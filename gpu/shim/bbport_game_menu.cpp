@@ -524,6 +524,35 @@ bool Detour(unsigned char* image, u64 va, const u8* prologue, std::size_t length
 /// A mapping within +-2 GiB of the image, for rel32 jumps both ways.
 u8* MapNear(unsigned char* image, u64 image_size, std::size_t size) {
     const u64 base = reinterpret_cast<u64>(image);
+#ifdef _WIN32
+    // Walk the actual free regions instead of guessing addresses: the guest address space
+    // reservation and the loader leave few fixed hints free. Every byte of the stubs must be
+    // within rel32 reach of every byte of the image.
+    {
+        constexpr u64 reach = (2ull << 30) - (1ull << 20);
+        constexpr u64 granularity = 0x10000;
+        const u64 lo = base + image_size > reach ? base + image_size - reach : granularity;
+        const u64 hi = base + reach - size;
+        MEMORY_BASIC_INFORMATION info;
+        for (u64 at = lo; at < hi && VirtualQuery(reinterpret_cast<void*>(at), &info, sizeof(info));) {
+            const u64 region = reinterpret_cast<u64>(info.BaseAddress);
+            const u64 region_end = region + info.RegionSize;
+            if (info.State == MEM_FREE) {
+                const u64 start = (std::max(region, at) + granularity - 1) & ~(granularity - 1);
+                if (start + size <= region_end && start < hi) {
+                    if (void* p = VirtualAlloc(reinterpret_cast<void*>(start), size,
+                                               MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)) {
+                        return static_cast<u8*>(p);
+                    }
+                }
+            }
+            if (region_end <= at) {
+                break;
+            }
+            at = region_end;
+        }
+    }
+#endif
     for (u64 k = 1; k <= 64; ++k) {
         for (const u64 hint : {base - k * (24ull << 20), base + image_size + k * (24ull << 20)}) {
 #ifdef _WIN32

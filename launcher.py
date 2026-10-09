@@ -31,7 +31,7 @@ ANISO_CHOICES = [
     ("Off", "0", "Game's default anisotropic filtering (no override)"),
 ]
 # (label, BB_PREUPLOAD value); "" keeps run.bat's default (1)
-PREUPLOAD_CHOICES = [("Normal", ""), ("Full (~3 GB more VRAM)", "2"), ("Off", "0")]
+PREUPLOAD_CHOICES = [("Normal", ""), ("Full (~3 GB more VRAM, 12 GB+ GPU)", "2"), ("Off", "0")]
 # (label, BB_FRAMES_AHEAD value): guest frames the GPU thread may run ahead of the display
 FRAMES_AHEAD_CHOICES = [("2 (smooth, default)", "2"), ("1 (lowest input lag)", "1"), ("3 (smoothest)", "3")]
 DEFAULT_DISPLAY = "Primary (default)"

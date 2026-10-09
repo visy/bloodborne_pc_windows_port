@@ -31,6 +31,8 @@ using namespace Xbyak::util;
 
 static Xbyak::CodeGenerator g_srt_codegen(32_MB);
 static const u8* g_srt_codegen_start = nullptr;
+// bbport: the shader cache rebuild translates on several threads; they share the code buffer.
+static std::mutex g_srt_codegen_mutex;
 
 namespace {
 void EnsureSrtFaultHandler();
@@ -40,6 +42,7 @@ namespace Shader {
 
 PFN_SrtWalker RegisterWalkerCode(const u8* ptr, size_t size) {
     EnsureSrtFaultHandler();
+    std::scoped_lock lock{g_srt_codegen_mutex};
     const auto func_addr = (PFN_SrtWalker)g_srt_codegen.getCurr();
     g_srt_codegen.db(ptr, size);
     g_srt_codegen.ready();
@@ -669,6 +672,7 @@ static void GenerateSrtProgram(Info& info, PassInfo& pass_info) {
 
     // Register the signal handler for SRT walker, if not already registered
     EnsureSrtFaultHandler();
+    std::scoped_lock lock{g_srt_codegen_mutex};
 
     info.srt_info.walker_func = c.getCurr<PFN_SrtWalker>();
     pass_info.dst_off_dw = NUM_USER_DATA_REGS;

@@ -39,6 +39,7 @@ namespace Vulkan {
 class Instance;
 class Scheduler;
 class ShaderCache;
+struct ShaderSource;
 
 struct Program {
     struct Module {
@@ -171,7 +172,26 @@ private:
                                                    std::string_view ext);
     vk::ShaderModule CompileModule(Shader::Info& info, Shader::RuntimeInfo& runtime_info,
                                    const std::span<const u32>& code, size_t perm_idx,
-                                   Shader::Backend::Bindings& binding);
+                                   Shader::Backend::Bindings& binding,
+                                   std::vector<u32>* spv_out = nullptr);
+
+    /// bbport: shader sources (vk_pipeline_serialization.h). Inputs of a compilation, taken
+    /// before it; null when nothing is recorded (no cache and no self-test).
+    std::unique_ptr<ShaderSource> BeginShaderSource(const PipelineSelection& sel,
+                                                    Shader::HwStage hw_stage,
+                                                    Shader::SwStage sw_stage,
+                                                    const Shader::ShaderParams& params,
+                                                    const Shader::RuntimeInfo& runtime_info,
+                                                    const Shader::Backend::Bindings& start,
+                                                    size_t perm_idx);
+    /// Stores the source with the guest reads of `log`; BB_SHADER_CACHE_SELFTEST=1 translates
+    /// it again right away and compares with the in-game result.
+    void FinishShaderSource(std::unique_ptr<ShaderSource> source, Shader::GuestReadLog& log,
+                            const std::vector<u32>& spv, const Shader::StageSpecialization& spec,
+                            const Shader::Info* base_info);
+    /// Translates the shader sources again for this GPU (all, or only programs whose meta or
+    /// SPIR-V is missing). Returns the number of rebuilt shaders.
+    u32 RebuildShaderCache(bool full);
     const Shader::RuntimeInfo& BuildRuntimeInfo(PipelineSelection& sel, Shader::HwStage stage,
                                                 Shader::SwStage l_stage);
 
@@ -198,6 +218,8 @@ private:
     PipelineSelection sel{}; ///< GPU thread selection state
     ComputePipelineKey compute_key{};
     u32 num_new_pipelines{}; // new pipelines added to the cache since the game start
+    bool preload_profile_changed{}; ///< bbport: WarmUp rebuilt the cache for another profile
+    u32 selftest_runs{}, selftest_failures{};
 
     // Only if Config::collectShadersForDebug()
     tsl::robin_map<vk::ShaderModule,

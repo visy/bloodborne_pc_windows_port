@@ -1,21 +1,39 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cstdlib>
+#include <map>
+#include <thread>
 #include <unordered_set>
+#include <xxhash.h>
+#include "common/hash.h"
 #include "common/serdes.h"
 #include "core/emulator_settings.h"
 #include "shader_recompiler/frontend/fetch_shader.h"
+#include "shader_recompiler/backend/spirv/emit_spirv.h"
 #include "shader_recompiler/info.h"
+#include "shader_recompiler/recompiler.h"
 #include "video_core/cache_storage.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
+#include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
 static constexpr u32 ShaderBinaryVersion = 7u; // bbport: interpolated integer fix (Pascal)
 static constexpr u32 ShaderMetaVersion = 7u; // bbport: ImageResource::needs_native
-static constexpr u32 PipelineKeyVersion = 5u; // bbport: Info layout (ImageResource::needs_native)
+static constexpr u32 PipelineKeyVersion = 6u; // bbport: discard fragment shader stored
+/// Keys of version 5 are the same without the discard fragment shader: still loaded (caches
+/// recorded before version 6 keep working), except pipelines that would need that shader.
+static constexpr u32 LegacyPipelineKeyVersion = 5u;
+/// bbport: ShaderSource blobs. Independent of the versions above: a translator change bumps
+/// ShaderBinaryVersion and the cache is translated again from its sources. Bump this one only
+/// when the source format or what it must capture changes (a new guest memory read).
+static constexpr u32 SourceVersion = 1u;
 } // namespace Serialization
 
 namespace Vulkan {
@@ -66,6 +84,13 @@ void RegisterShaderMeta(const Shader::Info& info,
         return;
     }
 
+    Storage::DataBase::Instance().Save(Storage::BlobType::ShaderMeta,
+                                       fmt::format("{:#018x}", perm_hash),
+                                       SerializeShaderMeta(info, spec, perm_hash, perm_idx));
+}
+
+std::vector<u8> SerializeShaderMeta(const Shader::Info& info, const Shader::StageSpecialization& spec,
+                                    size_t perm_hash, size_t perm_idx) {
     Serialization::Archive ar;
     Serialization::Writer meta{ar};
 
@@ -78,8 +103,7 @@ void RegisterShaderMeta(const Shader::Info& info,
     spec.Serialize(ar);
     info.Serialize(ar);
 
-    Storage::DataBase::Instance().Save(Storage::BlobType::ShaderMeta,
-                                       fmt::format("{:#018x}", perm_hash), ar.TakeOff());
+    return ar.TakeOff();
 }
 
 void RegisterShaderBinary(std::vector<u32>&& spv, u64 pgm_hash, size_t perm_idx) {
@@ -203,7 +227,13 @@ void GraphicsPipeline::SerializationSupport::Serialize(Serialization::Archive& a
     sdata.Write(multisampling);
     sdata.Write(tcs);
     sdata.Write(tes);
+    sdata.Write(fragment);
 }
+
+namespace {
+/// Set while WarmUp reads a version 5 key (no `fragment` field).
+bool reading_legacy_key = false;
+} // namespace
 
 bool GraphicsPipeline::SerializationSupport::Deserialize(Serialization::Archive& ar) {
     Serialization::Reader sdata{ar};
@@ -214,6 +244,9 @@ bool GraphicsPipeline::SerializationSupport::Deserialize(Serialization::Archive&
     sdata.Read(multisampling);
     sdata.Read(tcs);
     sdata.Read(tes);
+    if (!reading_legacy_key) {
+        sdata.Read(fragment);
+    }
     return true;
 }
 
@@ -222,6 +255,20 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
 
     GraphicsPipeline::SerializationSupport sdata{};
     sdata.Deserialize(ar);
+
+    // bbport: without a fragment shader, the pipeline carries the clip distance discard shader
+    // only on GPUs that need the emulation (and the vertex shader then exports the distances).
+    // Whether it does was decided for the profile the key was made with: after a rebuild for
+    // another profile such a pipeline is compiled again when the game uses it.
+    if (preload_profile_changed && !sel.graphics_key.stage_hashes[u32(Shader::SwStage::Fragment)] &&
+        (profile.needs_clip_distance_emulation || !sdata.fragment.empty())) {
+        return false;
+    }
+    // A version 5 key never stored the discard shader: compile such a pipeline in game.
+    if (reading_legacy_key && !sel.graphics_key.stage_hashes[u32(Shader::SwStage::Fragment)] &&
+        profile.needs_clip_distance_emulation) {
+        return false;
+    }
 
     for (int stage_idx = 0; stage_idx < MaxShaderStages; ++stage_idx) {
         const auto& hash = sel.graphics_key.stage_hashes[stage_idx];
@@ -325,53 +372,489 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
     return true;
 }
 
+// ---- bbport: shader sources and the cache rebuild ------------------------------------------
+
+namespace {
+
+constexpr u32 SourceMagic = 0x53534242u; // "BBSS"
+
+/// Layout of the raw structures in a source: a build whose layout differs (another compiler or
+/// OS) skips the source instead of misreading it.
+constexpr u32 SourceLayout() {
+    return u32(sizeof(Shader::RuntimeInfo)) | (u32(sizeof(Shader::Backend::Bindings)) << 16) |
+#ifdef _WIN32
+           (1u << 31);
+#else
+           0u;
+#endif
+}
+
+struct SourceWriter {
+    std::vector<u8> out;
+
+    void Raw(const void* data, size_t size) {
+        const auto* bytes = static_cast<const u8*>(data);
+        out.insert(out.end(), bytes, bytes + size);
+    }
+    template <typename T>
+    void Value(const T& value) {
+        static_assert(std::is_trivially_copyable_v<T>);
+        Raw(&value, sizeof(value));
+    }
+    template <typename T>
+    void Vector(const std::vector<T>& v) {
+        Value(u64(v.size()));
+        Raw(v.data(), v.size() * sizeof(T));
+    }
+};
+
+struct SourceReader {
+    const u8* data;
+    size_t size;
+    size_t offset = 0;
+    bool ok = true;
+
+    void Raw(void* dst, size_t count) {
+        if (!ok || count > size - offset) {
+            ok = false;
+            return;
+        }
+        std::memcpy(dst, data + offset, count);
+        offset += count;
+    }
+    template <typename T>
+    void Value(T& value) {
+        static_assert(std::is_trivially_copyable_v<T>);
+        Raw(&value, sizeof(value));
+    }
+    template <typename T>
+    void Vector(std::vector<T>& v) {
+        u64 count{};
+        Value(count);
+        if (!ok || count > (size - offset) / sizeof(T)) {
+            ok = false;
+            return;
+        }
+        v.resize(count);
+        Raw(v.data(), count * sizeof(T));
+    }
+};
+
+std::string MetaName(u64 pgm_hash, size_t perm_idx) {
+    return fmt::format("{:#018x}", HashCombine(pgm_hash, u64(perm_idx)));
+}
+
+std::string BinaryName(u64 pgm_hash, size_t perm_idx) {
+    return fmt::format("{:#018x}_{}", pgm_hash, perm_idx);
+}
+
+bool ParseSourceName(const std::string& name, u64& pgm_hash, u32& perm_idx) {
+    const auto sep = name.find('_');
+    if (sep == std::string::npos || !name.starts_with("0x")) {
+        return false;
+    }
+    char* end{};
+    pgm_hash = std::strtoull(name.c_str() + 2, &end, 16);
+    if (end != name.c_str() + sep) {
+        return false;
+    }
+    const auto idx = std::strtoul(name.c_str() + sep + 1, &end, 10);
+    if (*end != '\0' || idx >= 4096) {
+        return false;
+    }
+    perm_idx = u32(idx);
+    return true;
+}
+
+} // namespace
+
+std::string ShaderSourceName(u64 pgm_hash, size_t perm_idx) {
+    return BinaryName(pgm_hash, perm_idx);
+}
+
+void ApplyHostRuntimeInfo(Shader::RuntimeInfo& runtime_info, u32 host_flags,
+                          const Shader::Profile& profile) {
+    if (runtime_info.hw_stage == Shader::HwStage::Vertex) {
+        runtime_info.hw.vs.emulate_depth_negative_one_to_one =
+            (host_flags & ShaderSource::FlagClipSpaceMinusW) && !profile.supports_depth_clip_control;
+    } else if (runtime_info.hw_stage == Shader::HwStage::Fragment) {
+        runtime_info.hw.fs.clip_distance_emulation =
+            (host_flags & ShaderSource::FlagClipDistanceEmulation) &&
+            profile.needs_clip_distance_emulation;
+    }
+}
+
+std::vector<u8> SerializeShaderSource(const ShaderSource& source) {
+    SourceWriter payload;
+    payload.Value(source.pgm_hash);
+    payload.Value(source.perm_idx);
+    payload.Value(u32(source.hw_stage));
+    payload.Value(u32(source.sw_stage));
+    payload.Value(source.host_flags);
+    payload.Value(u64(source.pgm_base));
+    payload.Value(source.user_data);
+    payload.Value(source.start);
+    auto runtime_info = source.runtime_info;
+    if (runtime_info.hw_stage == Shader::HwStage::Geometry) {
+        runtime_info.hw.gs.vs_copy = {};
+    }
+    payload.Value(runtime_info);
+    payload.Vector(source.code);
+    payload.Vector(source.vs_copy);
+    payload.Value(u64(source.ranges.size()));
+    for (const auto& range : source.ranges) {
+        payload.Value(u64(range.addr));
+        payload.Vector(range.bytes);
+    }
+    payload.Value(u64(source.flat_bufs.size()));
+    for (const auto& flat : source.flat_bufs) {
+        payload.Vector(flat.walker);
+        payload.Vector(flat.data);
+    }
+
+    SourceWriter blob;
+    blob.Value(SourceMagic);
+    blob.Value(Serialization::SourceVersion);
+    blob.Value(SourceLayout());
+    blob.Value(u32{0});
+    blob.Value(u64(payload.out.size()));
+    blob.Value(u64(XXH3_64bits(payload.out.data(), payload.out.size())));
+    blob.Raw(payload.out.data(), payload.out.size());
+    return std::move(blob.out);
+}
+
+bool DeserializeShaderSource(std::vector<u8>&& data, ShaderSource& source) {
+    SourceReader header{data.data(), data.size()};
+    u32 magic{}, version{}, layout{}, reserved{};
+    u64 payload_size{}, checksum{};
+    header.Value(magic);
+    header.Value(version);
+    header.Value(layout);
+    header.Value(reserved);
+    header.Value(payload_size);
+    header.Value(checksum);
+    if (!header.ok || magic != SourceMagic || version != Serialization::SourceVersion ||
+        layout != SourceLayout() || payload_size != data.size() - header.offset) {
+        return false;
+    }
+    const u8* payload = data.data() + header.offset;
+    if (XXH3_64bits(payload, payload_size) != checksum) {
+        return false;
+    }
+
+    SourceReader in{payload, payload_size};
+    u32 hw_stage{}, sw_stage{};
+    u64 pgm_base{};
+    in.Value(source.pgm_hash);
+    in.Value(source.perm_idx);
+    in.Value(hw_stage);
+    in.Value(sw_stage);
+    in.Value(source.host_flags);
+    in.Value(pgm_base);
+    in.Value(source.user_data);
+    in.Value(source.start);
+    in.Value(source.runtime_info);
+    in.Vector(source.code);
+    in.Vector(source.vs_copy);
+    u64 num_ranges{};
+    in.Value(num_ranges);
+    if (!in.ok || num_ranges > payload_size) {
+        return false;
+    }
+    source.ranges.resize(num_ranges);
+    for (auto& range : source.ranges) {
+        u64 addr{};
+        in.Value(addr);
+        range.addr = VAddr(addr);
+        in.Vector(range.bytes);
+    }
+    u64 num_flat{};
+    in.Value(num_flat);
+    if (!in.ok || num_flat > payload_size) {
+        return false;
+    }
+    source.flat_bufs.resize(num_flat);
+    for (auto& flat : source.flat_bufs) {
+        in.Vector(flat.walker);
+        in.Vector(flat.data);
+    }
+    source.hw_stage = Shader::HwStage(hw_stage);
+    source.sw_stage = Shader::SwStage(sw_stage);
+    source.pgm_base = VAddr(pgm_base);
+    return in.ok && in.offset == payload_size && !source.code.empty() &&
+           hw_stage <= u32(Shader::HwStage::Compute) && sw_stage <= u32(Shader::SwStage::Compute) &&
+           source.runtime_info.hw_stage == source.hw_stage &&
+           source.runtime_info.sw_stage == source.sw_stage;
+}
+
+bool RebuildShader(const ShaderSource& source, const Shader::Profile& profile,
+                   Shader::Pools& pools, Shader::Info& base_info, RebuiltShader& out) {
+    Shader::GuestReadLog log{Shader::GuestReadLog::Mode::Replay};
+    log.ranges = source.ranges;
+    log.flat_bufs = source.flat_bufs;
+
+    const Shader::ShaderParams params{
+        .user_data = std::span<const u32, Shader::ShaderParams::NumShaderUserData>{
+            source.user_data},
+        .code = source.code,
+        .hash = source.pgm_hash,
+    };
+    auto runtime_info = source.runtime_info;
+    ApplyHostRuntimeInfo(runtime_info, source.host_flags, profile);
+    if (runtime_info.hw_stage == Shader::HwStage::Geometry) {
+        runtime_info.hw.gs.vs_copy = source.vs_copy;
+    }
+    const std::span<const u32> code{source.code};
+
+    Shader::GuestReadLog::Scope scope{&log};
+    if (source.perm_idx == 0) {
+        // GetProgram, new program: translate, then specialize on the translated Info.
+        base_info = Shader::Info(source.hw_stage, source.sw_stage, params);
+        base_info.pgm_base = source.pgm_base;
+        auto binding = source.start;
+        const auto program =
+            Shader::TranslateProgram(code, pools, base_info, runtime_info, profile);
+        out.spv = Shader::Backend::SPIRV::EmitSPIRV(profile, runtime_info, program, binding);
+        out.spec = Shader::StageSpecialization(base_info, runtime_info, profile, source.start);
+        if (log.failed) {
+            return false;
+        }
+        out.meta = SerializeShaderMeta(base_info, out.spec, HashCombine(source.pgm_hash, u64{0}), 0);
+    } else {
+        // GetProgram, new permutation: specialize on the program's Info with this draw's user
+        // data, then translate a fresh Info.
+        if (base_info.pgm_hash != source.pgm_hash || base_info.hw_stage != source.hw_stage) {
+            return false;
+        }
+        Shader::Info info = base_info;
+        info.pgm_base = source.pgm_base;
+        info.user_data = params.user_data;
+        info.RefreshFlatBuf();
+        out.spec = Shader::StageSpecialization(info, runtime_info, profile, source.start);
+
+        Shader::Info new_info(source.hw_stage, source.sw_stage, params);
+        new_info.pgm_base = source.pgm_base;
+        auto binding = source.start;
+        const auto program = Shader::TranslateProgram(code, pools, new_info, runtime_info, profile);
+        out.spv = Shader::Backend::SPIRV::EmitSPIRV(profile, runtime_info, program, binding);
+        if (log.failed) {
+            return false;
+        }
+        out.meta = SerializeShaderMeta(info, out.spec, HashCombine(source.pgm_hash, u64(source.perm_idx)),
+                                       source.perm_idx);
+    }
+    out.spec.info = nullptr;
+    return true;
+}
+
+u32 RebuildProgramSources(u64 pgm_hash, std::span<const u32> perms, const Shader::Profile& profile,
+                          Shader::Pools& pools, u32& num_skipped) {
+    auto& db = Storage::DataBase::Instance();
+    auto& progress = ShaderCacheRebuildProgress::Instance();
+    Shader::Info base_info{};
+    bool have_base = false;
+    u32 num_built = 0;
+    for (const u32 perm_idx : perms) {
+        const auto name = ShaderSourceName(pgm_hash, perm_idx);
+        std::vector<u8> blob;
+        db.Load(Storage::BlobType::ShaderSource, name, blob);
+        ShaderSource source{};
+        RebuiltShader out{};
+        const bool ok = (perm_idx == 0 || have_base) &&
+                        DeserializeShaderSource(std::move(blob), source) &&
+                        source.pgm_hash == pgm_hash && source.perm_idx == perm_idx &&
+                        RebuildShader(source, profile, pools, base_info, out);
+        if (!ok) {
+            // Useless now (damaged, another version, no permutation 0, or it does not replay):
+            // the shader is compiled again when the game uses it, which writes a new source.
+            db.Remove(Storage::BlobType::ShaderSource, name);
+            ++num_skipped;
+        } else {
+            have_base |= perm_idx == 0;
+            db.Save(Storage::BlobType::ShaderMeta, MetaName(pgm_hash, perm_idx),
+                    std::move(out.meta));
+            db.Save(Storage::BlobType::ShaderBinary, BinaryName(pgm_hash, perm_idx),
+                    std::move(out.spv));
+            ++num_built;
+        }
+        const u32 done = ++progress.done;
+        if (done % 500 == 0) {
+            LOG_INFO(Render, "Shader cache: {}/{} shaders", done, progress.total.load());
+        }
+    }
+    return num_built;
+}
+
+u32 PipelineCache::RebuildShaderCache(bool full) {
+    auto& db = Storage::DataBase::Instance();
+    if (!db.SupportsFiles()) {
+        return 0;
+    }
+
+    // Sources by program, permutations in order (permutation 0 first: the others need its Info).
+    std::map<u64, std::vector<u32>> programs;
+    for (const auto& name : db.ListNames(Storage::BlobType::ShaderSource)) {
+        u64 pgm_hash{};
+        u32 perm_idx{};
+        if (ParseSourceName(name, pgm_hash, perm_idx)) {
+            programs[pgm_hash].push_back(perm_idx);
+        } else {
+            db.Remove(Storage::BlobType::ShaderSource, name);
+        }
+    }
+
+    if (full) {
+        // Meta and SPIR-V were made for another profile; keys and sources are GPU-independent.
+        db.Clear({Storage::BlobType::PipelineKey, Storage::BlobType::ShaderSource,
+                  Storage::BlobType::ShaderProfile});
+    } else {
+        // Only programs with a permutation whose meta or SPIR-V is missing.
+        std::erase_if(programs, [&](const auto& program) {
+            return std::ranges::all_of(program.second, [&](u32 perm_idx) {
+                return db.Exists(Storage::BlobType::ShaderMeta, MetaName(program.first, perm_idx)) &&
+                       db.Exists(Storage::BlobType::ShaderBinary,
+                                 BinaryName(program.first, perm_idx));
+            });
+        });
+    }
+
+    u32 num_sources = 0;
+    std::vector<std::pair<u64, std::vector<u32>>> work;
+    work.reserve(programs.size());
+    for (auto& [pgm_hash, perms] : programs) {
+        std::ranges::sort(perms);
+        num_sources += u32(perms.size());
+        work.emplace_back(pgm_hash, std::move(perms));
+    }
+    if (work.empty()) {
+        return 0;
+    }
+
+    u32 num_threads = std::max(1u, std::thread::hardware_concurrency());
+    num_threads = num_threads > 2 ? num_threads - 1 : num_threads;
+    if (const char* env = std::getenv("BB_SHADER_CACHE_REBUILD_THREADS")) {
+        num_threads = std::max(1, std::atoi(env));
+    }
+    num_threads = std::min<u32>(num_threads, u32(work.size()));
+
+    LOG_INFO(Render, "Shader cache: rebuilding {} shaders ({} programs) for this GPU on {} threads...",
+             num_sources, work.size(), num_threads);
+    const auto start_time = std::chrono::steady_clock::now();
+
+    auto& progress = ShaderCacheRebuildProgress::Instance();
+    progress.total = num_sources;
+    progress.done = 0;
+    progress.active = true;
+    std::atomic<size_t> next{0};
+    std::atomic<u32> num_built{0}, num_skipped{0};
+    const auto worker = [&] {
+        Shader::Pools pools;
+        for (size_t i = next++; i < work.size(); i = next++) {
+            u32 skipped = 0;
+            num_built += RebuildProgramSources(work[i].first, work[i].second, profile, pools,
+                                               skipped);
+            num_skipped += skipped;
+        }
+    };
+    {
+        std::vector<std::jthread> threads;
+        for (u32 i = 1; i < num_threads; ++i) {
+            threads.emplace_back(worker);
+        }
+        worker();
+    }
+    db.Flush();
+    progress.active = false;
+
+    const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                                       start_time)
+                             .count();
+    LOG_INFO(Render, "Shader cache: rebuilt {} of {} shaders in {:.1f} s ({} skipped)",
+             num_built.load(), num_sources, seconds, num_skipped.load());
+    return num_built.load();
+}
+
+namespace {
+/// bbport: stored after the Shader::Profile in profile.bin: meta or SPIR-V of another version
+/// is translated again from the sources like a cache of another GPU.
+struct CacheVersions {
+    u32 meta = Serialization::ShaderMetaVersion;
+    u32 binary = Serialization::ShaderBinaryVersion;
+    bool operator==(const CacheVersions&) const = default;
+};
+
+bool EnvFlag(const char* name) {
+    const char* value = std::getenv(name);
+    return value && value[0] == '1';
+}
+} // namespace
+
 void PipelineCache::WarmUp() {
     if (!EmulatorSettings.IsPipelineCacheEnabled()) {
         return;
     }
 
-    Storage::DataBase::Instance().Open();
+    auto& db = Storage::DataBase::Instance();
+    db.Open();
+
+    const auto save_profile = [&] {
+        std::vector<u8> data(sizeof(Shader::Profile) + sizeof(CacheVersions));
+        const CacheVersions versions{};
+        std::memcpy(data.data(), &profile, sizeof(profile));
+        std::memcpy(data.data() + sizeof(profile), &versions, sizeof(versions));
+        db.Save(Storage::BlobType::ShaderProfile, "profile", std::move(data));
+    };
 
     // Check if cache is compatible
     std::vector<u8> profile_data{};
-    Storage::DataBase::Instance().Load(Storage::BlobType::ShaderProfile, "profile", profile_data);
-    if (profile_data.empty()) {
-        Storage::DataBase::Instance().FinishPreload();
-
-        profile_data.resize(sizeof(profile));
-        std::memcpy(profile_data.data(), &profile, sizeof(profile));
-        Storage::DataBase::Instance().Save(Storage::BlobType::ShaderProfile, "profile",
-                                           std::move(profile_data));
-        return;
-    }
-    if (profile_data.size() != sizeof(Shader::Profile)) {
-        LOG_WARNING(Render, "Pipeline cache profile has unexpected size ({} != {})",
-                    profile_data.size(), sizeof(Shader::Profile));
-    }
-    Shader::Profile cached_profile{};
-    if (profile_data.size() == sizeof(Shader::Profile)) {
+    db.Load(Storage::BlobType::ShaderProfile, "profile", profile_data);
+    bool compatible = false;
+    if (profile_data.size() == sizeof(Shader::Profile) + sizeof(CacheVersions)) {
+        Shader::Profile cached_profile{};
+        CacheVersions cached_versions{};
         std::memcpy(&cached_profile, profile_data.data(), sizeof(cached_profile));
+        std::memcpy(&cached_versions, profile_data.data() + sizeof(cached_profile),
+                    sizeof(cached_versions));
+        compatible = cached_profile == profile && cached_versions == CacheVersions{};
     }
-    if (profile_data.size() != sizeof(Shader::Profile) || cached_profile != profile) {
-        // bbport: upstream closed the cache for the session here, so it was never rewritten
-        // and every later session compiled every shader again (stutters on each new area).
-        // Start a fresh cache for this build and GPU instead.
-        LOG_WARNING(Render, "Pipeline cache isn't compatible with current system: rebuilding it");
-        Storage::DataBase::Instance().Clear();
-        Storage::DataBase::Instance().FinishPreload();
-        profile_data.resize(sizeof(profile));
-        std::memcpy(profile_data.data(), &profile, sizeof(profile));
-        Storage::DataBase::Instance().Save(Storage::BlobType::ShaderProfile, "profile",
-                                           std::move(profile_data));
-        return;
+
+    preload_profile_changed = false;
+    if (!db.SupportsFiles()) {
+        // Archived cache: no rebuild, as upstream.
+        if (profile_data.empty()) {
+            db.FinishPreload();
+            save_profile();
+            return;
+        }
+        if (!compatible) {
+            LOG_WARNING(Render, "Pipeline cache isn't compatible with current system");
+            db.FinishPreload();
+            save_profile();
+            return;
+        }
+    } else if (!compatible || EnvFlag("BB_SHADER_CACHE_REBUILD")) {
+        // bbport: a cache made on another GPU (or by another build) keeps its pipeline keys and
+        // shader sources; its shaders are translated again for this GPU. Upstream closed the
+        // cache, later builds cleared it.
+        if (!profile_data.empty()) {
+            LOG_WARNING(Render, "Pipeline cache was made for another GPU or build{}: rebuilding it",
+                        compatible ? " (BB_SHADER_CACHE_REBUILD)" : "");
+        }
+        RebuildShaderCache(true);
+        save_profile();
+        preload_profile_changed = !compatible;
+    } else {
+        // Sources whose meta or SPIR-V is missing (for instance a cache shared without them).
+        RebuildShaderCache(false);
     }
 
     u32 num_pipelines{};
     u32 num_total_pipelines{};
     u32 num_damaged{};
+    std::vector<std::string> stale_keys;
 
-    Storage::DataBase::Instance().ForEachBlob(
-        Storage::BlobType::PipelineKey, [&](std::vector<u8>&& data) {
+    db.ForEachNamedBlob(
+        Storage::BlobType::PipelineKey, [&](const std::string& name, std::vector<u8>&& data) {
             ++num_total_pipelines;
             // bbport: a damaged entry (cut short by a crash or a power loss, or rejected by the
             // driver) used to stop the game at every start until the cache was deleted by hand
@@ -382,9 +865,12 @@ void PipelineCache::WarmUp() {
 
                 u32 version{};
                 pldata.Read(version);
-                if (version != Serialization::PipelineKeyVersion) {
+                if (version != Serialization::PipelineKeyVersion &&
+                    version != Serialization::LegacyPipelineKeyVersion) {
+                    stale_keys.push_back(name);
                     return;
                 }
+                reading_legacy_key = version == Serialization::LegacyPipelineKeyVersion;
 
                 u32 is_compute{};
                 pldata.Read(is_compute);
@@ -398,6 +884,11 @@ void PipelineCache::WarmUp() {
 
                 if (result) {
                     ++num_pipelines;
+                } else {
+                    stale_keys.push_back(name);
+                    sel.infos.fill(nullptr);
+                    sel.modules.fill(nullptr);
+                    sel.fetch_shader.reset();
                 }
             } catch (const std::exception& e) {
                 if (num_damaged++ == 0) {
@@ -408,10 +899,13 @@ void PipelineCache::WarmUp() {
                 sel.fetch_shader.reset();
             }
         });
+    preload_profile_changed = false;
+    reading_legacy_key = false;
 
     if (num_damaged) {
         // Nothing preloaded is trusted: modules of a damaged entry may sit in programs that later
-        // lookups would reuse. Start as with no cache and write a fresh one.
+        // lookups would reuse. Start as with no cache and write a fresh one (the shader sources
+        // are checked on their own and kept).
         LOG_WARNING(Render, "Pipeline cache: {} damaged entries, rebuilding it", num_damaged);
         graphics_pipelines.clear();
         compute_pipelines.clear();
@@ -430,23 +924,29 @@ void PipelineCache::WarmUp() {
             instance.GetDevice().destroyShaderModule(vk::ShaderModule{module});
         }
         program_cache.clear();
-        Storage::DataBase::Instance().Clear();
-        Storage::DataBase::Instance().FinishPreload();
-        profile_data.resize(sizeof(profile));
-        std::memcpy(profile_data.data(), &profile, sizeof(profile));
-        Storage::DataBase::Instance().Save(Storage::BlobType::ShaderProfile, "profile",
-                                           std::move(profile_data));
+        db.Clear({Storage::BlobType::ShaderSource});
+        db.FinishPreload();
+        save_profile();
         return;
     }
 
     LOG_INFO(Render, "Preloaded {} pipelines", num_pipelines);
     if (num_total_pipelines > num_pipelines) {
-        LOG_WARNING(Render, "{} stale pipelines were found: clearing cache to regenerate cleanly",
+        // bbport: only the entries that did not load are removed (a stage of another cache
+        // version, a shader that could not be rebuilt for this GPU, ...); upstream cleared the
+        // whole cache, and with it the shader sources.
+        LOG_WARNING(Render, "{} stale pipelines were found: removing them",
                     num_total_pipelines - num_pipelines);
-        Storage::DataBase::Instance().Clear();
+        if (db.SupportsFiles()) {
+            for (const auto& name : stale_keys) {
+                db.Remove(Storage::BlobType::PipelineKey, name);
+            }
+        } else {
+            db.Clear();
+        }
     }
 
-    Storage::DataBase::Instance().FinishPreload();
+    db.FinishPreload();
 }
 
 void PipelineCache::Sync() {
@@ -498,7 +998,11 @@ bool Gcn::FetchShaderData::Deserialize(Serialization::Archive& ar) {
 void PersistentSrtInfo::Serialize(Serialization::Archive& ar) const {
     Serialization::Writer srt{ar};
 
-    srt.Write(this, sizeof(*this));
+    // bbport: without the host address of the walker (registered again when loaded), so the
+    // cache holds no host pointers.
+    auto persistent = *this;
+    persistent.walker_func = nullptr;
+    srt.Write(&persistent, sizeof(persistent));
     if (walker_func_size) {
         srt.Write(reinterpret_cast<void*>(walker_func), walker_func_size);
     }
@@ -524,7 +1028,12 @@ void StageSpecialization::Serialize(Serialization::Archive& ar) const {
     Serialization::Writer spec{ar};
 
     spec.Write(start);
-    spec.Write(runtime_info);
+    // bbport: without the host address of the copy shader code (only its hash is compared).
+    auto stored_runtime_info = runtime_info;
+    if (stored_runtime_info.hw_stage == HwStage::Geometry) {
+        stored_runtime_info.hw.gs.vs_copy = {};
+    }
+    spec.Write(stored_runtime_info);
 
     spec.Write(bitset.to_string());
 

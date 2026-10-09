@@ -54,6 +54,8 @@ struct Profile {
     bool needs_unorm_fixup{};
     bool needs_clip_distance_emulation{};
     bool supports_shader_stencil_export{};
+    /// bbport: VK_EXT_depth_clip_control (vertex shaders emulate [-w, w] depth without it).
+    bool supports_depth_clip_control{};
 
     bool operator==(const Profile&) const = default;
 };

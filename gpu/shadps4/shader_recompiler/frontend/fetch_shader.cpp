@@ -43,35 +43,10 @@ static bool IsTypedBufferLoad(const Gcn::GcnInst& inst) {
            inst.opcode == Opcode::TBUFFER_LOAD_FORMAT_XYZW;
 }
 
-const u32* GetFetchShaderCode(const Info& info, u32 sgpr_base) {
-    const u32* code;
-    std::memcpy(&code, &info.UserData()[sgpr_base], sizeof(code));
-    return code;
-}
-
-std::optional<FetchShaderData> ParseFetchShader(const Shader::Info& info) {
-    if (!info.has_fetch_shader) {
-        return std::nullopt;
-    }
-
-    const auto* code = GetFetchShaderCode(info, info.fetch_shader_sgpr_base);
-
-    // bbport: the pipeline cache parses the fetch shader on every draw. Results are cached
-    // per thread by code address and revalidated against a copy of the code, which is
-    // much cheaper than decoding it again.
-    struct CachedParse {
-        std::vector<u32> code;
-        FetchShaderData data;
-    };
-    thread_local std::unordered_map<const u32*, CachedParse> cache;
-    if (const auto it = cache.find(code);
-        !BbToggle::Disabled(BbToggle::FetchShaderCache) && it != cache.end() &&
-        std::memcmp(code, it->second.code.data(), it->second.code.size() * sizeof(u32)) == 0) {
-        return it->second.data;
-    }
-
+/// Decodes fetch shader code until its s_setpc_b64 (or `end`).
+static FetchShaderData Parse(const u32* code, const u32* end) {
     FetchShaderData data{};
-    GcnCodeSlice code_slice(code, code + std::numeric_limits<u32>::max());
+    GcnCodeSlice code_slice(code, end);
     GcnDecodeContext decoder;
 
     struct VsharpLoad {
@@ -127,10 +102,60 @@ std::optional<FetchShaderData> ParseFetchShader(const Shader::Info& info) {
         }
     }
 
+    return data;
+}
+
+const u32* GetFetchShaderCode(const Info& info, u32 sgpr_base) {
+    const u32* code;
+    std::memcpy(&code, &info.UserData()[sgpr_base], sizeof(code));
+    return code;
+}
+
+std::optional<FetchShaderData> ParseFetchShader(const Shader::Info& info) {
+    if (!info.has_fetch_shader) {
+        return std::nullopt;
+    }
+
+    const auto* code = GetFetchShaderCode(info, info.fetch_shader_sgpr_base);
+
+    // bbport: shader cache rebuild (guest_read_log.h): the code comes from the recorded copy.
+    auto* log = GuestReadLog::active;
+    if (log && log->mode == GuestReadLog::Mode::Replay) [[unlikely]] {
+        const auto* range = log->FindStart(reinterpret_cast<VAddr>(code));
+        if (!range || range->bytes.size() < sizeof(u32)) {
+            log->failed = true;
+            return FetchShaderData{};
+        }
+        std::vector<u32> copy(range->bytes.size() / sizeof(u32));
+        std::memcpy(copy.data(), range->bytes.data(), copy.size() * sizeof(u32));
+        return Parse(copy.data(), copy.data() + copy.size());
+    }
+
+    // bbport: the pipeline cache parses the fetch shader on every draw. Results are cached
+    // per thread by code address and revalidated against a copy of the code, which is
+    // much cheaper than decoding it again.
+    struct CachedParse {
+        std::vector<u32> code;
+        FetchShaderData data;
+    };
+    thread_local std::unordered_map<const u32*, CachedParse> cache;
+    if (const auto it = cache.find(code);
+        !BbToggle::Disabled(BbToggle::FetchShaderCache) && it != cache.end() &&
+        std::memcmp(code, it->second.code.data(), it->second.code.size() * sizeof(u32)) == 0) {
+        if (log) [[unlikely]] {
+            log->Add(reinterpret_cast<VAddr>(code), code, it->second.data.size);
+        }
+        return it->second.data;
+    }
+
+    const auto data = Parse(code, code + std::numeric_limits<u32>::max());
+    if (log) [[unlikely]] {
+        log->Add(reinterpret_cast<VAddr>(code), code, data.size);
+    }
     if (cache.size() >= 4096) {
         cache.clear();
     }
-    cache[code] = CachedParse{std::vector<u32>(code, code_slice.position()), data};
+    cache[code] = CachedParse{std::vector<u32>(code, code + data.size / sizeof(u32)), data};
     return data;
 }
 
