@@ -142,14 +142,22 @@ static void target_paths(int32_t user, const char *title, const DirName *dir, ch
     snprintf(meta,size,"%s/%s.sce_sys",base,dir->data);
 }
 
+/* A whole file replaced in one rename (a crash mid-write keeps the old one).
+ * Windows: fsync is _commit and rename is MoveFileEx(REPLACE_EXISTING|WRITE_THROUGH) (win32_compat.h). */
+static int write_atomic(const char *path, const void *data, size_t size) {
+    char temp[840]; snprintf(temp,sizeof(temp),"%s.bbtmp",path);
+    FILE *f=fopen(temp,"wb");
+    if (!f) return -1;
+    int ok=fwrite(data,1,size,f)==size && !fflush(f) && !fsync(fileno(f));
+    ok=!fclose(f) && ok;
+    if (!ok || rename(temp,path)) { unlink(temp); return -1; }
+    return 0;
+}
 static int write_param(const char *meta, const Param *p) {
     if (make_dirs(meta)) return -1;
     char path[800]; snprintf(path,sizeof(path),"%s/param.bin",meta);
-    FILE *f=fopen(path,"wb");
-    if (!f) return -1;
-    size_t n=fwrite(p,sizeof(*p),1,f);
-    fclose(f);
-    return n==1 ? 0 : -1;
+    Param copy=*p; copy.mtime=time(NULL);
+    return write_atomic(path,&copy,sizeof(copy));
 }
 
 static int read_param(const char *meta, Param *p) {
@@ -279,9 +287,7 @@ static ABI int32_t save_icon(const MountPoint *point, const Icon *icon) {
     int32_t r=ERR_NOT_MOUNTED;
     if (slot>=0) {
         char path[800]; snprintf(path,sizeof(path),"%s/icon0.png",slots[slot].meta);
-        FILE *f=fopen(path,"wb");
-        r=f && fwrite(icon->buffer,1,icon->data_size,f)==icon->data_size ? 0 : ERR_INTERNAL;
-        if (f) fclose(f);
+        r=write_atomic(path,icon->buffer,icon->data_size) ? ERR_INTERNAL : 0;
     }
     host_unlock(&lock);
     return r;

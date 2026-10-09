@@ -1,4 +1,5 @@
 // bbport: SDL3 window for the Vulkan swapchain (X11 or Wayland).
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <SDL3/SDL.h>
@@ -9,15 +10,68 @@
 
 namespace Frontend {
 
+namespace {
+
+// Case-insensitive substring search (strcasestr is a GNU extension, missing on Windows).
+bool ContainsNoCase(const char* haystack, const char* needle) {
+    return SDL_strcasestr(haystack, needle) != nullptr;
+}
+
+// Issue #69: the monitor the window (and fullscreen) goes to. BB_DISPLAY: its number in SDL's
+// order (1, 2, ...; bb-gpu-capabilities --displays lists them) or a part of its name; without it
+// SDL's primary display. The monitors are logged so a report says which one was taken.
+SDL_DisplayID ChooseDisplay() {
+    const SDL_DisplayID primary = SDL_GetPrimaryDisplay();
+    const char* wanted = std::getenv("BB_DISPLAY");
+    int count = 0;
+    SDL_DisplayID* ids = SDL_GetDisplays(&count);
+    SDL_DisplayID chosen = 0;
+    if (wanted && *wanted) {
+        char* end = nullptr;
+        const long number = std::strtol(wanted, &end, 10);
+        if (end && *end == '\0') {
+            if (number >= 1 && number <= count) {
+                chosen = ids[number - 1];
+            }
+        } else {
+            for (int i = 0; i < count && !chosen; ++i) {
+                const char* name = SDL_GetDisplayName(ids[i]);
+                if (name && ContainsNoCase(name, wanted)) {
+                    chosen = ids[i];
+                }
+            }
+        }
+    }
+    const SDL_DisplayID display = chosen ? chosen : primary;
+    for (int i = 0; i < count; ++i) {
+        const char* name = SDL_GetDisplayName(ids[i]);
+        const SDL_DisplayMode* mode = SDL_GetDesktopDisplayMode(ids[i]);
+        std::printf("Display %d: %s %dx%d%s%s\n", i + 1, name ? name : "?", mode ? mode->w : 0,
+                    mode ? mode->h : 0, ids[i] == primary ? " (primary)" : "",
+                    ids[i] == display ? " <- the game's (BB_DISPLAY)" : "");
+    }
+    if (wanted && *wanted && !chosen) {
+        std::printf("Display: BB_DISPLAY=%s matches none, the primary one is used\n", wanted);
+    }
+    SDL_free(ids);
+    return display;
+}
+
+} // namespace
+
 WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}, height{height_} {
     // Gamepads are sampled by runtime_pad.c; their events are pumped here with the window's.
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         UNREACHABLE_MSG("Failed to initialize SDL video: {}", SDL_GetError());
     }
+    if (const char* mute = std::getenv("BB_MUTE_UNFOCUSED")) {
+        mute_unfocused = mute[0] != '0';
+    }
     SDL_PropertiesID props = SDL_CreateProperties();
     SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, title);
-    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED);
-    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED);
+    const SDL_DisplayID display = ChooseDisplay();
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(display));
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(display));
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width_);
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height_);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
@@ -86,6 +140,7 @@ void WindowSDL::UpdateTextTitle() {
     const std::string title = text_active ? base_title + " \u2014 " + text_prompt + ": " + text + "_  (Enter = OK, Esc = cancel)"
                                           : base_title;
     SDL_SetWindowTitle(window, title.c_str());
+    BbOverlay::SetTextPrompt(text_active, text_prompt, text);
 }
 
 bool WindowSDL::PollEvents() {
@@ -101,15 +156,11 @@ bool WindowSDL::PollEvents() {
     if (!text_active) {
         BbOverlay::UpdateTextInput(window);
     }
-    // The game has no mouse input: the cursor shows only while the overlay menu is open.
-    // Toggled here because the menu can also close from the present thread (Close button).
-    static int cursor_shown = -1;
-    if (const int want = BbOverlay::CapturesInput() ? 1 : 0; want != cursor_shown) {
-        cursor_shown = want;
-        want ? SDL_ShowCursor() : SDL_HideCursor();
-    }
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
+        if (event.type == SDL_EVENT_MOUSE_MOTION) {
+            last_mouse_motion_ms = SDL_GetTicks();
+        }
         if (text_active && (event.type == SDL_EVENT_TEXT_INPUT || event.type == SDL_EVENT_KEY_DOWN)) {
             std::scoped_lock lock{text_mutex};
             if (event.type == SDL_EVENT_TEXT_INPUT) {
@@ -126,10 +177,23 @@ bool WindowSDL::PollEvents() {
             UpdateTextTitle();
             continue;
         }
+        // Alt+Enter: switch between windowed and fullscreen at any time.
+        if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && (event.key.mod & SDL_KMOD_ALT) &&
+            (event.key.key == SDLK_RETURN || event.key.key == SDLK_KP_ENTER)) {
+            const bool fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+            SDL_SetWindowFullscreen(window, !fullscreen);
+            continue;
+        }
         if (BbOverlay::HandleEvent(event)) {
             continue;
         }
         switch (event.type) {
+        case SDL_EVENT_WINDOW_FOCUS_LOST:
+        case SDL_EVENT_WINDOW_FOCUS_GAINED:
+            if (mute_unfocused) {
+                audible = event.type == SDL_EVENT_WINDOW_FOCUS_GAINED;
+            }
+            break;
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
         case SDL_EVENT_WINDOW_RESIZED: {
             int w = 0, h = 0;
@@ -146,7 +210,20 @@ bool WindowSDL::PollEvents() {
             break;
         }
     }
+    UpdateCursor();
     return is_open;
+}
+
+// Issue #3: the OS cursor over the game. bbport (Windows fork): the game has no mouse input, so
+// the cursor shows only while the overlay captures input (settings menu or text dialog) and is
+// hidden otherwise, windowed or fullscreen. Checked every poll because the menu can also close
+// from the present thread. ImGui never draws its own cursor (MouseDrawCursor stays off).
+void WindowSDL::UpdateCursor() {
+    const bool hide = !BbOverlay::CapturesInput();
+    if (hide != cursor_hidden) {
+        cursor_hidden = hide;
+        hide ? SDL_HideCursor() : SDL_ShowCursor();
+    }
 }
 
 } // namespace Frontend

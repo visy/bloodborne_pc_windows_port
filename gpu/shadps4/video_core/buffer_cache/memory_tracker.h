@@ -35,6 +35,32 @@ public:
             });
     }
 
+    /// bbport (pre-upload): whether the 4 MiB region at `region_addr` holds CPU-modified pages
+    /// that are not GPU-modified, with no guest write seen since frame `quiet_since`.
+    /// `rewritten`: only regions the guest wrote after the GPU had used them (write faults).
+    bool PreuploadCandidate(VAddr region_addr, u32 quiet_since, bool rewritten) noexcept {
+        auto* manager = top_tier[region_addr >> TRACKER_HIGHER_PAGE_BITS];
+        if (!manager) {
+            return !rewritten; // never used by the GPU: all of it is CPU-modified
+        }
+        std::scoped_lock lk{manager->lock};
+        if (rewritten && manager->last_cpu_write_frame == 0) {
+            return false;
+        }
+        return manager->last_cpu_write_frame < quiet_since &&
+               manager->preupload_backoff_until <= quiet_since && manager->HasCpuOnlyPages();
+    }
+    /// bbport (pre-upload): notes that the region was pre-uploaded at `frame`.
+    /// Returns how many times it was pre-uploaded before.
+    u32 NotePreuploaded(VAddr region_addr, u32 frame) noexcept {
+        if (auto* manager = top_tier[region_addr >> TRACKER_HIGHER_PAGE_BITS]) {
+            std::scoped_lock lk{manager->lock};
+            manager->preupload_frame = frame;
+            return manager->preupload_count++;
+        }
+        return 0;
+    }
+
     /// Returns true if a region has been modified from the GPU
     bool IsRegionGpuModified(VAddr query_cpu_addr, u64 query_size) noexcept {
         return IteratePages<false>(
@@ -99,6 +125,22 @@ public:
     /// Call 'func' for each CPU modified range and unmark those pages as CPU modified
     void ForEachUploadRange(VAddr query_cpu_range, u64 query_size, bool is_written, auto&& func,
                             auto&& on_upload) {
+        // bbport: a write binding over pages the CPU did not change and the GPU already owns
+        // needs neither an upload nor a state change (it ran under the region lock for every
+        // GPU write binding, twice per page). Racing guest writes are as in the read path.
+        if (is_written && !BbToggle::Disabled(BbToggle::LockFreeUploadCheck)) {
+            bool settled = true;
+            IteratePages<true>(query_cpu_range, query_size,
+                               [&settled](RegionManager* manager, u64 offset, size_t size) {
+                                    settled = settled &&
+                                              !manager->template IsRegionModified<Type::CPU>(offset, size) &&
+                                              manager->template IsRegionFullyModified<Type::GPU>(offset, size);
+                                });
+            if (settled) {
+                on_upload();
+                return;
+            }
+        }
         IteratePages<true>(query_cpu_range, query_size,
                            [&func, is_written](RegionManager* manager, u64 offset, size_t size) {
                                // bbport: read-only bindings skip the region lock when no page

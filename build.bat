@@ -80,6 +80,15 @@ if not exist "out\libatrac9.a" (
     echo Built out\libatrac9.a
 )
 
+rem Upstream FSR-Vulkan patches first (as build.sh), then the MinGW compatibility patch
+if exist "gpu\third_party\fsr-vulkan\.git" for %%p in (gpu\patches\fsr-vulkan\*.patch) do (
+    git -C gpu\third_party\fsr-vulkan apply --reverse --check "%CD%\%%p" >nul 2>nul
+    if errorlevel 1 (
+        echo Applying %%~nxp to FSR-Vulkan submodule...
+        git -C gpu\third_party\fsr-vulkan apply "%CD%\%%p"
+    )
+)
+
 if exist "patches\fsr_vulkan_mingw.patch" if exist "gpu\third_party\fsr-vulkan\.git" (
     git -C gpu\third_party\fsr-vulkan apply --check "..\..\..\patches\fsr_vulkan_mingw.patch" >nul 2>nul
     if not errorlevel 1 (
@@ -139,6 +148,31 @@ if exist "out\bbport.exe" (
 )
 
 python scripts\stage_dlls.py
+
+rem Optional DLSS (NVIDIA RTX): DLSS_SDK_ROOT=<github.com/NVIDIA/DLSS checkout> builds the bridge
+rem (gpu/dlss_bridge, the only code using NVIDIA's SDK; MSVC only, since the SDK's library is) and
+rem puts bbport_dlss.dll and NVIDIA's nvngx_dlss.dll next to bbport.exe. Without them the DLSS
+rem upscaler is listed as unavailable.
+if not defined DLSS_SDK_ROOT goto dlss_done
+set "DLSS_VK_INC="
+if defined VULKAN_SDK set DLSS_VK_INC="-DVULKAN_INCLUDE=%VULKAN_SDK%/Include"
+if not defined VULKAN_SDK if exist "C:\msys64\mingw64\include\vulkan\vulkan.h" set DLSS_VK_INC="-DVULKAN_INCLUDE=C:/msys64/mingw64/include"
+echo Building the DLSS bridge (Visual Studio 2022)
+cmake -S gpu/dlss_bridge -B out/dlss-bridge -G "Visual Studio 17 2022" -A x64 "-DDLSS_SDK_ROOT=%DLSS_SDK_ROOT%" %DLSS_VK_INC%
+if errorlevel 1 goto dlss_failed
+cmake --build out/dlss-bridge --config Release
+if errorlevel 1 goto dlss_failed
+copy /Y "out\dlss-bridge\Release\bbport_dlss.dll" "out\" >nul
+if errorlevel 1 goto dlss_failed
+copy /Y "%DLSS_SDK_ROOT%\lib\Windows_x86_64\rel\nvngx_dlss.dll" "out\" >nul
+if errorlevel 1 goto dlss_failed
+if exist "%DLSS_SDK_ROOT%\LICENSE.txt" copy /Y "%DLSS_SDK_ROOT%\LICENSE.txt" "out\NVIDIA-DLSS-LICENSE.txt" >nul
+echo DLSS bridge: out\bbport_dlss.dll
+goto dlss_done
+:dlss_failed
+echo DLSS bridge build failed: it needs Visual Studio 2022 and DLSS_SDK_ROOT pointing at the NVIDIA DLSS SDK.
+exit /b 1
+:dlss_done
 
 echo Build complete: out\bbport.exe
 

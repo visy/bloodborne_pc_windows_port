@@ -45,6 +45,7 @@
 #define pwrite runtime_win_pwrite
 int runtime_win_mkdir(const char *path, int mode);
 int runtime_win_rename(const char *from, const char *to);
+int runtime_win_open_shared(const char *path, int flags, int mode);
 int64_t runtime_win_pread(int fd, void *buffer, size_t size, int64_t offset);
 int64_t runtime_win_pwrite(int fd, const void *buffer, size_t size, int64_t offset);
 int runtime_win_remove_tree(const char *path);
@@ -58,6 +59,7 @@ int runtime_random(void *buffer, size_t size);
 uint32_t runtime_win_tls_slot(void);
 void runtime_win_set_tcb(void *tcb);
 void runtime_win_set_thread_name(const char *name);
+int runtime_win_thread_name(uint32_t thread_id, char *out, size_t size);
 
 /* Networking helpers without winsock headers. */
 int runtime_win_inet_pton4(const char *src, void *dst);

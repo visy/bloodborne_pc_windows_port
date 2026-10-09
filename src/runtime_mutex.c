@@ -180,9 +180,15 @@ static int32_t ensure_mutex(GuestMutex **mutex) {
 static ABI int32_t mutex_lock(GuestMutex **mutex) {
     int32_t e = ensure_mutex(mutex);
     if (e) return e;
-    runtime_thread_set_blocked("mutex", (uintptr_t)mutex);
-    e = orbis_error(native_lock(&(*mutex)->native));
-    runtime_thread_clear_blocked();
+    int r = native_trylock(&(*mutex)->native);
+    if (r == EBUSY) { /* contended: timed for the wait profile */
+        runtime_thread_set_blocked("mutex", (uintptr_t)mutex);
+        const uint64_t start = runtime_wait_clock();
+        r = native_lock(&(*mutex)->native);
+        runtime_wait_note(1, runtime_wait_clock() - start);
+        runtime_thread_clear_blocked();
+    }
+    e = orbis_error(r);
     if (!e) ++locks;
     restore_guest_fs();
     return e;
@@ -260,10 +266,12 @@ static ABI int32_t cond_wait(GuestCond **cond, GuestMutex **mutex) {
     if (!mutex || (uintptr_t)*mutex < 3) return orbis_error(EINVAL);
     ++waits;
     runtime_thread_set_blocked("condvar", (uintptr_t)cond);
-    int32_t res = orbis_error(native_cond_wait(&(*cond)->native, &(*mutex)->native, 0));
+    const uint64_t start = runtime_wait_clock();
+    const int e2 = native_cond_wait(&(*cond)->native, &(*mutex)->native, 0);
+    runtime_wait_note(0, runtime_wait_clock() - start);
     runtime_thread_clear_blocked();
     restore_guest_fs();
-    return res;
+    return orbis_error(e2);
 }
 static int32_t cond_wait_until(GuestCond **cond, GuestMutex **mutex, uint64_t deadline) {
     int32_t e = ensure_cond(cond);
@@ -271,10 +279,12 @@ static int32_t cond_wait_until(GuestCond **cond, GuestMutex **mutex, uint64_t de
     if (!mutex || (uintptr_t)*mutex < 3) return orbis_error(EINVAL);
     ++waits;
     runtime_thread_set_blocked("condvar_timed", (uintptr_t)cond);
-    int32_t res = timed_error(native_cond_wait(&(*cond)->native, &(*mutex)->native, deadline ? deadline : 1));
+    const uint64_t start = runtime_wait_clock();
+    const int e2 = native_cond_wait(&(*cond)->native, &(*mutex)->native, deadline ? deadline : 1);
+    runtime_wait_note(0, runtime_wait_clock() - start);
     runtime_thread_clear_blocked();
     restore_guest_fs();
-    return res;
+    return timed_error(e2);
 }
 static ABI int32_t cond_timedwait(GuestCond **cond, GuestMutex **mutex, uint32_t usec) {
     return cond_wait_until(cond, mutex, deadline_after(usec));
