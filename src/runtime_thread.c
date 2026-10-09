@@ -141,7 +141,7 @@ void runtime_thread_attach_main(void) {
     snprintf(t->name,sizeof(t->name),"main");
 }
 
-void *runtime_thread_get_tcb(void) {
+__attribute__((used)) void *runtime_thread_get_tcb(void) {
     GuestThread *t=runtime_thread_current();
     return t ? t->tcb : NULL;
 }

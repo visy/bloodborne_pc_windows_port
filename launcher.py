@@ -92,6 +92,70 @@ def resolve_game_dir(target: str):
     return None
 
 
+def settings_env(s: dict) -> dict:
+    """BB_* environment for run.bat from launcher settings (None = unset the variable).
+
+    Shared by the GUI and `launcher.py --write-env` (run.bat started without the launcher).
+    Defaults match the GUI's defaults for a missing launcher_settings.json.
+    """
+    def on(key, default=True):
+        return bool(s.get(key, default))
+
+    env = {}
+    game_dir = resolve_game_dir(s.get("eboot", "")) if s.get("eboot") else None
+    if game_dir is not None:
+        env["BB_GAME_DIR"] = str(game_dir)
+    env["BB_FPS"] = s.get("fps", "uncap")
+    env["BB_MODS_ENABLED"] = "1" if on("mods") else "0"
+    env["BB_UPSCALER"] = None if on("feat_upscaler") else "off"
+    env["BB_OBJECT_MOTION"] = None if on("feat_object_motion") else "0"
+    env["BB_OVERLAY"] = None if on("feat_overlay") else "0"
+    env["BB_FPS_PATCH"] = None if on("feat_fps_patch") else "0"
+
+    # Resolution scaling
+    res_choice = s.get("res", RES_CHOICES[0])
+    env["BB_RENDER_RES"] = res_choice if on("feat_res_scaling") and res_choice != RES_CHOICES[0] else None
+
+    env["BB_TRACE"] = "1" if on("feat_tracing") else "0"
+    env["BB_TIMEOUT"] = str(s.get("timeout", "0")).split()[0]
+    env["BB_WATCHDOG"] = None if on("feat_watchdog") else "0"
+    env["BB_PREP_WORKERS"] = None if on("feat_draw_prep") else "0"
+    env["BB_FULLSCREEN"] = "1" if on("feat_fullscreen", False) else "0"
+    # Overlay menu toggle on gamepad L3 + R3 (Insert always works)
+    env["BB_OVERLAY_PAD"] = "1" if on("feat_overlay_pad", False) else "0"
+
+    # Frame ahead queue (smooth frametimes & bound queue latency: 2 = balanced); an explicit
+    # BB_FRAMES_AHEAD in the environment wins.
+    if "BB_FRAMES_AHEAD" not in os.environ:
+        env["BB_FRAMES_AHEAD"] = "2"
+
+    # Anisotropic filtering (0 = game default, 2/4/8/16 = forced)
+    aniso_mapping = {c[0]: c[1] for c in ANISO_CHOICES}
+    env["BB_ANISO"] = aniso_mapping.get(s.get("aniso", "16x"), "16")
+
+    # Bloodborne.xml Patches
+    active_patches = sorted(s.get("enabled_patches", ["Skip Intro"]))
+    env["BB_PATCHES"] = ";".join(active_patches) if active_patches else None
+    return env
+
+
+def write_env_bat(path: Path, settings_path: Path = SETTINGS_FILE):
+    """Write the saved launcher settings as `set` lines for run.bat to `call`."""
+    try:
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    lines = ["@echo off"]
+    for key, value in settings_env(data).items():
+        value = "" if value is None else value.replace('"', "").replace("%", "%%")
+        lines.append(f'set "{key}={value}"')
+    # cmd reads batch files in the OEM code page (non-ASCII game paths)
+    path.write_text("\r\n".join(lines) + "\r\n", encoding="oem" if os.name == "nt" else "utf-8",
+                    errors="replace")
+
+
 def kill_tree(proc: subprocess.Popen):
     """Kill run.bat and everything it started (bbport.exe included)."""
     if os.name == "nt":
@@ -294,6 +358,8 @@ class BloodborneLauncher(tk.Tk):
         self.feat_tracing = tk.BooleanVar(value=self.settings.get("feat_tracing", True))
         self.feat_watchdog = tk.BooleanVar(value=self.settings.get("feat_watchdog", True))
         self.feat_draw_prep = tk.BooleanVar(value=self.settings.get("feat_draw_prep", True))
+        self.feat_fullscreen = tk.BooleanVar(value=self.settings.get("feat_fullscreen", False))
+        self.feat_overlay_pad = tk.BooleanVar(value=self.settings.get("feat_overlay_pad", False))
 
         grid_f = ttk.Frame(feat_card, style="Card.TFrame")
         grid_f.pack(fill="x")
@@ -336,6 +402,12 @@ class BloodborneLauncher(tk.Tk):
                         style="Card.TCheckbutton", command=self.on_quick_patch_toggle).grid(row=3, column=1, sticky="w", pady=2, padx=(0, 15))
         ttk.Checkbutton(grid_f, text="Disable Motion Blur", variable=self.feat_no_blur,
                         style="Card.TCheckbutton", command=self.on_quick_patch_toggle).grid(row=3, column=2, sticky="w", pady=2)
+
+        # Row 4
+        ttk.Checkbutton(grid_f, text="Fullscreen", variable=self.feat_fullscreen,
+                        style="Card.TCheckbutton").grid(row=4, column=0, sticky="w", pady=2, padx=(0, 15))
+        ttk.Checkbutton(grid_f, text="Overlay menu on L3 + R3", variable=self.feat_overlay_pad,
+                        style="Card.TCheckbutton").grid(row=4, column=1, sticky="w", pady=2, padx=(0, 15))
 
         self.update_res_scaling_state()
 
@@ -644,8 +716,8 @@ class BloodborneLauncher(tk.Tk):
         except (OSError, ValueError):
             return {}
 
-    def save_settings(self):
-        data = {
+    def current_settings(self) -> dict:
+        return {
             "eboot": self.eboot_var.get().strip(),
             "fps": self.fps_var.get(),
             "res": self.res_var.get(),
@@ -661,8 +733,13 @@ class BloodborneLauncher(tk.Tk):
             "feat_tracing": self.feat_tracing.get(),
             "feat_watchdog": self.feat_watchdog.get(),
             "feat_draw_prep": self.feat_draw_prep.get(),
+            "feat_fullscreen": self.feat_fullscreen.get(),
+            "feat_overlay_pad": self.feat_overlay_pad.get(),
             "enabled_patches": sorted(list(self.enabled_patches)),
         }
+
+    def save_settings(self):
+        data = self.current_settings()
         try:
             SETTINGS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except OSError:
@@ -905,77 +982,15 @@ class BloodborneLauncher(tk.Tk):
             self.log(f"  {line}")
 
         env = os.environ.copy()
+        env["BB_FROM_LAUNCHER"] = "1"  # run.bat: do not reload launcher_settings.json
+        for key, value in settings_env(self.current_settings()).items():
+            if value is None:
+                env.pop(key, None)
+            else:
+                env[key] = value
         env["BB_GAME_DIR"] = str(game_dir)
-        env["BB_FPS"] = self.fps_var.get()
-        env["BB_MODS_ENABLED"] = "1" if self.feat_mods.get() else "0"
-
-        # Upscaler (FSR)
-        if not self.feat_upscaler.get():
-            env["BB_UPSCALER"] = "off"
-        else:
-            env.pop("BB_UPSCALER", None)
-
-        # Object motion
-        if not self.feat_object_motion.get():
-            env["BB_OBJECT_MOTION"] = "0"
-        else:
-            env.pop("BB_OBJECT_MOTION", None)
-
-        # Overlay menu
-        if not self.feat_overlay.get():
-            env["BB_OVERLAY"] = "0"
-        else:
-            env.pop("BB_OVERLAY", None)
-
-        # FPS patch
-        if not self.feat_fps_patch.get():
-            env["BB_FPS_PATCH"] = "0"
-        else:
-            env.pop("BB_FPS_PATCH", None)
-
-        # Resolution scaling
-        env.pop("BB_RENDER_RES", None)
-        res_choice = self.res_var.get()
-        if self.feat_res_scaling.get():
-            if res_choice != RES_CHOICES[0]:
-                env["BB_RENDER_RES"] = res_choice
-        else:
-            res_choice = "Native (1080p, scaling off)"
-
-        # Debug tracing
-        if self.feat_tracing.get():
-            env["BB_TRACE"] = "1"
-        else:
-            env["BB_TRACE"] = "0"
-
-        # Watchdog & Timeout
-        timeout_sec = self.timeout_var.get().split()[0]
-        env["BB_TIMEOUT"] = timeout_sec
-        if not self.feat_watchdog.get():
-            env["BB_WATCHDOG"] = "0"
-        else:
-            env.pop("BB_WATCHDOG", None)
-
-        # GPU draw prep workers
-        if not self.feat_draw_prep.get():
-            env["BB_PREP_WORKERS"] = "0"
-        else:
-            env.pop("BB_PREP_WORKERS", None)
-
-        # Frame ahead queue (smooth frametimes & bound queue latency: 2 = balanced)
-        env.setdefault("BB_FRAMES_AHEAD", "2")
-
-        # Anisotropic filtering (0 = game default, 2/4/8/16 = forced)
-        aniso_mapping = {c[0]: c[1] for c in ANISO_CHOICES}
-        aniso_val = aniso_mapping.get(self.aniso_var.get(), "16")
-        env["BB_ANISO"] = aniso_val
-
-        # Bloodborne.xml Patches
+        res_choice = self.res_var.get() if self.feat_res_scaling.get() else "Native (1080p, scaling off)"
         active_patches = sorted(list(self.enabled_patches))
-        if active_patches:
-            env["BB_PATCHES"] = ";".join(active_patches)
-        else:
-            env.pop("BB_PATCHES", None)
 
         try:
             self.log_fh = open(LOG_FILE, "w", encoding="utf-8")
@@ -991,7 +1006,9 @@ class BloodborneLauncher(tk.Tk):
             f"ResScaling={'on' if self.feat_res_scaling.get() else 'off'}, "
             f"Tracing={'on' if self.feat_tracing.get() else 'off'}, "
             f"Watchdog={'on' if self.feat_watchdog.get() else 'off'}, "
-            f"DrawPrep={'on' if self.feat_draw_prep.get() else 'off'}"
+            f"DrawPrep={'on' if self.feat_draw_prep.get() else 'off'}, "
+            f"Fullscreen={'on' if self.feat_fullscreen.get() else 'off'}, "
+            f"OverlayPad={'on' if self.feat_overlay_pad.get() else 'off'}"
         )
 
         self.hidden_count = 0
@@ -1071,4 +1088,8 @@ class BloodborneLauncher(tk.Tk):
 
 
 if __name__ == "__main__":
-    BloodborneLauncher().mainloop()
+    import sys
+    if len(sys.argv) == 3 and sys.argv[1] == "--write-env":
+        write_env_bat(Path(sys.argv[2]))
+    else:
+        BloodborneLauncher().mainloop()
