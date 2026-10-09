@@ -7,6 +7,7 @@
 #include <xxhash.h>
 #include "video_core/renderer_vulkan/ui_composition.h"
 #include "bbport_timeline.h"
+#include "bbport_frame_state.h"
 #include "bbport_sections.h"
 #include "bbport_ce_stats.h"
 #include "bbport_toggles.h"
@@ -1558,6 +1559,12 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         static const char* scene_debug = std::getenv("BB_SCENE_DEBUG");
         scene_debug_frame = scene_debug && std::remove(scene_debug) == 0;
         scene_targets->debug = scene_debug_frame;
+    }
+    // bbport: a G-buffer pass (5+ color targets and depth): the frame shows the 3D scene
+    // (BbFrameState: the compile indicator stays off then).
+    if (std::popcount(pipeline->GetGraphicsKey().mrt_mask & 0x7fu) >= 5 &&
+        regs.depth_buffer.DepthValid()) {
+        BbFrameState::NoteScenePass();
     }
     bind_prepared = used_prepared;
     motion_draw = pipeline->GetGraphicsKey().motion_vectors;

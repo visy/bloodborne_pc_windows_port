@@ -109,6 +109,12 @@ private:
 
     void SetExpectedGameSize(s32 width, s32 height);
 
+    /// bbport: the startup shader precompile (PipelineCache::WarmUp on a worker thread) with a
+    /// progress screen this thread presents; Esc aborts it and exits.
+    void RunShaderPrecompile();
+    /// bbport: one frame of the precompile screen (cleared swapchain image + overlay).
+    void PresentPrecompileFrame();
+
 private:
     float expected_ratio{1920.0 / 1080.0f};
     u32 expected_frame_width{1920};

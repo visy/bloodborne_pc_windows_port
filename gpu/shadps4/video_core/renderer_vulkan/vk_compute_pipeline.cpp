@@ -118,6 +118,7 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
     ASSERT_MSG(pipeline_result == vk::Result::eSuccess, "Failed to create compute pipeline: {}",
                vk::to_string(pipeline_result));
     pipeline = std::move(pipe);
+    handle.store(*pipeline, std::memory_order_release);
     SetObjectName(device, *pipeline, "Compute Pipeline {}", debug_str);
 }
 

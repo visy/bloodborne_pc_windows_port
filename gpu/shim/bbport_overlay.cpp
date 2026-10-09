@@ -14,6 +14,8 @@
 #include <vector>
 
 #include <SDL3/SDL.h>
+#include "bbport_compile_progress.h"
+#include "bbport_frame_state.h"
 #include "bbport_settings.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -422,7 +424,7 @@ bool RestartNeeded() {
     auto& s = BbSettings::Get();
     bool restart = s.object_motion != s.startup_object_motion || s.model_lod != s.startup_model_lod ||
                    s.live_resolution != s.startup_live_resolution ||
-                   BbSettings::ResolutionNeedsRestart();
+                   s.gpl != s.startup_gpl || BbSettings::ResolutionNeedsRestart();
     for (int e = 0; e < BbSettings::EffectCount; ++e) {
         restart |= s.effects[e] != s.startup_effects[e];
     }
@@ -638,6 +640,24 @@ void AdvancedTab() {
              "полная яркость), синий — у пикселя точный вектор объекта. Движущийся предмет без того "
              "и другого даёт шлейф."),
            upscaler_on, [&](int i) { s.debug_view = i; });
+    Toggle("async_shaders", T("Asynchronous shaders", "Асинхронные шейдеры"), s.async_shaders,
+           T("A new shader is compiled in the background instead of pausing the game: objects "
+             "using it may be missing for a few frames. Never applies to the final frame, the UI "
+             "or compute work.",
+             "Новый шейдер компилируется в фоне, а не останавливает игру: объекты с ним могут "
+             "пропасть на несколько кадров. Не касается итогового кадра, интерфейса и "
+             "вычислительных шейдеров."));
+    Toggle("gpl", T("Pipeline libraries (GPL)", "Библиотеки конвейеров (GPL)"), s.gpl,
+           T("Builds pipelines from reusable parts (VK_EXT_graphics_pipeline_library): new "
+             "combinations of known shaders link almost instantly, an optimized version replaces "
+             "them in the background. Needs driver support. Applies after restarting the game.",
+             "Собирает конвейеры из готовых частей (VK_EXT_graphics_pipeline_library): новые "
+             "сочетания известных шейдеров связываются почти мгновенно, оптимизированная версия "
+             "заменяет их в фоне. Нужна поддержка драйвером. Применяется после перезапуска игры."));
+    Toggle("compile_indicator", T("Shader compilation indicator", "Индикатор компиляции шейдеров"),
+           s.compile_indicator,
+           T("Shows the progress of shader compilation in the bottom right corner.",
+             "Показывает ход компиляции шейдеров в правом нижнем углу."));
 }
 
 } // namespace Ui
@@ -888,6 +908,42 @@ void FpsCounter() {
                 : s.upscaler == BbSettings::UpscalerTaa    ? "TAA"
                 : s.upscaler == BbSettings::UpscalerDlss   ? "DLSS"
                                                            : "");
+    ImGui::End();
+}
+
+bool CompileIndicatorShown() {
+    BbCompileProgress::Phase phase{};
+    int percent = 0;
+    // Never over gameplay: only on the title/menus, loading screens and logos (no 3D scene).
+    return BbSettings::Get().compile_indicator && BbFrameState::IsMenuOrLoading() &&
+           BbCompileProgress::Shown(phase, percent);
+}
+
+void CompileIndicator() {
+    BbCompileProgress::Phase phase{};
+    int percent = 0;
+    if (!BbSettings::Get().compile_indicator || !BbFrameState::IsMenuOrLoading() ||
+        !BbCompileProgress::Shown(phase, percent)) {
+        return;
+    }
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float pad = 12.0f * base_scale;
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - pad,
+                                   viewport->WorkPos.y + viewport->WorkSize.y - pad),
+                            ImGuiCond_Always, ImVec2(1.0f, 1.0f));
+    ImGui::SetNextWindowBgAlpha(0.5f);
+    ImGui::Begin("##compile", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoFocusOnAppearing);
+    if (phase == BbCompileProgress::Phase::Rebuild) {
+        ImGui::Text(BbSettings::MenuText("Rebuilding shader cache for this GPU: %d%%",
+                                         "Пересборка кэша шейдеров для этой видеокарты: %d%%"),
+                    percent);
+    } else {
+        ImGui::Text(BbSettings::MenuText("Compiling shaders: %d%%", "Компиляция шейдеров: %d%%"),
+                    percent);
+    }
     ImGui::End();
 }
 
@@ -1162,7 +1218,8 @@ bool HandleEvent(const SDL_Event& event) {
 }
 
 bool Visible() {
-    return initialized && (menu_open || prompt_active || BbSettings::Get().show_fps);
+    return initialized &&
+           (menu_open || prompt_active || BbSettings::Get().show_fps || CompileIndicatorShown());
 }
 
 bool MenuOpen() {
@@ -1172,6 +1229,99 @@ bool MenuOpen() {
 bool CapturesInput() {
     // The text dialog too: keys typed into it (Backspace is the touchpad) stay out of the game.
     return menu_open || prompt_active;
+}
+
+void RenderPrecompile(vk::CommandBuffer cmdbuf, vk::Extent2D extent) {
+    std::scoped_lock lock{imgui_mutex};
+    if (!initialized) {
+        return;
+    }
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(float(extent.width), float(extent.height));
+    io.DeltaTime = 1.0f / 30.0f;
+    const float scale = std::max(float(extent.height) / 1080.0f, 0.75f);
+    if (std::abs(scale - base_scale) > 0.01f) {
+        ImGuiStyle& style = ImGui::GetStyle();
+        style.ScaleAllSizes(scale / base_scale);
+        style.FontScaleMain = scale;
+        base_scale = scale;
+    }
+    ImGui_ImplVulkan_NewFrame();
+    ImGui::NewFrame();
+
+    const u32 total = BbCompileProgress::total.load();
+    const u32 done = std::min(BbCompileProgress::done.load(), total);
+    const float fraction = total ? float(done) / float(total) : 0.0f;
+    const auto phase = BbCompileProgress::Phase(BbCompileProgress::phase.load());
+    const int percent = std::min(99, int(fraction * 100.0f));
+    char title[256];
+    if (phase == BbCompileProgress::Phase::Rebuild) {
+        std::snprintf(title, sizeof(title),
+                      BbSettings::MenuText("Rebuilding shader cache for this GPU... %d%%",
+                                           "Пересборка кэша шейдеров для этой видеокарты... %d%%"),
+                      percent);
+    } else if (BbCompileProgress::first_launch.load()) {
+        std::snprintf(title, sizeof(title),
+                      BbSettings::MenuText("Preparing shaders for this GPU (first launch)... %d%%",
+                                           "Подготовка шейдеров для этой видеокарты (первый "
+                                           "запуск)... %d%%"),
+                      percent);
+    } else {
+        std::snprintf(title, sizeof(title),
+                      BbSettings::MenuText("Compiling shaders... %d%%", "Компиляция шейдеров... %d%%"),
+                      percent);
+    }
+    char detail[160];
+    const double elapsed =
+        double(BbCompileProgress::NowNs() - BbCompileProgress::batch_start_ns.load()) / 1e9;
+    if (fraction > 0.03f && fraction < 1.0f && elapsed > 1.0) {
+        const int eta = int(elapsed * (1.0 - fraction) / fraction + 0.5);
+        std::snprintf(detail, sizeof(detail),
+                      BbSettings::MenuText("%u / %u   about %d:%02d left   Esc: quit",
+                                           "%u / %u   осталось около %d:%02d   Esc: выход"),
+                      done, total, eta / 60, eta % 60);
+    } else {
+        std::snprintf(detail, sizeof(detail),
+                      BbSettings::MenuText("%u / %u   Esc: quit", "%u / %u   Esc: выход"), done,
+                      total);
+    }
+
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->WorkPos);
+    ImGui::SetNextWindowSize(viewport->WorkSize);
+    ImGui::Begin("##precompile", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBackground |
+                     ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings);
+    const float width = viewport->WorkSize.x, height = viewport->WorkSize.y;
+    const float bar_width = std::min(width * 0.6f, 900.0f * base_scale);
+    if (serif_font) {
+        ImGui::PushFont(serif_font, 30.0f);
+    }
+    const ImVec2 title_size = ImGui::CalcTextSize(title);
+    ImGui::SetCursorPos(ImVec2((width - title_size.x) * 0.5f, height * 0.5f - title_size.y * 2.2f));
+    ImGui::TextUnformatted(title);
+    if (serif_font) {
+        ImGui::PopFont();
+    }
+    ImGui::SetCursorPos(ImVec2((width - bar_width) * 0.5f, height * 0.5f));
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.80f, 0.68f, 0.46f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.14f, 0.13f, 1.0f));
+    ImGui::ProgressBar(fraction, ImVec2(bar_width, 10.0f * base_scale), "");
+    ImGui::PopStyleColor(2);
+    if (sans_font) {
+        ImGui::PushFont(sans_font, 18.0f);
+    }
+    const ImVec2 detail_size = ImGui::CalcTextSize(detail);
+    ImGui::SetCursorPos(ImVec2((width - detail_size.x) * 0.5f, height * 0.5f + 24.0f * base_scale));
+    ImGui::TextDisabled("%s", detail);
+    if (sans_font) {
+        ImGui::PopFont();
+    }
+    ImGui::End();
+    ImGui::Render();
+    std::scoped_lock submit_lock{Vulkan::Scheduler::submit_mutex};
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmdbuf);
 }
 
 void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
@@ -1210,6 +1360,9 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     }
     if (BbSettings::Get().show_fps && !menu_open) {
         FpsCounter();
+    }
+    if (!menu_open) {
+        CompileIndicator();
     }
     if (prompt_active && !menu_open) {
         TextPrompt();

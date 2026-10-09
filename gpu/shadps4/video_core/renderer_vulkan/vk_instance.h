@@ -161,6 +161,14 @@ public:
         return buffer_marker;
     }
 
+    /// bbport: VK_EXT_graphics_pipeline_library enabled (BB_GPL, with fast linking).
+    bool IsGraphicsPipelineLibrarySupported() const {
+        return graphics_pipeline_library;
+    }
+    bool HasGplFastLinking() const {
+        return gpl_fast_linking;
+    }
+
     /// Returns true if VK_EXT_attachment_feedback_loop_layout is supported
     bool IsAttachmentFeedbackLoopLayoutSupported() const {
         return attachment_feedback_loop;
@@ -610,6 +618,8 @@ private:
     bool maintenance_8{};
     bool buffer_marker{};
     bool attachment_feedback_loop{};
+    bool graphics_pipeline_library{};
+    bool gpl_fast_linking{};
     bool image_2d_view_of_3d{};
     bool image_view_min_lod{};
     bool shader_clock{};

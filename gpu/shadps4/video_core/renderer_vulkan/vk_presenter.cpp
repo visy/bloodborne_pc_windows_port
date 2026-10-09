@@ -13,7 +13,13 @@
 #include "video_core/renderdoc.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "bbport_game_menu.h"
+#include <thread>
+#include <SDL3/SDL_keyboard.h>
+#include "bbport_compile_progress.h"
+#include "bbport_frame_state.h"
 #include "bbport_overlay.h"
+#include "common/thread.h"
+#include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "bbport_timeline.h"
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
@@ -39,6 +45,8 @@
 #include <system_error>
 #include <vector>
 #include <vk_mem_alloc.h>
+
+[[noreturn]] void BbHardExit(int code); // gpu/shim/bbgpu.cpp
 
 namespace Vulkan {
 
@@ -156,6 +164,135 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
     pp_pass.Create(device, swapchain.GetSurfaceFormat().format);
     BbOverlay::Init(instance, swapchain.GetSurfaceFormat().format, num_images);
 
+    // bbport: the pipeline cache is compiled before the game starts (BB_SHADER_PRECOMPILE=0:
+    // as before, inside the PipelineCache constructor, without a screen).
+    if (PipelineCache::PrecompileEnabled()) {
+        RunShaderPrecompile();
+    }
+    BbCompileProgress::StartTestIfRequested();
+}
+
+void Presenter::RunShaderPrecompile() {
+    auto& cache = rasterizer->GetPipelineCache();
+    std::atomic<bool> finished{false};
+    std::thread worker([&] {
+        Common::SetCurrentThreadName("bb:Precompile");
+        cache.WarmUp(true);
+        finished.store(true, std::memory_order_release);
+    });
+    const auto start = std::chrono::steady_clock::now();
+    bool aborted = false;
+    bool shown = false;
+    while (!finished.load(std::memory_order_acquire)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(33));
+        if (finished.load(std::memory_order_acquire)) {
+            break;
+        }
+        // Esc (the window has focus) stops it; closing the window exits from the window thread.
+        const bool* keys = SDL_GetKeyboardState(nullptr);
+        if (!aborted && keys && keys[SDL_SCANCODE_ESCAPE]) {
+            aborted = true;
+            std::printf("Shader precompile: aborted (Esc)\n");
+            cache.AbortWarmUp();
+        }
+        // Fast (warm) starts show nothing.
+        if (!aborted && std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(300)) {
+            PresentPrecompileFrame();
+            shown = true;
+        }
+    }
+    worker.join();
+    if (aborted) {
+        // What was written so far stays (each file is replaced whole); the next start goes on.
+        cache.Sync();
+        BbHardExit(0);
+    }
+    if (shown) {
+        // Leave a cleared frame instead of the last progress screen until the game presents.
+        PresentPrecompileFrame();
+    }
+    std::printf("Shader precompile: %.1f s\n",
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+}
+
+void Presenter::PresentPrecompileFrame() {
+    if (window.GetWidth() == 0 || window.GetHeight() == 0) {
+        return;
+    }
+    if (window.GetWidth() != swapchain.GetWidth() || window.GetHeight() != swapchain.GetHeight() ||
+        !swapchain.IsPresentable()) {
+        swapchain.Recreate(window.GetWidth(), window.GetHeight());
+        if (!swapchain.IsPresentable()) {
+            return;
+        }
+    }
+    if (!swapchain.AcquireNextImage()) {
+        swapchain.Recreate(window.GetWidth(), window.GetHeight());
+        return;
+    }
+    auto& scheduler = present_scheduler;
+    const auto cmdbuf = scheduler.CommandBuffer();
+    const vk::Extent2D extent = swapchain.GetExtent();
+    const vk::ImageSubresourceRange color_range{
+        .aspectMask = vk::ImageAspectFlagBits::eColor,
+        .baseMipLevel = 0,
+        .levelCount = 1,
+        .baseArrayLayer = 0,
+        .layerCount = VK_REMAINING_ARRAY_LAYERS,
+    };
+    const vk::ImageMemoryBarrier to_attachment{
+        .srcAccessMask = vk::AccessFlagBits::eNone,
+        .dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
+        .oldLayout = vk::ImageLayout::eUndefined,
+        .newLayout = vk::ImageLayout::eColorAttachmentOptimal,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = swapchain.Image(),
+        .subresourceRange = color_range,
+    };
+    cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                           vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                           vk::DependencyFlagBits::eByRegion, {}, {}, to_attachment);
+    const vk::RenderingAttachmentInfo attachment{
+        .imageView = swapchain.ImageView(),
+        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+        .loadOp = vk::AttachmentLoadOp::eClear,
+        .storeOp = vk::AttachmentStoreOp::eStore,
+        .clearValue = vk::ClearValue{vk::ClearColorValue{std::array{0.02f, 0.02f, 0.025f, 1.0f}}},
+    };
+    cmdbuf.beginRendering(vk::RenderingInfo{
+        .renderArea = {{0, 0}, extent},
+        .layerCount = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &attachment,
+    });
+    BbOverlay::RenderPrecompile(cmdbuf, extent);
+    cmdbuf.endRendering();
+    const vk::ImageMemoryBarrier to_present{
+        .srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
+        .dstAccessMask = vk::AccessFlagBits::eNone,
+        .oldLayout = vk::ImageLayout::eColorAttachmentOptimal,
+        .newLayout = vk::ImageLayout::ePresentSrcKHR,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = swapchain.Image(),
+        .subresourceRange = color_range,
+    };
+    cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                           vk::PipelineStageFlagBits::eBottomOfPipe,
+                           vk::DependencyFlagBits::eByRegion, {}, {}, to_present);
+    SubmitInfo info{};
+    info.AddWait(swapchain.GetImageAcquiredSemaphore());
+    info.AddSignal(swapchain.GetPresentReadySemaphore());
+    const u64 tick = scheduler.CurrentTick();
+    scheduler.Flush(info);
+    {
+        std::scoped_lock submit_lock{Scheduler::submit_mutex};
+        if (!swapchain.Present()) {
+            swapchain.Recreate(window.GetWidth(), window.GetHeight());
+        }
+    }
+    scheduler.Wait(tick);
 }
 
 Presenter::~Presenter() {
@@ -673,6 +810,7 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
                          vk::Filter::eLinear);
         // bbport: the settings menu / FPS counter over the frame, at display resolution.
         BbGameMenu::Poll(); // the port's pages in the game's System menu
+        BbFrameState::OnPresent(); // menu/loading detection (compile indicator)
         const bool overlay = BbOverlay::Visible();
         const std::array post_barriers{
             vk::ImageMemoryBarrier{

@@ -81,6 +81,13 @@ struct Values {
     /// DLSS (gpu/dlss_bridge, NVIDIA RTX) is ready, or why not (null before the device exists).
     std::atomic<bool> dlss_supported{false};
     std::atomic<const char*> dlss_problem{nullptr};
+    /// Graphics pipelines compiled on worker threads while their first draws are skipped
+    /// (BB_ASYNC_SHADERS). Live.
+    std::atomic<bool> async_shaders{false};
+    /// Graphics pipelines linked from VK_EXT_graphics_pipeline_library parts (BB_GPL). On restart.
+    std::atomic<bool> gpl{false};
+    /// "Compiling shaders: N%" in the bottom right corner (BB_COMPILE_INDICATOR). Live.
+    std::atomic<bool> compile_indicator{true};
 
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
     int startup_preset = NativeAA;
@@ -90,6 +97,7 @@ struct Values {
     int startup_model_lod = 0;
     int startup_output_res = OutputDefault;
     int startup_live_resolution = 0;
+    bool startup_gpl = false;
 };
 
 Values& Get();
