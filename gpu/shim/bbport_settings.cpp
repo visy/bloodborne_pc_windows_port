@@ -9,6 +9,12 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace BbSettings {
 
@@ -305,7 +311,15 @@ void Save() {
     FILE* file = std::fopen(temporary.c_str(), "w");
     bool ok = file && std::fwrite(out.data(), 1, out.size(), file) == out.size();
     ok = file && std::fclose(file) == 0 && ok;
-    if (!ok || std::rename(temporary.c_str(), Path()) != 0) {
+#ifdef _WIN32
+    // std::rename does not replace an existing file on Windows: every save after the first failed
+    // and the menu's choices (upscaler, preset, resolution...) were lost at the next start.
+    ok = ok && MoveFileExA(temporary.c_str(), Path(),
+                           MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+    ok = ok && std::rename(temporary.c_str(), Path()) == 0;
+#endif
+    if (!ok) {
         std::printf("Settings: cannot write %s\n", Path());
     }
 }
