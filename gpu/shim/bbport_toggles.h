@@ -186,6 +186,9 @@ inline std::atomic<std::uint64_t> vk_image_bytes{0};
 inline std::atomic<std::uint64_t> residency_alloc_bytes{0}, residency_unused_bytes{0};
 /// The texture cache collector: the usage it compares, the mark it starts at, images it freed.
 inline std::atomic<std::uint64_t> gc_used_bytes{0}, gc_trigger_bytes{0}, gc_freed_images{0};
+/// Its critical mark (images used a moment ago evicted past it): VRAM copies of the game's
+/// memory stop short of it and yield first (BufferCache::VramPromotionsPaused, LayerProcessIdle).
+inline std::atomic<std::uint64_t> gc_critical_bytes{0};
 /// Seconds of a steady clock, updated at every guest submission (cheap ages for caches).
 inline std::atomic<std::uint32_t> coarse_second{0};
 /// VRAM blocks moved back in place when idle, unbound with the memory the game unmapped, and

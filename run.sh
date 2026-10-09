@@ -19,6 +19,10 @@ data=${BB_DATA_DIR:-.}
 out=$data/out
 mkdir -p "$out"
 export BB_CONFIG=${BB_CONFIG:-$data/bbport.ini}
+# GPU paths are initialized when libbbgpu is loaded, before bbgpu_init receives --user.
+# Select the same user directory now, including for an AppImage or a separate save profile.
+export BB_GPU_USER_DIR=${BB_GPU_USER_DIR:-${BB_USER_DIR:-$data/user}}
+mkdir -p "$BB_GPU_USER_DIR"
 # FSR 4.1.1 assets (tools/fsr4cap/build_assets.sh): next to run.sh or in the data directory.
 if [[ -z ${BB_FSR411_DIR:-} && ! -d fsr4_411 && -d $data/fsr4_411 ]]; then
     export BB_FSR411_DIR=$data/fsr4_411
@@ -120,10 +124,11 @@ export BB_PREUPLOAD=${BB_PREUPLOAD:-1}
 # experimental, off by default) selects how a PC release would work: the GPU uses the game's
 # memory where it is (GPU-visible system memory) and keeps the data it reads often in VRAM, the
 # command processor's work is translated rather than emulated (BB_GUEST_IN_PLACE=1 and what
-# depends on it). AMD GPUs only for now: on others the GPU library keeps it off
-# (BB_PC_MODEL_ANY_GPU=1: try it anyway; NVIDIA, whose dma-buf maps at offset 0 only, gets one
-# chunk per direct memory allocation). 0 (default): the model of 0.3 (VRAM copies of the game's
-# memory, write tracking), with the fixes made since. BB_GUEST_IN_PLACE set by hand overrides it.
+# depends on it). AMD GPUs keep the game's memory in a sparse arena; others (NVIDIA: its sparse
+# binding stalls the GPU for seconds) get the layer's memory module, which binds the game's memory
+# in place and keeps VRAM copies without sparse binding (BB_LAYER_MEMORY=1/0 chooses by hand).
+# 0 (default): the model of 0.3 (VRAM copies of the game's memory, write tracking), with the fixes
+# made since. BB_GUEST_IN_PLACE set by hand overrides it.
 # BB_AS_0_3=1 (the launcher's developer switch "Synchronisation as in 0.3"): what changed since the
 # 0.3 release is reverted for comparisons: the 0.3 memory model, WRITE_DATA/DMA waiting for every
 # host copy, the scheduler's concurrent recording check.

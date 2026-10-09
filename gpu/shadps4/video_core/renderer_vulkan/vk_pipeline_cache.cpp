@@ -34,6 +34,9 @@
 #include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
+#include "video_core/buffer_cache/buffer.h"
+#include "video_core/buffer_cache/buffer_cache.h"
+#include "bbport_guest_memory.h"
 
 namespace Vulkan {
 
@@ -361,6 +364,8 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         .needs_clip_distance_emulation = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
         .supports_shader_stencil_export = instance_.IsShaderStencilExportSupported(),
         .supports_depth_clip_control = instance_.IsDepthClipControlSupported(),
+        // bbport BB_LAYER_MEMORY: buffers over nearly all memory go through the page table.
+        .paged_buffers = VideoCore::BufferCache::LayerPagedActive(),
     };
     // bbport: created before the warm-up, whose preloaded pipelines are built with it.
     auto [cache_result, cache] = instance.GetDevice().createPipelineCacheUnique({});

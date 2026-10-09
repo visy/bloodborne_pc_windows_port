@@ -17,6 +17,9 @@ static constexpr u32 NUM_BUFFERS = 40;
 static constexpr u32 NUM_SAMPLERS = 16;
 static constexpr u32 NUM_FMASKS = 8;
 
+// Bloodborne's original buffer-copy compute shader (not the export-stage copy shader).
+inline constexpr u64 BufferCopyShaderHash = 0xfefebf9f;
+
 using SharpLocation = u16;
 
 constexpr SharpLocation UNKNOWN_LOCATION = std::numeric_limits<u16>::max();
@@ -105,6 +108,14 @@ struct BufferResource {
     }
 };
 using BufferResourceList = boost::container::static_vector<BufferResource, NUM_BUFFERS>;
+
+/// bbport BB_LAYER_MEMORY: a guest buffer of 64 MiB or more (a shader given nearly all memory as
+/// one buffer) is reached through the page table, not as one bound range: the game's memory is
+/// in several buffers (its chunks, VRAM mirrors). docs/MEMORY_MODULE_PLAN.ru.md.
+constexpr u64 PagedBufferMinSize = u64{64} << 20;
+inline bool IsPagedBuffer(bool enabled, const AmdGpu::Buffer& sharp) {
+    return enabled && sharp.base_address != 0 && u64(sharp.GetSize()) >= PagedBufferMinSize;
+}
 
 enum class MipStorageFallbackMode : u16 {
     None,

@@ -202,14 +202,16 @@ set(COMMON
 file(GLOB AVPLAYER CONFIGURE_DEPENDS shadps4/core/libraries/avplayer/*.cpp)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale libswresample)
 file(GLOB SHIM_SOURCES CONFIGURE_DEPENDS shim/*.cpp shim/*/*.cpp)
+# The layer's own modules (independent of the shadPS4 code): layer/.
+file(GLOB LAYER_SOURCES CONFIGURE_DEPENDS layer/*.cpp)
 if (WIN32)
-    add_library(bbgpu STATIC ${VIDEO_CORE} ${RECOMPILER} ${COMMON} ${SHIM_SOURCES}
+    add_library(bbgpu STATIC ${VIDEO_CORE} ${RECOMPILER} ${COMMON} ${SHIM_SOURCES} ${LAYER_SOURCES}
         shadps4/core/libraries/gnmdriver/gnmdriver.cpp
         shadps4/core/libraries/videoout/driver.cpp shadps4/core/libraries/videoout/video_out.cpp
         shadps4/core/libraries/kernel/equeue.cpp ${AVPLAYER}
         shadps4/core/libraries/videodec/video_utils.cpp)
 else()
-    add_library(bbgpu SHARED ${VIDEO_CORE} ${RECOMPILER} ${COMMON} ${SHIM_SOURCES}
+    add_library(bbgpu SHARED ${VIDEO_CORE} ${RECOMPILER} ${COMMON} ${SHIM_SOURCES} ${LAYER_SOURCES}
         shadps4/core/libraries/gnmdriver/gnmdriver.cpp
         shadps4/core/libraries/videoout/driver.cpp shadps4/core/libraries/videoout/video_out.cpp
         shadps4/core/libraries/kernel/equeue.cpp ${AVPLAYER}
@@ -227,7 +229,7 @@ target_compile_definitions(bbgpu PRIVATE IMGUI_IMPL_VULKAN_NO_PROTOTYPES
     BB_SERIF_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSerif.ttf")
 set_source_files_properties(shim/bbport_overlay.cpp PROPERTIES
     OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf;${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSerif.ttf")
-target_include_directories(bbgpu PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include)
+target_include_directories(bbgpu PRIVATE shim layer shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include)
 target_compile_definitions(bbgpu PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
 if (WIN32)
     target_compile_definitions(bbgpu PRIVATE VK_USE_PLATFORM_WIN32_KHR)
@@ -290,6 +292,14 @@ target_include_directories(camera-motion-test PRIVATE shim shadps4 ${SHADER_INCL
 target_compile_options(camera-motion-test PRIVATE -UNDEBUG -fPIC)
 target_link_libraries(camera-motion-test PRIVATE bbgpu)
 add_dependencies(camera-motion-test host_shaders)
+
+add_executable(translation-memory-test EXCLUDE_FROM_ALL ../tests/test_translation_memory.cpp
+    ../tests/test_gpu_runtime_stubs.cpp)
+target_include_directories(translation-memory-test PRIVATE shim shadps4 third_party/gcn/include)
+target_compile_options(translation-memory-test PRIVATE -UNDEBUG -fPIC)
+set_source_files_properties(../tests/test_translation_memory.cpp PROPERTIES
+    COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
+target_link_libraries(translation-memory-test PRIVATE bbgpu)
 
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
 add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_support.cpp
