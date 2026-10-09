@@ -854,7 +854,11 @@ static DWORD WINAPI timeout_worker(LPVOID param) {
         printf("\n[TIMEOUT] Reached timeout of %lu seconds, terminating cleanly.\n", (unsigned long)sec);
         fflush(stdout);
         print_exit_summary();
-        ExitProcess(0);
+        fflush(stdout); fflush(stderr);
+        /* TerminateProcess, not ExitProcess: ExitProcess unloads the Vulkan driver DLLs under the
+         * loader lock while GPU threads are still inside the driver, which can hang the process
+         * for good (it then keeps its guest memory and the next start fails). */
+        TerminateProcess(GetCurrentProcess(), 0);
     }
     return 0;
 }
@@ -1353,7 +1357,11 @@ void runtime_restart(void) {
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
         print_exit_summary();
-        ExitProcess(0);
+        fflush(stdout); fflush(stderr);
+        /* TerminateProcess, not ExitProcess: ExitProcess unloads the Vulkan driver DLLs under the
+         * loader lock while GPU threads are still inside the driver, which can hang the process
+         * for good (it then keeps its guest memory and the next start fails). */
+        TerminateProcess(GetCurrentProcess(), 0);
     } else {
         fail("runtime_restart: CreateProcess failed");
     }

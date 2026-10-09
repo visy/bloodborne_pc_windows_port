@@ -50,6 +50,12 @@ public:
                     vk::ShaderModule module, SerializationSupport& sdata, bool preloading);
     ~ComputePipeline();
 
+    /// bbport: a pipeline built off the GPU thread from a copy of the Info reads the program's
+    /// own Info once published.
+    void RebindStage(const Shader::Info* info) {
+        stages[static_cast<u32>(Shader::SwStage::Compute)] = info;
+    }
+
 private:
     ComputePipelineKey compute_key;
 };

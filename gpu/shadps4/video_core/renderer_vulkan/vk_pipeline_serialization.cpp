@@ -19,8 +19,10 @@
 #include "video_core/cache_storage.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
+#include "video_core/renderer_vulkan/vk_pipeline_jobs.h"
 #include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
+#include "bbport_compile_progress.h"
 
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
@@ -190,6 +192,21 @@ bool PipelineCache::LoadComputePipeline(Serialization::Archive& ar) {
         return false;
     }
 
+    if (parallel_warmup) {
+        // bbport: the startup precompile builds it on a worker, from a copy of the Info.
+        auto job = std::make_shared<ComputeJob>();
+        job->cache = this;
+        job->key = compute_key;
+        job->owned.emplace(*sel.infos[0]);
+        job->bound_info = sel.infos[0];
+        job->module = sel.modules[0];
+        job->progress = true;
+        warmup_jobs.push_back(std::move(job));
+        sel.infos.fill(nullptr);
+        sel.modules.fill(nullptr);
+        return true;
+    }
+
     // bbport: built before it is inserted: a pipeline the driver rejects while preloading throws
     // (Serialization::CorruptData) and leaves no empty entry behind.
     auto pipeline =
@@ -290,9 +307,24 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
         }
     }
 
+    if (parallel_warmup) {
+        // bbport: the startup precompile builds it on a worker, from copies of the Infos.
+        auto job = MakeGraphicsJob(sdata, BuildMode::Preload);
+        job->progress = true;
+        job->optimize_inline = gpl != nullptr;
+        warmup_jobs.push_back(std::move(job));
+        sel.infos.fill(nullptr);
+        sel.modules.fill(nullptr);
+        sel.fetch_shader.reset();
+        return true;
+    }
+
     auto pipeline = std::make_unique<GraphicsPipeline>(
         instance, scheduler, desc_heap, profile, sel.graphics_key, *pipeline_cache, sel.infos,
-        sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, true);
+        sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, BuildMode::Preload, gpl.get());
+    if (gpl && pipeline->IsFastLinked() && pipeline->LinkOptimized()) {
+        ++gpl->num_optimized;
+    }
     const auto [it, is_new] = graphics_pipelines.try_emplace(sel.graphics_key);
     ASSERT(is_new);
     it.value() = std::move(pipeline);
@@ -678,6 +710,7 @@ u32 RebuildProgramSources(u64 pgm_hash, std::span<const u32> perms, const Shader
             ++num_built;
         }
         const u32 done = ++progress.done;
+        BbCompileProgress::Done(ok);
         if (done % 500 == 0) {
             LOG_INFO(Render, "Shader cache: {}/{} shaders", done, progress.total.load());
         }
@@ -745,11 +778,13 @@ u32 PipelineCache::RebuildShaderCache(bool full) {
     progress.total = num_sources;
     progress.done = 0;
     progress.active = true;
+    BbCompileProgress::BeginBatch(BbCompileProgress::Phase::Rebuild, num_sources);
+    BbCompileProgress::first_launch = true;
     std::atomic<size_t> next{0};
     std::atomic<u32> num_built{0}, num_skipped{0};
     const auto worker = [&] {
         Shader::Pools pools;
-        for (size_t i = next++; i < work.size(); i = next++) {
+        for (size_t i = next++; i < work.size() && !warmup_abort.load(); i = next++) {
             u32 skipped = 0;
             num_built += RebuildProgramSources(work[i].first, work[i].second, profile, pools,
                                                skipped);
@@ -789,10 +824,24 @@ bool EnvFlag(const char* name) {
 }
 } // namespace
 
-void PipelineCache::WarmUp() {
+void PipelineCache::AbortWarmUp() {
+    warmup_abort = true;
+    compiler.Cancel();
+}
+
+void PipelineCache::WarmUp(bool parallel) {
     if (!EmulatorSettings.IsPipelineCacheEnabled()) {
         return;
     }
+    const auto start_time = std::chrono::steady_clock::now();
+    parallel_warmup = parallel;
+    struct ParallelReset {
+        PipelineCache& cache;
+        ~ParallelReset() {
+            cache.parallel_warmup = false;
+            cache.warmup_jobs.clear();
+        }
+    } parallel_reset{*this};
 
     auto& db = Storage::DataBase::Instance();
     db.Open();
@@ -816,6 +865,16 @@ void PipelineCache::WarmUp() {
         std::memcpy(&cached_versions, profile_data.data() + sizeof(cached_profile),
                     sizeof(cached_versions));
         compatible = cached_profile == profile && cached_versions == CacheVersions{};
+    } else if (constexpr size_t known = offsetof(Shader::Profile, supports_depth_clip_control);
+               profile_data.size() >= known && profile_data.size() <= sizeof(Shader::Profile)) {
+        // Caches written before the versions were appended (and before
+        // supports_depth_clip_control): the bare Profile of that build. Same GPU and the same
+        // meta/binary versions as now: still valid, the header is rewritten below.
+        compatible = std::memcmp(profile_data.data(), &profile, known) == 0;
+        if (compatible) {
+            LOG_INFO(Render, "Pipeline cache: header of an earlier build, same GPU: kept");
+            save_profile();
+        }
     }
 
     preload_profile_changed = false;
@@ -852,9 +911,23 @@ void PipelineCache::WarmUp() {
     u32 num_total_pipelines{};
     u32 num_damaged{};
     std::vector<std::string> stale_keys;
+    if (warmup_abort) {
+        return;
+    }
+    if (parallel) {
+        // Progress: each key read, then each pipeline built (the total is corrected below).
+        const u32 num_keys = u32(db.ListNames(Storage::BlobType::PipelineKey).size());
+        BbCompileProgress::BeginBatch(BbCompileProgress::Phase::Startup, num_keys * 2);
+    }
 
     db.ForEachNamedBlob(
         Storage::BlobType::PipelineKey, [&](const std::string& name, std::vector<u8>&& data) {
+            if (warmup_abort) {
+                return;
+            }
+            if (parallel) {
+                BbCompileProgress::Done(true);
+            }
             ++num_total_pipelines;
             // bbport: a damaged entry (cut short by a crash or a power loss, or rejected by the
             // driver) used to stop the game at every start until the cache was deleted by hand
@@ -902,6 +975,84 @@ void PipelineCache::WarmUp() {
     preload_profile_changed = false;
     reading_legacy_key = false;
 
+    // bbport: BB_GPL_STATS=1: how much pipeline libraries could share (keys per shader tuple).
+    if (EnvFlag("BB_GPL_STATS")) {
+        std::unordered_set<u64> pre_raster, fragment, stages;
+        u32 count = 0;
+        const auto add = [&](const GraphicsPipelineKey& key) {
+            ++count;
+            const auto& h = key.stage_hashes;
+            pre_raster.insert(XXH3_64bits(&h[1], sizeof(h[0]) * (MaxShaderStages - 2)));
+            fragment.insert(h[0]);
+            stages.insert(XXH3_64bits(h.data(), sizeof(h[0]) * (MaxShaderStages - 1)));
+        };
+        for (const auto& job : warmup_jobs) {
+            if (const auto* graphics = dynamic_cast<const GraphicsJob*>(job.get())) {
+                add(graphics->key);
+            }
+        }
+        for (const auto& [key, _] : graphics_pipelines) {
+            add(key);
+        }
+        std::printf("GPL stats: %u graphics pipelines; %zu pre-rasterization shader tuples, %zu "
+                    "fragment shaders, %zu full shader tuples (%.1f pipelines per tuple)\n",
+                    count, pre_raster.size(), fragment.size(), stages.size(),
+                    stages.empty() ? 0.0 : double(count) / double(stages.size()));
+    }
+
+    // bbport: the startup precompile: the pipelines the keys describe, built on all cores.
+    if (parallel && !warmup_jobs.empty() && num_damaged == 0 && !warmup_abort) {
+        BbCompileProgress::total = BbCompileProgress::done.load() + u32(warmup_jobs.size());
+        const auto compile_start = std::chrono::steady_clock::now();
+        compiler.Start(PipelineCompiler::StartupWorkers(), false);
+        for (const auto& job : warmup_jobs) {
+            compiler.Enqueue(job, PipelineCompiler::PriorityWarmUp);
+        }
+        compiler.WaitIdle();
+        u32 failed = 0;
+        for (const auto& job : warmup_jobs) {
+            if (auto* graphics = dynamic_cast<GraphicsJob*>(job.get())) {
+                if (!graphics->IsDone() || graphics->failed || !graphics->result) {
+                    ++failed;
+                    continue;
+                }
+                graphics->published = true;
+                graphics->result->RebindStages(graphics->bound_infos);
+                const auto [it, is_new] = graphics_pipelines.try_emplace(graphics->key);
+                if (is_new) {
+                    it.value() = std::move(graphics->result);
+                }
+            } else if (auto* compute = dynamic_cast<ComputeJob*>(job.get())) {
+                if (!compute->IsDone() || compute->failed || !compute->result) {
+                    ++failed;
+                    continue;
+                }
+                compute->published = true;
+                compute->result->RebindStage(compute->bound_info);
+                const auto [it, is_new] = compute_pipelines.try_emplace(compute->key);
+                if (is_new) {
+                    it.value() = std::move(compute->result);
+                }
+            }
+        }
+        (void)compiler.DrainCompleted();
+        // No worker stays: gameplay starts them again only for async pipelines or library links.
+        compiler.StopWorkers();
+        if (warmup_abort) {
+            return;
+        }
+        LOG_INFO(Render, "Shader precompile: {} pipelines on {} threads in {:.1f} s",
+                 warmup_jobs.size() - failed, PipelineCompiler::StartupWorkers(),
+                 std::chrono::duration<double>(std::chrono::steady_clock::now() - compile_start)
+                     .count());
+        // A pipeline the driver rejects is a damaged entry, as in the sequential warm-up.
+        num_damaged += failed;
+    }
+    warmup_jobs.clear();
+    if (warmup_abort) {
+        return;
+    }
+
     if (num_damaged) {
         // Nothing preloaded is trusted: modules of a damaged entry may sit in programs that later
         // lookups would reuse. Start as with no cache and write a fresh one (the shader sources
@@ -947,9 +1098,16 @@ void PipelineCache::WarmUp() {
     }
 
     db.FinishPreload();
+    std::printf("Pipeline cache: %u of %u pipelines preloaded in %.1f s%s\n", num_pipelines,
+                num_total_pipelines,
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time).count(),
+                parallel ? " (parallel precompile)" : "");
 }
 
 void PipelineCache::Sync() {
+    // bbport: no job may write to the storage after it is closed (results are published on
+    // the GPU thread; queued jobs are dropped, running ones finish first).
+    compiler.Stop();
     Storage::DataBase::Instance().Close();
 }
 

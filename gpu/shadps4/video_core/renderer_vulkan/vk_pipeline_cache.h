@@ -13,6 +13,7 @@
 #include "shader_recompiler/specialization.h"
 #include "video_core/renderer_vulkan/vk_compute_pipeline.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
+#include "video_core/renderer_vulkan/vk_pipeline_compiler.h"
 #include "video_core/renderer_vulkan/vk_resource_pool.h"
 
 template <>
@@ -121,8 +122,17 @@ public:
                            AmdGpu::Liverpool* liverpool, u32 sparse_page_shift);
     ~PipelineCache();
 
-    void WarmUp();
+    /// Preloads the pipeline cache. `parallel` (the startup precompile, PrecompileEnabled):
+    /// pipelines are built on all cores with progress (BbCompileProgress); otherwise one by one
+    /// as before (BB_SHADER_PRECOMPILE=0, called from the constructor). Nothing else may use
+    /// the cache meanwhile (the game has not started).
+    void WarmUp(bool parallel = false);
+    /// Another thread: stops a running parallel WarmUp soon (Esc on the precompile screen).
+    void AbortWarmUp();
+    /// Stops the pipeline compiler (queued jobs dropped), then closes the cache storage.
     void Sync();
+    /// bbport: the startup precompile runs with a progress screen (BB_SHADER_PRECOMPILE, on).
+    static bool PrecompileEnabled();
 
     bool LoadComputePipeline(Serialization::Archive& ar);
     bool LoadGraphicsPipeline(Serialization::Archive& ar);
@@ -199,9 +209,34 @@ private:
         return num_new_pipelines > 0;
     }
 
+    // bbport: pipelines built on the compiler's workers (startup precompile, async graphics
+    // pipelines BB_ASYNC_SHADERS, optimized links of pipeline libraries).
+    struct GraphicsJob;
+    struct ComputeJob;
+    struct OptimizeJob;
+    std::shared_ptr<GraphicsJob> MakeGraphicsJob(const GraphicsPipeline::SerializationSupport& sdata,
+                                                 BuildMode mode);
+    void PublishCompleted();
+    /// Inserts a finished job's pipeline (null when it failed).
+    const GraphicsPipeline* PublishGraphics(GraphicsJob& job);
+    void QueueOptimize(GraphicsPipeline* pipeline);
+    void EnsureRuntimeWorkers();
+    /// GPU thread: waits for a job (runs it here when no worker took it), logs long waits.
+    void WaitJob(const std::shared_ptr<GraphicsJob>& job);
+    /// Async graphics pipelines: frame and render target history, the skip decision.
+    void TrackTargets();
+    bool DrawSkippable() const;
+    struct TargetSlot {
+        VAddr addr;
+        u32 last_frame;
+        u32 mask; ///< bit i: a target in frame (last_frame - i)
+    };
+
 private:
     const Instance& instance;
     Scheduler& scheduler;
+    /// bbport: VK_EXT_graphics_pipeline_library parts (BB_GPL), destroyed after the pipelines.
+    std::unique_ptr<GplLibraryCache> gpl;
     AmdGpu::Liverpool* liverpool;
     DescriptorHeap desc_heap;
     vk::UniquePipelineCache pipeline_cache;
@@ -225,6 +260,21 @@ private:
     tsl::robin_map<vk::ShaderModule,
                    std::vector<std::variant<GraphicsPipelineKey, ComputePipelineKey>>>
         module_related_pipelines;
+
+    // bbport: startup precompile.
+    bool parallel_warmup = false;
+    std::atomic<bool> warmup_abort{false};
+    std::vector<std::shared_ptr<PipelineCompiler::Job>> warmup_jobs;
+    // bbport: async graphics pipelines (GPU thread).
+    tsl::robin_map<GraphicsPipelineKey, std::shared_ptr<GraphicsJob>> pending_graphics;
+    std::vector<TargetSlot> target_table;
+    u32 async_frame = 0;
+    bool display_pass = false;
+    bool targets_stable = false;
+    u64 last_target_sig = 0;
+    u32 last_target_frame = ~0u;
+    /// Last: stopped (workers joined) before everything the jobs use is destroyed.
+    PipelineCompiler compiler;
 };
 
 } // namespace Vulkan

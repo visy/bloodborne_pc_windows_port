@@ -31,6 +31,9 @@
 #include "core/libraries/libs.h"
 #include "core/emulator_settings.h"
 #include "core/memory.h"
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include "core/signals.h"
 #include "sdl_window.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
@@ -263,6 +266,16 @@ static void StartProfileWriter() {
 }
 #endif
 
+/// Ends the process without unloading DLLs (see the window close path); stdio is flushed first.
+[[noreturn]] void BbHardExit(int code) {
+    std::fflush(stdout);
+    std::fflush(stderr);
+#ifdef _WIN32
+    TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
+#endif
+    std::_Exit(code);
+}
+
 extern "C" int bbgpu_init(const BbGpuConfig* config) {
     BbSettings::Load();
 #ifdef BB_PGO_GENERATE
@@ -291,6 +304,12 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
         }
         LOG_INFO(Frontend, "Window closed by user");
         std::fflush(stdout);
+        std::fflush(stderr);
+#ifdef _WIN32
+        // Not _Exit/ExitProcess: unloading the Vulkan driver while GPU threads are inside it can
+        // hang the process for good.
+        TerminateProcess(GetCurrentProcess(), 0);
+#endif
         std::_Exit(0);
     });
     g_window_thread.detach();

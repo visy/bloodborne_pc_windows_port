@@ -7,6 +7,7 @@
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
+#include <atomic>
 #include <boost/container/small_vector.hpp>
 
 namespace Shader {
@@ -32,8 +33,10 @@ public:
              bool is_compute = false);
     virtual ~Pipeline();
 
+    /// bbport: the handle to bind; a pipeline linked from libraries swaps it for its optimized
+    /// link later (any thread reads it, the old handle stays alive with the pipeline).
     vk::Pipeline Handle() const noexcept {
-        return *pipeline;
+        return vk::Pipeline{handle.load(std::memory_order_acquire)};
     }
 
     vk::PipelineLayout GetLayout() const noexcept {
@@ -72,6 +75,7 @@ protected:
     DescriptorHeap& desc_heap;
     const Shader::Profile& profile;
     vk::UniquePipeline pipeline;
+    std::atomic<VkPipeline> handle{VK_NULL_HANDLE};
     vk::UniquePipelineLayout pipeline_layout;
     vk::UniqueDescriptorSetLayout desc_layout;
     std::array<const Shader::Info*, Shader::MaxStageTypes> stages{};

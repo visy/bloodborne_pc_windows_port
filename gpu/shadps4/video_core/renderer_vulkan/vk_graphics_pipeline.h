@@ -3,6 +3,12 @@
 
 #pragma once
 
+#include <algorithm>
+#include <atomic>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 #include <boost/container/static_vector.hpp>
 #include <xxhash.h>
 
@@ -69,6 +75,16 @@ struct GraphicsPipelineKey {
     bool Deserialize(Serialization::Archive& ar);
 };
 
+/// bbport: how a GraphicsPipeline is built. Live: on the GPU thread for a draw (fills the
+/// serialization support from the live state, asserts on driver failure). Preload: from the cache
+/// warm-up (serialization support as stored). Async: on a worker from a live miss whose
+/// serialization support the GPU thread filled (FillSerializationSupport). Preload and Async throw
+/// Serialization::CorruptData when the driver rejects the pipeline.
+enum class BuildMode { Live, Preload, Async };
+
+class GplLibraryCache;
+struct GraphicsPipelineState;
+
 class GraphicsPipeline : public Pipeline {
 public:
     struct SerializationSupport {
@@ -91,8 +107,38 @@ public:
                      std::span<const Shader::RuntimeInfo, MaxShaderStages> runtime_infos,
                      std::optional<const Shader::Gcn::FetchShaderData> fetch_shader,
                      std::span<const vk::ShaderModule> modules, SerializationSupport& sdata,
-                     bool preloading);
+                     BuildMode mode, GplLibraryCache* gpl = nullptr);
     ~GraphicsPipeline();
+
+    /// bbport: the parts of `sdata` a live build derives from the draw's state (vertex inputs,
+    /// multisampling, auxiliary tessellation and discard shaders). GPU thread (reads user data).
+    static void FillSerializationSupport(
+        const Instance& instance, const GraphicsPipelineKey& key,
+        std::span<const Shader::Info*, MaxShaderStages> infos,
+        std::span<const Shader::RuntimeInfo, MaxShaderStages> runtime_infos,
+        const std::optional<const Shader::Gcn::FetchShaderData>& fetch_shader,
+        SerializationSupport& sdata);
+
+    /// bbport: a pipeline built off the GPU thread from Info copies reads the programs' own
+    /// Infos once published (as a pipeline built on the GPU thread does).
+    void RebindStages(std::span<const Shader::Info*, MaxShaderStages> infos) {
+        std::ranges::copy(infos, stages.begin());
+    }
+
+    /// bbport (GPL): linked from pipeline libraries without link-time optimization.
+    [[nodiscard]] bool IsFastLinked() const {
+        return fast_linked;
+    }
+    /// bbport (GPL): links the libraries again with link-time optimization and swaps the bound
+    /// handle (the fast-linked one stays alive). Any thread; false when the driver fails.
+    bool LinkOptimized();
+    /// bbport (GPL): whether every library of this pipeline already exists (a miss then only
+    /// needs a fast link). GPU thread, `sdata` as FillSerializationSupport made it.
+    static bool LibrariesReady(const Instance& instance, GplLibraryCache& gpl,
+                               const GraphicsPipelineKey& key,
+                               std::span<const Shader::Info*, MaxShaderStages> infos,
+                               std::span<const vk::ShaderModule> modules,
+                               const SerializationSupport& sdata);
 
     const std::optional<const Shader::Gcn::FetchShaderData>& GetFetchShader() const noexcept {
         return fetch_shader;
@@ -113,11 +159,50 @@ public:
                          u32 step_rate_1, std::span<const AmdGpu::Buffer> sharps = {}) const;
 
 private:
-    void BuildDescSetLayout(bool preloading);
+    void BuildDescSetLayout();
+    vk::Result CreateMonolithic(GraphicsPipelineState& state, vk::UniquePipeline& out);
+    vk::Result CreateFromLibraries(GraphicsPipelineState& state, GplLibraryCache& gpl,
+                                   vk::UniquePipeline& out);
 
 private:
     GraphicsPipelineKey key;
     std::optional<const Shader::Gcn::FetchShaderData> fetch_shader{};
+    vk::PipelineCache vk_pipeline_cache{};
+    /// bbport (GPL): the libraries this pipeline was linked from (owned by GplLibraryCache).
+    std::array<vk::Pipeline, 4> libraries{};
+    vk::UniquePipeline optimized;
+    bool fast_linked = false;
+};
+
+/// bbport: VK_EXT_graphics_pipeline_library parts shared between pipelines: vertex input
+/// interface, pre-rasterization shaders, fragment shader, fragment output interface. Keyed by
+/// the complete description of the state each part holds. Thread-safe: a part requested while
+/// another thread builds it waits for that build.
+class GplLibraryCache {
+public:
+    enum Kind : u32 { VertexInput, PreRasterization, FragmentShader, FragmentOutput, NumKinds };
+
+    struct Entry {
+        std::mutex mutex;
+        std::atomic<bool> done{false};
+        vk::Pipeline library{};
+        /// Layout the part was created with (identically defined to its pipelines' layouts).
+        vk::UniqueDescriptorSetLayout set_layout;
+        vk::UniquePipelineLayout layout;
+    };
+
+    explicit GplLibraryCache(vk::Device device);
+    ~GplLibraryCache();
+
+    std::shared_ptr<Entry> Get(const std::string& key);
+    [[nodiscard]] bool Contains(const std::string& key) const;
+
+    std::atomic<u32> num_libraries{0}, num_fast_links{0}, num_optimized{0}, num_failures{0};
+
+private:
+    vk::Device device;
+    mutable std::mutex mutex;
+    std::unordered_map<std::string, std::shared_ptr<Entry>> entries;
 };
 
 struct ClipDistanceShaderKey {

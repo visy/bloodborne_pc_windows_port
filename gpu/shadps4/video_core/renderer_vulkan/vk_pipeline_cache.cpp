@@ -10,6 +10,8 @@
 #include <string>
 #include <unordered_set>
 
+#include "bbport_compile_progress.h"
+#include "bbport_settings.h"
 #include "bbport_threads.h"
 
 #include "common/hash.h"
@@ -26,7 +28,9 @@
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/motion_history.h"
 #include "video_core/renderer_vulkan/vk_draw_prep.h"
+#include "video_core/renderer_vulkan/vk_frame_capture.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
+#include "video_core/renderer_vulkan/vk_pipeline_jobs.h"
 #include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
@@ -364,10 +368,26 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
                vk::to_string(cache_result));
     pipeline_cache = std::move(cache);
 
-    WarmUp();
+    if (instance.IsGraphicsPipelineLibrarySupported()) {
+        gpl = std::make_unique<GplLibraryCache>(instance.GetDevice());
+    }
+    // bbport: with the startup precompile, the presenter runs the warm-up with its screen.
+    if (!PrecompileEnabled()) {
+        WarmUp();
+    }
 }
 
-PipelineCache::~PipelineCache() = default;
+PipelineCache::~PipelineCache() {
+    compiler.Stop();
+}
+
+bool PipelineCache::PrecompileEnabled() {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_SHADER_PRECOMPILE");
+        return !(env && env[0] == '0');
+    }();
+    return enabled;
+}
 
 // bbport: shader/pipeline compile time on the GPU thread, reported by BB_FRAME_STATS.
 std::atomic<u64> g_bb_compile_ns;
@@ -383,6 +403,227 @@ struct CompileTimer {
     }
 };
 } // namespace
+
+// ---- bbport: pipeline jobs -------------------------------------------------------------------
+
+std::shared_ptr<PipelineCache::GraphicsJob> PipelineCache::MakeGraphicsJob(
+    const GraphicsPipeline::SerializationSupport& sdata, BuildMode mode) {
+    auto job = std::make_shared<GraphicsJob>();
+    job->cache = this;
+    job->key = sel.graphics_key;
+    job->mode = mode;
+    for (u32 i = 0; i < MaxShaderStages; ++i) {
+        if (sel.infos[i]) {
+            job->owned[i].emplace(*sel.infos[i]);
+            job->build_infos[i] = &*job->owned[i];
+        }
+    }
+    job->bound_infos = sel.infos;
+    job->runtime_infos = sel.runtime_infos;
+    job->fetch_shader = sel.fetch_shader;
+    job->modules = sel.modules;
+    job->sdata = sdata;
+    return job;
+}
+
+const GraphicsPipeline* PipelineCache::PublishGraphics(GraphicsJob& job) {
+    if (job.published) {
+        const auto it = graphics_pipelines.find(job.key);
+        return it != graphics_pipelines.end() ? it->second.get() : nullptr;
+    }
+    job.published = true;
+    if (pending_graphics.erase(job.key) != 0) {
+        --BbCompileProgress::async_pending;
+    }
+    if (job.failed || !job.result || !job.IsDone()) {
+        return nullptr;
+    }
+    job.result->RebindStages(job.bound_infos);
+    const auto [it, is_new] = graphics_pipelines.try_emplace(job.key);
+    if (!is_new) {
+        return it->second.get();
+    }
+    it.value() = std::move(job.result);
+    GraphicsPipeline* pipeline = it.value().get();
+    if (job.register_data) {
+        RegisterPipelineData(job.key, std::hash<GraphicsPipelineKey>{}(job.key), job.sdata);
+        ++num_new_pipelines;
+        ++BbCompileProgress::async_done;
+        if (EmulatorSettings.IsShaderCollect()) {
+            for (u32 stage = 0; stage < MaxShaderStages; ++stage) {
+                if (job.bound_infos[stage]) {
+                    module_related_pipelines[job.modules[stage]].emplace_back(job.key);
+                }
+            }
+        }
+    }
+    if (gpl && pipeline->IsFastLinked() && !job.optimize_inline) {
+        QueueOptimize(pipeline);
+    }
+    return pipeline;
+}
+
+void PipelineCache::QueueOptimize(GraphicsPipeline* pipeline) {
+    auto job = std::make_shared<OptimizeJob>();
+    job->pipeline = pipeline;
+    job->gpl = gpl.get();
+    EnsureRuntimeWorkers();
+    compiler.Enqueue(std::move(job), PipelineCompiler::PriorityOptimize);
+}
+
+void PipelineCache::EnsureRuntimeWorkers() {
+    if (compiler.NumWorkers() == 0 && !compiler.Stopped()) {
+        compiler.Start(PipelineCompiler::GameplayWorkers(), true);
+    }
+}
+
+void PipelineCache::PublishCompleted() {
+    for (const auto& done : compiler.DrainCompleted()) {
+        if (auto* job = dynamic_cast<GraphicsJob*>(done.get())) {
+            if (!job->published && job->mode == BuildMode::Async) {
+                PublishGraphics(*job);
+            }
+        }
+    }
+}
+
+void PipelineCache::WaitJob(const std::shared_ptr<GraphicsJob>& job) {
+    const u64 us = compiler.Wait(job);
+    ++BbCompileProgress::sync_waits;
+    static const bool stats = [] {
+        const char* env = std::getenv("BB_FRAME_STATS");
+        return env && env[0] == '1';
+    }();
+    if (stats && us > 50'000) {
+        std::printf("Shaders: GPU thread waited %.1f ms for pipeline %#llx\n", us / 1e3,
+                    static_cast<unsigned long long>(std::hash<GraphicsPipelineKey>{}(job->key)));
+    }
+}
+
+namespace {
+struct AsyncPolicy {
+    bool aggressive = false;
+    u32 max_skip_frames = 8;
+    u32 queue = 256;
+};
+const AsyncPolicy& GetAsyncPolicy() {
+    static const AsyncPolicy policy = [] {
+        AsyncPolicy p;
+        if (const char* env = std::getenv("BB_ASYNC_SHADERS_POLICY")) {
+            p.aggressive = std::strcmp(env, "aggressive") == 0;
+        }
+        if (const char* env = std::getenv("BB_ASYNC_SHADERS_MAX_SKIP_FRAMES")) {
+            p.max_skip_frames = u32(std::max(0, std::atoi(env)));
+        }
+        if (const char* env = std::getenv("BB_ASYNC_SHADERS_QUEUE")) {
+            p.queue = u32(std::max(1, std::atoi(env)));
+        }
+        return p;
+    }();
+    return policy;
+}
+} // namespace
+
+void PipelineCache::TrackTargets() {
+    const auto& regs = liverpool->regs;
+    const VAddr cb0 = regs.color_buffers[0] ? VAddr(regs.color_buffers[0].Address()) : 0;
+    const bool display = cb0 != 0 && FrameCapture::IsDisplayBuffer(cb0);
+    if (display && !display_pass) {
+        ++async_frame; // the pass copying a finished frame to a display buffer
+    }
+    display_pass = display;
+
+    std::array<VAddr, AmdGpu::NUM_COLOR_BUFFERS + 2> targets;
+    u32 count = 0;
+    if (regs.color_control.mode != AmdGpu::ColorControl::OperationMode::Disable) {
+        for (u32 cb = 0; cb < AmdGpu::NUM_COLOR_BUFFERS; ++cb) {
+            if (regs.color_buffers[cb] && regs.color_target_mask.GetMask(cb)) {
+                targets[count++] = VAddr(regs.color_buffers[cb].Address());
+            }
+        }
+    }
+    if (regs.depth_buffer.DepthValid() && regs.depth_control.depth_enable &&
+        regs.depth_control.depth_write_enable) {
+        targets[count++] = VAddr(regs.depth_buffer.DepthAddress()) | 1;
+    }
+    if (regs.depth_buffer.StencilValid() && regs.depth_control.stencil_enable) {
+        targets[count++] = VAddr(regs.depth_buffer.StencilAddress()) | 2;
+    }
+    u64 sig = count;
+    for (u32 i = 0; i < count; ++i) {
+        sig = (sig ^ targets[i]) * 0x100000001b3ull;
+    }
+    if (sig == last_target_sig && async_frame == last_target_frame) {
+        return; // same pass in the same frame
+    }
+    last_target_sig = sig;
+    last_target_frame = async_frame;
+
+    // Every target of the draw was a target in 2 of the 3 previous frames: not a one-off
+    // render-to-texture (those are never skipped).
+    constexpr size_t TableSize = 8192;
+    if (target_table.empty()) {
+        target_table.resize(TableSize);
+    }
+    bool stable = count > 0;
+    for (u32 i = 0; i < count; ++i) {
+        const VAddr addr = targets[i];
+        size_t slot = size_t((u64(addr) * 0x9E3779B97F4A7C15ull) >> 51) & (TableSize - 1);
+        TargetSlot* found = nullptr;
+        for (u32 probe = 0; probe < 32; ++probe, slot = (slot + 1) & (TableSize - 1)) {
+            auto& s = target_table[slot];
+            if (s.addr == addr || s.addr == 0) {
+                found = &s;
+                break;
+            }
+        }
+        if (!found) {
+            std::fill(target_table.begin(), target_table.end(), TargetSlot{});
+            stable = false;
+            continue;
+        }
+        if (found->addr == 0) {
+            *found = {addr, async_frame, 1};
+            stable = false;
+            continue;
+        }
+        const u32 shift = async_frame - found->last_frame;
+        if (shift != 0) {
+            found->mask = shift >= 32 ? 0u : found->mask << shift;
+            found->last_frame = async_frame;
+        }
+        found->mask |= 1;
+        stable &= std::popcount(found->mask & 0xEu) >= 2;
+    }
+    targets_stable = stable;
+}
+
+bool PipelineCache::DrawSkippable() const {
+    if (FrameCapture::Active() || display_pass || !targets_stable) {
+        return false;
+    }
+    // Screen-space passes (upscaler input, camera motion, UI) keep the frame's structure.
+    if (!GetAsyncPolicy().aggressive && liverpool->regs.IsClipDisabled()) {
+        return false;
+    }
+    // Draws that write memory besides their targets feed later work.
+    for (const auto* info : sel.infos) {
+        if (!info) {
+            continue;
+        }
+        for (const auto& buffer : info->buffers) {
+            if (buffer.is_written) {
+                return false;
+            }
+        }
+        for (const auto& image : info->images) {
+            if (image.is_written) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
 
 bool PipelineCache::PrepareGraphicsPipeline(PipelineSelection& worker_sel) {
     // Tessellation stages read constant buffers from memory at selection time: not prepared.
@@ -427,6 +668,14 @@ const GraphicsPipeline* PipelineCache::TryPreparedPipeline(const PreparedDraw& p
 
 const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectParams params,
                                                            const PreparedDraw* prepared) {
+    // bbport: results of the pipeline compiler (async pipelines, optimized library links).
+    if (compiler.HasCompleted()) {
+        PublishCompleted();
+    }
+    const bool async = BbSettings::Get().async_shaders.load(std::memory_order_relaxed);
+    if (async) {
+        TrackTargets();
+    }
     used_prepared = nullptr;
     if (prepared) {
         if (const auto* pipeline = TryPreparedPipeline(*prepared)) {
@@ -438,6 +687,76 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
     if (!RefreshGraphicsKey(sel)) {
         return nullptr;
     }
+    if (!pending_graphics.empty() || async) {
+        if (const auto found = graphics_pipelines.find(sel.graphics_key);
+            found != graphics_pipelines.end()) {
+            return found->second.get();
+        }
+        // bbport: a pipeline a worker builds (BB_ASYNC_SHADERS): never compiled twice.
+        if (const auto pending = pending_graphics.find(sel.graphics_key);
+            pending != pending_graphics.end()) {
+            const auto job = pending->second;
+            if (!job->IsFinished()) {
+                bool skip = async && DrawSkippable();
+                if (skip) {
+                    if (job->first_skip_frame == ~0u) {
+                        job->first_skip_frame = async_frame;
+                    } else if (async_frame - job->first_skip_frame >
+                               GetAsyncPolicy().max_skip_frames) {
+                        ++BbCompileProgress::timeouts;
+                        skip = false;
+                    }
+                }
+                if (skip) {
+                    ++BbCompileProgress::skipped_draws;
+                    sel.fetch_shader.reset();
+                    return nullptr;
+                }
+                WaitJob(job);
+            }
+            if (const auto* pipeline = PublishGraphics(*job)) {
+                sel.fetch_shader.reset();
+                return pipeline;
+            }
+            // Failed off the GPU thread: built here below (asserts on a driver failure).
+        } else if (async && BbCompileProgress::async_pending.load() < GetAsyncPolicy().queue &&
+                   DrawSkippable()) {
+            GraphicsPipeline::SerializationSupport sdata{};
+            GraphicsPipeline::FillSerializationSupport(instance, sel.graphics_key, sel.infos,
+                                                       sel.runtime_infos, sel.fetch_shader, sdata);
+            auto job = MakeGraphicsJob(sdata, BuildMode::Async);
+            job->register_data = true;
+            if (gpl && GraphicsPipeline::LibrariesReady(instance, *gpl, job->key, job->build_infos,
+                                                        job->modules, job->sdata)) {
+                // Every part exists: a fast link, no need to skip the draw.
+                CompileTimer timer;
+                try {
+                    job->Run();
+                    job->state.store(PipelineCompiler::Job::Done, std::memory_order_release);
+                } catch (const std::exception&) {
+                    job->failed = true;
+                    job->state.store(PipelineCompiler::Job::Done, std::memory_order_release);
+                }
+                if (const auto* pipeline = PublishGraphics(*job)) {
+                    sel.fetch_shader.reset();
+                    return pipeline;
+                }
+            } else {
+                job->progress = true;
+                job->first_skip_frame = async_frame;
+                EnsureRuntimeWorkers();
+                if (compiler.Enqueue(job, PipelineCompiler::PriorityLive)) {
+                    pending_graphics.emplace(job->key, job);
+                    ++BbCompileProgress::async_pending;
+                    BbCompileProgress::Add(BbCompileProgress::Phase::Runtime);
+                    ++BbCompileProgress::skipped_draws;
+                    sel.fetch_shader.reset();
+                    return nullptr;
+                }
+            }
+            // Not queued (shutting down) or failed: built here as usual.
+        }
+    }
     const auto [it, is_new] = graphics_pipelines.try_emplace(sel.graphics_key);
     if (is_new) {
         const auto pipeline_hash = std::hash<GraphicsPipelineKey>{}(sel.graphics_key);
@@ -447,10 +766,13 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         GraphicsPipeline::SerializationSupport sdata{};
         it.value() = std::make_unique<GraphicsPipeline>(
             instance, scheduler, desc_heap, profile, sel.graphics_key, *pipeline_cache, sel.infos,
-            sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, false);
+            sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, BuildMode::Live, gpl.get());
 
         RegisterPipelineData(sel.graphics_key, pipeline_hash, sdata);
         ++num_new_pipelines;
+        if (gpl && it.value()->IsFastLinked()) {
+            QueueOptimize(it.value().get());
+        }
 
         if (EmulatorSettings.IsShaderCollect()) {
             for (auto stage = 0; stage < MaxShaderStages; ++stage) {

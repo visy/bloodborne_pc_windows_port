@@ -22,6 +22,8 @@
 
 #include "bbport_settings.h"
 
+extern "C" void* runtime_low_map(size_t size, int prot); // src/runtime_memory.c
+
 // The game's code is called, and calls the hooks below, with the System V ABI (the PS4's): the
 // default on Linux, said explicitly for Windows.
 #define BB_SYSV __attribute__((sysv_abi))
@@ -525,7 +527,15 @@ bool Detour(unsigned char* image, u64 va, const u8* prologue, std::size_t length
 u8* MapNear(unsigned char* image, u64 image_size, std::size_t size) {
     const u64 base = reinterpret_cast<u64>(image);
 #ifdef _WIN32
-    // Walk the actual free regions instead of guessing addresses: the guest address space
+    // The image is the first block of the runtime's low guest area (0x800000000 up, all of it
+    // reserved for the guest): the next low block is right after it, within rel32 reach.
+    if (void* p = runtime_low_map(size, 3 /* read | write; VirtualProtect later */)) {
+        const u64 at = reinterpret_cast<u64>(p);
+        if (at + size <= base + (2ull << 30) - (1ull << 20) && at >= base) {
+            return static_cast<u8*>(p);
+        }
+    }
+    // Otherwise walk the actual free regions instead of guessing addresses: the guest address space
     // reservation and the loader leave few fixed hints free. Every byte of the stubs must be
     // within rel32 reach of every byte of the image.
     {
@@ -584,7 +594,8 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
     const std::size_t page = PageSize();
     u8* stubs = MapNear(image, size, page);
     if (!stubs) {
-        std::printf("Game menu: no memory near the image, the port's pages are off\n");
+        std::printf("Game menu: no memory near the image (%p, %llu MiB), the port's pages are off\n",
+                    static_cast<void*>(image), static_cast<unsigned long long>(size >> 20));
         return;
     }
     DefineTexts();

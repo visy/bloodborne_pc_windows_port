@@ -18,6 +18,7 @@
 #include <cstring>
 #include "common/assert.h"
 #include "bbport_toggles.h"
+#include "bbport_compile_progress.h"
 #include "bbport_heap_sites.h"
 #include "bbport_wait_trace.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
@@ -647,6 +648,7 @@ void VideoOutDriver::Flip(const Request& req) {
                         BbStats::tick_wait_ns.exchange(0) / (window * 1e7),
                         frames ? double(BbStats::reduced_draws.exchange(0)) / frames : 0.0,
                         frames ? double(BbStats::scene_draws.exchange(0)) / frames : 0.0);
+            BbCompileProgress::PrintStats();
             VideoCore::PageManager::ReportFaultSites();
             if (const u64 notes = BbStats::cpu_write_notes.exchange(0)) {
                 std::printf("Write notices: %.0f/s, %.2f MB/s (libc copies over pages the GPU side "

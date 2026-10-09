@@ -33,6 +33,10 @@ bool Visible();
 /// Present thread: draws into `view` (layout ColorAttachmentOptimal).
 void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent);
 
+/// bbport: the startup shader precompile screen (progress of BbCompileProgress), recorded into
+/// an active rendering of the swapchain image (cleared by the caller). Present thread.
+void RenderPrecompile(vk::CommandBuffer cmdbuf, vk::Extent2D extent);
+
 /// The menu or the text dialog is open: the game's input is held neutral.
 bool CapturesInput();
 

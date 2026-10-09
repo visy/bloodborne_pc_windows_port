@@ -12,6 +12,7 @@
 #include "imgui/renderer/imgui_core.h"
 #include "sdl_window.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
+#include "bbport_settings.h"
 #include "bbport_toggles.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -222,7 +223,8 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceImage2DViewOf3DFeaturesEXT, vk::PhysicalDeviceShaderClockFeaturesKHR,
         vk::PhysicalDeviceComputeShaderDerivativesFeaturesKHR,
         vk::PhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE,
-        vk::PhysicalDeviceCooperativeMatrixFeaturesKHR, vk::PhysicalDeviceShaderFloat8FeaturesEXT>();
+        vk::PhysicalDeviceCooperativeMatrixFeaturesKHR, vk::PhysicalDeviceShaderFloat8FeaturesEXT,
+        vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT>();
     features = feature_chain.get().features;
 
     const vk::StructureChain properties_chain = physical_device.getProperties2<
@@ -287,6 +289,37 @@ bool Instance::CreateDevice() {
         if (!attachment_feedback_loop) {
             // We want both extensions so remove the first if the second isn't available
             enabled_extensions.pop_back();
+        }
+    }
+    // bbport: VK_EXT_graphics_pipeline_library (BB_GPL / gpl in bbport.ini, read at start):
+    // pipelines linked from per-stage libraries. Fast linking is required, else monolithic.
+    if (BbSettings::Get().startup_gpl) {
+        const auto listed = [&](std::string_view name) {
+            return std::ranges::any_of(available_extensions,
+                                       [&](const std::string& e) { return e == name; });
+        };
+        const bool feature =
+            feature_chain.get<vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT>()
+                .graphicsPipelineLibrary;
+        if (listed(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME) &&
+            listed(VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME) && feature) {
+            const auto gpl_props =
+                physical_device
+                    .getProperties2<vk::PhysicalDeviceProperties2,
+                                    vk::PhysicalDeviceGraphicsPipelineLibraryPropertiesEXT>()
+                    .get<vk::PhysicalDeviceGraphicsPipelineLibraryPropertiesEXT>();
+            gpl_fast_linking = gpl_props.graphicsPipelineLibraryFastLinking;
+            if (gpl_fast_linking) {
+                graphics_pipeline_library = add_extension(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME) &&
+                                            add_extension(VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME);
+                std::printf("Pipelines: graphics pipeline libraries on (fast linking)\n");
+            } else {
+                std::printf("Pipelines: BB_GPL requested, but the driver has no fast linking of "
+                            "graphics pipeline libraries: monolithic pipelines\n");
+            }
+        } else {
+            std::printf("Pipelines: BB_GPL requested, but VK_EXT_graphics_pipeline_library is "
+                        "unavailable: monolithic pipelines\n");
         }
     }
     depth_range_unrestricted = add_extension(VK_EXT_DEPTH_RANGE_UNRESTRICTED_EXTENSION_NAME);
@@ -625,6 +658,9 @@ bool Instance::CreateDevice() {
             .shaderFloat8 = true,
             .shaderFloat8CooperativeMatrix = true,
         },
+        vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT{
+            .graphicsPipelineLibrary = true,
+        },
     };
 
     if (!custom_border_color) {
@@ -687,6 +723,9 @@ bool Instance::CreateDevice() {
     }
     if (!shader_float8) {
         device_chain.unlink<vk::PhysicalDeviceShaderFloat8FeaturesEXT>();
+    }
+    if (!graphics_pipeline_library) {
+        device_chain.unlink<vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT>();
     }
 
     auto [device_result, dev] = physical_device.createDeviceUnique(device_chain.get());
