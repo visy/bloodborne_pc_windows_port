@@ -185,6 +185,85 @@ def write_env_bat(path: Path, settings_path: Path = SETTINGS_FILE):
                     errors="replace", newline="")
 
 
+# Shader cache: <user>\cache\<title id>\ (run.bat: BB_USER_DIR or BB_DATA_DIR\user). Pipeline keys
+# (.key) and shader sources (.src) do not depend on the GPU; .meta/.spv are built for the GPU in
+# profile.bin and are rebuilt from the sources when a cache moves to another GPU.
+CACHE_GPU_INDEPENDENT = {".key", ".src"}
+CACHE_GPU_SPECIFIC = {".meta", ".spv"}
+CACHE_PROFILE = "profile.bin"
+
+
+def shader_cache_root() -> Path:
+    user = os.environ.get("BB_USER_DIR")
+    if user:
+        return Path(user) / "cache"
+    return Path(os.environ.get("BB_DATA_DIR", str(APP_DIR))) / "user" / "cache"
+
+
+def _cache_name_ok(name: str) -> bool:
+    """A plain file or folder name: nothing in an imported archive may leave the cache folder."""
+    return bool(name) and name not in (".", "..") and not any(c in name for c in '/\\:')
+
+
+def export_shader_cache(zip_path: Path, root: Path = None) -> int:
+    """Writes every title's shader cache into one .zip; returns the number of files."""
+    import zipfile
+    root = root or shader_cache_root()
+    titles = sorted(p for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
+    count = 0
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+        for title in titles:
+            for f in sorted(title.iterdir()):
+                if f.is_file() and (f.suffix in CACHE_GPU_INDEPENDENT | CACHE_GPU_SPECIFIC
+                                    or f.name == CACHE_PROFILE):
+                    zf.write(f, f"{title.name}/{f.name}")
+                    count += 1
+    return count
+
+
+def import_shader_cache(zip_path: Path, root: Path = None) -> dict:
+    """Merges a cache .zip into the local cache without overwriting anything. Keys and sources
+    are always taken; GPU-built .meta/.spv only when the .zip was made for the same GPU profile
+    (otherwise the game rebuilds them from the sources before the intro)."""
+    import zipfile
+    root = root or shader_cache_root()
+    stats = {"added": 0, "existing": 0, "gpu_skipped": 0, "titles": []}
+    with zipfile.ZipFile(zip_path) as zf:
+        entries = {}
+        for n in zf.namelist():
+            title, _, fname = n.partition("/")
+            if _cache_name_ok(title) and _cache_name_ok(fname):
+                entries.setdefault(title, []).append((n, fname))
+        for title, files in sorted(entries.items()):
+            dest = root / title
+            local_profile = dest / CACHE_PROFILE
+            zip_profile = next((zf.read(n) for n, f in files if f == CACHE_PROFILE), None)
+            if local_profile.is_file():
+                same_gpu = zip_profile is not None and local_profile.read_bytes() == zip_profile
+            else:
+                same_gpu = zip_profile is not None  # empty cache: the game checks the profile itself
+            dest.mkdir(parents=True, exist_ok=True)
+            stats["titles"].append(title)
+            for n, fname in files:
+                suffix = Path(fname).suffix
+                if fname == CACHE_PROFILE:
+                    if not local_profile.is_file() and same_gpu:
+                        local_profile.write_bytes(zf.read(n))
+                    continue
+                if suffix not in CACHE_GPU_INDEPENDENT | CACHE_GPU_SPECIFIC:
+                    continue
+                if suffix in CACHE_GPU_SPECIFIC and not same_gpu:
+                    stats["gpu_skipped"] += 1
+                    continue
+                target = dest / fname
+                if target.exists():
+                    stats["existing"] += 1
+                    continue
+                target.write_bytes(zf.read(n))
+                stats["added"] += 1
+    return stats
+
+
 def kill_tree(proc: subprocess.Popen):
     """Kill run.bat and everything it started (bbport.exe included)."""
     if os.name == "nt":
@@ -607,6 +686,21 @@ class BloodborneLauncher(tk.Tk):
         self._check(sec, "Shader compile progress indicator", self.feat_compile_indicator,
                     "Shows 'Compiling shaders: NN%' in a corner while new shaders compile, only on loading "
                     "screens and the main menu, never during gameplay. Default: on (BB_COMPILE_INDICATOR).")
+        cache_row = ttk.Frame(sec, style="Card.TFrame")
+        cache_row.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(6, 2))
+        sec.next_row += 1
+        export_btn = ttk.Button(cache_row, text="Export shader cache...", style="Secondary.TButton",
+                                command=self.export_cache)
+        export_btn.pack(side="left", padx=(0, 6))
+        import_btn = ttk.Button(cache_row, text="Import shader cache...", style="Secondary.TButton",
+                                command=self.import_cache)
+        import_btn.pack(side="left")
+        Tooltip(export_btn, "Saves your shader cache (user\\cache) as one .zip to share. It works on any "
+                            "GPU: the game rebuilds it for the other GPU before the intro. It is made from "
+                            "the game's shaders, so share it only with people who own the game.")
+        Tooltip(import_btn, "Merges a shader cache .zip from another player into yours (nothing is "
+                            "overwritten). With 'Precompile shaders at startup' on, everything in it is "
+                            "built before the intro on the next launch.")
 
         # 4. Game
         tab = self._tab("Game")
@@ -1150,6 +1244,54 @@ class BloodborneLauncher(tk.Tk):
             os.startfile(str(LOG_FILE))
         except (AttributeError, OSError) as ex:
             messagebox.showerror("Error", f"Could not open {LOG_FILE}:\n{ex}")
+
+    def export_cache(self):
+        root = shader_cache_root()
+        if not root.is_dir() or not any(root.iterdir()):
+            messagebox.showinfo("No shader cache", f"There is no shader cache yet in:\n{root}\n\n"
+                                "It is written while you play.")
+            return
+        target = filedialog.asksaveasfilename(
+            title="Export shader cache", defaultextension=".zip",
+            initialfile=f"bloodborne_shader_cache_{datetime.now():%Y%m%d}.zip",
+            filetypes=[("Zip archive", "*.zip")])
+        if not target:
+            return
+        try:
+            count = export_shader_cache(Path(target), root)
+        except OSError as ex:
+            messagebox.showerror("Export failed", str(ex))
+            return
+        self.log(f"Shader cache exported: {count} files -> {target}")
+        messagebox.showinfo("Shader cache exported",
+                            f"{count} files saved to:\n{target}\n\nIt contains data derived from the game's "
+                            "shaders: share it only with people who own the game.")
+
+    def import_cache(self):
+        if self.proc is not None:
+            messagebox.showwarning("Game running", "Close the game before importing a shader cache.")
+            return
+        source = filedialog.askopenfilename(title="Import shader cache",
+                                            filetypes=[("Zip archive", "*.zip")])
+        if not source:
+            return
+        import zipfile
+        try:
+            stats = import_shader_cache(Path(source))
+        except (OSError, zipfile.BadZipFile) as ex:
+            messagebox.showerror("Import failed", f"Could not read the shader cache archive:\n{ex}")
+            return
+        if not stats["titles"]:
+            messagebox.showwarning("Nothing imported", "The archive contains no shader cache.")
+            return
+        note = ("" if not stats["gpu_skipped"] else
+                f"\n{stats['gpu_skipped']} GPU-specific files were made for another GPU: the game rebuilds "
+                "them for yours before the intro.")
+        self.log(f"Shader cache imported from {source}: {stats['added']} new files, "
+                 f"{stats['existing']} already present, {stats['gpu_skipped']} rebuilt for this GPU")
+        messagebox.showinfo("Shader cache imported",
+                            f"{stats['added']} new files merged ({stats['existing']} already present)."
+                            f"{note}\n\nThe next launch prepares them before the intro.")
 
     # ------------------------------------------------------------- actions
     def browse_eboot(self):
