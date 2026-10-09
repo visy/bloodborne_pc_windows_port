@@ -140,7 +140,7 @@ build.bat
 `build.bat` then builds the bridge `out\bbport_dlss.dll` (`gpu/dlss_bridge`, the only code that uses the SDK; it needs Visual Studio 2022, since the SDK's library is MSVC-only) and copies NVIDIA's `nvngx_dlss.dll` next to `out\bbport.exe`. Pick *DLSS* in the in-game menu (or `upscaler=dlss` in `bbport.ini`): the preset sets the render size, Native AA is DLAA. Without the DLLs, on other GPUs or with `BB_DLSS=0` it is listed as unavailable and a DLSS setting falls back to FSR 3.1.
 
 **Faster builds for your own PC (optional).**
-- `-DBB_MARCH=native` (or a CPU name such as `skylake`) when configuring `out/gpu` tunes the code for your processor; the result may not start on older CPUs.
+- `-DBB_MARCH=native` (or a CPU name such as `skylake`) when configuring `out/gpu` tunes the code for your processor; the result may not start on older CPUs. Release builds use `-DBB_MARCH=x86-64-v3`, the AVX2 baseline the port already requires (Intel Haswell / AMD Ryzen and newer).
 - Profile-guided optimization: configure a second build folder with `-DBB_PGO=generate -DBB_OUT_DIR=<folder>`, play about 20 minutes with that `bbport.exe` (it writes a profile into `pgo\` every 30 s), then reconfigure the same build folder with `-DBB_PGO=use` and build again. Only the port's own code is optimized (GPU command translation, caches, runtime), so it helps in CPU-limited scenes.
 
 ### 2. Launch the Game

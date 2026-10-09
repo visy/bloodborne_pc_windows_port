@@ -22,7 +22,12 @@ option(BB_LTO "Link-time optimization of bbgpu" ON)
 # Empty (default) keeps the portable x86-64 build.
 set(BB_MARCH "" CACHE STRING "Target CPU for -march (empty: portable build)")
 if (BB_MARCH)
-    add_compile_options(-march=${BB_MARCH} -mtune=${BB_MARCH})
+    # The x86-64-vN levels are -march only: tune those for current CPUs in general.
+    if (BB_MARCH MATCHES "^x86-64")
+        add_compile_options(-march=${BB_MARCH} -mtune=generic)
+    else()
+        add_compile_options(-march=${BB_MARCH} -mtune=${BB_MARCH})
+    endif()
 endif()
 set(BB_PGO "off" CACHE STRING "Profile-guided optimization: off, generate, use")
 set(BB_PGO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../pgo" CACHE PATH "Profile directory")
