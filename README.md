@@ -30,6 +30,13 @@ This repository adapts the original Linux codebase specifically for Windows syst
 - **Texture Barrier Fix**: Fixed dynamic texture streaming race conditions in `tile_manager.cpp`, ensuring item icons in the HUD and loading screens render correctly without static noise.
 - **AT9 Audio Playback**: Bundles LibAtrac9 compilation to decode AT9 game audio natively on Windows.
 - **Windows Build System**: Standalone `build.bat` script that compiles the complete project with MinGW-w64 (GCC), CMake, and Ninja.
+- **Launcher with categories and tooltips**: settings grouped in tabs (Display, Graphics, Performance & Shaders, Game, Input & Audio, Advanced / Debug); hover any option for what it does, its trade-off, default and environment variable.
+- **No shader stutter in known areas**: before the intro logos the port builds every pipeline in the shader cache on all cores, with a progress screen the first time (`BB_SHADER_PRECOMPILE`, on by default; Esc skips). Optional *async shader compilation* (`BB_ASYNC_SHADERS`) and *graphics pipeline library* (`BB_GPL`) handle shaders the cache does not have yet. A small "Compiling shaders: NN%" note appears only on loading screens and menus, never in gameplay (`BB_COMPILE_INDICATOR`).
+- **Shareable, GPU-independent shader cache**: export and import it as one `.zip` from the launcher; a cache made on another GPU is rebuilt for yours before the intro (see [Sharing the shader cache](#sharing-the-shader-cache)).
+- **The Old Hunters automatically**: its data ships with patch 1.09; `run.bat` reports the add-on as installed on a fresh install (`BB_AUTO_DLC=0` skips this).
+- **Window and audio**: `Alt+Enter` switches fullscreen at any time; the game is muted while its window is in the background (launcher option, `BB_MUTE_UNFOCUSED`); the mouse cursor shows only while the overlay menu is open.
+- **Clean exit**: closing the window, the in-game restart and timeouts end the process without unloading the Vulkan driver under the loader lock, which could leave a hung process holding the game's memory.
+- **VRAM guard**: *Full* VRAM pre-upload drops to normal on GPUs with less than ~11 GB (`BB_PREUPLOAD_FORCE=1` keeps it).
 
 ---
 
@@ -111,7 +118,7 @@ neither has nor includes.
 
 Clone the repository recursively:
 ```cmd
-git clone --recursive https://github.com/Mrsuss60/bloodborne_pc_windows_port.git
+git clone --recursive https://github.com/visy/bloodborne_pc_windows_port.git
 cd bloodborne_pc_windows_port
 ```
 
@@ -132,6 +139,10 @@ build.bat
 ```
 `build.bat` then builds the bridge `out\bbport_dlss.dll` (`gpu/dlss_bridge`, the only code that uses the SDK; it needs Visual Studio 2022, since the SDK's library is MSVC-only) and copies NVIDIA's `nvngx_dlss.dll` next to `out\bbport.exe`. Pick *DLSS* in the in-game menu (or `upscaler=dlss` in `bbport.ini`): the preset sets the render size, Native AA is DLAA. Without the DLLs, on other GPUs or with `BB_DLSS=0` it is listed as unavailable and a DLSS setting falls back to FSR 3.1.
 
+**Faster builds for your own PC (optional).**
+- `-DBB_MARCH=native` (or a CPU name such as `skylake`) when configuring `out/gpu` tunes the code for your processor; the result may not start on older CPUs.
+- Profile-guided optimization: configure a second build folder with `-DBB_PGO=generate -DBB_OUT_DIR=<folder>`, play about 20 minutes with that `bbport.exe` (it writes a profile into `pgo\` every 30 s), then reconfigure the same build folder with `-DBB_PGO=use` and build again. Only the port's own code is optimized (GPU command translation, caches, runtime), so it helps in CPU-limited scenes.
+
 ### 2. Launch the Game
 
 By default the game folder is expected next to the repository (`..\CUSA03173`). Saves and the shader cache go to `user\`; settings to `bbport.ini`.
@@ -142,11 +153,12 @@ Double-click `launch_gui.bat` or run:
 launch_gui.bat
 ```
 - Select your `eboot.bin` file or game folder.
-- Select your target frame rate (60 FPS recommended for smooth frame pacing).
-- Select your internal resolution (e.g., 1280x720 with FSR enabled for high performance).
-- With several monitors, pick the one for the game under *Monitor* (`BB_DISPLAY=<number or part of the name>`).
-- Enable desired patches under the Patches tab (e.g., *Performance Patch*, *Disable Motion Blur*, *Skip Intro*).
-- Click **Launch Bloodborne**.
+- **Display**: target frame rate (60 FPS recommended), render resolution, fullscreen, monitor (`BB_DISPLAY`), frames ahead (1 = least input lag, 2 = default, 3 = smoothest).
+- **Graphics**: upscaler, object motion vectors, anisotropic filtering, VRAM pre-upload (*Full* needs a 12 GB+ GPU).
+- **Performance & Shaders**: *Performance Patch*, draw preparation workers, shader precompile, async shaders, GPL, the compile indicator, and **Export / Import shader cache**.
+- **Game**: skip intro, skip the online/offline choice, settings in the game's System menu, mods, and *All XML Patches...*.
+- **Input & Audio**: controller (`BB_GAMEPAD`), overlay on `L3 + R3`, mute in background.
+- Hover any option for details, then click **Launch Bloodborne**. `run.bat` started on its own uses the same saved settings.
 
 #### Option B: Using the Command Line
 Run `run.bat` pointing to your game directory:
@@ -162,7 +174,7 @@ Save files and shader caches are stored in `user\`. Settings are saved to `bbpor
 
 **Third-party patches:** shadPS4-format XML patch files in `patches\`, switched on and off in `patches.json`. See [mods and patches](docs/MODS.md).
 
-**DLC:** put your add-on dumps in `user\addcont\<title id>\<entitlement label>\`, e.g. `user\addcont\CUSA03173\SPEXPANSIONDLC03` for The Old Hunters.
+**DLC:** The Old Hunters' data is part of patch 1.09 (maps `m34`–`m36`); the game only needs the add-on reported as installed. `run.bat` does that automatically on a fresh install by creating `user\addcont\CUSA03173\SPEXPANSIONDLC03` when those maps exist (`BB_AUTO_DLC=0` skips it). Other add-on dumps go in `user\addcont\<title id>\<entitlement label>\`.
 
 ### Upscaler assets
 
@@ -178,13 +190,25 @@ FSR 3.1 needs none. FSR 4 (v07) and FSR 4.1.1 need assets that are not included:
 - **Free Camera**: When enabled in the launcher or overlay, hold `Cross` and press `L3` (or hold `Space` and press `Z` on keyboard) to cycle camera modes. Uses Lance McDonald's GoldHEN patch; conflicts with *Enemy Control*.
 - **Debug Menu**: If debug fonts (`DbgFont14h.ccm` and `DbgFont14h.tpf`, from [Debug Menu and XML Patch](https://www.nexusmods.com/bloodborne/mods/253)) are installed into `dvdroot_ps4/font/` (or `adhoc/font/`), open the menu using `Tab` or the left half of the controller touchpad. Startup rejects missing or empty font files instead of launching the unsafe patch.
 
+### Shader compilation
+
+A PC GPU needs every shader combination compiled into a pipeline before it can draw it, which is where first-time stutter comes from. The port records each pipeline the game uses in `user\cache\CUSA03173\` and:
+- **Precompiles the cache before the intro** (`BB_SHADER_PRECOMPILE`, default on): all cores build every cached pipeline before the logos; a progress screen appears when this takes longer than a moment (first launch, a new GPU, a grown cache). Later launches reuse the driver's own disk cache and are quick. `Esc` quits during the screen.
+- **Async shader compilation** (`BB_ASYNC_SHADERS`, default off, can be switched live in the overlay): a pipeline the cache does not have is built in the background and the object is skipped for a few frames instead of stopping the game. Compute work, frame-defining passes and one-off render targets are never skipped. `BB_FRAME_STATS=1` logs skipped draws and any wait over 50 ms.
+- **Graphics pipeline library** (`BB_GPL`, default off, restart needed): builds pipeline parts separately and links them quickly, with an optimized relink in the background; needs `VK_EXT_graphics_pipeline_library` with fast linking (falls back to whole pipelines otherwise).
+- **Compile indicator** (`BB_COMPILE_INDICATOR`, default on): "Compiling shaders: NN%" in a corner, only on loading screens and menus (frames without the game's 3D G-buffer pass), never during gameplay.
+
+Shaders the game has never used on any machine cannot be prepared up front: a pipeline depends on draw state the game only sets while running. A shared cache from a player who visited more areas covers them.
+
 ### Sharing the shader cache
+
+The launcher's **Export shader cache...** saves the cache as one `.zip`; **Import shader cache...** merges one into yours without overwriting anything (GPU-specific files are taken only when they were made for the same GPU; the rest is rebuilt before the intro). Caches from several players can be combined.
 
 The pipeline cache in `user\cache\CUSA03173\` can be copied as-is to another PC, also one with a different GPU. Next to the compiled shaders it keeps each shader's source (`.src` files: the game's shader code and the inputs of its translation). When the cache was made for another GPU (or by a build with a changed shader translator), the first launch translates every shader again from these sources for the current GPU ("Shader cache: rebuilding N shaders for this GPU..." in the log) instead of throwing the cache away. `BB_SHADER_CACHE_REBUILD=1` forces this rebuild, `BB_SHADER_CACHE_REBUILD_THREADS=N` sets its thread count. `BB_SHADER_CACHE_SELFTEST=1` translates each newly compiled shader a second time from its stored source and logs any difference (a developer check). The cache contains data derived from the game's shaders: share it only with people who own the game, and never commit it to this repository.
 
 ### Useful environment variables
 
-`BB_FRAME_STATS=1` (frame statistics), `BB_SAVE_LOG=1` (frame and readback statistics into `logs\<time>.frames.csv` / `.readbacks.csv`; the launcher's own log is `launcher.log`), `BB_ANISO=N` (anisotropic filtering; 16 by default, 0 = the game's own), `BB_UPSCALER=taa|fsr3|fsr4|fsr411|dlss|off`, `BB_FRAMES_AHEAD=N`, `BB_PRESENT_THREAD=0`, `BB_LIVE_RES=1`, `BB_PREUPLOAD=0|1|2` (background upload of GPU memory into VRAM: 1 by default, 2 = all of it, ~3 GB more VRAM, 0 = off), `BB_READBACKS=0|1|2`, `BB_GPU_PROFILE=1`, `BB_BREADCRUMBS=0`, `BB_DISPLAY`, `BB_GAMEPAD`, `BB_SKIP_NETWORK_CHOICE=0`, `BB_GAME_MENU=0`, `BB_SKIP_GAME_CHECK=1`.
+`BB_FRAME_STATS=1` (frame statistics), `BB_SAVE_LOG=1` (frame and readback statistics into `logs\<time>.frames.csv` / `.readbacks.csv`; the launcher's own log is `launcher.log`), `BB_ANISO=N` (anisotropic filtering; 16 by default, 0 = the game's own), `BB_UPSCALER=taa|fsr3|fsr4|fsr411|dlss|off`, `BB_FRAMES_AHEAD=N`, `BB_PRESENT_THREAD=0`, `BB_LIVE_RES=1`, `BB_PREUPLOAD=0|1|2` (background upload of GPU memory into VRAM: 1 by default, 2 = all of it, ~3 GB more VRAM, 0 = off), `BB_READBACKS=0|1|2`, `BB_GPU_PROFILE=1`, `BB_BREADCRUMBS=0`, `BB_DISPLAY`, `BB_GAMEPAD`, `BB_SKIP_NETWORK_CHOICE=0`, `BB_GAME_MENU=0`, `BB_SKIP_GAME_CHECK=1`, `BB_FULLSCREEN=1`, `BB_MUTE_UNFOCUSED=0`, `BB_OVERLAY_PAD=1` (overlay on `L3 + R3`), `BB_AUTO_DLC=0`, `BB_PREUPLOAD_FORCE=1`, `BB_SHADER_PRECOMPILE=0`, `BB_ASYNC_SHADERS=1` (with `BB_ASYNC_SHADERS_POLICY=aggressive`, `BB_ASYNC_SHADERS_MAX_SKIP_FRAMES`, `BB_ASYNC_SHADERS_QUEUE`, `BB_SHADER_THREADS`), `BB_GPL=1` (`BB_GPL_STATS=1`), `BB_COMPILE_INDICATOR=0`, `BB_COMPILE_PROGRESS_TEST=1`.
 More in [docs/](docs); recent upstream changes: [docs/CHANGES_after_0.4.md](docs/CHANGES_after_0.4.md), [docs/CHANGES_0.4.md](docs/CHANGES_0.4.md) (in Russian), [docs/CHANGES_2026-10-06.md](docs/CHANGES_2026-10-06.md).
 
 > Upstream (Linux) also ships a GTK4 launcher, an AppImage for the Steam Deck, MangoHud integration and `run.sh`/`build.sh`; those are kept in this repository for reference but are not used on Windows.
