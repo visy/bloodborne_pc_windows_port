@@ -21,7 +21,9 @@ PATCHES_XML = APP_DIR / "patches" / "Bloodborne.xml"
 DEFAULT_GAME = Path(os.environ.get("BB_GAME_DIR", "../CUSA03173"))
 
 FPS_CHOICES = ["uncap", "60", "90", "30"]
-RES_CHOICES = ["Default (1080p)", "1280x720", "1920x1080", "2560x1440", "3840x2160"]
+RES_CHOICES = ["From in-game menu", "1280x720", "1920x1080", "2560x1440", "3840x2160"]
+# Earlier name of RES_CHOICES[0] in saved settings
+LEGACY_RES_DEFAULT = "Default (1080p)"
 TIMEOUT_CHOICES = ["0 (no limit)", "10", "30", "60", "120", "300", "600"]
 ANISO_CHOICES = [
     ("16x", "16", "16x anisotropic filtering of scene textures (recommended)"),
@@ -121,6 +123,8 @@ def settings_env(s: dict) -> dict:
 
     # Resolution scaling
     res_choice = s.get("res", RES_CHOICES[0])
+    if res_choice not in RES_CHOICES:  # including LEGACY_RES_DEFAULT
+        res_choice = RES_CHOICES[0]
     env["BB_RENDER_RES"] = res_choice if on("feat_res_scaling") and res_choice != RES_CHOICES[0] else None
 
     env["BB_TRACE"] = "1" if on("feat_tracing") else "0"
@@ -600,13 +604,15 @@ class BloodborneLauncher(tk.Tk):
         tab = self._tab("Display")
         sec = self._section(tab, 0, "Resolution & window")
         self._check(sec, "Resolution scaling", self.feat_res_scaling,
-                    "Renders the game at the resolution chosen below instead of the native 1080p. "
-                    "Off = native 1080p rendering. Default: on (BB_RENDER_RES).",
+                    "Lets the render resolution below override the game. Off = native 1080p rendering. "
+                    "Default: on (BB_RENDER_RES).",
                     command=self.update_res_scaling_state)
         self.res_combo = self._combo(
             sec, "Render resolution:", self.res_var, RES_CHOICES,
-            "Internal render resolution used when Resolution scaling is on. Higher is sharper but heavier "
-            "on the GPU and uses more memory. Default (1080p) = the game's native size (BB_RENDER_RES).",
+            "From in-game menu (recommended): the in-game Output resolution and the upscaler preset "
+            "(DLSS / FSR quality levels) decide the render size, and changes are kept. A fixed value "
+            "here renders the 3D scene at exactly that size for the whole session and overrides the "
+            "in-game preset (BB_RENDER_RES).",
             width=18, indent=True)
         self._check(sec, "Fullscreen", self.feat_fullscreen,
                     "Starts the game in fullscreen instead of a window. You can also toggle it in game with "
