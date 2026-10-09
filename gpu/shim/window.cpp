@@ -101,6 +101,13 @@ bool WindowSDL::PollEvents() {
     if (!text_active) {
         BbOverlay::UpdateTextInput(window);
     }
+    // The game has no mouse input: the cursor shows only while the overlay menu is open.
+    // Toggled here because the menu can also close from the present thread (Close button).
+    static int cursor_shown = -1;
+    if (const int want = BbOverlay::CapturesInput() ? 1 : 0; want != cursor_shown) {
+        cursor_shown = want;
+        want ? SDL_ShowCursor() : SDL_HideCursor();
+    }
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         if (text_active && (event.type == SDL_EVENT_TEXT_INPUT || event.type == SDL_EVENT_KEY_DOWN)) {

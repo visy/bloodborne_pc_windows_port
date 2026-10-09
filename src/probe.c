@@ -163,7 +163,7 @@ void runtime_notify_progress(void) {
 #endif
 }
 
-ABI void restore_guest_fs(void) {
+__attribute__((used)) ABI void restore_guest_fs(void) {
 #ifdef _WIN32
     void *tcb = runtime_thread_get_tcb();
     if (tcb) {
@@ -185,7 +185,7 @@ static inline int check_noisy_import(const char *sym) {
             !strcmp(sym, "scePthreadSelf") || !strcmp(sym, "_Getpctype"));
 }
 
-ABI void *pre_import_hook(uint32_t index, uint64_t *args, void *caller) {
+__attribute__((used)) ABI void *pre_import_hook(uint32_t index, uint64_t *args, void *caller) {
     runtime_notify_progress();
     if (index >= import_count) return NULL;
     uint64_t total = ++g_total_import_calls;
@@ -244,7 +244,7 @@ ABI void *pre_import_hook(uint32_t index, uint64_t *args, void *caller) {
     return resolved_targets[index];
 }
 
-ABI void post_import_hook(uint32_t index, uint64_t ret_val) {
+__attribute__((used)) ABI void post_import_hook(uint32_t index, uint64_t ret_val) {
     if (index >= import_count) return;
     uint64_t count = import_call_counts[index];
     const char *name = names[index];

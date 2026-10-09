@@ -33,6 +33,18 @@ if "%PYTHON%"=="" (
 )
 if "%PYTHON%"=="" set "PYTHON=python"
 
+REM Started without the launcher: apply its last saved settings (launcher_settings.json).
+REM A game path passed on the command line still wins. BB_NO_LAUNCHER_SETTINGS=1 skips this.
+if not "%BB_FROM_LAUNCHER%"=="1" if not "%BB_NO_LAUNCHER_SETTINGS%"=="1" if exist "launcher_settings.json" (
+    del "%TEMP%\bbport_launcher_env.bat" >nul 2>nul
+    "%PYTHON%" launcher.py --write-env "%TEMP%\bbport_launcher_env.bat"
+    if exist "%TEMP%\bbport_launcher_env.bat" (
+        call "%TEMP%\bbport_launcher_env.bat"
+        del "%TEMP%\bbport_launcher_env.bat" >nul 2>nul
+        echo Using launcher settings from launcher_settings.json
+    )
+)
+
 REM Writable directory for generated files (out/), saves (user/) and bbport.ini
 if "%BB_DATA_DIR%"=="" set "BB_DATA_DIR=."
 set "out=%BB_DATA_DIR%\out"
