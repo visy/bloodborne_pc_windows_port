@@ -127,7 +127,7 @@ def settings_env(s: dict) -> dict:
     env["BB_TIMEOUT"] = str(s.get("timeout", "0")).split()[0]
     env["BB_WATCHDOG"] = None if on("feat_watchdog") else "0"
     env["BB_PREP_WORKERS"] = None if on("feat_draw_prep") else "0"
-    env["BB_FULLSCREEN"] = "1" if on("feat_fullscreen", False) else "0"
+    env["BB_FULLSCREEN"] = "1" if on("feat_fullscreen", bool(s.get("fullscreen", False))) else "0"
     # Overlay menu toggle on gamepad L3 + R3 (Insert always works)
     env["BB_OVERLAY_PAD"] = "1" if on("feat_overlay_pad", False) else "0"
 
@@ -446,7 +446,8 @@ class BloodborneLauncher(tk.Tk):
         self.feat_tracing = tk.BooleanVar(value=self.settings.get("feat_tracing", True))
         self.feat_watchdog = tk.BooleanVar(value=self.settings.get("feat_watchdog", True))
         self.feat_draw_prep = tk.BooleanVar(value=self.settings.get("feat_draw_prep", True))
-        self.feat_fullscreen = tk.BooleanVar(value=self.settings.get("feat_fullscreen", False))
+        self.feat_fullscreen = tk.BooleanVar(  # "fullscreen": key of the upstream launcher toggle (PR #39)
+            value=self.settings.get("feat_fullscreen", self.settings.get("fullscreen", False)))
         self.feat_overlay_pad = tk.BooleanVar(value=self.settings.get("feat_overlay_pad", False))
         self.feat_game_menu = tk.BooleanVar(value=self.settings.get("feat_game_menu", True))
         self.feat_skip_network_choice = tk.BooleanVar(value=self.settings.get("feat_skip_network_choice", True))
