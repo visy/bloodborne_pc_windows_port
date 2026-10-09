@@ -56,6 +56,8 @@ struct Profile {
     bool supports_shader_stencil_export{};
     /// bbport: VK_EXT_depth_clip_control (vertex shaders emulate [-w, w] depth without it).
     bool supports_depth_clip_control{};
+    /// bbport BB_LAYER_MEMORY: guest buffers of IsPagedBuffer size go through the page table.
+    bool paged_buffers{};
 
     bool operator==(const Profile&) const = default;
 };

@@ -232,6 +232,10 @@ set "probe=%BB_PROBE%"
 if "%probe%"=="" set "probe=out\bbport.exe"
 set "user_dir=%BB_USER_DIR%"
 if "%user_dir%"=="" set "user_dir=%BB_DATA_DIR%\user"
+REM GPU caches (shader cache) go to the same user directory: the GPU library reads
+REM BB_GPU_USER_DIR when it starts, before --user reaches it (as run.sh).
+if "%BB_GPU_USER_DIR%"=="" set "BB_GPU_USER_DIR=%user_dir%"
+if not exist "%BB_GPU_USER_DIR%" mkdir "%BB_GPU_USER_DIR%"
 REM The Old Hunters: its data ships in patch 1.09 (maps m34-m36), the game only needs the add-on
 REM reported as installed. A fresh install gets the entitlement folder automatically when the
 REM DLC maps are present and no add-on folder exists yet. BB_AUTO_DLC=0 skips this.

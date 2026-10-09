@@ -16,7 +16,7 @@ extern std::unique_ptr<AmdGpu::Liverpool> liverpool;
 
 namespace Vulkan {
 
-static constexpr u64 COPY_SHADER_HASH = 0xfefebf9f;
+static constexpr u64 COPY_SHADER_HASH = Shader::BufferCopyShaderHash;
 
 // bbport: the copy shader runs ~57 times per frame with ~1024 small ranges each. As one
 // vkCmdCopyBuffer with that many regions it cost ~37 ns of GPU time per range (~2.1 ms per
@@ -271,10 +271,17 @@ bool ExecuteShaderHLE(const Shader::Info& info, const AmdGpu::Regs& regs,
         // bbport: with the game's memory in place the game's shader runs (translated), reading its
         // copy list when the GPU executes it. BB_COPY_SHADER_NATIVE=0: the list read on the CPU
         // when the dispatch is recorded, copies of our own (before). Experiment bit 2 inverts it
-        // while the game runs.
+        // while the game runs. The layer's paged stores now write through to guest memory while
+        // keeping the current mirrors in sync, so the original shader is the default here too.
         static const bool native_env = [] {
             const char* env = std::getenv("BB_COPY_SHADER_NATIVE");
-            return !env || env[0] != '0';
+            const bool native = !env || env[0] != '0';
+            const bool translated = VideoCore::GuestInPlace() && native != BbToggle::Experiment(2);
+            std::printf("GPU: buffer copy shader fefebf9f: %s%s (BB_COPY_SHADER_NATIVE=0: HLE)\n",
+                        translated ? "original translated shader" : "HLE",
+                        translated && VideoCore::BufferCache::LayerPagedActive()
+                            ? ", paged writes through to guest memory" : "");
+            return native;
         }();
         if (VideoCore::GuestInPlace() && native_env != BbToggle::Experiment(2)) {
             return false;

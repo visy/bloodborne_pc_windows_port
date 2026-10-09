@@ -34,6 +34,7 @@
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_hle.h"
+#include "video_core/renderer_vulkan/vk_gpu_labels.h"
 #include "video_core/renderer_vulkan/vk_indirect_guard.h"
 #include "video_core/renderer_vulkan/vk_occlusion.h"
 #include "video_core/texture_cache/image_view.h"
@@ -213,9 +214,15 @@ bool Rasterizer::WriteDataOnGpu(VAddr address, const void* data, u32 size) {
     if (!enabled || !VideoCore::GuestInPlace() || size == 0 || (address | size) % 4 != 0) {
         return false;
     }
+    // bbport BB_LAYER_MEMORY: a range whole in a mirror is written there too (asked first: the
+    // target demotes it otherwise).
+    const auto mirror = buffer_cache.CommandWriteMirror(address, size);
     const auto target = buffer_cache.CommandWriteTarget(address, size);
     if (!target) {
         return false;
+    }
+    if (mirror) {
+        runtime.UpdateBuffer(mirror->first, mirror->second, {static_cast<const u8*>(data), size});
     }
     runtime.UpdateBuffer(target->first, target->second, {static_cast<const u8*>(data), size});
     if (size <= sizeof(u64) && HonestLabels()) {
@@ -254,26 +261,43 @@ u64 Rasterizer::OcclusionEvents() const {
 bool Rasterizer::WriteLabelOnGpu(VAddr address, u64 value, u32 num_bytes) {
     static const bool enabled = [] {
         const char* env = std::getenv("BB_GPU_LABELS");
-        const bool on = !env || env[0] != '0';
-        if (on && VideoCore::GuestInPlace()) {
-            std::printf("GPU: end-of-pipe labels are written by the GPU (buffer markers; "
-                        "BB_GPU_LABELS=0: by a CPU thread after the GPU)\n");
-        }
-        return on;
+        return !env || env[0] != '0';
     }();
     if (!enabled || !VideoCore::GuestInPlace() || !HonestLabels() ||
-        !instance.IsBufferMarkerSupported() || BbFreeCheck::Enabled() ||
-        (num_bytes != 4 && num_bytes != 8) || address % num_bytes != 0) {
+        BbFreeCheck::Enabled() || (num_bytes != 4 && num_bytes != 8) ||
+        address % num_bytes != 0) {
         return false;
     }
     const auto target = buffer_cache.GuestChunkSource(address, num_bytes);
     if (!target) {
         return false;
     }
+    static const bool force_portable = [] {
+        const char* env = std::getenv("BB_GPU_LABELS_PORTABLE");
+        return env && env[0] != '0';
+    }();
+    const bool marker = instance.IsBufferMarkerSupported() && !force_portable;
+    static const bool announced = [&] {
+        std::printf("GPU: end-of-pipe labels are written by the GPU (%s; "
+                    "BB_GPU_LABELS=0: by a CPU thread after the GPU)\n",
+                    marker ? "AMD buffer markers" : "portable Vulkan updates");
+        return true;
+    }();
+    (void)announced;
+    if (!marker) {
+        // Core Vulkan transfer commands are forbidden inside a render pass. Preserve command
+        // order by ending it here, then restart rendering normally at the next draw.
+        scheduler.EndRendering();
+        runtime.FlushBarriers();
+    }
     // The 64-bit label as two 32-bit end-of-pipe writes, the high half first: whoever sees the
     // new low half (the guest polls that) sees the new high half too.
     scheduler.Record([buffer = target->first->Handle(), offset = target->second, value,
-                      num_bytes](vk::CommandBuffer cmdbuf) {
+                      num_bytes, marker](vk::CommandBuffer cmdbuf) {
+        if (!marker) {
+            RecordPortableGpuLabel(cmdbuf, buffer, offset, value, num_bytes);
+            return;
+        }
         if (num_bytes == 8) {
             cmdbuf.writeBufferMarkerAMD(vk::PipelineStageFlagBits::eBottomOfPipe, buffer,
                                         offset + 4, static_cast<u32>(value >> 32));
@@ -281,6 +305,11 @@ bool Rasterizer::WriteLabelOnGpu(VAddr address, u64 value, u32 num_bytes) {
         cmdbuf.writeBufferMarkerAMD(vk::PipelineStageFlagBits::eBottomOfPipe, buffer, offset,
                                     static_cast<u32>(value));
     });
+    if (!marker) {
+        runtime.AccessBuffer(target->first, target->second, num_bytes,
+                             vk::PipelineStageFlagBits2::eTransfer,
+                             vk::AccessFlagBits2::eTransferWrite);
+    }
     // A VRAM copy of these bytes gets them too, at its next binding (as for CPU-written labels).
     buffer_cache.NoteLateCommandWrite(address, &value, num_bytes);
     BbStats::gpu_labels.fetch_add(1, std::memory_order_relaxed);
@@ -426,6 +455,7 @@ void Rasterizer::GpuWatchdog(u64 tick) {
         std::printf("GPU watchdog: submission %llu not finished after 10 s (the GPU finished %llu, "
                     "recording %llu): the GPU is stuck\n",
                     (unsigned long long)tick, (unsigned long long)done, (unsigned long long)recording);
+        buffer_cache.ReportArenaBinds();
         Breadcrumbs::ReportStuck("submitted work not finished in 10 s");
     } else {
         std::printf("GPU watchdog: waited 10 s for submission %llu, not submitted yet (the GPU finished "
@@ -941,6 +971,7 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
         // waits for the packet (WaitForPendingReads).
         if (size == 0 || size > VideoCore::BufferCache::STREAM_THRESHOLD || constants_in_place ||
             buffer_cache.IsRegionGpuModified(address, size) || PendingWriteOverlaps(address, size) ||
+            VideoCore::BufferCache::LayerMirrored(address, size) ||
             !copy(index, nullptr, address, size) || hle_candidate) {
             NotePendingRead(address, size);
         }
@@ -1938,7 +1969,7 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     // the game's memory. They hold data our translator reads on the CPU (next to shader code the
     // game uploads this way); a VRAM copy of them showed it a stale copy (a black scene). The
     // copy list read on the CPU (vk_shader_hle.cpp) kept them in place too.
-    buffer_cache.force_writes_in_place = cs.pgm_hash == 0xfefebf9f;
+    buffer_cache.force_writes_in_place = cs.pgm_hash == Shader::BufferCopyShaderHash;
     const bool bound = BindResources(pipeline);
     buffer_cache.force_writes_in_place = false;
     if (!bound) {
@@ -2681,6 +2712,9 @@ void Rasterizer::ResolveIndexBuffer(u32 index_offset) {
     const auto [buffer, offset] =
         buffer_cache.ObtainBuffer(index_address, index_buffer_size, false);
     needs_barrier |= runtime.IsBufferAccessed(buffer, offset, index_buffer_size);
+    // ResetBindings tracks graphics reads after the draw. Without this, an upload into a
+    // mirrored index range could overtake the previous draw's fixed-function index fetches.
+    bound_buffers.emplace_back(buffer, offset, index_buffer_size, false);
     index_bind = {buffer->Handle(), offset, index_type};
 }
 
@@ -2693,6 +2727,11 @@ void Rasterizer::ResetBindings(bool is_compute) {
                                           : vk::PipelineStageFlagBits2::eAllGraphics;
         const auto write_flag =
             is_written ? vk::AccessFlagBits2::eShaderWrite : vk::AccessFlagBits2::eNone;
+        if (!buffer) {
+            // bbport BB_LAYER_MEMORY: a paged binding (any buffer of the game's memory).
+            runtime.AccessGlobal(dst_stage, vk::AccessFlagBits2::eShaderRead | write_flag);
+            continue;
+        }
         runtime.AccessBuffer(buffer, offset, size, dst_stage,
                              vk::AccessFlagBits2::eShaderRead | write_flag);
     }
@@ -2700,6 +2739,19 @@ void Rasterizer::ResetBindings(bool is_compute) {
     bound_buffers.clear();
     needs_barrier = false;
 }
+
+namespace {
+// bbport BB_LAYER_MEMORY: the page table the info collection pass appends to every shader with
+// guest buffers is not one of the shader's own (the HLE patterns below count those).
+size_t ShaderBufferCount(const Shader::Info& info) {
+    size_t count = info.buffers.size();
+    if (count != 0 && !info.uses_dma &&
+        info.buffers.back().buffer_type == Shader::BufferType::BdaPagetable) {
+        --count;
+    }
+    return count;
+}
+} // namespace
 
 bool Rasterizer::IsComputeMetaClear(const Pipeline* pipeline) {
     if (!pipeline->IsCompute()) {
@@ -2746,7 +2798,7 @@ bool Rasterizer::IsComputeImageCopy(const Pipeline* pipeline, bool dry_run) {
     // Ensure shader only has 2 bound buffers
     const auto& cs_pgm = CsRegs();
     const auto& info = pipeline->GetStage(Shader::SwStage::Compute);
-    if (cs_pgm.num_thread_x.full != 64 || info.buffers.size() != 2 || !info.images.empty()) {
+    if (cs_pgm.num_thread_x.full != 64 || ShaderBufferCount(info) != 2 || !info.images.empty()) {
         return false;
     }
 
@@ -2817,7 +2869,7 @@ bool Rasterizer::IsComputeImageClear(const Pipeline* pipeline) {
     // Ensure shader only has 2 bound buffers
     const auto& cs_pgm = CsRegs();
     const auto& info = pipeline->GetStage(Shader::SwStage::Compute);
-    if (cs_pgm.num_thread_x.full != 64 || info.buffers.size() != 2 || !info.images.empty()) {
+    if (cs_pgm.num_thread_x.full != 64 || ShaderBufferCount(info) != 2 || !info.images.empty()) {
         return false;
     }
 
@@ -3016,6 +3068,45 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
             }
             if (vsharp.base_address == 0 || vsharp.GetSize() == 0) {
                 buffer_infos.emplace_back(VK_NULL_HANDLE, 0, VK_WHOLE_SIZE);
+            } else if (Shader::IsPagedBuffer(VideoCore::BufferCache::LayerPagedActive(), vsharp)) {
+                // bbport BB_LAYER_MEMORY: nearly all memory as one buffer: the shader reaches it
+                // through the page table; the descriptor holds its record. It may touch any
+                // buffer of the game's memory: barriers before it, and after it if it writes.
+                const auto [record, record_offset] = buffer_cache.LayerPagedRecord(
+                    vsharp.base_address, vsharp.GetSize(), desc.is_written);
+                // BB_LAYER_PAGED_STATS=1: paged bindings per shader, every 5 s.
+                static const bool paged_stats = std::getenv("BB_LAYER_PAGED_STATS") != nullptr;
+                if (paged_stats) {
+                    static std::map<std::pair<u64, u64>, std::pair<u64, u64>> counts;
+                    static u32 printed = 0;
+                    auto& c = counts[{stage.pgm_hash,
+                                      (vsharp.base_address << 1) | u64(desc.is_written)}];
+                    ++c.first;
+                    c.second = vsharp.GetSize();
+                    const u32 now = BbStats::coarse_second.load(std::memory_order_relaxed);
+                    if (now - printed >= 5) {
+                        printed = now;
+                        for (const auto& [key, value] : counts) {
+                            std::printf("Paged binding: shader %016llx buffer %#llx+%#llx %s: %llu "
+                                        "in 5 s\n",
+                                        (unsigned long long)key.first,
+                                        (unsigned long long)(key.second >> 1),
+                                        (unsigned long long)value.second,
+                                        (key.second & 1) ? "written" : "read",
+                                        (unsigned long long)value.first);
+                        }
+                        counts.clear();
+                    }
+                }
+                push_data.AddOffset(binding.buffer, 0);
+                buffer_infos.emplace_back(record->Handle(), record_offset, 32);
+                bound_buffers.emplace_back(nullptr, 0, 0, desc.is_written);
+                if (desc.is_written) {
+                    texture_cache.InvalidateMemoryFromGPU(
+                        vsharp.base_address,
+                        memory->ClampRangeSize(vsharp.base_address, vsharp.GetSize()));
+                }
+                needs_barrier = true;
             } else {
                 const u64 size = memory->ClampRangeSize(vsharp.base_address, vsharp.GetSize());
                 if (size != vsharp.GetSize()) {
@@ -3032,7 +3123,11 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                                 stage.pgm_hash);
                 }
                 push_data.AddOffset(binding.buffer, adjust);
-                buffer_infos.emplace_back(buffer->Handle(), offset_aligned, size + adjust);
+                // bbport BB_LAYER_MEMORY: a huge binding may come back cut at the end of its
+                // guest chunk's buffer.
+                buffer_infos.emplace_back(
+                    buffer->Handle(), offset_aligned,
+                    std::min<u64>(size + adjust, buffer->SizeBytes() - offset_aligned));
                 bound_buffers.emplace_back(buffer, offset, size, desc.is_written);
                 if (desc.is_written) {
                     // Raw storage-buffer writes can also make an aliased cached image stale.
@@ -3987,7 +4082,8 @@ void Rasterizer::FillBuffer(VAddr address, u32 num_bytes, u32 value, bool is_gds
         // (VRAM copies, unbound memory: shader code, descriptors this thread reads) on the CPU in
         // decode order, as before; the VRAM copy follows through write tracking.
         if (!buffer_cache.IsAnyInPlace(address, num_bytes) &&
-            !buffer_cache.IsRegionGpuModified(address, num_bytes)) {
+            !buffer_cache.IsRegionGpuModified(address, num_bytes) &&
+            !VideoCore::BufferCache::LayerMirrored(address, num_bytes)) {
             BbFreeCheck::Check(address, num_bytes, &value, BbFreeCheck::DmaFill);
             u32* buffer = std::bit_cast<u32*>(address);
             std::fill(buffer, buffer + (num_bytes / sizeof(u32)), value);
@@ -4014,15 +4110,19 @@ bool Rasterizer::DmaMayWriteOnCpu(VAddr dst, u32 num_bytes) {
         return true;
     }
     return !buffer_cache.IsAnyInPlace(dst, num_bytes) &&
-           !buffer_cache.IsRegionGpuModified(dst, num_bytes);
+           !buffer_cache.IsRegionGpuModified(dst, num_bytes) &&
+           !VideoCore::BufferCache::LayerMirrored(dst, num_bytes);
 }
 
 void Rasterizer::CopyBuffer(VAddr dst, VAddr src, u32 num_bytes, bool dst_gds, bool src_gds) {
     DrainDrawPipe();
     // bbport BB_GUEST_IN_PLACE: see FillBuffer (in place: the GPU, in stream order).
     if (!dst_gds && !buffer_cache.IsAnyInPlace(dst, num_bytes) &&
-        !buffer_cache.IsRegionGpuModified(dst, num_bytes)) {
+        !buffer_cache.IsRegionGpuModified(dst, num_bytes) &&
+        !VideoCore::BufferCache::LayerMirrored(dst, num_bytes)) {
+        // bbport BB_LAYER_MEMORY: a VRAM copy of the source may hold newer data than the game's memory.
         if (!src_gds && !buffer_cache.IsRegionGpuModified(src, num_bytes) &&
+            !VideoCore::BufferCache::LayerMirrored(src, num_bytes) &&
             !texture_cache.FindImageFromRange(src, num_bytes)) {
             // Both buffers were not transferred to GPU yet. Can safely copy in host memory.
             BbFreeCheck::Check(dst, num_bytes, std::bit_cast<const void*>(src), BbFreeCheck::DmaCopy);

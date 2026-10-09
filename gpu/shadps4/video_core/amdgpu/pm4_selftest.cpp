@@ -122,7 +122,7 @@ void Report(const Hooks& hooks) {
         std::printf("PM4 self-test: %-34s %s (%s)\n", name, ok ? "PASS" : "FAIL", detail.c_str());
         failures += ok ? 0 : 1;
     };
-    // Occlusion: a submission with draws, and nothing between two events.
+    // Occlusion: draws across submissions/render-pass cuts, and nothing between two events.
     const auto samples = [&](VAddr results, bool& valid) {
         u64 total = 0;
         valid = true;
@@ -137,7 +137,7 @@ void Report(const Hooks& hooks) {
     const u64 visible = samples(s + OccVisible, valid_visible);
     const u64 empty = samples(s + OccEmpty, valid_empty);
     const u64 events = hooks.occlusion_events() - state.events_before;
-    check("occlusion: samples of a submission", valid_visible && visible > 0,
+    check("occlusion: samples across submissions", valid_visible && visible > 0,
           std::to_string(visible) + " samples, valid " + std::to_string(valid_visible) + ", " +
               std::to_string(events) + " events translated");
     check("occlusion: nothing between two events", valid_empty && empty == 0,
@@ -206,13 +206,13 @@ Injection Next(u32 num_dwords, const Hooks& hooks) {
         s.events_before = hooks.occlusion_events();
         break;
     case 1:
-        if (num_dwords < 1024 && now - s.last_step < std::chrono::seconds(4)) {
-            return {}; // a submission with draws, if one comes
-        }
+        // A large PM4 submission can contain only compute/state commands. Keep this interval
+        // open until the next timed step instead: actual draws and multiple pass/command-buffer
+        // boundaries occur meanwhile, irrespective of how the label backend cuts rendering.
         s.before.Zpass(base + OccVisible);
-        s.after.Zpass(base + OccVisible + 8);
         break;
     case 2:
+        s.before.Zpass(base + OccVisible + 8);
         s.before.Zpass(base + OccEmpty);
         s.before.Zpass(base + OccEmpty + 8);
         break;

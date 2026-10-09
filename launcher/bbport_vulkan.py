@@ -24,30 +24,6 @@ LIBRARY_DIRS = (
 )
 
 
-AMD_VENDOR = "0x1002"
-NVIDIA_VENDOR = "0x10de"
-# GPUs the new memory model runs on: AMD (dma-buf chunks), NVIDIA (host memory import); the game
-# checks at startup that the driver can do it and falls back to the old model otherwise.
-PC_MODEL_VENDORS = {AMD_VENDOR, NVIDIA_VENDOR}
-
-
-def pc_model_gpu(drm_dir=Path("/sys/class/drm")):
-    """Whether the system has a GPU the new memory model runs on (AMD or NVIDIA).
-
-    True or False from the kernel's PCI vendor ids; None when they cannot be read (a sandbox
-    without /sys): the game itself turns the model off on another GPU.
-    """
-    vendors = set()
-    for path in drm_dir.glob("card[0-9]*/device/vendor"):
-        try:
-            vendors.add(path.read_text(encoding='utf-8').strip().lower())
-        except OSError:
-            continue
-    if not vendors:
-        return None
-    return bool(vendors & PC_MODEL_VENDORS)
-
-
 def elf64(path):
     """Reject 32-bit ICDs in distributions that install both architectures."""
     try:

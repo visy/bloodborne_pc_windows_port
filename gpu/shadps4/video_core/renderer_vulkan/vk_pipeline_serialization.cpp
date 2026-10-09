@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <map>
 #include <thread>
+#include <array>
 #include <unordered_set>
 #include <xxhash.h>
 #include "common/hash.h"
@@ -26,7 +27,7 @@
 
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
-static constexpr u32 ShaderBinaryVersion = 7u; // bbport: interpolated integer fix (Pascal)
+static constexpr u32 ShaderBinaryVersion = 9u; // layer page-table pairs / guarded write-through stores
 static constexpr u32 ShaderMetaVersion = 7u; // bbport: ImageResource::needs_native
 static constexpr u32 PipelineKeyVersion = 6u; // bbport: discard fragment shader stored
 /// Keys of version 5 are the same without the discard fragment shader: still loaded (caches
@@ -854,7 +855,12 @@ void PipelineCache::WarmUp(bool parallel) {
         db.Save(Storage::BlobType::ShaderProfile, "profile", std::move(data));
     };
 
-    // Check if cache is compatible
+    // Shader metadata and SPIR-V filenames share permutation indices. After a backend version
+    // change, retaining old blobs alongside new ones can associate a valid metadata entry with
+    // a different binary at the same index (upstream 0.5-pre2). The versions are checked together
+    // with the device profile before any module is loaded; a mismatch migrates the whole cache:
+    // with files, meta and SPIR-V are translated again from the GPU-independent sources (keys
+    // and sources kept); an archived cache cannot be rebuilt and is cleared.
     std::vector<u8> profile_data{};
     db.Load(Storage::BlobType::ShaderProfile, "profile", profile_data);
     bool compatible = false;
@@ -868,25 +874,28 @@ void PipelineCache::WarmUp(bool parallel) {
     } else if (constexpr size_t known = offsetof(Shader::Profile, supports_depth_clip_control);
                profile_data.size() >= known && profile_data.size() <= sizeof(Shader::Profile)) {
         // Caches written before the versions were appended (and before
-        // supports_depth_clip_control): the bare Profile of that build. Same GPU and the same
-        // meta/binary versions as now: still valid, the header is rewritten below.
-        compatible = std::memcmp(profile_data.data(), &profile, known) == 0;
-        if (compatible) {
-            LOG_INFO(Render, "Pipeline cache: header of an earlier build, same GPU: kept");
-            save_profile();
-        }
+        // supports_depth_clip_control): the bare Profile of that build, whose SPIR-V is binary
+        // version 7 (before upstream's version 9, layer page-table pairs). Recognized, but its
+        // meta and SPIR-V are migrated: rebuilt from the sources (keys and sources are kept).
+        LOG_INFO(Render, "Pipeline cache: header of an earlier build{}: shaders are rebuilt",
+                 std::memcmp(profile_data.data(), &profile, known) == 0 ? ", same GPU" : "");
+        compatible = false;
     }
 
     preload_profile_changed = false;
     if (!db.SupportsFiles()) {
-        // Archived cache: no rebuild, as upstream.
+        // Archived cache: no rebuild. As upstream, blobs of unknown or other versions are
+        // cleared rather than mixed with new ones.
         if (profile_data.empty()) {
+            db.Clear();
             db.FinishPreload();
             save_profile();
             return;
         }
         if (!compatible) {
-            LOG_WARNING(Render, "Pipeline cache isn't compatible with current system");
+            LOG_WARNING(Render, "Pipeline cache isn't compatible with current compiler/system: "
+                                "clearing it");
+            db.Clear();
             db.FinishPreload();
             save_profile();
             return;

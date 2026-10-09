@@ -24,6 +24,22 @@ namespace Vulkan {
 
 namespace {
 
+/// bbport BB_VRAM_LIMIT_MB=N (tests): the driver's VRAM budget taken as at most N MiB, at startup
+/// and while the game runs, so the texture collector and VRAM copies behave as on a smaller card
+/// (a 6 GB GTX 1660 Ti reports ~5600). Allocations themselves are not limited.
+u64 VramLimit() {
+    static const u64 limit = [] {
+        const char* env = std::getenv("BB_VRAM_LIMIT_MB");
+        const u64 mib = env && *env ? std::strtoull(env, nullptr, 10) : 0;
+        if (mib != 0) {
+            std::printf("GPU: VRAM budget limited to %llu MiB (BB_VRAM_LIMIT_MB)\n",
+                        (unsigned long long)mib);
+        }
+        return mib << 20;
+    }();
+    return limit;
+}
+
 std::vector<vk::PhysicalDevice> EnumeratePhysicalDevices(vk::UniqueInstance& instance) {
     auto [devices_result, devices] = instance->enumeratePhysicalDevices();
     ASSERT_MSG(devices_result == vk::Result::eSuccess, "Failed to enumerate physical devices: {}",
@@ -910,6 +926,9 @@ void Instance::CollectPhysicalMemoryInfo() {
         total_memory_budget += memory_props.memoryHeaps[i].size;
     }
     total_local_memory = local_memory;
+    if (VramLimit() != 0) {
+        total_memory_budget = std::min(total_memory_budget, VramLimit());
+    }
     if (!IsIntegrated()) {
         // Reserve memory for system only if we have plenty of dedicated VRAM (> 4 GB).
         // On discrete GPUs with <= 4 GB VRAM, the driver's memory budget already accounts
@@ -1008,7 +1027,7 @@ u64 Instance::GetDeviceMemoryBudgetNow() const {
     for (const size_t heap : valid_heaps) {
         total_budget += memory_budget_props.heapBudget[heap];
     }
-    return total_budget;
+    return VramLimit() != 0 ? std::min(total_budget, VramLimit()) : total_budget;
 }
 
 vk::FormatFeatureFlags2 Instance::GetFormatFeatureFlags(vk::Format format) const {

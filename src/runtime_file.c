@@ -558,6 +558,25 @@ static void touch_for_write(void *buffer,uint64_t size) {
         *b=*b;
     }
 }
+/* A page protected again between the touch and the kernel's copy (the GPU side re-arms its write
+ * traps): EFAULT with nothing read. Touched again, the read is tried again a few times. */
+static ssize_t read_retrying(int h,void *buffer,uint64_t size,int64_t offset,int positional) {
+    ssize_t n=-1;
+    for (int attempt=0; attempt<8; ++attempt) {
+#ifdef _WIN32
+        /* ReadFile into a page the GPU side protected again fails with ERROR_NOACCESS (the
+         * vectored handler never sees kernel-mode copies). Callers pass at most 1 GiB to read(). */
+        errno=0; SetLastError(0);
+        n=positional ? pread(h,buffer,size,offset) : read(h,buffer,(unsigned int)size);
+        if (n>=0 || (errno!=EFAULT && GetLastError()!=ERROR_NOACCESS)) break;
+#else
+        n=positional ? pread(h,buffer,size,offset) : read(h,buffer,size);
+        if (n>=0 || errno!=EFAULT) break;
+#endif
+        touch_for_write(buffer,size);
+    }
+    return n;
+}
 static int64_t do_read(int fd,void *buffer,uint64_t size) {
     int h=host_fd(fd);
     if (h<0) return -EBADF;
@@ -567,7 +586,7 @@ static int64_t do_read(int fd,void *buffer,uint64_t size) {
     uint64_t total_read = 0;
     while (total_read < size) {
         size_t chunk = (size - total_read > 0x40000000ULL) ? 0x40000000ULL : (size_t)(size - total_read);
-        int n = read(h, (char *)buffer + total_read, (unsigned int)chunk);
+        int n = (int)read_retrying(h, (char *)buffer + total_read, chunk, 0, 0);
         if (n < 0) {
             int e = errno;
             DWORD werr = GetLastError();
@@ -583,7 +602,7 @@ static int64_t do_read(int fd,void *buffer,uint64_t size) {
     __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,total_read,__ATOMIC_RELAXED);
     return (int64_t)total_read;
 #else
-    ssize_t n=read(h,buffer,size);
+    ssize_t n=read_retrying(h,buffer,size,0,0);
     if (n<0) { if (audio_trace()) printf("Audio trace: read(fd %d, %llu) failed, errno %d\n",fd,(unsigned long long)size,errno); return -errno; }
     if (n>0) runtime_memory_note_write((uintptr_t)buffer,(uint64_t)n); /* and once the data is there */
     __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,(uint64_t)n,__ATOMIC_RELAXED);
@@ -595,11 +614,12 @@ static int64_t do_pread(int fd,void *buffer,uint64_t size,int64_t offset) {
     if (h<0) return -EBADF;
     runtime_memory_note_write((uintptr_t)buffer,size);
     touch_for_write(buffer,size);
-    ssize_t n=pread(h,buffer,size,offset);
+    ssize_t n=read_retrying(h,buffer,size,offset,1);
     if (n<0) {
         int e = errno;
 #ifdef _WIN32
         DWORD werr = GetLastError();
+        if (e == 0) e = EIO; /* win_pread reports through GetLastError only */
         fprintf(stderr, "Runtime ERROR: pread(fd %d, size %llu, offset %lld) failed: errno %d, Win32 error %lu\n",
                 fd, (unsigned long long)size, (long long)offset, e, (unsigned long)werr);
 #endif

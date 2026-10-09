@@ -19,7 +19,6 @@ import time
 from pathlib import Path
 from bbport_assets import fsr411_problem
 from bbport_i18n import language, set_language, tr
-from bbport_vulkan import pc_model_gpu
 
 import gi
 
@@ -38,15 +37,13 @@ DATA_DIR = Path(os.environ.get("BB_DATA_DIR", PORT_DIR))
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "bbport-launcher"
 CONFIG_FILE = CONFIG_DIR / "settings.json"
 MAX_LOG_LINES = 5000
-# The new memory and translation model runs on AMD GPUs only for now (None: unknown).
-PC_MODEL_GPU = pc_model_gpu()
-PC_MODEL_SUBTITLE = ("Эксперимент, видеокарты AMD и NVIDIA. Видеокарта работает с памятью игры "
-                     "напрямую, как в игре для ПК, а команды графики переводятся, а не "
-                     "эмулируются; возможны ошибки. Если драйвер не проходит проверку при запуске "
-                     "— старая модель. Выключено — старая модель памяти, как в 0.3, "
-                     "со всеми исправлениями")
-PC_MODEL_NO_GPU = ("Только для видеокарт AMD и NVIDIA, а на этом компьютере их нет. Используется "
-                   "старая модель памяти, как в 0.3, со всеми исправлениями")
+# The new memory and translation model: any GPU (AMD: the sparse arena; NVIDIA and others: the
+# layer's memory module, no sparse binding of the game's memory).
+PC_MODEL_SUBTITLE = ("Эксперимент. Видеокарта работает с памятью игры напрямую, как в игре для ПК, "
+                     "а команды графики переводятся, а не эмулируются; возможны ошибки. На NVIDIA "
+                     "и других видеокартах, кроме AMD, — через модуль памяти прослойки. Если "
+                     "драйвер не проходит проверку при запуске — старая модель. Выключено — "
+                     "старая модель памяти, как в 0.3, со всеми исправлениями")
 # FSR 4.1.1 assets built from the user's AMD DLL (tools/fsr4cap, also in the package).
 FSR4CAP_DIR = PORT_DIR / "tools" / "fsr4cap"
 sys.path.insert(0, str(FSR4CAP_DIR))
@@ -283,10 +280,10 @@ def game_environment(s):
         env["BB_FRAME_STATS"] = "1"
     if s.get("save_log"):
         env["BB_SAVE_LOG"] = "1"
-    # The new memory and translation model (experimental, AMD GPUs only, off by default); the
+    # The new memory and translation model (experimental, off by default); the
     # model of 0.3 with the fixes made since otherwise. "pc_memory", "old_memory_model",
     # "new_memory_model" and "legacy_memory_model" of older settings are ignored.
-    env["BB_PC_MODEL"] = "1" if s.get("pc_model") and PC_MODEL_GPU is not False else "0"
+    env["BB_PC_MODEL"] = "1" if s.get("pc_model") else "0"
     # Synchronisation and memory as released in 0.3 (run.sh: BB_AS_0_3), for comparisons.
     if s.get("as_0_3"):
         env["BB_AS_0_3"] = "1"
@@ -510,10 +507,8 @@ class LauncherWindow(Adw.ApplicationWindow):
         mode = Adw.PreferencesGroup(title=tr("Режим работы"))
         self.pc_model_row = Adw.SwitchRow(
             title=tr("Новая модель памяти и трансляции"),
-            subtitle=tr(PC_MODEL_SUBTITLE if PC_MODEL_GPU is not False else PC_MODEL_NO_GPU),
-            active=self.settings.get("pc_model", False) and PC_MODEL_GPU is not False)
-        # Without an AMD GPU it shows the mode in use (off); the saved choice is kept.
-        self.pc_model_row.set_sensitive(PC_MODEL_GPU is not False)
+            subtitle=tr(PC_MODEL_SUBTITLE),
+            active=self.settings.get("pc_model", False))
         mode.add(self.pc_model_row)
         page.add(mode)
 
@@ -939,8 +934,7 @@ class LauncherWindow(Adw.ApplicationWindow):
         s["frame_stats"] = self.stats_row.get_active()
         s["save_log"] = self.save_log_row.get_active()
         s["crash_diag"] = self.crash_diag_row.get_active()
-        if self.pc_model_row.get_sensitive():
-            s["pc_model"] = self.pc_model_row.get_active()
+        s["pc_model"] = self.pc_model_row.get_active()
         s["as_0_3"] = self.as_0_3_row.get_active()
         s["gpu_profile"] = self.profile_row.get_active()
         s["vk_validation"] = self.validation_row.get_active()
