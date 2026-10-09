@@ -13,6 +13,8 @@
 
 #include <miniz.h>
 
+#include <algorithm>
+#include <atomic>
 #include <condition_variable>
 #include <functional>
 #include <future>
@@ -22,7 +24,8 @@
 namespace {
 
 std::mutex submit_mutex{};
-u32 num_requests{};
+// bbport: atomic: the shader cache rebuild saves from several threads.
+std::atomic<u32> num_requests{};
 std::condition_variable_any request_cv{};
 std::queue<std::packaged_task<void()>> req_queue{};
 std::mutex m_request{};
@@ -40,7 +43,7 @@ void ProcessIO(const std::stop_token& stoken) {
     while (!stoken.stop_requested()) {
         {
             std::unique_lock lk{submit_mutex};
-            Common::CondvarWait(request_cv, lk, stoken, [&] { return num_requests; });
+            Common::CondvarWait(request_cv, lk, stoken, [&] { return num_requests.load() != 0; });
         }
 
         if (stoken.stop_requested()) {
@@ -81,6 +84,9 @@ constexpr std::string GetBlobFileExtension(BlobType type) {
     }
     case BlobType::ShaderProfile: {
         return "bin";
+    }
+    case BlobType::ShaderSource: {
+        return "src";
     }
     default:
         UNREACHABLE();
@@ -245,6 +251,14 @@ void DataBase::Load(BlobType type, const std::string& name, std::vector<u32>& da
 }
 
 void DataBase::ForEachBlob(BlobType type, const std::function<void(std::vector<u8>&& data)>& func) {
+    ForEachNamedBlob(type, [&](const std::string&, std::vector<u8>&& data) {
+        func(std::move(data));
+    });
+}
+
+void DataBase::ForEachNamedBlob(
+    BlobType type,
+    const std::function<void(const std::string& name, std::vector<u8>&& data)>& func) {
     const auto& ext = GetBlobFileExtension(type);
     if (EmulatorSettings.IsPipelineCacheArchived()) {
         const auto num_files = mz_zip_reader_get_num_files(&zip_ar);
@@ -257,7 +271,7 @@ void DataBase::ForEachBlob(BlobType type, const std::function<void(std::vector<u
                 mz_zip_reader_file_stat(&zip_ar, index, &stat);
                 std::vector<u8> data(stat.m_uncomp_size);
                 mz_zip_reader_extract_to_mem(&zip_ar, index, data.data(), data.size(), 0);
-                func(std::move(data));
+                func(std::filesystem::path{file_name.data()}.stem().string(), std::move(data));
             }
         }
     } else {
@@ -268,25 +282,94 @@ void DataBase::ForEachBlob(BlobType type, const std::function<void(std::vector<u
                 if (file.IsOpen()) {
                     std::vector<u8> data(file.GetSize());
                     file.Read(data);
-                    func(std::move(data));
+                    func(file_name.path().stem().string(), std::move(data));
                 }
             }
         }
     }
 }
 
-void DataBase::Clear() {
+void DataBase::Clear(std::initializer_list<BlobType> keep) {
     if (!opened || EmulatorSettings.IsPipelineCacheArchived()) {
         return;
+    }
+    std::vector<std::string> kept_extensions;
+    for (const auto type : keep) {
+        kept_extensions.push_back("." + GetBlobFileExtension(type));
     }
     std::error_code ec;
     u64 removed = 0;
     for (const auto& entry : std::filesystem::directory_iterator(cache_path, ec)) {
-        if (entry.is_regular_file(ec) && std::filesystem::remove(entry.path(), ec)) {
+        if (!entry.is_regular_file(ec)) {
+            continue;
+        }
+        const auto extension = entry.path().extension().string();
+        if (std::ranges::find(kept_extensions, extension) != kept_extensions.end()) {
+            continue;
+        }
+        if (std::filesystem::remove(entry.path(), ec)) {
             ++removed;
         }
     }
     LOG_WARNING(Render, "Pipeline cache cleared ({} files): it is rebuilt for this build", removed);
+}
+
+bool DataBase::SupportsFiles() const {
+    return opened && !EmulatorSettings.IsPipelineCacheArchived();
+}
+
+bool DataBase::Exists(BlobType type, const std::string& name) const {
+    if (!SupportsFiles()) {
+        return false;
+    }
+    auto path = cache_path / name;
+    path.replace_extension(GetBlobFileExtension(type));
+    std::error_code ec;
+    return std::filesystem::is_regular_file(path, ec);
+}
+
+void DataBase::Remove(BlobType type, const std::string& name) {
+    if (!SupportsFiles()) {
+        return;
+    }
+    auto path = cache_path / name;
+    path.replace_extension(GetBlobFileExtension(type));
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+}
+
+std::vector<std::string> DataBase::ListNames(BlobType type) const {
+    std::vector<std::string> names;
+    if (!SupportsFiles()) {
+        return names;
+    }
+    const auto extension = "." + GetBlobFileExtension(type);
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(cache_path, ec)) {
+        if (entry.is_regular_file(ec) && entry.path().extension().string() == extension) {
+            names.push_back(entry.path().stem().string());
+        }
+    }
+    return names;
+}
+
+void DataBase::Flush() {
+    if (!opened) {
+        return;
+    }
+    auto done = std::make_shared<std::promise<void>>();
+    auto finished = done->get_future();
+    {
+        auto request = std::packaged_task<void()>{[done] { done->set_value(); }};
+        std::scoped_lock lock{m_request};
+        req_queue.emplace(std::move(request));
+    }
+    {
+        std::scoped_lock lk{submit_mutex};
+        ++num_requests;
+        request_cv.notify_one();
+    }
+    finished.wait();
 }
 
 void DataBase::FinishPreload() {

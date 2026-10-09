@@ -98,6 +98,28 @@ static u32 MapOutputs(std::span<Shader::OutputMap, 3> outputs, const AmdGpu::VsO
     return num_outputs;
 }
 
+/// bbport: register state behind the GPU-dependent runtime info bits (ShaderSource::host_flags).
+static u32 SourceHostFlags(const AmdGpu::Regs& regs, HwStage stage) {
+    u32 flags = 0;
+    if (stage == HwStage::Vertex && regs.clipper_control.clip_space == AmdGpu::ClipSpace::MinusWToW) {
+        flags |= ShaderSource::FlagClipSpaceMinusW;
+    }
+    if (stage == HwStage::Fragment) {
+        // Lowered user clip planes ride the same emulation path as guest-exported distances, so
+        // the fragment side arms whenever the hardware vertex stage lowers them, keeping its
+        // input locations in sync with the shifted vertex outputs.
+        const bool lowers_user_clip_planes =
+            regs.clipper_control.user_clip_plane_enable &&
+            !regs.stage_enable.IsStageEnabled(static_cast<u32>(HwStage::Geometry));
+        if ((regs.vs_output_control.clip_distance_enable &&
+             !regs.stage_enable.IsStageEnabled(static_cast<u32>(HwStage::Local))) ||
+            lowers_user_clip_planes) {
+            flags |= ShaderSource::FlagClipDistanceEmulation;
+        }
+    }
+    return flags;
+}
+
 const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& sel, HwStage stage,
                                                              SwStage l_stage) {
     auto& info = sel.runtime_infos[u32(l_stage)];
@@ -169,9 +191,7 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
         BuildCommon(regs.vs_program);
         info.hw.vs.user_clip_plane_mask = regs.clipper_control.user_clip_plane_enable;
         info.hw.vs.num_outputs = MapOutputs(info.hw.vs.outputs, regs.vs_output_control);
-        info.hw.vs.emulate_depth_negative_one_to_one =
-            !instance.IsDepthClipControlSupported() &&
-            regs.clipper_control.clip_space == AmdGpu::ClipSpace::MinusWToW;
+        ApplyHostRuntimeInfo(info, SourceHostFlags(regs, stage), profile);
         info.hw.vs.clip_disable = regs.IsClipDisabled();
         info.hw.vs.motion_vectors = sel.motion;
         break;
@@ -219,17 +239,7 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
         for (u32 i = 0; i < Shader::MaxColorBuffers; i++) {
             info.hw.fs.color_buffers[i] = sel.graphics_key.color_buffers[i];
         }
-        // Lowered user clip planes ride the same emulation path as guest-exported distances, so
-        // the fragment side arms whenever the hardware vertex stage lowers them, keeping its input
-        // locations in sync with the shifted vertex outputs.
-        const bool lowers_user_clip_planes =
-            regs.clipper_control.user_clip_plane_enable &&
-            !regs.stage_enable.IsStageEnabled(static_cast<u32>(HwStage::Geometry));
-        info.hw.fs.clip_distance_emulation =
-            ((regs.vs_output_control.clip_distance_enable &&
-              !regs.stage_enable.IsStageEnabled(static_cast<u32>(HwStage::Local))) ||
-             lowers_user_clip_planes) &&
-            profile.needs_clip_distance_emulation;
+        ApplyHostRuntimeInfo(info, SourceHostFlags(regs, stage), profile);
         break;
     }
     case HwStage::Compute: {
@@ -346,13 +356,15 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         .needs_unorm_fixup = instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
         .needs_clip_distance_emulation = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
         .supports_shader_stencil_export = instance_.IsShaderStencilExportSupported(),
+        .supports_depth_clip_control = instance_.IsDepthClipControlSupported(),
     };
-    WarmUp();
-
+    // bbport: created before the warm-up, whose preloaded pipelines are built with it.
     auto [cache_result, cache] = instance.GetDevice().createPipelineCacheUnique({});
     ASSERT_MSG(cache_result == vk::Result::eSuccess, "Failed to create pipeline cache: {}",
                vk::to_string(cache_result));
     pipeline_cache = std::move(cache);
+
+    WarmUp();
 }
 
 PipelineCache::~PipelineCache() = default;
@@ -794,7 +806,8 @@ bool PipelineCache::RefreshComputeKey() {
 
 vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::RuntimeInfo& runtime_info,
                                               const std::span<const u32>& code, size_t perm_idx,
-                                              Shader::Backend::Bindings& binding) {
+                                              Shader::Backend::Bindings& binding,
+                                              std::vector<u32>* spv_out) {
     LOG_INFO(Render_Vulkan, "Compiling {} shader {:#x} {}", info.hw_stage, info.pgm_hash,
              perm_idx != 0 ? "(permutation)" : "");
     DumpShader(code, info.pgm_hash, info.hw_stage, perm_idx, "bin");
@@ -815,6 +828,9 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
         module = CompileSPV(spv, instance.GetDevice());
     }
 
+    if (spv_out) {
+        *spv_out = spv;
+    }
     RegisterShaderBinary(std::move(spv), info.pgm_hash, perm_idx);
 
     const auto name = GetShaderName(info.hw_stage, info.pgm_hash, perm_idx);
@@ -875,9 +891,22 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
     if (it_pgm == program_cache.end()) {
         auto new_program = std::make_unique<Program>(hw_stage, sw_stage, params);
         auto start = binding;
-        const auto module =
-            CompileModule(new_program->info, runtime_info, params.code, 0, binding);
-        auto spec = Shader::StageSpecialization(new_program->info, runtime_info, profile, start);
+        // bbport: the inputs and guest memory reads of the compilation are recorded as its
+        // shader source (the cache is translated again from them for another GPU).
+        auto source = BeginShaderSource(sel, hw_stage, sw_stage, params, runtime_info, start, 0);
+        Shader::GuestReadLog log{Shader::GuestReadLog::Mode::Record};
+        std::vector<u32> spv;
+        vk::ShaderModule module{};
+        Shader::StageSpecialization spec{};
+        {
+            Shader::GuestReadLog::Scope scope{source ? &log : nullptr};
+            module = CompileModule(new_program->info, runtime_info, params.code, 0, binding,
+                                   source ? &spv : nullptr);
+            spec = Shader::StageSpecialization(new_program->info, runtime_info, profile, start);
+        }
+        if (source) {
+            FinishShaderSource(std::move(source), log, spv, spec, nullptr);
+        }
         const auto perm_hash = HashCombine(params.hash, 0);
 
         RegisterShaderMeta(new_program->info, spec.fetch_shader_data, spec, perm_hash, 0);
@@ -918,8 +947,25 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
         program->last_used = std::distance(program->modules.begin(), it);
     }
     if (it == program->modules.end()) {
-        auto new_info = Shader::Info(hw_stage, sw_stage, params);
-        module = CompileModule(new_info, runtime_info, params.code, perm_idx, binding);
+        auto source =
+            BeginShaderSource(sel, hw_stage, sw_stage, params, runtime_info, binding, perm_idx);
+        Shader::GuestReadLog log{Shader::GuestReadLog::Mode::Record};
+        std::vector<u32> spv;
+        {
+            Shader::GuestReadLog::Scope scope{source ? &log : nullptr};
+            if (source) {
+                // bbport: the specialization is made again under the log, so that its guest
+                // reads (resource tables, fetch shader) are part of the shader source.
+                info.RefreshFlatBuf();
+                spec = Shader::StageSpecialization(info, runtime_info, profile, binding);
+            }
+            auto new_info = Shader::Info(hw_stage, sw_stage, params);
+            module = CompileModule(new_info, runtime_info, params.code, perm_idx, binding,
+                                   source ? &spv : nullptr);
+        }
+        if (source) {
+            FinishShaderSource(std::move(source), log, spv, spec, program->info_template.get());
+        }
 
         RegisterShaderMeta(info, spec.fetch_shader_data, spec, perm_hash, perm_idx);
         std::unique_lock lk{programs_mutex};
@@ -932,6 +978,96 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
     }
     return std::make_tuple(&program->info, module,
                            program->modules[perm_idx].spec.fetch_shader_data, perm_hash);
+}
+
+static bool ShaderCacheSelfTest() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("BB_SHADER_CACHE_SELFTEST");
+        return value && value[0] == '1';
+    }();
+    return enabled;
+}
+
+std::unique_ptr<ShaderSource> PipelineCache::BeginShaderSource(
+    const PipelineSelection& sel, HwStage hw_stage, SwStage sw_stage,
+    const Shader::ShaderParams& params, const Shader::RuntimeInfo& runtime_info,
+    const Shader::Backend::Bindings& start, size_t perm_idx) {
+    if (!ShaderCacheSelfTest() && !Storage::DataBase::Instance().IsOpened()) {
+        return nullptr;
+    }
+    // Motion vertex shaders embed session-local buffer addresses: never preloaded or rebuilt.
+    if (hw_stage == HwStage::Vertex && runtime_info.hw.vs.motion_vectors) {
+        return nullptr;
+    }
+    auto source = std::make_unique<ShaderSource>();
+    source->pgm_hash = params.hash;
+    source->perm_idx = u32(perm_idx);
+    source->hw_stage = hw_stage;
+    source->sw_stage = sw_stage;
+    source->host_flags = hw_stage == HwStage::Compute ? 0u : SourceHostFlags(*sel.regs, hw_stage);
+    source->pgm_base = params.Base();
+    std::ranges::copy(params.user_data, source->user_data.begin());
+    source->start = start;
+    source->runtime_info = runtime_info;
+    if (hw_stage == HwStage::Geometry) {
+        const auto vs_copy = runtime_info.hw.gs.vs_copy;
+        source->vs_copy.assign(vs_copy.begin(), vs_copy.end());
+        source->runtime_info.hw.gs.vs_copy = {};
+    }
+    source->code.assign(params.code.begin(), params.code.end());
+    return source;
+}
+
+void PipelineCache::FinishShaderSource(std::unique_ptr<ShaderSource> source,
+                                       Shader::GuestReadLog& log, const std::vector<u32>& spv,
+                                       const Shader::StageSpecialization& spec,
+                                       const Shader::Info* base_info) {
+    if (log.inconsistent) {
+        // Guest memory changed while the shader was compiled: no exact copy of the inputs.
+        LOG_DEBUG(Render_Vulkan, "Shader source of {:#x} not recorded (inputs changed)",
+                  source->pgm_hash);
+        return;
+    }
+    source->ranges = std::move(log.ranges);
+    source->flat_bufs = std::move(log.flat_bufs);
+    auto blob = SerializeShaderSource(*source);
+
+    if (ShaderCacheSelfTest()) {
+        // Translate again from the serialized source, as the rebuild for another GPU does, and
+        // compare: proves that the source holds every input of the translation.
+        std::string failure;
+        ShaderSource copy{};
+        RebuiltShader out{};
+        Shader::Info base{};
+        if (base_info) {
+            base = *base_info;
+        }
+        if (source->perm_idx != 0 && !base_info) {
+            failure = "no program Info";
+        } else if (!DeserializeShaderSource(std::vector<u8>(blob), copy)) {
+            failure = "source blob does not read back";
+        } else if (!RebuildShader(copy, profile, pools, base, out)) {
+            failure = "a guest memory read is missing from the source";
+        } else if (out.spv != spv) {
+            failure = fmt::format("SPIR-V differs ({} / {} words)", out.spv.size(), spv.size());
+        } else if (!(spec == out.spec)) {
+            failure = "specialization differs";
+        }
+        ++selftest_runs;
+        if (!failure.empty()) {
+            ++selftest_failures;
+            LOG_ERROR(Render_Vulkan, "Shader cache self-test: {} shader {:#x} permutation {}: {}",
+                      source->hw_stage, source->pgm_hash, source->perm_idx, failure);
+        }
+        if (!failure.empty() || selftest_runs % 100 == 0) {
+            LOG_INFO(Render_Vulkan, "Shader cache self-test: {} shaders checked, {} mismatches",
+                     selftest_runs, selftest_failures);
+        }
+    }
+
+    Storage::DataBase::Instance().Save(Storage::BlobType::ShaderSource,
+                                       ShaderSourceName(source->pgm_hash, source->perm_idx),
+                                       std::move(blob));
 }
 
 std::optional<vk::ShaderModule> PipelineCache::ReplaceShader(vk::ShaderModule module,

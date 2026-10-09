@@ -232,6 +232,13 @@ set "probe=%BB_PROBE%"
 if "%probe%"=="" set "probe=out\bbport.exe"
 set "user_dir=%BB_USER_DIR%"
 if "%user_dir%"=="" set "user_dir=%BB_DATA_DIR%\user"
+REM The Old Hunters: its data ships in patch 1.09 (maps m34-m36), the game only needs the add-on
+REM reported as installed. A fresh install gets the entitlement folder automatically when the
+REM DLC maps are present and no add-on folder exists yet. BB_AUTO_DLC=0 skips this.
+if not "%BB_AUTO_DLC%"=="0" if exist "%game%\dvdroot_ps4\map\m34" if not exist "%user_dir%\addcont" (
+    mkdir "%user_dir%\addcont\CUSA03173\SPEXPANSIONDLC03" >nul 2>nul
+    echo The Old Hunters: add-on enabled ^(%user_dir%\addcont^)
+)
 set "timeout=%BB_TIMEOUT%"
 if "%timeout%"=="" set "timeout=0"
 

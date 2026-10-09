@@ -373,13 +373,27 @@ void EraseTwins(VAddr begin, VAddr end) {
 /// textures from the arena only where it is resident: no new VRAM. 2: all of the game's GPU
 /// memory, textures always from the arena (~3 GB more VRAM, the shared memory on a Steam Deck).
 /// 0: off.
+/// Largest device-local heap of a discrete GPU (0: integrated or not known yet), set by BufferCache.
+u64 discrete_vram_bytes = 0;
 int PreuploadMode() {
     static const int mode = [] {
         const char* env = std::getenv("BB_PREUPLOAD");
         if (GuestInPlace()) {
             return 0; // the GPU reads the game's memory itself: nothing to upload
         }
-        return env && (env[0] == '1' || env[0] == '2') ? env[0] - '0' : 0;
+        int value = env && (env[0] == '1' || env[0] == '2') ? env[0] - '0' : 0;
+        // Full pre-upload needs ~3 GB of VRAM on top of the game's textures: on an 8 GB card it
+        // runs out of VRAM, and sparse arena memory has no system-memory fallback on NVIDIA.
+        // BB_PREUPLOAD_FORCE=1 keeps it anyway.
+        const char* force = std::getenv("BB_PREUPLOAD_FORCE");
+        if (value == 2 && discrete_vram_bytes && discrete_vram_bytes < (11ull << 30) &&
+            !(force && force[0] == '1')) {
+            std::printf("GPU memory: full pre-upload needs more than %llu MiB of VRAM; using "
+                        "normal pre-upload (BB_PREUPLOAD_FORCE=1 keeps full)\n",
+                        static_cast<unsigned long long>(discrete_vram_bytes >> 20));
+            value = 1;
+        }
+        return value;
     }();
     return mode;
 }
@@ -506,6 +520,14 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
       gds_buffer{instance, 0, GDS_BUFFER_SIZE, MemoryType::Stream, "GDS Buffer"},
       memory_semaphore{instance} {
     integrated_gpu = instance.IsIntegrated();
+    if (!integrated_gpu) {
+        const auto& memory = instance.GetMemoryProperties();
+        for (u32 i = 0; i < memory.memoryHeapCount; ++i) {
+            if (memory.memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal) {
+                discrete_vram_bytes = std::max<u64>(discrete_vram_bytes, memory.memoryHeaps[i].size);
+            }
+        }
+    }
     // bbport: the PC memory model needs the game's direct memory in dma-buf chunks the runtime can
     // map at any offset (BbGuestMemory::Usable), and an AMD GPU for now (PcModelGpu). Without
     // them it is off, as BB_GUEST_IN_PLACE=0.

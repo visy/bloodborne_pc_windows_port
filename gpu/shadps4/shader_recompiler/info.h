@@ -10,6 +10,7 @@
 #include "common/types.h"
 #include "shader_recompiler/backend/bindings.h"
 #include "shader_recompiler/frontend/copy_shader.h"
+#include "shader_recompiler/guest_read_log.h"
 #include "shader_recompiler/frontend/tessellation.h"
 #include "shader_recompiler/ir/attribute.h"
 #include "shader_recompiler/ir/passes/srt.h"
@@ -220,7 +221,8 @@ struct Info : InfoPersistent {
         if (!base) {
             return T{};
         }
-        std::memcpy(&data, base + dword_offset, sizeof(T));
+        // bbport: guest memory, recorded for the shader cache rebuild (guest_read_log.h).
+        ReadGuest(&data, reinterpret_cast<VAddr>(base + dword_offset), sizeof(T));
         return data;
     }
 
@@ -246,6 +248,13 @@ struct Info : InfoPersistent {
         ASSERT(user_data.size() <= NUM_USER_DATA_REGS);
         std::memcpy(flattened_ud_buf.data(), user_data.data(), user_data.size_bytes());
         if (srt_info.walker_func) {
+            if (auto* log = GuestReadLog::active) [[unlikely]] {
+                log->Walk(srt_info.walker_func,
+                          reinterpret_cast<const u8*>(srt_info.walker_func),
+                          srt_info.walker_func_size, user_data.data(), flattened_ud_buf.data(),
+                          flattened_ud_buf.size());
+                return;
+            }
             srt_info.walker_func(user_data.data(), flattened_ud_buf.data());
         }
     }
@@ -255,9 +264,7 @@ struct Info : InfoPersistent {
         auto buf = ReadUdReg<AmdGpu::Buffer>(static_cast<u32>(tess_consts_ptr_base),
                                              static_cast<u32>(tess_consts_dword_offset));
         VAddr tess_constants_addr = buf.base_address;
-        memcpy(&tess_constants,
-               reinterpret_cast<TessellationDataConstantBuffer*>(tess_constants_addr),
-               sizeof(tess_constants));
+        ReadGuest(&tess_constants, tess_constants_addr, sizeof(tess_constants));
     }
 
     void Serialize(Serialization::Archive& ar) const;
