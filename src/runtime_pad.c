@@ -596,9 +596,17 @@ static void touch_ids(PadData *d) {
     else if (!since) since=d->timestamp;
     d->touch_held_time=d->touch_count ? (uint32_t)(d->timestamp-since) : 0;
 }
+/* Set while the settings menu or the name box holds the pad: the press that closed it (Cross on
+ * the name, Insert/L3+R3) stays held, and must not reach the game as a new press. Buttons are
+ * held neutral until everything is released (from Supermedo/bloodborne_pc 1.4). */
+static int hold_after_capture;
 static void sample(PadData *d) {
     sample_host(d);
-    if (bbgpu_overlay_captures_input() || bbgpu_text_input_is_active()) return;
+    if (bbgpu_overlay_captures_input() || bbgpu_text_input_is_active()) { hold_after_capture=1; return; }
+    if (hold_after_capture) {
+        if (d->buttons || d->l2>30 || d->r2>30) { d->buttons=0; d->l2=d->r2=0; touch_ids(d); return; }
+        hold_after_capture=0;
+    }
     record_sample(d);
     read_inject();
     replay_sample(d);

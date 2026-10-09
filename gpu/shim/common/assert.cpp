@@ -17,7 +17,19 @@
 // before exec; Vulkan calls failing then are not errors: this thread waits for the exec instead.
 extern "C" __attribute__((weak)) volatile int runtime_restarting; // absent in the tests
 
+namespace Common {
+// bbport: set on threads that rebuild shaders from the cache's sources: an assertion there means
+// that one stored shader does not replay with this build, which must skip it, not stop the game.
+thread_local bool assert_throws = false;
+void SetAssertThrowsOnThisThread(bool value) {
+    assert_throws = value;
+}
+} // namespace Common
+
 void assert_fail_impl() {
+    if (Common::assert_throws) {
+        throw std::runtime_error("assertion failed");
+    }
     if (&runtime_restarting && runtime_restarting) {
         for (;;) {
 #ifdef _WIN32
@@ -29,6 +41,11 @@ void assert_fail_impl() {
     }
     std::fflush(stdout);
     std::fputs("STOP: GPU library assertion failed (see GPU log above)\n", stderr);
+    std::fflush(stderr);
+#ifdef _WIN32
+    // Not _Exit: unloading the Vulkan driver while GPU threads are inside it can hang the process.
+    TerminateProcess(GetCurrentProcess(), 23);
+#endif
     std::_Exit(23);
 }
 

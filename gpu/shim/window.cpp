@@ -177,6 +177,18 @@ bool WindowSDL::PollEvents() {
             UpdateTextTitle();
             continue;
         }
+        // Controller-only players: Cross (A) confirms the name, Circle (B) cancels (from
+        // Supermedo/bloodborne_pc 1.4). The pad is held neutral while the box is open.
+        if (text_active && event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
+            (event.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH ||
+             event.gbutton.button == SDL_GAMEPAD_BUTTON_EAST)) {
+            std::scoped_lock lock{text_mutex};
+            text_state = event.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH ? 1 : 2;
+            text_active = false;
+            SDL_StopTextInput(window);
+            UpdateTextTitle();
+            continue;
+        }
         // Alt+Enter: switch between windowed and fullscreen at any time.
         if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && (event.key.mod & SDL_KMOD_ALT) &&
             (event.key.key == SDLK_RETURN || event.key.key == SDLK_KP_ENTER)) {
