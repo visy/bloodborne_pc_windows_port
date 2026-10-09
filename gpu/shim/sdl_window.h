@@ -35,17 +35,24 @@ public:
     /// 0 while typing, 1 confirmed (Enter), 2 cancelled (Escape); text is UTF-8.
     int PollTextInput(std::string& text);
     bool IsTextInputActive() const { return text_active; }
+    /// False while the window is in the background (BB_MUTE_UNFOCUSED, default on): audio muted.
+    bool IsAudible() const { return audible.load(std::memory_order_relaxed); }
     std::string GetTextInputPrompt();
     std::string GetTextInputValue();
 
 private:
     std::atomic<s32> width, height;
     std::atomic<bool> is_open{true};
+    std::atomic<bool> audible{true};
+    bool mute_unfocused{true};
     std::mutex text_mutex;
     bool text_requested{}, text_active{};
     int text_state{};
     std::string text, text_prompt, base_title;
     void UpdateTextTitle();
+    void UpdateCursor();
+    u64 last_mouse_motion_ms{}; ///< SDL_GetTicks of the last mouse motion (UpdateCursor)
+    bool cursor_hidden{};
     SDL_Window* window{};
     WindowSystemInfo window_info{};
 };

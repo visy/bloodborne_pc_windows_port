@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <string>
 #include <atomic>
 #include <chrono>
 #include "bbport_toggles.h"
@@ -89,6 +90,9 @@ public:
                  PageManager& tracker);
     ~TextureCache();
 
+    /// bbport (diagnostics): the images over [addr, addr + size), described briefly.
+    std::string DescribeImagesIn(VAddr addr, u64 size);
+
     /// bbport: changes whenever an image is registered or unregistered.
     [[nodiscard]] u64 RegistryGeneration() const noexcept {
         return registry_generation.load(std::memory_order_acquire);
@@ -174,6 +178,7 @@ public:
         std::scoped_lock lock{mutex};
         Image& image = slot_images[image_id];
         TrackImage(image_id);
+        WatchImage(image, "update image (slow path)");
         TouchImage(image);
         RefreshImage(image);
     }
@@ -193,6 +198,7 @@ public:
 
     /// Reuploads image contents.
     void RefreshImage(Image& image);
+    void WatchImage(const Image& image, const char* what);
 
     /// Retrieves the sampler that matches the provided S# descriptor.
     /// extra_lod_bias: bbport, added to the S#'s bias (reduced scene rendering).
@@ -437,6 +443,7 @@ private:
     std::atomic<u64> registry_generation{0};
     std::mutex samplers_mutex;
     std::mutex download_images_mutex;
+    std::atomic<bool> downloads_queued{false}; ///< download_images may be non-empty (checked without the lock)
     struct MetaDataInfo {
         MetaType type;
         s32 clear_mask = -1;

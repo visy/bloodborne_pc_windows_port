@@ -84,6 +84,7 @@ static int32_t wait_count(uint32_t id,int32_t need,uint32_t *timeout,int block) 
         Waiter **tail=&s->first;
         while (*tail) tail=&(*tail)->next;
         *tail=&w; ++s->active;
+        const uint64_t wait_start=runtime_wait_clock();
         uint64_t deadline=timeout ? now_ns()+(uint64_t)*timeout*1000 : 0;
         runtime_thread_set_blocked("semaphore", id);
         while (!w.done) {
@@ -104,6 +105,7 @@ static int32_t wait_count(uint32_t id,int32_t need,uint32_t *timeout,int block) 
             } else if (e!=ETIMEDOUT) host_check(e);
         }
         runtime_thread_clear_blocked();
+        runtime_wait_note(2,runtime_wait_clock()-wait_start);
         result=w.result;
         if (!result) ++acquired;
         if (timeout) {

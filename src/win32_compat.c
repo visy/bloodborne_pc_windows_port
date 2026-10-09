@@ -20,12 +20,37 @@
 int runtime_win_mkdir(const char *path, int mode) { (void)mode; return _mkdir(path); }
 
 int runtime_win_rename(const char *from, const char *to) {
-    if (MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) return 0;
+    if (MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED | MOVEFILE_WRITE_THROUGH)) return 0;
     DWORD e = GetLastError();
     errno = e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND ? ENOENT
           : e == ERROR_ACCESS_DENIED || e == ERROR_SHARING_VIOLATION ? EACCES
           : e == ERROR_DIR_NOT_EMPTY ? ENOTEMPTY : EIO;
     return -1;
+}
+
+/* open() whose file can be renamed or deleted while open (FILE_SHARE_DELETE), as on POSIX: save
+ * files are replaced by renaming a temporary copy over them (runtime_file.c) while other
+ * descriptors may still have them open. Always binary. Returns the descriptor or -1 + errno. */
+int runtime_win_open_shared(const char *path, int flags, int mode) {
+    DWORD access = (flags & 3) == O_WRONLY ? GENERIC_WRITE : (flags & 3) == O_RDWR ? GENERIC_READ | GENERIC_WRITE : GENERIC_READ;
+    DWORD disposition = (flags & O_CREAT) ? ((flags & O_EXCL) ? CREATE_NEW : (flags & O_TRUNC) ? CREATE_ALWAYS : OPEN_ALWAYS)
+                                          : (flags & O_TRUNC) ? TRUNCATE_EXISTING : OPEN_EXISTING;
+    DWORD attributes = (flags & O_CREAT) && !(mode & _S_IWRITE) ? FILE_ATTRIBUTE_READONLY : FILE_ATTRIBUTE_NORMAL;
+    HANDLE h = CreateFileA(path, access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                           disposition, attributes, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        DWORD e = GetLastError();
+        errno = e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND ? ENOENT
+              : e == ERROR_FILE_EXISTS || e == ERROR_ALREADY_EXISTS ? EEXIST
+              : e == ERROR_ACCESS_DENIED || e == ERROR_SHARING_VIOLATION ? EACCES
+              : e == ERROR_DISK_FULL ? ENOSPC : EIO;
+        return -1;
+    }
+    int crt = _O_BINARY | ((flags & 3) == O_WRONLY ? _O_WRONLY : (flags & 3) == O_RDWR ? _O_RDWR : _O_RDONLY);
+    if (flags & O_APPEND) crt |= _O_APPEND;
+    int fd = _open_osfhandle((intptr_t)h, crt); /* not inherited: NULL security attributes */
+    if (fd < 0) { CloseHandle(h); errno = EMFILE; return -1; }
+    return fd;
 }
 
 static int64_t positional(int fd, void *buffer, size_t size, int64_t offset, int write) {
@@ -142,6 +167,31 @@ void runtime_win_set_thread_name(const char *name) {
         }
         if (set_desc) set_desc(GetCurrentThread(), wide);
     }
+}
+/* A thread's description (runtime_win_set_thread_name) as UTF-8; thread_id 0: the calling thread.
+ * Returns 1 when it has one. */
+int runtime_win_thread_name(uint32_t thread_id, char *out, size_t size) {
+    typedef HRESULT (WINAPI *GetThreadDescFn)(HANDLE, PWSTR *);
+    static GetThreadDescFn get_desc = NULL;
+    static int checked = 0;
+    if (!size) return 0;
+    out[0] = 0;
+    if (!checked) {
+        HMODULE kb = GetModuleHandleW(L"kernelbase.dll");
+        if (kb) get_desc = (GetThreadDescFn)(void *)GetProcAddress(kb, "GetThreadDescription");
+        checked = 1;
+    }
+    if (!get_desc) return 0;
+    HANDLE thread = thread_id ? OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, thread_id) : GetCurrentThread();
+    if (!thread) return 0;
+    PWSTR wide = NULL;
+    int ok = SUCCEEDED(get_desc(thread, &wide)) && wide && wide[0] &&
+             WideCharToMultiByte(CP_UTF8, 0, wide, -1, out, (int)size, NULL, NULL) > 0;
+    if (!ok) out[0] = 0;
+    out[size - 1] = 0;
+    if (wide) LocalFree(wide);
+    if (thread_id) CloseHandle(thread);
+    return ok;
 }
 
 int runtime_win_inet_pton4(const char *src, void *dst) { return inet_pton(AF_INET, src, dst); }

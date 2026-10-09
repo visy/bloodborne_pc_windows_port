@@ -31,6 +31,10 @@ int bbgpu_text_input_poll(char *out_utf8, uint64_t size);
 int bbgpu_text_input_is_active(void);
 /* 1 while the in-game settings menu is open: the game's pad input is held neutral. */
 int bbgpu_overlay_captures_input(void);
+/* 0 while the game window is in the background and BB_MUTE_UNFOCUSED is not 0: audio is muted. */
+int bbgpu_audio_audible(void);
+/* Patches the loaded image before the game runs (image still writable): libGnm entry hooks. */
+void bbgpu_patch_image(unsigned char *image, uint64_t size);
 /* Number of symbols registered by the vendored libraries (diagnostics). */
 unsigned bbgpu_symbol_count(void);
 /* Flips and submissions query for heartbeat / diagnostics. */

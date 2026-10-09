@@ -30,6 +30,13 @@ ANISO_CHOICES = [
     ("2x", "2", "2x anisotropic filtering"),
     ("Off", "0", "Game's default anisotropic filtering (no override)"),
 ]
+# (label, BB_PREUPLOAD value); "" keeps run.bat's default (1)
+PREUPLOAD_CHOICES = [("Normal", ""), ("Full (~3 GB more VRAM)", "2"), ("Off", "0")]
+# (label, BB_FRAMES_AHEAD value): guest frames the GPU thread may run ahead of the display
+FRAMES_AHEAD_CHOICES = [("2 (smooth, default)", "2"), ("1 (lowest input lag)", "1"), ("3 (smoothest)", "3")]
+DEFAULT_DISPLAY = "Primary (default)"
+DEFAULT_GAMEPAD = "Any (default)"
+GPU_CAPS = APP_DIR / "out" / "bb-gpu-capabilities.exe"
 MAX_LOG_LINES = 5000
 VK_NOISE = "<Warning> vk_instance.cpp"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -124,10 +131,24 @@ def settings_env(s: dict) -> dict:
     # Overlay menu toggle on gamepad L3 + R3 (Insert always works)
     env["BB_OVERLAY_PAD"] = "1" if on("feat_overlay_pad", False) else "0"
 
-    # Frame ahead queue (smooth frametimes & bound queue latency: 2 = balanced); an explicit
-    # BB_FRAMES_AHEAD in the environment wins.
-    if "BB_FRAMES_AHEAD" not in os.environ:
-        env["BB_FRAMES_AHEAD"] = "2"
+    # Upstream 0.5: the port's settings as pages of the game's System menu (BB_GAME_MENU=0: off),
+    # the online/offline screen skipped by a game patch (scripts/patches.py adds it unless
+    # BB_SKIP_NETWORK_CHOICE=0), the monitor (BB_DISPLAY) and gamepad (BB_GAMEPAD) to use.
+    env["BB_GAME_MENU"] = None if on("feat_game_menu") else "0"
+    env["BB_SKIP_NETWORK_CHOICE"] = "1" if on("feat_skip_network_choice") else "0"
+    env["BB_DISPLAY"] = str(s.get("display") or "") or None
+    env["BB_GAMEPAD"] = str(s.get("gamepad") or "") or None
+    # Background pre-upload of GPU memory into VRAM: "" = run.bat's default (1), "2" full, "0" off.
+    preupload = str(s.get("preupload", ""))
+    env["BB_PREUPLOAD"] = preupload if preupload in ("0", "2") else None
+    # Frame and readback statistics into logs\<time>.frames.csv / .readbacks.csv
+    env["BB_SAVE_LOG"] = "1" if on("feat_save_log", False) else "0"
+    # Mute the game while its window is in the background
+    env["BB_MUTE_UNFOCUSED"] = "1" if on("feat_mute_unfocused") else "0"
+
+    # Frame ahead queue (smooth frametimes & bound queue latency: 2 = balanced)
+    frames_ahead = str(s.get("frames_ahead", "2"))
+    env["BB_FRAMES_AHEAD"] = frames_ahead if frames_ahead in ("1", "2", "3") else "2"
 
     # Anisotropic filtering (0 = game default, 2/4/8/16 = forced)
     aniso_mapping = {c[0]: c[1] for c in ANISO_CHOICES}
@@ -153,7 +174,7 @@ def write_env_bat(path: Path, settings_path: Path = SETTINGS_FILE):
         lines.append(f'set "{key}={value}"')
     # cmd reads batch files in the OEM code page (non-ASCII game paths)
     path.write_text("\r\n".join(lines) + "\r\n", encoding="oem" if os.name == "nt" else "utf-8",
-                    errors="replace")
+                    errors="replace", newline="")
 
 
 def kill_tree(proc: subprocess.Popen):
@@ -168,11 +189,38 @@ def kill_tree(proc: subprocess.Popen):
         proc.kill()
 
 
+def gpu_capabilities_lines(option: str) -> list:
+    """Output lines of out/bb-gpu-capabilities.exe --displays / --gamepads ([] if unavailable)."""
+    if not GPU_CAPS.is_file():
+        return []
+    try:
+        run = subprocess.run([str(GPU_CAPS), option], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=5,
+                             creationflags=NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return run.stdout.splitlines()
+
+
+def connected_displays() -> list:
+    """(BB_DISPLAY value, label) of the monitors: the name, or the number when names repeat."""
+    rows = [line.split("\t") for line in gpu_capabilities_lines("--displays") if line.count("\t") == 2]
+    names = [name for name, _, _ in rows]
+    return [(name if names.count(name) == 1 else str(number),
+             f"{number}: {name} ({size})" + (", primary" if primary == "1" else ""))
+            for number, (name, size, primary) in enumerate(rows, 1)]
+
+
+def connected_gamepads() -> list:
+    """(BB_GAMEPAD value = GUID, label = name) of the connected gamepads."""
+    return [tuple(line.split("\t", 1)) for line in gpu_capabilities_lines("--gamepads") if "\t" in line]
+
+
 class BloodborneLauncher(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Bloodborne PC Launcher")
-        self.geometry("780x880")
+        self.geometry("780x940")
         self.minsize(680, 720)
 
         self.proc = None
@@ -331,6 +379,46 @@ class BloodborneLauncher(tk.Tk):
         self.aniso_desc_lbl.grid(row=2, column=2, columnspan=2, sticky="w", pady=3)
         self.update_aniso_desc()
 
+        # Monitor (BB_DISPLAY) and controller (BB_GAMEPAD), listed by bb-gpu-capabilities.exe
+        saved_display = str(self.settings.get("display", "") or "")
+        self.display_choices = [(DEFAULT_DISPLAY, "")] + [(label, value) for value, label in connected_displays()]
+        if saved_display and saved_display not in [v for _, v in self.display_choices]:
+            self.display_choices.append((f"{saved_display} (saved)", saved_display))
+        self.display_var = tk.StringVar(value=next(
+            (label for label, value in self.display_choices if value == saved_display), DEFAULT_DISPLAY))
+        ttk.Label(opts, text="Monitor:", style="Card.TLabel").grid(row=3, column=0, sticky="w", pady=3)
+        ttk.Combobox(opts, textvariable=self.display_var, values=[c[0] for c in self.display_choices],
+                     state="readonly", width=22).grid(row=3, column=1, sticky="w", pady=3, padx=(6, 20))
+
+        saved_gamepad = str(self.settings.get("gamepad", "") or "")
+        self.gamepad_choices = [(DEFAULT_GAMEPAD, "")] + [(name, guid) for guid, name in connected_gamepads()]
+        if saved_gamepad and saved_gamepad not in [v for _, v in self.gamepad_choices]:
+            name = self.settings.get("gamepad_name") or saved_gamepad
+            self.gamepad_choices.append((f"{name} (not connected)", saved_gamepad))
+        self.gamepad_var = tk.StringVar(value=next(
+            (label for label, value in self.gamepad_choices if value == saved_gamepad), DEFAULT_GAMEPAD))
+        ttk.Label(opts, text="Controller:", style="Card.TLabel").grid(row=3, column=2, sticky="w", pady=3)
+        ttk.Combobox(opts, textvariable=self.gamepad_var, values=[c[0] for c in self.gamepad_choices],
+                     state="readonly", width=22).grid(row=3, column=3, sticky="w", pady=3, padx=(6, 0))
+
+        preupload = str(self.settings.get("preupload", ""))
+        self.preupload_var = tk.StringVar(value=next(
+            (label for label, value in PREUPLOAD_CHOICES if value == preupload), PREUPLOAD_CHOICES[0][0]))
+        ttk.Label(opts, text="VRAM pre-upload:", style="Card.TLabel").grid(row=4, column=0, sticky="w", pady=3)
+        ttk.Combobox(opts, textvariable=self.preupload_var, values=[c[0] for c in PREUPLOAD_CHOICES],
+                     state="readonly", width=22).grid(row=4, column=1, sticky="w", pady=3, padx=(6, 20))
+        ttk.Label(opts, text="↳ fewer stutters when areas stream in", style="Card.TLabel",
+                  font=("Segoe UI", 8), foreground="#888888").grid(row=4, column=2, columnspan=2, sticky="w", pady=3)
+
+        frames_ahead = str(self.settings.get("frames_ahead", "2"))
+        self.frames_ahead_var = tk.StringVar(value=next(
+            (label for label, value in FRAMES_AHEAD_CHOICES if value == frames_ahead), FRAMES_AHEAD_CHOICES[0][0]))
+        ttk.Label(opts, text="Frames ahead:", style="Card.TLabel").grid(row=5, column=0, sticky="w", pady=3)
+        ttk.Combobox(opts, textvariable=self.frames_ahead_var, values=[c[0] for c in FRAMES_AHEAD_CHOICES],
+                     state="readonly", width=22).grid(row=5, column=1, sticky="w", pady=3, padx=(6, 20))
+        ttk.Label(opts, text="↳ 1 = less input lag, higher = steadier frame times", style="Card.TLabel",
+                  font=("Segoe UI", 8), foreground="#888888").grid(row=5, column=2, columnspan=2, sticky="w", pady=3)
+
         # Features Card
         feat_card = ttk.Frame(main, style="Card.TFrame", padding=12)
         feat_card.pack(fill="x", pady=(0, 10))
@@ -360,6 +448,10 @@ class BloodborneLauncher(tk.Tk):
         self.feat_draw_prep = tk.BooleanVar(value=self.settings.get("feat_draw_prep", True))
         self.feat_fullscreen = tk.BooleanVar(value=self.settings.get("feat_fullscreen", False))
         self.feat_overlay_pad = tk.BooleanVar(value=self.settings.get("feat_overlay_pad", False))
+        self.feat_game_menu = tk.BooleanVar(value=self.settings.get("feat_game_menu", True))
+        self.feat_skip_network_choice = tk.BooleanVar(value=self.settings.get("feat_skip_network_choice", True))
+        self.feat_save_log = tk.BooleanVar(value=self.settings.get("feat_save_log", False))
+        self.feat_mute_unfocused = tk.BooleanVar(value=self.settings.get("feat_mute_unfocused", True))
 
         grid_f = ttk.Frame(feat_card, style="Card.TFrame")
         grid_f.pack(fill="x")
@@ -408,6 +500,16 @@ class BloodborneLauncher(tk.Tk):
                         style="Card.TCheckbutton").grid(row=4, column=0, sticky="w", pady=2, padx=(0, 15))
         ttk.Checkbutton(grid_f, text="Overlay menu on L3 + R3", variable=self.feat_overlay_pad,
                         style="Card.TCheckbutton").grid(row=4, column=1, sticky="w", pady=2, padx=(0, 15))
+        ttk.Checkbutton(grid_f, text="Settings in game's System menu", variable=self.feat_game_menu,
+                        style="Card.TCheckbutton").grid(row=4, column=2, sticky="w", pady=2)
+
+        # Row 5
+        ttk.Checkbutton(grid_f, text="Skip online/offline choice", variable=self.feat_skip_network_choice,
+                        style="Card.TCheckbutton").grid(row=5, column=0, sticky="w", pady=2, padx=(0, 15))
+        ttk.Checkbutton(grid_f, text="Save frame stats to logs\\", variable=self.feat_save_log,
+                        style="Card.TCheckbutton").grid(row=5, column=1, sticky="w", pady=2, padx=(0, 15))
+        ttk.Checkbutton(grid_f, text="Mute when in background", variable=self.feat_mute_unfocused,
+                        style="Card.TCheckbutton").grid(row=5, column=2, sticky="w", pady=2)
 
         self.update_res_scaling_state()
 
@@ -489,6 +591,8 @@ class BloodborneLauncher(tk.Tk):
         self.feat_tracing.set(True)
         self.feat_watchdog.set(True)
         self.feat_draw_prep.set(True)
+        self.feat_game_menu.set(True)
+        self.feat_skip_network_choice.set(True)
         self.fps_var.set("uncap")
         self.aniso_var.set("16x")
         self.enabled_patches = {"Skip Intro", "Performance Patch (perf increase)", "Disable Motion Blur (perf increase)"}
@@ -717,6 +821,8 @@ class BloodborneLauncher(tk.Tk):
             return {}
 
     def current_settings(self) -> dict:
+        gamepad_label = self.gamepad_var.get()
+        gamepad = dict(self.gamepad_choices).get(gamepad_label, "")
         return {
             "eboot": self.eboot_var.get().strip(),
             "fps": self.fps_var.get(),
@@ -735,6 +841,15 @@ class BloodborneLauncher(tk.Tk):
             "feat_draw_prep": self.feat_draw_prep.get(),
             "feat_fullscreen": self.feat_fullscreen.get(),
             "feat_overlay_pad": self.feat_overlay_pad.get(),
+            "feat_game_menu": self.feat_game_menu.get(),
+            "feat_skip_network_choice": self.feat_skip_network_choice.get(),
+            "feat_save_log": self.feat_save_log.get(),
+            "feat_mute_unfocused": self.feat_mute_unfocused.get(),
+            "display": dict(self.display_choices).get(self.display_var.get(), ""),
+            "gamepad": gamepad,
+            "gamepad_name": gamepad_label.removesuffix(" (not connected)") if gamepad else "",
+            "preupload": dict(PREUPLOAD_CHOICES).get(self.preupload_var.get(), ""),
+            "frames_ahead": dict(FRAMES_AHEAD_CHOICES).get(self.frames_ahead_var.get(), "2"),
             "enabled_patches": sorted(list(self.enabled_patches)),
         }
 
@@ -1008,7 +1123,12 @@ class BloodborneLauncher(tk.Tk):
             f"Watchdog={'on' if self.feat_watchdog.get() else 'off'}, "
             f"DrawPrep={'on' if self.feat_draw_prep.get() else 'off'}, "
             f"Fullscreen={'on' if self.feat_fullscreen.get() else 'off'}, "
-            f"OverlayPad={'on' if self.feat_overlay_pad.get() else 'off'}"
+            f"OverlayPad={'on' if self.feat_overlay_pad.get() else 'off'}, "
+            f"GameMenu={'on' if self.feat_game_menu.get() else 'off'}, "
+            f"SkipOnlineChoice={'on' if self.feat_skip_network_choice.get() else 'off'}, "
+            f"Monitor={self.display_var.get()}, Controller={self.gamepad_var.get()}, "
+            f"PreUpload={self.preupload_var.get()}, "
+            f"FramesAhead={dict(FRAMES_AHEAD_CHOICES).get(self.frames_ahead_var.get(), '2')}"
         )
 
         self.hidden_count = 0

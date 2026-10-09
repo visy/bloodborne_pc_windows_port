@@ -13,6 +13,7 @@
 #include <string.h>
 #include <time.h>
 #include <SDL3/SDL.h>
+#include "gpu/bbgpu.h"
 #ifdef _WIN32
 #include <windows.h>
 #include <mmsystem.h>
@@ -36,6 +37,7 @@ typedef struct {
     int used, type, channels, is_float, frames, sample_bytes, std_layout;
     int32_t volume[8];
     SDL_AudioStream *stream;
+    int muted; /* gain 0 while the game window is in the background (bbgpu_audio_audible) */
     uint64_t next_deadline_ns; /* next return of sceAudioOutOutput */
     int64_t adjust_ns; int window_min, window_count; /* queue level control */
     uint64_t last_output_us;
@@ -245,6 +247,9 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
                 p->window_count=0;
             }
             p->next_deadline_ns+=(uint64_t)p->adjust_ns;
+            /* Mute instead of pausing: the queue keeps its pacing while the window is unfocused. */
+            const int muted=!bbgpu_audio_audible();
+            if (muted!=p->muted) { p->muted=muted; SDL_SetAudioStreamGain(p->stream,muted ? 0.0f : 1.0f); }
             SDL_PutAudioStreamData(p->stream,converted,(int)bytes);
         }
 

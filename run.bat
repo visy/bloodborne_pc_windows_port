@@ -51,6 +51,21 @@ set "out=%BB_DATA_DIR%\out"
 if not exist "%out%" mkdir "%out%"
 if "%BB_CONFIG%"=="" set "BB_CONFIG=%BB_DATA_DIR%\bbport.ini"
 
+REM BB_SAVE_LOG=1 (launcher: "Save frame statistics to logs\"): this run's per-frame and readback
+REM statistics go to %BB_DATA_DIR%\logs\<time>.frames.csv and .readbacks.csv (as run.sh). The
+REM console output itself is in launcher.log when started from the launcher.
+if not "%BB_SAVE_LOG%"=="1" goto save_log_done
+if not exist "%BB_DATA_DIR%\logs" mkdir "%BB_DATA_DIR%\logs"
+"%PYTHON%" -c "import time; print(time.strftime('%%Y%%m%%d_%%H%%M%%S'))" > "%out%\log_stamp.txt"
+set "stamp="
+if exist "%out%\log_stamp.txt" for /f "usebackq delims=" %%t in ("%out%\log_stamp.txt") do set "stamp=%%t"
+if "%stamp%"=="" set "stamp=latest"
+set "BB_FRAME_STATS=1"
+if "%BB_FRAME_LOG%"=="" set "BB_FRAME_LOG=%BB_DATA_DIR%\logs\%stamp%.frames.csv"
+if "%BB_READBACK_LOG%"=="" set "BB_READBACK_LOG=%BB_DATA_DIR%\logs\%stamp%.readbacks.csv"
+echo Frame statistics: %BB_FRAME_LOG%
+:save_log_done
+
 REM Game directory containing eboot.bin
 set "EXTRA_ARGS="
 :arg_loop
@@ -94,8 +109,10 @@ if exist "%mods_result%" del "%mods_result%"
 "%PYTHON%" scripts\mods.py "%game%" --out "%out%" --mods-dir "%mods_dir%" --config "%mods_config%" --enabled "%mods_enabled%" > "%mods_result%"
 if exist "%mods_result%" for /f "usebackq delims=" %%g in ("%mods_result%") do set "game=%%g"
 
+REM prepare.py also checks the game files (scripts\game_check.py): exit code 2 = not the 1.09
+REM executable (BB_SKIP_GAME_CHECK=1 starts anyway).
 "%PYTHON%" scripts\prepare.py "%game%" --out "%out%"
-if errorlevel 1 exit /b 1
+if errorlevel 1 exit /b %ERRORLEVEL%
 
 "%PYTHON%" scripts\link_libc.py "%game%" --out "%out%"
 if errorlevel 1 exit /b 1
@@ -127,29 +144,32 @@ if "%BB_RENDER_RES%"=="" (
 )
 
 set "live=0"
-if not "%scaled_output%"=="" (
-    if not "%BB_LIVE_RES%"=="" set "live=%BB_LIVE_RES%"
-    if "%live%"=="0" if exist "%BB_CONFIG%" (
-        for /f "tokens=1,2 delims==" %%a in ('type "%BB_CONFIG%" 2^>nul') do (
-            if "%%a"=="live_resolution" set "live=%%b"
-        )
-    )
-    if "%live%"=="auto" (
-        set "caps=out\bb-gpu-capabilities.exe"
-        for /f "delims=" %%c in ('"%caps%" --live-resolution 2^>nul') do set "live=%%c"
-    )
-    if not "%live%"=="1" set "live=0"
+if "%scaled_output%"=="" goto live_done
+if not "%BB_LIVE_RES%"=="" set "live=%BB_LIVE_RES%"
+if not "%live%"=="0" goto live_chosen
+if not exist "%BB_CONFIG%" goto live_chosen
+for /f "usebackq tokens=1,2 delims== " %%a in ("%BB_CONFIG%") do (
+    if "%%a"=="live_resolution" set "live=%%b"
 )
-
+:live_chosen
+if not "%live%"=="auto" goto live_checked
+set "live=0"
+if exist "out\bb-gpu-capabilities.exe" (
+    out\bb-gpu-capabilities.exe --live-resolution > "%out%\live_resolution.txt" 2>nul
+    for /f "usebackq delims=" %%c in ("%out%\live_resolution.txt") do set "live=%%c"
+)
+:live_checked
+if not "%live%"=="1" set "live=0"
 if "%live%"=="1" (
     echo Output %scaled_output%: live resolution changes ^(live_resolution=0: startup patch^)
-) else if not "%scaled_output%"=="" (
-    set "BB_RENDER_RES=%scaled_render%"
-    set "BB_OUTPUT_RES=%scaled_output%"
-    set "BB_AUTO_RENDER_RES=1"
-    if "%BB_DMEM_MB%"=="" set "BB_DMEM_MB=9152"
-    echo Output %scaled_output%: scene %scaled_render%, direct memory %BB_DMEM_MB% MiB ^(live_resolution=1: live changes^)
+    goto live_done
 )
+set "BB_RENDER_RES=%scaled_render%"
+set "BB_OUTPUT_RES=%scaled_output%"
+set "BB_AUTO_RENDER_RES=1"
+if "%BB_DMEM_MB%"=="" set "BB_DMEM_MB=9152"
+echo Output %scaled_output%: scene %scaled_render%, direct memory %BB_DMEM_MB% MiB ^(live_resolution=1: live changes^)
+:live_done
 
 REM Explicit launcher resolutions skip scaled_output above, but patches.py still adds
 REM Increased Graphics Heap Sizes above 1080p. Match that patch's direct-memory budget.
@@ -166,9 +186,30 @@ if "%patches_config%"=="" set "patches_config=%BB_DATA_DIR%\patches.json"
 "%PYTHON%" scripts\patches.py --out "%out%" --fps "%fps%" --extra "%BB_PATCHES%" --settings "%BB_CONFIG%" --game-dir "%game%" --render-res "%BB_RENDER_RES%" --output-res "%BB_OUTPUT_RES%" --patches-dir "%patches_dir%" --patches-config "%patches_config%"
 if errorlevel 1 exit /b 1
 
+REM GPU memory and command processing defaults, as run.sh sets them:
+REM BB_PREUPLOAD: background upload of the game's GPU memory into VRAM ahead of use (1 = only
+REM   memory already in VRAM that the game rewrote, 2 = all of it, ~3 GB more VRAM, 0 = off).
+REM BB_PC_MODEL=1: upstream's experimental new memory and translation model (off by default;
+REM   developed on Linux). BB_GUEST_IN_PLACE set by hand overrides it.
+REM BB_AS_0_3=1: synchronisation and memory as released in 0.3, for comparisons.
+REM BB_COPY_GPU_BUFFERS: command buffers are copied when submitted and decoded from the copy.
+REM BB_GPU_WRITE_TWINS: guest writes next to small GPU outputs do not wait for the GPU.
+if "%BB_PREUPLOAD%"=="" set "BB_PREUPLOAD=1"
+if "%BB_AS_0_3%"=="1" (
+    set "BB_GUEST_IN_PLACE=0"
+    set "BB_HOST_COPY_WAITS=all"
+    set "BB_PRODUCER_CHECK=1"
+)
+if "%BB_PC_MODEL%"=="" set "BB_PC_MODEL=0"
+if "%BB_GUEST_IN_PLACE%"=="" set "BB_GUEST_IN_PLACE=%BB_PC_MODEL%"
+if "%BB_COPY_GPU_BUFFERS%"=="" set "BB_COPY_GPU_BUFFERS=1"
+if "%BB_GPU_WRITE_TWINS%"=="" set "BB_GPU_WRITE_TWINS=1"
+if "%BB_GPU_WRITE_TWINS_MAX%"=="" set "BB_GPU_WRITE_TWINS_MAX=65536"
+
+REM Frame rate: uncap = delta-time patch, vblank 480 Hz (frames shown at once); 60/90 fixed.
 if "%BB_VBLANK_HZ%"=="" (
     if "%fps%"=="uncap" (
-        set "BB_VBLANK_HZ=0"
+        set "BB_VBLANK_HZ=480"
     ) else if "%fps%"=="90" (
         set "BB_VBLANK_HZ=90"
     ) else (
@@ -186,7 +227,9 @@ if not exist "out\bbport.exe" (
     )
 )
 
-set "probe=out\bbport.exe"
+REM BB_PROBE: another executable (e.g. a debugger wrapper) instead of out\bbport.exe.
+set "probe=%BB_PROBE%"
+if "%probe%"=="" set "probe=out\bbport.exe"
 set "user_dir=%BB_USER_DIR%"
 if "%user_dir%"=="" set "user_dir=%BB_DATA_DIR%\user"
 set "timeout=%BB_TIMEOUT%"

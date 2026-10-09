@@ -89,6 +89,24 @@ public:
         return present_queue;
     }
 
+    /// bbport: a compute/transfer queue beside the graphics one (null when the device has none
+    /// or BB_READBACK_QUEUE=0), for reading back finished GPU writes.
+    static constexpr u32 NoFamily = ~0u;
+    vk::Queue GetReadbackQueue() const {
+        return readback_queue;
+    }
+    u32 GetReadbackQueueFamilyIndex() const {
+        return readback_family_index;
+    }
+    /// bbport: memory can be exported as a dma-buf (guest memory, BbGuestMemory).
+    bool IsGuestMemoryExportSupported() const {
+        return guest_memory_export;
+    }
+    /// bbport: host memory can be imported (VK_EXT_external_memory_host; BbGuestMemory).
+    bool IsHostMemoryImportSupported() const {
+        return host_memory_import;
+    }
+
     TracyVkCtx GetProfilerContext() const {
         return profiler_context;
     }
@@ -116,6 +134,11 @@ public:
     /// Returns true if 64-bit ints are supported in shaders
     bool IsShaderInt64Supported() const {
         return features.shaderInt64;
+    }
+
+    /// bbport: occlusion queries count samples exactly (else only zero or not).
+    bool IsOcclusionQueryPrecise() const {
+        return features.occlusionQueryPrecise;
     }
 
     /// Returns true if 16-bit ints are supported in shaders
@@ -292,6 +315,19 @@ public:
     /// bbport: FSR 4.1.1 (INT8 model passes and VK_VALVE_shader_mixed_float_dot_product).
     bool IsFsr411Supported() const {
         return IsFsr4Int8Supported() && mixed_float_dot_product;
+    }
+
+    /// bbport: FSR 4.1.1's FP8 matrix variant (RDNA4): FP8 cooperative matrices, the Vulkan
+    /// memory model, wave32 in full subgroups.
+    bool IsFsr411Fp8Supported() const {
+        return IsFsr411MatrixSupported() && shader_float8;
+    }
+
+    /// bbport: the same passes with FP16 matrices (the FP8 variant emulated, for testing).
+    bool IsFsr411MatrixSupported() const {
+        return IsFsr411Supported() && cooperative_matrix && vk12_features.vulkanMemoryModel &&
+               vk13_features.subgroupSizeControl && vk13_features.computeFullSubgroups &&
+               vk12_features.storageBuffer8BitAccess;
     }
 
     /// VK_KHR_shader_clock is supported.
@@ -542,6 +578,10 @@ private:
     VmaAllocator allocator{};
     vk::Queue present_queue;
     vk::Queue graphics_queue;
+    vk::Queue readback_queue;
+    bool guest_memory_export{};
+    bool host_memory_import{};
+    u32 readback_family_index = NoFamily;
     std::vector<vk::PhysicalDevice> physical_devices;
     std::vector<std::string> available_extensions;
     std::unordered_map<vk::Format, vk::FormatProperties3> format_properties;
@@ -575,11 +615,17 @@ private:
     bool shader_clock{};
     bool compute_shader_derivatives{};
     bool mixed_float_dot_product{}; // bbport: VK_VALVE_shader_mixed_float_dot_product (FSR 4.1.1)
+    bool cooperative_matrix{};      // bbport: VK_KHR_cooperative_matrix (FSR 4.1.1 FP8 variant)
+    bool shader_float8{};           // bbport: VK_EXT_shader_float8 with FP8 matrices (RDNA4)
     bool supports_memory_budget{};
     bool supports_block_texel_view{};
     u64 total_memory_budget{};
     u64 total_local_memory{};
     std::vector<size_t> valid_heaps;
 };
+
+/// bbport memory statistics: device-local VMA memory blocks and the allocations in them (the
+/// difference is free space VMA keeps).
+void VmaDeviceUsage(u64& block_bytes, u64& allocation_bytes);
 
 } // namespace Vulkan

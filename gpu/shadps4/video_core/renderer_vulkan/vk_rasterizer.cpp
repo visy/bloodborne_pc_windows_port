@@ -1,10 +1,20 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <map>
+#include "common/bb_host_compat.h"
+#include <unordered_set>
 #include <xxhash.h>
 #include "video_core/renderer_vulkan/ui_composition.h"
+#include "bbport_timeline.h"
+#include "bbport_sections.h"
+#include "bbport_ce_stats.h"
 #include "bbport_toggles.h"
+#include "bbport_write_log.h"
+#include "bbport_free_check.h"
+#include "bbport_guest_memory.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
+#include "common/hash.h"
 #include "common/debug.h"
 #include "core/debug_state.h"
 #include "core/emulator_settings.h"
@@ -23,6 +33,8 @@
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_hle.h"
+#include "video_core/renderer_vulkan/vk_indirect_guard.h"
+#include "video_core/renderer_vulkan/vk_occlusion.h"
 #include "video_core/texture_cache/image_view.h"
 #include "video_core/texture_cache/texture_cache.h"
 
@@ -60,6 +72,7 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
     if (!EmulatorSettings.IsNullGPU()) {
         liverpool->BindRasterizer(this);
     }
+    BbGuestMemory::Install(instance); // bbport: before the runtime maps direct memory
     memory->SetRasterizer(this);
 
     GpuProfiler::Init(instance, scheduler);
@@ -76,6 +89,352 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
 }
 
 Rasterizer::~Rasterizer() = default;
+
+bool Rasterizer::HonestLabels() {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_HONEST_LABELS");
+        const bool enabled = (env && env[0] == '1') || VideoCore::GuestInPlace();
+        if (enabled) {
+            std::printf("GPU: fences written when the GPU has finished the work before them "
+                        "(BB_HONEST_LABELS=1)\n");
+        }
+        return enabled;
+    }();
+    return on;
+}
+
+void Rasterizer::PublishSignals() {
+    // Only the recording thread, or the GPU command thread while it is idle (drained), touches
+    // them; other threads (a guest thread reading back) leave them to those.
+    const bool on_b = DrawPipe::OnStageB();
+    if (!(on_b || (OnStageA() && DrawPipeIdle()))) {
+        return;
+    }
+    // Fences of the packets before this one (stage B), or of all (stage A, drained).
+    const u64 upto = draw_pipe ? (on_b ? draw_pipe->Consumed() : draw_pipe->Head()) : 0;
+    if (local_signals.empty()) {
+        signals_published_upto.store(upto, std::memory_order_release);
+        return;
+    }
+    bool was_empty;
+    {
+        std::scoped_lock lk{gpu_signals_mutex};
+        if (!gpu_signal_thread.joinable()) {
+            gpu_signal_thread =
+                std::jthread([this](std::stop_token token) { GpuSignalLoop(token); });
+        }
+        was_empty = gpu_signals.empty();
+        for (auto& pending : local_signals) {
+            gpu_signals.push_back(std::move(pending));
+        }
+    }
+    local_signals.clear();
+    local_signal_count.store(0, std::memory_order_release);
+    signals_published_upto.store(upto, std::memory_order_release);
+    if (was_empty) {
+        gpu_signals_cv.notify_one();
+    }
+}
+
+void Rasterizer::SignalAfterGpu(std::function<void()> signal, VAddr label, u64 value) {
+    if (DrawPipe::OnStageB()) {
+        // Kept here until the end of the guest submission or the next flush (in tick order).
+        local_signals.push_back({scheduler.CurrentTick(), std::move(signal), label, value});
+        local_signal_count.store(u32(local_signals.size()), std::memory_order_release);
+        return;
+    }
+    if (OnStageA() && DrawPipeIdle()) {
+        PublishSignals(); // the recording thread's come first (it is idle)
+    }
+    bool was_empty;
+    {
+        std::scoped_lock lk{gpu_signals_mutex};
+        if (!gpu_signal_thread.joinable()) {
+            gpu_signal_thread =
+                std::jthread([this](std::stop_token token) { GpuSignalLoop(token); });
+        }
+        was_empty = gpu_signals.empty();
+        gpu_signals.push_back({scheduler.CurrentTick(), std::move(signal), label, value});
+    }
+    // The signal thread waits on the condition only with nothing queued (else it waits for the
+    // GPU and takes the rest when it gets back): no notify per fence (~60 a frame).
+    if (was_empty) {
+        gpu_signals_cv.notify_one();
+    }
+}
+
+void Rasterizer::RequestSignalFlush() {
+    if (signal_flush_requested.exchange(true, std::memory_order_acq_rel)) {
+        return;
+    }
+    static constexpr u8 none = 0;
+    RunInOrder(
+        [](Rasterizer& self, const u8*) {
+            self.signal_flush_requested.store(false, std::memory_order_release);
+            self.PublishSignals();
+            if (self.HasUnsubmittedSignals()) {
+                self.Flush();
+            }
+        },
+        &none, 0, BbToggle::PipelinedTasks, false);
+}
+
+bool Rasterizer::SignalsPublished(u64 position) const {
+    return !draw_pipe || !HonestLabels() ||
+           signals_published_upto.load(std::memory_order_acquire) >= position;
+}
+
+bool Rasterizer::HasUnsubmittedSignals() {
+    if (local_signal_count.load(std::memory_order_acquire) != 0) {
+        return true; // for the current tick, held by the recording thread
+    }
+    std::scoped_lock lk{gpu_signals_mutex};
+    return !gpu_signals.empty() && gpu_signals.back().tick >= scheduler.CurrentTick();
+}
+
+bool Rasterizer::WriteGuestMemory(VAddr address, const void* data, u32 size) {
+    if (!VideoCore::GuestInPlace() || size == 0 || (address | size) % 4 != 0) {
+        return false;
+    }
+    const auto [buffer, offset] = buffer_cache.ObtainBuffer(address, size, true);
+    if (!buffer_cache.IsInPlace(address, size)) {
+        return false;
+    }
+    runtime.UpdateBuffer(buffer, offset, {static_cast<const u8*>(data), size});
+    return true;
+}
+
+bool Rasterizer::WriteDataOnGpu(VAddr address, const void* data, u32 size) {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_GPU_COMMAND_WRITES");
+        return !env || env[0] != '0';
+    }();
+    if (!enabled || !VideoCore::GuestInPlace() || size == 0 || (address | size) % 4 != 0) {
+        return false;
+    }
+    const auto target = buffer_cache.CommandWriteTarget(address, size);
+    if (!target) {
+        return false;
+    }
+    runtime.UpdateBuffer(target->first, target->second, {static_cast<const u8*>(data), size});
+    if (size <= sizeof(u64) && HonestLabels()) {
+        u64 value = 0;
+        std::memcpy(&value, data, size);
+        SignalAfterGpu([] {}, address, value);
+    }
+    return true;
+}
+
+bool Rasterizer::OcclusionTranslated() {
+    // BB_OCCLUSION_QUERIES=0: the counters stay the fixed sequence written when decoded.
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_OCCLUSION_QUERIES");
+        return !env || env[0] != '0';
+    }();
+    // Experiment bit 4 of BB_TOGGLE_FILE: the fixed sequence while the game runs (A/B).
+    return enabled && VideoCore::GuestInPlace() && !BbToggle::Experiment(4);
+}
+
+bool Rasterizer::OcclusionEvent(VAddr address, u32 pairs) {
+    if (!OcclusionTranslated() || pairs == 0) {
+        return false;
+    }
+    if (!occlusion) {
+        occlusion = std::make_unique<OcclusionQueries>(instance, scheduler, buffer_cache);
+    }
+    occlusion->Event(address, pairs);
+    return true;
+}
+
+u64 Rasterizer::OcclusionEvents() const {
+    return occlusion ? occlusion->Events() : 0;
+}
+
+bool Rasterizer::WriteLabelOnGpu(VAddr address, u64 value, u32 num_bytes) {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_GPU_LABELS");
+        const bool on = !env || env[0] != '0';
+        if (on && VideoCore::GuestInPlace()) {
+            std::printf("GPU: end-of-pipe labels are written by the GPU (buffer markers; "
+                        "BB_GPU_LABELS=0: by a CPU thread after the GPU)\n");
+        }
+        return on;
+    }();
+    if (!enabled || !VideoCore::GuestInPlace() || !HonestLabels() ||
+        !instance.IsBufferMarkerSupported() || BbFreeCheck::Enabled() ||
+        (num_bytes != 4 && num_bytes != 8) || address % num_bytes != 0) {
+        return false;
+    }
+    const auto target = buffer_cache.GuestChunkSource(address, num_bytes);
+    if (!target) {
+        return false;
+    }
+    // The 64-bit label as two 32-bit end-of-pipe writes, the high half first: whoever sees the
+    // new low half (the guest polls that) sees the new high half too.
+    scheduler.Record([buffer = target->first->Handle(), offset = target->second, value,
+                      num_bytes](vk::CommandBuffer cmdbuf) {
+        if (num_bytes == 8) {
+            cmdbuf.writeBufferMarkerAMD(vk::PipelineStageFlagBits::eBottomOfPipe, buffer,
+                                        offset + 4, static_cast<u32>(value >> 32));
+        }
+        cmdbuf.writeBufferMarkerAMD(vk::PipelineStageFlagBits::eBottomOfPipe, buffer, offset,
+                                    static_cast<u32>(value));
+    });
+    // A VRAM copy of these bytes gets them too, at its next binding (as for CPU-written labels).
+    buffer_cache.NoteLateCommandWrite(address, &value, num_bytes);
+    BbStats::gpu_labels.fetch_add(1, std::memory_order_relaxed);
+    // In stream order for WAIT_REG_MEM, and the submission policy (HasUnsubmittedSignals).
+    SignalAfterGpu([] {}, address, value);
+    return true;
+}
+
+bool Rasterizer::PipeSignals() const {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_PIPE_SIGNALS");
+        return !env || env[0] != '0';
+    }();
+    return enabled && HonestLabels() && UseDrawPipe() && OnStageA();
+}
+
+void Rasterizer::SubmitForSignals() {
+    if (!HonestLabels()) {
+        return;
+    }
+    if (PipeSignals()) {
+        // Decided (and submitted) on the recording thread after this submission's draws and
+        // fences: here they may not even be recorded yet.
+        static constexpr u8 none = 0;
+        RunInOrder([](Rasterizer& self, const u8*) { self.SubmitForSignalsNow(); }, &none, 0,
+                   BbToggle::PipelinedTasks, false);
+        return;
+    }
+    SubmitForSignalsNow();
+}
+
+void Rasterizer::SubmitForSignalsNow() {
+    PublishSignals(); // the end of a guest submission
+    static const auto interval = std::chrono::microseconds([] {
+        const char* env = std::getenv("BB_HONEST_FLUSH_US");
+        return env ? std::strtoll(env, nullptr, 10) : 2000ll;
+    }());
+    if (!HasUnsubmittedSignals()) {
+        return;
+    }
+    // Batched (one submission per BB_HONEST_FLUSH_US) while the GPU still has work; at once when it
+    // has finished everything submitted: holding the work back then only leaves it idle. Not at
+    // once while draws are queued for this thread (BB_HONEST_IDLE_BACKLOG bytes, default 64 KiB):
+    // it is then what the GPU waits for, and a submission costs it ~65 us (heavy scenes: 13 a
+    // frame; 95 -> 100 FPS with half as many).
+    static const bool idle_flush = [] {
+        const char* env = std::getenv("BB_HONEST_IDLE_FLUSH");
+        return !env || env[0] != '0';
+    }();
+    static const u64 idle_backlog = [] {
+        const char* env = std::getenv("BB_HONEST_IDLE_BACKLOG");
+        return env ? std::strtoull(env, nullptr, 10) : u64(64 * 1024);
+    }();
+    const bool gpu_idle =
+        idle_flush &&
+        (!draw_pipe || !DrawPipe::OnStageB() || draw_pipe->Backlog() < idle_backlog) &&
+        scheduler.IsFree(scheduler.CurrentTick() - 1);
+    const auto since_flush = std::chrono::nanoseconds(
+        std::chrono::steady_clock::now().time_since_epoch().count() -
+        last_flush_ns.load(std::memory_order_relaxed));
+    if (!gpu_idle && since_flush < interval) {
+        return;
+    }
+    if (gpu_idle) {
+        BbStats::idle_flushes.fetch_add(1, std::memory_order_relaxed);
+    }
+    Flush();
+}
+
+bool Rasterizer::PendingSignalValue(VAddr address, u64& value) {
+    std::scoped_lock lk{gpu_signals_mutex};
+    for (auto it = gpu_signals.rbegin(); it != gpu_signals.rend(); ++it) {
+        if (it->label == address) {
+            value = it->value;
+            return true;
+        }
+    }
+    return false;
+}
+
+void Rasterizer::GpuSignalLoop(std::stop_token token) {
+    Common::SetCurrentThreadName("bb:GpuSignals");
+    auto* semaphore = scheduler.GetWorkSemaphore();
+    const vk::Semaphore handle = semaphore->Handle();
+    while (!token.stop_requested()) {
+        u64 tick = 0;
+        {
+            std::unique_lock lk{gpu_signals_mutex};
+            if (!gpu_signals_cv.wait(lk, token, [this] { return !gpu_signals.empty(); })) {
+                return;
+            }
+            tick = gpu_signals.front().tick;
+        }
+        // Bounded waits: the tick may not be submitted yet (the GPU command thread submits it
+        // when it runs out of work), and a stop request must be seen.
+        const vk::SemaphoreWaitInfo wait_info = {
+            .semaphoreCount = 1,
+            .pSemaphores = &handle,
+            .pValues = &tick,
+        };
+        // bbport: a lost device ends the wait with a report (it spun here forever: the game froze
+        // with its sound playing, Steam Deck); 10 s without progress prints what is stuck once.
+        const auto wait_start = std::chrono::steady_clock::now();
+        bool watched = false;
+        while (!token.stop_requested()) {
+            const vk::Result result = instance.GetDevice().waitSemaphores(&wait_info, 5'000'000);
+            if (result == vk::Result::eSuccess) {
+                break;
+            }
+            if (result == vk::Result::eErrorDeviceLost) {
+                Breadcrumbs::ReportDeviceLost("waiting for the GPU");
+                ASSERT_MSG(false, "Device lost while waiting for the GPU");
+            }
+            if (!watched && std::chrono::steady_clock::now() - wait_start > std::chrono::seconds(10)) {
+                watched = true;
+                GpuWatchdog(tick);
+            }
+        }
+        semaphore->Refresh();
+        BbTimeline::Note(BbTimeline::GpuDone, semaphore->KnownGpuTick());
+        while (true) {
+            std::function<void()> signal;
+            {
+                std::scoped_lock lk{gpu_signals_mutex};
+                if (gpu_signals.empty() || !semaphore->IsFree(gpu_signals.front().tick)) {
+                    break;
+                }
+                signal = std::move(gpu_signals.front().signal);
+                // Kept queued while it runs: PendingSignalValue still sees the fence.
+            }
+            signal();
+            std::scoped_lock lk{gpu_signals_mutex};
+            gpu_signals.pop_front();
+        }
+    }
+}
+
+void Rasterizer::GpuWatchdog(u64 tick) {
+    auto* semaphore = scheduler.GetWorkSemaphore();
+    semaphore->Refresh();
+    const u64 done = semaphore->KnownGpuTick(), recording = scheduler.CurrentTick();
+    if (tick < recording) {
+        std::printf("GPU watchdog: submission %llu not finished after 10 s (the GPU finished %llu, "
+                    "recording %llu): the GPU is stuck\n",
+                    (unsigned long long)tick, (unsigned long long)done, (unsigned long long)recording);
+        Breadcrumbs::ReportStuck("submitted work not finished in 10 s");
+    } else {
+        std::printf("GPU watchdog: waited 10 s for submission %llu, not submitted yet (the GPU finished "
+                    "%llu, recording %llu, draw pipe backlog %llu bytes): the port's threads are "
+                    "waiting for each other\n",
+                    (unsigned long long)tick, (unsigned long long)done, (unsigned long long)recording,
+                    (unsigned long long)(draw_pipe ? draw_pipe->Backlog() : 0));
+    }
+    std::fflush(stdout);
+}
 
 inline const AmdGpu::Regs& Rasterizer::Regs() const {
     return stage_regs ? *stage_regs : liverpool->regs;
@@ -218,6 +577,7 @@ VideoCore::ImageId Rasterizer::FindTargetMemoized(VideoCore::TextureCache::Image
 }
 
 void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
+    BB_SECTION(PrepareRenderState);
     // Prefetch render targets to handle overlaps with bound textures (e.g. mipgen)
     const auto& key = pipeline->GetGraphicsKey();
     const auto& regs = Regs();
@@ -266,7 +626,9 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
     // main camera (shadow passes bind the same layout with the light's camera).
     gbuffer_draw = camera_motion->Enabled() && std::popcount(key.mrt_mask) >= 5 && db_desc.first;
     if (gbuffer_draw) {
-        camera_motion->OnGBufferPass(db_desc.first);
+        const auto& vp = regs.viewports[0];
+        camera_motion->OnGBufferPass(db_desc.first, vp.xscale < 0.0f ? -1.0f : 1.0f,
+                                     vp.yscale < 0.0f ? -1.0f : 1.0f);
     }
     if (upscaler->Enabled() && cb_descs[0].first) {
         upscaler->OnColorTarget(cb_descs[0].first);
@@ -356,6 +718,8 @@ struct DrawPacket {
     u32 verify;
     std::array<AmdGpu::CbDbExtent, AmdGpu::NUM_COLOR_BUFFERS> cb_extent;
     AmdGpu::CbDbExtent db_extent;
+    u32 num_vsharps; ///< V#s of the vertex streams, after the indirect arguments
+    u32 pad;
     u64 ring_end; ///< constant ring position after this packet's copies
 };
 struct PacketStage {
@@ -435,47 +799,76 @@ void Rasterizer::NotePendingGpuWrite(VAddr address, u64 size) {
     if (!draw_pipe || !size) {
         return;
     }
-    // Draws write the same buffers over and over: an entry for the range only moves on.
-    const u64 position = draw_pipe->Head();
-    const VAddr end = address + size;
-    for (auto& write : pending_writes) {
-        if (address <= write.end && write.begin <= end) {
-            write.begin = std::min(write.begin, address);
-            write.end = std::max(write.end, end);
-            write.position = position;
-            pending_min = std::min(pending_min, address);
-            pending_max = std::max(pending_max, end);
-            return;
-        }
+    // Numbered by packet (a position, the packet's start, counted as reached once the packet
+    // before it had run, while this one was not recorded yet), in hashed granules: a lookup per
+    // constant binding instead of a scan of the writes (a list scan was ~5% of this thread).
+    pending_write_table.Note(address, size, draw_pipe->NextPacket());
+}
+
+void Rasterizer::NotePendingRead(VAddr address, u64 size) {
+    if (draw_pipe && size && OnStageA()) {
+        pending_reads.Note(address, size, draw_pipe->NextPacket());
     }
-    pending_writes.push_back({address, end, position});
-    pending_min = std::min(pending_min, address);
-    pending_max = std::max(pending_max, end);
+}
+
+void Rasterizer::WaitForPendingReads(VAddr address, u64 size) {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_CONSTRAM_PIPE");
+        return !env || env[0] != '0';
+    }();
+    if (!draw_pipe || !OnStageA()) {
+        return;
+    }
+    if (!enabled || !UseDrawPipe() || size == 0) {
+        DrainDrawPipe(DrawPipe::ReasonConstRam);
+        return;
+    }
+    const u64 packet = std::max(untracked_reads_packet, pending_reads.Newest(address, size));
+    if (draw_pipe->ReachedPacket(packet)) {
+        ++constram_waits_skipped;
+        return;
+    }
+    draw_pipe->WaitForPacket(packet, DrawPipe::ReasonConstRam);
+}
+
+void Rasterizer::NoteCommandWriteInOrder(VAddr addr, const void* data, u64 size) {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_CONSTRAM_PIPE");
+        return !env || env[0] != '0';
+    }();
+    if (VideoCore::WriteTracking() || !IsMapped(addr, size)) {
+        return;
+    }
+    if (!enabled || !UseDrawPipe() || !OnStageA() || size > 1_MB) {
+        NoteCommandWrite(addr, data, size, false);
+        return;
+    }
+    // The caches belong to the recording thread while it has packets: it updates them in order
+    // (later packets see the new bytes there; the memory already holds them for this thread).
+    struct Header {
+        VAddr addr;
+        u64 size;
+    };
+    thread_local std::vector<u8> payload;
+    payload.resize(sizeof(Header) + size);
+    const Header header{addr, size};
+    std::memcpy(payload.data(), &header, sizeof(header));
+    std::memcpy(payload.data() + sizeof(header), data, size);
+    RunInOrder(
+        [](Rasterizer& self, const u8* bytes) {
+            Header write;
+            std::memcpy(&write, bytes, sizeof(write));
+            self.NoteCommandWrite(write.addr, bytes + sizeof(write), write.size, true);
+        },
+        payload.data(), static_cast<u32>(payload.size()), BbToggle::PipelinedTasks, false);
 }
 
 bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
-    if (pending_writes.empty() || address >= pending_max || address + size <= pending_min) {
+    if (!draw_pipe || size == 0) {
         return false;
     }
-    // Now and then drop entries whose writes the recording thread has done: the bounds shrink.
-    if ((++pending_checks & 63) == 0) {
-        std::erase_if(pending_writes, [&](const PendingWrite& write) {
-            return draw_pipe->Reached(write.position);
-        });
-        pending_min = ~VAddr{0};
-        pending_max = 0;
-        for (const auto& write : pending_writes) {
-            pending_min = std::min(pending_min, write.begin);
-            pending_max = std::max(pending_max, write.end);
-        }
-    }
-    const VAddr end = address + size;
-    for (const auto& write : pending_writes) {
-        if (address < write.end && write.begin < end && !draw_pipe->Reached(write.position)) {
-            return true;
-        }
-    }
-    return false;
+    const u64 packet = pending_write_table.Newest(address, size);
+    return packet != 0 && !draw_pipe->ReachedPacket(packet);
 }
 
 void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDraw* prepared,
@@ -496,7 +889,7 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
     const auto copy = [&](u32 index, const void* source, VAddr address, u64 size) {
         const auto offset = constant_ring->Allocate(size, alignment);
         if (!offset) {
-            return;
+            return false;
         }
         u8* dst = constant_ring->Data(*offset);
         if (source) {
@@ -506,7 +899,14 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
         }
         constant_ring->Flush(*offset, size);
         out.push_back({index, static_cast<u32>(size), *offset, address});
+        return true;
     };
+    // Compute stages may run as HLE copy shaders, which read their buffers on the recording
+    // thread whether or not they were copied here.
+    const bool hle_candidate = stage.sw_stage == Shader::SwStage::Compute;
+    // BB_CONSTANTS_IN_PLACE: nothing is copied here; the recording thread binds the game's memory
+    // (or copies what is not in place, a read noted below).
+    const bool constants_in_place = VideoCore::ConstantsInPlace();
     for (u32 index = 0; index < stage.buffers.size(); ++index) {
         const auto& desc = stage.buffers[index];
         if (desc.IsSpecial()) {
@@ -528,13 +928,21 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
             NotePendingGpuWrite(address, size);
             continue;
         }
-        // The stream path of BufferCache::ObtainBuffer, taken here: small, read-only, not
-        // written by the GPU (now or by work still queued for the recording thread).
-        if (size == 0 || size > VideoCore::BufferCache::STREAM_THRESHOLD ||
-            buffer_cache.IsRegionGpuModified(address, size) || PendingWriteOverlaps(address, size)) {
-            continue;
+        if (BbCeStats::Enabled()) {
+            BbCeStats::Check(size <= VideoCore::BufferCache::STREAM_THRESHOLD
+                                 ? BbCeStats::RingConstants
+                                 : BbCeStats::LargeBuffer,
+                             address, size);
         }
-        copy(index, nullptr, address, size);
+        // The stream path of BufferCache::ObtainBuffer, taken here: small, read-only, not
+        // written by the GPU (now or by work still queued for the recording thread). What is not
+        // copied is read on the recording thread: a CPU write over these bytes on this thread
+        // waits for the packet (WaitForPendingReads).
+        if (size == 0 || size > VideoCore::BufferCache::STREAM_THRESHOLD || constants_in_place ||
+            buffer_cache.IsRegionGpuModified(address, size) || PendingWriteOverlaps(address, size) ||
+            !copy(index, nullptr, address, size) || hle_candidate) {
+            NotePendingRead(address, size);
+        }
     }
 }
 
@@ -566,9 +974,76 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
     for (const auto* stage : stages) {
         if (stage) {
             auto& ring = rings[num_stages];
+            if (BbCeStats::Enabled()) {
+                const auto ud = stage->UserData();
+                for (size_t i = 0; i + 1 < ud.size(); ++i) {
+                    const u64 value = u64(ud[i]) | u64(ud[i + 1]) << 32;
+                    if (value >= 0x100000000ull && value < (1ull << 40)) {
+                        BbCeStats::Check(BbCeStats::UserDataPointer, value, 64);
+                    }
+                }
+                BbCeStats::Get().checks[BbCeStats::DmaStage]++;
+                BbCeStats::Get().hits[0][BbCeStats::DmaStage] += stage->uses_dma ? 1 : 0;
+            }
+            // bbport BB_WATCH=addr,size (diagnostics): what the translator reads from that range on
+            // the CPU: user data pointing into it, constants copied from it; printed every 2 s.
+            static const std::pair<u64, u64> watch = [] {
+                const char* env = std::getenv("BB_WATCH");
+                if (!env) {
+                    return std::pair<u64, u64>{0, 0};
+                }
+                char* end = nullptr;
+                const u64 addr = std::strtoull(env, &end, 0);
+                const u64 len = end && *end == ',' ? std::strtoull(end + 1, nullptr, 0) : 0;
+                return std::pair<u64, u64>{addr, len};
+            }();
+            if (watch.second) {
+                static u64 ud_hits = 0, ud_checks = 0, ring_hits = 0, vs_hits = 0;
+                static u64 code_hits = 0;
+                if (stage->ProgramBase() >= watch.first && stage->ProgramBase() < watch.first + watch.second) {
+                    ++code_hits;
+                }
+                static u64 last_hash = 0;
+                static auto report = std::chrono::steady_clock::now();
+                const auto ud = stage->UserData();
+                ++ud_checks;
+                for (size_t i = 0; i + 1 < ud.size(); ++i) {
+                    const u64 value = (u64(ud[i]) | u64(ud[i + 1]) << 32) & 0xFFFFFFFFFFFFull;
+                    if (value >= watch.first && value < watch.first + watch.second) {
+                        ++ud_hits;
+                        last_hash = stage->pgm_hash;
+                    }
+                }
+                for (u32 index = 0; index < stage->buffers.size(); ++index) {
+                    const auto& desc = stage->buffers[index];
+                    if (desc.IsSpecial()) {
+                        continue;
+                    }
+                    const auto vsharp = desc.GetSharp(*stage);
+                    if (vsharp.base_address < watch.first + watch.second &&
+                        watch.first < vsharp.base_address + vsharp.GetSize()) {
+                        ++(vsharp.GetSize() <= VideoCore::BufferCache::STREAM_THRESHOLD ? ring_hits
+                                                                                      : vs_hits);
+                        last_hash = stage->pgm_hash;
+                    }
+                }
+                if (std::chrono::steady_clock::now() - report > std::chrono::seconds(2)) {
+                    report = std::chrono::steady_clock::now();
+                    std::printf("Watch %#llx+%#llx: user data pointers into it %llu of %llu stages, "
+                                "small buffers over it %llu, large %llu, shader code in it %llu (last shader %016llx)\n",
+                                (unsigned long long)watch.first, (unsigned long long)watch.second,
+                                (unsigned long long)ud_hits, (unsigned long long)ud_checks,
+                                (unsigned long long)ring_hits, (unsigned long long)vs_hits,
+                                (unsigned long long)code_hits,
+                                (unsigned long long)last_hash);
+                    ud_hits = ud_checks = ring_hits = vs_hits = code_hits = 0;
+                }
+            }
             ring.clear();
             if (constant_ring && !BbToggle::Disabled(BbToggle::ConstantRing)) {
                 CollectRingBindings(*stage, used_prepared, ring);
+            } else {
+                untracked_reads_packet = draw_pipe->NextPacket(); // bindings not listed
             }
             ++num_stages;
             size += sizeof(PacketStage) +
@@ -582,7 +1057,55 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
     }
     if (indirect) {
         size += AlignPacket(sizeof(IndirectDraw));
+        // The arguments are read on the recording thread.
+        const u64 args_size = u64(std::max(indirect->stride, 4u)) * std::max(indirect->max_count, 1u);
+        if (args_size <= 16_MB) {
+            NotePendingRead(indirect->args, args_size);
+        } else {
+            untracked_reads_packet = draw_pipe->NextPacket();
+        }
+        if (indirect->count) {
+            NotePendingRead(indirect->count, sizeof(u32));
+        }
     }
+    // bbport: the V#s of the vertex streams, read here from the tables the user data points to:
+    // those tables are what the game's constant engine dumps (a ring of ~25 pages rewritten
+    // ~14000 times a second). Read on the recording thread instead, a later dump had often
+    // replaced them by then: depth of field drew its passes with another draw's vertices (a
+    // flipped copy of the scene, streaks and blocks in the sky; issue #44). The streams' data and
+    // the index buffer are still read there: a DumpConstRam over them waits for this packet.
+    thread_local boost::container::static_vector<AmdGpu::Buffer, Shader::NUM_BUFFERS> vsharps;
+    vsharps.clear();
+    if (pipeline && !pipeline->IsCompute()) {
+        const auto* graphics = static_cast<const GraphicsPipeline*>(pipeline);
+        if (const auto& fetch = graphics->GetFetchShader();
+            fetch && fetch->attributes.size() <= vsharps.capacity()) {
+            const auto& vs = graphics->GetStage(Shader::SwStage::Vertex);
+            for (const auto& attrib : fetch->attributes) {
+                const auto buffer = attrib.GetSharp(vs);
+                vsharps.push_back(buffer);
+                if (buffer.base_address != 0 && buffer.GetSize() > 0) {
+                    if (BbCeStats::Enabled()) {
+                        BbCeStats::Check(BbCeStats::Vertex, buffer.base_address, buffer.GetSize());
+                    }
+                    NotePendingRead(buffer.base_address, buffer.GetSize());
+                }
+            }
+        }
+        if (is_indexed) {
+            const auto& regs = liverpool->regs;
+            const u32 index_size =
+                regs.index_buffer_type.index_type == AmdGpu::IndexType::Index16 ? 2 : 4;
+            const VAddr index_address =
+                regs.index_base_address.Address<VAddr>() + u64(index_offset) * index_size;
+            const u64 index_bytes = u64(regs.num_indices) * index_size;
+            if (BbCeStats::Enabled()) {
+                BbCeStats::Check(BbCeStats::Index, index_address, index_bytes);
+            }
+            NotePendingRead(index_address, index_bytes);
+        }
+    }
+    size += AlignPacket(u32(vsharps.size() * sizeof(AmdGpu::Buffer)));
     const u32 interval = VerifyInterval();
     const bool verify = interval && (draw_pipe->packets % interval) == 0;
     if (verify) {
@@ -607,6 +1130,7 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
     packet.cb_extent = liverpool->last_cb_extent;
     packet.db_extent = liverpool->last_db_extent;
     packet.ring_end = constant_ring ? constant_ring->Position() : 0;
+    packet.num_vsharps = static_cast<u32>(vsharps.size());
     out += sizeof(DrawPacket);
     std::memcpy(out, blocks.data(), num_blocks * sizeof(u16));
     out += AlignPacket(num_blocks * sizeof(u16));
@@ -646,6 +1170,8 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
         std::memcpy(out, indirect, sizeof(IndirectDraw));
         out += AlignPacket(sizeof(IndirectDraw));
     }
+    std::memcpy(out, vsharps.data(), vsharps.size() * sizeof(AmdGpu::Buffer));
+    out += AlignPacket(u32(vsharps.size() * sizeof(AmdGpu::Buffer)));
     if (verify) {
         std::memcpy(out, &liverpool->regs, sizeof(AmdGpu::Regs));
         out += sizeof(AmdGpu::Regs);
@@ -667,11 +1193,15 @@ void Rasterizer::RetireSubmission() {
     }
 }
 
-bool Rasterizer::RunInOrder(OrderedTask task, const void* data, u32 size, u64 toggle) {
+bool Rasterizer::RunInOrder(OrderedTask task, const void* data, u32 size, u64 toggle,
+                            bool reads_guest_memory) {
     if (!UseDrawPipe() || BbToggle::Disabled(toggle)) {
         DrainDrawPipe(DrawPipe::ReasonRasterizer);
         task(*this, static_cast<const u8*>(data));
         return false;
+    }
+    if (reads_guest_memory) {
+        untracked_reads_packet = draw_pipe->NextPacket();
     }
     const u32 total = sizeof(TaskPacket) + AlignPacket(size);
     u8* out = draw_pipe->Begin(total);
@@ -681,10 +1211,34 @@ bool Rasterizer::RunInOrder(OrderedTask task, const void* data, u32 size, u64 to
     return true;
 }
 
+namespace {
+// BB_SECTIONS: ordered tasks by function (cycles, count), stage B only.
+constexpr std::size_t TaskKinds = 16;
+std::array<void*, TaskKinds> task_kinds{};
+std::array<u64, TaskKinds> task_cycles{}, task_counts{};
+} // namespace
+
 void Rasterizer::RunDrawPacket(void* context, const u8* data, u32 size) {
+    BB_SECTION(Packet);
     auto& self = *static_cast<Rasterizer*>(context);
     if (*reinterpret_cast<const PacketKind*>(data) == PacketKind::Task) {
+        BB_SECTION(Task);
+        self.buffer_cache.NewPacket();
         const auto& task = *reinterpret_cast<const TaskPacket*>(data);
+        if (BbSections::Enabled()) {
+            const u64 t0 = __rdtsc();
+            task.task(self, data + sizeof(TaskPacket));
+            void* fn = reinterpret_cast<void*>(task.task);
+            for (std::size_t k = 0; k < TaskKinds; ++k) {
+                if (task_kinds[k] == fn || !task_kinds[k]) {
+                    task_kinds[k] = fn;
+                    task_cycles[k] += __rdtsc() - t0;
+                    ++task_counts[k];
+                    break;
+                }
+            }
+            return;
+        }
         task.task(self, data + sizeof(TaskPacket));
         return;
     }
@@ -725,6 +1279,8 @@ void Rasterizer::RunDrawPacket(void* context, const u8* data, u32 size) {
         indirect = reinterpret_cast<const IndirectDraw*>(in);
         in += AlignPacket(sizeof(IndirectDraw));
     }
+    self.packet_vsharps = {reinterpret_cast<const AmdGpu::Buffer*>(in), packet.num_vsharps};
+    in += AlignPacket(u32(packet.num_vsharps * sizeof(AmdGpu::Buffer)));
     if (packet.verify) {
         // The resource tables the GPU thread walked must read the same now: else a write
         // still queued here (WriteData, DMA) changed them after that thread read them.
@@ -809,6 +1365,7 @@ void Rasterizer::RunDrawPacket(void* context, const u8* data, u32 size) {
     }
     Shader::Info::num_ud_snapshots = 0;
     self.num_ring_stages = 0;
+    self.packet_vsharps = {};
     if (self.constant_ring) {
         self.constant_ring->Stamp(packet.ring_end);
     }
@@ -850,6 +1407,40 @@ void Rasterizer::PrintPipeStats() {
             } else {
                 std::printf(" %s=%.0f (%.1f%%)", names[r - 256], n / seconds, share);
             }
+        }
+    }
+    if (constram_waits_skipped) {
+        std::printf(" ConstRam not waited=%.0f", constram_waits_skipped / seconds);
+        constram_waits_skipped = 0;
+    }
+    if (BbSections::Enabled()) {
+        static std::array<u64, BbSections::Count> last_sections{};
+        const double packets = double(draw_pipe->packets - last_packets);
+        const double tsc_hz = cycles / seconds;
+        std::printf("\n  stage B us per packet:");
+        for (u32 s = 0; s < BbSections::Count; ++s) {
+            const u64 now_cycles = BbSections::cycles[s].load(std::memory_order_relaxed);
+            if (packets > 0) {
+                std::printf(" %s %.2f", BbSections::Names[s],
+                            1e6 * double(now_cycles - last_sections[s]) / tsc_hz / packets);
+            }
+            last_sections[s] = now_cycles;
+        }
+        // Racy reads of stage B's counters: diagnostics only.
+        std::printf("\n  stage B tasks (us per frame-second, count/s):");
+        static std::array<u64, TaskKinds> last_task_cycles{}, last_task_counts{};
+        for (std::size_t k = 0; k < TaskKinds && task_kinds[k]; ++k) {
+            BbHost::AddressInfo info;
+            BbHost::DescribeAddress(task_kinds[k], info);
+            char name[32];
+            std::snprintf(name, sizeof(name), "+0x%llx",
+                          (unsigned long long)(reinterpret_cast<u64>(task_kinds[k]) - info.base));
+            const u64 c = task_cycles[k], n = task_counts[k];
+            std::printf(" [%s %.0f us/s %.0f/s]", name,
+                        1e6 * double(c - last_task_cycles[k]) / tsc_hz / seconds,
+                        double(n - last_task_counts[k]) / seconds);
+            last_task_cycles[k] = c;
+            last_task_counts[k] = n;
         }
     }
     std::printf("\n  stage A waits over 0.5%%:");
@@ -932,9 +1523,23 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* pre
 
 void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw* used_prepared,
                             bool is_indexed, u32 index_offset) {
+    BB_SECTION(DrawRecord);
+    buffer_cache.NewPacket();
     if (DrawPipe::OnStageB()) {
         FrameCapture::Poll();
         scheduler.PopPendingOperations();
+    }
+    // bbport (BB_PREUPLOAD): once a frame, guest GPU memory the CPU wrote and then left alone is
+    // uploaded ahead of its use, BB_PREUPLOAD_MB (16) at most per frame.
+    if (const u32 frame = BbStats::frame_number.load(std::memory_order_relaxed);
+        frame != preupload_frame) {
+        preupload_frame = frame;
+        BB_SECTION(Preupload);
+        static const u64 budget = [] {
+            const char* env = std::getenv("BB_PREUPLOAD_MB");
+            return (env ? std::strtoull(env, nullptr, 10) : 16ull) << 20;
+        }();
+        buffer_cache.Preupload(budget);
     }
     const auto& regs = Regs();
     // bbport: the pass copying a finished frame to a display buffer; the previous draw's
@@ -999,6 +1604,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     push_data.yscale *= target_scale[1];
     push_data.yoffset *= target_scale[1];
     if (motion_draw && motion_geometry) {
+        BB_SECTION(Motion);
         const auto& vs = pipeline->GetStage(Shader::SwStage::Vertex);
         const auto [base_vertex, first_instance] =
             GetDrawOffsets(regs, vs, pipeline->GetFetchShader());
@@ -1080,7 +1686,11 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
             });
         }
     }
-    pipeline->BindResources(set_writes, push_data);
+    {
+        BB_SECTION(PipelineBind);
+        pipeline->BindResources(set_writes, push_data, {image_infos.data(), image_infos.size()},
+                                {buffer_infos.data(), buffer_infos.size()});
+    }
     // bbport: jitter geometry drawn with the scene depth, not full-screen passes (a shifted
     // full-screen quad leaves an edge column unwritten).
     draw_jitter = {};
@@ -1101,7 +1711,14 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     const u32 num_instances = regs.num_instances.NumInstances();
     const u32 first_vertex = vertex_offset;
     const u32 first_instance = instance_offset;
-    scheduler.Record([=](vk::CommandBuffer cmdbuf) {
+    const auto* ps_info = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
+    const Breadcrumbs::Crumb crumb{
+        .kind = is_indexed ? Breadcrumbs::Kind::DrawIndexed : Breadcrumbs::Kind::Draw,
+        .hash = {vs_info.pgm_hash, ps_info ? ps_info->pgm_hash : 0},
+        .program = {vs_info.ProgramBase(), ps_info ? ps_info->ProgramBase() : 0},
+        .count = {num_indices, num_instances, 0},
+    };
+    scheduler.RecordCrumb(crumb, [=](vk::CommandBuffer cmdbuf) {
         cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, handle);
         if (is_indexed) {
             cmdbuf.drawIndexed(num_indices, num_instances, 0, s32(first_vertex), first_instance);
@@ -1124,6 +1741,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     }
     DebugState.IncDrawCall();
 
+    BB_SECTION(Kick);
     ResetBindings(false);
     scheduler.KickRecording();
 }
@@ -1162,6 +1780,7 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
 
 void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_indexed,
                                     const IndirectDraw& indirect) {
+    buffer_cache.NewPacket();
     if (DrawPipe::OnStageB()) {
         FrameCapture::Poll();
         scheduler.PopPendingOperations();
@@ -1210,7 +1829,8 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     push_data.xoffset *= target_scale[0];
     push_data.yscale *= target_scale[1];
     push_data.yoffset *= target_scale[1];
-    pipeline->BindResources(set_writes, push_data);
+    pipeline->BindResources(set_writes, push_data, {image_infos.data(), image_infos.size()},
+                            {buffer_infos.data(), buffer_infos.size()});
     draw_jitter = {};
     if (upscaler->Enabled() && db_desc.first && db_desc.first == camera_motion->Depth()) {
         draw_jitter = upscaler->Jitter();
@@ -1226,7 +1846,17 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     const u64 args_offset = base;
     const vk::Buffer counts = count_address != 0 ? count_buffer->Handle() : vk::Buffer{};
     const u64 counts_offset = count_address != 0 ? count_offset : 0;
-    scheduler.Record([=](vk::CommandBuffer cmdbuf) {
+    const auto* vs_crumb = pipeline->GetStages()[u32(Shader::SwStage::Vertex)];
+    const auto* ps_crumb = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
+    const Breadcrumbs::Crumb crumb{
+        .kind = Breadcrumbs::Kind::DrawIndirect,
+        .hash = {vs_crumb ? vs_crumb->pgm_hash : 0, ps_crumb ? ps_crumb->pgm_hash : 0},
+        .program = {vs_crumb ? vs_crumb->ProgramBase() : 0,
+                    ps_crumb ? ps_crumb->ProgramBase() : 0},
+        .address = indirect.args,
+        .count = {max_count, stride, 0},
+    };
+    scheduler.RecordCrumb(crumb, [=](vk::CommandBuffer cmdbuf) {
         cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, handle);
         if (is_indexed) {
             if (counts) {
@@ -1267,6 +1897,8 @@ void Rasterizer::DispatchDirect() {
 }
 
 void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
+    BB_SECTION(DispatchRecord);
+    buffer_cache.NewPacket();
     FrameCapture::Poll();
     gbuffer_draw = false;
 
@@ -1287,11 +1919,22 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     if (upscaler->Enabled()) {
         upscaler->OnDispatch(cs.pgm_hash);
     }
-    if (ExecuteShaderHLE(cs, Regs(), cs_program, *this)) {
+    bool hle;
+    {
+        BB_SECTION(ShaderHle);
+        hle = ExecuteShaderHLE(cs, Regs(), cs_program, *this);
+    }
+    if (hle) {
         return;
     }
-
-    if (!BindResources(pipeline)) {
+    // bbport: the game's copy shader running as itself (BB_COPY_SHADER_NATIVE): its destinations stay in
+    // the game's memory. They hold data our translator reads on the CPU (next to shader code the
+    // game uploads this way); a VRAM copy of them showed it a stale copy (a black scene). The
+    // copy list read on the CPU (vk_shader_hle.cpp) kept them in place too.
+    buffer_cache.force_writes_in_place = cs.pgm_hash == 0xfefebf9f;
+    const bool bound = BindResources(pipeline);
+    buffer_cache.force_writes_in_place = false;
+    if (!bound) {
         return;
     }
 
@@ -1301,14 +1944,21 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
 
     scheduler.EndRendering();
     mark();
-    pipeline->BindResources(set_writes, push_data);
+    pipeline->BindResources(set_writes, push_data, {image_infos.data(), image_infos.size()},
+                            {buffer_infos.data(), buffer_infos.size()});
 
     const vk::Pipeline handle = pipeline->Handle();
     const u32 dim_x = cs_program.dim_x, dim_y = cs_program.dim_y, dim_z = cs_program.dim_z;
     if (FrameCapture::Active()) {
         FrameCapture::Dispatch(cs.pgm_hash, dim_x, dim_y, dim_z);
     }
-    scheduler.Record([=](vk::CommandBuffer cmdbuf) {
+    const Breadcrumbs::Crumb crumb{
+        .kind = Breadcrumbs::Kind::Dispatch,
+        .hash = {cs.pgm_hash, 0},
+        .program = {cs.ProgramBase(), 0},
+        .count = {dim_x, dim_y, dim_z},
+    };
+    scheduler.RecordCrumb(crumb, [=](vk::CommandBuffer cmdbuf) {
         cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, handle);
         cmdbuf.dispatch(dim_x, dim_y, dim_z);
     });
@@ -1339,6 +1989,7 @@ void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size) {
 
 void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr address,
                                         u32 size) {
+    buffer_cache.NewPacket();
     scheduler.PopPendingOperations();
     const u32 offset = 0;
 
@@ -1354,12 +2005,34 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
     }
 
     scheduler.EndRendering();
-    pipeline->BindResources(set_writes, push_data);
+    // Group counts checked on the GPU first (vk_indirect_guard.h); recorded before the
+    // pipeline's bindings, which the check's own pipeline would disturb.
+    vk::Buffer args = buffer->Handle();
+    u64 args_offset = base;
+    if (IndirectGuard::Enabled()) {
+        if (!indirect_guard) {
+            indirect_guard = std::make_unique<IndirectGuard>(instance, scheduler);
+        }
+        std::tie(args, args_offset) = indirect_guard->CheckArgs(*buffer, base);
+    }
+    pipeline->BindResources(set_writes, push_data, {image_infos.data(), image_infos.size()},
+                            {buffer_infos.data(), buffer_infos.size()});
 
     const vk::Pipeline handle = pipeline->Handle();
-    const vk::Buffer args = buffer->Handle();
-    const u64 args_offset = base;
-    scheduler.Record([=](vk::CommandBuffer cmdbuf) {
+    const vk::Buffer raw_args = buffer->Handle();
+    const u64 raw_offset = base;
+    const auto& cs_crumb = pipeline->GetStage(Shader::SwStage::Compute);
+    const u32 args_slot = Breadcrumbs::ArgsSlot();
+    const Breadcrumbs::Crumb crumb{
+        .kind = Breadcrumbs::Kind::DispatchIndirect,
+        .hash = {cs_crumb.pgm_hash, 0},
+        .program = {cs_crumb.ProgramBase(), 0},
+        .address = address,
+        .count = {buffer_cache.IsInPlace(address, size) ? 1u : 0u, 0, 0},
+        .args_slot = args_slot,
+    };
+    scheduler.RecordCrumb(crumb, [=](vk::CommandBuffer cmdbuf) {
+        Breadcrumbs::CopyArgs(cmdbuf, raw_args, raw_offset, args_slot); // what the game wrote
         cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, handle);
         cmdbuf.dispatchIndirect(args, args_offset);
     });
@@ -1370,15 +2043,21 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
 }
 
 u64 Rasterizer::Flush() {
+    BB_SECTION(Flush);
     DrainDrawPipe();
+    PublishSignals(); // the recording thread's (it is idle here, or this is it)
+    last_flush_ns.store(std::chrono::steady_clock::now().time_since_epoch().count(),
+                        std::memory_order_relaxed);
     const u64 current_tick = scheduler.CurrentTick();
     SubmitInfo info{};
     scheduler.Flush(info);
+    BbTimeline::Note(BbTimeline::VulkanSubmit, current_tick, DrawPipe::OnStageB() ? 1 : 0);
     return current_tick;
 }
 
 void Rasterizer::Finish() {
     DrainDrawPipe();
+    PublishSignals();
     scheduler.Finish();
 }
 
@@ -1506,11 +2185,134 @@ void Rasterizer::JoinBindHelper(void* context) {
     }
 }
 
+namespace {
+// bbport: BB_RES_STATS=1 (diagnostics) — what the bound shaders read their resource descriptors
+// from: user data registers (state the API call set) or tables in memory (SRT walker), by kind,
+// per draw and dispatch; printed every 5 s. Measures the step "descriptors read by the GPU"
+// (docs/EMULATION_REMOVAL_PLAN.ru.md).
+struct ResStats {
+    u64 calls = 0, stages = 0, walker_stages = 0, readconst_stages = 0, dma_stages = 0;
+    u64 flat_dwords = 0;
+    // [kind][source]: kind 0 guest buffers, 1 images, 2 samplers; source 0 registers or
+    // immediates, 1 memory (SRT), 2 mixed.
+    u64 sharps[3][3]{};
+    u64 buffers_written = 0, buffers_formatted = 0, images_written = 0, special_buffers = 0;
+    std::unordered_set<u64> shaders, walker_shaders;
+};
+template <typename Fetch>
+int SharpSource(const Fetch& fetch) {
+    bool reg = false, mem = false;
+    u8 mask = fetch.load_mask;
+    for (u32 i = 0; i < fetch.offsets.size(); ++i, mask >>= 1) {
+        if (!(mask & 1)) {
+            continue;
+        }
+        (fetch.offsets[i] < Shader::NUM_USER_DATA_REGS ? reg : mem) = true;
+    }
+    return mem ? (reg ? 2 : 1) : 0;
+}
+void NoteResStats(const Pipeline* pipeline) {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_RES_STATS");
+        return env && env[0] == '1';
+    }();
+    if (!enabled) {
+        return;
+    }
+    static std::mutex mutex;
+    static ResStats s;
+    static auto window = std::chrono::steady_clock::now();
+    std::scoped_lock lk{mutex};
+    ++s.calls;
+    for (const auto* stage : pipeline->GetStages()) {
+        if (!stage) {
+            continue;
+        }
+        ++s.stages;
+        s.shaders.insert(stage->pgm_hash);
+        if (stage->srt_info.walker_func) {
+            ++s.walker_stages;
+            s.walker_shaders.insert(stage->pgm_hash);
+        }
+        s.readconst_stages += stage->has_readconst ? 1 : 0;
+        s.dma_stages += stage->uses_dma ? 1 : 0;
+        s.flat_dwords += stage->srt_info.flattened_bufsize_dw;
+        for (const auto& b : stage->buffers) {
+            if (b.IsSpecial()) {
+                ++s.special_buffers;
+                continue;
+            }
+            ++s.sharps[0][SharpSource(b.sharp_fetch)];
+            s.buffers_written += b.is_written;
+            s.buffers_formatted += b.is_formatted;
+        }
+        for (const auto& i : stage->images) {
+            ++s.sharps[1][SharpSource(i.sharp_fetch)];
+            s.images_written += i.is_written;
+        }
+        for (const auto& smp : stage->samplers) {
+            ++s.sharps[2][SharpSource(smp.sharp_fetch)];
+        }
+    }
+    const auto now = std::chrono::steady_clock::now();
+    const double seconds = std::chrono::duration<double>(now - window).count();
+    if (seconds < 5.0) {
+        return;
+    }
+    window = now;
+    const double c = std::max<double>(1, s.calls);
+    std::printf("Resource stats: %.0f binds/s, %.2f stages/bind, %.2f with SRT walker (%zu of %zu "
+                "shaders), readconst %.2f, dma %.2f, flat %.1f dw/bind; per bind: buffers "
+                "reg %.2f mem %.2f mixed %.2f (written %.2f, formatted %.2f, special %.2f), "
+                "images reg %.2f mem %.2f mixed %.2f (written %.2f), samplers reg %.2f mem %.2f "
+                "mixed %.2f\n",
+                s.calls / seconds, s.stages / c, s.walker_stages / c, s.walker_shaders.size(),
+                s.shaders.size(), s.readconst_stages / c, s.dma_stages / c, s.flat_dwords / c,
+                s.sharps[0][0] / c, s.sharps[0][1] / c, s.sharps[0][2] / c, s.buffers_written / c,
+                s.buffers_formatted / c, s.special_buffers / c, s.sharps[1][0] / c,
+                s.sharps[1][1] / c, s.sharps[1][2] / c, s.images_written / c, s.sharps[2][0] / c,
+                s.sharps[2][1] / c, s.sharps[2][2] / c);
+    s = {};
+}
+} // namespace
+
 bool Rasterizer::BindResources(const Pipeline* pipeline) {
-    pipeline_is_compute = pipeline->IsCompute();
-    if (IsComputeImageCopy(pipeline) || IsComputeMetaClear(pipeline) ||
-        IsComputeImageClear(pipeline)) {
-        return false;
+    BB_SECTION(BindResources);
+    pipeline_is_compute = pipeline->IsCompute(); // bbport (Windows fork): before the HLE early-outs
+    NoteResStats(pipeline);
+    {
+        // bbport BB_HLE_STATS=1 (diagnostics): how often the compute shader substitutions fire.
+        static const bool hle_stats = std::getenv("BB_HLE_STATS") != nullptr;
+        // BB_HLE_OFF=mask (experiment): 1 image copy, 2 metadata clear, 4 image clear run as the
+        // game's shaders.
+        static const u32 hle_off = [] {
+            const char* env = std::getenv("BB_HLE_OFF");
+            return env ? u32(std::strtoul(env, nullptr, 0)) : 0u;
+        }();
+        static const bool copy_log = std::getenv("BB_IMAGE_COPY_LOG") != nullptr;
+        if ((hle_off & 1) && copy_log) {
+            IsComputeImageCopy(pipeline, true);
+        }
+        const int which = !(hle_off & 1) && IsComputeImageCopy(pipeline)   ? 1
+                          : !(hle_off & 2) && IsComputeMetaClear(pipeline) ? 2
+                          : !(hle_off & 4) && IsComputeImageClear(pipeline) ? 3
+                                                                             : 0;
+        if (hle_stats) {
+            static std::array<u64, 4> counts{};
+            static auto last = std::chrono::steady_clock::now();
+            ++counts[which];
+            if (std::chrono::steady_clock::now() - last > std::chrono::seconds(5)) {
+                last = std::chrono::steady_clock::now();
+                std::printf("HLE stats (5 s): image copy %llu, meta clear %llu, image clear %llu, "
+                            "other binds %llu\n",
+                            (unsigned long long)counts[1], (unsigned long long)counts[2],
+                            (unsigned long long)counts[3], (unsigned long long)counts[0]);
+                counts = {};
+            }
+        }
+        if (which) {
+            return false;
+        }
     }
 
     set_write_index = 0;
@@ -1521,6 +2323,7 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
     // size; the temporal upscaler restores the detail of the output's mip level (FSR guide:
     // log2(render / output)). Shadows, post-processing and UI keep the guest's bias.
     sampler_lod_bias = 0.0f;
+    pipeline_is_compute = pipeline->IsCompute();
     if (!pipeline->IsCompute() && !BbToggle::Disabled(BbToggle::SceneMipBias) &&
         std::popcount(static_cast<const GraphicsPipeline*>(pipeline)->GetGraphicsKey().mrt_mask &
                       0xff) >= 5) {
@@ -1645,6 +2448,7 @@ void Rasterizer::BindVertexBuffers(const GraphicsPipeline* pipeline, const Prepa
 }
 
 void Rasterizer::EmitVertexBuffers() {
+    BB_SECTION(EmitVertexBuffers);
     // bbport: only the used entries go into the recording chunk (the static vectors hold 32 of
     // each: ~3 KiB copied per draw).
     auto& v = vertex_binds;
@@ -1682,6 +2486,7 @@ void Rasterizer::EmitVertexBuffers() {
 
 void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
                                       const PreparedDraw* prepared) {
+    BB_SECTION(ResolveVertexBuffers);
     const auto& regs = Regs();
     auto& v = vertex_binds;
     v.num_buffers = 0;
@@ -1707,9 +2512,37 @@ void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
         attributes.assign(ready->attributes, ready->attributes + ready->count);
         bindings.assign(ready->bindings, ready->bindings + ready->count);
         guest_buffers.assign(ready->buffers, ready->buffers + ready->count);
+        if (BbCeStats::Enabled() && packet_vsharps.size() == ready->count) {
+            static u64 compared = 0, differed = 0;
+            ++compared;
+            differed += std::memcmp(ready->buffers, packet_vsharps.data(),
+                                    ready->count * sizeof(AmdGpu::Buffer)) != 0;
+            if ((compared & 0xFFFF) == 0) {
+                std::printf("CE stats: prepared V#s differed from the packet's in %llu of %llu "
+                            "draws\n",
+                            (unsigned long long)differed, (unsigned long long)compared);
+            }
+        }
     } else {
         pipeline->GetVertexInputs(attributes, bindings, divisors, guest_buffers,
-                                  regs.vgt_instance_step_rate_0, regs.vgt_instance_step_rate_1);
+                                  regs.vgt_instance_step_rate_0, regs.vgt_instance_step_rate_1,
+                                  packet_vsharps);
+        if (BbCeStats::Enabled() && !packet_vsharps.empty()) {
+            // What reading the V# tables here would have given instead (the old path).
+            static u64 compared = 0, differed = 0;
+            const auto& fetch = pipeline->GetFetchShader();
+            const auto& vs = pipeline->GetStage(Shader::SwStage::Vertex);
+            for (u32 i = 0; fetch && i < fetch->attributes.size() && i < packet_vsharps.size(); ++i) {
+                ++compared;
+                const auto now = fetch->attributes[i].GetSharp(vs);
+                differed += std::memcmp(&now, &packet_vsharps[i], sizeof(now)) != 0;
+            }
+            if ((compared & 0xFFFF) == 0) {
+                std::printf("CE stats: V#s read on the recording thread differed from the "
+                            "packet's in %llu of %llu\n",
+                            (unsigned long long)differed, (unsigned long long)compared);
+            }
+        }
     }
 
     if (bindings.empty()) {
@@ -1826,6 +2659,7 @@ void Rasterizer::EmitIndexBuffer() {
 }
 
 void Rasterizer::ResolveIndexBuffer(u32 index_offset) {
+    BB_SECTION(ResolveIndexBuffer);
     const auto& regs = Regs();
 
     // Figure out index type and size.
@@ -1897,7 +2731,7 @@ bool Rasterizer::IsComputeMetaClear(const Pipeline* pipeline) {
     return false;
 }
 
-bool Rasterizer::IsComputeImageCopy(const Pipeline* pipeline) {
+bool Rasterizer::IsComputeImageCopy(const Pipeline* pipeline, bool dry_run) {
     if (!pipeline->IsCompute()) {
         return false;
     }
@@ -1946,6 +2780,24 @@ bool Rasterizer::IsComputeImageCopy(const Pipeline* pipeline) {
     // Perform image copy
     VideoCore::Image& src_image = desc0.is_written ? image1 : image0;
     VideoCore::Image& dst_image = desc0.is_written ? image0 : image1;
+    // bbport BB_IMAGE_COPY_LOG=1 (diagnostics): the copies this recognizes.
+    static const bool copy_log = std::getenv("BB_IMAGE_COPY_LOG") != nullptr;
+    if (copy_log) {
+        static std::atomic<u32> printed{0};
+        if (printed.fetch_add(1) < 40) {
+            std::printf("Image copy: %#llx (%ux%u fmt %u flags %#x) -> %#llx (%ux%u fmt %u flags "
+                        "%#x), %u bytes\n",
+                        (unsigned long long)src_image.info.guest_address, src_image.info.size.width,
+                        src_image.info.size.height, u32(src_image.info.pixel_format),
+                        u32(src_image.flags), (unsigned long long)dst_image.info.guest_address,
+                        dst_image.info.size.width, dst_image.info.size.height,
+                        u32(dst_image.info.pixel_format), u32(dst_image.flags),
+                        u32(buf0.GetSize()));
+        }
+    }
+    if (dry_run) {
+        return false;
+    }
     runtime.CopyColorAndDepth(&src_image, &dst_image);
     return true;
 }
@@ -2008,9 +2860,63 @@ bool Rasterizer::IsComputeImageClear(const Pipeline* pipeline) {
     return true;
 }
 
+namespace {
+// bbport: BB_TRACE_SHADER=hash[,hash...] (diagnostics) — the buffers those shaders bind: address,
+// size, written or read, where the data is (in place: the game's memory over PCIe on a discrete
+// GPU; VRAM; partly), how often; printed every 5 s.
+void TraceShaderBinding(const Shader::Info& stage, VAddr addr, u64 size, bool written,
+                        const VideoCore::BufferCache& cache) {
+    static const std::vector<u64> hashes = [] {
+        std::vector<u64> out;
+        const char* env = std::getenv("BB_TRACE_SHADER");
+        for (const char* at = env; at && *at;) {
+            char* end = nullptr;
+            out.push_back(std::strtoull(at, &end, 16));
+            at = end && *end == ',' ? end + 1 : nullptr;
+        }
+        return out;
+    }();
+    if (hashes.empty() || std::ranges::find(hashes, stage.pgm_hash) == hashes.end()) {
+        return;
+    }
+    const bool in_place = cache.IsInPlace(addr, size);
+    const bool any_in_place = cache.IsAnyInPlace(addr, size);
+    struct Key {
+        u64 hash, addr, size;
+        bool written;
+        auto operator<=>(const Key&) const = default;
+    };
+    struct Entry {
+        u64 count = 0;
+        int place = 0; // 0 VRAM, 1 in place, 2 partly
+    };
+    static std::mutex mutex;
+    static std::map<Key, Entry> entries;
+    static auto report = std::chrono::steady_clock::now();
+    std::scoped_lock lk{mutex};
+    auto& entry = entries[{stage.pgm_hash, addr, size, written}];
+    ++entry.count;
+    entry.place = in_place ? 1 : any_in_place ? 2 : 0;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - report < std::chrono::seconds(5)) {
+        return;
+    }
+    report = now;
+    static constexpr const char* Places[] = {"VRAM", "in place", "partly in place"};
+    for (const auto& [key, value] : entries) {
+        std::printf("Shader %016llx binds %#llx+%#llx %s, %s, x%llu (uses_dma %d)\n",
+                    (unsigned long long)key.hash, (unsigned long long)key.addr,
+                    (unsigned long long)key.size, key.written ? "written" : "read",
+                    Places[value.place], (unsigned long long)value.count, int(stage.uses_dma));
+    }
+    entries.clear();
+}
+} // namespace
+
 void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* prepared,
                              Shader::Backend::Bindings& binding,
                              Shader::PushData& push_data, u32& write_index) {
+    BB_SECTION(BindBuffers);
     const u64 alignment = instance.StorageMinAlignment();
     for (u32 buffer_index = 0; buffer_index < stage.buffers.size(); ++buffer_index) {
         const auto& desc = stage.buffers[buffer_index];
@@ -2111,6 +3017,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 }
                 const auto [buffer, offset] = buffer_cache.ObtainBuffer(
                     vsharp.base_address, size, desc.is_written, desc.is_formatted);
+                TraceShaderBinding(stage, vsharp.base_address, size, desc.is_written, buffer_cache);
                 const u64 offset_aligned = Common::AlignDown(offset, alignment);
                 const u64 adjust = offset - offset_aligned;
                 if (adjust % 4 != 0) {
@@ -2182,6 +3089,7 @@ Rasterizer::ImageDescCacheEntry& Rasterizer::CachedImageDescEntry(const AmdGpu::
 void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* prepared,
                               Shader::Backend::Bindings& binding, u32& write_index,
                               bool& barrier, bool on_helper) {
+    BB_SECTION(BindTextures);
     const u32 first_image_idx = image_infos.size();
     TextureSet* set_slot = nullptr;
     if (!on_helper && BindTexturesFromSet(stage, prepared, first_image_idx, barrier, set_slot)) {
@@ -2643,6 +3551,7 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
 }
 
 RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
+    BB_SECTION(BeginRendering);
     // bbport: RenderStateMemo (see BeginMemo).
     const bool memo_on = !BbToggle::Disabled(BbToggle::RenderStateMemo) && !FrameCapture::Active();
     if (BbStats::enabled && ((begin_memo_hits + begin_memo_misses) & 0x3FFFF) == 0x3FFFF) {
@@ -3066,9 +3975,19 @@ void Rasterizer::FillBuffer(VAddr address, u32 num_bytes, u32 value, bool is_gds
                "FillBuffer address and size must be a multiple of 4 bytes");
     if (!is_gds) {
         texture_cache.ClearMeta(address);
-        if (!buffer_cache.IsRegionGpuModified(address, num_bytes)) {
+        // bbport BB_GUEST_IN_PLACE: memory the GPU uses in place is filled by the GPU in stream order
+        // (a fill on the CPU now would land before earlier draws read the old data). Elsewhere
+        // (VRAM copies, unbound memory: shader code, descriptors this thread reads) on the CPU in
+        // decode order, as before; the VRAM copy follows through write tracking.
+        if (!buffer_cache.IsAnyInPlace(address, num_bytes) &&
+            !buffer_cache.IsRegionGpuModified(address, num_bytes)) {
+            BbFreeCheck::Check(address, num_bytes, &value, BbFreeCheck::DmaFill);
             u32* buffer = std::bit_cast<u32*>(address);
             std::fill(buffer, buffer + (num_bytes / sizeof(u32)), value);
+            BbWriteLog::Note(address, buffer, num_bytes, BbWriteLog::Dma);
+            if (!VideoCore::WriteTracking()) {
+                NoteAssetWrite(address, num_bytes);
+            }
             return;
         }
     }
@@ -3081,13 +4000,30 @@ void Rasterizer::FillBuffer(VAddr address, u32 num_bytes, u32 value, bool is_gds
     runtime.FillBuffer(buffer, offset, num_bytes, value);
 }
 
+bool Rasterizer::DmaMayWriteOnCpu(VAddr dst, u32 num_bytes) {
+    // The first condition of both: false only where they record a GPU fill or copy. The model
+    // of 0.3 keeps its waits (the new memory and translation model only).
+    if (!VideoCore::GuestInPlace()) {
+        return true;
+    }
+    return !buffer_cache.IsAnyInPlace(dst, num_bytes) &&
+           !buffer_cache.IsRegionGpuModified(dst, num_bytes);
+}
+
 void Rasterizer::CopyBuffer(VAddr dst, VAddr src, u32 num_bytes, bool dst_gds, bool src_gds) {
     DrainDrawPipe();
-    if (!dst_gds && !buffer_cache.IsRegionGpuModified(dst, num_bytes)) {
+    // bbport BB_GUEST_IN_PLACE: see FillBuffer (in place: the GPU, in stream order).
+    if (!dst_gds && !buffer_cache.IsAnyInPlace(dst, num_bytes) &&
+        !buffer_cache.IsRegionGpuModified(dst, num_bytes)) {
         if (!src_gds && !buffer_cache.IsRegionGpuModified(src, num_bytes) &&
             !texture_cache.FindImageFromRange(src, num_bytes)) {
             // Both buffers were not transferred to GPU yet. Can safely copy in host memory.
+            BbFreeCheck::Check(dst, num_bytes, std::bit_cast<const void*>(src), BbFreeCheck::DmaCopy);
             std::memcpy(std::bit_cast<void*>(dst), std::bit_cast<void*>(src), num_bytes);
+            BbWriteLog::Note(dst, std::bit_cast<const void*>(dst), num_bytes, BbWriteLog::Dma);
+            if (!VideoCore::WriteTracking()) {
+                NoteAssetWrite(dst, num_bytes);
+            }
             return;
         }
     }
@@ -3132,12 +4068,54 @@ bool Rasterizer::InvalidateMemory(VAddr addr, u64 size, bool assume_locks) {
     return true;
 }
 
-bool Rasterizer::OnWriteFault(VAddr addr, bool assume_locks) {
+void Rasterizer::NoteAssetWrite(VAddr addr, u64 size) {
+    buffer_cache.NoteAssetWrite(addr, size);
+    InvalidateAfterWrite(addr, size);
+}
+
+void Rasterizer::InvalidateAfterWrite(VAddr addr, u64 size) {
+    if (VideoCore::WriteTracking() || !buffer_cache.IsRegionGpuModified(addr, size)) {
+        InvalidateMemory(addr, size);
+        return;
+    }
+    // GPU data beside the bytes the CPU wrote lives in VRAM: an invalidation would read it back
+    // (a 512 KiB window, whole pages) and upload pages over what the GPU writes meanwhile.
+    // Exactly the CPU's bytes go into VRAM instead; images over them are refreshed.
+    DrainDrawPipe();
+    buffer_cache.NotePreciseUpload(addr, size);
+    texture_cache.InvalidateMemory(addr, size);
+}
+
+void Rasterizer::NoteCommandWrite(VAddr addr, const void* data, u64 size, bool recording_thread) {
+    if (VideoCore::WriteTracking() || !IsMapped(addr, size)) {
+        return; // tracking catches it, or the GPU does not use it
+    }
+    if (!recording_thread) {
+        DrainDrawPipe();
+    }
+    buffer_cache.DropShadows(addr, size);
+    // An invalidation would read the GPU's data back over these bytes first (a readback).
+    if (!buffer_cache.UpdateGpuWritten(addr, std::span{static_cast<const u8*>(data), size})) {
+        buffer_cache.InvalidateMemory(addr, size, recording_thread);
+    }
+    texture_cache.InvalidateMemory(addr, size);
+}
+
+void Rasterizer::OnCpuWrite(VAddr addr, u64 size) {
+    BbStats::cpu_write_notes.fetch_add(1, std::memory_order_relaxed);
+    BbStats::cpu_write_note_bytes.fetch_add(size, std::memory_order_relaxed);
+    if (IsMapped(addr, size)) {
+        InvalidateAfterWrite(addr, size);
+        buffer_cache.NoteCpuWriteRange(addr, size);
+    }
+}
+
+bool Rasterizer::OnWriteFault(VAddr addr, bool assume_locks, u64 guest_rip) {
     DrainDrawPipe();
     if (!InvalidateMemory(addr, 8, assume_locks)) {
         return false;
     }
-    buffer_cache.ExtendWriteFault(addr);
+    buffer_cache.ExtendWriteFault(addr, guest_rip);
     return true;
 }
 
@@ -3176,6 +4154,7 @@ void Rasterizer::MapMemory(VAddr addr, u64 size) {
         std::scoped_lock lock{mapped_ranges_mutex};
         mapped_ranges += decltype(mapped_ranges)::interval_type::right_open(addr, addr + size);
     }
+    buffer_cache.NotePreuploadMapping(addr, size, true);
 }
 
 void Rasterizer::RegisterMemory(VAddr addr, u64 size) {
@@ -3183,6 +4162,9 @@ void Rasterizer::RegisterMemory(VAddr addr, u64 size) {
 }
 
 void Rasterizer::UnmapMemory(VAddr addr, u64 size) {
+    buffer_cache.NotePreuploadMapping(addr, size, false);
+    buffer_cache.UnmapInPlace(addr, size);
+    buffer_cache.DropTwins(addr, size);
     DrainDrawPipe();
     buffer_cache.InvalidateMemory(addr, size);
     texture_cache.UnmapMemory(addr, size);
@@ -3193,6 +4175,7 @@ void Rasterizer::UnmapMemory(VAddr addr, u64 size) {
 }
 
 void Rasterizer::UpdateDynamicState(const GraphicsPipeline* pipeline, const bool is_indexed) const {
+    BB_SECTION(UpdateDynamicState);
     UpdateViewportScissorState();
     UpdateDepthStencilState();
     UpdatePrimitiveState(is_indexed);
@@ -3539,7 +4522,7 @@ std::thread::id Rasterizer::GetGpuCommandProcessorThread() {
     return liverpool->GetGpuCommandProcessorThread();
 }
 
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
 u32 Rasterizer::GetGpuCommandProcessorThreadId() {
     return liverpool->GetGpuCommandProcessorThreadId();
 }

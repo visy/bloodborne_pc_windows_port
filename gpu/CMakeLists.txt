@@ -18,6 +18,12 @@ add_compile_options(-fno-omit-frame-pointer)
 # profile). Covers bbgpu and the static libraries linked into it. No -march: the same build
 # runs on the Steam Deck.
 option(BB_LTO "Link-time optimization of bbgpu" ON)
+# BB_MARCH: optional -march for a build that only runs on this CPU family (e.g. skylake, native).
+# Empty (default) keeps the portable x86-64 build.
+set(BB_MARCH "" CACHE STRING "Target CPU for -march (empty: portable build)")
+if (BB_MARCH)
+    add_compile_options(-march=${BB_MARCH} -mtune=${BB_MARCH})
+endif()
 set(BB_PGO "off" CACHE STRING "Profile-guided optimization: off, generate, use")
 set(BB_PGO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../pgo" CACHE PATH "Profile directory")
 if (BB_LTO)
@@ -161,7 +167,12 @@ add_host_shader(upscale_reactive.comp upscale_reactive_comp)
 add_host_shader(taa.comp taa_comp)
 add_host_shader(taa_sharpen.comp taa_sharpen_comp)
 add_host_shader(taa_sharpen.comp taa_sharpen_ldr_comp LDR_OUTPUT=1)
+add_host_shader(fsr4_color.comp fsr4_decode_comp)
+add_host_shader(fsr4_color.comp fsr4_encode_comp ENCODE=1)
+add_host_shader(fsr4_reactive.comp fsr4_reactive_comp)
 add_host_shader(buffer_multi_copy.comp buffer_multi_copy_comp)
+add_host_shader(occlusion_resolve.comp occlusion_resolve_comp)
+add_host_shader(indirect_guard.comp indirect_guard_comp)
 add_host_shader(depth_resample.frag depth_resample_frag)
 add_host_shader(depth_resample.frag depth_stencil_resample_frag HAS_STENCIL=1)
 add_host_shader(depth_resample.frag depth_stencil_bits_frag STENCIL_BITS=1)
@@ -205,9 +216,10 @@ target_sources(bbgpu PRIVATE third_party/imgui/imgui.cpp third_party/imgui/imgui
     third_party/imgui/backends/imgui_impl_vulkan.cpp)
 target_include_directories(bbgpu PRIVATE third_party/imgui third_party/imgui/backends)
 target_compile_definitions(bbgpu PRIVATE IMGUI_IMPL_VULKAN_NO_PROTOTYPES
-    BB_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf")
+    BB_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf"
+    BB_SERIF_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSerif.ttf")
 set_source_files_properties(shim/bbport_overlay.cpp PROPERTIES
-    OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf)
+    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf;${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSerif.ttf")
 target_include_directories(bbgpu PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include)
 target_compile_definitions(bbgpu PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
 if (WIN32)
@@ -215,6 +227,10 @@ if (WIN32)
 endif()
 target_compile_options(bbgpu PRIVATE -Wno-deprecated-declarations -Wno-missing-field-initializers)
 if (NOT WIN32)
+    # Loaded with bb-probe at startup (DT_NEEDED, never dlopen): thread_local access without a
+    # TLS descriptor call (_dl_tlsdesc_return was ~2% of the draw recording thread).
+    # (Windows: bbgpu is a static library linked into bbport.exe; ELF TLS models don't apply.)
+    target_compile_options(bbgpu PRIVATE -ftls-model=initial-exec)
     # Runtime symbols (runtime_memory_*, runtime_process_*) resolve against bb-probe.
     target_link_options(bbgpu PRIVATE -Wl,--allow-shlib-undefined)
 endif()
@@ -242,6 +258,9 @@ target_link_libraries(motion-shader-test PRIVATE bbgpu)
 add_executable(ui-composition-test EXCLUDE_FROM_ALL ../tests/test_ui_composition.cpp)
 target_compile_options(ui-composition-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(ui-composition-test PRIVATE ..)
+add_executable(settings-test EXCLUDE_FROM_ALL ../tests/test_settings.cpp shim/bbport_settings.cpp)
+target_compile_options(settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(settings-test PRIVATE .. shim)
 
 add_executable(scene-resolution-test EXCLUDE_FROM_ALL ../tests/test_scene_resolution.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(scene-resolution-test PRIVATE shim shadps4 third_party/gcn/include)
@@ -298,6 +317,6 @@ set_target_properties(bbport PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURREN
 
 add_executable(bb-gpu-capabilities ../tools/gpu_capabilities.c)
 target_include_directories(bb-gpu-capabilities PRIVATE .. ../src)
-target_link_libraries(bb-gpu-capabilities PRIVATE Vulkan::Vulkan)
+target_link_libraries(bb-gpu-capabilities PRIVATE Vulkan::Vulkan PkgConfig::SDL3)
 set_target_properties(bb-gpu-capabilities PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../out")
 
