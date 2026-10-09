@@ -234,7 +234,14 @@ s32 PS4_SYSV_ABI sceAvPlayerStop(AvPlayerHandle handle) {
     if (handle == nullptr) {
         return ORBIS_AVPLAYER_ERROR_INVALID_PARAMS;
     }
-    return handle->Stop();
+    // bbport: Stop joins the decoder threads; a C++ exception must never unwind into the game's
+    // frames (no unwind data there: the process dies). Guard from Supermedo/bloodborne_pc 1.3.
+    try {
+        return handle->Stop();
+    } catch (const std::exception& e) {
+        LOG_ERROR(Lib_AvPlayer, "Stop failed: {}", e.what());
+        return ORBIS_AVPLAYER_ERROR_OPERATION_FAILED;
+    }
 }
 
 s32 PS4_SYSV_ABI sceAvPlayerStreamCount(AvPlayerHandle handle) {

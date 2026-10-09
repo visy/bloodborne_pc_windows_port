@@ -968,6 +968,7 @@ void TextPrompt() {
     ImGui::Text("%s_", text.c_str());
     ImGui::Separator();
     ImGui::TextUnformatted("Keyboard: type, Backspace = delete, Enter = OK, Esc = cancel");
+    ImGui::TextUnformatted("Controller: Cross (A) = OK, Circle (B) = cancel");
     ImGui::End();
 }
 

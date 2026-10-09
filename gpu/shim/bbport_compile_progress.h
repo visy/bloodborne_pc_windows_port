@@ -60,6 +60,16 @@ inline void Add(Phase p, std::uint32_t n = 1) {
     }
 }
 
+/// Closes the running batch as finished (work that was counted but will not run, e.g. stale or
+/// damaged cache entries): the indicator must not stay at a partial percentage.
+inline void FinishBatch() {
+    const std::uint32_t d = done.load();
+    if (total.load() > d) {
+        total = d;
+        last_done_ns = NowNs();
+    }
+}
+
 /// One compilation of the batch finished.
 inline void Done(bool ok) {
     if (!ok) {

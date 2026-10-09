@@ -268,6 +268,28 @@ def import_shader_cache(zip_path: Path, root: Path = None) -> dict:
     return stats
 
 
+LOG_HISTORY = 5
+
+
+def rotate_launcher_log(keep: int = LOG_HISTORY):
+    """Moves the previous session's launcher.log to logs\\launcher_<time>.log (keeping the last
+    `keep`), so the log of a session that crashed is still there after the next start."""
+    if not LOG_FILE.is_file() or LOG_FILE.stat().st_size == 0:
+        return
+    logs = APP_DIR / "logs"
+    try:
+        logs.mkdir(exist_ok=True)
+        stamp = datetime.fromtimestamp(LOG_FILE.stat().st_mtime).strftime("%Y%m%d_%H%M%S")
+        target = logs / f"launcher_{stamp}.log"
+        if not target.exists():
+            LOG_FILE.replace(target)
+        old = sorted(logs.glob("launcher_*.log"))
+        for f in old[:-keep]:
+            f.unlink()
+    except OSError:
+        pass
+
+
 def kill_tree(proc: subprocess.Popen):
     """Kill run.bat and everything it started (bbport.exe included)."""
     if os.name == "nt":
@@ -1471,6 +1493,7 @@ class BloodborneLauncher(tk.Tk):
         res_choice = self.res_var.get() if self.feat_res_scaling.get() else "Native (1080p, scaling off)"
         active_patches = sorted(list(self.enabled_patches))
 
+        rotate_launcher_log()
         try:
             self.log_fh = open(LOG_FILE, "w", encoding="utf-8")
         except OSError:

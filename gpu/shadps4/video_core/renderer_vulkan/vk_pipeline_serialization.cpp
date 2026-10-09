@@ -39,6 +39,10 @@ static constexpr u32 LegacyPipelineKeyVersion = 5u;
 static constexpr u32 SourceVersion = 1u;
 } // namespace Serialization
 
+namespace Common {
+void SetAssertThrowsOnThisThread(bool value); // common/assert.cpp
+}
+
 namespace Vulkan {
 
 void RegisterPipelineData(const ComputePipelineKey& key,
@@ -119,6 +123,10 @@ void RegisterShaderBinary(std::vector<u32>&& spv, u64 pgm_hash, size_t perm_idx)
                                        std::move(spv));
 }
 
+/// Binary version 9 only changed shaders of the layer memory model (paged buffers): without it,
+/// meta and SPIR-V of version 7 are the same and stay usable (set by WarmUp from the profile).
+static bool accept_binary_v7 = false;
+
 bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
                     std::optional<Shader::Gcn::FetchShaderData>& fetch_shader_data,
                     Shader::StageSpecialization& spec, size_t& perm_idx) {
@@ -132,7 +140,8 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
 
     u32 binary_version{};
     meta.Read(binary_version);
-    if (binary_version != Serialization::ShaderBinaryVersion) {
+    if (binary_version != Serialization::ShaderBinaryVersion &&
+        !(binary_version == 7u && accept_binary_v7)) {
         return false;
     }
 
@@ -680,6 +689,25 @@ bool RebuildShader(const ShaderSource& source, const Shader::Profile& profile,
     return true;
 }
 
+/// RebuildShader with the translator's assertions turned into a skipped shader (a stored source
+/// that does not replay with this build) instead of stopping the game.
+static bool RebuildShaderGuarded(const ShaderSource& source, const Shader::Profile& profile,
+                                 Shader::Pools& pools, Shader::Info& base_info,
+                                 RebuiltShader& out) {
+    ::Common::SetAssertThrowsOnThisThread(true);
+    bool ok = false;
+    try {
+        ok = RebuildShader(source, profile, pools, base_info, out);
+    } catch (const std::exception& e) {
+        LOG_WARNING(Render, "Shader cache: shader {:#018x} permutation {} does not rebuild ({}): "
+                    "skipped, it compiles again when used", source.pgm_hash, source.perm_idx,
+                    e.what());
+        ok = false;
+    }
+    ::Common::SetAssertThrowsOnThisThread(false);
+    return ok;
+}
+
 u32 RebuildProgramSources(u64 pgm_hash, std::span<const u32> perms, const Shader::Profile& profile,
                           Shader::Pools& pools, u32& num_skipped) {
     auto& db = Storage::DataBase::Instance();
@@ -696,7 +724,7 @@ u32 RebuildProgramSources(u64 pgm_hash, std::span<const u32> perms, const Shader
         const bool ok = (perm_idx == 0 || have_base) &&
                         DeserializeShaderSource(std::move(blob), source) &&
                         source.pgm_hash == pgm_hash && source.perm_idx == perm_idx &&
-                        RebuildShader(source, profile, pools, base_info, out);
+                        RebuildShaderGuarded(source, profile, pools, base_info, out);
         if (!ok) {
             // Useless now (damaged, another version, no permutation 0, or it does not replay):
             // the shader is compiled again when the game uses it, which writes a new source.
@@ -807,6 +835,7 @@ u32 PipelineCache::RebuildShaderCache(bool full) {
                              .count();
     LOG_INFO(Render, "Shader cache: rebuilt {} of {} shaders in {:.1f} s ({} skipped)",
              num_built.load(), num_sources, seconds, num_skipped.load());
+    BbCompileProgress::FinishBatch();
     return num_built.load();
 }
 
@@ -818,6 +847,7 @@ struct CacheVersions {
     u32 binary = Serialization::ShaderBinaryVersion;
     bool operator==(const CacheVersions&) const = default;
 };
+constexpr CacheVersions kCurrentVersions{};
 
 bool EnvFlag(const char* name) {
     const char* value = std::getenv(name);
@@ -864,22 +894,46 @@ void PipelineCache::WarmUp(bool parallel) {
     std::vector<u8> profile_data{};
     db.Load(Storage::BlobType::ShaderProfile, "profile", profile_data);
     bool compatible = false;
+    // Binary version 9 changed only shaders built for the layer memory model (paged buffers:
+    // page-table pairs, guarded write-through stores). Without it the SPIR-V is the same as
+    // version 7's, so caches of version 7 stay valid then instead of being thrown away (most
+    // entries of those caches have no source to rebuild them from).
+    const auto versions_ok = [&](const CacheVersions& cached) {
+        return cached == CacheVersions{} ||
+               (cached.meta == Serialization::ShaderMetaVersion && cached.binary == 7u &&
+                !profile.paged_buffers);
+    };
+    accept_binary_v7 = !profile.paged_buffers;
+    constexpr size_t before_paged = offsetof(Shader::Profile, paged_buffers);
+    constexpr size_t before_clip = offsetof(Shader::Profile, supports_depth_clip_control);
     if (profile_data.size() == sizeof(Shader::Profile) + sizeof(CacheVersions)) {
         Shader::Profile cached_profile{};
         CacheVersions cached_versions{};
         std::memcpy(&cached_profile, profile_data.data(), sizeof(cached_profile));
         std::memcpy(&cached_versions, profile_data.data() + sizeof(cached_profile),
                     sizeof(cached_versions));
-        compatible = cached_profile == profile && cached_versions == CacheVersions{};
-    } else if (constexpr size_t known = offsetof(Shader::Profile, supports_depth_clip_control);
-               profile_data.size() >= known && profile_data.size() <= sizeof(Shader::Profile)) {
-        // Caches written before the versions were appended (and before
-        // supports_depth_clip_control): the bare Profile of that build, whose SPIR-V is binary
-        // version 7 (before upstream's version 9, layer page-table pairs). Recognized, but its
-        // meta and SPIR-V are migrated: rebuilt from the sources (keys and sources are kept).
-        LOG_INFO(Render, "Pipeline cache: header of an earlier build{}: shaders are rebuilt",
-                 std::memcmp(profile_data.data(), &profile, known) == 0 ? ", same GPU" : "");
-        compatible = false;
+        // Headers of binary version 7 predate paged_buffers, which took a padding byte of the
+        // struct (any value there): compare only what existed then.
+        compatible = versions_ok(cached_versions) &&
+                     (cached_versions.binary == 7u
+                          ? std::memcmp(profile_data.data(), &profile, before_paged) == 0
+                          : cached_profile == profile);
+    } else if (profile_data.size() >= before_paged + sizeof(CacheVersions) &&
+               profile_data.size() < sizeof(Shader::Profile) + sizeof(CacheVersions)) {
+        // Header of a build before paged_buffers (v0.3): Profile of that size, then versions.
+        CacheVersions cached_versions{};
+        std::memcpy(&cached_versions, profile_data.data() + profile_data.size() -
+                    sizeof(CacheVersions), sizeof(cached_versions));
+        compatible = !profile.paged_buffers &&
+                     std::memcmp(profile_data.data(), &profile, before_paged) == 0 &&
+                     versions_ok(cached_versions);
+    } else if (profile_data.size() >= before_clip && profile_data.size() <= sizeof(Shader::Profile)) {
+        // Bare Profile of a build before the versions were appended: binary version 7.
+        compatible = !profile.paged_buffers &&
+                     std::memcmp(profile_data.data(), &profile, before_clip) == 0;
+    }
+    if (compatible && profile_data.size() != sizeof(Shader::Profile) + sizeof(CacheVersions)) {
+        LOG_INFO(Render, "Pipeline cache: header of an earlier build, same GPU: kept");
     }
 
     preload_profile_changed = false;
@@ -914,6 +968,11 @@ void PipelineCache::WarmUp(bool parallel) {
     } else {
         // Sources whose meta or SPIR-V is missing (for instance a cache shared without them).
         RebuildShaderCache(false);
+        if (profile_data.size() != sizeof(Shader::Profile) + sizeof(CacheVersions) ||
+            std::memcmp(profile_data.data() + sizeof(Shader::Profile), &kCurrentVersions,
+                        sizeof(CacheVersions)) != 0) {
+            save_profile(); // an accepted older header: written in the current format
+        }
     }
 
     u32 num_pipelines{};
@@ -1058,6 +1117,11 @@ void PipelineCache::WarmUp(bool parallel) {
         num_damaged += failed;
     }
     warmup_jobs.clear();
+    if (parallel) {
+        // Stale or damaged keys counted in the startup batch build nothing: without this the
+        // indicator stayed at 50% in every menu and loading screen afterwards.
+        BbCompileProgress::FinishBatch();
+    }
     if (warmup_abort) {
         return;
     }
