@@ -174,7 +174,7 @@ Save files and shader caches are stored in `user\`. Settings are saved to `bbpor
 
 **Third-party patches:** shadPS4-format XML patch files in `patches\`, switched on and off in `patches.json`. See [mods and patches](docs/MODS.md).
 
-**DLC:** The Old Hunters' data is part of patch 1.09 (maps `m34`–`m36`); the game only needs the add-on reported as installed. `run.bat` does that automatically on a fresh install by creating `user\addcont\CUSA03173\SPEXPANSIONDLC03` when those maps exist (`BB_AUTO_DLC=0` skips it). Other add-on dumps go in `user\addcont\<title id>\<entitlement label>\`.
+**DLC:** The Old Hunters' data is part of patch 1.09 (maps `m34`–`m36`); the game only needs the add-on reported as installed. `run.bat` does that automatically on a fresh install by creating `user\addcont\CUSA03173\SPEXPANSIONDLC03` when those maps exist (`BB_AUTO_DLC=0` skips it). **That folder stays empty, and that is correct:** its name is all the game checks, so nothing needs to be copied into it. The log confirms it with `AppContent add-ons reported installed (...): 1`; in game, the Eye of a Blood-drunk Hunter takes you to the Hunter's Nightmare. To set it up by hand, just create that empty folder. Other add-on dumps go in `user\addcont\<title id>\<entitlement label>\`.
 
 ### Upscaler assets
 
