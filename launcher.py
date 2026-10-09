@@ -152,6 +152,7 @@ def settings_env(s: dict) -> dict:
     env["BB_ASYNC_SHADERS"] = "1" if on("feat_async_shaders", False) else "0"
     env["BB_GPL"] = "1" if on("feat_gpl", False) else "0"
     env["BB_COMPILE_INDICATOR"] = "1" if on("feat_compile_indicator") else "0"
+    env["BB_SHADER_PRECOMPILE"] = "1" if on("feat_shader_precompile") else "0"
 
     # Frame ahead queue (smooth frametimes & bound queue latency: 2 = balanced)
     frames_ahead = str(s.get("frames_ahead", "2"))
@@ -490,6 +491,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_async_shaders = tk.BooleanVar(value=self.settings.get("feat_async_shaders", False))
         self.feat_gpl = tk.BooleanVar(value=self.settings.get("feat_gpl", False))
         self.feat_compile_indicator = tk.BooleanVar(value=self.settings.get("feat_compile_indicator", True))
+        self.feat_shader_precompile = tk.BooleanVar(value=self.settings.get("feat_shader_precompile", True))
 
         # ---- presets row
         preset_row = ttk.Frame(main)
@@ -597,9 +599,14 @@ class BloodborneLauncher(tk.Tk):
                     "Compiles shader parts ahead of time (startup and loading screens) and links them quickly "
                     "at draw time. Needs driver support (NVIDIA/AMD; falls back automatically). Restart "
                     "required. Default: off (BB_GPL).")
+        self._check(sec, "Precompile shaders at startup", self.feat_shader_precompile,
+                    "Before the intro logos, builds every pipeline in the shader cache (and rebuilds the "
+                    "cache for a new GPU) with a progress screen, so areas already in the cache never "
+                    "stutter. Slow only the first time; later launches are quick. Esc skips. "
+                    "Default: on (BB_SHADER_PRECOMPILE).")
         self._check(sec, "Shader compile progress indicator", self.feat_compile_indicator,
-                    "Shows 'Compiling shaders: NN%' in the corner while shaders compile or the shader cache "
-                    "is rebuilt for a new GPU or driver. Default: on (BB_COMPILE_INDICATOR).")
+                    "Shows 'Compiling shaders: NN%' in a corner while new shaders compile, only on loading "
+                    "screens and the main menu, never during gameplay. Default: on (BB_COMPILE_INDICATOR).")
 
         # 4. Game
         tab = self._tab("Game")
@@ -772,6 +779,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_async_shaders.set(False)
         self.feat_gpl.set(False)
         self.feat_compile_indicator.set(True)
+        self.feat_shader_precompile.set(True)
         self.fps_var.set("30")
         self.aniso_var.set("Off")
         self.enabled_patches.clear()
@@ -796,6 +804,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_async_shaders.set(True)
         self.feat_gpl.set(True)
         self.feat_compile_indicator.set(True)
+        self.feat_shader_precompile.set(True)
         self.fps_var.set("uncap")
         self.aniso_var.set("16x")
         self.enabled_patches = {"Skip Intro", "Performance Patch (perf increase)", "Disable Motion Blur (perf increase)"}
@@ -1051,6 +1060,7 @@ class BloodborneLauncher(tk.Tk):
             "feat_async_shaders": self.feat_async_shaders.get(),
             "feat_gpl": self.feat_gpl.get(),
             "feat_compile_indicator": self.feat_compile_indicator.get(),
+            "feat_shader_precompile": self.feat_shader_precompile.get(),
             "display": dict(self.display_choices).get(self.display_var.get(), ""),
             "gamepad": gamepad,
             "gamepad_name": gamepad_label.removesuffix(" (not connected)") if gamepad else "",
@@ -1335,6 +1345,7 @@ class BloodborneLauncher(tk.Tk):
             f"AsyncShaders={'on' if self.feat_async_shaders.get() else 'off'}, "
             f"GPL={'on' if self.feat_gpl.get() else 'off'}, "
             f"CompileIndicator={'on' if self.feat_compile_indicator.get() else 'off'}, "
+            f"Precompile={'on' if self.feat_shader_precompile.get() else 'off'}, "
             f"Monitor={self.display_var.get()}, Controller={self.gamepad_var.get()}, "
             f"PreUpload={self.preupload_var.get()}, "
             f"FramesAhead={dict(FRAMES_AHEAD_CHOICES).get(self.frames_ahead_var.get(), '2')}"
