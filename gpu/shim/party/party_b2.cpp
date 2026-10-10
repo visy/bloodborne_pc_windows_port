@@ -672,6 +672,19 @@ void RestoreZeroedOverlay() {
 }
 
 /// The flags the opening cutscene depends on, as the store answers now (overlay in load mode 1).
+/// The guest's consumables (goods counts) and HP / stamina, for the "state kept" check.
+void LogGuestState(const GameSnapshot& s, const char* when) {
+    const u64 dm = Field<u64>(Field<u64>(s.player, 0x3b0), 0x20);
+    std::string g;
+    for (u32 id : {900u, 1000u, 1010u, 300u, 310u, 200u, 205u}) {
+        char b[32];
+        std::snprintf(b, sizeof b, " %u:%d", id, GoodsCount(id));
+        g += b;
+    }
+    Log("guest state %s: HP %d/%d stamina %d/%d; goods%s", when, Field<int>(dm, 0x128, -1), Field<int>(dm, 0x12c, -1),
+        Field<int>(dm, 0x134, -1), Field<int>(dm, 0x138, -1), g.c_str());
+}
+
 void LogIntroFlags(const char* when) {
     const u64 man = Slot(0x553b100);
     if (!man) {
@@ -954,6 +967,7 @@ void GuestTick(const GameSnapshot& s, double now) {
             st.screen_done = true;
             SaveOverlay();
             st.hp_before = Field<int>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0x128, -1);
+            LogGuestState(s, "at the host's travel");
             static const bool early = !(std::getenv("BB_PARTY_B2_EARLY_SCREEN") &&
                                         std::getenv("BB_PARTY_B2_EARLY_SCREEN")[0] == '0');
             if (early) {
@@ -1040,6 +1054,7 @@ void GuestTick(const GameSnapshot& s, double now) {
                     Log("guest: HP %d after the load (before %d, max %d)", hp, st.hp_before, mx);
                 }
             }
+            LogGuestState(s, "after the B2 load");
             const int n = RewindRemoteTasks("guest");
             Log("guest: arrived in the host world (flow 4); %d remote task(s) rewound", n);
             Send(0, "{\"op\":\"arrived\"}");  // guest: slot 0 = the host
