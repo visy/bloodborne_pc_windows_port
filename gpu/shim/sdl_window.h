@@ -39,6 +39,9 @@ public:
     bool IsAudible() const { return audible.load(std::memory_order_relaxed); }
     std::string GetTextInputPrompt();
     std::string GetTextInputValue();
+    /// Mouse & keyboard mode (any thread): mouse motion since the last consuming call (pixels)
+    /// and the buttons held (bit 0 left, 1 right, 2 middle, 3 X1, 4 X2).
+    void ReadMouse(float& dx, float& dy, u32& buttons, bool consume);
 
 private:
     std::atomic<s32> width, height;
@@ -51,8 +54,15 @@ private:
     std::string text, text_prompt, base_title;
     void UpdateTextTitle();
     void UpdateCursor();
+    void UpdateMouseMode();
     u64 last_mouse_motion_ms{}; ///< SDL_GetTicks of the last mouse motion (UpdateCursor)
     bool cursor_hidden{};
+    // Mouse & keyboard mode: relative mouse while the game has the input (UpdateMouseMode).
+    std::mutex mouse_mutex;
+    float mouse_dx{}, mouse_dy{};
+    u32 mouse_buttons{};
+    bool relative_mouse{};
+    u64 last_tuning_check_ms{};
     SDL_Window* window{};
     WindowSystemInfo window_info{};
 };

@@ -31,6 +31,18 @@ int bbgpu_text_input_poll(char *out_utf8, uint64_t size);
 int bbgpu_text_input_is_active(void);
 /* 1 while the in-game settings menu is open: the game's pad input is held neutral. */
 int bbgpu_overlay_captures_input(void);
+/* Mouse & keyboard controls (scheme from Mrsuss60/bloodborne_pc_windows_port): the mouse state
+ * gathered by the window thread and the menu's look tuning. Mouse motion (pixels, relative mode)
+ * accumulates until a call with consume_motion set takes it. buttons: bit 0 left, 1 right,
+ * 2 middle, 3 X1, 4 X2. Nothing is gathered while the menu or the name box is open. */
+typedef struct {
+    float dx, dy;
+    uint32_t buttons;
+    float sens_x, sens_y, deadzone, smoothing;
+    int invert_x, invert_y;
+} BbMouseState;
+/* 1 when mouse & keyboard mode is on (bbport.ini mk_enabled, BB_MOUSE_KEYBOARD, the menu). */
+int bbgpu_mouse_keyboard(BbMouseState *state, int consume_motion);
 /* 0 while the game window is in the background and BB_MUTE_UNFOCUSED is not 0: audio is muted. */
 int bbgpu_audio_audible(void);
 /* Patches the loaded image before the game runs (image still writable): libGnm entry hooks. */
