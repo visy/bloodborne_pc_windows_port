@@ -187,6 +187,7 @@ struct MemberTexts {
     u32 member_name[MaxMembers], member_value[MaxMembers], member_confirm[MaxMembers],
         member_help[MaxMembers];
     u32 restart_help;
+    u32 event_value, event_help;
 } party;
 std::string member_names[MaxMembers]; // the member row k stands for (kick)
 bool member_kickable[MaxMembers]{};
@@ -264,6 +265,15 @@ void RefreshParty() {
         party_row_visible[i] = !r.visible || r.visible(b);
     }
 
+    // Last event (Party members page).
+    both([&](bool r) { return b.last_event.empty() ? std::string(L(r, "None", "Нет")) : b.last_event; });
+    SetDynamic(party.event_value, en, ru);
+    both([&](bool r) {
+        return b.last_event.empty() ? std::string(L(r, "No party events yet", "Событий группы ещё не было"))
+                                    : std::string(L(r, "Last: ", "Последнее: ")) + b.last_event;
+    });
+    SetDynamic(party.event_help, en, ru);
+
     // Members.
     member_rows = std::clamp(int(b.members.size()), 1, MaxMembers);
     for (int k = 0; k < MaxMembers; ++k) {
@@ -295,7 +305,7 @@ void RefreshParty() {
         const auto where = [&](bool r) {
             std::string text = !m.connected  ? L(r, "Connection lost", "Связь потеряна")
                                : m.slot == 0 ? L(r, "Host's world", "Мир хоста")
-                               : m.in_world  ? L(r, "In host's world", "В мире хоста")
+                               : m.in_world  ? L(r, "In world", "В мире") // short: the value column is narrow
                                              : L(r, "In own world", "В своём мире");
             if (m.connected && !m.local && m.ping_ms >= 0) {
                 text += ", " + std::to_string(m.ping_ms) + L(r, " ms", " мс");
@@ -339,7 +349,9 @@ bool Active(const party::status::Board& b) {
     return b.enabled && b.role != party::status::Role::Off;
 }
 
-/// The Party page's own rows (orders 10..60): status, copy code, rejoin, leave, notices, last event.
+/// The Party page's own rows (orders 10..40): status, copy code, rejoin, leave. The join/leave
+/// notices switch and the last event are on the Party members page (room for the party flow's
+/// rows here).
 void DefineBuiltinPartyRows() {
     namespace ps = party::status;
     using B = ps::Board;
@@ -432,33 +444,6 @@ void DefineBuiltinPartyRows() {
     };
     party_rows.push_back({leave});
 
-    PartyRow toasts;
-    toasts.order = 50;
-    toasts.name = [](const B&) { return T2("Join/leave notices", "Уведомления"); };
-    toasts.value = [](const B&) { return T2("Off", "Выкл"); };
-    toasts.pressed = [](const B&) { return T2("On", "Вкл"); };
-    toasts.help = [](const B&) {
-        return T2("A short notice in a top corner when a hunter joins or leaves",
-                  "Короткое уведомление в углу, когда охотник входит или выходит");
-    };
-    toasts.visible = [](const B& b) { return b.enabled; };
-    toasts.toggle = true;
-    toasts.toggle_get = [] { return BbSettings::Get().party_toasts.load(); };
-    toasts.toggle_set = [](bool v) { BbSettings::Get().party_toasts = v; };
-    party_rows.push_back({toasts});
-
-    PartyRow event;
-    event.order = 60;
-    event.visible = [](const B& b) { return b.enabled; };
-    event.name = [](const B&) { return T2("Last event", "Последнее"); };
-    event.value = [](const B& b) {
-        return b.last_event.empty() ? T2("None", "Нет") : Texts{b.last_event, b.last_event};
-    };
-    event.help = [](const B& b) {
-        return b.last_event.empty() ? T2("No party events yet", "Событий группы ещё не было")
-                                    : Texts{"Last: " + b.last_event, "Последнее: " + b.last_event};
-    };
-    party_rows.push_back({event});
 }
 
 void DefineAll() {
@@ -786,6 +771,14 @@ void DefineAll() {
                party.member_name[k], party.member_help[k], {party.member_value[k], party.member_confirm[k]},
                Kind::Toggle, [k] { return k < member_rows; });
     }
+    // At most four member rows: the page's six rows hold these two too.
+    AddRow(Flag(&Values::party_toasts), "Join/leave notices", "Уведомления",
+           "A short notice in a top corner when a hunter joins or leaves",
+           "Короткое уведомление в углу, когда охотник входит или выходит", toggle, Kind::Toggle);
+    party.event_value = AddDynamic(MaxValueLength);
+    party.event_help = AddDynamic(MaxHelpLength);
+    AddRow(Info(), AddText("Last event", "Последнее"), party.event_help, {party.event_value, party.event_value},
+           Kind::Toggle);
 }
 
 } // namespace
