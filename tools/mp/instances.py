@@ -238,6 +238,22 @@ def open_log(path: Path):
     return f, f.tell()
 
 
+def tile_rect(slot):
+    """Screen rectangle for a game window by its machine-wide slot: slot 0 top left, slot 1 bottom
+    left (then top/bottom of the next column), each half the primary work area's height, 16:9."""
+    if os.name != "nt":
+        return None
+    class RECT(ctypes.Structure):
+        _fields_ = [("l", ctypes.c_long), ("t", ctypes.c_long), ("r", ctypes.c_long), ("b", ctypes.c_long)]
+    wa = RECT()
+    ctypes.windll.user32.SystemParametersInfoW(0x30, 0, ctypes.byref(wa), 0)  # SPI_GETWORKAREA
+    # Client area size; leave room for the title bar and borders of the next window below.
+    h = (wa.b - wa.t) // 2 - 40
+    w = h * 16 // 9
+    col, row = divmod(slot, 2)
+    return wa.l + 8 + col * (w + 16), wa.t + row * (h + 40) + 31, w, h
+
+
 def run(a):
     port0 = base_port(a.root)
     stop_leftovers(a.root)
@@ -264,6 +280,8 @@ def run(a):
             "BB_PATCHES": "Skip Online/Offline Choice;Skip Intro",
             "BB_MP_LOCAL_TEST": "1", "BB_MP_INSTANCE": str(i), "BB_MP_PORT": str(port0 + i),
             "BB_MP_NAME": f"Hunter{i}",
+            **({"BB_WINDOW_X": str(r[0]), "BB_WINDOW_Y": str(r[1]), "BB_WINDOW_W": str(r[2]), "BB_WINDOW_H": str(r[3])}
+               if (r := tile_rect(getattr(a, "slots", list(range(a.count)))[i])) else {}),
         })
         if a.party:
             party_saves_from(inst / "user")
@@ -398,7 +416,8 @@ def main():
         # At most max_clients game clients on this machine across all agents (tools/mp/game_queue.py).
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from game_queue import game_slots
-        with game_slots(a.count, a.root):
+        with game_slots(a.count, a.root) as slots:
+            a.slots = slots
             run(a)
         return
     {"setup": setup, "run": run, "logs": logs, "kill": kill, "crash": crash}[a.cmd](a)
