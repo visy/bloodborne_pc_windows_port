@@ -87,6 +87,23 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(display));
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width_);
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height_);
+    // Test harness tiling (tools/mp/instances.py): BB_WINDOW_X/Y place the window, BB_WINDOW_W/H
+    // size it (the render resolution is unchanged; the swapchain follows the window).
+    auto env_int = [](const char* name, int* out) {
+        const char* v = std::getenv(name);
+        if (!v || !*v) return false;
+        *out = std::atoi(v);
+        return true;
+    };
+    int wx = 0, wy = 0, ww = 0, wh = 0;
+    if (env_int("BB_WINDOW_X", &wx) && env_int("BB_WINDOW_Y", &wy)) {
+        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, wx);
+        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, wy);
+    }
+    if (env_int("BB_WINDOW_W", &ww) && env_int("BB_WINDOW_H", &wh) && ww > 0 && wh > 0) {
+        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, ww);
+        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, wh);
+    }
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_VULKAN_BOOLEAN, true);
     const char* fullscreen = std::getenv("BB_FULLSCREEN");
