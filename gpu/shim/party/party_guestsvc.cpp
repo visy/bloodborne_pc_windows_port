@@ -747,13 +747,15 @@ void LevelUpTick(const GameSnapshot& s, double now) {
         } else if (s.level > L.level0 && L.level0 >= 0) {
             go(LevelUpScript::WaitLevel, "level changed already");
         } else if (since >= 1.2) {
-            if (++L.tries > 6) {
+            if (++L.tries > 2) {
                 go(LevelUpScript::WaitLevel, "no level change after the confirm presses");
                 break;
             }
-            // The confirmation dialog: Cross first (YES is usually preselected), then Left + Cross.
-            Tap(L.tries % 2 ? kPadCross : kPadLeft, now);
-            Log("test: levelup: dialog: %s", L.tries % 2 ? "Cross" : "Left");
+            // The confirmation dialog ("Spend N Blood Echoes and level up?"): the cursor starts on
+            // NO (live: Cross there cancelled the raise), so Left to YES, then Cross.
+            Tap(L.tries % 2 ? kPadLeft : kPadCross, now);
+            Log("test: levelup: dialog: %s (echoes %d)", L.tries % 2 ? "Left (to YES)" : "Cross", s.echoes);
+            L.at = now; // space the presses (1.2 s)
         }
         break;
     case LevelUpScript::WaitLevel:
