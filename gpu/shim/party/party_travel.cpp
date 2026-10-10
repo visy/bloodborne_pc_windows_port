@@ -983,6 +983,15 @@ bool TravelEnabled() {
     return g_travel_on.load();
 }
 
+bool ReplayTravelNow(const TravelIntent& t) {
+    if (!g_travel_on.load()) {
+        return false;
+    }
+    const ReplayPlan p = ChooseReplay(t);
+    Log("replay now %s via %s", DescribeTravel(t).c_str(), ReplayMethodName(p.method));
+    return Replay(t, p);
+}
+
 void SetGuestDeathRedirect(std::uint32_t host_lamp_id) {
     const u32 was = g_death_lamp.exchange(host_lamp_id);
     if (was != host_lamp_id) {

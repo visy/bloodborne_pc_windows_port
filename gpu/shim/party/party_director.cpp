@@ -7,6 +7,7 @@
 #include "coop_hooks.h"
 #include "game_state.h"
 #include "lua_events.h"
+#include "party_b2.h"
 #include "party_fourp.h"
 #include "party_link.h"
 #include "party_story.h"
@@ -746,6 +747,7 @@ void PartyDirector::Tick() {
     st.last = s;
     st.have_last = true;
     NpcTestTick(s); // BB_PARTY_TEST_NPC fixture (party_npc_test.h)
+    b2::Tick(s);    // B2 seamless prototype (party_b2.h; BB_PARTY_B2=1)
 
     PartyRole role;
     party::PartyLink* link;
@@ -829,6 +831,14 @@ void PartyDirector::Tick() {
             Log("items: full list (%zu lots) sent to slot %d", items.size(), slot);
         }
     }
+    // B2 (party_b2.h): guest "arrived" / host notes.
+    if (link) {
+        int b2slot = party::kBroadcast;
+        std::string b2body;
+        while (b2::PopOutgoing(&b2slot, &b2body)) {
+            link->send_event(b2slot, b2::kEventName, b2body);
+        }
+    }
     // The overlay's Party tab: status board and its commands (party_status_bridge.h).
     if (role != PartyRole::None &&
         party::bridge::Tick({role == PartyRole::Host, link, s.world_up, s.loading, s.session_role, s.cooperators,
@@ -890,7 +900,8 @@ bool PartyRequested() {
     const char* p = std::getenv("BB_PARTY");
     const char* t = std::getenv("BB_PARTY_DIRECTOR_TEST");
     const char* i = std::getenv("BB_PARTY_ITEMS_TEST"); // C3 single-instance check
-    return (p && p[0]) || (t && t[0]) || (i && i[0]) || NpcTestRequested() || StoryTestRequested();
+    return (p && p[0]) || (t && t[0]) || (i && i[0]) || NpcTestRequested() || StoryTestRequested() ||
+           b2::Requested();
 }
 
 void CoopTick() {
@@ -922,6 +933,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
         HookCallSite(kSsParseCall, kSsParse, reinterpret_cast<const void*>(&SsParseHook), "ss.info parse log");
     }
     InstallTravelPatches(); // B1: Dream gate + travel hooks (byte-verified)
+    b2::Init();             // B2 seamless prototype (BB_PARTY_B2=1; byte-verified)
     InstallStoryHooks();    // C4: bank-2002 capture, guest mirror / replay (byte-verified)
     InstallItemsPatches();  // C3: award hook, parity patches (byte-verified)
     PhantomInit();          // guest respawn at the host's lamp, refill, boss Insight

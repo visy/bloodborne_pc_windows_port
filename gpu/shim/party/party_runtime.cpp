@@ -6,6 +6,7 @@
 #include "party_addr.h"
 #include "party_code.h"
 #include "party_crypto.h"
+#include "party_b2.h"
 #include "party_director.h"
 #include "party_story.h"
 #include "party_status_bridge.h"
@@ -679,16 +680,20 @@ LinkCallbacks make_callbacks(bool host) {
             return json::dump(reply, 0);
         };
     } else {
-        cb.on_event = [](int, std::uint64_t, const std::string& name, const std::string& body) {
+        cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
             if (name == coop::kTravelEventName) {  // B1: follow the host's warp
                 coop::TravelIntent t;
                 std::string err;
                 if (coop::TravelFromJsonText(body, &t, &err) && coop::SanitizePeerTravel(&t, &err)) {
                     bridge::OnTravel(coop::TravelKindName(t.kind));
-                    coop::RequestGuestTravel(t);
+                    if (!coop::b2::OnHostTravel(t)) coop::RequestGuestTravel(t);  // B2 keeps the room
                 } else {
                     plog("travel event: %s", err.c_str());
                 }
+                return;
+            }
+            if (name == coop::b2::kEventName) {  // B2: a guest arrived in the host world
+                coop::b2::OnLinkEvent(slot, body);
                 return;
             }
             if (name == coop::kStoryEventName) {  // C4: the host's cutscene / ending
