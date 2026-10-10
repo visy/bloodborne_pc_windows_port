@@ -200,6 +200,12 @@ Mapped MapState(const Facts& f) {
         return {host ? State::Hosting : State::WaitingForWorld, host ? count + ", " + why : "connected; " + why};
     }
     if (f.session_role == kRoleLeaving) return {State::WaitingForWorld, "leaving the session"};
+    // C1: no summons before this player finished its prologue (party_start.h).
+    if (f.prologue && f.session_role == kRoleIdle) {
+        const std::string why = "prologue" + (f.prologue_step.empty() ? std::string() : " (" + f.prologue_step + ")") +
+                                ", solo until ready";
+        return {host ? State::Hosting : State::WaitingForWorld, host ? count + ", " + why : why};
+    }
     if (host) {
         if (f.session_role == kRoleHost && f.cooperators > 0)
             return {State::Joined, std::to_string(f.cooperators + 1) + " in your world, " + count + " in the party"};
@@ -230,6 +236,7 @@ std::vector<status::Member> MapMembers(const std::vector<RosterEntry>& roster, c
         m.ping_ms = (e.slot == kHostSlot || !e.connected) ? -1 : static_cast<int>(e.ping_ms);
         if (!host && m.local) m.ping_ms = -1;
         m.area = area ? area(e.map_id) : AreaText(e.map_id);
+        if (e.state == MemberState::Prologue) m.area += m.area.empty() ? "prologue" : " (prologue)";
         out.push_back(std::move(m));
     }
     return out;
@@ -464,9 +471,11 @@ TickOut Tick(const TickIn& in) {
         }
         if (bell && (!b.rung || Since(b.bell_at, now) > kBellWindowS)) bell = false;
         const int max_players = f.max_players ? f.max_players : in.max_players;
+        const char* step = in.prologue && in.prologue_step ? in.prologue_step : "";
         if (!b.have_game || in.world_up != f.world_up || in.loading != f.loading ||
             in.session_role != f.session_role || in.cooperators != f.cooperators || travelling != f.travelling ||
-            bell != f.bell_recent || max_players != f.max_players) {
+            bell != f.bell_recent || max_players != f.max_players || in.prologue != f.prologue ||
+            f.prologue_step != step) {
             b.have_game = true;
             f.world_up = in.world_up;
             f.loading = in.loading;
@@ -475,6 +484,8 @@ TickOut Tick(const TickIn& in) {
             f.travelling = travelling;
             f.bell_recent = bell;
             f.max_players = max_players;
+            f.prologue = in.prologue;
+            f.prologue_step = step;
             PublishLocked(b);
         }
         // The roster only while in a party (a rejected / stopped link keeps its last one).
