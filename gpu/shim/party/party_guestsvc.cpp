@@ -927,17 +927,21 @@ void GuestServicesInit() {
         return;
     }
     SetEmevdRewriter2(&DollRewriter);
-    // push rbp; mov rbp, rsp; push r15, r14, rbx; sub rsp, 0x48 (13 bytes, then mov rbx, rdi).
-    HookPrologue(0x1BB7F60, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x53, 0x48, 0x83, 0xec, 0x48},
-                 &LevelUpMenuFactoryEntry, "level-up menu factory (log)");
-    // push rbp; mov rbp, rsp; push r15, r14, r13, r12, rbx; sub rsp, 0x48 (17 bytes; then mov rbx, rdx).
-    // push rbp; mov rbp, rsp; push r15..r12, rbx; sub rsp, 0x3c8 (20 bytes; then mov rbx, rsi).
-    HookPrologue(0x203FFD0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x81,
-                             0xec, 0xc8, 0x03, 0x00, 0x00},
-                 &TalkCommandEntry, "talk command switch (log)");
-    HookPrologue(0x1C4A520, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83,
-                             0xec, 0x48},
-                 &MenuRequestEntry, "menu request (log)");
+    if (!g.test.empty()) {
+        // Trace hooks for the live tests only (BB_PARTY_GUESTSVC_TEST): the LevelUp menu factory,
+        // the talk command ids, the menu requests.
+        // push rbp; mov rbp, rsp; push r15, r14, rbx; sub rsp, 0x48 (13 bytes, then mov rbx, rdi).
+        HookPrologue(0x1BB7F60, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x53, 0x48, 0x83, 0xec, 0x48},
+                     &LevelUpMenuFactoryEntry, "level-up menu factory (log)");
+        // push rbp; mov rbp, rsp; push r15..r12, rbx; sub rsp, 0x3c8 (20 bytes; then mov rbx, rsi).
+        HookPrologue(0x203FFD0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x81,
+                                 0xec, 0xc8, 0x03, 0x00, 0x00},
+                     &TalkCommandEntry, "talk command switch (log)");
+        // push rbp; mov rbp, rsp; push r15, r14, r13, r12, rbx; sub rsp, 0x48 (17 bytes; then mov rbx, rdx).
+        HookPrologue(0x1C4A520, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83,
+                                 0xec, 0x48},
+                     &MenuRequestEntry, "menu request (log)");
+    }
     // (0x176BFE0, the request's first test, is not hooked: replacing it stopped the guest from
     // joining in a live run.)
     EnsureEmevdFilter();
