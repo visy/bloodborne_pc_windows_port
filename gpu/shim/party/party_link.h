@@ -189,6 +189,11 @@ public:
     // Host: drop a member and free its slot (BYE Kicked).
     bool kick(int slot, const std::string& reason);
 
+    // The IO thread's longest single hold of the link's lock (microseconds, wall clock) since
+    // the last reset: what a caller that needs the lock could have waited. `cycles`: the
+    // longest hold in the IO thread's own CPU cycles (Windows; 0 elsewhere), i.e. without the
+    // time it was preempted holding it.
+    std::int64_t debug_lock_hold_max_us(bool reset = false, std::uint64_t* cycles = nullptr);
     // Tests: stop all IO (no reads, writes or pings) for `ms`, simulating a frozen network.
     void debug_freeze(int ms);
     // Tests: abort the current connection(s) without BYE (guest then reconnects).

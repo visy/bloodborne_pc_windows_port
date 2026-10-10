@@ -46,6 +46,18 @@ enum MsgType : std::uint8_t {
 constexpr std::uint32_t kMaxFrame = 16u << 20;
 constexpr std::uint8_t kMagic[4] = {'B', 'B', 'P', 'L'};
 
+// The calling thread's CPU cycles (0 where unavailable): a lock hold's own work, without the
+// time the thread was preempted.
+std::uint64_t thread_cycles() {
+#if defined(_WIN32)
+    ULONG64 c = 0;
+    QueryThreadCycleTime(GetCurrentThread(), &c);
+    return c;
+#else
+    return 0;
+#endif
+}
+
 std::int64_t ms_between(Clock::time_point a, Clock::time_point b) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count();
 }
@@ -438,7 +450,28 @@ struct PartyLink::Impl {
     std::uint32_t next_rpc = 1;
     int backoff_ms = 0;
     Clock::time_point next_attempt{};
-    bool want_connect = false;  // timers: a reconnect is due (the name is resolved outside mu)
+    bool want_connect = false;  // timers: a reconnect is due (dialed outside mu)
+    std::int64_t hold_max_us = 0;       // the IO thread's longest hold of mu (debug_lock_hold_max_us)
+    std::uint64_t hold_max_cycles = 0;  // the same hold in the IO thread's CPU cycles (Windows)
+
+    // What the game's main thread polls every frame (state, roster, local slot, its own entry),
+    // published under snap_mu: those getters never wait for mu, which the IO thread holds while
+    // it works (and may be preempted holding). Lock order: mu, then snap_mu.
+    mutable std::mutex snap_mu;
+    LinkState snap_state = LinkState::Idle;
+    int snap_slot = -1;
+    std::vector<RosterEntry> snap_roster;
+    MemberState snap_local_state = MemberState::Title;
+    std::uint32_t snap_local_map = 0;
+    void publish() {  // mu held
+        std::vector<RosterEntry> r = host ? host_roster() : groster;
+        std::lock_guard<std::mutex> lk(snap_mu);
+        snap_state = state;
+        snap_slot = host ? kHostSlot : my_slot;
+        snap_roster.swap(r);
+        snap_local_state = local_state;
+        snap_local_map = local_map;
+    }
     bool last_resumed = false;  // the last WELCOME resumed our session
     std::int64_t clock_offset = 0;
     std::uint32_t rtt = 0;
@@ -484,6 +517,10 @@ struct PartyLink::Impl {
     void set_state(LinkState s, std::string detail) {  // mu held
         if (state == s) return;
         state = s;
+        {
+            std::lock_guard<std::mutex> lk(snap_mu);
+            snap_state = s;
+        }
         state_cv.notify_all();
         log(std::string("party link: ") + link_state_name(s) + (detail.empty() ? "" : ": " + detail));
         if (cb.on_state) post([this, s, detail = std::move(detail)] { cb.on_state(s, detail); });
@@ -1309,6 +1346,8 @@ struct PartyLink::Impl {
             else
                 n = sock::poll(fds.data(), static_cast<unsigned long>(fds.size()), 10);
             std::unique_lock<std::mutex> lk(mu);
+            const auto locked_at = Clock::now();
+            const std::uint64_t cycles_at = thread_cycles();
             if (stopping) break;
             if (freeze_until > Clock::now()) continue;
             if (n > 0) {
@@ -1340,6 +1379,11 @@ struct PartyLink::Impl {
             timers();
             conns.erase(std::remove_if(conns.begin(), conns.end(), [](const std::unique_ptr<Conn>& c) { return c->dead; }),
                         conns.end());
+            publish();
+            const auto held = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - locked_at).count();
+            if (held > hold_max_us) hold_max_us = held;
+            const std::uint64_t cyc = thread_cycles() - cycles_at;
+            if (cyc > hold_max_cycles) hold_max_cycles = cyc;
             if (want_connect) connect_unlocked(lk);
         }
     }
@@ -1415,6 +1459,7 @@ bool PartyLink::start_host(std::string* error) {
         I.start_time = Clock::now();
         I.set_state(LinkState::Hosting, "port " + std::to_string(I.port) + ", up to " +
                                             std::to_string(I.cfg.max_players) + " players");
+        I.publish();
     }
     I.start_threads();
     return true;
@@ -1438,6 +1483,7 @@ bool PartyLink::start_guest(const std::string& host, std::uint16_t port, std::st
         I.host_port = port;
         I.start_time = Clock::now();
         I.start_connect(d);
+        I.publish();
     }
     I.start_threads();
     return true;
@@ -1466,6 +1512,7 @@ void PartyLink::stop(bool graceful) {
         I.gconn = nullptr;
         I.fail_pending("party link stopped");
         I.set_state(LinkState::Stopped, graceful ? "" : "dropped");
+        I.publish();
     }
 join:
     if (I.io_thread.joinable()) I.io_thread.join();
@@ -1478,14 +1525,15 @@ join:
     std::lock_guard<std::mutex> lk(I.mu);
     I.conns.clear();
     I.members.clear();
+    I.publish();
     crypto::wipe(I.party_key.data(), I.party_key.size());
 }
 
 bool PartyLink::is_host() const { return impl_->host; }
 
 LinkState PartyLink::state() const {
-    std::lock_guard<std::mutex> lk(impl_->mu);
-    return impl_->state;
+    std::lock_guard<std::mutex> lk(impl_->snap_mu);
+    return impl_->snap_state;
 }
 
 bool PartyLink::wait_state(LinkState s, int timeout_ms) const {
@@ -1494,8 +1542,8 @@ bool PartyLink::wait_state(LinkState s, int timeout_ms) const {
 }
 
 int PartyLink::local_slot() const {
-    std::lock_guard<std::mutex> lk(impl_->mu);
-    return impl_->host ? kHostSlot : impl_->my_slot;
+    std::lock_guard<std::mutex> lk(impl_->snap_mu);
+    return impl_->snap_slot;
 }
 
 std::uint16_t PartyLink::bound_port() const {
@@ -1509,8 +1557,8 @@ int PartyLink::max_players() const {
 }
 
 std::vector<RosterEntry> PartyLink::roster() const {
-    std::lock_guard<std::mutex> lk(impl_->mu);
-    return impl_->host ? impl_->host_roster() : impl_->groster;
+    std::lock_guard<std::mutex> lk(impl_->snap_mu);  // refreshed by the IO thread every <= 10 ms
+    return impl_->snap_roster;
 }
 
 std::int64_t PartyLink::host_clock_ms() const {
@@ -1660,6 +1708,11 @@ bool PartyLink::send_progress(int slot, const std::vector<std::uint8_t>& blob) {
 
 void PartyLink::set_local_state(MemberState state, std::uint32_t map_id) {
     Impl& I = *impl_;
+    {
+        // Called every frame; only a change needs the IO lock.
+        std::lock_guard<std::mutex> sl(I.snap_mu);
+        if (I.snap_local_state == state && I.snap_local_map == map_id) return;
+    }
     std::lock_guard<std::mutex> lk(I.mu);
     if (I.local_state == state && I.local_map == map_id) return;
     I.local_state = state;
@@ -1669,6 +1722,7 @@ void PartyLink::set_local_state(MemberState state, std::uint32_t map_id) {
     } else if (I.gconn && I.gconn->phase == Impl::Phase::Open) {
         I.send_local_state(I.gconn);
     }
+    I.publish();
 }
 
 bool PartyLink::kick(int slot, const std::string& reason) {
@@ -1676,7 +1730,19 @@ bool PartyLink::kick(int slot, const std::string& reason) {
     std::lock_guard<std::mutex> lk(I.mu);
     if (!I.host || !I.members.count(slot)) return false;
     I.release_member(slot, true, RejectCode::Kicked, reason.empty() ? "kicked by the host" : reason);
+    I.publish();
     return true;
+}
+
+std::int64_t PartyLink::debug_lock_hold_max_us(bool reset, std::uint64_t* cycles) {
+    std::lock_guard<std::mutex> lk(impl_->mu);
+    const std::int64_t v = impl_->hold_max_us;
+    if (cycles) *cycles = impl_->hold_max_cycles;
+    if (reset) {
+        impl_->hold_max_us = 0;
+        impl_->hold_max_cycles = 0;
+    }
+    return v;
 }
 
 void PartyLink::debug_freeze(int ms) {

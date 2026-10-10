@@ -141,6 +141,7 @@ struct Samples {
         std::lock_guard<std::mutex> lk(mu);
         return v.empty() ? 0 : *std::max_element(v.begin(), v.end());
     }
+    bool p99_ok(double limit) { return pct(99) < limit; }
     void clear() {
         std::lock_guard<std::mutex> lk(mu);
         v.clear();
@@ -822,7 +823,11 @@ struct Totals {
     std::atomic<std::uint64_t> rpc_ok{0}, rpc_fail{0}, rpc_bad{0};
     std::atomic<std::uint64_t> g2h_delivered{0}, g2h_dups{0}, g2h_gaps{0};
     std::atomic<int> state_changes{0};
+    std::atomic<std::int64_t> hold_max_us{0};      // the links' IO threads: longest hold of their lock
+    std::atomic<std::uint64_t> hold_max_cycles{0};  // ... in their own CPU cycles
     void clear() {
+        hold_max_us = 0;
+        hold_max_cycles = 0;
         ev_lat.clear();
         rpc_rtt.clear();
         main_call.clear();
@@ -832,6 +837,7 @@ struct Totals {
     }
 };
 Totals g_tot;
+double g_cycles_per_ms = 1e6;  // calibrated in main()
 
 struct GuestRun {
     int idx = 0;
@@ -1200,6 +1206,17 @@ struct Party {
                         lap(4);
                         const double total = ms_since(c0);
                         g_tot.main_call.add(total);
+                        std::uint64_t cyc = 0;
+                        const std::int64_t held = l->debug_lock_hold_max_us(true, &cyc);
+                        if (held > 3000)
+                            logf("%s link IO thread held its lock %.2f ms (%.2f ms of its own CPU)",
+                                 l->is_host() ? "host" : "guest", held / 1000.0, cyc / g_cycles_per_ms);
+                        std::int64_t prev = g_tot.hold_max_us.load();
+                        while (held > prev && !g_tot.hold_max_us.compare_exchange_weak(prev, held)) {
+                        }
+                        std::uint64_t pc = g_tot.hold_max_cycles.load();
+                        while (cyc > pc && !g_tot.hold_max_cycles.compare_exchange_weak(pc, cyc)) {
+                        }
                         if (total > 10)
                             logf("main thread: %s link calls took %.1f ms (state %.1f roster %.1f set_local %.1f event %.1f cmd %.1f)",
                                  l->is_host() ? "host" : "guest", total, part[0], part[1], part[2], part[3], part[4]);
@@ -1418,9 +1435,18 @@ void report(Party& p, Verdict& v, bool expect_lossless_udp_direct) {
                static_cast<unsigned long long>(p.udp[0]->relay_server().clients()),
                static_cast<unsigned long long>(st.reregistered), static_cast<unsigned long long>(st.unknown_dst));
     }
-    v.note("main thread: %zu link calls, p99 %.3f ms, max %.2f ms", g_tot.main_call.count(), g_tot.main_call.pct(99),
-           g_tot.main_call.max());
-    v.check(g_tot.main_call.max() < 50.0, "a main-thread call took over 50 ms");
+    const double hold_cpu = g_tot.hold_max_cycles.load() / g_cycles_per_ms;
+    v.note("main thread: %zu link calls, p99 %.3f ms, max %.2f ms (wall clock, scheduler included); link IO thread "
+           "lock hold max %.2f ms wall, %.2f ms of its own CPU",
+           g_tot.main_call.count(), g_tot.main_call.pct(99), g_tot.main_call.max(), g_tot.hold_max_us.load() / 1000.0,
+           hold_cpu);
+    // What the transport can make the main thread wait: the per-frame getters take no lock the
+    // IO thread holds; a change (set_local_state, send_event) waits at most for one IO-thread
+    // hold, whose own work is bounded (the CPU check). The wall-clock figures also count this
+    // machine's scheduler (the test runs ~40 threads), so they only fail far above a frame.
+    v.check(hold_cpu < 5.0, "the link IO thread worked over 5 ms under its lock");
+    v.check(g_tot.main_call.p99_ok(1.0), "main-thread link calls p99 over 1 ms");
+    v.check(g_tot.main_call.max() < 200.0, "a main-thread call took over 200 ms");
     (void)rb;
     (void)db;
 }
@@ -1645,6 +1671,18 @@ int main(int argc, char** argv) {
     setenv("BB_PARTY_FORCE_RELAY", "1", 1);
 #endif
     if (!udp::force_relay_from_env()) std::printf("BB_PARTY_FORCE_RELAY not parsed\n");
+#if defined(_WIN32)
+    {
+        // CPU cycles per millisecond of this thread, for the lock-hold figures.
+        ULONG64 c0 = 0, c1 = 0;
+        QueryThreadCycleTime(GetCurrentThread(), &c0);
+        const auto t = Clock::now();
+        while (ms_since(t) < 50) {
+        }
+        QueryThreadCycleTime(GetCurrentThread(), &c1);
+        g_cycles_per_ms = static_cast<double>(c1 - c0) / ms_since(t);
+    }
+#endif
     std::set<std::string> only;
     for (int i = 1; i < argc; ++i) only.insert(argv[i]);
     auto want = [&](const char* n) { return only.empty() || only.count(n); };
