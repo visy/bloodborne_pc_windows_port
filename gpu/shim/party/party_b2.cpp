@@ -450,7 +450,10 @@ int RewindRemoteTasks(const char* why) {
 }
 
 /// Host: the join-time snapshot again, to one member (after the host's own load).
+void LogIntroFlags(const char* when);
+
 void ResyncMember(u64 id) {
+    LogIntroFlags("host at the re-send");
     const u64 flow = Slot(kSlotFlow);
     using Send = int(BB_COOP_SYSV*)(u64, u64, u32, const void*, u32);
     using Snap = u64(BB_COOP_SYSV*)(u64, u64);
