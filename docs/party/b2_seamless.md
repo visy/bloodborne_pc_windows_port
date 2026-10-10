@@ -286,6 +286,34 @@ warp's own target was used; with +0x1521 = 1 our +0x14C4/D0/E0 write gives the s
   the opening cutscene" report came from a fresh `savedata_party`: both instances were re-set up
   with the current harness (level 37 character, "Saves: check OK ... 1 character slot used").
 
+### 6.4 Runs 17-20: placement written once, opening cutscene, saves [R]
+
+* Placement (run 17): the guest now steps aside **in its own world before ringing** (pre-ring
+  spacing: right / left / behind by slot, each try checked 30 ticks later: reached and same
+  height ±1.5 m = walkable, else the next side, else back to the start spot); its sign, and so the
+  join placement, is beside the host. A B2 arrival uses an exact-transform warp (forced placement
+  +0x14F0/+0x1500/+0x1510/+0x1520) beside the host's arrival spot, written once before the load.
+  Nothing moves a player after a load any more. Arrival watch (3 s, both instances): guest
+  `(-191.85, -28.67, 66.94)` 2.20 m from the host on both screens, host not moved (the guest's
+  height on the host's screen settles from -28.65 to -27.5 within 1 s: the remote chr landing).
+* Opening cutscene on the guest: EMEVD **event 12410000, 2002[3]** in the host's world. The
+  guest's overlay right after a plain bell join (host in the Dream) read 12410000=0 9401=1
+  9402=1 12417810=0; after the B2 re-sent snapshot **everything was 0** (9401 too), before and
+  after its load (run 18). Safety net in place: a client in the host's world never runs event
+  12410000's 2002 (EMEVD skip predicate, `seamless_rules SetEmevdSkipPredicate`): logged
+  `client: opening cutscene (event 12410000, 2002[3]) skipped in the host's world` and no remo.
+  Overlay guard (save the host-world overlay at the travel event, restore every group the new
+  snapshot left all-zero): restored 7 of 11 non-zero groups, but 9401's group came back
+  non-zero with the bit cleared - the re-sent snapshot itself carries different data. Root cause
+  of the poor re-sent snapshot is open (run 20 logs the host's own flags at the re-send).
+* Recovery net: a player falling for 6 s in its own world is warped to its own last lamp
+  (0x13CDF30, WorldTransitionState +0x1528).
+* Saves: every B2 run now starts from the base save `E:\gamesbport\save_backup\savedata_20261010`
+  copied into each instance's `user\savedata_party`. A player whose party character got a bad
+  position restores it with the game closed: copy a folder from
+  `user\save_backups\savedata_party\<date>-start` (written at every party start, newest 10 kept,
+  plus every 10 min) over `user\savedata_party`.
+
 ## 7. Risks / open items
 
 * (Closed in run 9) Guest rewind not executing in run 5. Static analysis: the update `0x1E52FE0` copies
