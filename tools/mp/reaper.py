@@ -31,6 +31,23 @@ def distinct_party_lines(root: Path) -> int:
     return len(seen)
 
 
+def all_in_world(root: Path) -> bool:
+    """Every instance's latest director world line is "Party: world up" (not "loading screen" or
+    "world down")."""
+    logs = list(root.glob("inst*/run.log"))
+    if not logs:
+        return False
+    for log in logs:
+        try:
+            text = log.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+        marks = re.findall(r"^Party: (world up|world down|loading screen)", text, re.M)
+        if not marks or marks[-1] != "world up":
+            return False
+    return True
+
+
 def end_run(root: Path):
     """Ends the run.bat shells and games under `root` (not the harness itself)."""
     r = str(root).replace("/", "\\").rstrip("\\").lower()
@@ -40,6 +57,57 @@ def end_run(root: Path):
           "} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $_.ProcessId }")
     out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True).stdout
     return out.split()
+
+
+def tile_windows():
+    r"""Stack every visible test game window (bbport.exe under E:\games\bbport, not the user's game
+    folder) four high in the left column, oldest process first, in physical pixels. Central, so
+    agents running an older harness still get the same layout."""
+    import ctypes
+    from ctypes import wintypes
+    u = ctypes.windll.user32
+    try:
+        u.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+    except (AttributeError, OSError):
+        u.SetProcessDPIAware()
+    ps = (r"Get-Process bbport -ErrorAction SilentlyContinue | Where-Object { $_.Path -like 'E:\games\bbport\*' } | "
+          "Sort-Object StartTime | ForEach-Object { $_.Id }")
+    pids = [int(x) for x in subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                                           capture_output=True, text=True).stdout.split()]
+    if not pids:
+        return
+    wins = {}
+    EnumProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def cb(hwnd, _):
+        if u.IsWindowVisible(hwnd) and not u.GetWindow(hwnd, 4):  # GW_OWNER: top-level only
+            pid = wintypes.DWORD()
+            u.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value in pids and u.GetWindowTextLengthW(hwnd) > 0:
+                wins.setdefault(pid.value, hwnd)
+        return True
+    u.EnumWindows(EnumProc(cb), 0)
+
+    class RECT(ctypes.Structure):
+        _fields_ = [("l", ctypes.c_long), ("t", ctypes.c_long), ("r", ctypes.c_long), ("b", ctypes.c_long)]
+    wa = RECT()
+    u.SystemParametersInfoW(0x30, 0, ctypes.byref(wa), 0)
+    rows = 4
+    cell_h = (wa.b - wa.t) // rows
+    for slot, pid in enumerate(p for p in pids if p in wins):
+        col, row = divmod(slot, rows)
+        hwnd = wins[pid]
+        wr, cr = RECT(), RECT()
+        u.GetWindowRect(hwnd, ctypes.byref(wr))
+        u.GetClientRect(hwnd, ctypes.byref(cr))
+        fw = (wr.r - wr.l) - (cr.r - cr.l)  # frame width/height around the client area
+        fh = (wr.b - wr.t) - (cr.b - cr.t)
+        h = cell_h - fh
+        w = h * 16 // 9
+        x, y = wa.l + col * (w + fw), wa.t + row * cell_h
+        if (wr.l, wr.t, cr.r - cr.l, cr.b - cr.t) != (x, y, w, h):
+            # SWP_NOZORDER | SWP_NOACTIVATE: never take the user's focus.
+            u.SetWindowPos(hwnd, 0, x, y, w + fw, h + fh, 0x0004 | 0x0010)
 
 
 def main():
@@ -60,15 +128,31 @@ def main():
             hid = e["id"]
             live.add(hid)
             root = Path(e["root"])
+            # A run with a legitimately long quiet phase opts out with a file <root>/noreap
+            # holding the number of seconds of quiet it needs.
+            idle = a.idle
+            try:
+                idle = max(idle, float((root / "noreap").read_text().strip() or 600))
+            except (OSError, ValueError):
+                pass
             n = distinct_party_lines(root)
+            # Only once every instance has reached its world: boots, title and loads are quiet
+            # phases that must not end a run.
+            if not all_in_world(root):
+                state[hid] = (n, now)
+                continue
             count, since = state.get(hid, (-1, now))
             if n != count:
                 state[hid] = (n, now)
-            elif n > 0 and now - since > a.idle:
+            elif n > 0 and now - since > idle:
                 pids = end_run(root)
-                print(time.strftime("%H:%M:%S"), f"idle {a.idle:.0f}s: ended {e.get('label') or root} "
+                print(time.strftime("%H:%M:%S"), f"idle {idle:.0f}s: ended {e.get('label') or root} "
                       f"({len(pids)} processes)", flush=True)
                 state[hid] = (n, now + 3600)  # don't repeat while the harness winds down
+        try:
+            tile_windows()
+        except Exception as ex:  # never let layout break the reaper
+            print("tile:", ex, flush=True)
         for hid in list(state):
             if hid not in live:
                 del state[hid]
