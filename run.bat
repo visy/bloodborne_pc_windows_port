@@ -191,8 +191,11 @@ if errorlevel 1 exit /b 1
 REM GPU memory and command processing defaults, as run.sh sets them:
 REM BB_PREUPLOAD: background upload of the game's GPU memory into VRAM ahead of use (1 = only
 REM   memory already in VRAM that the game rewrote, 2 = all of it, ~3 GB more VRAM, 0 = off).
-REM BB_PC_MODEL=1: upstream's experimental new memory and translation model (off by default;
-REM   developed on Linux). BB_GUEST_IN_PLACE set by hand overrides it.
+REM BB_PC_MODEL=1: upstream's new memory and translation model. Upstream 0.5 makes it the default
+REM   on AMD GPUs under Linux (run.sh asks bb-gpu-capabilities --device); it needs the game's
+REM   direct memory in Vulkan allocations (dma-buf/memfd chunks), which the Windows runtime's
+REM   pagefile section cannot provide, so here unset means 0: the 0.3 model with every fix since.
+REM   BB_GUEST_IN_PLACE set by hand overrides it.
 REM BB_AS_0_3=1: synchronisation and memory as released in 0.3, for comparisons.
 REM BB_COPY_GPU_BUFFERS: command buffers are copied when submitted and decoded from the copy.
 REM BB_GPU_WRITE_TWINS: guest writes next to small GPU outputs do not wait for the GPU.

@@ -38,6 +38,7 @@
 #include "video_core/texture_cache/texture_cache.h"
 // After the Vulkan headers of the video core (their configuration).
 #include "bblayer_gpu_memory.h"
+#include "bblayer_write_traps.h"
 
 extern "C" int runtime_memory_vma_info(uintptr_t address, int* prot, int* type, uintptr_t* end);
 
@@ -58,11 +59,16 @@ bool IsGuestCode(u64 rip) {
     return rip >= Image && rip < Image + ImageSize;
 }
 
-// BB_LAYER_VOLATILE=0 (tests): no volatile blocks (a range with unannounced bytes stays mixed).
+// Volatile blocks (BB_LAYER_VOLATILE=1; off by default): a range with a few unannounced blocks
+// goes into one mirror anyway, those blocks refreshed for every binding that reads them. Off, the
+// range stays mixed (in place). Their refreshes were ~300 MB/s of copies and, in render passes,
+// up to ~100 pass breaks a frame; on a recorded route off was 4.29-4.31 ms of GPU time a frame,
+// on 4.31-4.53 even with the in-pass reads in place, 5.4-7.3 before. They were ~0.1 % of the
+// bytes bound.
 bool LayerVolatileAllowed() {
     static const bool on = [] {
         const char* env = std::getenv("BB_LAYER_VOLATILE");
-        return !(env && env[0] == '0');
+        return env && env[0] == '1';
     }();
     return on;
 }
@@ -295,6 +301,28 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::LayerBind(VAddr addres
         }
         resolution = Layer().Resolve(address, size);
     }
+    // A read over volatile blocks while a render pass is open: in place. Their refresh is a copy,
+    // and a copy ends the pass: the same pass was stored and loaded again up to ~100 times a frame
+    // (light volumes, one draw each), the GPU 1.3-1.5x slower for the whole launch in the launches
+    // that made such blocks. Outside a pass (dispatches, the first draw) the mirror is refreshed.
+    // BB_LAYER_VOLATILE_IN_PASS=0: refreshed in passes too (as before).
+    static const bool volatile_in_place = [] {
+        const char* env = std::getenv("BB_LAYER_VOLATILE_IN_PASS");
+        return !(env && env[0] == '0');
+    }();
+    if (resolution.kind == Kind::Mirror && vram_allowed && !is_written && volatile_in_place &&
+        scheduler.IsRendering() && layer_volatile.Overlaps(first, end)) {
+        if (const auto in_place = LayerInPlace(address, size, true)) {
+            BbStats::bound_in_place_bytes.fetch_add(size, std::memory_order_relaxed);
+            layer_volatile_in_pass_bytes += size;
+            if (is_texel_buffer) {
+                SynchronizeMemoryFromImage(in_place->first, in_place->second, address,
+                                           static_cast<u32>(size));
+            }
+            TraceBinding(address, size, false, 2);
+            return in_place;
+        }
+    }
     if (resolution.kind == Kind::Mirror && vram_allowed) {
         auto* mirror = static_cast<Buffer*>(resolution.span.source->owner);
         BbStats::bound_vram_bytes.fetch_add(size, std::memory_order_relaxed);
@@ -315,6 +343,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::LayerBind(VAddr addres
             // The GPU's data is in VRAM only: copied back before the blocks go in place.
             gpu_modified_ranges.Add(address, size);
             NoteWriteTick(address, size);
+            LayerArmReadTraps(address, size); // and before the CPU reads it
         }
         TraceBinding(address, size, is_written, is_written ? 1 : 4);
         return std::pair<const Buffer*, u64>{mirror, mirror->Offset(address)};
@@ -707,11 +736,12 @@ void BufferCache::LayerMaintain() {
         for (const auto& range : layer_watched) {
             watched_blocks += range.end - range.start;
         }
-        std::printf("Layer memory: %llu volatile blocks, %llu MiB refreshed in 10 s; %llu watched "
-                    "blocks, %llu uploaded again after CPU writes; GPU writes in VRAM barred in "
+        std::printf("Layer memory: %llu volatile blocks, %llu MiB refreshed in 10 s (%llu MiB read in "
+                    "place in render passes); %llu watched blocks, %llu uploaded again after CPU writes; GPU writes in VRAM barred in "
                     "%llu MiB the CPU wrote\n",
                     (unsigned long long)volatile_blocks,
                     (unsigned long long)(layer_volatile_refresh_bytes >> 20),
+                    (unsigned long long)(layer_volatile_in_pass_bytes >> 20),
                     (unsigned long long)watched_blocks, (unsigned long long)layer_watch_refreshes,
                     (unsigned long long)([&] {
                         u64 blocks = 0;
@@ -721,6 +751,7 @@ void BufferCache::LayerMaintain() {
                         return blocks;
                     }() << block_shift >> 20));
         layer_volatile_refresh_bytes = 0;
+        layer_volatile_in_pass_bytes = 0;
         layer_watch_refreshes = 0;
         std::printf("Layer memory: write traps in 10 s: announced %llu; the game's code on watched "
                     "%llu, on other copies %llu; other code on watched %llu, on other copies %llu\n",
@@ -728,6 +759,18 @@ void BufferCache::LayerMaintain() {
                     (unsigned long long)layer_trap_kinds[2], (unsigned long long)layer_trap_kinds[3],
                     (unsigned long long)layer_trap_kinds[4]);
         layer_trap_kinds = {};
+        if (LayerReadTrapsOn()) {
+            u64 trapped = 0;
+            {
+                std::scoped_lock lk{layer_read_trap_mutex};
+                layer_read_trapped.ForEach([&](VAddr a, VAddr b) { trapped += b - a; });
+            }
+            std::printf("Layer memory: read traps (GPU data in VRAM only): %llu KiB trapped; %llu CPU "
+                        "accesses in 10 s, %llu KiB copied back for them\n",
+                        (unsigned long long)(trapped >> 10),
+                        (unsigned long long)layer_read_trap_hits.exchange(0),
+                        (unsigned long long)(layer_read_trap_bytes.exchange(0) >> 10));
+        }
         std::printf("Layer memory: back in place (MiB): written %llu, mixed %llu, command %llu, "
                     "request %llu, copy back %llu, unmap %llu, idle %llu; GPU data copied back %llu MiB\n",
                     (unsigned long long)(layer_demoted_bytes[0].load() >> 20),
@@ -1235,10 +1278,40 @@ void BufferCache::LayerCopyBack(u64 first, u64 end) {
                 const vk::BufferCopy copy{buffer->Offset(w_from), target->second, w_to - w_from};
                 runtime.CopyBuffer(buffer, target->first, std::span{&copy, 1});
                 layer_copied_back_bytes += w_to - w_from;
+                layer_copy_back_tick = scheduler.CurrentTick();
             }
         });
         gpu_modified_ranges.Subtract(from, bytes);
     }
+}
+
+
+// BB_LAYER_READ_TRAPS=1: what the GPU writes into a VRAM copy only is no access for the CPU until
+// it is copied back (LayerReadTrapHit): the game or the translator reading it on the CPU would
+// see stale data (on the PS4 the memory is one). Off by default for now.
+bool BufferCache::LayerReadTrapsOn() {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_LAYER_READ_TRAPS");
+        return env && env[0] == '1';
+    }();
+    return on;
+}
+
+void BufferCache::LayerArmReadTraps(VAddr address, u64 size) {
+    if (!LayerReadTrapsOn() || size == 0) {
+        return;
+    }
+    constexpr u64 Page = 4096;
+    const VAddr from = Common::AlignDown(address, Page);
+    const VAddr to = Common::AlignUp(address + size, Page);
+    std::scoped_lock lk{layer_read_trap_mutex};
+    if (layer_read_trapped.Contains(from, to - from)) {
+        return;
+    }
+    layer_read_trapped.ForEachNotInRange(from, to - from, [&](VAddr gap, u64 bytes) {
+        BbLayer::WriteTraps::Set(gap, bytes, BbLayer::WriteTraps::VramData, true);
+    });
+    layer_read_trapped.Add(from, to - from);
 }
 
 void BufferCache::LayerQueuePromotion(u64 first, u64 end) {
@@ -1336,20 +1409,10 @@ bool LayerTrapsOn() {
     return on;
 }
 
-/// bbport: a block of the game's memory read-only (a write trap) or open again (mprotect /
-/// VirtualProtect, as VramTrapProtect).
-void LayerProtect(u64 address, u64 size, bool writable) {
-#ifdef _WIN32
-    DWORD old = 0;
-    VirtualProtect(reinterpret_cast<void*>(address), size,
-                   writable ? PAGE_READWRITE : PAGE_READONLY, &old);
-#else
-    mprotect(reinterpret_cast<void*>(address), size, writable ? PROT_READ | PROT_WRITE : PROT_READ);
-#endif
-}
-
 void LayerUnprotect(u64 block) {
-    LayerProtect(block << layer_trap_shift, u64{1} << layer_trap_shift, true);
+    // Writable again unless another owner (an image there) still traps it (bblayer_write_traps.h).
+    BbLayer::WriteTraps::Set(block << layer_trap_shift, u64{1} << layer_trap_shift,
+                             BbLayer::WriteTraps::Mirror, false);
 }
 
 bool LayerTrapHandler(void* context, void* fault_address) {
@@ -1390,7 +1453,8 @@ void BufferCache::LayerArmTraps(u64 first, u64 end) {
         if (run_end > run_first) {
             BbStats::Timer timer{BbStats::t_layer[0]};
             BbStats::layer_mprotects.fetch_add(1, std::memory_order_relaxed);
-            LayerProtect(run_first << block_shift, (run_end - run_first) << block_shift, false);
+            BbLayer::WriteTraps::Set(run_first << block_shift, (run_end - run_first) << block_shift,
+                                     BbLayer::WriteTraps::Mirror, true);
         }
         run_first = run_end = 0;
     };
@@ -1435,8 +1499,9 @@ void BufferCache::LayerDisarmTraps(u64 first, u64 end, bool demote) {
         if (run_end > run_first) {
             BbStats::Timer timer{BbStats::t_layer[0]};
             BbStats::layer_mprotects.fetch_add(1, std::memory_order_relaxed);
-            LayerProtect(run_first << layer_trap_shift, (run_end - run_first) << layer_trap_shift,
-                         true);
+            BbLayer::WriteTraps::Set(run_first << layer_trap_shift,
+                                     (run_end - run_first) << layer_trap_shift,
+                                     BbLayer::WriteTraps::Mirror, false);
         }
         run_first = run_end = 0;
     };

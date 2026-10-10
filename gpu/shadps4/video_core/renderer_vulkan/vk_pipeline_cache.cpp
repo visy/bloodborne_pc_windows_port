@@ -37,6 +37,7 @@
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "bbport_guest_memory.h"
+#include "game_profile.h"
 
 namespace Vulkan {
 
@@ -366,6 +367,8 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         .supports_depth_clip_control = instance_.IsDepthClipControlSupported(),
         // bbport BB_LAYER_MEMORY: buffers over nearly all memory go through the page table.
         .paged_buffers = VideoCore::BufferCache::LayerPagedActive(),
+        // The game's buffer copy shader, from its profile (games/).
+        .buffer_copy_shader_hash = Game::BufferCopyShader(),
     };
     // bbport: created before the warm-up, whose preloaded pipelines are built with it.
     auto [cache_result, cache] = instance.GetDevice().createPipelineCacheUnique({});
@@ -615,8 +618,16 @@ void PipelineCache::TrackTargets() {
     targets_stable = stable;
 }
 
-bool PipelineCache::DrawSkippable() const {
+bool PipelineCache::DrawSkippable(bool indirect) const {
     if (FrameCapture::Active() || display_pass || !targets_stable) {
+        return false;
+    }
+    // A full-screen pass (one triangle or quad: lighting, fog, post-processing) waits for its
+    // pipeline: going without one for a frame left whole frames grey. So does an indirect draw
+    // (its size unknown here). What may go without is geometry, which shows a frame later
+    // (upstream 0.5).
+    constexpr u32 FullScreenIndices = 12;
+    if (indirect || liverpool->regs.num_indices <= FullScreenIndices) {
         return false;
     }
     // Loading screens and other light frames (fewer than 300 draws in the previous frame) compile
@@ -694,7 +705,8 @@ const GraphicsPipeline* PipelineCache::TryPreparedPipeline(const PreparedDraw& p
 }
 
 const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectParams params,
-                                                           const PreparedDraw* prepared) {
+                                                           const PreparedDraw* prepared,
+                                                           bool indirect) {
     // bbport: results of the pipeline compiler (async pipelines, optimized library links).
     if (compiler.HasCompleted()) {
         PublishCompleted();
@@ -724,7 +736,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
             pending != pending_graphics.end()) {
             const auto job = pending->second;
             if (!job->IsFinished()) {
-                bool skip = async && DrawSkippable();
+                bool skip = async && DrawSkippable(indirect);
                 if (skip) {
                     if (job->first_skip_frame == ~0u) {
                         job->first_skip_frame = async_frame;
@@ -747,7 +759,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
             }
             // Failed off the GPU thread: built here below (asserts on a driver failure).
         } else if (async && BbCompileProgress::async_pending.load() < GetAsyncPolicy().queue &&
-                   DrawSkippable()) {
+                   DrawSkippable(indirect)) {
             GraphicsPipeline::SerializationSupport sdata{};
             GraphicsPipeline::FillSerializationSupport(instance, sel.graphics_key, sel.infos,
                                                        sel.runtime_infos, sel.fetch_shader, sdata);

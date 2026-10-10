@@ -9,6 +9,7 @@
 #include "bbport_timeline.h"
 #include "bbport_frame_state.h"
 #include "bbport_sections.h"
+#include "game_profile.h"
 #include "bbport_ce_stats.h"
 #include "bbport_toggles.h"
 #include "bbport_write_log.h"
@@ -37,6 +38,7 @@
 #include "video_core/renderer_vulkan/vk_gpu_labels.h"
 #include "video_core/renderer_vulkan/vk_indirect_guard.h"
 #include "video_core/renderer_vulkan/vk_occlusion.h"
+#include "video_core/renderer_vulkan/vk_timestamps.h"
 #include "video_core/texture_cache/image_view.h"
 #include "video_core/texture_cache/texture_cache.h"
 
@@ -234,10 +236,16 @@ bool Rasterizer::WriteDataOnGpu(VAddr address, const void* data, u32 size) {
 }
 
 bool Rasterizer::OcclusionTranslated() {
-    // BB_OCCLUSION_QUERIES=0: the counters stay the fixed sequence written when decoded.
+    // BB_OCCLUSION_QUERIES=1 (opt-in): Vulkan occlusion queries. Else the counters stay the fixed
+    // sequence written when decoded (everything visible, as in the 0.3 model). With an upscaler
+    // the scene is drawn smaller and jittered: a light's sub-pixel test shape passed samples in
+    // one frame and none in the next, and its glow flashed grey over the whole frame (a lamp in
+    // the cathedral at 640x360). Counting has to become stable against that first.
+    // The PM4 self-test (BB_PM4_SELFTEST=1) checks them, so it turns them on.
     static const bool enabled = [] {
         const char* env = std::getenv("BB_OCCLUSION_QUERIES");
-        return !env || env[0] != '0';
+        const char* selftest = std::getenv("BB_PM4_SELFTEST");
+        return (env && env[0] == '1') || (selftest && selftest[0] == '1');
     }();
     // Experiment bit 4 of BB_TOGGLE_FILE: the fixed sequence while the game runs (A/B).
     return enabled && VideoCore::GuestInPlace() && !BbToggle::Experiment(4);
@@ -256,6 +264,32 @@ bool Rasterizer::OcclusionEvent(VAddr address, u32 pairs) {
 
 u64 Rasterizer::OcclusionEvents() const {
     return occlusion ? occlusion->Events() : 0;
+}
+
+bool Rasterizer::OnOcclusionPageAccess(VAddr addr, u64 rip, bool write, bool gpu_thread) {
+    return occlusion && occlusion->OnAccess(addr, rip, write, gpu_thread);
+}
+
+bool Rasterizer::OnVramDataAccess(VAddr addr, bool assume_locks) {
+    if (!assume_locks) {
+        DrainDrawPipe(); // as ReadMemory: the recording thread idle while the copy back runs
+    }
+    return buffer_cache.LayerReadTrapHit(addr, assume_locks);
+}
+
+bool Rasterizer::WriteTimestampOnGpu(VAddr address, bool end_of_pipe) {
+    // BB_GPU_TIMESTAMPS=0: written by the CPU (EOP: once the GPU is done; COPY_DATA: when decoded).
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_GPU_TIMESTAMPS");
+        return !(env && env[0] == '0');
+    }();
+    if (!enabled || !VideoCore::GuestInPlace() || address % 8 != 0) {
+        return false;
+    }
+    if (!timestamps) {
+        timestamps = std::make_unique<GpuTimestamps>(instance, scheduler, buffer_cache);
+    }
+    return timestamps->Write(address, end_of_pipe);
 }
 
 bool Rasterizer::WriteLabelOnGpu(VAddr address, u64 value, u32 num_bytes) {
@@ -284,6 +318,9 @@ bool Rasterizer::WriteLabelOnGpu(VAddr address, u64 value, u32 num_bytes) {
         return true;
     }();
     (void)announced;
+    if (occlusion) {
+        occlusion->WriteBeforeLabel(); // the occlusion results before it (stream order)
+    }
     if (!marker) {
         // Core Vulkan transfer commands are forbidden inside a render pass. Preserve command
         // order by ending it here, then restart rendering normally at the next draw.
@@ -1804,7 +1841,7 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
         .vertex_sgpr_offset = vertex_sgpr_offset,
         .instance_sgpr_offset = instance_sgpr_offset,
     };
-    const GraphicsPipeline* pipeline = pipeline_cache.GetGraphicsPipeline(params);
+    const GraphicsPipeline* pipeline = pipeline_cache.GetGraphicsPipeline(params, nullptr, true);
     if (!pipeline) {
         return;
     }
@@ -1969,7 +2006,8 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     // the game's memory. They hold data our translator reads on the CPU (next to shader code the
     // game uploads this way); a VRAM copy of them showed it a stale copy (a black scene). The
     // copy list read on the CPU (vk_shader_hle.cpp) kept them in place too.
-    buffer_cache.force_writes_in_place = cs.pgm_hash == Shader::BufferCopyShaderHash;
+    buffer_cache.force_writes_in_place =
+        Game::BufferCopyShader() != 0 && cs.pgm_hash == Game::BufferCopyShader();
     const bool bound = BindResources(pipeline);
     buffer_cache.force_writes_in_place = false;
     if (!bound) {

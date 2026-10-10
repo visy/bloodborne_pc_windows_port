@@ -1223,15 +1223,29 @@ void TextureCache::GarbageCollectImages() {
         const char* env = std::getenv("BB_GC_IDLE_SECONDS");
         return std::clamp<u64>(env ? std::strtoull(env, nullptr, 10) : 20, 1, 63);
     }();
+    // Under pressure an image goes once unused for BB_GC_PRESSURE_IDLE_SECONDS (5), over the
+    // critical mark for 1 s first, and only then by submissions as before (80/160 ticks, a
+    // fraction of a second). On cards up to 8 GB the pressure mark is 40 % of the budget: the
+    // usage stayed over it, so textures off screen for a moment were evicted and uploaded again
+    // when the camera turned back (9000 a minute with a 4.5 GB budget), read over the bus each
+    // time: NVIDIA testers saw the frame rate fall the longer they played.
+    static const u64 pressure_idle_seconds = [] {
+        const char* env = std::getenv("BB_GC_PRESSURE_IDLE_SECONDS");
+        return std::clamp<u64>(env ? std::strtoull(env, nullptr, 10) : 5, 0, 63);
+    }();
     // The tick at the start of that second (an older one where no submission came then).
-    const u64 idle_tick =
-        gc_tick_at_second[(second - idle_seconds) % gc_tick_at_second.size()];
-    const u64 pressure_seconds = std::clamp<u64>(idle_seconds / 4, 3ULL, 5ULL);
-    const u64 raw_press_tick =
-        gc_tick_at_second[(second - pressure_seconds) % gc_tick_at_second.size()];
+    const auto tick_seconds_ago = [&](u64 seconds) {
+        return gc_tick_at_second[(second - seconds) % gc_tick_at_second.size()];
+    };
+    const u64 idle_tick = tick_seconds_ago(idle_seconds);
+    // bbport (Windows fork): pressure after idle/4 s (3-5 s) unless BB_GC_PRESSURE_IDLE_SECONDS
+    // says otherwise, critical after 1 s; a slot no submission filled falls back to ticks.
+    static const bool pressure_seconds_set = std::getenv("BB_GC_PRESSURE_IDLE_SECONDS") != nullptr;
+    const u64 pressure_seconds =
+        pressure_seconds_set ? pressure_idle_seconds : std::clamp<u64>(idle_seconds / 4, 3ULL, 5ULL);
+    const u64 raw_press_tick = tick_seconds_ago(pressure_seconds);
     const u64 pressure_tick = raw_press_tick ? raw_press_tick : (gc_tick > 300 ? gc_tick - 300 : 0);
-    const u64 raw_crit_tick =
-        gc_tick_at_second[(second - 1) % gc_tick_at_second.size()];
+    const u64 raw_crit_tick = tick_seconds_ago(1);
     const u64 critical_tick = raw_crit_tick ? raw_crit_tick : (gc_tick > 120 ? gc_tick - 120 : 0);
 
     std::scoped_lock lock{mutex};
@@ -1242,10 +1256,15 @@ void TextureCache::GarbageCollectImages() {
     u32 visited = 0;
     u32 sync_downloads_this_pass = 0;
 
-    const auto configure = [&](bool allow_aggressive) {
+    // emergency: over the critical mark after evicting what was unused for a second.
+    const auto configure = [&](bool allow_aggressive, bool emergency = false) {
         pressured = total_used_memory >= pressure_gc_memory;
         aggresive = allow_aggressive && total_used_memory >= critical_gc_memory;
-        if (aggresive) {
+        if (emergency) {
+            // Still over the critical mark after the 1 s pass: by submissions (upstream 0.5).
+            below_tick = gc_tick - std::min<u64>(160, gc_tick);
+            num_deletions = 16;
+        } else if (aggresive) {
             below_tick = critical_tick;
             num_deletions = 16;
         } else if (pressured) {
@@ -1312,6 +1331,11 @@ void TextureCache::GarbageCollectImages() {
     if (total_used_memory >= critical_gc_memory) {
         // If we are still over the critical limit, run an aggressive GC
         configure(true);
+        lru_cache.ForEachItemBelow(below_tick, clean_up);
+    }
+    if (total_used_memory >= critical_gc_memory) {
+        // Still over it: what was used a moment ago goes too (out of memory otherwise).
+        configure(true, true);
         lru_cache.ForEachItemBelow(below_tick, clean_up);
     }
     // bbport: evictions under memory pressure, at most every 5 s (BB_FRAME_STATS or not).

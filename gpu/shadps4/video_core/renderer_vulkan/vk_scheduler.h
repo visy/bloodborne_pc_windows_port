@@ -728,7 +728,10 @@ public:
     void BeginRendering(const RenderState& new_state);
 
     /// Ends current rendering scope.
-    void EndRendering();
+    [[gnu::noinline]] void EndRendering();
+    /// BB_PASS_BREAK_TRACE=1 (diagnostics): who ended a render pass that began again with the same
+    /// state (a break: its attachments stored and loaded again), every 5 s.
+    static void TracePassBreak(void* caller);
 
     /// Sets a function to be called on every scheduler submission.
     void SetSubmitCallback(SubmitFunc&& on_submit) {
@@ -1160,6 +1163,7 @@ private:
     size_t segment_bytes = 0;          ///< closures of the current segment handed over or retired
     size_t split_bytes = 0;            ///< segment length at which the stream is cut
     bool resume_rendering = false;     ///< a cut closed the render pass with render_state
+    void* pass_end_caller = nullptr;   ///< BB_PASS_BREAK_TRACE: who ended the last render pass
     std::unique_ptr<RecordChunk> record_chunk;
     std::vector<std::unique_ptr<RecordChunk>> full_chunks;
     std::unique_ptr<RecordChunk> ordered_chunk;

@@ -58,6 +58,9 @@ struct Profile {
     bool supports_depth_clip_control{};
     /// bbport BB_LAYER_MEMORY: guest buffers of IsPagedBuffer size go through the page table.
     bool paged_buffers{};
+    /// bbport: the game's buffer copy compute shader (its GCN program hash, from the game's profile;
+    /// 0 = none): its paged stores go through to the game's memory as well.
+    u64 buffer_copy_shader_hash{};
 
     bool operator==(const Profile&) const = default;
 };

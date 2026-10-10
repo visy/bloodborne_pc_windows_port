@@ -3,6 +3,7 @@
 
 #include <thread>
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <unordered_map>
@@ -227,6 +228,9 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
     // bbport: a cut of the command stream (MaybeSplit) closed this render pass; it continues
     // in the next command buffer without clearing its attachments again.
     const bool resume = resume_rendering && !is_rendering && render_state == new_state;
+    if (!is_rendering && render_state == new_state && pass_end_caller) {
+        TracePassBreak(pass_end_caller);
+    }
     resume_rendering = false;
     EndRendering();
     CarrySuspend(false);
@@ -304,10 +308,66 @@ void Scheduler::EndRendering() {
     if (!is_rendering) {
         return;
     }
+    static const bool trace = [] {
+        const char* env = std::getenv("BB_PASS_BREAK_TRACE");
+        return env && env[0] == '1';
+    }();
+    if (trace) {
+        pass_end_caller = __builtin_return_address(0);
+    }
     CarrySuspend(true);
     is_rendering = false;
     Record([](vk::CommandBuffer cmdbuf) { cmdbuf.endRendering(); });
     CarryResume(false);
+}
+
+void Scheduler::TracePassBreak(void* caller) {
+    static std::mutex mutex;
+    static std::unordered_map<void*, u64> callers;
+    static u64 breaks = 0;
+    static auto last = std::chrono::steady_clock::now();
+    std::scoped_lock lk{mutex};
+    ++callers[caller];
+    ++breaks;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last < std::chrono::seconds(5)) {
+        return;
+    }
+    std::vector<std::pair<u64, void*>> top;
+    for (const auto& [address, count] : callers) {
+        top.emplace_back(count, address);
+    }
+    std::ranges::sort(top, std::greater{});
+    std::printf("Render pass breaks (the same pass begun again): %llu in %.0f s\n",
+                static_cast<unsigned long long>(breaks),
+                std::chrono::duration<double>(now - last).count());
+    for (size_t i = 0; i < std::min<size_t>(top.size(), 10); ++i) {
+#ifndef _WIN32
+        Dl_info info{};
+        dladdr(top[i].second, &info);
+        std::printf("Render pass break caller: %llu x %s+0x%lx\n",
+                    static_cast<unsigned long long>(top[i].first),
+                    info.dli_fname ? info.dli_fname : "?",
+                    static_cast<unsigned long>(reinterpret_cast<uintptr_t>(top[i].second) -
+                                               reinterpret_cast<uintptr_t>(info.dli_fbase)));
+#else
+        // The module holding the caller and the offset in it (as dladdr on Linux).
+        HMODULE module = nullptr;
+        char name[MAX_PATH] = "?";
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                   GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               static_cast<LPCSTR>(top[i].second), &module)) {
+            GetModuleFileNameA(module, name, sizeof(name));
+        }
+        std::printf("Render pass break caller: %llu x %s+0x%llx\n",
+                    static_cast<unsigned long long>(top[i].first), name,
+                    static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(top[i].second) -
+                                                    reinterpret_cast<uintptr_t>(module)));
+#endif
+    }
+    callers.clear();
+    breaks = 0;
+    last = now;
 }
 
 void Scheduler::TraceDirectRecording(void* caller) {
