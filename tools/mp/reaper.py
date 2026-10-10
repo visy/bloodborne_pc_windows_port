@@ -141,6 +141,36 @@ def main():
                     subprocess.run(["taskkill", "/PID", str(e["pid"]), "/T", "/F"], capture_output=True)
                     print(time.strftime("%H:%M:%S"), "gate: stopped", e.get("label") or e["root"], flush=True)
             holders = [e for e in holders if any(f in e["root"].replace("/", "\\").lower() for f in prio)]
+        # Required build features (require.txt next to the queue file: one regex per line that
+        # every instance log must show within 120 s of the run starting, e.g. the fast-join patch).
+        try:
+            reqs = [re.compile(l.strip()) for l in (g_QUEUE_DIR / "require.txt").read_text().splitlines()
+                    if l.strip()]
+        except OSError:
+            reqs = []
+        for e in list(holders):
+            if not reqs:
+                break
+            root = Path(e["root"])
+            logs = list(root.glob("inst*/run.log"))
+            started = state.get("start:" + e["id"]) or now
+            state["start:" + e["id"]] = started
+            if logs and now - started > 120:
+                texts = []
+                for lg in logs:
+                    try:
+                        texts.append(lg.read_text(encoding="utf-8", errors="replace"))
+                    except OSError:
+                        texts.append("")
+                # Only party runs (patches.py logs "party co-op: ..."); solo runs have nothing to require.
+                party = any("party co-op:" in t for t in texts)
+                missing = [r.pattern for r in reqs if party and not all(r.search(t) for t in texts)]
+                if missing:
+                    end_run(root)
+                    subprocess.run(["taskkill", "/PID", str(e["pid"]), "/T", "/F"], capture_output=True)
+                    print(time.strftime("%H:%M:%S"), "require: stopped", e.get("label") or e["root"],
+                          "- build lacks", missing, flush=True)
+                    holders.remove(e)
         for e in holders:
             hid = e["id"]
             live.add(hid)
@@ -171,7 +201,7 @@ def main():
         except Exception as ex:  # never let layout break the reaper
             print("tile:", ex, flush=True)
         for hid in list(state):
-            if hid not in live:
+            if hid not in live and not (hid.startswith("start:") and hid[6:] in live):
                 del state[hid]
         time.sleep(2)
 

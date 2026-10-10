@@ -138,6 +138,26 @@ static void test_lobby() {
     CHECK(!HostMayRing(true, -1, 3, guest_ready)); // cooperator count unknown
     CHECK(!HostMayRing(true, 2, 3, guest_ready));  // full
     CHECK(HostMayRing(true, 1, 4, mixed));
+
+    // Session roles: the host rings idle or already hosting (2nd / 3rd cooperator), a guest idle only.
+    CHECK(SessionMayRing(true, 0));
+    CHECK(SessionMayRing(true, 3));
+    CHECK(SessionMayRing(false, 0));
+    CHECK(!SessionMayRing(false, 3));
+    for (int r : {1, 2, 4, 5, 6, 7, -1}) {
+        CHECK(!SessionMayRing(true, r));
+        CHECK(!SessionMayRing(false, r));
+    }
+    // A 3-player party: the host with 1 cooperator in rings again for the 2nd; with 2 it stops.
+    const std::vector<party::RosterEntry> three = {Member(0, MS::Home), Member(1, MS::InHostWorld),
+                                                   Member(2, MS::Home)};
+    CHECK(HostMayRing(true, 1, 3, three));
+    CHECK(!HostMayRing(true, 2, 3, three));
+    // 4 players: up to 3 cooperators.
+    const std::vector<party::RosterEntry> four = {Member(0, MS::Home), Member(1, MS::InHostWorld),
+                                                  Member(2, MS::InHostWorld), Member(3, MS::Joining)};
+    CHECK(HostMayRing(true, 2, 4, four));
+    CHECK(!HostMayRing(true, 3, 4, four));
     CHECK(!HostMayRing(true, 1, 2, mixed));
 
     // Guest: ready and connected.

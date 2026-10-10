@@ -42,10 +42,10 @@ def free_port() -> int:
 
 
 class Harness:
-    def __init__(self, exe: str, port: int, password: str, secret: str, verbose: bool):
+    def __init__(self, exe: str, port: int, password: str, secret: str, verbose: bool, extra: list[str] = ()):
         self.lines: list[str] = []
         self.verbose = verbose
-        self.p = subprocess.Popen([exe, "--port", str(port), "--password", password, "--secret", secret],
+        self.p = subprocess.Popen([exe, "--port", str(port), "--password", password, "--secret", secret, *extra],
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         self.ready = threading.Event()
         self.code = ""
@@ -82,10 +82,91 @@ def run_simguest(args: list[str], verbose: bool) -> tuple[int, str]:
     return r.returncode, verdict
 
 
+def parse_verdict(v: str) -> dict:
+    """slot / room / member out of a join verdict ("PASS join: slot 1, user 1002, room 1001 member 2 ...")
+    or a crash-rejoin verdict ("... back in slot 3 / room 1001 ...")."""
+    import re
+    out = {}
+    m = re.search(r"slot (\d+), user \d+, room (\d+) member (\d+)", v)
+    if m:
+        out = {"slot": int(m[1]), "room": int(m[2]), "member": int(m[3])}
+    m = re.search(r"back in slot (\d+) / room (\d+)", v)
+    if m:
+        out = {"slot": int(m[1]), "room": int(m[2])}
+    return out
+
+
+def party_size_cases(exe: str, password: str, secret: str, key: bytes, logs: str, verbose: bool) -> list[bool]:
+    """Three- and four-player parties (docs/party/four_players.md): a harness per size, guests in parallel.
+
+    max 4: SimA, SimB, SimC join at once and share the host's room (3 summons, distinct slots and
+    members); SimC then crashes and rejoins its kept slot while SimA / SimB stay (no loss, heartbeats
+    fine); a 4th guest is refused (full) while SimC's slot is kept.
+    max 3: SimA, SimB join; a 3rd guest is refused (full)."""
+    results: list[bool] = []
+
+    def run_bg(args, out, i):
+        out[i] = run_simguest(args, verbose)
+
+    def say(good, text):
+        results.append(good)
+        print(f"{'ok  ' if good else 'BAD '} {text}")
+
+    for max_players in (4, 3):
+        port = free_port()
+        h = Harness(exe, port, password, secret, verbose, ["--max", str(max_players), "--fast"])
+        try:
+            if not h.ready.wait(15):
+                say(False, f"max {max_players}: harness did not come up")
+                continue
+            base = ["--code", h.code, "--key-hex", key.hex()]
+            lg = lambda n: ["--json-log", os.path.join(logs, f"p{max_players}-{n}.json")]  # noqa: E731
+            guests = ["SimA", "SimB"] + (["SimC"] if max_players == 4 else [])
+            hold = 40 if max_players == 4 else 12
+            res: dict = {}
+            threads = []
+            for i, n in enumerate(guests):
+                if n == "SimC":
+                    args = base + ["--name", n, "--script", "crash-rejoin", "--hold", "6", "--crash-delay", "3",
+                                   "--rejoin-budget", "40"] + lg(n)
+                else:
+                    args = base + ["--name", n, "--script", "join", "--hold", str(hold)] + lg(n)
+                th = threading.Thread(target=run_bg, args=(args, res, n))
+                th.start()
+                threads.append(th)
+            # The extra guest, once the others are in (SimC is then in or in its kept slot).
+            time.sleep(10)
+            extra = run_simguest(base + ["--name", "SimX", "--script", "join", "--no-udp"] + lg("SimX"), verbose)
+            for th in threads:
+                th.join()
+            tag = f"max {max_players}:"
+            for n in guests:
+                rc, v = res.get(n, (1, "(none)"))
+                say(rc == 0, f"{tag} {n}: {v}")
+            infos = {n: parse_verdict(res.get(n, (1, ""))[1]) for n in guests}
+            rooms = {i.get("room") for i in infos.values()}
+            slots = [i.get("slot") for i in infos.values()]
+            say(len(rooms) == 1 and None not in rooms and len(set(slots)) == len(slots) and None not in slots,
+                f"{tag} {len(guests)} guests in one host room {sorted(r for r in rooms if r)} on slots {slots}")
+            say(extra[0] != 0 and "rejected (full)" in extra[1], f"{tag} guest {len(guests) + 1} refused: {extra[1]}")
+            others_lost = [ln for ln in h.lines if " lost; slot kept" in ln and "SimC" not in ln]
+            say(not others_lost, f"{tag} no other member lost its link" +
+                (f": {others_lost}" if others_lost else ""))
+            if max_players == 4:
+                say(bool(h.grep("member SimC") and h.grep("SimC (slot")) and bool(h.grep("SimC's link is gone")),
+                    f"{tag} SimC's crash seen by the host, its sign taken off the board, slot kept and back")
+            summons = h.grep("summon_messenger/request for sign")
+            say(len(summons) >= len(guests), f"{tag} the host summoned {len(summons)} sign(s)")
+        finally:
+            h.stop()
+    return results
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--harness", default=os.path.join(ROOT, "out", "gpu", "party-host-harness.exe"))
     ap.add_argument("--soak", type=int, default=0)
+    ap.add_argument("--no-party-sizes", dest="sizes", action="store_false", help="skip the 3- / 4-player cases")
     ap.add_argument("--logs", default=os.path.join(ROOT, "out", "simguest-test"), help="JSON logs go here")
     ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args()
@@ -147,6 +228,8 @@ def main() -> int:
         print(f"{'ok  ' if host_ok else 'BAD '} host-side checks")
     finally:
         h.stop()
+    if a.sizes:
+        results += party_size_cases(a.harness, password, secret, key, a.logs, a.verbose)
     status = [ln for ln in h.lines if ln.startswith("HARNESS EXIT") or ln.startswith("HARNESS STATUS")]
     if status:
         print("host: " + status[-1])

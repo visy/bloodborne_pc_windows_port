@@ -25,7 +25,10 @@
 #include "party_util.h"
 
 #include <atomic>
+#include "../../party_env.h"
+
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -227,6 +230,13 @@ struct M2 {
 M2 g;
 
 bool trace() { return party_trace(); }
+
+// BB_PARTY_FAST_JOIN (default on; docs/party/join_timing.md): the SDK-like latency of the room
+// request answers and the signaling ESTABLISHED events shrinks (same order, shorter gaps).
+int join_ms(int normal, int fast) {
+    static const bool on = bb_party_switch_on("BB_PARTY_FAST_JOIN") != 0;
+    return on ? fast : normal;
+}
 
 void keep(std::unique_ptr<Held> h) {
     g.held.push_back(std::move(h));
@@ -589,7 +599,7 @@ void on_server_event(const json::Value& ev) {
         }
         log("np: member %u (%s) joined room %llu", peer.member_id, peer.online_id.c_str(),
             static_cast<unsigned long long>(g.room_id));
-        session::dispatch_after(300, session::Prio::RoomEvent, [peer] {
+        session::dispatch_after(join_ms(300, 100), session::Prio::RoomEvent, [peer] {
             M2Call c;
             {
                 std::lock_guard<std::mutex> lk2(g.mu);
@@ -598,7 +608,7 @@ void on_server_event(const json::Value& ev) {
             c.run();
         });
         const std::uint64_t room = g.room_id;
-        session::dispatch_after(800, session::Prio::Signaling, [mid, room] {
+        session::dispatch_after(join_ms(800, 300), session::Prio::Signaling, [mid, room] {
             std::uint16_t self;
             {
                 std::lock_guard<std::mutex> lk2(g.mu);
@@ -873,12 +883,12 @@ BBNET_ABI int m2_create_join_room(unsigned ctx, const std::uint8_t* reqp, const 
                 log("np: room %llu created, we are member %u", static_cast<unsigned long long>(room), g.member_id);
             }
         }
-        session::dispatch_after(300, session::Prio::Request, [req, o, error, resp] {
+        session::dispatch_after(join_ms(300, 100), session::Prio::Request, [req, o, error, resp] {
             fire_request(o.cbFunc, o.cbFuncArg, req, kEvCreateJoinRoom, error, resp);
         });
         if (!error) {
             std::lock_guard<std::mutex> lk2(g.mu);
-            schedule_established_for_all(800);
+            schedule_established_for_all(join_ms(800, 300));
         }
     });
     return 0;
@@ -931,12 +941,12 @@ BBNET_ABI int m2_join_room(unsigned ctx, const std::uint8_t* reqp, const Request
                     g.member_id, room_peers().size());
             }
         }
-        session::dispatch_after(300, session::Prio::Request, [req, o, error, resp] {
+        session::dispatch_after(join_ms(300, 100), session::Prio::Request, [req, o, error, resp] {
             fire_request(o.cbFunc, o.cbFuncArg, req, kEvJoinRoom, error, resp);
         });
         if (!error) {
             std::lock_guard<std::mutex> lk2(g.mu);
-            schedule_established_for_all(500);
+            schedule_established_for_all(join_ms(500, 200));
         }
     });
     return 0;
