@@ -129,6 +129,14 @@ static void test_npc_signs() {
 }
 
 int main() {
+    // Loopback-only sockets: no Windows Firewall prompt for a test program (party_sock.h).
+    if (!std::getenv("BB_PARTY_LOOPBACK")) {
+#if defined(_WIN32)
+        _putenv("BB_PARTY_LOOPBACK=1");
+#else
+        setenv("BB_PARTY_LOOPBACK", "1", 1);
+#endif
+    }
     test_config_and_tag();
     test_effective_max();
     test_h1();

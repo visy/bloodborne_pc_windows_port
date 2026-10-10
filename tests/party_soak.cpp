@@ -1820,6 +1820,14 @@ void run_host_restart(int down_ms) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // Loopback-only sockets: no Windows Firewall prompt for a test program (party_sock.h).
+    if (!std::getenv("BB_PARTY_LOOPBACK")) {
+#if defined(_WIN32)
+        _putenv("BB_PARTY_LOOPBACK=1");
+#else
+        setenv("BB_PARTY_LOOPBACK", "1", 1);
+#endif
+    }
     party::sock::startup();
 #if defined(_WIN32)
     timeBeginPeriod(1);  // as the game runs (its frame pacing): 1 ms waits, not 15.6 ms

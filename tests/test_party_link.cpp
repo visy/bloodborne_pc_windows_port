@@ -619,6 +619,14 @@ static void test_identity() {
 }
 
 int main() {
+    // Loopback-only sockets: no Windows Firewall prompt for a test program (party_sock.h).
+    if (!std::getenv("BB_PARTY_LOOPBACK")) {
+#if defined(_WIN32)
+        _putenv("BB_PARTY_LOOPBACK=1");
+#else
+        setenv("BB_PARTY_LOOPBACK", "1", 1);
+#endif
+    }
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("party codes\n");
     test_codes();
