@@ -82,6 +82,7 @@ struct Test {
     const char* ring = nullptr; // the event to raise once
     double delay = 10.0;
     bool start = false, grant_bells = false, drop_bells = false, drop_done = false;
+    int award_lot = -1; // award_lot=N: AwardItemLot(N) once (call-shape probe, test saves)
     bool insight_done = false, ring_done = false;
     Clock::time_point rung_at{};
 };
@@ -503,6 +504,13 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         const bool ok = WritePlayerInsight(t.insight);
         Log("test: Insight %d -> %d %s", before, t.insight, ok ? "written" : "NOT written (no player record)");
     }
+    if (t.award_lot > 0 && Seconds(st.world_at, now) >= 12.0 && s.world_up && !s.loading) {
+        const int before = GoodsCount(kGoodsBeckoning);
+        const bool ok = AwardItemLot(std::uint32_t(t.award_lot));
+        Log("test: award_lot %d: %s; goods 200 x%d -> x%d", t.award_lot, ok ? "awarded" : "NOT awarded", before,
+            GoodsCount(kGoodsBeckoning));
+        t.award_lot = -1;
+    }
     // PR1 probe: a character without the bells (removes goods 200 / 205 through GiveItemDirect
     // with a negative count, 10 s after the world is up). Test saves only.
     if (t.drop_bells && !t.drop_done && Seconds(st.world_at, now) >= 10.0 && s.world_up && !s.loading) {
@@ -588,6 +596,8 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.log_state = true;
             } else if (item == "start") {
                 st.test.start = true;
+            } else if (item.rfind("award_lot=", 0) == 0) {
+                st.test.award_lot = std::atoi(item.c_str() + 10);
             } else if (item == "drop_bells") {
                 st.test.drop_bells = true;
             } else if (item == "grant_bells") {
@@ -599,7 +609,7 @@ void PartyDirector::ConfigureFromEnv() {
             } else if (item.rfind("insight=", 0) == 0) {
                 st.test.insight = std::atoi(item.c_str() + 8);
             } else if (!item.empty()) {
-                Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, start, grant_bells, drop_bells, insight=N, ring_host or "
+                Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, start, grant_bells, drop_bells, award_lot=N, insight=N, ring_host or "
                     "ring_guest; ignored",
                     item.c_str());
             }

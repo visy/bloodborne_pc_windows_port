@@ -21,6 +21,7 @@
 //      BB_PARTY_DIRECTOR_TEST=item[,item..] - offline test mode:
 //        log_state    the state every 5 s and the game's own Lua event dispatches
 //        start        the campaign start flags and bell counts every 5 s (and on each change)
+//        award_lot=N  awards item lot N once, 12 s after the world is up (grant call probe)
 //        drop_bells   removes goods 200 / 205 10 s after the world is up (PR1 probe, test saves)
 //        grant_bells  grants the missing bells once ready (also without a party / with
 //                     BB_PARTY_GRANT_BELLS=0) and logs the counts before and after
