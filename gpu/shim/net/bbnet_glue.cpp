@@ -5,6 +5,11 @@
 #include "netsim.h"
 #include "../../bbnet.h"
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
+#include <atomic>
 #include <cctype>
 #include <condition_variable>
 #include <cstdarg>
@@ -99,6 +104,64 @@ void set_dirs(const char* app0, const char* user_dir) {
     std::lock_guard<std::mutex> lk(g_settings_mu);
     if (app0) g_settings->app0 = app0;
     if (user_dir) g_settings->user_dir = user_dir;
+}
+
+namespace {
+std::atomic<std::uintptr_t> g_image_base{0};
+std::atomic<std::uint64_t> g_image_size{0};
+}  // namespace
+
+std::uintptr_t guest_image_base() { return g_image_base.load(std::memory_order_acquire); }
+std::uint64_t guest_image_size() { return g_image_size.load(std::memory_order_acquire); }
+void* guest_image_at(std::uint64_t offset, std::size_t len) {
+    const std::uintptr_t base = guest_image_base();
+    const std::uint64_t size = guest_image_size();
+    if (!base || offset > size || len > size - offset) return nullptr;
+    return reinterpret_cast<void*>(base + offset);
+}
+
+namespace {
+// True when [addr, addr+n) is committed memory with one of `access`'s protections.
+bool memory_allows(std::uintptr_t addr, std::size_t n, bool write) {
+    if (addr < 0x10000) return false;
+#if defined(_WIN32)
+    const DWORD ok = write ? (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)
+                           : (PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ |
+                              PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY);
+    std::uintptr_t at = addr;
+    const std::uintptr_t end = addr + n;
+    while (at < end) {
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (!VirtualQuery(reinterpret_cast<const void*>(at), &mbi, sizeof(mbi))) return false;
+        if (mbi.State != MEM_COMMIT || !(mbi.Protect & ok) || (mbi.Protect & PAGE_GUARD)) return false;
+        at = reinterpret_cast<std::uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+    }
+#else
+    (void)n;
+    (void)write;
+#endif
+    return true;
+}
+}  // namespace
+
+bool guest_read(std::uintptr_t addr, void* out, std::size_t n) {
+    if (!out || !memory_allows(addr, n, false)) return false;
+    std::memcpy(out, reinterpret_cast<const void*>(addr), n);
+    return true;
+}
+
+bool guest_write(std::uintptr_t addr, const void* in, std::size_t n) {
+    if (!in || !memory_allows(addr, n, true)) return false;
+    std::memcpy(reinterpret_cast<void*>(addr), in, n);
+    return true;
+}
+
+bool party_trace() {
+    static const bool on = [] {
+        const char* e = std::getenv("BB_PARTY_TRACE");
+        return e && e[0] == '1';
+    }();
+    return on;
 }
 
 void log(const char* fmt, ...) {
@@ -207,6 +270,11 @@ extern "C" {
 
 void bbnet_configure(const char* app0, const char* user_dir) { bbnet::set_dirs(app0, user_dir); }
 
+void bbnet_set_image(void* image, uint64_t size) {
+    bbnet::g_image_size.store(image ? size : 0, std::memory_order_release);
+    bbnet::g_image_base.store(reinterpret_cast<std::uintptr_t>(image), std::memory_order_release);
+}
+
 int bbnet_party_enabled(void) { return bbnet::settings().party ? 1 : 0; }
 
 uintptr_t bbnet_resolve(const char* scoped_nid_or_name) {
@@ -217,8 +285,11 @@ uintptr_t bbnet_resolve(const char* scoped_nid_or_name) {
         if (!name) return 0;
     }
     if (!bbnet::routed(name)) return 0;
-    void* fn = bbnet::find(bbnet::kNetExports, name);
-    if (!fn) fn = bbnet::find(bbnet::kNpExports, name);
+    void* fn = nullptr;
+    for (const bbnet::Export* table : {bbnet::kNetExports, bbnet::kNpExports, bbnet::kMatching2Exports,
+                                       bbnet::kSignalingExports, bbnet::kHttpExports}) {
+        if ((fn = bbnet::find(table, name))) break;
+    }
     if (fn) bbnet::log("%s -> party library", name);
     return reinterpret_cast<uintptr_t>(fn);
 }

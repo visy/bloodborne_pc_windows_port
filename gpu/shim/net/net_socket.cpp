@@ -1788,6 +1788,18 @@ bool p2p_relay(std::uint32_t* server, std::uint16_t* vport) {
     return g_relay.on;
 }
 
+bool p2p_relay_vport_for(std::uint32_t addr, std::uint16_t port_host, std::uint16_t* vport) {
+    std::lock_guard<std::mutex> lk(g_relay_server.mu);
+    for (const auto& [key, c] : g_relay_server.by_token) {
+        (void)key;
+        if (c.addr == addr && c.port == bswap16(port_host)) {
+            if (vport) *vport = c.vport;
+            return true;
+        }
+    }
+    return false;
+}
+
 void p2p_punch(const char* label, std::uint32_t addr, std::uint16_t port_host, std::uint32_t local_addr,
                std::uint16_t local_port) {
     std::shared_ptr<P2pPort> port;

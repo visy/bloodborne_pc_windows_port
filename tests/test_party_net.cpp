@@ -432,9 +432,10 @@ static void test_routing() {
     CHECK(bbnet_resolve("sceNpTrophyCreateContext") == 0);
     CHECK(bbnet_resolve("sceNpCommerceDialogOpen") == 0);
     CHECK(bbnet_resolve("sceNpProfileDialogOpen") == 0);
-    CHECK(bbnet_resolve("sceNpMatching2Initialize") == 0);  // A3
-    CHECK(bbnet_resolve("sceNpSignalingInitialize") == 0);  // A3
-    CHECK(bbnet_resolve("sceHttpInit") == 0);               // A3
+    CHECK(bbnet_resolve("sceNpMatching2Initialize") != 0);  // A3: np_matching2.cpp
+    CHECK(bbnet_resolve("sceNpSignalingInitialize") != 0);  // A3: np_signaling.cpp
+    CHECK(bbnet_resolve("sceHttpInit") != 0);               // A3: http_hle.cpp
+    CHECK(bbnet_resolve("sceSslInit") != 0);
     CHECK(bbnet_resolve("sceNpCmpNpId") == 0);              // the stub's NOT_MATCH contract is kept
     CHECK(bbnet_resolve("sceNpGetState") != 0);
     CHECK(bbnet_resolve("sceNetCtlGetInfo") != 0);
