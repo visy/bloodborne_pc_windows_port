@@ -233,6 +233,8 @@ set_source_files_properties(shim/bbport_overlay.cpp PROPERTIES
 # exception frames from the write watch would land on it), and the ribbon writers compute the
 # game's bits exactly (no fused multiply-adds).
 set_source_files_properties(shim/bbport_stability.cpp PROPERTIES COMPILE_OPTIONS "-mno-red-zone")
+# party_fourp.cpp: a top-level asm stub (H4) refers to C symbols, which LTO would discard.
+set_source_files_properties(shim/party/party_fourp.cpp PROPERTIES COMPILE_OPTIONS "-fno-lto")
 set_source_files_properties(shim/bbport_ribbons.cpp PROPERTIES COMPILE_OPTIONS
     "-mno-red-zone;-ffp-contract=off;-fno-fast-math")
 target_include_directories(bbgpu PRIVATE shim layer shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include)
@@ -384,6 +386,7 @@ endif()
 
 # Party progress sync (shim/party/party_progress, C2): keys, categories, policy, diff, JSON, BBPF
 # against a fake flag store (the game glue is compiled out). ninja -C out/gpu party-progress-test
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../tests/test_party_progress.cpp")  # not committed yet
 add_executable(party-progress-test EXCLUDE_FROM_ALL ../tests/test_party_progress.cpp
     shim/party/party_progress.cpp shim/net/json.cpp)
 target_compile_definitions(party-progress-test PRIVATE BB_PARTY_PROGRESS_NO_GAME
@@ -391,6 +394,7 @@ target_compile_definitions(party-progress-test PRIVATE BB_PARTY_PROGRESS_NO_GAME
 target_compile_options(party-progress-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-progress-test PRIVATE shim)
 set_target_properties(party-progress-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+endif()
 # Party host harness (tests/party_host_harness.cpp): PartyLink host + PartyHostService + FromApi +
 # the party UDP port in one process with no game, for tools/party/simguest.py.
 # ninja -C out/gpu party-host-harness
@@ -416,6 +420,13 @@ target_compile_definitions(party-travel-test PRIVATE BB_PARTY_TRAVEL_NO_GAME)
 target_compile_options(party-travel-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-travel-test PRIVATE shim)
 set_target_properties(party-travel-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Four-player rules (shim/party/party_fourp.cpp; in bbgpu through SHIM_SOURCES): the pure parts
+# (BB_PARTY_FOURP_NO_GAME). ninja -C out/gpu party-fourp-test
+add_executable(party-fourp-test EXCLUDE_FROM_ALL ../tests/test_party_fourp.cpp shim/party/party_fourp.cpp)
+target_compile_definitions(party-fourp-test PRIVATE BB_PARTY_FOURP_NO_GAME)
+target_compile_options(party-fourp-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-fourp-test PRIVATE shim)
+set_target_properties(party-fourp-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Save policy (C5, src/runtime_savepolicy.c; in bbport through RUNTIME_SOURCES): party save folder,
 # rotating backups, save check, on temporary folders. ninja -C out/gpu save-policy-test
 add_executable(save-policy-test EXCLUDE_FROM_ALL ../tests/test_save_policy.c ../src/runtime_savepolicy.c)
