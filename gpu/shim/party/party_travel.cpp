@@ -5,6 +5,8 @@
 // byte before anything is written. Offsets are ours (raw ELF VA). The game's code is System V:
 // every call into it goes through a BB_COOP_SYSV pointer at Guest(off).
 #include "party_travel.h"
+#include "party_async_io.h"
+#include "party_perf.h"
 #include "party_ids.h"
 
 #include <algorithm>
@@ -17,6 +19,7 @@
 #ifndef BB_PARTY_TRAVEL_NO_GAME
 #include "coop_hooks.h"
 #include "game_state.h"
+#include "party_b2.h"
 #include "party_chalice.h"
 #include "party_director.h"
 
@@ -529,8 +532,8 @@ void Log(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    std::printf("Party travel: %s\n", line);
-    std::fflush(stdout);
+    perf::Scope z(perf::Zone::Log);
+    coop::asyncio::Print(std::string("Party travel: ") + PartyLogStamp() + line + "\n"); // never blocks the caller (party_async_io.h)
 }
 
 bool EnvOff(const char* name) {
@@ -560,6 +563,7 @@ bool LampUsable(u32 lamp) {
 }
 std::atomic<GuestRedirectFn> g_redirect_cb{nullptr};
 std::atomic<bool> g_death_redirect_on{true};
+std::atomic<SendHomeVetoFn> g_send_home_veto{nullptr};
 void* g_funnel_orig = nullptr;
 void* g_block_clear3_orig = nullptr;
 
@@ -579,6 +583,68 @@ u64 NextSeq() {
 
 std::mutex g_host_mu;
 HostTravelQueue g_host_queue; // under g_host_mu
+// Host: when its last broadcast travel started (Now()); 0 none. Main thread / the funnel hook
+// (also the main thread).
+std::atomic<double> g_host_left_at{0};
+bool g_host_load_seen = false;
+
+// 0x13CDDA0: BeginLeaveSession(SprjSessionManager) 0x1ED07A0 (role -> 7, LeaveRoom), then
+// 0x15BED10(network flow +0x16F8) - the game's own leave idiom (the funnel's, OnLeaveMenu_Yes's);
+// the host watchdog (party_director.cpp) uses the same helper.
+constexpr u64 kLeaveSessionAndDrop = 0x13cdda0;
+using LeaveFn = void(BB_COOP_SYSV*)();
+
+/// Host, main thread: after its own travel the game keeps the room through the load (the
+/// "Keep session on map reload" patch retargets the stage destructor's stop, 0x19471B1), and the
+/// guests have left it to follow. An empty room left open blocks the next Beckoning Bell (the
+/// director rings only when idle) until the game's own timeout ends it ~60 s later, and the
+/// summon into the stale room did not complete (live run 2026-10-10). So once the host is in
+/// its new world with no cooperator left, it leaves the room as vanilla would have at the load.
+void HostCloseEmptyRoom() {
+    const double at = g_host_left_at.load();
+    if (at == 0) {
+        return;
+    }
+    const double now = Now();
+    const GameSnapshot g = ReadGameState(false);
+    g_host_load_seen = g_host_load_seen || g.loading || !g.world_up;
+    if (now - at > 180.0) {
+        g_host_left_at = 0;
+        g_host_load_seen = false;
+        Log("host travel: no arrival within 180 s; room left as it is");
+        return;
+    }
+    if (!g_host_load_seen || !g.world_up || g.loading) {
+        return;
+    }
+    if (g.session_role != 3 /* host */ && g.session_role != 1 /* creating */) {
+        g_host_left_at = 0;
+        g_host_load_seen = false;
+        Log("host travel: arrived %.1f s after the warp, session %s: nothing to close", now - at,
+            SessionRoleName(g.session_role));
+        return;
+    }
+    const GameSnapshot full = ReadGameState(true);
+    if (full.cooperators != 0) {
+        if (full.cooperators > 0) {
+            g_host_left_at = 0; // someone is (still) in: keep the room
+            g_host_load_seen = false;
+            Log("host travel: arrived with %d cooperator(s) in the room; kept", full.cooperators);
+        }
+        return;
+    }
+    g_host_left_at = 0;
+    g_host_load_seen = false;
+    static const bool code_ok = Matches(kLeaveSessionAndDrop, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x53, 0x50, 0x48,
+                                                               0x8b, 0x05, 0xc7, 0x88, 0x18, 0x04}) &&
+                                CallsTo(kLeaveSessionAndDrop + 0x55, 0x1ed07a0);
+    if (code_ok) {
+        reinterpret_cast<LeaveFn>(Guest(kLeaveSessionAndDrop))();
+    }
+    const bool ok = code_ok && ReadGameState(false).session_role != 3; // leaving (7), or idle at once
+    Log("host travel: arrived %.1f s after the warp with an empty room: leave %s", now - at,
+        ok ? "started (bell next)" : "refused");
+}
 std::mutex g_guest_mu;
 GuestTravel g_guest;          // under g_guest_mu
 
@@ -633,10 +699,12 @@ void CaptureHost(u64 site, TravelKind kind) {
         std::lock_guard<std::mutex> lk(g_host_mu);
         g_host_queue.Push(t);
     }
+    g_host_left_at = Now(); // the room is closed once the host has arrived (TravelTick)
     Log("host travel %s -> %s", DescribeTravel(t).c_str(), ReplayMethodName(ChooseReplay(t).method));
 }
 
 BB_COOP_SYSV void LampWarpEntry(u64 id, u64, u64, u64, u64, u64) {
+    perf::Scope z(perf::Zone::HookLampWarp);
     if (!g_in_replay.load()) {
         g_lamp_key = static_cast<u32>(id);
     }
@@ -710,6 +778,9 @@ bool Replay(const TravelIntent& t, const ReplayPlan& p) {
 bool RetargetSendHome(u64 site) {
     if (!g_travel_on.load() || g_in_replay.load() || Role() != PartyRole::Guest) {
         return false;
+    }
+    if (SendHomeVetoFn veto = g_send_home_veto.load(); veto && veto(site)) {
+        return true; // B2: the guest stays (nothing runs)
     }
     std::optional<TravelIntent> dest;
     {
@@ -785,6 +856,7 @@ bool RedirectGuest(u64 site, TravelKind kind) {
 // Replaces 0x13CDE30 (jumped to from its entry, so the return address is the game caller's).
 __attribute__((noinline)) BB_COOP_SYSV u64 FunnelHook() {
     const u64 ret = reinterpret_cast<u64>(__builtin_return_address(0));
+    perf::Scope z(perf::Zone::HookFunnel);
     if (g_travel_on.load() && !g_in_replay.load()) {
         if (g_block_clear3.load() > 0) {
             if (RetargetSendHome(kBlockClear3Jump)) {
@@ -802,12 +874,14 @@ __attribute__((noinline)) BB_COOP_SYSV u64 FunnelHook() {
             }
         }
     }
+    z.End(); // the game's own transition is not ours
     return reinterpret_cast<FunnelFn>(g_funnel_orig)();
 }
 
 // The retargeted `call 0x13CDE30` at OnLeave_Limit / HostDead_1 / BlockClear2_1.
 __attribute__((noinline)) BB_COOP_SYSV u64 SendHomeHook() {
     const u64 site = reinterpret_cast<u64>(__builtin_return_address(0)) - Guest(0) - 5;
+
     if (RetargetSendHome(site)) {
         return 1;
     }
@@ -1001,6 +1075,12 @@ void TravelTick() {
     if (!g_travel_on.load()) {
         return;
     }
+    if (Role() == PartyRole::Host) {
+        if (!b2::Enabled()) { // B2 keeps the room; members are re-created after the load
+            HostCloseEmptyRoom();
+        }
+        return;
+    }
     const GameSnapshot g = ReadGameState(false);
     ReplayState s;
     s.world_up = g.world_up;
@@ -1063,6 +1143,10 @@ bool TravelPlaceForTest(std::uint32_t map, const float pos[3], float yaw) {
     Log("test: place the player at m%02u_%02u_%02u_%02u (%.2f, %.2f, %.2f) yaw %.2f", (map >> 24) & 0xff,
         (map >> 16) & 0xff, (map >> 8) & 0xff, map & 0xff, pos[0], pos[1], pos[2], yaw);
     return Replay(t, {ReplayMethod::Transform, kTravelNone});
+}
+
+void SetSendHomeVeto(SendHomeVetoFn fn) {
+    g_send_home_veto = fn;
 }
 
 bool ReplayTravelNow(const TravelIntent& t) {

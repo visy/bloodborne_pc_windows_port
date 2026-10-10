@@ -5,6 +5,8 @@
 // byte before anything is written. Offsets are ours (raw ELF VA). The game's code is System V:
 // every call into it goes through a BB_COOP_SYSV pointer at Guest(off).
 #include "party_story.h"
+#include "party_async_io.h"
+#include "party_perf.h"
 #include "party_ids.h"
 
 #include <algorithm>
@@ -16,6 +18,7 @@
 #include "coop_hooks.h"
 #include "game_state.h"
 #include "party_director.h"
+#include "party_runtime.h"
 
 #include <atomic>
 #include <chrono>
@@ -767,8 +770,8 @@ void Log(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    std::printf("Party story: %s\n", line);
-    std::fflush(stdout);
+    perf::Scope z(perf::Zone::Log);
+    coop::asyncio::Print(std::string("Party story: ") + line + "\n"); // never blocks the caller (party_async_io.h)
 }
 
 bool EnvOff(const char* name) {
@@ -808,6 +811,10 @@ struct Tick {
     bool world_was_up = false;
     // test
     bool test_on = false, test_done = false, test_mirror = false;
+    bool test_host = false;     // host:<remo>: the host plays it and sends it like a captured 2002 play
+    bool test_leave = false;    // leave_after_mirror: a guest leaves the party once a live mirror ended
+    double test_coop_since = 0; // host test: when a cooperator was first seen (0 = not yet)
+    double test_coop_poll = 0;
     u32 test_remo = 0;
     double test_delay = 10.0;
     // remo watch (logs)
@@ -874,6 +881,7 @@ void PushHost(const StoryIntent& s) {
 // ---- Host capture: the bank-2002 handler entry ----
 
 BB_COOP_SYSV void RemoHandlerEntry(u64, u64 event, u64, u64, u64, u64) {
+    perf::Scope z(perf::Zone::HookRemo);
     if (!g_story_on.load() || Role() != PartyRole::Host || !event) {
         return;
     }
@@ -1060,6 +1068,7 @@ void SaveSidecar() {
     if (g_tick.sidecar.empty()) {
         return;
     }
+    perf::Scope z(perf::Zone::StorySidecar);
     std::string text;
     {
         std::lock_guard<std::mutex> lk(g_guest_mu);
@@ -1068,13 +1077,8 @@ void SaveSidecar() {
         }
         text = json::dump(g_guest.ToJson(), 1);
     }
-    const std::string tmp = g_tick.sidecar + ".tmp";
-    {
-        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-        out << text;
-    }
-    std::remove(g_tick.sidecar.c_str());
-    std::rename(tmp.c_str(), g_tick.sidecar.c_str());
+    // .tmp, remove, rename - on the party's writer thread, never on the game's main thread.
+    coop::asyncio::Replace(g_tick.sidecar, std::move(text));
 }
 
 // ---- Host polls: endings (flags 21/22/23) and time of day ----
@@ -1123,7 +1127,18 @@ void ParseTest() {
         return;
     }
     std::string s(t);
-    if (s.rfind("cutscene:", 0) == 0) {
+    if (s == "leave_after_mirror") {
+        g_tick.test_leave = true;
+        Log("test: the guest leaves the party when a live mirror has ended");
+    } else if (s.rfind("host:", 0) == 0) {
+        g_tick.test_on = g_tick.test_host = true;
+        g_tick.test_remo = static_cast<u32>(std::strtoul(s.c_str() + 5, nullptr, 0));
+        if (const char* d = std::getenv("BB_PARTY_STORY_TEST_DELAY"); d && d[0]) {
+            g_tick.test_delay = std::atof(d);
+        }
+        Log("test: host plays remo %u and sends it to the party %.0f s after a cooperator is in the world",
+            g_tick.test_remo, g_tick.test_delay);
+    } else if (s.rfind("cutscene:", 0) == 0) {
         g_tick.test_on = true;
         g_tick.test_remo = static_cast<u32>(std::strtoul(s.c_str() + 9, nullptr, 0));
         g_tick.test_mirror = s.find(",mirror") != std::string::npos;
@@ -1133,7 +1148,7 @@ void ParseTest() {
         Log("test: replay remo %u %.0f s after the world is up%s", g_tick.test_remo, g_tick.test_delay,
             g_tick.test_mirror ? " (mirror path, mode 2)" : "");
     } else {
-        Log("BB_PARTY_STORY_TEST: '%s' is not cutscene:<id>[,mirror]; ignored", t);
+        Log("BB_PARTY_STORY_TEST: '%s' is not cutscene:<id>[,mirror] , host:<id> or leave_after_mirror; ignored", t);
     }
 }
 
@@ -1255,11 +1270,45 @@ void StoryTick() {
             Log("remo playing (map %s)", MapName(g.map_id).c_str());
         } else {
             Log("remo ended after %.1f s; control back (%s)", now - g_tick.remo_since, Describe(g).c_str());
+            if (g_tick.test_leave && g.session_role == RoleClient) {
+                g_tick.test_leave = false;
+                Log("test: live mirror over; the guest leaves the party (back to its own world)");
+                party::runtime_leave();
+            }
         }
         g_tick.remo_was_playing = st.remo_playing;
     }
+    // Host test: as if an EMEVD 2002 play of our own world had been captured (the hook's intent),
+    // once a cooperator has been in the world for the delay; the host plays it too.
+    if (g_tick.test_host && !g_tick.test_done && role == PartyRole::Host && g.world_up && !g.loading && OwnWorld() &&
+        !st.remo_playing) {
+        if (!g_tick.test_coop_since && now - g_tick.test_coop_poll >= 1.0) {
+            g_tick.test_coop_poll = now;
+            const GameSnapshot full = ReadGameState(true);
+            if (full.cooperators > 0) {
+                g_tick.test_coop_since = now;
+                Log("test: a cooperator is in the world; host remo in %.0f s", g_tick.test_delay);
+            }
+        }
+        if (g_tick.test_coop_since && now - g_tick.test_coop_since >= g_tick.test_delay) {
+            g_tick.test_done = true;
+            StoryIntent s;
+            s.kind = StoryKind::Cutscene;
+            s.id = g_tick.test_remo;
+            s.instr = 1;
+            s.flags = StoryFlagsForRemo(s.id);
+            s.seq = NextSeq();
+            StoryAction a;
+            a.kind = StoryAction::PlayRemo;
+            a.id = RemoForSex(s.id, SexVariant());
+            a.mode = 0;
+            a.why = "test host play";
+            Run(a);
+            PushHost(s);
+        }
+    }
     // Test: one forced replay (or mirror) item.
-    if (g_tick.test_on && !g_tick.test_done && g_tick.world_was_up && now - g_tick.world_since >= g_tick.test_delay &&
+    if (g_tick.test_on && !g_tick.test_host && !g_tick.test_done && g_tick.world_was_up && now - g_tick.world_since >= g_tick.test_delay &&
         !st.remo_playing && !busy) {
         g_tick.test_done = true;
         StoryIntent s;

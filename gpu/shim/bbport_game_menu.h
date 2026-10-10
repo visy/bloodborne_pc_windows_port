@@ -12,6 +12,12 @@ namespace BbGameMenu {
 /// still writable). Each hooked function is checked byte for byte against the 1.09 eboot.
 void PatchImage(unsigned char* image, std::uint64_t size);
 
+/// Screen changes, for the test aids' event-driven menus (test_newgame.cpp): `seq` counts the
+/// message lookups of ids the game had not looked up in the last second (a new screen or dialog
+/// building its texts); `last_ms` is that last lookup's steady-clock time in ms. Both 0 while the
+/// hooks are off.
+void TextActivity(std::uint64_t* seq, std::int64_t* last_ms);
+
 /// Applies what the player changed on the port's pages (each presented frame).
 void Poll();
 } // namespace BbGameMenu

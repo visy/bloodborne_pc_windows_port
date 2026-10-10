@@ -17,7 +17,8 @@ when BB_MP_LOCAL_TEST=1. Windows are placed side by side.
 --party: a loopback party. Instance 0 hosts (BB_PARTY=host), the others join (BB_PARTY=join) with
 the code the host writes to ROOT/party_code.txt (BB_PARTY_CODE_FILE, deleted before the run);
 BB_PARTY_PORT=base+i, BB_PARTY_NAME=Hunter{i}, no UPnP, no public STUN, 127.0.0.1 everywhere.
---env still overrides any of these. --crash-at S kills instance --crash-instance's bbport.exe
+--env still overrides any of these; --ienv I:KEY=VALUE sets a variable for instance I only (e.g. a
+test action on the guest). --crash-at S kills instance --crash-instance's bbport.exe
 (TerminateProcess, as a crash) S seconds into the run; run.bat then restarts it (BB_PARTY_RESTART).
 """
 import argparse, ctypes, os, re, shutil, subprocess, sys, threading, time
@@ -179,6 +180,13 @@ def setup(a):
         print("instance", i, "->", inst)
 
 
+def party_saves_from(user: Path):
+    r"""A party session always plays from user\savedata_party (src/runtime_savepolicy.c): the test
+    saves are copied there too the first time, so --party runs keep their characters."""
+    if (user / "savedata").is_dir() and not (user / "savedata_party").exists():
+        shutil.copytree(user / "savedata", user / "savedata_party")
+
+
 def stop_leftovers(root):
     """Ends what an earlier run of this root left behind (the harness killed by a timeout leaves
     run.bat's restart loop and the game running): its game would keep writing into the new
@@ -301,6 +309,7 @@ def run(a):
                if (r := tile_rect(getattr(a, "slots", list(range(a.count)))[i])) else {}),
         })
         if a.party:
+            party_saves_from(inst / "user")
             env.update({
                 "BB_PARTY": "host" if i == 0 else "join", "BB_PARTY_CODE_FILE": str(code_file),
                 "BB_PARTY_PORT": str(port0 + i), "BB_PARTY_NAME": f"Hunter{i}", "BB_PARTY_UPNP": "0",
@@ -310,6 +319,11 @@ def run(a):
         for kv in a.env or []:
             k, _, v = kv.partition("=")
             env[k] = v.replace("{i}", str(i)).replace("{port}", str(port0 + i))
+        for ikv in a.ienv or []:  # I:KEY=VALUE, instance I only
+            who, _, kv = ikv.partition(":")
+            if who.strip() == str(i):
+                k, _, v = kv.partition("=")
+                env[k] = v.replace("{i}", str(i)).replace("{port}", str(port0 + i))
         log, starts[i] = open_log(inst / "run.log")
         # Test games run ABOVE_NORMAL (children inherit) so agents' builds never starve them.
         prio = 0x00008000 if os.name == "nt" else 0
@@ -377,8 +391,9 @@ def run(a):
             # the same text and don't count as progress.
             n = len({re.sub(r"0x[0-9a-fA-F]+|\d[\d.:]*", "#", l) for i in range(a.count)
                      for l in log_text(i, starts[i]).splitlines() if idle_rx.match(l)})
-            in_world = all((re.findall(r"^Party: (world up|world down|loading screen)", log_text(i), re.M)
-                            or ["-"])[-1] == "world up" for i in range(a.count))
+            in_world = all((re.findall(r"^Party: (world up|world down)", log_text(i), re.M) or ["-"])[-1]
+                           == "world up" and (re.findall(r"^Party: loading screen (up|gone)", log_text(i), re.M)
+                                              or ["gone"])[-1] == "gone" for i in range(a.count))
             if n != last_party_count or not in_world:  # boots, titles and loads never count as idle
                 last_party_count, last_party_change = n, time.time()
             elif n > 0 and time.time() - last_party_change > idle_limit and not (want_crash and not crashed):
@@ -479,6 +494,7 @@ def main():
     ap.add_argument("--instance", type=int, default=1, help="crash: which instance")
     ap.add_argument("--after", type=float, default=0, help="crash: wait this many s first")
     ap.add_argument("--env", action="append")
+    ap.add_argument("--ienv", action="append", help="run: I:KEY=VALUE, set for instance I only (after --env)")
     ap.add_argument("--timestamps", action="store_true",
                     help="run: prefix every log line with [+seconds] since the run started (one clock for all instances)")
     ap.add_argument("--grep")

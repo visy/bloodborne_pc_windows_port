@@ -1,0 +1,316 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// The port's pages in the game's System menu (gpu/shim/bbport_game_menu_pages.h): the game's
+// limits (rows per page, the pop-up list last, text lengths, both languages), every overlay
+// setting reachable and saved to bbport.ini, the party page's buttons (rejoin, leave and kick
+// with a second press), the restart button and the run-time texts.
+// cmake --build out/gpu --target game-menu-pages-test && out/gpu/game-menu-pages-test
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <map>
+#include <set>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include "gpu/shim/bbport_game_menu_pages.h"
+#include "gpu/shim/bbport_settings.h"
+#include "gpu/shim/party/party_status.h"
+
+namespace P = BbGameMenu::Pages;
+
+static std::filesystem::path ini;
+static int restarts = 0;
+static int extension_runs = 0;
+static std::int64_t now = 1000000;
+
+static std::map<std::string, std::string> ReadIni() {
+    std::map<std::string, std::string> keys;
+    std::ifstream file(ini);
+    std::string line;
+    while (std::getline(file, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        const auto eq = line.find('=');
+        if (line.empty() || line[0] == '#' || eq == std::string::npos) continue;
+        keys[line.substr(0, eq)] = line.substr(eq + 1);
+    }
+    return keys;
+}
+
+static std::size_t Length(P::u32 id, bool russian) {
+    const char16_t* text = P::Text(id, russian);
+    assert(text);
+    std::size_t n = 0;
+    while (text[n]) ++n;
+    return n;
+}
+
+static void CheckText(P::u32 id, std::size_t limit, const char* what) {
+    if (P::IsDynamic(id)) return; // cut to its limit when written (checked below)
+    for (bool ru : {false, true}) {
+        const std::size_t n = Length(id, ru);
+        if (n == 0 || n > limit) {
+            std::fprintf(stderr, "%s text %#x (%s): length %zu, limit %zu\n", what, id, ru ? "ru" : "en", n, limit);
+            assert(false);
+        }
+    }
+}
+
+static void Advance(std::int64_t ms) {
+    now += ms;
+    P::Poll(now);
+}
+
+static void Limits() {
+    const auto& pages = P::All();
+    assert(pages.size() >= 10 && pages.size() <= 12); // MaxPages in bbport_game_menu.cpp
+    for (const P::Page& page : pages) {
+        CheckText(page.name, P::MaxNameLength, "page name");
+        CheckText(page.help, P::MaxHelpLength, "page help");
+        bool hidden_rows = false;
+        for (const P::Row& row : page.rows) hidden_rows |= bool(row.visible);
+        assert(!page.rows.empty() && (hidden_rows || page.rows.size() <= P::RowsPerPage));
+        for (std::size_t r = 0; r < page.rows.size(); ++r) {
+            const P::Row& row = page.rows[r];
+            CheckText(row.name, P::MaxNameLength, "row name");
+            CheckText(row.help, P::MaxHelpLength, "row help");
+            for (P::u32 c : row.choices) CheckText(c, P::MaxValueLength, "value");
+            if (row.kind == P::Kind::List) {
+                assert(r + 1 == page.rows.size()); // a pop-up list opens over the rows below it
+                assert(row.choices.size() >= 2 && row.choices.size() <= 32);
+            }
+            if (row.kind == P::Kind::Toggle) assert(row.choices.size() == 2);
+            if (row.kind == P::Kind::Steps) assert(row.choices.size() >= 2 && row.choices.size() <= 11);
+            assert(P::ByteField(row.field) == (row.kind != P::Kind::List));
+        }
+    }
+    assert(P::Text(P::IdBase - 1, false) == nullptr && P::Text(P::IdBase + P::TextCount(), true) == nullptr);
+}
+
+static void Helpers() {
+    for (int count = 2; count <= 5; ++count) {
+        for (int c = 0; c < count; ++c) assert(P::ChoiceFromPosition(P::ChoicePosition(c, count), count) == c);
+    }
+    const float table[11] = {0.f, .1f, .2f, .3f, .4f, .5f, .6f, .7f, .8f, .9f, 1.f};
+    assert(P::NearestPosition(table, 0.33f) == 3 && P::NearestPosition(table, 7.f) == 10);
+    assert(P::Utf16("Вкл") == u"Вкл");
+}
+
+/// Changes every setting row once (a different value) and checks the key it saved.
+static void EverySettingSaved() {
+    std::set<std::string> changed;
+    const auto& pages = P::All();
+    for (const P::Page& page : pages) {
+        for (const P::Row& row : page.rows) {
+            const auto before = ReadIni();
+            P::Load();
+            const int f = row.field;
+            if (row.kind == P::Kind::List) {
+                int& v = *P::Value(f);
+                v = (v + 1) % int(row.choices.size());
+            } else if (row.kind == P::Kind::Toggle) {
+                *P::Byte(f) = P::u8(1 - *P::Byte(f));
+            } else if (row.kind == P::Kind::Slider) {
+                *P::Byte(f) = P::u8(*P::Byte(f) == 10 ? 9 : *P::Byte(f) + 1);
+            } else {
+                const int count = int(row.choices.size());
+                const int c = P::ChoiceFromPosition(*P::Byte(f), count);
+                *P::Byte(f) = P::ChoicePosition((c + 1) % count, count);
+            }
+            Advance(16);
+            Advance(500); // the debounced rows (resolution, preset)
+            const auto after = ReadIni();
+            for (const auto& [key, value] : after) {
+                const auto it = before.find(key);
+                if (it == before.end() || it->second != value) changed.insert(key);
+            }
+        }
+    }
+    // Everything the overlay menu sets (bbport_overlay.cpp tabs).
+    const char* overlay[] = {
+        "upscaler", "preset", "sharpen", "sharpness", "jitter", "object_motion", "reactive", "reactive_scale",
+        "reactive_threshold", "reactive_max", "debug_view", "show_fps", "show_hud", "hud_position", "hud_opacity",
+        "hud_scale", "hud_graph", "hud_vram", "hud_gpu", "hud_cpu", "hud_ram", "mk_enabled", "mk_sens_x",
+        "mk_sens_y", "mk_invert_x", "mk_invert_y", "mk_deadzone", "mk_smoothing", "async_pipelines", "gpl",
+        "compile_indicator", "party_toasts", "fsr4_auto_exposure", "fsr4_invert_jitter", "model_lod",
+        "output_res", "live_resolution", "menu_language"};
+    for (const char* key : overlay) {
+        if (!changed.count(key)) {
+            std::fprintf(stderr, "no game menu row changes %s\n", key);
+            assert(false);
+        }
+    }
+    for (int e = 0; e < BbSettings::EffectCount; ++e) {
+        if (!changed.count(BbSettings::Effects[e].key)) {
+            std::fprintf(stderr, "no game menu row changes %s\n", BbSettings::Effects[e].key);
+            assert(false);
+        }
+    }
+}
+
+static const P::Page& PageNamed(const char16_t* english) {
+    for (const P::Page& page : P::All()) {
+        if (std::u16string(P::Text(page.name, false)) == english) return page;
+    }
+    assert(false);
+    return P::All().front();
+}
+
+/// The row whose (English) name is `name`.
+static const P::Row& RowNamed(const P::Page& page, const char16_t* name) {
+    for (const P::Row& row : page.rows) {
+        if (std::u16string(P::Text(row.name, false)) == name) return row;
+    }
+    assert(false);
+    return page.rows.front();
+}
+
+static void Press(const P::Row& row) {
+    *P::Byte(row.field) = P::u8(1 - *P::Byte(row.field));
+    Advance(16);
+}
+
+static void Party() {
+    namespace ps = party::status;
+    ps::ResetForTest(true);
+    ps::SetRole(ps::Role::Host);
+    ps::SetCode("BBP1-ABCD-EFGH-IJKL");
+    ps::SetState(ps::State::Joined, "2/3");
+    ps::SetMembers({{"Hunter0", true, true, -1, 0, "Hunter's Dream", true},
+                    {"Hunter1", true, true, 42, 1, "Cathedral Ward", false},
+                    {"Hunter2", false, false, -1, 2, "", false}});
+    P::Load();
+    const P::Page& party = PageNamed(u"Party");
+    const P::Page& members = PageNamed(u"Party members");
+    assert(std::u16string(P::Text(party.rows[0].choices[0], false)) == u"Together");
+    assert(std::u16string(P::Text(party.rows[0].help, false)).find(u"Host (your world)") == 0);
+    assert(std::u16string(P::Text(party.rows[1].help, true)).find(u"BBP1-ABCD-EFGH-IJKL") != std::u16string::npos);
+
+    // Member rows: one per member, name, state and ping; the host's own row cannot be kicked.
+    int visible = 0;
+    for (const P::Row& row : members.rows) visible += !row.visible || row.visible();
+    assert(visible == 3);
+    assert(std::u16string(P::Text(members.rows[0].name, false)) == u"Hunter0 (host) (you)");
+    assert(std::u16string(P::Text(members.rows[1].choices[0], false)) == u"In host's world, 42 ms");
+    assert(std::u16string(P::Text(members.rows[1].choices[1], false)) == u"Press again: kick");
+    assert(std::u16string(P::Text(members.rows[2].choices[0], true)) == u"Связь потеряна");
+    assert(std::u16string(P::Text(members.rows[0].choices[1], false)) ==
+           std::u16string(P::Text(members.rows[0].choices[0], false)));
+
+    ps::Command cmd;
+    while (ps::PopCommand(&cmd)) {}
+    // Kick: the first press arms (the row says "press again"), the second kicks.
+    Press(members.rows[1]);
+    assert(!ps::PopCommand(&cmd));
+    assert(*P::DefaultByte(members.rows[1].field) == 1); // the game's Default does not press it
+    Press(members.rows[1]);
+    assert(ps::PopCommand(&cmd) && cmd.type == ps::CommandType::Kick && cmd.name == "Hunter1");
+    // Not the host's own row.
+    Press(members.rows[0]);
+    Press(members.rows[0]);
+    assert(!ps::PopCommand(&cmd));
+    // A second press after 10 s only disarms.
+    Press(members.rows[2]);
+    Advance(11000);
+    Press(members.rows[2]);
+    assert(!ps::PopCommand(&cmd));
+
+    // Rejoin: at once; Leave: confirmed.
+    Press(party.rows[2]);
+    assert(ps::PopCommand(&cmd) && cmd.type == ps::CommandType::Rejoin);
+    Press(party.rows[2]); // back to "Request": nothing
+    assert(!ps::PopCommand(&cmd));
+    const P::Row& leave = RowNamed(party, u"Leave the party");
+    Press(leave);
+    assert(!ps::PopCommand(&cmd));
+    Press(leave);
+    assert(ps::PopCommand(&cmd) && cmd.type == ps::CommandType::Leave);
+
+    // Run-time texts are cut to their limits.
+    ps::SetLastEvent(std::string(300, 'x'));
+    Advance(300);
+    const P::Row& event = party.rows.back();
+    assert(Length(event.choices[0], false) == P::MaxValueLength);
+    assert(std::u16string(P::Text(event.choices[0], false)).substr(P::MaxValueLength - 3) == u"...");
+    assert(Length(event.help, true) == P::MaxHelpLength);
+
+    // Nobody: one row says so.
+    ps::SetMembers({});
+    P::Load();
+    visible = 0;
+    for (const P::Row& row : members.rows) visible += !row.visible || row.visible();
+    assert(visible == 1 && std::u16string(P::Text(members.rows[0].name, false)) == u"No one yet");
+
+    // Party mode off (single player): no commands from the buttons; the party-only rows (copy,
+    // rejoin, leave, notices, last event) are hidden, the extension row shows (in order).
+    ps::ResetForTest(false);
+    P::Load();
+    assert(P::PartyRowCount() == 7);
+    std::vector<const P::Row*> shown;
+    for (const P::Row& row : party.rows) if (!row.visible || row.visible()) shown.push_back(&row);
+    assert(shown.size() == 2 && std::u16string(P::Text(shown[1]->name, true)) == u"Создать группу");
+    const int runs = extension_runs;
+    Press(*shown[1]);
+    assert(extension_runs == runs + 1);
+    Press(*shown[1]); // back: only the text
+    assert(extension_runs == runs + 1);
+    assert(std::u16string(P::Text(party.rows[0].choices[0], false)) == u"Single player");
+    Press(party.rows[2]);
+    Press(leave);
+    Press(leave);
+    assert(!ps::PopCommand(&cmd));
+}
+
+static void Restart() {
+    P::Load();
+    const P::Row& row = RowNamed(PageNamed(u"Game patches"), u"Restart the game");
+    Press(row);
+    assert(restarts == 0);
+    Press(row);
+    assert(restarts == 1);
+}
+
+int main() {
+    ini = std::filesystem::temp_directory_path() / "bbport-game-menu-pages-test.ini";
+    {
+        std::ofstream file(ini);
+        file << "# test\nkey.cross=X, Space\nupscaler=fsr3\n";
+    }
+#ifdef _WIN32
+    _putenv_s("BB_CONFIG", ini.string().c_str());
+    _putenv_s("BB_MENU_LANGUAGE", "en");
+#else
+    setenv("BB_CONFIG", ini.string().c_str(), 1);
+    setenv("BB_MENU_LANGUAGE", "en", 1);
+#endif
+    BbSettings::Load();
+    BbSettings::ConfigureUpscalerSupport(true, true);
+    BbSettings::ConfigureDlssSupport(true, nullptr);
+    party::status::ResetForTest(false);
+    P::SetRestartHandler([] { ++restarts; });
+    // An extension row (party flow): hidden unless party mode is off, a confirmed action.
+    {
+        P::PartyRow row;
+        row.order = 35;
+        row.name = [](const P::PartyRow::Board&) { return P::Texts{"Host party", "Создать группу"}; };
+        row.value = [](const P::PartyRow::Board&) { return P::Texts{"Host", "Создать"}; };
+        row.visible = [](const P::PartyRow::Board& b) { return !b.enabled; };
+        row.press = P::PartyRow::Press::Once;
+        row.run = [](const P::PartyRow::Board&) { ++extension_runs; };
+        P::AddPartyRow(row);
+    }
+    P::Define();
+    P::Define(); // once
+    Limits();
+    Helpers();
+    EverySettingSaved();
+    assert(ReadIni()["key.cross"] == "X, Space"); // the launcher's keys stay
+    Party();
+    Restart();
+    std::filesystem::remove(ini);
+    std::printf("game menu pages: %zu pages, %d fields, %zu texts: ok\n", P::All().size(), P::FieldCount(),
+                P::TextCount());
+    return 0;
+}

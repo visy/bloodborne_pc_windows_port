@@ -456,6 +456,36 @@ static void TestApplier() {
     CHECK(ModeFor(p, 72400200) == SyncMode::SetOnly && guest.PoolBit(72400200));
     CHECK(ap.cursor().epoch() == 77 && ap.cursor().last_seq() == snap.seq);
 
+    // The precomputed plan (link thread) writes exactly what the bit walk writes.
+    {
+        auto run = [&](int how) {  // 0 no plan, 1 plan, 2 plan for another policy (falls back)
+            FakeStore g2;
+            g2.Build(1);
+            g2.SetPoolBit(12400150, true);
+            g2.SetPoolBit(12200125, true);
+            g2.SetPoolBit(2200, true);
+            FlagStore v = g2.view();
+            GuestApplier a;
+            const Policy pol = Policy::Defaults();
+            if (how == 0) {
+                a.QueueSnapshot(wire);
+            } else {
+                Policy other = pol;
+                other.mirror_overlay = !other.mirror_overlay;
+                a.QueueSnapshot(wire, GuestApplier::PlanSnapshot(wire, how == 1 ? pol : other));
+            }
+            const std::size_t n = a.Apply(v, pol, false);
+            return std::make_pair(std::make_pair(n, g2.pool),
+                                  std::make_pair(a.counters().already, a.counters().skipped));
+        };
+        const auto plain = run(0), planned = run(1), stale = run(2);
+        CHECK(plain.first.first > 0);
+        CHECK(planned == plain);
+        CHECK(stale == plain);
+        const auto plan = GuestApplier::PlanSnapshot(wire, Policy::Defaults());
+        CHECK(plan.valid && !plan.flags.empty());
+    }
+
     // live changes, with a replayed duplicate; mirror on
     p.mirror_overlay = true;
     host.SetPoolBit(12411800, true);

@@ -30,10 +30,14 @@ static char dir_name[32];
 void runtime_savepolicy_reset(void) { dir_name[0]=0; }
 /* A party run (gpu/party_env.h: unset, empty, 0, off, false, no = off). */
 static int party_session(void) { return bb_party_enabled(); }
+/* A party session always plays from the party saves (docs/party/ingame_flow.md §5): co-op progress
+ * sync and items can never reach a single-player character. BB_PARTY_SAVE=shared is ignored. */
 const char *runtime_savepolicy_dir(void) {
     if (!dir_name[0]) {
         const char *s=getenv("BB_PARTY_SAVE");
-        snprintf(dir_name,sizeof(dir_name),"%s",party_session() && s && !strcmp(s,"separate") ? "savedata_party" : "savedata");
+        if (party_session() && s && !strcmp(s,"shared"))
+            printf("Saves: BB_PARTY_SAVE=shared is ignored: a party session always uses the party saves\n");
+        snprintf(dir_name,sizeof(dir_name),"%s",party_session() ? "savedata_party" : "savedata");
     }
     return dir_name;
 }
@@ -439,14 +443,12 @@ void runtime_savepolicy_start(void) {
     int separate=!strcmp(dir,"savedata_party");
     if (separate)
         printf("Saves: party session with separate saves: using %s (the single-player saves in %s/savedata are not touched)\n",folder,user);
-    else if (party_session())
-        printf("Saves: party session on the normal saves in %s (BB_PARTY_SAVE=shared)\n",folder);
     List l=list_files(folder);
     int empty=!l.count;
     free(l.items);
     if (empty) {
-        if (separate) printf("Saves: %s has no saves yet: the game starts without characters. To play your "
-                             "single-player character, copy it with the launcher (Party tab, \"Copy single-player save\").\n",folder);
+        if (separate) printf("Saves: %s has no saves yet: the party game starts without characters (New Game "
+                             "makes the party character; the launcher's Party tab can copy a single-player save).\n",folder);
     } else {
         char ref[900]; int have_ref=!runtime_savepolicy_newest_good(user,dir,ref,sizeof(ref));
         SavePolicyCheck c;

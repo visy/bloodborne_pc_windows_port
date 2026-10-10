@@ -3,6 +3,7 @@
 // droogie/bbhost src/engine/np_test.cpp @8f2746c (GPL-3.0-or-later): world-up detection, the
 // Insight write and the bell events.
 #include "party_director.h"
+#include "party_async_io.h"
 
 #include "coop_hooks.h"
 #include "game_state.h"
@@ -23,6 +24,7 @@
 #include "seamless_rules.h"
 #include "test_newgame.h"
 #include "party_online.h"
+#include "party_perf.h"
 #include "party_watchdog.h"
 
 #include "../net/bbnet_internal.h"
@@ -38,10 +40,13 @@
 #include <vector>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <map>
+#include <vector>
 #include <mutex>
 #include <string>
 #include <utility>
+#include <vector>
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -86,9 +91,19 @@ void Log(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    std::printf("Party: %s\n", line);
-    std::fflush(stdout);
+    perf::Scope z(perf::Zone::Log);
+    coop::asyncio::Print(std::string("Party: ") + PartyLogStamp() + line + "\n"); // never blocks the caller (party_async_io.h)
 }
+
+/// A live travel test step (BB_PARTY_DIRECTOR_TEST host_warp=ID@S, host_die@S, guest_die@S):
+/// runs S seconds after this player's next (re)join - the host's cooperators 0 -> >= 1, the
+/// guest's client session with the world loaded - on the main thread, in list order.
+struct TravelStep {
+    enum Kind { HostWarp, HostDie, GuestDie } kind = HostWarp;
+    std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30
+    double delay = 15.0;
+    int min_join = 0;     // "#N": not before this player's Nth join
+};
 
 struct Test {
     bool on = false;
@@ -108,10 +123,23 @@ struct Test {
     float place_pos[3] = {0, 0, 0}, place_yaw = 0;
     double place_at = 15.0;
     std::uint32_t warp_point = 0; // warp=MAP:POINT (hex map): one stage warp, place's timing
+    std::vector<std::uint32_t> set_flags; // set_flag=ID[:ID...]: SetEventFlag(ID, 1) once (C2 live check)
+    bool coop_seen = false;               // host in a party: the actions wait for a cooperator
+    Clock::time_point coop_at{};
     bool insight_done = false, ring_done = false;
     const char* bell = nullptr; // bell_host / bell_guest: Ring() once ready (the real bell path)
     bool bell_done = false;
     Clock::time_point rung_at{};
+    // Travel steps (see TravelStep): the next one waits for a join after the previous one ran.
+    std::vector<TravelStep> steps;
+    std::size_t next_step = 0;
+    bool joined = false;       // in the party now (host: cooperators >= 1; guest: client, loaded)
+    bool armed = false;        // a join since the last step ran
+    int joins = 0;
+    Clock::time_point joined_at{};
+    Clock::time_point step_at{}; // the last step's run, for "back after" times
+    bool ran = false;            // a step of this role ran
+    TravelStep::Kind last_kind = TravelStep::HostWarp;
 };
 
 struct State {
@@ -662,6 +690,75 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
     }
 }
 
+constexpr std::uint64_t kLampWarp = 0x13cdf30; // void (u32 ReturnPointParam id): lamp / Dream / headstone
+constexpr std::uint64_t kForceDead = 0x13320c0; // Lua ForceDead(ctx unused, entity id; 10000 = local player)
+
+const char* TravelStepName(TravelStep::Kind k) {
+    return k == TravelStep::HostWarp ? "host_warp" : k == TravelStep::HostDie ? "host_die" : "guest_die";
+}
+
+/// The live travel test chain (TravelStep): joins are tracked in any state; a step runs in the
+/// world, with no loading screen and no stage request pending.
+void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::time_point now) {
+    Test& t = st.test;
+    if (t.steps.empty() || role == PartyRole::None) {
+        return;
+    }
+    // Guest: in once a client with the world loaded; out only when the session ends (the summon's
+    // own map reload into the host world is still in).
+    const bool joined = role == PartyRole::Host ? s.cooperators >= 1
+                        : t.joined                ? s.session_role == RoleClient
+                                                  : s.session_role == RoleClient && s.world_up && !s.loading;
+    if (joined != t.joined) {
+        t.joined = joined;
+        if (joined) {
+            ++t.joins;
+            t.joined_at = now;
+            t.armed = true;
+            if (t.ran) {
+                Log("test: travel steps: (re)joined #%d, %.1f s after %s", t.joins, Seconds(t.step_at, now),
+                    TravelStepName(t.last_kind));
+            } else {
+                Log("test: travel steps: joined #%d", t.joins);
+            }
+        } else {
+            Log("test: travel steps: out of the party (%s)", Describe(s).c_str());
+        }
+    }
+    // The other role's steps are that instance's: skip them.
+    auto mine = [&](const TravelStep& step) {
+        return (step.kind == TravelStep::GuestDie) == (role == PartyRole::Guest);
+    };
+    while (t.next_step < t.steps.size() && !mine(t.steps[t.next_step])) {
+        ++t.next_step;
+    }
+    if (t.next_step >= t.steps.size() || !t.armed || !joined || !s.world_up || s.loading ||
+        t.joins < t.steps[t.next_step].min_join || Seconds(t.joined_at, now) < t.steps[t.next_step].delay) {
+        return;
+    }
+    std::uint64_t wts = 0;
+    std::uint8_t requested = 1;
+    if (!SafeGet(Guest(0x5556678), &wts) || !wts || !SafeGet(wts + 8, &requested) || requested) {
+        return; // a stage request is pending
+    }
+    const TravelStep step = t.steps[t.next_step++];
+    t.armed = false;
+    t.step_at = now;
+    t.ran = true;
+    t.last_kind = step.kind;
+    Log("test: travel step %zu/%zu: %s%s%u (%s)", t.next_step, t.steps.size(), TravelStepName(step.kind),
+        step.kind == TravelStep::HostWarp ? " to lamp " : "", step.kind == TravelStep::HostWarp ? step.id : 0u,
+        Describe(s).c_str());
+    if (step.kind == TravelStep::HostWarp) {
+        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint32_t)>(Guest(kLampWarp))(step.id);
+    } else {
+        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, 10000);
+    }
+    std::uint8_t after = 0;
+    SafeGet(wts + 8, &after);
+    Log("test: travel step %s done; stage request %s", TravelStepName(step.kind), after ? "armed" : "not armed");
+}
+
 /// The title takes scripted input (BB_TEST_NEWGAME): no world; in party mode the link is up and
 /// the FROM sign-in (ss.info -> login -> notice) is over: the title menu shows after it (before,
 /// "Creating save data" / "Checking network status" swallow presses).
@@ -810,7 +907,30 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
                                      : TravelPlaceForTest(t.place_map, t.place_pos, t.place_yaw);
         Log("test: place: %s", ok ? "requested" : "refused (unknown map)");
     }
-    if (t.award_lot > 0 && Seconds(st.world_at, now) >= 12.0 && s.world_up && !s.loading) {
+    // Host of a party: award_lot / set_flag wait until a cooperator has been in the world for the
+    // test delay (the live-sync checks need a summoned guest); without a party, 12 s / delay.
+    bool party_host;
+    {
+        std::lock_guard<std::mutex> lk(st.mu);
+        party_host = st.role == PartyRole::Host;
+    }
+    if (party_host && s.cooperators > 0 && !t.coop_seen) {
+        t.coop_seen = true;
+        t.coop_at = now;
+        Log("test: a cooperator is in the world; party test actions in %.0f s", t.delay);
+    }
+    const bool party_ready = !party_host || (t.coop_seen && Seconds(t.coop_at, now) >= t.delay);
+    if (!t.set_flags.empty() && party_ready && Seconds(st.world_at, now) >= t.delay && s.world_up && !s.loading) {
+        for (const std::uint32_t id : t.set_flags) {
+            bool before = false, after = false;
+            ReadEventFlag(id, &before);
+            const bool ok = WriteEventFlag(id, true);
+            ReadEventFlag(id, &after);
+            Log("test: set_flag %u: %d -> %d (%s)", id, int(before), int(after), ok ? "written" : "NOT written");
+        }
+        t.set_flags.clear();
+    }
+    if (t.award_lot > 0 && party_ready && Seconds(st.world_at, now) >= 12.0 && s.world_up && !s.loading) {
         const int before = GoodsCount(kGoodsBeckoning);
         const bool ok = AwardItemLot(std::uint32_t(t.award_lot));
         Log("test: award_lot %d: %s; goods 200 x%d -> x%d", t.award_lot, ok ? "awarded" : "NOT awarded", before,
@@ -939,6 +1059,16 @@ void PartyDirector::ConfigureFromEnv() {
                     st.test.place_pos[2] = z;
                     st.test.place_yaw = yaw;
                 }
+            } else if (item.rfind("set_flag=", 0) == 0) {
+                for (const char* p = item.c_str() + 9; *p;) {
+                    char* end = nullptr;
+                    const unsigned long id = std::strtoul(p, &end, 10);
+                    if (end == p) {
+                        break;
+                    }
+                    st.test.set_flags.push_back(static_cast<std::uint32_t>(id));
+                    p = *end ? end + 1 : end;
+                }
             } else if (item == "drop_bells") {
                 st.test.drop_bells = true;
             } else if (item == "grant_bells") {
@@ -957,9 +1087,25 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.bell = kGuestBell;
             } else if (item.rfind("insight=", 0) == 0) {
                 st.test.insight = std::atoi(item.c_str() + 8);
+            } else if (item.rfind("host_warp=", 0) == 0 || item.rfind("host_die", 0) == 0 ||
+                       item.rfind("guest_die", 0) == 0) {
+                TravelStep step;
+                step.kind = item[0] == 'g' ? TravelStep::GuestDie
+                            : item.rfind("host_die", 0) == 0 ? TravelStep::HostDie
+                                                              : TravelStep::HostWarp;
+                if (step.kind == TravelStep::HostWarp) {
+                    step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 10, nullptr, 10));
+                }
+                if (const std::size_t at_sign = item.find('@'); at_sign != std::string::npos) {
+                    step.delay = std::atof(item.c_str() + at_sign + 1);
+                }
+                if (const std::size_t hash = item.find('#'); hash != std::string::npos) {
+                    step.min_join = std::atoi(item.c_str() + hash + 1);
+                }
+                st.test.steps.push_back(step);
             } else if (!item.empty()) {
-                Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, start, grant_bells, drop_bells, award_lot=N, insight=N, ring_host, "
-                    "ring_guest, bell_host or bell_guest; ignored",
+                Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, start, grant_bells, drop_bells, award_lot=N, set_flag=N[:N], insight=N, "
+                    "ring_host, ring_guest, bell_host, bell_guest, host_warp=ID@S, host_die@S or guest_die@S; ignored",
                     item.c_str());
             }
         }
@@ -1019,7 +1165,9 @@ void PartyDirector::Tick() {
     if (full) {
         st.last_full = now;
     }
+    perf::Scope zone(perf::Zone::DirReadState);
     GameSnapshot s = ReadGameState(full);
+    zone.End();
     if (!full && st.have_last) {
         s.cooperators = st.last.cooperators;
     }
@@ -1032,8 +1180,10 @@ void PartyDirector::Tick() {
     }
     st.last = s;
     st.have_last = true;
+    zone.Next(perf::Zone::DirNpcTest);
     NpcTestTick(s); // BB_PARTY_TEST_NPC fixture (party_npc_test.h)
     b2::Tick(s);    // B2 seamless prototype (party_b2.h; BB_PARTY_B2=1)
+    zone.End();
 
     PartyRole role;
     party::PartyLink* link;
@@ -1050,13 +1200,16 @@ void PartyDirector::Tick() {
     NewGameTestTick(s, TitleReadyForInput(role, link));
     // C1: the campaign start (readiness, bells).
     if (full || !st.start_logged) {
+        perf::Scope z(perf::Zone::DirStart);
         UpdateStart(st, s, start_mode);
         if (((grant_bells && role != PartyRole::None) || st.test.grant_bells) && st.world_seen &&
             Seconds(st.world_at, now) >= std::min(5.0, st.ring_delay) && !PrologueSkipBusy()) {
             GrantBells(st, s);
         }
     }
+    zone.Next(perf::Zone::Progress);
     progress::DirectorTick(s, link); // C2: flag capture / apply, host -> guest sync (party_progress.h)
+    zone.Next(perf::Zone::DirTitle);
     // Title: the FROM client's state when it changes (sign-in debugging).
     if (role != PartyRole::None && full && !s.world_up) {
         std::string fc = DescribeFromClient();
@@ -1076,6 +1229,7 @@ void PartyDirector::Tick() {
             AutoContinue(st, s, role, link, now);
         }
     }
+    zone.Next(perf::Zone::DirSend);
     // The roster entry.
     if (link) {
         const party::MemberState ms = LocalState(s, st.start_ready);
@@ -1095,7 +1249,7 @@ void PartyDirector::Tick() {
             if (TravelIntoChalice(t) || static_cast<std::uint32_t>(t.last_lamp) / 100000 == 29) {
                 t.chalice_channel = chalice::Read().channel;
             }
-            link->send_event(party::kBroadcast, kTravelEventName, TravelToJsonText(t));
+            link->post_event(party::kBroadcast, kTravelEventName, TravelToJsonText(t));
             party::bridge::OnTravel(TravelKindName(t.kind));
             Log("travel #%llu (%s) sent to the party", static_cast<unsigned long long>(t.seq), TravelKindName(t.kind));
             PhantomNoteHostTravel(t); // a rest (Dream, death, Mark): guests refill too
@@ -1103,7 +1257,7 @@ void PartyDirector::Tick() {
         // C4: the host's cutscenes, endings and time of day (party_story.h).
         StoryIntent si;
         while (PopHostStory(&si)) {
-            link->send_event(party::kBroadcast, kStoryEventName, StoryToJsonText(si));
+            link->post_event(party::kBroadcast, kStoryEventName, StoryToJsonText(si));
             Log("story #%llu (%s %u) sent to the party", static_cast<unsigned long long>(si.seq),
                 StoryKindName(si.kind), si.id);
         }
@@ -1114,17 +1268,17 @@ void PartyDirector::Tick() {
             items.push_back(g);
         }
         if (!items.empty()) {
-            link->send_event(party::kBroadcast, kItemsEventName, ItemsToJsonText(items));
+            link->post_event(party::kBroadcast, kItemsEventName, ItemsToJsonText(items));
             Log("items: %zu lots sent to the party", items.size());
         }
         // The host's chalices: every guest gets the ones it lacks (party_chalice.h).
         std::vector<std::uint32_t> chalices;
         if (chalice::PopHostGoods(&chalices)) {
-            link->send_event(party::kBroadcast, chalice::kGoodsEventName, chalice::GoodsToJsonText(chalices));
+            link->post_event(party::kBroadcast, chalice::kGoodsEventName, chalice::GoodsToJsonText(chalices));
         }
         int slot = -1;
         while (TakeHostFullItems(&slot, &items)) {
-            link->send_event(slot, kItemsFullEventName, ItemsToJsonText(items));
+            link->post_event(slot, kItemsFullEventName, ItemsToJsonText(items));
             Log("items: full list (%zu lots) sent to slot %d", items.size(), slot);
         }
     }
@@ -1133,9 +1287,10 @@ void PartyDirector::Tick() {
         int b2slot = party::kBroadcast;
         std::string b2body;
         while (b2::PopOutgoing(&b2slot, &b2body)) {
-            link->send_event(b2slot, b2::kEventName, b2body);
+            link->post_event(b2slot, b2::kEventName, b2body);
         }
     }
+    zone.Next(perf::Zone::StatusBridge);
     // The overlay's Party tab: status board and its commands (party_status_bridge.h).
     if (role != PartyRole::None &&
         party::bridge::Tick({role == PartyRole::Host, link, s.world_up, s.loading, s.session_role, s.cooperators,
@@ -1150,8 +1305,11 @@ void PartyDirector::Tick() {
     }
     // Phantoms as full players: the host's lamp / rest / boss Insight out, the guest's refill and
     // Insight in (party_phantom.h).
+    zone.Next(perf::Zone::Phantom);
     PhantomTick(link);
+    zone.Next(perf::Zone::DirRing);
     if (st.test.on) {
+        RunTravelSteps(st, s, role, now);
         RunTest(st, s, now);
         if ((st.test.log_state || st.test.start) && Seconds(st.last_log, now) >= 5.0) {
             const double secs = Seconds(st.last_log, now);
@@ -1244,6 +1402,30 @@ void PartyDirector::Tick() {
     }
 }
 
+std::string PartyLogStamp() {
+    static const bool on = [] {
+        const char* t = std::getenv("BB_PARTY_DIRECTOR_TEST");
+        const char* l = std::getenv("BB_PARTY_LOG_TIME");
+        return (t && t[0]) || (l && l[0] == '1');
+    }();
+    if (!on) {
+        return {};
+    }
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t secs = std::chrono::system_clock::to_time_t(now);
+    const int ms = static_cast<int>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000);
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &secs);
+#else
+    localtime_r(&secs, &tm);
+#endif
+    char b[32];
+    std::snprintf(b, sizeof b, "[%02d:%02d:%02d.%03d] ", tm.tm_hour, tm.tm_min, tm.tm_sec, ms);
+    return b;
+}
+
 bool PartyRequested() {
     const char* t = std::getenv("BB_PARTY_DIRECTOR_TEST");
     const char* i = std::getenv("BB_PARTY_ITEMS_TEST"); // C3 single-instance check
@@ -1252,17 +1434,28 @@ bool PartyRequested() {
 }
 
 void CoopTick() {
+    using perf::Zone;
+    perf::FrameBoundary(); // BB_PARTY_PERF=1: closes the last frame's per-zone sums
+    perf::Scope total(Zone::Tick);
+    perf::Scope z(Zone::LuaEvents);
     LuaEventsTick();
+    z.Next(Zone::Director);
     PartyDirector::Get().Tick();
     chalice::Tick(PartyDirector::Get().Role() == PartyRole::Host); // the local dungeon, the party's chalices
-    TravelTick();        // B1 guest replay (party_travel.h)
-    StoryTick();         // C4 cutscenes / endings (party_story.h)
-    ItemsTick();         // C3 guest item replay (party_items.h)
+    z.Next(Zone::Travel);
+    TravelTick(); // B1 guest replay (party_travel.h)
+    z.Next(Zone::Story);
+    StoryTick(); // C4 cutscenes / endings (party_story.h)
+    z.Next(Zone::Items);
+    ItemsTick(); // C3 guest item replay (party_items.h)
+    z.Next(Zone::Seamless);
     SeamlessRulesTick(); // A6 param rules, EMEVD filter stats (seamless_rules.h)
-    fourp::FourpTick();  // 4-player rules: the party's max players (party_fourp.h)
+    z.Next(Zone::Fourp);
+    fourp::FourpTick(); // 4-player rules: the party's max players (party_fourp.h)
 }
 
 void PartyInit(unsigned char* image, std::uint64_t size) {
+    perf::Init(); // BB_PARTY_PERF=1 (party_perf.h), before any hook goes in
     if (!HooksInit(image, size)) {
         Log("no image; party director off");
         return;

@@ -213,6 +213,10 @@ public:
     // replayed when it resumes); guest: slot ignored, to the host. Returns the cursor (the last
     // one for a broadcast; 0 when nobody is addressed).
     std::uint64_t send_event(int slot, const std::string& name, const std::string& json);
+    // send_event for the game's main thread: never waits for the IO thread's lock. When the lock
+    // is busy (or earlier posts still wait) the event is queued and the IO thread sends it at the
+    // start of its next pass (<= ~10 ms), in post order. Same delivery as send_event.
+    void post_event(int slot, const std::string& name, const std::string& json);
     // Fire-and-forget (dropped while disconnected). Host: slot or kBroadcast; guest: to the host.
     bool send_party_cmd(int slot, const std::string& cmd, const std::string& json);
     bool send_progress(int slot, const std::vector<std::uint8_t>& blob);

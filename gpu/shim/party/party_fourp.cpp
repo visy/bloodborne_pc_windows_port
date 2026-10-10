@@ -2,6 +2,8 @@
 // Four-player parties (see party_fourp.h and docs/party/four_players.md). Every site was read in
 // the 1.09 eboot (capstone over out/eboot.elf); each install compares the bytes first.
 #include "party_fourp.h"
+#include "party_async_io.h"
+#include "party_perf.h"
 
 #include "../../party_env.h"
 
@@ -131,8 +133,8 @@ void Log(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    std::printf("Party 4p: %s\n", line);
-    std::fflush(stdout);
+    perf::Scope z(perf::Zone::Log);
+    coop::asyncio::Print(std::string("Party 4p: ") + line + "\n"); // never blocks the caller (party_async_io.h)
 }
 
 // Our offsets (1.09).
@@ -198,6 +200,7 @@ void LogSummaryShape(u64 out, const i32 per_kind[5], int coop_now) {
 // H1
 BB_COOP_SYSV u64 SlotSummary(u64 out, u64 sel, u64 dbg) {
     const u64 r = g_summary_original(out, sel, dbg);
+    perf::Scope z(perf::Zone::HookFourpSlot);
     g_h1_calls.fetch_add(1, std::memory_order_relaxed);
     const int max = g_max.load(std::memory_order_relaxed);
     if (max < 4 || !sel || !out) {
@@ -312,6 +315,7 @@ extern "C" {
 __attribute__((used)) void* bb_fourp_spfx_original = nullptr;
 __attribute__((used)) BB_COOP_SYSV int bb_fourp_spfx_upgrade(void) {
     using namespace coop::fourp;
+    coop::perf::Scope z(coop::perf::Zone::HookFourpSpfx);
     // No max-players gate: 3 cooperators exist only once H1 let them in, and a guest must scale
     // like its host whatever it was told.
     const int n = CooperatorsNow();

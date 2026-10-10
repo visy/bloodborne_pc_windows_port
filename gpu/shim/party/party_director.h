@@ -35,9 +35,18 @@
 //        warp=MAP:POINT       one stage warp to warp point / entity POINT of MAP instead
 //        ring_host / ring_guest  raises that bell once, BB_PARTY_DIRECTOR_TEST_DELAY s (default 10)
 //                     after the world is up, and logs what follows (and the start flags/bells)
+//        host_warp=ID@S  host: S s after its next guest joined, the lamp warp 0x13CDF30(ID) on
+//                     the main thread (the path a lamp / the warp menu takes: B1 sees it)
+//        host_die@S / guest_die@S  that role: S s after its next (re)join, ForceDead on the
+//                     local player (Lua ForceDead 0x13320C0(0, 10000))
+//                     A "#N" suffix (host_die@15#2) holds a step until this player's Nth join.
+//                     The travel steps run in list order, each after a join that followed
+//                     the previous step (a chain: warp, rejoin, die, rejoin, ...); with them the
+//                     party logs get wall-clock stamps.
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace party {
 class PartyLink;
@@ -65,6 +74,9 @@ private:
 
 /// BB_PARTY or BB_PARTY_DIRECTOR_TEST is set (non-empty).
 bool PartyRequested();
+/// "[hh:mm:ss.mmm] " (local wall clock) when BB_PARTY_LOG_TIME=1 or BB_PARTY_DIRECTOR_TEST is
+/// set, else "": lets two instances' logs be lined up (travel timings).
+std::string PartyLogStamp();
 /// bbgpu_patch_image: binds the image, checks the Lua dispatcher and installs the main-thread
 /// tick (only call it when PartyRequested()).
 void PartyInit(unsigned char* image, std::uint64_t size);
