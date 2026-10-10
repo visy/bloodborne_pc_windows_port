@@ -18,6 +18,10 @@
 //          While a travel is pending or under way, the stock "send home" warps (OnLeave_Limit
 //          0x138A51C, HostDead_1 0x1381A93, BlockClear2_1 0x13856F4, BlockClear2_3's tail jump
 //          0x13859DF) go to that destination instead of the guest's pre-summon spot.
+//          A guest's own death (PartyGhostDeath_2's call 0x1382663) and a guest's Hunter's Mark
+//          (OnReviveMagic_1's tail jump 0x1389F20) go to the pending travel destination, else to
+//          the host's last lamp (SetGuestDeathRedirect; party_phantom.h keeps it current), so the
+//          guest respawns where the host will be and the director's bells bring it back.
 //   both:  InstallTravelPatches(): the hooks above plus the Hunter's Dream gate (area table dword
 //          0x47304B0 2100 -> -1, Small Resonant Bell availability 0x157F6D1 / 0x157F6D3), each
 //          byte-verified; a mismatch is logged and that site skipped.
@@ -129,6 +133,20 @@ private:
 };
 
 // ---- Guest state: the newest intent, the replay gate, the "travel under way" window ----
+// ---- Guest death / guest Hunter's Mark redirect (docs/party/phantom_limits.md 3.2) ----
+enum class GuestRedirect : std::uint8_t {
+    None,              ///< leave the game's own warp (home, the pre-summon spot)
+    TravelDestination, ///< a host travel is pending or under way: go there
+    HostLamp,          ///< 0x13CDF30(host's last lamp id)
+};
+const char* GuestRedirectName(GuestRedirect r);
+/// What a guest-side funnel call of `kind` (GuestDied, HuntersMark) does; the send-home and other
+/// kinds are not redirected here. `have_travel_destination`: GuestTravel::Destination() is set.
+GuestRedirect ChooseGuestRedirect(TravelKind kind, bool have_travel_destination, std::uint32_t host_lamp_id);
+/// The host's last lamp id (low dword of its WorldTransitionState +0x1528) from an intent;
+/// kTravelNone when it has none.
+std::uint32_t HostLampFromTravel(const TravelIntent& t);
+
 /// What the gate needs from the game (injectable for tests).
 struct ReplayState {
     bool world_up = false;
@@ -176,6 +194,18 @@ bool PopHostTravel(TravelIntent* out);
 void RequestGuestTravel(const TravelIntent& t);
 /// Main thread, once a frame (the coop tick): the guest replay.
 void TravelTick();
+/// The travel hooks are installed and on (BB_PARTY_TRAVEL is not 0 and the funnel hook is in).
+bool TravelEnabled();
+/// Guest: the host's last lamp id for the death / Hunter's Mark redirect (kTravelNone: no redirect,
+/// the guest goes home as in vanilla). Any thread. A travel intent with a last-lamp record also
+/// updates it.
+void SetGuestDeathRedirect(std::uint32_t host_lamp_id);
+std::uint32_t GuestDeathRedirectLamp();
+/// Guest: runs (on the game thread that died / used the Mark) after a redirect was carried out.
+using GuestRedirectFn = void (*)(TravelKind kind, GuestRedirect how, std::uint32_t lamp_id);
+void SetGuestRedirectCallback(GuestRedirectFn fn);
+/// BB_PARTY_GUEST_RESPAWN=0: guest deaths and Hunter's Marks go home as in vanilla.
+void SetGuestDeathRedirectEnabled(bool on);
 #endif
 
 } // namespace coop
