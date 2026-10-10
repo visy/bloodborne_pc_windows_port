@@ -8,6 +8,7 @@
 #include "game_state.h"
 #include "lua_events.h"
 #include "party_link.h"
+#include "party_progress.h"
 #include "party_travel.h"
 #include "seamless_rules.h"
 
@@ -273,6 +274,9 @@ void PartyDirector::ConfigureFromEnv() {
         max_players = std::atoi(m);
     }
     Configure(role, max_players);
+    progress::SetRole(role == PartyRole::Host    ? progress::Role::Host  // C2 progress sync
+                      : role == PartyRole::Guest ? progress::Role::Guest
+                                                 : progress::Role::None);
     std::lock_guard<std::mutex> lk(st.mu);
     if (const char* e = std::getenv("BB_PARTY_RING_EVERY"); e && e[0] && std::atof(e) >= 1.0) {
         st.ring_every = std::atof(e);
@@ -371,6 +375,7 @@ void PartyDirector::Tick() {
         role = st.role;
         link = st.link;
     }
+    progress::DirectorTick(s, link); // C2: flag capture / apply, host -> guest sync (party_progress.h)
     // The roster entry.
     if (link) {
         const party::MemberState ms = LocalState(s);
@@ -447,6 +452,8 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
         return;
     }
     LuaEventsInit();
+    progress::Init();         // C2 progress sync (party_progress.h)
+    progress::InstallHooks(); // byte-verified flag hooks (BB_PARTY_PROGRESS=0: none)
     SeamlessRulesInit(); // A6: party patch report, EMEVD filter (seamless_rules.h)
     PartyDirector::Get().ConfigureFromEnv();
     InstallTravelPatches(); // B1: Dream gate + travel hooks (byte-verified)
