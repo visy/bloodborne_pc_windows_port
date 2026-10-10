@@ -211,6 +211,9 @@ bool PopHostTravel(TravelIntent* out);
 void RequestGuestTravel(const TravelIntent& t);
 /// Main thread, once a frame (the coop tick): the guest replay.
 void TravelTick();
+/// Main thread: replays `t` now with the native warp ChooseReplay picks (B2 drives this itself,
+/// party_b2.h). False when the intent has no usable destination or travel is off.
+bool ReplayTravelNow(const TravelIntent& t);
 /// The travel hooks are installed and on (BB_PARTY_TRAVEL is not 0 and the funnel hook is in).
 bool TravelEnabled();
 /// Guest: the host's last lamp id for the death / Hunter's Mark redirect (kTravelNone: no redirect,

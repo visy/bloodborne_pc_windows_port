@@ -127,7 +127,7 @@ struct LinkConfig {
     int lost_timeout_ms = 10000;
     int slot_keep_ms = 60000;
     int backoff_initial_ms = 1000;
-    int backoff_max_ms = 8000;     // a friend's machine: retrying every 8 s costs nothing
+    int backoff_max_ms = 2000;     // a crashed host is back within ~2 s of its restart (rejoin timing, docs/party/join_timing.md)
     int backoff_jitter_pct = 20;   // each wait randomized +-20 %
     int connect_timeout_ms = 5000;
     int roster_refresh_ms = 5000;  // host re-broadcasts the roster (fresh pings) this often
