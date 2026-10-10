@@ -831,6 +831,7 @@ class LauncherWindow(Adw.ApplicationWindow):
                 "wrong_eboot": tr("eboot.bin не от версии 1.09: скопируйте eboot.bin из дампа обновления 1.09 в папку игры с заменой"),
                 "other_title": tr("Поддерживается только CUSA03173 с обновлением 1.09 (найдено {})").format(title),
                 "unreadable": tr("eboot.bin не читается как расшифрованный исполняемый файл PS4: сделайте дамп заново"),
+                "damaged_files": tr("Файлы игры повреждены при распаковке: шейдеры не распаковываются, игра зависнет на загрузке. Распакуйте игру и обновление 1.09 заново исправленным инструментом (issue #81)"),
             }[kind]
             self.game_row.set_subtitle(f"{path}\n{tooltip}")
         else:

@@ -622,6 +622,7 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     BbLayer::GpuMemory::Get().SetBlockShift(static_cast<u32>(block_shift));
     group_use.assign(u64{1} << (ADDRESS_SPACE_BITS - USE_GROUP_BITS), 0);
     group_demoted.assign(group_use.size(), 0);
+    layer_group_use.assign(group_use.size(), 0);
     arena_memory_type_index =
         FindMemoryType(instance.GetMemoryProperties(), vk::MemoryPropertyFlagBits::eDeviceLocal,
                        reqs.memoryTypeBits)
@@ -3504,6 +3505,18 @@ bool BufferCache::GarlicInVramForLayer() {
 } // namespace VideoCore
 
 namespace VideoCore {
+u64 BufferCache::LayerMirrorFloor(u64 budget) {
+    // BB_LAYER_MIRROR_FLOOR_PERCENT (25) of the driver's VRAM budget: the mirrors' share that the
+    // texture collector's mark does not take from them (6 GB: ~1.4 GB, 4 GB: ~0.9 GB). Past it they
+    // yield to images; under it images yield (the collector evicts more), up to the budget's
+    // BB_VRAM_PROMOTE_PERCENT. Reading the game's memory over the bus costs far more on NVIDIA.
+    static const u64 percent = [] {
+        const char* v = std::getenv("BB_LAYER_MIRROR_FLOOR_PERCENT");
+        return std::min<u64>(v && *v ? std::strtoull(v, nullptr, 10) : 25ull, 90ull);
+    }();
+    return budget / 100 * percent;
+}
+
 bool BufferCache::VramPromotionsPaused() {
     // VRAM nearly full (past BB_VRAM_PROMOTE_PERCENT of the driver's budget, default 90): no new
     // copies; the candidates wait, read in place meanwhile (#32: a card with 8 GB). Checked at
@@ -3525,8 +3538,14 @@ bool BufferCache::VramPromotionsPaused() {
         // Also short of the texture collector's critical mark: the collector compares all of our
         // VRAM and can only free images, so copies past it had it evict textures in use (6 GB
         // GTX 1660 Ti: mark 3927 MiB, 1.8 GiB of copies, 200-1250 images evicted per 5 s).
+        // Not below the mirrors' own share (LayerMirrorFloor), though: on a 4 GB card images and
+        // the rest already held the usage past that point, no copy was made again once the old
+        // ones went idle, and everything was read over the bus (5 FPS after 4 minutes).
         const u64 critical = BbStats::gc_critical_bytes.load(std::memory_order_relaxed);
-        const bool near_critical = critical != 0 && usage + PromoteCriticalMargin >= critical;
+        const bool under_floor = LayerMode() && BbLayer::GpuMemory::Get().ValidBytes() <
+                                                    LayerMirrorFloor(budget);
+        const bool near_critical =
+            critical != 0 && usage + PromoteCriticalMargin >= critical && !under_floor;
         const bool now_full = (budget != 0 && usage * 100 > budget * percent) || near_critical;
         if (now_full != full) {
             std::printf("Guest memory: VRAM %llu of %llu MiB in use (texture collector critical at "

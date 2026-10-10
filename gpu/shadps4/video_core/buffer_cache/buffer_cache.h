@@ -399,8 +399,8 @@ private:
     void LayerProcessIdle();
     /// VRAM near the texture collector's critical mark: idle mirrors go back in place.
     void LayerYieldToImages(u32 now);
-    /// Cuts the room to grow (LayerGrowthEnd) from mirrors until `wanted` bytes are freed.
-    u64 LayerTrimSlack(u64 wanted);
+    /// Makes mirrors with memory left without valid blocks again over those blocks only.
+    u64 LayerCompactMirrors(u64 wanted);
     /// The GPU writes [address, address + size) in the submission being recorded (write ticks).
     void NoteWriteTick(VAddr address, u64 size);
     /// Page table entry of a block (LayerPagedRecord), its writes, and rewrites after changes.
@@ -432,6 +432,11 @@ private:
     /// Headroom below the texture collector's critical mark: copies stop at it, and past
     /// ShrinkCriticalMargin idle mirrors go back in place (LayerProcessIdle).
     static constexpr u64 PromoteCriticalMargin = 384_MB;
+    /// Freed beyond the pause mark when stale mirrors go (LayerYieldToImages): room for the
+    /// copies waiting.
+    static constexpr u64 StaleHeadroom = 256_MB;
+    /// The mirrors' share of the driver's VRAM budget the texture collector's mark does not take.
+    static u64 LayerMirrorFloor(u64 budget);
     static constexpr u64 ShrinkCriticalMargin = 128_MB;
 
     const Vulkan::Instance& instance;
@@ -495,6 +500,14 @@ private:
     /// Watched blocks that went back in place for writes (LayerDemote): not watched again.
     IntervalList<> layer_watch_failed;
     std::unordered_map<u64, u8> layer_watch_strikes; ///< watched blocks sent back for requests
+    /// Ranges a GPU-writing binding sent back in place once (LayerBind): the second time they
+    /// stay there (dynamic_blocks).
+    IntervalList<> layer_write_bounces;
+    /// Per 2 MiB of guest addresses (as group_use): the second a binding last took a mirror there
+    /// directly (LayerBind), or blocks there moved to VRAM. Paged bindings do not count. Stale
+    /// ones go back in place first when VRAM is short (LayerYieldToImages).
+    std::vector<u32> layer_group_use;
+    void NoteDirectUse(VAddr address, u64 size);
     /// Dynamic blocks made so by the CPU's writes (ProcessDemotions), not by the GPU's.
     IntervalList<> layer_cpu_hot;
     u64 layer_volatile_refresh_bytes = 0; ///< statistics

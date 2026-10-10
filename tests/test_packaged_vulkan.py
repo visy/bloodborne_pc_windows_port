@@ -103,3 +103,35 @@ class PackagedVulkanTests(unittest.TestCase):
         self.env["BB_NVIDIA_LIB_DIR"] = str(self.libs)
         vulkan.configure(self.env, (self.icds,), ())
         self.assertIn("nvidia_icd.json", self.env["VK_DRIVER_FILES"])
+
+    def test_nvidia_report_names_libraries_searched_and_not_loaded(self):
+        # Issue #107: the driver loads but gives no vkCreateInstance; the report says what the
+        # dynamic linker looked for inside the package and did not load.
+        driver = self.library("libGLX_nvidia.so.615.1")
+        self.library("libnvidia-glcore.so.615.1")
+        self.manifest(str(driver))
+        self.configure()
+        cache = Path(self.env["LD_LIBRARY_PATH"].split(":")[0])
+        trace = "\n".join([
+            "   101:\tfind library=libGLdispatch.so.0 [0]; searching",
+            "   101:\tcalling init: /bundled/lib/libGLdispatch.so.0",
+            "   101:\tfind library=libnvidia-glcore.so.615.1 [0]; searching",
+            f"   101:\tcalling init: {cache}/libnvidia-glcore.so.615.1",
+            "   101:\tfind library=libnvidia-gpucomp.so.615.1 [0]; searching",
+            "   101:\tfind library=libm.so.6 [0]; searching",
+        ])
+        calls = []
+
+        def run(args, **kwargs):
+            calls.append(kwargs["env"].get("LD_DEBUG"))
+            return type("Result", (), {"stderr": trace})()
+
+        lines = vulkan.nvidia_report(self.env, "vulkaninfo", run)
+        self.assertEqual(calls, ["libs"])
+        self.assertTrue(any(line.strip().startswith("libnvidia-glcore.so.615.1 ->") for line in lines))
+        self.assertIn("Dynamic linker: 3 NVIDIA/glvnd libraries searched, not loaded: "
+                      "libnvidia-gpucomp.so.615.1", lines)
+
+    def test_nvidia_report_is_empty_without_the_host_driver(self):
+        self.configure()
+        self.assertEqual(vulkan.nvidia_report(self.env, "vulkaninfo", None), [])

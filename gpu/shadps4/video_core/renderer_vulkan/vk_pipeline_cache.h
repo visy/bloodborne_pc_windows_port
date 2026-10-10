@@ -273,6 +273,7 @@ private:
     bool targets_stable = false;
     u64 last_target_sig = 0;
     u32 last_target_frame = ~0u;
+    u32 frame_draws = 0, last_frame_draws = 0; ///< draws per frame (light frames: no skips)
     /// Last: stopped (workers joined) before everything the jobs use is destroyed.
     PipelineCompiler compiler;
 };

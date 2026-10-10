@@ -86,6 +86,8 @@ EN = {
         "Only CUSA03173 with update 1.09 is supported (found {})",
     "eboot.bin не читается как расшифрованный исполняемый файл PS4: сделайте дамп заново":
         "eboot.bin cannot be read as a decrypted PS4 executable: dump the game again",
+    "Файлы игры повреждены при распаковке: шейдеры не распаковываются, игра зависнет на загрузке. Распакуйте игру и обновление 1.09 заново исправленным инструментом (issue #81)":
+        "The game files were damaged when extracted: the shaders do not unpack and the game would hang while loading. Extract the game and the 1.09 update again with a fixed tool (issue #81)",
     "Bloodborne CUSA03173, версия 1.09": "Bloodborne CUSA03173, version 1.09",
     "Папка игры (с eboot.bin)": "Game folder (with eboot.bin)",
     # Languages
@@ -541,6 +543,8 @@ ZH_CN = {
         "仅支持已安装 1.09 更新的 CUSA03173（当前检测到 {}）",
     "eboot.bin не читается как расшифрованный исполняемый файл PS4: сделайте дамп заново":
         "无法将 eboot.bin 识别为已解密的 PS4 可执行文件：请重新转储游戏",
+    "Файлы игры повреждены при распаковке: шейдеры не распаковываются, игра зависнет на загрузке. Распакуйте игру и обновление 1.09 заново исправленным инструментом (issue #81)":
+        "游戏文件在解包时已损坏：着色器无法解压，游戏会在加载时卡住。请使用修复后的工具重新解包游戏和 1.09 更新（issue #81）",
     "Bloodborne CUSA03173, версия 1.09": "血源诅咒 CUSA03173，版本 1.09",
     "Папка игры (с eboot.bin)": "游戏文件夹（含 eboot.bin）",
     # Languages

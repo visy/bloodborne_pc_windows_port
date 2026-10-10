@@ -82,8 +82,9 @@ struct Values {
     std::atomic<bool> dlss_supported{false};
     std::atomic<const char*> dlss_problem{nullptr};
     /// Graphics pipelines compiled on worker threads while their first draws are skipped
-    /// (BB_ASYNC_SHADERS). Live.
-    std::atomic<bool> async_shaders{false};
+    /// (BB_ASYNC_SHADERS, alias BB_ASYNC_PIPELINES; ini key async_pipelines). On by default
+    /// since 0.5-pre4. Live.
+    std::atomic<bool> async_shaders{true};
     /// Graphics pipelines linked from VK_EXT_graphics_pipeline_library parts (BB_GPL). On restart.
     std::atomic<bool> gpl{false};
     /// "Compiling shaders: N%" in the bottom right corner (BB_COMPILE_INDICATOR). Live.

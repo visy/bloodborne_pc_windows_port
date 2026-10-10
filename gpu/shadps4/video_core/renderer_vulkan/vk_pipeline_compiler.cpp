@@ -41,6 +41,11 @@ u32 PipelineCompiler::GameplayWorkers() {
     if (const u32 env = EnvThreads()) {
         return env;
     }
+    // Upstream 0.5-pre4's name for the background workers (BB_SHADER_THREADS wins when both are
+    // set; it also sizes the startup precompile, this one only the workers while playing).
+    if (const char* env = std::getenv("BB_ASYNC_PIPELINE_THREADS"); env && *env) {
+        return u32(std::clamp(std::atoi(env), 1, 64));
+    }
     return std::max(1u, BbThreads::Available() / 4);
 }
 

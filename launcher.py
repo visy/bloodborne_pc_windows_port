@@ -153,7 +153,9 @@ def settings_env(s: dict) -> dict:
     # Shader compilation: background compile that skips the draw meanwhile (also a live toggle in
     # the in-game menu), graphics pipeline library (stages compiled ahead, linked at draw time) and
     # the "Compiling shaders: NN%" indicator.
-    env["BB_ASYNC_SHADERS"] = "1" if on("feat_async_shaders", False) else "0"
+    # On by default since 0.5-pre4 (upstream's BB_ASYNC_PIPELINES); stored as feat_async_pipelines:
+    # the old feat_async_shaders key mostly held the old default (off) and is not read any more.
+    env["BB_ASYNC_SHADERS"] = "1" if on("feat_async_pipelines", True) else "0"
     env["BB_GPL"] = "1" if on("feat_gpl", False) else "0"
     env["BB_COMPILE_INDICATOR"] = "1" if on("feat_compile_indicator") else "0"
     env["BB_SHADER_PRECOMPILE"] = "1" if on("feat_shader_precompile") else "0"
@@ -593,7 +595,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_skip_network_choice = tk.BooleanVar(value=self.settings.get("feat_skip_network_choice", True))
         self.feat_save_log = tk.BooleanVar(value=self.settings.get("feat_save_log", False))
         self.feat_mute_unfocused = tk.BooleanVar(value=self.settings.get("feat_mute_unfocused", True))
-        self.feat_async_shaders = tk.BooleanVar(value=self.settings.get("feat_async_shaders", False))
+        self.feat_async_shaders = tk.BooleanVar(value=self.settings.get("feat_async_pipelines", True))
         self.feat_gpl = tk.BooleanVar(value=self.settings.get("feat_gpl", False))
         self.feat_compile_indicator = tk.BooleanVar(value=self.settings.get("feat_compile_indicator", True))
         self.feat_shader_precompile = tk.BooleanVar(value=self.settings.get("feat_shader_precompile", True))
@@ -699,9 +701,11 @@ class BloodborneLauncher(tk.Tk):
 
         sec = self._section(tab, 1, "Shader compilation")
         self._check(sec, "Async shader compilation", self.feat_async_shaders,
-                    "Compiles new shaders in the background and skips drawing that object for a few frames "
-                    "instead of stuttering; brief pop-in is possible. Can also be toggled live in the in-game "
-                    "menu. Default: off (BB_ASYNC_SHADERS).")
+                    "Compiles a new pipeline of a pass drawn every frame in the background and skips drawing "
+                    "that object for a frame or two instead of stuttering; brief pop-in is possible. Loading "
+                    "screens, one-time renders, the final frame, the UI and compute work are never skipped. "
+                    "Can also be toggled live in the in-game menu. Default: on "
+                    "(BB_ASYNC_SHADERS; upstream's name BB_ASYNC_PIPELINES works too).")
         self._check(sec, "Graphics pipeline library (GPL)", self.feat_gpl,
                     "Compiles shader parts ahead of time (startup and loading screens) and links them quickly "
                     "at draw time. Needs driver support (NVIDIA/AMD; falls back automatically). Restart "
@@ -1179,7 +1183,7 @@ class BloodborneLauncher(tk.Tk):
             "feat_skip_network_choice": self.feat_skip_network_choice.get(),
             "feat_save_log": self.feat_save_log.get(),
             "feat_mute_unfocused": self.feat_mute_unfocused.get(),
-            "feat_async_shaders": self.feat_async_shaders.get(),
+            "feat_async_pipelines": self.feat_async_shaders.get(),
             "feat_gpl": self.feat_gpl.get(),
             "feat_compile_indicator": self.feat_compile_indicator.get(),
             "feat_shader_precompile": self.feat_shader_precompile.get(),
@@ -1360,6 +1364,15 @@ class BloodborneLauncher(tk.Tk):
             if chk:
                 kind, title, version = chk
                 explanation = game_check.explain(kind, title, version)
+                if kind == "damaged_files":
+                    # The right game, broken by the extraction tool (issue #81): the game would
+                    # hang while loading its shaders.
+                    return False, (
+                        f"Game File Verification Failed (damaged extraction):\n\n"
+                        f"{explanation}\n\n"
+                        f"Check every file: python scripts\\game_check.py \"{game_dir}\"\n"
+                        f"To bypass (not recommended): set environment variable BB_SKIP_GAME_CHECK=1."
+                    ), details
                 return False, (
                     f"Game File Verification Failed ({kind}):\n\n"
                     f"{explanation}\n\n"

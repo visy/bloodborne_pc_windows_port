@@ -641,9 +641,10 @@ void AdvancedTab() {
              "и другого даёт шлейф."),
            upscaler_on, [&](int i) { s.debug_view = i; });
     Toggle("async_shaders", T("Asynchronous shaders", "Асинхронные шейдеры"), s.async_shaders,
-           T("A new shader is compiled in the background instead of pausing the game: objects "
-             "using it may be missing for a few frames. Never applies to the final frame, the UI "
-             "or compute work.",
+           T("On by default. A new pipeline of a pass drawn in each of the last 8 frames is "
+             "compiled in the background instead of pausing the game: objects using it may be "
+             "missing for a frame or two. Never applies to the final frame, the UI, loading "
+             "screens or compute work.",
              "Новый шейдер компилируется в фоне, а не останавливает игру: объекты с ним могут "
              "пропасть на несколько кадров. Не касается итогового кадра, интерфейса и "
              "вычислительных шейдеров."));
