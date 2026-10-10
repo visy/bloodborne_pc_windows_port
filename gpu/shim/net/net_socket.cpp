@@ -657,7 +657,8 @@ std::shared_ptr<P2pPort> p2p_port_open(std::uint16_t want) {
         sockaddr_in sa{};
         sa.sin_family = AF_INET;
         sa.sin_port = bswap16(at);
-        sa.sin_addr.s_addr = INADDR_ANY;
+        // Local tests bind loopback only (no Windows Firewall prompt): see party_sock.h.
+        sa.sin_addr.s_addr = forced_local_ipv4() == bswap32(0x7f000001u) ? bswap32(0x7f000001u) : INADDR_ANY;
         if (::bind(port->fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) == 0) {
             port->port = at;
             break;
