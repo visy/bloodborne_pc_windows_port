@@ -110,6 +110,10 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_TEST_NPC_LOG` | `0`: no per-second state line | on | `gpu/shim/party/party_npc_test.cpp` |
 | `BB_PARTY_TEST_NPC_PATCH` | `1`: both patch groups of filter mode C on for the run | off | `gpu/shim/party/party_npc_test.cpp` |
 | `BB_PARTY_TEST_NPC_WARP` | `<WarpParam id>`: one lamp warp before anything else | off | `gpu/shim/party/party_npc_test.cpp` |
+| `BB_PARTY_ITEMS_HOST_TEST` | `<lot>[,...]`: the host awards these lots through the game's `0x17DDC50` (hostOnly 1) 20 s after a cooperator appeared, 10 s apart (summoned-give check) | off | `gpu/shim/party/party_items.cpp` |
+| `BB_PARTY_ITEMS_HOST_TEST_FLAGS` | `<id>[,...]`: flags the host sets with the first `BB_PARTY_ITEMS_HOST_TEST` award | off | `gpu/shim/party/party_items.cpp` |
+| `BB_PARTY_PROGRESS_TEST_READ` | `<id>[,...]`: logs own-save / visible values at each steady load | off | `gpu/shim/party/party_progress.cpp` |
+| `BB_PARTY_STORY_SUMMONED` | `0`: the C4 replay queue waits for the own world (no replays while summoned) | on | `gpu/shim/party/party_story.cpp` |
 | `BB_SAVE_BACKUP` | `1`: save backups also outside a party session; `0`: none in a party session | on in a party session | `src/runtime_savepolicy.c` |
 | `BB_SAVE_TRACE` | `1`: logs every operation on save files (/savedataN) | off | `src/runtime_file.c` |
 

@@ -389,3 +389,13 @@ of every task; nothing extra to patch.
   with a guest; the wall must not appear (`EMEVD ... skipped` count grows) and observe whether
   the stage-UID stop 0x193C657 ends the session (travel.md P2).
 - R6 after a session, diff the guest save: inventory, Insight, echoes persist; flags do not.
+
+## 8. Nothing waits for "home" (seamless play check, 2026-10-10)
+
+Checked for B2 (guests summoned nearly all the time): vial / bullet refills (`RefillQueue`, gate
+`ReplayAllowedNow`: world up, no load, not joining / leaving - role 6 passes; the host-rested
+request falls back to `kLoadWait` when no follow load comes), boss Insight (`InsightDrip`, same
+gate, SpEffect 4680 on the own PlayerIns; Insight lives in the own PlayerGameData), the host-lamp
+announcement and the death redirect: none needs the own world. Echoes, Insight and inventory are
+the guest's own PlayerGameData; they persist through the save requests that summoned C2/C3/C4
+writes now trigger (items.md 10).
