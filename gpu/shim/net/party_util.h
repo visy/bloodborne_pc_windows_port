@@ -16,7 +16,14 @@ namespace bbnet::party {
 inline long long int_of(const json::Value& v, const char* key, long long def = 0) {
     const json::Value* m = v.type == json::Value::Type::Object ? v.find(key) : nullptr;
     if (!m) return def;
-    if (m->type == json::Value::Type::Number) return static_cast<long long>(m->number);
+    if (m->type == json::Value::Type::Number) {
+        // A peer's 1e300 (or NaN): converting it to an integer is undefined; clamp instead.
+        const double d = m->number;
+        if (!(d == d)) return def;
+        if (d >= 9.2e18) return 9200000000000000000LL;
+        if (d <= -9.2e18) return -9200000000000000000LL;
+        return static_cast<long long>(d);
+    }
     if (m->type == json::Value::Type::Bool) return m->boolean ? 1 : 0;
     if (m->type == json::Value::Type::String && !m->string.empty()) {
         char* end = nullptr;
