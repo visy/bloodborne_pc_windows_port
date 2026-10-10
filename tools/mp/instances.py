@@ -307,7 +307,26 @@ def run(a):
         except OSError:
             return ""
 
+    # Lease: the machine has 2 game slots for every agent (tools/mp/game_queue.py). Once this run
+    # is past its lease and someone is waiting, it ends (a run should stop at its --until markers
+    # anyway; idle games after the interesting part only hold the slots).
+    lease = float(os.environ.get("BB_MP_LEASE", "240"))
+    last_lease_check = 0.0
     while any(p.poll() is None for _, p, _ in procs) and time.time() - t0 < a.seconds + 90:
+        if time.time() - t0 > lease and time.time() - last_lease_check > 5:
+            last_lease_check = time.time()
+            try:
+                from game_queue import _locked, _prune
+                with _locked("game") as st:
+                    _prune(st)
+                    waiting = len(st["queue"])
+            except Exception:
+                waiting = 0
+            if waiting:
+                verdict = verdict or ("LEASE EXPIRED after %.0f s: %d run(s) waiting for the game slots"
+                                      % (time.time() - t0, waiting))
+                print(verdict, flush=True)
+                break
         if want_crash and not crashed:
             hit = (a.crash_at and time.time() - t0 >= a.crash_at) or (
                 crash_rx and crash_rx.search(log_text(a.crash_instance, starts[a.crash_instance])))
