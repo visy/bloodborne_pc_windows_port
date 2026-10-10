@@ -62,6 +62,10 @@ public:
     // The member's link went away: its context is dropped, peers hear peer_deactivated; its room
     // membership then times out as usual (or is held while the roster says loading).
     void context_gone(const std::string& online_id);
+    // Members whose game registered a new context while the host still knew their old one (a
+    // crash restart), since the last call; the host's director clears the host game's stale peer
+    // reservation for them (fast join, docs/party/join_timing.md).
+    std::vector<std::string> take_restarted();
     // The host's own reachable endpoint for guests (A4: public address, UPnP, LAN), used for the
     // host's records when its context_start carried no mapped address.
     void set_host_endpoint(const std::string& online_id, const std::string& addr, int port);

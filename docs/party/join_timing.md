@@ -95,23 +95,78 @@ pacing, so a host and a guest with different settings still match.
 FirstSyncCompleteWait / CreateWait (network flags), SprjMoveMapListStep::Wait_forData,
 Wait_forSelfEpilogue (effect state), the world load itself, the 2 s host-lost grace.
 
+## Round 2: ringing and finding the peer
+
+Measured with `join_timeline.py` (`E:\games\bbport\agents\joinfast\mp\r2i*_inst*.log`,
+`r2k*_inst*.log`). Both in their worlds -> host `cooperators 1`:
+
+| Step | Increment 1 | Round 2 | What |
+|---|---|---|---|
+| guest in world -> rings | 1.0 s | 0.3 s | `ring_delay` 0.3 s |
+| rings -> sign created | 5.0 s | 2.0 s | `Party: Fast bell sign` |
+| sign -> host's poll lists it | 1.0 s | 0.04 s | the host director zeroes the game's poll countdown when a sign lands on our board |
+| request -> guest JoinRoom | 1.3 s | 0.8 s | signaling ESTABLISHED / ACTIVE +50 / +100 ms |
+| JoinRoom -> client (6) | 3.4 s | 1.7 s | NexusRevolution first retransmission timeout 3000 -> 1000 ms |
+| client (6) -> loading screen | 1.2 s | 1.2 s | (round 1: 0.5 s prologue) |
+| loading the host's world | 3.3 s | 3.3 s | real load |
+| **both in world -> cooperators 1** | **16.9 s** | **~10 s** (33.73 -> 43.63, 33.40 -> 43.76) | |
+
+**Bell -> sign: 5.0 s.** The traced bisect (`BB_PARTY_TRACE_BELL=1`) showed that SendSign 0x1901320
+is not reached through 0x1900500 / 0x130cde0 / 0x1901010 but from the bell sign sender, a small
+object (vtable 0x532f390, ctor 0x18a9050). Its update 0x18a9350 counts `+0x28` down while
+`+0x20` bit 0 is set. At 0 it sends the sign of kind `+8` (0x18a9900: type 7 for the Small
+Resonant Bell, or a natural-enemy type by the ss.info percentage) and re-arms 30 s for the
+resend. Every start writes 5.0: the functions 0x18a9250 / 0x18a9280 (0x18a9264 / 0x18a9324) and
+ten inlined starts, one per sign kind 1..10, at 0x189a095 + n*0x110.
+
+`Party: Fast bell sign` sets the timer to 2.0 s. It is on with fast join; `BB_PARTY_FAST_SIGN=0`
+turns it off alone. 0.5 s was tried and rejected: in 2 of 6 runs the guest was summoned while its
+bell was barely up, and the join stalled (the host never sent the summon data, or the guest
+stopped after client (6)). 2.0 s passed every run.
+
+**Host bell while a summon runs.** The host director no longer rings within 20 s after its game
+asked to summon someone (`summon_messenger/request`). A bell in that window restarted the search,
+and the summon failed into the game's 55 s summon timeout.
+
+**Kept:** the guest's 1.2 s from client (6) to the loading screen (0.5 s prologue plus the effect
+start) and the 3.3 s load.
+
+## Guest crash rejoin: before / after
+
+| | Baseline (fast off) | Round 2 |
+|---|---|---|
+| guest restart -> host cooperators 1 | 104.9 s (62.40 -> 167.33) | 30.4 s (46.10 -> 76.51; 45.10 -> 75.48) |
+| crash -> cooperators 1 | 108.6 s | 34.0 s |
+| failed summons before the good one | 2 (host never sends the summon data) | 0 |
+
+Why it failed (static RE, confirmed live). The host's game reuses what it had for the crashed
+guest's online id and address:
+
+- **Stale peer reservation.** The peer pool 0x147b350 (SSM+0x48) keeps a peer reserved for that
+  online id. 0x147af20 renews and reuses it on every summon retry, even when its connection
+  belongs to the dead process.
+- **Stale transport connection.** The NexusRevolution connection to the same address/port lives
+  until the transport's own timeout (~25 s, the defaults at 0xcdb309 / 0xcdb314). A summon in that
+  window sends the summon data over the old connection; the restarted game waits and gives up.
+
+Fixes:
+
+1. `PartyHostService::context_start`: a member registering a new context while it is still in a
+   room is a restarted game. Its old membership ends at once (MEMBER_LEFT + signaling DEAD on the
+   host instead of the 15 s heartbeat timeout), and it is reported to the host director.
+2. Host director `ClearStalePeers`: once the host's game has left the session with the dead peer,
+   the peers reserved for that online id lose the id (first byte `#`) and the keep flag. The next
+   summon reserves a fresh peer.
+3. `Party: Fast rejoin`: the peer keep 30 -> 10 s (0x147afe4, 0x147b0a7, 0x1480cf7, 0x1480e14).
+4. `FromApi::hold_signs`: a member that was in, joining or loading into the host's world when its
+   link dropped has its new signs held for 26 s after the drop, so the host's game cannot summon
+   it over the old connection. In the runs the hold ended 2-5 s after the restarted guest's sign
+   went up, so it costs about that much. Lowering the transport timeout would remove it, but would
+   also drop players on a real network hiccup that short.
+
 ## Open
 
-- **Guest ring -> sign create (5.0 s).** SpEffectParam 9005 has no duration / interval; no 5.0
-  on SendSign / CreateSign. Bisect with `BB_PARTY_TRACE_BELL=1` (0x1900500, 0x130cde0, 0x1901010).
-- **JoinRoom -> client (3.4 s).** The guest's first 15-byte vport-30 connect is answered only by
-  the second one ~3.06 s later; the NexusRevolution transport factory 0xcdb250 has a 3000 ms
-  default (0xcdb2e8), not proven to be the resend interval.
-- **Crash rejoin.** See below.
-
-## Crash rejoin (guest crash)
-
-Baseline (fast off, `crashbase_inst*.log`): guest killed at 58.7; party link sees it at 58.77;
-our room service drops the member at 72.65 (15 s heartbeat timeout); the host's game leaves its
-session at 82.86 (its own detection, 24 s after the crash). The guest restarts at 62.4, is in its
-world at 79.0 and rings at 84.0. The host summons at 90.99 and again at 120.8 - both fail (the
-host never sends the summon data) - and only the third attempt at 151.0 works: cooperators 1 at
-167.3, **105 s after the restart**. Static RE: the host's peer pool (0x147b350) keeps a
-reservation for the guest's online id; every summon retry (0x147af20 from the SSM tick) renews
-its 30 s keep and reuses it although its connection is the crashed process's, so the summon data
-goes to a dead connection until the keep lapses.
+- A lower transport idle timeout (0xcdb309 25000 / 0xcdb314 20000 ms) would end the crash hold
+  sooner, and the host would notice a crashed guest sooner too (today ~16 s). Not done: it is also
+  the tolerance for real network hiccups.
+- Host crash rejoin was not measured; the guest's link reconnect cap is now 2 s.
