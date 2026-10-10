@@ -321,6 +321,26 @@ warp's own target was used; with +0x1521 = 1 our +0x14C4/D0/E0 write gives the s
   `user\save_backups\savedata_party\<date>-start` (written at every party start, newest 10 kept,
   plus every 10 min) over `user\savedata_party`.
 
+### 6.5 Runs 22-25: host death, guest state, three players [R]
+
+* Host death (run 22, fresh saves, host and guest in the Dream): K8 kept the member task, the
+  guest dropped HostDead_1's send-home and followed the respawn travel, **the host's chr came back
+  on the guest** (`re-join done`, host chr at its respawn spot).
+* Guest state through a B2 load (run 24, guest HP set to 100 of 106, then host death): the load
+  refilled the guest to 106; B2 now puts back the HP it had at the host's travel event
+  (`guest: HP 106 after the load -> 100 as before the travel`). Items / buffs: a phantom's
+  inventory lives in its own PlayerGameData and is not touched by the load (not measured).
+* Respawn in place (no guest reload) - not feasible with the game's code: every death goes
+  through the funnel 0x13CDE30 → a stage request → MoveMapStep, and the world dtor 0x1547B40
+  frees every chr set (WorldChrMan 0x1914F40); the game has no revive-in-place for the host
+  (DS2's seamless mod found the same). A custom one (cancel the death load, revive the chr, warp
+  to the lamp when it is in the current map, bloodstain / enemy reset by hand) would be a separate
+  project. So host death = case (2): one loading screen, the guests stay in the session and keep
+  their state.
+* Three players (run 25, `BB_PARTY_B2_TEST_MEMBERS=2`): host lamp warp with two guests in the
+  world; both guests stayed clients, loaded the host's map in host-world mode, re-created the
+  host's chr; the host got two "arrived" and re-created both guests (76 s of run time).
+
 ## 7. Risks / open items
 
 * (Closed in run 9) Guest rewind not executing in run 5. Static analysis: the update `0x1E52FE0` copies
