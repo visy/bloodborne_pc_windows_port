@@ -34,13 +34,14 @@ constexpr std::uint64_t kSetEventFlag = 0x13cfcc0;
 constexpr std::uint64_t kInventoryFind = 0x14d9e80;
 constexpr std::uint64_t kAwardItemLot = 0x17ddc50;
 constexpr std::uint64_t kGiveItemDirect = 0x131cb70;
+constexpr std::uint64_t kLampWarp = 0x13cdf30; // void (u32 ReturnPoint id)
 constexpr std::uint64_t kRecInventory = 0x328;
 constexpr std::uint32_t kTypeGoods = 0x40000000u;
 
 /// The function's first bytes match 1.09 (checked once; a mismatch is logged once).
 bool CodeOk(std::uint64_t off, std::initializer_list<std::uint8_t> bytes, const char* name, int* state) {
     if (*state == 0) {
-        *state = Matches(off, bytes) ? 1 : -1;
+        *state = MatchesOriginal(off, bytes) ? 1 : -1; // our own entry hooks do not count
         if (*state < 0) {
             std::printf("Party: start: %s (0x%llx) differs from 1.09; off\n", name, static_cast<unsigned long long>(off));
             std::fflush(stdout);
@@ -75,6 +76,12 @@ bool GiveOk() {
     return CodeOk(kGiveItemDirect, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53,
                                     0x48, 0x83, 0xec, 0x68, 0x89, 0xcb, 0x41, 0x89, 0xd6, 0x41, 0x89, 0xf7},
                   "GiveItemDirect", &st);
+}
+
+bool LampWarpOk() {
+    static int st = 0;
+    return CodeOk(kLampWarp, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x53, 0x48, 0x83, 0xec, 0x38},
+                  "lamp warp", &st);
 }
 
 std::uint64_t Slot(std::uint64_t off) {
@@ -271,6 +278,10 @@ bool WriteEventFlag(std::uint32_t flag, bool value) {
 }
 
 int GoodsCount(std::uint32_t goods_id) {
+    return ItemCount(kTypeGoods, goods_id);
+}
+
+int ItemCount(std::uint32_t type_bits, std::uint32_t id) {
     const std::uint64_t rec = Field<std::uint64_t>(Slot(kGameDataMan), 8, 0);
     if (!rec || !FindOk()) {
         return -1;
@@ -281,7 +292,7 @@ int GoodsCount(std::uint32_t goods_id) {
         return -1;
     }
     using Fn = std::int32_t(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t, std::uint32_t);
-    const std::int32_t index = reinterpret_cast<Fn>(Guest(kInventoryFind))(list, kTypeGoods, goods_id);
+    const std::int32_t index = reinterpret_cast<Fn>(Guest(kInventoryFind))(list, type_bits, id);
     if (index < 0) {
         return 0;
     }
@@ -337,12 +348,25 @@ bool AwardItemLot(std::uint32_t lot) {
 }
 
 bool GiveGoods(std::uint32_t goods_id, int count) {
+    return GiveItem(kTypeGoods, goods_id, count);
+}
+
+bool GiveItem(std::uint32_t type_bits, std::uint32_t id, int count) {
     const std::uint64_t rec = Field<std::uint64_t>(Slot(kGameDataMan), 8, 0);
     if (!rec || !Slot(kItemGetMenu) || !GiveOk()) {
         return false;
     }
     using Fn = void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t, std::uint32_t, std::int32_t);
-    reinterpret_cast<Fn>(Guest(kGiveItemDirect))(0, kTypeGoods, goods_id, count);
+    reinterpret_cast<Fn>(Guest(kGiveItemDirect))(0, type_bits, id, count);
+    return true;
+}
+
+bool LampWarp(std::uint32_t return_point) {
+    if (!Field<std::uint64_t>(Slot(kWorldChrMan), 0x60, 0) || !LampWarpOk()) {
+        return false;
+    }
+    using Fn = void(BB_COOP_SYSV*)(std::uint32_t);
+    reinterpret_cast<Fn>(Guest(kLampWarp))(return_point);
     return true;
 }
 

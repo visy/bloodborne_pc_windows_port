@@ -14,6 +14,8 @@
 #include "np_hle.h"
 #include "np_session.h"
 
+#include "../../party_env.h"
+
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -66,8 +68,11 @@ void announce_locked(unsigned conn_id, Conn& c) {
     c.announced = true;
     session::peers_set_conn(c.member_id, conn_id, 2);
     const unsigned ctx = c.ctx;
-    session::dispatch_after(200, session::Prio::Signaling, [ctx, conn_id] { fire(ctx, conn_id, kEvEstablished, 0); });
-    session::dispatch_after(400, session::Prio::Signaling, [ctx, conn_id] { fire(ctx, conn_id, kEvActive, 0); });
+    // BB_PARTY_FAST_JOIN (default on; docs/party/join_timing.md): +50 / +100 ms.
+    static const bool fast = bb_party_switch_on("BB_PARTY_FAST_JOIN") != 0;
+    session::dispatch_after(fast ? 50 : 200, session::Prio::Signaling,
+                            [ctx, conn_id] { fire(ctx, conn_id, kEvEstablished, 0); });
+    session::dispatch_after(fast ? 100 : 400, session::Prio::Signaling, [ctx, conn_id] { fire(ctx, conn_id, kEvActive, 0); });
 }
 
 BBNET_ABI int sig_init(std::uint64_t, int, int, std::uint64_t) {

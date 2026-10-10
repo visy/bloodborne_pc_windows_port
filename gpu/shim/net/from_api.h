@@ -103,6 +103,11 @@ public:
     // A member's link went away (crash, timeout, leave): its signs leave the board, so no host
     // summons a game that is not there (returns how many). A restarted game puts up a new one.
     std::size_t drop_signs(const std::string& online_id);
+    // A member that was in (or joining) the host's world lost its link: the host's game keeps its
+    // transport connection to that address until the transport's own timeout (25 s), and summoning
+    // the restarted game over it fails (the guest waits for summon data that goes to the dead
+    // connection). Its new signs are not offered to anyone for `ms` (docs/party/join_timing.md).
+    void hold_signs(const std::string& online_id, int ms);
     std::uint64_t user_id_of(const std::string& online_id);
     /// The Chalice Dungeon channel board (tests, the party layer).
     ChannelBoard& channels() { return channels_; }
@@ -122,6 +127,7 @@ private:
     ChannelBoard channels_;
     mutable std::mutex mu_;
     std::vector<Sign> signs_;
+    std::vector<std::pair<std::string, std::int64_t>> holds_;  // online id -> steady ms until
     std::uint64_t next_sign_ = 1;
     std::vector<std::pair<std::string, std::uint64_t>> users_;  // online id -> UserId
     std::uint64_t next_user_ = 1001;
