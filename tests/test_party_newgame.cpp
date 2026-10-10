@@ -25,7 +25,7 @@ static int g_checks = 0;
 
 namespace {
 
-enum class Screen { Logos, Title, Brightness, Controls, Movie, Contract, Dialog, Loading, Opening, Clinic, Loaded };
+enum class Screen { Logos, Title, Fade, Brightness, Controls, Movie, Contract, Dialog, Loading, Opening, Clinic, Loaded };
 
 struct Model {
     Screen screen = Screen::Logos;
@@ -33,6 +33,7 @@ struct Model {
     bool yes = false;
     int ime = 0, movies = 0;
     bool has_character = false; // title default = Continue
+    double continue_fade = 0;   // Continue: the title fades this long before the loading screen
     bool ignore_next_cross = false;
     int drop_press = -1; // the game misses this press (0-based count of all presses)
     int presses = 0;
@@ -44,6 +45,8 @@ struct Model {
     std::uint64_t seq = 0;
     bool texts = true; // false: no screen signal (the game menu hooks off)
     double loading_at = -1;
+    double fade_until = 0;
+    int presses_after_continue = 0;
 
     void Go(Screen s, double t, bool with_texts = true) {
         screen = s;
@@ -53,14 +56,16 @@ struct Model {
     }
 
     void Press(std::uint32_t b, double t) {
+        if (screen == Screen::Fade || (has_character && screen == Screen::Loading)) ++presses_after_continue;
         if (t < busy_until) return; // still building
         auto wrap = [&](int n, int d) { row = (row + d + n) % n; };
         switch (screen) {
         case Screen::Title:
             if (b == kPadCross) {
                 if (has_character) {
-                    screen = Screen::Loading;
-                    until = t + 5;
+                    screen = continue_fade > 0 ? Screen::Fade : Screen::Loading;
+                    until = t + continue_fade + 5;
+                    fade_until = t + continue_fade;
                 } else {
                     Go(Screen::Brightness, t);
                 }
@@ -129,6 +134,7 @@ struct Model {
             }
             texts_at = -1;
         }
+        if (screen == Screen::Fade && t >= fade_until) screen = Screen::Loading;
         if (screen == Screen::Loading && t >= until) screen = has_character ? Screen::Loaded : Screen::Opening;
         NewGameInput in;
         in.t = t;
@@ -216,6 +222,17 @@ void TestSaveWithCharacter() {
     CHECK(m.ime == 0);
 }
 
+// Continue fades the title out before its loading screen (seen live: a save with a character sat
+// at the title / got the empty save's Brightness presses). Nothing more is pressed after Continue.
+void TestSaveWithCharacterFade() {
+    Model m;
+    m.has_character = true;
+    m.continue_fade = 2.5;
+    CHECK(Run(m, 120) == NewGamePhase::Done);
+    CHECK(m.screen == Screen::Loaded);
+    CHECK(m.presses_after_continue == 0);
+}
+
 void TestControlsCrossIgnoredOnce() {
     Model m;
     m.ignore_next_cross = true;
@@ -281,6 +298,7 @@ int main() {
     TestNoScreenSignal();
     TestTitleNeverReady();
     TestSaveWithCharacter();
+    TestSaveWithCharacterFade();
     TestControlsCrossIgnoredOnce();
     TestMissedPresses();
     TestWarpParse();
