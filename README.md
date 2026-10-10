@@ -1,4 +1,7 @@
-# bloodborne_pc_windows_port: Native Windows Port of Bloodborne [![Github downloads](https://img.shields.io/github/downloads/Mrsuss60/bloodborne_pc_windows_port/total?style=flat-square&color=blue)]([https://github.com/Mrsuss60/GamePad.360.Tester/releases](https://github.com/Mrsuss60/bloodborne_pc_windows_port/releases))
+# bloodborne_pc_windows_port: Native Windows Port of Bloodborne
+<a href="https://github.com/Mrsuss60/bloodborne_pc_windows_port/releases">
+  <img src="https://img.shields.io/github/downloads/Mrsuss60/bloodborne_pc_windows_port/total?style=for-the-badge&color=blue" width="150" alt="GitHub downloads">
+</a>
 
 `bloodborne_pc_windows_port` is a native 64-bit Windows port of the PlayStation 4 executable of *Bloodborne* (CUSA03173, version 1.09). 
 
