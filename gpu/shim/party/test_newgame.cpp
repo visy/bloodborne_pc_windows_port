@@ -230,12 +230,15 @@ std::uint32_t NewGameDriver::Step(const NewGameInput& in, std::string* log) {
         }
         if (in.opening_done && !in.cutscene) {
             Enter(NewGamePhase::Done, in.t, log, "in the clinic world (12410000 ON, 9180 OFF)");
-        } else if (!in.opening_done && in_phase >= 2.0) {
+        } else if ((!in.opening_done || in.cutscene) && in_phase >= 2.0) {
+            // 12410000 alone is not the end: a party guest's C2 catch-up may set it while the
+            // opening remo still plays (9180 ON) - keep skipping until 9180 is OFF too.
             if (tries_ < 10) {
                 ++tries_;
                 phase_at_ = in.t;
                 if (log) {
-                    *log = "opening cutscene (12410000 OFF): Options (try " + std::to_string(tries_) + ")";
+                    *log = std::string("opening cutscene (12410000 ") + (in.opening_done ? "ON" : "OFF") +
+                           ", 9180 " + (in.cutscene ? "ON" : "OFF") + "): Options (try " + std::to_string(tries_) + ")";
                 }
                 Queue({{kPadOptions, 2.0}});
             } else {
