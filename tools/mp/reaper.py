@@ -127,6 +127,19 @@ def main():
             holders = []
         now = time.time()
         live = set()
+        # Blocked agents (block.txt next to the queue file, one root fragment per line): their runs
+        # are ended at once - for agents relaunching a broken test before fixing it.
+        try:
+            blocked = [l.strip().lower() for l in (g_QUEUE_DIR / "block.txt").read_text().splitlines() if l.strip()]
+        except OSError:
+            blocked = []
+        for e in list(holders):
+            r = e["root"].replace("/", "\\").lower()
+            if any(b in r for b in blocked):
+                end_run(Path(e["root"]))
+                subprocess.run(["taskkill", "/PID", str(e["pid"]), "/T", "/F"], capture_output=True)
+                print(time.strftime("%H:%M:%S"), "blocked: stopped", e.get("label") or e["root"], flush=True)
+                holders.remove(e)
         # Gate: while agents/gate.txt exists only priority roots (priority.txt) may hold game slots;
         # end anything else (agents on an older queue that doesn't know the gate).
         qdir = g_QUEUE_DIR
