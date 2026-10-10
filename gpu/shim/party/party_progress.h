@@ -59,6 +59,9 @@ struct Value;
 namespace coop {
 struct GameSnapshot;
 }
+namespace party {
+class PartyLink;
+}
 
 namespace coop::progress {
 
@@ -343,6 +346,12 @@ void Tick(const GameSnapshot& s);
 /// Session boundaries (dumps; guest: the cursor is kept across rejoins of the same host epoch).
 void SessionStarted(const char* label);
 void SessionEnded();
+/// The director glue (party_progress_bridge.cpp), PartyDirector::Tick right after ReadGameState,
+/// main thread, `link` may be null: Tick(s); host: the captured changes to every member (EVENT
+/// "flags"), the full snapshot to each newly connected / resumed member (EVENT "flag_snapshot",
+/// retried until the baseline exists), session boundaries (hosting / first member connected ->
+/// "host", last one gone -> ended); guest: entering / leaving the host's world -> "guest" / ended.
+void DirectorTick(const GameSnapshot& s, party::PartyLink* link);
 
 // Host.
 /// C3 hook point (party_items): called on the main thread, outside every progress lock, once for

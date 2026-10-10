@@ -10,6 +10,7 @@
 #include "party_items.h"
 #include "party_phantom.h"
 #include "party_fourp.h"
+#include "party_progress.h"
 #include "party_travel.h"
 #include "upnp_win.h"
 
@@ -667,6 +668,11 @@ LinkCallbacks make_callbacks(bool host) {
                 std::string err;
                 if (coop::TravelFromJsonText(body, &t, &err)) coop::RequestGuestTravel(t);
                 else plog("travel event: %s", err.c_str());
+                return;
+            }
+            if (name == coop::progress::kEventFlags || name == coop::progress::kEventFlagSnapshot) {
+                std::string err;  // C2: the host's flags, applied by the main-thread tick
+                if (!coop::progress::OnLinkEvent(name, body, &err)) plog("%s event: %s", name.c_str(), err.c_str());
                 return;
             }
             if (name == coop::kItemsEventName || name == coop::kItemsFullEventName) {  // C3: the host's items
