@@ -250,6 +250,9 @@ into the host's Dream), guest log `Party guest services:` [R]:
   holds level 37 / echoes 19460 at the record (+0x86E8 / +0x86EC); the host's save keeps its
   echoes 0. Screenshots: `agents/guestsvc/evidence/bath_messenger_purchase` (the "Buy" list with
   the cursor on Blood Vial 540, the quantity box).
+* **Insight shop purchase (t210698) [R]**: same script (`warp=talk:210698;buy`): the Insight
+  messenger's Purchase list opened on the guest and the first row was bought: `Insight 6 -> 5`;
+  after the session the guest's party save holds Insight 5 (+0x86DC), the host's save Insight 6.
 * **Doll talk [R]**: the guest's Doll is solid (2.5) and her talk menu (Channel the Blood Echoes /
   Talk / Leave) opens on the guest; the kneel event ran after the rewrite; the level-up menu
   needs the 12100113 handshake (2.6, implemented, live run pending).
