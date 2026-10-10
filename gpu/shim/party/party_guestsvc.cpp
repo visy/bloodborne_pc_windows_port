@@ -1138,6 +1138,20 @@ void LampPressTick(const GameSnapshot& s, double now) {
         return;
     }
     P.next = now + 1.5;
+    if (const std::size_t f = g.test.find("lampflag="); f != std::string::npos) {
+        // The lamp's own "used" flag (the one its common event 7200 instance waits for), as the
+        // lamp interaction would set it on this game (load mode 1: the host-world overlay).
+        if (P.presses++ == 0) {
+            const std::uint32_t flag = std::uint32_t(std::strtoul(g.test.c_str() + f + 9, nullptr, 10));
+            const bool ok = WriteEventFlag(flag, true);
+            Log("test: lamppress: lamp flag %u set on the guest%s (map %s); its 7200 runs the warp", flag,
+                ok ? "" : " - FAILED", MapName(s.map_id).c_str());
+        } else if (P.presses > 10) {
+            P.done = true;
+            Log("test: lamppress: FAILED: no lamp request 15 s after the lamp flag");
+        }
+        return;
+    }
     std::uint32_t prompt = 0;
     const bool up = PromptUp(&prompt);
     if (!up && P.presses == 0 && P.next - now < 1.6) {
