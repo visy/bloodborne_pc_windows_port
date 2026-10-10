@@ -96,7 +96,33 @@ void p2p_punch(const char* label, std::uint32_t addr, std::uint16_t port, std::u
 // One line about the party port (counters), for the status line.
 std::string p2p_status();
 // This machine's LAN IPv4 address (network order), BB_PARTY_LOCAL_IP overriding; 0 when none.
+// Chosen once (the first use) and logged.
 std::uint32_t local_ipv4();
+
+// The LAN address choice (net_socket.cpp query_local_net), exposed for the tests.
+// The address forced by the environment (network order): BB_PARTY_LOCAL_IP, else 127.0.0.1 under
+// BB_PARTY_LOOPBACK=1 / BB_MP_LOCAL_TEST=1; 0 when nothing is forced. `source` names the variable.
+std::uint32_t forced_local_ipv4(std::string* source = nullptr);
+// A network adapter as the choice sees it.
+struct LanAdapter {
+    std::string name;         // friendly name + " / " + description
+    std::uint32_t ip = 0;     // network order
+    bool loopback = false;    // the software loopback adapter (or 127/8)
+    bool tunnel = false;      // IF_TYPE_TUNNEL (Teredo, 6to4 ...)
+    bool gateway = false;     // has an IPv4 default gateway
+    bool default_route = false;  // the interface the system routes the Internet through
+    bool physical = false;    // Ethernet or Wi-Fi interface type
+    std::uint32_t metric = 0;    // IPv4 interface metric (lower first), a tie breaker
+};
+// Hyper-V / WSL / Docker switches, VirtualBox / VMware host-only adapters, VPN and overlay
+// adapters (TAP, Wintun, WireGuard, Tailscale, ZeroTier, Hamachi, Radmin ...): by name.
+bool adapter_is_virtual(const std::string& name);
+// < 0: never chosen (loopback, tunnel, 169.254/16, no address). Otherwise higher wins: a
+// non-virtual adapter always beats a virtual one; then default route, gateway, physical type.
+int lan_adapter_score(const LanAdapter& a);
+// Queries the adapters now (not cached) and returns the address local_ipv4() would pick;
+// `how` describes the choice (the log line).
+std::uint32_t query_local_ipv4(std::string* how = nullptr);
 
 // --- NP (np_manager.cpp) ---
 void fill_npid(void* out, const char* online);
