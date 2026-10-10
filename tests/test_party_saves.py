@@ -83,6 +83,47 @@ class LauncherEnvTests(unittest.TestCase):
         self.assertIsNone(launcher.party_env({"party_mode": ""})["BB_PARTY_SAVE"])
         self.assertEqual(launcher.party_saves_module().PARTY, "savedata_party")
 
+    def test_party_env_rules_and_sync(self):
+        import importlib.util
+        from paths import ROOT
+        try:
+            spec = importlib.util.spec_from_file_location("bb_launcher", ROOT / "launcher.py")
+            launcher = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(launcher)
+        except Exception as ex:  # no tkinter / display
+            self.skipTest(f"launcher.py not importable here: {ex}")
+        # Defaults = the game's defaults (docs/party/DEBUG_SWITCHES.md, docs/PARTY.md)
+        env = launcher.party_env({"party_mode": "host"})
+        expected = {
+            "BB_PARTY_START": "prologue_solo", "BB_PARTY_GUEST_INSIGHT": "parity",
+            "BB_SAVE_BACKUP_MINUTES": "10", "BB_SAVE_BACKUP_KEEP": "10",
+            "BB_PARTY_GRANT_BELLS": "1", "BB_PARTY_OPEN_WORLD": "1", "BB_PARTY_GUEST_RESPAWN": "1",
+            "BB_PARTY_GUEST_REFILL": "1", "BB_PARTY_GUEST_MARK": "0", "BB_PARTY_FULL_REWARDS": "1",
+            "BB_PARTY_ITEMS": "1", "BB_PARTY_PROGRESS": "1", "BB_PARTY_PROGRESS_NPC": "0",
+            "BB_PARTY_STORY": "1", "BB_PARTY_STORY_MIRROR": "1", "BB_PARTY_RESTART": "1",
+        }
+        for key, value in expected.items():
+            self.assertEqual(env[key], value, key)
+        env = launcher.party_env({"party_mode": "join", "party_start": "immediate", "party_guest_insight": "0",
+                                  "party_backup_minutes": "0", "party_backup_keep": "50",
+                                  "party_progress_npc": True, "party_story_mirror": False,
+                                  "party_restart": False, "party_guest_mark": True})
+        self.assertEqual((env["BB_PARTY_START"], env["BB_PARTY_GUEST_INSIGHT"]), ("immediate", "0"))
+        self.assertEqual((env["BB_SAVE_BACKUP_MINUTES"], env["BB_SAVE_BACKUP_KEEP"]), ("0", "50"))
+        self.assertEqual((env["BB_PARTY_PROGRESS_NPC"], env["BB_PARTY_STORY_MIRROR"]), ("1", "0"))
+        self.assertEqual((env["BB_PARTY_RESTART"], env["BB_PARTY_GUEST_MARK"]), ("0", "1"))
+        # Bad values fall back to the defaults
+        env = launcher.party_env({"party_mode": "host", "party_start": "x", "party_backup_keep": "7"})
+        self.assertEqual((env["BB_PARTY_START"], env["BB_SAVE_BACKUP_KEEP"]), ("prologue_solo", "10"))
+        # Party off: every party variable is unset (run.bat sees none of them)
+        off = launcher.party_env({"party_mode": "", "party_restart": False})
+        self.assertTrue(all(v is None for v in off.values()))
+        self.assertIn("BB_PARTY_RESTART", off)
+        # run.bat started without the launcher gets the same values through --write-env
+        all_env = launcher.settings_env({"party_mode": "host", "party_story": False})
+        self.assertEqual(all_env["BB_PARTY_STORY"], "0")
+        self.assertEqual(all_env["BB_SKIP_NETWORK_CHOICE"], "online")
+
 
 if __name__ == "__main__":
     unittest.main()
