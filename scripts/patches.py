@@ -81,7 +81,8 @@ def skip_network_choice(env=os.environ):
 def network_choice_patch(env=os.environ, available=None):
     """The title-dialog patch for BB_SKIP_NETWORK_CHOICE: '0' none (the game asks), 'online' the
     PLAY ONLINE variant (party mode; none, with a warning, when the XML lacks it), else PLAY OFFLINE."""
-    value=env.get('BB_SKIP_NETWORK_CHOICE','1').strip().lower()
+    # Party mode (BB_PARTY set) boots ONLINE through the party NP layer unless told otherwise.
+    value=env.get('BB_SKIP_NETWORK_CHOICE','online' if env.get('BB_PARTY','').strip() else '1').strip().lower()
     if value=='0':
         return None
     if value=='online':
@@ -488,6 +489,10 @@ def main():
         raw_names.append(INTEL_TONEMAP)
     available={m.get('Name') for m in ET.parse(a.xml).getroot().iter('Metadata') if m.get('AppVer')==a.app_version}
     choice=network_choice_patch(available=available)
+    if party_mode() and choice==SKIP_NETWORK_CHOICE_ONLINE and SKIP_NETWORK_CHOICE in raw_names:
+        # An explicit offline skip (BB_PATCHES) would boot a party member offline: the online one.
+        print(f'Patches: party mode: "{SKIP_NETWORK_CHOICE}" -> "{SKIP_NETWORK_CHOICE_ONLINE}"',file=sys.stderr)
+        raw_names=[SKIP_NETWORK_CHOICE_ONLINE if n==SKIP_NETWORK_CHOICE else n for n in raw_names]
     if choice and choice not in raw_names and not any(n in raw_names for n in (SKIP_NETWORK_CHOICE,SKIP_NETWORK_CHOICE_ONLINE)):
         raw_names.append(choice)
     raw_names += [n for n in party_patches() if n not in raw_names]

@@ -1079,6 +1079,13 @@ std::string npid_text(const void* npid) {
     return buf;
 }
 
+bool party_host_lost(const std::string& why) {
+    std::lock_guard<std::mutex> lk(g.mu);
+    if (!g.in_room || g.is_host) return false;
+    room_gone_locked(kEvRoomDestroyed, kCauseLeave, nullptr, 0, "the party host is gone: " + why);
+    return true;
+}
+
 bool matching2_context_started() {
     std::lock_guard<std::mutex> lk(g.mu);
     return g.started;
