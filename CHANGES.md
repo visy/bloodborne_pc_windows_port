@@ -2,6 +2,15 @@
 
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
+
+## 0.5 (Windows port 0.5, merged with upstream bbport 0.5)
+
+- **Version**: 0.5 everywhere: `VERSION` at the repository root feeds CMake (`project(... VERSION)`, the `BBPORT_VERSION` define and the `bbport.exe` version resource), `bbport.exe --version` and its first log line, the launcher's title bar and the overlay menu's corner.
+- **Upstream 0.5** ([docs/CHANGES_0.5.md](docs/CHANGES_0.5.md)): native game settings pages (*Display*, *Effects*) with slider choices, the command-processor decoder (`gpu/cp`, `cp-decoder-test`) and game profiles (`gpu/games`), GPU timestamps, occlusion queries behind `BB_OCCLUSION_QUERIES=1`, the memory layer's shared write traps (`runtime_memory_trap`), VRAM churn fixes and the texture collector's emergency pass.
+- **Windows adaptations**: the write trap table (runtime) and the image watcher table (page manager) are reserved with `VirtualAlloc` and committed in 64 KiB chunks instead of `mmap(MAP_NORESERVE)`; traps are applied with `VirtualProtect` and kept on view pieces the Windows runtime remaps; fault addresses come from the Windows exception context; render-pass-break diagnostics use `GetModuleHandleEx` instead of `dladdr`.
+- **Kept from this port**: the async pipeline compiler and shader precompile (upstream's rule that full-screen passes and indirect draws never go without their pipeline is folded in), the second-based texture collector ages (upstream's `BB_GC_PRESSURE_IDLE_SECONDS` overrides them), the tabbed overlay menu, `launcher.py`, `run.bat`, the bbhost stability fixes and party co-op (still in development).
+- **Memory model**: upstream's *Auto* (the new model on AMD) is Linux-only; `run.bat` keeps the 0.3 model unless `BB_PC_MODEL=1` is set by hand.
+
 ---
 
 ## 1. Crash Analysis & Resolutions (Wolf Enemy Combat & Stability)

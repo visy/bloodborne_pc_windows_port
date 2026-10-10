@@ -16,6 +16,8 @@ from pathlib import Path
 from tkinter import ttk, filedialog, messagebox
 
 APP_DIR = Path(__file__).resolve().parent
+# The port's version (VERSION at the repository root; the release has no such file).
+PORT_VERSION = "0.5"
 RUN_BAT = APP_DIR / "run.bat"
 LOG_FILE = APP_DIR / "launcher.log"
 SETTINGS_FILE = APP_DIR / "launcher_settings.json"
@@ -665,7 +667,7 @@ class Tooltip:
 class BloodborneLauncher(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Bloodborne PC Launcher")
+        self.title(f"Bloodborne PC Launcher {PORT_VERSION}")
         self.geometry("780x760")  # the Party tab is the tallest settings tab
         self.minsize(720, 680)
 

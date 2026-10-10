@@ -35,6 +35,8 @@ void runtime_memory_set_write_watch(uintptr_t, uint64_t, int) { std::abort(); }
 void runtime_memory_set_guest_chunk_allocator(int (*)(uint64_t, uint64_t)) {}
 void runtime_memory_set_guest_chunk_whole(int) {}
 int runtime_memory_vma_info(uintptr_t, int*, int*, uintptr_t*) { std::abort(); }
+void runtime_memory_trap(uintptr_t, uint64_t, unsigned, int) { std::abort(); }
+unsigned runtime_memory_trap_reasons(uintptr_t) { std::abort(); }
 int runtime_memory_direct_phys(uintptr_t, uint64_t*, uintptr_t*) { std::abort(); }
 void* runtime_memory_backing_pointer(uint64_t) { std::abort(); }
 uintptr_t runtime_memory_resolve(const char*) { std::abort(); }

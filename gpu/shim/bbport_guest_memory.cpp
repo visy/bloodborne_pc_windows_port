@@ -504,8 +504,9 @@ std::atomic<int> layer_default{-1};
 
 bool PcModelGpu(const Vulkan::Instance& instance) {
     static const bool ok = [&] {
-        // AMD: the sparse arena (dma-buf chunks); the startup checks in Usable() decide whether
-        // the driver can do it. Other GPUs: the layer's memory module. Not the arena on NVIDIA:
+        // The layer's memory module on every GPU; the startup checks in Usable() decide whether
+        // the driver can do it. The sparse arena (BB_LAYER_MEMORY=0) is for AMD; not on NVIDIA
+        // (only with BB_PC_MODEL_ANY_GPU=1):
         // its host memory import passes those checks, but each rebinding of the game's memory (vkQueueBindSparse, blocks moved to and from VRAM) held the GPU for 10 s
         // and more, the desktop frozen with it (GTX 1660 Ti, driver 615.71). The Linux driver's
         // sparse binding has slowed down since 555: the time grows with the pages already bound
@@ -515,10 +516,13 @@ bool PcModelGpu(const Vulkan::Instance& instance) {
         constexpr std::uint32_t AmdVendor = 0x1002, NvidiaVendor = 0x10de;
         const std::uint32_t vendor = instance.GetVendorID();
         const char* any = std::getenv("BB_PC_MODEL_ANY_GPU");
-        // Other GPUs than AMD get the layer's memory module (no sparse binding of the game's
-        // memory, see LayerMemory) unless BB_LAYER_MEMORY says otherwise; it runs on any GPU.
-        layer_default.store(vendor != AmdVendor ? 1 : 0, std::memory_order_relaxed);
-        if (vendor != AmdVendor && LayerMemory()) {
+        // AMD keeps the sparse arena, every other GPU gets the layer's memory module (no sparse
+        // binding of the game's memory, see LayerMemory); BB_LAYER_MEMORY=1/0 by hand. On an
+        // RX 7800 XT the module was on par with the arena on a route in Yharnam, but in the
+        // Hunter's Dream it kept ~1 GB of the area's data out of VRAM (ranges with a few
+        // unannounced blocks stay in place without volatile blocks): 100 FPS against ~200.
+        layer_default.store(vendor == AmdVendor ? 0 : 1, std::memory_order_relaxed);
+        if (LayerMemory()) {
             std::printf("Guest memory: the new memory model through the layer's memory module on "
                         "this GPU (vendor 0x%04x): no sparse binding of the game's memory\n",
                         vendor);
@@ -541,8 +545,8 @@ bool HostImported() {
 }
 
 bool LayerMemory() {
-    // BB_LAYER_MEMORY=1/0 chooses; else the GPU decides (PcModelGpu, which asks first): the
-    // sparse arena on AMD, the module elsewhere (NVIDIA's sparse binding stalls for seconds).
+    // BB_LAYER_MEMORY=1/0 chooses; else PcModelGpu (which asks first) sets the module for every GPU
+    // (BB_LAYER_MEMORY=0: the sparse arena; NVIDIA's sparse binding stalls for seconds).
     static const bool on = [] {
         const char* env = std::getenv("BB_LAYER_MEMORY");
         if (env && *env) {

@@ -419,7 +419,8 @@ static void PagedStore(EmitContext& ctx, const EmitContext::BufferDefinition& bu
         ctx.OpShiftLeftLogical(ctx.U32[1], index, ctx.ConstU32(u32(std::countr_zero(bytes))));
     const auto access = ctx.PagedPointer(buffer, byte_offset, bytes, type);
     ctx.OpStore(access.pointer, value, spv::MemoryAccessMask::Aligned, bytes);
-    if (ctx.info.pgm_hash == BufferCopyShaderHash) {
+    if (ctx.profile.buffer_copy_shader_hash != 0 &&
+        ctx.info.pgm_hash == ctx.profile.buffer_copy_shader_hash) {
         // Original shader, original copy list, executed on the GPU. Its destinations include
         // CPU-consumed data: update the guest bytes as well as the current VRAM view. Other
         // compute shaders retain their normal mirror ownership and copy-back bookkeeping.

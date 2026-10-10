@@ -138,8 +138,10 @@ public:
     bool LoadGraphicsPipeline(Serialization::Archive& ar);
     bool LoadPipelineStage(Serialization::Archive& ar, size_t stage);
 
+    /// `indirect`: the draw's arguments are in memory (bbport: never skipped while compiling).
     const GraphicsPipeline* GetGraphicsPipeline(const DrawIndirectParams params = {},
-                                                const PreparedDraw* prepared = nullptr);
+                                                const PreparedDraw* prepared = nullptr,
+                                                bool indirect = false);
 
     /// bbport: worker side of draw preparation: selects the pipeline key for `sel.regs` without
     /// creating anything. False when a program or permutation does not exist yet.
@@ -225,7 +227,7 @@ private:
     void WaitJob(const std::shared_ptr<GraphicsJob>& job);
     /// Async graphics pipelines: frame and render target history, the skip decision.
     void TrackTargets();
-    bool DrawSkippable() const;
+    bool DrawSkippable(bool indirect) const;
     struct TargetSlot {
         VAddr addr;
         u32 last_frame;

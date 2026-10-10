@@ -642,9 +642,19 @@ static int64_t do_pread(int fd,void *buffer,uint64_t size,int64_t offset) {
     __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,(uint64_t)n,__ATOMIC_RELAXED);
     return n;
 }
+/* Pages the GPU side keeps without access (data newer in VRAM, runtime_memory_trap reasons from
+ * 16 up) would make the kernel's copy fail with EFAULT: a user-mode read of each page first goes
+ * through the handler, which copies the data back. */
+static void touch_for_read(const void *buffer,uint64_t size) {
+    if (!size) return;
+    uintptr_t p=(uintptr_t)buffer & ~(uintptr_t)4095, end=(uintptr_t)buffer+size;
+    for (; p<end; p+=4096)
+        (void)*(volatile const unsigned char *)(p<(uintptr_t)buffer ? (uintptr_t)buffer : p);
+}
 static int64_t do_write(int fd,const void *buffer,uint64_t size) {
     int h=host_fd_written(fd);
     if (h<0) return -EBADF;
+    touch_for_read(buffer,size);
     ssize_t n=write(h,buffer,size);
     if (n<0) return -errno;
     __atomic_add_fetch(&writes,1,__ATOMIC_RELAXED);
@@ -656,6 +666,7 @@ static int64_t do_pwrite(int fd,const void *buffer,uint64_t size,int64_t offset)
     if (fd>=0 && fd<3) return do_write(fd,buffer,size);
     int h=host_fd_written(fd);
     if (h<0) return -EBADF;
+    touch_for_read(buffer,size);
     ssize_t n=pwrite(h,buffer,size,offset);
     return n<0 ? -errno : n;
 }
