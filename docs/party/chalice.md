@@ -169,10 +169,29 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
   bookkeeping (0x13bdc00). Too risky for a save; not done. Main-world flags are never touched by
   any of this: the chalice groups are separate (event_flags.md 2).
 
-## 6. Open / not done
+* **Vanilla side effect, unchanged**: the quick join rewrites the summoned game's slot-0 record
+  and clears the current chalice groups (0x1aa8410 -> 0x13bdc00) — a member summoned into a chalice
+  dungeon loses the progress of the dungeon it had in that slot, exactly as in the original game.
 
-* Live: the altar ritual / quick join path was not driven end to end in the test harness (section
-  7 lists what was run). The ChannelId flag offsets (+32/+64) are read by party_chalice and logged;
+## 6. The altar objects (for automation later) — C
+
+* `SprjHolygrail.obj[k]` is a **SprjDungeonGateIns** (the per-slot altar object, step table
+  0x557e840, steps registered at 0x1abf510: Init 0x1ab5370, ChannelLoad, ModeSwitch 0x1ab5490,
+  DispError, NoHolygrail 0x1ab5750 (the altar menu: its decide handler 0x1abea30 calls the random
+  join), LocalRitual 0x1ab71c0, ServerRitual 0x1ab7740, LocalDungeon 0x1ab7a50, ServerDungeon
+  0x1ab7d00, Finish). `+0x364` = mode (0..6 -> steps 1/8/11/14/17/20/5), `+0x36c` = helper busy,
+  `+0x368` = the request it forwards to its helper (`+0x108`).
+* The ritual request 0x1aa47a0(helper, ritual) takes a ritual descriptor the altar menu builds
+  (0x1ab9270 / 0x1b038b0; chalice id at +0x10) and the creator's name (PlayerGameData +0x5d0).
+* The test fixtures used to get there: `BB_PARTY_DIRECTOR_TEST=goods=6109:1,goods=7000:2,
+  echoes=5000,log_pos,place=MAP:X:Y:Z:YAW,warp=MAP:POINT` (party_director.h). The Ritual Altar
+  part (`アイテム_祭壇`, entity 2111101) stands at (136.19, -19.17, 139.77) in m21_01; its action
+  region 2112999 (box 2.2 x 8 x 1) at (131.77, -19.96, 140.54).
+
+## 7. Open / not done
+
+* Live: the altar ritual / quick join path was not driven end to end in the test harness (the
+  report lists what was run). The ChannelId flag offsets (+32/+64) are read by party_chalice and logged;
   the slot-0 assumption for joins is inferred from the requesters.
 * A guest that ends in its own copy of the dungeon (e.g. it entered the same glyph itself) is not
   synchronised to the host's progress there (section 5).
