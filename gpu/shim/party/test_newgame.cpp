@@ -110,8 +110,9 @@ std::uint32_t NewGameDriver::Step(const NewGameInput& in, std::string* log) {
         }
         // A save with a character: Continue fades out before its loading screen shows; give it the
         // time before treating the title as an empty save's (Brightness would get Down / Cross).
-        // (an empty save's Brightness screen shows at once: its new texts end the wait).
-        if (in_phase < 4.0 && !(in.screen_seq != screen_mark_ && in.screen_quiet >= kSettle)) {
+        // No early exit on new texts: Continue looks texts up while it fades too (seen live: the
+        // Brightness presses went out 1 tick after Continue's texts). An empty save waits 5 s more.
+        if (in_phase < 5.0) {
             break;
         }
         // Brightness: Down once it is up (4 s at most), Cross on Next.

@@ -66,6 +66,7 @@ struct Model {
                     screen = continue_fade > 0 ? Screen::Fade : Screen::Loading;
                     until = t + continue_fade + 5;
                     fade_until = t + continue_fade;
+                    texts_at = t + 0.2; // Continue looks texts up while it fades (seen live)
                 } else {
                     Go(Screen::Brightness, t);
                 }
@@ -195,7 +196,7 @@ void TestHappyPath() {
     // Event driven: from the title (5 s) to the contract's loading screen in a few seconds, every
     // press as soon as its screen took input (the fixed waits took ~30 s).
     std::printf("happy path: title at 5.0 s, loading at %.1f s, %d taps\n", m.loading_at, taps);
-    CHECK(m.loading_at > 5 && m.loading_at < 14);
+    CHECK(m.loading_at > 5 && m.loading_at < 19); // incl. the 5 s Continue wait after New Game
 }
 
 void TestNoScreenSignal() {
