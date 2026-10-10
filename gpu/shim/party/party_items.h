@@ -62,12 +62,26 @@ enum class ItemSource : std::uint8_t {
 const char* ItemSourceName(ItemSource s);
 ItemSource ItemSourceFromName(const std::string& name);
 
+/// One item of a lot as the host resolved it (EVENT "items" row element 6): lotItemCategory
+/// (0 weapon, 1 armor, 2 rune / accessory, 4 goods), lotItemId, the count given.
+struct GrantItem {
+    std::uint32_t category = 0;
+    std::int32_t id = -1;
+    std::int32_t count = 1;
+    bool operator==(const GrantItem& o) const { return category == o.category && id == o.id && count == o.count; }
+};
+/// Items per grant at most (a lot and its continuation rows; the longest chain in 1.09 is 3).
+constexpr std::size_t kMaxGrantItems = 16;
+
 struct ItemGrant {
     std::uint64_t seq = 0;
     std::int32_t lot = kItemNone;
     std::int32_t flag = kItemNone;   ///< the lot's pickup flag (getItemFlagId), -1 if none
     std::int32_t ledger = kItemNone; ///< ledger index for flagless lots, else -1
     ItemSource source = ItemSource::Unknown;
+    /// What the host's award really gave (captured in its 0x17DDC50 call) or what it rolled once
+    /// for a random lot; empty = resolve from ItemLotParam (deterministic lots).
+    std::vector<GrantItem> items = {};
 
     /// The "already given" flag a guest checks: the lot flag, or the ledger bit.
     std::int64_t DoneFlag() const;
@@ -156,8 +170,56 @@ struct ItemApplyState {
 };
 /// In the own world with the flag store in mode 0, no loading screen, not joining/leaving/client.
 bool ItemApplyAllowedNow(const ItemApplyState& s);
+/// Summoned into the host's world (session role 6, flag store mode 1 = the host's overlay, own
+/// world byte 0), world steady: grants go straight into the own inventory and the own pool.
+bool ItemSummonedApplyAllowedNow(const ItemApplyState& s);
+enum class ItemApplyMode : std::uint8_t { None, Home, Summoned };
+ItemApplyMode ItemApplyModeNow(const ItemApplyState& s);
 
 // ---- Does a lot still fit the guest's inventory? ----
+// ---- Awarding while summoned (no own-world phase with seamless play) ----
+/// One ItemLotParam row (ITEMLOT_PARAM_ST) as far as the summoned give needs it.
+struct LotRowData {
+    std::int32_t lot = -1;
+    std::int32_t flag = -1;               ///< getItemFlagId (<= 0: none)
+    std::int32_t id[8] = {};              ///< lotItemId01..08
+    std::uint32_t category[8] = {};       ///< lotItemCategory01..08
+    std::uint16_t base[8] = {};           ///< lotItemBasePoint01..08
+    std::uint16_t cumulate[8] = {};       ///< cumulateLotPoint01..08
+    std::uint8_t num[8] = {};             ///< lotItemNum01..08
+};
+/// The roll (0x17CEAF0) walks lot, lot + 1, ... while rows exist; this many at most here.
+constexpr std::size_t kMaxLotChain = 16;
+/// Categories the direct give (GiveItemDirect 0x131CB70, type bits category << 28) handles:
+/// weapon, armor, rune, goods. Blood gems (8) need the area's gem-effect data (0x1A88130) and
+/// wait for the own world.
+bool GrantCategorySupported(std::uint32_t category);
+enum class LotPlanResult : std::uint8_t {
+    Give,        ///< `items` (maybe empty: nothing left) - give them, then set the flags
+    Random,      ///< a row picks between several slots and the host sent no item list
+    Unsupported, ///< a blood gem (or an unknown category): own world only
+    Missing,     ///< no ItemLotParam row
+};
+const char* LotPlanResultName(LotPlanResult r);
+struct LotPlan {
+    LotPlanResult result = LotPlanResult::Missing;
+    std::vector<GrantItem> items;
+    std::vector<std::int32_t> row_flags; ///< flags of the rows that give (set with the done flag)
+    std::string why;
+};
+/// What a summoned guest gives for a lot: `chain` is its ItemLotParam row and continuation rows;
+/// `host_items` (the host's capture / roll, may be empty) is used when every item matches a
+/// different row's slot (category, id, 1..lotItemNum), else the rows decide - one weighted slot
+/// per row (base or cumulate point > 0) is deterministic. Rows whose own flag `row_done` reports
+/// set give nothing (the roll skips them the same way).
+LotPlan PlanSummonedLot(const std::vector<LotRowData>& chain, const std::vector<GrantItem>& host_items,
+                        const std::function<bool(std::int32_t)>& row_done);
+/// Host: one roll of `chain` (each row: one slot by lotItemBasePoint weight; luck and cumulate
+/// counters ignored) for a random lot, so every guest gets the same items.
+std::vector<GrantItem> RollLotChain(const std::vector<LotRowData>& chain, std::uint64_t seed);
+/// Host: does `chain` need a roll (a row with more than one weighted slot)?
+bool LotChainRandom(const std::vector<LotRowData>& chain);
+
 /// One ItemLotParam slot as the guest's game sees it (only slots that can drop: id > 0, a
 /// category other than -1, a base point > 0).
 struct LotSlotState {
@@ -188,9 +250,15 @@ public:
     /// Queues grants whose key is not queued or done yet; returns how many were taken. Marks
     /// go to the front (they must land before an item replay of the same flag).
     std::size_t Offer(const std::vector<ItemGrant>& items);
-    /// Once a frame: the grant to apply now, else nothing. The caller reports Done(key) after.
+    /// Once a frame: the grant to apply now, else nothing. The caller reports Done(key) after,
+    /// or Defer(g) for a grant that cannot be given while summoned (random lot without the host's
+    /// list, blood gems): it keeps its place and waits for the own world.
     std::optional<ItemGrant> Step(const ItemApplyState& s, double now);
-    void Done(std::int64_t key) { done_.insert(key); }
+    void Done(std::int64_t key) { done_.insert(key); home_only_.erase(key); }
+    void Defer(const ItemGrant& g);
+    /// The mode of the grant Step returned last.
+    ItemApplyMode LastMode() const { return last_mode_; }
+    std::size_t HomeOnly() const { return home_only_.size(); }
     /// The grant Step returned was really awarded (a popup opened): the next waits kSpacing.
     /// Skips (flag already set, item held) take no time, so a long catch-up list goes fast.
     void Awarded(double now) { last_apply_ = now; }
@@ -201,6 +269,8 @@ private:
     std::deque<ItemGrant> q_;
     std::set<std::int64_t> queued_, done_;
     std::set<std::int32_t> adhoc_lots_;  // lots outside the tables, taken once each
+    std::set<std::int64_t> home_only_;   // deferred while summoned
+    ItemApplyMode stable_mode_ = ItemApplyMode::None, last_mode_ = ItemApplyMode::None;
     int stable_ = 0;
     double last_apply_ = -1e9;
 };

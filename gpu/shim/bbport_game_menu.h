@@ -18,6 +18,10 @@ void PatchImage(unsigned char* image, std::uint64_t size);
 /// hooks are off.
 void TextActivity(std::uint64_t* seq, std::int64_t* last_ms);
 
+/// The steady-clock ms of the last lookup of message `id` (any category), 0 when never; shown
+/// texts are looked up every frame, so "within the last ~300 ms" = on screen (test aids).
+std::int64_t LastLookupMs(std::uint32_t id);
+
 /// Applies what the player changed on the port's pages (each presented frame).
 void Poll();
 } // namespace BbGameMenu

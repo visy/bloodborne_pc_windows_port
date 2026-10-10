@@ -51,13 +51,15 @@ struct GameSnapshot {
     bool in_game_frame = false;  ///< CSNowLoadingHelper saw an in-game frame
     std::uint64_t world_chr_man = 0, player = 0, session_man = 0, game_data_man = 0, player_rec = 0;
     int session_role = -1, session_sub_state = -1, matching_status = -1;
-    int insight = -1, level = -1;
+    int insight = -1, level = -1, echoes = -1; ///< PlayerGameData +0x84, +0x90, +0x94
     std::uint32_t map_id = 0xffffffffu; ///< 0xAABBCCDD = mAA_BB_CC_DD; all ones when unknown
     int cooperators = -1;        ///< -1: not asked (or not safe to ask)
     int online_mode = -1;        ///< network flow +0x1590
     int np_online = -1;          ///< NP manager +0xd8
 };
 
+/// SprjSessionManager +0x124 (6 = client in another world), -1 without a session manager. Cheap.
+int LocalSessionRole();
 /// Reads the state. `call_game` also asks the game's cooperator count (main thread only, world up).
 GameSnapshot ReadGameState(bool call_game);
 /// "m24_01_00_00" (or "-" when unknown).
@@ -96,9 +98,35 @@ constexpr std::uint32_t kItemWeapon = 0x00000000u, kItemProtector = 0x10000000u,
 /// How many of item `id` (type bits above) the local player holds: 0 none, -1 unknown.
 int ItemCount(std::uint32_t type_bits, std::uint32_t id);
 /// GiveItemDirect 0x131CB70(0, type bits, id, count); false when the code differs or no player.
+/// It shows nothing; ShowItemGet adds the native "item acquired" entry.
 bool GiveItem(std::uint32_t type_bits, std::uint32_t id, int count);
+/// The native item-get dialog entry, exactly as the lot award's give list (0x17D89F0 at
+/// 0x17D9348) queues it: 0x16D8850(*0x553B1C0, &gaitem handle, type bits, id, count, 0) - pushes
+/// the entry onto the item-get list and plays sound 300. The handle is the inventory entry's
+/// (+0), so call it after the item is held. False (nothing queued) when the code differs, there
+/// is no list / free node or the item is not in the inventory.
+bool ShowItemGet(std::uint32_t type_bits, std::uint32_t id, int count);
 /// The lamp / ReturnPoint warp 0x13CDF30(id) (EMEVD 2003[49], the lamp menu); main thread, own
 /// world. False when the code differs from 1.09 or there is no player.
 bool LampWarp(std::uint32_t return_point);
+
+// ---- Cutscene skip ----
+/// The game's own remo skip request, the path its skip input takes: 0x1D07400(SprjRemo
+/// *0x5540058, &id) -> 0x1CF9D40(remo player, &id): with a skippable remo playing (player +0x168
+/// bit 1) and id matching (-1 = any), solo it sets +0x168 |= 0x20 (the player ends the scene with
+/// its fade), in multiplayer it sets the scene's own skip vote (+0x13D). Main thread. False when
+/// the code differs or there is no remo object; *skippable reports bit 1.
+bool RequestRemoSkip(bool* skippable = nullptr);
+
+// ---- Save requests (summoned writes: C2 pool flags, C3 direct gives, C4 story state) ----
+// A guest that stays summoned (seamless play) may go a long time without the game saving: what
+// the party code put into its own pool / inventory would be lost by a crash or a kill. The Lua
+// binding SaveRequest 0x1336DA0 (registered at 0x1342F89: GSM +0x1578 "save allowed" -> +0x1548 = 1,
+// +0x1547 profile, +0x1549 = 1) asks the game's own save task to write.
+/// Any thread: asks for one save soon (coalesced; `why` goes to the log).
+void RequestGameSave(const char* why);
+/// Main thread, once a frame (CoopTick): runs a pending request once the world is steady, at most
+/// one per 15 s; byte-verified (0x1336DA0 differs -> off, logged once).
+void GameSaveTick();
 
 } // namespace coop

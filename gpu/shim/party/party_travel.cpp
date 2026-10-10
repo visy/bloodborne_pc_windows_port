@@ -528,6 +528,8 @@ std::atomic<bool> g_death_redirect_on{true};
 std::atomic<SendHomeVetoFn> g_send_home_veto{nullptr};
 void* g_funnel_orig = nullptr;
 void* g_block_clear3_orig = nullptr;
+void* g_lamp_warp_orig = nullptr;
+std::atomic<LampWarpInterceptor> g_lamp_intercept{nullptr};
 
 // Seeded from the wall clock: a restarted host keeps counting upward, so guests that saw the
 // old host's intents do not drop the new ones as duplicates.
@@ -665,11 +667,16 @@ void CaptureHost(u64 site, TravelKind kind) {
     Log("host travel %s -> %s", DescribeTravel(t).c_str(), ReplayMethodName(ChooseReplay(t).method));
 }
 
-BB_COOP_SYSV void LampWarpEntry(u64 id, u64, u64, u64, u64, u64) {
+// Replaces 0x13CDF30 (void(u32 id)): the key for the host's capture, and the interceptor.
+__attribute__((noinline)) BB_COOP_SYSV void LampWarpHook(u64 id) {
     perf::Scope z(perf::Zone::HookLampWarp);
     if (!g_in_replay.load()) {
+        if (LampWarpInterceptor fn = g_lamp_intercept.load(); fn && fn(static_cast<u32>(id))) {
+            return;
+        }
         g_lamp_key = static_cast<u32>(id);
     }
+    reinterpret_cast<LampWarpFn>(g_lamp_warp_orig)(static_cast<u32>(id));
 }
 
 BB_COOP_SYSV void ReviveMagicEntry(u64, u64, u64, u64, u64, u64) {
@@ -964,8 +971,8 @@ void InstallTravelPatches() {
         kFunnel, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x50},
         reinterpret_cast<const void*>(&FunnelHook), &g_funnel_orig, "travel funnel (SessionWorldTransition)");
     // push rbp; mov rbp, rsp; push r15, r14, rbx; sub rsp, 0x38 (13 bytes; then mov ebx, edi).
-    HookPrologue(kLampWarp, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x53, 0x48, 0x83, 0xec, 0x38},
-                 &LampWarpEntry, "travel lamp key (0x13CDF30)");
+    ReplacePrologue(kLampWarp, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x53, 0x48, 0x83, 0xec, 0x38},
+                    reinterpret_cast<const void*>(&LampWarpHook), &g_lamp_warp_orig, "travel lamp warp (0x13CDF30)");
     // push rbp; mov rbp, rsp; push r15, r14, r13, r12, rbx; push rax (14 bytes; then mov rbx, rsi).
     HookPrologue(kOnReviveMagic, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x50},
                  &ReviveMagicEntry, "travel Hunter's Mark (OnReviveMagic)");
@@ -1087,6 +1094,14 @@ void SetGuestDeathRedirect(std::uint32_t host_lamp_id) {
 
 std::uint32_t GuestDeathRedirectLamp() {
     return g_death_lamp.load();
+}
+
+void SetLampWarpInterceptor(LampWarpInterceptor fn) {
+    g_lamp_intercept = fn;
+}
+
+void RunLampWarp(std::uint32_t id) {
+    reinterpret_cast<LampWarpFn>(Guest(kLampWarp))(id);
 }
 
 void SetGuestRedirectCallback(GuestRedirectFn fn) {

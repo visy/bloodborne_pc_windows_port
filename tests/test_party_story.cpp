@@ -187,6 +187,36 @@ static void test_mirror_then_replay() {
     CHECK(!g.Step(ph, t)); // wait end -> finished
     CHECK(g.Seen(32000000) && !g.Running());
 
+    // Still a phantom (seamless play: maybe for the whole session): no second remo (seen), the
+    // time of day, then the flags - the game side writes both into the own save's pool.
+    ph.tod_value = 6; // the own save's clock: night
+    a = Until(g, ph, t);
+    CHECK(a && a->kind == StoryAction::ApplyTod && a->tod == 3);
+    a = Until(g, ph, t);
+    CHECK(a && a->kind == StoryAction::SetFlags && a->on && a->flags == std::vector<std::uint32_t>{70002802});
+    CHECK(!Until(g, ph, t, 60));
+    CHECK(!g.Busy());
+}
+
+// BB_PARTY_STORY_SUMMONED=0: the queue waits for the own world, as before seamless play.
+static void test_replay_waits_home_when_summoned_off() {
+    GuestStory g;
+    g.summoned_replay = false;
+    double t = 100;
+    StoryIntent s;
+    s.seq = 1;
+    s.kind = StoryKind::Cutscene;
+    s.id = 32000000;
+    s.instr = 7;
+    s.tod = 3;
+    s.flags = {70002802};
+    CHECK(g.Offer(s, true, t));
+    StoryState ph = Phantom();
+    auto a = Until(g, ph, t, 100);
+    CHECK(a && a->kind == StoryAction::PlayRemo && a->mirror);
+    PlayToEnd(g, ph, t);
+    t += 1.0 / 60;
+    CHECK(!g.Step(ph, t));
     // Still a phantom: the queued item waits.
     CHECK(!Until(g, ph, t, 60));
     // Home (session dropped): no second remo (seen), the time of day, then the flags.
@@ -198,6 +228,44 @@ static void test_mirror_then_replay() {
     CHECK(a && a->kind == StoryAction::SetFlags && a->on && a->flags == std::vector<std::uint32_t>{70002802});
     CHECK(!Until(g, own, t, 60));
     CHECK(!g.Busy());
+}
+
+// A scene the guest missed (sent while it was not in the host's world) plays as a phantom at the
+// next calm moment through the phantom path (mode 2); an ending queued before it keeps waiting
+// for the own world.
+static void test_missed_scene_replayed_while_summoned() {
+    GuestStory g;
+    double t = 0;
+    StoryIntent end;
+    end.seq = 1;
+    end.kind = StoryKind::Ending;
+    end.id = 2;
+    CHECK(g.Offer(end, false, t));
+    StoryIntent s;
+    s.seq = 2;
+    s.kind = StoryKind::Cutscene;
+    s.id = 28000040; // Lecture Building grab: sex variant + flag
+    CHECK(g.Offer(s, false, t));
+    CHECK(g.QueueSize() == 2 && !g.MirrorPending());
+    StoryState ph = Phantom();
+    // Not calm (lost HP lately): nothing.
+    ph.calm = false;
+    CHECK(!Until(g, ph, t, 80));
+    ph.calm = true;
+    auto a = Until(g, ph, t);
+    CHECK(a && a->kind == StoryAction::PlayRemo && a->id == 28000040 && a->mode == 2 && !a->mirror);
+    CHECK(g.RunningSummoned());
+    PlayToEnd(g, ph, t);
+    a = Until(g, ph, t);
+    CHECK(a && a->kind == StoryAction::SetFlags && a->flags == std::vector<std::uint32_t>{12800434});
+    CHECK(g.Seen(28000040));
+    // The ending stays queued while summoned.
+    CHECK(!Until(g, ph, t, 80));
+    CHECK(g.QueueSize() == 1 && g.Busy());
+    // Home: the ending runs (Dream warp first).
+    StoryState own = OwnWorld();
+    a = Until(g, own, t);
+    CHECK(a && a->kind == StoryAction::TravelDream);
 }
 
 static void test_replay_unseen_with_sex_and_tod_guard() {
@@ -408,6 +476,8 @@ int main() {
     test_json();
     test_host_queue();
     test_mirror_then_replay();
+    test_replay_waits_home_when_summoned_off();
+    test_missed_scene_replayed_while_summoned();
     test_replay_unseen_with_sex_and_tod_guard();
     test_remo_never_starts();
     test_mirror_dropped_when_sent_home();

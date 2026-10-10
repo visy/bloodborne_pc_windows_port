@@ -312,8 +312,9 @@ player, and say who was the host.
   built and unit-tested but have not run in a real two-player session yet.
 - Travel is "follow and rejoin": guests load separately and are summoned again after the host's
   lamp trips, deaths and area changes. A shared seamless loading screen is not planned for now.
-- The host must enter a boss fog first; guests cannot use lamps, shops or the Doll while in the
-  host's world (they can at home).
+- The host must enter a boss fog first. In the host's Hunter's Dream a guest can level up at the
+  Doll and use the Bath Messengers' shops, the Insight shop, the workbench and storage on its own
+  character; lamps and headstones stay host-only for now (experimental opt-in `BB_PARTY_GUEST_LAMPS=1`).
 - NPC quests are not shared by default; dialogue gifts from NPCs are not handled.
 - Chalice Dungeons are not supported in party play.
 - 4 players: experimental, no slot for invaders.

@@ -12,9 +12,11 @@
 #include "party_fourp.h"
 #include "party_link.h"
 #include "party_story.h"
+#include "party_catchup.h"
 #include "party_status_bridge.h"
 #include "party_items.h"
 #include "party_npc_test.h"
+#include "party_guestsvc.h"
 #include "party_phantom.h"
 #include "party_start.h"
 #include "party_runtime.h"
@@ -1132,12 +1134,16 @@ void PartyDirector::Tick() {
     }
     // Test aids: scripted new game, prologue fast-forward (test_newgame.h).
     NewGameTestTick(s, TitleReadyForInput(role, link));
+    // Late joiner catch-up (party_catchup.h): a guest behind the host is brought up to it and
+    // gathered at the host's lamp before any summon.
+    CatchupTick(s, role == PartyRole::Guest && link && link->state() == party::LinkState::Connected,
+                Seconds(st.start, now));
     // C1: the campaign start (readiness, bells).
     if (full || !st.start_logged) {
         perf::Scope z(perf::Zone::DirStart);
         UpdateStart(st, s, start_mode);
         if (((grant_bells && role != PartyRole::None) || st.test.grant_bells) && st.world_seen &&
-            Seconds(st.world_at, now) >= std::min(5.0, st.ring_delay) && !PrologueSkipBusy()) {
+            Seconds(st.world_at, now) >= std::min(5.0, st.ring_delay) && !PrologueSkipBusy() && !CatchupBusy()) {
             GrantBells(st, s);
         }
     }
@@ -1233,6 +1239,8 @@ void PartyDirector::Tick() {
     // Insight in (party_phantom.h).
     zone.Next(perf::Zone::Phantom);
     PhantomTick(link);
+    // Guests use the Doll, shops and workshop in the host's Dream (party_guestsvc.h).
+    GuestServicesTick(s, link);
     zone.Next(perf::Zone::DirRing);
     if (st.test.on) {
         RunTravelSteps(st, s, role, now);
@@ -1295,7 +1303,7 @@ void PartyDirector::Tick() {
     // 3- / 4-player party (HostMayRing checks the count).
     if (!st.auto_ring || role == PartyRole::None || !link || !s.world_up || s.loading || !st.world_seen ||
         Seconds(st.world_at, now) < st.ring_delay || !SessionMayRing(role == PartyRole::Host, s.session_role) ||
-        PrologueSkipBusy()) {
+        PrologueSkipBusy() || CatchupBusy()) {
         return;
     }
     if (st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {
@@ -1414,7 +1422,8 @@ void CoopTick() {
     z.Next(Zone::Story);
     StoryTick(); // C4 cutscenes / endings (party_story.h)
     z.Next(Zone::Items);
-    ItemsTick(); // C3 guest item replay (party_items.h)
+    ItemsTick();    // C3 guest item replay (party_items.h)
+    GameSaveTick(); // save requests after summoned writes (game_state.h)
     z.Next(Zone::Seamless);
     SeamlessRulesTick(); // A6 param rules, EMEVD filter stats (seamless_rules.h)
     z.Next(Zone::Fourp);
@@ -1445,6 +1454,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     InstallStoryHooks();    // C4: bank-2002 capture, guest mirror / replay (byte-verified)
     InstallItemsPatches();  // C3: award hook, parity patches (byte-verified)
     PhantomInit();          // guest respawn at the host's lamp, refill, boss Insight
+    GuestServicesInit();    // guest Doll / shops / workshop in the host's Dream (byte-verified)
     g_tick_installed = HookPrologue(kFlipperUpdate,
                                     {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48,
                                      0x83, 0xec, 0x38},

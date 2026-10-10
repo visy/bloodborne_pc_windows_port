@@ -67,6 +67,15 @@ bool HookCallSite(u64 off, u64 target, const void* handler, const char* name);
 /// return address on the stack (a tail call); it may call Guest(target) itself.
 bool HookTailJump(u64 off, u64 target, const void* handler, const char* name);
 
+/// A value filter inside a function: `original` (whole, position-independent instructions, at
+/// least 5 bytes, compared first) at `off` is replaced by a jmp to a stub that runs `original`,
+/// saves rax..r11 and xmm0-7, runs `load_args` (sets rdi / rsi from the registers, e.g.
+/// `mov rdi, r15; mov esi, eax`), calls `fn` and continues at `resume` with rax = fn's result and
+/// every other register as `original` left it. The flags are not preserved.
+using ValueFilter = u64(BB_COOP_SYSV*)(u64 a0, u64 a1);
+bool HookValueFilter(u64 off, std::initializer_list<u8> original, std::initializer_list<u8> load_args, ValueFilter fn,
+                     u64 resume, const char* name);
+
 /// Writes `patched` over `original` at `off` (same length). True when the image now holds
 /// `patched` (written, or already there); false (and a log line naming `name`) when it holds
 /// neither: nothing is written then.
