@@ -3,6 +3,8 @@
 // the 1.09 eboot (capstone over out/eboot.elf); each install compares the bytes first.
 #include "party_fourp.h"
 
+#include "../../party_env.h"
+
 #include <cstdlib>
 #include <cstring>
 
@@ -35,8 +37,7 @@ bool EnvIsZero(const char* name) {
 
 Config ConfigFromEnv() {
     Config c;
-    const char* party = std::getenv("BB_PARTY");
-    c.on = party && party[0] && !EnvIsZero("BB_PARTY_FOURP");
+    c.on = bb_party_enabled() && !EnvIsZero("BB_PARTY_FOURP");
     c.scaling = !EnvIsZero("BB_PARTY_FOURP_SCALING");
     c.npc_signs = !EnvIsZero("BB_PARTY_FOURP_NPC_SIGNS");
     c.recruit = !EnvIsZero("BB_PARTY_FOURP_RECRUIT");
@@ -334,8 +335,7 @@ void FourpInit() {
     g_cfg = ConfigFromEnv();
     g_max.store(g_cfg.local_max);
     if (!g_cfg.on) {
-        const char* p = std::getenv("BB_PARTY");
-        Log("off (%s); rules tag %s", p && p[0] ? "BB_PARTY_FOURP=0" : "BB_PARTY not set", RulesTag(g_cfg).c_str());
+        Log("off (%s); rules tag %s", bb_party_enabled() ? "BB_PARTY_FOURP=0" : "BB_PARTY off", RulesTag(g_cfg).c_str());
         return;
     }
     if (!Image()) {

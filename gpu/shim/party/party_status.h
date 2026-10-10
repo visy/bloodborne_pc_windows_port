@@ -71,7 +71,7 @@ void SetLastEvent(const std::string& text);
 Board Snapshot();
 /// Cheap (atomic): changes whenever SetLastEvent is called.
 std::uint64_t EventSeq();
-/// BB_PARTY is set (non-empty) for this run (read once, or forced by tests via ResetForTest).
+/// BB_PARTY turns party mode on for this run (party_env.h: unset, empty, 0, off, false, no = off) (read once, or forced by tests via ResetForTest).
 bool Enabled();
 
 // --- commands: UI -> party code ---

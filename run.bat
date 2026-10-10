@@ -1,5 +1,14 @@
 @echo off
 setlocal
+REM BB_PARTY off values (unset, empty, 0, off, false, no; any case, blanks ignored) mean party
+REM mode off: cleared here so the game, scripts\patches.py and the restart loop below all see it
+REM unset (the same rule as gpu\party_env.h and scripts\party_env.py).
+if not defined BB_PARTY goto party_env_done
+set "party_check=%BB_PARTY: =%"
+if "%party_check%"=="" set "BB_PARTY="
+for %%v in (0 off false no) do if /i "%party_check%"=="%%v" set "BB_PARTY="
+set "party_check="
+:party_env_done
 
 cd /d "%~dp0"
 

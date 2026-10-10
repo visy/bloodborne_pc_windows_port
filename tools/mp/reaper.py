@@ -12,7 +12,9 @@ import argparse, json, re, subprocess, sys, time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from game_queue import _locked, _prune  # noqa: E402
+from game_queue import _locked, _prune, QUEUE_FILE  # noqa: E402
+
+g_QUEUE_DIR = QUEUE_FILE.parent
 
 PARTY = re.compile(r"^(Party|Net): ")
 NUM = re.compile(r"0x[0-9a-fA-F]+|\d[\d.:]*")
@@ -59,6 +61,57 @@ def end_run(root: Path):
     return out.split()
 
 
+def tile_windows():
+    r"""Stack every visible test game window (bbport.exe under E:\games\bbport, not the user's game
+    folder) four high in the left column, oldest process first, in physical pixels. Central, so
+    agents running an older harness still get the same layout."""
+    import ctypes
+    from ctypes import wintypes
+    u = ctypes.windll.user32
+    try:
+        u.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+    except (AttributeError, OSError):
+        u.SetProcessDPIAware()
+    ps = (r"Get-Process bbport -ErrorAction SilentlyContinue | Where-Object { $_.Path -like 'E:\games\bbport\*' } | "
+          "Sort-Object StartTime | ForEach-Object { $_.Id }")
+    pids = [int(x) for x in subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                                           capture_output=True, text=True).stdout.split()]
+    if not pids:
+        return
+    wins = {}
+    EnumProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def cb(hwnd, _):
+        if u.IsWindowVisible(hwnd) and not u.GetWindow(hwnd, 4):  # GW_OWNER: top-level only
+            pid = wintypes.DWORD()
+            u.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value in pids and u.GetWindowTextLengthW(hwnd) > 0:
+                wins.setdefault(pid.value, hwnd)
+        return True
+    u.EnumWindows(EnumProc(cb), 0)
+
+    class RECT(ctypes.Structure):
+        _fields_ = [("l", ctypes.c_long), ("t", ctypes.c_long), ("r", ctypes.c_long), ("b", ctypes.c_long)]
+    wa = RECT()
+    u.SystemParametersInfoW(0x30, 0, ctypes.byref(wa), 0)
+    rows = 4
+    cell_h = (wa.b - wa.t) // rows
+    for slot, pid in enumerate(p for p in pids if p in wins):
+        col, row = divmod(slot, rows)
+        hwnd = wins[pid]
+        wr, cr = RECT(), RECT()
+        u.GetWindowRect(hwnd, ctypes.byref(wr))
+        u.GetClientRect(hwnd, ctypes.byref(cr))
+        fw = (wr.r - wr.l) - (cr.r - cr.l)  # frame width/height around the client area
+        fh = (wr.b - wr.t) - (cr.b - cr.t)
+        h = cell_h - fh
+        w = h * 16 // 9
+        x, y = wa.l + col * (w + fw), wa.t + row * cell_h
+        if (wr.l, wr.t, cr.r - cr.l, cr.b - cr.t) != (x, y, w, h):
+            # SWP_NOZORDER | SWP_NOACTIVATE: never take the user's focus.
+            u.SetWindowPos(hwnd, 0, x, y, w + fw, h + fh, 0x0004 | 0x0010)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--idle", type=float, default=10)
@@ -73,6 +126,21 @@ def main():
             holders = []
         now = time.time()
         live = set()
+        # Gate: while agents/gate.txt exists only priority roots (priority.txt) may hold game slots;
+        # end anything else (agents on an older queue that doesn't know the gate).
+        qdir = g_QUEUE_DIR
+        if (qdir / "gate.txt").exists():
+            try:
+                prio = [l.strip().lower() for l in (qdir / "priority.txt").read_text().splitlines() if l.strip()]
+            except OSError:
+                prio = []
+            for e in holders:
+                r = e["root"].replace("/", "\\").lower()
+                if not any(f in r for f in prio):
+                    end_run(Path(e["root"]))
+                    subprocess.run(["taskkill", "/PID", str(e["pid"]), "/T", "/F"], capture_output=True)
+                    print(time.strftime("%H:%M:%S"), "gate: stopped", e.get("label") or e["root"], flush=True)
+            holders = [e for e in holders if any(f in e["root"].replace("/", "\\").lower() for f in prio)]
         for e in holders:
             hid = e["id"]
             live.add(hid)
@@ -98,6 +166,10 @@ def main():
                 print(time.strftime("%H:%M:%S"), f"idle {idle:.0f}s: ended {e.get('label') or root} "
                       f"({len(pids)} processes)", flush=True)
                 state[hid] = (n, now + 3600)  # don't repeat while the harness winds down
+        try:
+            tile_windows()
+        except Exception as ex:  # never let layout break the reaper
+            print("tile:", ex, flush=True)
         for hid in list(state):
             if hid not in live:
                 del state[hid]

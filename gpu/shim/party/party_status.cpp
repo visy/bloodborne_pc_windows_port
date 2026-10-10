@@ -2,6 +2,8 @@
 // Party status board: see party_status.h.
 #include "party_status.h"
 
+#include "../../party_env.h"
+
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -33,8 +35,7 @@ std::atomic<int> enabled_override{-1};  // -1: from BB_PARTY
 
 bool EnvEnabled() {
     static const bool on = [] {
-        const char* p = std::getenv("BB_PARTY");
-        return p && p[0] && std::strcmp(p, "0") != 0 && std::strcmp(p, "off") != 0;
+        return bb_party_enabled() != 0;
     }();
     return on;
 }
