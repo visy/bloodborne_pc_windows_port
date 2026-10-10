@@ -108,6 +108,16 @@ constexpr SsValue kSsValues[] = {
     {"ReloadServerStatusInfoInterval", "600"},
 };
 
+// BB_PARTY_FAST_JOIN (default on; docs/party/join_timing.md): these replace kSsValues. The get-list
+// builder 0x1e946e0 waits [client+0x100] = SummonDataGetListInterval whole seconds between two
+// summon_messenger/get polls of a ringing host (CONFIRMED); 0 would poll every frame (no in-flight
+// check), so 1. SummonDataCreateInterval is copied to SummonStepManager+0x190 (0x1e89aad) but no
+// reader was found; 1 for symmetry.
+constexpr SsValue kSsFastJoinValues[] = {
+    {"SummonDataGetListInterval", "1"},
+    {"SummonDataCreateInterval", "1"},
+};
+
 // ---------------------------------------------------------------------------------------------
 // The API answers. Paths are matched as suffixes of the request path. Bodies are templates:
 // ${Name} is replaced by a JSON value FromApi computes (SessionId, UserId, Now, NowText,

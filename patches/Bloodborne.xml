@@ -3486,4 +3486,27 @@
             <Line Type="bytes" Address="0x01cc92bb" Value="31c00f1f440000" Original="410fb64738f7d8"/>
         </PatchList>
     </Metadata>
+    <Metadata Title="Bloodborne" Name="Party: Fast multiplayer messages" Party="cosmetic" Author="bbport" Note="Party co-op (BB_PARTY; BB_PARTY_FAST_MESSAGES=0 turns it off): the multiplayer banner (Scaleform SummonMessage dialog, update 0x1bff910; FMG EventText 100001..200000: bell searching / discovered, X has arrived, entered the world of X, died, returning to own world, farewell) holds 1.5 s instead of 5.0 s. The fades are the movie's own (about 0.17 s in, 0.23 s out). 0x1bfface mov dword [r13],5.0 (a new message) and the rodata 5.0 at 0x4928a98, read only at 0x1bffa7d (re-show after a cutscene). docs/party/join_timing.md." PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x01ffface" Value="41c745000000c03f" Original="41c745000000a040"/>
+            <Line Type="bytes" Address="0x04d28a98" Value="0000c03f" Original="0000a040"/>
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Bloodborne" Name="Party: Hide bell searching messages" Party="cosmetic" Author="bbport" Note="Party co-op (BB_PARTY; BB_PARTY_FAST_MESSAGES=0 turns it off): the party director rings the bells itself, so the &quot;Searching for the chime of a Beckoning Bell / Small Resonant Bell...&quot; banners (100100/100110, 100001/100011) are not shown; the bell itself (SpEffect, sign, sound) is unchanged. 0x1389cfc: the tail jmp to ShowSummonMessage 0x1bffe80 after the epilogue -> ret; 0x17c3cea: call 0x1bffe80 (result unused) -> 5-byte nop. docs/party/join_timing.md." PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x01789cfc" Value="c390909090" Original="e97f618700"/>
+            <Line Type="bytes" Address="0x01bc3cea" Value="0f1f440000" Original="e891c14300"/>
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Bloodborne" Name="Party: Fast join" Party="cosmetic" Author="bbport" Note="Party co-op (BB_PARTY; BB_PARTY_FAST_JOIN=0 turns it off): the game&apos;s fixed summon / join pauses, none of which waits for data (docs/party/join_timing.md). CSEnterleaveDirectionStep timers (static initializer 0x196d3a0): guest self-prologue 0x5574ad0 5.0 -&gt; 0.5 s (STEP_C2H_Wait_forSelfPrologue 0x196b500; the guest&apos;s loading of the host world waits for it), others-epilogue cap 0x5574ad8 5.0 -&gt; 1.0 s (0x196be90 ends earlier when the effect is done), return-home wait 0x5574ae0 5.0 -&gt; 1.0 s and its fade 0x5574ae8 2.0 -&gt; 0.5 s (STEP_H2C_Wait_forEffect 0x196c2d0). Host summon message (SummonStepManager tick 0x14b5e10): the check whether the summoned guest is a connected peer before the summon data goes out repeats every 0.5 s instead of 3.0 s (0x14b80c4), with 30 tries instead of 5 (0x14b4975, 0x14bb067: the same 15 s window)." PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x01d6d3a8" Value="c7051e77c0030000003f" Original="c7051e77c0030000a040"/>
+            <Line Type="bytes" Address="0x01d6d3b2" Value="c7051c77c0030000803f" Original="c7051c77c0030000a040"/>
+            <Line Type="bytes" Address="0x01d6d3c6" Value="c7051077c0030000803f" Original="c7051077c0030000a040"/>
+            <Line Type="bytes" Address="0x01d6d3d0" Value="c7050e77c0030000003f" Original="c7050e77c00300000040"/>
+            <Line Type="bytes" Address="0x018b80c4" Value="41c7451c0000003f" Original="41c7451c00004040"/>
+            <Line Type="bytes" Address="0x018b4975" Value="41c744241801001e00" Original="41c744241801000500"/>
+            <Line Type="bytes" Address="0x018bb067" Value="c7431801001e00" Original="c7431801000500"/>
+        </PatchList>
+    </Metadata>
 </Patch>

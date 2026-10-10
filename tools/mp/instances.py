@@ -20,7 +20,7 @@ BB_PARTY_PORT=base+i, BB_PARTY_NAME=Hunter{i}, no UPnP, no public STUN, 127.0.0.
 --env still overrides any of these. --crash-at S kills instance --crash-instance's bbport.exe
 (TerminateProcess, as a crash) S seconds into the run; run.bat then restarts it (BB_PARTY_RESTART).
 """
-import argparse, ctypes, os, re, shutil, subprocess, sys, time
+import argparse, ctypes, os, re, shutil, subprocess, sys, threading, time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -252,7 +252,22 @@ def tile_rect(slot):
     return wa.l + 8 + col * (w + 16), wa.t + row * (h + frame) + 31, w, h
 
 
+def stamp_lines(src, log, t0):
+    """--timestamps: copies a child's output into its log, each line prefixed "[+SSS.mmm] "."""
+    try:
+        for raw in iter(src.readline, b""):
+            log.write(b"[+%8.3f] " % (time.time() - t0) + raw)
+    except (OSError, ValueError):
+        pass
+
+
 def run(a):
+    # A rebuild since the last setup: copy it first, or the run would test the old exe.
+    built = Path(a.build) / "out" / "bbport.exe"
+    inst0 = Path(a.root) / "inst0" / "out" / "bbport.exe"
+    if built.exists() and (not inst0.exists() or built.stat().st_mtime > inst0.stat().st_mtime + 1):
+        print("the build is newer than the instances' exe: running setup first", flush=True)
+        setup(a)
     port0 = base_port(a.root)
     stop_leftovers(a.root)
     user32 = ctypes.windll.user32 if os.name == "nt" else None
@@ -264,6 +279,7 @@ def run(a):
         # No error dialogs on the desktop from the children (inherited error mode): log-only tests.
         ctypes.windll.kernel32.SetErrorMode(0x0001 | 0x0002 | 0x8000)
     procs = []
+    ts0 = time.time()
     starts = [0] * a.count  # where this run begins in each run.log
     code_file = Path(a.root) / "party_code.txt"
     if a.party and code_file.exists():
@@ -297,8 +313,16 @@ def run(a):
         log, starts[i] = open_log(inst / "run.log")
         # Test games run ABOVE_NORMAL (children inherit) so agents' builds never starve them.
         prio = 0x00008000 if os.name == "nt" else 0
-        procs.append((i, subprocess.Popen(["cmd", "/c", str(inst / "run.bat")], cwd=inst, env=env,
-                                          stdout=log, stderr=subprocess.STDOUT, creationflags=prio), log))
+        if a.timestamps:
+            # Every line gets "[+SSS.mmm] " (seconds since the harness started the first
+            # instance, the same clock for all instances): join / summon timelines.
+            p = subprocess.Popen(["cmd", "/c", str(inst / "run.bat")], cwd=inst, env=env, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, creationflags=prio)
+            threading.Thread(target=stamp_lines, args=(p.stdout, log, ts0), daemon=True).start()
+        else:
+            p = subprocess.Popen(["cmd", "/c", str(inst / "run.bat")], cwd=inst, env=env,
+                                 stdout=log, stderr=subprocess.STDOUT, creationflags=prio)
+        procs.append((i, p, log))
         time.sleep(a.stagger)
     t0 = time.time()
     crashed = False
@@ -373,8 +397,11 @@ def run(a):
     for i, p, log in procs:
         if p.poll() is None:
             subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True)
+        code = p.wait()
+        if a.timestamps:
+            time.sleep(0.5)  # the copier thread drains the pipe
         log.close()
-        print(f"instance {i}: exit {p.wait()}")
+        print(f"instance {i}: exit {code}")
 
 
 def logs(a):
@@ -452,6 +479,8 @@ def main():
     ap.add_argument("--instance", type=int, default=1, help="crash: which instance")
     ap.add_argument("--after", type=float, default=0, help="crash: wait this many s first")
     ap.add_argument("--env", action="append")
+    ap.add_argument("--timestamps", action="store_true",
+                    help="run: prefix every log line with [+seconds] since the run started (one clock for all instances)")
     ap.add_argument("--grep")
     a = ap.parse_args()
     if a.cmd == "run":
