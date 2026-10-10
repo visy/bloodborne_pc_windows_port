@@ -3,8 +3,10 @@
 // (BB_PARTY_PORT, default 9307); guests connect to it directly (no server anywhere).
 //
 // Wire: every frame is [u32 len LE][u8 type][payload], len = 1 + payload size.
-//   guest -> HELLO     {magic "BBPL", u16 version, str name, sha256 eboot[32], mods hash[32], token[16]}
-//   host  -> CHALLENGE {nonce[24]}                         (or REJECT on version / hash / name)
+//   guest -> HELLO     {magic "BBPL", u16 version, str name, sha256 eboot[32], mods hash[32], token[16],
+//                       gameplay patches hash[32], str patch names, str mod names}  (newline-separated)
+//   host  -> CHALLENGE {nonce[24]}                         (or REJECT on version / hash / name; a
+//                       Mismatch REJECT names what differs: identity_mismatch)
 //   guest -> AUTH      {nonce[24], proof[32]}              proof = keyed BLAKE2b (party_crypto.h)
 //   host  -> WELCOME   {slot, max players, resumed, host clock ms, observed ip[4] + port, token,
 //                       roster} -- the first ENCRYPTED frame (proves the host knows the key too)
@@ -33,7 +35,7 @@
 
 namespace party {
 
-constexpr std::uint16_t kLinkProtocolVersion = 1;
+constexpr std::uint16_t kLinkProtocolVersion = 2;  // 2: HELLO carries the patch / mod sets
 constexpr int kBroadcast = -1;  // send_* target: every member (host side)
 constexpr int kHostSlot = 0;
 
@@ -53,7 +55,7 @@ struct RosterEntry {
 enum class RejectCode : std::uint8_t {
     None = 0,
     Version = 1,   // different PartyLink protocol
-    Mismatch = 2,  // different game version / patches / mods
+    Mismatch = 2,  // different game version / gameplay patches / gameplay mods (the reason says which)
     Auth = 3,      // wrong password or party code
     Full = 4,
     Name = 5,      // invalid or duplicate name
@@ -75,8 +77,13 @@ const char* link_state_name(LinkState s);
 
 struct LinkConfig {
     std::string name = "Hunter";  // <= 16 of [A-Za-z0-9_-]
+    // The version check: players must match in all three hashes. The names only explain a
+    // mismatch (the host lists what each side has); party_runtime fills them from
+    // out/party_patch_hash.txt (scripts/patches.py) and out/party_mods.txt (scripts/mods.py).
     std::array<std::uint8_t, 32> eboot_sha256{};
-    std::array<std::uint8_t, 32> mods_hash{};
+    std::array<std::uint8_t, 32> patches_hash{};  // gameplay patches (zeros: none / not compared)
+    std::array<std::uint8_t, 32> mods_hash{};     // gameplay mods (zeros: none)
+    std::vector<std::string> patch_names, mod_names;
     std::string password;               // BB_PARTY_PASSWORD (optional)
     std::array<std::uint8_t, 8> secret{};  // the party code's secret (zeros for plain host:port)
     std::uint16_t port = 9307;          // host: listen port (0 = ephemeral, see bound_port())
@@ -91,6 +98,15 @@ struct LinkConfig {
     int connect_timeout_ms = 5000;
     int roster_refresh_ms = 5000;  // host re-broadcasts the roster (fresh pings) this often
 };
+
+// What differs between the host's and a guest's game (eboot.bin, gameplay patches, gameplay mods),
+// one clause each, with the patch / mod names only one side has; empty when they match. The host
+// sends it as the Mismatch REJECT reason.
+std::string identity_mismatch(const LinkConfig& host, const LinkConfig& guest);
+// Reads an identity file (out/party_patch_hash.txt, out/party_mods.txt): "hash <64 hex>" and
+// "<item_key> <name>" lines; '#' lines are comments. False when it has no valid hash line.
+bool parse_identity_file(const std::string& text, const std::string& item_key, std::array<std::uint8_t, 32>* hash,
+                         std::vector<std::string>* items);
 
 // BB_PARTY_PORT, BB_PARTY_MAX (clamped 2..4), BB_PARTY_PASSWORD over `cfg`.
 void apply_link_env(LinkConfig& cfg);

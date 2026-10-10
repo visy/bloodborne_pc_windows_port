@@ -388,6 +388,22 @@ target_compile_options(party-start-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-start-test PRIVATE shim)
 set_target_properties(party-start-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 
+
+# Party progress sync (shim/party/party_progress, C2): keys, categories, policy, diff, JSON, BBPF
+# against a fake flag store (the game glue is compiled out). ninja -C out/gpu party-progress-test
+add_executable(party-progress-test EXCLUDE_FROM_ALL ../tests/test_party_progress.cpp
+    shim/party/party_progress.cpp shim/net/json.cpp)
+target_compile_definitions(party-progress-test PRIVATE BB_PARTY_PROGRESS_NO_GAME
+    BB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/..")
+target_compile_options(party-progress-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-progress-test PRIVATE shim)
+set_target_properties(party-progress-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Party status board (shim/party/party_status.cpp; in bbgpu through SHIM_SOURCES): the overlay's
+# Party tab <-> director snapshot and command queue. ninja -C out/gpu party-status-test
+add_executable(party-status-test EXCLUDE_FROM_ALL ../tests/test_party_status.cpp shim/party/party_status.cpp)
+target_compile_options(party-status-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-status-test PRIVATE shim)
+set_target_properties(party-status-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Party travel (B1, shim/party/party_travel.cpp; in bbgpu through SHIM_SOURCES): its pure logic
 # only (BB_PARTY_TRAVEL_NO_GAME). ninja -C out/gpu party-travel-test
 add_executable(party-travel-test EXCLUDE_FROM_ALL ../tests/test_party_travel.cpp shim/party/party_travel.cpp
