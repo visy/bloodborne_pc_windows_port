@@ -326,10 +326,12 @@ std::string FromApi::sign_create(const Caller& caller, const json::Value& body) 
     const long long area = int_of(body, "AreaId", 0);
     const long long region = int_of(body, "AreaRegionId", 0);
     if (!b64_decode_strict(str_of(body, "SummonData"), &data) || data.size() != kSummonDataSize || type < 0 ||
-        type > 255 || version < 0 || version > 0xffff || area < 0 || area > 0xffffffffLL || region < 0 ||
-        region > 0xffff) {
-        log("from api: %s: refused a malformed sign (type %lld, version %lld, %zu data bytes)",
-            caller.online_id.c_str(), type, version, data.size());
+        type > 255 || version < 0 || version > 0xffff || area < -0x80000000LL || area > 0xffffffffLL ||
+        region < -0x80000000LL || region > 0x7fffffffLL) {
+        // AreaId and AreaRegionId are signed: the Hunter's Dream and "Bells anywhere" areas are
+        // negative (Dream gate 0x47304B0 = -1, seamless_rules.md), and a live guest's sign there was refused.
+        log("from api: %s: refused a malformed sign (type %lld, version %lld, %zu data bytes, area %lld, region %lld)",
+            caller.online_id.c_str(), type, version, data.size(), area, region);
         return "0";
     }
     if (const char* bad = summon_data_problem(data.data(), data.size(), caller.online_id, &body)) {
@@ -394,6 +396,17 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
         list += render(formats::kSignTemplate, v);
     }
     list += "]";
+    {
+        // One line whenever what a member is shown changes (sign debugging).
+        static std::map<std::string, std::string> last;
+        std::string key = std::to_string(n) + " sign(s) for types [";
+        for (std::size_t i = 0; i < types.size(); ++i) key += (i ? "," : "") + std::to_string(types[i]);
+        key += "] of " + std::to_string(signs_.size()) + " on the board";
+        if (last[caller.online_id] != key) {
+            last[caller.online_id] = key;
+            log("from api: %s asks for signs: %s", caller.online_id.c_str(), key.c_str());
+        }
+    }
     return list;
 }
 
