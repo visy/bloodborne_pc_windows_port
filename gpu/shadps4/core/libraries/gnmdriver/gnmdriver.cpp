@@ -105,6 +105,10 @@ void ReleaseSubmissionLock() {
     cv_lock.notify_all();
 }
 
+bool GpuCaughtUp() {
+    return !liverpool || liverpool->CaughtUp();
+}
+
 // bbport BB_SUBMIT_LOCK=decode: frames (sceGnmSubmitDone calls) the GPU has finished.
 static u64 frames_retired{};
 

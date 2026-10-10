@@ -20,20 +20,63 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-/* sceKernelGetDirectMemorySize on retail PS4: 5056 MiB. BB_DMEM_MB raises it (the resolution
- * patches above 1080p need about 4 GiB more; run.sh sets it). */
+/* bbport: growth of the GFX_GraphicsPrivate heap (SprjMemory size table, guest +0x4736dd8) for a
+ * render size above 1080p, applied by the image patch (gpu/shim/bbport_stability.cpp) when the
+ * table still holds the stock size. The formula is bbhost's (droogie/bbhost,
+ * src/engine/live_resolution.cpp, GPL-3.0-or-later): about 270 MiB per million pixels past
+ * 1080p plus 256 MiB, in 64 MiB steps, at least 1 GiB. BB_GFX_HEAP_MORE_MIB=N sets it (0: off). */
+uint64_t runtime_gfx_heap_more_mib(void) {
+    static int done;
+    static uint64_t more;
+    if (done) return more;
+    done = 1;
+    const char *given = getenv("BB_GFX_HEAP_MORE_MIB");
+    if (given && *given) {
+        more = strtoull(given, NULL, 10);
+        if (more > 8192) more = 8192;
+        return more;
+    }
+    const char *res = getenv("BB_RENDER_RES");
+    unsigned long long w = 0, h = 0;
+    if (!res || sscanf(res, "%llux%llu", &w, &h) != 2) {
+        if (!res || sscanf(res, "%lluX%llu", &w, &h) != 2) return more = 0;
+    }
+    const uint64_t px = (uint64_t)w * h, px1080 = UINT64_C(1920) * 1080;
+    if (px <= px1080) return more = 0;
+    const double mp = (double)(px - px1080) / 1e6;
+    uint64_t mib = (uint64_t)((270.0 * mp + 256.0) / 64.0);
+    if ((double)mib * 64.0 < 270.0 * mp + 256.0) ++mib; /* ceil */
+    mib *= 64;
+    return more = mib < 1024 ? 1024 : mib;
+}
+/* sceKernelGetDirectMemorySize. Retail PS4: 5056 MiB; bbport now defaults to 6 GiB as bbhost
+ * does (droogie/bbhost src/hle/kernel.cpp, GPL-3.0-or-later): the SprjMemory heaps are carved from
+ * it in table order with little to spare. A GFX_GraphicsPrivate growth past 1 GiB (above) adds
+ * the rest. BB_DMEM_MB overrides it (5056..16384; the resolution patches above 1080p need about
+ * 4 GiB more than retail; run.bat/run.sh set 9152 then). */
 static uint64_t pool_size_bytes(void) {
     static uint64_t size;
     if (!size) {
         const char *env = getenv("BB_DMEM_MB");
         uint64_t mb = env ? strtoull(env, NULL, 10) : 0;
-        if (mb < 5056 || mb > 16384) mb = 5056;
+        if (mb < 5056 || mb > 16384) {
+            const uint64_t gfx = runtime_gfx_heap_more_mib();
+            mb = 6144 + (gfx > 1024 ? gfx - 1024 : 0);
+            if (mb > 16384) mb = 16384;
+        }
         size = mb * 1024 * 1024;
     }
     return size;
 }
+uint64_t runtime_memory_pool_size(void) { return pool_size_bytes(); }
+/* Flexible memory budget: PS4's 448 MiB, plus what the SprjMemory MENU heap grows by
+ * (bbport_stability.cpp: Scaleform's heaps, carved from MENU, which is flexible memory). */
+static uint64_t flexible_extra;
+void runtime_memory_grow_flexible(uint64_t bytes) {
+    __atomic_add_fetch(&flexible_extra, bytes, __ATOMIC_RELAXED);
+}
 #define POOL_SIZE pool_size_bytes()
-#define FLEXIBLE_SIZE (UINT64_C(448) * 1024 * 1024)
+#define FLEXIBLE_SIZE (UINT64_C(448) * 1024 * 1024 + __atomic_load_n(&flexible_extra, __ATOMIC_RELAXED))
 #define PAGE UINT64_C(16384)
 #define USER_MIN UINT64_C(0x1000000000)
 #define USER_MAX UINT64_C(0xfc00000000)

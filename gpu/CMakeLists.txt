@@ -229,6 +229,12 @@ target_compile_definitions(bbgpu PRIVATE IMGUI_IMPL_VULKAN_NO_PROTOTYPES
     BB_SERIF_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSerif.ttf")
 set_source_files_properties(shim/bbport_overlay.cpp PROPERTIES
     OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf;${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSerif.ttf")
+# Code guest threads run in place of the game's (System V functions): no red zone (Windows
+# exception frames from the write watch would land on it), and the ribbon writers compute the
+# game's bits exactly (no fused multiply-adds).
+set_source_files_properties(shim/bbport_stability.cpp PROPERTIES COMPILE_OPTIONS "-mno-red-zone")
+set_source_files_properties(shim/bbport_ribbons.cpp PROPERTIES COMPILE_OPTIONS
+    "-mno-red-zone;-ffp-contract=off;-fno-fast-math")
 target_include_directories(bbgpu PRIVATE shim layer shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include)
 target_compile_definitions(bbgpu PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
 if (WIN32)
