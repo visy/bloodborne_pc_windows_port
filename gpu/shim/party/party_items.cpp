@@ -427,6 +427,7 @@ using ull = unsigned long long;
 using Clock = std::chrono::steady_clock;
 
 constexpr u64 kAwardLot = 0x17ddc50;   // (MapItemMan*, int lot, char hostOnly)
+constexpr u64 kGiveList = 0x17d89f0;   // (MapItemMan*, ItemList*): inventory add + popup
 constexpr u64 kMapItemMan = 0x553d6e0; // slot: *(u64*)slot is the first argument of every lot call
 constexpr u64 kFlagMan = 0x553b100;    // SprjEventFlagMan slot (+0x80 load mode)
 constexpr u64 kIsFlag = 0x13cfc00;     // u8 (man, u32 id, u8* exists)
@@ -460,6 +461,7 @@ double Now() {
 
 std::atomic<bool> g_on{false};
 std::atomic<bool> g_in_apply{false}; // our own 0x17DDC50 call: the hook stands aside
+std::atomic<u32> g_added{0};         // items 0x17D89F0 added during our own award
 
 std::mutex g_host_mu;
 HostItems g_host;            // under g_host_mu
@@ -497,9 +499,9 @@ bool IsFlag(u64 man, std::int64_t id) {
     return reinterpret_cast<IsFlagFn>(Guest(kIsFlag))(man, static_cast<u32>(id), &exists) != 0;
 }
 
-void SetFlag(u64 man, std::int64_t id) {
+void SetFlag(u64 man, std::int64_t id, bool on = true) {
     if (man && id >= 0) {
-        reinterpret_cast<SetFlagFn>(Guest(kSetFlag))(man, static_cast<u32>(id), 1);
+        reinterpret_cast<SetFlagFn>(Guest(kSetFlag))(man, static_cast<u32>(id), on ? 1 : 0);
     }
 }
 
@@ -551,6 +553,26 @@ BB_COOP_SYSV void AwardEntry(u64, u64 lot_arg, u64 host_only_arg, u64, u64, u64)
         std::lock_guard<std::mutex> lk(g_guest_mu);
         g_guest.Offer({m});
         Log("guest received lot %d while summoned: flag %d will be set in the own world", lot, flag);
+    }
+}
+
+// Our own award's inventory adds (evidence for the apply log): ItemList {u32 n, then n x
+// {u32 gaitem, u32 itemId | category << 28, u32 count, u32 -1}} from +4 (0x17D8A42..0x17D8A8A).
+BB_COOP_SYSV void GiveListEntry(u64, u64 list, u64, u64, u64, u64) {
+    if (!g_in_apply.load() || !list) {
+        return;
+    }
+    u32 n = 0;
+    if (!SafeGet(list, &n)) {
+        return;
+    }
+    g_added.fetch_add(n);
+    for (u32 i = 0; i < n && i < 8; ++i) {
+        u32 e[4] = {};
+        if (SafeRead(list + 4 + 16ull * i, e, sizeof e)) {
+            Log("  inventory add %u/%u: item %u category %u count %u (gaitem 0x%x)", i + 1, n, e[1] & 0x0fffffffu,
+                e[1] >> 28, e[2], e[0]);
+        }
     }
 }
 
@@ -646,15 +668,23 @@ void Apply(const ItemGrant& g) {
         Log("skip %s: no MapItemMan", DescribeItem(g).c_str());
         return;
     }
+    // The ledger bit goes in first: the give can start a save (run A of the C3 check lost a
+    // ledger bit written after the award), so the save that holds the item holds the bit too.
+    // A lot that gives nothing clears it again.
+    if (g.flag < 0) {
+        SetFlag(man, done);
+    }
+    g_added = 0;
     g_in_apply = true;
     reinterpret_cast<AwardFn>(Guest(kAwardLot))(mim, static_cast<u32>(g.lot), 0);
     g_in_apply = false;
-    if (g.flag < 0) {
-        SetFlag(man, done); // the ledger bit (the award has no flag of its own)
+    const u32 added = g_added.load();
+    if (g.flag < 0 && added == 0) {
+        SetFlag(man, done, false);
     }
     const bool now_set = IsFlag(man, done);
-    Log("gave %s: 0x17DDC50(lot %d, 0); flag %lld is %s", DescribeItem(g).c_str(), g.lot, static_cast<long long>(done),
-        now_set ? "set" : "STILL CLEAR (the roll gave nothing?)");
+    Log("gave %s: 0x17DDC50(lot %d, 0) added %u item entr%s; flag %lld is %s", DescribeItem(g).c_str(), g.lot, added,
+        added == 1 ? "y" : "ies", static_cast<long long>(done), now_set ? "set" : "CLEAR (nothing given)");
 }
 
 } // namespace
@@ -683,6 +713,8 @@ void InstallItemsPatches() {
                       &AwardEntry, "item award (0x17DDC50)")) {
         Log("no award hook: host-only lots are not reported (flag reports still work)");
     }
+    HookPrologue(kGiveList, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53},
+                 &GiveListEntry, "item give log (0x17D89F0)");
     SeedHostSeq();
     ParseTestLots();
 #ifdef BB_PARTY_ITEMS_HAVE_PROGRESS
@@ -805,12 +837,18 @@ void ItemsTick() {
     }
     const GameSnapshot gs = ReadGameState(false);
     ItemApplyState s;
-    s.world_up = gs.world_up;
+    s.world_up = gs.world_up && gs.map_id != 0xffffffffu; // the player stands in a map
     s.loading = gs.loading;
     s.session_role = gs.session_role;
     s.load_mode = LoadMode(Ptr(kFlagMan));
     s.own_world = OwnWorld();
     s.game_data = gs.player_rec != 0 && Ptr(kMapItemMan) != 0;
+    static bool ready_logged = false;
+    if (ItemApplyAllowedNow(s) != ready_logged) {
+        ready_logged = !ready_logged;
+        Log("own-world apply gate %s (%s, load mode %d, own world %d)", ready_logged ? "open" : "closed",
+            Describe(gs).c_str(), s.load_mode, s.own_world);
+    }
     std::optional<ItemGrant> g;
     {
         std::lock_guard<std::mutex> lk(g_guest_mu);
