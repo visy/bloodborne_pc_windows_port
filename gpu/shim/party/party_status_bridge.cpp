@@ -477,7 +477,9 @@ TickOut Tick(const TickIn& in) {
             f.max_players = max_players;
             PublishLocked(b);
         }
-        if (in.link && Since(b.last_roster, now) >= kRosterEveryS) {
+        // The roster only while in a party (a rejected / stopped link keeps its last one).
+        if (in.link && (f.link == LinkState::Connected || f.link == LinkState::Hosting) &&
+            Since(b.last_roster, now) >= kRosterEveryS) {
             b.last_roster = now;
             roster_due = true;
         }
