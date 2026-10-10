@@ -47,18 +47,28 @@ def link_tree(src: Path, dst: Path):
                 shutil.copy2(Path(root) / f, target)
 
 
-def builds_running():
-    """Names of running ninja/ld processes (a build may be rewriting out\\bbport.exe)."""
+def builds_running(build=None):
+    """Running builds that may be rewriting BUILD/out/bbport.exe: the linkers (ld.exe) whose output
+    (-o) is under BUILD/out. Other worktrees' builds (parallel agents) do not count. Without the
+    command lines (no PowerShell), any ninja/ld/lto-wrapper process counts."""
+    if build is not None and os.name == "nt":
+        r = subprocess.run(["powershell", "-NoProfile", "-Command",
+                            "Get-CimInstance Win32_Process -Filter \"Name='ld.exe'\" | "
+                            "ForEach-Object { $_.CommandLine }"], capture_output=True, text=True)
+        if r.returncode == 0:
+            want = str((Path(build) / "out").resolve()).lower().replace("/", "\\")
+            outs = [m.group(1).lower().replace("/", "\\") for m in re.finditer(r" -o (\S+)", r.stdout)]
+            return sorted({"ld.exe -> " + o for o in outs if o.startswith(want)})
     out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True).stdout.lower()
     return sorted({n for n in ("ninja.exe", "ld.exe", "lto-wrapper.exe") if f'"{n}"' in out})
 
 
-def wait_for_builds(limit=600):
+def wait_for_builds(build=None, limit=600):
     t0 = time.time()
-    while (running := builds_running()) and time.time() - t0 < limit:
+    while (running := builds_running(build)) and time.time() - t0 < limit:
         print("waiting for the build to finish:", ", ".join(running), flush=True)
         time.sleep(10)
-    if builds_running():
+    if builds_running(build):
         sys.exit("a build is still running after %d s; not copying the executables" % limit)
 
 
@@ -114,7 +124,7 @@ def validate_instances(root, count):
 
 def setup(a):
     build = Path(a.build)
-    wait_for_builds()
+    wait_for_builds(build)
     for i in range(a.count):
         inst = Path(a.root) / f"inst{i}"
         (inst / "out").mkdir(parents=True, exist_ok=True)
