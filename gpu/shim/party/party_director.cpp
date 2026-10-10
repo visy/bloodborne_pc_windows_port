@@ -559,7 +559,8 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
 }
 
 /// The title takes scripted input (BB_TEST_NEWGAME): no world; in party mode the link is up and
-/// the FROM sign-in is not running (the same gates as AutoContinue).
+/// the FROM sign-in (ss.info -> login -> notice) is over: the title menu shows after it (before,
+/// "Creating save data" / "Checking network status" swallow presses).
 bool TitleReadyForInput(PartyRole role, party::PartyLink* link) {
     if (role == PartyRole::None) {
         return true;
@@ -570,7 +571,7 @@ bool TitleReadyForInput(PartyRole role, party::PartyLink* link) {
         return false;
     }
     const bbnet::OnlineProgress op = bbnet::online_progress();
-    return !(op.ss_info > 0 && op.notice == 0 && op.since_last >= 0 && op.since_last < 30.0);
+    return op.notice > 0 && op.since_last >= 2.0;
 }
 
 void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {

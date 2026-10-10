@@ -113,13 +113,25 @@ std::uint32_t NewGameDriver::Step(const NewGameInput& in, std::string* log) {
             ime_base_ = in.ime_count;
             Queue({{0, 1.5}, {kPadOptions, 4.0}, {kPadCross, 3.0}});
         } else if (in_phase >= 10.0) {
-            if (tries_ < 3) {
+            if (tries_ < 4) {
+                // Where the cursor is is unknown here; each try ends on the movie from one of
+                // the likely spots: Controls at Next (a Cross that was not taken), Brightness at
+                // its slider (Down, Cross, then Controls: Up, Cross), Controls at its top row.
                 ++tries_;
                 phase_at_ = in.t;
+                static const char* const what[] = {"Cross", "Down, Cross, Up, Cross", "Up, Cross",
+                                                   "Down, Cross, Up, Cross"};
                 if (log) {
-                    *log = "movie: none after 10 s; Cross on Next again (try " + std::to_string(tries_) + ")";
+                    *log = "movie: none after 10 s; " + std::string(what[tries_ - 1]) + " (try " +
+                           std::to_string(tries_) + ")";
                 }
-                Queue({{kPadCross, 3.0}});
+                if (tries_ == 1) {
+                    Queue({{kPadCross, 3.0}});
+                } else if (tries_ == 3) {
+                    Queue({{kPadUp, 1.0}, {kPadCross, 3.0}});
+                } else {
+                    Queue({{kPadDown, 1.0}, {kPadCross, 4.0}, {kPadUp, 1.0}, {kPadCross, 3.0}});
+                }
             } else {
                 Enter(NewGamePhase::Contract, in.t, log, "no movie seen; trying the contract screen anyway");
                 ime_base_ = in.ime_count;
@@ -131,6 +143,7 @@ std::uint32_t NewGameDriver::Step(const NewGameInput& in, std::string* log) {
         if (in.ime_count > ime_base_) {
             Enter(NewGamePhase::Finish, in.t, log,
                   "name entered; Up (wraps to Finish), Cross, Left (YES), Cross");
+            ime_base_ = in.ime_count;
             Queue({{0, 2.0}, {kPadUp, 1.5}, {kPadCross, 2.5}, {kPadLeft, 1.0}, {kPadCross, 3.0}});
         } else if (tries_ < 6) {
             ++tries_;
@@ -153,8 +166,28 @@ std::uint32_t NewGameDriver::Step(const NewGameInput& in, std::string* log) {
     case NewGamePhase::WaitLoad:
         if (in.loading || in.world_up) {
             Enter(NewGamePhase::Opening, in.t, log, "loading the world");
-        } else if (in_phase >= 20.0) {
-            Enter(NewGamePhase::Failed, in.t, log, "no loading screen 20 s after Finish");
+        } else if (in_phase >= 8.0) {
+            // A press was missed: still on the contract (a new name box = the cursor is on
+            // Enter Name) or on "Finalise contract?" (NO or YES highlighted). Left, Cross
+            // answers the dialog and opens it from Finish; Left does nothing on the contract.
+            if (tries_ >= 5) {
+                Enter(NewGamePhase::Failed, in.t, log, "no loading screen after Finish and 5 retries");
+                break;
+            }
+            ++tries_;
+            phase_at_ = in.t;
+            const bool on_name = in.ime_count > ime_base_;
+            ime_base_ = in.ime_count;
+            if (log) {
+                *log = std::string("no loading screen yet; ") +
+                       (on_name ? "the name box opened again: Up, Cross, Left, Cross" : "Left, Cross") + " (try " +
+                       std::to_string(tries_) + ")";
+            }
+            if (on_name) {
+                Queue({{0, 2.0}, {kPadUp, 1.5}, {kPadCross, 2.5}, {kPadLeft, 1.0}, {kPadCross, 3.0}});
+            } else {
+                Queue({{kPadLeft, 1.0}, {kPadCross, 3.0}});
+            }
         }
         break;
     case NewGamePhase::Opening:
@@ -243,6 +276,7 @@ const std::vector<StartWeapon>& PrologueSkipWeapons() {
 
 extern "C" void runtime_pad_director_press(std::uint32_t buttons); // src/runtime_pad.c
 extern "C" int runtime_ime_dialog_count(void);                     // src/runtime_services.c
+extern "C" int runtime_savedata_mount_count(void);                 // src/runtime_savedata.c
 
 namespace {
 std::atomic<int> g_movies{0};
@@ -381,7 +415,8 @@ void NewGameTestTick(const GameSnapshot& s, bool title_ready) {
     if (g.drv_on && !g.drv.finished()) {
         NewGameInput in;
         in.t = t;
-        in.title_ready = title_ready && !s.world_up && !s.loading;
+        // The title mounts the save right before its menu shows.
+        in.title_ready = title_ready && runtime_savedata_mount_count() > 0 && !s.world_up && !s.loading;
         in.ime_count = runtime_ime_dialog_count();
         in.movie_count = g_movies.load(std::memory_order_relaxed);
         in.world_up = s.world_up;

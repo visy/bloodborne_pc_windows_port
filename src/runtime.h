@@ -128,6 +128,8 @@ void runtime_pad_report(void);
 void runtime_pad_director_press(uint32_t buttons);
 /* How many ImeDialogs (name entry) the game opened so far; see runtime_services.c. */
 int runtime_ime_dialog_count(void);
+/* Save data mounts so far (the title mounts the save before its menu); runtime_savedata.c. */
+int runtime_savedata_mount_count(void);
 uintptr_t runtime_rtc_resolve(const char *name);
 const char *runtime_file_user_dir(void);
 void runtime_savedata_configure(const char *title);

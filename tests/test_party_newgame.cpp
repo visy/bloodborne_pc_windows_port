@@ -33,6 +33,8 @@ struct Model {
     int ime = 0, movies = 0;
     bool has_character = false; // title default = Continue
     bool ignore_next_cross = false;
+    int drop_press = -1; // the game misses this press (0-based count of all presses)
+    int presses = 0;
     double until = 0; // timed screens
     std::uint32_t last = 0;
 
@@ -132,7 +134,9 @@ struct Model {
         const std::uint32_t down = held & ~last;
         last = held;
         for (std::uint32_t bit = 1; bit; bit <<= 1) {
-            if (down & bit) Press(bit, t);
+            if (down & bit) {
+                if (presses++ != drop_press) Press(bit, t);
+            }
         }
     }
 };
@@ -186,6 +190,26 @@ void TestControlsCrossIgnoredOnce() {
     CHECK(m.movies == 1);
 }
 
+void TestMissedPresses() {
+    // Every single press of the run missed once in turn (title Cross, Brightness Down / Cross,
+    // Controls Up / Cross, ...): the checkpoints get the run to the clinic anyway, or it stops
+    // with Failed - never a wrong contract.
+    int done = 0;
+    for (int k = 0; k < 14; ++k) {
+        Model m;
+        m.drop_press = k;
+        const NewGamePhase p = Run(m, 400);
+        CHECK(p == NewGamePhase::Done || p == NewGamePhase::Failed);
+        if (p == NewGamePhase::Done) {
+            ++done;
+            CHECK(m.screen == Screen::Clinic);
+        } else {
+            std::fprintf(stderr, "note: with press %d missed the driver gave up\n", k);
+        }
+    }
+    CHECK(done == 14);
+}
+
 void TestWarpParse() {
     CHECK(ParsePrologueWarp(nullptr) == 2412951);
     CHECK(ParsePrologueWarp("") == 2412951);
@@ -223,6 +247,7 @@ int main() {
     TestTitleNeverReady();
     TestSaveWithCharacter();
     TestControlsCrossIgnoredOnce();
+    TestMissedPresses();
     TestWarpParse();
     TestSkipLists();
     std::printf("party-newgame-test: %d checks, %d failures\n", g_checks, g_failures);
