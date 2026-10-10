@@ -17,6 +17,10 @@ void runtime_thread_attach_host(const char* name);
 const char* runtime_symbol(const char* nid);
 }
 
+namespace bbnet::udp {
+class RelayClient;
+}
+
 namespace bbnet {
 
 // Every guest-callable function restores the guest FS base on its way out (as the runtime's
@@ -88,6 +92,8 @@ struct RelayInfo {
 bool p2p_stun(const char* host, std::uint16_t port, int timeout_ms, std::uint32_t* mapped_addr,
               std::uint16_t* mapped_port, bool want_relay = false, RelayInfo* relay = nullptr);
 bool p2p_relay(std::uint32_t* server, std::uint16_t* vport);
+// The guest-side relay state (party_udp.h), for routing a peer through the host relay.
+const udp::RelayClient& p2p_relay_client();
 // Host side: the relay port the host's relay gave the client seen at addr (network order) :
 // port_host (host order), from its STUN HELLO; false when that address never asked for one.
 bool p2p_relay_vport_for(std::uint32_t addr, std::uint16_t port_host, std::uint16_t* vport);

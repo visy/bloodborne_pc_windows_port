@@ -17,7 +17,13 @@
 // unacked events are replayed after a reconnect and de-duplicated by cursor), PARTY_CMD,
 // PROGRESS, BYE. No frame for lost_timeout (10 s) = connection lost; the host keeps a lost
 // member's slot (and its event queue) for slot_keep (60 s); the guest reconnects with
-// exponential backoff 1, 2, 4 .. 30 s and gets the same slot back (resume token).
+// exponential backoff 1, 2, 4, 8 s (then every 8 s, each wait +-20 % so guests that lost the
+// host together do not retry in lockstep) and gets the same slot back (resume token).
+//
+// Never blocks its caller: every public call takes the link's lock only for bookkeeping and
+// non-blocking socket writes; the IO thread holds it only while processing (bounded: frames are
+// flushed in batches, host names are resolved outside it). Waits: rpc_call (timeout_ms),
+// wait_state (timeout_ms), stop (joins the IO and callback threads: the shutdown path only).
 //
 // Threads: one IO thread (WSAPoll) per PartyLink, plus one callback thread: every callback runs
 // on the callback thread, one at a time, never while PartyLink's lock is held, so callbacks may
@@ -93,7 +99,8 @@ struct LinkConfig {
     int lost_timeout_ms = 10000;
     int slot_keep_ms = 60000;
     int backoff_initial_ms = 1000;
-    int backoff_max_ms = 30000;
+    int backoff_max_ms = 8000;     // a friend's machine: retrying every 8 s costs nothing
+    int backoff_jitter_pct = 20;   // each wait randomized +-20 %
     int connect_timeout_ms = 5000;
     int roster_refresh_ms = 5000;  // host re-broadcasts the roster (fresh pings) this often
 };
@@ -157,6 +164,9 @@ public:
     std::string observed_address() const;  // guest: "ip:port" the host saw us at
     // Host: the IPv4 (network byte order) member `slot` is connected from; 0 when not connected.
     std::uint32_t member_ip(int slot) const;
+    // Guest: the last WELCOME resumed our session (same slot, events replayed). False after a
+    // fresh join: the host restarted or released our slot, so it forgot our earlier state.
+    bool session_resumed() const;
     RejectCode reject_code() const;
     std::string reject_reason() const;
 
