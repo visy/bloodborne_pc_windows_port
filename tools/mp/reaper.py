@@ -187,17 +187,17 @@ def main():
             # phases that must not end a run.
             if not all_in_world(root):
                 state[hid] = (n, now)
-                # Stuck before the world (e.g. a first-run screen nobody presses through): no log
-                # growth at all for 90 s while not in the world ends the run too.
-                size = sum(f.stat().st_size for f in root.glob("inst*/run.log") if f.exists())
-                sz, sz_since = state.get("size:" + hid, (-1, now))
-                if size != sz:
-                    state["size:" + hid] = (size, now)
-                elif now - sz_since > 90:
+                # Stuck before the world (e.g. a first-run screen nobody presses through): no new
+                # kind of party line for 120 s while not in the world ends the run too (the game
+                # itself keeps logging frame stats, so log size proves nothing).
+                pn, pn_since = state.get("pre:" + hid, (-1, now))
+                if n != pn:
+                    state["pre:" + hid] = (n, now)
+                elif now - pn_since > max(120, idle):
                     pids = end_run(root)
-                    print(time.strftime("%H:%M:%S"), "stuck before the world (no log growth 90 s): ended",
+                    print(time.strftime("%H:%M:%S"), "stuck before the world (no new party lines 120 s): ended",
                           e.get("label") or root, f"({len(pids)} processes)", flush=True)
-                    state["size:" + hid] = (size, now + 3600)
+                    state["pre:" + hid] = (n, now + 3600)
                 continue
             count, since = state.get(hid, (-1, now))
             if n != count:
