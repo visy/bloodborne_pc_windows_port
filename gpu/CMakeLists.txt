@@ -384,13 +384,15 @@ endif()
 
 # Party progress sync (shim/party/party_progress, C2): keys, categories, policy, diff, JSON, BBPF
 # against a fake flag store (the game glue is compiled out). ninja -C out/gpu party-progress-test
-add_executable(party-progress-test EXCLUDE_FROM_ALL ../tests/test_party_progress.cpp
-    shim/party/party_progress.cpp shim/net/json.cpp)
-target_compile_definitions(party-progress-test PRIVATE BB_PARTY_PROGRESS_NO_GAME
-    BB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/..")
-target_compile_options(party-progress-test PRIVATE -UNDEBUG -Wall -Wextra)
-target_include_directories(party-progress-test PRIVATE shim)
-set_target_properties(party-progress-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/shim/party/party_progress.cpp)  # C2 lands in its own branch
+    add_executable(party-progress-test EXCLUDE_FROM_ALL ../tests/test_party_progress.cpp
+        shim/party/party_progress.cpp shim/net/json.cpp)
+    target_compile_definitions(party-progress-test PRIVATE BB_PARTY_PROGRESS_NO_GAME
+        BB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/..")
+    target_compile_options(party-progress-test PRIVATE -UNDEBUG -Wall -Wextra)
+    target_include_directories(party-progress-test PRIVATE shim)
+    set_target_properties(party-progress-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+endif()
 # Party status board (shim/party/party_status.cpp; in bbgpu through SHIM_SOURCES): the overlay's
 # Party tab <-> director snapshot and command queue. ninja -C out/gpu party-status-test
 add_executable(party-status-test EXCLUDE_FROM_ALL ../tests/test_party_status.cpp shim/party/party_status.cpp)
@@ -405,3 +407,11 @@ target_compile_definitions(party-travel-test PRIVATE BB_PARTY_TRAVEL_NO_GAME)
 target_compile_options(party-travel-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-travel-test PRIVATE shim)
 set_target_properties(party-travel-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Party items (C3, shim/party/party_items.cpp; in bbgpu through SHIM_SOURCES): tables, JSON,
+# queues and the apply gate (BB_PARTY_ITEMS_NO_GAME). ninja -C out/gpu party-items-test
+add_executable(party-items-test EXCLUDE_FROM_ALL ../tests/test_party_items.cpp shim/party/party_items.cpp
+    shim/net/json.cpp)
+target_compile_definitions(party-items-test PRIVATE BB_PARTY_ITEMS_NO_GAME)
+target_compile_options(party-items-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-items-test PRIVATE shim)
+set_target_properties(party-items-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
