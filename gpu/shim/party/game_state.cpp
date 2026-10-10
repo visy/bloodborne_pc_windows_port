@@ -40,7 +40,8 @@ constexpr std::uint32_t kTypeGoods = 0x40000000u;
 /// The function's first bytes match 1.09 (checked once; a mismatch is logged once).
 bool CodeOk(std::uint64_t off, std::initializer_list<std::uint8_t> bytes, const char* name, int* state) {
     if (*state == 0) {
-        *state = Matches(off, bytes) ? 1 : -1;
+        // C2 hooks SetEventFlag and C3 the award function: their prologues are jumps now.
+        *state = MatchesUnhooked(off, bytes) ? 1 : -1;
         if (*state < 0) {
             std::printf("Party: start: %s (0x%llx) differs from 1.09; off\n", name, static_cast<unsigned long long>(off));
             std::fflush(stdout);

@@ -16,6 +16,7 @@
 #include "coop_hooks.h"
 #include "game_state.h"
 #include "party_director.h"
+#include "party_runtime.h"
 
 #include <atomic>
 #include <chrono>
@@ -809,6 +810,7 @@ struct Tick {
     // test
     bool test_on = false, test_done = false, test_mirror = false;
     bool test_host = false;     // host:<remo>: the host plays it and sends it like a captured 2002 play
+    bool test_leave = false;    // leave_after_mirror: a guest leaves the party once a live mirror ended
     double test_coop_since = 0; // host test: when a cooperator was first seen (0 = not yet)
     double test_coop_poll = 0;
     u32 test_remo = 0;
@@ -1126,7 +1128,10 @@ void ParseTest() {
         return;
     }
     std::string s(t);
-    if (s.rfind("host:", 0) == 0) {
+    if (s == "leave_after_mirror") {
+        g_tick.test_leave = true;
+        Log("test: the guest leaves the party when a live mirror has ended");
+    } else if (s.rfind("host:", 0) == 0) {
         g_tick.test_on = g_tick.test_host = true;
         g_tick.test_remo = static_cast<u32>(std::strtoul(s.c_str() + 5, nullptr, 0));
         if (const char* d = std::getenv("BB_PARTY_STORY_TEST_DELAY"); d && d[0]) {
@@ -1144,7 +1149,7 @@ void ParseTest() {
         Log("test: replay remo %u %.0f s after the world is up%s", g_tick.test_remo, g_tick.test_delay,
             g_tick.test_mirror ? " (mirror path, mode 2)" : "");
     } else {
-        Log("BB_PARTY_STORY_TEST: '%s' is not cutscene:<id>[,mirror] or host:<id>; ignored", t);
+        Log("BB_PARTY_STORY_TEST: '%s' is not cutscene:<id>[,mirror] , host:<id> or leave_after_mirror; ignored", t);
     }
 }
 
@@ -1266,6 +1271,11 @@ void StoryTick() {
             Log("remo playing (map %s)", MapName(g.map_id).c_str());
         } else {
             Log("remo ended after %.1f s; control back (%s)", now - g_tick.remo_since, Describe(g).c_str());
+            if (g_tick.test_leave && g.session_role == RoleClient) {
+                g_tick.test_leave = false;
+                Log("test: live mirror over; the guest leaves the party (back to its own world)");
+                party::runtime_leave();
+            }
         }
         g_tick.remo_was_playing = st.remo_playing;
     }

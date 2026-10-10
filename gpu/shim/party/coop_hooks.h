@@ -32,6 +32,12 @@ u64 Guest(u64 off);
 /// The image holds `n` bytes `bytes` at `off`.
 bool Matches(u64 off, const u8* bytes, std::size_t n);
 inline bool Matches(u64 off, std::initializer_list<u8> bytes) { return Matches(off, bytes.begin(), bytes.size()); }
+/// Like Matches, but the prologues our entry hooks / replacements overwrote count as their
+/// original bytes: "is this still the 1.09 function" for code that calls a function we hooked.
+bool MatchesUnhooked(u64 off, const u8* bytes, std::size_t n);
+inline bool MatchesUnhooked(u64 off, std::initializer_list<u8> bytes) {
+    return MatchesUnhooked(off, bytes.begin(), bytes.size());
+}
 /// A `call rel32` (e8) at `off` to offset `target`.
 bool CallsTo(u64 off, u64 target);
 

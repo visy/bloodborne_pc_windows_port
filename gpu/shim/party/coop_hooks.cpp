@@ -28,6 +28,26 @@ unsigned char* g_image = nullptr;
 u64 g_image_size = 0;
 std::mutex g_mu; // installs
 
+// The original bytes of every prologue an entry hook / replacement overwrote (under g_mu), so a
+// code check of a hooked function (MatchesUnhooked) still sees the 1.09 bytes.
+struct HookedSite {
+    u64 off = 0;
+    std::size_t n = 0;
+    u8 bytes[32] = {};
+};
+constexpr std::size_t kMaxHookedSites = 256;
+HookedSite g_hooked[kMaxHookedSites];
+std::size_t g_hooked_n = 0;
+
+void RememberPrologue(u64 off, std::initializer_list<u8> prologue) {
+    if (g_hooked_n < kMaxHookedSites && prologue.size() <= sizeof g_hooked[0].bytes) {
+        HookedSite& h = g_hooked[g_hooked_n++];
+        h.off = off;
+        h.n = prologue.size();
+        std::memcpy(h.bytes, prologue.begin(), prologue.size());
+    }
+}
+
 constexpr std::size_t kStubPageSize = 16384;
 u8* g_stub_page = nullptr;
 std::size_t g_stub_used = 0;
@@ -268,6 +288,24 @@ bool Matches(u64 off, const u8* bytes, std::size_t n) {
     return std::memcmp(g_image + off, bytes, n) == 0;
 }
 
+bool MatchesUnhooked(u64 off, const u8* bytes, std::size_t n) {
+    if (!g_image || off + n > g_image_size || n > 256) {
+        return false;
+    }
+    u8 code[256];
+    std::memcpy(code, g_image + off, n);
+    std::lock_guard<std::mutex> lk(g_mu);
+    for (std::size_t i = 0; i < g_hooked_n; ++i) {
+        const HookedSite& h = g_hooked[i];
+        for (std::size_t k = 0; k < h.n; ++k) {
+            if (h.off + k >= off && h.off + k < off + n) {
+                code[h.off + k - off] = h.bytes[k];
+            }
+        }
+    }
+    return std::memcmp(code, bytes, n) == 0;
+}
+
 bool CallsTo(u64 off, u64 target) {
     if (!g_image || off + 5 > g_image_size || g_image[off] != 0xe8) {
         return false;
@@ -291,6 +329,7 @@ bool HookPrologue(u64 off, std::initializer_list<u8> prologue, PreHandler handle
     e.Raw(prologue.begin(), prologue.size());
     e.JmpTo(reinterpret_cast<u64>(g_image) + off + prologue.size());
     const u64 stub = PlaceStub(e);
+    RememberPrologue(off, prologue); // before the write: a half-done install still has its bytes
     if (!stub || !WriteBranch(off, 0xe9, stub, prologue.size() - 5)) {
         std::printf("Coop hooks: %s: the stub at guest +0x%llx could not be placed; not installed\n", name, ull(off));
         return false;
@@ -319,6 +358,7 @@ bool ReplacePrologue(u64 off, std::initializer_list<u8> prologue, const void* ha
     if (original) {
         *original = reinterpret_cast<void*>(trampoline);
     }
+    RememberPrologue(off, prologue);
     if (!WriteBranch(off, 0xe9, jump, prologue.size() - 5)) {
         std::printf("Coop hooks: %s: guest +0x%llx out of reach; not installed\n", name, ull(off));
         return false;

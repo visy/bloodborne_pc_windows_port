@@ -248,6 +248,41 @@ static void test_guest() {
     CHECK(!q.Step(Home(), t + 10)); // stable count restarted at 1
 }
 
+// A rejoin's full list is mostly lots the guest already has: a skip (NoPopup) does not hold the
+// next grant for kSpacing, so a new lot behind 100 skips lands at once, not 150 s later.
+static void test_guest_skips() {
+    GuestItems q;
+    std::vector<ItemGrant> in;
+    for (int i = 0; i < 100; ++i) {
+        in.push_back({std::uint64_t(i + 1), 2400000 + i * 10, 52400000 + i * 10, kItemNone, ItemSource::Full});
+    }
+    CHECK(q.Offer(in) == 100);
+    double t = 10.0;
+    std::optional<ItemGrant> g;
+    for (int i = 0; i < GuestItems::kStableTicks - 1; ++i) {
+        CHECK(!q.Step(Home(), t));
+    }
+    int taken = 0;
+    for (int i = 0; i < 100; ++i) {
+        g = q.Step(Home(), t);
+        if (!g) {
+            break;
+        }
+        q.Done(g->Key());
+        q.NoPopup(); // already given
+        ++taken;
+    }
+    CHECK(taken == 100);
+    // A real award still spaces the next one.
+    CHECK(q.Offer({{200, 31000, kItemNone, 25, ItemSource::Award}, {201, 31010, kItemNone, 26, ItemSource::Award}}) == 2);
+    g = q.Step(Home(), t);
+    CHECK(g && g->lot == 31000);
+    q.Done(g->Key());
+    CHECK(!q.Step(Home(), t + 0.1));
+    g = q.Step(Home(), t + GuestItems::kSpacing);
+    CHECK(g && g->lot == 31010);
+}
+
 int main() {
     test_tables();
     test_deny();
@@ -256,6 +291,7 @@ int main() {
     test_host();
     test_gate();
     test_guest();
+    test_guest_skips();
     std::printf("party-items-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

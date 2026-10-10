@@ -160,6 +160,8 @@ public:
     /// Once a frame: the grant to apply now, else nothing. The caller reports Done(key) after.
     std::optional<ItemGrant> Step(const ItemApplyState& s, double now);
     void Done(std::int64_t key) { done_.insert(key); }
+    /// The grant Step just returned opened no popup (already given): no spacing before the next.
+    void NoPopup() { last_apply_ = -1e9; }
     std::size_t Pending() const { return q_.size(); }
     bool IsDone(std::int64_t key) const { return done_.count(key) != 0; }
 
