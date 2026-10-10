@@ -4,7 +4,8 @@
 //
 // Wire: every frame is [u32 len LE][u8 type][payload], len = 1 + payload size.
 //   guest -> HELLO     {magic "BBPL", u16 version, str name, sha256 eboot[32], mods hash[32], token[16],
-//                       gameplay patches hash[32], str patch names, str mod names}  (newline-separated)
+//                       gameplay patches hash[32], str patch names, str mod names,  (newline-separated)
+//                       str party rules}  (max players + 4-player rule set, party_fourp.h)
 //   host  -> CHALLENGE {nonce[24]}                         (or REJECT on version / hash / name; a
 //                       Mismatch REJECT names what differs: identity_mismatch)
 //   guest -> AUTH      {nonce[24], proof[32]}              proof = keyed BLAKE2b (party_crypto.h)
@@ -18,7 +19,9 @@
 // PROGRESS, BYE. No frame for lost_timeout (10 s) = connection lost; the host keeps a lost
 // member's slot (and its event queue) for slot_keep (60 s); the guest reconnects with
 // exponential backoff 1, 2, 4, 8 s (then every 8 s, each wait +-20 % so guests that lost the
-// host together do not retry in lockstep) and gets the same slot back (resume token).
+// host together do not retry in lockstep) and gets the same slot back (resume token). A restarted
+// host restores its member table (slot, name, token: kept_members / restore_members, from the
+// party runtime's crash marker), so its guests get their slots back after a host crash too.
 //
 // Never blocks its caller: every public call takes the link's lock only for bookkeeping and
 // non-blocking socket writes; the IO thread holds it only while processing (bounded: frames are
@@ -89,6 +92,9 @@ struct LinkConfig {
     std::array<std::uint8_t, 32> patches_hash{};  // gameplay patches (zeros: none / not compared)
     std::array<std::uint8_t, 32> mods_hash{};     // gameplay mods (zeros: none)
     std::vector<std::string> patch_names, mod_names;
+    // The party's game rules: "max N players, 4p:..." (party_runtime from BB_PARTY_MAX and
+    // party_fourp.h FourpRulesTag). Part of the version check: must equal the host's.
+    std::string rules;
     std::string password;               // BB_PARTY_PASSWORD (optional)
     std::array<std::uint8_t, 8> secret{};  // the party code's secret (zeros for plain host:port)
     std::uint16_t port = 9307;          // host: listen port (0 = ephemeral, see bound_port())
@@ -117,6 +123,13 @@ bool parse_identity_file(const std::string& text, const std::string& item_key, s
 // BB_PARTY_PORT, BB_PARTY_MAX (clamped 2..4), BB_PARTY_PASSWORD over `cfg`.
 void apply_link_env(LinkConfig& cfg);
 bool valid_member_name(const std::string& name);
+
+// Host: a member's slot as kept across a host restart.
+struct KeptMember {
+    int slot = 0;
+    std::string name;
+    std::array<std::uint8_t, 16> token{};
+};
 
 struct LinkCallbacks {
     // Host: a member completed the handshake (rejoined = it got its kept slot back).
@@ -164,9 +177,6 @@ public:
     std::string observed_address() const;  // guest: "ip:port" the host saw us at
     // Host: the IPv4 (network byte order) member `slot` is connected from; 0 when not connected.
     std::uint32_t member_ip(int slot) const;
-    // Guest: the last WELCOME resumed our session (same slot, events replayed). False after a
-    // fresh join: the host restarted or released our slot, so it forgot our earlier state.
-    bool session_resumed() const;
     RejectCode reject_code() const;
     std::string reject_reason() const;
 
@@ -186,6 +196,16 @@ public:
     bool send_progress(int slot, const std::vector<std::uint8_t>& blob);
     // This player's roster entry (host: broadcast to all; guest: reported to the host).
     void set_local_state(MemberState state, std::uint32_t map_id);
+    // Host: every member's slot, name and resume token (for the crash marker).
+    std::vector<KeptMember> kept_members() const;
+    // Host, before start_host: members of the previous (crashed) run, as lost members whose slot
+    // is kept for slot_keep_ms from start_host. They come back by token or name; their WELCOME
+    // says "not resumed" (the event streams start afresh: this process is new).
+    void restore_members(const std::vector<KeptMember>& members);
+    // Guest: the last WELCOME resumed our previous session (false: the host restarted or released
+    // our slot - whatever the host knew about us is gone).
+    bool last_welcome_resumed() const;
+
     // Host: drop a member and free its slot (BYE Kicked).
     bool kick(int slot, const std::string& reason);
 

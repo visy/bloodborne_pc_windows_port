@@ -1057,7 +1057,7 @@ struct Party {
             }
             ++g_tot.state_changes;
             if (s == LinkState::Rejected) ++gr->rejected;
-            if (s == LinkState::Connected && gr->link && !gr->link->session_resumed()) {
+            if (s == LinkState::Connected && gr->link && !gr->link->last_welcome_resumed()) {
                 // party_runtime.cpp: a fresh host session - event ids start over, the relay
                 // registration is the old host's (np_session host_session_reset re-STUNs).
                 gr->rg.reset_event_cursor();
@@ -1503,7 +1503,7 @@ void run_outage(const char* name, int outage_ms) {
             char b[96];
             std::snprintf(b, sizeof b, " %s %.1f s;", kNames[i], std::chrono::duration<double>(c - t_back).count());
             rt += b;
-            v.check(g->link->session_resumed(), std::string(kNames[i]) + " not resumed");
+            v.check(g->link->last_welcome_resumed(), std::string(kNames[i]) + " not resumed");
         }
     }
     v.check(rejects == 0, "rejected");
@@ -1551,8 +1551,8 @@ void run_drop_rejoin() {
     if (a_back) {
         v.note("Alice (connection reset): back in %.2f s, slot %d -> %d, resumed %s",
                std::chrono::duration<double>(p.G(1)->connected_after(t_reset) - t_reset).count(), alice_slot,
-               p.G(1)->link->local_slot(), p.G(1)->link->session_resumed() ? "yes" : "no");
-        v.check(p.G(1)->link->session_resumed() && p.G(1)->link->local_slot() == alice_slot, "Alice not resumed");
+               p.G(1)->link->local_slot(), p.G(1)->link->last_welcome_resumed() ? "yes" : "no");
+        v.check(p.G(1)->link->last_welcome_resumed() && p.G(1)->link->local_slot() == alice_slot, "Alice not resumed");
     }
     // Bob: his process dies; 20 s later a new one (no token, same name) joins.
     p.crash_guest(2);
