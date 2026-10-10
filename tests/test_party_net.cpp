@@ -481,6 +481,80 @@ static void test_port_remap(std::uint16_t party_port) {
     std::printf("port remap: ok\n");
 }
 
+// The LAN address choice: BB_PARTY_LOCAL_IP / BB_PARTY_LOOPBACK win over every adapter (the
+// loopback one included); real adapters with the default route beat Hyper-V / WSL / VPN ones.
+static std::uint32_t ipv4(const char* text) {
+    std::uint32_t a = 0;
+    inet_pton(AF_INET, text, &a);
+    return a;
+}
+static void test_local_address() {
+    using bbnet::LanAdapter;
+    auto adapter = [](const char* name, const char* ip, bool gw, bool def, bool phys) {
+        LanAdapter a;
+        a.name = name;
+        a.ip = ipv4(ip);
+        a.gateway = gw;
+        a.default_route = def;
+        a.physical = phys;
+        return a;
+    };
+    const LanAdapter lan = adapter("Ethernet / Realtek PCIe 2.5GbE Family Controller", "192.168.1.20", true, true, true);
+    const LanAdapter wifi = adapter("Wi-Fi / Intel(R) Wi-Fi 6E AX211", "192.168.1.21", true, false, true);
+    const LanAdapter second = adapter("Ethernet 2 / Intel(R) Ethernet I219-V", "10.0.0.5", false, false, true);
+    const LanAdapter hyperv =
+        adapter("vEthernet (Default Switch) / Hyper-V Virtual Ethernet Adapter", "172.23.16.1", false, false, true);
+    const LanAdapter wsl = adapter("vEthernet (WSL (Hyper-V firewall)) / Hyper-V Virtual Ethernet Adapter #2",
+                                   "172.23.32.1", true, false, true);
+    const LanAdapter vbox =
+        adapter("Ethernet 3 / VirtualBox Host-Only Ethernet Adapter", "192.168.56.1", false, false, true);
+    const LanAdapter vpn = adapter("OpenVPN TAP / TAP-Windows Adapter V9", "10.8.0.6", true, true, true);
+    CHECK(!bbnet::adapter_is_virtual(lan.name) && !bbnet::adapter_is_virtual(wifi.name));
+    CHECK(bbnet::adapter_is_virtual(hyperv.name) && bbnet::adapter_is_virtual(wsl.name));
+    CHECK(bbnet::adapter_is_virtual(vbox.name) && bbnet::adapter_is_virtual(vpn.name));
+    CHECK(bbnet::adapter_is_virtual("Tailscale / Tailscale Tunnel"));
+    CHECK(bbnet::lan_adapter_score(lan) > bbnet::lan_adapter_score(wifi));
+    CHECK(bbnet::lan_adapter_score(wifi) > bbnet::lan_adapter_score(second));
+    for (const LanAdapter* v : {&hyperv, &wsl, &vbox, &vpn}) {
+        CHECK(bbnet::lan_adapter_score(*v) >= 0);
+        CHECK(bbnet::lan_adapter_score(second) > bbnet::lan_adapter_score(*v));  // even a VPN with the default route
+    }
+    LanAdapter lo = adapter("Loopback Pseudo-Interface 1", "127.0.0.1", false, false, false);
+    lo.loopback = true;
+    CHECK(bbnet::lan_adapter_score(lo) < 0);
+    CHECK(bbnet::lan_adapter_score(adapter("Ethernet", "169.254.3.4", false, false, true)) < 0);
+    LanAdapter teredo = adapter("Teredo", "10.1.1.1", false, false, false);
+    teredo.tunnel = true;
+    CHECK(bbnet::lan_adapter_score(teredo) < 0);
+
+    // The environment overrides, read at every query (party_runtime sets them late).
+    std::string how;
+    set_env("BB_PARTY_LOOPBACK", "");
+    set_env("BB_MP_LOCAL_TEST", "");
+    set_env("BB_PARTY_LOCAL_IP", "127.0.0.1");
+    CHECK(bbnet::forced_local_ipv4() == ipv4("127.0.0.1"));
+    CHECK(bbnet::query_local_ipv4(&how) == ipv4("127.0.0.1"));
+    CHECK(how.find("BB_PARTY_LOCAL_IP") != std::string::npos);
+    std::printf("local address (forced): %s\n", how.c_str());
+    set_env("BB_PARTY_LOCAL_IP", "10.200.201.202");
+    CHECK(bbnet::query_local_ipv4(&how) == ipv4("10.200.201.202"));
+    CHECK(how.find("no adapter") != std::string::npos);
+    set_env("BB_PARTY_LOCAL_IP", "");
+    set_env("BB_PARTY_LOOPBACK", "1");
+    std::string source;
+    CHECK(bbnet::forced_local_ipv4(&source) == ipv4("127.0.0.1") && source == "BB_PARTY_LOOPBACK=1");
+    CHECK(bbnet::query_local_ipv4(&how) == ipv4("127.0.0.1"));
+    set_env("BB_PARTY_LOOPBACK", "0");
+    set_env("BB_PARTY_LOCAL_IP", "not-an-ip");
+    CHECK(bbnet::forced_local_ipv4() == 0);
+    set_env("BB_PARTY_LOCAL_IP", "");
+    CHECK(bbnet::forced_local_ipv4() == 0);
+    const std::uint32_t chosen = bbnet::query_local_ipv4(&how);
+    CHECK((ntohl(chosen) >> 24) != 127);  // never the loopback adapter unless forced
+    std::printf("local address (auto): %s\n", how.c_str());
+    std::printf("local address: ok\n");
+}
+
 int main() {
     const std::uint16_t party_port = static_cast<std::uint16_t>(39000 + (std::rand() % 500));
     char port_text[16];
@@ -490,6 +564,7 @@ int main() {
     set_env("BB_PARTY_NAME", "Test_Hunter-1");
     setvbuf(stdout, nullptr, _IONBF, 0);
 
+    test_local_address();
     test_stun();
     test_netsim();
     test_routing();

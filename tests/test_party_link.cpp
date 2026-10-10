@@ -230,6 +230,9 @@ static LinkConfig base_cfg(const char* name, const char* password) {
     c.secret = {9, 8, 7, 6, 5, 4, 3, 2};
     c.eboot_sha256.fill(0xAB);
     c.mods_hash.fill(0x11);
+    c.patches_hash.fill(0x22);
+    c.patch_names = {"Party: Bells anywhere", "Party: Skip Online/Offline Choice (Online)"};
+    c.mod_names = {"Better Params (12 files)"};
     c.port = 0;  // ephemeral: tests never collide with a running game
     c.bind_addr = "127.0.0.1";
     c.max_players = 3;
@@ -314,7 +317,33 @@ static void test_party() {
         CHECK(bad.start_guest("127.0.0.1", port, &err));
         CHECK(bad.wait_state(LinkState::Rejected, 5000));
         CHECK(bad.reject_code() == RejectCode::Mismatch);
+        CHECK(bad.reject_reason().find("gameplay mods differ") != std::string::npos);
+        CHECK(bad.reject_reason().find("patches") == std::string::npos);
+        CHECK(bad.reject_reason().find("eboot") == std::string::npos);
         std::printf("  mismatched mods: %s\n", bad.reject_reason().c_str());
+    }
+    {
+        // Another gameplay patch set and another eboot: the guest learns both, by name.
+        Recorder xr;
+        LinkConfig c = base_cfg("Cheater", "hunter2");
+        c.patches_hash[0] ^= 1;
+        c.patch_names = {"Party: Skip Online/Offline Choice (Online)", "Player No Dead (Read note)"};
+        c.eboot_sha256[0] = 0x01;
+        PartyLink bad(c, recorder_callbacks(xr, "cheater"));
+        CHECK(bad.start_guest("127.0.0.1", port, &err));
+        CHECK(bad.wait_state(LinkState::Rejected, 5000));
+        CHECK(bad.reject_code() == RejectCode::Mismatch);
+        const std::string why = bad.reject_reason();
+        CHECK(why.find("eboot.bin differs") != std::string::npos);
+        CHECK(why.find("host only: Party: Bells anywhere") != std::string::npos);
+        CHECK(why.find("yours only: Player No Dead (Read note)") != std::string::npos);
+        CHECK(why.find("mods") == std::string::npos);
+        std::printf("  mismatched eboot + patches: %s\n", why.c_str());
+    }
+    {
+        // Cosmetic patches never reach the hash: only the gameplay set is compared, so a guest
+        // with the same gameplay set (whatever its graphics patches) joins. Here: same everything.
+        CHECK(identity_mismatch(base_cfg("A", ""), base_cfg("B", "")).empty());
     }
     {
         Recorder xr;
@@ -489,6 +518,57 @@ static void test_host_restart() {
     host2.stop();
 }
 
+// The version check's explanation and the identity files patches.py / mods.py write.
+static void test_identity() {
+    LinkConfig host, guest;
+    host.eboot_sha256.fill(1);
+    guest.eboot_sha256.fill(1);
+    CHECK(identity_mismatch(host, guest).empty());
+    guest.eboot_sha256[31] = 2;
+    std::string why = identity_mismatch(host, guest);
+    CHECK(why.find("eboot.bin differs") != std::string::npos);
+    CHECK(why.find("patches") == std::string::npos && why.find("mods") == std::string::npos);
+    guest.eboot_sha256 = host.eboot_sha256;
+    // Patches: names only on one side, then the same names with other bytes.
+    host.patch_names = {"A", "B", "C"};
+    host.patches_hash.fill(3);
+    guest.patch_names = {"B", "D"};
+    guest.patches_hash.fill(4);
+    why = identity_mismatch(host, guest);
+    CHECK(why.find("gameplay patches differ (host only: A, C; yours only: D)") != std::string::npos);
+    guest.patch_names = host.patch_names;
+    why = identity_mismatch(host, guest);
+    CHECK(why.find("same names, different contents") != std::string::npos);
+    guest.patches_hash = host.patches_hash;
+    // Mods: the host has none (zero hash), the guest one.
+    guest.mod_names = {"Texture-free param mod (3 files)"};
+    guest.mods_hash.fill(5);
+    why = identity_mismatch(host, guest);
+    CHECK(why.find("gameplay mods differ (host only: -; yours only: Texture-free param mod (3 files))") !=
+          std::string::npos);
+    CHECK(why.find("patches") == std::string::npos);
+    // Many names are cut.
+    guest.mod_names.clear();
+    for (int i = 0; i < 10; ++i) guest.mod_names.push_back("m" + std::to_string(i));
+    CHECK(identity_mismatch(host, guest).find("+4 more") != std::string::npos);
+    std::printf("  %s\n", identity_mismatch(host, guest).c_str());
+
+    std::array<std::uint8_t, 32> h{};
+    std::vector<std::string> items;
+    const std::string text =
+        "# comment\r\nhash 00112233445566778899aabbccddeeff00112233445566778899AABBCCDDEEFF\r\n"
+        "patch Party: Bells anywhere\r\npatch Player No Dead (Read note)\r\n# cosmetic 60 FPS++\r\nmod x\r\n";
+    CHECK(parse_identity_file(text, "patch", &h, &items));
+    CHECK(h[0] == 0x00 && h[1] == 0x11 && h[15] == 0xff && h[31] == 0xff);
+    CHECK(items.size() == 2 && items[0] == "Party: Bells anywhere" && items[1] == "Player No Dead (Read note)");
+    CHECK(parse_identity_file(text, "mod", &h, &items) && items.size() == 1 && items[0] == "x");
+    CHECK(!parse_identity_file("patch A\n", "patch", &h, &items));
+    CHECK(!parse_identity_file("hash 0011\n", "patch", &h, &items));
+    CHECK(!parse_identity_file("hash " + std::string(64, 'g') + "\n", "patch", &h, &items));
+    const std::array<std::uint8_t, 32> zero{};
+    CHECK(parse_identity_file("hash " + std::string(64, '0') + "\n", "mod", &h, &items) && items.empty() && h == zero);
+}
+
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("party codes\n");
@@ -497,6 +577,8 @@ int main() {
     test_crypto();
     std::printf("stun / env\n");
     test_stun_local();
+    std::printf("version check\n");
+    test_identity();
     std::printf("loopback party\n");
     test_party();
     std::printf("max players 2, secret-only key\n");
