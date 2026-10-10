@@ -9,12 +9,16 @@ extern "C" {
 #endif
 /* Directories the library keeps state in (optional; the environment is read on first use). */
 void bbnet_configure(const char *app0, const char *user_dir);
+/* The loaded eboot image (bbgpu_patch_image passes the loader's pointer and size): the party
+ * code reads and writes game data through it (the Matching2 signaling gate, FrpgNetMan). */
+void bbnet_set_image(void *image, uint64_t size);
 /* 1 when BB_PARTY is set (non-empty). */
 int bbnet_party_enabled(void);
 /* Function for an import, given its symbol name ("sceNetSocket") or scoped NID ("NID#L#M",
  * translated with runtime_symbol), or 0: always 0 without BB_PARTY, for NpTrophy, NpCommerce,
- * NpProfileDialog and NpScore, and for what the library does not implement yet (Matching2,
- * Signaling, Http, Ssl), which stay on the runtime's stubs. */
+ * NpProfileDialog and NpScore, and for names the library does not implement, which stay on the
+ * runtime's stubs. Net, NetCtl, Np (manager, auth, WebApi, lookup), NpMatching2, NpSignaling,
+ * Http and Ssl are the library's. */
 uintptr_t bbnet_resolve(const char *scoped_nid_or_name);
 /* One line describing the party state (role, name, port, counters, simulator). */
 const char *bbnet_status_line(void);

@@ -51,6 +51,24 @@ struct Export {
 // Guest-callable functions by symbol name; nullptr-terminated.
 extern const Export kNetExports[];
 extern const Export kNpExports[];
+extern const Export kMatching2Exports[];  // np_matching2.cpp
+extern const Export kSignalingExports[];  // np_signaling.cpp
+extern const Export kHttpExports[];       // http_hle.cpp (sceHttp*, sceSsl*)
+
+// --- The guest image (bbnet_set_image, from bbgpu_patch_image) ---
+// The loaded eboot's base (0x800000000 in this runtime) and size; 0 until the loader set them.
+std::uintptr_t guest_image_base();
+std::uint64_t guest_image_size();
+// The address of `offset` (raw ELF VA, docs/PARTY_COOP_PLAN.md "our offset") inside the image,
+// or nullptr when no image is known or [offset, offset+len) is outside it.
+void* guest_image_at(std::uint64_t offset, std::size_t len);
+// Copies n bytes of game memory at `addr` (image or heap) into `out`; false when the range
+// is not committed readable memory (a pointer the game has not set up yet).
+bool guest_read(std::uintptr_t addr, void* out, std::size_t n);
+// Writes n bytes at `addr` when the range is committed writable memory.
+bool guest_write(std::uintptr_t addr, const void* in, std::size_t n);
+// BB_PARTY_TRACE=1: log every party request and answer.
+bool party_trace();
 
 // --- The P2P port (net_socket.cpp) ---
 
@@ -70,6 +88,9 @@ struct RelayInfo {
 bool p2p_stun(const char* host, std::uint16_t port, int timeout_ms, std::uint32_t* mapped_addr,
               std::uint16_t* mapped_port, bool want_relay = false, RelayInfo* relay = nullptr);
 bool p2p_relay(std::uint32_t* server, std::uint16_t* vport);
+// Host side: the relay port the host's relay gave the client seen at addr (network order) :
+// port_host (host order), from its STUN HELLO; false when that address never asked for one.
+bool p2p_relay_vport_for(std::uint32_t addr, std::uint16_t port_host, std::uint16_t* vport);
 void p2p_punch(const char* label, std::uint32_t addr, std::uint16_t port, std::uint32_t local_addr,
                std::uint16_t local_port);
 // One line about the party port (counters), for the status line.

@@ -318,6 +318,16 @@ if (WIN32)
     target_link_libraries(party-net-test PRIVATE ws2_32 iphlpapi synchronization)
 endif()
 
+# Party host service (shim/net, A3): rooms, events, heartbeats, signaling resolve, FromApi through
+# sceHttp, Matching2/Signaling over LocalHost. ninja -C out/gpu party-host-test
+add_executable(party-host-test EXCLUDE_FROM_ALL ../tests/test_party_host.cpp ${PARTY_NET_SOURCES})
+target_compile_options(party-host-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-host-test PRIVATE shim/net ..)
+set_target_properties(party-host-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+if (WIN32)
+    target_link_libraries(party-host-test PRIVATE ws2_32 iphlpapi synchronization)
+endif()
+
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
 add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_support.cpp
     shim/bbport_settings.cpp)
