@@ -95,6 +95,15 @@ int main(void) {
     assert(!strcmp(runtime_savepolicy_dir(),"savedata"));
     set_env("BB_PARTY_SAVE",NULL); runtime_savepolicy_reset();
     assert(!strcmp(runtime_savepolicy_dir(),"savedata"));
+    /* BB_PARTY off values (gpu/party_env.h): no party save folder, whatever BB_PARTY_SAVE says. */
+    { const char *off[]={"0","off","OFF","false","no"," "};
+      for (unsigned i=0;i<sizeof(off)/sizeof(off[0]);++i) {
+          set_env("BB_PARTY",off[i]); set_env("BB_PARTY_SAVE","separate"); runtime_savepolicy_reset();
+          assert(!strcmp(runtime_savepolicy_dir(),"savedata"));
+      } }
+    /* Any on value (a party code too) is a party run. */
+    set_env("BB_PARTY","BBP1-ABCDEF"); set_env("BB_PARTY_SAVE","separate"); runtime_savepolicy_reset();
+    assert(!strcmp(runtime_savepolicy_dir(),"savedata_party"));
     set_env("BB_PARTY","join"); set_env("BB_PARTY_SAVE","separate"); runtime_savepolicy_reset();
     assert(!strcmp(runtime_savepolicy_dir(),"savedata_party"));
     puts("PASS: save folder choice");
