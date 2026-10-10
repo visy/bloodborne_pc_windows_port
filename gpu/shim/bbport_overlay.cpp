@@ -104,7 +104,7 @@ ImFont* sans_font = nullptr;
 ImFont* serif_font = nullptr;
 bool focus_request = true; // the menu was opened: its first row takes the focus
 
-// Party mode notices (join / leave / travel, party_status SetLastEvent): a toast in a top corner
+// Party mode notices (join / leave / travel, party_status SetLastEvent): a toast in a bottom corner
 // for a few seconds, never taking input. Atomics: Visible() reads them without imgui_mutex.
 std::atomic<std::uint64_t> toast_seen{0};  // the party event already shown
 std::atomic<std::int64_t> toast_until_ms{0}; // steady clock
@@ -1570,8 +1570,9 @@ void CompileIndicator() {
     ImGui::End();
 }
 
-/// Party notices (join / leave / travel): the latest party_status event for ToastMs in a top
-/// corner (top left; top right while the performance HUD has the top left), fading out. Not
+/// Party notices (join / leave / travel): the latest party_status event for ToastMs in a bottom
+/// corner, clear of the game's HUD (bottom left; bottom right while the performance HUD has the
+/// bottom left), fading out. Not
 /// interactive, never "menu open"; a newer event replaces the one shown.
 void PartyToast() {
     if (!party::status::Enabled() || !BbSettings::Get().party_toasts) {
@@ -1590,12 +1591,12 @@ void PartyToast() {
     }
     const float alpha = std::clamp(float(left) / 500.0f, 0.0f, 1.0f); // fades over the last 0.5 s
     const auto& s = BbSettings::Get();
-    const bool right = s.show_hud && s.hud_position == BbSettings::HudTopLeft;
+    const bool right = s.show_hud && s.hud_position == BbSettings::HudBottomLeft;
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float pad = 12.0f * base_scale;
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + (right ? viewport->WorkSize.x - pad : pad),
-                                   viewport->WorkPos.y + pad),
-                            ImGuiCond_Always, ImVec2(right ? 1.0f : 0.0f, 0.0f));
+                                   viewport->WorkPos.y + viewport->WorkSize.y - pad),
+                            ImGuiCond_Always, ImVec2(right ? 1.0f : 0.0f, 1.0f));
     ImGui::SetNextWindowBgAlpha(0.6f * alpha);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f * base_scale, 8.0f * base_scale));
