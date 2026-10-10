@@ -101,7 +101,7 @@ static void test_guest_gone() {
     // Home for 40 s, then the invite arrives (Joining): no stop at 25 s, the stall clock restarts.
     HostWatchdog h2;
     CHECK(RunUntilStop(h2, 0, 40, 3, 0, Roster(MemberState::Home)) < 0);
-    CHECK(RunUntilStop(h2, 40.5, 100, 3, 0, Roster(MemberState::Joining)) == 100.5);
+    CHECK(RunUntilStop(h2, 40.5, 110, 3, 0, Roster(MemberState::Joining)) == 100.5);
 }
 
 static void test_stuck_summon() {
