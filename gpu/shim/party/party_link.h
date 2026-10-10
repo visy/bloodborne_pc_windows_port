@@ -18,9 +18,15 @@
 // unacked events are replayed after a reconnect and de-duplicated by cursor), PARTY_CMD,
 // PROGRESS, BYE. No frame for lost_timeout (10 s) = connection lost; the host keeps a lost
 // member's slot (and its event queue) for slot_keep (60 s); the guest reconnects with
-// exponential backoff 1, 2, 4 .. 10 s and gets the same slot back (resume token). A restarted
+// exponential backoff 1, 2, 4, 8 s (then every 8 s, each wait +-20 % so guests that lost the
+// host together do not retry in lockstep) and gets the same slot back (resume token). A restarted
 // host restores its member table (slot, name, token: kept_members / restore_members, from the
 // party runtime's crash marker), so its guests get their slots back after a host crash too.
+//
+// Never blocks its caller: every public call takes the link's lock only for bookkeeping and
+// non-blocking socket writes; the IO thread holds it only while processing (bounded: frames are
+// flushed in batches, host names are resolved outside it). Waits: rpc_call (timeout_ms),
+// wait_state (timeout_ms), stop (joins the IO and callback threads: the shutdown path only).
 //
 // Threads: one IO thread (WSAPoll) per PartyLink, plus one callback thread: every callback runs
 // on the callback thread, one at a time, never while PartyLink's lock is held, so callbacks may
@@ -100,7 +106,8 @@ struct LinkConfig {
     int lost_timeout_ms = 10000;
     int slot_keep_ms = 60000;
     int backoff_initial_ms = 1000;
-    int backoff_max_ms = 10000;  // a crashed host is back within seconds of its restart
+    int backoff_max_ms = 8000;     // a friend's machine: retrying every 8 s costs nothing
+    int backoff_jitter_pct = 20;   // each wait randomized +-20 %
     int connect_timeout_ms = 5000;
     int roster_refresh_ms = 5000;  // host re-broadcasts the roster (fresh pings) this often
 };
@@ -203,6 +210,11 @@ public:
     // Host: drop a member and free its slot (BYE Kicked).
     bool kick(int slot, const std::string& reason);
 
+    // The IO thread's longest single hold of the link's lock (microseconds, wall clock) since
+    // the last reset: what a caller that needs the lock could have waited. `cycles`: the
+    // longest hold in the IO thread's own CPU cycles (Windows; 0 elsewhere), i.e. without the
+    // time it was preempted holding it.
+    std::int64_t debug_lock_hold_max_us(bool reset = false, std::uint64_t* cycles = nullptr);
     // Tests: stop all IO (no reads, writes or pings) for `ms`, simulating a frozen network.
     void debug_freeze(int ms);
     // Tests: abort the current connection(s) without BYE (guest then reconnects).
