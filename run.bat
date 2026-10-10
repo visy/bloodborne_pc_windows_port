@@ -189,6 +189,8 @@ if defined BB_RENDER_RES for /f "tokens=1,2 delims=xX" %%a in ("%BB_RENDER_RES%"
 if %render_pixels% GTR 2073600 if not defined BB_DMEM_MB set "BB_DMEM_MB=9152"
 if %render_pixels% GTR 2073600 echo Render %BB_RENDER_RES%: direct memory %BB_DMEM_MB% MiB
 
+REM The party flow's restart (exit code 75, below) comes back here: party mode changes the patches.
+:prepare_patches
 set "patches_dir=%BB_PATCHES_DIR%"
 if "%patches_dir%"=="" set "patches_dir=%BB_DATA_DIR%\patches"
 set "patches_config=%BB_PATCHES_CONFIG%"
@@ -279,8 +281,13 @@ for %%F in ("%probe%") do if %%~zF LSS 1048576 (
     exit /b 1
 )
 echo Launching Bloodborne PC (%probe%)...
+REM BB_RELAUNCH_LOOP=1: the game may end with exit code 75 to be started again (the party flow:
+REM System ^> Party in the game's menu, docs\party\ingame_flow.md). It leaves the new environment in
+REM %user_dir%\party_relaunch.bat (party mode on/off, role, Continue on its own).
+set "BB_RELAUNCH_LOOP=1"
 "%probe%" "%out%\boot-linked.bin" --content-profile "%out%\content.bin" --patches "%out%\patches.bin" --app0 "%game%" --user "%user_dir%" --timeout "%timeout%" %EXTRA_ARGS%
 set "rc=%ERRORLEVEL%"
+if "%rc%"=="75" goto party_relaunch
 if "%BB_PARTY%"=="" exit /b %rc%
 if "%rc%"=="0" exit /b 0
 if "%BB_PARTY_RESTART%"=="0" exit /b %rc%
@@ -308,3 +315,15 @@ echo Party: the game exited with %rc% ^(a crash^); restart %party_restarts% of %
 set "BB_PARTY_RESTARTED=1"
 "%PYTHON%" -c "import time; time.sleep(3)"
 goto launch
+
+:party_relaunch
+REM The party flow ended the game to start it again in party mode, in the other role or back in
+REM single-player (System > Party in the game's menu). Its environment, then the patches again.
+if exist "%user_dir%\party_relaunch.bat" (
+    call "%user_dir%\party_relaunch.bat"
+    del "%user_dir%\party_relaunch.bat" >nul 2>nul
+) else (
+    echo Party: exit code 75 without %user_dir%\party_relaunch.bat; starting again as before
+)
+if "%BB_PARTY%"=="" (echo Party: starting the single-player game) else (echo Party: starting the party game ^(%BB_PARTY%^))
+goto prepare_patches

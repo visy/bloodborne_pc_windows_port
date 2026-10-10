@@ -8,6 +8,8 @@
 // include/bbhost/params.hpp, the EMEVD event layout from include/bbhost/engine/sprj/emk_system.hpp.
 // Every offset was checked against our 1.09 eboot (docs/party/seamless_rules.md).
 #include "seamless_rules.h"
+#include "party_async_io.h"
+#include "party_perf.h"
 
 #include "../../party_env.h"
 
@@ -47,8 +49,8 @@ void Log(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    std::printf("Party seamless: %s\n", line);
-    std::fflush(stdout);
+    perf::Scope z(perf::Zone::Log);
+    coop::asyncio::Print(std::string("Party seamless: ") + line + "\n"); // never blocks the caller (party_async_io.h)
 }
 
 bool EnvOff(const char* name) {
@@ -471,6 +473,7 @@ void TraceInstruction(u64 event, i32 event_id, i32 bank, i32 id, u64 instr, bool
 }
 
 BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
+    perf::Scope z(perf::Zone::HookEmevd);
     g_emevd_calls.fetch_add(1, std::memory_order_relaxed);
     u64 instr = 0;
     i32 event_id = 0, bank = -1, id = -1;
@@ -512,6 +515,7 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
             rw(event_id, bank, id, event, instr);
         }
     }
+    z.End(); // the game's own dispatch is not ours
     return g_dispatch_original(self, event, dt);
 }
 
@@ -630,6 +634,7 @@ void SeamlessRulesTick() {
     // Params: every 0.5 s until they are written, then every 2 s (a reload restores them).
     if (Seconds(st.last_param, now) >= (st.params_done ? 2.0 : 0.5)) {
         st.last_param = now;
+        perf::Scope z(perf::Zone::SeamlessParams);
         const bool done = ApplyParamRules();
         if (done && !st.params_done) {
             Log("param rules hold (%.1f s after start)", Seconds(st.start, now));
@@ -650,6 +655,11 @@ void SeamlessRulesTick() {
         Log("EMEVD: %llu instructions dispatched, %llu skipped, %zu distinct (event, instruction)",
             ull(g_emevd_calls.load()), ull(g_emevd_skipped.load()), kinds);
     }
+}
+
+std::uint64_t GameParamRow(const char* name, const char* type, std::uint32_t id) {
+    ParamTable t;
+    return FindParam(name, type, &t) ? Row(t, id) : 0;
 }
 
 } // namespace coop

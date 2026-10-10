@@ -47,5 +47,9 @@ bool EnsureEmevdFilter();
 /// The argument bytes of instruction record `instr` of `event` (the copied arguments at
 /// event+0xb8, else the EVD data); 0 when unknown. *size receives the argument size.
 std::uint64_t EmevdInstructionArgs(std::uint64_t event, std::uint64_t instr, std::uint32_t* size);
+/// The data of row `id` of the loaded game param `name` (file type `type`, e.g. "ItemLotParam",
+/// "ITEM_LOT_PARAM_ST"), or 0 when the params are not loaded or the row does not exist. The
+/// address stays valid until the params are reloaded (main thread).
+std::uint64_t GameParamRow(const char* name, const char* type, std::uint32_t id);
 
 } // namespace coop

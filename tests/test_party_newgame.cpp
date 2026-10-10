@@ -7,6 +7,7 @@
 #include "party/test_newgame.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 using namespace coop;
@@ -37,8 +38,22 @@ struct Model {
     int presses = 0;
     double until = 0; // timed screens
     std::uint32_t last = 0;
+    // A new screen builds its texts 0.2 s after the press (screen_seq +1) and takes input from
+    // 0.45 s on: a press before that is lost (the event-driven driver must wait for it).
+    double busy_until = 0, texts_at = -1, last_texts = -10;
+    std::uint64_t seq = 0;
+    bool texts = true; // false: no screen signal (the game menu hooks off)
+    double loading_at = -1;
+
+    void Go(Screen s, double t, bool with_texts = true) {
+        screen = s;
+        row = 0;
+        busy_until = t + 0.45;
+        if (with_texts) texts_at = t + 0.2;
+    }
 
     void Press(std::uint32_t b, double t) {
+        if (t < busy_until) return; // still building
         auto wrap = [&](int n, int d) { row = (row + d + n) % n; };
         switch (screen) {
         case Screen::Title:
@@ -47,18 +62,14 @@ struct Model {
                     screen = Screen::Loading;
                     until = t + 5;
                 } else {
-                    screen = Screen::Brightness;
-                    row = 0;
+                    Go(Screen::Brightness, t);
                 }
             }
             break;
         case Screen::Brightness:
             if (b == kPadDown) wrap(2, 1);
             if (b == kPadUp) wrap(2, -1);
-            if (b == kPadCross && row == 1) {
-                screen = Screen::Controls;
-                row = 0;
-            }
+            if (b == kPadCross && row == 1) Go(Screen::Controls, t);
             break;
         case Screen::Controls:
             if (b == kPadDown) wrap(7, 1);
@@ -67,24 +78,21 @@ struct Model {
                 if (ignore_next_cross) {
                     ignore_next_cross = false;
                 } else {
-                    screen = Screen::Movie;
+                    Go(Screen::Movie, t, false);
                     ++movies;
                     until = t + 60;
                 }
             }
             break;
         case Screen::Movie:
-            if (b == kPadOptions) {
-                screen = Screen::Contract;
-                row = 0;
-            }
+            if (b == kPadOptions) Go(Screen::Contract, t);
             break;
         case Screen::Contract:
             if (b == kPadDown) wrap(6, 1);
             if (b == kPadUp) wrap(6, -1);
             if (b == kPadCross && row == 0) ++ime;
             if (b == kPadCross && row == 5) {
-                screen = Screen::Dialog;
+                Go(Screen::Dialog, t);
                 yes = false;
             }
             break;
@@ -95,8 +103,11 @@ struct Model {
                 if (yes) {
                     screen = Screen::Loading;
                     until = t + 8;
+                    loading_at = t;
                 } else {
-                    screen = Screen::Contract;
+                    const int keep = 5;
+                    Go(Screen::Contract, t);
+                    row = keep; // back on Finish
                 }
             }
             break;
@@ -109,10 +120,14 @@ struct Model {
     }
 
     NewGameInput Observe(double t, bool title_ready) {
-        if (screen == Screen::Logos && t >= 5) screen = Screen::Title;
-        if (screen == Screen::Movie && t >= until) {
-            screen = Screen::Contract;
-            row = 0;
+        if (screen == Screen::Logos && t >= 5) Go(Screen::Title, t);
+        if (screen == Screen::Movie && t >= until) Go(Screen::Contract, t);
+        if (texts_at >= 0 && t >= texts_at) {
+            if (texts) {
+                ++seq;
+                last_texts = texts_at;
+            }
+            texts_at = -1;
         }
         if (screen == Screen::Loading && t >= until) screen = has_character ? Screen::Loaded : Screen::Opening;
         NewGameInput in;
@@ -126,6 +141,8 @@ struct Model {
         in.flags_ok = world;
         in.opening_done = screen == Screen::Clinic || screen == Screen::Loaded;
         in.cutscene = screen == Screen::Opening;
+        in.screen_seq = seq;
+        in.screen_quiet = seq ? t - last_texts : 1e9;
         return in;
     }
 
@@ -150,6 +167,9 @@ NewGamePhase Run(Model& m, double secs, bool title_ready = true, int* taps = nul
     for (double t = 0; t < secs && !d.finished(); t += 1.0 / 30) {
         const NewGameInput in = m.Observe(t, title_ready);
         const std::uint32_t held = d.Step(in, &log);
+        if (std::getenv("NEWGAME_TEST_VERBOSE") && (!log.empty() || (held && !prev)))
+            std::printf("  %6.2f s %s%s\n", t, held && !prev ? ("press " + std::to_string(held) + " ").c_str() : "",
+                        log.c_str());
         if (held && !prev) ++n;
         prev = held;
         m.Feed(held, t);
@@ -166,6 +186,20 @@ void TestHappyPath() {
     CHECK(m.ime == 1);
     CHECK(m.movies == 1);
     CHECK(taps >= 10 && taps <= 14);
+    // Event driven: from the title (5 s) to the contract's loading screen in a few seconds, every
+    // press as soon as its screen took input (the fixed waits took ~30 s).
+    std::printf("happy path: title at 5.0 s, loading at %.1f s, %d taps\n", m.loading_at, taps);
+    CHECK(m.loading_at > 5 && m.loading_at < 14);
+}
+
+void TestNoScreenSignal() {
+    // The game menu hooks off: no screen_seq; each step waits its maximum, still to the clinic.
+    Model m;
+    m.texts = false;
+    CHECK(Run(m, 300) == NewGamePhase::Done);
+    CHECK(m.screen == Screen::Clinic && m.ime == 1);
+    std::printf("no screen signal: loading at %.1f s\n", m.loading_at);
+    CHECK(m.loading_at < 40);
 }
 
 void TestTitleNeverReady() {
@@ -244,6 +278,7 @@ void TestSkipLists() {
 
 int main() {
     TestHappyPath();
+    TestNoScreenSignal();
     TestTitleNeverReady();
     TestSaveWithCharacter();
     TestControlsCrossIgnoredOnce();

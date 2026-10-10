@@ -14,6 +14,10 @@
 //   the game ignored is pressed again instead of running the rest of the script blind. The
 //   default character (Male, Young, Milquetoast) is accepted. Log lines start with "newgame:".
 //   Taps are held 0.12 s: the menus auto-repeat a held direction (0.25 s moved two rows).
+//   Event driven: a press that needs the next screen waits for it (the game looking up texts it
+//   had not looked up in the last second, BbGameMenu::TextActivity, quiet for 0.3 s; or the movie
+//   / name box / loading counters) and goes as soon as it is there; the old fixed waits remain
+//   only as each step's maximum (no screen signal: the game menu hooks off).
 //
 // BB_TEST_PROLOGUE_SKIP=1: a prologue fast-forward, so the party's start (party_start.h) can be
 //   tested on fresh characters without fighting through the clinic, the first death and the first
@@ -51,6 +55,11 @@ struct NewGameInput {
     int movie_count = 0;      ///< movies started so far
     bool world_up = false, loading = false;
     bool flags_ok = false, opening_done = false, cutscene = false;
+    /// Screen changes (BbGameMenu::TextActivity): +1 for each message the game looks up that it had
+    /// not looked up in the last second - a new screen or dialog building its texts. 0 / unchanged
+    /// when unknown (the game menu hooks off): the driver then waits its maximum per step.
+    std::uint64_t screen_seq = 0;
+    double screen_quiet = 1e9; ///< seconds since the last such lookup
 };
 
 enum class NewGamePhase {
@@ -78,14 +87,17 @@ public:
 private:
     struct Tap {
         std::uint32_t buttons;
-        double gap; ///< wait after the release
+        double gap;        ///< at least this long after the release before the next tap
+        double wait = 0;   ///< > 0: first wait (at most this long after the previous release) for a
+                           ///< new screen since the previous press, quiet for kSettle
     };
     void Queue(std::initializer_list<Tap> taps);
     void Enter(NewGamePhase p, double t, std::string* log, const char* why);
     NewGamePhase phase_ = NewGamePhase::WaitTitle;
     std::vector<Tap> queue_;
     std::size_t next_ = 0;
-    double tap_at_ = -1, busy_until_ = 0, phase_at_ = 0, ready_since_ = -1;
+    double tap_at_ = -1, busy_until_ = 0, phase_at_ = 0, ready_since_ = -1, released_at_ = 0;
+    std::uint64_t screen_mark_ = 0; ///< screen_seq at the last press
     int tries_ = 0, ime_base_ = 0, movie_base_ = 0;
     bool holding_ = false;
 };

@@ -298,6 +298,12 @@ target_include_directories(cp-decoder-test PRIVATE cp)
 add_executable(settings-test EXCLUDE_FROM_ALL ../tests/test_settings.cpp shim/bbport_settings.cpp)
 target_compile_options(settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(settings-test PRIVATE .. shim)
+# The port's pages in the game's System menu (shim/bbport_game_menu_pages.cpp): limits, settings, party buttons.
+add_executable(game-menu-pages-test EXCLUDE_FROM_ALL ../tests/test_game_menu_pages.cpp shim/bbport_game_menu_pages.cpp
+    shim/bbport_settings.cpp shim/party/party_status.cpp)
+target_compile_options(game-menu-pages-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(game-menu-pages-test PRIVATE .. shim)
+set_target_properties(game-menu-pages-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 
 add_executable(scene-resolution-test EXCLUDE_FROM_ALL ../tests/test_scene_resolution.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(scene-resolution-test PRIVATE shim shadps4 third_party/gcn/include)
@@ -450,6 +456,12 @@ set_target_properties(party-link-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OF
 if (WIN32)
     target_link_libraries(party-link-test PRIVATE ws2_32 iphlpapi ole32 oleaut32)
 endif()
+# The in-game party flow's pure parts (shim/party/party_flow.cpp: party.json with the DPAPI-protected
+# password, the action planner, the relaunch file). ninja -C out/gpu party-flow-test
+add_executable(party-flow-test EXCLUDE_FROM_ALL ../tests/test_party_flow.cpp shim/party/party_flow.cpp shim/net/json.cpp)
+target_compile_options(party-flow-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-flow-test PRIVATE shim)
+set_target_properties(party-flow-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Party campaign start (C1, shim/party/party_start.cpp; in bbgpu through SHIM_SOURCES): readiness,
 # bell grant plan, lobby ring decisions. ninja -C out/gpu party-start-test
 add_executable(party-start-test EXCLUDE_FROM_ALL ../tests/test_party_start.cpp shim/party/party_start.cpp)
@@ -542,8 +554,8 @@ target_link_options(party-fuzz-ubsan PRIVATE -fsanitize=undefined -fsanitize-und
 # Party status bridge (shim/party/party_status_bridge.cpp; in bbgpu through SHIM_SOURCES): link /
 # game facts -> the Party tab's state, roster, events, commands. ninja -C out/gpu party-status-bridge-test
 add_executable(party-status-bridge-test EXCLUDE_FROM_ALL ../tests/test_party_status_bridge.cpp
-    shim/party/party_status_bridge.cpp shim/party/party_status.cpp ${PARTY_LINK_SOURCES}
-    shim/net/net_stun.cpp third_party/monocypher/monocypher.c)
+    shim/party/party_status_bridge.cpp shim/party/party_status.cpp shim/party/party_async_io.cpp
+    ${PARTY_LINK_SOURCES} shim/net/net_stun.cpp third_party/monocypher/monocypher.c)
 target_compile_definitions(party-status-bridge-test PRIVATE BB_PARTY_BRIDGE_NO_GAME)
 target_compile_options(party-status-bridge-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-status-bridge-test PRIVATE shim)
