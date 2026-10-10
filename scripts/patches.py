@@ -65,12 +65,53 @@ def intel_cpu(cpuinfo='/proc/cpuinfo'):
 
 
 # The title's PLAY ONLINE / PLAY OFFLINE dialog: the port has no PSN, the game goes straight to the
-# main menu offline. On by default (the launcher's switch); BB_SKIP_NETWORK_CHOICE=0 shows it.
+# main menu offline. On by default (the launcher's switch); BB_SKIP_NETWORK_CHOICE=0 shows it,
+# BB_SKIP_NETWORK_CHOICE=online goes online instead (party mode; the launcher sets it).
 SKIP_NETWORK_CHOICE='Skip Online/Offline Choice'
+
+
+SKIP_NETWORK_CHOICE_ONLINE='Party: Skip Online/Offline Choice (Online)'
 
 
 def skip_network_choice(env=os.environ):
     return env.get('BB_SKIP_NETWORK_CHOICE','1')!='0'
+
+
+def network_choice_patch(env=os.environ, available=None):
+    """The title-dialog patch for BB_SKIP_NETWORK_CHOICE: '0' none (the game asks), 'online' the
+    PLAY ONLINE variant (party mode; none, with a warning, when the XML lacks it), else PLAY OFFLINE."""
+    value=env.get('BB_SKIP_NETWORK_CHOICE','1').strip().lower()
+    if value=='0':
+        return None
+    if value=='online':
+        if available is not None and SKIP_NETWORK_CHOICE_ONLINE not in available:
+            print(f'Patches: BB_SKIP_NETWORK_CHOICE=online but "{SKIP_NETWORK_CHOICE_ONLINE}" is not in the '
+                  'patch file; the title asks PLAY ONLINE / PLAY OFFLINE',file=sys.stderr)
+            return None
+        return SKIP_NETWORK_CHOICE_ONLINE
+    return SKIP_NETWORK_CHOICE
+
+
+# Party co-op (BB_PARTY set): the seamless patches (docs/party/seamless_rules.md), unless
+# BB_PARTY_SEAMLESS=0. The community "Disable HTTP Requests" patch is never applied in party mode
+# (the party's FROM API runs over the game's HTTP calls).
+PARTY_SEAMLESS=['Party: Bells anywhere','Party: Bells after boss defeated',
+                'Party: Keep session on map reload','Party: SOS sign timeout 30s']
+PARTY_NO_INSIGHT='Party: Bells without Insight'
+DISABLE_HTTP='Disable HTTP Requests'
+
+
+def party_mode(env=os.environ):
+    return bool(env.get('BB_PARTY','').strip())
+
+
+def party_patches(env=os.environ):
+    if not party_mode(env) or env.get('BB_PARTY_SEAMLESS','1').strip()=='0':
+        return []
+    names=list(PARTY_SEAMLESS)
+    if env.get('BB_PARTY_BELL_NO_INSIGHT','1').strip()!='0':
+        names.append(PARTY_NO_INSIGHT)
+    return names
 
 
 def intel_tonemap_fix(env=os.environ, cpuinfo='/proc/cpuinfo'):
@@ -235,6 +276,34 @@ def eboot_segments(elf):
     return segments
 
 
+def elf_bytes(elf, vaddr, size):
+    """The eboot's file bytes at virtual address `vaddr` (patch offset), or None."""
+    phoff,=struct.unpack_from('<Q',elf,0x20)
+    phentsize,phnum=struct.unpack_from('<HH',elf,0x36)
+    for i in range(phnum):
+        kind,_,offset,start,_,filesz,_,_=struct.unpack_from('<IIQQQQQQ',elf,phoff+i*phentsize)
+        if kind==1 and start<=vaddr and vaddr+size<=start+filesz:
+            return elf[offset+vaddr-start:offset+vaddr-start+size]
+    return None
+
+
+def originals_match(xml, name, app_version, elf):
+    """False (with a message) when a line of patch `name` carries Original="hex" (the 1.09 bytes
+    the patch replaces) and the eboot holds something else there: the patch is then left out."""
+    for meta in ET.parse(xml).getroot().iter('Metadata'):
+        if meta.get('Name')!=name or meta.get('AppVer')!=app_version: continue
+        for line in meta.iter('Line'):
+            original=line.get('Original')
+            if not original: continue
+            want=bytes.fromhex(original.replace(' ',''))
+            have=elf_bytes(elf,int(line.get('Address'),0)-EBOOT_BASE,len(want))
+            if len(want)!=len(encode(line)) or have!=want:
+                print(f'Patches: "{name}" left out: {line.get("Address")} holds '
+                      f'{have.hex() if have else "nothing"}, not {want.hex()} (another eboot?)',file=sys.stderr)
+                return False
+    return True
+
+
 def encode(line):
     kind,value=line.get('Type'),line.get('Value')
     if kind=='bytes': return bytes.fromhex(value.replace(' ',''))
@@ -358,15 +427,26 @@ def main():
     raw_names += [n for n in effect_patches(read_settings(a.settings)) if n not in raw_names]
     if intel_tonemap_fix() and INTEL_TONEMAP not in raw_names:
         raw_names.append(INTEL_TONEMAP)
-    if skip_network_choice() and SKIP_NETWORK_CHOICE not in raw_names:
-        raw_names.append(SKIP_NETWORK_CHOICE)
+    available={m.get('Name') for m in ET.parse(a.xml).getroot().iter('Metadata') if m.get('AppVer')==a.app_version}
+    choice=network_choice_patch(available=available)
+    if choice and choice not in raw_names and not any(n in raw_names for n in (SKIP_NETWORK_CHOICE,SKIP_NETWORK_CHOICE_ONLINE)):
+        raw_names.append(choice)
+    raw_names += [n for n in party_patches() if n not in raw_names]
+    if party_mode() and DISABLE_HTTP in raw_names:
+        print(f'Patches: "{DISABLE_HTTP}" is off in party mode (BB_PARTY)',file=sys.stderr)
+        raw_names = [n for n in raw_names if n!=DISABLE_HTTP]
     names = []
     for n in raw_names:
         if n not in names:
             names.append(n)
     names = validate_patch_requirements(names,a.game_dir)
-    segments=eboot_segments((a.out/'eboot.elf').read_bytes())
+    elf=(a.out/'eboot.elf').read_bytes()
+    segments=eboot_segments(elf)
+    names=[n for n in names if originals_match(a.xml,n,a.app_version,elf)]
     writes=compile_patches(a.xml,names,a.app_version,segments)
+    party=[n for n in names if n.startswith('Party: ')]
+    if party:
+        print(f'Patches: party co-op: {", ".join(party)} (original bytes checked)')
     size=render_size(read_settings(a.settings),a.render_res) if a.render_res else None
     # The UI keeps the game's 1920x1080 coordinates even for a larger output: the port draws
     # it into the output-size image with a viewport scaled by output / 1920
@@ -388,8 +468,13 @@ def main():
         print(f'Patches: scene {size[0]}x{size[1]}; UI {ui[0]}x{ui[1]}')
     if a.patches_dir:
         # After the built-in ones: an external patch of the same bytes wins.
-        writes+=compile_external(external_selection(external_patches(a.patches_dir,a.app_version,a.xml),
-                                                    a.patches_config),segments)
+        selected=external_selection(external_patches(a.patches_dir,a.app_version,a.xml),a.patches_config)
+        if party_mode():
+            dropped=[key for key,_,meta in selected if meta.get('Name')==DISABLE_HTTP]
+            for key in dropped:
+                print(f'Patches: external {key} is off in party mode (BB_PARTY)',file=sys.stderr)
+            selected=[x for x in selected if x[0] not in dropped]
+        writes+=compile_external(selected,segments)
     # BBPATCH2: the patch base, so the loader can rebase pointers the patches write into
     # relocated slots (60/90 FPS++ replace function pointers).
     blob=struct.pack('<8sQQ',b'BBPATCH2',EBOOT_BASE,len(writes))
