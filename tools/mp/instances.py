@@ -383,6 +383,13 @@ def main():
     ap.add_argument("--env", action="append")
     ap.add_argument("--grep")
     a = ap.parse_args()
+    if a.cmd == "run":
+        # At most max_clients game clients on this machine across all agents (tools/mp/game_queue.py).
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from game_queue import game_slots
+        with game_slots(a.count, a.root):
+            run(a)
+        return
     {"setup": setup, "run": run, "logs": logs, "kill": kill, "crash": crash}[a.cmd](a)
 
 

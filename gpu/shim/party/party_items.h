@@ -108,9 +108,9 @@ bool ItemsFromJsonText(const std::string& text, std::vector<ItemGrant>* out, std
 /// Rows per event at most (the full list has ~1000; ItemsFromJson refuses more).
 constexpr std::size_t kMaxItemsPerEvent = 4096;
 /// May a grant the host sent reach the game (bbport security pass)? A host source (award, flag,
-/// full), a lot that is not denied, and a lot / flag (or ledger row) pair the tables agree on -
-/// or a lot the tables do not know with a flag that is no other lot's (a hook-captured lot;
-/// GuestItems grants each such lot once). `why` says what is wrong.
+/// full), a lot that is not denied, and a lot / flag (or ledger row) pair the tables agree on.
+/// A lot the tables do not know is refused whatever flag comes with it (an honest host only
+/// sends table pairs; docs/party/items.md 6.5). `why` says what is wrong.
 bool ItemGrantFromPeerAllowed(const ItemGrant& g, std::string* why = nullptr);
 /// The allowed rows of `in`; `rejected` (optional) counts the rest.
 std::vector<ItemGrant> FilterPeerItems(const std::vector<ItemGrant>& in, std::size_t* rejected = nullptr);
