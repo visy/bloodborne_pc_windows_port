@@ -86,6 +86,37 @@ inline std::vector<std::uint8_t> b64_decode(const std::string& in) {
     return out;
 }
 
+// Strict base64 (standard alphabet, '=' padding only at the end, no other characters): false on
+// anything else. For peer data whose size matters (the game's SummonData).
+inline bool b64_decode_strict(const std::string& in, std::vector<std::uint8_t>* out) {
+    out->clear();
+    if (in.size() % 4 != 0) return false;
+    std::uint32_t acc = 0;
+    int bits = 0;
+    std::size_t pad = 0;
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        const char ch = in[i];
+        int v;
+        if (ch >= 'A' && ch <= 'Z') v = ch - 'A';
+        else if (ch >= 'a' && ch <= 'z') v = ch - 'a' + 26;
+        else if (ch >= '0' && ch <= '9') v = ch - '0' + 52;
+        else if (ch == '+') v = 62;
+        else if (ch == '/') v = 63;
+        else if (ch == '=' && i + 2 >= in.size()) {
+            ++pad;
+            continue;
+        } else return false;
+        if (pad) return false;  // data after '='
+        acc = (acc << 6) | static_cast<std::uint32_t>(v);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out->push_back(static_cast<std::uint8_t>(acc >> bits));
+        }
+    }
+    return pad <= 2;
+}
+
 // "a.b.c.d" -> network order (0 when not a dotted IPv4 address).
 inline std::uint32_t ip_parse(const std::string& text) {
     unsigned a, b, c, d;
