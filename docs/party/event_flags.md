@@ -33,7 +33,7 @@ Tool: `tools/party/flag_tool.py`. Table: `gpu/shim/party/party_flags.inc` (gener
 | Lua `CompleteEvent` = "BroadcastSetFlag" | 0x132aad0 | registered at 0x133bea7 (lea fn; name "CompleteEvent") |
 | broadcast id only (no local set) | 0x1785380 | packet 0x0f to every peer |
 | packet 0x0f receive (main thread) | 0x1339b50 | SprjLuaEventMan update, via 0x1312ff0 |
-| EMEVD event completion write | 0x16ed100 | SprjEmkEventIns::EndOrRestart writes the bit directly (bbhost) |
+| EMEVD event completion write | 0x12ed100 | SprjEmkEventIns::EndOrRestart(this, restart): sets flag (event id +0x28) + (slot s16 +0x2c) when > 98, set-only, both paths (0x16ed100 in earlier notes is not an instruction boundary) |
 | WorldChrMan slot / packed map id | 0x553e878 | `*(*(slot)+0x60)+0x3f8`: area<<24 \| block<<16 \| ... |
 | SprjSessionManager slot (+0x124 role, +0xf8..+0x100 peer list) | 0x5540290 | |
 
@@ -93,7 +93,7 @@ Mode 0 (0x13b6540) maps blocks 0..9 (ids 0-9999), the T1/5/6/7 global groups and
   flags 2000-2022 rewritten every frame by the session code (bbhost event_flags.cpp), lamp warp
   requests 7AAB01xx, map-constructor-derived globals (e.g. 2400-2407 re-set by m24_00 event 0).
 - Event completion flags: an EMEVD event's id + slot **is** a flag in the same store (e.g. boss
-  event 12401800 -> flag 12401800). The interpreter writes it directly (0x16ed100), not through
+  event 12401800 -> flag 12401800). The interpreter writes it directly (0x12ed100), not through
   SetEventFlag. Restart (rest=1) events reset theirs.
 
 ## 3. Load modes: why phantoms' saves never progress
@@ -135,7 +135,7 @@ guest is in mode 1; and write the visible tree (SetEventFlag) when it is in mode
 
 - SetEventFlag 0x13cfcc0 / SetEventFlagValue 0x13d0060 (bbhost compared ~82k and ~700 calls a
   session): EMEVD 2003[2]/[22]/[17]/[9]/[31]/[32]/[41]..[43], Lua, talk (ESD) scripts.
-- Direct writers that bypass them: EMEVD completion (0x16ed100), 0x0f receive (0x1339b50),
+- Direct writers that bypass them: EMEVD completion (0x12ed100), 0x0f receive (0x1339b50),
   CompleteEvent (0x132aad0), table-driven setter 0x177b2a0, the snapshot apply, load, SetLoadMode
   and the chalice clear. Many more functions walk the tree inline (Ghidra lists ~70 references to
   the "SprjEventFlagMan" singleton name), so **setter hooks are not complete**: the host side must
@@ -175,8 +175,14 @@ Key findings behind the rows:
   its completion flag is the persistent "boss dead" flag; it also sets the global area bit
   `2AAx`/`3AAx` (2200 Witch, 2300/2301, 2400-2402, 2411/2412, 2420/2421, 2500, 2600/2601,
   2700/2701, 2800, 3200, 3300, 3400-3403, 3510-3517, 3600) and a boss-count bit 9452-9471.
-- **2410** = "multiplayer allowed, Cathedral Ward B" (m24_01 event 12411899), the flag behind the
-  boss-cleared summon rejection NOPed at 0x18749E8.
+- **2410** = m24_01 event 12411899 "マルチ可否制御_聖堂街B" (multiplayer on/off control, Central
+  Yharnam), set when both 12411800 (Gascoigne) and 12411700 are done. ON **blocks** the host bell /
+  summons in areas 241010-241080 (area table 0x47304B0, validator 0x131D7B0; see
+  campaign_start.md 2.2) - it is the flag behind the boss-cleared summon rejection NOPed at
+  0x18749E8. Every gate flag of the tables 0x47304B0 (xxx0..xxx3: 2100, 2200, 2300/2301,
+  2400-2402, 2410-2412, 2420/2421, 2500, 2600/2601, 2700/2701, 2800, 3200, 3300, 3400-3403,
+  3510-3513, 3600/3601) and 0x47301B0 (xxx5..xxx8, resonant/responder) is **never_sync**
+  (override rows in flag_tool.py gen-inc).
 - **Lamps**: lamp lit = `7AAB02xx` (awaited by common event 7100+slot "warp OBJ activate",
   cleared by the DLC-removal events); lamp object = `1AAB78x0` (2009[5] registration in common
   event 7000+slot); `7AAB01xx` and m21 `7210xxxx` are warp requests (runtime).
@@ -189,15 +195,24 @@ Key findings behind the rows:
   (per-map NPC state) and NPC-named map events.
 - **Per-player, never sync**: 6000-8999 (kept in the own pool by mode 1: runes, chalice unlocks,
   messenger shop, Doll), 9440-9451 covenant runes, 9500-9599 item use, 9900-9919 umbilical cords,
-  9181/9182 insight return, 21-23 endings (player-owned).
+  9181/9182 insight return. Endings, never synced silently (they trigger the staff roll / NG+;
+  only through the C4 replay, cutscenes_endings.md): 21-23, 6600-6604, 9900/9901 and the
+  events 9905/9909, 72100130/72100131, the m21 ending events 12100000/12100002/12100180.
+- **9180** = "a cutscene is playing" (set around every story remo) -> never_sync (it was
+  misread as "first death cutscene"). **9800-9802** = time of day (9800 evening, 9801 night,
+  9802 Blood Moon; written by the cutscene end callback 0x1CECEB0) -> own category
+  **time_of_day**, applied only through the cutscene replay path, never by the silent sync.
 - **Session/runtime**: 2000-2099, 7000-7399 and 7600-7699 (common event completions), 9200-9299,
   zones 1AAB5/6/7nnn, restart events. **boss_area** (1AAB4nnn: fight state, fog, NPC summons) is
   not synced live; the vanilla session already carries it.
 
-Suggested C2 policy: host -> guests, set-only, for boss_defeated, lamp_unlocked, shortcut_door,
-key_event (not endings), cutscene_seen, world_state; item_lot_picked only together with C3's
-lot-to-items replay; npc_quest only per whole 20-flag NPC block and later; never the rest.
-Elevators toggle (12400147/148 style) - sync their current state, not only sets.
+C2 policy (implemented in gpu/shim/party/party_progress.*): host -> guests, set-only, for
+boss_defeated, lamp_unlocked, shortcut_door, key_event, cutscene_seen, world_state, minus the
+area gates / endings / time of day above (never_sync / time_of_day rows) and ids the game
+randomises or counts; item_lot_picked never by C2 (the host hands item-pickup flags to C3's
+observer, party_items); npc_quest only per whole 20-flag NPC block and later; never the rest.
+Elevators toggle (12400147/148 style) - sync their current state, not only sets. C3's ledger
+flags 60009000+ are reserved.
 
 ## 8. Snapshot file (BB_PARTY_FLAG_DUMP=1)
 
