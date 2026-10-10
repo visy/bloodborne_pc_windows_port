@@ -53,7 +53,7 @@ std::string dump(const Value& v, int indent = 2);
 // of double range, an escaped NUL and unpaired surrogates.
 constexpr std::size_t kMaxText = 16u << 20;
 constexpr int kMaxDepth = 64;
-constexpr std::size_t kMaxValues = 1u << 20;
+constexpr std::size_t kMaxValues = 512u << 10;
 constexpr std::size_t kMaxNumberChars = 64;
 bool parse(const std::string& text, Value& out, std::string& error);
 
