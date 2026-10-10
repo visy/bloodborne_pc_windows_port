@@ -115,6 +115,11 @@ public:
     /// Flushes any GPU modified buffer in the logical page range back to CPU memory.
     void ReadMemory(VAddr device_addr, u64 size, bool is_write = false, bool assume_locks = false);
 
+    /// bbport BB_LAYER_READ_TRAPS: a CPU access hit a page whose newest data the GPU wrote into a
+    /// VRAM copy only: the block's GPU data is copied back into the game's memory first (on the
+    /// GPU command thread unless `assume_locks`). False: not such a page.
+    bool LayerReadTrapHit(VAddr address, bool assume_locks);
+
     /// bbport: a new draw or dispatch is being recorded: the per-binding housekeeping of
     /// EnsureResident (unmaps, demotions, assets, late writes) runs once for it, not per binding.
     void NewPacket() noexcept {
@@ -511,6 +516,17 @@ private:
     /// Dynamic blocks made so by the CPU's writes (ProcessDemotions), not by the GPU's.
     IntervalList<> layer_cpu_hot;
     u64 layer_volatile_refresh_bytes = 0; ///< statistics
+    u64 layer_volatile_in_pass_bytes = 0; ///< statistics: volatile reads bound in place in passes
+    /// BB_LAYER_READ_TRAPS: pages trapped for reads since the GPU wrote them in a VRAM copy only
+    /// (their mutex: the draw recording thread arms, the GPU command thread lifts), the newest
+    /// copy back recorded (a page without GPU data left waits for it), statistics.
+    RangeSet layer_read_trapped;
+    std::mutex layer_read_trap_mutex;
+    u64 layer_copy_back_tick = 0;
+    std::atomic<u64> layer_read_trap_hits{0}, layer_read_trap_bytes{0};
+    static bool LayerReadTrapsOn();
+    void LayerArmReadTraps(VAddr address, u64 size);
+    void LayerCopyBackForCpu(VAddr address);
     u64 layer_watch_refreshes = 0;        ///< statistics: watched blocks uploaded again
     /// Statistics: trap hits announced; by the game's code on watched / other blocks; by other
     /// code on watched / other blocks.
