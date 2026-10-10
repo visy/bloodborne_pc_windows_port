@@ -27,6 +27,12 @@ def child(folder, name):
     return folder / name
 
 
+def is_link(path):
+    """A symlink, or a directory junction (make_link's Windows fallback without symlink rights)."""
+    path = Path(path)
+    return path.is_symlink() or (hasattr(path, 'is_junction') and path.is_junction())
+
+
 def content_root(folder):
     """(root, prefix): where a mod's files are and the game path they go to, or None.
 
@@ -87,7 +93,7 @@ def mod_files(folder):
     for directory, folders, files in os.walk(root, followlinks=False):
         directory = Path(directory)
         for name in [*folders, *files]:
-            if (directory / name).is_symlink():
+            if is_link(directory / name):
                 raise ValueError(f'Mod symlinks are unsupported: {directory / name}')
         for name in sorted(files):
             source = directory / name
@@ -201,7 +207,7 @@ def make_link(link_path, target_path, target_is_directory=False):
 
 def expand(directory):
     """Materialize one directory level; never write through a directory link."""
-    if directory.is_symlink():
+    if is_link(directory):
         target = directory.resolve(strict=True)
         if not target.is_dir():
             raise ValueError(f'File/directory conflict at {directory.name}')
@@ -234,6 +240,9 @@ def build_overlay(game, out, mods):
     out = Path(out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     overlay = Path(tempfile.mkdtemp(prefix='mod-game-', dir=out))
+    # Overlay files a mod put there. Every other file in the overlay is a link to the game's: a
+    # symlink, or without symlink rights on Windows a hard link or a copy, which are regular files.
+    from_mods = set()
     try:
         for entry in game.iterdir():
             make_link(overlay / entry.name, entry, target_is_directory=entry.is_dir())
@@ -245,14 +254,16 @@ def build_overlay(game, out, mods):
                 parent = child(parent, part)
                 expand(parent)
             destination = child(parent, relative.parts[-1])
-            if destination.is_symlink():
-                replaced += destination.resolve().is_relative_to(game)
-                destination.unlink()
-            elif destination.exists():
+            key = os.path.normcase(destination)
+            if destination.is_dir():  # a real directory or a directory link
                 raise ValueError(f'File/directory conflict: {relative}')
+            elif destination.exists() or destination.is_symlink():
+                replaced += key not in from_mods
+                destination.unlink()
             else:
                 added += 1
             make_link(destination, source)
+            from_mods.add(key)
         print(f'Mods: {replaced} game files replaced, {added} added', file=sys.stderr)
         return overlay
     except BaseException:

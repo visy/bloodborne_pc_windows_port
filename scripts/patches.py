@@ -48,18 +48,20 @@ EFFECTS={
 INTEL_TONEMAP='Intel Black Tonemap Fix'
 
 
-def intel_cpu(cpuinfo='/proc/cpuinfo'):
-    if os.name == 'nt':
-        proc_id = os.environ.get('PROCESSOR_IDENTIFIER', '')
-        if 'Intel' in proc_id or 'GenuineIntel' in proc_id:
-            return True
+def intel_cpu(cpuinfo=None, env=os.environ):
+    """An Intel CPU: from `cpuinfo` (/proc/cpuinfo format) when given, else from Windows'
+    PROCESSOR_IDENTIFIER or Linux's /proc/cpuinfo."""
+    if cpuinfo is None and os.name == 'nt':
+        proc_id = env.get('PROCESSOR_IDENTIFIER', '')
+        if proc_id:  # 'Intel64 Family 6 Model 151 Stepping 2, GenuineIntel'
+            return 'Intel' in proc_id
         try:
             import platform
             return 'Intel' in platform.processor()
         except Exception:
             return False
     try:
-        with open(cpuinfo) as f:
+        with open(cpuinfo or '/proc/cpuinfo') as f:
             return any(line.startswith('vendor_id') and 'GenuineIntel' in line for line in f)
     except OSError:
         return False
@@ -172,9 +174,9 @@ def write_party_patch_file(out, digest, names, cosmetic=()):
     (Path(out)/PARTY_PATCH_FILE).write_text('\n'.join(lines)+'\n',encoding='utf-8')
 
 
-def intel_tonemap_fix(env=os.environ, cpuinfo='/proc/cpuinfo'):
+def intel_tonemap_fix(env=os.environ, cpuinfo=None):
     forced=env.get('BB_INTEL_TONEMAP_FIX')
-    return forced=='1' if forced in ('0','1') else intel_cpu(cpuinfo)
+    return forced=='1' if forced in ('0','1') else intel_cpu(cpuinfo, env)
 
 # model_lod: -2 highest, 0 the game's, 1 lower, 2 lowest.
 MODEL_LOD={'-2':'Model LOD -2 (Highest)','1':'Model LOD 1 (Lower)','2':'Model LOD 2 (Lowest)'}

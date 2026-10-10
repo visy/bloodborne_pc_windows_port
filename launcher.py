@@ -55,6 +55,58 @@ PARTY_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,16}$")
 PARTY_CODE_RE = re.compile(r"^BBP1(-[0-9A-HJ-NP-TV-Z]+)+$", re.IGNORECASE)
 PARTY_HOSTPORT_RE = re.compile(r"^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+):(\d{1,5})$")
 MP_INSTANCES = APP_DIR / "tools" / "mp" / "instances.py"
+PARTY_GUIDE = APP_DIR / "docs" / "PARTY.md"
+# Party rules & sync dialog. Combos: (label, env value); the first entry is the game's default.
+PARTY_START_CHOICES = [("After the prologue (recommended)", "prologue_solo"), ("Right away", "immediate")]
+PARTY_INSIGHT_CHOICES = [("Same as the host (default)", "parity"), ("Full bonus", "full"),
+                         ("Game's own (+1 only)", "0")]
+PARTY_BACKUP_MINUTES_CHOICES = ["5", "10", "15", "30", "60", "0"]  # 0 = only at the start
+PARTY_BACKUP_KEEP_CHOICES = ["5", "10", "20", "50", "100"]
+# On/off party options: (settings key, environment variable, default = the game's default).
+# Every one is written as 1 / 0 while party mode is on and unset while it is off.
+PARTY_HELP_SHORT = ("How to play together: the host picks Host a party and starts the game, then sends the "
+                    "code shown under Your code to the friends. Each friend picks Join a party, pastes "
+                    "the code and starts the game. Everyone needs the same game version (1.09), the same "
+                    "gameplay patches and mods and the same Max players. Click for the full steps.")
+PARTY_HELP = """Party co-op lets 2 to 4 players play the campaign together. It is still in development: its parts have been tested on one PC, but it has not been tested between two PCs yet - expect bugs.
+
+HOST
+1. Party tab: Mode = Host a party, enter your name. Max players: 3 is the game's normal limit.
+2. Launch the game. Once it is running, your party code (BBP1-...) appears under Your code. Click Copy code and send it to your friends.
+3. Leave UPnP on. If friends cannot connect, forward the port (default 9307, UDP and TCP) to this PC in your router, or use a VPN such as Tailscale and give them your VPN address as host:port.
+
+JOIN
+1. Party tab: Mode = Join a party, enter your name, paste the host's code (Paste button).
+2. Pick the same Max players as the host.
+3. Launch the game after the host's game is running.
+
+IN THE GAME
+- Everyone creates a character and plays the short prologue in their own world (until the first visit to the Hunter's Dream and taking a weapon). After that the host's game summons the others automatically (no bells or Insight needed).
+- Story progress, boss kills, lamps, shortcuts, items from the host's world and cutscenes are shared with the guests' own saves.
+- If a game crashes, it restarts by itself and rejoins the party.
+
+IF JOINING FAILS
+- "version mismatch": the game files, gameplay patches, gameplay mods or Max players differ from the host's. The message says which.
+- "wrong password or party code": copy the code again; check the Password field on both sides.
+- Nothing happens: the host's port is not reachable. See step 3 for the host.
+
+Saves: with Separate party saves on, the party plays from user\\savedata_party and backs it up to user\\save_backups. README.txt there explains restoring a backup.
+
+The full guide is docs\\PARTY.md."""
+PARTY_SWITCHES = [
+    ("party_grant_bells", "BB_PARTY_GRANT_BELLS", True),
+    ("party_open_world", "BB_PARTY_OPEN_WORLD", True),
+    ("party_guest_respawn", "BB_PARTY_GUEST_RESPAWN", True),
+    ("party_guest_refill", "BB_PARTY_GUEST_REFILL", True),
+    ("party_guest_mark", "BB_PARTY_GUEST_MARK", False),
+    ("party_full_rewards", "BB_PARTY_FULL_REWARDS", True),
+    ("party_items", "BB_PARTY_ITEMS", True),
+    ("party_progress", "BB_PARTY_PROGRESS", True),
+    ("party_progress_npc", "BB_PARTY_PROGRESS_NPC", False),
+    ("party_story", "BB_PARTY_STORY", True),
+    ("party_story_mirror", "BB_PARTY_STORY_MIRROR", True),
+    ("party_restart", "BB_PARTY_RESTART", True),
+]
 
 
 def load_xml_patches(xml_path: Path = PATCHES_XML):
@@ -182,7 +234,9 @@ def party_env(s: dict) -> dict:
     """BB_PARTY_* environment from launcher settings; party off unsets every variable."""
     keys = ["BB_PARTY", "BB_PARTY_NAME", "BB_PARTY_PORT", "BB_PARTY_CODE", "BB_PARTY_PASSWORD",
             "BB_PARTY_UPNP", "BB_PARTY_STUN", "BB_PARTY_PUBLIC_ADDR", "BB_PARTY_MAX",
-            "BB_PARTY_SEAMLESS", "BB_PARTY_AUTO", "BB_PARTY_SAVE"]
+            "BB_PARTY_SEAMLESS", "BB_PARTY_AUTO", "BB_PARTY_SAVE", "BB_PARTY_START",
+            "BB_PARTY_GUEST_INSIGHT", "BB_SAVE_BACKUP_MINUTES", "BB_SAVE_BACKUP_KEEP"]
+    keys += [env_name for _, env_name, _ in PARTY_SWITCHES]
     env = dict.fromkeys(keys)
     mode = str(s.get("party_mode", "") or "")
     if mode not in ("host", "join"):
@@ -207,6 +261,18 @@ def party_env(s: dict) -> dict:
     env["BB_PARTY_SEAMLESS"] = "1" if s.get("party_seamless", True) else "0"
     env["BB_PARTY_AUTO"] = "1" if s.get("party_auto", True) else "0"
     env["BB_PARTY_SAVE"] = "separate" if s.get("party_separate_save", True) else "shared"
+    # Party rules & sync dialog (defaults = the game's defaults, docs/PARTY.md)
+    start = str(s.get("party_start", "") or "")
+    env["BB_PARTY_START"] = start if start in dict(PARTY_START_CHOICES).values() else PARTY_START_CHOICES[0][1]
+    insight = str(s.get("party_guest_insight", "") or "")
+    env["BB_PARTY_GUEST_INSIGHT"] = insight if insight in dict(PARTY_INSIGHT_CHOICES).values() \
+        else PARTY_INSIGHT_CHOICES[0][1]
+    minutes = str(s.get("party_backup_minutes", "10"))
+    env["BB_SAVE_BACKUP_MINUTES"] = minutes if minutes in PARTY_BACKUP_MINUTES_CHOICES else "10"
+    keep = str(s.get("party_backup_keep", "10"))
+    env["BB_SAVE_BACKUP_KEEP"] = keep if keep in PARTY_BACKUP_KEEP_CHOICES else "10"
+    for key, env_name, default in PARTY_SWITCHES:
+        env[env_name] = "1" if s.get(key, default) else "0"
     return env
 
 
@@ -291,10 +357,8 @@ def settings_env(s: dict) -> dict:
     # Party co-op (BB_PARTY=host|join; off = every BB_PARTY_* unset)
     env.update(party_env(s))
     if env["BB_PARTY"]:
-        # TODO(party A7): the party needs the game's ONLINE title path. "online" asks for the skip
-        # patch's online variant (picks PLAY ONLINE instead of offline), which scripts/patches.py
-        # gets from another change. Until then patches.py treats any value but "0" as the
-        # OFFLINE skip, so party testing needs that change (or BB_SKIP_NETWORK_CHOICE=0 by hand).
+        # The party needs the game's ONLINE title path: scripts/patches.py applies the skip
+        # patch's online variant ("Party: Skip Online/Offline Choice (Online)").
         env["BB_SKIP_NETWORK_CHOICE"] = "online"
     return env
 
@@ -826,6 +890,20 @@ class BloodborneLauncher(tk.Tk):
         self.party_host_code_var = tk.StringVar(value=read_party_code())
         self.party_status_var = tk.StringVar()
         self.party_test_running = False
+        # Party rules & sync dialog (PARTY_SWITCHES, start mode, guest Insight, backups)
+        self.party_switch_vars = {key: tk.BooleanVar(value=bool(self.settings.get(key, default)))
+                                  for key, _, default in PARTY_SWITCHES}
+
+        def combo_label(choices, key):
+            value = str(self.settings.get(key, "") or "")
+            return next((label for label, v in choices if v == value), choices[0][0])
+        self.party_start_var = tk.StringVar(value=combo_label(PARTY_START_CHOICES, "party_start"))
+        self.party_insight_var = tk.StringVar(value=combo_label(PARTY_INSIGHT_CHOICES, "party_guest_insight"))
+        minutes = str(self.settings.get("party_backup_minutes", "10"))
+        self.party_backup_minutes_var = tk.StringVar(
+            value=minutes if minutes in PARTY_BACKUP_MINUTES_CHOICES else "10")
+        keep = str(self.settings.get("party_backup_keep", "10"))
+        self.party_backup_keep_var = tk.StringVar(value=keep if keep in PARTY_BACKUP_KEEP_CHOICES else "10")
 
         # ---- presets row
         preset_row = ttk.Frame(main)
@@ -1170,8 +1248,9 @@ class BloodborneLauncher(tk.Tk):
             "The name the others see for you: 1-16 letters, digits, _ or -. It is also your online ID "
             "in the game. Default: your Windows user name (BB_PARTY_NAME).", width=18)
         max_tip = ("Most players in the party, you included: 2, 3 (the game's normal co-op limit) or 4 "
-                   "(experimental: the game was not made for 4 players, expect issues). Every player "
-                   "must pick the same value: joining checks it. Default: 3 (BB_PARTY_MAX).")
+                   "(experimental: the game was not made for 4 players, expect issues). Everyone - the "
+                   "host and every player who joins - must pick the same value: a different value is "
+                   "refused when joining ('party rules differ'). Default: 3 (BB_PARTY_MAX).")
         self.party_max_combo = self._combo(sec, "Max players:", self.party_max_var, PARTY_MAX_CHOICES,
                                            max_tip, width=6)
         auto_cb = self._check(sec, "Automatic summoning", self.party_auto,
@@ -1191,7 +1270,8 @@ class BloodborneLauncher(tk.Tk):
                               "The first time, the launcher offers to copy your single-player save. "
                               "Off (shared): the party plays on your normal save. Either way the game "
                               "backs up the save at every party start and every 10 minutes "
-                              "(user\\save_backups, newest 10 kept; README.txt there explains restoring). "
+                              "(user\\save_backups, newest 10 kept, both changeable in Rules & sync; "
+                              "README.txt there explains restoring). "
                               "Default: on (BB_PARTY_SAVE=separate|shared).",
                               command=self.save_settings)
         copy_btn = ttk.Button(sec, text="Copy single-player save to party save", style="Secondary.TButton",
@@ -1202,12 +1282,25 @@ class BloodborneLauncher(tk.Tk):
                           "the folder party sessions with separate saves play from. Your single-player "
                           "save is only read. An existing party save is backed up to "
                           "user\\save_backups\\savedata_party first.")
+        # Rules & sync dialog, the party guide and (developer checkout) the local test in one row
+        tools_row = ttk.Frame(sec, style="Card.TFrame")
+        tools_row.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(6, 2))
+        sec.next_row += 1
+        rules_btn = ttk.Button(tools_row, text="Rules & sync...", style="Secondary.TButton",
+                               command=self.open_party_rules_dialog)
+        rules_btn.pack(side="left")
+        Tooltip(rules_btn, "More party options, with their defaults: how the party starts, bells, the "
+                           "open world, what happens when a guest dies, rewards for guests, progress / "
+                           "story / cutscene sync, save backups and the automatic restart after a crash.")
+        help_btn = ttk.Button(tools_row, text="Party help", style="Secondary.TButton",
+                              command=self.show_party_help)
+        help_btn.pack(side="left", padx=(6, 0))
+        Tooltip(help_btn, PARTY_HELP_SHORT)
         self.party_test_btn = None
         if MP_INSTANCES.is_file():
-            self.party_test_btn = ttk.Button(sec, text="Local test (2 instances)", style="Secondary.TButton",
+            self.party_test_btn = ttk.Button(tools_row, text="Local test", style="Secondary.TButton",
                                              command=self.run_party_local_test)
-            self.party_test_btn.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(6, 2))
-            sec.next_row += 1
+            self.party_test_btn.pack(side="left", padx=(6, 0))
             Tooltip(self.party_test_btn, "Developer test: runs tools\\mp\\instances.py setup --count 2, "
                                          "then run --count 2 --seconds 300 (two game instances on this "
                                          "PC, side by side, for 5 minutes). Its output appears in the "
@@ -1268,10 +1361,11 @@ class BloodborneLauncher(tk.Tk):
         sec.next_row += 1
 
         # Fields enabled in each mode: on (host or join), host only, join only
-        self.party_widgets_on = [name_lbl, self.party_name_entry, auto_cb, seamless_cb, save_cb,
+        self.party_widgets_on = [name_lbl, self.party_name_entry, self.party_max_combo, auto_cb, seamless_cb,
+                                 save_cb,
                                  port_lbl, self.party_port_entry, upnp_cb, stun_lbl, self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
-        self.party_widgets_host = [self.party_max_combo, public_lbl, self.party_public_entry,
+        self.party_widgets_host = [public_lbl, self.party_public_entry,
                                    host_lbl, self.party_host_code_entry, copy_btn]
         self.party_widgets_join = [code_lbl, self.party_code_entry, paste_btn]
         for var in (self.party_name_var, self.party_port_var, self.party_code_var):
@@ -1367,6 +1461,181 @@ class BloodborneLauncher(tk.Tk):
         if text:
             self.party_code_var.set(text)
             self.save_settings()
+
+    def show_party_help(self):
+        """How to host / join, in a small window; opens docs\\PARTY.md on request."""
+        dlg = tk.Toplevel(self)
+        dlg.title("Party help")
+        dlg.geometry("620x600")
+        dlg.minsize(480, 400)
+        dlg.transient(self)
+        dlg.configure(bg="#1a1a1a")
+        frame = ttk.Frame(dlg, style="Card.TFrame", padding=12)
+        frame.pack(fill="both", expand=True, padx=10, pady=(10, 6))
+        text = tk.Text(frame, bg="#252526", fg="#e0e0e0", relief="flat", wrap="word",
+                       font=("Segoe UI", 10), padx=4, pady=4)
+        scroll = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
+        text.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        text.pack(side="left", fill="both", expand=True)
+        text.insert("1.0", PARTY_HELP)
+        text.configure(state="disabled")
+        bar = ttk.Frame(dlg, style="Card.TFrame", padding=10)
+        bar.pack(fill="x", padx=10, pady=(0, 10))
+        if PARTY_GUIDE.is_file():
+            guide_btn = ttk.Button(bar, text="Open full guide (PARTY.md)", style="Secondary.TButton",
+                                   command=lambda: self.open_party_guide())
+            guide_btn.pack(side="left", ipady=4)
+            Tooltip(guide_btn, f"Opens {PARTY_GUIDE} in your text editor: ports, firewall, what is "
+                               "shared, saves and backups, crash recovery, 4 players, troubleshooting.")
+        ttk.Button(bar, text="Close", style="Secondary.TButton", command=dlg.destroy).pack(side="right", ipady=4)
+
+    def open_party_guide(self):
+        try:
+            os.startfile(str(PARTY_GUIDE))  # type: ignore[attr-defined]
+        except (OSError, AttributeError) as ex:
+            messagebox.showinfo("Party guide", f"Open this file in a text editor:\n{PARTY_GUIDE}\n\n({ex})")
+
+    def open_party_rules_dialog(self):
+        """Party rules & sync: the PARTY_SWITCHES, start mode, guest Insight and save backups."""
+        dlg = tk.Toplevel(self)
+        dlg.title("Party Rules & Sync")
+        dlg.geometry("720x560")
+        dlg.minsize(640, 500)
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.configure(bg="#1a1a1a")
+        body = ttk.Frame(dlg, style="Card.TFrame", padding=(14, 10, 14, 12))
+        body.pack(fill="both", expand=True, padx=10, pady=(10, 6))
+        body.columnconfigure(0, weight=1, uniform="sections")
+        body.columnconfigure(1, weight=1, uniform="sections")
+        ttk.Label(body, text="Hover over an option for details. Changes apply at the next launch. "
+                             "Defaults are the recommended settings.", style="Hint.TLabel").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        var = self.party_switch_vars
+        save = self.save_settings
+
+        def section(row, column, title):
+            sec = self._section(body, column, title)
+            sec.grid_configure(row=row, pady=(0, 12))
+            return sec
+
+        sec = section(1, 0, "Start & world")
+        start_combo = self._combo(
+            sec, "Party starts:", self.party_start_var, [c[0] for c in PARTY_START_CHOICES],
+            "When a player counts as ready to be summoned. After the prologue (recommended): once the "
+            "player has seen the opening, reached the Hunter's Dream for the first time and taken a "
+            "weapon; until then the others see '(prologue)' next to the name. Right away: as soon as "
+            "the opening cutscene is over (summons inside the clinic, before anyone has a weapon - "
+            "experimental). Each player's own setting; keep it the same for everyone. "
+            "Default: After the prologue (BB_PARTY_START=prologue_solo|immediate).", width=26)
+        start_combo.bind("<<ComboboxSelected>>", lambda e: save())
+        self._check(sec, "Give the bells", var["party_grant_bells"],
+                    "Gives each player the Beckoning Bell and the Small Resonant Bell once the prologue is "
+                    "done, so nobody has to buy or find them. Automatic summoning does not need them; they "
+                    "are for ringing by hand. Default: on (BB_PARTY_GRANT_BELLS).", command=save)
+        self._check(sec, "Open world (no co-op area walls)", var["party_open_world"],
+                    "Removes the walls the game puts on area borders while a helper is in your world, "
+                    "so the party can walk anywhere the host can. Off: the game's walls stay. Keep it the "
+                    "same for everyone. Default: on (BB_PARTY_OPEN_WORLD).", command=save)
+
+        sec = section(1, 1, "Guests")
+        self._check(sec, "Respawn at the host's lamp", var["party_guest_respawn"],
+                    "A guest who dies comes back at the host's last lamp and is summoned again, instead of "
+                    "being sent home to their own world. Applies to you while you are a guest. "
+                    "Default: on (BB_PARTY_GUEST_RESPAWN).", command=save)
+        self._check(sec, "Refill vials and bullets", var["party_guest_refill"],
+                    "Guests get their Blood Vials and Quicksilver Bullets refilled when the host rests at a "
+                    "lamp, dies or travels to the Dream, as the host does. Applies to you while you are a "
+                    "guest. Default: on (BB_PARTY_GUEST_REFILL).", command=save)
+        self._check(sec, "Guests can use Hunter's Mark", var["party_guest_mark"],
+                    "Lets a guest use the Hunter's Mark (and Bold Hunter's Mark); it takes the guest to the "
+                    "host's last lamp, like a death. Off: guests cannot use it, as in the normal game. "
+                    "Default: off (BB_PARTY_GUEST_MARK).", command=save)
+        self._check(sec, "Full rewards for guests", var["party_full_rewards"],
+                    "Guests get the full Blood Echoes for kills and bosses and the full enemy drops, like the "
+                    "host. Off: the game's co-op rules (half echoes, only vials and bullets drop). Applies "
+                    "to you while you are a guest. Default: on (BB_PARTY_FULL_REWARDS).", command=save)
+        self._check(sec, "Share the host's item rewards", var["party_items"],
+                    "Boss drops, key items and gifts the host receives (which guests never get in the "
+                    "normal game) are given to each guest too, in their own world, once each. "
+                    "Default: on (BB_PARTY_ITEMS).", command=save)
+        insight_combo = self._combo(
+            sec, "Insight for bosses:", self.party_insight_var, [c[0] for c in PARTY_INSIGHT_CHOICES],
+            "Insight a guest gets when the host kills a boss. Same as the host: the guest ends up with "
+            "the same Insight the host got for that boss. Full bonus: that much on top of the game's own "
+            "+1. Game's own: only the +1 the game gives a helper. "
+            "Default: Same as the host (BB_PARTY_GUEST_INSIGHT=parity|full|0).", width=24)
+        insight_combo.bind("<<ComboboxSelected>>", lambda e: save())
+
+        sec = section(2, 0, "Progress & story")
+        npc_cb = mirror_cb = None
+
+        def update_dependents():
+            npc_cb.state(["!disabled"] if var["party_progress"].get() else ["disabled"])
+            mirror_cb.state(["!disabled"] if var["party_story"].get() else ["disabled"])
+            save()
+        self._check(sec, "Share story progress", var["party_progress"],
+                    "The host's progress - bosses killed, lamps lit, shortcuts and doors opened, key "
+                    "events - is copied into each guest's own save, so the guests' worlds keep up with "
+                    "the host's. Needs to be on for the host and for each guest. "
+                    "Default: on (BB_PARTY_PROGRESS).", command=update_dependents)
+        npc_cb = self._check(sec, "    Also NPC quests (experimental)", var["party_progress_npc"],
+                             "Also copies the host's NPC quest steps (Eileen, Alfred, Djura ...) into the "
+                             "guests' saves. Quests are chains of steps, so a partly copied quest can get "
+                             "stuck. Guest's setting. Default: off (BB_PARTY_PROGRESS_NPC).", command=save)
+        self._check(sec, "Share cutscenes and endings", var["party_story"],
+                    "Every guest also sees the cutscenes the host triggers (shown again in the guest's own "
+                    "world if needed), the time of day (evening, night, Blood Moon) follows the host, and "
+                    "the ending the host gets plays for everyone. Needs to be on for the host and for "
+                    "each guest. Default: on (BB_PARTY_STORY).", command=update_dependents)
+        mirror_cb = self._check(sec, "    Play them live with the host", var["party_story_mirror"],
+                                "A guest in the host's world watches the cutscene at the same time as the "
+                                "host. Off: the guest sees it later, back in their own world. Guest's "
+                                "setting. Default: on (BB_PARTY_STORY_MIRROR).", command=save)
+
+        sec = section(2, 1, "Saves & crashes")
+        minutes_combo = self._combo(
+            sec, "Back up every (min):", self.party_backup_minutes_var, PARTY_BACKUP_MINUTES_CHOICES,
+            "During a party session the game copies the save folder to user\\save_backups at the start "
+            "and then every N minutes (0 = only at the start). README.txt there explains restoring. "
+            "Default: 10 (BB_SAVE_BACKUP_MINUTES).", width=6)
+        minutes_combo.bind("<<ComboboxSelected>>", lambda e: save())
+        keep_combo = self._combo(
+            sec, "Backups to keep:", self.party_backup_keep_var, PARTY_BACKUP_KEEP_CHOICES,
+            "How many backups are kept; the oldest are deleted. Backups that fail the save check are "
+            "kept separately, so a broken save never pushes good backups out. "
+            "Default: 10 (BB_SAVE_BACKUP_KEEP).", width=6)
+        keep_combo.bind("<<ComboboxSelected>>", lambda e: save())
+        self._check(sec, "Restart the game after a crash", var["party_restart"],
+                    "If the game crashes during a party session it starts again by itself, continues the "
+                    "save and rejoins the party (the host keeps your place for 60 s). At most 5 restarts "
+                    "in 10 minutes. Default: on (BB_PARTY_RESTART).", command=save)
+
+        update_dependents()
+
+        def on_defaults():
+            for key, _, default in PARTY_SWITCHES:
+                var[key].set(default)
+            self.party_start_var.set(PARTY_START_CHOICES[0][0])
+            self.party_insight_var.set(PARTY_INSIGHT_CHOICES[0][0])
+            self.party_backup_minutes_var.set("10")
+            self.party_backup_keep_var.set("10")
+            update_dependents()
+
+        bar = ttk.Frame(dlg, style="Card.TFrame", padding=10)
+        bar.pack(fill="x", padx=10, pady=(0, 10))
+        defaults_btn = ttk.Button(bar, text="Defaults", style="Secondary.TButton", command=on_defaults)
+        defaults_btn.pack(side="left", ipady=4)
+        Tooltip(defaults_btn, "Puts every option in this window back to its default.")
+        help_btn = ttk.Button(bar, text="Party help", style="Secondary.TButton", command=self.show_party_help)
+        help_btn.pack(side="left", padx=(6, 0), ipady=4)
+
+        def on_close():
+            save()
+            dlg.destroy()
+        ttk.Button(bar, text="Close", style="Secondary.TButton", command=on_close).pack(side="right", ipady=4)
+        dlg.protocol("WM_DELETE_WINDOW", on_close)
 
     def copy_solo_save_to_party(self, ask=True) -> bool:
         """Explicit copy of the single-player save into the party save folder (party_saves.py)."""
@@ -1918,6 +2187,12 @@ class BloodborneLauncher(tk.Tk):
             "party_stun": self.party_stun_var.get().strip(),
             "party_password": self.party_password_var.get(),
             "party_code": self.party_code_var.get().strip(),
+            "party_start": dict(PARTY_START_CHOICES).get(self.party_start_var.get(), PARTY_START_CHOICES[0][1]),
+            "party_guest_insight": dict(PARTY_INSIGHT_CHOICES).get(self.party_insight_var.get(),
+                                                                   PARTY_INSIGHT_CHOICES[0][1]),
+            "party_backup_minutes": self.party_backup_minutes_var.get(),
+            "party_backup_keep": self.party_backup_keep_var.get(),
+            **{key: var.get() for key, var in self.party_switch_vars.items()},
         }
 
     def save_settings(self):

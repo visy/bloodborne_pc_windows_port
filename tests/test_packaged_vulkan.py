@@ -2,6 +2,7 @@
 from paths import ROOT
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -9,6 +10,12 @@ import unittest
 spec = importlib.util.spec_from_file_location("bbport_vulkan", ROOT / "launcher/bbport_vulkan.py")
 vulkan = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(vulkan)
+
+
+# The Linux AppImage/Nix package's driver setup: POSIX paths (/nix/store/..., ':' lists) and
+# symlinks to the host's NVIDIA libraries. The Windows build uses the system's Vulkan loader.
+linux_only = unittest.skipIf(os.name == 'nt', 'Linux package driver setup: POSIX paths and '
+                             'symlinks to host .so files; not used by the Windows build')
 
 
 class PackagedVulkanTests(unittest.TestCase):
@@ -54,6 +61,7 @@ class PackagedVulkanTests(unittest.TestCase):
                 self.assertEqual(self.env, before)
                 del self.env[key]
 
+    @linux_only
     def test_host_nvidia_and_compiler_are_exposed_without_host_libc(self):
         driver = self.library("libGLX_nvidia.so.580.1")
         (self.libs / "libGLX_nvidia.so.0").symlink_to(driver.name)
@@ -97,6 +105,7 @@ class PackagedVulkanTests(unittest.TestCase):
         self.assertEqual(self.env["VK_DRIVER_FILES"],
                          "/user/extra.json:/bundled/radeon.json:/bundled/intel.json")
 
+    @linux_only
     def test_host_driver_can_be_supplied_outside_hidden_nix_store(self):
         self.library("libGLX_nvidia.so.0")
         self.manifest("/nix/store/hidden/lib/libGLX_nvidia.so.0")
@@ -104,6 +113,7 @@ class PackagedVulkanTests(unittest.TestCase):
         vulkan.configure(self.env, (self.icds,), ())
         self.assertIn("nvidia_icd.json", self.env["VK_DRIVER_FILES"])
 
+    @linux_only
     def test_nvidia_report_names_libraries_searched_and_not_loaded(self):
         # Issue #107: the driver loads but gives no vkCreateInstance; the report says what the
         # dynamic linker looked for inside the package and did not load.

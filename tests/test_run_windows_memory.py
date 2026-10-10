@@ -33,7 +33,9 @@ class ResolutionMemoryTests(unittest.TestCase):
                 env['BB_RENDER_RES'] = resolution
             if memory is not None:
                 env['BB_DMEM_MB'] = memory
-            run = subprocess.run([os.environ['COMSPEC'], '/d', '/c', 'run.bat'],
+            # .\run.bat: with NoDefaultCurrentDirectoryInExePath set, cmd does not look in the
+            # current directory for a bare name.
+            run = subprocess.run([os.environ['COMSPEC'], '/d', '/c', r'.\run.bat'],
                                  cwd=root, env=env, capture_output=True, timeout=30)
             self.assertEqual(run.returncode, 1, run.stdout + run.stderr)
             self.assertTrue((root / 'observed.json').exists(), run.stdout + run.stderr)

@@ -503,6 +503,11 @@ static void test_from_api() {
     // ss.info, with N = FrpgNetMan+0x9e8 = 7 from the fake image.
     std::string ss;
     CHECK(http_request(h, 0, "https://ss4.scej-network.jp:20443/bb/ss.info", "", &ss) == 200);
+    {  // base64 on the wire: the game decodes it before parsing
+        CHECK(ss.find('<') == std::string::npos);
+        const std::vector<std::uint8_t> raw = bbnet::party::b64_decode(ss);
+        ss.assign(raw.begin(), raw.end());
+    }
     CHECK(ss.find("<ss>0</ss>") != std::string::npos);
     CHECK(ss.find("<gameurl7>") != std::string::npos && ss.find("</gameurl7>") != std::string::npos);
     CHECK(ss.find("<gameurl0>") == std::string::npos);

@@ -176,8 +176,12 @@ void FromApi::handle(const Caller& caller, const HttpRequest& rq, HttpResponse& 
         out.body = formats::kPlaylogReply.body;
     } else if (ends_with(u.path, "ss.info")) {
         out.status = 200;
-        out.content_type = "text/xml";
-        out.body = from_api_ss_info();
+        out.content_type = "text/plain";
+        // The game base64-decodes the ss.info body before parsing it (the completion 0x1e7f240
+        // streams [response +0x58] through the base64 decoder 0x1ea92e0 -> 0xfd06f0 at 0x1e8169e,
+        // then calls 0x1e89850 -> parser 0x1eb65e0); plain XML decodes to garbage and the parse
+        // fails (seen with BB_PARTY_TRACE_SSINFO=1), so no login ever follows.
+        out.body = b64_encode(from_api_ss_info());
     } else {
         json::Value body;
         std::string err;
