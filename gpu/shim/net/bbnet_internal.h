@@ -169,5 +169,8 @@ struct OnlineProgress {
     double since_last = -1;                                // s since the latest FROM request (-1: none)
 };
 OnlineProgress online_progress();
+// Logs the game's online state (FrpgNetMan, the FROM client, the network flow) on every change
+// (online_watch.cpp); started by the first sceHttpInit under BB_PARTY.
+void online_watch_start();
 
 }  // namespace bbnet

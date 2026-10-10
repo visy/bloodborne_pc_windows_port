@@ -265,6 +265,11 @@ namespace {
 // The imports routed to this library under BB_PARTY: libSceNet, NetCtl, Http, Ssl and Np,
 // except the Np parts that stay offline whatever the mode.
 bool routed(const char* name) {
+    // Score: only the comment filter (np_manager.cpp); ranking and game data stay offline.
+    static const char* const kIncluded[] = {"sceNpScoreCensorComment", "sceNpScoreSanitizeComment"};
+    for (const char* x : kIncluded) {
+        if (std::strcmp(name, x) == 0) return true;
+    }
     static const char* const kExcluded[] = {"sceNpTrophy", "sceNpCommerce", "sceNpProfileDialog", "sceNpScore"};
     for (const char* x : kExcluded) {
         if (std::strncmp(name, x, std::strlen(x)) == 0) return false;
