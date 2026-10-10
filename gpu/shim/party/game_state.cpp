@@ -24,7 +24,7 @@ constexpr std::uint64_t kNetFlow = 0x5556678;
 constexpr std::uint64_t kNpManager = 0x56c7048;
 constexpr std::uint64_t kCooperatorCount = 0x15bdc20;
 
-constexpr std::uint64_t kRecInsight = 0x84, kRecLevel = 0x90;
+constexpr std::uint64_t kRecInsight = 0x84, kRecLevel = 0x90, kRecEchoes = 0x94;
 
 // Campaign start (game_state.h).
 constexpr std::uint64_t kEventFlagMan = 0x553b100;
@@ -175,6 +175,7 @@ GameSnapshot ReadGameState(bool call_game) {
     if (s.player_rec) {
         s.insight = Field<std::int32_t>(s.player_rec, kRecInsight, -1);
         s.level = Field<std::int32_t>(s.player_rec, kRecLevel, -1);
+        s.echoes = Field<std::int32_t>(s.player_rec, kRecEchoes, -1);
     }
     if (s.player) {
         // PlayerIns_GetBloodMarkMap (0x19046c0): *(*(player + 0x400) + 0x48).

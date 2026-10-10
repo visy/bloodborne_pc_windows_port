@@ -51,7 +51,7 @@ struct GameSnapshot {
     bool in_game_frame = false;  ///< CSNowLoadingHelper saw an in-game frame
     std::uint64_t world_chr_man = 0, player = 0, session_man = 0, game_data_man = 0, player_rec = 0;
     int session_role = -1, session_sub_state = -1, matching_status = -1;
-    int insight = -1, level = -1;
+    int insight = -1, level = -1, echoes = -1; ///< PlayerGameData +0x84, +0x90, +0x94
     std::uint32_t map_id = 0xffffffffu; ///< 0xAABBCCDD = mAA_BB_CC_DD; all ones when unknown
     int cooperators = -1;        ///< -1: not asked (or not safe to ask)
     int online_mode = -1;        ///< network flow +0x1590

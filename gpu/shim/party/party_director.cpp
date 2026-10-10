@@ -13,6 +13,7 @@
 #include "party_status_bridge.h"
 #include "party_items.h"
 #include "party_npc_test.h"
+#include "party_guestsvc.h"
 #include "party_phantom.h"
 #include "party_start.h"
 #include "party_runtime.h"
@@ -840,6 +841,8 @@ void PartyDirector::Tick() {
     // Phantoms as full players: the host's lamp / rest / boss Insight out, the guest's refill and
     // Insight in (party_phantom.h).
     PhantomTick(link);
+    // Guests use the Doll, shops and workshop in the host's Dream (party_guestsvc.h).
+    GuestServicesTick(s);
     if (st.test.on) {
         RunTest(st, s, now);
         if ((st.test.log_state || st.test.start) && Seconds(st.last_log, now) >= 5.0) {
@@ -925,6 +928,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     InstallStoryHooks();    // C4: bank-2002 capture, guest mirror / replay (byte-verified)
     InstallItemsPatches();  // C3: award hook, parity patches (byte-verified)
     PhantomInit();          // guest respawn at the host's lamp, refill, boss Insight
+    GuestServicesInit();    // guest Doll / shops / workshop in the host's Dream (byte-verified)
     g_tick_installed = HookPrologue(kFlipperUpdate,
                                     {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48,
                                      0x83, 0xec, 0x38},

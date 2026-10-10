@@ -565,6 +565,13 @@ target_compile_definitions(party-phantom-test PRIVATE BB_PARTY_PHANTOM_NO_GAME B
 target_compile_options(party-phantom-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-phantom-test PRIVATE shim)
 set_target_properties(party-phantom-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Party guest services (shim/party/party_guestsvc.cpp; in bbgpu through SHIM_SOURCES): the gate and
+# record logic (BB_PARTY_GUESTSVC_NO_GAME). ninja -C out/gpu party-guestsvc-test
+add_executable(party-guestsvc-test EXCLUDE_FROM_ALL ../tests/test_party_guestsvc.cpp shim/party/party_guestsvc.cpp)
+target_compile_definitions(party-guestsvc-test PRIVATE BB_PARTY_GUESTSVC_NO_GAME)
+target_compile_options(party-guestsvc-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-guestsvc-test PRIVATE shim)
+set_target_properties(party-guestsvc-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Four-player rules (shim/party/party_fourp.cpp; in bbgpu through SHIM_SOURCES): the pure parts
 # (BB_PARTY_FOURP_NO_GAME). ninja -C out/gpu party-fourp-test
 add_executable(party-fourp-test EXCLUDE_FROM_ALL ../tests/test_party_fourp.cpp shim/party/party_fourp.cpp)
