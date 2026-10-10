@@ -76,6 +76,10 @@ void scheduler_main() {
 
 std::mutex g_pmu;
 std::map<std::uint16_t, Peer> g_peers;
+// Peer input caps (bbport security pass): other members in a room (BB_PARTY_MAX is at most 8).
+constexpr std::size_t kMaxPeers = 8;
+// A peer's port number: 0 unless 1..65535 (a cast would wrap 65536 + n to n).
+std::uint16_t port_of(long long v) { return v > 0 && v <= 65535 ? static_cast<std::uint16_t>(v) : 0; }
 
 // ---- our reflexive address -------------------------------------------------------------------
 
@@ -291,6 +295,16 @@ void peers_upsert(const Peer& p) {
     Peer before;
     {
         std::lock_guard<std::mutex> lk(g_pmu);
+        // A room has at most kMaxPeers other members: a host's flood of member records must not
+        // grow the table (every entry becomes a member in the game's own room structures).
+        if (!g_peers.count(p.member_id)) {
+            std::size_t real = 0;
+            for (const auto& [m, q] : g_peers) real += m < 0xff00 ? 1 : 0;
+            if ((p.member_id < 0xff00 && real >= kMaxPeers) || g_peers.size() >= 2 * kMaxPeers) {
+                log("np: peer table full; member %u (%s) dropped", p.member_id, p.online_id.c_str());
+                return;
+            }
+        }
         Peer& slot = g_peers[p.member_id];
         before = slot;
         const unsigned conn = p.conn_id ? p.conn_id : slot.conn_id;
@@ -368,14 +382,16 @@ int peers_from_members(const json::Value& members) {
     if (members.type != json::Value::Type::Array) return 0;
     int n = 0;
     for (const json::Value& m : members.array) {
+        if (n >= static_cast<int>(kMaxPeers)) break;  // a room is never bigger
         Peer p;
-        p.member_id = static_cast<std::uint16_t>(int_of(m, "MemberId", 0));
-        if (!p.member_id) continue;
+        const long long mid = int_of(m, "MemberId", 0);
+        if (mid <= 0 || mid >= 0xff00) continue;  // 0xff00+: our own provisional entries
+        p.member_id = static_cast<std::uint16_t>(mid);
         p.online_id = str_of(m, "OnlineId");
         p.addr = ip_parse(str_of(m, "Addr"));
-        p.port = static_cast<std::uint16_t>(int_of(m, "Port", 0));
+        p.port = port_of(int_of(m, "Port", 0));
         p.local_addr = ip_parse(str_of(m, "LocalAddr"));
-        p.local_port = static_cast<std::uint16_t>(int_of(m, "LocalPort", 0));
+        p.local_port = port_of(int_of(m, "LocalPort", 0));
         // A STUN-mapped address that differs from the peer's local one means a NAT in between,
         // and only the mapped one reaches the peer.
         const std::uint32_t mapped = ip_parse(str_of(m, "MappedAddr"));

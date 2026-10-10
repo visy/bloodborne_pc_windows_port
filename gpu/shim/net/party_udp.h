@@ -19,6 +19,7 @@
 #include "net_stun.h"
 
 #include <chrono>
+#include <functional>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -77,15 +78,25 @@ public:
     static constexpr std::uint16_t kFirstPort = 50001;
     static constexpr std::uint16_t kPortSpan = 12000;
     static constexpr auto kIdleExpiry = std::chrono::minutes(10);
+    // Registrations (bbport security pass): the party port is on the internet and STUN / relay
+    // frames are unauthenticated, so the table is capped (a full table refuses newcomers rather
+    // than reusing a taken port) and, with an admit filter, only party members' addresses get
+    // answers or relay ports.
+    static constexpr std::size_t kMaxClients = 64;
+    static constexpr std::size_t kMaxClientsPerAddr = 8;
 
     struct Stats {
         std::uint64_t answered = 0, registered = 0, reregistered = 0, forwarded = 0, forwarded_bytes = 0,
-                      unknown_dst = 0, expired = 0;
+                      unknown_dst = 0, expired = 0, refused = 0;
     };
 
     // `own_port`: the party port (host order), never handed out as a relay port.
     explicit RelayServer(std::uint16_t own_port = 0);
     void set_own_port(std::uint16_t p);
+    // Which source addresses (network order) the server answers and registers: the party
+    // runtime admits its PartyLink members' addresses. None set: everyone (tests, harness).
+    // Called without the server's lock held; it may take others.
+    void set_admit(std::function<bool(std::uint32_t addr)> admit);
 
     // A STUN Binding Request that reached the party port from addr:port (network order). Writes
     // the answer into `out` (net::stun::kMaxResponse bytes) and returns its length; 0 when `d`
@@ -119,9 +130,13 @@ private:
         std::uint16_t vport = 0;  // host order
         Clock::time_point seen;
     };
-    Client& register_locked(std::uint64_t token, std::uint32_t addr, std::uint16_t port_nbo, std::string* note,
+    // nullptr when the table is full.
+    Client* register_locked(std::uint64_t token, std::uint32_t addr, std::uint16_t port_nbo, std::string* note,
                             bool re);
+    bool admitted(std::uint32_t addr) const;
     mutable std::mutex mu_;
+    mutable std::mutex admit_mu_;
+    std::function<bool(std::uint32_t)> admit_;
     std::uint16_t own_port_ = 0;
     std::map<std::uint64_t, Client> by_token_;
     std::map<std::uint16_t, std::uint64_t> by_vport_;

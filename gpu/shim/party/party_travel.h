@@ -102,6 +102,17 @@ bool TravelFromJson(const json::Value& v, TravelIntent* out, std::string* error 
 std::string TravelToJsonText(const TravelIntent& t);
 bool TravelFromJsonText(const std::string& text, TravelIntent* out, std::string* error = nullptr);
 
+// ---- Peer validation (bbport security pass) ----
+/// A campaign map area (21-28, 29 chalice, 32-36): the first byte of a packed map, AA of an id.
+bool TravelAreaPlausible(std::uint32_t area);
+/// A WarpParam / bonfire / lamp id shaped like the game's (AABnnnn: 7 digits, AA an area).
+bool TravelLampPlausible(std::uint32_t id);
+/// A host's travel intent before a guest replays it: false (with `why`) for a kind the host
+/// never broadcasts; ids that are not plausible become kTravelNone, a transform with a bad map
+/// or non-finite / far-out coordinates is dropped (has_pos false). The guest's game is then only
+/// asked to warp somewhere a game id can name.
+bool SanitizePeerTravel(TravelIntent* t, std::string* why = nullptr);
+
 // ---- How a guest replays an intent ----
 enum class ReplayMethod : std::uint8_t {
     None,         ///< nothing usable: leave the game's own warp alone

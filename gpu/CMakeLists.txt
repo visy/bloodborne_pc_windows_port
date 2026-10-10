@@ -457,6 +457,30 @@ set_target_properties(party-soak PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 if (WIN32)
     target_link_libraries(party-soak PRIVATE ws2_32 iphlpapi synchronization ole32 oleaut32 winmm)
 endif()
+# Party security fuzzing (tests/party_fuzz.cpp): every parser of peer bytes (JSON, PartyLink
+# frames over loopback both ways, STUN / relay / vport framing, party codes, the host service and
+# FromApi, the guest's event decoders and sanitizers) under random and structure-aware inputs,
+# plus the security regressions. party-fuzz: 60 s by default ([--seconds S] [target...]);
+# party-security-test: the regressions and a 20 s run; party-fuzz-ubsan: party-fuzz with UBSan in
+# trap mode and libstdc++ assertions (MinGW GCC has no ASan).
+set(PARTY_FUZZ_SOURCES ../tests/party_fuzz.cpp ${PARTY_NET_SOURCES} ${PARTY_LINK_SOURCES}
+    third_party/monocypher/monocypher.c shim/party/party_travel.cpp shim/party/party_story.cpp
+    shim/party/party_items.cpp shim/party/party_phantom.cpp shim/party/party_progress.cpp)
+foreach(fuzz_target party-fuzz party-security-test party-fuzz-ubsan)
+    add_executable(${fuzz_target} EXCLUDE_FROM_ALL ${PARTY_FUZZ_SOURCES})
+    target_compile_definitions(${fuzz_target} PRIVATE BB_PARTY_TRAVEL_NO_GAME BB_PARTY_STORY_NO_GAME
+        BB_PARTY_ITEMS_NO_GAME BB_PARTY_PHANTOM_NO_GAME BB_PARTY_PROGRESS_NO_GAME)
+    target_compile_options(${fuzz_target} PRIVATE -UNDEBUG -Wall -Wextra)
+    target_include_directories(${fuzz_target} PRIVATE shim shim/net ..)
+    set_target_properties(${fuzz_target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+    if (WIN32)
+        target_link_libraries(${fuzz_target} PRIVATE ws2_32 iphlpapi synchronization ole32 oleaut32)
+    endif()
+endforeach()
+target_compile_definitions(party-security-test PRIVATE PARTY_FUZZ_QUICK)
+target_compile_options(party-fuzz-ubsan PRIVATE -fsanitize=undefined -fsanitize-undefined-trap-on-error
+    -fno-sanitize-recover=all -D_GLIBCXX_ASSERTIONS -O1)
+target_link_options(party-fuzz-ubsan PRIVATE -fsanitize=undefined -fsanitize-undefined-trap-on-error)
 # Party status bridge (shim/party/party_status_bridge.cpp; in bbgpu through SHIM_SOURCES): link /
 # game facts -> the Party tab's state, roster, events, commands. ninja -C out/gpu party-status-bridge-test
 add_executable(party-status-bridge-test EXCLUDE_FROM_ALL ../tests/test_party_status_bridge.cpp
