@@ -175,7 +175,6 @@ def setup(a):
         user.mkdir(exist_ok=True)
         if a.saves and Path(a.saves).is_dir() and not (user / "savedata").exists():
             shutil.copytree(a.saves, user / "savedata")
-        party_saves_from(user)
         (inst / "bbport.ini").write_text(INI, encoding="utf-8")
         print("instance", i, "->", inst)
 
