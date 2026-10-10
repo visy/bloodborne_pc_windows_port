@@ -191,9 +191,9 @@ static void Party() {
     // Member rows: one per member, name, state and ping; the host's own row cannot be kicked.
     int visible = 0;
     for (const P::Row& row : members.rows) visible += !row.visible || row.visible();
-    assert(visible == 3);
+    assert(visible == 5); // three members, the notices switch, the last event
     assert(std::u16string(P::Text(members.rows[0].name, false)) == u"Hunter0 (host) (you)");
-    assert(std::u16string(P::Text(members.rows[1].choices[0], false)) == u"In host's world, 42 ms");
+    assert(std::u16string(P::Text(members.rows[1].choices[0], false)) == u"In world, 42 ms");
     assert(std::u16string(P::Text(members.rows[1].choices[1], false)) == u"Press again: kick");
     assert(std::u16string(P::Text(members.rows[2].choices[0], true)) == u"Связь потеряна");
     assert(std::u16string(P::Text(members.rows[0].choices[1], false)) ==
@@ -231,7 +231,8 @@ static void Party() {
     // Run-time texts are cut to their limits.
     ps::SetLastEvent(std::string(300, 'x'));
     Advance(300);
-    const P::Row& event = party.rows.back();
+    const P::Row& event = members.rows.back();
+    assert(std::u16string(P::Text(event.name, false)) == u"Last event");
     assert(Length(event.choices[0], false) == P::MaxValueLength);
     assert(std::u16string(P::Text(event.choices[0], false)).substr(P::MaxValueLength - 3) == u"...");
     assert(Length(event.help, true) == P::MaxHelpLength);
@@ -241,13 +242,13 @@ static void Party() {
     P::Load();
     visible = 0;
     for (const P::Row& row : members.rows) visible += !row.visible || row.visible();
-    assert(visible == 1 && std::u16string(P::Text(members.rows[0].name, false)) == u"No one yet");
+    assert(visible == 3 && std::u16string(P::Text(members.rows[0].name, false)) == u"No one yet");
 
     // Party mode off (single player): no commands from the buttons; the party-only rows (copy,
-    // rejoin, leave, notices, last event) are hidden, the extension row shows (in order).
+    // rejoin, leave) are hidden, the extension row shows (in order).
     ps::ResetForTest(false);
     P::Load();
-    assert(P::PartyRowCount() == 7);
+    assert(P::PartyRowCount() == 5); // status, copy, rejoin, leave + the extension row
     std::vector<const P::Row*> shown;
     for (const P::Row& row : party.rows) if (!row.visible || row.visible()) shown.push_back(&row);
     assert(shown.size() == 2 && std::u16string(P::Text(shown[1]->name, true)) == u"Создать группу");
@@ -272,7 +273,26 @@ static void Restart() {
     assert(restarts == 1);
 }
 
-int main() {
+/// --labels FILE: the English page / row names and help lines, for test drivers that read the
+/// focused item off the screen (tools: the QA menu driver matches OCR text against them).
+static void DumpLabels(const char* path) {
+    std::ofstream out(path);
+    const auto ascii = [](const char16_t* t) {
+        std::string s;
+        for (; t && *t; ++t) s.push_back(*t < 128 ? char(*t) : '?');
+        return s;
+    };
+    const char tab = '\t', end = '\n';
+    for (const P::Page& page : P::All()) {
+        out << "page" << tab << ascii(P::Text(page.name, false)) << tab << ascii(P::Text(page.help, false)) << end;
+        for (const P::Row& row : page.rows) {
+            out << "row" << tab << ascii(P::Text(page.name, false)) << tab << ascii(P::Text(row.name, false)) << tab
+                << ascii(P::Text(row.help, false)) << end;
+        }
+    }
+}
+
+int main(int argc, char** argv) {
     ini = std::filesystem::temp_directory_path() / "bbport-game-menu-pages-test.ini";
     {
         std::ofstream file(ini);
@@ -303,6 +323,10 @@ int main() {
     }
     P::Define();
     P::Define(); // once
+    if (argc == 3 && std::string(argv[1]) == "--labels") {
+        DumpLabels(argv[2]);
+        return 0;
+    }
     Limits();
     Helpers();
     EverySettingSaved();
