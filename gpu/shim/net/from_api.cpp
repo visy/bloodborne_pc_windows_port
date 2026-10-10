@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <map>
@@ -19,6 +20,12 @@ namespace bbnet::party {
 #include "from_api_formats.inc"
 
 namespace {
+
+// BB_PARTY_FAST_JOIN (default on): the quicker sign polling of kSsFastJoinValues.
+bool fast_join() {
+    const char* v = std::getenv("BB_PARTY_FAST_JOIN");
+    return !(v && v[0] == '0' && !v[1]);
+}
 
 struct Url {
     std::string scheme, host, path, query;

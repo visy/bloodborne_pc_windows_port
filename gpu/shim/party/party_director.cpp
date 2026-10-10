@@ -23,6 +23,7 @@
 
 #include "../net/bbnet_internal.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cstdarg>
@@ -102,6 +103,11 @@ struct State {
     bool auto_ring = true;
     int auto_continue = -1; // BB_PARTY_AUTOCONTINUE: -1 default (on in party mode), 0 off, 1 on
     double ring_every = 30.0;
+    // BB_PARTY_FAST_JOIN (default on; docs/party/join_timing.md): shorter director pauses.
+    bool fast_join = true;
+    double ring_delay = 1.0;        // s in a steady world before the first bell (5 without fast join)
+    double continue_settle = 1.0;   // s on the title before the first Continue press (4)
+    double continue_every = 1.0;    // s between Continue presses (2.5)
     StartMode start_mode = StartMode::PrologueSolo;
     bool grant_bells = true;
     Test test;
@@ -521,7 +527,7 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
             party::runtime().restarted() ? "crash restart" : "party mode");
     }
     // Let the title settle (logos, online login) before the first press.
-    if (Seconds(st.continue_ready, now) < 4.0) {
+    if (Seconds(st.continue_ready, now) < st.continue_settle) {
         return;
     }
     if (st.continue_held) {
@@ -544,7 +550,7 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
         st.continue_last = now;
         return;
     }
-    if (Seconds(st.continue_last, now) >= 2.5) {
+    if (Seconds(st.continue_last, now) >= st.continue_every) {
         st.continue_last = now;
         st.continue_held = true;
         ++st.continue_presses;
@@ -640,6 +646,15 @@ void PartyDirector::ConfigureFromEnv() {
     if (const char* e = std::getenv("BB_PARTY_RING_EVERY"); e && e[0] && std::atof(e) >= 1.0) {
         st.ring_every = std::atof(e);
     }
+    if (const char* f = std::getenv("BB_PARTY_FAST_JOIN"); f && f[0] == '0' && !f[1]) {
+        st.fast_join = false;
+        st.ring_delay = 5.0;
+        st.continue_settle = 4.0;
+        st.continue_every = 2.5;
+    }
+    if (const char* d = std::getenv("BB_PARTY_RING_DELAY"); d && d[0] && std::atof(d) >= 0.0) {
+        st.ring_delay = std::atof(d);
+    }
     if (const char* a = std::getenv("BB_PARTY_AUTO"); a && a[0] == '0') {
         st.auto_ring = false;
     }
@@ -691,9 +706,11 @@ void PartyDirector::ConfigureFromEnv() {
     if (const char* g = std::getenv("BB_PARTY_GRANT_BELLS"); g && g[0] == '0') {
         st.grant_bells = false;
     }
-    Log("director: role %s, max %d players, %s every %.0f s, start %s, bell grants %s%s%s",
+    Log("director: role %s, max %d players, %s every %.0f s (first %.1f s in the world), fast join %s, start %s, "
+        "bell grants %s%s%s",
         role == PartyRole::Host ? "host" : role == PartyRole::Guest ? "guest" : "none", st.max_players,
-        st.auto_ring ? "bell" : "no automatic bell", st.ring_every, StartModeName(st.start_mode),
+        st.auto_ring ? "bell" : "no automatic bell", st.ring_every, st.ring_delay, st.fast_join ? "on" : "off",
+        StartModeName(st.start_mode),
         st.grant_bells ? "on" : "off", st.test.on ? "; test: " : "", st.test.on ? std::getenv("BB_PARTY_DIRECTOR_TEST") : "");
 }
 
@@ -762,7 +779,7 @@ void PartyDirector::Tick() {
     if (full || !st.start_logged) {
         UpdateStart(st, s, start_mode);
         if (((grant_bells && role != PartyRole::None) || st.test.grant_bells) && st.world_seen &&
-            Seconds(st.world_at, now) >= 5.0) {
+            Seconds(st.world_at, now) >= std::min(5.0, st.ring_delay)) {
             GrantBells(st, s);
         }
     }
@@ -858,7 +875,7 @@ void PartyDirector::Tick() {
     }
     // Automatic summoning.
     if (!st.auto_ring || role == PartyRole::None || !link || !s.world_up || s.loading || !st.world_seen ||
-        Seconds(st.world_at, now) < 5.0 || s.session_role != RoleIdle) {
+        Seconds(st.world_at, now) < st.ring_delay || s.session_role != RoleIdle) {
         return;
     }
     if (st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {
