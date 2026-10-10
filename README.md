@@ -1,4 +1,4 @@
-# bloodborne_pc_windows_port: Native Windows Port of Bloodborne
+# Native Windows Port of Bloodborne
 
 ![Platform](https://img.shields.io/badge/PLATFORM-WINDOWS-0078D6?style=for-the-badge&logo=windows&logoColor=white&labelColor=1a0f0f)
 [![Latest release](https://img.shields.io/github/v/release/Mrsuss60/bloodborne_pc_windows_port?style=for-the-badge&logo=github&logoColor=white&labelColor=1a0f0f&color=8b0000&label=RELEASE)](https://github.com/Mrsuss60/bloodborne_pc_windows_port/releases)
