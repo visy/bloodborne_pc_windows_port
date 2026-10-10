@@ -181,8 +181,10 @@ member, who joins and deletes its sign; the next bell 30 s later takes the next 
   never rang again: no 2nd/3rd cooperator ever. `SessionMayRing`: the host rings idle or hosting,
   a guest only idle.
 - a member whose link is lost (crash) or gone keeps no sign on the board (`FromApi::drop_signs`
-  from `on_member_left`), and `get` hides signs of members already in a room as a non-owner, so
-  the host's game can only pick a sign of a member that is waiting (oldest sign first). The
+  from `on_member_left`), so the host's game cannot pick a crashed member's sign while the others
+  wait (signs are offered oldest first; a summoned guest's game deletes its own sign, seen live).
+  Signs of members already in a room are *not* hidden: a crashed member's room membership can be
+  held (loading) while its restarted game puts up a new sign. The
   game's own pick among several valid signs is not known (0x14baec0); with every offered sign
   valid it does not matter which one it takes.
 - the 4th sign: at max 4 with 3 cooperators the director stops ringing and H1 no longer lifts
@@ -207,8 +209,8 @@ prologue: `start ... READY`). Logs: `instances.py logs --grep "Party|from api|4p
    `cooperators 0 -> 1`; ~30 s later `ringing ...` again with session `host (3, ...)` ->
    `summons` the other guest -> `cooperators 1 -> 2`. N = 4: `Party 4p: H1: a 3rd cooperator
    slot opened (2 cooperators, max players 4)` -> third `summons` -> `cooperators 2 -> 3`. Each
-   guest: `session trying-to-join -> client (6)` and roster `in_host_world`. Signs: `asks for
-   signs: ... (k of members already in a room hidden)` never offers an in-world member.
+   guest: `session trying-to-join -> client (6)` and roster `in_host_world`. Signs: after each
+   summon the host's `asks for signs` count drops by one (the summoned guest deleted its sign).
 4. Cap: N = 3 with 3 guests running (BB_PARTY_MAX=3 but `--count 4`): the 3rd guest's link is
    refused full; N = 4: no 4th summon, no bell at 3 cooperators (no `ringing` after `2 -> 3`).
 5. Guest crash (`instances.py crash --instance 2` with 2-3 guests in): host `Hunter2 (slot 2)

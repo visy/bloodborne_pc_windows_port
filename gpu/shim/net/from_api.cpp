@@ -380,28 +380,11 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
         std::lock_guard<std::mutex> lk(mu_);
         board = signs_;
     }
-    // A sign whose owner already plays in someone's room (as a member, not the owner) is not
-    // offered: its game deletes it on the summon, but a late re-ring or a lost delete would let
-    // the host's game pick a sign that cannot answer while another member waits (with 2-3
-    // guests the host picks among several signs). Asked outside mu_ (the service has its own lock).
-    std::vector<std::string> busy;
-    for (const Sign& s : board) {
-        PartyHostService::RoomView rv;
-        if (s.online_id == caller.online_id || !service_.room_of(s.online_id, &rv)) continue;
-        for (const auto& m : rv.members) {
-            if (m.online_id == s.online_id && m.member_id != rv.owner_id) busy.push_back(s.online_id);
-        }
-    }
-    std::size_t hidden = 0;
     // Party-only by construction; every other member's signs, wherever they stand (the party
     // plays together - the game's own area check still applies on its side). Oldest first: the
     // member who waited longest is offered first.
     for (const Sign& s : board) {
         if (s.online_id == caller.online_id) continue;
-        if (std::find(busy.begin(), busy.end(), s.online_id) != busy.end()) {
-            ++hidden;
-            continue;
-        }
         if (!types.empty() && std::find(types.begin(), types.end(), s.summon_type) == types.end()) continue;
         if (n >= max) break;
         std::map<std::string, std::string> v;
@@ -426,7 +409,6 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
         std::string key = std::to_string(n) + " sign(s) for types [";
         for (std::size_t i = 0; i < types.size(); ++i) key += (i ? "," : "") + std::to_string(types[i]);
         key += "] of " + std::to_string(board.size()) + " on the board";
-        if (hidden) key += " (" + std::to_string(hidden) + " of members already in a room hidden)";
         if (last[caller.online_id] != key) {
             last[caller.online_id] = key;
             log("from api: %s asks for signs: %s", caller.online_id.c_str(), key.c_str());
