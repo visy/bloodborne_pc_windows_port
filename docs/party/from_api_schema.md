@@ -20,15 +20,15 @@ PLT import names), Ghidra via `tools/re/decomp.py`.
 | `BASE/basic_utils/get_emergency_notice?user_id=N` | POST | `{"ResKind":0,"NoticeList":[],"CheckTime":"2026-10-10T12:00:00"}` | CheckTime optional, format `%d-%02d-%02dT%02d:%02d:%02d` |
 | `BASE/penalty/check_user_priority_move_count?user_id=N` | POST | `{"ResKind":0}` | only `(code & 0xffff0000)==0` checked |
 | `BASE/summon_messenger/create?user_id=N` | POST | `{"ResKind":0}` | nothing else read |
-| `BASE/summon_messenger/get?user_id=N` | POST | `{"ResKind":0,"SummonDataList":[{"SummonDataVersion":3,"SummonData":"<base64 0xE0 bytes>","SummonType":0,"CharaId":1,"UserId":1002}]}` | SummonDataList must be an array; entry skipped unless SummonDataVersion is a non-negative JSON integer and SummonData decodes to exactly 0xE0 bytes |
+| `BASE/summon_messenger/get?user_id=N` | POST | `{"ResKind":0,"SummonDataList":[{"SummonDataVersion":3,"SummonData":"<base64 0xE0 bytes>","SummonType":0,"CharaId":1,"UserId":1002}]}` | SummonDataList must be an array; entry skipped unless SummonDataVersion == 3 and SummonData decodes to exactly 0xE0 bytes; echo the guest's create blob |
 | `BASE/summon_messenger/request?user_id=N` | POST | `{"ResKind":0}` | nothing else read |
 | `BASE/summon_messenger/delete?user_id=N` | POST | `{"ResKind":0}` | |
 | every other `BASE/...` | POST | `{"ResKind":0, <its list key>:[]}` | list keys in §4.4 must be arrays, else the answer is marked invalid |
 | play log PUT `bb-playlog-*.s3.amazonaws.com` | PUT | 200, empty | AES string `AES/CBC/PKCS5/MWC` is the play-log uploader's (0x1fe5530), not the FROM API |
 
-Every JSON number you send must be a **plain non-negative integer literal** (no `.0`, no `-`,
-no exponent) — see §3.2 (a `-`, `.`, `e`/`E` makes it a "double" value, type 2, which fails the
-`SummonDataVersion` type check and is not what the readers expect).
+Send JSON numbers as plain integer literals (§3.2: both the double and the int64 field get
+filled either way, but integers are exact). `SummonDataVersion` in every SummonDataList entry
+must equal **3**; `UserId` must fit in int32 (it is stored as int32 in the sign blob).
 
 ---------------------------------------------------------------------------------------------------
 
@@ -230,8 +230,9 @@ it also has `"SessionId": <string from login>` and `"UserId": <number>` and the 
 FrpgNetMan+0xa50/+0x9f6/+0x9f8 clear) — e.g. 0x1e942e0.
 
 ### 3.2 Parser value types (0x1eaf2f0) — C
-`2` double (number text containing `-`, `.`, `e` or `E`), `3` integer (digits only; both the
-double and the u64 fields are filled), `5` string, `6` array, `7` object (`t`/`f`/`n` literals
+`2` double (number text containing `-`, `.`, `e` or `E`; int64 field = (long)double),
+`3` integer (digits only, strtoull base 10; double field = (double)value) — readers never
+check 2 vs 3, they read the field they want, `5` string, `6` array, `7` object (`t`/`f`/`n` literals
 supported). Whitespace: space, tab, CR, LF. Readers use: int64 field (node+0x68: UserId,
 CharaId, PublishCharaId, ids), double field (node+0x60: ResKind, UserStatus, LanguageId,
 ServerVersion), string (SessionId, CheckTime, SummonData). Missing scalar keys read as 0 /
@@ -320,7 +321,8 @@ omitted. WanderingGhostGet failing (HTTP error) 3 times → offline 0xfa1, so an
   RegionFlag, SummonWord, UnlockFlagList, CoopOrNaturalEnemyRecruitNum,
   IsInvationMultiPlayRequesting, SessionId, UserId`.
   Response handler 0x1e80ab4: `SummonDataList` array (required); for each element (object):
-  `SummonDataVersion` must be type 3 (integer) else the entry is skipped (0x1e85085);
+  `SummonDataVersion` int64 value must **== 3** (`cmp dword [node+0x68],3` at 0x1e85085; missing
+key reads 0) else the entry is skipped;
   `SummonData` string → base64 decode (0x1ea92e0) → must be **exactly 0xE0 bytes** else skipped
   (0x1e852c4); the game then writes blob[0x79] = 0x63 (0x1e85306); `SummonType`, `CharaId`,
   `UserId` (integers) read; entries go to the summon list manager (0x5540428, 0xfc03e0).
@@ -331,9 +333,58 @@ omitted. WanderingGhostGet failing (HTTP error) 3 times → offline 0xfa1, so an
 
 ---------------------------------------------------------------------------------------------------
 
-## 5. SummonData blob — see §5 detail (filled from agent A0-3 below)
+## 5. SummonData blob (0xE0 bytes) — agent A0-3 + own checks
 
-(pending — see "Addenda")
+* **Built** inline in the SummonStepManager tick 0x14b5e10 (walks passive list SSM+0x158; copy
+  0x14b67b7–0x14b6948 into a stack buffer) → create builder 0x1e90e30 (call 0x14b6b8c), which
+  base64-encodes 0xE0 bytes (0x1ea87e0 @0x1e91078) into `"SummonData"`. Local sign source:
+  CreateSign 0x14b9180 (from SendSign 0x1901320); intermediate SignData object 0xF8 bytes,
+  vtable 0x5324d40.
+* **Parsed** by 0x14bfe20 / inlined in SSM add-received-sign 0x14ba980. GetList handler per
+  entry: version==3, decoded size==0xE0, writes blob[0x79]=0x63, `CharaId` → blob+0xD8
+  (0x1e854bb), `UserId` (int32) → blob+0xD0 (0x1e855db), `SummonType` only echoed to the play
+  log; wraps with 0x1486a10(obj, 0, 0xE0, blob) and calls 0x14ba980(FrpgNetMan+0xc50, wrapper)
+  (0x1e856df). **So the server only has to echo the client's blob; the JSON UserId/CharaId
+  override the blob's 0xD0/0xD8.**
+
+| Off | Size | Meaning | Conf |
+|---|---|---|---|
+| 0x00 | 0x34 | 13× int32 phantom appearance/equipment ids (0x1900eb0) | M |
+| 0x34 | 4 | packed phantom colour RGBA | M |
+| 0x38 | 1 | ChrIns vcall +0x190 byte | G |
+| 0x39 | 5 | ChrIns+0x4e8..0x4f8 floats ×100 as bytes | M |
+| 0x40 | 16 | sender online ID, ASCII, NUL-padded (FrpgNetMan+0xa68) — dedupe key | C |
+| 0x50 | 8 | creation timestamp/sequence (0x1490ce0), newer wins | C |
+| 0x58 | 4 | AreaId (= JSON AreaId) | C |
+| 0x5C | 12 | pos x,y,z floats (JSON PosX/Y/Z truncated) | C |
+| 0x68 | 4 | yaw float | M |
+| 0x6C | 4 | play-region id (JSON AreaRegionId derived) | L |
+| 0x70 | 2 | int16 MatchingLevel (soul level, PlayerGameData+0x90) | C |
+| 0x72 | 2 | int16 from player vcall +0x598 | G |
+| 0x74 | 2 | u16 min(PlayerGameData+0xd4, 50000) | G |
+| 0x76 | 1 | sign type (2 ForceJoin, 7 NormalCoop, 8 NormalInvade, 0xA InvadeBounty, …) | C |
+| 0x77 | 1 | resend/refresh counter | M |
+| 0x78 | 1 | (int) sign lifetime (SSM+0x194 = 30.0 initially) | M |
+| 0x79 | 1 | 0 on create; receiver forces 99 (remaining count) — **not** a version byte | C |
+| 0x7A | 2 | u16 length of next field (0x25) | C |
+| 0x7C | 0x50 | OnlineID serialization: byte 2 + 36-byte SceNpId, rest 0 (0xca2c90) | C |
+| 0xCC | 1 | NAT type (sceNetCtlGetNatInfo, FrpgNetMan+0x9ec) | C |
+| 0xD0 | 4 | int32 server UserId (create sends 0xFFFFFFFF; GetList overwrites) | C |
+| 0xD8 | 8 | u64 CharaId (create: FrpgNetMan+0xa90; GetList overwrites) | C |
+
+Receiver filtering: version/size above; host-state gate in 0x14ba980 (player SpEffect
+stateInfo 0xBD → any sign type, 0xBF → only type 8; M/G semantics); dedupe 0x14b8d10 (same
+type + 16 bytes at 0x40; equal timestamps merge, older expires). **No client-side area, level
+or password check on intake** — level/area matching is server-side (the client sends its own
+`MatchingLevel`, `AreaId`, `SummonTypeList`), so our party server decides who sees which sign.
+(The ss.info level window §2.4 is used by a separate check, 0x15091c0 → 0x1582a70.)
+
+Host side after picking a sign: 0x14baec0 (caller 0x1872360) sets the messenger object
+SSM+0x58 (vtable 0x53249e0): +0x120 TargetUserId = blob 0xD0, +0x128 TargetCharaId = blob 0xD8;
+0x14b47c0 → 0x1e98650 sends summon_messenger/request; callback 0x14be080 stores the code at
++0xEC; 0x14b48c0 continues only if code ≠ 0x10301 and `(code>>16)==0`. When FrpgNetMan+0xb == 0
+the message is queued locally (SSM+0x1c0). The actual join goes over NP Matching2/signaling
+(guest identified by the SceNpId at blob 0x7C); where the host consumes 0x7C/0xCC was not found.
 
 ---------------------------------------------------------------------------------------------------
 
@@ -358,7 +409,9 @@ omitted. WanderingGhostGet failing (HTTP error) 3 times → offline 0xfa1, so an
 10. summon create/delete/request: `{"ResKind":0}` — extra keys harmless.
 11. summon get: `{"ResKind":0,"SummonDataList":[…]}`; entry =
     `{"SummonDataVersion":3,"SummonData":"<b64 of 0xE0 bytes>","SummonType":N,"CharaId":N,"UserId":N}`
-    (SummonDataId/AreaId/AreaRegionId/OnlineId are ignored by the game).
+    (SummonDataId/AreaId/AreaRegionId/OnlineId are ignored by the game). The SummonData to echo is
+    exactly what the guest posted in summon_messenger/create; SummonType should be the
+    create request's `SummonType` (only logged).
 12. kDefaultReply `{"ResKind":0}` is fine for generic APIs, but list APIs need their array
     (§4.4) — e.g. `/blood_messenger/message_area` → `{"ResKind":0,"BloodMessList":[]}`,
     `/tomb_messenger/message_area` → `TombMessList`, `/wandering_ghost/get` →
@@ -367,4 +420,59 @@ omitted. WanderingGhostGet failing (HTTP error) 3 times → offline 0xfa1, so an
     `/blood_messenger/create` → `BloodMessIdList`, `/channel/*search*`,`get_details_info` →
     `ChannelList`, `/channel/get_info` → `ChannelInfoList`.
 13. HTTP status must be exactly 200; Content-Type is not checked.
-14. All numbers: non-negative integer literals (no `-`, `.`, exponent).
+14. Numbers: integer literals recommended; `SummonDataVersion` must be 3; UserId ≤ 0x7fffffff.
+
+---------------------------------------------------------------------------------------------------
+
+## 7. Title "Play Online / Play Offline" and forcing online (agent A0-5, static analysis)
+
+Dialog builder **0x1b39030** (called unconditionally from title ctor 0x1b384f0 @0x1b3871c and
+re-entry functor 0x1b4bc30 @0x1b4bce8 — the normal boot prompt, L): CommandList with
+| order | text id | text | functor vtable | operator() |
+|---|---|---|---|---|
+| 1 | 0x61e73 (401011) | Play Online | 0x533be80 | 0x1b49eb0 |
+| 2 | 0x61e72 (401010) | Play Offline | 0x533be30 | 0x1b49cd0 |
+
+Default cursor = byte 0x558037d (global 0x55801c8+0x1b5, loaded by 0x1c35b50 from saved
+preference bit). Both operator()s are identical except one byte — the flag of the inner functor
+(vtable 0x533bd90, op 0x1b48d40): **online 0x1b49ee1 `C6 45 C0 01`, offline 0x1b49d01
+`C6 45 C0 00`**. 0x1b48d40 → step chain 0x1c36a80; first step op 0x1c3feb0 writes
+obj(0x55801c8)+0x1b4=1, +0x1b5=+0x1b6=!flag (0x558037e = "offline" indicator) and
+**FrpgNetMan+0xa = flag** (0x1c3ff2b). Branch 0x1c36d88 `cmp byte [rax],0; je` → flag 1 runs the
+online chain **0x1c37b30**: sceNetCtlGetState (0x1c413c0) → sceNpGetState (0x1c41250) →
+sceNpGetGamePresenceStatus (0x1c40f50) → sceNpCheckNpAvailability (0x1e76140) →
+sceNpGetParentalControlInfo (0x1e763e0) → PS Plus check → NpCommerce dialog; then the FROM tasks
+(ss.info 0x1c492c0, login 0x1c48aa0, sync_chara_id 0x1c43ee0, move-count check 0x1c43940,
+normal notice 0x1c485d0).
+
+Fallbacks to offline: step error handler 0x1c3f330 (vtable 0x5347790) → functor 0x1c3f930
+(+0x1b6=1, FrpgNetMan+0xa=0, msg 0x61e6a "Starting game in offline mode"), or msg 0x61e69
+"Returning to title menu" when error counters 0x5578fd8/0x5578a38/0x5578d08 > 0; 0x1c42cb0
+(0x1c42d65/0x1c42d9f, "not fully installed"); 0x1c3f1d0.
+
+**Force online (C/high):** patch 0x1b49d04 `00`→`01` (offline item behaves as online).
+Weaker: NOP `je` 0x1c36d8b (`74 26`→`90 90`) — forces the sign-in branch but leaves
+FrpgNetMan+0xa = 0. Either way the NP/NetCtl shim must report connected / signed in /
+available / no parental restriction / Plus OK, and the FROM server must pass ss.info + login.
+
+## 8. Bells and Insight (agent A0-5)
+
+Insight = PlayerGameData ([[0x553b130]+8]) +0x84 (Lua GetHeroPoint 0x1338670).
+EquipParamGoods: 200 Beckoning Bell (+0x38 Insight cost = **1**), 205 Small Resonant Bell (0),
+225 Sinister Resonant Bell (0); bell SpEffects 9000/9005/9025 do not change Insight.
+
+* `OnEvent_Call_SOS` (ASCII 0x492eca5) dispatched at 0x130ca87 in 0x130c590 (host activates a
+  sign; type 1, 3 BlackSOS, 9 DragonewtSOS). No Insight check.
+* `OnEvent_SendSoulSign_NormalCoop` (0x4931557) dispatched at 0x1901794 in SendSign 0x1901320
+  (types 7, 0x15–0x18, 0x1a, 0x1d–0x20). Gates 0x1901566 (flow+0x16f8 table [+0x14] ≤ 1),
+  0x1901585 (session member list empty); sign created by 0x14b9180. Chain 0x1900500 → task op
+  0x130cde0 → 0x1901010 → 0x1901320.
+* **Insight requirement** in goods-usability check 0x157f200:
+  `0157fa51 movzx ecx, byte [r13+0x38]; 0157fa56 cmp ecx, [rax+0x84]; 0157fa5c setg al`
+  → patch 0x157fa5c `0F 9F C0` → `30 C0 90`. Other gates there: 0x157f8c2/0x157f8c8 (region ≤
+  999999), area validator 0x131d7b0 @0x157f90e (result 0x157f960), 205/225 via 0x191a750 @0x157f6cc
+  and 0x18c96d0, 0x157f58e (online mode flow+0x1590 == 0 && goods+0x42 bit21 "online only" —
+  set for 205/225), 0x157f578, 0x157f9a9.
+* **Insight consumption** in UseGoods 0x18c9160: `018c92bb movzx eax, byte [r15+0x38]; neg eax;
+  mov [rbp-0x44], eax` (delta applied by 0x18b61c0, clamp 0..99 at 0x18b64cd–0x18b650c)
+  → patch 0x18c92bb `41 0F B6 47 38 F7 D8` → `31 C0 0F 1F 44 00 00` (affects goods 200/201 only).
