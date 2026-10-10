@@ -805,7 +805,7 @@ void KickStalledTasks(const GameSnapshot& s, double now) {
     }
 }
 
-/// BB_PARTY_B2_TEST_WARP=<lamp id>: single-instance check of K2 - once an NPC task has existed
+/// BB_PARTY_B2_TEST_WARP=<lamp id> | die: single-instance check of K2 - once an NPC task has existed
 /// for 15 s in a steady world, warp once more (0x13CDF30) so the reset path runs with a task.
 void TestWarpTick(const GameSnapshot& s, double now) {
     static const char* env = std::getenv("BB_PARTY_B2_TEST_WARP");
@@ -837,6 +837,18 @@ void TestWarpTick(const GameSnapshot& s, double now) {
         return;
     }
     done = true;
+    // BB_PARTY_B2_TEST_WARP=die: the local player dies instead (Lua ForceDead 0x13320C0(ctx, entity
+    // 10000 = the local player): GetChrByEntityId, clear +0x1E3 bit 5, then the chr kill 0x18BF9A0).
+    if (std::strcmp(env, "die") == 0) {
+        if (!Matches(0x13320c0, {0x55, 0x48, 0x89, 0xe5, 0x48, 0x8d, 0x05})) {
+            Log("test die: ForceDead 0x13320C0 bytes differ; not run");
+            return;
+        }
+        Log("test die: ForceDead(10000) with tasks:%s", DescribeTasks().c_str());
+        using Fn = void(BB_COOP_SYSV*)(u64, u32);
+        reinterpret_cast<Fn>(Guest(0x13320c0))(0, 10000);
+        return;
+    }
     const u32 id = u32(std::strtoul(env, nullptr, 10));
     Log("test warp: lamp %u with tasks:%s", id, DescribeTasks().c_str());
     using Fn = void(BB_COOP_SYSV*)(u32);
