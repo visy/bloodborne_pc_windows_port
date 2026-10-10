@@ -882,6 +882,17 @@ void PushHost(const StoryIntent& s) {
 
 BB_COOP_SYSV void RemoHandlerEntry(u64, u64 event, u64, u64, u64, u64) {
     perf::Scope z(perf::Zone::HookRemo);
+    if (g_story_on.load() && event && Role() == PartyRole::Guest) {
+        // Diagnostics (B2): which event plays a remo on a guest in the host's world.
+        u64 gi = 0;
+        i32 gb = 0, gid = 0;
+        u32 gev = 0, gmap = 0;
+        if (SafeGet(event + 0xb0, &gi) && gi && SafeGet(gi, &gb) && gb == 2002 && SafeGet(gi + 4, &gid)) {
+            SafeGet(event + 0x28, &gev);
+            SafeGet(event + 0x68, &gmap);
+            Log("guest: EMEVD 2002[%d] (remo) from event %u, map %08x, own world %d", gid, gev, gmap, int(OwnWorld()));
+        }
+    }
     if (!g_story_on.load() || Role() != PartyRole::Host || !event) {
         return;
     }

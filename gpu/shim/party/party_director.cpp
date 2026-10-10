@@ -1378,7 +1378,8 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
         return false;
     }
     if ((host_map >> 16) == (s.map_id >> 16)) {
-        return false; // same area / block: the summon lands in the host's map
+        // Same area / block: the summon lands in the host's map; step aside first (B2 spacing).
+        return b2::GuestPreRing(s, host_map);
     }
     if (ever && Seconds(last, now) < 90.0) {
         return false;

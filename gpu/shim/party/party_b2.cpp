@@ -563,79 +563,147 @@ void BesideHost(float pos[4], const float rot[4], int slot) {
 /// the host's facing and height) with the chr warp vfunc +0x5F8 (0x18CD600(chr, pos, rot, 1), as
 /// the NPC summon step 0x1E4B559 calls it). The game's own placement (the sign spot, usually the
 /// host's lamp spot) is otherwise on top of the host. No ground probe yet: the host's height.
-void SpacingTick(const GameSnapshot& s) {
-    // Sides tried in order: the slot's own side, the other side, behind. Each warp is checked 30
-    // ticks later: a spot whose height ended > 1.5 m from the host's, or that the chr did not
-    // reach (blocked / no ground: the game puts it back or it falls), moves on to the next side.
-    static int last_flow = -1, stable = 0, attempt = -1, wait = 0;
-    static bool armed = false;
-    alignas(16) static float target[4], host_pos[4];
+/// After any host-world arrival (flow 3 -> 4): the local and the remote players' positions every
+/// 0.5 s for 3 s, on both instances (placement stability; nothing is written after a load).
+void ArrivalWatchTick(const GameSnapshot& s, double now) {
+    static int last_flow = -1;
+    static double until = 0, next = 0;
     const int fs = Field<int>(Slot(kSlotFlow), 0x84, -1);
     if (last_flow == 3 && fs == 4) {
-        armed = true;
-        stable = 0;
-        attempt = -1;
+        next = -1; // armed: starts when the world is up
     }
     last_flow = fs;
-    const float d = SummonOffset();
-    if (!armed || d <= 0.0f || Role() != RoleClient || !s.world_up || s.loading || !s.player) {
-        stable = 0;
+    if (next == 0 || !s.world_up || s.loading || !s.player) {
         return;
     }
-    if (++stable < 30) {
+    if (next < 0) {
+        next = now;
+        until = now + 3.0;
+    }
+    if (now < next) {
         return;
     }
-    u64 host = 0;
+    next = now + 0.5;
+    const auto pos = [](u64 chr, float out[4]) {
+        const u64 a = Field<u64>(Field<u64>(Field<u64>(Field<u64>(chr, 0x58), 8), 0x3b0), 0x68);
+        return a && SafeRead(a + 0x1e0, out, 16);
+    };
+    float me[4] = {};
+    pos(s.player, me);
+    std::string others;
     for (const TaskInfo& t : Tasks(false)) {
-        if (t.mode == 2) {
-            host = PlayerForPeer(t.task + kTaskPeer);
+        if (t.mode != 1 && t.mode != 2) {
+            continue;
+        }
+        float o[4] = {};
+        char b[128];
+        const u64 c = PlayerForPeer(t.task + kTaskPeer);
+        if (c && pos(c, o)) {
+            std::snprintf(b, sizeof b, " [mode %d (%.2f, %.2f, %.2f) %.2f m]", t.mode, o[0], o[1], o[2],
+                          std::sqrt((o[0] - me[0]) * (o[0] - me[0]) + (o[2] - me[2]) * (o[2] - me[2])));
+        } else {
+            std::snprintf(b, sizeof b, " [mode %d no chr]", t.mode);
+        }
+        others += b;
+    }
+    Log("arrival watch: me (%.2f, %.2f, %.2f)%s", me[0], me[1], me[2], others.c_str());
+    if (now >= until) {
+        next = 0;
+    }
+}
+
+/// Host: the same 3 s watch when a member's chr appears (a join or a B2 re-creation).
+void HostMemberWatchTick(const GameSnapshot& s, double now) {
+    static int had = 0;
+    static double until = 0, next = 0;
+    int have = 0;
+    for (const TaskInfo& t : Tasks(false)) {
+        have += (t.mode == 1 && PlayerForPeer(t.task + kTaskPeer)) ? 1 : 0;
+    }
+    if (Role() == RoleHost && have > had) {
+        next = now;
+        until = now + 3.0;
+    }
+    had = have;
+    if (next == 0 || now < next || !s.player) {
+        return;
+    }
+    next = now + 0.5;
+    const auto pos = [](u64 chr, float out[4]) {
+        const u64 a = Field<u64>(Field<u64>(Field<u64>(Field<u64>(chr, 0x58), 8), 0x3b0), 0x68);
+        return a && SafeRead(a + 0x1e0, out, 16);
+    };
+    float me[4] = {};
+    pos(s.player, me);
+    std::string others;
+    for (const TaskInfo& t : Tasks(false)) {
+        float o[4] = {};
+        const u64 c = t.mode == 1 ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        if (c && pos(c, o)) {
+            char b[128];
+            std::snprintf(b, sizeof b, " [guest (%.2f, %.2f, %.2f) %.2f m]", o[0], o[1], o[2],
+                          std::sqrt((o[0] - me[0]) * (o[0] - me[0]) + (o[2] - me[2]) * (o[2] - me[2])));
+            others += b;
         }
     }
-    if (!host) {
-        return; // the host's chr is not re-created yet
+    Log("host watch: me (%.2f, %.2f, %.2f)%s", me[0], me[1], me[2], others.c_str());
+    if (now >= until) {
+        next = 0;
     }
-    const auto phys = [](u64 chr) {
-        return Field<u64>(Field<u64>(Field<u64>(Field<u64>(chr, 0x58), 8), 0x3b0), 0x68);
-    };
-    alignas(16) float hp[4], hr[4], me[4];
-    const u64 ph = phys(host), pm = phys(s.player);
-    if (!ph || !pm || !SafeRead(ph + 0x1e0, hp, 16) || !SafeRead(ph + 0x1d0, hr, 16) || !SafeRead(pm + 0x1e0, me, 16)) {
-        return;
+}
+
+/// Before a guest rings (its own world, before any load): when it stands in the host's map it steps
+/// BB_PARTY_SUMMON_OFFSET aside in its own world - right / left / behind by slot, each try checked
+/// 30 ticks later (reached, same height +-1.5 m: walkable), else the next side, else back to the
+/// start. The sign is placed where it stands, so the join placement is beside the host once,
+/// before the load; nothing moves it afterwards. True while it is still moving (no ring yet).
+bool PreRingSpacing(const GameSnapshot& s, u32 host_map) {
+    static int attempt = -1, wait = 0;
+    static u64 done_for = 0;  // the PlayerIns it was done for (a new one after every load)
+    alignas(16) static float start[4], target[4], start_rot[4];
+    const float d = SummonOffset();
+    if (d <= 0.0f || !s.player || !s.world_up || s.loading || done_for == s.player ||
+        (host_map >> 16) != (s.map_id >> 16)) {
+        return false;
     }
-    const auto flat = [](const float* a, const float* b) {
-        return std::sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[2] - b[2]) * (a[2] - b[2]));
-    };
-    const float dist = flat(me, hp);
+    const u64 pm = Field<u64>(Field<u64>(Field<u64>(Field<u64>(s.player, 0x58), 8), 0x3b0), 0x68);
+    alignas(16) float me[4], rot[4];
+    if (!pm || !SafeRead(pm + 0x1e0, me, 16) || !SafeRead(pm + 0x1d0, rot, 16)) {
+        return false;
+    }
+    using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
     if (attempt >= 0) {
         if (++wait < 30) {
-            return;
+            return true;
         }
-        const bool ok = flat(me, target) < 1.0f && std::fabs(me[1] - host_pos[1]) < 1.5f && dist >= 1.0f;
-        Log("spacing: side %d %s: me (%.1f, %.1f, %.1f), %.1f m from the host (target (%.1f, %.1f, %.1f)); host "
-            "moved %.2f m since the warp (push check)",
-            attempt, ok ? "OK" : "blocked", me[0], me[1], me[2], dist, target[0], target[1], target[2],
-            flat(hp, host_pos));
+        const float off =
+            std::sqrt((me[0] - target[0]) * (me[0] - target[0]) + (me[2] - target[2]) * (me[2] - target[2]));
+        const bool ok = off < 0.8f && std::fabs(me[1] - start[1]) < 1.5f;
+        Log("pre-ring spacing: side try %d %s: at (%.2f, %.2f, %.2f), %.2f m from the target", attempt,
+            ok ? "OK" : "blocked", me[0], me[1], me[2], off);
         if (ok || attempt >= 2) {
-            armed = false;
-            return;
+            if (!ok) {
+                reinterpret_cast<Warp>(Field<u64>(Field<u64>(s.player, 0), 0x5f8))(s.player, start, start_rot, 1);
+                Log("pre-ring spacing: no side free; back to the start spot");
+            }
+            done_for = s.player;
+            attempt = -1;
+            return false;
         }
-    } else if (dist >= d - 0.5f) {
-        Log("spacing: arrived %.1f m from the host; left as it is", dist);
-        armed = false;
-        return;
+    } else {
+        std::memcpy(start, me, sizeof me);
+        std::memcpy(start_rot, rot, sizeof rot);
     }
     ++attempt;
     wait = 0;
     const int slot = g_local_slot.load() == 2 ? 2 : 1;
     const int side = attempt == 0 ? slot : attempt == 1 ? (slot == 1 ? 2 : 1) : 3;
-    std::memcpy(host_pos, hp, sizeof hp);
-    std::memcpy(target, hp, sizeof hp);
-    BesideHost(target, hr, side);
-    alignas(16) float rot[4] = {hr[0], hr[1], hr[2], hr[3]};
-    using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
-    reinterpret_cast<Warp>(Field<u64>(Field<u64>(s.player, 0), 0x5f8))(s.player, target, rot, 1);
-    Log("spacing: host at (%.1f, %.1f, %.1f), me %.1f m away -> warp to side %d (%.1f, %.1f, %.1f), %.1f m", hp[0],
-        hp[1], hp[2], dist, side, target[0], target[1], target[2], flat(target, hp));
+    std::memcpy(target, start, sizeof start);
+    BesideHost(target, start_rot, side);
+    reinterpret_cast<Warp>(Field<u64>(Field<u64>(s.player, 0), 0x5f8))(s.player, target, start_rot, 1);
+    Log("pre-ring spacing: own world, from (%.2f, %.2f, %.2f) to side %d (%.2f, %.2f, %.2f), %.1f m", start[0],
+        start[1], start[2], side, target[0], target[1], target[2], d);
+    return true;
 }
 
 /// Any failed or timed-out B2 step on a guest: hand the host's travel to B1 (party_travel): the
@@ -718,6 +786,19 @@ void GuestTick(const GameSnapshot& s, double now) {
                 SafeWrite(gsm + 0x14e0, st.dest_rot, 16);
                 Log("guest: summoned placement = stage %#x pos (%.1f, %.1f, %.1f), GSM +0x1521 = %u", st.dest_stage,
                     pos[0], pos[1], pos[2], unsigned(Field<u8>(gsm, 0x1521)));
+            }
+            {
+                // Written once, before the load: an exact transform (forced placement +0x14F0 map,
+                // +0x1500 position, +0x1510 rotation, +0x1520) beside the host's arrival spot.
+                std::lock_guard<std::mutex> lk(st.mu);
+                if (SummonOffset() > 0.0f) {
+                    t.kind = TravelKind::Transform;
+                    t.has_pos = true;
+                    t.pos_map = st.dest_stage;
+                    std::memcpy(t.pos, st.dest_pos, sizeof t.pos);
+                    BesideHost(t.pos, st.dest_rot, g_local_slot.load());
+                    std::memcpy(t.rot, st.dest_rot, sizeof t.rot);
+                }
             }
             FunnelKeepRoom keep;
             Log("guest: host snapshot applied; loading %s in host-world mode (K7 %s)", DescribeTravel(t).c_str(),
@@ -855,6 +936,10 @@ bool Requested() {
 
 void SetLocalSlot(int slot) {
     g_local_slot = slot;
+}
+
+bool GuestPreRing(const GameSnapshot& s, std::uint32_t host_map) {
+    return g_on.load() && PreRingSpacing(s, host_map);
 }
 
 bool HostHasMemberTasks() {
@@ -1048,7 +1133,8 @@ void Tick(const GameSnapshot& s) {
     TestWarpTick(s, now);
     KickStalledTasks(s, now);
     TestBossTick(s, now);
-    SpacingTick(s);
+    ArrivalWatchTick(s, now);
+    HostMemberWatchTick(s, now);
     if (Role() == RoleClient) {
         GuestTick(s, now);
     } else {

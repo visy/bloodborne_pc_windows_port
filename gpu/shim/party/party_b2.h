@@ -54,6 +54,9 @@ void Init();
 bool Enabled();
 /// Host: a member task (mode 1) exists - a guest is still in the session (main thread).
 bool HostHasMemberTasks();
+/// Guest, own world, before ringing (main thread): steps aside from the host's spot so the join
+/// placement is beside the host. True while it is still moving (do not ring yet).
+bool GuestPreRing(const GameSnapshot& s, std::uint32_t host_map);
 /// The local PartyLink slot (the director, every tick): guests stand beside the host by slot.
 void SetLocalSlot(int slot);
 /// Main thread, once a frame (the director tick).
