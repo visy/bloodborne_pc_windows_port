@@ -60,6 +60,17 @@ def configure(repo: Path):
     subprocess.run(args, check=True, env=env)
 
 
+def copy_submodules(repo: Path):
+    """The worktree's submodule dirs are empty: copy the main checkout's (with its local changes)."""
+    for line in git("submodule", "status").splitlines():
+        path = line[1:].split()[1]
+        src, dst = REPO / path, repo / path
+        if dst.exists() and any(dst.iterdir()):
+            continue
+        shutil.copytree(src, dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns(".git"))
+        print("submodule copied:", path)
+
+
 def link_game(dst: Path):
     """Hardlinks of the game data (read-only use). Never the pkg, never user\\ (saves) or out\\."""
     n = 0
@@ -87,6 +98,7 @@ def create(a):
     if not repo.exists():
         git("worktree", "add", "-B", f"agent/{a.name}", str(repo), "HEAD")
         print("worktree:", repo, "on branch", f"agent/{a.name}")
+    copy_submodules(repo)
     if not a.no_configure and not (repo / "out" / "gpu" / "build.ninja").exists():
         configure(repo)
     env_lines = [f"REPO={repo}", f"BUILD: PATH={MINGW};%PATH% & cmake --build {repo / 'out' / 'gpu'}"]
