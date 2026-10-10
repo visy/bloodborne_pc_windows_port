@@ -196,6 +196,7 @@ LinkCallbacks make_callbacks(bool trace) {
         pump_start(m);
     };
     cb.on_member_left = [](const RosterEntry& m, bool slot_kept) {
+        FromApi::instance().drop_signs(m.name);  // as party_runtime.cpp
         if (slot_kept) {
             g_lost.fetch_add(1);
             say("harness: member %s (slot %d) lost; slot kept", m.name.c_str(), m.slot);

@@ -12,7 +12,9 @@ import argparse, json, re, subprocess, sys, time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from game_queue import _locked, _prune  # noqa: E402
+from game_queue import _locked, _prune, QUEUE_FILE  # noqa: E402
+
+g_QUEUE_DIR = QUEUE_FILE.parent
 
 PARTY = re.compile(r"^(Party|Net): ")
 NUM = re.compile(r"0x[0-9a-fA-F]+|\d[\d.:]*")
@@ -124,6 +126,51 @@ def main():
             holders = []
         now = time.time()
         live = set()
+        # Gate: while agents/gate.txt exists only priority roots (priority.txt) may hold game slots;
+        # end anything else (agents on an older queue that doesn't know the gate).
+        qdir = g_QUEUE_DIR
+        if (qdir / "gate.txt").exists():
+            try:
+                prio = [l.strip().lower() for l in (qdir / "priority.txt").read_text().splitlines() if l.strip()]
+            except OSError:
+                prio = []
+            for e in holders:
+                r = e["root"].replace("/", "\\").lower()
+                if not any(f in r for f in prio):
+                    end_run(Path(e["root"]))
+                    subprocess.run(["taskkill", "/PID", str(e["pid"]), "/T", "/F"], capture_output=True)
+                    print(time.strftime("%H:%M:%S"), "gate: stopped", e.get("label") or e["root"], flush=True)
+            holders = [e for e in holders if any(f in e["root"].replace("/", "\\").lower() for f in prio)]
+        # Required build features (require.txt next to the queue file: one regex per line that
+        # every instance log must show within 120 s of the run starting, e.g. the fast-join patch).
+        try:
+            reqs = [re.compile(l.strip()) for l in (g_QUEUE_DIR / "require.txt").read_text().splitlines()
+                    if l.strip()]
+        except OSError:
+            reqs = []
+        for e in list(holders):
+            if not reqs:
+                break
+            root = Path(e["root"])
+            logs = list(root.glob("inst*/run.log"))
+            started = state.get("start:" + e["id"]) or now
+            state["start:" + e["id"]] = started
+            if logs and now - started > 120:
+                texts = []
+                for lg in logs:
+                    try:
+                        texts.append(lg.read_text(encoding="utf-8", errors="replace"))
+                    except OSError:
+                        texts.append("")
+                # Only party runs (patches.py logs "party co-op: ..."); solo runs have nothing to require.
+                party = any("party co-op:" in t for t in texts)
+                missing = [r.pattern for r in reqs if party and not all(r.search(t) for t in texts)]
+                if missing:
+                    end_run(root)
+                    subprocess.run(["taskkill", "/PID", str(e["pid"]), "/T", "/F"], capture_output=True)
+                    print(time.strftime("%H:%M:%S"), "require: stopped", e.get("label") or e["root"],
+                          "- build lacks", missing, flush=True)
+                    holders.remove(e)
         for e in holders:
             hid = e["id"]
             live.add(hid)
@@ -154,7 +201,7 @@ def main():
         except Exception as ex:  # never let layout break the reaper
             print("tile:", ex, flush=True)
         for hid in list(state):
-            if hid not in live:
+            if hid not in live and not (hid.startswith("start:") and hid[6:] in live):
                 del state[hid]
         time.sleep(2)
 

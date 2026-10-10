@@ -45,6 +45,20 @@ int main() {
     CHECK(!bb_party_enabled());
     SetParty("host");
     CHECK(bb_party_enabled() && bb_party_value() && std::string(bb_party_value()) == "host");
+    // Default-on switches (BB_PARTY_FAST_JOIN, ...): unset / blank = on, off words = off.
+#ifdef _WIN32
+    _putenv("BB_PARTY_FAST_JOIN=");
+    CHECK(bb_party_switch_on("BB_PARTY_FAST_JOIN"));
+    for (const char* v : {"BB_PARTY_FAST_JOIN=0", "BB_PARTY_FAST_JOIN=off", "BB_PARTY_FAST_JOIN= No "}) {
+        _putenv(v);
+        CHECK(!bb_party_switch_on("BB_PARTY_FAST_JOIN"));
+    }
+    for (const char* v : {"BB_PARTY_FAST_JOIN=1", "BB_PARTY_FAST_JOIN=on", "BB_PARTY_FAST_JOIN= "}) {
+        _putenv(v);
+        CHECK(bb_party_switch_on("BB_PARTY_FAST_JOIN"));
+    }
+    _putenv("BB_PARTY_FAST_JOIN=");
+#endif
     std::printf("party-env-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }
