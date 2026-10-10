@@ -46,6 +46,25 @@ constexpr std::size_t kMaxHeaders = 64;
 constexpr std::size_t kSummonDataSize = 0xE0;  // SummonData decodes to exactly this (A0 4.5)
 constexpr std::size_t kMaxSignsPerUser = 8;
 
+// SummonData content (docs/party/from_api_schema.md 5), checked before the host's board passes a
+// member's sign to the other members' games (bbport security pass). nullptr when the blob is one
+// the member's own game could have built for `online_id`, else why not:
+//   0x40   sender online id: 1-16 of [A-Za-z0-9_-], NUL padded, == online_id (the receivers'
+//          dedupe key: another member's id would replace or expire that member's sign)
+//   0x58   AreaId: a map of the game (party_ids.h MapKnown), == the request's AreaId when given
+//   0x5C   position x, y, z and 0x68 yaw: finite, |v| < 100000
+//   0x70   MatchingLevel 1..544, == the request's MatchingLevel when given
+//   0x76   sign type: one the game's session descriptor table (0x553d750, 0x22 rows) has a known
+//          meaning for: 7 NormalCoop, 1/5/19 other friendly kinds, 2 ForceJoin, 8 NormalInvade,
+//          0xA InvadeBounty
+//   0x7A   OnlineID serialization length == 0x25, 0x7C == 2, handle 0x7D..0x8C == online_id,
+//          terminator 0x8D == 0 (the guest a host's join goes to)
+//   0xCC   NAT type 0..3 (sceNetCtl: unknown, type 1, 2, 3)
+// `body` is the create request (AreaId, MatchingLevel); nullptr skips those cross-checks.
+constexpr int kMaxMatchingLevel = 544;
+const char* summon_data_problem(const std::uint8_t* data, std::size_t size, const std::string& online_id,
+                                const json::Value* body = nullptr);
+
 // The fixed host name of our gameurl (ss.info points the game at http://<it>:18671).
 constexpr const char* kGameHost = "bbparty.invalid";
 
