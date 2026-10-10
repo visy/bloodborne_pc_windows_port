@@ -347,6 +347,32 @@ bool HookCallSite(u64 off, u64 target, const void* handler, const char* name) {
     return true;
 }
 
+bool HookTailJump(u64 off, u64 target, const void* handler, const char* name) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    if (!Ready(name)) {
+        return false;
+    }
+    bool jumps = g_image && off + 5 <= g_image_size && g_image[off] == 0xe9;
+    if (jumps) {
+        std::int32_t rel;
+        std::memcpy(&rel, g_image + off + 1, 4);
+        jumps = off + 5 + std::int64_t(rel) == target;
+    }
+    if (!jumps) {
+        std::printf("Coop hooks: %s: guest +0x%llx is not a jmp to +0x%llx; not installed\n", name, ull(off),
+                    ull(target));
+        return false;
+    }
+    Emitter e = NewStub();
+    e.JmpAbs(handler);
+    if (!WriteBranch(off, 0xe9, PlaceStub(e), 0)) {
+        std::printf("Coop hooks: %s: the stub for guest +0x%llx could not be placed; not installed\n", name, ull(off));
+        return false;
+    }
+    std::printf("Coop hooks: %s: tail jump guest +0x%llx -> handler\n", name, ull(off));
+    return true;
+}
+
 bool PatchBytes(u64 off, std::initializer_list<u8> original, std::initializer_list<u8> patched, const char* name) {
     std::lock_guard<std::mutex> lk(g_mu);
     if (!g_image || original.size() != patched.size() || !patched.size()) {

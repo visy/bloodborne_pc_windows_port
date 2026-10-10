@@ -10,6 +10,7 @@
 #include "party_fourp.h"
 #include "party_link.h"
 #include "party_story.h"
+#include "party_phantom.h"
 #include "party_runtime.h"
 #include "party_travel.h"
 #include "seamless_rules.h"
@@ -568,6 +569,7 @@ void PartyDirector::Tick() {
         while (PopHostTravel(&t)) {
             link->send_event(party::kBroadcast, kTravelEventName, TravelToJsonText(t));
             Log("travel #%llu (%s) sent to the party", static_cast<unsigned long long>(t.seq), TravelKindName(t.kind));
+            PhantomNoteHostTravel(t); // a rest (Dream, death, Mark): guests refill too
         }
         // C4: the host's cutscenes, endings and time of day (party_story.h).
         StoryIntent si;
@@ -577,6 +579,9 @@ void PartyDirector::Tick() {
                 StoryKindName(si.kind), si.id);
         }
     }
+    // Phantoms as full players: the host's lamp / rest / boss Insight out, the guest's refill and
+    // Insight in (party_phantom.h).
+    PhantomTick(link);
     if (st.test.on) {
         RunTest(st, s, now);
         if (st.test.log_state && Seconds(st.last_log, now) >= 5.0) {
@@ -647,6 +652,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     }
     InstallTravelPatches(); // B1: Dream gate + travel hooks (byte-verified)
     InstallStoryHooks();    // C4: bank-2002 capture, guest mirror / replay (byte-verified)
+    PhantomInit();          // guest respawn at the host's lamp, refill, boss Insight
     g_tick_installed = HookPrologue(kFlipperUpdate,
                                     {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48,
                                      0x83, 0xec, 0x38},
