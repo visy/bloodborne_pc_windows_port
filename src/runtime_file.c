@@ -40,6 +40,9 @@
 #ifndef realpath
 #define realpath(N, R) _fullpath(R, N, MAX_PATH)
 #endif
+/* Fallbacks only: win32_compat.h (through runtime.h) maps pread/pwrite to runtime_win_pread/
+ * runtime_win_pwrite already, which made these unused (-Wunused-function). */
+#ifndef pread
 static ssize_t win_pread(int fd, void *buf, size_t count, int64_t offset) {
     HANDLE h = (HANDLE)_get_osfhandle(fd);
     if (h == INVALID_HANDLE_VALUE) {
@@ -61,6 +64,8 @@ static ssize_t win_pread(int fd, void *buf, size_t count, int64_t offset) {
     }
     return (ssize_t)read_bytes;
 }
+#endif
+#ifndef pwrite
 static ssize_t win_pwrite(int fd, const void *buf, size_t count, int64_t offset) {
     HANDLE h = (HANDLE)_get_osfhandle(fd);
     if (h == INVALID_HANDLE_VALUE) {
@@ -81,6 +86,7 @@ static ssize_t win_pwrite(int fd, const void *buf, size_t count, int64_t offset)
     }
     return (ssize_t)written_bytes;
 }
+#endif
 #ifndef pread
 #define pread win_pread
 #endif
