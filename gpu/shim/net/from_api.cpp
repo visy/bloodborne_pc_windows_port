@@ -3,6 +3,8 @@
 // from_api_formats.inc.
 #include "from_api.h"
 
+#include "../../party_env.h"
+
 #include "bbnet_internal.h"
 #include "party_util.h"
 #include "../party/party_ids.h"
@@ -10,6 +12,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <map>
@@ -19,6 +22,9 @@ namespace bbnet::party {
 #include "from_api_formats.inc"
 
 namespace {
+
+// BB_PARTY_FAST_JOIN (default on): the quicker sign polling of kSsFastJoinValues.
+bool fast_join() { return bb_party_switch_on("BB_PARTY_FAST_JOIN") != 0; }
 
 struct Url {
     std::string scheme, host, path, query;
@@ -130,7 +136,13 @@ std::string from_api_ss_info() {
     for (unsigned i : indices) {
         const std::string sfx = std::to_string(i);
         for (const formats::SsValue& v : formats::kSsValues) {
-            x += "<" + std::string(v.name) + sfx + ">" + v.value + "</" + v.name + sfx + ">\n";
+            const char* value = v.value;
+            if (fast_join()) {
+                for (const formats::SsValue& f : formats::kSsFastJoinValues) {
+                    if (std::strcmp(f.name, v.name) == 0) value = f.value;
+                }
+            }
+            x += "<" + std::string(v.name) + sfx + ">" + value + "</" + v.name + sfx + ">\n";
         }
         x += "<gameurl" + sfx + ">\n";
         for (const char* api : formats::kApiNames) {
@@ -394,10 +406,15 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
     int held = 0;
     std::string list = "[";
     int n = 0;
-    std::lock_guard<std::mutex> lk(mu_);
+    std::vector<Sign> board;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        board = signs_;
+    }
     // Party-only by construction; every other member's signs, wherever they stand (the party
-    // plays together - the game's own area check still applies on its side).
-    for (const Sign& s : signs_) {
+    // plays together - the game's own area check still applies on its side). Oldest first: the
+    // member who waited longest is offered first.
+    for (const Sign& s : board) {
         if (s.online_id == caller.online_id) continue;
         if (!types.empty() && std::find(types.begin(), types.end(), s.summon_type) == types.end()) continue;
         if (dungeon_unknown) {
@@ -421,10 +438,12 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
     list += "]";
     {
         // One line whenever what a member is shown changes (sign debugging).
+        static std::mutex last_mu;
         static std::map<std::string, std::string> last;
+        std::lock_guard<std::mutex> llk(last_mu);
         std::string key = std::to_string(n) + " sign(s) for types [";
         for (std::size_t i = 0; i < types.size(); ++i) key += (i ? "," : "") + std::to_string(types[i]);
-        key += "] of " + std::to_string(signs_.size()) + " on the board";
+        key += "] of " + std::to_string(board.size()) + " on the board";
         if (in_chalice) key += ", in chalice dungeon " + std::to_string(my_channel);
         if (held) key += " (" + std::to_string(held) + " held back: that dungeon is not on the channel board)";
         if (last[caller.online_id] != key) {
@@ -433,6 +452,16 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
         }
     }
     return list;
+}
+
+std::size_t FromApi::drop_signs(const std::string& online_id) {
+    std::lock_guard<std::mutex> lk(mu_);
+    const std::size_t before = signs_.size();
+    signs_.erase(std::remove_if(signs_.begin(), signs_.end(), [&](const Sign& s) { return s.online_id == online_id; }),
+                 signs_.end());
+    const std::size_t n = before - signs_.size();
+    if (n) log("from api: %s's link is gone: %zu sign(s) taken off the board", online_id.c_str(), n);
+    return n;
 }
 
 std::string FromApi::sign_delete(const Caller& caller, const json::Value& body) {

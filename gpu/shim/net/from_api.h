@@ -100,6 +100,9 @@ public:
         json::Value request;  // the create body as sent
     };
     std::vector<Sign> signs() const;
+    // A member's link went away (crash, timeout, leave): its signs leave the board, so no host
+    // summons a game that is not there (returns how many). A restarted game puts up a new one.
+    std::size_t drop_signs(const std::string& online_id);
     std::uint64_t user_id_of(const std::string& online_id);
     /// The Chalice Dungeon channel board (tests, the party layer).
     ChannelBoard& channels() { return channels_; }

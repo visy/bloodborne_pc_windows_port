@@ -16,7 +16,7 @@ from pathlib import Path
 _SCRIPTS=str(Path(__file__).resolve().parent)
 if _SCRIPTS not in sys.path:
     sys.path.insert(0,_SCRIPTS)
-from party_env import party_enabled  # noqa: E402  (the shared BB_PARTY rule)
+from party_env import party_enabled, party_switch_on  # noqa: E402  (the shared BB_PARTY rule)
 
 EBOOT_BASE=0x400000
 # BB_FPS presets: patch names from patches/Bloodborne.xml (app version 01.09).
@@ -107,6 +107,12 @@ def network_choice_patch(env=os.environ, available=None):
 PARTY_SEAMLESS=['Party: Bells anywhere','Party: Bells after boss defeated',
                 'Party: Keep session on map reload','Party: SOS sign timeout 30s']
 PARTY_NO_INSIGHT='Party: Bells without Insight'
+# Join timing (docs/party/join_timing.md): the multiplayer banners' hold and the bell "Searching..."
+# banners (BB_PARTY_FAST_MESSAGES=0 turns them off); the game's own join / summon pacing
+# (BB_PARTY_FAST_JOIN=0 turns it off). Both on by default in party mode, independent of
+# BB_PARTY_SEAMLESS, and left out of the party version check (Party="cosmetic").
+PARTY_FAST_MESSAGES=['Party: Fast multiplayer messages','Party: Hide bell searching messages']
+PARTY_FAST_JOIN=['Party: Fast join']
 DISABLE_HTTP='Disable HTTP Requests'
 
 
@@ -116,11 +122,17 @@ def party_mode(env=os.environ):
 
 
 def party_patches(env=os.environ):
-    if not party_mode(env) or env.get('BB_PARTY_SEAMLESS','1').strip()=='0':
+    if not party_mode(env):
         return []
-    names=list(PARTY_SEAMLESS)
-    if env.get('BB_PARTY_BELL_NO_INSIGHT','1').strip()!='0':
-        names.append(PARTY_NO_INSIGHT)
+    names=[]
+    if env.get('BB_PARTY_SEAMLESS','1').strip()!='0':
+        names+=PARTY_SEAMLESS
+        if env.get('BB_PARTY_BELL_NO_INSIGHT','1').strip()!='0':
+            names.append(PARTY_NO_INSIGHT)
+    if party_switch_on(env,'BB_PARTY_FAST_JOIN'):
+        names+=PARTY_FAST_JOIN
+    if party_switch_on(env,'BB_PARTY_FAST_MESSAGES'):
+        names+=PARTY_FAST_MESSAGES
     return names
 
 
@@ -145,6 +157,8 @@ COSMETIC_PATCHES={
     # Presentation, camera and input on this machine only.
     '50% Text scale','Skip Intro','Unlock Game Region','Bookmark and Capture outputs',
     'Increased camera distance','Disable Camera Auto Rotation via Movement','Sensitive Analog Input (easier to run)',
+    # Party join timing and banners (BB_PARTY_FAST_JOIN / BB_PARTY_FAST_MESSAGES): local pacing only.
+    'Party: Fast join','Party: Fast multiplayer messages','Party: Hide bell searching messages',
 }
 COSMETIC_PREFIXES=('Resolution Patch ',)
 COSMETIC_MARKS=('Light Grid',)
