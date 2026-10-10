@@ -118,6 +118,17 @@ int main() {
         assert(DescribeSkipRule(rules[0]).find("on a client") != std::string::npos);
     }
 
+    // The Doll's level-up kneel event: only its player chr type tests.
+    assert(DollLevelUpCharTypeTest(12100112, 4, 3, 10000, 0));
+    assert(DollLevelUpCharTypeTest(12100112, 4, 3, 10000, 1));
+    assert(!DollLevelUpCharTypeTest(12100112, 4, 3, 2100700, 0));
+    assert(!DollLevelUpCharTypeTest(12100112, 3, 3, 10000, 0));
+    assert(!DollLevelUpCharTypeTest(12100110, 4, 3, 10000, 0));
+    assert(DollLevelUpCharTypeTest(12100113, 4, 3, 10000, 0)); // the Doll's gesture: 72100102
+    assert(DollLevelUpCharTypeTest(12100114, 4, 3, 10000, 0)); // level-up SFX
+    assert(!DollLevelUpCharTypeTest(12100115, 4, 3, 10000, 0));
+    assert(!DollLevelUpCharTypeTest(12100112, 4, 3, 10000, 8));
+
     // Env.
     assert(GuestServicesEnabledFromEnv(nullptr));
     assert(GuestServicesEnabledFromEnv(""));

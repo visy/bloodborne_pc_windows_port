@@ -163,7 +163,8 @@ std::vector<EmevdSkipRule> DollPlacementRules() {
 }
 
 bool DollLevelUpCharTypeTest(int event_id, int bank, int id, int entity, int type) {
-    return event_id == 12100112 && bank == 4 && id == 3 && entity == 10000 && (type == 0 || type == 1);
+    return event_id >= 12100112 && event_id <= 12100114 && bank == 4 && id == 3 && entity == 10000 &&
+           (type == 0 || type == 1);
 }
 
 bool GuestLampsEnabledFromEnv(const char* v) {
@@ -271,7 +272,7 @@ std::uint64_t BB_COOP_SYSV IsClientFilter(std::uint64_t env, std::uint64_t value
 // EMEVD dispatch thread: the Doll's level-up kneel event 12100112 for a client (see the header).
 std::atomic<std::uint32_t> g_doll_rewrites{0};
 void DollRewriter(int event_id, int bank, int id, std::uint64_t event, std::uint64_t instr) {
-    if (event_id != 12100112 || bank != 4 || id != 3) {
+    if (event_id < 12100112 || event_id > 12100114 || bank != 4 || id != 3) {
         return;
     }
     std::uint32_t size = 0;
@@ -595,23 +596,13 @@ BB_COOP_SYSV void LevelUpMenuFactoryEntry(u64, u64, u64, u64, u64, u64) {
 // a functor whose call pointer ([[rsi+0x20]+8]) is the LevelUp factory 0x1BB7F60. Its first test is
 // 0x176BFE0 (called at 0x1C4A549; false = no menu). Logged for the live tests.
 std::atomic<std::uint32_t> g_menu_requests{0}, g_levelup_requests{0};
-std::atomic<int> g_menu_gate_last{-1};
 std::atomic<bool> g_menu_req_active{false};
-void* g_menu_gate_orig = nullptr;
 BB_COOP_SYSV void MenuRequestEntry(u64, u64 functor, u64, u64, u64, u64) {
     g_menu_requests.fetch_add(1, std::memory_order_relaxed);
     std::uint64_t impl = 0, fn = 0;
     if (functor && SafeGet(functor + 0x20, &impl) && impl && SafeGet(impl + 8, &fn) && fn == Guest(0x1BB7F60)) {
         g_levelup_requests.fetch_add(1, std::memory_order_relaxed);
     }
-}
-__attribute__((noinline)) BB_COOP_SYSV u64 MenuGateHook() {
-    const u64 ret = reinterpret_cast<u64>(__builtin_return_address(0));
-    const u64 r = reinterpret_cast<u64(BB_COOP_SYSV*)()>(g_menu_gate_orig)();
-    if (ret == Guest(0x1C4A54E)) {
-        g_menu_gate_last.store(int(r & 0xff), std::memory_order_relaxed);
-    }
-    return r;
 }
 
 // Talk commands (switch 0x203FFD0: rsi = the call, vfunc +0x18 = command id 0..87): a count per id
@@ -903,8 +894,8 @@ void GuestServicesInit() {
     HookPrologue(0x1C4A520, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83,
                              0xec, 0x48},
                  &MenuRequestEntry, "menu request (log)");
-    ReplacePrologue(0x176BFE0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x53, 0x48, 0x83, 0xec, 0x48},
-                    reinterpret_cast<const void*>(&MenuGateHook), &g_menu_gate_orig, "menu request gate 0x176BFE0 (log)");
+    // (0x176BFE0, the request's first test, is not hooked: replacing it stopped the guest from
+    // joining in a live run.)
     EnsureEmevdFilter();
     // rdi = r15 (the talk environment), rsi = eax (the game's answer).
     g.installed = HookValueFilter(kIsClientLoad, {0x41, 0x0f, 0xb6, 0x47, 0x25}, {0x4c, 0x89, 0xff, 0x89, 0xc6},
@@ -1067,8 +1058,7 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
     }
     static std::uint32_t reqs_logged = 0;
     if (const std::uint32_t q = g_menu_requests.load(std::memory_order_relaxed); q != reqs_logged) {
-        Log("menu requests %u (LevelUp %u); the request gate 0x176BFE0 last answered %d", q,
-            g_levelup_requests.load(), g_menu_gate_last.load());
+        Log("menu requests %u (LevelUp %u)", q, g_levelup_requests.load());
         reqs_logged = q;
     }
     static std::uint32_t menus_logged = 0;
@@ -1077,7 +1067,7 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
         menus_logged = m;
     }
     if (const std::uint32_t d = g_doll_rewrites.exchange(0, std::memory_order_relaxed)) {
-        Log("Doll level-up kneel (12100112): %u chr type test(s) set to the guest's own type", d);
+        Log("Doll level-up events (12100112-114): %u chr type test(s) set to the guest's own type", d);
     }
     if (const std::uint32_t m = g_multi_overrides.exchange(0, std::memory_order_relaxed)) {
         Log("headstones asked IsMultiplayerInProgress %u times (answered 0)", m);
