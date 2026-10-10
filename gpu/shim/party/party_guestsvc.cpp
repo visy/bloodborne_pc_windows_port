@@ -363,10 +363,16 @@ bool GuestLampIntercept(std::uint32_t id) {
 // bits 0..13 = index; block < WorldChrMan+0x20: entry = [WorldChrMan+0x28] + block * 0x160 ->
 // +0xC0 array (stride 0x38), else (block == [[WorldChrMan+8]+0x18]) WorldChrMan+0x38 array;
 // [entry] = ChrIns*.
-std::uint64_t FindChr(std::uint32_t entity) {
+std::uint64_t FindChr(std::uint32_t entity, std::string* diag = nullptr) {
     const std::uint64_t wcm = ReadGameState(false).world_chr_man;
     std::int32_t sets = 0;
-    if (!wcm || !SafeGet(wcm + 0x90, &sets) || sets <= 0 || sets > 64) {
+    const bool got = wcm && SafeGet(wcm + 0x90, &sets);
+    if (diag) {
+        char b[96];
+        std::snprintf(b, sizeof b, "wcm %p sets %d", reinterpret_cast<void*>(wcm), got ? sets : -1);
+        *diag = b;
+    }
+    if (!got || sets <= 0 || sets > 4096) {
         return 0;
     }
     for (std::int32_t i = 0; i < sets; ++i) {
@@ -375,6 +381,14 @@ std::uint64_t FindChr(std::uint32_t entity) {
         if (!SafeGet(wcm + 0x98 + 8 * std::uint64_t(i), &set) || !set || !SafeGet(set + 0xf0, &n) ||
             !SafeGet(set + 0xf8, &arr) || n <= 0 || n > 100000) {
             continue;
+        }
+        if (diag && i < 8) {
+            std::int32_t first = 0, last = 0;
+            SafeGet(arr, &first);
+            SafeGet(arr + 8 * std::uint64_t(n - 1), &last);
+            char b[96];
+            std::snprintf(b, sizeof b, "; set %d: %d ids %d..%d", i, n, first, last);
+            *diag += b;
         }
         for (std::int32_t k = 0; k < n; ++k) {
             std::int32_t id = 0, handle = 0;
@@ -409,8 +423,35 @@ std::uint64_t FindChr(std::uint32_t entity) {
     return 0;
 }
 
+// Live tests: the save's Doll progress (campaign_start.md 1.3): 12100105 awake, 9401 first Dream,
+// Insight >= 1, 12101024 / 12101025 (Beckoning Bell messenger). Logged once per world-up.
+bool CheckDollProgress(const GameSnapshot& s, const char* who) {
+    bool awake = false, first = false, m24 = false, m25 = false;
+    progress::ReadFlag(12100105, &awake);
+    progress::ReadFlag(9401, &first);
+    progress::ReadFlag(12101024, &m24);
+    progress::ReadFlag(12101025, &m25);
+    const bool ok = awake && first && s.insight >= 1;
+    Log("test: %s progress: 12100105=%d 9401=%d Insight=%d 12101024=%d 12101025=%d (%s, map %s)%s", who, awake, first,
+        s.insight, m24, m25, SessionRoleName(s.session_role), MapName(s.map_id).c_str(),
+        ok ? "" : " -- PROGRESS MISSING: the Doll cannot be awake on this save");
+    return ok;
+}
+
 void ProbeDoll() {
-    const std::uint64_t chr = FindChr(2100700);
+    std::string diag;
+    const std::uint64_t chr = FindChr(210304, &diag); // the table is keyed by talk script id
+    {
+        const GameSnapshot me = ReadGameState(false);
+        std::uint64_t phys = 0;
+        float p[4] = {};
+        if (me.player) {
+            SafeRead(me.player + 0xc0, p, sizeof p);
+        }
+        (void)phys;
+        Log("probe: lookup %s; local player %p at +0xc0 (%.2f, %.2f, %.2f)", diag.c_str(),
+            reinterpret_cast<void*>(me.player), p[0], p[1], p[2]);
+    }
     std::int32_t type = -1, st10 = -1;
     std::uint8_t b20 = 0, draw[8] = {};
     std::uint64_t sub = 0, phys = 0;
@@ -423,10 +464,50 @@ void ProbeDoll() {
             SafeGet(sub + 0x20, &b20);
         }
         SafeRead(chr + 0x1e0, draw, sizeof draw);
-        SafeGet(chr + 0x68, &phys);
-        if (phys) {
-            SafeRead(phys + 0x1d0, pos, sizeof pos);
+        SafeRead(chr + 0xc0, pos, sizeof pos);
+    }
+    // Discovery: where does the Doll keep her position? Float triples near one of her MSB spots
+    // (2102301 / 2102302 / 2102303 / 2102304), in the chr and one pointer deep.
+    if (chr) {
+        static const float spots[4][3] = {{-5.8f, -5.62f, -13.6f}, {-13.27f, -1.05f, 1.73f}, {-7.4f, -6.25f, -25.09f},
+                                          {-5.8f, -4.83f, -11.6f}};
+        std::string hits;
+        auto scan = [&](std::uint64_t base, const char* path, std::size_t n) {
+            for (std::size_t off = 0; off + 12 <= n && hits.size() < 600; off += 4) {
+                float v[3];
+                if (!SafeRead(base + off, v, sizeof v)) {
+                    return;
+                }
+                for (const auto& sp : spots) {
+                    if (std::fabs(v[0] - sp[0]) < 1.5f && std::fabs(v[1] - sp[1]) < 1.5f && std::fabs(v[2] - sp[2]) < 1.5f) {
+                        char b[96];
+                        std::snprintf(b, sizeof b, " %s+0x%zx=(%.2f,%.2f,%.2f)", path, off, v[0], v[1], v[2]);
+                        hits += b;
+                        break;
+                    }
+                }
+            }
+        };
+        scan(chr, "", 0x800);
+        for (std::size_t off = 0; off < 0x200; off += 8) {
+            std::uint64_t q = 0;
+            if (!SafeGet(chr + off, &q) || q < 0x10000 || (q & 7)) {
+                continue;
+            }
+            char path[24];
+            std::snprintf(path, sizeof path, "[+0x%zx]", off);
+            scan(q, path, 0x400);
         }
+        Log("probe: Doll position candidates:%s", hits.empty() ? " none" : hits.c_str());
+        float f[32] = {};
+        SafeRead(chr + 0xa0, f, sizeof f);
+        std::string fl;
+        for (int k = 0; k < 32; ++k) {
+            char b[24];
+            std::snprintf(b, sizeof b, " %.3f", f[k]);
+            fl += b;
+        }
+        Log("probe: Doll chr +0xa0..+0x120 floats:%s", fl.c_str());
     }
     std::string flags;
     for (const std::uint32_t f : {9401u, 100u, 1000u, 1001u, 1002u, 1003u, 12100105u, 12100500u, 12100501u, 12100502u,
@@ -436,6 +517,31 @@ void ProbeDoll() {
         char b[32];
         std::snprintf(b, sizeof b, " %u=%s", f, ok ? (on ? "1" : "0") : "?");
         flags += b;
+    }
+    {
+        const GameSnapshot me = ReadGameState(false);
+        std::uint8_t own = 0xff;
+        std::uint64_t wts = 0;
+        if (SafeGet(Guest(0x5556678), &wts) && wts) {
+            SafeGet(wts + 0x1592, &own);
+        }
+        float p[4] = {}, pr[4] = {}, dr[4] = {};
+        if (me.player) {
+            SafeRead(me.player + 0xc0, p, sizeof p);
+            SafeRead(me.player + 0xd0, pr, sizeof pr);
+        }
+        if (chr) {
+            SafeRead(chr + 0xd0, dr, sizeof dr);
+        }
+        const float dx = pos[0] - p[0], dz = pos[2] - p[2];
+        const float dist = std::sqrt(dx * dx + dz * dz);
+        // Angle between the player's facing (-sin, -cos) and the direction to the Doll.
+        const float fx = -std::sin(pr[1]), fz = -std::cos(pr[1]);
+        const float cosang = dist > 1e-3f ? (fx * dx + fz * dz) / dist : 1.0f;
+        Log("probe: role %s, own world byte %u, Insight %d; player (%.2f, %.2f, %.2f) yaw %.3f; Doll yaw %.3f; "
+            "distance %.2f m, facing her within %.0f degrees",
+            SessionRoleName(me.session_role), own, me.insight, p[0], p[1], p[2], pr[1], dr[1], dist,
+            std::acos(std::fmax(-1.0f, std::fmin(1.0f, cosang))) * 57.2958f);
     }
     Log("probe: Doll chr %p type %d, +0x18->+0x10 %d +0x20 0x%02x, +0x1e0 %02x %02x %02x %02x %02x %02x %02x %02x, "
         "pos (%.2f, %.2f, %.2f); flags%s",
@@ -469,7 +575,23 @@ bool RunTestFixture(const GameSnapshot& s, int step) {
     }
     alignas(16) float pos[4] = {0, 0, 0, 1};
     alignas(16) float rot[4] = {0, 0, 0, 0};
-    if (std::strncmp(at, "doll", 4) == 0) {
+    if (std::strncmp(at, "doll", 4) == 0 && FindChr(210304)) {
+        // In front of the Doll as this game placed her: ChrIns +0xC0 position, +0xD0 rotation
+        // (x, yaw, z, 0; 0.524 = her MSB 30 degrees). Live evidence: a character with yaw t faces
+        // (-sin t, 0, -cos t) (a guest put at +(sin, cos) * 1.2 ended up behind her). So: 1.2 m along
+        // her forward, facing back at her (yaw + pi).
+        const std::uint64_t doll = FindChr(210304);
+        float d[4] = {}, r[4] = {};
+        SafeRead(doll + 0xc0, d, sizeof d);
+        SafeRead(doll + 0xd0, r, sizeof r);
+        const float yaw = r[1];
+        pos[0] = d[0] - 1.2f * std::sin(yaw);
+        pos[1] = d[1];
+        pos[2] = d[2] - 1.2f * std::cos(yaw);
+        rot[1] = yaw + 3.14159265f;
+        Log("test: the Doll stands at (%.2f, %.2f, %.2f) yaw %.3f on this game; guest goes 1.2 m in front, yaw %.3f",
+            d[0], d[1], d[2], yaw, rot[1]);
+    } else if (std::strncmp(at, "doll", 4) == 0) {
         // In front of the Doll's stand spot on this game (12100500-12100502, event 12100110):
         // MSB regions 2102301 / 2102302 / 2102303; 1.2 m off, facing her.
         static const float spots[3][3] = {{-5.8f, -5.62f, -13.6f}, {-13.27f, -1.05f, 1.73f}, {-7.4f, -6.25f, -25.09f}};
@@ -495,7 +617,10 @@ bool RunTestFixture(const GameSnapshot& s, int step) {
     if (SafeGet(s.player, &vtbl) && SafeGet(vtbl + 0x5f8, &fn) && fn) {
         using WarpFn = void(BB_COOP_SYSV*)(std::uint64_t, const float*, const float*, std::uint64_t);
         reinterpret_cast<WarpFn>(fn)(s.player, pos, rot, 0);
-        Log("test: warp #%d: the guest to (%.2f, %.2f, %.2f) yaw %.2f", step, pos[0], pos[1], pos[2], rot[1]);
+        float now_at[3] = {};
+        SafeRead(s.player + 0xc0, now_at, sizeof now_at);
+        Log("test: warp #%d: the guest to (%.2f, %.2f, %.2f) yaw %.2f (now at %.2f, %.2f, %.2f)", step, pos[0], pos[1],
+            pos[2], rot[1], now_at[0], now_at[1], now_at[2]);
     }
     return true;
 }
@@ -507,6 +632,9 @@ void GuestServicesInit() {
         return;
     }
     g.init = true;
+    if (const char* t = std::getenv("BB_PARTY_GUESTSVC_TEST")) {
+        g.test = t;
+    }
     const char* party = std::getenv("BB_PARTY");
     g.enabled = party && party[0] && GuestServicesEnabledFromEnv(std::getenv("BB_PARTY_GUEST_SERVICES"));
     if (!g.enabled) {
@@ -616,6 +744,13 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
 
 void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
     LampTick(s, link);
+    static bool progress_logged = false;
+    if (!g.test.empty() && s.world_up && !s.loading && IsDreamMap(s.map_id) && !progress_logged) {
+        progress_logged = true;
+        CheckDollProgress(s, s.session_role == kSessionRoleClient ? "guest (host world)" : "own world");
+    } else if (!s.world_up || s.loading) {
+        progress_logged = false;
+    }
     static double last_probe = 0;
     if (g.test.find("probe") != std::string::npos && s.world_up && !s.loading && IsDreamMap(s.map_id) &&
         Now() - last_probe >= 10.0) {
@@ -646,7 +781,14 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
         }
     }
     const double now = Now();
-    if (g.open && !g.test.empty() && !g.test_done && now - g.open_at >= 15.0 && now >= g.test_next) {
+    bool doll_ready = true;
+    if (g.test.find("warp=doll") != std::string::npos && g.test_step == 0) {
+        // Wait until the Doll's character exists and stands somewhere (polled every tick).
+        float d[3] = {};
+        const std::uint64_t doll = FindChr(210304);
+        doll_ready = doll && SafeRead(doll + 0xc0, d, sizeof d) && (d[0] != 0.0f || d[2] != 0.0f);
+    }
+    if (g.open && !g.test.empty() && !g.test_done && doll_ready && now - g.open_at >= 5.0 && now >= g.test_next) {
         if (!RunTestFixture(s, g.test_step)) {
             g.test_done = true;
             Log("test: fixture done");
