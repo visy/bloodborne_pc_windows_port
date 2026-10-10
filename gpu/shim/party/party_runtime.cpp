@@ -6,6 +6,7 @@
 #include "party_addr.h"
 #include "party_code.h"
 #include "party_crypto.h"
+#include "party_b2.h"
 #include "party_director.h"
 #include "party_flow.h"
 #include "party_story.h"
@@ -20,6 +21,7 @@
 #include "../net/bbnet_internal.h"
 #include "../net/np_hle.h"
 #include "../net/np_session.h"
+#include "../net/from_api.h"
 #include "../net/party_host_service.h"
 #include "../net/party_transport.h"
 #include "../net/party_util.h"
@@ -644,6 +646,9 @@ LinkCallbacks make_callbacks(bool host) {
         };
         cb.on_member_left = [](const RosterEntry& m, bool slot_kept) {
             bridge::OnMemberLeft(m.name, slot_kept);
+            // Its signs go too (a crashed game cannot answer a summon; with 2-3 guests the host's
+            // game would otherwise pick a dead sign while the others wait). The restart puts up a new one.
+            bbnet::party::FromApi::instance().drop_signs(m.name);
             if (slot_kept) {
                 plog("%s (slot %d) lost; slot kept", m.name.c_str(), m.slot);
                 return;
@@ -652,6 +657,9 @@ LinkCallbacks make_callbacks(bool host) {
             write_marker();
             pump_stop(m.name);
             bbnet::party::PartyHostService::instance().context_gone(m.name);
+        };
+        cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
+            if (name == coop::b2::kEventName) coop::b2::OnLinkEvent(slot, body);  // B2: a guest arrived
         };
         cb.on_rpc = [](int slot, const std::string& kind, const std::string& body) -> std::string {
             PartyLink* link = R().link;
@@ -680,16 +688,20 @@ LinkCallbacks make_callbacks(bool host) {
             return json::dump(reply, 0);
         };
     } else {
-        cb.on_event = [](int, std::uint64_t, const std::string& name, const std::string& body) {
+        cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
             if (name == coop::kTravelEventName) {  // B1: follow the host's warp
                 coop::TravelIntent t;
                 std::string err;
                 if (coop::TravelFromJsonText(body, &t, &err) && coop::SanitizePeerTravel(&t, &err)) {
                     bridge::OnTravel(coop::TravelKindName(t.kind));
-                    coop::RequestGuestTravel(t);
+                    if (!coop::b2::OnHostTravel(t)) coop::RequestGuestTravel(t);  // B2 keeps the room
                 } else {
                     plog("travel event: %s", err.c_str());
                 }
+                return;
+            }
+            if (name == coop::b2::kEventName) {  // B2: a guest arrived in the host world
+                coop::b2::OnLinkEvent(slot, body);
                 return;
             }
             if (name == coop::kStoryEventName) {  // C4: the host's cutscene / ending

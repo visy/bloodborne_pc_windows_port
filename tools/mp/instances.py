@@ -261,6 +261,12 @@ def tile_rect(slot):
 
 
 def run(a):
+    # A rebuild since the last setup: copy it first, or the run would test the old exe.
+    built = Path(a.build) / "out" / "bbport.exe"
+    inst0 = Path(a.root) / "inst0" / "out" / "bbport.exe"
+    if built.exists() and (not inst0.exists() or built.stat().st_mtime > inst0.stat().st_mtime + 1):
+        print("the build is newer than the instances' exe: running setup first", flush=True)
+        setup(a)
     port0 = base_port(a.root)
     stop_leftovers(a.root)
     user32 = ctypes.windll.user32 if os.name == "nt" else None
@@ -287,8 +293,8 @@ def run(a):
             "BB_MP_LOCAL_TEST": "1", "BB_MP_INSTANCE": str(i), "BB_MP_PORT": str(port0 + i),
             "BB_MP_NAME": f"Hunter{i}",
             "BB_WINDOW_TITLE": f"[{(getattr(a, 'slots', None) or list(range(a.count)))[i]}] "
-                               f"{a.label or Path(a.root).parent.name} - inst{i}"
-                               f"{(' host' if i == 0 else ' guest') if a.party else ''}",
+                               f"{(a.label or Path(a.root).parent.name)[:40]} i{i}"
+                               f"{('h' if i == 0 else 'g') if a.party else ''}",
             **({"BB_WINDOW_X": str(r[0]), "BB_WINDOW_Y": str(r[1]), "BB_WINDOW_W": str(r[2]), "BB_WINDOW_H": str(r[3])}
                if (r := tile_rect(getattr(a, "slots", list(range(a.count)))[i])) else {}),
         })

@@ -126,4 +126,9 @@ bool GuestMayRing(bool guest_ready, bool connected) {
     return guest_ready && connected;
 }
 
+bool SessionMayRing(bool host, int session_role) {
+    constexpr int kIdle = 0, kHost = 3; // RoleIdle, RoleHost (game_state.h)
+    return session_role == kIdle || (host && session_role == kHost);
+}
+
 } // namespace coop

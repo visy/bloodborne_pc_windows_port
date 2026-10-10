@@ -93,5 +93,11 @@ bool MemberWaits(const std::vector<party::RosterEntry>& roster);
 /// and connected to the host.
 bool HostMayRing(bool host_ready, int cooperators, int max_players, const std::vector<party::RosterEntry>& roster);
 bool GuestMayRing(bool guest_ready, bool connected);
+/// The session roles (SprjSessionManager +0x124, game_state.h) the automatic bell may ring in:
+/// a guest only idle in its own world (0); the host idle (0) or already hosting (3) - with one
+/// cooperator in, the next member of a 3- or 4-player party is summoned by ringing again while
+/// hosting (the game's own Beckoning Bell works there). Never while trying to host / join,
+/// failing, as a client or leaving.
+bool SessionMayRing(bool host, int session_role);
 
 } // namespace coop

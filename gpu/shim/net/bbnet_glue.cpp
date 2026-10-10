@@ -4,6 +4,7 @@
 #include "bbnet_internal.h"
 #include "netsim.h"
 #include "../../bbnet.h"
+#include "../../party_env.h"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -56,7 +57,7 @@ Settings* g_settings = nullptr;
 
 Settings* load_settings() {
     auto* s = new Settings;
-    if (const char* p = env("BB_PARTY")) {
+    if (const char* p = bb_party_value()) {
         s->party = true;
         s->party_value = p;
         std::string lower(p);
