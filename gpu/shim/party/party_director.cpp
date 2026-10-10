@@ -9,6 +9,7 @@
 #include "lua_events.h"
 #include "party_link.h"
 #include "party_start.h"
+#include "party_status.h"
 #include "party_travel.h"
 #include "seamless_rules.h"
 
@@ -109,6 +110,7 @@ struct State {
     bool start_ready = false, start_logged = false;
     StartStep start_step = StartStep::NoWorld;
     bool granted = false; // bells granted (or found owned) in this world
+    std::string status_sig; // last board content published (party_status.h)
 };
 
 State& S() {
@@ -269,6 +271,68 @@ void Ring(State& st, const char* event, const char* why, Clock::time_point now) 
     } else {
         Log("could not queue %s (%s)", event, why);
     }
+}
+
+/// The overlay's Party board (party_status.h): this player's lobby / readiness state and the
+/// roster with each member's state. Published only on change.
+void PublishStatus(State& st, const GameSnapshot& s, PartyRole role, party::PartyLink* link, Clock::time_point now) {
+    namespace ps = party::status;
+    if (role == PartyRole::None || !link) {
+        return;
+    }
+    const party::LinkState ls = link->state();
+    ps::State state;
+    std::string detail;
+    if (ls == party::LinkState::Rejected) {
+        state = ps::State::Error;
+        detail = link->reject_reason();
+    } else if (ls == party::LinkState::Reconnecting) {
+        state = ps::State::Reconnecting;
+    } else if (ls == party::LinkState::Connecting) {
+        state = ps::State::Connecting;
+    } else if (!s.world_up || s.loading) {
+        state = ps::State::WaitingForWorld;
+        detail = s.loading ? "loading" : "title / character creation";
+    } else if (s.session_role == RoleClient || (role == PartyRole::Host && s.cooperators > 0)) {
+        state = ps::State::Joined;
+        if (role == PartyRole::Host) {
+            detail = std::to_string(s.cooperators) + " in";
+        }
+    } else if (!st.start_ready) {
+        state = ps::State::WaitingForWorld;
+        detail = std::string("prologue (") + StartStepName(st.start_step) + "), solo until ready";
+    } else if (st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {
+        state = ps::State::RingingBell;
+        detail = role == PartyRole::Host ? "Beckoning Bell" : "Small Resonant Bell";
+    } else {
+        state = role == PartyRole::Host ? ps::State::Hosting : ps::State::WaitingForWorld;
+        detail = role == PartyRole::Host ? "ready; waiting for a ready member" : "ready; waiting for the host";
+    }
+    std::vector<ps::Member> members;
+    const int me = link->local_slot();
+    for (const party::RosterEntry& e : link->roster()) {
+        ps::Member m;
+        m.name = e.name;
+        m.connected = e.connected;
+        m.in_world = e.state == party::MemberState::InHostWorld;
+        m.ping_ms = int(e.ping_ms);
+        m.slot = e.slot;
+        m.local = e.slot == me;
+        m.area = std::string(party::member_state_name(e.state)) +
+                 (e.map_id && e.map_id != 0xffffffffu ? " " + MapName(e.map_id) : std::string());
+        members.push_back(m);
+    }
+    std::string sig = std::to_string(int(state)) + "|" + detail;
+    for (const ps::Member& m : members) {
+        sig += "|" + m.name + "," + std::to_string(m.connected) + "," + m.area;
+    }
+    if (sig == st.status_sig) {
+        return;
+    }
+    st.status_sig = sig;
+    ps::SetRole(role == PartyRole::Host ? ps::Role::Host : ps::Role::Guest);
+    ps::SetState(state, detail);
+    ps::SetMembers(members);
 }
 
 void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
@@ -464,6 +528,9 @@ void PartyDirector::Tick() {
             st.sent_map = map;
             link->set_local_state(ms, map);
         }
+    }
+    if (full) {
+        PublishStatus(st, s, role, link, now);
     }
     // B1: the host's warps go to every guest (reliable: replayed to a member who reconnects).
     if (link && role == PartyRole::Host) {
