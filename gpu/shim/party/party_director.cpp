@@ -795,7 +795,7 @@ void PartyDirector::Tick() {
     if (full || !st.start_logged) {
         UpdateStart(st, s, start_mode);
         if (((grant_bells && role != PartyRole::None) || st.test.grant_bells) && st.world_seen &&
-            Seconds(st.world_at, now) >= 5.0) {
+            Seconds(st.world_at, now) >= 5.0 && !PrologueSkipBusy()) {
             GrantBells(st, s);
         }
     }
@@ -891,7 +891,7 @@ void PartyDirector::Tick() {
     }
     // Automatic summoning.
     if (!st.auto_ring || role == PartyRole::None || !link || !s.world_up || s.loading || !st.world_seen ||
-        Seconds(st.world_at, now) < 5.0 || s.session_role != RoleIdle) {
+        Seconds(st.world_at, now) < 5.0 || s.session_role != RoleIdle || PrologueSkipBusy()) {
         return;
     }
     if (st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {

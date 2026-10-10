@@ -377,6 +377,11 @@ bool NewGameTestRequested() {
     return EnvOn("BB_TEST_NEWGAME") || EnvOn("BB_TEST_PROLOGUE_SKIP");
 }
 
+bool PrologueSkipBusy() {
+    const T& g = G();
+    return g.init && g.skip && g.sp != SkipPhase::Wait && g.sp != SkipPhase::Done;
+}
+
 bool NewGameOwnsTitle() {
     T& g = G();
     return g.init && g.newgame && g.drv_on && !g.drv.finished();

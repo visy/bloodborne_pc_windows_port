@@ -113,6 +113,9 @@ const std::vector<StartWeapon>& PrologueSkipWeapons();
 bool NewGameTestRequested();
 /// The title driver is on and has not finished: the director's auto-Continue stays off.
 bool NewGameOwnsTitle();
+/// The prologue fast-forward has started and not finished (flags set, warp pending / loading):
+/// the director holds its bell grants and bells until the player stands at the warp target.
+bool PrologueSkipBusy();
 /// `title_ready`: see NewGameInput.
 void NewGameTestTick(const GameSnapshot& s, bool title_ready);
 
