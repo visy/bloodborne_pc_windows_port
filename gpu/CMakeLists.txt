@@ -384,7 +384,7 @@ endif()
 
 # Party progress sync (shim/party/party_progress, C2): keys, categories, policy, diff, JSON, BBPF
 # against a fake flag store (the game glue is compiled out). ninja -C out/gpu party-progress-test
-if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../tests/test_party_progress.cpp)  # not committed yet
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../tests/test_party_progress.cpp")  # not committed yet
 add_executable(party-progress-test EXCLUDE_FROM_ALL ../tests/test_party_progress.cpp
     shim/party/party_progress.cpp shim/net/json.cpp)
 target_compile_definitions(party-progress-test PRIVATE BB_PARTY_PROGRESS_NO_GAME
