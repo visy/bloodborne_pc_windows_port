@@ -279,8 +279,8 @@ def run(a):
             "BB_MP_LOCAL_TEST": "1", "BB_MP_INSTANCE": str(i), "BB_MP_PORT": str(port0 + i),
             "BB_MP_NAME": f"Hunter{i}",
             "BB_WINDOW_TITLE": f"[{(getattr(a, 'slots', None) or list(range(a.count)))[i]}] "
-                               f"{(a.label or Path(a.root).parent.name)[:40]} - inst{i}"
-                               f"{(' host' if i == 0 else ' guest') if a.party else ''}",
+                               f"{(a.label or Path(a.root).parent.name)[:40]} i{i}"
+                               f"{('h' if i == 0 else 'g') if a.party else ''}",
             **({"BB_WINDOW_X": str(r[0]), "BB_WINDOW_Y": str(r[1]), "BB_WINDOW_W": str(r[2]), "BB_WINDOW_H": str(r[3])}
                if (r := tile_rect(getattr(a, "slots", list(range(a.count)))[i])) else {}),
         })
