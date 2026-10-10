@@ -2,6 +2,7 @@
 #include "bbport_game_menu.h"
 #include "bbport_gnm_hooks.h"
 #include "bbport_stability.h"
+#include "party/party_director.h"
 // bbport: glue between the C loader and the vendored shadPS4 video core.
 #include "bbport_overlay.h"
 #include "bbport_settings.h"
@@ -24,6 +25,7 @@
 #include <vector>
 #include <SDL3/SDL.h>
 #include "../bbgpu.h"
+#include "../bbnet.h"
 #include "common/elf_info.h"
 #include "common/logging/log.h"
 #include "common/rdtsc.h"
@@ -269,6 +271,7 @@ static void StartProfileWriter() {
 
 /// Ends the process without unloading DLLs (see the window close path); stdio is flushed first.
 [[noreturn]] void BbHardExit(int code) {
+    bbnet_shutdown();  // party: BYE + UPnP unmap (no-op without BB_PARTY)
     std::fflush(stdout);
     std::fflush(stderr);
 #ifdef _WIN32
@@ -304,6 +307,7 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
             SDL_Delay(2);
         }
         LOG_INFO(Frontend, "Window closed by user");
+        bbnet_shutdown();  // party: BYE + UPnP unmap
         std::fflush(stdout);
         std::fflush(stderr);
 #ifdef _WIN32
@@ -361,6 +365,10 @@ extern "C" void bbgpu_patch_image(unsigned char* image, uint64_t size) {
     BbGnmHooks::PatchImage(image, size);
     BbGameMenu::PatchImage(image, size);
     BbStability::PatchImage(image, size);
+    bbnet_set_image(image, size);  // the party library's view of game data (gpu/shim/net)
+    if (coop::PartyRequested()) {
+        coop::PartyInit(image, size);  // party co-op: main-thread tick, Lua events, director
+    }
 }
 
 extern "C" unsigned bbgpu_symbol_count(void) {
