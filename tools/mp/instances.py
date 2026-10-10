@@ -312,9 +312,9 @@ def run(a):
     # anyway; idle games after the interesting part only hold the slots).
     lease = float(os.environ.get("BB_MP_LEASE", "240"))
     last_lease_check = 0.0
-    # Idle stop: once a party run has done something (the logs have party lines) and then nothing
-    # new happens in the party logs for --idle seconds, the run has what it can get: end it.
-    idle_rx = re.compile(r"^(Party|Net): ", re.M)
+    # Idle stop: once a party run has done something and then no NEW kind of party log line appears
+    # for --idle seconds (periodic status lines don't count), the run has what it can get: end it.
+    idle_rx = re.compile(r"^(Party|Net): ")
     idle_limit = a.idle
     last_party_count, last_party_change = -1, time.time()
     while any(p.poll() is None for _, p, _ in procs) and time.time() - t0 < a.seconds + 90:
@@ -340,7 +340,10 @@ def run(a):
                 marks = [os.path.getsize(Path(a.root) / f"inst{i}" / "run.log") for i in range(a.count)]
                 crash_instance(a.root, a.crash_instance)
         if idle_limit > 0:
-            n = sum(len(idle_rx.findall(log_text(i, starts[i]))) for i in range(a.count))
+            # Distinct party lines with numbers blanked: periodic status/roster/state lines repeat
+            # the same text and don't count as progress.
+            n = len({re.sub(r"[0-9a-fx.:]+", "#", l) for i in range(a.count)
+                     for l in log_text(i, starts[i]).splitlines() if idle_rx.match(l)})
             if n != last_party_count:
                 last_party_count, last_party_change = n, time.time()
             elif n > 0 and time.time() - last_party_change > idle_limit and not (want_crash and not crashed):
