@@ -78,8 +78,9 @@ class LauncherEnvTests(unittest.TestCase):
             self.skipTest(f"launcher.py not importable here: {ex}")
         env = launcher.party_env({"party_mode": "host"})
         self.assertEqual(env["BB_PARTY_SAVE"], "separate")
+        # The old shared choice is gone: a party session always plays from the party saves.
         env = launcher.party_env({"party_mode": "join", "party_separate_save": False})
-        self.assertEqual(env["BB_PARTY_SAVE"], "shared")
+        self.assertEqual(env["BB_PARTY_SAVE"], "separate")
         self.assertIsNone(launcher.party_env({"party_mode": ""})["BB_PARTY_SAVE"])
         self.assertEqual(launcher.party_saves_module().PARTY, "savedata_party")
 

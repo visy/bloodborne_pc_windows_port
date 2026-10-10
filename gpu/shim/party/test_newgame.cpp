@@ -13,6 +13,8 @@ namespace coop {
 
 namespace {
 constexpr double kHold = 0.12; // a tap: long enough for one game frame at 8 fps, short of auto-repeat
+constexpr double kSettle = 0.3; // a new screen: no new text lookups for this long (it has built)
+constexpr double kStep = 0.25;  // between two presses on the same screen (a frame or two)
 }
 
 const char* NewGamePhaseName(NewGamePhase p) {
@@ -59,15 +61,24 @@ std::uint32_t NewGameDriver::Step(const NewGameInput& in, std::string* log) {
             }
             holding_ = false;
             busy_until_ = in.t + tap.gap;
+            released_at_ = in.t;
             ++next_;
             return 0;
         }
-        if (in.t >= busy_until_) {
-            holding_ = true;
-            tap_at_ = in.t;
-            return tap.buttons;
+        if (in.t < busy_until_) {
+            return 0;
         }
-        return 0;
+        // A press for the next screen: as soon as it has built (or at the step's maximum).
+        if (tap.wait > 0 && in.t < released_at_ + tap.wait &&
+            !(in.screen_seq != screen_mark_ && in.screen_quiet >= kSettle)) {
+            return 0;
+        }
+        holding_ = true;
+        tap_at_ = in.t;
+        if (tap.buttons) {
+            screen_mark_ = in.screen_seq;
+        }
+        return tap.buttons;
     }
     if (in.t < busy_until_ || finished()) {
         return 0;
@@ -86,9 +97,10 @@ std::uint32_t NewGameDriver::Step(const NewGameInput& in, std::string* log) {
         if (ready_since_ < 0) {
             ready_since_ = in.t;
         }
-        if (in.t - ready_since_ >= 3.0) {
+        // The menu built (no new texts for a moment); 3 s at most without that signal.
+        if (in.t - ready_since_ >= 3.0 || (in.t - ready_since_ >= 0.3 && in.screen_seq > 0 && in.screen_quiet >= 0.5)) {
             Enter(NewGamePhase::NewGame, in.t, log, "title ready; Cross on New Game (the default item of an empty save)");
-            Queue({{kPadCross, 4.0}});
+            Queue({{kPadCross, kStep}});
         }
         break;
     case NewGamePhase::NewGame:
@@ -96,13 +108,14 @@ std::uint32_t NewGameDriver::Step(const NewGameInput& in, std::string* log) {
             Enter(NewGamePhase::WaitLoad, in.t, log, "loading after the first Cross: the save had a character (Continue)");
             break;
         }
+        // Brightness: Down once it is up (4 s at most), Cross on Next.
         Enter(NewGamePhase::Brightness, in.t, log, "Down to Next, Cross");
-        Queue({{kPadDown, 1.0}, {kPadCross, 4.0}});
+        Queue({{kPadDown, kStep, 4.0}, {kPadCross, kStep}});
         break;
     case NewGamePhase::Brightness:
         Enter(NewGamePhase::Controls, in.t, log, "Up (wraps to Next), Cross");
         movie_base_ = in.movie_count;
-        Queue({{kPadUp, 1.0}, {kPadCross, 3.0}});
+        Queue({{kPadUp, kStep, 4.0}, {kPadCross, kStep}});
         break;
     case NewGamePhase::Controls:
         Enter(NewGamePhase::WaitMovie, in.t, log, "waiting for the movie");
@@ -111,7 +124,8 @@ std::uint32_t NewGameDriver::Step(const NewGameInput& in, std::string* log) {
         if (in.movie_count > movie_base_) {
             Enter(NewGamePhase::Contract, in.t, log, "movie started; Options skips it, then Cross on Enter Name");
             ime_base_ = in.ime_count;
-            Queue({{0, 1.5}, {kPadOptions, 4.0}, {kPadCross, 3.0}});
+            // The movie skips once it plays (0.3 s); Enter Name once the contract is up (4 s max).
+            Queue({{0, 0.3}, {kPadOptions, kStep}, {kPadCross, 1.5, 4.0}}); // 1.5: the name box opens
         } else if (in_phase >= 10.0) {
             if (tries_ < 4) {
                 // Where the cursor is is unknown here; each try ends on the movie from one of
@@ -144,7 +158,9 @@ std::uint32_t NewGameDriver::Step(const NewGameInput& in, std::string* log) {
             Enter(NewGamePhase::Finish, in.t, log,
                   "name entered; Up (wraps to Finish), Cross, Left (YES), Cross");
             ime_base_ = in.ime_count;
-            Queue({{0, 2.0}, {kPadUp, 1.5}, {kPadCross, 2.5}, {kPadLeft, 1.0}, {kPadCross, 3.0}});
+            // The name box closed (the HLE answers at once): Up to Finish, Cross; the dialog's YES
+            // once "Finalise contract?" is up (2.5 s max), Cross.
+            Queue({{0, 0.6}, {kPadUp, kStep}, {kPadCross, kStep}, {kPadLeft, kStep, 2.5}, {kPadCross, kStep}});
         } else if (tries_ < 6) {
             ++tries_;
             if (log) {
@@ -268,6 +284,7 @@ const std::vector<StartWeapon>& PrologueSkipWeapons() {
 
 #include "game_state.h"
 #include "party_start.h"
+#include "../bbport_game_menu.h"
 
 #include <atomic>
 #include <chrono>
@@ -374,7 +391,9 @@ void ApplySkip(T& g) {
 } // namespace
 
 bool NewGameTestRequested() {
-    return EnvOn("BB_TEST_NEWGAME") || EnvOn("BB_TEST_PROLOGUE_SKIP");
+    // Asked every frame by the director: the environment once (getenv scans the whole block).
+    static const bool on = EnvOn("BB_TEST_NEWGAME") || EnvOn("BB_TEST_PROLOGUE_SKIP");
+    return on;
 }
 
 bool PrologueSkipBusy() {
@@ -423,6 +442,14 @@ void NewGameTestTick(const GameSnapshot& s, bool title_ready) {
         // The title mounts the save right before its menu shows.
         in.title_ready = title_ready && runtime_savedata_mount_count() > 0 && !s.world_up && !s.loading;
         in.ime_count = runtime_ime_dialog_count();
+        {
+            std::int64_t last_ms = 0;
+            BbGameMenu::TextActivity(&in.screen_seq, &last_ms);
+            const std::int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                            std::chrono::steady_clock::now().time_since_epoch())
+                                            .count();
+            in.screen_quiet = in.screen_seq ? double(now_ms - last_ms) / 1000.0 : 1e9;
+        }
         in.movie_count = g_movies.load(std::memory_order_relaxed);
         in.world_up = s.world_up;
         in.loading = s.loading;

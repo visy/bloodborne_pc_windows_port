@@ -11,9 +11,11 @@
 // Guest: entering the host's world (session role Client) -> "guest", leaving it -> ended. The
 //        EVENTs themselves arrive in party_runtime's on_event (progress::OnLinkEvent).
 #include "party_progress.h"
+#include "party_async_io.h"
 
 #include "game_state.h"
 #include "party_link.h"
+#include "party_perf.h"
 
 #include <cstdarg>
 #include <cstdio>
@@ -32,8 +34,8 @@ void BLog(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    std::printf("Party progress: %s\n", line);
-    std::fflush(stdout);
+    perf::Scope z(perf::Zone::Log);
+    coop::asyncio::Print(std::string("Party progress: ") + line + "\n"); // never blocks the caller (party_async_io.h)
 }
 
 struct Bridge {  // main thread only
@@ -93,7 +95,7 @@ void HostSide(Bridge& b, party::PartyLink* link) {
     }
 
     if (!changes.empty() && any_member) {
-        link->send_event(party::kBroadcast, kEventFlags, ChangesToJson(HostEpoch(), changes));
+        link->post_event(party::kBroadcast, kEventFlags, ChangesToJson(HostEpoch(), changes));
         BLog("%zu flag changes (seq %llu..%llu) sent to the party", changes.size(),
              static_cast<unsigned long long>(changes.front().seq), static_cast<unsigned long long>(changes.back().seq));
     }
@@ -109,7 +111,7 @@ void HostSide(Bridge& b, party::PartyLink* link) {
         b.waiting_logged = false;
         const std::string body = SnapshotToJson(snap);
         for (int slot : b.want_snapshot) {
-            link->send_event(slot, kEventFlagSnapshot, body);
+            link->post_event(slot, kEventFlagSnapshot, body);
             BLog("flag snapshot (%zu blocks, seq %llu, %zu bytes) sent to slot %d", snap.blocks.size(),
                  static_cast<unsigned long long>(snap.seq), body.size(), slot);
         }
@@ -137,6 +139,7 @@ void DirectorTick(const GameSnapshot& s, party::PartyLink* link) {
         return;
     }
     Tick(s);
+    perf::Scope z(perf::Zone::ProgressBridge);
     Bridge& b = B();
     if (link != b.link) {  // a new link (or none): its roster starts over
         b.link = link;

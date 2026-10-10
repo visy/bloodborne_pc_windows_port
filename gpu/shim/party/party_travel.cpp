@@ -5,6 +5,8 @@
 // byte before anything is written. Offsets are ours (raw ELF VA). The game's code is System V:
 // every call into it goes through a BB_COOP_SYSV pointer at Guest(off).
 #include "party_travel.h"
+#include "party_async_io.h"
+#include "party_perf.h"
 #include "party_ids.h"
 
 #include <algorithm>
@@ -503,8 +505,8 @@ void Log(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    std::printf("Party travel: %s%s\n", PartyLogStamp().c_str(), line);
-    std::fflush(stdout);
+    perf::Scope z(perf::Zone::Log);
+    coop::asyncio::Print(std::string("Party travel: ") + PartyLogStamp() + line + "\n"); // never blocks the caller (party_async_io.h)
 }
 
 bool EnvOff(const char* name) {
@@ -664,6 +666,7 @@ void CaptureHost(u64 site, TravelKind kind) {
 }
 
 BB_COOP_SYSV void LampWarpEntry(u64 id, u64, u64, u64, u64, u64) {
+    perf::Scope z(perf::Zone::HookLampWarp);
     if (!g_in_replay.load()) {
         g_lamp_key = static_cast<u32>(id);
     }
@@ -810,6 +813,7 @@ bool RedirectGuest(u64 site, TravelKind kind) {
 // Replaces 0x13CDE30 (jumped to from its entry, so the return address is the game caller's).
 __attribute__((noinline)) BB_COOP_SYSV u64 FunnelHook() {
     const u64 ret = reinterpret_cast<u64>(__builtin_return_address(0));
+    perf::Scope z(perf::Zone::HookFunnel);
     if (g_travel_on.load() && !g_in_replay.load()) {
         if (g_block_clear3.load() > 0) {
             if (RetargetSendHome(kBlockClear3Jump)) {
@@ -827,6 +831,7 @@ __attribute__((noinline)) BB_COOP_SYSV u64 FunnelHook() {
             }
         }
     }
+    z.End(); // the game's own transition is not ours
     return reinterpret_cast<FunnelFn>(g_funnel_orig)();
 }
 

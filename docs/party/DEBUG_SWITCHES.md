@@ -18,7 +18,7 @@ What they do for a player: [docs/PARTY.md](../PARTY.md).
 | `BB_PARTY_MAX` | Max players | 3 |
 | `BB_PARTY_AUTO` | Automatic summoning | 1 |
 | `BB_PARTY_SEAMLESS` | Seamless party rules | 1 |
-| `BB_PARTY_SAVE` | Separate party saves | `separate` (launcher); runtime default without it: shared |
+| `BB_PARTY_SAVE` | Separate party saves (always on) | `separate`; every party session uses `savedata_party`, `shared` is ignored |
 | `BB_PARTY_PORT` | Port | 9307 |
 | `BB_PARTY_UPNP` | UPnP | 1 |
 | `BB_PARTY_PUBLIC_ADDR` | Public address (host) | unset (STUN / UPnP) |
@@ -49,6 +49,11 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 
 | Name | What | Default | Owner file |
 |---|---|---|---|
+| `BB_PARTY_MENU` | `1`: this party run was started by the in-game party flow (docs/party/ingame_flow.md): `user\party.json` supplies the host address, password and host code secret when `BB_PARTY_CODE` / `BB_PARTY_PASSWORD` are unset | unset (launcher runs) | `gpu/shim/party/party_flow_game.cpp` |
+| `BB_PARTY_FLOW` | `0`: no party flow rows on the Party page | on | `gpu/shim/party/party_flow_game.cpp` |
+| `BB_PARTY_TITLE_ENTRY` | `0`: no *Party* item on the title's main menu (System → Party still has the rows) | on | `gpu/shim/bbport_game_menu.cpp` |
+| `BB_PARTY_FLOW_TEST` | Tests: `<action>[@s]` (`new`, `join`, `continue`, `host`, `leave`, `solo`, `auto` = `join` when party.json says role join, else `new`; `world:` prefix = in the world) runs that party flow action once, s seconds (default 15) after reaching the title / world; the restart it causes gets `BB_PARTY_FLOW_TEST_NEXT` as its `BB_PARTY_FLOW_TEST` | unset | `gpu/shim/party/party_flow_game.cpp` |
+| `BB_RELAUNCH_LOOP` | Set by `run.bat`: the game may end with exit code 75 to be started again with `user\party_relaunch.bat` applied; unset: the party flow restarts through `runtime_restart` | `1` under `run.bat` | `run.bat`, `src/probe.c` |
 | `BB_PARTY_HOST` | Overrides the role from `BB_PARTY`: `1` host, anything else guest | role from `BB_PARTY` | `gpu/shim/party/party_director.cpp`, `gpu/shim/net/bbnet_glue.cpp` |
 | `BB_PARTY_CODE_FILE` | Host: also writes the party code to this file. Guest without a code: waits up to 60 s for the file and joins with it | unset | `gpu/shim/party/party_runtime.cpp` (`tools/mp/instances.py`) |
 | `BB_PARTY_PREFER_LAN` | Guest reading `BB_PARTY_CODE_FILE`: try the LAN code before the Internet code | off | `gpu/shim/party/party_runtime.cpp` |
@@ -70,6 +75,8 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_DREAM_GATE` | `0`: the Hunter's Dream stays closed to co-op (no area-table patch) | patched | `gpu/shim/party/party_travel.cpp` |
 | `BB_PARTY_FULL_HP` | `0`: cooperators keep the game's 70 % max HP | 100 % | `gpu/shim/party/seamless_rules.cpp` |
 | `BB_PARTY_BELL_NO_INSIGHT` | `0`: the Beckoning Bell costs Insight again (param rule and XML patch) | no Insight | `gpu/shim/party/seamless_rules.cpp`, `scripts/patches.py` |
+| `BB_PARTY_PERF` | `1`: per-frame and per-call cost (p50 / p99 / max) of every coop-tick section and the hot hooks (SetEventFlag, EMEVD filter, award, travel funnel, ...) and of the party log lines, logged as `Party perf:` lines from a background thread; summarise with `tools/party/perf_summary.py run.log` | off | `gpu/shim/party/party_perf.cpp` |
+| `BB_PARTY_PERF_SECONDS` | Report period of `BB_PARTY_PERF` | 10 | `gpu/shim/party/party_perf.cpp` |
 | `BB_PARTY_EMEVD_TRACE` | `1`: logs each new (event, bank, instruction) the game runs | off | `gpu/shim/party/seamless_rules.cpp` |
 | `BB_PARTY_EMEVD_SKIP` | `event:bank:id[@index][,...]` (`*` = any event): skips those EMEVD instructions | none | `gpu/shim/party/seamless_rules.cpp` |
 | `BB_PARTY_FOURP` | `0`: no 4-player patches (rule tag `4p:off`; must match on every player) | on | `gpu/shim/party/party_fourp.cpp` |

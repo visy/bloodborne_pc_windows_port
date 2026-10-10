@@ -21,6 +21,7 @@
 //   SprjEventFlagMan 0x553b100: GetEventFlagValue 0x13cfd80(man, id, bits)
 //   area boss-cleared check 0x131d7b0(SprjLuaEventMan 0x553b0c8, &area) (what 0x1874710 asks)
 #include "party_npc_test.h"
+#include "party_async_io.h"
 
 #include "coop_hooks.h"
 
@@ -107,8 +108,7 @@ void Log(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    std::printf("Party NPC: %s\n", line);
-    std::fflush(stdout);
+    coop::asyncio::Print(std::string("Party NPC: ") + line + "\n"); // never blocks the caller (party_async_io.h)
 }
 
 double Seconds(Clock::time_point a, Clock::time_point b) {
