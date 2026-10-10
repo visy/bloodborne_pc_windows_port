@@ -100,4 +100,51 @@ bool GuestMayRing(bool guest_ready, bool connected);
 /// failing, as a client or leaving.
 bool SessionMayRing(bool host, int session_role);
 
+// ---- Late joiner catch-up (party_catchup.cpp is the game glue) ----
+// A guest whose save is behind the host's (a fresh character, or one still in the prologue) is
+// brought up to the host before any summon: once its own world is steady (an opening cutscene is
+// skipped, or waited for), the campaign-start flags the host necessarily has (12410000, 9402,
+// 9401, 12417810, 72101000/011, 12101020/21, 12100105, 9404; 9180 off - test_newgame.h's list)
+// go into its own save, the starting weapons 7000000 / 14000000 are given when it has none, and
+// it lamp-warps to the host's last lamp (the gather). The warp's load opens C2's post-load
+// window, where the host's flag snapshot (lamps, shortcuts, bosses, ...) lands in the own save;
+// C3's full item list follows at the summon. Only a party guest connected to a host whose own
+// snapshot says it is past the prologue; never the host, never a solo game.
+struct CatchupInput {
+    bool guest = false;       ///< party guest, link connected
+    bool host_known = false;  ///< the host's C2 flag snapshot arrived
+    bool host_ready = false;  ///< the host's snapshot: 12410000 and 9401 ON
+    bool in_world = false;    ///< world up, not loading
+    bool own_idle = false;    ///< own world, session role idle (0), flag store mode 0
+    bool remo_playing = false;
+    StartFlags flags;         ///< the guest's own
+    double t = 0;             ///< seconds, monotonic
+};
+struct CatchupAction {
+    enum Kind : std::uint8_t { None, SkipOpening, ApplyStart, Warp, Finished };
+    Kind kind = None;
+    std::string why;
+};
+class Catchup {
+public:
+    enum class Phase : std::uint8_t { Idle, Opening, Apply, Warp, WaitWarp, Done };
+    static constexpr double kSteady = 3.0;        ///< s in the own world before deciding
+    static constexpr double kSkipEvery = 4.0;     ///< s between two opening skips
+    static constexpr int kSkipTries = 10;
+    static constexpr double kWarpTimeout = 40.0;  ///< s for the gather warp's load
+    /// Once a frame.
+    CatchupAction Step(const CatchupInput& in);
+    Phase phase() const { return phase_; }
+    /// Applying / warping: the director holds its bells.
+    bool Busy() const { return phase_ == Phase::Apply || phase_ == Phase::Warp || phase_ == Phase::WaitWarp; }
+    bool Applied() const { return applied_; }
+
+private:
+    Phase phase_ = Phase::Idle;
+    double world_at_ = -1, phase_at_ = 0, skip_at_ = -1e9;
+    int skips_ = 0;
+    bool load_seen_ = false, applied_ = false;
+};
+const char* CatchupPhaseName(Catchup::Phase p);
+
 } // namespace coop

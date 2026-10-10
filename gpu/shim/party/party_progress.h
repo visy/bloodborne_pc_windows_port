@@ -405,6 +405,9 @@ bool ReadFlag(u32 id, bool* value);
 bool WriteFlagOwnSave(u32 id, bool value);
 /// The own save's value (the pool; in load mode 1 not what the host-world overlay shows).
 bool ReadFlagOwnSave(u32 id, bool* value);
+/// Guest: the host's value of `id` in its last full snapshot (EVENT flag_snapshot); false when
+/// no snapshot arrived or the id's block is not in it (not a candidate category). Any thread.
+bool HostSnapshotFlag(u32 id, bool* value);
 /// The flag store's load mode: 0 own world, 1 the host-world overlay, -1 no store.
 int FlagLoadMode();
 

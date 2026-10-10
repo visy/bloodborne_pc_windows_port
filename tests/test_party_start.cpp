@@ -178,12 +178,107 @@ static void test_lobby() {
     CHECK(GuestMayRing(StartReady(solo, guest, true), true));
 }
 
+static StartFlags Fresh() {
+    StartFlags f;
+    f.flags_ok = true;
+    f.opening_done = true; // in the clinic after the opening
+    return f;
+}
+
+static void test_catchup() {
+    // A fresh guest, host past the prologue: steady 3 s, apply, warp, load, done.
+    Catchup c;
+    CatchupInput in;
+    in.guest = true;
+    in.host_known = true;
+    in.host_ready = true;
+    in.in_world = true;
+    in.own_idle = true;
+    in.flags = Fresh();
+    in.t = 10;
+    CHECK(c.Step(in).kind == CatchupAction::None);
+    in.t = 12;
+    CHECK(c.Step(in).kind == CatchupAction::None);
+    in.t = 13.1;
+    CatchupAction a = c.Step(in);
+    CHECK(a.kind == CatchupAction::ApplyStart && c.Busy());
+    in.t = 13.5;
+    CHECK(c.Step(in).kind == CatchupAction::None);
+    in.t = 14.2;
+    CHECK(c.Step(in).kind == CatchupAction::Warp);
+    in.in_world = false; // loading
+    in.t = 15;
+    CHECK(c.Step(in).kind == CatchupAction::None && c.Busy());
+    in.in_world = true;
+    in.t = 20;
+    CHECK(c.Step(in).kind == CatchupAction::None); // steady again from 20
+    in.t = 23.5;
+    CHECK(c.Step(in).kind == CatchupAction::Finished && !c.Busy() && c.Applied());
+    CHECK(c.Step(in).kind == CatchupAction::None);
+
+    // Ready already: nothing applied.
+    Catchup r;
+    in = CatchupInput{};
+    in.guest = in.host_known = in.host_ready = in.in_world = in.own_idle = true;
+    in.flags = Fresh();
+    in.flags.first_dream = in.flags.weapon_left = in.flags.weapon_right = true;
+    in.t = 1;
+    CHECK(r.Step(in).kind == CatchupAction::Finished && !r.Applied());
+
+    // Never: not a guest, no host snapshot, or the host itself in its prologue.
+    for (int k = 0; k < 3; ++k) {
+        Catchup n;
+        CatchupInput x;
+        x.guest = k != 0;
+        x.host_known = k != 1;
+        x.host_ready = k != 2;
+        x.in_world = x.own_idle = true;
+        x.flags = Fresh();
+        for (int i = 0; i < 100; ++i) {
+            x.t = i;
+            CHECK(n.Step(x).kind == CatchupAction::None);
+        }
+        CHECK(n.phase() == Catchup::Phase::Idle);
+    }
+
+    // Mid-opening: skips every kSkipEvery s while the cutscene plays, then the catch-up.
+    Catchup o;
+    in = CatchupInput{};
+    in.guest = in.host_known = in.host_ready = in.in_world = in.own_idle = true;
+    in.flags.flags_ok = true;
+    in.flags.cutscene = true; // 12410000 OFF, 9180 ON
+    in.remo_playing = true;
+    in.t = 0;
+    CHECK(o.Step(in).kind == CatchupAction::SkipOpening);
+    in.t = 1;
+    CHECK(o.Step(in).kind == CatchupAction::None);
+    in.t = 4.5;
+    CHECK(o.Step(in).kind == CatchupAction::SkipOpening);
+    in.flags.opening_done = true;
+    in.flags.cutscene = false;
+    in.remo_playing = false;
+    in.t = 5; // the world restarts its steady clock? still idle in the own world: counted from 0
+    a = o.Step(in);
+    CHECK(a.kind == CatchupAction::ApplyStart);
+    // Not idle in the own world (summoned / joining): never applies.
+    Catchup s;
+    in = CatchupInput{};
+    in.guest = in.host_known = in.host_ready = in.in_world = true;
+    in.own_idle = false;
+    in.flags = Fresh();
+    for (int i = 0; i < 50; ++i) {
+        in.t = i;
+        CHECK(s.Step(in).kind == CatchupAction::None);
+    }
+}
+
 int main() {
     test_mode();
     test_steps();
     test_ready();
     test_grants();
     test_lobby();
+    test_catchup();
     std::printf("party-start-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }
