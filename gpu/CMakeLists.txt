@@ -389,3 +389,11 @@ target_compile_definitions(party-travel-test PRIVATE BB_PARTY_TRAVEL_NO_GAME)
 target_compile_options(party-travel-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-travel-test PRIVATE shim)
 set_target_properties(party-travel-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Party story (C4, shim/party/party_story.cpp): its pure logic only (BB_PARTY_STORY_NO_GAME).
+# ninja -C out/gpu party-story-test
+add_executable(party-story-test EXCLUDE_FROM_ALL ../tests/test_party_story.cpp shim/party/party_story.cpp
+    shim/net/json.cpp)
+target_compile_definitions(party-story-test PRIVATE BB_PARTY_STORY_NO_GAME)
+target_compile_options(party-story-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-story-test PRIVATE shim)
+set_target_properties(party-story-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
