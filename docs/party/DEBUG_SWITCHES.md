@@ -66,6 +66,8 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_DREAM_GATE` | `0`: the Hunter's Dream stays closed to co-op (no area-table patch) | patched | `gpu/shim/party/party_travel.cpp` |
 | `BB_PARTY_FULL_HP` | `0`: cooperators keep the game's 70 % max HP | 100 % | `gpu/shim/party/seamless_rules.cpp` |
 | `BB_PARTY_BELL_NO_INSIGHT` | `0`: the Beckoning Bell costs Insight again (param rule and XML patch) | no Insight | `gpu/shim/party/seamless_rules.cpp`, `scripts/patches.py` |
+| `BB_PARTY_PERF` | `1`: per-frame and per-call cost (p50 / p99 / max) of every coop-tick section and the hot hooks (SetEventFlag, EMEVD filter, award, travel funnel, ...) and of the party log lines, logged as `Party perf:` lines from a background thread; summarise with `tools/party/perf_summary.py run.log` | off | `gpu/shim/party/party_perf.cpp` |
+| `BB_PARTY_PERF_SECONDS` | Report period of `BB_PARTY_PERF` | 10 | `gpu/shim/party/party_perf.cpp` |
 | `BB_PARTY_EMEVD_TRACE` | `1`: logs each new (event, bank, instruction) the game runs | off | `gpu/shim/party/seamless_rules.cpp` |
 | `BB_PARTY_EMEVD_SKIP` | `event:bank:id[@index][,...]` (`*` = any event): skips those EMEVD instructions | none | `gpu/shim/party/seamless_rules.cpp` |
 | `BB_PARTY_FOURP` | `0`: no 4-player patches (rule tag `4p:off`; must match on every player) | on | `gpu/shim/party/party_fourp.cpp` |
