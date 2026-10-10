@@ -53,13 +53,36 @@ def builds_running():
     return sorted({n for n in ("ninja.exe", "ld.exe", "lto-wrapper.exe") if f'"{n}"' in out})
 
 
-def wait_for_builds(limit=600):
+def wait_for_builds(build=None, limit=600):
+    """Waits until the build's own out\bbport.exe is a complete PE file that has not changed for
+    5 s (other worktrees' builds - other agents - do not matter). Without `build`: until no
+    ninja/ld runs at all (the old behaviour)."""
     t0 = time.time()
-    while (running := builds_running()) and time.time() - t0 < limit:
-        print("waiting for the build to finish:", ", ".join(running), flush=True)
-        time.sleep(10)
-    if builds_running():
-        sys.exit("a build is still running after %d s; not copying the executables" % limit)
+    if build is None:
+        while (running := builds_running()) and time.time() - t0 < limit:
+            print("waiting for the build to finish:", ", ".join(running), flush=True)
+            time.sleep(10)
+        if builds_running():
+            sys.exit("a build is still running after %d s; not copying the executables" % limit)
+        return
+    exe = Path(build) / "out" / "bbport.exe"
+
+    def stamp():
+        try:
+            st = exe.stat()
+            return (st.st_size, st.st_mtime_ns)
+        except OSError:
+            return None
+
+    while time.time() - t0 < limit:
+        a = stamp()
+        if a and time.time() - a[1] / 1e9 > 5 and exe_ok(exe, 1 << 20):
+            time.sleep(2)
+            if stamp() == a:
+                return
+        print("waiting for", exe, "to be complete and stable", flush=True)
+        time.sleep(5)
+    sys.exit("%s is not complete after %d s; not copying the executables" % (exe, limit))
 
 
 def exe_ok(path: Path, min_size=1):
@@ -114,7 +137,7 @@ def validate_instances(root, count):
 
 def setup(a):
     build = Path(a.build)
-    wait_for_builds()
+    wait_for_builds(build)
     for i in range(a.count):
         inst = Path(a.root) / f"inst{i}"
         (inst / "out").mkdir(parents=True, exist_ok=True)
@@ -172,6 +195,7 @@ def run(a):
                 "BB_PARTY": "host" if i == 0 else "join", "BB_PARTY_CODE_FILE": str(code_file),
                 "BB_PARTY_PORT": str(BASE_PORT + i), "BB_PARTY_NAME": f"Hunter{i}", "BB_PARTY_UPNP": "0",
                 "BB_PARTY_STUN": "off", "BB_PARTY_LOOPBACK": "1", "BB_PARTY_LOCAL_IP": "127.0.0.1",
+                "BB_SKIP_NETWORK_CHOICE": "online", "BB_PATCHES": "Skip Intro",
             })
         for kv in a.env or []:
             k, _, v = kv.partition("=")
