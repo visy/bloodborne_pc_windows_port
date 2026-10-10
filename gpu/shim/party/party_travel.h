@@ -214,6 +214,10 @@ void TravelTick();
 /// Main thread: replays `t` now with the native warp ChooseReplay picks (B2 drives this itself,
 /// party_b2.h). False when the intent has no usable destination or travel is off.
 bool ReplayTravelNow(const TravelIntent& t);
+/// Guest: a veto on the stock send-home warps (B2 keeps a guest in the session through a host's
+/// death). `fn(site)` true = the send-home at `site` is dropped (nothing runs). Any thread.
+using SendHomeVetoFn = bool (*)(std::uint64_t site);
+void SetSendHomeVeto(SendHomeVetoFn fn);
 /// The travel hooks are installed and on (BB_PARTY_TRAVEL is not 0 and the funnel hook is in).
 bool TravelEnabled();
 /// Guest: the host's last lamp id for the death / Hunter's Mark redirect (kTravelNone: no redirect,

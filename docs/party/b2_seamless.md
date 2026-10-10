@@ -159,6 +159,10 @@ only in state 1 (queued until then). Enemy net sync per peer is re-armed by `0x1
 | K5 | 0x13809B7 | `e8 e4 fd b4 00` call 0x1ED07A0 | no leave while a re-join runs | OnMatchingCheck: member chr missing while loading |
 | K6 | 0x178524F | `e8 2c 25 b9 ff` call 0x1317780 | skip while a guest re-join runs | no vanilla SummonReloadStart |
 | K7 | 0x13CDEAE | `75 6c` | `eb 6c` written / restored around the guest's own warp (main thread) | guest warp without leaving |
+| K8 | 0x18C4D7D | `e8 2e 00 59 00` call 0x1E54DB0 | skip on the host (role 3) | ChrIns_OnDeath asks every human task to return when the host dies |
+| K9 | 0x1381A93 (B1 SendHomeHook) | - | `SetSendHomeVeto`: a B2 guest drops HostDead_1's send-home | the guest follows the host's death travel instead of going home |
+| E1 | NowLoading `*0x5562878` | - | guest at the host's travel event: +0x808 = 5, byte 0x556286B = 1, +0x17C0 = 0, +0x804 = 1 (the inline request of 0x1929007); dropped with 0x176D3C0 on a fallback | one continuous loading screen for the guest |
+| D4 | task update | - | a rewound task whose +0x54 stays unapplied for 2 s gets one update run by us (`0x1E52FE0(task, &{0x52EFD40, dt})`, as 0x1E556F0 does), not during SprjRemo | rewind gap fallback |
 | D1 | flow +0x84 | - | guest: 1 on host travel, 3 after the snapshot (the setter 0x178D9A0's write) | host-world load |
 | D2 | task +0x54 / +0xED | - | = 4 / \|= 1 for remote tasks without a chr | re-create remote chrs |
 | D3 | per member | - | host after its load: 0x19, `0x1786050`, `0x1786360`, `0x1A04190`, `0x18F0DB0`, `0x18F0E80`, `0x15BD0E0`, 0x42 | fresh snapshot / net sync |
@@ -232,7 +236,20 @@ warp's own target was used; with +0x1521 = 1 our +0x14C4/D0/E0 write gives the s
 
 ## 7. Risks / open items
 
-* Guest rewind not executing in run 5 (above) - first item for the next live run.
+* Guest rewind not executing in run 5 (above). Static analysis: the update `0x1E52FE0` copies
+  +0x54 to +0x50 unconditionally on entry, so `step 6 next 4` means the task update was not
+  called at all on the guest. Its only caller is `0x1E556F0` from the flow update `0x1789B60`,
+  which skips it while SprjRemo (`*0x5540058 +8 → +0x168 bit 0`) plays; `0x1789B60` itself runs
+  from the in-game net update `0x1947310` and three load-step callers. Candidates: a remo playing
+  on arrival, or the in-game net update not running after a non-summoned host-world load
+  (GSM +0x1521 was 0). The status line now logs the flow timer (+0x98, advanced by every
+  `0x1789B60`), +0x1521 and SprjRemo; D4 runs the update itself if it stays stalled.
+* Host death (K8/K9, untested live): the host keeps its member tasks, respawns at its lamp through
+  the funnel (B1 captures HostDeath and broadcasts it), the guests drop HostDead_1 and follow the
+  travel event with B2. Boss clear (BlockClear2_1/2_3) still sends guests home; B2 should veto
+  those too and keep the party (next).
+* Early loading screen (E1, untested live): what the request byte does while the guest is still
+  in the world (input, pause) is unknown; the guest's own load clears it at InGameStart.
 * Loading-screen count: host 1, guest 1 (its own load starts when the host's snapshot arrives,
   i.e. after the host's load; ~host load + guest load in wall time). Starting the guest's load in
   parallel needs the snapshot taken from the destination before the host is there - not possible;

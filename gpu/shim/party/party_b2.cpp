@@ -70,6 +70,10 @@ constexpr u64 kUidDropCall = 0x193c689;     // e8 82 26 c8 ff -> 0x15bed10
 constexpr u64 kMatchCheckCall = 0x13809b7;  // e8 e4 fd b4 00 -> 0x1ed07a0
 constexpr u64 kJoinStartCall = 0x178524f;   // e8 2c 25 b9 ff -> 0x1317780
 constexpr u64 kFunnelLeaveJne = 0x13cdeae;  // 75 6c (cmp [GSM+0x1592],0 ; jne skip-leave)
+constexpr u64 kHostDeathReturnCall = 0x18c4d7d; // e8 2e 00 59 00 -> 0x1e54db0 (ChrIns_OnDeath, role 3)
+constexpr u64 kRequestReturn = 0x1e54db0;       // void (CSMultiPlayMan*, const PlayerId*)
+constexpr u64 kHostDead1Call = 0x1381a93;       // HostDead_1's send-home (B1 SendHomeHook site)
+constexpr u64 kTaskUpdate = 0x1e52fe0;          // CSMultiPlayerInsTask update (vfunc +0xd0)
 
 // Task (CSMultiPlayerInsTask, 0x100 bytes, vtable 0x534F650) fields.
 constexpr u64 kTaskStep = 0x50, kTaskNext = 0x54, kTaskPeer = 0xc8, kTaskMode = 0xe8, kTaskSlot = 0xec,
@@ -298,6 +302,26 @@ BB_COOP_SYSV void UidDropHook(u64 slots) {
     reinterpret_cast<Fn>(Guest(kDropPresentation))(slots);
 }
 
+// K8: ChrIns_OnDeath (local player, role 3) asks every human task to return: the host's death
+// would end the party. With B2 the host respawns and the members follow (its travel event).
+BB_COOP_SYSV void HostDeathReturnHook(u64 man, u64 id) {
+    if (g_on.load() && Role() == RoleHost) {
+        Log("K8: host death: member task kept (no return request)");
+        return;
+    }
+    using Fn = void(BB_COOP_SYSV*)(u64, u64);
+    reinterpret_cast<Fn>(Guest(kRequestReturn))(man, id);
+}
+
+/// Guest: HostDead_1's send-home is dropped (the host's death travel brings the guest along).
+bool SendHomeVeto(u64 site) {
+    if (g_on.load() && Role() == RoleClient && site == kHostDead1Call) {
+        Log("guest: HostDead_1 send-home dropped (B2: the host's respawn travel follows)");
+        return true;
+    }
+    return false;
+}
+
 // K5: Lua OnMatchingCheck: a member's chr is missing (it is loading).
 BB_COOP_SYSV u64 MatchCheckHook(u64 session) {
     if (g_on.load() && g_rejoin.load()) {
@@ -334,6 +358,41 @@ bool WriteCode(u64 off, const u8* bytes, std::size_t n) {
     std::memcpy(at, bytes, n);
 #endif
     return true;
+}
+
+// The guest's loading screen from the host's travel event on (one continuous screen): what the
+// map-load request at 0x1929007..0x192902B writes inline into the NowLoading object
+// (*0x5562878): +0x808 screen kind 5, request byte 0x556286B = 1, +0x17C0 = 0, +0x804 = 1 unless 2.
+// The guest's own MoveMapStep clears it at InGameStart (0x176D3C0 from 0x193A755).
+constexpr u64 kSlotNowLoading = 0x5562878, kNowLoadingByte = 0x556286b, kNowLoadingClear = 0x176d3c0;
+bool g_early_screen = false;
+
+void RaiseLoadingScreen() {
+    const u64 nl = Slot(kSlotNowLoading);
+    if (!nl) {
+        return;
+    }
+    const int kind = 5, one = 1;
+    const u8 req = 1;
+    const float zero = 0.0f;
+    SafeWrite(nl + 0x808, &kind, 4);
+    SafeWrite(Guest(kNowLoadingByte), &req, 1);
+    SafeWrite(nl + 0x17c0, &zero, 4);
+    if (Field<int>(nl, 0x804) != 2) {
+        SafeWrite(nl + 0x804, &one, 4);
+    }
+    g_early_screen = true;
+    Log("guest: loading screen raised at the host's travel");
+}
+
+void DropLoadingScreen(const char* why) {
+    if (!g_early_screen) {
+        return;
+    }
+    g_early_screen = false;
+    using Fn = u64(BB_COOP_SYSV*)();
+    reinterpret_cast<Fn>(Guest(kNowLoadingClear))();
+    Log("guest: early loading screen dropped (%s)", why);
 }
 
 struct FunnelKeepRoom {
@@ -417,6 +476,7 @@ struct State {
     TravelIntent intent;  // under mu
     double since = 0;
     bool load_seen = false;
+    bool screen_done = false;
     int stable = 0;
     // host
     HostPhase hphase = HostPhase::Idle;
@@ -470,6 +530,14 @@ void GuestTick(const GameSnapshot& s, double now) {
     case GuestPhase::Idle:
         return;
     case GuestPhase::AwaitSnapshot:
+        if (!st.screen_done) {
+            st.screen_done = true;
+            static const bool early = !(std::getenv("BB_PARTY_B2_EARLY_SCREEN") &&
+                                        std::getenv("BB_PARTY_B2_EARLY_SCREEN")[0] == '0');
+            if (early) {
+                RaiseLoadingScreen();
+            }
+        }
         bool have_dest;
         {
             std::lock_guard<std::mutex> lk(st.mu);
@@ -508,6 +576,7 @@ void GuestTick(const GameSnapshot& s, double now) {
                 keep.armed ? "armed" : "NOT armed: the room will close");
             if (!ReplayTravelNow(t)) {
                 Log("guest: no usable destination; falling back to B1");
+                DropLoadingScreen("no destination");
                 g_rejoin = false;
                 std::lock_guard<std::mutex> lk(st.mu);
                 st.gphase = GuestPhase::Idle;
@@ -516,6 +585,7 @@ void GuestTick(const GameSnapshot& s, double now) {
         }
         if (now - st.since > 45.0) {  // the flow leaves by itself after 60 s in states 1-3
             Log("guest: no host snapshot within 45 s (flow %d); falling back to B1", fstate);
+            DropLoadingScreen("fallback");
             const int four = 4;
             SafeWrite(flow + 0x84, &four, 4);
             g_rejoin = false;
@@ -533,6 +603,7 @@ void GuestTick(const GameSnapshot& s, double now) {
         st.load_seen = st.load_seen || loading;
         st.stable = (!loading && st.load_seen) ? st.stable + 1 : 0;
         if (st.stable >= 30 && fstate == 4) {
+            g_early_screen = false;  // the load's own InGameStart cleared it
             const int n = RewindRemoteTasks("guest");
             Log("guest: arrived in the host world (flow 4); %d remote task(s) rewound", n);
             Send(0, "{\"op\":\"arrived\"}");  // guest: slot 0 = the host
@@ -668,11 +739,55 @@ void Init() {
     InstallCall(kMatchCheckCall, kBeginLeave, reinterpret_cast<const void*>(&MatchCheckHook),
                 "B2 K5 OnMatchingCheck leave");
     InstallCall(kJoinStartCall, kJoinStartLua, reinterpret_cast<const void*>(&JoinStartHook), "B2 K6 OnBeJoinStart");
+    InstallCall(kHostDeathReturnCall, kRequestReturn, reinterpret_cast<const void*>(&HostDeathReturnHook),
+                "B2 K8 host death return-all");
+    SetSendHomeVeto(&SendHomeVeto);
     Log("K7 funnel branch +0x%llx %s", ull(kFunnelLeaveJne),
         Matches(kFunnelLeaveJne, {0x75, 0x6c}) ? "verified (75 6c), written only around the guest's own warp"
                                                 : "MISMATCH: guest re-join will leave the room");
     g_on = true;
     Log("on%s", g_force.load() ? " (BB_PARTY_B2_FORCE: K2 keeps tasks without a session)" : "");
+}
+
+/// A rewound task whose requested step never got applied (+0x54 != +0x50 for 2 s): the game's own
+/// task update (0x1E556F0 from the flow update 0x1789B60) did not run it. Run one update of that
+/// task ourselves, as 0x1E556F0 does: vfunc +0xD0 = 0x1E52FE0(task, &{0x52EFD40, dt}).
+void KickStalledTasks(const GameSnapshot& s, double now) {
+    static double pending_since = 0, last_kick = 0;
+    if (!s.world_up || s.loading) {
+        pending_since = 0;
+        return;
+    }
+    bool stalled = false;
+    for (const TaskInfo& t : Tasks(false)) {
+        stalled = stalled || ((t.mode == 1 || t.mode == 2) && t.next == kStepCreate && t.step != kStepCreate);
+    }
+    if (!stalled) {
+        pending_since = 0;
+        return;
+    }
+    if (pending_since == 0) {
+        pending_since = now;
+        return;
+    }
+    const u64 remo = Field<u64>(Slot(0x5540058), 8);
+    const bool remo_on = remo && (Field<u8>(remo, 0x168) & 1);
+    if (now - pending_since < 2.0 || now - last_kick < 1.0 || remo_on) {
+        return;
+    }
+    last_kick = now;
+    struct alignas(8) Dt {
+        u64 vt;
+        float dt;
+    } dt{Guest(0x52efd40), 1.0f / 30.0f};
+    for (const TaskInfo& t : Tasks(false)) {
+        if ((t.mode == 1 || t.mode == 2) && t.next == kStepCreate && t.step != kStepCreate) {
+            Log("kick: task mode %d stalled at step %d next %d for %.1f s (flow timer %.2f); running its update",
+                t.mode, t.step, t.next, now - pending_since, Field<float>(Slot(kSlotFlow), 0x98));
+            using Fn = void(BB_COOP_SYSV*)(u64, const Dt*);
+            reinterpret_cast<Fn>(Guest(kTaskUpdate))(t.task, &dt);
+        }
+    }
 }
 
 /// BB_PARTY_B2_TEST_WARP=<lamp id>: single-instance check of K2 - once an NPC task has existed
@@ -729,6 +844,7 @@ void Tick(const GameSnapshot& s) {
     }
     ProbeTick(s);
     TestWarpTick(s, now);
+    KickStalledTasks(s, now);
     if (Role() == RoleClient) {
         GuestTick(s, now);
     } else {
@@ -750,6 +866,7 @@ bool OnHostTravel(const TravelIntent& t) {
         st.intent = t;
         st.have_intent = true;
         st.have_dest = false;
+        st.screen_done = false;
         st.gphase = GuestPhase::AwaitSnapshot;
         st.since = Now();
     }
