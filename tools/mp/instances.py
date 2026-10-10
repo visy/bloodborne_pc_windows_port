@@ -353,7 +353,9 @@ def run(a):
             # the same text and don't count as progress.
             n = len({re.sub(r"0x[0-9a-fA-F]+|\d[\d.:]*", "#", l) for i in range(a.count)
                      for l in log_text(i, starts[i]).splitlines() if idle_rx.match(l)})
-            if n != last_party_count:
+            in_world = all((re.findall(r"^Party: (world up|world down|loading screen)", log_text(i), re.M)
+                            or ["-"])[-1] == "world up" for i in range(a.count))
+            if n != last_party_count or not in_world:  # boots, titles and loads never count as idle
                 last_party_count, last_party_change = n, time.time()
             elif n > 0 and time.time() - last_party_change > idle_limit and not (want_crash and not crashed):
                 verdict = verdict or ("IDLE: no new party log lines for %.0f s (run ended at %.0f s)"
