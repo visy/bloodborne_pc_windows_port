@@ -305,7 +305,14 @@ warp's own target was used; with +0x1521 = 1 our +0x14C4/D0/E0 write gives the s
   Overlay guard (save the host-world overlay at the travel event, restore every group the new
   snapshot left all-zero): restored 7 of 11 non-zero groups, but 9401's group came back
   non-zero with the bit cleared - the re-sent snapshot itself carries different data. Root cause
-  of the poor re-sent snapshot is open (run 20 logs the host's own flags at the re-send).
+  of the poor re-sent snapshot: **the apply 0x13BECA0 ran in load mode 1** (a join applies it in
+  the guest's own world, mode 0). Run 20: host at the re-send 12410000=1 9401=1 12417810=1; guest
+  after its load all 0. **K11** (call site 0x17851CE `e8 cd 9a c3 ff` → 0x13BECA0): on a B2
+  re-entry the guest's store goes back to mode 0 (SetLoadMode 0x13BB590) before the apply; its
+  MoveMapStep sets mode 1 from the fresh overlay. Run 21: guest after the B2 load 12410000=1
+  9401=1 9402=1 12417810=1 12411800=1 (2410=0: an area gate, never shared), no opening
+  cutscene and no skip needed. The skip predicate stays as the net for a plain bell join whose
+  snapshot was taken in another map (12410000=0 after a join from a host in the Dream).
 * Recovery net: a player falling for 6 s in its own world is warped to its own last lamp
   (0x13CDF30, WorldTransitionState +0x1528).
 * Saves: every B2 run now starts from the base save `E:\games\bbport\save_backup\savedata_20261010`
