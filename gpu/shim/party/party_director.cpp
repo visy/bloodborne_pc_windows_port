@@ -414,7 +414,7 @@ bool ApplySpEffect(int id) {
 void Ring(State& st, const char* event, const char* why, Clock::time_point now) {
     st.last_ring = now;
     st.rung_ever = true;
-    const bool host = event == kHostBell;
+    const bool host = std::strcmp(event, kHostBell) == 0;
     const char* mode = std::getenv("BB_PARTY_BELL_MODE");
     if (mode && std::strcmp(mode, "lua") == 0) {
         if (LuaEventQueue(event)) {
