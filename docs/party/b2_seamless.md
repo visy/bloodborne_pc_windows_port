@@ -220,7 +220,23 @@ Run 1-3 (20:00-20:30) [R]:
   `on_event` callback in party_runtime (fixed in the same commit); the host fell back to its 60 s
   timer.
 
+Run 5 (21:10, with the fixes) [R]: **the guest arrived in m24_01 (stage 0x18010000) at the host's
+spot, in session (role 6, flow 4), after one loading screen**; the host got "arrived", rewound,
+and the guest's chr stood 0.4 m from the host on the host's screen (`chr pos (-193.4, -28.6,
+68.9)`). Open: on the guest the rewound host task stayed `step 6 next 4 flags 0x0d NO-chr` for the
+10 s the run lasted - the task update (0x1E556F0, from the flow update 0x1789B60, skipped while
+SprjRemo plays) did not run it. In runs 1-3 the same rewind did create the host chr. Next run
+logs the flow timer (+0x98, advanced by 0x1789B60), GSM +0x1521 and SprjRemo to tell which.
+GSM +0x1521 read 0 on the guest in run 5 (1 expected after OnJoinMutiplay), which is why the lamp
+warp's own target was used; with +0x1521 = 1 our +0x14C4/D0/E0 write gives the same spot.
+
 ## 7. Risks / open items
+
+* Guest rewind not executing in run 5 (above) - first item for the next live run.
+* Loading-screen count: host 1, guest 1 (its own load starts when the host's snapshot arrives,
+  i.e. after the host's load; ~host load + guest load in wall time). Starting the guest's load in
+  parallel needs the snapshot taken from the destination before the host is there - not possible;
+  the hybrid keeps the guest's loading screen up while it waits (flow 1) instead.
 
 * [I] GameData remote rows surviving a host load (MoveMapStep ctor touches only the local row) -
   check +0x10 of each row after the load in the two-instance run.
