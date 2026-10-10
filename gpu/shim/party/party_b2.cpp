@@ -22,6 +22,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <map>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -564,6 +565,89 @@ void BesideHost(float pos[4], const float rot[4], int slot) {
 /// the host's facing and height) with the chr warp vfunc +0x5F8 (0x18CD600(chr, pos, rot, 1), as
 /// the NPC summon step 0x1E4B559 calls it). The game's own placement (the sign spot, usually the
 /// host's lamp spot) is otherwise on top of the host. No ground probe yet: the host's height.
+// ---- Host-world flag overlay guard (B2 re-entry) ----
+// SprjEventFlagMan (*0x553B100) +0x88/+0x90: std::map<u32 group key, u8* 125-byte buffer>, the
+// host-world overlay of load mode 1 (nodes: left +0, parent +8, right +0x10, is-nil +0x19,
+// key +0x20, buffer +0x28). Run 18 showed the overlay all zero after the B2 re-sent snapshot was
+// applied (9401 / 12410000 = 0 where the join's snapshot had 1), so the client replayed the
+// opening cutscene. The guest keeps a copy of the overlay it had in the host's world and, after
+// the new snapshot, restores every group that came back all zero.
+std::map<u32, std::vector<u8>> g_overlay_saved;
+
+template <class F>
+void ForEachOverlayGroup(F&& fn) {
+    const u64 man = Slot(0x553b100);
+    const u64 head = Field<u64>(man, 0x90);
+    if (!head) {
+        return;
+    }
+    std::vector<u64> stack;
+    const u64 root = Field<u64>(head, 8);
+    if (root && root != head) {
+        stack.push_back(root);
+    }
+    int guard = 0;
+    while (!stack.empty() && guard++ < 4096) {
+        const u64 n = stack.back();
+        stack.pop_back();
+        if (!n || n == head || Field<u8>(n, 0x19)) {
+            continue;
+        }
+        fn(Field<u32>(n, 0x20), Field<u64>(n, 0x28));
+        stack.push_back(Field<u64>(n, 0));
+        stack.push_back(Field<u64>(n, 0x10));
+    }
+}
+
+void SaveOverlay() {
+    g_overlay_saved.clear();
+    int nonzero = 0;
+    ForEachOverlayGroup([&](u32 key, u64 buf) {
+        std::vector<u8> v(125);
+        if (buf && SafeRead(buf, v.data(), v.size())) {
+            bool any = false;
+            for (u8 b : v) {
+                any = any || b;
+            }
+            nonzero += any ? 1 : 0;
+            g_overlay_saved[key] = std::move(v);
+        }
+    });
+    Log("overlay guard: %zu host-world groups saved (%d non-zero)", g_overlay_saved.size(), nonzero);
+}
+
+void RestoreZeroedOverlay() {
+    int zero = 0, restored = 0, total = 0;
+    ForEachOverlayGroup([&](u32 key, u64 buf) {
+        ++total;
+        u8 v[125];
+        if (!buf || !SafeRead(buf, v, sizeof v)) {
+            return;
+        }
+        bool any = false;
+        for (u8 b : v) {
+            any = any || b;
+        }
+        if (any) {
+            return;
+        }
+        ++zero;
+        auto it = g_overlay_saved.find(key);
+        if (it == g_overlay_saved.end()) {
+            return;
+        }
+        bool saved_any = false;
+        for (u8 b : it->second) {
+            saved_any = saved_any || b;
+        }
+        if (saved_any && SafeWrite(buf, it->second.data(), it->second.size())) {
+            ++restored;
+        }
+    });
+    Log("overlay guard: %d groups, %d all-zero after the new snapshot, %d restored from the saved overlay", total,
+        zero, restored);
+}
+
 /// The flags the opening cutscene depends on, as the store answers now (overlay in load mode 1).
 void LogIntroFlags(const char* when) {
     const u64 man = Slot(0x553b100);
@@ -736,6 +820,48 @@ bool ClientIntroSkip(int event_id, int bank, int id) {
     return true;
 }
 
+/// Recovery net (any role, own world only): a player that keeps falling for 6 s (an endless fall
+/// out of the map after a bad saved position - the game's own death plane did not catch it) is
+/// warped to its own last lamp (0x13CDF30 with the low dword of WorldTransitionState +0x1528).
+void FallRecoveryTick(const GameSnapshot& s, double now) {
+    static float last_y = 0;
+    static double last_t = 0, falling_since = 0;
+    static u64 last_player = 0;
+    if (!s.world_up || s.loading || !s.player || Field<u8>(Slot(kSlotGsm), 0x1592) != 1) {
+        falling_since = 0;
+        last_player = 0;
+        return;
+    }
+    if (now - last_t < 1.0) {
+        return;
+    }
+    const u64 pm = Field<u64>(Field<u64>(Field<u64>(Field<u64>(s.player, 0x58), 8), 0x3b0), 0x68);
+    float p[4];
+    if (!pm || !SafeRead(pm + 0x1e0, p, 16)) {
+        return;
+    }
+    const float dy = last_player == s.player ? last_y - p[1] : 0.0f;
+    last_y = p[1];
+    last_t = now;
+    last_player = s.player;
+    if (dy > 1.5f) {
+        if (falling_since == 0) {
+            falling_since = now;
+        } else if (now - falling_since >= 6.0) {
+            falling_since = 0;
+            const u32 lamp = Field<u32>(Slot(kSlotGsm), 0x1528);
+            Log("recovery: falling for 6 s at (%.1f, %.1f, %.1f); warping to the own last lamp %u", p[0], p[1], p[2],
+                lamp);
+            if (lamp && lamp != 0xffffffffu) {
+                using Fn = void(BB_COOP_SYSV*)(u32);
+                reinterpret_cast<Fn>(Guest(0x13cdf30))(lamp);
+            }
+        }
+    } else {
+        falling_since = 0;
+    }
+}
+
 /// Any failed or timed-out B2 step on a guest: hand the host's travel to B1 (party_travel): the
 /// guest warps to the destination in its own world (the funnel leaves the session then, as
 /// vanilla) and the director's bells re-summon it. Never leaves the guest stranded.
@@ -778,6 +904,7 @@ void GuestTick(const GameSnapshot& s, double now) {
     case GuestPhase::AwaitSnapshot:
         if (!st.screen_done) {
             st.screen_done = true;
+            SaveOverlay();
             static const bool early = !(std::getenv("BB_PARTY_B2_EARLY_SCREEN") &&
                                         std::getenv("BB_PARTY_B2_EARLY_SCREEN")[0] == '0');
             if (early) {
@@ -830,6 +957,7 @@ void GuestTick(const GameSnapshot& s, double now) {
                     std::memcpy(t.rot, st.dest_rot, sizeof t.rot);
                 }
             }
+            RestoreZeroedOverlay();
             LogIntroFlags("before the host-world load");
             FunnelKeepRoom keep;
             Log("guest: host snapshot applied; loading %s in host-world mode (K7 %s)", DescribeTravel(t).c_str(),
@@ -1168,6 +1296,7 @@ void Tick(const GameSnapshot& s) {
     TestBossTick(s, now);
     ArrivalWatchTick(s, now);
     HostMemberWatchTick(s, now);
+    FallRecoveryTick(s, now);
     if (Role() == RoleClient) {
         GuestTick(s, now);
     } else {
