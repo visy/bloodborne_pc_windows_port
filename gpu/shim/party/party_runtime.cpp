@@ -653,6 +653,9 @@ LinkCallbacks make_callbacks(bool host) {
             pump_stop(m.name);
             bbnet::party::PartyHostService::instance().context_gone(m.name);
         };
+        cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
+            if (name == coop::b2::kEventName) coop::b2::OnLinkEvent(slot, body);  // B2: a guest arrived
+        };
         cb.on_rpc = [](int slot, const std::string& kind, const std::string& body) -> std::string {
             PartyLink* link = R().link;
             bbnet::party::Caller caller;

@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -191,11 +192,31 @@ std::vector<u64> Members() {
     return out;
 }
 
+bool ChrPos(u64 chr, float out[3]) {
+    const u64 a = Field<u64>(Field<u64>(Field<u64>(Field<u64>(chr, 0x58), 8), 0x3b0), 0x68);
+    return a && SafeRead(a + 0x1e0, out, 12);
+}
+
+std::string DescribeChr(u64 chr) {
+    float p[3] = {0, 0, 0};
+    char b[96];
+    if (!chr || !ChrPos(chr, p)) {
+        return "-";
+    }
+    std::snprintf(b, sizeof b, "stage %#x pos (%.1f, %.1f, %.1f)", Field<u32>(chr, 0x3f8), p[0], p[1], p[2]);
+    return b;
+}
+
 std::string DescribeTasks() {
     std::string s;
-    char b[96];
+    char b[192];
     for (const TaskInfo& t : Tasks(false)) {
-        const char* chr = (t.mode == 1 || t.mode == 2) ? (PlayerForPeer(t.task + kTaskPeer) ? " chr" : " NO-chr") : "";
+        std::string chrs;
+        if (t.mode == 1 || t.mode == 2) {
+            const u64 c = PlayerForPeer(t.task + kTaskPeer);
+            chrs = c ? " chr " + DescribeChr(c) : " NO-chr";
+        }
+        const char* chr = chrs.c_str();
         std::snprintf(b, sizeof b, " [human mode %d step %d next %d slot %u flags 0x%02x%s]", t.mode, t.step, t.next,
                       unsigned(t.slot), unsigned(t.flags), chr);
         s += b;
@@ -401,6 +422,9 @@ struct State {
     HostPhase hphase = HostPhase::Idle;
     double hsince = 0;
     bool arrived = false;  // a guest said it arrived (under mu)
+    bool have_dest = false; // guest: the host's post-load transform (under mu)
+    u32 dest_stage = 0;
+    float dest_pos[4] = {}, dest_rot[4] = {};
     // probe
     bool was_loading = false;
     u64 player_before = 0;
@@ -446,7 +470,12 @@ void GuestTick(const GameSnapshot& s, double now) {
     case GuestPhase::Idle:
         return;
     case GuestPhase::AwaitSnapshot:
-        if (fstate == 2) {
+        bool have_dest;
+        {
+            std::lock_guard<std::mutex> lk(st.mu);
+            have_dest = st.have_dest;
+        }
+        if (fstate == 2 && have_dest) {
             // The game applied the host's 0x11 world snapshot and 0x10 flags (+0x84 = 2; K6 ate
             // the Lua join start). Load the host's destination in host-world mode.
             TravelIntent t;
@@ -460,6 +489,20 @@ void GuestTick(const GameSnapshot& s, double now) {
             }
             const int three = 3;
             SafeWrite(flow + 0x84, &three, 4);  // the setter 0x178D9A0's write
+            {
+                // A guest's loads use the summoned placement (GSM +0x1521 set by the join):
+                // +0x14C4 stage, +0x14D0 position, +0x14E0 rotation - the host's, 1.5 m aside.
+                std::lock_guard<std::mutex> lk(st.mu);
+                const u64 gsm = Slot(kSlotGsm);
+                float pos[4];
+                std::memcpy(pos, st.dest_pos, sizeof pos);
+                pos[0] += 1.5f;
+                SafeWrite(gsm + 0x14c4, &st.dest_stage, 4);
+                SafeWrite(gsm + 0x14d0, pos, 16);
+                SafeWrite(gsm + 0x14e0, st.dest_rot, 16);
+                Log("guest: summoned placement = stage %#x pos (%.1f, %.1f, %.1f), GSM +0x1521 = %u", st.dest_stage,
+                    pos[0], pos[1], pos[2], unsigned(Field<u8>(gsm, 0x1521)));
+            }
             FunnelKeepRoom keep;
             Log("guest: host snapshot applied; loading %s in host-world mode (K7 %s)", DescribeTravel(t).c_str(),
                 keep.armed ? "armed" : "NOT armed: the room will close");
@@ -492,7 +535,7 @@ void GuestTick(const GameSnapshot& s, double now) {
         if (st.stable >= 30 && fstate == 4) {
             const int n = RewindRemoteTasks("guest");
             Log("guest: arrived in the host world (flow 4); %d remote task(s) rewound", n);
-            Send(-1, "{\"op\":\"arrived\"}");
+            Send(0, "{\"op\":\"arrived\"}");  // guest: slot 0 = the host
             std::lock_guard<std::mutex> lk(st.mu);
             st.gphase = GuestPhase::Rewinding;
             st.since = now;
@@ -537,6 +580,20 @@ void HostTick(const GameSnapshot& s, double now) {
         if (st.stable >= 30) {
             for (u64 id : Members()) {
                 ResyncMember(id);
+            }
+            // Where the host stands now: the guests' summoned placement (GSM +0x14C4/+0x14D0/
+            // +0x14E0, what the descriptor builder 0x1943F10 uses while GSM +0x1521 is set).
+            {
+                const u64 a = Field<u64>(Field<u64>(Field<u64>(Field<u64>(s.player, 0x58), 8), 0x3b0), 0x68);
+                float pos[4] = {}, rot[4] = {};
+                if (a && SafeRead(a + 0x1e0, pos, 16) && SafeRead(a + 0x1d0, rot, 16)) {
+                    char b[320];
+                    std::snprintf(b, sizeof b,
+                                  "{\"op\":\"dest\",\"stage\":%u,\"pos\":[%.4f,%.4f,%.4f,%.4f],\"rot\":[%.6f,%.6f,%.6f,%.6f]}",
+                                  Field<u32>(s.player, 0x3f8), pos[0], pos[1], pos[2], pos[3], rot[0], rot[1], rot[2], rot[3]);
+                    Send(-1, b);
+                    Log("host: destination sent: %s", b);
+                }
             }
             st.hphase = HostPhase::Resynced;
             st.hsince = now;
@@ -655,7 +712,7 @@ void Tick(const GameSnapshot& s) {
     static double last_status = 0;
     if ((Role() == RoleHost || Role() == RoleClient) && s.world_up && !s.loading && now - last_status >= 10.0) {
         last_status = now;
-        Log("status: map %s, role %d, flow %d, rejoin %d; tasks:%s", MapName(s.map_id).c_str(), Role(),
+        Log("status: local %s, role %d, flow %d, rejoin %d; tasks:%s", DescribeChr(s.player).c_str(), Role(),
             Field<int>(Slot(kSlotFlow), 0x84, -1), int(g_rejoin.load()), DescribeTasks().c_str());
     }
     ProbeTick(s);
@@ -680,6 +737,7 @@ bool OnHostTravel(const TravelIntent& t) {
         }
         st.intent = t;
         st.have_intent = true;
+        st.have_dest = false;
         st.gphase = GuestPhase::AwaitSnapshot;
         st.since = Now();
     }
@@ -698,6 +756,29 @@ bool OnHostTravel(const TravelIntent& t) {
 
 void OnLinkEvent(int from_slot, const std::string& body) {
     if (!g_on.load()) {
+        return;
+    }
+    if (body.find("\"dest\"") != std::string::npos) {
+        u32 stage = 0;
+        float p[4] = {}, r[4] = {};
+        const char* b = body.c_str();
+        const char* ps = std::strstr(b, "\"stage\":");
+        const char* pp = std::strstr(b, "\"pos\":[");
+        const char* pr = std::strstr(b, "\"rot\":[");
+        if (ps && pp && pr && std::sscanf(ps, "\"stage\":%u", &stage) == 1 &&
+            std::sscanf(pp, "\"pos\":[%f,%f,%f,%f]", &p[0], &p[1], &p[2], &p[3]) == 4 &&
+            std::sscanf(pr, "\"rot\":[%f,%f,%f,%f]", &r[0], &r[1], &r[2], &r[3]) == 4 &&
+            TravelMapKnown(stage) && std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]) &&
+            std::fabs(p[0]) < 1e5f && std::fabs(p[1]) < 1e5f && std::fabs(p[2]) < 1e5f) {
+            std::lock_guard<std::mutex> lk(S().mu);
+            S().have_dest = true;
+            S().dest_stage = stage;
+            std::memcpy(S().dest_pos, p, sizeof p);
+            std::memcpy(S().dest_rot, r, sizeof r);
+            Log("guest: host destination stage %#x pos (%.1f, %.1f, %.1f)", stage, p[0], p[1], p[2]);
+        } else {
+            Log("guest: bad destination event refused");
+        }
         return;
     }
     if (body.find("\"arrived\"") != std::string::npos) {
