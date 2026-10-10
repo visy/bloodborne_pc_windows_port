@@ -422,13 +422,14 @@ Timelines after the fix (host log H, guest log G; t = 0 at the step):
 | Host death (ForceDead) in Central Yharnam (run B) | 20:23:49.90 | +9.1 `host_death (site +0x1381ede)`, last lamp 2412951 (death animation first) | +9.15 lamp warp 2412951 | +14.8 | host left by itself +20.6 | +32.8 | **+43.5 s** (34.4 s after the capture) |
 | Lamp warp Central Yharnam -> same lamp (run C1) | 21:20:44.71 | +0.00 | +0.07 | +5.7 | +5.5 arrived, empty room left; host(3) again +21.2 | +25.2 | **+35.8 s** |
 | Guest death (ForceDead) in the host's world (run C1) | G 21:21:24.93 | (none: guest-side) | +8.6 `guest_died at +0x1382663: to the host's last lamp 2412951` (`party_phantom` redirect, then refill) | +14.2 | host 1 -> 0 cooperators +14.0, game left +18.7, host(3) again +36.4 | +40.4 | **+51.3 s** |
-| Lamp warp Central Yharnam -> Hunter's Dream `2102950` (run B) | 20:24:48.38 | +0.00 mode 2, m21_00 | +0.06 | - | - | - | run ended by the harness before the rejoin; to re-run |
+| Lamp warp Central Yharnam -> Hunter's Dream `2102950` (run C3, fast-join build) | 22:33:23.58 | +0.00 mode 2, m21_00 | +0.04 | +8.7 m21_00 | +11.1 arrived, empty room left; host(3) again +18.6 | +24.1 | **+30.0 s** |
 
 What the times consist of: the load itself is 5-8 s on both sides (in parallel); the rest is the bell
 cycle - the host's sign search polls `summon_messenger/get` and the guest's sign goes up on its next
 bell (director period 10 s in these runs, default 30 s), ~15 s from host idle to room, then 4 s join and
 ~10 s summon reload into the host world. A death adds the 8-9 s death animation before the funnel.
-Before the fix the same lamp warp took > 4 min and did not complete.
+Before the fix the same lamp warp took > 4 min and did not complete. Run C3 (with the fast-join
+increment 1 merged) also shows the Dream gate patches working for a rejoin in the Dream after a travel.
 
 Not covered live: headstone travel from the Dream (warp menu), scripted transitions (`2003[14]`), Lua
 stage warps, Hunter's Mark, boss clear, a 3rd/4th member; the send-home retarget (`OnLeave_Limit` /
