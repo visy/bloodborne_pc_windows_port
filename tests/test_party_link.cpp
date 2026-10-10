@@ -618,6 +618,42 @@ static void test_identity() {
     CHECK(parse_identity_file("hash " + std::string(64, '0') + "\n", "mod", &h, &items) && items.empty() && h == zero);
 }
 
+// Kick by name: BYE Kicked "kicked by the host" to that guest, its slot freed, and the name refused
+// for the rest of the session (no auto-rejoin, not even with a fresh link after a restart).
+static void test_kick() {
+    Recorder hr;
+    PartyLink host(base_cfg("Host", ""), recorder_callbacks(hr, "host"));
+    std::string err;
+    CHECK(host.start_host(&err));
+    LinkCallbacks none;
+    PartyLink a(base_cfg("Alice", ""), none), b(base_cfg("Bob", ""), none);
+    CHECK(a.start_guest("127.0.0.1", host.bound_port(), &err));
+    CHECK(b.start_guest("127.0.0.1", host.bound_port(), &err));
+    CHECK(a.wait_connected(5000) && b.wait_connected(5000));
+    CHECK(!host.kick_name("Nobody"));
+    CHECK(!host.kick_name("Host"));
+    CHECK(!a.kick_name("Bob"));  // guests cannot kick
+    CHECK(host.kick_name("Alice"));
+    CHECK(a.wait_state(LinkState::Rejected, 3000));
+    CHECK(a.reject_code() == RejectCode::Kicked && a.reject_reason() == "kicked by the host");
+    CHECK(wait_for([&] { return hr.left_released.load() == 1; }, 2000));
+    CHECK(wait_for([&] { return host.roster().size() == 2; }, 2000));
+    CHECK(host.is_banned("Alice") && !host.is_banned("Bob"));
+    CHECK(b.state() == LinkState::Connected);
+    // A restarted Alice (new link, no token) is refused.
+    PartyLink a2(base_cfg("Alice", ""), none);
+    CHECK(a2.start_guest("127.0.0.1", host.bound_port(), &err));
+    CHECK(a2.wait_state(LinkState::Rejected, 5000) && a2.reject_code() == RejectCode::Kicked);
+    std::printf("  kicked Alice: %s; restarted Alice: %s\n", a.reject_reason().c_str(), a2.reject_reason().c_str());
+    // reconnect_now: only while Reconnecting.
+    CHECK(!b.reconnect_now());
+    b.debug_drop_connections();
+    CHECK(b.wait_state(LinkState::Reconnecting, 2000));
+    b.reconnect_now();
+    CHECK(b.wait_connected(3000));
+    CHECK(!host.reconnect_now());
+}
+
 int main() {
     // Loopback-only sockets: no Windows Firewall prompt for a test program (party_sock.h).
     if (!std::getenv("BB_PARTY_LOOPBACK")) {
@@ -640,6 +676,8 @@ int main() {
     test_party();
     std::printf("max players 2, secret-only key\n");
     test_max_players_two();
+    std::printf("kick by name\n");
+    test_kick();
     std::printf("four players (host + 3 guests), game rules\n");
     test_four_players();
     std::printf("host restart: slots restored\n");

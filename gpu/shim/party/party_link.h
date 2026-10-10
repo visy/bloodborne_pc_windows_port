@@ -207,8 +207,14 @@ public:
     // our slot - whatever the host knew about us is gone).
     bool last_welcome_resumed() const;
 
-    // Host: drop a member and free its slot (BYE Kicked).
+    // Host: drop a member and free its slot (BYE Kicked, reason default "kicked by the host").
+    // The name is refused (REJECT Kicked) for the rest of this link's life: no auto-rejoin.
     bool kick(int slot, const std::string& reason);
+    // Host: kick() by member name; false when no remote member has it.
+    bool kick_name(const std::string& name, const std::string& reason = {});
+    bool is_banned(const std::string& name) const;
+    // Guest: while Reconnecting, try again now (backoff reset). False in any other state.
+    bool reconnect_now();
 
     // The IO thread's longest single hold of the link's lock (microseconds, wall clock) since
     // the last reset: what a caller that needs the lock could have waited. `cycles`: the
