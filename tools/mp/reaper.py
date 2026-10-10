@@ -31,6 +31,23 @@ def distinct_party_lines(root: Path) -> int:
     return len(seen)
 
 
+def all_in_world(root: Path) -> bool:
+    """Every instance's latest director world line is "Party: world up" (not "loading screen" or
+    "world down")."""
+    logs = list(root.glob("inst*/run.log"))
+    if not logs:
+        return False
+    for log in logs:
+        try:
+            text = log.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+        marks = re.findall(r"^Party: (world up|world down|loading screen)", text, re.M)
+        if not marks or marks[-1] != "world up":
+            return False
+    return True
+
+
 def end_run(root: Path):
     """Ends the run.bat shells and games under `root` (not the harness itself)."""
     r = str(root).replace("/", "\\").rstrip("\\").lower()
@@ -61,6 +78,11 @@ def main():
             live.add(hid)
             root = Path(e["root"])
             n = distinct_party_lines(root)
+            # Only once every instance has reached its world: boots, title and loads are quiet
+            # phases that must not end a run.
+            if not all_in_world(root):
+                state[hid] = (n, now)
+                continue
             count, since = state.get(hid, (-1, now))
             if n != count:
                 state[hid] = (n, now)
