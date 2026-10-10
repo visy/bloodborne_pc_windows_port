@@ -435,6 +435,9 @@ std::mutex g_guest_mu;
 RefillScheduler g_refill;           // under g_guest_mu
 InsightDripper g_drip;              // under g_guest_mu
 u64 g_last_rested = 0, g_last_insight = 0; // under g_guest_mu
+double g_last_insight_grant = -1e9;        // under g_guest_mu
+constexpr double kInsightMinInterval = 30.0;
+constexpr int kMaxInsightPerEvent = 10;
 std::atomic<double> g_last_client{-1e9};
 
 // Probe (main thread).
@@ -717,6 +720,11 @@ void PhantomOnEvent(const std::string& body) {
     const double now = Now();
     switch (e.kind) {
     case PhantomEventKind::Lamp:
+        // A lamp id the guest's game will warp to on death: only an id shaped like one.
+        if (e.lamp != kTravelNone && !TravelLampPlausible(e.lamp)) {
+            Log("host lamp %u is not a lamp id; ignored", e.lamp);
+            break;
+        }
         if (g_cfg.respawn) {
             SetGuestDeathRedirect(e.lamp);
         }
@@ -743,12 +751,20 @@ void PhantomOnEvent(const std::string& body) {
             break;
         }
         g_last_insight = e.seq;
+        // A boss gives a few Insight, and bosses do not fall twice a minute: a host's stream of
+        // insight events is capped (bbport security pass).
+        if (now - g_last_insight_grant < kInsightMinInterval) {
+            Log("host boss kill (event %u): another Insight event %.0f s after the last; ignored", e.source_event,
+                now - g_last_insight_grant);
+            break;
+        }
         if (!present) {
             Log("host boss kill (event %u, %d Insight): this guest was not in the host's world; nothing", e.source_event,
                 e.insight);
             break;
         }
-        g_drip.Add(grant);
+        g_last_insight_grant = now;
+        g_drip.Add(grant > kMaxInsightPerEvent ? kMaxInsightPerEvent : grant);
         Log("host boss kill (event %u, %d Insight): +%d here, %d with the native cooperator +1 (mode %s)",
             e.source_event, e.insight, grant, grant + 1, InsightModeName(g_cfg.insight));
         break;

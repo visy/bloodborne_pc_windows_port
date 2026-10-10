@@ -357,7 +357,7 @@ bool parse(const std::string& text, Value& out, std::string& error) {
         error = "document too large (" + std::to_string(text.size()) + " bytes)";
         return false;
     }
-    Parser p{text};
+    Parser p{text, 0, {}, 0};
     if (!p.value(out, 0)) {
         error = p.error;
         return false;
