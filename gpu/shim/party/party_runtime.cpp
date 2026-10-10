@@ -7,8 +7,10 @@
 #include "party_code.h"
 #include "party_crypto.h"
 #include "party_director.h"
+#include "party_items.h"
 #include "party_phantom.h"
 #include "party_fourp.h"
+#include "party_progress.h"
 #include "party_travel.h"
 #include "upnp_win.h"
 
@@ -621,6 +623,7 @@ LinkCallbacks make_callbacks(bool host) {
             plog("%s %s (slot %d)", m.name.c_str(), rejoined ? "is back" : "joined", m.slot);
             pump_start(m);
             write_marker();
+            coop::RequestHostFullItems(m.slot);  // C3: everything the host has, for its own save
         };
         cb.on_member_left = [](const RosterEntry& m, bool slot_kept) {
             if (slot_kept) {
@@ -665,6 +668,18 @@ LinkCallbacks make_callbacks(bool host) {
                 std::string err;
                 if (coop::TravelFromJsonText(body, &t, &err)) coop::RequestGuestTravel(t);
                 else plog("travel event: %s", err.c_str());
+                return;
+            }
+            if (name == coop::progress::kEventFlags || name == coop::progress::kEventFlagSnapshot) {
+                std::string err;  // C2: the host's flags, applied by the main-thread tick
+                if (!coop::progress::OnLinkEvent(name, body, &err)) plog("%s event: %s", name.c_str(), err.c_str());
+                return;
+            }
+            if (name == coop::kItemsEventName || name == coop::kItemsFullEventName) {  // C3: the host's items
+                std::vector<coop::ItemGrant> items;
+                std::string err;
+                if (coop::ItemsFromJsonText(body, &items, &err)) coop::RequestGuestItems(items);
+                else plog("%s event: %s", name.c_str(), err.c_str());
                 return;
             }
             if (name == coop::kPhantomEventName) {  // host lamp / rested / boss Insight
