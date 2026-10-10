@@ -547,14 +547,23 @@ void GuestTick(const GameSnapshot& s, double now) {
         }
         return;
     }
-    case GuestPhase::Rewinding:
-        if (now - st.since > 10.0) {
-            Log("guest: re-join done; tasks:%s", DescribeTasks().c_str());
+    case GuestPhase::Rewinding: {
+        bool all = true;
+        for (const TaskInfo& t : Tasks(false)) {
+            if ((t.mode == 1 || t.mode == 2) && !PlayerForPeer(t.task + kTaskPeer)) {
+                all = false;
+            }
+        }
+        if (all || now - st.since > 60.0) {
+            const u64 remo = Field<u64>(Slot(0x5540058), 8);
+            Log("guest: re-join %s after %.1f s (SprjRemo %d); tasks:%s", all ? "done" : "INCOMPLETE",
+                now - st.since, remo ? int(Field<u8>(remo, 0x168) & 1) : -1, DescribeTasks().c_str());
             g_rejoin = false;
             std::lock_guard<std::mutex> lk(st.mu);
             st.gphase = GuestPhase::Idle;
         }
         return;
+    }
     }
 }
 
