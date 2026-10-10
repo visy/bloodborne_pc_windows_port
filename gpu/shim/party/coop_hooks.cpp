@@ -347,4 +347,64 @@ bool HookCallSite(u64 off, u64 target, const void* handler, const char* name) {
     return true;
 }
 
+bool HookTailJump(u64 off, u64 target, const void* handler, const char* name) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    if (!Ready(name)) {
+        return false;
+    }
+    bool jumps = g_image && off + 5 <= g_image_size && g_image[off] == 0xe9;
+    if (jumps) {
+        std::int32_t rel;
+        std::memcpy(&rel, g_image + off + 1, 4);
+        jumps = off + 5 + std::int64_t(rel) == target;
+    }
+    if (!jumps) {
+        std::printf("Coop hooks: %s: guest +0x%llx is not a jmp to +0x%llx; not installed\n", name, ull(off),
+                    ull(target));
+        return false;
+    }
+    Emitter e = NewStub();
+    e.JmpAbs(handler);
+    if (!WriteBranch(off, 0xe9, PlaceStub(e), 0)) {
+        std::printf("Coop hooks: %s: the stub for guest +0x%llx could not be placed; not installed\n", name, ull(off));
+        return false;
+    }
+    std::printf("Coop hooks: %s: tail jump guest +0x%llx -> handler\n", name, ull(off));
+    return true;
+}
+
+bool PatchBytes(u64 off, std::initializer_list<u8> original, std::initializer_list<u8> patched, const char* name) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    if (!g_image || original.size() != patched.size() || !patched.size()) {
+        std::printf("Coop hooks: %s: no image or bad patch; not written\n", name);
+        return false;
+    }
+    const std::size_t n = patched.size();
+    if (Matches(off, patched.begin(), n)) {
+        std::printf("Coop hooks: %s: guest +0x%llx already patched\n", name, ull(off));
+        return true;
+    }
+    if (!Matches(off, original.begin(), n)) {
+        std::printf("Coop hooks: %s: guest +0x%llx is not the expected code (another game version or a patch); "
+                    "not written\n",
+                    name, ull(off));
+        return false;
+    }
+#ifdef _WIN32
+    DWORD old = 0;
+    if (!VirtualProtect(g_image + off, n, PAGE_EXECUTE_READWRITE, &old)) {
+        std::printf("Coop hooks: %s: guest +0x%llx not writable; not written\n", name, ull(off));
+        return false;
+    }
+    std::memcpy(g_image + off, patched.begin(), n);
+    DWORD unused = 0;
+    VirtualProtect(g_image + off, n, old, &unused);
+    FlushInstructionCache(GetCurrentProcess(), g_image + off, n);
+#else
+    std::memcpy(g_image + off, patched.begin(), n);
+#endif
+    std::printf("Coop hooks: %s: patched %zu bytes at guest +0x%llx\n", name, n, ull(off));
+    return true;
+}
+
 } // namespace coop

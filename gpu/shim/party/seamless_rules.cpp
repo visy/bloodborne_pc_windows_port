@@ -11,6 +11,8 @@
 
 #include "coop_hooks.h"
 #include "game_state.h"
+#include "party_phantom.h"
+#include "party_travel.h"
 
 #include <atomic>
 #include <chrono>
@@ -263,6 +265,7 @@ struct ParamRule {
     std::size_t width; // 1 (u8) or 4 (f32)
     float from, to;
     const char* env_off; // the env switch that turns this rule off
+    bool opt_in = false; // off unless env_off is set to a non-"0" value
     bool enabled = true;
     int state = 0; // 0 waiting, 1 written / holds, 2 refused (unexpected value or layout)
     std::uint64_t writes = 0;
@@ -275,6 +278,13 @@ ParamRule g_param_rules[] = {
      0x10, 4, 0.7f, 1.0f, "BB_PARTY_FULL_HP"},
     {"Beckoning Bell without Insight (EquipParamGoods 200 consumeHeroPoint)", "EquipParamGoods",
      "EQUIP_PARAM_GOODS_ST", 0x6c, 200, 0x38, 1, 1.0f, 0.0f, "BB_PARTY_BELL_NO_INSIGHT"},
+    // Hunter's Mark for guests (phantom_limits.md 1.1 / 3.2): byte 0x44 |= enable_white (bit 2) |
+    // enable_multi (bit 4); 1.09 data 0x43 / 0xC3. Opt-in: a guest's Mark then goes to the host's
+    // last lamp (party_travel's OnReviveMagic_1 redirect), the host's is a party travel.
+    {"Hunter's Mark for phantoms (EquipParamGoods 100 enable_white / enable_multi)", "EquipParamGoods",
+     "EQUIP_PARAM_GOODS_ST", 0x6c, 100, 0x44, 1, 67.0f, 87.0f, "BB_PARTY_GUEST_MARK", true},
+    {"Bold Hunter's Mark for phantoms (EquipParamGoods 1400 enable_white / enable_multi)", "EquipParamGoods",
+     "EQUIP_PARAM_GOODS_ST", 0x6c, 1400, 0x44, 1, 195.0f, 215.0f, "BB_PARTY_GUEST_MARK", true},
 };
 
 bool ReadField(u64 at, std::size_t width, float* v) {
@@ -358,52 +368,36 @@ constexpr u64 kEmevdDispatch = 0x17b93a0;
 using DispatchFn = u8(BB_COOP_SYSV*)(u64 self, u64 event, float dt);
 DispatchFn g_dispatch_original = nullptr;
 bool g_emevd_trace = false;
+std::atomic<EmevdRewriter> g_rewriter{nullptr};
 
-struct SkipRule {
-    i32 event; // -1: any
-    i32 bank, id;
-};
-// Instructions to skip in party sessions. Empty: the A6 "send phantoms home" instructions are to
-// be identified with BB_PARTY_EMEVD_TRACE=1 in a live 2-instance session (see the doc).
-const SkipRule kBuiltinSkips[] = {{0, 0, 0}};
-constexpr std::size_t kBuiltinSkipCount = 0;
-std::vector<SkipRule> g_skips;
+// Rules "event:bank:id[@index]" (party_phantom.h). Built in: the confinement walls of common
+// event 7600 (index 6 / 7, only while B1 travel is on; BB_PARTY_OPEN_WORLD=0 drops them). The A6
+// "send phantoms home" instructions are still to be identified with BB_PARTY_EMEVD_TRACE=1.
+std::vector<EmevdSkipRule> g_skips;
+bool g_emevd_observe = false; // party_phantom's boss-Insight observer
 
 std::mutex g_emevd_mu;
 std::unordered_map<u64, u64> g_emevd_seen; // key: event << 32 ^ bank << 16 ^ id
 std::atomic<u64> g_emevd_calls{0}, g_emevd_skipped{0};
 
 void ParseSkips() {
-    for (std::size_t i = 0; i < kBuiltinSkipCount; ++i) {
-        g_skips.push_back(kBuiltinSkips[i]);
+    for (const EmevdSkipRule& r : PhantomSkipRules()) {
+        g_skips.push_back(r);
+        Log("EMEVD rule (built in, confinement walls): skip %s", DescribeSkipRule(r).c_str());
     }
     const char* e = std::getenv("BB_PARTY_EMEVD_SKIP");
     if (!e) {
         return;
     }
-    std::string s(e);
-    std::size_t at = 0;
-    while (at < s.size()) {
-        std::size_t comma = s.find(',', at);
-        if (comma == std::string::npos) {
-            comma = s.size();
-        }
-        const std::string item = s.substr(at, comma - at);
-        at = comma + 1;
-        const std::size_t c1 = item.find(':'), c2 = c1 == std::string::npos ? c1 : item.find(':', c1 + 1);
-        if (c2 == std::string::npos) {
-            if (!item.empty()) {
-                Log("BB_PARTY_EMEVD_SKIP: '%s' is not event:bank:id; ignored", item.c_str());
-            }
-            continue;
-        }
-        SkipRule r;
-        const std::string ev = item.substr(0, c1);
-        r.event = ev == "*" ? -1 : i32(std::strtol(ev.c_str(), nullptr, 0));
-        r.bank = i32(std::strtol(item.c_str() + c1 + 1, nullptr, 0));
-        r.id = i32(std::strtol(item.c_str() + c2 + 1, nullptr, 0));
+    std::vector<EmevdSkipRule> rules;
+    std::vector<std::string> errors;
+    ParseEmevdSkipRules(e, &rules, &errors);
+    for (const std::string& err : errors) {
+        Log("BB_PARTY_EMEVD_SKIP: %s; ignored", err.c_str());
+    }
+    for (const EmevdSkipRule& r : rules) {
         g_skips.push_back(r);
-        Log("EMEVD rule: skip event %s bank %d instruction %d", r.event < 0 ? "*" : ev.c_str(), r.bank, r.id);
+        Log("EMEVD rule: skip %s", DescribeSkipRule(r).c_str());
     }
 }
 
@@ -419,20 +413,9 @@ void TraceInstruction(u64 event, i32 event_id, i32 bank, i32 id, u64 instr, bool
     }
     u32 map = 0, arg_size = 0;
     i32 index = -1;
-    i64 arg_off = 0;
     SafeGet(event + 0x68, &map);
     SafeGet(event + 0xa0, &index);
-    SafeGet(instr + 8, &arg_size);
-    SafeGet(instr + 0x10, &arg_off);
-    u64 args = 0;
-    SafeGet(event + 0xb8, &args);
-    if (!args) {
-        u64 runtime = 0, base = 0, section = 0;
-        if (SafeGet(event + 0xa8, &runtime) && runtime && SafeGet(runtime + 8, &base) && base &&
-            SafeGet(base + 0x78, &section)) {
-            args = base + section + u64(arg_off);
-        }
-    }
+    const u64 args = EmevdInstructionArgs(event, instr, &arg_size);
     char hex[3 * 24 + 1] = "";
     u8 bytes[24] = {};
     const std::size_t shown = arg_size < sizeof bytes ? arg_size : sizeof bytes;
@@ -455,13 +438,24 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
         SafeGet(instr + 4, &id);
     }
     bool skip = false;
-    if (instr) {
-        for (const SkipRule& r : g_skips) {
-            if ((r.event < 0 || r.event == event_id) && r.bank == bank && r.id == id) {
+    if (instr && !g_skips.empty()) {
+        i32 index = -1;
+        SafeGet(event + 0xa0, &index);
+        for (const EmevdSkipRule& r : g_skips) {
+            if (EmevdSkipMatches(r, event_id, bank, id, index) && (!r.needs_travel || TravelEnabled())) {
                 skip = true;
                 break;
             }
         }
+    }
+    if (g_emevd_observe && instr && !skip &&
+        ((bank == 2003 && (id == 12 || id == 15 || id == 53)) || (bank == 2000 && id == 0))) {
+        u8 args[12] = {};
+        u32 arg_size = 0;
+        const u64 at = EmevdInstructionArgs(event, instr, &arg_size);
+        const std::size_t n = arg_size < sizeof args ? arg_size : sizeof args;
+        const bool have = at && n && SafeRead(at, args, n);
+        PhantomEmevdInstruction(event_id, bank, id, have ? args : nullptr, have ? n : 0);
     }
     if (g_emevd_trace && instr) {
         TraceInstruction(event, event_id, bank, id, instr, skip);
@@ -469,6 +463,11 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
     if (skip) {
         g_emevd_skipped.fetch_add(1, std::memory_order_relaxed);
         return 1;
+    }
+    if (instr) {
+        if (const EmevdRewriter rw = g_rewriter.load(std::memory_order_relaxed)) {
+            rw(event_id, bank, id, event, instr);
+        }
     }
     return g_dispatch_original(self, event, dt);
 }
@@ -516,26 +515,68 @@ void SeamlessRulesInit() {
     st.start = Clock::now();
     ReportSites();
     for (ParamRule& r : g_param_rules) {
-        r.enabled = !EnvOff(r.env_off);
+        r.enabled = r.opt_in ? EnvOn(r.env_off) : !EnvOff(r.env_off);
         if (!r.enabled) {
-            Log("%s: off (%s=0)", r.what, r.env_off);
+            Log("%s: off (%s%s)", r.what, r.env_off, r.opt_in ? " not set; opt-in" : "=0");
         }
     }
     g_emevd_trace = EnvOn("BB_PARTY_EMEVD_TRACE");
     ParseSkips();
-    if (g_emevd_trace || !g_skips.empty()) {
-        // push rbp; mov rbp, rsp; push rbx; push rax - 6 bytes, no relative operands.
-        void* original = nullptr;
-        if (ReplacePrologue(kEmevdDispatch, {0x55, 0x48, 0x89, 0xe5, 0x53, 0x50},
-                            reinterpret_cast<const void*>(&EmevdDispatch), &original,
-                            "EMEVD instruction dispatch filter")) {
-            g_dispatch_original = reinterpret_cast<DispatchFn>(original);
-            Log("EMEVD filter: %s, %zu skip rules", g_emevd_trace ? "trace on" : "trace off", g_skips.size());
+    g_emevd_observe = PhantomWantsEmevd();
+    if (g_emevd_trace || !g_skips.empty() || g_emevd_observe) {
+        if (EnsureEmevdFilter()) {
+            Log("EMEVD filter: %s, %zu skip rules, boss-Insight observer %s", g_emevd_trace ? "trace on" : "trace off",
+                g_skips.size(), g_emevd_observe ? "on" : "off");
         } else {
             g_emevd_trace = false;
+            g_emevd_observe = false;
             g_skips.clear();
         }
     }
+}
+
+void SetEmevdRewriter(EmevdRewriter fn) {
+    g_rewriter.store(fn);
+}
+
+bool EnsureEmevdFilter() {
+    static std::mutex mu;
+    std::lock_guard<std::mutex> lk(mu);
+    if (g_dispatch_original) {
+        return true;
+    }
+    // push rbp; mov rbp, rsp; push rbx; push rax - 6 bytes, no relative operands.
+    void* original = nullptr;
+    if (!ReplacePrologue(kEmevdDispatch, {0x55, 0x48, 0x89, 0xe5, 0x53, 0x50},
+                         reinterpret_cast<const void*>(&EmevdDispatch), &original, "EMEVD instruction dispatch filter")) {
+        return false;
+    }
+    g_dispatch_original = reinterpret_cast<DispatchFn>(original);
+    return true;
+}
+
+std::uint64_t EmevdInstructionArgs(std::uint64_t event, std::uint64_t instr, std::uint32_t* size) {
+    u32 arg_size = 0;
+    i64 arg_off = 0;
+    if (size) {
+        *size = 0;
+    }
+    if (!event || !instr || !SafeGet(instr + 8, &arg_size) || !SafeGet(instr + 0x10, &arg_off)) {
+        return 0;
+    }
+    u64 args = 0;
+    SafeGet(event + 0xb8, &args);
+    if (!args) {
+        u64 runtime = 0, base = 0, section = 0;
+        if (SafeGet(event + 0xa8, &runtime) && runtime && SafeGet(runtime + 8, &base) && base &&
+            SafeGet(base + 0x78, &section)) {
+            args = base + section + u64(arg_off);
+        }
+    }
+    if (args && size) {
+        *size = arg_size;
+    }
+    return args;
 }
 
 void SeamlessRulesTick() {
