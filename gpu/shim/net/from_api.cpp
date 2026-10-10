@@ -3,6 +3,8 @@
 // from_api_formats.inc.
 #include "from_api.h"
 
+#include "../../party_env.h"
+
 #include "bbnet_internal.h"
 #include "party_util.h"
 #include "../party/party_ids.h"
@@ -22,10 +24,7 @@ namespace bbnet::party {
 namespace {
 
 // BB_PARTY_FAST_JOIN (default on): the quicker sign polling of kSsFastJoinValues.
-bool fast_join() {
-    const char* v = std::getenv("BB_PARTY_FAST_JOIN");
-    return !(v && v[0] == '0' && !v[1]);
-}
+bool fast_join() { return bb_party_switch_on("BB_PARTY_FAST_JOIN") != 0; }
 
 struct Url {
     std::string scheme, host, path, query;
@@ -137,7 +136,13 @@ std::string from_api_ss_info() {
     for (unsigned i : indices) {
         const std::string sfx = std::to_string(i);
         for (const formats::SsValue& v : formats::kSsValues) {
-            x += "<" + std::string(v.name) + sfx + ">" + v.value + "</" + v.name + sfx + ">\n";
+            const char* value = v.value;
+            if (fast_join()) {
+                for (const formats::SsValue& f : formats::kSsFastJoinValues) {
+                    if (std::strcmp(f.name, v.name) == 0) value = f.value;
+                }
+            }
+            x += "<" + std::string(v.name) + sfx + ">" + value + "</" + v.name + sfx + ">\n";
         }
         x += "<gameurl" + sfx + ">\n";
         for (const char* api : formats::kApiNames) {

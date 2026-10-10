@@ -16,7 +16,7 @@ from pathlib import Path
 _SCRIPTS=str(Path(__file__).resolve().parent)
 if _SCRIPTS not in sys.path:
     sys.path.insert(0,_SCRIPTS)
-from party_env import party_enabled  # noqa: E402  (the shared BB_PARTY rule)
+from party_env import party_enabled, party_switch_on  # noqa: E402  (the shared BB_PARTY rule)
 
 EBOOT_BASE=0x400000
 # BB_FPS presets: patch names from patches/Bloodborne.xml (app version 01.09).
@@ -129,9 +129,9 @@ def party_patches(env=os.environ):
         names+=PARTY_SEAMLESS
         if env.get('BB_PARTY_BELL_NO_INSIGHT','1').strip()!='0':
             names.append(PARTY_NO_INSIGHT)
-    if env.get('BB_PARTY_FAST_JOIN','1').strip()!='0':
+    if party_switch_on(env,'BB_PARTY_FAST_JOIN'):
         names+=PARTY_FAST_JOIN
-    if env.get('BB_PARTY_FAST_MESSAGES','1').strip()!='0':
+    if party_switch_on(env,'BB_PARTY_FAST_MESSAGES'):
         names+=PARTY_FAST_MESSAGES
     return names
 
