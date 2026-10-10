@@ -273,6 +273,7 @@ BBNET_ABI int http_init(int net_mem, int ssl_ctx, std::uint64_t pool) {
     BBNET_GUEST_RETURN();
     std::lock_guard<std::mutex> lock(g_mu);
     const int id = alloc(Kind::Ctx, 0);
+    online_watch_start();
     log("sceHttpInit net=%d ssl=%d pool=%llu -> %d", net_mem, ssl_ctx, static_cast<unsigned long long>(pool), id);
     return id;
 }

@@ -89,6 +89,18 @@ SessionId (+0x70), queues the error message id into FrpgNetMan+0xa30, sets
 ss.info failures (0x1133), WanderingGhostGet failing ≥3 times (0xfa1), 0x10010a/0x10010b, and
 HTTP failure (0x80000001/3) of certain APIs (0x11f9 etc., switch 0x1e887a1 over APIs 0xc..0x23).
 
+**Second drop path, outside the FROM responses (found live, 2026-10-10):** on entering the world
+online, 0x193a3e0 (0x193aa94..0x193abd7) checks the character-name verdict at
+`[[PlayerGameData+0x5d0]]+0xc` (1 = check pending, 2 = accepted, 3 = rejected / filter failed). Unless
+it is 2 it calls 0x1e8bb10 (clears client UserId +0x60 / SessionId +0x70), queues msg **0x125d**
+and sets **FrpgNetMan+0xa50 = 1** directly (not through 0x1ea5ce0). The verdict comes from the
+Score comment filter run on the name when the save loads (0xcd09a0 `sceNpScoreSanitizeComment`,
+0xcd0720 `sceNpScoreCensorComment`: 0 → accepted). The runtime's offline Score stubs answered
+SIGNED_OUT, so every party member went offline on its first world load; the party NP layer
+(np_manager.cpp) now answers both (comment unchanged / accepted). The only other writer of
++0xa50 = 1 is 0x1ea5ce0 (above); `Party online: the FROM client drops offline` logs its calls
+(party_online.cpp), `Net: online:` lines log the state (online_watch.cpp).
+
 ---------------------------------------------------------------------------------------------------
 
 ## 2. ss.info
