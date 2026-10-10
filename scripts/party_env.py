@@ -14,3 +14,10 @@ def party_value_on(value):
 def party_enabled(env=os.environ):
     """True when the environment's BB_PARTY turns party mode on."""
     return party_value_on(env.get('BB_PARTY'))
+
+
+def party_switch_on(env, name):
+    """A party switch that is on by default (BB_PARTY_FAST_JOIN, ...): unset or blank = on,
+    otherwise party_value_on (gpu/party_env.h bb_party_switch_on)."""
+    value = env.get(name)
+    return value is None or not str(value).strip() or party_value_on(value)

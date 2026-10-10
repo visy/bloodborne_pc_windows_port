@@ -203,10 +203,18 @@ class IntelTonemapTests(unittest.TestCase):
 
 class PartyPatchTests(unittest.TestCase):
     def test_seamless_patches_follow_bb_party(self):
+        fast = patches.PARTY_FAST_JOIN + patches.PARTY_FAST_MESSAGES
+        off = {'BB_PARTY_FAST_JOIN': '0', 'BB_PARTY_FAST_MESSAGES': '0'}
         self.assertEqual(patches.party_patches({}), [])
-        self.assertEqual(patches.party_patches({'BB_PARTY': 'host'}), patches.PARTY_SEAMLESS + [patches.PARTY_NO_INSIGHT])
-        self.assertEqual(patches.party_patches({'BB_PARTY': 'host', 'BB_PARTY_BELL_NO_INSIGHT': '0'}), patches.PARTY_SEAMLESS)
-        self.assertEqual(patches.party_patches({'BB_PARTY': 'host', 'BB_PARTY_SEAMLESS': '0'}), [])
+        self.assertEqual(patches.party_patches({'BB_PARTY': 'host'}),
+                         patches.PARTY_SEAMLESS + [patches.PARTY_NO_INSIGHT] + fast)
+        self.assertEqual(patches.party_patches({'BB_PARTY': 'host', 'BB_PARTY_BELL_NO_INSIGHT': '0', **off}),
+                         patches.PARTY_SEAMLESS)
+        self.assertEqual(patches.party_patches({'BB_PARTY': 'host', 'BB_PARTY_SEAMLESS': '0'}), fast)
+        self.assertEqual(patches.party_patches({'BB_PARTY': 'host', 'BB_PARTY_SEAMLESS': '0', **off}), [])
+        self.assertEqual(patches.party_patches({'BB_PARTY': 'join', 'BB_PARTY_FAST_JOIN': '0'}),
+                         patches.PARTY_SEAMLESS + [patches.PARTY_NO_INSIGHT] + patches.PARTY_FAST_MESSAGES)
+        self.assertEqual(patches.party_patches({'BB_FAST_JOIN': '0'}), [])
 
     def test_network_choice(self):
         both = {patches.SKIP_NETWORK_CHOICE, patches.SKIP_NETWORK_CHOICE_ONLINE}
@@ -218,7 +226,8 @@ class PartyPatchTests(unittest.TestCase):
                                                        {patches.SKIP_NETWORK_CHOICE}))
 
     def test_party_patches_exist_compile_and_carry_originals(self):
-        names = patches.PARTY_SEAMLESS + [patches.PARTY_NO_INSIGHT, patches.SKIP_NETWORK_CHOICE_ONLINE]
+        names = patches.PARTY_SEAMLESS + [patches.PARTY_NO_INSIGHT, patches.SKIP_NETWORK_CHOICE_ONLINE,
+                                          *patches.PARTY_FAST_JOIN, *patches.PARTY_FAST_MESSAGES]
         writes = compile_patches(XML, names, '01.09', SEGMENTS)
         self.assertTrue(writes)
         for meta in ET.parse(XML).getroot().iter('Metadata'):
@@ -262,6 +271,9 @@ class PartyVersionCheckTests(unittest.TestCase):
         for name in [*{n for preset in patches.FPS_PRESETS.values() for n in preset}, patches.RESOLUTION_TEMPLATE,
                      'Resolution Patch 3840x2160 (16:9)', '4k Light Grid (READ NOTES)', 'Increased Graphics Heap Sizes',
                      patches.INTEL_TONEMAP, *patches.MODEL_LOD.values()]:
+            self.assertIn(name, cosmetic)
+        # Join timing / banner patches change no game state both sides must share.
+        for name in patches.PARTY_FAST_JOIN + patches.PARTY_FAST_MESSAGES:
             self.assertIn(name, cosmetic)
         for off, on in patches.EFFECTS.values():
             for name in (off, on):
