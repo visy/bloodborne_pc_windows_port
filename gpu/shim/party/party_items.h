@@ -62,14 +62,40 @@ enum class ItemSource : std::uint8_t {
 const char* ItemSourceName(ItemSource s);
 ItemSource ItemSourceFromName(const std::string& name);
 
+/// A blood gem's instance data (SprjGaitem instance +0x18..+0x34, written by 0x1A87E20 when the
+/// gem is generated): [0] flags (bit 0/1 from the GemGenParam row), [1] rank, [2..7] the six
+/// GemeffectParam ids (-1 = empty slot).
+constexpr std::size_t kGemFields = 8;
+/// A generated gem's id is its lot slot's id plus the area's rank offset (0x1A88130: the sum of
+/// the area's gem-level rows, then the GemGenParam row with that id); 1.09's rows step by 1..3.
+constexpr std::int32_t kMaxGemIdOffset = 99;
+
 /// One item of a lot as the host resolved it (EVENT "items" row element 6): lotItemCategory
-/// (0 weapon, 1 armor, 2 rune / accessory, 4 goods), lotItemId, the count given.
+/// (0 weapon, 1 armor, 2 rune / accessory, 4 goods, 8 blood gem), lotItemId (for a gem: the
+/// GemGenParam id the host's game generated), the count given, and for a gem its instance data.
 struct GrantItem {
     std::uint32_t category = 0;
     std::int32_t id = -1;
     std::int32_t count = 1;
-    bool operator==(const GrantItem& o) const { return category == o.category && id == o.id && count == o.count; }
+    bool has_gem = false;
+    std::int32_t gem[kGemFields] = {};
+    bool operator==(const GrantItem& o) const {
+        if (category != o.category || id != o.id || count != o.count || has_gem != o.has_gem) {
+            return false;
+        }
+        for (std::size_t i = 0; has_gem && i < kGemFields; ++i) {
+            if (gem[i] != o.gem[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
 };
+/// Gem data a peer may send: flags 0..3, rank 0..1000, effect ids -1 or 0..99,999,999.
+bool GemDataPlausible(const std::int32_t (&gem)[kGemFields]);
+/// May this item reach the direct give: a supported category, or a blood gem with plausible
+/// instance data (count 1).
+bool GrantItemSupported(const GrantItem& it);
 /// Items per grant at most (a lot and its continuation rows; the longest chain in 1.09 is 3).
 constexpr std::size_t kMaxGrantItems = 16;
 
@@ -191,13 +217,16 @@ struct LotRowData {
 /// The roll (0x17CEAF0) walks lot, lot + 1, ... while rows exist; this many at most here.
 constexpr std::size_t kMaxLotChain = 16;
 /// Categories the direct give (GiveItemDirect 0x131CB70, type bits category << 28) handles:
-/// weapon, armor, rune, goods. Blood gems (8) need the area's gem-effect data (0x1A88130) and
-/// wait for the own world.
+/// weapon, armor, rune, goods. Blood gems (8) are generated per drop (0x1A88130, the area's gem
+/// level); a summoned guest recreates the gem the host's game generated (GrantItem::gem) and
+/// waits for the own world only when the host sent no gem data.
 bool GrantCategorySupported(std::uint32_t category);
+/// Does `chain` have a weighted blood-gem slot (the host's roll cannot stand in for it)?
+bool LotChainHasGem(const std::vector<LotRowData>& chain);
 enum class LotPlanResult : std::uint8_t {
     Give,        ///< `items` (maybe empty: nothing left) - give them, then set the flags
     Random,      ///< a row picks between several slots and the host sent no item list
-    Unsupported, ///< a blood gem (or an unknown category): own world only
+    Unsupported, ///< a blood gem without the host's gem data (or an unknown category): own world only
     Missing,     ///< no ItemLotParam row
 };
 const char* LotPlanResultName(LotPlanResult r);
@@ -209,7 +238,8 @@ struct LotPlan {
 };
 /// What a summoned guest gives for a lot: `chain` is its ItemLotParam row and continuation rows;
 /// `host_items` (the host's capture / roll, may be empty) is used when every item matches a
-/// different row's slot (category, id, 1..lotItemNum), else the rows decide - one weighted slot
+/// different row's slot (category, id, 1..lotItemNum; a blood gem: a gem slot whose id is at most
+/// kMaxGemIdOffset below the gem's, count 1, with gem data), else the rows decide - one weighted slot
 /// per row (base or cumulate point > 0) is deterministic. Rows whose own flag `row_done` reports
 /// set give nothing (the roll skips them the same way).
 LotPlan PlanSummonedLot(const std::vector<LotRowData>& chain, const std::vector<GrantItem>& host_items,
