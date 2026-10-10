@@ -13,6 +13,11 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+_SCRIPTS=str(Path(__file__).resolve().parent)
+if _SCRIPTS not in sys.path:
+    sys.path.insert(0,_SCRIPTS)
+from party_env import party_enabled  # noqa: E402  (the shared BB_PARTY rule)
+
 EBOOT_BASE=0x400000
 # BB_FPS presets: patch names from patches/Bloodborne.xml (app version 01.09).
 # Above 60 FPS the sprint fix always goes with the frame rate patch: without it sprinting drops to
@@ -84,7 +89,7 @@ def network_choice_patch(env=os.environ, available=None):
     """The title-dialog patch for BB_SKIP_NETWORK_CHOICE: '0' none (the game asks), 'online' the
     PLAY ONLINE variant (party mode; none, with a warning, when the XML lacks it), else PLAY OFFLINE."""
     # Party mode (BB_PARTY set) boots ONLINE through the party NP layer unless told otherwise.
-    value=env.get('BB_SKIP_NETWORK_CHOICE','online' if env.get('BB_PARTY','').strip() else '1').strip().lower()
+    value=env.get('BB_SKIP_NETWORK_CHOICE','online' if party_mode(env) else '1').strip().lower()
     if value=='0':
         return None
     if value=='online':
@@ -106,7 +111,8 @@ DISABLE_HTTP='Disable HTTP Requests'
 
 
 def party_mode(env=os.environ):
-    return bool(env.get('BB_PARTY','').strip())
+    """BB_PARTY turns party mode on (party_env.py: unset, empty, 0, off, false, no = off)."""
+    return party_enabled(env)
 
 
 def party_patches(env=os.environ):

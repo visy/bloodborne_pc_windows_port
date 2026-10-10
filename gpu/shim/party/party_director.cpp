@@ -20,8 +20,10 @@
 #include "party_travel.h"
 #include "seamless_rules.h"
 #include "party_online.h"
+#include "party_watchdog.h"
 
 #include "../net/bbnet_internal.h"
+#include "../../party_env.h"
 
 #include <atomic>
 #include <cctype>
@@ -136,6 +138,11 @@ struct State {
     bool continue_waiting = false;
     bool continue_signin = false;
     std::string last_from_client;
+    // Host session watchdog (party_watchdog.h).
+    HostWatchdog watchdog;
+    int watchdog_stops = 0;
+    bool watchdog_check = false; // after a stop: log the session / phantoms once it is idle
+    Clock::time_point watchdog_at{};
 };
 
 State& S() {
@@ -338,8 +345,9 @@ void LogTransitions(State& st, const GameSnapshot& now) {
         Log("loading screen %s", now.loading ? "up" : "gone");
     }
     if (now.session_role != was.session_role || now.session_sub_state != was.session_sub_state) {
-        Log("session %s (%d, sub %d) -> %s (%d, sub %d)", SessionRoleName(was.session_role), was.session_role,
-            was.session_sub_state, SessionRoleName(now.session_role), now.session_role, now.session_sub_state);
+        Log("session %s (%d, sub %d) -> %s (%d, sub %d) (t %.1f s)", SessionRoleName(was.session_role), was.session_role,
+            was.session_sub_state, SessionRoleName(now.session_role), now.session_role, now.session_sub_state,
+            Seconds(st.start, Clock::now()));
     }
     if (now.matching_status != was.matching_status) {
         Log("matching status %d -> %d", was.matching_status, now.matching_status);
@@ -348,7 +356,7 @@ void LogTransitions(State& st, const GameSnapshot& now) {
         Log("map %s -> %s", MapName(was.map_id).c_str(), MapName(now.map_id).c_str());
     }
     if (now.cooperators != was.cooperators && now.cooperators >= 0 && was.cooperators >= 0) {
-        Log("cooperators %d -> %d", was.cooperators, now.cooperators);
+        Log("cooperators %d -> %d (t %.1f s)", was.cooperators, now.cooperators, Seconds(st.start, Clock::now()));
     }
     if (now.online_mode != was.online_mode) {
         Log("online mode %d -> %d", was.online_mode, now.online_mode);
@@ -559,6 +567,90 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
     }
 }
 
+// ---- Host session watchdog (party_watchdog.h) ----
+// 0x13CDDA0: BeginLeaveSession(SprjSessionManager) 0x1ED07A0, ReloadPhase+0xf0 = chr type on
+// success, then a tail jump to 0x15BED10(network flow +0x16F8) (drops the presentation members).
+constexpr std::uint64_t kLeaveSessionAndDrop = 0x13cdda0;
+using VoidFn = void(BB_COOP_SYSV*)();
+
+/// SprjSessionManager peer count (+0xF8..+0x100, stride 0x20), presentation count (network flow
+/// +0x16F8 -> +0x18) and the WorldChrMan phantoms (chr set 1 count, +0x850 table): for the logs.
+std::string DescribeSessionMembers() {
+    std::uint64_t sm = 0, flow = 0, pres = 0, b = 0, e = 0;
+    SafeGet(Guest(0x5540290), &sm);
+    SafeGet(Guest(0x5556678), &flow);
+    if (sm) {
+        SafeGet(sm + 0xf8, &b);
+        SafeGet(sm + 0x100, &e);
+    }
+    std::int32_t pn = -1;
+    if (flow && SafeGet(flow + 0x16f8, &pres) && pres) {
+        SafeGet(pres + 0x18, &pn);
+    }
+    std::int32_t slots[4] = {-1, -1, -1, -1};
+    if (pres) {
+        SafeRead(pres + 0x80, slots, sizeof slots);
+    }
+    char out[200];
+    std::snprintf(out, sizeof out, "session peers %lld, presentation count %d (handles %x %x %x %x)",
+                  (b && e >= b) ? static_cast<long long>((e - b) / 0x20) : -1LL, pn, unsigned(slots[0]),
+                  unsigned(slots[1]), unsigned(slots[2]), unsigned(slots[3]));
+    return out;
+}
+
+void HostWatchdogTick(State& st, const GameSnapshot& s, party::PartyLink* link, Clock::time_point now) {
+    HostWatchdogInput in;
+    in.now_s = Seconds(st.start, now);
+    in.in_world = InWorld(s) && st.world_seen;
+    in.session_role = s.session_role;
+    in.cooperators = s.cooperators;
+    if (link) {
+        in.roster = link->roster();
+    }
+    if (st.watchdog_check && s.session_role == RoleIdle && Seconds(st.watchdog_at, now) >= 2.0) {
+        st.watchdog_check = false;
+        Log("host watchdog: session idle %.1f s after the stop; %s; cooperators %d", Seconds(st.watchdog_at, now),
+            DescribeSessionMembers().c_str(), s.cooperators);
+    }
+    if (!st.watchdog.Update(in)) {
+        return;
+    }
+    static int code_ok = 0;
+    if (!code_ok) {
+        code_ok = Matches(kLeaveSessionAndDrop, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x53, 0x50, 0x48, 0x8b,
+                                                 0x05, 0xc7, 0x88, 0x18, 0x04, 0x48, 0x8b, 0x98, 0xf8, 0x16, 0x00, 0x00})
+                      ? 1
+                      : -1;
+        if (code_ok < 0) {
+            Log("host watchdog: 0x13CDDA0 is not the 1.09 leave helper; the watchdog cannot stop sessions");
+        }
+    }
+    ++st.watchdog_stops;
+    Log("host watchdog: stop #%d (t %.1f s): %s; %s; roster: %s", st.watchdog_stops, in.now_s, st.watchdog.why().c_str(),
+        DescribeSessionMembers().c_str(), [&] {
+            std::string r;
+            for (const party::RosterEntry& e : in.roster) {
+                char b[96];
+                std::snprintf(b, sizeof b, "%s%s(slot %d, %s%s)", r.empty() ? "" : ", ", e.name.c_str(), e.slot,
+                              party::member_state_name(e.state), e.connected ? "" : ", lost");
+                r += b;
+            }
+            return r;
+        }().c_str());
+    if (code_ok < 0 || !CallsTo(kLeaveSessionAndDrop + 0x55, 0x1ed07a0)) {
+        Log("host watchdog: no stop (code check failed)");
+        return;
+    }
+    reinterpret_cast<VoidFn>(Guest(kLeaveSessionAndDrop))();
+    const GameSnapshot after = ReadGameState(false);
+    Log("host watchdog: left the session: role %s (%d); %s", SessionRoleName(after.session_role), after.session_role,
+        DescribeSessionMembers().c_str());
+    party::status::SetLastEvent("Summon stuck: session restarted");
+    st.watchdog_check = true;
+    st.watchdog_at = now;
+    st.rung_ever = false; // ring again as soon as the session is idle and a member waits
+}
+
 void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
     Test& t = st.test;
     if (!st.world_seen) {
@@ -645,7 +737,7 @@ void PartyDirector::Configure(PartyRole role, int max_players) {
 void PartyDirector::ConfigureFromEnv() {
     State& st = S();
     PartyRole role = PartyRole::None;
-    if (const char* p = std::getenv("BB_PARTY"); p && p[0]) {
+    if (const char* p = bb_party_value()) {
         std::string lower(p);
         for (char& c : lower) {
             c = char(std::tolower(static_cast<unsigned char>(c)));
@@ -728,6 +820,7 @@ void PartyDirector::ConfigureFromEnv() {
     if (const char* g = std::getenv("BB_PARTY_GRANT_BELLS"); g && g[0] == '0') {
         st.grant_bells = false;
     }
+    st.watchdog = HostWatchdog(HostWatchdogConfigFromEnv());
     Log("director: role %s, max %d players, %s every %.0f s, start %s, bell grants %s%s%s",
         role == PartyRole::Host ? "host" : role == PartyRole::Guest ? "guest" : "none", st.max_players,
         st.auto_ring ? "bell" : "no automatic bell", st.ring_every, StartModeName(st.start_mode),
@@ -874,6 +967,10 @@ void PartyDirector::Tick() {
             .ring_now) {
         st.rung_ever = false; // Rejoin while connected: the next bell goes up at once
     }
+    // A host summon that never completes: end the session and ring again (party_watchdog.h).
+    if (role == PartyRole::Host && full) {
+        HostWatchdogTick(st, s, link, now);
+    }
     // Phantoms as full players: the host's lamp / rest / boss Insight out, the guest's refill and
     // Insight in (party_phantom.h).
     PhantomTick(link);
@@ -924,10 +1021,9 @@ void PartyDirector::Tick() {
 }
 
 bool PartyRequested() {
-    const char* p = std::getenv("BB_PARTY");
     const char* t = std::getenv("BB_PARTY_DIRECTOR_TEST");
     const char* i = std::getenv("BB_PARTY_ITEMS_TEST"); // C3 single-instance check
-    return (p && p[0]) || (t && t[0]) || (i && i[0]) || NpcTestRequested() || StoryTestRequested();
+    return bb_party_enabled() || (t && t[0]) || (i && i[0]) || NpcTestRequested() || StoryTestRequested();
 }
 
 void CoopTick() {
