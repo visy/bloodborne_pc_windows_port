@@ -535,13 +535,13 @@ void ProbeTick(const GameSnapshot& s) {
 std::atomic<int> g_local_slot{-1};
 
 /// A guest's spot beside the host (never on it: character collision shoves the host): BB_PARTY_SUMMON_OFFSET
-/// (default 3.0 m, 0 = off) to
+/// (default 2.2 m, 0 = off) to
 /// the right (party slot 1), left (2) or behind (3+) of the host's facing, same height and facing.
 /// rot[1] is the yaw (radians); forward = (sin, 0, cos), right = (cos, 0, -sin).
 float SummonOffset() {
     static const float d = [] {
         const char* v = std::getenv("BB_PARTY_SUMMON_OFFSET");
-        return v && v[0] ? float(std::atof(v)) : 3.0f;
+        return v && v[0] ? float(std::atof(v)) : 2.2f;
     }();
     return d;
 }
@@ -564,12 +564,17 @@ void BesideHost(float pos[4], const float rot[4], int slot) {
 /// the NPC summon step 0x1E4B559 calls it). The game's own placement (the sign spot, usually the
 /// host's lamp spot) is otherwise on top of the host. No ground probe yet: the host's height.
 void SpacingTick(const GameSnapshot& s) {
-    static int last_flow = -1, stable = 0;
+    // Sides tried in order: the slot's own side, the other side, behind. Each warp is checked 30
+    // ticks later: a spot whose height ended > 1.5 m from the host's, or that the chr did not
+    // reach (blocked / no ground: the game puts it back or it falls), moves on to the next side.
+    static int last_flow = -1, stable = 0, attempt = -1, wait = 0;
     static bool armed = false;
+    alignas(16) static float target[4], host_pos[4];
     const int fs = Field<int>(Slot(kSlotFlow), 0x84, -1);
     if (last_flow == 3 && fs == 4) {
         armed = true;
         stable = 0;
+        attempt = -1;
     }
     last_flow = fs;
     const float d = SummonOffset();
@@ -589,7 +594,6 @@ void SpacingTick(const GameSnapshot& s) {
     if (!host) {
         return; // the host's chr is not re-created yet
     }
-    armed = false;
     const auto phys = [](u64 chr) {
         return Field<u64>(Field<u64>(Field<u64>(Field<u64>(chr, 0x58), 8), 0x3b0), 0x68);
     };
@@ -598,22 +602,40 @@ void SpacingTick(const GameSnapshot& s) {
     if (!ph || !pm || !SafeRead(ph + 0x1e0, hp, 16) || !SafeRead(ph + 0x1d0, hr, 16) || !SafeRead(pm + 0x1e0, me, 16)) {
         return;
     }
-    const float dist = std::sqrt((me[0] - hp[0]) * (me[0] - hp[0]) + (me[2] - hp[2]) * (me[2] - hp[2]));
-    if (dist >= d - 0.5f) {
+    const auto flat = [](const float* a, const float* b) {
+        return std::sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[2] - b[2]) * (a[2] - b[2]));
+    };
+    const float dist = flat(me, hp);
+    if (attempt >= 0) {
+        if (++wait < 30) {
+            return;
+        }
+        const bool ok = flat(me, target) < 1.0f && std::fabs(me[1] - host_pos[1]) < 1.5f && dist >= 1.0f;
+        Log("spacing: side %d %s: me (%.1f, %.1f, %.1f), %.1f m from the host (target (%.1f, %.1f, %.1f)); host "
+            "moved %.2f m since the warp (push check)",
+            attempt, ok ? "OK" : "blocked", me[0], me[1], me[2], dist, target[0], target[1], target[2],
+            flat(hp, host_pos));
+        if (ok || attempt >= 2) {
+            armed = false;
+            return;
+        }
+    } else if (dist >= d - 0.5f) {
         Log("spacing: arrived %.1f m from the host; left as it is", dist);
+        armed = false;
         return;
     }
-    alignas(16) float to[4] = {hp[0], hp[1], hp[2], hp[3]};
+    ++attempt;
+    wait = 0;
+    const int slot = g_local_slot.load() == 2 ? 2 : 1;
+    const int side = attempt == 0 ? slot : attempt == 1 ? (slot == 1 ? 2 : 1) : 3;
+    std::memcpy(host_pos, hp, sizeof hp);
+    std::memcpy(target, hp, sizeof hp);
+    BesideHost(target, hr, side);
     alignas(16) float rot[4] = {hr[0], hr[1], hr[2], hr[3]};
-    BesideHost(to, hr, g_local_slot.load());
     using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
-    reinterpret_cast<Warp>(Field<u64>(Field<u64>(s.player, 0), 0x5f8))(s.player, to, rot, 1);
-    float now[4] = {};
-    SafeRead(pm + 0x1e0, now, 16);
-    Log("spacing: host at (%.1f, %.1f, %.1f), me (%.1f, %.1f, %.1f) %.1f m -> moved to (%.1f, %.1f, %.1f), slot %d, "
-        "%.1f m (reads (%.1f, %.1f, %.1f) after the warp)",
-        hp[0], hp[1], hp[2], me[0], me[1], me[2], dist, to[0], to[1], to[2], g_local_slot.load(),
-        std::sqrt((to[0] - hp[0]) * (to[0] - hp[0]) + (to[2] - hp[2]) * (to[2] - hp[2])), now[0], now[1], now[2]);
+    reinterpret_cast<Warp>(Field<u64>(Field<u64>(s.player, 0), 0x5f8))(s.player, target, rot, 1);
+    Log("spacing: host at (%.1f, %.1f, %.1f), me %.1f m away -> warp to side %d (%.1f, %.1f, %.1f), %.1f m", hp[0],
+        hp[1], hp[2], dist, side, target[0], target[1], target[2], flat(target, hp));
 }
 
 /// Any failed or timed-out B2 step on a guest: hand the host's travel to B1 (party_travel): the
