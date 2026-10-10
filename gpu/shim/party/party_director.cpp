@@ -9,6 +9,7 @@
 #include "lua_events.h"
 #include "party_fourp.h"
 #include "party_link.h"
+#include "party_story.h"
 #include "party_status_bridge.h"
 #include "party_items.h"
 #include "party_npc_test.h"
@@ -686,6 +687,13 @@ void PartyDirector::Tick() {
             Log("travel #%llu (%s) sent to the party", static_cast<unsigned long long>(t.seq), TravelKindName(t.kind));
             PhantomNoteHostTravel(t); // a rest (Dream, death, Mark): guests refill too
         }
+        // C4: the host's cutscenes, endings and time of day (party_story.h).
+        StoryIntent si;
+        while (PopHostStory(&si)) {
+            link->send_event(party::kBroadcast, kStoryEventName, StoryToJsonText(si));
+            Log("story #%llu (%s %u) sent to the party", static_cast<unsigned long long>(si.seq),
+                StoryKindName(si.kind), si.id);
+        }
         // C3: the host's item lots to every guest; the full list to a member that (re)joined.
         std::vector<ItemGrant> items;
         ItemGrant g;
@@ -740,6 +748,9 @@ void PartyDirector::Tick() {
     // C1 (party_start.h): no bell before this player finished its start (clinic / first death
     // pitfalls); the host rings only for members that are ready (roster Home / Joining).
     if (role == PartyRole::Guest) {
+        if (StoryBusy()) {
+            return; // C4: a cutscene / ending replay first, then the rejoin
+        }
         if (GuestMayRing(st.start_ready, link->state() == party::LinkState::Connected)) {
             Ring(st, kGuestBell, "guest, ready and idle in its own world", now);
         }
@@ -760,13 +771,14 @@ bool PartyRequested() {
     const char* p = std::getenv("BB_PARTY");
     const char* t = std::getenv("BB_PARTY_DIRECTOR_TEST");
     const char* i = std::getenv("BB_PARTY_ITEMS_TEST"); // C3 single-instance check
-    return (p && p[0]) || (t && t[0]) || (i && i[0]) || NpcTestRequested();
+    return (p && p[0]) || (t && t[0]) || (i && i[0]) || NpcTestRequested() || StoryTestRequested();
 }
 
 void CoopTick() {
     LuaEventsTick();
     PartyDirector::Get().Tick();
     TravelTick();        // B1 guest replay (party_travel.h)
+    StoryTick();         // C4 cutscenes / endings (party_story.h)
     ItemsTick();         // C3 guest item replay (party_items.h)
     SeamlessRulesTick(); // A6 param rules, EMEVD filter stats (seamless_rules.h)
     fourp::FourpTick();  // 4-player rules: the party's max players (party_fourp.h)
@@ -787,6 +799,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
         HookCallSite(kSsParseCall, kSsParse, reinterpret_cast<const void*>(&SsParseHook), "ss.info parse log");
     }
     InstallTravelPatches(); // B1: Dream gate + travel hooks (byte-verified)
+    InstallStoryHooks();    // C4: bank-2002 capture, guest mirror / replay (byte-verified)
     InstallItemsPatches();  // C3: award hook, parity patches (byte-verified)
     PhantomInit();          // guest respawn at the host's lamp, refill, boss Insight
     g_tick_installed = HookPrologue(kFlipperUpdate,
