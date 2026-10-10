@@ -26,6 +26,7 @@
 #include "../net/bbnet_internal.h"
 #include "../../party_env.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cstdarg>
@@ -105,6 +106,11 @@ struct State {
     bool auto_ring = true;
     int auto_continue = -1; // BB_PARTY_AUTOCONTINUE: -1 default (on in party mode), 0 off, 1 on
     double ring_every = 30.0;
+    // BB_PARTY_FAST_JOIN (default on; docs/party/join_timing.md): shorter director pauses.
+    bool fast_join = true;
+    double ring_delay = 1.0;        // s in a steady world before the first bell (5 without fast join)
+    double continue_settle = 1.0;   // s on the title before the first Continue press (4)
+    double continue_every = 1.0;    // s between Continue presses (2.5)
     StartMode start_mode = StartMode::PrologueSolo;
     bool grant_bells = true;
     Test test;
@@ -118,6 +124,7 @@ struct State {
     Clock::time_point world_at{};
     Clock::time_point last_full{}, last_log{}, last_ring{};
     bool rung_ever = false;
+    bool poll_logged = true; // the sign polling 2.5 s after a bell (join timing)
     std::uint64_t tick_thread = 0;
     std::uint64_t ticks = 0, ticks_at_log = 0, foreign_ticks = 0;
     party::MemberState sent_state = party::MemberState::Title;
@@ -225,6 +232,8 @@ struct TracePoint {
 };
 TracePoint g_trace_points[] = {
     {0x1900500, "begin sign (0x1900500)"},
+    {0x130cde0, "sign Lua task op (0x130cde0)"},
+    {0x1901010, "sign task body (0x1901010)"},
     {0x1901320, "SendSign"},
     {0x14b9180, "CreateSign"},
     {0x14b5e10, "SummonStepManager tick"},
@@ -364,6 +373,7 @@ void LogTransitions(State& st, const GameSnapshot& now) {
 }
 
 std::string DescribeFromClient();
+std::string DescribeSignPolling();
 
 // The bells as the items ring them: the goods' SpEffect on the local player (Beckoning Bell 200
 // -> 9000, Small Resonant Bell 205 -> 9005). The player's update (0x18FEF50) sees the effect's
@@ -424,6 +434,7 @@ bool ApplySpEffect(int id) {
 void Ring(State& st, const char* event, const char* why, Clock::time_point now) {
     st.last_ring = now;
     st.rung_ever = true;
+    st.poll_logged = false;
     const bool host = std::strcmp(event, kHostBell) == 0;
     const char* mode = std::getenv("BB_PARTY_BELL_MODE");
     if (mode && std::strcmp(mode, "lua") == 0) {
@@ -443,6 +454,7 @@ void Ring(State& st, const char* event, const char* why, Clock::time_point now) 
         party::bridge::OnRing();
     }
     Log("bell: %s", DescribeFromClient().c_str());
+    Log("bell: %s", DescribeSignPolling().c_str());
     Log("ringing the %s (%s): SpEffect %d %s%s", host ? "Beckoning Bell" : "Small Resonant Bell", why, effect,
         ok ? "applied" : "NOT applied (no player)", ok ? (HasSpEffect(player, effect) ? (had ? ", was already on" : ", now on")
                                                                               : ", not on the list after the call")
@@ -490,6 +502,40 @@ std::string DescribeFromClient() {
     return b;
 }
 
+/// The sign polling as the game holds it (join timing, docs/party/join_timing.md): the parsed
+/// ss.info ([cm+0x18]: +0x8a0 SummonDataGetListInterval, +0x8a8..+0x8b4 the WaitCounts) and the
+/// FROM client's own countdown (+0x100) and per-type wait counters (+0xb4 normal coop, +0xbc/+0xc0
+/// invasion, +0xc4 natural enemy), read by the get-list builder 0x1e946e0.
+std::string DescribeSignPolling() {
+    std::uint64_t cm = 0, ss = 0;
+    SafeGet(Guest(0x5540288), &cm);
+    if (cm) {
+        SafeGet(cm + 0x18, &ss);
+    }
+    std::int32_t interval = -1, w0 = -1, w1 = -1, w2 = -1, w3 = -1, c0 = -1, c1 = -1, c2 = -1, c3 = -1;
+    float countdown = -1;
+    if (ss) {
+        SafeGet(ss + 0x8a0, &interval);
+        SafeGet(ss + 0x8a8, &w0);
+        SafeGet(ss + 0x8ac, &w1);
+        SafeGet(ss + 0x8b0, &w2);
+        SafeGet(ss + 0x8b4, &w3);
+    }
+    if (cm) {
+        SafeGet(cm + 0x100, &countdown);
+        SafeGet(cm + 0xb4, &c0);
+        SafeGet(cm + 0xbc, &c1);
+        SafeGet(cm + 0xc0, &c2);
+        SafeGet(cm + 0xc4, &c3);
+    }
+    char b[256];
+    std::snprintf(b, sizeof b,
+                  "sign polling: interval %d s (next in %.2f s), wait counts coop %d / invasion %d / enemy %d / all-area %d; "
+                  "counters %d %d %d %d",
+                  interval, countdown, w0, w1, w2, w3, c0, c1, c2, c3);
+    return b;
+}
+
 /// Title screen: confirms "Continue" (the main menu's default item once a save exists) with the
 /// game's own pad path (runtime_pad_director_press: no OS input) until the world loads. Cross is
 /// pressed 0.15 s every 2 s while no world was seen in this run, never in the world or while a
@@ -530,7 +576,7 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
             party::runtime().restarted() ? "crash restart" : "party mode");
     }
     // Let the title settle (logos, online login) before the first press.
-    if (Seconds(st.continue_ready, now) < 4.0) {
+    if (Seconds(st.continue_ready, now) < st.continue_settle) {
         return;
     }
     if (st.continue_held) {
@@ -553,7 +599,7 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
         st.continue_last = now;
         return;
     }
-    if (Seconds(st.continue_last, now) >= 2.5) {
+    if (Seconds(st.continue_last, now) >= st.continue_every) {
         st.continue_last = now;
         st.continue_held = true;
         ++st.continue_presses;
@@ -733,6 +779,15 @@ void PartyDirector::ConfigureFromEnv() {
     if (const char* e = std::getenv("BB_PARTY_RING_EVERY"); e && e[0] && std::atof(e) >= 1.0) {
         st.ring_every = std::atof(e);
     }
+    if (!bb_party_switch_on("BB_PARTY_FAST_JOIN")) {
+        st.fast_join = false;
+        st.ring_delay = 5.0;
+        st.continue_settle = 4.0;
+        st.continue_every = 2.5;
+    }
+    if (const char* d = std::getenv("BB_PARTY_RING_DELAY"); d && d[0] && std::atof(d) >= 0.0) {
+        st.ring_delay = std::atof(d);
+    }
     if (const char* a = std::getenv("BB_PARTY_AUTO"); a && a[0] == '0') {
         st.auto_ring = false;
     }
@@ -785,9 +840,11 @@ void PartyDirector::ConfigureFromEnv() {
         st.grant_bells = false;
     }
     st.watchdog = HostWatchdog(HostWatchdogConfigFromEnv());
-    Log("director: role %s, max %d players, %s every %.0f s, start %s, bell grants %s%s%s",
+    Log("director: role %s, max %d players, %s every %.0f s (first %.1f s in the world), fast join %s, start %s, "
+        "bell grants %s%s%s",
         role == PartyRole::Host ? "host" : role == PartyRole::Guest ? "guest" : "none", st.max_players,
-        st.auto_ring ? "bell" : "no automatic bell", st.ring_every, StartModeName(st.start_mode),
+        st.auto_ring ? "bell" : "no automatic bell", st.ring_every, st.ring_delay, st.fast_join ? "on" : "off",
+        StartModeName(st.start_mode),
         st.grant_bells ? "on" : "off", st.test.on ? "; test: " : "", st.test.on ? std::getenv("BB_PARTY_DIRECTOR_TEST") : "");
 }
 
@@ -857,7 +914,7 @@ void PartyDirector::Tick() {
     if (full || !st.start_logged) {
         UpdateStart(st, s, start_mode);
         if (((grant_bells && role != PartyRole::None) || st.test.grant_bells) && st.world_seen &&
-            Seconds(st.world_at, now) >= 5.0) {
+            Seconds(st.world_at, now) >= std::min(5.0, st.ring_delay)) {
             GrantBells(st, s);
         }
     }
@@ -963,10 +1020,14 @@ void PartyDirector::Tick() {
             st.ticks_at_log = st.ticks;
         }
     }
+    if (!st.poll_logged && Seconds(st.last_ring, now) >= 2.5) {
+        st.poll_logged = true;
+        Log("bell +2.5 s: %s", DescribeSignPolling().c_str());
+    }
     // Automatic summoning. The host also rings while hosting: the 2nd / 3rd cooperator of a
     // 3- / 4-player party (HostMayRing checks the count).
     if (!st.auto_ring || role == PartyRole::None || !link || !s.world_up || s.loading || !st.world_seen ||
-        Seconds(st.world_at, now) < 5.0 || !SessionMayRing(role == PartyRole::Host, s.session_role)) {
+        Seconds(st.world_at, now) < st.ring_delay || !SessionMayRing(role == PartyRole::Host, s.session_role)) {
         return;
     }
     if (st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {
