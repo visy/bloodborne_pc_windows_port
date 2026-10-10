@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <string_view>
+#include <unordered_set>
 
 namespace json {
 
@@ -133,6 +135,7 @@ struct Parser {
     const std::string& s;
     std::size_t pos = 0;
     std::string error;
+    std::size_t values = 0;  // every value parsed so far (kMaxValues)
 
     bool fail(const char* what) {
         if (error.empty()) error = std::string(what) + " at byte " + std::to_string(pos);
@@ -202,6 +205,9 @@ struct Parser {
             case 'u': {
                 std::uint32_t cp = 0;
                 if (!hex4(cp)) return false;
+                // NUL would cut every C string the value reaches (host names, paths, logs).
+                if (cp == 0) return fail("NUL (\\u0000) in string");
+                if (cp >= 0xdc00 && cp < 0xe000) return fail("unpaired surrogate");
                 if (cp >= 0xd800 && cp < 0xdc00) {
                     std::uint32_t lo = 0;
                     if (pos + 2 > s.size() || s[pos] != '\\' || s[pos + 1] != 'u') return fail("unpaired surrogate");
@@ -236,11 +242,15 @@ struct Parser {
             if (pos < s.size() && (s[pos] == '+' || s[pos] == '-')) ++pos;
             if (!digits()) return fail("invalid number");
         }
+        if (pos - start > kMaxNumberChars) return fail("number too long");
         out = std::strtod(s.substr(start, pos - start).c_str(), nullptr);
+        // 1e999 overflows to infinity: JSON has none, and every reader expects a finite number.
+        if (!std::isfinite(out)) return fail("number out of range");
         return true;
     }
     bool value(Value& out, int depth) {
-        if (depth > 64) return fail("nesting too deep");
+        if (depth > kMaxDepth) return fail("nesting too deep");
+        if (++values > kMaxValues) return fail("too many values");
         skip_ws();
         if (pos >= s.size()) return fail("unexpected end of input");
         const char c = s[pos];
@@ -252,6 +262,9 @@ struct Parser {
                 ++pos;
                 return true;
             }
+            // Duplicate keys: a linear scan for small objects, a hash set once it grows (a peer's
+            // object of 100k members must not cost 10^10 comparisons).
+            std::unordered_set<std::string> keys;
             for (;;) {
                 skip_ws();
                 std::string key;
@@ -261,7 +274,13 @@ struct Parser {
                 ++pos;
                 Value member;
                 if (!value(member, depth + 1)) return false;
-                if (out.find(key)) return fail("duplicate member");
+                if (out.object.size() < 16) {
+                    if (out.find(key)) return fail("duplicate member");
+                } else {
+                    if (keys.empty())
+                        for (const auto& kv : out.object) keys.insert(kv.first);
+                    if (!keys.insert(key).second) return fail("duplicate member");
+                }
                 out.object.emplace_back(std::move(key), std::move(member));
                 skip_ws();
                 if (pos < s.size() && s[pos] == ',') {
@@ -334,6 +353,10 @@ std::string dump(const Value& v, int indent) {
 }
 
 bool parse(const std::string& text, Value& out, std::string& error) {
+    if (text.size() > kMaxText) {
+        error = "document too large (" + std::to_string(text.size()) + " bytes)";
+        return false;
+    }
     Parser p{text};
     if (!p.value(out, 0)) {
         error = p.error;

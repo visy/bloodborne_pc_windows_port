@@ -47,6 +47,14 @@ struct Value {
 };
 
 std::string dump(const Value& v, int indent = 2);
+// Limits (peer input, bbport security pass): the parser refuses documents over kMaxText bytes,
+// nesting deeper than kMaxDepth, more than kMaxValues values in all (a Value is ~100 bytes:
+// "[0,0,0,..." would otherwise cost 50x its size), numbers longer than kMaxNumberChars or out
+// of double range, an escaped NUL and unpaired surrogates.
+constexpr std::size_t kMaxText = 16u << 20;
+constexpr int kMaxDepth = 64;
+constexpr std::size_t kMaxValues = 1u << 20;
+constexpr std::size_t kMaxNumberChars = 64;
 bool parse(const std::string& text, Value& out, std::string& error);
 
 std::string hex(std::uint64_t v);

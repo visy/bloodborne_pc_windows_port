@@ -46,6 +46,27 @@ namespace party {
 
 constexpr std::uint16_t kLinkProtocolVersion = 2;  // 2: HELLO carries the patch / mod sets
 constexpr int kBroadcast = -1;  // send_* target: every member (host side)
+
+// Peer input limits (bbport security pass). Every byte a peer sends is untrusted: a frame is
+// refused (connection dropped) past these, and the host meters each member.
+constexpr std::uint32_t kMaxFrame = 16u << 20;          // any frame after WELCOME
+constexpr std::uint32_t kMaxHandshakeFrame = 64u << 10;  // HELLO / CHALLENGE / AUTH / REJECT
+constexpr std::size_t kMaxPendingConns = 16;   // host: connections still in the handshake
+constexpr std::size_t kMaxPendingPerIp = 4;    // ... from one address
+constexpr std::size_t kMaxOutBuffer = 64u << 20;  // queued for a peer that does not read: dropped
+constexpr std::size_t kReadBudget = 256u << 10;   // bytes read from one connection per IO pass
+constexpr std::size_t kFramesPerPass = 256;       // frames handled per connection per IO pass
+constexpr int kMaxCallbackBacklog = 64;  // a connection's frames waiting for the callback thread:
+                                         // past this its socket is not read (backpressure)
+constexpr std::size_t kMaxUnackedEvents = 16384;  // per stream; the oldest go past this
+constexpr std::size_t kMaxEventName = 64;
+constexpr std::size_t kMaxRosterEntries = 8;
+// Host: what one member may send after WELCOME (frames / bytes per second, burst). A member past
+// it has its frames dropped (an RPC gets an error reply); kFloodDisconnect drops in a row and
+// the connection is closed (the slot is kept: a misbehaving client, not a kick).
+constexpr double kMemberFrameRate = 200, kMemberFrameBurst = 2000;
+constexpr double kMemberByteRate = 4u << 20, kMemberByteBurst = 48u << 20;
+constexpr std::uint32_t kFloodDisconnect = 20000;
 constexpr int kHostSlot = 0;
 
 // Prologue: in its own world, still playing the campaign start (party_start.h); not summoned yet.
