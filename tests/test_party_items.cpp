@@ -229,6 +229,7 @@ static void test_guest() {
     g = q.Step(Home(), t);
     CHECK(g && g->lot == 2400450);
     q.Done(g->Key());
+    q.Awarded(t); // it opened a popup
     // Then spacing.
     t += 0.016;
     CHECK(!q.Step(Home(), t));
@@ -249,85 +250,107 @@ static void test_guest() {
     CHECK(!q.Step(Home(), t + 10)); // stable count restarted at 1
 }
 
-// A rejoin's full list is mostly lots the guest already has: a skip (NoPopup) does not hold the
-// next grant for kSpacing, so a new lot behind 100 skips lands at once, not 150 s later.
-static void test_guest_skips() {
+// The Cathedral Ward report: lot 50000010 (ledger 36, event 12411700) gives goods 4114 (Sword
+// Hunter Badge, maxNum 1, no storage); a guest whose save already holds it got the blocking
+// "inventory or storage max" dialog. Such a lot is now skipped.
+static void test_fit() {
+    LotSlotState badge;
+    badge.category = 4;
+    badge.id = 4114;
+    badge.num = 1;
+    badge.owned = 1;
+    badge.max_num = 1;
+    badge.max_storage = 0;
+    std::string why;
+    CHECK(ClassifyLotFit({badge}, &why) == LotFit::Owned);
+    CHECK(why.find("4114") != std::string::npos);
+    badge.owned = 0;
+    CHECK(ClassifyLotFit({badge}) == LotFit::Give);
+    // Unknown count: never refused (the old behaviour).
+    badge.owned = -1;
+    CHECK(ClassifyLotFit({badge}) == LotFit::Give);
+    // Consumables: 18 vials + 3 > 20 with storage room -> fits (overflow goes to storage).
+    LotSlotState vials;
+    vials.category = 4;
+    vials.id = 1000;
+    vials.num = 3;
+    vials.owned = 18;
+    vials.max_num = 20;
+    vials.max_storage = 2;
+    CHECK(ClassifyLotFit({vials}) == LotFit::Give);
+    vials.max_storage = 0;
+    CHECK(ClassifyLotFit({vials}) == LotFit::Full);
+    vials.owned = 17;
+    CHECK(ClassifyLotFit({vials}) == LotFit::Give);
+    // Weapons have no count limit here; num 0 counts as 1.
+    LotSlotState weapon;
+    weapon.category = 0;
+    weapon.id = 18100000;
+    weapon.owned = 5;
+    weapon.max_num = 1;
+    CHECK(ClassifyLotFit({weapon}) == LotFit::Give);
+    LotSlotState key = badge;
+    key.id = 4000;
+    key.owned = 1;
+    key.num = 0;
+    // One refused slot refuses the lot; Owned wins over Full.
+    vials.owned = 20;
+    CHECK(ClassifyLotFit({weapon, vials}) == LotFit::Full);
+    CHECK(ClassifyLotFit({vials, key}) == LotFit::Owned);
+    CHECK(ClassifyLotFit({}) == LotFit::Give);
+    // A fight holds every popup back; marks still go.
     GuestItems q;
-    std::vector<ItemGrant> in;
-    for (int i = 0; i < 100; ++i) {
-        in.push_back({std::uint64_t(i + 1), 2400000 + i * 10, 52400000 + i * 10, kItemNone, ItemSource::Full});
+    CHECK(q.Offer({{1, 31000, kItemNone, 25, ItemSource::Full}}) == 1);
+    ItemApplyState fight = Home();
+    fight.calm = false;
+    double t = 100;
+    for (int i = 0; i < GuestItems::kStableTicks + 5; ++i, t += 0.016) {
+        CHECK(!q.Step(fight, t));
     }
-    CHECK(q.Offer(in) == 100);
-    double t = 10.0;
-    std::optional<ItemGrant> g;
-    for (int i = 0; i < GuestItems::kStableTicks - 1; ++i) {
-        CHECK(!q.Step(Home(), t));
-    }
-    int taken = 0;
-    for (int i = 0; i < 100; ++i) {
-        g = q.Step(Home(), t);
-        if (!g) {
-            break;
-        }
-        q.Done(g->Key());
-        q.NoPopup(); // already given
-        ++taken;
-    }
-    CHECK(taken == 100);
-    // A real award still spaces the next one.
-    CHECK(q.Offer({{200, 31000, kItemNone, 25, ItemSource::Award}, {201, 31010, kItemNone, 26, ItemSource::Award}}) == 2);
-    g = q.Step(Home(), t);
-    CHECK(g && g->lot == 31000);
-    q.Done(g->Key());
-    CHECK(!q.Step(Home(), t + 0.1));
-    g = q.Step(Home(), t + GuestItems::kSpacing);
-    CHECK(g && g->lot == 31010);
+    CHECK(q.Step(Home(), t).has_value());
 }
 
-// The duplicate of the live run (Sword Hunter Badge dialog, lots 29000/30000/31000/50000001/50000010
-// given again on the first party session): a save that earned ledger lots solo gets their bits
-// before any host flag lands, so the host's full list skips them.
+// Ledger lots a save earned solo (live run, first party session: 29000, 30000, 31000, 50000001,
+// 50000010 given again) get their bits before C2 writes any host flag, so the host's full list
+// skips them - and a boss the save never beat (its flag later synced by C2) keeps its lot.
 static void test_ledger_seed() {
     std::set<std::uint32_t> save = {9066, 9067, 12401800, 12411700, 12411800, 12101800};
     auto is_set = [&save](std::uint32_t id) { return save.count(id) != 0; };
-    std::vector<std::uint32_t> bits = LedgerBitsToSeed(is_set);
-    std::set<std::uint32_t> got(bits.begin(), bits.end());
+    const std::vector<std::uint32_t> bits = LedgerBitsToSeed(is_set);
+    const std::set<std::uint32_t> got(bits.begin(), bits.end());
     CHECK(got.size() == bits.size()); // no duplicates
     for (std::int32_t idx = 0; idx < std::int32_t(ItemLedgerCount()); ++idx) {
         const bool want = save.count(std::uint32_t(ItemLedgerDoneFlag(idx))) != 0;
         CHECK(got.count(kItemLedgerBase + std::uint32_t(idx)) == (want ? 1u : 0u));
     }
-    // The five lots of the live run, by their lots.
     for (std::int32_t lot : {29000, 30000, 31000, 50000001, 50000010}) {
         const std::int32_t idx = ItemLedgerIndex(lot);
         CHECK(idx >= 0);
         CHECK(got.count(kItemLedgerBase + std::uint32_t(idx)) == 1);
-        // The host's full-list grant for it now finds its done bit set: skipped.
         ItemGrant g{1, lot, kItemNone, idx, ItemSource::Full};
         CHECK(g.DoneFlag() == std::int64_t(kItemLedgerBase) + idx);
     }
-    // A boss the save never beat: its lot stays to be given (21002950, m22 12201800).
+    // m22's boss (12201800, lot 21002950) was not beaten here: no bit, the replay gives it even
+    // after C2 has synced 12201800 into this save.
     CHECK(got.count(kItemLedgerBase + std::uint32_t(ItemLedgerIndex(21002950))) == 0);
-    // A bit already set is not listed again; the marker stops everything.
     save.insert(kItemLedgerBase + std::uint32_t(ItemLedgerIndex(29000)));
     CHECK(LedgerBitsToSeed(is_set).size() == bits.size() - 1);
     save.insert(kItemLedgerSeeded);
     CHECK(LedgerBitsToSeed(is_set).empty());
+    CHECK(ItemLedgerCount() < std::size_t(kItemLedgerSize - 1));
+    CHECK(kItemLedgerSeeded == kItemLedgerBase + kItemLedgerSize - 1);
 }
 
 int main() {
     test_tables();
+    test_fit();
+    test_ledger_seed();
     test_deny();
     test_classify();
     test_json();
     test_host();
     test_gate();
     test_guest();
-    test_guest_skips();
-    test_ledger_seed();
-    // The seeded marker is the last ledger bit and never a lot's index.
-    CHECK(ItemLedgerCount() < std::size_t(kItemLedgerSize - 1));
-    CHECK(kItemLedgerSeeded == kItemLedgerBase + kItemLedgerSize - 1);
     std::printf("party-items-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

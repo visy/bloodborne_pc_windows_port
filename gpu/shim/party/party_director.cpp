@@ -36,7 +36,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <map>
+#include <vector>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -85,9 +87,19 @@ void Log(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    std::printf("Party: %s\n", line);
+    std::printf("Party: %s%s\n", PartyLogStamp().c_str(), line);
     std::fflush(stdout);
 }
+
+/// A live travel test step (BB_PARTY_DIRECTOR_TEST host_warp=ID@S, host_die@S, guest_die@S):
+/// runs S seconds after this player's next (re)join - the host's cooperators 0 -> >= 1, the
+/// guest's client session with the world loaded - on the main thread, in list order.
+struct TravelStep {
+    enum Kind { HostWarp, HostDie, GuestDie } kind = HostWarp;
+    std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30
+    double delay = 15.0;
+    int min_join = 0;     // "#N": not before this player's Nth join
+};
 
 struct Test {
     bool on = false;
@@ -104,6 +116,16 @@ struct Test {
     const char* bell = nullptr; // bell_host / bell_guest: Ring() once ready (the real bell path)
     bool bell_done = false;
     Clock::time_point rung_at{};
+    // Travel steps (see TravelStep): the next one waits for a join after the previous one ran.
+    std::vector<TravelStep> steps;
+    std::size_t next_step = 0;
+    bool joined = false;       // in the party now (host: cooperators >= 1; guest: client, loaded)
+    bool armed = false;        // a join since the last step ran
+    int joins = 0;
+    Clock::time_point joined_at{};
+    Clock::time_point step_at{}; // the last step's run, for "back after" times
+    bool ran = false;            // a step of this role ran
+    TravelStep::Kind last_kind = TravelStep::HostWarp;
 };
 
 struct State {
@@ -654,6 +676,75 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
     }
 }
 
+constexpr std::uint64_t kLampWarp = 0x13cdf30; // void (u32 ReturnPointParam id): lamp / Dream / headstone
+constexpr std::uint64_t kForceDead = 0x13320c0; // Lua ForceDead(ctx unused, entity id; 10000 = local player)
+
+const char* TravelStepName(TravelStep::Kind k) {
+    return k == TravelStep::HostWarp ? "host_warp" : k == TravelStep::HostDie ? "host_die" : "guest_die";
+}
+
+/// The live travel test chain (TravelStep): joins are tracked in any state; a step runs in the
+/// world, with no loading screen and no stage request pending.
+void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::time_point now) {
+    Test& t = st.test;
+    if (t.steps.empty() || role == PartyRole::None) {
+        return;
+    }
+    // Guest: in once a client with the world loaded; out only when the session ends (the summon's
+    // own map reload into the host world is still in).
+    const bool joined = role == PartyRole::Host ? s.cooperators >= 1
+                        : t.joined                ? s.session_role == RoleClient
+                                                  : s.session_role == RoleClient && s.world_up && !s.loading;
+    if (joined != t.joined) {
+        t.joined = joined;
+        if (joined) {
+            ++t.joins;
+            t.joined_at = now;
+            t.armed = true;
+            if (t.ran) {
+                Log("test: travel steps: (re)joined #%d, %.1f s after %s", t.joins, Seconds(t.step_at, now),
+                    TravelStepName(t.last_kind));
+            } else {
+                Log("test: travel steps: joined #%d", t.joins);
+            }
+        } else {
+            Log("test: travel steps: out of the party (%s)", Describe(s).c_str());
+        }
+    }
+    // The other role's steps are that instance's: skip them.
+    auto mine = [&](const TravelStep& step) {
+        return (step.kind == TravelStep::GuestDie) == (role == PartyRole::Guest);
+    };
+    while (t.next_step < t.steps.size() && !mine(t.steps[t.next_step])) {
+        ++t.next_step;
+    }
+    if (t.next_step >= t.steps.size() || !t.armed || !joined || !s.world_up || s.loading ||
+        t.joins < t.steps[t.next_step].min_join || Seconds(t.joined_at, now) < t.steps[t.next_step].delay) {
+        return;
+    }
+    std::uint64_t wts = 0;
+    std::uint8_t requested = 1;
+    if (!SafeGet(Guest(0x5556678), &wts) || !wts || !SafeGet(wts + 8, &requested) || requested) {
+        return; // a stage request is pending
+    }
+    const TravelStep step = t.steps[t.next_step++];
+    t.armed = false;
+    t.step_at = now;
+    t.ran = true;
+    t.last_kind = step.kind;
+    Log("test: travel step %zu/%zu: %s%s%u (%s)", t.next_step, t.steps.size(), TravelStepName(step.kind),
+        step.kind == TravelStep::HostWarp ? " to lamp " : "", step.kind == TravelStep::HostWarp ? step.id : 0u,
+        Describe(s).c_str());
+    if (step.kind == TravelStep::HostWarp) {
+        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint32_t)>(Guest(kLampWarp))(step.id);
+    } else {
+        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, 10000);
+    }
+    std::uint8_t after = 0;
+    SafeGet(wts + 8, &after);
+    Log("test: travel step %s done; stage request %s", TravelStepName(step.kind), after ? "armed" : "not armed");
+}
+
 /// The title takes scripted input (BB_TEST_NEWGAME): no world; in party mode the link is up and
 /// the FROM sign-in (ss.info -> login -> notice) is over: the title menu shows after it (before,
 /// "Creating save data" / "Checking network status" swallow presses).
@@ -926,9 +1017,25 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.bell = kGuestBell;
             } else if (item.rfind("insight=", 0) == 0) {
                 st.test.insight = std::atoi(item.c_str() + 8);
+            } else if (item.rfind("host_warp=", 0) == 0 || item.rfind("host_die", 0) == 0 ||
+                       item.rfind("guest_die", 0) == 0) {
+                TravelStep step;
+                step.kind = item[0] == 'g' ? TravelStep::GuestDie
+                            : item.rfind("host_die", 0) == 0 ? TravelStep::HostDie
+                                                              : TravelStep::HostWarp;
+                if (step.kind == TravelStep::HostWarp) {
+                    step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 10, nullptr, 10));
+                }
+                if (const std::size_t at_sign = item.find('@'); at_sign != std::string::npos) {
+                    step.delay = std::atof(item.c_str() + at_sign + 1);
+                }
+                if (const std::size_t hash = item.find('#'); hash != std::string::npos) {
+                    step.min_join = std::atoi(item.c_str() + hash + 1);
+                }
+                st.test.steps.push_back(step);
             } else if (!item.empty()) {
                 Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, start, grant_bells, drop_bells, award_lot=N, set_flag=N[:N], insight=N, "
-                    "ring_host, ring_guest, bell_host or bell_guest; ignored",
+                    "ring_host, ring_guest, bell_host, bell_guest, host_warp=ID@S, host_die@S or guest_die@S; ignored",
                     item.c_str());
             }
         }
@@ -1112,6 +1219,7 @@ void PartyDirector::Tick() {
     // Insight in (party_phantom.h).
     PhantomTick(link);
     if (st.test.on) {
+        RunTravelSteps(st, s, role, now);
         RunTest(st, s, now);
         if ((st.test.log_state || st.test.start) && Seconds(st.last_log, now) >= 5.0) {
             const double secs = Seconds(st.last_log, now);
@@ -1202,6 +1310,30 @@ void PartyDirector::Tick() {
             Ring(st, kHostBell, "host ready, a ready party member waits", now);
         }
     }
+}
+
+std::string PartyLogStamp() {
+    static const bool on = [] {
+        const char* t = std::getenv("BB_PARTY_DIRECTOR_TEST");
+        const char* l = std::getenv("BB_PARTY_LOG_TIME");
+        return (t && t[0]) || (l && l[0] == '1');
+    }();
+    if (!on) {
+        return {};
+    }
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t secs = std::chrono::system_clock::to_time_t(now);
+    const int ms = static_cast<int>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000);
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &secs);
+#else
+    localtime_r(&secs, &tm);
+#endif
+    char b[32];
+    std::snprintf(b, sizeof b, "[%02d:%02d:%02d.%03d] ", tm.tm_hour, tm.tm_min, tm.tm_sec, ms);
+    return b;
 }
 
 bool PartyRequested() {

@@ -64,7 +64,7 @@ void plog(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
-    std::printf("Party: %s\n", buf);
+    std::printf("Party: %s%s\n", coop::PartyLogStamp().c_str(), buf);
     std::fflush(stdout);
 }
 
