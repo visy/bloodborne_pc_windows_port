@@ -51,13 +51,15 @@ struct GameSnapshot {
     bool in_game_frame = false;  ///< CSNowLoadingHelper saw an in-game frame
     std::uint64_t world_chr_man = 0, player = 0, session_man = 0, game_data_man = 0, player_rec = 0;
     int session_role = -1, session_sub_state = -1, matching_status = -1;
-    int insight = -1, level = -1;
+    int insight = -1, level = -1, echoes = -1; ///< PlayerGameData +0x84, +0x90, +0x94
     std::uint32_t map_id = 0xffffffffu; ///< 0xAABBCCDD = mAA_BB_CC_DD; all ones when unknown
     int cooperators = -1;        ///< -1: not asked (or not safe to ask)
     int online_mode = -1;        ///< network flow +0x1590
     int np_online = -1;          ///< NP manager +0xd8
 };
 
+/// SprjSessionManager +0x124 (6 = client in another world), -1 without a session manager. Cheap.
+int LocalSessionRole();
 /// Reads the state. `call_game` also asks the game's cooperator count (main thread only, world up).
 GameSnapshot ReadGameState(bool call_game);
 /// "m24_01_00_00" (or "-" when unknown).

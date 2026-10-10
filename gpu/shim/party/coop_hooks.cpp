@@ -400,6 +400,34 @@ bool HookTailJump(u64 off, u64 target, const void* handler, const char* name) {
     return true;
 }
 
+bool HookValueFilter(u64 off, std::initializer_list<u8> original, std::initializer_list<u8> load_args, ValueFilter fn,
+                     u64 resume, const char* name) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    if (!Ready(name) || !PrologueOk(off, original, name)) {
+        return false;
+    }
+    if (!fn || resume >= g_image_size) {
+        std::printf("Coop hooks: %s: no filter or a bad resume offset; not installed\n", name);
+        return false;
+    }
+    Emitter e = NewStub();
+    e.Raw(original.begin(), original.size());
+    e.SkipRedZone();
+    e.SaveVolatile();                 // rax is the first push: [r12 + 0x48] after it
+    e.Raw(load_args.begin(), load_args.size());
+    e.CallAbs(reinterpret_cast<const void*>(fn));
+    e.Bytes({0x49, 0x89, 0x44, 0x24, 0x48}); // mov [r12 + 0x48], rax (the saved rax = the new value)
+    e.RestoreVolatile();
+    e.BackRedZone();
+    e.JmpTo(reinterpret_cast<u64>(g_image + resume));
+    if (!WriteBranch(off, 0xe9, PlaceStub(e), original.size() - 5)) {
+        std::printf("Coop hooks: %s: the stub for guest +0x%llx could not be placed; not installed\n", name, ull(off));
+        return false;
+    }
+    std::printf("Coop hooks: %s: value filter at guest +0x%llx (resume +0x%llx)\n", name, ull(off), ull(resume));
+    return true;
+}
+
 bool PatchBytes(u64 off, std::initializer_list<u8> original, std::initializer_list<u8> patched, const char* name) {
     std::lock_guard<std::mutex> lk(g_mu);
     if (!g_image || original.size() != patched.size() || !patched.size()) {

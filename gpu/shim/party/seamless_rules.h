@@ -39,8 +39,14 @@ void SeamlessRulesTick();
 /// game is about to execute (not for skipped ones), before the game reads its arguments. `event`
 /// is the SprjEmkEventIns, `instr` its instruction record; EmevdInstructionArgs finds the bytes.
 using EmevdRewriter = void (*)(int event_id, int bank, int id, std::uint64_t event, std::uint64_t instr);
+/// An extra skip predicate (party_b2: a client in the host's world never plays the opening
+/// cutscene): true = the instruction is skipped like a BB_PARTY_EMEVD_SKIP rule. One; nullptr removes.
+using EmevdSkipPredicate = bool (*)(int event_id, int bank, int id);
+void SetEmevdSkipPredicate(EmevdSkipPredicate fn);
 /// Sets the rewriter (one; nullptr removes it). Call before EnsureEmevdFilter.
 void SetEmevdRewriter(EmevdRewriter fn);
+/// A second, independent rewriter slot (party_guestsvc), run after the first.
+void SetEmevdRewriter2(EmevdRewriter fn);
 /// Installs the EMEVD dispatch filter (0x17b93a0) now if SeamlessRulesInit did not (idempotent,
 /// whether or not the seamless rules are on). True once installed.
 bool EnsureEmevdFilter();
