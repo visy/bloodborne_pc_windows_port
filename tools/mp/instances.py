@@ -262,6 +262,12 @@ def stamp_lines(src, log, t0):
 
 
 def run(a):
+    # A rebuild since the last setup: copy it first, or the run would test the old exe.
+    built = Path(a.build) / "out" / "bbport.exe"
+    inst0 = Path(a.root) / "inst0" / "out" / "bbport.exe"
+    if built.exists() and (not inst0.exists() or built.stat().st_mtime > inst0.stat().st_mtime + 1):
+        print("the build is newer than the instances' exe: running setup first", flush=True)
+        setup(a)
     port0 = base_port(a.root)
     stop_leftovers(a.root)
     user32 = ctypes.windll.user32 if os.name == "nt" else None
