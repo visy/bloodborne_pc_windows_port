@@ -24,8 +24,9 @@
 //            item except an ending runs there: a missed scene plays through the phantom path
 //            (mode 2, as the live mirror), the time of day and the story flags go into the own
 //            save's pool (C2's mode-1 pool write; 9800..9802 bits, no world refresh byte - the
-//            world shown is the host's), never into the host-world overlay. Endings wait for the
-//            own world (they warp to the own Hunter's Dream).
+//            world shown is the host's), never into the host-world overlay. An ending runs last:
+//            the guest's lamp warp to its own Hunter's Dream takes it out of the host's world
+//            (as a B1 travel follow does) and the ending program below runs there.
 //          - endings: A = warp to the own Hunter's Dream (0x13CDF30(2102961)) and set 72100130
 //            (m21 12100180 does the rest natively); B / C = the event body emulated in the own
 //            Dream (12101800[/12101850], 9180, remo, NG cycle +1, 6604, 6601|6602, 6603, last
@@ -36,8 +37,11 @@
 //      BB_PARTY_STORY_SUMMONED=0 (replay queue only in the own world, as before seamless play),
 //      BB_PARTY_STORY_PLAYER=<n> (the 0x131A9F0 player argument; default 10000 = the local
 //      player, resolved by 0x13C97A0; -1 = no appearance snapshot),
+//      BB_PARTY_STORY_ENDING_SUMMONED=0 (a summoned guest's ending waits for the own world),
 //      BB_PARTY_STORY_TEST=cutscene:<remo id>[,mirror] (single instance test: queue a replay of
-//      that remo once the world has been up 10 s; "mirror" uses the phantom path / mode 2).
+//      that remo once the world has been up 10 s; "mirror" uses the phantom path / mode 2),
+//      BB_PARTY_STORY_TEST=ending:<1|2|3>[,summoned] (queue that ending as if the host had sent it,
+//      BB_PARTY_STORY_TEST_DELAY s after the world is up; "summoned": only once a phantom).
 //
 // The pure part (kinds, JSON, the host queue, GuestStory's mirror / replay programs) has no game
 // dependency and is unit-tested (tests/test_party_story.cpp, built with BB_PARTY_STORY_NO_GAME).
@@ -179,6 +183,9 @@ public:
 
     bool mirror_enabled = true;
     bool summoned_replay = true;  ///< run the replay queue (except endings) while summoned
+    /// A summoned guest with a queued ending leaves the host's world for its own Hunter's Dream
+    /// (lamp warp) and runs the ending there (BB_PARTY_STORY_ENDING_SUMMONED=0: wait for home).
+    bool summoned_ending = true;
 
     /// False when `s.seq` is not newer than the newest seen. `in_host_world`: the guest is a
     /// phantom right now (a cutscene is mirrored live).
