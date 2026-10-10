@@ -1,26 +1,32 @@
 #!/usr/bin/env python3
-"""Machine-wide limit on running game clients, shared by every agent's harness runs.
+"""Machine-wide limits shared by every agent: running game clients and parallel builds.
 
-The state is one JSON file (default E:\\games\\bbport\\agents\\game_queue.json, BB_GAME_QUEUE_FILE),
+Each pool is one JSON file next to E:\\games\\bbport\\agents\\game_queue.json (BB_GAME_QUEUE_FILE):
+the "game" pool is game_queue.json, others are <pool>_queue.json (e.g. build_queue.json). Each is
 edited under an exclusive lock file next to it:
 
   {"max_clients": 2,
-   "holders": [{"id", "pid", "count", "root", "since"}],   # runs whose games are up
+   "holders": [{"id", "pid", "count", "root", "since"}],   # runs that hold slots
    "queue":   [{"id", "pid", "count", "root", "since"}]}   # waiting, first come first served
 
-A run needing `count` clients waits until it is first in the queue and the holders' clients plus
-`count` fit in max_clients. Entries whose harness process is gone are dropped, so a killed run
-never blocks the queue. max_clients is read from the file each time (edit it to change the limit;
-BB_GAME_QUEUE_MAX sets it when the file is created).
+A job needing `count` slots waits until it is first in the queue and the holders' slots plus
+`count` fit in max_clients. Entries whose process is gone are dropped, so a killed job never
+blocks the queue. max_clients is read from the file each time (edit it to change the limit;
+defaults: game 2 (BB_GAME_QUEUE_MAX), build 2 (BB_BUILD_QUEUE_MAX)).
 
-  python tools/mp/game_queue.py status      # who runs, who waits
-  python tools/mp/game_queue.py clear-dead  # drop entries of dead processes now
+  python tools/mp/game_queue.py status [pool]      # who runs, who waits (pool: game, build)
+  python tools/mp/game_queue.py clear-dead [pool]  # drop entries of dead processes now
 """
 import contextlib, json, os, sys, time
 from pathlib import Path
 
 QUEUE_FILE = Path(os.environ.get("BB_GAME_QUEUE_FILE", r"E:\games\bbport\agents\game_queue.json"))
-DEFAULT_MAX = int(os.environ.get("BB_GAME_QUEUE_MAX", "2"))
+POOL_DEFAULTS = {"game": int(os.environ.get("BB_GAME_QUEUE_MAX", "2")),
+                 "build": int(os.environ.get("BB_BUILD_QUEUE_MAX", "2"))}
+
+
+def pool_file(pool: str) -> Path:
+    return QUEUE_FILE if pool == "game" else QUEUE_FILE.with_name(f"{pool}_queue.json")
 
 
 def _alive(pid: int) -> bool:
@@ -44,9 +50,10 @@ def _alive(pid: int) -> bool:
 
 
 @contextlib.contextmanager
-def _locked():
-    QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    lock = QUEUE_FILE.with_suffix(".lock")
+def _locked(pool: str = "game"):
+    qf = pool_file(pool)
+    qf.parent.mkdir(parents=True, exist_ok=True)
+    lock = qf.with_suffix(".lock")
     t0 = time.time()
     while True:
         try:
@@ -63,20 +70,20 @@ def _locked():
             except OSError:
                 pass
             if time.time() - t0 > 120:
-                raise SystemExit(f"game queue: cannot lock {lock}")
+                raise SystemExit(f"{pool} queue: cannot lock {lock}")
             time.sleep(0.1)
     try:
         try:
-            state = json.loads(QUEUE_FILE.read_text(encoding="utf-8"))
+            state = json.loads(qf.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             state = {}
-        state.setdefault("max_clients", DEFAULT_MAX)
+        state.setdefault("max_clients", POOL_DEFAULTS.get(pool, 2))
         state.setdefault("holders", [])
         state.setdefault("queue", [])
         yield state
-        tmp = QUEUE_FILE.with_suffix(".tmp")
+        tmp = qf.with_suffix(".tmp")
         tmp.write_text(json.dumps(state, indent=1), encoding="utf-8")
-        os.replace(tmp, QUEUE_FILE)
+        os.replace(tmp, qf)
     finally:
         try:
             lock.unlink()
@@ -90,20 +97,20 @@ def _prune(state):
 
 
 @contextlib.contextmanager
-def game_slots(count: int, root: str):
-    """Hold `count` client slots for the duration of the block (waits its turn)."""
+def game_slots(count: int, root: str, pool: str = "game"):
+    """Hold `count` slots of `pool` for the duration of the block (waits its turn)."""
     me = {"id": f"{os.getpid()}-{time.time():.0f}", "pid": os.getpid(), "count": count, "root": str(root),
           "since": time.strftime("%H:%M:%S")}
-    with _locked() as st:
+    with _locked(pool) as st:
         _prune(st)
         if count > st["max_clients"]:
-            raise SystemExit(f"game queue: this run needs {count} clients but the machine-wide limit is "
-                             f"{st['max_clients']} ({QUEUE_FILE}: max_clients)")
+            raise SystemExit(f"{pool} queue: this job needs {count} slots but the machine-wide limit is "
+                             f"{st['max_clients']} ({pool_file(pool)}: max_clients)")
         st["queue"].append(me)
     last_note = 0.0
     try:
         while True:
-            with _locked() as st:
+            with _locked(pool) as st:
                 _prune(st)
                 used = sum(e["count"] for e in st["holders"])
                 first = st["queue"] and st["queue"][0]["id"] == me["id"]
@@ -114,25 +121,26 @@ def game_slots(count: int, root: str):
                     break
                 pos = next((i for i, e in enumerate(st["queue"]) if e["id"] == me["id"]), -1)
                 busy = ", ".join(f"{e['root']} ({e['count']})" for e in st["holders"])
+                limit = st["max_clients"]
             if time.time() - last_note > 30:
-                print(f"game queue: waiting (position {pos + 1}, {used}/{st['max_clients']} clients in use: {busy})",
-                      flush=True)
+                print(f"{pool} queue: waiting (position {pos + 1}, {used}/{limit} in use: {busy})", flush=True)
                 last_note = time.time()
             time.sleep(2)
-        print(f"game queue: got {count} client slot(s)", flush=True)
+        print(f"{pool} queue: got {count} slot(s)", flush=True)
         yield
     finally:
-        with _locked() as st:
+        with _locked(pool) as st:
             st["holders"] = [e for e in st["holders"] if e["id"] != me["id"]]
             st["queue"] = [e for e in st["queue"] if e["id"] != me["id"]]
 
 
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
-    with _locked() as st:
+    pool = sys.argv[2] if len(sys.argv) > 2 else "game"
+    with _locked(pool) as st:
         if cmd == "clear-dead":
             _prune(st)
-        print(f"max_clients {st['max_clients']}  ({QUEUE_FILE})")
+        print(f"{pool}: max {st['max_clients']}  ({pool_file(pool)})")
         for e in st["holders"]:
             print(f"  running  {e['count']}  {e['root']}  since {e['since']}  pid {e['pid']}"
                   f"{'' if _alive(e['pid']) else '  (dead)'}")
