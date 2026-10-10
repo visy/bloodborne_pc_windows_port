@@ -14,6 +14,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <time.h>
+#include <math.h>
 #include <SDL3/SDL.h>
 #include <sys/stat.h>
 #ifdef _WIN32
@@ -152,46 +153,54 @@ static void sample_host(PadData *d) {
     const bool lshift = k[SDL_SCANCODE_LSHIFT] || k[SDL_SCANCODE_RSHIFT];
 
     if (mk_enabled) {
-        // Combat bindings (Souls PC pattern):
-        // LMB: Light Attack / Trick weapon normal attack (R1)
-        // Shift + LMB or R key: Heavy Attack (R2)
+        // Combat bindings (Authentic Bloodborne layout adapted for PC):
+        // LMB: Right Hand Light Attack / Trick Weapon Normal (R1)
+        // Shift + LMB: Heavy / Charged Attack (R2)
         if (lshift && lmb) {
             d->buttons |= BTN_R2;
         } else if (lmb) {
             d->buttons |= BTN_R1;
         }
 
-        // RMB: Left hand weapon / Fire firearm (L2)
-        // Shift + RMB or Tab: Weapon Trick transform (L1)
+        // RMB: Left Hand Weapon / Fire Firearm (L2)
+        // Shift + RMB or Tab: Trick Weapon Transform (L1)
         if (lshift && rmb) {
             d->buttons |= BTN_L1;
         } else if (rmb) {
             d->buttons |= BTN_L2;
         }
+        if (k[SDL_SCANCODE_TAB]) {
+            d->buttons |= BTN_L1;
+        }
 
-        // Middle Mouse Button or Q: Lock-on / Reset Camera (R3)
+        // Middle Mouse Button or Q: Lock-On Target / Reset Camera (R3)
         if (mmb || k[SDL_SCANCODE_Q]) {
             d->buttons |= BTN_R3;
         }
 
-        // Keyboard Actions (Souls PC pattern):
-        // Space: Roll / Backstep / Dash (Circle)
+        // Keyboard Actions:
+        // Space: Dodge / Roll / Quickstep / Sprint (Circle)
         if (k[SDL_SCANCODE_SPACE]) d->buttons |= BTN_CIRCLE;
-        // E: Action / Interact / Pick up / Talk (Cross)
+        // E: Interact / Action / Pick Up / Talk (Cross)
         if (k[SDL_SCANCODE_E] || k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER]) d->buttons |= BTN_CROSS;
-        // R: Use Quick Item (Blood Vial / Consumable) (Square)
+        // R: Use Quick Consumable Item (Square)
         if (k[SDL_SCANCODE_R]) d->buttons |= BTN_SQUARE;
-        // X: Switch weapon mode / 2-hand mode (Triangle)
-        if (k[SDL_SCANCODE_X]) d->buttons |= BTN_TRIANGLE;
-        // C: Crouching / Gestures / L3
+        // F or V: Use Blood Vial / Heal (Triangle)
+        if (k[SDL_SCANCODE_F] || k[SDL_SCANCODE_V]) d->buttons |= BTN_TRIANGLE;
+        // C or Z: Jump / Gestures / Left Stick Click (L3) - Bloodborne has no crouch
         if (k[SDL_SCANCODE_C] || k[SDL_SCANCODE_Z]) d->buttons |= BTN_L3;
-        // Tab / G / Backspace: Personal Effects / Gestures (Touchpad)
-        if (k[SDL_SCANCODE_TAB] || k[SDL_SCANCODE_G]) touch_click(d, 0);
+        // G: Gestures Menu (Touchpad Left)
+        if (k[SDL_SCANCODE_G]) touch_click(d, 0);
+        // Backspace: Personal Effects / Inventory (Touchpad Right)
         if (k[SDL_SCANCODE_BACKSPACE]) touch_click(d, 1);
-        // Esc: Menu / Options (Options)
+        // Esc: Game Menu / System Options (Options)
         if (k[SDL_SCANCODE_ESCAPE]) d->buttons |= BTN_OPTIONS;
 
-        // D-Pad Quick Item / Weapon selection (Arrow keys or 1,2,3,4)
+        // D-Pad Quick Selection (Arrow keys or 1,2,3,4):
+        // 1 / Up: Blood Bullets (+5 bullets for HP)
+        // 2 / Down: Cycle Equipped Consumable Item
+        // 3 / Left: Switch Left Hand Weapon (Firearm)
+        // 4 / Right: Switch Right Hand Trick Weapon
         if (k[SDL_SCANCODE_UP] || k[SDL_SCANCODE_1]) d->buttons |= BTN_UP;
         if (k[SDL_SCANCODE_DOWN] || k[SDL_SCANCODE_2]) d->buttons |= BTN_DOWN;
         if (k[SDL_SCANCODE_LEFT] || k[SDL_SCANCODE_3]) d->buttons |= BTN_LEFT;
@@ -203,29 +212,57 @@ static void sample_host(PadData *d) {
         if (k[SDL_SCANCODE_W]) d->left_y = 0;
         else if (k[SDL_SCANCODE_S]) d->left_y = 255;
 
-        // Camera Look (Mouse Delta -> Right Stick)
+        // Camera Look (Mouse Delta -> Right Stick with progressive acceleration)
         static float filtered_dx = 0.0f;
         static float filtered_dy = 0.0f;
         filtered_dx = filtered_dx * smoothing + mouse_dx * (1.0f - smoothing);
         filtered_dy = filtered_dy * smoothing + mouse_dy * (1.0f - smoothing);
 
-        float aim_x = filtered_dx * sens_x * 8.0f;
-        float aim_y = filtered_dy * sens_y * 8.0f;
+        float aim_x = filtered_dx * sens_x;
+        float aim_y = filtered_dy * sens_y;
 
         if (inv_x) aim_x = -aim_x;
         if (inv_y) aim_y = -aim_y;
 
-        // Deadzone check
-        if (aim_x > -deadzone * 128.0f && aim_x < deadzone * 128.0f) aim_x = 0.0f;
-        if (aim_y > -deadzone * 128.0f && aim_y < deadzone * 128.0f) aim_y = 0.0f;
+        // Compute polar magnitude for radial acceleration curve
+        float mag = sqrtf(aim_x * aim_x + aim_y * aim_y);
+        float stick_dx = 0.0f;
+        float stick_dy = 0.0f;
 
-        int stick_rx = 128 + (int)aim_x;
-        int stick_ry = 128 + (int)aim_y;
+        if (mag > 0.0001f) {
+            float norm_x = aim_x / mag;
+            float norm_y = aim_y / mag;
+
+            // Apply deadzone in normalized units
+            float eff_mag = mag;
+            if (eff_mag <= deadzone * 20.0f) {
+                eff_mag = 0.0f;
+            } else {
+                eff_mag = eff_mag - (deadzone * 20.0f);
+            }
+
+            if (eff_mag > 0.0f) {
+                // Progressive power acceleration curve:
+                // Small inputs (eff_mag < 1.0): dampened for fine aiming precision
+                // Large inputs (eff_mag > 1.0): accelerated for quick camera swipes
+                float accel_factor = 1.0f + 0.18f * eff_mag;
+                if (accel_factor > 3.2f) accel_factor = 3.2f;
+
+                float scaled_output = eff_mag * 7.5f * accel_factor;
+                if (scaled_output > 127.0f) scaled_output = 127.0f;
+
+                stick_dx = norm_x * scaled_output;
+                stick_dy = norm_y * scaled_output;
+            }
+        }
+
+        int stick_rx = 128 + (int)roundf(stick_dx);
+        int stick_ry = 128 + (int)roundf(stick_dy);
         if (stick_rx < 0) stick_rx = 0; else if (stick_rx > 255) stick_rx = 255;
         if (stick_ry < 0) stick_ry = 0; else if (stick_ry > 255) stick_ry = 255;
 
         // Only override right stick if mouse delta was observed, allowing IJKL / arrow fallback
-        if (mouse_dx != 0.0f || mouse_dy != 0.0f || filtered_dx > 0.1f || filtered_dx < -0.1f || filtered_dy > 0.1f || filtered_dy < -0.1f) {
+        if (mouse_dx != 0.0f || mouse_dy != 0.0f || fabsf(filtered_dx) > 0.05f || fabsf(filtered_dy) > 0.05f) {
             d->right_x = (uint8_t)stick_rx;
             d->right_y = (uint8_t)stick_ry;
         }

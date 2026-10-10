@@ -742,20 +742,20 @@ class BloodborneLauncher(tk.Tk):
                   font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 6))
 
         bindings = [
-            ("Left Click (LMB)", "Right Hand Attack (R1) / Trick Normal Attack"),
-            ("Shift + Left Click", "Strong / Heavy Attack (R2)"),
-            ("Right Click (RMB)", "Left Hand Weapon (L2) / Fire Firearm"),
-            ("Shift + Right Click", "Trick Weapon Transform (L1)"),
+            ("Left Click (LMB)", "Right Hand Attack (R1) / Trick Normal"),
+            ("Shift + Left Click", "Strong / Charged Attack (R2)"),
+            ("Right Click (RMB)", "Left Hand Weapon / Firearm (L2)"),
+            ("Shift + RMB / Tab", "Trick Weapon Transform (L1)"),
             ("Middle Click / Q", "Lock-On Target / Reset Camera (R3)"),
             ("W / A / S / D", "Character Movement (Left Stick)"),
-            ("Space", "Roll / Backstep / Sprint (Circle)"),
-            ("E", "Action / Interact / Talk (Cross)"),
-            ("R", "Use Quick Item / Blood Vial (Square)"),
-            ("X", "Switch Weapon Mode / Two-Hand (Triangle)"),
-            ("C / Z", "Crouch / Gestures (L3)"),
-            ("Tab / G", "Gestures & Personal Effects (Touchpad Left)"),
+            ("Space", "Dodge / Roll / Quickstep / Sprint (Circle)"),
+            ("E", "Interact / Action / Pick Up / Talk (Cross)"),
+            ("R", "Use Equipped Quick Item (Square)"),
+            ("F / V", "Use Blood Vial / Heal (Triangle)"),
+            ("C / Z", "Jump / Gestures (L3)"),
+            ("G", "Gestures Menu (Touchpad Left)"),
             ("Esc", "Game Menu / Options (Options)"),
-            ("Arrow Keys / 1,2,3,4", "Switch Consumables & Weapons (D-Pad)"),
+            ("Arrow Keys / 1,2,3,4", "Blood Bullets & Weapon Cycling (D-Pad)"),
         ]
 
         bind_container = ttk.Frame(bind_card, style="Card.TFrame")
