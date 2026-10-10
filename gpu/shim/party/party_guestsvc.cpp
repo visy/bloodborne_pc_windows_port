@@ -215,6 +215,7 @@ std::deque<LampRequest> g_lamp_out;        // guest: to send
 std::deque<std::pair<int, LampRequest>> g_lamp_in; // host: from guests (slot, request)
 std::uint64_t g_lamp_seq = 0;
 LampRequestGate g_lamp_gate;
+std::atomic<int> g_lamp_requests_made{0}; // guest: lamp warps turned into requests (tests)
 
 std::atomic<bool> g_gate{false};
 std::atomic<std::uint32_t> g_overrides{0};
@@ -262,7 +263,10 @@ std::uint64_t BB_COOP_SYSV IsClientFilter(std::uint64_t env, std::uint64_t value
     // The talk script id (t210304 -> 210304; the case-19 environment is valid here: the game
     // just read +0x25).
     const std::uint32_t talk = *reinterpret_cast<const std::uint32_t*>(env + 0x10);
-    if (!GuestServiceTalkAllowed(talk, g.extra) && !(g_lamps.load(std::memory_order_relaxed) && HeadstoneTalk(talk))) {
+    // Headstones stay in their client wait on a guest (live: choosing an area in the headstone menu
+    // crashed the guest at once - the warp list is built from lamp flags the guest's overlay lacks);
+    // the host's headstones work in a party (MultiFilter) and the party follows the host.
+    if (!GuestServiceTalkAllowed(talk, g.extra)) {
         return value;
     }
     g_overrides.fetch_add(1, std::memory_order_relaxed);
@@ -363,7 +367,7 @@ void LogEnv(std::uint64_t env) {
     std::uint32_t talk = 0;
     SafeGet(env + 0x10, &talk);
     Log("talk script t%u (environment %p) asks IsClientPlayer: %s; ids:%s; head:%s", talk, reinterpret_cast<void*>(env),
-        GuestServiceTalkAllowed(talk, g.extra) ? "allowed" : (g_lamps.load() && HeadstoneTalk(talk)) ? "allowed (lamps)" : "kept vanilla", found.empty() ? " none" : found.c_str(),
+        GuestServiceTalkAllowed(talk, g.extra) ? "allowed" : "kept vanilla", found.empty() ? " none" : found.c_str(),
         hex.c_str());
 }
 
@@ -383,6 +387,7 @@ bool GuestLampIntercept(std::uint32_t id) {
         }
     }
     Log("lamp: the guest's warp to %u becomes a request to the host (the party travels together)", id);
+    g_lamp_requests_made.fetch_add(1);
     return true;
 }
 
@@ -1108,8 +1113,56 @@ bool GuestServicesOnLampRequest(int slot, const std::string& body, std::string* 
     return true;
 }
 
+// Live test (BB_PARTY_GUESTSVC_TEST "lamppress"): a guest in the host's world outside the Dream
+// presses Cross whenever an action prompt is up (it arrives at the host's lamp after a host warp),
+// at most 8 times, 1.5 s apart, until its lamp warp became a request.
+struct LampPress {
+    double next = 0, release = 0;
+    int presses = 0;
+    bool done = false;
+} g_lamp_press;
+
+void LampPressTick(const GameSnapshot& s, double now) {
+    LampPress& P = g_lamp_press;
+    if (P.release > 0 && now >= P.release) {
+        runtime_pad_director_press(0);
+        P.release = 0;
+    }
+    if (P.done || g.test.find("lamppress") == std::string::npos || !s.world_up || s.loading ||
+        s.session_role != kSessionRoleClient || IsDreamMap(s.map_id) || now < P.next) {
+        return;
+    }
+    if (g_lamp_requests_made.load() > 0) {
+        P.done = true;
+        Log("test: lamppress: the guest's lamp use became a request after %d press(es)", P.presses);
+        return;
+    }
+    P.next = now + 1.5;
+    std::uint32_t prompt = 0;
+    const bool up = PromptUp(&prompt);
+    if (!up && P.presses == 0 && P.next - now < 1.6) {
+        static int waits = 0;
+        if (++waits < 6) {
+            Log("test: lamppress: in %s, no action prompt yet (%d)", MapName(s.map_id).c_str(), waits);
+            return;
+        }
+    }
+    if (++P.presses > 8) {
+        P.done = true;
+        Log("test: lamppress: FAILED: no lamp request after 8 presses");
+        return;
+    }
+    runtime_pad_director_press(kPadCross);
+    P.release = now + 0.12;
+    Log("test: lamppress: Cross #%d (prompt %s %u, map %s)", P.presses, up ? "up" : "not seen", prompt,
+        MapName(s.map_id).c_str());
+}
+
 void LampTick(const GameSnapshot& s, party::PartyLink* link) {
     g_session_role = s.session_role;
+    if (!g.test.empty()) {
+        LampPressTick(s, Now());
+    }
     if (!g_lamps.load()) {
         return;
     }
