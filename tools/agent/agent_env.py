@@ -55,6 +55,13 @@ def configure(repo: Path):
             f"-DBB_OUT_DIR:PATH={(repo / 'out').as_posix()}"]
     for key, (typ, value) in cache_values().items():
         args.append(f"-D{key}:{typ}={value}")
+    # Agent builds are for testing: no LTO (the LTO link is most of a rebuild's time; releases keep
+    # it) and a compile cache shared by every worktree (ccache keys on paths relative to
+    # CCACHE_BASEDIR, set by tools/agent/build.py / env.txt).
+    args.append("-DBB_LTO:BOOL=OFF")
+    ccache = Path(MINGW) / "ccache.exe"
+    if ccache.exists():
+        args += [f"-DCMAKE_C_COMPILER_LAUNCHER={ccache.as_posix()}", f"-DCMAKE_CXX_COMPILER_LAUNCHER={ccache.as_posix()}"]
     env = os.environ.copy()
     env["PATH"] = MINGW + os.pathsep + env.get("PATH", "")
     subprocess.run(args, check=True, env=env)
