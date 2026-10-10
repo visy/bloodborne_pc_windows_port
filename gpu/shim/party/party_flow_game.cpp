@@ -359,6 +359,7 @@ void TestTick(bool at_title, bool world_up) {
         Action a;
     } kActions[] = {{"new", Action::NewParty},   {"join", Action::JoinParty},   {"continue", Action::ContinueParty},
                     {"host", Action::HostParty}, {"leave", Action::LeaveParty}, {"solo", Action::SinglePlayer}};
+    if (spec == "auto") spec = Current().role == "join" ? "join" : "new";  // per party.json's role
     for (const auto& k : kActions) {
         if (spec == k.name) {
             Log("test: %s", k.name);
