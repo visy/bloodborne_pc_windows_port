@@ -653,6 +653,14 @@ static void test_local_address() {
 }
 
 int main() {
+    // Loopback-only sockets: no Windows Firewall prompt for a test program (party_sock.h).
+    if (!std::getenv("BB_PARTY_LOOPBACK")) {
+#if defined(_WIN32)
+        _putenv("BB_PARTY_LOOPBACK=1");
+#else
+        setenv("BB_PARTY_LOOPBACK", "1", 1);
+#endif
+    }
     const std::uint16_t party_port = static_cast<std::uint16_t>(39000 + (std::rand() % 500));
     char port_text[16];
     std::snprintf(port_text, sizeof(port_text), "%u", party_port);
@@ -662,6 +670,7 @@ int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
 
     test_local_address();
+    set_env("BB_PARTY_LOOPBACK", "1");  // back to loopback-only sockets for the tests below
     test_stun();
     test_netsim();
     test_peer_paths();
