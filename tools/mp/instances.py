@@ -231,19 +231,25 @@ def open_log(path: Path):
 
 
 def tile_rect(slot):
-    """Screen rectangle for a game window by its machine-wide slot: slot 0 top left, slot 1 bottom
-    left (then top/bottom of the next column), each half the primary work area's height, 16:9."""
+    """Screen rectangle for a game window by its machine-wide slot: slots 0-3 stacked top to bottom
+    in the left column (then the next column), each a quarter of the primary work area's height,
+    16:9. Physical pixels: the game's window positions are DPI-unaware of Windows scaling."""
     if os.name != "nt":
         return None
+    try:
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))  # per-monitor v2
+    except (AttributeError, OSError):
+        ctypes.windll.user32.SetProcessDPIAware()
     class RECT(ctypes.Structure):
         _fields_ = [("l", ctypes.c_long), ("t", ctypes.c_long), ("r", ctypes.c_long), ("b", ctypes.c_long)]
     wa = RECT()
     ctypes.windll.user32.SystemParametersInfoW(0x30, 0, ctypes.byref(wa), 0)  # SPI_GETWORKAREA
-    # Client area size; leave room for the title bar and borders of the next window below.
-    h = (wa.b - wa.t) // 2 - 40
+    rows = 4
+    frame = 40  # title bar and borders of each window
+    h = (wa.b - wa.t) // rows - frame
     w = h * 16 // 9
-    col, row = divmod(slot, 2)
-    return wa.l + 8 + col * (w + 16), wa.t + row * (h + 40) + 31, w, h
+    col, row = divmod(slot, rows)
+    return wa.l + 8 + col * (w + 16), wa.t + row * (h + frame) + 31, w, h
 
 
 def run(a):
