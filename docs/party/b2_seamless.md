@@ -308,7 +308,7 @@ warp's own target was used; with +0x1521 = 1 our +0x14C4/D0/E0 write gives the s
   of the poor re-sent snapshot is open (run 20 logs the host's own flags at the re-send).
 * Recovery net: a player falling for 6 s in its own world is warped to its own last lamp
   (0x13CDF30, WorldTransitionState +0x1528).
-* Saves: every B2 run now starts from the base save `E:\gamesbport\save_backup\savedata_20261010`
+* Saves: every B2 run now starts from the base save `E:\games\bbport\save_backup\savedata_20261010`
   copied into each instance's `user\savedata_party`. A player whose party character got a bad
   position restores it with the game closed: copy a folder from
   `user\save_backups\savedata_party\<date>-start` (written at every party start, newest 10 kept,

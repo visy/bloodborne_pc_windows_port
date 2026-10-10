@@ -339,6 +339,24 @@ BB_COOP_SYSV u64 BossClearLeaveHook(u64 session) {
     return reinterpret_cast<Fn>(Guest(kBeginLeave))(session);
 }
 
+// K11: the packet-0x10 apply 0x13BECA0(SprjEventFlagMan, blob) at 0x17851CE. At a vanilla join
+// the guest is still in its own world (load mode 0) when it runs; a B2 re-entry receives it in
+// load mode 1 (the host-world overlay active), and the result read back all zero (runs 18-20).
+// So for a B2 re-entry the store is put back to load mode 0 (SetLoadMode 0x13BB590) first, as at
+// a join; the guest's MoveMapStep sets mode 1 again from the fresh overlay a moment later.
+BB_COOP_SYSV u64 FlagApplyHook(u64 man, u64 blob) {
+    using Apply = u64(BB_COOP_SYSV*)(u64, u64);
+    using Mode = void(BB_COOP_SYSV*)(u64, u32);
+    const int mode = Field<int>(man, 0x80, -1);
+    if (g_on.load() && g_rejoin.load() && Role() == RoleClient && mode == 1) {
+        reinterpret_cast<Mode>(Guest(0x13bb590))(man, 0);
+        const u64 r = reinterpret_cast<Apply>(Guest(0x13beca0))(man, blob);
+        Log("K11: host flag snapshot applied in load mode 0 (was 1) -> %llu", ull(r));
+        return r;
+    }
+    return reinterpret_cast<Apply>(Guest(0x13beca0))(man, blob);
+}
+
 // K5: Lua OnMatchingCheck: a member's chr is missing (it is loading).
 BB_COOP_SYSV u64 MatchCheckHook(u64 session) {
     if (g_on.load() && g_rejoin.load()) {
@@ -1144,6 +1162,7 @@ void Init() {
     InstallCall(0x13858f5, kBeginLeave, reinterpret_cast<const void*>(&BossClearLeaveHook), "B2 K10 boss-clear leave (a)");
     InstallCall(0x1385a95, kBeginLeave, reinterpret_cast<const void*>(&BossClearLeaveHook), "B2 K10 boss-clear leave (b)");
     SetSendHomeVeto(&SendHomeVeto);
+    InstallCall(0x17851ce, 0x13beca0, reinterpret_cast<const void*>(&FlagApplyHook), "B2 K11 flag snapshot apply");
     SetEmevdSkipPredicate(&ClientIntroSkip);
     EnsureEmevdFilter();
     Log("K7 funnel branch +0x%llx %s", ull(kFunnelLeaveJne),
