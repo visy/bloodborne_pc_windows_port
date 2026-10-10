@@ -278,6 +278,9 @@ def run(a):
             "BB_PATCHES": "Skip Online/Offline Choice;Skip Intro",
             "BB_MP_LOCAL_TEST": "1", "BB_MP_INSTANCE": str(i), "BB_MP_PORT": str(port0 + i),
             "BB_MP_NAME": f"Hunter{i}",
+            "BB_WINDOW_TITLE": f"[{(getattr(a, 'slots', None) or list(range(a.count)))[i]}] "
+                               f"{a.label or Path(a.root).parent.name} - inst{i}"
+                               f"{(' host' if i == 0 else ' guest') if a.party else ''}",
             **({"BB_WINDOW_X": str(r[0]), "BB_WINDOW_Y": str(r[1]), "BB_WINDOW_W": str(r[2]), "BB_WINDOW_H": str(r[3])}
                if (r := tile_rect(getattr(a, "slots", list(range(a.count)))[i])) else {}),
         })
@@ -438,6 +441,8 @@ def main():
     ap.add_argument("--crash-at", type=float, default=0, help="run: kill one instance's game this many s in")
     ap.add_argument("--crash-instance", type=int, default=1)
     ap.add_argument("--crash-when", help="run: kill that instance's game once its log matches this regex")
+    ap.add_argument("--label", default="",
+                    help="run: what this test is for; shown in the windows' title bars and the queue status")
     ap.add_argument("--idle", type=float, default=float(os.environ.get("BB_MP_IDLE", "60")),
                     help="run: end once the party logs (Party:/Net: lines) stay unchanged this many s (0 = off)")
     ap.add_argument("--until", action="append",
@@ -451,7 +456,7 @@ def main():
         # At most max_clients game clients on this machine across all agents (tools/mp/game_queue.py).
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from game_queue import game_slots
-        with game_slots(a.count, a.root) as slots:
+        with game_slots(a.count, a.root, label=a.label) as slots:
             a.slots = slots
             run(a)
         return
