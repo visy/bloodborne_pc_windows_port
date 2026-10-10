@@ -193,7 +193,7 @@ def main():
                 pn, pn_since = state.get("pre:" + hid, (-1, now))
                 if n != pn:
                     state["pre:" + hid] = (n, now)
-                elif now - pn_since > max(120, idle):
+                elif n > 0 and now - pn_since > max(120, idle):  # party runs only
                     pids = end_run(root)
                     print(time.strftime("%H:%M:%S"), "stuck before the world (no new party lines 120 s): ended",
                           e.get("label") or root, f"({len(pids)} processes)", flush=True)
