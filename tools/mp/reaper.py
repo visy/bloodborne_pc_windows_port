@@ -77,6 +77,13 @@ def main():
             hid = e["id"]
             live.add(hid)
             root = Path(e["root"])
+            # A run with a legitimately long quiet phase opts out with a file <root>/noreap
+            # holding the number of seconds of quiet it needs.
+            idle = a.idle
+            try:
+                idle = max(idle, float((root / "noreap").read_text().strip() or 600))
+            except (OSError, ValueError):
+                pass
             n = distinct_party_lines(root)
             # Only once every instance has reached its world: boots, title and loads are quiet
             # phases that must not end a run.
@@ -86,9 +93,9 @@ def main():
             count, since = state.get(hid, (-1, now))
             if n != count:
                 state[hid] = (n, now)
-            elif n > 0 and now - since > a.idle:
+            elif n > 0 and now - since > idle:
                 pids = end_run(root)
-                print(time.strftime("%H:%M:%S"), f"idle {a.idle:.0f}s: ended {e.get('label') or root} "
+                print(time.strftime("%H:%M:%S"), f"idle {idle:.0f}s: ended {e.get('label') or root} "
                       f"({len(pids)} processes)", flush=True)
                 state[hid] = (n, now + 3600)  # don't repeat while the harness winds down
         for hid in list(state):
