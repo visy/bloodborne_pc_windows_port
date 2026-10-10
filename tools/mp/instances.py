@@ -231,19 +231,25 @@ def open_log(path: Path):
 
 
 def tile_rect(slot):
-    """Screen rectangle for a game window by its machine-wide slot: slot 0 top left, slot 1 bottom
-    left (then top/bottom of the next column), each half the primary work area's height, 16:9."""
+    """Screen rectangle for a game window by its machine-wide slot: slots 0-3 stacked top to bottom
+    in the left column (then the next column), each a quarter of the primary work area's height,
+    16:9. Physical pixels: the game's window positions are DPI-unaware of Windows scaling."""
     if os.name != "nt":
         return None
+    try:
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))  # per-monitor v2
+    except (AttributeError, OSError):
+        ctypes.windll.user32.SetProcessDPIAware()
     class RECT(ctypes.Structure):
         _fields_ = [("l", ctypes.c_long), ("t", ctypes.c_long), ("r", ctypes.c_long), ("b", ctypes.c_long)]
     wa = RECT()
     ctypes.windll.user32.SystemParametersInfoW(0x30, 0, ctypes.byref(wa), 0)  # SPI_GETWORKAREA
-    # Client area size; leave room for the title bar and borders of the next window below.
-    h = (wa.b - wa.t) // 2 - 40
+    rows = 4
+    frame = 40  # title bar and borders of each window
+    h = (wa.b - wa.t) // rows - frame
     w = h * 16 // 9
-    col, row = divmod(slot, 2)
-    return wa.l + 8 + col * (w + 16), wa.t + row * (h + 40) + 31, w, h
+    col, row = divmod(slot, rows)
+    return wa.l + 8 + col * (w + 16), wa.t + row * (h + frame) + 31, w, h
 
 
 def run(a):
@@ -272,6 +278,9 @@ def run(a):
             "BB_PATCHES": "Skip Online/Offline Choice;Skip Intro",
             "BB_MP_LOCAL_TEST": "1", "BB_MP_INSTANCE": str(i), "BB_MP_PORT": str(port0 + i),
             "BB_MP_NAME": f"Hunter{i}",
+            "BB_WINDOW_TITLE": f"[{(getattr(a, 'slots', None) or list(range(a.count)))[i]}] "
+                               f"{a.label or Path(a.root).parent.name} - inst{i}"
+                               f"{(' host' if i == 0 else ' guest') if a.party else ''}",
             **({"BB_WINDOW_X": str(r[0]), "BB_WINDOW_Y": str(r[1]), "BB_WINDOW_W": str(r[2]), "BB_WINDOW_H": str(r[3])}
                if (r := tile_rect(getattr(a, "slots", list(range(a.count)))[i])) else {}),
         })
@@ -344,7 +353,9 @@ def run(a):
             # the same text and don't count as progress.
             n = len({re.sub(r"0x[0-9a-fA-F]+|\d[\d.:]*", "#", l) for i in range(a.count)
                      for l in log_text(i, starts[i]).splitlines() if idle_rx.match(l)})
-            if n != last_party_count:
+            in_world = all((re.findall(r"^Party: (world up|world down|loading screen)", log_text(i), re.M)
+                            or ["-"])[-1] == "world up" for i in range(a.count))
+            if n != last_party_count or not in_world:  # boots, titles and loads never count as idle
                 last_party_count, last_party_change = n, time.time()
             elif n > 0 and time.time() - last_party_change > idle_limit and not (want_crash and not crashed):
                 verdict = verdict or ("IDLE: no new party log lines for %.0f s (run ended at %.0f s)"
@@ -432,7 +443,9 @@ def main():
     ap.add_argument("--crash-at", type=float, default=0, help="run: kill one instance's game this many s in")
     ap.add_argument("--crash-instance", type=int, default=1)
     ap.add_argument("--crash-when", help="run: kill that instance's game once its log matches this regex")
-    ap.add_argument("--idle", type=float, default=float(os.environ.get("BB_MP_IDLE", "60")),
+    ap.add_argument("--label", default="",
+                    help="run: what this test is for; shown in the windows' title bars and the queue status")
+    ap.add_argument("--idle", type=float, default=float(os.environ.get("BB_MP_IDLE", "10")),
                     help="run: end once the party logs (Party:/Net: lines) stay unchanged this many s (0 = off)")
     ap.add_argument("--until", action="append",
                     help="run: stop (kill all) once every such regex matched in the logs (after the crash, if any)")
@@ -445,7 +458,7 @@ def main():
         # At most max_clients game clients on this machine across all agents (tools/mp/game_queue.py).
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from game_queue import game_slots
-        with game_slots(a.count, a.root) as slots:
+        with game_slots(a.count, a.root, label=a.label) as slots:
             a.slots = slots
             run(a)
         return
