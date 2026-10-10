@@ -58,6 +58,10 @@ std::uint64_t thread_cycles() {
 #endif
 }
 
+// A peer's clock value in ms (a host's uptime): beyond this it is nonsense, and arithmetic on it
+// could overflow.
+constexpr std::int64_t kMaxClockMs = 1ll << 50;
+
 std::int64_t ms_between(Clock::time_point a, Clock::time_point b) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count();
 }
@@ -942,9 +946,14 @@ struct PartyLink::Impl {
         switch (type) {
         case kPing: handle_common(c, type, r); break;
         case kPong: {
+            // The echo of our own PING time: anything later than now (or absurd) is a lie, and
+            // the subtraction must not overflow (fuzzing: a u64 near 2^63 did).
             std::uint64_t t = r.u64();
-            std::int64_t rtt_ms = now_ms() - static_cast<std::int64_t>(t);
-            if (r.ok && rtt_ms >= 0) m.ping_ms = static_cast<std::uint32_t>(rtt_ms);
+            const std::int64_t now = now_ms();
+            if (r.ok && t <= static_cast<std::uint64_t>(now)) {
+                const std::int64_t rtt_ms = now - static_cast<std::int64_t>(t);
+                if (rtt_ms <= 3600000) m.ping_ms = static_cast<std::uint32_t>(rtt_ms);
+            }
             break;
         }
         case kRoster: {  // the guest's own entry
@@ -1169,7 +1178,7 @@ struct PartyLink::Impl {
             my_slot = slot;
             host_max_players = maxp;
             my_token = tok;
-            clock_offset = static_cast<std::int64_t>(hclock) - now_ms();
+            clock_offset = hclock <= static_cast<std::uint64_t>(kMaxClockMs) ? static_cast<std::int64_t>(hclock) - now_ms() : 0;
             char buf[32];
             std::snprintf(buf, sizeof buf, "%u.%u.%u.%u:%u", ip[0], ip[1], ip[2], ip[3], oport);
             observed = buf;
@@ -1191,10 +1200,14 @@ struct PartyLink::Impl {
             std::uint64_t hclock = r.u64();
             if (!r.ok) break;
             std::int64_t now = now_ms();
-            std::int64_t rt = now - static_cast<std::int64_t>(t);
-            if (rt >= 0) {
-                rtt = static_cast<std::uint32_t>(rt);
-                clock_offset = static_cast<std::int64_t>(hclock) + rt / 2 - now;
+            // A host's PONG: t must be one of our PING times, its clock a sane number of ms
+            // (signed overflow here was the fuzzer's first find).
+            if (t <= static_cast<std::uint64_t>(now) && hclock <= static_cast<std::uint64_t>(kMaxClockMs)) {
+                const std::int64_t rt = now - static_cast<std::int64_t>(t);
+                if (rt <= 3600000) {
+                    rtt = static_cast<std::uint32_t>(rt);
+                    clock_offset = static_cast<std::int64_t>(hclock) + rt / 2 - now;
+                }
             }
             break;
         }
