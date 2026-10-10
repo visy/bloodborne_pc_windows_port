@@ -9,9 +9,11 @@
 #include "lua_events.h"
 #include "party_fourp.h"
 #include "party_link.h"
+#include "party_items.h"
 #include "party_npc_test.h"
 #include "party_phantom.h"
 #include "party_runtime.h"
+#include "party_progress.h"
 #include "party_travel.h"
 #include "seamless_rules.h"
 
@@ -432,6 +434,9 @@ void PartyDirector::ConfigureFromEnv() {
         max_players = std::atoi(m);
     }
     Configure(role, max_players);
+    progress::SetRole(role == PartyRole::Host    ? progress::Role::Host  // C2 progress sync
+                      : role == PartyRole::Guest ? progress::Role::Guest
+                                                 : progress::Role::None);
     std::lock_guard<std::mutex> lk(st.mu);
     if (const char* e = std::getenv("BB_PARTY_RING_EVERY"); e && e[0] && std::atof(e) >= 1.0) {
         st.ring_every = std::atof(e);
@@ -534,6 +539,7 @@ void PartyDirector::Tick() {
         role = st.role;
         link = st.link;
     }
+    progress::DirectorTick(s, link); // C2: flag capture / apply, host -> guest sync (party_progress.h)
     // Title: the FROM client's state when it changes (sign-in debugging).
     if (role != PartyRole::None && full && !s.world_up) {
         std::string fc = DescribeFromClient();
@@ -571,6 +577,21 @@ void PartyDirector::Tick() {
             link->send_event(party::kBroadcast, kTravelEventName, TravelToJsonText(t));
             Log("travel #%llu (%s) sent to the party", static_cast<unsigned long long>(t.seq), TravelKindName(t.kind));
             PhantomNoteHostTravel(t); // a rest (Dream, death, Mark): guests refill too
+        }
+        // C3: the host's item lots to every guest; the full list to a member that (re)joined.
+        std::vector<ItemGrant> items;
+        ItemGrant g;
+        while (PopHostItems(&g)) {
+            items.push_back(g);
+        }
+        if (!items.empty()) {
+            link->send_event(party::kBroadcast, kItemsEventName, ItemsToJsonText(items));
+            Log("items: %zu lots sent to the party", items.size());
+        }
+        int slot = -1;
+        while (TakeHostFullItems(&slot, &items)) {
+            link->send_event(slot, kItemsFullEventName, ItemsToJsonText(items));
+            Log("items: full list (%zu lots) sent to slot %d", items.size(), slot);
         }
     }
     // Phantoms as full players: the host's lamp / rest / boss Insight out, the guest's refill and
@@ -617,13 +638,15 @@ void PartyDirector::Tick() {
 bool PartyRequested() {
     const char* p = std::getenv("BB_PARTY");
     const char* t = std::getenv("BB_PARTY_DIRECTOR_TEST");
-    return (p && p[0]) || (t && t[0]) || NpcTestRequested();
+    const char* i = std::getenv("BB_PARTY_ITEMS_TEST"); // C3 single-instance check
+    return (p && p[0]) || (t && t[0]) || (i && i[0]) || NpcTestRequested();
 }
 
 void CoopTick() {
     LuaEventsTick();
     PartyDirector::Get().Tick();
     TravelTick();        // B1 guest replay (party_travel.h)
+    ItemsTick();         // C3 guest item replay (party_items.h)
     SeamlessRulesTick(); // A6 param rules, EMEVD filter stats (seamless_rules.h)
     fourp::FourpTick();  // 4-player rules: the party's max players (party_fourp.h)
 }
@@ -634,6 +657,8 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
         return;
     }
     LuaEventsInit();
+    progress::Init();         // C2 progress sync (party_progress.h)
+    progress::InstallHooks(); // byte-verified flag hooks (BB_PARTY_PROGRESS=0: none)
     SeamlessRulesInit(); // A6: party patch report, EMEVD filter (seamless_rules.h)
     fourp::FourpInit();  // 4-player parties: H1-H4, E6, P5 (party_fourp.h)
     PartyDirector::Get().ConfigureFromEnv();
@@ -641,6 +666,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
         HookCallSite(kSsParseCall, kSsParse, reinterpret_cast<const void*>(&SsParseHook), "ss.info parse log");
     }
     InstallTravelPatches(); // B1: Dream gate + travel hooks (byte-verified)
+    InstallItemsPatches();  // C3: award hook, parity patches (byte-verified)
     PhantomInit();          // guest respawn at the host's lamp, refill, boss Insight
     g_tick_installed = HookPrologue(kFlipperUpdate,
                                     {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48,
