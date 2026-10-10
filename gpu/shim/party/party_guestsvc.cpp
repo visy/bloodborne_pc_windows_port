@@ -860,8 +860,8 @@ void LevelUpTick(const GameSnapshot& s, double now) {
     case LevelUpScript::Keys:
         if (since >= 1.5) {
             if (L.key_at >= L.keys.size()) {
-                Log("test: levelup: keys done: level %d -> %d, echoes %d -> %d, Insight %d -> %d, Blood Stone Shards now %d",
-                    L.level0, s.level, L.echoes0, s.echoes, L.insight0, s.insight, GoodsCount(3000));
+                Log("test: levelup: keys done: level %d -> %d, echoes %d -> %d, Insight %d -> %d, Blood Stone Shards now %d, Twin %d",
+                    L.level0, s.level, L.echoes0, s.echoes, L.insight0, s.insight, GoodsCount(3000), GoodsCount(3010));
                 go(LevelUpScript::BackOut, "backing out (Circle)");
                 break;
             }
@@ -876,8 +876,8 @@ void LevelUpTick(const GameSnapshot& s, double now) {
             if (b) {
                 Tap(b, now);
             }
-            Log("test: levelup: key %s (level %d, echoes %d, Insight %d, Blood Stone Shards %d)", k.c_str(), s.level,
-                s.echoes, s.insight, GoodsCount(3000));
+            Log("test: levelup: key %s (level %d, echoes %d, Insight %d, Blood Stone Shards %d, Twin %d)", k.c_str(), s.level,
+                s.echoes, s.insight, GoodsCount(3000), GoodsCount(3010));
             L.at = now;
         }
         break;
@@ -909,10 +909,13 @@ bool RunTestFixture(const GameSnapshot& s, int step) {
     }
     const std::size_t sh = g.test.find("shards=");
     if (step == 0 && sh != std::string::npos) {
-        // Blood Stone Shards (goods 3000) for the workbench check.
-        const int before = GoodsCount(3000);
-        const bool ok = GiveGoods(3000, std::atoi(g.test.c_str() + sh + 7));
-        Log("test: Blood Stone Shards %d -> %d%s", before, GoodsCount(3000), ok ? "" : " (give failed)");
+        // Blood Stone Shards (goods 3000) and Twin Blood Stone Shards (3010: +3 -> +4 and up) for the
+        // workbench check.
+        const int n = std::atoi(g.test.c_str() + sh + 7);
+        const int b0 = GoodsCount(3000), b1 = GoodsCount(3010);
+        const bool ok = GiveGoods(3000, n) && GiveGoods(3010, n);
+        Log("test: Blood Stone Shards %d -> %d, Twin Blood Stone Shards %d -> %d%s", b0, GoodsCount(3000), b1,
+            GoodsCount(3010), ok ? "" : " (give failed)");
     }
     const std::size_t w = g.test.find("warp=");
     if (w == std::string::npos) {
