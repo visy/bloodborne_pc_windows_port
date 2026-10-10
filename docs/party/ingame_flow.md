@@ -116,7 +116,10 @@ everything).
 * **host_address**: a BBP1 party code or `host[:port]` (checked with `decode_party_code` when typed).
 * **host_secret**: the host's party-code secret, reused by menu runs (`BB_PARTY_MENU=1`) so the
   code friends saved stays valid next session (as long as the public address and port stay the
-  same; a `host:port` address with the password works whatever the secret).
+  same). A plain `host:port` address carries no secret: it joins a host **that has a password**
+  with that password alone (PartyLink: the host also accepts the key derived from the password and
+  an all-zero secret, only when its password is set; `party-link-test`
+  `test_plain_address_password`). Without a password a guest needs the party code.
 * **has_character / slot**: set when a party character reaches the world in a party session
   (the game's last-used slot, `[[0x553B130]+0x50]+2000`); *Continue party game* is offered once it
   is true. The game's own *Continue* in the party process loads the party save's last-used slot,
