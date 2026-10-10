@@ -243,19 +243,20 @@ static void Party() {
     for (const P::Row& row : members.rows) visible += !row.visible || row.visible();
     assert(visible == 1 && std::u16string(P::Text(members.rows[0].name, false)) == u"No one yet");
 
-    // Party mode off: no commands from the buttons; the extension row shows (in order).
+    // Party mode off (single player): no commands from the buttons; the party-only rows (copy,
+    // rejoin, leave, notices, last event) are hidden, the extension row shows (in order).
     ps::ResetForTest(false);
     P::Load();
     assert(P::PartyRowCount() == 7);
     std::vector<const P::Row*> shown;
     for (const P::Row& row : party.rows) if (!row.visible || row.visible()) shown.push_back(&row);
-    assert(shown.size() == 7 && std::u16string(P::Text(shown[3]->name, true)) == u"Создать группу");
+    assert(shown.size() == 2 && std::u16string(P::Text(shown[1]->name, true)) == u"Создать группу");
     const int runs = extension_runs;
-    Press(*shown[3]);
+    Press(*shown[1]);
     assert(extension_runs == runs + 1);
-    Press(*shown[3]); // back: only the text
+    Press(*shown[1]); // back: only the text
     assert(extension_runs == runs + 1);
-    assert(std::u16string(P::Text(party.rows[0].choices[0], false)) == u"Off (launcher)");
+    assert(std::u16string(P::Text(party.rows[0].choices[0], false)) == u"Single player");
     Press(party.rows[2]);
     Press(leave);
     Press(leave);

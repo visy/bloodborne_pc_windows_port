@@ -181,7 +181,7 @@ def setup(a):
 
 
 def party_saves_from(user: Path):
-    """A party session always plays from user\savedata_party (src/runtime_savepolicy.c): the test
+    r"""A party session always plays from user\savedata_party (src/runtime_savepolicy.c): the test
     saves are copied there too the first time, so --party runs keep their characters."""
     if (user / "savedata").is_dir() and not (user / "savedata_party").exists():
         shutil.copytree(user / "savedata", user / "savedata_party")
