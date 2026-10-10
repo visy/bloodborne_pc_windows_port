@@ -260,6 +260,7 @@ struct PartyLink::Impl {
         std::uint32_t map_id = 0;
         std::uint32_t ping_ms = 0;
         EventStream ev;
+        bool restored = false;  // from restore_members: the previous host process's member
     };
 
     struct Pending {
@@ -301,6 +302,7 @@ struct PartyLink::Impl {
     std::uint16_t host_port = 0;
     Conn* gconn = nullptr;
     int my_slot = -1;
+    bool last_resumed = false;
     int host_max_players = 0;
     Token my_token{};
     EventStream gev;
@@ -726,7 +728,12 @@ struct PartyLink::Impl {
                 m->conn = nullptr;
                 close_conn(old);
             }
-            resumed = !is_zero(c->token) && m->token == c->token;
+            resumed = !is_zero(c->token) && m->token == c->token && !m->restored;
+            if (m->restored) {
+                log("party link: " + c->name + " is back after a host restart (slot " + std::to_string(m->slot) +
+                    ", " + (!is_zero(c->token) && m->token == c->token ? "by token" : "by name") + ")");
+                m->restored = false;
+            }
             if (!resumed) m->ev.reset();
         } else {
             for (auto& [slot, mm] : members)
@@ -857,6 +864,7 @@ struct PartyLink::Impl {
             std::snprintf(buf, sizeof buf, "%u.%u.%u.%u:%u", ip[0], ip[1], ip[2], ip[3], oport);
             observed = buf;
             if (!resumed) gev.reset();
+            last_resumed = resumed;
             backoff_ms = 0;
             groster = ros;
             // Our own state, then any events the host has not acknowledged.
@@ -1203,6 +1211,8 @@ bool PartyLink::start_host(std::string* error) {
         I.listen_s = s;
         I.port = ntohs(b.sin_port);
         I.start_time = Clock::now();
+        for (auto& [slot, m] : I.members)
+            if (m.restored) m.lost_at = I.start_time;  // slot_keep_ms from now
         I.set_state(LinkState::Hosting, "port " + std::to_string(I.port) + ", up to " +
                                             std::to_string(I.cfg.max_players) + " players");
     }
@@ -1453,6 +1463,50 @@ void PartyLink::set_local_state(MemberState state, std::uint32_t map_id) {
     } else if (I.gconn && I.gconn->phase == Impl::Phase::Open) {
         I.send_local_state(I.gconn);
     }
+}
+
+std::vector<KeptMember> PartyLink::kept_members() const {
+    Impl& I = *impl_;
+    std::lock_guard<std::mutex> lk(I.mu);
+    std::vector<KeptMember> out;
+    if (!I.host) return out;
+    for (const auto& [slot, m] : I.members) {
+        KeptMember k;
+        k.slot = slot;
+        k.name = m.name;
+        k.token = m.token;
+        out.push_back(std::move(k));
+    }
+    return out;
+}
+
+void PartyLink::restore_members(const std::vector<KeptMember>& members) {
+    Impl& I = *impl_;
+    std::lock_guard<std::mutex> lk(I.mu);
+    if (I.state != LinkState::Idle) return;
+    for (const KeptMember& k : members) {
+        if (k.slot < 1 || k.slot >= I.cfg.max_players || !valid_member_name(k.name) || k.name == I.cfg.name ||
+            I.members.count(k.slot))
+            continue;
+        bool dup = false;
+        for (const auto& [s, m] : I.members) dup = dup || m.name == k.name;
+        if (dup) continue;
+        Impl::Member m;
+        m.slot = k.slot;
+        m.name = k.name;
+        m.token = k.token;
+        if (is_zero(m.token)) crypto::random_bytes(m.token.data(), m.token.size());
+        m.lost_at = Clock::now();
+        m.state = MemberState::Home;
+        m.restored = true;
+        I.members.emplace(k.slot, std::move(m));
+        I.log("party link: slot " + std::to_string(k.slot) + " kept for " + k.name + " (from before the restart)");
+    }
+}
+
+bool PartyLink::last_welcome_resumed() const {
+    std::lock_guard<std::mutex> lk(impl_->mu);
+    return impl_->last_resumed;
 }
 
 bool PartyLink::kick(int slot, const std::string& reason) {

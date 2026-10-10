@@ -11,6 +11,7 @@
 #include "upnp_win.h"
 
 #include "../net/bbnet_internal.h"
+#include "../net/np_hle.h"
 #include "../net/np_session.h"
 #include "../net/party_host_service.h"
 #include "../net/party_transport.h"
@@ -306,10 +307,18 @@ struct Runtime {
     std::string roster_sig;
     Clock::time_point last_roster_log{};
     std::string marker;  // <user>/party_state.json while this run is up
+    std::string marker_head;  // its pid / role / name / started members
+    bool marker_secret = false;
+    std::array<std::uint8_t, 8> secret{};  // host: the party code's secret (kept across a crash)
     // guest
     std::uint32_t host_ip_nbo = 0;
     std::uint16_t host_port = 0;
+    bool was_connected = false;
+    std::uint64_t loss_gen = 0;  // bumps on every link state change (host-lost grace check)
+    Clock::time_point lost_at{};
 };
+
+std::mutex g_marker_mu;  // serializes marker writes (startup thread, link callback thread)
 
 Runtime& R() {
     static Runtime* r = new Runtime;  // lives as long as the process (exit paths use it)
@@ -336,6 +345,66 @@ std::string roster_text(const std::vector<RosterEntry>& roster, bool with_ping) 
         s += b;
     }
     return s.empty() ? "(empty)" : s;
+}
+
+void write_text_file(const fs::path& path, const std::string& text);
+
+std::string hex_of(const std::uint8_t* p, std::size_t n) {
+    static const char* d = "0123456789abcdef";
+    std::string s;
+    for (std::size_t i = 0; i < n; ++i) {
+        s += d[p[i] >> 4];
+        s += d[p[i] & 15];
+    }
+    return s;
+}
+
+bool unhex(const std::string& t, std::uint8_t* out, std::size_t n) {
+    if (t.size() != 2 * n) return false;
+    auto v = [](char c) {
+        return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+    };
+    for (std::size_t i = 0; i < n; ++i) {
+        const int hi = v(t[2 * i]), lo = v(t[2 * i + 1]);
+        if (hi < 0 || lo < 0) return false;
+        out[i] = static_cast<std::uint8_t>(hi << 4 | lo);
+    }
+    return true;
+}
+
+// The crash marker <user>/party_state.json: pid, role, name, start time and, on the host, the
+// party secret and the member table (slot, name, resume token), so a restarted host keeps its
+// party code and gives every member its slot back. Rewritten on every member change.
+void write_marker() {
+    Runtime& r = R();
+    std::lock_guard<std::mutex> mk(g_marker_mu);
+    std::string path, head;
+    bool with_secret;
+    std::array<std::uint8_t, 8> secret;
+    PartyLink* link;
+    {
+        std::lock_guard<std::mutex> lk(r.mu);
+        if (r.shut || r.marker.empty()) return;
+        path = r.marker;
+        head = r.marker_head;
+        with_secret = r.marker_secret;
+        secret = r.secret;
+        link = r.link;
+    }
+    std::string body = "{" + head;
+    if (with_secret) body += ",\"secret\":\"" + hex_of(secret.data(), secret.size()) + "\"";
+    if (link && link->is_host()) {
+        body += ",\"members\":[";
+        bool first = true;
+        for (const KeptMember& k : link->kept_members()) {
+            body += std::string(first ? "" : ",") + "{\"slot\":" + std::to_string(k.slot) + ",\"name\":\"" + k.name +
+                    "\",\"token\":\"" + hex_of(k.token.data(), k.token.size()) + "\"}";
+            first = false;
+        }
+        body += "]";
+    }
+    body += "}\n";
+    write_text_file(path, body);
 }
 
 // ---- host: event pumps --------------------------------------------------------------------
@@ -391,15 +460,55 @@ void pump_stop(const std::string& name) {
 
 // ---- callbacks ----------------------------------------------------------------------------
 
+// Guest: the host is gone - its game crashed or quit without BYE (the link dropped and did not
+// come back within the grace), or it restarted and does not know us (WELCOME not resumed). The
+// game's room with it ends the way a host leaving ends it (np party_host_lost: ROOM_DESTROYED),
+// so the game goes home on its own; the link keeps reconnecting and the director rings again.
+int host_lost_grace_ms() {
+    const char* v = env("BB_PARTY_HOST_LOST_MS");
+    return v ? std::max(0, std::atoi(v)) : 2000;
+}
+
+void host_lost(const std::string& why) {
+    if (bbnet::np::party_host_lost(why)) plog("host lost (%s): the game leaves the host's world", why.c_str());
+    else plog("host lost (%s): not in the host's world", why.c_str());
+}
+
 void on_state(LinkState s, const std::string& detail) {
     Runtime& r = R();
     PartyLink* link;
+    bool host;
+    std::uint64_t gen;
     {
         std::lock_guard<std::mutex> lk(r.mu);
         r.st.state = s;
         link = r.link;
+        host = r.st.role == RuntimeRole::Host;
+        gen = ++r.loss_gen;
     }
     if (!link) return;
+    if (!host && (s == LinkState::Reconnecting || s == LinkState::Rejected)) {
+        bool first = false;
+        {
+            std::lock_guard<std::mutex> lk(r.mu);
+            if (r.was_connected) {
+                first = true;
+                r.was_connected = false;
+                r.lost_at = Clock::now();
+            }
+        }
+        if (first) {
+            const int grace = s == LinkState::Rejected ? 0 : host_lost_grace_ms();
+            std::thread([gen, grace, detail] {
+                std::this_thread::sleep_for(std::chrono::milliseconds(grace));
+                {
+                    std::lock_guard<std::mutex> lk(R().mu);
+                    if (R().loss_gen != gen && R().st.state == LinkState::Connected) return;  // back already
+                }
+                host_lost("party link down: " + detail);
+            }).detach();
+        }
+    }
     switch (s) {
     case LinkState::Connected: {
         const int slot = link->local_slot();
@@ -410,6 +519,23 @@ void on_state(LinkState s, const std::string& detail) {
         }
         plog("connected to the host as slot %d (we are seen at %s)%s%s", slot, link->observed_address().c_str(),
              detail.empty() ? "" : ": ", detail.c_str());
+        const bool resumed = link->last_welcome_resumed();
+        bool again;
+        Clock::time_point lost_at;
+        {
+            std::lock_guard<std::mutex> lk(r.mu);
+            again = r.rpc_wired;
+            lost_at = r.lost_at;
+            r.was_connected = true;
+        }
+        if (again) {
+            plog("back in the party after %.1f s%s", std::chrono::duration<double>(Clock::now() - lost_at).count(),
+                 resumed ? " (session resumed)" : " (the host restarted: a new session)");
+            if (!resumed) {
+                if (bbnet::party::RemoteGuest* rg = bbnet::party::remote_guest()) rg->reset_event_cursor();
+                host_lost("the host does not know our session any more");
+            }
+        }
         bbnet::party::RemoteGuest* rg = bbnet::party::remote_guest();
         bool wire = false;
         {
@@ -477,6 +603,7 @@ LinkCallbacks make_callbacks(bool host) {
         cb.on_member_joined = [](const RosterEntry& m, bool rejoined) {
             plog("%s %s (slot %d)", m.name.c_str(), rejoined ? "is back" : "joined", m.slot);
             pump_start(m);
+            write_marker();
         };
         cb.on_member_left = [](const RosterEntry& m, bool slot_kept) {
             if (slot_kept) {
@@ -484,6 +611,7 @@ LinkCallbacks make_callbacks(bool host) {
                 return;
             }
             plog("%s (slot %d) left", m.name.c_str(), m.slot);
+            write_marker();
             pump_stop(m.name);
             bbnet::party::PartyHostService::instance().context_gone(m.name);
         };
@@ -531,6 +659,7 @@ fs::path marker_path() { return fs::path(user_dir()) / "party_state.json"; }
 struct RestartInfo {
     bool restarted = false;
     std::string why;
+    std::string marker_body;  // the previous run's marker (host: secret, members)
 };
 
 const RestartInfo& restart_info() {
@@ -548,6 +677,7 @@ const RestartInfo& restart_info() {
             if (!ec && age < std::chrono::minutes(30)) {
                 std::string body;
                 read_file(m, &body);
+                info.marker_body = body;
                 while (!body.empty() && (body.back() == '\n' || body.back() == '\r')) body.pop_back();
                 info.restarted = true;
                 info.why += std::string(info.why.empty() ? "" : "; ") + "unclean exit marker " + m.string() + " " + body;
@@ -583,10 +713,62 @@ void write_text_file(const fs::path& path, const std::string& text) {
     }
 }
 
+// A restarted host's party secret and members: the crash marker's, or (an older marker) the
+// secret of the code it wrote to <user>/party_code.txt. The party code stays the same.
+bool previous_party(std::array<std::uint8_t, 8>* secret, std::vector<KeptMember>* members, std::string* from) {
+    const RestartInfo& ri = restart_info();
+    json::Value v;
+    std::string err;
+    if (!ri.marker_body.empty() && json::parse(ri.marker_body, v, err) && v.type == json::Value::Type::Object &&
+        unhex(bbnet::party::str_of(v, "secret"), secret->data(), secret->size())) {
+        *from = "the crash marker";
+        if (const json::Value* ms = v.find("members"); ms && ms->type == json::Value::Type::Array) {
+            for (const json::Value& m : ms->array) {
+                KeptMember k;
+                k.slot = static_cast<int>(bbnet::party::int_of(m, "slot", 0));
+                k.name = bbnet::party::str_of(m, "name");
+                if (!unhex(bbnet::party::str_of(m, "token"), k.token.data(), k.token.size())) k.token = {};
+                if (k.slot > 0 && !k.name.empty()) members->push_back(std::move(k));
+            }
+        }
+        return true;
+    }
+    std::string body;
+    if (read_file(fs::path(user_dir()) / "party_code.txt", &body)) {
+        std::istringstream in(body);
+        std::string line;
+        while (std::getline(in, line)) {
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+            const auto eq = line.find('=');
+            const std::string c = eq == std::string::npos ? line : line.substr(eq + 1);
+            PartyCode code;
+            std::string e;
+            if (!c.empty() && decode_party_code(c, &code, &e)) {
+                *secret = code.secret;
+                *from = "party_code.txt";
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 void start_host(LinkConfig cfg) {
     Runtime& r = R();
     const bool lb = loopback_mode();
-    crypto::random_bytes(cfg.secret.data(), cfg.secret.size());
+    std::vector<KeptMember> kept;
+    std::string from;
+    const bool restarted = restart_info().restarted;
+    if (restarted && previous_party(&cfg.secret, &kept, &from)) {
+        plog("restarted host: keeping the party code (secret from %s) and %zu member slot(s)", from.c_str(), kept.size());
+    } else {
+        crypto::random_bytes(cfg.secret.data(), cfg.secret.size());
+    }
+    {
+        std::lock_guard<std::mutex> lk(r.mu);
+        r.secret = cfg.secret;
+        r.marker_secret = true;
+    }
     if (lb) cfg.bind_addr = "0.0.0.0";
     const std::string name = cfg.name;
     const std::uint16_t port = cfg.port;
@@ -601,13 +783,24 @@ void start_host(LinkConfig cfg) {
         std::lock_guard<std::mutex> lk(r.mu);
         r.link = link;
     }
+    if (!kept.empty()) link->restore_members(kept);
     std::string err;
-    if (!link->start_host(&err)) {
+    // A restarted host's port can be held a little longer by the dead process's connections:
+    // retry for up to 60 s (the guests keep reconnecting meanwhile).
+    const auto bind_deadline = Clock::now() + std::chrono::seconds(restarted ? 60 : 0);
+    bool up = link->start_host(&err);
+    while (!up && Clock::now() < bind_deadline && !stopping()) {
+        plog("cannot host on TCP port %u yet (%s); retrying", port, err.c_str());
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        up = link->start_host(&err);
+    }
+    if (!up) {
         set_error("cannot host: " + err);
         plog("cannot host on TCP port %u: %s", port, err.c_str());
         return;
     }
     coop::PartyDirector::Get().SetLink(link);
+    write_marker();
 
     bbnet::party::PartyHostService& svc = bbnet::party::PartyHostService::instance();
     svc.set_loading_query([](const std::string& id) {
@@ -808,7 +1001,7 @@ void startup_main() {
         if (ri.restarted) plog("restarted after an unclean exit (%s): rejoining", ri.why.c_str());
         const fs::path m = marker_path();
         char body[256];
-        std::snprintf(body, sizeof body, "{\"pid\":%lu,\"role\":\"%s\",\"name\":\"%s\",\"started\":%lld}\n",
+        std::snprintf(body, sizeof body, "\"pid\":%lu,\"role\":\"%s\",\"name\":\"%s\",\"started\":%lld",
                       static_cast<unsigned long>(
 #if defined(_WIN32)
                           GetCurrentProcessId()
@@ -820,9 +1013,14 @@ void startup_main() {
                       static_cast<long long>(std::chrono::duration_cast<std::chrono::seconds>(
                                                  std::chrono::system_clock::now().time_since_epoch())
                                                  .count()));
-        write_text_file(m, body);
-        std::lock_guard<std::mutex> lk(r.mu);
-        r.marker = m.string();
+        {
+            std::lock_guard<std::mutex> lk(r.mu);
+            r.marker = m.string();
+            r.marker_head = body;
+        }
+        // restart_info() above kept the old marker's text (the host's previous secret and
+        // members) before this first write.
+        write_marker();
     }
     if (loopback_mode()) {
 #if defined(_WIN32)
