@@ -2,6 +2,7 @@
  * Self-contained (C library + Win32 only) so tests/test_save_policy.c can build it alone. */
 #define _GNU_SOURCE
 #include "save_policy.h"
+#include "../gpu/party_env.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,10 +28,8 @@ const char *runtime_file_user_dir(void);
 static char dir_name[32];
 
 void runtime_savepolicy_reset(void) { dir_name[0]=0; }
-static int party_session(void) {
-    const char *p=getenv("BB_PARTY");
-    return p && (!strcmp(p,"host") || !strcmp(p,"join"));
-}
+/* A party run (gpu/party_env.h: unset, empty, 0, off, false, no = off). */
+static int party_session(void) { return bb_party_enabled(); }
 const char *runtime_savepolicy_dir(void) {
     if (!dir_name[0]) {
         const char *s=getenv("BB_PARTY_SAVE");

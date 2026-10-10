@@ -8,6 +8,7 @@
 #include "runtime.h"
 #include "gpu/bbgpu.h"
 #include "gpu/bbnet.h"
+#include "../gpu/party_env.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -500,8 +501,7 @@ static const RuntimeExport exports[]={
 /* Party co-op (BB_PARTY set): libSceNet/NetCtl/Http/Ssl/Np imports the party library implements
  * (gpu/shim/net) resolve there; everything else, and every import without BB_PARTY, stays here. */
 uintptr_t runtime_services_resolve(const char *name) {
-    const char *party=getenv("BB_PARTY");
-    if (party && party[0]) {
+    if (bb_party_enabled()) {
         uintptr_t routed=bbnet_resolve(name);
         if (routed) return routed;
     }
