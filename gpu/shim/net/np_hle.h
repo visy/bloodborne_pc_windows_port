@@ -12,6 +12,11 @@ namespace bbnet::np {
 std::string npid_text(const void* npid);
 bool matching2_context_started();
 std::string matching2_status();
+// Guest: the party host is gone (its game crashed or quit without a word: the party link is
+// down, or a restarted host does not know our room). A room we are in as a guest ends for the
+// game the way a host leaving ends it: DEAD per member, then ROOM_DESTROYED (0x1104, cause
+// LEAVE) - the game returns to its own world. False when there was no such room.
+bool party_host_lost(const std::string& why);
 
 // NpSignaling, told by NpMatching2 about room members:
 // a member whose address is now in the peer table: connections to it can announce;
