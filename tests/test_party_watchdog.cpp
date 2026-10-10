@@ -167,6 +167,17 @@ static void test_retry_and_reset() {
     CHECK(RunUntilStop(w, 60, 200, 3, 0, Roster(MemberState::Title)) == 85);
 }
 
+static void test_test_stop() {
+    HostWatchdogConfig c;
+    c.test_stop_s = 3;
+    HostWatchdog w(c);
+    CHECK(RunUntilStop(w, 0, 10, 3, 0, Roster(MemberState::Home)) < 0);
+    CHECK(RunUntilStop(w, 10.5, 20, 3, 0, Roster(MemberState::InHostWorld)) == 13.5);
+    CHECK(!w.Update(In(20.5, 0, 0, Roster(MemberState::Home)))); // idle
+    // Once only: the next room's join runs to the end.
+    CHECK(RunUntilStop(w, 30, 50, 3, 0, Roster(MemberState::InHostWorld)) < 0);
+}
+
 static void SetEnv(const char* k, const char* v) {
 #ifdef _WIN32
     std::string s = std::string(k) + "=" + v;
@@ -197,6 +208,7 @@ int main() {
     test_progress_keeps_it();
     test_hard_cap();
     test_retry_and_reset();
+    test_test_stop();
     test_config();
     std::printf("party-watchdog-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

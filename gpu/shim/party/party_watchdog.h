@@ -26,7 +26,7 @@
 // table. The idiom of OnLeaveMenu_Yes / OnMatchingCheck / OnReviveMagic; see docs/party/travel.md.
 //
 // Env: BB_PARTY_HOST_WATCHDOG=0 (off), BB_PARTY_HOST_STALL_S (60), BB_PARTY_HOST_GONE_S (25),
-//      BB_PARTY_HOST_WAIT_S (90), BB_PARTY_HOST_HARD_S (240).
+//      BB_PARTY_HOST_WAIT_S (90), BB_PARTY_HOST_HARD_S (240); test: BB_PARTY_HOST_TEST_STOP_S.
 #pragma once
 
 #include "party_link.h"
@@ -43,6 +43,9 @@ struct HostWatchdogConfig {
     double wait_s = 90.0;
     double hard_s = 240.0;
     double retry_s = 15.0;
+    /// Test only (BB_PARTY_HOST_TEST_STOP_S): stop once, when a member has been on its way in for
+    /// this long - a stop with the half-loaded phantom present, as in the stuck case.
+    double test_stop_s = 0;
 };
 
 /// Reads BB_PARTY_HOST_WATCHDOG / _STALL_S / _GONE_S / _WAIT_S / _HARD_S.
@@ -71,6 +74,8 @@ private:
     HostWatchdogConfig cfg_;
     bool armed_ = false;
     double since_ = 0, last_change_ = 0, last_present_ = 0, last_stop_ = -1e9;
+    double incoming_since_ = -1;
+    bool test_done_ = false;
     std::string sig_;
     std::string why_;
 };

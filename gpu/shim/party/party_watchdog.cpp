@@ -31,6 +31,7 @@ HostWatchdogConfig HostWatchdogConfigFromEnv() {
     c.gone_s = EnvSeconds("BB_PARTY_HOST_GONE_S", c.gone_s);
     c.wait_s = EnvSeconds("BB_PARTY_HOST_WAIT_S", c.wait_s);
     c.hard_s = EnvSeconds("BB_PARTY_HOST_HARD_S", c.hard_s);
+    c.test_stop_s = EnvSeconds("BB_PARTY_HOST_TEST_STOP_S", 0);
     return c;
 }
 
@@ -50,6 +51,7 @@ bool HostWatchdog::Update(const HostWatchdogInput& in) {
     }
     if (!in.in_world || in.session_role != kRoleHost || in.cooperators > 0) {
         armed_ = false;
+        incoming_since_ = -1;
         return false;
     }
     std::string sig;
@@ -76,11 +78,20 @@ bool HostWatchdog::Update(const HostWatchdogInput& in) {
     if (incoming || waiting) {
         last_present_ = in.now_s;
     }
+    if (!incoming) {
+        incoming_since_ = -1;
+    } else if (incoming_since_ < 0) {
+        incoming_since_ = in.now_s;
+    }
     if (in.now_s - last_stop_ < cfg_.retry_s) {
         return false;
     }
     char b[200];
-    if (!incoming && !waiting && in.now_s - last_present_ >= cfg_.gone_s) {
+    if (cfg_.test_stop_s > 0 && !test_done_ && incoming && in.now_s - incoming_since_ >= cfg_.test_stop_s) {
+        test_done_ = true;
+        std::snprintf(b, sizeof b, "test stop: a member on its way in for %.0f s (BB_PARTY_HOST_TEST_STOP_S)",
+                      in.now_s - incoming_since_);
+    } else if (!incoming && !waiting && in.now_s - last_present_ >= cfg_.gone_s) {
         std::snprintf(b, sizeof b, "host with 0 cooperators and no member home or on its way in for %.0f s (guest gone)",
                       in.now_s - last_present_);
     } else if (incoming && in.now_s - last_change_ >= cfg_.stall_s) {
