@@ -18,8 +18,20 @@
 #endif
 
 #include <cstdint>
+#include <cstdlib>
 
 namespace party::sock {
+
+// Local tests (BB_PARTY_LOOPBACK=1 / BB_MP_LOCAL_TEST=1): every party socket binds 127.0.0.1 only.
+// Nothing then listens on the network, so Windows Firewall never prompts for the test programs or
+// the harness's per-agent game copies.
+inline bool loopback_only() {
+    for (const char* n : {"BB_PARTY_LOOPBACK", "BB_MP_LOCAL_TEST"}) {
+        const char* v = std::getenv(n);
+        if (v && v[0] == '1') return true;
+    }
+    return false;
+}
 
 #if defined(_WIN32)
 using Socket = SOCKET;

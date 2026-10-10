@@ -1452,7 +1452,8 @@ bool PartyLink::start_host(std::string* error) {
     sockaddr_in a{};
     a.sin_family = AF_INET;
     a.sin_port = htons(I.cfg.port);
-    if (inet_pton(AF_INET, I.cfg.bind_addr.c_str(), &a.sin_addr) != 1) a.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (sock::loopback_only()) a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    else if (inet_pton(AF_INET, I.cfg.bind_addr.c_str(), &a.sin_addr) != 1) a.sin_addr.s_addr = htonl(INADDR_ANY);
     if (::bind(s, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0) {
         sock::close(s);
         return fail("party port " + std::to_string(I.cfg.port) + " is in use (another game instance?)");
