@@ -19,6 +19,8 @@
 //      BB_PARTY_EMEVD_SKIP="event:bank:id[,...]" ("*" = any event) skips those instructions.
 #pragma once
 
+#include <cstdint>
+
 namespace coop {
 
 /// BB_PARTY set and BB_PARTY_SEAMLESS is not "0".
@@ -27,5 +29,18 @@ bool SeamlessRequested();
 void SeamlessRulesInit();
 /// Call once a frame from the main-thread coop tick.
 void SeamlessRulesTick();
+
+/// An EMEVD rewriter (party_fourp.cpp): runs on the dispatching thread for every instruction the
+/// game is about to execute (not for skipped ones), before the game reads its arguments. `event`
+/// is the SprjEmkEventIns, `instr` its instruction record; EmevdInstructionArgs finds the bytes.
+using EmevdRewriter = void (*)(int event_id, int bank, int id, std::uint64_t event, std::uint64_t instr);
+/// Sets the rewriter (one; nullptr removes it). Call before EnsureEmevdFilter.
+void SetEmevdRewriter(EmevdRewriter fn);
+/// Installs the EMEVD dispatch filter (0x17b93a0) now if SeamlessRulesInit did not (idempotent,
+/// whether or not the seamless rules are on). True once installed.
+bool EnsureEmevdFilter();
+/// The argument bytes of instruction record `instr` of `event` (the copied arguments at
+/// event+0xb8, else the EVD data); 0 when unknown. *size receives the argument size.
+std::uint64_t EmevdInstructionArgs(std::uint64_t event, std::uint64_t instr, std::uint32_t* size);
 
 } // namespace coop
