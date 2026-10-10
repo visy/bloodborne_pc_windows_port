@@ -108,6 +108,12 @@ std::uint32_t NewGameDriver::Step(const NewGameInput& in, std::string* log) {
             Enter(NewGamePhase::WaitLoad, in.t, log, "loading after the first Cross: the save had a character (Continue)");
             break;
         }
+        // A save with a character: Continue fades out before its loading screen shows; give it the
+        // time before treating the title as an empty save's (Brightness would get Down / Cross).
+        // (an empty save's Brightness screen shows at once: its new texts end the wait).
+        if (in_phase < 4.0 && !(in.screen_seq != screen_mark_ && in.screen_quiet >= kSettle)) {
+            break;
+        }
         // Brightness: Down once it is up (4 s at most), Cross on Next.
         Enter(NewGamePhase::Brightness, in.t, log, "Down to Next, Cross");
         Queue({{kPadDown, kStep, 4.0}, {kPadCross, kStep}});
