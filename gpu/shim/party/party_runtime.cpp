@@ -683,7 +683,7 @@ LinkCallbacks make_callbacks(bool host) {
             if (name == coop::kTravelEventName) {  // B1: follow the host's warp
                 coop::TravelIntent t;
                 std::string err;
-                if (coop::TravelFromJsonText(body, &t, &err)) {
+                if (coop::TravelFromJsonText(body, &t, &err) && coop::SanitizePeerTravel(&t, &err)) {
                     bridge::OnTravel(coop::TravelKindName(t.kind));
                     coop::RequestGuestTravel(t);
                 } else {
@@ -694,8 +694,8 @@ LinkCallbacks make_callbacks(bool host) {
             if (name == coop::kStoryEventName) {  // C4: the host's cutscene / ending
                 coop::StoryIntent s;
                 std::string err;
-                if (coop::StoryFromJsonText(body, &s, &err)) coop::RequestGuestStory(s);
-                else plog("story event: %s", err.c_str());
+                if (coop::StoryFromJsonText(body, &s, &err) && coop::SanitizePeerStory(&s, &err)) coop::RequestGuestStory(s);
+                else plog("story event refused: %s", err.c_str());
                 return;
             }
             if (name == coop::progress::kEventFlags || name == coop::progress::kEventFlagSnapshot) {
@@ -706,8 +706,14 @@ LinkCallbacks make_callbacks(bool host) {
             if (name == coop::kItemsEventName || name == coop::kItemsFullEventName) {  // C3: the host's items
                 std::vector<coop::ItemGrant> items;
                 std::string err;
-                if (coop::ItemsFromJsonText(body, &items, &err)) coop::RequestGuestItems(items);
-                else plog("%s event: %s", name.c_str(), err.c_str());
+                if (coop::ItemsFromJsonText(body, &items, &err)) {
+                    std::size_t rejected = 0;
+                    items = coop::FilterPeerItems(items, &rejected);  // only what the tables allow
+                    if (rejected) plog("%s event: %zu row(s) refused (not a valid host grant)", name.c_str(), rejected);
+                    coop::RequestGuestItems(items);
+                } else {
+                    plog("%s event: %s", name.c_str(), err.c_str());
+                }
                 return;
             }
             if (name == coop::kPhantomEventName) {  // host lamp / rested / boss Insight
@@ -865,6 +871,19 @@ void start_host(LinkConfig cfg) {
         r.have_cfg = true;
     }
     if (!kept.empty()) link->restore_members(kept);
+    // The party port answers STUN and hands out relay ports only to PartyLink members' addresses
+    // (it is on the internet; STUN is a reflector and the relay forwards to members).
+    // BB_PARTY_RELAY_OPEN=1: anyone (a guest whose UDP leaves from another address than its TCP).
+    if (!env_on("BB_PARTY_RELAY_OPEN")) {
+        bbnet::p2p_set_relay_admit([](std::uint32_t addr) {
+            if ((addr & 0xff) == 127) return true;
+            PartyLink* l = runtime_link();
+            if (!l) return false;
+            for (const RosterEntry& e : l->roster())
+                if (e.slot != kHostSlot && l->member_ip(e.slot) == addr) return true;
+            return false;
+        });
+    }
     std::string err;
     // A restarted host's port can be held a little longer by the dead process's connections:
     // retry for up to 60 s (the guests keep reconnecting meanwhile).

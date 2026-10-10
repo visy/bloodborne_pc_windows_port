@@ -40,6 +40,12 @@ struct HttpResponse {
     std::string body;
 };
 
+// Peer input limits (bbport security pass): a guest's "http" call and its signs.
+constexpr std::size_t kMaxUrl = 4096;
+constexpr std::size_t kMaxHeaders = 64;
+constexpr std::size_t kSummonDataSize = 0xE0;  // SummonData decodes to exactly this (A0 4.5)
+constexpr std::size_t kMaxSignsPerUser = 8;
+
 // The fixed host name of our gameurl (ss.info points the game at http://<it>:18671).
 constexpr const char* kGameHost = "bbparty.invalid";
 

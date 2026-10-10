@@ -73,16 +73,46 @@ struct Queue {
     std::uint64_t next_id = 1;
 };
 
+// A member's address fields are peer input (bbport security pass): a dotted IPv4 address or
+// nothing, a port 1..65535 or 0.
+std::string addr_of(const json::Value& r, const char* key) {
+    const std::string s = str_of(r, key);
+    return s.size() <= 15 && ip_parse(s) ? s : std::string();
+}
+int port_of(const json::Value& r, const char* key) {
+    const long long v = int_of(r, key, 0);
+    return v > 0 && v <= 65535 ? static_cast<int>(v) : 0;
+}
+
 Endpoint endpoint_of(const json::Value& r) {
     Endpoint e;
-    e.local_addr = str_of(r, "LocalAddr");
-    e.local_port = static_cast<int>(int_of(r, "LocalPort", 0));
-    e.public_addr = str_of(r, "PublicAddr");
-    e.public_port = static_cast<int>(int_of(r, "PublicPort", 0));
-    e.mapped_addr = str_of(r, "MappedAddr");
-    e.mapped_port = static_cast<int>(int_of(r, "MappedPort", 0));
-    e.relay_port = static_cast<int>(int_of(r, "RelayPort", 0));
+    e.local_addr = addr_of(r, "LocalAddr");
+    e.local_port = port_of(r, "LocalPort");
+    e.public_addr = addr_of(r, "PublicAddr");
+    e.public_port = port_of(r, "PublicPort");
+    e.mapped_addr = addr_of(r, "MappedAddr");
+    e.mapped_port = port_of(r, "MappedPort");
+    e.relay_port = port_of(r, "RelayPort");
     return e;
+}
+
+// create_room's extra members, as guests' invites carry them: numbers, and HostPos as three
+// finite coordinates.
+void copy_extra(const json::Value& rq, json::Value& extra) {
+    for (const char* k : {"HostArea", "HostLevel", "MemberTag"}) {
+        const json::Value* v = rq.find(k);
+        if (v && v->type == json::Value::Type::Number && v->number >= 0 && v->number <= 4294967295.0)
+            extra.set(k, *v);
+    }
+    const json::Value* p = rq.find("HostPos");
+    if (p && p->type == json::Value::Type::Array && p->array.size() == 3) {
+        json::Value pos = json::Value::make_array();
+        for (const json::Value& c : p->array) {
+            const bool ok = c.type == json::Value::Type::Number && c.number > -100000.0 && c.number < 100000.0;
+            pos.push(ok ? c.number : 0.0);
+        }
+        extra.set("HostPos", std::move(pos));
+    }
 }
 
 json::Value error_reply(int kind, const std::string& text) {
@@ -296,6 +326,16 @@ struct PartyHostService::Impl {
         return v;
     }
 
+    // The next member id: never 0 and never one in use (a u16 wraps after 65535 joins).
+    static std::uint16_t next_member_id(Room& room) {
+        for (int i = 0; i < 0x10000; ++i) {
+            const std::uint16_t id = room.next_member++;
+            if (id && id < 0xff00 && !room.members.count(id)) return id;
+            if (room.next_member >= 0xff00) room.next_member = 1;
+        }
+        return 0;  // unreachable: a room holds a handful of members
+    }
+
     std::string new_session_id() {
         char buf[24];
         std::snprintf(buf, sizeof(buf), "%016llx", static_cast<unsigned long long>(rng()));
@@ -310,11 +350,11 @@ struct PartyHostService::Impl {
         if (!caller_identity(who, rq, "context_start", &id, &err)) return err;
         Context c;
         c.online_id = id;
-        c.ep.local_addr = str_of(rq, "SignalingAddr");
-        c.ep.local_port = static_cast<int>(int_of(rq, "SignalingPort", 0));
-        c.ep.mapped_addr = str_of(rq, "MappedAddr");
-        c.ep.mapped_port = static_cast<int>(int_of(rq, "MappedPort", 0));
-        c.ep.relay_port = static_cast<int>(int_of(rq, "RelayPort", 0));
+        c.ep.local_addr = addr_of(rq, "SignalingAddr");
+        c.ep.local_port = port_of(rq, "SignalingPort");
+        c.ep.mapped_addr = addr_of(rq, "MappedAddr");
+        c.ep.mapped_port = port_of(rq, "MappedPort");
+        c.ep.relay_port = port_of(rq, "RelayPort");
         c.link_addr = who.link_addr;
         c.at_ms = now();
         std::lock_guard<std::mutex> lk(mu);
@@ -345,9 +385,7 @@ struct PartyHostService::Impl {
         m.ep = endpoint_of(rq);
         m.last_heartbeat_ms = now();
         room.owner = m.id;
-        for (const char* k : {"HostArea", "HostLevel", "HostPos", "MemberTag"}) {
-            if (const json::Value* v = rq.find(k)) room.extra.set(k, *v);
-        }
+        copy_extra(rq, room.extra);
         room.members[m.id] = m;
         queues[id];
         const std::uint64_t rid = room.id;
@@ -379,7 +417,7 @@ struct PartyHostService::Impl {
         const int cap = std::min(room.max_members, party_max_members());
         if (static_cast<int>(room.members.size()) >= cap) return error_reply(3, "Room full");
         Member m;
-        m.id = room.next_member++;
+        m.id = next_member_id(room);
         m.online_id = id;
         m.ep = endpoint_of(rq);
         m.last_heartbeat_ms = now();
@@ -454,7 +492,8 @@ struct PartyHostService::Impl {
         if (!caller_is(who, k->online_id)) return not_yours(who, "kick_member", *k);
         if (room->owner != kicker) return error_reply(5, "only the owner kicks");
         if (!room->members.count(mid) || mid == kicker) return error_reply(6, "no such member");
-        const std::string opt = str_of(rq, "OptData");
+        std::string opt = str_of(rq, "OptData");
+        if (opt.size() > 64) opt.clear();  // base64 of the game's 16 bytes
         remove_member_locked(room->id, mid, "kicked", &opt);
         return ok_reply();
     }
@@ -485,9 +524,9 @@ struct PartyHostService::Impl {
         std::lock_guard<std::mutex> lk(mu);
         Context& c = contexts[id];
         c.online_id = id;
-        c.ep.mapped_addr = str_of(rq, "MappedAddr");
-        c.ep.mapped_port = static_cast<int>(int_of(rq, "MappedPort", 0));
-        if (rq.find("RelayPort")) c.ep.relay_port = static_cast<int>(int_of(rq, "RelayPort", 0));
+        c.ep.mapped_addr = addr_of(rq, "MappedAddr");
+        c.ep.mapped_port = port_of(rq, "MappedPort");
+        if (rq.find("RelayPort")) c.ep.relay_port = port_of(rq, "RelayPort");
         if (who.link_addr) c.link_addr = who.link_addr;
         c.at_ms = now();
         log("party host: %s is now at %s:%d", id.c_str(), c.ep.mapped_addr.c_str(), c.ep.mapped_port);

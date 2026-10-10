@@ -486,6 +486,21 @@ void heartbeat_loop() {
 
 bool is_loopback(std::uint32_t addr_nbo) { return (addr_nbo & 0xff) == 127; }
 
+// The host's answers and events are peer input (bbport security pass): a room's size and member
+// ids as the game's room structures can hold them, finite positions.
+std::uint16_t clamp_slots(long long v, std::uint16_t def) {
+    if (v < 2) return def;
+    return static_cast<std::uint16_t>(v > 8 ? 8 : v);
+}
+std::uint16_t clamp_member(long long v, std::uint16_t def) {
+    return v > 0 && v <= 64 ? static_cast<std::uint16_t>(v) : def;
+}
+float clamp_pos(const json::Value& v) {
+    if (v.type != json::Value::Type::Number) return 0.0f;
+    const double d = v.number;
+    return d > -100000.0 && d < 100000.0 ? static_cast<float>(d) : 0.0f;
+}
+
 // ---- events from the host ------------------------------------------------------------------------
 
 void on_server_event(const json::Value& ev);
@@ -543,7 +558,7 @@ void on_server_event(const json::Value& ev) {
         const json::Value* pos = ev.find("HostPos");
         if (pos && pos->type == json::Value::Type::Array) {
             for (std::size_t i = 0; i < 3 && i < pos->array.size(); ++i) {
-                inv.host_pos[i] = static_cast<float>(pos->array[i].number);
+                inv.host_pos[i] = clamp_pos(pos->array[i]);
             }
         }
         inv.host_online_id = host.online_id;
@@ -846,9 +861,9 @@ BBNET_ABI int m2_create_join_room(unsigned ctx, const std::uint8_t* reqp, const 
             if (!error) {
                 g.session_id = sid;
                 g.room_id = room;
-                g.member_id = static_cast<std::uint16_t>(int_of(reply, "MemberId", 1));
+                g.member_id = clamp_member(int_of(reply, "MemberId", 1), 1);
                 g.owner_id = g.member_id;
-                g.max_slot = static_cast<std::uint16_t>(int_of(reply, "MaxMembers", max_slot));
+                g.max_slot = clamp_slots(int_of(reply, "MaxMembers", max_slot), max_slot);
                 g.is_host = true;
                 g.in_room = true;
                 g.room_since_ms = session::now_ms();
@@ -896,10 +911,10 @@ BBNET_ABI int m2_join_room(unsigned ctx, const std::uint8_t* reqp, const Request
             if (!error) {
                 g.session_id = str_of(reply, "SessionId");
                 g.room_id = room;
-                g.member_id = static_cast<std::uint16_t>(int_of(reply, "MemberId", 2));
+                g.member_id = clamp_member(int_of(reply, "MemberId", 2), 2);
                 // The room's size and owner as the host has them.
-                g.owner_id = static_cast<std::uint16_t>(int_of(reply, "OwnerMemberId", 1));
-                g.max_slot = static_cast<std::uint16_t>(int_of(reply, "MaxMembers", 5));
+                g.owner_id = clamp_member(int_of(reply, "OwnerMemberId", 1), 1);
+                g.max_slot = clamp_slots(int_of(reply, "MaxMembers", 5), 5);
                 g.is_host = false;
                 g.in_room = true;
                 g.room_since_ms = session::now_ms();
