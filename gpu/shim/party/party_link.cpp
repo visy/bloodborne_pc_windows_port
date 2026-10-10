@@ -538,6 +538,25 @@ struct PartyLink::Impl {
         snap_local_map = local_map;
         snap_max_players = host ? cfg.max_players : host_max_players;
     }
+    // post_event: events the main thread could not hand over without waiting for mu.
+    struct Posted {
+        int slot;
+        std::string name, json;
+    };
+    std::mutex post_mu;
+    std::deque<Posted> posted;
+    std::atomic<bool> any_posted{false};
+    std::uint64_t send_event_locked(int slot, const std::string& name, const std::string& json);  // mu held
+    void drain_posted() {  // mu held
+        if (!any_posted.load(std::memory_order_acquire)) return;
+        std::deque<Posted> q;
+        {
+            std::lock_guard<std::mutex> pl(post_mu);
+            q.swap(posted);
+            any_posted.store(false, std::memory_order_release);
+        }
+        for (const Posted& p : q) send_event_locked(p.slot, p.name, p.json);
+    }
     std::int64_t clock_offset = 0;
     std::uint32_t rtt = 0;
     std::string observed;
@@ -1523,6 +1542,7 @@ struct PartyLink::Impl {
             const auto locked_at = Clock::now();
             const std::uint64_t cycles_at = thread_cycles();
             if (stopping) break;
+            drain_posted();  // the main thread's post_event()s, in order, before this pass's work
             if (freeze_until > Clock::now()) continue;
             if (n > 0) {
                 for (std::size_t i = 0; i < fds.size(); ++i) {
@@ -1830,6 +1850,27 @@ std::uint32_t PartyLink::rpc_call_async(const std::string& kind, const std::stri
 std::uint64_t PartyLink::send_event(int slot, const std::string& name, const std::string& json) {
     Impl& I = *impl_;
     std::lock_guard<std::mutex> lk(I.mu);
+    I.drain_posted();  // posts made earlier go first
+    return I.send_event_locked(slot, name, json);
+}
+
+void PartyLink::post_event(int slot, const std::string& name, const std::string& json) {
+    Impl& I = *impl_;
+    {
+        std::unique_lock<std::mutex> lk(I.mu, std::try_to_lock);
+        if (lk.owns_lock()) {
+            I.drain_posted();
+            I.send_event_locked(slot, name, json);
+            return;
+        }
+    }
+    std::lock_guard<std::mutex> pl(I.post_mu);
+    I.posted.push_back({slot, name, json});
+    I.any_posted.store(true, std::memory_order_release);
+}
+
+std::uint64_t PartyLink::Impl::send_event_locked(int slot, const std::string& name, const std::string& json) {
+    Impl& I = *this;
     if (I.state == LinkState::Stopped || I.state == LinkState::Idle) return 0;
     auto push = [&](EventStream& es, Impl::Conn* c) {
         EventStream::Ev e{es.next_cursor++, name, json};

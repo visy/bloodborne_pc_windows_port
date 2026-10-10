@@ -567,7 +567,7 @@ void HostTick(party::PartyLink* link, double now) {
         return; // nobody to tell
     }
     for (const PhantomEvent& e : out) {
-        link->send_event(party::kBroadcast, kPhantomEventName, PhantomEventToJsonText(e));
+        link->post_event(party::kBroadcast, kPhantomEventName, PhantomEventToJsonText(e));
         Log("sent %s #%llu (lamp %d, Insight %d, event %u)", PhantomEventKindName(e.kind), ull(e.seq),
             static_cast<int>(e.lamp), e.insight, e.source_event);
     }

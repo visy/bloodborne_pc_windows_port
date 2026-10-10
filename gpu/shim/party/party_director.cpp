@@ -811,7 +811,7 @@ void PartyDirector::Tick() {
     if (link && role == PartyRole::Host) {
         TravelIntent t;
         while (PopHostTravel(&t)) {
-            link->send_event(party::kBroadcast, kTravelEventName, TravelToJsonText(t));
+            link->post_event(party::kBroadcast, kTravelEventName, TravelToJsonText(t));
             party::bridge::OnTravel(TravelKindName(t.kind));
             Log("travel #%llu (%s) sent to the party", static_cast<unsigned long long>(t.seq), TravelKindName(t.kind));
             PhantomNoteHostTravel(t); // a rest (Dream, death, Mark): guests refill too
@@ -819,7 +819,7 @@ void PartyDirector::Tick() {
         // C4: the host's cutscenes, endings and time of day (party_story.h).
         StoryIntent si;
         while (PopHostStory(&si)) {
-            link->send_event(party::kBroadcast, kStoryEventName, StoryToJsonText(si));
+            link->post_event(party::kBroadcast, kStoryEventName, StoryToJsonText(si));
             Log("story #%llu (%s %u) sent to the party", static_cast<unsigned long long>(si.seq),
                 StoryKindName(si.kind), si.id);
         }
@@ -830,12 +830,12 @@ void PartyDirector::Tick() {
             items.push_back(g);
         }
         if (!items.empty()) {
-            link->send_event(party::kBroadcast, kItemsEventName, ItemsToJsonText(items));
+            link->post_event(party::kBroadcast, kItemsEventName, ItemsToJsonText(items));
             Log("items: %zu lots sent to the party", items.size());
         }
         int slot = -1;
         while (TakeHostFullItems(&slot, &items)) {
-            link->send_event(slot, kItemsFullEventName, ItemsToJsonText(items));
+            link->post_event(slot, kItemsFullEventName, ItemsToJsonText(items));
             Log("items: full list (%zu lots) sent to slot %d", items.size(), slot);
         }
     }

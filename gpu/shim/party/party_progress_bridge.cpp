@@ -95,7 +95,7 @@ void HostSide(Bridge& b, party::PartyLink* link) {
     }
 
     if (!changes.empty() && any_member) {
-        link->send_event(party::kBroadcast, kEventFlags, ChangesToJson(HostEpoch(), changes));
+        link->post_event(party::kBroadcast, kEventFlags, ChangesToJson(HostEpoch(), changes));
         BLog("%zu flag changes (seq %llu..%llu) sent to the party", changes.size(),
              static_cast<unsigned long long>(changes.front().seq), static_cast<unsigned long long>(changes.back().seq));
     }
@@ -111,7 +111,7 @@ void HostSide(Bridge& b, party::PartyLink* link) {
         b.waiting_logged = false;
         const std::string body = SnapshotToJson(snap);
         for (int slot : b.want_snapshot) {
-            link->send_event(slot, kEventFlagSnapshot, body);
+            link->post_event(slot, kEventFlagSnapshot, body);
             BLog("flag snapshot (%zu blocks, seq %llu, %zu bytes) sent to slot %d", snap.blocks.size(),
                  static_cast<unsigned long long>(snap.seq), body.size(), slot);
         }

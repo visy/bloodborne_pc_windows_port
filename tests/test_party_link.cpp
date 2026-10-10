@@ -383,6 +383,12 @@ static void test_party() {
     CHECK(!br.has_event("only_alice"));
     CHECK(a.send_event(0, "guest_said", "{}") == 1);
     CHECK(wait_for([&] { return hr.has_event("guest_said"); }, 2000));
+    // post_event (the game's main thread): never waits for the IO lock; same delivery.
+    for (int k = 0; k < 50; ++k) host.post_event(kBroadcast, "posted_" + std::to_string(k), "{}");
+    a.post_event(0, "guest_posted", "{}");
+    CHECK(wait_for([&] { return ar.has_event("posted_49") && br.has_event("posted_49") && hr.has_event("guest_posted"); },
+                   2000));
+    CHECK(ar.has_event("posted_0") && br.has_event("posted_0"));
     CHECK(host.send_party_cmd(kBroadcast, "warp", "{\"map\":1}"));
     CHECK(b.send_party_cmd(0, "ready", "{}"));
     std::vector<std::uint8_t> blob(100000, 1);
