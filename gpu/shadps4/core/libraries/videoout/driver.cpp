@@ -783,6 +783,18 @@ void VideoOutDriver::Flip(const Request& req) {
         }
     }
 
+    // bbport BB_HONEST_FLIPS=1 (experiment): the flip completes once the GPU has finished the
+    // frame, as on the PS4, where the display flips at a vblank after the end of the frame's
+    // commands, instead of when the frame is queued. It did not change how often the game drew
+    // every light with FSR on (2 of 4 route runs), so it stays off.
+    static const bool honest_flips = [] {
+        const char* env = std::getenv("BB_HONEST_FLIPS");
+        return env && env[0] == '1';
+    }();
+    if (honest_flips) {
+        presenter->WaitRendered(req.frame);
+    }
+
     // Update flip status.
     auto* port = req.port;
     {

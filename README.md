@@ -5,6 +5,8 @@
 
 `bloodborne_pc_windows_port` is a native 64-bit Windows port of the PlayStation 4 executable of *Bloodborne* (CUSA03173, version 1.09). 
 
+**Version 0.5** (in step with upstream bbport 0.5; `bbport.exe --version`, the launcher's title bar and the overlay menu show it). Party co-op is included but still **in development** (see [Party co-op](#party-co-op-in-development)).
+
 This project is a Windows adaptation of the original Linux port ([`bbport`](https://github.com/deadinside28/bloodborne_pc) by `deadinside28`). It replaces the Linux-specific kernel, memory mapping, and POSIX threading implementation with a native Win32 runtime, allowing the game to run directly on Windows with Vulkan.
 
 bbport is the counterpart of Wine + DXVK for a single game: the game's original executable runs directly on the PC.
@@ -37,6 +39,7 @@ This repository adapts the original Linux codebase specifically for Windows syst
 - **Window and audio**: `Alt+Enter` switches fullscreen at any time; the game is muted while its window is in the background (launcher option, `BB_MUTE_UNFOCUSED`); the mouse cursor shows only while the overlay menu is open.
 - **Clean exit**: closing the window, the in-game restart and timeouts end the process without unloading the Vulkan driver under the loader lock, which could leave a hung process holding the game's memory.
 - **VRAM guard**: *Full* VRAM pre-upload drops to normal on GPUs with less than ~11 GB (`BB_PREUPLOAD_FORCE=1` keeps it).
+- **Upstream 0.5** ([changes](docs/CHANGES_0.5.md)): the game's own *System → Display / Effects* pages with slider-style choices (applied once a slider rests for 0.4 s), the GPU command decoder and game profiles, GPU timestamps, fewer hitches from background pipeline compiles (full-screen passes and indirect draws now wait for their pipeline: no grey frames), the texture collector's emergency pass on low-VRAM cards, the damaged-extraction check and the shared write traps of the memory layer, all built natively for Windows. Upstream's *Auto* memory model (the new model on AMD) is Linux-only: it needs the game's memory in dma-buf/memfd chunks that the Windows runtime cannot provide, so Windows keeps the 0.3 memory model with every fix since (`BB_PC_MODEL` is still accepted). The AppImage-only parts (NVIDIA EGL vendor files, RADV `nohiz`, MangoHud) do not apply on Windows. The overlay menu keeps this port's game-styled tabbed layout.
 - **Upstream 0.5-pre4** ([changes](docs/CHANGES_0.5-pre4.md)): the memory module's fixes, the command-recording crash fix (#100, reported on Windows), the damaged-extraction check (#81: `run.bat` and the launcher report game files whose shaders do not unpack; `python scripts\game_check.py GAME_DIR` checks every file) are included. The settings menu keeps this port's game-styled layout (tabs, rows like the game's dialogs) rather than upstream's return to the 0.3-style window. The drivers' shader-cache variables `run.sh` sets (`__GL_SHADER_DISK_CACHE*`, `MESA_SHADER_CACHE_MAX_SIZE`) are Linux-only; the NVIDIA driver on Windows uses its control-panel *Shader Cache Size* setting.
 
 ---

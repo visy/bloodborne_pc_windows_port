@@ -1145,6 +1145,13 @@ class Guest:
         status, text = self.http("GET", SS_INFO_URL)
         if status != 200:
             self.fail("ss.info", f"HTTP {status}")
+        if "<ss>" not in text:
+            # The game base64-decodes the body before parsing it (completion 0x1e7f240), so the
+            # host serves it encoded.
+            try:
+                text = base64.b64decode(text.strip(), validate=True).decode("utf-8", "replace")
+            except ValueError:
+                self.fail("ss.info", "body is neither XML nor base64")
         if "<ss>0</ss>" not in text:
             self.fail("ss.info", "no <ss>0</ss> (offline msg 0x1131)")
         bases = {}

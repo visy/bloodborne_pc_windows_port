@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// bbport.exe version resource (gpu/CMakeLists.txt fills it from VERSION).
+#include <winver.h>
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION @BBPORT_VERSION_COMMAS@,0,0
+PRODUCTVERSION @BBPORT_VERSION_COMMAS@,0,0
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+FILEFLAGS 0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "bbport contributors"
+            VALUE "FileDescription", "bbport - native Windows port of Bloodborne"
+            VALUE "FileVersion", "@BBPORT_VERSION@"
+            VALUE "InternalName", "bbport"
+            VALUE "LegalCopyright", "GPL-3.0-or-later; see LICENSE"
+            VALUE "OriginalFilename", "bbport.exe"
+            VALUE "ProductName", "Bloodborne PC Windows port"
+            VALUE "ProductVersion", "@BBPORT_VERSION@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

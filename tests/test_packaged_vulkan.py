@@ -25,8 +25,10 @@ class PackagedVulkanTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.icds = self.root / "icds"
         self.libs = self.root / "host-libs"
+        self.egl = self.root / "egl_vendor.d"
         self.icds.mkdir()
         self.libs.mkdir()
+        self.egl.mkdir()
         self.env = {"BB_DATA_DIR": str(self.root / "data"),
                     "BB_BUNDLED_VK_DRIVER_FILES": "/bundled/radeon.json:/bundled/intel.json",
                     "LD_LIBRARY_PATH": "/bundled/lib"}
@@ -44,7 +46,7 @@ class PackagedVulkanTests(unittest.TestCase):
         return path
 
     def configure(self):
-        return vulkan.configure(self.env, (self.icds,), (self.libs,))
+        return vulkan.configure(self.env, (self.icds,), (self.libs,), (self.egl,))
 
     def test_amd_intel_keep_bundled_drivers(self):
         self.configure()
@@ -83,6 +85,37 @@ class PackagedVulkanTests(unittest.TestCase):
         self.env["LD_LIBRARY_PATH"] = "/bundled/lib"
         self.configure()
         self.assertEqual(self.env, before)
+
+    def nvidia_host(self):
+        driver = self.library("libGLX_nvidia.so.580.1")
+        (self.libs / "libGLX_nvidia.so.0").symlink_to(driver.name)
+        self.manifest()
+
+    @linux_only
+    def test_nvidia_gets_the_host_egl_vendors_nvidia_first(self):
+        # #107: the package's glvnd saw no host EGL vendor; NVIDIA's ICD gave no vkCreateInstance.
+        self.nvidia_host()
+        for name in ("50_mesa.json", "10_nvidia.json"):
+            (self.egl / name).write_text("{}")
+        self.configure()
+        self.assertEqual(self.env["__EGL_VENDOR_LIBRARY_FILENAMES"],
+                         f"{self.egl / '10_nvidia.json'}:{self.egl / '50_mesa.json'}")
+
+    @linux_only
+    def test_egl_vendors_left_alone_without_nvidia_or_when_set(self):
+        (self.egl / "10_nvidia.json").write_text("{}")
+        self.configure() # no NVIDIA ICD: AMD/Intel keep the package's EGL
+        self.assertNotIn("__EGL_VENDOR_LIBRARY_FILENAMES", self.env)
+        self.nvidia_host()
+        for env in ({"__EGL_VENDOR_LIBRARY_FILENAMES": "/user/vendor.json"}, {"BB_NVIDIA_EGL": "0"}):
+            with self.subTest(env=env):
+                self.env.pop("__EGL_VENDOR_LIBRARY_FILENAMES", None)
+                self.env.pop("VK_DRIVER_FILES", None)
+                self.env.update(env)
+                self.configure()
+                self.assertEqual(self.env.get("__EGL_VENDOR_LIBRARY_FILENAMES"),
+                                 env.get("__EGL_VENDOR_LIBRARY_FILENAMES"))
+                self.env.pop("BB_NVIDIA_EGL", None)
 
     def test_absolute_and_relative_icd_paths(self):
         driver = self.library("libGLX_nvidia.so.0")

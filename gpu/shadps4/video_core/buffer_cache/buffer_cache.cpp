@@ -14,8 +14,9 @@
 #include "bbport_sections.h"
 #include "bbport_free_check.h"
 #include "bbport_guest_memory.h"
-#include "bbport_guest_hooks.h"
+#include "game_profile.h"
 #include "bblayer_gpu_memory.h"
+#include "bblayer_write_traps.h"
 #include "common/alignment.h"
 #include "core/emulator_settings.h"
 #include "core/memory.h"
@@ -283,6 +284,11 @@ private:
     u64 capacity = 0;
 };
 std::mutex fast_readback_mutex;
+/// One readback queue user for the old model's downloads and the module's read traps.
+FastReadback& SharedReadback(const Vulkan::Instance& instance) {
+    static FastReadback readback{instance};
+    return readback;
+}
 
 // bbport: BB_GPU_WRITE_TWINS=1 — a guest write into a page that holds bytes the GPU is still
 // writing (counters, small compute outputs rewritten every frame) does not wait for the GPU: the
@@ -587,9 +593,17 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
         std::printf("Guest memory: the PC memory model is off with this driver; the GPU uses copies "
                     "in VRAM (as BB_GUEST_IN_PLACE=0)\n");
     }
-    if (GuestInPlace()) {
+    // Hooks in the game's own code, from its profile (games/). BB_GUEST_HOOKS=0: none, as for a
+    // game the port knows nothing about.
+    const char* hooks_env = std::getenv("BB_GUEST_HOOKS");
+    const Game::Profile* game = Game::Active();
+    if (GuestInPlace() && game && game->install_hooks && !(hooks_env && hooks_env[0] == '0')) {
         static BufferCache* hooked_cache = this;
-        BbGuestHooks::Install([](u64 address, u64 size) { hooked_cache->NoteFreshRange(address, size); });
+        game->install_hooks(Game::CoreServices{
+            .fresh_range = [](u64 address, u64 size) { hooked_cache->NoteFreshRange(address, size); },
+        });
+    } else if (GuestInPlace() && game) {
+        std::printf("Guest hooks: off (BB_GUEST_HOOKS=0): nothing in the game's own code is hooked\n");
     }
     if (LayerMode()) {
         BbLayer::GpuMemory::Get().SetTranslate(&LayerTranslate);
@@ -793,6 +807,72 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
     }
 }
 
+bool BufferCache::LayerReadTrapHit(VAddr address, bool assume_locks) {
+    if (!(BbLayer::WriteTraps::Reasons(address) & BbLayer::WriteTraps::VramData)) {
+        return false;
+    }
+    layer_read_trap_hits.fetch_add(1, std::memory_order_relaxed);
+    if (assume_locks) {
+        LayerCopyBackForCpu(address);
+    } else {
+        liverpool->SendCommand<true>([this, address] { LayerCopyBackForCpu(address); });
+    }
+    return true;
+}
+
+void BufferCache::LayerCopyBackForCpu(VAddr address) {
+    if (!(BbLayer::WriteTraps::Reasons(address) & BbLayer::WriteTraps::VramData)) {
+        return; // copied back meanwhile
+    }
+    // The GPU's data in the block's VRAM copy (one readback for the block, not for each page),
+    // once the GPU has written it: on the readback queue, without waiting for the queued frames.
+    const VAddr from = Common::AlignDown(address, block_size);
+    boost::container::small_vector<vk::BufferCopy, 8> copies;
+    boost::container::small_vector<VAddr, 8> guests;
+    const Buffer* mirror_buffer = nullptr;
+    u64 total = 0, tick = 0;
+    if (const auto mirror = BbLayer::GpuMemory::Get().MirrorAt(from)) {
+        mirror_buffer = static_cast<const Buffer*>(mirror->owner);
+        gpu_modified_ranges.ForEachInRange(from, block_size, [&](VAddr start, VAddr end) {
+            copies.push_back({mirror_buffer->Offset(start), total, end - start});
+            guests.push_back(start);
+            total += Common::AlignUp(end - start, 64);
+            tick = std::max(tick, WriteTicks().Newest(start, end - start));
+        });
+    }
+    bool copied = copies.empty();
+    if (!copies.empty()) {
+        if (tick != 0 && !scheduler.IsFree(tick)) {
+            scheduler.Wait(tick); // submitted, and done
+        }
+        auto& readback = SharedReadback(instance);
+        if (readback.Available() && !BbToggle::Disabled(BbToggle::ReadbackQueue)) {
+            std::scoped_lock lk{fast_readback_mutex};
+            if (const u8* data = readback.Copy(mirror_buffer, copies, total,
+                                               scheduler.GetWorkSemaphore()->Handle(), tick)) {
+                for (size_t i = 0; i < copies.size(); ++i) {
+                    memory->TryWriteBacking(std::bit_cast<u8*>(guests[i]),
+                                            data + copies[i].dstOffset, copies[i].size);
+                }
+                copied = true;
+            }
+        }
+        if (copied) {
+            gpu_modified_ranges.Subtract(from, block_size);
+        } else {
+            // No readback queue: a copy in stream order, waited for.
+            LayerCopyBack(from >> block_shift, (from >> block_shift) + 1);
+            scheduler.Finish();
+        }
+        layer_read_trap_bytes.fetch_add(total, std::memory_order_relaxed);
+    } else if (layer_copy_back_tick != 0 && !scheduler.IsFree(layer_copy_back_tick)) {
+        scheduler.Wait(layer_copy_back_tick); // a copy back recorded is not done yet
+    }
+    std::scoped_lock lk{layer_read_trap_mutex};
+    BbLayer::WriteTraps::Set(from, block_size, BbLayer::WriteTraps::VramData, false);
+    layer_read_trapped.Subtract(from, block_size);
+}
+
 void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size) {
     boost::container::small_vector<vk::BufferCopy, 1> copies;
     u64 total_size_bytes = 0;
@@ -855,7 +935,7 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
     }
     const bool write_done = write_tick != 0 && scheduler.IsFree(write_tick);
     bool fast = false;
-    static FastReadback readback{instance};
+    auto& readback = SharedReadback(instance);
     if (write_tick != 0 && readback.Available() && !BbToggle::Disabled(BbToggle::ReadbackQueue)) {
         if (!write_done) {
             scheduler.Wait(write_tick);
@@ -1899,17 +1979,9 @@ void BufferCache::BindInPlace(u64 start, u64 end, std::vector<ResidentBind>& out
 
 void BufferCache::NoteCpuWrite(VAddr address, u64 guest_rip) {
     constexpr u32 Frames = 3, Window = 60;
-    // Guest code known to write per-frame data (reverse engineering): what it writes is an
-    // upload heap at its first write. 0x2ab7350: vertices computed on the CPU (cloth) into a
-    // ~128 MiB ring, each block written now and then; 0x20858a0: the game's allocator, its
-    // bookkeeping in GPU-mapped pages.
-    constexpr u64 Image = 0x800000000ull;
-    constexpr std::array<std::pair<u64, u64>, 2> DynamicWriters = {{
-        {Image + 0x2ab7350, Image + 0x2aba310},
-        {Image + 0x20858a0, Image + 0x2085e20},
-    }};
-    const bool dynamic_writer = std::ranges::any_of(
-        DynamicWriters, [&](const auto& r) { return guest_rip >= r.first && guest_rip < r.second; });
+    // Guest code the game's profile knows to write per-frame data: what it writes is an upload
+    // heap at its first write (others after Frames writes in Window frames).
+    const bool dynamic_writer = Game::IsDynamicWriter(guest_rip);
     const u64 block = address >> block_shift;
     const u32 frame = static_cast<u32>(BbStats::frame_number.load(std::memory_order_relaxed));
     std::scoped_lock lk{dynamic_mutex};
