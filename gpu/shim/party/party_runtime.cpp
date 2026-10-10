@@ -65,7 +65,7 @@ void plog(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
-    coop::asyncio::Print(std::string("Party: ") + buf + "\n"); // never blocks the caller (party_async_io.h)
+    coop::asyncio::Print(std::string("Party: ") + coop::PartyLogStamp() + buf + "\n"); // never blocks the caller (party_async_io.h)
 }
 
 const char* env(const char* name) {

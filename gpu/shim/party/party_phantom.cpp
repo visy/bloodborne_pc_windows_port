@@ -400,7 +400,7 @@ void Log(const char* fmt, ...) {
     std::vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
     perf::Scope z(perf::Zone::Log);
-    coop::asyncio::Print(std::string("Party phantom: ") + line + "\n"); // never blocks the caller (party_async_io.h)
+    coop::asyncio::Print(std::string("Party phantom: ") + PartyLogStamp() + line + "\n"); // never blocks the caller (party_async_io.h)
 }
 
 bool EnvOff(const char* name) {

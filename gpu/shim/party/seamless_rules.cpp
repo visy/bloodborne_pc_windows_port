@@ -645,4 +645,9 @@ void SeamlessRulesTick() {
     }
 }
 
+std::uint64_t GameParamRow(const char* name, const char* type, std::uint32_t id) {
+    ParamTable t;
+    return FindParam(name, type, &t) ? Row(t, id) : 0;
+}
+
 } // namespace coop

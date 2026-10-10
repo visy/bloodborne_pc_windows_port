@@ -144,14 +144,37 @@ struct ItemApplyState {
     int own_world = -1;       ///< WorldTransitionState +0x1592: 1 own world
     int session_role = -1;    ///< SprjSessionManager +0x124
     bool game_data = false;   ///< GameDataMan +8 and the MapItemMan exist
+    bool calm = true;         ///< the player lost no HP lately (not in a fight): a popup may open
 };
 /// In the own world with the flag store in mode 0, no loading screen, not joining/leaving/client.
 bool ItemApplyAllowedNow(const ItemApplyState& s);
 
+// ---- Does a lot still fit the guest's inventory? ----
+/// One ItemLotParam slot as the guest's game sees it (only slots that can drop: id > 0, a
+/// category other than -1, a base point > 0).
+struct LotSlotState {
+    std::uint32_t category = 0xffffffffu; ///< lotItemCategory: 0 weapon, 1 armor, 2 rune, 4 goods
+    std::int32_t id = -1;                 ///< lotItemId
+    int num = 1;                          ///< lotItemNum (0 counts as 1)
+    int owned = -1;                       ///< goods: how many the player holds; -1 unknown
+    int max_num = -1;                     ///< goods: EquipParamGoods maxNum; -1 unknown
+    int max_storage = -1;                 ///< goods: EquipParamGoods maxRepositoryNum; -1 unknown
+};
+enum class LotFit : std::uint8_t {
+    Give,  ///< nothing in the way: award it
+    Owned, ///< a unique goods item (maxNum 1, no storage) of the lot is held already (badge, key)
+    Full,  ///< a goods item would go over maxNum with no storage room: the game would refuse it
+           ///< with a blocking "inventory or storage max" dialog
+};
+const char* LotFitName(LotFit f);
+/// Owned / Full when any goods slot would be refused (the whole lot is then skipped: one refused
+/// item opens the blocking dialog); `why` names the slot. Unknown counts (-1) never refuse.
+LotFit ClassifyLotFit(const std::vector<LotSlotState>& slots, std::string* why = nullptr);
+
 class GuestItems {
 public:
     static constexpr int kStableTicks = 90;      ///< frames the gate must hold (world settled)
-    static constexpr double kSpacing = 1.5;      ///< s between two awards (each opens a popup)
+    static constexpr double kSpacing = 8.0;      ///< s between two awards (each opens a popup)
     static constexpr std::size_t kMaxQueue = 4096;
 
     /// Queues grants whose key is not queued or done yet; returns how many were taken. Marks
@@ -160,6 +183,9 @@ public:
     /// Once a frame: the grant to apply now, else nothing. The caller reports Done(key) after.
     std::optional<ItemGrant> Step(const ItemApplyState& s, double now);
     void Done(std::int64_t key) { done_.insert(key); }
+    /// The grant Step returned was really awarded (a popup opened): the next waits kSpacing.
+    /// Skips (flag already set, item held) take no time, so a long catch-up list goes fast.
+    void Awarded(double now) { last_apply_ = now; }
     std::size_t Pending() const { return q_.size(); }
     bool IsDone(std::int64_t key) const { return done_.count(key) != 0; }
 
