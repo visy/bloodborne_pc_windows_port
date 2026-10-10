@@ -169,6 +169,35 @@ BBNET_ABI int npauth_get_code(int, const void*, char* code, int* issuer) {
     return 0;
 }
 
+// ---- Score: the comment filter only ---------------------------------------------------------------
+// The game runs the character name through the Score comment filter (sceNpScoreSanitizeComment in
+// 0xcd09a0, sceNpScoreCensorComment in 0xcd0720) when a save loads and keeps the verdict at [PlayerGameData+0x5d0]->+0xc (2 = accepted). Entering the world online,
+// 0x193a3e0 (0x193aa94..0x193abd7) logs out of the FROM server - clears UserId / SessionId (0x1e8bb10),
+// queues msg 0x125d and sets FrpgNetMan+0xa50 (server offline) - unless that verdict is 2. The
+// runtime's offline Score stub answered SIGNED_OUT (verdict 3), so every party member dropped
+// offline on its first world load and no summon_messenger request was ever sent. There is no
+// word filter behind the party: every comment is accepted as is. The rest of Score (ranking,
+// game data) stays on the offline stubs.
+
+// sceNpScoreCensorComment(reqId, const char* comment, void* option): 0 = acceptable.
+BBNET_ABI int score_censor(int, const char* comment, void*) {
+    BBNET_GUEST_RETURN();
+    if (!comment) return kNpInvalidArgument;
+    if (party_trace()) log("sceNpScoreCensorComment '%s' -> accepted", comment);
+    return 0;
+}
+// sceNpScoreSanitizeComment(reqId, const char* comment, char* sanitized, void* option): the comment
+// unchanged (the game's buffer is 256 bytes; it only passes comments shorter than 255).
+BBNET_ABI int score_sanitize(int, const char* comment, char* sanitized, void*) {
+    BBNET_GUEST_RETURN();
+    if (!comment || !sanitized) return kNpInvalidArgument;
+    const std::size_t n = strnlen(comment, 255);
+    std::memcpy(sanitized, comment, n);
+    sanitized[n] = 0;
+    if (party_trace()) log("sceNpScoreSanitizeComment '%s' -> unchanged", sanitized);
+    return 0;
+}
+
 // ---- WebApi: empty friend and block lists ----------------------------------------------------------
 
 constexpr int kWebApiInvalid = static_cast<int>(0x80552902);
@@ -365,7 +394,7 @@ BBNET_ABI int lookup_npid(int, const void* online, void* npid, void*) {
 
 }  // namespace
 
-// Names not listed here (sceNpCmp*, sceNpSetNpTitleId, sceNpSetContentRestriction, Score,
+// Names not listed here (sceNpCmp*, sceNpSetNpTitleId, sceNpSetContentRestriction, the rest of Score,
 // Trophy, Commerce, ProfileDialog, Matching2, Signaling) stay on the runtime's stubs.
 const Export kNpExports[] = {
     {"sceNpRegisterStateCallback", reinterpret_cast<void*>(np_reg_state)},
@@ -390,6 +419,8 @@ const Export kNpExports[] = {
     {"sceNpAuthDeleteRequest", reinterpret_cast<void*>(np_ok_int)},
     {"sceNpAuthPollAsync", reinterpret_cast<void*>(np_poll_async)},
     {"sceNpAuthGetAuthorizationCode", reinterpret_cast<void*>(npauth_get_code)},
+    {"sceNpScoreCensorComment", reinterpret_cast<void*>(score_censor)},
+    {"sceNpScoreSanitizeComment", reinterpret_cast<void*>(score_sanitize)},
     {"sceNpWebApiInitialize", reinterpret_cast<void*>(webapi_init)},
     {"sceNpWebApiTerminate", reinterpret_cast<void*>(np_ok_int)},
     {"sceNpWebApiCreateContext", reinterpret_cast<void*>(webapi_create_ctx)},
