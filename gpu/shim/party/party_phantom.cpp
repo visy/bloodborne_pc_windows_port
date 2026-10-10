@@ -395,7 +395,7 @@ void Log(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    std::printf("Party phantom: %s\n", line);
+    std::printf("Party phantom: %s%s\n", PartyLogStamp().c_str(), line);
     std::fflush(stdout);
 }
 

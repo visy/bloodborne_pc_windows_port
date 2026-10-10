@@ -502,7 +502,7 @@ void Log(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    std::printf("Party travel: %s\n", line);
+    std::printf("Party travel: %s%s\n", PartyLogStamp().c_str(), line);
     std::fflush(stdout);
 }
 
@@ -541,6 +541,59 @@ u64 NextSeq() {
 
 std::mutex g_host_mu;
 HostTravelQueue g_host_queue; // under g_host_mu
+// Host: when its last broadcast travel started (Now()); 0 none. Main thread / the funnel hook
+// (also the main thread).
+std::atomic<double> g_host_left_at{0};
+bool g_host_load_seen = false;
+
+constexpr u64 kBeginLeaveSession = 0x1ed07a0; // bool (SprjSessionManager*): role -> 7, LeaveRoom
+using LeaveFn = u8(BB_COOP_SYSV*)(u64);
+
+/// Host, main thread: after its own travel the game keeps the room through the load (the
+/// "Keep session on map reload" patch retargets the stage destructor's stop, 0x19471B1), and the
+/// guests have left it to follow. An empty room left open blocks the next Beckoning Bell (the
+/// director rings only when idle) until the game's own timeout ends it ~60 s later, and the
+/// summon into the stale room did not complete (live run 2026-10-10). So once the host is in
+/// its new world with no cooperator left, it leaves the room as vanilla would have at the load.
+void HostCloseEmptyRoom() {
+    const double at = g_host_left_at.load();
+    if (at == 0) {
+        return;
+    }
+    const double now = Now();
+    const GameSnapshot g = ReadGameState(false);
+    g_host_load_seen = g_host_load_seen || g.loading || !g.world_up;
+    if (now - at > 180.0) {
+        g_host_left_at = 0;
+        g_host_load_seen = false;
+        Log("host travel: no arrival within 180 s; room left as it is");
+        return;
+    }
+    if (!g_host_load_seen || !g.world_up || g.loading) {
+        return;
+    }
+    if (g.session_role != 3 /* host */ && g.session_role != 1 /* creating */) {
+        g_host_left_at = 0;
+        g_host_load_seen = false;
+        Log("host travel: arrived %.1f s after the warp, session %s: nothing to close", now - at,
+            SessionRoleName(g.session_role));
+        return;
+    }
+    const GameSnapshot full = ReadGameState(true);
+    if (full.cooperators != 0) {
+        if (full.cooperators > 0) {
+            g_host_left_at = 0; // someone is (still) in: keep the room
+            g_host_load_seen = false;
+            Log("host travel: arrived with %d cooperator(s) in the room; kept", full.cooperators);
+        }
+        return;
+    }
+    g_host_left_at = 0;
+    g_host_load_seen = false;
+    const bool ok = full.session_man && reinterpret_cast<LeaveFn>(Guest(kBeginLeaveSession))(full.session_man) != 0;
+    Log("host travel: arrived %.1f s after the warp with an empty room: leave %s", now - at,
+        ok ? "started (bell next)" : "refused");
+}
 std::mutex g_guest_mu;
 GuestTravel g_guest;          // under g_guest_mu
 
@@ -595,6 +648,7 @@ void CaptureHost(u64 site, TravelKind kind) {
         std::lock_guard<std::mutex> lk(g_host_mu);
         g_host_queue.Push(t);
     }
+    g_host_left_at = Now(); // the room is closed once the host has arrived (TravelTick)
     Log("host travel %s -> %s", DescribeTravel(t).c_str(), ReplayMethodName(ChooseReplay(t).method));
 }
 
@@ -947,6 +1001,10 @@ void RequestGuestTravel(const TravelIntent& t) {
 
 void TravelTick() {
     if (!g_travel_on.load()) {
+        return;
+    }
+    if (Role() == PartyRole::Host) {
+        HostCloseEmptyRoom();
         return;
     }
     const GameSnapshot g = ReadGameState(false);

@@ -248,8 +248,69 @@ static void test_guest() {
     CHECK(!q.Step(Home(), t + 10)); // stable count restarted at 1
 }
 
+// The Cathedral Ward report: lot 50000010 (ledger 36, event 12411700) gives goods 4114 (Sword
+// Hunter Badge, maxNum 1, no storage); a guest whose save already holds it got the blocking
+// "inventory or storage max" dialog. Such a lot is now skipped.
+static void test_fit() {
+    LotSlotState badge;
+    badge.category = 4;
+    badge.id = 4114;
+    badge.num = 1;
+    badge.owned = 1;
+    badge.max_num = 1;
+    badge.max_storage = 0;
+    std::string why;
+    CHECK(ClassifyLotFit({badge}, &why) == LotFit::Owned);
+    CHECK(why.find("4114") != std::string::npos);
+    badge.owned = 0;
+    CHECK(ClassifyLotFit({badge}) == LotFit::Give);
+    // Unknown count: never refused (the old behaviour).
+    badge.owned = -1;
+    CHECK(ClassifyLotFit({badge}) == LotFit::Give);
+    // Consumables: 18 vials + 3 > 20 with storage room -> fits (overflow goes to storage).
+    LotSlotState vials;
+    vials.category = 4;
+    vials.id = 1000;
+    vials.num = 3;
+    vials.owned = 18;
+    vials.max_num = 20;
+    vials.max_storage = 2;
+    CHECK(ClassifyLotFit({vials}) == LotFit::Give);
+    vials.max_storage = 0;
+    CHECK(ClassifyLotFit({vials}) == LotFit::Full);
+    vials.owned = 17;
+    CHECK(ClassifyLotFit({vials}) == LotFit::Give);
+    // Weapons have no count limit here; num 0 counts as 1.
+    LotSlotState weapon;
+    weapon.category = 0;
+    weapon.id = 18100000;
+    weapon.owned = 5;
+    weapon.max_num = 1;
+    CHECK(ClassifyLotFit({weapon}) == LotFit::Give);
+    LotSlotState key = badge;
+    key.id = 4000;
+    key.owned = 1;
+    key.num = 0;
+    // One refused slot refuses the lot; Owned wins over Full.
+    vials.owned = 20;
+    CHECK(ClassifyLotFit({weapon, vials}) == LotFit::Full);
+    CHECK(ClassifyLotFit({vials, key}) == LotFit::Owned);
+    CHECK(ClassifyLotFit({}) == LotFit::Give);
+    // A fight holds every popup back; marks still go.
+    GuestItems q;
+    CHECK(q.Offer({{1, 31000, kItemNone, 25, ItemSource::Full}}) == 1);
+    ItemApplyState fight = Home();
+    fight.calm = false;
+    double t = 100;
+    for (int i = 0; i < GuestItems::kStableTicks + 5; ++i, t += 0.016) {
+        CHECK(!q.Step(fight, t));
+    }
+    CHECK(q.Step(Home(), t).has_value());
+}
+
 int main() {
     test_tables();
+    test_fit();
     test_deny();
     test_classify();
     test_json();

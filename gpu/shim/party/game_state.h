@@ -83,6 +83,8 @@ bool ReadEventFlag(std::uint32_t flag, bool* value);
 bool WriteEventFlag(std::uint32_t flag, bool value);
 /// How many of goods `id` the local player holds: 0 = none, -1 = unknown (no record / code differs).
 int GoodsCount(std::uint32_t goods_id);
+/// The same for any item: `type_bits` = category << 28 (0x40000000 goods); 0 none, -1 unknown.
+int InventoryCount(std::uint32_t type_bits, std::uint32_t id);
 /// The start flags and the bell counts (party_start.h).
 StartFlags ReadStartFlags();
 /// Awards item lot `lot` (with the item popup); false when the code differs or there is no player.

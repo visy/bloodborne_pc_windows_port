@@ -252,6 +252,10 @@ bool WriteEventFlag(std::uint32_t flag, bool value) {
 }
 
 int GoodsCount(std::uint32_t goods_id) {
+    return InventoryCount(kTypeGoods, goods_id);
+}
+
+int InventoryCount(std::uint32_t type_bits, std::uint32_t id) {
     const std::uint64_t rec = Field<std::uint64_t>(Slot(kGameDataMan), 8, 0);
     if (!rec || !FindOk()) {
         return -1;
@@ -262,7 +266,7 @@ int GoodsCount(std::uint32_t goods_id) {
         return -1;
     }
     using Fn = std::int32_t(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t, std::uint32_t);
-    const std::int32_t index = reinterpret_cast<Fn>(Guest(kInventoryFind))(list, kTypeGoods, goods_id);
+    const std::int32_t index = reinterpret_cast<Fn>(Guest(kInventoryFind))(list, type_bits, id);
     if (index < 0) {
         return 0;
     }
