@@ -721,8 +721,11 @@ void Tick(const GameSnapshot& s) {
     static double last_status = 0;
     if ((Role() == RoleHost || Role() == RoleClient) && s.world_up && !s.loading && now - last_status >= 10.0) {
         last_status = now;
-        Log("status: local %s, role %d, flow %d, rejoin %d; tasks:%s", DescribeChr(s.player).c_str(), Role(),
-            Field<int>(Slot(kSlotFlow), 0x84, -1), int(g_rejoin.load()), DescribeTasks().c_str());
+        const u64 remo = Field<u64>(Slot(0x5540058), 8);
+        Log("status: local %s, role %d, flow %d (timer %.2f, GSM+0x1521 %u, remo %d), rejoin %d; tasks:%s",
+            DescribeChr(s.player).c_str(), Role(), Field<int>(Slot(kSlotFlow), 0x84, -1),
+            Field<float>(Slot(kSlotFlow), 0x98), unsigned(Field<u8>(Slot(kSlotGsm), 0x1521)),
+            remo ? int(Field<u8>(remo, 0x168) & 1) : -1, int(g_rejoin.load()), DescribeTasks().c_str());
     }
     ProbeTick(s);
     TestWarpTick(s, now);
