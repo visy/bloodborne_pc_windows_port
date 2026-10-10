@@ -13,6 +13,7 @@
 #include <cstring>
 #include <deque>
 #include <map>
+#include <set>
 #include <mutex>
 #include <thread>
 
@@ -441,6 +442,7 @@ struct PartyLink::Impl {
     std::uint16_t port = 0;
     std::map<int, Member> members;
     Clock::time_point last_roster_bcast{};
+    std::set<std::string> banned;  // kicked names: refused for the rest of this session
 
     // Guest.
     std::string host_name;
@@ -908,6 +910,7 @@ struct PartyLink::Impl {
         // Resume: the same token (or, for a restarted guest, the same name) on a kept slot.
         Member* m = nullptr;
         bool resumed = false;
+        if (banned.count(c->name)) return reject_conn(c, RejectCode::Kicked, "kicked by the host");
         for (auto& [slot, mm] : members) {
             if (!is_zero(c->token) && mm.token == c->token) {
                 m = &mm;
@@ -1782,7 +1785,9 @@ bool PartyLink::last_welcome_resumed() const {
 bool PartyLink::kick(int slot, const std::string& reason) {
     Impl& I = *impl_;
     std::lock_guard<std::mutex> lk(I.mu);
-    if (!I.host || !I.members.count(slot)) return false;
+    if (!I.host || slot == kHostSlot || !I.members.count(slot)) return false;
+    I.banned.insert(I.members[slot].name);
+    I.log("party link: kicking " + I.members[slot].name + " (slot " + std::to_string(slot) + ")");
     I.release_member(slot, true, RejectCode::Kicked, reason.empty() ? "kicked by the host" : reason);
     I.publish();
     return true;
@@ -1797,6 +1802,30 @@ std::int64_t PartyLink::debug_lock_hold_max_us(bool reset, std::uint64_t* cycles
         impl_->hold_max_cycles = 0;
     }
     return v;
+}
+bool PartyLink::kick_name(const std::string& name, const std::string& reason) {
+    int slot = -1;
+    {
+        std::lock_guard<std::mutex> lk(impl_->mu);
+        if (!impl_->host) return false;
+        for (const auto& [s, m] : impl_->members)
+            if (m.name == name) slot = s;
+    }
+    return slot > 0 && kick(slot, reason);
+}
+
+bool PartyLink::is_banned(const std::string& name) const {
+    std::lock_guard<std::mutex> lk(impl_->mu);
+    return impl_->banned.count(name) != 0;
+}
+
+bool PartyLink::reconnect_now() {
+    Impl& I = *impl_;
+    std::lock_guard<std::mutex> lk(I.mu);
+    if (I.host || I.state != LinkState::Reconnecting) return false;
+    I.next_attempt = Clock::now();
+    I.backoff_ms = 0;
+    return true;
 }
 
 void PartyLink::debug_freeze(int ms) {

@@ -366,6 +366,53 @@ Out of reach for this fixture (needs a second instance or simguest): session rol
 Matching2 rooms, signaling, packets (0x32/0x33 go nowhere offline), `CSMultiPlayerInsTask`
 (primary vector), WorldSessionObjectMan ObjectRefs, guest-side behaviour, member-left suppression.
 
+### 5.1 The fixture as built (`gpu/shim/party/party_npc_test.{h,cpp}`)
+
+`BB_PARTY_TEST_NPC=<entity>[:<st>][,...] | auto` (the env starts the party layer by itself; no
+`BB_PARTY` needed). The session type defaults to the one the map's EMEVD template uses for a known
+entity (table 1.1 through 0x4733a10), else 27. `auto` probes every entity of table 1.1 with
+`GetChrByEntityId`. Modes (`BB_PARTY_TEST_NPC_MODE`): `summon` (path A), `cap` (one NPC every 3 s,
+path B unless `BB_PARTY_TEST_NPC_PATH=a`), `filter` (A/B/C, below), `log`. Extras:
+`BB_PARTY_TEST_NPC_RETURN=<s>` (0x15be2a0 after s seconds), `BB_PARTY_TEST_NPC_PATCH=1` (filter
+stage C patches on for the run), `BB_PARTY_TEST_NPC_WARP=<WarpParam id>` (lamp warp 0x13cdf30 first,
+once; 2412951 = Central Yharnam), `BB_PARTY_TEST_NPC_DELAY`, `BB_PARTY_TEST_NPC_LOG=0`. In every
+mode but `log`, a wrapper on the SOS filter 0x1874710 logs each request's fate (`SOS filter:`).
+Every second: `Party NPC: state map .., session .., cooperators N, flag6009 F, tasks: human H, npc
+K [npc h .. st .. step S <name> flags ..]; slots: count .. (kinds ..), cap .. [5 entries]; sel
+pending .., quota team1 .. team2 ..`. `Party NPC: done` marks the end of a load's work (for
+`instances.py --until`). Re-armed after each load (the warp exercises it).
+
+Task layout confirmed from the ctor 0x1e4ae90: +0xc8 handle, +0xd0 st, +0xd4 pos, +0xe0 rot,
++0xec/+0xf0 flags, +0x128 lifecycle byte (low 5 bits). EnsureNpcTask's create info:
+`{u32 handle; u8 st; f32 pos[3] @8; f32 rot[3] @0x14; i32 init @0x20; i32 end @0x24; u8 flags @0x28}`.
+
+### 5.2 Results (1.09, one instance, save at level 37 in the Hunter's Dream, warped to m24_01)
+
+- **Entities in m24_01** (`auto`): 2410158, 2410740, and also 2700920 / 2700921 (listed under
+  m27_00 in 1.1, yet resolvable from Central Yharnam; area 270180). 2410158 is not an NPC player
+  (vfunc +0x1a8 = 0, chr type 7) and never leaves SummonWait. Rows 26/27/32 of SessionTypeDesc:
+  mask 0x80, summonparam -1, team 1, net chr type 7 (counted as cooperator).
+- **Boss-cleared filter (mode `filter`, 2410740 st 26, area 241040, boss cleared 1):**
+  A (1.09): `request NULL`: 0x1878d90 drops it *before* the filter (capability bit 0x80 cleared by
+  the SOS status 0x186fe40). B (0x18749E8/0x18749F0 NOP'd): still `request NULL`. C (B +
+  0x18700D3 status restriction -> 0): `ACCEPTED`, task created. So in a boss-cleared area the
+  "Party: Bells after boss defeated" NOPs alone do not let NPC requests through; the status
+  producer's area restriction (patched by "Party: Bells anywhere") is the first gate. Both are
+  on with `BB_PARTY` set.
+- **Lifecycle (path A, stage C):** step 1 SummonMsgWait (flag 6009 = 1, slot `{kind 2 state 3}`,
+  cooperators 0 -> 1) -> 2 SummonWait -> 4 Update (6009 back to 0); `0x15be2a0(slots, h, 0)` at
+  +40 s -> 5 ReturnWait (flags 0x14), slot released at once (count 2 -> 1, cooperators 1 -> 0) ->
+  task gone within ~2 s. No leaked slot.
+- **Cap, path B** (4 NPCs, 3 s apart): every Register answered `registered`; slot count 1 -> 5
+  = member cap 5 (the local player holds entry 0). The cooperator count reached 3 (2410158 does
+  not count: not an NPC player). A 5th NPC would be refused (count >= cap); no fifth NPC entity is
+  loaded in m24_01 (m34_00 has six). Only one task at a time progressed past SummonWait (the
+  others stayed in step 2 until sent home). All four returns released their slots; count back to 1.
+- **Cap, path A** (with `BB_PARTY_TEST_NPC_PATCH=1`): requests 1-3 `ACCEPTED`; the 4th is
+  `request NULL` again: with 3 NPCs (4 players) the SOS status clears the capability bit, i.e. the
+  vanilla four-player limit is enforced in 0x186fe40, before the filter's own quota checks
+  (`sel+0x1c8` pending + slot kinds < 4, team quotas `sel+0x1fc`/`+0x200` = 3/3).
+
 ---
 
 ## Address index (our offsets)
