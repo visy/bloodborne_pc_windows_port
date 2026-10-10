@@ -9,6 +9,7 @@
 // It returns 0 when no handler table has the name, else the Lua call's result (0x2749180) - a
 // bool in al: only the low byte means anything (1 = a handler ran).
 #include "lua_events.h"
+#include "party_async_io.h"
 
 #include "coop_hooks.h"
 #include "game_state.h"
@@ -88,12 +89,11 @@ void LuaEventsTick() {
     for (const std::string& name : now) {
         std::int64_t r = 0;
         if (LuaEventRaiseNow(name.c_str(), &r)) {
-            std::printf("Party: Lua event %s raised -> %lld (1: a handler ran)\n", name.c_str(), static_cast<long long>(r));
+            coop::asyncio::Print("Party: Lua event " + name + " raised -> " + std::to_string(r) + " (1: a handler ran)\n");
         } else {
-            std::printf("Party: Lua event %s dropped: no event manager yet\n", name.c_str());
+            coop::asyncio::Print("Party: Lua event " + name + " dropped: no event manager yet\n");
         }
     }
-    std::fflush(stdout);
 }
 
 std::uint64_t LuaEventsRaised() {

@@ -159,6 +159,10 @@ only in state 1 (queued until then). Enemy net sync per peer is re-armed by `0x1
 | K5 | 0x13809B7 | `e8 e4 fd b4 00` call 0x1ED07A0 | no leave while a re-join runs | OnMatchingCheck: member chr missing while loading |
 | K6 | 0x178524F | `e8 2c 25 b9 ff` call 0x1317780 | skip while a guest re-join runs | no vanilla SummonReloadStart |
 | K7 | 0x13CDEAE | `75 6c` | `eb 6c` written / restored around the guest's own warp (main thread) | guest warp without leaving |
+| K8 | 0x18C4D7D | `e8 2e 00 59 00` call 0x1E54DB0 | skip on the host (role 3) | ChrIns_OnDeath asks every human task to return when the host dies |
+| K9 | 0x1381A93 (B1 SendHomeHook) | - | `SetSendHomeVeto`: a B2 guest drops HostDead_1's send-home | the guest follows the host's death travel instead of going home |
+| E1 | NowLoading `*0x5562878` | - | guest at the host's travel event: +0x808 = 5, byte 0x556286B = 1, +0x17C0 = 0, +0x804 = 1 (the inline request of 0x1929007); dropped with 0x176D3C0 on a fallback | one continuous loading screen for the guest |
+| D4 | task update | - | a rewound task whose +0x54 stays unapplied for 2 s gets one update run by us (`0x1E52FE0(task, &{0x52EFD40, dt})`, as 0x1E556F0 does), not during SprjRemo | rewind gap fallback |
 | D1 | flow +0x84 | - | guest: 1 on host travel, 3 after the snapshot (the setter 0x178D9A0's write) | host-world load |
 | D2 | task +0x54 / +0xED | - | = 4 / \|= 1 for remote tasks without a chr | re-create remote chrs |
 | D3 | per member | - | host after its load: 0x19, `0x1786050`, `0x1786360`, `0x1A04190`, `0x18F0DB0`, `0x18F0E80`, `0x15BD0E0`, 0x42 | fresh snapshot / net sync |
@@ -230,9 +234,42 @@ logs the flow timer (+0x98, advanced by 0x1789B60), GSM +0x1521 and SprjRemo to 
 GSM +0x1521 read 0 on the guest in run 5 (1 expected after OnJoinMutiplay), which is why the lamp
 warp's own target was used; with +0x1521 = 1 our +0x14C4/D0/E0 write gives the same spot.
 
+### 6.2 Runs 8-10 (after the gate; fast join merged) [R]
+
+* Run 8 (host lamp warp): guest still stuck at `step 6 next 4`; the status showed **SprjRemo
+  +0x168 bit 0 = 1** on the guest from its arrival on (a remo playing: the C4 story log says
+  "remo playing (map m24_01)"; bit 0 is set by the remo start 0x1CFA310). The flow update skips
+  every task while it is set - the rewind gap's cause.
+* Run 9 (D4 kick also during a remo, after 3 s): **closed** - `kick: task mode 2 stalled ... (remo
+  1); running its update` → `guest: re-join done after 3.0 s`, host chr on the guest at the
+  host's position; host got "arrived" and re-created the guest's chr. Whole lamp warp in 52 s of
+  run time; the early guest loading screen (E1) was raised at the travel event.
+* Run 10 (host death, ForceDead(10000) on the host 5 s after the guest stood in its world): K8 kept
+  the member task (twice), B1 captured `host_death` and broadcast it; the guest dropped
+  HostDead_1's send-home, stayed client, raised its loading screen, got the snapshot and the
+  host's respawn spot, loaded into m24_01 in host-world mode, rewound; the host re-created the
+  guest's chr on "arrived". **No session loss, no "returned home".**
+* `HostCloseEmptyRoom` (B1, upstream b58a940) is off under B2 (the room must stay).
+
 ## 7. Risks / open items
 
-* Guest rewind not executing in run 5 (above) - first item for the next live run.
+* (Closed in run 9) Guest rewind not executing in run 5. Static analysis: the update `0x1E52FE0` copies
+  +0x54 to +0x50 unconditionally on entry, so `step 6 next 4` means the task update was not
+  called at all on the guest. Its only caller is `0x1E556F0` from the flow update `0x1789B60`,
+  which skips it while SprjRemo (`*0x5540058 +8 → +0x168 bit 0`) plays; `0x1789B60` itself runs
+  from the in-game net update `0x1947310` and three load-step callers. Candidates: a remo playing
+  on arrival, or the in-game net update not running after a non-summoned host-world load
+  (GSM +0x1521 was 0). The status line now logs the flow timer (+0x98, advanced by every
+  `0x1789B60`), +0x1521 and SprjRemo; D4 runs the update itself if it stays stalled.
+* Host death (K8/K9, untested live): the host keeps its member tasks, respawns at its lamp through
+  the funnel (B1 captures HostDeath and broadcasts it), the guests drop HostDead_1 and follow the
+  travel event with B2.
+* Boss clear (K10 + veto, untested live): the guest's boss-clear Lua states leave at 0x13858F5 /
+  0x1385A95 (`e8 a6 ae b4 00` / `e8 06 ad b4 00` → 0x1ED07A0) and send home at 0x13856F4 /
+  0x13859DF; with B2 both are dropped on a guest, so the party stays in the cleared area (the host's
+  own boss rewards / 4050 handling are unchanged).
+* Early loading screen (E1, untested live): what the request byte does while the guest is still
+  in the world (input, pause) is unknown; the guest's own load clears it at InGameStart.
 * Loading-screen count: host 1, guest 1 (its own load starts when the host's snapshot arrives,
   i.e. after the host's load; ~host load + guest load in wall time). Starting the guest's load in
   parallel needs the snapshot taken from the destination before the host is there - not possible;

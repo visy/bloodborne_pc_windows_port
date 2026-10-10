@@ -2,12 +2,14 @@
 // The party runtime (party_runtime.h): wires PartyLink (A4) to the host service / transport (A3)
 // and the network library (A1/A2) inside the game process.
 #include "party_runtime.h"
+#include "party_async_io.h"
 
 #include "party_addr.h"
 #include "party_code.h"
 #include "party_crypto.h"
 #include "party_b2.h"
 #include "party_director.h"
+#include "party_flow.h"
 #include "party_story.h"
 #include "party_status_bridge.h"
 #include "party_items.h"
@@ -64,8 +66,7 @@ void plog(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
-    std::printf("Party: %s\n", buf);
-    std::fflush(stdout);
+    coop::asyncio::Print(std::string("Party: ") + coop::PartyLogStamp() + buf + "\n"); // never blocks the caller (party_async_io.h)
 }
 
 const char* env(const char* name) {
@@ -860,11 +861,15 @@ void start_host(LinkConfig cfg) {
     std::vector<KeptMember> kept;
     std::string from;
     const bool restarted = restart_info().restarted;
+    const std::string menu_secret = flow::RuntimeHostSecret();
     if (restarted && previous_party(&cfg.secret, &kept, &from)) {
         plog("restarted host: keeping the party code (secret from %s) and %zu member slot(s)", from.c_str(), kept.size());
+    } else if (!menu_secret.empty() && unhex(menu_secret, cfg.secret.data(), cfg.secret.size())) {
+        plog("party game from the menu: the party code of the last session (secret from party.json)");
     } else {
         crypto::random_bytes(cfg.secret.data(), cfg.secret.size());
     }
+    flow::StoreHostSecret(hex_of(cfg.secret.data(), cfg.secret.size()));
     // <user>/party_secret.txt: the restart's second source after the crash marker.
     write_text_file(fs::path(user_dir()) / "party_secret.txt", hex_of(cfg.secret.data(), cfg.secret.size()) + "\n");
     {
@@ -1025,6 +1030,8 @@ bool guest_code(PartyCode* code, std::string* error, std::string* used) {
     std::string text;
     if (const char* c = env("BB_PARTY_CODE")) {
         text = c;
+    } else if (const std::string saved = flow::RuntimeCode(); !saved.empty()) {
+        text = saved;  // the party flow's host address (party.json)
     } else if (const char* p = env("BB_PARTY"); p && lower(p) != "join" && lower(p) != "guest" && lower(p) != "1") {
         text = p;
     }
@@ -1159,6 +1166,7 @@ void startup_main() {
     }
     LinkConfig cfg;
     apply_link_env(cfg);
+    if (cfg.password.empty()) cfg.password = flow::RuntimePassword();  // the party flow's (party.json)
     cfg.port = s.party_port;  // the network library's (validated) value
     cfg.name = s.online_id;
     if (!valid_member_name(cfg.name)) {

@@ -24,6 +24,7 @@
 //    leave 40, notices 50, last event 60).
 //  - New pages: add them in Pages::DefineAll (MaxPages below caps the System items).
 #include "bbport_game_menu.h"
+#include "party/party_flow.h"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -110,6 +111,12 @@ constexpr u32 ControlsTitle = 113020;           // the ControllSetting layout's 
 
 const u8 MsgLookupPrologue[] = {0x89, 0xf0, 0x48, 0x8b, 0x77, 0x08, 0x48, 0x8b, 0x34, 0xc6};
 const u8 AddPageItemPrologue[] = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57};
+// The title screen's main menu (builder 0x1b4a3d0, docs/party/ingame_flow.md §3): its command items
+// (Continue 0x61f95, Load Game 0x61f96, New Game 0x61f97, ...) go through AddCommandItem; the
+// party flow adds the Party page as a title item right after New Game (BB_PARTY_TITLE_ENTRY=0: not).
+constexpr u64 AddCommandItem = 0x1b4c9a0; ///< (command list, name+help texts, functor, 0) -> the list
+constexpr u32 TitleNewGame = 0x61f97;
+const u8 AddCommandItemPrologue[] = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57};
 
 u64 image_base = 0;
 template <typename F>
@@ -283,7 +290,33 @@ using LookupFn = const char16_t*(BB_SYSV*)(void*, u32, u32, u32);
 using AddFn = void*(BB_SYSV*)(void*, void*, void*, void*);
 LookupFn lookup_original = nullptr;
 AddFn add_original = nullptr;
+AddFn command_original = nullptr;
 std::atomic<const void*> screen_sound_text{nullptr};
+std::atomic<const void*> new_game_text{nullptr}; // the title's "New Game" text, as looked up
+
+// Screen changes (TextActivity): a message id looked up that was not looked up in the last second.
+std::atomic<u64> fresh_seq{0};
+std::atomic<std::int64_t> fresh_ms{0};
+struct SeenText {
+    std::atomic<u64> key{0}; // category << 32 | id, + 1 (0 = empty)
+    std::atomic<std::int64_t> ms{0};
+};
+SeenText seen_texts[4096];
+void NoteLookup(u32 category, u32 id) {
+    const std::int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now().time_since_epoch())
+                                 .count();
+    const u64 key = (u64(category) << 32 | id) + 1;
+    SeenText& s = seen_texts[(key * 0x9E3779B97F4A7C15ull) >> 52];
+    if (s.key.load(std::memory_order_relaxed) == key && now - s.ms.load(std::memory_order_relaxed) < 1000) {
+        s.ms.store(now, std::memory_order_relaxed);
+        return;
+    }
+    s.key.store(key, std::memory_order_relaxed);
+    s.ms.store(now, std::memory_order_relaxed);
+    fresh_ms.store(now, std::memory_order_relaxed);
+    fresh_seq.fetch_add(1, std::memory_order_release);
+}
 
 BB_SYSV const char16_t* LookupHook(void* repository, u32 table, u32 category, u32 id) {
     if (id >= P::IdBase && id < P::IdBase + P::TextCount()) {
@@ -311,6 +344,7 @@ BB_SYSV const char16_t* LookupHook(void* repository, u32 table, u32 category, u3
         return title_override;
     }
     const char16_t* text = lookup_original(repository, table, category, id);
+    NoteLookup(category, id);
     static const bool trace = [] {
         const char* env = std::getenv("BB_GAME_MENU_TRACE");
         return env && env[0] == '1';
@@ -318,6 +352,13 @@ BB_SYSV const char16_t* LookupHook(void* repository, u32 table, u32 category, u3
     if (trace && id >= 110000 && id < 120000) {
         std::printf("Game menu: text %#x/%u%s from %#llx\n", category, id, title_override ? " (our page)" : "",
                     (unsigned long long)(reinterpret_cast<u64>(__builtin_return_address(0)) - image_base));
+    }
+    if (trace && id >= 401000 && id < 402000) {
+        std::printf("Game menu: title text %#x/%#x from %#llx\n", category, id,
+                    (unsigned long long)(reinterpret_cast<u64>(__builtin_return_address(0)) - image_base));
+    }
+    if (category == TextName && id == TitleNewGame && text) {
+        new_game_text = text;
     }
     if (category == TextName && id == ScreenSoundItem && text) {
         screen_sound_text = text;
@@ -353,6 +394,30 @@ BB_SYSV void* AddHook(void* menu, void* pair, void* function, void* out) {
         const auto& pages = P::All();
         for (std::size_t i = 0; i < pages.size() && i < MaxPages; ++i) {
             AddItem(menu, pages[i].name, pages[i].help, factories[i]);
+        }
+    }
+    return result;
+}
+
+/// The Party page's index in P::All() (-1 when there is none).
+int PartyPageIndex() {
+    const auto& pages = P::All();
+    for (std::size_t i = 0; i < pages.size() && i < MaxPages; ++i) {
+        const char16_t* name = P::Text(pages[i].name, false);
+        if (name && std::u16string(name) == u"Party") return int(i);
+    }
+    return -1;
+}
+
+/// The title's main menu: after its New Game item, the Party page as a title item.
+BB_SYSV void* CommandHook(void* list, void* pair, void* functor, void* x) {
+    void* result = command_original(list, pair, functor, x);
+    const void* new_game = new_game_text.load();
+    if (new_game && *reinterpret_cast<const void* const*>(pair) == new_game) {
+        static const int party = PartyPageIndex();
+        if (party >= 0) {
+            const auto& page = P::All()[std::size_t(party)];
+            AddItem(list, page.name, page.help, factories[std::size_t(party)]);
         }
     }
     return result;
@@ -469,6 +534,7 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
                     static_cast<void*>(image), static_cast<unsigned long long>(size >> 20));
         return;
     }
+    party::flow::RegisterMenuRows(); // the party flow's rows on the Party page (party_flow_rows.cpp)
     P::Define();
     P::SetRestartHandler(&runtime_restart);
     if (P::All().size() > MaxPages) {
@@ -481,6 +547,13 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
                reinterpret_cast<void*>(&LookupHook), reinterpret_cast<void**>(&lookup_original), cursor) &&
         Detour(image, AddPageItem, AddPageItemPrologue, sizeof(AddPageItemPrologue),
                reinterpret_cast<void*>(&AddHook), reinterpret_cast<void**>(&add_original), cursor);
+    // The title entry (party flow): needs the Party page and AddPageItem's original.
+    const char* title_entry = std::getenv("BB_PARTY_TITLE_ENTRY");
+    if (ok && (!title_entry || title_entry[0] != '0') && PartyPageIndex() >= 0 &&
+        Detour(image, AddCommandItem, AddCommandItemPrologue, sizeof(AddCommandItemPrologue),
+               reinterpret_cast<void*>(&CommandHook), reinterpret_cast<void**>(&command_original), cursor)) {
+        std::printf("Game menu: the Party page is also on the title screen (after New Game)\n");
+    }
 #ifdef _WIN32
     DWORD old_protect = 0;
     VirtualProtect(stubs, page, PAGE_EXECUTE_READ, &old_protect);
@@ -493,7 +566,13 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
 }
 
 
+void TextActivity(std::uint64_t* seq, std::int64_t* last_ms) {
+    *seq = fresh_seq.load(std::memory_order_acquire);
+    *last_ms = fresh_ms.load(std::memory_order_relaxed);
+}
+
 void Poll() {
+    party::flow::Tick(); // the party flow: text box, party character note (party_flow.h)
     P::Poll(std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now().time_since_epoch())
                 .count());

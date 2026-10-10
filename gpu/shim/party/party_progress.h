@@ -135,6 +135,8 @@ struct Policy {
     static Policy Defaults();
     /// Defaults plus BB_PARTY_PROGRESS_NPC / _MIRROR. item_lot_picked stays Off (C3 owns items).
     static Policy FromEnv();
+    bool operator==(const Policy& o) const { return mode == o.mode && mirror_overlay == o.mirror_overlay; }
+    bool operator!=(const Policy& o) const { return !(*this == o); }
 };
 /// What the guest does with `id` (category, the state list, the exclusions, NeverWritable).
 SyncMode ModeFor(const Policy& p, u32 id, Category cat);
@@ -222,6 +224,17 @@ public:
     };
     void QueueChanges(u64 epoch, const std::vector<FlagChange>& changes);
     void QueueSnapshot(const FlagSnapshot& snap);
+    /// What Apply would write for `snap` under `policy`: the (id, value) pairs it hands to the
+    /// store, in Apply's order. Pure (no store): the game glue computes it on the link's thread,
+    /// so the main thread's Apply only touches those flags instead of every candidate bit.
+    struct SnapshotPlan {
+        bool valid = false;
+        Policy policy;
+        std::vector<std::pair<u32, bool>> flags;
+    };
+    static SnapshotPlan PlanSnapshot(const FlagSnapshot& snap, const Policy& policy);
+    /// QueueSnapshot with its plan (used by Apply while the policy is still plan.policy).
+    void QueueSnapshot(const FlagSnapshot& snap, SnapshotPlan plan);
     std::size_t Pending() const { return items_.size(); }
     /// Applies everything queued. In load mode 0 nothing is applied (the queue is kept) unless
     /// `allow_mode0`. Returns the number of flags written.
@@ -236,6 +249,7 @@ private:
         bool snapshot = false;
         std::vector<FlagChange> changes;
         FlagSnapshot snap;
+        SnapshotPlan plan;
     };
     std::vector<Item> items_;
     GuestCursor cursor_;
@@ -367,6 +381,10 @@ void DirectorTick(const GameSnapshot& s, party::PartyLink* link);
 /// coop::OnHostFlagSet once party_items lands; either side can be merged first.
 using ItemFlagObserver = void (*)(u32 id);
 void SetItemFlagObserver(ItemFlagObserver fn);
+/// Called on the main thread at each steady own world (load mode 0) right before any host flag
+/// is applied there (C3's ledger seeding). nullptr unregisters.
+using BeforeApplyHook = void (*)();
+void SetBeforeApplyHook(BeforeApplyHook fn);
 /// Changes captured since the last call (in seq order; item_lot_picked changes are included for
 /// logs/diffs but guests never apply them). Any thread.
 std::vector<FlagChange> PopHostFlagChanges();

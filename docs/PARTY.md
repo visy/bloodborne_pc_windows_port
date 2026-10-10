@@ -19,18 +19,19 @@ guest's own save.
 ## Contents
 
 1. [What you need](#what-you-need)
-2. [Hosting](#hosting)
-3. [Joining](#joining)
-4. [The party code](#the-party-code)
-5. [Ports, UPnP, firewall, VPN](#ports-upnp-firewall-vpn)
-6. [What happens in the game](#what-happens-in-the-game)
-7. [What is shared, and what is not](#what-is-shared-and-what-is-not)
-8. [Settings (Rules & sync)](#settings-rules--sync)
-9. [Saves and backups](#saves-and-backups)
-10. [Crashes and disconnects](#crashes-and-disconnects)
-11. [Four players](#four-players)
-12. [Troubleshooting](#troubleshooting)
-13. [Known limitations](#known-limitations)
+2. [Starting a party game in the game (no launcher)](#starting-a-party-game-in-the-game-no-launcher)
+3. [Hosting](#hosting)
+4. [Joining](#joining)
+5. [The party code](#the-party-code)
+6. [Ports, UPnP, firewall, VPN](#ports-upnp-firewall-vpn)
+7. [What happens in the game](#what-happens-in-the-game)
+8. [What is shared, and what is not](#what-is-shared-and-what-is-not)
+9. [Settings (Rules & sync)](#settings-rules--sync)
+10. [Saves and backups](#saves-and-backups)
+11. [Crashes and disconnects](#crashes-and-disconnects)
+12. [Four players](#four-players)
+13. [Troubleshooting](#troubleshooting)
+14. [Known limitations](#known-limitations)
 
 ## What you need
 
@@ -43,15 +44,49 @@ guest's own save.
 - The Old Hunters DLC on all PCs or on none (the port turns it on automatically when the game
   files contain it, so this normally matches).
 
+## Starting a party game in the game (no launcher)
+
+The launcher's Party tab is optional: a party game can be started, joined and continued from the
+game's own title screen. The title menu has a **Party** item right after *New Game* (the same page
+as *System → Party*). Rows are pressed with left/right; the ones that restart the game need a
+second press.
+
+**The first session (fresh characters for everyone):**
+
+- **Host**: *Party → New party game*. The game restarts by itself (a few seconds) into the party
+  game: the party saves (`user\savedata_party`), the online title, hosting. Choose **New Game** and
+  make your hunter. The party code is under *System → Party → Copy party code* (and in
+  `user\party_code.txt`); send it to your friends. It stays the same in later sessions.
+- **Friends**: *Party → Host address* (type the host's party code, or `address:port`; **Ctrl+V**
+  pastes; Enter confirms), *Password* if the host set one (the host sets it on the same page before
+  *New party game*), then *Join party game*. The game restarts, joined to the host: choose
+  **New Game** and make your hunter. A plain `address:port` (instead of the code) works only when
+  the host uses a password.
+- Everyone plays the prologue on their own; once ready, the party gathers by itself (below).
+
+**Later sessions:** host and friends alike: *Party → Continue party game*. The game restarts, loads
+your party character by itself and hosts or joins (your last role) with the saved address and
+password; the summons follow automatically.
+
+**In the world** (party game), *System → Party* also has **Host party** / **Join party** (switch
+role: a quick restart, your character continues) and **Single player** (back to the
+single-player game and saves). With a single-player character loaded there are no party actions:
+party games always start from the title screen, so co-op can never write into a single-player save.
+
+The title's *Continue* / *Load Game* / *New Game* are always the single-player game. The settings
+are kept in `user\party.json`: your party name, last role, the host address, the password (stored
+protected with Windows DPAPI: only your Windows user on this PC can read it back), whether you
+have a party character. Details: [party/ingame_flow.md](party/ingame_flow.md).
+
 ## Hosting
 
 1. Start the launcher (`launch_gui.bat`) and open the **Party** tab.
 2. **Mode: Host a party.** Enter **Your name** (1-16 letters, digits, `_` or `-`; the others see
    it in the game).
 3. Pick **Max players** (3 is the game's normal co-op size; 4 is experimental).
-4. Leave **Automatic summoning**, **Seamless party rules** and **Separate party saves** on.
+4. Leave **Automatic summoning** and **Seamless party rules** on (*Separate party saves* is always on).
 5. Optional: a **Password** (every player must then enter the same one).
-6. Click **Launch Bloodborne**. With *Separate party saves* on, the first time the launcher
+6. Click **Launch Bloodborne**. Party play always uses its own saves; the first time the launcher
    offers to copy your single-player save into the party save folder (or start with an empty
    one for a new character).
 7. Once the game runs, your **party code** appears under **Your code** (the launcher log shows it
@@ -193,20 +228,21 @@ and the guest.
 
 Party tab options: **Automatic summoning** (off: ring the bells yourself), **Seamless party
 rules** (off: the normal game's co-op rules; the host's setting counts), **Separate party
-saves**, **Max players**, connection settings. The environment variables behind each option are
+saves** (always on), **Max players**, connection settings. The environment variables behind each option are
 listed in [party/DEBUG_SWITCHES.md](party/DEBUG_SWITCHES.md).
 
 ## Saves and backups
 
-- **Separate party saves** (on by default): a party session plays from `user\savedata_party`;
-  your single-player save in `user\savedata` is never written by it. The launcher offers to
-  copy your single-player save the first time, and the **Copy single-player save to party save**
-  button does it any time (an existing party save is backed up first). Off: the party plays on
-  your normal save.
+- **Party saves, always**: every party session (launcher or in-game) plays from
+  `user\savedata_party`; your single-player save in `user\savedata` is never written by it, so the
+  party's progress and item sync can never reach a single-player character. The launcher offers
+  to copy your single-player save the first time, and the **Copy single-player save to party
+  save** button does it any time (an existing party save is backed up first). The old *shared*
+  choice (`BB_PARTY_SAVE=shared`) is gone.
 - Progress the host shares is written into **each guest's own save**, so after a session your
   character's world has the bosses, lamps and shortcuts of the party's progress.
 - **Backups**: during every party session the game copies the save folder to
-  `user\save_backups\savedata_party\` (or `...\savedata\`) at the start, after a crash restart and
+  `user\save_backups\savedata_party\` at the start, after a crash restart and
   every 10 minutes. The newest 10 are kept; a copy identical to the last one is skipped. The game
   checks the save at every start (*"Saves: check OK"* in the log); a backup that fails the check
   is named `...-suspect` and never pushes good backups out.
