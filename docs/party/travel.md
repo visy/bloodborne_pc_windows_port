@@ -386,3 +386,51 @@ guest leave suppression) behind a flag, and measure whether `0x1E50xxx` insertio
   lamp, with and without the `+0x49` patch; read `GetEventFlagValue 0x13CFD80(2100)` in the Dream.
 * **P5** at `0x13CDF30` entry log `edi` and the stored `+0x153C` qword for lamp, headstone and death
   (key vs row `+4`).
+
+## 6. Live verification (2026-10-10, two loopback instances)
+
+Harness: `tools/mp/instances.py run --count 2 --party`, the test saves start in the Hunter's Dream (host
+level 37). The travel is triggered in-process by the director's test steps (no OS input):
+`BB_PARTY_DIRECTOR_TEST=host_warp=<ReturnPointParam id>@S,host_die@S,guest_die@S[#N]` run in order, each
+S seconds after that player's (re)join (host: cooperators 0 -> >= 1; guest: client(6) with the world
+loaded), `#N` holding a step until the Nth join. `host_warp` calls `0x13CDF30(id)` on the host's main
+thread (the lamp / warp-menu path, so the funnel hook sees caller `0x13CE002`); `host_die` / `guest_die`
+call the Lua binding **ForceDead `0x13320C0(ctx, 10000)`** (entity 10000 = local player via `0x13C97A0`;
+clears `ChrIns+0x1E3` bit 5, then `0x18BF9A0`: HP `+0xF8` of `[[chr+0x3B0]+0x20]` = 0 and the dead
+flag), which runs the normal death (animation, `OnEvent_4000`, `SoloPlayDeath_2` / `PartyGhostDeath_2`).
+With any test step set, the Party / Party travel / Party phantom lines carry wall-clock stamps
+(`BB_PARTY_LOG_TIME=1` does it alone), so the two logs line up.
+
+**Bug found and fixed: the host kept an empty room after its own travel.** The "Party: Keep session on
+map reload" patch (`0x19471B1` -> `0x1ED00A0`, meant for the guest's summoned map reload) also keeps the
+*host's* room through the host's lamp load, so section 1.1.4's "room dies at the load" no longer holds.
+First live run: host warped 19:43:44, guest left at once (replay +1 s), host arrived in m24_01 with role
+host(3) and 0 cooperators and stayed so for 56 s until the game's own timeout left (19:45:10); the
+director rings only when idle, and the summon into the next room then stalled (guest invited, the host's
+game never sent the world data; the same signature the host watchdog of `party_watchdog.h` was later
+written for). Fix (`party_travel.cpp` `HostCloseEmptyRoom`, from `TravelTick` on the host): after a
+broadcast travel, once the host has loaded and is in its new world in role host/creating with 0
+cooperators, it leaves through `0x13CDDA0` (BeginLeaveSession + `0x15BED10`, the funnel's own idiom),
+i.e. what vanilla does at the load; with cooperators > 0 the room is kept. The director also rings while
+hosting now (upstream `SessionMayRing`), which covers a guest that died and comes back.
+
+Timelines after the fix (host log H, guest log G; t = 0 at the step):
+
+| Scenario | Step | Host captures / sends | Guest replays | Guest home loaded | Host room | Guest client(6) | Back (host cooperators 1) |
+|---|---|---|---|---|---|---|---|
+| Lamp warp Dream -> Central Yharnam `2412951` (run B) | 20:22:56.21 | +0.00 `host travel ... lamp (site +0x13ce002)` mode 1, m24_01 | +0.04 `replay ... via lamp warp 0x13CDF30` (role 6 -> 7 at once) | +8.2 m24_01 | +8.0 arrived, empty room left; host(3) again +23.8 | +27.8 | **+38.7 s** |
+| Host death (ForceDead) in Central Yharnam (run B) | 20:23:49.90 | +9.1 `host_death (site +0x1381ede)`, last lamp 2412951 (death animation first) | +9.15 lamp warp 2412951 | +14.8 | host left by itself +20.6 | +32.8 | **+43.5 s** (34.4 s after the capture) |
+| Lamp warp Central Yharnam -> same lamp (run C1) | 21:20:44.71 | +0.00 | +0.07 | +5.7 | +5.5 arrived, empty room left; host(3) again +21.2 | +25.2 | **+35.8 s** |
+| Guest death (ForceDead) in the host's world (run C1) | G 21:21:24.93 | (none: guest-side) | +8.6 `guest_died at +0x1382663: to the host's last lamp 2412951` (`party_phantom` redirect, then refill) | +14.2 | host 1 -> 0 cooperators +14.0, game left +18.7, host(3) again +36.4 | +40.4 | **+51.3 s** |
+| Lamp warp Central Yharnam -> Hunter's Dream `2102950` (run B) | 20:24:48.38 | +0.00 mode 2, m21_00 | +0.06 | - | - | - | run ended by the harness before the rejoin; to re-run |
+
+What the times consist of: the load itself is 5-8 s on both sides (in parallel); the rest is the bell
+cycle - the host's sign search polls `summon_messenger/get` and the guest's sign goes up on its next
+bell (director period 10 s in these runs, default 30 s), ~15 s from host idle to room, then 4 s join and
+~10 s summon reload into the host world. A death adds the 8-9 s death animation before the funnel.
+Before the fix the same lamp warp took > 4 min and did not complete.
+
+Not covered live: headstone travel from the Dream (warp menu), scripted transitions (`2003[14]`), Lua
+stage warps, Hunter's Mark, boss clear, a 3rd/4th member; the send-home retarget (`OnLeave_Limit` /
+`HostDead_1`) did not fire in these runs because the TRAVEL message always arrived (< 0.1 s) before the
+room teardown, so the guest left by its own replay.
