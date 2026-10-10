@@ -423,6 +423,18 @@ set_target_properties(party-soak PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 if (WIN32)
     target_link_libraries(party-soak PRIVATE ws2_32 iphlpapi synchronization ole32 oleaut32 winmm)
 endif()
+# Party status bridge (shim/party/party_status_bridge.cpp; in bbgpu through SHIM_SOURCES): link /
+# game facts -> the Party tab's state, roster, events, commands. ninja -C out/gpu party-status-bridge-test
+add_executable(party-status-bridge-test EXCLUDE_FROM_ALL ../tests/test_party_status_bridge.cpp
+    shim/party/party_status_bridge.cpp shim/party/party_status.cpp ${PARTY_LINK_SOURCES}
+    shim/net/net_stun.cpp third_party/monocypher/monocypher.c)
+target_compile_definitions(party-status-bridge-test PRIVATE BB_PARTY_BRIDGE_NO_GAME)
+target_compile_options(party-status-bridge-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-status-bridge-test PRIVATE shim)
+set_target_properties(party-status-bridge-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+if (WIN32)
+    target_link_libraries(party-status-bridge-test PRIVATE ws2_32 iphlpapi ole32 oleaut32)
+endif()
 # Party travel (B1, shim/party/party_travel.cpp; in bbgpu through SHIM_SOURCES): its pure logic
 # only (BB_PARTY_TRAVEL_NO_GAME). ninja -C out/gpu party-travel-test
 add_executable(party-travel-test EXCLUDE_FROM_ALL ../tests/test_party_travel.cpp shim/party/party_travel.cpp
