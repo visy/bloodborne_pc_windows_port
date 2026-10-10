@@ -391,6 +391,8 @@ set_target_properties(party-start-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION O
 
 # Party progress sync (shim/party/party_progress, C2): keys, categories, policy, diff, JSON, BBPF
 # against a fake flag store (the game glue is compiled out). ninja -C out/gpu party-progress-test
+# (only while the C2 sources are present: the integration branch can lack them)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../tests/test_party_progress.cpp")
 add_executable(party-progress-test EXCLUDE_FROM_ALL ../tests/test_party_progress.cpp
     shim/party/party_progress.cpp shim/net/json.cpp)
 target_compile_definitions(party-progress-test PRIVATE BB_PARTY_PROGRESS_NO_GAME
@@ -398,6 +400,7 @@ target_compile_definitions(party-progress-test PRIVATE BB_PARTY_PROGRESS_NO_GAME
 target_compile_options(party-progress-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-progress-test PRIVATE shim)
 set_target_properties(party-progress-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+endif()
 # Party host harness (tests/party_host_harness.cpp): PartyLink host + PartyHostService + FromApi +
 # the party UDP port in one process with no game, for tools/party/simguest.py.
 # ninja -C out/gpu party-host-harness
