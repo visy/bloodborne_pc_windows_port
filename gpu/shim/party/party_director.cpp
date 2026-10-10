@@ -9,7 +9,14 @@
 #include "lua_events.h"
 #include "party_fourp.h"
 #include "party_link.h"
+#include "party_story.h"
+#include "party_status_bridge.h"
+#include "party_items.h"
+#include "party_npc_test.h"
+#include "party_phantom.h"
+#include "party_start.h"
 #include "party_runtime.h"
+#include "party_progress.h"
 #include "party_travel.h"
 #include "seamless_rules.h"
 
@@ -80,6 +87,8 @@ struct Test {
     int insight = -1;
     const char* ring = nullptr; // the event to raise once
     double delay = 10.0;
+    bool start = false, grant_bells = false, drop_bells = false, drop_done = false;
+    int award_lot = -1; // award_lot=N: AwardItemLot(N) once (call-shape probe, test saves)
     bool insight_done = false, ring_done = false;
     Clock::time_point rung_at{};
 };
@@ -92,6 +101,8 @@ struct State {
     bool auto_ring = true;
     int auto_continue = -1; // BB_PARTY_AUTOCONTINUE: -1 default (on in party mode), 0 off, 1 on
     double ring_every = 30.0;
+    StartMode start_mode = StartMode::PrologueSolo;
+    bool grant_bells = true;
     Test test;
 
     // Main thread only.
@@ -108,6 +119,11 @@ struct State {
     party::MemberState sent_state = party::MemberState::Title;
     std::uint32_t sent_map = 0;
     bool sent_any = false;
+    // Campaign start (party_start.h), refreshed with the full reads.
+    StartFlags cs{};
+    bool start_ready = false, start_logged = false;
+    StartStep start_step = StartStep::NoWorld;
+    bool granted = false; // bells granted (or found owned) in this world
     // Title "Continue" (AutoContinue).
     bool continue_done = false, continue_held = false;
     int continue_presses = 0;
@@ -228,7 +244,7 @@ void InstallBellTrace(std::integer_sequence<int, I...>) {
      ...);
 }
 
-party::MemberState LocalState(const GameSnapshot& s) {
+party::MemberState LocalState(const GameSnapshot& s, bool start_ready) {
     if (s.loading) {
         return party::MemberState::Loading;
     }
@@ -241,7 +257,67 @@ party::MemberState LocalState(const GameSnapshot& s) {
     if (s.session_role == RoleTryingToJoin) {
         return party::MemberState::Joining;
     }
-    return party::MemberState::Home;
+    return OwnWorldState(start_ready);
+}
+
+bool InWorld(const GameSnapshot& s) {
+    return s.world_up && !s.loading;
+}
+
+/// The start flags (full ticks): logs step and readiness changes.
+void UpdateStart(State& st, const GameSnapshot& s, StartMode mode) {
+    if (s.world_up && s.loading) {
+        return; // a loading screen keeps the last reading (the flags do not go back)
+    }
+    const bool in_world = InWorld(s);
+    if (in_world) {
+        st.cs = ReadStartFlags();
+    } else if (!s.world_up) {
+        st.cs = StartFlags{};
+        st.granted = false;
+    }
+    const StartStep step = ClassifyStart(st.cs, in_world);
+    const bool ready = StartReady(mode, st.cs, in_world);
+    if (!st.start_logged || step != st.start_step || ready != st.start_ready) {
+        if (in_world || st.start_logged) {
+            Log("start (%s): %s -> %s", StartModeName(mode), DescribeStart(st.cs, in_world).c_str(),
+                ready ? "READY for party summons" : "not ready");
+        }
+        st.start_logged = st.start_logged || in_world;
+    }
+    st.start_step = step;
+    st.start_ready = ready;
+}
+
+/// The bells a ready player lacks (§4.3), once per world, in its own world only.
+void GrantBells(State& st, const GameSnapshot& s) {
+    if (st.granted || !st.start_ready || !InWorld(s) || s.session_role != RoleIdle || st.cs.cutscene) {
+        return;
+    }
+    const BellGrant g = PlanBellGrant(st.cs);
+    if (st.cs.beckoning_count < 0 || st.cs.resonant_count < 0) {
+        return; // inventory not readable yet
+    }
+    st.granted = true;
+    if (!g.any()) {
+        return;
+    }
+    Log("bells: before: %s", DescribeStart(st.cs, true).c_str());
+    if (g.beckoning_lot) {
+        Log("bells: Beckoning Bell (lot %u): %s", kLotBeckoning, AwardItemLot(kLotBeckoning) ? "awarded" : "NOT awarded");
+    }
+    if (g.beckoning_goods) {
+        Log("bells: Beckoning Bell (goods %u, 6622 already on): %s", kGoodsBeckoning,
+            GiveGoods(kGoodsBeckoning, 1) ? "given" : "NOT given");
+    }
+    if (g.resonant) {
+        const bool ok = GiveGoods(kGoodsSmallResonant, 1);
+        const bool flag = ok && WriteEventFlag(kFlagResonantShop, true);
+        Log("bells: Small Resonant Bell (goods %u): %s, flag %u %s", kGoodsSmallResonant, ok ? "given" : "NOT given",
+            kFlagResonantShop, flag ? "set" : "not set");
+    }
+    st.cs = ReadStartFlags();
+    Log("bells: after: %s", DescribeStart(st.cs, true).c_str());
 }
 
 void LogTransitions(State& st, const GameSnapshot& now) {
@@ -275,17 +351,6 @@ void LogTransitions(State& st, const GameSnapshot& now) {
     if (now.insight != was.insight && now.insight >= 0 && was.insight >= 0) {
         Log("Insight %d -> %d", was.insight, now.insight);
     }
-}
-
-/// A party member (not us) is connected and not yet in a world with us.
-bool MemberWaits(party::PartyLink* link) {
-    for (const party::RosterEntry& e : link->roster()) {
-        if (e.slot != party::kHostSlot && e.connected &&
-            (e.state == party::MemberState::Home || e.state == party::MemberState::Joining)) {
-            return true;
-        }
-    }
-    return false;
 }
 
 std::string DescribeFromClient();
@@ -353,6 +418,7 @@ void Ring(State& st, const char* event, const char* why, Clock::time_point now) 
     const char* mode = std::getenv("BB_PARTY_BELL_MODE");
     if (mode && std::strcmp(mode, "lua") == 0) {
         if (LuaEventQueue(event)) {
+            party::bridge::OnRing();
             Log("ringing %s (%s; Lua event)", event, why);
         } else {
             Log("could not queue %s (%s)", event, why);
@@ -363,6 +429,9 @@ void Ring(State& st, const char* event, const char* why, Clock::time_point now) 
     const std::uint64_t player = LocalPlayer();
     const bool had = HasSpEffect(player, effect);
     const bool ok = ApplySpEffect(effect);
+    if (ok) {
+        party::bridge::OnRing();
+    }
     Log("bell: %s", DescribeFromClient().c_str());
     Log("ringing the %s (%s): SpEffect %d %s%s", host ? "Beckoning Bell" : "Small Resonant Bell", why, effect,
         ok ? "applied" : "NOT applied (no player)", ok ? (HasSpEffect(player, effect) ? (had ? ", was already on" : ", now on")
@@ -496,10 +565,28 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         const bool ok = WritePlayerInsight(t.insight);
         Log("test: Insight %d -> %d %s", before, t.insight, ok ? "written" : "NOT written (no player record)");
     }
+    if (t.award_lot > 0 && Seconds(st.world_at, now) >= 12.0 && s.world_up && !s.loading) {
+        const int before = GoodsCount(kGoodsBeckoning);
+        const bool ok = AwardItemLot(std::uint32_t(t.award_lot));
+        Log("test: award_lot %d: %s; goods 200 x%d -> x%d", t.award_lot, ok ? "awarded" : "NOT awarded", before,
+            GoodsCount(kGoodsBeckoning));
+        t.award_lot = -1;
+    }
+    // PR1 probe: a character without the bells (removes goods 200 / 205 through GiveItemDirect
+    // with a negative count, 10 s after the world is up). Test saves only.
+    if (t.drop_bells && !t.drop_done && Seconds(st.world_at, now) >= 10.0 && s.world_up && !s.loading) {
+        t.drop_done = true;
+        const int b = GoodsCount(kGoodsBeckoning), r = GoodsCount(kGoodsSmallResonant);
+        const bool ok_b = b > 0 ? GiveGoods(kGoodsBeckoning, -b) : true;
+        const bool ok_r = r > 0 ? GiveGoods(kGoodsSmallResonant, -r) : true;
+        Log("test: drop_bells: goods 200 x%d -> x%d (%s), 205 x%d -> x%d (%s)", b, GoodsCount(kGoodsBeckoning),
+            ok_b ? "ok" : "failed", r, GoodsCount(kGoodsSmallResonant), ok_r ? "ok" : "failed");
+    }
     if (t.ring && !t.ring_done && Seconds(st.world_at, now) >= t.delay && s.world_up && !s.loading) {
         t.ring_done = true;
         t.rung_at = now;
         Log("test: before %s: %s", t.ring, Describe(s).c_str());
+        Log("test: before %s: start %s", t.ring, DescribeStart(ReadStartFlags(), true).c_str());
         std::int64_t r = 0;
         const bool ok = LuaEventRaiseNow(t.ring, &r);
         Log("test: %s raised: %s, dispatcher returned %lld (1: a handler ran)", t.ring, ok ? "yes" : "no (no event manager)",
@@ -545,6 +632,9 @@ void PartyDirector::ConfigureFromEnv() {
         max_players = std::atoi(m);
     }
     Configure(role, max_players);
+    progress::SetRole(role == PartyRole::Host    ? progress::Role::Host  // C2 progress sync
+                      : role == PartyRole::Guest ? progress::Role::Guest
+                                                 : progress::Role::None);
     std::lock_guard<std::mutex> lk(st.mu);
     if (const char* e = std::getenv("BB_PARTY_RING_EVERY"); e && e[0] && std::atof(e) >= 1.0) {
         st.ring_every = std::atof(e);
@@ -568,6 +658,14 @@ void PartyDirector::ConfigureFromEnv() {
             at = end + 1;
             if (item == "log_state") {
                 st.test.log_state = true;
+            } else if (item == "start") {
+                st.test.start = true;
+            } else if (item.rfind("award_lot=", 0) == 0) {
+                st.test.award_lot = std::atoi(item.c_str() + 10);
+            } else if (item == "drop_bells") {
+                st.test.drop_bells = true;
+            } else if (item == "grant_bells") {
+                st.test.grant_bells = true;
             } else if (item == "ring_host") {
                 st.test.ring = kHostBell;
             } else if (item == "ring_guest") {
@@ -575,7 +673,8 @@ void PartyDirector::ConfigureFromEnv() {
             } else if (item.rfind("insight=", 0) == 0) {
                 st.test.insight = std::atoi(item.c_str() + 8);
             } else if (!item.empty()) {
-                Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, insight=N, ring_host or ring_guest; ignored",
+                Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, start, grant_bells, drop_bells, award_lot=N, insight=N, ring_host or "
+                    "ring_guest; ignored",
                     item.c_str());
             }
         }
@@ -583,11 +682,18 @@ void PartyDirector::ConfigureFromEnv() {
             st.test.delay = std::atof(d);
         }
     }
-    Log("director: role %s, max %d players, %s every %.0f s%s%s", role == PartyRole::Host ? "host"
-                                                                 : role == PartyRole::Guest ? "guest"
-                                                                                            : "none",
-        st.max_players, st.auto_ring ? "bell" : "no automatic bell", st.ring_every, st.test.on ? "; test: " : "",
-        st.test.on ? std::getenv("BB_PARTY_DIRECTOR_TEST") : "");
+    bool known = true;
+    st.start_mode = ParseStartMode(std::getenv("BB_PARTY_START"), &known);
+    if (!known) {
+        Log("BB_PARTY_START='%s' is not prologue_solo or immediate; using prologue_solo", std::getenv("BB_PARTY_START"));
+    }
+    if (const char* g = std::getenv("BB_PARTY_GRANT_BELLS"); g && g[0] == '0') {
+        st.grant_bells = false;
+    }
+    Log("director: role %s, max %d players, %s every %.0f s, start %s, bell grants %s%s%s",
+        role == PartyRole::Host ? "host" : role == PartyRole::Guest ? "guest" : "none", st.max_players,
+        st.auto_ring ? "bell" : "no automatic bell", st.ring_every, StartModeName(st.start_mode),
+        st.grant_bells ? "on" : "off", st.test.on ? "; test: " : "", st.test.on ? std::getenv("BB_PARTY_DIRECTOR_TEST") : "");
 }
 
 void PartyDirector::SetLink(party::PartyLink* link) {
@@ -638,14 +744,28 @@ void PartyDirector::Tick() {
     }
     st.last = s;
     st.have_last = true;
+    NpcTestTick(s); // BB_PARTY_TEST_NPC fixture (party_npc_test.h)
 
     PartyRole role;
     party::PartyLink* link;
+    StartMode start_mode;
+    bool grant_bells;
     {
         std::lock_guard<std::mutex> lk(st.mu);
         role = st.role;
         link = st.link;
+        start_mode = st.start_mode;
+        grant_bells = st.grant_bells;
     }
+    // C1: the campaign start (readiness, bells).
+    if (full || !st.start_logged) {
+        UpdateStart(st, s, start_mode);
+        if (((grant_bells && role != PartyRole::None) || st.test.grant_bells) && st.world_seen &&
+            Seconds(st.world_at, now) >= 5.0) {
+            GrantBells(st, s);
+        }
+    }
+    progress::DirectorTick(s, link); // C2: flag capture / apply, host -> guest sync (party_progress.h)
     // Title: the FROM client's state when it changes (sign-in debugging).
     if (role != PartyRole::None && full && !s.world_up) {
         std::string fc = DescribeFromClient();
@@ -667,7 +787,7 @@ void PartyDirector::Tick() {
     }
     // The roster entry.
     if (link) {
-        const party::MemberState ms = LocalState(s);
+        const party::MemberState ms = LocalState(s, st.start_ready);
         const std::uint32_t map = s.world_up ? s.map_id : 0;
         if (!st.sent_any || ms != st.sent_state || map != st.sent_map) {
             st.sent_any = true;
@@ -681,13 +801,51 @@ void PartyDirector::Tick() {
         TravelIntent t;
         while (PopHostTravel(&t)) {
             link->send_event(party::kBroadcast, kTravelEventName, TravelToJsonText(t));
+            party::bridge::OnTravel(TravelKindName(t.kind));
             Log("travel #%llu (%s) sent to the party", static_cast<unsigned long long>(t.seq), TravelKindName(t.kind));
+            PhantomNoteHostTravel(t); // a rest (Dream, death, Mark): guests refill too
+        }
+        // C4: the host's cutscenes, endings and time of day (party_story.h).
+        StoryIntent si;
+        while (PopHostStory(&si)) {
+            link->send_event(party::kBroadcast, kStoryEventName, StoryToJsonText(si));
+            Log("story #%llu (%s %u) sent to the party", static_cast<unsigned long long>(si.seq),
+                StoryKindName(si.kind), si.id);
+        }
+        // C3: the host's item lots to every guest; the full list to a member that (re)joined.
+        std::vector<ItemGrant> items;
+        ItemGrant g;
+        while (PopHostItems(&g)) {
+            items.push_back(g);
+        }
+        if (!items.empty()) {
+            link->send_event(party::kBroadcast, kItemsEventName, ItemsToJsonText(items));
+            Log("items: %zu lots sent to the party", items.size());
+        }
+        int slot = -1;
+        while (TakeHostFullItems(&slot, &items)) {
+            link->send_event(slot, kItemsFullEventName, ItemsToJsonText(items));
+            Log("items: full list (%zu lots) sent to slot %d", items.size(), slot);
         }
     }
+    // The overlay's Party tab: status board and its commands (party_status_bridge.h).
+    if (role != PartyRole::None &&
+        party::bridge::Tick({role == PartyRole::Host, link, s.world_up, s.loading, s.session_role, s.cooperators,
+                             link ? link->max_players() : 3, InWorld(s) && !st.start_ready,
+                             StartStepName(st.start_step)})
+            .ring_now) {
+        st.rung_ever = false; // Rejoin while connected: the next bell goes up at once
+    }
+    // Phantoms as full players: the host's lamp / rest / boss Insight out, the guest's refill and
+    // Insight in (party_phantom.h).
+    PhantomTick(link);
     if (st.test.on) {
         RunTest(st, s, now);
-        if (st.test.log_state && Seconds(st.last_log, now) >= 5.0) {
+        if ((st.test.log_state || st.test.start) && Seconds(st.last_log, now) >= 5.0) {
             const double secs = Seconds(st.last_log, now);
+            if (st.test.start) {
+                Log("start: %s", DescribeStart(st.cs, InWorld(s)).c_str());
+            }
             Log("state: %s; %llu ticks in %.1f s on thread %llu; game Lua dispatches %llu on it, %llu elsewhere",
                 Describe(s).c_str(), static_cast<unsigned long long>(st.ticks - st.ticks_at_log), secs,
                 static_cast<unsigned long long>(st.tick_thread),
@@ -705,9 +863,14 @@ void PartyDirector::Tick() {
     if (st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {
         return;
     }
+    // C1 (party_start.h): no bell before this player finished its start (clinic / first death
+    // pitfalls); the host rings only for members that are ready (roster Home / Joining).
     if (role == PartyRole::Guest) {
-        if (link->state() == party::LinkState::Connected) {
-            Ring(st, kGuestBell, "guest, idle in its own world", now);
+        if (StoryBusy()) {
+            return; // C4: a cutscene / ending replay first, then the rejoin
+        }
+        if (GuestMayRing(st.start_ready, link->state() == party::LinkState::Connected)) {
+            Ring(st, kGuestBell, "guest, ready and idle in its own world", now);
         }
     } else {
         int max_players;
@@ -715,9 +878,9 @@ void PartyDirector::Tick() {
             std::lock_guard<std::mutex> lk(st.mu);
             max_players = st.max_players;
         }
-        if (link->state() == party::LinkState::Hosting && s.cooperators >= 0 && s.cooperators < max_players - 1 &&
-            MemberWaits(link)) {
-            Ring(st, kHostBell, "host, a party member waits", now);
+        if (link->state() == party::LinkState::Hosting &&
+            HostMayRing(st.start_ready, s.cooperators, max_players, link->roster())) {
+            Ring(st, kHostBell, "host ready, a ready party member waits", now);
         }
     }
 }
@@ -725,13 +888,16 @@ void PartyDirector::Tick() {
 bool PartyRequested() {
     const char* p = std::getenv("BB_PARTY");
     const char* t = std::getenv("BB_PARTY_DIRECTOR_TEST");
-    return (p && p[0]) || (t && t[0]);
+    const char* i = std::getenv("BB_PARTY_ITEMS_TEST"); // C3 single-instance check
+    return (p && p[0]) || (t && t[0]) || (i && i[0]) || NpcTestRequested() || StoryTestRequested();
 }
 
 void CoopTick() {
     LuaEventsTick();
     PartyDirector::Get().Tick();
     TravelTick();        // B1 guest replay (party_travel.h)
+    StoryTick();         // C4 cutscenes / endings (party_story.h)
+    ItemsTick();         // C3 guest item replay (party_items.h)
     SeamlessRulesTick(); // A6 param rules, EMEVD filter stats (seamless_rules.h)
     fourp::FourpTick();  // 4-player rules: the party's max players (party_fourp.h)
 }
@@ -742,6 +908,8 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
         return;
     }
     LuaEventsInit();
+    progress::Init();         // C2 progress sync (party_progress.h)
+    progress::InstallHooks(); // byte-verified flag hooks (BB_PARTY_PROGRESS=0: none)
     SeamlessRulesInit(); // A6: party patch report, EMEVD filter (seamless_rules.h)
     fourp::FourpInit();  // 4-player parties: H1-H4, E6, P5 (party_fourp.h)
     PartyDirector::Get().ConfigureFromEnv();
@@ -752,6 +920,9 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
         HookCallSite(kSsParseCall, kSsParse, reinterpret_cast<const void*>(&SsParseHook), "ss.info parse log");
     }
     InstallTravelPatches(); // B1: Dream gate + travel hooks (byte-verified)
+    InstallStoryHooks();    // C4: bank-2002 capture, guest mirror / replay (byte-verified)
+    InstallItemsPatches();  // C3: award hook, parity patches (byte-verified)
+    PhantomInit();          // guest respawn at the host's lamp, refill, boss Insight
     g_tick_installed = HookPrologue(kFlipperUpdate,
                                     {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48,
                                      0x83, 0xec, 0x38},

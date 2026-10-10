@@ -7,7 +7,12 @@
 #include "party_code.h"
 #include "party_crypto.h"
 #include "party_director.h"
+#include "party_story.h"
+#include "party_status_bridge.h"
+#include "party_items.h"
+#include "party_phantom.h"
 #include "party_fourp.h"
+#include "party_progress.h"
 #include "party_travel.h"
 #include "upnp_win.h"
 
@@ -314,6 +319,11 @@ struct Runtime {
     std::string roster_sig;
     Clock::time_point last_roster_log{};
     std::string marker;  // <user>/party_state.json while this run is up
+    // Leave / Rejoin (party_status_bridge.h): the config the link was made with.
+    LinkConfig cfg;
+    bool have_cfg = false;
+    bool left = false;
+    bool busy = false;  // a Leave / Rejoin is under way
     std::string marker_head;  // its pid / role / name / started members
     bool marker_secret = false;
     std::array<std::uint8_t, 8> secret{};  // host: the party code's secret (kept across a crash)
@@ -333,8 +343,11 @@ Runtime& R() {
 }
 
 void set_error(const std::string& e) {
-    std::lock_guard<std::mutex> lk(R().mu);
-    R().st.last_error = e;
+    {
+        std::lock_guard<std::mutex> lk(R().mu);
+        R().st.last_error = e;
+    }
+    bridge::OnRuntimeError(e);
 }
 
 std::string roster_text(const std::vector<RosterEntry>& roster, bool with_ping) {
@@ -391,7 +404,7 @@ void write_marker() {
     PartyLink* link;
     {
         std::lock_guard<std::mutex> lk(r.mu);
-        if (r.shut || r.marker.empty()) return;
+        if (r.shut || r.left || r.marker.empty()) return;  // left: no crash rejoin
         path = r.marker;
         head = r.marker_head;
         with_secret = r.marker_secret;
@@ -494,6 +507,7 @@ void on_state(LinkState s, const std::string& detail) {
         gen = ++r.loss_gen;
     }
     if (!link) return;
+    bridge::OnLinkState(s, detail, link->reject_code(), link->reject_reason());
     if (!host && (s == LinkState::Reconnecting || s == LinkState::Rejected)) {
         bool first = false;
         {
@@ -540,6 +554,8 @@ void on_state(LinkState s, const std::string& detail) {
                  resumed ? " (session resumed)" : " (the host restarted: a new session)");
             if (!resumed) {
                 if (bbnet::party::RemoteGuest* rg = bbnet::party::remote_guest()) rg->reset_event_cursor();
+                // It no longer knows our NP context or relay registration either.
+                bbnet::session::host_session_reset();
                 host_lost("the host does not know our session any more");
             }
         }
@@ -608,6 +624,8 @@ void on_roster(const std::vector<RosterEntry>& roster) {
         }
     }
     if (log_it) plog("roster: %s", roster_text(roster, true).c_str());
+    PartyLink* link = runtime_link();
+    bridge::OnRoster(roster, link ? link->max_players() : 0);
 }
 
 LinkCallbacks make_callbacks(bool host) {
@@ -618,10 +636,13 @@ LinkCallbacks make_callbacks(bool host) {
     if (host) {
         cb.on_member_joined = [](const RosterEntry& m, bool rejoined) {
             plog("%s %s (slot %d)", m.name.c_str(), rejoined ? "is back" : "joined", m.slot);
+            bridge::OnMemberJoined(m.name, rejoined);
             pump_start(m);
             write_marker();
+            coop::RequestHostFullItems(m.slot);  // C3: everything the host has, for its own save
         };
         cb.on_member_left = [](const RosterEntry& m, bool slot_kept) {
+            bridge::OnMemberLeft(m.name, slot_kept);
             if (slot_kept) {
                 plog("%s (slot %d) lost; slot kept", m.name.c_str(), m.slot);
                 return;
@@ -662,8 +683,35 @@ LinkCallbacks make_callbacks(bool host) {
             if (name == coop::kTravelEventName) {  // B1: follow the host's warp
                 coop::TravelIntent t;
                 std::string err;
-                if (coop::TravelFromJsonText(body, &t, &err)) coop::RequestGuestTravel(t);
-                else plog("travel event: %s", err.c_str());
+                if (coop::TravelFromJsonText(body, &t, &err)) {
+                    bridge::OnTravel(coop::TravelKindName(t.kind));
+                    coop::RequestGuestTravel(t);
+                } else {
+                    plog("travel event: %s", err.c_str());
+                }
+                return;
+            }
+            if (name == coop::kStoryEventName) {  // C4: the host's cutscene / ending
+                coop::StoryIntent s;
+                std::string err;
+                if (coop::StoryFromJsonText(body, &s, &err)) coop::RequestGuestStory(s);
+                else plog("story event: %s", err.c_str());
+                return;
+            }
+            if (name == coop::progress::kEventFlags || name == coop::progress::kEventFlagSnapshot) {
+                std::string err;  // C2: the host's flags, applied by the main-thread tick
+                if (!coop::progress::OnLinkEvent(name, body, &err)) plog("%s event: %s", name.c_str(), err.c_str());
+                return;
+            }
+            if (name == coop::kItemsEventName || name == coop::kItemsFullEventName) {  // C3: the host's items
+                std::vector<coop::ItemGrant> items;
+                std::string err;
+                if (coop::ItemsFromJsonText(body, &items, &err)) coop::RequestGuestItems(items);
+                else plog("%s event: %s", name.c_str(), err.c_str());
+                return;
+            }
+            if (name == coop::kPhantomEventName) {  // host lamp / rested / boss Insight
+                coop::PhantomOnEvent(body);
                 return;
             }
             bbnet::party::RemoteGuest* rg = bbnet::party::remote_guest();
@@ -800,7 +848,7 @@ void start_host(LinkConfig cfg) {
         r.secret = cfg.secret;
         r.marker_secret = true;
     }
-    if (lb) cfg.bind_addr = "0.0.0.0";
+    if (lb) cfg.bind_addr = "127.0.0.1";  // local test: nothing on the network (no firewall prompt)
     const std::string name = cfg.name;
     const std::uint16_t port = cfg.port;
 
@@ -813,6 +861,8 @@ void start_host(LinkConfig cfg) {
     {
         std::lock_guard<std::mutex> lk(r.mu);
         r.link = link;
+        r.cfg = cfg;
+        r.have_cfg = true;
     }
     if (!kept.empty()) link->restore_members(kept);
     std::string err;
@@ -915,6 +965,7 @@ void start_host(LinkConfig cfg) {
         r.st.upnp = upnp_msg;
         r.st.local_slot = 0;
     }
+    bridge::OnCode(!internet.empty() ? internet : lan);
     plog("hosting on port %u as %s; code (Internet): %s; code (LAN): %s", port, name.c_str(),
          internet.empty() ? "(no public address: set BB_PARTY_PUBLIC_ADDR)" : internet.c_str(),
          lan.empty() ? "(no LAN address)" : lan.c_str());
@@ -933,14 +984,17 @@ void start_host(LinkConfig cfg) {
 }
 
 // The code a guest uses: BB_PARTY_CODE, BB_PARTY=<code>, or BB_PARTY_CODE_FILE (waits <= 60 s).
-bool guest_code(PartyCode* code, std::string* error) {
+bool guest_code(PartyCode* code, std::string* error, std::string* used) {
     std::string text;
     if (const char* c = env("BB_PARTY_CODE")) {
         text = c;
     } else if (const char* p = env("BB_PARTY"); p && lower(p) != "join" && lower(p) != "guest" && lower(p) != "1") {
         text = p;
     }
-    if (!text.empty()) return decode_party_code(text, code, error);
+    if (!text.empty()) {
+        *used = text;
+        return decode_party_code(text, code, error);
+    }
     const char* cf = env("BB_PARTY_CODE_FILE");
     if (!cf) {
         *error = "no party code: set BB_PARTY_CODE (or BB_PARTY_CODE_FILE)";
@@ -964,7 +1018,10 @@ bool guest_code(PartyCode* code, std::string* error) {
             }
             for (const std::string& c : prefer_lan ? std::vector<std::string>{lan, internet, bare}
                                                    : std::vector<std::string>{internet, lan, bare}) {
-                if (!c.empty() && decode_party_code(c, code, &last_err)) return true;
+                if (!c.empty() && decode_party_code(c, code, &last_err)) {
+                    *used = c;
+                    return true;
+                }
             }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -976,8 +1033,8 @@ bool guest_code(PartyCode* code, std::string* error) {
 void start_guest(LinkConfig cfg) {
     Runtime& r = R();
     PartyCode code;
-    std::string err;
-    if (!guest_code(&code, &err)) {
+    std::string err, code_text;
+    if (!guest_code(&code, &err, &code_text)) {
         set_error(err);
         plog("%s", err.c_str());
         return;
@@ -989,6 +1046,7 @@ void start_guest(LinkConfig cfg) {
         plog("cannot resolve the host %s", code.host.c_str());
         return;
     }
+    bridge::OnCode(code_text);
     cfg.secret = code.secret;
     if ((code.flags & kCodeFlagPasswordRequired) && cfg.password.empty())
         plog("warning: the host requires a password (BB_PARTY_PASSWORD)");
@@ -1001,7 +1059,10 @@ void start_guest(LinkConfig cfg) {
         r.host_ip_nbo = nbo;
         r.host_port = port;
         r.st.host_address = format_ipv4(ip) + ":" + std::to_string(port);
+        r.cfg = cfg;
+        r.have_cfg = true;
     }
+    bridge::OnHostAddress(format_ipv4(ip) + ":" + std::to_string(port));
     plog("joining %s as %s%s", r.st.host_address.c_str(), cfg.name.c_str(),
          (code.flags & kCodeFlagLan) ? " (LAN code)" : "");
     bbnet::party::remote_guest();  // the RemoteGuest transport exists before the game asks
@@ -1023,6 +1084,7 @@ void startup_main() {
         r.st.name = s.online_id;
         r.st.port = s.party_port;
     }
+    bridge::OnRuntimeStart(host, s.online_id);
     {
         const RestartInfo& ri = restart_info();  // before the marker below is rewritten
         {
@@ -1122,6 +1184,88 @@ void do_shutdown() {
     if (upnp) upnp->stop(2000);
 }
 
+// ---- Leave / Rejoin (the overlay's Party tab, party_status_bridge.h) -----------------------
+
+// Stops the link with BYE (host: the party ends for everyone; guest: no more reconnects) and
+// forgets the crash marker (a crash after Leave must not rejoin). Background thread.
+void leave_main() {
+    Runtime& r = R();
+    PartyLink* link;
+    bool host;
+    std::vector<std::shared_ptr<Pump>> pumps;
+    {
+        std::lock_guard<std::mutex> lk(r.mu);
+        link = r.link;
+        host = r.st.role == RuntimeRole::Host;
+        r.left = true;
+        for (auto& [k, p] : r.pumps) pumps.push_back(p);
+        r.pumps.clear();
+        if (!r.marker.empty()) {
+            std::error_code ec;
+            fs::remove(r.marker, ec);
+        }
+    }
+    for (auto& p : pumps) p->stop = true;
+    if (!pumps.empty()) bbnet::party::PartyHostService::instance().wake_all();
+    coop::PartyDirector::Get().SetLink(nullptr);
+    if (link) link->stop(true);
+    plog("%s", host ? "Leave: the party is over (BYE sent)" : "Leave: left the party (BYE sent; no reconnects)");
+    bridge::OnLeft(host);
+    std::lock_guard<std::mutex> lk(r.mu);
+    r.busy = false;
+}
+
+// A fresh link with the same config (host: same port and secret, so the codes stay valid).
+void rejoin_main() {
+    Runtime& r = R();
+    LinkConfig cfg;
+    bool host;
+    std::string host_text;
+    std::uint16_t port;
+    PartyLink* old;
+    {
+        std::lock_guard<std::mutex> lk(r.mu);
+        cfg = r.cfg;
+        host = r.st.role == RuntimeRole::Host;
+        host_text = bbnet::party::ip_text(r.host_ip_nbo);
+        port = r.host_port;
+        old = r.link;
+    }
+    coop::PartyDirector::Get().SetLink(nullptr);
+    if (old) old->stop(true);  // a Rejected / Stopped link: only joins its threads
+    bridge::OnRejoining();
+    auto* link = new PartyLink(cfg, make_callbacks(host));
+    {
+        std::lock_guard<std::mutex> lk(r.mu);
+        r.link = link;
+        r.left = false;
+        r.rpc_wired = false;  // the RemoteGuest RPC goes over the new link
+        r.st.last_error.clear();
+    }
+    write_marker();  // back in a party: a crash rejoins again
+    std::string err;
+    const bool ok = host ? link->start_host(&err) : link->start_guest(host_text, port, &err);
+    if (!ok) {
+        set_error(std::string(host ? "cannot host: " : "cannot join: ") + err);
+        plog("Rejoin: %s", err.c_str());
+    } else {
+        plog("Rejoin: %s", host ? "hosting again" : ("connecting to " + host_text + ":" + std::to_string(port)).c_str());
+        coop::PartyDirector::Get().SetLink(link);
+        bool have;
+        MemberState ms;
+        std::uint32_t map;
+        {
+            std::lock_guard<std::mutex> lk(r.mu);
+            have = r.have_local_state;
+            ms = r.local_state;
+            map = r.local_map;
+        }
+        if (have) link->set_local_state(ms, map);
+    }
+    std::lock_guard<std::mutex> lk(r.mu);
+    r.busy = false;
+}
+
 // Registered with the network library (bbnet_internal.h) at static initialization.
 struct Registrar {
     Registrar() {
@@ -1155,6 +1299,33 @@ void runtime_start() {
             r.cv.notify_all();
         }).detach();
     });
+}
+
+void runtime_leave() {
+    Runtime& r = R();
+    {
+        std::lock_guard<std::mutex> lk(r.mu);
+        if (r.busy || r.left || r.stopping || !r.link) return;
+        r.busy = true;
+    }
+    std::thread(leave_main).detach();
+}
+
+int runtime_rejoin() {
+    Runtime& r = R();
+    {
+        std::lock_guard<std::mutex> lk(r.mu);
+        if (r.busy || r.stopping || !r.have_cfg) return -1;
+        if (r.link && !r.left) {
+            const LinkState s = r.link->state();
+            if (s == LinkState::Connected || s == LinkState::Hosting) return 0;
+            if (s == LinkState::Connecting) return 1;
+            if (s == LinkState::Reconnecting) return r.link->reconnect_now() ? 1 : -1;
+        }
+        r.busy = true;
+    }
+    std::thread(rejoin_main).detach();
+    return 2;
 }
 
 void runtime_shutdown() {

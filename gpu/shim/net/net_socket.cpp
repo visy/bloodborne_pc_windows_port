@@ -14,6 +14,7 @@
 #include "bbnet_internal.h"
 #include "net_stun.h"
 #include "netsim.h"
+#include "party_udp.h"
 
 #if defined(_WIN32)
 #include <winsock2.h>
@@ -317,8 +318,9 @@ static_assert(sizeof(SceSockaddrIn) == 16, "SceNetSockaddrIn is 16 bytes");
 // datagram: [0xff][flags][src vport][dst vport] when flag 0x40 says the vports are one byte
 // (Bloodborne's are, 40 and 30), two-byte vports without it, four more bytes when flag 0x20
 // adds a comid. The header is kept on the wire so a shadPS4 or bbhost peer reads ours.
-constexpr std::uint8_t kP2pMagic = 0xff;
-constexpr std::uint8_t kP2pFlagP2p = 0x80, kP2pFlagByteVports = 0x40, kP2pFlagComid = 0x20, kP2pType = 0x03;
+using udp::kRelayHeader;
+using udp::p2p_header;
+using udp::p2p_write_header;
 constexpr std::uint16_t kGameP2pPort = 3658;
 
 struct Datagram {
@@ -361,63 +363,23 @@ struct P2pPort {
     // order): the hole-punch stops once the peer is heard.
     std::map<std::uint64_t, Clock::time_point> heard;
 };
-// A hole-punch probe: not a P2P datagram (no 0xff), dropped by the reader.
-constexpr std::uint8_t kProbe[8] = {0xfe, 'b', 'b', 'h', 'p', 0, 0, 0};
-
-// The relay. Client side: once a STUN answer carried BBHOST-RELAY, a datagram for another
-// relay port (the server's address, not its STUN port) leaves framed for the STUN port -
-// [0xfb]['R'][token][port] - and the relay's deliveries come back from the STUN port framed
-// [0xfb]['r'][source port]. The game sees none of it: its peers stay server:port both ways.
-constexpr std::uint8_t kRelayMagic = 0xfb, kRelayToServer = 'R', kRelayToClient = 'r';
-constexpr std::size_t kRelayHeader = 12;
-struct RelayLink {
-    std::mutex mu;
-    bool on = false;
-    std::uint32_t server = 0;     // network order
-    std::uint16_t stun_port = 0;  // network order
-    std::uint8_t token[net::stun::kTokenLen] = {};
-    std::uint16_t vport = 0;  // host order
-};
-RelayLink g_relay;
-
-// bbport: the server side, on the party host. A HELLO with a zero token gets a token and a
-// relay port; frames from a known token go on to the client owning the destination port.
-struct RelayClient {
-    std::uint8_t token[net::stun::kTokenLen] = {};
-    std::uint32_t addr = 0;  // network order
-    std::uint16_t port = 0;  // network order
-    std::uint16_t vport = 0;  // host order
-};
-struct RelayServer {
-    std::mutex mu;
-    std::map<std::uint64_t, RelayClient> by_token;
-    std::map<std::uint16_t, std::uint64_t> by_vport;
-    std::uint16_t next_vport = 50001;
-    std::mt19937_64 rng{std::random_device{}() ^ static_cast<std::uint64_t>(Clock::now().time_since_epoch().count())};
-};
-RelayServer g_relay_server;
-std::uint64_t token_key(const std::uint8_t* t) {
-    std::uint64_t k;
-    std::memcpy(&k, t, sizeof(k));
-    return k;
+// The relay (party_udp.h). Client side: once a STUN answer carried BBHOST-RELAY, a datagram for
+// another relay port (the server's address, not its STUN port) leaves framed for the STUN port
+// and the relay's deliveries come back from the STUN port. The game sees none of it: its peers
+// stay server:port both ways. Server side (the party host): STUN answers with a token and a
+// relay port, frames forwarded between clients.
+udp::RelayClient g_relay;
+// A guest's paths to the other guests (party_udp.h PeerPaths): direct while their probes are
+// answered, else through the host relay; BB_PARTY_FORCE_RELAY=1 relays them always.
+udp::PeerPaths& paths() {
+    static udp::PeerPaths* p = [] {
+        udp::PeerPaths::Config c;
+        c.force = udp::force_relay_from_env();
+        return new udp::PeerPaths(c);
+    }();
+    return *p;
 }
-
-// True when addr:port (network order) is a relay port to frame for.
-bool relay_target(std::uint32_t addr, std::uint16_t port_nbo, std::uint8_t token[net::stun::kTokenLen],
-                  sockaddr_in* stun_sa) {
-    std::lock_guard<std::mutex> lk(g_relay.mu);
-    if (!g_relay.on || addr != g_relay.server || port_nbo == g_relay.stun_port) return false;
-    std::memcpy(token, g_relay.token, net::stun::kTokenLen);
-    *stun_sa = sockaddr_in{};
-    stun_sa->sin_family = AF_INET;
-    stun_sa->sin_addr.s_addr = g_relay.server;
-    stun_sa->sin_port = g_relay.stun_port;
-    return true;
-}
-bool from_relay_server(const sockaddr_in& sa) {
-    std::lock_guard<std::mutex> lk(g_relay.mu);
-    return g_relay.on && sa.sin_addr.s_addr == g_relay.server && sa.sin_port == g_relay.stun_port;
-}
+udp::RelayServer g_relay_server;
 inline std::uint64_t source_key(std::uint32_t addr, std::uint16_t port_nbo) {
     return addr | (static_cast<std::uint64_t>(port_nbo) << 32);
 }
@@ -489,136 +451,88 @@ bool trace_now(std::atomic<int>& count) {
 
 int net_alloc() { return g_net_next++; }
 
-// Splits a datagram at the P2P header; returns the header length (0 when there is none).
-std::size_t p2p_header(const std::uint8_t* d, std::size_t n, std::uint16_t* src, std::uint16_t* dst) {
-    if (n < 4 || d[0] != kP2pMagic) return 0;
-    const std::uint8_t fl = d[1];
-    std::size_t at = 2;
-    if (fl & kP2pFlagComid) at += 4;
-    std::size_t hdr;
-    if (fl & kP2pFlagByteVports) {
-        if (at + 2 > n) return 0;
-        *src = d[at];
-        *dst = d[at + 1];
-        hdr = at + 2;
-    } else {
-        if (at + 4 > n) return 0;
-        *src = static_cast<std::uint16_t>((d[at] << 8) | d[at + 1]);
-        *dst = static_cast<std::uint16_t>((d[at + 2] << 8) | d[at + 3]);
-        hdr = at + 4;
-    }
-    return hdr;
-}
-// Writes the header for src -> dst into out (6 bytes room); returns its length.
-std::size_t p2p_write_header(std::uint8_t* out, std::uint16_t src, std::uint16_t dst) {
-    out[0] = kP2pMagic;
-    if (src < 256 && dst < 256) {
-        out[1] = kP2pFlagP2p | kP2pFlagByteVports | kP2pType;
-        out[2] = static_cast<std::uint8_t>(src);
-        out[3] = static_cast<std::uint8_t>(dst);
-        return 4;
-    }
-    out[1] = kP2pFlagP2p | kP2pType;
-    out[2] = static_cast<std::uint8_t>(src >> 8);
-    out[3] = static_cast<std::uint8_t>(src);
-    out[4] = static_cast<std::uint8_t>(dst >> 8);
-    out[5] = static_cast<std::uint8_t>(dst);
-    return 6;
-}
-
 // bbport: the host answers a peer's STUN Binding Request (and its relay HELLO).
 void answer_stun(P2pPort& port, const std::uint8_t* buf, std::size_t n, const sockaddr_in& sa) {
-    std::uint8_t txid[net::stun::kTxid];
-    std::uint8_t token[net::stun::kTokenLen];
-    bool hello = false;
-    if (!net::stun::parse_binding_request(buf, n, txid, &hello, token)) return;
-    net::stun::Relay relay;
-    if (hello && settings().host) {
-        std::lock_guard<std::mutex> lk(g_relay_server.mu);
-        auto it = g_relay_server.by_token.find(token_key(token));
-        if (it == g_relay_server.by_token.end()) {
-            RelayClient c;
-            do {
-                const std::uint64_t t = g_relay_server.rng();
-                std::memcpy(c.token, &t, sizeof(t));
-            } while (token_key(c.token) == 0 || g_relay_server.by_token.count(token_key(c.token)));
-            std::uint16_t vp = g_relay_server.next_vport;
-            while (vp == port.port || vp == 0 || g_relay_server.by_vport.count(vp)) ++vp;
-            g_relay_server.next_vport = static_cast<std::uint16_t>(vp + 1);
-            c.vport = vp;
-            it = g_relay_server.by_token.emplace(token_key(c.token), c).first;
-            g_relay_server.by_vport[vp] = token_key(c.token);
-            char ip[32];
-            write_ipv4(ip, sizeof(ip), sa.sin_addr.s_addr);
-            log("relay: %s:%u is relay port %u", ip, bswap16(sa.sin_port), vp);
-        }
-        it->second.addr = sa.sin_addr.s_addr;
-        it->second.port = sa.sin_port;
-        relay.present = true;
-        std::memcpy(relay.token, it->second.token, sizeof(relay.token));
-        relay.vport = it->second.vport;
-        relay.observed_addr = sa.sin_addr.s_addr;
-        relay.observed_port = bswap16(sa.sin_port);
-    }
     std::uint8_t out[net::stun::kMaxResponse];
-    const std::size_t len = net::stun::build_binding_response(out, txid, sa.sin_addr.s_addr, bswap16(sa.sin_port),
-                                                              relay.present ? &relay : nullptr);
+    std::string note;
+    const std::size_t len =
+        g_relay_server.answer_stun(buf, n, sa.sin_addr.s_addr, sa.sin_port, settings().host, out, &note);
+    if (!len) return;
+    if (!note.empty()) log("%s", note.c_str());
     raw_sendto(port.fd, out, len, &sa);
     std::lock_guard<std::mutex> lk(port.mu);
     ++port.stun_answered;
 }
 // bbport: the host forwards a guest's relay frame to the client owning the destination port.
 void relay_forward(P2pPort& port, std::uint8_t* buf, std::size_t n, const sockaddr_in& sa) {
-    const std::uint64_t src_key = token_key(buf + 2);
-    const std::uint16_t dst_vport = static_cast<std::uint16_t>((buf[10] << 8) | buf[11]);
+    std::uint8_t* frame = nullptr;
+    std::size_t len = 0;
+    std::uint32_t to_addr = 0;
+    std::uint16_t to_port = 0;
+    std::string note;
+    const bool ok = g_relay_server.forward(buf, n, sa.sin_addr.s_addr, sa.sin_port, &frame, &len, &to_addr, &to_port,
+                                           &note);
+    if (!note.empty()) log("%s", note.c_str());
+    if (!ok) return;
     sockaddr_in to{};
-    std::uint16_t src_vport = 0;
-    {
-        std::lock_guard<std::mutex> lk(g_relay_server.mu);
-        auto src = g_relay_server.by_token.find(src_key);
-        if (src == g_relay_server.by_token.end()) return;
-        src->second.addr = sa.sin_addr.s_addr;  // follows the client's NAT rebinding
-        src->second.port = sa.sin_port;
-        src_vport = src->second.vport;
-        auto dv = g_relay_server.by_vport.find(dst_vport);
-        if (dv == g_relay_server.by_vport.end()) return;
-        const RelayClient& dst = g_relay_server.by_token[dv->second];
-        to.sin_family = AF_INET;
-        to.sin_addr.s_addr = dst.addr;
-        to.sin_port = dst.port;
-    }
-    // [0xfb]['r'][source port] in place of the 12-byte request header.
-    std::uint8_t* frame = buf + kRelayHeader - 4;
-    frame[0] = kRelayMagic;
-    frame[1] = kRelayToClient;
-    frame[2] = static_cast<std::uint8_t>(src_vport >> 8);
-    frame[3] = static_cast<std::uint8_t>(src_vport);
-    raw_sendto(port.fd, frame, n - (kRelayHeader - 4), &to);
+    to.sin_family = AF_INET;
+    to.sin_addr.s_addr = to_addr;
+    to.sin_port = to_port;
+    raw_sendto(port.fd, frame, len, &to);
     std::lock_guard<std::mutex> lk(port.mu);
     ++port.relayed;
 }
 
 void p2p_reader(std::shared_ptr<P2pPort> port) {
-    std::uint8_t buf[2048 + kRelayHeader];
+    std::uint8_t buf[udp::kMaxDatagram + kRelayHeader];
     std::atomic<int> logs{0};
+    auto last_expire = Clock::now();
+    auto last_tick = Clock::now();
+    std::vector<std::pair<std::uint32_t, std::uint16_t>> probes;
+    std::vector<std::string> notes;
     while (!port->stop.load(std::memory_order_relaxed)) {
+        if (settings().host && Clock::now() - last_expire > std::chrono::seconds(60)) {
+            last_expire = Clock::now();
+            g_relay_server.expire(last_expire);
+        }
+        if (!settings().host && Clock::now() - last_tick > std::chrono::milliseconds(100)) {
+            // Probe every other guest directly (relayed or not) and switch paths on the answers.
+            last_tick = Clock::now();
+            probes.clear();
+            notes.clear();
+            paths().tick(last_tick, &probes, &notes);
+            for (const auto& [a, p] : probes) {
+                sockaddr_in t{};
+                t.sin_family = AF_INET;
+                t.sin_addr.s_addr = a;
+                t.sin_port = p;
+                raw_sendto(port->fd, udp::kProbe, sizeof(udp::kProbe), &t);
+            }
+            for (const std::string& line : notes) log("%s", line.c_str());
+        }
         if (sock_poll(port->fd, POLLIN, 200) <= 0) continue;
         sockaddr_in sa{};
         socklen_type sl = sizeof(sa);
         ssize_type n = raw_recvfrom(port->fd, buf, sizeof(buf), 0, &sa, &sl);
         if (n < 0) continue;  // Windows: an ICMP port unreachable surfaces as WSAECONNRESET
-        if (n >= static_cast<ssize_type>(kRelayHeader) && buf[0] == kRelayMagic && buf[1] == kRelayToServer &&
-            settings().host) {
+        if (udp::is_relay_request(buf, static_cast<std::size_t>(n)) && settings().host) {
             relay_forward(*port, buf, static_cast<std::size_t>(n), sa);
             continue;
         }
-        if (n >= 4 && buf[0] == kRelayMagic && buf[1] == kRelayToClient && from_relay_server(sa)) {
+        std::uint16_t relayed_from = 0;
+        if (g_relay.unwrap(buf, static_cast<std::size_t>(n), sa.sin_addr.s_addr, sa.sin_port, &relayed_from)) {
             // A relay delivery: the datagram of the owner of the source port, which the game
             // knows as server:port.
-            const std::uint16_t from_vport = static_cast<std::uint16_t>((buf[2] << 8) | buf[3]);
-            std::memmove(buf, buf + 4, static_cast<std::size_t>(n - 4));
-            n -= 4;
-            sa.sin_port = bswap16(from_vport);
+            std::memmove(buf, buf + udp::kDeliveryHeader, static_cast<std::size_t>(n) - udp::kDeliveryHeader);
+            n -= static_cast<ssize_type>(udp::kDeliveryHeader);
+            sa.sin_port = relayed_from;
+            // A peer we know by its direct address: the game sees it from there, whichever path.
+            std::uint32_t da = 0;
+            std::uint16_t dp = 0;
+            if (paths().direct_of_relay(bswap16(relayed_from), &da, &dp)) {
+                sa.sin_addr.s_addr = da;
+                sa.sin_port = dp;
+            }
         }
         std::uint16_t src = 0, dst = 0;
         const std::size_t hdr = p2p_header(buf, static_cast<std::size_t>(n), &src, &dst);
@@ -627,7 +541,12 @@ void p2p_reader(std::shared_ptr<P2pPort> port) {
         if (!hdr) {
             // Not the game's: a peer's hole-punch probe, a STUN request (answered) or the
             // STUN server's answer to our request. None reaches a game socket.
-            if (n >= 8 && std::memcmp(buf, kProbe, 5) == 0) {
+            if (udp::is_probe(buf, static_cast<std::size_t>(n))) {
+                if (udp::is_probe_ack(buf, static_cast<std::size_t>(n))) {
+                    paths().on_ack(sa.sin_addr.s_addr, sa.sin_port, Clock::now());
+                } else {
+                    raw_sendto(port->fd, udp::kProbeAck, sizeof(udp::kProbeAck), &sa);  // the path works
+                }
                 std::lock_guard<std::mutex> lk(port->mu);
                 ++port->rx;
                 ++port->probes;
@@ -738,7 +657,8 @@ std::shared_ptr<P2pPort> p2p_port_open(std::uint16_t want) {
         sockaddr_in sa{};
         sa.sin_family = AF_INET;
         sa.sin_port = bswap16(at);
-        sa.sin_addr.s_addr = INADDR_ANY;
+        // Local tests bind loopback only (no Windows Firewall prompt): see party_sock.h.
+        sa.sin_addr.s_addr = forced_local_ipv4() == bswap32(0x7f000001u) ? bswap32(0x7f000001u) : INADDR_ANY;
         if (::bind(port->fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) == 0) {
             port->port = at;
             break;
@@ -879,12 +799,12 @@ int dgram_send(int s, const void* buf, std::uint64_t len, int flags, const SceSo
     const sockfd_t fd = sock.port ? sock.port->fd : sock.fd;
     if (!sock_ok(fd)) return static_cast<int>(len);
     if (!to) return net_err(bsd::kEDESTADDRREQ);
-    std::uint8_t pkt[2048 + kRelayHeader];
+    std::uint8_t pkt[udp::kMaxDatagram + kRelayHeader];
     std::uint8_t* body = pkt + kRelayHeader;
     std::size_t hdr = 0;
     const std::uint16_t dst_vport = bswap16(to->vport);
     if (sock.p2p) hdr = p2p_write_header(body, sock.vport, dst_vport);
-    if (hdr + len > 2048) return net_err(bsd::kEMSGSIZE);
+    if (hdr + len > udp::kMaxDatagram) return net_err(bsd::kEMSGSIZE);
     if (buf && len) std::memcpy(body + hdr, buf, static_cast<std::size_t>(len));
     sockaddr_in sa{};
     sa.sin_family = AF_INET;
@@ -892,15 +812,25 @@ int dgram_send(int s, const void* buf, std::uint64_t len, int flags, const SceSo
     sa.sin_addr.s_addr = to->addr;
     (void)flags;
     ssize_type n;
-    std::uint8_t token[net::stun::kTokenLen];
-    sockaddr_in stun_sa{};
-    if (sock.p2p && relay_target(to->addr, to->port, token, &stun_sa)) {
-        std::uint8_t* frame = pkt;
-        frame[0] = kRelayMagic;
-        frame[1] = kRelayToServer;
-        std::memcpy(frame + 2, token, net::stun::kTokenLen);
-        std::memcpy(frame + 10, &to->port, 2);  // network order is the frame's big-endian
-        n = raw_sendto(fd, frame, kRelayHeader + hdr + static_cast<std::size_t>(len), &stun_sa);
+    std::uint32_t stun_addr = 0;
+    std::uint16_t stun_port = 0;
+    // A guest whose direct path does not answer goes through its relay port on the host.
+    std::uint32_t via_addr = to->addr;
+    std::uint16_t via_port = to->port;
+    std::uint16_t relay_port = 0;
+    if (sock.p2p && paths().relayed(to->addr, to->port, &relay_port)) {
+        std::uint32_t server = 0;
+        if (g_relay.get(&server, nullptr)) {
+            via_addr = server;
+            via_port = bswap16(relay_port);
+        }
+    }
+    if (sock.p2p && g_relay.frame_for(via_addr, via_port, pkt, &stun_addr, &stun_port)) {
+        sockaddr_in stun_sa{};
+        stun_sa.sin_family = AF_INET;
+        stun_sa.sin_addr.s_addr = stun_addr;
+        stun_sa.sin_port = stun_port;
+        n = raw_sendto(fd, pkt, kRelayHeader + hdr + static_cast<std::size_t>(len), &stun_sa);
         if (n >= 0) n -= static_cast<ssize_type>(kRelayHeader);
     } else {
         n = raw_sendto(fd, body, hdr + static_cast<std::size_t>(len), &sa);
@@ -1041,6 +971,8 @@ BBNET_ABI int net_bind(int s, const void* addr, int len) {
     sa.sin_family = AF_INET;
     sa.sin_port = bswap16(host_port);
     sa.sin_addr.s_addr = in.addr;
+    // Local tests: the game's own sockets listen on loopback only too (no Windows Firewall prompt).
+    if (in.addr == 0 && forced_local_ipv4() == bswap32(0x7f000001u)) sa.sin_addr.s_addr = bswap32(0x7f000001u);
 #if defined(_WIN32)
     if (host_port != guest_port) sock_setopt_int(sock.fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, 1);
 #endif
@@ -1852,13 +1784,7 @@ bool p2p_stun(const char* host, std::uint16_t sport, int timeout_ms, std::uint32
     // With the relay: the HELLO carries the token this server gave, else zeros.
     std::uint8_t token[net::stun::kTokenLen] = {};
     bool have_token = false;
-    if (want_relay) {
-        std::lock_guard<std::mutex> rl(g_relay.mu);
-        if (g_relay.on && g_relay.server == sa.sin_addr.s_addr && g_relay.stun_port == sa.sin_port) {
-            std::memcpy(token, g_relay.token, sizeof(token));
-            have_token = true;
-        }
-    }
+    if (want_relay) have_token = g_relay.token_for(sa.sin_addr.s_addr, sa.sin_port, token);
     std::uint8_t req[net::stun::kMaxRequest];
     std::unique_lock<std::mutex> lk(port->mu);
     if (port->stun_pending) return false;  // one at a time
@@ -1883,24 +1809,12 @@ bool p2p_stun(const char* host, std::uint16_t sport, int timeout_ms, std::uint32
             relay_out->observed_addr = relay.observed_addr;
             relay_out->observed_port = relay.observed_port;
         }
-        std::lock_guard<std::mutex> rl(g_relay.mu);
-        const bool was = g_relay.on;
-        const std::uint16_t was_vport = g_relay.vport;
-        if (relay.present) {
-            g_relay.on = true;
-            g_relay.server = sa.sin_addr.s_addr;
-            g_relay.stun_port = sa.sin_port;
-            std::memcpy(g_relay.token, relay.token, sizeof(g_relay.token));
-            g_relay.vport = relay.vport;
-        } else {
-            g_relay.on = false;  // a server without the relay: datagrams go as addressed
-        }
-        if (g_relay.on != was || g_relay.vport != was_vport) {
+        if (g_relay.on_answer(sa.sin_addr.s_addr, sa.sin_port, relay)) {
             char ip[32];
             write_ipv4(ip, sizeof(ip), sa.sin_addr.s_addr);
-            if (g_relay.on) {
-                log("relay on: %s:%u is our port %u; datagrams for its other ports go through it", ip, sport,
-                    g_relay.vport);
+            std::uint16_t vp = 0;
+            if (g_relay.get(nullptr, &vp)) {
+                log("relay on: %s:%u is our port %u; datagrams for its other ports go through it", ip, sport, vp);
             } else {
                 log("relay off (%s:%u offers none)", ip, sport);
             }
@@ -1909,23 +1823,36 @@ bool p2p_stun(const char* host, std::uint16_t sport, int timeout_ms, std::uint32
     return true;
 }
 
-bool p2p_relay(std::uint32_t* server, std::uint16_t* vport) {
-    std::lock_guard<std::mutex> lk(g_relay.mu);
-    if (server) *server = g_relay.server;
-    if (vport) *vport = g_relay.vport;
-    return g_relay.on;
-}
+bool p2p_relay(std::uint32_t* server, std::uint16_t* vport) { return g_relay.get(server, vport); }
 
 bool p2p_relay_vport_for(std::uint32_t addr, std::uint16_t port_host, std::uint16_t* vport) {
-    std::lock_guard<std::mutex> lk(g_relay_server.mu);
-    for (const auto& [key, c] : g_relay_server.by_token) {
-        (void)key;
-        if (c.addr == addr && c.port == bswap16(port_host)) {
-            if (vport) *vport = c.vport;
-            return true;
-        }
+    return g_relay_server.vport_for(addr, port_host, vport);
+}
+
+const udp::RelayClient& p2p_relay_client() { return g_relay; }
+
+void p2p_add_peer(const char* label, std::uint32_t addr, std::uint16_t port_host, std::uint16_t relay_port) {
+    if (settings().host || !addr || !port_host) return;
+    if (g_relay.is_server(addr, bswap16(port_host))) return;  // the host: its port is the relay
+    std::uint16_t own = 0;
+    g_relay.get(nullptr, &own);
+    if (relay_port && relay_port == own) return;  // ourselves
+    if (relay_port) g_relay.add_relay_port(relay_port);
+    paths().add(addr, bswap16(port_host), relay_port, Clock::now());
+    if (party_trace()) log("paths: %s relay port %u", label ? label : "peer", relay_port);
+}
+
+std::string p2p_paths_status() {
+    std::string s;
+    for (const auto& p : paths().peers()) {
+        char ip[32];
+        write_ipv4(ip, sizeof(ip), p.addr);
+        char b[96];
+        std::snprintf(b, sizeof(b), "%s%s:%u %s", s.empty() ? "" : ", ", ip, bswap16(p.port),
+                      p.relayed ? "relay" : (p.answered ? "direct" : "probing"));
+        s += b;
     }
-    return false;
+    return s;
 }
 
 void p2p_punch(const char* label, std::uint32_t addr, std::uint16_t port_host, std::uint32_t local_addr,
@@ -1938,9 +1865,10 @@ void p2p_punch(const char* label, std::uint32_t addr, std::uint16_t port_host, s
     }
     if (!port || !addr || !port_host) return;
     {
-        std::uint8_t token[net::stun::kTokenLen];
-        sockaddr_in stun_sa{};
-        if (relay_target(addr, bswap16(port_host), token, &stun_sa)) return;  // the relay needs no hole
+        std::uint8_t hdr[kRelayHeader];
+        std::uint32_t sa_addr = 0;
+        std::uint16_t sa_port = 0;
+        if (g_relay.frame_for(addr, bswap16(port_host), hdr, &sa_addr, &sa_port)) return;  // the relay needs no hole
     }
     std::vector<sockaddr_in> targets;
     sockaddr_in a{};
@@ -1971,7 +1899,7 @@ void p2p_punch(const char* label, std::uint32_t addr, std::uint16_t port_host, s
         };
         for (int i = 0; i < 40 && !port->stop.load(std::memory_order_relaxed); ++i) {
             for (const sockaddr_in& t : targets) {
-                if (raw_sendto(port->fd, kProbe, sizeof(kProbe), &t) >= 0) ++sent;
+                if (raw_sendto(port->fd, udp::kProbe, sizeof(udp::kProbe), &t) >= 0) ++sent;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
             if (heard_since_start()) {
@@ -2002,7 +1930,8 @@ std::string p2p_status() {
                   static_cast<unsigned long long>(port->rx), port->by_vport.size(),
                   static_cast<unsigned long long>(port->probes), static_cast<unsigned long long>(port->stun_answered),
                   static_cast<unsigned long long>(port->relayed));
-    return buf;
+    const std::string pp = p2p_paths_status();
+    return pp.empty() ? std::string(buf) : std::string(buf) + "; peers " + pp;
 }
 
 }  // namespace bbnet

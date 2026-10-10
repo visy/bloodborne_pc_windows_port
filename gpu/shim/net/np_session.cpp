@@ -8,6 +8,7 @@
 
 #include "bbnet_internal.h"
 #include "party_transport.h"
+#include "party_udp.h"
 #include "party_util.h"
 
 #include <atomic>
@@ -164,6 +165,17 @@ void punch_if_new(const Peer& before, const Peer& after) {
     p2p_punch(after.online_id.c_str(), after.addr, after.port, after.local_addr, after.local_port);
 }
 
+// Where a peer's address enters the table: the socket layer learns the peer and its relay port
+// and picks the path per datagram (direct while the peer answers probes, else the host relay;
+// always the relay with BB_PARTY_FORCE_RELAY=1). The game keeps the direct address.
+void route_peer(Peer& p, int relay_port) {
+    if (settings().host) return;
+    const std::uint16_t rp = relay_port > 0 && relay_port <= 65535 ? static_cast<std::uint16_t>(relay_port) : 0;
+    p2p_add_peer(p.online_id.c_str(), p.addr, p.port, rp);
+}
+
+std::atomic<bool> g_context_started{false};
+
 std::mutex g_roommu;
 std::string g_room_sid;
 int g_room_mid = 0;
@@ -198,7 +210,7 @@ void keepalive_main() {
     std::string last;
     {
         std::lock_guard<std::mutex> lk(g_mapped.mu);
-        last = g_mapped.addr + ":" + std::to_string(g_mapped.port);
+        last = g_mapped.addr + ":" + std::to_string(g_mapped.port) + " relay " + std::to_string(g_mapped.relay_port);
     }
     while (g_keeprun.load()) {
         {
@@ -210,9 +222,10 @@ void keepalive_main() {
         std::string now;
         {
             std::lock_guard<std::mutex> lk(g_mapped.mu);
-            now = g_mapped.addr + ":" + std::to_string(g_mapped.port);
+            now = g_mapped.addr + ":" + std::to_string(g_mapped.port) + " relay " + std::to_string(g_mapped.relay_port);
         }
-        if (now != last && now != ":0") {
+        // The relay port matters too: a restarted host may hand out another one.
+        if (now != last && now.rfind(":0 ", 0) != 0) {
             log("stun: our address is now %s (was %s); telling the host", now.c_str(), last.c_str());
             server_signaling_update();
             last = now;
@@ -375,6 +388,7 @@ int peers_from_members(const json::Value& members) {
             p.addr = p.local_addr;
             p.port = p.local_port;
         }
+        route_peer(p, static_cast<int>(int_of(m, "RelayPort", 0)));
         peers_upsert(p);
         ++n;
     }
@@ -424,7 +438,23 @@ bool server_context_start(json::Value& reply, std::string& error) {
         body.set("MappedPort", g_mapped.port);
         body.set("RelayPort", g_mapped.relay_port);
     }
-    return transport().ok_call(party::call::kContextStart, body, reply, error);
+    const bool ok = transport().ok_call(party::call::kContextStart, body, reply, error);
+    if (ok) g_context_started.store(true);
+    return ok;
+}
+
+void host_session_reset() {
+    {
+        std::lock_guard<std::mutex> lk(g_mapped.mu);
+        g_mapped.asked = false;  // the relay registration is the old host's
+    }
+    if (!g_context_started.load()) return;
+    dispatch_after(0, Prio::Context, [] {
+        json::Value reply;
+        std::string err;
+        if (server_context_start(reply, err)) log("np: context registered again with the host");
+        else log("np: context_start after the host's restart failed: %s", err.c_str());
+    });
 }
 
 bool server_create_room(int max_members, const json::Value& extra, json::Value& reply, std::string& error) {
@@ -481,8 +511,13 @@ bool server_signaling_resolve(const std::string& id, std::uint32_t* addr, std::u
         error = "no address";
         return false;
     }
-    if (addr) *addr = a;
-    if (port) *port = static_cast<std::uint16_t>(p);
+    Peer route;
+    route.online_id = id;
+    route.addr = a;
+    route.port = static_cast<std::uint16_t>(p);
+    route_peer(route, static_cast<int>(party::int_of(reply, "RelayPort", 0)));
+    if (addr) *addr = route.addr;
+    if (port) *port = route.port;
     return true;
 }
 

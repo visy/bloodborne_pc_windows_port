@@ -179,8 +179,60 @@ def setup(a):
         print("instance", i, "->", inst)
 
 
+def stop_leftovers(root):
+    """Ends what an earlier run of this root left behind (the harness killed by a timeout leaves
+    run.bat's restart loop and the game running): its game would keep writing into the new
+    run.log, and its restart loop would start the game again."""
+    if os.name != "nt":
+        return
+    wants = {str(Path(root)).lower(), str(Path(root).resolve()).lower()}
+    ps = ("Get-CimInstance Win32_Process -Filter \"Name='cmd.exe' or Name like 'bbport%' or Name like 'bb-probe%'\" | "
+          "ForEach-Object { $_.ProcessId.ToString() + '|' + $_.Name + '|' + $_.ExecutablePath + '|' + $_.CommandLine }")
+    out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        pid, _, rest = line.partition("|")
+        name, _, rest = rest.partition("|")
+        path, _, cmdline = rest.partition("|")
+        if name.lower() == "cmd.exe":
+            hit = any(w + os.sep + "inst" in cmdline.lower() for w in wants) and "run.bat" in cmdline.lower()
+        else:
+            hit = any(path.lower().startswith(w + os.sep) for w in wants)
+        if hit and pid.strip().isdigit() and int(pid) != os.getpid():
+            subprocess.run(["taskkill", "/PID", pid.strip(), "/T", "/F"], capture_output=True)
+            print(f"stopped a leftover {name} ({pid}) of an earlier run", flush=True)
+
+
+def open_log(path: Path):
+    """Opens an instance's run.log for its run. The previous one is kept as run.prev.log. The handle
+    the children inherit may only append (FILE_APPEND_DATA without FILE_WRITE_DATA): run.bat, its
+    restart loop's games and the Python helpers all write at the current end, and nothing can
+    rewrite or truncate earlier output - a writer's stale offset after someone truncated the file
+    used to leave the log's beginning as NUL bytes. Returns (file, offset this run starts at)."""
+    if path.exists():
+        try:
+            os.replace(path, path.with_name("run.prev.log"))
+        except OSError:
+            pass  # still open somewhere: append to it
+    if os.name == "nt":
+        import msvcrt
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateFileW.restype = wintypes.HANDLE
+        k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                                    wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+        FILE_APPEND_DATA, SYNCHRONIZE, FILE_READ_ATTRIBUTES = 0x4, 0x100000, 0x80
+        h = k32.CreateFileW(str(path), FILE_APPEND_DATA | SYNCHRONIZE | FILE_READ_ATTRIBUTES,
+                            7, None, 4, 0x80, None)  # share read/write/delete, OPEN_ALWAYS, normal
+        if h and h != wintypes.HANDLE(-1).value:
+            f = os.fdopen(msvcrt.open_osfhandle(h, os.O_APPEND), "ab", buffering=0)
+            return f, os.path.getsize(path)
+    f = open(path, "ab")
+    return f, f.tell()
+
+
 def run(a):
     port0 = base_port(a.root)
+    stop_leftovers(a.root)
     user32 = ctypes.windll.user32 if os.name == "nt" else None
     bad = validate_instances(a.root, a.count)
     if bad:
@@ -190,6 +242,7 @@ def run(a):
         # No error dialogs on the desktop from the children (inherited error mode): log-only tests.
         ctypes.windll.kernel32.SetErrorMode(0x0001 | 0x0002 | 0x8000)
     procs = []
+    starts = [0] * a.count  # where this run begins in each run.log
     code_file = Path(a.root) / "party_code.txt"
     if a.party and code_file.exists():
         code_file.unlink()  # a stale code (old secret) would only get the guests rejected
@@ -214,7 +267,7 @@ def run(a):
         for kv in a.env or []:
             k, _, v = kv.partition("=")
             env[k] = v.replace("{i}", str(i)).replace("{port}", str(port0 + i))
-        log = open(inst / "run.log", "wb")
+        log, starts[i] = open_log(inst / "run.log")
         procs.append((i, subprocess.Popen(["cmd", "/c", str(inst / "run.bat")], cwd=inst, env=env,
                                           stdout=log, stderr=subprocess.STDOUT), log))
         time.sleep(a.stagger)
@@ -223,7 +276,7 @@ def run(a):
     want_crash = bool(a.crash_at or a.crash_when)
     crash_rx = re.compile(a.crash_when) if a.crash_when else None
     until = [re.compile(u) for u in a.until or []]
-    marks = [0] * a.count  # log offsets at the crash: --until then looks at what follows it
+    marks = list(starts)  # log offsets at the crash: --until then looks at what follows it
     verdict = None
 
     def log_text(i, start=0):
@@ -236,7 +289,8 @@ def run(a):
 
     while any(p.poll() is None for _, p, _ in procs) and time.time() - t0 < a.seconds + 90:
         if want_crash and not crashed:
-            hit = (a.crash_at and time.time() - t0 >= a.crash_at) or (crash_rx and crash_rx.search(log_text(a.crash_instance)))
+            hit = (a.crash_at and time.time() - t0 >= a.crash_at) or (
+                crash_rx and crash_rx.search(log_text(a.crash_instance, starts[a.crash_instance])))
             if hit:
                 crashed = True
                 marks = [os.path.getsize(Path(a.root) / f"inst{i}" / "run.log") for i in range(a.count)]
