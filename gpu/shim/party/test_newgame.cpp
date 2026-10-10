@@ -343,18 +343,18 @@ std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen
     if (holding_) {
         if (t < until_) return steps_[next_ - 1].buttons == kWait ? 0 : steps_[next_ - 1].buttons;
         holding_ = false;
-        until_ = t + 0.6;
+        until_ = t + 1.0; // 1 s between presses (the Doll's level-up dialog: Left, 1.2 s, Cross)
         return 0;
     }
     if (next_ >= steps_.size() || t < until_) return 0;
     const Press& p = steps_[next_];
     if (!p.text.empty()) {
         if (wait_from_ < 0) wait_from_ = t;
+        // Looked up after the previous press (seen live: a screen or dialog looks its texts up once,
+        // when it builds - not every frame), then 0.4 s for it to take input.
         const double seen = text_seen ? text_seen(p.text) : -1.0;
-        const bool on_screen = seen > pressed_at_ && t - seen <= 0.5;
-        if (!on_screen) {
-            text_since_ = -1;
-        } else if (text_since_ < 0) {
+        const bool on_screen = seen >= 0 && seen > pressed_at_;
+        if (on_screen && text_since_ < 0) {
             text_since_ = t;
         }
         if (!on_screen || t - text_since_ < 0.4) {
@@ -387,6 +387,7 @@ std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen
     pressed_at_ = t;
     holding_ = true;
     until_ = t + (p.buttons == kWait ? 2.5 : 0.12);
+    text_since_ = -1;
     if (log) *log += "step " + std::to_string(next_) + "/" + std::to_string(steps_.size()) + ": " + p.name;
     return p.buttons == kWait ? 0 : p.buttons;
 }

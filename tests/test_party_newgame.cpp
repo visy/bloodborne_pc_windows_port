@@ -386,17 +386,18 @@ void TestMenuScriptRitual() {
 // screens whose count differs from the plan shift every '+' step). Each step waits for its screen's
 // own text. ----
 struct AltarModel {
-    enum S { None, Tutorial, Menu, ChaliceList, Ritual, Confirm, Done, Cancelled } s = None;
+    enum S { Prompt, None, Tutorial, Menu, ChaliceList, Ritual, Confirm, Done, Cancelled } s = Prompt;
     bool tutorial = true, yes = false;
     double ready_at = 0, built_at = 0, held_since = -1;
     std::uint32_t last = 0;
     std::map<std::string, double> seen;  // text -> last lookup time
     const char* Text() const {
         switch (s) {
+        case None: return "First Ritual Altar";
         case Tutorial: return "Use the Ritual Altar to create a Chalice Dungeon with a chalice ritual";
         case Menu: return "Chalice Ritual|Chalice Dungeon Search|Search for Chalice Glyph";
-        case ChaliceList: return "Chalice Ritual|Select chalice to use in ritual.";
-        case Ritual: return "Chalice Ritual|Basic materials|Conduct Chalice Ritual to create Chalice Dungeon.";
+        case ChaliceList: return "Chalice Ritual|Select chalice to use in ritual.|Shared Fixed Dungeon";
+        case Ritual: return "";
         case Confirm: return "Conduct a ritual to create a Chalice Dungeon?|Basic materials";
         default: return "";
         }
@@ -407,7 +408,8 @@ struct AltarModel {
         built_at = t + build - 0.1;
     }
     void Tick(double t, std::uint32_t held) {
-        if (t >= built_at) {
+        if (t >= built_at && built_at >= 0) {
+            built_at = -1; // a screen looks its texts up once, when it builds (seen live)
             std::string all = Text(), part;
             for (std::size_t a = 0; a <= all.size();) {
                 std::size_t e = all.find('|', a);
@@ -430,6 +432,7 @@ struct AltarModel {
         if (!down || t < ready_at) return;
         switch (s) {
         case None: if (down & kPadCross) Go(tutorial ? Tutorial : Menu, t, 0.6); break;
+        case Prompt: break;
         case Tutorial: if (down & kPadCross) Go(Menu, t, 0.5); break;
         case Menu:
             if (down & kPadLeft) s = Cancelled;  // a stray Left: off the Ritual row
@@ -452,6 +455,7 @@ struct AltarModel {
 AltarModel::S RunAltar(const char* script, bool tutorial) {
     AltarModel m;
     m.tutorial = tutorial;
+    m.Go(AltarModel::None, 0.5, 0.8); // the examine prompt shows as the player arrives
     MenuScript ms;
     CHECK(ms.Parse(script));
     auto seen = [&](const std::string& needle) {
@@ -474,12 +478,18 @@ AltarModel::S RunAltar(const char* script, bool tutorial) {
 }
 
 void TestMenuScriptTexts() {
-    const char* script = "cross/?cross@Use the Ritual Altar/cross@Chalice Dungeon Search/cross@Select chalice/"
-                         "cross@Basic materials/left@Conduct a ritual to create a Chalice Dungeon?/cross";
+    // The live order: the examine prompt, the optional tutorial, the altar menu, the chalice list, the
+    // ritual screen (no texts of its own: they were looked up with the list), the confirm dialog.
+    const char* script = "cross@First Ritual Altar/?cross@Use the Ritual Altar/cross@Chalice Dungeon Search/"
+                         "cross@Select chalice/wait/cross/left@Conduct a ritual to create a Chalice Dungeon?/cross";
     CHECK(RunAltar(script, true) == AltarModel::Done);   // with the first-time tutorial message
     CHECK(RunAltar(script, false) == AltarModel::Done);  // without it (skipped after 3 s)
     // The previous '+' script miscounts screens when the tutorial shows up.
     CHECK(RunAltar("cross/+cross/+cross/+cross/+left/cross", true) != AltarModel::Done);
+    // The previous text script (an examine before its prompt, texts expected to be looked up every frame).
+    CHECK(RunAltar("cross/?cross@Use the Ritual Altar/cross@Chalice Dungeon Search/cross@Select chalice/"
+                   "cross@Basic materials/left@Conduct a ritual to create a Chalice Dungeon?/cross",
+                   true) != AltarModel::Done);
     MenuScript ms;
     CHECK(ms.Parse("?cross@Use the/left@a b?") && ms.size() == 2);
     std::string bad;
