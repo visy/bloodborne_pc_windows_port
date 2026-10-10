@@ -131,6 +131,9 @@ static uint64_t bytes_read;
 static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
 
 static int save_path(const char *p) { return p && !strncmp(p,"/savedata",9); }
+/* Save activity for the backups (save_policy.h): bumped by every change under /savedataN. */
+static uint64_t save_generation;
+static void save_changed(void) { __atomic_add_fetch(&save_generation,1,__ATOMIC_SEQ_CST); }
 static int temp_name(const char *name) {
     size_t n=strlen(name);
     return n>6 && !strcmp(name+n-6,".bbtmp");
@@ -181,6 +184,14 @@ void runtime_file_unmount(const char *guest) {
     pthread_mutex_unlock(&lock);
 }
 static char user_root[512]="user";
+void runtime_file_save_activity(uint64_t *generation,int *open_writes) {
+    int n=0;
+    pthread_mutex_lock(&lock);
+    for (int i=3;i<MAX_FILES;++i) if (files[i].used && files[i].commit) ++n;
+    pthread_mutex_unlock(&lock);
+    *generation=__atomic_load_n(&save_generation,__ATOMIC_SEQ_CST);
+    *open_writes=n;
+}
 const char *runtime_file_user_dir(void) { return user_root; }
 void runtime_file_configure(const char *app0,const char *user) {
     char path[600];
@@ -461,6 +472,7 @@ static int64_t do_open(const char *guest,int flags,int mode) {
     if (host < 0) {
         if (save_path(guest) && (flags&3)) {
             host=open_for_commit(path,current,flags,mode,&commit,&temp);
+            save_changed();
             if (host<0) { errno=-host; host=-1; }
         } else {
             host=open_host(current,host_flags(flags),mode ? mode : 0644,save_path(guest));
@@ -527,7 +539,7 @@ static int64_t do_close(int fd) {
     pthread_mutex_unlock(&lock);
     free_listing(closed.dir);
     int result=0;
-    if (closed.temp) result=commit_file(&closed);
+    if (closed.temp) { result=commit_file(&closed); save_changed(); }
     else close(closed.host);
     if (save_trace() && save_path(closed.path))
         printf("Save trace: close(fd %d, %s)%s -> %d\n",fd,closed.path,closed.temp ? closed.dirty ? " commit" : " unwritten" : "",result);
@@ -745,6 +757,7 @@ static int64_t path_op(const char *guest,int op,int mode) {
     int e=translate(guest,path,sizeof(path));
     if (e) return -e;
     int r= op==0 ? mkdir(path,mode ? mode : 0755) : op==1 ? rmdir(path) : unlink(path);
+    if (save_path(guest)) save_changed();
     r=r ? -errno : 0;
     if (save_trace() && save_path(guest)) printf("Save trace: %s(%s) -> %d\n",op==0 ? "mkdir" : op==1 ? "rmdir" : "unlink",guest,r);
     return r;
@@ -756,6 +769,7 @@ static int64_t do_rename(const char *from,const char *to) {
     if (!e) e=translate(to,b,sizeof(b));
     if (e) return -e;
     int r=rename(a,b) ? -errno : 0;
+    if (save_path(from) || save_path(to)) save_changed();
     if (save_trace() && (save_path(from) || save_path(to))) printf("Save trace: rename(%s, %s) -> %d\n",from,to,r);
     return r;
 }
@@ -773,7 +787,7 @@ static int64_t do_truncate(const char *guest,int64_t length) {
     char path[1024];
     int e=translate(guest,path,sizeof(path));
     if (e) return -e;
-    if (save_path(guest)) current_copy(path,sizeof(path),1);
+    if (save_path(guest)) { current_copy(path,sizeof(path),1); save_changed(); }
     if (save_trace() && save_path(guest)) printf("Save trace: truncate(%s, %lld)\n",guest,(long long)length);
 #ifdef _WIN32
     int h = open(path, O_RDWR | O_BINARY);
