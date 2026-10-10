@@ -132,11 +132,96 @@ A crashed player (guest or host) must end up back in the party without doing any
 2. On a party restart the director confirms the title screen "Continue" itself and loads the
    save (BB_PARTY_AUTOCONTINUE, on by default in party mode).
 3. PartyLink keeps a dropped member's slot 60 s and resumes it by token or name; missed events
-   are replayed (done in A4).
+   are replayed (done in A4) when the link resumes by token (the same game process). A crashed
+   and restarted game rejoins by name into its old slot with a fresh event stream.
 4. When the guest's world is up the director rings the bell; the host's director sees a waiting
    member and summons them. The host's game treats the vanished phantom as a disconnect.
-5. Host crash: guests return to their own worlds, keep reconnecting (backoff), and are summoned
-   again once the host is back.
+5. Host crash: guests return to their own worlds, keep reconnecting (backoff 1, 2, 4, 8 s, then
+   every 8 s +-20 %), and are summoned again once the host is back. The restarted host keeps
+   its party code (secret in `<user>/party_secret.bin`, reused after an unclean exit), so the
+   guests' reconnects are accepted.
 6. Progress made meanwhile is caught up by the progress sync (C2) on return.
 Test: kill a guest instance mid-session in the local harness; verdict = back in the host's world
 within ~60 s with no input.
+
+## Transport robustness (party-soak)
+
+`cmake --build out/gpu --target party-soak && out/gpu/party-soak.exe [scenario...]` runs a host
+and three guests in one process over loopback, no game: the real PartyLink (each guest through
+a TCP proxy applying the profile: latency, jitter, a lost segment costing one more round trip,
+outages), the host service's event queues pumped into PartyLink as party_runtime.cpp does and
+delivered through RemoteGuest, game UDP with the party port's framing and relay
+(`shim/net/party_udp.h`, shared with net_socket.cpp) through `netsim::Queue`, each guest sending
+every player a 30 Hz stream directly and the other guests a second one through the host relay
+(BB_PARTY_FORCE_RELAY routing), and a stand-in main thread calling what the director calls every
+frame. One `VERDICT <scenario>: PASS|FAIL` line per scenario; details in `party_soak.log`.
+
+Profiles (BB_NET_SIM presets): lan = lat 1 jitter 0.5; dsl = lat 80 jitter 20 loss 2 dup 0.5
+reorder 1; bad = lat 200 jitter 80 loss 8; bursts `outage=<ms>,every=<ms>`.
+
+Results (2026-10-10, one loaded PC; one-way latency, so a relayed datagram crosses two links):
+
+| scenario | events host->guest p50 / p99 | RPC rtt p50 / p99 | UDP direct p50 / p99, delivered | UDP relay p50 / p99, delivered | reconnect |
+|---|---|---|---|---|---|
+| lan | 2.4 / 14 ms | 4.5 / 15 ms | 1.4 / 20 ms, 100 % | 3.1 / 23 ms, 100 % | - |
+| dsl | 86 / 280 ms | 175 / 490 ms | 84 / 157 ms, 97.9 % | 181 / 259 ms, 96.3 % | - |
+| bad | 347 / 756 ms | 752 / 1357 ms | 220 / 282 ms, 92.0 % | 474 / 554 ms, 86.1 % | - |
+| outage 5 s (dsl) | no event lost; link not dropped (lost_timeout 10 s) | | back 0.1 s after | back 0.2 s after | none needed |
+| outage 30 s (dsl) | no event lost; replayed on resume | | back 0.1 s after | back 0.2 s after | 0.6-4.5 s after the network is back (was 11 s with 16 s backoff steps) |
+| connection reset (dsl) | replayed, resumed by token | | | | 1.1-1.5 s |
+| guest crash, restart 20 s later | same slot by name | | | | 0.4 s after its restart |
+| host crash, back 10 s later | new host's events all delivered | | | relay ports kept | 0.4-2.2 s after the host is up |
+
+Relay overhead: one more link (the host's) per datagram, i.e. about one extra one-way delay and
+that link's loss (dsl: +95 ms, 96.3 % vs 97.9 % delivered); 12 bytes more to the host
+([fb]['R'][token][port]) and 4 more to the receiver ([fb]['r'][port]) per datagram (about 17 % /
+6 % of a 70-byte game datagram); the host forwards each one once (send + receive).
+
+Bugs the soak found and fixed:
+- After a host restart every event of the new host was dropped by RemoteGuest as a resend (its
+  EventIds start at 1 again): `RemoteGuest::reset_event_cursor` on a non-resumed WELCOME
+  (`PartyLink::session_resumed`), which also re-sends context_start and the relay HELLO
+  (`np_session::host_session_reset`).
+- A restarted host had a new random party secret: every guest was rejected (wrong code) and
+  stopped retrying. The secret is kept across a crash restart.
+- The relay forgot every client on a host restart and handed out new ports: relayed traffic
+  stopped until the next keepalive and the other members' addresses went stale. Relay ports are
+  derived from the token, and a frame or HELLO with an unknown token re-registers it.
+- Every datagram to a port on the host's address was relay-framed, also a player's own port
+  when it shares the host's address (one machine, or one NAT): only relay ports the guest routes
+  to are framed now.
+- Nothing ever chose the relay: BB_PARTY_FORCE_RELAY=1 routes guests to other guests through it.
+- A resumed member's backlog (600 events after 30 s) was replayed with one send() per frame
+  while holding the link lock: 37 ms stalls of the main thread's `state()`. Frames are batched;
+  the per-frame getters read a snapshot and never wait for the IO thread.
+- The reconnect backoff reached 16-30 s steps (11 s idle after a 30 s outage ended); now
+  1, 2, 4, 8 s with +-20 % jitter.
+- MinGW condition-variable waits and sleeps round to the 15.6 ms tick (timeBeginPeriod does not
+  help): BB_NET_SIM added ~15 ms to every simulated delay. `netsim::Waiter` (event +
+  high-resolution waitable timer).
+
+## Threads and waits: nothing blocks the game's main thread
+
+The director (main thread, SprjFlipper tick) uses only PartyLink calls that never wait for the
+network: `state()`, `roster()`, `local_slot()` read a snapshot (a mutex held for a copy);
+`set_local_state()` returns at once unless the state changed; `send_event()`,
+`send_party_cmd()`, `send_progress()`, `kick()` take the link lock and queue frames on
+non-blocking sockets. The IO thread holds that lock for at most ~1.6 ms of its own CPU in the
+soak (a 30 s backlog replay); name resolution, socket() and connect() run outside it.
+party-soak measures every main-thread call (p99 0.04-0.11 ms, max under 10 ms on a loaded
+machine) and the IO thread's lock holds.
+
+Every other wait, by thread:
+
+| wait | where | bound |
+|---|---|---|
+| PartyLink::rpc_call | session thread / http worker (RemoteGuest) | its timeout (3-4 s; http 15 s); fails at once while disconnected |
+| sceNpSignalingActivateConnection resolve | session thread (was the game's caller: an RPC of up to 4 s) | 4 s |
+| Matching2 calls, heartbeat, context_start, keepalive STUN | session thread (`dispatch_after`) | 4 s per RPC, STUN 3 x 1 s |
+| sceHttp blocking request | the game's own network thread, by its choice of a blocking request | 15 s RPC, 35 s wait |
+| sceHttpWaitRequest, P2P recv without SO_RCVTIMEO, sceNetEpollWait | the game's own threads, as the game asked (abortable) | the game's timeout |
+| sceNetResolverStartNtoa | the game's thread, as asked | the OS resolver |
+| sceNetSocketClose of the last P2P socket | game thread; the party port stays pinned in party mode | reader join <= 200 ms otherwise |
+| host startup (Argon2, UPnP 3 s, STUN 3 x 2 s) | the runtime's startup thread | as listed |
+| shutdown | exit path | 2.5 s overall |
+| netsim sender, PartyHostService pumps, link IO/callback threads | their own threads | - |
