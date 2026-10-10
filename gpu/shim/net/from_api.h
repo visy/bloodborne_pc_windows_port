@@ -64,6 +64,8 @@ public:
         int region = 0;
         int summon_type = 0;
         std::string data_b64;
+        long long chara_id = 0;
+        long long version = 3;  // SummonDataVersion as sent
         json::Value request;  // the create body as sent
     };
     std::vector<Sign> signs() const;

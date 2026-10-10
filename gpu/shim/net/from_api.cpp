@@ -243,9 +243,10 @@ std::string FromApi::dispatch(const Caller& caller, const std::string& path, con
 #else
     gmtime_r(&now, &tm);
 #endif
-    std::strftime(text, sizeof(text), "%Y-%m-%d %H:%M:%S", &tm);
+    std::strftime(text, sizeof(text), "%Y-%m-%dT%H:%M:%S", &tm);  // the game's CheckTime format
     vars["NowText"] = jstr(text);
-    vars["CharaId"] = jnum(int_of(body, "CharaId", 1));
+    // sync_chara_id publishes the CharaId every later request carries; one per member.
+    vars["CharaId"] = jnum(int_of(body, "CharaId", static_cast<long long>(uid)));
     if (ends_with(path, "/summon_messenger/create")) vars["SummonDataId"] = sign_create(caller, body);
     else if (ends_with(path, "/summon_messenger/get")) vars["SummonDataList"] = sign_get(caller, body);
     else if (ends_with(path, "/summon_messenger/delete")) sign_delete(caller, body);
@@ -261,6 +262,9 @@ std::string FromApi::sign_create(const Caller& caller, const json::Value& body) 
     s.region = static_cast<int>(int_of(body, "AreaRegionId", 0));
     s.summon_type = static_cast<int>(int_of(body, "SummonType", 0));
     s.data_b64 = str_of(body, "SummonData");
+    s.chara_id = int_of(body, "CharaId", static_cast<long long>(s.user_id));
+    s.version = int_of(body, "SummonDataVersion", 3);
+    if (s.version < 0) s.version = 3;
     s.request = body;
     std::lock_guard<std::mutex> lk(mu_);
     // One sign per member and type: a new one replaces the old.
@@ -298,6 +302,8 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
         v["AreaRegionId"] = jnum(s.region);
         v["SummonData"] = jstr(s.data_b64);
         v["OnlineId"] = jstr(s.online_id);
+        v["CharaId"] = jnum(s.chara_id);
+        v["SummonDataVersion"] = jnum(s.version);
         if (n++) list += ",";
         list += render(formats::kSignTemplate, v);
     }
