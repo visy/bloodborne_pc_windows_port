@@ -305,6 +305,82 @@ void TestSkipLists() {
     }
 }
 
+// ---- MenuScript (BB_PARTY_DIRECTOR_TEST seq=) against a model of the Ritual Altar menus ----
+// Seen live: Altar -> Chalice Ritual -> chalice list -> ritual screen -> "Conduct a ritual to create a
+// Chalice Dungeon?" YES / NO with NO focused; the dialog showed up to ~3 s after the Cross, so a timed
+// Left went to the ritual screen and was lost, and a 0.25 s Left moved the 2-item dialog twice.
+struct RitualModel {
+    enum S { Menu, ChaliceList, Ritual, Confirm, Done, Cancelled } s = Menu;
+    bool yes = false;
+    double ready_at = 0;     // the current screen takes input from here (its texts built)
+    double held_since = -1;  // a held direction auto-repeats after 0.2 s
+    std::uint32_t last = 0;
+    std::uint64_t seq = 0;
+    double texts_at = -1, last_texts = -10;
+    void Go(S n, double t, double build) {
+        s = n;
+        ready_at = t + build;
+        texts_at = t + build - 0.1;
+    }
+    void Tick(double t, std::uint32_t held) {
+        if (texts_at >= 0 && t >= texts_at) {
+            ++seq;
+            last_texts = texts_at;
+            texts_at = -1;
+        }
+        const std::uint32_t down = held & ~last;
+        last = held;
+        if (held & kPadLeft) {
+            if (held_since < 0) held_since = t;
+            if (t - held_since >= 0.2 && s == Confirm && t >= ready_at) {
+                yes = !yes;  // auto-repeat
+                held_since = t;
+            }
+        } else {
+            held_since = -1;
+        }
+        if (!down || t < ready_at) return;  // a press while the screen builds is lost
+        switch (s) {
+        case Menu: if (down & kPadCross) Go(ChaliceList, t, 0.5); break;
+        case ChaliceList: if (down & kPadCross) Go(Ritual, t, 1.0); break;
+        case Ritual: if (down & kPadCross) { Go(Confirm, t, 3.0); yes = false; } break;
+        case Confirm:
+            if (down & kPadLeft) yes = !yes;
+            if (down & kPadCross) s = yes ? Done : Cancelled;
+            break;
+        default: break;
+        }
+    }
+};
+
+RitualModel::S RunRitual(const char* script) {
+    RitualModel m;
+    MenuScript ms;
+    CHECK(ms.Parse(script));
+    for (double t = 0; t < 60; t += 1.0 / 30) {
+        std::string log;
+        const std::uint32_t held = ms.Step(t, m.seq, m.seq ? t - m.last_texts : 1e9, &log);
+        if (std::getenv("NEWGAME_TEST_VERBOSE") && !log.empty()) std::printf("  %6.2f s %s\n", t, log.c_str());
+        m.Tick(t, held);
+        if (m.s == RitualModel::Done || m.s == RitualModel::Cancelled || ms.finished()) {
+            for (int k = 0; k < 120; ++k) m.Tick(t += 1.0 / 30, 0);
+            break;
+        }
+    }
+    return m.s;
+}
+
+void TestMenuScriptRitual() {
+    // Waits for each new screen; the Left reaches the dialog and moves once; Cross takes YES.
+    CHECK(RunRitual("cross/+cross/+cross/+left/cross") == RitualModel::Done);
+    // What the live run did: fixed steps (here: no waits) - the Left is lost while the dialog builds.
+    CHECK(RunRitual("cross/cross/cross/left/cross") != RitualModel::Done);
+    MenuScript ms;
+    std::string bad;
+    CHECK(!ms.Parse("cross/jump", &bad) && bad == "jump");
+    CHECK(ms.Parse("+cross/wait/+left/cross") && ms.size() == 4);
+}
+
 } // namespace
 
 int main() {
@@ -314,6 +390,7 @@ int main() {
     TestSaveWithCharacter();
     TestSaveWithCharacterFade();
     TestSaveWithCharacterSlowLoad();
+    TestMenuScriptRitual();
     TestControlsCrossIgnoredOnce();
     TestMissedPresses();
     TestWarpParse();

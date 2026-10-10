@@ -23,6 +23,7 @@
 #include "party_travel.h"
 #include "seamless_rules.h"
 #include "test_newgame.h"
+#include "../bbport_game_menu.h"
 #include "party_online.h"
 #include "party_perf.h"
 #include "party_watchdog.h"
@@ -32,6 +33,7 @@
 #include "../../party_env.h"
 
 #include <algorithm>
+#include <cmath>
 #include <atomic>
 #include <cctype>
 #include <cstdarg>
@@ -110,6 +112,24 @@ struct Test {
     bool log_state = false;
     int insight = -1;
     int echoes = -1; // echoes=N: writes the player's Blood Echoes once (test saves)
+    // approach=X:Z:R[:BUTTON]: walk (pad file sticks, camera-relative, closed loop on the position)
+    // until within R m of (X, Z), facing it; then BUTTON (cross / triangle / square / circle) once.
+    bool approach = false, approach_done = false;
+    float ap_x = 0, ap_z = 0, ap_r = 1.0f;
+    std::uint32_t ap_button = 0;
+    int ap_steps = 0, ap_phase = 0; // 0 idle, 1 moving, 2 settling, 3 arrived, 4 pressing
+    double ap_angle = 0;
+    float ap_from[2] = {0, 0};
+    Clock::time_point ap_at{};
+    // stand=X:Y:Z:YAW[:BUTTON]: puts the player there in place (PlayerIns vfunc +0x5F8, no map
+    // reload; yaw t faces (-sin t, -cos t), agent/guestsvc's Doll fixture), then BUTTON once 1.5 s on.
+    bool stand = false, stand_done = false;
+    float st_pos[3] = {0, 0, 0}, st_yaw = 0;
+    std::uint32_t st_button = 0;
+    int st_phase = 0;
+    MenuScript st_seq; // seq=...: after stand (and its button), the menu walk (test_newgame.h)
+    bool st_seq_on = false;
+    Clock::time_point st_at{};
     bool log_pos = false; // log_pos: the player's area and position (FrpgNetMan +0xa7c / +0xaac) every 3 s
     Clock::time_point pos_at{};
     const char* ring = nullptr; // the event to raise once
@@ -762,6 +782,26 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
 /// The title takes scripted input (BB_TEST_NEWGAME): no world; in party mode the link is up and
 /// the FROM sign-in (ss.info -> login -> notice) is over: the title menu shows after it (before,
 /// "Creating save data" / "Checking network status" swallow presses).
+/// The player's area and position (FrpgNetMan +0xa7c / +0xaac); false when not readable.
+bool ReadPlayerPos(std::uint32_t* area, float pos[3]) {
+    std::uint64_t man = 0;
+    const std::uint64_t at = Guest(0x553b120);
+    return at && SafeGet(at, &man) && man && SafeGet(man + 0xa7c, area) && SafeRead(man + 0xaac, pos, 3 * sizeof(float));
+}
+
+/// Test fixtures: the left stick through the BB_PAD_FILE pad script (src/runtime_pad.c re-reads
+/// it when it changes); "" releases it.
+void WritePadFile(const char* tokens) {
+    const char* path = std::getenv("BB_PAD_FILE");
+    if (!path || !path[0]) {
+        return;
+    }
+    if (FILE* f = std::fopen(path, "w")) {
+        std::fputs(tokens, f);
+        std::fclose(f);
+    }
+}
+
 bool TitleReadyForInput(PartyRole role, party::PartyLink* link) {
     if (role == PartyRole::None) {
         return true;
@@ -899,6 +939,113 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             const int before = GoodsCount(std::uint32_t(id));
             const bool ok = before >= 0 && before < n ? GiveGoods(std::uint32_t(id), n - before) : before >= n;
             Log("test: goods %d x%d -> x%d (%s)", id, before, GoodsCount(std::uint32_t(id)), ok ? "ok" : "failed");
+        }
+    }
+    if (t.stand && !t.stand_done && s.world_up && !s.loading && s.player && Seconds(st.world_at, now) >= 10.0 &&
+        Seconds(t.st_at, now) >= 0.0) {
+        if (t.st_phase == 0) {
+            alignas(16) float pos[4] = {t.st_pos[0], t.st_pos[1], t.st_pos[2], 1.0f};
+            alignas(16) float rot[4] = {0, t.st_yaw, 0, 0};
+            std::uint64_t vtbl = 0, fn = 0;
+            if (SafeGet(s.player, &vtbl) && SafeGet(vtbl + 0x5f8, &fn) && fn) {
+                using WarpFn = void(BB_COOP_SYSV*)(std::uint64_t, const float*, const float*, std::uint64_t);
+                reinterpret_cast<WarpFn>(fn)(s.player, pos, rot, 0);
+                float at[3] = {};
+                SafeRead(s.player + 0xc0, at, sizeof at);
+                Log("test: stand at (%.2f, %.2f, %.2f) yaw %.3f, in place (now at %.2f, %.2f, %.2f)", pos[0], pos[1],
+                    pos[2], rot[1], at[0], at[1], at[2]);
+            } else {
+                Log("test: stand: no PlayerIns warp");
+            }
+            t.st_phase = 1;
+            t.st_at = now + std::chrono::milliseconds(1500);
+        } else if (t.st_phase == 1) {
+            float at[3] = {}, r[4] = {};
+            SafeRead(s.player + 0xc0, at, sizeof at);
+            SafeRead(s.player + 0xd0, r, sizeof r);
+            if (t.st_button) {
+                runtime_pad_director_press(t.st_button);
+            }
+            Log("test: stand: at (%.2f, %.2f, %.2f) yaw %.3f; pressed 0x%x", at[0], at[1], at[2], r[1], t.st_button);
+            t.st_phase = 2;
+            t.st_at = now + std::chrono::milliseconds(250);
+        } else if (t.st_phase == 2) {
+            runtime_pad_director_press(0);
+            t.st_phase = 3;
+            t.st_at = now + std::chrono::milliseconds(600);
+        } else if (t.st_phase == 3) {
+            // The menu walk, event driven (MenuScript: '+' waits for the next screen's texts).
+            std::uint64_t seq = 0;
+            std::int64_t last_ms = 0;
+            BbGameMenu::TextActivity(&seq, &last_ms);
+            const std::int64_t now_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
+            std::string line;
+            const double secs = std::chrono::duration<double>(now.time_since_epoch()).count();
+            runtime_pad_director_press(t.st_seq.Step(secs, seq, seq ? double(now_ms - last_ms) / 1000.0 : 1e9, &line));
+            if (!line.empty()) {
+                Log("test: seq %s (texts seq %llu)", line.c_str(), static_cast<unsigned long long>(seq));
+            }
+            if (t.st_seq.finished()) {
+                runtime_pad_director_press(0);
+                t.stand_done = true;
+                Log("test: seq done");
+            }
+        }
+    }
+    if (t.approach && !t.approach_done && s.world_up && !s.loading && Seconds(st.world_at, now) >= 12.0 &&
+        (!t.place || t.place_done) && Seconds(t.ap_at, now) >= 0.0) {
+        std::uint32_t area = 0;
+        float pos[3] = {0, 0, 0};
+        if (ReadPlayerPos(&area, pos)) {
+            const double dx = t.ap_x - pos[0], dz = t.ap_z - pos[2];
+            const double dist = std::sqrt(dx * dx + dz * dz);
+            const double want = std::atan2(dx, dz);
+            auto wrap = [](double a) { while (a > M_PI) a -= 2 * M_PI; while (a < -M_PI) a += 2 * M_PI; return a; };
+            if (t.ap_phase == 1) { // a step ends: release, let it settle
+                WritePadFile("");
+                t.ap_phase = 2;
+                t.ap_at = now + std::chrono::milliseconds(300);
+            } else if (t.ap_phase == 0 || t.ap_phase == 2) {
+                if (t.ap_phase == 2) {
+                    const double mx = pos[0] - t.ap_from[0], mz = pos[2] - t.ap_from[1];
+                    if (std::sqrt(mx * mx + mz * mz) > 0.05) {
+                        // Camera-relative stick: correct the stick angle by how far the walk missed.
+                        t.ap_angle = wrap(t.ap_angle + wrap(want - std::atan2(mx, mz)));
+                    }
+                }
+                Log("test: approach: (%.2f, %.2f) -> (%.2f, %.2f): %.2f m, stick %.0f deg (step %d)", pos[0], pos[2],
+                    t.ap_x, t.ap_z, dist, t.ap_angle * 180 / M_PI, t.ap_steps);
+                if (dist <= t.ap_r || t.ap_steps >= 40) {
+                    t.ap_phase = 3;
+                    t.ap_at = now + std::chrono::milliseconds(1200);
+                    Log("test: approach: %s at %.2f m", dist <= t.ap_r ? "arrived" : "GAVE UP", dist);
+                } else {
+                    ++t.ap_steps;
+                    t.ap_from[0] = pos[0];
+                    t.ap_from[1] = pos[2];
+                    const int lx = 128 + static_cast<int>(std::lround(127 * std::sin(t.ap_angle)));
+                    const int ly = 128 - static_cast<int>(std::lround(127 * std::cos(t.ap_angle)));
+                    char tok[48];
+                    std::snprintf(tok, sizeof tok, "lx=%d ly=%d", std::clamp(lx, 0, 255), std::clamp(ly, 0, 255));
+                    WritePadFile(tok);
+                    t.ap_phase = 1;
+                    const double secs = std::clamp(dist / 3.0, 0.12, 0.45);
+                    t.ap_at = now + std::chrono::milliseconds(static_cast<int>(secs * 1000));
+                }
+            } else if (t.ap_phase == 3) { // arrived: the button
+                if (t.ap_button) {
+                    runtime_pad_director_press(t.ap_button);
+                    Log("test: approach: pressed 0x%x (map 0x%08x)", t.ap_button, area);
+                    t.ap_phase = 4;
+                    t.ap_at = now + std::chrono::milliseconds(250);
+                } else {
+                    t.approach_done = true;
+                }
+            } else if (t.ap_phase == 4) {
+                runtime_pad_director_press(0);
+                t.approach_done = true;
+            }
         }
     }
     if (t.place && !t.place_done && Seconds(st.world_at, now) >= t.place_at && s.world_up && !s.loading) {
@@ -1077,6 +1224,39 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.ring = kHostBell;
             } else if (item == "ring_guest") {
                 st.test.ring = kGuestBell;
+            } else if (item.rfind("stand=", 0) == 0) {
+                float x = 0, y = 0, z = 0, yaw = 0;
+                char button[16] = {0};
+                const int n = std::sscanf(item.c_str() + 6, "%f:%f:%f:%f:%15s", &x, &y, &z, &yaw, button);
+                if (n >= 4) {
+                    st.test.stand = true;
+                    st.test.st_pos[0] = x;
+                    st.test.st_pos[1] = y;
+                    st.test.st_pos[2] = z;
+                    st.test.st_yaw = yaw;
+                    const std::string b = button;
+                    st.test.st_button = b == "cross" ? 0x4000u : b == "triangle" ? 0x1000u : b == "square" ? 0x8000u
+                                      : b == "circle" ? 0x2000u : 0u;
+                }
+            } else if (item.rfind("seq=", 0) == 0) {
+                std::string bad;
+                if (!st.test.st_seq.Parse(item.substr(4), &bad)) {
+                    Log("BB_PARTY_DIRECTOR_TEST: seq token '%s' unknown; seq ignored", bad.c_str());
+                    st.test.st_seq = MenuScript{};
+                }
+            } else if (item.rfind("approach=", 0) == 0) {
+                float x = 0, z = 0, r = 1.0f;
+                char button[16] = {0};
+                const int n = std::sscanf(item.c_str() + 9, "%f:%f:%f:%15s", &x, &z, &r, button);
+                if (n >= 2) {
+                    st.test.approach = true;
+                    st.test.ap_x = x;
+                    st.test.ap_z = z;
+                    st.test.ap_r = n >= 3 ? r : 1.0f;
+                    const std::string b = button;
+                    st.test.ap_button = b == "cross" ? 0x4000u : b == "triangle" ? 0x1000u : b == "square" ? 0x8000u
+                                      : b == "circle" ? 0x2000u : 0u;
+                }
             } else if (item == "log_pos") {
                 st.test.log_pos = true;
             } else if (item.rfind("echoes=", 0) == 0) {

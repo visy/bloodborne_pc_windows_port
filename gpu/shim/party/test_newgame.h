@@ -102,6 +102,35 @@ private:
     bool holding_ = false;
 };
 
+/// A scripted menu walk for test fixtures (BB_PARTY_DIRECTOR_TEST stand=...,seq=...): one token
+/// per press, '/'-separated: cross, circle, square, triangle, up, down, left, right, wait (a 2.5 s
+/// pause). A '+' prefix waits for a NEW screen or dialog first (TextActivity: texts the game had not
+/// looked up since the previous press, then quiet for 0.3 s; 8 s at most, then pressed anyway and
+/// logged). Each press is held 0.12 s (menus auto-repeat a held direction: 0.25 s moved a 2-item
+/// dialog twice) and the next one goes no sooner than 0.6 s after the release.
+class MenuScript {
+public:
+    static constexpr std::uint32_t kWait = 0xffffffffu;
+    /// False (and *bad = the token) on an unknown token.
+    bool Parse(const std::string& text, std::string* bad = nullptr);
+    bool finished() const { return next_ >= steps_.size() && !holding_; }
+    std::size_t size() const { return steps_.size(); }
+    /// Once a tick; the buttons to hold now. `log` gets a line when a press starts.
+    std::uint32_t Step(double t, std::uint64_t screen_seq, double screen_quiet, std::string* log);
+
+private:
+    struct Press {
+        std::uint32_t buttons;
+        bool new_screen;
+        std::string name;
+    };
+    std::vector<Press> steps_;
+    std::size_t next_ = 0;
+    bool holding_ = false;
+    double until_ = 0, wait_from_ = -1;
+    std::uint64_t mark_ = 0;
+};
+
 /// BB_TEST_PROLOGUE_WARP: empty -> 2412951 (Central Yharnam lamp); "0"/"off"/"none" -> 0 (no
 /// warp); "sickroom" -> 2412950; "dream" -> 2102950; a number -> that ReturnPoint id.
 std::uint32_t ParsePrologueWarp(const char* text);
