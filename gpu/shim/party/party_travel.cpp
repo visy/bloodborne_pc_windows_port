@@ -367,6 +367,35 @@ void GuestTravel::MarkReplayed(double now) {
     load_seen_ = false;
 }
 
+const char* GuestRedirectName(GuestRedirect r) {
+    switch (r) {
+    case GuestRedirect::None: return "none (home)";
+    case GuestRedirect::TravelDestination: return "the party's travel destination";
+    case GuestRedirect::HostLamp: return "the host's last lamp";
+    }
+    return "?";
+}
+
+GuestRedirect ChooseGuestRedirect(TravelKind kind, bool have_travel_destination, std::uint32_t host_lamp_id) {
+    if (kind != TravelKind::GuestDied && kind != TravelKind::HuntersMark) {
+        return GuestRedirect::None;
+    }
+    // A host warp in flight wins: the host will not be at its old lamp.
+    if (have_travel_destination) {
+        return GuestRedirect::TravelDestination;
+    }
+    // 0 is no lamp row either (WarpParam / bonfire ids are 7-digit map-based ids).
+    if (host_lamp_id != kTravelNone && host_lamp_id != 0) {
+        return GuestRedirect::HostLamp;
+    }
+    return GuestRedirect::None;
+}
+
+std::uint32_t HostLampFromTravel(const TravelIntent& t) {
+    const std::uint32_t id = Low(t.last_lamp);
+    return id == 0 ? kTravelNone : id;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Game part
 // ---------------------------------------------------------------------------------------------
@@ -391,6 +420,8 @@ constexpr u64 kLampWarp = 0x13cdf30;      // void (u32 id)
 constexpr u64 kOnReviveMagic = 0x1389d20; // Lua state: Hunter's Mark (session left at 0x1389DDD)
 constexpr u64 kBlockClear3 = 0x1385930;   // Lua state BlockClear2_3: tail jump 0x13859DF -> funnel
 constexpr u64 kBlockClear3Jump = 0x13859df;
+constexpr u64 kGuestDiedCall = 0x1382663; // PartyGhostDeath_2: `call 0x13CDE30` (e8 c8 b7 04 00)
+constexpr u64 kMarkTailJump = 0x1389f20;  // OnReviveMagic_1: `jmp 0x13CDE30` (e9 0b 3f 04 00)
 constexpr u64 kWarpNextStage = 0x132e010; // (ctx unused, area, block, region, u8 index, warp point)
 constexpr u64 kWarpBonfire = 0x132e050;   // (ctx unused, id)
 constexpr u64 kSetForcedMap = 0x156cf10;  // (const u32*) -> +0x14F0
@@ -432,6 +463,9 @@ std::atomic<bool> g_travel_on{false};
 std::atomic<bool> g_in_replay{false};       // our own warp is running: the hooks stand aside
 std::atomic<u32> g_lamp_key{kTravelNone};   // 0x13CDF30's edi, read by the funnel it calls
 std::atomic<int> g_block_clear3{0};         // inside BlockClear2_3 (its funnel call is a tail jump)
+std::atomic<u32> g_death_lamp{kTravelNone}; // guest: the host's last lamp (SetGuestDeathRedirect)
+std::atomic<GuestRedirectFn> g_redirect_cb{nullptr};
+std::atomic<bool> g_death_redirect_on{true};
 void* g_funnel_orig = nullptr;
 void* g_block_clear3_orig = nullptr;
 
@@ -607,6 +641,46 @@ bool RetargetSendHome(u64 site) {
     return true;
 }
 
+/// A guest's own death (PartyGhostDeath_2) or Hunter's Mark (OnReviveMagic_1) at `site`: the
+/// party's travel destination, else the host's last lamp, instead of home (phantom_limits.md 3.2).
+/// Both callers already set the forced-placement byte (+0x1520 = pre-summon spot) and
+/// PartyGhostDeath_2 also GameDataMan+0x70 (full recover after the next load), which stays.
+bool RedirectGuest(u64 site, TravelKind kind) {
+    if (!g_travel_on.load() || !g_death_redirect_on.load() || g_in_replay.load() || Role() != PartyRole::Guest) {
+        return false;
+    }
+    bool have_dest;
+    {
+        std::lock_guard<std::mutex> lk(g_guest_mu);
+        have_dest = g_guest.Destination().has_value();
+    }
+    const u32 lamp = g_death_lamp.load();
+    const GuestRedirect how = ChooseGuestRedirect(kind, have_dest, lamp);
+    bool done = false;
+    GuestRedirect used = how;
+    if (how == GuestRedirect::TravelDestination) {
+        done = RetargetSendHome(site);
+    }
+    if (!done && lamp != kTravelNone && lamp != 0 && how != GuestRedirect::None) {
+        used = GuestRedirect::HostLamp;
+        TravelIntent t;
+        t.kind = kind;
+        t.lamp_id = lamp;
+        Log("%s at +0x%llx: to the host's last lamp %u via %s", TravelKindName(kind), ull(site), lamp,
+            ReplayMethodName(ReplayMethod::LampWarp));
+        done = Replay(t, {ReplayMethod::LampWarp, lamp});
+    }
+    if (!done) {
+        Log("%s at +0x%llx: no host lamp known and no travel pending; going home as usual", TravelKindName(kind),
+            ull(site));
+        return false;
+    }
+    if (GuestRedirectFn cb = g_redirect_cb.load()) {
+        cb(kind, used, lamp);
+    }
+    return true;
+}
+
 // ---- Hooks ----
 
 // Replaces 0x13CDE30 (jumped to from its entry, so the return address is the game caller's).
@@ -623,6 +697,10 @@ __attribute__((noinline)) BB_COOP_SYSV u64 FunnelHook() {
             if (TravelKindBroadcast(kind) && kind != TravelKind::HuntersMark) {
                 CaptureHost(site, kind);
             }
+        } else if (ret - Guest(0) - 5 == kGuestDiedCall) {
+            if (RedirectGuest(kGuestDiedCall, TravelKind::GuestDied)) {
+                return 1;
+            }
         }
     }
     return reinterpret_cast<FunnelFn>(g_funnel_orig)();
@@ -632,6 +710,15 @@ __attribute__((noinline)) BB_COOP_SYSV u64 FunnelHook() {
 __attribute__((noinline)) BB_COOP_SYSV u64 SendHomeHook() {
     const u64 site = reinterpret_cast<u64>(__builtin_return_address(0)) - Guest(0) - 5;
     if (RetargetSendHome(site)) {
+        return 1;
+    }
+    return reinterpret_cast<FunnelFn>(Guest(kFunnel))();
+}
+
+// OnReviveMagic_1's tail jump to the funnel (a guest's Hunter's Mark; the host's is captured at
+// OnReviveMagic's entry). Entered by `jmp`, so returning returns to OnReviveMagic_1's caller.
+__attribute__((noinline)) BB_COOP_SYSV u64 MarkTailHook() {
+    if (RedirectGuest(kMarkTailJump, TravelKind::HuntersMark)) {
         return 1;
     }
     return reinterpret_cast<FunnelFn>(Guest(kFunnel))();
@@ -766,6 +853,14 @@ void InstallTravelPatches() {
         } else {
             Log("send-home BlockClear2_3: +0x%llx is not a jmp to the funnel; not installed", ull(kBlockClear3Jump));
         }
+        // Guest death: the direct call 0x1382663 reaches FunnelHook with its own return address.
+        if (!CallsTo(kGuestDiedCall, kFunnel)) {
+            Log("guest death redirect: +0x%llx is not a call to the funnel; off", ull(kGuestDiedCall));
+        } else {
+            Log("guest death redirect: PartyGhostDeath_2 call +0x%llx seen by the funnel hook", ull(kGuestDiedCall));
+        }
+        HookTailJump(kMarkTailJump, kFunnel, reinterpret_cast<const void*>(&MarkTailHook),
+                     "guest Hunter's Mark redirect (OnReviveMagic_1)");
     } else {
         Log("no funnel hook: the host cannot report travel and send-home retargets are off");
     }
@@ -781,6 +876,10 @@ bool PopHostTravel(TravelIntent* out) {
 void RequestGuestTravel(const TravelIntent& t) {
     if (!g_travel_on.load()) {
         return;
+    }
+    // Any intent with a last-lamp record also tells where the host respawns now.
+    if (const u32 lamp = HostLampFromTravel(t); lamp != kTravelNone) {
+        g_death_lamp = lamp;
     }
     bool taken;
     {
@@ -822,6 +921,29 @@ void TravelTick() {
                                                   : "travel finished (arrived, or %.0f s passed)",
             before == GuestTravel::Phase::Pending ? GuestTravel::kPendingTimeout : GuestTravel::kActiveTimeout);
     }
+}
+
+bool TravelEnabled() {
+    return g_travel_on.load();
+}
+
+void SetGuestDeathRedirect(std::uint32_t host_lamp_id) {
+    const u32 was = g_death_lamp.exchange(host_lamp_id);
+    if (was != host_lamp_id) {
+        Log("guest death redirect: host's last lamp %d (was %d)", static_cast<int>(host_lamp_id), static_cast<int>(was));
+    }
+}
+
+std::uint32_t GuestDeathRedirectLamp() {
+    return g_death_lamp.load();
+}
+
+void SetGuestRedirectCallback(GuestRedirectFn fn) {
+    g_redirect_cb = fn;
+}
+
+void SetGuestDeathRedirectEnabled(bool on) {
+    g_death_redirect_on = on;
 }
 
 #endif // BB_PARTY_TRAVEL_NO_GAME
