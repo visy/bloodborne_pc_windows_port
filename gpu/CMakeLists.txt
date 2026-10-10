@@ -384,6 +384,7 @@ endif()
 
 # Party progress sync (shim/party/party_progress, C2): keys, categories, policy, diff, JSON, BBPF
 # against a fake flag store (the game glue is compiled out). ninja -C out/gpu party-progress-test
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../tests/test_party_progress.cpp")  # not committed yet
 add_executable(party-progress-test EXCLUDE_FROM_ALL ../tests/test_party_progress.cpp
     shim/party/party_progress.cpp shim/net/json.cpp)
 target_compile_definitions(party-progress-test PRIVATE BB_PARTY_PROGRESS_NO_GAME
@@ -391,6 +392,7 @@ target_compile_definitions(party-progress-test PRIVATE BB_PARTY_PROGRESS_NO_GAME
 target_compile_options(party-progress-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-progress-test PRIVATE shim)
 set_target_properties(party-progress-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+endif()
 # Party status board (shim/party/party_status.cpp; in bbgpu through SHIM_SOURCES): the overlay's
 # Party tab <-> director snapshot and command queue. ninja -C out/gpu party-status-test
 add_executable(party-status-test EXCLUDE_FROM_ALL ../tests/test_party_status.cpp shim/party/party_status.cpp)

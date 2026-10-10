@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
 #include <cstdarg>
@@ -600,7 +601,36 @@ void write_text_file(const fs::path& path, const std::string& text) {
 void start_host(LinkConfig cfg) {
     Runtime& r = R();
     const bool lb = loopback_mode();
-    crypto::random_bytes(cfg.secret.data(), cfg.secret.size());
+    // Crash recovery: a restarted host keeps its party code's secret (<user>/party_secret.txt),
+    // so the guests' code stays valid and they reconnect on their own.
+    const fs::path secret_path = fs::path(user_dir()) / "party_secret.txt";
+    bool reused = false;
+    if (restart_info().restarted) {
+        std::string hex;
+        if (read_file(secret_path, &hex)) {
+            while (!hex.empty() && std::isspace(static_cast<unsigned char>(hex.back()))) hex.pop_back();
+            if (hex.size() == cfg.secret.size() * 2) {
+                reused = true;
+                for (std::size_t i = 0; i < cfg.secret.size() && reused; ++i) {
+                    unsigned v = 0;
+                    if (std::sscanf(hex.c_str() + 2 * i, "%2x", &v) != 1) reused = false;
+                    cfg.secret[i] = static_cast<std::uint8_t>(v);
+                }
+            }
+        }
+    }
+    if (reused) {
+        plog("restart: keeping the party code's secret (%s)", secret_path.string().c_str());
+    } else {
+        crypto::random_bytes(cfg.secret.data(), cfg.secret.size());
+        std::string hex;
+        char b[3];
+        for (std::uint8_t v : cfg.secret) {
+            std::snprintf(b, sizeof b, "%02x", v);
+            hex += b;
+        }
+        write_text_file(secret_path, hex + "\n");
+    }
     if (lb) cfg.bind_addr = "0.0.0.0";
     const std::string name = cfg.name;
     const std::uint16_t port = cfg.port;
