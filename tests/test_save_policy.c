@@ -88,13 +88,15 @@ int main(void) {
     mkdirs(user);
     printf("test folder: %s\n",user);
 
-    /* Folder choice: separate only in a party session that asks for it. */
+    /* Folder choice: every party session plays from the party saves (shared is ignored). */
     set_env("BB_PARTY",NULL); set_env("BB_PARTY_SAVE","separate"); runtime_savepolicy_reset();
     assert(!strcmp(runtime_savepolicy_dir(),"savedata"));
     set_env("BB_PARTY","host"); set_env("BB_PARTY_SAVE","shared"); runtime_savepolicy_reset();
-    assert(!strcmp(runtime_savepolicy_dir(),"savedata"));
+    assert(!strcmp(runtime_savepolicy_dir(),"savedata_party"));
     set_env("BB_PARTY_SAVE",NULL); runtime_savepolicy_reset();
-    assert(!strcmp(runtime_savepolicy_dir(),"savedata"));
+    assert(!strcmp(runtime_savepolicy_dir(),"savedata_party"));
+    set_env("BB_PARTY","BBP1-0000-0000"); runtime_savepolicy_reset();
+    assert(!strcmp(runtime_savepolicy_dir(),"savedata_party"));
     set_env("BB_PARTY","join"); set_env("BB_PARTY_SAVE","separate"); runtime_savepolicy_reset();
     assert(!strcmp(runtime_savepolicy_dir(),"savedata_party"));
     puts("PASS: save folder choice");

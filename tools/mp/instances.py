@@ -175,8 +175,16 @@ def setup(a):
         user.mkdir(exist_ok=True)
         if a.saves and Path(a.saves).is_dir() and not (user / "savedata").exists():
             shutil.copytree(a.saves, user / "savedata")
+        party_saves_from(user)
         (inst / "bbport.ini").write_text(INI, encoding="utf-8")
         print("instance", i, "->", inst)
+
+
+def party_saves_from(user: Path):
+    """A party session always plays from user\savedata_party (src/runtime_savepolicy.c): the test
+    saves are copied there too the first time, so --party runs keep their characters."""
+    if (user / "savedata").is_dir() and not (user / "savedata_party").exists():
+        shutil.copytree(user / "savedata", user / "savedata_party")
 
 
 def stop_leftovers(root):
@@ -258,6 +266,7 @@ def run(a):
             "BB_MP_NAME": f"Hunter{i}",
         })
         if a.party:
+            party_saves_from(inst / "user")
             env.update({
                 "BB_PARTY": "host" if i == 0 else "join", "BB_PARTY_CODE_FILE": str(code_file),
                 "BB_PARTY_PORT": str(port0 + i), "BB_PARTY_NAME": f"Hunter{i}", "BB_PARTY_UPNP": "0",

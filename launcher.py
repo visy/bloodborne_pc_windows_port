@@ -262,7 +262,9 @@ def party_env(s: dict) -> dict:
     env["BB_PARTY_MAX"] = max_players if max_players in PARTY_MAX_CHOICES else "3"
     env["BB_PARTY_SEAMLESS"] = "1" if s.get("party_seamless", True) else "0"
     env["BB_PARTY_AUTO"] = "1" if s.get("party_auto", True) else "0"
-    env["BB_PARTY_SAVE"] = "separate" if s.get("party_separate_save", True) else "shared"
+    # Always the party saves (user\savedata_party): co-op sync never touches a single-player save
+    # (docs/party/ingame_flow.md); the old "shared" choice is gone.
+    env["BB_PARTY_SAVE"] = "separate"
     # Party rules & sync dialog (defaults = the game's defaults, docs/PARTY.md)
     start = str(s.get("party_start", "") or "")
     env["BB_PARTY_START"] = start if start in dict(PARTY_START_CHOICES).values() else PARTY_START_CHOICES[0][1]
@@ -1241,8 +1243,11 @@ class BloodborneLauncher(tk.Tk):
         sec = self._section(tab, 0, "Party")
         mode_tip = ("Play the game together with friends (co-op). Host a party: your game is the party's "
                     "host and the launcher shows a party code to give to your friends. Join a party: "
-                    "enter the host's code. Off: the game runs single-player as before. Party mode "
-                    "uses the game's online title path. Default: Off (BB_PARTY=host|join, unset = off).")
+                    "enter the host's code. Off: the game starts single-player; a party game can then "
+                    "be started or joined in the game itself (title screen: Party, after New Game, or "
+                    "System > Party; it restarts into party mode on its own and remembers the host "
+                    "address and password in user\\party.json). Party mode uses the game's online "
+                    "title path and always the party saves. Default: Off (BB_PARTY=host|join, unset = off).")
         self.party_mode_combo = self._combo(sec, "Mode:", self.party_mode_var, [m[0] for m in PARTY_MODES],
                                             mode_tip, width=16)
         self.party_mode_combo.bind("<<ComboboxSelected>>", lambda e: self.on_party_change())
@@ -1267,16 +1272,17 @@ class BloodborneLauncher(tk.Tk):
                                   "and guests keep full HP instead of 70%. The host's setting counts. "
                                   "Default: on (BB_PARTY_SEAMLESS).",
                                   command=self.save_settings)
-        save_cb = self._check(sec, "Separate party saves", self.party_separate_save,
-                              "Party play uses its own save folder (user\\savedata_party), so your "
+        self.party_separate_save.set(True)
+        save_cb = self._check(sec, "Separate party saves (always)", self.party_separate_save,
+                              "Party play always uses its own save folder (user\\savedata_party), so your "
                               "single-player save (user\\savedata) is never touched by a party session. "
-                              "The first time, the launcher offers to copy your single-player save. "
-                              "Off (shared): the party plays on your normal save. Either way the game "
-                              "backs up the save at every party start and every 10 minutes "
+                              "The first time, the launcher offers to copy your single-player save. The "
+                              "game backs up the party save at every party start and every 10 minutes "
                               "(user\\save_backups, newest 10 kept, both changeable in Rules & sync; "
-                              "README.txt there explains restoring). "
-                              "Default: on (BB_PARTY_SAVE=separate|shared).",
+                              "README.txt there explains restoring). Party games can also be started in "
+                              "the game: System > Party on the title screen (or Party after New Game).",
                               command=self.save_settings)
+        save_cb.configure(state="disabled")
         copy_btn = ttk.Button(sec, text="Copy single-player save to party save", style="Secondary.TButton",
                               command=self.copy_solo_save_to_party)
         copy_btn.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(4, 2))

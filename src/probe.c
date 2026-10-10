@@ -1370,6 +1370,29 @@ void runtime_restart(void) {
 #endif
 }
 
+/* The party flow (gpu/shim/party/party_flow.h): end this run so that run.bat starts the game
+ * again with <user>\party_relaunch.bat applied. run.bat sets BB_RELAUNCH_LOOP=1 when it handles
+ * exit_code; otherwise (an older run.bat, run.sh) runtime_restart() starts run.bat / run.sh
+ * itself, which inherits the environment the party flow already set in this process. */
+void runtime_relaunch(int exit_code) {
+    const char *loop = getenv("BB_RELAUNCH_LOOP");
+    if (!loop || strcmp(loop, "1")) {
+        runtime_restart();
+        return;
+    }
+    fflush(NULL);
+    runtime_restarting = 1;
+    __sync_synchronize();
+    printf("Runtime: ending with exit code %d: run.bat starts the game again\n", exit_code);
+    print_exit_summary();
+    fflush(stdout); fflush(stderr);
+#ifdef _WIN32
+    TerminateProcess(GetCurrentProcess(), (UINT)exit_code); /* as runtime_restart: no ExitProcess */
+#else
+    _exit(exit_code);
+#endif
+}
+
 #ifndef BBPORT_VERSION
 #define BBPORT_VERSION "dev"
 #endif

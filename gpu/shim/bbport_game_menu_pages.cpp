@@ -348,12 +348,13 @@ void DefineBuiltinPartyRows() {
     status.name = [](const B&) { return T2("Status", "Состояние"); };
     status.value = [](const B& b) {
         return b.enabled ? Texts{StateShort(b.state, false), StateShort(b.state, true)}
-                         : T2("Off (launcher)", "Выкл (в лаунчере)");
+                         : T2("Single player", "Одиночная игра");
     };
     status.help = [](const B& b) {
         if (!b.enabled) {
-            return T2("Party mode is off: enable it in the launcher (Party tab)",
-                      "Режим группы выключен: включите его в лаунчере (вкладка «Группа»)");
+            // The party flow's rows (party_flow_rows.cpp) start or join a party game on the title.
+            return T2("Single-player saves. Party games start on the title screen (System > Party)",
+                      "Одиночные сохранения. Игра группой начинается на титульном экране (Система > Группа)");
         }
         Texts t;
         for (bool r : {false, true}) {
@@ -382,6 +383,7 @@ void DefineBuiltinPartyRows() {
                      std::string(host ? "Влево/вправо: копировать код для друзей: " : "Влево/вправо: копировать код: ") +
                          b.code};
     };
+    copy.visible = [](const B& b) { return Active(b); }; // party flow: the solo title's rows instead
     copy.press = PartyRow::Press::Once;
     copy.run = [](const B&) { ps::RequestCopyCode(); };
     party_rows.push_back({copy});
@@ -402,6 +404,7 @@ void DefineBuiltinPartyRows() {
                         "Влево/вправо: переподключиться к хосту и позвонить в колокол")
                    : T2("Party mode is off", "Режим группы выключен");
     };
+    rejoin.visible = [](const B& b) { return Active(b); };
     rejoin.press = PartyRow::Press::Once;
     rejoin.run = [](const B& b) {
         if (Active(b)) ps::RequestRejoin();
@@ -422,6 +425,7 @@ void DefineBuiltinPartyRows() {
                         "Дважды влево/вправо: вернуться в свой мир и не возвращаться к хосту")
                    : T2("Party mode is off", "Режим группы выключен");
     };
+    leave.visible = [](const B& b) { return Active(b); };
     leave.press = PartyRow::Press::Confirm;
     leave.run = [](const B& b) {
         if (Active(b)) ps::RequestLeave();
@@ -437,6 +441,7 @@ void DefineBuiltinPartyRows() {
         return T2("A short notice in a top corner when a hunter joins or leaves",
                   "Короткое уведомление в углу, когда охотник входит или выходит");
     };
+    toasts.visible = [](const B& b) { return b.enabled; };
     toasts.toggle = true;
     toasts.toggle_get = [] { return BbSettings::Get().party_toasts.load(); };
     toasts.toggle_set = [](bool v) { BbSettings::Get().party_toasts = v; };
@@ -444,6 +449,7 @@ void DefineBuiltinPartyRows() {
 
     PartyRow event;
     event.order = 60;
+    event.visible = [](const B& b) { return b.enabled; };
     event.name = [](const B&) { return T2("Last event", "Последнее"); };
     event.value = [](const B& b) {
         return b.last_event.empty() ? T2("None", "Нет") : Texts{b.last_event, b.last_event};

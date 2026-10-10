@@ -416,6 +416,12 @@ set_target_properties(party-link-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OF
 if (WIN32)
     target_link_libraries(party-link-test PRIVATE ws2_32 iphlpapi ole32 oleaut32)
 endif()
+# The in-game party flow's pure parts (shim/party/party_flow.cpp: party.json with the DPAPI-protected
+# password, the action planner, the relaunch file). ninja -C out/gpu party-flow-test
+add_executable(party-flow-test EXCLUDE_FROM_ALL ../tests/test_party_flow.cpp shim/party/party_flow.cpp shim/net/json.cpp)
+target_compile_options(party-flow-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-flow-test PRIVATE shim)
+set_target_properties(party-flow-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Party campaign start (C1, shim/party/party_start.cpp; in bbgpu through SHIM_SOURCES): readiness,
 # bell grant plan, lobby ring decisions. ninja -C out/gpu party-start-test
 add_executable(party-start-test EXCLUDE_FROM_ALL ../tests/test_party_start.cpp shim/party/party_start.cpp)
