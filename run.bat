@@ -248,6 +248,51 @@ if not "%BB_AUTO_DLC%"=="0" if exist "%game%\dvdroot_ps4\map\m34" if not exist "
 set "timeout=%BB_TIMEOUT%"
 if "%timeout%"=="" set "timeout=0"
 
+REM Party crash recovery: with BB_PARTY set, a non-zero exit (a crash) restarts the game with the
+REM same environment after a short delay and BB_PARTY_RESTARTED=1, so it rejoins the party (the
+REM host keeps the slot for 60 s). At most BB_PARTY_RESTART_MAX (default 5) restarts per 10 minutes;
+REM BB_PARTY_RESTART=0 disables. A BB_TIMEOUT run keeps its overall deadline across restarts.
+set "party_restarts=0"
+set "party_window=0"
+set "run_start=0"
+if not "%BB_PARTY%"=="" "%PYTHON%" -c "import time; print(int(time.time()))" > "%out%\party_time.txt"
+if not "%BB_PARTY%"=="" for /f "usebackq delims=" %%t in ("%out%\party_time.txt") do set "run_start=%%t"
+if "%BB_PARTY_RESTART_MAX%"=="" set "BB_PARTY_RESTART_MAX=5"
+
+:launch
+REM A build relinking the exe leaves it empty for a while: never start that (Windows would show a
+REM dialog), and never restart into it.
+for %%F in ("%probe%") do if %%~zF LSS 1048576 (
+    echo [ERROR] %probe% is incomplete ^(%%~zF bytes; a build writing it?^); not starting. >&2
+    exit /b 1
+)
 echo Launching Bloodborne PC (%probe%)...
 "%probe%" "%out%\boot-linked.bin" --content-profile "%out%\content.bin" --patches "%out%\patches.bin" --app0 "%game%" --user "%user_dir%" --timeout "%timeout%" %EXTRA_ARGS%
-exit /b %ERRORLEVEL%
+set "rc=%ERRORLEVEL%"
+if "%BB_PARTY%"=="" exit /b %rc%
+if "%rc%"=="0" exit /b 0
+if "%BB_PARTY_RESTART%"=="0" exit /b %rc%
+REM Launch failures (access denied, bad image, not found) are not crashes: no restart.
+for %%c in (5 193 216 9009) do if "%rc%"=="%%c" exit /b %rc%
+set "now=0"
+"%PYTHON%" -c "import time; print(int(time.time()))" > "%out%\party_time.txt"
+for /f "usebackq delims=" %%t in ("%out%\party_time.txt") do set "now=%%t"
+set /a "since_window=now-party_window"
+if %since_window% GTR 600 (
+    set "party_window=%now%"
+    set "party_restarts=0"
+)
+set /a "party_restarts+=1"
+if %party_restarts% GTR %BB_PARTY_RESTART_MAX% (
+    echo Party: the game exited with %rc% again; %BB_PARTY_RESTART_MAX% restarts in 10 minutes, giving up. >&2
+    exit /b %rc%
+)
+if not "%timeout%"=="0" if not "%run_start%"=="0" set /a "timeout=BB_TIMEOUT-(now-run_start)"
+if not "%timeout%"=="0" if %timeout% LSS 10 (
+    echo Party: the game exited with %rc%; no time left in BB_TIMEOUT, not restarting.
+    exit /b %rc%
+)
+echo Party: the game exited with %rc% ^(a crash^); restart %party_restarts% of %BB_PARTY_RESTART_MAX% in 3 s to rejoin the party
+set "BB_PARTY_RESTARTED=1"
+"%PYTHON%" -c "import time; time.sleep(3)"
+goto launch

@@ -101,6 +101,19 @@ std::uint32_t local_ipv4();
 // --- NP (np_manager.cpp) ---
 void fill_npid(void* out, const char* online);
 
+// --- The party runtime (shim/party/party_runtime.cpp) ---
+// It registers itself at static initialization (the network library alone, as in the unit tests,
+// runs without one). start: once, lazily, on the library's first use under BB_PARTY (bbnet_resolve /
+// bbnet_configure); status: appended to bbnet_status_line.
+struct RuntimeHooks {
+    void (*start)() = nullptr;
+    void (*shutdown)() = nullptr;
+    std::string (*status)() = nullptr;
+};
+void set_runtime_hooks(const RuntimeHooks& hooks);
+// Starts the registered runtime once (no-op without BB_PARTY or without a runtime).
+void runtime_start_once();
+
 // --- Guest callbacks (bbnet_glue.cpp) ---
 // Calls the guest's System V function `fn` with up to six integer arguments on the dispatcher
 // thread (attached to the runtime, guest FS restored before each call), in posting order.

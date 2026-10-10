@@ -44,7 +44,8 @@ copied from it carry `SPDX-License-Identifier: GPL-3.0-or-later` and
 | SessionWorldTransition (leave only while WorldTransitionState+0x1592 == 0) | | 0x13cde30 |
 | MoveMapStep ctor | | 0x1937570 |
 | SummonedMapReload serialize; SetSessionTargetMap (+0x14c4) | | 0x131e5c0; 0x156ce80 |
-| CSMultiPlayMan::Stop; wrapper (0xFF000023) | | 0x1ED07A0; 0xC8ED70 |
+| SprjSessionManager stop (assert string; CSMultiPlayMan is a separate singleton at 0x5540230); wrapper (0xFF000023) | | 0x1ED07A0; 0xC8ED70 |
+| Travel funnel (19 callers) / lamp warp by id / Dream area-table gate dword | | 0x13CDE30 / 0x13CDF30 / 0x47304B0 |
 | Map-reload stop call → retarget to 0x1ED00A0 | | 0x19471B1 |
 | Boss-cleared rejection (flag 2410), NOP | | 0x18749E8 |
 | Negative event id; responder area; builder jump | | 0x18749F0; 0x14B714A; 0x1874B79 |
@@ -119,3 +120,20 @@ wait for the user's go-ahead.
 - Session manager +0x124 role: 0 idle … 3 host, 4 trying to join, 6 client, 7 leaving.
 - Cooperator count 0x15bdc20 asserts without WorldChrMan / session — call only in the world.
 - Bells via Lua are accepted offline; the Insight gate is inside the Lua body.
+
+## Requirement: seamless crash recovery
+
+A crashed player (guest or host) must end up back in the party without doing anything:
+1. Party mode restarts the game after a crash (non-zero exit) with the same settings
+   (launcher / run.bat loop, BB_PARTY_RESTART=0 disables).
+2. On a party restart the director confirms the title screen "Continue" itself and loads the
+   save (BB_PARTY_AUTOCONTINUE, on by default in party mode).
+3. PartyLink keeps a dropped member's slot 60 s and resumes it by token or name; missed events
+   are replayed (done in A4).
+4. When the guest's world is up the director rings the bell; the host's director sees a waiting
+   member and summons them. The host's game treats the vanished phantom as a disconnect.
+5. Host crash: guests return to their own worlds, keep reconnecting (backoff), and are summoned
+   again once the host is back.
+6. Progress made meanwhile is caught up by the progress sync (C2) on return.
+Test: kill a guest instance mid-session in the local harness; verdict = back in the host's world
+within ~60 s with no input.

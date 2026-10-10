@@ -21,9 +21,11 @@
 namespace party {
 
 #if defined(_WIN32)
-namespace {
-
 // natupnp.h is not part of mingw-w64: the interfaces from natupnp.idl (Windows SDK), as used.
+// They must NOT be in an anonymous namespace: GCC then knows every class derived from them (none -
+// the objects come from COM) and, with LTO, turned the calls into a call to nowhere (crash at
+// RIP 0x100000000 right after CoCreateInstance).
+namespace upnp_com {
 const GUID kClsidUPnPNAT = {0xAE1E00AA, 0x3FD5, 0x403C, {0x8A, 0x27, 0x2B, 0xBD, 0xC3, 0x0C, 0xD0, 0xE1}};
 const GUID kIidIUPnPNAT = {0xB171C812, 0xCC76, 0x485A, {0x94, 0xD8, 0xB6, 0xB3, 0xA2, 0x79, 0x4E, 0x99}};
 
@@ -56,6 +58,11 @@ struct IUPnPNAT : public IDispatch {
     virtual HRESULT STDMETHODCALLTYPE get_DynamicPortMappingCollection(IUnknown** ppDPMs) = 0;
     virtual HRESULT STDMETHODCALLTYPE get_NATEventManager(IUnknown** ppNEM) = 0;
 };
+
+}  // namespace upnp_com
+using namespace upnp_com;
+
+namespace {
 
 std::string narrow(BSTR b) {
     if (!b) return {};

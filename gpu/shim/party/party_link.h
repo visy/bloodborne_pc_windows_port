@@ -139,6 +139,8 @@ public:
     std::int64_t host_clock_ms() const;  // host: its own; guest: estimated from PONGs
     std::uint32_t rtt_ms() const;        // guest: last RTT to the host
     std::string observed_address() const;  // guest: "ip:port" the host saw us at
+    // Host: the IPv4 (network byte order) member `slot` is connected from; 0 when not connected.
+    std::uint32_t member_ip(int slot) const;
     RejectCode reject_code() const;
     std::string reject_reason() const;
 

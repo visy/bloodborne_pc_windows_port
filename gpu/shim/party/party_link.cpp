@@ -709,9 +709,14 @@ struct PartyLink::Impl {
                 break;
             }
         }
+        // By name also while the old connection is not yet declared lost, when it comes from the
+        // same address and has been silent for two ping intervals (a crashed guest restarted
+        // before lost_timeout); a live player of the same name still gets RejectCode::Name.
+        const auto silent = std::chrono::milliseconds(2 * cfg.ping_interval_ms);
         if (!m)
             for (auto& [slot, mm] : members)
-                if (!mm.conn && mm.name == c->name) {
+                if (mm.name == c->name &&
+                    (!mm.conn || (mm.conn->peer_ip == c->peer_ip && Clock::now() - mm.conn->last_rx > silent))) {
                     m = &mm;
                     break;
                 }
@@ -1310,6 +1315,16 @@ std::uint32_t PartyLink::rtt_ms() const {
 std::string PartyLink::observed_address() const {
     std::lock_guard<std::mutex> lk(impl_->mu);
     return impl_->observed;
+}
+
+std::uint32_t PartyLink::member_ip(int slot) const {
+    std::lock_guard<std::mutex> lk(impl_->mu);
+    if (!impl_->host) return 0;
+    auto it = impl_->members.find(slot);
+    if (it == impl_->members.end() || !it->second.conn) return 0;
+    std::uint32_t ip = 0;
+    std::memcpy(&ip, it->second.conn->peer_ip.data(), 4);
+    return ip;
 }
 
 RejectCode PartyLink::reject_code() const {

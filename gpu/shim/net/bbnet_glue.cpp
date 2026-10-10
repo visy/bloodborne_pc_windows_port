@@ -239,6 +239,27 @@ void drain_guest_calls() {
     d.done_cv.wait(lk, [&] { return d.done >= target; });
 }
 
+// --- The party runtime hooks ------------------------------------------------------------------
+
+namespace {
+RuntimeHooks& runtime_hooks() {
+    static RuntimeHooks* h = new RuntimeHooks;  // set during static initialization, used at exit
+    return *h;
+}
+}  // namespace
+
+void set_runtime_hooks(const RuntimeHooks& hooks) { runtime_hooks() = hooks; }
+
+void runtime_start_once() {
+    static std::atomic<bool> started{false};
+    if (!settings().party || started.exchange(true)) return;
+    if (runtime_hooks().start) {
+        runtime_hooks().start();
+    } else {
+        log("no party runtime linked: party link, codes and host service wiring are off");
+    }
+}
+
 namespace {
 
 // The imports routed to this library under BB_PARTY: libSceNet, NetCtl, Http, Ssl and Np,
@@ -268,7 +289,10 @@ void* find(const Export* table, const char* name) {
 
 extern "C" {
 
-void bbnet_configure(const char* app0, const char* user_dir) { bbnet::set_dirs(app0, user_dir); }
+void bbnet_configure(const char* app0, const char* user_dir) {
+    bbnet::set_dirs(app0, user_dir);
+    bbnet::runtime_start_once();
+}
 
 void bbnet_set_image(void* image, uint64_t size) {
     bbnet::g_image_size.store(image ? size : 0, std::memory_order_release);
@@ -279,6 +303,7 @@ int bbnet_party_enabled(void) { return bbnet::settings().party ? 1 : 0; }
 
 uintptr_t bbnet_resolve(const char* scoped_nid_or_name) {
     if (!scoped_nid_or_name || !bbnet::settings().party) return 0;
+    bbnet::runtime_start_once();  // the party runtime comes up with the first routed import
     const char* name = scoped_nid_or_name;
     if (std::strchr(name, '#')) {
         name = runtime_symbol(scoped_nid_or_name);
@@ -311,6 +336,7 @@ const char* bbnet_status_line(void) {
                       ? ("on (" + std::to_string(st.submitted) + " sent, " + std::to_string(st.dropped) + " lost)").c_str()
                       : "off");
     line = buf;
+    if (bbnet::runtime_hooks().status) line += "; " + bbnet::runtime_hooks().status();
     return line.c_str();
 }
 
