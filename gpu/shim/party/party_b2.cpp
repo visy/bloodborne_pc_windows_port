@@ -1308,7 +1308,11 @@ void TestWarpTick(const GameSnapshot& s, double now) {
         npc_since = now;
         return;
     }
-    if (now - npc_since < 5.0) {
+    static const double delay = [] {
+        const char* v = std::getenv("BB_PARTY_B2_TEST_DELAY");
+        return v && v[0] ? std::atof(v) : 5.0;
+    }();
+    if (now - npc_since < delay) {
         return;
     }
     done = true;
