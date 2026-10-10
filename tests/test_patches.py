@@ -193,5 +193,44 @@ class IntelTonemapTests(unittest.TestCase):
         self.assertIn(patches.INTEL_TONEMAP, names)
 
 
+class PartyPatchTests(unittest.TestCase):
+    def test_seamless_patches_follow_bb_party(self):
+        self.assertEqual(patches.party_patches({}), [])
+        self.assertEqual(patches.party_patches({'BB_PARTY': 'host'}), patches.PARTY_SEAMLESS + [patches.PARTY_NO_INSIGHT])
+        self.assertEqual(patches.party_patches({'BB_PARTY': 'host', 'BB_PARTY_BELL_NO_INSIGHT': '0'}), patches.PARTY_SEAMLESS)
+        self.assertEqual(patches.party_patches({'BB_PARTY': 'host', 'BB_PARTY_SEAMLESS': '0'}), [])
+
+    def test_network_choice(self):
+        both = {patches.SKIP_NETWORK_CHOICE, patches.SKIP_NETWORK_CHOICE_ONLINE}
+        self.assertEqual(patches.network_choice_patch({}, both), patches.SKIP_NETWORK_CHOICE)
+        self.assertIsNone(patches.network_choice_patch({'BB_SKIP_NETWORK_CHOICE': '0'}, both))
+        self.assertEqual(patches.network_choice_patch({'BB_SKIP_NETWORK_CHOICE': 'online'}, both),
+                         patches.SKIP_NETWORK_CHOICE_ONLINE)
+        self.assertIsNone(patches.network_choice_patch({'BB_SKIP_NETWORK_CHOICE': 'online'},
+                                                       {patches.SKIP_NETWORK_CHOICE}))
+
+    def test_party_patches_exist_compile_and_carry_originals(self):
+        names = patches.PARTY_SEAMLESS + [patches.PARTY_NO_INSIGHT, patches.SKIP_NETWORK_CHOICE_ONLINE]
+        writes = compile_patches(XML, names, '01.09', SEGMENTS)
+        self.assertTrue(writes)
+        for meta in ET.parse(XML).getroot().iter('Metadata'):
+            if meta.get('Name') in names:
+                self.assertEqual(meta.get('isEnabled'), 'false')
+                for line in meta.iter('Line'):
+                    self.assertEqual(len(bytes.fromhex(line.get('Original'))), len(patches.encode(line)))
+
+    def test_original_mismatch_leaves_the_patch_out(self):
+        # A fake ELF: one PT_LOAD segment, vaddr 0 at file offset 0x1000.
+        size = 0x1a00000
+        elf = bytearray(0x1000 + size)
+        struct.pack_into('<Q', elf, 0x20, 0x40)
+        struct.pack_into('<HH', elf, 0x36, 0x38, 1)
+        struct.pack_into('<IIQQQQQQ', elf, 0x40, 1, 5, 0x1000, 0, 0, size, size, 0x1000)
+        name = 'Party: Keep session on map reload'
+        self.assertFalse(patches.originals_match(XML, name, '01.09', bytes(elf)))
+        elf[0x1000 + 0x19471b1:0x1000 + 0x19471b6] = bytes.fromhex('e8ea955800')
+        self.assertTrue(patches.originals_match(XML, name, '01.09', bytes(elf)))
+
+
 if __name__ == '__main__':
     unittest.main()
