@@ -7,11 +7,15 @@
 #include "coop_hooks.h"
 #include "game_state.h"
 #include "lua_events.h"
+#include "party_fourp.h"
 #include "party_link.h"
 #include "party_start.h"
 #include "party_status.h"
+#include "party_runtime.h"
 #include "party_travel.h"
 #include "seamless_rules.h"
+
+#include "../net/bbnet_internal.h"
 
 #include <atomic>
 #include <cctype>
@@ -31,6 +35,8 @@
 #else
 #include <pthread.h>
 #endif
+
+extern "C" void runtime_pad_director_press(std::uint32_t buttons); // src/runtime_pad.c
 
 namespace coop {
 namespace {
@@ -86,6 +92,7 @@ struct State {
     int max_players = 3;
     party::PartyLink* link = nullptr;
     bool auto_ring = true;
+    int auto_continue = -1; // BB_PARTY_AUTOCONTINUE: -1 default (on in party mode), 0 off, 1 on
     double ring_every = 30.0;
     StartMode start_mode = StartMode::PrologueSolo;
     bool grant_bells = true;
@@ -111,6 +118,13 @@ struct State {
     StartStep start_step = StartStep::NoWorld;
     bool granted = false; // bells granted (or found owned) in this world
     std::string status_sig; // last board content published (party_status.h)
+    // Title "Continue" (AutoContinue).
+    bool continue_done = false, continue_held = false;
+    int continue_presses = 0;
+    Clock::time_point continue_ready{}, continue_last{};
+    bool continue_waiting = false;
+    bool continue_signin = false;
+    std::string last_from_client;
 };
 
 State& S() {
@@ -155,6 +169,36 @@ BB_COOP_SYSV void DispatchEntry(std::uint64_t ctx, std::uint64_t name_ptr, std::
 BB_COOP_SYSV void FlipperEntry(std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t,
                                std::uint64_t) {
     CoopTick();
+}
+
+// ss.info parser (0x1eb65e0(alloc, text, &N, &L, out)) at its one call 0x1e89a21 in the
+// ss.info completion 0x1e89850: logs what the game parsed and the result (title debugging;
+// BB_PARTY_TRACE_SSINFO=1).
+using SsParseFn = std::uint64_t(BB_COOP_SYSV*)(std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t,
+                                               std::uint64_t);
+constexpr std::uint64_t kSsParse = 0x1eb65e0, kSsParseCall = 0x1e89a21;
+__attribute__((noinline)) BB_COOP_SYSV std::uint64_t SsParseHook(std::uint64_t a0, std::uint64_t text,
+                                                                 std::uint64_t n, std::uint64_t l, std::uint64_t out) {
+    std::uint32_t nv = 0, lv = 0;
+    SafeGet(n, &nv);
+    SafeGet(l, &lv);
+    // An MSVC-style std::string: +8 inline buffer or pointer (capacity +0x20 > 15), size +0x18.
+    std::uint64_t size = 0, cap = 0, data = text + 8;
+    SafeGet(text + 0x18, &size);
+    SafeGet(text + 0x20, &cap);
+    if (cap > 15) {
+        SafeGet(text + 8, &data);
+    }
+    char head[161] = {};
+    SafeRead(data, head, size < 160 ? size : 160);
+    for (char& c : head) {
+        if (c == '\n' || c == '\r') c = ' ';
+    }
+    const std::uint64_t r = reinterpret_cast<SsParseFn>(Guest(kSsParse))(a0, text, n, l, out);
+    Log("ss.info parse: N %u, lang %u, %llu bytes (cap %llu) -> %s; text: %s", nv, lv,
+        static_cast<unsigned long long>(size), static_cast<unsigned long long>(cap), (r & 0xff) ? "ok" : "FAILED",
+        head);
+    return r;
 }
 
 party::MemberState LocalState(const GameSnapshot& s, bool start_ready) {
@@ -258,6 +302,9 @@ void LogTransitions(State& st, const GameSnapshot& now) {
     if (now.cooperators != was.cooperators && now.cooperators >= 0 && was.cooperators >= 0) {
         Log("cooperators %d -> %d", was.cooperators, now.cooperators);
     }
+    if (now.online_mode != was.online_mode) {
+        Log("online mode %d -> %d", was.online_mode, now.online_mode);
+    }
     if (now.insight != was.insight && now.insight >= 0 && was.insight >= 0) {
         Log("Insight %d -> %d", was.insight, now.insight);
     }
@@ -333,6 +380,116 @@ void PublishStatus(State& st, const GameSnapshot& s, PartyRole role, party::Part
     ps::SetRole(role == PartyRole::Host ? ps::Role::Host : ps::Role::Guest);
     ps::SetState(state, detail);
     ps::SetMembers(members);
+}
+
+constexpr std::uint32_t kPadCross = 0x4000;
+
+/// The game's FROM-server client as it stands (title debugging): SprjNetworkClientMan (slot
+/// 0x5540288: +0x18 parsed ss.info, its +8 <ss> status; +0x3e4 ss.info failures; +0x60 UserId,
+/// +0xd0 ss.info reload timer) and FrpgNetMan (slot 0x553b120: +0xa online flag, +0xa30 queued
+/// error message, +0xa50 server-offline flag).
+std::string DescribeFromClient() {
+    std::uint64_t cm = 0, fm = 0, ss = 0;
+    SafeGet(Guest(0x5540288), &cm);
+    SafeGet(Guest(0x553b120), &fm);
+    std::int32_t ss_status = -1, fails = -1, msg = -1;
+    std::int64_t user = -1;
+    float reload = -1;
+    std::uint8_t online = 0xff, offline = 0xff;
+    if (cm) {
+        SafeGet(cm + 0x18, &ss);
+        SafeGet(cm + 0x3e4, &fails);
+        SafeGet(cm + 0x60, &user);
+        SafeGet(cm + 0xd0, &reload);
+        if (ss) {
+            SafeGet(ss + 8, &ss_status);
+        }
+    }
+    if (fm) {
+        SafeGet(fm + 0xa, &online);
+        SafeGet(fm + 0xa30, &msg);
+        SafeGet(fm + 0xa50, &offline);
+    }
+    char b[256];
+    std::snprintf(b, sizeof b,
+                  "FROM client: ss.info %s (status %d, failures %d, reload in %.0f s), user id %lld; FrpgNetMan online %d, "
+                  "error msg 0x%x, server-offline %d",
+                  ss ? "parsed" : "none", ss_status, fails, reload, static_cast<long long>(user), online, msg, offline);
+    return b;
+}
+
+/// Title screen: confirms "Continue" (the main menu's default item once a save exists) with the
+/// game's own pad path (runtime_pad_director_press: no OS input) until the world loads. Cross is
+/// pressed 0.15 s every 2 s while no world was seen in this run, never in the world or while a
+/// loading screen is up; the party link must be up first (the online login runs through it).
+void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::PartyLink* link, Clock::time_point now) {
+    if (st.continue_done) {
+        return;
+    }
+    auto release = [&] {
+        if (st.continue_held) {
+            runtime_pad_director_press(0);
+            st.continue_held = false;
+        }
+    };
+    if (s.world_up || st.world_seen) {
+        release();
+        st.continue_done = true;
+        Log("auto-continue: world up after %d press(es)", st.continue_presses);
+        return;
+    }
+    if (s.loading) {
+        release();
+        st.continue_waiting = false;
+        return;
+    }
+    const party::LinkState ls = link ? link->state() : party::LinkState::Idle;
+    const bool link_ok = role == PartyRole::Host ? ls == party::LinkState::Hosting : ls == party::LinkState::Connected;
+    if (!link_ok) {
+        release();
+        st.continue_waiting = false;
+        return;
+    }
+    if (!st.continue_waiting) {
+        st.continue_waiting = true;
+        st.continue_ready = now;
+        st.continue_last = now;
+        Log("auto-continue: party link up; confirming Continue on the title (%s)",
+            party::runtime().restarted() ? "crash restart" : "party mode");
+    }
+    // Let the title settle (logos, online login) before the first press.
+    if (Seconds(st.continue_ready, now) < 4.0) {
+        return;
+    }
+    if (st.continue_held) {
+        if (Seconds(st.continue_last, now) >= 0.15) {
+            release();
+        }
+        return;
+    }
+    // The FROM sign-in (ss.info -> login -> sync_chara_id -> notices) starts once the title takes
+    // its first press; Continue while it runs leaves the game offline: wait for it (<= 30 s).
+    const bbnet::OnlineProgress op = bbnet::online_progress();
+    const bool signing_in = op.ss_info > 0 && op.notice == 0 && op.since_last >= 0 && op.since_last < 30.0;
+    if (signing_in != st.continue_signin) {
+        st.continue_signin = signing_in;
+        Log("auto-continue: %s (ss.info %d, login %d, chara id %d, notice %d, failures %d); %s",
+            signing_in ? "the FROM sign-in runs; holding Continue" : "the FROM sign-in is over", op.ss_info, op.login,
+            op.chara_id, op.notice, op.failures, DescribeFromClient().c_str());
+    }
+    if (signing_in) {
+        st.continue_last = now;
+        return;
+    }
+    if (Seconds(st.continue_last, now) >= 2.5) {
+        st.continue_last = now;
+        st.continue_held = true;
+        ++st.continue_presses;
+        runtime_pad_director_press(kPadCross);
+        if (st.continue_presses <= 5 || st.continue_presses % 10 == 0) {
+            Log("auto-continue: Cross #%d (%s; %s)", st.continue_presses, Describe(s).c_str(), DescribeFromClient().c_str());
+        }
+    }
 }
 
 void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
@@ -412,6 +569,9 @@ void PartyDirector::ConfigureFromEnv() {
     }
     if (const char* a = std::getenv("BB_PARTY_AUTO"); a && a[0] == '0') {
         st.auto_ring = false;
+    }
+    if (const char* c = std::getenv("BB_PARTY_AUTOCONTINUE"); c && c[0]) {
+        st.auto_continue = c[0] == '0' ? 0 : 1;
     }
     if (const char* t = std::getenv("BB_PARTY_DIRECTOR_TEST"); t && t[0]) {
         st.test.on = true;
@@ -530,6 +690,25 @@ void PartyDirector::Tick() {
             GrantBells(st, s);
         }
     }
+    // Title: the FROM client's state when it changes (sign-in debugging).
+    if (role != PartyRole::None && full && !s.world_up) {
+        std::string fc = DescribeFromClient();
+        if (fc != st.last_from_client) {
+            Log("title: %s", fc.c_str());
+            st.last_from_client = std::move(fc);
+        }
+    }
+    // Title: Continue on our own (party mode default; always after a crash restart).
+    if (role != PartyRole::None) {
+        int ac;
+        {
+            std::lock_guard<std::mutex> lk(st.mu);
+            ac = st.auto_continue;
+        }
+        if (ac != 0 || party::runtime().restarted()) {
+            AutoContinue(st, s, role, link, now);
+        }
+    }
     // The roster entry.
     if (link) {
         const party::MemberState ms = LocalState(s, st.start_ready);
@@ -606,6 +785,7 @@ void CoopTick() {
     PartyDirector::Get().Tick();
     TravelTick();        // B1 guest replay (party_travel.h)
     SeamlessRulesTick(); // A6 param rules, EMEVD filter stats (seamless_rules.h)
+    fourp::FourpTick();  // 4-player rules: the party's max players (party_fourp.h)
 }
 
 void PartyInit(unsigned char* image, std::uint64_t size) {
@@ -615,7 +795,11 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     }
     LuaEventsInit();
     SeamlessRulesInit(); // A6: party patch report, EMEVD filter (seamless_rules.h)
+    fourp::FourpInit();  // 4-player parties: H1-H4, E6, P5 (party_fourp.h)
     PartyDirector::Get().ConfigureFromEnv();
+    if (const char* t = std::getenv("BB_PARTY_TRACE_SSINFO"); t && t[0] == '1') {
+        HookCallSite(kSsParseCall, kSsParse, reinterpret_cast<const void*>(&SsParseHook), "ss.info parse log");
+    }
     InstallTravelPatches(); // B1: Dream gate + travel hooks (byte-verified)
     g_tick_installed = HookPrologue(kFlipperUpdate,
                                     {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48,

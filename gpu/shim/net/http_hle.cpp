@@ -179,6 +179,27 @@ const char* method_name(int m) {
     }
 }
 
+std::atomic<int> g_ss_info{0}, g_login{0}, g_chara{0}, g_notice{0}, g_fail{0};
+std::atomic<long long> g_last_ms{-1};
+
+long long now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+void note_progress(const std::string& url, bool ok) {
+    g_last_ms = now_ms();
+    if (!ok) {
+        ++g_fail;
+        return;
+    }
+    auto has = [&](const char* s) { return url.find(s) != std::string::npos; };
+    if (has("/ss.info")) ++g_ss_info;
+    else if (has("/basic_utils/login")) ++g_login;
+    else if (has("/basic_utils/sync_chara_id")) ++g_chara;
+    else if (has("/basic_utils/get_normal_notice")) ++g_notice;
+}
+
 // The route: FromApi for the FROM hosts, the play-log buckets and our gameurl (in-process on
 // the host, over the party link on a guest); a network error for anything else.
 void perform(const std::string& url, int method, const Effective& eff, std::string post,
@@ -226,6 +247,7 @@ void perform(const std::string& url, int method, const Effective& eff, std::stri
         }
     }
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    note_progress(url, status == 200 && !err);
     static std::atomic<int> logs{0};
     if (party_trace() || logs.fetch_add(1) < 24) {
         log("http: %s %s -> %ld (%zu bytes, %.0f ms)%s", method_name(method), url.c_str(), status, body.size(), ms,
@@ -535,6 +557,20 @@ BBNET_ABI int http_read(int id, void* data, std::uint64_t size) {
 }  // namespace
 
 }  // namespace bbnet::http
+
+namespace bbnet {
+OnlineProgress online_progress() {
+    OnlineProgress p;
+    p.ss_info = http::g_ss_info;
+    p.login = http::g_login;
+    p.chara_id = http::g_chara;
+    p.notice = http::g_notice;
+    p.failures = http::g_fail;
+    const long long last = http::g_last_ms;
+    p.since_last = last < 0 ? -1 : double(http::now_ms() - last) / 1000.0;
+    return p;
+}
+}  // namespace bbnet
 
 namespace bbnet {
 
