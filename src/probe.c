@@ -48,6 +48,12 @@ static uint64_t image_size;
 static void **resolved_targets;
 static uint64_t *import_call_counts;
 static uint8_t *is_unbound;
+/* An import the runtime does not implement (no HLE symbol, no native libc binding):
+ * stop_on_unbound=1 reports it and stops (exit 20), the loader contract of upstream's bb-probe and
+ * tests/test_probe.py; 0 returns 0 to the guest and carries on, which the Windows port's game runs
+ * rely on. Default: stop under --cpu-only (a loader probe: the game cannot run there), carry on
+ * with the GPU; BB_UNBOUND_IMPORTS=stop|zero overrides it. */
+static int stop_on_unbound;
 static FILE *g_import_file = NULL;
 static volatile uint64_t g_total_import_calls = 0;
 static volatile uint64_t g_import_file_lines = 0;
@@ -225,6 +231,21 @@ static inline int check_noisy_import(const char *sym) {
             !strcmp(sym, "scePthreadSelf") || !strcmp(sym, "_Getpctype"));
 }
 
+static __attribute__((noreturn)) void unresolved_stop(uint32_t id, uint64_t argument, uintptr_t caller) {
+    const char *api = runtime_import_name(names[id]);
+    printf("STOP: first unsupported PS4 import: %s (index %u)\n", names[id], id);
+    printf("API: %s\n", api ? api : "unknown");
+    printf("Caller return offset: 0x%" PRIxPTR "; first argument: 0x%" PRIx64 "\n", caller, argument);
+    for (uint64_t m=0;m<module_count;++m)
+        if (caller>=modules[m].base && caller-modules[m].base<modules[m].size)
+            printf("Caller in linked module %" PRIu64 " (%s): +0x%" PRIxPTR "\n",m,m==0 ? "libc.prx" : "system module",caller-modules[m].base);
+    runtime_report();
+    puts(entered_game ? "Original guest entry instructions executed; game initialization is incomplete." :
+                        "Native libc initialization is incomplete; game entry has not run.");
+    fflush(NULL);
+    _exit(20); /* no destructors: GPU, audio and guest threads are still running */
+}
+
 __attribute__((used)) ABI void *pre_import_hook(uint32_t index, uint64_t *args, void *caller) {
     runtime_notify_progress();
     if (index >= import_count) return NULL;
@@ -264,6 +285,7 @@ __attribute__((used)) ABI void *pre_import_hook(uint32_t index, uint64_t *args, 
     }
 
     if (is_unbound[index]) {
+        if (stop_on_unbound) unresolved_stop(index, args[0], caller_off);
         if (g_bb_trace && count <= 3) {
             printf("[UNBOUND IMPORT CALLED #%" PRIu64 "] index %u: %s (%s) from 0x%" PRIxPTR "\n"
                    "  args: (0x%" PRIx64 ", 0x%" PRIx64 ", 0x%" PRIx64 ", 0x%" PRIx64 ", 0x%" PRIx64 ", 0x%" PRIx64 ") -> returning 0\n",
@@ -1435,6 +1457,14 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--patches") && i+1<argc) patch_file=argv[++i];
         else if (!strcmp(argv[i], "--timeout") && i+1<argc) timeout_seconds=(unsigned)strtoul(argv[++i],NULL,10);
         else { fprintf(stderr, "Unknown option: %s\n", argv[i]); return 1; }
+    }
+    stop_on_unbound = cpu_only;
+    const char *unbound_mode = getenv("BB_UNBOUND_IMPORTS");
+    if (unbound_mode && !strcmp(unbound_mode, "stop")) stop_on_unbound = 1;
+    else if (unbound_mode && !strcmp(unbound_mode, "zero")) stop_on_unbound = 0;
+    else if (unbound_mode && *unbound_mode) {
+        fprintf(stderr, "BB_UNBOUND_IMPORTS: expected stop or zero, got %s\n", unbound_mode);
+        return 1;
     }
 
     if (g_bb_trace) {

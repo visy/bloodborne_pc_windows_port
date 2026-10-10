@@ -9,6 +9,9 @@
 #include "video_core/texture_cache/image.h"
 #include "video_core/host_shaders/camera_motion_comp.h"
 #include <vk_mem_alloc.h>
+// bbgpu's headers above are seen with its NDEBUG (gpu/CMakeLists.txt); the checks use assert().
+#undef NDEBUG
+#include <cassert>
 
 int main() {
     Vulkan::Instance instance(0, false);

@@ -15,6 +15,9 @@
 #include "video_core/host_shaders/taa_comp.h"
 #include "video_core/host_shaders/taa_sharpen_comp.h"
 #include <vk_mem_alloc.h>
+// bbgpu's headers above are seen with its NDEBUG (gpu/CMakeLists.txt); the checks use assert().
+#undef NDEBUG
+#include <cassert>
 
 int main(int argc, char** argv) {
     using namespace Vulkan;
