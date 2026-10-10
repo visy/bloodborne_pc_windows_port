@@ -89,6 +89,8 @@ struct Test {
     bool log_state = false;
     int insight = -1;
     int echoes = -1; // echoes=N: writes the player's Blood Echoes once (test saves)
+    bool log_pos = false; // log_pos: the player's area and position (FrpgNetMan +0xa7c / +0xaac) every 3 s
+    Clock::time_point pos_at{};
     const char* ring = nullptr; // the event to raise once
     double delay = 10.0;
     bool start = false, grant_bells = false, drop_bells = false, drop_done = false;
@@ -576,6 +578,16 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         const bool ok = WritePlayerInsight(t.insight);
         Log("test: Insight %d -> %d %s", before, t.insight, ok ? "written" : "NOT written (no player record)");
     }
+    if (t.log_pos && s.world_up && !s.loading && Seconds(t.pos_at, now) >= 3.0) {
+        t.pos_at = now;
+        std::uint64_t man = 0;
+        std::uint32_t area = 0;
+        float pos[3] = {0, 0, 0};
+        const std::uint64_t at = Guest(0x553b120);
+        if (at && SafeGet(at, &man) && man && SafeGet(man + 0xa7c, &area) && SafeRead(man + 0xaac, pos, sizeof pos)) {
+            Log("test: pos area 0x%08x (%.2f, %.2f, %.2f)", area, pos[0], pos[1], pos[2]);
+        }
+    }
     if (t.echoes >= 0 && Seconds(st.world_at, now) >= 2.0 && !s.loading) {
         const bool ok = WritePlayerEchoes(t.echoes);
         Log("test: Blood Echoes -> %d %s", t.echoes, ok ? "written" : "NOT written (no player record)");
@@ -723,6 +735,8 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.ring = kHostBell;
             } else if (item == "ring_guest") {
                 st.test.ring = kGuestBell;
+            } else if (item == "log_pos") {
+                st.test.log_pos = true;
             } else if (item.rfind("echoes=", 0) == 0) {
                 st.test.echoes = std::atoi(item.c_str() + 7);
             } else if (item.rfind("insight=", 0) == 0) {
