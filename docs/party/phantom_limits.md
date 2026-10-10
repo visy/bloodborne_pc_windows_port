@@ -30,7 +30,7 @@ map-reload retarget, HP 0.7 -> 1.0 (SpEffect 9006/9026), bell/Insight gates, PLA
 | 4b | Summon timer | None: SpEffect 9003/9005/9006/9025/9026 `effectEndurance` = -1 | — | — | C |
 | 4c | Distance leash | None found | — | — | I |
 | 5a | Insight items (Madman's Knowledge, ...) | enable_white = 1 | Nothing | — | C |
-| 5b | Insight on boss kill / first encounter | common event 9350 (`End if Client`), called only from host branches | Director mirrors: SpEffect 4680 x N (or Insight write) on the guest | low | C (gate), I (4680 = +1) |
+| 5b | Insight on boss kill / first encounter | common event 9350 (`End if Client`), called only from host branches; a white phantom gets a native **+1** per boss kill (BlockClear2 0x13849A0, SpEffect 4680 at 0x13852B1) | Director mirrors the host's boss-kill N (parity: N - 1 on top of the native +1) | low | C (gate, +1 site), I (4680 = +1, runtime) |
 | 5c | Boss echoes | BlockClear handler 0x13849A0 pays PlayerGameData+0xF8 to chr types 0, 8 **and 1** | Nothing | — | C |
 | 5d | Kill echoes | Phantom SpEffects have `soulRate` 1.0 | Nothing (verify distribution) | — | C (data), I (who gets the kill) |
 
@@ -302,7 +302,23 @@ of every task; nothing extra to patch.
 
 - **Insight consumables** [C]: Madman's Knowledge 1500, Great One's Wisdom 1501 are
   white-enabled with `canMultiUse`; the Insight goes to the guest's own PlayerGameData+0x84.
-- **Insight from bosses** [C]: common event **9350 `SAN値獲得`** applies SpEffect 4680 N times
+- **Insight from bosses, resolved** [C]: both earlier statements hold, for different grants.
+  (1) The *host's* boss Insight is common event 9350 (below): host-only, guests never run it.
+  (2) A white phantom gets its own **+1 per boss kill** natively: BlockClear2 `0x13849A0`, branch
+  `PlayerIns+0x78 == 1` (`0x1384CF4`), after the clear bonus is paid (`0x13851EE..0x138525D`):
+  `0x138527C..0x13852B1` `mov esi,0x1248` (4680), `rdx = rdi = PlayerIns`, `ecx = r8 = r9 = 0`,
+  `[rsp] = 0`, `xmm0..4 = 1.0f` (`0x4925B88`), `call [vtbl+0x3F0]` (the ApplySpEffect vfunc; same
+  convention as MultiDoping `0x138BD48`). Condition: `[0x553B108] != 0` and a local PlayerIns
+  (also the whole state is skipped when `[[0x553B108]+0x60]+0x40 > 0`, meaning not traced [I]).
+  So vanilla: host +N (2-5, from 9350), cooperator +1. Data (all `2000[0] (slot, 9350, N)` calls,
+  `flag_tool` EMEVD reader): every boss-kill event (`ボス撃破_*`, `*_ボス撃破`) has a boss-defeat
+  instruction `2003[12]`/`[53]` (or `[15]`) before its 9350 start; first-encounter, area and story
+  starts have none. Implemented (`gpu/shim/party/party_phantom.cpp`): the host's EMEVD filter pairs
+  `2003[12/15/53]` with the `2000[0](_, 9350, N)` of the same event (120 s window) and sends EVENT
+  `phantom {insight, n}`; a guest that was a client in the last 90 s applies SpEffect 4680
+  `GuestInsightGrant(N)` times (parity default: N - 1, so it ends at N like the host; `full`: N),
+  15 frames apart (9350 waits 10 frames between applications). Probe R5 still open.
+- **Insight from bosses (host)** [C]: common event **9350 `SAN値獲得`** applies SpEffect 4680 N times
   (labels 1..9) and starts with `1003[6] [0,1]` (end if client). It is started (2000[0]) from
   host-only branches: e.g. Gascoigne kill 12411800 jumps to its client label at index 27
   (`1003[105] [1,1]`) before index 29 `2000[0] [0,9350,2]`; first entry 12411802 needs chr type
@@ -332,8 +348,28 @@ of every task; nothing extra to patch.
 | Confinement walls off (EMEVD index skip) | event 7600 instr 6 `2005[3]`, instr 7 `2006[2]` | — | skip | off, with B1 | medium |
 | Guest death -> host lamp | 0x13CDE30 hook, caller 0x1382663 (`e8 c8 b7 04 00`) | — | `0x13CDF30(host lamp id)` | on in party mode | low-medium |
 | Guest vial refill | call `0x14DACE0()` (+`0x14DBB70()`) on the guest, main thread | — | runtime | on lamp/respawn | low |
-| Guest boss Insight | SpEffect 4680 x N on the guest | — | runtime | on | low |
+| Guest boss Insight | SpEffect 4680 x (N - 1) on the guest (vfunc +0x3F0) | — | runtime | on (parity) | low |
+| (opt) Hunter's Mark for guests | EquipParamGoods 100 / 1400 byte 0x44 | `0x43` / `0xC3` | `0x57` / `0xD7` (+ white, multi) | off | low-medium |
+| Guest Hunter's Mark -> host lamp | tail jump 0x1389F20 (`e9 0b 3f 04 00`) retargeted | — | `0x13CDF30(host lamp id)` | on in party mode | low-medium |
 | Per-goods white enable | EquipParamGoods row byte 0x44 bit 2 | 0 | 1 | none needed | low |
+
+## 6a. Implementation (party_phantom, branch agent/phantom)
+
+`gpu/shim/party/party_phantom.{h,cpp}` with small extensions in `party_travel` (guest redirect),
+`seamless_rules` (rule syntax, observer, Hunter's Mark param rules), `coop_hooks` (`HookTailJump`),
+`party_director` / `party_runtime` (EVENT `phantom`). Env switches are listed in
+`party_phantom.h`. Status: built, unit-tested (`party-phantom-test`); not yet run in a live
+2-instance session (the test harness cannot leave the title screen without input).
+
+| Item | Where | Notes |
+|---|---|---|
+| Guest death -> host lamp | `party_travel` FunnelHook, guest branch, return address 0x1382668 | pending travel destination first (`RetargetSendHome`), else `0x13CDF30(host lamp)` with `+0x1520` cleared; `GameDataMan+0x70` (full recover) kept |
+| Guest Hunter's Mark -> host lamp | `HookTailJump(0x1389F20)` | same choice; only reachable with `BB_PARTY_GUEST_MARK=1` |
+| Host lamp id | host polls `+0x1528` (own world) once a second, EVENT `phantom {lamp}` on change or membership change; any TRAVEL's `last_lamp` updates it too | guest: `SetGuestDeathRedirect` |
+| Auto-rejoin | the director's Small Resonant Bell (idle in own world, link up) | no new code |
+| Refill | guest tick: `0x14DBB70()` then `0x14DACE0()` after a steady world (30 frames, no load / stage request / join) | triggers: EVENT `phantom {rested}` (host travel into the Dream, host death, host Mark), own redirected respawn; waits for the follow load (45 s cap) |
+| Confinement walls | built-in rules `7600:2005:3@6`, `7600:2006:2@7` | only while `TravelEnabled()`; `BB_PARTY_OPEN_WORLD=0` drops them |
+| Rule syntax | `event:bank:id[@index]`, index = `event+0xA0` | `BB_PARTY_EMEVD_SKIP` |
 
 ## 7. Probes
 
@@ -342,5 +378,14 @@ of every task; nothing extra to patch.
 - R3 dump SessionTypeDesc rows (0x553D750, stride 0x80) for the human white type; field +0x24
   (4).
 - R4 kill-echo distribution (5).
-- R5 confirm SpEffect 4680 = +1 Insight per application (apply once offline, read +0x84).
+- R5 confirm SpEffect 4680 = +1 Insight per application (apply once offline, read +0x84):
+  `BB_PARTY_PHANTOM_PROBE=insight` (with `BB_PARTY_DIRECTOR_TEST=log_state`) applies it once 5 s
+  after the world is up; the director logs `Insight a -> b`. `BB_PARTY_PHANTOM_PROBE=refill` runs
+  the refill once.
+- R7 guest death redirect: kill the guest; expect `Party travel: guest_died at +0x1382663: to the
+  host's last lamp ...`, one load into the guest's world at that lamp, `refill (guest respawn)`,
+  then the bell and a rejoin.
+- R8 open world: walk the host across a confinement-wall boundary (e.g. m24_01 2411997-2411999)
+  with a guest; the wall must not appear (`EMEVD ... skipped` count grows) and observe whether
+  the stage-UID stop 0x193C657 ends the session (travel.md P2).
 - R6 after a session, diff the guest save: inventory, Insight, echoes persist; flags do not.
