@@ -438,6 +438,8 @@ struct PartyLink::Impl {
     std::uint32_t next_rpc = 1;
     int backoff_ms = 0;
     Clock::time_point next_attempt{};
+    bool want_connect = false;  // timers: a reconnect is due (the name is resolved outside mu)
+    bool last_resumed = false;  // the last WELCOME resumed our session
     std::int64_t clock_offset = 0;
     std::uint32_t rtt = 0;
     std::string observed;
@@ -489,6 +491,16 @@ struct PartyLink::Impl {
     std::int64_t now_ms() const { return ms_between(start_time, Clock::now()); }
 
     // ---------- framing ----------
+    // While corked (> 0) frames are only queued; the corking code flushes once at the end, so
+    // a burst (an event replay, a read full of events and their ACKs) is a few send() calls
+    // instead of one per frame and the lock is held that much shorter.
+    int corked = 0;
+    struct Cork {
+        Impl& i;
+        explicit Cork(Impl& im) : i(im) { ++i.corked; }
+        ~Cork() { --i.corked; }
+    };
+
     void queue_frame(Conn* c, std::uint8_t type, const std::vector<std::uint8_t>& body) {
         if (c->dead) return;
         if (c->tx.ready()) {
@@ -512,7 +524,7 @@ struct PartyLink::Impl {
             w.u32(len).u8(type).bytes(body.data(), body.size());
             c->out.insert(c->out.end(), w.b.begin(), w.b.end());
         }
-        flush(c);
+        if (!corked) flush(c);
     }
     void send(Conn* c, std::uint8_t type, const Writer& w) { queue_frame(c, type, w.b); }
 
@@ -586,8 +598,15 @@ struct PartyLink::Impl {
         fail_pending("connection to the host lost");
         if (stopping || state == LinkState::Rejected || state == LinkState::Stopped) return;
         if (was_open || backoff_ms == 0) backoff_ms = cfg.backoff_initial_ms;
-        next_attempt = Clock::now() + std::chrono::milliseconds(backoff_ms);
-        set_state(LinkState::Reconnecting, why + "; retrying in " + std::to_string(backoff_ms) + " ms");
+        int wait = backoff_ms;
+        if (cfg.backoff_jitter_pct > 0) {
+            std::uint32_t r = 0;
+            crypto::random_bytes(reinterpret_cast<std::uint8_t*>(&r), sizeof r);
+            const int span = backoff_ms * cfg.backoff_jitter_pct / 100;
+            if (span > 0) wait += static_cast<int>(r % static_cast<std::uint32_t>(2 * span + 1)) - span;
+        }
+        next_attempt = Clock::now() + std::chrono::milliseconds(wait);
+        set_state(LinkState::Reconnecting, why + "; retrying in " + std::to_string(wait) + " ms");
         backoff_ms = std::min(backoff_ms * 2, cfg.backoff_max_ms);
     }
 
@@ -670,6 +689,15 @@ struct PartyLink::Impl {
 
     // ---------- frame processing ----------
     void process_input(Conn* c) {
+        {
+            Cork cork(*this);
+            process_frames(c);
+        }
+        // This connection's replies, and what the frames queued for others (a roster broadcast).
+        for (auto& o : conns)
+            if (!o->dead && o->out_off < o->out.size()) flush(o.get());
+    }
+    void process_frames(Conn* c) {
         std::size_t off = 0;
         while (!c->dead && c->in.size() - off >= 5) {
             const std::uint8_t* h = c->in.data() + off;
@@ -991,6 +1019,7 @@ struct PartyLink::Impl {
             std::snprintf(buf, sizeof buf, "%u.%u.%u.%u:%u", ip[0], ip[1], ip[2], ip[3], oport);
             observed = buf;
             if (!resumed) gev.reset();
+            last_resumed = resumed;
             backoff_ms = 0;
             groster = ros;
             // Our own state, then any events the host has not acknowledged.
@@ -1082,24 +1111,62 @@ struct PartyLink::Impl {
         send(c, kRoster, w);
     }
 
-    void start_connect() {  // guest, mu held
-        std::array<std::uint8_t, 4> ip{};
-        bool resolved = false;
-        {
-            addrinfo hints{};
-            hints.ai_family = AF_INET;
-            hints.ai_socktype = SOCK_STREAM;
-            addrinfo* res = nullptr;
-            if (getaddrinfo(host_name.c_str(), nullptr, &hints, &res) == 0 && res) {
-                for (addrinfo* a = res; a; a = a->ai_next)
-                    if (a->ai_family == AF_INET) {
-                        std::memcpy(ip.data(), &reinterpret_cast<sockaddr_in*>(a->ai_addr)->sin_addr, 4);
-                        resolved = true;
-                        break;
-                    }
-                freeaddrinfo(res);
-            }
+    // The host's IPv4 address. A literal is parsed; a name goes to the resolver, which can take
+    // seconds: never called with mu held (every API call, the game's main thread included,
+    // takes mu).
+    static bool resolve_host(const std::string& name, std::array<std::uint8_t, 4>* ip) {
+        in_addr lit{};
+        if (inet_pton(AF_INET, name.c_str(), &lit) == 1) {
+            std::memcpy(ip->data(), &lit, 4);
+            return true;
         }
+        addrinfo hints{};
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        addrinfo* res = nullptr;
+        bool ok = false;
+        if (getaddrinfo(name.c_str(), nullptr, &hints, &res) == 0 && res) {
+            for (addrinfo* a = res; a; a = a->ai_next)
+                if (a->ai_family == AF_INET) {
+                    std::memcpy(ip->data(), &reinterpret_cast<sockaddr_in*>(a->ai_addr)->sin_addr, 4);
+                    ok = true;
+                    break;
+                }
+            freeaddrinfo(res);
+        }
+        return ok;
+    }
+
+    // One connection attempt's system calls: name resolution, socket(), a non-blocking
+    // connect(). Done without mu: each can take milliseconds (seconds for a resolver).
+    struct Dial {
+        bool resolved = false;
+        std::array<std::uint8_t, 4> ip{};
+        sock::Socket s = sock::kInvalid;
+        bool failed = false;     // connect() failed at once
+        bool connected = false;  // connect() completed at once (loopback)
+    };
+    static Dial dial(const std::string& name, std::uint16_t port) {
+        Dial d;
+        d.resolved = resolve_host(name, &d.ip);
+        if (!d.resolved) return d;
+        d.s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (d.s == sock::kInvalid) return d;
+        sock::set_nonblocking(d.s);
+        int one = 1;
+        setsockopt(d.s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&one), sizeof one);
+        sockaddr_in a{};
+        a.sin_family = AF_INET;
+        a.sin_port = htons(port);
+        std::memcpy(&a.sin_addr, d.ip.data(), 4);
+        const int rc = ::connect(d.s, reinterpret_cast<sockaddr*>(&a), sizeof a);
+        d.connected = rc == 0;
+        d.failed = rc != 0 && !sock::would_block(sock::last_error());
+        return d;
+    }
+
+    void start_connect(Dial d) {  // guest, mu held
+        want_connect = false;
         auto c = std::make_unique<Conn>();
         c->id = next_conn_id++;
         c->created = c->last_rx = Clock::now();
@@ -1108,21 +1175,13 @@ struct PartyLink::Impl {
         conns.push_back(std::move(c));
         gconn = raw;
         set_state(LinkState::Connecting, host_name + ":" + std::to_string(host_port));
-        if (!resolved) return lose(raw, "cannot resolve " + host_name);
-        raw->s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (!d.resolved) return lose(raw, "cannot resolve " + host_name);
+        raw->s = d.s;
         if (raw->s == sock::kInvalid) return lose(raw, "socket() failed");
-        sock::set_nonblocking(raw->s);
-        int one = 1;
-        setsockopt(raw->s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&one), sizeof one);
-        sockaddr_in a{};
-        a.sin_family = AF_INET;
-        a.sin_port = htons(host_port);
-        std::memcpy(&a.sin_addr, ip.data(), 4);
-        raw->peer_ip = ip;
+        raw->peer_ip = d.ip;
         raw->peer_port = host_port;
-        int rc = ::connect(raw->s, reinterpret_cast<sockaddr*>(&a), sizeof a);
-        if (rc != 0 && !sock::would_block(sock::last_error())) return lose(raw, "connect failed");
-        if (rc == 0) on_connected(raw);
+        if (d.failed) return lose(raw, "connect failed");
+        if (d.connected) on_connected(raw);
     }
 
     void on_connected(Conn* c) {
@@ -1203,7 +1262,7 @@ struct PartyLink::Impl {
             }
             if (ms_between(last_roster_bcast, now) >= cfg.roster_refresh_ms) broadcast_roster();
         } else {
-            if (!gconn && state == LinkState::Reconnecting && now >= next_attempt) start_connect();
+            if (!gconn && state == LinkState::Reconnecting && now >= next_attempt) want_connect = true;
             for (auto it = pending.begin(); it != pending.end();) {
                 if (!it->second.sync && now >= it->second.deadline) {
                     auto f = std::move(it->second.cb);
@@ -1249,7 +1308,7 @@ struct PartyLink::Impl {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             else
                 n = sock::poll(fds.data(), static_cast<unsigned long>(fds.size()), 10);
-            std::lock_guard<std::mutex> lk(mu);
+            std::unique_lock<std::mutex> lk(mu);
             if (stopping) break;
             if (freeze_until > Clock::now()) continue;
             if (n > 0) {
@@ -1281,7 +1340,23 @@ struct PartyLink::Impl {
             timers();
             conns.erase(std::remove_if(conns.begin(), conns.end(), [](const std::unique_ptr<Conn>& c) { return c->dead; }),
                         conns.end());
+            if (want_connect) connect_unlocked(lk);
         }
+    }
+
+    // A due reconnect: dials (resolve, socket, connect) without mu, then installs it (mu held).
+    void connect_unlocked(std::unique_lock<std::mutex>& lk) {
+        const std::string name = host_name;
+        const std::uint16_t port = host_port;
+        lk.unlock();
+        Dial d = dial(name, port);
+        lk.lock();
+        if (stopping || gconn || state != LinkState::Reconnecting) {
+            want_connect = false;
+            if (d.s != sock::kInvalid) sock::close(d.s);
+            return;
+        }
+        start_connect(d);
     }
 
     void start_threads() {
@@ -1356,12 +1431,13 @@ bool PartyLink::start_guest(const std::string& host, std::uint16_t port, std::st
     if (!valid_member_name(I.cfg.name)) return fail("invalid name (1-16 of A-Z a-z 0-9 _ -)");
     I.host = false;
     I.party_key = crypto::derive_party_key(I.cfg.password, I.cfg.secret.data());
+    Impl::Dial d = Impl::dial(host, port);
     {
         std::lock_guard<std::mutex> lk(I.mu);
         I.host_name = host;
         I.host_port = port;
         I.start_time = Clock::now();
-        I.start_connect();
+        I.start_connect(d);
     }
     I.start_threads();
     return true;
@@ -1460,6 +1536,11 @@ std::uint32_t PartyLink::member_ip(int slot) const {
     std::uint32_t ip = 0;
     std::memcpy(&ip, it->second.conn->peer_ip.data(), 4);
     return ip;
+}
+
+bool PartyLink::session_resumed() const {
+    std::lock_guard<std::mutex> lk(impl_->mu);
+    return impl_->last_resumed;
 }
 
 RejectCode PartyLink::reject_code() const {

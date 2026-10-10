@@ -129,20 +129,11 @@ BBNET_ABI int sig_activate(unsigned ctx, const void* npid, unsigned* conn_out) {
     std::string how = c.member_id ? "" : " (peer not known yet)";
     if (!c.member_id) {
         // The host activates its connection to the guest it summons before the guest is a room
-        // member; on PSN the signaling server resolved the address, here the party host does.
-        std::uint32_t addr = 0;
-        std::uint16_t port = 0;
-        std::string error;
-        if (session::server_signaling_resolve(peer, &addr, &port, error)) {
-            const session::Peer prov = session::peers_provisional(peer, addr, port);
-            c.member_id = prov.member_id;
-            char text[64];
-            std::snprintf(text, sizeof(text), " (resolved %u.%u.%u.%u:%u)", addr & 0xff, (addr >> 8) & 0xff,
-                          (addr >> 16) & 0xff, addr >> 24, port);
-            how = text;
-        } else {
-            how = " (not known and not resolved: " + error + ")";
-        }
+        // member; on PSN the signaling server resolved the address, here the party host does -
+        // on the session thread: the game's thread never waits for the party link (a guest's
+        // resolve is an RPC that can take its full timeout on a bad network). The connection
+        // stays pending (status 1) and is announced once the peer is known.
+        how = " (resolving)";
     }
     std::lock_guard<std::mutex> lk(g_mu);
     const unsigned id = g_next_conn++;
@@ -150,6 +141,27 @@ BBNET_ABI int sig_activate(unsigned ctx, const void* npid, unsigned* conn_out) {
     *conn_out = id;
     log("sceNpSignalingActivateConnection %s -> conn %u%s", peer.c_str(), id, how.c_str());
     announce_locked(id, g_conn[id]);
+    if (!c.member_id) {
+        session::dispatch_after(0, session::Prio::Signaling, [peer] {
+            std::uint32_t addr = 0;
+            std::uint16_t port = 0;
+            std::string error;
+            if (!session::server_signaling_resolve(peer, &addr, &port, error)) {
+                log("np: signaling resolve %s: %s", peer.c_str(), error.c_str());
+                return;
+            }
+            const session::Peer prov = session::peers_provisional(peer, addr, port);
+            log("np: signaling resolved %s at %u.%u.%u.%u:%u", peer.c_str(), addr & 0xff, (addr >> 8) & 0xff,
+                (addr >> 16) & 0xff, addr >> 24, port);
+            std::lock_guard<std::mutex> lk(g_mu);
+            for (auto& [cid, cc] : g_conn) {
+                if (!cc.dead && cc.online_id == peer && !cc.member_id) {  // a room member meanwhile keeps its id
+                    cc.member_id = prov.member_id;
+                    announce_locked(cid, cc);
+                }
+            }
+        });
+    }
     return 0;
 }
 BBNET_ABI int sig_deactivate(unsigned ctx, unsigned conn) {

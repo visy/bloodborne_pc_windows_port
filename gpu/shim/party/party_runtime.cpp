@@ -416,6 +416,12 @@ void on_state(LinkState s, const std::string& detail) {
         plog("connected to the host as slot %d (we are seen at %s)%s%s", slot, link->observed_address().c_str(),
              detail.empty() ? "" : ": ", detail.c_str());
         bbnet::party::RemoteGuest* rg = bbnet::party::remote_guest();
+        if (!link->session_resumed()) {
+            // A fresh session at the host (it restarted, or our slot was released): its event
+            // ids start over and it no longer knows our NP context or relay registration.
+            if (rg) rg->reset_event_cursor();
+            bbnet::session::host_session_reset();
+        }
         bool wire = false;
         {
             std::lock_guard<std::mutex> lk(r.mu);
@@ -597,10 +603,31 @@ void write_text_file(const fs::path& path, const std::string& text) {
     }
 }
 
+// The party code's secret. A host restarted after a crash (restart_info) keeps the one it had
+// (<user>/party_secret.bin, up to a day old): the guests keep reconnecting with the old code's
+// key and would otherwise be rejected (wrong password or party code) and give up.
+std::array<std::uint8_t, 8> host_secret() {
+    std::array<std::uint8_t, 8> secret{};
+    const fs::path path = fs::path(user_dir()) / "party_secret.bin";
+    if (restart_info().restarted) {
+        std::string old;
+        std::error_code ec;
+        const auto age = fs::file_time_type::clock::now() - fs::last_write_time(path, ec);
+        if (!ec && age < std::chrono::hours(24) && read_file(path, &old) && old.size() == secret.size()) {
+            std::memcpy(secret.data(), old.data(), secret.size());
+            plog("restarted: keeping the party code (secret from %s)", path.string().c_str());
+            return secret;
+        }
+    }
+    crypto::random_bytes(secret.data(), secret.size());
+    write_text_file(path, std::string(reinterpret_cast<const char*>(secret.data()), secret.size()));
+    return secret;
+}
+
 void start_host(LinkConfig cfg) {
     Runtime& r = R();
     const bool lb = loopback_mode();
-    crypto::random_bytes(cfg.secret.data(), cfg.secret.size());
+    cfg.secret = host_secret();
     if (lb) cfg.bind_addr = "0.0.0.0";
     const std::string name = cfg.name;
     const std::uint16_t port = cfg.port;
