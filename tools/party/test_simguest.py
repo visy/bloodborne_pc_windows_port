@@ -8,7 +8,8 @@ host + PartyHostService + FromApi + the party UDP port, no game) and checks the 
 
 Cases: join by party code + password, crash-rejoin as a restarted process (no token),
 crash-rejoin with the resume token, a wrong password (must be REJECTed: auth), a different game
-version (REJECT: mismatch), then optionally soak N. Exit code 0 when every case behaves.
+version (REJECT: mismatch), host:port + secret, impersonation of the host (every spoofed RPC
+refused), then optionally soak N. Exit code 0 when every case behaves.
 """
 from __future__ import annotations
 
@@ -120,6 +121,10 @@ def main() -> int:
              log("mismatch"), False, "rejected (mismatch)"),
             ("host:port + secret", ["--host", "127.0.0.1", "--port", str(port), "--secret", secret,
                                     "--key-hex", key.hex(), "--name", "SimF", "--script", "join"] + log("plain"),
+             True, ""),
+            ("impersonation (--spoof-online-id Host) refused", ["--code", code, "--key-hex", key.hex(),
+                                                               "--name", "SimM", "--script", "join",
+                                                               "--spoof-online-id", "Host"] + log("spoof"),
              True, ""),
         ]
         if a.soak:

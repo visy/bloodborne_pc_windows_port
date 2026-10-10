@@ -426,3 +426,9 @@ target_compile_definitions(party-travel-test PRIVATE BB_PARTY_TRAVEL_NO_GAME)
 target_compile_options(party-travel-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-travel-test PRIVATE shim)
 set_target_properties(party-travel-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Save policy (C5, src/runtime_savepolicy.c; in bbport through RUNTIME_SOURCES): party save folder,
+# rotating backups, save check, on temporary folders. ninja -C out/gpu save-policy-test
+add_executable(save-policy-test EXCLUDE_FROM_ALL ../tests/test_save_policy.c ../src/runtime_savepolicy.c)
+target_compile_options(save-policy-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(save-policy-test PRIVATE ../src)
+set_target_properties(save-policy-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
