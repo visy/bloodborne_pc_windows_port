@@ -177,9 +177,11 @@ bool GuestServicesEnabledFromEnv(const char* v) {
 #include "game_state.h"
 #include "party_director.h"
 #include "party_link.h"
+#include "party_progress.h"
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdarg>
 #include <deque>
 #include <mutex>
@@ -381,7 +383,26 @@ bool RunTestFixture(const GameSnapshot& s, int step) {
     }
     alignas(16) float pos[4] = {0, 0, 0, 1};
     alignas(16) float rot[4] = {0, 0, 0, 0};
-    if (std::sscanf(at, "%f,%f,%f,%f", &pos[0], &pos[1], &pos[2], &rot[1]) != 4 || !s.player) {
+    if (std::strncmp(at, "doll", 4) == 0) {
+        // In front of the Doll's stand spot on this game (12100500-12100502, event 12100110):
+        // MSB regions 2102301 / 2102302 / 2102303; 1.2 m off, facing her.
+        static const float spots[3][3] = {{-5.8f, -5.62f, -13.6f}, {-13.27f, -1.05f, 1.73f}, {-7.4f, -6.25f, -25.09f}};
+        int spot = 0;
+        for (int k = 0; k < 3; ++k) {
+            bool on = false;
+            if (progress::ReadFlag(12100500 + k, &on) && on) {
+                spot = k;
+            }
+        }
+        pos[0] = spots[spot][0] + 0.6f;
+        pos[1] = spots[spot][1];
+        pos[2] = spots[spot][2] + 1.04f;
+        rot[1] = std::atan2(-0.6f, -1.04f);
+        Log("test: the Doll's spot on this game is #%d (12100500 + %d)", spot + 1, spot);
+    } else if (std::sscanf(at, "%f,%f,%f,%f", &pos[0], &pos[1], &pos[2], &rot[1]) != 4) {
+        return false;
+    }
+    if (!s.player) {
         return false;
     }
     std::uint64_t vtbl = 0, fn = 0;
