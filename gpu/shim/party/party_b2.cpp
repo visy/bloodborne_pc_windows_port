@@ -607,12 +607,40 @@ void Init() {
     Log("on%s", g_force.load() ? " (BB_PARTY_B2_FORCE: K2 keeps tasks without a session)" : "");
 }
 
+/// BB_PARTY_B2_TEST_WARP=<lamp id>: single-instance check of K2 - once an NPC task has existed
+/// for 15 s in a steady world, warp once more (0x13CDF30) so the reset path runs with a task.
+void TestWarpTick(const GameSnapshot& s, double now) {
+    static const char* env = std::getenv("BB_PARTY_B2_TEST_WARP");
+    static bool done = false;
+    static double npc_since = 0;
+    if (!env || !env[0] || done) {
+        return;
+    }
+    if (!s.world_up || s.loading || Tasks(true).empty()) {
+        npc_since = 0;
+        return;
+    }
+    if (npc_since == 0) {
+        npc_since = now;
+        return;
+    }
+    if (now - npc_since < 15.0) {
+        return;
+    }
+    done = true;
+    const u32 id = u32(std::strtoul(env, nullptr, 10));
+    Log("test warp: lamp %u with tasks:%s", id, DescribeTasks().c_str());
+    using Fn = void(BB_COOP_SYSV*)(u32);
+    reinterpret_cast<Fn>(Guest(0x13cdf30))(id);
+}
+
 void Tick(const GameSnapshot& s) {
     if (!g_on.load()) {
         return;
     }
     const double now = Now();
     ProbeTick(s);
+    TestWarpTick(s, now);
     if (Role() == RoleClient) {
         GuestTick(s, now);
     } else {
