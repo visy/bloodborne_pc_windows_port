@@ -629,6 +629,8 @@ struct LevelUpScript {
     bool open = false;                 ///< "open[=TEXT]": open a menu, then press "keys=" one by one
     std::string keys;                  ///< "cross,left,..." pressed 1.5 s apart once the menu is open
     std::size_t key_at = 0;
+    std::uint32_t target = 0;          ///< talk id of the character / object to use
+    int approach = 0;                  ///< WaitPlaced: placement attempts (distance x side)
     std::uint32_t menu_text = 15000100; ///< the talk menu row to choose
     std::uint32_t requests0 = 0;
     int insight0 = -1;
@@ -648,6 +650,36 @@ bool OnScreen(std::uint32_t id, std::int64_t within_ms = 400) {
                                  std::chrono::steady_clock::now().time_since_epoch())
                                  .count();
     return ms && now - ms < within_ms;
+}
+
+// The action prompt: ActionButtonParam textId of the Dream's talk / examine regions (6003 / 6004 /
+// 6019-6026 / 6030: 10010100, 10010200, 10010220, 70000009) - looked up every frame while shown.
+bool PromptUp() {
+    for (const std::uint32_t id : {10010100u, 10010200u, 10010220u, 70000009u}) {
+        if (OnScreen(id)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Stand the local player at `dist` m from `chr` on the side `side` (0 its front, 1 back, 2 / 3
+// its sides; forward(yaw) = (-sin, -cos)), facing it (PlayerIns vfunc +0x5F8).
+bool StandAt(const GameSnapshot& s, std::uint64_t chr, float dist, int side) {
+    float d[4] = {}, r[4] = {};
+    if (!chr || !s.player || !SafeRead(chr + 0xc0, d, sizeof d) || !SafeRead(chr + 0xd0, r, sizeof r)) {
+        return false;
+    }
+    const float a = r[1] + (side == 1 ? 3.14159265f : side == 2 ? 1.5707963f : side == 3 ? -1.5707963f : 0.0f);
+    alignas(16) float pos[4] = {d[0] - dist * std::sin(a), d[1], d[2] - dist * std::cos(a), 1.0f};
+    alignas(16) float rot[4] = {0, a + 3.14159265f, 0, 0};
+    std::uint64_t vtbl = 0, fn = 0;
+    if (!SafeGet(s.player, &vtbl) || !SafeGet(vtbl + 0x5f8, &fn) || !fn) {
+        return false;
+    }
+    using WarpFn = void(BB_COOP_SYSV*)(std::uint64_t, const float*, const float*, std::uint64_t);
+    reinterpret_cast<WarpFn>(fn)(s.player, pos, rot, 0);
+    return true;
 }
 
 void Tap(std::uint32_t buttons, double now) {
@@ -676,9 +708,25 @@ void LevelUpTick(const GameSnapshot& s, double now) {
     const double since = now - L.at;
     switch (L.stage) {
     case LevelUpScript::WaitPlaced:
-        if (since >= 1.5) {
-            Tap(kPadCross, now);
-            go(LevelUpScript::Greeting, "Cross at the Doll (talk); advancing her lines until the talk menu is up");
+        // Press only with the action prompt up; else step closer / around (polled every 0.8 s).
+        if (since >= 0.8) {
+            if (PromptUp()) {
+                Tap(kPadCross, now);
+                go(LevelUpScript::Greeting, "action prompt up: Cross (talk); advancing the lines until the menu is up");
+                break;
+            }
+            static const float dists[] = {1.2f, 1.0f, 0.8f, 0.6f, 0.45f};
+            const int n = L.approach++;
+            if (n >= 5 * 4) {
+                go(LevelUpScript::Done, "FAILED: no action prompt at any distance / side");
+                break;
+            }
+            const float dist = dists[n / 4];
+            const int side = n % 4;
+            const bool ok = StandAt(s, FindChr(L.target), dist, side);
+            Log("test: levelup: no prompt yet; standing %.2f m from t%u (side %d)%s", dist, L.target, side,
+                ok ? "" : " - warp failed");
+            L.at = now;
         }
         break;
     case LevelUpScript::Greeting:
@@ -1121,10 +1169,12 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
             g_lvl.at = now;
             g_lvl.shop = false;
             g_lvl.menu_text = kTextChannel;
+            g_lvl.target = target ? target : 210304;
         } else if (const std::size_t o = g.test.find("open"); g.test_step == 0 && o != std::string::npos) {
             g_lvl.stage = LevelUpScript::WaitPlaced;
             g_lvl.at = now;
             g_lvl.open = true;
+            g_lvl.target = target;
             g_lvl.menu_text = g.test.compare(o, 5, "open=") == 0 ? std::uint32_t(std::strtoul(g.test.c_str() + o + 5, nullptr, 10)) : 0;
             if (const std::size_t k = g.test.find("keys="); k != std::string::npos) {
                 const std::size_t e = g.test.find(';', k);
@@ -1135,6 +1185,7 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
             g_lvl.at = now;
             g_lvl.shop = true;
             g_lvl.menu_text = kTextPurchase;
+            g_lvl.target = target;
         }
         ++g.test_step;
         g.test_next = now + 8.0;
