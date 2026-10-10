@@ -367,7 +367,7 @@ void DirectorTick(const GameSnapshot& s, party::PartyLink* link);
 /// coop::OnHostFlagSet once party_items lands; either side can be merged first.
 using ItemFlagObserver = void (*)(u32 id);
 void SetItemFlagObserver(ItemFlagObserver fn);
-/// Called on the main thread at each steady own world (load mode 0) right before any host flag
+/// Called on the main thread at each steady load (load mode 0 or 1) right before any host flag
 /// is applied there (C3's ledger seeding). nullptr unregisters.
 using BeforeApplyHook = void (*)();
 void SetBeforeApplyHook(BeforeApplyHook fn);
@@ -389,6 +389,10 @@ Policy CurrentPolicy();
 // Flag access (main thread; the live game store).
 bool ReadFlag(u32 id, bool* value);
 bool WriteFlagOwnSave(u32 id, bool value);
+/// The own save's value (the pool; in load mode 1 not what the host-world overlay shows).
+bool ReadFlagOwnSave(u32 id, bool* value);
+/// The flag store's load mode: 0 own world, 1 the host-world overlay, -1 no store.
+int FlagLoadMode();
 
 struct Stats {
     u64 hook_hits = 0, hook_candidates = 0, scans = 0, host_changes = 0;

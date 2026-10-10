@@ -1349,6 +1349,7 @@ void CoopTick() {
     TravelTick();        // B1 guest replay (party_travel.h)
     StoryTick();         // C4 cutscenes / endings (party_story.h)
     ItemsTick();         // C3 guest item replay (party_items.h)
+    GameSaveTick();      // save requests after summoned writes (game_state.h)
     SeamlessRulesTick(); // A6 param rules, EMEVD filter stats (seamless_rules.h)
     fourp::FourpTick();  // 4-player rules: the party's max players (party_fourp.h)
 }

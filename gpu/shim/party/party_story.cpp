@@ -16,6 +16,7 @@
 #include "coop_hooks.h"
 #include "game_state.h"
 #include "party_director.h"
+#include "party_progress.h"
 #include "party_runtime.h"
 
 #include <atomic>
@@ -394,11 +395,12 @@ bool GuestStory::TakeDirty() {
     return d;
 }
 
-void GuestStory::Build(const StoryIntent& s, bool mirror) {
+void GuestStory::Build(const StoryIntent& s, bool mirror, bool summoned) {
     ops_.clear();
     cur_ = s;
     running_ = true;
     running_mirror_ = mirror;
+    running_summoned_ = summoned && !mirror;
     op_started_ = false;
     auto push = [this](Op op) { ops_.push_back(std::move(op)); };
     if (mirror) {
@@ -410,7 +412,8 @@ void GuestStory::Build(const StoryIntent& s, bool mirror) {
     switch (s.kind) {
     case StoryKind::Cutscene: {
         if (!Seen(s.id) || s.force) {
-            push({Op::Play, s.id, 0});
+            // Summoned: the phantom path (mode 2) the live mirror uses; no warp variant.
+            push({Op::Play, s.id, summoned ? 2u : 0u});
             push({Op::WaitRemoStart});
             push({Op::WaitRemoEnd});
         }
@@ -479,6 +482,7 @@ void GuestStory::Finish(bool ok) {
     (void)ok;
     running_ = false;
     running_mirror_ = false;
+    running_summoned_ = false;
     ops_.clear();
     dirty_ = true;
 }
@@ -672,6 +676,21 @@ std::optional<StoryAction> GuestStory::Step(const StoryState& st, double now) {
         dirty_ = true;
         Build(s, false);
         return Run(st, now);
+    }
+    // Seamless play: a guest may stay summoned for the whole session. Everything but an ending
+    // runs as a phantom too (mode-2 play, own-pool writes); endings wait for the own world.
+    if (!queue_.empty() && summoned_replay && !st.own_world && stable_mirror_ >= kStableTicks && st.calm &&
+        !st.remo_playing) {
+        for (auto it = queue_.begin(); it != queue_.end(); ++it) {
+            if (it->kind == StoryKind::Ending) {
+                continue;
+            }
+            const StoryIntent s = *it;
+            queue_.erase(it);
+            dirty_ = true;
+            Build(s, false, true);
+            return Run(st, now);
+        }
     }
     return std::nullopt;
 }
@@ -961,7 +980,34 @@ BB_COOP_SYSV void RemoHandlerEntry(u64, u64 event, u64, u64, u64, u64) {
 
 // ---- Guest actions ----
 
+/// Summoned (flag store load mode 1): the live store is the host's overlay; story state goes into
+/// the own save's pool instead (C2's pool write), the overlay is never touched.
+bool Summoned() {
+    return progress::FlagLoadMode() == 1;
+}
+
+int OwnTodValue() {
+    int v = 0;
+    for (u32 i = 0; i < 3; ++i) {
+        bool b = false;
+        if (!progress::ReadFlagOwnSave(9800 + i, &b)) {
+            return -1;
+        }
+        v |= (b ? 1 : 0) << (2 - i); // 9800 = bit 2
+    }
+    return v;
+}
+
 void SetFlags(const std::vector<u32>& flags, bool on) {
+    if (Summoned()) {
+        for (u32 f : flags) {
+            if (!progress::WriteFlagOwnSave(f, on)) {
+                Log("flag %u: not in the own save's pool; not set while summoned", f);
+            }
+        }
+        RequestGameSave("C4 story flags");
+        return;
+    }
     const u64 man = Slot(kEventFlagMan);
     if (!man) {
         Log("no EventFlagMan: flags not set");
@@ -970,6 +1016,26 @@ void SetFlags(const std::vector<u32>& flags, bool on) {
     for (u32 f : flags) {
         reinterpret_cast<SetFlagFn>(Guest(kSetEventFlag))(man, f, on ? 1 : 0);
     }
+}
+
+/// No HP lost for 15 s (ChrIns +0x3B0 -> +0x20: +0xF8 HP), as party_items' popup rule.
+bool Calm(double now) {
+    static u64 last_player = 0;
+    static i32 last_hp = -1;
+    static double last_hit = -1e9;
+    const u64 player = Field<u64>(Slot(kWorldChrMan), 0x60, 0);
+    const u64 a = Field<u64>(player, 0x3b0, 0);
+    const u64 b = Field<u64>(a, 0x20, 0);
+    const i32 hp = Field<i32>(b, 0xf8, -1);
+    if (!player || !a || !b || hp < 0) {
+        return true;
+    }
+    if (player == last_player && last_hp >= 0 && hp < last_hp) {
+        last_hit = now;
+    }
+    last_player = player;
+    last_hp = hp;
+    return now - last_hit >= 15.0;
 }
 
 void Run(const StoryAction& a) {
@@ -982,17 +1048,32 @@ void Run(const StoryAction& a) {
         break;
     }
     case StoryAction::SetFlags: {
+        const bool summoned = Summoned();
         SetFlags(a.flags, a.on);
         std::string list;
         for (u32 f : a.flags) {
-            list += (list.empty() ? "" : ",") + std::to_string(f) + "=" + std::to_string(FlagValue(f, 1));
+            bool v = false;
+            const int value = summoned ? (progress::ReadFlagOwnSave(f, &v) ? int(v) : -1) : FlagValue(f, 1);
+            list += (list.empty() ? "" : ",") + std::to_string(f) + "=" + std::to_string(value);
         }
-        Log("%s: flags set %s (read back: %s)", a.why.c_str(), a.on ? "ON" : "OFF", list.c_str());
+        Log("%s: flags set %s%s (read back: %s)", a.why.c_str(), a.on ? "ON" : "OFF",
+            summoned ? " in the own save's pool (summoned; overlay untouched)" : "", list.c_str());
         break;
     }
     case StoryAction::ApplyTod: {
         const u64 man = Slot(kEventFlagMan);
         const int v = TodFlagValue(a.tod);
+        if (v >= 0 && Summoned()) {
+            // The own save only; the world shown stays the host's (no refresh byte).
+            const int before = OwnTodValue();
+            for (u32 i = 0; i < 3; ++i) {
+                progress::WriteFlagOwnSave(9800 + i, ((v >> (2 - i)) & 1) != 0);
+            }
+            Log("time of day %d while summoned: own save 9800..9802 %d -> %d (pool; overlay untouched)", a.tod,
+                before, OwnTodValue());
+            RequestGameSave("C4 time of day");
+            break;
+        }
         if (man && v >= 0) {
             const int before = FlagValue(9800, 3);
             reinterpret_cast<SetFlagValueFn>(Guest(kSetFlagValue))(man, 9800, 3, static_cast<u32>(v));
@@ -1177,6 +1258,7 @@ void InstallStoryHooks() {
         g_player_arg = static_cast<i32>(std::strtol(p, nullptr, 0));
     }
     g_guest.mirror_enabled = !EnvOff("BB_PARTY_STORY_MIRROR");
+    g_guest.summoned_replay = !EnvOff("BB_PARTY_STORY_SUMMONED");
     // Reference sites (cutscenes_endings.md 5.1): play remo, time-of-day apply; the calls need them.
     const bool play_ok = Matches(kPlayRemo, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54});
     const bool tod_ok =
@@ -1261,8 +1343,10 @@ void StoryTick() {
         st.sex_variant = SexVariant(); // a virtual call into the game: only when a play may follow
     }
     if (g.world_up && !g.loading) {
-        const int tv = FlagValue(9800, 3);
+        // Summoned: the own save's clock (the overlay shows the host's).
+        const int tv = Summoned() ? OwnTodValue() : FlagValue(9800, 3);
         st.tod_value = tv < 0 ? 0 : tv;
+        st.calm = Calm(now);
     }
     // Remo watch: the playing bit's edges (both roles; the evidence for tests).
     if (st.remo_playing != g_tick.remo_was_playing) {
