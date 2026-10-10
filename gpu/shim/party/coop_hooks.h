@@ -55,4 +55,14 @@ bool ReplacePrologue(u64 off, std::initializer_list<u8> prologue, const void* ha
 /// `target`, System V); the handler may call Guest(target) itself.
 bool HookCallSite(u64 off, u64 target, const void* handler, const char* name);
 
+/// Retargets the tail jump `jmp rel32` (e9) at `off` (which must jump to `target`) to `handler`
+/// (same signature as `target`, System V). The handler is entered with the original caller's
+/// return address on the stack (a tail call); it may call Guest(target) itself.
+bool HookTailJump(u64 off, u64 target, const void* handler, const char* name);
+
+/// Writes `patched` over `original` at `off` (same length). True when the image now holds
+/// `patched` (written, or already there); false (and a log line naming `name`) when it holds
+/// neither: nothing is written then.
+bool PatchBytes(u64 off, std::initializer_list<u8> original, std::initializer_list<u8> patched, const char* name);
+
 } // namespace coop
