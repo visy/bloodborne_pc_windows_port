@@ -86,6 +86,16 @@ party game from the beginning; the in-game rows then switch role or back to sing
 paths use the party saves; the menu path keeps its settings in party.json, the launcher path in
 `launcher_settings.json` (a launcher run never reads party.json's password or code).
 
+### Why "Continue party game" and not the title's Continue + "Host party"
+
+The first idea was: press the game's own *Continue*, then *Host party* / *Join party* in the
+world. With the party save as the only co-op path, the title's *Continue* loads a single-player
+character (it reads `user\savedata`); hosting or joining from there would sync the party's
+progress and items into that save. So the party entries live next to *Continue* instead: *Continue
+party game* is the one press that picks the party save, the role and the saved address, and the
+world's *Host party* / *Join party* are offered only once the party character is loaded (switching
+role, or hosting / joining again after *Leave*).
+
 ## 3. The title entry
 
 The title's main menu is built by 0x1B4A3D0 (Ghidra): command items through
