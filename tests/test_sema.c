@@ -4,6 +4,11 @@
 
 /* The settings menu of the GPU library restarts through probe.c, which tests do not link. */
 void runtime_restart(void) { abort(); }
+#ifdef _WIN32
+/* probe.c's too: no guest TLS block on these host threads (FS is the host's), and no restart. */
+ABI void restore_guest_fs(void) {}
+volatile int runtime_restarting;
+#endif
 #include <assert.h>
 #include <pthread.h>
 #include <stdint.h>

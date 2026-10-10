@@ -22,7 +22,7 @@ from pathlib import Path
 
 QUEUE_FILE = Path(os.environ.get("BB_GAME_QUEUE_FILE", r"E:\games\bbport\agents\game_queue.json"))
 POOL_DEFAULTS = {"game": int(os.environ.get("BB_GAME_QUEUE_MAX", "2")),
-                 "build": int(os.environ.get("BB_BUILD_QUEUE_MAX", "2"))}
+                 "build": int(os.environ.get("BB_BUILD_QUEUE_MAX", "3"))}
 
 
 def pool_file(pool: str) -> Path:
