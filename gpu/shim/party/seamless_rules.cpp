@@ -409,6 +409,7 @@ using DispatchFn = u8(BB_COOP_SYSV*)(u64 self, u64 event, float dt);
 DispatchFn g_dispatch_original = nullptr;
 bool g_emevd_trace = false;
 std::atomic<EmevdRewriter> g_rewriter{nullptr};
+std::atomic<EmevdRewriter> g_rewriter2{nullptr};
 
 // Rules "event:bank:id[@index]" (party_phantom.h). Built in: the confinement walls of common
 // event 7600 (index 6 / 7, only while B1 travel is on; BB_PARTY_OPEN_WORLD=0 drops them). The A6
@@ -514,6 +515,9 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
         if (const EmevdRewriter rw = g_rewriter.load(std::memory_order_relaxed)) {
             rw(event_id, bank, id, event, instr);
         }
+        if (const EmevdRewriter rw = g_rewriter2.load(std::memory_order_relaxed)) {
+            rw(event_id, bank, id, event, instr);
+        }
     }
     z.End(); // the game's own dispatch is not ours
     return g_dispatch_original(self, event, dt);
@@ -583,6 +587,10 @@ void SeamlessRulesInit() {
 
 void SetEmevdRewriter(EmevdRewriter fn) {
     g_rewriter.store(fn);
+}
+
+void SetEmevdRewriter2(EmevdRewriter fn) {
+    g_rewriter2.store(fn);
 }
 
 bool EnsureEmevdFilter() {

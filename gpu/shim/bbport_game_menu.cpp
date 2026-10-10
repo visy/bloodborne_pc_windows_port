@@ -302,10 +302,20 @@ struct SeenText {
     std::atomic<std::int64_t> ms{0};
 };
 SeenText seen_texts[4096];
+struct SeenId {
+    std::atomic<u32> id{0};
+    std::atomic<std::int64_t> ms{0};
+};
+SeenId seen_ids[4096]; // by id only (LastLookupMs)
 void NoteLookup(u32 category, u32 id) {
     const std::int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
                                  std::chrono::steady_clock::now().time_since_epoch())
                                  .count();
+    {
+        SeenId& e = seen_ids[(u64(id) * 0x9E3779B97F4A7C15ull) >> 52];
+        e.id.store(id, std::memory_order_relaxed);
+        e.ms.store(now, std::memory_order_relaxed);
+    }
     const u64 key = (u64(category) << 32 | id) + 1;
     SeenText& s = seen_texts[(key * 0x9E3779B97F4A7C15ull) >> 52];
     if (s.key.load(std::memory_order_relaxed) == key && now - s.ms.load(std::memory_order_relaxed) < 1000) {
@@ -565,6 +575,11 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
                 P::All().size());
 }
 
+
+std::int64_t LastLookupMs(std::uint32_t id) {
+    const SeenId& e = seen_ids[(u64(id) * 0x9E3779B97F4A7C15ull) >> 52];
+    return e.id.load(std::memory_order_relaxed) == id ? e.ms.load(std::memory_order_relaxed) : 0;
+}
 
 void TextActivity(std::uint64_t* seq, std::int64_t* last_ms) {
     *seq = fresh_seq.load(std::memory_order_acquire);

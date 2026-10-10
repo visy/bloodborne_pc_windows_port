@@ -112,6 +112,15 @@ std::vector<EmevdSkipRule> LampSkipRules();
 /// two instructions on a client keeps the host's flags from the join snapshot (map m21 zone 0).
 std::vector<EmevdSkipRule> DollPlacementRules();
 
+/// The Doll's level-up handshake (live finding): talk t210304 sets 72100100 and waits for
+/// 72100101 before OpenSoul; m21_00 event 12100112 (人形のヒロイン_レベルアップアニメ_PC, the
+/// player's kneel) sets it, but only for chr type 0 (index 1-2 `4[3] [15, 10000, 0]` + `1000[2]`
+/// end, and the 4[3] [n, 10000, 0] tests of each distance branch). On a client (chr type 1) the
+/// rewriter makes those tests ask for the local player's own type (args byte 8: 0 -> 1) while it
+/// executes them, and puts 0 back when the same bytes run on a non-client (the EVD data is shared).
+/// True when an instruction (event, bank, id, entity, type) is one of those tests.
+bool DollLevelUpCharTypeTest(int event_id, int bank, int id, int entity, int type);
+
 /// The local character's record (PlayerGameData +0x90 level, +0x94 echoes, +0x84 Insight).
 struct PlayerRecord {
     int level = -1, echoes = -1, insight = -1;

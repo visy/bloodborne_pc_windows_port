@@ -162,6 +162,10 @@ std::vector<EmevdSkipRule> DollPlacementRules() {
     return out;
 }
 
+bool DollLevelUpCharTypeTest(int event_id, int bank, int id, int entity, int type) {
+    return event_id == 12100112 && bank == 4 && id == 3 && entity == 10000 && (type == 0 || type == 1);
+}
+
 bool GuestLampsEnabledFromEnv(const char* v) {
     return v && v[0] == '1' && !v[1];
 }
@@ -175,9 +179,11 @@ bool GuestServicesEnabledFromEnv(const char* v) {
 #ifndef BB_PARTY_GUESTSVC_NO_GAME
 #include "coop_hooks.h"
 #include "game_state.h"
+#include "seamless_rules.h"
 #include "party_director.h"
 #include "party_link.h"
 #include "party_progress.h"
+#include "bbport_game_menu.h"
 
 #include <atomic>
 #include <chrono>
@@ -185,6 +191,8 @@ bool GuestServicesEnabledFromEnv(const char* v) {
 #include <cstdarg>
 #include <deque>
 #include <mutex>
+
+extern "C" void runtime_pad_director_press(std::uint32_t buttons); // src/runtime_pad.c
 
 namespace coop {
 namespace {
@@ -258,6 +266,26 @@ std::uint64_t BB_COOP_SYSV IsClientFilter(std::uint64_t env, std::uint64_t value
     }
     g_overrides.fetch_add(1, std::memory_order_relaxed);
     return 0;
+}
+
+// EMEVD dispatch thread: the Doll's level-up kneel event 12100112 for a client (see the header).
+std::atomic<std::uint32_t> g_doll_rewrites{0};
+void DollRewriter(int event_id, int bank, int id, std::uint64_t event, std::uint64_t instr) {
+    if (event_id != 12100112 || bank != 4 || id != 3) {
+        return;
+    }
+    std::uint32_t size = 0;
+    const std::uint64_t args = EmevdInstructionArgs(event, instr, &size);
+    std::int32_t entity = 0;
+    std::int8_t type = -1;
+    if (!args || size < 9 || !SafeGet(args + 4, &entity) || !SafeGet(args + 8, &type) ||
+        !DollLevelUpCharTypeTest(event_id, bank, id, entity, type)) {
+        return;
+    }
+    const std::int8_t want = LocalSessionRole() == kSessionRoleClient ? 1 : 0;
+    if (type != want && SafeWrite(args + 8, &want, 1)) {
+        g_doll_rewrites.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 // Main thread (talk scripts): IsMultiplayerInProgress for talk environment `env` (both roles):
@@ -549,6 +577,202 @@ void ProbeDoll() {
         draw[7], pos[0], pos[1], pos[2], flags.c_str());
 }
 
+// Live test (BB_PARTY_GUESTSVC_TEST "levelup"): the Doll's level up on the guest, event-driven
+// through the game's own pad path (runtime_pad_director_press, no OS input). Each stage waits for
+// what the game shows: message lookups (BbGameMenu::LastLookupMs / TextActivity: a text on screen
+// is looked up every frame) and the character record. Talk menu texts (talk ESD t210304):
+// 15000100 "Channel the Blood Echoes", 15000007 "Talk", 15000005 "Leave".
+// The level-up menu: talk command OpenSoul (command switch 0x203FFD0 case 31 at 0x2040B4E) queues a
+// menu request (0x1C4A520) with the factory 0x1BB7F60, which builds the menu named "LevelUp"
+// (0x49B46F6, through 0x1C1CDF0). A pre-hook on the factory tells the test (and the log) that the
+// game really built the level-up menu on this game.
+std::atomic<std::uint32_t> g_levelup_menus{0};
+BB_COOP_SYSV void LevelUpMenuFactoryEntry(u64, u64, u64, u64, u64, u64) {
+    g_levelup_menus.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Menu request 0x1C4A520(out, factory std::function*, ...): the OpenSoul command (0x2040BB2) passes
+// a functor whose call pointer ([[rsi+0x20]+8]) is the LevelUp factory 0x1BB7F60. Its first test is
+// 0x176BFE0 (called at 0x1C4A549; false = no menu). Logged for the live tests.
+std::atomic<std::uint32_t> g_menu_requests{0}, g_levelup_requests{0};
+std::atomic<int> g_menu_gate_last{-1};
+std::atomic<bool> g_menu_req_active{false};
+void* g_menu_gate_orig = nullptr;
+BB_COOP_SYSV void MenuRequestEntry(u64, u64 functor, u64, u64, u64, u64) {
+    g_menu_requests.fetch_add(1, std::memory_order_relaxed);
+    std::uint64_t impl = 0, fn = 0;
+    if (functor && SafeGet(functor + 0x20, &impl) && impl && SafeGet(impl + 8, &fn) && fn == Guest(0x1BB7F60)) {
+        g_levelup_requests.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+__attribute__((noinline)) BB_COOP_SYSV u64 MenuGateHook() {
+    const u64 ret = reinterpret_cast<u64>(__builtin_return_address(0));
+    const u64 r = reinterpret_cast<u64(BB_COOP_SYSV*)()>(g_menu_gate_orig)();
+    if (ret == Guest(0x1C4A54E)) {
+        g_menu_gate_last.store(int(r & 0xff), std::memory_order_relaxed);
+    }
+    return r;
+}
+
+// Talk commands (switch 0x203FFD0: rsi = the call, vfunc +0x18 = command id 0..87): a count per id
+// while the gate is open (the live tests: did OpenSoul, id 31, run on the guest?).
+std::atomic<std::uint32_t> g_talk_cmds[96];
+BB_COOP_SYSV void TalkCommandEntry(u64, u64 call, u64, u64, u64, u64) {
+    if (!g_gate.load(std::memory_order_relaxed) || !call) {
+        return;
+    }
+    std::uint64_t vtbl = 0, fn = 0;
+    if (!SafeGet(call, &vtbl) || !SafeGet(vtbl + 0x18, &fn) || !fn) {
+        return;
+    }
+    const std::uint32_t id = reinterpret_cast<std::uint32_t(BB_COOP_SYSV*)(u64)>(fn)(call);
+    if (id < 96) {
+        g_talk_cmds[id].fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+struct LevelUpScript {
+    enum Stage { Off, WaitPlaced, Greeting, MenuUp, WaitScreen, Raise, Confirm, Accept, WaitLevel, BackOut, Done };
+    std::uint32_t menus0 = 0;
+    Stage stage = Off;
+    double at = 0, press_until = 0;
+    int tries = 0, level0 = -1, echoes0 = -1;
+    std::uint64_t seq0 = 0;
+} g_lvl;
+
+constexpr std::uint32_t kPadCross = 0x4000, kPadCircle = 0x2000, kPadRight = 0x20, kPadLeft = 0x80, kPadUp = 0x10,
+                        kPadDown = 0x40;
+constexpr std::uint32_t kTextChannel = 15000100, kTextLeave = 15000005;
+
+bool OnScreen(std::uint32_t id, std::int64_t within_ms = 400) {
+    const std::int64_t ms = BbGameMenu::LastLookupMs(id);
+    const std::int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now().time_since_epoch())
+                                 .count();
+    return ms && now - ms < within_ms;
+}
+
+void Tap(std::uint32_t buttons, double now) {
+    runtime_pad_director_press(buttons);
+    g_lvl.press_until = now + 0.12;
+}
+
+void LevelUpTick(const GameSnapshot& s, double now) {
+    LevelUpScript& L = g_lvl;
+    if (L.stage == LevelUpScript::Off || L.stage == LevelUpScript::Done) {
+        return;
+    }
+    if (L.press_until > 0) {
+        if (now < L.press_until) {
+            return;
+        }
+        runtime_pad_director_press(0);
+        L.press_until = 0;
+    }
+    auto go = [&](LevelUpScript::Stage st, const char* what) {
+        L.stage = st;
+        L.at = now;
+        L.tries = 0;
+        Log("test: levelup: %s", what);
+    };
+    const double since = now - L.at;
+    switch (L.stage) {
+    case LevelUpScript::WaitPlaced:
+        if (since >= 1.5) {
+            Tap(kPadCross, now);
+            go(LevelUpScript::Greeting, "Cross at the Doll (talk); advancing her lines until the talk menu is up");
+        }
+        break;
+    case LevelUpScript::Greeting:
+        if (OnScreen(kTextChannel) && OnScreen(kTextLeave)) {
+            go(LevelUpScript::MenuUp, "talk menu up: 'Channel the Blood Echoes' (15000100) is on screen");
+        } else if (since >= 1.5 * (L.tries + 1)) {
+            if (++L.tries > 12) {
+                go(LevelUpScript::Done, "FAILED: no talk menu after 12 presses");
+                break;
+            }
+            Tap(kPadCross, now);
+            Log("test: levelup: line %d: Cross", L.tries);
+        }
+        break;
+    case LevelUpScript::MenuUp:
+        if (since >= 0.8) {
+            // The menu's cursor starts on its first row, "Channel the Blood Echoes" (AddTalkListData
+            // index 1). Make sure: Up wraps would move it, so press nothing but Cross.
+            L.menus0 = g_levelup_menus.load();
+            Tap(kPadCross, now);
+            go(LevelUpScript::WaitScreen, "Cross on 'Channel the Blood Echoes'; the Doll's lines follow");
+        }
+        break;
+    case LevelUpScript::WaitScreen:
+        // The guest kneels (event 12100112), the Doll speaks; then OpenSoul builds the menu.
+        if (g_levelup_menus.load() != L.menus0) {
+            go(LevelUpScript::Raise, "the game built the LevelUp menu (factory 0x1BB7F60): level-up screen open");
+        } else if (since >= 2.0 * (L.tries + 1)) {
+            if (++L.tries > 10) {
+                go(LevelUpScript::Done, "FAILED: no LevelUp menu after the Doll's lines (10 presses)");
+                break;
+            }
+            Tap(kPadCross, now);
+            Log("test: levelup: Doll line %d: Cross", L.tries);
+        }
+        break;
+    case LevelUpScript::Raise:
+        if (since >= 1.5) {
+            L.level0 = s.level;
+            L.echoes0 = s.echoes;
+            Tap(L.tries == 0 ? kPadDown : kPadRight, now);
+            if (L.tries++ == 0) {
+                Log("test: levelup: Down (first attribute)");
+                L.at = now - 0.5;
+                break;
+            }
+            go(LevelUpScript::Confirm, "Right: +1 on the selected attribute");
+        }
+        break;
+    case LevelUpScript::Confirm:
+        if (since >= 1.0) {
+            Tap(kPadCross, now);
+            go(LevelUpScript::Accept, "Cross: confirm the level up");
+        }
+        break;
+    case LevelUpScript::Accept:
+        if (s.level > L.level0 && L.level0 >= 0) {
+            go(LevelUpScript::WaitLevel, "level changed already");
+        } else if (since >= 1.2) {
+            if (++L.tries > 6) {
+                go(LevelUpScript::WaitLevel, "no level change after the confirm presses");
+                break;
+            }
+            // The confirmation dialog: Cross first (YES is usually preselected), then Left + Cross.
+            Tap(L.tries % 2 ? kPadCross : kPadLeft, now);
+            Log("test: levelup: dialog: %s", L.tries % 2 ? "Cross" : "Left");
+        }
+        break;
+    case LevelUpScript::WaitLevel:
+        if (s.level > L.level0 && L.level0 >= 0) {
+            Log("test: levelup: LEVEL UP on the guest: level %d -> %d, echoes %d -> %d", L.level0, s.level, L.echoes0,
+                s.echoes);
+            go(LevelUpScript::BackOut, "backing out (Circle)");
+        } else if (since >= 4.0) {
+            Log("test: levelup: FAILED: level still %d (echoes %d)", s.level, s.echoes);
+            go(LevelUpScript::BackOut, "backing out (Circle)");
+        }
+        break;
+    case LevelUpScript::BackOut:
+        if (since >= 1.0 * (L.tries + 1)) {
+            if (++L.tries > 4) {
+                go(LevelUpScript::Done, "done");
+                break;
+            }
+            Tap(kPadCircle, now);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
 // Test fixture: stand the guest somewhere (PlayerIns vfunc +0x5F8 warp 0x18CD600: rsi float4
 // position, rdx float4 rotation (0, yaw, 0, 0), ecx 0; the convention of 0x13AEADD) and/or set its
 // echoes, so a scripted run can open a menu and spend them. Never on by default.
@@ -667,6 +891,21 @@ void GuestServicesInit() {
         g.enabled = false;
         return;
     }
+    SetEmevdRewriter2(&DollRewriter);
+    // push rbp; mov rbp, rsp; push r15, r14, rbx; sub rsp, 0x48 (13 bytes, then mov rbx, rdi).
+    HookPrologue(0x1BB7F60, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x53, 0x48, 0x83, 0xec, 0x48},
+                 &LevelUpMenuFactoryEntry, "level-up menu factory (log)");
+    // push rbp; mov rbp, rsp; push r15, r14, r13, r12, rbx; sub rsp, 0x48 (17 bytes; then mov rbx, rdx).
+    // push rbp; mov rbp, rsp; push r15..r12, rbx; sub rsp, 0x3c8 (20 bytes; then mov rbx, rsi).
+    HookPrologue(0x203FFD0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x81,
+                             0xec, 0xc8, 0x03, 0x00, 0x00},
+                 &TalkCommandEntry, "talk command switch (log)");
+    HookPrologue(0x1C4A520, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83,
+                             0xec, 0x48},
+                 &MenuRequestEntry, "menu request (log)");
+    ReplacePrologue(0x176BFE0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x53, 0x48, 0x83, 0xec, 0x48},
+                    reinterpret_cast<const void*>(&MenuGateHook), &g_menu_gate_orig, "menu request gate 0x176BFE0 (log)");
+    EnsureEmevdFilter();
     // rdi = r15 (the talk environment), rsi = eax (the game's answer).
     g.installed = HookValueFilter(kIsClientLoad, {0x41, 0x0f, 0xb6, 0x47, 0x25}, {0x4c, 0x89, 0xff, 0x89, 0xc6},
                                   &IsClientFilter, kTestResultInt, "talk IsClientPlayer (guest services)");
@@ -792,10 +1031,16 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
         if (!RunTestFixture(s, g.test_step)) {
             g.test_done = true;
             Log("test: fixture done");
+        } else if (g.test_step == 0 && g.test.find("levelup") != std::string::npos) {
+            g_lvl.stage = LevelUpScript::WaitPlaced;
+            g_lvl.at = now;
         }
         ++g.test_step;
         g.test_next = now + 8.0;
         g.rec = RecordOf(ReadGameState(false)); // the fixture's echoes are not a purchase
+    }
+    if (g.open) {
+        LevelUpTick(s, now);
     }
     if (!g.open || now - g.last_check < 1.0) {
         return;
@@ -808,6 +1053,31 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
         }
         g.logged_envs[i] = env;
         LogEnv(env);
+    }
+    {
+        std::string cmds;
+        for (int i = 0; i < 96; ++i) {
+            if (const std::uint32_t n = g_talk_cmds[i].exchange(0, std::memory_order_relaxed)) {
+                cmds += " " + std::to_string(i) + "x" + std::to_string(n);
+            }
+        }
+        if (!cmds.empty()) {
+            Log("talk commands run:%s (31 = OpenSoul)", cmds.c_str());
+        }
+    }
+    static std::uint32_t reqs_logged = 0;
+    if (const std::uint32_t q = g_menu_requests.load(std::memory_order_relaxed); q != reqs_logged) {
+        Log("menu requests %u (LevelUp %u); the request gate 0x176BFE0 last answered %d", q,
+            g_levelup_requests.load(), g_menu_gate_last.load());
+        reqs_logged = q;
+    }
+    static std::uint32_t menus_logged = 0;
+    if (const std::uint32_t m = g_levelup_menus.load(std::memory_order_relaxed); m != menus_logged) {
+        Log("the game built the LevelUp menu (%u so far)", m);
+        menus_logged = m;
+    }
+    if (const std::uint32_t d = g_doll_rewrites.exchange(0, std::memory_order_relaxed)) {
+        Log("Doll level-up kneel (12100112): %u chr type test(s) set to the guest's own type", d);
     }
     if (const std::uint32_t m = g_multi_overrides.exchange(0, std::memory_order_relaxed)) {
         Log("headstones asked IsMultiplayerInProgress %u times (answered 0)", m);

@@ -41,6 +41,8 @@ void SeamlessRulesTick();
 using EmevdRewriter = void (*)(int event_id, int bank, int id, std::uint64_t event, std::uint64_t instr);
 /// Sets the rewriter (one; nullptr removes it). Call before EnsureEmevdFilter.
 void SetEmevdRewriter(EmevdRewriter fn);
+/// A second, independent rewriter slot (party_guestsvc), run after the first.
+void SetEmevdRewriter2(EmevdRewriter fn);
 /// Installs the EMEVD dispatch filter (0x17b93a0) now if SeamlessRulesInit did not (idempotent,
 /// whether or not the seamless rules are on). True once installed.
 bool EnsureEmevdFilter();
