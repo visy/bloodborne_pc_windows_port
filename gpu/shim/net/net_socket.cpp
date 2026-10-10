@@ -971,6 +971,8 @@ BBNET_ABI int net_bind(int s, const void* addr, int len) {
     sa.sin_family = AF_INET;
     sa.sin_port = bswap16(host_port);
     sa.sin_addr.s_addr = in.addr;
+    // Local tests: the game's own sockets listen on loopback only too (no Windows Firewall prompt).
+    if (in.addr == 0 && forced_local_ipv4() == bswap32(0x7f000001u)) sa.sin_addr.s_addr = bswap32(0x7f000001u);
 #if defined(_WIN32)
     if (host_port != guest_port) sock_setopt_int(sock.fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, 1);
 #endif
