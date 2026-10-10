@@ -132,6 +132,37 @@ Tests on one PC: `tools/mp/instances.py` (separate instance folders, 30 fps, VRA
 `tools/party/*` (pad driver, simguest from bbhost simclient, verdict, flag diff). Two-PC tests
 wait for the user's go-ahead.
 
+## Status per phase (2026-10-10)
+
+Sources: `docs/party/*.md` (implementation / results sections) and the commit log. Columns:
+**Code + unit tests** = implemented and covered by the named test target (no game needed);
+**In the game** = what has actually been seen running in the game, and how (one instance, or
+several local instances on one PC over loopback); **Open** = not done or not yet observed.
+Nothing has run between two PCs yet, and no human guest has yet been seen summoned into a
+host's world by the party layer (the instance harness cannot leave the title screen without
+input, so the in-world summon flow has not run there).
+
+| Phase | Code + unit tests | In the game | Open |
+|---|---|---|---|
+| A0 RE spike | done (`docs/party/from_api_schema.md`, FromApi formats confirmed) | - | - |
+| A1 transport | net layer, STUN, relay, netsim; `party-net-test`; `party-soak` (host + 3 guests, lan/dsl/bad, outages, crashes: all PASS); PeerPaths relay fallback | - (party-soak runs without the game) | game traffic between game instances; real NATs / routers |
+| A2 NP signed in | online id = party name; `party-net-test` | - | the FROM login reaching the online main menu through the party NP layer (seamless_rules.md "still needs") |
+| A3 host service | FromApi, Matching2, signaling, http_hle; `party-host-test` (also with 4 players) | - | a game-created room joined by a game client end to end |
+| A4 PartyLink, code, UPnP, public address | `party-link-test` (95+ checks, 4 players, kick by name, host restart); version check covers gameplay patches / mods / rules | 4 loopback instances reach the host's roster (`Hunter0..Hunter3`, title) | UPnP / STUN against real routers (not testable on one PC) |
+| A5 auto summoning | director, tick hook, Lua bell events, game state | single instance: tick once per frame, Lua bells accepted, map / role / Insight reads (section below) | an automatic summon between two games |
+| A6 seamless rules | XML party patches, param rules (full HP, bells without Insight), EMEVD filter, online title skip; patch report per site | single instance (NPC fixture, npc_peer.md 5.2): with `BB_PARTY` set, NPC summons go through in a boss-cleared area | every item of seamless_rules.md "What still needs a live 2-instance session" |
+| A7 UI | launcher Party tab + Rules & sync + Party help; overlay Party tab, toasts, status bridge (Leave / Rejoin / Kick); `party-status-test`, `party-status-bridge-test`, `tests/test_party_saves.py` | - | user guide `docs/PARTY.md` written; two-PC use |
+| Crash recovery | run.bat restart loop, auto-continue, rejoin by token / name, host keeps code and members; `party-link-test`, `party-soak` | instance harness (`--crash-instance 0`): the host killed and restarted with the same code, the guest back on slot 1 by token 7.1 s after the kill | host crash with a guest in the host's world |
+| B1 follow and rejoin | host travel capture, guest replay, send-home retarget, Dream gate; `party-travel-test` | - | a real host warp followed by a guest |
+| B2 seamless warp | research only (travel.md 4: research-grade, highest crash risk) | - | not planned now |
+| C1 campaign start | readiness (`prologue_solo` / `immediate`), Prologue roster state, bell grants; `party-start-test` | single instance: prologue flags read, Small Resonant Bell granted (goods 205 0 -> 1) | PR1 (does an automatic sign need the bell?) undecided at runtime |
+| C2 progress sync | host flag capture, guest apply into its own save, snapshots, BBPF dumps; `party-progress-test` | - | a host flag change applied on a real guest; NPC quests (off by default) |
+| C3 items | lot capture, guest replay, ledger, parity patches; `party-items-test` | single instance: lots awarded through `BB_PARTY_ITEMS_TEST`, ledger flag set, parity patches `applied` | replay from a real host; NG+ ledger flags; mark lost on a crash |
+| C4 cutscenes / endings | capture, live mirror, replay queue, time of day, endings; `party-story-test` | single instance: remo replay (85 s) and mirror call (mode 2), queue survives a restart | a host-triggered cutscene on a real guest; endings for guests |
+| C5 save policy | separate folder, launcher copy, rotating backups, save check; `save-policy-test`, `tests/test_party_saves.py` | - | world reset on rest |
+| Guests as full players (phantom limits) | respawn at host lamp, refill, open world, boss Insight, opt-in Mark; `party-phantom-test` | single instance probes for Insight / refill only | every item, in a real session |
+| 4 players | H1-H4, E6, P5, rules in the version check; `party-fourp-test`, `party-link-test`, `party-host-test` with `BB_PARTY_MAX=4` | 4 loopback instances install the patches and reach a 4-member roster at the title | a 3rd cooperator in the world, boss scaling, NPC signs, invader slot (cap 5) |
+
 ## Verified in A5 (single instance)
 
 - Tick hook SprjFlipper::Update 0x2034770 runs once per frame on the game's main thread (title,

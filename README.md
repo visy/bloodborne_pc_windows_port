@@ -160,6 +160,7 @@ launch_gui.bat
 - **Performance & Shaders**: *Performance Patch*, draw preparation workers, shader precompile, async shaders, GPL, the compile indicator, and **Export / Import shader cache**.
 - **Game**: skip intro, skip the online/offline choice, settings in the game's System menu, mods, and *All XML Patches...*.
 - **Input & Audio**: controller (`BB_GAMEPAD`), overlay on `L3 + R3`, mute in background.
+- **Party**: host or join a co-op party, connection settings, *Rules & sync...* and *Party help* ([guide](docs/PARTY.md)).
 - Hover any option for details, then click **Launch Bloodborne**. `run.bat` started on its own uses the same saved settings.
 
 #### Option B: Using the Command Line
@@ -181,6 +182,20 @@ Save files and shader caches are stored in `user\`. Settings are saved to `bbpor
 ### Upscaler assets
 
 FSR 3.1 needs none. FSR 4 (v07) and FSR 4.1.1 need assets that are not included: `tools/fetch_fsr4_assets.sh` downloads FSR 4 v07, and FSR 4.1.1 is built from your own AMD `amd_fidelityfx_upscaler_dx12.dll` (4.1.x) by `tools/fsr4cap` (upstream runs this under Proton on Linux; the resulting `fsr4_411` folder can be copied here). On RDNA4 the FP8 variant is picked automatically; `BB_FSR411_VARIANT=int8` forces INT8.
+
+---
+
+## Party co-op (in development)
+
+Play the campaign together with 2-4 players, without PSN or a server: one player hosts and
+sends a party code (`BBP1-...`), the others join with it (launcher **Party** tab). Guests are
+summoned automatically, follow the host between areas, and the host's progress, item rewards,
+cutscenes and ending are carried into each guest's own save; party play uses a separate save
+folder with automatic backups, and a crashed game restarts and rejoins by itself.
+**Status:** early. The parts have been tested on one PC (unit tests, several game copies
+connecting to each other, single-copy checks in the game); a real session between **two PCs has
+not been tested yet**. Guide (hosting, joining, ports / UPnP / firewall, what is shared, saves, troubleshooting):
+[docs/PARTY.md](docs/PARTY.md). Development status: [docs/PARTY_COOP_PLAN.md](docs/PARTY_COOP_PLAN.md).
 
 ---
 
