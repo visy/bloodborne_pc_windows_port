@@ -21,8 +21,8 @@ import contextlib, json, os, sys, time
 from pathlib import Path
 
 QUEUE_FILE = Path(os.environ.get("BB_GAME_QUEUE_FILE", r"E:\games\bbport\agents\game_queue.json"))
-POOL_DEFAULTS = {"game": int(os.environ.get("BB_GAME_QUEUE_MAX", "2")),
-                 "build": int(os.environ.get("BB_BUILD_QUEUE_MAX", "2"))}
+POOL_DEFAULTS = {"game": int(os.environ.get("BB_GAME_QUEUE_MAX", "3")),
+                 "build": int(os.environ.get("BB_BUILD_QUEUE_MAX", "3"))}
 
 
 def pool_file(pool: str) -> Path:
@@ -97,10 +97,10 @@ def _prune(state):
 
 
 @contextlib.contextmanager
-def game_slots(count: int, root: str, pool: str = "game"):
+def game_slots(count: int, root: str, pool: str = "game", label: str = ""):
     """Hold `count` slots of `pool` for the duration of the block (waits its turn); yields the
     slot numbers held."""
-    me = {"id": f"{os.getpid()}-{time.time():.0f}", "pid": os.getpid(), "count": count, "root": str(root),
+    me = {"id": f"{os.getpid()}-{time.time():.0f}", "pid": os.getpid(), "count": count, "root": str(root), "label": label,
           "since": time.strftime("%H:%M:%S")}
     with _locked(pool) as st:
         _prune(st)
@@ -147,10 +147,10 @@ def main():
             _prune(st)
         print(f"{pool}: max {st['max_clients']}  ({pool_file(pool)})")
         for e in st["holders"]:
-            print(f"  running  {e['count']}  {e['root']}  since {e['since']}  pid {e['pid']}"
+            print(f"  running  {e['count']}  {e['root']}  since {e['since']}  pid {e['pid']}  {e.get('label', '')}"
                   f"{'' if _alive(e['pid']) else '  (dead)'}")
         for i, e in enumerate(st["queue"]):
-            print(f"  wait #{i + 1} {e['count']}  {e['root']}  since {e['since']}  pid {e['pid']}"
+            print(f"  wait #{i + 1} {e['count']}  {e['root']}  since {e['since']}  pid {e['pid']}  {e.get('label', '')}"
                   f"{'' if _alive(e['pid']) else '  (dead)'}")
 
 
