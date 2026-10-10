@@ -229,6 +229,8 @@ bool TravelEnabled();
 /// Test fixtures (BB_PARTY_DIRECTOR_TEST place=...): warps the local player to an exact transform
 /// through the forced-placement sequence (main thread, world up). False when the map is unknown.
 bool TravelPlaceForTest(std::uint32_t map, const float pos[3], float yaw);
+/// Test fixtures (warp=MAP:POINT): a stage warp 0x132E010 to warp point / entity `point` of `map`.
+bool TravelWarpForTest(std::uint32_t map, std::uint32_t point);
 /// Guest: the host's last lamp id for the death / Hunter's Mark redirect (kTravelNone: no redirect,
 /// the guest goes home as in vanilla). Any thread. A travel intent with a last-lamp record also
 /// updates it.

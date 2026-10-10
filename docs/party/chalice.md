@@ -57,7 +57,7 @@ ErrorRecovery, 29 StateSwitch 0x1aaa3d0, 30 Finish.
 * Requesters: **Join** 0x1aa4a10(helper, list, index) takes a channel object from a search
   result list (refcounted, state at +0x110, ChannelId at +0x10, glyph wstring at +0x180);
   **RandomJoin** 0x1aa4cb0(helper) needs nothing else: it reads the player's unlocked depth per
-  chalice family from flags 6228+7i.. (four 9-step scans), creates the random-join request object
+  chalice family from flags 6221+k+7i, i = 1..9 (family k = 0..3), creates the random-join request object
   with 0x1e65580 (which sends **ChannelRandomJoin**) and starts step 10. Both refuse unless
   online (FrpgNetMan +8 set, +0x9f6/+0x9f8/+0xa50 clear), idle (+0x25c == 1) and no request
   pending. Callers: the altar menu (0x1abea30, menu event 2000 = decide; 0x1c0da40 functor).
@@ -112,45 +112,68 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
 
 * Vanilla matching is server-side (from_api_schema.md 5: no client-side area / password check on
   sign intake). The client sends `AreaId` and `ChannelId` with every sign and sign query.
-* **Both games must have the same dungeon**: the summoned guest loads the host's map from its own
-  data, and for area 29 that data is its current slot's record (section 1). Hence: a member's game
-  joins the host's dungeon first (glyph or random join at the Ritual Altar), then the bells work.
-* **Our rule** (FromApi::sign_get): when the querying host or a sign is in area 29, the sign is
-  listed only if both are in area 29 with the **same non-zero ChannelId**. Outside the dungeons
-  nothing changes. The board also notes each member's current ChannelId from these calls
-  (`random_join` uses it).
+* **The summoned game does not need the dungeon beforehand** (C, 0x14ba340 / 0x14bb200): the
+  host's game sends its own summon message (the type-1 item over P2P, np_session.h) to the sign's
+  owner; it carries the host's room data and, at +0x2c, the **host's ChannelId**. The guest's
+  handler 0x14ba340 stores the room data in its sign entry (+0xb8, state +0xc8 = 2) and, for a
+  ChannelId other than `0x8000000000000000`, creates a channel request by id (0x1e65290 ->
+  **get_details_info**) in +0xc0. When the session join proceeds (0x1872360 -> 0x14bb200), the
+  guest's game hands that channel to **slot 0's helper** (`SprjHolygrail.obj[0] + 0x108`,
+  0x1ac3ef0 -> QuickJoin 0x1aa5280 -> step 13 0x1aa8410): the slot-0 record is written from the
+  fetched entry (FormData), the chalice groups are cleared (0x13bdc00), and the guest loads the
+  host's dungeon. Slot 0 is the network / joined-dungeon slot; a member's own ritual dungeons use
+  the others (I: the requesters always pick obj[0] for joins).
+* So what the party needs is that **get_details_info finds the host's dungeon**: the host's game
+  uploads it when it performs the ritual / resumes it online (helper steps 5-6, ChannelUpload), and
+  the board keeps it. **Our rule** (FromApi::sign_get): a host whose sign query is in area 29 gets
+  the members' signs (wherever they rang: the Hunter's Dream, the world, another dungeon) only while
+  its ChannelId is on the board; otherwise none ("held back" in the log) — the summoned game would
+  build its own slot's dungeon. Outside the dungeons nothing changes. The board notes each
+  member's current ChannelId from these calls (`random_join` uses it).
+* **The automatic flow**: host and guests are in the Hunter's Dream (B1 travel follows the host
+  there); the host performs the ritual / enters its dungeon at the altar (the upload reaches the
+  board); the guests stay (below) and keep ringing the Small Resonant Bell (PartyDirector); the
+  host's director rings the Beckoning Bell inside the dungeon; the host's game summons; each guest's
+  game quick-joins the host's dungeon by ChannelId and loads in next to the host.
 * **Travel** (party_travel, B1): a host warp into area 29 (packed map, exact-position map, lamp
   `29xxxxx`, bonfire entity, a host death / Mark respawning at a dungeon lamp) carries the host's
   ChannelId (`"chalice"` in the travel event). A guest replays it only when its own current slot
-  holds that ChannelId (`ChaliceReplayAllowed`); otherwise it stays (logged: "join it at the Ritual
-  Altar"), because a warp into area 29 would generate the guest's own slot's dungeon (or none) —
-  a different layout. The guest death / Mark redirect to the host's last lamp skips a dungeon lamp
-  of a dungeon the guest does not have.
-* **4-player / scaling**: the m29 scripts already use the multiplayer doping (party_fourp.md,
+  holds that ChannelId (`ChaliceReplayAllowed`); otherwise it stays where it is and is summoned
+  (above): a warp into area 29 would generate the guest's own slot's dungeon (or none) — a
+  different layout. The guest death / Mark redirect to the host's last lamp skips a dungeon lamp of
+  a dungeon the guest does not have. `Party: chalice: slot S, dungeon N, load mode M` logs each
+  game's current dungeon (party_chalice.h reads it from the flags).
+* **4-player / scaling**: the m29 scripts already use the multiplayer doping (four_players.md,
   `Lua_MultiDoping`, 7501/7502).
 
 ## 5. Progress and rewards
 
+* **Chalices for everyone** (party_chalice.h): the chalices (goods 6100..6539 that are
+  HolygrailExParam rows; isOnlyOne, never consumed by a ritual) the host owns go to every guest
+  that lacks them (`chalice_goods` event, every change and every 60 s; the guest gives itself the
+  missing ones with GiveItemDirect in its own world, load mode 0). Whichever member's dungeon the
+  party clears, every member can perform the next ritual itself. A peer's list is filtered to the
+  25 chalice ids (no other goods can be given this way).
 * Dungeon flags (layer doors, boss kills, treasure in area 29, 1100xxxxx / 2001xxxxx lots) live in
   the **slot's own groups** (areas 40..47 remapped from area 29 by the slot), so a summoned guest
   (load mode 1, the host's overlay) never progresses its own copy, exactly like vanilla. They are
   never written from outside (party_progress `NeverWritable`, items.md: Chalice lots excluded).
-* What a guest gets in vanilla, and here: boss kill echoes / Insight as a cooperator, the shared
-  item drops it picks up itself. Chalice rewards (the next chalice, Ritual materials from bosses)
-  are host-only `2003[4]` awards (items.md); C3's ledger leaves area 29 out.
-* **Why no replay into the guest's slot**: the guest's slot record and the host's are the same
-  dungeon only when the guest joined it (same ChannelId); writing the host's area-29 flags into the
-  guest's slot groups would need the guest's slot index mapping (9020-9026 one-hot, remapped by
-  0x13b89b0 on every load) and would bypass the game's own slot bookkeeping (the clear 0x13bdc00 on
-  quick join / new ritual). Too risky for a save; not done. The vanilla path remains: a guest that
-  joined the same dungeon (glyph / random join) plays it in its own world and keeps its own
-  progress there; boss doors opened in co-op stay open in the host's world only.
+* What a guest gets as a cooperator: boss kill echoes / Insight (and the C3 parity patches' full
+  rewards), the drops it picks up itself. Boss reward lots in the dungeons (Ritual materials, the
+  chalice drops) are host-only `2003[4]` awards; C3 does not replay them: they are flagless and
+  repeatable per dungeon (no per-player flag or ledger bit to give them exactly once). The chalices
+  among them reach the guests through the chalice share above.
+* **Why no flag replay into the guest's slot**: the guest's quick join cleared its slot-0 groups and
+  rebuilt the record; writing the host's area-29 flags there would need the guest's slot mapping
+  (9020-9026 one-hot, remapped by 0x13b89b0 on every load) and would bypass the game's own slot
+  bookkeeping (0x13bdc00). Too risky for a save; not done. Main-world flags are never touched by
+  any of this: the chalice groups are separate (event_flags.md 2).
 
 ## 6. Open / not done
 
-* Fully automatic "follow the host into its dungeon": the random join (0x1aa4cb0 on
-  `SprjHolygrail.obj[slot] + 0x108`) needs the helper's state machine running (the altar menu
-  drives it) and the warp into the dungeon afterwards (the altar's own path). Not automated; the
-  member uses the altar's "Join a random dungeon" (the board answers with the host's dungeon) or
-  the host's glyph (logged by the host's game: `uploaded chalice dungeon N, glyph xxxxxxxx`).
+* Live: the altar ritual / quick join path was not driven end to end in the test harness (section
+  7 lists what was run). The ChannelId flag offsets (+32/+64) are read by party_chalice and logged;
+  the slot-0 assumption for joins is inferred from the requesters.
+* A guest that ends in its own copy of the dungeon (e.g. it entered the same glyph itself) is not
+  synchronised to the host's progress there (section 5).
 * The exact meaning of Status / ShareLevel / TurnoutLevel values, FixedOrGeneral 1 vs 2.

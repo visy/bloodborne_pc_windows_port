@@ -49,6 +49,7 @@ bool GoodsFromJsonText(const std::string& text, std::vector<std::uint32_t>* out,
 } // namespace coop::chalice
 
 #ifndef BB_PARTY_CHALICE_NO_GAME
+#include "coop_hooks.h"
 #include "game_state.h"
 
 #include <atomic>
@@ -79,7 +80,8 @@ double Seconds() {
 State Read() {
     State s;
     std::uint64_t man = 0;
-    if (!SafeGet(kEventFlagManSlot, &man) || man < 0x10000) {
+    const std::uint64_t slot_at = Guest(kEventFlagManSlot);
+    if (!slot_at || !SafeGet(slot_at, &man) || man < 0x10000) {
         return s;
     }
     std::int32_t mode = -1;

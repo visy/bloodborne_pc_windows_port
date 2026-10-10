@@ -1035,6 +1035,19 @@ bool TravelEnabled() {
     return g_travel_on.load();
 }
 
+bool TravelWarpForTest(std::uint32_t map, std::uint32_t point) {
+    if (!TravelMapKnown(map) || !ids::WarpPointKnown(map, point)) {
+        return false;
+    }
+    TravelIntent t;
+    t.kind = TravelKind::ScriptedWarp;
+    t.packed_map = map;
+    t.warp_point = point;
+    Log("test: warp the player to m%02u_%02u_%02u_%02u point %u", (map >> 24) & 0xff, (map >> 16) & 0xff,
+        (map >> 8) & 0xff, map & 0xff, point);
+    return Replay(t, {ReplayMethod::StageWarp, kTravelNone});
+}
+
 bool TravelPlaceForTest(std::uint32_t map, const float pos[3], float yaw) {
     if (!TravelMapKnown(map)) {
         return false;

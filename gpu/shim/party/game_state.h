@@ -66,6 +66,8 @@ std::string MapName(std::uint32_t map_id);
 std::string Describe(const GameSnapshot& s);
 /// Writes the local player's Insight (PlayerGameData +0x84); false when there is no record.
 bool WritePlayerInsight(int insight);
+/// Writes the local player's Blood Echoes (PlayerGameData +0x94; test fixtures).
+bool WritePlayerEchoes(int echoes);
 
 // ---- Campaign start (C1, docs/party/campaign_start.md). Game functions: main thread only. ----
 // Each function's first bytes are compared with the 1.09 code before the first call; a mismatch

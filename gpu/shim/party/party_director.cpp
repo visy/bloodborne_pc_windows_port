@@ -88,6 +88,7 @@ struct Test {
     bool on = false;
     bool log_state = false;
     int insight = -1;
+    int echoes = -1; // echoes=N: writes the player's Blood Echoes once (test saves)
     const char* ring = nullptr; // the event to raise once
     double delay = 10.0;
     bool start = false, grant_bells = false, drop_bells = false, drop_done = false;
@@ -98,6 +99,7 @@ struct Test {
     std::uint32_t place_map = 0;
     float place_pos[3] = {0, 0, 0}, place_yaw = 0;
     double place_at = 15.0;
+    std::uint32_t warp_point = 0; // warp=MAP:POINT (hex map): one stage warp, place's timing
     bool insight_done = false, ring_done = false;
     Clock::time_point rung_at{};
 };
@@ -574,6 +576,11 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         const bool ok = WritePlayerInsight(t.insight);
         Log("test: Insight %d -> %d %s", before, t.insight, ok ? "written" : "NOT written (no player record)");
     }
+    if (t.echoes >= 0 && Seconds(st.world_at, now) >= 2.0 && !s.loading) {
+        const bool ok = WritePlayerEchoes(t.echoes);
+        Log("test: Blood Echoes -> %d %s", t.echoes, ok ? "written" : "NOT written (no player record)");
+        t.echoes = -1;
+    }
     if (!t.goods.empty() && !t.goods_done && Seconds(st.world_at, now) >= 8.0 && s.world_up && !s.loading) {
         t.goods_done = true;
         for (const auto& [id, n] : t.goods) {
@@ -584,7 +591,8 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
     }
     if (t.place && !t.place_done && Seconds(st.world_at, now) >= t.place_at && s.world_up && !s.loading) {
         t.place_done = true;
-        const bool ok = TravelPlaceForTest(t.place_map, t.place_pos, t.place_yaw);
+        const bool ok = t.warp_point ? TravelWarpForTest(t.place_map, t.warp_point)
+                                     : TravelPlaceForTest(t.place_map, t.place_pos, t.place_yaw);
         Log("test: place: %s", ok ? "requested" : "refused (unknown map)");
     }
     if (t.award_lot > 0 && Seconds(st.world_at, now) >= 12.0 && s.world_up && !s.loading) {
@@ -689,6 +697,13 @@ void PartyDirector::ConfigureFromEnv() {
                 if (std::sscanf(item.c_str() + 6, "%d:%d", &id, &n) == 2 && id > 0 && n > 0 && n <= 99) {
                     st.test.goods.emplace_back(id, n);
                 }
+            } else if (item.rfind("warp=", 0) == 0) {
+                unsigned map = 0, point = 0;
+                if (std::sscanf(item.c_str() + 5, "%x:%u", &map, &point) == 2) {
+                    st.test.place = true;
+                    st.test.place_map = map;
+                    st.test.warp_point = point;
+                }
             } else if (item.rfind("place=", 0) == 0) {
                 unsigned map = 0;
                 float x = 0, y = 0, z = 0, yaw = 0;
@@ -708,6 +723,8 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.ring = kHostBell;
             } else if (item == "ring_guest") {
                 st.test.ring = kGuestBell;
+            } else if (item.rfind("echoes=", 0) == 0) {
+                st.test.echoes = std::atoi(item.c_str() + 7);
             } else if (item.rfind("insight=", 0) == 0) {
                 st.test.insight = std::atoi(item.c_str() + 8);
             } else if (!item.empty()) {
