@@ -547,6 +547,10 @@ static void sample_host(PadData *d) {
  * touchpad defaults to a left-side click; lx= ly= rx= ry= (0..255) override
  * the sticks. An empty file releases everything. */
 static struct { uint32_t buttons; int stick[4]; int touch_side; } injected={0,{-1,-1,-1,-1},-1};
+/* runtime_pad_director_press: buttons the party director holds (title "Continue" on its own, no
+ * OS input); OR-ed into every sample like the pad file's. */
+static volatile uint32_t director_buttons;
+void runtime_pad_director_press(uint32_t buttons) { director_buttons=buttons; }
 static int replay_armed;      /* 1 while a BB_PAD_REPLAY recording plays, 2 once it ended */
 static uint64_t replay_start; /* 0: (re)start at the next sample */
 static void read_inject(void) {
@@ -697,7 +701,7 @@ static void sample(PadData *d) {
     record_sample(d);
     read_inject();
     replay_sample(d);
-    d->buttons|=injected.buttons;
+    d->buttons|=injected.buttons|director_buttons;
     if (injected.touch_side>=0) touch_click(d,injected.touch_side);
     else if ((d->buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d,0);
     if (injected.buttons & BTN_L2) d->l2=255;
