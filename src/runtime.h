@@ -126,6 +126,8 @@ uintptr_t runtime_pad_resolve(const char *name);
 void runtime_pad_report(void);
 /* The party director's held buttons (PS4 pad bits, 0 releases); see runtime_pad.c. */
 void runtime_pad_director_press(uint32_t buttons);
+/* How many ImeDialogs (name entry) the game opened so far; see runtime_services.c. */
+int runtime_ime_dialog_count(void);
 uintptr_t runtime_rtc_resolve(const char *name);
 const char *runtime_file_user_dir(void);
 void runtime_savedata_configure(const char *title);

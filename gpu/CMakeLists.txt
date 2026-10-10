@@ -416,6 +416,13 @@ add_executable(party-start-test EXCLUDE_FROM_ALL ../tests/test_party_start.cpp s
 target_compile_options(party-start-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-start-test PRIVATE shim)
 set_target_properties(party-start-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Test aids (shim/party/test_newgame.cpp, BB_TEST_NEWGAME / BB_TEST_PROLOGUE_SKIP): the scripted
+# new game driver against a model of the title menus. ninja -C out/gpu party-newgame-test
+add_executable(party-newgame-test EXCLUDE_FROM_ALL ../tests/test_party_newgame.cpp shim/party/test_newgame.cpp)
+target_compile_definitions(party-newgame-test PRIVATE BB_TEST_NEWGAME_NO_GAME)
+target_compile_options(party-newgame-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-newgame-test PRIVATE shim)
+set_target_properties(party-newgame-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 
 
 # Party progress sync (shim/party/party_progress, C2): keys, categories, policy, diff, JSON, BBPF
