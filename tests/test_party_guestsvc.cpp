@@ -53,7 +53,8 @@ int main() {
 
     // Talk scripts.
     assert(GuestServiceTalk(210304));  // Doll
-    assert(!GuestServiceTalk(210692)); // workbench: the shops commit
+    assert(GuestServiceTalk(210692));  // workbench
+    assert(GuestServiceTalk(210698));  // Insight messenger
     assert(!GuestServiceTalk(210305)); // Gehrman (last choice)
     assert(!GuestServiceTalk(210000)); // headstone
     assert(!GuestServiceTalk(210721)); // Dream warp menu

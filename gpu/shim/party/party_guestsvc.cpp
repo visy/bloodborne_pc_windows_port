@@ -43,6 +43,15 @@ std::string DescribeRecordChange(const PlayerRecord& a, const PlayerRecord& b) {
 bool GuestServiceTalk(std::uint32_t talk) {
     switch (talk) {
     case 210304: // Doll: level up (MSB entity 2100700)
+    case 210691: // Bath Messenger: shop, sell (2100211)
+    case 210692: // workbench: upgrade, Blood Gems, repair, crush (2100201)
+    case 210693: // storage (2100200)
+    case 210694: // Bath Messenger shop (2100215)
+    case 210695: // Bath Messenger shop (2100216)
+    case 210696: // mirror: appearance (2100202)
+    case 210697: // dress-up messenger (2100218)
+    case 210698: // Insight messenger: Insight shop (2100219)
+    case 210699: // Bath Messenger shop (2100203)
         return true;
     default:
         return false;
