@@ -461,6 +461,8 @@ void TraceInstruction(u64 event, i32 event_id, i32 bank, i32 id, u64 instr, bool
         hex, ull(n), skipped ? " SKIPPED (rule)" : "");
 }
 
+std::atomic<EmevdSkipPredicate> g_skip_pred{nullptr};
+
 BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
     perf::Scope z(perf::Zone::HookEmevd);
     g_emevd_calls.fetch_add(1, std::memory_order_relaxed);
@@ -480,6 +482,11 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
                 skip = true;
                 break;
             }
+        }
+    }
+    if (!skip && instr) {
+        if (const EmevdSkipPredicate pred = g_skip_pred.load(std::memory_order_relaxed)) {
+            skip = pred(event_id, bank, id);
         }
     }
     if (g_emevd_observe && instr && !skip &&
@@ -567,6 +574,10 @@ void SeamlessRulesInit() {
             g_skips.clear();
         }
     }
+}
+
+void SetEmevdSkipPredicate(EmevdSkipPredicate fn) {
+    g_skip_pred = fn;
 }
 
 void SetEmevdRewriter(EmevdRewriter fn) {

@@ -11,6 +11,7 @@
 #include "game_state.h"
 #include "party_travel.h"
 #include "lua_events.h"
+#include "seamless_rules.h"
 #include "../../party_env.h"
 
 #include <atomic>
@@ -563,6 +564,20 @@ void BesideHost(float pos[4], const float rot[4], int slot) {
 /// the host's facing and height) with the chr warp vfunc +0x5F8 (0x18CD600(chr, pos, rot, 1), as
 /// the NPC summon step 0x1E4B559 calls it). The game's own placement (the sign spot, usually the
 /// host's lamp spot) is otherwise on top of the host. No ground probe yet: the host's height.
+/// The flags the opening cutscene depends on, as the store answers now (overlay in load mode 1).
+void LogIntroFlags(const char* when) {
+    const u64 man = Slot(0x553b100);
+    if (!man) {
+        return;
+    }
+    using Get = u32(BB_COOP_SYSV*)(u64, u32, u32);
+    const auto f = [&](u32 id) { return reinterpret_cast<Get>(Guest(0x13cfd80))(man, id, 1); };
+    Log("flags %s (load mode %d, GSM+0x1592 %u): 12410000=%u 9401=%u 9402=%u 12417810=%u 9180=%u 12410105=%u "
+        "12411800=%u 2410=%u",
+        when, Field<int>(man, 0x80, -1), unsigned(Field<u8>(Slot(kSlotGsm), 0x1592)), f(12410000), f(9401), f(9402),
+        f(12417810), f(9180), f(12410105), f(12411800), f(2410));
+}
+
 /// After any host-world arrival (flow 3 -> 4): the local and the remote players' positions every
 /// 0.5 s for 3 s, on both instances (placement stability; nothing is written after a load).
 void ArrivalWatchTick(const GameSnapshot& s, double now) {
@@ -579,6 +594,7 @@ void ArrivalWatchTick(const GameSnapshot& s, double now) {
     if (next < 0) {
         next = now;
         until = now + 3.0;
+        LogIntroFlags("after the host-world load");
     }
     if (now < next) {
         return;
@@ -706,6 +722,20 @@ bool PreRingSpacing(const GameSnapshot& s, u32 host_map) {
     return true;
 }
 
+/// Safety net: a client in the host's world (GSM+0x1592 == 0) never plays the opening cutscene
+/// (event 12410000's EMEVD 2002 remo): its flags come from the host's overlay, which may lack them.
+bool ClientIntroSkip(int event_id, int bank, int id) {
+    if (bank != 2002 || event_id != 12410000 || !g_on.load() || Role() != RoleClient ||
+        Field<u8>(Slot(kSlotGsm), 0x1592) != 0) {
+        return false;
+    }
+    static std::atomic<int> logged{0};
+    if (logged.fetch_add(1) < 3) {
+        Log("client: opening cutscene (event 12410000, 2002[%d]) skipped in the host's world", id);
+    }
+    return true;
+}
+
 /// Any failed or timed-out B2 step on a guest: hand the host's travel to B1 (party_travel): the
 /// guest warps to the destination in its own world (the funnel leaves the session then, as
 /// vanilla) and the director's bells re-summon it. Never leaves the guest stranded.
@@ -800,6 +830,7 @@ void GuestTick(const GameSnapshot& s, double now) {
                     std::memcpy(t.rot, st.dest_rot, sizeof t.rot);
                 }
             }
+            LogIntroFlags("before the host-world load");
             FunnelKeepRoom keep;
             Log("guest: host snapshot applied; loading %s in host-world mode (K7 %s)", DescribeTravel(t).c_str(),
                 keep.armed ? "armed" : "NOT armed: the room will close");
@@ -982,6 +1013,8 @@ void Init() {
     InstallCall(0x13858f5, kBeginLeave, reinterpret_cast<const void*>(&BossClearLeaveHook), "B2 K10 boss-clear leave (a)");
     InstallCall(0x1385a95, kBeginLeave, reinterpret_cast<const void*>(&BossClearLeaveHook), "B2 K10 boss-clear leave (b)");
     SetSendHomeVeto(&SendHomeVeto);
+    SetEmevdSkipPredicate(&ClientIntroSkip);
+    EnsureEmevdFilter();
     Log("K7 funnel branch +0x%llx %s", ull(kFunnelLeaveJne),
         Matches(kFunnelLeaveJne, {0x75, 0x6c}) ? "verified (75 6c), written only around the guest's own warp"
                                                 : "MISMATCH: guest re-join will leave the room");
