@@ -651,6 +651,9 @@ static int64_t do_write(int fd,const void *buffer,uint64_t size) {
     return n;
 }
 static int64_t do_pwrite(int fd,const void *buffer,uint64_t size,int64_t offset) {
+    /* stdin/stdout/stderr are the harness's log (a file shared with run.bat and the launcher):
+     * a positional write there would overwrite earlier output; append instead. */
+    if (fd>=0 && fd<3) return do_write(fd,buffer,size);
     int h=host_fd_written(fd);
     if (h<0) return -EBADF;
     ssize_t n=pwrite(h,buffer,size,offset);
@@ -774,6 +777,7 @@ static int64_t do_rename(const char *from,const char *to) {
     return r;
 }
 static int64_t do_ftruncate(int fd,int64_t length) {
+    if (fd>=0 && fd<3) return -EINVAL; /* never truncate the log the harness redirected us into */
     int h=host_fd_written(fd);
     if (h<0) return -EBADF;
 #ifdef _WIN32
