@@ -296,6 +296,41 @@ static void test_guest() {
     CHECK(!p.Destination());
 }
 
+// Chalice Dungeons: a guest follows a warp into a dungeon only into the one its game has.
+static void test_chalice() {
+    TravelIntent t;
+    t.seq = 9;
+    t.kind = TravelKind::ScriptedWarp;
+    t.packed_map = 0x18010000u;  // m24_01: not a dungeon
+    CHECK(!TravelIntoChalice(t) && ChaliceReplayAllowed(t, 0));
+    t.packed_map = 0x1D010A0Cu;  // m29_01_10_12: a dungeon piece
+    CHECK(TravelIntoChalice(t));
+    CHECK(!ChaliceReplayAllowed(t, 0) && !ChaliceReplayAllowed(t, 77));
+    t.chalice_channel = 77;
+    CHECK(ChaliceReplayAllowed(t, 77) && !ChaliceReplayAllowed(t, 78) && !ChaliceReplayAllowed(t, 0));
+    // The channel travels in the event (hex) and is optional.
+    TravelIntent back;
+    CHECK(TravelFromJsonText(TravelToJsonText(t), &back) && back.chalice_channel == 77);
+    t.chalice_channel = 0;
+    CHECK(TravelFromJsonText(TravelToJsonText(t), &back) && back.chalice_channel == 0);
+    // Lamps 29xxxxx, a dungeon respawn, an exact position in area 29.
+    TravelIntent l;
+    l.kind = TravelKind::Lamp;
+    l.lamp_id = 2902950;
+    CHECK(TravelIntoChalice(l));
+    l.lamp_id = 2102950;
+    CHECK(!TravelIntoChalice(l));
+    l.kind = TravelKind::HostDeath;
+    l.lamp_id = kTravelNone;
+    l.last_lamp = 2902951;
+    CHECK(TravelIntoChalice(l));
+    TravelIntent p;
+    p.kind = TravelKind::Transform;
+    p.has_pos = true;
+    p.pos_map = 0x1D000000u;
+    CHECK(TravelIntoChalice(p));
+}
+
 int main() {
     test_call_sites();
     test_json();
@@ -303,6 +338,7 @@ int main() {
     test_host_queue();
     test_gate();
     test_guest();
+    test_chalice();
     std::printf("party-travel-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

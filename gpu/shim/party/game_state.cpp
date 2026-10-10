@@ -241,6 +241,16 @@ bool ReadEventFlag(std::uint32_t flag, bool* value) {
     return true;
 }
 
+bool ReadEventFlagValue(std::uint32_t first, std::uint32_t bits, std::uint32_t* value) {
+    const std::uint64_t man = Slot(kEventFlagMan);
+    if (!man || !GetFlagOk() || bits < 1 || bits > 32) {
+        return false;
+    }
+    using Fn = std::uint32_t(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t, std::uint32_t);
+    *value = reinterpret_cast<Fn>(Guest(kGetEventFlag))(man, first, bits);
+    return true;
+}
+
 bool WriteEventFlag(std::uint32_t flag, bool value) {
     const std::uint64_t man = Slot(kEventFlagMan);
     if (!man || !SetFlagOk()) {

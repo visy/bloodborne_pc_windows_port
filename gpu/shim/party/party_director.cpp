@@ -11,6 +11,7 @@
 #include "party_link.h"
 #include "party_story.h"
 #include "party_status_bridge.h"
+#include "party_chalice.h"
 #include "party_items.h"
 #include "party_npc_test.h"
 #include "party_phantom.h"
@@ -801,6 +802,10 @@ void PartyDirector::Tick() {
     if (link && role == PartyRole::Host) {
         TravelIntent t;
         while (PopHostTravel(&t)) {
+            // Into (or respawning in) a Chalice Dungeon: which one (guests follow only into it).
+            if (TravelIntoChalice(t) || static_cast<std::uint32_t>(t.last_lamp) / 100000 == 29) {
+                t.chalice_channel = chalice::Read().channel;
+            }
             link->send_event(party::kBroadcast, kTravelEventName, TravelToJsonText(t));
             party::bridge::OnTravel(TravelKindName(t.kind));
             Log("travel #%llu (%s) sent to the party", static_cast<unsigned long long>(t.seq), TravelKindName(t.kind));
@@ -896,6 +901,7 @@ bool PartyRequested() {
 void CoopTick() {
     LuaEventsTick();
     PartyDirector::Get().Tick();
+    chalice::Tick();     // the local chalice dungeon (party_chalice.h)
     TravelTick();        // B1 guest replay (party_travel.h)
     StoryTick();         // C4 cutscenes / endings (party_story.h)
     ItemsTick();         // C3 guest item replay (party_items.h)

@@ -6,8 +6,9 @@
 //   <gameurl>/basic_utils/{login,get_datetime,get_normal_notice,get_emergency_notice,
 //                          get_user_agreement,sync_chara_id}
 //   <gameurl>/summon_messenger/{create,get,delete,request}   (the party sign board)
+//   <gameurl>/channel/*                                       (Chalice Dungeons, from_api_channel.h)
 //   https://bb-playlog-{test,prod}.s3.amazonaws.com/...       (play logs: PUT, answered 200)
-// and everything else under gameurl (messages, bloodstains, ghosts, Chalice channels) gets an
+// and everything else under gameurl (messages, bloodstains, ghosts) gets an
 // empty success. Bodies and answers whose exact format is not confirmed live in one table,
 // from_api_formats.inc. BB_PARTY_TRACE=1 logs every request and answer.
 //
@@ -15,8 +16,13 @@
 // guest's create puts its sign up, the host's get lists every other member's signs, and the
 // host's request queues a guest_invite (party_transport.h) for the sign's owner with the
 // host's room and addresses - what bbhost's np_matching2.cpp on_server_event reads.
+// Chalice Dungeons (docs/party/chalice.md): a sign or a sign query whose AreaId is in area 29
+// only meets the other side when both carry the same ChannelId - the same dungeon, which both
+// games generated from the same FormData (the channel board) - so nobody is summoned into a
+// dungeon layout its own game does not have.
 #pragma once
 
+#include "from_api_channel.h"
 #include "json.h"
 #include "party_host_service.h"
 
@@ -91,10 +97,13 @@ public:
         std::string data_b64;
         long long chara_id = 0;
         long long version = 3;  // SummonDataVersion as sent
+        long long channel = 0;  // ChannelId as sent (the Chalice Dungeon the sign is in)
         json::Value request;  // the create body as sent
     };
     std::vector<Sign> signs() const;
     std::uint64_t user_id_of(const std::string& online_id);
+    /// The Chalice Dungeon channel board (tests, the party layer).
+    ChannelBoard& channels() { return channels_; }
 
     // The process's (the host's), over PartyHostService::instance().
     static FromApi& instance();
@@ -108,6 +117,7 @@ private:
     std::string sign_request(const Caller& caller, const json::Value& body);
 
     PartyHostService& service_;
+    ChannelBoard channels_;
     mutable std::mutex mu_;
     std::vector<Sign> signs_;
     std::uint64_t next_sign_ = 1;

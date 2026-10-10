@@ -80,6 +80,8 @@ bool WritePlayerInsight(int insight);
 
 /// The flag's value; false when it cannot be read (no EventFlagMan, code differs).
 bool ReadEventFlag(std::uint32_t flag, bool* value);
+/// GetEventFlagValue(first, bits): `bits` consecutive flags, the last one bit 0 (bits 1..32).
+bool ReadEventFlagValue(std::uint32_t first, std::uint32_t bits, std::uint32_t* value);
 bool WriteEventFlag(std::uint32_t flag, bool value);
 /// How many of goods `id` the local player holds: 0 = none, -1 = unknown (no record / code differs).
 int GoodsCount(std::uint32_t goods_id);

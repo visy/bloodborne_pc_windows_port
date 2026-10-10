@@ -85,6 +85,9 @@ struct TravelIntent {
     std::uint32_t pos_map = kTravelNone;
     float pos[4] = {0, 0, 0, 0};
     float rot[4] = {0, 0, 0, 0};
+    /// The host's Chalice Dungeon (party_chalice.h ChannelId) when the destination is inside one
+    /// (TravelIntoChalice); 0 otherwise.
+    std::uint64_t chalice_channel = 0;
 
     std::uint32_t Area() const { return (packed_map >> 24) & 0xff; }
     std::uint32_t Block() const { return (packed_map >> 16) & 0xff; }
@@ -118,6 +121,16 @@ bool TravelBonfireKnown(std::uint32_t id);
 /// far-out coordinates is dropped (has_pos false). The guest's game is then only asked to warp
 /// somewhere its own data names.
 bool SanitizePeerTravel(TravelIntent* t, std::string* why = nullptr);
+
+// ---- Chalice Dungeons (docs/party/chalice.md) ----
+/// The destination is inside a Chalice Dungeon (area 29): the map, the exact-position map, the
+/// lamp (ReturnPointParam 29xxxxx) or the bonfire / warp point entity.
+bool TravelIntoChalice(const TravelIntent& t);
+/// A guest replays a warp into a Chalice Dungeon only into the dungeon its own game has in its
+/// current chalice slot (`local_channel`): the layout is generated locally from that slot, so a
+/// warp into another one (or none) would load a different dungeon. The guest joins the host's
+/// dungeon at the altar first (the channel board's glyph / random join).
+bool ChaliceReplayAllowed(const TravelIntent& t, std::uint64_t local_channel);
 
 // ---- How a guest replays an intent ----
 enum class ReplayMethod : std::uint8_t {

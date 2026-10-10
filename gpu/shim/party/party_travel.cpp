@@ -17,6 +17,7 @@
 #ifndef BB_PARTY_TRAVEL_NO_GAME
 #include "coop_hooks.h"
 #include "game_state.h"
+#include "party_chalice.h"
 #include "party_director.h"
 
 #include <atomic>
@@ -142,12 +143,17 @@ std::string DescribeTravel(const TravelIntent& t) {
     char text[384];
     std::snprintf(text, sizeof text,
                   "#%llu %s (site +0x%x): lamp %d, map m%02u_%02u_%02u_%02u (0x%08x), warp point %d, mode %u, "
-                  "respawn 0x%016llx, last lamp 0x%016llx%s",
+                  "respawn 0x%016llx, last lamp 0x%016llx%s%s",
                   static_cast<unsigned long long>(t.seq), TravelKindName(t.kind), t.call_site,
                   static_cast<int>(t.lamp_id), t.Area(), t.Block(), t.Region(), t.Index(), t.packed_map,
                   static_cast<int>(t.warp_point), t.respawn_mode, static_cast<unsigned long long>(t.respawn_record),
-                  static_cast<unsigned long long>(t.last_lamp), t.has_pos ? ", exact position" : "");
-    return text;
+                  static_cast<unsigned long long>(t.last_lamp), t.has_pos ? ", exact position" : "",
+                  t.chalice_channel ? ", chalice dungeon" : "");
+    std::string out = text;
+    if (t.chalice_channel) {
+        out += " " + std::to_string(t.chalice_channel);
+    }
+    return out;
 }
 
 json::Value TravelToJson(const TravelIntent& t) {
@@ -161,6 +167,9 @@ json::Value TravelToJson(const TravelIntent& t) {
     v.set("mode", t.respawn_mode);
     v.set("respawn", json::hex(t.respawn_record));
     v.set("last_lamp", json::hex(t.last_lamp));
+    if (t.chalice_channel) {
+        v.set("chalice", json::hex(t.chalice_channel));
+    }
     if (t.has_pos) {
         json::Value p = json::Value::make_object();
         p.set("map", t.pos_map);
@@ -191,6 +200,9 @@ bool TravelFromJson(const json::Value& v, TravelIntent* out, std::string* error)
         t.respawn_mode = json::u32(v, "mode");
         t.respawn_record = json::u64(v, "respawn");
         t.last_lamp = json::u64(v, "last_lamp");
+        if (v.find("chalice")) {
+            t.chalice_channel = json::u64(v, "chalice");
+        }
         if (const json::Value* p = v.find("transform")) {
             t.pos_map = json::u32(*p, "map");
             const std::vector<json::Value>& pos = json::arr(*p, "pos");
@@ -228,6 +240,21 @@ bool TravelLampKnown(std::uint32_t id) {
 bool TravelBonfireKnown(std::uint32_t id) {
     // 0x132E050 derives the map from the id itself (area id / 100000, block id / 10000 % 10).
     return ids::EntityKnown(id) && ids::MapKnown(ids::EntityMap(id));
+}
+
+bool TravelIntoChalice(const TravelIntent& t) {
+    auto area_of_map = [](std::uint32_t m) { return m != kTravelNone && ((m >> 24) & 0xff) == 29; };
+    auto area_of_id = [](std::uint32_t id) { return id != kTravelNone && id / 100000 == 29; };
+    const bool lamp_kind = t.kind == TravelKind::Lamp || t.kind == TravelKind::HostDeath ||
+                           t.kind == TravelKind::HuntersMark;
+    return area_of_map(t.packed_map) || (t.has_pos && area_of_map(t.pos_map)) ||
+           (lamp_kind && area_of_id(t.lamp_id)) || (t.kind == TravelKind::LuaBonfireWarp && area_of_id(t.warp_point)) ||
+           ((t.kind == TravelKind::HostDeath || t.kind == TravelKind::HuntersMark) &&
+            area_of_id(static_cast<std::uint32_t>(t.last_lamp)));
+}
+
+bool ChaliceReplayAllowed(const TravelIntent& t, std::uint64_t local_channel) {
+    return !TravelIntoChalice(t) || (t.chalice_channel != 0 && t.chalice_channel == local_channel);
 }
 
 bool SanitizePeerTravel(TravelIntent* t, std::string* why) {
@@ -520,6 +547,17 @@ std::atomic<bool> g_in_replay{false};       // our own warp is running: the hook
 std::atomic<u32> g_lamp_key{kTravelNone};   // 0x13CDF30's edi, read by the funnel it calls
 std::atomic<int> g_block_clear3{0};         // inside BlockClear2_3 (its funnel call is a tail jump)
 std::atomic<u32> g_death_lamp{kTravelNone}; // guest: the host's last lamp (SetGuestDeathRedirect)
+std::atomic<std::uint64_t> g_host_chalice{0};  // guest: the host's chalice dungeon (its last intent's)
+
+/// A host lamp a guest may be sent to: one in a Chalice Dungeon only when the guest's own game
+/// has the host's dungeon in its current slot (party_chalice.h).
+bool LampUsable(u32 lamp) {
+    if (lamp == kTravelNone || lamp / 100000 != 29) {
+        return true;
+    }
+    const std::uint64_t host = g_host_chalice.load();
+    return host != 0 && host == chalice::LocalChannel();
+}
 std::atomic<GuestRedirectFn> g_redirect_cb{nullptr};
 std::atomic<bool> g_death_redirect_on{true};
 void* g_funnel_orig = nullptr;
@@ -710,7 +748,12 @@ bool RedirectGuest(u64 site, TravelKind kind) {
         std::lock_guard<std::mutex> lk(g_guest_mu);
         have_dest = g_guest.Destination().has_value();
     }
-    const u32 lamp = g_death_lamp.load();
+    u32 lamp = g_death_lamp.load();
+    if (!LampUsable(lamp)) {
+        Log("%s at +0x%llx: the host's last lamp %u is in a chalice dungeon this game does not have",
+            TravelKindName(kind), ull(site), lamp);
+        lamp = kTravelNone;
+    }
     const GuestRedirect how = ChooseGuestRedirect(kind, have_dest, lamp);
     bool done = false;
     GuestRedirect used = how;
@@ -936,6 +979,15 @@ void RequestGuestTravel(const TravelIntent& t) {
     // Any intent with a last-lamp record also tells where the host respawns now.
     if (const u32 lamp = HostLampFromTravel(t); lamp != kTravelNone) {
         g_death_lamp = lamp;
+    }
+    g_host_chalice = t.chalice_channel;
+    // Chalice Dungeons: only into the dungeon this game has (docs/party/chalice.md).
+    if (!ChaliceReplayAllowed(t, chalice::LocalChannel())) {
+        Log("guest travel %s not followed: the host enters chalice dungeon %llu, this game has %llu "
+            "(join it at the Ritual Altar: glyph or random join)",
+            DescribeTravel(t).c_str(), static_cast<unsigned long long>(t.chalice_channel),
+            static_cast<unsigned long long>(chalice::LocalChannel()));
+        return;
     }
     bool taken;
     {

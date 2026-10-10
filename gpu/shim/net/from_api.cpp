@@ -264,6 +264,11 @@ std::string FromApi::dispatch(const Caller& caller, const std::string& path, con
     else if (ends_with(path, "/summon_messenger/get")) vars["SummonDataList"] = sign_get(caller, body);
     else if (ends_with(path, "/summon_messenger/delete")) sign_delete(caller, body);
     else if (ends_with(path, "/summon_messenger/request")) vars["Result"] = sign_request(caller, body);
+    else if (const std::size_t at = path.rfind("/channel/"); at != std::string::npos) {
+        *status = 200;
+        *content_type = "application/json";
+        return channels_.handle(path.substr(at + 9), caller.online_id, uid, body, text);
+    }
     return render(reply->body, vars);
 }
 
@@ -347,7 +352,9 @@ std::string FromApi::sign_create(const Caller& caller, const json::Value& body) 
     s.data_b64 = str_of(body, "SummonData");
     s.chara_id = int_of(body, "CharaId", static_cast<long long>(s.user_id));
     s.version = version;
+    s.channel = int_of(body, "ChannelId", 0);
     s.request = body;
+    if (ChaliceArea(area)) channels_.note_member_channel(caller.online_id, static_cast<std::uint64_t>(s.channel));
     std::lock_guard<std::mutex> lk(mu_);
     // One sign per member and type: a new one replaces the old.
     signs_.erase(std::remove_if(signs_.begin(), signs_.end(),
@@ -361,8 +368,8 @@ std::string FromApi::sign_create(const Caller& caller, const json::Value& body) 
     }
     s.id = next_sign_++;
     signs_.push_back(s);
-    log("from api: %s put up a sign (type %d, area 0x%x) -> %llu", caller.online_id.c_str(), s.summon_type, s.area,
-        static_cast<unsigned long long>(s.id));
+    log("from api: %s put up a sign (type %d, area 0x%x, channel %lld) -> %llu", caller.online_id.c_str(), s.summon_type,
+        s.area, s.channel, static_cast<unsigned long long>(s.id));
     return jnum(static_cast<long long>(s.id));
 }
 
@@ -373,6 +380,12 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
     }
     long long max = int_of(body, "GetMaxCount", 32);
     if (max <= 0) max = 32;
+    // Chalice Dungeons: only the same dungeon (ChannelId) on both sides (from_api.h).
+    const long long my_area = int_of(body, "AreaId", 0);
+    const long long my_channel = int_of(body, "ChannelId", 0);
+    const bool in_chalice = ChaliceArea(my_area);
+    if (in_chalice) channels_.note_member_channel(caller.online_id, static_cast<std::uint64_t>(my_channel));
+    int other_dungeon = 0;
     std::string list = "[";
     int n = 0;
     std::lock_guard<std::mutex> lk(mu_);
@@ -381,6 +394,12 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
     for (const Sign& s : signs_) {
         if (s.online_id == caller.online_id) continue;
         if (!types.empty() && std::find(types.begin(), types.end(), s.summon_type) == types.end()) continue;
+        if (in_chalice || ChaliceArea(static_cast<std::int32_t>(s.area))) {
+            if (!in_chalice || !ChaliceArea(static_cast<std::int32_t>(s.area)) || s.channel != my_channel || !s.channel) {
+                ++other_dungeon;
+                continue;
+            }
+        }
         if (n >= max) break;
         std::map<std::string, std::string> v;
         v["SummonDataId"] = jnum(static_cast<long long>(s.id));
@@ -402,6 +421,8 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
         std::string key = std::to_string(n) + " sign(s) for types [";
         for (std::size_t i = 0; i < types.size(); ++i) key += (i ? "," : "") + std::to_string(types[i]);
         key += "] of " + std::to_string(signs_.size()) + " on the board";
+        if (other_dungeon) key += " (" + std::to_string(other_dungeon) + " in another chalice dungeon or outside)";
+        if (in_chalice) key += ", chalice dungeon " + std::to_string(my_channel);
         if (last[caller.online_id] != key) {
             last[caller.online_id] = key;
             log("from api: %s asks for signs: %s", caller.online_id.c_str(), key.c_str());
