@@ -830,7 +830,7 @@ void start_host(LinkConfig cfg) {
         r.secret = cfg.secret;
         r.marker_secret = true;
     }
-    if (lb) cfg.bind_addr = "0.0.0.0";
+    if (lb) cfg.bind_addr = "127.0.0.1";  // local test: nothing on the network (no firewall prompt)
     const std::string name = cfg.name;
     const std::uint16_t port = cfg.port;
 
