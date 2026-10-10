@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // TEST AIDS for automated runs (tools/mp/instances.py); never on in normal play:
 //
+// (BB_TEST_NEWGAME / BB_TEST_PROLOGUE_SKIP = "party": only in a party process, BB_PARTY set - a
+// single-player start that the party flow's menu restarts into the party game keeps its title.)
 // BB_TEST_NEWGAME=1: a fresh character without a person at the pad. From the title of an EMPTY
 //   save (New Game is the default item there; with a character in the save the title's default is
 //   Continue and the run simply loads it) the driver presses, through the game's own pad path
@@ -105,15 +107,20 @@ private:
 
 /// A scripted menu walk for test fixtures (BB_PARTY_DIRECTOR_TEST stand=...,seq=...): one token
 /// per press, '/'-separated: cross, circle, square, triangle, up, down, left, right, wait (a 2.5 s
-/// pause). `button@text` waits until a message text containing `text` (ASCII, case-insensitive) is
-/// on screen - looked up after the previous press and still being looked up - for 0.4 s, then
+/// pause), mark=NAME (the same pause, named in the log: a screenshot point), options, type=TEXT / enter / esc (types TEXT into the open text box, or presses Enter /
+/// Esc there, in-process: the caller does that, TakeTyped; "\n" = Enter, "\x1b" = Esc). `button@text` waits until a message text containing `text`
+/// (ASCII, case-insensitive) is on screen - looked up after the previous press and still being looked up - for 0.4 s, then
 /// presses (10 s at most, then the script stops: STUCK). A '?' prefix makes such a step optional: no
-/// text in 3 s -> skipped without a press (a first-time tutorial message). A '+' prefix waits for any
+/// text in 3 s -> skipped without a press (a first-time tutorial message). A '~' prefix: the text
+/// looked up once since the previous press is enough (screens that look their texts up only when built,
+/// like the title menu). A '+' prefix waits for any
 /// new screen (TextActivity; 8 s at most). Each press is held 0.12 s (menus auto-repeat a held
 /// direction: 0.25 s moved a 2-item dialog twice), the next one no sooner than 0.6 s after it.
 class MenuScript {
 public:
     static constexpr std::uint32_t kWait = 0xffffffffu;
+    /// type= / enter / esc steps (TakeTyped).
+    static constexpr std::uint32_t kType = 0xfffffffeu;
     /// False (and *bad = the token) on an unknown token.
     bool Parse(const std::string& text, std::string* bad = nullptr);
     bool finished() const { return stuck_ || (next_ >= steps_.size() && !holding_); }
@@ -123,15 +130,27 @@ public:
     std::uint32_t Step(double t, std::uint64_t screen_seq, double screen_quiet, std::string* log,
                        const std::function<double(const std::string&)>& text_seen = {});
     bool stuck() const { return stuck_; }
+    /// A `type=` step started: its text, once.
+    bool TakeTyped(std::string* text) {
+        if (!has_typed_) return false;
+        has_typed_ = false;
+        *text = typed_;
+        return true;
+    }
 
 private:
     struct Press {
-        std::uint32_t buttons;
-        bool new_screen;
+        std::uint32_t buttons = 0;
+        bool new_screen = false;
         std::string name;
         std::string text;   ///< @text: wait for it
         bool optional = false;
+        std::string typed;  ///< type=TEXT
+        bool appeared = false; ///< '~': the text looked up since the previous press is enough
     };
+    static std::uint32_t Held(std::uint32_t b) { return b == kWait || b == kType ? 0 : b; }
+    std::string typed_;
+    bool has_typed_ = false;
     bool stuck_ = false;
     double pressed_at_ = -1e9, text_since_ = -1;
     std::vector<Press> steps_;

@@ -227,6 +227,23 @@ bool Store(const std::string& path, const Saved& s, std::string* error) {
     return !ec;
 }
 
+std::string DefaultName(const std::string& user, std::uint32_t random) {
+    std::string base;
+    for (const char c : user) {
+        if (base.size() >= 11) break;
+        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') base += c;
+        else if (c == ' ') base += '_';
+    }
+    if (base.empty()) base = "Hunter";
+    static const char kDigits[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+    base += '-';
+    for (int i = 0; i < 4; ++i) {
+        base += kDigits[random % 36];
+        random /= 36;
+    }
+    return base;
+}
+
 std::string NormalizeAddress(const std::string& text) {
     std::string s = Trim(text);
     if (s.size() > 4 && (s.rfind("bbp1", 0) == 0 || s.rfind("BBP1", 0) == 0 || s.rfind("Bbp1", 0) == 0)) {

@@ -390,7 +390,9 @@ BB_SYSV const char16_t* LookupHook(void* repository, u32 table, u32 category, u3
                             (unsigned long long)lookups.exchange(0), id - P::IdBase);
             }
         }
-        return TextOf(id);
+        const char16_t* ours = TextOf(id);
+        NoteText(ours); // the port's page texts too (TextSeenMs: scripted walks wait for its rows)
+        return ours;
     }
     if (title_override && category == TextName && id == ControlsTitle) {
         return title_override;

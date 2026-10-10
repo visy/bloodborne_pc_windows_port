@@ -511,6 +511,12 @@ extern "C" int bbgpu_audio_audible(void) {
     return g_window ? g_window->IsAudible() : 1;
 }
 
+extern "C" int bbgpu_text_input_test_type(const char* keys) {
+    if (!g_window || !keys) return 0;
+    g_window->TestType(keys);
+    return 1;
+}
+
 extern "C" int bbgpu_text_input_is_active(void) {
     return (g_window && g_window->IsTextInputActive()) ? 1 : 0;
 }

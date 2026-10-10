@@ -135,6 +135,23 @@ void RegisterMenuRows() {
     pass.run = [](const Board&) { BeginEdit(Field::Password); };
     P::AddPartyRow(pass);
 
+    Row name;
+    name.order = 19;
+    name.name = [](const Board&) { return T("Party name", "Имя в группе"); };
+    name.value = [](const Board&) {
+        const Saved s = Current();
+        return s.name.empty() ? T("Automatic", "Автоматически") : Texts{Short(s.name), Short(s.name)};
+    };
+    name.pressed = [](const Board&) { return T("Type, then Enter", "Введите, Enter"); };
+    name.help = [](const Board&) {
+        return WithMessage(T("Your name in the party (1-16 of A-Z a-z 0-9 _ -); each player needs their own",
+                             "Ваше имя в группе (1-16 из A-Z a-z 0-9 _ -); у каждого своё"));
+    };
+    name.visible = [](const Board&) { return SoloTitle(); };
+    name.press = Row::Press::Once;
+    name.run = [](const Board&) { BeginEdit(Field::Name); };
+    P::AddPartyRow(name);
+
     Row host;
     host.order = 25;
     host.name = [](const Board&) { return T("Host party", "Стать хостом"); };

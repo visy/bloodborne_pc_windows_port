@@ -309,7 +309,8 @@ bool MenuScript::Parse(const std::string& text, std::string* bad) {
         std::string tok = text.substr(a, e - a);
         a = e + 1;
         if (tok.empty()) continue;
-        Press p{0, false, tok, std::string(), false};
+        Press p;
+        p.name = tok;
         if (tok[0] == '?') {
             p.optional = true;
             tok.erase(0, 1);
@@ -317,6 +318,16 @@ bool MenuScript::Parse(const std::string& text, std::string* bad) {
         if (!tok.empty() && tok[0] == '+') {
             p.new_screen = true;
             tok.erase(0, 1);
+        }
+        if (!tok.empty() && tok[0] == '~') {
+            p.appeared = true;
+            tok.erase(0, 1);
+        }
+        if (tok.rfind("type=", 0) == 0 || tok == "enter" || tok == "esc") { // the text box, in-process
+            p.typed = tok == "enter" ? "\n" : tok == "esc" ? "\x1b" : tok.substr(5);
+            p.buttons = kType;
+            steps_.push_back(p);
+            continue;
         }
         if (const std::size_t at = tok.find('@'); at != std::string::npos) {
             p.text = tok.substr(at + 1);
@@ -328,7 +339,8 @@ bool MenuScript::Parse(const std::string& text, std::string* bad) {
         }
         p.buttons = tok == "cross" ? kPadCross : tok == "circle" ? kPadCircle : tok == "square" ? 0x8000u
                   : tok == "triangle" ? 0x1000u : tok == "up" ? kPadUp : tok == "down" ? kPadDown
-                  : tok == "left" ? kPadLeft : tok == "right" ? kPadRight : tok == "wait" ? kWait : 0u;
+                  : tok == "left" ? kPadLeft : tok == "right" ? kPadRight : tok == "options" ? kPadOptions
+                  : tok == "wait" || tok.rfind("mark=", 0) == 0 ? kWait : 0u;
         if (!p.buttons) {
             if (bad) *bad = p.name;
             return false;
@@ -343,7 +355,7 @@ std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen
     if (log) log->clear();
     if (stuck_) return 0;
     if (holding_) {
-        if (t < until_) return steps_[next_ - 1].buttons == kWait ? 0 : steps_[next_ - 1].buttons;
+        if (t < until_) return Held(steps_[next_ - 1].buttons);
         holding_ = false;
         until_ = t + 0.6;
         return 0;
@@ -353,7 +365,7 @@ std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen
     if (!p.text.empty()) {
         if (wait_from_ < 0) wait_from_ = t;
         const double seen = text_seen ? text_seen(p.text) : -1.0;
-        const bool on_screen = seen > pressed_at_ && t - seen <= 0.5;
+        const bool on_screen = seen > pressed_at_ && (p.appeared || t - seen <= 0.5);
         if (!on_screen) {
             text_since_ = -1;
         } else if (text_since_ < 0) {
@@ -387,8 +399,9 @@ std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen
     pressed_at_ = t;
     holding_ = true;
     until_ = t + (p.buttons == kWait ? 2.5 : 0.12);
+    if (p.buttons == kType) typed_ = p.typed, has_typed_ = true;
     if (log) *log += "step " + std::to_string(next_) + "/" + std::to_string(steps_.size()) + ": " + p.name;
-    return p.buttons == kWait ? 0 : p.buttons;
+    return Held(p.buttons);
 }
 
 } // namespace coop
@@ -398,6 +411,7 @@ std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen
 #include "game_state.h"
 #include "party_start.h"
 #include "../bbport_game_menu.h"
+#include "../../party_env.h"
 
 #include <atomic>
 #include <chrono>
@@ -433,6 +447,9 @@ void Log(const char* fmt, ...) {
 
 bool EnvOn(const char* name) {
     const char* v = std::getenv(name);
+    // "party": only in a party process (a single-player start that the party flow's menu restarts
+    // into the party game, tools/mp/flow_live.py, keeps its title to itself).
+    if (v && std::strcmp(v, "party") == 0) return bb_party_enabled() != 0;
     return v && v[0] && v[0] != '0';
 }
 

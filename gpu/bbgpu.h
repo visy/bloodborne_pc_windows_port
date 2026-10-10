@@ -29,6 +29,8 @@ void bbgpu_dump_guest_writes(void *ucontext);
 int bbgpu_text_input_begin(const char *initial_utf8, const char *prompt_utf8);
 int bbgpu_text_input_poll(char *out_utf8, uint64_t size);
 int bbgpu_text_input_is_active(void);
+/* Test aid: keys into the text box as if typed (ASCII; '\n' Enter, '\x1b' Esc, '\b' Backspace). */
+int bbgpu_text_input_test_type(const char *keys);
 /* 1 while the in-game settings menu is open: the game's pad input is held neutral. */
 int bbgpu_overlay_captures_input(void);
 /* Mouse & keyboard controls (scheme from Mrsuss60/bloodborne_pc_windows_port): the mouse state

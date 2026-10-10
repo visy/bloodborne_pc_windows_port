@@ -162,6 +162,29 @@ void WindowSDL::BeginTextInput(const std::string& initial, const std::string& pr
     text_requested = true;
 }
 
+void WindowSDL::TestType(const std::string& keys) {
+    // Text-input events point at their text: one static, NUL-terminated string per ASCII character.
+    static char ascii[128][2];
+    for (const char c : keys) {
+        SDL_Event e;
+        SDL_zero(e);
+        if (c == '\n' || c == '\x1b' || c == '\b') {
+            e.type = SDL_EVENT_KEY_DOWN;
+            e.key.windowID = SDL_GetWindowID(window);
+            e.key.key = c == '\n' ? SDLK_RETURN : c == '\b' ? SDLK_BACKSPACE : SDLK_ESCAPE;
+            e.key.down = true;
+        } else if (static_cast<unsigned char>(c) >= 0x20 && static_cast<unsigned char>(c) < 0x7f) {
+            ascii[int(c)][0] = c;
+            e.type = SDL_EVENT_TEXT_INPUT;
+            e.text.windowID = SDL_GetWindowID(window);
+            e.text.text = ascii[int(c)];
+        } else {
+            continue;
+        }
+        SDL_PushEvent(&e);
+    }
+}
+
 int WindowSDL::PollTextInput(std::string& out) {
     std::scoped_lock lock{text_mutex};
     out = text;

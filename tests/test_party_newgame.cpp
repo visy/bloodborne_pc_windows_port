@@ -485,9 +485,40 @@ void TestMenuScriptTexts() {
     CHECK(!ms.Parse("cross@", &bad));
 }
 
+// The party flow's live walk (tools/mp/flow_live.py): the title's texts are looked up once when the
+// menu is built ('~': seen since the previous press is enough), the text box (type= / enter / esc:
+// TakeTyped, no buttons held), mark= pauses and Options.
+void TestMenuScriptTextBox() {
+    MenuScript ms;
+    CHECK(ms.Parse("~down@New Game/cross/options/type=127.0.0.1:47600/mark=typed/enter/esc") && ms.size() == 7);
+    double new_game_at = 0.5; // looked up once, while the title was built
+    auto seen = [&](const std::string& n) { return n == "New Game" ? new_game_at : -1.0; };
+    std::vector<std::uint32_t> pressed;
+    std::vector<std::string> typed;
+    for (double t = 5; t < 40 && !ms.finished(); t += 1.0 / 30) {
+        std::string log;
+        const std::uint32_t held = ms.Step(t, 0, 1e9, &log, seen);
+        if (!log.empty() && held) pressed.push_back(held);
+        std::string keys;
+        if (ms.TakeTyped(&keys)) typed.push_back(keys);
+    }
+    CHECK(!ms.stuck());
+    CHECK((pressed == std::vector<std::uint32_t>{kPadDown, kPadCross, kPadOptions}));
+    CHECK((typed == std::vector<std::string>{"127.0.0.1:47600", "\n", "\x1b"}));
+    // Without '~' the same title text (not looked up again) never counts as on screen.
+    MenuScript strict;
+    CHECK(strict.Parse("down@New Game"));
+    for (double t = 5; t < 20 && !strict.finished(); t += 1.0 / 30) {
+        std::string log;
+        strict.Step(t, 0, 1e9, &log, seen);
+    }
+    CHECK(strict.stuck());
+}
+
 } // namespace
 
 int main() {
+    TestMenuScriptTextBox();
     TestHappyPath();
     TestNoScreenSignal();
     TestTitleNeverReady();

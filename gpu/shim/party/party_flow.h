@@ -98,6 +98,12 @@ bool PartyActionsAllowed(const Context& c);
 /// `set "K=V"` lines for run.bat (values limited to [A-Za-z0-9_.:@-]; false otherwise).
 bool RelaunchBat(const Plan& p, std::string* out, std::string* error);
 
+/// The party name a player gets when party.json has none (the first party action): the user name
+/// (its [A-Za-z0-9_-], blanks as '_', at most 11; "Hunter" when nothing is left) + '-' + 4 base-36
+/// digits of `random`. The host admits one player per name, and every menu player used to be
+/// "Hunter": the second friend was refused ("the name Hunter is already in the party").
+std::string DefaultName(const std::string& user, std::uint32_t random);
+
 /// A party address as typed: trimmed; "" when empty. Accepts a BBP1 code or host[:port].
 std::string NormalizeAddress(const std::string& text);
 

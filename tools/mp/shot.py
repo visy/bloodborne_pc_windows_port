@@ -16,6 +16,12 @@ user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
 kernel32 = ctypes.windll.kernel32
 psapi = ctypes.windll.psapi
+# Physical pixels: without DPI awareness GetClientRect reports the scaled-down (logical) size while
+# PrintWindow draws physical pixels, so the shots were the window's top-left corner only.
+try:
+    user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))  # per-monitor v2
+except (AttributeError, OSError):
+    user32.SetProcessDPIAware()
 
 
 def proc_path(pid):

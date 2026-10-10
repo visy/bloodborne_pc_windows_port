@@ -9,6 +9,8 @@
 #include "party_code.h"
 #include "party_runtime.h"
 #include "party_status.h"
+#include "test_newgame.h"
+#include "../bbport_game_menu.h"
 #include "../net/bbnet_internal.h"
 #include "../../bbnet.h"
 
@@ -30,6 +32,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <random>
 #include <thread>
 
 extern "C" {
@@ -39,6 +42,8 @@ void runtime_relaunch(int exit_code);       // src/probe.c
 int bbgpu_text_input_begin(const char* initial_utf8, const char* prompt_utf8);
 int bbgpu_text_input_poll(char* out_utf8, unsigned long long size);
 int bbgpu_text_input_is_active(void);
+int bbgpu_text_input_test_type(const char* keys);
+void runtime_pad_director_press(std::uint32_t buttons);  // src/runtime_pad.c
 }
 
 namespace party::flow {
@@ -176,7 +181,15 @@ std::string LastMessage() {
 }
 
 Plan Run(Action a) {
-    const Context c = CurrentContext();
+    Context c = CurrentContext();
+    if (c.saved.name.empty() && !Env("BB_PARTY_NAME")) {
+        // A name of its own (party.json keeps it): the default "Hunter" was the same for everyone.
+        const char* user = Env("BB_USER_NAME");
+        if (!user) user = Env("USERNAME");
+        if (!user) user = Env("USER");
+        c.saved.name = DefaultName(user ? user : "", std::random_device{}());
+        Log("party name: %s (automatic; Party name changes it)", c.saved.name.c_str());
+    }
     Plan p = PlanAction(a, c);
     {
         std::lock_guard<std::mutex> lk(g_mu);
@@ -314,6 +327,111 @@ void NoteCharacterInWorld() {
     Log("party character in the world (save slot %d): Continue party game will load it", slot);
 }
 
+namespace {
+
+/// BB_TEST_MENU_FILE (test aid, tools/mp/flow_live.py): a menu walk through the REAL menus for this
+/// process. Each start of the game takes the file's first line (and removes it), so the run.bat
+/// relaunch loop's next process gets the next one: "<title|world> <seconds> <MenuScript>" (after
+/// that many seconds at the title / in the world; MenuScript tokens, test_newgame.h) or "-" (no
+/// walk this time). type= / enter / esc go to the text box as SDL key events (no OS input).
+struct MenuTest {
+    bool loaded = false, active = false, in_world = false, done = false;
+    double delay = 0;
+    coop::MenuScript script;
+    std::chrono::steady_clock::time_point since{};
+};
+MenuTest g_menu_test;
+
+void LoadMenuTest() {
+    MenuTest& m = g_menu_test;
+    m.loaded = true;
+    const char* path = Env("BB_TEST_MENU_FILE");
+    if (!path) return;
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return;
+    std::string first, line, rest;
+    bool got = false;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!got) {
+            first = line;
+            got = true;
+        } else {
+            rest += line + "\n";
+        }
+    }
+    in.close();
+    if (!got) return;
+    {
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        out << rest;
+    }
+    if (first.empty() || first == "-") {
+        Log("test menu: no walk for this start");
+        return;
+    }
+    char where[16] = {0};
+    double delay = 0;
+    int used = 0;
+    if (std::sscanf(first.c_str(), "%15s %lf %n", where, &delay, &used) < 2 || used <= 0) {
+        Log("test menu: bad line '%s'", first.c_str());
+        return;
+    }
+    std::string bad;
+    if (!m.script.Parse(first.substr(std::size_t(used)), &bad)) {
+        Log("test menu: unknown token '%s'", bad.c_str());
+        return;
+    }
+    m.in_world = std::strcmp(where, "world") == 0;
+    m.delay = delay;
+    m.active = true;
+    Log("test menu: %zu steps %s after %.0f s: %s", m.script.size(), m.in_world ? "in the world" : "at the title",
+        delay, first.c_str() + used);
+}
+
+void MenuTestTick(bool at_title, bool world_up) {
+    MenuTest& m = g_menu_test;
+    if (!m.loaded) LoadMenuTest();
+    if (!m.active || m.done) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (m.since == std::chrono::steady_clock::time_point{}) {
+        // The title: once its menu is up (its texts looked up; the boot, logos and the
+        // "Creating save data" / network checks come before).
+        const bool title_menu = BbGameMenu::TextSeenMs("New Game") > 0 || BbGameMenu::TextSeenMs("Continue") > 0;
+        if (!(m.in_world ? world_up : at_title && title_menu)) return;
+        m.since = now;
+        Log("test menu: %s; starting in %.0f s", m.in_world ? "in the world" : "title menu up", m.delay);
+    }
+    if (std::chrono::duration<double>(now - m.since).count() < m.delay) return;
+    std::uint64_t seq = 0;
+    std::int64_t last_ms = 0;
+    BbGameMenu::TextActivity(&seq, &last_ms);
+    const std::int64_t now_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+    const double t = double(now_ms) / 1000.0;
+    std::string line;
+    const std::uint32_t held = m.script.Step(t, seq, seq ? double(now_ms - last_ms) / 1000.0 : 1e9, &line,
+                                             [](const std::string& text) {
+                                                 const std::int64_t ms = BbGameMenu::TextSeenMs(text.c_str());
+                                                 return ms > 0 ? double(ms) / 1000.0 : -1.0;
+                                             });
+    runtime_pad_director_press(held);
+    if (!line.empty()) Log("test menu: %s", line.c_str());
+    std::string keys;
+    if (m.script.TakeTyped(&keys)) {
+        const bool box = bbgpu_text_input_is_active() != 0;
+        Log("test menu: %zu key(s) into the text box%s", keys.size(), box ? "" : " (NOT open)");
+        bbgpu_text_input_test_type(keys.c_str());
+    }
+    if (m.script.finished()) {
+        runtime_pad_director_press(0);
+        m.done = true;
+        Log("test menu: %s", m.script.stuck() ? "STUCK" : "done");
+    }
+}
+
+}  // namespace
+
 void Tick() {
     Poll();
     static bool was_up = false;
@@ -321,6 +439,7 @@ void Tick() {
     if (up && !was_up && bbnet::settings().party) NoteCharacterInWorld();
     was_up = up;
     TestTick(!up, up);
+    MenuTestTick(!up, up);
 }
 
 void TestTick(bool at_title, bool world_up) {
