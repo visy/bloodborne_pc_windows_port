@@ -1,0 +1,4 @@
+# Shell scripts run on Linux/the Steam Deck (and Git Bash): LF even in a Windows checkout.
+*.sh text eol=lf
+# cmd.exe scripts: CRLF.
+*.bat text eol=crlf

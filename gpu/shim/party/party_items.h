@@ -105,6 +105,15 @@ json::Value ItemsToJson(const std::vector<ItemGrant>& items);
 bool ItemsFromJson(const json::Value& v, std::vector<ItemGrant>* out, std::string* error = nullptr);
 std::string ItemsToJsonText(const std::vector<ItemGrant>& items);
 bool ItemsFromJsonText(const std::string& text, std::vector<ItemGrant>* out, std::string* error = nullptr);
+/// Rows per event at most (the full list has ~1000; ItemsFromJson refuses more).
+constexpr std::size_t kMaxItemsPerEvent = 4096;
+/// May a grant the host sent reach the game (bbport security pass)? A host source (award, flag,
+/// full), a lot that is not denied, and a lot / flag (or ledger row) pair the tables agree on -
+/// or a lot the tables do not know with a flag that is no other lot's (a hook-captured lot;
+/// GuestItems grants each such lot once). `why` says what is wrong.
+bool ItemGrantFromPeerAllowed(const ItemGrant& g, std::string* why = nullptr);
+/// The allowed rows of `in`; `rejected` (optional) counts the rest.
+std::vector<ItemGrant> FilterPeerItems(const std::vector<ItemGrant>& in, std::size_t* rejected = nullptr);
 
 // ---- Host ledger: what was sent ----
 class HostItems {
@@ -157,6 +166,7 @@ public:
 private:
     std::deque<ItemGrant> q_;
     std::set<std::int64_t> queued_, done_;
+    std::set<std::int32_t> adhoc_lots_;  // lots outside the tables, taken once each
     int stable_ = 0;
     double last_apply_ = -1e9;
 };

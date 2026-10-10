@@ -7,6 +7,7 @@
 #include "party_travel.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -213,6 +214,52 @@ bool TravelFromJson(const json::Value& v, TravelIntent* out, std::string* error)
         }
         return false;
     }
+}
+
+bool TravelAreaPlausible(std::uint32_t area) {
+    return (area >= 21 && area <= 29) || (area >= 32 && area <= 36);
+}
+
+bool TravelLampPlausible(std::uint32_t id) {
+    return id >= 1000000 && id < 10000000 && TravelAreaPlausible(id / 100000) && id / 10000 % 10 < 10;
+}
+
+bool SanitizePeerTravel(TravelIntent* t, std::string* why) {
+    if (!TravelKindBroadcast(t->kind)) {
+        if (why) {
+            *why = std::string("kind ") + TravelKindName(t->kind) + " is never broadcast";
+        }
+        return false;
+    }
+    auto lamp = [](std::uint32_t id) { return id == kTravelNone || TravelLampPlausible(id) ? id : kTravelNone; };
+    auto record = [&](std::uint64_t r) {
+        const std::uint32_t lo = static_cast<std::uint32_t>(r);
+        return lo == kTravelNone || TravelLampPlausible(lo) ? r : ~0ull;
+    };
+    t->lamp_id = lamp(t->lamp_id);
+    t->respawn_record = record(t->respawn_record);
+    t->last_lamp = record(t->last_lamp);
+    if (t->packed_map != kTravelNone && (!TravelAreaPlausible(t->Area()) || t->Block() >= 10)) {
+        t->packed_map = kTravelNone;
+    }
+    if (t->warp_point != kTravelNone && t->warp_point >= 100000000) {
+        t->warp_point = kTravelNone;
+    }
+    if (t->kind == TravelKind::LuaBonfireWarp) {
+        t->warp_point = lamp(t->warp_point);
+    }
+    if (t->has_pos) {
+        bool ok = (t->pos_map >> 24) != 0 && TravelAreaPlausible(t->pos_map >> 24) && ((t->pos_map >> 16) & 0xff) < 10;
+        for (int i = 0; i < 4; ++i) {
+            ok = ok && std::isfinite(t->pos[i]) && std::fabs(t->pos[i]) < 100000.0f && std::isfinite(t->rot[i]) &&
+                 std::fabs(t->rot[i]) < 1000.0f;
+        }
+        if (!ok) {
+            t->has_pos = false;
+            t->pos_map = kTravelNone;
+        }
+    }
+    return true;
 }
 
 std::string TravelToJsonText(const TravelIntent& t) {

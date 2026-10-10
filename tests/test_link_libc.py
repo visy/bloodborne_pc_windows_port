@@ -57,7 +57,7 @@ class LinkTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'relocation outside image'):
             self.run_link(*self.fixture(relocs=[(4092,8,0,0)]))
 
-    def test_fs_thread_pointer_loads_are_rewritten_to_gs(self):
+    def link_fs_loads(self):
         main,libc=self.fixture()
         load=bytes.fromhex('64488b042500000000')
         code=load+b'\x90'+load+b'\xc3'
@@ -65,7 +65,21 @@ class LinkTests(unittest.TestCase):
                                dict(type=7,vaddr=2048,filesz=0,memsz=48,align=16)]
         data,report=self.run_link(main,libc,code)
         size=struct.unpack_from('<Q',data,8)[0]
-        image=data[-size:]
+        return data,data[-size:],report
+
+    def test_fs_thread_pointer_loads_are_kept_on_windows(self):
+        # Windows: FS is free (the TEB is at GS); probe.c sets the FS base to the guest TCB.
+        with patch.object(link_libc.sys,'platform','win32'):
+            data,image,report=self.link_fs_loads()
+        self.assertEqual(image[0],0x64)
+        self.assertEqual(image[10],0x64)
+        self.assertEqual(report['fs_loads_patched'],0)
+        self.assertEqual(report['main_tls'],dict(vaddr=2048,filesz=0,memsz=48,align=16))
+
+    def test_fs_thread_pointer_loads_are_rewritten_to_gs(self):
+        # Linux: glibc owns FS; the runtime points GS at the guest TCB (runtime_thread.c).
+        with patch.object(link_libc.sys,'platform','linux'):
+            data,image,report=self.link_fs_loads()
         self.assertEqual(image[0],0x65)
         self.assertEqual(image[10],0x65)
         self.assertEqual(report['fs_loads_patched'],2)

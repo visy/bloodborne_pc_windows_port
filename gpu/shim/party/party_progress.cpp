@@ -564,12 +564,19 @@ bool ChangesFromJson(const std::string& text, u64* epoch, std::vector<FlagChange
         }
         *epoch = json::as_u64(json::member(v, "epoch"), "epoch");
         out->clear();
+        if (json::arr(v, "c").size() > kMaxChangesPerEvent) {
+            throw std::runtime_error("too many changes");
+        }
         for (const json::Value& e : json::arr(v, "c")) {
             if (e.type != json::Value::Type::Array || e.array.size() != 4) {
                 throw std::runtime_error("bad change entry");
             }
             FlagChange c;
-            c.id = static_cast<u32>(json::as_u64(e.array[0], "id"));
+            const u64 id = json::as_u64(e.array[0], "id");
+            if (id > 0xffffffffull) {
+                throw std::runtime_error("id out of range");
+            }
+            c.id = static_cast<u32>(id);
             c.value = json::as_u64(e.array[1], "value") != 0;
             if (e.array[2].type != json::Value::Type::String || !CategoryFromName(e.array[2].string, &c.cat)) {
                 throw std::runtime_error("bad category");
@@ -624,12 +631,19 @@ bool SnapshotFromJson(const std::string& text, FlagSnapshot* out, std::string* e
         s.epoch = json::as_u64(json::member(v, "epoch"), "epoch");
         s.seq = json::u64(v, "seq");
         s.map_id = json::u32(v, "map");
+        if (json::arr(v, "b").size() > kMaxSnapshotBlocks) {
+            throw std::runtime_error("too many blocks");
+        }
         for (const json::Value& b : json::arr(v, "b")) {
             if (b.type != json::Value::Type::Array || b.array.size() != 2 ||
                 b.array[1].type != json::Value::Type::Array) {
                 throw std::runtime_error("bad block entry");
             }
-            const u32 block = static_cast<u32>(json::as_u64(b.array[0], "block"));
+            const u64 block64 = json::as_u64(b.array[0], "block");
+            if (block64 > 0xffffffffull || b.array[1].array.size() > kBitsPerBlock) {
+                throw std::runtime_error("bad block");
+            }
+            const u32 block = static_cast<u32>(block64);
             std::vector<u32>& bits = s.blocks[block];
             for (const json::Value& x : b.array[1].array) {
                 const u64 bit = json::as_u64(x, "bit");
@@ -897,14 +911,26 @@ void GuestApplier::QueueChanges(u64 epoch, const std::vector<FlagChange>& change
         it.changes = std::move(fresh);
         items_.push_back(std::move(it));
     }
+    Trim();
 }
 
 void GuestApplier::QueueSnapshot(const FlagSnapshot& snap) {
     cursor_.Reset(snap.epoch, snap.seq);
+    // A newer snapshot supersedes a queued one (a host's stream of them must not pile up).
+    items_.erase(std::remove_if(items_.begin(), items_.end(), [](const Item& i) { return i.snapshot; }), items_.end());
     Item it;
     it.snapshot = true;
     it.snap = snap;
     items_.push_back(std::move(it));
+    Trim();
+}
+
+void GuestApplier::Trim() {
+    // Bounded while the store cannot take them (mode 0 outside the post-load window).
+    if (items_.size() > kMaxPendingItems) {
+        n_.dropped_seq += items_.size() - kMaxPendingItems;
+        items_.erase(items_.begin(), items_.begin() + static_cast<std::ptrdiff_t>(items_.size() - kMaxPendingItems));
+    }
 }
 
 bool GuestApplier::ApplyOne(const FlagStore& store, const Policy& policy, u32 id, bool value) {
