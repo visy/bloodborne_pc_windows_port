@@ -31,7 +31,8 @@
 //           pointer before / after, CSMultiPlayMan human / NPC tasks (step, mode, flags), flow
 //           state, session role - what single-instance runs can check.
 //
-// Env: BB_PARTY_B2=1 on; BB_PARTY_B2_FORCE=1 treats "no session" as a session for K2 (to
+// Env: default ON in party mode (BB_PARTY); BB_PARTY_B2=0 off (B1 only), =1 on without BB_PARTY;
+//      any failed / timed-out guest step falls back to B1 (FallbackToB1); BB_PARTY_B2_FORCE=1 treats "no session" as a session for K2 (to
 //      exercise the keep path offline with NPC tasks, single-instance test only).
 #pragma once
 
@@ -51,6 +52,13 @@ bool Requested();
 /// PartyInit, after InstallTravelPatches (bbgpu_patch_image, game not running yet).
 void Init();
 bool Enabled();
+/// Host: a member task (mode 1) exists - a guest is still in the session (main thread).
+bool HostHasMemberTasks();
+/// Guest, own world, before ringing (main thread): steps aside from the host's spot so the join
+/// placement is beside the host. True while it is still moving (do not ring yet).
+bool GuestPreRing(const GameSnapshot& s, std::uint32_t host_map);
+/// The local PartyLink slot (the director, every tick): guests stand beside the host by slot.
+void SetLocalSlot(int slot);
 /// Main thread, once a frame (the director tick).
 void Tick(const GameSnapshot& s);
 /// Guest: the host's travel event. True when B2 takes it (B1's replay must not run it).

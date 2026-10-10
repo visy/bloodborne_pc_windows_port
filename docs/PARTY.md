@@ -113,9 +113,10 @@ address or port changes.
 The launcher shows a ✓ or ✗ hint under the code field if the name, port or code look wrong.
 
 In the game, the game's own menu has two party pages under **System** (on the title
-screen and in the pause menu, after *Screen/Sound*): **Party** (the state and your role, *Copy party
-code* to the clipboard, *Rejoin* / *Summon again*, *Leave the party*, the join / leave notices switch
-and the last event) and **Party members** (each hunter with their state and ping; the host kicks a
+screen and in the pause menu, after *Environment* (Screen/Sound)): **Party** (the state and your role, *Copy party
+code* to the clipboard, *Rejoin* / *Summon again*, *Leave the party*, plus the party flow's
+rows to start or join a party game) and **Party members** (each hunter with their state and ping, the
+join / leave notices switch and the last event; the host kicks a
 hunter by pressing left/right twice on their row). *Leave* also asks for a second press. The
 bottom line of each row explains it (the party code is shown there too). The overlay menu
 (**Insert**, or **L3 + R3** if enabled) still has the same **Party** tab. Players joining and

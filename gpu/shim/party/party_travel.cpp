@@ -1031,7 +1031,9 @@ void TravelTick() {
         return;
     }
     if (Role() == PartyRole::Host) {
-        if (!b2::Enabled()) { // B2 keeps the room; members are re-created after the load
+        // B2 keeps the room while a member's task exists; once the guest fell back to B1 (task
+        // gone) the empty room is closed as in B1.
+        if (!b2::Enabled() || !b2::HostHasMemberTasks()) {
             HostCloseEmptyRoom();
         }
         return;
