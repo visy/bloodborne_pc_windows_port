@@ -623,9 +623,12 @@ BB_COOP_SYSV void TalkCommandEntry(u64, u64 call, u64, u64, u64, u64) {
 }
 
 struct LevelUpScript {
-    enum Stage { Off, WaitPlaced, Greeting, MenuUp, WaitScreen, Raise, Confirm, Accept, WaitLevel, BackOut, Done };
+    enum Stage { Off, WaitPlaced, Greeting, MenuUp, WaitScreen, Raise, Confirm, Accept, WaitLevel, BackOut, Done, Keys };
     std::uint32_t menus0 = 0;
     bool shop = false;                 ///< "buy": a messenger's Purchase instead of the Doll's level up
+    bool open = false;                 ///< "open[=TEXT]": open a menu, then press "keys=" one by one
+    std::string keys;                  ///< "cross,left,..." pressed 1.5 s apart once the menu is open
+    std::size_t key_at = 0;
     std::uint32_t menu_text = 15000100; ///< the talk menu row to choose
     std::uint32_t requests0 = 0;
     int insight0 = -1;
@@ -679,8 +682,13 @@ void LevelUpTick(const GameSnapshot& s, double now) {
         }
         break;
     case LevelUpScript::Greeting:
-        if (OnScreen(L.menu_text) && OnScreen(kTextLeave)) {
-            go(LevelUpScript::MenuUp, L.shop ? "talk menu up: 'Purchase' (15000140) is on screen"
+        if (L.open && L.menu_text == 0) {
+            L.menus0 = g_levelup_menus.load();
+            L.requests0 = g_menu_requests.load();
+            go(LevelUpScript::WaitScreen, "no talk list: waiting for the menu (Cross on any dialog)");
+        } else if (OnScreen(L.menu_text) && OnScreen(kTextLeave)) {
+            go(LevelUpScript::MenuUp, L.open ? "talk menu up: the chosen row is on screen"
+                                    : L.shop ? "talk menu up: 'Purchase' (15000140) is on screen"
                                              : "talk menu up: 'Channel the Blood Echoes' (15000100) is on screen");
         } else if (since >= 1.5 * (L.tries + 1)) {
             if (++L.tries > 12) {
@@ -698,12 +706,19 @@ void LevelUpTick(const GameSnapshot& s, double now) {
             L.menus0 = g_levelup_menus.load();
             L.requests0 = g_menu_requests.load();
             Tap(kPadCross, now);
-            go(LevelUpScript::WaitScreen, L.shop ? "Cross on 'Purchase'" : "Cross on 'Channel the Blood Echoes'; the Doll's lines follow");
+            go(LevelUpScript::WaitScreen, L.open ? "Cross on the chosen row"
+                                          : L.shop ? "Cross on 'Purchase'" : "Cross on 'Channel the Blood Echoes'; the Doll's lines follow");
         }
         break;
     case LevelUpScript::WaitScreen:
         // The guest kneels (event 12100112), the Doll speaks; then OpenSoul builds the menu.
-        if (L.shop && g_menu_requests.load() != L.requests0) {
+        if (L.open && g_menu_requests.load() != L.requests0) {
+            L.level0 = s.level;
+            L.echoes0 = s.echoes;
+            L.insight0 = s.insight;
+            L.key_at = 0;
+            go(LevelUpScript::Keys, "the menu was requested (0x1C4A520): menu open");
+        } else if (L.shop && g_menu_requests.load() != L.requests0) {
             go(LevelUpScript::Raise, "the shop menu was requested (OpenRegularShop -> 0x1C4A520): shop open");
         } else if (g_levelup_menus.load() != L.menus0) {
             go(LevelUpScript::Raise, "the game built the LevelUp menu (factory 0x1BB7F60): level-up screen open");
@@ -774,6 +789,29 @@ void LevelUpTick(const GameSnapshot& s, double now) {
         } else if (since >= 4.0) {
             Log("test: levelup: FAILED: level still %d (echoes %d)", s.level, s.echoes);
             go(LevelUpScript::BackOut, "backing out (Circle)");
+        }
+        break;
+    case LevelUpScript::Keys:
+        if (since >= 1.5) {
+            if (L.key_at >= L.keys.size()) {
+                Log("test: levelup: keys done: level %d -> %d, echoes %d -> %d, Insight %d -> %d", L.level0, s.level,
+                    L.echoes0, s.echoes, L.insight0, s.insight);
+                go(LevelUpScript::BackOut, "backing out (Circle)");
+                break;
+            }
+            std::size_t end = L.keys.find(',', L.key_at);
+            if (end == std::string::npos) {
+                end = L.keys.size();
+            }
+            const std::string k = L.keys.substr(L.key_at, end - L.key_at);
+            L.key_at = end + 1;
+            const std::uint32_t b = k == "cross" ? kPadCross : k == "circle" ? kPadCircle : k == "left" ? kPadLeft
+                                    : k == "right" ? kPadRight : k == "up" ? kPadUp : k == "down" ? kPadDown : 0;
+            if (b) {
+                Tap(b, now);
+            }
+            Log("test: levelup: key %s (level %d, echoes %d, Insight %d)", k.c_str(), s.level, s.echoes, s.insight);
+            L.at = now;
         }
         break;
     case LevelUpScript::BackOut:
@@ -1083,6 +1121,15 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
             g_lvl.at = now;
             g_lvl.shop = false;
             g_lvl.menu_text = kTextChannel;
+        } else if (const std::size_t o = g.test.find("open"); g.test_step == 0 && o != std::string::npos) {
+            g_lvl.stage = LevelUpScript::WaitPlaced;
+            g_lvl.at = now;
+            g_lvl.open = true;
+            g_lvl.menu_text = g.test.compare(o, 5, "open=") == 0 ? std::uint32_t(std::strtoul(g.test.c_str() + o + 5, nullptr, 10)) : 0;
+            if (const std::size_t k = g.test.find("keys="); k != std::string::npos) {
+                const std::size_t e = g.test.find(';', k);
+                g_lvl.keys = g.test.substr(k + 5, e == std::string::npos ? std::string::npos : e - k - 5);
+            }
         } else if (g.test_step == 0 && g.test.find("buy") != std::string::npos) {
             g_lvl.stage = LevelUpScript::WaitPlaced;
             g_lvl.at = now;
