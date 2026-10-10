@@ -8,6 +8,7 @@
 #include "game_state.h"
 #include "lua_events.h"
 #include "party_link.h"
+#include "party_items.h"
 #include "party_travel.h"
 #include "seamless_rules.h"
 
@@ -389,6 +390,21 @@ void PartyDirector::Tick() {
             link->send_event(party::kBroadcast, kTravelEventName, TravelToJsonText(t));
             Log("travel #%llu (%s) sent to the party", static_cast<unsigned long long>(t.seq), TravelKindName(t.kind));
         }
+        // C3: the host's item lots to every guest; the full list to a member that (re)joined.
+        std::vector<ItemGrant> items;
+        ItemGrant g;
+        while (PopHostItems(&g)) {
+            items.push_back(g);
+        }
+        if (!items.empty()) {
+            link->send_event(party::kBroadcast, kItemsEventName, ItemsToJsonText(items));
+            Log("items: %zu lots sent to the party", items.size());
+        }
+        int slot = -1;
+        while (TakeHostFullItems(&slot, &items)) {
+            link->send_event(slot, kItemsFullEventName, ItemsToJsonText(items));
+            Log("items: full list (%zu lots) sent to slot %d", items.size(), slot);
+        }
     }
     if (st.test.on) {
         RunTest(st, s, now);
@@ -431,13 +447,15 @@ void PartyDirector::Tick() {
 bool PartyRequested() {
     const char* p = std::getenv("BB_PARTY");
     const char* t = std::getenv("BB_PARTY_DIRECTOR_TEST");
-    return (p && p[0]) || (t && t[0]);
+    const char* i = std::getenv("BB_PARTY_ITEMS_TEST"); // C3 single-instance check
+    return (p && p[0]) || (t && t[0]) || (i && i[0]);
 }
 
 void CoopTick() {
     LuaEventsTick();
     PartyDirector::Get().Tick();
     TravelTick();        // B1 guest replay (party_travel.h)
+    ItemsTick();         // C3 guest item replay (party_items.h)
     SeamlessRulesTick(); // A6 param rules, EMEVD filter stats (seamless_rules.h)
 }
 
@@ -450,6 +468,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     SeamlessRulesInit(); // A6: party patch report, EMEVD filter (seamless_rules.h)
     PartyDirector::Get().ConfigureFromEnv();
     InstallTravelPatches(); // B1: Dream gate + travel hooks (byte-verified)
+    InstallItemsPatches();  // C3: award hook, parity patches (byte-verified)
     g_tick_installed = HookPrologue(kFlipperUpdate,
                                     {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48,
                                      0x83, 0xec, 0x38},
