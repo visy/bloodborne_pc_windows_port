@@ -654,9 +654,16 @@ bool OnScreen(std::uint32_t id, std::int64_t within_ms = 400) {
 
 // The action prompt: ActionButtonParam textId of the Dream's talk / examine regions (6003 / 6004 /
 // 6019-6026 / 6030: 10010100, 10010200, 10010220, 70000009) - looked up every frame while shown.
-bool PromptUp() {
-    for (const std::uint32_t id : {10010100u, 10010200u, 10010220u, 70000009u}) {
-        if (OnScreen(id)) {
+// Any action-button text on screen: ActionButtonParam text ids are 1001xxxx (talk / examine /
+// "Workshop"-style object prompts) or 7000xxxx; *id receives the first one seen.
+bool PromptUp(std::uint32_t* id = nullptr) {
+    std::uint32_t ids[256];
+    const int n = BbGameMenu::RecentLookups(400, ids, 256);
+    for (int i = 0; i < n; ++i) {
+        if ((ids[i] >= 10010000 && ids[i] < 10020000) || (ids[i] >= 70000000 && ids[i] < 70010000)) {
+            if (id) {
+                *id = ids[i];
+            }
             return true;
         }
     }
@@ -710,9 +717,17 @@ void LevelUpTick(const GameSnapshot& s, double now) {
     case LevelUpScript::WaitPlaced:
         // Press only with the action prompt up; else step closer / around (polled every 0.8 s).
         if (since >= 0.8) {
-            if (PromptUp()) {
+            std::uint32_t prompt = 0;
+            if (PromptUp(&prompt)) {
                 Tap(kPadCross, now);
-                go(LevelUpScript::Greeting, "action prompt up: Cross (talk); advancing the lines until the menu is up");
+                Log("test: levelup: action prompt text %u on screen", prompt);
+                go(LevelUpScript::Greeting, "action prompt up: Cross; advancing the lines until the menu is up");
+                break;
+            }
+            if (L.approach == 1) {
+                // Fallback: 1.2 m in front and facing it: press once anyway.
+                Tap(kPadCross, now);
+                go(LevelUpScript::Greeting, "no prompt text seen; pressed Cross anyway (1.2 m in front, facing it)");
                 break;
             }
             static const float dists[] = {1.2f, 1.0f, 0.8f, 0.6f, 0.45f};
