@@ -268,8 +268,10 @@ def run(a):
             k, _, v = kv.partition("=")
             env[k] = v.replace("{i}", str(i)).replace("{port}", str(port0 + i))
         log, starts[i] = open_log(inst / "run.log")
+        # Test games run ABOVE_NORMAL (children inherit) so agents' builds never starve them.
+        prio = 0x00008000 if os.name == "nt" else 0
         procs.append((i, subprocess.Popen(["cmd", "/c", str(inst / "run.bat")], cwd=inst, env=env,
-                                          stdout=log, stderr=subprocess.STDOUT), log))
+                                          stdout=log, stderr=subprocess.STDOUT, creationflags=prio), log))
         time.sleep(a.stagger)
     t0 = time.time()
     crashed = False
