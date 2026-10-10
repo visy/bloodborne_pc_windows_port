@@ -32,6 +32,13 @@ class PartyEnvRule(unittest.TestCase):
             self.assertTrue(party_env.party_value_on(v), repr(v))
             self.assertTrue(party_env.party_enabled(env_with(v)), repr(v))
 
+    def test_default_on_switch(self):
+        self.assertTrue(party_env.party_switch_on({}, 'BB_PARTY_FAST_JOIN'))
+        self.assertTrue(party_env.party_switch_on({'BB_PARTY_FAST_JOIN': ' '}, 'BB_PARTY_FAST_JOIN'))
+        self.assertTrue(party_env.party_switch_on({'BB_PARTY_FAST_JOIN': '1'}, 'BB_PARTY_FAST_JOIN'))
+        for v in ('0', 'off', ' No ', 'FALSE'):
+            self.assertFalse(party_env.party_switch_on({'BB_PARTY_FAST_JOIN': v}, 'BB_PARTY_FAST_JOIN'), v)
+
     def test_same_as_the_c_header(self):
         # The C header lists the same off words.
         header = (ROOT / 'gpu' / 'party_env.h').read_text(encoding='utf-8')

@@ -87,6 +87,18 @@ constexpr Site kSites[] = {
     {"Party: SOS sign timeout 30s", 0x4927a5c, "00003443", "0000f041"},
     {"Party: Bells without Insight", 0x157fa5c, "0f9fc0", "30c090"},
     {"Party: Bells without Insight", 0x18c92bb, "410fb64738f7d8", "31c00f1f440000"},
+    // Join timing (docs/party/join_timing.md; BB_PARTY_FAST_JOIN / BB_PARTY_FAST_MESSAGES).
+    {"Party: Fast join", 0x196d3a8, "c7051e77c0030000a040", "c7051e77c0030000003f"},
+    {"Party: Fast join", 0x196d3b2, "c7051c77c0030000a040", "c7051c77c0030000803f"},
+    {"Party: Fast join", 0x196d3c6, "c7051077c0030000a040", "c7051077c0030000803f"},
+    {"Party: Fast join", 0x196d3d0, "c7050e77c00300000040", "c7050e77c0030000003f"},
+    {"Party: Fast join", 0x14b80c4, "41c7451c00004040", "41c7451c0000003f"},
+    {"Party: Fast join", 0x14b4975, "41c744241801000500", "41c744241801001e00"},
+    {"Party: Fast join", 0x14bb067, "c7431801000500", "c7431801001e00"},
+    {"Party: Fast multiplayer messages", 0x1bfface, "41c745000000a040", "41c745000000c03f"},
+    {"Party: Fast multiplayer messages", 0x4928a98, "0000a040", "0000c03f"},
+    {"Party: Hide bell searching messages", 0x1389cfc, "e97f618700", "c390909090"},
+    {"Party: Hide bell searching messages", 0x17c3cea, "e891c14300", "0f1f440000"},
 };
 
 std::vector<u8> Hex(const char* h) {

@@ -61,6 +61,9 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_RESTARTED` | Set to `1` by `run.bat` on a crash restart: rejoin path, `restart` backup | unset | `run.bat`, `gpu/shim/party/party_runtime.cpp`, `src/runtime_savepolicy.c` |
 | `BB_PARTY_RESTART_MAX` | Most crash restarts in 10 minutes | 5 | `run.bat` |
 | `BB_PARTY_AUTOCONTINUE` | `0`: the director does not press Continue on the title (it still does after a crash restart); `1`: always | on in party mode | `gpu/shim/party/party_director.cpp` |
+| `BB_PARTY_FAST_JOIN` | `0`: the game's summon / join pauses stay (no `Party: Fast join` patch), ss.info sign polling every 5 s, director pauses 5 s / 4 s / 2.5 s, SDK-like room delays ([join_timing.md](join_timing.md)) | on in party mode | `scripts/patches.py`, `gpu/shim/net/from_api.cpp`, `gpu/shim/net/np_matching2.cpp`, `gpu/shim/party/party_director.cpp` |
+| `BB_PARTY_FAST_MESSAGES` | `0`: the multiplayer banners hold 5 s again and the bell "Searching..." banners show | on in party mode | `scripts/patches.py` |
+| `BB_PARTY_RING_DELAY` | Seconds in a steady world before the director's first bell (also the bell grant) | 1 (5 with `BB_PARTY_FAST_JOIN=0`) | `gpu/shim/party/party_director.cpp` |
 | `BB_PARTY_RING_EVERY` | Seconds between the director's automatic bells (min 1) | 30 | `gpu/shim/party/party_director.cpp` |
 | `BB_PARTY_TRAVEL` | `0`: no travel-together hooks or replay (B1); also drops the open-world rules | on | `gpu/shim/party/party_travel.cpp`, `gpu/shim/party/party_phantom.cpp` |
 | `BB_PARTY_DREAM_GATE` | `0`: the Hunter's Dream stays closed to co-op (no area-table patch) | patched | `gpu/shim/party/party_travel.cpp` |

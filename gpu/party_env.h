@@ -43,4 +43,13 @@ static inline const char *bb_party_value(void) {
     return bb_party_value_on(v) ? v : (const char *)0;
 }
 
+/* A party switch that is on by default (BB_PARTY_FAST_JOIN, ...): unset or blank = on, otherwise
+ * the same off words as above. */
+static inline int bb_party_switch_on(const char *name) {
+    const char *v = getenv(name), *p = v;
+    if (!v) return 1;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') ++p;
+    return *p ? bb_party_value_on(v) : 1;
+}
+
 #endif
