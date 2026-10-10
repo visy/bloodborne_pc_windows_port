@@ -88,7 +88,8 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_STORY_TEST` | `cutscene:<remo id>[,mirror]`: single-instance replay test 10 s after the world is up | off | `gpu/shim/party/party_story.cpp` |
 | `BB_PARTY_STORY_TEST_DELAY` | Delay of `BB_PARTY_STORY_TEST` in s | 10 | `gpu/shim/party/party_story.cpp` |
 | `BB_PARTY_ITEMS_TEST` | `<lot>[,<lot>...]`: applies these item lots once in the own world (any role) | off | `gpu/shim/party/party_items.cpp` |
-| `BB_PARTY_DIRECTOR_TEST` | `log_state,start,grant_bells,drop_bells,award_lot=N,insight=N,ring_host,ring_guest`: director test actions without a party | off | `gpu/shim/party/party_director.cpp` |
+| `BB_PARTY_DIRECTOR_TEST` | `log_state,start,grant_bells,drop_bells,award_lot=N,insight=N,ring_host,ring_guest`: director test actions without a party; live travel steps `host_warp=ID@S`, `host_die@S`, `guest_die@S` (optional `#N`: not before this player's Nth join) run in order, S s after each (re)join (docs/party/travel.md 6); any value also stamps the party logs with the wall clock | off | `gpu/shim/party/party_director.cpp` |
+| `BB_PARTY_LOG_TIME` | `1`: wall-clock stamps on the Party / Party travel / Party phantom log lines | off | `gpu/shim/party/party_director.cpp` |
 | `BB_PARTY_DIRECTOR_TEST_DELAY` | Delay of the director test actions in s (after the world is up) | 10 | `gpu/shim/party/party_director.cpp` |
 | `BB_PARTY_PHANTOM_PROBE` | `insight`, `refill`: one offline probe 5 s after the world is up | off | `gpu/shim/party/party_phantom.cpp` |
 | `BB_PARTY_TRACE` | `1`: logs every FROM API / HTTP request and answer (default: the first few) | off | `gpu/shim/net/bbnet_glue.cpp` |
