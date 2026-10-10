@@ -527,6 +527,7 @@ struct PartyLink::Impl {
     std::vector<RosterEntry> snap_roster;
     MemberState snap_local_state = MemberState::Title;
     std::uint32_t snap_local_map = 0;
+    int snap_max_players = 0;  // host: cfg.max_players; guest: the host's (WELCOME), 0 before it
     void publish() {  // mu held
         std::vector<RosterEntry> r = host ? host_roster() : groster;
         std::lock_guard<std::mutex> lk(snap_mu);
@@ -535,6 +536,7 @@ struct PartyLink::Impl {
         snap_roster.swap(r);
         snap_local_state = local_state;
         snap_local_map = local_map;
+        snap_max_players = host ? cfg.max_players : host_max_players;
     }
     std::int64_t clock_offset = 0;
     std::uint32_t rtt = 0;
@@ -1177,6 +1179,10 @@ struct PartyLink::Impl {
             c->last_ping = Clock::now();
             my_slot = slot;
             host_max_players = maxp;
+            {
+                std::lock_guard<std::mutex> sl(snap_mu);
+                snap_max_players = maxp;
+            }
             my_token = tok;
             clock_offset = hclock <= static_cast<std::uint64_t>(kMaxClockMs) ? static_cast<std::int64_t>(hclock) - now_ms() : 0;
             char buf[32];
@@ -1728,8 +1734,10 @@ std::uint16_t PartyLink::bound_port() const {
 }
 
 int PartyLink::max_players() const {
-    std::lock_guard<std::mutex> lk(impl_->mu);
-    return impl_->host ? impl_->cfg.max_players : impl_->host_max_players;
+    // Polled every frame by the game's main thread: the published copy, never the IO lock.
+    if (impl_->host) return impl_->cfg.max_players;  // fixed at construction
+    std::lock_guard<std::mutex> lk(impl_->snap_mu);
+    return impl_->snap_max_players;
 }
 
 std::vector<RosterEntry> PartyLink::roster() const {

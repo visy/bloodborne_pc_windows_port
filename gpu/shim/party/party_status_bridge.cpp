@@ -2,6 +2,7 @@
 // Party status bridge (party_status_bridge.h): party runtime / director -> status board, and the
 // Party tab's commands back.
 #include "party_status_bridge.h"
+#include "party_async_io.h"
 
 #ifndef BB_PARTY_BRIDGE_NO_GAME
 #include "party_runtime.h"
@@ -39,8 +40,7 @@ void Log(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    std::printf("Party: %s\n", line);
-    std::fflush(stdout);
+    coop::asyncio::Print(std::string("Party: ") + line + "\n"); // never blocks the caller (party_async_io.h)
 }
 
 double Since(Clock::time_point t, Clock::time_point now) { return std::chrono::duration<double>(now - t).count(); }

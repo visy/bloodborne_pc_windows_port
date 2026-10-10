@@ -2,6 +2,7 @@
 // The party runtime (party_runtime.h): wires PartyLink (A4) to the host service / transport (A3)
 // and the network library (A1/A2) inside the game process.
 #include "party_runtime.h"
+#include "party_async_io.h"
 
 #include "party_addr.h"
 #include "party_code.h"
@@ -62,8 +63,7 @@ void plog(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
-    std::printf("Party: %s\n", buf);
-    std::fflush(stdout);
+    coop::asyncio::Print(std::string("Party: ") + buf + "\n"); // never blocks the caller (party_async_io.h)
 }
 
 const char* env(const char* name) {

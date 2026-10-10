@@ -6,6 +6,7 @@
 
 #include "coop_hooks.h"
 #include "party_start.h"
+#include "party_async_io.h"
 #include "../bbport_threads.h"
 
 #include <cstdio>
@@ -42,8 +43,10 @@ bool CodeOk(std::uint64_t off, std::initializer_list<std::uint8_t> bytes, const 
     if (*state == 0) {
         *state = Matches(off, bytes) ? 1 : -1;
         if (*state < 0) {
-            std::printf("Party: start: %s (0x%llx) differs from 1.09; off\n", name, static_cast<unsigned long long>(off));
-            std::fflush(stdout);
+            char line[160];
+            std::snprintf(line, sizeof line, "Party: start: %s (0x%llx) differs from 1.09; off\n", name,
+                          static_cast<unsigned long long>(off));
+            coop::asyncio::Print(line);
         }
     }
     return *state > 0;
@@ -106,11 +109,9 @@ __attribute__((noinline)) bool SafeRead(std::uint64_t address, void* out, std::s
         return false;
     }
     runtime_fault_recover = &recover;
-    const volatile unsigned char* src = reinterpret_cast<const volatile unsigned char*>(address);
-    unsigned char* dst = static_cast<unsigned char*>(out);
-    for (std::size_t i = 0; i < n; ++i) {
-        dst[i] = src[i];
-    }
+    // One copy (a fault anywhere in it lands in BB_RECOVER_SET above); small fixed sizes become
+    // single loads. The party layer makes thousands of these per frame (flag tree, game state).
+    std::memcpy(out, reinterpret_cast<const void*>(address), n);
     runtime_fault_recover = prev;
     return true;
 }

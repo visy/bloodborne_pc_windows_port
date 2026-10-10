@@ -484,8 +484,8 @@ target_link_options(party-fuzz-ubsan PRIVATE -fsanitize=undefined -fsanitize-und
 # Party status bridge (shim/party/party_status_bridge.cpp; in bbgpu through SHIM_SOURCES): link /
 # game facts -> the Party tab's state, roster, events, commands. ninja -C out/gpu party-status-bridge-test
 add_executable(party-status-bridge-test EXCLUDE_FROM_ALL ../tests/test_party_status_bridge.cpp
-    shim/party/party_status_bridge.cpp shim/party/party_status.cpp ${PARTY_LINK_SOURCES}
-    shim/net/net_stun.cpp third_party/monocypher/monocypher.c)
+    shim/party/party_status_bridge.cpp shim/party/party_status.cpp shim/party/party_async_io.cpp
+    ${PARTY_LINK_SOURCES} shim/net/net_stun.cpp third_party/monocypher/monocypher.c)
 target_compile_definitions(party-status-bridge-test PRIVATE BB_PARTY_BRIDGE_NO_GAME)
 target_compile_options(party-status-bridge-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-status-bridge-test PRIVATE shim)

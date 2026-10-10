@@ -10,6 +10,8 @@
 //   WorldTransitionState slot 0x5556678: +0x08 stage request, +0x1528 last lamp {id, aux},
 //     +0x1592 own world.
 #include "party_phantom.h"
+#include "party_async_io.h"
+#include "party_perf.h"
 
 #include "net/json.h"
 
@@ -395,8 +397,8 @@ void Log(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    std::printf("Party phantom: %s\n", line);
-    std::fflush(stdout);
+    perf::Scope z(perf::Zone::Log);
+    coop::asyncio::Print(std::string("Party phantom: ") + line + "\n"); // never blocks the caller (party_async_io.h)
 }
 
 bool EnvOff(const char* name) {
