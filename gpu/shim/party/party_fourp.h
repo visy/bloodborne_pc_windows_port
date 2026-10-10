@@ -20,11 +20,12 @@
 // H2-H4 change nothing while at most 2 cooperators exist (vanilla cap), so they are installed for
 // every party; only H1 / E6 follow the max players, which can change at run time.
 //
-// Max players: the host's BB_PARTY_MAX (clamped 2..4, PartyLink). A guest takes the host's value
-// from WELCOME (party::PartyLink::max_players) - FourpTick applies it, so a guest's own
-// BB_PARTY_MAX does not matter. WELCOME arrives at the title (the network starts there), before
-// any world is loaded. What every peer must share is the rule set: FourpRulesTag() goes into the
-// party patch/mod hash and HELLO, so a peer with other rules is rejected with a clear reason.
+// Max players: BB_PARTY_MAX (clamped 2..4, PartyLink). It and FourpRulesTag() form the party
+// rules ("max 4 players, 4p:v1:..."), part of the PartyLink version check (LinkConfig::rules,
+// HELLO): a guest with another max players or rule set is rejected with a reason naming both.
+// The host's value also arrives in WELCOME (party::PartyLink::max_players) and FourpTick applies
+// it on a connected guest, so the host's setting is what runs. WELCOME arrives at the title (the
+// network starts there), before any world is loaded.
 //
 // Env: BB_PARTY_FOURP=0 nothing installed (tag "4p:off");
 //      BB_PARTY_FOURP_SCALING=0 no H2-H4 (boss HP stays at the game's 0/1/2 table);
@@ -48,7 +49,7 @@ struct Config {
 /// From the environment.
 Config ConfigFromEnv();
 /// The rule set every peer must share: "4p:off" or "4p:v1:H1,H2,H3,H4,E6" (P5 is server-only, not
-/// in it). Goes into the party patch/mod hash and HELLO.
+/// in it). Goes into the party rules of the version check (with the max players).
 std::string RulesTag(const Config& c);
 /// The tag for this process (ConfigFromEnv).
 std::string FourpRulesTag();

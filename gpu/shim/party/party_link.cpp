@@ -131,6 +131,28 @@ struct Reader {
     std::string str32() { return str(u32()); }
 };
 
+// HELLO's name lists: '\n'-separated (names never hold one), at most ~16 KiB.
+std::string join_names(const std::vector<std::string>& names) {
+    std::string s;
+    for (const std::string& n : names) {
+        if (s.size() + n.size() + 1 > 16384) break;
+        if (!s.empty()) s += '\n';
+        s += n;
+    }
+    return s;
+}
+std::vector<std::string> split_names(const std::string& s) {
+    std::vector<std::string> out;
+    std::size_t pos = 0;
+    while (pos < s.size()) {
+        std::size_t end = s.find('\n', pos);
+        if (end == std::string::npos) end = s.size();
+        if (end > pos) out.push_back(s.substr(pos, end - pos));
+        pos = end + 1;
+    }
+    return out;
+}
+
 void write_roster(Writer& w, const std::vector<RosterEntry>& r) {
     w.u8(static_cast<std::uint8_t>(r.size()));
     for (const auto& e : r) {
@@ -205,6 +227,117 @@ const char* link_state_name(LinkState s) {
     case LinkState::Stopped: return "stopped";
     }
     return "?";
+}
+
+namespace {
+
+std::string short_hex(const std::array<std::uint8_t, 32>& h) {
+    static const char* d = "0123456789abcdef";
+    std::string s;
+    for (int i = 0; i < 4; ++i) {
+        s += d[h[i] >> 4];
+        s += d[h[i] & 15];
+    }
+    return s;
+}
+
+bool all_zero(const std::array<std::uint8_t, 32>& h) {
+    for (std::uint8_t b : h)
+        if (b) return false;
+    return true;
+}
+
+// "A, B, C +2 more" (at most `limit` names).
+std::string name_list(const std::vector<std::string>& names, std::size_t limit = 6) {
+    std::string s;
+    for (std::size_t i = 0; i < names.size() && i < limit; ++i) s += (i ? ", " : "") + names[i];
+    if (names.size() > limit) s += " +" + std::to_string(names.size() - limit) + " more";
+    return s;
+}
+
+// One clause about a differing set: what only one side has, or that the contents differ.
+std::string set_clause(const char* what, const std::array<std::uint8_t, 32>& host_hash,
+                       const std::vector<std::string>& host_names, const std::array<std::uint8_t, 32>& guest_hash,
+                       const std::vector<std::string>& guest_names) {
+    std::vector<std::string> host_only, guest_only;
+    for (const std::string& n : host_names)
+        if (std::find(guest_names.begin(), guest_names.end(), n) == guest_names.end()) host_only.push_back(n);
+    for (const std::string& n : guest_names)
+        if (std::find(host_names.begin(), host_names.end(), n) == host_names.end()) guest_only.push_back(n);
+    std::string s = std::string(what) + " differ (";
+    if (host_only.empty() && guest_only.empty()) {
+        if (all_zero(host_hash) || all_zero(guest_hash))
+            s += all_zero(host_hash) ? "the host has none" : "you have none";
+        else
+            s += "same names, different contents: another version of them";
+        s += "; host " + short_hex(host_hash) + ", yours " + short_hex(guest_hash);
+    } else {
+        s += "host only: " + (host_only.empty() ? std::string("-") : name_list(host_only));
+        s += "; yours only: " + (guest_only.empty() ? std::string("-") : name_list(guest_only));
+    }
+    return s + ")";
+}
+
+}  // namespace
+
+std::string identity_mismatch(const LinkConfig& host, const LinkConfig& guest) {
+    std::vector<std::string> parts;
+    if (host.eboot_sha256 != guest.eboot_sha256)
+        parts.push_back("eboot.bin differs (host " + short_hex(host.eboot_sha256) + ", yours " +
+                        short_hex(guest.eboot_sha256) + ": another game version or dump; the port needs 1.09)");
+    if (host.patches_hash != guest.patches_hash)
+        parts.push_back(set_clause("gameplay patches", host.patches_hash, host.patch_names, guest.patches_hash,
+                                   guest.patch_names));
+    if (host.mods_hash != guest.mods_hash)
+        parts.push_back(set_clause("gameplay mods", host.mods_hash, host.mod_names, guest.mods_hash, guest.mod_names));
+    if (host.rules != guest.rules)
+        parts.push_back("party rules differ (host " + (host.rules.empty() ? std::string("none") : host.rules) +
+                        "; yours " + (guest.rules.empty() ? std::string("none: an older build") : guest.rules) +
+                        "): every player needs the same Max players setting (BB_PARTY_MAX) and BB_PARTY_FOURP*");
+    if (parts.empty()) return {};
+    std::string s = "version mismatch with the host: ";
+    for (std::size_t i = 0; i < parts.size(); ++i) s += (i ? "; " : "") + parts[i];
+    return s;
+}
+
+bool parse_identity_file(const std::string& text, const std::string& item_key, std::array<std::uint8_t, 32>* hash,
+                         std::vector<std::string>* items) {
+    bool have = false;
+    std::array<std::uint8_t, 32> h{};
+    std::vector<std::string> names;
+    std::size_t pos = 0;
+    auto nibble = [](char c) {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    while (pos < text.size()) {
+        std::size_t end = text.find('\n', pos);
+        if (end == std::string::npos) end = text.size();
+        std::string line = text.substr(pos, end - pos);
+        pos = end + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (line.empty() || line[0] == '#') continue;
+        const std::size_t sp = line.find(' ');
+        if (sp == std::string::npos) continue;
+        const std::string key = line.substr(0, sp), value = line.substr(sp + 1);
+        if (key == "hash") {
+            if (value.size() != 64) return false;
+            for (int i = 0; i < 32; ++i) {
+                const int hi = nibble(value[2 * i]), lo = nibble(value[2 * i + 1]);
+                if (hi < 0 || lo < 0) return false;
+                h[i] = static_cast<std::uint8_t>(hi << 4 | lo);
+            }
+            have = true;
+        } else if (key == item_key && !value.empty()) {
+            names.push_back(value);
+        }
+    }
+    if (!have) return false;
+    if (hash) *hash = h;
+    if (items) *items = std::move(names);
+    return true;
 }
 
 bool valid_member_name(const std::string& name) {
@@ -599,24 +732,24 @@ struct PartyLink::Impl {
             std::uint8_t magic[4];
             r.bytes(magic, 4);
             std::uint16_t ver = r.u16();
-            c->name = r.str16();
-            std::uint8_t eboot[32], mods[32];
-            r.bytes(eboot, 32);
-            r.bytes(mods, 32);
-            r.bytes(c->token.data(), 16);
-            const std::string rules = r.ok && r.n ? r.str16() : std::string();
             if (!r.ok || std::memcmp(magic, kMagic, 4) != 0) return lose(c, "not a PartyLink client");
+            // The version before the rest: other versions lay HELLO out differently.
             if (ver != kLinkProtocolVersion)
                 return reject_conn(c, RejectCode::Version,
                                    "different party protocol version (host " + std::to_string(kLinkProtocolVersion) +
                                        ", yours " + std::to_string(ver) + "): update the port");
-            if (rules != cfg.rules)
-                return reject_conn(c, RejectCode::Mismatch,
-                                   "different party game rules (host " + (cfg.rules.empty() ? "none" : cfg.rules) +
-                                       ", yours " + (rules.empty() ? "none: an older build" : rules) +
-                                       "): use the same build and the same BB_PARTY_FOURP* settings");
-            if (std::memcmp(eboot, cfg.eboot_sha256.data(), 32) != 0 || std::memcmp(mods, cfg.mods_hash.data(), 32) != 0)
-                return reject_conn(c, RejectCode::Mismatch, "different game version/patches/mods");
+            c->name = r.str16();
+            LinkConfig theirs;
+            r.bytes(theirs.eboot_sha256.data(), 32);
+            r.bytes(theirs.mods_hash.data(), 32);
+            r.bytes(c->token.data(), 16);
+            r.bytes(theirs.patches_hash.data(), 32);
+            theirs.patch_names = split_names(r.str16());
+            theirs.mod_names = split_names(r.str16());
+            if (r.ok && r.n) theirs.rules = r.str16();  // absent before the party rules existed
+            if (!r.ok) return lose(c, "short HELLO");
+            const std::string mismatch = identity_mismatch(cfg, theirs);
+            if (!mismatch.empty()) return reject_conn(c, RejectCode::Mismatch, mismatch);
             if (!valid_member_name(c->name))
                 return reject_conn(c, RejectCode::Name, "invalid name (1-16 of A-Z a-z 0-9 _ -)");
             crypto::random_bytes(c->hn.data(), c->hn.size());
@@ -1003,7 +1136,8 @@ struct PartyLink::Impl {
         Writer w;
         w.bytes(kMagic, 4).u16(kLinkProtocolVersion).str16(cfg.name);
         w.bytes(cfg.eboot_sha256.data(), 32).bytes(cfg.mods_hash.data(), 32).bytes(my_token.data(), 16);
-        if (!cfg.rules.empty()) w.str16(cfg.rules);
+        w.bytes(cfg.patches_hash.data(), 32).str16(join_names(cfg.patch_names)).str16(join_names(cfg.mod_names));
+        w.str16(cfg.rules);
         send(c, kHello, w);
     }
 

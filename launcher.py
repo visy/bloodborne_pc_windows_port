@@ -1161,8 +1161,8 @@ class BloodborneLauncher(tk.Tk):
             "The name the others see for you: 1-16 letters, digits, _ or -. It is also your online ID "
             "in the game. Default: your Windows user name (BB_PARTY_NAME).", width=18)
         max_tip = ("Most players in the party, you included: 2, 3 (the game's normal co-op limit) or 4 "
-                   "(experimental: the game was not made for 4 players, expect issues). Only the "
-                   "host's setting counts. Default: 3 (BB_PARTY_MAX).")
+                   "(experimental: the game was not made for 4 players, expect issues). Every player "
+                   "must pick the same value: joining checks it. Default: 3 (BB_PARTY_MAX).")
         self.party_max_combo = self._combo(sec, "Max players:", self.party_max_var, PARTY_MAX_CHOICES,
                                            max_tip, width=6)
         auto_cb = self._check(sec, "Automatic summoning", self.party_auto,

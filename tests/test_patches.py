@@ -232,5 +232,102 @@ class PartyPatchTests(unittest.TestCase):
         self.assertTrue(patches.originals_match(XML, name, '01.09', bytes(elf)))
 
 
+class PartyVersionCheckTests(unittest.TestCase):
+    """out/party_patch_hash.txt: only gameplay patches count in the party's version check."""
+
+    def all_names(self):
+        return [m.get('Name') for m in ET.parse(XML).getroot().iter('Metadata') if m.get('AppVer') == '01.09']
+
+    def test_classification_of_the_built_in_patches(self):
+        names = self.all_names()
+        for name in patches.COSMETIC_PATCHES:
+            self.assertIn(name, names)  # no stale entries
+        cosmetic = {n for n in names if patches.patch_is_cosmetic(n)}
+        gameplay = set(names) - cosmetic
+        # Party patches and the skip-online dialog always count; so do cheats and rally changes.
+        for name in [*patches.PARTY_SEAMLESS, patches.PARTY_NO_INSIGHT, patches.SKIP_NETWORK_CHOICE,
+                     patches.SKIP_NETWORK_CHOICE_ONLINE, 'Player No Dead (Read note)', 'Disable Rally (HP Regain)',
+                     'No Rally Decay', 'Enemy Control', 'DS1-like physics', '60FPS (no deltatime)',
+                     patches.DEBUG_MENU]:
+            self.assertIn(name, gameplay)
+        # Frame rate, resolution, effects, LOD and the platform workarounds never do.
+        for name in [*{n for preset in patches.FPS_PRESETS.values() for n in preset}, patches.RESOLUTION_TEMPLATE,
+                     'Resolution Patch 3840x2160 (16:9)', '4k Light Grid (READ NOTES)', 'Increased Graphics Heap Sizes',
+                     patches.INTEL_TONEMAP, *patches.MODEL_LOD.values()]:
+            self.assertIn(name, cosmetic)
+        for off, on in patches.EFFECTS.values():
+            for name in (off, on):
+                if name and name not in (patches.DEBUG_MENU, 'Restore Debug Camera'):
+                    self.assertIn(name, cosmetic)
+
+    def items(self, names):
+        metas = {m.get('Name'): m for m in ET.parse(XML).getroot().iter('Metadata') if m.get('AppVer') == '01.09'}
+        return [(n, metas[n], compile_patches(XML, [n], '01.09', SEGMENTS)) for n in names]
+
+    def test_hash_ignores_cosmetic_patches_and_order(self):
+        gameplay = patches.PARTY_SEAMLESS + [patches.SKIP_NETWORK_CHOICE_ONLINE]
+        base, names = patches.party_patch_set(self.items(gameplay))
+        self.assertEqual(names, sorted(gameplay))
+        graphics = ['Uncap FPS++', 'Sprint Fix (High FPS)', 'Disable Motion Blur (perf increase)',
+                    'Resolution Patch 2560x1440 (16:9)', 'Model LOD 2 (Lowest)', patches.INTEL_TONEMAP]
+        self.assertEqual(patches.party_patch_set(self.items(graphics + gameplay[::-1]))[0], base)
+        self.assertEqual(patches.party_patch_set(self.items(['60 FPS++'] + gameplay))[0], base)
+        cheat, names = patches.party_patch_set(self.items(gameplay + ['Player No Dead (Read note)']))
+        self.assertNotEqual(cheat, base)
+        self.assertIn('Player No Dead (Read note)', names)
+        self.assertNotEqual(patches.party_patch_set(self.items(gameplay[1:]))[0], base)
+        # Same name, other bytes (another version of the patch file): another hash.
+        name, meta, writes = self.items(gameplay[:1])[0]
+        changed = [(name, meta, [(writes[0][0], bytes(len(writes[0][1])))] + writes[1:])]
+        self.assertNotEqual(patches.party_patch_set(changed)[0], patches.party_patch_set([(name, meta, writes)])[0])
+        # Nothing gameplay-related at all: a fixed hash, no names.
+        empty, names = patches.party_patch_set(self.items(graphics))
+        self.assertEqual(names, [])
+        self.assertEqual(empty, patches.party_patch_set([])[0])
+
+    def test_external_patch_marked_cosmetic(self):
+        meta = ET.fromstring('<Metadata Name="My Reshade-ish tweak" Party="cosmetic"/>')
+        self.assertTrue(patches.patch_is_cosmetic('My Reshade-ish tweak', meta))
+        self.assertFalse(patches.patch_is_cosmetic('My Reshade-ish tweak', ET.fromstring('<Metadata Name="x"/>')))
+        # An XML can also insist that a listed name counts.
+        self.assertFalse(patches.patch_is_cosmetic('60 FPS++', ET.fromstring('<Metadata Party="gameplay"/>')))
+
+    def test_main_writes_the_party_file(self):
+        """patches.py end to end: 60 FPS vs uncapped, same gameplay hash; a cheat changes it."""
+        import os
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            # A tiny ELF whose one PT_LOAD covers every patch address in memory (no file bytes:
+            # patches with Original= are left out, the same way on every run).
+            elf = bytearray(0x200)
+            struct.pack_into('<Q', elf, 0x20, 0x40)
+            struct.pack_into('<HH', elf, 0x36, 0x38, 1)
+            struct.pack_into('<IIQQQQQQ', elf, 0x40, 1, 5, 0x100, 0, 0, 0, 0x6000000, 0x1000)
+            (out / 'eboot.elf').write_bytes(bytes(elf))
+            env = {**os.environ, 'BB_PARTY': 'host', 'BB_INTEL_TONEMAP_FIX': '0', 'BB_SKIP_NETWORK_CHOICE': '1'}
+
+            def run(fps, extra=''):
+                subprocess.run([sys.executable, str(ROOT / 'scripts/patches.py'), '--out', str(out), '--fps', fps,
+                                '--extra', extra, '--settings', str(out / 'none.ini'), '--game-dir', str(out)],
+                               check=True, env=env, capture_output=True)
+                text = (out / patches.PARTY_PATCH_FILE).read_text(encoding='utf-8')
+                return text, (out / 'patches.bin').read_bytes()
+
+            fast, fast_bin = run('uncap')
+            slow, slow_bin = run('60')
+            self.assertNotEqual(fast_bin, slow_bin)
+            hash_line = [line for line in fast.splitlines() if line.startswith('hash ')]
+            self.assertEqual(len(hash_line), 1)
+            self.assertEqual(len(hash_line[0].split()[1]), 64)
+            self.assertEqual(hash_line, [line for line in slow.splitlines() if line.startswith('hash ')])
+            self.assertIn(f'patch {patches.SKIP_NETWORK_CHOICE}', fast.splitlines())
+            self.assertIn('# cosmetic Uncap FPS++', fast.splitlines())
+            cheat, _ = run('60', 'Player No Dead (Read note)')
+            self.assertIn('patch Player No Dead (Read note)', cheat.splitlines())
+            self.assertNotEqual([line for line in cheat.splitlines() if line.startswith('hash ')], hash_line)
+
+
 if __name__ == '__main__':
     unittest.main()
