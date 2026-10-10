@@ -3,6 +3,7 @@
 // droogie/bbhost src/engine/np_test.cpp @8f2746c (GPL-3.0-or-later): world-up detection, the
 // Insight write and the bell events.
 #include "party_director.h"
+#include "party_async_io.h"
 
 #include "coop_hooks.h"
 #include "game_state.h"
@@ -22,6 +23,7 @@
 #include "seamless_rules.h"
 #include "test_newgame.h"
 #include "party_online.h"
+#include "party_perf.h"
 #include "party_watchdog.h"
 
 #include "../net/bbnet_internal.h"
@@ -87,8 +89,8 @@ void Log(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    std::printf("Party: %s%s\n", PartyLogStamp().c_str(), line);
-    std::fflush(stdout);
+    perf::Scope z(perf::Zone::Log);
+    coop::asyncio::Print(std::string("Party: ") + PartyLogStamp() + line + "\n"); // never blocks the caller (party_async_io.h)
 }
 
 /// A live travel test step (BB_PARTY_DIRECTOR_TEST host_warp=ID@S, host_die@S, guest_die@S):
@@ -1095,7 +1097,9 @@ void PartyDirector::Tick() {
     if (full) {
         st.last_full = now;
     }
+    perf::Scope zone(perf::Zone::DirReadState);
     GameSnapshot s = ReadGameState(full);
+    zone.End();
     if (!full && st.have_last) {
         s.cooperators = st.last.cooperators;
     }
@@ -1108,8 +1112,10 @@ void PartyDirector::Tick() {
     }
     st.last = s;
     st.have_last = true;
+    zone.Next(perf::Zone::DirNpcTest);
     NpcTestTick(s); // BB_PARTY_TEST_NPC fixture (party_npc_test.h)
     b2::Tick(s);    // B2 seamless prototype (party_b2.h; BB_PARTY_B2=1)
+    zone.End();
 
     PartyRole role;
     party::PartyLink* link;
@@ -1126,13 +1132,16 @@ void PartyDirector::Tick() {
     NewGameTestTick(s, TitleReadyForInput(role, link));
     // C1: the campaign start (readiness, bells).
     if (full || !st.start_logged) {
+        perf::Scope z(perf::Zone::DirStart);
         UpdateStart(st, s, start_mode);
         if (((grant_bells && role != PartyRole::None) || st.test.grant_bells) && st.world_seen &&
             Seconds(st.world_at, now) >= std::min(5.0, st.ring_delay) && !PrologueSkipBusy()) {
             GrantBells(st, s);
         }
     }
+    zone.Next(perf::Zone::Progress);
     progress::DirectorTick(s, link); // C2: flag capture / apply, host -> guest sync (party_progress.h)
+    zone.Next(perf::Zone::DirTitle);
     // Title: the FROM client's state when it changes (sign-in debugging).
     if (role != PartyRole::None && full && !s.world_up) {
         std::string fc = DescribeFromClient();
@@ -1152,6 +1161,7 @@ void PartyDirector::Tick() {
             AutoContinue(st, s, role, link, now);
         }
     }
+    zone.Next(perf::Zone::DirSend);
     // The roster entry.
     if (link) {
         const party::MemberState ms = LocalState(s, st.start_ready);
@@ -1167,7 +1177,7 @@ void PartyDirector::Tick() {
     if (link && role == PartyRole::Host) {
         TravelIntent t;
         while (PopHostTravel(&t)) {
-            link->send_event(party::kBroadcast, kTravelEventName, TravelToJsonText(t));
+            link->post_event(party::kBroadcast, kTravelEventName, TravelToJsonText(t));
             party::bridge::OnTravel(TravelKindName(t.kind));
             Log("travel #%llu (%s) sent to the party", static_cast<unsigned long long>(t.seq), TravelKindName(t.kind));
             PhantomNoteHostTravel(t); // a rest (Dream, death, Mark): guests refill too
@@ -1175,7 +1185,7 @@ void PartyDirector::Tick() {
         // C4: the host's cutscenes, endings and time of day (party_story.h).
         StoryIntent si;
         while (PopHostStory(&si)) {
-            link->send_event(party::kBroadcast, kStoryEventName, StoryToJsonText(si));
+            link->post_event(party::kBroadcast, kStoryEventName, StoryToJsonText(si));
             Log("story #%llu (%s %u) sent to the party", static_cast<unsigned long long>(si.seq),
                 StoryKindName(si.kind), si.id);
         }
@@ -1186,12 +1196,12 @@ void PartyDirector::Tick() {
             items.push_back(g);
         }
         if (!items.empty()) {
-            link->send_event(party::kBroadcast, kItemsEventName, ItemsToJsonText(items));
+            link->post_event(party::kBroadcast, kItemsEventName, ItemsToJsonText(items));
             Log("items: %zu lots sent to the party", items.size());
         }
         int slot = -1;
         while (TakeHostFullItems(&slot, &items)) {
-            link->send_event(slot, kItemsFullEventName, ItemsToJsonText(items));
+            link->post_event(slot, kItemsFullEventName, ItemsToJsonText(items));
             Log("items: full list (%zu lots) sent to slot %d", items.size(), slot);
         }
     }
@@ -1200,9 +1210,10 @@ void PartyDirector::Tick() {
         int b2slot = party::kBroadcast;
         std::string b2body;
         while (b2::PopOutgoing(&b2slot, &b2body)) {
-            link->send_event(b2slot, b2::kEventName, b2body);
+            link->post_event(b2slot, b2::kEventName, b2body);
         }
     }
+    zone.Next(perf::Zone::StatusBridge);
     // The overlay's Party tab: status board and its commands (party_status_bridge.h).
     if (role != PartyRole::None &&
         party::bridge::Tick({role == PartyRole::Host, link, s.world_up, s.loading, s.session_role, s.cooperators,
@@ -1217,7 +1228,9 @@ void PartyDirector::Tick() {
     }
     // Phantoms as full players: the host's lamp / rest / boss Insight out, the guest's refill and
     // Insight in (party_phantom.h).
+    zone.Next(perf::Zone::Phantom);
     PhantomTick(link);
+    zone.Next(perf::Zone::DirRing);
     if (st.test.on) {
         RunTravelSteps(st, s, role, now);
         RunTest(st, s, now);
@@ -1344,17 +1357,34 @@ bool PartyRequested() {
 }
 
 void CoopTick() {
+    using perf::Zone;
+    perf::FrameBoundary(); // BB_PARTY_PERF=1: closes the last frame's per-zone sums
+    perf::Scope total(Zone::Tick);
+    perf::Scope z(Zone::LuaEvents);
     LuaEventsTick();
+    z.Next(Zone::Director);
     PartyDirector::Get().Tick();
+<<<<<<< HEAD
     TravelTick();        // B1 guest replay (party_travel.h)
     StoryTick();         // C4 cutscenes / endings (party_story.h)
     ItemsTick();         // C3 guest item replay (party_items.h)
     GameSaveTick();      // save requests after summoned writes (game_state.h)
+=======
+    z.Next(Zone::Travel);
+    TravelTick(); // B1 guest replay (party_travel.h)
+    z.Next(Zone::Story);
+    StoryTick(); // C4 cutscenes / endings (party_story.h)
+    z.Next(Zone::Items);
+    ItemsTick(); // C3 guest item replay (party_items.h)
+    z.Next(Zone::Seamless);
+>>>>>>> windows-upstream-0.5
     SeamlessRulesTick(); // A6 param rules, EMEVD filter stats (seamless_rules.h)
-    fourp::FourpTick();  // 4-player rules: the party's max players (party_fourp.h)
+    z.Next(Zone::Fourp);
+    fourp::FourpTick(); // 4-player rules: the party's max players (party_fourp.h)
 }
 
 void PartyInit(unsigned char* image, std::uint64_t size) {
+    perf::Init(); // BB_PARTY_PERF=1 (party_perf.h), before any hook goes in
     if (!HooksInit(image, size)) {
         Log("no image; party director off");
         return;

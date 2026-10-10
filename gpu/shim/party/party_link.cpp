@@ -433,6 +433,7 @@ struct PartyLink::Impl {
         crypto::Aead tx, rx;
         Nonce hn{}, gn{};
         Key pending_tx{}, pending_rx{};  // guest: keys derived at AUTH, armed at WELCOME
+        bool password_only = false;      // host: the guest proved the password with a plain address (no code secret)
         Clock::time_point created, last_rx, last_ping;
         bool dead = false;
         bool close_after_flush = false;
@@ -476,6 +477,9 @@ struct PartyLink::Impl {
     LinkConfig cfg;
     LinkCallbacks cb;
     Key party_key{};
+    // Host with a password: the key of a guest that joined by plain host:port (no code, so no
+    // secret: party_code.h "the password alone then keys the party"). Zero when no password.
+    Key password_key{};
     bool host = false;
 
     mutable std::mutex mu;
@@ -527,6 +531,7 @@ struct PartyLink::Impl {
     std::vector<RosterEntry> snap_roster;
     MemberState snap_local_state = MemberState::Title;
     std::uint32_t snap_local_map = 0;
+    int snap_max_players = 0;  // host: cfg.max_players; guest: the host's (WELCOME), 0 before it
     void publish() {  // mu held
         std::vector<RosterEntry> r = host ? host_roster() : groster;
         std::lock_guard<std::mutex> lk(snap_mu);
@@ -535,6 +540,26 @@ struct PartyLink::Impl {
         snap_roster.swap(r);
         snap_local_state = local_state;
         snap_local_map = local_map;
+        snap_max_players = host ? cfg.max_players : host_max_players;
+    }
+    // post_event: events the main thread could not hand over without waiting for mu.
+    struct Posted {
+        int slot;
+        std::string name, json;
+    };
+    std::mutex post_mu;
+    std::deque<Posted> posted;
+    std::atomic<bool> any_posted{false};
+    std::uint64_t send_event_locked(int slot, const std::string& name, const std::string& json);  // mu held
+    void drain_posted() {  // mu held
+        if (!any_posted.load(std::memory_order_acquire)) return;
+        std::deque<Posted> q;
+        {
+            std::lock_guard<std::mutex> pl(post_mu);
+            q.swap(posted);
+            any_posted.store(false, std::memory_order_release);
+        }
+        for (const Posted& p : q) send_event_locked(p.slot, p.name, p.json);
     }
     std::int64_t clock_offset = 0;
     std::uint32_t rtt = 0;
@@ -913,8 +938,12 @@ struct PartyLink::Impl {
             r.bytes(proof, 32);
             if (!r.ok) return lose(c, "short AUTH");
             Key expect = crypto::auth_proof(party_key, c->hn, c->gn);
-            if (!crypto::equal32(expect.data(), proof))
-                return reject_conn(c, RejectCode::Auth, "wrong password or party code");
+            if (!crypto::equal32(expect.data(), proof)) {
+                const Key by_password = crypto::auth_proof(password_key, c->hn, c->gn);
+                if (cfg.password.empty() || !crypto::equal32(by_password.data(), proof))
+                    return reject_conn(c, RejectCode::Auth, "wrong password or party code");
+                c->password_only = true;  // a plain address and the right password
+            }
             admit(c);
             return;
         }
@@ -1075,8 +1104,9 @@ struct PartyLink::Impl {
         m->conn = c;
         m->state = MemberState::Joining;
         c->slot = m->slot;
-        c->tx.init(crypto::session_key(party_key, "bbp-h2g", c->hn, c->gn));
-        c->rx.init(crypto::session_key(party_key, "bbp-g2h", c->hn, c->gn));
+        const Key& key = c->password_only ? password_key : party_key;
+        c->tx.init(crypto::session_key(key, "bbp-h2g", c->hn, c->gn));
+        c->rx.init(crypto::session_key(key, "bbp-g2h", c->hn, c->gn));
         c->phase = Phase::Open;
         c->last_ping = Clock::now();
         c->frames.init(kMemberFrameRate, kMemberFrameBurst);
@@ -1177,6 +1207,10 @@ struct PartyLink::Impl {
             c->last_ping = Clock::now();
             my_slot = slot;
             host_max_players = maxp;
+            {
+                std::lock_guard<std::mutex> sl(snap_mu);
+                snap_max_players = maxp;
+            }
             my_token = tok;
             clock_offset = hclock <= static_cast<std::uint64_t>(kMaxClockMs) ? static_cast<std::int64_t>(hclock) - now_ms() : 0;
             char buf[32];
@@ -1517,6 +1551,7 @@ struct PartyLink::Impl {
             const auto locked_at = Clock::now();
             const std::uint64_t cycles_at = thread_cycles();
             if (stopping) break;
+            drain_posted();  // the main thread's post_event()s, in order, before this pass's work
             if (freeze_until > Clock::now()) continue;
             if (n > 0) {
                 for (std::size_t i = 0; i < fds.size(); ++i) {
@@ -1600,6 +1635,10 @@ bool PartyLink::start_host(std::string* error) {
     if (!valid_member_name(I.cfg.name)) return fail("invalid name (1-16 of A-Z a-z 0-9 _ -)");
     I.host = true;
     I.party_key = crypto::derive_party_key(I.cfg.password, I.cfg.secret.data());
+    if (!I.cfg.password.empty()) {
+        const std::array<std::uint8_t, 8> no_secret{};
+        I.password_key = crypto::derive_party_key(I.cfg.password, no_secret.data());
+    }
     sock::Socket s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == sock::kInvalid) return fail("socket() failed");
 #if defined(_WIN32)
@@ -1703,6 +1742,7 @@ join:
     I.members.clear();
     I.publish();
     crypto::wipe(I.party_key.data(), I.party_key.size());
+    crypto::wipe(I.password_key.data(), I.password_key.size());
 }
 
 bool PartyLink::is_host() const { return impl_->host; }
@@ -1728,8 +1768,10 @@ std::uint16_t PartyLink::bound_port() const {
 }
 
 int PartyLink::max_players() const {
-    std::lock_guard<std::mutex> lk(impl_->mu);
-    return impl_->host ? impl_->cfg.max_players : impl_->host_max_players;
+    // Polled every frame by the game's main thread: the published copy, never the IO lock.
+    if (impl_->host) return impl_->cfg.max_players;  // fixed at construction
+    std::lock_guard<std::mutex> lk(impl_->snap_mu);
+    return impl_->snap_max_players;
 }
 
 std::vector<RosterEntry> PartyLink::roster() const {
@@ -1822,6 +1864,27 @@ std::uint32_t PartyLink::rpc_call_async(const std::string& kind, const std::stri
 std::uint64_t PartyLink::send_event(int slot, const std::string& name, const std::string& json) {
     Impl& I = *impl_;
     std::lock_guard<std::mutex> lk(I.mu);
+    I.drain_posted();  // posts made earlier go first
+    return I.send_event_locked(slot, name, json);
+}
+
+void PartyLink::post_event(int slot, const std::string& name, const std::string& json) {
+    Impl& I = *impl_;
+    {
+        std::unique_lock<std::mutex> lk(I.mu, std::try_to_lock);
+        if (lk.owns_lock()) {
+            I.drain_posted();
+            I.send_event_locked(slot, name, json);
+            return;
+        }
+    }
+    std::lock_guard<std::mutex> pl(I.post_mu);
+    I.posted.push_back({slot, name, json});
+    I.any_posted.store(true, std::memory_order_release);
+}
+
+std::uint64_t PartyLink::Impl::send_event_locked(int slot, const std::string& name, const std::string& json) {
+    Impl& I = *this;
     if (I.state == LinkState::Stopped || I.state == LinkState::Idle) return 0;
     auto push = [&](EventStream& es, Impl::Conn* c) {
         EventStream::Ev e{es.next_cursor++, name, json};

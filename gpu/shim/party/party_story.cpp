@@ -5,6 +5,8 @@
 // byte before anything is written. Offsets are ours (raw ELF VA). The game's code is System V:
 // every call into it goes through a BB_COOP_SYSV pointer at Guest(off).
 #include "party_story.h"
+#include "party_async_io.h"
+#include "party_perf.h"
 #include "party_ids.h"
 
 #include <algorithm>
@@ -787,8 +789,8 @@ void Log(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    std::printf("Party story: %s\n", line);
-    std::fflush(stdout);
+    perf::Scope z(perf::Zone::Log);
+    coop::asyncio::Print(std::string("Party story: ") + line + "\n"); // never blocks the caller (party_async_io.h)
 }
 
 bool EnvOff(const char* name) {
@@ -898,6 +900,7 @@ void PushHost(const StoryIntent& s) {
 // ---- Host capture: the bank-2002 handler entry ----
 
 BB_COOP_SYSV void RemoHandlerEntry(u64, u64 event, u64, u64, u64, u64) {
+    perf::Scope z(perf::Zone::HookRemo);
     if (!g_story_on.load() || Role() != PartyRole::Host || !event) {
         return;
     }
@@ -1146,6 +1149,7 @@ void SaveSidecar() {
     if (g_tick.sidecar.empty()) {
         return;
     }
+    perf::Scope z(perf::Zone::StorySidecar);
     std::string text;
     {
         std::lock_guard<std::mutex> lk(g_guest_mu);
@@ -1154,13 +1158,8 @@ void SaveSidecar() {
         }
         text = json::dump(g_guest.ToJson(), 1);
     }
-    const std::string tmp = g_tick.sidecar + ".tmp";
-    {
-        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-        out << text;
-    }
-    std::remove(g_tick.sidecar.c_str());
-    std::rename(tmp.c_str(), g_tick.sidecar.c_str());
+    // .tmp, remove, rename - on the party's writer thread, never on the game's main thread.
+    coop::asyncio::Replace(g_tick.sidecar, std::move(text));
 }
 
 // ---- Host polls: endings (flags 21/22/23) and time of day ----

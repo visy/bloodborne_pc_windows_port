@@ -383,6 +383,12 @@ static void test_party() {
     CHECK(!br.has_event("only_alice"));
     CHECK(a.send_event(0, "guest_said", "{}") == 1);
     CHECK(wait_for([&] { return hr.has_event("guest_said"); }, 2000));
+    // post_event (the game's main thread): never waits for the IO lock; same delivery.
+    for (int k = 0; k < 50; ++k) host.post_event(kBroadcast, "posted_" + std::to_string(k), "{}");
+    a.post_event(0, "guest_posted", "{}");
+    CHECK(wait_for([&] { return ar.has_event("posted_49") && br.has_event("posted_49") && hr.has_event("guest_posted"); },
+                   2000));
+    CHECK(ar.has_event("posted_0") && br.has_event("posted_0"));
     CHECK(host.send_party_cmd(kBroadcast, "warp", "{\"map\":1}"));
     CHECK(b.send_party_cmd(0, "ready", "{}"));
     std::vector<std::uint8_t> blob(100000, 1);
@@ -470,6 +476,35 @@ static void test_max_players_two() {
     PartyLink d(other, none);
     CHECK(d.start_guest("127.0.0.1", host.bound_port(), &err));
     CHECK(d.wait_state(LinkState::Rejected, 5000) && d.reject_code() == RejectCode::Auth);
+}
+
+// A plain host:port (no party code, so no secret) with the right password joins a host that has
+// a password (party_code.h; the in-game party flow saves such addresses); without the password
+// (or when the host has none) it is refused.
+static void test_plain_address_password() {
+    LinkCallbacks none;
+    PartyLink host(base_cfg("Host", "pw"), none);
+    std::string err;
+    CHECK(host.start_host(&err));
+    LinkConfig plain = base_cfg("Plain", "pw");
+    plain.secret = {};
+    PartyLink p(plain, none);
+    CHECK(p.start_guest("127.0.0.1", host.bound_port(), &err));
+    CHECK(p.wait_connected(5000));
+    CHECK(wait_for([&] { return host.roster().size() == 2; }, 2000));
+    LinkConfig wrong = base_cfg("Wrong", "nope");
+    wrong.secret = {};
+    PartyLink w(wrong, none);
+    CHECK(w.start_guest("127.0.0.1", host.bound_port(), &err));
+    CHECK(w.wait_state(LinkState::Rejected, 5000) && w.reject_code() == RejectCode::Auth);
+    PartyLink open(base_cfg("Host2", ""), none);
+    CHECK(open.start_host(&err));
+    LinkConfig nopw = base_cfg("NoPw", "");
+    nopw.secret = {};
+    PartyLink n(nopw, none);
+    CHECK(n.start_guest("127.0.0.1", open.bound_port(), &err));
+    CHECK(n.wait_state(LinkState::Rejected, 5000) && n.reject_code() == RejectCode::Auth);
+    std::printf("  plain address + password: joined; wrong / no password: refused\n");
 }
 
 // Four players: host + 3 guests (slots 1..3, roster of 4, events to all), a 4th guest is
@@ -676,6 +711,7 @@ int main() {
     test_party();
     std::printf("max players 2, secret-only key\n");
     test_max_players_two();
+    test_plain_address_password();
     std::printf("kick by name\n");
     test_kick();
     std::printf("four players (host + 3 guests), game rules\n");
