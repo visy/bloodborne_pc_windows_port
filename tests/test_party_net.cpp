@@ -526,6 +526,18 @@ static void test_routing() {
     CHECK(bbnet_resolve("TEST1#A#B") == bbnet_resolve("sceNetSocket"));  // scoped NID via runtime_symbol
     CHECK(bbnet_resolve("TEST2#A#B") == 0);                              // NpScore stays on the stubs
     CHECK(bbnet_resolve("sceNpScoreCreateRequest") == 0);
+    // ...except the comment filter: its SIGNED_OUT made the game drop offline in the world.
+    CHECK(bbnet_resolve("sceNpScoreSanitizeComment") != 0);
+    CHECK(bbnet_resolve("sceNpScoreCensorComment") != 0);
+    {
+        using Sanitize = int(BBNET_ABI*)(int, const char*, char*, void*);
+        using Censor = int(BBNET_ABI*)(int, const char*, void*);
+        char out[256];
+        std::memset(out, 'x', sizeof out);
+        CHECK(reinterpret_cast<Sanitize>(bbnet_resolve("sceNpScoreSanitizeComment"))(1, "visy", out, nullptr) == 0);
+        CHECK(std::strcmp(out, "visy") == 0);
+        CHECK(reinterpret_cast<Censor>(bbnet_resolve("sceNpScoreCensorComment"))(1, "visy", nullptr) == 0);
+    }
     CHECK(bbnet_resolve("sceNpTrophyCreateContext") == 0);
     CHECK(bbnet_resolve("sceNpCommerceDialogOpen") == 0);
     CHECK(bbnet_resolve("sceNpProfileDialogOpen") == 0);

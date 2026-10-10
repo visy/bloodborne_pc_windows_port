@@ -19,6 +19,7 @@
 #include "party_progress.h"
 #include "party_travel.h"
 #include "seamless_rules.h"
+#include "party_online.h"
 
 #include "../net/bbnet_internal.h"
 
@@ -910,6 +911,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     LuaEventsInit();
     progress::Init();         // C2 progress sync (party_progress.h)
     progress::InstallHooks(); // byte-verified flag hooks (BB_PARTY_PROGRESS=0: none)
+    OnlineDiagInit();    // FROM client drop-offline log (party_online.h)
     SeamlessRulesInit(); // A6: party patch report, EMEVD filter (seamless_rules.h)
     fourp::FourpInit();  // 4-player parties: H1-H4, E6, P5 (party_fourp.h)
     PartyDirector::Get().ConfigureFromEnv();

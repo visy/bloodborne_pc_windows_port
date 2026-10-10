@@ -84,6 +84,7 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_PHANTOM_PROBE` | `insight`, `refill`: one offline probe 5 s after the world is up | off | `gpu/shim/party/party_phantom.cpp` |
 | `BB_PARTY_TRACE` | `1`: logs every FROM API / HTTP request and answer (default: the first few) | off | `gpu/shim/net/bbnet_glue.cpp` |
 | `BB_PARTY_TRACE_SSINFO` | `1`: logs the game's ss.info parse result | off | `gpu/shim/party/party_director.cpp` |
+| `BB_PARTY_ONLINE_WATCH` | `0`: no `Net: online:` lines (the game's FROM-client / FrpgNetMan / network-flow online state, logged on every change) | on | `gpu/shim/net/online_watch.cpp` |
 | `BB_NET_TRACE` | `1`: logs every datagram (default: the first 400) | capped | `gpu/shim/net/net_socket.cpp` |
 | `BB_NET_SIM` | Network simulator: `lat=80,jitter=20,loss=2,dup=0.5,reorder=1,seed=7` or a preset `lan`, `wifi`, `dsl`, `mobile`, `bad` | off | `gpu/shim/net/netsim.h`, `gpu/shim/net/bbnet_glue.cpp` |
 | `BB_PARTY_STATUS_LOG` | `1`: a `Party: status ...` line every 10 s and on each change | off | `gpu/shim/party/party_status_bridge.cpp` |
