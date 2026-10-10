@@ -27,11 +27,11 @@ copied from it carry `SPDX-License-Identifier: GPL-3.0-or-later` and
 | SummonDataWrapper vtable | 0x5722570 | 0x5322570 |
 | Matching2 signaling gate (u8 = 1) | 0x586cc09 | 0x546cc09 |
 | LuaEvent_DispatchByName | 0x1739870 | 0x1339870 |
-| SprjLuaEventMan slot (ctx = *(slot)+8) | 0x593b0c8 | 0x553b0c8 |
+| SprjLuaEventMan slot (ctx = *(*(slot)+8)) | 0x593b0c8 | 0x553b0c8 |
 | GameDataMan slot (+8 player: +0x84 Insight, +0x90 level) | 0x593b130 | 0x553b130 |
 | SprjSessionManager slot (+0x124 state) | 0x5940290 | 0x5540290 |
 | WorldChrMan slot | 0x593e878 | 0x553e878 |
-| NP manager (IsOnline +0xd8) | 0x5ac7058 | 0x56c7058 |
+| NP manager slot (object IsOnline +0xd8) | 0x5ac7048 | 0x56c7048 (object at 0x56c7058 per bbhost) |
 | Network flow (+0x1590 online mode, +0x16f8 slot table) | 0x5956678 | 0x5556678 |
 | Cooperator count fn | 0x19bdc20 | 0x15bdc20 |
 | SOS sign timeout float 180.0 | 0x4d27a5c | 0x4927a5c |
@@ -109,3 +109,13 @@ backups, world reset on rest), 4 players (presentation table has 5 slots; coop c
 Tests on one PC: `tools/mp/instances.py` (separate instance folders, 30 fps, VRAM cap),
 `tools/party/*` (pad driver, simguest from bbhost simclient, verdict, flag diff). Two-PC tests
 wait for the user's go-ahead.
+
+## Verified in A5 (single instance)
+
+- Tick hook SprjFlipper::Update 0x2034770 runs once per frame on the game's main thread (title,
+  loading, world). LuaEvent_DispatchByName 0x1339870 (ctx, name) returns 0 for unknown names.
+- Map id: PlayerIns_GetBloodMarkMap 0x19046c0 → *(*(WorldChrMan+0x60)+0x400)+0x48.
+- NowLoading byte 0x556286b (set 0x176d380, cleared 0x176d3c0).
+- Session manager +0x124 role: 0 idle … 3 host, 4 trying to join, 6 client, 7 leaving.
+- Cooperator count 0x15bdc20 asserts without WorldChrMan / session — call only in the world.
+- Bells via Lua are accepted offline; the Insight gate is inside the Lua body.
