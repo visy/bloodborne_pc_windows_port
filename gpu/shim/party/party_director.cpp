@@ -11,6 +11,7 @@
 #include "party_link.h"
 #include "party_status_bridge.h"
 #include "party_items.h"
+#include "party_npc_test.h"
 #include "party_phantom.h"
 #include "party_runtime.h"
 #include "party_progress.h"
@@ -531,6 +532,7 @@ void PartyDirector::Tick() {
     }
     st.last = s;
     st.have_last = true;
+    NpcTestTick(s); // BB_PARTY_TEST_NPC fixture (party_npc_test.h)
 
     PartyRole role;
     party::PartyLink* link;
@@ -647,7 +649,7 @@ bool PartyRequested() {
     const char* p = std::getenv("BB_PARTY");
     const char* t = std::getenv("BB_PARTY_DIRECTOR_TEST");
     const char* i = std::getenv("BB_PARTY_ITEMS_TEST"); // C3 single-instance check
-    return (p && p[0]) || (t && t[0]) || (i && i[0]);
+    return (p && p[0]) || (t && t[0]) || (i && i[0]) || NpcTestRequested();
 }
 
 void CoopTick() {
