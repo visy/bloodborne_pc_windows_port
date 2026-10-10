@@ -257,10 +257,13 @@ static void ime_complete(int end_status, const char *text) {
     ime.end_status=end_status; ime.finished=1; ime.running=0;
     printf("Runtime: ImeDialog %s%s%s\n",end_status ? "cancelled (default used)" : "text: ",end_status ? "Hunter" : (text ? text : "Hunter"),"");
 }
+static volatile int ime_opened; /* name boxes opened (test drivers: BB_TEST_NEWGAME) */
+int runtime_ime_dialog_count(void) { return ime_opened; }
 static ABI int32_t ime_init(const ImeParam *param, const void *extended) {
     (void)extended;
     if (!param || !param->buffer || !param->max_length) return (int32_t)0x80BC0004; /* IME INVALID_ADDRESS */
     if (ime.running) return (int32_t)0x80BC0003;                                  /* BUSY */
+    ++ime_opened;
     memset(&ime,0,sizeof(ime));
     ime.buffer=param->buffer; ime.max_length=param->max_length; ime.running=1;
     char initial[512], prompt[256];
@@ -270,7 +273,9 @@ static ABI int32_t ime_init(const ImeParam *param, const void *extended) {
         const char *name = getenv("BB_USER_NAME");
         snprintf(initial, sizeof(initial), "%s", name && name[0] ? name : "Hunter");
     }
-    const char *preset=getenv("BB_IME_TEXT");
+    /* BB_TEST_NAME (test aid, BB_TEST_NEWGAME runs): the character name, typed by nobody. */
+    const char *preset=getenv("BB_TEST_NAME");
+    if (!preset || !*preset) preset=getenv("BB_IME_TEXT");
     if (preset) { ime_complete(0,preset); return 0; }
     if (!bbgpu_text_input_begin(initial,prompt[0] ? prompt : "Name")) {
         const char *name=getenv("BB_USER_NAME");
