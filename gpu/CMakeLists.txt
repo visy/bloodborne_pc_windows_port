@@ -416,6 +416,16 @@ add_executable(party-start-test EXCLUDE_FROM_ALL ../tests/test_party_start.cpp s
 target_compile_options(party-start-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-start-test PRIVATE shim)
 set_target_properties(party-start-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Host session watchdog (shim/party/party_watchdog.cpp): when a stuck host session is stopped.
+# ninja -C out/gpu party-watchdog-test
+add_executable(party-watchdog-test EXCLUDE_FROM_ALL ../tests/test_party_watchdog.cpp shim/party/party_watchdog.cpp)
+target_compile_options(party-watchdog-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-watchdog-test PRIVATE shim)
+set_target_properties(party-watchdog-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# The shared BB_PARTY on/off rule (party_env.h). ninja -C out/gpu party-env-test
+add_executable(party-env-test EXCLUDE_FROM_ALL ../tests/test_party_env.cpp)
+target_compile_options(party-env-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+set_target_properties(party-env-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 
 
 # Party progress sync (shim/party/party_progress, C2): keys, categories, policy, diff, JSON, BBPF
