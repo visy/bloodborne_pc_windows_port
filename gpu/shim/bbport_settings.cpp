@@ -64,8 +64,14 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.debug_view = std::clamp(i, 0, DebugViewCount - 1);
     } else if (key == "show_fps") {
         v.show_fps = i != 0;
-    } else if (key == "async_shaders") {
+    } else if (key == "async_pipelines") {
         v.async_shaders = i != 0;
+    } else if (key == "async_shaders") {
+        // Saved before async compilation became the default (0.5-pre4), when off meant only
+        // "never switched on": an explicit off is kept under async_pipelines from now on.
+        if (i != 0) {
+            v.async_shaders = true;
+        }
     } else if (key == "gpl") {
         v.gpl = i != 0;
     } else if (key == "compile_indicator") {
@@ -162,13 +168,18 @@ void Load() {
         {"BB_REACTIVE", "reactive"},              {"BB_REACTIVE_SCALE", "reactive_scale"},
         {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
         {"BB_UPSCALE_PRESET", "preset"},            {"BB_OBJECT_MOTION", "object_motion"},
-        {"BB_ASYNC_SHADERS", "async_shaders"},      {"BB_GPL", "gpl"},
-        {"BB_COMPILE_INDICATOR", "compile_indicator"},
+        {"BB_GPL", "gpl"},                          {"BB_COMPILE_INDICATOR", "compile_indicator"},
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env)) {
             Set(v, key, value);
         }
+    }
+    // Async pipelines: BB_ASYNC_SHADERS (this port) wins over BB_ASYNC_PIPELINES (upstream's name).
+    if (const char* value = std::getenv("BB_ASYNC_SHADERS"); value && value[0]) {
+        Set(v, "async_pipelines", value);
+    } else if (const char* alias = std::getenv("BB_ASYNC_PIPELINES"); alias && alias[0]) {
+        Set(v, "async_pipelines", alias);
     }
     v.startup_preset = v.preset;
     v.startup_upscaler = v.upscaler;
@@ -254,7 +265,7 @@ void Save() {
     put("reactive_max", fixed(v.reactive_max, 2));
     put("debug_view", std::to_string(v.debug_view.load()));
     put("show_fps", flag(v.show_fps));
-    put("async_shaders", flag(v.async_shaders));
+    put("async_pipelines", flag(v.async_shaders));
     put("gpl", flag(v.gpl));
     put("compile_indicator", flag(v.compile_indicator));
     put("fsr4_auto_exposure", flag(v.fsr4_auto_exposure));

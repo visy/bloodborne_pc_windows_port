@@ -110,7 +110,9 @@ if exist "%mods_result%" del "%mods_result%"
 if exist "%mods_result%" for /f "usebackq delims=" %%g in ("%mods_result%") do set "game=%%g"
 
 REM prepare.py also checks the game files (scripts\game_check.py): exit code 2 = not the 1.09
-REM executable (BB_SKIP_GAME_CHECK=1 starts anyway).
+REM executable, or a damaged extraction whose shaders do not unpack (issue #81; the game would
+REM hang while loading). BB_SKIP_GAME_CHECK=1 starts anyway. Every file:
+REM python scripts\game_check.py GAME_DIR
 "%PYTHON%" scripts\prepare.py "%game%" --out "%out%"
 if errorlevel 1 exit /b %ERRORLEVEL%
 

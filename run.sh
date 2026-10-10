@@ -22,6 +22,13 @@ export BB_CONFIG=${BB_CONFIG:-$data/bbport.ini}
 # GPU paths are initialized when libbbgpu is loaded, before bbgpu_init receives --user.
 # Select the same user directory now, including for an AppImage or a separate save profile.
 export BB_GPU_USER_DIR=${BB_GPU_USER_DIR:-${BB_USER_DIR:-$data/user}}
+# The drivers' own shader caches keep compiled pipelines between sessions (the port's cache gives
+# them the shaders again at startup): NVIDIA's without its cleanup and with room for the game's
+# pipelines (as Steam sets it), Mesa's with more room than its default.
+export __GL_SHADER_DISK_CACHE=${__GL_SHADER_DISK_CACHE:-1}
+export __GL_SHADER_DISK_CACHE_SKIP_CLEANUP=${__GL_SHADER_DISK_CACHE_SKIP_CLEANUP:-1}
+export __GL_SHADER_DISK_CACHE_SIZE=${__GL_SHADER_DISK_CACHE_SIZE:-10737418240}
+export MESA_SHADER_CACHE_MAX_SIZE=${MESA_SHADER_CACHE_MAX_SIZE:-4G}
 mkdir -p "$BB_GPU_USER_DIR"
 # FSR 4.1.1 assets (tools/fsr4cap/build_assets.sh): next to run.sh or in the data directory.
 if [[ -z ${BB_FSR411_DIR:-} && ! -d fsr4_411 && -d $data/fsr4_411 ]]; then

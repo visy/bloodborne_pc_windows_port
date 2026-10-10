@@ -132,6 +132,13 @@ inline void PrintStats() {
                 static_cast<unsigned long long>(d), async_pending.load(),
                 static_cast<unsigned long long>(s), static_cast<unsigned long long>(w),
                 static_cast<unsigned long long>(to), at(0.5), at(0.95), n ? v[n - 1] / 1e3 : 0.0);
+    // The same counts in upstream 0.5-pre4's wording (BB_ASYNC_PIPELINES), for shared log tools.
+    if (d != 0 || s != 0) {
+        std::printf("GPU: %llu pipelines compiled in the background, %llu draws went without "
+                    "theirs meanwhile, %llu waited for one\n",
+                    static_cast<unsigned long long>(d), static_cast<unsigned long long>(s),
+                    static_cast<unsigned long long>(w));
+    }
 }
 
 /// BB_COMPILE_PROGRESS_TEST=1: a fake batch shortly after start, to check the indicator.

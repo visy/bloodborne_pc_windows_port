@@ -506,8 +506,13 @@ void PipelineCache::WaitJob(const std::shared_ptr<GraphicsJob>& job) {
 }
 
 namespace {
+/// BB_ASYNC_SHADERS_POLICY: safe (default) skips draws only into render targets used in each
+/// of the last 8 frames (upstream 0.5-pre4's BB_ASYNC_PIPELINES rule); balanced (the 0.3.x
+/// default): targets used in 2 of the 3 previous frames; aggressive: as balanced, and
+/// screen-space passes may be skipped too.
 struct AsyncPolicy {
     bool aggressive = false;
+    bool balanced = false;
     u32 max_skip_frames = 8;
     u32 queue = 256;
 };
@@ -516,6 +521,7 @@ const AsyncPolicy& GetAsyncPolicy() {
         AsyncPolicy p;
         if (const char* env = std::getenv("BB_ASYNC_SHADERS_POLICY")) {
             p.aggressive = std::strcmp(env, "aggressive") == 0;
+            p.balanced = p.aggressive || std::strcmp(env, "balanced") == 0;
         }
         if (const char* env = std::getenv("BB_ASYNC_SHADERS_MAX_SKIP_FRAMES")) {
             p.max_skip_frames = u32(std::max(0, std::atoi(env)));
@@ -535,8 +541,11 @@ void PipelineCache::TrackTargets() {
     const bool display = cb0 != 0 && FrameCapture::IsDisplayBuffer(cb0);
     if (display && !display_pass) {
         ++async_frame; // the pass copying a finished frame to a display buffer
+        last_frame_draws = frame_draws;
+        frame_draws = 0;
     }
     display_pass = display;
+    ++frame_draws;
 
     std::array<VAddr, AmdGpu::NUM_COLOR_BUFFERS + 2> targets;
     u32 count = 0;
@@ -564,8 +573,10 @@ void PipelineCache::TrackTargets() {
     last_target_sig = sig;
     last_target_frame = async_frame;
 
-    // Every target of the draw was a target in 2 of the 3 previous frames: not a one-off
-    // render-to-texture (those are never skipped).
+    // Every target of the draw was a target in each of the last 8 frames (safe, upstream
+    // 0.5-pre4's rule), or in 2 of the 3 previous frames (balanced / aggressive): not a one-off
+    // render-to-texture (a face baked for a character, a texture made once: never skipped).
+    const bool balanced = GetAsyncPolicy().balanced;
     constexpr size_t TableSize = 8192;
     if (target_table.empty()) {
         target_table.resize(TableSize);
@@ -598,13 +609,24 @@ void PipelineCache::TrackTargets() {
             found->last_frame = async_frame;
         }
         found->mask |= 1;
-        stable &= std::popcount(found->mask & 0xEu) >= 2;
+        stable &= balanced ? std::popcount(found->mask & 0xEu) >= 2
+                           : (found->mask & 0xFFu) == 0xFFu;
     }
     targets_stable = stable;
 }
 
 bool PipelineCache::DrawSkippable() const {
     if (FrameCapture::Active() || display_pass || !targets_stable) {
+        return false;
+    }
+    // Loading screens and other light frames (fewer than 300 draws in the previous frame) compile
+    // at once, as upstream 0.5-pre4: nothing there is worth a missing draw.
+    if (last_frame_draws < 300) {
+        return false;
+    }
+    // Without VK_EXT_vertex_input_dynamic_state the pipeline depends on the draw's vertex
+    // buffers (upstream 0.5-pre4): built at once.
+    if (!instance.IsVertexInputDynamicState()) {
         return false;
     }
     // Screen-space passes (upscaler input, camera motion, UI) keep the frame's structure.

@@ -904,6 +904,40 @@ void TextureCache::RefreshImage(Image& image) {
         }
     }
 
+    if (sync_log) {
+        // BB_IMAGE_SYNC_LOG: the images refreshed most per 5 s (any reason), with their flags.
+        struct Refreshes {
+            u64 count = 0, bytes = 0;
+            u32 width = 0, height = 0, format = 0, tiling = 0, flags = 0;
+        };
+        static std::mutex refresh_mutex;
+        static std::unordered_map<VAddr, Refreshes> refreshes;
+        static auto window_start = std::chrono::steady_clock::now();
+        std::scoped_lock lk{refresh_mutex};
+        auto& r = refreshes[image.info.guest_address];
+        r = {r.count + 1,
+             r.bytes + image.info.guest_size,
+             image.info.size.width,
+             image.info.size.height,
+             u32(image.info.pixel_format),
+             u32(image.info.tile_mode),
+             r.flags | u32(image.flags)};
+        if (const auto now = std::chrono::steady_clock::now();
+            now - window_start >= std::chrono::seconds(5)) {
+            std::vector<std::pair<VAddr, Refreshes>> top(refreshes.begin(), refreshes.end());
+            std::ranges::sort(top, std::greater{}, [](const auto& e) { return e.second.bytes; });
+            std::string text;
+            for (size_t i = 0; i < std::min<size_t>(top.size(), 5); ++i) {
+                const auto& [address, e] = top[i];
+                text += fmt::format(" {:#x} {}x{} fmt {} tile {}: {}x {:.0f} MB flags {:#x};",
+                                    address, e.width, e.height, e.format, e.tiling, e.count,
+                                    e.bytes / 1e6, e.flags);
+            }
+            std::printf("Image refreshes (5 s, %zu images):%s\n", refreshes.size(), text.c_str());
+            refreshes.clear();
+            window_start = now;
+        }
+    }
     BbStats::image_upload_bytes.fetch_add(image.info.guest_size, std::memory_order_relaxed);
     boost::container::small_vector<vk::BufferImageCopy, 14> image_copies;
     for (u32 m = 0; m < num_mips; m++) {

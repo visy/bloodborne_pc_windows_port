@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 MANIFEST_DIRS = (
@@ -107,6 +108,59 @@ def configure(env, manifest_dirs=MANIFEST_DIRS, library_dirs=LIBRARY_DIRS):
     return f"Vulkan: host NVIDIA driver {driver}; bundled AMD/Intel also available"
 
 
+def nvidia_report(env, tool, run=subprocess.run):
+    """--vulkan-info with the host NVIDIA driver: what the packaged loader got, for issue reports
+    (#107: the driver loaded but gave no vkCreateInstance). The linked libraries, the kernel
+    module, the device nodes, hybrid-graphics variables, and the dynamic linker's view of one
+    vulkaninfo run: NVIDIA libraries it searched for and never loaded."""
+    manifest = next((Path(p) for p in env.get("VK_DRIVER_FILES", "").split(":")
+                     if "/vulkan/nvidia/" in p), None)
+    if manifest is None:
+        return []
+    lines = [f"NVIDIA libraries linked in {manifest.parent / 'lib'}:"]
+    try:
+        links = sorted((manifest.parent / "lib").iterdir())
+    except OSError as error:
+        links = []
+        lines.append(f"  cannot list: {error}")
+    for link in links:
+        target = os.readlink(link) if link.is_symlink() else "(file)"
+        lines.append(f"  {link.name} -> {target}{'' if link.exists() else '  MISSING'}")
+    try:
+        module = Path("/proc/driver/nvidia/version").read_text(encoding="utf-8").splitlines()[0]
+    except (OSError, IndexError):
+        module = "not loaded (no /proc/driver/nvidia/version)"
+    lines.append(f"Kernel module: {module}")
+    nodes = sorted(Path("/dev").glob("nvidia*"))
+    lines.append("Device nodes: " + (", ".join(
+        f"{n.name}{'' if os.access(n, os.R_OK | os.W_OK) else ' (no access)'}" for n in nodes)
+        or "none"))
+    for key in ("__NV_PRIME_RENDER_OFFLOAD", "__VK_LAYER_NV_optimus", "__GLX_VENDOR_LIBRARY_NAME",
+                "DRI_PRIME", "VK_LOADER_LAYERS_DISABLE"):
+        if env.get(key):
+            lines.append(f"{key}={env[key]}")
+    try:
+        result = run([tool, "--summary"], env={**env, "LD_DEBUG": "libs"},
+                     stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=60)
+        trace = result.stderr
+    except (OSError, subprocess.SubprocessError) as error:
+        lines.append(f"Dynamic linker trace: {tool} did not run ({error})")
+        return lines
+    searched, loaded = [], set()
+    for line in trace.splitlines():
+        if (at := line.find("find library=")) != -1:
+            name = line[at + len("find library="):].split(" ", 1)[0]
+            if name not in searched:
+                searched.append(name)
+        elif (at := line.find("calling init: ")) != -1:
+            loaded.add(Path(line[at + len("calling init: "):].strip()).name)
+    wanted = [n for n in searched if "nvidia" in n.lower() or "GLdispatch" in n]
+    missing = [n for n in wanted if n not in loaded]
+    lines.append(f"Dynamic linker: {len(wanted)} NVIDIA/glvnd libraries searched, "
+                 + (f"not loaded: {', '.join(missing)}" if missing else "all loaded"))
+    return lines
+
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: bbport_vulkan.py <program> [args...]", file=sys.stderr)
@@ -123,6 +177,8 @@ def main():
         os.environ.setdefault("VK_LOADER_DEBUG", "error,warn,driver")
         for key in ("VK_DRIVER_FILES", "VK_ICD_FILENAMES", "LD_LIBRARY_PATH"):
             print(f"{key}={os.environ.get(key, '')}", file=sys.stderr, flush=True)
+        for line in nvidia_report(os.environ, tool):
+            print(line, file=sys.stderr, flush=True)
         os.execvpe(tool, [tool, "--summary"], os.environ)
     os.execvpe(sys.argv[1], sys.argv[1:], os.environ)
 
