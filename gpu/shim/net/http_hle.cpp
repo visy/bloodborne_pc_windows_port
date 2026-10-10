@@ -249,7 +249,7 @@ void perform(const std::string& url, int method, const Effective& eff, std::stri
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     note_progress(url, status == 200 && !err);
     static std::atomic<int> logs{0};
-    if (party_trace() || logs.fetch_add(1) < 24) {
+    if (party_trace() || url.find("/summon_messenger/") != std::string::npos || logs.fetch_add(1) < 24) {
         log("http: %s %s -> %ld (%zu bytes, %.0f ms)%s", method_name(method), url.c_str(), status, body.size(), ms,
             err ? " error" : "");
     }

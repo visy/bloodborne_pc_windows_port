@@ -7,6 +7,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import shutil
+
+# Not a bare 'bash': on Windows CreateProcess finds System32\bash.exe (WSL) before PATH (Git Bash).
+BASH = shutil.which('bash') or 'bash'
 
 spec = importlib.util.spec_from_file_location('bbmods', ROOT / 'scripts/mods.py')
 mods = importlib.util.module_from_spec(spec)
@@ -29,7 +33,7 @@ class ModTests(unittest.TestCase):
     def mod(self, name, contents=b'mod', file='a.dcx'):
         root = self.moddir / name
         folder = root / 'dvdroot_ps4' / 'chr'
-        folder.mkdir(parents=True, exist_ok=True)
+        (folder / file).parent.mkdir(parents=True, exist_ok=True)
         (folder / file).write_bytes(contents)
         return root
 
@@ -76,9 +80,26 @@ class ModTests(unittest.TestCase):
 
     def test_mod_symlinks_rejected(self):
         a = self.mod('A')
-        (a / 'dvdroot_ps4/escape').symlink_to(self.assets, target_is_directory=True)
+        escape = a / 'dvdroot_ps4/escape'
+        try:
+            escape.symlink_to(self.assets, target_is_directory=True)
+        except OSError:
+            if os.name != 'nt':
+                raise
+            # Symlinks need Developer Mode or admin rights on Windows; a junction is the
+            # directory link anyone can make (and what make_link falls back to).
+            import _winapi
+            _winapi.CreateJunction(str(self.assets), str(escape))
         with self.assertRaises(ValueError):
             mods.build_overlay(self.game, self.root / 'out', [('A', a)])
+
+    def test_new_mod_directory_stays_out_of_the_game(self):
+        # The overlay links the game's folders; a new folder must be made in the overlay, never
+        # through a link (a junction on Windows without symlink rights) inside the game.
+        a = self.mod('A', b'deep', 'sub/deep.dcx')
+        result = mods.build_overlay(self.game, self.root / 'out', [('A', a)])
+        self.assertEqual((result / 'dvdroot_ps4/chr/sub/deep.dcx').read_bytes(), b'deep')
+        self.assertEqual({p.name for p in self.assets.iterdir()}, {'a.dcx', 'b.dcx'})
 
     def test_executable_replacement_rejected(self):
         a = self.mod('A')
@@ -152,7 +173,7 @@ class ModTests(unittest.TestCase):
         env = dict(os.environ, BB_PREBUILT='1', BB_PROBE=str(probe), PYTHON=str(python),
             BB_DATA_DIR=str(self.root), BB_GAME_DIR=str(self.game),
             BB_MODS_DIR=str(self.moddir), BB_MODS_ENABLED='1', BB_MODS_CONFIG=str(self.root/'mods.json'))
-        result = subprocess.run(['bash', 'run.sh'], cwd=ROOT, env=env, capture_output=True, timeout=30)
+        result = subprocess.run([BASH, 'run.sh'], cwd=ROOT, env=env, capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 7, result.stderr)
         mounted = json.loads((self.root / 'mounted.json').read_text())
         self.assertEqual(mounted['content'], 'mod')
