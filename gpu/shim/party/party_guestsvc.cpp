@@ -714,36 +714,28 @@ void LevelUpTick(const GameSnapshot& s, double now) {
     };
     const double since = now - L.at;
     switch (L.stage) {
-    case LevelUpScript::WaitPlaced:
-        // Press only with the action prompt up; else step closer / around (polled every 0.8 s).
-        if (since >= 0.8) {
-            std::uint32_t prompt = 0;
-            if (PromptUp(&prompt)) {
-                Tap(kPadCross, now);
-                Log("test: levelup: action prompt text %u on screen", prompt);
-                go(LevelUpScript::Greeting, "action prompt up: Cross; advancing the lines until the menu is up");
-                break;
-            }
-            if (L.approach == 1) {
-                // Fallback: 1.2 m in front and facing it: press once anyway.
-                Tap(kPadCross, now);
-                go(LevelUpScript::Greeting, "no prompt text seen; pressed Cross anyway (1.2 m in front, facing it)");
-                break;
-            }
-            static const float dists[] = {1.2f, 1.0f, 0.8f, 0.6f, 0.45f};
-            const int n = L.approach++;
-            if (n >= 5 * 4) {
-                go(LevelUpScript::Done, "FAILED: no action prompt at any distance / side");
-                break;
-            }
-            const float dist = dists[n / 4];
-            const int side = n % 4;
-            const bool ok = StandAt(s, FindChr(L.target), dist, side);
-            Log("test: levelup: no prompt yet; standing %.2f m from t%u (side %d)%s", dist, L.target, side,
-                ok ? "" : " - warp failed");
-            L.at = now;
+    case LevelUpScript::WaitPlaced: {
+        // Step in along the target's front (1.2 m, then closer), 1 s at each spot: log the
+        // action-button texts seen, press Cross, and let Greeting look for the talk menu.
+        static const float dists[] = {1.2f, 1.0f, 0.85f, 0.7f, 0.55f, 0.4f};
+        if (since < 1.0) {
+            break;
         }
+        if (L.approach > 0) {
+            std::uint32_t prompt = 0;
+            const bool up = PromptUp(&prompt);
+            Tap(kPadCross, now);
+            Log("test: levelup: at %.2f m: action prompt %s%s; Cross", dists[L.approach - 1], up ? "text " : "not seen",
+                up ? std::to_string(prompt).c_str() : "");
+            go(LevelUpScript::Greeting, "advancing the lines until the menu is up");
+            break;
+        }
+        const bool ok = StandAt(s, FindChr(L.target), dists[0], 0);
+        Log("test: levelup: standing %.2f m in front of t%u%s", dists[0], L.target, ok ? "" : " - warp failed");
+        L.approach = 1;
+        L.at = now;
         break;
+    }
     case LevelUpScript::Greeting:
         if (L.open && L.menu_text == 0) {
             L.menus0 = g_levelup_menus.load();
@@ -754,8 +746,19 @@ void LevelUpTick(const GameSnapshot& s, double now) {
                                     : L.shop ? "talk menu up: 'Purchase' (15000140) is on screen"
                                              : "talk menu up: 'Channel the Blood Echoes' (15000100) is on screen");
         } else if (since >= 1.5 * (L.tries + 1)) {
-            if (++L.tries > 12) {
-                go(LevelUpScript::Done, "FAILED: no talk menu after 12 presses");
+            const int limit = L.target == 210304 ? 12 : 3;
+            if (++L.tries > limit) {
+                static const float dists[] = {1.2f, 1.0f, 0.85f, 0.7f, 0.55f, 0.4f};
+                if (L.approach < 6) {
+                    const float d = dists[L.approach++];
+                    StandAt(s, FindChr(L.target), d, 0);
+                    Log("test: levelup: no menu; one step closer: %.2f m", d);
+                    L.stage = LevelUpScript::WaitPlaced;
+                    L.at = now;
+                    L.tries = 0;
+                    break;
+                }
+                go(LevelUpScript::Done, "FAILED: no talk menu at any distance");
                 break;
             }
             Tap(kPadCross, now);
