@@ -83,10 +83,66 @@ int win_mem_space(uintptr_t start, uintptr_t end) {
     return -1;
 }
 
+/* Commit charge errors: the pool section (direct + flexible memory, 7 GiB by default) is committed
+ * up front, so it fails when the system commit limit (RAM + page file) is nearly used up - several
+ * game instances, LTO builds - while the page file grows or others exit. */
+static int commit_error(DWORD e) {
+    return e == ERROR_COMMITMENT_LIMIT || e == ERROR_PAGEFILE_QUOTA || e == ERROR_NOT_ENOUGH_MEMORY ||
+           e == ERROR_OUTOFMEMORY || e == ERROR_COMMITMENT_MINIMUM || e == ERROR_NO_SYSTEM_RESOURCES;
+}
+
+static unsigned long long env_number(const char *name, unsigned long long fallback) {
+    const char *v = getenv(name);
+    return v && *v ? strtoull(v, NULL, 10) : fallback;
+}
+
+static unsigned long long commit_free_mib(void) {
+    MEMORYSTATUSEX st = {.dwLength = sizeof(st)};
+    return GlobalMemoryStatusEx(&st) ? st.ullAvailPageFile >> 20 : 0;
+}
+
+/* Creates the pool section. A commit failure is retried for BB_POOL_COMMIT_WAIT seconds (default
+ * 120; 0 = no wait, the error goes to the guest as before); if it still fails the process exits (code 75) with the reason, instead of returning the
+ * error to the guest: the game's first allocation (Dantelion2 runtime heap, guest +0x20819f0) then
+ * panics with a deliberate write to address 0 (+0x20b56d2) and no hint of the cause.
+ * BB_TEST_POOL_FAILURES=N simulates N commit failures (tests). */
 int win_mem_section(uint64_t size, void **backing) {
-    section = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_EXECUTE_READWRITE | SEC_COMMIT,
-                                 (DWORD)(size >> 32), (DWORD)size, NULL);
-    if (!section) { report("creating the memory pool section", 0, size); return -1; }
+    const unsigned long long wait_s = env_number("BB_POOL_COMMIT_WAIT", 120);
+    unsigned long long simulated = env_number("BB_TEST_POOL_FAILURES", 0);
+    const ULONGLONG t0 = GetTickCount64();
+    for (unsigned attempt = 0;; ++attempt) {
+        if (simulated) {
+            --simulated;
+            section = NULL;
+            SetLastError(ERROR_COMMITMENT_LIMIT);
+        } else {
+            section = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_EXECUTE_READWRITE | SEC_COMMIT,
+                                         (DWORD)(size >> 32), (DWORD)size, NULL);
+        }
+        if (section) {
+            if (attempt) printf("Runtime: memory pool committed after %llu s of waiting\n",
+                                (unsigned long long)((GetTickCount64() - t0) / 1000));
+            break;
+        }
+        const DWORD error = GetLastError();
+        const unsigned long long waited = (GetTickCount64() - t0) / 1000;
+        if (!commit_error(error) || waited >= wait_s) {
+            report("creating the memory pool section", 0, size);
+            if (!commit_error(error) || !wait_s) return -1; /* BB_POOL_COMMIT_WAIT=0: old behaviour */
+            fprintf(stderr, "Runtime: FATAL: Windows cannot commit the %llu MiB guest memory pool "
+                    "(%llu MiB of commit left after %llu s; error %lu). Close other game instances or "
+                    "builds, or enlarge the page file. Exiting.\n",
+                    (unsigned long long)(size >> 20), commit_free_mib(), waited, error);
+            fflush(stdout);
+            fflush(stderr);
+            ExitProcess(75);
+        }
+        if (!attempt || attempt % 10 == 0)
+            fprintf(stderr, "Runtime: committing the %llu MiB guest memory pool failed (Windows error %lu, "
+                    "%llu MiB of commit left: other games or builds?); retrying for up to %llu s\n",
+                    (unsigned long long)(size >> 20), error, commit_free_mib(), wait_s);
+        Sleep(simulated ? 50 : 1000);
+    }
     section_backing = MapViewOfFile(section, FILE_MAP_ALL_ACCESS, 0, 0, size);
     if (!section_backing) { report("mapping the memory pool", 0, size); return -1; }
     *backing = section_backing;
