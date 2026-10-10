@@ -273,7 +273,26 @@ static void Restart() {
     assert(restarts == 1);
 }
 
-int main() {
+/// --labels FILE: the English page / row names and help lines, for test drivers that read the
+/// focused item off the screen (tools: the QA menu driver matches OCR text against them).
+static void DumpLabels(const char* path) {
+    std::ofstream out(path);
+    const auto ascii = [](const char16_t* t) {
+        std::string s;
+        for (; t && *t; ++t) s.push_back(*t < 128 ? char(*t) : '?');
+        return s;
+    };
+    const char tab = '\t', end = '\n';
+    for (const P::Page& page : P::All()) {
+        out << "page" << tab << ascii(P::Text(page.name, false)) << tab << ascii(P::Text(page.help, false)) << end;
+        for (const P::Row& row : page.rows) {
+            out << "row" << tab << ascii(P::Text(page.name, false)) << tab << ascii(P::Text(row.name, false)) << tab
+                << ascii(P::Text(row.help, false)) << end;
+        }
+    }
+}
+
+int main(int argc, char** argv) {
     ini = std::filesystem::temp_directory_path() / "bbport-game-menu-pages-test.ini";
     {
         std::ofstream file(ini);
@@ -304,6 +323,10 @@ int main() {
     }
     P::Define();
     P::Define(); // once
+    if (argc == 3 && std::string(argv[1]) == "--labels") {
+        DumpLabels(argv[2]);
+        return 0;
+    }
     Limits();
     Helpers();
     EverySettingSaved();
