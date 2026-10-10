@@ -6,6 +6,7 @@
 #include <cassert>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 using namespace coop;
 
@@ -67,12 +68,64 @@ int main() {
     assert(!GuestServiceTalkAllowed(210305, "123,2103050"));
     assert(!GuestServiceTalkAllowed(210305, "x,,210305x"));
 
+    // Headstones (lamp part).
+    assert(HeadstoneTalk(210000) && HeadstoneTalk(210003) && HeadstoneTalk(210721));
+    assert(!HeadstoneTalk(210004) && !HeadstoneTalk(210720) && !HeadstoneTalk(210304));
+
+    // Lamp requests.
+    {
+        LampRequest r;
+        r.id = 2102950; // Dream from the Great Bridge (ReturnPointParam)
+        r.seq = 7;
+        LampRequest back;
+        std::string err;
+        assert(LampRequestFromJsonText(LampRequestToJsonText(r), &back, &err));
+        assert(back.id == r.id && back.seq == 7);
+        assert(SanitizePeerLampRequest(back, &err));
+        back.id = 12345;
+        assert(!SanitizePeerLampRequest(back, &err) && !err.empty());
+        assert(!LampRequestFromJsonText("[]", &back, &err));
+        assert(!LampRequestFromJsonText("{\"seq\":\"1\"}", &back, &err));
+        assert(!LampRequestFromJsonText("not json", &back, &err));
+    }
+    {
+        LampRequestGate gate;
+        std::string why;
+        assert(!gate.Accept(false, 100.0, &why));
+        assert(gate.Accept(true, 100.0, &why));
+        assert(!gate.Accept(true, 105.0, &why));
+        assert(gate.Accept(true, 111.0, &why));
+    }
+    {
+        const std::vector<EmevdSkipRule> rules = LampSkipRules();
+        assert(rules.size() == 1);
+        assert(EmevdSkipMatches(rules[0], 7200, 1003, 6, 0));
+        assert(!EmevdSkipMatches(rules[0], 7200, 1003, 6, 1));
+        assert(!EmevdSkipMatches(rules[0], 7300, 1003, 6, 0));
+    }
+
+    // Doll placement: client-only skips of the re-roll in 12100110.
+    {
+        const std::vector<EmevdSkipRule> rules = DollPlacementRules();
+        assert(rules.size() == 2);
+        for (const EmevdSkipRule& r : rules) {
+            assert(r.client_only && !r.needs_travel && r.event == 12100110);
+        }
+        assert(EmevdSkipMatches(rules[0], 12100110, 2003, 22, 25));
+        assert(EmevdSkipMatches(rules[1], 12100110, 2003, 17, 26));
+        assert(!EmevdSkipMatches(rules[0], 12100110, 2003, 22, 28)); // the 12105034 clear stays
+        assert(!EmevdSkipMatches(rules[1], 12100111, 2003, 17, 10)); // auto-talk roll stays
+        assert(DescribeSkipRule(rules[0]).find("on a client") != std::string::npos);
+    }
+
     // Env.
     assert(GuestServicesEnabledFromEnv(nullptr));
     assert(GuestServicesEnabledFromEnv(""));
     assert(GuestServicesEnabledFromEnv("1"));
     assert(!GuestServicesEnabledFromEnv("0"));
     assert(GuestServicesEnabledFromEnv("00"));
+    assert(!GuestLampsEnabledFromEnv(nullptr) && !GuestLampsEnabledFromEnv("") && !GuestLampsEnabledFromEnv("0"));
+    assert(GuestLampsEnabledFromEnv("1"));
 
     // Record changes.
     PlayerRecord a{10, 5000, 3}, b{11, 3200, 3};

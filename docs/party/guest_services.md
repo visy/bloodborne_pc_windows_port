@@ -110,7 +110,88 @@ Log lines (`Party guest services:`): `open: guest in the host's m21_00_00_00; le
 Insight I`, `talk script tN (environment 0x...) asks IsClientPlayer: allowed|kept vanilla`,
 `talk scripts asked IsClientPlayer N times (answered 0)`, `own character: level a -> b, echoes ...`.
 
-## 3. Lamps (design; next step)
+### 2.4 The Doll on a guest (placement) [C static; runtime pending]
+
+User report from the first live run: the guest in the host's Dream did not see the Doll where the
+host's Doll stands. What decides the Doll, per m21_00 EMEVD:
+
+* No client guard and no character disable for the Doll (entity 2100700) anywhere in m21_00 or
+  common EMEVD: the constructor only sets her update frequency (`2004[34]`), the preconstructor
+  keeps the Dream state flags 1000-1003 (`1003` "Doll dead" via 12100101, 1002 / 1000 via 9462).
+  Her talk script t210304 runs on the guest (the live run logged it asking IsClientPlayer), so the
+  character exists on the guest.
+* **12100110** `人形のヒロイン_立ち位置制御` (Doll stand position, every Dream load, both roles):
+  lifeless (spot 2102304, anim 9011, sets 12105100) if flag 9401 is off or Insight is 0; else
+  12100105 = 1 (awake), 9404 = 1; ends for the late states (1000 / 1002 on, 1026 / 1027, the DLC
+  boss flags 13501800 / 13601800 without 72100116 / 72100117); then **re-rolls the stand spot**:
+  index 24 `1003[1]` skip 2 if flag 100, index 25 `2003[22]` clear 12100500-12100509, index 26
+  `2003[17]` random one of them, and short-warps her (`2004[41]`) to 2102301 (by the lamp, anim
+  9009), 2102302 (in the workshop, -13.3, -1.1, 1.7) or 2102303 (lower garden, -7.4, -6.3, -25.1).
+* Where the inputs come from on a guest (load mode 1, join snapshot 0x10): 9401 (global 9000-9999)
+  and 100 / 1000-1003 / 1026 / 1027 (global 0-1999) are in the snapshot = the host's values;
+  12100105 and 12100500-12100510 are m21 type-1 zone 0 = in the snapshot; Insight is the guest's
+  own (the test guest has 6); 13501800 / 13601800 (other maps) and 72100116 / 72100117 (T7) are
+  not in the snapshot (0 on the guest: only differs for a host that killed those DLC bosses).
+* So a guest gets an awake Doll, but **rolls its own stand spot**: in two of three cases its Doll
+  stands in the workshop or the lower garden while the host's stands by the lamp.
+
+Fix (party mode, guest services on): client-only EMEVD skip rules `12100110:2003:22@25` and
+`12100110:2003:17@26` (`EmevdSkipRule::client_only`, checked against `SprjSessionManager+0x124
+== 6` in the EMEVD filter): on a client the re-roll is skipped, the host's 12100500-12100502 from
+the snapshot stay, and the guest's Doll is warped to the host's spot. The host is unaffected (the
+rules never match there). `BB_PARTY_GUEST_SERVICES=0` drops them.
+
+## 3. Lamps and headstones (implemented, opt-in `BB_PARTY_GUEST_LAMPS=1` until run live)
+
+Bloodborne's world lamps only go to the Hunter's Dream (resting = the load into the Dream refills
+and respawns), and the Dream's headstones go to a lit lamp. Seamless-style behaviour for a party:
+whoever uses a lamp or headstone, **the whole party travels**, led by the host (B1 travel,
+`travel.md`), so nobody is left alone in a world they cannot reach.
+
+### 3.1 Gates [C]
+
+* **World lamp object** `0x12F5C40`: byte `+0x49` = session peer count > 0 or presentation count
+  > 1 (`0x12F8303..0x12F8323`); while it is set the action-button row is 90000 (no lamp use), for
+  the host as well as for guests. That is why even the host cannot rest with guests present.
+* **Common event 7200** `ワープOBJ_拠点へのワープ_XX` (lamp -> Dream, one instance per lamp): index 0
+  `1003[6] [0, 1]` = end if client (multiplayer state 1); then wait for the lamp's flag, clear it,
+  turn, SFX, `2003[49]` warp (-> `0x13CDF30(id)`).
+* **Headstones** t210000-t210003 (and the warp menu t210721): their root state machine parks in an
+  empty machine while talk test 52 `IsMultiplayerInProgress()` is 1 (case `0x203C505`: session
+  presentation count > 1 or peer count > 0) - for the host too - and in "client wait" while
+  `IsClientPlayer()` is 1.
+
+### 3.2 Lift [C, runtime pending]
+
+* `0x12F831C 85 c9 0f 9f c1 08 c1` -> `31 c9 90 90 90 90 90` (party mode): `+0x49` = 0, so lamps
+  are usable with guests present (host and guests).
+* EMEVD rule `7200:1003:6@0` (party mode): a guest's lamp event no longer ends at once; on the host
+  `1003[6]` (end if client) never ends anything, so the rule is a no-op there.
+* Value filter at `0x203C564` (`or cl, al; movzx eax, cl`, then `jmp 0x203EECF`): for the headstone
+  scripts IsMultiplayerInProgress answers 0 in party mode; IsClientPlayer answers 0 for them on a
+  guest in the Dream.
+* **Guest warp -> host request.** `0x13CDF30` is now replaced (it was a pre-hook): our own replays
+  pass through; any other call on a guest that is a client in the host's world is consumed and
+  becomes EVENT `lamp_request {id, seq}` to the host (sent from the director tick).
+* **Host.** `on_event` (host side) parses and checks the request (`id` must be a ReturnPointParam
+  row, `TravelLampKnown`); the director tick runs `0x13CDF30(id)` itself when the host is in the
+  world and not loading, at most once per 10 s. The host's own warp is captured by the travel funnel
+  hook as usual (TRAVEL broadcast), every guest replays it and is summoned again: one party travel.
+  No loop: the host's warp is not intercepted (host role), the guests' follow warps are our replays.
+* Rest: travelling to the Dream is the rest (the host's load refills; guests get the phantom
+  refill on the host's "rested" event, `phantom_limits.md` 1.2).
+* Opt-in: `BB_PARTY_GUEST_LAMPS=1` (it also changes the host's lamp gate); default off until a
+  live run confirms 3.3.
+
+### 3.3 Still open [I]
+
+* `+0x4B` (`0x191B6E0`): another character whose action target is the lamp (presumably the other
+  player standing at it) still blocks the prompt; the lamp's chr-type range branch
+  (`(type | 8) == 8` at the interaction distance code) may give a guest a different range.
+* Whether the guest's lamp interaction itself sets the lamp's flag on the guest (ObjAct `0x2D`
+  replication may also start the host's own 7200 instance - then the host warps natively and the
+  guest's request is dropped by the 10 s gate).
+* Headstone warp menu: confirm that the selection reaches `0x13CDF30` (shadp2p: menu travel does).
 
 ## 4. Safety
 
@@ -121,3 +202,21 @@ Insight I`, `talk script tN (environment 0x...) asks IsClientPlayer: allowed|kep
   no lock (main thread).
 
 ## 5. Runtime evidence
+
+Live 2-instance runs (loopback party, the test save parked in the Hunter's Dream, guest summoned
+into the host's Dream), guest log `Party guest services:` [R]:
+
+* `open: guest in the host's m21_00_00_00; level 37, echoes 0, Insight 6` - the gate opens for the
+  client in the host's Dream and closes during loads (`closed (role client, map m21_00_00_00,
+  loading)`).
+* Discovery: every Dream talk script near the guest asks IsClientPlayer through the filter, with
+  its id at `env+0x10`: t210000-t210002 (headstones), t210304 (Doll), t210691 / t210694 /
+  t210695 (messengers), t210721; `+0x8` holds the script table (210304, 210305, 210306, 210693 ...).
+* `talk scripts asked IsClientPlayer 270-285 times (answered 0)` per second - the allowed scripts
+  leave their client wait; `headstones asked IsMultiplayerInProgress ~90 times (answered 0)` with
+  the lamp part on.
+* Not yet observed (test runs held by the coordinator's gate): the Doll's level-up menu on the
+  guest, a purchase, and the save read-back. Fixture for it: `BB_PARTY_GUESTSVC_TEST=
+  "echoes=20000;warp=-5.2,-5.62,-12.56,3.665"` (stands the guest in front of the Doll's lamp spot
+  15 s after the gate opened), pad script via `BB_PAD_FILE`, `BB_SAVE_TRACE=1`, until marker
+  `own character steady for 15 s` (logged 15 s after a level / echoes / Insight change).

@@ -10,6 +10,7 @@
 #include "party_story.h"
 #include "party_status_bridge.h"
 #include "party_items.h"
+#include "party_guestsvc.h"
 #include "party_phantom.h"
 #include "party_fourp.h"
 #include "party_progress.h"
@@ -651,6 +652,12 @@ LinkCallbacks make_callbacks(bool host) {
             write_marker();
             pump_stop(m.name);
             bbnet::party::PartyHostService::instance().context_gone(m.name);
+        };
+        cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
+            if (name == coop::kLampRequestEventName) {  // a guest used a lamp / headstone
+                std::string err;
+                if (!coop::GuestServicesOnLampRequest(slot, body, &err)) plog("lamp request from slot %d refused: %s", slot, err.c_str());
+            }
         };
         cb.on_rpc = [](int slot, const std::string& kind, const std::string& body) -> std::string {
             PartyLink* link = R().link;

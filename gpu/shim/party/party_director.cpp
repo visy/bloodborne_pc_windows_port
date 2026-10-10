@@ -939,7 +939,7 @@ void PartyDirector::Tick() {
     // Insight in (party_phantom.h).
     PhantomTick(link);
     // Guests use the Doll, shops and workshop in the host's Dream (party_guestsvc.h).
-    GuestServicesTick(s);
+    GuestServicesTick(s, link);
     if (st.test.on) {
         RunTest(st, s, now);
         if ((st.test.log_state || st.test.start) && Seconds(st.last_log, now) >= 5.0) {

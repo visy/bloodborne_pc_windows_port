@@ -223,6 +223,13 @@ using GuestRedirectFn = void (*)(TravelKind kind, GuestRedirect how, std::uint32
 void SetGuestRedirectCallback(GuestRedirectFn fn);
 /// BB_PARTY_GUEST_RESPAWN=0: guest deaths and Hunter's Marks go home as in vanilla.
 void SetGuestDeathRedirectEnabled(bool on);
+/// Runs on the game thread for every lamp / headstone warp 0x13CDF30(id) the game itself starts
+/// (not our replays); true = consumed: the warp does not happen (party_guestsvc: a guest's lamp
+/// use becomes a request to the host).
+using LampWarpInterceptor = bool (*)(std::uint32_t id);
+void SetLampWarpInterceptor(LampWarpInterceptor fn);
+/// The native lamp warp 0x13CDF30(id) (main thread; the host's travel hooks see it as usual).
+void RunLampWarp(std::uint32_t id);
 #endif
 
 } // namespace coop

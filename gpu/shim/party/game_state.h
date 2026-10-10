@@ -58,6 +58,8 @@ struct GameSnapshot {
     int np_online = -1;          ///< NP manager +0xd8
 };
 
+/// SprjSessionManager +0x124 (6 = client in another world), -1 without a session manager. Cheap.
+int LocalSessionRole();
 /// Reads the state. `call_game` also asks the game's cooperator count (main thread only, world up).
 GameSnapshot ReadGameState(bool call_game);
 /// "m24_01_00_00" (or "-" when unknown).

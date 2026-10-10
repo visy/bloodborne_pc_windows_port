@@ -81,6 +81,10 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_ITEMS_TEST` | `<lot>[,<lot>...]`: applies these item lots once in the own world (any role) | off | `gpu/shim/party/party_items.cpp` |
 | `BB_PARTY_DIRECTOR_TEST` | `log_state,start,grant_bells,drop_bells,award_lot=N,insight=N,ring_host,ring_guest`: director test actions without a party | off | `gpu/shim/party/party_director.cpp` |
 | `BB_PARTY_DIRECTOR_TEST_DELAY` | Delay of the director test actions in s (after the world is up) | 10 | `gpu/shim/party/party_director.cpp` |
+| `BB_PARTY_GUEST_SERVICES` | `0`: guests cannot use the Doll, shops or workshop in the host's Dream (vanilla client gates) | on in party mode | `gpu/shim/party/party_guestsvc.cpp` |
+| `BB_PARTY_GUEST_SERVICES_TALK` | `all` or a comma list of more talk script ids the guest may use (diagnostics) | built-in list | `gpu/shim/party/party_guestsvc.cpp` |
+| `BB_PARTY_GUEST_LAMPS` | `1`: lamps and headstones work in a party; a guest's lamp / headstone use moves the whole party (host-led) | off (opt-in until run live) | `gpu/shim/party/party_guestsvc.cpp` |
+| `BB_PARTY_GUESTSVC_TEST` | `echoes=N;warp=x,y,z,yaw[/...]`: live-test fixture on the guest, 15 s after the guest-services gate opened | off | `gpu/shim/party/party_guestsvc.cpp` |
 | `BB_PARTY_PHANTOM_PROBE` | `insight`, `refill`: one offline probe 5 s after the world is up | off | `gpu/shim/party/party_phantom.cpp` |
 | `BB_PARTY_TRACE` | `1`: logs every FROM API / HTTP request and answer (default: the first few) | off | `gpu/shim/net/bbnet_glue.cpp` |
 | `BB_PARTY_TRACE_SSINFO` | `1`: logs the game's ss.info parse result | off | `gpu/shim/party/party_director.cpp` |

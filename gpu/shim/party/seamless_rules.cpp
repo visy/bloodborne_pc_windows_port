@@ -13,6 +13,7 @@
 
 #include "coop_hooks.h"
 #include "game_state.h"
+#include "party_guestsvc.h"
 #include "party_phantom.h"
 #include "party_travel.h"
 
@@ -387,6 +388,10 @@ void ParseSkips() {
         g_skips.push_back(r);
         Log("EMEVD rule (built in, confinement walls): skip %s", DescribeSkipRule(r).c_str());
     }
+    for (const EmevdSkipRule& r : GuestServicesSkipRules()) {
+        g_skips.push_back(r);
+        Log("EMEVD rule (built in, guest services): skip %s", DescribeSkipRule(r).c_str());
+    }
     const char* e = std::getenv("BB_PARTY_EMEVD_SKIP");
     if (!e) {
         return;
@@ -444,7 +449,8 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
         i32 index = -1;
         SafeGet(event + 0xa0, &index);
         for (const EmevdSkipRule& r : g_skips) {
-            if (EmevdSkipMatches(r, event_id, bank, id, index) && (!r.needs_travel || TravelEnabled())) {
+            if (EmevdSkipMatches(r, event_id, bank, id, index) && (!r.needs_travel || TravelEnabled()) &&
+                (!r.client_only || LocalSessionRole() == 6)) {
                 skip = true;
                 break;
             }

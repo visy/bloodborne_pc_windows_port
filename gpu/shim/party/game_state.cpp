@@ -149,6 +149,13 @@ const char* SessionRoleName(int role) {
     }
 }
 
+int LocalSessionRole() {
+    if (!Image()) {
+        return -1;
+    }
+    return Field<std::int32_t>(Slot(kSessionManager), 0x124, -1);
+}
+
 GameSnapshot ReadGameState(bool call_game) {
     GameSnapshot s;
     if (!Image()) {

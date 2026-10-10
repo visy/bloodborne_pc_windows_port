@@ -19,14 +19,32 @@
 // (session role 6) in the world (not loading) on map m21 (Hunter's Dream). Everywhere else the
 // game's own answer stands (quest NPCs in the host's world keep refusing guests).
 //
-// Env: BB_PARTY_GUEST_SERVICES=0 turns it off (vanilla: guests cannot use them in the host's world).
+// Lamps and headstones (docs/party/guest_services.md 3): one party travel, led by the host.
+//   - World lamps: the lamp object's multiplayer byte +0x49 (0x12F8323, set from the session's
+//     member counts) is forced to 0 in party mode (0x12F831C: test/setg/or -> xor ecx, ecx), for
+//     host and guests: the host's own lamp works with guests present, and a guest's lamp runs
+//     common event 7200 (its `1003[6] End if Client` at index 0 is skipped: rule 7200:1003:6@0).
+//   - Dream headstones (t210000-t210003, t210721): IsMultiplayerInProgress() (talk test 52, case
+//     0x203C505; filtered at 0x203C564) answers 0 for them in party mode (host and guests), and
+//     IsClientPlayer() 0 for a guest.
+//   - A guest's resulting warp 0x13CDF30(id) is consumed (party_travel's interceptor) and sent to
+//     the host as EVENT "lamp_request" {id}; the host's director checks it (a ReturnPointParam row,
+//     host in the world and not loading, one per 10 s) and runs the same warp itself: the B1 travel
+//     then brings every guest along (the host's own warp: no loop; guests' replays are ours).
+//
+// Env: BB_PARTY_GUEST_SERVICES=0 turns it off (vanilla: guests cannot use them in the host's world);
+// BB_PARTY_GUEST_LAMPS=1 turns the lamp / headstone part on (opt-in until it has run live; it
+// also lifts the lamp gate for the host).
 //
 // The pure part has no game dependency and is unit-tested (tests/test_party_guestsvc.cpp, built
 // with BB_PARTY_GUESTSVC_NO_GAME).
 #pragma once
 
+#include "party_phantom.h"
+
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace coop {
 
@@ -57,6 +75,43 @@ bool GuestServiceTalk(std::uint32_t talk);
 /// list of more talk script ids (BB_PARTY_GUEST_SERVICES_TALK).
 bool GuestServiceTalkAllowed(std::uint32_t talk, const std::string& extra);
 
+/// Dream headstones and warp menus whose multiplayer / client tests the lamp part lifts:
+/// 210000-210003 (headstones), 210721 (warp menu with StartWarpMenuInit).
+bool HeadstoneTalk(std::uint32_t talk);
+
+// ---- Lamp requests (guest -> host) ----
+constexpr const char* kLampRequestEventName = "lamp_request";
+struct LampRequest {
+    std::uint32_t id = kTravelNone; ///< the ReturnPointParam id the guest's lamp / headstone warp asked for
+    std::uint64_t seq = 0;          ///< guest counter (diagnostics)
+};
+std::string LampRequestToJsonText(const LampRequest& r);
+bool LampRequestFromJsonText(const std::string& text, LampRequest* out, std::string* error = nullptr);
+/// A guest's request before the host acts on it: the id must be a ReturnPointParam row.
+bool SanitizePeerLampRequest(const LampRequest& r, std::string* why = nullptr);
+
+/// Host: at most one accepted request per kMinInterval s, and only with the host ready (in the
+/// world, not loading).
+class LampRequestGate {
+public:
+    static constexpr double kMinInterval = 10.0;
+    bool Accept(bool host_ready, double now, std::string* why = nullptr);
+
+private:
+    double last_ = -1e9;
+};
+
+/// The built-in EMEVD rules of the lamp part: 7200:1003:6@0 (world lamp -> Dream: the client end).
+std::vector<EmevdSkipRule> LampSkipRules();
+
+/// The Doll stands where the host's Doll stands (client-only rules): m21_00 event 12100110
+/// (人形のヒロイン_立ち位置制御, every Dream load, no client guard) clears and re-rolls the stand-spot
+/// flags 12100500-12100509 (index 25 `2003[22]`, index 26 `2003[17]`) unless flag 100 is on, then
+/// short-warps the Doll (2004[41]) to spot 2102301 / 2102302 (workshop) / 2102303 (lower garden).
+/// A guest rolls its own spot, so its Doll can stand somewhere else than the host's. Skipping the
+/// two instructions on a client keeps the host's flags from the join snapshot (map m21 zone 0).
+std::vector<EmevdSkipRule> DollPlacementRules();
+
 /// The local character's record (PlayerGameData +0x90 level, +0x94 echoes, +0x84 Insight).
 struct PlayerRecord {
     int level = -1, echoes = -1, insight = -1;
@@ -68,15 +123,28 @@ struct PlayerRecord {
 /// "level 10 -> 11, echoes 5000 -> 3200" (the changed fields only; "" when equal or unknown).
 std::string DescribeRecordChange(const PlayerRecord& before, const PlayerRecord& after);
 
+/// "BB_PARTY_GUEST_LAMPS" value -> on only for "1" (opt-in).
+bool GuestLampsEnabledFromEnv(const char* value);
 /// "BB_PARTY_GUEST_SERVICES" value -> on/off (unset / "" / anything but "0" = on).
 bool GuestServicesEnabledFromEnv(const char* value);
 
 #ifndef BB_PARTY_GUESTSVC_NO_GAME
 struct GameSnapshot;
-/// PartyInit: installs the gated override (party mode and enabled only; byte-verified).
+}
+namespace party {
+class PartyLink;
+}
+namespace coop {
+/// PartyInit: installs the filters and patches (party mode and enabled only; byte-verified).
 void GuestServicesInit();
-/// Director tick (main thread): opens / closes the gate, logs the guest's record changes.
-void GuestServicesTick(const GameSnapshot& s);
+/// seamless_rules (EMEVD filter set-up): the Doll placement rules and the lamp part's rules
+/// (party mode, guest services on; the lamp rule only with lamps on).
+std::vector<EmevdSkipRule> GuestServicesSkipRules();
+/// Director tick (main thread): opens / closes the gate, logs the guest's record changes; guest:
+/// sends lamp requests; host: runs accepted ones.
+void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link);
+/// Host: EVENT "lamp_request" from guest `slot` (PartyLink callback thread). False + why: refused.
+bool GuestServicesOnLampRequest(int slot, const std::string& body, std::string* why);
 /// Open right now (diagnostics, the Party tab).
 bool GuestServicesOpen();
 #endif
