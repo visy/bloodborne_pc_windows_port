@@ -446,4 +446,5 @@ static const RuntimeExport exports[]={
 };
 
 uintptr_t runtime_savedata_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }
+int runtime_savedata_mount_count(void) { return (int)mounts_done; }
 void runtime_savedata_report(void) { printf("Runtime: save data mounts=%zu, memory writes=%zu\n",mounts_done,memory_writes); }

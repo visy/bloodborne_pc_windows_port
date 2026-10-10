@@ -92,4 +92,15 @@ bool AwardItemLot(std::uint32_t lot);
 /// Gives `count` of goods `id` directly; false when the code differs or there is no player.
 bool GiveGoods(std::uint32_t goods_id, int count);
 
+// Item type bits of the inventory / GiveItemDirect (EMEVD 2003[43] type 0..3).
+constexpr std::uint32_t kItemWeapon = 0x00000000u, kItemProtector = 0x10000000u, kItemAccessory = 0x20000000u,
+                        kItemGoods = 0x40000000u;
+/// How many of item `id` (type bits above) the local player holds: 0 none, -1 unknown.
+int ItemCount(std::uint32_t type_bits, std::uint32_t id);
+/// GiveItemDirect 0x131CB70(0, type bits, id, count); false when the code differs or no player.
+bool GiveItem(std::uint32_t type_bits, std::uint32_t id, int count);
+/// The lamp / ReturnPoint warp 0x13CDF30(id) (EMEVD 2003[49], the lamp menu); main thread, own
+/// world. False when the code differs from 1.09 or there is no player.
+bool LampWarp(std::uint32_t return_point);
+
 } // namespace coop

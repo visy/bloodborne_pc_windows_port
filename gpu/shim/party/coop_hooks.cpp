@@ -6,7 +6,9 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <mutex>
+#include <vector>
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -268,6 +270,29 @@ bool Matches(u64 off, const u8* bytes, std::size_t n) {
     return std::memcmp(g_image + off, bytes, n) == 0;
 }
 
+namespace {
+std::map<u64, std::vector<u8>> g_replaced; // under g_mu: prologue bytes our jumps replaced
+void NoteReplaced(u64 off, std::initializer_list<u8> prologue) {
+    g_replaced[off] = std::vector<u8>(prologue.begin(), prologue.end());
+}
+} // namespace
+
+bool MatchesOriginal(u64 off, const u8* bytes, std::size_t n) {
+    if (!g_image || off + n > g_image_size) {
+        return false;
+    }
+    std::vector<u8> view(g_image + off, g_image + off + n);
+    std::lock_guard<std::mutex> lk(g_mu);
+    for (const auto& [at, orig] : g_replaced) {
+        for (std::size_t i = 0; i < orig.size(); ++i) {
+            if (at + i >= off && at + i < off + n) {
+                view[at + i - off] = orig[i];
+            }
+        }
+    }
+    return std::memcmp(view.data(), bytes, n) == 0;
+}
+
 bool CallsTo(u64 off, u64 target) {
     if (!g_image || off + 5 > g_image_size || g_image[off] != 0xe8) {
         return false;
@@ -295,6 +320,7 @@ bool HookPrologue(u64 off, std::initializer_list<u8> prologue, PreHandler handle
         std::printf("Coop hooks: %s: the stub at guest +0x%llx could not be placed; not installed\n", name, ull(off));
         return false;
     }
+    NoteReplaced(off, prologue);
     std::printf("Coop hooks: %s: entry hook at guest +0x%llx\n", name, ull(off));
     return true;
 }
@@ -323,6 +349,7 @@ bool ReplacePrologue(u64 off, std::initializer_list<u8> prologue, const void* ha
         std::printf("Coop hooks: %s: guest +0x%llx out of reach; not installed\n", name, ull(off));
         return false;
     }
+    NoteReplaced(off, prologue);
     std::printf("Coop hooks: %s: replaced guest +0x%llx\n", name, ull(off));
     return true;
 }
