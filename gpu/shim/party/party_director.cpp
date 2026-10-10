@@ -91,6 +91,7 @@ struct TravelStep {
     enum Kind { HostWarp, HostDie, GuestDie } kind = HostWarp;
     std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30
     double delay = 15.0;
+    int min_join = 0;     // "#N": not before this player's Nth join
 };
 
 struct Test {
@@ -590,8 +591,11 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     if (t.steps.empty() || role == PartyRole::None) {
         return;
     }
+    // Guest: in once a client with the world loaded; out only when the session ends (the summon's
+    // own map reload into the host world is still in).
     const bool joined = role == PartyRole::Host ? s.cooperators >= 1
-                                                : s.session_role == RoleClient && s.world_up && !s.loading;
+                        : t.joined                ? s.session_role == RoleClient
+                                                  : s.session_role == RoleClient && s.world_up && !s.loading;
     if (joined != t.joined) {
         t.joined = joined;
         if (joined) {
@@ -616,7 +620,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         ++t.next_step;
     }
     if (t.next_step >= t.steps.size() || !t.armed || !joined || !s.world_up || s.loading ||
-        Seconds(t.joined_at, now) < t.steps[t.next_step].delay) {
+        t.joins < t.steps[t.next_step].min_join || Seconds(t.joined_at, now) < t.steps[t.next_step].delay) {
         return;
     }
     std::uint64_t wts = 0;
@@ -771,6 +775,9 @@ void PartyDirector::ConfigureFromEnv() {
                 }
                 if (const std::size_t at_sign = item.find('@'); at_sign != std::string::npos) {
                     step.delay = std::atof(item.c_str() + at_sign + 1);
+                }
+                if (const std::size_t hash = item.find('#'); hash != std::string::npos) {
+                    step.min_join = std::atoi(item.c_str() + hash + 1);
                 }
                 st.test.steps.push_back(step);
             } else if (!item.empty()) {
@@ -958,8 +965,13 @@ void PartyDirector::Tick() {
         }
     }
     // Automatic summoning.
+    // A host may ring again while it hosts (vanilla allows more summons into the open room): a
+    // guest that died, used its Mark or crashed comes back into the same room. After the host's
+    // own travel the room is closed first (party_travel's HostCloseEmptyRoom).
+    const bool may_ring_role =
+        s.session_role == RoleIdle || (role == PartyRole::Host && s.session_role == RoleHost && s.cooperators >= 0);
     if (!st.auto_ring || role == PartyRole::None || !link || !s.world_up || s.loading || !st.world_seen ||
-        Seconds(st.world_at, now) < 5.0 || s.session_role != RoleIdle) {
+        Seconds(st.world_at, now) < 5.0 || !may_ring_role) {
         return;
     }
     if (st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {

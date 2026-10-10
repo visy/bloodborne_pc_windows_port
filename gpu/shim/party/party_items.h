@@ -183,6 +183,9 @@ public:
     /// Once a frame: the grant to apply now, else nothing. The caller reports Done(key) after.
     std::optional<ItemGrant> Step(const ItemApplyState& s, double now);
     void Done(std::int64_t key) { done_.insert(key); }
+    /// The grant Step returned was really awarded (a popup opened): the next waits kSpacing.
+    /// Skips (flag already set, item held) take no time, so a long catch-up list goes fast.
+    void Awarded(double now) { last_apply_ = now; }
     std::size_t Pending() const { return q_.size(); }
     bool IsDone(std::int64_t key) const { return done_.count(key) != 0; }
 

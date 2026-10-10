@@ -228,6 +228,7 @@ static void test_guest() {
     g = q.Step(Home(), t);
     CHECK(g && g->lot == 2400450);
     q.Done(g->Key());
+    q.Awarded(t); // it opened a popup
     // Then spacing.
     t += 0.016;
     CHECK(!q.Step(Home(), t));
