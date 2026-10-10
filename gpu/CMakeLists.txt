@@ -384,19 +384,33 @@ endif()
 
 # Party progress sync (shim/party/party_progress, C2): keys, categories, policy, diff, JSON, BBPF
 # against a fake flag store (the game glue is compiled out). ninja -C out/gpu party-progress-test
-add_executable(party-progress-test EXCLUDE_FROM_ALL ../tests/test_party_progress.cpp
-    shim/party/party_progress.cpp shim/net/json.cpp)
-target_compile_definitions(party-progress-test PRIVATE BB_PARTY_PROGRESS_NO_GAME
-    BB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/..")
-target_compile_options(party-progress-test PRIVATE -UNDEBUG -Wall -Wextra)
-target_include_directories(party-progress-test PRIVATE shim)
-set_target_properties(party-progress-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# (The test source is not committed yet on every branch: configure without it.)
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../tests/test_party_progress.cpp")
+    add_executable(party-progress-test EXCLUDE_FROM_ALL ../tests/test_party_progress.cpp
+        shim/party/party_progress.cpp shim/net/json.cpp)
+    target_compile_definitions(party-progress-test PRIVATE BB_PARTY_PROGRESS_NO_GAME
+        BB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/..")
+    target_compile_options(party-progress-test PRIVATE -UNDEBUG -Wall -Wextra)
+    target_include_directories(party-progress-test PRIVATE shim)
+    set_target_properties(party-progress-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+endif()
 # Party status board (shim/party/party_status.cpp; in bbgpu through SHIM_SOURCES): the overlay's
 # Party tab <-> director snapshot and command queue. ninja -C out/gpu party-status-test
 add_executable(party-status-test EXCLUDE_FROM_ALL ../tests/test_party_status.cpp shim/party/party_status.cpp)
 target_compile_options(party-status-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-status-test PRIVATE shim)
 set_target_properties(party-status-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Party transport soak (tests/party_soak.cpp): a host and three guests in one process over
+# loopback under the network simulator's profiles and burst outages; a verdict per scenario.
+# cmake --build out/gpu --target party-soak && out/gpu/party-soak.exe [scenario...]
+add_executable(party-soak EXCLUDE_FROM_ALL ../tests/party_soak.cpp ${PARTY_NET_SOURCES} ${PARTY_LINK_SOURCES}
+    third_party/monocypher/monocypher.c)
+target_compile_options(party-soak PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-soak PRIVATE shim/net shim ..)
+set_target_properties(party-soak PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+if (WIN32)
+    target_link_libraries(party-soak PRIVATE ws2_32 iphlpapi synchronization ole32 oleaut32 winmm)
+endif()
 # Party travel (B1, shim/party/party_travel.cpp; in bbgpu through SHIM_SOURCES): its pure logic
 # only (BB_PARTY_TRAVEL_NO_GAME). ninja -C out/gpu party-travel-test
 add_executable(party-travel-test EXCLUDE_FROM_ALL ../tests/test_party_travel.cpp shim/party/party_travel.cpp
