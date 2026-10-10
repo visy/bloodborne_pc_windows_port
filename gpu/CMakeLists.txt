@@ -427,6 +427,22 @@ target_compile_definitions(party-travel-test PRIVATE BB_PARTY_TRAVEL_NO_GAME)
 target_compile_options(party-travel-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-travel-test PRIVATE shim)
 set_target_properties(party-travel-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Party items (C3, shim/party/party_items.cpp; in bbgpu through SHIM_SOURCES): tables, JSON,
+# queues and the apply gate (BB_PARTY_ITEMS_NO_GAME). ninja -C out/gpu party-items-test
+add_executable(party-items-test EXCLUDE_FROM_ALL ../tests/test_party_items.cpp shim/party/party_items.cpp
+    shim/net/json.cpp)
+target_compile_definitions(party-items-test PRIVATE BB_PARTY_ITEMS_NO_GAME)
+target_compile_options(party-items-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-items-test PRIVATE shim)
+set_target_properties(party-items-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Party phantoms (shim/party/party_phantom.cpp; in bbgpu through SHIM_SOURCES): its pure logic
+# and party_travel's guest redirect choice. ninja -C out/gpu party-phantom-test
+add_executable(party-phantom-test EXCLUDE_FROM_ALL ../tests/test_party_phantom.cpp shim/party/party_phantom.cpp
+    shim/party/party_travel.cpp shim/net/json.cpp)
+target_compile_definitions(party-phantom-test PRIVATE BB_PARTY_PHANTOM_NO_GAME BB_PARTY_TRAVEL_NO_GAME)
+target_compile_options(party-phantom-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-phantom-test PRIVATE shim)
+set_target_properties(party-phantom-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Four-player rules (shim/party/party_fourp.cpp; in bbgpu through SHIM_SOURCES): the pure parts
 # (BB_PARTY_FOURP_NO_GAME). ninja -C out/gpu party-fourp-test
 add_executable(party-fourp-test EXCLUDE_FROM_ALL ../tests/test_party_fourp.cpp shim/party/party_fourp.cpp)
