@@ -391,6 +391,17 @@ target_compile_definitions(party-progress-test PRIVATE BB_PARTY_PROGRESS_NO_GAME
 target_compile_options(party-progress-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-progress-test PRIVATE shim)
 set_target_properties(party-progress-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Party host harness (tests/party_host_harness.cpp): PartyLink host + PartyHostService + FromApi +
+# the party UDP port in one process with no game, for tools/party/simguest.py.
+# ninja -C out/gpu party-host-harness
+add_executable(party-host-harness EXCLUDE_FROM_ALL ../tests/party_host_harness.cpp ${PARTY_NET_SOURCES}
+    ${PARTY_LINK_SOURCES} third_party/monocypher/monocypher.c)
+target_compile_options(party-host-harness PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-host-harness PRIVATE shim shim/net ..)
+set_target_properties(party-host-harness PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+if (WIN32)
+    target_link_libraries(party-host-harness PRIVATE ws2_32 iphlpapi synchronization ole32 oleaut32)
+endif()
 # Party status board (shim/party/party_status.cpp; in bbgpu through SHIM_SOURCES): the overlay's
 # Party tab <-> director snapshot and command queue. ninja -C out/gpu party-status-test
 add_executable(party-status-test EXCLUDE_FROM_ALL ../tests/test_party_status.cpp shim/party/party_status.cpp)
