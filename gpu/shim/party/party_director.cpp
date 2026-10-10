@@ -1680,6 +1680,18 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
         // Same area / block: the summon lands in the host's map; step aside first (B2 spacing).
         return b2::GuestPreRing(s, host_map);
     }
+    // The host in a Chalice Dungeon (or its last lamp in one): no gather. A warp into area 29 would
+    // build this game's own slot's dungeon (or none, seen live); the summon itself brings the guest
+    // in (quick join by ChannelId, docs/party/chalice.md 4), so it rings where it stands.
+    if (((host_map >> 24) & 0xff) == 29 || lamp / 100000 == 29) {
+        static Clock::time_point said{};
+        if (Seconds(said, now) >= 60.0) {
+            said = now;
+            Log("gather: the host is in a chalice dungeon (%s, lamp %u); ringing here, the summon quick-joins it",
+                MapName(host_map).c_str(), lamp);
+        }
+        return false;
+    }
     if (ever && Seconds(last, now) < 90.0) {
         return false;
     }

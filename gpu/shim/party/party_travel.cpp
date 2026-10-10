@@ -1065,7 +1065,7 @@ void RequestGuestTravel(const TravelIntent& t) {
     // Chalice Dungeons: only into the dungeon this game has (docs/party/chalice.md).
     if (!ChaliceReplayAllowed(t, chalice::LocalChannel())) {
         Log("guest travel %s not followed: the host enters chalice dungeon %llu, this game has %llu "
-            "(join it at the Ritual Altar: glyph or random join)",
+            "(the summon brings it in: quick join by ChannelId)",
             DescribeTravel(t).c_str(), static_cast<unsigned long long>(t.chalice_channel),
             static_cast<unsigned long long>(chalice::LocalChannel()));
         return;
