@@ -92,6 +92,43 @@ json::Value error_reply(int kind, const std::string& text) {
     return r;
 }
 
+// ResKind 7: the request names someone other than the caller PartyLink authenticated.
+constexpr int kResImpersonation = 7;
+
+// The identity a call acts as. A call that came over PartyLink carries the member's
+// authenticated name in `who` (party_runtime's on_rpc refuses a slot with no roster name), and
+// that name wins: a body OnlineId naming anyone else is refused. Only an in-process caller with
+// no name of its own (tests, tools) is taken at the body's word.
+bool caller_identity(const Caller& who, const json::Value& rq, const char* kind, std::string* id, json::Value* err) {
+    const std::string body = str_of(rq, "OnlineId");
+    if (!who.online_id.empty()) {
+        if (!body.empty() && body != who.online_id) {
+            log("party host: refused %s from %s claiming OnlineId %s", kind, who.online_id.c_str(), body.c_str());
+            *err = error_reply(kResImpersonation, "OnlineId does not match the caller");
+            return false;
+        }
+        *id = who.online_id;
+        return true;
+    }
+    if (who.link_addr) {  // a remote caller with no authenticated name
+        log("party host: refused %s from an unnamed remote caller", kind);
+        *err = error_reply(kResImpersonation, "caller not authenticated");
+        return false;
+    }
+    if (body.empty()) {
+        *err = error_reply(1, "no OnlineId");
+        return false;
+    }
+    *id = body;
+    return true;
+}
+
+// May `who` act as member `m`? Its own record only (an unnamed in-process caller: anyone).
+bool caller_is(const Caller& who, const std::string& member_online_id) {
+    if (who.online_id.empty()) return who.link_addr == 0;
+    return who.online_id == member_online_id;
+}
+
 json::Value ok_reply() {
     json::Value r = json::Value::make_object();
     r.set("ResKind", 0);
@@ -268,9 +305,9 @@ struct PartyHostService::Impl {
     // --- the calls ---
 
     json::Value context_start(const Caller& who, const json::Value& rq) {
-        std::string id = str_of(rq, "OnlineId");
-        if (id.empty()) id = who.online_id;
-        if (id.empty()) return error_reply(1, "no OnlineId");
+        std::string id;
+        json::Value err;
+        if (!caller_identity(who, rq, "context_start", &id, &err)) return err;
         Context c;
         c.online_id = id;
         c.ep.local_addr = str_of(rq, "SignalingAddr");
@@ -291,9 +328,9 @@ struct PartyHostService::Impl {
     }
 
     json::Value create_room(const Caller& who, const json::Value& rq) {
-        std::string id = str_of(rq, "OnlineId");
-        if (id.empty()) id = who.online_id;
-        if (id.empty()) return error_reply(1, "no OnlineId");
+        std::string id;
+        json::Value err;
+        if (!caller_identity(who, rq, "create_room", &id, &err)) return err;
         std::lock_guard<std::mutex> lk(mu);
         // A room it still has (the game left without LeaveRoom) closes first.
         for (const auto& [rid, mid] : memberships_locked(id)) remove_member_locked(rid, mid, "leave_room", nullptr);
@@ -327,9 +364,9 @@ struct PartyHostService::Impl {
     }
 
     json::Value join_room(const Caller& who, const json::Value& rq) {
-        std::string id = str_of(rq, "OnlineId");
-        if (id.empty()) id = who.online_id;
-        if (id.empty()) return error_reply(1, "no OnlineId");
+        std::string id;
+        json::Value err;
+        if (!caller_identity(who, rq, "join_room", &id, &err)) return err;
         const auto rid = static_cast<std::uint64_t>(int_of(rq, "RoomId", 0));
         std::lock_guard<std::mutex> lk(mu);
         auto it = rooms.find(rid);
@@ -371,22 +408,33 @@ struct PartyHostService::Impl {
         return r;
     }
 
-    json::Value leave_room(const json::Value& rq) {
+    // A member record named by SessionId + MemberId that is not the caller's own: refused.
+    json::Value not_yours(const Caller& who, const char* kind, const Member& m) const {
+        log("party host: refused %s from %s for member %u (%s)", kind, who.online_id.c_str(), m.id,
+            m.online_id.c_str());
+        return error_reply(kResImpersonation, "that member is not the caller");
+    }
+
+    json::Value leave_room(const Caller& who, const json::Value& rq) {
         const std::string sid = str_of(rq, "SessionId");
         const auto mid = static_cast<std::uint16_t>(int_of(rq, "MemberId", 0));
         std::lock_guard<std::mutex> lk(mu);
         Member* m = nullptr;
-        if (Room* room = find_session_locked(sid, mid, &m)) remove_member_locked(room->id, mid, "leave_room", nullptr);
+        if (Room* room = find_session_locked(sid, mid, &m)) {
+            if (!caller_is(who, m->online_id)) return not_yours(who, "leave_room", *m);
+            remove_member_locked(room->id, mid, "leave_room", nullptr);
+        }
         return ok_reply();
     }
 
-    json::Value heartbeat(const json::Value& rq) {
+    json::Value heartbeat(const Caller& who, const json::Value& rq) {
         const std::string sid = str_of(rq, "SessionId");
         const auto mid = static_cast<std::uint16_t>(int_of(rq, "MemberId", 0));
         std::lock_guard<std::mutex> lk(mu);
         Member* m = nullptr;
         json::Value r = ok_reply();
         if (find_session_locked(sid, mid, &m)) {
+            if (!caller_is(who, m->online_id)) return not_yours(who, "heartbeat", *m);
             m->last_heartbeat_ms = now();
             r.set("InRoom", 1);
         } else {
@@ -395,7 +443,7 @@ struct PartyHostService::Impl {
         return r;
     }
 
-    json::Value kick_member(const json::Value& rq) {
+    json::Value kick_member(const Caller& who, const json::Value& rq) {
         const std::string sid = str_of(rq, "SessionId");
         const auto mid = static_cast<std::uint16_t>(int_of(rq, "MemberId", 0));
         const auto kicker = static_cast<std::uint16_t>(int_of(rq, "KickerMemberId", 0));
@@ -403,6 +451,7 @@ struct PartyHostService::Impl {
         Member* k = nullptr;
         Room* room = find_session_locked(sid, kicker, &k);
         if (!room) return error_reply(4, "not in that room");
+        if (!caller_is(who, k->online_id)) return not_yours(who, "kick_member", *k);
         if (room->owner != kicker) return error_reply(5, "only the owner kicks");
         if (!room->members.count(mid) || mid == kicker) return error_reply(6, "no such member");
         const std::string opt = str_of(rq, "OptData");
@@ -430,8 +479,9 @@ struct PartyHostService::Impl {
     }
 
     json::Value signaling_update(const Caller& who, const json::Value& rq) {
-        std::string id = str_of(rq, "OnlineId");
-        if (id.empty()) id = who.online_id;
+        std::string id;
+        json::Value err;
+        if (!caller_identity(who, rq, "signaling_update", &id, &err)) return err;
         std::lock_guard<std::mutex> lk(mu);
         Context& c = contexts[id];
         c.online_id = id;
@@ -481,9 +531,9 @@ void PartyHostService::handle(const Caller& caller, const std::string& kind, con
     if (kind == "context_start") reply = d_->context_start(caller, rq);
     else if (kind == "create_room") reply = d_->create_room(caller, rq);
     else if (kind == "join_room") reply = d_->join_room(caller, rq);
-    else if (kind == "leave_room") reply = d_->leave_room(rq);
-    else if (kind == "heartbeat") reply = d_->heartbeat(rq);
-    else if (kind == "kick_member") reply = d_->kick_member(rq);
+    else if (kind == "leave_room") reply = d_->leave_room(caller, rq);
+    else if (kind == "heartbeat") reply = d_->heartbeat(caller, rq);
+    else if (kind == "kick_member") reply = d_->kick_member(caller, rq);
     else if (kind == "signaling_resolve") reply = d_->signaling_resolve(rq);
     else if (kind == "signaling_update") reply = d_->signaling_update(caller, rq);
     else reply = error_reply(9, "unknown call " + kind);
