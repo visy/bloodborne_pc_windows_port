@@ -443,6 +443,52 @@ static void test_max_players_two() {
     CHECK(d.wait_state(LinkState::Rejected, 5000) && d.reject_code() == RejectCode::Auth);
 }
 
+// A crashed host restarted on the same port with the same secret and the member table it kept:
+// every guest gets its old slot back (a new session: not resumed), nobody is rejected.
+static void test_host_restart() {
+    Recorder hr, ar, br, h2r;
+    PartyLink* host = new PartyLink(base_cfg("Host", ""), recorder_callbacks(hr, "host"));
+    std::string err;
+    CHECK(host->start_host(&err));
+    const std::uint16_t port = host->bound_port();
+    PartyLink a(base_cfg("Alice", ""), recorder_callbacks(ar, "alice"));
+    PartyLink b(base_cfg("Bob", ""), recorder_callbacks(br, "bob"));
+    CHECK(a.start_guest("127.0.0.1", port, &err));
+    CHECK(a.wait_connected(5000));
+    CHECK(b.start_guest("127.0.0.1", port, &err));
+    CHECK(b.wait_connected(5000));
+    const int sa = a.local_slot(), sb = b.local_slot();
+    const std::vector<KeptMember> kept = host->kept_members();
+    CHECK(kept.size() == 2);
+    host->stop(false);  // the crash: no BYE
+    CHECK(a.wait_state(LinkState::Reconnecting, 3000));
+    CHECK(b.wait_state(LinkState::Reconnecting, 3000));
+    // Reversed join order on purpose: Bob first. Slots come from the kept table, not the order.
+    LinkConfig hc = base_cfg("Host", "");
+    hc.port = port;
+    PartyLink host2(hc, recorder_callbacks(h2r, "host2"));
+    host2.restore_members(kept);
+    bool up = false;
+    for (int i = 0; i < 50 && !(up = host2.start_host(&err)); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    CHECK(up);
+    CHECK(wait_for([&] { return a.state() == LinkState::Connected && b.state() == LinkState::Connected; }, 5000));
+    CHECK(a.local_slot() == sa && b.local_slot() == sb);
+    CHECK(!a.last_welcome_resumed() && !b.last_welcome_resumed());
+    CHECK(wait_for([&] {
+        int conn = 0;
+        for (const RosterEntry& e : host2.roster()) conn += e.connected;
+        return conn == 3;
+    }, 3000));
+    CHECK(h2r.rejoined.load() == 2 && h2r.joined.load() == 0);
+    // Events flow on the new streams.
+    host2.send_event(kBroadcast, "after_restart", "{}");
+    CHECK(wait_for([&] { return ar.events.load() >= 1 && br.events.load() >= 1; }, 3000));
+    std::printf("  restarted host on :%u: alice slot %d, bob slot %d back\n", port, a.local_slot(), b.local_slot());
+    a.stop();
+    b.stop();
+    host2.stop();
+}
+
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("party codes\n");
@@ -455,6 +501,8 @@ int main() {
     test_party();
     std::printf("max players 2, secret-only key\n");
     test_max_players_two();
+    std::printf("host restart: slots restored\n");
+    test_host_restart();
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     std::printf(g_failures ? "FAILED\n" : "OK\n");
     return g_failures ? 1 : 0;
