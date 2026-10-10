@@ -152,4 +152,25 @@ Evidence of the in-game runs: §7.
 
 ## 7. Verification
 
-(filled in by the runs below)
+**Single instance, the real menu** (`instances.py run --count 1`, single-player start, pad driven
+through `BB_PAD_FILE`, 2026-10-10): the title menu shows *Continue / Load Game / New Game /
+**Party** / System*; *Party* opens the page with *Status: Single player*, *New party game*, *Join
+party game* (*Set address first*), *Continue party game*, *Host address*, *Password*. Two presses on
+*Continue party game*:
+
+```
+Party flow: continue (solo, single-player save, title): Restarting into the party game (host)
+Party flow: relaunching (exit code 75, .\user\party_relaunch.bat)
+Runtime: ending with exit code 75: run.bat starts the game again
+Party: starting the party game (host)
+Patches: party co-op: Party: Skip Online/Offline Choice (Online), Party: Bells anywhere, ...
+Saves: party session with separate saves: using .\user/savedata_party (the single-player saves in .\user/savedata are not touched)
+Party: hosting on port 48000 as Hunter0; code (Internet): BBP1-0417-...
+Party: auto-continue: party link up; confirming Continue on the title (party mode)
+Party: auto-continue: world up after 2 press(es)
+Party flow: party character in the world (save slot 0): Continue party game will load it
+```
+
+party.json afterwards: the hand-written plain `"password"` became `password_dpapi`, `host_secret`
+was stored, `slot` 0. The first run (single-player) checked `user/savedata`; the restarted one
+`user/savedata_party` only.
