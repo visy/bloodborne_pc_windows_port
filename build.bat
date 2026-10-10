@@ -194,15 +194,16 @@ if "%~1"=="--test" (
     out\pad-test.exe
     if errorlevel 1 exit /b 1
 
-    out\test_runtime.exe
+    rem tests/test_runtime.c, runtime-test, uses POSIX signals: Linux only, build.sh --test.
+    cmake --build out/gpu --target sema-test content-test
     if errorlevel 1 exit /b 1
 
-    gcc -std=c11 -O2 -g -Wall -Wextra -Werror -Isrc tests/test_file_mods.c -o out/file-mods-test.exe
+    gcc -std=c11 -O2 -g -Wall -Wextra -Werror -Isrc tests/test_file_mods.c src/win32_compat.c -lws2_32 -o out/file-mods-test.exe
     if errorlevel 1 exit /b 1
     out\file-mods-test.exe
     if errorlevel 1 exit /b 1
 
-    out\test_sema.exe
+    out\sema-test.exe
     if errorlevel 1 exit /b 1
 
     out\content-test.exe

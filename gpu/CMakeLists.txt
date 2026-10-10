@@ -303,13 +303,13 @@ add_executable(scene-resolution-test EXCLUDE_FROM_ALL ../tests/test_scene_resolu
 target_include_directories(scene-resolution-test PRIVATE shim shadps4 third_party/gcn/include)
 # The test's Vulkan-Hpp inline methods have a different set of platform extensions
 # from vk_platform.cpp. Keep them local and use an explicit dispatcher in the test.
-target_compile_options(scene-resolution-test PRIVATE -UNDEBUG -fPIC)
+target_compile_options(scene-resolution-test PRIVATE -fPIC)
 set_source_files_properties(../tests/test_scene_resolution.cpp PROPERTIES
     COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
 target_link_libraries(scene-resolution-test PRIVATE bbgpu)
 add_executable(taa-shader-test EXCLUDE_FROM_ALL ../tests/test_taa_shader.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(taa-shader-test PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include)
-target_compile_options(taa-shader-test PRIVATE -UNDEBUG -fPIC)
+target_compile_options(taa-shader-test PRIVATE -fPIC)
 set_source_files_properties(../tests/test_taa_shader.cpp PROPERTIES
     COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
 target_link_libraries(taa-shader-test PRIVATE bbgpu)
@@ -317,17 +317,32 @@ add_dependencies(taa-shader-test host_shaders)
 
 add_executable(camera-motion-test EXCLUDE_FROM_ALL ../tests/test_camera_motion.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(camera-motion-test PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include)
-target_compile_options(camera-motion-test PRIVATE -UNDEBUG -fPIC)
+target_compile_options(camera-motion-test PRIVATE -fPIC)
 target_link_libraries(camera-motion-test PRIVATE bbgpu)
 add_dependencies(camera-motion-test host_shaders)
 
 add_executable(translation-memory-test EXCLUDE_FROM_ALL ../tests/test_translation_memory.cpp
     ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(translation-memory-test PRIVATE shim shadps4 third_party/gcn/include)
-target_compile_options(translation-memory-test PRIVATE -UNDEBUG -fPIC)
+target_compile_options(translation-memory-test PRIVATE -fPIC)
 set_source_files_properties(../tests/test_translation_memory.cpp PROPERTIES
     COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
 target_link_libraries(translation-memory-test PRIVATE bbgpu)
+# The Vulkan tests share bbgpu's headers, so they see them with bbgpu's configuration: NDEBUG
+# (Vulkan-Hpp's DispatchLoaderBase has an extra member without it) and, on Windows,
+# VK_USE_PLATFORM_WIN32_KHR. PE/COFF merges the tests' inline Vulkan-Hpp methods (COMDAT) with
+# bbgpu's whatever their visibility; with another DispatchLoaderDynamic layout bbgpu's dispatcher
+# was filled at the wrong offsets ("Vulkan 1.3 is required, but only 1.0 is supported by
+# instance"). The tests turn assert() back on after those headers (#undef NDEBUG).
+foreach(vulkan_test scene-resolution-test taa-shader-test camera-motion-test translation-memory-test)
+    target_compile_definitions(${vulkan_test} PRIVATE NDEBUG)
+    if (WIN32)
+        target_compile_definitions(${vulkan_test} PRIVATE VK_USE_PLATFORM_WIN32_KHR)
+    endif()
+endforeach()
+if (WIN32)
+    target_compile_definitions(motion-shader-test PRIVATE VK_USE_PLATFORM_WIN32_KHR)
+endif()
 
 # Party network library (shim/net): STUN, vport framing, the network simulator and a loopback
 # UDP exchange through the guest-facing socket functions. ninja -C out/gpu party-net-test
@@ -387,6 +402,26 @@ if (WIN32)
     target_link_options(bbport PRIVATE "-Wl,--disable-dynamicbase" "-Wl,--disable-high-entropy-va")
 endif()
 set_target_properties(bbport PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BB_OUT_DIR}")
+
+# Runtime unit tests (tests/test_sema.c, tests/test_content.c) for tests/test_sema.py and
+# tests/test_content.py, which run out/sema-test and out/content-test (build.sh --test builds them
+# on Linux). cmake --build out/gpu --target sema-test content-test
+add_executable(sema-test EXCLUDE_FROM_ALL ../tests/test_sema.c ${RUNTIME_SOURCES})
+target_include_directories(sema-test PRIVATE .. ../src)
+target_compile_options(sema-test PRIVATE -UNDEBUG)
+target_link_libraries(sema-test PRIVATE bbgpu "${CMAKE_CURRENT_SOURCE_DIR}/../out/libatrac9.a")
+add_executable(content-test EXCLUDE_FROM_ALL ../tests/test_content.c ../src/runtime_content.c)
+target_include_directories(content-test PRIVATE .. ../src)
+target_compile_options(content-test PRIVATE -UNDEBUG -Wall -Wextra)
+# -Werror for the test only: win32_compat.c redefines WIN32_LEAN_AND_MEAN (also set globally).
+set_source_files_properties(../tests/test_content.c PROPERTIES COMPILE_OPTIONS -Werror)
+target_compile_definitions(content-test PRIVATE _GNU_SOURCE)
+if (WIN32)
+    target_link_libraries(sema-test PRIVATE ws2_32 iphlpapi synchronization dbghelp ntdll winmm)
+    target_sources(content-test PRIVATE ../src/win32_compat.c)
+    target_link_libraries(content-test PRIVATE ws2_32)
+endif()
+set_target_properties(sema-test content-test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BB_OUT_DIR}")
 
 add_executable(bb-gpu-capabilities ../tools/gpu_capabilities.c)
 target_include_directories(bb-gpu-capabilities PRIVATE .. ../src)

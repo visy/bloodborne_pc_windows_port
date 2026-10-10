@@ -1,14 +1,8 @@
 #define _GNU_SOURCE
 #include <assert.h>
 #include <unistd.h>
+#include "test_portable.h"
 #ifdef _WIN32
-#include <windows.h>
-#include <fcntl.h>
-#include <stdlib.h>
-static inline int setenv(const char *name, const char *value, int overwrite) {
-    (void)overwrite;
-    return _putenv_s(name, value);
-}
 #define usleep(us) Sleep((us) / 1000)
 #endif
 #include "../src/runtime_pad.c"
@@ -48,28 +42,20 @@ static void inject(const char *path, const char *tokens) {
 }
 
 int main(void) {
-#ifdef _WIN32
-    char temp_dir[MAX_PATH];
-    GetTempPathA(sizeof(temp_dir), temp_dir);
     char path[512];
-    snprintf(path, sizeof(path), "%sbbport-pad-test-XXXXXX", temp_dir);
-#else
-    char path[]="/tmp/bbport-pad-test-XXXXXX";
-#endif
-    int fd=mkstemp(path);
-    assert(fd>=0);
-    close(fd);
-    setenv("BB_PAD_FILE",path,1);
+    const int created=bb_test_temp_file(path,sizeof(path),"bbport-pad-test-");
+    assert(created==0);
+    bb_test_setenv("BB_PAD_FILE",path);
     /* bbport.ini controls: buttons moved, a trigger as a button and a button as a trigger. */
-    char config[]="/tmp/bbport-pad-config-XXXXXX";
-    int config_fd=mkstemp(config);
-    assert(config_fd>=0);
+    char config[512];
+    const int config_created=bb_test_temp_file(config,sizeof(config),"bbport-pad-config-");
+    assert(config_created==0);
     const char controls[]="upscaler=fsr3\npad.cross=b\npad.circle=a\npad.r2=rightshoulder\n"
                           "pad.r1=righttrigger\nkey.cross=X, Space\npad.bogus=a\nmkkey.triangle=T\n";
-    assert(write(config_fd,controls,sizeof(controls)-1)==(ssize_t)(sizeof(controls)-1));
-    close(config_fd);
-    setenv("BB_CONFIG",config,1);
-    setenv("SDL_VIDEODRIVER","dummy",1);
+    const int written=bb_test_write_file(config,controls,sizeof(controls)-1);
+    assert(written==0);
+    bb_test_setenv("BB_CONFIG",config);
+    bb_test_setenv("SDL_VIDEODRIVER","dummy");
     /* Only the virtual test controller is a gamepad, whatever is plugged in. */
     SDL_SetHint(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT,"0x1d50/0x6189");
     assert(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_GAMEPAD));
@@ -120,6 +106,11 @@ int main(void) {
     SDL_UpdateGamepads();
     assert(pad_read_state(1,&data)==0 && data.touch_count==1 && data.touches[0].x==480);
     assert(SDL_SetJoystickVirtualButton(joystick,SDL_GAMEPAD_BUTTON_TOUCHPAD,false));
+    /* The capture above holds the pad neutral until everything is released (hold_after_capture,
+     * runtime_pad.c): the touchpad button was still down. Released now, input flows again. */
+    SDL_UpdateJoysticks();
+    SDL_UpdateGamepads();
+    assert(pad_read_state(1,&data)==0 && data.buttons==0);
     assert(SDL_SetJoystickVirtualButton(joystick,SDL_GAMEPAD_BUTTON_EAST,true));
     assert(SDL_SetJoystickVirtualButton(joystick,SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER,true));
     assert(SDL_SetJoystickVirtualAxis(joystick,SDL_GAMEPAD_AXIS_RIGHT_TRIGGER,32767));

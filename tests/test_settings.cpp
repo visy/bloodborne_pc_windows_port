@@ -6,8 +6,8 @@
 #include <fstream>
 #include <sstream>
 #include <string>
-#include <unistd.h>
 #include "gpu/shim/bbport_settings.h"
+#include "test_portable.h"
 
 static std::string Read(const char* path) {
     std::ifstream file(path);
@@ -17,14 +17,15 @@ static std::string Read(const char* path) {
 }
 
 int main() {
-    char path[] = "/tmp/bbport-settings-test-XXXXXX";
-    const int fd = mkstemp(path);
-    assert(fd >= 0);
+    char path[1024];
+    const int created = bb_test_temp_file(path, sizeof(path), "bbport-settings-test-");
+    assert(created == 0);
     const char ini[] = "# launcher\nupscaler=fsr3\nkey.cross=X, Space\npad.circle=a\nshow_fps=0\n"
                        "fullscreen_hint=1\n";
-    assert(write(fd, ini, sizeof(ini) - 1) == ssize_t(sizeof(ini) - 1));
-    close(fd);
-    setenv("BB_CONFIG", path, 1);
+    const int written = bb_test_write_file(path, ini, sizeof(ini) - 1);
+    assert(written == 0);
+    const int env = bb_test_setenv("BB_CONFIG", path);
+    assert(env == 0);
 
     BbSettings::Load();
     auto& s = BbSettings::Get();
@@ -47,6 +48,6 @@ int main() {
     s.menu_y = -1.0f;
     BbSettings::Load();
     assert(s.menu_x == 0.625f && s.menu_y == 0.125f && s.upscaler == BbSettings::UpscalerFsr411);
-    unlink(path);
+    std::remove(path);
     std::puts("PASS: settings save keeps other keys, menu position");
 }
