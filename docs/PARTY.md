@@ -77,9 +77,14 @@ address or port changes.
 
 The launcher shows a ✓ or ✗ hint under the code field if the name, port or code look wrong.
 
-In the game, the overlay menu (**Insert**, or **L3 + R3** if enabled) has a **Party** tab: the
-party's state, the members, the code (copy), **Rejoin**, **Leave** and, for the host, **Kick**.
-Players joining and leaving are shown as short messages.
+In the game, the game's own menu has two party pages under **System** (on the title
+screen and in the pause menu, after *Screen/Sound*): **Party** (the state and your role, *Copy party
+code* to the clipboard, *Rejoin* / *Summon again*, *Leave the party*, the join / leave notices switch
+and the last event) and **Party members** (each hunter with their state and ping; the host kicks a
+hunter by pressing left/right twice on their row). *Leave* also asks for a second press. The
+bottom line of each row explains it (the party code is shown there too). The overlay menu
+(**Insert**, or **L3 + R3** if enabled) still has the same **Party** tab. Players joining and
+leaving are shown as short messages.
 
 ## The party code
 
@@ -226,8 +231,8 @@ listed in [party/DEBUG_SWITCHES.md](party/DEBUG_SWITCHES.md).
 - **Connection lost**: the same as a host crash for the guest; it reconnects automatically
   (after 1, 2, 4, 8 seconds, then every 8 seconds).
 - Progress made while someone was away is caught up when they are back.
-- The overlay's Party tab has **Rejoin** (try again now) and **Leave** (stop; the game no longer
-  reconnects). A kicked player cannot rejoin that session.
+- *System → Party* (or the overlay's Party tab) has **Rejoin** (try again now) and **Leave** (stop;
+  the game no longer reconnects). A kicked player cannot rejoin that session.
 
 ## Four players
 
@@ -239,8 +244,8 @@ connecting has been checked (on one PC); a third helper actually summoned into a
 
 ## Troubleshooting
 
-The launcher log (and `launcher.log`) shows the game's `Party:` lines. The overlay's Party tab
-shows the state and the last error.
+The launcher log (and `launcher.log`) shows the game's `Party:` lines. *System → Party* in the
+game's menu (and the overlay's Party tab) shows the state and the last error.
 
 | Message / symptom | Cause | Fix |
 |---|---|---|
@@ -254,7 +259,7 @@ shows the state and the last error.
 | *the party is full* | Max players reached | Raise Max players (on everyone's PC) or wait. |
 | *kicked by the host* | The host kicked you | Ask the host. |
 | Guest stays at *Connecting* | The host's port is not reachable | Host: check UPnP in the log, forward UDP+TCP 9307, allow the firewall prompt; or use the LAN code / a VPN. |
-| Connected, but never summoned | The guest is still in the prologue, in a menu, or the host is in a loading screen / boss fight | Finish the prologue; wait for the next bell (every 30 s); use *Rejoin* in the overlay. |
+| Connected, but never summoned | The guest is still in the prologue, in a menu, or the host is in a loading screen / boss fight | Finish the prologue; wait for the next bell (every 30 s); use *Rejoin* (*System → Party*). |
 | No code under *Your code* | The game has not started hosting yet | Wait until the game is at the title screen; check the log for `Party:` errors. |
 | Save looks wrong after a session | - | Restore a backup (above) and report it with the logs. |
 

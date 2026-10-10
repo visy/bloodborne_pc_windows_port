@@ -652,14 +652,7 @@ void SliderRow(const char* id, const char* label, std::atomic<float>& value, flo
 }
 
 bool RestartNeeded() {
-    auto& s = BbSettings::Get();
-    bool restart = s.object_motion != s.startup_object_motion || s.model_lod != s.startup_model_lod ||
-                   s.live_resolution != s.startup_live_resolution ||
-                   s.gpl != s.startup_gpl || BbSettings::ResolutionNeedsRestart();
-    for (int e = 0; e < BbSettings::EffectCount; ++e) {
-        restart |= s.effects[e] != s.startup_effects[e];
-    }
-    return restart;
+    return BbSettings::RestartNeeded();
 }
 
 void DisplayTab() {
@@ -1265,6 +1258,13 @@ void Menu() {
         const char* version = "bbport " BBPORT_VERSION;
         const ImVec2 text = ImGui::CalcTextSize(version);
         draw->AddText(ImVec2(x0, win.y + S(39.0f) - text.y * 0.5f), Dim(0.8f), version);
+        // Every setting here is also a page of the game's own menu (bbport_game_menu_pages.cpp):
+        // this overlay is the fallback and the debugging aid.
+        ImGui::PushFont(sans_font, 14.0f);
+        const char* where = T("All settings are also pages of the game's own System menu",
+                              "Все настройки есть и в меню игры: раздел «Система»");
+        draw->AddText(ImVec2(x0, win.y + S(39.0f) + text.y * 0.5f + S(4.0f)), Gold(0.55f), where);
+        ImGui::PopFont();
     }
 
     // Title.

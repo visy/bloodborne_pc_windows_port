@@ -299,6 +299,17 @@ bool ResolutionNeedsRestart() {
          (v.upscaler == UpscalerTaa) != (v.startup_upscaler == UpscalerTaa));
 }
 
+bool RestartNeeded() {
+    const auto& s = Get();
+    bool restart = s.object_motion != s.startup_object_motion || s.model_lod != s.startup_model_lod ||
+                   s.live_resolution != s.startup_live_resolution || s.gpl != s.startup_gpl ||
+                   ResolutionNeedsRestart();
+    for (int e = 0; e < EffectCount; ++e) {
+        restart |= s.effects[e] != s.startup_effects[e];
+    }
+    return restart;
+}
+
 void Save() {
     // The menu (present or window thread) and F11 (window thread) both save.
     static std::mutex save_mutex;
