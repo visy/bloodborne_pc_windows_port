@@ -48,6 +48,9 @@ struct Facts {
     int cooperators = -1;
     bool travelling = false;
     bool bell_recent = false;        // our bell went up recently
+    // C1 campaign start (party_start.h): in the own world but not ready for summons yet.
+    bool prologue = false;
+    std::string prologue_step;       // "clinic", "first-dream" ...
 };
 
 struct Mapped {
@@ -88,6 +91,8 @@ struct TickIn {
     int session_role = -1;
     int cooperators = -1;
     int max_players = 3;
+    bool prologue = false;           // C1: this player is still in its prologue (not ready)
+    const char* prologue_step = "";  // party_start.h StartStepName
 };
 struct TickOut {
     bool ring_now = false;  // Rejoin while connected: the director's next bell goes up at once

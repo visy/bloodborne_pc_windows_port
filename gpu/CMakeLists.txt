@@ -383,6 +383,13 @@ set_target_properties(party-link-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OF
 if (WIN32)
     target_link_libraries(party-link-test PRIVATE ws2_32 iphlpapi ole32 oleaut32)
 endif()
+# Party campaign start (C1, shim/party/party_start.cpp; in bbgpu through SHIM_SOURCES): readiness,
+# bell grant plan, lobby ring decisions. ninja -C out/gpu party-start-test
+add_executable(party-start-test EXCLUDE_FROM_ALL ../tests/test_party_start.cpp shim/party/party_start.cpp)
+target_compile_options(party-start-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-start-test PRIVATE shim)
+set_target_properties(party-start-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+
 
 # Party progress sync (shim/party/party_progress, C2): keys, categories, policy, diff, JSON, BBPF
 # against a fake flag store (the game glue is compiled out). ninja -C out/gpu party-progress-test

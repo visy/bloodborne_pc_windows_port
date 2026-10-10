@@ -22,6 +22,8 @@
 
 namespace coop {
 
+struct StartFlags; // party_start.h
+
 /// Copies `n` bytes from `address`; false (nothing copied for sure) if it faults or is implausible.
 bool SafeRead(std::uint64_t address, void* out, std::size_t n);
 template <class T>
@@ -64,5 +66,28 @@ std::string MapName(std::uint32_t map_id);
 std::string Describe(const GameSnapshot& s);
 /// Writes the local player's Insight (PlayerGameData +0x84); false when there is no record.
 bool WritePlayerInsight(int insight);
+
+// ---- Campaign start (C1, docs/party/campaign_start.md). Game functions: main thread only. ----
+// Each function's first bytes are compared with the 1.09 code before the first call; a mismatch
+// turns that function off (logged once).
+//   GetEventFlagValue 0x13CFD80(EventFlagMan *0x553B100, flag, bits 1) -> 0/1
+//   SetEventFlag      0x13CFCC0(EventFlagMan, flag, on)
+//   inventory index   0x14D9E80(PlayerGameData + 0x328, type bits, id) -> index or -1 (a leaf,
+//     pure hash lookup); entry = index < [list+0x24] ? [list+0x58] + 16 i : [list+0x48] + 16 (i - n),
+//     count at entry +8 (as GiveItemDirect reads it)
+//   AwardItemLot      0x17DDC50(*0x553D6E0, lot, 0)   (EMEVD 2003[4], call 0x17C1806)
+//   GiveItemDirect    0x131CB70(0, type bits, id, n)  (EMEVD 2003[43], call 0x17C2ACB)
+
+/// The flag's value; false when it cannot be read (no EventFlagMan, code differs).
+bool ReadEventFlag(std::uint32_t flag, bool* value);
+bool WriteEventFlag(std::uint32_t flag, bool value);
+/// How many of goods `id` the local player holds: 0 = none, -1 = unknown (no record / code differs).
+int GoodsCount(std::uint32_t goods_id);
+/// The start flags and the bell counts (party_start.h).
+StartFlags ReadStartFlags();
+/// Awards item lot `lot` (with the item popup); false when the code differs or there is no player.
+bool AwardItemLot(std::uint32_t lot);
+/// Gives `count` of goods `id` directly; false when the code differs or there is no player.
+bool GiveGoods(std::uint32_t goods_id, int count);
 
 } // namespace coop

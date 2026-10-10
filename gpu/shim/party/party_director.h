@@ -8,16 +8,26 @@
 //   host:  world up, no loading screen, session idle, cooperators < max - 1 and a party member
 //          waits (roster: connected, Home or Joining)
 //            -> raise OnEvent_Call_SOS (Beckoning Bell) every BB_PARTY_RING_EVERY s
-// The local roster state (Title / Loading / Home / InHostWorld) and map go to PartyLink.
+// The local roster state (Title / Loading / Prologue / Home / InHostWorld) and map go to PartyLink.
+// Campaign start (C1, party_start.h): nothing is rung before the local player is "ready"
+// (BB_PARTY_START=prologue_solo: prologue done; immediate: opening cutscene done); until then the
+// roster state is Prologue, so the host does not ring for that member either. Once ready, in its
+// own world, the player gets the bells it lacks (BB_PARTY_GRANT_BELLS, default on).
 //
 // Env: BB_PARTY=host|join|<code> (role: host when "host" or BB_PARTY_HOST=1, else guest),
 //      BB_PARTY_MAX (2..4, default 3), BB_PARTY_RING_EVERY (s, default 30),
 //      BB_PARTY_AUTO=0 (no automatic bells: state tracking and logs only),
+//      BB_PARTY_START=prologue_solo (default) | immediate, BB_PARTY_GRANT_BELLS=0 (no bell grants),
 //      BB_PARTY_DIRECTOR_TEST=item[,item..] - offline test mode:
 //        log_state    the state every 5 s and the game's own Lua event dispatches
+//        start        the campaign start flags and bell counts every 5 s (and on each change)
+//        award_lot=N  awards item lot N once, 12 s after the world is up (grant call probe)
+//        drop_bells   removes goods 200 / 205 10 s after the world is up (PR1 probe, test saves)
+//        grant_bells  grants the missing bells once ready (also without a party / with
+//                     BB_PARTY_GRANT_BELLS=0) and logs the counts before and after
 //        insight=N    writes the player's Insight once the world is up
 //        ring_host / ring_guest  raises that bell once, BB_PARTY_DIRECTOR_TEST_DELAY s (default 10)
-//                     after the world is up, and logs what follows
+//                     after the world is up, and logs what follows (and the start flags/bells)
 #pragma once
 
 #include <cstdint>

@@ -235,8 +235,45 @@ static int test_board_and_commands() {
     return 0;
 }
 
+// C1: a player still in its prologue (party_start.h) shows that instead of "waiting for the bell".
+static int test_prologue() {
+    using party::LinkState;
+    using party::status::Role;
+    using party::status::State;
+    Facts f;
+    f.role = Role::Guest;
+    f.have_link = true;
+    f.link = LinkState::Connected;
+    f.world_up = true;
+    f.session_role = 0;
+    f.prologue = true;
+    f.prologue_step = "clinic";
+    CHECK(MapState(f).state == State::WaitingForWorld && MapState(f).detail == "prologue (clinic), solo until ready");
+    f.prologue = false;
+    CHECK(MapState(f).detail == "connected; waiting for the host's bell");
+    f.role = Role::Host;
+    f.link = LinkState::Hosting;
+    f.members_connected = 2;
+    f.max_players = 3;
+    f.prologue = true;
+    f.prologue_step = "first-dream";
+    CHECK(MapState(f).state == State::Hosting && MapState(f).detail == "2/3, prologue (first-dream), solo until ready");
+    f.session_role = 6;  // already summoned: the session wins
+    f.role = Role::Guest;
+    f.link = LinkState::Connected;
+    CHECK(MapState(f).state == State::Joined);
+    party::RosterEntry e;
+    e.name = "Hunter1";
+    e.slot = 1;
+    e.connected = true;
+    e.state = party::MemberState::Prologue;
+    const auto m = bridge::MapMembers({e}, "Hunter0", true, [](std::uint32_t) { return std::string("m24_01"); });
+    CHECK(m.size() == 1 && m[0].area == "m24_01 (prologue)" && !m[0].in_world);
+    return 0;
+}
+
 int main() {
-    if (test_map_state() || test_members() || test_board_and_commands()) return 1;
+    if (test_map_state() || test_members() || test_board_and_commands() || test_prologue()) return 1;
     std::printf("%d checks OK\n", g_checks);
     return 0;
 }
