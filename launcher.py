@@ -1063,8 +1063,9 @@ class BloodborneLauncher(tk.Tk):
 
         sec = self._section(tab, 1, "Menus, mods & patches")
         self._check(sec, "Settings in game's System menu", self.feat_game_menu,
-                    "Adds the port's settings as pages of the game's own System menu (Display / Game effects "
-                    "/ Game patches). Off leaves the game's menu untouched. Default: on (BB_GAME_MENU).")
+                    "Adds all of the port's settings as pages of the game's own System menu (Display, Effects, "
+                    "Upscaler, Performance HUD, Mouse & keyboard, Game patches, Party ...). Off leaves the "
+                    "game's menu untouched (the overlay, Insert, still has them). Default: on (BB_GAME_MENU).")
         self._check(sec, "Enable mods folder (mods/)", self.feat_mods,
                     "Loads loose-file mods from the mods\\ folder (switches and load order in mods.json); the "
                     "original game files are not modified. Default: on (BB_MODS_ENABLED).")
