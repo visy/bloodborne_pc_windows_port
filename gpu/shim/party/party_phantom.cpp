@@ -208,6 +208,16 @@ bool PhantomEventFromJsonText(const std::string& text, PhantomEvent* out, std::s
     }
 }
 
+bool SanitizePeerPhantom(const PhantomEvent& e, std::string* why) {
+    if (e.kind == PhantomEventKind::Lamp && e.lamp != kTravelNone && !TravelLampKnown(e.lamp)) {
+        if (why) {
+            *why = "lamp " + std::to_string(e.lamp) + " is not a ReturnPointParam row";
+        }
+        return false;
+    }
+    return true;
+}
+
 bool RestedFromTravel(const TravelIntent& t) {
     switch (t.kind) {
     case TravelKind::Lamp:
@@ -720,9 +730,9 @@ void PhantomOnEvent(const std::string& body) {
     const double now = Now();
     switch (e.kind) {
     case PhantomEventKind::Lamp:
-        // A lamp id the guest's game will warp to on death: only an id shaped like one.
-        if (e.lamp != kTravelNone && !TravelLampPlausible(e.lamp)) {
-            Log("host lamp %u is not a lamp id; ignored", e.lamp);
+        // A lamp id the guest's game will warp to on death (0x13CDF30): a ReturnPointParam row.
+        if (!SanitizePeerPhantom(e, &err)) {
+            Log("host %s; ignored", err.c_str());
             break;
         }
         if (g_cfg.respawn) {

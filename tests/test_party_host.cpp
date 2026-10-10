@@ -12,6 +12,7 @@
 #include "party_transport.h"
 #include "party_util.h"
 #include "gpu/bbnet.h"
+#include "party_sign_blob.h"
 
 #include <atomic>
 #include <chrono>
@@ -578,8 +579,7 @@ static void test_from_api() {
                                 R"({"MessageId":"LoginRequest"})");
     const long long guest_uid = int_of(gl, "UserId", 0);
     CHECK(guest_uid > 0 && guest_uid != host_uid);
-    std::string blob(0xE0, '\0');
-    blob[0x76] = 7;
+    const std::string blob = party_test::sign_blob("GuestA");
     json::Value cr = guest_http(
         "GuestA", "POST", "http://bbparty.invalid:18671/summon_messenger/create?user_id=" + std::to_string(guest_uid),
         R"({"MessageId":"SummonDataCreateRequest","CharaId":1,"AreaId":402718720,"AreaRegionId":1,"SummonType":0,"SummonData":")" +
@@ -858,9 +858,19 @@ static void test_impersonation() {
     // A sign the game could not read (SummonData must be 0xE0 bytes) is refused (security pass).
     CHECK(post("Alice", "/summon_messenger/create", R"({"SummonType":1,"AreaId":1,"SummonData":"AA=="})") == 200);
     CHECK(api.signs().empty());
+    // 0xE0 bytes of junk: no sender id, no map (content check, from_api_schema.md 5).
     CHECK(post("Alice", "/summon_messenger/create",
                R"({"SummonType":1,"AreaId":1,"SummonData":")" + bbnet::party::b64_encode(std::string(0xE0, 'x')) +
                    R"("})") == 200);
+    CHECK(api.signs().empty());
+    // Mallory's game cannot put up a sign that carries Alice's online id (the receivers' dedupe key).
+    CHECK(post("Mallory", "/summon_messenger/create",
+               R"({"SummonType":1,"AreaId":402718720,"SummonData":")" +
+                   bbnet::party::b64_encode(party_test::sign_blob("Alice")) + R"("})") == 200);
+    CHECK(api.signs().empty());
+    CHECK(post("Alice", "/summon_messenger/create",
+               R"({"SummonType":1,"AreaId":402718720,"MatchingLevel":50,"SummonData":")" +
+                   bbnet::party::b64_encode(party_test::sign_blob("Alice")) + R"("})") == 200);
     CHECK(api.signs().size() == 1 && api.signs()[0].online_id == "Alice");
     const std::string alice_sign = std::to_string(api.signs()[0].id);
     CHECK(post("Mallory", "/summon_messenger/delete", "{\"SummonDataId\":" + alice_sign + "}") == 200);

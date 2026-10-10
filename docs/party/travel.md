@@ -322,6 +322,15 @@ NowLoading `0x556286B == 0`, `GSM+0x08 == 0` (no pending request), role not 4/7,
 * Guest-initiated Hunter's Mark (`0x1389D20`, type 1): policy hook — either let it go home (leave party
   temporarily) or redirect to the host's last lamp (`+0x1528` from the host's PROGRESS) via the same
   rewrite.
+* **Peer validation** (`SanitizePeerTravel`, bbport security pass): every id of a host's intent is looked
+  up in tables generated from the game data (`gpu/shim/party/party_ids.inc`, `tools/party/ids_tool.py`):
+  the 0x13CDF30 ids (`lamp`, the low dwords of `respawn` / `last_lamp`, the phantom event's lamp) must be
+  **ReturnPointParam** rows (the param the lamp warp looks up: +0 area, +1 block, +4 returnPointEntityId,
+  +8 returnAnimId, `isRegistDeadReturn` 0 = Hunter's Dream; rows 1 and 9902950 have area 0 and are left
+  out); `map` and the transform's map must be existing maps (map folders and MSBs); a stage-warp point
+  must be an entity of the destination map (int32 ids AABnnnn found in that map's MSBs, plus the EMEVD
+  2003[14] / 2002 warp points), a 0x132E050 bonfire id an entity of the map it names. An unknown id
+  becomes "none" (a stage warp then uses the map's default entry; no lamp id leaves the lamp warp out).
 
 ### 3.3 Auto-rejoin and timing
 1. T0 host hook sends TRAVEL; host request ack ≈ T0+0.53 s; host room closes during its load

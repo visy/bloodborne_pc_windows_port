@@ -5,6 +5,7 @@
 // byte before anything is written. Offsets are ours (raw ELF VA). The game's code is System V:
 // every call into it goes through a BB_COOP_SYSV pointer at Guest(off).
 #include "party_story.h"
+#include "party_ids.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -175,13 +176,12 @@ bool ReplayWorthy(const StoryIntent& s) {
     }
 }
 
-bool StoryRemoPlausible(std::uint32_t remo_id) {
-    const std::uint32_t area = remo_id / 1000000, block = remo_id / 10000 % 100;
-    return remo_id < 100000000 && ((area >= 21 && area <= 28) || (area >= 32 && area <= 36)) && block < 10;
+bool StoryRemoKnown(std::uint32_t remo_id) {
+    return ids::RemoKnown(remo_id);
 }
 
 bool SanitizePeerStory(StoryIntent* s, std::string* why) {
-    if (s->kind == StoryKind::Cutscene && !StoryRemoPlausible(s->id)) {
+    if (s->kind == StoryKind::Cutscene && !StoryRemoKnown(s->id)) {
         if (why) {
             *why = "cutscene " + std::to_string(s->id) + " is not a game remo";
         }
