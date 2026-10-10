@@ -425,3 +425,9 @@ target_compile_definitions(party-fourp-test PRIVATE BB_PARTY_FOURP_NO_GAME)
 target_compile_options(party-fourp-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-fourp-test PRIVATE shim)
 set_target_properties(party-fourp-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Save policy (C5, src/runtime_savepolicy.c; in bbport through RUNTIME_SOURCES): party save folder,
+# rotating backups, save check, on temporary folders. ninja -C out/gpu save-policy-test
+add_executable(save-policy-test EXCLUDE_FROM_ALL ../tests/test_save_policy.c ../src/runtime_savepolicy.c)
+target_compile_options(save-policy-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(save-policy-test PRIVATE ../src)
+set_target_properties(save-policy-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)

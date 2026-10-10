@@ -110,6 +110,24 @@ safe points with snapshots) → C3 items/rewards (lot-to-items replay) → C4 cu
 (Dream summon rejection, ending flags/EMEVD replay) → C5 save policy (separate party saves,
 backups, world reset on rest), 4 players (presentation table has 5 slots; coop cap RE).
 
+**C5 save policy (done: folder, backups, check; world reset on rest open):**
+`src/runtime_savepolicy.c` / `save_policy.h`. `BB_PARTY=host|join` + `BB_PARTY_SAVE=separate`
+(launcher default; the runtime default without it is shared, so test harnesses keep using
+`user\savedata`) maps every save path (`root()`, memory.dat, the sound hack) to
+`user\savedata_party`. The launcher (`scripts/party_saves.py`) offers the explicit copy of
+`user\savedata` on the first separate-save launch and has a copy button; the copy goes through
+a `.copying` folder and backs up a replaced party save. At start the runtime checks the folder
+(userdata0000-0009 = 0x140000 bytes, userdata0010/backup0010 = 0x40000 and not all zeros,
+param.bin = 1328; vs the newest good backup: emptied slots, lost files, changed headers) and,
+in a party session (`BB_SAVE_BACKUP=1` forces it), copies it to
+`user\save_backups\<folder>\<time>-start|restart|timer[-NN][-suspect]` at start and every
+`BB_SAVE_BACKUP_MINUTES` (10). Copies are taken only after 5 quiet seconds and discarded if
+`runtime_file_save_activity` (generation of /savedataN changes, open save writers) moved
+during the copy; a copy is written as `.partial` and renamed when complete; identical copies
+are dropped; a copy failing the check is `-suspect` with its own quota (`BB_SAVE_BACKUP_KEEP`,
+10), so a crash-restart with a damaged save never rotates good backups away. Tests:
+`ninja -C out/gpu save-policy-test`, `tests/test_party_saves.py`.
+
 Tests on one PC: `tools/mp/instances.py` (separate instance folders, 30 fps, VRAM cap),
 `tools/party/*` (pad driver, simguest from bbhost simclient, verdict, flag diff). Two-PC tests
 wait for the user's go-ahead.

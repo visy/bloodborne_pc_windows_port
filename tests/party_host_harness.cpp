@@ -216,6 +216,12 @@ LinkCallbacks make_callbacks(bool trace) {
         }
         json::Value req, reply;
         std::string err;
+        if (caller.online_id.empty()) {  // no authenticated roster name: it cannot act as anyone
+            reply = json::Value::make_object();
+            reply.set("ResKind", 7);
+            reply.set("Error", "caller not authenticated");
+            return json::dump(reply, 0);
+        }
         if (!json::parse(body, req, err)) {
             reply = json::Value::make_object();
             reply.set("ResKind", 1);

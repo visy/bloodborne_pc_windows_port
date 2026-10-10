@@ -169,6 +169,15 @@ def read_party_code() -> str:
     return next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
 
 
+def party_saves_module():
+    """scripts\\party_saves.py: the separate party save folder helpers."""
+    scripts_dir = str(APP_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import party_saves
+    return party_saves
+
+
 def party_env(s: dict) -> dict:
     """BB_PARTY_* environment from launcher settings; party off unsets every variable."""
     keys = ["BB_PARTY", "BB_PARTY_NAME", "BB_PARTY_PORT", "BB_PARTY_CODE", "BB_PARTY_PASSWORD",
@@ -1177,11 +1186,22 @@ class BloodborneLauncher(tk.Tk):
                                   "Default: on (BB_PARTY_SEAMLESS).",
                                   command=self.save_settings)
         save_cb = self._check(sec, "Separate party saves", self.party_separate_save,
-                              "Party play uses its own save slot, so your single-player save is never "
-                              "touched by a party session; the game keeps backups of the party save "
-                              "next to it. Off (shared): the party plays on your normal save, so make "
-                              "your own backup first. Default: on (BB_PARTY_SAVE=separate|shared).",
+                              "Party play uses its own save folder (user\\savedata_party), so your "
+                              "single-player save (user\\savedata) is never touched by a party session. "
+                              "The first time, the launcher offers to copy your single-player save. "
+                              "Off (shared): the party plays on your normal save. Either way the game "
+                              "backs up the save at every party start and every 10 minutes "
+                              "(user\\save_backups, newest 10 kept; README.txt there explains restoring). "
+                              "Default: on (BB_PARTY_SAVE=separate|shared).",
                               command=self.save_settings)
+        copy_btn = ttk.Button(sec, text="Copy single-player save to party save", style="Secondary.TButton",
+                              command=self.copy_solo_save_to_party)
+        copy_btn.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(4, 2))
+        sec.next_row += 1
+        Tooltip(copy_btn, "Copies user\\savedata (your single-player characters) to user\\savedata_party, "
+                          "the folder party sessions with separate saves play from. Your single-player "
+                          "save is only read. An existing party save is backed up to "
+                          "user\\save_backups\\savedata_party first.")
         self.party_test_btn = None
         if MP_INSTANCES.is_file():
             self.party_test_btn = ttk.Button(sec, text="Local test (2 instances)", style="Secondary.TButton",
@@ -1347,6 +1367,64 @@ class BloodborneLauncher(tk.Tk):
         if text:
             self.party_code_var.set(text)
             self.save_settings()
+
+    def copy_solo_save_to_party(self, ask=True) -> bool:
+        """Explicit copy of the single-player save into the party save folder (party_saves.py)."""
+        if self.proc is not None:
+            messagebox.showwarning("Game running", "Close the game before copying saves.")
+            return False
+        try:
+            ps = party_saves_module()
+        except ImportError as ex:
+            messagebox.showerror("Party save", f"scripts\\party_saves.py is missing:\n{ex}")
+            return False
+        user = party_user_dir()
+        if not ps.has_saves(user / ps.SOLO):
+            messagebox.showinfo("Party save", f"There is no single-player save to copy in:\n{user / ps.SOLO}")
+            return False
+        replace = ps.has_saves(user / ps.PARTY)
+        if replace and not messagebox.askyesno(
+                "Replace the party save?",
+                f"{user / ps.PARTY} already has a party save.\n\nReplace it with a copy of your "
+                f"single-player save? The current party save is first backed up to "
+                f"{user / ps.BACKUPS / ps.PARTY}."):
+            return False
+        if ask and not replace and not messagebox.askokcancel(
+                "Copy single-player save",
+                f"Copy {user / ps.SOLO} to {user / ps.PARTY}?\n\nYour single-player save is only read."):
+            return False
+        try:
+            backup = ps.copy_solo_to_party(user, replace=replace)
+        except (OSError, ValueError) as ex:
+            messagebox.showerror("Party save", f"The copy failed; nothing was changed:\n{ex}")
+            return False
+        self.log(f"[PARTY] Copied {user / ps.SOLO} to {user / ps.PARTY}"
+                 + (f" (the old party save is in {backup})" if backup else ""))
+        return True
+
+    def offer_party_save_copy(self, env) -> bool:
+        """First party session with separate saves: offer the copy. False: do not launch."""
+        if not env.get("BB_PARTY") or env.get("BB_PARTY_SAVE") != "separate":
+            return True
+        try:
+            ps = party_saves_module()
+        except ImportError:
+            return True
+        user = party_user_dir()
+        if not ps.should_offer_copy(user):
+            return True
+        answer = messagebox.askyesnocancel(
+            "Party save",
+            "Party sessions use their own save folder (Separate party saves), and it is empty.\n\n"
+            f"Copy your single-player save ({user / ps.SOLO}) into the party save folder "
+            f"({user / ps.PARTY})? Your single-player save is only read, never changed.\n\n"
+            "Yes: copy it and start\nNo: start with an empty party save (a new character)\n"
+            "Cancel: do not start")
+        if answer is None:
+            return False
+        if answer:
+            return self.copy_solo_save_to_party(ask=False)
+        return True
 
     def run_party_local_test(self):
         if self.party_test_running:
@@ -2157,6 +2235,9 @@ class BloodborneLauncher(tk.Tk):
             else:
                 env[key] = value
         env["BB_GAME_DIR"] = str(game_dir)
+        if not self.offer_party_save_copy(env):
+            self.log("[PARTY] Not started (party save copy cancelled).")
+            return
         res_choice = self.res_var.get() if self.feat_res_scaling.get() else "Native (1080p, scaling off)"
         active_patches = sorted(list(self.enabled_patches))
 
