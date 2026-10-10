@@ -137,6 +137,13 @@ public:
                (work_retired || !use_retired || Libraries::GnmDriver::SubmitLockOnDecode());
     }
 
+    /// bbport: everything submitted so far is decoded and its work retired (with honest labels:
+    /// the GPU has executed it and written its labels). For waits that want the GPU to catch up
+    /// (BbStability: the GX resource-table block reclaim).
+    bool CaughtUp() const {
+        return num_submits == 0 && work_retired;
+    }
+
     void SetVoPort(Libraries::VideoOut::VideoOutPort* port) {
         vo_port = port;
     }

@@ -235,6 +235,9 @@ bool SubmitLockOnDecode();
 void ReleaseSubmissionLock();
 /// The GPU has finished everything up to the `frames`th sceGnmSubmitDone (BB_SUBMIT_LOCK=decode).
 void NoteFramesRetired(u64 frames);
+/// bbport: the command processor has decoded everything submitted and the GPU has retired it
+/// (Liverpool::CaughtUp); true when there is no GPU.
+bool GpuCaughtUp();
 int PS4_SYSV_ABI sceGnmUnmapComputeQueue(u32 vqid);
 int PS4_SYSV_ABI sceGnmUnregisterAllResourcesForOwner();
 int PS4_SYSV_ABI sceGnmUnregisterOwnerAndResources();

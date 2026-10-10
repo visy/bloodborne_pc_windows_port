@@ -247,5 +247,6 @@ Special thanks to the original creators and open source projects that made this 
 - **Thealexbarney**: LibAtrac9 audio decoding library.
 - **ocornut**: Dear ImGui library for the in-game settings overlay.
 - **Supermedo** and **IFreemz**: DLSS bridge.
+- **droogie and the bbhost team** ([bbhost](https://github.com/droogie/bbhost), GPL-3.0-or-later): the long-session stability fixes in `gpu/shim/bbport_stability.cpp` and `gpu/shim/bbport_ribbons.cpp` (heap size table growth, GX resource-table reclaim wait, frame-pool borrow fix, red-zone-free effect ribbon writers, blend write-mask fix, 6 GiB direct memory) come from or follow bbhost.
 - **Community Patch Authors**: Kyo, Lance McDonald, illusion, emoose, auser1337, and contributors for the 60 FPS, camera, and engine patches.
 - **zackcage6**: testing and bug reporting.
