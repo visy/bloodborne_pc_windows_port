@@ -164,7 +164,7 @@ private:
 #ifndef BB_PARTY_ITEMS_NO_GAME
 /// bbgpu_patch_image, once, after coop::HooksInit (party mode only): the award hook and the
 /// parity patches (byte-verified; a mismatch is logged and that site skipped). Registers
-/// OnHostFlagSet with C2 when party_progress.h is present.
+/// OnHostFlagSet as C2's item-flag observer (progress::SetItemFlagObserver).
 void InstallItemsPatches();
 /// Host: C2 reports a host item-pickup flag 0 -> 1 (any thread).
 void OnHostFlagSet(std::uint32_t flag);
