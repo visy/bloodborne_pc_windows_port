@@ -12,10 +12,12 @@
 #include "party_fourp.h"
 #include "party_link.h"
 #include "party_story.h"
+#include "party_catchup.h"
 #include "party_status_bridge.h"
 #include "party_chalice.h"
 #include "party_items.h"
 #include "party_npc_test.h"
+#include "party_guestsvc.h"
 #include "party_phantom.h"
 #include "party_start.h"
 #include "party_runtime.h"
@@ -1344,6 +1346,8 @@ PartyRole PartyDirector::Role() const {
     return st.role;
 }
 
+bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_point now);
+
 void PartyDirector::Tick() {
     State& st = S();
     const auto now = Clock::now();
@@ -1400,12 +1404,16 @@ void PartyDirector::Tick() {
     }
     // Test aids: scripted new game, prologue fast-forward (test_newgame.h).
     NewGameTestTick(s, TitleReadyForInput(role, link));
+    // Late joiner catch-up (party_catchup.h): a guest behind the host is brought up to it and
+    // gathered at the host's lamp before any summon.
+    CatchupTick(s, role == PartyRole::Guest && link && link->state() == party::LinkState::Connected,
+                Seconds(st.start, now));
     // C1: the campaign start (readiness, bells).
     if (full || !st.start_logged) {
         perf::Scope z(perf::Zone::DirStart);
         UpdateStart(st, s, start_mode);
         if (((grant_bells && role != PartyRole::None) || st.test.grant_bells) && st.world_seen &&
-            Seconds(st.world_at, now) >= std::min(5.0, st.ring_delay) && !PrologueSkipBusy()) {
+            Seconds(st.world_at, now) >= std::min(5.0, st.ring_delay) && !PrologueSkipBusy() && !CatchupBusy()) {
             GrantBells(st, s);
         }
     }
@@ -1486,6 +1494,7 @@ void PartyDirector::Tick() {
     }
     // B2 (party_b2.h): guest "arrived" / host notes.
     if (link) {
+        b2::SetLocalSlot(link->local_slot());
         int b2slot = party::kBroadcast;
         std::string b2body;
         while (b2::PopOutgoing(&b2slot, &b2body)) {
@@ -1509,6 +1518,8 @@ void PartyDirector::Tick() {
     // Insight in (party_phantom.h).
     zone.Next(perf::Zone::Phantom);
     PhantomTick(link);
+    // Guests use the Doll, shops and workshop in the host's Dream (party_guestsvc.h).
+    GuestServicesTick(s, link);
     zone.Next(perf::Zone::DirRing);
     if (st.test.on) {
         RunTravelSteps(st, s, role, now);
@@ -1571,7 +1582,7 @@ void PartyDirector::Tick() {
     // 3- / 4-player party (HostMayRing checks the count).
     if (!st.auto_ring || role == PartyRole::None || !link || !s.world_up || s.loading || !st.world_seen ||
         Seconds(st.world_at, now) < st.ring_delay || !SessionMayRing(role == PartyRole::Host, s.session_role) ||
-        PrologueSkipBusy()) {
+        PrologueSkipBusy() || CatchupBusy()) {
         return;
     }
     if (st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {
@@ -1584,6 +1595,9 @@ void PartyDirector::Tick() {
             return; // C4: a cutscene / ending replay first, then the rejoin
         }
         if (GuestMayRing(st.start_ready, link->state() == party::LinkState::Connected)) {
+            if (GatherGuest(s, link, now)) {
+                return; // travelling to the host's lamp in its own world first; ring there
+            }
             Ring(st, kGuestBell, "guest, ready and idle in its own world", now);
         }
     } else {
@@ -1628,6 +1642,45 @@ std::string PartyLogStamp() {
     return b;
 }
 
+/// Gather (BB_PARTY_GATHER, default on): before a guest rings, its own world goes to the host's
+/// last lamp when the host's map (roster slot 0) is another area/block than the guest's own, so
+/// the summon brings it into the host's map and "home" always follows the host (a fresh session,
+/// or after any return home). The lamp id is the host's last lamp (party_phantom / travel
+/// events: GuestDeathRedirectLamp). One gather per 90 s; logs why it does or does not run.
+bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_point now) {
+    static const bool on = !(std::getenv("BB_PARTY_GATHER") && std::getenv("BB_PARTY_GATHER")[0] == '0');
+    static Clock::time_point last{};
+    static bool ever = false;
+    if (!on || !link || !s.world_up || s.loading || s.session_role != RoleIdle) {
+        return false;
+    }
+    std::uint32_t host_map = 0;
+    for (const party::RosterEntry& e : link->roster()) {
+        if (e.slot == party::kHostSlot) {
+            host_map = e.map_id;
+        }
+    }
+    const std::uint32_t lamp = GuestDeathRedirectLamp();
+    if (!host_map || host_map == 0xffffffffu || s.map_id == 0xffffffffu || lamp == kTravelNone || lamp == 0) {
+        return false;
+    }
+    if ((host_map >> 16) == (s.map_id >> 16)) {
+        // Same area / block: the summon lands in the host's map; step aside first (B2 spacing).
+        return b2::GuestPreRing(s, host_map);
+    }
+    if (ever && Seconds(last, now) < 90.0) {
+        return false;
+    }
+    ever = true;
+    last = now;
+    TravelIntent t;
+    t.kind = TravelKind::Lamp;
+    t.lamp_id = lamp;
+    Log("gather: own world %s, host in %s; to the host's last lamp %u before ringing", MapName(s.map_id).c_str(),
+        MapName(host_map).c_str(), lamp);
+    return ReplayTravelNow(t);
+}
+
 bool PartyRequested() {
     const char* t = std::getenv("BB_PARTY_DIRECTOR_TEST");
     const char* i = std::getenv("BB_PARTY_ITEMS_TEST"); // C3 single-instance check
@@ -1649,7 +1702,8 @@ void CoopTick() {
     z.Next(Zone::Story);
     StoryTick(); // C4 cutscenes / endings (party_story.h)
     z.Next(Zone::Items);
-    ItemsTick(); // C3 guest item replay (party_items.h)
+    ItemsTick();    // C3 guest item replay (party_items.h)
+    GameSaveTick(); // save requests after summoned writes (game_state.h)
     z.Next(Zone::Seamless);
     SeamlessRulesTick(); // A6 param rules, EMEVD filter stats (seamless_rules.h)
     z.Next(Zone::Fourp);
@@ -1680,6 +1734,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     InstallStoryHooks();    // C4: bank-2002 capture, guest mirror / replay (byte-verified)
     InstallItemsPatches();  // C3: award hook, parity patches (byte-verified)
     PhantomInit();          // guest respawn at the host's lamp, refill, boss Insight
+    GuestServicesInit();    // guest Doll / shops / workshop in the host's Dream (byte-verified)
     g_tick_installed = HookPrologue(kFlipperUpdate,
                                     {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48,
                                      0x83, 0xec, 0x38},

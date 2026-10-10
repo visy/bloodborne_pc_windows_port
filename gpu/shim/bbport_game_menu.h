@@ -23,6 +23,10 @@ std::int64_t TextSeenMs(const char* needle);
 /// Every recent lookup's text looked up after `since_ms` (test aids' text logs).
 void RecentTexts(std::int64_t since_ms, void (*fn)(const char16_t* text, std::int64_t ms, void* user), void* user);
 
+/// The steady-clock ms of the last lookup of message `id` (any category), 0 when never; shown
+/// texts are looked up every frame, so "within the last ~300 ms" = on screen (test aids).
+std::int64_t LastLookupMs(std::uint32_t id);
+
 /// Applies what the player changed on the port's pages (each presented frame).
 void Poll();
 } // namespace BbGameMenu

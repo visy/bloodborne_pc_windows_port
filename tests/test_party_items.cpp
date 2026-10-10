@@ -341,6 +341,197 @@ static void test_ledger_seed() {
     CHECK(kItemLedgerSeeded == kItemLedgerBase + kItemLedgerSize - 1);
 }
 
+
+static ItemApplyState Summoned() {
+    ItemApplyState s;
+    s.world_up = true;
+    s.load_mode = 1;
+    s.own_world = 0;
+    s.session_role = 6;
+    s.game_data = true;
+    return s;
+}
+
+static LotRowData Row(std::int32_t lot, std::int32_t flag) {
+    LotRowData r;
+    r.lot = lot;
+    r.flag = flag;
+    for (int i = 0; i < 8; ++i) {
+        r.category[i] = 0xffffffffu;
+    }
+    return r;
+}
+
+static void Slot(LotRowData* r, int i, std::uint32_t cat, std::int32_t id, int num, int base) {
+    r->category[i] = cat;
+    r->id[i] = id;
+    r->num[i] = static_cast<std::uint8_t>(num);
+    r->base[i] = static_cast<std::uint16_t>(base);
+}
+
+static void test_summoned_gate() {
+    CHECK(ItemSummonedApplyAllowedNow(Summoned()));
+    CHECK(ItemApplyModeNow(Summoned()) == ItemApplyMode::Summoned);
+    CHECK(ItemApplyModeNow(Home()) == ItemApplyMode::Home);
+    ItemApplyState s = Summoned();
+    s.load_mode = 0; // flag store not switched yet: neither
+    CHECK(ItemApplyModeNow(s) == ItemApplyMode::None);
+    s = Summoned();
+    s.session_role = 4; // joining
+    CHECK(ItemApplyModeNow(s) == ItemApplyMode::None);
+    s = Summoned();
+    s.loading = true;
+    CHECK(ItemApplyModeNow(s) == ItemApplyMode::None);
+    s = Summoned();
+    s.game_data = false;
+    CHECK(ItemApplyModeNow(s) == ItemApplyMode::None);
+}
+
+static void test_plan() {
+    auto none = [](std::int32_t) { return false; };
+    // Treasure: one row, one slot (Hunter Chief Emblem style).
+    LotRowData t = Row(2400450, 52400450);
+    Slot(&t, 0, 4, 4002, 1, 100);
+    LotPlan p = PlanSummonedLot({t}, {}, none);
+    CHECK(p.result == LotPlanResult::Give && p.items.size() == 1);
+    CHECK(p.items[0] == (GrantItem{4, 4002, 1}));
+    CHECK(p.row_flags == std::vector<std::int32_t>{52400450});
+    // lotItemNum 0 counts as 1; a count is taken as is.
+    t.num[0] = 0;
+    CHECK(PlanSummonedLot({t}, {}, none).items[0].count == 1);
+    t.num[0] = 3;
+    CHECK(PlanSummonedLot({t}, {}, none).items[0].count == 3);
+    // A chain (cap + garb) with a second row of its own flag already held: only the first.
+    LotRowData a = Row(2110010, 52110010), b = Row(2110011, 52110011);
+    Slot(&a, 0, 1, 230000, 1, 100);
+    Slot(&b, 0, 1, 231000, 1, 100);
+    p = PlanSummonedLot({a, b}, {}, [](std::int32_t f) { return f == 52110011; });
+    CHECK(p.result == LotPlanResult::Give && p.items.size() == 1 && p.items[0].id == 230000);
+    CHECK(p.row_flags == std::vector<std::int32_t>{52110010});
+    p = PlanSummonedLot({a, b}, {}, none);
+    CHECK(p.items.size() == 2 && p.row_flags.size() == 2);
+    // A blood gem: own world only.
+    LotRowData g = Row(17000, 50000200);
+    Slot(&g, 0, 8, 10001, 1, 100);
+    CHECK(PlanSummonedLot({g}, {}, none).result == LotPlanResult::Unsupported);
+    // A random row without the host's list: own world only; with a matching list: that list.
+    LotRowData r = Row(22502610, -1);
+    Slot(&r, 0, 4, 1000, 2, 50);
+    Slot(&r, 1, 4, 900, 5, 50);
+    CHECK(PlanSummonedLot({r}, {}, none).result == LotPlanResult::Random);
+    CHECK(LotChainRandom({r}) && !LotChainRandom({t}));
+    p = PlanSummonedLot({r}, {{4, 900, 5}}, none);
+    CHECK(p.result == LotPlanResult::Give && p.items.size() == 1 && p.items[0].id == 900);
+    // A host list naming an item the lot cannot give, or a higher count: ignored (rows decide).
+    CHECK(PlanSummonedLot({r}, {{4, 4114, 1}}, none).result == LotPlanResult::Random);
+    CHECK(PlanSummonedLot({r}, {{4, 900, 6}}, none).result == LotPlanResult::Random);
+    CHECK(PlanSummonedLot({t}, {{4, 4002, 1}, {4, 4002, 1}}, none).items.size() == 1); // 2 items, 1 row
+    // The host's capture of a deterministic lot is used as is.
+    p = PlanSummonedLot({t}, {{4, 4002, 2}}, none);
+    CHECK(p.why == "host's item list" && p.items[0].count == 2);
+    // An empty deterministic row gives nothing but still counts (its flag is set).
+    LotRowData e = Row(5000, 50005000);
+    e.base[0] = 100; // id 0: "nothing"
+    p = PlanSummonedLot({e}, {}, none);
+    CHECK(p.result == LotPlanResult::Give && p.items.empty() && p.row_flags.size() == 1);
+    CHECK(PlanSummonedLot({}, {}, none).result == LotPlanResult::Missing);
+    // The host's roll: always a slot of the row, the same for the same seed.
+    for (std::uint64_t seed = 1; seed < 200; ++seed) {
+        const std::vector<GrantItem> rolled = RollLotChain({r}, seed);
+        CHECK(rolled.size() == 1 && (rolled[0].id == 1000 || rolled[0].id == 900));
+        CHECK(rolled == RollLotChain({r}, seed));
+        CHECK(PlanSummonedLot({r}, rolled, none).result == LotPlanResult::Give);
+    }
+    std::set<std::int32_t> seen;
+    for (std::uint64_t seed = 1; seed < 200; ++seed) {
+        seen.insert(RollLotChain({r}, seed)[0].id);
+    }
+    CHECK(seen.size() == 2);
+    CHECK(GrantCategorySupported(0) && GrantCategorySupported(4) && !GrantCategorySupported(8) &&
+          !GrantCategorySupported(3));
+}
+
+static void test_items_json() {
+    ItemGrant g{5, 22502610, kItemNone, 30, ItemSource::Award};
+    g.items = {{4, 900, 5}, {0, 12080000, 1}};
+    std::vector<ItemGrant> out;
+    std::string err;
+    CHECK(ItemsFromJsonText(ItemsToJsonText({g}), &out, &err));
+    CHECK(out.size() == 1 && out[0].items == g.items);
+    // Old rows (5 elements) still parse, with no items.
+    CHECK(ItemsFromJsonText(R"({"items":[[1,2400450,52400450,-1,"flag"]]})", &out, &err) && out[0].items.empty());
+    // Bad item lists are refused.
+    CHECK(!ItemsFromJsonText(R"({"items":[[1,2400450,52400450,-1,"flag",[[8,1,1]]]]})", &out, &err));
+    CHECK(!ItemsFromJsonText(R"({"items":[[1,2400450,52400450,-1,"flag",[[4,0,1]]]]})", &out, &err));
+    CHECK(!ItemsFromJsonText(R"({"items":[[1,2400450,52400450,-1,"flag",[[4,1,0]]]]})", &out, &err));
+    CHECK(!ItemsFromJsonText(R"({"items":[[1,2400450,52400450,-1,"flag",[[4,1,256]]]]})", &out, &err));
+    CHECK(!ItemsFromJsonText(R"({"items":[[1,2400450,52400450,-1,"flag",[[4,1]]]]})", &out, &err));
+    CHECK(!ItemsFromJsonText(R"({"items":[[1,2400450,52400450,-1,"flag",{"a":1}]]})", &out, &err));
+    CHECK(!ItemsFromJsonText(R"({"items":[[1,2400450,52400450,-1,"flag",[[-4,1,1]]]]})", &out, &err));
+    std::string many = R"({"items":[[1,2400450,52400450,-1,"flag",[)";
+    for (int i = 0; i < 17; ++i) {
+        many += std::string(i ? "," : "") + "[4,1000,1]";
+    }
+    many += "]]]}";
+    CHECK(!ItemsFromJsonText(many, &out, &err));
+}
+
+static void test_guest_summoned() {
+    GuestItems q;
+    std::vector<ItemGrant> in = {{1, 2400450, 52400450, kItemNone, ItemSource::Flag},
+                                 {2, 17000, 50000200, kItemNone, ItemSource::Flag},
+                                 {3, 31000, kItemNone, 25, ItemSource::Award}};
+    CHECK(q.Offer(in) == 3);
+    double t = 100.0;
+    std::optional<ItemGrant> g;
+    int got_at = -1;
+    for (int i = 0; i < GuestItems::kStableTicks + 5 && !g; ++i) {
+        g = q.Step(Summoned(), t);
+        t += 0.016;
+        got_at = i;
+    }
+    // Summoned: the same 90-frame settle, then in order.
+    CHECK(got_at == GuestItems::kStableTicks - 1);
+    CHECK(g && g->lot == 2400450 && q.LastMode() == ItemApplyMode::Summoned);
+    q.Done(g->Key());
+    q.Awarded(t);
+    // The spacing / calm rules hold while summoned too.
+    CHECK(!q.Step(Summoned(), t + 1));
+    ItemApplyState fight = Summoned();
+    fight.calm = false;
+    CHECK(!q.Step(fight, t + GuestItems::kSpacing + 1));
+    t += GuestItems::kSpacing + 2;
+    g = q.Step(Summoned(), t);
+    CHECK(g && g->lot == 17000);
+    // A blood gem lot: deferred to the own world; the next one is not blocked by it.
+    q.Defer(*g);
+    CHECK(q.HomeOnly() == 1 && q.Pending() == 2);
+    g = q.Step(Summoned(), t + 0.016);
+    CHECK(g && g->lot == 31000);
+    q.Done(g->Key());
+    // Nothing else while summoned (the deferred one waits), however long.
+    for (int i = 0; i < 300; ++i) {
+        t += 0.1;
+        CHECK(!q.Step(Summoned(), t));
+    }
+    // A mark arriving while summoned goes first and is applied at once (own pool).
+    CHECK(q.Offer({{0, 43710, 50002560, kItemNone, ItemSource::Mark}}) == 1);
+    g = q.Step(Summoned(), t);
+    CHECK(g && g->source == ItemSource::Mark);
+    q.Done(g->Key());
+    // Home: the deferred lot comes (after the gate settles in the new mode).
+    g.reset();
+    for (int i = 0; i < GuestItems::kStableTicks + 5 && !g; ++i) {
+        t += 0.016;
+        g = q.Step(Home(), t);
+    }
+    CHECK(g && g->lot == 17000 && q.LastMode() == ItemApplyMode::Home);
+    q.Done(g->Key());
+    CHECK(q.Pending() == 0 && q.HomeOnly() == 0);
+    // Done keys stay done (a resent full list after a rejoin).
+    CHECK(q.Offer(in) == 0);
+}
+
 int main() {
     test_tables();
     test_fit();
@@ -351,6 +542,10 @@ int main() {
     test_host();
     test_gate();
     test_guest();
+    test_summoned_gate();
+    test_plan();
+    test_items_json();
+    test_guest_summoned();
     std::printf("party-items-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

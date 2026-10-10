@@ -534,11 +534,12 @@ endif()
 # trap mode and libstdc++ assertions (MinGW GCC has no ASan).
 set(PARTY_FUZZ_SOURCES ../tests/party_fuzz.cpp ${PARTY_NET_SOURCES} ${PARTY_LINK_SOURCES}
     third_party/monocypher/monocypher.c shim/party/party_travel.cpp shim/party/party_story.cpp
-    shim/party/party_items.cpp shim/party/party_phantom.cpp shim/party/party_progress.cpp)
+    shim/party/party_items.cpp shim/party/party_phantom.cpp shim/party/party_progress.cpp
+    shim/party/party_guestsvc.cpp)
 foreach(fuzz_target party-fuzz party-security-test party-fuzz-ubsan)
     add_executable(${fuzz_target} EXCLUDE_FROM_ALL ${PARTY_FUZZ_SOURCES})
     target_compile_definitions(${fuzz_target} PRIVATE BB_PARTY_TRAVEL_NO_GAME BB_PARTY_STORY_NO_GAME
-        BB_PARTY_ITEMS_NO_GAME BB_PARTY_PHANTOM_NO_GAME BB_PARTY_PROGRESS_NO_GAME)
+        BB_PARTY_ITEMS_NO_GAME BB_PARTY_PHANTOM_NO_GAME BB_PARTY_PROGRESS_NO_GAME BB_PARTY_GUESTSVC_NO_GAME)
     target_compile_options(${fuzz_target} PRIVATE -UNDEBUG -Wall -Wextra)
     target_include_directories(${fuzz_target} PRIVATE shim shim/net ..)
     set_target_properties(${fuzz_target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
@@ -594,6 +595,15 @@ target_compile_definitions(party-phantom-test PRIVATE BB_PARTY_PHANTOM_NO_GAME B
 target_compile_options(party-phantom-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-phantom-test PRIVATE shim)
 set_target_properties(party-phantom-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Party guest services (shim/party/party_guestsvc.cpp; in bbgpu through SHIM_SOURCES): the gate and
+# record logic (BB_PARTY_GUESTSVC_NO_GAME). ninja -C out/gpu party-guestsvc-test
+add_executable(party-guestsvc-test EXCLUDE_FROM_ALL ../tests/test_party_guestsvc.cpp shim/party/party_guestsvc.cpp
+    shim/party/party_phantom.cpp shim/party/party_travel.cpp shim/net/json.cpp)
+target_compile_definitions(party-guestsvc-test PRIVATE BB_PARTY_GUESTSVC_NO_GAME BB_PARTY_PHANTOM_NO_GAME
+    BB_PARTY_TRAVEL_NO_GAME)
+target_compile_options(party-guestsvc-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-guestsvc-test PRIVATE shim)
+set_target_properties(party-guestsvc-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Four-player rules (shim/party/party_fourp.cpp; in bbgpu through SHIM_SOURCES): the pure parts
 # (BB_PARTY_FOURP_NO_GAME). ninja -C out/gpu party-fourp-test
 add_executable(party-fourp-test EXCLUDE_FROM_ALL ../tests/test_party_fourp.cpp shim/party/party_fourp.cpp)

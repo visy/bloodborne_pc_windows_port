@@ -15,6 +15,7 @@
 
 #include "coop_hooks.h"
 #include "game_state.h"
+#include "party_guestsvc.h"
 #include "party_phantom.h"
 #include "party_travel.h"
 
@@ -318,6 +319,12 @@ ParamRule g_param_rules[] = {
      "EQUIP_PARAM_GOODS_ST", 0x6c, 100, 0x44, 1, 67.0f, 87.0f, "BB_PARTY_GUEST_MARK", true},
     {"Bold Hunter's Mark for phantoms (EquipParamGoods 1400 enable_white / enable_multi)", "EquipParamGoods",
      "EQUIP_PARAM_GOODS_ST", 0x6c, 1400, 0x44, 1, 195.0f, 215.0f, "BB_PARTY_GUEST_MARK", true},
+    // Guest services (guest_services.md 2.4): on a client, chr creation 0x18E4F94..0x18E4FDC turns an
+    // NPC whose NpcParam has isChangeWanderGhost (byte 0x145 bit 7) into a wandering ghost (chr type
+    // 4: translucent, no collision, no talk). The Doll (NpcParam 803000, 1.09 byte 0x80) stays a
+    // normal NPC, so a guest in the host's Dream can talk to her. Only clients read the bit.
+    {"the Doll stays solid for guests (NpcParam 803000 isChangeWanderGhost)", "NpcParam", "NPC_PARAM_ST", 0x184,
+     803000, 0x145, 1, 128.0f, 0.0f, "BB_PARTY_GUEST_SERVICES"},
 };
 
 bool ReadField(u64 at, std::size_t width, float* v) {
@@ -402,6 +409,7 @@ using DispatchFn = u8(BB_COOP_SYSV*)(u64 self, u64 event, float dt);
 DispatchFn g_dispatch_original = nullptr;
 bool g_emevd_trace = false;
 std::atomic<EmevdRewriter> g_rewriter{nullptr};
+std::atomic<EmevdRewriter> g_rewriter2{nullptr};
 
 // Rules "event:bank:id[@index]" (party_phantom.h). Built in: the confinement walls of common
 // event 7600 (index 6 / 7, only while B1 travel is on; BB_PARTY_OPEN_WORLD=0 drops them). The A6
@@ -417,6 +425,10 @@ void ParseSkips() {
     for (const EmevdSkipRule& r : PhantomSkipRules()) {
         g_skips.push_back(r);
         Log("EMEVD rule (built in, confinement walls): skip %s", DescribeSkipRule(r).c_str());
+    }
+    for (const EmevdSkipRule& r : GuestServicesSkipRules()) {
+        g_skips.push_back(r);
+        Log("EMEVD rule (built in, guest services): skip %s", DescribeSkipRule(r).c_str());
     }
     const char* e = std::getenv("BB_PARTY_EMEVD_SKIP");
     if (!e) {
@@ -461,6 +473,8 @@ void TraceInstruction(u64 event, i32 event_id, i32 bank, i32 id, u64 instr, bool
         hex, ull(n), skipped ? " SKIPPED (rule)" : "");
 }
 
+std::atomic<EmevdSkipPredicate> g_skip_pred{nullptr};
+
 BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
     perf::Scope z(perf::Zone::HookEmevd);
     g_emevd_calls.fetch_add(1, std::memory_order_relaxed);
@@ -476,10 +490,16 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
         i32 index = -1;
         SafeGet(event + 0xa0, &index);
         for (const EmevdSkipRule& r : g_skips) {
-            if (EmevdSkipMatches(r, event_id, bank, id, index) && (!r.needs_travel || TravelEnabled())) {
+            if (EmevdSkipMatches(r, event_id, bank, id, index) && (!r.needs_travel || TravelEnabled()) &&
+                (!r.client_only || LocalSessionRole() == 6)) {
                 skip = true;
                 break;
             }
+        }
+    }
+    if (!skip && instr) {
+        if (const EmevdSkipPredicate pred = g_skip_pred.load(std::memory_order_relaxed)) {
+            skip = pred(event_id, bank, id);
         }
     }
     if (g_emevd_observe && instr && !skip &&
@@ -500,6 +520,9 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
     }
     if (instr) {
         if (const EmevdRewriter rw = g_rewriter.load(std::memory_order_relaxed)) {
+            rw(event_id, bank, id, event, instr);
+        }
+        if (const EmevdRewriter rw = g_rewriter2.load(std::memory_order_relaxed)) {
             rw(event_id, bank, id, event, instr);
         }
     }
@@ -569,8 +592,16 @@ void SeamlessRulesInit() {
     }
 }
 
+void SetEmevdSkipPredicate(EmevdSkipPredicate fn) {
+    g_skip_pred = fn;
+}
+
 void SetEmevdRewriter(EmevdRewriter fn) {
     g_rewriter.store(fn);
+}
+
+void SetEmevdRewriter2(EmevdRewriter fn) {
+    g_rewriter2.store(fn);
 }
 
 bool EnsureEmevdFilter() {

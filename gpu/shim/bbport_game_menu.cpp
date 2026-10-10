@@ -21,7 +21,7 @@
 //  - Party page: an action table. Pages::AddPartyRow(PartyRow) before PatchImage adds a row
 //    (order, texts made from party::status::Board, Press None / Once / Confirm, run(board), or a
 //    settings toggle); built-in rows use the same table (status 10, copy code 20, rejoin 30,
-//    leave 40, notices 50, last event 60).
+//    leave 40; the notices switch and the last event are on Party members).
 //  - New pages: add them in Pages::DefineAll (MaxPages below caps the System items).
 #include "bbport_game_menu.h"
 #include "party/party_flow.h"
@@ -250,8 +250,15 @@ void AddRows(void* page, const std::vector<Row>& all) {
 
 std::atomic<const char16_t*> title_override{nullptr}; // while the game builds one of our pages (its menu thread)
 // Called by the game's menu code (guest threads, System V ABI like the game), one set per page.
+bool Trace();
 template <int N>
 BB_SYSV void Rows(void* page, void*) {
+    if (Trace()) {
+        const char16_t* name = P::Text(P::All()[N].name, false);
+        std::string ascii;
+        for (const char16_t* c = name; c && *c; ++c) ascii.push_back(*c < 128 ? char(*c) : '?');
+        std::printf("Game menu: page %d %s open\n", N, ascii.c_str());
+    }
     P::Load();
     AddRows(page, P::All()[N].rows);
 }
@@ -295,6 +302,17 @@ AddFn command_original = nullptr;
 std::atomic<const void*> screen_sound_text{nullptr};
 std::atomic<const void*> new_game_text{nullptr}; // the title's "New Game" text, as looked up
 
+/// BB_GAME_MENU_TRACE=1: menu events in the log for scripted tests (tools driving the menu with
+/// BB_PAD_FILE wait for them): "Game menu: new text", "Game menu: System menu built",
+/// "Game menu: page N <name> open".
+bool Trace() {
+    static const bool trace = [] {
+        const char* env = std::getenv("BB_GAME_MENU_TRACE");
+        return env && env[0] == '1';
+    }();
+    return trace;
+}
+
 // Screen changes (TextActivity): a message id looked up that was not looked up in the last second.
 std::atomic<u64> fresh_seq{0};
 std::atomic<std::int64_t> fresh_ms{0};
@@ -323,10 +341,20 @@ void NoteText(const char16_t* text) {
     r.text.store(text, std::memory_order_relaxed);
     r.ms.store(now, std::memory_order_release);
 }
+struct SeenId {
+    std::atomic<u32> id{0};
+    std::atomic<std::int64_t> ms{0};
+};
+SeenId seen_ids[4096]; // by id only (LastLookupMs)
 void NoteLookup(u32 category, u32 id) {
     const std::int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
                                  std::chrono::steady_clock::now().time_since_epoch())
                                  .count();
+    {
+        SeenId& e = seen_ids[(u64(id) * 0x9E3779B97F4A7C15ull) >> 52];
+        e.id.store(id, std::memory_order_relaxed);
+        e.ms.store(now, std::memory_order_relaxed);
+    }
     const u64 key = (u64(category) << 32 | id) + 1;
     SeenText& s = seen_texts[(key * 0x9E3779B97F4A7C15ull) >> 52];
     if (s.key.load(std::memory_order_relaxed) == key && now - s.ms.load(std::memory_order_relaxed) < 1000) {
@@ -337,6 +365,9 @@ void NoteLookup(u32 category, u32 id) {
     s.ms.store(now, std::memory_order_relaxed);
     fresh_ms.store(now, std::memory_order_relaxed);
     fresh_seq.fetch_add(1, std::memory_order_release);
+    if (Trace()) {
+        std::printf("Game menu: new text %#x/%u\n", category, id);
+    }
 }
 
 BB_SYSV const char16_t* LookupHook(void* repository, u32 table, u32 category, u32 id) {
@@ -416,6 +447,9 @@ BB_SYSV void* AddHook(void* menu, void* pair, void* function, void* out) {
         const auto& pages = P::All();
         for (std::size_t i = 0; i < pages.size() && i < MaxPages; ++i) {
             AddItem(menu, pages[i].name, pages[i].help, factories[i]);
+        }
+        if (Trace()) {
+            std::printf("Game menu: System menu built\n");
         }
     }
     return result;
@@ -624,6 +658,11 @@ void RecentTexts(std::int64_t since_ms, void (*fn)(const char16_t* text, std::in
             fn(t, ms, user);
         }
     }
+}
+
+std::int64_t LastLookupMs(std::uint32_t id) {
+    const SeenId& e = seen_ids[(u64(id) * 0x9E3779B97F4A7C15ull) >> 52];
+    return e.id.load(std::memory_order_relaxed) == id ? e.ms.load(std::memory_order_relaxed) : 0;
 }
 
 void TextActivity(std::uint64_t* seq, std::int64_t* last_ms) {

@@ -113,9 +113,10 @@ address or port changes.
 The launcher shows a ✓ or ✗ hint under the code field if the name, port or code look wrong.
 
 In the game, the game's own menu has two party pages under **System** (on the title
-screen and in the pause menu, after *Screen/Sound*): **Party** (the state and your role, *Copy party
-code* to the clipboard, *Rejoin* / *Summon again*, *Leave the party*, the join / leave notices switch
-and the last event) and **Party members** (each hunter with their state and ping; the host kicks a
+screen and in the pause menu, after *Environment* (Screen/Sound)): **Party** (the state and your role, *Copy party
+code* to the clipboard, *Rejoin* / *Summon again*, *Leave the party*, plus the party flow's
+rows to start or join a party game) and **Party members** (each hunter with their state and ping, the
+join / leave notices switch and the last event; the host kicks a
 hunter by pressing left/right twice on their row). *Leave* also asks for a second press. The
 bottom line of each row explains it (the party code is shown there too). The overlay menu
 (**Insert**, or **L3 + R3** if enabled) still has the same **Party** tab. Players joining and
@@ -311,8 +312,9 @@ player, and say who was the host.
   built and unit-tested but have not run in a real two-player session yet.
 - Travel is "follow and rejoin": guests load separately and are summoned again after the host's
   lamp trips, deaths and area changes. A shared seamless loading screen is not planned for now.
-- The host must enter a boss fog first; guests cannot use lamps, shops or the Doll while in the
-  host's world (they can at home).
+- The host must enter a boss fog first. In the host's Hunter's Dream a guest can level up at the
+  Doll and use the Bath Messengers' shops, the Insight shop, the workbench and storage on its own
+  character; lamps and headstones stay host-only for now (experimental opt-in `BB_PARTY_GUEST_LAMPS=1`).
 - NPC quests are not shared by default; dialogue gifts from NPCs are not handled.
 - Chalice Dungeons are not supported in party play.
 - 4 players: experimental, no slot for invaders.

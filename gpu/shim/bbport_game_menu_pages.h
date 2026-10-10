@@ -88,7 +88,7 @@ struct Texts {
 struct PartyRow {
     using Board = party::status::Board;
     int order = 0; ///< position on the page; built-in rows: status 10, copy code 20, rejoin 30,
-                   ///< leave 40, notices 50, last event 60
+                   ///< leave 40 (notices and last event: Party members page)
     std::function<Texts(const Board&)> name;    ///< at most MaxNameLength units (cut otherwise)
     std::function<Texts(const Board&)> help;    ///< the bottom line, at most MaxHelpLength
     std::function<Texts(const Board&)> value;   ///< the value column (null: "-")
