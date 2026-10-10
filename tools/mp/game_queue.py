@@ -98,7 +98,8 @@ def _prune(state):
 
 @contextlib.contextmanager
 def game_slots(count: int, root: str, pool: str = "game"):
-    """Hold `count` slots of `pool` for the duration of the block (waits its turn)."""
+    """Hold `count` slots of `pool` for the duration of the block (waits its turn); yields the
+    slot numbers held."""
     me = {"id": f"{os.getpid()}-{time.time():.0f}", "pid": os.getpid(), "count": count, "root": str(root),
           "since": time.strftime("%H:%M:%S")}
     with _locked(pool) as st:
@@ -117,6 +118,10 @@ def game_slots(count: int, root: str, pool: str = "game"):
                 if first and used + count <= st["max_clients"]:
                     st["queue"] = [e for e in st["queue"] if e["id"] != me["id"]]
                     me["since"] = time.strftime("%H:%M:%S")
+                    # Slot numbers (0..max-1) not held by anyone: the game pool uses them as screen
+                    # positions (tools/mp/instances.py tiles windows by slot).
+                    taken = {n for e in st["holders"] for n in e.get("slots", [])}
+                    me["slots"] = [n for n in range(st["max_clients"] + count) if n not in taken][:count]
                     st["holders"].append(me)
                     break
                 pos = next((i for i, e in enumerate(st["queue"]) if e["id"] == me["id"]), -1)
@@ -126,8 +131,8 @@ def game_slots(count: int, root: str, pool: str = "game"):
                 print(f"{pool} queue: waiting (position {pos + 1}, {used}/{limit} in use: {busy})", flush=True)
                 last_note = time.time()
             time.sleep(2)
-        print(f"{pool} queue: got {count} slot(s)", flush=True)
-        yield
+        print(f"{pool} queue: got {count} slot(s) {me['slots']}", flush=True)
+        yield me["slots"]
     finally:
         with _locked(pool) as st:
             st["holders"] = [e for e in st["holders"] if e["id"] != me["id"]]
