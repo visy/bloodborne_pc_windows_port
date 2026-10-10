@@ -176,8 +176,14 @@ public:
     bool send_progress(int slot, const std::vector<std::uint8_t>& blob);
     // This player's roster entry (host: broadcast to all; guest: reported to the host).
     void set_local_state(MemberState state, std::uint32_t map_id);
-    // Host: drop a member and free its slot (BYE Kicked).
+    // Host: drop a member and free its slot (BYE Kicked, reason default "kicked by the host").
+    // The name is refused (REJECT Kicked) for the rest of this link's life: no auto-rejoin.
     bool kick(int slot, const std::string& reason);
+    // Host: kick() by member name; false when no remote member has it.
+    bool kick_name(const std::string& name, const std::string& reason = {});
+    bool is_banned(const std::string& name) const;
+    // Guest: while Reconnecting, try again now (backoff reset). False in any other state.
+    bool reconnect_now();
 
     // Tests: stop all IO (no reads, writes or pings) for `ms`, simulating a frozen network.
     void debug_freeze(int ms);
