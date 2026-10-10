@@ -71,6 +71,21 @@ def copy_submodules(repo: Path):
         print("submodule copied:", path)
 
 
+def seed_out(repo: Path):
+    """out\ holds prebuilt inputs the build links (libatrac9.a) and the runtime DLLs: hardlink the
+    main checkout's (never its exes, logs or build dirs - those are per agent)."""
+    src, dst = REPO / "out", repo / "out"
+    dst.mkdir(parents=True, exist_ok=True)
+    for f in src.iterdir():
+        t = dst / f.name
+        if t.exists() or f.name in ("gpu", "gpu-pgo-gen") or f.suffix.lower() in (".exe", ".log", ".pdb"):
+            continue
+        if f.is_dir():
+            shutil.copytree(f, t)
+        else:
+            os.link(f, t)
+
+
 def link_game(dst: Path):
     """Hardlinks of the game data (read-only use). Never the pkg, never user\\ (saves) or out\\."""
     n = 0
@@ -99,6 +114,7 @@ def create(a):
         git("worktree", "add", "-B", f"agent/{a.name}", str(repo), "HEAD")
         print("worktree:", repo, "on branch", f"agent/{a.name}")
     copy_submodules(repo)
+    seed_out(repo)
     if not a.no_configure and not (repo / "out" / "gpu" / "build.ninja").exists():
         configure(repo)
     env_lines = [f"REPO={repo}", f"BUILD: PATH={MINGW};%PATH% & cmake --build {repo / 'out' / 'gpu'}"]
