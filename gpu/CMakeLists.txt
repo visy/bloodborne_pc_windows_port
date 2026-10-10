@@ -342,6 +342,11 @@ foreach(vulkan_test scene-resolution-test taa-shader-test camera-motion-test tra
 endforeach()
 if (WIN32)
     target_compile_definitions(motion-shader-test PRIVATE VK_USE_PLATFORM_WIN32_KHR)
+    # bbgpu's Windows dependencies (as bbport links them): NtSetInformationFile (io_file.cpp) etc.
+    foreach(vulkan_test motion-shader-test scene-resolution-test taa-shader-test camera-motion-test
+            translation-memory-test)
+        target_link_libraries(${vulkan_test} PRIVATE ws2_32 iphlpapi synchronization dbghelp ntdll winmm)
+    endforeach()
 endif()
 
 # Party network library (shim/net): STUN, vport framing, the network simulator and a loopback

@@ -48,4 +48,14 @@ uint64_t runtime_heap_growths() { return 0; }
 // The party/net glue in bbgpu (bbnet_glue.cpp, game_state.cpp) runs only with a guest process.
 __attribute__((sysv_abi)) void restore_guest_fs() { std::abort(); }
 int runtime_setjmp(void*) { std::abort(); }
+// Without LTO the linker keeps whole bbgpu objects (menu, stability, party director, equeue), so
+// their runtime references need a definition too; none of them runs without the game.
+void* runtime_low_map(size_t, int) { std::abort(); }
+uint64_t runtime_gfx_heap_more_mib() { return 0; }
+uint64_t runtime_memory_pool_size() { return 0; }
+void runtime_memory_grow_flexible(uint64_t) { std::abort(); }
+void runtime_pad_director_press(uint32_t) { std::abort(); }
+const char* runtime_symbol(const char*) { return nullptr; }
+void runtime_thread_set_blocked(const char*, uint64_t) {}
+void runtime_thread_clear_blocked() {}
 }
