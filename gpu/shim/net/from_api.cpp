@@ -5,9 +5,11 @@
 
 #include "bbnet_internal.h"
 #include "party_util.h"
+#include "../party/party_ids.h"
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <ctime>
 #include <map>
@@ -265,6 +267,56 @@ std::string FromApi::dispatch(const Caller& caller, const std::string& path, con
     return render(reply->body, vars);
 }
 
+const char* summon_data_problem(const std::uint8_t* d, std::size_t size, const std::string& online_id,
+                                const json::Value* body) {
+    if (size != kSummonDataSize) return "not 0xE0 bytes";
+    auto u16 = [&](std::size_t o) { return static_cast<unsigned>(d[o] | d[o + 1] << 8); };
+    auto u32 = [&](std::size_t o) {
+        return static_cast<std::uint32_t>(d[o]) | static_cast<std::uint32_t>(d[o + 1]) << 8 |
+               static_cast<std::uint32_t>(d[o + 2]) << 16 | static_cast<std::uint32_t>(d[o + 3]) << 24;
+    };
+    auto f32 = [&](std::size_t o) {
+        const std::uint32_t bits = u32(o);
+        float f;
+        std::memcpy(&f, &bits, sizeof f);
+        return f;
+    };
+    // An online id field of 16 bytes: the id, then NULs only.
+    auto id_field = [&](std::size_t o) {
+        std::size_t n = 0;
+        while (n < 16 && d[o + n]) ++n;
+        for (std::size_t i = n; i < 16; ++i)
+            if (d[o + i]) return false;
+        if (n == 0 || n != online_id.size() || std::memcmp(d + o, online_id.data(), n) != 0) return false;
+        for (std::size_t i = 0; i < n; ++i) {
+            const unsigned char c = d[o + i];
+            if (!std::isalnum(c) && c != '_' && c != '-') return false;
+        }
+        return true;
+    };
+    if (!id_field(0x40)) return "online id at 0x40 is not the sender's";
+    const std::uint32_t area = u32(0x58);
+    if (!coop::ids::MapKnown(area)) return "AreaId at 0x58 is not a map of the game";
+    if (body && body->find("AreaId") && static_cast<long long>(area) != int_of(*body, "AreaId", -1))
+        return "AreaId at 0x58 differs from the request's";
+    for (std::size_t o : {0x5Cu, 0x60u, 0x64u, 0x68u}) {
+        const float v = f32(o);
+        if (!std::isfinite(v) || std::fabs(v) >= 100000.0f) return "position / yaw not finite or out of range";
+    }
+    const int level = static_cast<std::int16_t>(u16(0x70));
+    if (level < 1 || level > kMaxMatchingLevel) return "MatchingLevel at 0x70 out of range";
+    if (body && body->find("MatchingLevel") && level != int_of(*body, "MatchingLevel", -1))
+        return "MatchingLevel at 0x70 differs from the request's";
+    switch (d[0x76]) {
+    case 1: case 2: case 5: case 7: case 8: case 0xA: case 19: break;
+    default: return "sign type at 0x76 unknown";
+    }
+    if (u16(0x7A) != 0x25 || d[0x7C] != 2) return "OnlineID serialization header at 0x7A wrong";
+    if (!id_field(0x7D) || d[0x8D] != 0) return "SceNpId at 0x7D is not the sender's";
+    if (d[0xCC] > 3) return "NAT type at 0xCC out of range";
+    return nullptr;
+}
+
 std::string FromApi::sign_create(const Caller& caller, const json::Value& body) {
     // The sign goes into other members' games as it is: their native code reads SummonData
     // (exactly 0xE0 bytes, from_api_formats.inc) and the numbers. Anything else is refused.
@@ -278,6 +330,10 @@ std::string FromApi::sign_create(const Caller& caller, const json::Value& body) 
         region > 0xffff) {
         log("from api: %s: refused a malformed sign (type %lld, version %lld, %zu data bytes)",
             caller.online_id.c_str(), type, version, data.size());
+        return "0";
+    }
+    if (const char* bad = summon_data_problem(data.data(), data.size(), caller.online_id, &body)) {
+        log("from api: %s: refused a sign: %s", caller.online_id.c_str(), bad);
         return "0";
     }
     Sign s;

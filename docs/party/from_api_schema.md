@@ -379,6 +379,18 @@ or password check on intake** — level/area matching is server-side (the client
 `MatchingLevel`, `AreaId`, `SummonTypeList`), so our party server decides who sees which sign.
 (The ss.info level window §2.4 is used by a separate check, 0x15091c0 → 0x1582a70.)
 
+**Party host intake (bbport security pass).** Because the receiving game checks nothing, the host's
+board (`FromApi::sign_create`, `summon_data_problem` in gpu/shim/net/from_api.h) refuses a member's
+sign before any other member's game can list it unless: the blob is exactly 0xE0 bytes of strict
+base64; 0x40 is the creating member's own online id (1-16 of `[A-Za-z0-9_-]`, NUL padded — the
+dedupe key, so nobody can replace or expire another member's sign); 0x58 AreaId is a map of the game
+(`coop::ids::MapKnown`, generated from the map folders / MSBs by tools/party/ids_tool.py) and equals
+the request's `AreaId`; position and yaw are finite with |v| < 100000; 0x70 MatchingLevel is 1..544
+and equals the request's `MatchingLevel` when sent; 0x76 is a known sign type (1, 2, 5, 7, 8, 0xA,
+19 — the descriptor table 0x553d750 has 0x22 rows); 0x7A == 0x25, 0x7C == 2 and the SceNpId handle at
+0x7D is the member's own id (terminator 0x8D == 0); 0xCC NAT type is 0..3. The 13 equipment ids at
+0x00 are not checked against the EquipParam tables.
+
 Host side after picking a sign: 0x14baec0 (caller 0x1872360) sets the messenger object
 SSM+0x58 (vtable 0x53249e0): +0x120 TargetUserId = blob 0xD0, +0x128 TargetCharaId = blob 0xD8;
 0x14b47c0 → 0x1e98650 sends summon_messenger/request; callback 0x14be080 stores the code at

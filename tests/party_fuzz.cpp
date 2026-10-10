@@ -36,7 +36,9 @@
 #include "party_host_service.h"
 #include "party_udp.h"
 #include "party_util.h"
+#include "party_sign_blob.h"
 #include "party/party_code.h"
+#include "party/party_ids.h"
 #include "party/party_crypto.h"
 #include "party/party_items.h"
 #include "party/party_link.h"
@@ -461,7 +463,7 @@ Corpus json_corpus() {
           R"({"MessageId":"SummonDataGetListRequest","AreaId":402718720,"GetMaxCount":20,"SummonTypeList":[{"SummonType":0,"GetLimitCount":5}]})",
           R"({"MessageId":"SummonDataSummonRequest","TargetUserId":1002,"SummonDataId":1})"})
         c.add(std::string(s));
-    const std::string blob = bbnet::party::b64_encode(std::string(0xE0, 'q'));
+    const std::string blob = bbnet::party::b64_encode(party_test::sign_blob("fz0"));
     c.add(R"({"MessageId":"SummonDataCreateRequest","CharaId":1,"AreaId":402718720,"AreaRegionId":1,"SummonType":0,"SummonData":")" +
           blob + R"(","SummonDataVersion":3})");
     return c;
@@ -579,16 +581,21 @@ void run_travel(Rng& r, const Corpus& c) {
         return;
     }
     INVARIANT(coop::TravelKindBroadcast(t.kind));
-    INVARIANT(t.lamp_id == coop::kTravelNone || coop::TravelLampPlausible(t.lamp_id));
+    INVARIANT(t.lamp_id == coop::kTravelNone || coop::TravelLampKnown(t.lamp_id));
+    INVARIANT(t.packed_map == coop::kTravelNone || coop::TravelMapKnown(t.packed_map));
+    if (t.has_pos) INVARIANT(coop::TravelMapKnown(t.pos_map));
     if (t.has_pos)
         for (int i = 0; i < 4; ++i) INVARIANT(std::isfinite(t.pos[i]) && std::isfinite(t.rot[i]));
     const coop::ReplayPlan plan = coop::ChooseReplay(t);
-    if (plan.method == coop::ReplayMethod::LampWarp || plan.method == coop::ReplayMethod::BonfireWarp)
-        INVARIANT(coop::TravelLampPlausible(plan.id));
-    if (plan.method == coop::ReplayMethod::StageWarp) INVARIANT(coop::TravelAreaPlausible(t.Area()));
+    if (plan.method == coop::ReplayMethod::LampWarp) INVARIANT(coop::TravelLampKnown(plan.id));
+    if (plan.method == coop::ReplayMethod::BonfireWarp) INVARIANT(coop::TravelBonfireKnown(plan.id));
+    if (plan.method == coop::ReplayMethod::StageWarp) {
+        INVARIANT(coop::TravelMapKnown(t.packed_map));
+        INVARIANT(t.warp_point == coop::kTravelNone || coop::ids::WarpPointKnown(t.packed_map, t.warp_point));
+    }
     if (plan.method == coop::ReplayMethod::Transform) INVARIANT(t.has_pos);
     const std::uint32_t lamp = coop::HostLampFromTravel(t);
-    INVARIANT(lamp == coop::kTravelNone || coop::TravelLampPlausible(lamp));
+    INVARIANT(lamp == coop::kTravelNone || coop::TravelLampKnown(lamp));
     static double clock = 0;
     clock += 1;
     guest.Offer(t, clock);
@@ -607,12 +614,12 @@ void run_story(Rng& r, const Corpus& c) {
     if (!coop::StoryFromJsonText(s, &st, &err)) return;
     (void)coop::DescribeStory(st);
     if (!coop::SanitizePeerStory(&st, &err)) {
-        INVARIANT(st.kind == coop::StoryKind::Cutscene && !coop::StoryRemoPlausible(st.id));
+        INVARIANT(st.kind == coop::StoryKind::Cutscene && !coop::StoryRemoKnown(st.id));
         return;
     }
     const std::vector<std::uint32_t> table = coop::StoryFlagsForRemo(st.id);
     for (std::uint32_t f : st.flags) INVARIANT(std::find(table.begin(), table.end(), f) != table.end());
-    if (st.kind == coop::StoryKind::Cutscene) INVARIANT(coop::StoryRemoPlausible(st.id));
+    if (st.kind == coop::StoryKind::Cutscene) INVARIANT(coop::StoryRemoKnown(st.id));
     static double clock = 0;
     clock += 1;
     guest.Offer(st, r.chance(2), clock);
@@ -644,8 +651,10 @@ void run_phantom(Rng& r, const Corpus& c) {
     set_input("phantom", s);
     coop::PhantomEvent e;
     std::string err;
-    if (coop::PhantomEventFromJsonText(s, &e, &err) && e.kind == coop::PhantomEventKind::Insight)
-        INVARIANT(e.insight >= 0 && e.insight <= 99);
+    if (!coop::PhantomEventFromJsonText(s, &e, &err)) return;
+    if (e.kind == coop::PhantomEventKind::Insight) INVARIANT(e.insight >= 0 && e.insight <= 99);
+    if (coop::SanitizePeerPhantom(e, &err) && e.kind == coop::PhantomEventKind::Lamp)
+        INVARIANT(e.lamp == coop::kTravelNone || coop::TravelLampKnown(e.lamp));
 }
 
 void run_progress(Rng& r, const Corpus& c) {
@@ -711,6 +720,7 @@ void run_hostsvc(Rng& r, const Corpus& c) {
             std::vector<u8> data;
             INVARIANT(bbnet::party::b64_decode_strict(sign.data_b64, &data) && data.size() == bbnet::party::kSummonDataSize);
             INVARIANT(++per_user[sign.online_id] <= static_cast<int>(bbnet::party::kMaxSignsPerUser));
+            INVARIANT(!bbnet::party::summon_data_problem(data.data(), data.size(), sign.online_id));
         }
     } else {
         svc->handle(who, kind, rq, reply);
@@ -1056,7 +1066,7 @@ struct LinkGuestRig {
             if (name == coop::kTravelEventName) {
                 coop::TravelIntent t;
                 if (coop::TravelFromJsonText(body, &t, &err) && coop::SanitizePeerTravel(&t, &err))
-                    INVARIANT(t.lamp_id == coop::kTravelNone || coop::TravelLampPlausible(t.lamp_id));
+                    INVARIANT(t.lamp_id == coop::kTravelNone || coop::TravelLampKnown(t.lamp_id));
             } else if (name == coop::kStoryEventName) {
                 coop::StoryIntent s;
                 if (coop::StoryFromJsonText(body, &s, &err)) (void)coop::SanitizePeerStory(&s, &err);
@@ -1276,6 +1286,150 @@ void regress_udp() {
     CHECK(gated.clients() == 1);
 }
 
+// The generated id tables (party_ids.inc, tools/party/ids_tool.py) and the checks built on them.
+template <typename T, std::size_t N>
+bool strictly_sorted(const T (&a)[N]) {
+    for (std::size_t i = 1; i < N; ++i)
+        if (!(a[i - 1] < a[i])) return false;
+    return true;
+}
+
+void regress_ids() {
+    namespace ids = coop::ids;
+    std::string err;
+    CHECK(strictly_sorted(ids::kPartyMaps) && strictly_sorted(ids::kPartyReturnPoints) &&
+          strictly_sorted(ids::kPartyEntities) && strictly_sorted(ids::kPartyRemos));
+    CHECK(std::size(ids::kPartyReturnPoints) >= 80 && std::size(ids::kPartyRemos) >= 40 &&
+          std::size(ids::kPartyEntities) >= 1000 && std::size(ids::kPartyMaps) >= 20);
+    // Maps: folders and MSB variants; not a shape (area 24 block 3 has the right shape, no map).
+    CHECK(ids::MapKnown(0x18010000) && ids::MapKnown(0x15000000) && ids::MapKnown(0x24000000));
+    CHECK(!ids::MapKnown(0x18030000) && !ids::MapKnown(0x14010000) && !ids::MapKnown(0) && !ids::MapKnown(0xffffffffu));
+    // ReturnPointParam rows (0x13CDF30 ids): the observed ones (travel.md 1.1), not area-0 rows.
+    for (std::uint32_t id : {2412952u, 2412951u, 2802952u, 2102950u, 2102952u, 2102961u, 3602952u})
+        CHECK(coop::TravelLampKnown(id));
+    for (std::uint32_t id : {1u, 9902950u, 2412954u, 2402952u, 2412960u, 0u, 2412000u}) CHECK(!coop::TravelLampKnown(id));
+    // Remos: the files (sAA_BB_NNNN) incl. the +1000 sex variants; shaped ids without a file are not.
+    for (std::uint32_t id : {21000000u, 24011005u, 28001040u, 32000000u, 36000010u}) CHECK(coop::StoryRemoKnown(id));
+    for (std::uint32_t id : {24000010u, 27000000u, 21000060u, 32000010u}) CHECK(!coop::StoryRemoKnown(id));
+    // Entities: a lamp's own point, EMEVD warp points; an id of another map is not a warp point there.
+    CHECK(ids::WarpPointKnown(0x18010000, 2412952) && ids::WarpPointKnown(0x21000000, 3302171));
+    CHECK(!ids::WarpPointKnown(0x18000000, 2412952) && !ids::WarpPointKnown(0x18010000, 2419999));
+    CHECK(coop::TravelBonfireKnown(2412952) && !coop::TravelBonfireKnown(2419999) && !coop::TravelBonfireKnown(99999999));
+
+    // Travel: every id goes through the tables.
+    coop::TravelIntent t;
+    t.seq = 1;
+    t.kind = coop::TravelKind::Lamp;
+    t.lamp_id = 2412954;                       // lamp-shaped, no row
+    t.respawn_record = 0x00018b2b0024d198ull;  // aux 101163 << 32 | 2412952
+    t.last_lamp = 2412958;                     // shaped, no row
+    CHECK(coop::SanitizePeerTravel(&t, &err) && t.lamp_id == coop::kTravelNone &&
+          t.respawn_record == 0x00018b2b0024d198ull && t.last_lamp == ~0ull);
+    CHECK(coop::ChooseReplay(t).method == coop::ReplayMethod::LampWarp && coop::ChooseReplay(t).id == 2412952);
+    t = {};
+    t.seq = 2;
+    t.kind = coop::TravelKind::LuaStageWarp;
+    t.packed_map = 0x18030000;  // shaped like m24_03, no such map
+    t.warp_point = 2432000;
+    CHECK(coop::SanitizePeerTravel(&t, &err) && t.packed_map == coop::kTravelNone && t.warp_point == coop::kTravelNone);
+    CHECK(coop::ChooseReplay(t).method == coop::ReplayMethod::None);
+    t.packed_map = 0x18010000;
+    t.warp_point = 2412952;
+    CHECK(coop::SanitizePeerTravel(&t, &err) && t.packed_map == 0x18010000 && t.warp_point == 2412952);
+    t.warp_point = 2602950;  // a point of another map: the destination's default entry instead
+    CHECK(coop::SanitizePeerTravel(&t, &err) && t.packed_map == 0x18010000 && t.warp_point == coop::kTravelNone);
+    CHECK(coop::ChooseReplay(t).method == coop::ReplayMethod::StageWarp);
+    t = {};
+    t.seq = 3;
+    t.kind = coop::TravelKind::LuaBonfireWarp;
+    t.warp_point = 2419999;  // shaped, not an entity of m24_01
+    CHECK(coop::SanitizePeerTravel(&t, &err) && t.warp_point == coop::kTravelNone);
+    t.warp_point = 2412952;
+    CHECK(coop::SanitizePeerTravel(&t, &err) && coop::ChooseReplay(t).method == coop::ReplayMethod::BonfireWarp);
+    t = {};
+    t.seq = 4;
+    t.kind = coop::TravelKind::Transform;
+    t.has_pos = true;
+    t.pos_map = 0x18030000;
+    CHECK(coop::SanitizePeerTravel(&t, &err) && !t.has_pos);
+    t.has_pos = true;
+    t.pos_map = 0x18010000;
+    CHECK(coop::SanitizePeerTravel(&t, &err) && t.has_pos && coop::ChooseReplay(t).method == coop::ReplayMethod::Transform);
+
+    // Story: a remo-shaped id without a file is refused; a real one passes.
+    coop::StoryIntent s;
+    s.seq = 1;
+    s.kind = coop::StoryKind::Cutscene;
+    s.id = 27000000;
+    CHECK(!coop::SanitizePeerStory(&s, &err));
+    s.id = 24011005;
+    CHECK(coop::SanitizePeerStory(&s, &err));
+
+    // Phantom: the death redirect lamp.
+    coop::PhantomEvent pe;
+    pe.kind = coop::PhantomEventKind::Lamp;
+    pe.lamp = 2412952;
+    CHECK(coop::SanitizePeerPhantom(pe, &err));
+    pe.lamp = coop::kTravelNone;
+    CHECK(coop::SanitizePeerPhantom(pe, &err));
+    for (std::uint32_t bad : {2412954u, 1u, 9902950u, 0x7fffffffu}) {
+        pe.lamp = bad;
+        CHECK(!coop::SanitizePeerPhantom(pe, &err));
+    }
+
+    // Items: lots outside the tables are refused (docs/party/items.md 6.5), whatever the flag.
+    CHECK(!coop::ItemGrantFromPeerAllowed({1, 77777777, 990000000, coop::kItemNone, coop::ItemSource::Full}, &err));
+    CHECK(coop::ItemGrantFromPeerAllowed({1, 80000000, 5000, coop::kItemNone, coop::ItemSource::Award}, &err));  // key item pair
+    CHECK(!coop::ItemGrantFromPeerAllowed({1, 1234567, 61234567, coop::kItemNone, coop::ItemSource::Award}, &err));
+    CHECK(!coop::ItemGrantFromPeerAllowed({1, 2400450, 12401800, coop::kItemNone, coop::ItemSource::Flag}, &err));
+    CHECK(coop::ItemGrantFromPeerAllowed({1, 2400450, 52400450, coop::kItemNone, coop::ItemSource::Flag}, &err));
+
+    // Sign content (from_api_schema.md 5).
+    auto problem = [](const std::string& blob, const std::string& who, const char* body = nullptr) {
+        json::Value b;
+        std::string e;
+        if (body) CHECK(json::parse(body, b, e));
+        return bbnet::party::summon_data_problem(reinterpret_cast<const std::uint8_t*>(blob.data()), blob.size(), who,
+                                                 body ? &b : nullptr);
+    };
+    using party_test::sign_blob;
+    CHECK(!problem(sign_blob("Alice"), "Alice"));
+    CHECK(!problem(sign_blob("Alice"), "Alice", R"({"AreaId":402718720,"MatchingLevel":50})"));
+    CHECK(!problem(sign_blob("Hunter_012345678"), "Hunter_012345678"));  // 16 characters
+    CHECK(!problem(sign_blob("Alice", 0x18010000, 544, 8, 3), "Alice"));
+    CHECK(problem(sign_blob("Alice"), "Bob"));                             // someone else's id
+    CHECK(problem(sign_blob("Alice").substr(0, 0xDF), "Alice"));           // size
+    CHECK(problem(sign_blob("Alice", 0x18030000), "Alice"));               // no such map
+    CHECK(problem(sign_blob("Alice", 0), "Alice"));
+    CHECK(problem(sign_blob("Alice"), "Alice", R"({"AreaId":352321536})"));  // blob and request disagree
+    CHECK(problem(sign_blob("Alice", 0x18010000, 0), "Alice"));            // level
+    CHECK(problem(sign_blob("Alice", 0x18010000, 545), "Alice"));
+    CHECK(problem(sign_blob("Alice", 0x18010000, -3), "Alice"));
+    CHECK(problem(sign_blob("Alice"), "Alice", R"({"MatchingLevel":51})"));
+    CHECK(problem(sign_blob("Alice", 0x18010000, 50, 0x21), "Alice"));    // sign type
+    CHECK(problem(sign_blob("Alice", 0x18010000, 50, 0xff), "Alice"));
+    CHECK(problem(sign_blob("Alice", 0x18010000, 50, 7, 4), "Alice"));     // NAT type
+    std::string b = sign_blob("Alice");
+    b[0x45] = 'x';  // a byte after the id's NUL
+    CHECK(problem(b, "Alice"));
+    b = sign_blob("Al\x01" "ce");
+    CHECK(problem(b, "Al\x01" "ce"));  // not an online id
+    b = sign_blob("Alice");
+    b[0x7A] = 0x50;  // serialization length
+    CHECK(problem(b, "Alice"));
+    b = sign_blob("Alice");
+    b[0x7D] = 'B';  // the SceNpId of another player
+    CHECK(problem(b, "Alice"));
+    b = sign_blob("Alice");
+    const float nan = std::nanf("");
+    std::memcpy(&b[0x60], &nan, 4);
+    CHECK(problem(b, "Alice"));
+    b = sign_blob("Alice");
+    const float big = 1e6f;
+    std::memcpy(&b[0x68], &big, 4);
+    CHECK(problem(b, "Alice"));
+}
+
 void regress_decoders() {
     std::string err;
     // Items: a host cannot pair a known lot with an arbitrary flag, or send guest-local rows.
@@ -1326,7 +1480,8 @@ void regress_decoders() {
     t.kind = coop::TravelKind::ScriptedWarp;
     t.packed_map = 0x63000000;  // area 99
     CHECK(coop::SanitizePeerTravel(&t, &err) && t.packed_map == coop::kTravelNone);
-    CHECK(coop::TravelLampPlausible(2412952) && coop::TravelLampPlausible(2102961) && !coop::TravelLampPlausible(9999999));
+    CHECK(coop::TravelLampKnown(2412952) && coop::TravelLampKnown(2102961) && !coop::TravelLampKnown(9999999));
+    regress_ids();
     // Progress: caps and no truncation of 64-bit ids.
     std::uint64_t epoch;
     std::vector<coop::progress::FlagChange> ch;
@@ -1370,7 +1525,7 @@ void regress_hostsvc() {
         json::Value r;
         api.handle_json(a, h, r);
     };
-    const std::string good = bbnet::party::b64_encode(std::string(0xE0, 'g'));
+    const std::string good = bbnet::party::b64_encode(party_test::sign_blob("fzA"));
     create(0, good.substr(0, good.size() - 4));
     create(0, good + "AAAA");
     create(0, "!" + good.substr(1));
