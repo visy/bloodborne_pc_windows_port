@@ -231,6 +231,7 @@ public:
 
 private:
     bool ApplyOne(const FlagStore& store, const Policy& policy, u32 id, bool value);
+    void Trim();
     struct Item {
         bool snapshot = false;
         std::vector<FlagChange> changes;
@@ -240,6 +241,12 @@ private:
     GuestCursor cursor_;
     Counters n_;
 };
+
+// Peer input caps (bbport security pass): a "flags" event's changes, a snapshot's blocks, the
+// guest's queue of events not applied yet.
+constexpr std::size_t kMaxChangesPerEvent = 65536;
+constexpr std::size_t kMaxSnapshotBlocks = 65536;
+constexpr std::size_t kMaxPendingItems = 1024;
 
 // JSON bodies of the PartyLink EVENTs "flags" and "flag_snapshot".
 constexpr const char* kEventFlags = "flags";
