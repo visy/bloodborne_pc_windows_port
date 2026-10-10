@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
 #include <cstdarg>
@@ -748,6 +749,13 @@ bool previous_party(std::array<std::uint8_t, 8>* secret, std::vector<KeptMember>
         return true;
     }
     std::string body;
+    if (read_file(fs::path(user_dir()) / "party_secret.txt", &body)) {
+        while (!body.empty() && std::isspace(static_cast<unsigned char>(body.back()))) body.pop_back();
+        if (unhex(body, secret->data(), secret->size())) {
+            *from = "party_secret.txt";
+            return true;
+        }
+    }
     if (read_file(fs::path(user_dir()) / "party_code.txt", &body)) {
         std::istringstream in(body);
         std::string line;
@@ -778,6 +786,8 @@ void start_host(LinkConfig cfg) {
     } else {
         crypto::random_bytes(cfg.secret.data(), cfg.secret.size());
     }
+    // <user>/party_secret.txt: the restart's second source after the crash marker.
+    write_text_file(fs::path(user_dir()) / "party_secret.txt", hex_of(cfg.secret.data(), cfg.secret.size()) + "\n");
     {
         std::lock_guard<std::mutex> lk(r.mu);
         r.secret = cfg.secret;
