@@ -19,6 +19,7 @@
 #include "bbport_compile_progress.h"
 #include "bbport_frame_state.h"
 #include "bbport_settings.h"
+#include "party/party_status.h"
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "imgui_impl_vulkan.h"
@@ -102,6 +103,24 @@ float base_scale = 1.0f;
 ImFont* sans_font = nullptr;
 ImFont* serif_font = nullptr;
 bool focus_request = true; // the menu was opened: its first row takes the focus
+
+// Party mode notices (join / leave / travel, party_status SetLastEvent): a toast in a top corner
+// for a few seconds, never taking input. Atomics: Visible() reads them without imgui_mutex.
+std::atomic<std::uint64_t> toast_seen{0};  // the party event already shown
+std::atomic<std::int64_t> toast_until_ms{0}; // steady clock
+std::string toast_text;                      // present thread (imgui_mutex)
+constexpr std::int64_t ToastMs = 4000;
+
+std::int64_t SteadyMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+bool ToastWanted() {
+    return party::status::Enabled() && BbSettings::Get().party_toasts &&
+           (party::status::EventSeq() != toast_seen.load() || SteadyMs() < toast_until_ms.load());
+}
 
 // The game's text dialog (ImeDialog, the character name), typed on the keyboard: drawn while it
 // is open. In fullscreen the window title that showed it is not visible (issues #17, #19).
@@ -967,6 +986,214 @@ void AdvancedTab() {
              "Показывает ход компиляции шейдеров в правом нижнем углу."));
 }
 
+// Serverless party co-op (docs/PARTY_COOP_PLAN.md, A7): what party_status.h's board holds, and
+// the commands back to the director. Read-only lines are not rows (focus skips them).
+
+/// A read-only "label   value" line in the row layout; the value is clipped to its column.
+void Info(const char* label, const char* value, ImU32 value_color) {
+    const float width = ImGui::GetContentRegionAvail().x, height = S(34.0f);
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(width, height));
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const float mid_y = at.y + height * 0.5f;
+    const ImVec2 label_size = ImGui::CalcTextSize(label);
+    draw->AddText(ImVec2(at.x + S(28.0f), mid_y - label_size.y * 0.5f), Plain(0.8f), label);
+    if (value && value[0]) {
+        const float col0 = at.x + width * 0.56f, col1 = at.x + width - S(28.0f);
+        const ImVec2 size = ImGui::CalcTextSize(value);
+        const float x = size.x < col1 - col0 ? (col0 + col1 - size.x) * 0.5f : col0;
+        draw->PushClipRect(ImVec2(col0, at.y), ImVec2(col1, at.y + height), true);
+        draw->AddText(ImVec2(x, mid_y - size.y * 0.5f), value_color, value);
+        draw->PopClipRect();
+    }
+}
+
+/// An action row (Cross / Enter / click) with an optional text in the value column, no arrows.
+bool ActionRow(const char* id, const char* label, const char* value, const char* hint, bool enabled) {
+    const bool act = Row(id, label, nullptr, hint, enabled) != 0;
+    if (value && value[0]) {
+        const bool focused = enabled && state.focus == state.rows - 1;
+        const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
+        const float col0 = r0.x + (r1.x - r0.x) * 0.56f, col1 = r1.x - S(28.0f);
+        const ImVec2 size = ImGui::CalcTextSize(value);
+        const float x = size.x < col1 - col0 ? (col0 + col1 - size.x) * 0.5f : col0;
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->PushClipRect(ImVec2(col0, r0.y), ImVec2(col1, r1.y), true);
+        draw->AddText(ImVec2(x, (r0.y + r1.y - size.y) * 0.5f), !enabled ? Dim() : focused ? Bright() : Gold(0.9f),
+                      value);
+        draw->PopClipRect();
+    }
+    return enabled && act;
+}
+
+const char* PartyStateText(party::status::State st, party::status::Role role) {
+    using party::status::State;
+    switch (st) {
+    case State::Off: return T("Not running", "Не запущена");
+    case State::Starting: return T("Starting…", "Запуск…");
+    case State::Hosting: return T("Hosting: waiting for hunters", "Хост: ожидание охотников");
+    case State::Connecting: return T("Connecting to the host…", "Подключение к хосту…");
+    case State::WaitingForWorld: return T("Waiting for the world to load", "Ожидание загрузки мира");
+    case State::RingingBell:
+        return role == party::status::Role::Host ? T("Ringing the Beckoning Bell", "Звон манящего колокола")
+                                                 : T("Ringing the Small Resonant Bell",
+                                                     "Звон малого резонирующего колокола");
+    case State::Joined: return T("Together", "Вместе");
+    case State::Travelling: return T("Travelling with the party…", "Переход вместе с группой…");
+    case State::Reconnecting: return T("Connection lost: reconnecting…", "Связь потеряна: переподключение…");
+    case State::Error: return T("Error", "Ошибка");
+    }
+    return "";
+}
+
+struct PartyUiState {
+    double copied_until = 0.0;       ///< "Copied" shown in the code row until then (ImGui time)
+    double leave_confirm_until = 0.0;
+    double kick_confirm_until = 0.0;
+    std::string kick_confirm;        ///< the member a second press kicks
+};
+PartyUiState party_ui;
+
+void PartyTab() {
+    namespace ps = party::status;
+    const ps::Board b = ps::Snapshot();
+    const bool on = b.enabled;
+    const double now = ImGui::GetTime();
+    const ImU32 warn = ImGui::GetColorU32(ImVec4(1.0f, 0.55f, 0.35f, 1.0f));
+    char line[256];
+    if (!on) {
+        Note(T("Party mode is off — enable it in the launcher.",
+               "Режим группы выключен — включите его в лаунчере."),
+             warn);
+        ImGui::Spacing();
+    }
+
+    // Status, role.
+    std::snprintf(line, sizeof(line), b.detail.empty() ? "%s" : "%s  (%s)", PartyStateText(b.state, b.role),
+                  b.detail.c_str());
+    Info(T("Status", "Состояние"), line,
+         b.state == ps::State::Error          ? warn
+         : b.state == ps::State::Reconnecting ? ImGui::GetColorU32(ImVec4(0.95f, 0.72f, 0.35f, 1.0f))
+         : on                                 ? Bright()
+                                              : Dim());
+    Info(T("Role", "Роль"),
+         b.role == ps::Role::Host    ? T("Host (your world)", "Хост (ваш мир)")
+         : b.role == ps::Role::Guest ? T("Guest", "Гость")
+                                     : T("None", "Нет"),
+         on ? Plain() : Dim());
+
+    // Party code + copy.
+    const bool copied = now < party_ui.copied_until;
+    const char* code_value = copied          ? T("Copied to clipboard", "Скопирован в буфер обмена")
+                             : b.code.empty() ? T("not yet known", "ещё неизвестен")
+                                              : b.code.c_str();
+    if (ActionRow("party_copy", T("Party code: copy", "Код группы: копировать"), code_value,
+                  b.role == ps::Role::Host
+                      ? T("The code friends paste into the launcher to join you: your address, port and "
+                          "the party's secret. Share it only with them.",
+                          "Код, который друзья вставляют в лаунчер, чтобы присоединиться: ваш адрес, "
+                          "порт и секрет группы. Давайте его только им.")
+                      : T("The code of the party you joined. Copies it to the clipboard.",
+                          "Код группы, к которой вы присоединились. Копирует его в буфер обмена."),
+                  on && !b.code.empty())) {
+        if (ps::RequestCopyCode()) {
+            party_ui.copied_until = now + 2.0;
+        }
+    }
+
+    // Members.
+    ImGui::Spacing();
+    Note(T("Hunters", "Охотники"), Gold(0.8f));
+    if (b.members.empty()) {
+        Info(on ? T("No one yet", "Пока никого") : "—", nullptr, Dim());
+    }
+    for (const ps::Member& m : b.members) {
+        char who[96];
+        std::snprintf(who, sizeof(who), "%s%s%s", m.name.c_str(), m.slot == 0 ? T("  (host)", "  (хост)") : "",
+                      m.local ? T("  (you)", "  (вы)") : "");
+        const char* where = !m.connected  ? T("Connection lost, slot kept", "Связь потеряна, место сохранено")
+                            : m.slot == 0 ? T("Host's world", "Мир хоста")
+                            : m.in_world  ? T("In the host's world", "В мире хоста")
+                                          : T("In their own world", "В своём мире");
+        int n = std::snprintf(line, sizeof(line), "%s", where);
+        if (m.connected && !m.local && m.ping_ms >= 0 && n < int(sizeof(line))) {
+            n += std::snprintf(line + n, sizeof(line) - n, T("  ·  %d ms", "  ·  %d мс"), m.ping_ms);
+        }
+        if (!m.area.empty() && n < int(sizeof(line))) {
+            std::snprintf(line + n, sizeof(line) - n, "  ·  %s", m.area.c_str());
+        }
+        Info(who, line, !m.connected ? warn : m.in_world || m.slot == 0 ? Bright() : Plain());
+    }
+
+    // Actions.
+    ImGui::Spacing();
+    const bool active = on && b.role != ps::Role::Off;
+    if (ActionRow("party_rejoin",
+                  b.role == ps::Role::Host ? T("Summon the party again", "Призвать группу снова")
+                                           : T("Rejoin the host", "Вернуться к хосту"),
+                  nullptr,
+                  b.role == ps::Role::Host
+                      ? T("Rings the Beckoning Bell again for hunters who are waiting.",
+                          "Снова звонит в манящий колокол для ожидающих охотников.")
+                      : T("Reconnects to the host now and rings the bell to be summoned again.",
+                          "Сейчас же переподключается к хосту и звонит в колокол, чтобы вас снова "
+                          "призвали."),
+                  active)) {
+        ps::RequestRejoin();
+    }
+    const bool leave_armed = now < party_ui.leave_confirm_until;
+    if (ActionRow("party_leave", T("Leave the party", "Покинуть группу"),
+                  leave_armed ? T("Press again to leave", "Нажмите ещё раз") : nullptr,
+                  b.role == ps::Role::Host
+                      ? T("Ends the party: every guest returns to their own world.",
+                          "Завершает группу: все гости возвращаются в свои миры.")
+                      : T("Returns to your own world and stops rejoining the host.",
+                          "Возвращает в ваш мир и прекращает возвращения к хосту."),
+                  active)) {
+        if (leave_armed) {
+            party_ui.leave_confirm_until = 0.0;
+            ps::RequestLeave();
+        } else {
+            party_ui.leave_confirm_until = now + 3.0;
+        }
+    }
+    if (b.role == ps::Role::Host) {
+        for (const ps::Member& m : b.members) {
+            if (m.local || m.slot == 0) {
+                continue;
+            }
+            char id[48], label[96];
+            std::snprintf(id, sizeof(id), "party_kick_%d", m.slot);
+            std::snprintf(label, sizeof(label), T("Kick %s", "Исключить %s"), m.name.c_str());
+            const bool armed = now < party_ui.kick_confirm_until && party_ui.kick_confirm == m.name;
+            if (ActionRow(id, label, armed ? T("Press again to kick", "Нажмите ещё раз") : nullptr,
+                          T("Sends this hunter back to their own world and frees the slot.",
+                            "Отправляет охотника в его мир и освобождает место."),
+                          on)) {
+                if (armed) {
+                    party_ui.kick_confirm.clear();
+                    ps::KickMember(m.name);
+                } else {
+                    party_ui.kick_confirm = m.name;
+                    party_ui.kick_confirm_until = now + 3.0;
+                }
+            }
+        }
+    }
+    auto& s = BbSettings::Get();
+    Toggle("party_toasts", T("Join / leave notices", "Уведомления о входе и выходе"), s.party_toasts,
+           T("A short notice in a top corner when a hunter joins or leaves, or the party travels. "
+             "Never takes input.",
+             "Короткое уведомление в верхнем углу, когда охотник входит или выходит или группа "
+             "перемещается. Не перехватывает ввод."),
+           on);
+    if (!b.last_event.empty()) {
+        ImGui::Spacing();
+        std::snprintf(line, sizeof(line), T("Last: %s", "Последнее: %s"), b.last_event.c_str());
+        Note(line, Dim());
+    }
+}
+
 } // namespace Ui
 
 void Menu() {
@@ -975,9 +1202,10 @@ void Menu() {
     const ImVec2 display = io.DisplaySize;
     ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 165));
 
-    static const char* tab_en[] = {"Display", "Upscaler", "Game effects", "Controls", "Advanced"};
-    static const char* tab_ru[] = {"Изображение", "Апскейлер", "Эффекты игры", "Управление", "Дополнительно"};
-    constexpr int tabs = 5;
+    static const char* tab_en[] = {"Display", "Upscaler", "Game effects", "Controls", "Advanced", "Party"};
+    static const char* tab_ru[] = {"Изображение", "Апскейлер", "Эффекты игры", "Управление", "Дополнительно",
+                                   "Группа"};
+    constexpr int tabs = 6;
     if (focus_request) {
         focus_request = false;
         state.focus_first = true;
@@ -1112,7 +1340,8 @@ void Menu() {
     case 1: UpscalerTab(); break;
     case 2: EffectsTab(); break;
     case 3: ControlsTab(); break;
-    default: AdvancedTab(); break;
+    case 4: AdvancedTab(); break;
+    default: PartyTab(); break;
     }
     if (RestartNeeded()) {
         ImGui::Spacing();
@@ -1329,6 +1558,56 @@ void CompileIndicator() {
                     percent);
     }
     ImGui::End();
+}
+
+/// Party notices (join / leave / travel): the latest party_status event for ToastMs in a top
+/// corner (top left; top right while the performance HUD has the top left), fading out. Not
+/// interactive, never "menu open"; a newer event replaces the one shown.
+void PartyToast() {
+    if (!party::status::Enabled() || !BbSettings::Get().party_toasts) {
+        return;
+    }
+    const std::int64_t now = SteadyMs();
+    if (party::status::EventSeq() != toast_seen.load()) {
+        const party::status::Board b = party::status::Snapshot();
+        toast_seen = b.event_seq;
+        toast_text = b.last_event;
+        toast_until_ms = toast_text.empty() ? 0 : now + ToastMs;
+    }
+    const std::int64_t left = toast_until_ms.load() - now;
+    if (left <= 0 || toast_text.empty()) {
+        return;
+    }
+    const float alpha = std::clamp(float(left) / 500.0f, 0.0f, 1.0f); // fades over the last 0.5 s
+    const auto& s = BbSettings::Get();
+    const bool right = s.show_hud && s.hud_position == BbSettings::HudTopLeft;
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float pad = 12.0f * base_scale;
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + (right ? viewport->WorkSize.x - pad : pad),
+                                   viewport->WorkPos.y + pad),
+                            ImGuiCond_Always, ImVec2(right ? 1.0f : 0.0f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.6f * alpha);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f * base_scale, 8.0f * base_scale));
+    ImGui::PushFont(serif_font, 19.0f);
+    ImGui::Begin("##party_toast", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings);
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImGui::TextColored(ImVec4(0.96f, 0.88f, 0.70f, alpha), "%s", toast_text.c_str());
+    // The game's gold underline, fading to both ends.
+    const float w = ImGui::GetItemRectSize().x, y = ImGui::GetItemRectMax().y + 3.0f * base_scale;
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImU32 gold = ImGui::GetColorU32(ImVec4(0.80f, 0.68f, 0.46f, 0.85f * alpha));
+    const ImU32 clear = ImGui::GetColorU32(ImVec4(0.80f, 0.68f, 0.46f, 0.0f));
+    const float t = 1.2f * base_scale, mid = at.x + w * 0.5f;
+    draw->AddRectFilledMultiColor(ImVec2(at.x, y), ImVec2(mid, y + t), clear, gold, gold, clear);
+    draw->AddRectFilledMultiColor(ImVec2(mid, y), ImVec2(at.x + w, y + t), gold, clear, clear, gold);
+    ImGui::Dummy(ImVec2(0.0f, 4.0f * base_scale));
+    ImGui::End();
+    ImGui::PopFont();
+    ImGui::PopStyleVar(2);
 }
 
 void TextPrompt() {
@@ -1626,7 +1905,7 @@ bool HandleEvent(const SDL_Event& event) {
 bool Visible() {
     return initialized &&
            (menu_open || prompt_active || BbSettings::Get().show_fps || BbSettings::Get().show_hud ||
-            CompileIndicatorShown());
+            CompileIndicatorShown() || ToastWanted());
 }
 
 bool MenuOpen() {
@@ -1775,6 +2054,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     }
     if (!menu_open) {
         CompileIndicator();
+        PartyToast();
     }
     if (prompt_active && !menu_open) {
         TextPrompt();
