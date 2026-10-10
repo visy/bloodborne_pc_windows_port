@@ -194,6 +194,32 @@ NPC task alive).
   map; no crash, no leaked slot. [R]
 * Not checkable with one instance: K1/K3-K7 actions, D1-D3 (need a session).
 
+### 6.1 Live, two instances (loopback party, `--party`, save in the Hunter's Dream)
+
+`instances.py run --count 2 --party --env BB_PARTY_B2=1 --env BB_PARTY_B2_TEST_WARP=2412951
+--env BB_PARTY_B2_TEST_HOSTWARP=1` (the host lamp-warps to Central Yharnam once the guest's chr
+has stood in its world; the director's bells did the first summon in the Dream).
+
+Run 1-3 (20:00-20:30) [R]:
+* Host: K2 kept both tasks through its load (`[mode 3 step 6] [mode 1 step 6 0x0c]`), role
+  stayed 3, flow 4; the guest's chr gone after the load (NO-chr) as predicted; "join snapshot
+  re-sent (0x19, flags ok, world ok, bullets, net sync, NPC, 0x42)".
+* Guest: took the TRAVEL event, flow 1; the game applied the host's snapshot (flow 2, K6 ate
+  `OnBeJoinStart`); flow 3 + lamp warp under K7: **one loading screen, role stayed 6 (client),
+  no "returned home"**; the old stage dtor kept its tasks (flow 3); `0x178D9C0` set flow 4; K5
+  suppressed one OnMatchingCheck leave; rewind → **host chr re-created on the guest**
+  (`[mode 2 step 6 0x0c chr]`).
+* Host: rewind → **guest chr re-created on the host** (`[mode 1 step 6 0x0c chr]`).
+* Bug found: the guest landed in **m21_00 (stage 0x15000000), not m24_01**: a guest's loads use
+  the *summoned placement* while GSM +0x1521 is set (OnJoinMutiplay): the descriptor builder
+  `0x1943F10` takes type 2 with GSM +0x14C4 (stage), +0x14D0 (position), +0x14E0 (rotation),
+  ignoring the lamp warp's +0x0C. Fix (commit 1411e30): after its load the host sends its stage
+  (PlayerIns +0x3F8) and physics transform (+0x58→+8→+0x3B0→+0x68: +0x1E0 position, +0x1D0
+  rotation) in a "b2" "dest" event; the guest writes them (1.5 m aside) into +0x14C4/+0x14D0/
+  +0x14E0 before its warp. The host side "arrived" event was never delivered: the host had no
+  `on_event` callback in party_runtime (fixed in the same commit); the host fell back to its 60 s
+  timer.
+
 ## 7. Risks / open items
 
 * [I] GameData remote rows surviving a host load (MoveMapStep ctor touches only the local row) -
