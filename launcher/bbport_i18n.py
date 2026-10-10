@@ -246,8 +246,12 @@ EN = {
     # Mode
     "Режим работы": "Mode",
     "Новая модель памяти и трансляции": "New memory and translation model",
-    "Эксперимент. Видеокарта работает с памятью игры напрямую, как в игре для ПК, а команды графики переводятся, а не эмулируются; возможны ошибки. На NVIDIA и других видеокартах, кроме AMD, — через модуль памяти прослойки. Если драйвер не проходит проверку при запуске — старая модель. Выключено — старая модель памяти, как в 0.3, со всеми исправлениями":
-        "Experimental. The GPU works with the game's memory directly, as in a PC game, and graphics commands are translated rather than emulated; errors are possible. On NVIDIA and other non-AMD GPUs it goes through the layer's memory module. If the driver fails the startup check, the old model is used. Off: the old memory model, as in 0.3, with all the fixes",
+    "Новая: видеокарта работает с памятью игры напрямую, как в игре для ПК, а команды графики переводятся, а не эмулируются. Старая — модель памяти 0.3 со всеми исправлениями. Если драйвер не проходит проверку при запуске — старая":
+        "The new one: the GPU works with the game's memory directly, as in a PC game, and graphics commands are translated rather than emulated. The old one: the memory model of 0.3 with all the fixes. If the driver fails the startup check, the old one",
+    "Модель памяти и трансляции": "Memory and translation model",
+    "Авто: новая на AMD, старая на других": "Auto: new on AMD, old on others",
+    "Новая": "New",
+    "Старая (как в 0.3)": "Old (as in 0.3)",
     "Синхронизация как в 0.3": "Synchronisation as in 0.3",
     "Для поиска регрессий: старая модель памяти и ожидания копий как в релизе 0.3":
         "For finding regressions: the old memory model and copy waits as released in 0.3",
@@ -463,8 +467,12 @@ PT_BR = {
     "Для разработчика": "Desenvolvedor",
     "Режим работы": "Modo",
     "Новая модель памяти и трансляции": "Novo modelo de memória e tradução",
-    "Эксперимент. Видеокарта работает с памятью игры напрямую, как в игре для ПК, а команды графики переводятся, а не эмулируются; возможны ошибки. На NVIDIA и других видеокартах, кроме AMD, — через модуль памяти прослойки. Если драйвер не проходит проверку при запуске — старая модель. Выключено — старая модель памяти, как в 0.3, со всеми исправлениями":
-        "Experimental. A GPU usa a memória do jogo diretamente, como em um jogo de PC, e os comandos gráficos são traduzidos em vez de emulados; podem ocorrer erros. Na NVIDIA e em outras GPUs que não são AMD, isso passa pelo módulo de memória da camada. Se o driver falhar na verificação inicial, é usado o modelo antigo. Desligado: o modelo de memória antigo, como na 0.3, com todas as correções",
+    "Новая: видеокарта работает с памятью игры напрямую, как в игре для ПК, а команды графики переводятся, а не эмулируются. Старая — модель памяти 0.3 со всеми исправлениями. Если драйвер не проходит проверку при запуске — старая":
+        "O novo: a GPU usa a memória do jogo diretamente, como em um jogo de PC, e os comandos gráficos são traduzidos em vez de emulados. O antigo: o modelo de memória da 0.3 com todas as correções. Se o driver falhar na verificação inicial, o antigo",
+    "Модель памяти и трансляции": "Modelo de memória e tradução",
+    "Авто: новая на AMD, старая на других": "Automático: novo na AMD, antigo nas outras",
+    "Новая": "Novo",
+    "Старая (как в 0.3)": "Antigo (como na 0.3)",
     "Синхронизация как в 0.3": "Sincronização como na 0.3",
     "Для поиска регрессий: старая модель памяти и ожидания копий как в релизе 0.3":
         "Para encontrar regressões: o modelo de memória antigo e as esperas de cópias como na versão 0.3",
@@ -704,8 +712,12 @@ ZH_CN = {
     # Mode
     "Режим работы": "工作模式",
     "Новая модель памяти и трансляции": "新内存与指令转译模型",
-    "Эксперимент. Видеокарта работает с памятью игры напрямую, как в игре для ПК, а команды графики переводятся, а не эмулируются; возможны ошибки. На NVIDIA и других видеокартах, кроме AMD, — через модуль памяти прослойки. Если драйвер не проходит проверку при запуске — старая модель. Выключено — старая модель памяти, как в 0.3, со всеми исправлениями":
-        "实验性功能。显卡会像 PC 游戏那样直接读写游戏内存，图形指令被转译而非模拟；可能出现问题。在 NVIDIA 及其他非 AMD 显卡上，通过转换层的内存模块实现。如果驱动未通过启动检查，则使用旧模型。关闭时使用旧的内存模型（与 0.3 版相同），包含所有修复",
+    "Новая: видеокарта работает с памятью игры напрямую, как в игре для ПК, а команды графики переводятся, а не эмулируются. Старая — модель памяти 0.3 со всеми исправлениями. Если драйвер не проходит проверку при запуске — старая":
+        "新模型：显卡像 PC 游戏那样直接读写游戏内存，图形指令被转译而非模拟。旧模型：0.3 版的内存模型，包含所有修复。如果驱动未通过启动检查，则使用旧模型",
+    "Модель памяти и трансляции": "内存与指令转译模型",
+    "Авто: новая на AMD, старая на других": "自动：AMD 用新模型，其他显卡用旧模型",
+    "Новая": "新模型",
+    "Старая (как в 0.3)": "旧模型（与 0.3 版相同）",
     "Синхронизация как в 0.3": "与 0.3 版相同的同步方式",
     "Для поиска регрессий: старая модель памяти и ожидания копий как в релизе 0.3":
         "用于排查回归问题：采用与 0.3 版发布时相同的旧内存模型与复制等待方式",

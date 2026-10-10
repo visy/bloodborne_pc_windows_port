@@ -17,9 +17,6 @@ static constexpr u32 NUM_BUFFERS = 40;
 static constexpr u32 NUM_SAMPLERS = 16;
 static constexpr u32 NUM_FMASKS = 8;
 
-// Bloodborne's original buffer-copy compute shader (not the export-stage copy shader).
-inline constexpr u64 BufferCopyShaderHash = 0xfefebf9f;
-
 using SharpLocation = u16;
 
 constexpr SharpLocation UNKNOWN_LOCATION = std::numeric_limits<u16>::max();

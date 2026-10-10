@@ -52,6 +52,7 @@ void runtime_memory_dump_recent_ops(void *file_handle);
 /* The CPU is about to write the range outside guest code (a file read): tells the GPU side. */
 void runtime_memory_note_write(uintptr_t address, uint64_t size);
 void runtime_memory_note_cpu_write(uintptr_t address, uint64_t size);
+void runtime_memory_prepare_cpu_write(uintptr_t address, uint64_t size);
 /* bbport (frame stats): a guest thread was blocked `ns` in the runtime (0 cond, 1 mutex, 2 sema, 3 sleep). */
 void runtime_wait_note(int kind, uint64_t ns);
 void runtime_wait_report(double frames);
