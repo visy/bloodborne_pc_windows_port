@@ -1,0 +1,1868 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// derived from droogie/bbhost src/hle/net.cpp @8f2746c
+//
+// libSceNet / libSceNetCtl for party play (BB_PARTY): the game's sockets on real Winsock.
+// UDP (type 2) and TCP (type 1) sockets are host sockets; SOCK_DGRAM_P2P (type 6) sockets
+// share one UDP port per instance - the game's P2P port 3658 becomes BB_PARTY_PORT (default
+// 9307), bound with SO_EXCLUSIVEADDRUSE - multiplexed by the PS4 kernel's virtual-port header
+// [0xff][flags][src vport][dst vport]. Hole-punch probes (fe 'bbhp'), STUN Binding traffic and
+// relay frames ([0xfb]['R'|'r']) share that port and never reach the game. The party host
+// answers STUN Binding Requests on it and relays between guests that cannot reach each other.
+//
+// Errors follow the runtime's libSceNet convention (runtime_services.c): the call returns
+// 0x80410100 | errno and sceNetErrnoLoc's word holds the errno, both FreeBSD numbers.
+#include "bbnet_internal.h"
+#include "net_stun.h"
+#include "netsim.h"
+
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <iphlpapi.h>
+#include <windows.h>
+#else
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
+
+#include <atomic>
+#include <cerrno>
+#include <chrono>
+#include <condition_variable>
+#include <cstdarg>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <deque>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <random>
+#include <string>
+#include <thread>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+namespace bbnet {
+namespace {
+
+using Clock = std::chrono::steady_clock;
+
+// FreeBSD errno values (what the guest reads).
+namespace bsd {
+constexpr int kEINTR = 4, kEIO = 5, kEBADF = 9, kENOMEM = 12, kEACCES = 13, kEFAULT = 14, kEINVAL = 22,
+              kEAGAIN = 35, kEINPROGRESS = 36, kEALREADY = 37, kENOTSOCK = 38, kEDESTADDRREQ = 39,
+              kEMSGSIZE = 40, kENOPROTOOPT = 42, kEPROTONOSUPPORT = 43, kEOPNOTSUPP = 45,
+              kEAFNOSUPPORT = 47, kEADDRINUSE = 48, kEADDRNOTAVAIL = 49, kENETDOWN = 50, kENETUNREACH = 51,
+              kECONNABORTED = 53, kECONNRESET = 54, kENOBUFS = 55, kEISCONN = 56, kENOTCONN = 57,
+              kETIMEDOUT = 60, kECONNREFUSED = 61, kEHOSTUNREACH = 65;
+}  // namespace bsd
+
+constexpr int kNetErrBase = static_cast<int>(0x80410100);
+constexpr int kNetCtlInvalidAddr = static_cast<int>(0x80412107);
+constexpr int kNetCtlInvalidCode = static_cast<int>(0x80412104);
+// SCE_NET_ERROR_RESOLVER_ENOHOST (shadPS4 net_error.h).
+constexpr int kResolverNoHost = static_cast<int>(0x804101ea);
+
+// The socket API behind a few names, so the layer reads the same on Windows and Linux
+// (winsock: SOCKET handles, closesocket, WSA error numbers, no MSG_DONTWAIT - the sockets
+// are non-blocking there and a blocking call waits with WSAPoll first).
+#if defined(_WIN32)
+using sockfd_t = SOCKET;
+constexpr sockfd_t kBadSock = INVALID_SOCKET;
+using socklen_type = int;
+using ssize_type = int;
+inline void sock_close(sockfd_t fd) { ::closesocket(fd); }
+inline int last_sock_error() { return ::WSAGetLastError(); }
+// The last socket error as a FreeBSD errno.
+int sock_errno() {
+    switch (::WSAGetLastError()) {
+        case WSAEWOULDBLOCK: return bsd::kEAGAIN;
+        case WSAEINPROGRESS: return bsd::kEINPROGRESS;
+        case WSAEALREADY: return bsd::kEALREADY;
+        case WSAENOTSOCK: return bsd::kEBADF;
+        case WSAEDESTADDRREQ: return bsd::kEDESTADDRREQ;
+        case WSAEMSGSIZE: return bsd::kEMSGSIZE;
+        case WSAENOPROTOOPT: return bsd::kENOPROTOOPT;
+        case WSAEPROTONOSUPPORT: return bsd::kEPROTONOSUPPORT;
+        case WSAEOPNOTSUPP: return bsd::kEOPNOTSUPP;
+        case WSAEAFNOSUPPORT: return bsd::kEAFNOSUPPORT;
+        case WSAEADDRINUSE: return bsd::kEADDRINUSE;
+        case WSAEADDRNOTAVAIL: return bsd::kEADDRNOTAVAIL;
+        case WSAENETDOWN: return bsd::kENETDOWN;
+        case WSAENETUNREACH: return bsd::kENETUNREACH;
+        case WSAECONNABORTED: return bsd::kECONNABORTED;
+        case WSAECONNRESET: return bsd::kECONNRESET;
+        case WSAENOBUFS: return bsd::kENOBUFS;
+        case WSAEISCONN: return bsd::kEISCONN;
+        case WSAENOTCONN: return bsd::kENOTCONN;
+        case WSAETIMEDOUT: return bsd::kETIMEDOUT;
+        case WSAECONNREFUSED: return bsd::kECONNREFUSED;
+        case WSAEHOSTUNREACH: return bsd::kEHOSTUNREACH;
+        case WSAEACCES: return bsd::kEACCES;  // a port another program holds exclusively
+        case WSAEFAULT: return bsd::kEFAULT;
+        case WSAEINVAL: return bsd::kEINVAL;
+        case WSAEINTR: return bsd::kEINTR;
+        default: return bsd::kEIO;
+    }
+}
+int map_so_error(int e) {
+    ::WSASetLastError(e);
+    return sock_errno();
+}
+inline void sock_set_nonblock(sockfd_t fd, bool on) {
+    u_long v = on ? 1 : 0;
+    ::ioctlsocket(fd, FIONBIO, &v);
+}
+inline int sock_poll(sockfd_t fd, short events, int ms) {
+    WSAPOLLFD p{fd, events, 0};
+    return ::WSAPoll(&p, 1, ms);
+}
+inline int sock_poll_revents(sockfd_t fd, short events, short* revents) {
+    WSAPOLLFD p{fd, events, 0};
+    const int r = ::WSAPoll(&p, 1, 0);
+    *revents = r > 0 ? p.revents : 0;
+    return r;
+}
+inline sockfd_t sock_new(int type) {
+    const sockfd_t fd = ::socket(AF_INET, type, type == SOCK_STREAM ? IPPROTO_TCP : IPPROTO_UDP);
+    if (fd != INVALID_SOCKET) sock_set_nonblock(fd, true);  // blocking calls wait with WSAPoll
+    return fd;
+}
+inline void sock_setopt_int(sockfd_t fd, int level, int name, int v) {
+    ::setsockopt(fd, level, name, reinterpret_cast<const char*>(&v), sizeof(v));
+}
+#else
+using sockfd_t = int;
+constexpr sockfd_t kBadSock = -1;
+using socklen_type = socklen_t;
+using ssize_type = ssize_t;
+inline void sock_close(sockfd_t fd) { ::close(fd); }
+int errno_to_bsd(int e) {
+    switch (e) {
+        case EAGAIN: return bsd::kEAGAIN;
+        case EINPROGRESS: return bsd::kEINPROGRESS;
+        case EALREADY: return bsd::kEALREADY;
+        case ENOTSOCK: return bsd::kENOTSOCK;
+        case EDESTADDRREQ: return bsd::kEDESTADDRREQ;
+        case EMSGSIZE: return bsd::kEMSGSIZE;
+        case ENOPROTOOPT: return bsd::kENOPROTOOPT;
+        case EPROTONOSUPPORT: return bsd::kEPROTONOSUPPORT;
+        case EOPNOTSUPP: return bsd::kEOPNOTSUPP;
+        case EAFNOSUPPORT: return bsd::kEAFNOSUPPORT;
+        case EADDRINUSE: return bsd::kEADDRINUSE;
+        case EADDRNOTAVAIL: return bsd::kEADDRNOTAVAIL;
+        case ENETDOWN: return bsd::kENETDOWN;
+        case ENETUNREACH: return bsd::kENETUNREACH;
+        case ECONNABORTED: return bsd::kECONNABORTED;
+        case ECONNRESET: return bsd::kECONNRESET;
+        case ENOBUFS: return bsd::kENOBUFS;
+        case EISCONN: return bsd::kEISCONN;
+        case ENOTCONN: return bsd::kENOTCONN;
+        case ETIMEDOUT: return bsd::kETIMEDOUT;
+        case ECONNREFUSED: return bsd::kECONNREFUSED;
+        case EHOSTUNREACH: return bsd::kEHOSTUNREACH;
+        default: return e <= 34 ? e : bsd::kEIO;  // 1..34 coincide
+    }
+}
+int sock_errno() { return errno_to_bsd(errno); }
+int map_so_error(int e) { return errno_to_bsd(e); }
+inline int last_sock_error() { return errno; }
+inline void sock_set_nonblock(sockfd_t fd, bool on) {
+    const int fl = ::fcntl(fd, F_GETFL, 0);
+    ::fcntl(fd, F_SETFL, on ? (fl | O_NONBLOCK) : (fl & ~O_NONBLOCK));
+}
+inline int sock_poll(sockfd_t fd, short events, int ms) {
+    pollfd p{fd, events, 0};
+    return ::poll(&p, 1, ms);
+}
+inline int sock_poll_revents(sockfd_t fd, short events, short* revents) {
+    pollfd p{fd, events, 0};
+    const int r = ::poll(&p, 1, 0);
+    *revents = r > 0 ? p.revents : 0;
+    return r;
+}
+inline sockfd_t sock_new(int type) {
+    const sockfd_t fd = ::socket(AF_INET, type, 0);
+    if (fd >= 0) sock_set_nonblock(fd, true);  // as on Windows: blocking calls wait with poll
+    return fd;
+}
+inline void sock_setopt_int(sockfd_t fd, int level, int name, int v) { ::setsockopt(fd, level, name, &v, sizeof(v)); }
+#endif
+inline bool sock_ok(sockfd_t fd) { return fd != kBadSock; }
+inline bool would_block() {
+#if defined(_WIN32)
+    return ::WSAGetLastError() == WSAEWOULDBLOCK;
+#else
+    return errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+}
+
+ssize_type raw_recvfrom(sockfd_t fd, void* buf, std::size_t len, int flags, sockaddr_in* sa, socklen_type* sl) {
+    return ::recvfrom(fd, static_cast<char*>(buf), static_cast<int>(len), flags, reinterpret_cast<sockaddr*>(sa), sl);
+}
+// Every UDP datagram leaves here: through the network simulator when BB_NET_SIM is on.
+ssize_type raw_sendto(sockfd_t fd, const void* buf, std::size_t len, const sockaddr_in* sa) {
+    if (netsim::enabled()) {
+        return netsim::sendto(static_cast<std::uintptr_t>(fd), buf, len, sa->sin_addr.s_addr, sa->sin_port);
+    }
+    return ::sendto(fd, static_cast<const char*>(buf), static_cast<int>(len), 0, reinterpret_cast<const sockaddr*>(sa),
+                    sizeof(*sa));
+}
+
+// The game's epoll over one wake word instead of the kernel's epoll: a P2P socket is readable
+// when its inbox has a datagram; a host socket is polled with a zero timeout; a wait sleeps on
+// the word every reader, control change and abort bumps, ten milliseconds at a time for the
+// host sockets. The word is read before the sockets are looked at, so a datagram that lands
+// between the look and the sleep wakes it.
+std::atomic<std::uint32_t> g_wake_word{0};
+#if !defined(_WIN32)
+std::mutex g_wake_mu;
+std::condition_variable g_wake_cv;
+#endif
+void net_wake() {
+    g_wake_word.fetch_add(1, std::memory_order_seq_cst);
+#if defined(_WIN32)
+    ::WakeByAddressAll(reinterpret_cast<void*>(&g_wake_word));
+#else
+    std::lock_guard<std::mutex> lk(g_wake_mu);
+    g_wake_cv.notify_all();
+#endif
+}
+void wake_wait(std::uint32_t gen, Clock::time_point until) {
+    const auto now = Clock::now();
+    if (now >= until) return;
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(until - now).count();
+    if (ms <= 0) {
+        // Below a millisecond: the timeout is honoured by yielding, not rounded to zero
+        // (KyoPS4x #215: an empty epoll spinning a core on a timeout it ignored).
+        while (Clock::now() < until && g_wake_word.load(std::memory_order_seq_cst) == gen) std::this_thread::yield();
+        return;
+    }
+#if defined(_WIN32)
+    std::uint32_t expected = gen;
+    ::WaitOnAddress(reinterpret_cast<void*>(&g_wake_word), &expected, sizeof(expected), static_cast<DWORD>(ms));
+#else
+    std::unique_lock<std::mutex> lk(g_wake_mu);
+    g_wake_cv.wait_until(lk, until, [&] { return g_wake_word.load(std::memory_order_seq_cst) != gen; });
+#endif
+}
+
+std::uint16_t bswap16(std::uint16_t v) { return static_cast<std::uint16_t>((v << 8) | (v >> 8)); }
+std::uint32_t bswap32(std::uint32_t v) {
+    return (v << 24) | ((v << 8) & 0x00ff0000u) | ((v >> 8) & 0x0000ff00u) | (v >> 24);
+}
+
+int parse_ipv4(const char* s, std::uint32_t* net) {
+    if (!s || !net) return 0;
+    unsigned a = 0, b = 0, c = 0, d = 0;
+    char extra = 0;
+    if (std::sscanf(s, "%u.%u.%u.%u%c", &a, &b, &c, &d, &extra) != 4) return 0;
+    if (a > 255 || b > 255 || c > 255 || d > 255) return 0;
+    *net = bswap32((a << 24) | (b << 16) | (c << 8) | d);
+    return 1;
+}
+void write_ipv4(char* dst, unsigned n, std::uint32_t net) {
+    if (!dst || n == 0) return;
+    const std::uint32_t host = bswap32(net);
+    std::snprintf(dst, n, "%u.%u.%u.%u", (host >> 24) & 0xffu, (host >> 16) & 0xffu, (host >> 8) & 0xffu,
+                  host & 0xffu);
+}
+
+void wsa_start() {
+#if defined(_WIN32)
+    static const bool started = [] {
+        WSADATA d{};
+        return ::WSAStartup(MAKEWORD(2, 2), &d) == 0;
+    }();
+    (void)started;
+#endif
+}
+
+thread_local int g_net_errno = 0;
+int g_net_next = 1;
+std::mutex g_net_mu;
+
+int net_err(int bsd_errno) {
+    g_net_errno = bsd_errno;
+    return kNetErrBase | (bsd_errno & 0xff);
+}
+// The failing errno of a real call, as the game's sceNetErrnoLoc and return value.
+int net_fail() { return net_err(sock_errno()); }
+int net_again() { return net_err(bsd::kEAGAIN); }
+
+// SceNetSockaddrIn: {len, family, port (nbo), addr (nbo), vport (nbo), zero[6]}.
+struct SceSockaddrIn {
+    std::uint8_t len;
+    std::uint8_t family;
+    std::uint16_t port;
+    std::uint32_t addr;
+    std::uint16_t vport;
+    std::uint8_t zero[6];
+};
+static_assert(sizeof(SceSockaddrIn) == 16, "SceNetSockaddrIn is 16 bytes");
+
+// The PS4 kernel multiplexes virtual ports over one UDP port with a header on every
+// datagram: [0xff][flags][src vport][dst vport] when flag 0x40 says the vports are one byte
+// (Bloodborne's are, 40 and 30), two-byte vports without it, four more bytes when flag 0x20
+// adds a comid. The header is kept on the wire so a shadPS4 or bbhost peer reads ours.
+constexpr std::uint8_t kP2pMagic = 0xff;
+constexpr std::uint8_t kP2pFlagP2p = 0x80, kP2pFlagByteVports = 0x40, kP2pFlagComid = 0x20, kP2pType = 0x03;
+constexpr std::uint16_t kGameP2pPort = 3658;
+
+struct Datagram {
+    std::vector<std::uint8_t> data;
+    std::uint32_t addr = 0;   // nbo
+    std::uint16_t port = 0;   // nbo
+    std::uint16_t vport = 0;  // host order, the sender's
+};
+// A P2P game socket's inbox: what the port's reader demultiplexed to its vport.
+struct SockQueue {
+    std::mutex mu;
+    std::condition_variable cv;
+    std::deque<Datagram> q;
+    int sock = 0;
+    std::uint16_t vport = 0;
+    // Counters for the desync work: what came in, what went out, how deep the inbox got.
+    std::uint64_t in_dgrams = 0, in_bytes = 0, out_dgrams = 0, out_bytes = 0, forwarded = 0;
+    std::size_t hiwater = 0;
+};
+// The party UDP port, shared by every game socket that binds a vport on it (the game binds
+// 40 at boot and 30 for a session, both on 3658). A reader thread drains it into the queues.
+struct P2pPort {
+    sockfd_t fd = kBadSock;
+    std::uint16_t port = 0;  // host order
+    std::mutex mu;
+    std::map<std::uint16_t, std::shared_ptr<SockQueue>> by_vport;
+    std::thread reader;
+    std::atomic<bool> stop{false};
+    std::uint64_t rx = 0, unmatched = 0, no_header = 0, probes = 0, stun_answered = 0, relayed = 0;
+    Clock::time_point last_report{};
+    // One STUN Binding exchange at a time (p2p_stun): the reader answers the transaction it
+    // finds here (under mu).
+    bool stun_pending = false, stun_done = false;
+    std::uint8_t stun_txid[net::stun::kTxid] = {};
+    std::uint32_t stun_addr = 0;
+    std::uint16_t stun_port = 0;
+    net::stun::Relay stun_relay;
+    std::condition_variable stun_cv;
+    // When a datagram last arrived from each source (addr | port << 32, both network
+    // order): the hole-punch stops once the peer is heard.
+    std::map<std::uint64_t, Clock::time_point> heard;
+};
+// A hole-punch probe: not a P2P datagram (no 0xff), dropped by the reader.
+constexpr std::uint8_t kProbe[8] = {0xfe, 'b', 'b', 'h', 'p', 0, 0, 0};
+
+// The relay. Client side: once a STUN answer carried BBHOST-RELAY, a datagram for another
+// relay port (the server's address, not its STUN port) leaves framed for the STUN port -
+// [0xfb]['R'][token][port] - and the relay's deliveries come back from the STUN port framed
+// [0xfb]['r'][source port]. The game sees none of it: its peers stay server:port both ways.
+constexpr std::uint8_t kRelayMagic = 0xfb, kRelayToServer = 'R', kRelayToClient = 'r';
+constexpr std::size_t kRelayHeader = 12;
+struct RelayLink {
+    std::mutex mu;
+    bool on = false;
+    std::uint32_t server = 0;     // network order
+    std::uint16_t stun_port = 0;  // network order
+    std::uint8_t token[net::stun::kTokenLen] = {};
+    std::uint16_t vport = 0;  // host order
+};
+RelayLink g_relay;
+
+// bbport: the server side, on the party host. A HELLO with a zero token gets a token and a
+// relay port; frames from a known token go on to the client owning the destination port.
+struct RelayClient {
+    std::uint8_t token[net::stun::kTokenLen] = {};
+    std::uint32_t addr = 0;  // network order
+    std::uint16_t port = 0;  // network order
+    std::uint16_t vport = 0;  // host order
+};
+struct RelayServer {
+    std::mutex mu;
+    std::map<std::uint64_t, RelayClient> by_token;
+    std::map<std::uint16_t, std::uint64_t> by_vport;
+    std::uint16_t next_vport = 50001;
+    std::mt19937_64 rng{std::random_device{}() ^ static_cast<std::uint64_t>(Clock::now().time_since_epoch().count())};
+};
+RelayServer g_relay_server;
+std::uint64_t token_key(const std::uint8_t* t) {
+    std::uint64_t k;
+    std::memcpy(&k, t, sizeof(k));
+    return k;
+}
+
+// True when addr:port (network order) is a relay port to frame for.
+bool relay_target(std::uint32_t addr, std::uint16_t port_nbo, std::uint8_t token[net::stun::kTokenLen],
+                  sockaddr_in* stun_sa) {
+    std::lock_guard<std::mutex> lk(g_relay.mu);
+    if (!g_relay.on || addr != g_relay.server || port_nbo == g_relay.stun_port) return false;
+    std::memcpy(token, g_relay.token, net::stun::kTokenLen);
+    *stun_sa = sockaddr_in{};
+    stun_sa->sin_family = AF_INET;
+    stun_sa->sin_addr.s_addr = g_relay.server;
+    stun_sa->sin_port = g_relay.stun_port;
+    return true;
+}
+bool from_relay_server(const sockaddr_in& sa) {
+    std::lock_guard<std::mutex> lk(g_relay.mu);
+    return g_relay.on && sa.sin_addr.s_addr == g_relay.server && sa.sin_port == g_relay.stun_port;
+}
+inline std::uint64_t source_key(std::uint32_t addr, std::uint16_t port_nbo) {
+    return addr | (static_cast<std::uint64_t>(port_nbo) << 32);
+}
+
+// One line per port every 60 s (and at close): the stream's shape.
+void p2p_report_locked(P2pPort& port, const char* when) {
+    std::string line;
+    char buf[192];
+    for (auto& [vp, q] : port.by_vport) {
+        std::lock_guard<std::mutex> lk(q->mu);
+        std::snprintf(buf, sizeof(buf), " vport %u (sock %d): in %llu/%llu B, out %llu/%llu B, hiwater %zu, fwd %llu;",
+                      vp, q->sock, static_cast<unsigned long long>(q->in_dgrams),
+                      static_cast<unsigned long long>(q->in_bytes), static_cast<unsigned long long>(q->out_dgrams),
+                      static_cast<unsigned long long>(q->out_bytes), q->hiwater,
+                      static_cast<unsigned long long>(q->forwarded));
+        line += buf;
+    }
+    log("p2p port %u %s: rx %llu, unmatched %llu, no header %llu, probes %llu, stun %llu, relayed %llu;%s", port.port,
+        when, static_cast<unsigned long long>(port.rx), static_cast<unsigned long long>(port.unmatched),
+        static_cast<unsigned long long>(port.no_header), static_cast<unsigned long long>(port.probes),
+        static_cast<unsigned long long>(port.stun_answered), static_cast<unsigned long long>(port.relayed),
+        line.c_str());
+}
+std::map<std::uint16_t, std::shared_ptr<P2pPort>> g_p2p_ports;  // under g_net_mu
+std::atomic<std::uint16_t> g_bound_port{0};
+
+// What a socket shares with its waiters (copied NetSocks point at the same one).
+struct SockCtl {
+    std::atomic<bool> aborted{false};
+    std::atomic<int> rcvtimeo_us{0}, sndtimeo_us{0};
+};
+struct NetSock {
+    int domain = 2;
+    int type = 1;
+    bool nonblock = false;
+    bool listening = false;
+    // UDP (2) and TCP (1) sockets are host sockets; SOCK_DGRAM_P2P (6) sockets share the
+    // party port through `port` and read from `queue`. Other types are inert handles.
+    sockfd_t fd = kBadSock;
+    bool p2p = false;
+    std::uint16_t vport = 0;  // host order, what the game bound
+    std::shared_ptr<P2pPort> port;
+    std::shared_ptr<SockQueue> queue;
+    std::shared_ptr<SockCtl> ctl = std::make_shared<SockCtl>();
+};
+struct NetEpoll {
+    std::string name;
+    std::atomic<bool> aborting{false};
+    std::unordered_map<int, std::uint32_t> watch;
+    std::unordered_map<int, std::uint64_t> data;  // socket id -> the game's epoll data
+};
+std::unordered_map<int, NetSock> g_net_socks;
+std::unordered_map<int, std::shared_ptr<NetEpoll>> g_net_epolls;
+std::unordered_map<int, int> g_net_resolvers;
+std::unordered_map<int, std::pair<void*, void*>> g_net_ctl_cbs;
+int g_net_ctl_cb_next = 1;
+
+// The first datagrams are always logged (the P2P handshake is a few dozen small packets and
+// the runs that fail are the ones without a trace); BB_NET_TRACE=1 removes the cap.
+const bool g_net_trace = [] {
+    const char* e = std::getenv("BB_NET_TRACE");
+    return e && e[0] == '1';
+}();
+constexpr int kTraceFirst = 400;
+bool trace_now(std::atomic<int>& count) {
+    if (g_net_trace) return true;
+    return count.fetch_add(1, std::memory_order_relaxed) < kTraceFirst;
+}
+
+int net_alloc() { return g_net_next++; }
+
+// Splits a datagram at the P2P header; returns the header length (0 when there is none).
+std::size_t p2p_header(const std::uint8_t* d, std::size_t n, std::uint16_t* src, std::uint16_t* dst) {
+    if (n < 4 || d[0] != kP2pMagic) return 0;
+    const std::uint8_t fl = d[1];
+    std::size_t at = 2;
+    if (fl & kP2pFlagComid) at += 4;
+    std::size_t hdr;
+    if (fl & kP2pFlagByteVports) {
+        if (at + 2 > n) return 0;
+        *src = d[at];
+        *dst = d[at + 1];
+        hdr = at + 2;
+    } else {
+        if (at + 4 > n) return 0;
+        *src = static_cast<std::uint16_t>((d[at] << 8) | d[at + 1]);
+        *dst = static_cast<std::uint16_t>((d[at + 2] << 8) | d[at + 3]);
+        hdr = at + 4;
+    }
+    return hdr;
+}
+// Writes the header for src -> dst into out (6 bytes room); returns its length.
+std::size_t p2p_write_header(std::uint8_t* out, std::uint16_t src, std::uint16_t dst) {
+    out[0] = kP2pMagic;
+    if (src < 256 && dst < 256) {
+        out[1] = kP2pFlagP2p | kP2pFlagByteVports | kP2pType;
+        out[2] = static_cast<std::uint8_t>(src);
+        out[3] = static_cast<std::uint8_t>(dst);
+        return 4;
+    }
+    out[1] = kP2pFlagP2p | kP2pType;
+    out[2] = static_cast<std::uint8_t>(src >> 8);
+    out[3] = static_cast<std::uint8_t>(src);
+    out[4] = static_cast<std::uint8_t>(dst >> 8);
+    out[5] = static_cast<std::uint8_t>(dst);
+    return 6;
+}
+
+// bbport: the host answers a peer's STUN Binding Request (and its relay HELLO).
+void answer_stun(P2pPort& port, const std::uint8_t* buf, std::size_t n, const sockaddr_in& sa) {
+    std::uint8_t txid[net::stun::kTxid];
+    std::uint8_t token[net::stun::kTokenLen];
+    bool hello = false;
+    if (!net::stun::parse_binding_request(buf, n, txid, &hello, token)) return;
+    net::stun::Relay relay;
+    if (hello && settings().host) {
+        std::lock_guard<std::mutex> lk(g_relay_server.mu);
+        auto it = g_relay_server.by_token.find(token_key(token));
+        if (it == g_relay_server.by_token.end()) {
+            RelayClient c;
+            do {
+                const std::uint64_t t = g_relay_server.rng();
+                std::memcpy(c.token, &t, sizeof(t));
+            } while (token_key(c.token) == 0 || g_relay_server.by_token.count(token_key(c.token)));
+            std::uint16_t vp = g_relay_server.next_vport;
+            while (vp == port.port || vp == 0 || g_relay_server.by_vport.count(vp)) ++vp;
+            g_relay_server.next_vport = static_cast<std::uint16_t>(vp + 1);
+            c.vport = vp;
+            it = g_relay_server.by_token.emplace(token_key(c.token), c).first;
+            g_relay_server.by_vport[vp] = token_key(c.token);
+            char ip[32];
+            write_ipv4(ip, sizeof(ip), sa.sin_addr.s_addr);
+            log("relay: %s:%u is relay port %u", ip, bswap16(sa.sin_port), vp);
+        }
+        it->second.addr = sa.sin_addr.s_addr;
+        it->second.port = sa.sin_port;
+        relay.present = true;
+        std::memcpy(relay.token, it->second.token, sizeof(relay.token));
+        relay.vport = it->second.vport;
+        relay.observed_addr = sa.sin_addr.s_addr;
+        relay.observed_port = bswap16(sa.sin_port);
+    }
+    std::uint8_t out[net::stun::kMaxResponse];
+    const std::size_t len = net::stun::build_binding_response(out, txid, sa.sin_addr.s_addr, bswap16(sa.sin_port),
+                                                              relay.present ? &relay : nullptr);
+    raw_sendto(port.fd, out, len, &sa);
+    std::lock_guard<std::mutex> lk(port.mu);
+    ++port.stun_answered;
+}
+// bbport: the host forwards a guest's relay frame to the client owning the destination port.
+void relay_forward(P2pPort& port, std::uint8_t* buf, std::size_t n, const sockaddr_in& sa) {
+    const std::uint64_t src_key = token_key(buf + 2);
+    const std::uint16_t dst_vport = static_cast<std::uint16_t>((buf[10] << 8) | buf[11]);
+    sockaddr_in to{};
+    std::uint16_t src_vport = 0;
+    {
+        std::lock_guard<std::mutex> lk(g_relay_server.mu);
+        auto src = g_relay_server.by_token.find(src_key);
+        if (src == g_relay_server.by_token.end()) return;
+        src->second.addr = sa.sin_addr.s_addr;  // follows the client's NAT rebinding
+        src->second.port = sa.sin_port;
+        src_vport = src->second.vport;
+        auto dv = g_relay_server.by_vport.find(dst_vport);
+        if (dv == g_relay_server.by_vport.end()) return;
+        const RelayClient& dst = g_relay_server.by_token[dv->second];
+        to.sin_family = AF_INET;
+        to.sin_addr.s_addr = dst.addr;
+        to.sin_port = dst.port;
+    }
+    // [0xfb]['r'][source port] in place of the 12-byte request header.
+    std::uint8_t* frame = buf + kRelayHeader - 4;
+    frame[0] = kRelayMagic;
+    frame[1] = kRelayToClient;
+    frame[2] = static_cast<std::uint8_t>(src_vport >> 8);
+    frame[3] = static_cast<std::uint8_t>(src_vport);
+    raw_sendto(port.fd, frame, n - (kRelayHeader - 4), &to);
+    std::lock_guard<std::mutex> lk(port.mu);
+    ++port.relayed;
+}
+
+void p2p_reader(std::shared_ptr<P2pPort> port) {
+    std::uint8_t buf[2048 + kRelayHeader];
+    std::atomic<int> logs{0};
+    while (!port->stop.load(std::memory_order_relaxed)) {
+        if (sock_poll(port->fd, POLLIN, 200) <= 0) continue;
+        sockaddr_in sa{};
+        socklen_type sl = sizeof(sa);
+        ssize_type n = raw_recvfrom(port->fd, buf, sizeof(buf), 0, &sa, &sl);
+        if (n < 0) continue;  // Windows: an ICMP port unreachable surfaces as WSAECONNRESET
+        if (n >= static_cast<ssize_type>(kRelayHeader) && buf[0] == kRelayMagic && buf[1] == kRelayToServer &&
+            settings().host) {
+            relay_forward(*port, buf, static_cast<std::size_t>(n), sa);
+            continue;
+        }
+        if (n >= 4 && buf[0] == kRelayMagic && buf[1] == kRelayToClient && from_relay_server(sa)) {
+            // A relay delivery: the datagram of the owner of the source port, which the game
+            // knows as server:port.
+            const std::uint16_t from_vport = static_cast<std::uint16_t>((buf[2] << 8) | buf[3]);
+            std::memmove(buf, buf + 4, static_cast<std::size_t>(n - 4));
+            n -= 4;
+            sa.sin_port = bswap16(from_vport);
+        }
+        std::uint16_t src = 0, dst = 0;
+        const std::size_t hdr = p2p_header(buf, static_cast<std::size_t>(n), &src, &dst);
+        std::shared_ptr<SockQueue> q;
+        bool forwarded = false;
+        if (!hdr) {
+            // Not the game's: a peer's hole-punch probe, a STUN request (answered) or the
+            // STUN server's answer to our request. None reaches a game socket.
+            if (n >= 8 && std::memcmp(buf, kProbe, 5) == 0) {
+                std::lock_guard<std::mutex> lk(port->mu);
+                ++port->rx;
+                ++port->probes;
+                port->heard[source_key(sa.sin_addr.s_addr, sa.sin_port)] = Clock::now();
+                continue;
+            }
+            if (n >= 20 && buf[0] == 0x00 && buf[1] == 0x01) {
+                {
+                    std::lock_guard<std::mutex> lk(port->mu);
+                    ++port->rx;
+                    port->heard[source_key(sa.sin_addr.s_addr, sa.sin_port)] = Clock::now();
+                }
+                answer_stun(*port, buf, static_cast<std::size_t>(n), sa);
+                continue;
+            }
+            if (n >= 20 && buf[0] == 0x01 && buf[1] == 0x01) {
+                std::lock_guard<std::mutex> lk(port->mu);
+                std::uint32_t a = 0;
+                std::uint16_t p = 0;
+                if (port->stun_pending &&
+                    net::stun::parse_binding_response(buf, static_cast<std::size_t>(n), port->stun_txid, &a, &p,
+                                                      &port->stun_relay)) {
+                    ++port->rx;
+                    port->stun_addr = a;
+                    port->stun_port = p;
+                    port->stun_done = true;
+                    port->stun_pending = false;
+                    port->stun_cv.notify_all();
+                    continue;
+                }
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lk(port->mu);
+            ++port->rx;
+            port->heard[source_key(sa.sin_addr.s_addr, sa.sin_port)] = Clock::now();
+            if (!hdr) ++port->no_header;
+            auto it = hdr ? port->by_vport.find(dst) : port->by_vport.end();
+            if (it != port->by_vport.end()) {
+                q = it->second;
+            } else if (!port->by_vport.empty()) {
+                // No socket on that vport (or no header): the first bound vport takes it, as
+                // the shadPS4 fork forwarded a PS4 peer's vport 30 to the game's 40.
+                q = port->by_vport.begin()->second;
+                forwarded = true;
+                if (hdr) ++port->unmatched;
+            }
+            const auto now = Clock::now();
+            if (now - port->last_report > std::chrono::seconds(60)) {
+                port->last_report = now;
+                p2p_report_locked(*port, "60 s");
+            }
+        }
+        if (!q) continue;
+        Datagram dg;
+        dg.data.assign(buf + hdr, buf + n);
+        dg.addr = sa.sin_addr.s_addr;
+        dg.port = sa.sin_port;
+        dg.vport = src;
+        if (trace_now(logs)) {
+            char ip[32];
+            write_ipv4(ip, sizeof(ip), sa.sin_addr.s_addr);
+            log("recv %d <- %s:%u vport %u->%u: %zu bytes%s", q->sock, ip, bswap16(sa.sin_port), src, dst,
+                dg.data.size(), hdr ? (dst == q->vport ? "" : " (forwarded)") : " (no p2p header)");
+        }
+        {
+            std::lock_guard<std::mutex> lk(q->mu);
+            ++q->in_dgrams;
+            q->in_bytes += dg.data.size();
+            if (forwarded) ++q->forwarded;
+            q->q.push_back(std::move(dg));
+            if (q->q.size() > q->hiwater) q->hiwater = q->q.size();
+        }
+        q->cv.notify_all();
+        net_wake();
+    }
+}
+
+// Under g_net_mu. The instance's party UDP port, opened on first use (the game's first P2P
+// bind, or the session layer's STUN query before it).
+std::shared_ptr<P2pPort> p2p_port_open(std::uint16_t want) {
+    wsa_start();
+    auto pit = g_p2p_ports.find(want);
+    if (pit != g_p2p_ports.end()) return pit->second;
+    const std::uint16_t bound = g_bound_port.load();
+    if (bound) {
+        pit = g_p2p_ports.find(bound);
+        if (pit != g_p2p_ports.end()) return pit->second;
+    }
+    auto port = std::make_shared<P2pPort>();
+    // The port is this instance's alone. With SO_REUSEADDR a second instance on the machine
+    // bound it too and the kernel handed it our peers' datagrams (bbhost, 2026-10-06);
+    // Windows also lets a later SO_REUSEADDR socket take a port unless the first is
+    // exclusive. When another program has it, the next free port is ours.
+    constexpr int kTries = 16;
+    for (int i = 0; i < kTries; ++i) {
+        const auto at = static_cast<std::uint16_t>(want + i);
+        port->fd = sock_new(SOCK_DGRAM);
+        if (!sock_ok(port->fd)) return nullptr;
+#if defined(_WIN32)
+        sock_setopt_int(port->fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, 1);
+        // An ICMP port-unreachable from a peer that went away must not fail later reads.
+        BOOL no_reset = FALSE;
+        DWORD ret = 0;
+        ::WSAIoctl(port->fd, _WSAIOW(IOC_VENDOR, 12) /* SIO_UDP_CONNRESET */, &no_reset, sizeof(no_reset), nullptr,
+                   0, &ret, nullptr, nullptr);
+#endif
+        sockaddr_in sa{};
+        sa.sin_family = AF_INET;
+        sa.sin_port = bswap16(at);
+        sa.sin_addr.s_addr = INADDR_ANY;
+        if (::bind(port->fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) == 0) {
+            port->port = at;
+            break;
+        }
+        const int e = sock_errno();
+        sock_close(port->fd);
+        port->fd = kBadSock;
+        if (e != bsd::kEADDRINUSE && e != bsd::kEACCES) {
+            log("party port %u: bind failed (errno %d)", at, e);
+            return nullptr;
+        }
+        log("party port %u is in use by another program%s", at, i + 1 < kTries ? "; trying the next" : "");
+    }
+    if (!sock_ok(port->fd)) return nullptr;
+    if (port->port != want) log("party port %u (BB_PARTY_PORT %u was taken); peers reach this game there", port->port, want);
+    else log("party port %u open", port->port);
+    g_bound_port.store(port->port);
+    port->reader = std::thread(p2p_reader, port);
+    g_p2p_ports[port->port] = port;
+    return port;
+}
+
+// Under g_net_mu. Detaches a P2P socket from its port; the port's reader stops with its last
+// socket (unless the session layer holds the port open).
+std::atomic<bool> g_port_pinned{false};
+void p2p_detach(NetSock& sock) {
+    if (!sock.port) return;
+    std::shared_ptr<P2pPort> port = sock.port;
+    bool empty = false;
+    {
+        std::lock_guard<std::mutex> lk(port->mu);
+        p2p_report_locked(*port, "at a socket's close");
+        auto it = port->by_vport.find(sock.vport);
+        if (it != port->by_vport.end() && it->second == sock.queue) port->by_vport.erase(it);
+        empty = port->by_vport.empty();
+    }
+    sock.port.reset();
+    if (empty && !g_port_pinned.load()) {
+        port->stop.store(true, std::memory_order_relaxed);
+        if (port->reader.joinable()) port->reader.join();
+        if (sock_ok(port->fd)) sock_close(port->fd);
+        port->fd = kBadSock;
+        g_p2p_ports.erase(port->port);
+        g_bound_port.store(0);
+    }
+}
+
+// A copy of the socket's runtime state, without holding g_net_mu across a blocking call.
+bool sock_state(int s, NetSock* out) {
+    std::lock_guard<std::mutex> lock(g_net_mu);
+    auto it = g_net_socks.find(s);
+    if (it == g_net_socks.end()) return false;
+    *out = it->second;
+    return true;
+}
+
+// Waits (blocking socket) until fd is ready for `events`; returns 0, or the game's error
+// (EINTR when aborted, EAGAIN at the socket's timeout).
+int wait_ready(const NetSock& sock, short events, int timeout_us) {
+    const auto deadline = timeout_us > 0 ? Clock::now() + std::chrono::microseconds(timeout_us) : Clock::time_point::max();
+    for (;;) {
+        if (sock.ctl->aborted.load()) return net_err(bsd::kEINTR);
+        const int r = sock_poll(sock.fd, events, 50);
+        if (r > 0) return 0;
+        if (r < 0) return net_fail();
+        if (Clock::now() >= deadline) return net_again();
+    }
+}
+
+void fill_sce_addr(SceSockaddrIn* out, std::uint32_t addr, std::uint16_t port_nbo, std::uint16_t vport_host) {
+    std::memset(out, 0, sizeof(*out));
+    out->len = 16;
+    out->family = 2;
+    out->port = port_nbo;
+    out->addr = addr;
+    out->vport = bswap16(vport_host);
+}
+
+// Reads one datagram (or stream bytes): from the socket's queue for P2P, the fd otherwise.
+int sock_recv(int s, void* buf, std::uint64_t len, int flags, SceSockaddrIn* from) {
+    NetSock sock;
+    if (!sock_state(s, &sock)) return net_err(bsd::kEBADF);
+    const bool dontwait = sock.nonblock || (flags & 0x80);  // 0x80: SCE_NET_MSG_DONTWAIT
+    const bool peek = flags & 0x2;
+    if (sock.p2p) {
+        if (!sock.queue) return net_again();
+        SockQueue& q = *sock.queue;
+        Datagram dg;
+        {
+            std::unique_lock<std::mutex> lk(q.mu);
+            if (q.q.empty()) {
+                if (dontwait) return net_again();
+                const int to = sock.ctl->rcvtimeo_us.load();
+                auto ready = [&] { return !q.q.empty() || sock.ctl->aborted.load(); };
+                if (to > 0) {
+                    if (!q.cv.wait_for(lk, std::chrono::microseconds(to), ready)) return net_again();
+                } else {
+                    q.cv.wait(lk, ready);
+                }
+                if (q.q.empty()) return net_err(bsd::kEINTR);
+            }
+            if (peek) {
+                dg = q.q.front();
+            } else {
+                dg = std::move(q.q.front());
+                q.q.pop_front();
+            }
+        }
+        const std::size_t take = dg.data.size() < len ? dg.data.size() : static_cast<std::size_t>(len);
+        if (buf && take) std::memcpy(buf, dg.data.data(), take);
+        if (from) fill_sce_addr(from, dg.addr, dg.port, dg.vport);
+        return static_cast<int>(take);
+    }
+    if (!sock_ok(sock.fd)) return dontwait ? net_again() : net_err(bsd::kENOTCONN);
+    for (;;) {
+        sockaddr_in sa{};
+        socklen_type sl = sizeof(sa);
+        const ssize_type n = raw_recvfrom(sock.fd, buf, static_cast<std::size_t>(len), peek ? MSG_PEEK : 0, &sa, &sl);
+        if (n >= 0) {
+            if (from) fill_sce_addr(from, sa.sin_addr.s_addr, sa.sin_port, 0);
+            return static_cast<int>(n);
+        }
+#if defined(_WIN32)
+        if (sock.type == 2 && ::WSAGetLastError() == WSAECONNRESET) continue;  // a stale ICMP report
+#endif
+        if (!would_block()) return net_fail();
+        if (dontwait) return net_again();
+        const int r = wait_ready(sock, POLLIN, sock.ctl->rcvtimeo_us.load());
+        if (r) return r;
+    }
+}
+
+// Sends one datagram, with the P2P header in front on a P2P socket (and the relay frame
+// around it toward a relayed peer).
+int dgram_send(int s, const void* buf, std::uint64_t len, int flags, const SceSockaddrIn* to) {
+    NetSock sock;
+    if (!sock_state(s, &sock)) return net_err(bsd::kEBADF);
+    const sockfd_t fd = sock.port ? sock.port->fd : sock.fd;
+    if (!sock_ok(fd)) return static_cast<int>(len);
+    if (!to) return net_err(bsd::kEDESTADDRREQ);
+    std::uint8_t pkt[2048 + kRelayHeader];
+    std::uint8_t* body = pkt + kRelayHeader;
+    std::size_t hdr = 0;
+    const std::uint16_t dst_vport = bswap16(to->vport);
+    if (sock.p2p) hdr = p2p_write_header(body, sock.vport, dst_vport);
+    if (hdr + len > 2048) return net_err(bsd::kEMSGSIZE);
+    if (buf && len) std::memcpy(body + hdr, buf, static_cast<std::size_t>(len));
+    sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_port = to->port;
+    sa.sin_addr.s_addr = to->addr;
+    (void)flags;
+    ssize_type n;
+    std::uint8_t token[net::stun::kTokenLen];
+    sockaddr_in stun_sa{};
+    if (sock.p2p && relay_target(to->addr, to->port, token, &stun_sa)) {
+        std::uint8_t* frame = pkt;
+        frame[0] = kRelayMagic;
+        frame[1] = kRelayToServer;
+        std::memcpy(frame + 2, token, net::stun::kTokenLen);
+        std::memcpy(frame + 10, &to->port, 2);  // network order is the frame's big-endian
+        n = raw_sendto(fd, frame, kRelayHeader + hdr + static_cast<std::size_t>(len), &stun_sa);
+        if (n >= 0) n -= static_cast<ssize_type>(kRelayHeader);
+    } else {
+        n = raw_sendto(fd, body, hdr + static_cast<std::size_t>(len), &sa);
+    }
+    static std::atomic<int> logs{0};
+    if (sock.p2p && trace_now(logs)) {
+        char ip[32];
+        write_ipv4(ip, sizeof(ip), to->addr);
+        log("send %d -> %s:%u vport %u->%u: %llu bytes -> %lld", s, ip, bswap16(to->port), sock.vport, dst_vport,
+            static_cast<unsigned long long>(len), static_cast<long long>(n));
+    }
+    if (n < 0) {
+        // A UDP send never waits here: the datagram is dropped as a full queue would.
+        if (would_block()) return sock.nonblock || (flags & 0x80) ? net_again() : static_cast<int>(len);
+        return net_fail();
+    }
+    if (sock.queue) {
+        std::lock_guard<std::mutex> lk(sock.queue->mu);
+        ++sock.queue->out_dgrams;
+        sock.queue->out_bytes += len;
+    }
+    return static_cast<int>(len);
+}
+
+// Maps a guest port to the host port: the game's P2P port 3658 becomes the party port.
+std::uint16_t host_port_for(std::uint16_t guest_port) {
+    return guest_port == kGameP2pPort ? settings().party_port : guest_port;
+}
+
+// ---- libSceNet -------------------------------------------------------------------------------
+
+BBNET_ABI int net_init() {
+    BBNET_GUEST_RETURN();
+    wsa_start();
+    log("sceNetInit (party networking, port %u)", settings().party_port);
+    return 0;
+}
+BBNET_ABI int net_term() { return 0; }
+BBNET_ABI int* net_errno_loc() { return &g_net_errno; }
+
+BBNET_ABI int net_pool_create(const char* name, int size, int) {
+    BBNET_GUEST_RETURN();
+    std::lock_guard<std::mutex> lock(g_net_mu);
+    const int id = net_alloc();
+    log("sceNetPoolCreate %s size=%d -> %d", name ? name : "", size, id);
+    return id;
+}
+BBNET_ABI int net_pool_destroy(int) { return 0; }
+
+BBNET_ABI int net_socket(const char* name, int domain, int type, int) {
+    BBNET_GUEST_RETURN();
+    wsa_start();
+    std::lock_guard<std::mutex> lock(g_net_mu);
+    if (domain != 2) return net_err(bsd::kEAFNOSUPPORT);
+    const int id = net_alloc();
+    NetSock sock;
+    sock.domain = domain;
+    sock.type = type;
+    const char* kind = "inert";
+    if (type == 2) {
+        sock.fd = sock_new(SOCK_DGRAM);
+        if (!sock_ok(sock.fd)) return net_fail();
+        kind = "udp";
+    } else if (type == 1) {
+        sock.fd = sock_new(SOCK_STREAM);
+        if (!sock_ok(sock.fd)) return net_fail();
+        kind = "tcp";
+    } else if (type == 6) {
+        sock.p2p = true;
+        sock.queue = std::make_shared<SockQueue>();
+        sock.queue->sock = id;
+        kind = "udp p2p";
+    }
+    g_net_socks[id] = sock;
+    log("sceNetSocket %s domain=%d type=%d -> %d (%s)", name ? name : "", domain, type, id, kind);
+    return id;
+}
+BBNET_ABI int net_socket_close(int s) {
+    BBNET_GUEST_RETURN();
+    std::lock_guard<std::mutex> lock(g_net_mu);
+    auto it = g_net_socks.find(s);
+    if (it == g_net_socks.end()) return net_err(bsd::kEBADF);
+    it->second.ctl->aborted.store(true);
+    if (it->second.queue) it->second.queue->cv.notify_all();
+    if (sock_ok(it->second.fd)) sock_close(it->second.fd);
+    p2p_detach(it->second);
+    for (auto& [eid, ep] : g_net_epolls) {
+        ep->watch.erase(s);
+        ep->data.erase(s);
+    }
+    g_net_socks.erase(it);
+    net_wake();
+    return 0;
+}
+BBNET_ABI int net_socket_abort(int s, int) {
+    BBNET_GUEST_RETURN();
+    std::lock_guard<std::mutex> lock(g_net_mu);
+    auto it = g_net_socks.find(s);
+    if (it == g_net_socks.end()) return net_err(bsd::kEBADF);
+    it->second.ctl->aborted.store(true);
+    if (it->second.queue) it->second.queue->cv.notify_all();
+    net_wake();
+    return 0;
+}
+BBNET_ABI int net_bind(int s, const void* addr, int len) {
+    BBNET_GUEST_RETURN();
+    std::lock_guard<std::mutex> lock(g_net_mu);
+    auto it = g_net_socks.find(s);
+    if (it == g_net_socks.end()) return net_err(bsd::kEBADF);
+    NetSock& sock = it->second;
+    SceSockaddrIn in{};
+    if (addr && len >= static_cast<int>(sizeof(in))) std::memcpy(&in, addr, sizeof(in));
+    if (sock.p2p) {
+        // A P2P socket binds the instance's party port, not the game's 3658: two instances
+        // may share this machine. The vport is the game's.
+        const std::uint16_t want = settings().party_port;
+        std::shared_ptr<P2pPort> port = p2p_port_open(want);
+        if (!port) {
+            const int r = net_fail();
+            log("sceNetBind %d port %u vport %u -> udp %u failed", s, bswap16(in.port), bswap16(in.vport), want);
+            return r;
+        }
+        p2p_detach(sock);
+        sock.vport = bswap16(in.vport);
+        sock.queue->vport = sock.vport;
+        sock.port = port;
+        {
+            std::lock_guard<std::mutex> lk(port->mu);
+            port->by_vport[sock.vport] = sock.queue;
+        }
+        log("sceNetBind %d port %u vport %u -> udp %u (p2p)", s, bswap16(in.port), sock.vport, port->port);
+        return 0;
+    }
+    if (!sock_ok(sock.fd)) return 0;
+    const std::uint16_t guest_port = bswap16(in.port);
+    const std::uint16_t host_port = host_port_for(guest_port);
+    sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_port = bswap16(host_port);
+    sa.sin_addr.s_addr = in.addr;
+#if defined(_WIN32)
+    if (host_port != guest_port) sock_setopt_int(sock.fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, 1);
+#endif
+    if (::bind(sock.fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) < 0) {
+        const int r = net_fail();
+        log("sceNetBind %d port %u failed (errno %d)", s, host_port, g_net_errno);
+        return r;
+    }
+    log("sceNetBind %d port %u%s (%s)", s, host_port, host_port != guest_port ? " (game 3658)" : "",
+        sock.type == 1 ? "tcp" : "udp");
+    return 0;
+}
+BBNET_ABI int net_listen(int s, int backlog) {
+    BBNET_GUEST_RETURN();
+    std::lock_guard<std::mutex> lock(g_net_mu);
+    auto it = g_net_socks.find(s);
+    if (it == g_net_socks.end()) return net_err(bsd::kEBADF);
+    it->second.listening = true;
+    if (sock_ok(it->second.fd) && it->second.type == 1) {
+        if (::listen(it->second.fd, backlog > 0 ? backlog : 8) < 0) return net_fail();
+    }
+    return 0;
+}
+BBNET_ABI int net_accept(int s, void* addr, unsigned* addrlen) {
+    BBNET_GUEST_RETURN();
+    NetSock sock;
+    if (!sock_state(s, &sock)) return net_err(bsd::kEBADF);
+    if (!sock_ok(sock.fd) || sock.type != 1) return net_err(bsd::kEOPNOTSUPP);
+    for (;;) {
+        sockaddr_in sa{};
+        socklen_type sl = sizeof(sa);
+        const sockfd_t fd = ::accept(sock.fd, reinterpret_cast<sockaddr*>(&sa), &sl);
+        if (sock_ok(fd)) {
+            sock_set_nonblock(fd, true);
+            std::lock_guard<std::mutex> lock(g_net_mu);
+            const int id = net_alloc();
+            NetSock ns;
+            ns.domain = 2;
+            ns.type = 1;
+            ns.fd = fd;
+            g_net_socks[id] = ns;
+            if (addr && addrlen && *addrlen >= 16) {
+                SceSockaddrIn in;
+                fill_sce_addr(&in, sa.sin_addr.s_addr, sa.sin_port, 0);
+                std::memcpy(addr, &in, 16);
+                *addrlen = 16;
+            }
+            return id;
+        }
+        if (!would_block()) return net_fail();
+        if (sock.nonblock) return net_again();
+        const int r = wait_ready(sock, POLLIN, 0);
+        if (r) return r;
+    }
+}
+BBNET_ABI int net_connect(int s, const void* addr, int len) {
+    BBNET_GUEST_RETURN();
+    NetSock sock;
+    if (!sock_state(s, &sock)) return net_err(bsd::kEBADF);
+    if (!addr || len < 16) return net_err(bsd::kEINVAL);
+    if (!sock_ok(sock.fd)) return 0;  // P2P / inert: addressed per datagram
+    SceSockaddrIn in{};
+    std::memcpy(&in, addr, sizeof(in));
+    sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_port = in.port;
+    sa.sin_addr.s_addr = in.addr;
+    if (::connect(sock.fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) == 0) return 0;
+#if defined(_WIN32)
+    const bool pending = ::WSAGetLastError() == WSAEWOULDBLOCK || ::WSAGetLastError() == WSAEINPROGRESS;
+#else
+    const bool pending = errno == EINPROGRESS;
+#endif
+    if (!pending) return net_fail();
+    if (sock.nonblock) return net_err(bsd::kEINPROGRESS);
+    const int sndto = sock.ctl->sndtimeo_us.load();
+    const int r = wait_ready(sock, POLLOUT, sndto > 0 ? sndto : 30 * 1000 * 1000);
+    if (r) return r == net_again() ? net_err(bsd::kETIMEDOUT) : r;
+    int err = 0;
+    socklen_type el = sizeof(err);
+    ::getsockopt(sock.fd, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&err), &el);
+    if (err) return net_err(map_so_error(err));
+    return 0;
+}
+BBNET_ABI int net_shutdown(int s, int how) {
+    BBNET_GUEST_RETURN();
+    NetSock sock;
+    if (!sock_state(s, &sock)) return net_err(bsd::kEBADF);
+    if (sock_ok(sock.fd) && sock.type == 1 && ::shutdown(sock.fd, how) < 0) return net_fail();
+    return 0;
+}
+BBNET_ABI int net_setsockopt(int s, int level, int name, const void* val, int len) {
+    BBNET_GUEST_RETURN();
+    std::lock_guard<std::mutex> lock(g_net_mu);
+    auto it = g_net_socks.find(s);
+    if (it == g_net_socks.end()) return net_err(bsd::kEBADF);
+    NetSock& sock = it->second;
+    int v = 0;
+    if (val && len >= 4) std::memcpy(&v, val, 4);
+    if (level == 0xffff) {
+        switch (name) {
+            case 0x1200: sock.nonblock = v != 0; break;  // SCE_NET_SO_NBIO (host sockets stay non-blocking)
+            case 0x1005: sock.ctl->sndtimeo_us.store(v); break;  // SO_SNDTIMEO (microseconds)
+            case 0x1006: sock.ctl->rcvtimeo_us.store(v); break;  // SO_RCVTIMEO
+            case 0x1001:
+            case 0x1002:
+                if (sock_ok(sock.fd)) sock_setopt_int(sock.fd, SOL_SOCKET, name == 0x1001 ? SO_SNDBUF : SO_RCVBUF, v);
+                break;
+            case 0x0004:  // SO_REUSEADDR: not on Windows, where it lets another program take the port
+#if !defined(_WIN32)
+                if (sock_ok(sock.fd)) sock_setopt_int(sock.fd, SOL_SOCKET, SO_REUSEADDR, v);
+#endif
+                break;
+            case 0x0020:  // SO_BROADCAST
+                if (sock_ok(sock.fd)) sock_setopt_int(sock.fd, SOL_SOCKET, SO_BROADCAST, v);
+                break;
+            default: break;
+        }
+    } else if (level == 6 && name == 1 && sock_ok(sock.fd) && sock.type == 1) {  // TCP_NODELAY
+        sock_setopt_int(sock.fd, IPPROTO_TCP, TCP_NODELAY, v);
+    }
+    if (g_net_trace) log("sceNetSetsockopt %d level 0x%x name 0x%x = %d", s, level, name, v);
+    return 0;
+}
+BBNET_ABI int net_getsockopt(int s, int level, int name, void* val, unsigned* len) {
+    BBNET_GUEST_RETURN();
+    NetSock sock;
+    if (!sock_state(s, &sock)) return net_err(bsd::kEBADF);
+    if (!val || !len || *len < 4) return net_err(bsd::kEINVAL);
+    int v = 0;
+    if (level == 0xffff) {
+        switch (name) {
+            case 0x1200: v = sock.nonblock; break;
+            case 0x1005: v = sock.ctl->sndtimeo_us.load(); break;
+            case 0x1006: v = sock.ctl->rcvtimeo_us.load(); break;
+            case 0x1008: v = sock.type; break;  // SO_TYPE
+            case 0x1007:                        // SO_ERROR
+                if (sock_ok(sock.fd)) {
+                    int err = 0;
+                    socklen_type el = sizeof(err);
+                    ::getsockopt(sock.fd, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&err), &el);
+                    v = err ? map_so_error(err) : 0;
+                }
+                break;
+            case 0x1001:
+            case 0x1002:
+                if (sock_ok(sock.fd)) {
+                    socklen_type vl = sizeof(v);
+                    ::getsockopt(sock.fd, SOL_SOCKET, name == 0x1001 ? SO_SNDBUF : SO_RCVBUF, reinterpret_cast<char*>(&v),
+                                 &vl);
+                }
+                break;
+            default: break;
+        }
+    }
+    std::memcpy(val, &v, 4);
+    *len = 4;
+    return 0;
+}
+BBNET_ABI int net_getsockname(int s, void* addr, unsigned* addrlen) {
+    BBNET_GUEST_RETURN();
+    std::lock_guard<std::mutex> lock(g_net_mu);
+    auto it = g_net_socks.find(s);
+    if (it == g_net_socks.end()) return net_err(bsd::kEBADF);
+    if (addr && addrlen && *addrlen >= 16) {
+        SceSockaddrIn in{};
+        in.len = 16;
+        in.family = 2;
+        const sockfd_t fd = it->second.port ? it->second.port->fd : it->second.fd;
+        if (sock_ok(fd)) {
+            sockaddr_in sa{};
+            socklen_type sl = sizeof(sa);
+            if (::getsockname(fd, reinterpret_cast<sockaddr*>(&sa), &sl) == 0) {
+                in.port = sa.sin_port;
+                in.addr = sa.sin_addr.s_addr;
+            }
+            in.vport = bswap16(it->second.vport);
+        }
+        std::memcpy(addr, &in, 16);
+        *addrlen = 16;
+    }
+    return 0;
+}
+
+BBNET_ABI int net_recv(int s, void* buf, std::uint64_t len, int flags) {
+    BBNET_GUEST_RETURN();
+    return sock_recv(s, buf, len, flags, nullptr);
+}
+BBNET_ABI int net_send(int s, const void* buf, std::uint64_t len, int flags) {
+    BBNET_GUEST_RETURN();
+    NetSock sock;
+    if (!sock_state(s, &sock)) return net_err(bsd::kEBADF);
+    if (!sock_ok(sock.fd)) return static_cast<int>(len);
+    const bool dontwait = sock.nonblock || (flags & 0x80);
+    std::uint64_t done = 0;
+    for (;;) {
+#if defined(MSG_NOSIGNAL)
+        constexpr int kSendFlags = MSG_NOSIGNAL;
+#else
+        constexpr int kSendFlags = 0;
+#endif
+        const int n = static_cast<int>(
+            ::send(sock.fd, static_cast<const char*>(buf) + done, static_cast<int>(len - done), kSendFlags));
+        if (n >= 0) {
+            done += static_cast<std::uint64_t>(n);
+            if (done >= len || sock.type != 1 || dontwait) return static_cast<int>(done);
+            continue;
+        }
+        if (!would_block()) return done ? static_cast<int>(done) : net_fail();
+        if (dontwait) return done ? static_cast<int>(done) : net_again();
+        const int r = wait_ready(sock, POLLOUT, sock.ctl->sndtimeo_us.load());
+        if (r) return done ? static_cast<int>(done) : r;
+    }
+}
+BBNET_ABI int net_recvfrom(int s, void* buf, std::uint64_t len, int flags, void* from, unsigned* fromlen) {
+    BBNET_GUEST_RETURN();
+    SceSockaddrIn in{};
+    const int r = sock_recv(s, buf, len, flags, &in);
+    if (r >= 0 && from && fromlen && *fromlen >= 16) {
+        std::memcpy(from, &in, 16);
+        *fromlen = 16;
+    }
+    return r;
+}
+BBNET_ABI int net_sendto(int s, const void* buf, std::uint64_t len, int flags, const void* to, int tolen) {
+    BBNET_GUEST_RETURN();
+    if (!to || tolen < 16) return net_send(s, buf, len, flags);
+    SceSockaddrIn in{};
+    std::memcpy(&in, to, 16);
+    return dgram_send(s, buf, len, flags, &in);
+}
+
+BBNET_ABI std::uint16_t net_htons(std::uint16_t v) { return bswap16(v); }
+BBNET_ABI std::uint32_t net_htonl(std::uint32_t v) { return bswap32(v); }
+
+BBNET_ABI int net_inet_pton(int af, const char* src, void* dst) {
+    BBNET_GUEST_RETURN();
+    if (af != 2 || !dst) return net_err(bsd::kEAFNOSUPPORT);
+    std::uint32_t net = 0;
+    if (!parse_ipv4(src, &net)) return 0;
+    std::memcpy(dst, &net, 4);
+    return 1;
+}
+BBNET_ABI const char* net_inet_ntop(int af, const void* src, char* dst, unsigned size) {
+    BBNET_GUEST_RETURN();
+    if (af != 2 || !src || !dst || size < 8) {
+        net_err(af != 2 ? bsd::kEAFNOSUPPORT : bsd::kEINVAL);
+        return nullptr;
+    }
+    std::uint32_t net = 0;
+    std::memcpy(&net, src, 4);
+    write_ipv4(dst, size, net);
+    return dst;
+}
+
+BBNET_ABI int net_epoll_create(const char* name, int) {
+    BBNET_GUEST_RETURN();
+    std::lock_guard<std::mutex> lock(g_net_mu);
+    const int id = net_alloc();
+    auto ep = std::make_shared<NetEpoll>();
+    if (name) ep->name = name;
+    g_net_epolls[id] = std::move(ep);
+    log("sceNetEpollCreate %s -> %d", name ? name : "", id);
+    return id;
+}
+BBNET_ABI int net_epoll_destroy(int id) {
+    BBNET_GUEST_RETURN();
+    std::lock_guard<std::mutex> lock(g_net_mu);
+    auto it = g_net_epolls.find(id);
+    if (it == g_net_epolls.end()) return net_err(bsd::kEBADF);
+    it->second->aborting.store(true);
+    g_net_epolls.erase(it);
+    net_wake();
+    return 0;
+}
+// The game's SceNetEpollEvent: {u32 events, u32 pad, u64 ident, u64 data}.
+struct SceEpollEvent {
+    std::uint32_t events;
+    std::uint32_t pad;
+    std::uint64_t ident;
+    std::uint64_t data;
+};
+BBNET_ABI int net_epoll_control(int id, int op, int sock, void* event) {
+    BBNET_GUEST_RETURN();
+    std::lock_guard<std::mutex> lock(g_net_mu);
+    auto it = g_net_epolls.find(id);
+    if (it == g_net_epolls.end()) return net_err(bsd::kEBADF);
+    NetEpoll& ep = *it->second;
+    SceEpollEvent sev{};
+    if (event) std::memcpy(&sev, event, sizeof(sev));
+    if (op == 3) {  // DEL
+        ep.watch.erase(sock);
+        ep.data.erase(sock);
+    } else {  // ADD (1) / MOD (2)
+        ep.watch[sock] = sev.events;
+        ep.data[sock] = sev.data;
+    }
+    net_wake();
+    if (g_net_trace) log("sceNetEpollControl %d op %d sock %d events 0x%x", id, op, sock, sev.events);
+    return 0;
+}
+BBNET_ABI int net_epoll_wait(int id, void* events, int maxevents, int timeout) {
+    BBNET_GUEST_RETURN();
+    std::shared_ptr<NetEpoll> ep;
+    {
+        std::lock_guard<std::mutex> lock(g_net_mu);
+        auto it = g_net_epolls.find(id);
+        if (it == g_net_epolls.end()) return net_err(bsd::kEBADF);
+        ep = it->second;
+    }
+    // timeout is in microseconds, -1 forever.
+    const auto deadline =
+        timeout < 0 ? Clock::time_point::max() : Clock::now() + std::chrono::microseconds(timeout);
+    for (;;) {
+        // Before the look: a wake after it changes the word, and the sleep returns at once.
+        const std::uint32_t gen = g_wake_word.load(std::memory_order_seq_cst);
+        int out = 0;
+        bool host_sockets = false;
+        {
+            std::lock_guard<std::mutex> lock(g_net_mu);
+            if (!g_net_epolls.count(id)) return net_err(bsd::kEBADF);
+            for (const auto& [sock, want] : ep->watch) {
+                if (out >= maxevents) break;
+                auto sit = g_net_socks.find(sock);
+                if (sit == g_net_socks.end()) continue;
+                const NetSock& ns = sit->second;
+                std::uint32_t ready = 0;
+                if (ns.p2p && ns.queue) {
+                    std::lock_guard<std::mutex> lk(ns.queue->mu);
+                    if ((want & 0x1) && !ns.queue->q.empty()) ready |= 0x1;
+                    if (want & 0x2) ready |= 0x2;  // a datagram send never waits
+                } else if (sock_ok(ns.fd)) {
+                    host_sockets = true;
+                    short ev = 0, rev = 0;
+                    if (want & 0x1) ev |= POLLIN;
+                    if (want & 0x2) ev |= POLLOUT;
+                    if (sock_poll_revents(ns.fd, ev ? ev : POLLIN, &rev) > 0) {
+                        if (rev & (POLLIN | POLLHUP)) ready |= want & 0x1;
+                        if (rev & POLLOUT) ready |= want & 0x2;
+                        if (rev & POLLERR) ready |= 0x8;
+                        if (rev & POLLHUP) ready |= 0x10;
+                    }
+                }
+                if (!ready) continue;
+                SceEpollEvent sev{};
+                sev.events = ready;
+                sev.ident = static_cast<std::uint64_t>(sock);
+                auto d = ep->data.find(sock);
+                sev.data = d == ep->data.end() ? 0 : d->second;
+                if (events) {
+                    std::memcpy(static_cast<std::uint8_t*>(events) + static_cast<std::size_t>(out) * sizeof(sev), &sev,
+                                sizeof(sev));
+                }
+                ++out;
+            }
+        }
+        if (out) return out;
+        if (ep->aborting.exchange(false)) return 0;
+        const auto now = Clock::now();
+        if (now >= deadline) return 0;
+        // Host sockets have no reader to wake us: they are looked at every 10 ms.
+        const auto slice = host_sockets ? std::chrono::milliseconds(10) : std::chrono::milliseconds(100);
+        const Clock::time_point until = deadline - now < slice ? deadline : now + slice;
+        wake_wait(gen, until);
+    }
+}
+BBNET_ABI int net_epoll_abort(int id, int) {
+    BBNET_GUEST_RETURN();
+    std::lock_guard<std::mutex> lock(g_net_mu);
+    auto it = g_net_epolls.find(id);
+    if (it == g_net_epolls.end()) return net_err(bsd::kEBADF);
+    it->second->aborting.store(true);
+    net_wake();
+    return 0;
+}
+
+BBNET_ABI int net_resolver_create(const char*, int memid, int) {
+    BBNET_GUEST_RETURN();
+    std::lock_guard<std::mutex> lock(g_net_mu);
+    const int id = net_alloc();
+    g_net_resolvers[id] = memid;
+    return id;
+}
+BBNET_ABI int net_resolver_destroy(int id) {
+    BBNET_GUEST_RETURN();
+    std::lock_guard<std::mutex> lock(g_net_mu);
+    g_net_resolvers.erase(id);
+    return 0;
+}
+// sceNetResolverStartNtoa(rid, hostname, SceNetInAddr* addr, timeout, retry, flags): a real lookup.
+BBNET_ABI int net_resolver_ntoa(int id, const char* hostname, void* addr, int, int, int) {
+    BBNET_GUEST_RETURN();
+    {
+        std::lock_guard<std::mutex> lock(g_net_mu);
+        if (!g_net_resolvers.count(id)) return net_err(bsd::kEBADF);
+    }
+    if (!hostname || !addr) return net_err(bsd::kEINVAL);
+    std::uint32_t a = 0;
+    if (!parse_ipv4(hostname, &a)) {
+        wsa_start();
+        addrinfo hints{};
+        hints.ai_family = AF_INET;
+        addrinfo* res = nullptr;
+        if (::getaddrinfo(hostname, nullptr, &hints, &res) != 0 || !res) {
+            log("sceNetResolverStartNtoa %s: no such host", hostname);
+            g_net_errno = kResolverNoHost & 0xff;
+            return kResolverNoHost;
+        }
+        a = reinterpret_cast<const sockaddr_in*>(res->ai_addr)->sin_addr.s_addr;
+        ::freeaddrinfo(res);
+    }
+    std::memcpy(addr, &a, 4);
+    return 0;
+}
+// sceNetResolverStartAton(rid, const SceNetInAddr* addr, char* hostname, len, timeout, retry, flags).
+BBNET_ABI int net_resolver_aton(int id, const void* addr, char* hostname, int len, int, int, int) {
+    BBNET_GUEST_RETURN();
+    {
+        std::lock_guard<std::mutex> lock(g_net_mu);
+        if (!g_net_resolvers.count(id)) return net_err(bsd::kEBADF);
+    }
+    if (!addr || !hostname || len <= 0) return net_err(bsd::kEINVAL);
+    wsa_start();
+    sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    std::memcpy(&sa.sin_addr.s_addr, addr, 4);
+    char host[256];
+    if (::getnameinfo(reinterpret_cast<const sockaddr*>(&sa), sizeof(sa), host, sizeof(host), nullptr, 0, 0) != 0) {
+        write_ipv4(host, sizeof(host), sa.sin_addr.s_addr);
+    }
+    std::snprintf(hostname, static_cast<std::size_t>(len), "%s", host);
+    return 0;
+}
+
+// ---- libSceNetCtl ------------------------------------------------------------------------------
+
+struct LocalNet {
+    std::uint32_t ip = 0, mask = 0, gateway = 0, dns1 = 0, dns2 = 0;  // network order
+    std::uint8_t mac[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x01};
+    std::uint32_t mtu = 1500;
+};
+// This machine's LAN adapter: up, not loopback or a tunnel, with an IPv4 address; one with a
+// default gateway first. BB_PARTY_LOCAL_IP names the address instead.
+LocalNet query_local_net() {
+    LocalNet out;
+    const char* forced = std::getenv("BB_PARTY_LOCAL_IP");
+    std::uint32_t want = 0;
+    if (forced && *forced) parse_ipv4(forced, &want);
+#if defined(_WIN32)
+    ULONG size = 32 * 1024;
+    std::vector<std::uint8_t> buf(size);
+    const ULONG flags = GAA_FLAG_INCLUDE_GATEWAYS | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_ANYCAST;
+    ULONG r = ::GetAdaptersAddresses(AF_INET, flags, nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()), &size);
+    if (r == ERROR_BUFFER_OVERFLOW) {
+        buf.resize(size);
+        r = ::GetAdaptersAddresses(AF_INET, flags, nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()), &size);
+    }
+    if (r != NO_ERROR) return out;
+    int best = -1;
+    for (auto* a = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()); a; a = a->Next) {
+        if (a->OperStatus != IfOperStatusUp) continue;
+        if (a->IfType == IF_TYPE_SOFTWARE_LOOPBACK || a->IfType == IF_TYPE_TUNNEL) continue;
+        for (auto* u = a->FirstUnicastAddress; u; u = u->Next) {
+            if (u->Address.lpSockaddr->sa_family != AF_INET) continue;
+            const std::uint32_t ip = reinterpret_cast<sockaddr_in*>(u->Address.lpSockaddr)->sin_addr.s_addr;
+            const std::uint32_t host_ip = bswap32(ip);
+            if ((host_ip >> 16) == 0xa9fe) continue;  // 169.254/16: no DHCP answer
+            int score = a->FirstGatewayAddress ? 2 : 1;
+            if (want) score = ip == want ? 3 : 0;
+            if (score <= best) continue;
+            best = score;
+            out.ip = ip;
+            const ULONG prefix = u->OnLinkPrefixLength;
+            out.mask = prefix ? bswap32(prefix >= 32 ? 0xffffffffu : ~(0xffffffffu >> prefix)) : 0;
+            out.gateway = 0;
+            for (auto* g = a->FirstGatewayAddress; g; g = g->Next) {
+                if (g->Address.lpSockaddr->sa_family == AF_INET) {
+                    out.gateway = reinterpret_cast<sockaddr_in*>(g->Address.lpSockaddr)->sin_addr.s_addr;
+                    break;
+                }
+            }
+            out.dns1 = out.dns2 = 0;
+            int nd = 0;
+            for (auto* d = a->FirstDnsServerAddress; d && nd < 2; d = d->Next) {
+                if (d->Address.lpSockaddr->sa_family != AF_INET) continue;
+                (nd++ ? out.dns2 : out.dns1) = reinterpret_cast<sockaddr_in*>(d->Address.lpSockaddr)->sin_addr.s_addr;
+            }
+            if (a->PhysicalAddressLength == 6) std::memcpy(out.mac, a->PhysicalAddress, 6);
+            if (a->Mtu && a->Mtu < 65536) out.mtu = a->Mtu;
+        }
+    }
+#else
+    ifaddrs* list = nullptr;
+    if (::getifaddrs(&list) != 0) return out;
+    int best = -1;
+    for (ifaddrs* i = list; i; i = i->ifa_next) {
+        if (!i->ifa_addr || i->ifa_addr->sa_family != AF_INET) continue;
+        if (!(i->ifa_flags & IFF_UP) || (i->ifa_flags & IFF_LOOPBACK)) continue;
+        const std::uint32_t ip = reinterpret_cast<sockaddr_in*>(i->ifa_addr)->sin_addr.s_addr;
+        int score = 1;
+        if (want) score = ip == want ? 3 : 0;
+        if (score <= best) continue;
+        best = score;
+        out.ip = ip;
+        out.mask = i->ifa_netmask ? reinterpret_cast<sockaddr_in*>(i->ifa_netmask)->sin_addr.s_addr : 0;
+    }
+    ::freeifaddrs(list);
+#endif
+    if (want && !out.ip) out.ip = want;
+    return out;
+}
+const LocalNet& local_net() {
+    static const LocalNet net = [] {
+        wsa_start();
+        LocalNet n = query_local_net();
+        char ip[32], gw[32];
+        write_ipv4(ip, sizeof(ip), n.ip);
+        write_ipv4(gw, sizeof(gw), n.gateway);
+        log("local address %s (gateway %s)", n.ip ? ip : "none", n.gateway ? gw : "none");
+        return n;
+    }();
+    return net;
+}
+
+BBNET_ABI int netctl_get_state(int* state) {
+    BBNET_GUEST_RETURN();
+    if (!state) return kNetCtlInvalidAddr;
+    *state = 3;  // IPOBTAINED
+    return 0;
+}
+// sceNetCtlGetInfo(code, SceNetCtlInfo*): only the member the code names is written.
+BBNET_ABI int netctl_get_info(int code, void* info) {
+    BBNET_GUEST_RETURN();
+    if (!info) return kNetCtlInvalidAddr;
+    const LocalNet& n = local_net();
+    auto put_u32 = [&](std::uint32_t v) { std::memcpy(info, &v, 4); };
+    auto put_ip = [&](std::uint32_t a) {
+        std::memset(info, 0, 16);
+        write_ipv4(static_cast<char*>(info), 16, a);
+    };
+    switch (code) {
+        case 1: put_u32(0); break;               // DEVICE: wired
+        case 2: std::memcpy(info, n.mac, 6); break;  // ETHER_ADDR
+        case 3: put_u32(n.mtu); break;           // MTU
+        case 4: put_u32(1); break;               // LINK: up
+        case 11: put_u32(0); break;              // IP_CONFIG: DHCP
+        case 12: std::memset(info, 0, 256); break;  // DHCP_HOSTNAME
+        case 13: std::memset(info, 0, 128); break;  // PPPOE_AUTH_NAME
+        case 14: put_ip(n.ip ? n.ip : bswap32(0x7f000001u)); break;  // IP_ADDRESS
+        case 15: put_ip(n.mask ? n.mask : bswap32(0xff000000u)); break;  // NETMASK
+        case 16: put_ip(n.gateway); break;       // DEFAULT_ROUTE
+        case 17: put_ip(n.dns1); break;          // PRIMARY_DNS
+        case 18: put_ip(n.dns2); break;          // SECONDARY_DNS
+        case 19: put_u32(0); break;              // HTTP_PROXY_CONFIG: off
+        case 20: std::memset(info, 0, 256); break;  // HTTP_PROXY_SERVER
+        case 21: std::memset(info, 0, 2); break;    // HTTP_PROXY_PORT
+        case 5: case 6: case 7: case 8: case 9: case 10:  // Wi-Fi members: wired, none
+            std::memset(info, 0, code == 6 ? 36 : 8);
+            break;
+        default: return kNetCtlInvalidCode;
+    }
+    return 0;
+}
+BBNET_ABI int netctl_register(void* fn, void* arg, int* cid) {
+    BBNET_GUEST_RETURN();
+    if (!cid) return kNetCtlInvalidAddr;
+    std::lock_guard<std::mutex> lock(g_net_mu);
+    const int id = g_net_ctl_cb_next++;
+    g_net_ctl_cbs[id] = {fn, arg};
+    *cid = id;
+    return 0;
+}
+BBNET_ABI int netctl_unregister(int cid) {
+    BBNET_GUEST_RETURN();
+    std::lock_guard<std::mutex> lock(g_net_mu);
+    g_net_ctl_cbs.erase(cid);
+    return 0;
+}
+BBNET_ABI int netctl_check() { return 0; }  // the state never changes: no events
+// SceNetCtlNatInfo {u32 size, int stunStatus, int natType, SceNetInAddr mappedAddr}.
+BBNET_ABI int netctl_nat(std::uint32_t* info) {
+    BBNET_GUEST_RETURN();
+    if (!info) return kNetCtlInvalidAddr;
+    const LocalNet& n = local_net();
+    info[1] = 1;  // STUN ok
+    info[2] = 2;  // NAT type 2 (moderate): the party host's relay covers type 3 peers
+    info[3] = n.ip ? n.ip : bswap32(0x7f000001u);
+    return 0;
+}
+
+}  // namespace
+
+const Export kNetExports[] = {
+    {"sceNetInit", reinterpret_cast<void*>(net_init)},
+    {"sceNetTerm", reinterpret_cast<void*>(net_term)},
+    {"sceNetErrnoLoc", reinterpret_cast<void*>(net_errno_loc)},
+    {"sceNetPoolCreate", reinterpret_cast<void*>(net_pool_create)},
+    {"sceNetPoolDestroy", reinterpret_cast<void*>(net_pool_destroy)},
+    {"sceNetSocket", reinterpret_cast<void*>(net_socket)},
+    {"sceNetSocketClose", reinterpret_cast<void*>(net_socket_close)},
+    {"sceNetSocketAbort", reinterpret_cast<void*>(net_socket_abort)},
+    {"sceNetBind", reinterpret_cast<void*>(net_bind)},
+    {"sceNetListen", reinterpret_cast<void*>(net_listen)},
+    {"sceNetAccept", reinterpret_cast<void*>(net_accept)},
+    {"sceNetConnect", reinterpret_cast<void*>(net_connect)},
+    {"sceNetShutdown", reinterpret_cast<void*>(net_shutdown)},
+    {"sceNetSetsockopt", reinterpret_cast<void*>(net_setsockopt)},
+    {"sceNetGetsockopt", reinterpret_cast<void*>(net_getsockopt)},
+    {"sceNetGetsockname", reinterpret_cast<void*>(net_getsockname)},
+    {"sceNetRecv", reinterpret_cast<void*>(net_recv)},
+    {"sceNetSend", reinterpret_cast<void*>(net_send)},
+    {"sceNetRecvfrom", reinterpret_cast<void*>(net_recvfrom)},
+    {"sceNetSendto", reinterpret_cast<void*>(net_sendto)},
+    {"sceNetHtons", reinterpret_cast<void*>(net_htons)},
+    {"sceNetNtohs", reinterpret_cast<void*>(net_htons)},
+    {"sceNetHtonl", reinterpret_cast<void*>(net_htonl)},
+    {"sceNetNtohl", reinterpret_cast<void*>(net_htonl)},
+    {"sceNetInetPton", reinterpret_cast<void*>(net_inet_pton)},
+    {"sceNetInetNtop", reinterpret_cast<void*>(net_inet_ntop)},
+    {"sceNetEpollCreate", reinterpret_cast<void*>(net_epoll_create)},
+    {"sceNetEpollDestroy", reinterpret_cast<void*>(net_epoll_destroy)},
+    {"sceNetEpollControl", reinterpret_cast<void*>(net_epoll_control)},
+    {"sceNetEpollWait", reinterpret_cast<void*>(net_epoll_wait)},
+    {"sceNetEpollAbort", reinterpret_cast<void*>(net_epoll_abort)},
+    {"sceNetResolverCreate", reinterpret_cast<void*>(net_resolver_create)},
+    {"sceNetResolverDestroy", reinterpret_cast<void*>(net_resolver_destroy)},
+    {"sceNetResolverStartNtoa", reinterpret_cast<void*>(net_resolver_ntoa)},
+    {"sceNetResolverStartAton", reinterpret_cast<void*>(net_resolver_aton)},
+    {"sceNetCtlGetState", reinterpret_cast<void*>(netctl_get_state)},
+    {"sceNetCtlGetInfo", reinterpret_cast<void*>(netctl_get_info)},
+    {"sceNetCtlRegisterCallback", reinterpret_cast<void*>(netctl_register)},
+    {"sceNetCtlUnregisterCallback", reinterpret_cast<void*>(netctl_unregister)},
+    {"sceNetCtlCheckCallback", reinterpret_cast<void*>(netctl_check)},
+    {"sceNetCtlGetNatInfo", reinterpret_cast<void*>(netctl_nat)},
+    {nullptr, nullptr},
+};
+
+// --- The reflexive address, relay and hole punching (session layer, A3+) -----------------------
+
+std::uint16_t p2p_bound_port() { return g_bound_port.load(); }
+
+bool p2p_open() {
+    std::lock_guard<std::mutex> lock(g_net_mu);
+    if (!p2p_port_open(settings().party_port)) return false;
+    g_port_pinned.store(true);  // the session layer keeps it while no game socket is bound
+    return true;
+}
+
+std::uint32_t local_ipv4() { return local_net().ip; }
+
+bool p2p_stun(const char* host, std::uint16_t sport, int timeout_ms, std::uint32_t* mapped_addr,
+              std::uint16_t* mapped_port, bool want_relay, RelayInfo* relay_out) {
+    wsa_start();
+    sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    std::uint32_t literal = 0;
+    if (parse_ipv4(host, &literal)) {
+        sa.sin_addr.s_addr = literal;
+    } else {
+        addrinfo hints{};
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_DGRAM;
+        addrinfo* res = nullptr;
+        if (::getaddrinfo(host, nullptr, &hints, &res) != 0 || !res) {
+            log("stun: cannot resolve %s", host ? host : "(null)");
+            return false;
+        }
+        std::memcpy(&sa, res->ai_addr, sizeof(sa));
+        ::freeaddrinfo(res);
+    }
+    sa.sin_port = bswap16(sport);
+    std::shared_ptr<P2pPort> port;
+    {
+        std::lock_guard<std::mutex> lock(g_net_mu);
+        port = p2p_port_open(settings().party_port);
+        if (port) g_port_pinned.store(true);
+    }
+    if (!port) {
+        log("stun: no party port %u to ask from", settings().party_port);
+        return false;
+    }
+    // With the relay: the HELLO carries the token this server gave, else zeros.
+    std::uint8_t token[net::stun::kTokenLen] = {};
+    bool have_token = false;
+    if (want_relay) {
+        std::lock_guard<std::mutex> rl(g_relay.mu);
+        if (g_relay.on && g_relay.server == sa.sin_addr.s_addr && g_relay.stun_port == sa.sin_port) {
+            std::memcpy(token, g_relay.token, sizeof(token));
+            have_token = true;
+        }
+    }
+    std::uint8_t req[net::stun::kMaxRequest];
+    std::unique_lock<std::mutex> lk(port->mu);
+    if (port->stun_pending) return false;  // one at a time
+    const std::size_t req_len =
+        net::stun::build_binding_request(req, port->stun_txid, want_relay, have_token ? token : nullptr);
+    port->stun_pending = true;
+    port->stun_done = false;
+    lk.unlock();
+    (void)raw_sendto(port->fd, req, req_len, &sa);
+    lk.lock();
+    port->stun_cv.wait_for(lk, std::chrono::milliseconds(timeout_ms), [&] { return port->stun_done; });
+    const bool ok = port->stun_done;
+    port->stun_pending = false;
+    if (!ok) return false;
+    if (mapped_addr) *mapped_addr = port->stun_addr;
+    if (mapped_port) *mapped_port = port->stun_port;
+    if (want_relay) {
+        const net::stun::Relay& relay = port->stun_relay;
+        if (relay_out) {
+            relay_out->present = relay.present;
+            relay_out->vport = relay.vport;
+            relay_out->observed_addr = relay.observed_addr;
+            relay_out->observed_port = relay.observed_port;
+        }
+        std::lock_guard<std::mutex> rl(g_relay.mu);
+        const bool was = g_relay.on;
+        const std::uint16_t was_vport = g_relay.vport;
+        if (relay.present) {
+            g_relay.on = true;
+            g_relay.server = sa.sin_addr.s_addr;
+            g_relay.stun_port = sa.sin_port;
+            std::memcpy(g_relay.token, relay.token, sizeof(g_relay.token));
+            g_relay.vport = relay.vport;
+        } else {
+            g_relay.on = false;  // a server without the relay: datagrams go as addressed
+        }
+        if (g_relay.on != was || g_relay.vport != was_vport) {
+            char ip[32];
+            write_ipv4(ip, sizeof(ip), sa.sin_addr.s_addr);
+            if (g_relay.on) {
+                log("relay on: %s:%u is our port %u; datagrams for its other ports go through it", ip, sport,
+                    g_relay.vport);
+            } else {
+                log("relay off (%s:%u offers none)", ip, sport);
+            }
+        }
+    }
+    return true;
+}
+
+bool p2p_relay(std::uint32_t* server, std::uint16_t* vport) {
+    std::lock_guard<std::mutex> lk(g_relay.mu);
+    if (server) *server = g_relay.server;
+    if (vport) *vport = g_relay.vport;
+    return g_relay.on;
+}
+
+void p2p_punch(const char* label, std::uint32_t addr, std::uint16_t port_host, std::uint32_t local_addr,
+               std::uint16_t local_port) {
+    std::shared_ptr<P2pPort> port;
+    {
+        std::lock_guard<std::mutex> lock(g_net_mu);
+        auto it = g_p2p_ports.find(g_bound_port.load());
+        if (it != g_p2p_ports.end()) port = it->second;
+    }
+    if (!port || !addr || !port_host) return;
+    {
+        std::uint8_t token[net::stun::kTokenLen];
+        sockaddr_in stun_sa{};
+        if (relay_target(addr, bswap16(port_host), token, &stun_sa)) return;  // the relay needs no hole
+    }
+    std::vector<sockaddr_in> targets;
+    sockaddr_in a{};
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = addr;
+    a.sin_port = bswap16(port_host);
+    targets.push_back(a);
+    if (local_addr && local_port && (local_addr != addr || local_port != port_host)) {
+        sockaddr_in b{};
+        b.sin_family = AF_INET;
+        b.sin_addr.s_addr = local_addr;
+        b.sin_port = bswap16(local_port);
+        targets.push_back(b);
+    }
+    const std::string name = label ? label : "peer";
+    std::thread([port, targets, name] {
+        const auto start = Clock::now();
+        int sent = 0;
+        bool heard = false;
+        // Anything from either address since the start: the peer is through.
+        auto heard_since_start = [&] {
+            std::lock_guard<std::mutex> lk(port->mu);
+            for (const sockaddr_in& t : targets) {
+                auto it = port->heard.find(source_key(t.sin_addr.s_addr, t.sin_port));
+                if (it != port->heard.end() && it->second >= start) return true;
+            }
+            return false;
+        };
+        for (int i = 0; i < 40 && !port->stop.load(std::memory_order_relaxed); ++i) {
+            for (const sockaddr_in& t : targets) {
+                if (raw_sendto(port->fd, kProbe, sizeof(kProbe), &t) >= 0) ++sent;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            if (heard_since_start()) {
+                heard = true;
+                break;
+            }
+        }
+        char ip[32];
+        write_ipv4(ip, sizeof(ip), targets[0].sin_addr.s_addr);
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - start).count();
+        log("punch %s %s:%u%s: %d probes, %s after %lld ms", name.c_str(), ip, bswap16(targets[0].sin_port),
+            targets.size() > 1 ? " (+local)" : "", sent, heard ? "peer heard" : "nothing heard",
+            static_cast<long long>(ms));
+    }).detach();
+}
+
+std::string p2p_status() {
+    std::shared_ptr<P2pPort> port;
+    {
+        std::lock_guard<std::mutex> lock(g_net_mu);
+        auto it = g_p2p_ports.find(g_bound_port.load());
+        if (it != g_p2p_ports.end()) port = it->second;
+    }
+    if (!port) return "party port closed";
+    std::lock_guard<std::mutex> lk(port->mu);
+    char buf[200];
+    std::snprintf(buf, sizeof(buf), "udp %u: rx %llu, %zu vport(s), probes %llu, stun %llu, relayed %llu", port->port,
+                  static_cast<unsigned long long>(port->rx), port->by_vport.size(),
+                  static_cast<unsigned long long>(port->probes), static_cast<unsigned long long>(port->stun_answered),
+                  static_cast<unsigned long long>(port->relayed));
+    return buf;
+}
+
+}  // namespace bbnet
