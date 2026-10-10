@@ -20,6 +20,7 @@
 #include "party_progress.h"
 #include "party_travel.h"
 #include "seamless_rules.h"
+#include "test_newgame.h"
 #include "party_online.h"
 #include "party_watchdog.h"
 
@@ -96,6 +97,8 @@ struct Test {
     bool start = false, grant_bells = false, drop_bells = false, drop_done = false;
     int award_lot = -1; // award_lot=N: AwardItemLot(N) once (call-shape probe, test saves)
     bool insight_done = false, ring_done = false;
+    const char* bell = nullptr; // bell_host / bell_guest: Ring() once ready (the real bell path)
+    bool bell_done = false;
     Clock::time_point rung_at{};
 };
 
@@ -647,6 +650,22 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
     }
 }
 
+/// The title takes scripted input (BB_TEST_NEWGAME): no world; in party mode the link is up and
+/// the FROM sign-in (ss.info -> login -> notice) is over: the title menu shows after it (before,
+/// "Creating save data" / "Checking network status" swallow presses).
+bool TitleReadyForInput(PartyRole role, party::PartyLink* link) {
+    if (role == PartyRole::None) {
+        return true;
+    }
+    const party::LinkState ls = link ? link->state() : party::LinkState::Idle;
+    const bool link_ok = role == PartyRole::Host ? ls == party::LinkState::Hosting : ls == party::LinkState::Connected;
+    if (!link_ok) {
+        return false;
+    }
+    const bbnet::OnlineProgress op = bbnet::online_progress();
+    return op.notice > 0 && op.since_last >= 2.0;
+}
+
 // ---- Host session watchdog (party_watchdog.h) ----
 // 0x13CDDA0: BeginLeaveSession(SprjSessionManager) 0x1ED07A0, ReloadPhase+0xf0 = chr type on
 // success, then a tail jump to 0x15BED10(network flow +0x16F8) (drops the presentation members).
@@ -735,6 +754,14 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
     Test& t = st.test;
     if (!st.world_seen) {
         return;
+    }
+    // bell_host / bell_guest: the bell through the item path (SpEffect -> SendSign -> sign
+    // create / search on the FROM server) once this player is ready, bells granted, 5 s idle.
+    if (t.bell && !t.bell_done && st.start_ready && st.granted && s.world_up && !s.loading &&
+        s.session_role == RoleIdle && Seconds(st.world_at, now) >= t.delay) {
+        t.bell_done = true;
+        Log("test: %s once (ready: %s)", t.bell, DescribeStart(st.cs, true).c_str());
+        Ring(st, t.bell, "test bell", now);
     }
     if (t.insight >= 0 && !t.insight_done && Seconds(st.world_at, now) >= 2.0 && !s.loading) {
         t.insight_done = true;
@@ -856,11 +883,15 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.ring = kHostBell;
             } else if (item == "ring_guest") {
                 st.test.ring = kGuestBell;
+            } else if (item == "bell_host") {
+                st.test.bell = kHostBell;
+            } else if (item == "bell_guest") {
+                st.test.bell = kGuestBell;
             } else if (item.rfind("insight=", 0) == 0) {
                 st.test.insight = std::atoi(item.c_str() + 8);
             } else if (!item.empty()) {
-                Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, start, grant_bells, drop_bells, award_lot=N, insight=N, ring_host or "
-                    "ring_guest; ignored",
+                Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, start, grant_bells, drop_bells, award_lot=N, insight=N, ring_host, "
+                    "ring_guest, bell_host or bell_guest; ignored",
                     item.c_str());
             }
         }
@@ -947,11 +978,13 @@ void PartyDirector::Tick() {
         start_mode = st.start_mode;
         grant_bells = st.grant_bells;
     }
+    // Test aids: scripted new game, prologue fast-forward (test_newgame.h).
+    NewGameTestTick(s, TitleReadyForInput(role, link));
     // C1: the campaign start (readiness, bells).
     if (full || !st.start_logged) {
         UpdateStart(st, s, start_mode);
         if (((grant_bells && role != PartyRole::None) || st.test.grant_bells) && st.world_seen &&
-            Seconds(st.world_at, now) >= std::min(5.0, st.ring_delay)) {
+            Seconds(st.world_at, now) >= std::min(5.0, st.ring_delay) && !PrologueSkipBusy()) {
             GrantBells(st, s);
         }
     }
@@ -971,7 +1004,7 @@ void PartyDirector::Tick() {
             std::lock_guard<std::mutex> lk(st.mu);
             ac = st.auto_continue;
         }
-        if (ac != 0 || party::runtime().restarted()) {
+        if ((ac != 0 || party::runtime().restarted()) && !NewGameTestRequested()) {
             AutoContinue(st, s, role, link, now);
         }
     }
@@ -1100,7 +1133,8 @@ void PartyDirector::Tick() {
     // Automatic summoning. The host also rings while hosting: the 2nd / 3rd cooperator of a
     // 3- / 4-player party (HostMayRing checks the count).
     if (!st.auto_ring || role == PartyRole::None || !link || !s.world_up || s.loading || !st.world_seen ||
-        Seconds(st.world_at, now) < st.ring_delay || !SessionMayRing(role == PartyRole::Host, s.session_role)) {
+        Seconds(st.world_at, now) < st.ring_delay || !SessionMayRing(role == PartyRole::Host, s.session_role) ||
+        PrologueSkipBusy()) {
         return;
     }
     if (st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {
@@ -1137,7 +1171,7 @@ bool PartyRequested() {
     const char* t = std::getenv("BB_PARTY_DIRECTOR_TEST");
     const char* i = std::getenv("BB_PARTY_ITEMS_TEST"); // C3 single-instance check
     return bb_party_enabled() || (t && t[0]) || (i && i[0]) || NpcTestRequested() || StoryTestRequested() ||
-           b2::Requested();
+           b2::Requested() || NewGameTestRequested();
 }
 
 void CoopTick() {
