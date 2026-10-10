@@ -155,6 +155,12 @@ A crashed player (guest or host) must end up back in the party without doing any
    member and summons them. The host's game treats the vanished phantom as a disconnect.
 5. Host crash: guests return to their own worlds, keep reconnecting (backoff), and are summoned
    again once the host is back.
+   Done (agent/hostcrash): the restarted host keeps its party code (secret from the crash marker
+   <user>/party_state.json, then party_secret.txt, then party_code.txt) and its member table
+   (slot, name, token in the marker -> PartyLink::restore_members); guests notice the TCP reset
+   at once, end the game's room with the host after 2 s (BB_PARTY_HOST_LOST_MS; ROOM_DESTROYED
+   0x1104 cause LEAVE, as when a host leaves) and reconnect with 1, 2, 4 .. 10 s backoff. Harness
+   run (--crash-instance 0): guest back on slot 1 by token 7.1 s after the kill, same code.
 6. Progress made meanwhile is caught up by the progress sync (C2) on return.
 Test: kill a guest instance mid-session in the local harness; verdict = back in the host's world
 within ~60 s with no input.
