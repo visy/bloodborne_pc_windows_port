@@ -34,6 +34,7 @@
 #endif
 
 #include <atomic>
+#include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
@@ -1481,13 +1482,24 @@ struct LocalNet {
     std::uint8_t mac[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x01};
     std::uint32_t mtu = 1500;
 };
-// This machine's LAN adapter: up, not loopback or a tunnel, with an IPv4 address; one with a
-// default gateway first. BB_PARTY_LOCAL_IP names the address instead.
-LocalNet query_local_net() {
+// This machine's LAN address (the party's LAN code, sceNetCtl's IP_ADDRESS). Forced by
+// BB_PARTY_LOCAL_IP (any address, loopback included; the adapter carrying it supplies mask and
+// gateway) or BB_PARTY_LOOPBACK=1 / BB_MP_LOCAL_TEST=1 (127.0.0.1). Otherwise the best-scoring
+// adapter (lan_adapter_score): a real adapter with the default route first, Hyper-V / WSL /
+// VirtualBox / VPN adapters last. `how` describes the choice and the candidates (logged).
+LocalNet query_local_net(std::string* how) {
     LocalNet out;
-    const char* forced = std::getenv("BB_PARTY_LOCAL_IP");
-    std::uint32_t want = 0;
-    if (forced && *forced) parse_ipv4(forced, &want);
+    std::string source;
+    const std::uint32_t want = forced_local_ipv4(&source);
+    std::string candidates;
+    LanAdapter chosen{};
+    char text[32];
+    auto note = [&](const LanAdapter& info, int score) {
+        if (want) return;
+        write_ipv4(text, sizeof(text), info.ip);
+        candidates += std::string(candidates.empty() ? "" : "; ") + text + " " + info.name +
+                      (score < 0 ? " (unusable)" : " (score " + std::to_string(score) + ")");
+    };
 #if defined(_WIN32)
     ULONG size = 32 * 1024;
     std::vector<std::uint8_t> buf(size);
@@ -1497,30 +1509,56 @@ LocalNet query_local_net() {
         buf.resize(size);
         r = ::GetAdaptersAddresses(AF_INET, flags, nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()), &size);
     }
-    if (r != NO_ERROR) return out;
+    // The interface the system routes the Internet through (a route lookup; nothing is sent).
+    DWORD default_if = 0;
+    std::uint32_t probe = 0;
+    parse_ipv4("8.8.8.8", &probe);
+    if (::GetBestInterface(probe, &default_if) != NO_ERROR) default_if = 0;
+    auto narrow = [](const wchar_t* w) {
+        std::string s;
+        if (!w) return s;
+        const int n = ::WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
+        if (n > 1) {
+            s.resize(static_cast<std::size_t>(n - 1));
+            ::WideCharToMultiByte(CP_UTF8, 0, w, -1, &s[0], n, nullptr, nullptr);
+        }
+        return s;
+    };
     int best = -1;
-    for (auto* a = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()); a; a = a->Next) {
+    std::uint32_t best_metric = 0;
+    for (auto* a = r == NO_ERROR ? reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()) : nullptr; a; a = a->Next) {
         if (a->OperStatus != IfOperStatusUp) continue;
-        if (a->IfType == IF_TYPE_SOFTWARE_LOOPBACK || a->IfType == IF_TYPE_TUNNEL) continue;
+        LanAdapter info;
+        info.name = narrow(a->FriendlyName);
+        const std::string desc = narrow(a->Description);
+        if (!desc.empty() && desc != info.name) info.name += " / " + desc;
+        info.loopback = a->IfType == IF_TYPE_SOFTWARE_LOOPBACK;
+        info.tunnel = a->IfType == IF_TYPE_TUNNEL;
+        info.physical = a->IfType == IF_TYPE_ETHERNET_CSMACD || a->IfType == IF_TYPE_IEEE80211;
+        info.default_route = default_if && a->IfIndex == default_if;
+        info.metric = a->Ipv4Metric;
+        std::uint32_t gateway = 0;
+        for (auto* g = a->FirstGatewayAddress; g; g = g->Next) {
+            if (g->Address.lpSockaddr->sa_family != AF_INET) continue;
+            gateway = reinterpret_cast<sockaddr_in*>(g->Address.lpSockaddr)->sin_addr.s_addr;
+            if (gateway) break;
+        }
+        info.gateway = gateway != 0;
         for (auto* u = a->FirstUnicastAddress; u; u = u->Next) {
             if (u->Address.lpSockaddr->sa_family != AF_INET) continue;
-            const std::uint32_t ip = reinterpret_cast<sockaddr_in*>(u->Address.lpSockaddr)->sin_addr.s_addr;
-            const std::uint32_t host_ip = bswap32(ip);
-            if ((host_ip >> 16) == 0xa9fe) continue;  // 169.254/16: no DHCP answer
-            int score = a->FirstGatewayAddress ? 2 : 1;
-            if (want) score = ip == want ? 3 : 0;
-            if (score <= best) continue;
+            info.ip = reinterpret_cast<sockaddr_in*>(u->Address.lpSockaddr)->sin_addr.s_addr;
+            int score = lan_adapter_score(info);
+            note(info, score);
+            if (want) score = info.ip == want ? 1 : -1;
+            if (score < 0) continue;
+            if (score < best || (score == best && info.metric >= best_metric)) continue;
             best = score;
-            out.ip = ip;
+            best_metric = info.metric;
+            chosen = info;
+            out.ip = info.ip;
             const ULONG prefix = u->OnLinkPrefixLength;
             out.mask = prefix ? bswap32(prefix >= 32 ? 0xffffffffu : ~(0xffffffffu >> prefix)) : 0;
-            out.gateway = 0;
-            for (auto* g = a->FirstGatewayAddress; g; g = g->Next) {
-                if (g->Address.lpSockaddr->sa_family == AF_INET) {
-                    out.gateway = reinterpret_cast<sockaddr_in*>(g->Address.lpSockaddr)->sin_addr.s_addr;
-                    break;
-                }
-            }
+            out.gateway = gateway;
             out.dns1 = out.dns2 = 0;
             int nd = 0;
             for (auto* d = a->FirstDnsServerAddress; d && nd < 2; d = d->Next) {
@@ -1533,32 +1571,70 @@ LocalNet query_local_net() {
     }
 #else
     ifaddrs* list = nullptr;
-    if (::getifaddrs(&list) != 0) return out;
     int best = -1;
-    for (ifaddrs* i = list; i; i = i->ifa_next) {
-        if (!i->ifa_addr || i->ifa_addr->sa_family != AF_INET) continue;
-        if (!(i->ifa_flags & IFF_UP) || (i->ifa_flags & IFF_LOOPBACK)) continue;
-        const std::uint32_t ip = reinterpret_cast<sockaddr_in*>(i->ifa_addr)->sin_addr.s_addr;
-        int score = 1;
-        if (want) score = ip == want ? 3 : 0;
-        if (score <= best) continue;
-        best = score;
-        out.ip = ip;
-        out.mask = i->ifa_netmask ? reinterpret_cast<sockaddr_in*>(i->ifa_netmask)->sin_addr.s_addr : 0;
+    if (::getifaddrs(&list) == 0) {
+        for (ifaddrs* i = list; i; i = i->ifa_next) {
+            if (!i->ifa_addr || i->ifa_addr->sa_family != AF_INET) continue;
+            if (!(i->ifa_flags & IFF_UP)) continue;
+            LanAdapter info;
+            info.name = i->ifa_name ? i->ifa_name : "";
+            info.ip = reinterpret_cast<sockaddr_in*>(i->ifa_addr)->sin_addr.s_addr;
+            info.loopback = (i->ifa_flags & IFF_LOOPBACK) != 0;
+            info.physical = info.name.rfind("en", 0) == 0 || info.name.rfind("eth", 0) == 0 ||
+                            info.name.rfind("wl", 0) == 0;
+            int score = lan_adapter_score(info);
+            note(info, score);
+            if (want) score = info.ip == want ? 1 : -1;
+            if (score <= best) continue;
+            best = score;
+            chosen = info;
+            out.ip = info.ip;
+            out.mask = i->ifa_netmask ? reinterpret_cast<sockaddr_in*>(i->ifa_netmask)->sin_addr.s_addr : 0;
+        }
+        ::freeifaddrs(list);
     }
-    ::freeifaddrs(list);
 #endif
-    if (want && !out.ip) out.ip = want;
+    std::string line;
+    if (want) {
+        write_ipv4(text, sizeof(text), want);
+        line = std::string(text) + " from " + source;
+        if (out.ip == want) {
+            line += " (adapter " + chosen.name + ")";
+        } else {
+            line += " (on no adapter of this machine)";
+            out = LocalNet{};
+            out.ip = want;
+        }
+        if ((bswap32(want) >> 24) == 127) {
+            out.mask = bswap32(0xff000000u);
+            out.gateway = 0;
+        }
+    } else if (out.ip) {
+        write_ipv4(text, sizeof(text), out.ip);
+        line = std::string(text) + " on " + chosen.name;
+        std::string tags;
+        auto tag = [&](const std::string& t) { tags += (tags.empty() ? "" : ", ") + t; };
+        if (chosen.default_route) tag("default route");
+        if (chosen.gateway) {
+            char gw[32];
+            write_ipv4(gw, sizeof(gw), out.gateway);
+            tag(std::string("gateway ") + gw);
+        }
+        if (adapter_is_virtual(chosen.name)) tag("virtual adapter: no better one");
+        if (!tags.empty()) line += " [" + tags + "]";
+        line += "; candidates: " + candidates + "; BB_PARTY_LOCAL_IP overrides";
+    } else {
+        line = "none (no usable IPv4 adapter" + (candidates.empty() ? std::string() : ": " + candidates) + ")";
+    }
+    if (how) *how = line;
     return out;
 }
 const LocalNet& local_net() {
     static const LocalNet net = [] {
         wsa_start();
-        LocalNet n = query_local_net();
-        char ip[32], gw[32];
-        write_ipv4(ip, sizeof(ip), n.ip);
-        write_ipv4(gw, sizeof(gw), n.gateway);
-        log("local address %s (gateway %s)", n.ip ? ip : "none", n.gateway ? gw : "none");
+        std::string how;
+        LocalNet n = query_local_net(&how);
+        log("local address %s", how.c_str());
         return n;
     }();
     return net;
@@ -1631,6 +1707,58 @@ BBNET_ABI int netctl_nat(std::uint32_t* info) {
 }
 
 }  // namespace
+
+std::uint32_t forced_local_ipv4(std::string* source) {
+    auto on = [](const char* name) {
+        const char* v = std::getenv(name);
+        return v && *v && v[0] != '0';
+    };
+    const char* forced = std::getenv("BB_PARTY_LOCAL_IP");
+    if (forced && *forced) {
+        std::uint32_t ip = 0;
+        if (parse_ipv4(forced, &ip) && ip) {
+            if (source) *source = "BB_PARTY_LOCAL_IP";
+            return ip;
+        }
+        log("BB_PARTY_LOCAL_IP=%s is not an IPv4 address; ignored", forced);
+    }
+    for (const char* name : {"BB_PARTY_LOOPBACK", "BB_MP_LOCAL_TEST"}) {
+        if (on(name)) {
+            if (source) *source = std::string(name) + "=1";
+            return bswap32(0x7f000001u);
+        }
+    }
+    return 0;
+}
+
+bool adapter_is_virtual(const std::string& name) {
+    std::string n;
+    for (char c : name) n += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    static const char* const kMarks[] = {
+        "hyper-v", "vethernet", "wsl", "virtualbox", "vbox", "vmware", "vmnet", "virtual", "docker",
+        "tap-windows", "tap adapter", "tap-", "openvpn", "wintun", "wireguard", "tailscale", "zerotier",
+        "hamachi", "radmin", "nordlynx", "vpn", "anyconnect", "fortinet", "pangp", "loopback", "bluetooth"};
+    for (const char* m : kMarks) {
+        if (n.find(m) != std::string::npos) return true;
+    }
+    return false;
+}
+
+int lan_adapter_score(const LanAdapter& a) {
+    if (!a.ip || a.loopback || a.tunnel) return -1;
+    const std::uint32_t host = bswap32(a.ip);
+    if ((host >> 24) == 127 || (host >> 16) == 0xa9feu) return -1;  // loopback; 169.254/16: no DHCP answer
+    int score = adapter_is_virtual(a.name) ? 0 : 100;
+    if (a.default_route) score += 8;
+    if (a.gateway) score += 4;
+    if (a.physical) score += 2;
+    return score;
+}
+
+std::uint32_t query_local_ipv4(std::string* how) {
+    wsa_start();
+    return query_local_net(how).ip;
+}
 
 const Export kNetExports[] = {
     {"sceNetInit", reinterpret_cast<void*>(net_init)},
