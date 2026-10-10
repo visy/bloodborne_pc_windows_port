@@ -1,11 +1,13 @@
 /* libSceSaveData on host directories:
  *   <user>/savedata/<user id>/<title id>/<dir name>/        files the game writes
+ *   (<user>/savedata_party/... instead in a party session with BB_PARTY_SAVE=separate, save_policy.h)
  *   <user>/savedata/<user id>/<title id>/<dir name>.sce_sys/ param.bin, icon0.png
  *   <user>/savedata/<user id>/<title id>.memory/memory.dat  SaveDataMemory
  * A mounted directory appears to the guest as /savedata0../savedata15.
  * Metadata lives beside the directory so the guest's own files are untouched. */
 #define _GNU_SOURCE
 #include "runtime.h"
+#include "save_policy.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -86,7 +88,7 @@ static void bloodborne_sound_hack(void) {
     for (size_t i=0;i<sizeof(ids)/sizeof(*ids);++i) if (!strcmp(title_id,ids[i])) bloodborne=1;
     if (!bloodborne) return;
     char users[700];
-    snprintf(users,sizeof(users),"%s/savedata",runtime_file_user_dir());
+    snprintf(users,sizeof(users),"%s/%s",runtime_file_user_dir(),runtime_savepolicy_dir());
     DIR *dir=opendir(users);
     if (!dir) return;
     for (struct dirent *e; (e=readdir(dir));) {
@@ -110,6 +112,7 @@ static void bloodborne_sound_hack(void) {
 
 void runtime_savedata_configure(const char *title) {
     if (title && *title) snprintf(title_id,sizeof(title_id),"%s",title);
+    runtime_savepolicy_start(); /* before the sound hack writes: the start backup has the save as it was */
     bloodborne_sound_hack();
 }
 
@@ -133,7 +136,7 @@ static int make_dirs(const char *path) {
 }
 
 static void root(int32_t user, const char *title, char *out, size_t size) {
-    snprintf(out,size,"%s/savedata/%d/%s",runtime_file_user_dir(),user,title && *title ? title : title_id);
+    snprintf(out,size,"%s/%s/%d/%s",runtime_file_user_dir(),runtime_savepolicy_dir(),user,title && *title ? title : title_id);
 }
 
 static void target_paths(int32_t user, const char *title, const DirName *dir, char *host, char *meta, size_t size) {

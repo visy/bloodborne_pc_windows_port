@@ -110,6 +110,24 @@ safe points with snapshots) → C3 items/rewards (lot-to-items replay) → C4 cu
 (Dream summon rejection, ending flags/EMEVD replay) → C5 save policy (separate party saves,
 backups, world reset on rest), 4 players (presentation table has 5 slots; coop cap RE).
 
+**C5 save policy (done: folder, backups, check; world reset on rest open):**
+`src/runtime_savepolicy.c` / `save_policy.h`. `BB_PARTY=host|join` + `BB_PARTY_SAVE=separate`
+(launcher default; the runtime default without it is shared, so test harnesses keep using
+`user\savedata`) maps every save path (`root()`, memory.dat, the sound hack) to
+`user\savedata_party`. The launcher (`scripts/party_saves.py`) offers the explicit copy of
+`user\savedata` on the first separate-save launch and has a copy button; the copy goes through
+a `.copying` folder and backs up a replaced party save. At start the runtime checks the folder
+(userdata0000-0009 = 0x140000 bytes, userdata0010/backup0010 = 0x40000 and not all zeros,
+param.bin = 1328; vs the newest good backup: emptied slots, lost files, changed headers) and,
+in a party session (`BB_SAVE_BACKUP=1` forces it), copies it to
+`user\save_backups\<folder>\<time>-start|restart|timer[-NN][-suspect]` at start and every
+`BB_SAVE_BACKUP_MINUTES` (10). Copies are taken only after 5 quiet seconds and discarded if
+`runtime_file_save_activity` (generation of /savedataN changes, open save writers) moved
+during the copy; a copy is written as `.partial` and renamed when complete; identical copies
+are dropped; a copy failing the check is `-suspect` with its own quota (`BB_SAVE_BACKUP_KEEP`,
+10), so a crash-restart with a damaged save never rotates good backups away. Tests:
+`ninja -C out/gpu save-policy-test`, `tests/test_party_saves.py`.
+
 Tests on one PC: `tools/mp/instances.py` (separate instance folders, 30 fps, VRAM cap),
 `tools/party/*` (pad driver, simguest from bbhost simclient, verdict, flag diff). Two-PC tests
 wait for the user's go-ahead.
@@ -136,10 +154,15 @@ A crashed player (guest or host) must end up back in the party without doing any
    and restarted game rejoins by name into its old slot with a fresh event stream.
 4. When the guest's world is up the director rings the bell; the host's director sees a waiting
    member and summons them. The host's game treats the vanished phantom as a disconnect.
-5. Host crash: guests return to their own worlds, keep reconnecting (backoff 1, 2, 4, 8 s, then
-   every 8 s +-20 %), and are summoned again once the host is back. The restarted host keeps
-   its party code (secret in `<user>/party_secret.bin`, reused after an unclean exit), so the
-   guests' reconnects are accepted.
+5. Host crash: guests return to their own worlds, keep reconnecting (backoff), and are summoned
+   again once the host is back.
+   Done (agent/hostcrash): the restarted host keeps its party code (secret from the crash marker
+   <user>/party_state.json, then party_secret.txt, then party_code.txt) and its member table
+   (slot, name, token in the marker -> PartyLink::restore_members); guests notice the TCP reset
+   at once, end the game's room with the host after 2 s (BB_PARTY_HOST_LOST_MS; ROOM_DESTROYED
+   0x1104 cause LEAVE, as when a host leaves) and reconnect with 1, 2, 4, 8 s backoff
+   (then every 8 s, +-20 %). Harness
+   run (--crash-instance 0): guest back on slot 1 by token 7.1 s after the kill, same code.
 6. Progress made meanwhile is caught up by the progress sync (C2) on return.
 Test: kill a guest instance mid-session in the local harness; verdict = back in the host's world
 within ~60 s with no input.
@@ -183,7 +206,7 @@ Bugs the soak found and fixed:
   (`PartyLink::session_resumed`), which also re-sends context_start and the relay HELLO
   (`np_session::host_session_reset`).
 - A restarted host had a new random party secret: every guest was rejected (wrong code) and
-  stopped retrying. The secret is kept across a crash restart.
+  stopped retrying (fixed in parallel by agent/hostcrash: secret and member table restored).
 - The relay forgot every client on a host restart and handed out new ports: relayed traffic
   stopped until the next keepalive and the other members' addresses went stale. Relay ports are
   derived from the token, and a frame or HELLO with an unknown token re-registers it.

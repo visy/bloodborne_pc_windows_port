@@ -140,8 +140,7 @@ public:
     void set_host_endpoint(std::uint32_t addr_nbo, std::uint16_t port, bool loopback);
     // An EVENT frame's payload from PartyLink; returns the EventId to ACK (0 when unparsable).
     std::uint64_t on_link_event(const std::string& event_json);
-    // The link joined a host session that does not continue ours (the host restarted or
-    // released our slot): its EventIds start over, so the resend filter does too.
+    // The host restarted (PartyLink WELCOME not resumed): its EventIds start again at 1.
     void reset_event_cursor();
 
     bool rpc(const char* kind, const json::Value& request, json::Value& reply, std::string& error,
