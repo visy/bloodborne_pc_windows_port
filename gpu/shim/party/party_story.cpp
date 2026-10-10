@@ -175,6 +175,30 @@ bool ReplayWorthy(const StoryIntent& s) {
     }
 }
 
+bool StoryRemoPlausible(std::uint32_t remo_id) {
+    const std::uint32_t area = remo_id / 1000000, block = remo_id / 10000 % 100;
+    return remo_id < 100000000 && ((area >= 21 && area <= 28) || (area >= 32 && area <= 36)) && block < 10;
+}
+
+bool SanitizePeerStory(StoryIntent* s, std::string* why) {
+    if (s->kind == StoryKind::Cutscene && !StoryRemoPlausible(s->id)) {
+        if (why) {
+            *why = "cutscene " + std::to_string(s->id) + " is not a game remo";
+        }
+        return false;
+    }
+    const std::vector<std::uint32_t> table = StoryFlagsForRemo(s->kind == StoryKind::Cutscene ? s->id : 0);
+    std::vector<std::uint32_t> keep;
+    for (std::uint32_t f : s->flags) {
+        if (std::find(table.begin(), table.end(), f) != table.end() &&
+            std::find(keep.begin(), keep.end(), f) == keep.end()) {
+            keep.push_back(f);
+        }
+    }
+    s->flags = std::move(keep);
+    return true;
+}
+
 int TodFlagValue(int tod) {
     return tod >= 0 && tod < 4 ? kTodTable[tod] : -1;
 }
@@ -248,6 +272,9 @@ bool StoryFromJson(const json::Value& v, StoryIntent* out, std::string* error) {
         s.tod = static_cast<int>(tod);
         s.warp_point = json::u32(v, "warp_point");
         s.warp_map = json::u32(v, "warp_map");
+        if (json::arr(v, "flags").size() > 64) {
+            throw std::runtime_error("flags: too many");
+        }
         for (const json::Value& f : json::arr(v, "flags")) {
             s.flags.push_back(static_cast<std::uint32_t>(json::as_u64(f, "flags")));
         }

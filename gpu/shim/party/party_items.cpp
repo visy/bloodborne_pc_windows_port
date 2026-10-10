@@ -284,18 +284,27 @@ bool ItemsFromJson(const json::Value& v, std::vector<ItemGrant>* out, std::strin
             throw std::runtime_error("not an object");
         }
         std::vector<ItemGrant> r;
+        if (json::arr(v, "items").size() > kMaxItemsPerEvent) {
+            throw std::runtime_error("items: too many rows");
+        }
         for (const json::Value& row : json::arr(v, "items")) {
             if (row.type != json::Value::Type::Array || row.array.size() != 5) {
                 throw std::runtime_error("items: a row needs [seq, lot, flag, ledger, source]");
             }
             auto integer = [](const json::Value& x, const char* what) -> double {
-                if (x.type != json::Value::Type::Number || x.number != static_cast<double>(static_cast<long long>(x.number))) {
+                // Range first: converting 1e300 to an integer is undefined.
+                if (x.type != json::Value::Type::Number || !(x.number > -9.0e15 && x.number < 9.0e15) ||
+                    x.number != static_cast<double>(static_cast<long long>(x.number))) {
                     throw std::runtime_error(std::string("items: ") + what + " is not an integer");
                 }
                 return x.number;
             };
             ItemGrant g;
-            g.seq = static_cast<std::uint64_t>(integer(row.array[0], "seq"));
+            const double seq = integer(row.array[0], "seq");
+            if (seq < 0) {
+                throw std::runtime_error("items: seq is negative");
+            }
+            g.seq = static_cast<std::uint64_t>(seq);
             const double lot = integer(row.array[1], "lot"), flag = integer(row.array[2], "flag"),
                          ledger = integer(row.array[3], "ledger");
             if (lot <= 0 || lot > 2147483647.0 || flag < -1 || flag > 2147483647.0 || ledger < -1 ||
@@ -322,6 +331,54 @@ bool ItemsFromJson(const json::Value& v, std::vector<ItemGrant>* out, std::strin
         }
         return false;
     }
+}
+
+bool ItemGrantFromPeerAllowed(const ItemGrant& g, std::string* why) {
+    auto no = [&](const char* w) {
+        if (why) {
+            *why = w;
+        }
+        return false;
+    };
+    if (g.source != ItemSource::Award && g.source != ItemSource::Flag && g.source != ItemSource::Full) {
+        return no("not a host source (mark / test rows are guest-local)");
+    }
+    if (ItemLotDenied(g.lot, g.flag)) {
+        return no("lot denied");
+    }
+    if (g.flag < 0) {
+        if (g.ledger < 0 || ItemLedgerLot(g.ledger) != g.lot) {
+            return no("ledger row does not match the lot");
+        }
+        return true;
+    }
+    const std::int32_t table_flag = ItemLotFlag(g.lot);
+    if (table_flag == g.flag || ItemLotForFlag(g.flag) == g.lot) {
+        return true;
+    }
+    if (table_flag != kItemNone) {
+        return no("the lot has another flag");
+    }
+    if (ItemLotForFlag(g.flag) != kItemNone) {
+        return no("the flag belongs to another lot");
+    }
+    return true;  // a captured lot outside the tables
+}
+
+std::vector<ItemGrant> FilterPeerItems(const std::vector<ItemGrant>& in, std::size_t* rejected) {
+    std::vector<ItemGrant> out;
+    std::size_t bad = 0;
+    for (const ItemGrant& g : in) {
+        if (ItemGrantFromPeerAllowed(g)) {
+            out.push_back(g);
+        } else {
+            ++bad;
+        }
+    }
+    if (rejected) {
+        *rejected = bad;
+    }
+    return out;
 }
 
 std::string ItemsToJsonText(const std::vector<ItemGrant>& items) {
@@ -375,13 +432,22 @@ std::size_t GuestItems::Offer(const std::vector<ItemGrant>& items) {
             continue;
         }
         if (g.source == ItemSource::Mark) {
+            if (q_.size() >= kMaxQueue) {
+                continue;
+            }
             q_.push_front(g); // before any replay of the same flag
             ++taken;
             continue;
         }
-        if (!queued_.insert(key).second) {
+        if (q_.size() >= kMaxQueue || queued_.count(key)) {
             continue;
         }
+        // A lot outside the tables comes once, whatever flags it is paired with.
+        if (g.flag >= 0 && ItemLotFlag(g.lot) != g.flag && ItemLotForFlag(g.flag) != g.lot &&
+            !adhoc_lots_.insert(g.lot).second) {
+            continue;
+        }
+        queued_.insert(key);
         if (q_.size() >= kMaxQueue) {
             continue; // the host's next full list brings it again
         }

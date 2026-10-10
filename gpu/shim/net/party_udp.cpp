@@ -75,6 +75,20 @@ void RelayServer::set_own_port(std::uint16_t p) {
     own_port_ = p;
 }
 
+void RelayServer::set_admit(std::function<bool(std::uint32_t)> admit) {
+    std::lock_guard<std::mutex> lk(admit_mu_);
+    admit_ = std::move(admit);
+}
+
+bool RelayServer::admitted(std::uint32_t addr) const {
+    std::function<bool(std::uint32_t)> f;
+    {
+        std::lock_guard<std::mutex> lk(admit_mu_);
+        f = admit_;
+    }
+    return !f || f(addr);
+}
+
 std::uint16_t RelayServer::preferred_port(std::uint64_t token) {
     // splitmix64 finalizer: any token bits spread over the range.
     std::uint64_t z = token + 0x9e3779b97f4a7c15ull;
@@ -84,17 +98,34 @@ std::uint16_t RelayServer::preferred_port(std::uint64_t token) {
     return static_cast<std::uint16_t>(kFirstPort + z % kPortSpan);
 }
 
-RelayServer::Client& RelayServer::register_locked(std::uint64_t token, std::uint32_t addr, std::uint16_t port_nbo,
+RelayServer::Client* RelayServer::register_locked(std::uint64_t token, std::uint32_t addr, std::uint16_t port_nbo,
                                                   std::string* note, bool re) {
+    std::size_t same_addr = 0;
+    for (const auto& [k, o] : by_token_) same_addr += o.addr == addr ? 1 : 0;
+    if (by_token_.size() >= kMaxClients || same_addr >= kMaxClientsPerAddr) {
+        ++stats_.refused;
+        if (note && (stats_.refused == 1 || stats_.refused % 100 == 0))
+            *note = "relay: table full; refused " + std::to_string(stats_.refused) + " registration(s)";
+        return nullptr;
+    }
     Client c;
     c.token = token;
     c.addr = addr;
     c.port = port_nbo;
     c.seen = Clock::now();
     std::uint16_t vp = preferred_port(token);
+    bool free_port = false;
     for (unsigned i = 0; i < kPortSpan; ++i) {
-        if (vp != own_port_ && !by_vport_.count(vp)) break;
+        if (vp != own_port_ && !by_vport_.count(vp)) {
+            free_port = true;
+            break;
+        }
         vp = static_cast<std::uint16_t>(vp + 1 >= kFirstPort + kPortSpan ? kFirstPort : vp + 1);
+    }
+    // Never hand out a taken port: that would route another client's traffic to this one.
+    if (!free_port) {
+        ++stats_.refused;
+        return nullptr;
     }
     c.vport = vp;
     by_vport_[vp] = token;
@@ -104,7 +135,7 @@ RelayServer::Client& RelayServer::register_locked(std::uint64_t token, std::uint
         *note = "relay: " + addr_text(addr, port_nbo) + " is relay port " + std::to_string(vp) +
                 (re ? " (re-registered a token this relay did not know)" : "");
     }
-    return by_token_.emplace(token, c).first->second;
+    return &by_token_.emplace(token, c).first->second;
 }
 
 std::size_t RelayServer::answer_stun(const std::uint8_t* d, std::size_t n, std::uint32_t addr, std::uint16_t port_nbo,
@@ -113,6 +144,11 @@ std::size_t RelayServer::answer_stun(const std::uint8_t* d, std::size_t n, std::
     std::uint8_t token[net::stun::kTokenLen];
     bool hello = false;
     if (!net::stun::parse_binding_request(d, n, txid, &hello, token)) return 0;
+    if (!admitted(addr)) {  // not a party member: no answer (no reflection, no relay port)
+        std::lock_guard<std::mutex> lk(mu_);
+        ++stats_.refused;
+        return 0;
+    }
     net::stun::Relay relay;
     {
         std::lock_guard<std::mutex> lk(mu_);
@@ -121,27 +157,30 @@ std::size_t RelayServer::answer_stun(const std::uint8_t* d, std::size_t n, std::
             std::uint64_t key = token_key(token);
             auto it = by_token_.find(key);
             if (it == by_token_.end()) {
+                Client* fresh = nullptr;
                 if (key == 0) {
                     do {
                         key = rng_();
                     } while (key == 0 || by_token_.count(key));
-                    register_locked(key, addr, port_nbo, note, false);
+                    fresh = register_locked(key, addr, port_nbo, note, false);
                 } else {
                     // A token from before a restart of ours: the client keeps it (and, unless
                     // taken, its port).
-                    register_locked(key, addr, port_nbo, note, true);
+                    fresh = register_locked(key, addr, port_nbo, note, true);
                 }
-                it = by_token_.find(key);
+                it = fresh ? by_token_.find(key) : by_token_.end();
             }
-            Client& c = it->second;
-            c.addr = addr;
-            c.port = port_nbo;
-            c.seen = Clock::now();
-            relay.present = true;
-            key_bytes(c.token, relay.token);
-            relay.vport = c.vport;
-            relay.observed_addr = addr;
-            relay.observed_port = bswap16(port_nbo);
+            if (it != by_token_.end()) {  // else: the table is full, a plain STUN answer
+                Client& c = it->second;
+                c.addr = addr;
+                c.port = port_nbo;
+                c.seen = Clock::now();
+                relay.present = true;
+                key_bytes(c.token, relay.token);
+                relay.vport = c.vport;
+                relay.observed_addr = addr;
+                relay.observed_port = bswap16(port_nbo);
+            }
         }
     }
     return net::stun::build_binding_response(out, txid, addr, bswap16(port_nbo), relay.present ? &relay : nullptr);
@@ -154,11 +193,27 @@ bool RelayServer::forward(std::uint8_t* buf, std::size_t n, std::uint32_t addr, 
     const std::uint64_t src_key = token_key(buf + 2);
     const std::uint16_t dst_vport = static_cast<std::uint16_t>((buf[10] << 8) | buf[11]);
     std::uint16_t src_vport = 0;
+    bool known = false;
     {
         std::lock_guard<std::mutex> lk(mu_);
         if (src_key == 0) return false;
+        known = by_token_.count(src_key) != 0;
+    }
+    // An unknown token registers its sender: only an admitted address may (the admit filter
+    // takes other locks, so it runs outside ours).
+    if (!known && !admitted(addr)) {
+        std::lock_guard<std::mutex> lk(mu_);
+        ++stats_.refused;
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lk(mu_);
         auto src = by_token_.find(src_key);
-        if (src == by_token_.end()) src = by_token_.find(register_locked(src_key, addr, port_nbo, note, true).token);
+        if (src == by_token_.end()) {
+            Client* fresh = register_locked(src_key, addr, port_nbo, note, true);
+            if (!fresh) return false;
+            src = by_token_.find(src_key);
+        }
         src->second.addr = addr;  // follows the client's NAT rebinding
         src->second.port = port_nbo;
         src->second.seen = Clock::now();

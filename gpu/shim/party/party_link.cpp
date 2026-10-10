@@ -44,7 +44,6 @@ enum MsgType : std::uint8_t {
     kEncrypted = 0xE0,
 };
 
-constexpr std::uint32_t kMaxFrame = 16u << 20;
 constexpr std::uint8_t kMagic[4] = {'B', 'B', 'P', 'L'};
 
 // The calling thread's CPU cycles (0 where unavailable): a lock hold's own work, without the
@@ -58,6 +57,10 @@ std::uint64_t thread_cycles() {
     return 0;
 #endif
 }
+
+// A peer's clock value in ms (a host's uptime): beyond this it is nonsense, and arithmetic on it
+// could overflow.
+constexpr std::int64_t kMaxClockMs = 1ll << 50;
 
 std::int64_t ms_between(Clock::time_point a, Clock::time_point b) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count();
@@ -166,6 +169,8 @@ std::vector<std::string> split_names(const std::string& s) {
     return out;
 }
 
+std::string sanitize_text(const std::string& s, std::size_t max);
+
 void write_roster(Writer& w, const std::vector<RosterEntry>& r) {
     w.u8(static_cast<std::uint8_t>(r.size()));
     for (const auto& e : r) {
@@ -180,13 +185,14 @@ std::vector<RosterEntry> read_roster(Reader& r) {
     for (unsigned i = 0; i < n && r.ok; ++i) {
         RosterEntry e;
         e.slot = r.u8();
-        e.name = r.str16();
+        e.name = sanitize_text(r.str16(), 16);
         std::uint8_t st = r.u8();
         e.state = st <= 6 ? static_cast<MemberState>(st) : MemberState::Title;
         e.connected = r.u8() != 0;
         e.map_id = r.u32();
         e.ping_ms = r.u32();
-        out.push_back(std::move(e));
+        // At most a party's worth of entries, each a real slot.
+        if (e.slot <= 7 && out.size() < kMaxRosterEntries) out.push_back(std::move(e));
     }
     return out;
 }
@@ -198,6 +204,47 @@ bool is_zero(const Token& t) {
         if (b) return false;
     return true;
 }
+
+// Printable ASCII only, at most `max` bytes: a peer's text (REJECT / BYE reasons, roster names)
+// goes to logs and the overlay.
+std::string sanitize_text(const std::string& s, std::size_t max) {
+    std::string out;
+    for (char c : s) {
+        if (out.size() >= max) break;
+        const unsigned char u = static_cast<unsigned char>(c);
+        out += u >= 0x20 && u < 0x7f ? c : '?';
+    }
+    return out;
+}
+
+bool valid_event_name(const std::string& s) {
+    if (s.empty() || s.size() > kMaxEventName) return false;
+    for (char c : s) {
+        const unsigned char u = static_cast<unsigned char>(c);
+        if (u <= 0x20 || u >= 0x7f) return false;
+    }
+    return true;
+}
+
+// A token bucket: `rate` per second, at most `burst` saved up.
+struct Bucket {
+    double tokens = 0, rate = 0, burst = 0;
+    Clock::time_point at{};
+    void init(double r, double b) {
+        rate = r;
+        burst = b;
+        tokens = b;
+        at = Clock::now();
+    }
+    bool take(double n, Clock::time_point now) {
+        const double dt = std::chrono::duration<double>(now - at).count();
+        at = now;
+        tokens = std::min(burst, tokens + dt * rate);
+        if (tokens < n) return false;
+        tokens -= n;
+        return true;
+    }
+};
 
 // Reliable events in one direction: the sender's unacked queue and the receiver's last cursor.
 struct EventStream {
@@ -395,6 +442,13 @@ struct PartyLink::Impl {
         // Host: from HELLO.
         std::string name;
         Token token{};
+        // Peer metering (bbport security pass). backlog: this connection's frames posted to the
+        // callback thread and not run yet (shared: a callback may outlive the connection).
+        std::shared_ptr<std::atomic<int>> backlog = std::make_shared<std::atomic<int>>(0);
+        bool input_pending = false;  // complete frames left in `in` (kFramesPerPass)
+        Bucket frames, bytes;        // host: the member's rate (admit)
+        std::uint32_t flood_drops = 0;
+        std::uint64_t flood_total = 0;
     };
 
     struct Member {
@@ -444,6 +498,7 @@ struct PartyLink::Impl {
     std::map<int, Member> members;
     Clock::time_point last_roster_bcast{};
     std::set<std::string> banned;  // kicked names: refused for the rest of this session
+    std::uint64_t refused_conns = 0;
 
     // Guest.
     std::string host_name;
@@ -522,6 +577,15 @@ struct PartyLink::Impl {
     void log(std::string line) {
         if (cb.on_log) post([this, line = std::move(line)] { cb.on_log(line); });
     }
+    // A callback a peer's frame asked for: counted in the connection's backlog until it ran.
+    void post_peer(Conn* c, std::function<void()> f) {
+        std::shared_ptr<std::atomic<int>> b = c->backlog;
+        b->fetch_add(1);
+        post([b, f = std::move(f)] {
+            f();
+            b->fetch_sub(1);
+        });
+    }
     void set_state(LinkState s, std::string detail) {  // mu held
         if (state == s) return;
         state = s;
@@ -568,6 +632,10 @@ struct PartyLink::Impl {
             Writer w;
             w.u32(len).u8(type).bytes(body.data(), body.size());
             c->out.insert(c->out.end(), w.b.begin(), w.b.end());
+        }
+        if (c->out.size() - c->out_off > kMaxOutBuffer) {
+            lose(c, "peer is not reading (" + std::to_string((c->out.size() - c->out_off) >> 20) + " MiB queued)");
+            return;
         }
         if (!corked) flush(c);
     }
@@ -718,8 +786,10 @@ struct PartyLink::Impl {
         if (!r.ok) return;
         if (cursor > es.rx_last) {
             es.rx_last = cursor;
-            if (cb.on_event)
-                post([this, from_slot, cursor, name = std::move(name), json = std::move(json)] {
+            if (!valid_event_name(name))
+                log("party link: dropped an event with an invalid name from slot " + std::to_string(from_slot));
+            else if (cb.on_event)
+                post_peer(c, [this, from_slot, cursor, name = std::move(name), json = std::move(json)] {
                     cb.on_event(from_slot, cursor, name, json);
                 });
         }
@@ -744,12 +814,20 @@ struct PartyLink::Impl {
     }
     void process_frames(Conn* c) {
         std::size_t off = 0;
+        std::size_t frames = 0;
+        c->input_pending = false;
         while (!c->dead && c->in.size() - off >= 5) {
+            if (frames++ >= kFramesPerPass || c->backlog->load() >= kMaxCallbackBacklog) {
+                c->input_pending = true;  // the IO loop comes back for the rest
+                break;
+            }
             const std::uint8_t* h = c->in.data() + off;
             std::uint32_t len = static_cast<std::uint32_t>(h[0]) | (static_cast<std::uint32_t>(h[1]) << 8) |
                                 (static_cast<std::uint32_t>(h[2]) << 16) | (static_cast<std::uint32_t>(h[3]) << 24);
-            if (len == 0 || len > kMaxFrame) {
-                lose(c, "bad frame length");
+            // Before WELCOME nobody is authenticated: a handshake frame is small.
+            const std::uint32_t limit = c->phase == Phase::Open ? kMaxFrame : kMaxHandshakeFrame;
+            if (len == 0 || len > limit) {
+                lose(c, "bad frame length " + std::to_string(len));
                 return;
             }
             if (c->in.size() - off < 4 + static_cast<std::size_t>(len)) break;
@@ -844,12 +922,38 @@ struct PartyLink::Impl {
         auto it = members.find(c->slot);
         if (it == members.end() || it->second.conn != c) return lose(c, "stale connection");
         Member& m = it->second;
+        if (type != kPong && type != kEventAck && type != kBye) {
+            const auto now = Clock::now();
+            const bool fits = c->frames.take(1, now) && c->bytes.take(static_cast<double>(r.n), now);
+            if (!fits) {
+                ++c->flood_total;
+                if (++c->flood_drops >= kFloodDisconnect)
+                    return lose(c, "flooding the host (" + std::to_string(c->flood_total) +
+                                       " frames over the rate limit)");
+                if (c->flood_total == 1 || c->flood_total % 1000 == 0)
+                    log("party link: " + m.name + " is over the rate limit; " + std::to_string(c->flood_total) +
+                        " frames dropped");
+                if (type == kRpcReq) {  // the caller is told rather than left to time out
+                    const std::uint32_t id = r.u32();
+                    Writer w;
+                    w.u32(id).u8(0).str32("{\"ResKind\":8,\"Error\":\"rate limited\"}");
+                    send(c, kRpcResp, w);
+                }
+                return;
+            }
+            c->flood_drops = 0;
+        }
         switch (type) {
         case kPing: handle_common(c, type, r); break;
         case kPong: {
+            // The echo of our own PING time: anything later than now (or absurd) is a lie, and
+            // the subtraction must not overflow (fuzzing: a u64 near 2^63 did).
             std::uint64_t t = r.u64();
-            std::int64_t rtt_ms = now_ms() - static_cast<std::int64_t>(t);
-            if (r.ok && rtt_ms >= 0) m.ping_ms = static_cast<std::uint32_t>(rtt_ms);
+            const std::int64_t now = now_ms();
+            if (r.ok && t <= static_cast<std::uint64_t>(now)) {
+                const std::int64_t rtt_ms = now - static_cast<std::int64_t>(t);
+                if (rtt_ms <= 3600000) m.ping_ms = static_cast<std::uint32_t>(rtt_ms);
+            }
             break;
         }
         case kRoster: {  // the guest's own entry
@@ -869,7 +973,7 @@ struct PartyLink::Impl {
             if (!r.ok) break;
             int slot = m.slot;
             std::uint64_t conn_id = c->id;
-            post([this, slot, conn_id, id, kind = std::move(kind), json = std::move(json)] {
+            post_peer(c, [this, slot, conn_id, id, kind = std::move(kind), json = std::move(json)] {
                 bool ok = static_cast<bool>(cb.on_rpc);
                 std::string reply = ok ? cb.on_rpc(slot, kind, json) : std::string("{\"error\":\"no rpc handler\"}");
                 std::lock_guard<std::mutex> lk(mu);
@@ -888,14 +992,18 @@ struct PartyLink::Impl {
             std::string json = r.str32();
             int slot = m.slot;
             if (r.ok && cb.on_party_cmd)
-                post([this, slot, cmd = std::move(cmd), json = std::move(json)] { cb.on_party_cmd(slot, cmd, json); });
+                post_peer(c, [this, slot, cmd = std::move(cmd), json = std::move(json)] {
+                    cb.on_party_cmd(slot, cmd, json);
+                });
             break;
         }
         case kProgress: {
             std::string blob = r.str32();
             int slot = m.slot;
             if (r.ok && cb.on_progress)
-                post([this, slot, b = std::vector<std::uint8_t>(blob.begin(), blob.end())] { cb.on_progress(slot, b); });
+                post_peer(c, [this, slot, b = std::vector<std::uint8_t>(blob.begin(), blob.end())] {
+                    cb.on_progress(slot, b);
+                });
             break;
         }
         case kBye: {
@@ -971,6 +1079,8 @@ struct PartyLink::Impl {
         c->rx.init(crypto::session_key(party_key, "bbp-g2h", c->hn, c->gn));
         c->phase = Phase::Open;
         c->last_ping = Clock::now();
+        c->frames.init(kMemberFrameRate, kMemberFrameBurst);
+        c->bytes.init(kMemberByteRate, kMemberByteBurst);
 
         Writer w;
         w.u8(static_cast<std::uint8_t>(m->slot)).u8(static_cast<std::uint8_t>(cfg.max_players)).u8(resumed ? 1 : 0);
@@ -1021,7 +1131,7 @@ struct PartyLink::Impl {
     void handle_guest(Conn* c, std::uint8_t type, Reader& r, bool enc) {
         if (type == kReject && !enc) {
             RejectCode code = static_cast<RejectCode>(r.u8());
-            std::string why = r.str16();
+            std::string why = sanitize_text(r.str16(), 1024);
             reject = code;
             reject_text = why;
             close_conn(c);
@@ -1059,6 +1169,8 @@ struct PartyLink::Impl {
             r.bytes(tok.data(), 16);
             auto ros = read_roster(r);
             if (!r.ok) return lose(c, "short WELCOME");
+            if (slot < 1 || slot > 3 || maxp < 2 || maxp > 4 || slot >= maxp)
+                return lose(c, "bad WELCOME (slot " + std::to_string(slot) + " of " + std::to_string(maxp) + ")");
             c->tx.init(c->pending_tx);
             crypto::wipe(c->pending_tx.data(), 32);
             c->phase = Phase::Open;
@@ -1066,7 +1178,7 @@ struct PartyLink::Impl {
             my_slot = slot;
             host_max_players = maxp;
             my_token = tok;
-            clock_offset = static_cast<std::int64_t>(hclock) - now_ms();
+            clock_offset = hclock <= static_cast<std::uint64_t>(kMaxClockMs) ? static_cast<std::int64_t>(hclock) - now_ms() : 0;
             char buf[32];
             std::snprintf(buf, sizeof buf, "%u.%u.%u.%u:%u", ip[0], ip[1], ip[2], ip[3], oport);
             observed = buf;
@@ -1088,10 +1200,14 @@ struct PartyLink::Impl {
             std::uint64_t hclock = r.u64();
             if (!r.ok) break;
             std::int64_t now = now_ms();
-            std::int64_t rt = now - static_cast<std::int64_t>(t);
-            if (rt >= 0) {
-                rtt = static_cast<std::uint32_t>(rt);
-                clock_offset = static_cast<std::int64_t>(hclock) + rt / 2 - now;
+            // A host's PONG: t must be one of our PING times, its clock a sane number of ms
+            // (signed overflow here was the fuzzer's first find).
+            if (t <= static_cast<std::uint64_t>(now) && hclock <= static_cast<std::uint64_t>(kMaxClockMs)) {
+                const std::int64_t rt = now - static_cast<std::int64_t>(t);
+                if (rt <= 3600000) {
+                    rtt = static_cast<std::uint32_t>(rt);
+                    clock_offset = static_cast<std::int64_t>(hclock) + rt / 2 - now;
+                }
             }
             break;
         }
@@ -1127,18 +1243,22 @@ struct PartyLink::Impl {
             std::string cmd = r.str16();
             std::string json = r.str32();
             if (r.ok && cb.on_party_cmd)
-                post([this, cmd = std::move(cmd), json = std::move(json)] { cb.on_party_cmd(kHostSlot, cmd, json); });
+                post_peer(c, [this, cmd = std::move(cmd), json = std::move(json)] {
+                    cb.on_party_cmd(kHostSlot, cmd, json);
+                });
             break;
         }
         case kProgress: {
             std::string blob = r.str32();
             if (r.ok && cb.on_progress)
-                post([this, b = std::vector<std::uint8_t>(blob.begin(), blob.end())] { cb.on_progress(kHostSlot, b); });
+                post_peer(c, [this, b = std::vector<std::uint8_t>(blob.begin(), blob.end())] {
+                    cb.on_progress(kHostSlot, b);
+                });
             break;
         }
         case kBye: {
             RejectCode code = static_cast<RejectCode>(r.u8());
-            std::string why = r.str16();
+            std::string why = sanitize_text(r.str16(), 1024);
             reject = code == RejectCode::None ? RejectCode::Shutdown : code;
             reject_text = why.empty() ? "the host ended the party" : why;
             close_conn(c);
@@ -1257,6 +1377,21 @@ struct PartyLink::Impl {
             sock::set_nonblocking(s);
             int one = 1;
             setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&one), sizeof one);
+            // Nobody is authenticated yet: a handful of handshakes at a time, fewer per address.
+            std::size_t pending = 0, same_ip = 0;
+            for (const auto& o : conns) {
+                if (o->dead || o->phase == Phase::Open) continue;
+                ++pending;
+                if (std::memcmp(o->peer_ip.data(), &a.sin_addr, 4) == 0) ++same_ip;
+            }
+            if (pending >= kMaxPendingConns || same_ip >= kMaxPendingPerIp) {
+                sock::close(s);
+                ++refused_conns;
+                if (refused_conns == 1 || refused_conns % 100 == 0)
+                    log("party link: refused " + std::to_string(refused_conns) +
+                        " connection(s): too many handshakes in progress");
+                continue;
+            }
             auto c = std::make_unique<Conn>();
             c->id = next_conn_id++;
             c->s = s;
@@ -1270,10 +1405,14 @@ struct PartyLink::Impl {
 
     void read_conn(Conn* c) {
         std::uint8_t buf[65536];
-        for (;;) {
+        // At most kReadBudget per pass (the rest waits in the socket: the lock is held short and
+        // `in` stays bounded), and nothing while unhandled frames are still buffered.
+        std::size_t got = 0;
+        while (!c->input_pending && got < kReadBudget) {
             long r = sock::recv_some(c->s, buf, sizeof buf);
             if (r > 0) {
                 c->in.insert(c->in.end(), buf, buf + r);
+                got += static_cast<std::size_t>(r);
                 if (r < static_cast<long>(sizeof buf)) break;
                 continue;
             }
@@ -1293,6 +1432,13 @@ struct PartyLink::Impl {
                 if (ms_between(c->created, now) > cfg.connect_timeout_ms) lose(c, "connect timed out");
                 continue;
             }
+            if (host && c->phase != Phase::Open &&
+                ms_between(c->created, now) > std::max(cfg.connect_timeout_ms, cfg.lost_timeout_ms)) {
+                lose(c, "handshake timed out");
+                continue;
+            }
+            // A connection held back by its own callback backlog is not silent.
+            if (c->backlog->load() >= kMaxCallbackBacklog) c->last_rx = now;
             if (ms_between(c->last_rx, now) > cfg.lost_timeout_ms) {
                 lose(c, "no traffic for " + std::to_string(cfg.lost_timeout_ms / 1000) + " s");
                 continue;
@@ -1334,6 +1480,7 @@ struct PartyLink::Impl {
         for (;;) {
             fds.clear();
             owners.clear();
+            bool busy = false;  // buffered frames to handle: poll without waiting
             {
                 std::lock_guard<std::mutex> lk(mu);
                 if (stopping) break;
@@ -1349,18 +1496,23 @@ struct PartyLink::Impl {
                         if (c->dead || c->s == sock::kInvalid) continue;
                         sock::PollFd p{};
                         p.fd = c->s;
-                        p.events = POLLIN;
+                        // Backpressure: no reads while frames wait (in `in` or for callbacks).
+                        const bool readable = !c->input_pending && c->backlog->load() < kMaxCallbackBacklog;
+                        if (c->input_pending) busy = true;
+                        p.events = readable ? POLLIN : 0;
                         if (c->phase == Phase::Connecting || c->out_off < c->out.size()) p.events |= POLLOUT;
+                        if (!p.events) continue;
                         fds.push_back(p);
                         owners.push_back(c.get());
                     }
                 }
             }
             int n = 0;
-            if (fds.empty())
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            else
-                n = sock::poll(fds.data(), static_cast<unsigned long>(fds.size()), 10);
+            if (fds.empty()) {
+                if (!busy) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            } else {
+                n = sock::poll(fds.data(), static_cast<unsigned long>(fds.size()), busy ? 0 : 10);
+            }
             std::unique_lock<std::mutex> lk(mu);
             const auto locked_at = Clock::now();
             const std::uint64_t cycles_at = thread_cycles();
@@ -1391,6 +1543,11 @@ struct PartyLink::Impl {
                     if (re & (POLLIN | POLLERR | POLLHUP)) read_conn(c);
                     if (!c->dead && (re & POLLOUT)) flush(c);
                 }
+            }
+            // Frames left over from an earlier pass (kFramesPerPass, callback backlog).
+            for (std::size_t i = 0; i < conns.size(); ++i) {
+                Conn* c = conns[i].get();
+                if (!c->dead && c->input_pending && c->backlog->load() < kMaxCallbackBacklog) process_input(c);
             }
             timers();
             conns.erase(std::remove_if(conns.begin(), conns.end(), [](const std::unique_ptr<Conn>& c) { return c->dead; }),
@@ -1669,6 +1826,8 @@ std::uint64_t PartyLink::send_event(int slot, const std::string& name, const std
     auto push = [&](EventStream& es, Impl::Conn* c) {
         EventStream::Ev e{es.next_cursor++, name, json};
         es.unacked.push_back(e);
+        // A peer that never acknowledges must not grow the queue without end.
+        while (es.unacked.size() > kMaxUnackedEvents) es.unacked.pop_front();
         if (c && c->phase == Impl::Phase::Open) I.send_event_frame(c, e);
         return e.cursor;
     };
