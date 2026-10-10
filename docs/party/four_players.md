@@ -196,6 +196,24 @@ game): max 4 - three guests in one room on slots 1-3, SimC crashes and is back i
 ~15 s later while SimA/SimB keep their links and heartbeats, SimC's sign taken off the board, a
 4th guest refused (full); max 3 - two guests in, the 3rd refused (full).
 
+**Live, 3 instances (2026-10-10, agent/live4p, loopback, `BB_PARTY_RING_EVERY=10`).**
+- Max 3 (`--crash-instance 2 --crash-when "-> client \(6"`): Hunter1 summoned (`cooperators
+  0 -> 1`), the host rang again while hosting and summoned Hunter2 into the same room 1001;
+  Hunter2 was killed as it entered the host's world, the host logged `Hunter2 (slot 2) lost;
+  slot kept`, Hunter2's restart auto-continued, signed (sign 3), was summoned again and the host
+  reached `cooperators 1 -> 2` 132 s into the run. Hunter1 stayed `client (6)` throughout (no
+  session change), its path to Hunter2 went `through the host relay` while Hunter2 was dead and
+  back to direct (`punch Hunter2 ... peer heard`) after the restart; Hunter2 punched both peers.
+- Max 4: both guests summoned (`cooperators 1 -> 2` after 76 s). H1 shape: with 1 cooperator
+  `status rec0..3 2 2 0 0, counted 2; kinds 7:2`, with 2 `counted 3; kinds 7:3` - the per-kind
+  sum is one more than the phantoms in the world (0x18796c0 also counts the selector's own
+  session entries, sel+0x1c0), so the old H1 rule (sum < max players - 1) would never have
+  lifted at 2 cooperators: the 3rd cooperator could not have come in. H1 now uses the game's
+  cooperator count (0x15bdc20, FourpTick, twice a second).
+- With 1 cooperator rec0/rec1 are already both "used" by that count, yet in the max 3 run (H1
+  not active below max 4) the 2nd summon happened: the summary is not what limits a bell summon
+  of the 2nd cooperator; whether it limits the 3rd needs the 4-client run (step 3 below).
+
 ### Live test plan for 3 and 4 clients (when the machine allows 3+ game clients, or on two PCs)
 
 Setup: `instances.py run --count 3|4 --party --env BB_PARTY_MAX=3|4 --vram 1536 --fps 30
@@ -207,8 +225,8 @@ prologue: `start ... READY`). Logs: `instances.py logs --grep "Party|from api|4p
    auto-continues into its world (`auto-continue: world up`).
 3. Summons (host log): `ringing the Beckoning Bell` -> `from api: Hunter0 summons HunterK` ->
    `cooperators 0 -> 1`; ~30 s later `ringing ...` again with session `host (3, ...)` ->
-   `summons` the other guest -> `cooperators 1 -> 2`. N = 4: `Party 4p: H1: a 3rd cooperator
-   slot opened (2 cooperators, max players 4)` -> third `summons` -> `cooperators 2 -> 3`. Each
+   `summons` the other guest -> `cooperators 1 -> 2`. N = 4: `Party 4p: H1: a cooperator slot
+   opened (2 cooperators in the world, ...)` -> third `summons` -> `cooperators 2 -> 3`. Each
    guest: `session trying-to-join -> client (6)` and roster `in_host_world`. Signs: after each
    summon the host's `asks for signs` count drops by one (the summoned guest deleted its sign).
 4. Cap: N = 3 with 3 guests running (BB_PARTY_MAX=3 but `--count 4`): the 3rd guest's link is

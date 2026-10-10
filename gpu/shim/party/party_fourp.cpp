@@ -214,11 +214,20 @@ BB_COOP_SYSV u64 SlotSummary(u64 out, u64 sel, u64 dbg) {
         per_kind[k] = count_kind(sel, kind);
         coop += per_kind[k++];
     }
-    LogSummaryShape(out, per_kind, CooperatorsNowFast());
+    // The per-kind sum counts one more than the phantoms in the world (live, 3 instances: kind 7
+    // = 2 with 1 cooperator, 3 with 2), so with 2 cooperators it never let the 3rd in. The
+    // game's own cooperator count (0x15bdc20, read by FourpTick) decides; the sum minus one
+    // only while that is not known yet.
+    const int coop_now = CooperatorsNowFast();
+    LogSummaryShape(out, per_kind, coop_now);
+    coop = coop_now >= 0 ? coop_now : coop - 1;
     if (LiftCoopSlot(rec0, coop, max)) {
         const i32 free_status = 0;
-        if (SafeWrite(out + 4, &free_status, 4) && g_h1_lifts.fetch_add(1) == 0) {
-            Log("H1: a 3rd cooperator slot opened (%d cooperators, max players %d)", coop, max);
+        static std::atomic<int> logged_coop{-1};
+        g_h1_lifts.fetch_add(1, std::memory_order_relaxed);
+        if (SafeWrite(out + 4, &free_status, 4) && logged_coop.exchange(coop) != coop) {
+            Log("H1: a cooperator slot opened (%d cooperators in the world, kind counts %d, max players %d)", coop,
+                per_kind[0] + per_kind[1] + per_kind[2] + per_kind[3] + per_kind[4], max);
         }
     }
     return r;
