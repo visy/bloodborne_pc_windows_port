@@ -1072,6 +1072,8 @@ PartyRole PartyDirector::Role() const {
     return st.role;
 }
 
+bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_point now);
+
 void PartyDirector::Tick() {
     State& st = S();
     const auto now = Clock::now();
@@ -1292,6 +1294,9 @@ void PartyDirector::Tick() {
             return; // C4: a cutscene / ending replay first, then the rejoin
         }
         if (GuestMayRing(st.start_ready, link->state() == party::LinkState::Connected)) {
+            if (GatherGuest(s, link, now)) {
+                return; // travelling to the host's lamp in its own world first; ring there
+            }
             Ring(st, kGuestBell, "guest, ready and idle in its own world", now);
         }
     } else {
@@ -1334,6 +1339,44 @@ std::string PartyLogStamp() {
     char b[32];
     std::snprintf(b, sizeof b, "[%02d:%02d:%02d.%03d] ", tm.tm_hour, tm.tm_min, tm.tm_sec, ms);
     return b;
+}
+
+/// Gather (BB_PARTY_GATHER, default on): before a guest rings, its own world goes to the host's
+/// last lamp when the host's map (roster slot 0) is another area/block than the guest's own, so
+/// the summon brings it into the host's map and "home" always follows the host (a fresh session,
+/// or after any return home). The lamp id is the host's last lamp (party_phantom / travel
+/// events: GuestDeathRedirectLamp). One gather per 90 s; logs why it does or does not run.
+bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_point now) {
+    static const bool on = !(std::getenv("BB_PARTY_GATHER") && std::getenv("BB_PARTY_GATHER")[0] == '0');
+    static Clock::time_point last{};
+    static bool ever = false;
+    if (!on || !link || !s.world_up || s.loading || s.session_role != RoleIdle) {
+        return false;
+    }
+    std::uint32_t host_map = 0;
+    for (const party::RosterEntry& e : link->roster()) {
+        if (e.slot == party::kHostSlot) {
+            host_map = e.map_id;
+        }
+    }
+    const std::uint32_t lamp = GuestDeathRedirectLamp();
+    if (!host_map || host_map == 0xffffffffu || s.map_id == 0xffffffffu || lamp == kTravelNone || lamp == 0) {
+        return false;
+    }
+    if ((host_map >> 16) == (s.map_id >> 16)) {
+        return false; // same area / block: the summon lands in the host's map
+    }
+    if (ever && Seconds(last, now) < 90.0) {
+        return false;
+    }
+    ever = true;
+    last = now;
+    TravelIntent t;
+    t.kind = TravelKind::Lamp;
+    t.lamp_id = lamp;
+    Log("gather: own world %s, host in %s; to the host's last lamp %u before ringing", MapName(s.map_id).c_str(),
+        MapName(host_map).c_str(), lamp);
+    return ReplayTravelNow(t);
 }
 
 bool PartyRequested() {
