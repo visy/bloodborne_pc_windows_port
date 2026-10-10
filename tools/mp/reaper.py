@@ -34,8 +34,8 @@ def distinct_party_lines(root: Path) -> int:
 
 
 def all_in_world(root: Path) -> bool:
-    """Every instance's latest director world line is "Party: world up" (not "loading screen" or
-    "world down")."""
+    """Every instance's latest director world line is "Party: world up" and its latest loading
+    line is not "Party: loading screen up"."""
     logs = list(root.glob("inst*/run.log"))
     if not logs:
         return False
@@ -44,8 +44,9 @@ def all_in_world(root: Path) -> bool:
             text = log.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return False
-        marks = re.findall(r"^Party: (world up|world down|loading screen)", text, re.M)
-        if not marks or marks[-1] != "world up":
+        worlds = re.findall(r"^Party: (world up|world down)", text, re.M)
+        loads = re.findall(r"^Party: loading screen (up|gone)", text, re.M)
+        if not worlds or worlds[-1] != "world up" or (loads and loads[-1] == "up"):
             return False
     return True
 
@@ -126,6 +127,19 @@ def main():
             holders = []
         now = time.time()
         live = set()
+        # Blocked agents (block.txt next to the queue file, one root fragment per line): their runs
+        # are ended at once - for agents relaunching a broken test before fixing it.
+        try:
+            blocked = [l.strip().lower() for l in (g_QUEUE_DIR / "block.txt").read_text().splitlines() if l.strip()]
+        except OSError:
+            blocked = []
+        for e in list(holders):
+            r = e["root"].replace("/", "\\").lower()
+            if any(b in r for b in blocked):
+                end_run(Path(e["root"]))
+                subprocess.run(["taskkill", "/PID", str(e["pid"]), "/T", "/F"], capture_output=True)
+                print(time.strftime("%H:%M:%S"), "blocked: stopped", e.get("label") or e["root"], flush=True)
+                holders.remove(e)
         # Gate: while agents/gate.txt exists only priority roots (priority.txt) may hold game slots;
         # end anything else (agents on an older queue that doesn't know the gate).
         qdir = g_QUEUE_DIR
