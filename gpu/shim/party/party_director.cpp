@@ -61,6 +61,7 @@
 #endif
 
 extern "C" void runtime_pad_director_press(std::uint32_t buttons); // src/runtime_pad.c
+extern "C" std::uint32_t runtime_pad_last_buttons(); // src/runtime_pad.c: the last sample the game read
 
 namespace coop {
 namespace {
@@ -991,6 +992,17 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
                     return ms > 0 ? double(ms) / 1000.0 : -1.0;
                 });
             runtime_pad_director_press(held);
+            // The raw pad state the game read while a press is held (once per press).
+            static std::uint32_t logged_held = 0;
+            if (held && held != logged_held) {
+                const std::uint32_t read = runtime_pad_last_buttons();
+                if (read & held) {
+                    Log("test: seq: the game read pad buttons 0x%x (held 0x%x)", read, held);
+                    logged_held = held;
+                }
+            } else if (!held) {
+                logged_held = 0;
+            }
             if (!line.empty()) {
                 Log("test: seq %s (texts seq %llu)", line.c_str(), static_cast<unsigned long long>(seq));
             }

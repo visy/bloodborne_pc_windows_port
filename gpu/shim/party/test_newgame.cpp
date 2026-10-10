@@ -346,7 +346,8 @@ std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen
     if (holding_) {
         if (t < until_) return steps_[next_ - 1].buttons == kWait ? 0 : steps_[next_ - 1].buttons;
         holding_ = false;
-        until_ = t + 1.0; // 1 s between presses (the Doll's level-up dialog: Left, 1.2 s, Cross)
+        // 1 s between presses; 1.2 s after a direction (the Doll's level-up dialog: Left, 1.2 s, Cross).
+        until_ = t + ((last_buttons_ & (kPadLeft | kPadRight | kPadUp | kPadDown)) ? 1.2 : 1.0);
         return 0;
     }
     if (next_ >= steps_.size() || t < until_) return 0;
@@ -368,11 +369,21 @@ std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen
                 wait_from_ = -1;
                 return 0;
             }
-            if (t - wait_from_ < 6.0) {
+            // The previous Cross may have been swallowed (seen live: the tutorial's OK while it
+            // opened): press it once more after 3.5 s without the text.
+            if (t - wait_from_ >= 3.5 && !retried_ && next_ > 0 && steps_[next_ - 1].buttons == kPadCross) {
+                retried_ = true;
+                holding_ = true;
+                until_ = t + 0.12;
+                pressed_at_ = t;
+                if (log) *log = "no '" + p.text + "' in 3.5 s: Cross again (step " + std::to_string(next_) + ")";
+                return kPadCross; // held as steps_[next_ - 1] (the previous Cross), then the gap
+            }
+            if (t - wait_from_ < 7.0) {
                 return 0;
             }
             // Never hang: the text may be drawn through another path; press anyway, logged.
-            if (log) *log = "no '" + p.text + "' in 6 s, pressed anyway; ";
+            if (log) *log = "no '" + p.text + "' in 7 s, pressed anyway; ";
         }
         text_since_ = -1;
     }
@@ -385,9 +396,11 @@ std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen
         *log = "";
     }
     wait_from_ = -1;
+    retried_ = false;
     ++next_;
     mark_ = screen_seq;
     pressed_at_ = t;
+    last_buttons_ = p.buttons == kWait ? 0 : p.buttons;
     holding_ = true;
     until_ = t + (p.buttons == kWait ? 2.5 : 0.12);
     text_since_ = -1;

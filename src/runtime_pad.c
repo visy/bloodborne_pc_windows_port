@@ -551,6 +551,9 @@ static struct { uint32_t buttons; int stick[4]; int touch_side; } injected={0,{-
  * OS input); OR-ed into every sample like the pad file's. */
 static volatile uint32_t director_buttons;
 void runtime_pad_director_press(uint32_t buttons) { director_buttons=buttons; }
+/* runtime_pad_last_buttons: the buttons of the last sample the game read (test aids' logs). */
+static volatile uint32_t last_sample_buttons;
+uint32_t runtime_pad_last_buttons(void) { return last_sample_buttons; }
 static int replay_armed;      /* 1 while a BB_PAD_REPLAY recording plays, 2 once it ended */
 static uint64_t replay_start; /* 0: (re)start at the next sample */
 static void read_inject(void) {
@@ -702,6 +705,7 @@ static void sample(PadData *d) {
     read_inject();
     replay_sample(d);
     d->buttons|=injected.buttons|director_buttons;
+    last_sample_buttons=d->buttons;
     if (injected.touch_side>=0) touch_click(d,injected.touch_side);
     else if ((d->buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d,0);
     if (injected.buttons & BTN_L2) d->l2=255;

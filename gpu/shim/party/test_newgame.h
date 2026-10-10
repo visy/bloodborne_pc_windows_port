@@ -108,7 +108,8 @@ private:
 /// pause). `button@text` waits until a message text containing `text` (ASCII, case-insensitive) is
 /// on screen - looked up after the previous press (screens look their texts up once, when they
 /// build) - for 0.4 s, then
-/// presses (6 s at most, then it presses anyway and logs it). A '?' prefix makes such a step optional: no
+/// presses (no text 3.5 s after a Cross: that Cross once more - it may have been swallowed; 7 s at
+/// most, then it presses anyway and logs it). A '?' prefix makes such a step optional: no
 /// text in 3 s -> skipped without a press (a first-time tutorial message). A '+' prefix waits for any
 /// new screen (TextActivity; 8 s at most). Each press is held 0.12 s (menus auto-repeat a held
 /// direction: 0.25 s moved a 2-item dialog twice), the next one no sooner than 1 s after it.
@@ -133,7 +134,8 @@ private:
         std::string text;   ///< @text: wait for it
         bool optional = false;
     };
-    bool stuck_ = false;
+    bool stuck_ = false, retried_ = false;
+    std::uint32_t last_buttons_ = 0;
     double pressed_at_ = -1e9, text_since_ = -1;
     std::vector<Press> steps_;
     std::size_t next_ = 0;

@@ -388,6 +388,7 @@ void TestMenuScriptRitual() {
 struct AltarModel {
     enum S { Prompt, None, Tutorial, Menu, ChaliceList, Ritual, Confirm, Done, Cancelled } s = Prompt;
     bool tutorial = true, yes = false;
+    int swallow = 0; // presses the tutorial ignores (seen live: its OK while it was opening)
     double ready_at = 0, built_at = 0, held_since = -1;
     std::uint32_t last = 0;
     std::map<std::string, double> seen;  // text -> last lookup time
@@ -395,9 +396,9 @@ struct AltarModel {
         switch (s) {
         case None: return "First Ritual Altar";
         case Tutorial: return "Use the Ritual Altar to create a Chalice Dungeon with a chalice ritual";
-        case Menu: return "Chalice Ritual|Chalice Dungeon Search|Search for Chalice Glyph";
+        case Menu: return "Ritual Altar|Chalice Ritual|Chalice Dungeon Search|Search by Chalice Glyph";
         case ChaliceList: return "Chalice Ritual|Select chalice to use in ritual.|Shared Fixed Dungeon";
-        case Ritual: return "";
+        case Ritual: return "Pthumerian Labyrinth|Rite materials|Chalice Ritual";
         case Confirm: return "Conduct a ritual to create a Chalice Dungeon?|Basic materials";
         default: return "";
         }
@@ -433,7 +434,13 @@ struct AltarModel {
         switch (s) {
         case None: if (down & kPadCross) Go(tutorial ? Tutorial : Menu, t, 0.6); break;
         case Prompt: break;
-        case Tutorial: if (down & kPadCross) Go(Menu, t, 0.5); break;
+        case Tutorial:
+            if ((down & kPadCross) && swallow > 0) {
+                --swallow;
+                break;
+            }
+            if (down & kPadCross) Go(Menu, t, 0.5);
+            break;
         case Menu:
             if (down & kPadLeft) s = Cancelled;  // a stray Left: off the Ritual row
             if (down & kPadCross) Go(ChaliceList, t, 1.2);
@@ -452,9 +459,10 @@ struct AltarModel {
     }
 };
 
-AltarModel::S RunAltar(const char* script, bool tutorial) {
+AltarModel::S RunAltar(const char* script, bool tutorial, int swallow = 0) {
     AltarModel m;
     m.tutorial = tutorial;
+    m.swallow = swallow;
     m.Go(AltarModel::None, 0.5, 0.8); // the examine prompt shows as the player arrives
     MenuScript ms;
     CHECK(ms.Parse(script));
@@ -480,10 +488,12 @@ AltarModel::S RunAltar(const char* script, bool tutorial) {
 void TestMenuScriptTexts() {
     // The live order: the examine prompt, the optional tutorial, the altar menu, the chalice list, the
     // ritual screen (no texts of its own: they were looked up with the list), the confirm dialog.
-    const char* script = "cross@First Ritual Altar/?cross@Use the Ritual Altar/cross@Chalice Dungeon Search/"
-                         "cross@Select chalice/wait/cross/left@Conduct a ritual to create a Chalice Dungeon?/cross";
-    CHECK(RunAltar(script, true) == AltarModel::Done);   // with the first-time tutorial message
-    CHECK(RunAltar(script, false) == AltarModel::Done);  // without it (skipped after 3 s)
+    const char* script = "cross@First Ritual Altar/?cross@Use the Ritual Altar/cross@Search by Chalice Glyph/"
+                         "cross@Select chalice to use/cross@Rite materials/"
+                         "left@Conduct a ritual to create a Chalice Dungeon?/cross";
+    CHECK(RunAltar(script, true) == AltarModel::Done);     // with the first-time tutorial message
+    CHECK(RunAltar(script, false) == AltarModel::Done);    // without it (skipped after 3 s)
+    CHECK(RunAltar(script, true, 1) == AltarModel::Done);  // its OK swallowed once: Cross again
     // The previous '+' script miscounts screens when the tutorial shows up.
     CHECK(RunAltar("cross/+cross/+cross/+cross/+left/cross", true) != AltarModel::Done);
     // The previous text script (an examine before its prompt, texts expected to be looked up every frame).
