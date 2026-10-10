@@ -743,6 +743,122 @@ static void test_service_four() {
     std::printf("  four players: room of %zu, 4th guest refused\n", rv.members.size());
 }
 
+// --- 6. impersonation: a guest acts only as its authenticated PartyLink name -------------------
+
+static json::Value remote(PartyHostService& s, const char* who, const char* kind, const json::Value& rq) {
+    json::Value reply;
+    s.handle(Caller{who, 0x0a00000a}, kind, rq, reply);  // came over PartyLink (10.0.0.10)
+    return reply;
+}
+
+static void test_impersonation() {
+    PartyHostService s;
+    std::int64_t now = 5000000;
+    s.set_clock([&] { return now; });
+    s.set_heartbeat_timeout_ms(15000);
+    // The host's own calls (in-process, its own name) and two guests over PartyLink.
+    CHECK(int_of(call(s, "Host", "context_start",
+                      obj({{"OnlineId", "Host"}, {"SignalingAddr", "192.168.1.10"}, {"SignalingPort", 9307}})),
+                 "ResKind", -1) == 0);
+    for (const char* g : {"Alice", "Mallory"}) {
+        json::Value r = remote(s, g, "context_start",
+                               obj({{"OnlineId", g}, {"SignalingAddr", "192.168.1.50"}, {"SignalingPort", 9307}}));
+        CHECK(int_of(r, "ResKind", -1) == 0 && str_of(r, "OnlineId") == g);
+    }
+    // A body with no OnlineId: the authenticated name is used.
+    {
+        json::Value r =
+            remote(s, "Alice", "context_start", obj({{"SignalingAddr", "192.168.1.51"}, {"SignalingPort", 9307}}));
+        CHECK(int_of(r, "ResKind", -1) == 0 && str_of(r, "OnlineId") == "Alice");
+    }
+    json::Value made = call(s, "Host", "create_room", obj({{"OnlineId", "Host"}, {"MaxMembers", 4}}));
+    const long long room = int_of(made, "RoomId", 0);
+    const std::string sid = str_of(made, "SessionId");
+    CHECK(int_of(made, "ResKind", -1) == 0 && room > 0);
+    CHECK(int_of(remote(s, "Alice", "join_room", obj({{"OnlineId", "Alice"}, {"RoomId", room}})), "MemberId", 0) == 2);
+    CHECK(int_of(remote(s, "Mallory", "join_room", obj({{"RoomId", room}})), "MemberId", 0) == 3);
+
+    // context_start / signaling_update as "Host": refused, the host's address is unchanged.
+    const std::string host_addr = str_of(call(s, "Host", "signaling_resolve", obj({{"OnlineId", "Host"}})), "Addr");
+    CHECK(host_addr == "192.168.1.10");
+    CHECK(int_of(remote(s, "Mallory", "context_start",
+                        obj({{"OnlineId", "Host"}, {"SignalingAddr", "6.6.6.6"}, {"SignalingPort", 666}})),
+                 "ResKind", -1) == 7);
+    CHECK(int_of(remote(s, "Mallory", "signaling_update",
+                        obj({{"OnlineId", "Host"}, {"MappedAddr", "6.6.6.6"}, {"MappedPort", 666}})),
+                 "ResKind", -1) == 7);
+    CHECK(str_of(call(s, "Host", "signaling_resolve", obj({{"OnlineId", "Host"}})), "Addr") == host_addr);
+    // join_room / create_room as "Host" (or another guest): refused, the host's room stands.
+    CHECK(int_of(remote(s, "Mallory", "join_room", obj({{"OnlineId", "Host"}, {"RoomId", room}})), "ResKind", -1) == 7);
+    CHECK(int_of(remote(s, "Mallory", "create_room", obj({{"OnlineId", "Host"}})), "ResKind", -1) == 7);
+    CHECK(int_of(remote(s, "Mallory", "join_room", obj({{"OnlineId", "Alice"}, {"RoomId", room}})), "ResKind", -1) == 7);
+    PartyHostService::RoomView v;
+    CHECK(s.room(static_cast<std::uint64_t>(room), &v) && v.members.size() == 3 && v.owner_id == 1);
+    for (const char* who : {"Host", "Alice"}) CHECK(!has_event(events(s, who), "room_closed"));
+
+    // Kick: Mallory claims to be the owner (KickerMemberId 1): refused; Alice stays.
+    CHECK(int_of(remote(s, "Mallory", "kick_member",
+                        obj({{"SessionId", sid}, {"MemberId", 2}, {"KickerMemberId", 1}, {"OptData", ""}})),
+                 "ResKind", -1) == 7);
+    // Mallory as itself is not the owner.
+    CHECK(int_of(remote(s, "Mallory", "kick_member",
+                        obj({{"SessionId", sid}, {"MemberId", 2}, {"KickerMemberId", 3}, {"OptData", ""}})),
+                 "ResKind", -1) == 5);
+    // leave_room / heartbeat for someone else: refused.
+    CHECK(int_of(remote(s, "Mallory", "leave_room", obj({{"SessionId", sid}, {"MemberId", 2}})), "ResKind", -1) == 7);
+    CHECK(int_of(remote(s, "Mallory", "leave_room", obj({{"SessionId", sid}, {"MemberId", 1}})), "ResKind", -1) == 7);
+    CHECK(int_of(remote(s, "Mallory", "heartbeat", obj({{"SessionId", sid}, {"MemberId", 2}})), "ResKind", -1) == 7);
+    CHECK(s.room(static_cast<std::uint64_t>(room), &v) && v.members.size() == 3);
+    CHECK(!has_event(events(s, "Alice"), "room_member_kicked") && !has_event(events(s, "Alice"), "room_closed"));
+    // A heartbeat for someone else does not keep it alive: Alice goes silent and times out.
+    now += 10000;
+    call(s, "Host", "heartbeat", obj({{"SessionId", sid}, {"MemberId", 1}}));
+    CHECK(int_of(remote(s, "Mallory", "heartbeat", obj({{"SessionId", sid}, {"MemberId", 3}})), "InRoom", 0) == 1);
+    remote(s, "Mallory", "heartbeat", obj({{"SessionId", sid}, {"MemberId", 2}}));
+    now += 10000;
+    call(s, "Host", "heartbeat", obj({{"SessionId", sid}, {"MemberId", 1}}));
+    remote(s, "Mallory", "heartbeat", obj({{"SessionId", sid}, {"MemberId", 3}}));
+    s.tick();
+    CHECK(s.room(static_cast<std::uint64_t>(room), &v) && v.members.size() == 2);
+    CHECK(has_event(events(s, "Host"), "room_member_left", 2));
+
+    // An unnamed remote caller (no roster name) can be no one.
+    CHECK(int_of(remote(s, "", "context_start", obj({{"OnlineId", "Host"}, {"SignalingAddr", "6.6.6.6"}})), "ResKind",
+                 -1) == 7);
+    CHECK(int_of(remote(s, "", "join_room", obj({{"OnlineId", "Nobody"}, {"RoomId", room}})), "ResKind", -1) == 7);
+    CHECK(int_of(remote(s, "", "leave_room", obj({{"SessionId", sid}, {"MemberId", 3}})), "ResKind", -1) == 7);
+
+    // The legit flows: Mallory leaves itself; the owner kicks; the host's own calls work.
+    CHECK(int_of(remote(s, "Alice", "join_room", obj({{"RoomId", room}})), "MemberId", 0) == 4);
+    CHECK(int_of(remote(s, "Mallory", "leave_room", obj({{"SessionId", sid}, {"MemberId", 3}})), "ResKind", -1) == 0);
+    CHECK(int_of(call(s, "Host", "kick_member",
+                      obj({{"SessionId", sid}, {"MemberId", 4}, {"KickerMemberId", 1}, {"OptData", ""}})),
+                 "ResKind", -1) == 0);
+    CHECK(has_event(events(s, "Alice"), "room_member_kicked", 4));
+    CHECK(s.room(static_cast<std::uint64_t>(room), &v) && v.members.size() == 1);
+    CHECK(int_of(call(s, "Host", "leave_room", obj({{"SessionId", sid}, {"MemberId", 1}})), "ResKind", -1) == 0);
+    CHECK(!s.room(static_cast<std::uint64_t>(room), nullptr));
+
+    // FromApi: a guest deletes only its own signs, whatever SummonDataId it names.
+    bbnet::party::FromApi api(s);
+    auto post = [&](const char* who, const char* path, const std::string& body) {
+        bbnet::party::HttpRequest rq;
+        rq.method = "POST";
+        rq.url = std::string("http://bbparty.invalid:18671") + path;
+        rq.body = body;
+        bbnet::party::HttpResponse r;
+        api.handle(Caller{who, 0x0a00000a}, rq, r);
+        return r.status;
+    };
+    CHECK(post("Alice", "/summon_messenger/create", R"({"SummonType":1,"AreaId":1,"SummonData":"AA=="})") == 200);
+    CHECK(api.signs().size() == 1 && api.signs()[0].online_id == "Alice");
+    const std::string alice_sign = std::to_string(api.signs()[0].id);
+    CHECK(post("Mallory", "/summon_messenger/delete", "{\"SummonDataId\":" + alice_sign + "}") == 200);
+    CHECK(api.signs().size() == 1);
+    CHECK(post("Alice", "/summon_messenger/delete", "{\"SummonDataId\":" + alice_sign + "}") == 200);
+    CHECK(api.signs().empty());
+}
+
 int main() {
     const std::uint16_t party_port = static_cast<std::uint16_t>(41000 + (std::rand() % 500));
     char port_text[16];
@@ -775,6 +891,7 @@ int main() {
     test_matching2_host();
     test_from_api();
     test_matching2_leave_and_join();
+    test_impersonation();
     }
 
     if (g_failures) {
