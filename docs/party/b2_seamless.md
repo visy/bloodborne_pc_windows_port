@@ -236,7 +236,8 @@ warp's own target was used; with +0x1521 = 1 our +0x14C4/D0/E0 write gives the s
 * Loading-screen count: host 1, guest 1 (its own load starts when the host's snapshot arrives,
   i.e. after the host's load; ~host load + guest load in wall time). Starting the guest's load in
   parallel needs the snapshot taken from the destination before the host is there - not possible;
-  the hybrid keeps the guest's loading screen up while it waits (flow 1) instead.
+  today the guest stands in the old map while it waits (flow 1); planned: raise its loading screen
+  at the TRAVEL event (NowLoading 0x176D380) so the player sees one continuous screen.
 
 * [I] GameData remote rows surviving a host load (MoveMapStep ctor touches only the local row) -
   check +0x10 of each row after the load in the two-instance run.
