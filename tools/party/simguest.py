@@ -1352,6 +1352,7 @@ class Guest:
             self.fail("join_room", f"refused: {r.get('Error', r)}")
         self.room, self.room_sid, self.member_id = r["RoomId"], r["SessionId"], r["MemberId"]
         self.members = r.get("Members", [])
+        self.owner_id = r.get("OwnerMemberId")
         names = [m.get("OnlineId") for m in self.members]
         if self.host_name not in names:
             self.fail("join_room", f"the host {self.host_name} is not among the members {names}")
@@ -1458,6 +1459,34 @@ class Guest:
         if self.udp:
             self.udp.close()
 
+    def spoof(self, victim: str) -> None:
+        """Impersonation probes (the host must answer each with ResKind 7 and change nothing):
+        context_start / signaling_update / join_room / create_room naming `victim`, and
+        kick_member / leave_room / heartbeat acting as the room owner's member id."""
+        ep = {"SignalingAddr": "6.6.6.6", "SignalingPort": 666}
+        before = self.call("signaling_resolve", {"OnlineId": victim})
+        probes = [
+            ("context_start", {"OnlineId": victim, **ep}),
+            ("signaling_update", {"OnlineId": victim, "MappedAddr": "6.6.6.6", "MappedPort": 666}),
+            ("join_room", {**self.endpoint, "OnlineId": victim, "RoomId": self.room}),
+            ("create_room", {"OnlineId": victim, "MaxMembers": 2}),
+            ("kick_member", {"SessionId": self.room_sid, "MemberId": self.member_id,
+                             "KickerMemberId": self.owner_id, "OptData": ""}),
+            ("heartbeat", {"SessionId": self.room_sid, "MemberId": self.owner_id}),
+            ("leave_room", {"SessionId": self.room_sid, "MemberId": self.owner_id}),
+        ]
+        for kind, rq in probes:
+            r = self.call(kind, rq)
+            if r.get("ResKind") != 7:
+                self.fail("spoof", f"{kind} as {victim} / member {self.owner_id} was not refused: {r}")
+        after = self.call("signaling_resolve", {"OnlineId": victim})
+        if (before.get("Addr"), before.get("Port")) != (after.get("Addr"), after.get("Port")):
+            self.fail("spoof", f"{victim}'s address changed: {before} -> {after}")
+        hb = self.call("heartbeat", {"SessionId": self.room_sid, "MemberId": self.member_id})
+        if hb.get("ResKind") != 0 or hb.get("InRoom") != 1:
+            self.fail("spoof", f"no longer in the room after the probes: {hb}")
+        self.ok("spoof", f"{len(probes)} impersonation probes as {victim} refused (ResKind 7); room intact")
+
     def full_join(self) -> float:
         t0 = time.monotonic()
         self.connect()
@@ -1476,6 +1505,8 @@ def script_join(o, key, j) -> tuple[bool, str]:
     g = Guest(o, key, j)
     try:
         dt = g.full_join()
+        if o.spoof_online_id:
+            g.spoof(o.spoof_online_id)
         if o.hold:
             g.hold(o.hold)
         if not o.stay:
@@ -1670,6 +1701,8 @@ def main(argv=None) -> int:
     ap.add_argument("--rejoin-budget", type=float, default=60.0, help="crash -> back in the room, seconds")
     ap.add_argument("--keep-token", action="store_true", help="the restart reuses the resume token")
     ap.add_argument("--lost-timeout", type=float, default=10.0)
+    ap.add_argument("--spoof-online-id", default="", metavar="NAME",
+                    help="join, then send RPCs claiming to be NAME / the room owner: each must be refused")
     ap.add_argument("--stay", action="store_true", help="do not leave at the end (until Ctrl+C)")
     ap.add_argument("--json-log", default=None, help="JSON log path (default simguest-<name>.json, - = none)")
     ap.add_argument("-v", "--verbose", action="store_true")
