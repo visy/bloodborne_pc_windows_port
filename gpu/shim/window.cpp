@@ -116,6 +116,11 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
         SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FOCUSABLE_BOOLEAN, false);
     }
     base_title = title;
+    // Test harness label (tools/mp/instances.py --label): what this test run is for.
+    if (const char* t = std::getenv("BB_WINDOW_TITLE"); t && *t) {
+        base_title = t;
+        SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, t);
+    }
     window = SDL_CreateWindowWithProperties(props);
     SDL_DestroyProperties(props);
     ASSERT_MSG(window, "Failed to create window: {}", SDL_GetError());
