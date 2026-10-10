@@ -1,7 +1,13 @@
 # bloodborne_pc_windows_port: Native Windows Port of Bloodborne
-<a href="https://github.com/Mrsuss60/bloodborne_pc_windows_port/releases">
-  <img src="https://img.shields.io/github/downloads/Mrsuss60/bloodborne_pc_windows_port/total?style=for-the-badge&color=blue" width="150" alt="GitHub downloads">
-</a>
+<div align="center">
+  
+![Platform](https://img.shields.io/badge/PLATFORM-WINDOWS-0078D6?style=for-the-badge&logo=windows&logoColor=white&labelColor=1a0f0f)
+[![Latest release](https://img.shields.io/github/v/release/Mrsuss60/bloodborne_pc_windows_port?style=for-the-badge&logo=github&logoColor=white&labelColor=1a0f0f&color=8b0000&label=RELEASE)](https://github.com/Mrsuss60/bloodborne_pc_windows_port/releases)
+[![Downloads](https://img.shields.io/github/downloads/Mrsuss60/bloodborne_pc_windows_port/total?style=for-the-badge&logo=github&logoColor=white&labelColor=1a0f0f&color=b22222&label=DOWNLOADS)](https://github.com/Mrsuss60/bloodborne_pc_windows_port/releases)
+[![Stars](https://img.shields.io/github/stars/Mrsuss60/bloodborne_pc_windows_port?style=for-the-badge&logo=github&logoColor=white&labelColor=1a0f0f&color=c9a227&label=STARS)](https://github.com/Mrsuss60/bloodborne_pc_windows_port/stargazers)
+[![Last commit](https://img.shields.io/github/last-commit/Mrsuss60/bloodborne_pc_windows_port?style=for-the-badge&logo=git&logoColor=white&labelColor=1a0f0f&color=6b6b6b&label=LAST%20COMMIT)](https://github.com/Mrsuss60/bloodborne_pc_windows_port/commits)
+</div>
+#
 
 `bloodborne_pc_windows_port` is a native 64-bit Windows port of the PlayStation 4 executable of *Bloodborne* (CUSA03173, version 1.09). 
 
