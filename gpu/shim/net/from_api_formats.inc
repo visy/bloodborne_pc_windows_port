@@ -24,10 +24,10 @@
 
 namespace formats {
 
-// The <ss> status value (GUESS: 0 = up).
+// The <ss> status value (CONFIRMED, A0: anything but 0 -> offline message 0x1131/0x1132).
 constexpr const char* kSsStatus = "0";
 
-// N when FrpgNetMan+0x9e8 cannot be read (GUESS: the value is small).
+// N when FrpgNetMan+0x9e8 cannot be read (CONFIRMED-safe, A0: real N = 0x4736550[region], 1..4).
 constexpr unsigned kSsInfoFallbackIndices[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
 
 // Where N lives (CONFIRMED: 0x1e899b3..0x1e899e6).
@@ -50,7 +50,7 @@ constexpr const char* kApiNames[] = {
 };
 static_assert(sizeof(kApiNames) / sizeof(kApiNames[0]) == 37, "the eboot's parser reads 37 APIs");
 
-// The base every API gets (GUESS: scheme://host:port with no trailing slash; the host is
+// The base every API gets (CONFIRMED shape, A0: scheme://host[:port], no trailing slash; the host is
 // ours, http_hle answers it in-process or forwards it to the party host).
 constexpr const char* kApiBase = "http://bbparty.invalid:18671";
 
@@ -82,9 +82,11 @@ constexpr SsValue kSsValues[] = {
     {"TombMessGetListGetMaxCount", "0"},
     {"TombMessGetListGetCountPerArea", "0"},
     {"TombMessGetListInterval", "600"},
-    {"SummonDataCoopMatchingLevelLowerRel", "1000"},  // party: any level
-    {"SummonDataCoopMatchingLevelLowerAbs", "1000"},
-    {"SummonDataCoopMatchingLevelUpperRel", "1000"},
+    // Party: any level. The window is LowerAbs + L*(LowerRel/100+1) .. UpperAbs + L*(UpperRel/100+1)
+    // (CONFIRMED, A0 sec. 2.4); positive Lower* values make it empty.
+    {"SummonDataCoopMatchingLevelLowerRel", "0"},
+    {"SummonDataCoopMatchingLevelLowerAbs", "-1000"},
+    {"SummonDataCoopMatchingLevelUpperRel", "0"},
     {"SummonDataCoopMatchingLevelUpperAbs", "1000"},
     {"SummonDataGetListInvationGuardTimerObserveTimeRate", "0"},
     {"SummonDataGetListInvationGuardTimerLimitationTimeRate", "0"},
@@ -127,40 +129,55 @@ struct Reply {
     bool confirmed;
 };
 constexpr Reply kReplies[] = {
+    // CONFIRMED (A0 4.1, reader 0x1e7c1d0): SessionId non-empty string, UserId integer;
+    // success iff ResKind == 0. MessageId/ServerTime are not read.
     {"/basic_utils/login", 200, "application/json",
-     R"({"MessageId":"LoginResponse","ResKind":0,"SessionId":${SessionId},"UserId":${UserId},"ServerTime":${Now}})",
-     false},
-    {"/basic_utils/get_datetime", 200, "application/json",
-     R"({"MessageId":"ServerTimeGetResponse","ResKind":0,"ServerTime":${Now},"DateTime":${NowText}})", false},
-    {"/basic_utils/get_normal_notice", 200, "application/json",
-     R"({"MessageId":"NoticeNormalGetResponse","ResKind":0,"NoticeList":[]})", false},
+     R"({"ResKind":0,"SessionId":${SessionId},"UserId":${UserId},"UserStatus":0,"LanguageId":1,"ServerVersion":109})",
+     true},
+    // Never requested in 1.09 (A0 3.3).
+    {"/basic_utils/get_datetime", 200, "application/json", R"({"ResKind":0})", true},
+    {"/basic_utils/get_normal_notice", 200, "application/json", R"({"ResKind":0,"NoticeList":[]})", true},
     {"/basic_utils/get_emergency_notice", 200, "application/json",
-     R"({"MessageId":"NoticeEmergencyGetResponse","ResKind":0,"NoticeList":[]})", false},
+     R"({"ResKind":0,"NoticeList":[],"CheckTime":${NowText}})", true},
     {"/basic_utils/get_user_agreement", 200, "application/json",
-     R"({"MessageId":"UserAgreementGetResponse","ResKind":0,"Agreed":1,"Version":0,"Text":""})", false},
+     R"({"ResKind":0,"UserAgreementText":"","UserAgreementID":0})", false},
+    // CONFIRMED (A0 4.2): the array is required; its first PublishCharaId becomes the CharaId.
     {"/basic_utils/sync_chara_id", 200, "application/json",
-     R"({"MessageId":"SyncCharaIdResponse","ResKind":0,"CharaId":${CharaId}})", false},
-    {"/summon_messenger/create", 200, "application/json",
-     R"({"MessageId":"SummonDataCreateResponse","ResKind":0,"SummonDataId":${SummonDataId}})", false},
-    {"/summon_messenger/get", 200, "application/json",
-     R"({"MessageId":"SummonDataGetListResponse","ResKind":0,"SummonDataList":${SummonDataList}})", false},
-    {"/summon_messenger/delete", 200, "application/json",
-     R"({"MessageId":"SummonDataRemoveResponse","ResKind":0})", false},
-    {"/summon_messenger/request", 200, "application/json",
-     R"({"MessageId":"SummonDataSummonResponse","ResKind":0,"Result":${Result}})", false},
+     R"({"ResKind":0,"PublishCharacterIdList":[{"PublishCharaId":${CharaId}}]})", true},
+    // CONFIRMED (A0 4.5): only the code is read; SummonDataId is ours (tests, logs).
+    {"/summon_messenger/create", 200, "application/json", R"({"ResKind":0,"SummonDataId":${SummonDataId}})", true},
+    {"/summon_messenger/get", 200, "application/json", R"({"ResKind":0,"SummonDataList":${SummonDataList}})",
+     true},
+    {"/summon_messenger/delete", 200, "application/json", R"({"ResKind":0})", true},
+    {"/summon_messenger/request", 200, "application/json", R"({"ResKind":0,"Result":${Result}})", true},
+    // List APIs: the list key must be an array or the answer is invalid (A0 4.4, CONFIRMED).
+    {"/blood_messenger/create", 200, "application/json", R"({"ResKind":0,"BloodMessIdList":[]})", true},
+    {"/blood_messenger/message_area", 200, "application/json", R"({"ResKind":0,"BloodMessList":[]})", true},
+    {"/blood_messenger/evaluation", 200, "application/json", R"({"ResKind":0,"BloodMessEvaluationList":[]})", true},
+    {"/blood_messenger/exist_messages", 200, "application/json",
+     R"({"ResKind":0,"BloodMessEvaluationList":[],"LostBloodMessIdList":[]})", true},
+    {"/chair_messenger/get", 200, "application/json", R"({"ResKind":0,"ChairMessList":[],"ChairMessCount":0})", true},
+    {"/tomb_messenger/message_area", 200, "application/json", R"({"ResKind":0,"TombMessList":[]})", true},
+    {"/wandering_ghost/get", 200, "application/json", R"({"ResKind":0,"WanderingGhostList":[]})", true},
+    {"/channel/get_info", 200, "application/json", R"({"ResKind":0,"ChannelInfoList":[]})", true},
+    {"/channel/get_details_info", 200, "application/json", R"({"ResKind":0,"ChannelList":[]})", true},
+    {"search", 200, "application/json", R"({"ResKind":0,"ChannelList":[]})", true},
 };
 
 // Anything else under the gameurl (messages, bloodstains, ghosts, channels, net errors):
-// an empty success (GUESS).
+// an empty success (CONFIRMED for the generic APIs, A0 4.4).
 constexpr Reply kDefaultReply = {"", 200, "application/json", R"({"ResKind":0})", false};
 
 // A play-log PUT (bb-playlog-*.s3.amazonaws.com): S3's empty 200 (CONFIRMED: the uploader's
 // PUT, bbhost http.cpp; S3 answers 200 with no body).
 constexpr Reply kPlaylogReply = {"", 200, "text/plain", "", true};
 
-// A SummonDataList entry (GUESS beyond UserId, which is CONFIRMED).
+// A SummonDataList entry (CONFIRMED, A0 4.5): SummonDataVersion must be an integer and SummonData
+// must decode to exactly 0xE0 bytes or the entry is skipped; SummonType, CharaId, UserId are read;
+// the rest is ignored by the game (kept for logs and tests).
 constexpr const char* kSignTemplate =
-    R"({"SummonDataId":${SummonDataId},"UserId":${UserId},"SummonType":${SummonType},"AreaId":${AreaId},)"
-    R"("AreaRegionId":${AreaRegionId},"SummonData":${SummonData},"OnlineId":${OnlineId}})";
+    R"({"SummonDataVersion":${SummonDataVersion},"SummonData":${SummonData},"SummonType":${SummonType},)"
+    R"("CharaId":${CharaId},"UserId":${UserId},"SummonDataId":${SummonDataId},"AreaId":${AreaId},)"
+    R"("AreaRegionId":${AreaRegionId},"OnlineId":${OnlineId}})";
 
 }  // namespace formats

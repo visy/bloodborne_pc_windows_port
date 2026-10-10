@@ -521,7 +521,15 @@ static void test_from_api() {
     CHECK(!str_of(login, "SessionId").empty() && int_of(login, "UserId", 0) > 0);
     const long long host_uid = int_of(login, "UserId", 0);
     CHECK(http_request(h, 1, "http://bbparty.invalid:18671/basic_utils/get_datetime", "{}", &body) == 200);
-    CHECK(int_of(parse(body), "ServerTime", 0) > 1700000000);
+    CHECK(int_of(parse(body), "ResKind", -1) == 0);
+    // sync_chara_id: the PublishCharacterIdList array the game requires (A0 4.2).
+    CHECK(http_request(h, 1, "http://bbparty.invalid:18671/basic_utils/sync_chara_id", R"({"CharaIdNum":1})", &body) == 200);
+    {
+        const json::Value sync = parse(body);
+        const json::Value* l = sync.find("PublishCharacterIdList");
+        CHECK(l && l->type == json::Value::Type::Array && l->array.size() == 1 &&
+              int_of(l->array[0], "PublishCharaId", 0) > 0);
+    }
     for (const char* p : {"get_normal_notice", "get_emergency_notice", "get_user_agreement", "sync_chara_id"}) {
         CHECK(http_request(h, 1, std::string("http://bbparty.invalid:18671/basic_utils/") + p, "{}", &body) == 200);
         CHECK(int_of(parse(body), "ResKind", -1) == 0);
@@ -582,6 +590,7 @@ static void test_from_api() {
     const json::Value* signs = list.find("SummonDataList");
     CHECK(signs && signs->array.size() == 1 && int_of(signs->array[0], "UserId", 0) == guest_uid);
     CHECK(str_of(signs->array[0], "SummonData") == bbnet::party::b64_encode(blob));
+    CHECK(int_of(signs->array[0], "SummonDataVersion", -1) == 3 && int_of(signs->array[0], "CharaId", 0) == 1);
     // A type filter that matches nothing.
     CHECK(http_request(h, 1, "http://bbparty.invalid:18671/summon_messenger/get",
                        R"({"SummonTypeList":[{"SummonType":2}]})", &body) == 200);
