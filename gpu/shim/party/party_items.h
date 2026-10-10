@@ -35,6 +35,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -46,6 +47,9 @@ namespace coop {
 constexpr std::int32_t kItemNone = -1;
 constexpr std::uint32_t kItemLedgerBase = 60009000; ///< T6 global zone 9: saved pool, unused by the data
 constexpr std::int32_t kItemLedgerSize = 1000;
+/// Set once the ledger was seeded from a save's own history (SeedLedgerFromOwnSave); the last bit of
+/// the ledger range, never a lot's index.
+constexpr std::uint32_t kItemLedgerSeeded = kItemLedgerBase + kItemLedgerSize - 1;
 
 enum class ItemSource : std::uint8_t {
     Unknown = 0,
@@ -84,6 +88,10 @@ std::int32_t ItemLedgerIndex(std::int32_t lot);
 /// The completion flag of the event that awards ledger lot `idx` (host's "already awarded").
 std::int32_t ItemLedgerDoneFlag(std::int32_t idx);
 std::int32_t ItemLedgerLot(std::int32_t idx);
+/// Ledger seeding (pure part of SeedLedgerFromOwnSave): with `is_set` reading the save, the ledger
+/// bits to set - one per ledger lot whose done flag is set and whose bit is not - or nothing when
+/// the save already carries the kItemLedgerSeeded marker.
+std::vector<std::uint32_t> LedgerBitsToSeed(const std::function<bool(std::uint32_t)>& is_set);
 std::size_t ItemLotFlagCount();
 std::size_t ItemLedgerCount();
 
@@ -204,6 +212,13 @@ private:
 void InstallItemsPatches();
 /// Host: C2 reports a host item-pickup flag 0 -> 1 (any thread).
 void OnHostFlagSet(std::uint32_t flag);
+/// Main thread, own world (load mode 0), before C2 applies any host flag (C2's before-apply hook):
+/// once per save (marker kItemLedgerSeeded), the ledger bit of every flagless lot whose awarding
+/// event's completion flag the save already holds - the player earned it solo, so a host's replay
+/// does not give it twice. The awarding event's flag is not checked at apply time: C2 writes the
+/// host's boss flags into the guest's save first. Saves that took C2 flags before seeding existed
+/// may hold host boss flags and so skip a lot they never got (dev saves only).
+void SeedLedgerFromOwnSave();
 /// Host: the next grant to broadcast (any thread).
 bool PopHostItems(ItemGrant* out);
 /// Host: a member (re)joined and needs the full list (any thread; the PartyLink callback).

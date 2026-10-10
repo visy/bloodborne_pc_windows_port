@@ -17,7 +17,8 @@ when BB_MP_LOCAL_TEST=1. Windows are placed side by side.
 --party: a loopback party. Instance 0 hosts (BB_PARTY=host), the others join (BB_PARTY=join) with
 the code the host writes to ROOT/party_code.txt (BB_PARTY_CODE_FILE, deleted before the run);
 BB_PARTY_PORT=base+i, BB_PARTY_NAME=Hunter{i}, no UPnP, no public STUN, 127.0.0.1 everywhere.
---env still overrides any of these. --crash-at S kills instance --crash-instance's bbport.exe
+--env still overrides any of these; --ienv I:KEY=VALUE sets a variable for instance I only (e.g. a
+test action on the guest). --crash-at S kills instance --crash-instance's bbport.exe
 (TerminateProcess, as a crash) S seconds into the run; run.bat then restarts it (BB_PARTY_RESTART).
 """
 import argparse, ctypes, os, re, shutil, subprocess, sys, threading, time
@@ -310,6 +311,11 @@ def run(a):
         for kv in a.env or []:
             k, _, v = kv.partition("=")
             env[k] = v.replace("{i}", str(i)).replace("{port}", str(port0 + i))
+        for ikv in a.ienv or []:  # I:KEY=VALUE, instance I only
+            who, _, kv = ikv.partition(":")
+            if who.strip() == str(i):
+                k, _, v = kv.partition("=")
+                env[k] = v.replace("{i}", str(i)).replace("{port}", str(port0 + i))
         log, starts[i] = open_log(inst / "run.log")
         # Test games run ABOVE_NORMAL (children inherit) so agents' builds never starve them.
         prio = 0x00008000 if os.name == "nt" else 0
@@ -479,6 +485,7 @@ def main():
     ap.add_argument("--instance", type=int, default=1, help="crash: which instance")
     ap.add_argument("--after", type=float, default=0, help="crash: wait this many s first")
     ap.add_argument("--env", action="append")
+    ap.add_argument("--ienv", action="append", help="run: I:KEY=VALUE, set for instance I only (after --env)")
     ap.add_argument("--timestamps", action="store_true",
                     help="run: prefix every log line with [+seconds] since the run started (one clock for all instances)")
     ap.add_argument("--grep")
