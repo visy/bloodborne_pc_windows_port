@@ -13,6 +13,7 @@
 #include <cstring>
 #include <deque>
 #include <map>
+#include <set>
 #include <mutex>
 #include <thread>
 
@@ -45,6 +46,18 @@ enum MsgType : std::uint8_t {
 
 constexpr std::uint32_t kMaxFrame = 16u << 20;
 constexpr std::uint8_t kMagic[4] = {'B', 'B', 'P', 'L'};
+
+// The calling thread's CPU cycles (0 where unavailable): a lock hold's own work, without the
+// time the thread was preempted.
+std::uint64_t thread_cycles() {
+#if defined(_WIN32)
+    ULONG64 c = 0;
+    QueryThreadCycleTime(GetCurrentThread(), &c);
+    return c;
+#else
+    return 0;
+#endif
+}
 
 std::int64_t ms_between(Clock::time_point a, Clock::time_point b) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count();
@@ -429,6 +442,7 @@ struct PartyLink::Impl {
     std::uint16_t port = 0;
     std::map<int, Member> members;
     Clock::time_point last_roster_bcast{};
+    std::set<std::string> banned;  // kicked names: refused for the rest of this session
 
     // Guest.
     std::string host_name;
@@ -444,6 +458,28 @@ struct PartyLink::Impl {
     std::uint32_t next_rpc = 1;
     int backoff_ms = 0;
     Clock::time_point next_attempt{};
+    bool want_connect = false;  // timers: a reconnect is due (dialed outside mu)
+    std::int64_t hold_max_us = 0;       // the IO thread's longest hold of mu (debug_lock_hold_max_us)
+    std::uint64_t hold_max_cycles = 0;  // the same hold in the IO thread's CPU cycles (Windows)
+
+    // What the game's main thread polls every frame (state, roster, local slot, its own entry),
+    // published under snap_mu: those getters never wait for mu, which the IO thread holds while
+    // it works (and may be preempted holding). Lock order: mu, then snap_mu.
+    mutable std::mutex snap_mu;
+    LinkState snap_state = LinkState::Idle;
+    int snap_slot = -1;
+    std::vector<RosterEntry> snap_roster;
+    MemberState snap_local_state = MemberState::Title;
+    std::uint32_t snap_local_map = 0;
+    void publish() {  // mu held
+        std::vector<RosterEntry> r = host ? host_roster() : groster;
+        std::lock_guard<std::mutex> lk(snap_mu);
+        snap_state = state;
+        snap_slot = host ? kHostSlot : my_slot;
+        snap_roster.swap(r);
+        snap_local_state = local_state;
+        snap_local_map = local_map;
+    }
     std::int64_t clock_offset = 0;
     std::uint32_t rtt = 0;
     std::string observed;
@@ -488,6 +524,10 @@ struct PartyLink::Impl {
     void set_state(LinkState s, std::string detail) {  // mu held
         if (state == s) return;
         state = s;
+        {
+            std::lock_guard<std::mutex> lk(snap_mu);
+            snap_state = s;
+        }
         state_cv.notify_all();
         log(std::string("party link: ") + link_state_name(s) + (detail.empty() ? "" : ": " + detail));
         if (cb.on_state) post([this, s, detail = std::move(detail)] { cb.on_state(s, detail); });
@@ -495,6 +535,16 @@ struct PartyLink::Impl {
     std::int64_t now_ms() const { return ms_between(start_time, Clock::now()); }
 
     // ---------- framing ----------
+    // While corked (> 0) frames are only queued; the corking code flushes once at the end, so
+    // a burst (an event replay, a read full of events and their ACKs) is a few send() calls
+    // instead of one per frame and the lock is held that much shorter.
+    int corked = 0;
+    struct Cork {
+        Impl& i;
+        explicit Cork(Impl& im) : i(im) { ++i.corked; }
+        ~Cork() { --i.corked; }
+    };
+
     void queue_frame(Conn* c, std::uint8_t type, const std::vector<std::uint8_t>& body) {
         if (c->dead) return;
         if (c->tx.ready()) {
@@ -518,7 +568,7 @@ struct PartyLink::Impl {
             w.u32(len).u8(type).bytes(body.data(), body.size());
             c->out.insert(c->out.end(), w.b.begin(), w.b.end());
         }
-        flush(c);
+        if (!corked) flush(c);
     }
     void send(Conn* c, std::uint8_t type, const Writer& w) { queue_frame(c, type, w.b); }
 
@@ -592,8 +642,15 @@ struct PartyLink::Impl {
         fail_pending("connection to the host lost");
         if (stopping || state == LinkState::Rejected || state == LinkState::Stopped) return;
         if (was_open || backoff_ms == 0) backoff_ms = cfg.backoff_initial_ms;
-        next_attempt = Clock::now() + std::chrono::milliseconds(backoff_ms);
-        set_state(LinkState::Reconnecting, why + "; retrying in " + std::to_string(backoff_ms) + " ms");
+        int wait = backoff_ms;
+        if (cfg.backoff_jitter_pct > 0) {
+            std::uint32_t r = 0;
+            crypto::random_bytes(reinterpret_cast<std::uint8_t*>(&r), sizeof r);
+            const int span = backoff_ms * cfg.backoff_jitter_pct / 100;
+            if (span > 0) wait += static_cast<int>(r % static_cast<std::uint32_t>(2 * span + 1)) - span;
+        }
+        next_attempt = Clock::now() + std::chrono::milliseconds(wait);
+        set_state(LinkState::Reconnecting, why + "; retrying in " + std::to_string(wait) + " ms");
         backoff_ms = std::min(backoff_ms * 2, cfg.backoff_max_ms);
     }
 
@@ -676,6 +733,15 @@ struct PartyLink::Impl {
 
     // ---------- frame processing ----------
     void process_input(Conn* c) {
+        {
+            Cork cork(*this);
+            process_frames(c);
+        }
+        // This connection's replies, and what the frames queued for others (a roster broadcast).
+        for (auto& o : conns)
+            if (!o->dead && o->out_off < o->out.size()) flush(o.get());
+    }
+    void process_frames(Conn* c) {
         std::size_t off = 0;
         while (!c->dead && c->in.size() - off >= 5) {
             const std::uint8_t* h = c->in.data() + off;
@@ -844,6 +910,7 @@ struct PartyLink::Impl {
         // Resume: the same token (or, for a restarted guest, the same name) on a kept slot.
         Member* m = nullptr;
         bool resumed = false;
+        if (banned.count(c->name)) return reject_conn(c, RejectCode::Kicked, "kicked by the host");
         for (auto& [slot, mm] : members) {
             if (!is_zero(c->token) && mm.token == c->token) {
                 m = &mm;
@@ -1095,24 +1162,62 @@ struct PartyLink::Impl {
         send(c, kRoster, w);
     }
 
-    void start_connect() {  // guest, mu held
-        std::array<std::uint8_t, 4> ip{};
-        bool resolved = false;
-        {
-            addrinfo hints{};
-            hints.ai_family = AF_INET;
-            hints.ai_socktype = SOCK_STREAM;
-            addrinfo* res = nullptr;
-            if (getaddrinfo(host_name.c_str(), nullptr, &hints, &res) == 0 && res) {
-                for (addrinfo* a = res; a; a = a->ai_next)
-                    if (a->ai_family == AF_INET) {
-                        std::memcpy(ip.data(), &reinterpret_cast<sockaddr_in*>(a->ai_addr)->sin_addr, 4);
-                        resolved = true;
-                        break;
-                    }
-                freeaddrinfo(res);
-            }
+    // The host's IPv4 address. A literal is parsed; a name goes to the resolver, which can take
+    // seconds: never called with mu held (every API call, the game's main thread included,
+    // takes mu).
+    static bool resolve_host(const std::string& name, std::array<std::uint8_t, 4>* ip) {
+        in_addr lit{};
+        if (inet_pton(AF_INET, name.c_str(), &lit) == 1) {
+            std::memcpy(ip->data(), &lit, 4);
+            return true;
         }
+        addrinfo hints{};
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        addrinfo* res = nullptr;
+        bool ok = false;
+        if (getaddrinfo(name.c_str(), nullptr, &hints, &res) == 0 && res) {
+            for (addrinfo* a = res; a; a = a->ai_next)
+                if (a->ai_family == AF_INET) {
+                    std::memcpy(ip->data(), &reinterpret_cast<sockaddr_in*>(a->ai_addr)->sin_addr, 4);
+                    ok = true;
+                    break;
+                }
+            freeaddrinfo(res);
+        }
+        return ok;
+    }
+
+    // One connection attempt's system calls: name resolution, socket(), a non-blocking
+    // connect(). Done without mu: each can take milliseconds (seconds for a resolver).
+    struct Dial {
+        bool resolved = false;
+        std::array<std::uint8_t, 4> ip{};
+        sock::Socket s = sock::kInvalid;
+        bool failed = false;     // connect() failed at once
+        bool connected = false;  // connect() completed at once (loopback)
+    };
+    static Dial dial(const std::string& name, std::uint16_t port) {
+        Dial d;
+        d.resolved = resolve_host(name, &d.ip);
+        if (!d.resolved) return d;
+        d.s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (d.s == sock::kInvalid) return d;
+        sock::set_nonblocking(d.s);
+        int one = 1;
+        setsockopt(d.s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&one), sizeof one);
+        sockaddr_in a{};
+        a.sin_family = AF_INET;
+        a.sin_port = htons(port);
+        std::memcpy(&a.sin_addr, d.ip.data(), 4);
+        const int rc = ::connect(d.s, reinterpret_cast<sockaddr*>(&a), sizeof a);
+        d.connected = rc == 0;
+        d.failed = rc != 0 && !sock::would_block(sock::last_error());
+        return d;
+    }
+
+    void start_connect(Dial d) {  // guest, mu held
+        want_connect = false;
         auto c = std::make_unique<Conn>();
         c->id = next_conn_id++;
         c->created = c->last_rx = Clock::now();
@@ -1121,21 +1226,13 @@ struct PartyLink::Impl {
         conns.push_back(std::move(c));
         gconn = raw;
         set_state(LinkState::Connecting, host_name + ":" + std::to_string(host_port));
-        if (!resolved) return lose(raw, "cannot resolve " + host_name);
-        raw->s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (!d.resolved) return lose(raw, "cannot resolve " + host_name);
+        raw->s = d.s;
         if (raw->s == sock::kInvalid) return lose(raw, "socket() failed");
-        sock::set_nonblocking(raw->s);
-        int one = 1;
-        setsockopt(raw->s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&one), sizeof one);
-        sockaddr_in a{};
-        a.sin_family = AF_INET;
-        a.sin_port = htons(host_port);
-        std::memcpy(&a.sin_addr, ip.data(), 4);
-        raw->peer_ip = ip;
+        raw->peer_ip = d.ip;
         raw->peer_port = host_port;
-        int rc = ::connect(raw->s, reinterpret_cast<sockaddr*>(&a), sizeof a);
-        if (rc != 0 && !sock::would_block(sock::last_error())) return lose(raw, "connect failed");
-        if (rc == 0) on_connected(raw);
+        if (d.failed) return lose(raw, "connect failed");
+        if (d.connected) on_connected(raw);
     }
 
     void on_connected(Conn* c) {
@@ -1217,7 +1314,7 @@ struct PartyLink::Impl {
             }
             if (ms_between(last_roster_bcast, now) >= cfg.roster_refresh_ms) broadcast_roster();
         } else {
-            if (!gconn && state == LinkState::Reconnecting && now >= next_attempt) start_connect();
+            if (!gconn && state == LinkState::Reconnecting && now >= next_attempt) want_connect = true;
             for (auto it = pending.begin(); it != pending.end();) {
                 if (!it->second.sync && now >= it->second.deadline) {
                     auto f = std::move(it->second.cb);
@@ -1263,7 +1360,9 @@ struct PartyLink::Impl {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             else
                 n = sock::poll(fds.data(), static_cast<unsigned long>(fds.size()), 10);
-            std::lock_guard<std::mutex> lk(mu);
+            std::unique_lock<std::mutex> lk(mu);
+            const auto locked_at = Clock::now();
+            const std::uint64_t cycles_at = thread_cycles();
             if (stopping) break;
             if (freeze_until > Clock::now()) continue;
             if (n > 0) {
@@ -1295,7 +1394,28 @@ struct PartyLink::Impl {
             timers();
             conns.erase(std::remove_if(conns.begin(), conns.end(), [](const std::unique_ptr<Conn>& c) { return c->dead; }),
                         conns.end());
+            publish();
+            const auto held = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - locked_at).count();
+            if (held > hold_max_us) hold_max_us = held;
+            const std::uint64_t cyc = thread_cycles() - cycles_at;
+            if (cyc > hold_max_cycles) hold_max_cycles = cyc;
+            if (want_connect) connect_unlocked(lk);
         }
+    }
+
+    // A due reconnect: dials (resolve, socket, connect) without mu, then installs it (mu held).
+    void connect_unlocked(std::unique_lock<std::mutex>& lk) {
+        const std::string name = host_name;
+        const std::uint16_t port = host_port;
+        lk.unlock();
+        Dial d = dial(name, port);
+        lk.lock();
+        if (stopping || gconn || state != LinkState::Reconnecting) {
+            want_connect = false;
+            if (d.s != sock::kInvalid) sock::close(d.s);
+            return;
+        }
+        start_connect(d);
     }
 
     void start_threads() {
@@ -1334,7 +1454,8 @@ bool PartyLink::start_host(std::string* error) {
     sockaddr_in a{};
     a.sin_family = AF_INET;
     a.sin_port = htons(I.cfg.port);
-    if (inet_pton(AF_INET, I.cfg.bind_addr.c_str(), &a.sin_addr) != 1) a.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (sock::loopback_only()) a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    else if (inet_pton(AF_INET, I.cfg.bind_addr.c_str(), &a.sin_addr) != 1) a.sin_addr.s_addr = htonl(INADDR_ANY);
     if (::bind(s, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0) {
         sock::close(s);
         return fail("party port " + std::to_string(I.cfg.port) + " is in use (another game instance?)");
@@ -1356,6 +1477,7 @@ bool PartyLink::start_host(std::string* error) {
             if (m.restored) m.lost_at = I.start_time;  // slot_keep_ms from now
         I.set_state(LinkState::Hosting, "port " + std::to_string(I.port) + ", up to " +
                                             std::to_string(I.cfg.max_players) + " players");
+        I.publish();
     }
     I.start_threads();
     return true;
@@ -1372,12 +1494,14 @@ bool PartyLink::start_guest(const std::string& host, std::uint16_t port, std::st
     if (!valid_member_name(I.cfg.name)) return fail("invalid name (1-16 of A-Z a-z 0-9 _ -)");
     I.host = false;
     I.party_key = crypto::derive_party_key(I.cfg.password, I.cfg.secret.data());
+    Impl::Dial d = Impl::dial(host, port);
     {
         std::lock_guard<std::mutex> lk(I.mu);
         I.host_name = host;
         I.host_port = port;
         I.start_time = Clock::now();
-        I.start_connect();
+        I.start_connect(d);
+        I.publish();
     }
     I.start_threads();
     return true;
@@ -1406,6 +1530,7 @@ void PartyLink::stop(bool graceful) {
         I.gconn = nullptr;
         I.fail_pending("party link stopped");
         I.set_state(LinkState::Stopped, graceful ? "" : "dropped");
+        I.publish();
     }
 join:
     if (I.io_thread.joinable()) I.io_thread.join();
@@ -1418,14 +1543,15 @@ join:
     std::lock_guard<std::mutex> lk(I.mu);
     I.conns.clear();
     I.members.clear();
+    I.publish();
     crypto::wipe(I.party_key.data(), I.party_key.size());
 }
 
 bool PartyLink::is_host() const { return impl_->host; }
 
 LinkState PartyLink::state() const {
-    std::lock_guard<std::mutex> lk(impl_->mu);
-    return impl_->state;
+    std::lock_guard<std::mutex> lk(impl_->snap_mu);
+    return impl_->snap_state;
 }
 
 bool PartyLink::wait_state(LinkState s, int timeout_ms) const {
@@ -1434,8 +1560,8 @@ bool PartyLink::wait_state(LinkState s, int timeout_ms) const {
 }
 
 int PartyLink::local_slot() const {
-    std::lock_guard<std::mutex> lk(impl_->mu);
-    return impl_->host ? kHostSlot : impl_->my_slot;
+    std::lock_guard<std::mutex> lk(impl_->snap_mu);
+    return impl_->snap_slot;
 }
 
 std::uint16_t PartyLink::bound_port() const {
@@ -1449,8 +1575,8 @@ int PartyLink::max_players() const {
 }
 
 std::vector<RosterEntry> PartyLink::roster() const {
-    std::lock_guard<std::mutex> lk(impl_->mu);
-    return impl_->host ? impl_->host_roster() : impl_->groster;
+    std::lock_guard<std::mutex> lk(impl_->snap_mu);  // refreshed by the IO thread every <= 10 ms
+    return impl_->snap_roster;
 }
 
 std::int64_t PartyLink::host_clock_ms() const {
@@ -1595,6 +1721,11 @@ bool PartyLink::send_progress(int slot, const std::vector<std::uint8_t>& blob) {
 
 void PartyLink::set_local_state(MemberState state, std::uint32_t map_id) {
     Impl& I = *impl_;
+    {
+        // Called every frame; only a change needs the IO lock.
+        std::lock_guard<std::mutex> sl(I.snap_mu);
+        if (I.snap_local_state == state && I.snap_local_map == map_id) return;
+    }
     std::lock_guard<std::mutex> lk(I.mu);
     if (I.local_state == state && I.local_map == map_id) return;
     I.local_state = state;
@@ -1604,6 +1735,7 @@ void PartyLink::set_local_state(MemberState state, std::uint32_t map_id) {
     } else if (I.gconn && I.gconn->phase == Impl::Phase::Open) {
         I.send_local_state(I.gconn);
     }
+    I.publish();
 }
 
 std::vector<KeptMember> PartyLink::kept_members() const {
@@ -1653,8 +1785,46 @@ bool PartyLink::last_welcome_resumed() const {
 bool PartyLink::kick(int slot, const std::string& reason) {
     Impl& I = *impl_;
     std::lock_guard<std::mutex> lk(I.mu);
-    if (!I.host || !I.members.count(slot)) return false;
+    if (!I.host || slot == kHostSlot || !I.members.count(slot)) return false;
+    I.banned.insert(I.members[slot].name);
+    I.log("party link: kicking " + I.members[slot].name + " (slot " + std::to_string(slot) + ")");
     I.release_member(slot, true, RejectCode::Kicked, reason.empty() ? "kicked by the host" : reason);
+    I.publish();
+    return true;
+}
+
+std::int64_t PartyLink::debug_lock_hold_max_us(bool reset, std::uint64_t* cycles) {
+    std::lock_guard<std::mutex> lk(impl_->mu);
+    const std::int64_t v = impl_->hold_max_us;
+    if (cycles) *cycles = impl_->hold_max_cycles;
+    if (reset) {
+        impl_->hold_max_us = 0;
+        impl_->hold_max_cycles = 0;
+    }
+    return v;
+}
+bool PartyLink::kick_name(const std::string& name, const std::string& reason) {
+    int slot = -1;
+    {
+        std::lock_guard<std::mutex> lk(impl_->mu);
+        if (!impl_->host) return false;
+        for (const auto& [s, m] : impl_->members)
+            if (m.name == name) slot = s;
+    }
+    return slot > 0 && kick(slot, reason);
+}
+
+bool PartyLink::is_banned(const std::string& name) const {
+    std::lock_guard<std::mutex> lk(impl_->mu);
+    return impl_->banned.count(name) != 0;
+}
+
+bool PartyLink::reconnect_now() {
+    Impl& I = *impl_;
+    std::lock_guard<std::mutex> lk(I.mu);
+    if (I.host || I.state != LinkState::Reconnecting) return false;
+    I.next_attempt = Clock::now();
+    I.backoff_ms = 0;
     return true;
 }
 
