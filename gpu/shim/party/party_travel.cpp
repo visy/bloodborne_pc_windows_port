@@ -674,6 +674,9 @@ bool RetargetSendHome(u64 site) {
     if (!g_travel_on.load() || g_in_replay.load() || Role() != PartyRole::Guest) {
         return false;
     }
+    if (SendHomeVetoFn veto = g_send_home_veto.load(); veto && veto(site)) {
+        return true; // B2: the guest stays (nothing runs)
+    }
     std::optional<TravelIntent> dest;
     {
         std::lock_guard<std::mutex> lk(g_guest_mu);
@@ -766,9 +769,7 @@ __attribute__((noinline)) BB_COOP_SYSV u64 FunnelHook() {
 // The retargeted `call 0x13CDE30` at OnLeave_Limit / HostDead_1 / BlockClear2_1.
 __attribute__((noinline)) BB_COOP_SYSV u64 SendHomeHook() {
     const u64 site = reinterpret_cast<u64>(__builtin_return_address(0)) - Guest(0) - 5;
-    if (SendHomeVetoFn veto = g_send_home_veto.load(); veto && veto(site)) {
-        return 1;
-    }
+
     if (RetargetSendHome(site)) {
         return 1;
     }

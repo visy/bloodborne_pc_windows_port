@@ -315,11 +315,24 @@ BB_COOP_SYSV void HostDeathReturnHook(u64 man, u64 id) {
 
 /// Guest: HostDead_1's send-home is dropped (the host's death travel brings the guest along).
 bool SendHomeVeto(u64 site) {
-    if (g_on.load() && Role() == RoleClient && site == kHostDead1Call) {
-        Log("guest: HostDead_1 send-home dropped (B2: the host's respawn travel follows)");
+    if (g_on.load() && Role() == RoleClient &&
+        (site == kHostDead1Call || site == 0x13856f4 || site == 0x13859df)) {
+        Log("guest: send-home at +0x%llx dropped (B2: %s)", ull(site),
+            site == kHostDead1Call ? "the host's respawn travel follows" : "the party stays after the boss");
         return true;
     }
     return false;
+}
+
+// K10: the boss-clear Lua states' BeginLeaveSession (0x13858F5 in 0x13858A0, 0x1385A95 in
+// 0x13859F0): a B2 guest stays in the session after the boss.
+BB_COOP_SYSV u64 BossClearLeaveHook(u64 session) {
+    if (g_on.load() && Role() == RoleClient) {
+        Log("K10: boss-clear leave suppressed (party stays)");
+        return 0;
+    }
+    using Fn = u64(BB_COOP_SYSV*)(u64);
+    return reinterpret_cast<Fn>(Guest(kBeginLeave))(session);
 }
 
 // K5: Lua OnMatchingCheck: a member's chr is missing (it is loading).
@@ -741,6 +754,8 @@ void Init() {
     InstallCall(kJoinStartCall, kJoinStartLua, reinterpret_cast<const void*>(&JoinStartHook), "B2 K6 OnBeJoinStart");
     InstallCall(kHostDeathReturnCall, kRequestReturn, reinterpret_cast<const void*>(&HostDeathReturnHook),
                 "B2 K8 host death return-all");
+    InstallCall(0x13858f5, kBeginLeave, reinterpret_cast<const void*>(&BossClearLeaveHook), "B2 K10 boss-clear leave (a)");
+    InstallCall(0x1385a95, kBeginLeave, reinterpret_cast<const void*>(&BossClearLeaveHook), "B2 K10 boss-clear leave (b)");
     SetSendHomeVeto(&SendHomeVeto);
     Log("K7 funnel branch +0x%llx %s", ull(kFunnelLeaveJne),
         Matches(kFunnelLeaveJne, {0x75, 0x6c}) ? "verified (75 6c), written only around the guest's own warp"

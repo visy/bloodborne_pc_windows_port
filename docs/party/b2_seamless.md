@@ -246,8 +246,11 @@ warp's own target was used; with +0x1521 = 1 our +0x14C4/D0/E0 write gives the s
   `0x1789B60`), +0x1521 and SprjRemo; D4 runs the update itself if it stays stalled.
 * Host death (K8/K9, untested live): the host keeps its member tasks, respawns at its lamp through
   the funnel (B1 captures HostDeath and broadcasts it), the guests drop HostDead_1 and follow the
-  travel event with B2. Boss clear (BlockClear2_1/2_3) still sends guests home; B2 should veto
-  those too and keep the party (next).
+  travel event with B2.
+* Boss clear (K10 + veto, untested live): the guest's boss-clear Lua states leave at 0x13858F5 /
+  0x1385A95 (`e8 a6 ae b4 00` / `e8 06 ad b4 00` → 0x1ED07A0) and send home at 0x13856F4 /
+  0x13859DF; with B2 both are dropped on a guest, so the party stays in the cleared area (the host's
+  own boss rewards / 4050 handling are unchanged).
 * Early loading screen (E1, untested live): what the request byte does while the guest is still
   in the world (input, pause) is unknown; the guest's own load clears it at InGameStart.
 * Loading-screen count: host 1, guest 1 (its own load starts when the host's snapshot arrives,
