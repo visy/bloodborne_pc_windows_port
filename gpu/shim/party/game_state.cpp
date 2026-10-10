@@ -11,7 +11,11 @@
 
 #include <cstdio>
 #include <cstring>
+#include <atomic>
+#include <chrono>
 #include <initializer_list>
+#include <mutex>
+#include <string>
 
 namespace coop {
 namespace {
@@ -25,7 +29,7 @@ constexpr std::uint64_t kNetFlow = 0x5556678;
 constexpr std::uint64_t kNpManager = 0x56c7048;
 constexpr std::uint64_t kCooperatorCount = 0x15bdc20;
 
-constexpr std::uint64_t kRecInsight = 0x84, kRecLevel = 0x90;
+constexpr std::uint64_t kRecInsight = 0x84, kRecLevel = 0x90, kRecEchoes = 0x94;
 
 // Campaign start (game_state.h).
 constexpr std::uint64_t kEventFlagMan = 0x553b100;
@@ -79,6 +83,38 @@ bool GiveOk() {
     return CodeOk(kGiveItemDirect, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53,
                                     0x48, 0x83, 0xec, 0x68, 0x89, 0xcb, 0x41, 0x89, 0xd6, 0x41, 0x89, 0xf7},
                   "GiveItemDirect", &st);
+}
+
+constexpr std::uint64_t kItemGetList = 0x553b1c0;  // the item-get dialog's list (0x17D9341)
+constexpr std::uint64_t kItemGetPush = 0x16d8850;  // (list, &handle, type bits, id, count, stored)
+bool ItemGetOk() {
+    static int st = 0;
+    return CodeOk(kItemGetPush, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48,
+                                 0x83, 0xec, 0x28, 0x48, 0x89, 0xfb},
+                  "item-get list push", &st);
+}
+constexpr std::uint64_t kRemoSkip = 0x1d07400;  // (SprjRemo*, int* remo id or -1)
+constexpr std::uint64_t kSprjRemo = 0x5540058;
+int& st2() {
+    static int st = 0;
+    return st;
+}
+bool RemoSkipOk() {
+    static int st = 0;
+    return CodeOk(kRemoSkip, {0x55, 0x48, 0x89, 0xe5, 0x53, 0x48, 0x83, 0xec, 0x18, 0x48, 0x8b, 0x1d, 0xd0, 0xc7, 0x6d,
+                              0x03},
+                  "remo skip request", &st) &&
+           CodeOk(0x1cf9d40, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x50, 0x48,
+                              0x89, 0xfb},
+                  "remo player skip", &st2());
+}
+constexpr std::uint64_t kSaveRequest = 0x1336da0; // Lua SaveRequest (void)
+constexpr std::uint64_t kLuaEventMan = 0x553b0c8;  // SprjLuaEventMan (the binding asserts it)
+bool SaveRequestOk() {
+    static int st = 0;
+    return CodeOk(kSaveRequest, {0x55, 0x48, 0x89, 0xe5, 0x48, 0x8d, 0x05, 0x1d, 0x43, 0x20, 0x04, 0x48, 0x83, 0x38,
+                                 0x00, 0x75},
+                  "SaveRequest", &st);
 }
 
 bool LampWarpOk() {
@@ -157,6 +193,13 @@ const char* SessionRoleName(int role) {
     }
 }
 
+int LocalSessionRole() {
+    if (!Image()) {
+        return -1;
+    }
+    return Field<std::int32_t>(Slot(kSessionManager), 0x124, -1);
+}
+
 GameSnapshot ReadGameState(bool call_game) {
     GameSnapshot s;
     if (!Image()) {
@@ -183,6 +226,7 @@ GameSnapshot ReadGameState(bool call_game) {
     if (s.player_rec) {
         s.insight = Field<std::int32_t>(s.player_rec, kRecInsight, -1);
         s.level = Field<std::int32_t>(s.player_rec, kRecLevel, -1);
+        s.echoes = Field<std::int32_t>(s.player_rec, kRecEchoes, -1);
     }
     if (s.player) {
         // PlayerIns_GetBloodMarkMap (0x19046c0): *(*(player + 0x400) + 0x48).
@@ -293,6 +337,50 @@ int ItemCount(std::uint32_t type_bits, std::uint32_t id) {
     return handle == 0 ? 0 : count;
 }
 
+namespace {
+/// The inventory entry's gaitem handle for an item (0 = not held / unknown).
+std::uint32_t ItemHandle(std::uint32_t type_bits, std::uint32_t id) {
+    const std::uint64_t rec = Field<std::uint64_t>(Slot(kGameDataMan), 8, 0);
+    if (!rec || !FindOk()) {
+        return 0;
+    }
+    const std::uint64_t list = rec + kRecInventory;
+    if (!Field<std::uint64_t>(list, 0x68, 0) || !Field<std::uint64_t>(list, 0x78, 0)) {
+        return 0;
+    }
+    using Fn = std::int32_t(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t, std::uint32_t);
+    const std::int32_t index = reinterpret_cast<Fn>(Guest(kInventoryFind))(list, type_bits, id);
+    const std::int32_t last = Field<std::int32_t>(list, 0x88, -1);
+    if (index < 0 || last < 0 || index > last) {
+        return 0;
+    }
+    const std::uint32_t split = Field<std::uint32_t>(list, 0x24, 0);
+    const std::uint64_t entry = std::uint32_t(index) < split
+                                    ? Field<std::uint64_t>(list, 0x58, 0) + 16ull * std::uint32_t(index)
+                                    : Field<std::uint64_t>(list, 0x48, 0) + 16ull * (std::uint32_t(index) - split);
+    std::uint32_t handle = 0;
+    return SafeGet(entry, &handle) ? handle : 0;
+}
+} // namespace
+
+bool ShowItemGet(std::uint32_t type_bits, std::uint32_t id, int count) {
+    const std::uint64_t list = Slot(kItemGetList);
+    // 0x16D8850 takes a node from the free list (+0x10) or the tail of the live list (+8); with
+    // neither it would write through null.
+    if (!list || (!Field<std::uint64_t>(list, 0x10, 0) && !Field<std::uint64_t>(list, 8, 0)) || !ItemGetOk()) {
+        return false;
+    }
+    std::uint32_t handle[2] = {ItemHandle(type_bits, id), 0};
+    if (!handle[0]) {
+        return false;
+    }
+    // The give list copies the handle into a wrapper (ref +1) around the call and drops it after
+    // (ref -1); ours lives across the call unchanged, the push takes its own reference.
+    using Fn = void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t*, std::uint32_t, std::uint32_t, std::int32_t, std::uint32_t);
+    reinterpret_cast<Fn>(Guest(kItemGetPush))(list, handle, type_bits, id & 0x0fffffffu, count, 0);
+    return true;
+}
+
 StartFlags ReadStartFlags() {
     StartFlags f;
     struct Want {
@@ -341,6 +429,68 @@ bool GiveItem(std::uint32_t type_bits, std::uint32_t id, int count) {
     using Fn = void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t, std::uint32_t, std::int32_t);
     reinterpret_cast<Fn>(Guest(kGiveItemDirect))(0, type_bits, id, count);
     return true;
+}
+
+bool RequestRemoSkip(bool* skippable) {
+    const std::uint64_t remo = Slot(kSprjRemo);
+    const std::uint64_t player = Field<std::uint64_t>(remo, 8, 0);
+    const std::uint8_t bits = Field<std::uint8_t>(player, 0x168, 0);
+    if (skippable) {
+        *skippable = (bits & 2) != 0;
+    }
+    if (!remo || !player || !RemoSkipOk()) {
+        return false;
+    }
+    std::int32_t any = -1;
+    using Fn = std::uint64_t(BB_COOP_SYSV*)(std::uint64_t, std::int32_t*);
+    reinterpret_cast<Fn>(Guest(kRemoSkip))(remo, &any);
+    return true;
+}
+
+namespace {
+std::atomic<bool> g_save_pending{false};
+std::mutex g_save_mu;
+std::string g_save_why; // under g_save_mu
+double g_save_last = -1e9;
+int g_save_steady = 0;
+} // namespace
+
+void RequestGameSave(const char* why) {
+    std::lock_guard<std::mutex> lk(g_save_mu);
+    if (why && g_save_why.find(why) == std::string::npos) {
+        g_save_why += (g_save_why.empty() ? "" : ", ") + std::string(why);
+    }
+    g_save_pending = true;
+}
+
+void GameSaveTick() {
+    const GameSnapshot s = ReadGameState(false);
+    g_save_steady = s.world_up && !s.loading ? g_save_steady + 1 : 0;
+    if (!g_save_pending.load() || g_save_steady < 30) {
+        return;
+    }
+    const double now =
+        std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (now - g_save_last < 15.0) {
+        return;
+    }
+    std::string why;
+    {
+        std::lock_guard<std::mutex> lk(g_save_mu);
+        why.swap(g_save_why);
+        g_save_pending = false;
+    }
+    g_save_last = now;
+    const std::uint64_t gsm = Slot(kNetFlow); // GSM (WorldTransitionState)
+    if (!gsm || !Slot(kLuaEventMan) || !SaveRequestOk()) {
+        coop::asyncio::Print("Party: save request (" + why + ") not possible (no game state / code differs)\n");
+        return;
+    }
+    const std::uint8_t allowed = Field<std::uint8_t>(gsm, 0x1578, 0);
+    using Fn = void(BB_COOP_SYSV*)();
+    reinterpret_cast<Fn>(Guest(kSaveRequest))();
+    coop::asyncio::Print("Party: save requested (" + why + "): save allowed " + std::to_string(allowed) +
+                         ", request " + std::to_string(Field<std::uint8_t>(gsm, 0x1548, 0)) + "\n");
 }
 
 bool LampWarp(std::uint32_t return_point) {

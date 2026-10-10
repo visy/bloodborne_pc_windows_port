@@ -512,6 +512,25 @@ static void TestApplier() {
     ap0.QueueChanges(5, {{12401800, true, Category::boss_defeated, 1}});
     CHECK(ap0.Apply(os, Policy::Defaults(), false) == 0 && ap0.Pending() == 1 && !own.PoolBit(12401800));
     CHECK(ap0.Apply(os, Policy::Defaults(), true) == 1 && ap0.Pending() == 0 && own.PoolBit(12401800));
+    // A boss flag of the map the guest stands in (m24_01 Cleric Beast 12411800 in Central
+    // Yharnam) is held back in mode 0: the running boss event would play the kill (banner,
+    // music, rewards). Another map's boss flag goes in; the held one follows in mode 1 (pool).
+    CHECK(HoldBossFlagInMode0(12411800, 0x18010000) && !HoldBossFlagInMode0(12411800, 0x18000000) &&
+          !HoldBossFlagInMode0(12417810, 0x18010000) && !HoldBossFlagInMode0(12411800, 0xffffffffu));
+    {
+        FakeStore home;
+        home.Build(0);
+        FlagStore hs = home.view();
+        GuestApplier h;
+        h.QueueChanges(6, {{12411800, true, Category::boss_defeated, 1}, {12401800, true, Category::boss_defeated, 2}});
+        CHECK(h.Apply(hs, Policy::Defaults(), true, 0x18010000) == 1);
+        CHECK(home.PoolBit(12401800) && !home.PoolBit(12411800) && h.Held() == 1 && h.Pending() == 1);
+        CHECK(h.Apply(hs, Policy::Defaults(), true, 0x18010000) == 0 && h.Held() == 1); // same map: still held
+        FakeStore away;
+        away.Build(1);
+        FlagStore as = away.view();
+        CHECK(h.Apply(as, Policy::Defaults(), false, 0x18010000) == 1 && away.PoolBit(12411800) && h.Pending() == 0);
+    }
     // never-writable ids are refused even when a (bad) host sends them
     ap0.QueueChanges(5, {{9021, true, Category::world_state, 2}});
     ap0.Apply(os, Policy::Defaults(), true);

@@ -52,6 +52,18 @@ std::uint32_t NewGameDriver::Step(const NewGameInput& in, std::string* log) {
     if (log) {
         log->clear();
     }
+    // A world loading during character creation: the title's first Cross was Continue (a save
+    // with a character; with the online / offline prompt in between it can take a while). Stop
+    // pressing creation buttons into the world (seen live: Options / Cross in the Hunter's Dream).
+    if ((phase_ == NewGamePhase::Brightness || phase_ == NewGamePhase::Controls ||
+         phase_ == NewGamePhase::WaitMovie || phase_ == NewGamePhase::Contract) &&
+        (in.world_up || in.loading)) {
+        queue_.clear();
+        next_ = 0;
+        holding_ = false;
+        Enter(NewGamePhase::WaitLoad, in.t, log, "a world is loading: the save had a character (Continue)");
+        return 0;
+    }
     // The tap queue first: hold, release, gap.
     if (next_ < queue_.size()) {
         const Tap& tap = queue_[next_];
@@ -106,6 +118,12 @@ std::uint32_t NewGameDriver::Step(const NewGameInput& in, std::string* log) {
     case NewGamePhase::NewGame:
         if (in.world_up || in.loading) {
             Enter(NewGamePhase::WaitLoad, in.t, log, "loading after the first Cross: the save had a character (Continue)");
+            break;
+        }
+        // A save with a character: Continue fades out before its loading screen shows; give it the
+        // time before treating the title as an empty save's (Brightness would get Down / Cross).
+        // (an empty save's Brightness screen shows at once: its new texts end the wait).
+        if (in_phase < 4.0 && !(in.screen_seq != screen_mark_ && in.screen_quiet >= kSettle)) {
             break;
         }
         // Brightness: Down once it is up (4 s at most), Cross on Next.
@@ -212,12 +230,15 @@ std::uint32_t NewGameDriver::Step(const NewGameInput& in, std::string* log) {
         }
         if (in.opening_done && !in.cutscene) {
             Enter(NewGamePhase::Done, in.t, log, "in the clinic world (12410000 ON, 9180 OFF)");
-        } else if (!in.opening_done && in_phase >= 2.0) {
+        } else if ((!in.opening_done || in.cutscene) && in_phase >= 2.0) {
+            // 12410000 alone is not the end: a party guest's C2 catch-up may set it while the
+            // opening remo still plays (9180 ON) - keep skipping until 9180 is OFF too.
             if (tries_ < 10) {
                 ++tries_;
                 phase_at_ = in.t;
                 if (log) {
-                    *log = "opening cutscene (12410000 OFF): Options (try " + std::to_string(tries_) + ")";
+                    *log = std::string("opening cutscene (12410000 ") + (in.opening_done ? "ON" : "OFF") +
+                           ", 9180 " + (in.cutscene ? "ON" : "OFF") + "): Options (try " + std::to_string(tries_) + ")";
                 }
                 Queue({{kPadOptions, 2.0}});
             } else {

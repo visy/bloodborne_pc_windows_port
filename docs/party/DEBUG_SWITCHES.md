@@ -94,6 +94,10 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_DIRECTOR_TEST` | `log_state,start,grant_bells,drop_bells,award_lot=N,set_flag=N[:N...],insight=N,ring_host,ring_guest`: director test actions without a party (on a party host `award_lot` / `set_flag` wait until a cooperator has been in the world for the delay); live travel steps `host_warp=ID@S`, `host_die@S`, `guest_die@S` (optional `#N`: not before this player's Nth join) run in order, S s after each (re)join (docs/party/travel.md 6); any value also stamps the party logs with the wall clock | off | `gpu/shim/party/party_director.cpp` |
 | `BB_PARTY_LOG_TIME` | `1`: wall-clock stamps on the Party / Party travel / Party phantom log lines | off | `gpu/shim/party/party_director.cpp` |
 | `BB_PARTY_DIRECTOR_TEST_DELAY` | Delay of the director test actions in s (after the world is up) | 10 | `gpu/shim/party/party_director.cpp` |
+| `BB_PARTY_GUEST_SERVICES` | `0`: guests cannot use the Doll, shops or workshop in the host's Dream (vanilla client gates) | on in party mode | `gpu/shim/party/party_guestsvc.cpp` |
+| `BB_PARTY_GUEST_SERVICES_TALK` | `all` or a comma list of more talk script ids the guest may use (diagnostics) | built-in list | `gpu/shim/party/party_guestsvc.cpp` |
+| `BB_PARTY_GUEST_LAMPS` | `1`: lamps and headstones work in a party; a guest's lamp / headstone use moves the whole party (host-led) | off (opt-in until run live) | `gpu/shim/party/party_guestsvc.cpp` |
+| `BB_PARTY_GUESTSVC_TEST` | `echoes=N;warp=x,y,z,yaw[/...]`: live-test fixture on the guest, 15 s after the guest-services gate opened | off | `gpu/shim/party/party_guestsvc.cpp` |
 | `BB_PARTY_PHANTOM_PROBE` | `insight`, `refill`: one offline probe 5 s after the world is up | off | `gpu/shim/party/party_phantom.cpp` |
 | `BB_PARTY_TRACE` | `1`: logs every FROM API / HTTP request and answer (default: the first few) | off | `gpu/shim/net/bbnet_glue.cpp` |
 | `BB_PARTY_TRACE_SSINFO` | `1`: logs the game's ss.info parse result | off | `gpu/shim/party/party_director.cpp` |
@@ -110,6 +114,10 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_TEST_NPC_LOG` | `0`: no per-second state line | on | `gpu/shim/party/party_npc_test.cpp` |
 | `BB_PARTY_TEST_NPC_PATCH` | `1`: both patch groups of filter mode C on for the run | off | `gpu/shim/party/party_npc_test.cpp` |
 | `BB_PARTY_TEST_NPC_WARP` | `<WarpParam id>`: one lamp warp before anything else | off | `gpu/shim/party/party_npc_test.cpp` |
+| `BB_PARTY_ITEMS_HOST_TEST` | `<lot>[,...]`: the host awards these lots through the game's `0x17DDC50` (hostOnly 1) 20 s after a cooperator appeared, 10 s apart (summoned-give check) | off | `gpu/shim/party/party_items.cpp` |
+| `BB_PARTY_ITEMS_HOST_TEST_FLAGS` | `<id>[,...]`: flags the host sets with the first `BB_PARTY_ITEMS_HOST_TEST` award | off | `gpu/shim/party/party_items.cpp` |
+| `BB_PARTY_PROGRESS_TEST_READ` | `<id>[,...]`: logs own-save / visible values at each steady load | off | `gpu/shim/party/party_progress.cpp` |
+| `BB_PARTY_STORY_SUMMONED` | `0`: the C4 replay queue waits for the own world (no replays while summoned) | on | `gpu/shim/party/party_story.cpp` |
 | `BB_SAVE_BACKUP` | `1`: save backups also outside a party session; `0`: none in a party session | on in a party session | `src/runtime_savepolicy.c` |
 | `BB_SAVE_TRACE` | `1`: logs every operation on save files (/savedataN) | off | `src/runtime_file.c` |
 

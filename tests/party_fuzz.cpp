@@ -9,6 +9,7 @@
 //   story      StoryFromJsonText + SanitizePeerStory + GuestStory
 //   items      ItemsFromJsonText + FilterPeerItems + GuestItems
 //   phantom    PhantomEventFromJsonText
+//   lamp       LampRequestFromJsonText + SanitizePeerLampRequest (a guest's lamp request, host side)
 //   progress   ChangesFromJson / SnapshotFromJson / GuestApplier queue / BbpfDecode
 //   hostsvc    PartyHostService::handle and FromApi::handle_json (guest RPCs, the sign board)
 //   linkhost   a real PartyLink host over loopback: garbage and pre-auth frames, then
@@ -40,6 +41,7 @@
 #include "party/party_code.h"
 #include "party/party_ids.h"
 #include "party/party_crypto.h"
+#include "party/party_guestsvc.h"
 #include "party/party_items.h"
 #include "party/party_link.h"
 #include "party/party_phantom.h"
@@ -442,6 +444,10 @@ Corpus json_corpus() {
     pe.kind = coop::PhantomEventKind::Lamp;
     pe.lamp = 2102961;
     c.add(coop::PhantomEventToJsonText(pe));
+    coop::LampRequest lr;
+    lr.id = 2102950;
+    lr.seq = 3;
+    c.add(coop::LampRequestToJsonText(lr));
     std::vector<coop::progress::FlagChange> ch(2);
     ch[0] = {12401800, true, coop::progress::CategoryOf(12401800), 5};
     ch[1] = {70002802, false, coop::progress::CategoryOf(70002802), 6};
@@ -655,6 +661,15 @@ void run_phantom(Rng& r, const Corpus& c) {
     if (e.kind == coop::PhantomEventKind::Insight) INVARIANT(e.insight >= 0 && e.insight <= 99);
     if (coop::SanitizePeerPhantom(e, &err) && e.kind == coop::PhantomEventKind::Lamp)
         INVARIANT(e.lamp == coop::kTravelNone || coop::TravelLampKnown(e.lamp));
+}
+
+void run_lamp(Rng& r, const Corpus& c) {
+    const std::string s = text_of(next_input(r, c, true));
+    set_input("lamp", s);
+    coop::LampRequest q;
+    std::string err;
+    if (!coop::LampRequestFromJsonText(s, &q, &err)) return;
+    if (coop::SanitizePeerLampRequest(q, &err)) INVARIANT(coop::TravelLampKnown(q.id));
 }
 
 void run_progress(Rng& r, const Corpus& c) {
@@ -1765,7 +1780,7 @@ int main(int argc, char** argv) {
     std::vector<Named> targets = {
         {"json", run_json, &jc, 1},       {"code", run_code, &bin, 0.5},     {"stun", run_stun, &bin, 0.5},
         {"udp", run_udp, &bin, 0.7},      {"travel", run_travel, &jc, 1},    {"story", run_story, &jc, 1},
-        {"items", run_items, &jc, 1},     {"phantom", run_phantom, &jc, 0.5}, {"progress", run_progress, &jc, 1},
+        {"items", run_items, &jc, 1},     {"phantom", run_phantom, &jc, 0.5}, {"lamp", run_lamp, &jc, 0.3}, {"progress", run_progress, &jc, 1},
         {"hostsvc", run_hostsvc, &jc, 1.5}, {"linkhost", run_linkhost, &jc, 2}, {"linkguest", run_linkguest, &jc, 2},
     };
     double total_share = 0;

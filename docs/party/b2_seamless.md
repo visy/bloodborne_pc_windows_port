@@ -251,7 +251,117 @@ warp's own target was used; with +0x1521 = 1 our +0x14C4/D0/E0 write gives the s
   guest's chr on "arrived". **No session loss, no "returned home".**
 * `HostCloseEmptyRoom` (B1, upstream b58a940) is off under B2 (the room must stay).
 
+### 6.3 Runs 11-16: boss clear, gather, what players see, spacing [R]
+
+* Boss clear (runs 11-13, `BB_PARTY_B2_TEST_BOSS=BlockClear2` raised on the guest by name): the
+  Lua state ran (dispatcher 1) and the guest stayed a client for 30+ s, but no BlockClear2_1 /
+  K10 / send-home followed - the white-phantom branch of `BlockClear2` 0x13849A0 needs a real boss
+  kill state before it chains on. Inconclusive for K10; no send-home leak seen. A real boss fight
+  is needed to close this.
+* Split maps at session start (runs 12-13): the guest's own save in the Hunter's Dream, the host's
+  in m24_01; the bell join placed the guest at its sign spot - the Dream - **in the host's world**
+  (bells anywhere). Fixed by **gather** (`BB_PARTY_GATHER`, default on, party_director): before a
+  guest rings, if the host's roster map (slot 0) is another area/block, the guest's own world
+  lamp-warps to the host's last lamp (`GuestDeathRedirectLamp`, kept by party_phantom). Run 13:
+  `gather: own world m21_00_00_00, host in m24_01_00_00; to the host's last lamp 2412951` →
+  joined in m24_01 next to the host. The same check runs before every ring, so it also covers
+  "after any return home".
+* What players see (run 14-15, `tools/mp/shot.py` = PrintWindow screenshots on log events): at the
+  host's lamp warp both windows show the loading screen (item tips) from the travel event on; the
+  guest's screen stays a loading screen through its snapshot wait and its own load (E1 works) and
+  opens in m24_01 beside the host; a remo plays on the guest right after arrival (the SprjRemo
+  bit seen before). Which remo is open (not identified).
+* Spacing (runs 14-16): the game's join placement is the sign spot = the shared lamp spot (0.2 m
+  from the host, the host got shoved 0.4 m). Writing GSM +0x14D0 before the join load had no
+  effect (the descriptor is built earlier); instead after any host-world arrival (flow 3 → 4,
+  bell join or B2) the guest's chr is warped beside the host with the chr warp vfunc +0x5F8
+  (`0x18CD600(chr, pos, rot, 1)`, as the NPC summon step does): `BB_PARTY_SUMMON_OFFSET` metres
+  (default 2.2; 3.0 judged too far, 1.5 too close), right / left / behind by slot, each try checked
+  30 ticks later (reached, same height ±1.5 m) with the next side as fallback and a log of how far
+  the host moved (push check). Run 15 (3 m): warped from 0.4 m to 3.0 m. No ground probe yet:
+  the host's height is used.
+* Lamp ids: 2412951 is the outdoor Central Yharnam lamp (screenshots of the arrival are a street,
+  position (-193.4, -28.6, 68.5) in m24_01), as travel.md's shadp2p capture says; 2412952 Great
+  Bridge; 2412950 (not seen here) is the likely 1st Floor Sickroom. The "guest in the clinic with
+  the opening cutscene" report came from a fresh `savedata_party`: both instances were re-set up
+  with the current harness (level 37 character, "Saves: check OK ... 1 character slot used").
+
+### 6.4 Runs 17-20: placement written once, opening cutscene, saves [R]
+
+* Placement (run 17): the guest now steps aside **in its own world before ringing** (pre-ring
+  spacing: right / left / behind by slot, each try checked 30 ticks later: reached and same
+  height ±1.5 m = walkable, else the next side, else back to the start spot); its sign, and so the
+  join placement, is beside the host. A B2 arrival uses an exact-transform warp (forced placement
+  +0x14F0/+0x1500/+0x1510/+0x1520) beside the host's arrival spot, written once before the load.
+  Nothing moves a player after a load any more. Arrival watch (3 s, both instances): guest
+  `(-191.85, -28.67, 66.94)` 2.20 m from the host on both screens, host not moved (the guest's
+  height on the host's screen settles from -28.65 to -27.5 within 1 s: the remote chr landing).
+* Opening cutscene on the guest: EMEVD **event 12410000, 2002[3]** in the host's world. The
+  guest's overlay right after a plain bell join (host in the Dream) read 12410000=0 9401=1
+  9402=1 12417810=0; after the B2 re-sent snapshot **everything was 0** (9401 too), before and
+  after its load (run 18). Safety net in place: a client in the host's world never runs event
+  12410000's 2002 (EMEVD skip predicate, `seamless_rules SetEmevdSkipPredicate`): logged
+  `client: opening cutscene (event 12410000, 2002[3]) skipped in the host's world` and no remo.
+  Overlay guard (save the host-world overlay at the travel event, restore every group the new
+  snapshot left all-zero): restored 7 of 11 non-zero groups, but 9401's group came back
+  non-zero with the bit cleared - the re-sent snapshot itself carries different data. Root cause
+  of the poor re-sent snapshot: **the apply 0x13BECA0 ran in load mode 1** (a join applies it in
+  the guest's own world, mode 0). Run 20: host at the re-send 12410000=1 9401=1 12417810=1; guest
+  after its load all 0. **K11** (call site 0x17851CE `e8 cd 9a c3 ff` → 0x13BECA0): on a B2
+  re-entry the guest's store goes back to mode 0 (SetLoadMode 0x13BB590) before the apply; its
+  MoveMapStep sets mode 1 from the fresh overlay. Run 21: guest after the B2 load 12410000=1
+  9401=1 9402=1 12417810=1 12411800=1 (2410=0: an area gate, never shared), no opening
+  cutscene and no skip needed. The skip predicate stays as the net for a plain bell join whose
+  snapshot was taken in another map (12410000=0 after a join from a host in the Dream).
+* Recovery net: a player falling for 6 s in its own world is warped to its own last lamp
+  (0x13CDF30, WorldTransitionState +0x1528).
+* Saves: every B2 run now starts from the base save `E:\games\bbport\save_backup\savedata_20261010`
+  copied into each instance's `user\savedata_party`. A player whose party character got a bad
+  position restores it with the game closed: copy a folder from
+  `user\save_backups\savedata_party\<date>-start` (written at every party start, newest 10 kept,
+  plus every 10 min) over `user\savedata_party`.
+
+### 6.5 Runs 22-25: host death, guest state, three players [R]
+
+* Host death (run 22, fresh saves, host and guest in the Dream): K8 kept the member task, the
+  guest dropped HostDead_1's send-home and followed the respawn travel, **the host's chr came back
+  on the guest** (`re-join done`, host chr at its respawn spot).
+* Guest state through a B2 load (run 24, guest HP set to 100 of 106, then host death): the load
+  refilled the guest to 106; B2 now puts back the HP it had at the host's travel event
+  (`guest: HP 106 after the load -> 100 as before the travel`). Items / buffs: a phantom's
+  inventory lives in its own PlayerGameData and is not touched by the load (not measured).
+* Respawn in place (no guest reload) - not feasible with the game's code: every death goes
+  through the funnel 0x13CDE30 → a stage request → MoveMapStep, and the world dtor 0x1547B40
+  frees every chr set (WorldChrMan 0x1914F40); the game has no revive-in-place for the host
+  (DS2's seamless mod found the same). A custom one (cancel the death load, revive the chr, warp
+  to the lamp when it is in the current map, bloodstain / enemy reset by hand) would be a separate
+  project. So host death = case (2): one loading screen, the guests stay in the session and keep
+  their state.
+* Three players (run 25, `BB_PARTY_B2_TEST_MEMBERS=2`): host lamp warp with two guests in the
+  world; both guests stayed clients, loaded the host's map in host-world mode, re-created the
+  host's chr; the host got two "arrived" and re-created both guests (76 s of run time).
+
+### 6.6 Runs 26-28: B1 fallback, guest consumables [R]
+
+* Forced failure (`BB_PARTY_B2_TEST_FAIL=resync`: the host sends no snapshot). Run 26: after 45 s
+  the guest dropped its loading screen, fell back to B1 (lamp warp in its own world, left the
+  room), but the re-summon failed: the network flow still held the old member list, so the new
+  room's member event 0xE created no task for the host and the join was left 2 s later. Fix: once
+  idle after a fallback, B2 runs the flow's own end-of-session cleanup 0x178A900 (clearing +0xC5,
+  set by every MoveMapStep ctor, which defers it). Run 27: `flow cleanup 0x178A900 ran ... flow
+  now 0`, the director's bells re-summoned the guest 20 s later (client again).
+* Guest consumables across a host death (run 28): `goods 900:3 1000:15 200:1 205:1`, stamina
+  100/100 identical before the travel and after the B2 load; HP refilled by the load and put back
+  (100/106). Buffs (SpEffects) not measured.
+
 ## 7. Risks / open items
+
+* K10 / boss clear with a real kill: the test save has Cleric Beast / Gascoigne already dead
+  (12411800 = 1, 2410 = 1). Plan: a save before a boss near a lamp (Vicar Amelia from the
+  Cathedral Ward lamp, or a chalice boss), both players in the arena via director test actions
+  (`host_warp`), the fight started by its EMEVD fog event, then `ForceDead(boss entity)` on the
+  host (the boss-death EMEVD 2003[12] and Lua 4050 run as in a real kill); expect the guest's
+  K10 / send-home veto lines and the session kept.
 
 * (Closed in run 9) Guest rewind not executing in run 5. Static analysis: the update `0x1E52FE0` copies
   +0x54 to +0x50 unconditionally on entry, so `step 6 next 4` means the task update was not

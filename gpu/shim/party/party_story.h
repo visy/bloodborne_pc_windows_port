@@ -19,6 +19,13 @@
 //            (mode 0) unless it was mirrored, then the time of day exactly like 0x1CECEB0
 //            (SetEventFlagValue(EventFlagMan, 9800, 3, {0,4,6,7}[tod]); byte [*(0x553B148)+0x81]=1)
 //            and the story flags of that scene.
+//          - the same queue while summoned (seamless play may have no own-world phase at all):
+//            once the guest is a steady phantom (role 6) and calm (no HP lost for 15 s), every
+//            item except an ending runs there: a missed scene plays through the phantom path
+//            (mode 2, as the live mirror), the time of day and the story flags go into the own
+//            save's pool (C2's mode-1 pool write; 9800..9802 bits, no world refresh byte - the
+//            world shown is the host's), never into the host-world overlay. Endings wait for the
+//            own world (they warp to the own Hunter's Dream).
 //          - endings: A = warp to the own Hunter's Dream (0x13CDF30(2102961)) and set 72100130
 //            (m21 12100180 does the rest natively); B / C = the event body emulated in the own
 //            Dream (12101800[/12101850], 9180, remo, NG cycle +1, 6604, 6601|6602, 6603, last
@@ -26,6 +33,7 @@
 //          While it is busy the director does not ring the guest bell (StoryBusy()).
 //
 // Env: BB_PARTY_STORY=0 (no capture, no replay), BB_PARTY_STORY_MIRROR=0 (no live mirror),
+//      BB_PARTY_STORY_SUMMONED=0 (replay queue only in the own world, as before seamless play),
 //      BB_PARTY_STORY_PLAYER=<n> (the 0x131A9F0 player argument; default 10000 = the local
 //      player, resolved by 0x13C97A0; -1 = no appearance snapshot),
 //      BB_PARTY_STORY_TEST=cutscene:<remo id>[,mirror] (single instance test: queue a replay of
@@ -132,7 +140,8 @@ struct StoryState {
     bool remo_playing = false;         ///< SprjRemo player +0x168 bit 0
     bool sex_variant = false;          ///< play the +1000 remo files
     std::uint32_t map_id = 0xffffffffu;
-    int tod_value = 0;                 ///< current 9800..9802 3-bit value
+    int tod_value = 0;                 ///< 9800..9802 3-bit value of the own save (summoned: the pool)
+    bool calm = true;                  ///< no HP lost lately (a summoned replay waits for it)
 };
 
 struct StoryAction {
@@ -169,6 +178,7 @@ public:
     static constexpr std::size_t kMaxQueue = 32;
 
     bool mirror_enabled = true;
+    bool summoned_replay = true;  ///< run the replay queue (except endings) while summoned
 
     /// False when `s.seq` is not newer than the newest seen. `in_host_world`: the guest is a
     /// phantom right now (a cutscene is mirrored live).
@@ -179,6 +189,8 @@ public:
     bool Busy() const;
     /// The replay part only (the mirror is not a reason to hold the bell).
     bool ReplayBusy() const { return !queue_.empty() || (running_ && !running_mirror_); }
+    /// The item running now is a summoned replay (mode-2 play, own-pool writes).
+    bool RunningSummoned() const { return running_ && running_summoned_; }
     bool Seen(std::uint32_t remo_id) const;
     std::size_t QueueSize() const { return queue_.size(); }
     bool MirrorPending() const { return mirror_.has_value(); }
@@ -204,7 +216,7 @@ private:
         bool on = true;
         int tod = -1, ending = 0;
     };
-    void Build(const StoryIntent& s, bool mirror);
+    void Build(const StoryIntent& s, bool mirror, bool summoned = false);
     std::optional<StoryAction> RunOps(const StoryState& st, double now);
     std::optional<StoryAction> Run(const StoryState& st, double now);
     void Finish(bool ok);
@@ -217,7 +229,7 @@ private:
     int stable_mirror_ = 0, stable_own_ = 0;
     bool dirty_ = false;
 
-    bool running_ = false, running_mirror_ = false;
+    bool running_ = false, running_mirror_ = false, running_summoned_ = false;
     StoryIntent cur_{};
     std::deque<Op> ops_;
     double op_since_ = 0;

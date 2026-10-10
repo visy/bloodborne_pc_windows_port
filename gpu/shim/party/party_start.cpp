@@ -131,4 +131,105 @@ bool SessionMayRing(bool host, int session_role) {
     return session_role == kIdle || (host && session_role == kHost);
 }
 
+const char* CatchupPhaseName(Catchup::Phase p) {
+    switch (p) {
+    case Catchup::Phase::Idle: return "idle";
+    case Catchup::Phase::Opening: return "opening";
+    case Catchup::Phase::Apply: return "apply";
+    case Catchup::Phase::Warp: return "warp";
+    case Catchup::Phase::WaitWarp: return "wait-warp";
+    case Catchup::Phase::Done: return "done";
+    }
+    return "?";
+}
+
+CatchupAction Catchup::Step(const CatchupInput& in) {
+    CatchupAction a;
+    if (in.in_world && in.own_idle) {
+        if (world_at_ < 0) {
+            world_at_ = in.t;
+        }
+    } else {
+        world_at_ = -1;
+    }
+    const bool steady = world_at_ >= 0 && in.t - world_at_ >= kSteady && in.flags.flags_ok;
+    switch (phase_) {
+    case Phase::Idle:
+    case Phase::Opening: {
+        if (!in.guest || !in.host_known || !in.host_ready) {
+            return a; // nothing to compare against (or the host itself is in its prologue)
+        }
+        const StartStep step = ClassifyStart(in.flags, in.in_world);
+        // A scene playing in the own world while behind the host (the opening; its 12410000 may
+        // already be set by C2's snapshot while the remo still runs): the game's skip request,
+        // retried until the remo is skippable and gone.
+        if (step != StartStep::Ready && in.remo_playing && in.in_world && in.own_idle) {
+            if (step == StartStep::Opening) {
+                phase_ = Phase::Opening;
+            }
+            if (skips_ < kSkipTries && in.t - skip_at_ >= kSkipEvery) {
+                skip_at_ = in.t;
+                ++skips_;
+                a.kind = CatchupAction::SkipOpening;
+                a.why = "behind the host and a cutscene plays in the own world: skip " + std::to_string(skips_);
+            }
+            return a;
+        }
+        if (step == StartStep::Ready) {
+            phase_ = Phase::Done;
+            a.kind = CatchupAction::Finished;
+            a.why = "the own save is past the prologue: nothing to catch up";
+            return a;
+        }
+        if (step == StartStep::NoWorld || step == StartStep::Unknown) {
+            return a;
+        }
+        if (step == StartStep::Opening) {
+            // The opening cutscene (or the frames before it): skip it, as Options does.
+            phase_ = Phase::Opening;
+            if ((in.remo_playing || in.flags.cutscene) && in.in_world && skips_ < kSkipTries &&
+                in.t - skip_at_ >= kSkipEvery) {
+                skip_at_ = in.t;
+                ++skips_;
+                a.kind = CatchupAction::SkipOpening;
+                a.why = "behind the host and in the opening cutscene: skip " + std::to_string(skips_);
+            }
+            return a;
+        }
+        if (!steady || in.remo_playing || in.flags.cutscene) {
+            return a; // a cutscene (first death, ...) or a load: wait for a steady own world
+        }
+        phase_ = Phase::Apply;
+        a.kind = CatchupAction::ApplyStart;
+        a.why = std::string("behind the host (step ") + StartStepName(step) + ")";
+        applied_ = true;
+        phase_at_ = in.t;
+        return a;
+    }
+    case Phase::Apply:
+        if (in.t - phase_at_ >= 1.0 && in.in_world) {
+            phase_ = Phase::WaitWarp;
+            phase_at_ = in.t;
+            load_seen_ = false;
+            a.kind = CatchupAction::Warp;
+            a.why = "gather at the host's lamp";
+        }
+        return a;
+    case Phase::Warp:
+    case Phase::WaitWarp:
+        if (!in.in_world) {
+            load_seen_ = true;
+        }
+        if ((load_seen_ && steady) || in.t - phase_at_ >= kWarpTimeout) {
+            phase_ = Phase::Done;
+            a.kind = CatchupAction::Finished;
+            a.why = load_seen_ ? "arrived after the gather warp" : "no load after the gather warp (timeout)";
+        }
+        return a;
+    case Phase::Done:
+        return a;
+    }
+    return a;
+}
+
 } // namespace coop

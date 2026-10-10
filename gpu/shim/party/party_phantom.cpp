@@ -131,7 +131,8 @@ std::string DescribeSkipRule(const EmevdSkipRule& r) {
     if (r.index >= 0) {
         std::snprintf(idx, sizeof idx, "@%d", r.index);
     }
-    std::snprintf(text, sizeof text, "%s:%d:%d%s%s", ev, r.bank, r.id, idx, r.needs_travel ? " (with B1 travel)" : "");
+    std::snprintf(text, sizeof text, "%s:%d:%d%s%s%s", ev, r.bank, r.id, idx, r.needs_travel ? " (with B1 travel)" : "",
+                  r.client_only ? " (on a client)" : "");
     return text;
 }
 
