@@ -22,6 +22,8 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace coop::chalice {
 
@@ -43,6 +45,20 @@ constexpr std::uint64_t ChannelFromDwords(std::uint32_t lo, std::uint32_t hi) {
     return (hi & 0x80000000u) ? 0 : (static_cast<std::uint64_t>(hi) << 32 | lo);
 }
 
+// ---- The party's chalices (progress for everyone) ----
+// The chalices (goods; HolygrailExParam rows that are EquipParamGoods, isOnlyOne, never consumed
+// by a ritual) the host owns go to every guest that lacks them, in the guest's own world:
+// whichever dungeon the party clears, every member can perform the next ritual itself.
+constexpr std::uint32_t kChaliceGoods[] = {6100, 6109, 6200, 6209, 6210, 6219, 6300, 6302, 6309,
+                                           6310, 6312, 6319, 6401, 6409, 6420, 6429, 6500, 6502,
+                                           6509, 6520, 6522, 6529, 6530, 6532, 6539};
+bool IsChaliceGoods(std::uint32_t goods_id);
+constexpr const char* kGoodsEventName = "chalice_goods";
+/// {"goods":[id, ...]}
+std::string GoodsToJsonText(const std::vector<std::uint32_t>& ids);
+/// The chalice goods of a peer's event (anything else is dropped); false on a malformed body.
+bool GoodsFromJsonText(const std::string& text, std::vector<std::uint32_t>* out, std::string* error = nullptr);
+
 struct State {
     bool valid = false;         ///< the flags could be read
     int slot = -1;              ///< -1: no chalice slot selected
@@ -53,8 +69,14 @@ struct State {
 #ifndef BB_PARTY_CHALICE_NO_GAME
 /// Reads the local game's chalice slot and its ChannelId.
 State Read();
-/// Once a frame (coop tick): re-reads every ~2 s, logs changes, and keeps LocalChannel().
-void Tick();
+/// Once a frame (coop tick): re-reads every ~2 s, logs changes, and keeps LocalChannel(); the
+/// host also notes the chalices it owns (PopHostGoods), a guest gives itself the host's chalices
+/// it lacks (in its own world).
+void Tick(bool host);
+/// Host: the chalices to send (when they changed, and every 60 s for members that rejoined).
+bool PopHostGoods(std::vector<std::uint32_t>* out);
+/// Guest: the host's chalices (any thread; applied by Tick).
+void RequestGuestGoods(const std::vector<std::uint32_t>& ids);
 /// The dungeon the local game has in its current slot while it is in its own world (load mode
 /// 0); 0 when none or unknown. Any thread (the last Tick's value).
 std::uint64_t LocalChannel();

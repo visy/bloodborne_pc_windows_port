@@ -864,6 +864,11 @@ void PartyDirector::Tick() {
             link->send_event(party::kBroadcast, kItemsEventName, ItemsToJsonText(items));
             Log("items: %zu lots sent to the party", items.size());
         }
+        // The host's chalices: every guest gets the ones it lacks (party_chalice.h).
+        std::vector<std::uint32_t> chalices;
+        if (chalice::PopHostGoods(&chalices)) {
+            link->send_event(party::kBroadcast, chalice::kGoodsEventName, chalice::GoodsToJsonText(chalices));
+        }
         int slot = -1;
         while (TakeHostFullItems(&slot, &items)) {
             link->send_event(slot, kItemsFullEventName, ItemsToJsonText(items));
@@ -937,7 +942,7 @@ bool PartyRequested() {
 void CoopTick() {
     LuaEventsTick();
     PartyDirector::Get().Tick();
-    chalice::Tick();     // the local chalice dungeon (party_chalice.h)
+    chalice::Tick(PartyDirector::Get().Role() == PartyRole::Host); // the local dungeon, the party's chalices
     TravelTick();        // B1 guest replay (party_travel.h)
     StoryTick();         // C4 cutscenes / endings (party_story.h)
     ItemsTick();         // C3 guest item replay (party_items.h)

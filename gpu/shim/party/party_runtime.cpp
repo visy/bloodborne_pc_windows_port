@@ -2,6 +2,7 @@
 // The party runtime (party_runtime.h): wires PartyLink (A4) to the host service / transport (A3)
 // and the network library (A1/A2) inside the game process.
 #include "party_runtime.h"
+#include "party_chalice.h"
 
 #include "party_addr.h"
 #include "party_code.h"
@@ -714,6 +715,13 @@ LinkCallbacks make_callbacks(bool host) {
                 } else {
                     plog("%s event: %s", name.c_str(), err.c_str());
                 }
+                return;
+            }
+            if (name == coop::chalice::kGoodsEventName) {  // the host's chalices (party_chalice.h)
+                std::vector<std::uint32_t> ids;
+                std::string err;
+                if (coop::chalice::GoodsFromJsonText(body, &ids, &err)) coop::chalice::RequestGuestGoods(ids);
+                else plog("%s event: %s", name.c_str(), err.c_str());
                 return;
             }
             if (name == coop::kPhantomEventName) {  // host lamp / rested / boss Insight
