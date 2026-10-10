@@ -9,6 +9,7 @@
 #include "coop_hooks.h"
 #include "game_state.h"
 #include "party_travel.h"
+#include "lua_events.h"
 
 #include <atomic>
 #include <chrono>
@@ -808,6 +809,38 @@ void KickStalledTasks(const GameSnapshot& s, double now) {
     }
 }
 
+/// BB_PARTY_B2_TEST_BOSS=<Lua event name> (e.g. BlockClear2): the guest raises it once the host's
+/// chr has stood in its world for 5 s - the boss-clear path (K10 and the send-home veto) without
+/// a boss fight. Logs the dispatcher's answer.
+void TestBossTick(const GameSnapshot& s, double now) {
+    static const char* env = std::getenv("BB_PARTY_B2_TEST_BOSS");
+    static bool done = false;
+    static double since = 0;
+    if (!env || !env[0] || done || Role() != RoleClient || !s.world_up || s.loading) {
+        return;
+    }
+    bool ready = false;
+    for (const TaskInfo& t : Tasks(false)) {
+        ready = ready || (t.mode == 2 && t.step == kStepUpdate && PlayerForPeer(t.task + kTaskPeer));
+    }
+    if (!ready) {
+        since = 0;
+        return;
+    }
+    if (since == 0) {
+        since = now;
+        return;
+    }
+    if (now - since < 5.0) {
+        return;
+    }
+    done = true;
+    std::int64_t r = -1;
+    const bool ok = LuaEventRaiseNow(env, &r);
+    Log("test boss: Lua event %s raised (%s, dispatcher %lld); role %d", env, ok ? "ok" : "no event manager",
+        static_cast<long long>(r), Role());
+}
+
 /// BB_PARTY_B2_TEST_WARP=<lamp id> | die: single-instance check of K2 - once an NPC task has existed
 /// for 15 s in a steady world, warp once more (0x13CDF30) so the reset path runs with a task.
 void TestWarpTick(const GameSnapshot& s, double now) {
@@ -875,6 +908,7 @@ void Tick(const GameSnapshot& s) {
     ProbeTick(s);
     TestWarpTick(s, now);
     KickStalledTasks(s, now);
+    TestBossTick(s, now);
     if (Role() == RoleClient) {
         GuestTick(s, now);
     } else {
