@@ -12,6 +12,7 @@
 #include "party_fourp.h"
 #include "party_link.h"
 #include "party_story.h"
+#include "party_catchup.h"
 #include "party_status_bridge.h"
 #include "party_items.h"
 #include "party_npc_test.h"
@@ -1133,12 +1134,16 @@ void PartyDirector::Tick() {
     }
     // Test aids: scripted new game, prologue fast-forward (test_newgame.h).
     NewGameTestTick(s, TitleReadyForInput(role, link));
+    // Late joiner catch-up (party_catchup.h): a guest behind the host is brought up to it and
+    // gathered at the host's lamp before any summon.
+    CatchupTick(s, role == PartyRole::Guest && link && link->state() == party::LinkState::Connected,
+                Seconds(st.start, now));
     // C1: the campaign start (readiness, bells).
     if (full || !st.start_logged) {
         perf::Scope z(perf::Zone::DirStart);
         UpdateStart(st, s, start_mode);
         if (((grant_bells && role != PartyRole::None) || st.test.grant_bells) && st.world_seen &&
-            Seconds(st.world_at, now) >= std::min(5.0, st.ring_delay) && !PrologueSkipBusy()) {
+            Seconds(st.world_at, now) >= std::min(5.0, st.ring_delay) && !PrologueSkipBusy() && !CatchupBusy()) {
             GrantBells(st, s);
         }
     }
@@ -1298,7 +1303,7 @@ void PartyDirector::Tick() {
     // 3- / 4-player party (HostMayRing checks the count).
     if (!st.auto_ring || role == PartyRole::None || !link || !s.world_up || s.loading || !st.world_seen ||
         Seconds(st.world_at, now) < st.ring_delay || !SessionMayRing(role == PartyRole::Host, s.session_role) ||
-        PrologueSkipBusy()) {
+        PrologueSkipBusy() || CatchupBusy()) {
         return;
     }
     if (st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {
@@ -1417,7 +1422,8 @@ void CoopTick() {
     z.Next(Zone::Story);
     StoryTick(); // C4 cutscenes / endings (party_story.h)
     z.Next(Zone::Items);
-    ItemsTick(); // C3 guest item replay (party_items.h)
+    ItemsTick();    // C3 guest item replay (party_items.h)
+    GameSaveTick(); // save requests after summoned writes (game_state.h)
     z.Next(Zone::Seamless);
     SeamlessRulesTick(); // A6 param rules, EMEVD filter stats (seamless_rules.h)
     z.Next(Zone::Fourp);
