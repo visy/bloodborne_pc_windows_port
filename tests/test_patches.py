@@ -2,6 +2,7 @@ from paths import ROOT
 import struct
 import tempfile
 import unittest
+from unittest.mock import patch
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -181,6 +182,13 @@ class IntelTonemapTests(unittest.TestCase):
     def test_on_for_intel_off_for_amd(self):
         self.assertTrue(patches.intel_tonemap_fix({}, self.cpuinfo('GenuineIntel')))
         self.assertFalse(patches.intel_tonemap_fix({}, self.cpuinfo('AuthenticAMD')))
+
+    def test_windows_processor_identifier(self):
+        with patch.object(patches.os, 'name', 'nt'):
+            intel = {'PROCESSOR_IDENTIFIER': 'Intel64 Family 6 Model 151 Stepping 2, GenuineIntel'}
+            amd = {'PROCESSOR_IDENTIFIER': 'AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD'}
+            self.assertTrue(patches.intel_tonemap_fix(intel))
+            self.assertFalse(patches.intel_tonemap_fix(amd))
 
     def test_environment_forces_it(self):
         amd, intel = self.cpuinfo('AuthenticAMD'), self.cpuinfo('GenuineIntel')

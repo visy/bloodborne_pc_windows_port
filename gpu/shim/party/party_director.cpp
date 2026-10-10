@@ -32,6 +32,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <utility>
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -206,6 +207,43 @@ __attribute__((noinline)) BB_COOP_SYSV std::uint64_t SsParseHook(std::uint64_t a
     return r;
 }
 
+// BB_PARTY_TRACE_BELL=1: entry logs along the bell / sign / summon path (first 5 calls of each,
+// then every 500th), to see how far a bell gets.
+struct TracePoint {
+    std::uint64_t off;
+    const char* name;
+    std::atomic<std::uint64_t> calls{0};
+};
+TracePoint g_trace_points[] = {
+    {0x1900500, "begin sign (0x1900500)"},
+    {0x1901320, "SendSign"},
+    {0x14b9180, "CreateSign"},
+    {0x14b5e10, "SummonStepManager tick"},
+    {0x1e90e30, "summon_messenger/create builder"},
+    {0x1e946e0, "summon_messenger/get builder"},
+    {0x14ba980, "SSM add received sign"},
+    {0x14baec0, "host picks a sign (messenger target)"},
+    {0x1e98650, "summon_messenger/request builder"},
+};
+template <int I>
+BB_COOP_SYSV void TraceEntry(std::uint64_t a0, std::uint64_t a1, std::uint64_t a2, std::uint64_t, std::uint64_t,
+                             std::uint64_t) {
+    TracePoint& t = g_trace_points[I];
+    const std::uint64_t n = ++t.calls;
+    if (n <= 5 || n % 500 == 0) {
+        Log("bell trace: %s (+0x%llx) call #%llu (a0 0x%llx a1 0x%llx a2 0x%llx)", t.name,
+            static_cast<unsigned long long>(t.off), static_cast<unsigned long long>(n),
+            static_cast<unsigned long long>(a0), static_cast<unsigned long long>(a1),
+            static_cast<unsigned long long>(a2));
+    }
+}
+template <int... I>
+void InstallBellTrace(std::integer_sequence<int, I...>) {
+    (HookPrologue(g_trace_points[I].off, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, &TraceEntry<I>,
+                  g_trace_points[I].name),
+     ...);
+}
+
 party::MemberState LocalState(const GameSnapshot& s, bool start_ready) {
     if (s.loading) {
         return party::MemberState::Loading;
@@ -315,15 +353,90 @@ void LogTransitions(State& st, const GameSnapshot& now) {
     }
 }
 
+std::string DescribeFromClient();
+
+// The bells as the items ring them: the goods' SpEffect on the local player (Beckoning Bell 200
+// -> 9000, Small Resonant Bell 205 -> 9005). The player's update (0x18FEF50) sees the effect's
+// param flag and calls 0x1900500(player, sign type), which queues the Lua task (0x1314A40, op
+// 0x130CDE0) that runs SendSign 0x1901010/0x1901320 -> CreateSign -> summon_messenger/create; the
+// active-bell updater 0x1506820 keeps the searching visuals (9003/9004, 9008/9009). The named Lua
+// events OnEvent_Call_SOS / OnEvent_SendSoulSign_NormalCoop are what the game raises AFTER a
+// summon / a sign (0x130CA87, 0x1901794): raising them only runs the Lua reaction (animation,
+// RecallMenuEvent), never a sign (BB_PARTY_TRACE_BELL=1 showed no SendSign / CreateSign).
+// Apply: ChrIns vtable +0x3F0 (chr, id, source chr, 0, 1, 0, 0; xmm0-4 = 1.0), the call the
+// updater itself makes at 0x1506A29.
+constexpr int kHostBellEffect = 9000, kGuestBellEffect = 9005;
+using AddSpEffectFn = void(BB_COOP_SYSV*)(std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t,
+                                          std::uint64_t, std::uint64_t, float, float, float, float, float);
+
+std::uint64_t LocalPlayer() {
+    std::uint64_t wcm = 0, player = 0;
+    SafeGet(Guest(0x553e878), &wcm);
+    if (wcm) {
+        SafeGet(wcm + 0x60, &player);
+    }
+    return player;
+}
+
+/// The player has SpEffect `id` (list at ChrIns +0x1C8: first node at +8, id +0x40, next +0x58).
+bool HasSpEffect(std::uint64_t player, int id) {
+    std::uint64_t list = 0, node = 0;
+    if (!player || !SafeGet(player + 0x1c8, &list) || !list || !SafeGet(list + 8, &node)) {
+        return false;
+    }
+    for (int guard = 0; node && guard < 512; ++guard) {
+        std::int32_t nid = 0;
+        if (!SafeGet(node + 0x40, &nid)) {
+            return false;
+        }
+        if (nid == id) {
+            return true;
+        }
+        if (!SafeGet(node + 0x58, &node)) {
+            return false;
+        }
+    }
+    return false;
+}
+
+/// Main thread only (the director's tick).
+bool ApplySpEffect(int id) {
+    const std::uint64_t player = LocalPlayer();
+    std::uint64_t vt = 0, fn = 0;
+    if (!player || !SafeGet(player, &vt) || !vt || !SafeGet(vt + 0x3f0, &fn) || !fn) {
+        return false;
+    }
+    reinterpret_cast<AddSpEffectFn>(fn)(player, static_cast<std::uint64_t>(id), player, 0, 1, 0, 0, 1.0f, 1.0f, 1.0f,
+                                        1.0f, 1.0f);
+    return true;
+}
+
 void Ring(State& st, const char* event, const char* why, Clock::time_point now) {
     st.last_ring = now;
     st.rung_ever = true;
-    if (LuaEventQueue(event)) {
-        party::bridge::OnRing();
-        Log("ringing %s (%s)", event, why);
-    } else {
-        Log("could not queue %s (%s)", event, why);
+    const bool host = std::strcmp(event, kHostBell) == 0;
+    const char* mode = std::getenv("BB_PARTY_BELL_MODE");
+    if (mode && std::strcmp(mode, "lua") == 0) {
+        if (LuaEventQueue(event)) {
+            party::bridge::OnRing();
+            Log("ringing %s (%s; Lua event)", event, why);
+        } else {
+            Log("could not queue %s (%s)", event, why);
+        }
+        return;
     }
+    const int effect = host ? kHostBellEffect : kGuestBellEffect;
+    const std::uint64_t player = LocalPlayer();
+    const bool had = HasSpEffect(player, effect);
+    const bool ok = ApplySpEffect(effect);
+    if (ok) {
+        party::bridge::OnRing();
+    }
+    Log("bell: %s", DescribeFromClient().c_str());
+    Log("ringing the %s (%s): SpEffect %d %s%s", host ? "Beckoning Bell" : "Small Resonant Bell", why, effect,
+        ok ? "applied" : "NOT applied (no player)", ok ? (HasSpEffect(player, effect) ? (had ? ", was already on" : ", now on")
+                                                                              : ", not on the list after the call")
+                                          : "");
 }
 
 constexpr std::uint32_t kPadCross = 0x4000;
@@ -339,7 +452,7 @@ std::string DescribeFromClient() {
     std::int32_t ss_status = -1, fails = -1, msg = -1;
     std::int64_t user = -1;
     float reload = -1;
-    std::uint8_t online = 0xff, offline = 0xff;
+    std::uint8_t online = 0xff, offline = 0xff, b8 = 0xff, b9f6 = 0xff, b9f8 = 0xff, bb = 0xff;
     if (cm) {
         SafeGet(cm + 0x18, &ss);
         SafeGet(cm + 0x3e4, &fails);
@@ -353,12 +466,17 @@ std::string DescribeFromClient() {
         SafeGet(fm + 0xa, &online);
         SafeGet(fm + 0xa30, &msg);
         SafeGet(fm + 0xa50, &offline);
+        SafeGet(fm + 8, &b8);
+        SafeGet(fm + 0xb, &bb);
+        SafeGet(fm + 0x9f6, &b9f6);
+        SafeGet(fm + 0x9f8, &b9f8);
     }
     char b[256];
     std::snprintf(b, sizeof b,
                   "FROM client: ss.info %s (status %d, failures %d, reload in %.0f s), user id %lld; FrpgNetMan online %d, "
-                  "error msg 0x%x, server-offline %d",
-                  ss ? "parsed" : "none", ss_status, fails, reload, static_cast<long long>(user), online, msg, offline);
+                  "error msg 0x%x, server-offline %d (+8 %d, +0xb %d, +0x9f6 %d, +0x9f8 %d)",
+                  ss ? "parsed" : "none", ss_status, fails, reload, static_cast<long long>(user), online, msg, offline,
+                  b8, bb, b9f6, b9f8);
     return b;
 }
 
@@ -795,6 +913,9 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     SeamlessRulesInit(); // A6: party patch report, EMEVD filter (seamless_rules.h)
     fourp::FourpInit();  // 4-player parties: H1-H4, E6, P5 (party_fourp.h)
     PartyDirector::Get().ConfigureFromEnv();
+    if (const char* t = std::getenv("BB_PARTY_TRACE_BELL"); t && t[0] == '1') {
+        InstallBellTrace(std::make_integer_sequence<int, sizeof(g_trace_points) / sizeof(g_trace_points[0])>{});
+    }
     if (const char* t = std::getenv("BB_PARTY_TRACE_SSINFO"); t && t[0] == '1') {
         HookCallSite(kSsParseCall, kSsParse, reinterpret_cast<const void*>(&SsParseHook), "ss.info parse log");
     }
