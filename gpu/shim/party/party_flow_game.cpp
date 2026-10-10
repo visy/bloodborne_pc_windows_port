@@ -4,6 +4,7 @@
 // the only game reads are two pointers (is a character loaded, its save slot), through the
 // party library's fault-safe guest_read.
 #include "party_flow.h"
+#include "party_async_io.h"
 
 #include "party_code.h"
 #include "party_runtime.h"
@@ -56,8 +57,7 @@ void Log(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
-    std::printf("Party flow: %s\n", buf);
-    std::fflush(stdout);
+    coop::asyncio::Print(std::string("Party flow: ") + buf + "\n"); // never blocks the caller (party_async_io.h)
 }
 
 const char* Env(const char* name) {
