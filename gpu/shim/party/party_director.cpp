@@ -10,6 +10,7 @@
 #include "party_fourp.h"
 #include "party_link.h"
 #include "party_story.h"
+#include "party_items.h"
 #include "party_phantom.h"
 #include "party_runtime.h"
 #include "party_travel.h"
@@ -578,6 +579,21 @@ void PartyDirector::Tick() {
             Log("story #%llu (%s %u) sent to the party", static_cast<unsigned long long>(si.seq),
                 StoryKindName(si.kind), si.id);
         }
+        // C3: the host's item lots to every guest; the full list to a member that (re)joined.
+        std::vector<ItemGrant> items;
+        ItemGrant g;
+        while (PopHostItems(&g)) {
+            items.push_back(g);
+        }
+        if (!items.empty()) {
+            link->send_event(party::kBroadcast, kItemsEventName, ItemsToJsonText(items));
+            Log("items: %zu lots sent to the party", items.size());
+        }
+        int slot = -1;
+        while (TakeHostFullItems(&slot, &items)) {
+            link->send_event(slot, kItemsFullEventName, ItemsToJsonText(items));
+            Log("items: full list (%zu lots) sent to slot %d", items.size(), slot);
+        }
     }
     // Phantoms as full players: the host's lamp / rest / boss Insight out, the guest's refill and
     // Insight in (party_phantom.h).
@@ -626,7 +642,8 @@ void PartyDirector::Tick() {
 bool PartyRequested() {
     const char* p = std::getenv("BB_PARTY");
     const char* t = std::getenv("BB_PARTY_DIRECTOR_TEST");
-    return (p && p[0]) || (t && t[0]) || StoryTestRequested();
+    const char* i = std::getenv("BB_PARTY_ITEMS_TEST"); // C3 single-instance check
+    return (p && p[0]) || (t && t[0]) || (i && i[0]) || StoryTestRequested();
 }
 
 void CoopTick() {
@@ -634,6 +651,7 @@ void CoopTick() {
     PartyDirector::Get().Tick();
     TravelTick();        // B1 guest replay (party_travel.h)
     StoryTick();         // C4 cutscenes / endings (party_story.h)
+    ItemsTick();         // C3 guest item replay (party_items.h)
     SeamlessRulesTick(); // A6 param rules, EMEVD filter stats (seamless_rules.h)
     fourp::FourpTick();  // 4-player rules: the party's max players (party_fourp.h)
 }
@@ -652,6 +670,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     }
     InstallTravelPatches(); // B1: Dream gate + travel hooks (byte-verified)
     InstallStoryHooks();    // C4: bank-2002 capture, guest mirror / replay (byte-verified)
+    InstallItemsPatches();  // C3: award hook, parity patches (byte-verified)
     PhantomInit();          // guest respawn at the host's lamp, refill, boss Insight
     g_tick_installed = HookPrologue(kFlipperUpdate,
                                     {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48,
