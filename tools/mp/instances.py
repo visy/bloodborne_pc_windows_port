@@ -443,7 +443,7 @@ def main():
     ap.add_argument("--crash-when", help="run: kill that instance's game once its log matches this regex")
     ap.add_argument("--label", default="",
                     help="run: what this test is for; shown in the windows' title bars and the queue status")
-    ap.add_argument("--idle", type=float, default=float(os.environ.get("BB_MP_IDLE", "60")),
+    ap.add_argument("--idle", type=float, default=float(os.environ.get("BB_MP_IDLE", "10")),
                     help="run: end once the party logs (Party:/Net: lines) stay unchanged this many s (0 = off)")
     ap.add_argument("--until", action="append",
                     help="run: stop (kill all) once every such regex matched in the logs (after the crash, if any)")
