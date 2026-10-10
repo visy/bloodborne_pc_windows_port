@@ -10,6 +10,7 @@
 #include "game_state.h"
 #include "party_travel.h"
 #include "lua_events.h"
+#include "../../party_env.h"
 
 #include <atomic>
 #include <chrono>
@@ -531,6 +532,33 @@ void ProbeTick(const GameSnapshot& s) {
     st.was_loading = loading;
 }
 
+/// Any failed or timed-out B2 step on a guest: hand the host's travel to B1 (party_travel): the
+/// guest warps to the destination in its own world (the funnel leaves the session then, as
+/// vanilla) and the director's bells re-summon it. Never leaves the guest stranded.
+void FallbackToB1(const char* why) {
+    State& st = S();
+    TravelIntent t;
+    bool have;
+    {
+        std::lock_guard<std::mutex> lk(st.mu);
+        have = st.have_intent;
+        t = st.intent;
+        st.gphase = GuestPhase::Idle;
+    }
+    DropLoadingScreen(why);
+    g_rejoin = false;
+    const u64 flow = Slot(kSlotFlow);
+    const int fs = Field<int>(flow, 0x84, -1);
+    if (fs >= 1 && fs <= 3) {
+        const int four = 4;
+        SafeWrite(flow + 0x84, &four, 4);
+    }
+    Log("guest: FALLBACK to B1 (%s; flow was %d)%s", why, fs, have ? "" : " - no travel to replay");
+    if (have) {
+        RequestGuestTravel(t);
+    }
+}
+
 void GuestTick(const GameSnapshot& s, double now) {
     State& st = S();
     const u64 flow = Slot(kSlotFlow);
@@ -589,27 +617,12 @@ void GuestTick(const GameSnapshot& s, double now) {
             Log("guest: host snapshot applied; loading %s in host-world mode (K7 %s)", DescribeTravel(t).c_str(),
                 keep.armed ? "armed" : "NOT armed: the room will close");
             if (!ReplayTravelNow(t)) {
-                Log("guest: no usable destination; falling back to B1");
-                DropLoadingScreen("no destination");
-                g_rejoin = false;
-                std::lock_guard<std::mutex> lk(st.mu);
-                st.gphase = GuestPhase::Idle;
+                FallbackToB1("no usable destination");
             }
             return;
         }
         if (now - st.since > 45.0) {  // the flow leaves by itself after 60 s in states 1-3
-            Log("guest: no host snapshot within 45 s (flow %d); falling back to B1", fstate);
-            DropLoadingScreen("fallback");
-            const int four = 4;
-            SafeWrite(flow + 0x84, &four, 4);
-            g_rejoin = false;
-            TravelIntent t;
-            {
-                std::lock_guard<std::mutex> lk(st.mu);
-                t = st.intent;
-                st.gphase = GuestPhase::Idle;
-            }
-            RequestGuestTravel(t);
+            FallbackToB1(fstate == 2 ? "no host destination within 45 s" : "no host snapshot within 45 s");
         }
         return;
     case GuestPhase::Loading: {
@@ -625,10 +638,7 @@ void GuestTick(const GameSnapshot& s, double now) {
             st.gphase = GuestPhase::Rewinding;
             st.since = now;
         } else if (now - st.since > 90.0) {
-            Log("guest: load did not finish in host-world mode within 90 s (flow %d)", fstate);
-            g_rejoin = false;
-            std::lock_guard<std::mutex> lk(st.mu);
-            st.gphase = GuestPhase::Idle;
+            FallbackToB1("host-world load not finished within 90 s");
         }
         return;
     }
@@ -643,6 +653,10 @@ void GuestTick(const GameSnapshot& s, double now) {
             const u64 remo = Field<u64>(Slot(0x5540058), 8);
             Log("guest: re-join %s after %.1f s (SprjRemo %d); tasks:%s", all ? "done" : "INCOMPLETE",
                 now - st.since, remo ? int(Field<u8>(remo, 0x168) & 1) : -1, DescribeTasks().c_str());
+            if (!all) {
+                FallbackToB1("host chr not re-created within 60 s");
+                return;
+            }
             g_rejoin = false;
             std::lock_guard<std::mutex> lk(st.mu);
             st.gphase = GuestPhase::Idle;
@@ -724,7 +738,22 @@ void InstallCall(u64 off, u64 target, const void* handler, const char* name) {
 } // namespace
 
 bool Requested() {
-    return EnvOn("BB_PARTY_B2");
+    // Default in party mode (BB_PARTY set): B2, with B1 as the automatic fallback. BB_PARTY_B2=0: B1
+    // only; BB_PARTY_B2=1 also without BB_PARTY (test fixtures).
+    const char* v = std::getenv("BB_PARTY_B2");
+    if (v && v[0]) {
+        return EnvOn("BB_PARTY_B2");
+    }
+    return bb_party_enabled() != 0;
+}
+
+bool HostHasMemberTasks() {
+    for (const TaskInfo& t : Tasks(false)) {
+        if (t.mode == 1) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool Enabled() {
@@ -912,6 +941,14 @@ void Tick(const GameSnapshot& s) {
     if (Role() == RoleClient) {
         GuestTick(s, now);
     } else {
+        GuestPhase gp;
+        {
+            std::lock_guard<std::mutex> lk(S().mu);
+            gp = S().gphase;
+        }
+        if (gp != GuestPhase::Idle && Role() != RoleHost) {
+            FallbackToB1("the session ended during the re-join");
+        }
         HostTick(s, now);
     }
 }
