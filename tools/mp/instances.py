@@ -307,7 +307,31 @@ def run(a):
         except OSError:
             return ""
 
+    # Lease: the machine has 2 game slots for every agent (tools/mp/game_queue.py). Once this run
+    # is past its lease and someone is waiting, it ends (a run should stop at its --until markers
+    # anyway; idle games after the interesting part only hold the slots).
+    lease = float(os.environ.get("BB_MP_LEASE", "240"))
+    last_lease_check = 0.0
+    # Idle stop: once a party run has done something (the logs have party lines) and then nothing
+    # new happens in the party logs for --idle seconds, the run has what it can get: end it.
+    idle_rx = re.compile(r"^(Party|Net): ", re.M)
+    idle_limit = a.idle
+    last_party_count, last_party_change = -1, time.time()
     while any(p.poll() is None for _, p, _ in procs) and time.time() - t0 < a.seconds + 90:
+        if time.time() - t0 > lease and time.time() - last_lease_check > 5:
+            last_lease_check = time.time()
+            try:
+                from game_queue import _locked, _prune
+                with _locked("game") as st:
+                    _prune(st)
+                    waiting = len(st["queue"])
+            except Exception:
+                waiting = 0
+            if waiting:
+                verdict = verdict or ("LEASE EXPIRED after %.0f s: %d run(s) waiting for the game slots"
+                                      % (time.time() - t0, waiting))
+                print(verdict, flush=True)
+                break
         if want_crash and not crashed:
             hit = (a.crash_at and time.time() - t0 >= a.crash_at) or (
                 crash_rx and crash_rx.search(log_text(a.crash_instance, starts[a.crash_instance])))
@@ -315,13 +339,22 @@ def run(a):
                 crashed = True
                 marks = [os.path.getsize(Path(a.root) / f"inst{i}" / "run.log") for i in range(a.count)]
                 crash_instance(a.root, a.crash_instance)
+        if idle_limit > 0:
+            n = sum(len(idle_rx.findall(log_text(i, starts[i]))) for i in range(a.count))
+            if n != last_party_count:
+                last_party_count, last_party_change = n, time.time()
+            elif n > 0 and time.time() - last_party_change > idle_limit and not (want_crash and not crashed):
+                verdict = verdict or ("IDLE: no new party log lines for %.0f s (run ended at %.0f s)"
+                                      % (idle_limit, time.time() - t0))
+                print(verdict, flush=True)
+                break
         if until and (crashed or not want_crash):
             text = chr(10).join(log_text(i, marks[i]) for i in range(a.count))
             if all(u.search(text) for u in until):
                 verdict = "all --until markers seen after %.0f s" % (time.time() - t0)
                 break
         time.sleep(1)
-    if until:
+    if until or verdict:
         print("verdict:", verdict or "TIMED OUT waiting for --until markers", flush=True)
     for i, p, log in procs:
         if p.poll() is None:
@@ -396,6 +429,8 @@ def main():
     ap.add_argument("--crash-at", type=float, default=0, help="run: kill one instance's game this many s in")
     ap.add_argument("--crash-instance", type=int, default=1)
     ap.add_argument("--crash-when", help="run: kill that instance's game once its log matches this regex")
+    ap.add_argument("--idle", type=float, default=float(os.environ.get("BB_MP_IDLE", "60")),
+                    help="run: end once the party logs (Party:/Net: lines) stay unchanged this many s (0 = off)")
     ap.add_argument("--until", action="append",
                     help="run: stop (kill all) once every such regex matched in the logs (after the crash, if any)")
     ap.add_argument("--instance", type=int, default=1, help="crash: which instance")

@@ -6,8 +6,9 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "test_portable.h"
 /* The user folder add-ons are listed from (runtime_file.c in the game): a temporary one here. */
-static char user_dir[64]="/tmp/bbport-content-test-XXXXXX";
+static char user_dir[512];
 const char *runtime_file_user_dir(void) { return user_dir; }
 typedef int32_t (ABI *Module)(uint16_t);
 typedef int32_t (ABI *Init)(const void *,void *);
@@ -15,7 +16,8 @@ typedef int32_t (ABI *Param)(uint32_t,int32_t *);
 typedef int32_t (ABI *List)(uint32_t,void *,uint32_t,uint32_t *);
 #define GET(t,n) ((t)runtime_content_resolve(n))
 int main(int argc,char **argv) {
-    assert(mkdtemp(user_dir));
+    const int created=bb_test_temp_dir(user_dir,sizeof(user_dir),"bbport-content-test-");
+    assert(created==0);
     Module load=GET(Module,"g8cM39EUZ6o#M#N");
     Module loaded=GET(Module,"fMP5NHUOaMk#M#N");
     Module unload=GET(Module,"eR2bZFAAU0Q#M#N");
@@ -62,7 +64,7 @@ int main(int argc,char **argv) {
     for (unsigned i=0;i<sizeof(entries);++i) assert(entries[i]==0xaa);
     assert((uint32_t)list(0,NULL,0,NULL)==0x80d90002);
     /* <user>/addcont/<title>/<label>: reported installed (The Old Hunters' entitlement). */
-    char path[160];
+    char path[640];
     snprintf(path,sizeof(path),"%s/addcont",user_dir); assert(!mkdir(path,0755));
     snprintf(path,sizeof(path),"%s/addcont/CUSA00900",user_dir); assert(!mkdir(path,0755));
     snprintf(path,sizeof(path),"%s/addcont/CUSA00900/SPEXPANSIONDLC03",user_dir); assert(!mkdir(path,0755));
