@@ -64,6 +64,12 @@ const RuntimeApi& runtime();
 void runtime_start();
 // BYE + UPnP unmap; idempotent; bounded.
 void runtime_shutdown();
+// The Party tab's Leave (background): BYE and the link stops (host: the party ends; guest: no
+// more reconnects); the crash marker goes (no automatic rejoin after a crash). UPnP stays.
+void runtime_leave();
+// The Party tab's Rejoin: 0 the link is up (nothing done: the caller rings), 1 reconnecting now,
+// 2 a fresh link is starting (after Leave or a rejection; same config and codes), -1 nothing to do.
+int runtime_rejoin();
 RuntimeStatus runtime_status();
 // One line for the overlay / status: "party host Hunter0: hosting :47600, 2/3 (Hunter1 3 ms)".
 std::string party_status_line();
