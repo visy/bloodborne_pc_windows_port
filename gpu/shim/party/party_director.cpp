@@ -7,6 +7,7 @@
 #include "coop_hooks.h"
 #include "game_state.h"
 #include "lua_events.h"
+#include "party_fourp.h"
 #include "party_link.h"
 #include "party_travel.h"
 #include "seamless_rules.h"
@@ -439,6 +440,7 @@ void CoopTick() {
     PartyDirector::Get().Tick();
     TravelTick();        // B1 guest replay (party_travel.h)
     SeamlessRulesTick(); // A6 param rules, EMEVD filter stats (seamless_rules.h)
+    fourp::FourpTick();  // 4-player rules: the party's max players (party_fourp.h)
 }
 
 void PartyInit(unsigned char* image, std::uint64_t size) {
@@ -448,6 +450,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     }
     LuaEventsInit();
     SeamlessRulesInit(); // A6: party patch report, EMEVD filter (seamless_rules.h)
+    fourp::FourpInit();  // 4-player parties: H1-H4, E6, P5 (party_fourp.h)
     PartyDirector::Get().ConfigureFromEnv();
     InstallTravelPatches(); // B1: Dream gate + travel hooks (byte-verified)
     g_tick_installed = HookPrologue(kFlipperUpdate,

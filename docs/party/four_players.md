@@ -126,3 +126,36 @@ guard each write.
 - **Lua bytecode** `Lua_MultiDoping` in global_event.lua has the same ==1/==2 branches; if the
   engine ever runs the bytecode instead of 0x138bc70 (L: it runs the native one), H3 does not
   cover it — H4 still turns 7501 into 7502 but 3 coop would hit "No Doping".
+
+## 7. Implementation (gpu/shim/party/party_fourp.{h,cpp})
+
+`coop::fourp::FourpInit()` (PartyInit, after HooksInit and SeamlessRulesInit, before the game
+runs) and `FourpTick()` (CoopTick). Installed whenever `BB_PARTY` is set and `BB_PARTY_FOURP` is
+not `0`; every site is compared with the 1.09 bytes first and logged (`Party 4p: ...`,
+`Coop hooks: 4p ...`).
+
+| Id | How | Gate at run time |
+|---|---|---|
+| H1 | `ReplacePrologue(0x186fe40, 55 48 89 e5 41 57 41 56 41 55 41 54 53)`; after the original, `out+4 == 2` and Σ `0x18796c0(sel, k)` (k = 7, 1, 0x15, 0x16, 0x17) < max players - 1 → `out+4 = 0` | max players in force >= 4 |
+| H2 | `HookCallSite(0x17bf187 → 0x15bdc20)`: `min(count, 2)` | none (identity with <= 2 cooperators) |
+| H3 | `PatchBytes(0x138bcbf, 83 f8 02 75 32 → 83 f8 02 7c 32)` | none (identity with <= 2) |
+| H4 | `ReplacePrologue(0x18c6db0, same 13 bytes)` → asm stub `bb_fourp_spfx_stub`: esi 7501 and `0x15bdc20(slots) >= 3` (asked only with WorldChrMan, its player, SprjSessionManager and the slot table present) → esi 7502; rdi..r11 and xmm0-7 saved, stack argument untouched, tail jump to the trampoline | none (>= 3 cooperators only exist through H1) |
+| E6 | EMEVD dispatch filter (seamless_rules `SetEmevdRewriter` + `EnsureEmevdFilter`, installed even with `BB_PARTY_SEAMLESS=0`): 3[29] args `[g][0][3][2]` in events `xx04400..xx04406` / 12906962 → count byte 3; reverted (only bytes it wrote) when max players drops below 4 | max players >= 4 |
+| P5 | `PatchBytes(0x1e97770, b9 02 00 00 00 → b9 03 00 00 00)` | local `BB_PARTY_MAX >= 4` at boot (cosmetic, server only) |
+
+Switches: `BB_PARTY_FOURP=0` (nothing), `BB_PARTY_FOURP_SCALING=0` (no H2-H4),
+`BB_PARTY_FOURP_NPC_SIGNS=0` (no E6), `BB_PARTY_FOURP_RECRUIT=0` (no P5).
+
+**Max players and the version check.** The rule tag (`4p:off` / `4p:v1:H1,H2,H3,H4,E6`) and the
+max players are part of the party identity: a guest whose tag or `BB_PARTY_MAX` differs from the
+host's is rejected with a reason naming both values. Every player therefore runs the same max
+players; the host's value additionally arrives in WELCOME and `FourpTick` applies it on a
+connected guest (`EffectiveMaxPlayers`), so H1/E6 follow the host even if that check is ever
+relaxed. WELCOME arrives at the title screen (the network starts there), before a world loads.
+
+**Network layers with 3 guests.** PartyLink slots 1..3 (max players clamped 2..4), the host
+service's Matching2 room cap `min(game MaxMembers 5, BB_PARTY_MAX)` = 4, per-guest event pumps,
+signaling and the vport tables are maps without fixed sizes (tests: `party-link-test`
+"four players", `party-host-test` run with `BB_PARTY_MAX=4`). Known gaps: a room of 4 leaves no
+slot for an invader (host + 3 + invader needs a cap of 5); guest-to-guest traffic is a direct
+mesh with no fallback through the host relay (more likely to matter with 3 guest-guest links).

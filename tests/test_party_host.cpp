@@ -715,6 +715,34 @@ static void test_remote_guest() {
     std::printf("remote guest seam: ok\n");
 }
 
+// BB_PARTY_MAX=4 (a separate run: party_max_members() is read once): host + 3 guests in one room,
+// every member hears the others' joins, a 4th guest is refused.
+static void test_service_four() {
+    PartyHostService s;
+    std::int64_t now = 1000000;
+    s.set_clock([&] { return now; });
+    const char* ids[] = {"Host", "G1", "G2", "G3", "G4"};
+    for (const char* id : ids)
+        call(s, id, "context_start", obj({{"OnlineId", id}, {"SignalingAddr", "127.0.0.1"}, {"SignalingPort", 9307}}));
+    json::Value made = call(s, "Host", "create_room", obj({{"OnlineId", "Host"}, {"MaxMembers", 5}}));
+    CHECK(int_of(made, "ResKind", -1) == 0);
+    const long long room = int_of(made, "RoomId", 0);
+    for (int i = 1; i <= 3; ++i) {
+        json::Value j = call(s, ids[i], "join_room", obj({{"OnlineId", ids[i]}, {"RoomId", room}}));
+        CHECK(int_of(j, "ResKind", -1) == 0 && int_of(j, "MemberId", 0) == i + 1);
+        CHECK(j.find("Members") && j.find("Members")->array.size() == static_cast<std::size_t>(i));
+    }
+    json::Value j4 = call(s, "G4", "join_room", obj({{"OnlineId", "G4"}, {"RoomId", room}}));
+    CHECK(int_of(j4, "ResKind", 0) != 0 && str_of(j4, "Error") == "Room full");
+    auto he = events(s, "Host");
+    CHECK(he.size() == 3 && has_event(he, "room_member_joined", 2) && has_event(he, "room_member_joined", 3) &&
+          has_event(he, "room_member_joined", 4));
+    CHECK(events(s, "G1").size() == 2 && events(s, "G2").size() == 1 && events(s, "G3").empty());
+    PartyHostService::RoomView rv;
+    CHECK(s.room(static_cast<std::uint64_t>(room), &rv) && rv.members.size() == 4);
+    std::printf("  four players: room of %zu, 4th guest refused\n", rv.members.size());
+}
+
 int main() {
     const std::uint16_t party_port = static_cast<std::uint16_t>(41000 + (std::rand() % 500));
     char port_text[16];
@@ -739,11 +767,15 @@ int main() {
     std::memcpy(&netman[0xaac], pos, sizeof(pos));
     bbnet_set_image(image.data(), image.size());
 
+    if (bbnet::party::party_max_members() == 4) {
+        test_service_four();  // BB_PARTY_MAX=4 run; the other cases assume the default 3
+    } else {
     test_service();
     test_remote_guest();
     test_matching2_host();
     test_from_api();
     test_matching2_leave_and_join();
+    }
 
     if (g_failures) {
         std::fprintf(stderr, "party-host-test: %d failure(s)\n", g_failures);
