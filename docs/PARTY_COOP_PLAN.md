@@ -62,7 +62,8 @@ Bell events (main thread only, through LuaEvent_DispatchByName): host `OnEvent_C
 
 - Every `sceNet* sceNetCtl* sceHttp* sceSsl* sceNp*` import goes through
   `runtime_services_resolve` (src/runtime_services.c); no network module is LLE. With `BB_PARTY`
-  set, names (except NpTrophy/Commerce/ProfileDialog/Score) resolve to a new C++ library in
+  on (one rule everywhere - gpu/party_env.h, scripts/party_env.py, run.bat: unset, empty, 0, off,
+  false, no = off), names (except NpTrophy/Commerce/ProfileDialog/Score) resolve to a new C++ library in
   `gpu/shim/net/` + `gpu/shim/party/` (sysv_abi functions), else the offline stubs.
 - bbhost's `net/session.h` server seam: replace its HTTP `np_post` with `PartyTransport`
   (`LocalHost` in-process on the host, `RemoteGuest` RPC over PartyLink on guests).
@@ -195,6 +196,28 @@ A crashed player (guest or host) must end up back in the party without doing any
    (then every 8 s, +-20 %). Harness
    run (--crash-instance 0): guest back on slot 1 by token 7.1 s after the kill, same code.
 6. Progress made meanwhile is caught up by the progress sync (C2) on return.
+7. Stuck half-join (host session watchdog, `party_watchdog.{h,cpp}`, `party-watchdog-test`): a
+   guest killed while it joins (at client(6), before the host's cooperator count moved) has been
+   seen to leave the host in host(3) with 0 cooperators for minutes - the restarted guest gets
+   the invite and the P2P handshake, never the 267-byte world data. A host in its world with 0
+   cooperators now stops its session when nobody is home or on the way in for 25 s
+   (`BB_PARTY_HOST_GONE_S`), a joining member (Joining / Loading / InHostWorld) makes no roster
+   progress for 60 s (`_STALL_S`), a home member is not invited for 90 s (`_WAIT_S`; a normal
+   invite took 26 s in the harness), or after 240 s in all (`_HARD_S`); `BB_PARTY_HOST_WATCHDOG=0`
+   turns it off. The stop calls the game's own leave helper 0x13CDDA0 on the main thread
+   (byte-checked): BeginLeaveSession 0x1ED07A0 (role 7, matching stop task with reason
+   0xFF000023 via 0xC8ED70, leave step at +0x280) then 0x15BED10(network flow +0x16F8), which
+   disables every phantom still in the presentation table - the sequence of OnLeaveMenu_Yes
+   0x1389FB0 / OnMatchingCheck 0x13808B0 / OnReviveMagic. The director then rings again at once.
+   Harness (2026-10-10): `BB_PARTY_HOST_TEST_STOP_S=4` stops the host 4 s after the guest entered
+   client(6) with its phantom half loaded (session peers 2, presentation count 2): host(3) ->
+   leaving(7) -> idle in 0.6 s, 2.1 s later peers 0 and presentation count 1 (the stale phantom
+   dropped); the guest went home by itself (client -> idle, own world reloaded), the host
+   re-hosted and the guest was a cooperator again 54 s after the stop. Normal joins with the
+   watchdog on: no stop (16 s from the room to the cooperator). In two `--crash-instance 1
+   --crash-when 'client \(6'` runs the host's game ended the half-joined room by itself (32 s
+   after the kill) and the guest was back in 57 s after the kill; the stuck case did not
+   reproduce there, so the watchdog is the safety net for it.
 Test: kill a guest instance mid-session in the local harness; verdict = back in the host's world
 within ~60 s with no input.
 

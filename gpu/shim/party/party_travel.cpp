@@ -546,8 +546,11 @@ HostTravelQueue g_host_queue; // under g_host_mu
 std::atomic<double> g_host_left_at{0};
 bool g_host_load_seen = false;
 
-constexpr u64 kBeginLeaveSession = 0x1ed07a0; // bool (SprjSessionManager*): role -> 7, LeaveRoom
-using LeaveFn = u8(BB_COOP_SYSV*)(u64);
+// 0x13CDDA0: BeginLeaveSession(SprjSessionManager) 0x1ED07A0 (role -> 7, LeaveRoom), then
+// 0x15BED10(network flow +0x16F8) - the game's own leave idiom (the funnel's, OnLeaveMenu_Yes's);
+// the host watchdog (party_director.cpp) uses the same helper.
+constexpr u64 kLeaveSessionAndDrop = 0x13cdda0;
+using LeaveFn = void(BB_COOP_SYSV*)();
 
 /// Host, main thread: after its own travel the game keeps the room through the load (the
 /// "Keep session on map reload" patch retargets the stage destructor's stop, 0x19471B1), and the
@@ -590,7 +593,13 @@ void HostCloseEmptyRoom() {
     }
     g_host_left_at = 0;
     g_host_load_seen = false;
-    const bool ok = full.session_man && reinterpret_cast<LeaveFn>(Guest(kBeginLeaveSession))(full.session_man) != 0;
+    static const bool code_ok = Matches(kLeaveSessionAndDrop, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x53, 0x50, 0x48,
+                                                               0x8b, 0x05, 0xc7, 0x88, 0x18, 0x04}) &&
+                                CallsTo(kLeaveSessionAndDrop + 0x55, 0x1ed07a0);
+    if (code_ok) {
+        reinterpret_cast<LeaveFn>(Guest(kLeaveSessionAndDrop))();
+    }
+    const bool ok = code_ok && ReadGameState(false).session_role != 3; // leaving (7), or idle at once
     Log("host travel: arrived %.1f s after the warp with an empty room: leave %s", now - at,
         ok ? "started (bell next)" : "refused");
 }
@@ -1039,6 +1048,15 @@ void TravelTick() {
 
 bool TravelEnabled() {
     return g_travel_on.load();
+}
+
+bool ReplayTravelNow(const TravelIntent& t) {
+    if (!g_travel_on.load()) {
+        return false;
+    }
+    const ReplayPlan p = ChooseReplay(t);
+    Log("replay now %s via %s", DescribeTravel(t).c_str(), ReplayMethodName(p.method));
+    return Replay(t, p);
 }
 
 void SetGuestDeathRedirect(std::uint32_t host_lamp_id) {

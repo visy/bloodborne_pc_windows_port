@@ -3,6 +3,8 @@
 // the 1.09 eboot (capstone over out/eboot.elf); each install compares the bytes first.
 #include "party_fourp.h"
 
+#include "../../party_env.h"
+
 #include <cstdlib>
 #include <cstring>
 
@@ -18,6 +20,7 @@
 #include <cstdio>
 #include <mutex>
 #include <set>
+#include <string>
 #endif
 
 namespace coop::fourp {
@@ -35,8 +38,7 @@ bool EnvIsZero(const char* name) {
 
 Config ConfigFromEnv() {
     Config c;
-    const char* party = std::getenv("BB_PARTY");
-    c.on = party && party[0] && !EnvIsZero("BB_PARTY_FOURP");
+    c.on = bb_party_enabled() && !EnvIsZero("BB_PARTY_FOURP");
     c.scaling = !EnvIsZero("BB_PARTY_FOURP_SCALING");
     c.npc_signs = !EnvIsZero("BB_PARTY_FOURP_NPC_SIGNS");
     c.recruit = !EnvIsZero("BB_PARTY_FOURP_RECRUIT");
@@ -158,6 +160,41 @@ using CountKindFn = i32(BB_COOP_SYSV*)(u64 sel, i32 kind);
 using CountFn = i32(BB_COOP_SYSV*)(u64 slots);
 SummaryFn g_summary_original = nullptr;
 
+// The game's cooperator count without the world checks' cost: set by FourpTick (main thread).
+std::atomic<int> g_coop_now{-1};
+int CooperatorsNowFast() {
+    return g_coop_now.load(std::memory_order_relaxed);
+}
+
+// H1 diagnostics: what the summary holds next to the per-kind counts (status 3 unavailable, 0
+// free, 2 used at +4 / +0x10 / +0x1c / +0x28; +0x33 members counted) and the game's cooperator
+// count, each time that shape changes (first 40). The lift counts on the per-kind sum; this shows
+// whether one phantom is counted under two kinds.
+std::mutex g_shape_mu;
+std::string g_shape_last;
+int g_shape_logs = 0;
+void LogSummaryShape(u64 out, const i32 per_kind[5], int coop_now) {
+    i32 st[4] = {-1, -1, -1, -1};
+    u8 total = 0xff;
+    SafeGet(out + 4, &st[0]);
+    SafeGet(out + 0x10, &st[1]);
+    SafeGet(out + 0x1c, &st[2]);
+    SafeGet(out + 0x28, &st[3]);
+    SafeGet(out + 0x33, &total);
+    char b[200];
+    std::snprintf(b, sizeof b,
+                  "status rec0..3 %d %d %d %d, counted %u; kinds 7:%d 1:%d 0x15:%d 0x16:%d 0x17:%d; game cooperators %d",
+                  st[0], st[1], st[2], st[3], total, per_kind[0], per_kind[1], per_kind[2], per_kind[3], per_kind[4],
+                  coop_now);
+    std::lock_guard<std::mutex> lk(g_shape_mu);
+    if (g_shape_logs >= 40 || g_shape_last == b) {
+        return;
+    }
+    g_shape_last = b;
+    ++g_shape_logs;
+    Log("H1 summary: %s", b);
+}
+
 // H1
 BB_COOP_SYSV u64 SlotSummary(u64 out, u64 sel, u64 dbg) {
     const u64 r = g_summary_original(out, sel, dbg);
@@ -172,13 +209,26 @@ BB_COOP_SYSV u64 SlotSummary(u64 out, u64 sel, u64 dbg) {
     }
     const auto count_kind = reinterpret_cast<CountKindFn>(Guest(kCountKind));
     int coop = 0;
+    i32 per_kind[5] = {};
+    int k = 0;
     for (const i32 kind : {7, 1, 0x15, 0x16, 0x17}) {
-        coop += count_kind(sel, kind);
+        per_kind[k] = count_kind(sel, kind);
+        coop += per_kind[k++];
     }
+    // The per-kind sum counts one more than the phantoms in the world (live, 3 instances: kind 7
+    // = 2 with 1 cooperator, 3 with 2), so with 2 cooperators it never let the 3rd in. The
+    // game's own cooperator count (0x15bdc20, read by FourpTick) decides; the sum minus one
+    // only while that is not known yet.
+    const int coop_now = CooperatorsNowFast();
+    LogSummaryShape(out, per_kind, coop_now);
+    coop = coop_now >= 0 ? coop_now : coop - 1;
     if (LiftCoopSlot(rec0, coop, max)) {
         const i32 free_status = 0;
-        if (SafeWrite(out + 4, &free_status, 4) && g_h1_lifts.fetch_add(1) == 0) {
-            Log("H1: a 3rd cooperator slot opened (%d cooperators, max players %d)", coop, max);
+        static std::atomic<int> logged_coop{-1};
+        g_h1_lifts.fetch_add(1, std::memory_order_relaxed);
+        if (SafeWrite(out + 4, &free_status, 4) && logged_coop.exchange(coop) != coop) {
+            Log("H1: a cooperator slot opened (%d cooperators in the world, kind counts %d, max players %d)", coop,
+                per_kind[0] + per_kind[1] + per_kind[2] + per_kind[3] + per_kind[4], max);
         }
     }
     return r;
@@ -334,8 +384,7 @@ void FourpInit() {
     g_cfg = ConfigFromEnv();
     g_max.store(g_cfg.local_max);
     if (!g_cfg.on) {
-        const char* p = std::getenv("BB_PARTY");
-        Log("off (%s); rules tag %s", p && p[0] ? "BB_PARTY_FOURP=0" : "BB_PARTY not set", RulesTag(g_cfg).c_str());
+        Log("off (%s); rules tag %s", bb_party_enabled() ? "BB_PARTY_FOURP=0" : "BB_PARTY off", RulesTag(g_cfg).c_str());
         return;
     }
     if (!Image()) {
@@ -407,6 +456,11 @@ void FourpTick() {
             guest && connected ? "the host's setting" : "local BB_PARTY_MAX");
     }
     const auto now = Clock::now();
+    static Clock::time_point coop_read{};
+    if (now - coop_read >= std::chrono::milliseconds(500)) {
+        coop_read = now;
+        g_coop_now.store(CooperatorsNow(), std::memory_order_relaxed);
+    }
     if (now - g_tick.last_log >= std::chrono::seconds(30)) {
         g_tick.last_log = now;
         const u64 h1 = g_h1_lifts.load(), h2 = g_h2_clamps.load(), h4 = g_h4_upgrades.load(),

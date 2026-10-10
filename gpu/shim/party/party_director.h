@@ -14,7 +14,9 @@
 // roster state is Prologue, so the host does not ring for that member either. Once ready, in its
 // own world, the player gets the bells it lacks (BB_PARTY_GRANT_BELLS, default on).
 //
-// Env: BB_PARTY=host|join|<code> (role: host when "host" or BB_PARTY_HOST=1, else guest),
+// Env: BB_PARTY=host|join|<code> (role: host when "host" or BB_PARTY_HOST=1, else guest; unset, empty,
+//        0, off, false, no = off: gpu/party_env.h),
+//      BB_PARTY_HOST_WATCHDOG / _STALL_S / _GONE_S / _HARD_S: the host session watchdog (party_watchdog.h),
 //      BB_PARTY_MAX (2..4, default 3), BB_PARTY_RING_EVERY (s, default 30),
 //      BB_PARTY_AUTO=0 (no automatic bells: state tracking and logs only),
 //      BB_PARTY_START=prologue_solo (default) | immediate, BB_PARTY_GRANT_BELLS=0 (no bell grants),

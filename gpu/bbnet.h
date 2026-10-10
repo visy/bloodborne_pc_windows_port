@@ -12,7 +12,7 @@ void bbnet_configure(const char *app0, const char *user_dir);
 /* The loaded eboot image (bbgpu_patch_image passes the loader's pointer and size): the party
  * code reads and writes game data through it (the Matching2 signaling gate, FrpgNetMan). */
 void bbnet_set_image(void *image, uint64_t size);
-/* 1 when BB_PARTY is set (non-empty). */
+/* 1 when BB_PARTY turns party mode on (gpu/party_env.h: unset, empty, 0, off, false, no = off). */
 int bbnet_party_enabled(void);
 /* Function for an import, given its symbol name ("sceNetSocket") or scoped NID ("NID#L#M",
  * translated with runtime_symbol), or 0: always 0 without BB_PARTY, for NpTrophy, NpCommerce,

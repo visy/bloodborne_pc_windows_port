@@ -9,6 +9,8 @@
 // Every offset was checked against our 1.09 eboot (docs/party/seamless_rules.md).
 #include "seamless_rules.h"
 
+#include "../../party_env.h"
+
 #include "coop_hooks.h"
 #include "game_state.h"
 #include "party_phantom.h"
@@ -493,8 +495,7 @@ double Seconds(Clock::time_point a, Clock::time_point b) {
 } // namespace
 
 bool SeamlessRequested() {
-    const char* p = std::getenv("BB_PARTY");
-    return p && p[0] && !EnvOff("BB_PARTY_SEAMLESS");
+    return bb_party_enabled() && !EnvOff("BB_PARTY_SEAMLESS");
 }
 
 void SeamlessRulesInit() {
