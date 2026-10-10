@@ -307,10 +307,22 @@ bool MenuScript::Parse(const std::string& text, std::string* bad) {
         std::string tok = text.substr(a, e - a);
         a = e + 1;
         if (tok.empty()) continue;
-        Press p{0, false, tok};
-        if (tok[0] == '+') {
+        Press p{0, false, tok, std::string(), false};
+        if (tok[0] == '?') {
+            p.optional = true;
+            tok.erase(0, 1);
+        }
+        if (!tok.empty() && tok[0] == '+') {
             p.new_screen = true;
             tok.erase(0, 1);
+        }
+        if (const std::size_t at = tok.find('@'); at != std::string::npos) {
+            p.text = tok.substr(at + 1);
+            tok.erase(at);
+            if (p.text.empty()) {
+                if (bad) *bad = p.name;
+                return false;
+            }
         }
         p.buttons = tok == "cross" ? kPadCross : tok == "circle" ? kPadCircle : tok == "square" ? 0x8000u
                   : tok == "triangle" ? 0x1000u : tok == "up" ? kPadUp : tok == "down" ? kPadDown
@@ -324,8 +336,10 @@ bool MenuScript::Parse(const std::string& text, std::string* bad) {
     return true;
 }
 
-std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen_quiet, std::string* log) {
+std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen_quiet, std::string* log,
+                               const std::function<double(const std::string&)>& text_seen) {
     if (log) log->clear();
+    if (stuck_) return 0;
     if (holding_) {
         if (t < until_) return steps_[next_ - 1].buttons == kWait ? 0 : steps_[next_ - 1].buttons;
         holding_ = false;
@@ -334,6 +348,31 @@ std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen
     }
     if (next_ >= steps_.size() || t < until_) return 0;
     const Press& p = steps_[next_];
+    if (!p.text.empty()) {
+        if (wait_from_ < 0) wait_from_ = t;
+        const double seen = text_seen ? text_seen(p.text) : -1.0;
+        const bool on_screen = seen > pressed_at_ && t - seen <= 0.5;
+        if (!on_screen) {
+            text_since_ = -1;
+        } else if (text_since_ < 0) {
+            text_since_ = t;
+        }
+        if (!on_screen || t - text_since_ < 0.4) {
+            if (p.optional && t - wait_from_ >= 3.0) {
+                if (log) *log = "step " + std::to_string(next_ + 1) + "/" + std::to_string(steps_.size()) + ": " +
+                                p.name + " skipped (no '" + p.text + "' in 3 s)";
+                ++next_;
+                wait_from_ = -1;
+                return 0;
+            }
+            if (t - wait_from_ >= 10.0) {
+                stuck_ = true;
+                if (log) *log = "STUCK at step " + std::to_string(next_ + 1) + ": no '" + p.text + "' in 10 s";
+            }
+            return 0;
+        }
+        text_since_ = -1;
+    }
     if (p.new_screen) {
         if (wait_from_ < 0) wait_from_ = t;
         const bool built = screen_seq != mark_ && screen_quiet >= 0.3;
@@ -343,6 +382,7 @@ std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen
     wait_from_ = -1;
     ++next_;
     mark_ = screen_seq;
+    pressed_at_ = t;
     holding_ = true;
     until_ = t + (p.buttons == kWait ? 2.5 : 0.12);
     if (log) *log += "step " + std::to_string(next_) + "/" + std::to_string(steps_.size()) + ": " + p.name;

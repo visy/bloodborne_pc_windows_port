@@ -8,6 +8,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <string>
 
 using namespace coop;
@@ -381,6 +382,110 @@ void TestMenuScriptRitual() {
     CHECK(ms.Parse("+cross/wait/+left/cross") && ms.size() == 4);
 }
 
+// ---- MenuScript with texts (seen live: a first-time tutorial message before the altar menu, and
+// screens whose count differs from the plan shift every '+' step). Each step waits for its screen's
+// own text. ----
+struct AltarModel {
+    enum S { None, Tutorial, Menu, ChaliceList, Ritual, Confirm, Done, Cancelled } s = None;
+    bool tutorial = true, yes = false;
+    double ready_at = 0, built_at = 0, held_since = -1;
+    std::uint32_t last = 0;
+    std::map<std::string, double> seen;  // text -> last lookup time
+    const char* Text() const {
+        switch (s) {
+        case Tutorial: return "Use the Ritual Altar to create a Chalice Dungeon with a chalice ritual";
+        case Menu: return "Chalice Ritual|Chalice Dungeon Search|Search for Chalice Glyph";
+        case ChaliceList: return "Chalice Ritual|Select chalice to use in ritual.";
+        case Ritual: return "Chalice Ritual|Basic materials|Conduct Chalice Ritual to create Chalice Dungeon.";
+        case Confirm: return "Conduct a ritual to create a Chalice Dungeon?|Basic materials";
+        default: return "";
+        }
+    }
+    void Go(S n, double t, double build) {
+        s = n;
+        ready_at = t + build;
+        built_at = t + build - 0.1;
+    }
+    void Tick(double t, std::uint32_t held) {
+        if (t >= built_at) {
+            std::string all = Text(), part;
+            for (std::size_t a = 0; a <= all.size();) {
+                std::size_t e = all.find('|', a);
+                if (e == std::string::npos) e = all.size();
+                if (e > a) seen[all.substr(a, e - a)] = t;
+                a = e + 1;
+            }
+        }
+        const std::uint32_t down = held & ~last;
+        last = held;
+        if (held & kPadLeft) {
+            if (held_since < 0) held_since = t;
+            if (t - held_since >= 0.2 && s == Confirm && t >= ready_at) {
+                yes = !yes;
+                held_since = t;
+            }
+        } else {
+            held_since = -1;
+        }
+        if (!down || t < ready_at) return;
+        switch (s) {
+        case None: if (down & kPadCross) Go(tutorial ? Tutorial : Menu, t, 0.6); break;
+        case Tutorial: if (down & kPadCross) Go(Menu, t, 0.5); break;
+        case Menu:
+            if (down & kPadLeft) s = Cancelled;  // a stray Left: off the Ritual row
+            if (down & kPadCross) Go(ChaliceList, t, 1.2);
+            break;
+        case ChaliceList:
+            if (down & kPadLeft) s = Cancelled;  // seen live: Left switched the chalice tab
+            if (down & kPadCross) Go(Ritual, t, 1.0);
+            break;
+        case Ritual: if (down & kPadCross) { Go(Confirm, t, 3.0); yes = false; } break;
+        case Confirm:
+            if (down & kPadLeft) yes = !yes;
+            if (down & kPadCross) s = yes ? Done : Cancelled;
+            break;
+        default: break;
+        }
+    }
+};
+
+AltarModel::S RunAltar(const char* script, bool tutorial) {
+    AltarModel m;
+    m.tutorial = tutorial;
+    MenuScript ms;
+    CHECK(ms.Parse(script));
+    auto seen = [&](const std::string& needle) {
+        double best = -1;
+        for (const auto& [text, at] : m.seen)
+            if (text.find(needle) != std::string::npos && at > best) best = at;
+        return best;
+    };
+    for (double t = 0; t < 90; t += 1.0 / 30) {
+        std::string log;
+        const std::uint32_t held = ms.Step(t, 0, 1e9, &log, seen);
+        if (std::getenv("NEWGAME_TEST_VERBOSE") && !log.empty()) std::printf("  %6.2f s %s\n", t, log.c_str());
+        m.Tick(t, held);
+        if (m.s == AltarModel::Done || m.s == AltarModel::Cancelled || ms.finished()) {
+            for (int k = 0; k < 120; ++k) m.Tick(t += 1.0 / 30, 0);
+            break;
+        }
+    }
+    return m.s;
+}
+
+void TestMenuScriptTexts() {
+    const char* script = "cross/?cross@Use the Ritual Altar/cross@Chalice Dungeon Search/cross@Select chalice/"
+                         "cross@Basic materials/left@Conduct a ritual to create a Chalice Dungeon?/cross";
+    CHECK(RunAltar(script, true) == AltarModel::Done);   // with the first-time tutorial message
+    CHECK(RunAltar(script, false) == AltarModel::Done);  // without it (skipped after 3 s)
+    // The previous '+' script miscounts screens when the tutorial shows up.
+    CHECK(RunAltar("cross/+cross/+cross/+cross/+left/cross", true) != AltarModel::Done);
+    MenuScript ms;
+    CHECK(ms.Parse("?cross@Use the/left@a b?") && ms.size() == 2);
+    std::string bad;
+    CHECK(!ms.Parse("cross@", &bad));
+}
+
 } // namespace
 
 int main() {
@@ -391,6 +496,7 @@ int main() {
     TestSaveWithCharacterFade();
     TestSaveWithCharacterSlowLoad();
     TestMenuScriptRitual();
+    TestMenuScriptTexts();
     TestControlsCrossIgnoredOnce();
     TestMissedPresses();
     TestWarpParse();

@@ -982,14 +982,19 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
                 std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
             std::string line;
             const double secs = std::chrono::duration<double>(now.time_since_epoch()).count();
-            runtime_pad_director_press(t.st_seq.Step(secs, seq, seq ? double(now_ms - last_ms) / 1000.0 : 1e9, &line));
+            const std::uint32_t held = t.st_seq.Step(
+                secs, seq, seq ? double(now_ms - last_ms) / 1000.0 : 1e9, &line, [](const std::string& text) {
+                    const std::int64_t ms = BbGameMenu::TextSeenMs(text.c_str());
+                    return ms > 0 ? double(ms) / 1000.0 : -1.0;
+                });
+            runtime_pad_director_press(held);
             if (!line.empty()) {
                 Log("test: seq %s (texts seq %llu)", line.c_str(), static_cast<unsigned long long>(seq));
             }
             if (t.st_seq.finished()) {
                 runtime_pad_director_press(0);
                 t.stand_done = true;
-                Log("test: seq done");
+                Log("test: seq %s", t.st_seq.stuck() ? "STUCK" : "done");
             }
         }
     }

@@ -34,6 +34,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <initializer_list>
 #include <string>
 #include <vector>
@@ -104,26 +105,35 @@ private:
 
 /// A scripted menu walk for test fixtures (BB_PARTY_DIRECTOR_TEST stand=...,seq=...): one token
 /// per press, '/'-separated: cross, circle, square, triangle, up, down, left, right, wait (a 2.5 s
-/// pause). A '+' prefix waits for a NEW screen or dialog first (TextActivity: texts the game had not
-/// looked up since the previous press, then quiet for 0.3 s; 8 s at most, then pressed anyway and
-/// logged). Each press is held 0.12 s (menus auto-repeat a held direction: 0.25 s moved a 2-item
-/// dialog twice) and the next one goes no sooner than 0.6 s after the release.
+/// pause). `button@text` waits until a message text containing `text` (ASCII, case-insensitive) is
+/// on screen - looked up after the previous press and still being looked up - for 0.4 s, then
+/// presses (10 s at most, then the script stops: STUCK). A '?' prefix makes such a step optional: no
+/// text in 3 s -> skipped without a press (a first-time tutorial message). A '+' prefix waits for any
+/// new screen (TextActivity; 8 s at most). Each press is held 0.12 s (menus auto-repeat a held
+/// direction: 0.25 s moved a 2-item dialog twice), the next one no sooner than 0.6 s after it.
 class MenuScript {
 public:
     static constexpr std::uint32_t kWait = 0xffffffffu;
     /// False (and *bad = the token) on an unknown token.
     bool Parse(const std::string& text, std::string* bad = nullptr);
-    bool finished() const { return next_ >= steps_.size() && !holding_; }
+    bool finished() const { return stuck_ || (next_ >= steps_.size() && !holding_); }
     std::size_t size() const { return steps_.size(); }
     /// Once a tick; the buttons to hold now. `log` gets a line when a press starts.
-    std::uint32_t Step(double t, std::uint64_t screen_seq, double screen_quiet, std::string* log);
+    /// `text_seen(text)`: the last time (t units) a text containing `text` was looked up, < 0 never.
+    std::uint32_t Step(double t, std::uint64_t screen_seq, double screen_quiet, std::string* log,
+                       const std::function<double(const std::string&)>& text_seen = {});
+    bool stuck() const { return stuck_; }
 
 private:
     struct Press {
         std::uint32_t buttons;
         bool new_screen;
         std::string name;
+        std::string text;   ///< @text: wait for it
+        bool optional = false;
     };
+    bool stuck_ = false;
+    double pressed_at_ = -1e9, text_since_ = -1;
     std::vector<Press> steps_;
     std::size_t next_ = 0;
     bool holding_ = false;
