@@ -8,6 +8,7 @@
 #include "game_state.h"
 #include "lua_events.h"
 #include "party_link.h"
+#include "party_travel.h"
 #include "seamless_rules.h"
 
 #include <atomic>
@@ -381,6 +382,14 @@ void PartyDirector::Tick() {
             link->set_local_state(ms, map);
         }
     }
+    // B1: the host's warps go to every guest (reliable: replayed to a member who reconnects).
+    if (link && role == PartyRole::Host) {
+        TravelIntent t;
+        while (PopHostTravel(&t)) {
+            link->send_event(party::kBroadcast, kTravelEventName, TravelToJsonText(t));
+            Log("travel #%llu (%s) sent to the party", static_cast<unsigned long long>(t.seq), TravelKindName(t.kind));
+        }
+    }
     if (st.test.on) {
         RunTest(st, s, now);
         if (st.test.log_state && Seconds(st.last_log, now) >= 5.0) {
@@ -428,6 +437,7 @@ bool PartyRequested() {
 void CoopTick() {
     LuaEventsTick();
     PartyDirector::Get().Tick();
+    TravelTick();        // B1 guest replay (party_travel.h)
     SeamlessRulesTick(); // A6 param rules, EMEVD filter stats (seamless_rules.h)
 }
 
@@ -439,6 +449,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     LuaEventsInit();
     SeamlessRulesInit(); // A6: party patch report, EMEVD filter (seamless_rules.h)
     PartyDirector::Get().ConfigureFromEnv();
+    InstallTravelPatches(); // B1: Dream gate + travel hooks (byte-verified)
     g_tick_installed = HookPrologue(kFlipperUpdate,
                                     {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48,
                                      0x83, 0xec, 0x38},

@@ -7,6 +7,7 @@
 #include "party_code.h"
 #include "party_crypto.h"
 #include "party_director.h"
+#include "party_travel.h"
 #include "upnp_win.h"
 
 #include "../net/bbnet_internal.h"
@@ -508,6 +509,13 @@ LinkCallbacks make_callbacks(bool host) {
         };
     } else {
         cb.on_event = [](int, std::uint64_t, const std::string& name, const std::string& body) {
+            if (name == coop::kTravelEventName) {  // B1: follow the host's warp
+                coop::TravelIntent t;
+                std::string err;
+                if (coop::TravelFromJsonText(body, &t, &err)) coop::RequestGuestTravel(t);
+                else plog("travel event: %s", err.c_str());
+                return;
+            }
             bbnet::party::RemoteGuest* rg = bbnet::party::remote_guest();
             const std::uint64_t id = rg ? rg->on_link_event(body) : 0;
             if (bbnet::party_trace()) plog("event %s id %llu", name.c_str(), static_cast<unsigned long long>(id));
