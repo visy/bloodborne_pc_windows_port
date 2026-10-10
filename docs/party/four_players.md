@@ -146,12 +146,14 @@ not `0`; every site is compared with the 1.09 bytes first and logged (`Party 4p:
 Switches: `BB_PARTY_FOURP=0` (nothing), `BB_PARTY_FOURP_SCALING=0` (no H2-H4),
 `BB_PARTY_FOURP_NPC_SIGNS=0` (no E6), `BB_PARTY_FOURP_RECRUIT=0` (no P5).
 
-**Max players and the version check.** The rule tag (`4p:off` / `4p:v1:H1,H2,H3,H4,E6`) and the
-max players are part of the party identity: a guest whose tag or `BB_PARTY_MAX` differs from the
-host's is rejected with a reason naming both values. Every player therefore runs the same max
-players; the host's value additionally arrives in WELCOME and `FourpTick` applies it on a
-connected guest (`EffectiveMaxPlayers`), so H1/E6 follow the host even if that check is ever
-relaxed. WELCOME arrives at the title screen (the network starts there), before a world loads.
+**Max players and the version check.** `party_runtime` sets `LinkConfig::rules` =
+`"max <BB_PARTY_MAX> players, <rule tag>"` (tag `4p:off` / `4p:v1:H1,H2,H3,H4,E6`), sent last in
+HELLO and compared by `identity_mismatch` next to eboot / gameplay patches / gameplay mods: a
+guest with another max players or rule set gets a Mismatch REJECT "party rules differ (host max 4
+players, 4p:v1:...; yours max 3 players, ...)". So every player sets the same Max players (the
+launcher tooltip says so). The host's value also arrives in WELCOME and `FourpTick` applies it on
+a connected guest (`EffectiveMaxPlayers`), so H1/E6 follow the host; WELCOME arrives at the title
+screen (the network starts there), before a world loads.
 
 **Network layers with 3 guests.** PartyLink slots 1..3 (max players clamped 2..4), the host
 service's Matching2 room cap `min(game MaxMembers 5, BB_PARTY_MAX)` = 4, per-guest event pumps,

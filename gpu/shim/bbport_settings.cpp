@@ -130,6 +130,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.gpl = i != 0;
     } else if (key == "compile_indicator") {
         v.compile_indicator = i != 0;
+    } else if (key == "party_toasts") {
+        v.party_toasts = i != 0;
     } else if (key == "menu_pos") {
         float x = -1.0f, y = -1.0f;
         if (std::sscanf(value.c_str(), "%f,%f", &x, &y) == 2 && x >= 0.0f && x <= 1.0f && y >= 0.0f &&
@@ -344,6 +346,7 @@ void Save() {
     put("async_pipelines", flag(v.async_shaders));
     put("gpl", flag(v.gpl));
     put("compile_indicator", flag(v.compile_indicator));
+    put("party_toasts", flag(v.party_toasts));
     put("fsr4_auto_exposure", flag(v.fsr4_auto_exposure));
     put("fsr4_invert_jitter", flag(v.fsr4_invert_jitter));
     // Read by patches.py at start.
