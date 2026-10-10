@@ -235,10 +235,15 @@ public:
     static SnapshotPlan PlanSnapshot(const FlagSnapshot& snap, const Policy& policy);
     /// QueueSnapshot with its plan (used by Apply while the policy is still plan.policy).
     void QueueSnapshot(const FlagSnapshot& snap, SnapshotPlan plan);
-    std::size_t Pending() const { return items_.size(); }
+    std::size_t Pending() const { return items_.size() + (held_.empty() ? 0 : 1); }
+    std::size_t Held() const { return held_.size(); }
     /// Applies everything queued. In load mode 0 nothing is applied (the queue is kept) unless
-    /// `allow_mode0`. Returns the number of flags written.
-    std::size_t Apply(const FlagStore& store, const Policy& policy, bool allow_mode0);
+    /// `allow_mode0`. Returns the number of flags written. `map_id` (load mode 0, when not
+    /// kNoMap): boss flags of that map are held back (HoldBossFlagInMode0) and written later - in
+    /// load mode 1 (the own pool, invisible to the running events) or after a load into another
+    /// map - so a catch-up never fires the map's boss-kill event (banner, music, rewards).
+    static constexpr u32 kNoMap = 0;
+    std::size_t Apply(const FlagStore& store, const Policy& policy, bool allow_mode0, u32 map_id = kNoMap);
     const Counters& counters() const { return n_; }
     const GuestCursor& cursor() const { return cursor_; }
 
@@ -252,9 +257,15 @@ private:
         SnapshotPlan plan;
     };
     std::vector<Item> items_;
+    std::vector<std::pair<u32, bool>> held_; // boss flags of the map the guest stood in (mode 0)
     GuestCursor cursor_;
     Counters n_;
 };
+
+/// A boss flag (boss_defeated) of the map `map_id` (area << 24 | block << 16) the guest stands in:
+/// written in its own world (load mode 0) the running boss event would see the kill and play it
+/// (PREY SLAUGHTERED, music, the reward branch). Flag ids TAABZnnn name their map (AA, B).
+bool HoldBossFlagInMode0(u32 id, u32 map_id);
 
 // Peer input caps (bbport security pass): a "flags" event's changes, a snapshot's blocks, the
 // guest's queue of events not applied yet.

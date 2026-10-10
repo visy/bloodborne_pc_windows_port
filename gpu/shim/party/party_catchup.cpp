@@ -15,7 +15,6 @@
 #include <cstdio>
 #include <string>
 
-extern "C" void runtime_pad_director_press(std::uint32_t buttons); // src/runtime_pad.c
 
 namespace coop {
 namespace {
@@ -47,7 +46,6 @@ bool RemoPlaying() {
 
 struct State {
     Catchup c;
-    double release_at = -1; // the Options press of an opening skip
     double flags_at = -1;
     StartFlags flags;
     bool logged_wait = false;
@@ -91,10 +89,6 @@ void ApplyStart() {
 
 void CatchupTick(const GameSnapshot& s, bool guest_connected, double now) {
     State& st = S();
-    if (st.release_at >= 0 && now >= st.release_at) {
-        runtime_pad_director_press(0);
-        st.release_at = -1;
-    }
     if (st.c.phase() == Catchup::Phase::Done) {
         return;
     }
@@ -127,15 +121,14 @@ void CatchupTick(const GameSnapshot& s, bool guest_connected, double now) {
     switch (a.kind) {
     case CatchupAction::None:
         break;
-    case CatchupAction::SkipOpening:
-        if (NewGameTestRequested()) {
-            Log("%s: left to the test driver (BB_TEST_NEWGAME)", a.why.c_str());
-            break;
-        }
-        Log("%s (%s): Options", a.why.c_str(), DescribeStart(st.flags, in_world).c_str());
-        runtime_pad_director_press(kPadOptions);
-        st.release_at = now + 0.15;
+    case CatchupAction::SkipOpening: {
+        // The game's own skip request (what its skip input does), not a kill of the scene.
+        bool skippable = false;
+        const bool ok = RequestRemoSkip(&skippable);
+        Log("%s (%s): remo skip request %s (skippable bit %d)", a.why.c_str(), DescribeStart(st.flags, in_world).c_str(),
+            ok ? "sent" : "NOT possible (code differs / no remo)", skippable ? 1 : 0);
         break;
+    }
     case CatchupAction::ApplyStart:
         Log("%s; before: %s", a.why.c_str(), DescribeStart(st.flags, in_world).c_str());
         ApplyStart();

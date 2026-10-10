@@ -93,6 +93,21 @@ bool ItemGetOk() {
                                  0x83, 0xec, 0x28, 0x48, 0x89, 0xfb},
                   "item-get list push", &st);
 }
+constexpr std::uint64_t kRemoSkip = 0x1d07400;  // (SprjRemo*, int* remo id or -1)
+constexpr std::uint64_t kSprjRemo = 0x5540058;
+int& st2() {
+    static int st = 0;
+    return st;
+}
+bool RemoSkipOk() {
+    static int st = 0;
+    return CodeOk(kRemoSkip, {0x55, 0x48, 0x89, 0xe5, 0x53, 0x48, 0x83, 0xec, 0x18, 0x48, 0x8b, 0x1d, 0xd0, 0xc7, 0x6d,
+                              0x03},
+                  "remo skip request", &st) &&
+           CodeOk(0x1cf9d40, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x50, 0x48,
+                              0x89, 0xfb},
+                  "remo player skip", &st2());
+}
 constexpr std::uint64_t kSaveRequest = 0x1336da0; // Lua SaveRequest (void)
 constexpr std::uint64_t kLuaEventMan = 0x553b0c8;  // SprjLuaEventMan (the binding asserts it)
 bool SaveRequestOk() {
@@ -405,6 +420,22 @@ bool GiveItem(std::uint32_t type_bits, std::uint32_t id, int count) {
     }
     using Fn = void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t, std::uint32_t, std::int32_t);
     reinterpret_cast<Fn>(Guest(kGiveItemDirect))(0, type_bits, id, count);
+    return true;
+}
+
+bool RequestRemoSkip(bool* skippable) {
+    const std::uint64_t remo = Slot(kSprjRemo);
+    const std::uint64_t player = Field<std::uint64_t>(remo, 8, 0);
+    const std::uint8_t bits = Field<std::uint8_t>(player, 0x168, 0);
+    if (skippable) {
+        *skippable = (bits & 2) != 0;
+    }
+    if (!remo || !player || !RemoSkipOk()) {
+        return false;
+    }
+    std::int32_t any = -1;
+    using Fn = std::uint64_t(BB_COOP_SYSV*)(std::uint64_t, std::int32_t*);
+    reinterpret_cast<Fn>(Guest(kRemoSkip))(remo, &any);
     return true;
 }
 

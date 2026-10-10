@@ -108,6 +108,14 @@ bool ShowItemGet(std::uint32_t type_bits, std::uint32_t id, int count);
 /// world. False when the code differs from 1.09 or there is no player.
 bool LampWarp(std::uint32_t return_point);
 
+// ---- Cutscene skip ----
+/// The game's own remo skip request, the path its skip input takes: 0x1D07400(SprjRemo
+/// *0x5540058, &id) -> 0x1CF9D40(remo player, &id): with a skippable remo playing (player +0x168
+/// bit 1) and id matching (-1 = any), solo it sets +0x168 |= 0x20 (the player ends the scene with
+/// its fade), in multiplayer it sets the scene's own skip vote (+0x13D). Main thread. False when
+/// the code differs or there is no remo object; *skippable reports bit 1.
+bool RequestRemoSkip(bool* skippable = nullptr);
+
 // ---- Save requests (summoned writes: C2 pool flags, C3 direct gives, C4 story state) ----
 // A guest that stays summoned (seamless play) may go a long time without the game saving: what
 // the party code put into its own pool / inventory would be lost by a crash or a kill. The Lua

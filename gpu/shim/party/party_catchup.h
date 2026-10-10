@@ -2,7 +2,7 @@
 // Late joiner catch-up (C1/C2/C3): a guest whose own save is behind the host's (a fresh
 // character, one still in the prologue) is brought up to the host before any summon. The rules
 // are coop::Catchup (party_start.h, unit-tested); this is the game glue: the opening cutscene
-// skip (Options through the director's pad, never OS input), the campaign-start flags and the
+// skip (the game's own remo skip request 0x1D07400, game_state.h RequestRemoSkip), the campaign-start flags and the
 // starting weapons into the own save (own world, load mode 0), a save request, then the gather
 // warp to the host's last lamp (party_travel's host lamp record; the Hunter's Dream when unknown).
 // The warp's load opens C2's post-load window, where the host's snapshot (lamps, shortcuts,
