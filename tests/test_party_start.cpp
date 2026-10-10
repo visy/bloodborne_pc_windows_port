@@ -250,8 +250,13 @@ static void test_catchup() {
     in.remo_playing = true;
     in.t = 0;
     CHECK(o.Step(in).kind == CatchupAction::SkipOpening);
-    in.t = 1;
+    in.t = 0.5;
     CHECK(o.Step(in).kind == CatchupAction::None);
+    // C2's snapshot set 12410000 while the remo still plays: still skipping, no apply yet.
+    in.flags.opening_done = true;
+    in.t = 1.6;
+    CHECK(o.Step(in).kind == CatchupAction::SkipOpening && !o.Busy());
+    in.flags.opening_done = false;
     in.t = 4.5;
     CHECK(o.Step(in).kind == CatchupAction::SkipOpening);
     in.flags.opening_done = true;

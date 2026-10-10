@@ -129,8 +129,8 @@ class Catchup {
 public:
     enum class Phase : std::uint8_t { Idle, Opening, Apply, Warp, WaitWarp, Done };
     static constexpr double kSteady = 3.0;        ///< s in the own world before deciding
-    static constexpr double kSkipEvery = 4.0;     ///< s between two opening skips
-    static constexpr int kSkipTries = 10;
+    static constexpr double kSkipEvery = 1.0;     ///< s between two skip requests (the remo turns skippable after its fade-in)
+    static constexpr int kSkipTries = 60;
     static constexpr double kWarpTimeout = 40.0;  ///< s for the gather warp's load
     /// Once a frame.
     CatchupAction Step(const CatchupInput& in);

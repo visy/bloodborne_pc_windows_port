@@ -160,6 +160,21 @@ CatchupAction Catchup::Step(const CatchupInput& in) {
             return a; // nothing to compare against (or the host itself is in its prologue)
         }
         const StartStep step = ClassifyStart(in.flags, in.in_world);
+        // A scene playing in the own world while behind the host (the opening; its 12410000 may
+        // already be set by C2's snapshot while the remo still runs): the game's skip request,
+        // retried until the remo is skippable and gone.
+        if (step != StartStep::Ready && in.remo_playing && in.in_world && in.own_idle) {
+            if (step == StartStep::Opening) {
+                phase_ = Phase::Opening;
+            }
+            if (skips_ < kSkipTries && in.t - skip_at_ >= kSkipEvery) {
+                skip_at_ = in.t;
+                ++skips_;
+                a.kind = CatchupAction::SkipOpening;
+                a.why = "behind the host and a cutscene plays in the own world: skip " + std::to_string(skips_);
+            }
+            return a;
+        }
         if (step == StartStep::Ready) {
             phase_ = Phase::Done;
             a.kind = CatchupAction::Finished;

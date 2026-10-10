@@ -125,8 +125,12 @@ void CatchupTick(const GameSnapshot& s, bool guest_connected, double now) {
         // The game's own skip request (what its skip input does), not a kill of the scene.
         bool skippable = false;
         const bool ok = RequestRemoSkip(&skippable);
-        Log("%s (%s): remo skip request %s (skippable bit %d)", a.why.c_str(), DescribeStart(st.flags, in_world).c_str(),
-            ok ? "sent" : "NOT possible (code differs / no remo)", skippable ? 1 : 0);
+        static int quiet = 0;
+        if (skippable || !ok || ++quiet % 10 == 1) { // not every second while the scene fades in
+            Log("%s (%s): remo skip request %s (skippable bit %d%s)", a.why.c_str(),
+                DescribeStart(st.flags, in_world).c_str(), ok ? "sent" : "NOT possible (code differs / no remo)",
+                skippable ? 1 : 0, skippable ? "" : ": the game ignores it until the scene is skippable");
+        }
         break;
     }
     case CatchupAction::ApplyStart:
