@@ -465,3 +465,29 @@ the first Gehrman fight and first-visit Yahar'gul apply SpEffects 9120/9121. Opt
   double it).
 * **C8** host ending with guests present: order of `ENDING` send vs room close (`0x19471B1` /
   `0x193C657`), guests' `OnLeave_Limit` path.
+
+## 8. Implementation (gpu/shim/party/party_story.{h,cpp})
+
+* Host capture: entry hook (`HookPrologue`) on the bank-2002 handler `0x17C53B0(this, event)`,
+  independent of the A6 filter (which is only installed for trace/skip rules). Argument layouts
+  read from the handler's disassembly [static]: 1 `{id, mode}`; 2 `{id, mode, point, u8 area,
+  u8 block}`; 3 `{id, mode, player}`; 4 = 2 + player @0x10; 6 = 4 + u8 tod @0x14; 7 `{id, mode,
+  player, u8 tod @0xC}`; 8 `{point, u8 area @4, u8 block @5}` (not captured: B1 travel). Only
+  plays of the host's own world (`+0x1592 == 1`). Ending events 12100180/12100000/12100002
+  become `ending {1,2,3}` at their remo instruction (before flag 21/22/23 and the room close);
+  the tick also polls 21/22/23 and the 9800 3-bit value (baseline taken at each world-up).
+* EVENT `story` JSON: `{seq, kind cutscene|ending|time_of_day, id, mode, instr, event, map, tod,
+  warp_point, warp_map, flags[]}`.
+* Guest (`GuestStory`, pure, `party-story-test`): phantom (role 6) -> live mirror, mode 2, own
+  sex; then a replay queue in the own world (remo mode 0 unless mirrored, tod never backwards,
+  story flags); endings A/B/C as in 4.4 (B/C: `ForceEnding` = `GameDataMan+0x6C`, `GSM+0x1550`
+  only if no loading screen 8 s after the flag; A is never forced). Queue + seen ids persist in
+  `<user>/party_story.json`. The director does not ring the guest bell while a replay runs.
+* Sex: 1003[12] jumps to the `+1000` branch when `*(PlayerIns->vfunc[0x1C8]() + 0xCA) == 0`
+  (0x17bedd0 case 0xc) [static].
+* Player argument: 10000 resolves to `WorldChrMan+0x60` in `0x13C97A0` [static], so the guest's
+  own hunter is snapshotted (probe C6 answered statically; `BB_PARTY_STORY_PLAYER=-1` for none).
+* Runtime: `BB_PARTY_STORY_TEST=cutscene:21000040` in the Hunter's Dream (single instance):
+  `0x131A9F0` queued, playing bit rose, fell after 85 s, control back, world up;
+  `cutscene:21000000,mirror` (mode 2, the phantom call): played 27.6 s, control back. The sidecar
+  replayed an unfinished item after a restart (persistence path).

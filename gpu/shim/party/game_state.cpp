@@ -5,10 +5,12 @@
 #include "game_state.h"
 
 #include "coop_hooks.h"
+#include "party_start.h"
 #include "../bbport_threads.h"
 
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 
 namespace coop {
 namespace {
@@ -23,6 +25,57 @@ constexpr std::uint64_t kNpManager = 0x56c7048;
 constexpr std::uint64_t kCooperatorCount = 0x15bdc20;
 
 constexpr std::uint64_t kRecInsight = 0x84, kRecLevel = 0x90;
+
+// Campaign start (game_state.h).
+constexpr std::uint64_t kEventFlagMan = 0x553b100;
+constexpr std::uint64_t kItemGetMenu = 0x553d6e0;
+constexpr std::uint64_t kGetEventFlag = 0x13cfd80;
+constexpr std::uint64_t kSetEventFlag = 0x13cfcc0;
+constexpr std::uint64_t kInventoryFind = 0x14d9e80;
+constexpr std::uint64_t kAwardItemLot = 0x17ddc50;
+constexpr std::uint64_t kGiveItemDirect = 0x131cb70;
+constexpr std::uint64_t kRecInventory = 0x328;
+constexpr std::uint32_t kTypeGoods = 0x40000000u;
+
+/// The function's first bytes match 1.09 (checked once; a mismatch is logged once).
+bool CodeOk(std::uint64_t off, std::initializer_list<std::uint8_t> bytes, const char* name, int* state) {
+    if (*state == 0) {
+        *state = Matches(off, bytes) ? 1 : -1;
+        if (*state < 0) {
+            std::printf("Party: start: %s (0x%llx) differs from 1.09; off\n", name, static_cast<unsigned long long>(off));
+            std::fflush(stdout);
+        }
+    }
+    return *state > 0;
+}
+
+bool GetFlagOk() {
+    static int st = 0;
+    return CodeOk(kGetEventFlag, {0x55, 0x41, 0x57, 0x41, 0x56, 0x53, 0x41, 0x89, 0xd0, 0x44, 0x8b, 0x4f, 0x1c},
+                  "GetEventFlagValue", &st);
+}
+bool SetFlagOk() {
+    static int st = 0;
+    return CodeOk(kSetEventFlag, {0x41, 0x89, 0xd0, 0x8b, 0x4f, 0x1c, 0x31, 0xd2, 0x89, 0xf0, 0xf7, 0xf1},
+                  "SetEventFlag", &st);
+}
+bool FindOk() {
+    static int st = 0;
+    return CodeOk(kInventoryFind, {0x53, 0x81, 0xe6, 0x00, 0x00, 0x00, 0xf0, 0x81, 0xe2, 0xff, 0xff, 0xff, 0x0f},
+                  "inventory index", &st);
+}
+bool AwardOk() {
+    static int st = 0;
+    return CodeOk(kAwardItemLot, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48,
+                                  0x81, 0xec, 0xa8, 0x01, 0x00, 0x00, 0x41, 0x89, 0xd6},
+                  "AwardItemLot", &st);
+}
+bool GiveOk() {
+    static int st = 0;
+    return CodeOk(kGiveItemDirect, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53,
+                                    0x48, 0x83, 0xec, 0x68, 0x89, 0xcb, 0x41, 0x89, 0xd6, 0x41, 0x89, 0xf7},
+                  "GiveItemDirect", &st);
+}
 
 std::uint64_t Slot(std::uint64_t off) {
     std::uint64_t v = 0;
@@ -174,6 +227,104 @@ bool WritePlayerInsight(int insight) {
     }
     const std::int32_t v = insight;
     return SafeWrite(rec + kRecInsight, &v, 4);
+}
+
+// ---- Campaign start ----
+
+bool ReadEventFlag(std::uint32_t flag, bool* value) {
+    const std::uint64_t man = Slot(kEventFlagMan);
+    if (!man || !GetFlagOk()) {
+        return false;
+    }
+    using Fn = std::uint32_t(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t, std::uint32_t);
+    *value = reinterpret_cast<Fn>(Guest(kGetEventFlag))(man, flag, 1) != 0;
+    return true;
+}
+
+bool WriteEventFlag(std::uint32_t flag, bool value) {
+    const std::uint64_t man = Slot(kEventFlagMan);
+    if (!man || !SetFlagOk()) {
+        return false;
+    }
+    using Fn = void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t, std::uint32_t);
+    reinterpret_cast<Fn>(Guest(kSetEventFlag))(man, flag, value ? 1 : 0);
+    return true;
+}
+
+int GoodsCount(std::uint32_t goods_id) {
+    const std::uint64_t rec = Field<std::uint64_t>(Slot(kGameDataMan), 8, 0);
+    if (!rec || !FindOk()) {
+        return -1;
+    }
+    const std::uint64_t list = rec + kRecInventory;
+    // The lookup reads [list+0x68] (bucket table) and [list+0x78] (chain); both must exist.
+    if (!Field<std::uint64_t>(list, 0x68, 0) || !Field<std::uint64_t>(list, 0x78, 0)) {
+        return -1;
+    }
+    using Fn = std::int32_t(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t, std::uint32_t);
+    const std::int32_t index = reinterpret_cast<Fn>(Guest(kInventoryFind))(list, kTypeGoods, goods_id);
+    if (index < 0) {
+        return 0;
+    }
+    const std::int32_t last = Field<std::int32_t>(list, 0x88, -1);
+    const std::uint32_t split = Field<std::uint32_t>(list, 0x24, 0);
+    if (last < 0 || std::uint32_t(index) > std::uint32_t(last)) {
+        return -1;
+    }
+    const std::uint64_t entry = std::uint32_t(index) < split
+                                    ? Field<std::uint64_t>(list, 0x58, 0) + 16ull * std::uint32_t(index)
+                                    : Field<std::uint64_t>(list, 0x48, 0) + 16ull * (std::uint32_t(index) - split);
+    std::int32_t handle = 0, count = -1;
+    if (!SafeGet(entry, &handle) || !SafeGet(entry + 8, &count)) {
+        return -1;
+    }
+    return handle == 0 ? 0 : count;
+}
+
+StartFlags ReadStartFlags() {
+    StartFlags f;
+    struct Want {
+        std::uint32_t id;
+        bool* out;
+    };
+    const Want want[] = {
+        {kFlagOpeningDone, &f.opening_done}, {kFlagCutscenePending, &f.cutscene},
+        {kFlagFirstDream, &f.first_dream},   {kFlagFirstDeathToBase, &f.first_death},
+        {kFlagWeaponRight, &f.weapon_right}, {kFlagWeaponLeft, &f.weapon_left},
+        {kFlagDollAwake, &f.doll_awake},     {kFlagBeckoningLot, &f.beckoning_lot},
+        {kFlagResonantShop, &f.resonant_shop},
+    };
+    f.flags_ok = true;
+    for (const Want& w : want) {
+        if (!ReadEventFlag(w.id, w.out)) {
+            f.flags_ok = false;
+            break;
+        }
+    }
+    f.beckoning_count = GoodsCount(kGoodsBeckoning);
+    f.resonant_count = GoodsCount(kGoodsSmallResonant);
+    return f;
+}
+
+bool AwardItemLot(std::uint32_t lot) {
+    const std::uint64_t menu = Slot(kItemGetMenu);
+    const std::uint64_t rec = Field<std::uint64_t>(Slot(kGameDataMan), 8, 0);
+    if (!menu || !rec || !Slot(kEventFlagMan) || !Slot(kSessionManager) || !AwardOk()) {
+        return false;
+    }
+    using Fn = void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t, std::uint32_t);
+    reinterpret_cast<Fn>(Guest(kAwardItemLot))(menu, lot, 0);
+    return true;
+}
+
+bool GiveGoods(std::uint32_t goods_id, int count) {
+    const std::uint64_t rec = Field<std::uint64_t>(Slot(kGameDataMan), 8, 0);
+    if (!rec || !Slot(kItemGetMenu) || !GiveOk()) {
+        return false;
+    }
+    using Fn = void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t, std::uint32_t, std::int32_t);
+    reinterpret_cast<Fn>(Guest(kGiveItemDirect))(0, kTypeGoods, goods_id, count);
+    return true;
 }
 
 } // namespace coop

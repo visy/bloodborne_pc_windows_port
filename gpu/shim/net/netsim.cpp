@@ -5,12 +5,17 @@
 #if defined(_WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
 #else
 #include <netinet/in.h>
 #include <sys/socket.h>
 #endif
 
 #include <algorithm>
+#include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -28,9 +33,9 @@ struct Preset {
 constexpr Preset kPresets[] = {
     {"lan", "lat=1,jitter=0.5"},
     {"wifi", "lat=5,jitter=5,loss=0.5"},
-    {"dsl", "lat=25,jitter=8,loss=0.5,reorder=0.2"},
+    {"dsl", "lat=80,jitter=20,loss=2,dup=0.5,reorder=1"},
     {"mobile", "lat=60,jitter=25,loss=2,dup=0.2,reorder=1"},
-    {"bad", "lat=150,jitter=60,loss=8,dup=2,reorder=4"},
+    {"bad", "lat=200,jitter=80,loss=8"},
 };
 
 bool heap_later(const Packet& a, const Packet& b) {
@@ -45,8 +50,13 @@ bool parse(const char* spec, Config* out, std::string* error) {
     if (!spec) return true;
     std::string s(spec);
     if (s.empty() || s == "0" || s == "off") return true;
-    for (const Preset& p : kPresets) {
-        if (s == p.name) s = p.spec;
+    // A preset name, alone or first: "dsl" or "dsl,outage=5000,every=60000".
+    {
+        const std::size_t comma = s.find(',');
+        const std::string head = s.substr(0, comma);
+        for (const Preset& p : kPresets) {
+            if (head == p.name) s = std::string(p.spec) + (comma == std::string::npos ? "" : s.substr(comma));
+        }
     }
     std::size_t at = 0;
     while (at < s.size()) {
@@ -73,6 +83,8 @@ bool parse(const char* spec, Config* out, std::string* error) {
         else if (key == "dup") out->dup_pct = std::min(v, 100.0);
         else if (key == "reorder") out->reorder_pct = std::min(v, 100.0);
         else if (key == "seed") out->seed = static_cast<std::uint64_t>(v);
+        else if (key == "outage") out->outage_ms = v;
+        else if (key == "every") out->outage_every_ms = v;
         else {
             if (error) *error = "netsim: unknown key '" + key + "'";
             return false;
@@ -84,10 +96,15 @@ bool parse(const char* spec, Config* out, std::string* error) {
 
 std::string describe(const Config& c) {
     if (!c.enabled) return "off";
-    char buf[160];
+    char buf[200];
     std::snprintf(buf, sizeof(buf), "lat=%g,jitter=%g,loss=%g,dup=%g,reorder=%g,seed=%llu", c.lat_ms, c.jitter_ms,
                   c.loss_pct, c.dup_pct, c.reorder_pct, static_cast<unsigned long long>(c.seed));
-    return buf;
+    std::string s = buf;
+    if (c.outage_ms > 0 && c.outage_every_ms > 0) {
+        std::snprintf(buf, sizeof(buf), ",outage=%g,every=%g", c.outage_ms, c.outage_every_ms);
+        s += buf;
+    }
+    return s;
 }
 
 Queue::Queue(const Config& c) : cfg_(c), rng_(c.seed) {}
@@ -103,9 +120,31 @@ Clock::duration Queue::delay() {
     return std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(ms));
 }
 
+void Queue::blackout(Clock::time_point from, Clock::time_point until) {
+    black_from_ = from;
+    black_until_ = until;
+}
+
+bool Queue::in_outage(Clock::time_point now) {
+    if (!started_) {
+        started_ = true;
+        first_ = now;
+    }
+    if (now >= black_from_ && now < black_until_) return true;
+    if (cfg_.outage_ms <= 0 || cfg_.outage_every_ms <= 0) return false;
+    const double since = std::chrono::duration<double, std::milli>(now - first_).count();
+    if (since < cfg_.outage_every_ms) return false;
+    return std::fmod(since, cfg_.outage_every_ms) < cfg_.outage_ms;
+}
+
 int Queue::submit(Clock::time_point now, std::uintptr_t fd, std::uint32_t addr, std::uint16_t port, const void* data,
                   std::size_t len) {
     ++stats_.submitted;
+    if (in_outage(now)) {
+        ++stats_.dropped;
+        ++stats_.blacked_out;
+        return 0;
+    }
     if (cfg_.loss_pct > 0 && uniform() * 100.0 < cfg_.loss_pct) {
         ++stats_.dropped;
         return 0;
@@ -153,13 +192,57 @@ bool Queue::next_due(Clock::time_point* when) const {
     return true;
 }
 
+// --- Waiter ---------------------------------------------------------------------
+
+#if defined(_WIN32)
+Waiter::Waiter() {
+    event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    timer_ = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    if (!timer_) timer_ = CreateWaitableTimerW(nullptr, FALSE, nullptr);  // before Windows 10 1803
+}
+Waiter::~Waiter() {
+    if (timer_) CloseHandle(timer_);
+    if (event_) CloseHandle(event_);
+}
+void Waiter::wait_until(Clock::time_point t) {
+    const auto now = Clock::now();
+    if (t <= now) return;
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(t - now).count();
+    LARGE_INTEGER due;
+    due.QuadPart = -static_cast<LONGLONG>(us) * 10;  // relative, 100 ns units
+    HANDLE hs[2] = {event_, timer_};
+    if (timer_ && SetWaitableTimer(timer_, &due, 0, nullptr, nullptr, FALSE)) {
+        WaitForMultipleObjects(2, hs, FALSE, INFINITE);
+        CancelWaitableTimer(timer_);
+    } else {
+        WaitForSingleObject(event_, static_cast<DWORD>((us + 999) / 1000));
+    }
+}
+void Waiter::notify() { SetEvent(event_); }
+#else
+Waiter::Waiter() = default;
+Waiter::~Waiter() = default;
+void Waiter::wait_until(Clock::time_point t) {
+    std::unique_lock<std::mutex> lk(mu_);
+    cv_.wait_until(lk, t, [&] { return flag_; });
+    flag_ = false;
+}
+void Waiter::notify() {
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        flag_ = true;
+    }
+    cv_.notify_one();
+}
+#endif
+
 // --- The process-wide simulator ----------------------------------------------
 
 namespace {
 
 struct Sim {
     std::mutex mu;
-    std::condition_variable cv;
+    Waiter waiter;
     Queue* queue = nullptr;  // never freed: the sender thread lives as long as the process
     bool thread_started = false;
 };
@@ -174,13 +257,12 @@ void sender() {
     std::unique_lock<std::mutex> lk(s.mu);
     for (;;) {
         Clock::time_point when;
-        if (!s.queue->next_due(&when)) {
-            s.cv.wait(lk);
-            continue;
-        }
         const Clock::time_point now = Clock::now();
+        if (!s.queue->next_due(&when)) when = now + std::chrono::seconds(1);
         if (when > now) {
-            s.cv.wait_until(lk, when);
+            lk.unlock();
+            s.waiter.wait_until(when);  // a submit wakes it (the event stays set if it came first)
+            lk.lock();
             continue;
         }
         due.clear();
@@ -237,7 +319,7 @@ int sendto(std::uintptr_t fd, const void* data, std::size_t len, std::uint32_t a
             std::thread(sender).detach();
         }
     }
-    s.cv.notify_all();
+    s.waiter.notify();
     return static_cast<int>(len);
 }
 

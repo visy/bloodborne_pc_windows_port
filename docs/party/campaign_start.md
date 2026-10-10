@@ -327,3 +327,27 @@ state and weapons. Keep the C5 rule: party saves separate from solo saves.
 * **PR5** Guest with 9401 OFF follows a host lamp warp to the Dream via 0x13CDF30: cutscene 21000000 plays,
   no softlock, the guest can ring again afterwards.
 * **PR6** 9180 timing: ON from the m24_01 preconstructor until the end of 24010005; OFF in normal play.
+
+## 7. Implementation and probe results (C1 wiring)
+
+* `gpu/shim/party/party_start.{h,cpp}` (pure logic, `party-start-test`): `BB_PARTY_START=prologue_solo`
+  (default: ready at 12410000 && 9401 && 12101020 && 12101021 && 9180 OFF) | `immediate` (ready at
+  12410000 && 9180 OFF). A member in its own world that is not ready reports roster state **Prologue**
+  (new `MemberState` 6), so the host never rings for it and it never rings itself.
+* `game_state`: `ReadEventFlag` (0x13CFD80), `WriteEventFlag` (0x13CFCC0), `GoodsCount` (0x14D9E80 lookup on
+  PlayerGameData+0x328, count at entry+8), `AwardItemLot` (0x17DDC50(*0x553D6E0, lot, **0**): the EMEVD
+  call at 0x17C1806 passes edx 0, not 1; edx 1 = only when the role table allows), `GiveGoods` (0x131CB70).
+  Every function's first bytes are compared with 1.09 before the first call.
+* Director: `BB_PARTY_GRANT_BELLS` (default on in party mode): once ready, in its own world (role 0), 5 s
+  after the world is up: lot 10010 if goods 200 is missing (goods 200 directly when 6622 is already ON),
+  goods 205 + flag 6610 if 205 is missing. Readiness and lobby state go to the party status board.
+* Runtime (1.09 save copy, level 37, Hunter's Dream): flags read correctly (all prologue flags 1, 9180 0 →
+  READY); inventory read goods 200 x1, 205 x0 (6610 0). Grant: goods 205 x0 → x1, 6610 → 1 [C].
+  `award_lot=10010` on a character that already holds the bell: call returns, no crash, count stays 1
+  (unique item) — the award itself on a character without the bell is still [I]. `GiveItemDirect` with a
+  negative count does **not** remove goods 200 [C].
+* **PR1 not decided at runtime**: the Lua `OnEvent_SendSoulSign_NormalCoop` ran (dispatcher 1) on a
+  character without goods 205, but the game was offline (FrpgNetMan+0xa 1 → 0 during the title: the FROM
+  login never ran after ss.info), so no `summon_messenger/create` could follow either way. Static: SendSign
+  0x1901320 reaches none of 0x14D9E80 / 0x157F200 / 0x131CB70 / 0x14D0BE0 within 7 levels of direct calls
+  (virtual calls not followed) [I]. Grants stay on by default, so ownership does not matter for the party.

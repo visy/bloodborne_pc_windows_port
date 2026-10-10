@@ -373,6 +373,14 @@ struct HostBot {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // Loopback-only sockets: no Windows Firewall prompt for a test program (party_sock.h).
+    if (!std::getenv("BB_PARTY_LOOPBACK")) {
+#if defined(_WIN32)
+        _putenv("BB_PARTY_LOOPBACK=1");
+#else
+        setenv("BB_PARTY_LOOPBACK", "1", 1);
+#endif
+    }
     Options o;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];

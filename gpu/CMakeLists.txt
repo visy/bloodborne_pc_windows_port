@@ -383,6 +383,13 @@ set_target_properties(party-link-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OF
 if (WIN32)
     target_link_libraries(party-link-test PRIVATE ws2_32 iphlpapi ole32 oleaut32)
 endif()
+# Party campaign start (C1, shim/party/party_start.cpp; in bbgpu through SHIM_SOURCES): readiness,
+# bell grant plan, lobby ring decisions. ninja -C out/gpu party-start-test
+add_executable(party-start-test EXCLUDE_FROM_ALL ../tests/test_party_start.cpp shim/party/party_start.cpp)
+target_compile_options(party-start-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-start-test PRIVATE shim)
+set_target_properties(party-start-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+
 
 # Party progress sync (shim/party/party_progress, C2): keys, categories, policy, diff, JSON, BBPF
 # against a fake flag store (the game glue is compiled out). ninja -C out/gpu party-progress-test
@@ -412,6 +419,29 @@ add_executable(party-status-test EXCLUDE_FROM_ALL ../tests/test_party_status.cpp
 target_compile_options(party-status-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-status-test PRIVATE shim)
 set_target_properties(party-status-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Party transport soak (tests/party_soak.cpp): a host and three guests in one process over
+# loopback under the network simulator's profiles and burst outages; a verdict per scenario.
+# cmake --build out/gpu --target party-soak && out/gpu/party-soak.exe [scenario...]
+add_executable(party-soak EXCLUDE_FROM_ALL ../tests/party_soak.cpp ${PARTY_NET_SOURCES} ${PARTY_LINK_SOURCES}
+    third_party/monocypher/monocypher.c)
+target_compile_options(party-soak PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-soak PRIVATE shim/net shim ..)
+set_target_properties(party-soak PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+if (WIN32)
+    target_link_libraries(party-soak PRIVATE ws2_32 iphlpapi synchronization ole32 oleaut32 winmm)
+endif()
+# Party status bridge (shim/party/party_status_bridge.cpp; in bbgpu through SHIM_SOURCES): link /
+# game facts -> the Party tab's state, roster, events, commands. ninja -C out/gpu party-status-bridge-test
+add_executable(party-status-bridge-test EXCLUDE_FROM_ALL ../tests/test_party_status_bridge.cpp
+    shim/party/party_status_bridge.cpp shim/party/party_status.cpp ${PARTY_LINK_SOURCES}
+    shim/net/net_stun.cpp third_party/monocypher/monocypher.c)
+target_compile_definitions(party-status-bridge-test PRIVATE BB_PARTY_BRIDGE_NO_GAME)
+target_compile_options(party-status-bridge-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-status-bridge-test PRIVATE shim)
+set_target_properties(party-status-bridge-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+if (WIN32)
+    target_link_libraries(party-status-bridge-test PRIVATE ws2_32 iphlpapi ole32 oleaut32)
+endif()
 # Party travel (B1, shim/party/party_travel.cpp; in bbgpu through SHIM_SOURCES): its pure logic
 # only (BB_PARTY_TRAVEL_NO_GAME). ninja -C out/gpu party-travel-test
 add_executable(party-travel-test EXCLUDE_FROM_ALL ../tests/test_party_travel.cpp shim/party/party_travel.cpp
@@ -420,6 +450,30 @@ target_compile_definitions(party-travel-test PRIVATE BB_PARTY_TRAVEL_NO_GAME)
 target_compile_options(party-travel-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-travel-test PRIVATE shim)
 set_target_properties(party-travel-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Party story (C4, shim/party/party_story.cpp): its pure logic only (BB_PARTY_STORY_NO_GAME).
+# ninja -C out/gpu party-story-test
+add_executable(party-story-test EXCLUDE_FROM_ALL ../tests/test_party_story.cpp shim/party/party_story.cpp
+    shim/net/json.cpp)
+target_compile_definitions(party-story-test PRIVATE BB_PARTY_STORY_NO_GAME)
+target_compile_options(party-story-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-story-test PRIVATE shim)
+set_target_properties(party-story-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Party items (C3, shim/party/party_items.cpp; in bbgpu through SHIM_SOURCES): tables, JSON,
+# queues and the apply gate (BB_PARTY_ITEMS_NO_GAME). ninja -C out/gpu party-items-test
+add_executable(party-items-test EXCLUDE_FROM_ALL ../tests/test_party_items.cpp shim/party/party_items.cpp
+    shim/net/json.cpp)
+target_compile_definitions(party-items-test PRIVATE BB_PARTY_ITEMS_NO_GAME)
+target_compile_options(party-items-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-items-test PRIVATE shim)
+set_target_properties(party-items-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Party phantoms (shim/party/party_phantom.cpp; in bbgpu through SHIM_SOURCES): its pure logic
+# and party_travel's guest redirect choice. ninja -C out/gpu party-phantom-test
+add_executable(party-phantom-test EXCLUDE_FROM_ALL ../tests/test_party_phantom.cpp shim/party/party_phantom.cpp
+    shim/party/party_travel.cpp shim/net/json.cpp)
+target_compile_definitions(party-phantom-test PRIVATE BB_PARTY_PHANTOM_NO_GAME BB_PARTY_TRAVEL_NO_GAME)
+target_compile_options(party-phantom-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-phantom-test PRIVATE shim)
+set_target_properties(party-phantom-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Four-player rules (shim/party/party_fourp.cpp; in bbgpu through SHIM_SOURCES): the pure parts
 # (BB_PARTY_FOURP_NO_GAME). ninja -C out/gpu party-fourp-test
 add_executable(party-fourp-test EXCLUDE_FROM_ALL ../tests/test_party_fourp.cpp shim/party/party_fourp.cpp)
