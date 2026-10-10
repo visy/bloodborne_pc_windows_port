@@ -787,7 +787,6 @@ struct Tick {
     bool remo_was_playing = false;
     double remo_since = 0;
     std::string sidecar;
-    double last_save = 0;
 };
 Tick g_tick;
 
@@ -1233,7 +1232,8 @@ void StoryTick() {
         g_tick.remo_was_playing = st.remo_playing;
     }
     // Test: one forced replay (or mirror) item.
-    if (g_tick.test_on && !g_tick.test_done && g_tick.world_was_up && now - g_tick.world_since >= g_tick.test_delay) {
+    if (g_tick.test_on && !g_tick.test_done && g_tick.world_was_up && now - g_tick.world_since >= g_tick.test_delay &&
+        !st.remo_playing && !busy) {
         g_tick.test_done = true;
         StoryIntent s;
         s.seq = NextSeq();
@@ -1266,10 +1266,7 @@ void StoryTick() {
     if (a) {
         Run(*a);
     }
-    if (now - g_tick.last_save >= 2.0) {
-        g_tick.last_save = now;
-        SaveSidecar();
-    }
+    SaveSidecar(); // writes only when the queue / seen set changed
 }
 
 #endif // BB_PARTY_STORY_NO_GAME
