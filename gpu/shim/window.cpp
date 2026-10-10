@@ -7,10 +7,23 @@
 #include "common/logging/log.h"
 #include "sdl_window.h"
 #include "bbport_overlay.h"
+#include "bbport_settings.h"
 
 namespace Frontend {
 
 namespace {
+
+// ReadMouse's bits: 0 left, 1 right, 2 middle, 3 X1, 4 X2.
+u32 MouseButtonBit(u8 button) {
+    switch (button) {
+    case SDL_BUTTON_LEFT: return 1u << 0;
+    case SDL_BUTTON_RIGHT: return 1u << 1;
+    case SDL_BUTTON_MIDDLE: return 1u << 2;
+    case SDL_BUTTON_X1: return 1u << 3;
+    case SDL_BUTTON_X2: return 1u << 4;
+    default: return 0;
+    }
+}
 
 // Case-insensitive substring search (strcasestr is a GNU extension, missing on Windows).
 bool ContainsNoCase(const char* haystack, const char* needle) {
@@ -196,14 +209,36 @@ bool WindowSDL::PollEvents() {
             SDL_SetWindowFullscreen(window, !fullscreen);
             continue;
         }
+        // Mouse & keyboard mode: a release always ends the press, also when the menu takes it.
+        if (event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+            std::scoped_lock lock{mouse_mutex};
+            mouse_buttons &= ~MouseButtonBit(event.button.button);
+        }
         if (BbOverlay::HandleEvent(event)) {
             continue;
+        }
+        // Mouse & keyboard mode (from Mrsuss60/bloodborne_pc_windows_port): motion and presses
+        // for runtime_pad.c, never while the menu or the name box has the input.
+        if ((event.type == SDL_EVENT_MOUSE_MOTION || event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) &&
+            BbSettings::Get().mk_enabled && !text_active && !BbOverlay::CapturesInput()) {
+            std::scoped_lock lock{mouse_mutex};
+            if (event.type == SDL_EVENT_MOUSE_MOTION) {
+                mouse_dx += event.motion.xrel;
+                mouse_dy += event.motion.yrel;
+            } else {
+                mouse_buttons |= MouseButtonBit(event.button.button);
+            }
         }
         switch (event.type) {
         case SDL_EVENT_WINDOW_FOCUS_LOST:
         case SDL_EVENT_WINDOW_FOCUS_GAINED:
             if (mute_unfocused) {
                 audible = event.type == SDL_EVENT_WINDOW_FOCUS_GAINED;
+            }
+            if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+                std::scoped_lock lock{mouse_mutex};
+                mouse_dx = mouse_dy = 0.0f;
+                mouse_buttons = 0;
             }
             break;
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
@@ -222,12 +257,47 @@ bool WindowSDL::PollEvents() {
             break;
         }
     }
+    UpdateMouseMode();
     UpdateCursor();
     return is_open;
 }
 
-// Issue #3: the OS cursor over the game. bbport (Windows fork): the game has no mouse input, so
-// the cursor shows only while the overlay captures input (settings menu or text dialog) and is
+// Mouse & keyboard mode: while the game has the input (menu and name box closed, window
+// focused) the mouse is in relative mode, captured by the window and turning the camera; the menu
+// releases it. Off: nothing changes (the cursor is only hidden, UpdateCursor).
+void WindowSDL::UpdateMouseMode() {
+    const bool mk = BbSettings::Get().mk_enabled.load();
+    const bool focused = (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    const bool want = mk && focused && !text_active && !BbOverlay::CapturesInput();
+    if (want != relative_mouse) {
+        relative_mouse = want;
+        SDL_SetWindowRelativeMouseMode(window, want);
+    }
+    if (!want) {
+        std::scoped_lock lock{mouse_mutex};
+        mouse_dx = mouse_dy = 0.0f;
+        mouse_buttons = 0;
+    }
+    // The launcher's mouse & keyboard dialog may change the tuning while the game runs.
+    const u64 now = SDL_GetTicks();
+    if (mk && now - last_tuning_check_ms >= 1000 && !BbOverlay::MenuOpen()) {
+        last_tuning_check_ms = now;
+        BbSettings::ReloadMouseTuning();
+    }
+}
+
+void WindowSDL::ReadMouse(float& dx, float& dy, u32& buttons, bool consume) {
+    std::scoped_lock lock{mouse_mutex};
+    dx = mouse_dx;
+    dy = mouse_dy;
+    buttons = mouse_buttons;
+    if (consume) {
+        mouse_dx = mouse_dy = 0.0f;
+    }
+}
+
+// Issue #3: the OS cursor over the game. bbport (Windows fork): the game takes no pointer input
+// (mouse & keyboard mode reads relative motion, UpdateMouseMode), so the cursor shows only while the overlay captures input (settings menu or text dialog) and is
 // hidden otherwise, windowed or fullscreen. Checked every poll because the menu can also close
 // from the present thread. ImGui never draws its own cursor (MouseDrawCursor stays off).
 void WindowSDL::UpdateCursor() {

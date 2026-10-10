@@ -7,6 +7,19 @@
  *   Space/Enter Cross, LShift/Esc Circle, E Square, Q Triangle, 1 L1, 3 R1, R L2, F R2,
  *   Z L3, C R3, F1/O Options, Tab left touchpad, Backspace right touchpad, arrow keys d-pad.
  *
+ * Mouse & keyboard mode (opt-in: launcher "Mouse & keyboard controls", BB_MOUSE_KEYBOARD=1,
+ * bbport.ini mk_enabled=1 or the in-game menu's Controls tab; Souls-PC scheme from
+ * Mrsuss60/bloodborne_pc_windows_port) replaces the layout above while it is on:
+ *   mouse: motion right stick (camera; mk_sens_x/y, mk_invert_x/y, mk_deadzone, mk_smoothing),
+ *   left button R1, Shift+left R2, right button L2, Shift+right L1, middle R3 (lock-on),
+ *   side buttons X1 L1, X2 R2;
+ *   keys: WASD left stick, IJKL right stick, Space Circle (dodge), E/Enter Cross, R Square,
+ *   X Triangle, Q R3 (lock-on), C/Z L3, Esc/F1 Options, Tab/G left touchpad, Backspace right
+ *   touchpad, arrow keys and 1 2 3 4 d-pad (up down left right).
+ * bbport.ini mkkey.<input>= lines rebind that layout as key.<input>= lines do the classic one;
+ * pad.<input>= lines apply in both. The mouse is captured (relative mode) only while the menu and
+ * the name box are closed.
+ *
  * Stick neutral: SDL exposes no way to read a pad's calibration and some clones report a
  * biased neutral (a Switch-style pad was seen returning both sticks at a constant ~ +/-16380).
  * The neutral of each axis is taken from a quiet window after the pad opens (SDL returns zero
@@ -297,10 +310,26 @@ static const uint32_t input_buttons[IN_COUNT]={
 enum { PAD_LEFT_TRIGGER=SDL_GAMEPAD_BUTTON_COUNT, PAD_RIGHT_TRIGGER }; /* triggers as buttons */
 typedef struct { int key_count, pad_count; SDL_Scancode keys[MAX_BIND]; int pad[MAX_BIND]; } Binding;
 static Binding bindings[IN_COUNT];
-static int bindings_ready;
+static int bindings_mode=-1; /* the layout loaded: 0 classic, 1 mouse & keyboard, -1 none yet */
 
-static void bind_defaults(void) {
-    static const struct { int input; SDL_Scancode key; } keys[]={
+typedef struct { int input; SDL_Scancode key; } KeyDefault;
+/* Mouse & keyboard mode's keys (Mrsuss60/bloodborne_pc_windows_port's scheme); the attacks and
+ * L1/L2/R2 are on the mouse (sample_mouse). */
+static const KeyDefault mk_keys[]={
+    {IN_CROSS,SDL_SCANCODE_E}, {IN_CROSS,SDL_SCANCODE_RETURN}, {IN_CROSS,SDL_SCANCODE_KP_ENTER},
+    {IN_CIRCLE,SDL_SCANCODE_SPACE}, {IN_SQUARE,SDL_SCANCODE_R}, {IN_TRIANGLE,SDL_SCANCODE_X},
+    {IN_L3,SDL_SCANCODE_C}, {IN_L3,SDL_SCANCODE_Z}, {IN_R3,SDL_SCANCODE_Q},
+    {IN_OPTIONS,SDL_SCANCODE_ESCAPE}, {IN_OPTIONS,SDL_SCANCODE_F1},
+    {IN_TOUCHPAD,SDL_SCANCODE_TAB}, {IN_TOUCHPAD,SDL_SCANCODE_G}, {IN_TOUCHPAD_RIGHT,SDL_SCANCODE_BACKSPACE},
+    {IN_UP,SDL_SCANCODE_UP}, {IN_UP,SDL_SCANCODE_1}, {IN_DOWN,SDL_SCANCODE_DOWN}, {IN_DOWN,SDL_SCANCODE_2},
+    {IN_LEFT,SDL_SCANCODE_LEFT}, {IN_LEFT,SDL_SCANCODE_3}, {IN_RIGHT,SDL_SCANCODE_RIGHT}, {IN_RIGHT,SDL_SCANCODE_4},
+    {IN_MOVE_UP,SDL_SCANCODE_W}, {IN_MOVE_DOWN,SDL_SCANCODE_S}, {IN_MOVE_LEFT,SDL_SCANCODE_A},
+    {IN_MOVE_RIGHT,SDL_SCANCODE_D}, {IN_LOOK_UP,SDL_SCANCODE_I}, {IN_LOOK_DOWN,SDL_SCANCODE_K},
+    {IN_LOOK_LEFT,SDL_SCANCODE_J}, {IN_LOOK_RIGHT,SDL_SCANCODE_L},
+};
+
+static void bind_defaults(int mk) {
+    static const KeyDefault keys[]={
         {IN_CROSS,SDL_SCANCODE_SPACE}, {IN_CROSS,SDL_SCANCODE_RETURN}, {IN_CROSS,SDL_SCANCODE_KP_ENTER},
         {IN_CIRCLE,SDL_SCANCODE_LSHIFT}, {IN_CIRCLE,SDL_SCANCODE_ESCAPE}, {IN_SQUARE,SDL_SCANCODE_E},
         {IN_TRIANGLE,SDL_SCANCODE_Q}, {IN_L1,SDL_SCANCODE_1}, {IN_R1,SDL_SCANCODE_3},
@@ -324,8 +353,10 @@ static void bind_defaults(void) {
         {IN_LEFT,SDL_GAMEPAD_BUTTON_DPAD_LEFT}, {IN_RIGHT,SDL_GAMEPAD_BUTTON_DPAD_RIGHT},
     };
     memset(bindings,0,sizeof bindings);
-    for (size_t i=0;i<sizeof(keys)/sizeof(*keys);++i) {
-        Binding *b=&bindings[keys[i].input]; b->keys[b->key_count++]=keys[i].key;
+    const KeyDefault *key_list=mk ? mk_keys : keys;
+    const size_t key_count=mk ? sizeof(mk_keys)/sizeof(*mk_keys) : sizeof(keys)/sizeof(*keys);
+    for (size_t i=0;i<key_count;++i) {
+        Binding *b=&bindings[key_list[i].input]; b->keys[b->key_count++]=key_list[i].key;
     }
     for (size_t i=0;i<sizeof(pads)/sizeof(*pads);++i) {
         Binding *b=&bindings[pads[i].input]; b->pad[b->pad_count++]=pads[i].button;
@@ -337,20 +368,24 @@ static int pad_button_from_name(const char *name) {
     const SDL_GamepadButton b=SDL_GetGamepadButtonFromString(name);
     return b==SDL_GAMEPAD_BUTTON_INVALID ? -1 : (int)b;
 }
-/* key.<input>= / pad.<input>= lines of the settings file. */
-static void load_bindings(void) {
-    bind_defaults();
+/* key.<input>= (classic layout) / mkkey.<input>= (mouse & keyboard mode) / pad.<input>= lines of
+ * the settings file. */
+static void load_bindings(int mk) {
+    bind_defaults(mk);
     const char *path=getenv("BB_CONFIG");
     FILE *f=path ? fopen(path,"r") : NULL;
     if (!f) return;
     char line[512];
     while (fgets(line,sizeof line,f)) {
-        const int keyboard=!strncmp(line,"key.",4), pad=!strncmp(line,"pad.",4);
+        const int mk_line=!strncmp(line,"mkkey.",6);
+        const int keyboard=!strncmp(line,"key.",4) || mk_line, pad=!strncmp(line,"pad.",4);
         char *eq=strchr(line,'=');
         if ((!keyboard && !pad) || !eq) continue;
+        if (keyboard && mk_line!=mk) continue; /* the other layout's line */
         *eq=0;
+        const char *input_name=line+(mk_line ? 6 : 4);
         int input=-1;
-        for (int i=0;i<IN_COUNT;++i) if (!strcmp(line+4,input_names[i])) input=i;
+        for (int i=0;i<IN_COUNT;++i) if (!strcmp(input_name,input_names[i])) input=i;
         if (input<0 || (pad && input>=IN_MOVE_UP)) { printf("Runtime: controls: unknown input %s\n",line); continue; }
         Binding *b=&bindings[input];
         if (keyboard) b->key_count=0; else b->pad_count=0;
@@ -360,11 +395,11 @@ static void load_bindings(void) {
             if (!*name) continue;
             if (keyboard) {
                 const SDL_Scancode s=SDL_GetScancodeFromName(name);
-                if (s==SDL_SCANCODE_UNKNOWN) printf("Runtime: controls: unknown key \"%s\" for %s\n",name,line+4);
+                if (s==SDL_SCANCODE_UNKNOWN) printf("Runtime: controls: unknown key \"%s\" for %s\n",name,input_name);
                 else if (b->key_count<MAX_BIND) b->keys[b->key_count++]=s;
             } else {
                 const int button=pad_button_from_name(name);
-                if (button<0) printf("Runtime: controls: unknown gamepad button \"%s\" for %s\n",name,line+4);
+                if (button<0) printf("Runtime: controls: unknown gamepad button \"%s\" for %s\n",name,input_name);
                 else if (b->pad_count<MAX_BIND) b->pad[b->pad_count++]=button;
             }
         }
@@ -405,6 +440,45 @@ static void apply_keyboard(PadData *d, const bool *k) {
     d->right_y=key_axis(d->right_y,key_down(k,IN_LOOK_UP),key_down(k,IN_LOOK_DOWN));
 }
 
+/* Mouse & keyboard mode (from Mrsuss60/bloodborne_pc_windows_port, reworked): the mouse's speed
+ * moves the right stick, so the camera turns as fast as the mouse moves whatever the frame rate
+ * (their per-read delta was frame-rate dependent). Motion is taken at most every 4 ms: a second
+ * read in the same frame keeps the previous value instead of seeing no motion. 960 px/s (16 px
+ * per 60 Hz frame, their 8 stick units per pixel) is full deflection at sensitivity 1. */
+static float look_x, look_y;
+static uint64_t look_last;
+static void sample_mouse(PadData *d, const BbMouseState *m, int consumed, float dt, const bool *k) {
+    if (consumed) {
+        if (dt>0.0f) {
+            if (dt>0.1f) dt=0.1f;
+            float tx=m->dx/dt*m->sens_x*(127.0f/960.0f), ty=m->dy/dt*m->sens_y*(127.0f/960.0f);
+            if (m->invert_x) tx=-tx;
+            if (m->invert_y) ty=-ty;
+            float s=m->smoothing; if (s<0.0f) s=0.0f; else if (s>0.95f) s=0.95f;
+            look_x=look_x*s+tx*(1.0f-s);
+            look_y=look_y*s+ty*(1.0f-s);
+            if (look_x>127.0f) look_x=127.0f; else if (look_x<-127.0f) look_x=-127.0f;
+            if (look_y>127.0f) look_y=127.0f; else if (look_y<-127.0f) look_y=-127.0f;
+        }
+    }
+    const float dead=m->deadzone*127.0f;
+    const float ox=look_x>dead || look_x<-dead ? look_x : 0.0f;
+    const float oy=look_y>dead || look_y<-dead ? look_y : 0.0f;
+    /* Only while the mouse moves: the gamepad's right stick works otherwise (IJKL win over both). */
+    if (ox!=0.0f || oy!=0.0f) {
+        d->right_x=(uint8_t)(128+(int)(ox>=0.0f ? ox+0.5f : ox-0.5f));
+        d->right_y=(uint8_t)(128+(int)(oy>=0.0f ? oy+0.5f : oy-0.5f));
+    }
+    const int shift=k && (k[SDL_SCANCODE_LSHIFT] || k[SDL_SCANCODE_RSHIFT]);
+    if (m->buttons & 1u) d->buttons|=shift ? BTN_R2 : BTN_R1;
+    if (m->buttons & 2u) d->buttons|=shift ? BTN_L1 : BTN_L2;
+    if (m->buttons & 4u) d->buttons|=BTN_R3;
+    if (m->buttons & 8u) d->buttons|=BTN_L1;
+    if (m->buttons & 16u) d->buttons|=BTN_R2;
+    if (d->buttons & BTN_L2) d->l2=255;
+    if (d->buttons & BTN_R2) d->r2=255;
+}
+
 static void sample_host(PadData *d) {
     report_guest_heap();
     memset(d,0,sizeof(*d));
@@ -413,8 +487,20 @@ static void sample_host(PadData *d) {
     d->connected=1; d->connected_count=connected_count ? connected_count : 1;
     d->timestamp=now_us();
     SDL_Gamepad *g=current_gamepad();
-    if (!bindings_ready) { load_bindings(); bindings_ready=1; }
-    if (bbgpu_overlay_captures_input() || bbgpu_text_input_is_active()) return; /* settings menu open or typing: neutral input */
+    /* Mouse & keyboard mode (live: the menu switches it): its own key layout. */
+    const uint64_t now=d->timestamp;
+    const float dt=look_last ? (float)(now-look_last)/1e6f : 0.0f;
+    const int consume=!look_last || dt>=0.004f;
+    BbMouseState mouse;
+    const int mk=bbgpu_mouse_keyboard(&mouse,consume);
+    if (!mk) { look_x=look_y=0.0f; look_last=0; }
+    else if (consume) look_last=now;
+    if (bindings_mode!=mk) {
+        load_bindings(mk);
+        if (bindings_mode>=0) printf("Runtime: controls: %s layout\n",mk ? "mouse & keyboard" : "classic keyboard");
+        bindings_mode=mk;
+    }
+    if (bbgpu_overlay_captures_input() || bbgpu_text_input_is_active()) { look_x=look_y=0.0f; return; } /* settings menu open or typing: neutral input */
     const bool *k=SDL_WasInit(SDL_INIT_VIDEO) ? SDL_GetKeyboardState(NULL) : NULL;
     if (g) {
         int touch_right=0;
@@ -449,6 +535,7 @@ static void sample_host(PadData *d) {
         if ((d->buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d,0);
         if (touch_right) touch_click(d,1);
     }
+    if (mk) sample_mouse(d,&mouse,consume,dt,k);
     /* Alt+Enter toggles fullscreen (window.cpp): its Enter is not the game's Cross. */
     if (k && !((k[SDL_SCANCODE_LALT] || k[SDL_SCANCODE_RALT]) &&
                (k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER]))) apply_keyboard(d,k);

@@ -500,3 +500,23 @@ extern "C" int bbgpu_audio_audible(void) {
 extern "C" int bbgpu_text_input_is_active(void) {
     return (g_window && g_window->IsTextInputActive()) ? 1 : 0;
 }
+
+// Mouse & keyboard controls (after Mrsuss60/bloodborne_pc_windows_port's
+// bbgpu_consume_mouse_delta / bbgpu_get_mk_config, as one call).
+extern "C" int bbgpu_mouse_keyboard(BbMouseState* state, int consume_motion) {
+    const auto& s = BbSettings::Get();
+    const bool on = s.mk_enabled.load();
+    if (state) {
+        *state = BbMouseState{};
+        if (on && g_window) {
+            g_window->ReadMouse(state->dx, state->dy, state->buttons, consume_motion != 0);
+        }
+        state->sens_x = s.mk_sens_x.load();
+        state->sens_y = s.mk_sens_y.load();
+        state->deadzone = s.mk_deadzone.load();
+        state->smoothing = s.mk_smoothing.load();
+        state->invert_x = s.mk_invert_x.load() ? 1 : 0;
+        state->invert_y = s.mk_invert_y.load() ? 1 : 0;
+    }
+    return on ? 1 : 0;
+}

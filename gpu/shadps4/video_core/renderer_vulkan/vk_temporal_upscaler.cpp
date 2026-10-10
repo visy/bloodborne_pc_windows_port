@@ -1424,7 +1424,13 @@ float TemporalUpscaler::SceneMipBias() const {
 }
 
 bool TemporalUpscaler::Scaled() const {
-    return scaled_session || target_width != 1920 || target_height != 1080;
+    // bbport (fix from Mrsuss60/bloodborne_pc_windows_port): BB_RENDER_RES=1920x1080 with a
+    // 1080p output (the launcher's "1920x1080") scales nothing. Taken as scaled, every scene draw
+    // with the native 1920x1080 viewport looked like a UI draw (OnDraw: scaled_session &&
+    // native_viewport) and started the UI composition at the first scene pass: a dark frame and a
+    // stretched HUD. Such a session takes the native path (the scene stays 1920x1080, fixed).
+    return (scaled_session && (render_width != 1920 || render_height != 1080)) ||
+           target_width != 1920 || target_height != 1080;
 }
 
 void TemporalUpscaler::OnColorTarget(VideoCore::ImageId color) {
@@ -1561,7 +1567,14 @@ void TemporalUpscaler::PrepareUiDepth(VideoCore::ImageId depth_id) {
         (ui_depth_format == vk::Format::eD32SfloatS8Uint ? vk::ImageAspectFlagBits::eStencil
                                                       : vk::ImageAspectFlags{});
     // Copy depth if blit is supported; otherwise just clear it (UI depth test still works).
-    const bool copy = depth_id && depth_blit &&
+    // BB_UI_DEPTH_COPY=0 (from Mrsuss60/bloodborne_pc_windows_port, there the default): always
+    // clear, for HUD elements hidden by the scene's depth. Default 1: the scene depth is copied, as
+    // upstream does, so UI draws that depth-test against the scene keep doing so.
+    static const bool copy_scene_depth = [] {
+        const char* env = std::getenv("BB_UI_DEPTH_COPY");
+        return !(env && env[0] == '0');
+    }();
+    const bool copy = copy_scene_depth && depth_id && depth_blit &&
         texture_cache.GetImage(depth_id).info.pixel_format == ui_depth_format;
     if (copy) {
         runtime.Transit(&texture_cache.GetImage(depth_id), vk::ImageLayout::eTransferSrcOptimal,

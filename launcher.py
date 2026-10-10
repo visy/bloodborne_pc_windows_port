@@ -149,6 +149,13 @@ def settings_env(s: dict) -> dict:
     env["BB_SAVE_LOG"] = "1" if on("feat_save_log", False) else "0"
     # Mute the game while its window is in the background
     env["BB_MUTE_UNFOCUSED"] = "1" if on("feat_mute_unfocused") else "0"
+    # Mouse & keyboard controls (scheme from Mrsuss60/bloodborne_pc_windows_port): opt-in, and the
+    # launcher decides at each start (the in-game Controls tab switches it for the session). Its
+    # tuning (mk_* keys) lives in bbport.ini: the launcher's dialog and the in-game menu edit it.
+    env["BB_MOUSE_KEYBOARD"] = "1" if on("feat_mouse_keyboard", False) else "0"
+    # Performance HUD (F11 in game): on = shown at every start; off = the game keeps the choice
+    # made with F11 or in its menu (bbport.ini show_hud).
+    env["BB_HUD"] = "1" if on("feat_hud", False) else None
 
     # Shader compilation: background compile that skips the draw meanwhile (also a live toggle in
     # the in-game menu), graphics pipeline library (stages compiled ahead, linked at draw time) and
@@ -189,6 +196,81 @@ def write_env_bat(path: Path, settings_path: Path = SETTINGS_FILE):
     # cmd reads batch files in the OEM code page (non-ASCII game paths)
     path.write_text("\r\n".join(lines) + "\r\n", encoding="oem" if os.name == "nt" else "utf-8",
                     errors="replace", newline="")
+
+
+# Mouse & keyboard tuning in bbport.ini (key: default, low, high), edited by the launcher's dialog
+# and the in-game Controls tab; a running game re-reads them when the file changes.
+MK_TUNING = {
+    "mk_sens_x": (1.0, 0.1, 5.0),
+    "mk_sens_y": (1.0, 0.1, 5.0),
+    "mk_smoothing": (0.2, 0.0, 0.8),
+    "mk_deadzone": (0.05, 0.0, 0.2),
+}
+# Mouse & keyboard mode's bindings (src/runtime_pad.c; scheme from Mrsuss60/bloodborne_pc_windows_port)
+MK_BINDINGS = [
+    ("Mouse movement", "Camera (right stick)"),
+    ("Left click", "R1: attack"),
+    ("Shift + left click", "R2: strong attack"),
+    ("Right click", "L2: firearm / left hand"),
+    ("Shift + right click", "L1: transform trick weapon"),
+    ("Middle click / Q", "R3: lock on / reset camera"),
+    ("Mouse side buttons", "L1 (back) / R2 (forward)"),
+    ("W A S D", "Move (left stick)"),
+    ("Space", "Circle: dodge, run (hold)"),
+    ("E / Enter", "Cross: interact, confirm"),
+    ("R", "Square: use quick item"),
+    ("X", "Triangle: use Blood Vial"),
+    ("C / Z", "L3"),
+    ("Tab / G", "Touchpad: gestures, menus"),
+    ("Backspace", "Touchpad right side"),
+    ("Esc / F1", "Options: game menu"),
+    ("Arrows / 1 2 3 4", "D-pad up / down / left / right"),
+    ("I J K L", "Camera (right stick)"),
+]
+
+
+def bbport_ini_path() -> Path:
+    """bbport.ini as run.bat finds it: BB_CONFIG, else BB_DATA_DIR (default: the launcher's folder)."""
+    if os.environ.get("BB_CONFIG"):
+        return Path(os.environ["BB_CONFIG"])
+    data_dir = Path(os.environ.get("BB_DATA_DIR") or ".")
+    return (data_dir if data_dir.is_absolute() else APP_DIR / data_dir) / "bbport.ini"
+
+
+def read_ini(path: Path) -> dict:
+    values = {}
+    try:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            key, sep, value = line.partition("=")
+            if sep and not line.lstrip().startswith("#"):
+                values[key.strip()] = value.strip()
+    except OSError:
+        pass
+    return values
+
+
+def update_ini(path: Path, values: dict):
+    """Sets keys of bbport.ini, keeping its other lines (the game's settings, key.* bindings)."""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = ["# bbport settings (in-game menu: Insert; L3+R3 with BB_OVERLAY_PAD=1)"]
+    written = set()
+    out = []
+    for line in lines:
+        key, sep, _ = line.partition("=")
+        key = key.strip()
+        if sep and not line.lstrip().startswith("#") and key in values:
+            if key not in written:
+                out.append(f"{key}={values[key]}")
+                written.add(key)
+            continue
+        out.append(line)
+    out += [f"{key}={value}" for key, value in values.items() if key not in written]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text("\n".join(out) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
 
 
 # Shader cache: <user>\cache\<title id>\ (run.bat: BB_USER_DIR or BB_DATA_DIR\user). Pipeline keys
@@ -599,6 +681,8 @@ class BloodborneLauncher(tk.Tk):
         self.feat_gpl = tk.BooleanVar(value=self.settings.get("feat_gpl", False))
         self.feat_compile_indicator = tk.BooleanVar(value=self.settings.get("feat_compile_indicator", True))
         self.feat_shader_precompile = tk.BooleanVar(value=self.settings.get("feat_shader_precompile", True))
+        self.feat_hud = tk.BooleanVar(value=self.settings.get("feat_hud", False))
+        self.feat_mouse_keyboard = tk.BooleanVar(value=self.settings.get("feat_mouse_keyboard", False))
 
         # ---- presets row
         preset_row = ttk.Frame(main)
@@ -614,11 +698,13 @@ class BloodborneLauncher(tk.Tk):
         everything_btn.pack(side="right")
         Tooltip(vanilla_btn, "Preset: turns the port's optional features off (upscaler, object motion, overlay, "
                              "FPS patch, mods, resolution scaling, tracing, watchdog, draw prep workers, async "
-                             "shaders, GPL), sets 30 FPS, anisotropic filtering Off and disables all XML patches. "
-                             "Saved immediately.")
+                             "shaders, GPL, performance HUD, mouse & keyboard controls), sets 30 FPS, "
+                             "anisotropic filtering Off and disables all XML patches. Saved immediately.")
         Tooltip(everything_btn, "Preset: turns the features back on (including async shaders and GPL), sets "
                                 "Uncap FPS and 16x anisotropic filtering, and enables the recommended patches "
-                                "(Skip Intro, Performance Patch, Disable Motion Blur). Saved immediately.")
+                                "(Skip Intro, Performance Patch, Disable Motion Blur). The performance HUD and "
+                                "mouse & keyboard controls are preferences and stay as they are. Saved "
+                                "immediately.")
 
         # ---- settings notebook
         self.notebook = ttk.Notebook(main)
@@ -657,6 +743,11 @@ class BloodborneLauncher(tk.Tk):
                     "How many frames the GPU thread may queue ahead of the display. 1 = least input lag, "
                     "2 = smoother frame times (default), 3 = smoothest but more lag (BB_FRAMES_AHEAD).",
                     width=20)
+        self._check(sec, "Performance HUD (F11)", self.feat_hud,
+                    "In-game overlay with FPS, frame time and a frame-time graph, VRAM, GPU, CPU and RAM "
+                    "load. F11 shows or hides it at any time; its corner, size and metrics are in the "
+                    "in-game menu (Insert > Display). On = shown at every start; off = the game keeps "
+                    "your last F11 / menu choice. Default: off (BB_HUD).")
 
         # 2. Graphics
         tab = self._tab("Graphics")
@@ -772,6 +863,19 @@ class BloodborneLauncher(tk.Tk):
         self._check(sec, "Overlay menu on L3 + R3", self.feat_overlay_pad,
                     "Also opens the overlay menu by clicking both sticks (L3 + R3) on the gamepad. "
                     "The Insert key always works. Default: off (BB_OVERLAY_PAD).")
+        self._check(sec, "Mouse & keyboard controls", self.feat_mouse_keyboard,
+                    "PC-style controls: the mouse turns the camera (captured while playing), left click "
+                    "R1, Shift+left R2, right click L2, Shift+right L1, middle click lock-on; Space "
+                    "dodge, E interact, R item, X Blood Vial... (full list in the settings dialog). "
+                    "Replaces the classic keyboard layout while on; a gamepad keeps working. Can be "
+                    "switched in game (Insert > Controls). Default: off (BB_MOUSE_KEYBOARD).")
+        mk_btn = ttk.Button(sec, text="Mouse & keyboard settings...", style="Secondary.TButton",
+                            command=self.open_mk_dialog)
+        mk_btn.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(4, 2))
+        sec.next_row += 1
+        Tooltip(mk_btn, "Mouse sensitivity, inverted look, smoothing and dead zone, and the list of "
+                        "key bindings. Saved to bbport.ini (mk_* keys); a running game picks the "
+                        "changes up within a second.")
 
         sec = self._section(tab, 1, "Audio")
         self._check(sec, "Mute when in background", self.feat_mute_unfocused,
@@ -906,6 +1010,8 @@ class BloodborneLauncher(tk.Tk):
         self.feat_gpl.set(False)
         self.feat_compile_indicator.set(True)
         self.feat_shader_precompile.set(True)
+        self.feat_hud.set(False)
+        self.feat_mouse_keyboard.set(False)
         self.fps_var.set("30")
         self.aniso_var.set("Off")
         self.enabled_patches.clear()
@@ -1150,6 +1256,125 @@ class BloodborneLauncher(tk.Tk):
         ttk.Button(bottom_bar, text="Cancel", style="Secondary.TButton",
                    command=on_cancel).pack(side="right", ipady=4)
 
+    def open_mk_dialog(self):
+        """Mouse & keyboard tuning (bbport.ini mk_* keys) and the bindings list. After the dialog of
+        Mrsuss60/bloodborne_pc_windows_port, in this launcher's style."""
+        ini_path = bbport_ini_path()
+        ini = read_ini(ini_path)
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Mouse & Keyboard Settings")
+        dlg.geometry("640x660")
+        dlg.minsize(560, 560)
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.configure(bg="#1a1a1a")
+
+        main = ttk.Frame(dlg, style="Card.TFrame", padding=14)
+        main.pack(fill="both", expand=True, padx=10, pady=(10, 6))
+        ttk.Label(main, text="MOUSE LOOK", style="Section.TLabel").grid(
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
+
+        def number(key):
+            default, low, high = MK_TUNING[key]
+            try:
+                return min(max(float(ini.get(key, default)), low), high)
+            except ValueError:
+                return default
+
+        tips = {
+            "mk_sens_x": "How fast the camera turns left/right for a mouse movement. Default 1.0.",
+            "mk_sens_y": "How fast the camera tilts up/down for a mouse movement. Default 1.0.",
+            "mk_smoothing": "Averages the mouse movement over a few frames: smoother, slightly delayed. "
+                            "0 = raw. Default 0.20.",
+            "mk_deadzone": "Mouse movement slower than this share of a full stick push is ignored "
+                           "(hand tremor). Default 0.05.",
+        }
+        labels = {"mk_sens_x": "Horizontal sensitivity:", "mk_sens_y": "Vertical sensitivity:",
+                  "mk_smoothing": "Smoothing:", "mk_deadzone": "Dead zone:"}
+        tuning_vars = {}
+        value_labels = {}
+        row = 1
+        for key, (_, low, high) in MK_TUNING.items():
+            var = tk.DoubleVar(value=number(key))
+            tuning_vars[key] = var
+            lbl = ttk.Label(main, text=labels[key], style="Card.TLabel")
+            lbl.grid(row=row, column=0, sticky="w", pady=3)
+            value_lbl = ttk.Label(main, text=f"{var.get():.2f}", style="Card.TLabel", width=6)
+            value_labels[key] = value_lbl
+            scale = ttk.Scale(main, from_=low, to=high, variable=var,
+                              command=lambda v, out=value_lbl: out.config(text=f"{float(v):.2f}"))
+            scale.grid(row=row, column=1, sticky="ew", padx=8, pady=3)
+            value_lbl.grid(row=row, column=2, sticky="w", pady=3)
+            for widget in (lbl, scale, value_lbl):
+                Tooltip(widget, tips[key] + f" (bbport.ini {key})")
+            row += 1
+        main.columnconfigure(1, weight=1)
+
+        invert_x = tk.BooleanVar(value=ini.get("mk_invert_x", "0") not in ("", "0"))
+        invert_y = tk.BooleanVar(value=ini.get("mk_invert_y", "0") not in ("", "0"))
+        inv_row = ttk.Frame(main, style="Card.TFrame")
+        inv_row.grid(row=row, column=0, columnspan=3, sticky="w", pady=(4, 8))
+        row += 1
+        for text, var, key in (("Invert horizontal look", invert_x, "mk_invert_x"),
+                               ("Invert vertical look", invert_y, "mk_invert_y")):
+            cb = ttk.Checkbutton(inv_row, text=text, variable=var, style="Card.TCheckbutton")
+            cb.pack(side="left", padx=(0, 16))
+            Tooltip(cb, f"Turns the camera the other way for this mouse axis (bbport.ini {key}).")
+
+        ttk.Label(main, text="BINDINGS (WHILE MOUSE & KEYBOARD CONTROLS ARE ON)", style="Section.TLabel").grid(
+            row=row, column=0, columnspan=3, sticky="w", pady=(4, 4))
+        row += 1
+        binds = ttk.Frame(main, style="Card.TFrame")
+        binds.grid(row=row, column=0, columnspan=3, sticky="nsew")
+        row += 1
+        half = (len(MK_BINDINGS) + 1) // 2
+        for index, (keys, action) in enumerate(MK_BINDINGS):
+            r, c = index % half, (index // half) * 2
+            ttk.Label(binds, text=keys, style="Card.TLabel", font=("Segoe UI", 8, "bold"),
+                      foreground="#c5a059").grid(row=r, column=c, sticky="w", padx=(0, 6), pady=1)
+            ttk.Label(binds, text=action, style="Card.TLabel", font=("Segoe UI", 8),
+                      foreground="#cccccc").grid(row=r, column=c + 1, sticky="w", padx=(0, 18), pady=1)
+        ttk.Label(main, text="The mouse is captured while you play and released while the in-game menu "
+                             "(Insert) or the name box is open. Rebind keys with mkkey.<input>= lines in "
+                             "bbport.ini (key.<input>= lines are the classic layout's). Off: the classic "
+                             "layout (WASD / IJKL / Space / Shift ...) is used and the mouse does nothing.",
+                  style="Hint.TLabel", wraplength=580, justify="left").grid(
+            row=row, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+        bottom_bar = ttk.Frame(dlg, style="Card.TFrame", padding=10)
+        bottom_bar.pack(fill="x", padx=10, pady=(0, 10))
+
+        def on_save():
+            values = {key: f"{var.get():.2f}" for key, var in tuning_vars.items()}
+            values["mk_invert_x"] = "1" if invert_x.get() else "0"
+            values["mk_invert_y"] = "1" if invert_y.get() else "0"
+            try:
+                update_ini(ini_path, values)
+                self.log(f"[M&K] Saved to {ini_path}: " + ", ".join(f"{k}={v}" for k, v in values.items()))
+            except OSError as e:
+                self.log(f"[ERROR] Could not save {ini_path}: {e}")
+            dlg.destroy()
+
+        def on_defaults():
+            for key, var in tuning_vars.items():
+                var.set(MK_TUNING[key][0])
+                value_labels[key].config(text=f"{var.get():.2f}")  # set() does not run the command
+            invert_x.set(False)
+            invert_y.set(False)
+
+        def on_cancel():
+            dlg.destroy()
+
+        dlg.protocol("WM_DELETE_WINDOW", on_cancel)
+        ttk.Button(bottom_bar, text="Save & Apply", style="Action.TButton",
+                   command=on_save).pack(side="right", padx=(8, 0), ipady=4)
+        ttk.Button(bottom_bar, text="Cancel", style="Secondary.TButton",
+                   command=on_cancel).pack(side="right", ipady=4)
+        defaults_btn = ttk.Button(bottom_bar, text="Defaults", style="Secondary.TButton", command=on_defaults)
+        defaults_btn.pack(side="left", ipady=4)
+        Tooltip(defaults_btn, "Sensitivity 1.0, smoothing 0.20, dead zone 0.05, no inverted look.")
+
     # ------------------------------------------------------------ settings
     def load_settings(self) -> dict:
         try:
@@ -1187,6 +1412,8 @@ class BloodborneLauncher(tk.Tk):
             "feat_gpl": self.feat_gpl.get(),
             "feat_compile_indicator": self.feat_compile_indicator.get(),
             "feat_shader_precompile": self.feat_shader_precompile.get(),
+            "feat_hud": self.feat_hud.get(),
+            "feat_mouse_keyboard": self.feat_mouse_keyboard.get(),
             "display": dict(self.display_choices).get(self.display_var.get(), ""),
             "gamepad": gamepad,
             "gamepad_name": gamepad_label.removesuffix(" (not connected)") if gamepad else "",

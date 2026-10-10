@@ -18,6 +18,10 @@ inline bool IsFsr4(int upscaler) {
 enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerformance, PresetCount };
 enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugMotion = 2, DebugViewCount };
 enum class MenuLanguage { English, Russian };
+/// Corner of the performance HUD (ini hud_position; hud_quadrant is the same key in
+/// Mrsuss60/bloodborne_pc_windows_port, read too).
+enum HudPosition : int { HudTopLeft = 0, HudTopRight = 1, HudBottomLeft = 2, HudBottomRight = 3,
+                         HudPositionCount };
 
 /// Game effects switched by the community patches at start (patches.py EFFECTS): ini key,
 /// menu label, default (the game's own behaviour).
@@ -62,6 +66,21 @@ struct Values {
     std::atomic<float> reactive_max{0.9f};
     std::atomic<int> debug_view{DebugNone};
     std::atomic<bool> show_fps{false};
+    /// Performance HUD (F11, menu, BB_HUD; from Mrsuss60/bloodborne_pc_windows_port): FPS and
+    /// frame time always, the other metrics each switchable. Replaces the FPS counter while on.
+    std::atomic<bool> show_hud{false};
+    std::atomic<int> hud_position{HudTopLeft};
+    std::atomic<float> hud_opacity{0.75f};
+    std::atomic<float> hud_scale{1.0f};
+    std::atomic<bool> hud_graph{true}, hud_vram{true}, hud_gpu{true}, hud_cpu{true}, hud_ram{true};
+    /// Mouse & keyboard controls (BB_MOUSE_KEYBOARD, menu; scheme from
+    /// Mrsuss60/bloodborne_pc_windows_port): the mouse turns the camera and attacks, the keyboard
+    /// takes a Souls-PC layout (runtime_pad.c). Off: the classic keyboard layout, mouse unused.
+    std::atomic<bool> mk_enabled{false};
+    std::atomic<float> mk_sens_x{1.0f}, mk_sens_y{1.0f};
+    std::atomic<bool> mk_invert_x{false}, mk_invert_y{false};
+    std::atomic<float> mk_deadzone{0.05f};  ///< fraction of full stick deflection ignored
+    std::atomic<float> mk_smoothing{0.2f};  ///< 0 raw .. 0.8 heavy smoothing of the mouse look
     /// The settings menu's position (fraction of the screen), -1 until it is moved.
     std::atomic<float> menu_x{-1.0f}, menu_y{-1.0f};
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.
@@ -117,6 +136,10 @@ int RenderPreset();
 bool ResolutionNeedsRestart();
 /// Writes the file (menu changes).
 void Save();
+/// Window thread, about once a second: when the file changed on disk since it was last read or
+/// written (the launcher's mouse & keyboard dialog while the game runs), re-reads the mouse
+/// tuning keys (mk_sens_*, mk_invert_*, mk_deadzone, mk_smoothing) only.
+void ReloadMouseTuning();
 
 /// Render resolution divisor of a preset (1.0 native, 1.5 quality, ...).
 float PresetScale(int preset);

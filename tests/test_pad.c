@@ -16,6 +16,17 @@ static inline int setenv(const char *name, const char *value, int overwrite) {
 static int capture;
 int bbgpu_overlay_captures_input(void) { return capture; }
 int bbgpu_text_input_is_active(void) { return 0; }
+/* Mouse & keyboard mode (after Mrsuss60/bloodborne_pc_windows_port's test stubs). */
+static int mk_mode;
+static float mk_dx;
+static uint32_t mk_buttons;
+int bbgpu_mouse_keyboard(BbMouseState *state, int consume_motion) {
+    memset(state,0,sizeof(*state));
+    state->dx=mk_dx; state->buttons=mk_buttons;
+    state->sens_x=state->sens_y=1.0f; state->deadzone=0.05f; state->smoothing=0.0f;
+    if (consume_motion) mk_dx=0.0f;
+    return mk_mode;
+}
 #ifdef _WIN32
 uint64_t host_monotonic_ns(void) {
     LARGE_INTEGER f, c;
@@ -54,7 +65,7 @@ int main(void) {
     int config_fd=mkstemp(config);
     assert(config_fd>=0);
     const char controls[]="upscaler=fsr3\npad.cross=b\npad.circle=a\npad.r2=rightshoulder\n"
-                          "pad.r1=righttrigger\nkey.cross=X, Space\npad.bogus=a\n";
+                          "pad.r1=righttrigger\nkey.cross=X, Space\npad.bogus=a\nmkkey.triangle=T\n";
     assert(write(config_fd,controls,sizeof(controls)-1)==(ssize_t)(sizeof(controls)-1));
     close(config_fd);
     setenv("BB_CONFIG",config,1);
@@ -118,6 +129,25 @@ int main(void) {
     assert(data.buttons==(BTN_CROSS|BTN_R2|BTN_R1) && data.r2==255);
     assert(bindings[IN_CROSS].key_count==2 && bindings[IN_CROSS].keys[0]==SDL_SCANCODE_X &&
            bindings[IN_CROSS].keys[1]==SDL_SCANCODE_SPACE);
+    /* Mouse & keyboard mode: its own keys (mkkey.* lines, key.* ignored), the left button R1, the
+     * mouse's speed on the right stick. The gamepad is released first (hold_after_capture). */
+    assert(SDL_SetJoystickVirtualButton(joystick,SDL_GAMEPAD_BUTTON_EAST,false));
+    assert(SDL_SetJoystickVirtualButton(joystick,SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER,false));
+    assert(SDL_SetJoystickVirtualAxis(joystick,SDL_GAMEPAD_AXIS_RIGHT_TRIGGER,-32768)); /* raw: released */
+    SDL_UpdateJoysticks();
+    SDL_UpdateGamepads();
+    assert(pad_read_state(1,&data)==0 && data.buttons==0);
+    mk_mode=1; mk_buttons=1;
+    assert(pad_read_state(1,&data)==0);
+    assert(bindings[IN_CROSS].keys[0]==SDL_SCANCODE_E && bindings[IN_TRIANGLE].key_count==1 &&
+           bindings[IN_TRIANGLE].keys[0]==SDL_SCANCODE_T && bindings[IN_CIRCLE].keys[0]==SDL_SCANCODE_SPACE);
+    assert(data.buttons==BTN_R1 && data.right_x==128);
+    usleep(20000);
+    mk_dx=100.0f; /* 5000 px/s: full deflection */
+    assert(pad_read_state(1,&data)==0 && data.right_x==255);
+    mk_mode=0; mk_buttons=0;
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_R1) && data.right_x==128 &&
+           bindings[IN_CROSS].keys[0]==SDL_SCANCODE_X);
     SDL_CloseJoystick(joystick);
     if (gamepad) SDL_CloseGamepad(gamepad);
     gamepad=NULL;
@@ -125,5 +155,5 @@ int main(void) {
     SDL_Quit();
     unlink(path);
     unlink(config);
-    puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch coordinates, overlay capture, controls");
+    puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch coordinates, overlay capture, controls, mouse & keyboard mode");
 }

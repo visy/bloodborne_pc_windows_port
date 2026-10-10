@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -27,6 +29,21 @@ const char* Path() {
 
 float Clamp(float v, float lo, float hi) {
     return std::clamp(v, lo, hi);
+}
+
+// The file's modification time when this process last read or wrote it (ReloadMouseTuning).
+std::mutex file_mutex;
+std::filesystem::file_time_type file_time{};
+
+std::filesystem::file_time_type FileTime() {
+    std::error_code error;
+    const auto time = std::filesystem::last_write_time(std::filesystem::path(Path()), error);
+    return error ? std::filesystem::file_time_type{} : time;
+}
+
+void NoteFileTime() {
+    std::scoped_lock lock{file_mutex};
+    file_time = FileTime();
 }
 
 void Set(Values& v, const std::string& key, const std::string& value) {
@@ -64,6 +81,43 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.debug_view = std::clamp(i, 0, DebugViewCount - 1);
     } else if (key == "show_fps") {
         v.show_fps = i != 0;
+    } else if (key == "show_hud") {
+        v.show_hud = i != 0;
+    } else if (key == "hud_position" || key == "hud_quadrant") {
+        static constexpr const char* names[HudPositionCount] = {"top_left", "top_right", "bottom_left",
+                                                                "bottom_right"};
+        v.hud_position = std::clamp(i, 0, HudPositionCount - 1);
+        for (int p = 0; p < HudPositionCount; ++p) {
+            if (value == names[p]) v.hud_position = p;
+        }
+    } else if (key == "hud_opacity") {
+        v.hud_opacity = Clamp(f, 0.1f, 1.0f);
+    } else if (key == "hud_scale") {
+        v.hud_scale = Clamp(f, 0.5f, 2.0f);
+    } else if (key == "hud_graph") {
+        v.hud_graph = i != 0;
+    } else if (key == "hud_vram") {
+        v.hud_vram = i != 0;
+    } else if (key == "hud_gpu") {
+        v.hud_gpu = i != 0;
+    } else if (key == "hud_cpu") {
+        v.hud_cpu = i != 0;
+    } else if (key == "hud_ram") {
+        v.hud_ram = i != 0;
+    } else if (key == "mk_enabled") {
+        v.mk_enabled = i != 0;
+    } else if (key == "mk_sens_x") {
+        v.mk_sens_x = Clamp(f, 0.1f, 5.0f);
+    } else if (key == "mk_sens_y") {
+        v.mk_sens_y = Clamp(f, 0.1f, 5.0f);
+    } else if (key == "mk_invert_x") {
+        v.mk_invert_x = i != 0;
+    } else if (key == "mk_invert_y") {
+        v.mk_invert_y = i != 0;
+    } else if (key == "mk_deadzone") {
+        v.mk_deadzone = Clamp(f, 0.0f, 0.2f);
+    } else if (key == "mk_smoothing") {
+        v.mk_smoothing = Clamp(f, 0.0f, 0.8f);
     } else if (key == "async_pipelines") {
         v.async_shaders = i != 0;
     } else if (key == "async_shaders") {
@@ -156,6 +210,7 @@ void Load() {
         std::fclose(file);
         std::printf("Settings: %s\n", Path());
     }
+    NoteFileTime();
     // Environment overrides (scripts, A/B tests).
     if (const char* env = std::getenv("BB_UPSCALER")) {
         v.upscaler = UpscalerOff;
@@ -169,6 +224,8 @@ void Load() {
         {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
         {"BB_UPSCALE_PRESET", "preset"},            {"BB_OBJECT_MOTION", "object_motion"},
         {"BB_GPL", "gpl"},                          {"BB_COMPILE_INDICATOR", "compile_indicator"},
+        {"BB_HUD", "show_hud"},                     {"BB_HUD_POSITION", "hud_position"},
+        {"BB_MOUSE_KEYBOARD", "mk_enabled"},
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env)) {
@@ -241,6 +298,9 @@ bool ResolutionNeedsRestart() {
 }
 
 void Save() {
+    // The menu (present or window thread) and F11 (window thread) both save.
+    static std::mutex save_mutex;
+    std::scoped_lock save_lock{save_mutex};
     const auto& v = Get();
     // The keys the menu writes, in this order; the rest of the file stays as it is: the
     // launcher's controls (key.* / pad.*) and its other keys, comments.
@@ -265,6 +325,22 @@ void Save() {
     put("reactive_max", fixed(v.reactive_max, 2));
     put("debug_view", std::to_string(v.debug_view.load()));
     put("show_fps", flag(v.show_fps));
+    put("show_hud", flag(v.show_hud));
+    put("hud_position", std::to_string(v.hud_position.load()));
+    put("hud_opacity", fixed(v.hud_opacity, 2));
+    put("hud_scale", fixed(v.hud_scale, 2));
+    put("hud_graph", flag(v.hud_graph));
+    put("hud_vram", flag(v.hud_vram));
+    put("hud_gpu", flag(v.hud_gpu));
+    put("hud_cpu", flag(v.hud_cpu));
+    put("hud_ram", flag(v.hud_ram));
+    put("mk_enabled", flag(v.mk_enabled));
+    put("mk_sens_x", fixed(v.mk_sens_x, 2));
+    put("mk_sens_y", fixed(v.mk_sens_y, 2));
+    put("mk_invert_x", flag(v.mk_invert_x));
+    put("mk_invert_y", flag(v.mk_invert_y));
+    put("mk_deadzone", fixed(v.mk_deadzone, 2));
+    put("mk_smoothing", fixed(v.mk_smoothing, 2));
     put("async_pipelines", flag(v.async_shaders));
     put("gpl", flag(v.gpl));
     put("compile_indicator", flag(v.compile_indicator));
@@ -332,6 +408,39 @@ void Save() {
 #endif
     if (!ok) {
         std::printf("Settings: cannot write %s\n", Path());
+    }
+    NoteFileTime();
+}
+
+void ReloadMouseTuning() {
+    {
+        std::scoped_lock lock{file_mutex};
+        const auto time = FileTime();
+        if (time == file_time) {
+            return;
+        }
+        file_time = time;
+    }
+    // Only the tuning: mk_enabled comes from the launcher (BB_MOUSE_KEYBOARD) or the menu, and
+    // the other keys are the menu's (a full re-read would undo its unsaved changes).
+    static constexpr const char* tuning[] = {"mk_sens_x", "mk_sens_y", "mk_invert_x", "mk_invert_y",
+                                             "mk_deadzone", "mk_smoothing"};
+    auto& v = Get();
+    if (FILE* file = std::fopen(Path(), "r")) {
+        char line[256];
+        while (std::fgets(line, sizeof(line), file)) {
+            std::string text{line};
+            text.erase(text.find_last_not_of(" \t\r\n") + 1);
+            const auto eq = text.find('=');
+            if (text.empty() || text[0] == '#' || eq == std::string::npos) {
+                continue;
+            }
+            const std::string key = text.substr(0, eq);
+            if (std::find(std::begin(tuning), std::end(tuning), key) != std::end(tuning)) {
+                Set(v, key, text.substr(eq + 1));
+            }
+        }
+        std::fclose(file);
     }
 }
 

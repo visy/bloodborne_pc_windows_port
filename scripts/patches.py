@@ -372,6 +372,13 @@ def main():
     # it into the output-size image with a viewport scaled by output / 1920
     # (UiComposition::NativeViewport), so it is rasterized at the output resolution.
     ui=OUTPUT_SIZE
+    # bbport (from Mrsuss60/bloodborne_pc_windows_port): a 1920x1080 scene for a 1080p output (the
+    # launcher's "1920x1080") is the game's own layout. The 1280x720 template would still write its
+    # 720p-only constants (lock-on / HP bar coordinates, a scale factor): the executable is left
+    # as it is instead. The upscaler treats this session as unscaled (TemporalUpscaler::Scaled).
+    if size==OUTPUT_SIZE and a.output_res.lower() in ('','1920x1080'):
+        print('Patches: scene 1920x1080 for a 1080p output: native layout, no resolution patch')
+        size=None
     if size:
         writes+=resolution_writes(a.xml,size,a.app_version,segments,ui)
         if size[0]*size[1]>OUTPUT_SIZE[0]*OUTPUT_SIZE[1]:

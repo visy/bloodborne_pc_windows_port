@@ -7,6 +7,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <cwchar>
 #include <mutex>
 #include <functional>
 #include <string>
@@ -22,6 +24,18 @@
 #include "imgui_impl_vulkan.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include <map>
+#include <thread>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <pdh.h>
+#endif
 
 // DejaVu Sans (Cyrillic), embedded (third_party/fonts, Bitstream Vera license).
 #ifdef _WIN32
@@ -95,9 +109,207 @@ std::mutex prompt_mutex;
 std::atomic<bool> prompt_active{false};
 std::string prompt_title, prompt_text;
 
-// Present rate for the FPS counter.
+// Present rate for the FPS counter and the HUD.
 std::chrono::steady_clock::time_point last_present{};
 float frame_ms_avg = 0.0f;
+// The HUD's frame-time graph: the last present intervals (present thread only).
+constexpr int FrameHistory = 120;
+float frame_history[FrameHistory] = {};
+int frame_history_next = 0;
+
+// Performance HUD telemetry (from Mrsuss60/bloodborne_pc_windows_port: NVML, the Windows PDH
+// "GPU Engine" counters, GetSystemTimes, GlobalMemoryStatusEx). Sampled every 0.5 s on a thread of
+// its own while the HUD is shown, so a slow PDH query never delays a present. -1: unknown.
+namespace Telemetry {
+
+std::atomic<bool> wanted{false};
+std::atomic<float> gpu{-1.0f}, cpu{-1.0f}, ram_used_gb{-1.0f}, ram_total_gb{-1.0f};
+std::atomic<float> vram_used_gb{-1.0f}, vram_budget_gb{-1.0f};
+const Vulkan::Instance* instance = nullptr;
+u32 vendor_id = 0;
+u8 device_luid[8] = {};
+bool device_luid_valid = false;
+std::once_flag started;
+
+#ifdef _WIN32
+// NVML (NVIDIA driver), loaded at run time; used only when the game's GPU is NVIDIA's.
+struct NvmlUtilization {
+    unsigned int gpu, memory;
+};
+using NvmlInit = int (*)();
+using NvmlHandleByIndex = int (*)(unsigned int, void**);
+using NvmlUtilizationRates = int (*)(void*, NvmlUtilization*);
+NvmlUtilizationRates nvml_utilization = nullptr;
+void* nvml_device = nullptr;
+
+// PDH (any vendor): the 3D engines' utilization, summed over processes per engine of the game's
+// adapter (its LUID in the instance name), the busiest engine as Task Manager shows it.
+using PdhOpen = decltype(&PdhOpenQueryW);
+using PdhAdd = decltype(&PdhAddEnglishCounterW);
+using PdhCollect = decltype(&PdhCollectQueryData);
+using PdhArray = decltype(&PdhGetFormattedCounterArrayW);
+PdhCollect pdh_collect = nullptr;
+PdhArray pdh_array = nullptr;
+PDH_HQUERY pdh_query = nullptr;
+PDH_HCOUNTER pdh_counter = nullptr;
+std::vector<unsigned char> pdh_buffer;
+wchar_t luid_tag[48] = {};
+
+void InitGpu() {
+    if (vendor_id == 0x10DE) {
+        if (HMODULE nvml = LoadLibraryA("nvml.dll")) {
+            auto init = reinterpret_cast<NvmlInit>(GetProcAddress(nvml, "nvmlInit_v2"));
+            if (!init) init = reinterpret_cast<NvmlInit>(GetProcAddress(nvml, "nvmlInit"));
+            auto by_index = reinterpret_cast<NvmlHandleByIndex>(
+                GetProcAddress(nvml, "nvmlDeviceGetHandleByIndex_v2"));
+            if (!by_index) {
+                by_index = reinterpret_cast<NvmlHandleByIndex>(
+                    GetProcAddress(nvml, "nvmlDeviceGetHandleByIndex"));
+            }
+            nvml_utilization = reinterpret_cast<NvmlUtilizationRates>(
+                GetProcAddress(nvml, "nvmlDeviceGetUtilizationRates"));
+            if (init && by_index && nvml_utilization && init() == 0 && by_index(0, &nvml_device) == 0 &&
+                nvml_device) {
+                return;
+            }
+            nvml_device = nullptr;
+        }
+    }
+    HMODULE pdh = LoadLibraryA("pdh.dll");
+    if (!pdh) {
+        return;
+    }
+    const auto open = reinterpret_cast<PdhOpen>(GetProcAddress(pdh, "PdhOpenQueryW"));
+    const auto add = reinterpret_cast<PdhAdd>(GetProcAddress(pdh, "PdhAddEnglishCounterW"));
+    pdh_collect = reinterpret_cast<PdhCollect>(GetProcAddress(pdh, "PdhCollectQueryData"));
+    pdh_array = reinterpret_cast<PdhArray>(GetProcAddress(pdh, "PdhGetFormattedCounterArrayW"));
+    if (!open || !add || !pdh_collect || !pdh_array || open(nullptr, 0, &pdh_query) != ERROR_SUCCESS) {
+        pdh_query = nullptr;
+        return;
+    }
+    if (add(pdh_query, L"\\GPU Engine(*engtype_3D)\\Utilization Percentage", 0, &pdh_counter) !=
+        ERROR_SUCCESS) {
+        pdh_counter = nullptr;
+        return;
+    }
+    pdh_collect(pdh_query); // a rate: the first value comes from the second collection
+    if (device_luid_valid) {
+        LUID luid;
+        std::memcpy(&luid, device_luid, sizeof(luid));
+        std::swprintf(luid_tag, std::size(luid_tag), L"luid_0x%08lX_0x%08lX",
+                      static_cast<unsigned long>(luid.HighPart), static_cast<unsigned long>(luid.LowPart));
+    }
+}
+
+float SampleGpu() {
+    if (nvml_device) {
+        NvmlUtilization rates{};
+        return nvml_utilization(nvml_device, &rates) == 0 ? float(rates.gpu) : -1.0f;
+    }
+    if (!pdh_counter || pdh_collect(pdh_query) != ERROR_SUCCESS) {
+        return -1.0f;
+    }
+    DWORD size = 0, count = 0;
+    pdh_array(pdh_counter, PDH_FMT_DOUBLE, &size, &count, nullptr);
+    if (size == 0) {
+        return -1.0f;
+    }
+    pdh_buffer.resize(size);
+    auto* items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(pdh_buffer.data());
+    if (pdh_array(pdh_counter, PDH_FMT_DOUBLE, &size, &count, items) != ERROR_SUCCESS) {
+        return -1.0f;
+    }
+    std::map<std::wstring, double> engines; // "<luid>_phys_N_eng_M": summed over processes
+    for (DWORD i = 0; i < count; ++i) {
+        // 0 valid, 1 new data; a new instance has no rate before its second collection.
+        if (items[i].FmtValue.CStatus > 1 || !items[i].szName) {
+            continue;
+        }
+        const std::wstring_view name{items[i].szName};
+        if (luid_tag[0] && name.find(luid_tag) == std::wstring_view::npos) {
+            continue; // another adapter
+        }
+        // "pid_<n>_luid_<a>_<b>_phys_<p>_eng_<e>_engtype_3D": the engine without the process.
+        const auto luid_at = name.find(L"luid_");
+        const size_t start = luid_at == std::wstring_view::npos ? 0 : luid_at;
+        const auto type_at = name.find(L"_engtype_", start);
+        const size_t length = type_at == std::wstring_view::npos ? std::wstring_view::npos : type_at - start;
+        engines[std::wstring(name.substr(start, length))] += items[i].FmtValue.doubleValue;
+    }
+    double busiest = 0.0;
+    for (const auto& [engine, value] : engines) {
+        busiest = std::max(busiest, value);
+    }
+    return std::clamp(float(busiest), 0.0f, 100.0f);
+}
+
+void SampleSystem() {
+    static ULONGLONG last_idle = 0, last_total = 0;
+    FILETIME idle_time, kernel_time, user_time;
+    if (GetSystemTimes(&idle_time, &kernel_time, &user_time)) {
+        const auto to64 = [](const FILETIME& t) {
+            return (ULONGLONG(t.dwHighDateTime) << 32) | t.dwLowDateTime;
+        };
+        const ULONGLONG idle = to64(idle_time);
+        const ULONGLONG total = to64(kernel_time) + to64(user_time); // kernel includes idle
+        if (last_total && total > last_total) {
+            const double busy = 1.0 - double(idle - last_idle) / double(total - last_total);
+            cpu = std::clamp(float(busy * 100.0), 0.0f, 100.0f);
+        }
+        last_idle = idle;
+        last_total = total;
+    }
+    MEMORYSTATUSEX memory{};
+    memory.dwLength = sizeof(memory);
+    if (GlobalMemoryStatusEx(&memory)) {
+        constexpr float gb = 1024.0f * 1024.0f * 1024.0f;
+        ram_total_gb = float(memory.ullTotalPhys) / gb;
+        ram_used_gb = float(memory.ullTotalPhys - memory.ullAvailPhys) / gb;
+    }
+}
+#else
+void InitGpu() {}
+float SampleGpu() {
+    return -1.0f;
+}
+void SampleSystem() {}
+#endif
+
+void SampleVram() {
+    if (!instance) {
+        return;
+    }
+    constexpr double gb = 1024.0 * 1024.0 * 1024.0;
+    if (instance->CanReportMemoryUsage()) {
+        vram_used_gb = float(double(instance->GetDeviceMemoryUsage()) / gb);
+        vram_budget_gb = float(double(instance->GetDeviceMemoryBudgetNow()) / gb);
+    } else {
+        u64 blocks = 0, allocations = 0;
+        Vulkan::VmaDeviceUsage(blocks, allocations);
+        vram_used_gb = float(double(blocks) / gb);
+        vram_budget_gb = float(double(instance->GetDeviceLocalMemory()) / gb);
+    }
+}
+
+void Start() {
+    std::call_once(started, [] {
+        std::thread([] {
+            InitGpu();
+            while (true) {
+                if (wanted.load(std::memory_order_relaxed)) {
+                    gpu = SampleGpu();
+                    SampleSystem();
+                    SampleVram();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                } else {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                }
+            }
+        }).detach();
+    });
+}
+
+} // namespace Telemetry
 
 float PixelDensity(SDL_WindowID id);
 
@@ -462,8 +674,51 @@ void DisplayTab() {
              "видеокартах. Применяется после перезапуска игры."),
            true, [&](int i) { Store(s.live_resolution, i - 1, true); });
     Toggle("fps", T("FPS counter", "Счётчик FPS"), s.show_fps,
-           T("Frames per second and frame time in the top right corner.",
-             "Кадры в секунду и время кадра в правом верхнем углу."));
+           s.show_hud ? T("The performance HUD is on and shows the frame rate itself.",
+                          "Включён оверлей производительности: частота кадров показана в нём.")
+                      : T("Frames per second and frame time in the top right corner. The "
+                          "performance HUD below shows more.",
+                          "Кадры в секунду и время кадра в правом верхнем углу. Оверлей "
+                          "производительности ниже показывает больше."),
+           !s.show_hud);
+    // Performance HUD (from Mrsuss60/bloodborne_pc_windows_port).
+    const bool hud = s.show_hud;
+    Toggle("hud", T("Performance HUD (F11)", "Оверлей производительности (F11)"), s.show_hud,
+           T("Frame rate and frame time, with a frame-time graph, video memory, GPU, CPU and RAM "
+             "load (each can be hidden below). F11 shows or hides it at any time. Replaces the FPS "
+             "counter while on.",
+             "Частота и время кадра, график времени кадра, видеопамять, загрузка видеокарты, "
+             "процессора и памяти (каждое можно скрыть ниже). F11 включает и выключает его в любой "
+             "момент. Пока он включён, счётчик FPS не показывается."));
+    const char* positions[] = {T("Top left", "Сверху слева"), T("Top right", "Сверху справа"),
+                               T("Bottom left", "Снизу слева"), T("Bottom right", "Снизу справа")};
+    Choice("hud_position", T("HUD position", "Положение оверлея"), s.hud_position,
+           BbSettings::HudPositionCount, [&](int i) { return positions[i]; }, [](int) { return true; },
+           T("Corner of the screen. In the bottom right corner the shader compilation indicator "
+             "moves to the bottom left.",
+             "Угол экрана. В правом нижнем углу индикатор компиляции шейдеров переносится в левый "
+             "нижний."),
+           hud, [&](int i) { Store(s.hud_position, i, true); });
+    SliderRow("hud_opacity", T("HUD background opacity", "Непрозрачность фона оверлея"), s.hud_opacity,
+              0.1f, 1.0f, 0.05f, nullptr, hud);
+    SliderRow("hud_scale", T("HUD size", "Размер оверлея"), s.hud_scale, 0.5f, 2.0f, 0.1f, nullptr, hud);
+    Toggle("hud_graph", T("HUD: frame-time graph", "Оверлей: график времени кадра"), s.hud_graph,
+           T("The last 120 frame times; spikes are stutters.",
+             "Время последних 120 кадров; пики — это подтормаживания."),
+           hud);
+    Toggle("hud_vram", T("HUD: video memory", "Оверлей: видеопамять"), s.hud_vram,
+           T("Video memory used by the game and the driver's budget for it.",
+             "Видеопамять, занятая игрой, и доступный ей бюджет драйвера."),
+           hud);
+    Toggle("hud_gpu", T("HUD: GPU load", "Оверлей: загрузка видеокарты"), s.hud_gpu,
+           T("NVIDIA: from the driver (NVML). AMD / Intel: Windows' GPU counters, as in Task "
+             "Manager.",
+             "NVIDIA: от драйвера (NVML). AMD / Intel: счётчики Windows, как в диспетчере задач."),
+           hud);
+    Toggle("hud_cpu", T("HUD: CPU load", "Оверлей: загрузка процессора"), s.hud_cpu,
+           T("Load of all CPU cores together.", "Общая загрузка всех ядер процессора."), hud);
+    Toggle("hud_ram", T("HUD: RAM", "Оверлей: оперативная память"), s.hud_ram,
+           T("System memory in use / installed.", "Занятая / установленная оперативная память."), hud);
     static const char* languages[] = {"English", "Русский"};
     Choice("language", "Language", s.menu_language == BbSettings::MenuLanguage::Russian ? 1 : 0, 2,
            [](int i) { return languages[i]; }, [](int) { return true; },
@@ -608,6 +863,57 @@ void EffectsTab() {
     }
 }
 
+// Mouse & keyboard controls (scheme from Mrsuss60/bloodborne_pc_windows_port; runtime_pad.c).
+void ControlsTab() {
+    auto& s = BbSettings::Get();
+    Toggle("mk", T("Mouse & keyboard controls", "Управление мышью и клавиатурой"), s.mk_enabled,
+           T("A PC layout: the mouse turns the camera and attacks, the keyboard moves, dodges and "
+             "uses items (the list below). Off: the classic keyboard layout (WASD / IJKL), the mouse "
+             "is not used. Applies at once; the launcher's setting is used at the next start.",
+             "Раскладка для ПК: мышь поворачивает камеру и атакует, клавиатура — движение, "
+             "уклонение и предметы (список ниже). Выкл: классическая раскладка (WASD / IJKL), мышь "
+             "не используется. Действует сразу; при следующем запуске берётся настройка лаунчера."));
+    const bool mk = s.mk_enabled;
+    SliderRow("mk_sens_x", T("Mouse sensitivity (horizontal)", "Чувствительность мыши (по горизонтали)"),
+              s.mk_sens_x, 0.1f, 5.0f, 0.1f,
+              T("How fast the camera turns for a mouse movement.",
+                "Скорость поворота камеры при движении мыши."),
+              mk);
+    SliderRow("mk_sens_y", T("Mouse sensitivity (vertical)", "Чувствительность мыши (по вертикали)"),
+              s.mk_sens_y, 0.1f, 5.0f, 0.1f, nullptr, mk);
+    Toggle("mk_invert_x", T("Invert horizontal look", "Инверсия по горизонтали"), s.mk_invert_x, nullptr, mk);
+    Toggle("mk_invert_y", T("Invert vertical look", "Инверсия по вертикали"), s.mk_invert_y, nullptr, mk);
+    SliderRow("mk_smoothing", T("Mouse smoothing", "Сглаживание мыши"), s.mk_smoothing, 0.0f, 0.8f, 0.05f,
+              T("Averages the mouse movement over a few frames: smoother, slightly delayed.",
+                "Усредняет движение мыши за несколько кадров: плавнее, с небольшой задержкой."),
+              mk);
+    SliderRow("mk_deadzone", T("Mouse dead zone", "Мёртвая зона мыши"), s.mk_deadzone, 0.0f, 0.2f, 0.01f,
+              T("Mouse movement slower than this share of a full stick push is ignored (hand "
+                "tremor).",
+                "Движение мыши медленнее этой доли полного наклона стика не учитывается (дрожание "
+                "руки)."),
+              mk);
+    ImGui::Spacing();
+    Note(mk ? T("Mouse: move = camera, left = R1, Shift + left = R2, right = L2, Shift + right = L1, "
+                "middle = R3 (lock-on), side buttons = L1 / R2.  Keys: WASD move, Space = Circle "
+                "(dodge), E / Enter = Cross, R = Square, X = Triangle, Q = R3, C / Z = L3, Esc / F1 = "
+                "Options, Tab / G = touchpad, Backspace = right touchpad, arrows or 1 2 3 4 = d-pad, "
+                "IJKL = camera.",
+                "Мышь: движение — камера, левая — R1, Shift + левая — R2, правая — L2, Shift + правая "
+                "— L1, средняя — R3 (захват цели), боковые — L1 / R2.  Клавиши: WASD — движение, "
+                "Пробел — Круг (уклонение), E / Enter — Крест, R — Квадрат, X — Треугольник, Q — R3, "
+                "C / Z — L3, Esc / F1 — Options, Tab / G — тачпад, Backspace — правая сторона тачпада, "
+                "стрелки или 1 2 3 4 — крестовина, IJKL — камера.")
+            : T("Classic layout: WASD move, IJKL camera, Space / Enter = Cross, Left Shift / Esc = "
+                "Circle, E = Square, Q = Triangle, 1 / 3 = L1 / R1, R / F = L2 / R2, Z / C = L3 / R3, "
+                "F1 / O = Options, Tab / Backspace = touchpad, arrows = d-pad.",
+                "Классическая раскладка: WASD — движение, IJKL — камера, Пробел / Enter — Крест, "
+                "Левый Shift / Esc — Круг, E — Квадрат, Q — Треугольник, 1 / 3 — L1 / R1, R / F — "
+                "L2 / R2, Z / C — L3 / R3, F1 / O — Options, Tab / Backspace — тачпад, стрелки — "
+                "крестовина."),
+         Dim());
+}
+
 void AdvancedTab() {
     auto& s = BbSettings::Get();
     const bool upscaler_on = s.upscaler != BbSettings::UpscalerOff;
@@ -669,9 +975,9 @@ void Menu() {
     const ImVec2 display = io.DisplaySize;
     ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 165));
 
-    static const char* tab_en[] = {"Display", "Upscaler", "Game effects", "Advanced"};
-    static const char* tab_ru[] = {"Изображение", "Апскейлер", "Эффекты игры", "Дополнительно"};
-    constexpr int tabs = 4;
+    static const char* tab_en[] = {"Display", "Upscaler", "Game effects", "Controls", "Advanced"};
+    static const char* tab_ru[] = {"Изображение", "Апскейлер", "Эффекты игры", "Управление", "Дополнительно"};
+    constexpr int tabs = 5;
     if (focus_request) {
         focus_request = false;
         state.focus_first = true;
@@ -805,6 +1111,7 @@ void Menu() {
     case 0: DisplayTab(); break;
     case 1: UpscalerTab(); break;
     case 2: EffectsTab(); break;
+    case 3: ControlsTab(); break;
     default: AdvancedTab(); break;
     }
     if (RestartNeeded()) {
@@ -912,6 +1219,79 @@ void FpsCounter() {
     ImGui::End();
 }
 
+const char* UpscalerLabel() {
+    const int upscaler = BbSettings::Get().upscaler;
+    return upscaler == BbSettings::UpscalerFsr3     ? "FSR 3.1"
+           : upscaler == BbSettings::UpscalerFsr4   ? "FSR 4"
+           : upscaler == BbSettings::UpscalerFsr411 ? "FSR 4.1.1"
+           : upscaler == BbSettings::UpscalerTaa    ? "TAA"
+           : upscaler == BbSettings::UpscalerDlss   ? "DLSS"
+                                                    : "";
+}
+
+/// The performance HUD (after Mrsuss60/bloodborne_pc_windows_port's HudOverlay): not
+/// interactive, never "menu open" (CapturesInput stays false), in the chosen corner.
+void PerformanceHud() {
+    const auto& s = BbSettings::Get();
+    Telemetry::Start();
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float pad = 12.0f * base_scale;
+    const float hud_scale = std::clamp(s.hud_scale.load(), 0.5f, 2.0f);
+    const int position = std::clamp(s.hud_position.load(), 0, BbSettings::HudPositionCount - 1);
+    const bool right = position == BbSettings::HudTopRight || position == BbSettings::HudBottomRight;
+    const bool bottom = position == BbSettings::HudBottomLeft || position == BbSettings::HudBottomRight;
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + (right ? viewport->WorkSize.x - pad : pad),
+                                   viewport->WorkPos.y + (bottom ? viewport->WorkSize.y - pad : pad)),
+                            ImGuiCond_Always, ImVec2(right ? 1.0f : 0.0f, bottom ? 1.0f : 0.0f));
+    ImGui::SetNextWindowBgAlpha(std::clamp(s.hud_opacity.load(), 0.1f, 1.0f));
+    ImGui::PushFont(sans_font, 16.0f * hud_scale);
+    ImGui::Begin("##hud", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings);
+    const float fps = frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f;
+    ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1.0f), "%.0f FPS", fps);
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.75f, 0.85f, 1.0f, 1.0f), BbSettings::MenuText("%.1f ms  %s", "%.1f мс  %s"),
+                       frame_ms_avg, UpscalerLabel());
+    if (s.hud_graph) {
+        float peak = 0.0f;
+        for (const float ms : frame_history) {
+            peak = std::max(peak, ms);
+        }
+        // At least 33 ms high, so a steady 60 FPS line sits low and a spike stands out.
+        const float top = std::max(33.4f, std::ceil(peak / 8.0f) * 8.0f);
+        char overlay[32];
+        std::snprintf(overlay, sizeof(overlay), "%.0f ms", top);
+        ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.80f, 0.68f, 0.46f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.0f, 0.0f, 0.0f, 0.35f));
+        ImGui::PlotLines("##frametimes", frame_history, FrameHistory, frame_history_next, overlay, 0.0f,
+                         top, ImVec2(220.0f * base_scale * hud_scale, 40.0f * base_scale * hud_scale));
+        ImGui::PopStyleColor(2);
+    }
+    if (s.hud_vram && Telemetry::vram_used_gb >= 0.0f) {
+        if (Telemetry::vram_budget_gb > 0.0f) {
+            ImGui::Text(BbSettings::MenuText("VRAM %.1f / %.1f GB", "Видеопамять %.1f / %.1f ГБ"),
+                        Telemetry::vram_used_gb.load(), Telemetry::vram_budget_gb.load());
+        } else {
+            ImGui::Text(BbSettings::MenuText("VRAM %.1f GB", "Видеопамять %.1f ГБ"),
+                        Telemetry::vram_used_gb.load());
+        }
+    }
+    if (s.hud_gpu && Telemetry::gpu >= 0.0f) {
+        ImGui::Text(BbSettings::MenuText("GPU %.0f%%", "Видеокарта %.0f%%"), Telemetry::gpu.load());
+    }
+    if (s.hud_cpu && Telemetry::cpu >= 0.0f) {
+        ImGui::Text(BbSettings::MenuText("CPU %.0f%%", "Процессор %.0f%%"), Telemetry::cpu.load());
+    }
+    if (s.hud_ram && Telemetry::ram_total_gb > 0.0f) {
+        ImGui::Text(BbSettings::MenuText("RAM %.1f / %.1f GB", "Память %.1f / %.1f ГБ"),
+                    Telemetry::ram_used_gb.load(), Telemetry::ram_total_gb.load());
+    }
+    ImGui::End();
+    ImGui::PopFont();
+}
+
 bool CompileIndicatorShown() {
     BbCompileProgress::Phase phase{};
     int percent = 0;
@@ -929,9 +1309,12 @@ void CompileIndicator() {
     }
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float pad = 12.0f * base_scale;
-    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - pad,
+    // Bottom right, or bottom left while the performance HUD has that corner.
+    const auto& s = BbSettings::Get();
+    const bool left = s.show_hud && s.hud_position == BbSettings::HudBottomRight;
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + (left ? pad : viewport->WorkSize.x - pad),
                                    viewport->WorkPos.y + viewport->WorkSize.y - pad),
-                            ImGuiCond_Always, ImVec2(1.0f, 1.0f));
+                            ImGuiCond_Always, ImVec2(left ? 0.0f : 1.0f, 1.0f));
     ImGui::SetNextWindowBgAlpha(0.5f);
     ImGui::Begin("##compile", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
@@ -1107,7 +1490,17 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
         return;
     }
     initialized = true;
-    std::printf("Overlay: menu ready (Insert%s)\n", pad_toggle ? " or L3+R3" : "");
+    // Performance HUD telemetry: the game's GPU (NVML for NVIDIA, else its adapter's PDH counters).
+    Telemetry::instance = &instance;
+    {
+        vk::PhysicalDeviceIDProperties id{};
+        vk::PhysicalDeviceProperties2 properties{.pNext = &id};
+        instance.GetPhysicalDevice().getProperties2(&properties);
+        Telemetry::vendor_id = properties.properties.vendorID;
+        Telemetry::device_luid_valid = id.deviceLUIDValid;
+        std::memcpy(Telemetry::device_luid, id.deviceLUID.data(), sizeof(Telemetry::device_luid));
+    }
+    std::printf("Overlay: menu ready (Insert%s), performance HUD on F11\n", pad_toggle ? " or L3+R3" : "");
 }
 
 void UpdateTextInput(SDL_Window* window) {
@@ -1139,6 +1532,17 @@ bool HandleEvent(const SDL_Event& event) {
         if (down && !event.key.repeat &&
             (event.key.key == SDLK_INSERT || (is_open && event.key.key == SDLK_ESCAPE))) {
             SetOpen(event.key.key == SDLK_INSERT ? !is_open : false);
+            return true;
+        }
+        // F11: the performance HUD (Mrsuss60/bloodborne_pc_windows_port). Their Shift+Tab is
+        // not taken: Shift and Tab are game keys here (Circle + touchpad; in mouse & keyboard
+        // mode the attack modifier + touchpad). F11 is bound to nothing in either layout.
+        if (event.key.key == SDLK_F11) {
+            if (down && !event.key.repeat) {
+                auto& s = BbSettings::Get();
+                s.show_hud = !s.show_hud.load();
+                BbSettings::Save();
+            }
             return true;
         }
         if (!is_open) {
@@ -1221,7 +1625,8 @@ bool HandleEvent(const SDL_Event& event) {
 
 bool Visible() {
     return initialized &&
-           (menu_open || prompt_active || BbSettings::Get().show_fps || CompileIndicatorShown());
+           (menu_open || prompt_active || BbSettings::Get().show_fps || BbSettings::Get().show_hud ||
+            CompileIndicatorShown());
 }
 
 bool MenuOpen() {
@@ -1334,7 +1739,10 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     last_present = now;
     if (ms > 0.0f && ms < 1000.0f) {
         frame_ms_avg = frame_ms_avg == 0.0f ? ms : frame_ms_avg * 0.95f + ms * 0.05f;
+        frame_history[frame_history_next] = ms;
+        frame_history_next = (frame_history_next + 1) % FrameHistory;
     }
+    Telemetry::wanted.store(initialized && BbSettings::Get().show_hud, std::memory_order_relaxed);
     if (std::getenv("BB_MENU_KEYS_FILE") && initialized) {
         std::scoped_lock lock{imgui_mutex};
         ScriptedKeys();
@@ -1360,7 +1768,9 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     if (menu_open) {
         Menu();
     }
-    if (BbSettings::Get().show_fps && !menu_open) {
+    if (BbSettings::Get().show_hud && !menu_open) {
+        PerformanceHud(); // includes the frame rate: the FPS counter is not drawn too
+    } else if (BbSettings::Get().show_fps && !menu_open) {
         FpsCounter();
     }
     if (!menu_open) {
