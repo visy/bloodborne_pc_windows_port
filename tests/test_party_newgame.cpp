@@ -47,6 +47,7 @@ struct Model {
     double loading_at = -1;
     double fade_until = 0;
     int presses_after_continue = 0;
+    int presses_in_loaded = 0; // presses once Continue's world loads
 
     void Go(Screen s, double t, bool with_texts = true) {
         screen = s;
@@ -57,6 +58,7 @@ struct Model {
 
     void Press(std::uint32_t b, double t) {
         if (screen == Screen::Fade || (has_character && screen == Screen::Loading)) ++presses_after_continue;
+        if (screen == Screen::Loaded || (has_character && screen == Screen::Loading)) ++presses_in_loaded;
         if (t < busy_until) return; // still building
         auto wrap = [&](int n, int d) { row = (row + d + n) % n; };
         switch (screen) {
@@ -233,6 +235,17 @@ void TestSaveWithCharacterFade() {
     CHECK(m.presses_after_continue == 0);
 }
 
+// Continue with the online / offline prompt: the load starts long after the Cross (the driver has
+// moved on to the empty save's screens by then); once a world loads it stops pressing.
+void TestSaveWithCharacterSlowLoad() {
+    Model m;
+    m.has_character = true;
+    m.continue_fade = 9.0;
+    CHECK(Run(m, 120) == NewGamePhase::Done);
+    CHECK(m.screen == Screen::Loaded);
+    CHECK(m.presses_in_loaded == 0);
+}
+
 void TestControlsCrossIgnoredOnce() {
     Model m;
     m.ignore_next_cross = true;
@@ -299,6 +312,7 @@ int main() {
     TestTitleNeverReady();
     TestSaveWithCharacter();
     TestSaveWithCharacterFade();
+    TestSaveWithCharacterSlowLoad();
     TestControlsCrossIgnoredOnce();
     TestMissedPresses();
     TestWarpParse();

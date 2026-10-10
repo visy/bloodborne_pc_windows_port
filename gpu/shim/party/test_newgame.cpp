@@ -52,6 +52,18 @@ std::uint32_t NewGameDriver::Step(const NewGameInput& in, std::string* log) {
     if (log) {
         log->clear();
     }
+    // A world loading during character creation: the title's first Cross was Continue (a save
+    // with a character; with the online / offline prompt in between it can take a while). Stop
+    // pressing creation buttons into the world (seen live: Options / Cross in the Hunter's Dream).
+    if ((phase_ == NewGamePhase::Brightness || phase_ == NewGamePhase::Controls ||
+         phase_ == NewGamePhase::WaitMovie || phase_ == NewGamePhase::Contract) &&
+        (in.world_up || in.loading)) {
+        queue_.clear();
+        next_ = 0;
+        holding_ = false;
+        Enter(NewGamePhase::WaitLoad, in.t, log, "a world is loading: the save had a character (Continue)");
+        return 0;
+    }
     // The tap queue first: hold, release, gap.
     if (next_ < queue_.size()) {
         const Tap& tap = queue_[next_];
