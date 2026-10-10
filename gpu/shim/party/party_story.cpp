@@ -1210,8 +1210,15 @@ void StoryTick() {
     st.own_world = OwnWorld();
     st.remo_playing = g.world_up && RemoPlaying();
     st.map_id = g.map_id;
+    bool busy;
+    {
+        std::lock_guard<std::mutex> lk(g_guest_mu);
+        busy = g_guest.Busy();
+    }
+    if (g.world_up && !g.loading && (busy || (g_tick.test_on && !g_tick.test_done))) {
+        st.sex_variant = SexVariant(); // a virtual call into the game: only when a play may follow
+    }
     if (g.world_up && !g.loading) {
-        st.sex_variant = SexVariant();
         const int tv = FlagValue(9800, 3);
         st.tod_value = tv < 0 ? 0 : tv;
     }
