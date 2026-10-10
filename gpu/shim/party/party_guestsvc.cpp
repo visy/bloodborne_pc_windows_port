@@ -357,6 +357,92 @@ bool GuestLampIntercept(std::uint32_t id) {
     return true;
 }
 
+// Diagnostics (BB_PARTY_GUESTSVC_TEST "probe"): the character with `entity` the way the talk
+// environment finds it (0x203AC3D..0x203AD09): WorldChrMan +0x90 count of chr sets, +0x98[i] a set
+// with +0xF0 count and +0xF8 sorted {entity, handle} pairs; handle bits 14..19 = slot block,
+// bits 0..13 = index; block < WorldChrMan+0x20: entry = [WorldChrMan+0x28] + block * 0x160 ->
+// +0xC0 array (stride 0x38), else (block == [[WorldChrMan+8]+0x18]) WorldChrMan+0x38 array;
+// [entry] = ChrIns*.
+std::uint64_t FindChr(std::uint32_t entity) {
+    const std::uint64_t wcm = ReadGameState(false).world_chr_man;
+    std::int32_t sets = 0;
+    if (!wcm || !SafeGet(wcm + 0x90, &sets) || sets <= 0 || sets > 64) {
+        return 0;
+    }
+    for (std::int32_t i = 0; i < sets; ++i) {
+        std::uint64_t set = 0, arr = 0;
+        std::int32_t n = 0;
+        if (!SafeGet(wcm + 0x98 + 8 * std::uint64_t(i), &set) || !set || !SafeGet(set + 0xf0, &n) ||
+            !SafeGet(set + 0xf8, &arr) || n <= 0 || n > 100000) {
+            continue;
+        }
+        for (std::int32_t k = 0; k < n; ++k) {
+            std::int32_t id = 0, handle = 0;
+            if (!SafeGet(arr + 8 * std::uint64_t(k), &id) || id != std::int32_t(entity)) {
+                continue;
+            }
+            SafeGet(arr + 8 * std::uint64_t(k) + 4, &handle);
+            if (handle < 0) {
+                return 0;
+            }
+            const std::uint32_t block = (std::uint32_t(handle) >> 14) & 0x3f, index = std::uint32_t(handle) & 0x3fff;
+            std::int32_t blocks = 0;
+            std::uint64_t entry = 0;
+            SafeGet(wcm + 0x20, &blocks);
+            if (std::int32_t(block) < blocks) {
+                std::uint64_t base = 0, list = 0;
+                SafeGet(wcm + 0x28, &base);
+                SafeGet(base + block * 0x160 + 0xc0, &list);
+                entry = list ? list + index * 0x38 : 0;
+            } else {
+                std::uint64_t list = 0;
+                SafeGet(wcm + 0x38, &list);
+                entry = list ? list + index * 0x38 : 0;
+            }
+            std::uint64_t chr = 0;
+            if (entry) {
+                SafeGet(entry, &chr);
+            }
+            return chr;
+        }
+    }
+    return 0;
+}
+
+void ProbeDoll() {
+    const std::uint64_t chr = FindChr(2100700);
+    std::int32_t type = -1, st10 = -1;
+    std::uint8_t b20 = 0, draw[8] = {};
+    std::uint64_t sub = 0, phys = 0;
+    float pos[4] = {};
+    if (chr) {
+        SafeGet(chr + 0x78, &type);
+        SafeGet(chr + 0x18, &sub);
+        if (sub) {
+            SafeGet(sub + 0x10, &st10);
+            SafeGet(sub + 0x20, &b20);
+        }
+        SafeRead(chr + 0x1e0, draw, sizeof draw);
+        SafeGet(chr + 0x68, &phys);
+        if (phys) {
+            SafeRead(phys + 0x1d0, pos, sizeof pos);
+        }
+    }
+    std::string flags;
+    for (const std::uint32_t f : {9401u, 100u, 1000u, 1001u, 1002u, 1003u, 12100105u, 12100500u, 12100501u, 12100502u,
+                                  12100510u, 12105100u}) {
+        bool on = false;
+        const bool ok = progress::ReadFlag(f, &on);
+        char b[32];
+        std::snprintf(b, sizeof b, " %u=%s", f, ok ? (on ? "1" : "0") : "?");
+        flags += b;
+    }
+    Log("probe: Doll chr %p type %d, +0x18->+0x10 %d +0x20 0x%02x, +0x1e0 %02x %02x %02x %02x %02x %02x %02x %02x, "
+        "pos (%.2f, %.2f, %.2f); flags%s",
+        reinterpret_cast<void*>(chr), type, st10, b20, draw[0], draw[1], draw[2], draw[3], draw[4], draw[5], draw[6],
+        draw[7], pos[0], pos[1], pos[2], flags.c_str());
+}
+
 // Test fixture: stand the guest somewhere (PlayerIns vfunc +0x5F8 warp 0x18CD600: rsi float4
 // position, rdx float4 rotation (0, yaw, 0, 0), ecx 0; the convention of 0x13AEADD) and/or set its
 // echoes, so a scripted run can open a menu and spend them. Never on by default.
@@ -530,6 +616,12 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
 
 void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
     LampTick(s, link);
+    static double last_probe = 0;
+    if (g.test.find("probe") != std::string::npos && s.world_up && !s.loading && IsDreamMap(s.map_id) &&
+        Now() - last_probe >= 10.0) {
+        last_probe = Now();
+        ProbeDoll();
+    }
     if (!g.installed) {
         return;
     }
