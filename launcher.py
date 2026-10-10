@@ -68,7 +68,7 @@ PARTY_HELP_SHORT = ("How to play together: the host picks Host a party and start
                     "code shown under Your code to the friends. Each friend picks Join a party, pastes "
                     "the code and starts the game. Everyone needs the same game version (1.09), the same "
                     "gameplay patches and mods and the same Max players. Click for the full steps.")
-PARTY_HELP = """Party co-op lets 2 to 4 players play the campaign together. It is still in development: it works on one PC with test instances, but has not been tested between two PCs yet.
+PARTY_HELP = """Party co-op lets 2 to 4 players play the campaign together. It is still in development: its parts have been tested on one PC, but it has not been tested between two PCs yet - expect bugs.
 
 HOST
 1. Party tab: Mode = Host a party, enter your name. Max players: 3 is the game's normal limit.
