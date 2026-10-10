@@ -195,8 +195,9 @@ std::string DescribeTasks() {
     std::string s;
     char b[96];
     for (const TaskInfo& t : Tasks(false)) {
-        std::snprintf(b, sizeof b, " [human mode %d step %d next %d slot %u flags 0x%02x]", t.mode, t.step, t.next,
-                      unsigned(t.slot), unsigned(t.flags));
+        const char* chr = (t.mode == 1 || t.mode == 2) ? (PlayerForPeer(t.task + kTaskPeer) ? " chr" : " NO-chr") : "";
+        std::snprintf(b, sizeof b, " [human mode %d step %d next %d slot %u flags 0x%02x%s]", t.mode, t.step, t.next,
+                      unsigned(t.slot), unsigned(t.flags), chr);
         s += b;
     }
     for (const TaskInfo& t : Tasks(true)) {
@@ -423,8 +424,9 @@ void ProbeTick(const GameSnapshot& s) {
         Log("load started: local PlayerIns %#llx, role %d, flow %d; tasks:%s", ull(s.player), Role(),
             Field<int>(Slot(kSlotFlow), 0x84, -1), DescribeTasks().c_str());
     } else if (!loading && st.was_loading) {
-        Log("B2 load report: local PlayerIns %#llx -> %#llx (%s), player set %d, role %d, flow %d; tasks:%s",
-            ull(st.player_before), ull(s.player), st.player_before == s.player ? "SAME object" : "re-created",
+        Log("B2 load report: map %s, local PlayerIns %#llx -> %#llx (%s), player set %d, role %d, flow %d; tasks:%s",
+            MapName(s.map_id).c_str(), ull(st.player_before), ull(s.player),
+            st.player_before == s.player ? "SAME object" : "re-created",
             Field<int>(Slot(kSlotWorldChrMan), 0x30, -1), Role(), Field<int>(Slot(kSlotFlow), 0x84, -1),
             DescribeTasks().c_str());
     }
@@ -616,7 +618,18 @@ void TestWarpTick(const GameSnapshot& s, double now) {
     if (!env || !env[0] || done) {
         return;
     }
-    if (!s.world_up || s.loading || Tasks(true).empty()) {
+    // BB_PARTY_B2_TEST_HOSTWARP=1: the host instead, once a guest's chr has stood in its world.
+    static const bool host_mode = EnvOn("BB_PARTY_B2_TEST_HOSTWARP");
+    bool ready = !Tasks(true).empty();
+    if (host_mode) {
+        ready = false;
+        if (Role() == RoleHost) {
+            for (const TaskInfo& t : Tasks(false)) {
+                ready = ready || (t.mode == 1 && t.step == kStepUpdate && PlayerForPeer(t.task + kTaskPeer));
+            }
+        }
+    }
+    if (!s.world_up || s.loading || !ready) {
         npc_since = 0;
         return;
     }
@@ -639,6 +652,12 @@ void Tick(const GameSnapshot& s) {
         return;
     }
     const double now = Now();
+    static double last_status = 0;
+    if ((Role() == RoleHost || Role() == RoleClient) && s.world_up && !s.loading && now - last_status >= 10.0) {
+        last_status = now;
+        Log("status: map %s, role %d, flow %d, rejoin %d; tasks:%s", MapName(s.map_id).c_str(), Role(),
+            Field<int>(Slot(kSlotFlow), 0x84, -1), int(g_rejoin.load()), DescribeTasks().c_str());
+    }
     ProbeTick(s);
     TestWarpTick(s, now);
     if (Role() == RoleClient) {

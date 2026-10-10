@@ -178,7 +178,21 @@ Single-instance results in section 6; the two-instance path (D1-D3) is **unteste
 
 ## 6. Runtime (single instance)
 
-See section 6 results below (filled from the probe run).
+Runs: `tools/mp/instances.py run --count 1 --env BB_PARTY=host --env BB_PARTY_AUTO=0
+--env BB_PARTY_B2=1 --env BB_PARTY_B2_FORCE=1 --env BB_PARTY_TEST_NPC=auto
+--env BB_PARTY_TEST_NPC_WARP=2412951 --env BB_PARTY_B2_TEST_WARP=2412951` (save in the Hunter's
+Dream; the fixture warps to Central Yharnam and summons NPC 2410158, B2 warps once more with the
+NPC task alive).
+
+* All sites byte-verified at install: K2-K7 hooked; K1 found already retargeted by the XML
+  "Keep session on map reload" (`e8 ea 8e 58 00`), as party mode applies it. [R]
+* **Local PlayerIns is re-created by every load**: `0 -> 0x10149d0840` (title → Dream),
+  `0x10149d0840 -> 0x10229bc550` (Dream → m24_01); the player set stays 5 entries. Confirms 1.2:
+  remote PlayerIns cannot survive a load, only their tasks can. [R]
+* K2 with a live NPC task (`[npc step 1 life 0x62]`): reset skipped, the NPC task destroyed by
+  our replica of the reset's NPC half, load completed, the fixture re-summoned the NPC in the new
+  map; no crash, no leaked slot. [R]
+* Not checkable with one instance: K1/K3-K7 actions, D1-D3 (need a session).
 
 ## 7. Risks / open items
 
