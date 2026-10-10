@@ -19,6 +19,13 @@
 #include <mutex>
 #include <queue>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 namespace {
 
 std::mutex submit_mutex{};
@@ -152,8 +159,23 @@ bool WriteVector(const BlobType type, std::filesystem::path&& path_, std::vector
                 }
             } else {
                 using namespace Common::FS;
-                const auto file = IOFile{path, FileAccessMode::Create};
-                file.Write(v);
+                auto temp_path = path;
+                temp_path += ".tmp";
+                {
+                    const auto file = IOFile{temp_path, FileAccessMode::Create};
+                    file.Write(v);
+                }
+#ifdef _WIN32
+                if (!MoveFileExW(temp_path.c_str(), path.c_str(),
+                                 MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) {
+                    std::error_code ec;
+                    std::filesystem::remove(path, ec);
+                    std::filesystem::rename(temp_path, path, ec);
+                }
+#else
+                std::error_code ec;
+                std::filesystem::rename(temp_path, path, ec);
+#endif
             }
         }};
         std::scoped_lock lock{m_request};

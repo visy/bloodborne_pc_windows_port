@@ -267,7 +267,9 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
     Storage::DataBase::Instance().Load(Storage::BlobType::ShaderBinary,
                                        fmt::format("{:#018x}_{}", program->info.pgm_hash, perm_idx),
                                        spv);
-    if (spv.empty()) {
+    if (spv.empty() || spv[0] != 0x07230203u) {
+        LOG_WARNING(Render_Vulkan, "Cached shader binary {}_{:x}_{} is missing or invalid SPIR-V",
+                    program->info.hw_stage, program->info.pgm_hash, perm_idx);
         return false;
     }
 
@@ -279,6 +281,9 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
     auto [it_pgm, new_program] = program_cache.try_emplace(program->info.pgm_hash);
     if (new_program) {
         module = CompileSPV(spv, instance.GetDevice());
+        if (!module) {
+            return false;
+        }
         it_pgm.value() = std::move(program);
     } else {
         const auto& it = std::ranges::find(it_pgm.value()->modules, spec, &Program::Module::spec);
@@ -297,6 +302,9 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
             module = it->module;
         } else {
             module = CompileSPV(spv, instance.GetDevice());
+            if (!module) {
+                return false;
+            }
         }
     }
     it_pgm.value()->InsertPermut(module, std::move(spec), perm_idx);
@@ -351,33 +359,41 @@ void PipelineCache::WarmUp() {
     u32 num_pipelines{};
     u32 num_total_pipelines{};
 
-    Storage::DataBase::Instance().ForEachBlob(
-        Storage::BlobType::PipelineKey, [&](std::vector<u8>&& data) {
-            ++num_total_pipelines;
+    try {
+        Storage::DataBase::Instance().ForEachBlob(
+            Storage::BlobType::PipelineKey, [&](std::vector<u8>&& data) {
+                ++num_total_pipelines;
 
-            Serialization::Archive ar{std::move(data)};
-            Serialization::Reader pldata{ar};
+                Serialization::Archive ar{std::move(data)};
+                Serialization::Reader pldata{ar};
 
-            u32 version{};
-            pldata.Read(version);
-            if (version != Serialization::PipelineKeyVersion) {
-                return;
-            }
+                u32 version{};
+                pldata.Read(version);
+                if (version != Serialization::PipelineKeyVersion) {
+                    return;
+                }
 
-            u32 is_compute{};
-            pldata.Read(is_compute);
+                u32 is_compute{};
+                pldata.Read(is_compute);
 
-            bool result{};
-            if (is_compute) {
-                result = LoadComputePipeline(ar);
-            } else {
-                result = LoadGraphicsPipeline(ar);
-            }
+                bool result{};
+                if (is_compute) {
+                    result = LoadComputePipeline(ar);
+                } else {
+                    result = LoadGraphicsPipeline(ar);
+                }
 
-            if (result) {
-                ++num_pipelines;
-            }
-        });
+                if (result) {
+                    ++num_pipelines;
+                }
+            });
+    } catch (const Serialization::CorruptData& e) {
+        LOG_ERROR(Render, "Corrupted pipeline cache detected during WarmUp: {}. Clearing cache.",
+                  e.what());
+        Storage::DataBase::Instance().Clear();
+        Storage::DataBase::Instance().FinishPreload();
+        return;
+    }
 
     LOG_INFO(Render, "Preloaded {} pipelines", num_pipelines);
     if (num_total_pipelines > num_pipelines) {

@@ -303,7 +303,14 @@ void RunEventWriteEop(Vulkan::Rasterizer& rasterizer, const u8* data) {
 
 void RunDmaData(Vulkan::Rasterizer& rasterizer, const u8* data) {
     const auto* dma_data = reinterpret_cast<const PM4DmaData*>(data);
-    ASSERT(dma_data->command.das == 0);
+    // Copies deferred to the recording thread that read this range precede the write (the
+    // command processor's writes do not wait for earlier draws: the game cannot take one for
+    // a sign that the GPU is past them); fences deferred to it (RecorderFences) precede writes
+    // the guest sees.
+    if (dma_data->dst_sel == DmaDataDst::Memory || dma_data->dst_sel == DmaDataDst::MemoryUsingL2) {
+        rasterizer.WaitHostCopiesFor(dma_data->DstAddress<VAddr>(), dma_data->NumBytes());
+        rasterizer.WaitDeferredSignals();
+    }
     if (dma_data->src_sel == DmaDataSrc::Data && dma_data->dst_sel == DmaDataDst::Gds) {
         rasterizer.FillBuffer(dma_data->dst_addr_lo, dma_data->NumBytes(),
                                dma_data->data, true);
@@ -343,9 +350,12 @@ void SignalFlip(Vulkan::Rasterizer& rasterizer, const u8*) {
 void RunWriteData(Vulkan::Rasterizer& rasterizer, const u8* data) {
     const auto* header = reinterpret_cast<const PM4Header*>(data);
     const auto* write_data = reinterpret_cast<const PM4CmdWriteData*>(data);
-    // Copies deferred to the recording thread, and fences deferred to it (RecorderFences),
-    // precede writes the guest sees.
-    rasterizer.WaitHostCopies();
+    // Copies deferred to the recording thread that read this range precede the write (the
+    // command processor's writes do not wait for earlier draws: the game cannot take one for
+    // a sign that the GPU is past them); fences deferred to it (RecorderFences) precede writes
+    // the guest sees.
+    rasterizer.WaitHostCopiesFor(write_data->Address<VAddr>(),
+                                 (header->type3.count.Value() - 2) * sizeof(u32));
     rasterizer.WaitDeferredSignals();
     BbWriteLog::Note(write_data->Address<u64>(), write_data->data,
                      (header->type3.count.Value() - 2) * sizeof(u32), BbWriteLog::WriteData);
@@ -762,10 +772,24 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
         default:
             UNREACHABLE_MSG("Wrong PM4 type {}", type);
             break;
-        case 0:
+        case 0: {
+            // A zero dword is often trailing padding at the end of a command chunk.
+            // If all remaining dwords in the chunk are zero, treat them as padding and finish.
+            bool all_zero = true;
+            for (u32 w : dcb) {
+                if (w != 0) {
+                    all_zero = false;
+                    break;
+                }
+            }
+            if (all_zero) {
+                dcb = {};
+                continue;
+            }
             UNREACHABLE_MSG("Unimplemented PM4 type 0, base reg: {}, size: {}",
                             header->type0.base.Value(), header->type0.NumWords());
             break;
+        }
         case 2:
             // Type-2 packet are used for padding purposes
             dcb = NextPacket(dcb, 1);
@@ -1173,6 +1197,12 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 if (dma_data->dst_addr_lo == 0x3022C || !rasterizer) {
                     break;
                 }
+                const bool reads_memory = dma_data->src_sel == DmaDataSrc::Memory ||
+                                          dma_data->src_sel == DmaDataSrc::MemoryUsingL2;
+                if (reads_memory) {
+                    rasterizer->NoteHostCopySource(dma_data->SrcAddress<VAddr>(),
+                                                   dma_data->NumBytes());
+                }
                 if (rasterizer->RunInOrder(&RunDmaData, dma_data, sizeof(PM4DmaData),
                                            BbToggle::PipelinedMemoryWrites) &&
                     (dma_data->dst_sel == DmaDataDst::Memory ||
@@ -1433,6 +1463,20 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
         }
 
         if (header->type != 3) {
+            bool all_zero = true;
+            for (u32 w : acb) {
+                if (w != 0) {
+                    all_zero = false;
+                    break;
+                }
+            }
+            if (all_zero) {
+                if constexpr (!is_indirect) {
+                    *queue.read_addr += acb.size();
+                    *queue.read_addr %= queue.ring_size_dw;
+                }
+                break;
+            }
             // No other types of packets were spotted so far
             UNREACHABLE_MSG("Invalid PM4 type {}", header->type.Value());
         }

@@ -1043,6 +1043,7 @@ void TextureCache::GarbageCollectImages() {
     }
     BbStats::gc_used_bytes.store(total_used_memory, std::memory_order_relaxed);
     BbStats::gc_trigger_bytes.store(trigger_gc_memory, std::memory_order_relaxed);
+    BbStats::gc_critical_bytes.store(critical_gc_memory, std::memory_order_relaxed);
     // bbport: gc_tick (one per guest submission, hundreds a second) at each of the last 64
     // seconds, for ages in seconds. The usage compared is all of our VRAM, not only images: on a
     // discrete GPU it stays over the trigger, where an age of 16 ticks (~3 frames) evicted every
@@ -1056,6 +1057,9 @@ void TextureCache::GarbageCollectImages() {
         BbStats::coarse_second.store(u32(second), std::memory_order_relaxed);
         gc_tick_at_second[second % gc_tick_at_second.size()] = gc_tick;
     }
+    if (BbToggle::Disabled(BbToggle::TextureCollector)) {
+        return;
+    }
     if (total_used_memory < trigger_gc_memory) {
         return;
     }
@@ -1063,16 +1067,21 @@ void TextureCache::GarbageCollectImages() {
         const char* env = std::getenv("BB_GC_IDLE_SECONDS");
         return std::clamp<u64>(env ? std::strtoull(env, nullptr, 10) : 20, 1, 63);
     }();
+    // Under pressure an image goes once unused for BB_GC_PRESSURE_IDLE_SECONDS (5), over the
+    // critical mark for 1 s first, and only then by submissions as before (80/160 ticks, a
+    // fraction of a second). On cards up to 8 GB the pressure mark is 40 % of the budget: the
+    // usage stayed over it, so textures off screen for a moment were evicted and uploaded again
+    // when the camera turned back (9000 a minute with a 4.5 GB budget), read over the bus each
+    // time: NVIDIA testers saw the frame rate fall the longer they played.
+    static const u64 pressure_idle_seconds = [] {
+        const char* env = std::getenv("BB_GC_PRESSURE_IDLE_SECONDS");
+        return std::clamp<u64>(env ? std::strtoull(env, nullptr, 10) : 5, 0, 63);
+    }();
     // The tick at the start of that second (an older one where no submission came then).
-    const u64 idle_tick =
-        gc_tick_at_second[(second - idle_seconds) % gc_tick_at_second.size()];
-    const u64 pressure_seconds = std::clamp<u64>(idle_seconds / 4, 3ULL, 5ULL);
-    const u64 raw_press_tick =
-        gc_tick_at_second[(second - pressure_seconds) % gc_tick_at_second.size()];
-    const u64 pressure_tick = raw_press_tick ? raw_press_tick : (gc_tick > 300 ? gc_tick - 300 : 0);
-    const u64 raw_crit_tick =
-        gc_tick_at_second[(second - 1) % gc_tick_at_second.size()];
-    const u64 critical_tick = raw_crit_tick ? raw_crit_tick : (gc_tick > 120 ? gc_tick - 120 : 0);
+    const auto tick_seconds_ago = [&](u64 seconds) {
+        return gc_tick_at_second[(second - seconds) % gc_tick_at_second.size()];
+    };
+    const u64 idle_tick = tick_seconds_ago(idle_seconds);
 
     std::scoped_lock lock{mutex};
     bool pressured = false;
@@ -1082,19 +1091,19 @@ void TextureCache::GarbageCollectImages() {
     u32 visited = 0;
     u32 sync_downloads_this_pass = 0;
 
-    const auto configure = [&](bool allow_aggressive) {
+    // emergency: over the critical mark after evicting what was unused for a second.
+    const auto configure = [&](bool allow_aggressive, bool emergency = false) {
         pressured = total_used_memory >= pressure_gc_memory;
         aggresive = allow_aggressive && total_used_memory >= critical_gc_memory;
-        if (aggresive) {
-            below_tick = critical_tick;
-            num_deletions = 16;
-        } else if (pressured) {
-            below_tick = pressure_tick;
-            num_deletions = 6;
-        } else {
-            below_tick = idle_tick;
-            num_deletions = 4;
+        const u64 ticks_to_destroy = std::min<u64>(aggresive ? 160 : pressured ? 80 : 16, gc_tick);
+        below_tick = gc_tick - ticks_to_destroy;
+        if (!pressured && !aggresive) {
+            below_tick = std::min(below_tick, idle_tick);
+        } else if (!emergency) {
+            const u64 seconds = aggresive ? 1 : pressure_idle_seconds;
+            below_tick = std::min(below_tick, tick_seconds_ago(seconds));
         }
+        num_deletions = aggresive ? 40 : pressured ? 20 : 10;
         visited = 0;
     };
     const auto clean_up = [&](ImageId image_id) {
@@ -1152,6 +1161,11 @@ void TextureCache::GarbageCollectImages() {
     if (total_used_memory >= critical_gc_memory) {
         // If we are still over the critical limit, run an aggressive GC
         configure(true);
+        lru_cache.ForEachItemBelow(below_tick, clean_up);
+    }
+    if (total_used_memory >= critical_gc_memory) {
+        // Still over it: what was used a moment ago goes too (out of memory otherwise).
+        configure(true, true);
         lru_cache.ForEachItemBelow(below_tick, clean_up);
     }
     // bbport: evictions under memory pressure, at most every 5 s (BB_FRAME_STATS or not).

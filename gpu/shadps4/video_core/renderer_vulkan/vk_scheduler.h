@@ -740,10 +740,9 @@ public:
             func(current_cmdbuf);
             return;
         }
-        if (!record_chunk->Push(std::forward<Func>(func))) {
-            full_chunks.push_back(std::move(record_chunk));
-            record_chunk = AcquireChunk();
-            const bool pushed = record_chunk->Push(std::forward<Func>(func));
+        if (!CurrentChunk().Push(std::forward<Func>(func))) {
+            RetireChunk();
+            const bool pushed = CurrentChunk().Push(std::forward<Func>(func));
             ASSERT(pushed);
         }
     }
@@ -761,9 +760,8 @@ public:
             return;
         }
         ASSERT(bytes + 1024 <= RecordChunk::Capacity);
-        if (RecordChunk::Capacity - record_chunk->Size() < bytes + 1024) {
-            full_chunks.push_back(std::move(record_chunk));
-            record_chunk = AcquireChunk();
+        if (RecordChunk::Capacity - CurrentChunk().Size() < bytes + 1024) {
+            RetireChunk();
         }
     }
 
@@ -777,7 +775,7 @@ public:
         // Room for the data and the command that follows it, so both stay in one chunk.
         const size_t bytes = data.size_bytes();
         ReserveRecordData(bytes + alignof(T));
-        auto* dst = static_cast<T*>(record_chunk->Allocate(bytes, alignof(T)));
+        auto* dst = static_cast<T*>(CurrentChunk().Allocate(bytes, alignof(T)));
         std::memcpy(dst, data.data(), bytes);
         return {dst, data.size()};
     }
@@ -794,6 +792,15 @@ public:
     /// (it may then rewrite the memory, e.g. UI vertices: flickering) and before the
     /// submission that reads them. Waits for all.
     void WaitHostCopies();
+
+    /// bbport: guest memory [address, address + size) a host copy issued now will read (the
+    /// source of a deferred upload or rename). WaitHostCopiesFor waits only for these.
+    void NoteHostCopySource(u64 address, u64 size);
+    /// Waits for the host copies when one of them may still read [address, address + size): a
+    /// write there (the command processor's WRITE_DATA/DMA) must not change what they copy.
+    /// Writes elsewhere do not wait (the hardware's command processor writes do not wait for
+    /// earlier draws either).
+    void WaitHostCopiesFor(u64 address, u64 size);
 
     /// Runs `copy` on the recording thread in order with the commands (the thread spins for
     /// work anyway, so small copies cost no wakeup); WaitHostCopies() covers it.
@@ -874,6 +881,25 @@ private:
 
     std::unique_ptr<RecordChunk> AcquireChunk();
 
+    /// Moves the full current chunk aside; a new one takes its place (swapped in: never null).
+    void RetireChunk() {
+        auto full = AcquireChunk();
+        record_chunk.swap(full);
+        if (full) {
+            full_chunks.push_back(std::move(full));
+        }
+    }
+
+    /// The current chunk, never null: replacements are swapped in, so a fault handler that
+    /// records on this thread while one is replaced still finds one; a null one (issue #100:
+    /// a read of RecordChunk::Capacity at address 0x20000) is replaced here.
+    RecordChunk& CurrentChunk() {
+        if (!record_chunk) [[unlikely]] {
+            record_chunk = AcquireChunk();
+        }
+        return *record_chunk;
+    }
+
     void RecorderThread(std::stop_token stoken);
 
     void SubmitExecution(SubmitInfo& info);
@@ -916,6 +942,20 @@ private:
     bool direct_mode = false; ///< the command buffer is recorded on the caller's thread
     u64 host_copies_issued = 0;
     std::atomic<u64> host_copies_done{0};
+    /// Host copy sources by 64 KiB granule in a direct-mapped table: a slot is pending while its
+    /// note is newer than the last completed WaitHostCopies; a slot two granules share is a
+    /// wildcard (any granule mapping there counts as pending).
+    struct HostCopySlot {
+        u64 granule = 0;
+        u64 seq = 0;
+    };
+    static constexpr u32 HostCopySlots = 4096;
+    static constexpr u64 HostCopyWildcard = ~u64(0);
+    std::mutex host_copy_sources_mutex;
+    std::array<HostCopySlot, HostCopySlots> host_copy_slots{};
+    u64 host_copy_source_seq = 0;
+    u64 host_copy_sources_done = 0;  ///< notes up to this one are copied
+    u64 host_copy_big_seq = 0;       ///< last note too large for the table (counts as everywhere)
     std::atomic<u64> deferred_signals_issued{0}; ///< by the thread recording (A or B)
     std::shared_ptr<std::atomic<u64>> deferred_signals_done =
         std::make_shared<std::atomic<u64>>(0);

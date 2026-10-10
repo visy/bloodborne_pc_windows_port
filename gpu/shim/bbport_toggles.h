@@ -53,6 +53,8 @@ enum : std::uint64_t {
     OrderedGuestWrites = 1ull << 49,
     SceneHalfRes = 1ull << 50, ///< live scaling also reduces the 960x540 post targets
     UpdateImageFastPath = 1u << 30,
+    /// Bit set: the texture collector frees nothing (A/B of its evictions while the game runs).
+    TextureCollector = 1ull << 31,
     // TAA A/B in one run: optional techniques, off by default (no measured gain, 2026-10-02).
     TaaTonemapBlend = 1ull << 51,
     TaaClip = 1ull << 52,
@@ -114,11 +116,15 @@ inline std::atomic<std::uint64_t> reduced_draws{0}, scene_draws{0};
 /// Wall time spent blocked in the scheduler (ns): waiting for the recording thread to drain,
 /// for host copies before a submission or fence, and for GPU ticks.
 inline std::atomic<std::uint64_t> sync_recording_ns{0}, host_copies_wait_ns{0}, tick_wait_ns{0},
-    copy_threads_wait_ns{0}, host_copy_waits{0};
+    copy_threads_wait_ns{0}, host_copy_waits{0}, host_copy_waits_skipped{0};
 /// The texture cache collector: the usage it compares, the mark it starts at, images it freed.
 inline std::atomic<std::uint64_t> gc_used_bytes{0}, gc_trigger_bytes{0}, gc_freed_images{0};
+/// Its critical mark (images used a moment ago evicted past it).
+inline std::atomic<std::uint64_t> gc_critical_bytes{0};
 /// Seconds of a steady clock, updated at every guest submission (cheap ages for caches).
 inline std::atomic<std::uint32_t> coarse_second{0};
+/// Game frames shown (incremented on Present).
+inline std::atomic<std::uint32_t> frame_number{0};
 /// Images the collector passed over (GPU-written, not evictable without memory pressure).
 inline std::atomic<std::uint64_t> gc_kept_images{0};
 struct WaitTimer {
