@@ -37,7 +37,8 @@ constexpr std::uint16_t kLinkProtocolVersion = 1;
 constexpr int kBroadcast = -1;  // send_* target: every member (host side)
 constexpr int kHostSlot = 0;
 
-enum class MemberState : std::uint8_t { Title = 0, Home = 1, Joining = 2, InHostWorld = 3, Dead = 4, Loading = 5 };
+// Prologue: in its own world, still playing the campaign start (party_start.h); not summoned yet.
+enum class MemberState : std::uint8_t { Title = 0, Home = 1, Joining = 2, InHostWorld = 3, Dead = 4, Loading = 5, Prologue = 6 };
 const char* member_state_name(MemberState s);
 
 struct RosterEntry {
