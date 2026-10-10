@@ -54,6 +54,8 @@ void Init();
 bool Enabled();
 /// Host: a member task (mode 1) exists - a guest is still in the session (main thread).
 bool HostHasMemberTasks();
+/// The local PartyLink slot (the director, every tick): guests stand beside the host by slot.
+void SetLocalSlot(int slot);
 /// Main thread, once a frame (the director tick).
 void Tick(const GameSnapshot& s);
 /// Guest: the host's travel event. True when B2 takes it (B1's replay must not run it).

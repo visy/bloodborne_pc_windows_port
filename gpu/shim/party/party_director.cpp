@@ -1209,6 +1209,7 @@ void PartyDirector::Tick() {
     }
     // B2 (party_b2.h): guest "arrived" / host notes.
     if (link) {
+        b2::SetLocalSlot(link->local_slot());
         int b2slot = party::kBroadcast;
         std::string b2body;
         while (b2::PopOutgoing(&b2slot, &b2body)) {

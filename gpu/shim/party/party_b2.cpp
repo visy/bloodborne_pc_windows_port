@@ -532,6 +532,23 @@ void ProbeTick(const GameSnapshot& s) {
     st.was_loading = loading;
 }
 
+std::atomic<int> g_local_slot{-1};
+
+/// A guest's spot beside the host (never on it: character collision shoves the host): 1.75 m to
+/// the right (party slot 1), left (2) or behind (3+) of the host's facing, same height and facing.
+/// rot[1] is the yaw (radians); forward = (sin, 0, cos), right = (cos, 0, -sin).
+void BesideHost(float pos[4], const float rot[4], int slot) {
+    const float yaw = rot[1], d = 1.75f;
+    const float fx = std::sin(yaw), fz = std::cos(yaw), rx = std::cos(yaw), rz = -std::sin(yaw);
+    if (slot == 2) {
+        pos[0] -= rx * d, pos[2] -= rz * d;
+    } else if (slot >= 3) {
+        pos[0] -= fx * d, pos[2] -= fz * d;
+    } else {
+        pos[0] += rx * d, pos[2] += rz * d;
+    }
+}
+
 /// Any failed or timed-out B2 step on a guest: hand the host's travel to B1 (party_travel): the
 /// guest warps to the destination in its own world (the funnel leaves the session then, as
 /// vanilla) and the director's bells re-summon it. Never leaves the guest stranded.
@@ -569,8 +586,26 @@ void GuestTick(const GameSnapshot& s, double now) {
         phase = st.gphase;
     }
     switch (phase) {
-    case GuestPhase::Idle:
+    case GuestPhase::Idle: {
+        // A plain join's host-world load (flow 3) uses the summoned placement too; the sign was
+        // placed where the guest stood, often the host's own lamp spot: move it beside the host.
+        static bool offset_done = false;
+        if (fstate != 3) {
+            offset_done = false;
+        } else if (!offset_done) {
+            offset_done = true;
+            const u64 gsm = Slot(kSlotGsm);
+            float pos[4], rot[4];
+            if (gsm && SafeRead(gsm + 0x14d0, pos, 16) && SafeRead(gsm + 0x14e0, rot, 16) && std::isfinite(pos[0])) {
+                const float was[3] = {pos[0], pos[1], pos[2]};
+                BesideHost(pos, rot, g_local_slot.load());
+                SafeWrite(gsm + 0x14d0, pos, 16);
+                Log("guest: join placement moved beside the host: (%.1f, %.1f, %.1f) -> (%.1f, %.1f, %.1f), slot %d",
+                    was[0], was[1], was[2], pos[0], pos[1], pos[2], g_local_slot.load());
+            }
+        }
         return;
+    }
     case GuestPhase::AwaitSnapshot:
         if (!st.screen_done) {
             st.screen_done = true;
@@ -606,7 +641,7 @@ void GuestTick(const GameSnapshot& s, double now) {
                 const u64 gsm = Slot(kSlotGsm);
                 float pos[4];
                 std::memcpy(pos, st.dest_pos, sizeof pos);
-                pos[0] += 1.5f;
+                BesideHost(pos, st.dest_rot, g_local_slot.load());
                 SafeWrite(gsm + 0x14c4, &st.dest_stage, 4);
                 SafeWrite(gsm + 0x14d0, pos, 16);
                 SafeWrite(gsm + 0x14e0, st.dest_rot, 16);
@@ -745,6 +780,10 @@ bool Requested() {
         return EnvOn("BB_PARTY_B2");
     }
     return bb_party_enabled() != 0;
+}
+
+void SetLocalSlot(int slot) {
+    g_local_slot = slot;
 }
 
 bool HostHasMemberTasks() {
