@@ -27,7 +27,20 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 DEFAULT_ROOT = REPO.parent / "mptest"
 DEFAULT_GAME = Path(os.environ.get("BB_GAME_DIR", r"E:\games\bloodborne"))
-BASE_PORT = 47600
+BASE_PORT = 47600  # default root; see base_port()
+
+
+def base_port(root) -> int:
+    """Each harness root gets its own port range, so agents' parallel runs (tools/agent/agent_env.py
+    gives each its own root) never collide: BB_MP_BASE_PORT, else 47600 for the default root, else
+    47700 + 10 * (a stable hash of the root path % 150)."""
+    if os.environ.get("BB_MP_BASE_PORT"):
+        return int(os.environ["BB_MP_BASE_PORT"])
+    r = Path(root).resolve()
+    if r == Path(DEFAULT_ROOT).resolve():
+        return BASE_PORT
+    import zlib
+    return 47700 + 10 * (zlib.crc32(str(r).lower().encode()) % 150)
 INI = ("upscaler=off\npreset=0\noutput_res=1280x720\nlive_resolution=0\nshow_fps=1\n"
        "skip_intro=1\n")
 
@@ -167,6 +180,7 @@ def setup(a):
 
 
 def run(a):
+    port0 = base_port(a.root)
     user32 = ctypes.windll.user32 if os.name == "nt" else None
     bad = validate_instances(a.root, a.count)
     if bad:
@@ -187,19 +201,19 @@ def run(a):
             "BB_FULLSCREEN": "0", "BB_FPS": str(a.fps), "BB_TIMEOUT": str(a.seconds), "BB_VRAM_LIMIT_MB": str(a.vram),
             "BB_SHADER_PRECOMPILE": "1", "BB_MUTE_UNFOCUSED": "1", "BB_WINDOW_BACKGROUND": "1",
             "BB_PATCHES": "Skip Online/Offline Choice;Skip Intro",
-            "BB_MP_LOCAL_TEST": "1", "BB_MP_INSTANCE": str(i), "BB_MP_PORT": str(BASE_PORT + i),
+            "BB_MP_LOCAL_TEST": "1", "BB_MP_INSTANCE": str(i), "BB_MP_PORT": str(port0 + i),
             "BB_MP_NAME": f"Hunter{i}",
         })
         if a.party:
             env.update({
                 "BB_PARTY": "host" if i == 0 else "join", "BB_PARTY_CODE_FILE": str(code_file),
-                "BB_PARTY_PORT": str(BASE_PORT + i), "BB_PARTY_NAME": f"Hunter{i}", "BB_PARTY_UPNP": "0",
+                "BB_PARTY_PORT": str(port0 + i), "BB_PARTY_NAME": f"Hunter{i}", "BB_PARTY_UPNP": "0",
                 "BB_PARTY_STUN": "off", "BB_PARTY_LOOPBACK": "1", "BB_PARTY_LOCAL_IP": "127.0.0.1",
                 "BB_SKIP_NETWORK_CHOICE": "online", "BB_PATCHES": "Skip Intro",
             })
         for kv in a.env or []:
             k, _, v = kv.partition("=")
-            env[k] = v.replace("{i}", str(i)).replace("{port}", str(BASE_PORT + i))
+            env[k] = v.replace("{i}", str(i)).replace("{port}", str(port0 + i))
         log = open(inst / "run.log", "wb")
         procs.append((i, subprocess.Popen(["cmd", "/c", str(inst / "run.bat")], cwd=inst, env=env,
                                           stdout=log, stderr=subprocess.STDOUT), log))
