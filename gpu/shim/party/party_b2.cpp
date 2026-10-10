@@ -557,6 +557,7 @@ void ProbeTick(const GameSnapshot& s) {
 }
 
 std::atomic<int> g_local_slot{-1};
+std::atomic<bool> g_fell_back{false};  // a B1 fallback ran: clean the network flow once idle
 
 /// A guest's spot beside the host (never on it: character collision shoves the host): BB_PARTY_SUMMON_OFFSET
 /// (default 2.2 m, 0 = off) to
@@ -671,6 +672,19 @@ void RestoreZeroedOverlay() {
 }
 
 /// The flags the opening cutscene depends on, as the store answers now (overlay in load mode 1).
+/// The guest's consumables (goods counts) and HP / stamina, for the "state kept" check.
+void LogGuestState(const GameSnapshot& s, const char* when) {
+    const u64 dm = Field<u64>(Field<u64>(s.player, 0x3b0), 0x20);
+    std::string g;
+    for (u32 id : {900u, 1000u, 1010u, 300u, 310u, 200u, 205u}) {
+        char b[32];
+        std::snprintf(b, sizeof b, " %u:%d", id, GoodsCount(id));
+        g += b;
+    }
+    Log("guest state %s: HP %d/%d stamina %d/%d; goods%s", when, Field<int>(dm, 0x128, -1), Field<int>(dm, 0x12c, -1),
+        Field<int>(dm, 0x134, -1), Field<int>(dm, 0x138, -1), g.c_str());
+}
+
 void LogIntroFlags(const char* when) {
     const u64 man = Slot(0x553b100);
     if (!man) {
@@ -905,10 +919,35 @@ void FallbackToB1(const char* why) {
         const int four = 4;
         SafeWrite(flow + 0x84, &four, 4);
     }
+    g_fell_back = true;
     Log("guest: FALLBACK to B1 (%s; flow was %d)%s", why, fs, have ? "" : " - no travel to replay");
     if (have) {
         RequestGuestTravel(t);
     }
+}
+
+/// After a B1 fallback the guest leaves the room through the funnel, but the network flow keeps the
+/// old member list (+0x68 with the host's GameData slot): the next join's member event 0xE then
+/// finds the host "already known" and creates no task, and the join is left at once (run 26).
+/// Once the session is idle in the world, run the flow's own end-of-session cleanup 0x178A900
+/// (member list, GameData rows, task returns) once.
+void FallbackCleanupTick(const GameSnapshot& s) {
+    if (!g_fell_back.load() || Role() != RoleIdle || !s.world_up || s.loading) {
+        return;
+    }
+    g_fell_back = false;
+    const u64 flow = Slot(kSlotFlow);
+    u64 n = 0;
+    const u64 head = Field<u64>(flow, 0x68);
+    for (u64 node = Field<u64>(head, 0); head && node && node != head && n < 8; node = Field<u64>(node, 0)) {
+        ++n;
+    }
+    const u8 zero = 0;
+    SafeWrite(flow + 0xc5, &zero, 1);  // set by every MoveMapStep ctor; 0x178A900 defers while it is set
+    using Fn = void(BB_COOP_SYSV*)(u64);
+    reinterpret_cast<Fn>(Guest(0x178a900))(flow);
+    Log("guest: after the fallback, flow cleanup 0x178A900 ran (%llu stale member(s), flow now %d); tasks:%s", ull(n),
+        Field<int>(flow, 0x84, -1), DescribeTasks().c_str());
 }
 
 void GuestTick(const GameSnapshot& s, double now) {
@@ -928,6 +967,7 @@ void GuestTick(const GameSnapshot& s, double now) {
             st.screen_done = true;
             SaveOverlay();
             st.hp_before = Field<int>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0x128, -1);
+            LogGuestState(s, "at the host's travel");
             static const bool early = !(std::getenv("BB_PARTY_B2_EARLY_SCREEN") &&
                                         std::getenv("BB_PARTY_B2_EARLY_SCREEN")[0] == '0');
             if (early) {
@@ -1014,6 +1054,7 @@ void GuestTick(const GameSnapshot& s, double now) {
                     Log("guest: HP %d after the load (before %d, max %d)", hp, st.hp_before, mx);
                 }
             }
+            LogGuestState(s, "after the B2 load");
             const int n = RewindRemoteTasks("guest");
             Log("guest: arrived in the host world (flow 4); %d remote task(s) rewound", n);
             Send(0, "{\"op\":\"arrived\"}");  // guest: slot 0 = the host
@@ -1361,6 +1402,7 @@ void Tick(const GameSnapshot& s) {
     TestBossTick(s, now);
     ArrivalWatchTick(s, now);
     HostMemberWatchTick(s, now);
+    FallbackCleanupTick(s);
     FallRecoveryTick(s, now);
     if (Role() == RoleClient) {
         GuestTick(s, now);
