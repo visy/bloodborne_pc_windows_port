@@ -187,6 +187,17 @@ def main():
             # phases that must not end a run.
             if not all_in_world(root):
                 state[hid] = (n, now)
+                # Stuck before the world (e.g. a first-run screen nobody presses through): no new
+                # kind of party line for 120 s while not in the world ends the run too (the game
+                # itself keeps logging frame stats, so log size proves nothing).
+                pn, pn_since = state.get("pre:" + hid, (-1, now))
+                if n != pn:
+                    state["pre:" + hid] = (n, now)
+                elif n > 0 and now - pn_since > max(120, idle):  # party runs only
+                    pids = end_run(root)
+                    print(time.strftime("%H:%M:%S"), "stuck before the world (no new party lines 120 s): ended",
+                          e.get("label") or root, f"({len(pids)} processes)", flush=True)
+                    state["pre:" + hid] = (n, now + 3600)
                 continue
             count, since = state.get(hid, (-1, now))
             if n != count:
@@ -201,7 +212,7 @@ def main():
         except Exception as ex:  # never let layout break the reaper
             print("tile:", ex, flush=True)
         for hid in list(state):
-            if hid not in live and not (hid.startswith("start:") and hid[6:] in live):
+            if hid not in live and not (hid.split(":", 1)[-1] in live and ":" in hid):
                 del state[hid]
         time.sleep(2)
 

@@ -381,6 +381,10 @@ void DirectorTick(const GameSnapshot& s, party::PartyLink* link);
 /// coop::OnHostFlagSet once party_items lands; either side can be merged first.
 using ItemFlagObserver = void (*)(u32 id);
 void SetItemFlagObserver(ItemFlagObserver fn);
+/// Called on the main thread at each steady own world (load mode 0) right before any host flag
+/// is applied there (C3's ledger seeding). nullptr unregisters.
+using BeforeApplyHook = void (*)();
+void SetBeforeApplyHook(BeforeApplyHook fn);
 /// Changes captured since the last call (in seq order; item_lot_picked changes are included for
 /// logs/diffs but guests never apply them). Any thread.
 std::vector<FlagChange> PopHostFlagChanges();

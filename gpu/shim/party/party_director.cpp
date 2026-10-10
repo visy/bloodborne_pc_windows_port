@@ -44,6 +44,7 @@
 #include <mutex>
 #include <string>
 #include <utility>
+#include <vector>
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -110,6 +111,9 @@ struct Test {
     double delay = 10.0;
     bool start = false, grant_bells = false, drop_bells = false, drop_done = false;
     int award_lot = -1; // award_lot=N: AwardItemLot(N) once (call-shape probe, test saves)
+    std::vector<std::uint32_t> set_flags; // set_flag=ID[:ID...]: SetEventFlag(ID, 1) once (C2 live check)
+    bool coop_seen = false;               // host in a party: the actions wait for a cooperator
+    Clock::time_point coop_at{};
     bool insight_done = false, ring_done = false;
     const char* bell = nullptr; // bell_host / bell_guest: Ring() once ready (the real bell path)
     bool bell_done = false;
@@ -862,7 +866,30 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         const bool ok = WritePlayerInsight(t.insight);
         Log("test: Insight %d -> %d %s", before, t.insight, ok ? "written" : "NOT written (no player record)");
     }
-    if (t.award_lot > 0 && Seconds(st.world_at, now) >= 12.0 && s.world_up && !s.loading) {
+    // Host of a party: award_lot / set_flag wait until a cooperator has been in the world for the
+    // test delay (the live-sync checks need a summoned guest); without a party, 12 s / delay.
+    bool party_host;
+    {
+        std::lock_guard<std::mutex> lk(st.mu);
+        party_host = st.role == PartyRole::Host;
+    }
+    if (party_host && s.cooperators > 0 && !t.coop_seen) {
+        t.coop_seen = true;
+        t.coop_at = now;
+        Log("test: a cooperator is in the world; party test actions in %.0f s", t.delay);
+    }
+    const bool party_ready = !party_host || (t.coop_seen && Seconds(t.coop_at, now) >= t.delay);
+    if (!t.set_flags.empty() && party_ready && Seconds(st.world_at, now) >= t.delay && s.world_up && !s.loading) {
+        for (const std::uint32_t id : t.set_flags) {
+            bool before = false, after = false;
+            ReadEventFlag(id, &before);
+            const bool ok = WriteEventFlag(id, true);
+            ReadEventFlag(id, &after);
+            Log("test: set_flag %u: %d -> %d (%s)", id, int(before), int(after), ok ? "written" : "NOT written");
+        }
+        t.set_flags.clear();
+    }
+    if (t.award_lot > 0 && party_ready && Seconds(st.world_at, now) >= 12.0 && s.world_up && !s.loading) {
         const int before = GoodsCount(kGoodsBeckoning);
         const bool ok = AwardItemLot(std::uint32_t(t.award_lot));
         Log("test: award_lot %d: %s; goods 200 x%d -> x%d", t.award_lot, ok ? "awarded" : "NOT awarded", before,
@@ -968,6 +995,16 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.start = true;
             } else if (item.rfind("award_lot=", 0) == 0) {
                 st.test.award_lot = std::atoi(item.c_str() + 10);
+            } else if (item.rfind("set_flag=", 0) == 0) {
+                for (const char* p = item.c_str() + 9; *p;) {
+                    char* end = nullptr;
+                    const unsigned long id = std::strtoul(p, &end, 10);
+                    if (end == p) {
+                        break;
+                    }
+                    st.test.set_flags.push_back(static_cast<std::uint32_t>(id));
+                    p = *end ? end + 1 : end;
+                }
             } else if (item == "drop_bells") {
                 st.test.drop_bells = true;
             } else if (item == "grant_bells") {
@@ -999,8 +1036,8 @@ void PartyDirector::ConfigureFromEnv() {
                 }
                 st.test.steps.push_back(step);
             } else if (!item.empty()) {
-                Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, start, grant_bells, drop_bells, award_lot=N, insight=N, ring_host, "
-                    "ring_guest, bell_host, bell_guest, host_warp=ID@S, host_die@S or guest_die@S; ignored",
+                Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, start, grant_bells, drop_bells, award_lot=N, set_flag=N[:N], insight=N, "
+                    "ring_host, ring_guest, bell_host, bell_guest, host_warp=ID@S, host_die@S or guest_die@S; ignored",
                     item.c_str());
             }
         }

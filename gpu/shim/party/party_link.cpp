@@ -433,6 +433,7 @@ struct PartyLink::Impl {
         crypto::Aead tx, rx;
         Nonce hn{}, gn{};
         Key pending_tx{}, pending_rx{};  // guest: keys derived at AUTH, armed at WELCOME
+        bool password_only = false;      // host: the guest proved the password with a plain address (no code secret)
         Clock::time_point created, last_rx, last_ping;
         bool dead = false;
         bool close_after_flush = false;
@@ -476,6 +477,9 @@ struct PartyLink::Impl {
     LinkConfig cfg;
     LinkCallbacks cb;
     Key party_key{};
+    // Host with a password: the key of a guest that joined by plain host:port (no code, so no
+    // secret: party_code.h "the password alone then keys the party"). Zero when no password.
+    Key password_key{};
     bool host = false;
 
     mutable std::mutex mu;
@@ -934,8 +938,12 @@ struct PartyLink::Impl {
             r.bytes(proof, 32);
             if (!r.ok) return lose(c, "short AUTH");
             Key expect = crypto::auth_proof(party_key, c->hn, c->gn);
-            if (!crypto::equal32(expect.data(), proof))
-                return reject_conn(c, RejectCode::Auth, "wrong password or party code");
+            if (!crypto::equal32(expect.data(), proof)) {
+                const Key by_password = crypto::auth_proof(password_key, c->hn, c->gn);
+                if (cfg.password.empty() || !crypto::equal32(by_password.data(), proof))
+                    return reject_conn(c, RejectCode::Auth, "wrong password or party code");
+                c->password_only = true;  // a plain address and the right password
+            }
             admit(c);
             return;
         }
@@ -1096,8 +1104,9 @@ struct PartyLink::Impl {
         m->conn = c;
         m->state = MemberState::Joining;
         c->slot = m->slot;
-        c->tx.init(crypto::session_key(party_key, "bbp-h2g", c->hn, c->gn));
-        c->rx.init(crypto::session_key(party_key, "bbp-g2h", c->hn, c->gn));
+        const Key& key = c->password_only ? password_key : party_key;
+        c->tx.init(crypto::session_key(key, "bbp-h2g", c->hn, c->gn));
+        c->rx.init(crypto::session_key(key, "bbp-g2h", c->hn, c->gn));
         c->phase = Phase::Open;
         c->last_ping = Clock::now();
         c->frames.init(kMemberFrameRate, kMemberFrameBurst);
@@ -1626,6 +1635,10 @@ bool PartyLink::start_host(std::string* error) {
     if (!valid_member_name(I.cfg.name)) return fail("invalid name (1-16 of A-Z a-z 0-9 _ -)");
     I.host = true;
     I.party_key = crypto::derive_party_key(I.cfg.password, I.cfg.secret.data());
+    if (!I.cfg.password.empty()) {
+        const std::array<std::uint8_t, 8> no_secret{};
+        I.password_key = crypto::derive_party_key(I.cfg.password, no_secret.data());
+    }
     sock::Socket s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == sock::kInvalid) return fail("socket() failed");
 #if defined(_WIN32)
@@ -1729,6 +1742,7 @@ join:
     I.members.clear();
     I.publish();
     crypto::wipe(I.party_key.data(), I.party_key.size());
+    crypto::wipe(I.password_key.data(), I.password_key.size());
 }
 
 bool PartyLink::is_host() const { return impl_->host; }

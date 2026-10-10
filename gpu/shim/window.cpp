@@ -1,4 +1,5 @@
 // bbport: SDL3 window for the Vulkan swapchain (X11 or Wayland).
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -178,10 +179,20 @@ std::string WindowSDL::GetTextInputValue() {
 }
 
 void WindowSDL::UpdateTextTitle() {
-    const std::string title = text_active ? base_title + " \u2014 " + text_prompt + ": " + text + "_  (Enter = OK, Esc = cancel)"
+    // A password (the party flow's prompt says so) is shown as asterisks, one per character.
+    std::string lower = text_prompt;
+    for (char& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
+    std::string shown = text;
+    if (lower.find("password") != std::string::npos) {
+        shown.clear();
+        for (const char c : text) {
+            if ((static_cast<unsigned char>(c) & 0xC0) != 0x80) shown += '*';
+        }
+    }
+    const std::string title = text_active ? base_title + " \u2014 " + text_prompt + ": " + shown + "_  (Enter = OK, Esc = cancel)"
                                           : base_title;
     SDL_SetWindowTitle(window, title.c_str());
-    BbOverlay::SetTextPrompt(text_active, text_prompt, text);
+    BbOverlay::SetTextPrompt(text_active, text_prompt, shown);
 }
 
 bool WindowSDL::PollEvents() {
@@ -206,6 +217,15 @@ bool WindowSDL::PollEvents() {
             std::scoped_lock lock{text_mutex};
             if (event.type == SDL_EVENT_TEXT_INPUT) {
                 text += event.text.text;
+            } else if (event.key.key == SDLK_V && (event.key.mod & SDL_KMOD_CTRL)) {
+                // Ctrl+V: the clipboard's first line (a party code, an address).
+                if (char* clip = SDL_GetClipboardText()) {
+                    std::string line = clip;
+                    SDL_free(clip);
+                    line = line.substr(0, line.find_first_of("\r\n"));
+                    if (line.size() > 256) line.resize(256);
+                    text += line;
+                }
             } else if (event.key.key == SDLK_BACKSPACE && !text.empty()) {
                 size_t cut = text.size() - 1; // drop one UTF-8 code point
                 while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) --cut;

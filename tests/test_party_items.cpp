@@ -7,6 +7,7 @@
 
 #include <cstdio>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -309,9 +310,41 @@ static void test_fit() {
     CHECK(q.Step(Home(), t).has_value());
 }
 
+// Ledger lots a save earned solo (live run, first party session: 29000, 30000, 31000, 50000001,
+// 50000010 given again) get their bits before C2 writes any host flag, so the host's full list
+// skips them - and a boss the save never beat (its flag later synced by C2) keeps its lot.
+static void test_ledger_seed() {
+    std::set<std::uint32_t> save = {9066, 9067, 12401800, 12411700, 12411800, 12101800};
+    auto is_set = [&save](std::uint32_t id) { return save.count(id) != 0; };
+    const std::vector<std::uint32_t> bits = LedgerBitsToSeed(is_set);
+    const std::set<std::uint32_t> got(bits.begin(), bits.end());
+    CHECK(got.size() == bits.size()); // no duplicates
+    for (std::int32_t idx = 0; idx < std::int32_t(ItemLedgerCount()); ++idx) {
+        const bool want = save.count(std::uint32_t(ItemLedgerDoneFlag(idx))) != 0;
+        CHECK(got.count(kItemLedgerBase + std::uint32_t(idx)) == (want ? 1u : 0u));
+    }
+    for (std::int32_t lot : {29000, 30000, 31000, 50000001, 50000010}) {
+        const std::int32_t idx = ItemLedgerIndex(lot);
+        CHECK(idx >= 0);
+        CHECK(got.count(kItemLedgerBase + std::uint32_t(idx)) == 1);
+        ItemGrant g{1, lot, kItemNone, idx, ItemSource::Full};
+        CHECK(g.DoneFlag() == std::int64_t(kItemLedgerBase) + idx);
+    }
+    // m22's boss (12201800, lot 21002950) was not beaten here: no bit, the replay gives it even
+    // after C2 has synced 12201800 into this save.
+    CHECK(got.count(kItemLedgerBase + std::uint32_t(ItemLedgerIndex(21002950))) == 0);
+    save.insert(kItemLedgerBase + std::uint32_t(ItemLedgerIndex(29000)));
+    CHECK(LedgerBitsToSeed(is_set).size() == bits.size() - 1);
+    save.insert(kItemLedgerSeeded);
+    CHECK(LedgerBitsToSeed(is_set).empty());
+    CHECK(ItemLedgerCount() < std::size_t(kItemLedgerSize - 1));
+    CHECK(kItemLedgerSeeded == kItemLedgerBase + kItemLedgerSize - 1);
+}
+
 int main() {
     test_tables();
     test_fit();
+    test_ledger_seed();
     test_deny();
     test_classify();
     test_json();

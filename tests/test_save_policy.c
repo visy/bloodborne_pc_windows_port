@@ -88,13 +88,13 @@ int main(void) {
     mkdirs(user);
     printf("test folder: %s\n",user);
 
-    /* Folder choice: separate only in a party session that asks for it. */
+    /* Folder choice: every party session plays from the party saves (shared is ignored). */
     set_env("BB_PARTY",NULL); set_env("BB_PARTY_SAVE","separate"); runtime_savepolicy_reset();
     assert(!strcmp(runtime_savepolicy_dir(),"savedata"));
     set_env("BB_PARTY","host"); set_env("BB_PARTY_SAVE","shared"); runtime_savepolicy_reset();
-    assert(!strcmp(runtime_savepolicy_dir(),"savedata"));
+    assert(!strcmp(runtime_savepolicy_dir(),"savedata_party"));
     set_env("BB_PARTY_SAVE",NULL); runtime_savepolicy_reset();
-    assert(!strcmp(runtime_savepolicy_dir(),"savedata"));
+    assert(!strcmp(runtime_savepolicy_dir(),"savedata_party"));
     /* BB_PARTY off values (gpu/party_env.h): no party save folder, whatever BB_PARTY_SAVE says. */
     { const char *off[]={"0","off","OFF","false","no"," "};
       for (unsigned i=0;i<sizeof(off)/sizeof(off[0]);++i) {
