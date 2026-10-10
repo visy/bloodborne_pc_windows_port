@@ -78,6 +78,10 @@ std::vector<std::uint64_t> id_list(const json::Value& body) {
 
 }  // namespace
 
+std::string ChannelBoard::FixedKey(long long grail, long long level, long long rites) {
+    return "fixed:" + std::to_string(grail) + ":" + std::to_string(level) + ":" + std::to_string(rites);
+}
+
 std::uint64_t ChannelBoard::IdOf(const std::string& form_data) {
     // 52 bits: exact as a JSON double; never 0 (the game's "none" is 0x8000000000000000 / 0).
     const std::uint64_t id = fnv1a64(form_data) & ((1ull << 52) - 1);
@@ -132,9 +136,15 @@ std::string ChannelBoard::upload(const std::string& caller, std::uint64_t uid, c
         return "{\"ResKind\":" + jnum(kChannelLost) + "}";
     }
     std::lock_guard<std::mutex> lk(mu_);
-    const std::uint64_t id = IdOf(form);
+    // A shared fixed dungeon: one channel per (chalice, depth, rites), whatever its FormData.
+    const bool fixed = small(body, "FixedOrGeneral") == 2;
+    const std::string fixed_key =
+        fixed ? FixedKey(small(body, "HolyGrailTypeId"), small(body, "RitualLevel"), small(body, "SubFeatureFlag")) : "";
+    const std::uint64_t id = fixed ? IdOf(fixed_key) : IdOf(form);
     Channel* c = find_id(id);
-    if (c && c->form_data != form) {
+    if (c && fixed) {
+        c->form_data = form;
+    } else if (c && c->form_data != form) {
         // A hash collision (or a forged FormData aimed at someone's id): never replace another dungeon.
         log("from api: %s: chalice dungeon id %llu collides; refused", caller.c_str(), static_cast<unsigned long long>(id));
         return "{\"ResKind\":" + jnum(kChannelLost) + "}";
@@ -152,7 +162,7 @@ std::string ChannelBoard::upload(const std::string& caller, std::uint64_t uid, c
         }
         Channel n;
         n.id = id;
-        n.glyph = GlyphOf(form);
+        n.glyph = fixed ? GlyphOf(fixed_key) : GlyphOf(form);
         n.owner = caller;
         n.owner_uid = uid;
         n.form_data = form;
@@ -227,7 +237,42 @@ std::string ChannelBoard::search(const std::string& caller, const json::Value& b
     const bool by_rites = has_number(body, "SubFeatureFlag");
     long long max = small(body, "GetCount", 20);
     if (max <= 0 || max > static_cast<long long>(kMaxChannelQuery)) max = kMaxChannelQuery;
+    // A Shared Fixed Dungeon ritual (FixedOrGeneralList [{2}], GetCount 1, every criterion set):
+    // the game joins the one shared channel of that fixed dungeon and treats an empty answer as a
+    // server failure (reply handler 0x1e8711c: result 0x80000005 -> drop offline, msg 0x11f9 "Failed
+    // to connect to Bloodborne server", seen live). The fixed layout comes from the chalice's params,
+    // so the board makes that channel on first use, keyed by (chalice, depth, rites), the caller's too.
+    const bool shared_fixed = std::find(kinds.begin(), kinds.end(), 2) != kinds.end() && by_grail && by_level &&
+                              by_rites;
     std::lock_guard<std::mutex> lk(mu_);
+    if (shared_fixed) {
+        const std::string key = FixedKey(small(body, "HolyGrailTypeId"), small(body, "RitualLevel"),
+                                         small(body, "SubFeatureFlag"));
+        Channel* c = find_id(IdOf(key));
+        if (!c) {
+            Channel n;
+            n.id = IdOf(key);
+            n.glyph = GlyphOf(key);
+            n.owner = caller;
+            n.holy_grail = small(body, "HolyGrailTypeId");
+            n.ritual_level = small(body, "RitualLevel");
+            n.sub_feature = small(body, "SubFeatureFlag");
+            n.fixed_or_general = 2;
+            n.status = small(body, "Status", 1);
+            n.touched = ++clock_;
+            channels_.push_back(std::move(n));
+            c = &channels_.back();
+            log("from api: %s: shared fixed chalice dungeon %llu (glyph %s, chalice %lld, depth %lld, rites %lld) "
+                "made on first use", caller.c_str(), static_cast<unsigned long long>(c->id), c->glyph.c_str(),
+                c->holy_grail, c->ritual_level, c->sub_feature);
+            drop_excess();
+            c = find_id(IdOf(key));
+        }
+        if (c) {
+            c->touched = ++clock_;
+            return "{\"ResKind\":0,\"ChannelList\":[" + entry(*c, false) + "]}";
+        }
+    }
     std::vector<const Channel*> hits;
     for (const Channel& c : channels_) {
         if (c.owner == caller) continue;

@@ -969,6 +969,23 @@ static void test_chalice_channels() {
     CHECK(int_of(post("GuestA", "/channel/random_join", "{}"), "ChannelId", 0) == id);  // the host plays it
     CHECK(int_of(post("Host", "/channel/random_join", "{}"), "ChannelId", 0) == id2);
 
+    // A Shared Fixed Dungeon ritual searches for its one shared channel and fails ("Failed to connect")
+    // on an empty list (seen live): the board makes it, the same for every member, and a later upload
+    // of that fixed dungeon keeps its id.
+    const std::string fixed_q = R"({"FixedOrGeneralList":[{"FixedOrGeneral":2}],"FormDataVersion":0,"GetCount":1,)"
+                                R"("HolyGrailTypeId":0,"RitualLevel":1,"Status":1,"SubFeatureFlag":256})";
+    json::Value f1 = post("Host", "/channel/search", fixed_q);
+    CHECK(count(f1, "ChannelList") == 1);
+    const long long fixed_id = int_of(f1.find("ChannelList")->array[0], "ChannelId", 0);
+    CHECK(fixed_id > 0 && int_of(f1.find("ChannelList")->array[0], "FixedOrGeneral", 0) == 2);
+    json::Value f2 = post("GuestA", "/channel/search", fixed_q);
+    CHECK(count(f2, "ChannelList") == 1 && int_of(f2.find("ChannelList")->array[0], "ChannelId", 0) == fixed_id);
+    const std::string fixed_up = R"({"HolyGrailTypeId":0,"FormDataVersion":0,"Status":1,"FixedOrGeneral":2,"FormData":")" +
+                                 bbnet::party::b64_encode(std::string("fixed layout")) +
+                                 R"(","ShareLevel":1,"SubFeatureFlag":256,"RitualLevel":1})";
+    CHECK(int_of(post("Host", "/channel/upload", fixed_up), "ChannelId", 0) == fixed_id);
+    CHECK(api.channels().known(static_cast<std::uint64_t>(fixed_id)));
+
     // Bells: a host inside a dungeon the board has gets every member's sign (the summoned game
     // quick-joins the dungeon by its ChannelId); inside one the board does not have, none.
     post("GuestA", "/summon_messenger/create", sign("GuestA", 0x15010000u, 0));  // the Hunter's Dream

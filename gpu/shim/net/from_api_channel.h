@@ -96,6 +96,8 @@ public:
     /// The glyph for a FormData (deterministic: the same dungeon keeps its glyph and id).
     static std::string GlyphOf(const std::string& form_data);
     static std::uint64_t IdOf(const std::string& form_data);
+    /// The key of a shared fixed dungeon (one channel per chalice, depth and rites).
+    static std::string FixedKey(long long grail, long long level, long long rites);
 
 private:
     std::string upload(const std::string& caller, std::uint64_t uid, const json::Value& body, const std::string& now);
