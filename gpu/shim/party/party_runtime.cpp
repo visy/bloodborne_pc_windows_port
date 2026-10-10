@@ -543,6 +543,8 @@ void on_state(LinkState s, const std::string& detail) {
                  resumed ? " (session resumed)" : " (the host restarted: a new session)");
             if (!resumed) {
                 if (bbnet::party::RemoteGuest* rg = bbnet::party::remote_guest()) rg->reset_event_cursor();
+                // It no longer knows our NP context or relay registration either.
+                bbnet::session::host_session_reset();
                 host_lost("the host does not know our session any more");
             }
         }
