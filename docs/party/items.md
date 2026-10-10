@@ -295,7 +295,7 @@ if (flag < 0) SetEventFlag(*(void**)(0x800000000ull+0x553B100), 60009000 + idx, 
   the param bnd, the talk ESD and the Lua bnds for any u32/f32/f64 in 60009000..60009999: 0 hits.
 * Host: hook at the entry of `0x17DDC50`; `hostOnly == 1` lots in the own world become grants (flagged
   lot → key = flag, ledger lot → key = 60009000 + idx); `OnHostFlagSet(flag)` (C2's
-  `SetItemFlagObserver`, registered only when `party_progress.h` exists) maps flags to lots, preferring
+  `progress::SetItemFlagObserver`, registered by `InstallItemsPatches`) maps flags to lots, preferring
   the lot the hook captured for that flag. Every key is sent once (EVENT `items`); a member that
   (re)joins gets EVENT `items_full`, built on the main thread from the host's flags (lot flags and
   ledger done flags) once the host's own world is up.

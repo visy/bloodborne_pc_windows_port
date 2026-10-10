@@ -16,6 +16,7 @@
 #include "coop_hooks.h"
 #include "game_state.h"
 #include "party_director.h"
+#include "party_progress.h"
 
 #include <atomic>
 #include <chrono>
@@ -27,11 +28,6 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
-#endif
-// C2 progress sync reports the host's item flags; optional so neither side needs the other.
-#if __has_include("party_progress.h")
-#include "party_progress.h"
-#define BB_PARTY_ITEMS_HAVE_PROGRESS 1
 #endif
 #endif
 
@@ -717,12 +713,9 @@ void InstallItemsPatches() {
                  &GiveListEntry, "item give log (0x17D89F0)");
     SeedHostSeq();
     ParseTestLots();
-#ifdef BB_PARTY_ITEMS_HAVE_PROGRESS
-    SetItemFlagObserver(&OnHostFlagSet);
+    // C2 hands every host item_lot_picked flag 0 -> 1 to OnHostFlagSet (main thread).
+    progress::SetItemFlagObserver(&OnHostFlagSet);
     Log("C2 item-flag observer registered");
-#else
-    Log("party_progress.h not built in: only the award hook reports host items");
-#endif
     Log("%zu flagged lots, %zu ledger lots (flags %u..%u)", ItemLotFlagCount(), ItemLedgerCount(), kItemLedgerBase,
         kItemLedgerBase + kItemLedgerSize - 1);
     g_on = true;
