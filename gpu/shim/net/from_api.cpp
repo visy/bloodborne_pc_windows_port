@@ -10,7 +10,9 @@
 #include "../party/party_ids.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -25,6 +27,14 @@ namespace {
 
 // BB_PARTY_FAST_JOIN (default on): the quicker sign polling of kSsFastJoinValues.
 bool fast_join() { return bb_party_switch_on("BB_PARTY_FAST_JOIN") != 0; }
+
+std::atomic<std::uint64_t> g_sign_changes{0};
+std::atomic<std::uint64_t> g_summons{0};
+
+std::int64_t steady_now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
 
 struct Url {
     std::string scheme, host, path, query;
@@ -373,6 +383,7 @@ std::string FromApi::sign_create(const Caller& caller, const json::Value& body) 
     }
     s.id = next_sign_++;
     signs_.push_back(s);
+    g_sign_changes.fetch_add(1, std::memory_order_relaxed);
     log("from api: %s put up a sign (type %d, area 0x%x) -> %llu", caller.online_id.c_str(), s.summon_type, s.area,
         static_cast<unsigned long long>(s.id));
     return jnum(static_cast<long long>(s.id));
@@ -391,6 +402,16 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
     {
         std::lock_guard<std::mutex> lk(mu_);
         board = signs_;
+        const std::int64_t now = steady_now_ms();
+        holds_.erase(std::remove_if(holds_.begin(), holds_.end(), [&](const auto& h) { return h.second <= now; }),
+                     holds_.end());
+        board.erase(std::remove_if(board.begin(), board.end(),
+                                   [&](const Sign& s) {
+                                       for (const auto& h : holds_)
+                                           if (h.first == s.online_id) return true;
+                                       return false;
+                                   }),
+                    board.end());
     }
     // Party-only by construction; every other member's signs, wherever they stand (the party
     // plays together - the game's own area check still applies on its side). Oldest first: the
@@ -427,6 +448,20 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
         }
     }
     return list;
+}
+
+void FromApi::hold_signs(const std::string& online_id, int ms) {
+    std::lock_guard<std::mutex> lk(mu_);
+    const std::int64_t until = steady_now_ms() + ms;
+    for (auto& h : holds_) {
+        if (h.first == online_id) {
+            h.second = until;
+            return;
+        }
+    }
+    holds_.emplace_back(online_id, until);
+    log("from api: %s's signs are held for %d s (the host's old connection to it must time out first)",
+        online_id.c_str(), ms / 1000);
 }
 
 std::size_t FromApi::drop_signs(const std::string& online_id) {
@@ -501,9 +536,15 @@ std::string FromApi::sign_request(const Caller& caller, const json::Value& body)
     }
     ev.set("HostPos", std::move(pos));
     service_.push_event(target, std::move(ev));
+    g_summons.fetch_add(1, std::memory_order_relaxed);
     log("from api: %s summons %s into room %llu", caller.online_id.c_str(), target.c_str(),
         static_cast<unsigned long long>(room.room_id));
     return "1";
 }
 
 }  // namespace bbnet::party
+
+namespace bbnet {
+std::uint64_t sign_board_changes() { return party::g_sign_changes.load(std::memory_order_relaxed); }
+std::uint64_t summon_requests() { return party::g_summons.load(std::memory_order_relaxed); }
+}  // namespace bbnet
