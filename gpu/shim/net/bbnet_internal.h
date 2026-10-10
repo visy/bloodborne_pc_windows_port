@@ -94,6 +94,12 @@ bool p2p_stun(const char* host, std::uint16_t port, int timeout_ms, std::uint32_
 bool p2p_relay(std::uint32_t* server, std::uint16_t* vport);
 // The guest-side relay state (party_udp.h), for routing a peer through the host relay.
 const udp::RelayClient& p2p_relay_client();
+// A guest learned another guest's addresses: its direct address (network order, host-order
+// port) and its relay port on the host (0 = none). Its game traffic then goes direct while
+// the peer answers probes, through the relay otherwise (party_udp.h PeerPaths).
+void p2p_add_peer(const char* label, std::uint32_t addr, std::uint16_t port_host, std::uint16_t relay_port);
+// "addr:port direct|relay|probing, ..." for the status line.
+std::string p2p_paths_status();
 // Host side: the relay port the host's relay gave the client seen at addr (network order) :
 // port_host (host order), from its STUN HELLO; false when that address never asked for one.
 bool p2p_relay_vport_for(std::uint32_t addr, std::uint16_t port_host, std::uint16_t* vport);

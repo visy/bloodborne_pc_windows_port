@@ -165,17 +165,13 @@ void punch_if_new(const Peer& before, const Peer& after) {
     p2p_punch(after.online_id.c_str(), after.addr, after.port, after.local_addr, after.local_port);
 }
 
-// BB_PARTY_FORCE_RELAY=1 (party_udp.h): another guest is reached at its relay port on the host.
-// Applied where a peer's address enters the table; the host never relays its own traffic.
+// Where a peer's address enters the table: the socket layer learns the peer and its relay port
+// and picks the path per datagram (direct while the peer answers probes, else the host relay;
+// always the relay with BB_PARTY_FORCE_RELAY=1). The game keeps the direct address.
 void route_peer(Peer& p, int relay_port) {
-    if (settings().host || relay_port <= 0 || relay_port > 65535) return;
-    static const bool force = udp::force_relay_from_env();
-    const udp::PeerRoute r =
-        udp::route_to_peer(p2p_relay_client(), p.addr, p.port, static_cast<std::uint16_t>(relay_port), force);
-    if (!r.relayed) return;
-    log("relay: %s through the host relay (port %u)", p.online_id.c_str(), r.port);
-    p.addr = r.addr;
-    p.port = r.port;
+    if (settings().host) return;
+    const std::uint16_t rp = relay_port > 0 && relay_port <= 65535 ? static_cast<std::uint16_t>(relay_port) : 0;
+    p2p_add_peer(p.online_id.c_str(), p.addr, p.port, rp);
 }
 
 std::atomic<bool> g_context_started{false};

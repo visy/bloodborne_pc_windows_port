@@ -369,6 +369,16 @@ struct P2pPort {
 // stay server:port both ways. Server side (the party host): STUN answers with a token and a
 // relay port, frames forwarded between clients.
 udp::RelayClient g_relay;
+// A guest's paths to the other guests (party_udp.h PeerPaths): direct while their probes are
+// answered, else through the host relay; BB_PARTY_FORCE_RELAY=1 relays them always.
+udp::PeerPaths& paths() {
+    static udp::PeerPaths* p = [] {
+        udp::PeerPaths::Config c;
+        c.force = udp::force_relay_from_env();
+        return new udp::PeerPaths(c);
+    }();
+    return *p;
+}
 udp::RelayServer g_relay_server;
 inline std::uint64_t source_key(std::uint32_t addr, std::uint16_t port_nbo) {
     return addr | (static_cast<std::uint64_t>(port_nbo) << 32);
@@ -477,10 +487,28 @@ void p2p_reader(std::shared_ptr<P2pPort> port) {
     std::uint8_t buf[udp::kMaxDatagram + kRelayHeader];
     std::atomic<int> logs{0};
     auto last_expire = Clock::now();
+    auto last_tick = Clock::now();
+    std::vector<std::pair<std::uint32_t, std::uint16_t>> probes;
+    std::vector<std::string> notes;
     while (!port->stop.load(std::memory_order_relaxed)) {
         if (settings().host && Clock::now() - last_expire > std::chrono::seconds(60)) {
             last_expire = Clock::now();
             g_relay_server.expire(last_expire);
+        }
+        if (!settings().host && Clock::now() - last_tick > std::chrono::milliseconds(100)) {
+            // Probe every other guest directly (relayed or not) and switch paths on the answers.
+            last_tick = Clock::now();
+            probes.clear();
+            notes.clear();
+            paths().tick(last_tick, &probes, &notes);
+            for (const auto& [a, p] : probes) {
+                sockaddr_in t{};
+                t.sin_family = AF_INET;
+                t.sin_addr.s_addr = a;
+                t.sin_port = p;
+                raw_sendto(port->fd, udp::kProbe, sizeof(udp::kProbe), &t);
+            }
+            for (const std::string& line : notes) log("%s", line.c_str());
         }
         if (sock_poll(port->fd, POLLIN, 200) <= 0) continue;
         sockaddr_in sa{};
@@ -498,6 +526,13 @@ void p2p_reader(std::shared_ptr<P2pPort> port) {
             std::memmove(buf, buf + udp::kDeliveryHeader, static_cast<std::size_t>(n) - udp::kDeliveryHeader);
             n -= static_cast<ssize_type>(udp::kDeliveryHeader);
             sa.sin_port = relayed_from;
+            // A peer we know by its direct address: the game sees it from there, whichever path.
+            std::uint32_t da = 0;
+            std::uint16_t dp = 0;
+            if (paths().direct_of_relay(bswap16(relayed_from), &da, &dp)) {
+                sa.sin_addr.s_addr = da;
+                sa.sin_port = dp;
+            }
         }
         std::uint16_t src = 0, dst = 0;
         const std::size_t hdr = p2p_header(buf, static_cast<std::size_t>(n), &src, &dst);
@@ -507,6 +542,11 @@ void p2p_reader(std::shared_ptr<P2pPort> port) {
             // Not the game's: a peer's hole-punch probe, a STUN request (answered) or the
             // STUN server's answer to our request. None reaches a game socket.
             if (udp::is_probe(buf, static_cast<std::size_t>(n))) {
+                if (udp::is_probe_ack(buf, static_cast<std::size_t>(n))) {
+                    paths().on_ack(sa.sin_addr.s_addr, sa.sin_port, Clock::now());
+                } else {
+                    raw_sendto(port->fd, udp::kProbeAck, sizeof(udp::kProbeAck), &sa);  // the path works
+                }
                 std::lock_guard<std::mutex> lk(port->mu);
                 ++port->rx;
                 ++port->probes;
@@ -773,7 +813,18 @@ int dgram_send(int s, const void* buf, std::uint64_t len, int flags, const SceSo
     ssize_type n;
     std::uint32_t stun_addr = 0;
     std::uint16_t stun_port = 0;
-    if (sock.p2p && g_relay.frame_for(to->addr, to->port, pkt, &stun_addr, &stun_port)) {
+    // A guest whose direct path does not answer goes through its relay port on the host.
+    std::uint32_t via_addr = to->addr;
+    std::uint16_t via_port = to->port;
+    std::uint16_t relay_port = 0;
+    if (sock.p2p && paths().relayed(to->addr, to->port, &relay_port)) {
+        std::uint32_t server = 0;
+        if (g_relay.get(&server, nullptr)) {
+            via_addr = server;
+            via_port = bswap16(relay_port);
+        }
+    }
+    if (sock.p2p && g_relay.frame_for(via_addr, via_port, pkt, &stun_addr, &stun_port)) {
         sockaddr_in stun_sa{};
         stun_sa.sin_family = AF_INET;
         stun_sa.sin_addr.s_addr = stun_addr;
@@ -1777,6 +1828,30 @@ bool p2p_relay_vport_for(std::uint32_t addr, std::uint16_t port_host, std::uint1
 
 const udp::RelayClient& p2p_relay_client() { return g_relay; }
 
+void p2p_add_peer(const char* label, std::uint32_t addr, std::uint16_t port_host, std::uint16_t relay_port) {
+    if (settings().host || !addr || !port_host) return;
+    if (g_relay.is_server(addr, bswap16(port_host))) return;  // the host: its port is the relay
+    std::uint16_t own = 0;
+    g_relay.get(nullptr, &own);
+    if (relay_port && relay_port == own) return;  // ourselves
+    if (relay_port) g_relay.add_relay_port(relay_port);
+    paths().add(addr, bswap16(port_host), relay_port, Clock::now());
+    if (party_trace()) log("paths: %s relay port %u", label ? label : "peer", relay_port);
+}
+
+std::string p2p_paths_status() {
+    std::string s;
+    for (const auto& p : paths().peers()) {
+        char ip[32];
+        write_ipv4(ip, sizeof(ip), p.addr);
+        char b[96];
+        std::snprintf(b, sizeof(b), "%s%s:%u %s", s.empty() ? "" : ", ", ip, bswap16(p.port),
+                      p.relayed ? "relay" : (p.answered ? "direct" : "probing"));
+        s += b;
+    }
+    return s;
+}
+
 void p2p_punch(const char* label, std::uint32_t addr, std::uint16_t port_host, std::uint32_t local_addr,
                std::uint16_t local_port) {
     std::shared_ptr<P2pPort> port;
@@ -1852,7 +1927,8 @@ std::string p2p_status() {
                   static_cast<unsigned long long>(port->rx), port->by_vport.size(),
                   static_cast<unsigned long long>(port->probes), static_cast<unsigned long long>(port->stun_answered),
                   static_cast<unsigned long long>(port->relayed));
-    return buf;
+    const std::string pp = p2p_paths_status();
+    return pp.empty() ? std::string(buf) : std::string(buf) + "; peers " + pp;
 }
 
 }  // namespace bbnet
