@@ -72,7 +72,7 @@ def grab(hwnd):
     gdi32.DeleteObject(bmp)
     gdi32.DeleteDC(mdc)
     user32.ReleaseDC(hwnd, hdc)
-    return Image.frombuffer("RGBA", (w, h), buf, "raw", "BGRA", 0, 1).convert("RGB")
+    return Image.frombytes("RGBA", (w, h), buf.raw, "raw", "BGRA").convert("RGB")
 
 
 def shoot(root, out, tag):

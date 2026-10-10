@@ -534,11 +534,20 @@ void ProbeTick(const GameSnapshot& s) {
 
 std::atomic<int> g_local_slot{-1};
 
-/// A guest's spot beside the host (never on it: character collision shoves the host): 1.75 m to
+/// A guest's spot beside the host (never on it: character collision shoves the host): BB_PARTY_SUMMON_OFFSET
+/// (default 3.0 m, 0 = off) to
 /// the right (party slot 1), left (2) or behind (3+) of the host's facing, same height and facing.
 /// rot[1] is the yaw (radians); forward = (sin, 0, cos), right = (cos, 0, -sin).
+float SummonOffset() {
+    static const float d = [] {
+        const char* v = std::getenv("BB_PARTY_SUMMON_OFFSET");
+        return v && v[0] ? float(std::atof(v)) : 3.0f;
+    }();
+    return d;
+}
+
 void BesideHost(float pos[4], const float rot[4], int slot) {
-    const float yaw = rot[1], d = 1.75f;
+    const float yaw = rot[1], d = SummonOffset();
     const float fx = std::sin(yaw), fz = std::cos(yaw), rx = std::cos(yaw), rz = -std::sin(yaw);
     if (slot == 2) {
         pos[0] -= rx * d, pos[2] -= rz * d;
@@ -547,6 +556,64 @@ void BesideHost(float pos[4], const float rot[4], int slot) {
     } else {
         pos[0] += rx * d, pos[2] += rz * d;
     }
+}
+
+/// Guest, after any host-world arrival (a bell join or a B2 travel: flow 3 -> 4): once the host's chr
+/// stands in this world, a guest closer than the offset - 0.5 m is moved beside it (by party slot,
+/// the host's facing and height) with the chr warp vfunc +0x5F8 (0x18CD600(chr, pos, rot, 1), as
+/// the NPC summon step 0x1E4B559 calls it). The game's own placement (the sign spot, usually the
+/// host's lamp spot) is otherwise on top of the host. No ground probe yet: the host's height.
+void SpacingTick(const GameSnapshot& s) {
+    static int last_flow = -1, stable = 0;
+    static bool armed = false;
+    const int fs = Field<int>(Slot(kSlotFlow), 0x84, -1);
+    if (last_flow == 3 && fs == 4) {
+        armed = true;
+        stable = 0;
+    }
+    last_flow = fs;
+    const float d = SummonOffset();
+    if (!armed || d <= 0.0f || Role() != RoleClient || !s.world_up || s.loading || !s.player) {
+        stable = 0;
+        return;
+    }
+    if (++stable < 30) {
+        return;
+    }
+    u64 host = 0;
+    for (const TaskInfo& t : Tasks(false)) {
+        if (t.mode == 2) {
+            host = PlayerForPeer(t.task + kTaskPeer);
+        }
+    }
+    if (!host) {
+        return; // the host's chr is not re-created yet
+    }
+    armed = false;
+    const auto phys = [](u64 chr) {
+        return Field<u64>(Field<u64>(Field<u64>(Field<u64>(chr, 0x58), 8), 0x3b0), 0x68);
+    };
+    alignas(16) float hp[4], hr[4], me[4];
+    const u64 ph = phys(host), pm = phys(s.player);
+    if (!ph || !pm || !SafeRead(ph + 0x1e0, hp, 16) || !SafeRead(ph + 0x1d0, hr, 16) || !SafeRead(pm + 0x1e0, me, 16)) {
+        return;
+    }
+    const float dist = std::sqrt((me[0] - hp[0]) * (me[0] - hp[0]) + (me[2] - hp[2]) * (me[2] - hp[2]));
+    if (dist >= d - 0.5f) {
+        Log("spacing: arrived %.1f m from the host; left as it is", dist);
+        return;
+    }
+    alignas(16) float to[4] = {hp[0], hp[1], hp[2], hp[3]};
+    alignas(16) float rot[4] = {hr[0], hr[1], hr[2], hr[3]};
+    BesideHost(to, hr, g_local_slot.load());
+    using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
+    reinterpret_cast<Warp>(Field<u64>(Field<u64>(s.player, 0), 0x5f8))(s.player, to, rot, 1);
+    float now[4] = {};
+    SafeRead(pm + 0x1e0, now, 16);
+    Log("spacing: host at (%.1f, %.1f, %.1f), me (%.1f, %.1f, %.1f) %.1f m -> moved to (%.1f, %.1f, %.1f), slot %d, "
+        "%.1f m (reads (%.1f, %.1f, %.1f) after the warp)",
+        hp[0], hp[1], hp[2], me[0], me[1], me[2], dist, to[0], to[1], to[2], g_local_slot.load(),
+        std::sqrt((to[0] - hp[0]) * (to[0] - hp[0]) + (to[2] - hp[2]) * (to[2] - hp[2])), now[0], now[1], now[2]);
 }
 
 /// Any failed or timed-out B2 step on a guest: hand the host's travel to B1 (party_travel): the
@@ -586,26 +653,8 @@ void GuestTick(const GameSnapshot& s, double now) {
         phase = st.gphase;
     }
     switch (phase) {
-    case GuestPhase::Idle: {
-        // A plain join's host-world load (flow 3) uses the summoned placement too; the sign was
-        // placed where the guest stood, often the host's own lamp spot: move it beside the host.
-        static bool offset_done = false;
-        if (fstate != 3) {
-            offset_done = false;
-        } else if (!offset_done) {
-            offset_done = true;
-            const u64 gsm = Slot(kSlotGsm);
-            float pos[4], rot[4];
-            if (gsm && SafeRead(gsm + 0x14d0, pos, 16) && SafeRead(gsm + 0x14e0, rot, 16) && std::isfinite(pos[0])) {
-                const float was[3] = {pos[0], pos[1], pos[2]};
-                BesideHost(pos, rot, g_local_slot.load());
-                SafeWrite(gsm + 0x14d0, pos, 16);
-                Log("guest: join placement moved beside the host: (%.1f, %.1f, %.1f) -> (%.1f, %.1f, %.1f), slot %d",
-                    was[0], was[1], was[2], pos[0], pos[1], pos[2], g_local_slot.load());
-            }
-        }
+    case GuestPhase::Idle:
         return;
-    }
     case GuestPhase::AwaitSnapshot:
         if (!st.screen_done) {
             st.screen_done = true;
@@ -977,6 +1026,7 @@ void Tick(const GameSnapshot& s) {
     TestWarpTick(s, now);
     KickStalledTasks(s, now);
     TestBossTick(s, now);
+    SpacingTick(s);
     if (Role() == RoleClient) {
         GuestTick(s, now);
     } else {
