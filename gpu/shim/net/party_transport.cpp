@@ -226,6 +226,11 @@ std::uint64_t RemoteGuest::on_link_event(const std::string& event_json) {
     return id;
 }
 
+void RemoteGuest::reset_event_cursor() {
+    std::lock_guard<std::mutex> lk(st_->mu);
+    st_->last_event = 0;
+}
+
 void RemoteGuest::start_events(const std::string& online_id, EventHandler handler) {
     std::lock_guard<std::mutex> lk(st_->mu);
     st_->online_id = online_id;
