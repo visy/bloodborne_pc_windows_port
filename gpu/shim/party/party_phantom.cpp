@@ -13,6 +13,8 @@
 #include "party_async_io.h"
 #include "party_perf.h"
 
+#include "../../party_env.h"
+
 #include "net/json.h"
 
 #include <cstdio>
@@ -407,8 +409,7 @@ bool EnvOff(const char* name) {
 }
 
 bool PartyMode() {
-    const char* p = std::getenv("BB_PARTY");
-    return p && p[0];
+    return bb_party_enabled();
 }
 
 double Now() {

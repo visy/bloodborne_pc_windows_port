@@ -11,6 +11,8 @@
 #include "party_async_io.h"
 #include "party_perf.h"
 
+#include "../../party_env.h"
+
 #include "coop_hooks.h"
 #include "game_state.h"
 #include "party_phantom.h"
@@ -497,8 +499,7 @@ double Seconds(Clock::time_point a, Clock::time_point b) {
 } // namespace
 
 bool SeamlessRequested() {
-    const char* p = std::getenv("BB_PARTY");
-    return p && p[0] && !EnvOff("BB_PARTY_SEAMLESS");
+    return bb_party_enabled() && !EnvOff("BB_PARTY_SEAMLESS");
 }
 
 void SeamlessRulesInit() {
