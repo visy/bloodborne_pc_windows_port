@@ -141,6 +141,33 @@ Fix (party mode, guest services on): client-only EMEVD skip rules `12100110:2003
 the snapshot stay, and the guest's Doll is warped to the host's spot. The host is unaffected (the
 rules never match there). `BB_PARTY_GUEST_SERVICES=0` drops them.
 
+### 2.5 The Doll as a wandering ghost on a guest [R, fixed]
+
+Live: the guest saw a translucent Doll it could walk through and not talk to. Probe: her ChrIns
+chr type (+0x78) was 5 on the host and **4 (wandering ghost)** on the guest. Chr creation
+`0x18E4F94..0x18E4FDC`: when the local session role is 6 (client) or a presentation is active
+(`[[0x5556678]+0x16F8]+0x98 != -1`), an NPC whose NpcParam row (`[chr+0x3C8]+8`) has
+**isChangeWanderGhost** (byte 0x145 bit 7) gets `ghostModelId` (+0x10C) and chr type 4. The Doll's
+row **803000** has it (1.09 byte `0x80`; 804000 too). Fix: a seamless param rule writes NpcParam
+803000 byte 0x145 `0x80 -> 0x00` (row size 0x184; only clients read the bit;
+`BB_PARTY_GUEST_SERVICES=0` keeps vanilla). Live after the fix: chr type 5 on the guest, solid,
+her talk menu opens.
+
+### 2.6 The Doll's level-up handshake [C, R partly]
+
+`t210304` StateMachine x7: State_3 "レベルアップ" -> State_22 -> State_10 sets 72100100 and waits for
+**72100101 and 72100102**, then State_7 runs `OpenSoul()` (talk command 31: switch `0x203FFD0`
+case at `0x2040B4E`, menu request `0x1C4A520` with the factory `0x1BB7F60` that builds the menu
+named "LevelUp"). 72100101 is set by m21_00 event **12100112** (the player's kneel), 72100102 by
+**12100113** (the Doll's gesture); 12100114 is the level-up SFX (flag 7500). All three start with
+`4[3] [15, 10000, 0]` + `1000[2]` = end unless the local chr type is 0 (12100112 repeats the test
+in each distance branch). Live trace (guest): the kneel ran once 12100112 was rewritten, but no
+talk command 31 and no LevelUp factory call followed - 72100102 never came. Fix: an EMEVD
+rewriter (second slot, `SetEmevdRewriter2`) sets those `4[3]` chr-type bytes (args +8) to the local
+player's type on a client while they execute and back to 0 on a non-client (the EVD data is
+shared) for events 12100112-12100114. The command path itself has no role test (the shop
+command uses the same menu request and works, 5.).
+
 ## 3. Lamps and headstones (implemented, opt-in `BB_PARTY_GUEST_LAMPS=1` until run live)
 
 Bloodborne's world lamps only go to the Hunter's Dream (resting = the load into the Dream refills
@@ -215,8 +242,14 @@ into the host's Dream), guest log `Party guest services:` [R]:
 * `talk scripts asked IsClientPlayer 270-285 times (answered 0)` per second - the allowed scripts
   leave their client wait; `headstones asked IsMultiplayerInProgress ~90 times (answered 0)` with
   the lamp part on.
-* Not yet observed (test runs held by the coordinator's gate): the Doll's level-up menu on the
-  guest, a purchase, and the save read-back. Fixture for it: `BB_PARTY_GUESTSVC_TEST=
-  "echoes=20000;warp=-5.2,-5.62,-12.56,3.665"` (stands the guest in front of the Doll's lamp spot
-  15 s after the gate opened), pad script via `BB_PAD_FILE`, `BB_SAVE_TRACE=1`, until marker
-  `own character steady for 15 s` (logged 15 s after a level / echoes / Insight change).
+* **Bath Messenger purchase (t210691) [R]**: the fixture stands the guest 1.2 m in front of the
+  messenger (talk table lookup, +0xC0 / +0xD0), the event-driven script talks, waits for the talk
+  menu ('Purchase' 15000140 looked up), selects it, sees the shop's menu request, buys the first
+  row: `PURCHASE on the guest: echoes 20000 -> 19460` (a Blood Vial for 540: vials 15 -> 16), the
+  guest's game saved 3 s later, and the guest's party save (`savedata_party/.../userdata0000`)
+  holds level 37 / echoes 19460 at the record (+0x86E8 / +0x86EC); the host's save keeps its
+  echoes 0. Screenshots: `agents/guestsvc/evidence/bath_messenger_purchase` (the "Buy" list with
+  the cursor on Blood Vial 540, the quantity box).
+* **Doll talk [R]**: the guest's Doll is solid (2.5) and her talk menu (Channel the Blood Echoes /
+  Talk / Leave) opens on the guest; the kneel event ran after the rewrite; the level-up menu
+  needs the 12100113 handshake (2.6, implemented, live run pending).

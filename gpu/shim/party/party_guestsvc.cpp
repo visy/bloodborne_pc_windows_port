@@ -625,6 +625,10 @@ BB_COOP_SYSV void TalkCommandEntry(u64, u64 call, u64, u64, u64, u64) {
 struct LevelUpScript {
     enum Stage { Off, WaitPlaced, Greeting, MenuUp, WaitScreen, Raise, Confirm, Accept, WaitLevel, BackOut, Done };
     std::uint32_t menus0 = 0;
+    bool shop = false;                 ///< "buy": a messenger's Purchase instead of the Doll's level up
+    std::uint32_t menu_text = 15000100; ///< the talk menu row to choose
+    std::uint32_t requests0 = 0;
+    int insight0 = -1;
     Stage stage = Off;
     double at = 0, press_until = 0;
     int tries = 0, level0 = -1, echoes0 = -1;
@@ -633,7 +637,7 @@ struct LevelUpScript {
 
 constexpr std::uint32_t kPadCross = 0x4000, kPadCircle = 0x2000, kPadRight = 0x20, kPadLeft = 0x80, kPadUp = 0x10,
                         kPadDown = 0x40;
-constexpr std::uint32_t kTextChannel = 15000100, kTextLeave = 15000005;
+constexpr std::uint32_t kTextChannel = 15000100, kTextLeave = 15000005, kTextPurchase = 15000140;
 
 bool OnScreen(std::uint32_t id, std::int64_t within_ms = 400) {
     const std::int64_t ms = BbGameMenu::LastLookupMs(id);
@@ -675,8 +679,9 @@ void LevelUpTick(const GameSnapshot& s, double now) {
         }
         break;
     case LevelUpScript::Greeting:
-        if (OnScreen(kTextChannel) && OnScreen(kTextLeave)) {
-            go(LevelUpScript::MenuUp, "talk menu up: 'Channel the Blood Echoes' (15000100) is on screen");
+        if (OnScreen(L.menu_text) && OnScreen(kTextLeave)) {
+            go(LevelUpScript::MenuUp, L.shop ? "talk menu up: 'Purchase' (15000140) is on screen"
+                                             : "talk menu up: 'Channel the Blood Echoes' (15000100) is on screen");
         } else if (since >= 1.5 * (L.tries + 1)) {
             if (++L.tries > 12) {
                 go(LevelUpScript::Done, "FAILED: no talk menu after 12 presses");
@@ -691,13 +696,16 @@ void LevelUpTick(const GameSnapshot& s, double now) {
             // The menu's cursor starts on its first row, "Channel the Blood Echoes" (AddTalkListData
             // index 1). Make sure: Up wraps would move it, so press nothing but Cross.
             L.menus0 = g_levelup_menus.load();
+            L.requests0 = g_menu_requests.load();
             Tap(kPadCross, now);
-            go(LevelUpScript::WaitScreen, "Cross on 'Channel the Blood Echoes'; the Doll's lines follow");
+            go(LevelUpScript::WaitScreen, L.shop ? "Cross on 'Purchase'" : "Cross on 'Channel the Blood Echoes'; the Doll's lines follow");
         }
         break;
     case LevelUpScript::WaitScreen:
         // The guest kneels (event 12100112), the Doll speaks; then OpenSoul builds the menu.
-        if (g_levelup_menus.load() != L.menus0) {
+        if (L.shop && g_menu_requests.load() != L.requests0) {
+            go(LevelUpScript::Raise, "the shop menu was requested (OpenRegularShop -> 0x1C4A520): shop open");
+        } else if (g_levelup_menus.load() != L.menus0) {
             go(LevelUpScript::Raise, "the game built the LevelUp menu (factory 0x1BB7F60): level-up screen open");
         } else if (since >= 2.0 * (L.tries + 1)) {
             if (++L.tries > 10) {
@@ -712,6 +720,12 @@ void LevelUpTick(const GameSnapshot& s, double now) {
         if (since >= 1.5) {
             L.level0 = s.level;
             L.echoes0 = s.echoes;
+            L.insight0 = s.insight;
+            if (L.shop) {
+                Tap(kPadCross, now);
+                go(LevelUpScript::Confirm, "Cross on the shop's first item");
+                break;
+            }
             Tap(L.tries == 0 ? kPadDown : kPadRight, now);
             if (L.tries++ == 0) {
                 Log("test: levelup: Down (first attribute)");
@@ -728,7 +742,9 @@ void LevelUpTick(const GameSnapshot& s, double now) {
         }
         break;
     case LevelUpScript::Accept:
-        if (s.level > L.level0 && L.level0 >= 0) {
+        if (L.shop && L.echoes0 >= 0 && (s.echoes != L.echoes0 || s.insight != L.insight0)) {
+            go(LevelUpScript::WaitLevel, "the purchase went through");
+        } else if (s.level > L.level0 && L.level0 >= 0) {
             go(LevelUpScript::WaitLevel, "level changed already");
         } else if (since >= 1.2) {
             if (++L.tries > 6) {
@@ -741,7 +757,15 @@ void LevelUpTick(const GameSnapshot& s, double now) {
         }
         break;
     case LevelUpScript::WaitLevel:
-        if (s.level > L.level0 && L.level0 >= 0) {
+        if (L.shop && L.echoes0 >= 0 && (s.echoes != L.echoes0 || s.insight != L.insight0)) {
+            Log("test: levelup: PURCHASE on the guest: echoes %d -> %d, Insight %d -> %d", L.echoes0, s.echoes, L.insight0,
+                s.insight);
+            go(LevelUpScript::BackOut, "backing out (Circle)");
+        } else if (L.shop && since >= 4.0) {
+            Log("test: levelup: FAILED: no purchase (echoes %d, Insight %d)", s.echoes, s.insight);
+            go(LevelUpScript::BackOut, "backing out (Circle)");
+        } else if (L.shop) {
+        } else if (s.level > L.level0 && L.level0 >= 0) {
             Log("test: levelup: LEVEL UP on the guest: level %d -> %d, echoes %d -> %d", L.level0, s.level, L.echoes0,
                 s.echoes);
             go(LevelUpScript::BackOut, "backing out (Circle)");
@@ -790,7 +814,25 @@ bool RunTestFixture(const GameSnapshot& s, int step) {
     }
     alignas(16) float pos[4] = {0, 0, 0, 1};
     alignas(16) float rot[4] = {0, 0, 0, 0};
-    if (std::strncmp(at, "doll", 4) == 0 && FindChr(210304)) {
+    std::uint32_t talk_target = 0;
+    if (std::strncmp(at, "doll", 4) == 0) {
+        talk_target = 210304;
+    } else if (std::strncmp(at, "talk:", 5) == 0) {
+        talk_target = std::uint32_t(std::strtoul(at + 5, nullptr, 10));
+    }
+    if (talk_target && talk_target != 210304 && FindChr(talk_target)) {
+        const std::uint64_t chr = FindChr(talk_target);
+        float d[4] = {}, r[4] = {};
+        SafeRead(chr + 0xc0, d, sizeof d);
+        SafeRead(chr + 0xd0, r, sizeof r);
+        const float yaw = r[1];
+        pos[0] = d[0] - 1.2f * std::sin(yaw);
+        pos[1] = d[1];
+        pos[2] = d[2] - 1.2f * std::cos(yaw);
+        rot[1] = yaw + 3.14159265f;
+        Log("test: t%u's character stands at (%.2f, %.2f, %.2f) yaw %.3f; guest goes 1.2 m in front, yaw %.3f",
+            talk_target, d[0], d[1], d[2], yaw, rot[1]);
+    } else if (std::strncmp(at, "doll", 4) == 0 && FindChr(210304)) {
         // In front of the Doll as this game placed her: ChrIns +0xC0 position, +0xD0 rotation
         // (x, yaw, z, 0; 0.524 = her MSB 30 degrees). Live evidence: a character with yaw t faces
         // (-sin t, 0, -cos t) (a guest put at +(sin, cos) * 1.2 ended up behind her). So: 1.2 m along
@@ -822,6 +864,8 @@ bool RunTestFixture(const GameSnapshot& s, int step) {
         pos[2] = spots[spot][2] + 1.04f;
         rot[1] = std::atan2(-0.6f, -1.04f);
         Log("test: the Doll's spot on this game is #%d (12100500 + %d)", spot + 1, spot);
+    } else if (talk_target && talk_target != 210304) {
+        return false;
     } else if (std::sscanf(at, "%f,%f,%f,%f", &pos[0], &pos[1], &pos[2], &rot[1]) != 4) {
         return false;
     }
@@ -1012,11 +1056,17 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
     }
     const double now = Now();
     bool doll_ready = true;
-    if (g.test.find("warp=doll") != std::string::npos && g.test_step == 0) {
-        // Wait until the Doll's character exists and stands somewhere (polled every tick).
+    std::uint32_t target = 0;
+    if (g.test.find("warp=doll") != std::string::npos) {
+        target = 210304;
+    } else if (const std::size_t t = g.test.find("warp=talk:"); t != std::string::npos) {
+        target = std::uint32_t(std::strtoul(g.test.c_str() + t + 10, nullptr, 10));
+    }
+    if (target && g.test_step == 0) {
+        // Wait until the character exists and stands somewhere (polled every tick).
         float d[3] = {};
-        const std::uint64_t doll = FindChr(210304);
-        doll_ready = doll && SafeRead(doll + 0xc0, d, sizeof d) && (d[0] != 0.0f || d[2] != 0.0f);
+        const std::uint64_t chr = FindChr(target);
+        doll_ready = chr && SafeRead(chr + 0xc0, d, sizeof d) && (d[0] != 0.0f || d[2] != 0.0f);
     }
     if (g.open && !g.test.empty() && !g.test_done && doll_ready && now - g.open_at >= 5.0 && now >= g.test_next) {
         if (!RunTestFixture(s, g.test_step)) {
@@ -1025,6 +1075,13 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
         } else if (g.test_step == 0 && g.test.find("levelup") != std::string::npos) {
             g_lvl.stage = LevelUpScript::WaitPlaced;
             g_lvl.at = now;
+            g_lvl.shop = false;
+            g_lvl.menu_text = kTextChannel;
+        } else if (g.test_step == 0 && g.test.find("buy") != std::string::npos) {
+            g_lvl.stage = LevelUpScript::WaitPlaced;
+            g_lvl.at = now;
+            g_lvl.shop = true;
+            g_lvl.menu_text = kTextPurchase;
         }
         ++g.test_step;
         g.test_next = now + 8.0;
