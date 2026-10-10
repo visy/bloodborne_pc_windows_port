@@ -8,6 +8,7 @@
 #include "party_crypto.h"
 #include "party_director.h"
 #include "party_items.h"
+#include "party_phantom.h"
 #include "party_fourp.h"
 #include "party_travel.h"
 #include "upnp_win.h"
@@ -673,6 +674,10 @@ LinkCallbacks make_callbacks(bool host) {
                 std::string err;
                 if (coop::ItemsFromJsonText(body, &items, &err)) coop::RequestGuestItems(items);
                 else plog("%s event: %s", name.c_str(), err.c_str());
+                return;
+            }
+            if (name == coop::kPhantomEventName) {  // host lamp / rested / boss Insight
+                coop::PhantomOnEvent(body);
                 return;
             }
             bbnet::party::RemoteGuest* rg = bbnet::party::remote_guest();
