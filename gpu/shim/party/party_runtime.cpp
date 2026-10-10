@@ -865,6 +865,19 @@ void start_host(LinkConfig cfg) {
         r.have_cfg = true;
     }
     if (!kept.empty()) link->restore_members(kept);
+    // The party port answers STUN and hands out relay ports only to PartyLink members' addresses
+    // (it is on the internet; STUN is a reflector and the relay forwards to members).
+    // BB_PARTY_RELAY_OPEN=1: anyone (a guest whose UDP leaves from another address than its TCP).
+    if (!env_on("BB_PARTY_RELAY_OPEN")) {
+        bbnet::p2p_set_relay_admit([](std::uint32_t addr) {
+            if ((addr & 0xff) == 127) return true;
+            PartyLink* l = runtime_link();
+            if (!l) return false;
+            for (const RosterEntry& e : l->roster())
+                if (e.slot != kHostSlot && l->member_ip(e.slot) == addr) return true;
+            return false;
+        });
+    }
     std::string err;
     // A restarted host's port can be held a little longer by the dead process's connections:
     // retry for up to 60 s (the guests keep reconnecting meanwhile).

@@ -850,7 +850,12 @@ static void test_impersonation() {
         api.handle(Caller{who, 0x0a00000a}, rq, r);
         return r.status;
     };
+    // A sign the game could not read (SummonData must be 0xE0 bytes) is refused (security pass).
     CHECK(post("Alice", "/summon_messenger/create", R"({"SummonType":1,"AreaId":1,"SummonData":"AA=="})") == 200);
+    CHECK(api.signs().empty());
+    CHECK(post("Alice", "/summon_messenger/create",
+               R"({"SummonType":1,"AreaId":1,"SummonData":")" + bbnet::party::b64_encode(std::string(0xE0, 'x')) +
+                   R"("})") == 200);
     CHECK(api.signs().size() == 1 && api.signs()[0].online_id == "Alice");
     const std::string alice_sign = std::to_string(api.signs()[0].id);
     CHECK(post("Mallory", "/summon_messenger/delete", "{\"SummonDataId\":" + alice_sign + "}") == 200);

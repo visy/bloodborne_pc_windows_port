@@ -199,11 +199,18 @@ void FromApi::handle(const Caller& caller, const HttpRequest& rq, HttpResponse& 
 void FromApi::handle_json(const Caller& caller, const json::Value& rq, json::Value& reply) {
     HttpRequest h;
     h.method = str_of(rq, "Method");
-    if (h.method.empty()) h.method = "GET";
+    if (h.method.empty() || h.method.size() > 16) h.method = "GET";
     h.url = str_of(rq, "Url");
+    if (h.url.size() > kMaxUrl) {  // a peer's request: nothing the game sends is this long
+        reply = json::Value::make_object();
+        reply.set("ResKind", 1);
+        reply.set("Error", "url too long");
+        return;
+    }
     if (const json::Value* hs = rq.find("Headers"); hs && hs->type == json::Value::Type::Array) {
         for (const json::Value& v : hs->array) {
-            if (v.type == json::Value::Type::String) h.headers.push_back(v.string);
+            if (h.headers.size() >= kMaxHeaders) break;
+            if (v.type == json::Value::Type::String && v.string.size() <= 1024) h.headers.push_back(v.string);
         }
     }
     const std::vector<std::uint8_t> b = b64_decode(str_of(rq, "Body"));
@@ -255,6 +262,20 @@ std::string FromApi::dispatch(const Caller& caller, const std::string& path, con
 }
 
 std::string FromApi::sign_create(const Caller& caller, const json::Value& body) {
+    // The sign goes into other members' games as it is: their native code reads SummonData
+    // (exactly 0xE0 bytes, from_api_formats.inc) and the numbers. Anything else is refused.
+    std::vector<std::uint8_t> data;
+    const long long type = int_of(body, "SummonType", 0);
+    const long long version = int_of(body, "SummonDataVersion", 3);
+    const long long area = int_of(body, "AreaId", 0);
+    const long long region = int_of(body, "AreaRegionId", 0);
+    if (!b64_decode_strict(str_of(body, "SummonData"), &data) || data.size() != kSummonDataSize || type < 0 ||
+        type > 255 || version < 0 || version > 0xffff || area < 0 || area > 0xffffffffLL || region < 0 ||
+        region > 0xffff) {
+        log("from api: %s: refused a malformed sign (type %lld, version %lld, %zu data bytes)",
+            caller.online_id.c_str(), type, version, data.size());
+        return "0";
+    }
     Sign s;
     s.user_id = user_id_of(caller.online_id);
     s.online_id = caller.online_id;
@@ -263,14 +284,19 @@ std::string FromApi::sign_create(const Caller& caller, const json::Value& body) 
     s.summon_type = static_cast<int>(int_of(body, "SummonType", 0));
     s.data_b64 = str_of(body, "SummonData");
     s.chara_id = int_of(body, "CharaId", static_cast<long long>(s.user_id));
-    s.version = int_of(body, "SummonDataVersion", 3);
-    if (s.version < 0) s.version = 3;
+    s.version = version;
     s.request = body;
     std::lock_guard<std::mutex> lk(mu_);
     // One sign per member and type: a new one replaces the old.
     signs_.erase(std::remove_if(signs_.begin(), signs_.end(),
                                 [&](const Sign& o) { return o.user_id == s.user_id && o.summon_type == s.summon_type; }),
                  signs_.end());
+    std::size_t mine = 0;
+    for (const Sign& o : signs_) mine += o.user_id == s.user_id ? 1 : 0;
+    if (mine >= kMaxSignsPerUser) {
+        log("from api: %s has %zu signs up; refused another", caller.online_id.c_str(), mine);
+        return "0";
+    }
     s.id = next_sign_++;
     signs_.push_back(s);
     log("from api: %s put up a sign (type %d, area 0x%x) -> %llu", caller.online_id.c_str(), s.summon_type, s.area,

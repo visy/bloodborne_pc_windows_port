@@ -357,12 +357,30 @@ struct P2pPort {
     std::uint8_t stun_txid[net::stun::kTxid] = {};
     std::uint32_t stun_addr = 0;
     std::uint16_t stun_port = 0;
+    std::uint32_t stun_server_addr = 0;     // where the pending request went (nbo): only its
+    std::uint16_t stun_server_port = 0;     // answer counts
     net::stun::Relay stun_relay;
     std::condition_variable stun_cv;
     // When a datagram last arrived from each source (addr | port << 32, both network
     // order): the hole-punch stops once the peer is heard.
     std::map<std::uint64_t, Clock::time_point> heard;
+    std::atomic<std::uint64_t> dropped{0};  // datagrams a full game inbox did not take (kMaxInbox)
 };
+// Peer input caps (bbport security pass): the party port is on the internet, so neither a
+// socket's inbox nor the heard table may grow with what strangers send.
+constexpr std::size_t kMaxInbox = 1024;     // datagrams queued for one game socket
+constexpr std::size_t kMaxHeard = 4096;     // sources remembered
+void note_heard_locked(P2pPort& port, std::uint64_t key) {
+    const auto now = Clock::now();
+    if (port.heard.size() >= kMaxHeard && !port.heard.count(key)) {
+        for (auto it = port.heard.begin(); it != port.heard.end();) {
+            if (now - it->second > std::chrono::seconds(30)) it = port.heard.erase(it);
+            else ++it;
+        }
+        if (port.heard.size() >= kMaxHeard) port.heard.clear();
+    }
+    port.heard[key] = now;
+}
 // The relay (party_udp.h). Client side: once a STUN answer carried BBHOST-RELAY, a datagram for
 // another relay port (the server's address, not its STUN port) leaves framed for the STUN port
 // and the relay's deliveries come back from the STUN port. The game sees none of it: its peers
@@ -550,14 +568,14 @@ void p2p_reader(std::shared_ptr<P2pPort> port) {
                 std::lock_guard<std::mutex> lk(port->mu);
                 ++port->rx;
                 ++port->probes;
-                port->heard[source_key(sa.sin_addr.s_addr, sa.sin_port)] = Clock::now();
+                note_heard_locked(*port, source_key(sa.sin_addr.s_addr, sa.sin_port));
                 continue;
             }
             if (n >= 20 && buf[0] == 0x00 && buf[1] == 0x01) {
                 {
                     std::lock_guard<std::mutex> lk(port->mu);
                     ++port->rx;
-                    port->heard[source_key(sa.sin_addr.s_addr, sa.sin_port)] = Clock::now();
+                    note_heard_locked(*port, source_key(sa.sin_addr.s_addr, sa.sin_port));
                 }
                 answer_stun(*port, buf, static_cast<std::size_t>(n), sa);
                 continue;
@@ -566,7 +584,8 @@ void p2p_reader(std::shared_ptr<P2pPort> port) {
                 std::lock_guard<std::mutex> lk(port->mu);
                 std::uint32_t a = 0;
                 std::uint16_t p = 0;
-                if (port->stun_pending &&
+                if (port->stun_pending && sa.sin_addr.s_addr == port->stun_server_addr &&
+                    sa.sin_port == port->stun_server_port &&
                     net::stun::parse_binding_response(buf, static_cast<std::size_t>(n), port->stun_txid, &a, &p,
                                                       &port->stun_relay)) {
                     ++port->rx;
@@ -582,7 +601,7 @@ void p2p_reader(std::shared_ptr<P2pPort> port) {
         {
             std::lock_guard<std::mutex> lk(port->mu);
             ++port->rx;
-            port->heard[source_key(sa.sin_addr.s_addr, sa.sin_port)] = Clock::now();
+            note_heard_locked(*port, source_key(sa.sin_addr.s_addr, sa.sin_port));
             if (!hdr) ++port->no_header;
             auto it = hdr ? port->by_vport.find(dst) : port->by_vport.end();
             if (it != port->by_vport.end()) {
@@ -617,6 +636,13 @@ void p2p_reader(std::shared_ptr<P2pPort> port) {
             ++q->in_dgrams;
             q->in_bytes += dg.data.size();
             if (forwarded) ++q->forwarded;
+            if (q->q.size() >= kMaxInbox) {  // the game is not reading (or a flood): oldest go
+                q->q.pop_front();
+                const std::uint64_t d = port->dropped.fetch_add(1) + 1;
+                if (d % 1000 == 1)
+                    log("p2p port %u: a full inbox dropped datagrams (%llu so far)", port->port,
+                        static_cast<unsigned long long>(d));
+            }
             q->q.push_back(std::move(dg));
             if (q->q.size() > q->hiwater) q->hiwater = q->q.size();
         }
@@ -1792,6 +1818,8 @@ bool p2p_stun(const char* host, std::uint16_t sport, int timeout_ms, std::uint32
         net::stun::build_binding_request(req, port->stun_txid, want_relay, have_token ? token : nullptr);
     port->stun_pending = true;
     port->stun_done = false;
+    port->stun_server_addr = sa.sin_addr.s_addr;
+    port->stun_server_port = sa.sin_port;
     lk.unlock();
     (void)raw_sendto(port->fd, req, req_len, &sa);
     lk.lock();
@@ -1828,6 +1856,8 @@ bool p2p_relay(std::uint32_t* server, std::uint16_t* vport) { return g_relay.get
 bool p2p_relay_vport_for(std::uint32_t addr, std::uint16_t port_host, std::uint16_t* vport) {
     return g_relay_server.vport_for(addr, port_host, vport);
 }
+
+void p2p_set_relay_admit(std::function<bool(std::uint32_t addr)> admit) { g_relay_server.set_admit(std::move(admit)); }
 
 const udp::RelayClient& p2p_relay_client() { return g_relay; }
 
