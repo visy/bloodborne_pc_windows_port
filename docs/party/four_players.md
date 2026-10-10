@@ -161,3 +161,12 @@ signaling and the vport tables are maps without fixed sizes (tests: `party-link-
 "four players", `party-host-test` run with `BB_PARTY_MAX=4`). Known gaps: a room of 4 leaves no
 slot for an invader (host + 3 + invader needs a cap of 5); guest-to-guest traffic is a direct
 mesh with no fallback through the host relay (more likely to matter with 3 guest-guest links).
+
+**Live check (2026-10-10, 4 loopback instances, `instances.py run --count 4 --party --env
+BB_PARTY_MAX=4`, ports 5317x).** All four install H1-H4/E6/P5 (`Coop hooks: 4p ...` lines),
+log `party rules: max 4 players, 4p:v1:H1,H2,H3,H4,E6`, and the host's roster reaches
+`Hunter0..Hunter3 (slots 0..3, title)` 19 s in. Not yet checked live: a 3rd cooperator summoned
+in the world (the harness instances stay at the title without input - the director's automatic
+continue runs only after a crash restart - so the automatic summon flow does not run there yet),
+H2/H4 boss scaling, E6 NPC signs. Memory: four instances plus other work hit the Windows commit
+limit once (error 1455 creating the 7 GB pool; the restart loop recovered).
