@@ -213,7 +213,8 @@ Bugs the soak found and fixed:
 - Every datagram to a port on the host's address was relay-framed, also a player's own port
   when it shares the host's address (one machine, or one NAT): only relay ports the guest routes
   to are framed now.
-- Nothing ever chose the relay: BB_PARTY_FORCE_RELAY=1 routes guests to other guests through it.
+- Nothing ever chose the relay (the published RelayPort was never used): guest-to-guest paths
+  now fall back to it per peer (below); BB_PARTY_FORCE_RELAY=1 relays every guest pair.
 - A resumed member's backlog (600 events after 30 s) was replayed with one send() per frame
   while holding the link lock: 37 ms stalls of the main thread's `state()`. Frames are batched;
   the per-frame getters read a snapshot and never wait for the IO thread.
@@ -222,6 +223,24 @@ Bugs the soak found and fixed:
 - MinGW condition-variable waits and sleeps round to the 15.6 ms tick (timeBeginPeriod does not
   help): BB_NET_SIM added ~15 ms to every simulated delay. `netsim::Waiter` (event +
   high-resolution waitable timer).
+
+## Guest-to-guest paths: direct, or the host relay (PeerPaths)
+
+Each guest probes every other guest's direct address twice a second (`fe 'bbhp' 0 0 0`); a
+bbport port answers every probe with `fe 'bbhp' 1 0 0`. An answer proves the direct path both
+ways. A peer that never answered within 2.5 s, or that stopped answering for 2.5 s (5 probes), is
+reached through its relay port on the host until an answer comes back (then direct again,
+within ~0.5 s). The game never sees it: it keeps the peer's direct address; a relayed datagram
+leaves framed for the peer's relay port and relay deliveries from that port are presented from
+the peer's direct address (`party_udp.h` PeerPaths, used by net_socket.cpp; peers and relay
+ports come from the host's member records in np_session). The host is always direct (its port
+is the relay). The status line lists each peer as direct / relay / probing.
+
+party-soak `nat-pair` (dsl): Alice and Bob blocked both ways from the start - their traffic
+flows through the relay after 2.7 s (95 % delivered over two lossy dsl legs); the path opens -
+direct again after 0.3 s; it closes mid-session - relayed after 2.3 s, datagrams flowing again
+after 2.4 s; the pairs with Carol never switch. Under `bad` (8 % loss) no pair switched; in the
+outages every pair went to the relay and back (both dead meanwhile).
 
 ## Threads and waits: nothing blocks the game's main thread
 

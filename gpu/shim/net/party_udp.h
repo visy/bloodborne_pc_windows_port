@@ -25,6 +25,8 @@
 #include <mutex>
 #include <random>
 #include <set>
+#include <utility>
+#include <vector>
 #include <string>
 
 namespace bbnet::udp {
@@ -42,11 +44,16 @@ std::size_t p2p_header(const std::uint8_t* d, std::size_t n, std::uint16_t* src,
 std::size_t p2p_write_header(std::uint8_t* out, std::uint16_t src, std::uint16_t dst);
 
 // ---- probe ----
+// fe 'bbhp' 0 0 0: a hole-punch probe. bbport answers each with fe 'bbhp' 1 0 0 (an ack): an ack
+// proves the direct path works both ways (a peer that only sends ours does not answer: then
+// PeerPaths falls back to the relay, which is right for a one-way path too).
 constexpr std::uint8_t kProbe[8] = {0xfe, 'b', 'b', 'h', 'p', 0, 0, 0};
+constexpr std::uint8_t kProbeAck[8] = {0xfe, 'b', 'b', 'h', 'p', 1, 0, 0};
 inline bool is_probe(const std::uint8_t* d, std::size_t n) {
     return n >= 8 && d[0] == kProbe[0] && d[1] == kProbe[1] && d[2] == kProbe[2] && d[3] == kProbe[3] &&
            d[4] == kProbe[4];
 }
+inline bool is_probe_ack(const std::uint8_t* d, std::size_t n) { return is_probe(d, n) && d[5] == 1; }
 
 // ---- relay frames ----
 constexpr std::uint8_t kRelayMagic = 0xfb, kRelayToServer = 'R', kRelayToClient = 'r';
@@ -156,6 +163,60 @@ private:
     std::uint8_t token_[net::stun::kTokenLen] = {};
     std::uint16_t vport_ = 0;       // host order
     mutable std::set<std::uint16_t> relay_ports_;  // host order
+};
+
+// A guest's paths to the other guests: direct, or through the host relay when the direct path
+// does not answer. Every peer is probed directly twice a second (relayed or not); a peer whose
+// probes got no ack for `fallback_ms` since it was added, or for `lost_ms` after it answered,
+// is reached through its relay port on the host until an ack comes back (then direct again).
+// Transparent to the game: it keeps addressing the peer's direct address; a relayed datagram
+// leaves framed for the peer's relay port, and relay deliveries from that port are presented as
+// coming from the peer's direct address. BB_PARTY_FORCE_RELAY=1 relays every peer always.
+// Thread-safe.
+class PeerPaths {
+public:
+    struct Config {
+        int probe_interval_ms = 500;
+        int fallback_ms = 2500;  // never answered: relay after this long
+        int lost_ms = 2500;      // answered before: relay after this long without an ack (5 probes)
+        bool force = false;      // BB_PARTY_FORCE_RELAY
+    };
+    struct PeerView {
+        std::uint32_t addr = 0;        // network order
+        std::uint16_t port = 0;        // network order
+        std::uint16_t relay_port = 0;  // host order
+        bool relayed = false;
+        int switches = 0;  // direct <-> relay changes
+        bool answered = false;
+    };
+    PeerPaths() = default;
+    explicit PeerPaths(Config c) : cfg_(c) {}
+    void configure(const Config& c);
+    // Another guest at addr:port (its direct address, network order) with its relay port on our
+    // relay server (host order; 0 = none: always direct). Re-adding updates the relay port.
+    void add(std::uint32_t addr, std::uint16_t port_nbo, std::uint16_t relay_port, Clock::time_point now);
+    void remove(std::uint32_t addr, std::uint16_t port_nbo);
+    // A probe ack from addr:port.
+    void on_ack(std::uint32_t addr, std::uint16_t port_nbo, Clock::time_point now);
+    // Applies the timeouts and appends the direct addresses due a probe now; `notes` (optional)
+    // gets a log line per path change.
+    void tick(Clock::time_point now, std::vector<std::pair<std::uint32_t, std::uint16_t>>* probes,
+              std::vector<std::string>* notes = nullptr);
+    // The game sends to addr:port: true (with the peer's relay port) when it goes through the relay.
+    bool relayed(std::uint32_t addr, std::uint16_t port_nbo, std::uint16_t* relay_port) const;
+    // A relay delivery from relay port `relay_port` (host order): the peer's direct address.
+    bool direct_of_relay(std::uint16_t relay_port, std::uint32_t* addr, std::uint16_t* port_nbo) const;
+    std::vector<PeerView> peers() const;
+
+private:
+    struct Peer {
+        PeerView v;
+        Clock::time_point added, last_ack, next_probe;
+    };
+    static std::uint64_t key(std::uint32_t a, std::uint16_t p) { return a | (static_cast<std::uint64_t>(p) << 32); }
+    mutable std::mutex mu_;
+    Config cfg_;
+    std::map<std::uint64_t, Peer> peers_;
 };
 
 // BB_PARTY_FORCE_RELAY=1: a guest sends its game traffic for other guests through the host

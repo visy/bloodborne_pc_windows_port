@@ -304,6 +304,105 @@ void RelayClient::reset() {
     vport_ = 0;
 }
 
+// ---- PeerPaths ----
+
+void PeerPaths::configure(const Config& c) {
+    std::lock_guard<std::mutex> lk(mu_);
+    cfg_ = c;
+    if (c.force)
+        for (auto& [k, p] : peers_) {
+            (void)k;
+            if (p.v.relay_port) p.v.relayed = true;
+        }
+}
+
+void PeerPaths::add(std::uint32_t addr, std::uint16_t port_nbo, std::uint16_t relay_port, Clock::time_point now) {
+    if (!addr || !port_nbo) return;
+    std::lock_guard<std::mutex> lk(mu_);
+    auto [it, fresh] = peers_.try_emplace(key(addr, port_nbo));
+    Peer& p = it->second;
+    if (fresh) {
+        p.v.addr = addr;
+        p.v.port = port_nbo;
+        p.added = now;
+        p.next_probe = now;
+    }
+    p.v.relay_port = relay_port;
+    if (!relay_port) p.v.relayed = false;
+    else if (cfg_.force) p.v.relayed = true;
+}
+
+void PeerPaths::remove(std::uint32_t addr, std::uint16_t port_nbo) {
+    std::lock_guard<std::mutex> lk(mu_);
+    peers_.erase(key(addr, port_nbo));
+}
+
+void PeerPaths::on_ack(std::uint32_t addr, std::uint16_t port_nbo, Clock::time_point now) {
+    std::lock_guard<std::mutex> lk(mu_);
+    auto it = peers_.find(key(addr, port_nbo));
+    if (it == peers_.end()) return;
+    it->second.last_ack = now;
+    it->second.v.answered = true;
+}
+
+void PeerPaths::tick(Clock::time_point now, std::vector<std::pair<std::uint32_t, std::uint16_t>>* probes,
+                     std::vector<std::string>* notes) {
+    std::lock_guard<std::mutex> lk(mu_);
+    const auto ms = [](int v) { return std::chrono::milliseconds(v); };
+    for (auto& [k, p] : peers_) {
+        (void)k;
+        if (now >= p.next_probe) {
+            if (probes) probes->emplace_back(p.v.addr, p.v.port);
+            p.next_probe = now + ms(cfg_.probe_interval_ms);
+        }
+        if (cfg_.force || !p.v.relay_port) continue;
+        const bool fresh_ack = p.v.answered && now - p.last_ack <= ms(cfg_.probe_interval_ms * 3 / 2);
+        const bool lost = !p.v.answered ? now - p.added > ms(cfg_.fallback_ms) : now - p.last_ack > ms(cfg_.lost_ms);
+        const bool want = p.v.relayed ? !fresh_ack : lost;
+        if (want != p.v.relayed) {
+            p.v.relayed = want;
+            ++p.v.switches;
+            if (notes) {
+                notes->push_back("path to " + addr_text(p.v.addr, p.v.port) +
+                                 (want ? ": no answer to direct probes, through the host relay (port " +
+                                             std::to_string(p.v.relay_port) + ")"
+                                       : std::string(": direct again (probes answered)")));
+            }
+        }
+    }
+}
+
+bool PeerPaths::relayed(std::uint32_t addr, std::uint16_t port_nbo, std::uint16_t* relay_port) const {
+    std::lock_guard<std::mutex> lk(mu_);
+    auto it = peers_.find(key(addr, port_nbo));
+    if (it == peers_.end() || !it->second.v.relayed) return false;
+    if (relay_port) *relay_port = it->second.v.relay_port;
+    return true;
+}
+
+bool PeerPaths::direct_of_relay(std::uint16_t relay_port, std::uint32_t* addr, std::uint16_t* port_nbo) const {
+    std::lock_guard<std::mutex> lk(mu_);
+    for (const auto& [k, p] : peers_) {
+        (void)k;
+        if (p.v.relay_port == relay_port) {
+            *addr = p.v.addr;
+            *port_nbo = p.v.port;
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<PeerPaths::PeerView> PeerPaths::peers() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    std::vector<PeerView> v;
+    for (const auto& [k, p] : peers_) {
+        (void)k;
+        v.push_back(p.v);
+    }
+    return v;
+}
+
 // ---- routing ----
 
 bool force_relay_from_env() {

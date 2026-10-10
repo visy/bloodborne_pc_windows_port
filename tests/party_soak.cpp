@@ -546,7 +546,19 @@ public:
         const std::size_t len = hdr + 64;
         std::uint32_t sa = 0;
         std::uint16_t sp = 0;
-        if (rc_.frame_for(addr, htons(port_host), pkt, &sa, &sp)) {
+        // net_socket.cpp dgram_send: a guest whose direct path does not answer goes through its
+        // relay port on the host.
+        std::uint32_t via_addr = addr;
+        std::uint16_t via_port = htons(port_host);
+        std::uint16_t rp = 0;
+        if (!host_ && paths_.relayed(addr, htons(port_host), &rp)) {
+            std::uint32_t server = 0;
+            if (rc_.get(&server, nullptr)) {
+                via_addr = server;
+                via_port = htons(rp);
+            }
+        }
+        if (rc_.frame_for(via_addr, via_port, pkt, &sa, &sp)) {
             send_raw(pkt, udp::kRelayHeader + len, sa, sp);
             relay_bytes_out_ += udp::kRelayHeader + len;
         } else {
@@ -599,6 +611,7 @@ private:
             std::lock_guard<std::mutex> lk(qmu_);
             const auto now = Clock::now();
             if (cond_->in_outage(now)) return;  // our network is down
+            if (blocked(ntohs(port_nbo))) return;  // no direct path to that player (NAT)
             q_->submit(now, 0, addr, port_nbo, d, n);
         }
         waiter_.notify();
@@ -635,7 +648,19 @@ private:
     }
     void read_loop() {
         std::uint8_t buf[udp::kMaxDatagram + udp::kRelayHeader];
+        auto last_tick = Clock::now();
+        std::vector<std::pair<std::uint32_t, std::uint16_t>> probes;
+        std::vector<std::string> notes;
         while (!stop_) {
+            if (!host_ && Clock::now() - last_tick > std::chrono::milliseconds(100)) {
+                // net_socket.cpp p2p_reader: probe the other guests, switch paths on the answers.
+                last_tick = Clock::now();
+                probes.clear();
+                notes.clear();
+                paths_.tick(last_tick, &probes, &notes);
+                for (const auto& [a, pt] : probes) send_raw(udp::kProbe, sizeof udp::kProbe, a, pt);
+                for (const auto& line : notes) logf("p%d %s", idx_, line.c_str());
+            }
             party::sock::PollFd p{};
             p.fd = fd_;
             p.events = POLLIN;
@@ -645,6 +670,7 @@ private:
             const int n = ::recvfrom(fd_, reinterpret_cast<char*>(buf), sizeof buf, 0, reinterpret_cast<sockaddr*>(&sa), &sl);
             if (n <= 0) continue;
             if (cond_->in_outage(Clock::now())) continue;  // our network is down
+            if (blocked(ntohs(sa.sin_port))) continue;      // no direct path from that player
             std::size_t len = static_cast<std::size_t>(n);
             std::uint32_t from_addr = sa.sin_addr.s_addr;
             std::uint16_t from_port = sa.sin_port;
@@ -691,9 +717,19 @@ private:
                     std::memmove(buf, buf + udp::kDeliveryHeader, len - udp::kDeliveryHeader);
                     len -= udp::kDeliveryHeader;
                     from_port = relayed_from;
+                    std::uint32_t da = 0;
+                    std::uint16_t dp = 0;
+                    if (paths_.direct_of_relay(ntohs(relayed_from), &da, &dp)) {
+                        from_addr = da;  // the game knows the peer by its direct address
+                        from_port = dp;
+                    }
                 }
             }
-            if (udp::is_probe(buf, len)) continue;
+            if (udp::is_probe(buf, len)) {
+                if (udp::is_probe_ack(buf, len)) paths_.on_ack(from_addr, from_port, Clock::now());
+                else send_raw(udp::kProbeAck, sizeof udp::kProbeAck, from_addr, from_port);
+                continue;
+            }
             std::uint16_t src = 0, dst = 0;
             const std::size_t hdr = udp::p2p_header(buf, len, &src, &dst);
             if (!hdr || len < hdr + 18) continue;
@@ -726,7 +762,8 @@ private:
             // The source the game would see: the sender's direct port, or its relay port.
             const auto id = ident_.find(from);
             if (id != ident_.end()) {
-                const std::uint16_t want = flow == kRelay ? id->second.second : id->second.first;
+                // Relay deliveries from a known peer are presented from its direct address.
+                const std::uint16_t want = id->second.first;
                 if (want && bswap16(from_port) != want) ++f.wrong_source;
             }
         }
@@ -740,6 +777,40 @@ private:
     std::uint16_t port_ = 0;
     udp::RelayServer server_;
     udp::RelayClient rc_;
+    udp::PeerPaths paths_;
+    mutable std::mutex block_mu_;
+    std::set<std::uint16_t> blocked_;
+    bool blocked(std::uint16_t port_host) const {
+        std::lock_guard<std::mutex> lk(block_mu_);
+        return blocked_.count(port_host) != 0;
+    }
+
+public:
+    // net_socket.cpp p2p_add_peer: another guest's direct address and relay port.
+    void add_peer(std::uint32_t addr, std::uint16_t port_host, std::uint16_t relay_port) {
+        if (host_ || rc_.is_server(addr, htons(port_host))) return;
+        std::uint16_t own = 0;
+        rc_.get(nullptr, &own);
+        if (relay_port && relay_port == own) return;
+        if (relay_port) rc_.add_relay_port(relay_port);
+        paths_.add(addr, htons(port_host), relay_port, Clock::now());
+    }
+    // Simulates a NAT pair that cannot reach each other: nothing to or from that UDP port.
+    void block(std::uint16_t port_host, bool on) {
+        std::lock_guard<std::mutex> lk(block_mu_);
+        if (on) blocked_.insert(port_host);
+        else blocked_.erase(port_host);
+    }
+    std::vector<udp::PeerPaths::PeerView> peer_paths() const { return paths_.peers(); }
+    // This node's path to UDP port `port_host` (on loopback): relayed?
+    bool relayed_to(std::uint16_t port_host) const { return paths_.relayed(loopback(), htons(port_host), nullptr); }
+    int switches_to(std::uint16_t port_host) const {
+        for (const auto& v : paths_.peers())
+            if (v.port == htons(port_host)) return v.switches;
+        return 0;
+    }
+
+private:
     std::mutex qmu_;
     bbnet::netsim::Waiter waiter_;
     std::unique_ptr<bbnet::netsim::Queue> q_;
@@ -1251,6 +1322,7 @@ struct Party {
                 std::uint16_t rp = 0;
                 udp[s]->relay_client().get(nullptr, &rp);
                 udp[d]->set_identity(s, s == 0 ? host_udp : udp[s]->port(), rp);
+                if (d != 0 && s != 0 && rp) udp[d]->add_peer(loopback(), udp[s]->port(), rp);
             }
         }
     }
@@ -1258,6 +1330,12 @@ struct Party {
         stop = true;
         for (std::thread* t : {&traffic_th, &events_th, &main_th, &stun_th})
             if (t->joinable()) t->join();
+    }
+
+    std::vector<std::pair<int, int>> blocked_pairs;  // guest pairs without a direct path from the start
+    void block_pair(int a, int b, bool on) {
+        udp[a]->block(udp[b]->port(), on);
+        udp[b]->block(udp[a]->port(), on);
     }
 
     // ---- setup / teardown ----
@@ -1270,6 +1348,7 @@ struct Party {
             udp[i] = std::make_unique<UdpNode>(i, false, &cond[i]);
             proxy[i] = std::make_unique<TcpProxy>(host_port, &cond[i], kNames[i]);
         }
+        for (const auto& [a, b] : blocked_pairs) block_pair(a, b, true);
         const auto t0 = Clock::now();
         for (int i = 1; i < kMaxPlayers; ++i)
             if (!start_guest(i)) return false;
@@ -1436,6 +1515,22 @@ void report(Party& p, Verdict& v, bool expect_lossless_udp_direct) {
                static_cast<unsigned long long>(st.reregistered), static_cast<unsigned long long>(st.unknown_dst));
     }
     const double hold_cpu = g_tot.hold_max_cycles.load() / g_cycles_per_ms;
+    {
+        // Guest-to-guest paths (PeerPaths): which are relayed now, how often they switched.
+        std::string ps;
+        for (int g = 1; g < kMaxPlayers; ++g) {
+            if (!p.udp[g]) continue;
+            for (int o = 1; o < kMaxPlayers; ++o) {
+                if (o == g || !p.udp[o]) continue;
+                char b[64];
+                std::snprintf(b, sizeof b, " %c->%c %s/%d", kNames[g][0], kNames[o][0],
+                              p.udp[g]->relayed_to(p.udp[o]->port()) ? "relay" : "direct",
+                              p.udp[g]->switches_to(p.udp[o]->port()));
+                ps += b;
+            }
+        }
+        v.note("guest paths (now/switches):%s", ps.c_str());
+    }
     v.note("main thread: %zu link calls, p99 %.3f ms, max %.2f ms (wall clock, scheduler included); link IO thread "
            "lock hold max %.2f ms wall, %.2f ms of its own CPU",
            g_tot.main_call.count(), g_tot.main_call.pct(99), g_tot.main_call.max(), g_tot.hold_max_us.load() / 1000.0,
@@ -1591,6 +1686,71 @@ void run_drop_rejoin() {
     finish(v);
 }
 
+// Alice and Bob have no direct path (their NATs): PeerPaths falls back to the host relay; the
+// path opens (back to direct), then closes again mid-session (back to the relay).
+void run_nat_pair() {
+    Verdict v{"nat-pair", {}, {}};
+    say("== nat-pair (dsl): Alice <-> Bob have no direct path, then one opens, then it closes again");
+    g_tot.clear();
+    Party p;
+    p.blocked_pairs = {{1, 2}};
+    if (!p.up(profile("dsl"))) v.check(false, "handshake");
+    const auto t0 = Clock::now();
+    p.udp[1]->arm_first_rx();
+    p.udp[2]->arm_first_rx();
+    UdpNode& A = *p.udp[1];
+    UdpNode& B = *p.udp[2];
+    UdpNode& Cn = *p.udp[3];
+    const bool through = wait_until(
+        [&] {
+            return B.first_rx(1, kDirect) != Clock::time_point{} && A.first_rx(2, kDirect) != Clock::time_point{};
+        },
+        15000);
+    v.check(through, "Alice and Bob never reached each other");
+    if (through) {
+        v.note("blocked from the start: Alice->Bob through the relay after %.2f s, Bob->Alice after %.2f s",
+               std::chrono::duration<double>(B.first_rx(1, kDirect) - t0).count(),
+               std::chrono::duration<double>(A.first_rx(2, kDirect) - t0).count());
+    }
+    v.check(A.relayed_to(B.port()) && B.relayed_to(A.port()), "Alice <-> Bob not relayed");
+    v.check(!A.relayed_to(Cn.port()) && !Cn.relayed_to(A.port()) && !B.relayed_to(Cn.port()),
+            "a pair with a direct path was relayed");
+    // Delivery over the relayed path, as the game sends it (to the direct address).
+    const std::uint64_t s0 = A.sent(2, kDirect), r0 = B.rx(1, kDirect).received;
+    sleep_ms(8000);
+    const std::uint64_t s1 = A.sent(2, kDirect), r1 = B.rx(1, kDirect).received;
+    const double ratio = s1 > s0 ? 100.0 * static_cast<double>(r1 - r0) / static_cast<double>(s1 - s0) : 0;
+    v.note("Alice->Bob addressed directly, delivered through the relay: %.1f %% over 8 s", ratio);
+    v.check(ratio > 85, "the relayed path lost too much");
+    // The direct path opens: back to direct.
+    const auto t_open = Clock::now();
+    p.block_pair(1, 2, false);
+    const bool direct = wait_until([&] { return !A.relayed_to(B.port()) && !B.relayed_to(A.port()); }, 10000);
+    v.check(direct, "not back to direct after the path opened");
+    if (direct) v.note("path opened: direct again after %.2f s", ms_since(t_open) / 1000);
+    sleep_ms(4000);
+    // ... and closes again mid-session: the relay takes over.
+    const auto t_close = Clock::now();
+    B.arm_first_rx();
+    p.block_pair(1, 2, true);
+    const bool relayed = wait_until([&] { return A.relayed_to(B.port()) && B.relayed_to(A.port()); }, 10000);
+    const double t_relayed = ms_since(t_close) / 1000;
+    v.check(relayed, "not relayed after the path closed");
+    const bool again = wait_until([&] { return B.first_rx(1, kDirect) != Clock::time_point{}; }, 10000);
+    v.check(again, "Alice->Bob did not resume through the relay");
+    if (relayed && again)
+        v.note("path closed: relayed after %.2f s, Alice->Bob datagrams flowing again after %.2f s",
+               t_relayed,
+               std::chrono::duration<double>(B.first_rx(1, kDirect) - t_close).count());
+    sleep_ms(3000);
+    v.check(A.switches_to(Cn.port()) == 0 && B.switches_to(Cn.port()) == 0 && Cn.switches_to(A.port()) == 0 &&
+                Cn.switches_to(B.port()) == 0,
+            "a pair with a working direct path switched");
+    report(p, v, false);
+    p.down();
+    finish(v);
+}
+
 void run_host_restart(int down_ms) {
     Verdict v{"host-restart", {}, {}};
     say("== host-restart (dsl): the host's game crashes, is back %d s later on the same ports", down_ms / 1000);
@@ -1694,6 +1854,7 @@ int main(int argc, char** argv) {
     if (want("outage-30s")) run_outage("outage-30s", 30000);
     if (want("drop-rejoin")) run_drop_rejoin();
     if (want("host-restart")) run_host_restart(10000);
+    if (want("nat-pair")) run_nat_pair();
     int failed = 0;
     std::printf("\n");
     for (const auto& [n, ok] : g_results) {
