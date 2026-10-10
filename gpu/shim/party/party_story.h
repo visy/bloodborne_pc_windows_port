@@ -95,12 +95,12 @@ std::vector<std::uint32_t> StoryFlagsForRemo(std::uint32_t remo_id);
 /// The scene changes the guest's world or is a story scene it must see even if it missed the
 /// live mirror (boss intros etc. are mirror-only).
 bool ReplayWorthy(const StoryIntent& s);
-/// A remo id shaped like the game's cutscenes: AABBNNNN with AA a campaign area (21-28, 32-36)
-/// and BB < 10 (remo/sAA_BB_NNNN.remobnd.dcx). Anything else would make the guest's game look
-/// for a file that is not there.
-bool StoryRemoPlausible(std::uint32_t remo_id);
+/// A remo id the game has: remo/sAA_BB_NNNN.remobnd.dcx or an EMEVD 2002 play (party_ids.h,
+/// generated from the game data by tools/party/ids_tool.py). Anything else would make the
+/// guest's game look for a file that is not there.
+bool StoryRemoKnown(std::uint32_t remo_id);
 /// A story intent from the host (bbport security pass): false (with `why`) for a cutscene id
-/// that is not plausible; otherwise its flags are cut to the ones the guest's own table gives
+/// the game does not have; otherwise its flags are cut to the ones the guest's own table gives
 /// for that remo (the host only ever sends those) - a host cannot set arbitrary event flags.
 bool SanitizePeerStory(StoryIntent* s, std::string* why = nullptr);
 /// 9800..9802 as a 3-bit value (9800 = bit 2) for a tod (0..3): {0, 4, 6, 7}; -1 out of range.

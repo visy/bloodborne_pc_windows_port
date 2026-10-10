@@ -362,7 +362,11 @@ bool ItemGrantFromPeerAllowed(const ItemGrant& g, std::string* why) {
     if (ItemLotForFlag(g.flag) != kItemNone) {
         return no("the flag belongs to another lot");
     }
-    return true;  // a captured lot outside the tables
+    // A lot / flag pair outside the tables. An honest host of the same game version never sends
+    // one: ClassifyAward takes the flag from ITEM_LOT_FLAG and ClassifyFlag only maps flags the
+    // table (or a capture of a table lot) gives, so this would be an arbitrary event flag write
+    // plus an arbitrary lot award in the guest's own save. Refused (docs/party/items.md 6.5).
+    return no("lot / flag pair outside the tables");
 }
 
 std::vector<ItemGrant> FilterPeerItems(const std::vector<ItemGrant>& in, std::size_t* rejected) {

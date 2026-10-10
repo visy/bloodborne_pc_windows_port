@@ -265,6 +265,24 @@ if (flag < 0) SetEventFlag(*(void**)(0x800000000ull+0x553B100), 60009000 + idx, 
 * Endings and NG+ (C4): NG+ variant lots (34000/34030, 43800/43802…) depend on the cycle; the host's lot id is
   used as is.
 
+### 6.5 Peer validation (bbport security pass)
+
+A guest takes a host row (`FilterPeerItems`, `ItemGrantFromPeerAllowed`) only when it is a host source
+(award / flag / full), the lot is not denied (6.1 item 3, Chalice), and the tables agree: the lot's
+`ITEM_LOT_FLAG` is the row's flag (or the flag's lot is the row's lot), or a flagless row names the ledger
+index of its own lot. **A lot outside the tables is refused**, whatever flag comes with it. Earlier builds
+took such a "captured" lot once; that is no longer needed and was a hole:
+
+* an honest host never sends one: `ClassifyAward` takes the flag from `ITEM_LOT_FLAG(lot)` (a flagless lot
+  outside the ledger is not offered at all), and `ClassifyFlag` maps flags through the same table or the
+  host's captures, which only hold table lots. `party_items.inc` lists *every* flagged ItemLotParam row
+  outside the Chalice Dungeons, so a flagged row the game can award is always in it;
+* the pair is written into the guest's own save: an arbitrary lot award plus an arbitrary event flag set to
+  ON (the "done" flag), i.e. a host could flip any story / boss / NPC flag of a guest.
+
+Host and guests run the same game data (1.09) and the same generated tables; a mismatched build loses only
+the rows its tables do not know (logged as rejected), never more.
+
 ## 7. Patches considered and rejected for C3
 
 | Site | Original | Would do | Why not |

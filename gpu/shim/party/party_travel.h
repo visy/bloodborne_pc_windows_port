@@ -103,14 +103,20 @@ std::string TravelToJsonText(const TravelIntent& t);
 bool TravelFromJsonText(const std::string& text, TravelIntent* out, std::string* error = nullptr);
 
 // ---- Peer validation (bbport security pass) ----
-/// A campaign map area (21-28, 29 chalice, 32-36): the first byte of a packed map, AA of an id.
-bool TravelAreaPlausible(std::uint32_t area);
-/// A WarpParam / bonfire / lamp id shaped like the game's (AABnnnn: 7 digits, AA an area).
-bool TravelLampPlausible(std::uint32_t id);
+/// Peer ids are checked against the game's own tables (party_ids.h, generated from the game
+/// data by tools/party/ids_tool.py), not by shape.
+/// An existing map: area << 24 | block << 16 | region << 8 | index (a packed map, a pos map).
+bool TravelMapKnown(std::uint32_t packed_map);
+/// A ReturnPointParam ("WarpParam") row 0x13CDF30 can warp to: lamp, headstone, last lamp.
+bool TravelLampKnown(std::uint32_t id);
+/// A bonfire / warp point id 0x132E050 can take: an entity id AABnnnn of map mAA_0B.
+bool TravelBonfireKnown(std::uint32_t id);
 /// A host's travel intent before a guest replays it: false (with `why`) for a kind the host
-/// never broadcasts; ids that are not plausible become kTravelNone, a transform with a bad map
-/// or non-finite / far-out coordinates is dropped (has_pos false). The guest's game is then only
-/// asked to warp somewhere a game id can name.
+/// never broadcasts; a lamp / record id that is no ReturnPointParam row, a packed map that is no
+/// game map, a bonfire id that is no entity of its map and a stage warp point that is not in the
+/// destination map become kTravelNone; a transform with an unknown map or non-finite /
+/// far-out coordinates is dropped (has_pos false). The guest's game is then only asked to warp
+/// somewhere its own data names.
 bool SanitizePeerTravel(TravelIntent* t, std::string* why = nullptr);
 
 // ---- How a guest replays an intent ----

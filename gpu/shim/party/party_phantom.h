@@ -81,6 +81,10 @@ struct PhantomEvent {
 };
 std::string PhantomEventToJsonText(const PhantomEvent& e);
 bool PhantomEventFromJsonText(const std::string& text, PhantomEvent* out, std::string* error = nullptr);
+/// A host's phantom event before it reaches the game (bbport security pass): false (with `why`)
+/// for a Lamp whose id is no ReturnPointParam row (TravelLampKnown; the guest's death redirect
+/// warps there through 0x13CDF30).
+bool SanitizePeerPhantom(const PhantomEvent& e, std::string* why = nullptr);
 
 /// A host travel that refills the host (and so the guests): lamp into the Hunter's Dream
 /// (respawn mode 2), host death, Hunter's Mark.

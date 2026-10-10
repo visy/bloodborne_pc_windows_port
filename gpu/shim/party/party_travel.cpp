@@ -5,6 +5,7 @@
 // byte before anything is written. Offsets are ours (raw ELF VA). The game's code is System V:
 // every call into it goes through a BB_COOP_SYSV pointer at Guest(off).
 #include "party_travel.h"
+#include "party_ids.h"
 
 #include <algorithm>
 #include <cmath>
@@ -216,12 +217,17 @@ bool TravelFromJson(const json::Value& v, TravelIntent* out, std::string* error)
     }
 }
 
-bool TravelAreaPlausible(std::uint32_t area) {
-    return (area >= 21 && area <= 29) || (area >= 32 && area <= 36);
+bool TravelMapKnown(std::uint32_t packed_map) {
+    return ids::MapKnown(packed_map);
 }
 
-bool TravelLampPlausible(std::uint32_t id) {
-    return id >= 1000000 && id < 10000000 && TravelAreaPlausible(id / 100000) && id / 10000 % 10 < 10;
+bool TravelLampKnown(std::uint32_t id) {
+    return ids::ReturnPointKnown(id);
+}
+
+bool TravelBonfireKnown(std::uint32_t id) {
+    // 0x132E050 derives the map from the id itself (area id / 100000, block id / 10000 % 10).
+    return ids::EntityKnown(id) && ids::MapKnown(ids::EntityMap(id));
 }
 
 bool SanitizePeerTravel(TravelIntent* t, std::string* why) {
@@ -231,25 +237,28 @@ bool SanitizePeerTravel(TravelIntent* t, std::string* why) {
         }
         return false;
     }
-    auto lamp = [](std::uint32_t id) { return id == kTravelNone || TravelLampPlausible(id) ? id : kTravelNone; };
+    auto lamp = [](std::uint32_t id) { return id == kTravelNone || TravelLampKnown(id) ? id : kTravelNone; };
     auto record = [&](std::uint64_t r) {
         const std::uint32_t lo = static_cast<std::uint32_t>(r);
-        return lo == kTravelNone || TravelLampPlausible(lo) ? r : ~0ull;
+        return lo == kTravelNone || TravelLampKnown(lo) ? r : ~0ull;
     };
     t->lamp_id = lamp(t->lamp_id);
     t->respawn_record = record(t->respawn_record);
     t->last_lamp = record(t->last_lamp);
-    if (t->packed_map != kTravelNone && (!TravelAreaPlausible(t->Area()) || t->Block() >= 10)) {
+    if (t->packed_map != kTravelNone && !TravelMapKnown(t->packed_map)) {
         t->packed_map = kTravelNone;
     }
-    if (t->warp_point != kTravelNone && t->warp_point >= 100000000) {
+    if (t->kind == TravelKind::LuaBonfireWarp) {
+        if (t->warp_point != kTravelNone && !TravelBonfireKnown(t->warp_point)) {
+            t->warp_point = kTravelNone;
+        }
+    } else if (t->warp_point != kTravelNone &&
+               (t->packed_map == kTravelNone || !ids::WarpPointKnown(t->packed_map, t->warp_point))) {
+        // A stage warp to a point that is not in the destination map: the map's default entry.
         t->warp_point = kTravelNone;
     }
-    if (t->kind == TravelKind::LuaBonfireWarp) {
-        t->warp_point = lamp(t->warp_point);
-    }
     if (t->has_pos) {
-        bool ok = (t->pos_map >> 24) != 0 && TravelAreaPlausible(t->pos_map >> 24) && ((t->pos_map >> 16) & 0xff) < 10;
+        bool ok = TravelMapKnown(t->pos_map);
         for (int i = 0; i < 4; ++i) {
             ok = ok && std::isfinite(t->pos[i]) && std::fabs(t->pos[i]) < 100000.0f && std::isfinite(t->rot[i]) &&
                  std::fabs(t->rot[i]) < 1000.0f;
