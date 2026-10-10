@@ -694,7 +694,7 @@ void TestWarpTick(const GameSnapshot& s, double now) {
         npc_since = now;
         return;
     }
-    if (now - npc_since < 15.0) {
+    if (now - npc_since < 5.0) {
         return;
     }
     done = true;
