@@ -508,7 +508,7 @@ static void test_host_restart() {
         for (const RosterEntry& e : host2.roster()) conn += e.connected;
         return conn == 3;
     }, 3000));
-    CHECK(h2r.rejoined.load() == 2 && h2r.joined.load() == 0);
+    CHECK(wait_for([&] { return h2r.rejoined.load() == 2; }, 2000) && h2r.joined.load() == 0);  // callbacks lag
     // Events flow on the new streams.
     host2.send_event(kBroadcast, "after_restart", "{}");
     CHECK(wait_for([&] { return ar.events.load() >= 1 && br.events.load() >= 1; }, 3000));
