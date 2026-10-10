@@ -1035,6 +1035,23 @@ bool TravelEnabled() {
     return g_travel_on.load();
 }
 
+bool TravelPlaceForTest(std::uint32_t map, const float pos[3], float yaw) {
+    if (!TravelMapKnown(map)) {
+        return false;
+    }
+    TravelIntent t;
+    t.kind = TravelKind::Transform;
+    t.has_pos = true;
+    t.pos_map = map;
+    for (int i = 0; i < 3; ++i) {
+        t.pos[i] = pos[i];
+    }
+    t.rot[1] = yaw;
+    Log("test: place the player at m%02u_%02u_%02u_%02u (%.2f, %.2f, %.2f) yaw %.2f", (map >> 24) & 0xff,
+        (map >> 16) & 0xff, (map >> 8) & 0xff, map & 0xff, pos[0], pos[1], pos[2], yaw);
+    return Replay(t, {ReplayMethod::Transform, kTravelNone});
+}
+
 void SetGuestDeathRedirect(std::uint32_t host_lamp_id) {
     const u32 was = g_death_lamp.exchange(host_lamp_id);
     if (was != host_lamp_id) {

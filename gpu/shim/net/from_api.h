@@ -16,10 +16,9 @@
 // guest's create puts its sign up, the host's get lists every other member's signs, and the
 // host's request queues a guest_invite (party_transport.h) for the sign's owner with the
 // host's room and addresses - what bbhost's np_matching2.cpp on_server_event reads.
-// Chalice Dungeons (docs/party/chalice.md): a sign or a sign query whose AreaId is in area 29
-// only meets the other side when both carry the same ChannelId - the same dungeon, which both
-// games generated from the same FormData (the channel board) - so nobody is summoned into a
-// dungeon layout its own game does not have.
+// Chalice Dungeons (docs/party/chalice.md): a host whose sign query is in area 29 gets signs only
+// while its ChannelId is on the channel board: the summoned game fetches that dungeon by id and
+// quick-joins it, so nobody is summoned into a dungeon layout its own game cannot build.
 #pragma once
 
 #include "from_api_channel.h"

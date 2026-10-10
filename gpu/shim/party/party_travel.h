@@ -226,6 +226,9 @@ void RequestGuestTravel(const TravelIntent& t);
 void TravelTick();
 /// The travel hooks are installed and on (BB_PARTY_TRAVEL is not 0 and the funnel hook is in).
 bool TravelEnabled();
+/// Test fixtures (BB_PARTY_DIRECTOR_TEST place=...): warps the local player to an exact transform
+/// through the forced-placement sequence (main thread, world up). False when the map is unknown.
+bool TravelPlaceForTest(std::uint32_t map, const float pos[3], float yaw);
 /// Guest: the host's last lamp id for the death / Hunter's Mark redirect (kTravelNone: no redirect,
 /// the guest goes home as in vanilla). Any thread. A travel intent with a last-lamp record also
 /// updates it.

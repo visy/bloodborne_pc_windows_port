@@ -6,8 +6,10 @@
 // and the server-assigned ChannelId and 8-character glyph (DiscernmentWord). A member's game
 // uploads its dungeon when it performs the ritual or enters it online; another member's game
 // finds it with the glyph (word_search), the altar's search (search) or "join random"
-// (random_join) and generates the same dungeon from the FormData. Inside, the bells match by
-// ChannelId (FromApi's sign board).
+// (random_join) and generates the same dungeon from the FormData. Summoned into a dungeon, a
+// member's game gets the host's ChannelId with the host's summon message (P2P, 0x14ba340), fetches
+// the entry with get_details_info and quick-joins it into its slot 0 (0x14bb200 -> 0x1ac3ef0 ->
+// 0x1aa5280): it does not need the dungeon beforehand (docs/party/chalice.md 4).
 //
 // Party-only by construction (only party members reach the host). Formats (eboot 1.09, our
 // offsets; docs/party/chalice.md 3):
@@ -89,6 +91,8 @@ public:
     std::uint64_t member_channel(const std::string& member) const;
 
     std::vector<Channel> channels() const;
+    /// The board has this dungeon (a summoned member's game can fetch it).
+    bool known(std::uint64_t id) const;
     /// The glyph for a FormData (deterministic: the same dungeon keeps its glyph and id).
     static std::string GlyphOf(const std::string& form_data);
     static std::uint64_t IdOf(const std::string& form_data);

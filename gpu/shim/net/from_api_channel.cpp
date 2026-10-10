@@ -346,6 +346,14 @@ std::uint64_t ChannelBoard::member_channel(const std::string& member) const {
     return 0;
 }
 
+bool ChannelBoard::known(std::uint64_t id) const {
+    std::lock_guard<std::mutex> lk(mu_);
+    for (const Channel& c : channels_) {
+        if (c.id == id) return true;
+    }
+    return false;
+}
+
 std::vector<ChannelBoard::Channel> ChannelBoard::channels() const {
     std::lock_guard<std::mutex> lk(mu_);
     return channels_;

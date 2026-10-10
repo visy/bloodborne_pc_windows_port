@@ -29,6 +29,7 @@
 #include <cstdarg>
 #include <chrono>
 #include <cstdio>
+#include <vector>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -91,6 +92,12 @@ struct Test {
     double delay = 10.0;
     bool start = false, grant_bells = false, drop_bells = false, drop_done = false;
     int award_lot = -1; // award_lot=N: AwardItemLot(N) once (call-shape probe, test saves)
+    std::vector<std::pair<int, int>> goods; // goods=ID:N: tops goods ID up to N once (test saves)
+    bool goods_done = false;
+    bool place = false, place_done = false; // place=MAP:X:Y:Z:YAW (hex map): one forced placement
+    std::uint32_t place_map = 0;
+    float place_pos[3] = {0, 0, 0}, place_yaw = 0;
+    double place_at = 15.0;
     bool insight_done = false, ring_done = false;
     Clock::time_point rung_at{};
 };
@@ -567,6 +574,19 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         const bool ok = WritePlayerInsight(t.insight);
         Log("test: Insight %d -> %d %s", before, t.insight, ok ? "written" : "NOT written (no player record)");
     }
+    if (!t.goods.empty() && !t.goods_done && Seconds(st.world_at, now) >= 8.0 && s.world_up && !s.loading) {
+        t.goods_done = true;
+        for (const auto& [id, n] : t.goods) {
+            const int before = GoodsCount(std::uint32_t(id));
+            const bool ok = before >= 0 && before < n ? GiveGoods(std::uint32_t(id), n - before) : before >= n;
+            Log("test: goods %d x%d -> x%d (%s)", id, before, GoodsCount(std::uint32_t(id)), ok ? "ok" : "failed");
+        }
+    }
+    if (t.place && !t.place_done && Seconds(st.world_at, now) >= t.place_at && s.world_up && !s.loading) {
+        t.place_done = true;
+        const bool ok = TravelPlaceForTest(t.place_map, t.place_pos, t.place_yaw);
+        Log("test: place: %s", ok ? "requested" : "refused (unknown map)");
+    }
     if (t.award_lot > 0 && Seconds(st.world_at, now) >= 12.0 && s.world_up && !s.loading) {
         const int before = GoodsCount(kGoodsBeckoning);
         const bool ok = AwardItemLot(std::uint32_t(t.award_lot));
@@ -664,6 +684,22 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.start = true;
             } else if (item.rfind("award_lot=", 0) == 0) {
                 st.test.award_lot = std::atoi(item.c_str() + 10);
+            } else if (item.rfind("goods=", 0) == 0) {
+                int id = 0, n = 0;
+                if (std::sscanf(item.c_str() + 6, "%d:%d", &id, &n) == 2 && id > 0 && n > 0 && n <= 99) {
+                    st.test.goods.emplace_back(id, n);
+                }
+            } else if (item.rfind("place=", 0) == 0) {
+                unsigned map = 0;
+                float x = 0, y = 0, z = 0, yaw = 0;
+                if (std::sscanf(item.c_str() + 6, "%x:%f:%f:%f:%f", &map, &x, &y, &z, &yaw) >= 4) {
+                    st.test.place = true;
+                    st.test.place_map = map;
+                    st.test.place_pos[0] = x;
+                    st.test.place_pos[1] = y;
+                    st.test.place_pos[2] = z;
+                    st.test.place_yaw = yaw;
+                }
             } else if (item == "drop_bells") {
                 st.test.drop_bells = true;
             } else if (item == "grant_bells") {

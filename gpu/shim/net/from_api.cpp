@@ -380,12 +380,18 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
     }
     long long max = int_of(body, "GetMaxCount", 32);
     if (max <= 0) max = 32;
-    // Chalice Dungeons: only the same dungeon (ChannelId) on both sides (from_api.h).
+    // Chalice Dungeons (from_api.h): a host inside one summons only when its dungeon is on the
+    // channel board - the summoned game fetches it by ChannelId (get_details_info) and quick-joins
+    // it; without it that game would build its own slot's dungeon instead.
     const long long my_area = int_of(body, "AreaId", 0);
     const long long my_channel = int_of(body, "ChannelId", 0);
     const bool in_chalice = ChaliceArea(my_area);
-    if (in_chalice) channels_.note_member_channel(caller.online_id, static_cast<std::uint64_t>(my_channel));
-    int other_dungeon = 0;
+    bool dungeon_unknown = false;
+    if (in_chalice) {
+        channels_.note_member_channel(caller.online_id, static_cast<std::uint64_t>(my_channel));
+        dungeon_unknown = my_channel <= 0 || !channels_.known(static_cast<std::uint64_t>(my_channel));
+    }
+    int held = 0;
     std::string list = "[";
     int n = 0;
     std::lock_guard<std::mutex> lk(mu_);
@@ -394,11 +400,9 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
     for (const Sign& s : signs_) {
         if (s.online_id == caller.online_id) continue;
         if (!types.empty() && std::find(types.begin(), types.end(), s.summon_type) == types.end()) continue;
-        if (in_chalice || ChaliceArea(static_cast<std::int32_t>(s.area))) {
-            if (!in_chalice || !ChaliceArea(static_cast<std::int32_t>(s.area)) || s.channel != my_channel || !s.channel) {
-                ++other_dungeon;
-                continue;
-            }
+        if (dungeon_unknown) {
+            ++held;
+            continue;
         }
         if (n >= max) break;
         std::map<std::string, std::string> v;
@@ -421,8 +425,8 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
         std::string key = std::to_string(n) + " sign(s) for types [";
         for (std::size_t i = 0; i < types.size(); ++i) key += (i ? "," : "") + std::to_string(types[i]);
         key += "] of " + std::to_string(signs_.size()) + " on the board";
-        if (other_dungeon) key += " (" + std::to_string(other_dungeon) + " in another chalice dungeon or outside)";
-        if (in_chalice) key += ", chalice dungeon " + std::to_string(my_channel);
+        if (in_chalice) key += ", in chalice dungeon " + std::to_string(my_channel);
+        if (held) key += " (" + std::to_string(held) + " held back: that dungeon is not on the channel board)";
         if (last[caller.online_id] != key) {
             last[caller.online_id] = key;
             log("from api: %s asks for signs: %s", caller.online_id.c_str(), key.c_str());

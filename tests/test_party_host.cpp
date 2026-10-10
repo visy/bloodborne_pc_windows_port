@@ -14,6 +14,7 @@
 #include "gpu/bbnet.h"
 #include "party_sign_blob.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -968,9 +969,10 @@ static void test_chalice_channels() {
     CHECK(int_of(post("GuestA", "/channel/random_join", "{}"), "ChannelId", 0) == id);  // the host plays it
     CHECK(int_of(post("Host", "/channel/random_join", "{}"), "ChannelId", 0) == id2);
 
-    // Bells: a sign in a chalice dungeon reaches only a host in the same dungeon.
-    post("GuestA", "/summon_messenger/create", sign("GuestA", chalice_map, id));
-    post("GuestB", "/summon_messenger/create", sign("GuestB", chalice_map, id2));
+    // Bells: a host inside a dungeon the board has gets every member's sign (the summoned game
+    // quick-joins the dungeon by its ChannelId); inside one the board does not have, none.
+    post("GuestA", "/summon_messenger/create", sign("GuestA", 0x15010000u, 0));  // the Hunter's Dream
+    post("GuestB", "/summon_messenger/create", sign("GuestB", chalice_map, id2)); // its own dungeon
     CHECK(api.signs().size() == 2);
     auto listed = [&](const json::Value& q) {
         std::vector<std::string> who;
@@ -981,20 +983,20 @@ static void test_chalice_channels() {
                 who.emplace_back(reinterpret_cast<const char*>(&b[0x40]));
             }
         }
+        std::sort(who.begin(), who.end());
         return who;
     };
     auto host_get = [&](std::uint32_t area, long long channel) {
         return listed(post("Host", "/summon_messenger/get",
                            "{\"AreaId\":" + std::to_string(area) + ",\"ChannelId\":" + std::to_string(channel) + "}"));
     };
-    CHECK(host_get(chalice_map, id) == std::vector<std::string>{"GuestA"});
-    CHECK(host_get(chalice_map, id2) == std::vector<std::string>{"GuestB"});
-    CHECK(host_get(chalice_map, 0).empty());  // a dungeon nobody uploaded: nobody
-    CHECK(host_get(0x18010000u, 0).empty());  // outside: no sign from inside a dungeon
-    // A sign outside the dungeons is not listed to a host inside one, and is listed outside.
-    post("GuestA", "/summon_messenger/create", sign("GuestA", 0x18010000u, 0));
-    CHECK(host_get(chalice_map, id).empty());
-    CHECK(host_get(0x18010000u, 0) == std::vector<std::string>{"GuestA"});
+    const std::vector<std::string> both{"GuestA", "GuestB"};
+    CHECK(host_get(chalice_map, id) == both);
+    CHECK(host_get(chalice_map, id2) == both);
+    CHECK(host_get(chalice_map, 0).empty());          // never uploaded: held back
+    CHECK(host_get(chalice_map, 4242).empty());       // not on the board: held back
+    CHECK(host_get(0x18010000u, 0) == both);          // outside the dungeons: as before
+    CHECK(host_get(0x18010000u, 4242) == both);
 }
 
 int main() {
