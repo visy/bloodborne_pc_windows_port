@@ -292,6 +292,9 @@ int main() {
     test_gate();
     test_guest();
     test_guest_skips();
+    // The seeded marker is the last ledger bit and never a lot's index.
+    CHECK(ItemLedgerCount() < std::size_t(kItemLedgerSize - 1));
+    CHECK(kItemLedgerSeeded == kItemLedgerBase + kItemLedgerSize - 1);
     std::printf("party-items-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }
