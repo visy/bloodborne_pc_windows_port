@@ -724,6 +724,7 @@ void LevelUpTick(const GameSnapshot& s, double now) {
         if (L.approach > 0) {
             std::uint32_t prompt = 0;
             const bool up = PromptUp(&prompt);
+            L.requests0 = g_menu_requests.load();
             Tap(kPadCross, now);
             Log("test: levelup: at %.2f m: action prompt %s%s; Cross", dists[L.approach - 1], up ? "text " : "not seen",
                 up ? std::to_string(prompt).c_str() : "");
@@ -737,11 +738,13 @@ void LevelUpTick(const GameSnapshot& s, double now) {
         break;
     }
     case LevelUpScript::Greeting:
-        if (L.open && L.menu_text == 0) {
-            L.menus0 = g_levelup_menus.load();
-            L.requests0 = g_menu_requests.load();
-            go(LevelUpScript::WaitScreen, "no talk list: waiting for the menu (Cross on any dialog)");
-        } else if (OnScreen(L.menu_text) && OnScreen(kTextLeave)) {
+        if (L.open && L.menu_text == 0 && g_menu_requests.load() != L.requests0) {
+            L.level0 = s.level;
+            L.echoes0 = s.echoes;
+            L.insight0 = s.insight;
+            L.key_at = 0;
+            go(LevelUpScript::Keys, "no talk list: the menu was requested (0x1C4A520): menu open");
+        } else if (L.menu_text != 0 && OnScreen(L.menu_text) && OnScreen(kTextLeave)) {
             go(LevelUpScript::MenuUp, L.open ? "talk menu up: the chosen row is on screen"
                                     : L.shop ? "talk menu up: 'Purchase' (15000140) is on screen"
                                              : "talk menu up: 'Channel the Blood Echoes' (15000100) is on screen");
