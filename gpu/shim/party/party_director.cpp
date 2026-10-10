@@ -75,7 +75,7 @@ struct Test {
     int insight = -1;
     const char* ring = nullptr; // the event to raise once
     double delay = 10.0;
-    bool start = false, grant_bells = false;
+    bool start = false, grant_bells = false, drop_bells = false, drop_done = false;
     bool insight_done = false, ring_done = false;
     Clock::time_point rung_at{};
 };
@@ -346,6 +346,16 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         const bool ok = WritePlayerInsight(t.insight);
         Log("test: Insight %d -> %d %s", before, t.insight, ok ? "written" : "NOT written (no player record)");
     }
+    // PR1 probe: a character without the bells (removes goods 200 / 205 through GiveItemDirect
+    // with a negative count, 10 s after the world is up). Test saves only.
+    if (t.drop_bells && !t.drop_done && Seconds(st.world_at, now) >= 10.0 && s.world_up && !s.loading) {
+        t.drop_done = true;
+        const int b = GoodsCount(kGoodsBeckoning), r = GoodsCount(kGoodsSmallResonant);
+        const bool ok_b = b > 0 ? GiveGoods(kGoodsBeckoning, -b) : true;
+        const bool ok_r = r > 0 ? GiveGoods(kGoodsSmallResonant, -r) : true;
+        Log("test: drop_bells: goods 200 x%d -> x%d (%s), 205 x%d -> x%d (%s)", b, GoodsCount(kGoodsBeckoning),
+            ok_b ? "ok" : "failed", r, GoodsCount(kGoodsSmallResonant), ok_r ? "ok" : "failed");
+    }
     if (t.ring && !t.ring_done && Seconds(st.world_at, now) >= t.delay && s.world_up && !s.loading) {
         t.ring_done = true;
         t.rung_at = now;
@@ -418,6 +428,8 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.log_state = true;
             } else if (item == "start") {
                 st.test.start = true;
+            } else if (item == "drop_bells") {
+                st.test.drop_bells = true;
             } else if (item == "grant_bells") {
                 st.test.grant_bells = true;
             } else if (item == "ring_host") {
@@ -427,7 +439,7 @@ void PartyDirector::ConfigureFromEnv() {
             } else if (item.rfind("insight=", 0) == 0) {
                 st.test.insight = std::atoi(item.c_str() + 8);
             } else if (!item.empty()) {
-                Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, start, grant_bells, insight=N, ring_host or "
+                Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, start, grant_bells, drop_bells, insight=N, ring_host or "
                     "ring_guest; ignored",
                     item.c_str());
             }
