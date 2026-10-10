@@ -521,6 +521,7 @@ struct State {
     double hsince = 0;
     bool arrived = false;  // a guest said it arrived (under mu)
     bool have_dest = false; // guest: the host's post-load transform (under mu)
+    int hp_before = -1;      // guest: its HP at the host's travel event (kept through the B2 load)
     u32 dest_stage = 0;
     float dest_pos[4] = {}, dest_rot[4] = {};
     // probe
@@ -926,6 +927,7 @@ void GuestTick(const GameSnapshot& s, double now) {
         if (!st.screen_done) {
             st.screen_done = true;
             SaveOverlay();
+            st.hp_before = Field<int>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0x128, -1);
             static const bool early = !(std::getenv("BB_PARTY_B2_EARLY_SCREEN") &&
                                         std::getenv("BB_PARTY_B2_EARLY_SCREEN")[0] == '0');
             if (early) {
@@ -998,6 +1000,20 @@ void GuestTick(const GameSnapshot& s, double now) {
         st.stable = (!loading && st.load_seen) ? st.stable + 1 : 0;
         if (st.stable >= 30 && fstate == 4) {
             g_early_screen = false;  // the load's own InGameStart cleared it
+            {
+                // The guest's state is not the load's business (no rest): its HP as before the
+                // host's travel (a load may refill it). Data module: chr +0x3B0 -> +0x20: HP +0x128,
+                // max +0x12C.
+                const u64 dm = Field<u64>(Field<u64>(s.player, 0x3b0), 0x20);
+                const int hp = Field<int>(dm, 0x128, -1), mx = Field<int>(dm, 0x12c, -1);
+                if (dm && st.hp_before > 0 && hp >= 0 && hp != st.hp_before) {
+                    const int keep = st.hp_before < mx ? st.hp_before : mx;
+                    SafeWrite(dm + 0x128, &keep, 4);
+                    Log("guest: HP %d after the load -> %d as before the travel (max %d)", hp, keep, mx);
+                } else {
+                    Log("guest: HP %d after the load (before %d, max %d)", hp, st.hp_before, mx);
+                }
+            }
             const int n = RewindRemoteTasks("guest");
             Log("guest: arrived in the host world (flow 4); %d remote task(s) rewound", n);
             Send(0, "{\"op\":\"arrived\"}");  // guest: slot 0 = the host
@@ -1053,7 +1069,14 @@ void HostTick(const GameSnapshot& s, double now) {
     case HostPhase::Loading:
         st.stable = loading ? 0 : st.stable + 1;
         if (st.stable >= 30) {
+            // BB_PARTY_B2_TEST_FAIL=resync: the host sends nothing (the guests' B1 fallback test).
+            static const bool fail = std::getenv("BB_PARTY_B2_TEST_FAIL") &&
+                                     std::strcmp(std::getenv("BB_PARTY_B2_TEST_FAIL"), "resync") == 0;
             for (u64 id : Members()) {
+                if (fail) {
+                    Log("test fail: join snapshot NOT re-sent");
+                    continue;
+                }
                 ResyncMember(id);
             }
             // Where the host stands now: the guests' summoned placement (GSM +0x14C4/+0x14D0/
@@ -1242,6 +1265,16 @@ void TestBossTick(const GameSnapshot& s, double now) {
         return;
     }
     done = true;
+    if (std::strncmp(env, "hp=", 3) == 0) {
+        // BB_PARTY_B2_TEST_BOSS=hp=<n>: the guest's HP set to n (to see it kept through a B2 load).
+        const int hp = std::atoi(env + 3);
+        const u64 dm = Field<u64>(Field<u64>(s.player, 0x3b0), 0x20);
+        if (dm && hp > 0) {
+            SafeWrite(dm + 0x128, &hp, 4);
+        }
+        Log("test hp: guest HP set to %d (max %d)", hp, Field<int>(dm, 0x12c, -1));
+        return;
+    }
     std::int64_t r = -1;
     const bool ok = LuaEventRaiseNow(env, &r);
     Log("test boss: Lua event %s raised (%s, dispatcher %lld); role %d", env, ok ? "ok" : "no event manager",
@@ -1261,12 +1294,18 @@ void TestWarpTick(const GameSnapshot& s, double now) {
     static const bool host_mode = EnvOn("BB_PARTY_B2_TEST_HOSTWARP");
     bool ready = !Tasks(true).empty();
     if (host_mode) {
-        ready = false;
+        // BB_PARTY_B2_TEST_MEMBERS=<n> (default 1): wait for n guests' chrs in the host's world.
+        static const int want = [] {
+            const char* v = std::getenv("BB_PARTY_B2_TEST_MEMBERS");
+            return v && v[0] ? std::atoi(v) : 1;
+        }();
+        int have = 0;
         if (Role() == RoleHost) {
             for (const TaskInfo& t : Tasks(false)) {
-                ready = ready || (t.mode == 1 && t.step == kStepUpdate && PlayerForPeer(t.task + kTaskPeer));
+                have += (t.mode == 1 && t.step == kStepUpdate && PlayerForPeer(t.task + kTaskPeer)) ? 1 : 0;
             }
         }
+        ready = have >= want;
     }
     if (!s.world_up || s.loading || !ready) {
         npc_since = 0;
@@ -1276,7 +1315,11 @@ void TestWarpTick(const GameSnapshot& s, double now) {
         npc_since = now;
         return;
     }
-    if (now - npc_since < 5.0) {
+    static const double delay = [] {
+        const char* v = std::getenv("BB_PARTY_B2_TEST_DELAY");
+        return v && v[0] ? std::atof(v) : 5.0;
+    }();
+    if (now - npc_since < delay) {
         return;
     }
     done = true;
