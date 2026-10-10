@@ -251,6 +251,41 @@ warp's own target was used; with +0x1521 = 1 our +0x14C4/D0/E0 write gives the s
   guest's chr on "arrived". **No session loss, no "returned home".**
 * `HostCloseEmptyRoom` (B1, upstream b58a940) is off under B2 (the room must stay).
 
+### 6.3 Runs 11-16: boss clear, gather, what players see, spacing [R]
+
+* Boss clear (runs 11-13, `BB_PARTY_B2_TEST_BOSS=BlockClear2` raised on the guest by name): the
+  Lua state ran (dispatcher 1) and the guest stayed a client for 30+ s, but no BlockClear2_1 /
+  K10 / send-home followed - the white-phantom branch of `BlockClear2` 0x13849A0 needs a real boss
+  kill state before it chains on. Inconclusive for K10; no send-home leak seen. A real boss fight
+  is needed to close this.
+* Split maps at session start (runs 12-13): the guest's own save in the Hunter's Dream, the host's
+  in m24_01; the bell join placed the guest at its sign spot - the Dream - **in the host's world**
+  (bells anywhere). Fixed by **gather** (`BB_PARTY_GATHER`, default on, party_director): before a
+  guest rings, if the host's roster map (slot 0) is another area/block, the guest's own world
+  lamp-warps to the host's last lamp (`GuestDeathRedirectLamp`, kept by party_phantom). Run 13:
+  `gather: own world m21_00_00_00, host in m24_01_00_00; to the host's last lamp 2412951` →
+  joined in m24_01 next to the host. The same check runs before every ring, so it also covers
+  "after any return home".
+* What players see (run 14-15, `tools/mp/shot.py` = PrintWindow screenshots on log events): at the
+  host's lamp warp both windows show the loading screen (item tips) from the travel event on; the
+  guest's screen stays a loading screen through its snapshot wait and its own load (E1 works) and
+  opens in m24_01 beside the host; a remo plays on the guest right after arrival (the SprjRemo
+  bit seen before). Which remo is open (not identified).
+* Spacing (runs 14-16): the game's join placement is the sign spot = the shared lamp spot (0.2 m
+  from the host, the host got shoved 0.4 m). Writing GSM +0x14D0 before the join load had no
+  effect (the descriptor is built earlier); instead after any host-world arrival (flow 3 → 4,
+  bell join or B2) the guest's chr is warped beside the host with the chr warp vfunc +0x5F8
+  (`0x18CD600(chr, pos, rot, 1)`, as the NPC summon step does): `BB_PARTY_SUMMON_OFFSET` metres
+  (default 2.2; 3.0 judged too far, 1.5 too close), right / left / behind by slot, each try checked
+  30 ticks later (reached, same height ±1.5 m) with the next side as fallback and a log of how far
+  the host moved (push check). Run 15 (3 m): warped from 0.4 m to 3.0 m. No ground probe yet:
+  the host's height is used.
+* Lamp ids: 2412951 is the outdoor Central Yharnam lamp (screenshots of the arrival are a street,
+  position (-193.4, -28.6, 68.5) in m24_01), as travel.md's shadp2p capture says; 2412952 Great
+  Bridge; 2412950 (not seen here) is the likely 1st Floor Sickroom. The "guest in the clinic with
+  the opening cutscene" report came from a fresh `savedata_party`: both instances were re-set up
+  with the current harness (level 37 character, "Saves: check OK ... 1 character slot used").
+
 ## 7. Risks / open items
 
 * (Closed in run 9) Guest rewind not executing in run 5. Static analysis: the update `0x1E52FE0` copies
