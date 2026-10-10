@@ -314,9 +314,14 @@ if (flag < 0) SetEventFlag(*(void**)(0x800000000ull+0x553B100), 60009000 + idx, 
 * Parity patches of section 5: written at start in party mode (`BB_PARTY` set) unless
   `BB_PARTY_FULL_REWARDS=0`, each byte-verified.
 * Debug: `BB_PARTY_ITEMS_TEST=<lot>[,...]` applies lots once in the own world in any role (it also turns
-  on the party layer's tick). Single-instance run (Hunter's Dream, save level 37):
-  `2300090` (1 Blood Vial, treasure flag 52300090) and `24020` (ledger 8) were given and their flags read
-  back as set.
+  on the party layer's tick). Single-instance runs (Continue via `BB_PAD_FILE`, Hunter's Dream, save
+  level 37): `2300090` gave goods 1000 (Blood Vial) x1, flag 52300090 set; ledger lot `24020` gave goods
+  1110 x2, flag 60009008 set (log of the `0x17D89F0` list). After a restart the first lot of a run is
+  skipped ("already given"), ledger or treasure alike; the second one, awarded 1.5 s later, is given again
+  together with its vanilla treasure flag: the game saved once after the first item and the test run was
+  killed (BB_TIMEOUT) before the next save, so item and flag share the save. The ledger bit is set before
+  the award call (cleared again when the award adds nothing) so it is in the same save as the item.
+  With `BB_PARTY` set the three parity patches log `applied`.
 * Open: whether the 9040-slot completion flags (9045...) are set exactly when the gift is given
   [inferred from the event shape]; NG+ handling of the ledger flags (T6 global zone 9) [unchecked]; the
   `items_full` list also carries `hostOnly == 0` flagged lots, which a guest that was present in an earlier
