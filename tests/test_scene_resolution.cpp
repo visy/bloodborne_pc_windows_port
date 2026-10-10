@@ -11,6 +11,9 @@
 #include "video_core/renderer_vulkan/vk_scene_resolution.h"
 #include "video_core/texture_cache/blit_helper.h"
 #include <vk_mem_alloc.h>
+// bbgpu's headers above are seen with its NDEBUG (gpu/CMakeLists.txt); the checks use assert().
+#undef NDEBUG
+#include <cassert>
 
 int main() {
     using namespace Vulkan;
