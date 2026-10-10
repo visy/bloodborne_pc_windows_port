@@ -1069,7 +1069,14 @@ void HostTick(const GameSnapshot& s, double now) {
     case HostPhase::Loading:
         st.stable = loading ? 0 : st.stable + 1;
         if (st.stable >= 30) {
+            // BB_PARTY_B2_TEST_FAIL=resync: the host sends nothing (the guests' B1 fallback test).
+            static const bool fail = std::getenv("BB_PARTY_B2_TEST_FAIL") &&
+                                     std::strcmp(std::getenv("BB_PARTY_B2_TEST_FAIL"), "resync") == 0;
             for (u64 id : Members()) {
+                if (fail) {
+                    Log("test fail: join snapshot NOT re-sent");
+                    continue;
+                }
                 ResyncMember(id);
             }
             // Where the host stands now: the guests' summoned placement (GSM +0x14C4/+0x14D0/
