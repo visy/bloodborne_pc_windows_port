@@ -35,6 +35,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -87,6 +88,10 @@ std::int32_t ItemLedgerIndex(std::int32_t lot);
 /// The completion flag of the event that awards ledger lot `idx` (host's "already awarded").
 std::int32_t ItemLedgerDoneFlag(std::int32_t idx);
 std::int32_t ItemLedgerLot(std::int32_t idx);
+/// Ledger seeding (pure part of SeedLedgerFromOwnSave): with `is_set` reading the save, the ledger
+/// bits to set - one per ledger lot whose done flag is set and whose bit is not - or nothing when
+/// the save already carries the kItemLedgerSeeded marker.
+std::vector<std::uint32_t> LedgerBitsToSeed(const std::function<bool(std::uint32_t)>& is_set);
 std::size_t ItemLotFlagCount();
 std::size_t ItemLedgerCount();
 

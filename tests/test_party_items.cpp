@@ -7,6 +7,7 @@
 
 #include <cstdio>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -283,6 +284,37 @@ static void test_guest_skips() {
     CHECK(g && g->lot == 31010);
 }
 
+// The duplicate of the live run (Sword Hunter Badge dialog, lots 29000/30000/31000/50000001/50000010
+// given again on the first party session): a save that earned ledger lots solo gets their bits
+// before any host flag lands, so the host's full list skips them.
+static void test_ledger_seed() {
+    std::set<std::uint32_t> save = {9066, 9067, 12401800, 12411700, 12411800, 12101800};
+    auto is_set = [&save](std::uint32_t id) { return save.count(id) != 0; };
+    std::vector<std::uint32_t> bits = LedgerBitsToSeed(is_set);
+    std::set<std::uint32_t> got(bits.begin(), bits.end());
+    CHECK(got.size() == bits.size()); // no duplicates
+    for (std::int32_t idx = 0; idx < std::int32_t(ItemLedgerCount()); ++idx) {
+        const bool want = save.count(std::uint32_t(ItemLedgerDoneFlag(idx))) != 0;
+        CHECK(got.count(kItemLedgerBase + std::uint32_t(idx)) == (want ? 1u : 0u));
+    }
+    // The five lots of the live run, by their lots.
+    for (std::int32_t lot : {29000, 30000, 31000, 50000001, 50000010}) {
+        const std::int32_t idx = ItemLedgerIndex(lot);
+        CHECK(idx >= 0);
+        CHECK(got.count(kItemLedgerBase + std::uint32_t(idx)) == 1);
+        // The host's full-list grant for it now finds its done bit set: skipped.
+        ItemGrant g{1, lot, kItemNone, idx, ItemSource::Full};
+        CHECK(g.DoneFlag() == std::int64_t(kItemLedgerBase) + idx);
+    }
+    // A boss the save never beat: its lot stays to be given (21002950, m22 12201800).
+    CHECK(got.count(kItemLedgerBase + std::uint32_t(ItemLedgerIndex(21002950))) == 0);
+    // A bit already set is not listed again; the marker stops everything.
+    save.insert(kItemLedgerBase + std::uint32_t(ItemLedgerIndex(29000)));
+    CHECK(LedgerBitsToSeed(is_set).size() == bits.size() - 1);
+    save.insert(kItemLedgerSeeded);
+    CHECK(LedgerBitsToSeed(is_set).empty());
+}
+
 int main() {
     test_tables();
     test_deny();
@@ -292,6 +324,7 @@ int main() {
     test_gate();
     test_guest();
     test_guest_skips();
+    test_ledger_seed();
     // The seeded marker is the last ledger bit and never a lot's index.
     CHECK(ItemLedgerCount() < std::size_t(kItemLedgerSize - 1));
     CHECK(kItemLedgerSeeded == kItemLedgerBase + kItemLedgerSize - 1);
