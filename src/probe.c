@@ -8,6 +8,7 @@
 #include <cpuid.h>
 #include "runtime.h"
 #include "gpu/bbgpu.h"
+#include "gpu/bbnet.h"
 #if !defined(__x86_64__) || !defined(__GNUC__)
 #error This prototype requires x86-64 GCC or Clang (including MinGW).
 #endif
@@ -69,6 +70,7 @@ static volatile uint64_t g_stat_longest_freeze_s = 0;
 static volatile uint64_t g_stat_current_freeze_s = 0;
 
 static void print_exit_summary(void) {
+    bbnet_shutdown(); /* party: BYE + UPnP unmap (no-op without BB_PARTY) */
     static int summary_printed = 0;
     if (summary_printed) return;
     summary_printed = 1;

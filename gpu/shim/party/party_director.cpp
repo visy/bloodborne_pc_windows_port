@@ -8,6 +8,7 @@
 #include "game_state.h"
 #include "lua_events.h"
 #include "party_link.h"
+#include "seamless_rules.h"
 
 #include <atomic>
 #include <cctype>
@@ -427,6 +428,7 @@ bool PartyRequested() {
 void CoopTick() {
     LuaEventsTick();
     PartyDirector::Get().Tick();
+    SeamlessRulesTick(); // A6 param rules, EMEVD filter stats (seamless_rules.h)
 }
 
 void PartyInit(unsigned char* image, std::uint64_t size) {
@@ -435,6 +437,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
         return;
     }
     LuaEventsInit();
+    SeamlessRulesInit(); // A6: party patch report, EMEVD filter (seamless_rules.h)
     PartyDirector::Get().ConfigureFromEnv();
     g_tick_installed = HookPrologue(kFlipperUpdate,
                                     {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48,

@@ -22,6 +22,9 @@ int bbnet_party_enabled(void);
 uintptr_t bbnet_resolve(const char *scoped_nid_or_name);
 /* One line describing the party state (role, name, port, counters, simulator). */
 const char *bbnet_status_line(void);
+/* Ends the party (BYE to the other members, UPnP mappings removed); bounded (< 2.5 s), idempotent,
+ * a no-op without BB_PARTY. Every process exit path calls it (gpu/shim/party/party_runtime.cpp). */
+void bbnet_shutdown(void);
 /* Calls the guest's System V function fn(a0..a5) on the dispatcher thread, which is attached
  * to the runtime and restores the guest FS base before every call; calls run in order. */
 void bbnet_post_guest_call(uintptr_t fn, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
