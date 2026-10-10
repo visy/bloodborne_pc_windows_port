@@ -114,7 +114,16 @@ def game_slots(count: int, root: str, pool: str = "game", label: str = ""):
             with _locked(pool) as st:
                 _prune(st)
                 used = sum(e["count"] for e in st["holders"])
-                first = st["queue"] and st["queue"][0]["id"] == me["id"]
+                # Priority roots (one path fragment per line in priority.txt next to the queue file)
+                # go ahead of everyone else, first come first served among themselves.
+                try:
+                    prio = [l.strip().lower() for l in (QUEUE_FILE.parent / "priority.txt").read_text().splitlines()
+                            if l.strip()]
+                except OSError:
+                    prio = []
+                is_prio = lambda e: any(f in e["root"].replace("/", "\\").lower() for f in prio)
+                order = [e for e in st["queue"] if is_prio(e)] + [e for e in st["queue"] if not is_prio(e)]
+                first = order and order[0]["id"] == me["id"]
                 if first and used + count <= st["max_clients"]:
                     st["queue"] = [e for e in st["queue"] if e["id"] != me["id"]]
                     me["since"] = time.strftime("%H:%M:%S")
@@ -124,7 +133,7 @@ def game_slots(count: int, root: str, pool: str = "game", label: str = ""):
                     me["slots"] = [n for n in range(st["max_clients"] + count) if n not in taken][:count]
                     st["holders"].append(me)
                     break
-                pos = next((i for i, e in enumerate(st["queue"]) if e["id"] == me["id"]), -1)
+                pos = next((i for i, e in enumerate(order) if e["id"] == me["id"]), -1)
                 busy = ", ".join(f"{e['root']} ({e['count']})" for e in st["holders"])
                 limit = st["max_clients"]
             if time.time() - last_note > 30:
