@@ -470,8 +470,12 @@ void runtime_savepolicy_start(void) {
     const char *restarted=getenv("BB_PARTY_RESTARTED");
     if (!empty) runtime_savepolicy_backup(user,dir,restarted && restarted[0]=='1' ? "restart" : "start",backup_keep,NULL,0);
     if (backup_minutes) {
-        pthread_t t;
-        if (!pthread_create(&t,NULL,backup_thread,NULL)) pthread_detach(t);
+        pthread_t t; pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setstacksize(&attr,256*1024); /* the copies are on the heap */
+        pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED);
+        if (pthread_create(&t,&attr,backup_thread,NULL)) printf("Saves: no periodic backups (thread not created)\n");
+        pthread_attr_destroy(&attr);
         printf("Saves: backups every %d min to %s/save_backups/%s (newest %d kept)\n",backup_minutes,user,dir,backup_keep);
         fflush(stdout);
     }
