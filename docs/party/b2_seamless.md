@@ -234,9 +234,26 @@ logs the flow timer (+0x98, advanced by 0x1789B60), GSM +0x1521 and SprjRemo to 
 GSM +0x1521 read 0 on the guest in run 5 (1 expected after OnJoinMutiplay), which is why the lamp
 warp's own target was used; with +0x1521 = 1 our +0x14C4/D0/E0 write gives the same spot.
 
+### 6.2 Runs 8-10 (after the gate; fast join merged) [R]
+
+* Run 8 (host lamp warp): guest still stuck at `step 6 next 4`; the status showed **SprjRemo
+  +0x168 bit 0 = 1** on the guest from its arrival on (a remo playing: the C4 story log says
+  "remo playing (map m24_01)"; bit 0 is set by the remo start 0x1CFA310). The flow update skips
+  every task while it is set - the rewind gap's cause.
+* Run 9 (D4 kick also during a remo, after 3 s): **closed** - `kick: task mode 2 stalled ... (remo
+  1); running its update` → `guest: re-join done after 3.0 s`, host chr on the guest at the
+  host's position; host got "arrived" and re-created the guest's chr. Whole lamp warp in 52 s of
+  run time; the early guest loading screen (E1) was raised at the travel event.
+* Run 10 (host death, ForceDead(10000) on the host 5 s after the guest stood in its world): K8 kept
+  the member task (twice), B1 captured `host_death` and broadcast it; the guest dropped
+  HostDead_1's send-home, stayed client, raised its loading screen, got the snapshot and the
+  host's respawn spot, loaded into m24_01 in host-world mode, rewound; the host re-created the
+  guest's chr on "arrived". **No session loss, no "returned home".**
+* `HostCloseEmptyRoom` (B1, upstream b58a940) is off under B2 (the room must stay).
+
 ## 7. Risks / open items
 
-* Guest rewind not executing in run 5 (above). Static analysis: the update `0x1E52FE0` copies
+* (Closed in run 9) Guest rewind not executing in run 5. Static analysis: the update `0x1E52FE0` copies
   +0x54 to +0x50 unconditionally on entry, so `step 6 next 4` means the task update was not
   called at all on the guest. Its only caller is `0x1E556F0` from the flow update `0x1789B60`,
   which skips it while SprjRemo (`*0x5540058 +8 → +0x168 bit 0`) plays; `0x1789B60` itself runs
