@@ -5,6 +5,7 @@ image places eboot vaddr 0 at image offset 0. Only literal writes are supported
 (bytes, bytes16/32/64, float32/64, utf8, utf16); pattern ("mask") patches are rejected.
 """
 import argparse
+import hashlib
 import json
 import os
 import struct
@@ -112,6 +113,62 @@ def party_patches(env=os.environ):
     if env.get('BB_PARTY_BELL_NO_INSIGHT','1').strip()!='0':
         names.append(PARTY_NO_INSIGHT)
     return names
+
+
+# Party version check (gpu/shim/party/party_runtime.cpp, PartyLink HELLO): the host admits a guest
+# only with the same eboot.bin, the same gameplay patches and the same gameplay mods. Patches that
+# change only what one machine draws or plays back (graphics, frame rate, resolution, LOD, sound
+# workarounds, camera and input feel, language) are left out of that check, so friends can play
+# with different graphics settings. Every other patch counts: the party patches, the skip-online
+# dialog, rally / physics / debug / cheat patches and any patch not listed here (external ones
+# too, unless their XML marks them Party="cosmetic").
+COSMETIC_PATCHES={
+    # Frame rate (the 30 FPS rule's speed fixes go with them).
+    '30 FPS++','60 FPS++','90 FPS++','Uncap FPS++','Sprint Fix (High FPS)',
+    # Resolution / render size / memory for it.
+    'Optimal 1080p','Increased Graphics Heap Sizes',
+    # Effects and level of detail.
+    'Disable AA','Disable Chromatic Aberration','Disable DoF','Disable Dynamic Light Shadows (perf increase)',
+    'Disable Motion Blur (perf increase)','Disable SSAO','Enable Screen Space Reflections (READ NOTE)',
+    'Model LOD -2 (Highest)','Model LOD 1 (Lower)','Model LOD 2 (Lowest)','Performance Patch (perf increase)',
+    # Platform workarounds (CPU / sound).
+    'Intel Black Tonemap Fix','Intel 12th Gen+ SFX workaround','FMOD Crash Fix',
+    # Presentation, camera and input on this machine only.
+    '50% Text scale','Skip Intro','Unlock Game Region','Bookmark and Capture outputs',
+    'Increased camera distance','Disable Camera Auto Rotation via Movement','Sensitive Analog Input (easier to run)',
+}
+COSMETIC_PREFIXES=('Resolution Patch ',)
+COSMETIC_MARKS=('Light Grid',)
+PARTY_PATCH_FILE='party_patch_hash.txt'
+
+
+def patch_is_cosmetic(name, meta=None):
+    """True when patch `name` changes no gameplay (left out of the party version check)."""
+    if meta is not None and meta.get('Party','').strip().lower() in ('cosmetic','gameplay'):
+        return meta.get('Party').strip().lower()=='cosmetic'
+    return (name in COSMETIC_PATCHES or name.startswith(COSMETIC_PREFIXES)
+            or any(mark in name for mark in COSMETIC_MARKS))
+
+
+def party_patch_set(items):
+    """(hash hex, names) of the gameplay patches. items: [(name, meta or None, writes)]; cosmetic
+    ones are dropped; the hash covers names and bytes, independent of order."""
+    gameplay=sorted((name,writes) for name,meta,writes in items if not patch_is_cosmetic(name,meta))
+    digest=hashlib.sha256(b'bbparty-patches-1')
+    for name,writes in gameplay:
+        digest.update(b'\0patch\0'+name.encode('utf-8')+b'\0')
+        for offset,data in writes:
+            digest.update(struct.pack('<QQ',offset,len(data))+data)
+    return digest.hexdigest(),[name for name,_ in gameplay]
+
+
+def write_party_patch_file(out, digest, names, cosmetic=()):
+    lines=['# Party version check (scripts/patches.py): the gameplay patches of patches.bin. Players',
+           '# with another hash are refused by the party host; cosmetic patches do not count.',
+           f'hash {digest}']
+    lines+=[f'patch {n}' for n in names]
+    lines+=[f'# cosmetic {n}' for n in cosmetic]
+    (Path(out)/PARTY_PATCH_FILE).write_text('\n'.join(lines)+'\n',encoding='utf-8')
 
 
 def intel_tonemap_fix(env=os.environ, cpuinfo='/proc/cpuinfo'):
@@ -370,8 +427,9 @@ def external_selection(found, config):
             if key in enabled or (key not in disabled and meta.get('isEnabled','false').lower()=='true')]
 
 
-def compile_external(selected, segments):
-    """Writes of the selected external patches; a patch with unsupported lines is skipped whole."""
+def compile_external(selected, segments, applied=None):
+    """Writes of the selected external patches; a patch with unsupported lines is skipped whole.
+    applied: a list that gets (key, metadata, writes) of each applied patch."""
     writes=[]
     for key,_,meta in selected:
         try:
@@ -386,6 +444,7 @@ def compile_external(selected, segments):
             print(f'Patches: skipped {key}: {error}',file=sys.stderr)
             continue
         writes+=ours
+        if applied is not None: applied.append((key,meta,ours))
         print(f'Patches: external {key} ({len(ours)} writes)')
     return writes
 
@@ -444,6 +503,8 @@ def main():
     segments=eboot_segments(elf)
     names=[n for n in names if originals_match(a.xml,n,a.app_version,elf)]
     writes=compile_patches(a.xml,names,a.app_version,segments)
+    metas={m.get('Name'):m for m in ET.parse(a.xml).getroot().iter('Metadata') if m.get('AppVer')==a.app_version}
+    party_items=[(n,metas.get(n),compile_patches(a.xml,[n],a.app_version,segments)) for n in names]
     party=[n for n in names if n.startswith('Party: ')]
     if party:
         print(f'Patches: party co-op: {", ".join(party)} (original bytes checked)')
@@ -474,13 +535,22 @@ def main():
             for key in dropped:
                 print(f'Patches: external {key} is off in party mode (BB_PARTY)',file=sys.stderr)
             selected=[x for x in selected if x[0] not in dropped]
-        writes+=compile_external(selected,segments)
+        applied=[]
+        writes+=compile_external(selected,segments,applied)
+        party_items+=[(f'{meta.get("Name")} (external)',meta,ours) for _,meta,ours in applied]
     # BBPATCH2: the patch base, so the loader can rebase pointers the patches write into
     # relocated slots (60/90 FPS++ replace function pointers).
     blob=struct.pack('<8sQQ',b'BBPATCH2',EBOOT_BASE,len(writes))
     for offset,data in writes: blob+=struct.pack('<QQ',offset,len(data))+data
     (a.out/'patches.bin').write_bytes(blob)
     print(f'Patches: FPS preset {a.fps}; {len(writes)} writes from {names or "none"}')
+    # The resolution writes and the heap patch are cosmetic: not in party_items.
+    digest,gameplay=party_patch_set(party_items)
+    cosmetic=sorted(n for n,meta,_ in party_items if patch_is_cosmetic(n,meta))
+    write_party_patch_file(a.out,digest,gameplay,cosmetic)
+    if party_mode():
+        print(f'Patches: party version check: {len(gameplay)} gameplay patches ({digest[:12]}): '
+              f'{", ".join(gameplay) or "none"}; not compared: {", ".join(cosmetic) or "none"}')
 
 
 if __name__=='__main__':

@@ -566,11 +566,11 @@ STORE_MAPS = [(21, 0), (21, 1), (22, 0), (23, 0), (24, 0), (24, 1), (24, 2), (25
 GLOBAL_ROWS = [
     (0, 0, "never_sync", "flag 0: constant-false operand of thousands of EMEVD conditions"),
     (1, 20, "session_runtime", "warp-menu selection values (m29 12904029/30 value ops)"),
-    (21, 23, "key_event", "ending reached A/B/C (m21 12100180/12100000/12100002); player-owned"),
+    (21, 23, "never_sync", "ending reached A/B/C -> staff roll / NG+ (cutscenes_endings.md); C4 replay only"),
     (24, 999, "never_sync", "unclassified (debug 101, widow 999); no progress writers"),
     (1000, 1999, "npc_quest", "NPC quest state machines, 20 flags per NPC; vanilla snapshot group 1"),
     (2000, 2099, "session_runtime", "online/session state, 2000-2022 rewritten every frame by session code (bbhost)"),
-    (2100, 3699, "world_state", "per-area progress AAxx: boss-cleared / multiplayer-allowed bits (2410 = Cathedral B multi gate); constructors recompute"),
+    (2100, 3699, "world_state", "per-area progress AAxx; the area gate bits of tables 0x47304B0/0x47301B0 are never_sync overrides (ON blocks the bells)"),
     (3700, 4999, "never_sync", "no EMEVD/param writers"),
     (5000, 5299, "item_lot_picked", "global ItemLotParam.getItemFlagId (key items, gifts)"),
     (5300, 5899, "session_runtime", "5500+slot shop-transfer events (restart)"),
@@ -585,7 +585,7 @@ GLOBAL_ROWS = [
     (9000, 9039, "never_sync", "warp/dungeon bookkeeping; 9020-9026 one-hot chalice slot selects flag-store groups"),
     (9040, 9119, "item_lot_picked", "NPC hands over an item - the item side is C3"),
     (9120, 9179, "never_sync", "unclassified"),
-    (9180, 9180, "cutscene_seen", "first death -> Hunter's Dream cutscene"),
+    (9180, 9180, "never_sync", "a cutscene is playing (set around every story remo; cutscenes_endings.md)"),
     (9181, 9199, "never_sync", "insight return 9181/9182 (per player)"),
     (9200, 9299, "session_runtime", "insight hallucinations / bell maiden events (restart)"),
     (9300, 9359, "cutscene_seen", "boss intro seen (host enters boss room, first fight)"),
@@ -598,7 +598,8 @@ GLOBAL_ROWS = [
     (9500, 9599, "never_sync", "per-player item use counters"),
     (9600, 9699, "never_sync", "unclassified"),
     (9700, 9799, "npc_quest", "NPC misc state (dozing, avenger, Patches)"),
-    (9800, 9899, "never_sync", "unclassified"),
+    (9800, 9802, "time_of_day", "9800 evening, 9801 night, 9802 Blood Moon (cutscene end 0x1CECEB0); cutscene replay only"),
+    (9803, 9899, "never_sync", "unclassified"),
     (9900, 9919, "never_sync", "C-ending umbilical cord count (player-owned progression)"),
     (9920, 9999, "never_sync", "unclassified"),
     (10000000, 10009999, "never_sync", "type-1 global groups: no data writers"),
@@ -606,6 +607,35 @@ GLOBAL_ROWS = [
     (60000000, 60009999, "never_sync", "type-6 global groups: no data writers"),
     (70000000, 70009999, "never_sync", "type-7 global: 70000030 set at lamp activation, NPC door knock, avenger state - unclassified"),
 ]
+# Overrides emitted BEFORE the generated rows (first match wins): ids whose data-derived category is
+# wrong or dangerous to sync silently. Evidence: docs/party/campaign_start.md section 2.2 (area gate
+# tables dumped from the eboot: TBL1 0x47304B0, the host bell / summon validator 0x131D7B0 - an ON
+# flag BLOCKS multiplayer in that area; TBL0 0x47301B0, the resonant/responder check 0x191A750) and
+# docs/party/cutscenes_endings.md (ending and time-of-day flags).
+AREA_GATE_TBL1 = [2100, 2200, 2300, 2301, 2400, 2401, 2402, 2410, 2411, 2412, 2420, 2421, 2500, 2600, 2601,
+                  2700, 2701, 2800, 3200, 3300, 3400, 3401, 3402, 3403, 3510, 3511, 3512, 3513, 3600, 3601,
+                  12901800, 12901801, 12901802, 12901803]
+AREA_GATE_TBL0 = [2105, 2205, 2305, 2306, 2405, 2406, 2407, 2415, 2425, 2426, 2505, 2605, 2606, 2705, 2706,
+                  2805, 3205, 3305, 3405, 3406, 3407, 3408, 3515, 3516, 3517, 3518, 3605, 3606,
+                  12901805, 12901806, 12901807, 12901808]
+OVERRIDE_ROWS = (
+    [(f, f, "never_sync", "area gate (TBL1 0x47304B0: ON blocks the host bell / summons in the area)")
+     for f in AREA_GATE_TBL1]
+    + [(f, f, "never_sync", "area gate (TBL0 0x47301B0: resonant/responder check)") for f in AREA_GATE_TBL0]
+    + [
+        (21, 23, "never_sync", "ending reached A/B/C -> staff roll / NG+; C4 replay only"),
+        (6600, 6604, "never_sync", "ending bookkeeping (6600 A, 6601 B, 6602 C, 6603 any, 6604 ending reached -> NG+ key item strip)"),
+        (9180, 9180, "never_sync", "a cutscene is playing (runtime)"),
+        (9800, 9802, "time_of_day", "9800 evening, 9801 night, 9802 Blood Moon; cutscene replay only (C4)"),
+        (9900, 9901, "never_sync", "C ending: 9900 three cords eaten, 9901 cord count value"),
+        (9905, 9905, "never_sync", "C ending: cord count event"),
+        (9909, 9909, "never_sync", "C ending: sets 9900"),
+        (12100000, 12100000, "never_sync", "ending event (m21); C4 replay only"),
+        (12100002, 12100002, "never_sync", "ending event (m21); C4 replay only"),
+        (12100180, 12100180, "never_sync", "A ending event (m21); C4 replay only"),
+        (72100130, 72100131, "never_sync", "Gehrman's offer submit/refuse -> A ending / fight; C4 replay only"),
+    ])
+
 # per map, per type / zone default (zone = 4th digit from the right of TAABZnnn)
 ZONE_DEFAULT = {
     (1, 0): ("world_state", "map objects/events (persistent; vanilla shares with phantoms)"),
@@ -777,10 +807,14 @@ def cmd_gen_inc(a):
         "// Flag id layout: TAABZnnn - T type digit (0 global, 1/5/6/7/9), AA area, B block,",
         "// Z zone, nnn bit in the 1000-flag group (see docs/party/event_flags.md).",
         "// Categories: boss_defeated boss_area lamp_unlocked shortcut_door npc_quest",
-        "// item_lot_picked key_event cutscene_seen world_state session_runtime never_sync.",
+        "// item_lot_picked key_event cutscene_seen world_state session_runtime never_sync",
+        "// time_of_day (9800-9802: applied only through the cutscene replay path, never silently).",
         "// Ids no row covers: treat as never_sync.",
-        f"// ---- {len(spec_rows)} specific rows",
+        f"// ---- {len(OVERRIDE_ROWS)} override rows (area gates, endings, cutscene/time-of-day flags)",
     ]
+    for lo, hi, cat, note in OVERRIDE_ROWS:
+        out.append(f'{{{lo}u, {hi}u, Category::{cat}, "{esc(note)}"}},')
+    out.append(f"// ---- {len(spec_rows)} specific rows")
     for lo, hi, cat, note in spec_rows:
         out.append(f'{{{lo}u, {hi}u, Category::{cat}, "{esc(note)}"}},')
     out.append(f"// ---- {len(srows)} global and structural rows")

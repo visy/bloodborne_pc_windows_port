@@ -72,7 +72,7 @@ def copy_submodules(repo: Path):
 
 
 def seed_out(repo: Path):
-    """out\ holds prebuilt inputs the build links (libatrac9.a) and the runtime DLLs: hardlink the
+    r"""out\ holds prebuilt inputs the build links (libatrac9.a) and the runtime DLLs: hardlink the
     main checkout's (never its exes, logs or build dirs - those are per agent)."""
     src, dst = REPO / "out", repo / "out"
     dst.mkdir(parents=True, exist_ok=True)

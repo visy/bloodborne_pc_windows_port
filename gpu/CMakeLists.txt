@@ -381,6 +381,33 @@ set_target_properties(party-link-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OF
 if (WIN32)
     target_link_libraries(party-link-test PRIVATE ws2_32 iphlpapi ole32 oleaut32)
 endif()
+
+# Party progress sync (shim/party/party_progress, C2): keys, categories, policy, diff, JSON, BBPF
+# against a fake flag store (the game glue is compiled out). ninja -C out/gpu party-progress-test
+add_executable(party-progress-test EXCLUDE_FROM_ALL ../tests/test_party_progress.cpp
+    shim/party/party_progress.cpp shim/net/json.cpp)
+target_compile_definitions(party-progress-test PRIVATE BB_PARTY_PROGRESS_NO_GAME
+    BB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/..")
+target_compile_options(party-progress-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-progress-test PRIVATE shim)
+set_target_properties(party-progress-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Party host harness (tests/party_host_harness.cpp): PartyLink host + PartyHostService + FromApi +
+# the party UDP port in one process with no game, for tools/party/simguest.py.
+# ninja -C out/gpu party-host-harness
+add_executable(party-host-harness EXCLUDE_FROM_ALL ../tests/party_host_harness.cpp ${PARTY_NET_SOURCES}
+    ${PARTY_LINK_SOURCES} third_party/monocypher/monocypher.c)
+target_compile_options(party-host-harness PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-host-harness PRIVATE shim shim/net ..)
+set_target_properties(party-host-harness PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+if (WIN32)
+    target_link_libraries(party-host-harness PRIVATE ws2_32 iphlpapi synchronization ole32 oleaut32)
+endif()
+# Party status board (shim/party/party_status.cpp; in bbgpu through SHIM_SOURCES): the overlay's
+# Party tab <-> director snapshot and command queue. ninja -C out/gpu party-status-test
+add_executable(party-status-test EXCLUDE_FROM_ALL ../tests/test_party_status.cpp shim/party/party_status.cpp)
+target_compile_options(party-status-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-status-test PRIVATE shim)
+set_target_properties(party-status-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Party travel (B1, shim/party/party_travel.cpp; in bbgpu through SHIM_SOURCES): its pure logic
 # only (BB_PARTY_TRAVEL_NO_GAME). ninja -C out/gpu party-travel-test
 add_executable(party-travel-test EXCLUDE_FROM_ALL ../tests/test_party_travel.cpp shim/party/party_travel.cpp
@@ -389,3 +416,9 @@ target_compile_definitions(party-travel-test PRIVATE BB_PARTY_TRAVEL_NO_GAME)
 target_compile_options(party-travel-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-travel-test PRIVATE shim)
 set_target_properties(party-travel-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Save policy (C5, src/runtime_savepolicy.c; in bbport through RUNTIME_SOURCES): party save folder,
+# rotating backups, save check, on temporary folders. ninja -C out/gpu save-policy-test
+add_executable(save-policy-test EXCLUDE_FROM_ALL ../tests/test_save_policy.c ../src/runtime_savepolicy.c)
+target_compile_options(save-policy-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(save-policy-test PRIVATE ../src)
+set_target_properties(save-policy-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
