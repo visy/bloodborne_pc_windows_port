@@ -1370,8 +1370,16 @@ void runtime_restart(void) {
 #endif
 }
 
+#ifndef BBPORT_VERSION
+#define BBPORT_VERSION "dev"
+#endif
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
+    if (argc == 2 && (!strcmp(argv[1], "--version") || !strcmp(argv[1], "-V"))) {
+        printf("bbport %s (Bloodborne Windows port)\n", BBPORT_VERSION);
+        return 0;
+    }
+    printf("bbport %s (Bloodborne Windows port)\n", BBPORT_VERSION);
 #ifdef _WIN32
     runtime_memory_reserve_space();
 #endif

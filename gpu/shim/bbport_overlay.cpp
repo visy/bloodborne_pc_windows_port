@@ -1256,6 +1256,16 @@ void Menu() {
     const float x0 = win.x + S(24.0f), x1 = win.x + size.x - S(24.0f);
     Ornament(draw, x0, x1, win.y + S(10.0f));
     Ornament(draw, x0, x1, win.y + size.y - S(10.0f));
+    // The port's version, small in the top left corner (VERSION, gpu/CMakeLists.txt); the close
+    // button is top right, the controls line bottom centre.
+    {
+#ifndef BBPORT_VERSION
+#define BBPORT_VERSION "dev"
+#endif
+        const char* version = "bbport " BBPORT_VERSION;
+        const ImVec2 text = ImGui::CalcTextSize(version);
+        draw->AddText(ImVec2(x0, win.y + S(39.0f) - text.y * 0.5f), Dim(0.8f), version);
+    }
 
     // Title.
     ImGui::PushFont(serif_font, 34.0f);
