@@ -129,6 +129,7 @@ struct Test {
     int st_phase = 0;
     MenuScript st_seq; // seq=...: after stand (and its button), the menu walk (test_newgame.h)
     bool st_seq_on = false;
+    std::string st_last_texts;
     Clock::time_point st_at{};
     bool log_pos = false; // log_pos: the player's area and position (FrpgNetMan +0xa7c / +0xaac) every 3 s
     Clock::time_point pos_at{};
@@ -990,6 +991,22 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             runtime_pad_director_press(held);
             if (!line.empty()) {
                 Log("test: seq %s (texts seq %llu)", line.c_str(), static_cast<unsigned long long>(seq));
+            }
+            // Every second: the texts on screen now (first 60 ASCII chars each), to learn the real ones.
+            static std::int64_t texts_logged = 0;
+            if (now_ms - texts_logged >= 1000) {
+                std::string all;
+                BbGameMenu::RecentTexts(now_ms - 600, [](const char16_t* text, std::int64_t, void* user) {
+                    std::string& out = *static_cast<std::string*>(user);
+                    std::string a;
+                    for (const char16_t* c = text; *c && a.size() < 60; ++c) a += *c < 128 && *c >= 32 ? char(*c) : '.';
+                    if (out.find(a) == std::string::npos && out.size() < 1500) out += " | " + a;
+                }, &all);
+                if (all != t.st_last_texts) {
+                    t.st_last_texts = all;
+                    Log("test: texts now:%s", all.c_str());
+                }
+                texts_logged = now_ms;
             }
             if (t.st_seq.finished()) {
                 runtime_pad_director_press(0);

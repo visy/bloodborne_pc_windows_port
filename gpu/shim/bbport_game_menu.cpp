@@ -616,6 +616,16 @@ std::int64_t TextSeenMs(const char* needle) {
     return best;
 }
 
+void RecentTexts(std::int64_t since_ms, void (*fn)(const char16_t* text, std::int64_t ms, void* user), void* user) {
+    for (RecentText& r : recent_texts) {
+        const std::int64_t ms = r.ms.load(std::memory_order_acquire);
+        const char16_t* t = r.text.load(std::memory_order_relaxed);
+        if (t && ms > since_ms) {
+            fn(t, ms, user);
+        }
+    }
+}
+
 void TextActivity(std::uint64_t* seq, std::int64_t* last_ms) {
     *seq = fresh_seq.load(std::memory_order_acquire);
     *last_ms = fresh_ms.load(std::memory_order_relaxed);

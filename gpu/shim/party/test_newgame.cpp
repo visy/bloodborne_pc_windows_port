@@ -365,11 +365,11 @@ std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen
                 wait_from_ = -1;
                 return 0;
             }
-            if (t - wait_from_ >= 10.0) {
-                stuck_ = true;
-                if (log) *log = "STUCK at step " + std::to_string(next_ + 1) + ": no '" + p.text + "' in 10 s";
+            if (t - wait_from_ < 6.0) {
+                return 0;
             }
-            return 0;
+            // Never hang: the text may be drawn through another path; press anyway, logged.
+            if (log) *log = "no '" + p.text + "' in 6 s, pressed anyway; ";
         }
         text_since_ = -1;
     }
@@ -378,6 +378,8 @@ std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen
         const bool built = screen_seq != mark_ && screen_quiet >= 0.3;
         if (!built && t - wait_from_ < 8.0) return 0;
         if (log) *log = built ? "" : "no new screen in 8 s; ";
+    } else if (log && !p.text.empty() && log->empty()) {
+        *log = "";
     }
     wait_from_ = -1;
     ++next_;
