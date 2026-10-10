@@ -3498,7 +3498,7 @@
             <Line Type="bytes" Address="0x01bc3cea" Value="0f1f440000" Original="e891c14300"/>
         </PatchList>
     </Metadata>
-    <Metadata Title="Bloodborne" Name="Party: Fast join" Party="cosmetic" Author="bbport" Note="Party co-op (BB_PARTY; BB_PARTY_FAST_JOIN=0 turns it off): the game&apos;s fixed summon / join pauses, none of which waits for data (docs/party/join_timing.md). CSEnterleaveDirectionStep timers (static initializer 0x196d3a0): guest self-prologue 0x5574ad0 5.0 -&gt; 0.5 s (STEP_C2H_Wait_forSelfPrologue 0x196b500; the guest&apos;s loading of the host world waits for it), others-epilogue cap 0x5574ad8 5.0 -&gt; 1.0 s (0x196be90 ends earlier when the effect is done), return-home wait 0x5574ae0 5.0 -&gt; 1.0 s and its fade 0x5574ae8 2.0 -&gt; 0.5 s (STEP_H2C_Wait_forEffect 0x196c2d0). Host summon message (SummonStepManager tick 0x14b5e10): the check whether the summoned guest is a connected peer before the summon data goes out repeats every 0.5 s instead of 3.0 s (0x14b80c4), with 30 tries instead of 5 (0x14b4975, 0x14bb067: the same 15 s window)." PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin" isEnabled="false">
+    <Metadata Title="Bloodborne" Name="Party: Fast join" Party="cosmetic" Author="bbport" Note="Party co-op (BB_PARTY; BB_PARTY_FAST_JOIN=0 turns it off): the game&apos;s fixed summon / join pauses, none of which waits for data (docs/party/join_timing.md). CSEnterleaveDirectionStep timers (static initializer 0x196d3a0): guest self-prologue 0x5574ad0 5.0 -&gt; 0.5 s (STEP_C2H_Wait_forSelfPrologue 0x196b500; the guest&apos;s loading of the host world waits for it), others-epilogue cap 0x5574ad8 5.0 -&gt; 1.0 s (0x196be90 ends earlier when the effect is done), return-home wait 0x5574ae0 5.0 -&gt; 1.0 s and its fade 0x5574ae8 2.0 -&gt; 0.5 s (STEP_H2C_Wait_forEffect 0x196c2d0). Host summon message (SummonStepManager tick 0x14b5e10): the check whether the summoned guest is a connected peer before the summon data goes out repeats every 0.5 s instead of 3.0 s (0x14b80c4), with 30 tries instead of 5 (0x14b4975, 0x14bb067: the same 15 s window). NexusRevolution transport defaults (0xcdb250): the first retransmission timeout 3000 -&gt; 1000 ms (0xcdb2e8; the guest&apos;s session connect on vport 30 crosses the host&apos;s and is resent only after it), like TCP&apos;s initial RTO." PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin" isEnabled="false">
         <PatchList>
             <Line Type="bytes" Address="0x01d6d3a8" Value="c7051e77c0030000003f" Original="c7051e77c0030000a040"/>
             <Line Type="bytes" Address="0x01d6d3b2" Value="c7051c77c0030000803f" Original="c7051c77c0030000a040"/>
@@ -3507,6 +3507,31 @@
             <Line Type="bytes" Address="0x018b80c4" Value="41c7451c0000003f" Original="41c7451c00004040"/>
             <Line Type="bytes" Address="0x018b4975" Value="41c744241801001e00" Original="41c744241801000500"/>
             <Line Type="bytes" Address="0x018bb067" Value="c7431801001e00" Original="c7431801000500"/>
+            <Line Type="bytes" Address="0x010db2e8" Value="c7842488000000e8030000" Original="c7842488000000b80b0000"/>
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Bloodborne" Name="Party: Fast rejoin" Party="cosmetic" Author="bbport" Note="Party co-op (BB_PARTY; BB_PARTY_FAST_JOIN=0 turns it off): the host&apos;s peer pool (0x147b350) keeps a peer reserved for a summoned player&apos;s online id 10 s instead of 30 s after the last use (+0xe4 keep flag, +0xe8 timer; 0x147af20 renews it on every summon retry, 0x1480d10 counts it down and re-arms it while the player is a session member). A guest that crashed and restarted is summoned again once the stale reservation lapses (docs/party/join_timing.md)." PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x0187afe4" Value="41c78424e800000000002041" Original="41c78424e80000000000f041"/>
+            <Line Type="bytes" Address="0x0187b0a7" Value="c781e800000000002041" Original="c781e80000000000f041"/>
+            <Line Type="bytes" Address="0x01880cf7" Value="c787e800000000002041" Original="c787e80000000000f041"/>
+            <Line Type="bytes" Address="0x01880e14" Value="c780e800000000002041" Original="c780e80000000000f041"/>
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Bloodborne" Name="Party: Fast bell sign" Party="cosmetic" Author="bbport" Note="Party co-op (with BB_PARTY_FAST_JOIN; BB_PARTY_FAST_SIGN=0 turns it off alone): the bell sign sender (vtable 0x532f390; update 0x18a9350 counts +0x28 down, then SendSign 0x1901320, then 30 s to the next resend) sends the first sign 2.0 s after a bell instead of 5.0 s: start functions 0x18a9250 / 0x18a9280 (0x18a9264 / 0x18a9324) and the ten inlined starts of sign kinds 1..10 (0x189a095 + n*0x110). docs/party/join_timing.md." PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x01ca9264" Value="c7472800000040" Original="c747280000a040"/>
+            <Line Type="bytes" Address="0x01ca9324" Value="c7472800000040" Original="c747280000a040"/>
+            <Line Type="bytes" Address="0x01c9a095" Value="c7432800000040" Original="c743280000a040"/>
+            <Line Type="bytes" Address="0x01c9a1a5" Value="c7432800000040" Original="c743280000a040"/>
+            <Line Type="bytes" Address="0x01c9a2b5" Value="c7432800000040" Original="c743280000a040"/>
+            <Line Type="bytes" Address="0x01c9a3c5" Value="c7432800000040" Original="c743280000a040"/>
+            <Line Type="bytes" Address="0x01c9a4d5" Value="c7432800000040" Original="c743280000a040"/>
+            <Line Type="bytes" Address="0x01c9a5e5" Value="c7432800000040" Original="c743280000a040"/>
+            <Line Type="bytes" Address="0x01c9a6f5" Value="c7432800000040" Original="c743280000a040"/>
+            <Line Type="bytes" Address="0x01c9a805" Value="c7432800000040" Original="c743280000a040"/>
+            <Line Type="bytes" Address="0x01c9a915" Value="c7432800000040" Original="c743280000a040"/>
+            <Line Type="bytes" Address="0x01c9aa25" Value="c7432800000040" Original="c743280000a040"/>
         </PatchList>
     </Metadata>
 </Patch>

@@ -648,6 +648,12 @@ LinkCallbacks make_callbacks(bool host) {
             // Its signs go too (a crashed game cannot answer a summon; with 2-3 guests the host's
             // game would otherwise pick a dead sign while the others wait). The restart puts up a new one.
             bbnet::party::FromApi::instance().drop_signs(m.name);
+            // Fast join: the host's game keeps its transport connection to a member that was in (or
+            // joining) its world until the transport times out; a restarted game summoned before
+            // that never gets the summon data (docs/party/join_timing.md).
+            if (m.state == MemberState::InHostWorld || m.state == MemberState::Joining ||
+                m.state == MemberState::Loading)
+                bbnet::party::FromApi::instance().hold_signs(m.name, 26000);
             if (slot_kept) {
                 plog("%s (slot %d) lost; slot kept", m.name.c_str(), m.slot);
                 return;

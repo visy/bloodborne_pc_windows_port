@@ -16,7 +16,7 @@ from pathlib import Path
 _SCRIPTS=str(Path(__file__).resolve().parent)
 if _SCRIPTS not in sys.path:
     sys.path.insert(0,_SCRIPTS)
-from party_env import party_enabled, party_switch_on  # noqa: E402  (the shared BB_PARTY rule)
+from party_env import party_enabled, party_switch_on, party_value_on  # noqa: E402  (the shared BB_PARTY rule)
 
 EBOOT_BASE=0x400000
 # BB_FPS presets: patch names from patches/Bloodborne.xml (app version 01.09).
@@ -112,7 +112,9 @@ PARTY_NO_INSIGHT='Party: Bells without Insight'
 # (BB_PARTY_FAST_JOIN=0 turns it off). Both on by default in party mode, independent of
 # BB_PARTY_SEAMLESS, and left out of the party version check (Party="cosmetic").
 PARTY_FAST_MESSAGES=['Party: Fast multiplayer messages','Party: Hide bell searching messages']
-PARTY_FAST_JOIN=['Party: Fast join']
+PARTY_FAST_JOIN=['Party: Fast join','Party: Fast rejoin']
+# With fast join unless BB_PARTY_FAST_SIGN=0: the first sign 0.5 s after a bell (docs/party/join_timing.md).
+PARTY_FAST_SIGN='Party: Fast bell sign'
 DISABLE_HTTP='Disable HTTP Requests'
 
 
@@ -131,6 +133,8 @@ def party_patches(env=os.environ):
             names.append(PARTY_NO_INSIGHT)
     if party_switch_on(env,'BB_PARTY_FAST_JOIN'):
         names+=PARTY_FAST_JOIN
+    if party_switch_on(env,'BB_PARTY_FAST_JOIN') and party_switch_on(env,'BB_PARTY_FAST_SIGN'):
+        names.append(PARTY_FAST_SIGN)
     if party_switch_on(env,'BB_PARTY_FAST_MESSAGES'):
         names+=PARTY_FAST_MESSAGES
     return names
@@ -158,7 +162,7 @@ COSMETIC_PATCHES={
     '50% Text scale','Skip Intro','Unlock Game Region','Bookmark and Capture outputs',
     'Increased camera distance','Disable Camera Auto Rotation via Movement','Sensitive Analog Input (easier to run)',
     # Party join timing and banners (BB_PARTY_FAST_JOIN / BB_PARTY_FAST_MESSAGES): local pacing only.
-    'Party: Fast join','Party: Fast multiplayer messages','Party: Hide bell searching messages',
+    'Party: Fast join','Party: Fast rejoin','Party: Fast bell sign','Party: Fast multiplayer messages','Party: Hide bell searching messages',
 }
 COSMETIC_PREFIXES=('Resolution Patch ',)
 COSMETIC_MARKS=('Light Grid',)
