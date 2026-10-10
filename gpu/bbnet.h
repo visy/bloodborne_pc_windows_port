@@ -1,0 +1,28 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * C interface of the party network library (gpu/shim/net): libSceNet/NetCtl/Np for serverless
+ * party co-op (docs/PARTY_COOP_PLAN.md). Inert unless BB_PARTY is set. */
+#ifndef BBNET_H
+#define BBNET_H
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+/* Directories the library keeps state in (optional; the environment is read on first use). */
+void bbnet_configure(const char *app0, const char *user_dir);
+/* 1 when BB_PARTY is set (non-empty). */
+int bbnet_party_enabled(void);
+/* Function for an import, given its symbol name ("sceNetSocket") or scoped NID ("NID#L#M",
+ * translated with runtime_symbol), or 0: always 0 without BB_PARTY, for NpTrophy, NpCommerce,
+ * NpProfileDialog and NpScore, and for what the library does not implement yet (Matching2,
+ * Signaling, Http, Ssl), which stay on the runtime's stubs. */
+uintptr_t bbnet_resolve(const char *scoped_nid_or_name);
+/* One line describing the party state (role, name, port, counters, simulator). */
+const char *bbnet_status_line(void);
+/* Calls the guest's System V function fn(a0..a5) on the dispatcher thread, which is attached
+ * to the runtime and restores the guest FS base before every call; calls run in order. */
+void bbnet_post_guest_call(uintptr_t fn, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
+                           uint64_t a5);
+#ifdef __cplusplus
+}
+#endif
+#endif

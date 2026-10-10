@@ -7,6 +7,7 @@
 #define _GNU_SOURCE
 #include "runtime.h"
 #include "gpu/bbgpu.h"
+#include "gpu/bbnet.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -491,4 +492,13 @@ static const RuntimeExport exports[]={
     {"sceDiscMapIsRequestOnHDD",discmap_on_hdd}, {"sceDiscMap_8A828CAEE7EDD5E9",discmap_8a82},
     {"sceVoiceInit",ok_void}, {"sceVoiceEnd",ok_void},
 };
-uintptr_t runtime_services_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }
+/* Party co-op (BB_PARTY set): libSceNet/NetCtl/Http/Ssl/Np imports the party library implements
+ * (gpu/shim/net) resolve there; everything else, and every import without BB_PARTY, stays here. */
+uintptr_t runtime_services_resolve(const char *name) {
+    const char *party=getenv("BB_PARTY");
+    if (party && party[0]) {
+        uintptr_t routed=bbnet_resolve(name);
+        if (routed) return routed;
+    }
+    return RUNTIME_LOOKUP(exports,name);
+}

@@ -252,7 +252,7 @@ endif()
 target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan)
 if (WIN32)
     target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
-        tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit ws2_32)
+        tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit ws2_32 iphlpapi synchronization)
 else()
     target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
         tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::X11 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit)
@@ -307,6 +307,17 @@ set_source_files_properties(../tests/test_translation_memory.cpp PROPERTIES
     COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
 target_link_libraries(translation-memory-test PRIVATE bbgpu)
 
+# Party network library (shim/net): STUN, vport framing, the network simulator and a loopback
+# UDP exchange through the guest-facing socket functions. ninja -C out/gpu party-net-test
+file(GLOB PARTY_NET_SOURCES CONFIGURE_DEPENDS shim/net/*.cpp)
+add_executable(party-net-test EXCLUDE_FROM_ALL ../tests/test_party_net.cpp ${PARTY_NET_SOURCES})
+target_compile_options(party-net-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-net-test PRIVATE shim/net ..)
+set_target_properties(party-net-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+if (WIN32)
+    target_link_libraries(party-net-test PRIVATE ws2_32 iphlpapi synchronization)
+endif()
+
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
 add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_support.cpp
     shim/bbport_settings.cpp)
@@ -333,7 +344,7 @@ add_executable(bbport
 target_include_directories(bbport PRIVATE .. ../src)
 target_link_libraries(bbport PRIVATE bbgpu "${CMAKE_CURRENT_SOURCE_DIR}/../out/libatrac9.a" Vulkan::Vulkan)
 if (WIN32)
-    target_link_libraries(bbport PRIVATE ws2_32 dbghelp ntdll winmm)
+    target_link_libraries(bbport PRIVATE ws2_32 iphlpapi synchronization dbghelp ntdll winmm)
     target_link_options(bbport PRIVATE "-Wl,--disable-dynamicbase" "-Wl,--disable-high-entropy-va")
 endif()
 set_target_properties(bbport PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BB_OUT_DIR}")
@@ -343,3 +354,18 @@ target_include_directories(bb-gpu-capabilities PRIVATE .. ../src)
 target_link_libraries(bb-gpu-capabilities PRIVATE Vulkan::Vulkan PkgConfig::SDL3)
 set_target_properties(bb-gpu-capabilities PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BB_OUT_DIR}")
 
+# Party link (shim/party: PartyLink control channel, party codes, UPnP, public address) with
+# monocypher 4.0.2 (third_party/monocypher, BSD-2-Clause OR CC0-1.0). ninja -C out/gpu party-link-test
+target_sources(bbgpu PRIVATE third_party/monocypher/monocypher.c)
+if (WIN32)
+    target_link_libraries(bbgpu PUBLIC ole32 oleaut32)
+endif()
+file(GLOB PARTY_LINK_SOURCES CONFIGURE_DEPENDS shim/party/*.cpp)
+add_executable(party-link-test EXCLUDE_FROM_ALL ../tests/test_party_link.cpp ${PARTY_LINK_SOURCES}
+    shim/net/net_stun.cpp third_party/monocypher/monocypher.c)
+target_compile_options(party-link-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-link-test PRIVATE shim)
+set_target_properties(party-link-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+if (WIN32)
+    target_link_libraries(party-link-test PRIVATE ws2_32 iphlpapi ole32 oleaut32)
+endif()
