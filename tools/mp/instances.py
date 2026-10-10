@@ -342,7 +342,7 @@ def run(a):
         if idle_limit > 0:
             # Distinct party lines with numbers blanked: periodic status/roster/state lines repeat
             # the same text and don't count as progress.
-            n = len({re.sub(r"[0-9a-fx.:]+", "#", l) for i in range(a.count)
+            n = len({re.sub(r"0x[0-9a-fA-F]+|\d[\d.:]*", "#", l) for i in range(a.count)
                      for l in log_text(i, starts[i]).splitlines() if idle_rx.match(l)})
             if n != last_party_count:
                 last_party_count, last_party_change = n, time.time()
