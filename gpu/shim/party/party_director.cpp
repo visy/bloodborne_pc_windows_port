@@ -25,6 +25,7 @@
 #include "party_watchdog.h"
 
 #include "../net/bbnet_internal.h"
+#include "../net/party_host_service.h"
 #include "../../party_env.h"
 
 #include <algorithm>
@@ -133,7 +134,7 @@ struct State {
     double ring_every = 30.0;
     // BB_PARTY_FAST_JOIN (default on; docs/party/join_timing.md): shorter director pauses.
     bool fast_join = true;
-    double ring_delay = 1.0;        // s in a steady world before the first bell (5 without fast join)
+    double ring_delay = 0.3;        // s in a steady world before the first bell (5 without fast join)
     double continue_settle = 1.0;   // s on the title before the first Continue press (4)
     double continue_every = 1.0;    // s between Continue presses (2.5)
     StartMode start_mode = StartMode::PrologueSolo;
@@ -150,6 +151,10 @@ struct State {
     Clock::time_point last_full{}, last_log{}, last_ring{};
     bool rung_ever = false;
     bool poll_logged = true; // the sign polling 2.5 s after a bell (join timing)
+    std::uint64_t signs_seen = 0; // host: bbnet::sign_board_changes() last acted on
+    std::uint64_t summons_seen = 0; // host: bbnet::summon_requests() last seen
+    Clock::time_point summon_at{};  // host: when our game last asked to summon someone
+    std::vector<std::string> restarted; // host: members whose game restarted, stale peer not cleared yet
     std::uint64_t tick_thread = 0;
     std::uint64_t ticks = 0, ticks_at_log = 0, foreign_ticks = 0;
     party::MemberState sent_state = party::MemberState::Title;
@@ -454,6 +459,38 @@ bool ApplySpEffect(int id) {
     reinterpret_cast<AddSpEffectFn>(fn)(player, static_cast<std::uint64_t>(id), player, 0, 1, 0, 0, 1.0f, 1.0f, 1.0f,
                                         1.0f, 1.0f);
     return true;
+}
+
+/// Fast join, host: the game's peer pool (SummonStepManager [FrpgNetMan+0xc50] +0x48; used list
+/// sentinel at +0x58, node {next, prev, value +0x10}, peer = [value+0x20]) keeps a peer reserved
+/// for a summoned player's online id (+0x64, 16 bytes) while its keep flag (+0xe4) is set; a new
+/// summon of the same id (0x147af20) renews and reuses it even when its connection belongs to a
+/// crashed game process, so the summon data goes nowhere (docs/party/join_timing.md). For a
+/// member that restarted, the stale peers lose the id and the keep: the next summon reserves a
+/// fresh peer. Main thread only. Returns how many peers were cleared.
+int ClearStalePeers(const std::string& online_id) {
+    std::uint64_t fm = 0, ssm = 0, pool = 0, head = 0, node = 0;
+    if (!SafeGet(Guest(0x553b120), &fm) || !fm || !SafeGet(fm + 0xc50, &ssm) || !ssm || !SafeGet(ssm + 0x48, &pool) ||
+        !pool || !SafeGet(pool + 0x58, &head) || !head || !SafeGet(head, &node)) {
+        return -1;
+    }
+    int cleared = 0;
+    for (int guard = 0; node && node != head && guard < 64; ++guard) {
+        std::uint64_t value = 0, peer = 0;
+        char id[17] = {};
+        if (SafeGet(node + 0x10, &value) && value && SafeGet(value + 0x20, &peer) && peer &&
+            SafeRead(peer + 0x64, id, 16) && std::strncmp(id, online_id.c_str(), 16) == 0) {
+            const char mark = '#'; // no online id starts with it
+            const std::uint8_t off = 0;
+            SafeWrite(peer + 0x64, &mark, 1);
+            SafeWrite(peer + 0xe4, &off, 1);
+            ++cleared;
+        }
+        if (!SafeGet(node, &node)) {
+            break;
+        }
+    }
+    return cleared;
 }
 
 void Ring(State& st, const char* event, const char* why, Clock::time_point now) {
@@ -1161,6 +1198,42 @@ void PartyDirector::Tick() {
             st.ticks_at_log = st.ticks;
         }
     }
+    // Fast join, host: a member's new sign is on our board - let the game's get-list poll run on
+    // its next frame (the FROM client's countdown [0x5540288]+0x100, set to the 1 s interval after
+    // each poll; the builder 0x1e946e0 requests once it is <= 0) instead of up to 1 s later.
+    if (role == PartyRole::Host && st.fast_join) {
+        const std::uint64_t signs = bbnet::sign_board_changes();
+        if (signs != st.signs_seen) {
+            st.signs_seen = signs;
+            std::uint64_t cm = 0;
+            float countdown = 0;
+            if (SafeGet(Guest(0x5540288), &cm) && cm && SafeGet(cm + 0x100, &countdown) && countdown > 0) {
+                const float zero = 0;
+                SafeWrite(cm + 0x100, &zero, sizeof zero);
+                Log("sign on the board: the game polls it now (was in %.2f s)", countdown);
+            }
+        }
+    }
+    if (role == PartyRole::Host) {
+        const std::uint64_t summons = bbnet::summon_requests();
+        if (summons != st.summons_seen) {
+            st.summons_seen = summons;
+            st.summon_at = now;
+        }
+    }
+    if (role == PartyRole::Host && st.fast_join) {
+        for (std::string& name : bbnet::party::PartyHostService::instance().take_restarted()) {
+            Log("%s restarted its game: its old peer is cleared once our game is out of that session", name.c_str());
+            st.restarted.push_back(std::move(name));
+        }
+        // Not while our game is still in the session with the dead peer (it ends that one itself).
+        if (!st.restarted.empty() && s.session_role == RoleIdle) {
+            for (const std::string& name : st.restarted) {
+                Log("%s: %d stale peer(s) of our game cleared", name.c_str(), ClearStalePeers(name));
+            }
+            st.restarted.clear();
+        }
+    }
     if (!st.poll_logged && Seconds(st.last_ring, now) >= 2.5) {
         st.poll_logged = true;
         Log("bell +2.5 s: %s", DescribeSignPolling().c_str());
@@ -1189,6 +1262,11 @@ void PartyDirector::Tick() {
         {
             std::lock_guard<std::mutex> lk(st.mu);
             max_players = st.max_players;
+        }
+        // Not while a summon our game asked for is under way (a bell then restarts its search
+        // and the summon fails: the guest waits for the summon data until it gives up).
+        if (st.summons_seen && Seconds(st.summon_at, now) < 20.0) {
+            return;
         }
         if (link->state() == party::LinkState::Hosting &&
             HostMayRing(st.start_ready, s.cooperators, max_players, link->roster())) {

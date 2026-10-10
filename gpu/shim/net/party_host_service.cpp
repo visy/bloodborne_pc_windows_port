@@ -172,6 +172,7 @@ struct PartyHostService::Impl {
     std::condition_variable cv;
     std::uint64_t wake_gen = 0;
     std::map<std::string, Context> contexts;
+    std::vector<std::string> restarted;  // take_restarted()
     std::map<std::uint64_t, Room> rooms;
     std::map<std::string, Queue> queues;
     std::set<std::string> loading;
@@ -358,6 +359,16 @@ struct PartyHostService::Impl {
         c.link_addr = who.link_addr;
         c.at_ms = now();
         std::lock_guard<std::mutex> lk(mu);
+        // A member registering a context while it is still in a room is a new game process (a
+        // crash restart): its old membership ends now, not at the heartbeat timeout, so the other
+        // games drop the dead peer (signaling DEAD, MEMBER_LEFT) before it is summoned again.
+        const auto old_rooms = memberships_locked(id);
+        if (contexts.count(id) || !old_rooms.empty()) restarted.push_back(id);
+        for (const auto& [rid, mid] : old_rooms) {
+            log("party host: %s started a new game while in room %llu; its old membership ends", id.c_str(),
+                static_cast<unsigned long long>(rid));
+            remove_member_locked(rid, mid, "restarted", nullptr);
+        }
         contexts[id] = c;
         queues[id];  // the queue exists from now on
         log("party host: context %s at %s:%d (mapped %s:%d)", id.c_str(), c.ep.local_addr.c_str(), c.ep.local_port,
@@ -655,6 +666,13 @@ void PartyHostService::context_gone(const std::string& online_id) {
         ev.set("OnlineId", online_id);
         d_->push_locked(id, std::move(ev));
     }
+}
+
+std::vector<std::string> PartyHostService::take_restarted() {
+    std::lock_guard<std::mutex> lk(d_->mu);
+    std::vector<std::string> out;
+    out.swap(d_->restarted);
+    return out;
 }
 
 void PartyHostService::set_host_endpoint(const std::string& online_id, const std::string& addr, int port) {
