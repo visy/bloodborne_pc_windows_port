@@ -9,7 +9,9 @@
 #include "lua_events.h"
 #include "party_fourp.h"
 #include "party_link.h"
+#include "party_status_bridge.h"
 #include "party_items.h"
+#include "party_npc_test.h"
 #include "party_phantom.h"
 #include "party_runtime.h"
 #include "party_progress.h"
@@ -257,6 +259,7 @@ void Ring(State& st, const char* event, const char* why, Clock::time_point now) 
     st.last_ring = now;
     st.rung_ever = true;
     if (LuaEventQueue(event)) {
+        party::bridge::OnRing();
         Log("ringing %s (%s)", event, why);
     } else {
         Log("could not queue %s (%s)", event, why);
@@ -529,6 +532,7 @@ void PartyDirector::Tick() {
     }
     st.last = s;
     st.have_last = true;
+    NpcTestTick(s); // BB_PARTY_TEST_NPC fixture (party_npc_test.h)
 
     PartyRole role;
     party::PartyLink* link;
@@ -573,6 +577,7 @@ void PartyDirector::Tick() {
         TravelIntent t;
         while (PopHostTravel(&t)) {
             link->send_event(party::kBroadcast, kTravelEventName, TravelToJsonText(t));
+            party::bridge::OnTravel(TravelKindName(t.kind));
             Log("travel #%llu (%s) sent to the party", static_cast<unsigned long long>(t.seq), TravelKindName(t.kind));
             PhantomNoteHostTravel(t); // a rest (Dream, death, Mark): guests refill too
         }
@@ -591,6 +596,13 @@ void PartyDirector::Tick() {
             link->send_event(slot, kItemsFullEventName, ItemsToJsonText(items));
             Log("items: full list (%zu lots) sent to slot %d", items.size(), slot);
         }
+    }
+    // The overlay's Party tab: status board and its commands (party_status_bridge.h).
+    if (role != PartyRole::None &&
+        party::bridge::Tick({role == PartyRole::Host, link, s.world_up, s.loading, s.session_role, s.cooperators,
+                             link ? link->max_players() : 3})
+            .ring_now) {
+        st.rung_ever = false; // Rejoin while connected: the next bell goes up at once
     }
     // Phantoms as full players: the host's lamp / rest / boss Insight out, the guest's refill and
     // Insight in (party_phantom.h).
@@ -637,7 +649,7 @@ bool PartyRequested() {
     const char* p = std::getenv("BB_PARTY");
     const char* t = std::getenv("BB_PARTY_DIRECTOR_TEST");
     const char* i = std::getenv("BB_PARTY_ITEMS_TEST"); // C3 single-instance check
-    return (p && p[0]) || (t && t[0]) || (i && i[0]);
+    return (p && p[0]) || (t && t[0]) || (i && i[0]) || NpcTestRequested();
 }
 
 void CoopTick() {

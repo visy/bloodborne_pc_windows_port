@@ -66,6 +66,7 @@ bool stun_query(std::intptr_t sock_in, const std::string& server, std::uint16_t 
         sockaddr_in a{};
         a.sin_family = AF_INET;
         a.sin_port = htons(local_port);
+        if (sock::loopback_only()) a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         if (::bind(s, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0) {
             a.sin_port = 0;  // the party port is taken (the game's socket): any port tells the address
             ::bind(s, reinterpret_cast<sockaddr*>(&a), sizeof a);

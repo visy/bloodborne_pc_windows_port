@@ -72,6 +72,10 @@ Peer peers_provisional(const std::string& online_id, std::uint32_t addr, std::ui
 // The transport calls (bbhost's server_*). Each returns false with `error` on failure.
 party::PartyTransport& transport();
 bool server_context_start(json::Value& reply, std::string& error);
+// The party link reached a host that does not know this session (it restarted, or our slot
+// was released): the relay registration is refreshed and, once the game started a context,
+// context_start is sent again (on the session thread).
+void host_session_reset();
 bool server_create_room(int max_members, const json::Value& extra, json::Value& reply, std::string& error);
 bool server_join_room(std::uint64_t room_id, json::Value& reply, std::string& error);
 bool server_leave_room(const std::string& session_id, int member_id, json::Value& reply, std::string& error);
