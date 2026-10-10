@@ -856,9 +856,10 @@ void PartyDirector::Tick() {
             st.ticks_at_log = st.ticks;
         }
     }
-    // Automatic summoning.
+    // Automatic summoning. The host also rings while hosting: the 2nd / 3rd cooperator of a
+    // 3- / 4-player party (HostMayRing checks the count).
     if (!st.auto_ring || role == PartyRole::None || !link || !s.world_up || s.loading || !st.world_seen ||
-        Seconds(st.world_at, now) < 5.0 || s.session_role != RoleIdle) {
+        Seconds(st.world_at, now) < 5.0 || !SessionMayRing(role == PartyRole::Host, s.session_role)) {
         return;
     }
     if (st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {
