@@ -884,6 +884,9 @@ class BloodborneLauncher(tk.Tk):
         self.party_max_var = tk.StringVar(value=party_max if party_max in PARTY_MAX_CHOICES else "3")
         self.party_auto = tk.BooleanVar(value=self.settings.get("party_auto", True))
         self.party_seamless = tk.BooleanVar(value=self.settings.get("party_seamless", True))
+        # Party HUD: a game setting (bbport.ini party_hud, also in the game's menus), not a launch
+        # option: read from and written to bbport.ini directly.
+        self.party_hud = tk.BooleanVar(value=read_ini(bbport_ini_path()).get("party_hud", "1") != "0")
         self.party_separate_save = tk.BooleanVar(value=self.settings.get("party_separate_save", True))
         self.party_port_var = tk.StringVar(value=str(self.settings.get("party_port", PARTY_DEFAULT_PORT)))
         self.party_upnp = tk.BooleanVar(value=self.settings.get("party_upnp", True))
@@ -1272,6 +1275,13 @@ class BloodborneLauncher(tk.Tk):
                                   "and guests keep full HP instead of 70%. The host's setting counts. "
                                   "Default: on (BB_PARTY_SEAMLESS).",
                                   command=self.save_settings)
+        hud_cb = self._check(sec, "Party HUD", self.party_hud,
+                             "Your companions' names and health in the bottom left corner of the game, "
+                             "greyed while they are not in your world; on the same map their distance, a "
+                             "direction arrow and a name tag above them. Never shown in single-player. Also "
+                             "in the game: System > Party members > Party HUD. Default: on (bbport.ini "
+                             "party_hud).",
+                             command=self.save_party_hud)
         self.party_separate_save.set(True)
         save_cb = self._check(sec, "Separate party saves (always)", self.party_separate_save,
                               "Party play always uses its own save folder (user\\savedata_party), so your "
@@ -1371,7 +1381,7 @@ class BloodborneLauncher(tk.Tk):
 
         # Fields enabled in each mode: on (host or join), host only, join only
         self.party_widgets_on = [name_lbl, self.party_name_entry, self.party_max_combo, auto_cb, seamless_cb,
-                                 save_cb,
+                                 hud_cb, save_cb,
                                  port_lbl, self.party_port_entry, upnp_cb, stun_lbl, self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
         self.party_widgets_host = [public_lbl, self.party_public_entry,
@@ -1383,6 +1393,14 @@ class BloodborneLauncher(tk.Tk):
 
     def party_mode(self) -> str:
         return dict(PARTY_MODES).get(self.party_mode_var.get(), "")
+
+    def save_party_hud(self):
+        """The Party HUD checkbox: bbport.ini party_hud (a running game picks it up on its next start;
+        in game: System > Party members)."""
+        try:
+            update_ini(bbport_ini_path(), {"party_hud": "1" if self.party_hud.get() else "0"})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save the Party HUD setting to bbport.ini: {ex}")
 
     def on_party_change(self):
         self.update_party_state()

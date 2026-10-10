@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "bbport_camera.h"
 #include "bbport_toggles.h"
 
 #include "video_core/host_shaders/camera_motion_comp.h"
@@ -369,6 +370,10 @@ void CameraMotion::CommitFrameCamera() {
     previous = current;
     current = pass_camera;
     committed = true;
+    // bbport: the overlay's copy (party HUD tags / arrows, bbport_camera.h).
+    if (current.valid) {
+        BbCamera::Publish(current.view, current.proj);
+    }
 }
 
 void CameraMotion::OnDisplayPass(VideoCore::ImageId frame) {
