@@ -8,6 +8,7 @@
 #include "game_state.h"
 #include "lua_events.h"
 #include "party_link.h"
+#include "party_npc_test.h"
 #include "party_travel.h"
 #include "seamless_rules.h"
 
@@ -363,6 +364,7 @@ void PartyDirector::Tick() {
     }
     st.last = s;
     st.have_last = true;
+    NpcTestTick(s); // BB_PARTY_TEST_NPC fixture (party_npc_test.h)
 
     PartyRole role;
     party::PartyLink* link;
@@ -431,7 +433,7 @@ void PartyDirector::Tick() {
 bool PartyRequested() {
     const char* p = std::getenv("BB_PARTY");
     const char* t = std::getenv("BB_PARTY_DIRECTOR_TEST");
-    return (p && p[0]) || (t && t[0]);
+    return (p && p[0]) || (t && t[0]) || NpcTestRequested();
 }
 
 void CoopTick() {
