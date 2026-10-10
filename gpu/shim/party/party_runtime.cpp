@@ -20,6 +20,7 @@
 #include "../net/bbnet_internal.h"
 #include "../net/np_hle.h"
 #include "../net/np_session.h"
+#include "../net/from_api.h"
 #include "../net/party_host_service.h"
 #include "../net/party_transport.h"
 #include "../net/party_util.h"
@@ -644,6 +645,9 @@ LinkCallbacks make_callbacks(bool host) {
         };
         cb.on_member_left = [](const RosterEntry& m, bool slot_kept) {
             bridge::OnMemberLeft(m.name, slot_kept);
+            // Its signs go too (a crashed game cannot answer a summon; with 2-3 guests the host's
+            // game would otherwise pick a dead sign while the others wait). The restart puts up a new one.
+            bbnet::party::FromApi::instance().drop_signs(m.name);
             if (slot_kept) {
                 plog("%s (slot %d) lost; slot kept", m.name.c_str(), m.slot);
                 return;
