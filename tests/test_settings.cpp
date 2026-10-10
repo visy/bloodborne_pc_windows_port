@@ -6,7 +6,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
-#include <unistd.h>
+#include <filesystem>
 #include "gpu/shim/bbport_settings.h"
 
 static std::string Read(const char* path) {
@@ -17,14 +17,22 @@ static std::string Read(const char* path) {
 }
 
 int main() {
-    char path[] = "/tmp/bbport-settings-test-XXXXXX";
-    const int fd = mkstemp(path);
-    assert(fd >= 0);
+    // A file of its own in the temporary folder (Windows too: no mkstemp / setenv there).
+    const std::string file_name = (std::filesystem::temp_directory_path() /
+                                   ("bbport-settings-test-" + std::to_string(std::rand()) + ".ini")).string();
+    const char* path = file_name.c_str();
     const char ini[] = "# launcher\nupscaler=fsr3\nkey.cross=X, Space\npad.circle=a\nshow_fps=0\n"
                        "fullscreen_hint=1\n";
-    assert(write(fd, ini, sizeof(ini) - 1) == ssize_t(sizeof(ini) - 1));
-    close(fd);
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(ini, sizeof(ini) - 1);
+        assert(out.good());
+    }
+#ifdef _WIN32
+    _putenv_s("BB_CONFIG", path);
+#else
     setenv("BB_CONFIG", path, 1);
+#endif
 
     BbSettings::Load();
     auto& s = BbSettings::Get();
@@ -47,6 +55,6 @@ int main() {
     s.menu_y = -1.0f;
     BbSettings::Load();
     assert(s.menu_x == 0.625f && s.menu_y == 0.125f && s.upscaler == BbSettings::UpscalerFsr411);
-    unlink(path);
+    std::filesystem::remove(path);
     std::puts("PASS: settings save keeps other keys, menu position");
 }
