@@ -56,6 +56,7 @@ constexpr u64 kReturnNpc = 0x15be2a0;
 constexpr u64 kCooperatorCount = 0x15bdc20;
 constexpr u64 kGetEventFlagValue = 0x13cfd80;
 constexpr u64 kAreaBossCleared = 0x131d7b0;
+constexpr u64 kLampWarp = 0x13cdf30; // void(u32 WarpParam id), travel.md 1.1
 
 constexpr u64 kSlotEventMan = 0x553b108;
 constexpr u64 kSlotMultiPlayMan = 0x5540230;
@@ -66,14 +67,23 @@ constexpr u64 kSlotLuaEventMan = 0x553b0c8;
 constexpr u64 kSlotWorldChrMan = 0x553e878;
 constexpr u64 kSessionTypeDesc = 0x553d750;
 
-// The boss-cleared rejection of the SOS filter (seamless_rules: "Party: Bells after boss defeated").
-struct FilterSite {
+// Runtime copies of two "Party: ..." XML patches (seamless_rules.md), for the filter A/B/C test:
+//   group 1 "Party: Bells after boss defeated" (SOS filter 0x1874710): boss-cleared / negative-area rejections
+//   group 2 "Party: Bells anywhere", status producer 0x186fe40 only: its area-derived restriction -> 0
+//     (with the restriction set, 0x1878d90 clears capability bit 0x80 and drops the request before the filter)
+struct PatchSite {
+    int group;
     u64 off;
-    u8 orig[6];
+    int len;
+    u8 orig[16];
+    u8 patched[16];
 };
-constexpr FilterSite kFilterSites[] = {
-    {0x18749e8, {0x0f, 0x85, 0x48, 0x01, 0x00, 0x00}}, // jne: area boss cleared -> reject
-    {0x18749f0, {0x0f, 0x88, 0x40, 0x01, 0x00, 0x00}}, // js: area < 0 -> reject
+constexpr PatchSite kPatchSites[] = {
+    {1, 0x18749e8, 6, {0x0f, 0x85, 0x48, 0x01, 0x00, 0x00}, {0x90, 0x90, 0x90, 0x90, 0x90, 0x90}}, // jne boss cleared
+    {1, 0x18749f0, 6, {0x0f, 0x88, 0x40, 0x01, 0x00, 0x00}, {0x90, 0x90, 0x90, 0x90, 0x90, 0x90}}, // js area < 0
+    {2, 0x18700d3, 16,
+     {0x84, 0xc0, 0x41, 0xbd, 0xff, 0xff, 0xff, 0xff, 0x44, 0x0f, 0x44, 0xeb, 0x41, 0xc1, 0xed, 0x1f},
+     {0x45, 0x31, 0xed, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90}}, // xor r13d,r13d
 };
 
 // EMEVD summon type -> session type (0x4733a10).
@@ -144,6 +154,9 @@ struct Fixture {
     std::vector<Target> targets;
     double delay = 5.0, return_after = -1.0;
     bool log_every_second = true;
+    bool patch_all = false; // BB_PARTY_TEST_NPC_PATCH=1: both patch groups on for the whole run
+    int warp_id = -1;       // BB_PARTY_TEST_NPC_WARP: lamp warp to the NPC map first (once)
+    bool warp_done = false, warp_pending = false;
 
     // Per load.
     bool steady = false;
@@ -153,13 +166,15 @@ struct Fixture {
     std::size_t next = 0;
     Clock::time_point last_action{};
     std::vector<Summoned> summoned;
-    bool reported_missing = false, cap_summary = false;
+    bool reported_missing = false, cap_summary = false, done = false;
+    Clock::time_point work_done_at{};
+    bool work_done = false;
     int cap_registered = 0, cap_refused = 0;
     std::string last_state;
     Clock::time_point last_log{};
 
     // Filter A/B (once per process).
-    int filter_phase = 0; // 0 not started, 1 request with 1.09 bytes, 2 request NOP'd, 3 done
+    int filter_phase = 0; // 0 not started, 1 A (1.09), 2 B (boss filter patched), 3 C (+ status), 4 done
     Clock::time_point filter_at{};
     bool filter_patched = false;
 };
@@ -229,6 +244,12 @@ void Configure(Fixture& f) {
     }
     if (const char* r = std::getenv("BB_PARTY_TEST_NPC_RETURN"); r && r[0]) {
         f.return_after = std::atof(r);
+    }
+    if (const char* pa = std::getenv("BB_PARTY_TEST_NPC_PATCH"); pa && pa[0] == '1') {
+        f.patch_all = true;
+    }
+    if (const char* w = std::getenv("BB_PARTY_TEST_NPC_WARP"); w && w[0]) {
+        f.warp_id = std::atoi(w);
     }
     if (const char* l = std::getenv("BB_PARTY_TEST_NPC_LOG"); l && l[0] == '0') {
         f.log_every_second = false;
@@ -331,37 +352,55 @@ std::string DescRow(int st) {
     return text;
 }
 
-void PatchFilter(bool nop) {
-    for (const FilterSite& site : kFilterSites) {
-        static const u8 kNop[6] = {0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
-        const u8* want_before = nop ? site.orig : kNop;
-        if (!Matches(site.off, want_before, 6)) {
-            Log("filter: 0x%llx does not hold the expected bytes; left alone", static_cast<unsigned long long>(site.off));
+/// Writes group `group`'s patched (on) or 1.09 (off) bytes; a site holding neither is left alone.
+void PatchGroup(int group, bool on) {
+    for (const PatchSite& site : kPatchSites) {
+        if (site.group != group) {
+            continue;
+        }
+        const u8* from = on ? site.orig : site.patched;
+        const u8* to = on ? site.patched : site.orig;
+        if (Matches(site.off, to, site.len)) {
+            continue;
+        }
+        if (!Matches(site.off, from, site.len)) {
+            Log("patch: 0x%llx does not hold the expected bytes; left alone", static_cast<unsigned long long>(site.off));
             continue;
         }
         u8* at = reinterpret_cast<u8*>(Guest(site.off));
 #ifdef _WIN32
         DWORD old = 0, unused = 0;
-        if (!VirtualProtect(at, 6, PAGE_EXECUTE_READWRITE, &old)) {
-            Log("filter: VirtualProtect failed at 0x%llx", static_cast<unsigned long long>(site.off));
+        if (!VirtualProtect(at, site.len, PAGE_EXECUTE_READWRITE, &old)) {
+            Log("patch: VirtualProtect failed at 0x%llx", static_cast<unsigned long long>(site.off));
             continue;
         }
-        std::memcpy(at, nop ? kNop : site.orig, 6);
-        VirtualProtect(at, 6, old, &unused);
-        FlushInstructionCache(GetCurrentProcess(), at, 6);
+        std::memcpy(at, to, site.len);
+        VirtualProtect(at, site.len, old, &unused);
+        FlushInstructionCache(GetCurrentProcess(), at, site.len);
 #else
         const std::uintptr_t page = reinterpret_cast<std::uintptr_t>(at) & ~std::uintptr_t(0xfff);
         mprotect(reinterpret_cast<void*>(page), 0x2000, PROT_READ | PROT_WRITE | PROT_EXEC);
-        std::memcpy(at, nop ? kNop : site.orig, 6);
+        std::memcpy(at, to, site.len);
         mprotect(reinterpret_cast<void*>(page), 0x2000, PROT_READ | PROT_EXEC);
 #endif
     }
 }
 
-const char* FilterBytes() {
-    const bool orig = Matches(kFilterSites[0].off, kFilterSites[0].orig, 6);
-    static const u8 kNop[6] = {0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
-    return orig ? "1.09 (rejects)" : Matches(kFilterSites[0].off, kNop, 6) ? "NOP (patched)" : "unknown";
+/// "boss-filter 1.09/patched, status 1.09/patched".
+std::string FilterBytes() {
+    std::string out;
+    for (int g = 1; g <= 2; ++g) {
+        bool orig = true, patched = true;
+        for (const PatchSite& site : kPatchSites) {
+            if (site.group == g) {
+                orig = orig && Matches(site.off, site.orig, site.len);
+                patched = patched && Matches(site.off, site.patched, site.len);
+            }
+        }
+        out += g == 1 ? "boss-filter " : ", status-restriction ";
+        out += orig ? "1.09" : patched ? "patched" : "mixed";
+    }
+    return out;
 }
 
 // ---- State ----
@@ -391,7 +430,7 @@ std::vector<TaskView> NpcTasks(int* humans) {
             continue;
         }
         TaskView v{t, Field<u32>(t, 0xc8, 0xffffffffu), Field<i32>(t, 0x50, -1), Field<u8>(t, 0xd0, 0xff),
-                   Field<u32>(t, 0x128, 0), {}};
+                   u32(Field<u8>(t, 0x128, 0) & 0x1f), {}};
         const u64 wname = Field<u64>(t, 0xb8, 0);
         for (int i = 0; wname && i < 31; ++i) {
             std::uint16_t c = 0;
@@ -451,8 +490,10 @@ void LogState(Fixture& f, const GameSnapshot& s, bool force) {
     line = head;
     for (const TaskView& t : tasks) {
         char one[160];
-        std::snprintf(one, sizeof one, " [npc h 0x%x st %d step %d %s life 0x%x]", t.handle, t.st, t.step,
-                      t.name.c_str(), t.life);
+        static const char* const kSteps[] = {"Init", "SummonMsgWait", "SummonWait", "Summon",
+                                             "Update", "ReturnWait", "Return", "Finish"};
+        std::snprintf(one, sizeof one, " [npc h 0x%x st %d step %d %s flags 0x%x]", t.handle, t.st, t.step,
+                      t.step >= 0 && t.step < 8 ? kSteps[t.step] : "?", t.life);
         line += one;
     }
     line += "; " + SlotsText(table) + "; " + SelText();
@@ -495,7 +536,7 @@ bool SummonFaithful(const Target& t, u64 chr, u64 player) {
     using BuildFn = void(BB_COOP_SYSV*)(u64, u64, u32, i32, float*, float*, int*, i32, int);
     reinterpret_cast<BuildFn>(Guest(kBuildRequest))(sel, u64(t.st), u32(t.entity), -1, pos, rot, &evid, -1, 0);
     Log("summon %d: SetDisable(0) + 0x1878d90(sel 0x%llx, st %d, flags -1/-1) at (%.1f, %.1f, %.1f); filter bytes %s",
-        t.entity, static_cast<unsigned long long>(sel), t.st, pos[0], pos[1], pos[2], FilterBytes());
+        t.entity, static_cast<unsigned long long>(sel), t.st, pos[0], pos[1], pos[2], FilterBytes().c_str());
     return true;
 }
 
@@ -560,18 +601,21 @@ void SendHome(Summoned& m) {
 
 void ResetLoad(Fixture& f) {
     if (f.filter_patched) {
-        PatchFilter(false);
+        PatchGroup(1, false);
+        PatchGroup(2, false);
         f.filter_patched = false;
         Log("filter: 1.09 bytes restored (load)");
     }
     f.steady = false;
+    f.warp_pending = false;
     f.live.clear();
     f.next = 0;
     f.summoned.clear();
     f.reported_missing = false;
     f.cap_summary = false;
+    f.done = f.work_done = false;
     f.cap_registered = f.cap_refused = 0;
-    if (f.filter_phase == 1 || f.filter_phase == 2) {
+    if (f.filter_phase >= 1 && f.filter_phase <= 3) {
         f.filter_phase = 0; // the request died with the load: run the A/B again in the next one
     }
 }
@@ -608,18 +652,19 @@ bool TaskFor(u32 handle) {
 }
 
 void RunFilter(Fixture& f, const GameSnapshot& s, Clock::time_point now) {
-    if (f.filter_phase >= 3 || f.live.empty()) {
+    if (f.filter_phase >= 4 || f.live.empty()) {
         return;
     }
     const Target& t = f.live[0];
+    static const char* const kStage[] = {"", "A (1.09 bytes)", "B (boss-filter NOPs 0x18749E8/0x18749F0)",
+                                         "C (B + status restriction 0x18700D3 -> 0)"};
     if (f.filter_phase == 0) {
-        if (f.filter_patched) {
-            PatchFilter(false);
-            f.filter_patched = false;
-        }
+        PatchGroup(1, false);
+        PatchGroup(2, false);
+        f.filter_patched = false;
         const u64 chr = Prepare(t, "filter A (1.09 bytes)");
         if (!chr) {
-            f.filter_phase = 3;
+            f.filter_phase = 4;
             return;
         }
         SummonFaithful(t, chr, s.player);
@@ -635,32 +680,29 @@ void RunFilter(Fixture& f, const GameSnapshot& s, Clock::time_point now) {
     const u32 handle = Field<u32>(chr, 8, 0xffffffffu);
     const bool task = chr && TaskFor(handle);
     const int area = chr ? ChrArea(chr) : -1;
-    if (f.filter_phase == 1) {
-        Log("filter A result: %s (area %d, boss cleared %d, filter bytes %s)",
-            task ? "task created: the request passed the filter" : "NO task: the request was dropped", area,
-            AreaBossCleared(area), FilterBytes());
-        if (task) {
-            Log("filter: nothing to compare (the 1.09 filter let it through; the area's boss flag is off)");
-            f.filter_phase = 3;
-            return;
+    Log("filter %s result: %s (area %d, boss cleared %d; %s)", kStage[f.filter_phase],
+        task ? "task created" : "NO task (request dropped)", area, AreaBossCleared(area), FilterBytes().c_str());
+    if (task || f.filter_phase == 3 || !chr) {
+        if (f.filter_patched) {
+            PatchGroup(1, false);
+            PatchGroup(2, false);
+            f.filter_patched = false;
+            Log("filter: 1.09 bytes restored (%s)", FilterBytes().c_str());
         }
-        PatchFilter(true);
-        f.filter_patched = true;
-        Prepare(t, "filter B (0x18749E8/0x18749F0 NOP'd)");
-        if (chr) {
-            SummonFaithful(t, chr, s.player);
-        }
-        f.filter_phase = 2;
-        f.filter_at = now;
+        f.filter_phase = 4;
         return;
     }
-    Log("filter B result: %s (area %d, boss cleared %d, filter bytes %s)",
-        task ? "task created: the NOP lets the boss-cleared request through" : "still NO task: rejected elsewhere", area,
-        AreaBossCleared(area), FilterBytes());
-    PatchFilter(false);
-    f.filter_patched = false;
-    Log("filter: 1.09 bytes restored (%s)", FilterBytes());
-    f.filter_phase = 3;
+    ++f.filter_phase;
+    PatchGroup(1, true);
+    if (f.filter_phase == 3) {
+        PatchGroup(2, true);
+    }
+    f.filter_patched = true;
+    char why[96];
+    std::snprintf(why, sizeof why, "filter %s", kStage[f.filter_phase]);
+    Prepare(t, why);
+    SummonFaithful(t, chr, s.player);
+    f.filter_at = now;
 }
 
 void RunSummons(Fixture& f, const GameSnapshot& s, Clock::time_point now) {
@@ -669,9 +711,12 @@ void RunSummons(Fixture& f, const GameSnapshot& s, Clock::time_point now) {
         if (f.mode == Mode::Cap && !f.cap_summary && !f.live.empty() && Seconds(f.last_action, now) >= 3.0) {
             f.cap_summary = true;
             const u64 table = SlotTable();
-            Log("cap summary: %zu NPCs tried, %d registered, %d refused; slot count %d, member cap %d, cooperators %d, "
-                "npc tasks %zu",
-                f.live.size(), f.cap_registered, f.cap_refused, Field<i32>(table, 0x14, -1), MemberCap(),
+            char reg[64] = "Register answers: path B only";
+            if (f.path == Path::Direct) {
+                std::snprintf(reg, sizeof reg, "%d registered, %d refused", f.cap_registered, f.cap_refused);
+            }
+            Log("cap summary (path %s): %zu NPCs tried, %s; slot count %d, member cap %d, cooperators %d, npc tasks %zu",
+                f.path == Path::Direct ? "B" : "A", f.live.size(), reg, Field<i32>(table, 0x14, -1), MemberCap(),
                 CooperatorCount(s), NpcTasks(nullptr).size());
         }
         return;
@@ -701,6 +746,41 @@ void RunSummons(Fixture& f, const GameSnapshot& s, Clock::time_point now) {
     }
 }
 
+// ---- SOS filter observer: 0x1874710(sel, req, from_event) -> accepted request or 0 ----
+// Wrapped (ReplacePrologue) so each NPC request's fate is logged: req NULL = 0x1878d90 already
+// dropped it (capability mask desc[st]+4 & the SOS status 0x186fe40); 0 = the filter rejected it.
+constexpr u64 kSosFilter = 0x1874710;
+using SosFilterFn = u64(BB_COOP_SYSV*)(u64, u64, int);
+void* g_filter_orig = nullptr;
+
+BB_COOP_SYSV u64 SosFilterWrap(u64 sel, u64 req, int from_event) {
+    const u64 r = reinterpret_cast<SosFilterFn>(g_filter_orig)(sel, req, from_event);
+    if (from_event) { // the request path (0x1878d90 passes 1; the sign list update passes 0)
+        if (!req) {
+            Log("SOS filter: request NULL (0x1878d90 dropped it before the filter: desc capability mask & SOS "
+                "status 0x186fe40 = 0)");
+        } else {
+            const int st = Field<u8>(req, 0x22, 0xff);
+            Log("SOS filter: request st %d entity %d (summon flag %d, dismiss %d) -> %s", st, Field<i32>(req, 0x88, -1),
+                Field<i32>(req, 0x8c, -1), Field<i32>(req, 0x90, -1), r ? "ACCEPTED" : "REJECTED");
+        }
+    }
+    return r;
+}
+
+void InstallFilterObserver() {
+    static bool tried = false;
+    if (tried) {
+        return;
+    }
+    tried = true;
+    // push rbp; mov rbp,rsp; push r15..r12, rbx; sub rsp,0x28 (17 bytes, no rip-relative operands)
+    ReplacePrologue(kSosFilter, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48,
+                                 0x83, 0xec, 0x28},
+                    reinterpret_cast<const void*>(&SosFilterWrap), &g_filter_orig,
+                    "NPC fixture: SOS filter observer (0x1874710)");
+}
+
 } // namespace
 
 bool NpcTestRequested() {
@@ -716,9 +796,13 @@ void NpcTestTick(const GameSnapshot& s) {
     if (!f.on || !Image()) {
         return;
     }
+    // The SOS filter runs on this (the main) thread only: the tick is a safe point to wrap it.
+    if (f.mode != Mode::LogOnly) {
+        InstallFilterObserver();
+    }
     const auto now = Clock::now();
     // Re-arm on every load: the NPC belongs to its map's ChrSet, the handle dies with it.
-    if (!s.world_up || s.loading) {
+    if (!s.world_up || s.loading || s.map_id == 0xffffffffu) {
         if (f.steady) {
             Log("load / world down: re-arming (%zu summoned in the last load)", f.summoned.size());
             ResetLoad(f);
@@ -745,6 +829,30 @@ void NpcTestTick(const GameSnapshot& s) {
     }
     if (Seconds(f.steady_at, now) < f.delay) {
         return;
+    }
+    if (f.patch_all && f.mode != Mode::Filter) {
+        static bool logged = false;
+        PatchGroup(1, true);
+        PatchGroup(2, true);
+        if (!logged) {
+            logged = true;
+            Log("patch: boss filter and status restriction patched for the run (%s)", FilterBytes().c_str());
+        }
+    }
+    if (f.warp_pending) {
+        return; // until the load the warp starts
+    }
+    if (f.warp_id > 0 && !f.warp_done) {
+        f.warp_done = true;
+        const u32 want = u32(f.warp_id / 100000) << 24 | u32((f.warp_id / 10000) % 10) << 16;
+        if ((s.map_id & 0xffff0000u) != want) {
+            Log("warp: lamp warp 0x13cdf30(%d) to m%02u_%02u (from %s); the fixture re-arms after the load",
+                f.warp_id, want >> 24, (want >> 16) & 0xff, MapName(s.map_id).c_str());
+            using Fn = void(BB_COOP_SYSV*)(u32);
+            reinterpret_cast<Fn>(Guest(kLampWarp))(u32(f.warp_id));
+            f.warp_pending = true;
+            return;
+        }
     }
     if (!f.reported_missing) {
         f.reported_missing = true;
@@ -784,6 +892,26 @@ void NpcTestTick(const GameSnapshot& s) {
             if (!m.returned && Seconds(m.at, now) >= f.return_after) {
                 SendHome(m);
             }
+        }
+    }
+    // "done": this load's work is over (every summon tried, the filter A/B finished, every return
+    // sent) and the NPC tasks are gone, or 30 s passed since: a marker for --until.
+    bool work = f.mode == Mode::Filter ? (f.filter_phase >= 4 || f.live.empty()) : f.next >= f.live.size();
+    for (const Summoned& m : f.summoned) {
+        work = work && (f.return_after < 0 || m.returned);
+    }
+    if (work && !f.work_done) {
+        f.work_done = true;
+        f.work_done_at = now;
+    }
+    if (f.work_done && !f.done) {
+        const std::size_t tasks = NpcTasks(nullptr).size();
+        const double waited = Seconds(f.work_done_at, now);
+        if ((tasks == 0 && waited >= 3.0) || waited >= 30.0) {
+            f.done = true;
+            LogState(f, s, true);
+            Log("done in %s: %zu summoned, %zu NPC tasks left, cooperators %d, slot count %d", MapName(s.map_id).c_str(),
+                f.summoned.size(), tasks, CooperatorCount(s), Field<i32>(SlotTable(), 0x14, -1));
         }
     }
 }
