@@ -358,6 +358,7 @@ constexpr u64 kEmevdDispatch = 0x17b93a0;
 using DispatchFn = u8(BB_COOP_SYSV*)(u64 self, u64 event, float dt);
 DispatchFn g_dispatch_original = nullptr;
 bool g_emevd_trace = false;
+std::atomic<EmevdRewriter> g_rewriter{nullptr};
 
 struct SkipRule {
     i32 event; // -1: any
@@ -419,20 +420,9 @@ void TraceInstruction(u64 event, i32 event_id, i32 bank, i32 id, u64 instr, bool
     }
     u32 map = 0, arg_size = 0;
     i32 index = -1;
-    i64 arg_off = 0;
     SafeGet(event + 0x68, &map);
     SafeGet(event + 0xa0, &index);
-    SafeGet(instr + 8, &arg_size);
-    SafeGet(instr + 0x10, &arg_off);
-    u64 args = 0;
-    SafeGet(event + 0xb8, &args);
-    if (!args) {
-        u64 runtime = 0, base = 0, section = 0;
-        if (SafeGet(event + 0xa8, &runtime) && runtime && SafeGet(runtime + 8, &base) && base &&
-            SafeGet(base + 0x78, &section)) {
-            args = base + section + u64(arg_off);
-        }
-    }
+    const u64 args = EmevdInstructionArgs(event, instr, &arg_size);
     char hex[3 * 24 + 1] = "";
     u8 bytes[24] = {};
     const std::size_t shown = arg_size < sizeof bytes ? arg_size : sizeof bytes;
@@ -469,6 +459,11 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
     if (skip) {
         g_emevd_skipped.fetch_add(1, std::memory_order_relaxed);
         return 1;
+    }
+    if (instr) {
+        if (const EmevdRewriter rw = g_rewriter.load(std::memory_order_relaxed)) {
+            rw(event_id, bank, id, event, instr);
+        }
     }
     return g_dispatch_original(self, event, dt);
 }
@@ -524,18 +519,57 @@ void SeamlessRulesInit() {
     g_emevd_trace = EnvOn("BB_PARTY_EMEVD_TRACE");
     ParseSkips();
     if (g_emevd_trace || !g_skips.empty()) {
-        // push rbp; mov rbp, rsp; push rbx; push rax - 6 bytes, no relative operands.
-        void* original = nullptr;
-        if (ReplacePrologue(kEmevdDispatch, {0x55, 0x48, 0x89, 0xe5, 0x53, 0x50},
-                            reinterpret_cast<const void*>(&EmevdDispatch), &original,
-                            "EMEVD instruction dispatch filter")) {
-            g_dispatch_original = reinterpret_cast<DispatchFn>(original);
+        if (EnsureEmevdFilter()) {
             Log("EMEVD filter: %s, %zu skip rules", g_emevd_trace ? "trace on" : "trace off", g_skips.size());
         } else {
             g_emevd_trace = false;
             g_skips.clear();
         }
     }
+}
+
+void SetEmevdRewriter(EmevdRewriter fn) {
+    g_rewriter.store(fn);
+}
+
+bool EnsureEmevdFilter() {
+    static std::mutex mu;
+    std::lock_guard<std::mutex> lk(mu);
+    if (g_dispatch_original) {
+        return true;
+    }
+    // push rbp; mov rbp, rsp; push rbx; push rax - 6 bytes, no relative operands.
+    void* original = nullptr;
+    if (!ReplacePrologue(kEmevdDispatch, {0x55, 0x48, 0x89, 0xe5, 0x53, 0x50},
+                         reinterpret_cast<const void*>(&EmevdDispatch), &original, "EMEVD instruction dispatch filter")) {
+        return false;
+    }
+    g_dispatch_original = reinterpret_cast<DispatchFn>(original);
+    return true;
+}
+
+std::uint64_t EmevdInstructionArgs(std::uint64_t event, std::uint64_t instr, std::uint32_t* size) {
+    u32 arg_size = 0;
+    i64 arg_off = 0;
+    if (size) {
+        *size = 0;
+    }
+    if (!event || !instr || !SafeGet(instr + 8, &arg_size) || !SafeGet(instr + 0x10, &arg_off)) {
+        return 0;
+    }
+    u64 args = 0;
+    SafeGet(event + 0xb8, &args);
+    if (!args) {
+        u64 runtime = 0, base = 0, section = 0;
+        if (SafeGet(event + 0xa8, &runtime) && runtime && SafeGet(runtime + 8, &base) && base &&
+            SafeGet(base + 0x78, &section)) {
+            args = base + section + u64(arg_off);
+        }
+    }
+    if (args && size) {
+        *size = arg_size;
+    }
+    return args;
 }
 
 void SeamlessRulesTick() {

@@ -309,6 +309,8 @@ void OnLinkState(LinkState state, const std::string& detail, RejectCode reject, 
         PublishLocked(b);
     }
     if (state == was) return;
+    // Out of the party: the old roster is no longer ours.
+    if (state == LinkState::Rejected || state == LinkState::Stopped) status::SetMembers({});
     if (state == LinkState::Connected) {
         status::SetLastEvent(was == LinkState::Reconnecting ? "Rejoined the party" : "Joined the party");
     } else if (state == LinkState::Reconnecting && (was == LinkState::Connected)) {

@@ -472,6 +472,101 @@ static void test_max_players_two() {
     CHECK(d.wait_state(LinkState::Rejected, 5000) && d.reject_code() == RejectCode::Auth);
 }
 
+// Four players: host + 3 guests (slots 1..3, roster of 4, events to all), a 4th guest is
+// refused, a guest's own max is overridden by the host's WELCOME, a guest with other game
+// rules (party_fourp.h tag) is rejected with a reason naming both.
+static void test_four_players() {
+    Recorder hr, ar, br, cr;
+    LinkConfig hc = base_cfg("Host", "");
+    hc.max_players = 4;
+    hc.rules = "max 4 players, 4p:v1:H1,H2,H3,H4,E6";
+    PartyLink host(hc, recorder_callbacks(hr, "host"));
+    std::string err;
+    CHECK(host.start_host(&err));
+    const std::uint16_t port = host.bound_port();
+    auto guest_cfg = [&](const char* name) {
+        LinkConfig c = base_cfg(name, "");
+        c.max_players = 3;  // the guest's own setting: the host's counts
+        c.rules = hc.rules;
+        return c;
+    };
+    PartyLink a(guest_cfg("A"), recorder_callbacks(ar, "a")), b(guest_cfg("B"), recorder_callbacks(br, "b")),
+        c(guest_cfg("C"), recorder_callbacks(cr, "c"));
+    CHECK(a.start_guest("127.0.0.1", port, &err));
+    CHECK(b.start_guest("127.0.0.1", port, &err));
+    CHECK(c.start_guest("127.0.0.1", port, &err));
+    CHECK(a.wait_connected(5000) && b.wait_connected(5000) && c.wait_connected(5000));
+    CHECK(a.max_players() == 4 && b.max_players() == 4 && c.max_players() == 4);
+    const int sa = a.local_slot(), sb = b.local_slot(), sc = c.local_slot();
+    CHECK(sa >= 1 && sa <= 3 && sb >= 1 && sb <= 3 && sc >= 1 && sc <= 3 && sa != sb && sb != sc && sa != sc);
+    CHECK(wait_for([&] { return hr.joined.load() == 3; }, 3000));
+    CHECK(wait_for([&] { return a.roster().size() == 4 && b.roster().size() == 4 && c.roster().size() == 4; }, 3000));
+    std::printf("  slots %d %d %d, roster %zu\n", sa, sb, sc, host.roster().size());
+    host.send_event(kBroadcast, "four", "{}");
+    CHECK(wait_for([&] { return ar.count_event("four") == 1 && br.count_event("four") == 1 && cr.count_event("four") == 1; }, 3000));
+    LinkCallbacks none;
+    PartyLink d(guest_cfg("D"), none);
+    CHECK(d.start_guest("127.0.0.1", port, &err));
+    CHECK(d.wait_state(LinkState::Rejected, 5000) && d.reject_code() == RejectCode::Full);
+    LinkConfig ec = guest_cfg("E");
+    ec.rules = "max 3 players, 4p:v1:H1,H2,H3,H4,E6";
+    PartyLink e(ec, none);
+    c.stop();  // a free slot: the rejection below is about the rules, not the size
+    CHECK(wait_for([&] { return host.roster().size() == 3; }, 3000));
+    CHECK(e.start_guest("127.0.0.1", port, &err));
+    CHECK(e.wait_state(LinkState::Rejected, 5000) && e.reject_code() == RejectCode::Mismatch);
+    std::printf("  other rules: %s\n", e.reject_reason().c_str());
+    CHECK(e.reject_reason().find("party rules differ") != std::string::npos &&
+          e.reject_reason().find("max 3 players") != std::string::npos &&
+          e.reject_reason().find("max 4 players") != std::string::npos);
+}
+
+// A crashed host restarted on the same port with the same secret and the member table it kept:
+// every guest gets its old slot back (a new session: not resumed), nobody is rejected.
+static void test_host_restart() {
+    Recorder hr, ar, br, h2r;
+    PartyLink* host = new PartyLink(base_cfg("Host", ""), recorder_callbacks(hr, "host"));
+    std::string err;
+    CHECK(host->start_host(&err));
+    const std::uint16_t port = host->bound_port();
+    PartyLink a(base_cfg("Alice", ""), recorder_callbacks(ar, "alice"));
+    PartyLink b(base_cfg("Bob", ""), recorder_callbacks(br, "bob"));
+    CHECK(a.start_guest("127.0.0.1", port, &err));
+    CHECK(a.wait_connected(5000));
+    CHECK(b.start_guest("127.0.0.1", port, &err));
+    CHECK(b.wait_connected(5000));
+    const int sa = a.local_slot(), sb = b.local_slot();
+    const std::vector<KeptMember> kept = host->kept_members();
+    CHECK(kept.size() == 2);
+    host->stop(false);  // the crash: no BYE
+    CHECK(a.wait_state(LinkState::Reconnecting, 3000));
+    CHECK(b.wait_state(LinkState::Reconnecting, 3000));
+    // Reversed join order on purpose: Bob first. Slots come from the kept table, not the order.
+    LinkConfig hc = base_cfg("Host", "");
+    hc.port = port;
+    PartyLink host2(hc, recorder_callbacks(h2r, "host2"));
+    host2.restore_members(kept);
+    bool up = false;
+    for (int i = 0; i < 50 && !(up = host2.start_host(&err)); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    CHECK(up);
+    CHECK(wait_for([&] { return a.state() == LinkState::Connected && b.state() == LinkState::Connected; }, 5000));
+    CHECK(a.local_slot() == sa && b.local_slot() == sb);
+    CHECK(!a.last_welcome_resumed() && !b.last_welcome_resumed());
+    CHECK(wait_for([&] {
+        int conn = 0;
+        for (const RosterEntry& e : host2.roster()) conn += e.connected;
+        return conn == 3;
+    }, 3000));
+    CHECK(wait_for([&] { return h2r.rejoined.load() == 2; }, 2000) && h2r.joined.load() == 0);  // callbacks lag
+    // Events flow on the new streams.
+    host2.send_event(kBroadcast, "after_restart", "{}");
+    CHECK(wait_for([&] { return ar.events.load() >= 1 && br.events.load() >= 1; }, 3000));
+    std::printf("  restarted host on :%u: alice slot %d, bob slot %d back\n", port, a.local_slot(), b.local_slot());
+    a.stop();
+    b.stop();
+    host2.stop();
+}
+
 // The version check's explanation and the identity files patches.py / mods.py write.
 static void test_identity() {
     LinkConfig host, guest;
@@ -575,6 +670,10 @@ int main() {
     test_max_players_two();
     std::printf("kick by name\n");
     test_kick();
+    std::printf("four players (host + 3 guests), game rules\n");
+    test_four_players();
+    std::printf("host restart: slots restored\n");
+    test_host_restart();
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     std::printf(g_failures ? "FAILED\n" : "OK\n");
     return g_failures ? 1 : 0;
