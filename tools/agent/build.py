@@ -4,7 +4,7 @@ never starve the running test games.
 
   python tools/agent/build.py [BUILD_DIR] [--target T ...] [-j N]
 
-BUILD_DIR defaults to out/gpu of the repo this script is in. At most 2 builds run at once across
+BUILD_DIR defaults to out/gpu of the repo this script is in. At most 3 builds run at once across
 all agents (tools/mp/game_queue.py pool "build"; edit build_queue.json max_clients to change); a
 build runs with -j 8 by default (BB_BUILD_JOBS) at BELOW_NORMAL priority, which its compiler and
 linker children inherit. TMP/TEMP go to <repo>/../tmp when unset (keeps C: free).

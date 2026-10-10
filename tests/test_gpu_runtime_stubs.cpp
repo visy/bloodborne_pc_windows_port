@@ -11,7 +11,9 @@ thread_local jmp_buf* runtime_fault_recover = nullptr;
 #else
 thread_local sigjmp_buf* runtime_fault_recover = nullptr;
 #endif
-uint32_t runtime_disabled_optimizations = 0;
+// gpu/shim/common/assert.cpp reads it (a weak reference, which PE/COFF cannot leave unresolved).
+volatile int runtime_restarting = 0;
+uint64_t runtime_disabled_optimizations = 0;  // uint64_t as in runtime_memory.c and bbport_toggles.h
 uint64_t runtime_experiment_bits = 0;
 uint64_t runtime_tsc_frequency() { return 1000000000; }
 int runtime_file_translate(const char*, char*, size_t) { std::abort(); }
@@ -43,4 +45,17 @@ uintptr_t runtime_memory_resolve(const char*) { std::abort(); }
 void runtime_wait_report(double) {}
 void runtime_sleep_stats(uint64_t* calls, uint64_t* ns) { *calls = 0; *ns = 0; }
 uint64_t runtime_heap_growths() { return 0; }
+// The party/net glue in bbgpu (bbnet_glue.cpp, game_state.cpp) runs only with a guest process.
+__attribute__((sysv_abi)) void restore_guest_fs() { std::abort(); }
+int runtime_setjmp(void*) { std::abort(); }
+// Without LTO the linker keeps whole bbgpu objects (menu, stability, party director, equeue), so
+// their runtime references need a definition too; none of them runs without the game.
+void* runtime_low_map(size_t, int) { std::abort(); }
+uint64_t runtime_gfx_heap_more_mib() { return 0; }
+uint64_t runtime_memory_pool_size() { return 0; }
+void runtime_memory_grow_flexible(uint64_t) { std::abort(); }
+void runtime_pad_director_press(uint32_t) { std::abort(); }
+const char* runtime_symbol(const char*) { return nullptr; }
+void runtime_thread_set_blocked(const char*, uint64_t) {}
+void runtime_thread_clear_blocked() {}
 }
