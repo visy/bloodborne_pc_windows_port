@@ -374,7 +374,9 @@ void ApplySkip(T& g) {
 } // namespace
 
 bool NewGameTestRequested() {
-    return EnvOn("BB_TEST_NEWGAME") || EnvOn("BB_TEST_PROLOGUE_SKIP");
+    // Asked every frame by the director: the environment once (getenv scans the whole block).
+    static const bool on = EnvOn("BB_TEST_NEWGAME") || EnvOn("BB_TEST_PROLOGUE_SKIP");
+    return on;
 }
 
 bool PrologueSkipBusy() {
