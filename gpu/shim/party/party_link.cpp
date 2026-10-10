@@ -147,7 +147,7 @@ std::vector<RosterEntry> read_roster(Reader& r) {
         e.slot = r.u8();
         e.name = r.str16();
         std::uint8_t st = r.u8();
-        e.state = st <= 5 ? static_cast<MemberState>(st) : MemberState::Title;
+        e.state = st <= 6 ? static_cast<MemberState>(st) : MemberState::Title;
         e.connected = r.u8() != 0;
         e.map_id = r.u32();
         e.ping_ms = r.u32();
@@ -190,6 +190,7 @@ const char* member_state_name(MemberState s) {
     case MemberState::InHostWorld: return "in_host_world";
     case MemberState::Dead: return "dead";
     case MemberState::Loading: return "loading";
+    case MemberState::Prologue: return "prologue";
     }
     return "?";
 }
