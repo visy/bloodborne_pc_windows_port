@@ -97,8 +97,7 @@ Wait_forSelfEpilogue (effect state), the world load itself, the 2 s host-lost gr
 
 ## Round 2: ringing and finding the peer
 
-Measured with `join_timeline.py` (`E:\gamesbportgents\joinfast\mp2i*_inst*.log`,
-2i*_inst*.log`,
+Measured with `join_timeline.py` (`E:\games\bbport\agents\joinfast\mp\r2i*_inst*.log`,
 `r2k*_inst*.log`). Both in their worlds -> host `cooperators 1`:
 
 | Step | Increment 1 | Round 2 | What |
