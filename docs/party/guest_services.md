@@ -110,7 +110,7 @@ Log lines (`Party guest services:`): `open: guest in the host's m21_00_00_00; le
 Insight I`, `talk script tN (environment 0x...) asks IsClientPlayer: allowed|kept vanilla`,
 `talk scripts asked IsClientPlayer N times (answered 0)`, `own character: level a -> b, echoes ...`.
 
-### 2.4 The Doll on a guest (placement) [C static; runtime pending]
+### 2.4 The Doll on a guest (placement) [C]
 
 User report from the first live run: the guest in the host's Dream did not see the Doll where the
 host's Doll stands. What decides the Doll, per m21_00 EMEVD:
@@ -153,7 +153,7 @@ row **803000** has it (1.09 byte `0x80`; 804000 too). Fix: a seamless param rule
 `BB_PARTY_GUEST_SERVICES=0` keeps vanilla). Live after the fix: chr type 5 on the guest, solid,
 her talk menu opens.
 
-### 2.6 The Doll's level-up handshake [C, R partly]
+### 2.6 The Doll's level-up handshake [C, R]
 
 `t210304` StateMachine x7: State_3 "レベルアップ" -> State_22 -> State_10 sets 72100100 and waits for
 **72100101 and 72100102**, then State_7 runs `OpenSoul()` (talk command 31: switch `0x203FFD0`
@@ -253,6 +253,11 @@ into the host's Dream), guest log `Party guest services:` [R]:
 * **Insight shop purchase (t210698) [R]**: same script (`warp=talk:210698;buy`): the Insight
   messenger's Purchase list opened on the guest and the first row was bought: `Insight 6 -> 5`;
   after the session the guest's party save holds Insight 5 (+0x86DC), the host's save Insight 6.
-* **Doll talk [R]**: the guest's Doll is solid (2.5) and her talk menu (Channel the Blood Echoes /
-  Talk / Leave) opens on the guest; the kneel event ran after the rewrite; the level-up menu
-  needs the 12100113 handshake (2.6, implemented, live run pending).
+* **Doll level up [R]**: with 2.4-2.6 in place (`echoes=20000;warp=doll;levelup`): talk, her
+  lines, "Channel the Blood Echoes", the kneel and her gesture (12100112 / 12100113 rewritten),
+  then talk command 31 OpenSoul and the LevelUp menu factory 0x1BB7F60 run on the guest; the
+  Level Up screen shows the guest's own record (level 37, echoes 20000, Insight 6). Down to
+  Endurance, Right (15 -> 16, "Required 8634"), Cross, the dialog "Spend 8634 Blood Echoes and
+  level up?" (cursor on NO: Left to YES, Cross): `LEVEL UP on the guest: level 37 -> 38, echoes
+  20000 -> 11366`. After the session the guest's party save holds level 38 / echoes 11366; the
+  host's save keeps level 37 / echoes 0. Screenshots: `agents/guestsvc/evidence/doll_level_up`.
