@@ -17,6 +17,9 @@ void PatchImage(unsigned char* image, std::uint64_t size);
 /// building its texts); `last_ms` is that last lookup's steady-clock time in ms. Both 0 while the
 /// hooks are off.
 void TextActivity(std::uint64_t* seq, std::int64_t* last_ms);
+/// The last steady-clock ms a message text containing `needle` (ASCII, case-insensitive) was looked
+/// up (a screen looks its texts up while it is shown); 0 when not among the recent lookups.
+std::int64_t TextSeenMs(const char* needle);
 
 /// The steady-clock ms of the last lookup of message `id` (any category), 0 when never; shown
 /// texts are looked up every frame, so "within the last ~300 ms" = on screen (test aids).
