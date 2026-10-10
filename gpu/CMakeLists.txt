@@ -1,7 +1,11 @@
 # bbport GPU library: shadPS4 video core + shader recompiler + Gnm/VideoOut
 # drivers, adapted to the native_probe runtime through shims in shim/.
 cmake_minimum_required(VERSION 3.24)
-project(bbgpu LANGUAGES C CXX)
+# The Windows port's version: VERSION at the repository root (launcher.py and the tests read it too).
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION" BBPORT_VERSION)
+string(STRIP "${BBPORT_VERSION}" BBPORT_VERSION)
+project(bbgpu VERSION ${BBPORT_VERSION} LANGUAGES C CXX)
+add_compile_definitions(BBPORT_VERSION="${BBPORT_VERSION}")
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 11)
@@ -369,6 +373,13 @@ add_executable(bbport
     ${RUNTIME_SOURCES}
     ../src/vulkan_smoke.c
 )
+if (WIN32)
+    # The exe's version resource (Properties -> Details): file and product version.
+    enable_language(RC)
+    string(REPLACE "." "," BBPORT_VERSION_COMMAS "${BBPORT_VERSION}")
+    configure_file(../src/bbport.rc.in "${CMAKE_CURRENT_BINARY_DIR}/bbport.rc" @ONLY)
+    target_sources(bbport PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/bbport.rc")
+endif()
 target_include_directories(bbport PRIVATE .. ../src)
 target_link_libraries(bbport PRIVATE bbgpu "${CMAKE_CURRENT_SOURCE_DIR}/../out/libatrac9.a" Vulkan::Vulkan)
 if (WIN32)

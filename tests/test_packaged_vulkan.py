@@ -91,6 +91,7 @@ class PackagedVulkanTests(unittest.TestCase):
         (self.libs / "libGLX_nvidia.so.0").symlink_to(driver.name)
         self.manifest()
 
+    @linux_only
     def test_nvidia_gets_the_host_egl_vendors_nvidia_first(self):
         # #107: the package's glvnd saw no host EGL vendor; NVIDIA's ICD gave no vkCreateInstance.
         self.nvidia_host()
@@ -100,6 +101,7 @@ class PackagedVulkanTests(unittest.TestCase):
         self.assertEqual(self.env["__EGL_VENDOR_LIBRARY_FILENAMES"],
                          f"{self.egl / '10_nvidia.json'}:{self.egl / '50_mesa.json'}")
 
+    @linux_only
     def test_egl_vendors_left_alone_without_nvidia_or_when_set(self):
         (self.egl / "10_nvidia.json").write_text("{}")
         self.configure() # no NVIDIA ICD: AMD/Intel keep the package's EGL
