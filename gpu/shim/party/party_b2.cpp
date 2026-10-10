@@ -5,6 +5,7 @@
 // byte by coop_hooks before anything is written. Offsets are ours (raw ELF VA). The game's code
 // is System V: every call into it goes through a BB_COOP_SYSV pointer at Guest(off).
 #include "party_b2.h"
+#include "party_async_io.h"
 
 #include "coop_hooks.h"
 #include "game_state.h"
@@ -83,8 +84,7 @@ void Log(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    std::printf("Party B2: %s\n", line);
-    std::fflush(stdout);
+    coop::asyncio::Print(std::string("Party B2: ") + line + "\n"); // never blocks the caller (party_async_io.h)
 }
 
 bool EnvOn(const char* name) {
