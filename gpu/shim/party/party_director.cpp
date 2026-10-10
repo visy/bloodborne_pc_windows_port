@@ -20,10 +20,12 @@
 #include "party_progress.h"
 #include "party_travel.h"
 #include "seamless_rules.h"
+#include "test_newgame.h"
 #include "party_online.h"
 #include "party_watchdog.h"
 
 #include "../net/bbnet_internal.h"
+#include "../net/party_host_service.h"
 #include "../../party_env.h"
 
 #include <algorithm>
@@ -95,6 +97,8 @@ struct Test {
     bool start = false, grant_bells = false, drop_bells = false, drop_done = false;
     int award_lot = -1; // award_lot=N: AwardItemLot(N) once (call-shape probe, test saves)
     bool insight_done = false, ring_done = false;
+    const char* bell = nullptr; // bell_host / bell_guest: Ring() once ready (the real bell path)
+    bool bell_done = false;
     Clock::time_point rung_at{};
 };
 
@@ -108,7 +112,7 @@ struct State {
     double ring_every = 30.0;
     // BB_PARTY_FAST_JOIN (default on; docs/party/join_timing.md): shorter director pauses.
     bool fast_join = true;
-    double ring_delay = 1.0;        // s in a steady world before the first bell (5 without fast join)
+    double ring_delay = 0.3;        // s in a steady world before the first bell (5 without fast join)
     double continue_settle = 1.0;   // s on the title before the first Continue press (4)
     double continue_every = 1.0;    // s between Continue presses (2.5)
     StartMode start_mode = StartMode::PrologueSolo;
@@ -125,6 +129,10 @@ struct State {
     Clock::time_point last_full{}, last_log{}, last_ring{};
     bool rung_ever = false;
     bool poll_logged = true; // the sign polling 2.5 s after a bell (join timing)
+    std::uint64_t signs_seen = 0; // host: bbnet::sign_board_changes() last acted on
+    std::uint64_t summons_seen = 0; // host: bbnet::summon_requests() last seen
+    Clock::time_point summon_at{};  // host: when our game last asked to summon someone
+    std::vector<std::string> restarted; // host: members whose game restarted, stale peer not cleared yet
     std::uint64_t tick_thread = 0;
     std::uint64_t ticks = 0, ticks_at_log = 0, foreign_ticks = 0;
     party::MemberState sent_state = party::MemberState::Title;
@@ -431,6 +439,38 @@ bool ApplySpEffect(int id) {
     return true;
 }
 
+/// Fast join, host: the game's peer pool (SummonStepManager [FrpgNetMan+0xc50] +0x48; used list
+/// sentinel at +0x58, node {next, prev, value +0x10}, peer = [value+0x20]) keeps a peer reserved
+/// for a summoned player's online id (+0x64, 16 bytes) while its keep flag (+0xe4) is set; a new
+/// summon of the same id (0x147af20) renews and reuses it even when its connection belongs to a
+/// crashed game process, so the summon data goes nowhere (docs/party/join_timing.md). For a
+/// member that restarted, the stale peers lose the id and the keep: the next summon reserves a
+/// fresh peer. Main thread only. Returns how many peers were cleared.
+int ClearStalePeers(const std::string& online_id) {
+    std::uint64_t fm = 0, ssm = 0, pool = 0, head = 0, node = 0;
+    if (!SafeGet(Guest(0x553b120), &fm) || !fm || !SafeGet(fm + 0xc50, &ssm) || !ssm || !SafeGet(ssm + 0x48, &pool) ||
+        !pool || !SafeGet(pool + 0x58, &head) || !head || !SafeGet(head, &node)) {
+        return -1;
+    }
+    int cleared = 0;
+    for (int guard = 0; node && node != head && guard < 64; ++guard) {
+        std::uint64_t value = 0, peer = 0;
+        char id[17] = {};
+        if (SafeGet(node + 0x10, &value) && value && SafeGet(value + 0x20, &peer) && peer &&
+            SafeRead(peer + 0x64, id, 16) && std::strncmp(id, online_id.c_str(), 16) == 0) {
+            const char mark = '#'; // no online id starts with it
+            const std::uint8_t off = 0;
+            SafeWrite(peer + 0x64, &mark, 1);
+            SafeWrite(peer + 0xe4, &off, 1);
+            ++cleared;
+        }
+        if (!SafeGet(node, &node)) {
+            break;
+        }
+    }
+    return cleared;
+}
+
 void Ring(State& st, const char* event, const char* why, Clock::time_point now) {
     st.last_ring = now;
     st.rung_ever = true;
@@ -610,6 +650,22 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
     }
 }
 
+/// The title takes scripted input (BB_TEST_NEWGAME): no world; in party mode the link is up and
+/// the FROM sign-in (ss.info -> login -> notice) is over: the title menu shows after it (before,
+/// "Creating save data" / "Checking network status" swallow presses).
+bool TitleReadyForInput(PartyRole role, party::PartyLink* link) {
+    if (role == PartyRole::None) {
+        return true;
+    }
+    const party::LinkState ls = link ? link->state() : party::LinkState::Idle;
+    const bool link_ok = role == PartyRole::Host ? ls == party::LinkState::Hosting : ls == party::LinkState::Connected;
+    if (!link_ok) {
+        return false;
+    }
+    const bbnet::OnlineProgress op = bbnet::online_progress();
+    return op.notice > 0 && op.since_last >= 2.0;
+}
+
 // ---- Host session watchdog (party_watchdog.h) ----
 // 0x13CDDA0: BeginLeaveSession(SprjSessionManager) 0x1ED07A0, ReloadPhase+0xf0 = chr type on
 // success, then a tail jump to 0x15BED10(network flow +0x16F8) (drops the presentation members).
@@ -698,6 +754,14 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
     Test& t = st.test;
     if (!st.world_seen) {
         return;
+    }
+    // bell_host / bell_guest: the bell through the item path (SpEffect -> SendSign -> sign
+    // create / search on the FROM server) once this player is ready, bells granted, 5 s idle.
+    if (t.bell && !t.bell_done && st.start_ready && st.granted && s.world_up && !s.loading &&
+        s.session_role == RoleIdle && Seconds(st.world_at, now) >= t.delay) {
+        t.bell_done = true;
+        Log("test: %s once (ready: %s)", t.bell, DescribeStart(st.cs, true).c_str());
+        Ring(st, t.bell, "test bell", now);
     }
     if (t.insight >= 0 && !t.insight_done && Seconds(st.world_at, now) >= 2.0 && !s.loading) {
         t.insight_done = true;
@@ -819,11 +883,15 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.ring = kHostBell;
             } else if (item == "ring_guest") {
                 st.test.ring = kGuestBell;
+            } else if (item == "bell_host") {
+                st.test.bell = kHostBell;
+            } else if (item == "bell_guest") {
+                st.test.bell = kGuestBell;
             } else if (item.rfind("insight=", 0) == 0) {
                 st.test.insight = std::atoi(item.c_str() + 8);
             } else if (!item.empty()) {
-                Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, start, grant_bells, drop_bells, award_lot=N, insight=N, ring_host or "
-                    "ring_guest; ignored",
+                Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, start, grant_bells, drop_bells, award_lot=N, insight=N, ring_host, "
+                    "ring_guest, bell_host or bell_guest; ignored",
                     item.c_str());
             }
         }
@@ -910,11 +978,13 @@ void PartyDirector::Tick() {
         start_mode = st.start_mode;
         grant_bells = st.grant_bells;
     }
+    // Test aids: scripted new game, prologue fast-forward (test_newgame.h).
+    NewGameTestTick(s, TitleReadyForInput(role, link));
     // C1: the campaign start (readiness, bells).
     if (full || !st.start_logged) {
         UpdateStart(st, s, start_mode);
         if (((grant_bells && role != PartyRole::None) || st.test.grant_bells) && st.world_seen &&
-            Seconds(st.world_at, now) >= std::min(5.0, st.ring_delay)) {
+            Seconds(st.world_at, now) >= std::min(5.0, st.ring_delay) && !PrologueSkipBusy()) {
             GrantBells(st, s);
         }
     }
@@ -934,7 +1004,7 @@ void PartyDirector::Tick() {
             std::lock_guard<std::mutex> lk(st.mu);
             ac = st.auto_continue;
         }
-        if (ac != 0 || party::runtime().restarted()) {
+        if ((ac != 0 || party::runtime().restarted()) && !NewGameTestRequested()) {
             AutoContinue(st, s, role, link, now);
         }
     }
@@ -1020,6 +1090,42 @@ void PartyDirector::Tick() {
             st.ticks_at_log = st.ticks;
         }
     }
+    // Fast join, host: a member's new sign is on our board - let the game's get-list poll run on
+    // its next frame (the FROM client's countdown [0x5540288]+0x100, set to the 1 s interval after
+    // each poll; the builder 0x1e946e0 requests once it is <= 0) instead of up to 1 s later.
+    if (role == PartyRole::Host && st.fast_join) {
+        const std::uint64_t signs = bbnet::sign_board_changes();
+        if (signs != st.signs_seen) {
+            st.signs_seen = signs;
+            std::uint64_t cm = 0;
+            float countdown = 0;
+            if (SafeGet(Guest(0x5540288), &cm) && cm && SafeGet(cm + 0x100, &countdown) && countdown > 0) {
+                const float zero = 0;
+                SafeWrite(cm + 0x100, &zero, sizeof zero);
+                Log("sign on the board: the game polls it now (was in %.2f s)", countdown);
+            }
+        }
+    }
+    if (role == PartyRole::Host) {
+        const std::uint64_t summons = bbnet::summon_requests();
+        if (summons != st.summons_seen) {
+            st.summons_seen = summons;
+            st.summon_at = now;
+        }
+    }
+    if (role == PartyRole::Host && st.fast_join) {
+        for (std::string& name : bbnet::party::PartyHostService::instance().take_restarted()) {
+            Log("%s restarted its game: its old peer is cleared once our game is out of that session", name.c_str());
+            st.restarted.push_back(std::move(name));
+        }
+        // Not while our game is still in the session with the dead peer (it ends that one itself).
+        if (!st.restarted.empty() && s.session_role == RoleIdle) {
+            for (const std::string& name : st.restarted) {
+                Log("%s: %d stale peer(s) of our game cleared", name.c_str(), ClearStalePeers(name));
+            }
+            st.restarted.clear();
+        }
+    }
     if (!st.poll_logged && Seconds(st.last_ring, now) >= 2.5) {
         st.poll_logged = true;
         Log("bell +2.5 s: %s", DescribeSignPolling().c_str());
@@ -1027,7 +1133,8 @@ void PartyDirector::Tick() {
     // Automatic summoning. The host also rings while hosting: the 2nd / 3rd cooperator of a
     // 3- / 4-player party (HostMayRing checks the count).
     if (!st.auto_ring || role == PartyRole::None || !link || !s.world_up || s.loading || !st.world_seen ||
-        Seconds(st.world_at, now) < st.ring_delay || !SessionMayRing(role == PartyRole::Host, s.session_role)) {
+        Seconds(st.world_at, now) < st.ring_delay || !SessionMayRing(role == PartyRole::Host, s.session_role) ||
+        PrologueSkipBusy()) {
         return;
     }
     if (st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {
@@ -1048,6 +1155,11 @@ void PartyDirector::Tick() {
             std::lock_guard<std::mutex> lk(st.mu);
             max_players = st.max_players;
         }
+        // Not while a summon our game asked for is under way (a bell then restarts its search
+        // and the summon fails: the guest waits for the summon data until it gives up).
+        if (st.summons_seen && Seconds(st.summon_at, now) < 20.0) {
+            return;
+        }
         if (link->state() == party::LinkState::Hosting &&
             HostMayRing(st.start_ready, s.cooperators, max_players, link->roster())) {
             Ring(st, kHostBell, "host ready, a ready party member waits", now);
@@ -1059,7 +1171,7 @@ bool PartyRequested() {
     const char* t = std::getenv("BB_PARTY_DIRECTOR_TEST");
     const char* i = std::getenv("BB_PARTY_ITEMS_TEST"); // C3 single-instance check
     return bb_party_enabled() || (t && t[0]) || (i && i[0]) || NpcTestRequested() || StoryTestRequested() ||
-           b2::Requested();
+           b2::Requested() || NewGameTestRequested();
 }
 
 void CoopTick() {

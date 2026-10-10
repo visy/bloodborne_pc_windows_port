@@ -9,10 +9,14 @@
 
 #include <string_view>
 
+// bbport: movies the game started (test drivers, gpu/shim/party/test_newgame.cpp).
+extern "C" void bbport_test_note_movie(void);
+
 namespace Libraries::AvPlayer {
 
 s32 PS4_SYSV_ABI sceAvPlayerAddSource(AvPlayerHandle handle, const char* filename) {
     LOG_TRACE(Lib_AvPlayer, "filename = {}", filename);
+    bbport_test_note_movie();
     if (handle == nullptr) {
         return ORBIS_AVPLAYER_ERROR_INVALID_PARAMS;
     }
@@ -25,6 +29,7 @@ s32 PS4_SYSV_ABI sceAvPlayerAddSourceEx(AvPlayerHandle handle, AvPlayerUriType u
     if (handle == nullptr || uri_type != AvPlayerUriType::Source || source_details == nullptr) {
         return ORBIS_AVPLAYER_ERROR_INVALID_PARAMS;
     }
+    bbport_test_note_movie();
     const auto path = std::string_view(source_details->uri.name, source_details->uri.length);
     return handle->AddSourceEx(path, source_details->source_type);
 }

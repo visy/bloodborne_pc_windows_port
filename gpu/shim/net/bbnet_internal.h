@@ -173,6 +173,11 @@ struct OnlineProgress {
     double since_last = -1;                                // s since the latest FROM request (-1: none)
 };
 OnlineProgress online_progress();
+// Host: how many signs members have put up on the party's board so far (from_api.cpp). The
+// director lets the host's game poll the board at once when it changes (fast join).
+std::uint64_t sign_board_changes();
+// Host: how many summon_messenger/request calls succeeded so far (from_api.cpp).
+std::uint64_t summon_requests();
 // Logs the game's online state (FrpgNetMan, the FROM client, the network flow) on every change
 // (online_watch.cpp); started by the first sceHttpInit under BB_PARTY.
 void online_watch_start();
