@@ -18,13 +18,18 @@
 //               NetFlowSlots_Register 0x15bc590; BB_PARTY_TEST_NPC_PATH=a for the faithful one),
 //               logs Register's answer, the slot count against the member cap and the cooperator
 //               count after each one, then a summary line.
-//       filter: A/B of the boss-cleared rejection: the faithful request with the 1.09 bytes at
-//               0x18749E8 / 0x18749F0; if no task appears, the same request with them NOP'd (the
-//               "Party: Bells after boss defeated" patch, written at runtime and restored).
+//       filter: A/B/C of the request filters, one faithful request each, 4 s apart, until a task appears:
+//               A with the 1.09 bytes; B with the boss-cleared rejections 0x18749E8 / 0x18749F0 NOP'd
+//               ("Party: Bells after boss defeated"); C with B plus the status producer's area
+//               restriction 0x18700D3 -> 0 (part of "Party: Bells anywhere"). Written at runtime,
+//               restored afterwards. A wrapper on 0x1874710 logs each request's fate ("SOS filter:").
 //       log:    no summon; logs the state only (call-path and slot-table check in any map).
 //   BB_PARTY_TEST_NPC_DELAY=<s>   seconds in a steady world before the first summon (default 5)
 //   BB_PARTY_TEST_NPC_RETURN=<s>  send every summoned NPC home (0x15be2a0) after <s> seconds
 //   BB_PARTY_TEST_NPC_LOG=0       no per-second state line
+//   BB_PARTY_TEST_NPC_PATCH=1     summon/cap modes: both patch groups of filter mode C on for the run
+//   BB_PARTY_TEST_NPC_WARP=<id>   once, before anything else: lamp warp 0x13cdf30(<WarpParam id>) when
+//                                 the world is not in that map (e.g. 2412951 Central Yharnam, m24_01)
 //
 // Log lines start with "Party NPC:"; the once-a-second line is "Party NPC: state ...".
 #pragma once
