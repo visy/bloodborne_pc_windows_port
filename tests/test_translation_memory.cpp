@@ -8,18 +8,22 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include "test_portable.h"
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
 #include "shader_recompiler/ir/ir_emitter.h"
 #include "video_core/renderer_vulkan/vk_gpu_labels.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include <vk_mem_alloc.h>
+// bbgpu's headers above are seen with its NDEBUG (gpu/CMakeLists.txt); the checks use assert().
+#undef NDEBUG
+#include <cassert>
 
 int main(int argc, char** argv) {
     using namespace Vulkan;
     using namespace Shader;
     // The regression must exercise no AMD marker commands, including diagnostic breadcrumbs.
-    setenv("BB_BREADCRUMBS","0",1);
+    bb_test_setenv("BB_BREADCRUMBS","0");
     Instance instance(0, true);
     static vk::detail::DynamicLoader loader;
     vk::detail::DispatchLoaderDynamic d;
@@ -68,7 +72,10 @@ int main(int argc, char** argv) {
 
     Info info{};
     info.hw_stage=HwStage::Compute; info.sw_stage=SwStage::Compute;
-    info.pgm_hash=BufferCopyShaderHash; info.uses_paged_buffers=true;
+    // Bloodborne's buffer copy shader (gpu/games/bloodborne.cpp); its stores also update guest
+    // memory. 0.5 moved the hash from a constant into the profile (Game::BufferCopyShader()).
+    constexpr u64 CopyShaderHash = 0xfefebf9f;
+    info.pgm_hash=CopyShaderHash; info.uses_paged_buffers=true;
     for (u32 i=0;i<3;++i) {
         BufferResource buffer{};
         buffer.buffer_type=i==2 ? BufferType::BdaPagetable : BufferType::Guest;
@@ -94,6 +101,7 @@ int main(int argc, char** argv) {
     runtime.hw.cs.workgroup_size={1,1,1};
     Profile profile{}; profile.supported_spirv=0x00010600; profile.support_int64=true;
     profile.paged_buffers=true; profile.sparse_page_shift=16;
+    profile.buffer_copy_shader_hash=CopyShaderHash;
     Backend::Bindings bindings{};
     const auto code=Backend::SPIRV::EmitSPIRV(profile,runtime,program,bindings);
     if (argc>1) {

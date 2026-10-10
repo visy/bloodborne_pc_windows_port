@@ -1,12 +1,16 @@
-from paths import ROOT
+from paths import ROOT, build_hint, test_exe
 from pathlib import Path
+import os
 import subprocess
 import unittest
 
-EXE = ROOT / 'out/runtime-test'
+EXE = test_exe('runtime-test')
 
 
-@unittest.skipUnless(EXE.exists(), 'run bash build.sh --test first')
+@unittest.skipIf(os.name == 'nt', 'tests/test_runtime.c checks guest faults with POSIX signals '
+                 '(sigaction/sigsetjmp on SIGSEGV); Windows faults go through probe.c\'s vectored '
+                 'handler, so runtime-test is built by build.sh on Linux only')
+@unittest.skipUnless(EXE.exists(), build_hint('runtime-test'))
 class RuntimeTests(unittest.TestCase):
     def run_case(self, *args):
         return subprocess.run([str(EXE.resolve()), *args], capture_output=True, text=True, timeout=10)

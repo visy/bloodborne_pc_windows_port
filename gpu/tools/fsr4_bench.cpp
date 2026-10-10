@@ -27,6 +27,18 @@
 #include "ffx_vk_fsr4_v07_assets.h"
 #include "fsr411.h"
 
+// setenv(name, value, overwrite) on Linux, _putenv_s on Windows (MinGW has no setenv).
+static void SetEnv(const char* name, const char* value, bool overwrite) {
+    if (!overwrite && std::getenv(name)) {
+        return;
+    }
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+
 namespace {
 
 #define CHECK(call)                                                                            \
@@ -302,9 +314,9 @@ int main(int argc, char** argv) {
             break;
         }
     }
-    setenv("BB_FSR4_PROFILE", "1", 0);
+    SetEnv("BB_FSR4_PROFILE", "1", false);
     if (stats) {
-        setenv("BB_FSR4_STATS", "1", 1);
+        SetEnv("BB_FSR4_STATS", "1", true);
     }
     const Gpu gpu = CreateGpu(stats);
 
