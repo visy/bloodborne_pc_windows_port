@@ -60,7 +60,8 @@ second press.
 - **Friends**: *Party → Host address* (type the host's party code, or `address:port`; **Ctrl+V**
   pastes; Enter confirms), *Password* if the host set one (the host sets it on the same page before
   *New party game*), then *Join party game*. The game restarts, joined to the host: choose
-  **New Game** and make your hunter.
+  **New Game** and make your hunter. A plain `address:port` (instead of the code) works only when
+  the host uses a password.
 - Everyone plays the prologue on their own; once ready, the party gathers by itself (below).
 
 **Later sessions:** host and friends alike: *Party → Continue party game*. The game restarts, loads

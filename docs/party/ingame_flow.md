@@ -187,3 +187,34 @@ Party flow: party character in the world (save slot 0): Continue party game will
 party.json afterwards: the hand-written plain `"password"` became `password_dpapi`, `host_secret`
 was stored, `slot` 0. The first run (single-player) checked `user/savedata`; the restarted one
 `user/savedata_party` only.
+
+**Two instances, later session** (`tmp/flow2.py`: both start single-player with a party.json -
+host: role host, password; guest: role join, `host_address` `127.0.0.1:<port>`, the same password -
+and `BB_PARTY_FLOW_TEST=continue@1`, the same code path as the *Continue party game* row). The
+first attempt was refused (`wrong password or party code`: a plain address carries no code
+secret, and the link key needed it) - fixed in PartyLink (§4). Then:
+
+```
+inst1: Party flow: continue (solo, single-player save, title): Restarting to join the party
+inst1: Party: starting the party game (join)
+inst1: Party: connected to the host as slot 1
+inst0/1: Party: auto-continue: world up after 7 / 3 press(es)
+inst0: Party: ringing the Beckoning Bell (host ready, a ready party member waits)
+inst1: Party: session trying-to-join (4, sub 0) -> client (6, sub 0)        <- summoned
+```
+
+**Two instances, a fresh party** (`tmp/flow4.py`: empty party saves; host role host, guest role
+join; `BB_PARTY_FLOW_TEST=auto@1` = *New party game* / *Join party game*; the test aids
+`BB_TEST_NEWGAME=1`, `BB_TEST_PROLOGUE_SKIP=1` make the characters and skip the prologue):
+
+```
+inst0: Party flow: new (solo, single-player save, title): Restarting into the party game (host): choose New Game
+inst1: Party flow: join (solo, single-player save, title): Restarting to join the party: choose New Game
+both:  Saves: .\user/savedata_party has no saves yet: the party game starts without characters
+both:  Party: newgame: ... contract -> finish: name entered ... -> opening -> done
+inst0: Party: session trying-to-host (1, sub 0) -> host (3, sub 4)
+inst1: Party: session trying-to-join (4, sub 0) -> client (6, sub 0)        <- summoned
+```
+
+With the event-driven new-game driver (screen changes from the message lookups) the same run
+reached the summon in 61 s of harness time instead of 90 s, without a retried press.
