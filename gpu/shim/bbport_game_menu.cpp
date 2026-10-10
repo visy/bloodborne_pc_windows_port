@@ -294,6 +294,30 @@ AddFn command_original = nullptr;
 std::atomic<const void*> screen_sound_text{nullptr};
 std::atomic<const void*> new_game_text{nullptr}; // the title's "New Game" text, as looked up
 
+// Screen changes (TextActivity): a message id looked up that was not looked up in the last second.
+std::atomic<u64> fresh_seq{0};
+std::atomic<std::int64_t> fresh_ms{0};
+struct SeenText {
+    std::atomic<u64> key{0}; // category << 32 | id, + 1 (0 = empty)
+    std::atomic<std::int64_t> ms{0};
+};
+SeenText seen_texts[4096];
+void NoteLookup(u32 category, u32 id) {
+    const std::int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now().time_since_epoch())
+                                 .count();
+    const u64 key = (u64(category) << 32 | id) + 1;
+    SeenText& s = seen_texts[(key * 0x9E3779B97F4A7C15ull) >> 52];
+    if (s.key.load(std::memory_order_relaxed) == key && now - s.ms.load(std::memory_order_relaxed) < 1000) {
+        s.ms.store(now, std::memory_order_relaxed);
+        return;
+    }
+    s.key.store(key, std::memory_order_relaxed);
+    s.ms.store(now, std::memory_order_relaxed);
+    fresh_ms.store(now, std::memory_order_relaxed);
+    fresh_seq.fetch_add(1, std::memory_order_release);
+}
+
 BB_SYSV const char16_t* LookupHook(void* repository, u32 table, u32 category, u32 id) {
     if (id >= P::IdBase && id < P::IdBase + P::TextCount()) {
         // BB_GAME_MENU_TRACE=1: how often the game asks for our texts (per 2 s).
@@ -320,6 +344,7 @@ BB_SYSV const char16_t* LookupHook(void* repository, u32 table, u32 category, u3
         return title_override;
     }
     const char16_t* text = lookup_original(repository, table, category, id);
+    NoteLookup(category, id);
     static const bool trace = [] {
         const char* env = std::getenv("BB_GAME_MENU_TRACE");
         return env && env[0] == '1';
@@ -540,6 +565,11 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
                 P::All().size());
 }
 
+
+void TextActivity(std::uint64_t* seq, std::int64_t* last_ms) {
+    *seq = fresh_seq.load(std::memory_order_acquire);
+    *last_ms = fresh_ms.load(std::memory_order_relaxed);
+}
 
 void Poll() {
     party::flow::Tick(); // the party flow: text box, party character note (party_flow.h)
