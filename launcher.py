@@ -5,7 +5,9 @@ import json
 import locale
 import os
 import queue
+import re
 import subprocess
+import sys
 import threading
 import tkinter as tk
 import xml.etree.ElementTree as ET
@@ -42,6 +44,17 @@ GPU_CAPS = APP_DIR / "out" / "bb-gpu-capabilities.exe"
 MAX_LOG_LINES = 5000
 VK_NOISE = "<Warning> vk_instance.cpp"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+# Party co-op (docs/PARTY_COOP_PLAN.md): (label, BB_PARTY value); "" = off (BB_PARTY unset)
+PARTY_MODES = [("Off", ""), ("Host a party", "host"), ("Join a party", "join")]
+PARTY_MAX_CHOICES = ["2", "3", "4"]
+PARTY_DEFAULT_PORT = 9307
+PARTY_DEFAULT_STUN = "stun.l.google.com:19302"
+PARTY_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,16}$")
+# BBP1- + Crockford base32 groups (I/L/O accepted as aliases of 1/1/0, U is never used)
+PARTY_CODE_RE = re.compile(r"^BBP1(-[0-9A-HJ-NP-TV-Z]+)+$", re.IGNORECASE)
+PARTY_HOSTPORT_RE = re.compile(r"^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+):(\d{1,5})$")
+MP_INSTANCES = APP_DIR / "tools" / "mp" / "instances.py"
 
 
 def load_xml_patches(xml_path: Path = PATCHES_XML):
@@ -99,6 +112,93 @@ def resolve_game_dir(target: str):
     if p.is_dir() and (p / "eboot.bin").is_file():
         return p
     return None
+
+
+def party_default_name() -> str:
+    """The Windows user name reduced to a valid party name (1-16 of A-Z a-z 0-9 _ -)."""
+    name = os.environ.get("USERNAME") or os.environ.get("USER") or ""
+    name = re.sub(r"[^A-Za-z0-9_-]", "", name.replace(" ", "_"))[:16]
+    return name or "Hunter"
+
+
+def party_name_ok(name: str) -> bool:
+    return bool(PARTY_NAME_RE.match(name or ""))
+
+
+def party_port(value, default: int = PARTY_DEFAULT_PORT):
+    """The port as an int for a number in 1024-65535, `default` for an empty value, else None."""
+    text = str(value if value is not None else "").strip()
+    if not text:
+        return default
+    if not text.isdigit():
+        return None
+    port = int(text)
+    return port if 1024 <= port <= 65535 else None
+
+
+def party_code_problem(code: str) -> str:
+    """'' when `code` is a party code (BBP1-...) or host:port, else what is wrong with it."""
+    code = (code or "").strip()
+    if not code:
+        return "enter the party code the host gave you (BBP1-...) or host:port"
+    if code.upper().startswith("BBP1"):
+        if PARTY_CODE_RE.match(code):
+            return ""
+        return "a party code is BBP1- followed by groups of 0-9 / A-Z (no U), separated by -"
+    m = PARTY_HOSTPORT_RE.match(code)
+    if m:
+        port = int(m.group(2))
+        return "" if 1 <= port <= 65535 else "the port after : must be 1-65535"
+    return "not a party code (BBP1-...) or host:port"
+
+
+def party_user_dir() -> Path:
+    """The game's user folder as run.bat finds it: BB_USER_DIR, else <BB_DATA_DIR or launcher dir>\\user."""
+    user = os.environ.get("BB_USER_DIR")
+    if user:
+        return Path(user)
+    return Path(os.environ.get("BB_DATA_DIR", str(APP_DIR))) / "user"
+
+
+def read_party_code() -> str:
+    """The last code the hosting game wrote to <user dir>\\party_code.txt ('' if none)."""
+    try:
+        text = (party_user_dir() / "party_code.txt").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+
+
+def party_env(s: dict) -> dict:
+    """BB_PARTY_* environment from launcher settings; party off unsets every variable."""
+    keys = ["BB_PARTY", "BB_PARTY_NAME", "BB_PARTY_PORT", "BB_PARTY_CODE", "BB_PARTY_PASSWORD",
+            "BB_PARTY_UPNP", "BB_PARTY_STUN", "BB_PARTY_PUBLIC_ADDR", "BB_PARTY_MAX",
+            "BB_PARTY_SEAMLESS", "BB_PARTY_AUTO", "BB_PARTY_SAVE"]
+    env = dict.fromkeys(keys)
+    mode = str(s.get("party_mode", "") or "")
+    if mode not in ("host", "join"):
+        return env
+    name = str(s.get("party_name", "") or "").strip()
+    port = party_port(s.get("party_port", ""))
+    max_players = str(s.get("party_max", "3"))
+    stun = str(s.get("party_stun", "") or "").strip()
+    public = str(s.get("party_public_addr", "") or "").strip()
+    password = str(s.get("party_password", "") or "")
+    env["BB_PARTY"] = mode
+    env["BB_PARTY_NAME"] = name if party_name_ok(name) else party_default_name()
+    env["BB_PARTY_PORT"] = str(port or PARTY_DEFAULT_PORT)
+    if mode == "join":
+        code = str(s.get("party_code", "") or "").strip()
+        env["BB_PARTY_CODE"] = (code.upper() if code.upper().startswith("BBP1") else code) or None
+    env["BB_PARTY_PASSWORD"] = password or None
+    env["BB_PARTY_UPNP"] = "1" if s.get("party_upnp", True) else "0"
+    env["BB_PARTY_STUN"] = stun or None  # game default: stun.l.google.com:19302; "off" disables
+    env["BB_PARTY_PUBLIC_ADDR"] = (public or None) if mode == "host" else None
+    env["BB_PARTY_MAX"] = max_players if max_players in PARTY_MAX_CHOICES else "3"
+    env["BB_PARTY_SEAMLESS"] = "1" if s.get("party_seamless", True) else "0"
+    env["BB_PARTY_AUTO"] = "1" if s.get("party_auto", True) else "0"
+    env["BB_PARTY_SAVE"] = "separate" if s.get("party_separate_save", True) else "shared"
+    return env
 
 
 def settings_env(s: dict) -> dict:
@@ -178,6 +278,15 @@ def settings_env(s: dict) -> dict:
     # Bloodborne.xml Patches
     active_patches = sorted(s.get("enabled_patches", ["Skip Intro"]))
     env["BB_PATCHES"] = ";".join(active_patches) if active_patches else None
+
+    # Party co-op (BB_PARTY=host|join; off = every BB_PARTY_* unset)
+    env.update(party_env(s))
+    if env["BB_PARTY"]:
+        # TODO(party A7): the party needs the game's ONLINE title path. "online" asks for the skip
+        # patch's online variant (picks PLAY ONLINE instead of offline), which scripts/patches.py
+        # gets from another change. Until then patches.py treats any value but "0" as the
+        # OFFLINE skip, so party testing needs that change (or BB_SKIP_NETWORK_CHOICE=0 by hand).
+        env["BB_SKIP_NETWORK_CHOICE"] = "online"
     return env
 
 
@@ -484,8 +593,8 @@ class BloodborneLauncher(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Bloodborne PC Launcher")
-        self.geometry("780x720")
-        self.minsize(720, 640)
+        self.geometry("780x760")  # the Party tab is the tallest settings tab
+        self.minsize(720, 680)
 
         self.proc = None
         self.log_fh = None
@@ -525,7 +634,8 @@ class BloodborneLauncher(tk.Tk):
         style.configure("SubHeader.TLabel", font=("Segoe UI", 9), foreground="#888888", background=bg_dark)
         style.configure("Section.TLabel", font=("Segoe UI", 8, "bold"), foreground="#c5a059", background=bg_card)
         style.configure("Hint.TLabel", font=("Segoe UI", 8), foreground="#888888", background=bg_card)
-        style.map("Card.TCheckbutton", background=[("active", "#2d2d30")])
+        style.map("Card.TCheckbutton", background=[("active", "#2d2d30")],
+                  foreground=[("disabled", "#666666")])
 
         # Settings notebook: dark tabs, the selected one joins the card below it
         style.configure("TNotebook", background=bg_dark, borderwidth=0, tabmargins=(0, 0, 0, 0),
@@ -548,6 +658,10 @@ class BloodborneLauncher(tk.Tk):
                         bordercolor="#3e3e42",
                         lightcolor="#3e3e42",
                         darkcolor="#3e3e42")
+        style.map("TEntry",
+                  fieldbackground=[("disabled", "#2a2a2c"), ("readonly", "#202022")],
+                  foreground=[("disabled", "#666666")])
+        style.map("Card.TLabel", foreground=[("disabled", "#666666")])
 
         # Combobox styling
         style.configure("TCombobox",
@@ -684,6 +798,26 @@ class BloodborneLauncher(tk.Tk):
         self.feat_hud = tk.BooleanVar(value=self.settings.get("feat_hud", False))
         self.feat_mouse_keyboard = tk.BooleanVar(value=self.settings.get("feat_mouse_keyboard", False))
 
+        # Party co-op (BB_PARTY_*)
+        party_mode = str(self.settings.get("party_mode", "") or "")
+        self.party_mode_var = tk.StringVar(value=next(
+            (label for label, value in PARTY_MODES if value == party_mode), PARTY_MODES[0][0]))
+        self.party_name_var = tk.StringVar(value=str(self.settings.get("party_name") or party_default_name()))
+        party_max = str(self.settings.get("party_max", "3"))
+        self.party_max_var = tk.StringVar(value=party_max if party_max in PARTY_MAX_CHOICES else "3")
+        self.party_auto = tk.BooleanVar(value=self.settings.get("party_auto", True))
+        self.party_seamless = tk.BooleanVar(value=self.settings.get("party_seamless", True))
+        self.party_separate_save = tk.BooleanVar(value=self.settings.get("party_separate_save", True))
+        self.party_port_var = tk.StringVar(value=str(self.settings.get("party_port", PARTY_DEFAULT_PORT)))
+        self.party_upnp = tk.BooleanVar(value=self.settings.get("party_upnp", True))
+        self.party_public_var = tk.StringVar(value=str(self.settings.get("party_public_addr", "") or ""))
+        self.party_stun_var = tk.StringVar(value=str(self.settings.get("party_stun", PARTY_DEFAULT_STUN) or ""))
+        self.party_password_var = tk.StringVar(value=str(self.settings.get("party_password", "") or ""))
+        self.party_code_var = tk.StringVar(value=str(self.settings.get("party_code", "") or ""))
+        self.party_host_code_var = tk.StringVar(value=read_party_code())
+        self.party_status_var = tk.StringVar()
+        self.party_test_running = False
+
         # ---- presets row
         preset_row = ttk.Frame(main)
         preset_row.pack(fill="x", pady=(0, 4))
@@ -698,13 +832,14 @@ class BloodborneLauncher(tk.Tk):
         everything_btn.pack(side="right")
         Tooltip(vanilla_btn, "Preset: turns the port's optional features off (upscaler, object motion, overlay, "
                              "FPS patch, mods, resolution scaling, tracing, watchdog, draw prep workers, async "
-                             "shaders, GPL, performance HUD, mouse & keyboard controls), sets 30 FPS, "
-                             "anisotropic filtering Off and disables all XML patches. Saved immediately.")
+                             "shaders, GPL, performance HUD, mouse & keyboard controls, party mode), sets "
+                             "30 FPS, anisotropic filtering Off and disables all XML patches. Saved "
+                             "immediately.")
         Tooltip(everything_btn, "Preset: turns the features back on (including async shaders and GPL), sets "
                                 "Uncap FPS and 16x anisotropic filtering, and enables the recommended patches "
-                                "(Skip Intro, Performance Patch, Disable Motion Blur). The performance HUD and "
-                                "mouse & keyboard controls are preferences and stay as they are. Saved "
-                                "immediately.")
+                                "(Skip Intro, Performance Patch, Disable Motion Blur). The performance HUD, "
+                                "mouse & keyboard controls and the Party tab are preferences and stay as "
+                                "they are. Saved immediately.")
 
         # ---- settings notebook
         self.notebook = ttk.Notebook(main)
@@ -834,6 +969,7 @@ class BloodborneLauncher(tk.Tk):
                     command=self.on_quick_patch_toggle)
         self._check(sec, "Skip online/offline choice", self.feat_skip_network_choice,
                     "Skips the screen that asks whether to play online or offline at startup (game patch). "
+                    "With party mode on (Party tab) the game always takes the online path instead. "
                     "Default: on (BB_SKIP_NETWORK_CHOICE).")
 
         sec = self._section(tab, 1, "Menus, mods & patches")
@@ -882,7 +1018,10 @@ class BloodborneLauncher(tk.Tk):
                     "Mutes the game while its window is not focused (e.g. after Alt+Tab). "
                     "Default: on (BB_MUTE_UNFOCUSED).")
 
-        # 6. Advanced / Debug
+        # 6. Party (co-op over the Internet / LAN, BB_PARTY_*)
+        self.build_party_tab()
+
+        # 7. Advanced / Debug
         tab = self._tab("Advanced / Debug")
         sec = self._section(tab, 0, "Diagnostics")
         self._check(sec, "Debug tracing (heartbeat/hang dump)", self.feat_tracing,
@@ -901,6 +1040,8 @@ class BloodborneLauncher(tk.Tk):
                     "0 = no limit, the default (BB_TIMEOUT).", width=12, indent=True)
 
         self.update_res_scaling_state()
+        self.update_party_state()
+        self.notebook.bind("<<NotebookTabChanged>>", lambda e: self.refresh_party_code(), add="+")
 
         # launch / stop
         action = ttk.Frame(main)
@@ -985,6 +1126,271 @@ class BloodborneLauncher(tk.Tk):
         Tooltip(combo, tip)
         return combo
 
+    def _entry(self, sec, text, var, tip, width=22, show=None, button=None):
+        """Label + text entry row (optionally with a small button after the entry)."""
+        lbl = ttk.Label(sec, text=text, style="Card.TLabel")
+        lbl.grid(row=sec.next_row, column=0, sticky="w", pady=3, padx=(0, 8))
+        holder = ttk.Frame(sec, style="Card.TFrame")
+        holder.grid(row=sec.next_row, column=1, sticky="w", pady=3)
+        entry = ttk.Entry(holder, textvariable=var, width=width, show=show or "")
+        entry.pack(side="left")
+        btn = None
+        if button is not None:
+            btn_text, command, btn_tip = button
+            btn = ttk.Button(holder, text=btn_text, style="Secondary.TButton", command=command, width=10)
+            btn.pack(side="left", padx=(6, 0))
+            Tooltip(btn, btn_tip)
+        sec.next_row += 1
+        Tooltip(lbl, tip)
+        Tooltip(entry, tip)
+        return lbl, entry, btn, holder
+
+    # ------------------------------------------------------------- party
+    def build_party_tab(self):
+        tab = self.party_tab = self._tab("Party")
+        sec = self._section(tab, 0, "Party")
+        mode_tip = ("Play the game together with friends (co-op). Host a party: your game is the party's "
+                    "host and the launcher shows a party code to give to your friends. Join a party: "
+                    "enter the host's code. Off: the game runs single-player as before. Party mode "
+                    "uses the game's online title path. Default: Off (BB_PARTY=host|join, unset = off).")
+        self.party_mode_combo = self._combo(sec, "Mode:", self.party_mode_var, [m[0] for m in PARTY_MODES],
+                                            mode_tip, width=16)
+        self.party_mode_combo.bind("<<ComboboxSelected>>", lambda e: self.on_party_change())
+        name_lbl, self.party_name_entry, _, _ = self._entry(
+            sec, "Your name:", self.party_name_var,
+            "The name the others see for you: 1-16 letters, digits, _ or -. It is also your online ID "
+            "in the game. Default: your Windows user name (BB_PARTY_NAME).", width=18)
+        max_tip = ("Most players in the party, you included: 2, 3 (the game's normal co-op limit) or 4 "
+                   "(experimental: the game was not made for 4 players, expect issues). Only the "
+                   "host's setting counts. Default: 3 (BB_PARTY_MAX).")
+        self.party_max_combo = self._combo(sec, "Max players:", self.party_max_var, PARTY_MAX_CHOICES,
+                                           max_tip, width=6)
+        auto_cb = self._check(sec, "Automatic summoning", self.party_auto,
+                              "The party members are summoned into the host's world automatically (no "
+                              "bells, no Insight needed) and come back after a death or a boss. Off: use "
+                              "the Beckoning / Small Resonant Bells yourself. Default: on (BB_PARTY_AUTO).",
+                              command=self.save_settings)
+        seamless_cb = self._check(sec, "Seamless party rules", self.party_seamless,
+                                  "Party rules instead of the game's co-op rules: bells work anywhere "
+                                  "(also after the area's boss is dead), the session survives boss kills, "
+                                  "and guests keep full HP instead of 70%. The host's setting counts. "
+                                  "Default: on (BB_PARTY_SEAMLESS).",
+                                  command=self.save_settings)
+        save_cb = self._check(sec, "Separate party saves", self.party_separate_save,
+                              "Party play uses its own save slot, so your single-player save is never "
+                              "touched by a party session; the game keeps backups of the party save "
+                              "next to it. Off (shared): the party plays on your normal save, so make "
+                              "your own backup first. Default: on (BB_PARTY_SAVE=separate|shared).",
+                              command=self.save_settings)
+        self.party_test_btn = None
+        if MP_INSTANCES.is_file():
+            self.party_test_btn = ttk.Button(sec, text="Local test (2 instances)", style="Secondary.TButton",
+                                             command=self.run_party_local_test)
+            self.party_test_btn.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(6, 2))
+            sec.next_row += 1
+            Tooltip(self.party_test_btn, "Developer test: runs tools\\mp\\instances.py setup --count 2, "
+                                         "then run --count 2 --seconds 300 (two game instances on this "
+                                         "PC, side by side, for 5 minutes). Its output appears in the "
+                                         "log below. Needs a built game (out\\bbport.exe).")
+
+        sec = self._section(tab, 1, "Connection")
+        port_tip = ("UDP/TCP port of the party on this PC (1024-65535). The host's friends connect to it; "
+                    "forward it in your router if UPnP cannot open it. Default: 9307 (BB_PARTY_PORT).")
+        port_lbl = ttk.Label(sec, text="Port:", style="Card.TLabel")
+        port_lbl.grid(row=sec.next_row, column=0, sticky="w", pady=3, padx=(0, 8))
+        port_row = ttk.Frame(sec, style="Card.TFrame")
+        port_row.grid(row=sec.next_row, column=1, sticky="w", pady=3)
+        sec.next_row += 1
+        self.party_port_entry = ttk.Entry(port_row, textvariable=self.party_port_var, width=7)
+        self.party_port_entry.pack(side="left")
+        upnp_cb = ttk.Checkbutton(port_row, text="UPnP", variable=self.party_upnp, style="Card.TCheckbutton",
+                                  command=self.save_settings)
+        upnp_cb.pack(side="left", padx=(10, 0))
+        Tooltip(port_lbl, port_tip)
+        Tooltip(self.party_port_entry, port_tip)
+        Tooltip(upnp_cb, "Asks your router (UPnP) to open the party port while the game runs, so friends "
+                         "can connect without manual port forwarding. Harmless when the router does not "
+                         "support it. Default: on (BB_PARTY_UPNP=1/0).")
+        public_lbl, self.party_public_entry, _, _ = self._entry(
+            sec, "Public address:", self.party_public_var,
+            "Host only: the address put into the party code. Empty (recommended) = found automatically "
+            "through the STUN server. Set it for a fixed IP / DNS name or a VPN address, e.g. "
+            "203.0.113.5 or 203.0.113.5:9307 (BB_PARTY_PUBLIC_ADDR).")
+        stun_lbl, self.party_stun_entry, _, _ = self._entry(
+            sec, "STUN server:", self.party_stun_var,
+            "Server (host:port) that tells the game its public Internet address for the party code and "
+            "connections. 'off' = no STUN (LAN / VPN / fixed public address only). Empty = the default "
+            f"{PARTY_DEFAULT_STUN} (BB_PARTY_STUN).")
+        pw_lbl, self.party_password_entry, _, _ = self._entry(
+            sec, "Password:", self.party_password_var,
+            "Optional extra password: the host and every member must enter the same one. The party code "
+            "already contains a secret; a password also keeps out people who get hold of the code. "
+            "Stored in launcher_settings.json. Default: none (BB_PARTY_PASSWORD).", show="*")
+        code_tip = ("The code the host gave you: BBP1- followed by letter/digit groups (letters are not "
+                    "case-sensitive), or the host's address as host:port (LAN, VPN, port forwarding). "
+                    "(BB_PARTY_CODE)")
+        code_lbl, self.party_code_entry, paste_btn, _ = self._entry(
+            sec, "Party code:", self.party_code_var, code_tip, width=20,
+            button=("Paste", self.paste_party_code, "Pastes the party code from the clipboard."))
+        host_tip = ("The code of your party, to give to your friends (they paste it with Join a party). "
+                    "The game writes it to party_code.txt in the user folder once it starts hosting, so "
+                    "it appears here after the game has started; it changes when your address or port "
+                    "changes.")
+        host_lbl, self.party_host_code_entry, copy_btn, _ = self._entry(
+            sec, "Your code:", self.party_host_code_var, host_tip, width=20,
+            button=("Copy code", self.copy_party_code, "Copies your party code to the clipboard."))
+        self.party_host_code_entry.state(["readonly"])
+        self.party_join_row = [code_lbl, self.party_code_entry.master]
+        self.party_host_row = [host_lbl, self.party_host_code_entry.master]
+        self.party_status_lbl = ttk.Label(sec, textvariable=self.party_status_var, style="Hint.TLabel",
+                                          wraplength=340, justify="left")
+        self.party_status_lbl.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        sec.next_row += 1
+
+        # Fields enabled in each mode: on (host or join), host only, join only
+        self.party_widgets_on = [name_lbl, self.party_name_entry, auto_cb, seamless_cb, save_cb,
+                                 port_lbl, self.party_port_entry, upnp_cb, stun_lbl, self.party_stun_entry,
+                                 pw_lbl, self.party_password_entry]
+        self.party_widgets_host = [self.party_max_combo, public_lbl, self.party_public_entry,
+                                   host_lbl, self.party_host_code_entry, copy_btn]
+        self.party_widgets_join = [code_lbl, self.party_code_entry, paste_btn]
+        for var in (self.party_name_var, self.party_port_var, self.party_code_var):
+            var.trace_add("write", lambda *a: self.update_party_hints())
+        self.after(2000, self.party_code_tick)
+
+    def party_mode(self) -> str:
+        return dict(PARTY_MODES).get(self.party_mode_var.get(), "")
+
+    def on_party_change(self):
+        self.update_party_state()
+        self.save_settings()
+
+    def update_party_state(self):
+        mode = self.party_mode()
+        for widgets, enabled in ((self.party_widgets_on, bool(mode)),
+                                 (self.party_widgets_host, mode == "host"),
+                                 (self.party_widgets_join, mode == "join")):
+            for w in widgets:
+                w.state(["!disabled"] if enabled else ["disabled"])
+        # One code row at a time: the host's own code, or the code to join with
+        show, hide = (self.party_host_row, self.party_join_row) if mode == "host" else \
+                     (self.party_join_row, self.party_host_row)
+        for w in hide:
+            w.grid_remove()
+        for w in show:
+            w.grid()
+        if mode == "host":
+            self.refresh_party_code()
+        self.update_party_hints()
+
+    def party_problems(self) -> list:
+        """What keeps the party settings from working (empty when the party is off or fine)."""
+        mode = self.party_mode()
+        if not mode:
+            return []
+        problems = []
+        if not party_name_ok(self.party_name_var.get().strip()):
+            problems.append("Your name: 1-16 letters, digits, _ or - (no spaces).")
+        if party_port(self.party_port_var.get()) is None:
+            problems.append("Port: a number from 1024 to 65535.")
+        if mode == "join":
+            problem = party_code_problem(self.party_code_var.get())
+            if problem:
+                problems.append(f"Party code: {problem}.")
+        return problems
+
+    def update_party_hints(self):
+        mode = self.party_mode()
+        problems = self.party_problems()
+        if not mode:
+            text = "Party is off: the game runs single-player, as without this tab."
+        elif problems:
+            text = "✗ " + " ".join(problems)
+        elif mode == "host":
+            text = ("Give your code to your friends." if self.party_host_code_var.get() else
+                    "The code appears here after the game starts hosting.")
+        else:
+            text = "✓ Party code OK. Start the game after the host's game is running."
+        self.party_status_var.set(text)
+        self.party_status_lbl.config(foreground="#d06060" if problems else "#888888")
+
+    def refresh_party_code(self):
+        code = read_party_code()
+        if code != self.party_host_code_var.get():
+            self.party_host_code_var.set(code)
+            if code and self.party_mode() == "host":
+                self.log(f"[PARTY] Party code: {code}")
+            self.update_party_hints()
+
+    def party_code_tick(self):
+        if self.party_mode() == "host":
+            self.refresh_party_code()
+        self.after(2000, self.party_code_tick)
+
+    def copy_party_code(self):
+        self.refresh_party_code()
+        code = self.party_host_code_var.get()
+        if not code:
+            messagebox.showinfo("No party code yet", "The party code appears after the game starts hosting "
+                                f"(it writes {party_user_dir() / 'party_code.txt'}).")
+            return
+        self.clipboard_clear()
+        self.clipboard_append(code)
+        self.log("[PARTY] Party code copied to the clipboard.")
+
+    def paste_party_code(self):
+        try:
+            text = self.clipboard_get()
+        except tk.TclError:
+            return
+        text = " ".join(str(text).split())  # one line, no surrounding spaces
+        if text:
+            self.party_code_var.set(text)
+            self.save_settings()
+
+    def run_party_local_test(self):
+        if self.party_test_running:
+            self.log("[PARTY TEST] Already running.")
+            return
+        if not messagebox.askokcancel(
+                "Local party test", "Sets up two test instances (tools\\mp\\instances.py) and runs them "
+                "side by side for 5 minutes. Continue?"):
+            return
+        game_args = []
+        game_dir = resolve_game_dir(self.eboot_var.get()) if self.eboot_var.get().strip() else None
+        if game_dir is not None:
+            game_args = ["--game", str(game_dir)]
+        steps = [["setup", "--count", "2"] + game_args,
+                 ["run", "--count", "2", "--seconds", "300"] + game_args]
+        self.party_test_running = True
+        self.log("[PARTY TEST] Starting: instances.py setup, then run (2 instances, 300 s).")
+        threading.Thread(target=self.party_test_thread, args=(steps,), daemon=True).start()
+
+    def party_test_thread(self, steps):
+        """Runs instances.py steps one after the other; output goes to the log panel (strings only
+        on log_queue: a tuple there means the game finished)."""
+        try:
+            for args in steps:
+                cmd = [sys.executable, str(MP_INSTANCES)] + args
+                self.log_queue.put("[PARTY TEST] > " + " ".join(cmd[1:]))
+                try:
+                    proc = subprocess.Popen(cmd, cwd=str(APP_DIR), stdin=subprocess.DEVNULL,
+                                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                            creationflags=NO_WINDOW)
+                except OSError as ex:
+                    self.log_queue.put(f"[PARTY TEST] Could not start: {ex}")
+                    return
+                for raw in iter(proc.stdout.readline, b""):
+                    self.log_queue.put("[PARTY TEST] " + decode_line(raw).rstrip())
+                proc.stdout.close()
+                rc = proc.wait()
+                if rc != 0:
+                    self.log_queue.put(f"[PARTY TEST] {args[0]} failed with code {rc}; stopped.")
+                    return
+            self.log_queue.put("[PARTY TEST] Done (instances.py logs --count 2 shows the game logs).")
+        finally:
+            self.party_test_running = False
+
     def update_aniso_desc(self):
         curr = self.aniso_var.get()
         desc = next((c[2] for c in ANISO_CHOICES if c[0] == curr), "")
@@ -1014,12 +1420,14 @@ class BloodborneLauncher(tk.Tk):
         self.feat_mouse_keyboard.set(False)
         self.fps_var.set("30")
         self.aniso_var.set("Off")
+        self.party_mode_var.set(PARTY_MODES[0][0])
         self.enabled_patches.clear()
         self.sync_quick_patch_vars()
         self.update_aniso_desc()
         self.update_res_scaling_state()
+        self.update_party_state()
         self.save_settings()
-        self.log("Preset applied: Vanilla mode (all optional features off, FPS preset=30 native, BB_ANISO=0, all patches off).")
+        self.log("Preset applied: Vanilla mode (all optional features off, FPS preset=30 native, BB_ANISO=0, all patches off, party off).")
 
     def set_everything_on(self):
         self.feat_upscaler.set(True)
@@ -1420,6 +1828,18 @@ class BloodborneLauncher(tk.Tk):
             "preupload": dict(PREUPLOAD_CHOICES).get(self.preupload_var.get(), ""),
             "frames_ahead": dict(FRAMES_AHEAD_CHOICES).get(self.frames_ahead_var.get(), "2"),
             "enabled_patches": sorted(list(self.enabled_patches)),
+            "party_mode": self.party_mode(),
+            "party_name": self.party_name_var.get().strip(),
+            "party_max": self.party_max_var.get(),
+            "party_auto": self.party_auto.get(),
+            "party_seamless": self.party_seamless.get(),
+            "party_separate_save": self.party_separate_save.get(),
+            "party_port": self.party_port_var.get().strip(),
+            "party_upnp": self.party_upnp.get(),
+            "party_public_addr": self.party_public_var.get().strip(),
+            "party_stun": self.party_stun_var.get().strip(),
+            "party_password": self.party_password_var.get(),
+            "party_code": self.party_code_var.get().strip(),
         }
 
     def save_settings(self):
@@ -1712,6 +2132,13 @@ class BloodborneLauncher(tk.Tk):
             messagebox.showerror("Invalid Path", f"Could not find eboot.bin in:\n{target}")
             return
 
+        party_problems = self.party_problems()
+        if party_problems:
+            self.notebook.select(self.party_tab)
+            messagebox.showerror("Party settings", "Fix the Party tab before launching:\n\n"
+                                 + "\n".join(party_problems))
+            return
+
         ready, err_msg, details = self.verify_prelaunch(game_dir)
         if not ready:
             self.log(f"[PRE-LAUNCH ERROR] Verification failed: {err_msg.splitlines()[0]}")
@@ -1768,6 +2195,14 @@ class BloodborneLauncher(tk.Tk):
         self.log(f"FPS: {self.fps_var.get()} | Res: {res_choice} | Mods: {env['BB_MODS_ENABLED']}")
         self.log(features_str)
         self.log(f"XML Patches ({len(active_patches)} active): {', '.join(active_patches) if active_patches else 'None'}")
+        if env.get("BB_PARTY"):
+            self.log(f"Party: {env['BB_PARTY']} | Name: {env['BB_PARTY_NAME']} | Port: {env['BB_PARTY_PORT']} | "
+                     f"Max: {env['BB_PARTY_MAX']} | Auto: {env['BB_PARTY_AUTO']} | "
+                     f"Seamless: {env['BB_PARTY_SEAMLESS']} | Save: {env['BB_PARTY_SAVE']} | "
+                     f"UPnP: {env['BB_PARTY_UPNP']}"
+                     + (f" | Code: {env['BB_PARTY_CODE']}" if env.get("BB_PARTY_CODE") else ""))
+        else:
+            self.log("Party: off")
         self.log("=" * 50)
 
         cmd = ["cmd.exe", "/d", "/c", RUN_BAT.name] if os.name == "nt" else [str(RUN_BAT)]
