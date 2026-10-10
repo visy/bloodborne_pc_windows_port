@@ -787,7 +787,10 @@ void KickStalledTasks(const GameSnapshot& s, double now) {
     }
     const u64 remo = Field<u64>(Slot(0x5540058), 8);
     const bool remo_on = remo && (Field<u8>(remo, 0x168) & 1);
-    if (now - pending_since < 2.0 || now - last_kick < 1.0 || remo_on) {
+    // While SprjRemo's +0x168 bit 0 is set the flow update skips every task (0x1789B60); live run 8
+    // showed it stuck at 1 on the guest after its host-world load (no cutscene visible), so after
+    // 3 s we run the update ourselves anyway.
+    if (now - pending_since < (remo_on ? 3.0 : 2.0) || now - last_kick < 1.0) {
         return;
     }
     last_kick = now;
@@ -797,8 +800,8 @@ void KickStalledTasks(const GameSnapshot& s, double now) {
     } dt{Guest(0x52efd40), 1.0f / 30.0f};
     for (const TaskInfo& t : Tasks(false)) {
         if ((t.mode == 1 || t.mode == 2) && t.next == kStepCreate && t.step != kStepCreate) {
-            Log("kick: task mode %d stalled at step %d next %d for %.1f s (flow timer %.2f); running its update",
-                t.mode, t.step, t.next, now - pending_since, Field<float>(Slot(kSlotFlow), 0x98));
+            Log("kick: task mode %d stalled at step %d next %d for %.1f s (remo %d); running its update", t.mode,
+                t.step, t.next, now - pending_since, int(remo_on));
             using Fn = void(BB_COOP_SYSV*)(u64, const Dt*);
             reinterpret_cast<Fn>(Guest(kTaskUpdate))(t.task, &dt);
         }

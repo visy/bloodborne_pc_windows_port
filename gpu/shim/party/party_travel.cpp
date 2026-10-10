@@ -17,6 +17,7 @@
 #ifndef BB_PARTY_TRAVEL_NO_GAME
 #include "coop_hooks.h"
 #include "game_state.h"
+#include "party_b2.h"
 #include "party_director.h"
 
 #include <atomic>
@@ -1018,7 +1019,9 @@ void TravelTick() {
         return;
     }
     if (Role() == PartyRole::Host) {
-        HostCloseEmptyRoom();
+        if (!b2::Enabled()) { // B2 keeps the room; members are re-created after the load
+            HostCloseEmptyRoom();
+        }
         return;
     }
     const GameSnapshot g = ReadGameState(false);
