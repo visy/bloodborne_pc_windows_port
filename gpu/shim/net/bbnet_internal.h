@@ -148,4 +148,14 @@ void post_guest_call(std::uintptr_t fn, std::uint64_t a0 = 0, std::uint64_t a1 =
 // Waits until every call posted so far has returned (tests, shutdown).
 void drain_guest_calls();
 
+// --- The game's FROM server sign-in as the HTTP layer saw it (http_hle.cpp) ---
+// The party director waits for it on the title before it confirms Continue: pressing on while
+// the online chain (ss.info, login, sync_chara_id, notices) still runs leaves the game offline.
+struct OnlineProgress {
+    int ss_info = 0, login = 0, chara_id = 0, notice = 0;  // answers with HTTP 200 so far
+    int failures = 0;                                      // requests without an HTTP 200
+    double since_last = -1;                                // s since the latest FROM request (-1: none)
+};
+OnlineProgress online_progress();
+
 }  // namespace bbnet

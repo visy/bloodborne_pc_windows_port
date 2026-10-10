@@ -18,7 +18,9 @@
 // unacked events are replayed after a reconnect and de-duplicated by cursor), PARTY_CMD,
 // PROGRESS, BYE. No frame for lost_timeout (10 s) = connection lost; the host keeps a lost
 // member's slot (and its event queue) for slot_keep (60 s); the guest reconnects with
-// exponential backoff 1, 2, 4 .. 30 s and gets the same slot back (resume token).
+// exponential backoff 1, 2, 4 .. 10 s and gets the same slot back (resume token). A restarted
+// host restores its member table (slot, name, token: kept_members / restore_members, from the
+// party runtime's crash marker), so its guests get their slots back after a host crash too.
 //
 // Threads: one IO thread (WSAPoll) per PartyLink, plus one callback thread: every callback runs
 // on the callback thread, one at a time, never while PartyLink's lock is held, so callbacks may
@@ -97,7 +99,7 @@ struct LinkConfig {
     int lost_timeout_ms = 10000;
     int slot_keep_ms = 60000;
     int backoff_initial_ms = 1000;
-    int backoff_max_ms = 30000;
+    int backoff_max_ms = 10000;  // a crashed host is back within seconds of its restart
     int connect_timeout_ms = 5000;
     int roster_refresh_ms = 5000;  // host re-broadcasts the roster (fresh pings) this often
 };
@@ -114,6 +116,13 @@ bool parse_identity_file(const std::string& text, const std::string& item_key, s
 // BB_PARTY_PORT, BB_PARTY_MAX (clamped 2..4), BB_PARTY_PASSWORD over `cfg`.
 void apply_link_env(LinkConfig& cfg);
 bool valid_member_name(const std::string& name);
+
+// Host: a member's slot as kept across a host restart.
+struct KeptMember {
+    int slot = 0;
+    std::string name;
+    std::array<std::uint8_t, 16> token{};
+};
 
 struct LinkCallbacks {
     // Host: a member completed the handshake (rejoined = it got its kept slot back).
@@ -180,6 +189,16 @@ public:
     bool send_progress(int slot, const std::vector<std::uint8_t>& blob);
     // This player's roster entry (host: broadcast to all; guest: reported to the host).
     void set_local_state(MemberState state, std::uint32_t map_id);
+    // Host: every member's slot, name and resume token (for the crash marker).
+    std::vector<KeptMember> kept_members() const;
+    // Host, before start_host: members of the previous (crashed) run, as lost members whose slot
+    // is kept for slot_keep_ms from start_host. They come back by token or name; their WELCOME
+    // says "not resumed" (the event streams start afresh: this process is new).
+    void restore_members(const std::vector<KeptMember>& members);
+    // Guest: the last WELCOME resumed our previous session (false: the host restarted or released
+    // our slot - whatever the host knew about us is gone).
+    bool last_welcome_resumed() const;
+
     // Host: drop a member and free its slot (BYE Kicked).
     bool kick(int slot, const std::string& reason);
 
