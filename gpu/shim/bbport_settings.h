@@ -136,6 +136,9 @@ void ConfigureDlssSupport(bool available, const char* problem);
 bool FixedRenderSession();
 int RenderPreset();
 bool ResolutionNeedsRestart();
+/// A setting applied only at start (game patches, model detail, motion vectors, live resolution,
+/// GPL, the startup render size) differs from what this run started with.
+bool RestartNeeded();
 /// Writes the file (menu changes).
 void Save();
 /// Window thread, about once a second: when the file changed on disk since it was last read or
