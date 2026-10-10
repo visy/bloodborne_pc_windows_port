@@ -3,7 +3,8 @@
 // (BB_PARTY_PORT, default 9307); guests connect to it directly (no server anywhere).
 //
 // Wire: every frame is [u32 len LE][u8 type][payload], len = 1 + payload size.
-//   guest -> HELLO     {magic "BBPL", u16 version, str name, sha256 eboot[32], mods hash[32], token[16]}
+//   guest -> HELLO     {magic "BBPL", u16 version, str name, sha256 eboot[32], mods hash[32], token[16],
+//                       [str rules]}   rules: the game-rule tag (party_fourp.h), absent from old builds
 //   host  -> CHALLENGE {nonce[24]}                         (or REJECT on version / hash / name)
 //   guest -> AUTH      {nonce[24], proof[32]}              proof = keyed BLAKE2b (party_crypto.h)
 //   host  -> WELCOME   {slot, max players, resumed, host clock ms, observed ip[4] + port, token,
@@ -81,6 +82,7 @@ struct LinkConfig {
     std::uint16_t port = 9307;          // host: listen port (0 = ephemeral, see bound_port())
     std::string bind_addr = "0.0.0.0";  // host
     int max_players = 3;                // 2..4 including the host (BB_PARTY_MAX)
+    std::string rules;                  // game-rule tag ("4p:v1:..."), must match the host's (also in mods_hash)
     // Timing (tests shrink these).
     int ping_interval_ms = 1000;
     int lost_timeout_ms = 10000;

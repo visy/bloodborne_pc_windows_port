@@ -604,11 +604,17 @@ struct PartyLink::Impl {
             r.bytes(eboot, 32);
             r.bytes(mods, 32);
             r.bytes(c->token.data(), 16);
+            const std::string rules = r.ok && r.n ? r.str16() : std::string();
             if (!r.ok || std::memcmp(magic, kMagic, 4) != 0) return lose(c, "not a PartyLink client");
             if (ver != kLinkProtocolVersion)
                 return reject_conn(c, RejectCode::Version,
                                    "different party protocol version (host " + std::to_string(kLinkProtocolVersion) +
                                        ", yours " + std::to_string(ver) + "): update the port");
+            if (rules != cfg.rules)
+                return reject_conn(c, RejectCode::Mismatch,
+                                   "different party game rules (host " + (cfg.rules.empty() ? "none" : cfg.rules) +
+                                       ", yours " + (rules.empty() ? "none: an older build" : rules) +
+                                       "): use the same build and the same BB_PARTY_FOURP* settings");
             if (std::memcmp(eboot, cfg.eboot_sha256.data(), 32) != 0 || std::memcmp(mods, cfg.mods_hash.data(), 32) != 0)
                 return reject_conn(c, RejectCode::Mismatch, "different game version/patches/mods");
             if (!valid_member_name(c->name))
@@ -997,6 +1003,7 @@ struct PartyLink::Impl {
         Writer w;
         w.bytes(kMagic, 4).u16(kLinkProtocolVersion).str16(cfg.name);
         w.bytes(cfg.eboot_sha256.data(), 32).bytes(cfg.mods_hash.data(), 32).bytes(my_token.data(), 16);
+        if (!cfg.rules.empty()) w.str16(cfg.rules);
         send(c, kHello, w);
     }
 

@@ -7,6 +7,7 @@
 #include "party_code.h"
 #include "party_crypto.h"
 #include "party_director.h"
+#include "party_fourp.h"
 #include "party_travel.h"
 #include "upnp_win.h"
 
@@ -243,6 +244,11 @@ std::array<std::uint8_t, 32> eboot_hash() {
 std::array<std::uint8_t, 32> mods_digest(std::string* what) {
     std::string blob = "bbparty-mods-1";
     std::string data;
+    // The game-rule set (4-player rules, party_fourp.h): peers with other rules must not meet.
+    // Max players itself is not in it: the host's BB_PARTY_MAX counts (WELCOME), guests follow.
+    const std::string rules = coop::fourp::FourpRulesTag();
+    blob += std::string("\0rules\0", 7) + rules;
+    *what += "rules " + rules + ", ";
     const std::string dd = data_dir();
     if (!env("BB_PARTY_HASH_PATCHES") || env_on("BB_PARTY_HASH_PATCHES")) {
         const fs::path pb = fs::path(dd) / "out" / "patches.bin";
@@ -841,6 +847,7 @@ void startup_main() {
     cfg.eboot_sha256 = eboot_hash();
     std::string what;
     cfg.mods_hash = mods_digest(&what);
+    cfg.rules = coop::fourp::FourpRulesTag();
     plog("%s %s, port %u, up to %d players; patches/mods %s... (%s)%s", host ? "host" : "guest", cfg.name.c_str(),
          cfg.port, cfg.max_players, hex_prefix(cfg.mods_hash).c_str(), what.c_str(),
          loopback_mode() ? "; loopback test" : "");
