@@ -124,6 +124,14 @@ def game_slots(count: int, root: str, pool: str = "game", label: str = ""):
                 is_prio = lambda e: any(f in e["root"].replace("/", "\\").lower() for f in prio)
                 order = [e for e in st["queue"] if is_prio(e)] + [e for e in st["queue"] if not is_prio(e)]
                 first = order and order[0]["id"] == me["id"]
+                # Backfill: when the head of the queue doesn't fit in the free slots, the earliest
+                # waiter that does fit may go (runs are short, so the head isn't starved for long).
+                if not first and order:
+                    free = st["max_clients"] - used
+                    head_fits = order[0]["count"] <= free
+                    if not head_fits:
+                        fitting = next((e for e in order if e["count"] <= free), None)
+                        first = fitting is not None and fitting["id"] == me["id"]
                 # Gate (gate.txt next to the queue file, e.g. "only the join speed-up may test until
                 # its fix is merged"): while it exists, only priority roots get game slots.
                 gate = (QUEUE_FILE.parent / "gate.txt").exists()
