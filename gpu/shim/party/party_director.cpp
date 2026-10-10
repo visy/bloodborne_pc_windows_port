@@ -13,6 +13,7 @@
 #include "party_items.h"
 #include "party_phantom.h"
 #include "party_runtime.h"
+#include "party_progress.h"
 #include "party_travel.h"
 #include "seamless_rules.h"
 
@@ -433,6 +434,9 @@ void PartyDirector::ConfigureFromEnv() {
         max_players = std::atoi(m);
     }
     Configure(role, max_players);
+    progress::SetRole(role == PartyRole::Host    ? progress::Role::Host  // C2 progress sync
+                      : role == PartyRole::Guest ? progress::Role::Guest
+                                                 : progress::Role::None);
     std::lock_guard<std::mutex> lk(st.mu);
     if (const char* e = std::getenv("BB_PARTY_RING_EVERY"); e && e[0] && std::atof(e) >= 1.0) {
         st.ring_every = std::atof(e);
@@ -534,6 +538,7 @@ void PartyDirector::Tick() {
         role = st.role;
         link = st.link;
     }
+    progress::DirectorTick(s, link); // C2: flag capture / apply, host -> guest sync (party_progress.h)
     // Title: the FROM client's state when it changes (sign-in debugging).
     if (role != PartyRole::None && full && !s.world_up) {
         std::string fc = DescribeFromClient();
@@ -662,6 +667,8 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
         return;
     }
     LuaEventsInit();
+    progress::Init();         // C2 progress sync (party_progress.h)
+    progress::InstallHooks(); // byte-verified flag hooks (BB_PARTY_PROGRESS=0: none)
     SeamlessRulesInit(); // A6: party patch report, EMEVD filter (seamless_rules.h)
     fourp::FourpInit();  // 4-player parties: H1-H4, E6, P5 (party_fourp.h)
     PartyDirector::Get().ConfigureFromEnv();

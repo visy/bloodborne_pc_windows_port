@@ -11,6 +11,7 @@
 #include "party_items.h"
 #include "party_phantom.h"
 #include "party_fourp.h"
+#include "party_progress.h"
 #include "party_travel.h"
 #include "upnp_win.h"
 
@@ -543,6 +544,8 @@ void on_state(LinkState s, const std::string& detail) {
                  resumed ? " (session resumed)" : " (the host restarted: a new session)");
             if (!resumed) {
                 if (bbnet::party::RemoteGuest* rg = bbnet::party::remote_guest()) rg->reset_event_cursor();
+                // It no longer knows our NP context or relay registration either.
+                bbnet::session::host_session_reset();
                 host_lost("the host does not know our session any more");
             }
         }
@@ -675,6 +678,11 @@ LinkCallbacks make_callbacks(bool host) {
                 std::string err;
                 if (coop::StoryFromJsonText(body, &s, &err)) coop::RequestGuestStory(s);
                 else plog("story event: %s", err.c_str());
+                return;
+            }
+            if (name == coop::progress::kEventFlags || name == coop::progress::kEventFlagSnapshot) {
+                std::string err;  // C2: the host's flags, applied by the main-thread tick
+                if (!coop::progress::OnLinkEvent(name, body, &err)) plog("%s event: %s", name.c_str(), err.c_str());
                 return;
             }
             if (name == coop::kItemsEventName || name == coop::kItemsFullEventName) {  // C3: the host's items

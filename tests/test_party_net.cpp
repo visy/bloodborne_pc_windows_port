@@ -6,6 +6,7 @@
 #include "bbnet_internal.h"
 #include "net_stun.h"
 #include "netsim.h"
+#include "party_udp.h"
 #include "json.h"
 #include "gpu/bbnet.h"
 
@@ -146,6 +147,55 @@ static void test_stun() {
     std::printf("stun: ok\n");
 }
 
+// PeerPaths (party_udp.h): direct while probes are answered, the host relay otherwise.
+static void test_peer_paths() {
+    using bbnet::udp::PeerPaths;
+    using C = std::chrono::steady_clock;
+    const auto t0 = C::now();
+    auto at = [&](int ms) { return t0 + std::chrono::milliseconds(ms); };
+    const std::uint32_t a = htonl(0x0a000002), b = htonl(0x0a000003);
+    const std::uint16_t pa = htons(9307), pb = htons(9308);
+    PeerPaths paths(PeerPaths::Config{1000, 3000, 5000, false});
+    paths.add(a, pa, 50010, at(0));
+    paths.add(b, pb, 0, at(0));  // no relay port: always direct
+    std::vector<std::pair<std::uint32_t, std::uint16_t>> probes;
+    std::vector<std::string> notes;
+    paths.tick(at(0), &probes, &notes);
+    CHECK(probes.size() == 2);  // both probed at once
+    probes.clear();
+    paths.tick(at(500), &probes, &notes);
+    CHECK(probes.empty());      // once a second
+    std::uint16_t rp = 0;
+    paths.tick(at(2900), &probes, &notes);
+    CHECK(!paths.relayed(a, pa, &rp));  // still trying directly
+    paths.tick(at(3100), &probes, &notes);
+    CHECK(paths.relayed(a, pa, &rp) && rp == 50010);  // no answer for 3 s: relay
+    CHECK(!paths.relayed(b, pb, &rp));                 // nowhere to fall back to
+    CHECK(notes.size() == 1);
+    std::uint32_t da = 0;
+    std::uint16_t dp = 0;
+    CHECK(paths.direct_of_relay(50010, &da, &dp) && da == a && dp == pa);
+    // An answer: direct again at the next tick.
+    paths.on_ack(a, pa, at(4000));
+    paths.tick(at(4100), &probes, &notes);
+    CHECK(!paths.relayed(a, pa, &rp));
+    // Answered before, then silent: relay after 5 s without an ack.
+    paths.tick(at(8900), &probes, &notes);
+    CHECK(!paths.relayed(a, pa, &rp));
+    paths.tick(at(9100), &probes, &notes);
+    CHECK(paths.relayed(a, pa, &rp));
+    CHECK(paths.peers().size() == 2 && notes.size() == 3);
+    // An unknown source and an unknown relay port: nothing.
+    CHECK(!paths.relayed(htonl(0x0a000009), pa, &rp) && !paths.direct_of_relay(50099, &da, &dp));
+    // BB_PARTY_FORCE_RELAY: relayed from the start, whatever the probes say.
+    PeerPaths forced(PeerPaths::Config{1000, 3000, 5000, true});
+    forced.add(a, pa, 50010, at(0));
+    forced.on_ack(a, pa, at(10));
+    forced.tick(at(20), &probes, &notes);
+    CHECK(forced.relayed(a, pa, &rp));
+    std::printf("peer paths: ok\n");
+}
+
 static void test_netsim() {
     using namespace bbnet::netsim;
     Config c;
@@ -156,7 +206,35 @@ static void test_netsim() {
     CHECK(!parse("lat=abc", &c, &err));
     CHECK(!parse("speed=3", &c, &err));
     CHECK(parse("off", &c, &err) && !c.enabled);
-    CHECK(parse("dsl", &c, &err) && c.enabled && c.lat_ms == 25);
+    CHECK(parse("dsl", &c, &err) && c.enabled && c.lat_ms == 80 && c.jitter_ms == 20 && c.loss_pct == 2 &&
+          c.dup_pct == 0.5 && c.reorder_pct == 1);
+    CHECK(parse("bad", &c, &err) && c.lat_ms == 200 && c.jitter_ms == 80 && c.loss_pct == 8 && c.dup_pct == 0);
+    CHECK(parse("dsl,seed=3,outage=5000,every=60000", &c, &err) && c.lat_ms == 80 && c.seed == 3 &&
+          c.outage_ms == 5000 && c.outage_every_ms == 60000);
+    {
+        // Burst outages: nothing gets through for 5 s once a minute, from the first minute on.
+        CHECK(parse("lat=10,outage=5000,every=60000", &c, &err));
+        Queue q(c);
+        const auto t0 = Clock::now();
+        int through = 0, lost = 0;
+        for (int ms = 0; ms < 130000; ms += 100) {
+            const std::uint32_t v = static_cast<std::uint32_t>(ms);
+            const int n = q.submit(t0 + std::chrono::milliseconds(ms), 1, 0x0100007f, htons(9), &v, sizeof(v));
+            const bool out = (ms >= 60000 && ms < 65000) || (ms >= 120000 && ms < 125000);
+            if (n == 0) ++lost;
+            else ++through;
+            CHECK((n == 0) == out);
+        }
+        CHECK(lost == 100 && q.stats().blacked_out == 100);
+        // On demand (tests): blackout(from, until).
+        Queue q2(Config{true, 1, 0, 0, 0, 0, 0, 0, 1});
+        q2.blackout(t0 + std::chrono::seconds(1), t0 + std::chrono::seconds(2));
+        const std::uint32_t v = 1;
+        CHECK(q2.submit(t0, 1, 0x0100007f, htons(9), &v, 4) == 1);
+        CHECK(q2.submit(t0 + std::chrono::milliseconds(1500), 1, 0x0100007f, htons(9), &v, 4) == 0);
+        CHECK(q2.submit(t0 + std::chrono::milliseconds(2000), 1, 0x0100007f, htons(9), &v, 4) == 1);
+        (void)through;
+    }
 
     // The statistics over many datagrams.
     CHECK(parse("lat=50,jitter=10,loss=10,dup=5,reorder=5,seed=7", &c, &err));
@@ -340,6 +418,8 @@ static void test_sockets(std::uint16_t party_port) {
     const std::uint8_t after[] = {0xff, 0xc3, 40, 30, 'o', 'k'};
     raw_send(raw, after, sizeof(after), party_port);
     CHECK(recvfrom(p30, buf, sizeof(buf), 0, &from, &fromlen) == 2 && std::memcmp(buf, "ok", 2) == 0);
+    // ... and is answered with a probe ack (the direct path works both ways: PeerPaths).
+    CHECK(raw_recv(raw, wire, sizeof(wire), 2000) == 8 && bbnet::udp::is_probe_ack(wire, 8));
     // The host answers a STUN Binding Request on the party port.
     std::uint8_t req[net::stun::kMaxRequest], txid[net::stun::kTxid];
     const std::size_t rq = net::stun::build_binding_request(req, txid);
@@ -361,6 +441,23 @@ static void test_sockets(std::uint16_t party_port) {
     std::uint32_t server = 0;
     std::uint16_t relay_vport = 0;
     CHECK(bbnet::p2p_relay(&server, &relay_vport) && relay_vport == relay.vport);
+    // A port on the host's address that is not a known relay port goes as addressed (a player
+    // sharing the host's address); route_to_peer remembers the relay ports it routes to.
+    {
+        std::uint8_t hdr[bbnet::udp::kRelayHeader];
+        std::uint32_t sa = 0;
+        std::uint16_t sp = 0;
+        CHECK(!bbnet::p2p_relay_client().frame_for(server, htons(relay.vport), hdr, &sa, &sp));
+        const std::uint16_t peer = relay.vport == 51234 ? 51235 : 51234;
+        const bbnet::udp::PeerRoute r = bbnet::udp::route_to_peer(bbnet::p2p_relay_client(), server, 40000, peer, true);
+        CHECK(r.relayed && r.addr == server && r.port == peer);
+        CHECK(bbnet::p2p_relay_client().frame_for(server, htons(peer), hdr, &sa, &sp));
+        // Ourselves, the host itself (its party port) and anything without force: direct.
+        CHECK(!bbnet::udp::route_to_peer(bbnet::p2p_relay_client(), server, 40000, relay.vport, true).relayed);
+        CHECK(!bbnet::udp::route_to_peer(bbnet::p2p_relay_client(), server, party_port, peer, true).relayed);
+        CHECK(!bbnet::udp::route_to_peer(bbnet::p2p_relay_client(), server, 40000, peer, false).relayed);
+        bbnet::p2p_relay_client().add_relay_port(relay.vport);  // the round trip below: to ourselves
+    }
     // Relay round trip: a datagram for our own relay port goes framed to the host (ourselves),
     // is forwarded back as [fb]['r'][port] and reaches vport 30 from 127.0.0.1:<relay port>.
     SceAddr via_relay = sce_addr("127.0.0.1", relay.vport, 30);
@@ -567,6 +664,7 @@ int main() {
     test_local_address();
     test_stun();
     test_netsim();
+    test_peer_paths();
     test_routing();
     test_np();
     test_dispatcher();
