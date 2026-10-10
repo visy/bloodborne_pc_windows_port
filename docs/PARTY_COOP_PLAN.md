@@ -71,7 +71,10 @@ Bell events (main thread only, through LuaEvent_DispatchByName): host `OnEvent_C
   per-member event queue pushed over PartyLink) + STUN Binding responder and guest↔guest relay
   on the party UDP port.
 - PartyLink: TCP control `[u32 len][u8 type][payload]`, HELLO (version, name, eboot SHA-256,
-  patch/mod hash) / CHALLENGE / AUTH (keyed BLAKE2b) / WELCOME / REJECT, then XChaCha20-Poly1305
+  gameplay patch hash + names from out/party_patch_hash.txt (scripts/patches.py; graphics / FPS /
+  resolution patches excluded), gameplay mod hash + names from out/party_mods.txt (scripts/mods.py;
+  texture / shader / sound files excluded); a Mismatch REJECT says which of the three differs and
+  which names only one side has) / CHALLENGE / AUTH (keyed BLAKE2b) / WELCOME / REJECT, then XChaCha20-Poly1305
   (key = Argon2i(password ‖ code secret), monocypher). PING/PONG 1 Hz, ROSTER, RPC_REQ/RESP,
   EVENT/ACK, PARTY_CMD, PROGRESS, BYE.
 - Party code: `BBP1-` + Crockford base32 {ver, flags, ipv4, port, secret[8], crc16}; Internet

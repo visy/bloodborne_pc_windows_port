@@ -237,49 +237,54 @@ std::array<std::uint8_t, 32> eboot_hash() {
     return h;
 }
 
-// Patches and mods: BLAKE2b-256 over out/patches.bin (BB_PARTY_HASH_PATCHES=0 leaves it out),
-// mods.json and the enabled mods folder's listing (relative path + size). Missing files count as
-// empty, so two players without mods match.
-std::array<std::uint8_t, 32> mods_digest(std::string* what) {
-    std::string blob = "bbparty-mods-1";
+// The gameplay patches (BB_PARTY_HASH_PATCHES=0: not compared): out/party_patch_hash.txt, which
+// scripts/patches.py writes next to patches.bin with the hash and names of the patches that are
+// not cosmetic (graphics, FPS, resolution ... do not count). Without it (an older patches.py) the
+// whole patches.bin is hashed, as before. Fills cfg.patches_hash / patch_names.
+void patch_identity(LinkConfig& cfg, std::string* what) {
+    if (env("BB_PARTY_HASH_PATCHES") && !env_on("BB_PARTY_HASH_PATCHES")) {
+        *what += "patches not compared (BB_PARTY_HASH_PATCHES=0)";
+        return;
+    }
+    const fs::path out = fs::path(data_dir()) / "out";
     std::string data;
-    const std::string dd = data_dir();
-    if (!env("BB_PARTY_HASH_PATCHES") || env_on("BB_PARTY_HASH_PATCHES")) {
-        const fs::path pb = fs::path(dd) / "out" / "patches.bin";
-        if (read_file(pb, &data)) {
-            blob += std::string("\0patches\0", 9) + data;
-            *what += "patches.bin " + std::to_string(data.size()) + " B";
-        } else {
-            *what += "no patches.bin";
-        }
-    } else {
-        *what += "patches not hashed";
+    if (read_file(out / "party_patch_hash.txt", &data) &&
+        parse_identity_file(data, "patch", &cfg.patches_hash, &cfg.patch_names)) {
+        *what += std::to_string(cfg.patch_names.size()) + " gameplay patches";
+        return;
     }
-    const bool mods_on = !env("BB_MODS_ENABLED") || env_on("BB_MODS_ENABLED");
-    if (mods_on) {
-        const fs::path cfg = env("BB_MODS_CONFIG") ? fs::path(env("BB_MODS_CONFIG")) : fs::path(dd) / "mods.json";
-        if (read_file(cfg, &data)) {
-            blob += std::string("\0modsjson\0", 10) + data;
-            *what += ", mods.json";
-        }
-        const fs::path dir = env("BB_MODS_DIR") ? fs::path(env("BB_MODS_DIR")) : fs::path(dd) / "mods";
-        std::error_code ec;
-        std::vector<std::string> files;
-        if (fs::is_directory(dir, ec)) {
-            for (auto it = fs::recursive_directory_iterator(dir, ec); !ec && it != fs::recursive_directory_iterator();
-                 it.increment(ec)) {
-                if (!it->is_regular_file(ec)) continue;
-                const std::string rel = fs::relative(it->path(), dir, ec).generic_string();
-                files.push_back(rel + "\t" + std::to_string(it->file_size(ec)));
-            }
-        }
-        std::sort(files.begin(), files.end());
-        for (const std::string& f : files) blob += std::string("\0mod\0", 5) + f;
-        if (!files.empty()) *what += ", " + std::to_string(files.size()) + " mod files";
-    } else {
+    if (read_file(out / "patches.bin", &data)) {
+        const std::string blob = std::string("bbparty-patches-bin\0", 20) + data;
+        cfg.patches_hash = crypto::blake2b256(blob.data(), blob.size());
+        cfg.patch_names = {"patches.bin (all patches: no party_patch_hash.txt)"};
+        *what += "patches.bin " + std::to_string(data.size()) + " B (no party_patch_hash.txt)";
+        return;
+    }
+    *what += "no patches";
+}
+
+// The gameplay mods: out/party_mods.txt from scripts/mods.py (the enabled mods' winning files that
+// are not cosmetic - textures, shaders, sound, fonts ... do not count; ReShade-type files outside
+// dvdroot_ps4 never do). No file (mods.py did not run or failed: no mods applied) or mods off:
+// none. Fills cfg.mods_hash / mod_names.
+void mod_identity(LinkConfig& cfg, std::string* what) {
+    if (env("BB_MODS_ENABLED") && !env_on("BB_MODS_ENABLED")) {
         *what += ", mods off";
+        return;
     }
-    return crypto::blake2b256(blob.data(), blob.size());
+    std::string data;
+    const fs::path f = fs::path(data_dir()) / "out" / "party_mods.txt";
+    if (read_file(f, &data) && parse_identity_file(data, "mod", &cfg.mods_hash, &cfg.mod_names)) {
+        *what += cfg.mod_names.empty() ? ", no gameplay mods" : ", " + std::to_string(cfg.mod_names.size()) + " gameplay mods";
+        return;
+    }
+    *what += ", no party_mods.txt (no mods applied)";
+}
+
+std::string joined(const std::vector<std::string>& v) {
+    std::string s;
+    for (const std::string& x : v) s += (s.empty() ? "" : ", ") + x;
+    return s.empty() ? "none" : s;
 }
 
 // ---- state --------------------------------------------------------------------------------
@@ -441,7 +446,16 @@ void on_state(LinkState s, const std::string& detail) {
     case LinkState::Connecting: break;  // PartyLink logs it (on_log)
     case LinkState::Reconnecting: plog("connection lost; reconnecting%s%s", detail.empty() ? "" : ": ", detail.c_str()); break;
     case LinkState::Rejected: {
-        const std::string why = std::string("rejected (") + std::to_string(static_cast<int>(link->reject_code())) +
+        const RejectCode code = link->reject_code();
+        if (code == RejectCode::Mismatch) {
+            // The host names what differs (identity_mismatch): eboot.bin, gameplay patches, mods.
+            set_error("host refused: " + link->reject_reason());
+            plog("the host refused this game: %s", link->reject_reason().c_str());
+            plog("make the listed patches / mods / game version the same as the host's (the launcher's Patches "
+                 "and Mods tabs), or BB_PARTY_HASH_PATCHES=0 on every player to skip the patch check");
+            break;
+        }
+        const std::string why = std::string("rejected (") + std::to_string(static_cast<int>(code)) +
                                 "): " + link->reject_reason();
         set_error(why);
         plog("%s", why.c_str());
@@ -840,10 +854,14 @@ void startup_main() {
     }
     cfg.eboot_sha256 = eboot_hash();
     std::string what;
-    cfg.mods_hash = mods_digest(&what);
-    plog("%s %s, port %u, up to %d players; patches/mods %s... (%s)%s", host ? "host" : "guest", cfg.name.c_str(),
-         cfg.port, cfg.max_players, hex_prefix(cfg.mods_hash).c_str(), what.c_str(),
+    patch_identity(cfg, &what);
+    mod_identity(cfg, &what);
+    plog("%s %s, port %u, up to %d players; version check: eboot %s..., patches %s..., mods %s... (%s)%s",
+         host ? "host" : "guest", cfg.name.c_str(), cfg.port, cfg.max_players, hex_prefix(cfg.eboot_sha256).c_str(),
+         hex_prefix(cfg.patches_hash).c_str(), hex_prefix(cfg.mods_hash).c_str(), what.c_str(),
          loopback_mode() ? "; loopback test" : "");
+    plog("gameplay patches: %s", joined(cfg.patch_names).c_str());
+    plog("gameplay mods: %s", joined(cfg.mod_names).c_str());
     {
         std::lock_guard<std::mutex> lk(r.mu);
         if (r.stopping) return;
