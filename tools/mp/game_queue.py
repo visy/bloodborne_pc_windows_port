@@ -124,6 +124,11 @@ def game_slots(count: int, root: str, pool: str = "game", label: str = ""):
                 is_prio = lambda e: any(f in e["root"].replace("/", "\\").lower() for f in prio)
                 order = [e for e in st["queue"] if is_prio(e)] + [e for e in st["queue"] if not is_prio(e)]
                 first = order and order[0]["id"] == me["id"]
+                # Gate (gate.txt next to the queue file, e.g. "only the join speed-up may test until
+                # its fix is merged"): while it exists, only priority roots get game slots.
+                gate = (QUEUE_FILE.parent / "gate.txt").exists()
+                if gate and pool == "game" and not is_prio(me):
+                    first = False
                 if first and used + count <= st["max_clients"]:
                     st["queue"] = [e for e in st["queue"] if e["id"] != me["id"]]
                     me["since"] = time.strftime("%H:%M:%S")
