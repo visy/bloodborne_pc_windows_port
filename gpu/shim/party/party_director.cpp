@@ -1210,9 +1210,9 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         Log("test: %s %s from %s", TravelStepName(step.kind), step.args.c_str(), DescribeHere(s).c_str());
         return;
     } else if (step.kind == TravelStep::GuestKill) {
-        // guest_kill=ENTITY@S%MAP (0: the nearest living enemy within 60 m): ForceDead on the guest's
+        // guest_kill=ENTITY@S%MAP (0: the nearest living enemy within 500 m): ForceDead on the guest's
         // own copy (split travel: an enemy killed while the players are apart).
-        const std::uint32_t id = step.id ? step.id : b2::NearestEnemyForTest(60.0f);
+        const std::uint32_t id = step.id ? step.id : b2::NearestEnemyForTest(500.0f);
         Log("test: guest_kill: entity %u", id);
         if (id) {
             reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, id);

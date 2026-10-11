@@ -3497,7 +3497,21 @@ bool MemberApart(int slot) {
 
 std::uint32_t NearestEnemyForTest(float max_m) {
     const GameSnapshot s = ReadGameState(false);
-    return g_on.load() && s.world_up && !s.loading ? NearestEnemy(s, max_m) : 0u;
+    if (!g_on.load() || !s.world_up || s.loading) {
+        return 0;
+    }
+    int all = 0, ours = 0, alive = 0;
+    ForEachMapChr([&](u32 id, u64 chr) {
+        ++all;
+        if (EnemyReconcilable(id, s.map_id)) {
+            ++ours;
+            alive += Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0x128, 0) > 0 ? 1 : 0;
+        }
+    });
+    const u32 id = NearestEnemy(s, max_m);
+    Log("test: map chrs %d, of %s %d (%d alive); nearest within %.0f m: %u", all, MapName(s.map_id).c_str(), ours, alive,
+        double(max_m), id);
+    return id;
 }
 
 bool PopOutgoing(int* slot, std::string* body) {
