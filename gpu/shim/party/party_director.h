@@ -83,6 +83,9 @@ private:
 /// Main thread: the game's own leave (0x13CDDA0: BeginLeaveSession + drop the presentation
 /// members, as the host watchdog uses it), byte-checked; false when the code is not 1.09's.
 bool LeaveGameSession();
+/// Any thread: the host ended the party / is gone: a guest still in the host's world goes home at
+/// once (OnLeave_Limit on the next main-thread tick).
+void RequestGuestSendHome(const std::string& why);
 
 /// BB_PARTY or BB_PARTY_DIRECTOR_TEST is set (non-empty).
 bool PartyRequested();

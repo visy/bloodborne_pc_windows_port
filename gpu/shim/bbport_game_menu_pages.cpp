@@ -45,6 +45,8 @@ u32 AddDynamic(std::size_t limit) {
 
 /// Writes a run-time text in place (the game may hold the pointer): cut to the text's limit
 /// with an ellipsis, rewritten only when it changed.
+std::atomic<std::uint64_t> dynamic_changes{0};
+
 void SetDynamic(u32 id, const std::string& english, const std::string& russian) {
     Dynamic& d = *dynamics[std::size_t(texts[id - IdBase].dynamic)];
     for (int lang = 0; lang < 2; ++lang) {
@@ -63,6 +65,7 @@ void SetDynamic(u32 id, const std::string& english, const std::string& russian) 
         buffer[text.size()] = 0; // shorter first: a reader never runs past the new end
         std::copy(text.begin(), text.end(), buffer.begin());
         buffer[text.size()] = 0;
+        dynamic_changes.fetch_add(1, std::memory_order_release);
     }
 }
 
@@ -151,6 +154,7 @@ int Info() {
 
 // ---- Pages ----
 std::vector<Page> pages;
+u32 split_text[1] = {0};
 
 void AddPage(const char* en, const char* ru, const char* help_en, const char* help_ru) {
     const u32 name = AddText(en, ru);
@@ -826,6 +830,11 @@ void DefineAll() {
     AddRow(Info(), AddText("Last event", "Последнее"), party.event_help, {party.event_value, party.event_value},
            Kind::Toggle);
 
+    // The split-travel question (party_split.cpp): a game dialog with YES / NO after a lamp,
+    // headstone or Hunter's Mark in a party (docs/party/split_travel.md).
+    split_text[0] = AddText("Travel with the party?\nYES: everyone travels together.  NO: you travel alone.",
+                            "Путешествовать всей группой?\nДА: вся группа вместе.  НЕТ: только вы.");
+
     // ---- Party rules (party_balance.h): the death debuff and the overhead display. ----
     AddPage("Party rules", "Правила группы", "Death debuff, what shows above companions (bbport)",
             "Штраф за смерть, что видно над спутниками (bbport)");
@@ -888,6 +897,11 @@ void RefreshBalance() {
 }
 
 } // namespace
+
+u32 SplitTravelText(int which) {
+    Define();
+    return which == 0 ? split_text[0] : 0;
+}
 
 std::u16string Utf16(const char* utf8) {
     std::u16string out;
@@ -981,6 +995,10 @@ const char16_t* Text(u32 id, bool russian) {
 
 std::size_t TextCount() {
     return texts.size();
+}
+
+std::uint64_t DynamicChanges() {
+    return dynamic_changes.load(std::memory_order_acquire);
 }
 
 bool IsDynamic(u32 id) {

@@ -138,7 +138,11 @@ void HandleCommand(Bridge& b, const status::Command& c, const TickIn& in, TickOu
     switch (c.type) {
     case status::CommandType::Leave:
         Log("status: Leave pressed (%s)", in.host ? "host: ending the party" : "guest: leaving the party");
-        if (!in.host && in.session_role == 6 && a.leave_session) {  // 6: client (summoned)
+        // The game's own leave first - a guest summoned (6: client) goes home at once; a host with
+        // guests in (3: host) ends the session the way its Silencing Blank would - then the link
+        // stops once the game's session is idle.
+        if (((!in.host && in.session_role == 6) || (in.host && in.session_role == 3 && in.cooperators > 0)) &&
+            a.leave_session) {
             const bool left = a.leave_session();
             Log("status: Leave: the game's own session leave first: %s",
                 left ? "done; the link stops once the session is idle" : "not available (code check)");

@@ -322,6 +322,11 @@ static void test_chalice() {
     CHECK(TravelFromJsonText(TravelToJsonText(t), &back) && back.chalice_channel == 77);
     t.chalice_channel = 0;
     CHECK(TravelFromJsonText(TravelToJsonText(t), &back) && back.chalice_channel == 0);
+    // Split travel: "alone" is optional (absent = the party travels together) and round-trips.
+    CHECK(!back.alone && TravelToJsonText(t).find("alone") == std::string::npos);
+    t.alone = true;
+    CHECK(TravelFromJsonText(TravelToJsonText(t), &back) && back.alone);
+    t.alone = false;
     // Lamps 29xxxxx, a dungeon respawn, an exact position in area 29.
     TravelIntent l;
     l.kind = TravelKind::Lamp;
