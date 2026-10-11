@@ -102,6 +102,12 @@ BB_COOP_SYSV void SummonMessageProbe(u64, u64, u64 wrapper, u64, u64, u64) {
     std::fflush(stdout);
 }
 
+namespace {
+constexpr std::uint32_t kRecordBits = 1376; // +992 name 0x30 bytes ends here
+std::atomic<double> g_quick_join_at{0};
+void* g_set_load_mode = nullptr;
+} // namespace
+
 // Quick join's last step (0x1aa8410(helper)): writes the fetched channel into the helper's slot record
 // (+0xc8 slot, +0xd0 the channel object) and clears the chalice groups (docs/party/chalice.md 4).
 BB_COOP_SYSV void QuickJoinStepProbe(u64 helper, u64, u64, u64, u64, u64) {
@@ -112,11 +118,59 @@ BB_COOP_SYSV void QuickJoinStepProbe(u64 helper, u64, u64, u64, u64, u64) {
     for (int i = 0; ch && i < 6; ++i) SafeGet(ch + 8 * i, &q[i]);
     std::uint32_t bits = 0;
     ReadEventFlagValue(9020, 7, &bits);
+    g_quick_join_at.store(Seconds());
     std::printf("Party: chalice: quick join writes slot %u (current slots 0x%x), channel object %llx: %llx %llx %llx %llx %llx %llx%s",
                 slot, bits, static_cast<unsigned long long>(ch), static_cast<unsigned long long>(q[0]),
                 static_cast<unsigned long long>(q[1]), static_cast<unsigned long long>(q[2]),
                 static_cast<unsigned long long>(q[3]), static_cast<unsigned long long>(q[4]),
                 static_cast<unsigned long long>(q[5]), "\n");
+    std::fflush(stdout);
+}
+
+// A summoned member's game quick-joins the host's dungeon into its slot record (0x1aa8410), then
+// the session load switches its event flags to load mode 1 (SetLoadMode 0x13bb590: the flag groups
+// move onto other storage, only the slot bit 9020+k is carried over). The map load (0x1928680) then
+// reads the slot record's dungeon map (+96) from that storage, finds none and loads m255 (live: the
+// guest fell through an empty world). So the record is carried over too: snapshotted before the
+// switch, written into the load-mode-1 storage after it — transient, never the member's save.
+
+BB_COOP_SYSV void SetLoadModeHook(u64 man, u64 mode) {
+    using Fn = void(BB_COOP_SYSV*)(u64, u64);
+    using Get = std::uint32_t(BB_COOP_SYSV*)(u64, std::uint32_t, std::uint32_t);
+    using Set = void(BB_COOP_SYSV*)(u64, std::uint32_t, std::uint32_t, std::uint32_t);
+    std::int32_t cur = -1;
+    const double joined = g_quick_join_at.load();
+    const bool carry = static_cast<std::uint32_t>(mode) == 1 && man && SafeGet(man + kLoadModeOff, &cur) && cur == 0 &&
+                       joined > 0 && Seconds() - joined < 180;
+    std::uint32_t rec[kRecordBits / 32] = {};
+    int slot = -1;
+    if (carry) {
+        const Get get = reinterpret_cast<Get>(Guest(0x13cfd80));
+        slot = SlotFromBits(get(man, kSlotFlag, kSlots));
+        if (slot >= 0) {
+            const std::uint32_t base = kRecordBase + static_cast<std::uint32_t>(slot) * kRecordStride;
+            for (std::uint32_t i = 0; i < kRecordBits / 32; ++i) rec[i] = get(man, base + 32 * i, 32);
+        }
+    }
+    reinterpret_cast<Fn>(g_set_load_mode)(man, mode);
+    if (!carry || slot < 0) {
+        return;
+    }
+    g_quick_join_at.store(0);
+    if ((rec[3] & 0xff000000u) != 0x1d000000u) {
+        std::printf("Party: chalice: load mode 1: slot %d's record holds no dungeon (map 0x%08x): not carried\n", slot, rec[3]);
+        std::fflush(stdout);
+        return;
+    }
+    const Get get = reinterpret_cast<Get>(Guest(0x13cfd80));
+    const Set set = reinterpret_cast<Set>(Guest(0x13d0060));
+    const std::uint32_t base = kRecordBase + static_cast<std::uint32_t>(slot) * kRecordStride;
+    const std::uint32_t before = get(man, base + 96, 32);
+    for (std::uint32_t i = 0; i < kRecordBits / 32; ++i) set(man, base + 32 * i, 32, rec[i]);
+    const std::uint32_t after = get(man, base + 96, 32);
+    std::printf("Party: chalice: load mode 1: slot %d's record (dungeon %llu, map 0x%08x) carried over (map read 0x%08x -> 0x%08x)\n",
+                slot, static_cast<unsigned long long>((static_cast<std::uint64_t>(rec[2]) << 32) | rec[1]), rec[3],
+                before, after);
     std::fflush(stdout);
 }
 
@@ -128,6 +182,8 @@ void InstallProbes() {
     done = true;
     HookPrologue(0x14ba340, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, &SummonMessageProbe, "chalice: summon message probe");
     HookPrologue(0x1aa8410, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, &QuickJoinStepProbe, "chalice: quick join step probe");
+    ReplacePrologue(0x13bb590, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, reinterpret_cast<const void*>(&SetLoadModeHook),
+                    &g_set_load_mode, "chalice: carry the slot record into load mode 1");
 }
 
 namespace {
