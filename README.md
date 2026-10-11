@@ -105,16 +105,19 @@ PC (several game copies, simulated internet lag), not yet between two PCs.
 |---|---|
 | "Travel alone / Travel with party" choice at lamps | In progress |
 | Every player, host included, respawns at their own last lamp | In progress |
-| Dying in a boss fight: spectate until the fight ends | In progress |
+| Dying in a boss fight: spectate until the fight ends, then everyone respawns at one shared lamp | In progress |
 | Bloodstains for everyone, like single-player | In progress |
 | Death debuff (stacks on death, cleared at a lamp; on by default, can be turned off) | In progress |
 | Enemy scaling settings (harder than vanilla by default) | In progress |
 | Guests open doors, pull levers, talk to NPCs; NPC choices shared | In progress |
+| Item pickups and enemy drops per player: everyone gets their own | In progress |
 | Cutscenes play for the whole party | Planned |
 | Joining during a boss fight waits outside until it ends | Planned |
 | 4 players (3 work today) | In progress |
 | Names over party members | In progress |
 | Chalice dungeons: full clear in a party, rituals by anyone | In progress |
+| PvP / friendly fire the host can switch on and off | Later |
+| Pings: party members and marked spots visible through walls, with distance and player colours | Later |
 
 ### Connecting over the internet
 
