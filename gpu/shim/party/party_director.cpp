@@ -5,6 +5,7 @@
 #include "party_director.h"
 #include "../net/netsim.h"
 #include "party_hud.h"
+#include "party_ids.h"
 #include "party_balance.h"
 #include "party_async_io.h"
 
@@ -1158,7 +1159,25 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         step.kind == TravelStep::HostWarp ? " to lamp " : step.kind == TravelStep::HostKill ? " entity " : "",
         step.kind == TravelStep::HostWarp || step.kind == TravelStep::HostKill ? step.id : 0u, Describe(s).c_str());
     if (step.kind == TravelStep::HostWarp) {
-        RunLampWarpDecided(step.id, false);  // the party move (no split-travel question)
+        // Test setup should stay invisible: a host already standing at that lamp (within 5 m, same
+        // map) only gets the lamp as its last-lamp record (+0x1528), no warp and no loading screen.
+        float spot[4], me[4];
+        std::uint64_t w = 0, rec = 0, pm = 0, a = 0, b = 0;
+        const std::uint64_t player = LocalPlayer();
+        bool at_lamp = false;
+        if (ids::ReturnSpot(step.id, spot) && (ids::EntityMap(step.id) >> 16) == (s.map_id >> 16) && player &&
+            SafeGet(player + 0x58, &a) && a && SafeGet(a + 8, &b) && b && SafeGet(b + 0x3b0, &pm) && pm &&
+            SafeGet(pm + 0x68, &pm) && pm && SafeRead(pm + 0x1e0, me, sizeof me)) {
+            const float dx = me[0] - spot[0], dy = me[1] - spot[1], dz = me[2] - spot[2];
+            at_lamp = dx * dx + dy * dy + dz * dz < 25.0f;
+        }
+        if (at_lamp && SafeGet(Guest(0x5556678), &w) && w && SafeGet(w + 0x1528, &rec)) {
+            const std::uint64_t now_rec = (rec & 0xffffffff00000000ull) | step.id;
+            SafeWrite(w + 0x1528, &now_rec, 8);
+            Log("test: host_warp %u skipped: already at that lamp (last-lamp record set, no load)", step.id);
+        } else {
+            RunLampWarpDecided(step.id, false);  // the party move (no split-travel question)
+        }
     } else if (step.kind == TravelStep::HostAlone) {
         b2::HostTravelAloneNext();
         RunLampWarpDecided(step.id, true);

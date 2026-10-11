@@ -594,6 +594,7 @@ std::atomic<GuestRedirectFn> g_redirect_cb{nullptr};
 std::atomic<bool> g_death_redirect_on{true};
 std::atomic<SendHomeVetoFn> g_send_home_veto{nullptr};
 std::atomic<GuestDeathHoldFn> g_guest_death_hold{nullptr};
+std::atomic<HostDeathInterceptFn> g_host_death_intercept{nullptr};
 void* g_funnel_orig = nullptr;
 void* g_block_clear3_orig = nullptr;
 void* g_lamp_warp_orig = nullptr;
@@ -951,6 +952,11 @@ __attribute__((noinline)) BB_COOP_SYSV u64 FunnelHook() {
             const u64 site = ret - Guest(0) - 5;
             const TravelKind kind = TravelKindFromCallSite(site);
             // OnReviveMagic_1's mark is captured at OnReviveMagic's entry (it left the session first).
+            if (kind == TravelKind::HostDeath) {
+                if (HostDeathInterceptFn fn = g_host_death_intercept.load(); fn && fn()) {
+                    return 1;  // B2: the host is revived in place (no party move)
+                }
+            }
             if (TravelKindBroadcast(kind) && site != kMarkTailJump) {
                 CaptureHost(site, kind);
             }
@@ -1293,6 +1299,18 @@ void GuestDeathRedirectNow() {
         return;
     }
     Log("held guest death: no redirect; the stock funnel (home)");
+    reinterpret_cast<FunnelFn>(g_funnel_orig ? g_funnel_orig : reinterpret_cast<void*>(Guest(kFunnel)))();
+}
+
+void SetHostDeathIntercept(HostDeathInterceptFn fn) {
+    g_host_death_intercept = fn;
+}
+
+void HostDeathFunnelNow() {
+    if (g_travel_on.load() && Role() == PartyRole::Host) {
+        CaptureHost(0x1381ede, TravelKind::HostDeath);
+    }
+    Log("host death: the stock funnel runs now (respawn load; the party follows)");
     reinterpret_cast<FunnelFn>(g_funnel_orig ? g_funnel_orig : reinterpret_cast<void*>(Guest(kFunnel)))();
 }
 
