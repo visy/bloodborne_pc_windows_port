@@ -57,6 +57,9 @@ def main():
     ap.add_argument("--host-world", default="", help="the host's in-world walk after the restart")
     ap.add_argument("--until", action="append", default=[])
     ap.add_argument("--env", action="append", default=[], help="KEY=VALUE for both instances")
+    ap.add_argument("--count", type=int, default=2, help="continue: 3 = a second guest (a copy of inst1's party "
+                    "character and party.json under another name)")
+    ap.add_argument("--host-delay", type=int, default=8, help="seconds in the joined world before --host-world")
     a = ap.parse_args()
     root = Path(a.root)
     port0 = instances.base_port(root)
@@ -65,10 +68,21 @@ def main():
     guest = [("title 5 " + l) if l != "-" else l for l in guest]
     # The party process after the restart: an in-world walk (Options > System > Party ...).
     if a.host_world:
-        host[1] = "joined 8 " + a.host_world
+        host[1] = f"joined {a.host_delay} " + a.host_world
     if a.guest_world:
         guest[1] = "joined 8 " + a.guest_world
-    for i, lines in enumerate((host, guest)):
+    if a.count > 2 and a.phase == "continue":
+        import json as _json
+        for k in range(2, a.count):
+            src, dst = root / "inst1" / "user", root / f"inst{k}" / "user"
+            dst.mkdir(parents=True, exist_ok=True)
+            if not (dst / "savedata_party").exists():
+                shutil.copytree(src / "savedata_party", dst / "savedata_party")
+            pj = _json.loads((src / "party.json").read_text(encoding="utf-8"))
+            pj["name"] = (pj.get("name") or "Hunter")[:14] + f"-{k}"
+            (dst / "party.json").write_text(_json.dumps(pj, indent=2), encoding="utf-8")
+    all_lines = [host, guest] + [[l if not l.startswith("joined") else "-" for l in guest]] * max(0, a.count - 2)
+    for i, lines in enumerate(all_lines):
         user = root / f"inst{i}" / "user"
         user.mkdir(parents=True, exist_ok=True)
         if a.phase == "fresh":
@@ -99,7 +113,7 @@ def main():
     env = [f"BB_TEST_MENU_FILE={root}\\menu{{i}}.txt", "BB_PARTY_PORT={port}", "BB_PARTY_UPNP=0",
            "BB_PARTY_STUN=off", "BB_TEST_NEWGAME=party", "BB_TEST_PROLOGUE_SKIP=party",
            "BB_TEST_NAME=Hunter{i}"]
-    cmd = [sys.executable, str(HERE / "instances.py"), "run", "--count", "2", "--root", str(root), "--game", a.game,
+    cmd = [sys.executable, str(HERE / "instances.py"), "run", "--count", str(a.count), "--root", str(root), "--game", a.game,
            "--saves", str(root / "nosaves"), "--build", str(REPO), "--seconds", str(a.seconds), "--idle", "0",
            "--label", f"flowlive {a.phase}", "--timestamps"]
     for e in env + a.env:
@@ -107,11 +121,11 @@ def main():
     # The summon, and a little of the log after it (the screenshots at +3 s).
     for u in a.until or [r"Party: session trying-to-join .* -> client \(6[\s\S]{1500}"]:
         cmd += ["--until", u]
-    subprocess.run([sys.executable, str(HERE / "instances.py"), "setup", "--count", "2", "--root", str(root),
+    subprocess.run([sys.executable, str(HERE / "instances.py"), "setup", "--count", str(a.count), "--root", str(root),
                     "--build", str(REPO), "--game", a.game, "--saves", str(root / "nosaves")], check=True)
     r = subprocess.run(cmd)
     shot.terminate()
-    for i in range(2):
+    for i in range(a.count):
         pj = root / f"inst{i}" / "user" / "party.json"
         print(f"inst{i} party.json:", pj.read_text(encoding="utf-8") if pj.exists() else "(none)")
     sys.exit(r.returncode)

@@ -207,6 +207,7 @@ struct State {
     bool auto_ring = true;
     int auto_continue = -1; // BB_PARTY_AUTOCONTINUE: -1 default (on in party mode), 0 off, 1 on
     double ring_every = 30.0;
+    bool a11_waiting = false;  // A11: the host's bell held (boss fight / cutscene)
     // BB_PARTY_FAST_JOIN (default on; docs/party/join_timing.md): shorter director pauses.
     bool fast_join = true;
     double ring_delay = 0.3;        // s in a steady world before the first bell (5 without fast join)
@@ -451,6 +452,7 @@ void LogTransitions(State& st, const GameSnapshot& now) {
     const GameSnapshot& was = st.last;
     if (now.world_up != was.world_up) {
         Log("world %s: %s", now.world_up ? "up" : "down", Describe(now).c_str());
+        if (!now.world_up) BossBarReset();  // A11: a load ends any boss fight
     }
     if (now.loading != was.loading) {
         Log("loading screen %s", now.loading ? "up" : "gone");
@@ -2114,6 +2116,23 @@ void PartyDirector::Tick() {
     }
     if (st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {
         return;
+    }
+    // A11 (ERSC_PARITY.md, user decision): a player joining while the host fights a boss or
+    // watches a cutscene waits outside - the host does not ring until it ends (the guest's sign
+    // waits at the host's lamp in its own world, GatherGuest).
+    if (role == PartyRole::Host) {
+        const bool boss = BossBarShown(), remo = CutscenePlaying();
+        if (boss || remo) {
+            if (!st.a11_waiting) {
+                st.a11_waiting = true;
+                Log("A11: no bell while the host %s: joiners wait outside", boss ? "fights a boss" : "watches a cutscene");
+            }
+            return;
+        }
+        if (st.a11_waiting) {
+            st.a11_waiting = false;
+            Log("A11: the boss fight / cutscene is over: ringing for waiting joiners again");
+        }
     }
     // C1 (party_start.h): no bell before this player finished its start (clinic / first death
     // pitfalls); the host rings only for members that are ready (roster Home / Joining).
