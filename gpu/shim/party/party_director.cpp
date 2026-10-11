@@ -103,13 +103,18 @@ void Log(const char* fmt, ...) {
 struct TravelStep {
     // HostMark / GuestMark: the Hunter's Mark (the Lua event "OnReviveMagic", what the player's
     // special-effect update 0x18FEF50 raises for a stateInfo 0x17 effect). HostStage: Lua
-    // WarpNextStage 0x132E010 (args area:block:region:index:warp point). HostMove: the host's chr
-    // put at each x:y:z:yaw (separated by '/') 2 s apart, no load (streamed blocks). HostHeadstone:
-    // talk to the headstone t<id> (stand 1.2 m in front, Cross), wait for its menu, Down N times,
-    // Cross (args id:N).
-    enum Kind { HostWarp, HostDie, GuestDie, HostMark, GuestMark, HostStage, HostMove, HostHeadstone } kind = HostWarp;
-    std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30
-    std::string args;     // HostStage / HostMove / HostHeadstone
+    // WarpNextStage 0x132E010 (args area:block:region:index:warp point), or WarpNextStage_Bonfire
+    // 0x132E050 (args bonfire:ID). HostWalk: the host's chr put at each x:y:z:yaw (separated by
+    // '/') 3 s apart, no load (streamed blocks). HostHeadstone: talk to the headstone t<id> (stand
+    // 1.2 m in front, Cross), wait for its menu, Down N times, Cross (args id:N).
+    enum Kind {
+        HostWarp, HostDie, GuestDie, HostKill, HostMove, GuestMove,
+        HostMark, GuestMark, HostStage, HostWalk, HostHeadstone
+    } kind = HostWarp;
+    std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30; HostKill: the entity id
+    float pos[3] = {};    // HostMove / GuestMove: the chr warp target (map coordinates)
+    std::string map;      // HostMove / GuestMove "%NAME": only while the current map name contains it
+    std::string args;     // HostStage / HostWalk / HostHeadstone
     double delay = 15.0;
     int min_join = 0;     // "#N": not before this player's Nth join
 };
@@ -118,16 +123,6 @@ struct Test {
     bool on = false;
     bool log_state = false;
     int insight = -1;
-    // A running multi-tick step (HostMove / HostHeadstone).
-    struct Script {
-        TravelStep::Kind kind = TravelStep::HostMove;
-        std::string args;
-        int stage = 0, presses = 0;
-        Clock::time_point at{};
-        bool pressed = false;
-        std::uint64_t text_seq = 0;
-    } script;
-    bool script_on = false;
     const char* ring = nullptr; // the event to raise once
     double delay = 10.0;
     bool start = false, grant_bells = false, drop_bells = false, drop_done = false;
@@ -149,6 +144,20 @@ struct Test {
     Clock::time_point step_at{}; // the last step's run, for "back after" times
     bool ran = false;            // a step of this role ran
     TravelStep::Kind last_kind = TravelStep::HostWarp;
+    // HostKill waits for no re-join (a B2 host keeps its cooperators through a load): it runs S s
+    // after the world was steady again with a cooperator, counted from here.
+    Clock::time_point steady_at{};
+    bool steady = false;
+    // A running multi-tick step (HostWalk / HostHeadstone).
+    struct Script {
+        TravelStep::Kind kind = TravelStep::HostWalk;
+        std::string args;
+        int stage = 0, presses = 0;
+        Clock::time_point at{};
+        bool pressed = false;
+        std::uint64_t text_seq = 0;
+    } script;
+    bool script_on = false;
 };
 
 struct State {
@@ -707,16 +716,20 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::HostWarp: return "host_warp";
     case TravelStep::HostDie: return "host_die";
     case TravelStep::GuestDie: return "guest_die";
+    case TravelStep::HostKill: return "host_kill";
+    case TravelStep::HostMove: return "host_move";
+    case TravelStep::GuestMove: return "guest_move";
     case TravelStep::HostMark: return "host_mark";
     case TravelStep::GuestMark: return "guest_mark";
     case TravelStep::HostStage: return "host_stage";
-    case TravelStep::HostMove: return "host_move";
+    case TravelStep::HostWalk: return "host_walk";
     case TravelStep::HostHeadstone: return "host_headstone";
     }
     return "?";
 }
 
 constexpr std::uint64_t kWarpNextStage = 0x132e010; // Lua WarpNextStage(ctx unused, area, block, region, index, point)
+constexpr std::uint64_t kWarpNextStageBonfire = 0x132e050; // Lua WarpNextStage_Bonfire(ctx unused, id)
 constexpr std::uint32_t kPadDownTest = 0x40;
 
 /// The local chr's map stage (PlayerIns +0x3F8, what the stage-UID check 0x193C537 compares) and position.
@@ -751,7 +764,7 @@ bool PutChr(const GameSnapshot& s, const float xyz[3], float yaw) {
     return true;
 }
 
-/// HostMove / HostHeadstone, one tick.
+/// HostWalk / HostHeadstone, one tick.
 void RunTravelScript(State& st, const GameSnapshot& s, Clock::time_point now) {
     Test::Script& sc = st.test.script;
     auto tap = [&](std::uint32_t buttons) {
@@ -769,19 +782,20 @@ void RunTravelScript(State& st, const GameSnapshot& s, Clock::time_point now) {
     const double since = Seconds(sc.at, now);
     auto done = [&](const char* how) {
         st.test.script_on = false;
-        if (sc.kind == TravelStep::HostMove && st.test.joined) {
+        if (sc.kind == TravelStep::HostWalk && st.test.joined) {
             // No load, so no re-join follows: the next step counts from here.
             st.test.armed = true;
             st.test.joined_at = now;
+            st.test.step_at = now;
         }
         Log("test: %s %s (%s)", TravelStepName(sc.kind), how, DescribeHere(s).c_str());
     };
-    if (sc.kind == TravelStep::HostMove) {
+    if (sc.kind == TravelStep::HostWalk) {
         if (!s.world_up || s.loading) {
             done("FAILED: a load started");
             return;
         }
-        if (sc.stage > 0 && since < 2.0) {
+        if (sc.stage > 0 && since < 3.0) {
             return;
         }
         const char* at = sc.args.c_str();
@@ -790,7 +804,7 @@ void RunTravelScript(State& st, const GameSnapshot& s, Clock::time_point now) {
             at = at ? at + 1 : nullptr;
         }
         if (sc.stage > 0) {
-            Log("test: host_move hop %d settled: %s", sc.stage, DescribeHere(s).c_str());
+            Log("test: host_walk hop %d settled: %s", sc.stage, DescribeHere(s).c_str());
         }
         float p[3] = {};
         float yaw = 0;
@@ -799,7 +813,7 @@ void RunTravelScript(State& st, const GameSnapshot& s, Clock::time_point now) {
             return;
         }
         const bool ok = PutChr(s, p, yaw);
-        Log("test: host_move hop %d to (%.2f, %.2f, %.2f)%s", sc.stage + 1, p[0], p[1], p[2], ok ? "" : " FAILED");
+        Log("test: host_walk hop %d to (%.2f, %.2f, %.2f)%s", sc.stage + 1, p[0], p[1], p[2], ok ? "" : " FAILED");
         ++sc.stage;
         sc.at = now;
         return;
@@ -927,8 +941,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     }
     // The other role's steps are that instance's: skip them.
     auto mine = [&](const TravelStep& step) {
-        const bool guest_step = step.kind == TravelStep::GuestDie || step.kind == TravelStep::GuestMark;
-        return guest_step == (role == PartyRole::Guest);
+        return (step.kind == TravelStep::GuestDie || step.kind == TravelStep::GuestMove ||
+                step.kind == TravelStep::GuestMark) == (role == PartyRole::Guest);
     };
     if (t.script_on) {
         RunTravelScript(st, s, now);
@@ -937,8 +951,29 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     while (t.next_step < t.steps.size() && !mine(t.steps[t.next_step])) {
         ++t.next_step;
     }
-    if (t.next_step >= t.steps.size() || !t.armed || !joined || !s.world_up || s.loading ||
-        t.joins < t.steps[t.next_step].min_join || Seconds(t.joined_at, now) < t.steps[t.next_step].delay) {
+    // Steady world with the party (HostKill's clock): restarts at every load / leave.
+    const bool steady = joined && s.world_up && !s.loading;
+    if (steady != t.steady) {
+        t.steady = steady;
+        t.steady_at = now;
+    }
+    const TravelStep::Kind next_kind = t.next_step < t.steps.size() ? t.steps[t.next_step].kind : TravelStep::HostWarp;
+    if (t.next_step < t.steps.size() && (next_kind == TravelStep::HostKill || next_kind == TravelStep::HostMove ||
+                                         next_kind == TravelStep::GuestMove || next_kind == TravelStep::HostWalk)) {
+        if (!steady || (!t.ran && !t.armed) || t.joins < t.steps[t.next_step].min_join) {
+            return; // as the first step of a chain it still waits for the join
+        }
+        // S s after the later of: the last load (steady again), the previous step (or the join).
+        const Clock::time_point prev = t.ran ? t.step_at : t.joined_at;
+        const Clock::time_point from = t.steady_at > prev ? t.steady_at : prev;
+        if (Seconds(from, now) < t.steps[t.next_step].delay) {
+            return;
+        }
+        if (!t.steps[t.next_step].map.empty() && MapName(s.map_id).find(t.steps[t.next_step].map) == std::string::npos) {
+            return;
+        }
+    } else if (t.next_step >= t.steps.size() || !t.armed || !joined || !s.world_up || s.loading ||
+               t.joins < t.steps[t.next_step].min_join || Seconds(t.joined_at, now) < t.steps[t.next_step].delay) {
         return;
     }
     std::uint64_t wts = 0;
@@ -952,10 +987,26 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     t.ran = true;
     t.last_kind = step.kind;
     Log("test: travel step %zu/%zu: %s%s%u (%s)", t.next_step, t.steps.size(), TravelStepName(step.kind),
-        step.kind == TravelStep::HostWarp ? " to lamp " : "", step.kind == TravelStep::HostWarp ? step.id : 0u,
-        Describe(s).c_str());
+        step.kind == TravelStep::HostWarp ? " to lamp " : step.kind == TravelStep::HostKill ? " entity " : "",
+        step.kind == TravelStep::HostWarp || step.kind == TravelStep::HostKill ? step.id : 0u, Describe(s).c_str());
     if (step.kind == TravelStep::HostWarp) {
         reinterpret_cast<void(BB_COOP_SYSV*)(std::uint32_t)>(Guest(kLampWarp))(step.id);
+    } else if (step.kind == TravelStep::HostMove || step.kind == TravelStep::GuestMove) {
+        // The local chr to a spot (the chr warp vfunc +0x5F8 = 0x18CD600(chr, pos, rot, 1), as the
+        // NPC summon step and the B2 spacing do), keeping its rotation.
+        const std::uint64_t player = LocalPlayer();
+        std::uint64_t pm = 0, a = 0, b = 0, vt = 0, fn = 0;
+        alignas(16) float pos[4] = {step.pos[0], step.pos[1], step.pos[2], 1.0f}, rot[4] = {0, 0, 0, 0};
+        if (player && SafeGet(player + 0x58, &a) && a && SafeGet(a + 8, &b) && b && SafeGet(b + 0x3b0, &pm) && pm &&
+            SafeGet(pm + 0x68, &pm) && pm && SafeRead(pm + 0x1d0, rot, sizeof rot) && SafeGet(player, &vt) && vt &&
+            SafeGet(vt + 0x5f8, &fn) && fn) {
+            reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, const float*, const float*, std::uint32_t)>(fn)(
+                player, pos, rot, 1);
+            Log("test: %s to (%.2f, %.2f, %.2f)", TravelStepName(step.kind), double(pos[0]), double(pos[1]),
+                double(pos[2]));
+        } else {
+            Log("test: %s: no player / transform", TravelStepName(step.kind));
+        }
     } else if (step.kind == TravelStep::HostMark || step.kind == TravelStep::GuestMark) {
         std::int64_t r = -1;
         const bool ok = LuaEventRaiseNow("OnReviveMagic", &r);
@@ -964,15 +1015,19 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     } else if (step.kind == TravelStep::HostStage) {
         unsigned a = 0, b = 0, r = 0, i = 0;
         int wp = -1;
-        if (std::sscanf(step.args.c_str(), "%u:%u:%u:%u:%d", &a, &b, &r, &i, &wp) >= 4) {
+        if (step.args.rfind("bonfire:", 0) == 0) {
+            const std::uint32_t id = static_cast<std::uint32_t>(std::strtoul(step.args.c_str() + 8, nullptr, 10));
+            Log("test: WarpNextStage_Bonfire(%u) %s", id, DescribeHere(s).c_str());
+            reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kWarpNextStageBonfire))(0, id);
+        } else if (std::sscanf(step.args.c_str(), "%u:%u:%u:%u:%d", &a, &b, &r, &i, &wp) >= 4) {
             Log("test: WarpNextStage(m%02u_%02u_%02u_%02u, point %d) %s", a, b, r, i, wp, DescribeHere(s).c_str());
             reinterpret_cast<std::uint64_t(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t, std::uint32_t, std::uint32_t,
                                                           std::uint32_t, std::uint32_t)>(Guest(kWarpNextStage))(
                 0, a, b, r, i, static_cast<std::uint32_t>(wp));
         } else {
-            Log("test: host_stage '%s' is not area:block:region:index[:point]", step.args.c_str());
+            Log("test: host_stage '%s' is not area:block:region:index[:point] or bonfire:ID", step.args.c_str());
         }
-    } else if (step.kind == TravelStep::HostMove || step.kind == TravelStep::HostHeadstone) {
+    } else if (step.kind == TravelStep::HostWalk || step.kind == TravelStep::HostHeadstone) {
         t.script = Test::Script{};
         t.script.kind = step.kind;
         t.script.args = step.args;
@@ -980,6 +1035,10 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         t.script_on = true;
         Log("test: %s %s from %s", TravelStepName(step.kind), step.args.c_str(), DescribeHere(s).c_str());
         return;
+    } else if (step.kind == TravelStep::HostKill) {
+        // A boss (or any enemy) killed as the game's own death path: ForceDead on its entity id; the
+        // boss-defeat EMEVD (4[00] death state -> 2003[12]) and the Lua boss clear follow.
+        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, step.id);
     } else {
         reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, 10000);
     }
@@ -1261,21 +1320,46 @@ void PartyDirector::ConfigureFromEnv() {
             } else if (item.rfind("insight=", 0) == 0) {
                 st.test.insight = std::atoi(item.c_str() + 8);
             } else if (item.rfind("host_warp=", 0) == 0 || item.rfind("host_die", 0) == 0 ||
-                       item.rfind("guest_die", 0) == 0 || item.rfind("host_mark", 0) == 0 ||
-                       item.rfind("guest_mark", 0) == 0 || item.rfind("host_stage=", 0) == 0 ||
-                       item.rfind("host_move=", 0) == 0 || item.rfind("host_headstone=", 0) == 0) {
+                       item.rfind("guest_die", 0) == 0 || item.rfind("host_kill=", 0) == 0 ||
+                       item.rfind("host_move=", 0) == 0 || item.rfind("guest_move=", 0) == 0) {
                 TravelStep step;
-                step.kind = item.rfind("guest_die", 0) == 0         ? TravelStep::GuestDie
-                            : item.rfind("guest_mark", 0) == 0      ? TravelStep::GuestMark
-                            : item.rfind("host_die", 0) == 0        ? TravelStep::HostDie
-                            : item.rfind("host_mark", 0) == 0       ? TravelStep::HostMark
-                            : item.rfind("host_stage=", 0) == 0     ? TravelStep::HostStage
-                            : item.rfind("host_move=", 0) == 0      ? TravelStep::HostMove
-                            : item.rfind("host_headstone=", 0) == 0 ? TravelStep::HostHeadstone
-                                                                    : TravelStep::HostWarp;
-                if (step.kind == TravelStep::HostWarp) {
+                step.kind = item.rfind("guest_move", 0) == 0 ? TravelStep::GuestMove
+                            : item[0] == 'g'                     ? TravelStep::GuestDie
+                            : item.rfind("host_die", 0) == 0     ? TravelStep::HostDie
+                            : item.rfind("host_kill", 0) == 0    ? TravelStep::HostKill
+                            : item.rfind("host_move", 0) == 0    ? TravelStep::HostMove
+                                                                 : TravelStep::HostWarp;
+                if (step.kind == TravelStep::HostWarp || step.kind == TravelStep::HostKill) {
                     step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 10, nullptr, 10));
                 }
+                if (step.kind == TravelStep::HostMove || step.kind == TravelStep::GuestMove) {
+                    // host_move=X:Y:Z@S[%MAP] (':' separates: ',' separates the list items)
+                    const char* p = item.c_str() + item.find('=') + 1;
+                    for (int k = 0; k < 3; ++k) {
+                        char* end = nullptr;
+                        step.pos[k] = std::strtof(p, &end);
+                        p = (end && *end == ':') ? end + 1 : end;
+                    }
+                    if (const std::size_t pc = item.find('%'); pc != std::string::npos) {
+                        step.map = item.substr(pc + 1);
+                    }
+                }
+                if (const std::size_t at_sign = item.find('@'); at_sign != std::string::npos) {
+                    step.delay = std::atof(item.c_str() + at_sign + 1);
+                }
+                if (const std::size_t hash = item.find('#'); hash != std::string::npos) {
+                    step.min_join = std::atoi(item.c_str() + hash + 1);
+                }
+                st.test.steps.push_back(step);
+            } else if (item.rfind("host_mark", 0) == 0 || item.rfind("guest_mark", 0) == 0 ||
+                       item.rfind("host_stage=", 0) == 0 || item.rfind("host_walk=", 0) == 0 ||
+                       item.rfind("host_headstone=", 0) == 0) {
+                TravelStep step;
+                step.kind = item.rfind("guest_mark", 0) == 0    ? TravelStep::GuestMark
+                            : item.rfind("host_mark", 0) == 0   ? TravelStep::HostMark
+                            : item.rfind("host_stage=", 0) == 0 ? TravelStep::HostStage
+                            : item.rfind("host_walk=", 0) == 0  ? TravelStep::HostWalk
+                                                                : TravelStep::HostHeadstone;
                 if (const std::size_t eq = item.find('='); eq != std::string::npos) {
                     const std::size_t stop = item.find_first_of("@#", eq);
                     step.args = item.substr(eq + 1, stop == std::string::npos ? std::string::npos : stop - eq - 1);
@@ -1289,8 +1373,8 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.steps.push_back(step);
             } else if (!item.empty()) {
                 Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, start, grant_bells, drop_bells, award_lot=N, set_flag=N[:N], insight=N, "
-                    "ring_host, ring_guest, bell_host, bell_guest, host_warp=ID@S, host_die@S, guest_die@S, host_mark@S, "
-                    "guest_mark@S, host_stage=A:B:R:I:P@S, host_move=X:Y:Z:YAW[/...]@S or host_headstone=TALK:DOWNS@S; ignored",
+                    "ring_host, ring_guest, bell_host, bell_guest, host_warp=ID@S, host_kill=ENTITY@S, host_move=X:Y:Z@S[%MAP], guest_move=X:Y:Z@S[%MAP], host_die@S, guest_die@S, "
+                    "host_mark@S, guest_mark@S, host_stage=A:B:R:I:P|bonfire:ID@S, host_walk=X:Y:Z:YAW[/...]@S or host_headstone=TALK:DOWNS@S; ignored",
                     item.c_str());
             }
         }
