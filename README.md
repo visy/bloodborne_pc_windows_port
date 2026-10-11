@@ -79,8 +79,10 @@ run from two new characters to the end credits passed, and a three-player travel
   anyone home.
 - **No multiplayer walls.** The fog walls that keep phantoms near the host are gone; the party can
   split up and explore.
-- **Travel together.** Lamps, headstones, the Hunter's Mark and scripted transitions move the
-  whole party with one loading screen.
+- **Travel together or alone.** Lamps, headstones and the Hunter's Mark ask "Travel with the party?".
+  Yes moves the whole party with one loading screen; No moves only you, and the others don't load.
+- **No loading screen inside the same map.** A lamp or Hunter's Mark to a spot in the map you are
+  already in is an instant warp, for the whole party too.
 - **Everyone can use lamps.** Vanilla disables lamps during co-op; here they work for everyone.
   A lamp lit by anyone is lit for the party.
 - **Resting resets the world for the party.** Enemies respawn; everyone's HP, vials and bullets
@@ -123,7 +125,6 @@ run from two new characters to the end credits passed, and a three-player travel
 
 | Change | Status |
 |---|---|
-| "Travel alone / Travel with party" choice at lamps | In progress |
 | Every player, host included, respawns at their own last lamp | In progress |
 | Dying in a boss fight: spectate until the fight ends, then everyone respawns at one shared lamp | In progress |
 | Bloodstains for everyone, like single-player | In progress |
