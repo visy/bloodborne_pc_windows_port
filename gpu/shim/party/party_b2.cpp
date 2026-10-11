@@ -1701,7 +1701,69 @@ bool ClientIntroSkip(int event_id, int bank, int id) {
 /// Recovery net (any role, own world only): a player that keeps falling for 6 s (an endless fall
 /// out of the map after a bad saved position - the game's own death plane did not catch it) is
 /// warped to its own last lamp (0x13CDF30 with the low dword of WorldTransitionState +0x1528).
+/// A summoned guest (in the host's world) that keeps falling for 6 s (live, 3 players: a guest fell
+/// through the host's m24_01 from y -28 to -1500 after the second guest arrived and was never
+/// recovered - own-world recovery only) is put back where it last stood still, in place (the chr
+/// warp +0x5F8, no load).
+void HostWorldFallTick(const GameSnapshot& s, double now) {
+    static float stable[4] = {0, 0, 0, 0}, last_y = 0;
+    static double last_t = 0, falling_since = 0, still_since = 0;
+    static u64 last_player = 0;
+    static bool have_stable = false;
+    if (!s.world_up || s.loading || !s.player || Field<u8>(Slot(kSlotGsm), 0x1592) != 0) {
+        falling_since = still_since = 0;
+        have_stable = false;
+        last_player = 0;
+        return;
+    }
+    if (now - last_t < 0.5) {
+        return;
+    }
+    const u64 pm = Field<u64>(Field<u64>(Field<u64>(Field<u64>(s.player, 0x58), 8), 0x3b0), 0x68);
+    alignas(16) float p[4];
+    if (!pm || !SafeRead(pm + 0x1e0, p, 16)) {
+        return;
+    }
+    const float dy = last_player == s.player ? last_y - p[1] : 0.0f;
+    last_y = p[1];
+    last_t = now;
+    if (last_player != s.player) {
+        have_stable = false;
+    }
+    last_player = s.player;
+    if (std::fabs(dy) < 0.05f) {  // standing (or walking on the level): a known good spot
+        if (still_since == 0) still_since = now;
+        if (now - still_since >= 1.0) {
+            std::memcpy(stable, p, sizeof p);
+            have_stable = true;
+        }
+        falling_since = 0;
+        return;
+    }
+    still_since = 0;
+    if (dy < 0.7f) {  // 0.5 s: more than 0.7 m down is a fall
+        falling_since = 0;
+        return;
+    }
+    if (falling_since == 0) {
+        falling_since = now;
+        return;
+    }
+    if (now - falling_since < 6.0 || !have_stable) {
+        return;
+    }
+    falling_since = 0;
+    alignas(16) float to[4] = {stable[0], stable[1] + 0.3f, stable[2], 1.0f};
+    alignas(16) float rot[4] = {0, 0, 0, 0};
+    SafeRead(pm + 0x1d0, rot, 16);
+    using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
+    reinterpret_cast<Warp>(Field<u64>(Field<u64>(s.player, 0), 0x5f8))(s.player, to, rot, 1);
+    Log("recovery: falling for 6 s in the host's world at (%.1f, %.1f, %.1f); back to (%.1f, %.1f, %.1f) where it last stood",
+        p[0], p[1], p[2], to[0], to[1], to[2]);
+}
+
 void FallRecoveryTick(const GameSnapshot& s, double now) {
+    HostWorldFallTick(s, now);
     static float last_y = 0;
     static double last_t = 0, falling_since = 0;
     static u64 last_player = 0;
