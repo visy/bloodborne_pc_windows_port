@@ -71,6 +71,8 @@ int main() {
     // Headstones (lamp part).
     assert(HeadstoneTalk(210000) && HeadstoneTalk(210003) && HeadstoneTalk(210721));
     assert(!HeadstoneTalk(210004) && !HeadstoneTalk(210720) && !HeadstoneTalk(210304));
+    assert(LampTalk(241000) && LampTalk(241003) && LampTalk(210001) && LampTalk(361002) && LampTalk(242000));
+    assert(!LampTalk(241004) && !LampTalk(241190) && !LampTalk(210304) && !LampTalk(243000) && !LampTalk(100000));
 
     // Lamp requests.
     {
