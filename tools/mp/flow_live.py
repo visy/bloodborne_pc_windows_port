@@ -118,7 +118,7 @@ def main():
     shot = subprocess.Popen([sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out", str(shots),
                              "--seconds", "7200"] + watch)
     env = [f"BB_TEST_MENU_FILE={root}\\menu{{i}}.txt", "BB_PARTY_PORT={port}", "BB_PARTY_UPNP=0",
-           "BB_PARTY_STUN=off", "BB_TEST_NEWGAME=party", "BB_TEST_PROLOGUE_SKIP=party",
+           "BB_PARTY_STUN=off", "BB_AUDIO=none", "BB_TEST_NEWGAME=party", "BB_TEST_PROLOGUE_SKIP=party",
            "BB_TEST_NAME=Hunter{i}"]
     cmd = [sys.executable, str(HERE / "instances.py"), "run", "--count", str(a.count), "--root", str(root), "--game", a.game,
            "--saves", str(root / "nosaves"), "--build", str(REPO), "--seconds", str(a.seconds), "--idle", "0",
