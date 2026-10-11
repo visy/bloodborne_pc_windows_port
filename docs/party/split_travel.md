@@ -107,6 +107,50 @@ For hostdeath (party_travel.h / party_b2.h):
   load uses the guest's own respawn records, which already name that lamp.
 * `MembersApart()` > 0 keeps the host watchdog quiet and K5 suppressed.
 
-## 4. Status
+## 4. Implementation (gpu/shim/party/party_split.cpp, party_b2.cpp, party_travel.cpp)
 
-Work in progress (agent splittravel, 2026-10-11); see sections below as they are filled in.
+**The question.** A lamp or headstone warp `0x13CDF30(id)` the player starts, or the Hunter's Mark
+item reaching the funnel (site `0x18FFA1D`), is consumed in a party (host with a member task, or a
+guest that is a client) and held. The main thread then opens the game's own generic dialog, the
+way the Lua `OnYesNoDialog 0x132D2C0` does: the struct at `*(0x5562878 +0xD08)` gets `[0]` the
+message id, `[1]`/`[2]` = 1 / 2 (YES / NO buttons), `[4]` byte 1, `[6]` = -1 (the result),
+`0x5562878 +0x254` = 0, then `0x16BEBF0(dialog, 7)` [C]. The message is the port's text id
+(`BbGameMenu::Pages::SplitTravelText`, answered by the System menu's text lookup hook):
+"Travel with the party? YES: everyone travels together. NO: you travel alone." The answer is
+`[6]`: 1 = YES, 0 / 2 = NO / closed (the event `0x531CFD0`'s check reads it the same way) [C].
+
+* YES: the old party move. Host: `RunLampWarpDecided(id, false)` (the interceptor stands aside,
+  the funnel capture broadcasts TRAVEL, every guest follows with B2). Guest: `lamp_request` to the
+  host (guest_services.md 3). A guest's Hunter's Mark "with the party" goes to the host's last lamp.
+* NO: host: `HostTravelAloneNext()` + `RunLampWarpDecided(id, true)`: the captured TravelIntent
+  carries `alone`; guests receiving it do not follow (`b2::OnHostTravel`: no load, the host's chr
+  is removed on their side); the host's B2 driver does not re-send its snapshot after that load.
+  Guest: `TravelAlone(LampIntent(id))`.
+* `BB_PARTY_TRAVEL_CHOICE=party|alone` skips the question (always that answer); `ask` (default).
+
+**Guest alone, into the host's area** (the Dream when the host is there, or the host's map): a
+B2 re-join that the guest starts (`BeginRejoin(solo)`): stale snapshot packets are drained, flow
+state 1, EVENT b2 `rejoin` -> the host re-sends its snapshot (the lone-respawn path, without the
+dead chr), the guest loads ITS destination (the lamp warp itself, not the transform beside the
+host; GSM +0x1521 cleared for the load so the summoned placement does not apply), arrives, both
+sides rewind the member tasks. One load, for the traveller only.
+
+**Guest alone, elsewhere**: `TravelAlone` writes flow +0x84 = 3 and runs the lamp warp with K7
+armed (the funnel keeps the room), EVENT b2 `away` (the host removes the guest's chr). The load is
+a host-world load (flags from the overlay); the game sets flow 4 at its end. Phase `AwayLoading`.
+
+**Members apart** (`SplitTick`, both roles, every frame while no re-join runs): members are
+placed by the party link's vitals (map + position, ~4 Hz). A remote chr whose owner (the member
+reporting a position within 5 m of it) is in another area is removed (task kept). A member in our
+area for 2 s without a chr here is built again (rewind; the host also re-registers its net sync,
+`0x18F0DB0` / `0x18F0E80`, without snapshot packets) - a meet without a load. `MembersApart()`
+feeds the host watchdog (present, never "stuck") and K5 (OnMatchingCheck stays quiet while
+members are apart and 15 s after any split chr change).
+
+**Tests.** Director steps `host_lamp=ID`, `guest_lamp=ID` (the player's warp, with the question),
+`host_alone=ID` (decided alone); `BB_PARTY_SPLIT_TEST=no,yes,...` answers the questions in order
+with the in-process pad (Left = YES / Right = NO, then Cross).
+
+## 5. Live results
+
+(see below)
