@@ -3214,6 +3214,18 @@ bool TravelAlone(const TravelIntent& t, AloneWhy why) {
     }
     g_rejoin = true;
     RestoreHostBlobs();
+    {
+        // The summoned placement GSM +0x14C4 stage / +0x14D0 position / +0x14E0 rotation still held
+        // the host's last spot (m24_01) and a host-world load takes its stage from it whatever the
+        // forced transform says (live split7 / split9: PlayerIns stage 0x18010000 at the Dream's
+        // coordinates, area-24 resources, no world). The destination's goes there too.
+        alignas(16) float p16[4] = {tt.pos[0], tt.pos[1], tt.pos[2], 1.0f};
+        alignas(16) float r16[4] = {tt.rot[0], tt.rot[1], tt.rot[2], tt.rot[3]};
+        Log("guest: alone load: summoned placement stage %#x -> %#x", Field<u32>(gsm, 0x14c4), tt.pos_map);
+        SafeWrite(gsm + 0x14c4, &tt.pos_map, 4);
+        SafeWrite(gsm + 0x14d0, p16, 16);
+        SafeWrite(gsm + 0x14e0, r16, 16);
+    }
     const int three = 3;
     SafeWrite(flow + 0x84, &three, 4);
     Send(0, std::string("{\"op\":\"away\",") + pos + "}");
