@@ -395,8 +395,10 @@ std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen
     }
     wait_from_ = -1;
     ++next_;
-    mark_ = screen_seq;
-    pressed_at_ = t;
+    if (p.buttons != kWait) { // a pause (wait, mark=) is not a press: text waits look back past it
+        mark_ = screen_seq;
+        pressed_at_ = t;
+    }
     holding_ = true;
     until_ = t + (p.buttons == kWait ? 2.5 : 0.12);
     if (p.buttons == kType) typed_ = p.typed, has_typed_ = true;

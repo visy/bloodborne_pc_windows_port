@@ -107,7 +107,8 @@ private:
 
 /// A scripted menu walk for test fixtures (BB_PARTY_DIRECTOR_TEST stand=...,seq=...): one token
 /// per press, '/'-separated: cross, circle, square, triangle, up, down, left, right, wait (a 2.5 s
-/// pause), mark=NAME (the same pause, named in the log: a screenshot point), options, type=TEXT / enter / esc (types TEXT into the open text box, or presses Enter /
+/// pause; not a press: text waits look back past it to the last real press), mark=NAME (the same
+/// pause, named in the log: a screenshot point), options, type=TEXT / enter / esc (types TEXT into the open text box, or presses Enter /
 /// Esc there, in-process: the caller does that, TakeTyped; "\n" = Enter, "\x1b" = Esc). `button@text` waits until a message text containing `text`
 /// (ASCII, case-insensitive) is on screen - looked up after the previous press and still being looked up - for 0.4 s, then
 /// presses (10 s at most, then the script stops: STUCK). A '?' prefix makes such a step optional: no
