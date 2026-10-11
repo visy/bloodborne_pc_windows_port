@@ -140,7 +140,7 @@ run from two new characters to the end credits passed, and a three-player travel
 | Every cutscene for the whole party (story cutscenes and endings already work) | In progress |
 | Joining during a boss fight or cutscene waits outside until it ends | Works for boss fights (verified live); cutscenes in progress |
 | The 4th player joins as fast as the others | In progress |
-| Chalice dungeons: deeper layers checked in a party; entering the party's dungeon in one press | In progress |
+| Chalice dungeons: deeper layers checked in a party; entering the party's dungeon in one press (the altar still asks a few prompts) | In progress |
 | PvP / friendly fire the host can switch on and off | Later |
 | Pings: party members and marked spots visible through walls, with distance and player colours | Later |
 

@@ -2186,11 +2186,12 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
 /// took the party dungeon's glyph, the remaining prompts are answered on the game's own pad path:
 /// OK on "Search using Chalice Glyph", the search result, YES on "Join the selected Chalice
 /// Dungeon?", the altar again and its first awaken point. Text-gated and strict: a prompt that
-/// does not come in 10 s stops the walk (no blind presses). BB_PARTY_ALTAR_AUTO=0: off.
+/// does not come in 10 s stops the walk (no blind presses). Off by default until verified live
+/// (0.5.2): BB_PARTY_ALTAR_AUTO=1 turns it on.
 void AltarAutopilotTick(const GameSnapshot& s) {
     static const bool off = [] {
         const char* e = std::getenv("BB_PARTY_ALTAR_AUTO");
-        return e && e[0] == '0';
+        return !(e && e[0] == '1');
     }();
     static MenuScript script;
     static bool on = false;
