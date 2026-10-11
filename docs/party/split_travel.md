@@ -181,7 +181,7 @@ members are apart and 15 s after any split chr change).
 
 **Tests.** Director steps `host_lamp=ID`, `guest_lamp=ID` (the player's warp, with the question),
 `host_alone=ID` (decided alone); `BB_PARTY_SPLIT_TEST=no,yes,...` answers the questions in order
-with the in-process pad (Left = YES / Right = NO, then Cross).
+with the in-process pad (YES = Cross; NO = Right, then Cross: the cursor starts on YES).
 
 ## 5. Live results
 

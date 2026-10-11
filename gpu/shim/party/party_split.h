@@ -13,7 +13,7 @@
 //
 // Env: BB_PARTY_TRAVEL_CHOICE = ask (default) | party (always the party move, no question) |
 //      alone (always alone, no question); BB_PARTY_SPLIT_TEST = yes | no (tests: answer the
-//      dialog with the in-process pad: Left / Right, then Cross).
+//      dialog with the in-process pad: YES = Cross, NO = Right then Cross).
 #pragma once
 
 #include <cstdint>

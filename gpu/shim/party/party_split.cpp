@@ -34,7 +34,7 @@ constexpr u64 kSlotMenuMan = 0x5562878;    // +0x78 dialog kind up (0 none), +0x
 constexpr u64 kMenuBusyByte = 0x553b1ba;    // ShowGenDialog 0x1335110 opens nothing while set
 constexpr u64 kOpenDialog = 0x16bebf0;      // (dialog struct, kind)
 constexpr int kRoleHost = 3, kRoleClient = 6;
-constexpr u32 kPadCross = 0x4000, kPadLeft = 0x80, kPadRight = 0x20;
+constexpr u32 kPadCross = 0x4000, kPadRight = 0x20;
 
 void Log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 void Log(const char* fmt, ...) {
@@ -289,7 +289,7 @@ void Tick(const GameSnapshot& s) {
     }
     if (p.state == Ask::Open) {
         const int r = Field<int>(p.dialog, 0x18, -1);
-        // Test answer (BB_PARTY_SPLIT_TEST=yes|no): the cursor first (Left = YES, Right = NO), then Cross.
+        // Test answer (BB_PARTY_SPLIT_TEST=yes|no): YES = Cross; NO = Right, then Cross.
         // BB_PARTY_SPLIT_TEST=no,yes,...: one answer per question in order (the last repeats).
         static const char* test = std::getenv("BB_PARTY_SPLIT_TEST");
         const int asked = g_asked;
@@ -319,7 +319,8 @@ void Tick(const GameSnapshot& s) {
         }
         if (!answer.empty() && r == -1 && now - p.since > 1.5 && now - p.test_at > 1.2 && p.test_step < 6) {
             const bool yes = answer == "yes";
-            const u32 b = p.test_step % 2 == 0 ? (yes ? kPadLeft : kPadRight) : kPadCross;
+            // The cursor starts on YES (live inworld1: Left + Cross and Right + Cross both gave NO).
+            const u32 b = yes || p.test_step % 2 == 1 ? kPadCross : kPadRight;
             runtime_pad_director_press(b);
             release_at = now + 0.12;
             Log("test: dialog answer %s: press %#x (step %d)", answer.c_str(), b, p.test_step);
