@@ -302,6 +302,7 @@ def run(a):
             "BB_GAME_DIR": str(a.game), "BB_FROM_LAUNCHER": "1", "BB_NO_LAUNCHER_SETTINGS": "1",
             "BB_FULLSCREEN": "0", "BB_FPS": str(a.fps), "BB_TIMEOUT": str(a.seconds), "BB_VRAM_LIMIT_MB": str(a.vram),
             "BB_SHADER_PRECOMPILE": "1", "BB_MUTE_UNFOCUSED": "1", "BB_WINDOW_BACKGROUND": "1",
+            "BB_AUDIO": "none",  # test games are silent (timer audio backend, also less CPU)
             "BB_PATCHES": "Skip Online/Offline Choice;Skip Intro",
             "BB_MP_LOCAL_TEST": "1", "BB_MP_INSTANCE": str(i), "BB_MP_PORT": str(port0 + i),
             "BB_MP_NAME": f"Hunter{i}",
