@@ -558,10 +558,11 @@ class Link:
     def __init__(self, name: str, key: bytes, eboot: bytes, mods: bytes, token: bytes, log,
                  ping_interval: float = 1.0, lost_timeout: float = 10.0, patches: bytes = b"\0" * 32,
                  patch_names: list[str] | None = None, mod_names: list[str] | None = None,
-                 protocol: int = PROTOCOL_VERSION):
+                 protocol: int = PROTOCOL_VERSION, ident: dict | None = None):
         self.name, self.key, self.eboot, self.mods, self.token = name, key, eboot, mods, token
         self.patches, self.patch_names, self.mod_names = patches, patch_names or [], mod_names or []
         self.protocol = protocol
+        self.ident = ident or {}  # A9: rules, build, params, hooks, hook names (absent: not sent)
         self.log = log
         self.ping_interval, self.lost_timeout = ping_interval, lost_timeout
         self.sock: socket.socket | None = None
@@ -654,6 +655,12 @@ class Link:
         hello = b"BBPL" + struct.pack("<H", self.protocol) + w_str16(self.name) + self.eboot + self.mods + self.token
         if self.protocol >= 2:
             hello += self.patches + w_str16("\n".join(self.patch_names)) + w_str16("\n".join(self.mod_names))
+            i = self.ident
+            if "rules" in i or "build" in i:  # trailing optional fields, in order (party_link.h)
+                hello += w_str16(i.get("rules", ""))
+            if "build" in i:
+                hello += (w_str16(i["build"]) + i.get("params", b"\0" * 32) + i.get("hooks", b"\0" * 32) +
+                          w_str16("\n".join(i.get("hook_names", []))))
         self._send_raw(HELLO, hello)
         t, body, enc = self._read_frame()
         if t == REJECT and not enc:
@@ -1123,7 +1130,7 @@ class Guest:
         o = self.o
         self.link = Link(o.name, self.key, o.eboot, o.mods, self.token, self.linklog,
                          lost_timeout=o.lost_timeout, patches=o.patches, patch_names=o.patch_names,
-                         mod_names=o.mod_names, protocol=o.protocol)
+                         mod_names=o.mod_names, protocol=o.protocol, ident=o.ident)
         t = time.monotonic()
         try:
             self.link.connect(o.host_ip, o.host_port)
@@ -1676,6 +1683,24 @@ def game_identity(data_dir: str) -> tuple[bytes, list[str], bytes, list[str]]:
     return patches, patch_names, mods, mod_names
 
 
+def read_party_identity(path: str) -> dict:
+    """<user dir>/party_identity.txt written by party_runtime.cpp write_identity_file (A9): every
+    field a real game's HELLO carries, so a simulated member passes the version check."""
+    ident: dict = {"hook_names": [], "patch_names": [], "mod_names": []}
+    for line in open(path, encoding="utf-8", errors="replace").read().split("\n"):
+        line = line.rstrip("\r")
+        if not line or line.startswith("#") or " " not in line:
+            continue
+        k, v = line.split(" ", 1)
+        if k in ("build", "rules"):
+            ident[k] = v
+        elif k in ("eboot", "params", "patches", "mods", "hooks"):
+            ident[k] = bytes.fromhex(v)
+        elif k in ("hook", "patch", "mod"):
+            ident[k + "_names"].append(v)
+    return ident
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Headless simulated party guest (see the module docstring).",
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1696,6 +1721,10 @@ def main(argv=None) -> int:
     ap.add_argument("--eboot-sha256", default="", help="64 hex digits (default zeros)")
     ap.add_argument("--patches-hash", default="", help="64 hex digits (default zeros)")
     ap.add_argument("--mods-hash", default="", help="64 hex digits (default zeros)")
+    ap.add_argument("--identity", help="a game's party_identity.txt (user dir): send its whole version-check "
+                                       "identity (A9), e.g. to join a real game host")
+    ap.add_argument("--build-id", default=None, help="A9 bbport build id to send (default: none)")
+    ap.add_argument("--rules", default=None, help="party rules to send (\"max 4 players, 4p:...\")")
     ap.add_argument("--protocol", type=int, default=PROTOCOL_VERSION, help="PartyLink version to speak (1 or 2)")
     ap.add_argument("--no-udp", dest="udp", action="store_false", help="skip STUN and probes")
     ap.add_argument("--udp-port", type=int, default=0, help="our UDP port (0 = any)")
@@ -1762,13 +1791,23 @@ def main(argv=None) -> int:
         o.patches = bytes.fromhex(o.patches_hash)
     if o.mods_hash:
         o.mods = bytes.fromhex(o.mods_hash)
+    o.ident = {}
+    if o.identity:
+        o.ident = read_party_identity(o.identity)
+        o.eboot = o.ident.get("eboot", o.eboot)
+        o.patches, o.mods = o.ident.get("patches", o.patches), o.ident.get("mods", o.mods)
+        o.patch_names, o.mod_names = o.ident["patch_names"], o.ident["mod_names"]
+    if o.build_id is not None:
+        o.ident["build"] = o.build_id
+    if o.rules is not None:
+        o.ident["rules"] = o.rules
     if len(o.eboot) != 32 or len(o.mods) != 32 or len(o.patches) != 32:
         ap.error("--eboot-sha256 / --patches-hash / --mods-hash: 64 hex digits")
 
     log_path = o.json_log if o.json_log is not None else f"simguest-{o.name}.json"
     if log_path == "-":
         log_path = None
-    shown = {k: v for k, v in vars(o).items() if k not in ("password", "key_hex", "eboot", "mods", "patches")}
+    shown = {k: v for k, v in vars(o).items() if k not in ("password", "key_hex", "eboot", "mods", "patches", "ident")}
     shown["password_set"] = bool(o.password)
     shown["eboot"], shown["mods"], shown["patches"] = o.eboot.hex(), o.mods.hex(), o.patches.hex()
     j = JsonLog(log_path, shown)

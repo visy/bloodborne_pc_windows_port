@@ -12,6 +12,7 @@
 
 #include "bbport_settings.h"
 #include "party/party_balance_rules.h"
+#include "party/party_link.h"  // kMaxPartyPlayers
 #include "party/party_status.h"
 
 namespace BbGameMenu::Pages {
@@ -188,7 +189,7 @@ bool UpscalerAvailable(int i) {
 int upscaler_field = -1;
 
 // ---- Party (party_status.h): the run-time texts and the members the rows stand for ----
-constexpr int MaxMembers = 4; // the host and three guests (party_link max_players)
+constexpr int MaxMembers = party::kMaxPartyPlayers; // the host and the guests (party_link.h)
 struct MemberTexts {
     u32 member_name[MaxMembers], member_value[MaxMembers], member_confirm[MaxMembers],
         member_help[MaxMembers];
@@ -805,8 +806,10 @@ void DefineAll() {
                party.member_name[k], party.member_help[k], {party.member_value[k], party.member_confirm[k]},
                Kind::Toggle, [k] { return k < member_rows; });
     }
-    // At most four member rows: the page's six rows hold the notices and the party HUD switch too
-    // (the last event, after them, shows while fewer than four hunters are in the party).
+    // One row per member (kMaxPartyPlayers = 4), then the switches: a full party of four still
+    // shows the notices and party HUD switches (the page's six rows); guest lamps and the last
+    // event show while fewer than four hunters are in the party (lamps also: overlay Party tab).
+    // The System menu is at its 12 pages, so the switches cannot move to a page of their own.
     AddRow(Flag(&Values::party_toasts), "Join/leave notices", "Уведомления",
            "A short notice in a top corner when a hunter joins or leaves",
            "Короткое уведомление в углу, когда охотник входит или выходит", toggle, Kind::Toggle);
