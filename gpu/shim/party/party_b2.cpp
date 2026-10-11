@@ -225,7 +225,7 @@ std::string DescribeChr(u64 chr) {
     const u32 pres = fn ? reinterpret_cast<TypeFn>(fn)(chr) : ~0u;
     std::snprintf(b, sizeof b, "stage %#x type %d/%d pos (%.1f, %.1f, %.1f) hp %d", Field<u32>(chr, 0x3f8),
                   Field<int>(chr, 0x78, -1), int(pres), p[0], p[1], p[2],
-                  Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0x128, -1));
+                  Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0xf8, -1));
     return b;
 }
 
@@ -1062,8 +1062,8 @@ void LogGuestState(const GameSnapshot& s, const char* when) {
         std::snprintf(b, sizeof b, " %u:%d", id, GoodsCount(id));
         g += b;
     }
-    Log("guest state %s: HP %d/%d stamina %d/%d echoes %d insight %d; goods%s; speffects %s", when, Field<int>(dm, 0x128, -1),
-        Field<int>(dm, 0x12c, -1), Field<int>(dm, 0x134, -1), Field<int>(dm, 0x138, -1), s.echoes, s.insight, g.c_str(),
+    Log("guest state %s: HP %d/%d stamina %d/%d echoes %d insight %d; goods%s; speffects %s", when, Field<int>(dm, 0xf8, -1),
+        Field<int>(dm, 0xfc, -1), Field<int>(dm, 0x134, -1), Field<int>(dm, 0x138, -1), s.echoes, s.insight, g.c_str(),
         DescribeSpEffects(s.player).c_str());
 }
 
@@ -1611,10 +1611,10 @@ void GuestTick(const GameSnapshot& s, double now) {
         if (!st.screen_done) {
             st.screen_done = true;
             SaveOverlay();
-            st.hp_before = Field<int>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0x128, -1);
+            st.hp_before = Field<int>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0xf8, -1);
             if (st.hp_before <= 0) {
                 // Dead at the host's travel (a held death): back with full HP, as the host respawns.
-                st.hp_before = Field<int>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0x12c, -1);
+                st.hp_before = Field<int>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0xfc, -1);
                 Log("guest: dead at the host's travel; full HP (%d) after the load", st.hp_before);
             }
             ApplyTestSpEffects(s.player);
@@ -1713,15 +1713,15 @@ void GuestTick(const GameSnapshot& s, double now) {
             g_early_screen = false;  // the load's own InGameStart cleared it
             {
                 // The guest's state is not the load's business (no rest): its HP as before the
-                // host's travel (a load may refill it). Data module: chr +0x3B0 -> +0x20: HP +0x128,
-                // max +0x12C.
+                // host's travel (a load may refill it). Data module: chr +0x3B0 -> +0x20: HP +0xf8,
+                // max +0xFC.
                 const u64 dm = Field<u64>(Field<u64>(s.player, 0x3b0), 0x20);
-                const int hp = Field<int>(dm, 0x128, -1), mx = Field<int>(dm, 0x12c, -1);
+                const int hp = Field<int>(dm, 0xf8, -1), mx = Field<int>(dm, 0xfc, -1);
                 if (RestedFromTravel(st.intent)) {
                     Log("guest: HP %d after the load (a rest travel: the refill heals, max %d)", hp, mx);
                 } else if (dm && st.hp_before > 0 && hp >= 0 && hp != st.hp_before) {
                     const int keep = st.hp_before < mx ? st.hp_before : mx;
-                    SafeWrite(dm + 0x128, &keep, 4);
+                    SafeWrite(dm + 0xf8, &keep, 4);
                     Log("guest: HP %d after the load -> %d as before the travel (max %d)", hp, keep, mx);
                 } else {
                     Log("guest: HP %d after the load (before %d, max %d)", hp, st.hp_before, mx);
@@ -1876,7 +1876,7 @@ void HostTick(const GameSnapshot& s, double now) {
                 continue;
             }
             const u64 chr = PlayerForPeer(t.task + kTaskPeer);
-            const int hp = Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0x128, -1);
+            const int hp = Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0xf8, -1);
             if (!chr || chr != victim) {
                 continue;
             }
@@ -2156,9 +2156,9 @@ void TestBossTick(const GameSnapshot& s, double now) {
         const int hp = std::atoi(env + 3);
         const u64 dm = Field<u64>(Field<u64>(s.player, 0x3b0), 0x20);
         if (dm && hp > 0) {
-            SafeWrite(dm + 0x128, &hp, 4);
+            SafeWrite(dm + 0xf8, &hp, 4);
         }
-        Log("test hp: guest HP set to %d (max %d)", hp, Field<int>(dm, 0x12c, -1));
+        Log("test hp: guest HP set to %d (max %d)", hp, Field<int>(dm, 0xfc, -1));
         return;
     }
     std::int64_t r = -1;
