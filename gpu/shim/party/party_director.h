@@ -67,6 +67,10 @@ private:
     PartyDirector() = default;
 };
 
+/// Main thread: the game's own leave (0x13CDDA0: BeginLeaveSession + drop the presentation
+/// members, as the host watchdog uses it), byte-checked; false when the code is not 1.09's.
+bool LeaveGameSession();
+
 /// BB_PARTY or BB_PARTY_DIRECTOR_TEST is set (non-empty).
 bool PartyRequested();
 /// "[hh:mm:ss.mmm] " (local wall clock) when BB_PARTY_LOG_TIME=1 or BB_PARTY_DIRECTOR_TEST is

@@ -6,6 +6,7 @@
 
 #ifndef BB_PARTY_BRIDGE_NO_GAME
 #include "party_runtime.h"
+#include "party_director.h"
 #endif
 
 #include <chrono>
@@ -66,6 +67,10 @@ struct Bridge {
     Clock::time_point travel_at{}, bell_at{}, last_roster{}, last_log{};
     bool rung = false;
     bool log_on = false, log_checked = false;
+    // A guest's Leave after the game's own session leave: the link stops once the game's session
+    // is idle (at most 3 s on), so the game never sees the host vanish under a live session.
+    bool leave_pending = false;
+    Clock::time_point leave_at{};
     // BB_PARTY_STATUS_TEST: scripted Party tab presses (main thread).
     struct Scripted {
         double at = 0;
@@ -115,6 +120,7 @@ void Update(F&& change) {
 Actions DefaultActions() {
     Actions a;
     a.leave = [] { party::runtime_leave(); };
+    a.leave_session = [] { return coop::LeaveGameSession(); };
     a.rejoin = [] { return party::runtime_rejoin(); };
     a.kick = [](const std::string& name) {
         PartyLink* link = party::runtime_link();
@@ -131,6 +137,16 @@ void HandleCommand(Bridge& b, const status::Command& c, const TickIn& in, TickOu
     switch (c.type) {
     case status::CommandType::Leave:
         Log("status: Leave pressed (%s)", in.host ? "host: ending the party" : "guest: leaving the party");
+        if (!in.host && in.session_role == 6 && a.leave_session) {  // 6: client (summoned)
+            const bool left = a.leave_session();
+            Log("status: Leave: the game's own session leave first: %s",
+                left ? "done; the link stops once the session is idle" : "not available (code check)");
+            if (left) {
+                b.leave_pending = true;
+                b.leave_at = Clock::now();
+                break;
+            }
+        }
         if (a.leave) a.leave();
         break;
     case status::CommandType::Rejoin: {
@@ -504,6 +520,11 @@ TickOut Tick(const TickIn& in) {
     // The tab's commands (main thread: the runtime calls below only start background work).
     status::Command c;
     while (status::PopCommand(&c)) HandleCommand(b, c, in, &out);
+    if (b.leave_pending && (in.session_role == 0 || now - b.leave_at > std::chrono::seconds(3))) {
+        b.leave_pending = false;
+        Log("status: Leave: session %s; stopping the link", in.session_role == 0 ? "idle" : "still not idle after 3 s");
+        if (b.actions.leave) b.actions.leave();
+    }
     if (log_due) Log("%s", SnapshotLine(status::Snapshot()).c_str());
     return out;
 }

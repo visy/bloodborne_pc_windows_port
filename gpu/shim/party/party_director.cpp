@@ -796,6 +796,23 @@ std::string DescribeSessionMembers() {
     return out;
 }
 
+} // namespace
+
+bool LeaveGameSession() {
+    static const bool ok =
+        Matches(kLeaveSessionAndDrop, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x53, 0x50, 0x48, 0x8b, 0x05,
+                                       0xc7, 0x88, 0x18, 0x04, 0x48, 0x8b, 0x98, 0xf8, 0x16, 0x00, 0x00}) &&
+        CallsTo(kLeaveSessionAndDrop + 0x55, 0x1ed07a0);
+    if (!ok) return false;
+    reinterpret_cast<VoidFn>(Guest(kLeaveSessionAndDrop))();
+    const GameSnapshot after = ReadGameState(false);
+    Log("leave: the game's session leave: role %s (%d); %s", SessionRoleName(after.session_role), after.session_role,
+        DescribeSessionMembers().c_str());
+    return true;
+}
+
+namespace {
+
 void HostWatchdogTick(State& st, const GameSnapshot& s, party::PartyLink* link, Clock::time_point now) {
     HostWatchdogInput in;
     in.now_s = Seconds(st.start, now);
