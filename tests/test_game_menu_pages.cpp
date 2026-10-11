@@ -226,8 +226,8 @@ static void Party() {
     // Rejoin: at once; Leave: confirmed.
     Press(party.rows[2]);
     assert(ps::PopCommand(&cmd) && cmd.type == ps::CommandType::Rejoin);
-    Press(party.rows[2]); // back to "Request": nothing
-    assert(!ps::PopCommand(&cmd));
+    Press(party.rows[2]); // every press runs a Once row (the text box rows: each press opens it)
+    assert(ps::PopCommand(&cmd) && cmd.type == ps::CommandType::Rejoin);
     const P::Row& leave = RowNamed(party, u"Leave the party");
     Press(leave);
     assert(!ps::PopCommand(&cmd));
@@ -262,8 +262,8 @@ static void Party() {
     const int runs = extension_runs;
     Press(*shown[1]);
     assert(extension_runs == runs + 1);
-    Press(*shown[1]); // back: only the text
-    assert(extension_runs == runs + 1);
+    Press(*shown[1]); // every press runs it
+    assert(extension_runs == runs + 2);
     assert(std::u16string(P::Text(party.rows[0].choices[0], false)) == u"Single player");
     Press(party.rows[2]);
     Press(leave);

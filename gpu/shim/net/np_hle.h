@@ -25,5 +25,8 @@ void signaling_peer_known(std::uint16_t member_id);
 void signaling_peer_dead(const std::string& online_id);
 // our room is over: every connection is dead without an event.
 void signaling_reset();
+// Party host: a player registered its context (joined or rejoined the party): connections to it
+// still resolving are resolved again now (a guest that left and pressed Join party).
+void signaling_peer_registered(const std::string& online_id);
 
 }  // namespace bbnet::np

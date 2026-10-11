@@ -508,7 +508,45 @@ void TestMenuScriptTexts() {
 
 } // namespace
 
+namespace {
+// The party flow's live walk (tools/mp/flow_live.py): the title's texts are looked up once when the
+// menu is built, the text box (type= / enter / esc: TakeTyped, no buttons held), mark= pauses
+// (not presses: a text wait after one still sees a text looked up after the press before it) and
+// Options.
+void TestMenuScriptTextBox() {
+    MenuScript ms;
+    CHECK(ms.Parse("~down@New Game/cross/options/type=127.0.0.1:47600/mark=typed/enter/esc") && ms.size() == 7);
+    auto seen = [](const std::string& n) { return n == "New Game" ? 0.5 : -1.0; };  // looked up once
+    std::vector<std::uint32_t> pressed;
+    std::vector<std::string> typed;
+    for (double t = 5; t < 40 && !ms.finished(); t += 1.0 / 30) {
+        std::string log;
+        const std::uint32_t held = ms.Step(t, 0, 1e9, &log, seen);
+        if (!log.empty() && held) pressed.push_back(held);
+        std::string keys;
+        if (ms.TakeTyped(&keys)) typed.push_back(keys);
+    }
+    CHECK(ms.finished() && !ms.stuck());
+    CHECK((pressed == std::vector<std::uint32_t>{kPadDown, kPadCross, kPadOptions}));
+    CHECK((typed == std::vector<std::string>{"127.0.0.1:47600", "\n", "\x1b"}));
+    // A dialog that shows up during the pauses after a press (live: "Session lost" after Leave).
+    MenuScript pause;
+    CHECK(pause.Parse("right/wait/wait/?cross@Session lost"));
+    double dialog_at = -1;
+    std::vector<std::uint32_t> p2;
+    for (double t = 0; t < 30 && !pause.finished(); t += 1.0 / 30) {
+        if (dialog_at < 0 && t >= 2.0) dialog_at = t;  // during the first wait
+        std::string log;
+        const std::uint32_t held =
+            pause.Step(t, 0, 1e9, &log, [&](const std::string&) { return dialog_at; });
+        if (!log.empty() && held) p2.push_back(held);
+    }
+    CHECK((p2 == std::vector<std::uint32_t>{kPadRight, kPadCross}));
+}
+} // namespace
+
 int main() {
+    TestMenuScriptTextBox();
     TestHappyPath();
     TestNoScreenSignal();
     TestTitleNeverReady();

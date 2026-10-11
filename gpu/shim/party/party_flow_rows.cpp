@@ -111,7 +111,7 @@ void RegisterMenuRows() {
         const Saved s = Current();
         return s.host_address.empty() ? T("Not set", "Не задан") : Texts{Short(s.host_address), Short(s.host_address)};
     };
-    addr.pressed = [](const Board&) { return T("Type, then Enter", "Введите, Enter"); };
+    addr.pressed = addr.value;  // every press opens the text box: the value in both states
     addr.help = [](const Board&) {
         return WithMessage(T("Party code or host:port from the host; type it on the keyboard (Ctrl+V pastes)",
                              "Код группы или хост:порт; введите с клавиатуры (Ctrl+V вставляет)"));
@@ -125,7 +125,7 @@ void RegisterMenuRows() {
     pass.order = 18;
     pass.name = [](const Board&) { return T("Password", "Пароль"); };
     pass.value = [](const Board&) { return Current().password.empty() ? T("None", "Нет") : T("Set", "Задан"); };
-    pass.pressed = [](const Board&) { return T("Type, then Enter", "Введите, Enter"); };
+    pass.pressed = pass.value;  // every press opens the text box: the value in both states
     pass.help = [](const Board&) {
         return WithMessage(T("The party's password (host and guests the same); saved protected for this Windows user",
                              "Пароль группы (у всех одинаковый); хранится защищённым для этого пользователя"));
@@ -134,6 +134,23 @@ void RegisterMenuRows() {
     pass.press = Row::Press::Once;
     pass.run = [](const Board&) { BeginEdit(Field::Password); };
     P::AddPartyRow(pass);
+
+    Row name;
+    name.order = 19;
+    name.name = [](const Board&) { return T("Party name", "Имя в группе"); };
+    name.value = [](const Board&) {
+        const Saved s = Current();
+        return s.name.empty() ? T("Automatic", "Автоматически") : Texts{Short(s.name), Short(s.name)};
+    };
+    name.pressed = name.value;  // every press opens the text box: the value in both states
+    name.help = [](const Board&) {
+        return WithMessage(T("Your name in the party (1-16 of A-Z a-z 0-9 _ -); each player needs their own",
+                             "Ваше имя в группе (1-16 из A-Z a-z 0-9 _ -); у каждого своё"));
+    };
+    name.visible = [](const Board&) { return SoloTitle(); };
+    name.press = Row::Press::Once;
+    name.run = [](const Board&) { BeginEdit(Field::Name); };
+    P::AddPartyRow(name);
 
     Row host;
     host.order = 25;

@@ -35,6 +35,10 @@ public:
     /// 0 while typing, 1 confirmed (Enter), 2 cancelled (Escape); text is UTF-8.
     int PollTextInput(std::string& text);
     bool IsTextInputActive() const { return text_active; }
+    /// Test aid (any thread): queues SDL key events into this window's event queue as if typed - each
+    /// ASCII character a text-input event, '\n' Enter, '\x1b' Escape, '\b' Backspace - so the text box
+    /// takes them through PollEvents like the keyboard's. No OS input, no focus needed.
+    void TestType(const std::string& keys);
     /// False while the window is in the background (BB_MUTE_UNFOCUSED, default on): audio muted.
     bool IsAudible() const { return audible.load(std::memory_order_relaxed); }
     std::string GetTextInputPrompt();

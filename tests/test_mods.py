@@ -1,4 +1,4 @@
-from paths import ROOT
+from paths import ROOT, posix_env, posix_tool
 import importlib.util
 import json
 import os
@@ -10,7 +10,7 @@ import unittest
 import shutil
 
 # Not a bare 'bash': on Windows CreateProcess finds System32\bash.exe (WSL) before PATH (Git Bash).
-BASH = shutil.which('bash') or 'bash'
+BASH = posix_tool('bash') or 'bash'
 
 spec = importlib.util.spec_from_file_location('bbmods', ROOT / 'scripts/mods.py')
 mods = importlib.util.module_from_spec(spec)
@@ -173,7 +173,7 @@ class ModTests(unittest.TestCase):
         env = dict(os.environ, BB_PREBUILT='1', BB_PROBE=str(probe), PYTHON=str(python),
             BB_DATA_DIR=str(self.root), BB_GAME_DIR=str(self.game),
             BB_MODS_DIR=str(self.moddir), BB_MODS_ENABLED='1', BB_MODS_CONFIG=str(self.root/'mods.json'))
-        result = subprocess.run([BASH, 'run.sh'], cwd=ROOT, env=env, capture_output=True, timeout=30)
+        result = subprocess.run([BASH, 'run.sh'], cwd=ROOT, env=posix_env(env), capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 7, result.stderr)
         mounted = json.loads((self.root / 'mounted.json').read_text())
         self.assertEqual(mounted['content'], 'mod')

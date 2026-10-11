@@ -105,6 +105,9 @@ struct Actions {
     std::function<void()> leave;
     std::function<int()> rejoin;  // 0 link up, 1 reconnecting now, 2 a fresh link, -1 nothing to do
     std::function<bool(const std::string&)> kick;
+    /// Guest Leave while summoned: the game's own session leave first (main thread), so the game
+    /// sends the guest home itself instead of noticing a dead session ("Session lost" dialog).
+    std::function<bool()> leave_session;
 };
 
 /// Tests: the bridge's own state back to the start (no actions until SetActionsForTest).

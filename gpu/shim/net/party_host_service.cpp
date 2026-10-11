@@ -5,6 +5,7 @@
 
 #include "bbnet_internal.h"
 #include "party_util.h"
+#include "np_hle.h"
 
 #include <algorithm>
 #include <atomic>
@@ -375,6 +376,8 @@ struct PartyHostService::Impl {
             c.ep.mapped_addr.c_str(), c.ep.mapped_port);
         json::Value r = ok_reply();
         r.set("OnlineId", id);
+        // Our game's connections to it that are still resolving (it left and rejoined): now.
+        np::signaling_peer_registered(id);
         return r;
     }
 

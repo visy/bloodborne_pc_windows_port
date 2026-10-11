@@ -349,6 +349,12 @@ Texts T2(const char* en, const char* ru) {
 bool Active(const party::status::Board& b) {
     return b.enabled && b.role != party::status::Role::Off;
 }
+/// The link runs (not after Leave): Copy code / Rejoin / Leave only then. After Leave the party
+/// flow's Host party / Join party take over (live: the page then had seven rows, Join party showed
+/// next to Rejoin the host and the sixth-row limit cut Single player).
+bool Running(const party::status::Board& b) {
+    return Active(b) && b.state != party::status::State::Off;
+}
 
 /// The Party page's own rows (orders 10..40): status, copy code, rejoin, leave. The join/leave
 /// notices switch and the last event are on the Party members page (room for the party flow's
@@ -396,7 +402,7 @@ void DefineBuiltinPartyRows() {
                      std::string(host ? "Влево/вправо: копировать код для друзей: " : "Влево/вправо: копировать код: ") +
                          b.code};
     };
-    copy.visible = [](const B& b) { return Active(b); }; // party flow: the solo title's rows instead
+    copy.visible = [](const B& b) { return Running(b); }; // party flow: the solo title's rows instead
     copy.press = PartyRow::Press::Once;
     copy.run = [](const B&) { ps::RequestCopyCode(); };
     party_rows.push_back({copy});
@@ -417,7 +423,7 @@ void DefineBuiltinPartyRows() {
                         "Влево/вправо: переподключиться к хосту и позвонить в колокол")
                    : T2("Party mode is off", "Режим группы выключен");
     };
-    rejoin.visible = [](const B& b) { return Active(b); };
+    rejoin.visible = [](const B& b) { return Running(b); };
     rejoin.press = PartyRow::Press::Once;
     rejoin.run = [](const B& b) {
         if (Active(b)) ps::RequestRejoin();
@@ -438,7 +444,7 @@ void DefineBuiltinPartyRows() {
                         "Дважды влево/вправо: вернуться в свой мир и не возвращаться к хосту")
                    : T2("Party mode is off", "Режим группы выключен");
     };
-    leave.visible = [](const B& b) { return Active(b); };
+    leave.visible = [](const B& b) { return Running(b); };
     leave.press = PartyRow::Press::Confirm;
     leave.run = [](const B& b) {
         if (Active(b)) ps::RequestLeave();
@@ -749,7 +755,9 @@ void DefineAll() {
                 Field f;
                 f.kind = Kind::Toggle;
                 f.act = [act](int from, int to, std::int64_t) {
-                    if (from == 0 && to == 1) act(); // the press back to 0 only resets the text
+                    // Every press (live: the press back to 0 only reset the text, so a second edit of
+                    // the address took two presses and showed 'Type, then Enter' after Enter).
+                    if (from != to) act();
                 };
                 e.field = AddField(std::move(f));
             }
