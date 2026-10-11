@@ -17,7 +17,7 @@ from tkinter import ttk, filedialog, messagebox
 
 APP_DIR = Path(__file__).resolve().parent
 # The port's version (VERSION at the repository root; the release has no such file).
-PORT_VERSION = "0.5.1"
+PORT_VERSION = "0.5.2"
 RUN_BAT = APP_DIR / "run.bat"
 LOG_FILE = APP_DIR / "launcher.log"
 SETTINGS_FILE = APP_DIR / "launcher_settings.json"

@@ -3,6 +3,21 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## 0.5.2 (Windows port 0.5.2, party co-op milestone)
+
+- **Party co-op** (still in development; README *Party co-op*, docs/party/ERSC_PARITY.md ~81%):
+  - Travel: "Travel with the party?" at lamps, headstones and the Hunter's Mark; travelling alone loads only the traveller; no loading screen for warps inside the loaded map.
+  - Deaths: the host and guests respawn at their own lamp without a load when it is in the loaded map; dying in a boss fight waits until the fight ends; bloodstains for guests; rot (death debuff, on by default).
+  - Guests: open doors and pull levers in the host's world, talk to NPCs (quest choices shared), trigger cutscenes for the whole party, get Insight.
+  - Joining: waits outside boss fights, faster connect, no "Session lost" after Leave, the host's End party sends guests home cleanly.
+  - Chalice dungeons: any player's ritual, guest summons, boss loot per player, lifts.
+  - Balance: enemy scaling settings (harder than vanilla by default), names over party members.
+  - Fixes: invisible guest on the host (missing draw bit), guest grey screen going to the Dream alone, crash when players stand in different map areas, guests stuck dead after a boss, wrong HP field.
+  - Internet: tested under simulated lag, loss and outages; guest codes for hosts without port forwarding.
+  - Version check: different builds or party options are refused with a clear message.
+- **Faster startup**: the prepared game image is cached (run.bat steps ~14 s -> ~1 s); quicker automatic Continue.
+- **Known issues**: guest position can drift on Continue after dying while summoned; no spectator camera while dead in a boss fight; 4-player joins unreliable; the 4th player and 2-PC play are untested.
+
 ## 0.5.1 (Windows port 0.5.1, with upstream bbport 0.51)
 
 - **Upstream 0.51** ([docs/UPSTREAM_0.51_INTEGRATION.md](docs/UPSTREAM_0.51_INTEGRATION.md)): game profile for every 1.09 retail region, motion blur smear fix, 4 GB VRAM fallback, title flicker fix above 1080p, swapchain recreation fix, DLSS library choice in the launcher, mouse wheel and mouse bindings in mouse & keyboard mode, *Quit the game* in the overlay and System menu. The shadNet online module is not included (needs a server; conflicts with party co-op).
