@@ -146,6 +146,13 @@ private:
 #endif
 };
 
+// A total outage from now for `ms` (tests: director steps host_outage / guest_outage): every UDP
+// datagram this process sends is dropped and every party-link byte it receives is held until it
+// ends. Works only while the simulator is on (BB_NET_SIM set, e.g. "lat=0").
+void outage_now(double ms);
+// The outage_now() window covering `now`, if any.
+bool blackout_at(Clock::time_point now, Clock::time_point* end);
+
 // Process-wide simulator (configured once by bbnet_configure / the first party socket).
 void configure(const Config& c);
 bool enabled();

@@ -331,6 +331,17 @@ static void test_netsim() {
         CHECK(sd.retransmits() > 50 && sd.retransmits() < 160);  // ~10 % of 1000
         const Clock::time_point held = sd.schedule(e + std::chrono::milliseconds(2200));
         CHECK(held >= e + std::chrono::milliseconds(3000 + 50) && sd.outage_holds() == 1);
+        // outage_now: a process-wide window (director steps host_outage / guest_outage).
+        CHECK(!blackout_at(Clock::now(), nullptr));
+        outage_now(80);
+        CHECK(blackout_at(Clock::now(), nullptr));
+        {
+            StreamDelay s3(c2, Clock::now() - std::chrono::hours(1), 2);
+            const Clock::time_point t = Clock::now();
+            CHECK(s3.schedule(t) >= t + std::chrono::milliseconds(70) && s3.outage_holds() == 1);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        CHECK(!blackout_at(Clock::now(), nullptr));
         std::printf("netsim: stream delay ok (%llu retransmits of 1000)\n",
                     static_cast<unsigned long long>(sd.retransmits()));
     }

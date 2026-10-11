@@ -15,6 +15,7 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
@@ -161,7 +162,7 @@ Clock::time_point StreamDelay::schedule(Clock::time_point now) {
     }
     Clock::time_point due = now + std::chrono::duration_cast<Clock::duration>(ms(d));
     Clock::time_point end;
-    if (outage_at(cfg_, epoch_, epoch_, now, &end)) {
+    if (outage_at(cfg_, epoch_, epoch_, now, &end) || blackout_at(now, &end)) {
         const Clock::time_point after = end + std::chrono::duration_cast<Clock::duration>(ms(cfg_.lat_ms));
         if (after > due) due = after;
         ++outage_holds_;
@@ -349,6 +350,30 @@ void sender() {
 }
 
 }  // namespace
+
+namespace {
+std::atomic<std::int64_t> g_black_from{0}, g_black_until{0};  // steady_clock ticks
+}  // namespace
+
+bool blackout_at(Clock::time_point now, Clock::time_point* end) {
+    const std::int64_t t = now.time_since_epoch().count();
+    const std::int64_t from = g_black_from.load(), until = g_black_until.load();
+    if (until == 0 || t < from || t >= until) return false;
+    if (end) *end = Clock::time_point(Clock::duration(until));
+    return true;
+}
+
+void outage_now(double ms_len) {
+    const Clock::time_point now = Clock::now();
+    const Clock::time_point until =
+        now + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(ms_len));
+    g_black_from = now.time_since_epoch().count();
+    g_black_until = until.time_since_epoch().count();
+    Sim& s = sim();
+    std::lock_guard<std::mutex> lk(s.mu);
+    if (s.queue) s.queue->blackout(now, until);
+    std::printf("Net: simulated outage for %.0f ms%s\n", ms_len, s.queue ? "" : " (simulator off: no effect)");
+}
 
 void configure(const Config& c) {
     Sim& s = sim();
