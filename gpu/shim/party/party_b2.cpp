@@ -2655,6 +2655,57 @@ void HostTick(const GameSnapshot& s, double now) {
     }
 }
 
+
+// ---- C6 RE: the game's transport objects (NexusRevolution) ----
+constexpr u64 kNrCreateCall = 0xcdac45;  // FUN_00CDABE0: call FUN_00CDB250(obj, mgr[1], mgr[2], cfg)
+constexpr u64 kNrCreate = 0xcdb250;
+std::mutex g_nr_mu;
+std::deque<NrTransport> g_nr;
+
+BB_COOP_SYSV u64 NrCreateHook(u64 obj, u64 a1, u64 a2, u64 cfg) {
+    using Fn = u64(BB_COOP_SYSV*)(u64, u64, u64, u64);
+    const u64 r = reinterpret_cast<Fn>(Guest(kNrCreate))(obj, a1, a2, cfg);
+    // RE aid only (experimental C6 work, BB_PARTY_NR_FAST_EXPIRE=1): otherwise a plain pass-through.
+    static const bool on = EnvOn("BB_PARTY_NR_FAST_EXPIRE");
+    if (!on) return r;
+    NrTransport t;
+    t.owner = obj;
+    t.factory = a2;
+    t.transport = Field<u64>(obj, 8);
+    static const std::uint32_t pat[7] = {0x4d0, 3000, 5000, 6000, 25000, 20000, 200};
+    long found_at = -1;
+    if (t.transport) {
+        std::vector<std::uint32_t> buf(0x4000 / 4);
+        for (std::size_t chunk = 0; chunk < buf.size(); chunk += 256) {
+            if (!SafeRead(t.transport + chunk * 4, buf.data() + chunk, 1024)) break;
+        }
+        for (std::size_t i = 0; i + 7 <= buf.size(); ++i) {
+            if (buf[i] == 0x4d0 && std::memcmp(&buf[i], pat, sizeof pat) == 0) {
+                found_at = static_cast<long>(i * 4);
+                t.config = reinterpret_cast<std::uint32_t*>(t.transport + i * 4);
+                break;
+            }
+        }
+    }
+    if (t.transport) {
+        std::uint32_t w[32] = {};
+        SafeRead(t.transport + 0x130, w, sizeof w);
+        std::string hex;
+        for (int i = 0; i < 32; ++i) {
+            char x[16];
+            std::snprintf(x, sizeof x, " %x", w[i]);
+            hex += x;
+        }
+        Log("NR transport +0x130..:%s", hex.c_str());
+    }
+    Log("NR transport created: owner %#llx transport %#llx (ok %d); config copy %s%#lx", ull(obj), ull(t.transport),
+        static_cast<int>(r & 0xff), found_at >= 0 ? "at +" : "not found in 16 KiB ", found_at >= 0 ? found_at : 0L);
+    std::lock_guard<std::mutex> lk(g_nr_mu);
+    g_nr.push_front(t);
+    if (g_nr.size() > 16) g_nr.pop_back();
+    return r;
+}
+
 void InstallCall(u64 off, u64 target, const void* handler, const char* name) {
     if (!HookCallSite(off, target, handler, name)) {
         Log("%s: NOT installed (bytes differ)", name);
@@ -2662,6 +2713,30 @@ void InstallCall(u64 off, u64 target, const void* handler, const char* name) {
 }
 
 } // namespace
+
+std::string NrFindTimeouts(u64 base, std::size_t span) {
+    std::vector<std::uint32_t> buf(span / 4);
+    for (std::size_t chunk = 0; chunk < buf.size(); chunk += 256)
+        if (!SafeRead(base + chunk * 4, buf.data() + chunk, 1024)) {
+            buf.resize(chunk);
+            break;
+        }
+    std::string out;
+    for (std::size_t i = 0; i < buf.size(); ++i) {
+        const std::uint32_t v = buf[i];
+        if (v == 25000 || v == 20000 || v == 25000000 || v == 20000000 || v == 3000 || v == 5000 || v == 6000 || v == 200) {
+            char x[40];
+            std::snprintf(x, sizeof x, " +%#zx=%u", i * 4, v);
+            out += x;
+        }
+    }
+    return out;
+}
+
+std::vector<NrTransport> NrTransports() {
+    std::lock_guard<std::mutex> lk(g_nr_mu);
+    return {g_nr.begin(), g_nr.end()};
+}
 
 bool Requested() {
     // Default in party mode (BB_PARTY set): B2, with B1 as the automatic fallback. BB_PARTY_B2=0: B1
@@ -2719,6 +2794,7 @@ void Init() {
     InstallCall(kHostDeathReturnCall, kRequestReturn, reinterpret_cast<const void*>(&HostDeathReturnHook),
                 "B2 K8 host death return-all");
     InstallCall(0x13858f5, kBeginLeave, reinterpret_cast<const void*>(&BossClearLeaveHook), "B2 K10 boss-clear leave (a)");
+    InstallCall(kNrCreateCall, kNrCreate, reinterpret_cast<const void*>(&NrCreateHook), "C6 NR transport create");
     InstallCall(0x1385a95, kBeginLeave, reinterpret_cast<const void*>(&BossClearLeaveHook), "B2 K10 boss-clear leave (b)");
     // Not B2-specific (B1 bell joins stream too): installed whenever B2 is.
     if (!HookPrologue(0x18cb0e0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x81,

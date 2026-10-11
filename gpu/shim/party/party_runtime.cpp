@@ -56,6 +56,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <tlhelp32.h>
 #endif
 
 namespace party {
@@ -1338,6 +1339,83 @@ bool nr_copy_ok(const std::uint32_t* h) {
 
 std::vector<std::uint32_t*> g_nr_hits;  // g_nr_mu
 
+// RE aid (BB_PARTY_NR_WATCH=1, with BB_PARTY_NR_FAST_EXPIRE=1): hardware data breakpoints on the
+// first config copy's two idle timeouts (+0x10, +0x14 from the 0x4d0 word) in every thread; each
+// distinct reading instruction is logged once a second (guest offset, count).
+std::atomic<std::uint64_t> g_nrw_rip[64];
+std::atomic<std::uint32_t> g_nrw_cnt[64];
+std::atomic<std::uint64_t> g_nrw_lo{0}, g_nrw_hi{0};
+
+LONG CALLBACK nr_watch_veh(PEXCEPTION_POINTERS ep) {
+    if (ep->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP) return EXCEPTION_CONTINUE_SEARCH;
+    CONTEXT* c = ep->ContextRecord;
+    if (!(c->Dr6 & 3)) return EXCEPTION_CONTINUE_SEARCH;
+    const std::uint64_t rip = c->Rip;
+    for (int i = 0; i < 64; ++i) {
+        std::uint64_t cur = g_nrw_rip[i].load();
+        if (cur == rip) {
+            g_nrw_cnt[i].fetch_add(1);
+            break;
+        }
+        if (cur == 0 && g_nrw_rip[i].compare_exchange_strong(cur, rip)) {
+            g_nrw_cnt[i].fetch_add(1);
+            break;
+        }
+    }
+    c->Dr6 = 0;
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+void nr_watch_arm(std::uint32_t* h) {
+    static bool once = false;
+    if (once || !env_on("BB_PARTY_NR_WATCH")) return;
+    once = true;
+    AddVectoredExceptionHandler(1, nr_watch_veh);
+    const DWORD self = GetCurrentThreadId(), pid = GetCurrentProcessId();
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    THREADENTRY32 te{};
+    te.dwSize = sizeof te;
+    int armed = 0;
+    for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
+        if (te.th32OwnerProcessID != pid || te.th32ThreadID == self) continue;
+        HANDLE th = OpenThread(THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_SUSPEND_RESUME, FALSE, te.th32ThreadID);
+        if (!th) continue;
+        if (SuspendThread(th) != static_cast<DWORD>(-1)) {
+            CONTEXT c{};
+            c.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+            if (GetThreadContext(th, &c)) {
+                c.Dr0 = reinterpret_cast<DWORD64>(h + 4);
+                c.Dr1 = reinterpret_cast<DWORD64>(h + 5);
+                // L0, L1; RW = 11 (read/write), LEN = 11 (4 bytes) for both.
+                c.Dr7 = (c.Dr7 & ~0xff0000full) | 1 | 4 | (0xfull << 16) | (0xfull << 20);
+                if (SetThreadContext(th, &c)) ++armed;
+            }
+            ResumeThread(th);
+        }
+        CloseHandle(th);
+    }
+    CloseHandle(snap);
+    const std::uint64_t base = reinterpret_cast<std::uint64_t>(coop::Image());
+    plog("nr watch: data breakpoints on %p (+0x10 / +0x14) in %d threads", static_cast<void*>(h), armed);
+    std::thread([base] {
+        std::uint32_t last[64] = {};
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            for (int i = 0; i < 64; ++i) {
+                const std::uint64_t rip = g_nrw_rip[i].load();
+                if (!rip) break;
+                const std::uint32_t n = g_nrw_cnt[i].load();
+                if (n != last[i] && (last[i] == 0 || n / 100 != last[i] / 100)) {
+                    plog("nr watch: read at %#llx (guest +%#llx) x%u", static_cast<unsigned long long>(rip),
+                         static_cast<unsigned long long>(rip >= base ? rip - base : 0), n);
+                    last[i] = n;
+                }
+            }
+        }
+    }).detach();
+}
+
+
 // Finds the copies ahead of time (the scan of the resident heap takes seconds): when the host's
 // game gets a cooperator (its transport holds them), and again at a crash if they moved.
 void nr_scan_locked(const char* why) {
@@ -1348,6 +1426,34 @@ void nr_scan_locked(const char* why) {
     std::string body;
     const char* how = "whole process";
     g_nr_hits.clear();
+    for (const coop::b2::NrTransport& t : coop::b2::NrTransports()) {
+        if (t.config && nr_copy_ok(t.config)) g_nr_hits.push_back(t.config);
+        // Seen live: a copy at transport +0x14c (pattern written after the create returns).
+        auto* c = reinterpret_cast<std::uint32_t*>(t.transport + 0x14c);
+        if (t.transport && !t.config && nr_copy_ok(c)) g_nr_hits.push_back(c);
+        if (t.transport) {
+            std::uint32_t w[16] = {};
+            MEMORY_BASIC_INFORMATION mi{};
+            plog("transport %#llx timing values:%s", static_cast<unsigned long long>(t.transport),
+                 coop::b2::NrFindTimeouts(t.transport, 0x8000).c_str());
+            plog("factory %#llx timing values:%s", static_cast<unsigned long long>(t.factory),
+                 coop::b2::NrFindTimeouts(t.factory, 0x4000).c_str());
+            plog("owner %#llx timing values:%s", static_cast<unsigned long long>(t.owner),
+                 coop::b2::NrFindTimeouts(t.owner, 0xc0).c_str());
+            if (VirtualQuery(reinterpret_cast<void*>(t.transport), &mi, sizeof mi) && mi.State == MEM_COMMIT) {
+                std::memcpy(w, reinterpret_cast<const void*>(t.transport + 0x140), sizeof w);
+                plog("transport %#llx +0x140: %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x",
+                     static_cast<unsigned long long>(t.transport), w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8],
+                     w[9], w[10], w[11], w[12], w[13], w[14], w[15]);
+            }
+        }
+    }
+    if (!g_nr_hits.empty()) {
+        plog("game transport config: %zu cop%s from the transport-create hook", g_nr_hits.size(),
+             g_nr_hits.size() == 1 ? "y" : "ies");
+        nr_watch_arm(g_nr_hits[0]);
+        return;
+    }
     if (read_file(hint_file, &body)) {
         const std::uintptr_t h = static_cast<std::uintptr_t>(std::strtoull(body.c_str(), nullptr, 16));
         if (h > (1ull << 30)) {
@@ -1395,6 +1501,7 @@ void runtime_nr_prescan() {
         bool ok = !g_nr_hits.empty();
         for (const std::uint32_t* h : g_nr_hits) ok = ok && nr_copy_ok(h);
         if (!ok) nr_scan_locked("a cooperator joined");
+        if (!g_nr_hits.empty()) nr_watch_arm(g_nr_hits[0]);
     }).detach();
 }
 

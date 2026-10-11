@@ -114,5 +114,15 @@ int MembersApart();
 bool LampTravelIntent(std::uint32_t id, TravelIntent* t);
 /// Host in a session with at least one member task (someone to travel with or without).
 bool HostHasMembers();
+/// C6 (RE): the game's NexusRevolution transports seen created (0xCDB250 via 0xCDAC45) and, per
+/// transport, where its copy of the transport config lives (the word 0x4d0, then 3000, 5000, 6000,
+/// 25000 idle, 20000, 200). Newest first; entries can be stale (check before use).
+struct NrTransport {
+    std::uint64_t owner = 0, transport = 0, factory = 0;
+    std::uint32_t* config = nullptr;
+};
+std::vector<NrTransport> NrTransports();
+/// RE: offsets in [base, base+span) holding the transport config's timing values.
+std::string NrFindTimeouts(std::uint64_t base, std::size_t span);
 
 } // namespace coop::b2

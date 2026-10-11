@@ -198,6 +198,22 @@ So everything but the hold is the normal join plus the guest's own boot and load
 Result: crash rejoin stays ~30 s after the restart (~34 s after the crash). The floor without
 the hold is ~22 s after the crash (boot + own load + a normal join).
 
+### Transport RE so far (2026-10-11, experimental, all behind `BB_PARTY_NR_FAST_EXPIRE=1`)
+
+- A call-site hook on 0xCDAC45 (`FUN_00CDABE0` -> `FUN_00CDB250`, the transport create) gives each
+  transport as it is made: one at boot, one per hosted session (e.g. owner `0x110dbb8b40`,
+  transport `owner+8` = `0x110dcb9380`). The socket states are named by 0xCD84E0
+  (`SocketState_Disconnected` ... `Connected`, `Disconnect`, `Disconnecting`).
+- The "config copies" the memory scan found (the 0x4d0 / 3000 / 5000 / 6000 / 25000 / 20000 / 200
+  run) are **not live**: they show up only after the session ends (at `transport + 0x7c` of the
+  freed session transport), and hardware data breakpoints on them (`BB_PARTY_NR_WATCH=1`) were
+  hit only by our own scanner, never by game code. So lowering them could not work, which explains
+  the earlier runs.
+- Next: find where the live transport keeps the idle timeout or the per-connection last-receive
+  time (the 0x4d0 run is not in the session transport's first 16 KiB; a search of the transport,
+  owner and factory objects for the single values is built in but was not run), then the
+  transport's vtable (factory `param_3->vtable[0x10]`).
+
 ## Open
 
 - Finding where the NexusRevolution transport keeps its idle timeout per connection (the config
