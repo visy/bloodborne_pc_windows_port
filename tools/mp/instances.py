@@ -42,8 +42,11 @@ def base_port(root) -> int:
         return BASE_PORT
     import zlib
     return 47700 + 10 * (zlib.crc32(str(r).lower().encode()) % 150)
+# Up to 4 test games share one GPU and RAM: lowest-cost settings (720p, no upscaler, every optional
+# effect off, lowest model detail). Agents read screenshots, so 720p stays.
 INI = ("upscaler=off\npreset=0\noutput_res=1280x720\nlive_resolution=0\nshow_fps=1\n"
-       "skip_intro=1\n")
+       "skip_intro=1\nmodel_lod=2\neffect_chromatic_aberration=0\neffect_dof=0\neffect_motion_blur=0\n"
+       "effect_ssao=0\neffect_game_aa=0\neffect_dynamic_shadows=0\neffect_ssr=0\n")
 
 
 def link_tree(src: Path, dst: Path):
@@ -478,7 +481,9 @@ def main():
     ap.add_argument("--game", default=str(DEFAULT_GAME))
     ap.add_argument("--saves", default=str(DEFAULT_GAME / "user" / "savedata"))
     ap.add_argument("--seconds", type=int, default=120)
-    ap.add_argument("--vram", type=int, default=3072)
+    # 4 instances share one 8 GB card: 4 x 1792 MiB plus the desktop fit; 3072 each overcommitted
+    # VRAM and spilled into system RAM.
+    ap.add_argument("--vram", type=int, default=int(os.environ.get("BB_MP_VRAM", "1792")))
     ap.add_argument("--fps", default="30", help="frame cap of the test instances (30, 60, 90, uncap)")
     ap.add_argument("--stagger", type=float, default=8.0)
     ap.add_argument("--party", action="store_true", help="instance 0 hosts a loopback party, the others join")
