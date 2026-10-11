@@ -2029,7 +2029,8 @@ void PartyDirector::Tick() {
             link->post_event(party::kBroadcast, kItemsEventName, ItemsToJsonText(items));
             Log("items: %zu lots sent to the party", items.size());
         }
-        // The host's chalices: every guest gets the ones it lacks (party_chalice.h).
+        // The host's chalices (its own and those the guests sent): every guest gets the ones it
+        // lacks (party_chalice.h).
         std::vector<std::uint32_t> chalices;
         if (chalice::PopHostGoods(&chalices)) {
             link->post_event(party::kBroadcast, chalice::kGoodsEventName, chalice::GoodsToJsonText(chalices));
@@ -2038,6 +2039,13 @@ void PartyDirector::Tick() {
         while (TakeHostFullItems(&slot, &items)) {
             link->post_event(slot, kItemsFullEventName, ItemsToJsonText(items));
             Log("items: full list (%zu lots) sent to slot %d", items.size(), slot);
+        }
+    }
+    // A guest's chalices go to the host (any member can perform the ritual; party_chalice.h).
+    if (link && role == PartyRole::Guest) {
+        std::vector<std::uint32_t> chalices;
+        if (chalice::PopHostGoods(&chalices)) {
+            link->post_event(party::kHostSlot, chalice::kGoodsEventName, chalice::GoodsToJsonText(chalices));
         }
     }
     // B2 (party_b2.h): guest "arrived" / host notes.

@@ -196,11 +196,14 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
 ## 5. Progress and rewards
 
 * **Chalices for everyone** (party_chalice.h): the chalices (goods 6100..6539 that are
-  HolygrailExParam rows; isOnlyOne, never consumed by a ritual) the host owns go to every guest
-  that lacks them (`chalice_goods` event, every change and every 60 s; the guest gives itself the
-  missing ones with GiveItemDirect in its own world, load mode 0). Whichever member's dungeon the
-  party clears, every member can perform the next ritual itself. A peer's list is filtered to the
-  25 chalice ids (no other goods can be given this way).
+  HolygrailExParam rows; isOnlyOne, never consumed by a ritual) any member owns go to every member
+  that lacks them (`chalice_goods` event, every change and every 60 s): a guest sends its list to
+  the host, the host gives itself the missing ones and broadcasts its (now merged) list, and each
+  guest gives itself the missing ones in its own world (load mode 0; GiveItemDirect). Whichever
+  member's dungeon the party clears, every member can perform the next ritual itself, and the host
+  can open the altar menu for a dungeon a guest made (the altar refuses everything with "A Holy
+  Chalice is required to conduct a ritual." when the player owns no chalice, run c16). A peer's
+  list is filtered to the 25 chalice ids (no other goods can be given this way).
 * Dungeon flags (layer doors, boss kills, treasure in area 29, 1100xxxxx / 2001xxxxx lots) live in
   the **slot's own groups** (areas 40..47 remapped from area 29 by the slot), so a summoned guest
   (load mode 1, the host's overlay) never progresses its own copy, exactly like vanilla. They are
