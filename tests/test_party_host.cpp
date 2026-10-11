@@ -14,6 +14,7 @@
 #include "gpu/bbnet.h"
 #include "party_sign_blob.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -879,6 +880,165 @@ static void test_impersonation() {
     CHECK(api.signs().empty());
 }
 
+// --- Chalice Dungeons: the channel board and the bells' ChannelId matching (chalice.md) -------
+static void test_chalice_channels() {
+    PartyHostService s;
+    bbnet::party::FromApi api(s);
+    auto post = [&](const char* who, const char* path, const std::string& body) {
+        bbnet::party::HttpRequest rq;
+        rq.method = "POST";
+        rq.url = std::string("http://bbparty.invalid:18671") + path;
+        rq.body = body;
+        bbnet::party::HttpResponse r;
+        api.handle(Caller{who, 0x0a00000a}, rq, r);
+        json::Value v;
+        std::string err;
+        CHECK(r.status == 200 && json::parse(r.body, v, err));
+        return v;
+    };
+    const std::string form = bbnet::party::b64_encode(std::string(600, 'd') + "dungeon-1");
+    const std::string upload = R"({"MessageId":"ChannelUploadRequest","HolyGrailTypeId":1100,"FormDataVersion":0,)"
+                               R"("Status":1,"FixedOrGeneral":0,"FormData":")" + form +
+                               R"(","CharaId":7,"ShareLevel":2,"SubFeatureFlag":0,"RitualLevel":1,)"
+                               R"("WishMaterialList":[{"WishMaterialMainTypeId":1,"WishMaterialSubTypeId":2,)"
+                               R"("WishMaterialCount":3,"SpendMaterialCount":0}]})";
+    // Upload: an id and an 8-character glyph; the same dungeon again keeps both.
+    json::Value up = post("Host", "/channel/upload", upload);
+    CHECK(int_of(up, "ResKind", -1) == 0);
+    const long long id = int_of(up, "ChannelId", 0);
+    const std::string glyph = str_of(up, "DiscernmentWord");
+    CHECK(id > 0 && id < (1LL << 52) && glyph.size() == 8);
+    for (char ch : glyph) CHECK((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9'));
+    json::Value again = post("GuestA", "/channel/upload", upload);
+    CHECK(int_of(again, "ChannelId", 0) == id && str_of(again, "DiscernmentWord") == glyph);
+    CHECK(api.channels().channels().size() == 1 && api.channels().channels()[0].owner == "Host");
+    // Refused: no FormData, junk base64, a FormDataVersion the game would not read.
+    CHECK(int_of(post("GuestA", "/channel/upload", R"({"FormDataVersion":0})"), "ResKind", 0) == 0x1040a);
+    CHECK(int_of(post("GuestA", "/channel/upload", R"({"FormData":"%%%%","FormDataVersion":0})"), "ResKind", 0) == 0x1040a);
+    CHECK(int_of(post("GuestA", "/channel/upload", R"({"FormData":"QUFB","FormDataVersion":1})"), "ResKind", 0) == 0x1040a);
+    CHECK(api.channels().channels().size() == 1);
+
+    // Glyph search: the root object is the entry the game reads (0x1e89da0).
+    json::Value w = post("GuestA", "/channel/word_search", "{\"SearchWord\":\"" + glyph + "\",\"FormDataVersion\":0}");
+    CHECK(int_of(w, "ResKind", -1) == 0 && int_of(w, "ChannelId", 0) == id && str_of(w, "FormData") == form);
+    CHECK(int_of(w, "FormDataVersion", -1) == 0 && int_of(w, "HolyGrailTypeId", 0) == 1100);
+    CHECK(int_of(w, "FixedOrGeneral", -1) == 0 && int_of(w, "RitualLevel", 0) == 1);
+    const json::Value* wish = w.find("WishMaterialList");
+    CHECK(wish && wish->type == json::Value::Type::Array && wish->array.size() == 1);
+    CHECK(int_of(post("GuestA", "/channel/word_search", R"({"SearchWord":"zzzzzzzz"})"), "ResKind", 0) == 0x1040a);
+
+    // Search: the other members' dungeons that fit; not the caller's own.
+    auto count = [](const json::Value& v, const char* key) {
+        const json::Value* l = v.find(key);
+        return l && l->type == json::Value::Type::Array ? static_cast<int>(l->array.size()) : -1;
+    };
+    CHECK(count(post("GuestA", "/channel/search", R"({"HolyGrailTypeId":null,"RitualLevel":null,"GetCount":20,)"
+                                                  R"("FixedOrGeneralList":[{"FixedOrGeneral":0},{"FixedOrGeneral":2}]})"),
+                "ChannelList") == 1);
+    CHECK(count(post("GuestA", "/channel/search", R"({"FixedOrGeneralList":[{"FixedOrGeneral":1}]})"), "ChannelList") == 0);
+    CHECK(count(post("GuestA", "/channel/search", R"({"HolyGrailTypeId":1200})"), "ChannelList") == 0);
+    CHECK(count(post("Host", "/channel/search", "{}"), "ChannelList") == 0);
+    // Details / info by id; unknown ids are left out (never "lost").
+    const std::string ids = "{\"ChannelIdList\":[{\"ChannelId\":" + std::to_string(id) + "},{\"ChannelId\":12345}]}";
+    CHECK(count(post("GuestA", "/channel/get_details_info", ids), "ChannelList") == 1);
+    json::Value info = post("GuestA", "/channel/get_info", ids);
+    CHECK(int_of(info, "ResKind", -1) == 0 && count(info, "ChannelInfoList") == 1);
+    // Share level: the uploader's setting only.
+    post("GuestA", "/channel/share", "{\"ChannelId\":" + std::to_string(id) + ",\"ShareLevel\":0}");
+    CHECK(api.channels().channels()[0].share_level == 2);
+    post("Host", "/channel/share", "{\"ChannelId\":" + std::to_string(id) + ",\"ShareLevel\":1}");
+    CHECK(api.channels().channels()[0].share_level == 1);
+    CHECK(int_of(post("GuestA", "/channel/add_material", "{}"), "CompleteFlag", -1) == 0);
+
+    // Random join: the dungeon another member plays now (its bells report it), else the newest.
+    const std::string form2 = bbnet::party::b64_encode(std::string(600, 'e') + "dungeon-2");
+    std::string upload2 = upload;
+    upload2.replace(upload2.find(form), form.size(), form2);
+    const long long id2 = int_of(post("GuestB", "/channel/upload", upload2), "ChannelId", 0);
+    CHECK(id2 > 0 && id2 != id);
+    CHECK(int_of(post("GuestA", "/channel/random_join", "{}"), "ChannelId", 0) == id2);  // newest
+    CHECK(int_of(post("GuestB", "/channel/random_join", "{}"), "ChannelId", 0) == id);   // never its own
+    const std::uint32_t chalice_map = 486607628u;  // 0x1D010A0C: area 29, a Chalice Dungeon piece
+    auto sign = [&](const char* who, std::uint32_t area, long long channel) {
+        return std::string(R"({"SummonType":7,"AreaId":)") + std::to_string(area) + R"(,"MatchingLevel":50,"ChannelId":)" +
+               std::to_string(channel) + R"(,"SummonData":")" +
+               bbnet::party::b64_encode(party_test::sign_blob(who, area)) + R"("})";
+    };
+    post("Host", "/summon_messenger/get", "{\"AreaId\":" + std::to_string(chalice_map) + ",\"ChannelId\":" + std::to_string(id) + "}");
+    CHECK(api.channels().member_channel("Host") == static_cast<std::uint64_t>(id));
+    CHECK(int_of(post("GuestA", "/channel/random_join", "{}"), "ChannelId", 0) == id);  // the host plays it
+    CHECK(int_of(post("Host", "/channel/random_join", "{}"), "ChannelId", 0) == id2);
+
+    // A Shared Fixed Dungeon ritual searches for its one shared channel and fails ("Failed to connect")
+    // on an empty list (seen live): the board makes it, the same for every member, and a later upload
+    // of that fixed dungeon keeps its id.
+    const std::string fixed_q = R"({"FixedOrGeneralList":[{"FixedOrGeneral":2}],"FormDataVersion":0,"GetCount":1,)"
+                                R"("HolyGrailTypeId":0,"RitualLevel":1,"Status":1,"SubFeatureFlag":256})";
+    json::Value f1 = post("Host", "/channel/search", fixed_q);
+    CHECK(count(f1, "ChannelList") == 1);
+    const long long fixed_id = int_of(f1.find("ChannelList")->array[0], "ChannelId", 0);
+    CHECK(fixed_id > 0 && int_of(f1.find("ChannelList")->array[0], "FixedOrGeneral", 0) == 2);
+    json::Value f2 = post("GuestA", "/channel/search", fixed_q);
+    CHECK(count(f2, "ChannelList") == 1 && int_of(f2.find("ChannelList")->array[0], "ChannelId", 0) == fixed_id);
+    // The synthetic channel has no FormData until the host's game puts its slot record's on it
+    // (a summoned member's quick join reads it through get_details_info).
+    const std::uint64_t fid = static_cast<std::uint64_t>(fixed_id);
+    CHECK(api.channels().form_data(fid).empty());
+    const std::string slot_fd = bbnet::party::b64_encode(std::string("slot record layout"));
+    CHECK(!api.channels().set_form_data(fid, "not base64!"));
+    CHECK(!api.channels().set_form_data(fid + 1, slot_fd));
+    CHECK(api.channels().set_form_data(fid, slot_fd) && api.channels().form_data(fid) == slot_fd);
+    {
+        json::Value d = post("GuestB", "/channel/get_details_info",
+                             R"({"ChannelIdList":[{"ChannelId":)" + std::to_string(fixed_id) + "}]}");
+        CHECK(count(d, "ChannelList") == 1);
+        const json::Value* e = count(d, "ChannelList") == 1 ? &d.find("ChannelList")->array[0] : nullptr;
+        const json::Value* fd = e ? e->find("FormData") : nullptr;
+        CHECK(fd && fd->string == slot_fd);
+        // ShareLevel != 0 and Status 1: the reader's game takes Status only with a ShareLevel,
+        // and a quick join needs it (else the join is cancelled).
+        CHECK(e && int_of(*e, "ShareLevel", 0) != 0 && int_of(*e, "Status", 0) == 1);
+        // A member in its own ritual of that dungeon (it searched it just now) gets ShareLevel 0.
+        json::Value r = post("GuestA", "/channel/get_details_info",
+                             R"({"ChannelIdList":[{"ChannelId":)" + std::to_string(fixed_id) + "}]}");
+        CHECK(count(r, "ChannelList") == 1 && int_of(r.find("ChannelList")->array[0], "ShareLevel", -1) == 0);
+    }
+    const std::string fixed_up = R"({"HolyGrailTypeId":0,"FormDataVersion":0,"Status":1,"FixedOrGeneral":2,"FormData":")" +
+                                 bbnet::party::b64_encode(std::string("fixed layout")) +
+                                 R"(","ShareLevel":1,"SubFeatureFlag":256,"RitualLevel":1})";
+    CHECK(int_of(post("Host", "/channel/upload", fixed_up), "ChannelId", 0) == fixed_id);
+    CHECK(api.channels().known(static_cast<std::uint64_t>(fixed_id)));
+
+    // Bells: a host inside a dungeon the board has gets every member's sign (the summoned game
+    // quick-joins the dungeon by its ChannelId); inside one the board does not have, none.
+    post("GuestA", "/summon_messenger/create", sign("GuestA", 0x15010000u, 0));  // the Hunter's Dream
+    post("GuestB", "/summon_messenger/create", sign("GuestB", chalice_map, id2)); // its own dungeon
+    CHECK(api.signs().size() == 2);
+    auto listed = [&](const json::Value& q) {
+        std::vector<std::string> who;
+        const json::Value* l = q.find("SummonDataList");
+        if (l && l->type == json::Value::Type::Array) {
+            for (const json::Value& e : l->array) {
+                const std::vector<std::uint8_t> b = bbnet::party::b64_decode(str_of(e, "SummonData"));
+                who.emplace_back(reinterpret_cast<const char*>(&b[0x40]));
+            }
+        }
+        std::sort(who.begin(), who.end());
+        return who;
+    };
+    auto host_get = [&](std::uint32_t area, long long channel) {
+        return listed(post("Host", "/summon_messenger/get",
+                           "{\"AreaId\":" + std::to_string(area) + ",\"ChannelId\":" + std::to_string(channel) + "}"));
+    };
+    const std::vector<std::string> both{"GuestA", "GuestB"};
+    CHECK(host_get(chalice_map, id) == both);
+    CHECK(host_get(chalice_map, id2) == both);
+    CHECK(host_get(chalice_map, 0).empty());          // never uploaded: held back
+    CHECK(host_get(chalice_map, 4242).empty());       // not on the board: held back
+    CHECK(host_get(0x18010000u, 0) == both);          // outside the dungeons: as before
+    CHECK(host_get(0x18010000u, 4242) == both);
+}
+
 int main() {
     // Loopback-only sockets: no Windows Firewall prompt for a test program (party_sock.h).
     if (!std::getenv("BB_PARTY_LOOPBACK")) {
@@ -918,6 +1078,7 @@ int main() {
     test_remote_guest();
     test_matching2_host();
     test_from_api();
+    test_chalice_channels();
     test_matching2_leave_and_join();
     test_impersonation();
     }

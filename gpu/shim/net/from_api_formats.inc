@@ -169,9 +169,7 @@ constexpr Reply kReplies[] = {
     {"/chair_messenger/get", 200, "application/json", R"({"ResKind":0,"ChairMessList":[],"ChairMessCount":0})", true},
     {"/tomb_messenger/message_area", 200, "application/json", R"({"ResKind":0,"TombMessList":[]})", true},
     {"/wandering_ghost/get", 200, "application/json", R"({"ResKind":0,"WanderingGhostList":[]})", true},
-    {"/channel/get_info", 200, "application/json", R"({"ResKind":0,"ChannelInfoList":[]})", true},
-    {"/channel/get_details_info", 200, "application/json", R"({"ResKind":0,"ChannelList":[]})", true},
-    {"search", 200, "application/json", R"({"ResKind":0,"ChannelList":[]})", true},
+    // /channel/*: the Chalice Dungeon board (from_api_channel.h) answers them.
 };
 
 // Anything else under the gameurl (messages, bloodstains, ghosts, channels, net errors):

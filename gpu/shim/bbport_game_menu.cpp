@@ -43,6 +43,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cctype>
 #include <cstring>
 #include <string>
 #include <utility>
@@ -320,6 +321,26 @@ struct SeenText {
     std::atomic<std::int64_t> ms{0};
 };
 SeenText seen_texts[4096];
+// The last lookups with their texts (TextSeenMs: test aids wait for a given screen's text).
+struct RecentText {
+    std::atomic<const char16_t*> text{nullptr};
+    std::atomic<std::int64_t> ms{0};
+};
+RecentText recent_texts[512];
+std::atomic<u32> recent_next{0};
+void NoteText(const char16_t* text) {
+    if (!text || !text[0]) {
+        return;
+    }
+    const std::int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now().time_since_epoch())
+                                 .count();
+    // Repeats (a screen looks its texts up every frame) refresh their slot instead of filling the ring.
+    const u32 h = u32((reinterpret_cast<std::uintptr_t>(text) >> 3) * 0x9E3779B1u) >> 23; // 0..511
+    RecentText& r = recent_texts[h];
+    r.text.store(text, std::memory_order_relaxed);
+    r.ms.store(now, std::memory_order_release);
+}
 struct SeenId {
     std::atomic<u32> id{0};
     std::atomic<std::int64_t> ms{0};
@@ -376,6 +397,7 @@ BB_SYSV const char16_t* LookupHook(void* repository, u32 table, u32 category, u3
     }
     const char16_t* text = lookup_original(repository, table, category, id);
     NoteLookup(category, id);
+    NoteText(text);
     static const bool trace = [] {
         const char* env = std::getenv("BB_GAME_MENU_TRACE");
         return env && env[0] == '1';
@@ -599,6 +621,44 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
                 P::All().size());
 }
 
+
+std::int64_t TextSeenMs(const char* needle) {
+    std::int64_t best = 0;
+    const std::size_t n = std::strlen(needle);
+    if (!n) {
+        return 0;
+    }
+    for (RecentText& r : recent_texts) {
+        const std::int64_t ms = r.ms.load(std::memory_order_acquire);
+        const char16_t* t = r.text.load(std::memory_order_relaxed);
+        if (!t || ms <= best) {
+            continue;
+        }
+        // ASCII, case-insensitive substring.
+        for (const char16_t* p = t; *p; ++p) {
+            std::size_t k = 0;
+            while (k < n && p[k] && std::tolower(static_cast<unsigned char>(p[k] < 128 ? p[k] : 0)) ==
+                                        std::tolower(static_cast<unsigned char>(needle[k]))) {
+                ++k;
+            }
+            if (k == n) {
+                best = ms;
+                break;
+            }
+        }
+    }
+    return best;
+}
+
+void RecentTexts(std::int64_t since_ms, void (*fn)(const char16_t* text, std::int64_t ms, void* user), void* user) {
+    for (RecentText& r : recent_texts) {
+        const std::int64_t ms = r.ms.load(std::memory_order_acquire);
+        const char16_t* t = r.text.load(std::memory_order_relaxed);
+        if (t && ms > since_ms) {
+            fn(t, ms, user);
+        }
+    }
+}
 
 std::int64_t LastLookupMs(std::uint32_t id) {
     const SeenId& e = seen_ids[(u64(id) * 0x9E3779B97F4A7C15ull) >> 52];

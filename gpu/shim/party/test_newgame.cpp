@@ -122,8 +122,9 @@ std::uint32_t NewGameDriver::Step(const NewGameInput& in, std::string* log) {
         }
         // A save with a character: Continue fades out before its loading screen shows; give it the
         // time before treating the title as an empty save's (Brightness would get Down / Cross).
-        // (an empty save's Brightness screen shows at once: its new texts end the wait).
-        if (in_phase < 4.0 && !(in.screen_seq != screen_mark_ && in.screen_quiet >= kSettle)) {
+        // No early exit on new texts: Continue looks texts up while it fades too (seen live: the
+        // Brightness presses went out 1 tick after Continue's texts). An empty save waits 5 s more.
+        if (in_phase < 5.0) {
             break;
         }
         // Brightness: Down once it is up (4 s at most), Cross on Next.
@@ -297,6 +298,114 @@ const std::vector<StartWeapon>& PrologueSkipWeapons() {
         {14000000, 72101011, "left"},
     };
     return weapons;
+}
+
+bool MenuScript::Parse(const std::string& text, std::string* bad) {
+    steps_.clear();
+    next_ = 0;
+    std::size_t a = 0;
+    while (a <= text.size()) {
+        std::size_t e = text.find('/', a);
+        if (e == std::string::npos) e = text.size();
+        std::string tok = text.substr(a, e - a);
+        a = e + 1;
+        if (tok.empty()) continue;
+        Press p{0, false, tok, std::string(), false};
+        if (tok[0] == '?') {
+            p.optional = true;
+            tok.erase(0, 1);
+        }
+        if (!tok.empty() && tok[0] == '+') {
+            p.new_screen = true;
+            tok.erase(0, 1);
+        }
+        if (const std::size_t at = tok.find('@'); at != std::string::npos) {
+            p.text = tok.substr(at + 1);
+            tok.erase(at);
+            if (p.text.empty()) {
+                if (bad) *bad = p.name;
+                return false;
+            }
+        }
+        p.buttons = tok == "cross" ? kPadCross : tok == "circle" ? kPadCircle : tok == "square" ? 0x8000u
+                  : tok == "triangle" ? 0x1000u : tok == "up" ? kPadUp : tok == "down" ? kPadDown
+                  : tok == "left" ? kPadLeft : tok == "right" ? kPadRight : tok == "wait" ? kWait : 0u;
+        if (!p.buttons) {
+            if (bad) *bad = p.name;
+            return false;
+        }
+        steps_.push_back(p);
+    }
+    return true;
+}
+
+std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen_quiet, std::string* log,
+                               const std::function<double(const std::string&)>& text_seen) {
+    if (log) log->clear();
+    if (stuck_) return 0;
+    if (holding_) {
+        if (t < until_) return steps_[next_ - 1].buttons == kWait ? 0 : steps_[next_ - 1].buttons;
+        holding_ = false;
+        // 1 s between presses; 1.2 s after a direction (the Doll's level-up dialog: Left, 1.2 s, Cross).
+        until_ = t + ((last_buttons_ & (kPadLeft | kPadRight | kPadUp | kPadDown)) ? 1.2 : 1.0);
+        return 0;
+    }
+    if (next_ >= steps_.size() || t < until_) return 0;
+    const Press& p = steps_[next_];
+    if (!p.text.empty()) {
+        if (wait_from_ < 0) wait_from_ = t;
+        // Looked up after the previous press (seen live: a screen or dialog looks its texts up once,
+        // when it builds - not every frame), then 0.4 s for it to take input.
+        const double seen = text_seen ? text_seen(p.text) : -1.0;
+        const bool on_screen = seen >= 0 && seen > pressed_at_;
+        if (on_screen && text_since_ < 0) {
+            text_since_ = t;
+        }
+        if (!on_screen || t - text_since_ < 0.4) {
+            if (p.optional && t - wait_from_ >= 3.0) {
+                if (log) *log = "step " + std::to_string(next_ + 1) + "/" + std::to_string(steps_.size()) + ": " +
+                                p.name + " skipped (no '" + p.text + "' in 3 s)";
+                ++next_;
+                wait_from_ = -1;
+                return 0;
+            }
+            // The previous Cross may have been swallowed (seen live: the tutorial's OK while it
+            // opened): press it once more after 3.5 s without the text.
+            if (t - wait_from_ >= 3.5 && !retried_ && next_ > 0 && steps_[next_ - 1].buttons == kPadCross) {
+                retried_ = true;
+                holding_ = true;
+                until_ = t + 0.12;
+                pressed_at_ = t;
+                if (log) *log = "no '" + p.text + "' in 3.5 s: Cross again (step " + std::to_string(next_) + ")";
+                return kPadCross; // held as steps_[next_ - 1] (the previous Cross), then the gap
+            }
+            if (t - wait_from_ < 7.0) {
+                return 0;
+            }
+            // Never hang: the text may be drawn through another path; press anyway, logged.
+            if (log) *log = "no '" + p.text + "' in 7 s, pressed anyway; ";
+        }
+        text_since_ = -1;
+    }
+    if (p.new_screen) {
+        if (wait_from_ < 0) wait_from_ = t;
+        const bool built = screen_seq != mark_ && screen_quiet >= 0.3;
+        if (!built && t - wait_from_ < 8.0) return 0;
+        if (log) *log = built ? "" : "no new screen in 8 s; ";
+    } else if (log && !p.text.empty() && log->empty()) {
+        *log = "";
+    }
+    wait_from_ = -1;
+    retried_ = false;
+    ++next_;
+    mark_ = screen_seq;
+    pressed_at_ = t;
+    last_buttons_ = p.buttons == kWait ? 0 : p.buttons;
+    holding_ = true;
+    until_ = t + (p.buttons == kWait ? 2.5 : 0.12);
+    text_since_ = -1;
+    if (log) *log += "step " + std::to_string(next_) + "/" + std::to_string(steps_.size()) + ": " + p.name;
+    return p.buttons == kWait ? 0 : p.buttons;
 }
 
 } // namespace coop
