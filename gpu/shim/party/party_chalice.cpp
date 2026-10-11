@@ -77,6 +77,36 @@ double Seconds() {
 
 } // namespace
 
+// A summon message as a guest's game receives it (0x14ba340(SSM, ?, wrapper); wrapper +8 -> message):
+// +1 type (1 = invited, 2 = ...), +4/+8 ids, +0x10 the host's map (FrpgNetMan +0xa7c), +0x2c the
+// host's ChannelId (FrpgNetMan +0xa88 when the map is in area 29, else 0x8000000000000000; the
+// sender 0x14b8625), +0x34 room data size. A ChannelId makes the guest fetch and quick-join it.
+BB_COOP_SYSV void SummonMessageProbe(u64, u64, u64 wrapper, u64, u64, u64) {
+    std::uint64_t msg = 0;
+    if (!wrapper || !SafeGet(wrapper + 8, &msg) || !msg) {
+        return;
+    }
+    std::uint8_t type = 0;
+    std::uint32_t map = 0, size = 0;
+    std::uint64_t channel = 0;
+    SafeGet(msg + 1, &type);
+    SafeGet(msg + 0x10, &map);
+    SafeGet(msg + 0x2c, &channel);
+    SafeGet(msg + 0x34, &size);
+    std::printf("Party: chalice: summon message type %u, host map 0x%08x, ChannelId 0x%llx, room data %u bytes\n", type,
+                map, static_cast<unsigned long long>(channel), size);
+    std::fflush(stdout);
+}
+
+void InstallProbes() {
+    static bool done = false;
+    if (done) {
+        return;
+    }
+    done = true;
+    HookPrologue(0x14ba340, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, &SummonMessageProbe, "chalice: summon message probe");
+}
+
 State Read() {
     State s;
     std::uint64_t man = 0;
@@ -120,6 +150,17 @@ void Tick(bool host) {
     if (!s.valid) {
         return;
     }
+    {
+        // The game's current ChannelId (FrpgNetMan +0xa88: what summon messages and signs carry).
+        static std::uint64_t last_net_channel = 1;
+        std::uint64_t net = 0, ch = 0;
+        const std::uint64_t at = Guest(0x553b120);
+        if (at && SafeGet(at, &net) && net && SafeGet(net + 0xa88, &ch) && ch != last_net_channel) {
+            last_net_channel = ch;
+            std::printf("Party: chalice: FrpgNetMan ChannelId 0x%llx\n", static_cast<unsigned long long>(ch));
+            std::fflush(stdout);
+        }
+    }
     if (host) {
         // The host's chalices: sent when they change, and every 60 s for members that (re)joined.
         std::vector<std::uint32_t> own;
@@ -159,6 +200,43 @@ void Tick(bool host) {
     }
     if (s.load_mode == 0) {
         g_local.store(s.slot >= 0 ? s.channel : 0);
+    }
+    // The summon request a guest's game got (SummonStepManager [FrpgNetMan+0xc50] +0x158, the
+    // passive list: entry +0xc8 state (2 = invited), +0x38 the host's map, +0xb0/+0xb8 room data,
+    // +0xc0 the channel request made from the message's ChannelId (0x14ba340), whose +0x10 is the id).
+    {
+        std::uint64_t net = 0, ssm = 0, head = 0;
+        const std::uint64_t at = Guest(0x553b120);
+        if (at && SafeGet(at, &net) && net && SafeGet(net + 0xc50, &ssm) && ssm && SafeGet(ssm + 0x158, &head) && head) {
+            std::uint64_t node = 0;
+            SafeGet(head, &node);
+            static std::string last_seen;
+            std::string now_seen;
+            for (int n = 0; node && node != head && n < 8; ++n) {
+                std::uint64_t entry = 0, next = 0, chan = 0, chan_id = 0;
+                std::int32_t state = 0, map = 0, size = 0;
+                SafeGet(node + 0x10, &entry);
+                SafeGet(node, &next);
+                if (entry) {
+                    SafeGet(entry + 0xc8, &state);
+                    SafeGet(entry + 0x38, &map);
+                    SafeGet(entry + 0xb0, &size);
+                    SafeGet(entry + 0xc0, &chan);
+                    if (chan) SafeGet(chan + 0x10, &chan_id);
+                    char b[160];
+                    std::snprintf(b, sizeof b, " [state %d, map 0x%08x, room data %d bytes, channel request %s (id %llu)]",
+                                  state, static_cast<std::uint32_t>(map), size, chan ? "yes" : "none",
+                                  static_cast<unsigned long long>(chan_id));
+                    now_seen += b;
+                }
+                node = next;
+            }
+            if (now_seen != last_seen) {
+                last_seen = now_seen;
+                std::printf("Party: chalice: summon requests:%s\n", now_seen.empty() ? " none" : now_seen.c_str());
+                std::fflush(stdout);
+            }
+        }
     }
     if (s.slot != last.slot || s.channel != last.channel || s.load_mode != last.load_mode) {
         std::printf("Party: chalice: slot %d, dungeon %llu, load mode %d (map %s)\n", s.slot,

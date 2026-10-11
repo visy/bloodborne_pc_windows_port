@@ -458,6 +458,7 @@ std::string DescribeSignPolling();
 // Apply: ChrIns vtable +0x3F0 (chr, id, source chr, 0, 1, 0, 0; xmm0-4 = 1.0), the call the
 // updater itself makes at 0x1506A29.
 constexpr int kHostBellEffect = 9000, kGuestBellEffect = 9005;
+constexpr int kChaliceWaitEffect = 9900; // the Dream bell's chalice co-op wait (stateInfo 269)
 using AddSpEffectFn = void(BB_COOP_SYSV*)(std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t,
                                           std::uint64_t, std::uint64_t, float, float, float, float, float);
 
@@ -554,6 +555,32 @@ void Ring(State& st, const char* event, const char* why, Clock::time_point now) 
     const std::uint64_t player = LocalPlayer();
     const bool had = HasSpEffect(player, effect);
     const bool ok = ApplySpEffect(effect);
+    // A guest while the host is in a Chalice Dungeon: also the vanilla Dream bell's effect 9900
+    // (SpEffectParam stateInfo 269). The player's update (0x193ac10) turns it into FrpgNetMan +0xb9c
+    // bit 0 -> +0xb14 bit 0; only with it does the summon handler 0x14ba340 take the message's
+    // ChannelId (state 2), fetch the dungeon (get_details_info) and quick-join it before loading
+    // the host's map (0x14bb200 -> 0x1aa5280). Without it the guest loads its own Dream (seen
+    // live). The party's Dream bell patch (0x157F6D1) rings the normal 9005 instead.
+    if (!host && ok) {
+        std::uint32_t host_map = 0;
+        party::PartyLink* link = nullptr;
+        {
+            std::lock_guard<std::mutex> lk(st.mu);
+            link = st.link;
+        }
+        if (link) {
+            for (const party::RosterEntry& e : link->roster()) {
+                if (e.slot == party::kHostSlot) {
+                    host_map = e.map_id;
+                }
+            }
+        }
+        if (((host_map >> 24) & 0xff) == 29 && host_map != 0xffffffffu) {
+            const bool chalice_ok = ApplySpEffect(kChaliceWaitEffect);
+            Log("bell: the host is in a chalice dungeon (%s): SpEffect %d %s", MapName(host_map).c_str(),
+                kChaliceWaitEffect, chalice_ok ? "applied too (quick join on summon)" : "NOT applied");
+        }
+    }
     if (ok) {
         party::bridge::OnRing();
     }
@@ -1743,6 +1770,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     LuaEventsInit();
     progress::Init();         // C2 progress sync (party_progress.h)
     progress::InstallHooks(); // byte-verified flag hooks (BB_PARTY_PROGRESS=0: none)
+    chalice::InstallProbes(); // summon message log (party_chalice.h)
     OnlineDiagInit();    // FROM client drop-offline log (party_online.h)
     SeamlessRulesInit(); // A6: party patch report, EMEVD filter (seamless_rules.h)
     fourp::FourpInit();  // 4-player parties: H1-H4, E6, P5 (party_fourp.h)

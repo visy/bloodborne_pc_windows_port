@@ -67,6 +67,8 @@ struct State {
 };
 
 #ifndef BB_PARTY_CHALICE_NO_GAME
+/// The summon message probe (logs each summon message's map / ChannelId, 0x14ba340). Once, at init.
+void InstallProbes();
 /// Reads the local game's chalice slot and its ChannelId.
 State Read();
 /// Once a frame (coop tick): re-reads every ~2 s, logs changes, and keeps LocalChannel(); the
