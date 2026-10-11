@@ -1304,15 +1304,47 @@ bool EnemyReconcilable(u32 id, u32 block_map) {
     return id >= 1000000 && ids::EntityMap(id) == (block_map & 0xffff0000u) && id % 10000 / 100 != 8;
 }
 
+// Kills seen while members are apart: an enemy of our block that was alive (HP > 0, max HP > 0)
+// and is dead now. HP 0 alone means nothing: the game keeps unspawned / far chrs at HP 0 (live
+// split20: 119 chrs of m24_01, 7 alive).
+std::map<u32, bool> g_enemy_alive;  // entity -> alive at the last scan (main thread)
+std::vector<u32> g_killed_apart;
+u32 g_killed_map = 0;
+
+void EnemyWatchTick(const GameSnapshot& s, double now) {
+    static double next = 0;
+    if (now < next || !s.world_up || s.loading || s.map_id == 0xffffffffu) {
+        return;
+    }
+    next = now + 0.5;
+    if (g_killed_map && (g_killed_map >> 16) != (s.map_id >> 16)) {
+        g_killed_apart.clear();  // another map: those kills are gone with the load
+        g_enemy_alive.clear();
+    }
+    g_killed_map = s.map_id;
+    const bool apart = g_apart.load() > 0;
+    ForEachMapChr([&](u32 id, u64 chr) {
+        if (!EnemyReconcilable(id, s.map_id)) {
+            return;
+        }
+        const u64 dm = Field<u64>(Field<u64>(chr, 0x3b0), 0x20);
+        const int hp = Field<int>(dm, 0x128, 0), mx = Field<int>(dm, 0x12c, 0);
+        const bool alive = dm && mx > 0 && hp > 0;
+        auto it = g_enemy_alive.find(id);
+        if (it != g_enemy_alive.end() && it->second && !alive && mx > 0 && apart && g_killed_apart.size() < 128) {
+            g_killed_apart.push_back(id);
+            Log("split: enemy %u killed while the party is apart (sent at the next meet)", id);
+        }
+        g_enemy_alive[id] = alive;
+    });
+}
+
 std::vector<u32> DeadEnemiesHere(u32 map) {
     std::vector<u32> out;
-    ForEachMapChr([&](u32 id, u64 chr) {
-        const u64 dm = Field<u64>(Field<u64>(chr, 0x3b0), 0x20);
-        const int hp = Field<int>(dm, 0x128, 1), mx = Field<int>(dm, 0x12c, 0);
-        if (dm && mx > 0 && hp <= 0 && EnemyReconcilable(id, map) && out.size() < 128) {
-            out.push_back(id);
-        }
-    });
+    if (g_killed_map && (g_killed_map >> 16) == (map >> 16)) {
+        out = g_killed_apart;
+    }
+    g_killed_apart.clear();
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());
     return out;
@@ -3105,6 +3137,7 @@ void Tick(const GameSnapshot& s) {
         }
         if (s.world_up && !s.loading) {
             ApplyDeadEnemies(s);
+            EnemyWatchTick(s, now);
         }
     }
     if (Role() == RoleClient) {
