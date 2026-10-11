@@ -884,8 +884,8 @@ void LevelUpTick(const GameSnapshot& s, double now) {
             if (b) {
                 Tap(b, now);
             }
-            Log("test: levelup: key %s (level %d, echoes %d, Insight %d, Blood Stone Shards %d, Twin %d)", k.c_str(), s.level,
-                s.echoes, s.insight, GoodsCount(3000), GoodsCount(3010));
+            Log("test: levelup: key %s (level %d, echoes %d, Insight %d, Blood Stone Shards %d, Twin %d, Blood Vials %d)",
+                k.c_str(), s.level, s.echoes, s.insight, GoodsCount(3000), GoodsCount(3010), GoodsCount(1000));
             L.at = now;
         }
         break;
