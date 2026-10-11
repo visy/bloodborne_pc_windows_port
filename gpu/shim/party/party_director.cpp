@@ -1530,7 +1530,14 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         if (player && SafeGet(player, &vt) && vt && SafeGet(vt + 0x5f8, &fn) && fn) {
             reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, const float*, const float*, std::uint32_t)>(fn)(
                 player, pos, rot, 1);
-            Log("test: a11_move to (%.2f, %.2f, %.2f)", double(pos[0]), double(pos[1]), double(pos[2]));
+            // Invincible for the fight (EnableInvincible, chr +0x1E1 bit 14): the fight must outlast
+            // the joiner's arrival in its own world.
+            std::uint32_t f = 0;
+            if (SafeRead(player + 0x1e1, &f, 4)) {
+                f |= 1u << 14;
+                SafeWrite(player + 0x1e1, &f, 4);
+            }
+            Log("test: a11_move to (%.2f, %.2f, %.2f), invincible", double(pos[0]), double(pos[1]), double(pos[2]));
         }
     }
     if (t.a11_kill && !t.a11_killed) {
@@ -1542,6 +1549,13 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         if (t.a11_bar_seen && Seconds(t.a11_bar_at, now) >= t.a11_kill_after) {
             t.a11_killed = true;
             Log("test: a11_kill: entity %u", t.a11_entity);
+            if (const std::uint64_t pl = LocalPlayer()) {
+                std::uint32_t f = 0;
+                if (SafeRead(pl + 0x1e1, &f, 4)) {
+                    f &= ~(1u << 14);
+                    SafeWrite(pl + 0x1e1, &f, 4);
+                }
+            }
             reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, t.a11_entity);
         }
     }
