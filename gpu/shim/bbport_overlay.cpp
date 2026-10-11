@@ -1678,6 +1678,24 @@ const char* StateText(const party::hud::Companion& c) {
 
 } // namespace PartyHudDraw
 
+/// BB_PARTY_HUD_LOG=1: why the panel shows or not, every 5 s (present thread, before Visible).
+void PartyHudDiag() {
+    static const bool hud_log = [] {
+        const char* v = std::getenv("BB_PARTY_HUD_LOG");
+        return v && v[0] && v[0] != '0';
+    }();
+    if (hud_log) {
+        static std::int64_t next_log = 0;
+        if (const std::int64_t now = SteadyMs(); now >= next_log) {
+            next_log = now + 5000;
+            std::printf("Party HUD: overlay: party %d, setting %d, shown %d, menu/loading %d, camera %d, fps %d\n",
+                        int(party::status::Enabled()), int(BbSettings::Get().party_hud.load()),
+                        int(party::hud::Shown()), int(BbFrameState::IsMenuOrLoading()),
+                        int(BbCamera::Latest().valid), int(BbSettings::Get().show_fps.load()));
+        }
+    }
+}
+
 /// Party HUD (party_hud.h): one compact row per companion - name, a thin HP bar (stamina below
 /// it), distance and a direction arrow on the same map - in the bottom left corner (above the
 /// performance HUD when that has the corner). Companions outside this player's world are greyed.
@@ -2277,6 +2295,9 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     if (std::getenv("BB_MENU_KEYS_FILE") && initialized) {
         std::scoped_lock lock{imgui_mutex};
         ScriptedKeys();
+    }
+    if (initialized) {
+        PartyHudDiag();
     }
     if (!Visible()) {
         return;
