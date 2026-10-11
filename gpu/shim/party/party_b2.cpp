@@ -1568,13 +1568,13 @@ void SendDeadEnemies(const GameSnapshot& s, const char* why) {
     Log("split: %zu dead enemies of %s sent (%s)", dead.size(), MapName(s.map_id).c_str(), why);
 }
 
-std::mutex g_dead_mu;
+std::mutex g_enemy_dead_mu;
 std::vector<std::pair<u32, std::vector<u32>>> g_dead_in;  // (map, ids) received
 
 void ApplyDeadEnemies(const GameSnapshot& s) {
     std::vector<std::pair<u32, std::vector<u32>>> in;
     {
-        std::lock_guard<std::mutex> lk(g_dead_mu);
+        std::lock_guard<std::mutex> lk(g_enemy_dead_mu);
         in.swap(g_dead_in);
     }
     for (const auto& [map, list] : in) {
@@ -4545,7 +4545,7 @@ void OnLinkEvent(int from_slot, const std::string& body) {
             p = *end == ',' ? end + 1 : end;
         }
         std::sort(list.begin(), list.end());
-        std::lock_guard<std::mutex> lk(g_dead_mu);
+        std::lock_guard<std::mutex> lk(g_enemy_dead_mu);
         if (g_dead_in.size() < 8) {
             g_dead_in.emplace_back(map, std::move(list));
         }
