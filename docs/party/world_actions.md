@@ -227,3 +227,22 @@ state (not placed / not talkable yet).
 * Instanced pickup into the own save: the fixed path (no baseline) not yet re-run live; enemy
   drops: a guest's real kill (damage, not a local ForceDead) and both players' rolls not yet seen.
 * Memory Altar / covenants / chalice ritual by a guest not run live.
+
+## 11. Interface (for split travel and other callers)
+
+* Wire format: EVENT `world_action` (`worldact::kEventName`), guest -> host, body
+  `worldact::RequestToJson(Request{map, set, clr, kick})`; parse and shape-check with
+  `worldact::RequestFromJson` (sizes 32 / 16 / 4, no duplicates, every id allowed in its own area).
+* Policy: `worldact::WorldActionAllowed(id, clear, host_map)` - the category whitelist (section 2)
+  plus "map flags must be of `host_map`'s area". The host applies a request in `HostTick` with
+  `host_map` = **the host's current map**. A lone guest in a map the host is not in (split travel)
+  produces flags of another area: such a caller must validate against the flag's own area
+  (`WorldActionAllowed(id, clear, (id / 100000 % 100) << 24)`, as `RequestFromJson` does) and keep
+  the rest (category whitelist, mirror mask, NeverWritable, rate limit `RateLimit::Take`).
+* Guest-side detection is automatic only in load mode 1 (the guest in the host's world: the
+  overlay vs. the mirror image, `progress::GuestLocalWorldChanges`). A guest in its own world (load
+  mode 0) writes its own pool directly; whatever it changes there that the host's world should
+  get must be collected by the caller (e.g. a pool diff over `WorldMirrorKeys()` filtered by
+  `WorldActionAllowed`) and sent with the same EVENT.
+* Own-save writes are the sender's job (the guest writes its own pool; the host never writes a
+  guest's save).
