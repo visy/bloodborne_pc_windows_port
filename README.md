@@ -144,3 +144,5 @@ Special thanks to the original creators and open source projects that made this 
 - **ocornut**: Dear ImGui library for the in-game settings overlay.
 - **Community Patch Authors**: Kyo, Lance McDonald, illusion, emoose, auser1337, and contributors for the 60 FPS, camera, and engine patches.
 - **zackcage6**: testing and bug reporting.
+- **[parsifal295](https://github.com/parsifal295)**: pull requests number [#37](https://github.com/Mrsuss60/bloodborne_pc_windows_port/pull/37), [#36](https://github.com/Mrsuss60/bloodborne_pc_windows_port/pull/36), [#35](https://github.com/Mrsuss60/bloodborne_pc_windows_port/pull/35).
+- **[wizardnun ](https://github.com/wizardnun)**: pull request number [#39](https://github.com/Mrsuss60/bloodborne_pc_windows_port/pull/39)
