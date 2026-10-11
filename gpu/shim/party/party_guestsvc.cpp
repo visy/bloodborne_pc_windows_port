@@ -250,6 +250,7 @@ bool GuestServicesEnabledFromEnv(const char* v) {
 #include "party_link.h"
 #include "party_progress.h"
 #include "party_split.h"
+#include "party_b2.h"
 #include "bbport_game_menu.h"
 #include "bbport_settings.h"
 
@@ -1792,7 +1793,11 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
             continue;
         }
         Log("lamp: slot %d used a lamp / headstone: the host warps to %u, the party follows", slot, r.id);
-        RunLampWarp(r.id);
+        // Inside the loaded map: the party moves in-world (no load); else the decided party warp
+        // (the split question is the guest's, already answered).
+        if (!b2::HostPartyWarpNoLoad(r.id)) {
+            RunLampWarpDecided(r.id, false);
+        }
     }
 }
 

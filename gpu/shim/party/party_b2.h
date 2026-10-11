@@ -93,6 +93,17 @@ bool TravelAlone(const TravelIntent& t, AloneWhy why);
 /// Guest, main thread, dead: respawns at its OWN last lamp (GSM +0x1528) as an alone travel
 /// (TravelAlone with AloneWhy::Death): in the host's area a re-join, elsewhere an alone load.
 bool RespawnAloneAtOwnLamp();
+/// An intent's destination map (packed; the lamp / last-lamp record's map for lamp kinds), 0 unknown.
+std::uint32_t DestMapOf(const TravelIntent& t);
+/// Main thread: lamp / return point `id` lies in the block the local player stands in (and its
+/// MSB spot is known): the player is put there with the chr warp, no load. `beside`: next to
+/// the spot by party slot. False: not in this block (a real map change: load as before).
+/// For hostdeath: a respawn at a lamp of the current map is this plus the revive.
+bool WarpToLampNoLoad(std::uint32_t id, bool beside);
+/// Host, main thread: the party's move to lamp `id` inside the loaded map: the host warps
+/// in-world and EVENT b2 {"op":"warp","lamp":id} moves the guests of this map beside it (others,
+/// apart, travel there with one load of their own). False: not in this block.
+bool HostPartyWarpNoLoad(std::uint32_t id);
 /// Host, main thread: the next own travel is alone (TravelIntent::alone): the guests do not
 /// follow and the host does not re-send its snapshot after its load. Expires after 10 s.
 void HostTravelAloneNext();

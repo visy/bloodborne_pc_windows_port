@@ -131,11 +131,18 @@ u64 OpenQuestion() {
 void Carry(const Pending& p, bool alone, const char* how) {
     Log("lamp %u (%s): %s -> %s", p.id, p.host ? "host" : "guest", how, alone ? "travel alone" : "travel with the party");
     if (p.host) {
+        // Inside the loaded map: no load for anyone (the chr warp; guests of this map beside).
+        if (alone ? b2::WarpToLampNoLoad(p.id, false) : b2::HostPartyWarpNoLoad(p.id)) {
+            return;
+        }
         if (alone) {
             b2::HostTravelAloneNext();
         }
         RunLampWarpDecided(p.id, alone);
         return;
+    }
+    if (alone && b2::WarpToLampNoLoad(p.id, false)) {
+        return;  // a guest's own move inside the host's loaded map: no load
     }
     if (alone) {
         TravelIntent t;

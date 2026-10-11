@@ -782,7 +782,7 @@ std::string DescribePresence(bool deep = false) {
     return out;
 }
 
-enum class GuestPhase { Idle, AwaitSnapshot, Loading, Rewinding, AwayLoading };
+enum class GuestPhase { Idle, AwaitSnapshot, Loading, Rewinding, AwayLoading, InWorldFollow };
 enum class HostPhase { Idle, Loading, Resynced };
 
 struct State {
@@ -811,6 +811,8 @@ struct State {
     // its own (no transform beside the host, no summoned placement); the GSM +0x1521 it cleared.
     bool solo = false;
     int saved_1521 = -1;
+    u32 warp_lamp = 0;      // guest: the host's in-world party move to follow (main thread)
+    double inworld_since = 0;  // guest: an in-world follow of a host load into this block
     bool respawn_have_pos = false;  // where it died (its member chr here stands there)
     float respawn_pos[3] = {};
     bool have_dest = false; // guest: the host's post-load transform (under mu)
@@ -1092,6 +1094,62 @@ bool SplitHostReachable() {
     const Where* h = WhereOf(0);
     const bool apart = g_apart.load() > 0 || Now() - g_host_alone_seen.load() < 60.0;
     return apart && h && h->connected && h->age_ms < 5000;
+}
+
+// ---- In-world warps: a move inside the loaded map needs no load (no loading screen) ----
+void BesideHost(float pos[4], const float rot[4], int slot);
+/// The local player's current map (packed), 0xffffffff unknown.
+u32 LocalMap() {
+    const GameSnapshot g = ReadGameState(false);
+    return g.world_up && !g.loading ? g.map_id : 0xffffffffu;
+}
+
+/// `map` (packed) is the block the local player stands in: area and block equal.
+bool InLoadedBlock(u32 map) {
+    const u32 cur = LocalMap();
+    return cur != 0xffffffffu && map != 0 && map != 0xffffffffu && (map >> 16) == (cur >> 16);
+}
+
+/// The chr warp vfunc +0x5F8 (0x18CD600(chr, pos, rot, 1), as the NPC summon step and the B2
+/// spacing use it) on the local player: same map, no load. Main thread.
+bool WarpLocal(const float pos[3], float yaw, const char* why) {
+    const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+    const u64 fn = player ? Field<u64>(Field<u64>(player, 0), 0x5f8) : 0;
+    if (!fn) {
+        return false;
+    }
+    alignas(16) float p16[4] = {pos[0], pos[1], pos[2], 1.0f};
+    alignas(16) float r16[4] = {0.0f, yaw, 0.0f, 0.0f};
+    float before[3] = {};
+    ChrPos(player, before);
+    using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
+    reinterpret_cast<Warp>(fn)(player, p16, r16, 1);
+    Log("in-world warp (%s): (%.1f, %.1f, %.1f) -> (%.1f, %.1f, %.1f) in %s, no load", why, before[0], before[1], before[2],
+        pos[0], pos[1], pos[2], MapName(LocalMap()).c_str());
+    return true;
+}
+
+/// Lamp / return point `id` is in the loaded block and its spot is known.
+bool LampInLoadedBlock(u32 id, float spot[4]) {
+    return id != 0 && id != kTravelNone && id / 100000 != 29 && ids::ReturnSpot(id, spot) &&
+           InLoadedBlock(ids::EntityMap(id));
+}
+
+/// To lamp `id`'s spot without a load; beside it by party slot when `beside` (the spacing of
+/// BesideHost: guests never stand inside each other).
+bool WarpToLampInWorld(u32 id, bool beside, const char* why) {
+    float spot[4];
+    if (!LampInLoadedBlock(id, spot)) {
+        return false;
+    }
+    float pos[4] = {spot[0], spot[1], spot[2], 1.0f};
+    const float rot[4] = {0.0f, spot[3], 0.0f, 0.0f};
+    if (beside && g_local_slot.load() > 0) {
+        BesideHost(pos, rot, g_local_slot.load());
+    }
+    char b[96];
+    std::snprintf(b, sizeof b, "%s, lamp %u", why, id);
+    return WarpLocal(pos, spot[3], b);
 }
 
 std::string DescribeWhere() {
@@ -1608,6 +1666,9 @@ void FallRecoveryTick(const GameSnapshot& s, double now) {
             const u32 lamp = use_host ? host : own;
             Log("recovery: falling for 6 s at (%.1f, %.1f, %.1f); warping to %s last lamp %u", p[0], p[1], p[2],
                 use_host ? "the host's" : "the own", lamp);
+            if (lamp && lamp != 0xffffffffu && WarpToLampInWorld(lamp, false, "fall recovery")) {
+                return;  // the lamp is in this map: no load
+            }
             if (lamp && lamp != 0xffffffffu) {
                 using Fn = void(BB_COOP_SYSV*)(u32);
                 reinterpret_cast<Fn>(Guest(0x13cdf30))(lamp);
@@ -1886,8 +1947,56 @@ void GuestTick(const GameSnapshot& s, double now) {
         phase = st.gphase;
     }
     switch (phase) {
-    case GuestPhase::Idle:
+    case GuestPhase::Idle: {
+        u32 lamp = 0;
+        {
+            std::lock_guard<std::mutex> lk(st.mu);
+            std::swap(lamp, st.warp_lamp);
+        }
+        if (lamp && s.world_up && !s.loading) {
+            if (WarpToLampInWorld(lamp, true, "the host's party move")) {
+                return;
+            }
+            // Not in this block (apart): the party move brings it along - one load, its own.
+            TravelIntent t;
+            if (LampIntent(lamp, &t) && TravelAlone(t, AloneWhy::Lamp)) {
+                return;
+            }
+            Log("guest: could not follow the host's in-world move to lamp %u", lamp);
+        }
         return;
+    }
+    case GuestPhase::InWorldFollow: {
+        // The host loads a map this guest already stands in: no load here. Once the host is in
+        // (its "dest"), stand beside it, drop the snapshot packets it sent, say "arrived" (the host
+        // re-creates this guest's chr; the host's own chr here follows its new PlayerIns).
+        bool have_dest;
+        float pos[4], rot[4];
+        {
+            std::lock_guard<std::mutex> lk(st.mu);
+            have_dest = st.have_dest;
+            std::memcpy(pos, st.dest_pos, sizeof pos);
+            std::memcpy(rot, st.dest_rot, sizeof rot);
+        }
+        if (have_dest && s.world_up && !s.loading) {
+            DrainSnapshotQueue("in-world follow");
+            BesideHost(pos, rot, g_local_slot.load());
+            WarpLocal(pos, rot[1], "follow the host's load into this map");
+            const int n = RewindRemoteTasks("guest in-world follow");
+            Send(0, "{\"op\":\"arrived\"}");
+            Log("guest: followed the host inside the loaded map (%s): no load; %d task(s) rewound",
+                MapName(s.map_id).c_str(), n);
+            g_rejoin = false;
+            std::lock_guard<std::mutex> lk(st.mu);
+            st.gphase = GuestPhase::Idle;
+        } else if (now - st.since > 60.0) {
+            g_rejoin = false;
+            Log("guest: in-world follow: no host destination within 60 s; staying");
+            std::lock_guard<std::mutex> lk(st.mu);
+            st.gphase = GuestPhase::Idle;
+        }
+        return;
+    }
     case GuestPhase::AwayLoading: {
         // Split travel: this guest's alone load (flow 3 -> the game's 4 at the end of the load).
         const bool loading = s.loading || !s.world_up;
@@ -2771,6 +2880,28 @@ bool OnHostTravel(const TravelIntent& t) {
         Log("guest: the host travels alone (%s); staying here (no load)", DescribeTravel(t).c_str());
         return true;
     }
+    {
+        // The host's destination is the block this guest stands in (a host death or a stage warp
+        // inside the map): no load for the guest (B4 / H1), only a move beside the host.
+        const GameSnapshot g = ReadGameState(false);
+        const std::uint32_t dest = DestMapOf(t);
+        static const bool inworld = !(std::getenv("BB_PARTY_INWORLD") && std::getenv("BB_PARTY_INWORLD")[0] == '0');
+        if (inworld && dest != 0 && g.world_up && !g.loading && g.map_id != 0xffffffffu && (dest >> 16) == (g.map_id >> 16) &&
+            !g_dead_follow.load()) {
+            std::lock_guard<std::mutex> lk(S().mu);
+            if (S().gphase == GuestPhase::Idle) {
+                S().intent = t;
+                S().have_intent = true;
+                S().have_dest = false;
+                S().gphase = GuestPhase::InWorldFollow;
+                S().since = Now();
+                g_rejoin = true;
+                Log("guest: host travels inside this map (%s): no load here, a move beside it once it is in",
+                    DescribeTravel(t).c_str());
+                return true;
+            }
+        }
+    }
     return BeginRejoin(t, false, false);
 }
 
@@ -2798,6 +2929,17 @@ void OnLinkEvent(int from_slot, const std::string& body) {
             Log("guest: host destination stage %#x pos (%.1f, %.1f, %.1f)", stage, p[0], p[1], p[2]);
         } else {
             Log("guest: bad destination event refused");
+        }
+        return;
+    }
+    if (body.find("\"warp\"") != std::string::npos) {
+        // The host's in-world party move (HostPartyWarpNoLoad): run on the main thread.
+        unsigned id = 0;
+        const char* pl = std::strstr(body.c_str(), "\"lamp\":");
+        if (pl && std::sscanf(pl, "\"lamp\":%u", &id) == 1 && TravelLampKnown(id)) {
+            std::lock_guard<std::mutex> lk(S().mu);
+            S().warp_lamp = id;
+            Log("guest: the host moved to lamp %u inside its map (no load); following", id);
         }
         return;
     }
@@ -2842,6 +2984,21 @@ bool LampTravelIntent(std::uint32_t id, TravelIntent* t) {
 
 bool HostHasMembers() {
     return Role() == RoleHost && HostHasMemberTasks();
+}
+
+bool WarpToLampNoLoad(std::uint32_t id, bool beside) {
+    return g_on.load() && WarpToLampInWorld(id, beside, beside ? "party move" : "own move");
+}
+
+bool HostPartyWarpNoLoad(std::uint32_t id) {
+    if (!g_on.load() || Role() != RoleHost || !WarpToLampInWorld(id, false, "the host's party move")) {
+        return false;
+    }
+    char b[64];
+    std::snprintf(b, sizeof b, "{\"op\":\"warp\",\"lamp\":%u}", id);
+    Send(-1, b);
+    Log("host: party move to lamp %u inside the loaded map: no load; guests in this map follow in-world", id);
+    return true;
 }
 
 void SetWhere(const std::vector<Where>& members) {
