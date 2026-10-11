@@ -460,7 +460,7 @@ if (WIN32)
     target_link_libraries(bbgpu PUBLIC ole32 oleaut32)
 endif()
 # The link layer only: the other shim/party files (runtime wiring, game-side co-op) need the game.
-set(PARTY_LINK_SOURCES shim/party/party_link.cpp shim/party/party_code.cpp shim/party/party_addr.cpp
+set(PARTY_LINK_SOURCES shim/party/party_link.cpp shim/party/party_rudp.cpp shim/party/party_code.cpp shim/party/party_addr.cpp
     shim/party/party_crypto.cpp shim/party/upnp_win.cpp)
 add_executable(party-link-test EXCLUDE_FROM_ALL ../tests/test_party_link.cpp ${PARTY_LINK_SOURCES}
     shim/net/net_stun.cpp shim/net/netsim.cpp third_party/monocypher/monocypher.c)
@@ -549,11 +549,12 @@ endif()
 set(PARTY_FUZZ_SOURCES ../tests/party_fuzz.cpp ${PARTY_NET_SOURCES} ${PARTY_LINK_SOURCES}
     third_party/monocypher/monocypher.c shim/party/party_travel.cpp shim/party/party_story.cpp
     shim/party/party_items.cpp shim/party/party_phantom.cpp shim/party/party_progress.cpp
-    shim/party/party_guestsvc.cpp shim/party/party_balance_rules.cpp)
+    shim/party/party_guestsvc.cpp shim/party/party_worldact.cpp shim/party/party_balance_rules.cpp)
 foreach(fuzz_target party-fuzz party-security-test party-fuzz-ubsan)
     add_executable(${fuzz_target} EXCLUDE_FROM_ALL ${PARTY_FUZZ_SOURCES})
     target_compile_definitions(${fuzz_target} PRIVATE BB_PARTY_TRAVEL_NO_GAME BB_PARTY_STORY_NO_GAME
-        BB_PARTY_ITEMS_NO_GAME BB_PARTY_PHANTOM_NO_GAME BB_PARTY_PROGRESS_NO_GAME BB_PARTY_GUESTSVC_NO_GAME)
+        BB_PARTY_ITEMS_NO_GAME BB_PARTY_PHANTOM_NO_GAME BB_PARTY_PROGRESS_NO_GAME BB_PARTY_GUESTSVC_NO_GAME
+        BB_PARTY_WORLDACT_NO_GAME)
     target_compile_options(${fuzz_target} PRIVATE -UNDEBUG -Wall -Wextra)
     target_include_directories(${fuzz_target} PRIVATE shim shim/net ..)
     set_target_properties(${fuzz_target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
@@ -635,6 +636,16 @@ target_compile_definitions(party-guestsvc-test PRIVATE BB_PARTY_GUESTSVC_NO_GAME
 target_compile_options(party-guestsvc-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-guestsvc-test PRIVATE shim)
 set_target_properties(party-guestsvc-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Guest world actions (shim/party/party_worldact.cpp; in bbgpu through SHIM_SOURCES): whitelist,
+# request JSON, rate limit, NPC talk allowance (BB_PARTY_WORLDACT_NO_GAME).
+# cmake --build out/gpu --target party-worldact-test
+add_executable(party-worldact-test EXCLUDE_FROM_ALL ../tests/test_party_worldact.cpp shim/party/party_worldact.cpp
+    shim/party/party_progress.cpp shim/net/json.cpp)
+target_compile_definitions(party-worldact-test PRIVATE BB_PARTY_WORLDACT_NO_GAME BB_PARTY_PROGRESS_NO_GAME
+    BB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/..")
+target_compile_options(party-worldact-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-worldact-test PRIVATE shim)
+set_target_properties(party-worldact-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Four-player rules (shim/party/party_fourp.cpp; in bbgpu through SHIM_SOURCES): the pure parts
 # (BB_PARTY_FOURP_NO_GAME). ninja -C out/gpu party-fourp-test
 add_executable(party-fourp-test EXCLUDE_FROM_ALL ../tests/test_party_fourp.cpp shim/party/party_fourp.cpp)

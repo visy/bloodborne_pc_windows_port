@@ -90,6 +90,7 @@ const char* CommandName(CommandType type) {
     case CommandType::Leave: return "leave";
     case CommandType::Rejoin: return "rejoin";
     case CommandType::Kick: return "kick";
+    case CommandType::AddGuestCode: return "add_guest_code";
     }
     return "?";
 }
@@ -106,6 +107,14 @@ void SetCode(const std::string& code) {
     std::scoped_lock lock{mutex};
     if (board.code != code) {
         board.code = code;
+        ++board.version;
+    }
+}
+
+void SetGuestCode(const std::string& code) {
+    std::scoped_lock lock{mutex};
+    if (board.guest_code != code) {
+        board.guest_code = code;
         ++board.version;
     }
 }
@@ -176,12 +185,56 @@ bool KickMember(const std::string& name) {
     return false;
 }
 
+namespace {
+bool CopyText(const std::string& code);
+}  // namespace
+
 bool RequestCopyCode() {
     std::string code;
     {
         std::scoped_lock lock{mutex};
         code = board.code;
     }
+    return CopyText(code);
+}
+
+bool RequestCopyGuestCode() {
+    std::string code;
+    {
+        std::scoped_lock lock{mutex};
+        code = board.guest_code;
+    }
+    return CopyText(code);
+}
+
+bool RequestAddGuestCodeFromClipboard(std::string* got) {
+    std::string text;
+#ifdef _WIN32
+    if (OpenClipboard(nullptr)) {
+        if (HANDLE h = GetClipboardData(CF_UNICODETEXT)) {
+            if (const auto* w = static_cast<const wchar_t*>(GlobalLock(h))) {
+                const int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
+                if (n > 1 && n < 4096) {
+                    text.resize(std::size_t(n));
+                    WideCharToMultiByte(CP_UTF8, 0, w, -1, text.data(), n, nullptr, nullptr);
+                    text.resize(std::size_t(n - 1));
+                }
+                GlobalUnlock(h);
+            }
+        }
+        CloseClipboard();
+    }
+#endif
+    if (got) *got = text;
+    std::string upper;
+    for (char c : text) upper.push_back(static_cast<char>(c >= 'a' && c <= 'z' ? c - 32 : c));
+    if (upper.find("BBG1") == std::string::npos) return false;
+    Queue({CommandType::AddGuestCode, text});
+    return true;
+}
+
+namespace {
+bool CopyText(const std::string& code) {
     if (code.empty()) {
         return false;
     }
@@ -225,6 +278,7 @@ bool RequestCopyCode() {
     return false;
 #endif
 }
+}  // namespace
 
 bool PopCommand(Command* out) {
     std::scoped_lock lock{mutex};
