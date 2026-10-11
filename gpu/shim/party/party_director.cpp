@@ -2140,6 +2140,13 @@ void PartyDirector::Tick() {
     // C4 rot, D7 enemy scaling, E2 extras: the host's rules for the party (party_balance.h).
     if (role != PartyRole::None) balance::Tick(s, link, role == PartyRole::Host);
     // B1: the host's warps go to every guest (reliable: replayed to a member who reconnects).
+    if (link && role == PartyRole::Guest) {
+        StoryIntent up;
+        while (PopGuestStoryUp(&up)) {  // D10: the guest's own cutscene, for the host to share
+            link->send_event(0, kStoryUpEventName, StoryToJsonText(up));
+            Log("story: own cutscene %u sent to the host (D10)", up.id);
+        }
+    }
     if (link && role == PartyRole::Host) {
         TravelIntent t;
         while (PopHostTravel(&t)) {

@@ -438,7 +438,13 @@ std::uint64_t BB_COOP_SYSV MultiFilter(std::uint64_t env, std::uint64_t value) {
     }
     const std::uint32_t talk = *reinterpret_cast<const std::uint32_t*>(env + 0x10);
     NoteMultiTalk(talk);
-    if (!HeadstoneTalk(talk) && !LampTalk(talk)) {
+    // BB_PARTY_GUEST_ALTARS=1 (probe): the Dream's altar scripts t210050-t210110 too.
+    static const bool altars = [] {
+        const char* a = std::getenv("BB_PARTY_GUEST_ALTARS");
+        return a && a[0] == '1';
+    }();
+    const bool altar = altars && talk >= 210050 && talk <= 210110 && talk % 10 == 0;
+    if (!HeadstoneTalk(talk) && !LampTalk(talk) && !altar) {
         return value;
     }
     g_multi_overrides.fetch_add(1, std::memory_order_relaxed);
