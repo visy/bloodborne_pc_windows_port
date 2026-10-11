@@ -810,6 +810,7 @@ struct State {
     // guest: the running re-join is this guest's own travel (split travel): the destination is
     // its own (no transform beside the host, no summoned placement); the GSM +0x1521 it cleared.
     bool solo = false;
+    bool blobs_saved = false;  // guest: this re-join's host world blobs were copied
     int saved_1521 = -1;
     u32 warp_lamp = 0;      // guest: the host's in-world party move to follow (main thread)
     double inworld_since = 0;  // guest: an in-world follow of a host load into this block
@@ -835,11 +836,13 @@ void Send(int slot, const std::string& body) {
     S().out.emplace_back(slot, body);
 }
 
+std::string DescribeBlobs();
 void ProbeTick(const GameSnapshot& s) {
     State& st = S();
     const bool loading = s.loading || !s.world_up;
     if (loading && !st.was_loading) {
         st.player_before = s.player;
+        Log("load started: blobs %s", DescribeBlobs().c_str());
         Log("load started: local PlayerIns %#llx, role %d, flow %d; tasks:%s; presence %s", ull(s.player), Role(),
             Field<int>(Slot(kSlotFlow), 0x84, -1), DescribeTasks().c_str(), DescribePresence().c_str());
     } else if (!loading && st.was_loading) {
@@ -853,6 +856,7 @@ void ProbeTick(const GameSnapshot& s) {
         Log("B2 load report: GSM +0x1593 %u +0x1594 %#x +0x1598 %u +0x159c %#x, GameDataMan +0x68 %#x, +0x0c %#x",
             unsigned(Field<u8>(gsm, 0x1593)), Field<u32>(gsm, 0x1594), unsigned(Field<u8>(gsm, 0x1598)),
             Field<u32>(gsm, 0x159c), Field<u32>(Slot(kSlotGameData), 0x68), Field<u32>(gsm, 0x0c));
+        Log("B2 load report: blobs %s", DescribeBlobs().c_str());
     }
     st.was_loading = loading;
 }
@@ -1098,6 +1102,70 @@ bool SplitHostReachable() {
     const Where* h = WhereOf(0);
     const bool apart = g_apart.load() > 0 || Now() - g_host_alone_seen.load() < 60.0;
     return apart && h && h->connected && h->age_ms < 5000;
+}
+
+// ---- The host's world blobs of packet 0x11 (GSM +0x16C0/+0x16C8 decals, +0x16A0/+0x16A8 map
+// items, +0x1684/+0x1688 CHR), kept for an alone load. A host-world load into a map the host has
+// not loaded (no snapshot) built no world (live split5/split7: map "-", the player falling through
+// nothing - the user's "grey screen"). The map items blob is what the host-world loader reads
+// (getter 0x156C600: +0x16B0 own world / +0x16A0 host world); copies of the last ones the host sent
+// are put back (game heap, *0x5540420 vfunc +0x58) when they are empty before an alone load.
+struct Blob {
+    u64 size_off, ptr_off;
+    std::vector<u8> data;
+};
+Blob g_blobs[3] = {{0x16c0, 0x16c8, {}}, {0x16a0, 0x16a8, {}}, {0x1684, 0x1688, {}}};
+
+std::string DescribeBlobs() {
+    const u64 gsm = Slot(kSlotGsm);
+    char b[160];
+    std::snprintf(b, sizeof b, "decals %d, map items %d, chr %d (own: %d / %d / %d)", Field<int>(gsm, 0x16c0),
+                  Field<int>(gsm, 0x16a0), Field<int>(gsm, 0x1684), Field<int>(gsm, 0x16d0), Field<int>(gsm, 0x16b0),
+                  Field<int>(gsm, 0x1690));
+    return b;
+}
+
+void SaveHostBlobs() {
+    const u64 gsm = Slot(kSlotGsm);
+    for (Blob& bl : g_blobs) {
+        const int n = Field<int>(gsm, bl.size_off);
+        const u64 p = Field<u64>(gsm, bl.ptr_off);
+        if (n > 0 && n < (1 << 22) && p) {
+            bl.data.resize(std::size_t(n));
+            if (!SafeRead(p, bl.data.data(), bl.data.size())) {
+                bl.data.clear();
+            }
+        }
+    }
+    Log("guest: host world blobs kept for alone loads (%s)", DescribeBlobs().c_str());
+}
+
+void RestoreHostBlobs() {
+    const u64 gsm = Slot(kSlotGsm);
+    const u64 heap = Slot(0x5540420);
+    if (!gsm || !heap) {
+        return;
+    }
+    using Alloc = u64(BB_COOP_SYSV*)(u64, u64, u64);
+    const u64 alloc = Field<u64>(Field<u64>(heap, 0), 0x58);
+    std::string put;
+    for (Blob& bl : g_blobs) {
+        if (bl.data.empty() || Field<int>(gsm, bl.size_off) > 0 || Field<u64>(gsm, bl.ptr_off) || !alloc) {
+            continue;
+        }
+        const u64 p = reinterpret_cast<Alloc>(alloc)(heap, bl.data.size(), 1);
+        if (!p || !SafeWrite(p, bl.data.data(), bl.data.size())) {
+            continue;
+        }
+        const int n = int(bl.data.size());
+        SafeWrite(gsm + bl.ptr_off, &p, 8);
+        SafeWrite(gsm + bl.size_off, &n, 4);
+        char b[32];
+        std::snprintf(b, sizeof b, " +0x%llx (%d B)", ull(bl.size_off), n);
+        put += b;
+    }
+    Log("guest: alone load: host world blobs before (%s); put back:%s", DescribeBlobs().c_str(),
+        put.empty() ? " none" : put.c_str());
 }
 
 // ---- In-world warps: a move inside the loaded map needs no load (no loading screen) ----
@@ -2067,6 +2135,10 @@ void GuestTick(const GameSnapshot& s, double now) {
             std::lock_guard<std::mutex> lk(st.mu);
             have_dest = st.have_dest;
         }
+        if (fstate == 2 && !st.blobs_saved) {
+            st.blobs_saved = true;
+            SaveHostBlobs();
+        }
         if (fstate == 2 && have_dest) {
             // The game applied the host's 0x11 world snapshot and 0x10 flags (+0x84 = 2; K6 ate
             // the Lua join start). Load the host's destination in host-world mode.
@@ -2841,6 +2913,7 @@ bool BeginRejoin(const TravelIntent& t, bool main_thread, bool solo) {
         st.have_intent = true;
         st.have_dest = false;
         st.screen_done = false;
+        st.blobs_saved = false;
         st.solo = solo;
         st.gphase = GuestPhase::AwaitSnapshot;
         st.since = Now();
@@ -3140,6 +3213,7 @@ bool TravelAlone(const TravelIntent& t, AloneWhy why) {
         }
     }
     g_rejoin = true;
+    RestoreHostBlobs();
     const int three = 3;
     SafeWrite(flow + 0x84, &three, 4);
     Send(0, std::string("{\"op\":\"away\",") + pos + "}");
