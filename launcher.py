@@ -109,7 +109,6 @@ class BloodborneLauncher(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Bloodborne PC Launcher")
-        self.geometry("780x880")
         self.minsize(680, 720)
 
         self.proc = None
@@ -640,7 +639,6 @@ class BloodborneLauncher(tk.Tk):
         """Mouse & Keyboard Settings Dialog with real-time bbport.ini synchronization."""
         dlg = tk.Toplevel(self)
         dlg.title("Mouse & Keyboard Settings")
-        dlg.geometry("640x620")
         dlg.minsize(560, 520)
         dlg.transient(self)
         dlg.grab_set()
