@@ -3,6 +3,7 @@
 // droogie/bbhost src/engine/np_test.cpp @8f2746c (GPL-3.0-or-later): world-up detection, the
 // Insight write and the bell events.
 #include "party_director.h"
+#include "party_hud.h"
 #include "party_async_io.h"
 
 #include "coop_hooks.h"
@@ -1249,6 +1250,8 @@ void PartyDirector::Tick() {
             link->set_local_state(ms, map);
         }
     }
+    // The party HUD: our vitals out, the companions' board for the overlay (party_hud.h).
+    if (role != PartyRole::None) PartyHudTick(s, link, LocalState(s, st.start_ready));
     // B1: the host's warps go to every guest (reliable: replayed to a member who reconnects).
     if (link && role == PartyRole::Host) {
         TravelIntent t;

@@ -122,6 +122,17 @@ bottom line of each row explains it (the party code is shown there too). The ove
 (**Insert**, or **L3 + R3** if enabled) still has the same **Party** tab. Players joining and
 leaving are shown as short messages.
 
+**Party HUD.** In party mode a small panel in the bottom left corner lists your companions: name,
+a thin HP bar (stamina under it) and, while they are on the same map, how far away they are and an
+arrow pointing their way (relative to the camera). Companions who are not in your world (at home,
+loading, in their prologue, disconnected) are greyed and say where they are. Companions in your
+world and in view also get a small name tag with their HP above their head. The numbers come from
+the game itself when the companion stands in your world, otherwise from their own game (sent about
+4 times a second through the host). Switch it in the game (**System > Party members > Party HUD**),
+the overlay's Party tab or the launcher's Party tab (bbport.ini `party_hud`, default on; never shown
+in single-player). The panel stays clear of the game's HUD and stacks above the performance HUD
+when that sits in the bottom left; join / leave notices appear above the panel.
+
 ## The party code
 
 A code looks like `BBP1-XXXX-XXXX-...`. It holds the host's address and port and a secret; the

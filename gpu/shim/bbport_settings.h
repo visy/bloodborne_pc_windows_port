@@ -110,6 +110,9 @@ struct Values {
     std::atomic<bool> compile_indicator{true};
     /// Party mode: short join / leave / travel notices in a top corner (ini party_toasts). Live.
     std::atomic<bool> party_toasts{true};
+    /// Party mode: the party HUD, companions' names / health / whereabouts in the bottom left
+    /// corner (party_hud.h; ini party_hud). Never shown solo. Live.
+    std::atomic<bool> party_hud{true};
 
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
     int startup_preset = NativeAA;

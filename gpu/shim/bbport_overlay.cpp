@@ -19,7 +19,9 @@
 #include "bbport_compile_progress.h"
 #include "bbport_frame_state.h"
 #include "bbport_settings.h"
+#include "party/party_hud.h"
 #include "party/party_status.h"
+#include "bbport_camera.h"
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "imgui_impl_vulkan.h"
@@ -115,6 +117,21 @@ std::int64_t SteadyMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::steady_clock::now().time_since_epoch())
         .count();
+}
+
+// Party HUD (party_hud.h): companions' names and health in the bottom left corner, stacked above
+// the performance HUD when it has that corner; the toast goes above the panel. Present thread.
+party::hud::Board hud_board;          // the overlay's copy (Read each frame: fixed size, no allocation)
+bool perf_hud_bottom_left = false;    // this frame: the performance HUD's window ...
+float perf_hud_top = 0.0f;            // ... and its top edge
+float party_hud_top = -1.0f;          // this frame: the panel's top edge (-1: not drawn)
+const bool party_tags_on = [] {
+    const char* v = std::getenv("BB_PARTY_HUD_TAGS");
+    return !(v && v[0] == '0');
+}();
+
+bool PartyHudWanted() {
+    return party::status::Enabled() && BbSettings::Get().party_hud && party::hud::Shown();
 }
 
 bool ToastWanted() {
@@ -1180,6 +1197,12 @@ void PartyTab() {
              "Короткое уведомление в верхнем углу, когда охотник входит или выходит или группа "
              "перемещается. Не перехватывает ввод."),
            on);
+    Toggle("party_hud", T("Party HUD", "Панель группы"), s.party_hud,
+           T("Your companions' names and health in the bottom left corner, greyed while they are not "
+             "in your world; on the same map the distance, a direction arrow and a name tag above them.",
+             "Имена и здоровье спутников в левом нижнем углу (серым, пока они не в вашем мире); на той "
+             "же карте - расстояние, стрелка направления и имя над спутником."),
+           on);
     if (!b.last_event.empty()) {
         ImGui::Spacing();
         std::snprintf(line, sizeof(line), T("Last: %s", "Последнее: %s"), b.last_event.c_str());
@@ -1527,6 +1550,8 @@ void PerformanceHud() {
         ImGui::Text(BbSettings::MenuText("RAM %.1f / %.1f GB", "Память %.1f / %.1f ГБ"),
                     Telemetry::ram_used_gb.load(), Telemetry::ram_total_gb.load());
     }
+    perf_hud_bottom_left = bottom && !right; // the party HUD stacks above it
+    perf_hud_top = ImGui::GetWindowPos().y;
     ImGui::End();
     ImGui::PopFont();
 }
@@ -1570,6 +1595,249 @@ void CompileIndicator() {
     ImGui::End();
 }
 
+namespace PartyHudDraw {
+
+constexpr float Pi = 3.14159265f;
+
+ImU32 Rgba(float r, float g, float b, float a) {
+    return ImGui::GetColorU32(ImVec4(r, g, b, a));
+}
+
+/// The direction axes on the ground (x, z): the game camera's when it is fresh and stands near
+/// the player (the same world space), else the player's facing.
+struct Axes {
+    float fx = 0, fz = 1, rx = 1, rz = 0;
+    bool camera = false; // the camera's: name tags can be projected with it
+};
+
+Axes DirectionAxes(const party::hud::Board& b, const BbCamera::State& cam) {
+    Axes a;
+    if (cam.valid && b.me_have_pos) {
+        const auto at = BbCamera::Position(cam);
+        const float dx = at[0] - b.me_pos[0], dy = at[1] - b.me_pos[1], dz = at[2] - b.me_pos[2];
+        // A third-person camera is a few metres from the player; far off = another space (a
+        // cutscene camera, a map with its own origin): not trusted.
+        if (dx * dx + dy * dy + dz * dz < 15.0f * 15.0f) {
+            const auto& v = cam.view;
+            const float sx = cam.proj[0] < 0.0f ? -1.0f : 1.0f; // screen right is view +x times sx
+            float fx = v[8], fz = v[10], rx = v[0] * sx, rz = v[2] * sx;
+            const float fl = std::sqrt(fx * fx + fz * fz), rl = std::sqrt(rx * rx + rz * rz);
+            if (fl > 1e-3f && rl > 1e-3f) {
+                a = {fx / fl, fz / fl, rx / rl, rz / rl, true};
+                return a;
+            }
+        }
+    }
+    a.fx = std::sin(b.me_yaw);
+    a.fz = std::cos(b.me_yaw);
+    a.rx = std::cos(b.me_yaw);
+    a.rz = -std::sin(b.me_yaw);
+    return a;
+}
+
+/// An arrow (pointing up = straight ahead) turned by `angle` (clockwise = right).
+void Arrow(ImDrawList* draw, ImVec2 c, float r, float angle, ImU32 fill, ImU32 edge) {
+    const float s = std::sin(angle), co = std::cos(angle);
+    const auto at = [&](float x, float y) { // (x right, y up) -> screen
+        return ImVec2(c.x + (x * co + y * s) * r, c.y - (-x * s + y * co) * r);
+    };
+    const ImVec2 tip = at(0.0f, 1.0f), left = at(-0.72f, -0.8f), notch = at(0.0f, -0.35f),
+                 right = at(0.72f, -0.8f);
+    draw->AddTriangleFilled(tip, left, notch, fill);
+    draw->AddTriangleFilled(tip, notch, right, fill);
+    draw->AddLine(tip, left, edge, 1.0f);
+    draw->AddLine(tip, right, edge, 1.0f);
+}
+
+/// A thin bar in the game's style: dark well, gold hairline frame, `fill` up to `frac`.
+void Bar(ImDrawList* draw, ImVec2 p0, ImVec2 p1, float frac, ImU32 fill, float alpha) {
+    draw->AddRectFilled(p0, p1, Rgba(0.04f, 0.03f, 0.03f, 0.80f * alpha));
+    if (frac > 0.0f) {
+        const float x = p0.x + (p1.x - p0.x) * std::clamp(frac, 0.0f, 1.0f);
+        draw->AddRectFilled(p0, ImVec2(x, p1.y), fill);
+    }
+    draw->AddRect(ImVec2(p0.x - 1.0f, p0.y - 1.0f), ImVec2(p1.x + 1.0f, p1.y + 1.0f),
+                  Rgba(0.80f, 0.68f, 0.46f, 0.45f * alpha));
+}
+
+const char* StateText(const party::hud::Companion& c) {
+    using party::MemberState;
+    if (!c.connected) return BbSettings::MenuText("Connection lost", "Связь потеряна");
+    if (c.have_hp && !c.alive) return BbSettings::MenuText("Dead", "Мёртв");
+    switch (c.state) {
+    case MemberState::Title: return BbSettings::MenuText("Title screen", "Главное меню");
+    case MemberState::Loading: return BbSettings::MenuText("Loading", "Загрузка");
+    case MemberState::Prologue: return BbSettings::MenuText("Prologue", "Пролог");
+    case MemberState::Joining: return BbSettings::MenuText("Joining", "Входит");
+    case MemberState::Home: return BbSettings::MenuText("Own world", "В своём мире");
+    case MemberState::InHostWorld: return BbSettings::MenuText("Host's world", "В мире хоста");
+    case MemberState::Dead: return BbSettings::MenuText("Dead", "Мёртв");
+    }
+    return "";
+}
+
+} // namespace PartyHudDraw
+
+/// BB_PARTY_HUD_LOG=1: why the panel shows or not, every 5 s (present thread, before Visible).
+void PartyHudDiag() {
+    static const bool hud_log = [] {
+        const char* v = std::getenv("BB_PARTY_HUD_LOG");
+        return v && v[0] && v[0] != '0';
+    }();
+    if (hud_log) {
+        static std::int64_t next_log = 0;
+        if (const std::int64_t now = SteadyMs(); now >= next_log) {
+            next_log = now + 5000;
+            std::printf("Party HUD: overlay: party %d, setting %d, shown %d, menu/loading %d, camera %d, fps %d\n",
+                        int(party::status::Enabled()), int(BbSettings::Get().party_hud.load()),
+                        int(party::hud::Shown()), int(BbFrameState::IsMenuOrLoading()),
+                        int(BbCamera::Latest().valid), int(BbSettings::Get().show_fps.load()));
+            // Where each companion's head projects (u, v across the scene; depth in metres).
+            const BbCamera::State cam = BbCamera::Latest();
+            party::hud::Read(&hud_board);
+            for (int i = 0; cam.valid && i < hud_board.count; ++i) {
+                const party::hud::Companion& c = hud_board.c[i];
+                const float head[3] = {c.pos[0], c.pos[1] + 2.05f, c.pos[2]};
+                float u = -1, v = -1, depth = -1;
+                const bool in_front = c.have_pos &&
+                                      party::hud::Project(cam.view.data(), cam.proj.data(), head, &u, &v, &depth);
+                std::printf("Party HUD: overlay: %s %s u %.2f v %.2f depth %.1f\n", c.name,
+                            in_front ? "in front" : "behind", u, v, depth);
+            }
+        }
+    }
+}
+
+/// Party HUD (party_hud.h): one compact row per companion - name, a thin HP bar (stamina below
+/// it), distance and a direction arrow on the same map - in the bottom left corner (above the
+/// performance HUD when that has the corner). Companions outside this player's world are greyed.
+/// Name tags above companions in view (the game camera, BB_PARTY_HUD_TAGS=0: off). Not
+/// interactive; no allocation (the board is a fixed-size copy, texts go to stack buffers).
+void PartyHud() {
+    using namespace PartyHudDraw;
+    party_hud_top = -1.0f;
+    if (!PartyHudWanted() || BbFrameState::IsMenuOrLoading()) {
+        return;
+    }
+    party::hud::Read(&hud_board);
+    const party::hud::Board& b = hud_board;
+    if (!b.active || b.count <= 0) {
+        return;
+    }
+    const BbCamera::State cam = BbCamera::Latest();
+    const Axes axes = DirectionAxes(b, cam);
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float s = base_scale;
+    const float pad = 12.0f * s;
+    const float bottom = perf_hud_bottom_left ? perf_hud_top - 6.0f * s
+                                              : viewport->WorkPos.y + viewport->WorkSize.y - pad;
+    const float width = 210.0f * s;
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + pad, bottom), ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+    ImGui::SetNextWindowBgAlpha(0.42f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f * s, 7.0f * s));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f * s, 2.0f * s));
+    ImGui::Begin("##party_hud", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    char right_text[48];
+    for (int i = 0; i < b.count; ++i) {
+        const party::hud::Companion& c = b.c[i];
+        const bool here = c.same_world && c.connected;
+        const float alpha = here ? 1.0f : 0.55f;
+        if (i > 0) {
+            ImGui::Dummy(ImVec2(0.0f, 5.0f * s));
+        }
+        // Name (serif, the game's cream; grey outside our world), state / distance on the right.
+        const ImVec2 row = ImGui::GetCursorScreenPos();
+        ImGui::PushFont(serif_font, 17.0f);
+        ImGui::TextColored(here ? ImVec4(0.96f, 0.88f, 0.70f, 1.0f) : ImVec4(0.62f, 0.60f, 0.57f, alpha), "%s",
+                           c.name);
+        const float name_h = ImGui::GetItemRectSize().y;
+        ImGui::PopFont();
+        float right_edge = row.x + width;
+        if (c.same_map) {
+            const float d = party::hud::Distance(b.me_pos, c.pos);
+            const float r = 5.5f * s;
+            const ImVec2 centre(right_edge - r, row.y + name_h * 0.5f);
+            Arrow(draw, centre,
+                  r, party::hud::Bearing(b.me_pos, c.pos, axes.fx, axes.fz, axes.rx, axes.rz),
+                  Rgba(0.93f, 0.84f, 0.62f, 0.95f * alpha), Rgba(0.10f, 0.07f, 0.04f, 0.9f * alpha));
+            right_edge -= 2.0f * r + 5.0f * s;
+            std::snprintf(right_text, sizeof right_text, d < 10.0f ? "%.1f m" : "%.0f m", d);
+        } else {
+            std::snprintf(right_text, sizeof right_text, "%s", here ? "" : StateText(c));
+        }
+        if (right_text[0]) {
+            ImGui::PushFont(sans_font, 13.0f);
+            const ImVec2 ts = ImGui::CalcTextSize(right_text);
+            draw->AddText(ImVec2(right_edge - ts.x, row.y + (name_h - ts.y) * 0.5f),
+                          Rgba(0.80f, 0.76f, 0.68f, 0.9f * alpha), right_text);
+            ImGui::PopFont();
+        }
+        // HP (the game's dark red), stamina (green) under it.
+        const ImVec2 bar0 = ImGui::GetCursorScreenPos();
+        const float hp_h = 4.0f * s, st_h = 2.0f * s;
+        const float hp_frac = c.have_hp && c.max_hp > 0 ? float(c.hp) / float(c.max_hp) : 0.0f;
+        Bar(draw, bar0, ImVec2(bar0.x + width, bar0.y + hp_h), hp_frac,
+            here ? Rgba(0.62f, 0.07f, 0.06f, 1.0f) : Rgba(0.42f, 0.22f, 0.20f, alpha), alpha);
+        float used = hp_h;
+        if (c.have_stamina && c.max_stamina > 0) {
+            const float y = bar0.y + hp_h + 2.0f * s;
+            Bar(draw, ImVec2(bar0.x, y), ImVec2(bar0.x + width, y + st_h), float(c.stamina) / float(c.max_stamina),
+                here ? Rgba(0.30f, 0.55f, 0.26f, 0.95f) : Rgba(0.30f, 0.40f, 0.28f, alpha), alpha);
+            used += 2.0f * s + st_h;
+        }
+        ImGui::Dummy(ImVec2(width, used + 1.0f * s));
+    }
+    party_hud_top = ImGui::GetWindowPos().y;
+    ImGui::End();
+    ImGui::PopStyleVar(3);
+
+    // Name tags above the companions in view (only with the game camera in the player's space).
+    if (!party_tags_on || !axes.camera) {
+        return;
+    }
+    const ImVec2 display = viewport->Size;
+    ImDrawList* bg = ImGui::GetBackgroundDrawList();
+    for (int i = 0; i < b.count; ++i) {
+        const party::hud::Companion& c = b.c[i];
+        if (!c.same_world || !c.connected || !c.have_pos || !c.same_map) {
+            continue;
+        }
+        const float d = party::hud::Distance(b.me_pos, c.pos);
+        if (d < 1.0f || d > 80.0f) {
+            continue;
+        }
+        const float head[3] = {c.pos[0], c.pos[1] + 2.05f, c.pos[2]};
+        float u = 0, v = 0, depth = 0;
+        if (!party::hud::Project(cam.view.data(), cam.proj.data(), head, &u, &v, &depth) || u < 0.02f ||
+            u > 0.98f || v < 0.04f || v > 0.96f) {
+            continue;
+        }
+        // Clear of the game's own HUD (bars and item slots top left, echoes bottom right).
+        if ((u < 0.34f && v < 0.26f) || (u > 0.80f && v > 0.86f)) {
+            continue;
+        }
+        const float alpha = std::clamp((80.0f - d) / 30.0f, 0.0f, 1.0f) * 0.95f;
+        const float size = std::clamp(15.0f * 12.0f / std::max(d, 6.0f), 11.0f, 15.0f);
+        ImGui::PushFont(serif_font, size);
+        const ImVec2 ts = ImGui::CalcTextSize(c.name);
+        const ImVec2 at(u * display.x - ts.x * 0.5f, v * display.y - ts.y);
+        bg->AddText(ImVec2(at.x + 1.0f, at.y + 1.0f), Rgba(0.0f, 0.0f, 0.0f, 0.8f * alpha), c.name);
+        bg->AddText(at, Rgba(0.96f, 0.88f, 0.70f, alpha), c.name);
+        ImGui::PopFont();
+        if (c.have_hp && c.max_hp > 0) {
+            const float w = 56.0f * s, h = 3.0f * s;
+            const ImVec2 p0(u * display.x - w * 0.5f, at.y + ts.y + 2.0f * s);
+            Bar(bg, p0, ImVec2(p0.x + w, p0.y + h), float(c.hp) / float(c.max_hp), Rgba(0.62f, 0.07f, 0.06f, alpha),
+                alpha);
+        }
+    }
+}
+
 /// Party notices (join / leave / travel): the latest party_status event for ToastMs in a bottom
 /// corner, clear of the game's HUD (bottom left; bottom right while the performance HUD has the
 /// bottom left), fading out. Not
@@ -1594,8 +1862,11 @@ void PartyToast() {
     const bool right = s.show_hud && s.hud_position == BbSettings::HudBottomLeft;
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float pad = 12.0f * base_scale;
-    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + (right ? viewport->WorkSize.x - pad : pad),
-                                   viewport->WorkPos.y + viewport->WorkSize.y - pad),
+    // Bottom left above the party HUD panel when that is drawn (the panel stacks above the
+    // performance HUD instead, and the toast then keeps the bottom right).
+    const float bottom = !right && party_hud_top > 0.0f ? party_hud_top - 6.0f * base_scale
+                                                         : viewport->WorkPos.y + viewport->WorkSize.y - pad;
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + (right ? viewport->WorkSize.x - pad : pad), bottom),
                             ImGuiCond_Always, ImVec2(right ? 1.0f : 0.0f, 1.0f));
     ImGui::SetNextWindowBgAlpha(0.6f * alpha);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -1916,7 +2187,7 @@ bool HandleEvent(const SDL_Event& event) {
 bool Visible() {
     return initialized &&
            (menu_open || prompt_active || BbSettings::Get().show_fps || BbSettings::Get().show_hud ||
-            CompileIndicatorShown() || ToastWanted());
+            CompileIndicatorShown() || ToastWanted() || PartyHudWanted());
 }
 
 bool MenuOpen() {
@@ -2037,6 +2308,9 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
         std::scoped_lock lock{imgui_mutex};
         ScriptedKeys();
     }
+    if (initialized) {
+        PartyHudDiag();
+    }
     if (!Visible()) {
         return;
     }
@@ -2055,6 +2329,8 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
 
     ImGui_ImplVulkan_NewFrame();
     ImGui::NewFrame();
+    perf_hud_bottom_left = false;
+    party_hud_top = -1.0f;
     if (menu_open) {
         Menu();
     }
@@ -2065,6 +2341,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     }
     if (!menu_open) {
         CompileIndicator();
+        PartyHud(); // before the toast: it stacks above the panel
         PartyToast();
     }
     if (prompt_active && !menu_open) {
