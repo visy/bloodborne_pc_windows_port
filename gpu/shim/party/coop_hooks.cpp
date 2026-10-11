@@ -8,6 +8,7 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <string>
 #include <vector>
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -275,7 +276,18 @@ std::map<u64, std::vector<u8>> g_replaced; // under g_mu: prologue bytes our jum
 void NoteReplaced(u64 off, std::initializer_list<u8> prologue) {
     g_replaced[off] = std::vector<u8>(prologue.begin(), prologue.end());
 }
+std::vector<std::string> g_installed; // under g_mu: "<name> @+<off>" of every install (A9)
+void NoteInstalled(u64 off, const char* name) {
+    char at[32];
+    std::snprintf(at, sizeof at, " @+0x%llx", ull(off));
+    g_installed.push_back(std::string(name ? name : "?") + at);
+}
 } // namespace
+
+std::vector<std::string> InstalledHooks() {
+    std::lock_guard<std::mutex> lk(g_mu);
+    return g_installed;
+}
 
 bool MatchesOriginal(u64 off, const u8* bytes, std::size_t n) {
     if (!g_image || off + n > g_image_size) {
@@ -321,6 +333,7 @@ bool HookPrologue(u64 off, std::initializer_list<u8> prologue, PreHandler handle
         return false;
     }
     NoteReplaced(off, prologue);
+    NoteInstalled(off, name);
     std::printf("Coop hooks: %s: entry hook at guest +0x%llx\n", name, ull(off));
     return true;
 }
@@ -350,6 +363,7 @@ bool ReplacePrologue(u64 off, std::initializer_list<u8> prologue, const void* ha
         return false;
     }
     NoteReplaced(off, prologue);
+    NoteInstalled(off, name);
     std::printf("Coop hooks: %s: replaced guest +0x%llx\n", name, ull(off));
     return true;
 }
@@ -370,6 +384,7 @@ bool HookCallSite(u64 off, u64 target, const void* handler, const char* name) {
         std::printf("Coop hooks: %s: the stub for guest +0x%llx could not be placed; not installed\n", name, ull(off));
         return false;
     }
+    NoteInstalled(off, name);
     std::printf("Coop hooks: %s: call site guest +0x%llx -> handler\n", name, ull(off));
     return true;
 }
@@ -396,6 +411,7 @@ bool HookTailJump(u64 off, u64 target, const void* handler, const char* name) {
         std::printf("Coop hooks: %s: the stub for guest +0x%llx could not be placed; not installed\n", name, ull(off));
         return false;
     }
+    NoteInstalled(off, name);
     std::printf("Coop hooks: %s: tail jump guest +0x%llx -> handler\n", name, ull(off));
     return true;
 }
@@ -424,6 +440,7 @@ bool HookValueFilter(u64 off, std::initializer_list<u8> original, std::initializ
         std::printf("Coop hooks: %s: the stub for guest +0x%llx could not be placed; not installed\n", name, ull(off));
         return false;
     }
+    NoteInstalled(off, name);
     std::printf("Coop hooks: %s: value filter at guest +0x%llx (resume +0x%llx)\n", name, ull(off), ull(resume));
     return true;
 }
@@ -436,6 +453,7 @@ bool PatchBytes(u64 off, std::initializer_list<u8> original, std::initializer_li
     }
     const std::size_t n = patched.size();
     if (Matches(off, patched.begin(), n)) {
+        NoteInstalled(off, name);
         std::printf("Coop hooks: %s: guest +0x%llx already patched\n", name, ull(off));
         return true;
     }
@@ -458,6 +476,7 @@ bool PatchBytes(u64 off, std::initializer_list<u8> original, std::initializer_li
 #else
     std::memcpy(g_image + off, patched.begin(), n);
 #endif
+    NoteInstalled(off, name);
     std::printf("Coop hooks: %s: patched %zu bytes at guest +0x%llx\n", name, n, ull(off));
     return true;
 }

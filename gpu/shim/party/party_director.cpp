@@ -116,7 +116,7 @@ struct TravelStep {
     // 1.2 m in front, Cross), wait for its menu, Down N times, Cross (args id:N).
     enum Kind {
         HostWarp, HostDie, GuestDie, HostKill, HostMove, GuestMove,
-        HostPress, GuestPress, HostMark, GuestMark, HostStage, HostWalk, HostHeadstone, HostFlag, HostLastLamp,
+        HostPress, GuestPress, HostMark, GuestMark, HostStage, HostWalk, HostHeadstone, HostFlag, HostLastLamp, HostLamp,
         HostOutage, GuestOutage  // a simulated total network outage of `buttons` ms (BB_NET_SIM on)
     } kind = HostWarp;
     std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30; HostKill: the entity id
@@ -172,6 +172,7 @@ struct Test {
     Clock::time_point coop_at{};
     bool insight_done = false, ring_done = false;
     const char* bell = nullptr; // bell_host / bell_guest: Ring() once ready (the real bell path)
+    int bell_area = -1;         // bell_host@AA: only in a map of area AA (e.g. 29: inside a Chalice Dungeon)
     bool bell_done = false;
     Clock::time_point rung_at{};
     // Travel steps (see TravelStep): the next one waits for a join after the previous one ran.
@@ -796,6 +797,7 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::GuestMark: return "guest_mark";
     case TravelStep::HostStage: return "host_stage";
     case TravelStep::HostLastLamp: return "host_lastlamp";
+    case TravelStep::HostLamp: return "host_lamp";
     case TravelStep::HostWalk: return "host_walk";
     case TravelStep::HostHeadstone: return "host_headstone";
     case TravelStep::HostFlag: return "host_flag";
@@ -1055,7 +1057,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         (next_kind == TravelStep::HostKill || next_kind == TravelStep::HostMove || next_kind == TravelStep::GuestMove ||
          next_kind == TravelStep::HostPress || next_kind == TravelStep::GuestPress || next_kind == TravelStep::HostWalk ||
          next_kind == TravelStep::HostOutage || next_kind == TravelStep::GuestOutage ||
-         next_kind == TravelStep::HostLastLamp ||
+         next_kind == TravelStep::HostLastLamp || next_kind == TravelStep::HostLamp ||
          next_kind == TravelStep::HostMark || next_kind == TravelStep::GuestMark || !t.steps[t.next_step].map.empty())) {
         if (!steady || (!t.ran && !t.armed) || t.joins < t.steps[t.next_step].min_join) {
             return; // as the first step of a chain it still waits for the join
@@ -1110,6 +1112,10 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         } else {
             Log("test: %s: no player / transform", TravelStepName(step.kind));
         }
+    } else if (step.kind == TravelStep::HostLamp) {
+        // host_lamp=ID@S: the lamp warp 0x13CDF30(ID) on the steady-world clock (host_warp waits for
+        // a re-join, which a B2 host never sees): e.g. a Chalice Dungeon lamp's "back to the Dream".
+        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint32_t)>(Guest(kLampWarp))(step.id);
     } else if (step.kind == TravelStep::HostLastLamp) {
         // Test fixture: the host's last-lamp record (WorldTransitionState +0x1528 {id, aux}) names
         // a lamp of another map - the state after walking into the next area without resting.
@@ -1331,7 +1337,16 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
     }
     // bell_host / bell_guest: the bell through the item path (SpEffect -> SendSign -> sign
     // create / search on the FROM server) once this player is ready, bells granted, 5 s idle.
+    // bell_host@AA: the host's own map in area AA; bell_guest@AA: the host's (roster) map.
+    std::uint32_t bell_map = s.map_id;
+    if (t.bell_area >= 0 && t.bell && std::strcmp(t.bell, kGuestBell) == 0 && st.link) {
+        bell_map = 0xffffffffu;
+        for (const party::RosterEntry& e : st.link->roster()) {
+            if (e.slot == party::kHostSlot) bell_map = e.map_id;
+        }
+    }
     if (t.bell && !t.bell_done && st.start_ready && st.granted && s.world_up && !s.loading &&
+        (t.bell_area < 0 || (bell_map != 0xffffffffu && bell_map != 0 && int(bell_map >> 24) == t.bell_area)) &&
         s.session_role == RoleIdle && Seconds(st.world_at, now) >= t.delay) {
         t.bell_done = true;
         Log("test: %s once (ready: %s)", t.bell, DescribeStart(st.cs, true).c_str());
@@ -1343,15 +1358,23 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         const bool ok = WritePlayerInsight(t.insight);
         Log("test: Insight %d -> %d %s", before, t.insight, ok ? "written" : "NOT written (no player record)");
     }
-    if (t.log_pos && s.world_up && !s.loading && Seconds(t.pos_at, now) >= 3.0) {
+    if (t.log_pos && s.world_up && !s.loading && Seconds(t.pos_at, now) >= 1.0) {
+        // Every second: the physics position (as DescribeHere; the map man's +0xAAC is the last
+        // grounded / area position and goes stale after a re-created PlayerIns) and the area id.
         t.pos_at = now;
         std::uint64_t man = 0;
         std::uint32_t area = 0;
-        float pos[3] = {0, 0, 0};
         const std::uint64_t at = Guest(0x553b120);
-        if (at && SafeGet(at, &man) && man && SafeGet(man + 0xa7c, &area) && SafeRead(man + 0xaac, pos, sizeof pos)) {
-            Log("test: pos area 0x%08x (%.2f, %.2f, %.2f)", area, pos[0], pos[1], pos[2]);
+        if (at && SafeGet(at, &man) && man) {
+            SafeGet(man + 0xa7c, &area);
         }
+        float p[3] = {};
+        std::uint64_t a = 0;
+        if (s.player && SafeGet(s.player + 0x58, &a) && a && SafeGet(a + 8, &a) && a && SafeGet(a + 0x3b0, &a) && a &&
+            SafeGet(a + 0x68, &a) && a) {
+            SafeRead(a + 0x1e0, p, 12);
+        }
+        Log("test: pos area 0x%08x (%.2f, %.2f, %.2f)", area, p[0], p[1], p[2]);
     }
     if (t.echoes >= 0 && Seconds(st.world_at, now) >= 2.0 && !s.loading) {
         const bool ok = WritePlayerEchoes(t.echoes);
@@ -1366,8 +1389,12 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             Log("test: goods %d x%d -> x%d (%s)", id, before, GoodsCount(std::uint32_t(id)), ok ? "ok" : "failed");
         }
     }
-    if (t.stand && !t.stand_done && s.world_up && !s.loading && s.player && Seconds(st.world_at, now) >= 10.0 &&
-        Seconds(t.st_at, now) >= 0.0) {
+    // With place= the stand waits for the placed map (the Ritual Altar is in m21_01, not the Dream
+    // block m21_00 a save starts in: a stand there kept the player where it was).
+    const bool stand_map_ok =
+        !t.place || (t.place_done && (s.map_id & 0xffff0000u) == (t.place_map & 0xffff0000u));
+    if (t.stand && !t.stand_done && stand_map_ok && s.world_up && !s.loading && s.player &&
+        Seconds(st.world_at, now) >= 10.0 && Seconds(t.st_at, now) >= 0.0) {
         if (t.st_phase == 0) {
             alignas(16) float pos[4] = {t.st_pos[0], t.st_pos[1], t.st_pos[2], 1.0f};
             alignas(16) float rot[4] = {0, t.st_yaw, 0, 0};
@@ -1580,7 +1607,7 @@ void PartyDirector::Configure(PartyRole role, int max_players) {
     State& st = S();
     std::lock_guard<std::mutex> lk(st.mu);
     st.role = role;
-    st.max_players = max_players < 2 ? 2 : max_players > 4 ? 4 : max_players;
+    st.max_players = max_players < 2 ? 2 : max_players > party::kMaxPartyPlayers ? party::kMaxPartyPlayers : max_players;
 }
 
 void PartyDirector::ConfigureFromEnv() {
@@ -1718,6 +1745,12 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.log_pos = true;
             } else if (item.rfind("echoes=", 0) == 0) {
                 st.test.echoes = std::atoi(item.c_str() + 7);
+            } else if (item.rfind("bell_guest@", 0) == 0) {
+                st.test.bell = kGuestBell;
+                st.test.bell_area = std::atoi(item.c_str() + 11);
+            } else if (item.rfind("bell_host@", 0) == 0) {
+                st.test.bell = kHostBell;
+                st.test.bell_area = std::atoi(item.c_str() + 10);
             } else if (item == "bell_host") {
                 st.test.bell = kHostBell;
             } else if (item == "bell_guest") {
@@ -1728,8 +1761,8 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("guest_die", 0) == 0 || item.rfind("host_kill=", 0) == 0 ||
                        item.rfind("host_move=", 0) == 0 || item.rfind("guest_move=", 0) == 0 ||
                        item.rfind("host_press=", 0) == 0 || item.rfind("guest_press=", 0) == 0 ||
-                       item.rfind("host_lastlamp=", 0) == 0 || item.rfind("host_outage=", 0) == 0 ||
-                       item.rfind("guest_outage=", 0) == 0) {
+                       item.rfind("host_lastlamp=", 0) == 0 || item.rfind("host_lamp=", 0) == 0 ||
+                       item.rfind("host_outage=", 0) == 0 || item.rfind("guest_outage=", 0) == 0) {
                 TravelStep step;
                 step.kind = item.rfind("guest_outage", 0) == 0  ? TravelStep::GuestOutage
                             : item.rfind("host_outage", 0) == 0   ? TravelStep::HostOutage
@@ -1737,12 +1770,16 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("guest_press", 0) == 0  ? TravelStep::GuestPress
                             : item.rfind("host_press", 0) == 0   ? TravelStep::HostPress
                             : item.rfind("host_lastlamp", 0) == 0 ? TravelStep::HostLastLamp
+                            : item.rfind("host_lamp", 0) == 0     ? TravelStep::HostLamp
                             : item[0] == 'g'                     ? TravelStep::GuestDie
                             : item.rfind("host_die", 0) == 0     ? TravelStep::HostDie
                             : item.rfind("host_kill", 0) == 0    ? TravelStep::HostKill
                             : item.rfind("host_move", 0) == 0    ? TravelStep::HostMove
                                                                  : TravelStep::HostWarp;
                 if (step.kind == TravelStep::HostWarp || step.kind == TravelStep::HostKill) {
+                    step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 10, nullptr, 10));
+                }
+                if (step.kind == TravelStep::HostLamp) {
                     step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 10, nullptr, 10));
                 }
                 if (step.kind == TravelStep::HostLastLamp) {
@@ -1992,7 +2029,8 @@ void PartyDirector::Tick() {
             link->post_event(party::kBroadcast, kItemsEventName, ItemsToJsonText(items));
             Log("items: %zu lots sent to the party", items.size());
         }
-        // The host's chalices: every guest gets the ones it lacks (party_chalice.h).
+        // The host's chalices (its own and those the guests sent): every guest gets the ones it
+        // lacks (party_chalice.h).
         std::vector<std::uint32_t> chalices;
         if (chalice::PopHostGoods(&chalices)) {
             link->post_event(party::kBroadcast, chalice::kGoodsEventName, chalice::GoodsToJsonText(chalices));
@@ -2001,6 +2039,13 @@ void PartyDirector::Tick() {
         while (TakeHostFullItems(&slot, &items)) {
             link->post_event(slot, kItemsFullEventName, ItemsToJsonText(items));
             Log("items: full list (%zu lots) sent to slot %d", items.size(), slot);
+        }
+    }
+    // A guest's chalices go to the host (any member can perform the ritual; party_chalice.h).
+    if (link && role == PartyRole::Guest) {
+        std::vector<std::uint32_t> chalices;
+        if (chalice::PopHostGoods(&chalices)) {
+            link->post_event(party::kHostSlot, chalice::kGoodsEventName, chalice::GoodsToJsonText(chalices));
         }
     }
     // B2 (party_b2.h): guest "arrived" / host notes.
