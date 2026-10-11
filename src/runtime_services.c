@@ -278,6 +278,7 @@ static ABI int32_t ime_init(const ImeParam *param, const void *extended) {
     /* BB_TEST_NAME (test aid, BB_TEST_NEWGAME runs): the character name, typed by nobody. */
     const char *preset=getenv("BB_TEST_NAME");
     if (!preset || !*preset) preset=getenv("BB_IME_TEXT");
+    if (!preset || !*preset) preset=bbgpu_ime_preset(param->max_length); /* party: the party dungeon's glyph */
     if (preset) { ime_complete(0,preset); return 0; }
     if (!bbgpu_text_input_begin(initial,prompt[0] ? prompt : "Name")) {
         const char *name=getenv("BB_USER_NAME");

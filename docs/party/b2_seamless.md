@@ -524,6 +524,27 @@ reset. Fallback: no snapshot within 45 s -> the B1 fallback as before (redirect,
   last lamp set to another map: `lamps of m24_01_00_00: 2412950:- 2412951:lit` -> respawned at the
   lit Central Yharnam lamp (-193.4, -28.6, 68.5); unlit 2412950 (1st Floor Sickroom) skipped.
 
+### 6.12 A guest dying after (or during) a boss fight stayed dead (2026-10-11, overlay)
+
+The "guest_die after the boss did nothing" test oddity was a real bug, not the test step:
+
+* The die step's own gates were open (`ForceDead gates: GSM +0x176F 0, chr ... 0`), entity 10000
+  was our chr, and ForceDead set HP (data module +0xF8; +0x128 is not HP) to 0 at once:
+  `HP 503 -> 0 right after`. A fall into the void after the kill (no die step) did the same:
+  `Party balance: death 1`, no respawn for 100+ s.
+* Yet no `guest_died` funnel call came: the guest lay dead in the host's world. The boss-clear Lua
+  state BlockClear2_3 (0x1385930) ends in the send-home tail jump K10 drops, so the phantom's
+  state machine never leaves it and never runs PartyGhostDeath (0x13824C0). One run also had a
+  death *during* the Cleric Beast fight (before the kill) that went unprocessed for 17 s.
+* Fix (`DeadAfterClearTick`, party_b2.cpp): guest, HP 0 for 12 s after a K10 on this load (15 s
+  otherwise) with no death funnel or B2 death hold -> `GuestDeathRedirectNow()`, the normal lone
+  death path (respawn at the host's last lamp, the bell brings the guest back).
+  Live (`guest dies after boss: watchdog 2`): kill +0, guest ForceDead +23 s, `dead for 12 s and the
+  game's death state never ran (after a boss clear ...)`, `guest_died ... to the host's last lamp
+  2412952`, loading screen 5 s later.
+* The K10 invincibility guess (Lua EnableInvincible, chr +0x1E1 bit 14) was wrong: `no invincibility
+  left 10 s after the clear` in every run; the clear stays as a harmless check.
+
 ## 7. Risks / open items
 
 * (Closed in 6.7 / 6.8) K10 / boss clear with a real kill; wipes (guest and host dead) and falls

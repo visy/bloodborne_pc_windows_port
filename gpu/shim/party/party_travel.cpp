@@ -577,6 +577,7 @@ std::atomic<bool> g_travel_on{false};
 std::atomic<bool> g_in_replay{false};       // our own warp is running: the hooks stand aside
 std::atomic<u32> g_lamp_key{kTravelNone};   // 0x13CDF30's edi, read by the funnel it calls
 std::atomic<int> g_block_clear3{0};         // inside BlockClear2_3 (its funnel call is a tail jump)
+std::atomic<u32> g_guest_map{0};            // guest: its current map (TravelTick), 0 unknown
 std::atomic<u32> g_death_lamp{kTravelNone}; // guest: the host's last lamp (SetGuestDeathRedirect)
 std::atomic<std::uint64_t> g_host_chalice{0};  // guest: the host's chalice dungeon (its last intent's)
 
@@ -1157,6 +1158,17 @@ void RequestGuestTravel(const TravelIntent& t) {
             static_cast<unsigned long long>(chalice::LocalChannel()));
         return;
     }
+    // Into a dungeon from outside: its own copy would only be left again for the summon (two loads,
+    // run c20); staying put, the summon's quick join brings it in with one load.
+    if (TravelIntoChalice(t)) {
+        const u32 here = g_guest_map.load();
+        if (here && (here >> 24) != 29) {
+            Log("guest travel %s not followed: the host enters chalice dungeon %llu from outside one; the summon "
+                "brings this game in (one load)",
+                DescribeTravel(t).c_str(), static_cast<unsigned long long>(t.chalice_channel));
+            return;
+        }
+    }
     bool taken;
     {
         std::lock_guard<std::mutex> lk(g_guest_mu);
@@ -1192,6 +1204,9 @@ void TravelTick() {
         return;
     }
     const GameSnapshot g = ReadGameState(false);
+    if (g.world_up && !g.loading && g.map_id && g.map_id != 0xffffffffu) {
+        g_guest_map.store(g.map_id);
+    }
     ReplayState s;
     s.world_up = g.world_up;
     s.loading = g.loading;

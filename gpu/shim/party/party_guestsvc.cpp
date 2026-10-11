@@ -1725,6 +1725,32 @@ void LogLampTalks() {
 void LampTick(const GameSnapshot& s, party::PartyLink* link) {
     g_session_role = s.session_role;
     LogLampTalks();
+    if (const std::size_t ep = g.test.find("entprobe="); ep != std::string::npos && s.world_up && !s.loading) {
+        // "entprobe=ENTITY": a map object's world matrix every 5 s (0x13C9AF0 record, 3x4 rows at
+        // +0x240, translation in column 3) and the player's position: test spots for doors etc.
+        static double last = 0;
+        if (Now() - last >= 5.0) {
+            last = Now();
+            // "entprobe=A:B:C": several entities.
+            for (const char* q = g.test.c_str() + ep + 9; *q >= '0' && *q <= '9';) {
+            char* qe = nullptr;
+            const std::int32_t ent = static_cast<std::int32_t>(std::strtol(q, &qe, 10));
+            q = (qe && *qe == ':') ? qe + 1 : "";
+            std::uint32_t idx = 0xffffffffu;
+            using Find = std::uint64_t(BB_COOP_SYSV*)(std::int32_t, std::uint32_t*);
+            const std::uint64_t rec = reinterpret_cast<Find>(Guest(0x13c9af0))(ent, &idx);
+            float m[12] = {}, me[4] = {};
+            if (s.player) SafeRead(s.player + 0xc0, me, sizeof me);
+            if (rec && SafeRead(rec + 0x240, m, sizeof m)) {
+                Log("test: entprobe %d: pos (%.2f, %.2f, %.2f) rows x (%.2f %.2f %.2f) z (%.2f %.2f %.2f); player (%.2f, "
+                    "%.2f, %.2f) map %s", ent, m[3], m[7], m[11], m[0], m[1], m[2], m[8], m[9], m[10], me[0], me[1],
+                    me[2], MapName(s.map_id).c_str());
+            } else {
+                Log("test: entprobe %d: no map object here (map %s)", ent, MapName(s.map_id).c_str());
+            }
+            }
+        }
+    }
     if (!g.test.empty()) {
         LampPressTick(s, Now());
         static double last_host_probe = 0;
