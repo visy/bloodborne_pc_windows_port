@@ -15,6 +15,7 @@
 #include "seamless_rules.h"
 #include "../../party_env.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -209,11 +210,18 @@ bool ChrPos(u64 chr, float out[3]) {
 
 std::string DescribeChr(u64 chr) {
     float p[3] = {0, 0, 0};
-    char b[96];
+    char b[128];
     if (!chr || !ChrPos(chr, p)) {
         return "-";
     }
-    std::snprintf(b, sizeof b, "stage %#x pos (%.1f, %.1f, %.1f) hp %d", Field<u32>(chr, 0x3f8), p[0], p[1], p[2],
+    // +0x78 chr type (0 own body, 1 white phantom, ...); vfunc +0x558 is what the cooperator count
+    // 0x15BDC20 tests (counted when in {1, 5, 7, 19}).
+    using TypeFn = u32(BB_COOP_SYSV*)(u64);
+    const u64 vt = Field<u64>(chr, 0);
+    const u64 fn = vt ? Field<u64>(vt, 0x558) : 0;
+    const u32 pres = fn ? reinterpret_cast<TypeFn>(fn)(chr) : ~0u;
+    std::snprintf(b, sizeof b, "stage %#x type %d/%d pos (%.1f, %.1f, %.1f) hp %d", Field<u32>(chr, 0x3f8),
+                  Field<int>(chr, 0x78, -1), int(pres), p[0], p[1], p[2],
                   Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0x128, -1));
     return b;
 }
@@ -225,7 +233,9 @@ std::string DescribeTasks() {
         std::string chrs;
         if (t.mode == 1 || t.mode == 2) {
             const u64 c = PlayerForPeer(t.task + kTaskPeer);
-            chrs = c ? " chr " + DescribeChr(c) : " NO-chr";
+            char h[48];
+            std::snprintf(h, sizeof h, " handle %08x at %#llx", c ? Field<u32>(c, 8, ~0u) : ~0u, ull(c));
+            chrs = c ? " chr " + DescribeChr(c) + h : " NO-chr";
         }
         const char* chr = chrs.c_str();
         std::snprintf(b, sizeof b, " [human mode %d step %d next %d slot %u flags 0x%02x%s]", t.mode, t.step, t.next,
@@ -237,6 +247,30 @@ std::string DescribeTasks() {
         s += b;
     }
     return s.empty() ? std::string(" none") : s;
+}
+
+/// The presentation slots (GSM +0x16F8 table: +0x14 used, +0x18 count, 5 entries of 0x14 bytes
+/// from +0x1C: {chr handle, kind, state, a, b}) - what the cooperator count 0x15BDC20 reads (a
+/// handle counts when it resolves to a live chr in WorldChrMan +0x850).
+std::string DescribePresentation() {
+    const u64 t = Field<u64>(Slot(kSlotGsm), 0x16f8);
+    if (!t) {
+        return "pres -";
+    }
+    char b[96];
+    std::snprintf(b, sizeof b, "pres used %d count %d max %d:", Field<int>(t, 0x14, -1), Field<int>(t, 0x18, -1),
+                  Field<int>(Slot(kSlotFlow), 0xc, -1));
+    std::string s = b;
+    for (int i = 0; i < 5; ++i) {
+        const u64 e = t + 0x1c + 0x14 * u64(i);
+        const u32 h = Field<u32>(e, 0, ~0u);
+        if (h == ~0u) {
+            continue;
+        }
+        std::snprintf(b, sizeof b, " [%d %08x k%d s%d]", i, h, Field<int>(e, 4), Field<int>(e, 8));
+        s += b;
+    }
+    return s;
 }
 
 // ---- Hooks ----
@@ -290,10 +324,38 @@ BB_COOP_SYSV void ResetHook(u64 man) {
     reinterpret_cast<Fn>(Guest(kMultiPlayReset))(man);
 }
 
-// K3: in-game stage update, stage-record UID changed: the host's BeginLeaveSession.
+// K3: in-game stage update, stage-record UID changed (the host walked into another streamed block,
+// e.g. Great Bridge m24_01 <-> Cathedral Ward m24_00): the host's BeginLeaveSession. The room is
+// kept; the log names how far the farthest member chr is.
+// Live (edgetravel 2026-10-11): with the guest moving along (2 m) two block changes kept the
+// session with no crash. With the host *teleported* 146 m into the other block and the guest left
+// behind, the host crashed ~0.8 s later in the remote chr's physics update (0x18CB16A..0x18CB17D:
+// [[chr+0x288]+0x18]+0x88 freed, RBX = the guest's chr) - also when the vanilla leave ran at the
+// change (session idle 0.5 s before the crash), so the leave does not protect against it: the
+// block the remote chr stood in was streamed out before its task deleted the chr. Open risk for
+// a guest far behind the host when a block streams out (docs/party/travel.md 6.1).
 BB_COOP_SYSV u64 UidLeaveHook(u64 session) {
     if (g_on.load() && SessionUp()) {
-        Log("K3: stage-record change with a session: no leave");
+        const u64 me = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+        float mp[3] = {};
+        const bool have_me = me && ChrPos(me, mp);
+        float farthest = 0.0f;
+        int members = 0;
+        for (const TaskInfo& t : Tasks(false)) {
+            if (t.mode != 1 && t.mode != 2) {
+                continue;
+            }
+            const u64 c = PlayerForPeer(t.task + kTaskPeer);
+            float p[3] = {};
+            if (!c || !have_me || !ChrPos(c, p)) {
+                continue;
+            }
+            ++members;
+            const float dx = p[0] - mp[0], dy = p[1] - mp[1], dz = p[2] - mp[2];
+            farthest = std::max(farthest, std::sqrt(dx * dx + dy * dy + dz * dz));
+        }
+        Log("K3: stage-record change with a session (stage %#x, %d member chr(s), farthest %.1f m): no leave",
+            me ? Field<u32>(me, 0x3f8) : 0u, members, farthest);
         return 0;
     }
     using Fn = u64(BB_COOP_SYSV*)(u64);
@@ -611,6 +673,7 @@ struct State {
     HostPhase hphase = HostPhase::Idle;
     double hsince = 0;
     bool arrived = false;  // a guest said it arrived (under mu)
+    bool rejoined_logged = false; // host: an "arrived" came since the resync
     bool respawn_request = false;  // a guest died alone and reloads this world (under mu)
     bool respawn_have_pos = false;  // where it died (its member chr here stands there)
     float respawn_pos[3] = {};
@@ -1753,6 +1816,7 @@ void HostTick(const GameSnapshot& s, double now) {
             }
             st.hphase = HostPhase::Resynced;
             st.hsince = now;
+            st.rejoined_logged = false;
             std::lock_guard<std::mutex> lk(st.mu);
             st.arrived = false;
         }
@@ -1774,14 +1838,29 @@ void HostTick(const GameSnapshot& s, double now) {
             arrived = st.arrived;
             st.arrived = false;
         }
-        if (arrived || now - st.hsince > 60.0) {
+        const bool timeout = now - st.hsince > 60.0;
+        if (arrived || timeout) {
             const int n = RewindRemoteTasks("host");
             Log("host: %s; %d member task(s) rewound", arrived ? "a guest arrived" : "60 s without arrival", n);
-            if (now - st.hsince > 60.0 || n == 0) {
+            if (timeout) {
                 st.hphase = HostPhase::Idle;
                 g_rejoin = false;
+                return;
             }
         }
+        // Done once every member task has its chr again (each guest's "arrived" rewinds it).
+        bool all = true;
+        for (const TaskInfo& t : Tasks(false)) {
+            if (t.mode == 1 && !PlayerForPeer(t.task + kTaskPeer)) {
+                all = false;
+            }
+        }
+        if (all && (arrived || st.rejoined_logged)) {
+            st.hphase = HostPhase::Idle;
+            g_rejoin = false;
+            Log("host: re-join done after %.1f s; tasks:%s", now - st.hsince, DescribeTasks().c_str());
+        }
+        st.rejoined_logged = st.rejoined_logged || arrived;
         return;
     }
     }
@@ -2025,12 +2104,12 @@ void Tick(const GameSnapshot& s) {
     if ((Role() == RoleHost || Role() == RoleClient) && s.world_up && !s.loading && now - last_status >= 10.0) {
         last_status = now;
         const u64 remo = Field<u64>(Slot(0x5540058), 8);
-        Log("status: local %s, role %d, flow %d (timer %.2f, GSM+0x1521 %u, remo %d), rejoin %d, cooperators %d; "
-            "tasks:%s; presence %s",
-            DescribeChr(s.player).c_str(), Role(), Field<int>(Slot(kSlotFlow), 0x84, -1),
+        Log("status: local %s (%#llx), role %d, flow %d (timer %.2f, GSM+0x1521 %u, remo %d), rejoin %d, cooperators %d; "
+            "tasks:%s; presence %s; %s",
+            DescribeChr(s.player).c_str(), ull(s.player), Role(), Field<int>(Slot(kSlotFlow), 0x84, -1),
             Field<float>(Slot(kSlotFlow), 0x98), unsigned(Field<u8>(Slot(kSlotGsm), 0x1521)),
             remo ? int(Field<u8>(remo, 0x168) & 1) : -1, int(g_rejoin.load()), s.cooperators, DescribeTasks().c_str(),
-            DescribePresence(true).c_str());
+            DescribePresence(true).c_str(), DescribePresentation().c_str());
     }
     ProbeTick(s);
     TestWarpTick(s, now);

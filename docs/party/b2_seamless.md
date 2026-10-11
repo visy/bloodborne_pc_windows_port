@@ -472,7 +472,7 @@ reset. Fallback: no snapshot within 45 s -> the B1 fallback as before (redirect,
 
 * **Host's last lamp in another map** (r24-r25; fixture `host_lastlamp=2402950`: the host's
   +0x1528 names a Cathedral Ward lamp while the party stands in m24_01 - the state after walking
-  into the next area. A stage warp `host_stage=24:0:<point>` was tried first: points 2402950 /
+  into the next area. A stage warp 0x132E010 to m24_00 was tried first: points 2402950 /
   2401950 are no warp regions, the host fell and recovered, r18/r21). `SoloRespawn` sees the lamp's
   map (`ids::EntityMap`) differ from the current one and picks a lamp of the current map:
   ReturnPointParam ids AAB295k, lit = common event 7000's 2009[5] flag `1AAB7800 + 20k` (m24_01:

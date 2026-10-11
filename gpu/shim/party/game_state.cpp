@@ -283,8 +283,11 @@ bool WritePlayerInsight(int insight) {
 
 bool WritePlayerEchoes(int echoes) {
     const std::uint64_t rec = Field<std::uint64_t>(Slot(kGameDataMan), 8, 0);
+    if (!rec || echoes < 0) {
+        return false;
+    }
     const std::int32_t v = echoes;
-    return rec && SafeWrite(rec + kRecEchoes, &v, 4);
+    return SafeWrite(rec + 0x94, &v, 4);
 }
 
 // ---- Campaign start ----
@@ -296,6 +299,16 @@ bool ReadEventFlag(std::uint32_t flag, bool* value) {
     }
     using Fn = std::uint32_t(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t, std::uint32_t);
     *value = reinterpret_cast<Fn>(Guest(kGetEventFlag))(man, flag, 1) != 0;
+    return true;
+}
+
+bool ReadEventFlagValue(std::uint32_t first, std::uint32_t bits, std::uint32_t* value) {
+    const std::uint64_t man = Slot(kEventFlagMan);
+    if (!man || !GetFlagOk() || bits < 1 || bits > 32) {
+        return false;
+    }
+    using Fn = std::uint32_t(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t, std::uint32_t);
+    *value = reinterpret_cast<Fn>(Guest(kGetEventFlag))(man, first, bits);
     return true;
 }
 

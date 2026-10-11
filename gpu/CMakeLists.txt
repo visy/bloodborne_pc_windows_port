@@ -576,8 +576,8 @@ endif()
 # Party travel (B1, shim/party/party_travel.cpp; in bbgpu through SHIM_SOURCES): its pure logic
 # only (BB_PARTY_TRAVEL_NO_GAME). ninja -C out/gpu party-travel-test
 add_executable(party-travel-test EXCLUDE_FROM_ALL ../tests/test_party_travel.cpp shim/party/party_travel.cpp
-    shim/net/json.cpp)
-target_compile_definitions(party-travel-test PRIVATE BB_PARTY_TRAVEL_NO_GAME)
+    shim/party/party_chalice.cpp shim/net/json.cpp)
+target_compile_definitions(party-travel-test PRIVATE BB_PARTY_TRAVEL_NO_GAME BB_PARTY_CHALICE_NO_GAME)
 target_compile_options(party-travel-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-travel-test PRIVATE shim)
 set_target_properties(party-travel-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
