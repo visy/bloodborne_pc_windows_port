@@ -90,6 +90,9 @@ const char* AloneWhyName(AloneWhy w);
 /// mode (no snapshot; flags from the mirror). False: not possible now (no session, a re-join
 /// running, no destination) - the caller keeps the old behaviour.
 bool TravelAlone(const TravelIntent& t, AloneWhy why);
+/// Guest, main thread, dead: respawns at its OWN last lamp (GSM +0x1528) as an alone travel
+/// (TravelAlone with AloneWhy::Death): in the host's area a re-join, elsewhere an alone load.
+bool RespawnAloneAtOwnLamp();
 /// Host, main thread: the next own travel is alone (TravelIntent::alone): the guests do not
 /// follow and the host does not re-send its snapshot after its load. Expires after 10 s.
 void HostTravelAloneNext();

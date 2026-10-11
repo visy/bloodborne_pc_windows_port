@@ -583,6 +583,8 @@ std::atomic<LampWarpInterceptor> g_lamp_intercept{nullptr};
 std::atomic<bool> g_lamp_decided{false};  // RunLampWarpDecided: the interceptor stands aside
 std::atomic<MarkInterceptor> g_mark_intercept{nullptr};
 std::atomic<bool> g_next_alone{false};    // host: the next captured travel is alone (split travel)
+std::atomic<bool> g_death_alone{false};   // host: every captured HostDeath is alone (hostdeath)
+std::atomic<double> g_last_alone_at{0};   // host: when the last alone travel was captured (Now())
 
 // Seeded from the wall clock: a restarted host keeps counting upward, so guests that saw the
 // old host's intents do not drop the new ones as duplicates.
@@ -713,7 +715,10 @@ void CaptureHost(u64 site, TravelKind kind) {
     if (kind == TravelKind::Lamp) {
         t.lamp_id = g_lamp_key.exchange(kTravelNone);
     }
-    t.alone = g_next_alone.exchange(false);
+    t.alone = g_next_alone.exchange(false) || (kind == TravelKind::HostDeath && g_death_alone.load());
+    if (t.alone) {
+        g_last_alone_at = Now();
+    }
     {
         // One warp, one TRAVEL: the game can reach the funnel twice for the same lamp warp within a
         // few frames (live: a guest's lamp request run by the host captured twice, 26 ms apart, two
@@ -1285,6 +1290,15 @@ void SetMarkInterceptor(MarkInterceptor fn) {
 
 void SetNextHostTravelAlone(bool alone) {
     g_next_alone = alone;
+}
+
+void SetHostDeathAlone(bool alone) {
+    g_death_alone = alone;
+}
+
+double LastAloneCaptureAgo() {
+    const double at = g_last_alone_at.load();
+    return at > 0 ? Now() - at : 1e9;
 }
 
 void RunLampWarpReplay(std::uint32_t id) {

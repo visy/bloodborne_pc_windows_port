@@ -2243,7 +2243,8 @@ void HostTick(const GameSnapshot& s, double now) {
             st.hsince = now;
             st.stable = 0;
             g_rejoin = true;
-            st.alone_load = g_host_alone_next.exchange(false) && now - g_host_alone_at.load() < 10.0;
+            st.alone_load = (g_host_alone_next.exchange(false) && now - g_host_alone_at.load() < 10.0) ||
+                            LastAloneCaptureAgo() < 10.0;
             Log("host: own load with a session; members keep the room%s",
                 st.alone_load ? " (an alone travel: the guests stay where they are)" : "");
         }
@@ -2299,7 +2300,8 @@ void HostTick(const GameSnapshot& s, double now) {
             st.hsince = now;
             st.stable = 0;
             g_rejoin = true;
-            st.alone_load = g_host_alone_next.exchange(false) && now - g_host_alone_at.load() < 10.0;
+            st.alone_load = (g_host_alone_next.exchange(false) && now - g_host_alone_at.load() < 10.0) ||
+                            LastAloneCaptureAgo() < 10.0;
             Log("host: another own load before the last re-join settled; members keep the room, re-sync after it%s",
                 st.alone_load ? " (alone: no re-sync)" : "");
             return;
@@ -2920,6 +2922,16 @@ bool TravelAlone(const TravelIntent& t, AloneWhy why) {
         return false;
     }
     return true;
+}
+
+bool RespawnAloneAtOwnLamp() {
+    const u32 own = Field<u32>(Slot(kSlotGsm), 0x1528);
+    TravelIntent t;
+    if (!g_on.load() || own == 0 || own == kTravelNone || !LampIntent(own, &t)) {
+        Log("guest: own-lamp respawn refused (own last lamp %u)", own);
+        return false;
+    }
+    return TravelAlone(t, AloneWhy::Death);
 }
 
 bool PopOutgoing(int* slot, std::string* body) {

@@ -273,6 +273,12 @@ void RunLampWarp(std::uint32_t id);
 void RunLampWarpDecided(std::uint32_t id, bool alone);
 /// Host: the next travel the funnel captures is alone (split travel; cleared by the capture).
 void SetNextHostTravelAlone(bool alone);
+/// Host: every captured host death (TravelKind::HostDeath) is an alone travel (the guests play
+/// on; the hostdeath rule "everyone respawns at their own last lamp"). Any thread.
+void SetHostDeathAlone(bool alone);
+/// Host: seconds since the funnel captured an alone travel (1e9: never). B2 uses it to tell an
+/// alone load (no snapshot re-send, nobody to wait for).
+double LastAloneCaptureAgo();
 /// The Hunter's Mark item reaching the funnel (site 0x18FFA1D, any role; not our replays):
 /// `fn(last lamp id)` true = consumed (no stage request; split travel asks, then runs a decided
 /// lamp warp to that lamp). Game thread.
