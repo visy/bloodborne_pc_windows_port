@@ -242,22 +242,60 @@ whoever uses a lamp or headstone, **the whole party travels**, led by the host (
 * **One TRAVEL per warp [fixed]**: the host captured a guest-requested lamp warp twice, 26 ms apart
   (two TRAVEL, two "rested"). `CaptureHost` now drops the same warp (kind, lamp, map, respawn
   record) seen again within 1 s; the next runs logged one TRAVEL.
-* **Guest button press at a world lamp [R, not working yet; not a flag problem]**: after following the
-  host to Central Yharnam the guest's lamp object (entity 2411951) has all four "unavailable" bytes
-  0 (+0x49 patched) but type (+0x28) 0. The host-world mirror (event_flags.md 12) did not change
-  that: with the mirror the guest's overlay holds every lamp flag the host has (72410201-203,
-  12417810/830/831 ... - dump: 0 host-only bits), the lamp looks the same with the mirror on and off
-  (A/B screenshots), and **the host's own lamp object reads the same** (type 0, `+0xC70 entry: +0xC
-  0 +0xE 0 lit 0 reg 1 +0x14 12417820 +0x18 1` on both). What the bytes are: type = FUN_0146E360,
-  the level (0-4) of the FrpgNetMan +0xC70 "FrpgNetBonfireDbItem" entry's +0xC counter against
-  param 0x96 thresholds (an online lamp-activity level, set by the lamp DB / 0x146D890), and
-  +0x2C = 90000 + type is an **SFX id** (the flame effect; 0x15F95.. are SFX ids in the same
-  function), not an action-button row (ActionButtonParam has no rows 90000-90005). Live
-  (`lampprobe;lampwalk`: the player is warped 1 m in front of the lamp, matrix translation at the
-  0x13C9AF0 record +0x24C/+0x25C/+0x26C = (-196.8, -28.6, 65.4)): **neither the host nor the guest
-  gets a lamp prompt there in a party session** (PromptUp none, screenshots). So the world-lamp gate
-  is still elsewhere (session-gated action, not the overlay); the request path behind it works
-  (`lampflag=` test above) and the Dream headstones now give guests the same party travel.
+* **World lamps in a party [R, fixed 2026-10-11]** (host: party mode, `BB_PARTY_HEADSTONES`
+  default on; guest: guest lamps, on by default since 2026-10-11, `BB_PARTY_GUEST_LAMPS=0` off). How a lamp works: the lamp is a **talk script**,
+  `tAAB000..tAAB003` of its map (Central Yharnam's lamp 2411951 = **t241001**; the Dream's
+  headstones are t210000..t210003 of the same family). Each frame it registers its action button
+  (ActionButtonParam **6100** "Light Lamp" / **6101** "Return to the Hunter's Dream", type 0xD,
+  through the talk condition 0x203AD60 -> `0x1CD91F0`; `buttonprobe` saw `13:6101` 30x/s) when the
+  lamp's FrpgNetMan +0xC70 entry is enabled - and that enable is the lamp object's four
+  "unavailable" bytes, of which **+0x49 = session peer count > 0** (0x12F831C). So in vanilla
+  the prompt disappears for everybody as soon as a session is up. On a client the script also
+  asks **IsClientPlayer** and **IsMultiplayerInProgress**. (The lamp object's "type" +0x28 and
+  +0x2C = 90000 + type are the flame level / SFX id: unrelated.)
+  * Fix: the +0x49 patch (`31 c9 90..` at 0x12F831C) is now applied whenever the party headstones
+    are on (it was only with `BB_PARTY_GUEST_LAMPS`); `MultiFilter` answers IsMultiplayerInProgress 0
+    for lamp scripts too (`LampTalk`: talk / 1000 in 210..369 with block 0..2, talk % 1000 <= 3);
+    for a client, `LampClientAnswer` (in the IsClientPlayer filter, outside the Dream-only gate)
+    answers 0 for lamp scripts when `BB_PARTY_GUEST_LAMPS=1`.
+  * Host, live (`lampprobe;lampwalk;hostlamppress`, the host lamp-warped to Central Yharnam with a
+    guest in the party): prompt "Return to the Hunter's Dream" (screenshot), Cross -> the confirm
+    box "Return to the Hunter's Dream? YES / NO", Left + Cross -> the lamp's flag, common event
+    7200 warps (`0x13CDF30(2102950)`): `host travel ... lamp 2102950, map m21_00_00_00`, "rested"
+    sent, the guest replayed it (B2 `replay now ... lamp 2102950`, `arrived in the host world`).
+  * Guest, live (`BB_PARTY_GUEST_LAMPS=1`, `lamppress;lampprobe;lampwalk`): `talk t241001 asks
+    IsClientPlayer (world lamp: answered 0)`, the same prompt and confirm box on the guest
+    (screenshots), YES -> `lamp: the guest's warp to 2102950 becomes a request to the host`, the host
+    warped (`slot 1 used a lamp / headstone: the host warps to 2102950`, one TRAVEL), the guest
+    followed by B2 into the Dream.
+  * **Lighting a new lamp [R]** (test fixture: the host's own save loses Central Yharnam's lamp,
+    `BB_PARTY_PROGRESS_TEST_CLEAR=12417830,12417831,72410201`: the lamp object's base+10 / base+11
+    of its flag base 12417820 and its lamp-lit flag 7AAB02xx). Through the mirror the guest's
+    prompt there is "Light lamp" too although its own save has the lamp lit (screenshot).
+    - Host lights it: 6100 registered, Cross -> `host flag 72410201 = 1`, then 12417830/831; the
+      guest's overlay follows within ~1 s (`blocks changed by the host: 72410:1`, `12417:2`) and the
+      guest's prompt at the lamp is "Return to the Hunter's Dream" (screenshot).
+    - Guest lights it: its game writes the flags into the host-world overlay only (own pool:
+      0 differing flags before / after, BBPF -pool dumps). `GuestLampLitTick` (guest, load mode 1,
+      once a second) sends the lamp flags its overlay has and the host's mirror image lacks - the
+      lamp's base+10 / base+11 from its FrpgNetMan +0xC70 entry and the map's 7AAB02xx - as EVENT
+      **`lamp_lit`** `{ids}` (at most 16, each `LampLitFlagAllowed`); the host sets them in its world
+      (`lamp: slot 1 lit a lamp in the host's world: set 72410201`) and the mirror carries the rest.
+      The guest's own save never changes; the host's world is lit for the whole party.
+* **Default on (2026-10-11)**: guest lamps / headstones are on in party mode; `BB_PARTY_GUEST_LAMPS=0`
+  (or the switch "Guests use lamps" on the Party members page / the overlay's party section, ini
+  `party_guest_lamps`; read at start) turns them off. With them on, live: the guest's Doll level up
+  still works (`LEVEL UP on the guest: level 37 -> 38`), the guest's headstone travel works (above).
+* **Rest via a guest's lamp [R]**: the guest's lamp use is a request; the host makes the warp, so
+  the host's load is the rest (its world's enemies respawn in the host's game, the only world
+  there is) and the guest gets the "rested" refill: vials and bullets from storage, and HP (B2 no
+  longer puts the pre-travel HP back after a rest travel, `RestedFromTravel`; the refill tops HP up
+  too). Live (`hurt`: guest HP 53/106 before): after the follow load `guest: HP 106 after the load
+  (a rest travel: the refill heals)`, `refill (host rested): vials and bullets topped up`.
+  * Test steps: `lampwalk` stands the player 1 m in front of the nearest probed lamp (its map
+    object's matrix: 0x13C9AF0 record +0x24C/+0x25C/+0x26C); `hostlamppress` (host) and `lamppress`
+    (guest) press Cross, Left, Cross; `buttonprobe` logs every action-button registration
+    (0x1CD91F0 type:id) and the ActionButtonMan gates; `talkprobe` the talk action manager 0x13ADCC0.
 * Open: `+0x4B` and the lamp's chr-type range branch for a guest.
 
 ## 4. Safety

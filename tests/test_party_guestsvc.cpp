@@ -71,6 +71,22 @@ int main() {
     // Headstones (lamp part).
     assert(HeadstoneTalk(210000) && HeadstoneTalk(210003) && HeadstoneTalk(210721));
     assert(!HeadstoneTalk(210004) && !HeadstoneTalk(210720) && !HeadstoneTalk(210304));
+    assert(LampTalk(241000) && LampTalk(241003) && LampTalk(210001) && LampTalk(361002) && LampTalk(242000));
+    assert(LampLitFlagAllowed(12417830) && LampLitFlagAllowed(12417831) && LampLitFlagAllowed(72410201));
+    assert(!LampLitFlagAllowed(12417820) && !LampLitFlagAllowed(12417832) && !LampLitFlagAllowed(12416830) &&
+           !LampLitFlagAllowed(72410101) && !LampLitFlagAllowed(9401) && !LampLitFlagAllowed(12411800) &&
+           !LampLitFlagAllowed(14017830));
+    {
+        std::vector<std::uint32_t> ids;
+        std::string err;
+        assert(LampLitFromJsonText(LampLitToJsonText({12417830, 72410201}), &ids, &err) && ids.size() == 2 &&
+               ids[0] == 12417830 && ids[1] == 72410201);
+        assert(!LampLitFromJsonText(LampLitToJsonText({12411800}), &ids, &err));
+        assert(!LampLitFromJsonText("{\"ids\":[1,2", &ids, &err));
+        std::vector<std::uint32_t> many(17, 72410201);
+        assert(!LampLitFromJsonText(LampLitToJsonText(many), &ids, &err));
+    }
+    assert(!LampTalk(241004) && !LampTalk(241190) && !LampTalk(210304) && !LampTalk(243000) && !LampTalk(100000));
 
     // Lamp requests.
     {
@@ -137,8 +153,9 @@ int main() {
     assert(GuestServicesEnabledFromEnv("1"));
     assert(!GuestServicesEnabledFromEnv("0"));
     assert(GuestServicesEnabledFromEnv("00"));
-    assert(!GuestLampsEnabledFromEnv(nullptr) && !GuestLampsEnabledFromEnv("") && !GuestLampsEnabledFromEnv("0"));
-    assert(GuestLampsEnabledFromEnv("1"));
+    assert(GuestLampsEnabledFromEnv(nullptr) && GuestLampsEnabledFromEnv("") && !GuestLampsEnabledFromEnv("0"));
+    assert(GuestLampsEnabledFromEnv("1") && GuestLampsEnabledFromEnv("1", false));
+    assert(!GuestLampsEnabledFromEnv(nullptr, false) && !GuestLampsEnabledFromEnv("x", false));
 
     // Record changes.
     PlayerRecord a{10, 5000, 3}, b{11, 3200, 3};

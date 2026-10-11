@@ -87,6 +87,63 @@ bool HeadstoneTalk(std::uint32_t talk) {
     return (talk >= 210000 && talk <= 210003) || talk == 210721;
 }
 
+bool LampTalk(std::uint32_t talk) {
+    const std::uint32_t map = talk / 1000;  // area * 10 + block
+    return map >= 210 && map <= 369 && map % 10 <= 2 && talk % 1000 <= 3;
+}
+
+bool LampLitFlagAllowed(std::uint32_t id) {
+    const std::uint32_t type = id / 10000000, area = id / 100000 % 100, zone = id / 1000 % 10, n = id % 1000;
+    if (area < 21 || area > 36 || id / 10000 % 10 > 2) {
+        return false;
+    }
+    if (type == 1 && zone == 7 && n >= 800 && n < 900 && (n % 20 == 10 || n % 20 == 11)) {
+        return true;  // the lamp object's base+10 / base+11
+    }
+    return type == 7 && zone == 0 && n >= 200 && n < 300;  // 7AAB02xx lamp lit
+}
+
+std::string LampLitToJsonText(const std::vector<std::uint32_t>& ids) {
+    json::Value v = json::Value::make_object();
+    json::Value a = json::Value::make_array();
+    for (std::uint32_t id : ids) {
+        a.push(static_cast<unsigned>(id));
+    }
+    v.set("ids", std::move(a));
+    return json::dump(v, 0);
+}
+
+bool LampLitFromJsonText(const std::string& text, std::vector<std::uint32_t>* ids, std::string* error) {
+    json::Value v;
+    std::string err;
+    if (!json::parse(text, v, err)) {
+        if (error) {
+            *error = err;
+        }
+        return false;
+    }
+    try {
+        if (v.type != json::Value::Type::Object || json::arr(v, "ids").size() > kMaxLampLitIds) {
+            throw std::runtime_error("bad lamp_lit body");
+        }
+        std::vector<std::uint32_t> out;
+        for (const json::Value& x : json::arr(v, "ids")) {
+            const std::uint64_t id = json::as_u64(x, "id");
+            if (id > 0xffffffffull || !LampLitFlagAllowed(std::uint32_t(id))) {
+                throw std::runtime_error("not a lamp flag");
+            }
+            out.push_back(std::uint32_t(id));
+        }
+        *ids = std::move(out);
+        return true;
+    } catch (const std::exception& e) {
+        if (error) {
+            *error = e.what();
+        }
+        return false;
+    }
+}
+
 std::string LampRequestToJsonText(const LampRequest& r) {
     json::Value v = json::Value::make_object();
     v.set("id", r.id);
@@ -169,8 +226,14 @@ bool DollLevelUpCharTypeTest(int event_id, int bank, int id, int entity, int typ
            (type == 0 || type == 1);
 }
 
-bool GuestLampsEnabledFromEnv(const char* v) {
-    return v && v[0] == '1' && !v[1];
+bool GuestLampsEnabledFromEnv(const char* v, bool fallback) {
+    if (v && v[0] == '0' && !v[1]) {
+        return false;
+    }
+    if (v && v[0] == '1' && !v[1]) {
+        return true;
+    }
+    return fallback;
 }
 
 bool GuestServicesEnabledFromEnv(const char* v) {
@@ -187,6 +250,7 @@ bool GuestServicesEnabledFromEnv(const char* v) {
 #include "party_link.h"
 #include "party_progress.h"
 #include "bbport_game_menu.h"
+#include "bbport_settings.h"
 
 #include <atomic>
 #include <chrono>
@@ -198,6 +262,11 @@ bool GuestServicesEnabledFromEnv(const char* v) {
 extern "C" void runtime_pad_director_press(std::uint32_t buttons); // src/runtime_pad.c
 
 namespace coop {
+
+/// Guest lamps / headstones: env BB_PARTY_GUEST_LAMPS ("0" / "1") over the Party page setting.
+bool GuestLampsOn() {
+    return GuestLampsEnabledFromEnv(std::getenv("BB_PARTY_GUEST_LAMPS"), BbSettings::Get().party_guest_lamps.load());
+}
 namespace {
 
 constexpr u64 kIsClientLoad = 0x203BA78;   // movzx eax, byte [r15+0x25]
@@ -217,6 +286,32 @@ std::atomic<bool> g_lamps{false};
 std::atomic<bool> g_headstones{false};
 std::atomic<int> g_session_role{-1};       // the tick's last read (the interceptor's thread)
 std::atomic<std::uint32_t> g_multi_overrides{0};
+std::atomic<std::uint32_t> g_lamp_talk_overrides{0};
+// Diagnostics: the talk scripts that asked IsMultiplayerInProgress (logged by the tick, once each).
+std::atomic<std::uint32_t> g_multi_talks[16];
+std::atomic<std::uint32_t> g_client_talks[16];  // ... and IsClientPlayer (any map)
+void NoteTalk(std::atomic<std::uint32_t> (&slots)[16], std::uint32_t talk) {
+    for (auto& slot : slots) {
+        std::uint32_t cur = slot.load(std::memory_order_relaxed);
+        if (cur == talk) {
+            return;
+        }
+        if (cur == 0 && slot.compare_exchange_strong(cur, talk)) {
+            return;
+        }
+    }
+}
+void NoteMultiTalk(std::uint32_t talk) {
+    for (auto& slot : g_multi_talks) {
+        std::uint32_t cur = slot.load(std::memory_order_relaxed);
+        if (cur == talk) {
+            return;
+        }
+        if (cur == 0 && slot.compare_exchange_strong(cur, talk)) {
+            return;
+        }
+    }
+}
 std::mutex g_lamp_mu;
 std::deque<LampRequest> g_lamp_out;        // guest: to send
 std::deque<std::pair<int, LampRequest>> g_lamp_in; // host: from guests (slot, request)
@@ -261,8 +356,26 @@ void NoteEnv(std::uint64_t env) {
     }
 }
 
+// The same filter, outside the Dream gate: a guest's world lamp (BB_PARTY_GUEST_LAMPS) answers 0 so
+// its menu opens; its warp becomes a lamp request to the host (GuestLampIntercept).
+std::uint64_t LampClientAnswer(std::uint64_t env, std::uint64_t value) {
+    const std::uint32_t talk = *reinterpret_cast<const std::uint32_t*>(env + 0x10);
+    if (!LampTalk(talk) || HeadstoneTalk(talk) || !g_lamps.load(std::memory_order_relaxed) ||
+        g_session_role.load(std::memory_order_relaxed) != kSessionRoleClient) {
+        return value;
+    }
+    g_lamp_talk_overrides.fetch_add(1, std::memory_order_relaxed);
+    return 0;
+}
+
 // Main thread (talk scripts): the game's answer `value` of IsClientPlayer for talk environment `env`.
 std::uint64_t BB_COOP_SYSV IsClientFilter(std::uint64_t env, std::uint64_t value) {
+    if ((value & 0xff) != 0) {
+        NoteTalk(g_client_talks, *reinterpret_cast<const std::uint32_t*>(env + 0x10));
+    }
+    if ((value & 0xff) != 0 && LampClientAnswer(env, value) == 0) {
+        return 0;
+    }
     if (!g_gate.load(std::memory_order_relaxed) || (value & 0xff) == 0) {
         return value;
     }
@@ -311,7 +424,8 @@ std::uint64_t BB_COOP_SYSV MultiFilter(std::uint64_t env, std::uint64_t value) {
         return value;
     }
     const std::uint32_t talk = *reinterpret_cast<const std::uint32_t*>(env + 0x10);
-    if (!HeadstoneTalk(talk)) {
+    NoteMultiTalk(talk);
+    if (!HeadstoneTalk(talk) && !LampTalk(talk)) {
         return value;
     }
     g_multi_overrides.fetch_add(1, std::memory_order_relaxed);
@@ -1023,6 +1137,8 @@ bool RunTestFixture(const GameSnapshot& s, int step) {
 } // namespace
 
 BB_COOP_SYSV void LampObjEntry(u64 obj, u64, u64, u64, u64, u64); // test probe (below)
+BB_COOP_SYSV void TalkManEntry(u64 man, u64, u64, u64, u64, u64);  // test probe (below)
+BB_COOP_SYSV void ButtonEntry(u64, u64 type, u64 id, u64, u64, u64);  // test probe (below)
 
 void GuestServicesInit() {
     if (g.init) {
@@ -1046,7 +1162,7 @@ void GuestServicesInit() {
     if (const char* e = std::getenv("BB_PARTY_GUEST_SERVICES_TALK")) {
         g.extra = e;
     }
-    g_lamps = GuestLampsEnabledFromEnv(std::getenv("BB_PARTY_GUEST_LAMPS"));
+    g_lamps = GuestLampsOn();
     const char* hs = std::getenv("BB_PARTY_HEADSTONES");
     const bool headstones = g_lamps.load() || !(hs && hs[0] == '0' && !hs[1]);
     bool multi_ok = false;
@@ -1055,15 +1171,19 @@ void GuestServicesInit() {
                    HookValueFilter(kMultiOr, {0x08, 0xc1, 0x0f, 0xb6, 0xc1}, {0x4c, 0x89, 0xff, 0x89, 0xc6}, &MultiFilter,
                                    kTestResultInt, "talk IsMultiplayerInProgress (party headstones)");
         g_headstones = multi_ok;
-        Log("headstones %s: the host travels from the Hunter's Dream with guests present (the party follows)",
-            multi_ok ? "on" : "NOT installed");
+        // World lamps too (host first): the lamp object's multiplayer byte +0x49 and the lamp talk
+        // scripts' IsMultiplayerInProgress (MultiFilter, LampTalk) - the host's lamp use is then
+        // an ordinary lamp warp the travel capture turns into a party move.
+        const bool gate_ok = PatchBytes(kLampMultiGate, {0x85, 0xc9, 0x0f, 0x9f, 0xc1, 0x08, 0xc1},
+                                        {0x31, 0xc9, 0x90, 0x90, 0x90, 0x90, 0x90},
+                                        "lamp multiplayer gate +0x49 (party lamps)");
+        Log("headstones and lamps %s: the host travels from a headstone or a lamp with guests present (the party "
+            "follows)%s", multi_ok ? "on" : "NOT installed", gate_ok ? "" : "; lamp gate +0x49 NOT patched");
     } else {
         Log("headstones off (BB_PARTY_HEADSTONES=0): vanilla, no headstone travel while in a party");
     }
     if (g_lamps.load()) {
-        bool ok = multi_ok;
-        ok = PatchBytes(kLampMultiGate, {0x85, 0xc9, 0x0f, 0x9f, 0xc1, 0x08, 0xc1}, {0x31, 0xc9, 0x90, 0x90, 0x90, 0x90, 0x90},
-                        "lamp multiplayer gate +0x49 (party lamps)") && ok;
+        const bool ok = multi_ok;
         SetLampWarpInterceptor(&GuestLampIntercept);
         Log("lamps %s: lamps and headstones work in a party; a guest's lamp use moves the whole party (host-led)",
             ok ? "on" : "partly installed");
@@ -1076,6 +1196,16 @@ void GuestServicesInit() {
         return;
     }
     SetEmevdRewriter2(&DollRewriter);
+    if (g.test.find("buttonprobe") != std::string::npos) {
+        HookPrologue(0x1CD91F0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83,
+                                 0xec, 0x58},
+                     &ButtonEntry, "action-button registration (test probe)");
+    }
+    if (g.test.find("talkprobe") != std::string::npos) {
+        HookPrologue(0x13ADCC0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83,
+                                 0xec, 0x68},
+                     &TalkManEntry, "talk action-button update (test probe)");
+    }
     if (g.test.find("lampprobe") != std::string::npos) {
         // push rbp; mov rbp, rsp; push r15..r12, rbx; sub rsp, 0x2848 (20 bytes; then mov [rbp-0x2820], rdx).
         HookPrologue(0x12F5C40, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x81,
@@ -1113,12 +1243,92 @@ std::vector<EmevdSkipRule> GuestServicesSkipRules() {
         return {};
     }
     std::vector<EmevdSkipRule> out = DollPlacementRules();
-    if (GuestLampsEnabledFromEnv(std::getenv("BB_PARTY_GUEST_LAMPS"))) {
+    if (GuestLampsOn()) {
         for (const EmevdSkipRule& r : LampSkipRules()) {
             out.push_back(r);
         }
     }
     return out;
+}
+
+std::mutex g_lit_mu;
+std::deque<std::pair<int, std::vector<std::uint32_t>>> g_lit_in;  // host: from guests
+std::vector<std::uint32_t> g_lit_out;                             // guest: to send
+
+bool GuestServicesOnLampLit(int slot, const std::string& body, std::string* why) {
+    if (!g_lamps.load() || PartyDirector::Get().Role() != PartyRole::Host) {
+        if (why) {
+            *why = "guest lamps are off on the host";
+        }
+        return false;
+    }
+    std::vector<std::uint32_t> ids;
+    if (!LampLitFromJsonText(body, &ids, why)) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lk(g_lit_mu);
+    if (g_lit_in.size() < 16) {
+        g_lit_in.emplace_back(slot, std::move(ids));
+    }
+    return true;
+}
+
+/// Guest, in the host's world (load mode 1), once a second: a lamp the guest lit there sets its
+/// flags in the host-world overlay only (the game writes the visible tree; the own pool keeps
+/// its own lamps). The lamp flags its overlay has and the host's mirror image lacks go to the host
+/// as EVENT lamp_lit; the host sets them in its world and the mirror brings them back.
+void GuestLampLitTick(const GameSnapshot& s) {
+    static double last = 0;
+    static std::uint32_t map = 0;
+    static std::vector<std::uint32_t> sent;
+    if (s.session_role != kSessionRoleClient || !s.world_up || s.loading || progress::FlagLoadMode() != 1 ||
+        Now() - last < 1.0) {
+        return;
+    }
+    last = Now();
+    if (s.map_id != map) {
+        map = s.map_id;
+        sent.clear();
+    }
+    std::vector<std::uint32_t> ids;
+    auto consider = [&](std::uint32_t id) {
+        bool mine = false, host = false;
+        if (LampLitFlagAllowed(id) && progress::ReadFlag(id, &mine) && mine && progress::HostWorldFlag(id, &host) &&
+            !host && std::find(sent.begin(), sent.end(), id) == sent.end() && ids.size() < kMaxLampLitIds) {
+            ids.push_back(id);
+        }
+    };
+    // The lamps of this map: FrpgNetMan (0x553B120) +0xC70 entries, +0x14 = object flag base.
+    std::uint64_t net = 0, c70 = 0, head = 0, n = 0;
+    if (SafeGet(Guest(0x553b120), &net) && net && SafeGet(net + 0xc70, &c70) && c70 && SafeGet(c70 + 0x30, &head) &&
+        head && SafeGet(head, &n)) {
+        for (int guard = 0; n && n != head && guard < 512; ++guard) {
+            std::uint64_t e = 0;
+            std::int32_t base = -1;
+            if (SafeGet(n + 0x10, &e) && e && SafeGet(e + 0x14, &base) && base >= 0) {
+                consider(std::uint32_t(base) + 10);
+                consider(std::uint32_t(base) + 11);
+            }
+            if (!SafeGet(n, &n)) {
+                break;
+            }
+        }
+    }
+    const std::uint32_t area = s.map_id >> 24, block = (s.map_id >> 16) & 0xff;
+    for (std::uint32_t k = 200; k < 300; ++k) {
+        consider(70000000 + area * 100000 + block * 10000 + k);
+    }
+    if (ids.empty()) {
+        return;
+    }
+    sent.insert(sent.end(), ids.begin(), ids.end());
+    std::string list;
+    for (std::uint32_t id : ids) {
+        list += " " + std::to_string(id);
+    }
+    Log("lamp: the guest lit a lamp of the host's world (overlay:%s); asking the host to light it", list.c_str());
+    std::lock_guard<std::mutex> lk(g_lit_mu);
+    g_lit_out.insert(g_lit_out.end(), ids.begin(), ids.end());
 }
 
 bool GuestServicesOnLampRequest(int slot, const std::string& body, std::string* why) {
@@ -1210,6 +1420,98 @@ void LogLampObjs() {
         Log("test: lamp object %p entity %d type %u row %d: +0x48 %u +0x49 %u +0x4A %u +0x4B %u; %s",
             reinterpret_cast<void*>(o), ent, type, row, b[0], b[1], b[2], b[3], entry.c_str());
     }
+}
+
+// Test probe ("talkprobe"): the talk action-button update 0x13ADCC0(talkman, ...) - the manager that
+// registers a talk's action button (type 0xF) for the nearest talk entry in range (0x13A3710)
+// unless the state mask 0x176B7E0() has bits outside 0xC8. Entries: +0x90 array (0x140 each),
+// +0x98 count; entry +0x58 map object id, +0x5C state (3/4 skipped), +0x90 talk object (vfunc
+// +0x98: its talk id).
+std::atomic<std::uint64_t> g_talkman{0};
+BB_COOP_SYSV void TalkManEntry(u64 man, u64, u64, u64, u64, u64) {
+    g_talkman.store(man, std::memory_order_relaxed);
+}
+// "buttonprobe": every action-button registration 0x1CD91F0(man, type, button id, ...) (the game
+// calls it each frame for each button in range), distinct (type, id) with counts.
+std::mutex g_btn_mu;
+std::map<std::uint64_t, std::uint32_t> g_btn_seen;
+std::atomic<std::uint64_t> g_btn_man{0};
+BB_COOP_SYSV void ButtonEntry(u64 man, u64 type, u64 id, u64 p5, u64 p6, u64 p7) {
+    g_btn_man.store(man, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lk(g_btn_mu);
+    if (g_btn_seen.size() < 256) {
+        // key: type (8 bits) | p5 | p6 | p7 flags | id
+        ++g_btn_seen[(type & 0xffu) << 40 | (p5 & 1) << 34 | (p6 & 1) << 33 | (p7 & 1) << 32 | (id & 0xffffffffu)];
+    }
+}
+void LogButtons() {
+    std::map<std::uint64_t, std::uint32_t> seen;
+    {
+        std::lock_guard<std::mutex> lk(g_btn_mu);
+        seen.swap(g_btn_seen);
+    }
+    std::string list;
+    for (const auto& [k, n] : seen) {
+        char b[48];
+        std::snprintf(b, sizeof b, " %u:%d(p5 %u p6 %u p7 %u) x%u", unsigned(k >> 40), std::int32_t(k & 0xffffffffu),
+                      unsigned(k >> 34 & 1), unsigned(k >> 33 & 1), unsigned(k >> 32 & 1), n);
+        list += b;
+    }
+    const std::uint64_t man = g_btn_man.load();
+    std::uint8_t m52 = 0, m55 = 0;
+    SafeGet(man + 0x52, &m52);
+    SafeGet(man + 0x55, &m55);
+    std::uint64_t g = 0;
+    std::int32_t c0 = -1, c118 = -1;
+    if (SafeGet(Guest(0x5562878), &g) && g) {
+        SafeGet(g + 0xc0, &c0);
+        SafeGet(g + 0x118, &c118);
+    }
+    using StFn = std::uint64_t(BB_COOP_SYSV*)(std::int32_t, std::int32_t);
+    const std::uint64_t st = reinterpret_cast<StFn>(Guest(0x13cc180))(10000, -1) & 0xff;
+    list += "; man +0x52 " + std::to_string(m52) + " +0x55 " + std::to_string(m55) + ", 0x13CC180 " +
+            std::to_string(st) + ", [0x5562878] +0xC0 " + std::to_string(c0) + " +0x118 " + std::to_string(c118);
+    Log("test: buttonprobe: registrations since the last line:%s", list.empty() ? " none" : list.substr(0, 400).c_str());
+}
+
+void LogTalkMan() {
+    const std::uint64_t man = g_talkman.load(std::memory_order_relaxed);
+    if (!man) {
+        Log("test: talkprobe: talk manager not seen");
+        return;
+    }
+    std::uint64_t arr = 0;
+    std::int32_t n = 0, cur = 0, btn = 0;
+    std::uint8_t on = 0, want = 0;
+    SafeGet(man + 0x90, &arr);
+    SafeGet(man + 0x98, &n);
+    SafeGet(man + 0x9c, &on);
+    SafeGet(man + 0x9d, &want);
+    SafeGet(man + 0xa0, &cur);
+    SafeGet(man + 0xa4, &btn);
+    using MaskFn = std::uint32_t(BB_COOP_SYSV*)();
+    const std::uint32_t mask = reinterpret_cast<MaskFn>(Guest(0x176b7e0))();
+    std::string list;
+    for (int i = 0; i < n && i < 64 && arr; ++i) {
+        const std::uint64_t e = arr + std::uint64_t(i) * 0x140;
+        std::uint32_t obj = 0;
+        std::int32_t st = 0;
+        std::uint8_t f = 0;
+        std::uint64_t talk = 0, vt = 0, fn = 0;
+        SafeGet(e + 0x58, &obj);
+        SafeGet(e + 0x5c, &st);
+        SafeGet(e + 0x108, &f);
+        std::int32_t tid = -1;
+        if (SafeGet(e + 0x90, &talk) && talk && SafeGet(talk, &vt) && vt && SafeGet(vt + 0x98, &fn) && fn) {
+            using IdFn = std::int32_t(BB_COOP_SYSV*)(std::uint64_t);
+            tid = reinterpret_cast<IdFn>(fn)(talk);
+        }
+        char b[64];
+        std::snprintf(b, sizeof b, " [%d t%d st%d f%02x]", i, tid, st, f);
+        list += b;
+    }
+    Log("test: talkprobe: mask %#x (blocks when & 0xffffff37), button %u/%u cur %d btn %d, %d entries:%s", mask,
+        on, want, cur, btn, n, list.substr(0, 380).c_str());
 }
 
 /// "lampwalk" (with lampprobe): stand the local player 1 m in front of the nearest probed lamp
@@ -1315,6 +1617,18 @@ void LampPressTick(const GameSnapshot& s, double now) {
     }
     if (g.test.find("lampwalk") != std::string::npos && !P.walked) {
         P.walked = WalkToLamp(s);  // then the prompt check on the next round
+        if (P.walked && g.test.find("hurt") != std::string::npos) {
+            // "hurt": half HP before the rest (does the party rest heal the guest?). Chr data module
+            // chr +0x3B0 -> +0x20: HP +0x128, max +0x12C.
+            std::uint64_t cm = 0, dm = 0;
+            std::int32_t mx = 0;
+            if (SafeGet(s.player + 0x3b0, &cm) && cm && SafeGet(cm + 0x20, &dm) && dm && SafeGet(dm + 0x12c, &mx) &&
+                mx > 1) {
+                const std::int32_t half = mx / 2;
+                SafeWrite(dm + 0x128, &half, 4);
+                Log("test: hurt: guest HP set to %d / %d before the rest", half, mx);
+            }
+        }
         if (P.walked) {
             return;
         }
@@ -1333,14 +1647,46 @@ void LampPressTick(const GameSnapshot& s, double now) {
         Log("test: lamppress: FAILED: no lamp request after 8 presses");
         return;
     }
-    runtime_pad_director_press(kPadCross);
+    // With lampwalk: Cross (prompt), Left (YES: the confirm box starts on NO), Cross, repeated.
+    const bool left = g.test.find("lampwalk") != std::string::npos && P.presses % 3 == 2;
+    runtime_pad_director_press(left ? kPadLeft : kPadCross);
     P.release = now + 0.12;
-    Log("test: lamppress: Cross #%d (prompt %s %u, map %s)", P.presses, up ? "up" : "not seen", prompt,
+    Log("test: lamppress: %s #%d (prompt %s %u, map %s)", left ? "Left" : "Cross", P.presses, up ? "up" : "not seen", prompt,
         MapName(s.map_id).c_str());
+}
+
+void LogLampTalks() {
+    static double last = 0;
+    if (Now() - last < 1.0) {
+        return;
+    }
+    last = Now();
+    if (const std::uint32_t m = g_lamp_talk_overrides.exchange(0, std::memory_order_relaxed)) {
+        Log("guest lamp talk asked IsClientPlayer %u times (answered 0)", m);
+    }
+    static std::uint32_t client_logged[16] = {};
+    for (int i = 0; i < 16; ++i) {
+        const std::uint32_t t = g_client_talks[i].load(std::memory_order_relaxed);
+        if (t && client_logged[i] != t) {
+            client_logged[i] = t;
+            Log("talk t%06u asks IsClientPlayer (%s)", t,
+                LampTalk(t) && !HeadstoneTalk(t) ? "world lamp: answered 0 with BB_PARTY_GUEST_LAMPS=1" : "as before");
+        }
+    }
+    static std::uint32_t multi_logged[16] = {};
+    for (int i = 0; i < 16; ++i) {
+        const std::uint32_t t = g_multi_talks[i].load(std::memory_order_relaxed);
+        if (t && multi_logged[i] != t) {
+            multi_logged[i] = t;
+            Log("talk t%06u asks IsMultiplayerInProgress (%s)", t,
+                HeadstoneTalk(t) ? "headstone" : LampTalk(t) ? "lamp: answered 0" : "left as is");
+        }
+    }
 }
 
 void LampTick(const GameSnapshot& s, party::PartyLink* link) {
     g_session_role = s.session_role;
+    LogLampTalks();
     if (!g.test.empty()) {
         LampPressTick(s, Now());
         static double last_host_probe = 0;
@@ -1354,7 +1700,24 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
             } else if (host_walked) {
                 std::uint32_t prompt = 0;
                 const bool up = PromptUp(&prompt);
-                Log("test: lampwalk: host at the lamp: prompt %s %u", up ? "up" : "not seen", prompt);
+                static int host_presses = 0;
+                // Cross (the lamp's "Return to the Hunter's Dream"), Left (YES in the confirm box, the
+                // cursor starts on NO), Cross.
+                const bool press = g.test.find("hostlamppress") != std::string::npos && host_presses < 3;
+                const std::uint32_t key = host_presses == 1 ? kPadLeft : kPadCross;
+                Log("test: lampwalk: host at the lamp: prompt %s %u%s", up ? "up" : "not seen", prompt,
+                    !press ? "" : key == kPadLeft ? "; key Left" : "; key Cross");
+                if (g.test.find("talkprobe") != std::string::npos) {
+                    LogTalkMan();
+                }
+                if (g.test.find("buttonprobe") != std::string::npos) {
+                    LogButtons();
+                }
+                if (press) {
+                    ++host_presses;
+                    runtime_pad_director_press(key);
+                    g_lamp_press.release = Now() + 0.12;
+                }
             }
         }
     }
@@ -1376,6 +1739,33 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
     for (const LampRequest& r : out) {
         link->send_event(0, kLampRequestEventName, LampRequestToJsonText(r));
         Log("lamp: request %u sent to the host", r.id);
+    }
+    if (role == PartyRole::Guest) {
+        GuestLampLitTick(s);
+        std::vector<std::uint32_t> lit;
+        {
+            std::lock_guard<std::mutex> lk(g_lit_mu);
+            lit.swap(g_lit_out);
+        }
+        if (!lit.empty() && link) {
+            link->send_event(0, kLampLitEventName, LampLitToJsonText(lit));
+        }
+    } else if (role == PartyRole::Host) {
+        std::deque<std::pair<int, std::vector<std::uint32_t>>> lit;
+        {
+            std::lock_guard<std::mutex> lk(g_lit_mu);
+            lit.swap(g_lit_in);
+        }
+        for (const auto& [slot, ids] : lit) {
+            std::string list;
+            for (std::uint32_t id : ids) {
+                bool before = false;
+                progress::ReadFlag(id, &before);
+                const bool ok = progress::WriteFlagOwnSave(id, true);  // the host's world (load mode 0)
+                list += " " + std::to_string(id) + (before ? "(was set)" : ok ? "" : "(NOT written)");
+            }
+            Log("lamp: slot %d lit a lamp in the host's world: set%s", slot, list.c_str());
+        }
     }
     for (const auto& [slot, r] : in) {
         std::string why;
@@ -1544,7 +1934,7 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
         Log("Doll level-up events (12100112-114): %u chr type test(s) set to the guest's own type", d);
     }
     if (const std::uint32_t m = g_multi_overrides.exchange(0, std::memory_order_relaxed)) {
-        Log("headstones asked IsMultiplayerInProgress %u times (answered 0)", m);
+        Log("headstones / lamps asked IsMultiplayerInProgress %u times (answered 0)", m);
     }
     const std::uint32_t n = g_overrides.load(std::memory_order_relaxed);
     if (n != g.overrides_logged) {

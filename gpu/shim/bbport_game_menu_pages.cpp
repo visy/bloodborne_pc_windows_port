@@ -790,6 +790,12 @@ void DefineAll() {
            AddText("Companions' names, health and where they are, in the bottom left corner",
                    "Имена, здоровье и местоположение спутников в левом нижнем углу"),
            toggle, Kind::Toggle, [] { return party::status::Enabled(); });
+    // Guests use lamps and headstones (party_guestsvc; read at the next start). Shown while fewer
+    // than four hunters are in the party (the page holds six rows).
+    AddRow(Flag(&Values::party_guest_lamps), AddText("Guests use lamps", "Фонари гостям"),
+           AddText("Guests may use lamps and headstones; the whole party travels (after a restart)",
+                   "Гости могут пользоваться фонарями и надгробиями; группа идёт вместе (после перезапуска)"),
+           toggle, Kind::Toggle, [] { return party::status::Enabled(); });
     party.event_value = AddDynamic(MaxValueLength);
     party.event_help = AddDynamic(MaxHelpLength);
     AddRow(Info(), AddText("Last event", "Последнее"), party.event_help, {party.event_value, party.event_value},
