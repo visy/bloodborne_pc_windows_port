@@ -322,7 +322,7 @@ void Tick(const GameSnapshot& s) {
             // The cursor starts on YES (live inworld1: Left + Cross and Right + Cross both gave NO).
             const u32 b = yes || p.test_step % 2 == 1 ? kPadCross : kPadRight;
             runtime_pad_director_press(b);
-            release_at = now + 0.12;
+            release_at = now + 0.25;  // held long enough for a slow frame (a 0.12 s tap was missed live)
             Log("test: dialog answer %s: press %#x (step %d)", answer.c_str(), b, p.test_step);
             std::lock_guard<std::mutex> lk(g_mu);
             g_p.test_step = p.test_step + 1;

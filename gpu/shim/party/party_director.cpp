@@ -1050,7 +1050,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         ++t.next_step;
     }
     // Steady world with the party (HostKill's clock): restarts at every load / leave.
-    const bool steady = joined && s.world_up && !s.loading;
+    // Split travel: members apart (no cooperator here) still count as the party being together.
+    const bool steady = (joined || b2::MembersApart() > 0) && s.world_up && !s.loading;
     if (steady != t.steady) {
         t.steady = steady;
         t.steady_at = now;
