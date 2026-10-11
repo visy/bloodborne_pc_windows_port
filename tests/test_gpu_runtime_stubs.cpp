@@ -58,4 +58,10 @@ void runtime_pad_director_press(uint32_t) { std::abort(); }
 const char* runtime_symbol(const char*) { return nullptr; }
 void runtime_thread_set_blocked(const char*, uint64_t) {}
 void runtime_thread_clear_blocked() {}
+// The party flow (party_flow_game.cpp) and the test aids (test_newgame.cpp), via the game menu.
+const char* runtime_file_user_dir() { return "user"; }
+const char* runtime_savepolicy_dir() { return "savedata"; }
+void runtime_relaunch(int) { std::abort(); }
+int runtime_ime_dialog_count() { return 0; }
+int runtime_savedata_mount_count() { return 0; }
 }
