@@ -82,6 +82,18 @@ object handle, `+0x5C` trigger state):
 
 `party_worldact` logs both entries ("ObjAct kick (local player|another player)").
 
+**Live result (run 3): vanilla replicates a client's kick.** The guest's Cross on lever 2411310 ran
+`0x13AE370` on the guest (`kick event 12410200` = the lever event's id, object handle 0x20500045,
+entry 7) and 0.07 s later `0x13AF830` on the **host** for the same entry: the host's own event
+12410200 saw "ObjAct executed", played the gate animation in the host's world and set its flag
+itself (the guest's `world_action` 3.5 s later found `12410200=1(was)`). Host screenshots: the
+gate closed at +0.5 s, open at +9 s. So the host sees the object animate natively; the
+`world_action` route adds the guest's own save and covers what the kick does not (NPC flags,
+objects whose host-side event is not loaded, a host far away). The guest also sends the kick
+event id (`kick:[12410200]`); the host replays it on its own entry through `0x13AF830(blockman,
+idx, -1, current state)` only when its game did not get the kick in the last 15 s (run 3:
+"already reached the host's game (vanilla)").
+
 ## 4. Items: instanced world pickups (D4)
 
 Vanilla: MSB treasure is never created on a client (`0x17DC300`: role 6 / session slot gates) and a
@@ -102,6 +114,16 @@ overlay; `GuestLocalWorldChanges` reports overlay item bits the pool lacks and t
 them into its own pool (never to the host). The host's world keeps its item. C3 still hands the
 host's pickups to the guests (their pool flag then hides the treasure for them too); boss rewards
 and key items stay C3's (everyone present).
+
+### 4.1 Enemy drops: per player (user decision, 2026-10-11)
+
+Every player's game runs an enemy's death and rolls its drop itself (`0x17DD0B0`, from the chr
+death `0x18C4F90`); a client kept only items with `isGuestDrop` (Blood Vials, Quicksilver Bullets)
+- the filter at `0x17DD75D` is skipped for a non-client by `0x17DD764 je`. `BB_PARTY_GUEST_DROPS`
+(default on) turns that `je` into a `jmp` (`0f 84 3a 02 00 00` -> `e9 3b 02 00 00 90`): a guest
+keeps its whole own roll (materials, gems, rare drops) - each player has its own drop, into its own
+save (a unique drop's flag is an item_lot_picked bit: own pool, instanced like treasure). The drop
+roll and every map item pickup are logged ("enemy drop roll on this game", "map item pickup").
 
 ## 5. NPC talk with a guest present (D8)
 
@@ -165,7 +187,13 @@ Run 2 (2026-10-11 11:4x):
 | Gilbert (chr 2410782, talk at his window) | prompt 10010200 (Talk), dialogue paged with Cross | - |
 | Iosefka (chr 2410702, clinic door) | prompt 10010400, talk; `set 62411300(world_state)`, `set 12410739(npc_quest)`, then `set 1143 72410337 (npc_quest)` | all applied |
 
-(Run 3: the host standing at the gate, ObjAct kick log - section 3.)
+Run 3 (12:07, host standing 7 m from gate 2411300): guest Cross 106.622 -> guest `ObjAct kick
+(local player) ... kick event 12410200` 106.645 -> host `ObjAct kick (another player) ... kick
+event 12410200` 106.690 -> host's own event sets 12410200 (guest's world_action at 110.354 finds
+it set). Host screenshots `lever_0.5s_inst0.png` (gate closed) / `lever_9s_inst0.png` (open).
+
+Run 4 (Iosefka again, the quest already advanced in the host's save): guest `set
+12410739(npc_quest)` -> host `12410739=1(was)`.
 
 ## 10. Open items
 
