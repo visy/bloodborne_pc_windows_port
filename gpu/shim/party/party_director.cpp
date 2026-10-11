@@ -1706,6 +1706,11 @@ void PartyDirector::ConfigureFromEnv() {
                         step.map = item.substr(pc + 1);
                     }
                 }
+                if (step.map.empty() && item.find('%') != std::string::npos) {
+                    // Any step with %MAP runs on the steady-world clock (S s after the last load or
+                    // the previous step, in that map): chains of warps / kills without re-joins.
+                    step.map = item.substr(item.find('%') + 1);
+                }
                 if (step.kind == TravelStep::HostMove || step.kind == TravelStep::GuestMove) {
                     // host_move=X:Y:Z@S[%MAP] (':' separates: ',' separates the list items)
                     const char* p = item.c_str() + item.find('=') + 1;
