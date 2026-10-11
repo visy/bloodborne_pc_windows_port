@@ -253,6 +253,8 @@ bool PopHostStory(StoryIntent* out);
 void RequestGuestStory(const StoryIntent& s);
 /// Main thread, once a frame (the coop tick): host polls, guest mirror / replay.
 void StoryTick();
+/// Host, any thread: a member joined (its catch-up gets the host's time of day, e.g. the Blood Moon).
+void StoryMemberJoined();
 /// The guest is replaying a story item (hold the bell / rejoin).
 bool StoryBusy();
 /// BB_PARTY_STORY_TEST is set (single instance test; the party layer must start for it).

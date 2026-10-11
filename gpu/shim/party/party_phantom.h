@@ -79,6 +79,8 @@ struct PhantomEvent {
     std::uint32_t lamp = kTravelNone; ///< Lamp: the host's last lamp id (+0x1528 low dword)
     std::int32_t insight = 0;     ///< Insight: N of the host's 9350 start
     std::uint32_t source_event = 0; ///< Insight: the host's EMEVD event (diagnostics)
+    bool boss = true;             ///< Insight: a boss kill (the guest's game adds +1 natively); false =
+                                  ///< a first encounter / story Insight (G2): the guest gets all N
 };
 std::string PhantomEventToJsonText(const PhantomEvent& e);
 bool PhantomEventFromJsonText(const std::string& text, PhantomEvent* out, std::string* error = nullptr);

@@ -93,14 +93,21 @@ run from two new characters to the end credits passed, and a three-player travel
   into every player's own save. A guest who is behind catches up, including the Blood Moon.
 - **Story cutscenes and endings play for everyone.** The Blood Moon, Gehrman's scenes and the
   ending with the end credits play for every party member.
-- **The host's world is shared live.** A door or shortcut opened by the host is open for the
-  guests too.
+- **The host's world is shared live, both ways.** A door or shortcut opened by the host is open
+  for the guests too, and a lever or door a guest uses opens in the host's world (and in the
+  guest's own save).
+- **Guests can talk to NPCs** in the host's world (Gilbert, Iosefka, Eileen ...); quest choices
+  are shared by the whole party.
+- **Loot is per player.** Each player can take each world item once into their own save, and
+  every player gets their own roll of each enemy's drop.
 - **Up to 4 players** (host + 3), all in the host's world. The 4th player's summon can take a
   minute or two.
 - **Same version for everyone.** A player whose bbport build, game files, patches, mods or party
   options differ is refused on joining; the message says what differs and what to do.
 - **Chalice dungeons together.** Guests join the host's dungeon; levers, doors, the layer boss, its
-  loot (for each player) and the lift down work for the whole party.
+  loot (for each player) and the lift work for the whole party. Any player can perform the ritual:
+  the host's altar then offers *Enter the party's dungeon* (no glyph typing), and chalices are
+  shared between all players.
 - **Crashes recover.** A crashed game restarts and rejoins by itself.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
 - **Death has a cost.** Each death stacks "rot" (−10% max HP or stamina, picked at random, up to
@@ -133,7 +140,7 @@ run from two new characters to the end credits passed, and a three-player travel
 | Every cutscene for the whole party (story cutscenes and endings already work) | In progress |
 | Joining during a boss fight or cutscene waits outside until it ends | In progress (no summon while the host's boss bar or a cutscene is up) |
 | The 4th player joins as fast as the others | In progress |
-| Chalice dungeons: rituals by any player (guest's dungeon entered by the party) | In progress |
+| Chalice dungeons: deeper layers checked in a party; entering the party's dungeon in one press | In progress |
 | PvP / friendly fire the host can switch on and off | Later |
 | Pings: party members and marked spots visible through walls, with distance and player colours | Later |
 
@@ -141,7 +148,11 @@ run from two new characters to the end credits passed, and a three-player travel
 
 The host needs port 9307 (UDP and TCP) reachable. Most routers open it automatically (UPnP);
 otherwise forward it by hand. Allow the Windows Firewall prompt once. Guests need nothing.
-Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
+
+No UPnP and no port forward? Each guest copies its **guest code** (`BBG1-...`, *Party* page) and
+sends it to the host, who presses *Add a guest code*: the game then connects through both routers
+(hole punching). This fails behind symmetric / carrier-grade NAT (some mobile and ISP
+connections); there, let another player host or use a VPN such as Tailscale. Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
 
 Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 [docs/party/ERSC_PARITY.md](docs/party/ERSC_PARITY.md)

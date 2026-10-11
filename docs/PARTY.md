@@ -159,6 +159,13 @@ Instead of a code, a guest can also enter the host's address directly as `host:p
 - **Public address**: normally found automatically (STUN server `stun.l.google.com:19302`, or
   UPnP). For a fixed IP, a DNS name or a VPN address, enter it in *Public address* (host only).
   *STUN server* `off` turns the lookup off (LAN / VPN only).
+- **No UPnP and no port forward: guest codes.** Each guest's overlay *Party* page shows *Your
+  guest code* (`BBG1-XXXX-XXXX-XXXX`, its public UDP address; also `user/party_guest_code.txt`).
+  The guest copies it and sends it to the host; the host copies it and presses *Add a guest code
+  (paste)* (or sets `BB_PARTY_GUEST_CODES`). The host then punches a path through its router
+  towards that guest, and the party link switches to UDP when TCP gets no answer. Works with most
+  home routers; not with symmetric NAT (see next point). Details:
+  [party/network_robustness.md](party/network_robustness.md) §4.
 - **Carrier-grade NAT / no port forwarding possible**: use a VPN that puts all players in one
   virtual network, such as Tailscale or ZeroTier. The host shares its VPN address as
   `address:9307` (or sets it as *Public address*, so the code contains it).
@@ -205,12 +212,13 @@ Instead of a code, a guest can also enter the host's address directly as `host:p
 
 - Character level, stats, inventory, equipment, Blood Echoes and Insight you already have.
 - Shop purchases, the Doll, Hunter's Dream upgrades, runes, chalices.
-- **NPC quests**: off by default, because a quest is a chain of steps and a partly copied quest
-  can get stuck (Rules & sync: *Also NPC quests*, experimental). Gifts NPCs give in dialogue are
-  not handled.
+- **NPC quests** are shared (on by default, Rules & sync: *Also NPC quests*): the first choice
+  anyone makes - host or guest, guests can talk to NPCs in the host's world - applies to the
+  host's world and to every player's save. Gifts an NPC gives in dialogue go to whoever talked.
 - **Chalice Dungeons** are not part of party play.
-- World treasure a guest picks up while in the host's world does not exist for guests in the
-  normal game; the host's pickups are handed to guests through the item sharing above.
+- World treasure is per player: a guest sees and takes the host world's items into its own save
+  (each player once); enemy drops are rolled for every player. The host's pickups are also handed
+  to guests through the item sharing above.
 
 ## Settings (Rules & sync)
 
@@ -231,7 +239,7 @@ and the guest.
 | Share the host's item rewards | on | *Both*: boss drops, keys and gifts given to each guest. |
 | Insight for bosses | Same as the host | *Guest*: Insight for a host boss kill. *Full bonus* = that much on top of the game's +1; *Game's own* = only +1. |
 | Share story progress | on | *Both*: progress copied into the guests' saves. |
-| Also NPC quests | off | *Guest*: NPC quest steps too (experimental). |
+| Also NPC quests | on | *Guest*: NPC quest steps too (shared NPC quest choices). |
 | Share cutscenes and endings | on | *Both*: cutscenes, time of day and endings. |
 | Play them live with the host | on | *Guest*: watch with the host while in the host's world. |
 | Back up every (min) | 10 | Save backup period during a party session (0 = only at start). |

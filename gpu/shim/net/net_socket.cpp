@@ -210,11 +210,15 @@ inline bool would_block() {
 #endif
 }
 
+std::mutex g_link_handler_mu;
+std::function<void(std::uint32_t, std::uint16_t, const std::uint8_t*, std::size_t)> g_link_handler;
+
 ssize_type raw_recvfrom(sockfd_t fd, void* buf, std::size_t len, int flags, sockaddr_in* sa, socklen_type* sl) {
     return ::recvfrom(fd, static_cast<char*>(buf), static_cast<int>(len), flags, reinterpret_cast<sockaddr*>(sa), sl);
 }
 // Every UDP datagram leaves here: through the network simulator when BB_NET_SIM is on.
 ssize_type raw_sendto(sockfd_t fd, const void* buf, std::size_t len, const sockaddr_in* sa) {
+    if (netsim::enabled() && netsim::config().nat) netsim::nat_note_out(sa->sin_addr.s_addr, sa->sin_port);
     if (netsim::enabled() && netsim::applies_to(netsim::config(), sa->sin_addr.s_addr)) {
         return netsim::sendto(static_cast<std::uintptr_t>(fd), buf, len, sa->sin_addr.s_addr, sa->sin_port);
     }
@@ -533,6 +537,19 @@ void p2p_reader(std::shared_ptr<P2pPort> port) {
         socklen_type sl = sizeof(sa);
         ssize_type n = raw_recvfrom(port->fd, buf, sizeof(buf), 0, &sa, &sl);
         if (n < 0) continue;  // Windows: an ICMP port unreachable surfaces as WSAECONNRESET
+        // A simulated NAT (BB_NET_SIM nat=1): nothing from an endpoint we have not sent to.
+        if (netsim::enabled() && netsim::config().nat && netsim::applies_to(netsim::config(), sa.sin_addr.s_addr) &&
+            !netsim::nat_allow_in(sa.sin_addr.s_addr, sa.sin_port))
+            continue;
+        if (n >= 16 && buf[0] == 0xfa && buf[1] == 'L') {  // the party link's UDP path (party_rudp.h)
+            std::function<void(std::uint32_t, std::uint16_t, const std::uint8_t*, std::size_t)> h;
+            {
+                std::lock_guard<std::mutex> lk(g_link_handler_mu);
+                h = g_link_handler;
+            }
+            if (h) h(sa.sin_addr.s_addr, sa.sin_port, buf, static_cast<std::size_t>(n));
+            continue;
+        }
         if (udp::is_relay_request(buf, static_cast<std::size_t>(n)) && settings().host) {
             relay_forward(*port, buf, static_cast<std::size_t>(n), sa);
             continue;
@@ -1858,6 +1875,26 @@ bool p2p_relay_vport_for(std::uint32_t addr, std::uint16_t port_host, std::uint1
 }
 
 void p2p_set_relay_admit(std::function<bool(std::uint32_t addr)> admit) { g_relay_server.set_admit(std::move(admit)); }
+
+void p2p_set_link_handler(std::function<void(std::uint32_t, std::uint16_t, const std::uint8_t*, std::size_t)> fn) {
+    std::lock_guard<std::mutex> lk(g_link_handler_mu);
+    g_link_handler = std::move(fn);
+}
+
+bool p2p_send_raw(std::uint32_t addr, std::uint16_t port_nbo, const std::uint8_t* d, std::size_t n) {
+    std::shared_ptr<P2pPort> port;
+    {
+        std::lock_guard<std::mutex> lock(g_net_mu);
+        port = p2p_port_open(settings().party_port);
+        if (port) g_port_pinned.store(true);
+    }
+    if (!port) return false;
+    sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_addr.s_addr = addr;
+    sa.sin_port = port_nbo;
+    return raw_sendto(port->fd, d, n, &sa) >= 0;
+}
 
 const udp::RelayClient& p2p_relay_client() { return g_relay; }
 

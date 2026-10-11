@@ -40,6 +40,7 @@ struct Config {
     double outage_ms = 0, outage_every_ms = 0;
     double outage_at_ms = 0;  // one-shot outage this long after the epoch (configure())
     bool any_addr = false;    // also non-loopback addresses
+    bool nat = false;         // simulated NAT: unsolicited inbound UDP dropped, inbound TCP refused
     std::uint64_t seed = 1;
 };
 
@@ -146,6 +147,12 @@ private:
 #endif
 };
 
+// Simulated NAT (nat=1): an inbound datagram from addr:port (network order) passes only after
+// this process sent one to that endpoint (an address-and-port restricted cone NAT; the hole a
+// guest or a host punches). Process-wide.
+void nat_note_out(std::uint32_t addr, std::uint16_t port);
+bool nat_allow_in(std::uint32_t addr, std::uint16_t port);
+
 // A total outage from now for `ms` (tests: director steps host_outage / guest_outage): every UDP
 // datagram this process sends is dropped and every party-link byte it receives is held until it
 // ends. Works only while the simulator is on (BB_NET_SIM set, e.g. "lat=0").
@@ -155,6 +162,8 @@ bool blackout_at(Clock::time_point now, Clock::time_point* end);
 
 // Process-wide simulator (configured once by bbnet_configure / the first party socket).
 void configure(const Config& c);
+// Tests: replaces the process-wide config (and the delay line) even when one is set.
+void reconfigure_for_tests(const Config& c);
 bool enabled();
 // The process-wide config and its epoch (configure()); disabled config when off.
 Config config();
