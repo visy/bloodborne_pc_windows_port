@@ -88,6 +88,10 @@ struct TravelIntent {
     /// The host's Chalice Dungeon (party_chalice.h ChannelId) when the destination is inside one
     /// (TravelIntoChalice); 0 otherwise.
     std::uint64_t chalice_channel = 0;
+    /// The traveller goes alone (docs/party/split_travel.md): the other members stay where they
+    /// are and do not load. False (the default, also when a peer omits it): the party travels
+    /// together (B2 follow).
+    bool alone = false;
 
     std::uint32_t Area() const { return (packed_map >> 24) & 0xff; }
     std::uint32_t Block() const { return (packed_map >> 16) & 0xff; }

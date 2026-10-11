@@ -177,6 +177,9 @@ json::Value TravelToJson(const TravelIntent& t) {
     if (t.chalice_channel) {
         v.set("chalice", json::hex(t.chalice_channel));
     }
+    if (t.alone) {
+        v.set("alone", 1u);
+    }
     if (t.has_pos) {
         json::Value p = json::Value::make_object();
         p.set("map", t.pos_map);
@@ -209,6 +212,9 @@ bool TravelFromJson(const json::Value& v, TravelIntent* out, std::string* error)
         t.last_lamp = json::u64(v, "last_lamp");
         if (v.find("chalice")) {
             t.chalice_channel = json::u64(v, "chalice");
+        }
+        if (v.find("alone")) {
+            t.alone = json::u32(v, "alone") != 0;
         }
         if (const json::Value* p = v.find("transform")) {
             t.pos_map = json::u32(*p, "map");
