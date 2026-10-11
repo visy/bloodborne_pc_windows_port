@@ -1692,6 +1692,18 @@ void PartyHudDiag() {
                         int(party::status::Enabled()), int(BbSettings::Get().party_hud.load()),
                         int(party::hud::Shown()), int(BbFrameState::IsMenuOrLoading()),
                         int(BbCamera::Latest().valid), int(BbSettings::Get().show_fps.load()));
+            // Where each companion's head projects (u, v across the scene; depth in metres).
+            const BbCamera::State cam = BbCamera::Latest();
+            party::hud::Read(&hud_board);
+            for (int i = 0; cam.valid && i < hud_board.count; ++i) {
+                const party::hud::Companion& c = hud_board.c[i];
+                const float head[3] = {c.pos[0], c.pos[1] + 2.05f, c.pos[2]};
+                float u = -1, v = -1, depth = -1;
+                const bool in_front = c.have_pos &&
+                                      party::hud::Project(cam.view.data(), cam.proj.data(), head, &u, &v, &depth);
+                std::printf("Party HUD: overlay: %s %s u %.2f v %.2f depth %.1f\n", c.name,
+                            in_front ? "in front" : "behind", u, v, depth);
+            }
         }
     }
 }
