@@ -251,14 +251,17 @@ void UpdateSystemTelemetry() {
 }
 
 void SetOpen(bool value) {
-    if (menu_open.exchange(value) == value) {
+    if (menu_open.load() == value) {
         return;
     }
-    ImGui::GetIO().MouseDrawCursor = value;
+    // Save before the menu is marked closed: the window thread re-reads bbport.ini only while
+    // the menu is closed (window.cpp), so it can never read the file before this write.
     if (!value && dirty) {
         dirty = false;
         BbSettings::Save();
     }
+    menu_open = value;
+    ImGui::GetIO().MouseDrawCursor = value;
 }
 
 ImGuiKey KeyFromSdl(SDL_Keycode key) {
@@ -477,6 +480,7 @@ void Menu() {
     bool show_mask = s.debug_view == BbSettings::DebugReactive;
     if (ImGui::Checkbox("Показать маску (отладка)", &show_mask)) {
         s.debug_view = show_mask ? BbSettings::DebugReactive : BbSettings::DebugNone;
+        dirty = true;
     }
     ImGui::EndDisabled();
     ImGui::EndDisabled();
@@ -487,6 +491,7 @@ void Menu() {
     bool show_motion = s.debug_view == BbSettings::DebugMotion;
     if (ImGui::Checkbox("Показать векторы движения (отладка)", &show_motion)) {
         s.debug_view = show_motion ? BbSettings::DebugMotion : BbSettings::DebugNone;
+        dirty = true;
     }
     Hint("Красный/зелёный: движение по горизонтали/вертикали (8 пикселей = полная яркость). "
          "Синий: пиксель получил точный вектор объекта, а не только движение камеры. "
