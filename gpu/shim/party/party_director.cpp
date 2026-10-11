@@ -1168,6 +1168,15 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     } else if (step.kind == TravelStep::HostKill) {
         // A boss (or any enemy) killed as the game's own death path: ForceDead on its entity id; the
         // boss-defeat EMEVD (4[00] death state -> 2003[12]) and the Lua boss clear follow.
+        {
+            const std::uint64_t chr = GuestSvcFindChr(step.id);
+            float d[4] = {};
+            if (chr) {
+                SafeRead(chr + 0xc0, d, sizeof d);
+            }
+            Log("test: host_kill: entity %u %s (%.1f, %.1f, %.1f)", step.id, chr ? "loaded at" : "NOT loaded here", d[0], d[1],
+                d[2]);
+        }
         reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, step.id);
     } else {
         reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, 10000);
