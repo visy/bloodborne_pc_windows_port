@@ -1253,6 +1253,34 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
 
 void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
     LampTick(s, link);
+    // Live test "hostheadstone[;keys=...]": the HOST uses a Dream headstone (t210000) with a guest
+    // present (IsMultiplayerInProgress lift), 20 s after the first cooperator: the party follows.
+    {
+        static bool started = false;
+        static double coop_at = 0;
+        if (!started && g.test.find("hostheadstone") != std::string::npos && s.session_role == 3 &&
+            IsDreamMap(s.map_id) && s.world_up && !s.loading && s.cooperators >= 1) {
+            if (coop_at == 0) {
+                coop_at = Now();
+            } else if (Now() - coop_at >= 20.0 && FindChr(210000)) {
+                started = true;
+                g_lvl = LevelUpScript{};
+                g_lvl.open = true;
+                g_lvl.target = 210000;
+                g_lvl.menu_text = 0;
+                if (const std::size_t k = g.test.find("keys="); k != std::string::npos) {
+                    const std::size_t e = g.test.find(';', k);
+                    g_lvl.keys = g.test.substr(k + 5, e == std::string::npos ? std::string::npos : e - k - 5);
+                }
+                g_lvl.stage = LevelUpScript::WaitPlaced;
+                g_lvl.at = Now();
+                Log("test: host headstone: starting (cooperators %d)", s.cooperators);
+            }
+        }
+        if (started && s.session_role == 3) {
+            LevelUpTick(s, Now());
+        }
+    }
     static bool progress_logged = false;
     if (!g.test.empty() && s.world_up && !s.loading && IsDreamMap(s.map_id) && !progress_logged) {
         progress_logged = true;
