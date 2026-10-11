@@ -2726,7 +2726,413 @@ void InstallCall(u64 off, u64 target, const void* handler, const char* name) {
     }
 }
 
+// ---- Title join (BB_PARTY_TITLE_JOIN): Continue straight into the host's world ----
+// The guest joins the host's session from the title screen (no world, no sign): the host
+// serializes its session descriptor as its summon message does (0x1872360: [u32 -> GSM +0x16f0]
+// [u32, low byte -> GSM +0x16f4] [descriptor 0xc90b00]), the guest deserializes it (0xc90dd0) and
+// joins (0x1789010 -> SprjSessionManager 0x1ED0670: JoinRoom). The flow update 0x1789B60 (session
+// update 0x1ED0B20 + packet handler) only runs in the world / load steps: the guest runs it at the
+// title until the host's join snapshot is applied (flow +0x84 = 2), then sets +0x84 = 3 and the
+// summoned placement (GSM +0x14C4 stage, +0x14D0 pos, +0x14E0 rot) and lets Continue run: the
+// MoveMapStep ctor 0x1937570 makes that first load a host-world load. docs/party/join_timing.md.
+constexpr u64 kRoomCtor = 0xc8fbf0;     // void (room*)
+constexpr u64 kRoomDtor = 0xc90520;     // void (room*)
+constexpr u64 kRoomRead = 0xc90dd0;     // bool (room*, reader*)
+constexpr u64 kRoomWrite = 0xc90b00;    // bool (room*, writer*)
+constexpr u64 kRoomFetch = 0xc8f500;    // bool (SessionMan+0x18, room* = SessionMan+0x38, bool)
+constexpr u64 kRoomCopy = 0xc90270;     // void (room* dst, const room* src)
+constexpr u64 kRoomValid = 0xc90d80;    // bool (room*)
+constexpr u64 kStreamWrite = 0x2078780; // u64 (writer*, const void*, u64)
+constexpr u64 kJoinSession = 0x1789010; // bool (flow, room*)
+constexpr u64 kFlowUpdate = 0x1789b60;  // void (float dt, flow)
+constexpr u64 kWriterVtable = 0x53b2c80, kReaderVtable = 0x53b2be0;
+
+enum class TitlePhase { Off, Idle, Requested, Joining, Snapshot, Ready, Loading, Done, Failed };
+const char* TitlePhaseName(TitlePhase p) {
+    switch (p) {
+    case TitlePhase::Off: return "off";
+    case TitlePhase::Idle: return "idle";
+    case TitlePhase::Requested: return "requested";
+    case TitlePhase::Joining: return "joining";
+    case TitlePhase::Snapshot: return "snapshot";
+    case TitlePhase::Ready: return "ready";
+    case TitlePhase::Loading: return "loading";
+    case TitlePhase::Done: return "done";
+    case TitlePhase::Failed: return "failed";
+    }
+    return "?";
+}
+
+struct TitleJoin {
+    std::mutex mu;
+    TitlePhase phase = TitlePhase::Idle;
+    double since = 0, last_update = 0;
+    float last_timer = -1.0f;
+    int updates = 0;
+    bool have_reply = false;
+    std::vector<u8> room;  // the host's reply: head + descriptor
+    u32 stage = 0;
+    float pos[4] = {}, rot[4] = {};
+    int last_role = -2, last_state = -2;
+    std::vector<int> requests;  // host: slots that asked
+};
+TitleJoin& TJ() {
+    static TitleJoin t;
+    return t;
+}
+
+bool TitleJoinOn() {
+    static const bool on = EnvOn("BB_PARTY_TITLE_JOIN");
+    return on;
+}
+
+std::string Hex(const std::vector<u8>& b, std::size_t max) {
+    std::string s;
+    char h[3];
+    for (std::size_t i = 0; i < b.size() && i < max; ++i) {
+        std::snprintf(h, sizeof h, "%02x", b[i]);
+        s += h;
+    }
+    return s;
+}
+
+bool Unhex(const char* p, std::vector<u8>* out) {
+    out->clear();
+    auto nib = [](char c) -> int {
+        return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+    };
+    while (p[0] && p[0] != '"') {
+        const int a = nib(p[0]), b = p[1] ? nib(p[1]) : -1;
+        if (a < 0 || b < 0 || out->size() >= 0x400) {
+            return false;
+        }
+        out->push_back(u8(a << 4 | b));
+        p += 2;
+    }
+    return !out->empty();
+}
+
+/// Host: the session descriptor as the summon message carries it, behind the 8-byte head.
+bool SerializeRoom(u32 head0, u32 head1, std::vector<u8>* out) {
+    const u64 ssm = Slot(kSlotSession);
+    if (!ssm || Role() != RoleHost) {
+        return false;
+    }
+    using Fetch = u8(BB_COOP_SYSV*)(u64, u64, u32);
+    using Copy = void(BB_COOP_SYSV*)(u64, u64);
+    using One = u8(BB_COOP_SYSV*)(u64);
+    using Two = u8(BB_COOP_SYSV*)(u64, u64);
+    using Dtor = void(BB_COOP_SYSV*)(u64);
+    using Put = u64(BB_COOP_SYSV*)(u64, const void*, u64);
+    reinterpret_cast<Fetch>(Guest(kRoomFetch))(ssm + 0x18, ssm + 0x38, 1);
+    alignas(16) u8 room[0x200] = {};
+    reinterpret_cast<Copy>(Guest(kRoomCopy))(u64(room), ssm + 0x38);
+    bool ok = false;
+    if (reinterpret_cast<One>(Guest(kRoomValid))(u64(room)) & 1) {
+        // DLMemoryWriter as 0x1872360 builds it: +8 allocator (none: never grows), +0x10 buffer,
+        // +0x18 capacity, +0x20 growable, +0x30 end, +0x38 grow step.
+        alignas(16) u8 buf[0x400] = {};
+        alignas(16) u64 w[11] = {};
+        w[0] = u64(Guest(kWriterVtable));
+        w[2] = u64(buf);
+        w[3] = sizeof buf;
+        w[7] = sizeof buf;
+        reinterpret_cast<Put>(Guest(kStreamWrite))(u64(w), &head0, 4);
+        reinterpret_cast<Put>(Guest(kStreamWrite))(u64(w), &head1, 4);
+        ok = reinterpret_cast<Two>(Guest(kRoomWrite))(u64(room), u64(w)) & 1;
+        const u64 n = w[6];
+        if (ok && n > 8 && n <= sizeof buf) {
+            out->assign(buf, buf + n);
+        } else {
+            ok = false;
+        }
+    }
+    reinterpret_cast<Dtor>(Guest(kRoomDtor))(u64(room));
+    return ok;
+}
+
+/// The head the host's summon message puts before the descriptor for presentation slot `slot`
+/// (0x1872360: the session-type table 0x553D750 + slot * 0x80, its +0xC, then the slot).
+void RoomHead(int slot, u32* head0, u32* head1) {
+    *head1 = u32(slot);
+    *head0 = 0;
+    SafeGet(u64(Guest(kSessionTypeDesc + 0xc + u64(slot) * 0x80)), head0);
+}
+
+void TitleJoinHostTick(const GameSnapshot& s) {
+    std::vector<int> req;
+    {
+        std::lock_guard<std::mutex> lk(TJ().mu);
+        req.swap(TJ().requests);
+    }
+    static double first_wait = 0;
+    if (!req.empty() && (Role() != RoleHost || !s.world_up || s.loading)) {
+        // No room yet (the host rings its bell once it is in the world): asked again next frame.
+        const double now = Now();
+        if (first_wait == 0) {
+            first_wait = now;
+            Log("title join: slot %d asked for the room; waiting for a room here (role %d, world %d)", req[0], Role(),
+                int(s.world_up));
+        }
+        if (now - first_wait < 40.0) {
+            std::lock_guard<std::mutex> lk(TJ().mu);
+            TJ().requests.insert(TJ().requests.end(), req.begin(), req.end());
+            return;
+        }
+        for (int slot : req) {
+            Send(slot, "{\"op\":\"title_room\",\"room\":\"\"}");
+        }
+        first_wait = 0;
+        Log("title join: no room here within 40 s; refused");
+        return;
+    }
+    first_wait = 0;
+    for (int slot : req) {
+        u32 h0 = 0, h1 = 0;
+        RoomHead(slot, &h0, &h1);
+        std::vector<u8> room;
+        const bool ok = SerializeRoom(h0, h1, &room);
+        const u64 a = Field<u64>(Field<u64>(Field<u64>(Field<u64>(s.player, 0x58), 8), 0x3b0), 0x68);
+        float pos[4] = {}, rot[4] = {};
+        SafeRead(a + 0x1e0, pos, 16);
+        SafeRead(a + 0x1d0, rot, 16);
+        std::string b = "{\"op\":\"title_room\",\"room\":\"" + (ok ? Hex(room, room.size()) : std::string()) + "\"";
+        char tail[256];
+        std::snprintf(tail, sizeof tail, ",\"stage\":%u,\"pos\":[%.4f,%.4f,%.4f,%.4f],\"rot\":[%.6f,%.6f,%.6f,%.6f]}",
+                      Field<u32>(s.player, 0x3f8), pos[0], pos[1], pos[2], pos[3], rot[0], rot[1], rot[2], rot[3]);
+        b += tail;
+        Send(slot, b);
+        Log("title join: slot %d asked for the room: %s (%zu bytes, head %s), stage %#x", slot, ok ? "sent" : "NOT serialized",
+            room.size(), Hex(room, 24).c_str(), Field<u32>(s.player, 0x3f8));
+    }
+    // Validation in an ordinary bell join: the descriptor as this host would send it, next to the
+    // guest's `summon message ... (head ...)` line.
+    static int last_coop = 0;
+    if (s.world_up && Role() == RoleHost && s.cooperators > last_coop && EnvOn("BB_PARTY_TITLE_JOIN_PROBE")) {
+        u32 h0 = 0, h1 = 0;
+        RoomHead(1, &h0, &h1);
+        std::vector<u8> room;
+        const bool ok = SerializeRoom(h0, h1, &room);
+        Log("title join probe: host descriptor %s, %zu bytes, head %s", ok ? "ok" : "FAILED", room.size(), Hex(room, 24).c_str());
+    }
+    if (s.cooperators >= 0) {
+        last_coop = s.cooperators;
+    }
+}
+
+void TitleJoinFail(const char* why) {
+    const int role = Role();
+    if (role == 4 || role == RoleClient) {
+        using Fn = u8(BB_COOP_SYSV*)(u64);
+        reinterpret_cast<Fn>(Guest(kBeginLeave))(Slot(kSlotSession));
+    }
+    g_rejoin = false;
+    std::lock_guard<std::mutex> lk(TJ().mu);
+    TJ().phase = TitlePhase::Failed;
+    Log("title join: FAILED (%s; role %d, flow %d); Continue loads the own world as before", why, role,
+        Field<int>(Slot(kSlotFlow), 0x84, -1));
+}
+
+bool TitleJoinStart() {
+    TitleJoin& t = TJ();
+    std::vector<u8> room;
+    {
+        std::lock_guard<std::mutex> lk(t.mu);
+        room = t.room;
+    }
+    if (room.size() <= 8) {
+        TitleJoinFail("the host sent no room");
+        return false;
+    }
+    using Ctor = void(BB_COOP_SYSV*)(u64);
+    using Read = u8(BB_COOP_SYSV*)(u64, u64);
+    using Join = u8(BB_COOP_SYSV*)(u64, u64);
+    alignas(16) u8 obj[0x200] = {};
+    reinterpret_cast<Ctor>(Guest(kRoomCtor))(u64(obj));
+    // DLMemoryReader as 0x1872360 builds it over the descriptor (after the 8-byte head).
+    alignas(16) u64 r[6] = {};
+    r[0] = u64(Guest(kReaderVtable));
+    r[1] = room.size() - 8;
+    r[2] = u64(room.data() + 8);
+    r[3] = 0;
+    reinterpret_cast<u8*>(r)[0x24] = 1;
+    const bool read = reinterpret_cast<Read>(Guest(kRoomRead))(u64(obj), u64(r)) & 1;
+    bool joined = false;
+    if (read) {
+        const u64 gsm = Slot(kSlotGsm);
+        u32 h0 = 0, h1 = 0;
+        std::memcpy(&h0, room.data(), 4);
+        std::memcpy(&h1, room.data() + 4, 4);
+        const u8 slot = u8(h1);
+        SafeWrite(gsm + 0x16f0, &h0, 4);
+        SafeWrite(gsm + 0x16f4, &slot, 1);
+        g_rejoin = true;  // K5 / K6 quiet: no Lua join start at the title
+        joined = reinterpret_cast<Join>(Guest(kJoinSession))(Slot(kSlotFlow), u64(obj)) & 1;
+        Log("title join: descriptor read (%zu bytes, head %08x %08x); JoinSession -> %d (role %d)", room.size(), h0, h1,
+            int(joined), Role());
+    }
+    reinterpret_cast<Ctor>(Guest(kRoomDtor))(u64(obj));
+    if (!read) {
+        TitleJoinFail("the descriptor did not parse");
+        return false;
+    }
+    if (!joined) {
+        TitleJoinFail("JoinSession refused");
+        return false;
+    }
+    std::lock_guard<std::mutex> lk(t.mu);
+    t.phase = TitlePhase::Joining;
+    t.since = Now();
+    return true;
+}
+
+/// The flow update at the title (nothing else runs it there): only while the game's own does not
+/// advance the flow timer (+0x98).
+void TitleFlowUpdate(double now) {
+    TitleJoin& t = TJ();
+    const u64 flow = Slot(kSlotFlow);
+    const float timer = Field<float>(flow, 0x98, -1.0f);
+    const double dt = t.last_update > 0 ? std::min(0.1, std::max(0.0, now - t.last_update)) : 1.0 / 30.0;
+    t.last_update = now;
+    if (timer != t.last_timer || !flow) {
+        t.last_timer = timer;
+        return;  // the game updated it this frame (or no flow)
+    }
+    using Upd = void(BB_COOP_SYSV*)(float, u64);
+    reinterpret_cast<Upd>(Guest(kFlowUpdate))(float(dt), flow);
+    t.last_timer = Field<float>(flow, 0x98, -1.0f);
+    if (++t.updates == 1) {
+        Log("title join: running the flow update at the title (the game does not)");
+    }
+}
+
+/// Guest, after Continue: the host-world load of a title join, then its arrival (flow 4).
+void TitleJoinGuestTick(const GameSnapshot& s, double now) {
+    TitleJoin& t = TJ();
+    TitlePhase phase;
+    {
+        std::lock_guard<std::mutex> lk(t.mu);
+        phase = t.phase;
+    }
+    if (phase == TitlePhase::Ready && s.loading) {
+        std::lock_guard<std::mutex> lk(t.mu);
+        t.phase = TitlePhase::Loading;
+        Log("title join: loading (flow %d, GSM+0x1592 %u)", Field<int>(Slot(kSlotFlow), 0x84, -1),
+            unsigned(Field<u8>(Slot(kSlotGsm), 0x1592)));
+        return;
+    }
+    if (phase == TitlePhase::Loading && s.world_up && !s.loading) {
+        g_rejoin = false;
+        {
+            std::lock_guard<std::mutex> lk(t.mu);
+            t.phase = TitlePhase::Done;
+        }
+        Log("title join: in the world after %.1f s: map %s, flow %d, GSM+0x1592 %u, role %d, cooperators %d",
+            now - t.since, MapName(s.map_id).c_str(), Field<int>(Slot(kSlotFlow), 0x84, -1),
+            unsigned(Field<u8>(Slot(kSlotGsm), 0x1592)), Role(), s.cooperators);
+    }
+}
+
 } // namespace
+
+bool TitleJoinRequested() {
+    return TitleJoinOn() && Requested();
+}
+
+bool TitleJoinHold(const GameSnapshot& s) {
+    if (!TitleJoinOn() || !g_on.load()) {
+        return false;
+    }
+    TitleJoin& t = TJ();
+    const double now = Now();
+    TitlePhase phase;
+    {
+        std::lock_guard<std::mutex> lk(t.mu);
+        phase = t.phase;
+    }
+    const int role = Role();
+    const int fstate = Field<int>(Slot(kSlotFlow), 0x84, -1);
+    if (role != t.last_role || fstate != t.last_state) {
+        Log("title join: %s: role %d -> %d, flow %d -> %d (%.1f s)", TitlePhaseName(phase), t.last_role, role, t.last_state,
+            fstate, t.since > 0 ? now - t.since : 0.0);
+        t.last_role = role;
+        t.last_state = fstate;
+    }
+    switch (phase) {
+    case TitlePhase::Idle: {
+        Send(0, "{\"op\":\"title_req\"}");
+        std::lock_guard<std::mutex> lk(t.mu);
+        t.phase = TitlePhase::Requested;
+        t.since = now;
+        Log("title join: asking the host for its room");
+        return true;
+    }
+    case TitlePhase::Requested: {
+        bool have;
+        {
+            std::lock_guard<std::mutex> lk(t.mu);
+            have = t.have_reply;
+        }
+        if (have) {
+            TitleJoinStart();
+            return true;
+        }
+        if (now - t.since > 45.0) {
+            TitleJoinFail("no answer from the host within 45 s");
+            return false;
+        }
+        return true;
+    }
+    case TitlePhase::Joining:
+    case TitlePhase::Snapshot: {
+        TitleFlowUpdate(now);
+        const int st2 = Field<int>(Slot(kSlotFlow), 0x84, -1);
+        if (phase == TitlePhase::Joining && Role() == RoleClient && st2 == 1) {
+            std::lock_guard<std::mutex> lk(t.mu);
+            t.phase = TitlePhase::Snapshot;
+            Log("title join: client, waiting for the host's snapshot (%.1f s)", now - t.since);
+        }
+        if (st2 == 2) {
+            // The snapshot is applied: the own-world serializer 0x131E5C0 has nothing to save (no
+            // world); host-world load next with the summoned placement.
+            const u64 gsm = Slot(kSlotGsm);
+            const u64 flow = Slot(kSlotFlow);
+            u32 stage;
+            float pos[4], rot[4];
+            {
+                std::lock_guard<std::mutex> lk(t.mu);
+                stage = t.stage;
+                std::memcpy(pos, t.pos, sizeof pos);
+                std::memcpy(rot, t.rot, sizeof rot);
+                t.phase = TitlePhase::Ready;
+            }
+            BesideHost(pos, rot, g_local_slot.load() > 0 ? g_local_slot.load() : 1);
+            const int three = 3;
+            SafeWrite(gsm + 0x14c4, &stage, 4);
+            SafeWrite(gsm + 0x14d0, pos, 16);
+            SafeWrite(gsm + 0x14e0, rot, 16);
+            SafeWrite(flow + 0x84, &three, 4);
+            Log("title join: host snapshot applied after %.1f s; flow 3, placement stage %#x pos (%.1f, %.1f, %.1f): "
+                "Continue now loads the host's world",
+                now - t.since, stage, pos[0], pos[1], pos[2]);
+            return false;
+        }
+        if (Role() != 4 && Role() != RoleClient && now - t.since > 3.0) {
+            TitleJoinFail("the join ended");
+            return false;
+        }
+        if (now - t.since > 20.0) {
+            TitleJoinFail("no snapshot within 20 s");
+            return false;
+        }
+        return true;
+    }
+    case TitlePhase::Ready:
+        return false;
+    default:
+        return false;
+    }
+}
 
 bool Requested() {
     // Default in party mode (BB_PARTY set): B2, with B1 as the automatic fallback. BB_PARTY_B2=0: B1
@@ -3010,6 +3416,10 @@ void Tick(const GameSnapshot& s) {
         Log("remote chr on a streamed-out block: stale map hit cleared %u time(s); tasks:%s", n, DescribeTasks().c_str());
     }
     ProbeTick(s);
+    if (TitleJoinOn() || EnvOn("BB_PARTY_TITLE_JOIN_PROBE")) {
+        TitleJoinHostTick(s);
+        TitleJoinGuestTick(s, now);
+    }
     TestWarpTick(s, now);
     KickStalledTasks(s, now);
     TestBossTick(s, now);
@@ -3136,6 +3546,36 @@ bool OnHostTravel(const TravelIntent& t) {
 
 void OnLinkEvent(int from_slot, const std::string& body) {
     if (!g_on.load()) {
+        return;
+    }
+    if (body.find("\"title_req\"") != std::string::npos) {
+        std::lock_guard<std::mutex> lk(TJ().mu);
+        TJ().requests.push_back(from_slot);
+        return;
+    }
+    if (body.find("\"title_room\"") != std::string::npos) {
+        const char* b = body.c_str();
+        const char* pr = std::strstr(b, "\"room\":\"");
+        std::vector<u8> room;
+        const bool ok = pr && Unhex(pr + 8, &room);
+        u32 stage = 0;
+        float p[4] = {}, r[4] = {};
+        const char* ps = std::strstr(b, "\"stage\":");
+        const char* pp = std::strstr(b, "\"pos\":[");
+        const char* pq = std::strstr(b, "\"rot\":[");
+        const bool where = ps && pp && pq && std::sscanf(ps, "\"stage\":%u", &stage) == 1 &&
+                           std::sscanf(pp, "\"pos\":[%f,%f,%f,%f]", &p[0], &p[1], &p[2], &p[3]) == 4 &&
+                           std::sscanf(pq, "\"rot\":[%f,%f,%f,%f]", &r[0], &r[1], &r[2], &r[3]) == 4 &&
+                           TravelMapKnown(stage) && std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]) &&
+                           std::fabs(p[0]) < 1e5f && std::fabs(p[1]) < 1e5f && std::fabs(p[2]) < 1e5f;
+        std::lock_guard<std::mutex> lk(TJ().mu);
+        TJ().have_reply = true;
+        TJ().room = ok && where ? room : std::vector<u8>{};
+        TJ().stage = stage;
+        std::memcpy(TJ().pos, p, sizeof p);
+        std::memcpy(TJ().rot, r, sizeof r);
+        Log("title join: the host's room: %zu bytes, stage %#x pos (%.1f, %.1f, %.1f)%s", room.size(), stage, p[0], p[1], p[2],
+            ok && where ? "" : " (refused)");
         return;
     }
     if (body.find("\"dest\"") != std::string::npos) {

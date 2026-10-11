@@ -143,8 +143,17 @@ BB_COOP_SYSV void SummonMessageProbe(u64, u64, u64 wrapper, u64, u64, u64) {
     SafeGet(msg + 0x10, &map);
     SafeGet(msg + 0x2c, &channel);
     SafeGet(msg + 0x34, &size);
-    std::printf("Party: chalice: summon message type %u, host map 0x%08x, ChannelId 0x%llx, room data %u bytes\n", type,
-                map, static_cast<unsigned long long>(channel), size);
+    // The room data's head (0x1872360 reads u32 -> GSM +0x16f0, u32 (low byte) -> GSM +0x16f4,
+    // then the session descriptor 0xc90dd0): logged for the title join (party_b2 TitleJoin).
+    std::uint8_t head[24] = {};
+    char hex[sizeof head * 2 + 1] = {};
+    if (size >= sizeof head && SafeRead(msg + 0x38, head, sizeof head)) {
+        for (std::size_t i = 0; i < sizeof head; ++i) {
+            std::snprintf(hex + i * 2, 3, "%02x", head[i]);
+        }
+    }
+    std::printf("Party: chalice: summon message type %u, host map 0x%08x, ChannelId 0x%llx, room data %u bytes (head %s)\n",
+                type, map, static_cast<unsigned long long>(channel), size, hex);
     std::fflush(stdout);
 }
 
