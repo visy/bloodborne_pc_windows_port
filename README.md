@@ -146,3 +146,4 @@ Special thanks to the original creators and open source projects that made this 
 - **zackcage6**: testing and bug reporting.
 - **[parsifal295](https://github.com/parsifal295)**: pull requests number [#37](https://github.com/Mrsuss60/bloodborne_pc_windows_port/pull/37), [#36](https://github.com/Mrsuss60/bloodborne_pc_windows_port/pull/36), [#35](https://github.com/Mrsuss60/bloodborne_pc_windows_port/pull/35).
 - **[wizardnun ](https://github.com/wizardnun)**: pull request number [#39](https://github.com/Mrsuss60/bloodborne_pc_windows_port/pull/39)
+- **[Vorshim92](https://github.com/Vorshim92)**: pull requests number [#65](https://github.com/Mrsuss60/bloodborne_pc_windows_port/pull/65), [#66](https://github.com/Mrsuss60/bloodborne_pc_windows_port/pull/66), [#67](https://github.com/Mrsuss60/bloodborne_pc_windows_port/pull/67).
