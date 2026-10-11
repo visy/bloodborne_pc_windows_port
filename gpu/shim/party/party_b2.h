@@ -111,6 +111,8 @@ std::uint32_t MemberMap(int slot);
 bool MemberApart(int slot);
 /// Test aid: the nearest living enemy of the local block within `max_m` m (entity id; 0 none).
 std::uint32_t NearestEnemyForTest(float max_m);
+/// Test aid: kills enemy `id` of the local world (HP 0; a client's Lua ForceDead does nothing).
+bool KillEnemyForTest(std::uint32_t id);
 /// Host, main thread: the next own travel is alone (TravelIntent::alone): the guests do not
 /// follow and the host does not re-send its snapshot after its load. Expires after 10 s.
 void HostTravelAloneNext();

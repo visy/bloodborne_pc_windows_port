@@ -1237,7 +1237,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         const std::uint32_t id = step.id ? step.id : b2::NearestEnemyForTest(500.0f);
         Log("test: guest_kill: entity %u", id);
         if (id) {
-            reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, id);
+            b2::KillEnemyForTest(id);  // live split24: ForceDead on a client left the enemy at full HP
         }
     } else if (step.kind == TravelStep::HostKill) {
         // A boss (or any enemy) killed as the game's own death path: ForceDead on its entity id; the

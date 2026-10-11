@@ -911,6 +911,14 @@ void NoteAway(int slot) {
 }
 
 void SendDeadEnemies(const GameSnapshot& s, const char* why);
+double g_meet_rewind_at = 0;
+std::atomic<bool> g_record_request{false};
+double g_arrived_at = 0;  // guest: send "arrived" then (after an in-world follow)  // a member asked for our record (EVENT b2 record)  // main thread: the meet's re-creation, after the records arrived
+/// This player's record to every member (0x1781AC0, what InGameStart runs after a load). Main thread.
+void RebroadcastOwnRecord(const char* why) {
+    reinterpret_cast<void(BB_COOP_SYSV*)()>(Guest(0x1781ac0))();
+    Log("split: own player record re-broadcast (%s)", why);
+}
 u32 AreaOf(u32 map) {
     return (map == 0 || map == 0xffffffffu) ? 0u : map >> 24;
 }
@@ -1118,9 +1126,49 @@ void SplitTick(const GameSnapshot& s, double now) {
             }
             g_split_change_at = now;
             SendDeadEnemies(s, "meet without a load");
-            const int n = RewindRemoteTasks("split meet");
-            Log("split: a member is in our area (%s) without its chr here: %d task(s) rewound (no load)",
-                MapName(s.map_id).c_str(), n);
+            // The member's player record (GameData row: 0xB / 8 / 0x3B / 0x3C / 0xD) is what
+            // STEP_Create builds its chr from. After a load each player re-broadcasts it at
+            // InGameStart (0x1781AC0); the side that did NOT load holds a stale row and built an
+            // invisible chr whose name plate hung at an old spot (user report, split24: the host saw
+            // "Co-operator Hunter1" floating, no body). So both sides re-broadcast now (and ask the
+            // other to), and the rewind waits for the records.
+            RebroadcastOwnRecord("meet");
+            Send(Role() == RoleHost ? -1 : 0, "{\"op\":\"record\"}");
+            g_meet_rewind_at = now + 1.5;
+            Log("split: a member is in our area (%s) without its chr here: records exchanged, re-creation in 1.5 s "
+                "(no load)", MapName(s.map_id).c_str());
+        }
+    }
+    if (g_meet_rewind_at > 0 && now >= g_meet_rewind_at) {
+        g_meet_rewind_at = 0;
+        const int n = RewindRemoteTasks("split meet");
+        Log("split: meet: %d task(s) rewound to STEP_Create", n);
+    }
+    // Self-heal: a remote chr standing far (> 15 m) from every member's reported position for 5 s,
+    // while all of them report positions in our area, is a stale one: removed, the meet builds it
+    // again (with fresh records).
+    static std::map<u64, double> far_since;
+    for (const TaskInfo& t : Tasks(false)) {
+        const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        float p[3];
+        if (!c || !ChrPos(c, p)) {
+            continue;
+        }
+        bool all_known = true;
+        for (const Where& w : g_where) {
+            if (w.slot != g_local_slot.load() && w.connected && (!w.has_pos || w.age_ms > 2000 || AreaOf(w.map) != mine)) {
+                all_known = false;
+            }
+        }
+        if (!all_known || SlotNear(p, 15.0f) >= 0) {
+            far_since.erase(c);
+            continue;
+        }
+        auto it = far_since.emplace(c, now).first;
+        if (now - it->second >= 5.0) {
+            far_since.erase(c);
+            RemoveRemoteChr(c, "no member reports a position near it for 5 s (stale)");
+            last_meet = 0;  // the meet re-creates it at once
         }
     }
 }
@@ -2295,7 +2343,10 @@ void GuestTick(const GameSnapshot& s, double now) {
             WarpLocal(pos, rot[1], "follow the host's load into this map");
             SendDeadEnemies(s, "in-world follow");
             const int n = RewindRemoteTasks("guest in-world follow");
-            Send(0, "{\"op\":\"arrived\"}");
+            // The host loaded and holds this guest's record from before: send it fresh, and the
+            // "arrived" (the host's re-creation) a moment later (see the meet in SplitTick).
+            RebroadcastOwnRecord("in-world follow");
+            g_arrived_at = now + 1.5;
             Log("guest: followed the host inside the loaded map (%s): no load; %d task(s) rewound",
                 MapName(s.map_id).c_str(), n);
             g_rejoin = false;
@@ -3142,6 +3193,13 @@ void Tick(const GameSnapshot& s) {
             SplitTick(s, now);
         }
         if (s.world_up && !s.loading) {
+            if (g_arrived_at > 0 && now >= g_arrived_at) {
+                g_arrived_at = 0;
+                Send(0, "{\"op\":\"arrived\"}");
+            }
+            if (g_record_request.exchange(false) && SessionUp()) {
+                RebroadcastOwnRecord("a member asked (meet)");
+            }
             ApplyDeadEnemies(s);
             EnemyWatchTick(s, now);
         }
@@ -3274,6 +3332,10 @@ void OnLinkEvent(int from_slot, const std::string& body) {
         } else {
             Log("guest: bad destination event refused");
         }
+        return;
+    }
+    if (body.find("\"record\"") != std::string::npos) {
+        g_record_request = true;  // main thread: RebroadcastOwnRecord
         return;
     }
     if (body.find("\"dead\"") != std::string::npos) {
@@ -3580,6 +3642,19 @@ bool MemberApart(int slot) {
     const std::uint32_t m = MemberMap(slot);
     const std::uint32_t mine = LocalMap();
     return m != 0 && m != 0xffffffffu && mine != 0xffffffffu && AreaOf(m) != AreaOf(mine);
+}
+
+bool KillEnemyForTest(std::uint32_t id) {
+    bool done = false;
+    ForEachMapChr([&](u32 e, u64 chr) {
+        const u64 dm = Field<u64>(Field<u64>(chr, 0x3b0), 0x20);
+        if (e == id && dm && Field<int>(dm, 0x128, 0) > 0) {
+            const int zero = 0;
+            done = SafeWrite(dm + 0x128, &zero, 4);
+        }
+    });
+    Log("test: enemy %u HP set to 0 %s", id, done ? "(the game's own death follows)" : "- not found alive");
+    return done;
 }
 
 std::uint32_t NearestEnemyForTest(float max_m) {
