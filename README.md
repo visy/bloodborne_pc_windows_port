@@ -1,7 +1,8 @@
 # Bloodborne PC — native Windows port
 
 Run the PS4 version of *Bloodborne* (v1.09, any retail release) natively on Windows with Vulkan.
-Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28 (Linux).
+Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28 (Linux) and the original
+[Windows port](https://github.com/Mrsuss60/bloodborne_pc_windows_port) by Mrsuss60.
 
 **Version 0.5.1** · Playable · Party co-op in development
 
@@ -160,6 +161,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | Who | What |
 |---|---|
 | deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors |
+| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes |
 | shadPS4 team | Vulkan video core and shader recompiler (GPL-2.0+), sirit |
 | droogie and the bbhost team | Long-session stability fixes ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |
 | FireBurn | FSR-Vulkan (MIT); AMD FidelityFX SDK (MIT) |
