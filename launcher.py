@@ -2449,7 +2449,7 @@ class BloodborneLauncher(tk.Tk):
             if scripts_dir not in sys.path:
                 sys.path.insert(0, scripts_dir)
             import game_check
-            chk = game_check.problem(str(game_dir))
+            chk = game_check.problem(str(game_dir), cache=APP_DIR / "out" / "game_check.json")
             if chk:
                 kind, title, version = chk
                 explanation = game_check.explain(kind, title, version)

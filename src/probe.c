@@ -32,6 +32,7 @@
 #include <sys/syscall.h>
 #include <sys/uio.h>
 #endif
+#include "gpu/shim/boot_marks.h"
 
 typedef struct { uint64_t address, size, flags; } Segment;
 typedef struct { uint64_t target, kind, value, addend; } Reloc;
@@ -1425,6 +1426,7 @@ int main(int argc, char **argv) {
         return 0;
     }
     printf("bbport %s (Bloodborne Windows port)\n", BBPORT_VERSION);
+    bb_boot_mark("process start");
 #ifdef _WIN32
     runtime_memory_reserve_space();
 #endif
@@ -1533,6 +1535,7 @@ int main(int argc, char **argv) {
     sigemptyset(&alarm_action.sa_mask); sigaction(SIGALRM, &alarm_action, NULL);
     start_timeout(timeout_seconds);
 #endif
+    bb_boot_mark("runtime set up, reading the boot image");
     FILE *f = fopen(argv[1], "rb");
     if (!f) fail("cannot open boot file; run prepare.py first");
     char magic[8];
@@ -1645,8 +1648,10 @@ int main(int argc, char **argv) {
         if (procparam) memcpy(&sdk,image+procparam+16,8); /* procparam: size, magic, count, sdk_version */
         BbGpuConfig gpu={title,serial,user_dir ? user_dir : "user",(uint32_t)sdk,attributes,1920,1080};
         gpu_enabled=1; /* page tracking starts while the rasterizer registers guest memory */
+        bb_boot_mark("boot image loaded, GPU init");
         if (bbgpu_init(&gpu)) fail("GPU initialization failed");
         printf("GPU: window and Vulkan presenter ready; SDK 0x%08x, %u HLE symbols\n",(unsigned)sdk,bbgpu_symbol_count());
+        bb_boot_mark("GPU ready");
     }
     image_size = size;
     resolved_targets = calloc(import_count + 1, sizeof(void *));

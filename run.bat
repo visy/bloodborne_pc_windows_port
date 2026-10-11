@@ -11,6 +11,8 @@ set "party_check="
 :party_env_done
 
 cd /d "%~dp0"
+REM Startup timeline (docs/STARTUP.md): the clock time here and at the launch below.
+echo Boot: run.bat started at %TIME%
 
 REM Find Python 3
 if "%PYTHON%"=="" (
@@ -118,23 +120,16 @@ if exist "%mods_result%" del "%mods_result%"
 "%PYTHON%" scripts\mods.py "%game%" --out "%out%" --mods-dir "%mods_dir%" --config "%mods_config%" --enabled "%mods_enabled%" > "%mods_result%"
 if exist "%mods_result%" for /f "usebackq delims=" %%g in ("%mods_result%") do set "game=%%g"
 
-REM prepare.py also checks the game files (scripts\game_check.py): exit code 2 = not the 1.09
-REM executable, or a damaged extraction whose shaders do not unpack (issue #81; the game would
-REM hang while loading). BB_SKIP_GAME_CHECK=1 starts anyway. Every file:
+REM The boot image (scripts\boot_image.py: prepare.py, link_libc.py, link_modules.py in one process)
+REM is built once and reused while the game files and scripts stay the same (docs\STARTUP.md;
+REM BB_BOOT_CACHE=0 rebuilds). prepare.py also checks the game files (scripts\game_check.py): exit
+REM code 2 = not the 1.09 executable, or a damaged extraction whose shaders do not unpack (issue
+REM #81; the game would hang while loading). BB_SKIP_GAME_CHECK=1 starts anyway. Every file:
 REM python scripts\game_check.py GAME_DIR
-"%PYTHON%" scripts\prepare.py "%game%" --out "%out%"
-if errorlevel 1 exit /b %ERRORLEVEL%
-
-"%PYTHON%" scripts\link_libc.py "%game%" --out "%out%"
-if errorlevel 1 exit /b 1
-
-"%PYTHON%" scripts\link_modules.py "%game%" --out "%out%"
-if errorlevel 1 exit /b 1
-
 set "sku=%BB_CONTENT_SKU%"
 if "%sku%"=="" set "sku=full"
-"%PYTHON%" scripts\content_profile.py "%game%" --out "%out%" --sku "%sku%"
-if errorlevel 1 exit /b 1
+"%PYTHON%" scripts\boot_image.py "%game%" --out "%out%" --sku "%sku%"
+if errorlevel 1 exit /b %ERRORLEVEL%
 
 if "%BB_AUTO_RENDER_RES%"=="1" (
     set "BB_RENDER_RES="
@@ -280,6 +275,7 @@ for %%F in ("%probe%") do if %%~zF LSS 1048576 (
     echo [ERROR] %probe% is incomplete ^(%%~zF bytes; a build writing it?^); not starting. >&2
     exit /b 1
 )
+echo Boot: launching at %TIME%
 echo Launching Bloodborne PC (%probe%)...
 REM BB_RELAUNCH_LOOP=1: the game may end with exit code 75 to be started again (the party flow:
 REM System ^> Party in the game's menu, docs\party\ingame_flow.md). It leaves the new environment in
