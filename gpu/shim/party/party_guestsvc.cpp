@@ -215,6 +215,7 @@ std::deque<LampRequest> g_lamp_out;        // guest: to send
 std::deque<std::pair<int, LampRequest>> g_lamp_in; // host: from guests (slot, request)
 std::uint64_t g_lamp_seq = 0;
 LampRequestGate g_lamp_gate;
+std::atomic<int> g_lamp_requests_made{0}; // guest: lamp warps turned into requests (tests)
 
 std::atomic<bool> g_gate{false};
 std::atomic<std::uint32_t> g_overrides{0};
@@ -262,7 +263,10 @@ std::uint64_t BB_COOP_SYSV IsClientFilter(std::uint64_t env, std::uint64_t value
     // The talk script id (t210304 -> 210304; the case-19 environment is valid here: the game
     // just read +0x25).
     const std::uint32_t talk = *reinterpret_cast<const std::uint32_t*>(env + 0x10);
-    if (!GuestServiceTalkAllowed(talk, g.extra) && !(g_lamps.load(std::memory_order_relaxed) && HeadstoneTalk(talk))) {
+    // Headstones stay in their client wait on a guest (live: choosing an area in the headstone menu
+    // crashed the guest at once - the warp list is built from lamp flags the guest's overlay lacks);
+    // the host's headstones work in a party (MultiFilter) and the party follows the host.
+    if (!GuestServiceTalkAllowed(talk, g.extra)) {
         return value;
     }
     g_overrides.fetch_add(1, std::memory_order_relaxed);
@@ -363,7 +367,7 @@ void LogEnv(std::uint64_t env) {
     std::uint32_t talk = 0;
     SafeGet(env + 0x10, &talk);
     Log("talk script t%u (environment %p) asks IsClientPlayer: %s; ids:%s; head:%s", talk, reinterpret_cast<void*>(env),
-        GuestServiceTalkAllowed(talk, g.extra) ? "allowed" : (g_lamps.load() && HeadstoneTalk(talk)) ? "allowed (lamps)" : "kept vanilla", found.empty() ? " none" : found.c_str(),
+        GuestServiceTalkAllowed(talk, g.extra) ? "allowed" : "kept vanilla", found.empty() ? " none" : found.c_str(),
         hex.c_str());
 }
 
@@ -383,6 +387,7 @@ bool GuestLampIntercept(std::uint32_t id) {
         }
     }
     Log("lamp: the guest's warp to %u becomes a request to the host (the party travels together)", id);
+    g_lamp_requests_made.fetch_add(1);
     return true;
 }
 
@@ -623,9 +628,14 @@ BB_COOP_SYSV void TalkCommandEntry(u64, u64 call, u64, u64, u64, u64) {
 }
 
 struct LevelUpScript {
-    enum Stage { Off, WaitPlaced, Greeting, MenuUp, WaitScreen, Raise, Confirm, Accept, WaitLevel, BackOut, Done };
+    enum Stage { Off, WaitPlaced, Greeting, MenuUp, WaitScreen, Raise, Confirm, Accept, WaitLevel, BackOut, Done, Keys };
     std::uint32_t menus0 = 0;
     bool shop = false;                 ///< "buy": a messenger's Purchase instead of the Doll's level up
+    bool open = false;                 ///< "open[=TEXT]": open a menu, then press "keys=" one by one
+    std::string keys;                  ///< "cross,left,..." pressed 1.5 s apart once the menu is open
+    std::size_t key_at = 0;
+    std::uint32_t target = 0;          ///< talk id of the character / object to use
+    int approach = 0;                  ///< WaitPlaced: placement attempts (distance x side)
     std::uint32_t menu_text = 15000100; ///< the talk menu row to choose
     std::uint32_t requests0 = 0;
     int insight0 = -1;
@@ -645,6 +655,43 @@ bool OnScreen(std::uint32_t id, std::int64_t within_ms = 400) {
                                  std::chrono::steady_clock::now().time_since_epoch())
                                  .count();
     return ms && now - ms < within_ms;
+}
+
+// The action prompt: ActionButtonParam textId of the Dream's talk / examine regions (6003 / 6004 /
+// 6019-6026 / 6030: 10010100, 10010200, 10010220, 70000009) - looked up every frame while shown.
+// Any action-button text on screen: ActionButtonParam text ids are 1001xxxx (talk / examine /
+// "Workshop"-style object prompts) or 7000xxxx; *id receives the first one seen.
+bool PromptUp(std::uint32_t* id = nullptr) {
+    std::uint32_t ids[256];
+    const int n = BbGameMenu::RecentLookups(400, ids, 256);
+    for (int i = 0; i < n; ++i) {
+        if ((ids[i] >= 10010000 && ids[i] < 10020000) || (ids[i] >= 70000000 && ids[i] < 70010000)) {
+            if (id) {
+                *id = ids[i];
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+// Stand the local player at `dist` m from `chr` on the side `side` (0 its front, 1 back, 2 / 3
+// its sides; forward(yaw) = (-sin, -cos)), facing it (PlayerIns vfunc +0x5F8).
+bool StandAt(const GameSnapshot& s, std::uint64_t chr, float dist, int side) {
+    float d[4] = {}, r[4] = {};
+    if (!chr || !s.player || !SafeRead(chr + 0xc0, d, sizeof d) || !SafeRead(chr + 0xd0, r, sizeof r)) {
+        return false;
+    }
+    const float a = r[1] + (side == 1 ? 3.14159265f : side == 2 ? 1.5707963f : side == 3 ? -1.5707963f : 0.0f);
+    alignas(16) float pos[4] = {d[0] - dist * std::sin(a), d[1], d[2] - dist * std::cos(a), 1.0f};
+    alignas(16) float rot[4] = {0, a + 3.14159265f, 0, 0};
+    std::uint64_t vtbl = 0, fn = 0;
+    if (!SafeGet(s.player, &vtbl) || !SafeGet(vtbl + 0x5f8, &fn) || !fn) {
+        return false;
+    }
+    using WarpFn = void(BB_COOP_SYSV*)(std::uint64_t, const float*, const float*, std::uint64_t);
+    reinterpret_cast<WarpFn>(fn)(s.player, pos, rot, 0);
+    return true;
 }
 
 void Tap(std::uint32_t buttons, double now) {
@@ -672,19 +719,54 @@ void LevelUpTick(const GameSnapshot& s, double now) {
     };
     const double since = now - L.at;
     switch (L.stage) {
-    case LevelUpScript::WaitPlaced:
-        if (since >= 1.5) {
-            Tap(kPadCross, now);
-            go(LevelUpScript::Greeting, "Cross at the Doll (talk); advancing her lines until the talk menu is up");
+    case LevelUpScript::WaitPlaced: {
+        // Step in along the target's front (1.2 m, then closer), 1 s at each spot: log the
+        // action-button texts seen, press Cross, and let Greeting look for the talk menu.
+        static const float dists[] = {1.2f, 1.0f, 0.85f, 0.7f, 0.55f, 0.4f};
+        if (since < 1.0) {
+            break;
         }
+        if (L.approach > 0) {
+            std::uint32_t prompt = 0;
+            const bool up = PromptUp(&prompt);
+            L.requests0 = g_menu_requests.load();
+            Tap(kPadCross, now);
+            Log("test: levelup: at %.2f m: action prompt %s%s; Cross", dists[L.approach - 1], up ? "text " : "not seen",
+                up ? std::to_string(prompt).c_str() : "");
+            go(LevelUpScript::Greeting, "advancing the lines until the menu is up");
+            break;
+        }
+        const bool ok = StandAt(s, FindChr(L.target), dists[0], 0);
+        Log("test: levelup: standing %.2f m in front of t%u%s", dists[0], L.target, ok ? "" : " - warp failed");
+        L.approach = 1;
+        L.at = now;
         break;
+    }
     case LevelUpScript::Greeting:
-        if (OnScreen(L.menu_text) && OnScreen(kTextLeave)) {
-            go(LevelUpScript::MenuUp, L.shop ? "talk menu up: 'Purchase' (15000140) is on screen"
+        if (L.open && L.menu_text == 0 && g_menu_requests.load() != L.requests0) {
+            L.level0 = s.level;
+            L.echoes0 = s.echoes;
+            L.insight0 = s.insight;
+            L.key_at = 0;
+            go(LevelUpScript::Keys, "no talk list: the menu was requested (0x1C4A520): menu open");
+        } else if (L.menu_text != 0 && OnScreen(L.menu_text) && OnScreen(kTextLeave)) {
+            go(LevelUpScript::MenuUp, L.open ? "talk menu up: the chosen row is on screen"
+                                    : L.shop ? "talk menu up: 'Purchase' (15000140) is on screen"
                                              : "talk menu up: 'Channel the Blood Echoes' (15000100) is on screen");
         } else if (since >= 1.5 * (L.tries + 1)) {
-            if (++L.tries > 12) {
-                go(LevelUpScript::Done, "FAILED: no talk menu after 12 presses");
+            const int limit = L.target == 210304 ? 12 : 3;
+            if (++L.tries > limit) {
+                static const float dists[] = {1.2f, 1.0f, 0.85f, 0.7f, 0.55f, 0.4f};
+                if (L.approach < 6) {
+                    const float d = dists[L.approach++];
+                    StandAt(s, FindChr(L.target), d, 0);
+                    Log("test: levelup: no menu; one step closer: %.2f m", d);
+                    L.stage = LevelUpScript::WaitPlaced;
+                    L.at = now;
+                    L.tries = 0;
+                    break;
+                }
+                go(LevelUpScript::Done, "FAILED: no talk menu at any distance");
                 break;
             }
             Tap(kPadCross, now);
@@ -698,12 +780,19 @@ void LevelUpTick(const GameSnapshot& s, double now) {
             L.menus0 = g_levelup_menus.load();
             L.requests0 = g_menu_requests.load();
             Tap(kPadCross, now);
-            go(LevelUpScript::WaitScreen, L.shop ? "Cross on 'Purchase'" : "Cross on 'Channel the Blood Echoes'; the Doll's lines follow");
+            go(LevelUpScript::WaitScreen, L.open ? "Cross on the chosen row"
+                                          : L.shop ? "Cross on 'Purchase'" : "Cross on 'Channel the Blood Echoes'; the Doll's lines follow");
         }
         break;
     case LevelUpScript::WaitScreen:
         // The guest kneels (event 12100112), the Doll speaks; then OpenSoul builds the menu.
-        if (L.shop && g_menu_requests.load() != L.requests0) {
+        if (L.open && g_menu_requests.load() != L.requests0) {
+            L.level0 = s.level;
+            L.echoes0 = s.echoes;
+            L.insight0 = s.insight;
+            L.key_at = 0;
+            go(LevelUpScript::Keys, "the menu was requested (0x1C4A520): menu open");
+        } else if (L.shop && g_menu_requests.load() != L.requests0) {
             go(LevelUpScript::Raise, "the shop menu was requested (OpenRegularShop -> 0x1C4A520): shop open");
         } else if (g_levelup_menus.load() != L.menus0) {
             go(LevelUpScript::Raise, "the game built the LevelUp menu (factory 0x1BB7F60): level-up screen open");
@@ -776,6 +865,30 @@ void LevelUpTick(const GameSnapshot& s, double now) {
             go(LevelUpScript::BackOut, "backing out (Circle)");
         }
         break;
+    case LevelUpScript::Keys:
+        if (since >= 1.5) {
+            if (L.key_at >= L.keys.size()) {
+                Log("test: levelup: keys done: level %d -> %d, echoes %d -> %d, Insight %d -> %d, Blood Stone Shards now %d, Twin %d",
+                    L.level0, s.level, L.echoes0, s.echoes, L.insight0, s.insight, GoodsCount(3000), GoodsCount(3010));
+                go(LevelUpScript::BackOut, "backing out (Circle)");
+                break;
+            }
+            std::size_t end = L.keys.find(',', L.key_at);
+            if (end == std::string::npos) {
+                end = L.keys.size();
+            }
+            const std::string k = L.keys.substr(L.key_at, end - L.key_at);
+            L.key_at = end + 1;
+            const std::uint32_t b = k == "cross" ? kPadCross : k == "circle" ? kPadCircle : k == "left" ? kPadLeft
+                                    : k == "right" ? kPadRight : k == "up" ? kPadUp : k == "down" ? kPadDown : 0;
+            if (b) {
+                Tap(b, now);
+            }
+            Log("test: levelup: key %s (level %d, echoes %d, Insight %d, Blood Stone Shards %d, Twin %d)", k.c_str(), s.level,
+                s.echoes, s.insight, GoodsCount(3000), GoodsCount(3010));
+            L.at = now;
+        }
+        break;
     case LevelUpScript::BackOut:
         if (since >= 1.0 * (L.tries + 1)) {
             if (++L.tries > 4) {
@@ -801,6 +914,16 @@ bool RunTestFixture(const GameSnapshot& s, int step) {
         if (SafeWrite(s.player_rec + 0x94, &v, 4)) {
             Log("test: guest echoes set to %d", v);
         }
+    }
+    const std::size_t sh = g.test.find("shards=");
+    if (step == 0 && sh != std::string::npos) {
+        // Blood Stone Shards (goods 3000) and Twin Blood Stone Shards (3010: +3 -> +4 and up) for the
+        // workbench check.
+        const int n = std::atoi(g.test.c_str() + sh + 7);
+        const int b0 = GoodsCount(3000), b1 = GoodsCount(3010);
+        const bool ok = GiveGoods(3000, n) && GiveGoods(3010, n);
+        Log("test: Blood Stone Shards %d -> %d, Twin Blood Stone Shards %d -> %d%s", b0, GoodsCount(3000), b1,
+            GoodsCount(3010), ok ? "" : " (give failed)");
     }
     const std::size_t w = g.test.find("warp=");
     if (w == std::string::npos) {
@@ -990,8 +1113,70 @@ bool GuestServicesOnLampRequest(int slot, const std::string& body, std::string* 
     return true;
 }
 
+// Live test (BB_PARTY_GUESTSVC_TEST "lamppress"): a guest in the host's world outside the Dream
+// presses Cross whenever an action prompt is up (it arrives at the host's lamp after a host warp),
+// at most 8 times, 1.5 s apart, until its lamp warp became a request.
+struct LampPress {
+    double next = 0, release = 0;
+    int presses = 0;
+    bool done = false;
+} g_lamp_press;
+
+void LampPressTick(const GameSnapshot& s, double now) {
+    LampPress& P = g_lamp_press;
+    if (P.release > 0 && now >= P.release) {
+        runtime_pad_director_press(0);
+        P.release = 0;
+    }
+    if (P.done || g.test.find("lamppress") == std::string::npos || !s.world_up || s.loading ||
+        s.session_role != kSessionRoleClient || IsDreamMap(s.map_id) || now < P.next) {
+        return;
+    }
+    if (g_lamp_requests_made.load() > 0) {
+        P.done = true;
+        Log("test: lamppress: the guest's lamp use became a request after %d press(es)", P.presses);
+        return;
+    }
+    P.next = now + 1.5;
+    if (const std::size_t f = g.test.find("lampflag="); f != std::string::npos) {
+        // The lamp's own "used" flag (the one its common event 7200 instance waits for), as the
+        // lamp interaction would set it on this game (load mode 1: the host-world overlay).
+        if (P.presses++ == 0) {
+            const std::uint32_t flag = std::uint32_t(std::strtoul(g.test.c_str() + f + 9, nullptr, 10));
+            const bool ok = WriteEventFlag(flag, true);
+            Log("test: lamppress: lamp flag %u set on the guest%s (map %s); its 7200 runs the warp", flag,
+                ok ? "" : " - FAILED", MapName(s.map_id).c_str());
+        } else if (P.presses > 10) {
+            P.done = true;
+            Log("test: lamppress: FAILED: no lamp request 15 s after the lamp flag");
+        }
+        return;
+    }
+    std::uint32_t prompt = 0;
+    const bool up = PromptUp(&prompt);
+    if (!up && P.presses == 0 && P.next - now < 1.6) {
+        static int waits = 0;
+        if (++waits < 6) {
+            Log("test: lamppress: in %s, no action prompt yet (%d)", MapName(s.map_id).c_str(), waits);
+            return;
+        }
+    }
+    if (++P.presses > 8) {
+        P.done = true;
+        Log("test: lamppress: FAILED: no lamp request after 8 presses");
+        return;
+    }
+    runtime_pad_director_press(kPadCross);
+    P.release = now + 0.12;
+    Log("test: lamppress: Cross #%d (prompt %s %u, map %s)", P.presses, up ? "up" : "not seen", prompt,
+        MapName(s.map_id).c_str());
+}
+
 void LampTick(const GameSnapshot& s, party::PartyLink* link) {
     g_session_role = s.session_role;
+    if (!g.test.empty()) {
+        LampPressTick(s, Now());
+    }
     if (!g_lamps.load()) {
         return;
     }
@@ -1083,11 +1268,23 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
             g_lvl.at = now;
             g_lvl.shop = false;
             g_lvl.menu_text = kTextChannel;
+            g_lvl.target = target ? target : 210304;
+        } else if (const std::size_t o = g.test.find("open"); g.test_step == 0 && o != std::string::npos) {
+            g_lvl.stage = LevelUpScript::WaitPlaced;
+            g_lvl.at = now;
+            g_lvl.open = true;
+            g_lvl.target = target;
+            g_lvl.menu_text = g.test.compare(o, 5, "open=") == 0 ? std::uint32_t(std::strtoul(g.test.c_str() + o + 5, nullptr, 10)) : 0;
+            if (const std::size_t k = g.test.find("keys="); k != std::string::npos) {
+                const std::size_t e = g.test.find(';', k);
+                g_lvl.keys = g.test.substr(k + 5, e == std::string::npos ? std::string::npos : e - k - 5);
+            }
         } else if (g.test_step == 0 && g.test.find("buy") != std::string::npos) {
             g_lvl.stage = LevelUpScript::WaitPlaced;
             g_lvl.at = now;
             g_lvl.shop = true;
             g_lvl.menu_text = kTextPurchase;
+            g_lvl.target = target;
         }
         ++g.test_step;
         g.test_next = now + 8.0;

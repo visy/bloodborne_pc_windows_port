@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <mutex>
 
 #include "bbport_settings.h"
 #include "party/party_status.h"
@@ -909,7 +910,16 @@ bool ChoiceAvailable(int field, int choice) {
     return field != upscaler_field || UpscalerAvailable(choice);
 }
 
+/// Load (the game's menu thread, when a page opens) and Poll / RefreshDynamic (the present
+/// thread) share the values and the run-time texts' sources (member names, the visible rows):
+/// one of them at a time. Recursive: a button's action may refresh the texts.
+std::recursive_mutex& StateMutex() {
+    static std::recursive_mutex m;
+    return m;
+}
+
 void Load() {
+    std::scoped_lock lock{StateMutex()};
     const Values& s = BbSettings::Get();
     for (std::size_t i = 0; i < fields.size(); ++i) {
         const Field& f = fields[i];
@@ -926,11 +936,13 @@ void Load() {
 }
 
 void RefreshDynamic() {
+    std::scoped_lock lock{StateMutex()};
     RefreshParty();
     RefreshRestart();
 }
 
 void Poll(std::int64_t now_ms) {
+    std::scoped_lock lock{StateMutex()};
     if (!loaded) {
         return;
     }

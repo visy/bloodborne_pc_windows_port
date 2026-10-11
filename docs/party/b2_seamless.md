@@ -341,7 +341,27 @@ warp's own target was used; with +0x1521 = 1 our +0x14C4/D0/E0 write gives the s
   world; both guests stayed clients, loaded the host's map in host-world mode, re-created the
   host's chr; the host got two "arrived" and re-created both guests (76 s of run time).
 
+### 6.6 Runs 26-28: B1 fallback, guest consumables [R]
+
+* Forced failure (`BB_PARTY_B2_TEST_FAIL=resync`: the host sends no snapshot). Run 26: after 45 s
+  the guest dropped its loading screen, fell back to B1 (lamp warp in its own world, left the
+  room), but the re-summon failed: the network flow still held the old member list, so the new
+  room's member event 0xE created no task for the host and the join was left 2 s later. Fix: once
+  idle after a fallback, B2 runs the flow's own end-of-session cleanup 0x178A900 (clearing +0xC5,
+  set by every MoveMapStep ctor, which defers it). Run 27: `flow cleanup 0x178A900 ran ... flow
+  now 0`, the director's bells re-summoned the guest 20 s later (client again).
+* Guest consumables across a host death (run 28): `goods 900:3 1000:15 200:1 205:1`, stamina
+  100/100 identical before the travel and after the B2 load; HP refilled by the load and put back
+  (100/106). Buffs (SpEffects) not measured.
+
 ## 7. Risks / open items
+
+* K10 / boss clear with a real kill: the test save has Cleric Beast / Gascoigne already dead
+  (12411800 = 1, 2410 = 1). Plan: a save before a boss near a lamp (Vicar Amelia from the
+  Cathedral Ward lamp, or a chalice boss), both players in the arena via director test actions
+  (`host_warp`), the fight started by its EMEVD fog event, then `ForceDead(boss entity)` on the
+  host (the boss-death EMEVD 2003[12] and Lua 4050 run as in a real kill); expect the guest's
+  K10 / send-home veto lines and the session kept.
 
 * (Closed in run 9) Guest rewind not executing in run 5. Static analysis: the update `0x1E52FE0` copies
   +0x54 to +0x50 unconditionally on entry, so `step 6 next 4` means the task update was not

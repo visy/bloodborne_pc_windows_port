@@ -16,12 +16,18 @@ user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
 kernel32 = ctypes.windll.kernel32
 psapi = ctypes.windll.psapi
-# Physical pixels: without DPI awareness GetClientRect reports the scaled-down (logical) size while
-# PrintWindow draws physical pixels, so the shots were the window's top-left corner only.
+
+# Per-monitor DPI aware: otherwise GetClientRect reports the scaled (logical) size of the game's
+# window while PrintWindow draws physical pixels, so on a 150 % / 200 % display only the top-left
+# part of the frame was saved (the bottom-centre item-get box and the top-right Insight / echoes
+# counter were never in the shots).
 try:
-    user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))  # per-monitor v2
+    user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))  # PER_MONITOR_AWARE_V2
 except (AttributeError, OSError):
-    user32.SetProcessDPIAware()
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except (AttributeError, OSError):
+        user32.SetProcessDPIAware()
 
 
 def proc_path(pid):

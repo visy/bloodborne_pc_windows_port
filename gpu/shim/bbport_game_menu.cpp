@@ -657,6 +657,20 @@ std::int64_t TextSeenMs(const char* needle) {
     return best;
 }
 
+int RecentLookups(std::int64_t within_ms, std::uint32_t* out, int max) {
+    const std::int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now().time_since_epoch())
+                                 .count();
+    int n = 0;
+    for (const SeenId& e : seen_ids) {
+        const std::int64_t ms = e.ms.load(std::memory_order_relaxed);
+        if (ms && now - ms < within_ms && n < max) {
+            out[n++] = e.id.load(std::memory_order_relaxed);
+        }
+    }
+    return n;
+}
+
 void TextActivity(std::uint64_t* seq, std::int64_t* last_ms) {
     *seq = fresh_seq.load(std::memory_order_acquire);
     *last_ms = fresh_ms.load(std::memory_order_relaxed);

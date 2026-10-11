@@ -20,6 +20,7 @@
 #include "party_director.h"
 #include "party_progress.h"
 #include "party_runtime.h"
+#include "party_travel.h"
 
 #include <atomic>
 #include <chrono>
@@ -590,7 +591,7 @@ std::optional<StoryAction> GuestStory::RunOps(const StoryState& st, double now) 
             }
             ops_.pop_front();
             op_started_ = false;
-            if ((st.map_id >> 16) == 0x1500) { // m21_00: already in the Dream
+            if (st.own_world && (st.map_id >> 16) == 0x1500) { // m21_00: already in the own Dream
                 if (!ops_.empty() && ops_.front().kind == Op::WaitArrive) {
                     ops_.pop_front();
                 }
@@ -680,7 +681,10 @@ std::optional<StoryAction> GuestStory::Step(const StoryState& st, double now) {
         return Run(st, now);
     }
     // Seamless play: a guest may stay summoned for the whole session. Everything but an ending
-    // runs as a phantom too (mode-2 play, own-pool writes); endings wait for the own world.
+    // runs as a phantom too (mode-2 play, own-pool writes). An ending comes last: the guest
+    // leaves the host's world by the lamp warp to its own Hunter's Dream (a client's warp loads
+    // its own world, as every B1 travel follow does) and the ending program runs there - the
+    // native ending step, staff roll, NG+. The director rings no bell while it runs (Busy).
     if (!queue_.empty() && summoned_replay && !st.own_world && stable_mirror_ >= kStableTicks && st.calm &&
         !st.remo_playing) {
         for (auto it = queue_.begin(); it != queue_.end(); ++it) {
@@ -692,6 +696,18 @@ std::optional<StoryAction> GuestStory::Step(const StoryState& st, double now) {
             dirty_ = true;
             Build(s, false, true);
             return Run(st, now);
+        }
+        if (summoned_ending) {
+            for (auto it = queue_.begin(); it != queue_.end(); ++it) {
+                if (it->kind != StoryKind::Ending) {
+                    continue;
+                }
+                const StoryIntent s = *it;
+                queue_.erase(it);
+                dirty_ = true;
+                Build(s, false, false); // the warp home first: the rest runs in the own Dream
+                return Run(st, now);
+            }
         }
     }
     return std::nullopt;
@@ -773,13 +789,11 @@ constexpr u64 kTodWorld = 0x553b148;     // *(slot)+0x81 = 1: re-evaluate time o
 constexpr u64 kGameDataMan = 0x553b130;  // +0x68 NG cycle, +0x6C ending type
 constexpr u64 kWts = 0x5556678;          // +0x08 transition requested, +0x1550 ending request, +0x1592 own world
 constexpr u64 kWorldChrMan = 0x553e878;  // +0x60 local PlayerIns (vtable +0x1C8 -> chr data, +0xCA sex)
-constexpr u64 kLampWarp = 0x13cdf30;     // void (u32 id)
 
 using PlayRemoFn = u64(BB_COOP_SYSV*)(u64, u64, u64, u64, u64, u64);
 using SetFlagFn = void(BB_COOP_SYSV*)(u64, u32, u32);
 using GetFlagValueFn = u32(BB_COOP_SYSV*)(u64, u32, u32);
 using SetFlagValueFn = void(BB_COOP_SYSV*)(u64, u32, u32, u32);
-using LampWarpFn = void(BB_COOP_SYSV*)(u32);
 using ChrDataFn = u64(BB_COOP_SYSV*)(u64);
 
 void Log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -832,6 +846,12 @@ struct Tick {
     bool test_on = false, test_done = false, test_mirror = false;
     bool test_host = false;     // host:<remo>: the host plays it and sends it like a captured 2002 play
     bool test_leave = false;    // leave_after_mirror: a guest leaves the party once a live mirror ended
+    int test_ending = 0;        // ending:<1|2|3>: queue that ending as if the host had sent it
+    bool test_summoned = false; // ...only once this game is a phantom (session role 6)
+    u32 last_ng = 0xffffffffu;  // GameDataMan +0x68 at the last world-up (logged when it changes)
+    double ng_logged_for = -1;  // the world-up (world_since) the NG cycle was logged for
+    double ending_at = 0;       // our ending replay set its flag (21/22/23) or requested the step
+    double ending_log = 0;      // last "staff roll" progress line (every 10 s until the next world)
     double test_coop_since = 0; // host test: when a cooperator was first seen (0 = not yet)
     double test_coop_poll = 0;
     u32 test_remo = 0;
@@ -1109,10 +1129,15 @@ void Run(const StoryAction& a) {
         }
         break;
     }
-    case StoryAction::TravelDream:
-        Log("ending: warping to the own Hunter's Dream (%u)", a.id);
-        reinterpret_cast<LampWarpFn>(Guest(kLampWarp))(a.id);
+    case StoryAction::TravelDream: {
+        // As a travel replay (the travel / guest-lamp hooks stand aside): a phantom's lamp warp
+        // leaves the host's world and loads its own (B1's follow), an own-world one just warps.
+        const GameSnapshot g = ReadGameState(false);
+        Log("ending: warping to the own Hunter's Dream (%u)%s", a.id,
+            g.session_role == RoleClient ? " - leaving the host's world (summoned)" : "");
+        RunLampWarpReplay(a.id);
         break;
+    }
     case StoryAction::ForceEnding: {
         const u64 gdm = Slot(kGameDataMan), wts = Slot(kWts);
         const u32 type = static_cast<u32>(a.ending);
@@ -1230,6 +1255,20 @@ void ParseTest() {
         }
         Log("test: host plays remo %u and sends it to the party %.0f s after a cooperator is in the world",
             g_tick.test_remo, g_tick.test_delay);
+    } else if (s.rfind("ending:", 0) == 0) {
+        g_tick.test_on = true;
+        g_tick.test_ending = std::atoi(s.c_str() + 7);
+        g_tick.test_summoned = s.find(",summoned") != std::string::npos;
+        if (const char* d = std::getenv("BB_PARTY_STORY_TEST_DELAY"); d && d[0]) {
+            g_tick.test_delay = std::atof(d);
+        }
+        if (g_tick.test_ending < 1 || g_tick.test_ending > 3) {
+            g_tick.test_on = false;
+            Log("BB_PARTY_STORY_TEST: ending must be 1, 2 or 3; ignored");
+        } else {
+            Log("test: queue ending %d %.0f s after the world is up%s", g_tick.test_ending, g_tick.test_delay,
+                g_tick.test_summoned ? ", once summoned" : "");
+        }
     } else if (s.rfind("cutscene:", 0) == 0) {
         g_tick.test_on = true;
         g_tick.test_remo = static_cast<u32>(std::strtoul(s.c_str() + 9, nullptr, 0));
@@ -1240,7 +1279,9 @@ void ParseTest() {
         Log("test: replay remo %u %.0f s after the world is up%s", g_tick.test_remo, g_tick.test_delay,
             g_tick.test_mirror ? " (mirror path, mode 2)" : "");
     } else {
-        Log("BB_PARTY_STORY_TEST: '%s' is not cutscene:<id>[,mirror] , host:<id> or leave_after_mirror; ignored", t);
+        Log("BB_PARTY_STORY_TEST: '%s' is not cutscene:<id>[,mirror], ending:<n>[,summoned], host:<id> or "
+            "leave_after_mirror; ignored",
+            t);
     }
 }
 
@@ -1269,6 +1310,7 @@ void InstallStoryHooks() {
     }
     g_guest.mirror_enabled = !EnvOff("BB_PARTY_STORY_MIRROR");
     g_guest.summoned_replay = !EnvOff("BB_PARTY_STORY_SUMMONED");
+    g_guest.summoned_ending = !EnvOff("BB_PARTY_STORY_ENDING_SUMMONED");
     // Reference sites (cutscenes_endings.md 5.1): play remo, time-of-day apply; the calls need them.
     const bool play_ok = Matches(kPlayRemo, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54});
     const bool tod_ok =
@@ -1402,9 +1444,38 @@ void StoryTick() {
             PushHost(s);
         }
     }
+    // NG cycle (GameDataMan +0x68) once per world-up and on every change: the evidence for
+    // ending replays (after the staff roll the next cycle loads with it).
+    if (g.world_up && !g.loading && now - g_tick.world_since >= 2.0) {
+        const u32 ng = Field<u32>(Slot(kGameDataMan), 0x68, 0xffffffffu);
+        if (ng != 0xffffffffu && (ng != g_tick.last_ng || g_tick.ng_logged_for != g_tick.world_since)) {
+            Log("NG cycle %u%s (map %s, %s)", ng,
+                g_tick.last_ng == 0xffffffffu || ng == g_tick.last_ng ? " at world-up" : " (changed)",
+                MapName(g.map_id).c_str(), Describe(g).c_str());
+            g_tick.last_ng = ng;
+            g_tick.ng_logged_for = g_tick.world_since;
+        }
+    }
+    // Test: an ending as if the host had sent it (once summoned, if asked).
+    if (g_tick.test_on && g_tick.test_ending && !g_tick.test_done && g_tick.world_was_up &&
+        now - g_tick.world_since >= g_tick.test_delay && !st.remo_playing &&
+        (!g_tick.test_summoned || g.session_role == RoleClient)) {
+        g_tick.test_done = true;
+        StoryIntent s;
+        s.seq = NextSeq();
+        s.kind = StoryKind::Ending;
+        s.id = static_cast<u32>(g_tick.test_ending);
+        bool taken;
+        {
+            std::lock_guard<std::mutex> lk(g_guest_mu);
+            taken = g_guest.Offer(s, g.session_role == RoleClient, now);
+        }
+        Log("test: %s %s (session %s, NG cycle %u)", DescribeStory(s).c_str(), taken ? "queued" : "refused",
+            SessionRoleName(g.session_role), Field<u32>(Slot(kGameDataMan), 0x68, 0xffffffffu));
+    }
     // Test: one forced replay (or mirror) item.
-    if (g_tick.test_on && !g_tick.test_host && !g_tick.test_done && g_tick.world_was_up && now - g_tick.world_since >= g_tick.test_delay &&
-        !st.remo_playing && !busy) {
+    if (g_tick.test_on && !g_tick.test_ending && !g_tick.test_host && !g_tick.test_done && g_tick.world_was_up &&
+        now - g_tick.world_since >= g_tick.test_delay && !st.remo_playing && !busy) {
         g_tick.test_done = true;
         StoryIntent s;
         s.seq = NextSeq();
@@ -1436,6 +1507,26 @@ void StoryTick() {
     }
     if (a) {
         Run(*a);
+        if ((a->kind == StoryAction::SetFlags && a->on && a->flags.size() == 1 && a->flags[0] >= 21 &&
+             a->flags[0] <= 23) ||
+            (a->kind == StoryAction::SetFlags && a->on && a->flags == std::vector<u32>{72100130}) ||
+            a->kind == StoryAction::ForceEnding) {
+            g_tick.ending_at = now;
+            g_tick.ending_log = now;
+        }
+    }
+    // After our ending: the ending step (staff roll movie) has no world; a progress line every
+    // 10 s until the next cycle's world is up (also keeps the test harness from reaping it).
+    if (g_tick.ending_at > 0) {
+        if (g.world_up && !g.loading && now - g_tick.ending_at > 30.0 && now - g_tick.world_since >= 2.0 &&
+            g_tick.world_since > g_tick.ending_at) {
+            Log("ending: the next cycle's world is up %.0f s after the ending started (NG cycle %u, map %s)",
+                now - g_tick.ending_at, Field<u32>(Slot(kGameDataMan), 0x68, 0xffffffffu), MapName(g.map_id).c_str());
+            g_tick.ending_at = 0;
+        } else if (now - g_tick.ending_log >= 10.0) {
+            g_tick.ending_log = now;
+            Log("ending: staff roll / ending step t=%.0f s (%s)", now - g_tick.ending_at, Describe(g).c_str());
+        }
     }
     SaveSidecar(); // writes only when the queue / seen set changed
 }

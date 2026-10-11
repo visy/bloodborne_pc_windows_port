@@ -24,6 +24,8 @@ std::int64_t TextSeenMs(const char* needle);
 /// The steady-clock ms of the last lookup of message `id` (any category), 0 when never; shown
 /// texts are looked up every frame, so "within the last ~300 ms" = on screen (test aids).
 std::int64_t LastLookupMs(std::uint32_t id);
+/// Message ids looked up within the last `within_ms` (up to `max` of them into `out`); the count.
+int RecentLookups(std::int64_t within_ms, std::uint32_t* out, int max);
 
 /// Applies what the player changed on the port's pages (each presented frame).
 void Poll();
