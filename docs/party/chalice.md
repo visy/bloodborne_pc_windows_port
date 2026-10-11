@@ -137,10 +137,29 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
   ChannelId other than `0x8000000000000000`, creates a channel request by id (0x1e65290 ->
   **get_details_info**) in +0xc0. When the session join proceeds (0x1872360 -> 0x14bb200), the
   guest's game hands that channel to **slot 0's helper** (`SprjHolygrail.obj[0] + 0x108`,
-  0x1ac3ef0 -> QuickJoin 0x1aa5280 -> step 13 0x1aa8410): the slot-0 record is written from the
-  fetched entry (FormData), the chalice groups are cleared (0x13bdc00), and the guest loads the
-  host's dungeon. Slot 0 is the network / joined-dungeon slot; a member's own ritual dungeons use
-  the others (I: the requesters always pick obj[0] for joins).
+  0x1ac3ef0 -> request 6 0x1aa5280 -> STEP_Exec_forQuickJoin 0x1aa81d0): the FormData is parsed
+  (0x1aa3b90 -> 0x1a9c490) into the helper and written into the slot-0 record, then StateSwitch
+  (0x1aaa3d0) sets the helper state (+0x25c): **5** when the channel object's +0x54 == 1 (or 3
+  with +0x10c bit 0), else 3. 0x1ac3ef0 succeeds only with state 5; with 2..4 it requests 7
+  (STEP_Exec_forCancel 0x1aa8410: the slot record reset to empty) and the summon goes on without a
+  dungeon. The map load (0x1928680) reads the current slot's record (+96 = the dungeon map
+  0x1dxxxxxx) and otherwise loads m255 (an empty world: the guest falls and dies).
+  The channel object's +0x54 is the entry's `Status`, copied only when `ShareLevel` != 0
+  (0x1e6dea2); `CompleteFlag` of add_material sets it too. Slot 0 is the network / joined-dungeon
+  slot; a member's own ritual dungeons use the others (I: the requesters always pick obj[0]).
+* **What the board answers for it** (live runs V..#13): the entry must carry the dungeon's
+  **FormData** (the host's game never uploads a shared fixed dungeon; party_chalice puts a
+  version-4 FormData built from the host's live ritual helper on the board, `FormData from slot
+  S's record (124 bytes) on the board`), and a **ShareLevel != 0 with Status 1** for the summoned
+  member. The member performing the ritual of that dungeon (its fixed search within 120 s) gets
+  the stored ShareLevel 0: with 1 its own ritual generated a local dungeon (ChannelId with the high
+  bit set) instead (run #12).
+* **Load mode 1**: SetLoadMode(1) (0x13bb590) moves the flag groups onto other storage and only
+  carries the slot bit 9020+k. party_chalice replaces it to also carry the quick-joined slot
+  record (snapshot before, written after; only within 180 s of a quick join; transient storage,
+  never the member's save): `load mode 1: slot 0's record (dungeon N, map 0x1d0a5a00) carried
+  over`. The map load itself already happened in mode 0 (the record is there then); this keeps the
+  record readable for later loads in the host's world.
 * So what the party needs is that **get_details_info finds the host's dungeon**: the host's game
   uploads it when it performs the ritual / resumes it online (helper steps 5-6, ChannelUpload), and
   the board keeps it. **Our rule** (FromApi::sign_get): a host whose sign query is in area 29 gets
@@ -152,9 +171,10 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
   +0x2c from FrpgNetMan +0xa88 only in area 29, and the guest's 0x14ba340 takes it only with
   FrpgNetMan +0xb14 bit 0 set (from +0xb9c bit 0 = SpEffect stateInfo 269 = **SpEffect 9900**, the
   vanilla Dream bell's "chalice wait"). The party rings with its own bell patch (9005), so the
-  director also applies 9900 to a guest that rings while the host's roster map is in area 29
-  (live: `summon message type 1, host map 0x1d0a5a00, ChannelId 0x3f22b458bd799` -> two
-  get_details_info -> quick join).
+  director also applies 9900 to a guest that rings while the host's roster map is in area 29, and
+  to a guest whose sign is already out when the host enters its dungeon (run #10: the guest rang
+  ~10 s before, the summon then carried no quick join) (live: `summon message type 1, host map
+  0x1d0a5a00, ChannelId 0x3f22b458bd799` -> two get_details_info -> quick join).
 * **No gather into a dungeon**: GatherGuest skips the gather while the host's map or lamp is in
   area 29 (it warped the guest to the host's dungeon lamp = its own slot's dungeon).
 * **The automatic flow**: host and guests are in the Hunter's Dream (B1 travel follows the host
@@ -215,11 +235,22 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
   part (`アイテム_祭壇`, entity 2111101) stands at (136.19, -19.17, 139.77) in m21_01; its action
   region 2112999 (box 2.2 x 8 x 1) at (131.77, -19.96, 140.54).
 
-## 7. Open / not done
+## 7. Live evidence and open points
 
-* Live: the altar ritual / quick join path was not driven end to end in the test harness (the
-  report lists what was run). The ChannelId flag offsets (+32/+64) are read by party_chalice and logged;
-  the slot-0 assumption for joins is inferred from the requesters.
+* **Run #13** (2 instances, `chalice PARTY #13`): the host (Hunter0) performs the Pthumeru
+  Chalice ritual at the First Ritual Altar (MenuScript), its search makes the shared fixed channel
+  1110692594440089 (glyph wmqbhonw), it enters m29_00 and the board gets the FormData from its
+  helper. The guest (Hunter1, Hunter's Dream) rings with 9900, is summoned: `summon message type
+  1 ... ChannelId 0x3f22b458bd799` -> `quick join request` -> `STEP_Exec_forQuickJoin` -> `slot 0,
+  dungeon 1110692594440089 ... gate mode 5` -> `load mode 1: slot 0's record ... carried over` ->
+  map m29_00_00_00, position (40.4, 31.1, -91.0) steady, cooperators 1, roster in_host_world in
+  the host's dungeon until the run ended. **Run #14** reproduced it with screenshots: both games in the
+  Pthumerian Labyrinth, the host sees the guest phantom (Hunter1) in the corridor ahead.
+* Before the fixes: run V/W the guest fell through an empty map (m255: no FormData, then the
+  quick join cancelled by state 3), run #10 the guest loaded the host's Dream copy (no 9900).
 * A guest that ends in its own copy of the dungeon (e.g. it entered the same glyph itself) is not
   synchronised to the host's progress there (section 5).
-* The exact meaning of Status / ShareLevel / TurnoutLevel values, FixedOrGeneral 1 vs 2.
+* The vanilla quick join overwrites the summoned member's slot-0 record (section 5).
+* The exact meaning of ShareLevel / TurnoutLevel values, FixedOrGeneral 1 vs 2; uploaded (root /
+  "general") dungeons with pending rite materials (Status 0) are not joinable by a summon (as in
+  vanilla: +0x54 stays 0).
