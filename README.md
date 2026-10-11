@@ -119,7 +119,11 @@ PC (several game copies, simulated internet lag), not yet between two PCs.
 
 The host needs port 9307 (UDP and TCP) reachable. Most routers open it automatically (UPnP);
 otherwise forward it by hand. Allow the Windows Firewall prompt once. Guests need nothing.
-Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
+
+No UPnP and no port forward? Each guest copies its **guest code** (`BBG1-...`, *Party* page) and
+sends it to the host, who presses *Add a guest code*: the game then connects through both routers
+(hole punching). This fails behind symmetric / carrier-grade NAT (some mobile and ISP
+connections); there, let another player host or use a VPN such as Tailscale. Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
 
 Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 [docs/party/ERSC_PARITY.md](docs/party/ERSC_PARITY.md)

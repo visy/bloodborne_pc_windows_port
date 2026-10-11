@@ -52,6 +52,7 @@
 #include <vector>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 #ifdef _WIN32
@@ -1186,7 +1187,21 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         if (SafeGet(Guest(0x5556678), &gsm) && gsm) SafeGet(gsm + 0x176f, &no_hp);
         if (player && SafeGet(player + 0x18, &a18) && a18 && SafeGet(a18 + 0x30, &a30) && a30) SafeGet(a30 + 0x18, &no_die);
         Log("test: ForceDead gates: GSM +0x176F %u, chr +0x18/+0x30/+0x18 %u (bit 0 blocks the death)", no_hp, no_die);
+        auto hp_of = [] {
+            std::uint64_t pl = LocalPlayer(), ins = 0, dm = 0;
+            int hp = -1;
+            if (pl && SafeGet(pl + 0x3b0, &ins) && ins && SafeGet(ins + 0x20, &dm) && dm) SafeGet(dm + 0x128, &hp);
+            return hp;
+        };
+        const int hp0 = hp_of();
         reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, 10000);
+        Log("test: die: HP %d -> %d right after ForceDead", hp0, hp_of());
+        std::thread([hp_of] {
+            for (int i = 1; i <= 4; ++i) {
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+                Log("test: die: HP %d (+%d s)", hp_of(), 2 * i);
+            }
+        }).detach();
     }
     std::uint8_t after = 0;
     SafeGet(wts + 8, &after);

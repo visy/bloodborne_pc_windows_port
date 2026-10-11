@@ -1287,23 +1287,9 @@ void startup_main() {
             r.st.restarted = ri.restarted;
         }
         if (ri.restarted) plog("restarted after an unclean exit (%s): rejoining", ri.why.c_str());
-        // A restarted guest takes another UDP port than its crashed game: the host's game keeps its
-        // transport connection to the old address:port until that times out (~25 s; a summon in
-        // that window goes to the dead game), but a new endpoint is a new peer - the host then
-        // releases the sign hold at once (PartyHostService context_start). Alternates between the
-        // configured port and port + 4 (guests need no open port; BB_PARTY_GUEST_PORT_SWAP=0 off).
-        if (!host && ri.restarted && !(env("BB_PARTY_GUEST_PORT_SWAP") && !env_on("BB_PARTY_GUEST_PORT_SWAP"))) {
-            const std::uint16_t base = s.party_port;
-            std::uint16_t old = base;
-            if (const auto at = ri.marker_body.find("\"udp_port\":"); at != std::string::npos)
-                old = static_cast<std::uint16_t>(std::strtoul(ri.marker_body.c_str() + at + 11, nullptr, 10));
-            const std::uint16_t want = old == base ? static_cast<std::uint16_t>(base + 4) : base;
-            bbnet::set_party_port(want);
-            plog("restarted guest: party UDP port %u (the crashed game had %u): the host sees a new peer", want, old);
-        }
         const fs::path m = marker_path();
         char body[256];
-        std::snprintf(body, sizeof body, "\"pid\":%lu,\"role\":\"%s\",\"name\":\"%s\",\"udp_port\":%u,\"started\":%lld",
+        std::snprintf(body, sizeof body, "\"pid\":%lu,\"role\":\"%s\",\"name\":\"%s\",\"started\":%lld",
                       static_cast<unsigned long>(
 #if defined(_WIN32)
                           GetCurrentProcessId()
@@ -1311,7 +1297,7 @@ void startup_main() {
                           0
 #endif
                               ),
-                      host ? "host" : "guest", s.online_id.c_str(), static_cast<unsigned>(bbnet::settings().party_port),
+                      host ? "host" : "guest", s.online_id.c_str(),
                       static_cast<long long>(std::chrono::duration_cast<std::chrono::seconds>(
                                                  std::chrono::system_clock::now().time_since_epoch())
                                                  .count()));

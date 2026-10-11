@@ -489,18 +489,6 @@ void FromApi::hold_signs(const std::string& online_id, int ms) {
         online_id.c_str(), ms / 1000);
 }
 
-bool FromApi::release_hold(const std::string& online_id) {
-    std::lock_guard<std::mutex> lk(mu_);
-    for (auto it = holds_.begin(); it != holds_.end(); ++it) {
-        if (it->first == online_id) {
-            holds_.erase(it);
-            log("from api: %s's sign hold released (it came back from another endpoint)", online_id.c_str());
-            return true;
-        }
-    }
-    return false;
-}
-
 std::size_t FromApi::drop_signs(const std::string& online_id) {
     std::lock_guard<std::mutex> lk(mu_);
     const std::size_t before = signs_.size();

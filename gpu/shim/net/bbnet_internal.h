@@ -46,8 +46,6 @@ struct Settings {
 };
 const Settings& settings();
 void set_dirs(const char* app0, const char* user_dir);
-// Moves the party UDP port before it is opened (a restarted guest: party_runtime).
-void set_party_port(std::uint16_t port);
 
 void log(const char* fmt, ...) __attribute__((format(gnu_printf, 1, 2)));
 

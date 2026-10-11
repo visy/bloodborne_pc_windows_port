@@ -5,7 +5,6 @@
 
 #include "bbnet_internal.h"
 #include "party_util.h"
-#include "from_api.h"
 #include "np_hle.h"
 
 #include <algorithm>
@@ -366,13 +365,6 @@ struct PartyHostService::Impl {
         // games drop the dead peer (signaling DEAD, MEMBER_LEFT) before it is summoned again.
         const auto old_rooms = memberships_locked(id);
         if (contexts.count(id) || !old_rooms.empty()) restarted.push_back(id);
-        if (const auto oc = contexts.find(id); oc != contexts.end() &&
-                                              (oc->second.ep.local_port != c.ep.local_port ||
-                                               oc->second.ep.local_addr != c.ep.local_addr)) {
-            // Another endpoint than the crashed game's: our game's stale transport connection does
-            // not match it, so its new sign needs no hold (party_runtime: a restarted guest's port).
-            FromApi::instance().release_hold(id);
-        }
         for (const auto& [rid, mid] : old_rooms) {
             log("party host: %s started a new game while in room %llu; its old membership ends", id.c_str(),
                 static_cast<unsigned long long>(rid));
