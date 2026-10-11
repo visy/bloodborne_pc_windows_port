@@ -1261,19 +1261,39 @@ std::string DescribeSessionMembers() {
 
 } // namespace
 
+namespace {
+constexpr std::uint64_t kOnLeaveLimit = 0x138a4a0;
+bool OnLeaveLimitOk() {
+    static const bool ok = Matches(kOnLeaveLimit, {0x55, 0x48, 0x89, 0xe5}) && CallsTo(kOnLeaveLimit + 0x77, 0x1332bc0);
+    return ok;
+}
+/// The game's own send-home of a phantom (OnLeave_Limit), let through party_travel's retarget.
+void RunOnLeaveLimit() {
+    AllowNextSendHome();
+    using LimitFn = void(BB_COOP_SYSV*)(std::uint64_t);
+    reinterpret_cast<LimitFn>(Guest(kOnLeaveLimit))(0);
+}
+std::atomic<bool> g_send_home_request{false};
+std::string g_send_home_why;  // under g_send_home_mu
+std::mutex g_send_home_mu;
+} // namespace
+
+void RequestGuestSendHome(const std::string& why) {
+    {
+        std::lock_guard<std::mutex> lk(g_send_home_mu);
+        g_send_home_why = why;
+    }
+    g_send_home_request = true;
+}
+
 bool LeaveGameSession() {
     // A guest (a phantom in the host's world): the game's own voluntary leave - OnLeave_Limit
     // (0x138A4A0, what OnLeaveMenu_Yes 0x1389FB0 runs for a phantom after the session leave): the
     // pre-summon spot, then the funnel (BeginLeave + the load home) at once. The session leave
     // alone left the game to notice a dead room 10 s later ("Session lost" 0xcc/5001, then home).
-    constexpr std::uint64_t kOnLeaveLimit = 0x138a4a0;
     const GameSnapshot before = ReadGameState(false);
-    static const bool limit_ok = Matches(kOnLeaveLimit, {0x55, 0x48, 0x89, 0xe5}) &&
-                                 CallsTo(kOnLeaveLimit + 0x77, 0x1332bc0);
-    if (before.session_role == RoleClient && limit_ok) {
-        AllowNextSendHome();
-        using LimitFn = void(BB_COOP_SYSV*)(std::uint64_t);
-        reinterpret_cast<LimitFn>(Guest(kOnLeaveLimit))(0);
+    if (before.session_role == RoleClient && OnLeaveLimitOk()) {
+        RunOnLeaveLimit();
         const GameSnapshot after = ReadGameState(false);
         Log("leave: OnLeave_Limit (the guest's own leave): role %s (%d)", SessionRoleName(after.session_role),
             after.session_role);
@@ -1907,6 +1927,27 @@ void PartyDirector::Tick() {
         s.cooperators = st.last.cooperators;
     }
     LogTransitions(st, s);
+    // A6: the host ended the party (or is gone) while this guest stands in its world: home at once
+    // through the game's own send-home (OnLeave_Limit) instead of the game's room-gone path 10 s
+    // later with "Session lost" (0xcc/5001 from OnRoomDisappeared 0x138A590, live).
+    if (g_send_home_request.load(std::memory_order_relaxed) && s.world_up && !s.loading) {
+        g_send_home_request = false;
+        std::uint64_t wts = 0;
+        std::uint8_t own = 1;
+        SafeGet(Guest(0x5556678), &wts);
+        if (wts) SafeGet(wts + 0x1592, &own);
+        std::string why;
+        {
+            std::lock_guard<std::mutex> lk(g_send_home_mu);
+            why = g_send_home_why;
+        }
+        if (own == 0 && OnLeaveLimitOk()) {
+            RunOnLeaveLimit();
+            Log("host lost (%s): home now (OnLeave_Limit)", why.c_str());
+        } else {
+            Log("host lost (%s): already in the own world", why.c_str());
+        }
+    }
     if (s.world_up && !s.loading && !st.world_seen) {
         st.world_seen = true;
         st.world_at = now;
