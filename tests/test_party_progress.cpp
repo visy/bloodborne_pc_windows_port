@@ -7,6 +7,8 @@
 // Build and run: ninja -C out/gpu party-progress-test && out/gpu/party-progress-test.exe
 #include "party/party_progress.h"
 
+#include <algorithm>
+
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -718,6 +720,47 @@ static void TestWorldMirror() {
     CHECK(gs2.ReadVisible(2200, &v) && !v);
     CHECK(gs2.ReadVisible(52410100, &v) && !v);
     CHECK(gs2.ReadVisible(72410202, &v) && v);
+
+    // D3: the guest's own changes in the overlay are its local changes (not the host's)
+    CHECK(gm.LocalChanges(ov, guest.ops(), 64).empty());
+    guest.SetOverlayBit(12410200, true);   // the guest pulled a lever
+    guest.SetOverlayBit(72410202, false);  // and something it cleared
+    auto lc = gm.LocalChanges(ov, guest.ops(), 64);
+    CHECK(lc.size() == 2);
+    CHECK(std::find(lc.begin(), lc.end(), std::make_pair(u32(12410200), true)) != lc.end());
+    CHECK(std::find(lc.begin(), lc.end(), std::make_pair(u32(72410202), false)) != lc.end());
+    CHECK(gm.LocalChanges(ov, guest.ops(), 1).size() == 1);
+    guest.SetOverlayBit(2005, true);  // a session flag is never a local change (not masked)
+    CHECK(gm.LocalChanges(ov, guest.ops(), 64).size() == 2);
+    // a host change not yet applied: that group is skipped (its difference may be the host's)
+    WorldImage lever;
+    lever.groups[u32(PoolKeyOfId(12410200))] = gm.Group(PoolKeyOfId(12410200));
+    PutBit(lever.groups[u32(PoolKeyOfId(12410200))].data(), 12410200 % kBitsPerBlock, true);
+    gm.Receive(lever);
+    lc = gm.LocalChanges(ov, guest.ops(), 64);
+    CHECK(lc.size() == 1 && lc[0].first == 72410202u);
+    CHECK(gm.Apply(ov, guest.ops(), false, &r));
+    lc = gm.LocalChanges(ov, guest.ops(), 64);
+    CHECK(lc.size() == 1 && lc[0].first == 72410202u);  // the host took the lever: no longer local
+
+    // D4: instanced items: the mirror leaves item pickup bits alone; they are no local changes
+    CHECK(CategoryOf(52410100) == Category::item_lot_picked);
+    CHECK(GetBit(WorldItemMask(PoolKeyOfId(52410100)).data(), 52410100 % kBitsPerBlock));
+    CHECK(!GetBit(WorldItemMask(PoolKeyOfId(12410200)).data(), 12410200 % kBitsPerBlock));
+    SetInstancedItems(true);
+    guest.SetOverlayBit(52410100, true);  // the guest picked it up
+    WorldImage items;
+    items.groups[u32(PoolKeyOfId(52410101))] = gm.Group(PoolKeyOfId(52410101));
+    PutBit(items.groups[u32(PoolKeyOfId(52410101))].data(), 52410101 % kBitsPerBlock, true);  // host took another
+    gm.Receive(items);
+    CHECK(gm.Apply(ov, guest.ops(), false, &r));
+    CHECK(gs2.ReadVisible(52410101, &v) && !v);  // the host's pickup is not the guest's
+    CHECK(gs2.ReadVisible(52410100, &v) && v);   // the guest's own stays
+    lc = gm.LocalChanges(ov, guest.ops(), 64);
+    CHECK(lc.size() == 1 && lc[0].first == 72410202u);  // item bits are reported by the store glue (own pool)
+    SetInstancedItems(false);
+    CHECK(gm.Apply(ov, guest.ops(), true, &r));
+    CHECK(gs2.ReadVisible(52410101, &v) && v);  // instancing off: the host's world again
 }
 
 static void TestBbpf(const char* source_dir) {

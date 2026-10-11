@@ -35,7 +35,7 @@ What they do for a player: [docs/PARTY.md](../PARTY.md).
 | `BB_PARTY_ITEMS` | Share the host's item rewards | 1 |
 | `BB_PARTY_GUEST_INSIGHT` | Insight for bosses | `parity` (`full`, `0`) |
 | `BB_PARTY_PROGRESS` | Share story progress | 1 |
-| `BB_PARTY_PROGRESS_NPC` | Also NPC quests | 0 |
+| `BB_PARTY_PROGRESS_NPC` | Also NPC quests (shared NPC quest choices) | 1 |
 | `BB_PARTY_STORY` | Share cutscenes and endings | 1 |
 | `BB_PARTY_STORY_MIRROR` | Play them live with the host | 1 |
 | `BB_SAVE_BACKUP_MINUTES` | Back up every (min) | 10 (0 = only at start) |

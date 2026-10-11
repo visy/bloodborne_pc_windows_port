@@ -164,6 +164,9 @@ std::string PhantomEventToJsonText(const PhantomEvent& e) {
     if (e.kind == PhantomEventKind::Insight) {
         v.set("n", e.insight);
         v.set("event", e.source_event);
+        if (!e.boss) {
+            v.set("boss", false);
+        }
     }
     return json::dump(v, 0);
 }
@@ -202,6 +205,11 @@ bool PhantomEventFromJsonText(const std::string& text, PhantomEvent* out, std::s
             }
             e.insight = static_cast<int>(n);
             e.source_event = json::u32(v, "event");
+            const json::Value* b = v.find("boss");  // absent (older hosts): a boss kill
+            if (b && b->type != json::Value::Type::Bool) {
+                throw std::runtime_error("boss not a bool");
+            }
+            e.boss = !b || b->boolean;
         }
         *out = e;
         return true;
@@ -695,16 +703,25 @@ void PhantomEmevdInstruction(std::int32_t event, std::int32_t bank, std::int32_t
         std::lock_guard<std::mutex> lk(g_host_mu);
         grant = g_tracker.OnInitializeEvent(event, target, n, now);
     }
+    bool boss = true;
     if (!grant) {
-        return;
+        // G2: Insight that is not a boss kill (a boss's first encounter, story moments): everyone
+        // present gets it too - the guest's game has no native +1 for it.
+        if (target != BossInsightTracker::kInsightEvent || n <= 0 || n > 99) {
+            return;
+        }
+        grant = n;
+        boss = false;
     }
     PhantomEvent e;
     e.kind = PhantomEventKind::Insight;
     e.seq = NextSeq();
     e.insight = *grant;
     e.source_event = static_cast<u32>(event);
+    e.boss = boss;
     Queue(e);
-    Log("host boss kill: event %d starts 9350 with %d Insight; telling the guests", event, *grant);
+    Log("host %s: event %d starts 9350 with %d Insight; telling the guests", boss ? "boss kill" : "encounter / story Insight",
+        event, *grant);
 }
 
 void PhantomNoteHostTravel(const TravelIntent& t) {
@@ -769,7 +786,8 @@ void PhantomOnEvent(const std::string& body) {
     }
     case PhantomEventKind::Insight: {
         const bool present = now - g_last_client.load() <= kParticipation;
-        const int grant = GuestInsightGrant(e.insight, g_cfg.insight);
+        const int grant = e.boss ? GuestInsightGrant(e.insight, g_cfg.insight)
+                                 : (g_cfg.insight == InsightMode::Off ? 0 : e.insight);
         std::lock_guard<std::mutex> lk(g_guest_mu);
         if (e.seq <= g_last_insight) {
             break;

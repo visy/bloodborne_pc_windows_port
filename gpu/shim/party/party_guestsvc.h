@@ -178,6 +178,8 @@ bool GuestServicesOpen();
 /// The ChrIns of a map character by its talk script / entity id (WorldChrMan chr sets), 0 if none
 /// (main thread; live test fixtures).
 std::uint64_t GuestSvcFindChr(std::uint32_t id);
+/// An action-button prompt text was looked up in the last 400 ms (*id: its text id).
+bool GuestSvcPromptUp(std::uint32_t* id);
 #endif
 
 } // namespace coop

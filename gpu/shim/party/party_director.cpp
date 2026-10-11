@@ -31,6 +31,7 @@
 #include "party_online.h"
 #include "party_perf.h"
 #include "party_watchdog.h"
+#include "party_worldact.h"
 #include "../bbport_game_menu.h"
 
 #include "../net/bbnet_internal.h"
@@ -116,7 +117,8 @@ struct TravelStep {
     enum Kind {
         HostWarp, HostDie, GuestDie, HostKill, HostMove, GuestMove,
         HostPress, GuestPress, HostMark, GuestMark, HostStage, HostWalk, HostHeadstone, HostFlag, HostLastLamp,
-        HostOutage, GuestOutage  // a simulated total network outage of `buttons` ms (BB_NET_SIM on)
+        HostOutage, GuestOutage, // a simulated total network outage of `buttons` ms (BB_NET_SIM on)
+        HostObj, GuestObj, HostChr, GuestChr // stand at a map object / character: ENTITY[:DIST[:ANGLE]]
     } kind = HostWarp;
     std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30; HostKill: the entity id
     float pos[3] = {};    // HostMove / GuestMove: the chr warp target (map coordinates)
@@ -798,6 +800,10 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::HostWalk: return "host_walk";
     case TravelStep::HostHeadstone: return "host_headstone";
     case TravelStep::HostFlag: return "host_flag";
+    case TravelStep::HostObj: return "host_obj";
+    case TravelStep::GuestObj: return "guest_obj";
+    case TravelStep::HostChr: return "host_chr";
+    case TravelStep::GuestChr: return "guest_chr";
     }
     return "?";
 }
@@ -1030,7 +1036,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     auto mine = [&](const TravelStep& step) {
         return (step.kind == TravelStep::GuestDie || step.kind == TravelStep::GuestMove ||
                 step.kind == TravelStep::GuestPress || step.kind == TravelStep::GuestMark ||
-                step.kind == TravelStep::GuestOutage) == (role == PartyRole::Guest);
+                step.kind == TravelStep::GuestOutage || step.kind == TravelStep::GuestObj ||
+                step.kind == TravelStep::GuestChr) == (role == PartyRole::Guest);
     };
     if (t.script_on) {
         RunTravelScript(st, s, now);
@@ -1054,7 +1061,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         (next_kind == TravelStep::HostKill || next_kind == TravelStep::HostMove || next_kind == TravelStep::GuestMove ||
          next_kind == TravelStep::HostPress || next_kind == TravelStep::GuestPress || next_kind == TravelStep::HostWalk ||
          next_kind == TravelStep::HostOutage || next_kind == TravelStep::GuestOutage ||
-         next_kind == TravelStep::HostLastLamp ||
+         next_kind == TravelStep::HostLastLamp || next_kind == TravelStep::HostObj ||
+         next_kind == TravelStep::GuestObj || next_kind == TravelStep::HostChr || next_kind == TravelStep::GuestChr ||
          next_kind == TravelStep::HostMark || next_kind == TravelStep::GuestMark || !t.steps[t.next_step].map.empty())) {
         if (!steady || (!t.ran && !t.armed) || t.joins < t.steps[t.next_step].min_join) {
             return; // as the first step of a chain it still waits for the join
@@ -1143,6 +1151,17 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             Log("test: Hunter's Mark: SpEffect %d %s (%s)", effect, ok ? "applied" : "NOT applied",
                 DescribeHere(s).c_str());
         }
+    } else if (step.kind == TravelStep::HostObj || step.kind == TravelStep::GuestObj ||
+               step.kind == TravelStep::HostChr || step.kind == TravelStep::GuestChr) {
+        int entity = 0;
+        float dist = 1.2f, angle = 0;
+        std::sscanf(step.args.c_str(), "%d:%f:%f", &entity, &dist, &angle);
+        std::string what;
+        const bool obj = step.kind == TravelStep::HostObj || step.kind == TravelStep::GuestObj;
+        const bool ok = obj ? worldact::StandAtObject(entity, dist, angle, &what)
+                            : worldact::StandAtChr(entity, dist, angle, &what);
+        Log("test: %s %d (%.1f m, %.0f deg): %s", TravelStepName(step.kind), entity, double(dist), double(angle),
+            ok ? what.c_str() : "FAILED: not loaded");
     } else if (step.kind == TravelStep::HostFlag) {
         // A story choice the game makes in a talk menu (e.g. 72100131 = refuse Gehrman): SetEventFlag.
         const std::uint32_t id = static_cast<std::uint32_t>(std::strtoul(step.args.c_str(), nullptr, 10));
@@ -1790,9 +1809,15 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.steps.push_back(step);
             } else if (item.rfind("host_mark", 0) == 0 || item.rfind("guest_mark", 0) == 0 ||
                        item.rfind("host_stage=", 0) == 0 || item.rfind("host_walk=", 0) == 0 ||
-                       item.rfind("host_headstone=", 0) == 0 || item.rfind("host_flag=", 0) == 0) {
+                       item.rfind("host_headstone=", 0) == 0 || item.rfind("host_flag=", 0) == 0 ||
+                       item.rfind("host_obj=", 0) == 0 || item.rfind("guest_obj=", 0) == 0 ||
+                       item.rfind("host_chr=", 0) == 0 || item.rfind("guest_chr=", 0) == 0) {
                 TravelStep step;
-                step.kind = item.rfind("guest_mark", 0) == 0    ? TravelStep::GuestMark
+                step.kind = item.rfind("host_obj=", 0) == 0     ? TravelStep::HostObj
+                            : item.rfind("guest_obj=", 0) == 0  ? TravelStep::GuestObj
+                            : item.rfind("host_chr=", 0) == 0   ? TravelStep::HostChr
+                            : item.rfind("guest_chr=", 0) == 0  ? TravelStep::GuestChr
+                            : item.rfind("guest_mark", 0) == 0    ? TravelStep::GuestMark
                             : item.rfind("host_mark", 0) == 0   ? TravelStep::HostMark
                             : item.rfind("host_stage=", 0) == 0 ? TravelStep::HostStage
                             : item.rfind("host_walk=", 0) == 0  ? TravelStep::HostWalk
@@ -2028,6 +2053,8 @@ void PartyDirector::Tick() {
     PhantomTick(link);
     // Guests use the Doll, shops and workshop in the host's Dream (party_guestsvc.h).
     GuestServicesTick(s, link);
+    // A guest's levers / doors / NPC talk change the host's world (party_worldact.h).
+    worldact::Tick(s, link);
     zone.Next(perf::Zone::DirRing);
     if (st.test.on) {
         RunTravelSteps(st, s, role, now);
@@ -2272,6 +2299,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     InstallStoryHooks();    // C4: bank-2002 capture, guest mirror / replay (byte-verified)
     InstallItemsPatches();  // C3: award hook, parity patches (byte-verified)
     PhantomInit();          // guest respawn at the host's lamp, refill, boss Insight
+    worldact::Init();       // guest world actions, instanced treasure pickups (byte-verified)
     GuestServicesInit();    // guest Doll / shops / workshop in the host's Dream (byte-verified)
     g_tick_installed = HookPrologue(kFlipperUpdate,
                                     {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48,
