@@ -9,6 +9,7 @@
 
 #include "coop_hooks.h"
 #include "game_state.h"
+#include "party_phantom.h"
 #include "party_progress.h"
 #include "party_travel.h"
 #include "party_ids.h"
@@ -1711,7 +1712,9 @@ void GuestTick(const GameSnapshot& s, double now) {
                 // max +0x12C.
                 const u64 dm = Field<u64>(Field<u64>(s.player, 0x3b0), 0x20);
                 const int hp = Field<int>(dm, 0x128, -1), mx = Field<int>(dm, 0x12c, -1);
-                if (dm && st.hp_before > 0 && hp >= 0 && hp != st.hp_before) {
+                if (RestedFromTravel(st.intent)) {
+                    Log("guest: HP %d after the load (a rest travel: the refill heals, max %d)", hp, mx);
+                } else if (dm && st.hp_before > 0 && hp >= 0 && hp != st.hp_before) {
                     const int keep = st.hp_before < mx ? st.hp_before : mx;
                     SafeWrite(dm + 0x128, &keep, 4);
                     Log("guest: HP %d after the load -> %d as before the travel (max %d)", hp, keep, mx);

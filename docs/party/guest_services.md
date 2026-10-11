@@ -243,7 +243,7 @@ whoever uses a lamp or headstone, **the whole party travels**, led by the host (
   (two TRAVEL, two "rested"). `CaptureHost` now drops the same warp (kind, lamp, map, respawn
   record) seen again within 1 s; the next runs logged one TRAVEL.
 * **World lamps in a party [R, fixed 2026-10-11]** (host: party mode, `BB_PARTY_HEADSTONES`
-  default on; guest: `BB_PARTY_GUEST_LAMPS=1`). How a lamp works: the lamp is a **talk script**,
+  default on; guest: guest lamps, on by default since 2026-10-11, `BB_PARTY_GUEST_LAMPS=0` off). How a lamp works: the lamp is a **talk script**,
   `tAAB000..tAAB003` of its map (Central Yharnam's lamp 2411951 = **t241001**; the Dream's
   headstones are t210000..t210003 of the same family). Each frame it registers its action button
   (ActionButtonParam **6100** "Light Lamp" / **6101** "Return to the Hunter's Dream", type 0xD,
@@ -268,8 +268,30 @@ whoever uses a lamp or headstone, **the whole party travels**, led by the host (
     (screenshots), YES -> `lamp: the guest's warp to 2102950 becomes a request to the host`, the host
     warped (`slot 1 used a lamp / headstone: the host warps to 2102950`, one TRAVEL), the guest
     followed by B2 into the Dream.
-  * Lighting a new lamp ("Light Lamp", 6100) goes through the same script and the same two gates;
-    not run live (the test save has every lamp of the reachable maps lit).
+  * **Lighting a new lamp [R]** (test fixture: the host's own save loses Central Yharnam's lamp,
+    `BB_PARTY_PROGRESS_TEST_CLEAR=12417830,12417831,72410201`: the lamp object's base+10 / base+11
+    of its flag base 12417820 and its lamp-lit flag 7AAB02xx). Through the mirror the guest's
+    prompt there is "Light lamp" too although its own save has the lamp lit (screenshot).
+    - Host lights it: 6100 registered, Cross -> `host flag 72410201 = 1`, then 12417830/831; the
+      guest's overlay follows within ~1 s (`blocks changed by the host: 72410:1`, `12417:2`) and the
+      guest's prompt at the lamp is "Return to the Hunter's Dream" (screenshot).
+    - Guest lights it: its game writes the flags into the host-world overlay only (own pool:
+      0 differing flags before / after, BBPF -pool dumps). `GuestLampLitTick` (guest, load mode 1,
+      once a second) sends the lamp flags its overlay has and the host's mirror image lacks - the
+      lamp's base+10 / base+11 from its FrpgNetMan +0xC70 entry and the map's 7AAB02xx - as EVENT
+      **`lamp_lit`** `{ids}` (at most 16, each `LampLitFlagAllowed`); the host sets them in its world
+      (`lamp: slot 1 lit a lamp in the host's world: set 72410201`) and the mirror carries the rest.
+      The guest's own save never changes; the host's world is lit for the whole party.
+* **Default on (2026-10-11)**: guest lamps / headstones are on in party mode; `BB_PARTY_GUEST_LAMPS=0`
+  (or the switch "Guests use lamps" on the Party members page / the overlay's party section, ini
+  `party_guest_lamps`; read at start) turns them off. With them on, live: the guest's Doll level up
+  still works (`LEVEL UP on the guest: level 37 -> 38`), the guest's headstone travel works (above).
+* **Rest via a guest's lamp [R]**: the guest's lamp use is a request; the host makes the warp, so
+  the host's load is the rest (its world's enemies respawn in the host's game, the only world
+  there is) and the guest gets the "rested" refill: vials and bullets from storage, and HP (B2 no
+  longer puts the pre-travel HP back after a rest travel, `RestedFromTravel`; the refill tops HP up
+  too). Live (`hurt`: guest HP 53/106 before): after the follow load `guest: HP 106 after the load
+  (a rest travel: the refill heals)`, `refill (host rested): vials and bullets topped up`.
   * Test steps: `lampwalk` stands the player 1 m in front of the nearest probed lamp (its map
     object's matrix: 0x13C9AF0 record +0x24C/+0x25C/+0x26C); `hostlamppress` (host) and `lamppress`
     (guest) press Cross, Left, Cross; `buttonprobe` logs every action-button registration

@@ -510,7 +510,17 @@ bool Refill(RefillReason why) {
     }
     reinterpret_cast<VoidFn>(Guest(kBloodBullets))();
     reinterpret_cast<VoidFn>(Guest(kReplenish))();
-    Log("refill (%s): vials and bullets topped up from storage (0x14DBB70, 0x14DACE0)", RefillReasonName(why));
+    // A rest also heals (a lamp / the Dream): HP to max. The guest's chr data module (chr +0x3B0
+    // -> +0x20): HP +0x128, max +0x12C.
+    int hp = -1, mx = -1;
+    const u64 player = LocalPlayer();
+    u64 cm = 0, dm = 0;
+    if (why == RefillReason::HostRested && player && SafeGet(player + 0x3b0, &cm) && cm && SafeGet(cm + 0x20, &dm) &&
+        dm && SafeGet(dm + 0x128, &hp) && SafeGet(dm + 0x12c, &mx) && hp > 0 && mx > 0 && hp < mx) {
+        SafeWrite(dm + 0x128, &mx, 4);
+    }
+    Log("refill (%s): vials and bullets topped up from storage (0x14DBB70, 0x14DACE0)%s", RefillReasonName(why),
+        hp > 0 && mx > 0 && hp < mx ? (", HP " + std::to_string(hp) + " -> " + std::to_string(mx)).c_str() : "");
     return true;
 }
 

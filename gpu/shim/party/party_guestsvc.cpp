@@ -92,6 +92,58 @@ bool LampTalk(std::uint32_t talk) {
     return map >= 210 && map <= 369 && map % 10 <= 2 && talk % 1000 <= 3;
 }
 
+bool LampLitFlagAllowed(std::uint32_t id) {
+    const std::uint32_t type = id / 10000000, area = id / 100000 % 100, zone = id / 1000 % 10, n = id % 1000;
+    if (area < 21 || area > 36 || id / 10000 % 10 > 2) {
+        return false;
+    }
+    if (type == 1 && zone == 7 && n >= 800 && n < 900 && (n % 20 == 10 || n % 20 == 11)) {
+        return true;  // the lamp object's base+10 / base+11
+    }
+    return type == 7 && zone == 0 && n >= 200 && n < 300;  // 7AAB02xx lamp lit
+}
+
+std::string LampLitToJsonText(const std::vector<std::uint32_t>& ids) {
+    json::Value v = json::Value::make_object();
+    json::Value a = json::Value::make_array();
+    for (std::uint32_t id : ids) {
+        a.push(static_cast<unsigned>(id));
+    }
+    v.set("ids", std::move(a));
+    return json::dump(v, 0);
+}
+
+bool LampLitFromJsonText(const std::string& text, std::vector<std::uint32_t>* ids, std::string* error) {
+    json::Value v;
+    std::string err;
+    if (!json::parse(text, v, err)) {
+        if (error) {
+            *error = err;
+        }
+        return false;
+    }
+    try {
+        if (v.type != json::Value::Type::Object || json::arr(v, "ids").size() > kMaxLampLitIds) {
+            throw std::runtime_error("bad lamp_lit body");
+        }
+        std::vector<std::uint32_t> out;
+        for (const json::Value& x : json::arr(v, "ids")) {
+            const std::uint64_t id = json::as_u64(x, "id");
+            if (id > 0xffffffffull || !LampLitFlagAllowed(std::uint32_t(id))) {
+                throw std::runtime_error("not a lamp flag");
+            }
+            out.push_back(std::uint32_t(id));
+        }
+        *ids = std::move(out);
+        return true;
+    } catch (const std::exception& e) {
+        if (error) {
+            *error = e.what();
+        }
+        return false;
+    }
+}
+
 std::string LampRequestToJsonText(const LampRequest& r) {
     json::Value v = json::Value::make_object();
     v.set("id", r.id);
@@ -1199,6 +1251,86 @@ std::vector<EmevdSkipRule> GuestServicesSkipRules() {
     return out;
 }
 
+std::mutex g_lit_mu;
+std::deque<std::pair<int, std::vector<std::uint32_t>>> g_lit_in;  // host: from guests
+std::vector<std::uint32_t> g_lit_out;                             // guest: to send
+
+bool GuestServicesOnLampLit(int slot, const std::string& body, std::string* why) {
+    if (!g_lamps.load() || PartyDirector::Get().Role() != PartyRole::Host) {
+        if (why) {
+            *why = "guest lamps are off on the host";
+        }
+        return false;
+    }
+    std::vector<std::uint32_t> ids;
+    if (!LampLitFromJsonText(body, &ids, why)) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lk(g_lit_mu);
+    if (g_lit_in.size() < 16) {
+        g_lit_in.emplace_back(slot, std::move(ids));
+    }
+    return true;
+}
+
+/// Guest, in the host's world (load mode 1), once a second: a lamp the guest lit there sets its
+/// flags in the host-world overlay only (the game writes the visible tree; the own pool keeps
+/// its own lamps). The lamp flags its overlay has and the host's mirror image lacks go to the host
+/// as EVENT lamp_lit; the host sets them in its world and the mirror brings them back.
+void GuestLampLitTick(const GameSnapshot& s) {
+    static double last = 0;
+    static std::uint32_t map = 0;
+    static std::vector<std::uint32_t> sent;
+    if (s.session_role != kSessionRoleClient || !s.world_up || s.loading || progress::FlagLoadMode() != 1 ||
+        Now() - last < 1.0) {
+        return;
+    }
+    last = Now();
+    if (s.map_id != map) {
+        map = s.map_id;
+        sent.clear();
+    }
+    std::vector<std::uint32_t> ids;
+    auto consider = [&](std::uint32_t id) {
+        bool mine = false, host = false;
+        if (LampLitFlagAllowed(id) && progress::ReadFlag(id, &mine) && mine && progress::HostWorldFlag(id, &host) &&
+            !host && std::find(sent.begin(), sent.end(), id) == sent.end() && ids.size() < kMaxLampLitIds) {
+            ids.push_back(id);
+        }
+    };
+    // The lamps of this map: FrpgNetMan (0x553B120) +0xC70 entries, +0x14 = object flag base.
+    std::uint64_t net = 0, c70 = 0, head = 0, n = 0;
+    if (SafeGet(Guest(0x553b120), &net) && net && SafeGet(net + 0xc70, &c70) && c70 && SafeGet(c70 + 0x30, &head) &&
+        head && SafeGet(head, &n)) {
+        for (int guard = 0; n && n != head && guard < 512; ++guard) {
+            std::uint64_t e = 0;
+            std::int32_t base = -1;
+            if (SafeGet(n + 0x10, &e) && e && SafeGet(e + 0x14, &base) && base >= 0) {
+                consider(std::uint32_t(base) + 10);
+                consider(std::uint32_t(base) + 11);
+            }
+            if (!SafeGet(n, &n)) {
+                break;
+            }
+        }
+    }
+    const std::uint32_t area = s.map_id >> 24, block = (s.map_id >> 16) & 0xff;
+    for (std::uint32_t k = 200; k < 300; ++k) {
+        consider(70000000 + area * 100000 + block * 10000 + k);
+    }
+    if (ids.empty()) {
+        return;
+    }
+    sent.insert(sent.end(), ids.begin(), ids.end());
+    std::string list;
+    for (std::uint32_t id : ids) {
+        list += " " + std::to_string(id);
+    }
+    Log("lamp: the guest lit a lamp of the host's world (overlay:%s); asking the host to light it", list.c_str());
+    std::lock_guard<std::mutex> lk(g_lit_mu);
+    g_lit_out.insert(g_lit_out.end(), ids.begin(), ids.end());
+}
+
 bool GuestServicesOnLampRequest(int slot, const std::string& body, std::string* why) {
     if (!g_lamps.load()) {
         if (why) {
@@ -1485,6 +1617,18 @@ void LampPressTick(const GameSnapshot& s, double now) {
     }
     if (g.test.find("lampwalk") != std::string::npos && !P.walked) {
         P.walked = WalkToLamp(s);  // then the prompt check on the next round
+        if (P.walked && g.test.find("hurt") != std::string::npos) {
+            // "hurt": half HP before the rest (does the party rest heal the guest?). Chr data module
+            // chr +0x3B0 -> +0x20: HP +0x128, max +0x12C.
+            std::uint64_t cm = 0, dm = 0;
+            std::int32_t mx = 0;
+            if (SafeGet(s.player + 0x3b0, &cm) && cm && SafeGet(cm + 0x20, &dm) && dm && SafeGet(dm + 0x12c, &mx) &&
+                mx > 1) {
+                const std::int32_t half = mx / 2;
+                SafeWrite(dm + 0x128, &half, 4);
+                Log("test: hurt: guest HP set to %d / %d before the rest", half, mx);
+            }
+        }
         if (P.walked) {
             return;
         }
@@ -1595,6 +1739,33 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
     for (const LampRequest& r : out) {
         link->send_event(0, kLampRequestEventName, LampRequestToJsonText(r));
         Log("lamp: request %u sent to the host", r.id);
+    }
+    if (role == PartyRole::Guest) {
+        GuestLampLitTick(s);
+        std::vector<std::uint32_t> lit;
+        {
+            std::lock_guard<std::mutex> lk(g_lit_mu);
+            lit.swap(g_lit_out);
+        }
+        if (!lit.empty() && link) {
+            link->send_event(0, kLampLitEventName, LampLitToJsonText(lit));
+        }
+    } else if (role == PartyRole::Host) {
+        std::deque<std::pair<int, std::vector<std::uint32_t>>> lit;
+        {
+            std::lock_guard<std::mutex> lk(g_lit_mu);
+            lit.swap(g_lit_in);
+        }
+        for (const auto& [slot, ids] : lit) {
+            std::string list;
+            for (std::uint32_t id : ids) {
+                bool before = false;
+                progress::ReadFlag(id, &before);
+                const bool ok = progress::WriteFlagOwnSave(id, true);  // the host's world (load mode 0)
+                list += " " + std::to_string(id) + (before ? "(was set)" : ok ? "" : "(NOT written)");
+            }
+            Log("lamp: slot %d lit a lamp in the host's world: set%s", slot, list.c_str());
+        }
     }
     for (const auto& [slot, r] : in) {
         std::string why;
