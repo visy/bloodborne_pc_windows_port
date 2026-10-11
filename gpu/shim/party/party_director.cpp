@@ -746,7 +746,7 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
             st.continue_held = false;
         }
     };
-    static const bool trace = !std::getenv("BB_PARTY_TITLE_TRACE") || std::getenv("BB_PARTY_TITLE_TRACE")[0] != '0';
+    static const bool trace = std::getenv("BB_PARTY_TITLE_TRACE") && std::getenv("BB_PARTY_TITLE_TRACE")[0] == '1';
     if (trace) {
         // The title's screens by their texts (message ids looked up in the last 0.4 s).
         static std::string last;

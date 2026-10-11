@@ -125,6 +125,7 @@ Instance::Instance(const Frontend::WindowSystemInfo& window_info, s32 physical_d
                    bool enable_validation, bool enable_crash_diagnostic)
     : instance{CreateInstance(window_info.type, enable_validation, enable_crash_diagnostic)},
       physical_devices{EnumeratePhysicalDevices(instance)} {
+    bb_boot_mark("Vulkan instance ready");
     if (enable_validation) {
         debug_callback = CreateDebugCallback(*instance);
     }
