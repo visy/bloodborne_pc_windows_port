@@ -13,6 +13,7 @@
 #include "party_phantom.h"
 #include "party_progress.h"
 #include "party_travel.h"
+#include "party_story.h"
 #include "party_ids.h"
 #include "lua_events.h"
 #include "seamless_rules.h"
@@ -1687,6 +1688,12 @@ bool PreRingSpacing(const GameSnapshot& s, u32 host_map) {
 /// Safety net: a client in the host's world (GSM+0x1592 == 0) never plays the opening cutscene
 /// (event 12410000's EMEVD 2002 remo): its flags come from the host's overlay, which may lack them.
 bool ClientIntroSkip(int event_id, int bank, int id) {
+    if (bank == 2002 && id >= 1 && id <= 7 && event_id > 0 && Role() == RoleClient &&
+        StoryMirroredEvent(static_cast<std::uint32_t>(event_id))) {
+        // The live mirror (party_story) already played this event's scene with the host.
+        Log("client: event %d's 2002[%d] skipped: its cutscene already played as the live mirror", event_id, id);
+        return true;
+    }
     if (bank != 2002 || event_id != 12410000 || !g_on.load() || Role() != RoleClient ||
         Field<u8>(Slot(kSlotGsm), 0x1592) != 0) {
         return false;

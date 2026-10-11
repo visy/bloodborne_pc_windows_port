@@ -251,6 +251,9 @@ void InstallStoryHooks();
 bool PopHostStory(StoryIntent* out);
 /// Guest: the host's intent (any thread; the PartyLink callback).
 void RequestGuestStory(const StoryIntent& s);
+/// Guest: the live mirror played the cutscene of EMEVD event `event_id` in the last 10 minutes
+/// (the client's own copy of that event's 2002 is then a duplicate).
+bool StoryMirroredEvent(std::uint32_t event_id);
 /// Main thread, once a frame (the coop tick): host polls, guest mirror / replay.
 void StoryTick();
 /// Host, any thread: a member joined (its catch-up gets the host's time of day, e.g. the Blood Moon).

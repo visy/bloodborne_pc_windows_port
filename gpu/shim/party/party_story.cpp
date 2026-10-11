@@ -27,6 +27,7 @@
 #include <cstdarg>
 #include <cstdlib>
 #include <fstream>
+#include <map>
 #include <mutex>
 #include <sstream>
 #endif
@@ -1342,6 +1343,15 @@ void InstallStoryHooks() {
     Log("on: mirror %s, player argument %d", g_guest.mirror_enabled ? "on" : "off", g_player_arg);
 }
 
+// Guest: EMEVD events whose cutscene the live mirror played (event id -> Now()). The host-world
+// copy of the same event runs on the client too and plays the scene again once the host's event
+// flag reaches it (live: Mergo's arena entry 26000010 played twice, the 2nd 0.1 s after the
+// mirror's ended, `guest: EMEVD 2002[3] ... from event 12601802`); the EMEVD skip predicate
+// (party_b2 ClientIntroSkip) drops the client's 2002 of such an event.
+constexpr double kMirrorDedupeSeconds = 600.0;
+std::mutex g_mirrored_mu;
+std::map<std::uint32_t, double> g_mirrored;
+
 bool PopHostStory(StoryIntent* out) {
     std::lock_guard<std::mutex> lk(g_host_mu);
     return g_host_queue.Pop(out);
@@ -1359,8 +1369,18 @@ void RequestGuestStory(const StoryIntent& s) {
         std::lock_guard<std::mutex> lk(g_guest_mu);
         taken = g_guest.Offer(s, phantom, Now());
     }
+    if (taken && phantom && s.kind == StoryKind::Cutscene && s.event_id) {
+        std::lock_guard<std::mutex> lk(g_mirrored_mu);
+        g_mirrored[s.event_id] = Now();
+    }
     Log("guest %s %s%s", DescribeStory(s).c_str(), taken ? "taken" : "ignored (not newer than the last)",
         taken && phantom ? " (phantom: live mirror)" : "");
+}
+
+bool StoryMirroredEvent(std::uint32_t event_id) {
+    std::lock_guard<std::mutex> lk(g_mirrored_mu);
+    const auto it = g_mirrored.find(event_id);
+    return it != g_mirrored.end() && Now() - it->second < kMirrorDedupeSeconds;
 }
 
 bool StoryBusy() {
