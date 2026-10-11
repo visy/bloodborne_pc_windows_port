@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <array>
 #include <deque>
 #include <map>
 #include <mutex>
@@ -1890,6 +1891,7 @@ void FallbackCleanupTick(const GameSnapshot& s) {
 // was gone and the bell had to re-summon it (live r5). With no host travel within the grace
 // (BB_PARTY_B2_DEATH_GRACE s, default 8; 0 = no hold) the usual redirect runs.
 std::atomic<double> g_death_held_at{0};
+std::atomic<double> g_last_hold_at{0};  // the last held death (not cleared when the hold is consumed)
 // The guest is dead and follows the host's travel: its load is a death load, which goes to its
 // own respawn records (GSM +0x1528 last lamp, +0x1538 mode, +0x153C respawn: often the Hunter's
 // Dream) whatever the forced placement says (live r11: loaded m21_00 in host-world mode, 142 m
@@ -1952,6 +1954,7 @@ bool HoldGuestDeath() {
         phase = S().gphase;
     }
     g_death_held_at = Now();
+    g_last_hold_at = g_death_held_at.load();
     GuestBloodstain();
     Send(0, "{\"op\":\"dead\"}");  // the host counts its members down (C2: a wipe while it is down)
     if (phase != GuestPhase::Idle) {
@@ -2095,13 +2098,20 @@ void DeadAfterClearTick(const GameSnapshot& s, double now) {
     // 12 s after a K10 on this load (the normal path fires ~8.6 s after the death), 15 s otherwise
     // (live: a death in the Cleric Beast's arena during the fight was not processed either).
     const double limit = g_k10_this_load.load() ? 12.0 : 15.0;
-    if (fired || now - dead_since < limit || g_death_held_at.load() >= dead_since) return;
+    // The game's death state did run when B2 held the death (HoldGuestDeath) - also once the hold
+    // was consumed by a lone respawn or a dead follow that is still loading (hostdeath hd22: this
+    // watchdog redirected a guest 8 s into its lone respawn, which ended the session).
+    if (fired || now - dead_since < limit || g_death_held_at.load() >= dead_since ||
+        g_last_hold_at.load() >= dead_since || g_dead_follow.load() || g_solo_respawn.load()) {
+        return;
+    }
     fired = true;
     Log("guest: dead for %.0f s and the game's death state never ran (%s): the guest death redirect runs now",
         now - dead_since, g_k10_this_load.load() ? "after a boss clear: BlockClear state kept by K10" : "no PartyGhostDeath");
     GuestDeathRedirectNow();
 }
 
+bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why);
 void HeldDeathTick(const GameSnapshot& s, double now) {
     if (g_dead_follow.load() && !SessionUp()) {
         // The follow ended without an arrival (B1 fallback): the host's records stay, which is
@@ -2149,10 +2159,24 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
     // lamp (split travel: a re-join when that lamp is in the host's area, else an alone load);
     // after a boss fight everyone uses the party's lamp, the host's last lamp (SoloRespawn).
     static const bool own_lamp = !(std::getenv("BB_PARTY_GUEST_OWN_LAMP") && std::getenv("BB_PARTY_GUEST_OWN_LAMP")[0] == '0');
-    if (limbo_logged != at && own_lamp) {
-        if (RespawnAloneAtOwnLamp()) {
-            Log("guest: died alone (no host travel in %.1f s): respawn at its own last lamp %u", now - at,
-                Field<u32>(Slot(kSlotGsm), 0x1528));
+    {
+        // The respawn lamp in the loaded map: revived where it lies and put on the lamp, no load
+        // for anyone (own last lamp outside a boss fight, the host's after one). Own lamp in
+        // another map: split travel loads it for this guest alone; if it cannot, the host's lamp.
+        const u32 own = Field<u32>(Slot(kSlotGsm), 0x1528);
+        const u32 party = GuestDeathRedirectLamp();
+        const bool boss = limbo_logged == at;
+        if (!boss && own_lamp) {
+            if (GuestReviveInPlace(s, own, "its own last lamp")) {
+                return;
+            }
+            if (RespawnAloneAtOwnLamp()) {
+                Log("guest: died alone (no host travel in %.1f s): its own last lamp %u is in another map: a load for "
+                    "this guest only", now - at, own);
+                return;
+            }
+        }
+        if (GuestReviveInPlace(s, party, "the host's last lamp")) {
             return;
         }
     }
@@ -2522,8 +2546,18 @@ bool HostDeathIntercept() {
 }
 
 /// Main thread: the taken host death's revive.
+void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host);
 void ReviveHost(const GameSnapshot& s) {
+    ReviveLocal(s, g_lamp_spot, true);
+}
+
+/// Main thread: the local player's chr revived where it lies and put on `sp` (its lamp's spawn
+/// spot in the loaded map). `host`: the party host (peers re-create its chr on "host_revived");
+/// otherwise a guest (peers re-create the member chr nearest to where it died, "member_revived").
+void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
     const u64 p = s.player;
+    float died_at[4] = {}, died_rot[4] = {};
+    ChrTransform(p, died_at, died_rot);
     DeathFields before;
     ReadDeathFields(p, &before);
     Log("host revive: before: hp %d, %s; alive: %s; echoes %d", ChrHp(p), DescribeDeathFields(before).c_str(),
@@ -2546,7 +2580,7 @@ void ReviveHost(const GameSnapshot& s) {
     }
     const u64 ctrl = Field<u64>(p, 0x58), m8 = Field<u64>(Field<u64>(p, 0x3b0), 8),
               m20 = Field<u64>(Field<u64>(p, 0x3b0), 0x20);
-    if (RecipeHas("recover")) {
+    if (RecipeHas("recover") && host) {  // a guest keeps its phantom type (0x1900710 writes +0x78 = 0)
         // RevivePlayer / OnSpEffectRevive's 0x1900710: body form, SpEffects reset, HP to max.
         reinterpret_cast<void(BB_COOP_SYSV*)(u64)>(Guest(0x1900710))(p);
     }
@@ -2630,12 +2664,24 @@ void ReviveHost(const GameSnapshot& s) {
             unsigned(Field<u8>(m30, 0x384)));
         reinterpret_cast<void(BB_COOP_SYSV*)(u32, u32, u32, u32)>(Guest(0x13cbfd0))(10000, u32(anim), 0, 0);
     }
-    const LampSpot sp = g_lamp_spot;
     if (RecipeHas("warp") && sp.valid) {
         alignas(16) float pos[4], rot[4];
         std::memcpy(pos, sp.pos, sizeof pos);
         std::memcpy(rot, sp.rot, sizeof rot);
         pos[3] = 1.0f;
+        // Another party member standing on the lamp spot (within 1 m): side by side instead of inside
+        // it (BesideHost: 0.5 m by party slot).
+        for (const TaskInfo& t : Tasks(false)) {
+            const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+            float q[3];
+            if (c && ChrPos(c, q) && (q[0] - pos[0]) * (q[0] - pos[0]) + (q[2] - pos[2]) * (q[2] - pos[2]) < 1.0f &&
+                std::fabs(q[1] - pos[1]) < 2.0f) {
+                BesideHost(pos, rot, host ? 2 : (g_local_slot.load() > 0 ? g_local_slot.load() : 1));
+                Log("revive: a member stands on the lamp spot; placed beside it (%.2f, %.2f, %.2f)", double(pos[0]),
+                    double(pos[1]), double(pos[2]));
+                break;
+            }
+        }
         if (const u64 fn = Field<u64>(Field<u64>(p, 0), 0x5f8)) {
             reinterpret_cast<void(BB_COOP_SYSV*)(u64, const float*, const float*, u32)>(fn)(p, pos, rot, 1);
         }
@@ -2644,9 +2690,100 @@ void ReviveHost(const GameSnapshot& s) {
     ReadDeathFields(p, &after);
     g_revivals.fetch_add(1);
     g_seen_dying = false;
-    Log("host revive #%d: after: hp %d, %s; at lamp %u (%s)", g_revivals.load(), ChrHp(p),
+    Log("%s revive #%d: after: hp %d, %s; at lamp %u (%s)", host ? "host" : "guest", g_revivals.load(), ChrHp(p),
         DescribeDeathFields(after).c_str(), sp.lamp, DescribeChr(p).c_str());
-    Send(-1, "{\"op\":\"host_revived\"}");
+    if (host) {
+        Send(-1, "{\"op\":\"host_revived\"}");
+    } else {
+        char b[128];
+        std::snprintf(b, sizeof b, "{\"op\":\"member_revived\",\"pos\":[%.3f,%.3f,%.3f]}", died_at[0], died_at[1],
+                      died_at[2]);
+        Send(-1, b);
+    }
+}
+
+/// Guest, main thread: its held death respawns at `lamp` in the loaded map with no load (the
+/// Bloodborne rule: a load only for a real map change). False: the lamp is not in this map or has
+/// no known spawn spot (the caller loads as before).
+bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
+    static const bool on = !(std::getenv("BB_PARTY_GUEST_REVIVE") && std::getenv("BB_PARTY_GUEST_REVIVE")[0] == '0');
+    const u32 stage = Field<u32>(s.player, 0x3f8);
+    float rs[4];
+    if (!on || !s.player || lamp == 0 || lamp == kTravelNone || (ids::EntityMap(lamp) >> 16) != (stage >> 16) ||
+        !ids::ReturnSpot(lamp, rs)) {
+        return false;
+    }
+    LampSpot sp;
+    sp.valid = true;
+    sp.lamp = lamp;
+    sp.map = ids::EntityMap(lamp);
+    sp.pos[0] = rs[0], sp.pos[1] = rs[1], sp.pos[2] = rs[2], sp.pos[3] = 1.0f;
+    sp.rot[1] = rs[3] * 3.14159265f / 180.0f;
+    Log("guest: died alone: revived at %s %u in the loaded map (%.1f, %.1f, %.1f), no load", why, lamp, double(rs[0]),
+        double(rs[1]), double(rs[2]));
+    ReviveLocal(s, sp, false);
+    return true;
+}
+
+/// Any role: a stage request armed after a revive (the ChrCtrl death bits were cleared): set them
+/// again so the load goes ahead (see g_ctrl_cleared_for).
+void ReviveRearmTick(const GameSnapshot& s) {
+    if (!s.player || g_ctrl_cleared_for != s.player || Field<u8>(Slot(kSlotGsm), 8) == 0) {
+        return;
+    }
+    g_ctrl_cleared_for = 0;
+    const u64 ctrl = Field<u64>(s.player, 0x58);
+    const u32 c = Field<u32>(ctrl, 0x114) | 0x10001u;
+    SafeWrite(ctrl + 0x114, &c, 4);
+    if (const u64 c38 = Field<u64>(ctrl, 0x38)) {
+        const u8 b = u8(Field<u8>(c38, 0x48) | 1u);
+        SafeWrite(c38 + 0x48, &b, 1);
+    }
+    Log("revive: a stage request after the revive; ChrCtrl death bits set again for the load");
+}
+
+std::mutex g_member_revived_mu;
+std::vector<std::array<float, 3>> g_member_revived;  // positions where revived members died (under mu)
+
+/// Host and guests: a member revived in place: its chr here (dead where it fell) is removed and
+/// built again by its task at the member's new spot.
+void MemberRevivedTick(const GameSnapshot& s) {
+    if (!s.world_up || s.loading) {
+        return;
+    }
+    std::vector<std::array<float, 3>> todo;
+    {
+        std::lock_guard<std::mutex> lk(g_member_revived_mu);
+        todo.swap(g_member_revived);
+    }
+    for (const auto& at : todo) {
+        u64 victim = 0;
+        float best = 36.0f;
+        for (const TaskInfo& t : Tasks(false)) {
+            const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+            float p[3];
+            if (c && ChrPos(c, p)) {
+                const float d = (p[0] - at[0]) * (p[0] - at[0]) + (p[1] - at[1]) * (p[1] - at[1]) +
+                                (p[2] - at[2]) * (p[2] - at[2]);
+                if (d < best) {
+                    best = d;
+                    victim = c;
+                }
+            }
+        }
+        if (!victim) {
+            Log("member revived: no member chr within 6 m of (%.1f, %.1f, %.1f) here", double(at[0]), double(at[1]),
+                double(at[2]));
+            continue;
+        }
+        using Release = u64(BB_COOP_SYSV*)(u64, u32);
+        using Remove = void(BB_COOP_SYSV*)(u64, u64);
+        reinterpret_cast<Release>(Guest(0x15bc080))(Field<u64>(Slot(kSlotGsm), 0x16f8), Field<u32>(victim, 8));
+        reinterpret_cast<Remove>(Guest(0x19186e0))(Slot(kSlotWorldChrMan), victim);
+        Log("member revived in place: its dead chr %#llx here removed (%.1f m from where it died); re-created",
+            ull(victim), double(std::sqrt(best)));
+        RewindRemoteTasks("member revived");
+    }
 }
 
 /// Main thread, host: the alive snapshot, the taken death's revive (or a wipe's vanilla funnel)
@@ -2687,17 +2824,7 @@ void HostDownTick(const GameSnapshot& s, double now) {
         last_hp = hp;
         last_f = f;
     }
-    if (g_ctrl_cleared_for == s.player && Field<u8>(Slot(kSlotGsm), 8) != 0) {
-        g_ctrl_cleared_for = 0;
-        const u64 ctrl = Field<u64>(s.player, 0x58);
-        const u32 c = Field<u32>(ctrl, 0x114) | 0x10001u;
-        SafeWrite(ctrl + 0x114, &c, 4);
-        if (const u64 c38 = Field<u64>(ctrl, 0x38)) {
-            const u8 b = u8(Field<u8>(c38, 0x48) | 1u);
-            SafeWrite(c38 + 0x48, &b, 1);
-        }
-        Log("host revive: a stage request after the revive; ChrCtrl death bits set again for the load");
-    }
+    // (stage-request re-arm: ReviveRearmTick, any role)
     if (!g_host_down.load()) {
         if (ChrHp(s.player) > 0 && !(Field<u64>(s.player, 0x1e1) & 0x10000) && !g_seen_dying) {
             g_alive_fields_ok = ReadDeathFields(s.player, &g_alive_fields);
@@ -3695,6 +3822,8 @@ void Tick(const GameSnapshot& s) {
     LampSpotTick(s);
     HostDownTick(s, now);
     HostRevivedTick(s);
+    MemberRevivedTick(s);
+    ReviveRearmTick(s);
     BossClearInvincibleTick(s, now);
     DeadAfterClearTick(s, now);
     {
@@ -3874,6 +4003,23 @@ void OnLinkEvent(int from_slot, const std::string& body) {
         std::memcpy(S().respawn_pos, p, sizeof p);
         Log("host: slot %d %s; re-sending the snapshot", from_slot,
             live ? "travels alone into this area" : "died alone and respawns in this world");
+        return;
+    }
+    if (body.find("\"member_revived\"") != std::string::npos) {
+        float p[3] = {0, 0, 0};
+        const char* pp = std::strstr(body.c_str(), "\"pos\":[");
+        if (pp && std::sscanf(pp, "\"pos\":[%f,%f,%f]", &p[0], &p[1], &p[2]) == 3 && std::isfinite(p[0]) &&
+            std::isfinite(p[1]) && std::isfinite(p[2])) {
+            std::lock_guard<std::mutex> lk(g_member_revived_mu);
+            if (g_member_revived.size() < 8) {
+                g_member_revived.push_back({p[0], p[1], p[2]});
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lk(g_dead_mu);
+            g_dead_members.erase(from_slot);
+        }
+        Log("slot %d was revived in place (no load)", from_slot);
         return;
     }
     if (body.find("\"host_revived\"") != std::string::npos) {
