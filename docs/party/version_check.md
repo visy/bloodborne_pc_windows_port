@@ -48,5 +48,14 @@ game host's check; `--build-id` / `--rules` set single fields (the harness takes
 - `tools/party/test_simguest.py`: "other bbport build -> REJECT mismatch (A9)" against the real host
   code (party-host-harness): `bbport build differs (host unknown, yours 0.4 (...)): install the same
   bbport release as the host`.
-- Live: see four_players.md, "Live, 4 clients (2026-10-11, agent/sixp)": every instance logs its build,
-  params and party patch hashes, and all four match.
+- Live, match: in the 4-client runs (four_players.md, "A7") every instance logged the same
+  `build 0.5 (0.5-590-g5bd14843cf), params 581e28302a23..., party patches da32cddaed85... (35 hooks)`
+  and all were admitted.
+- Live, mismatch (2026-10-11, 2 clients, `--ienv 1:BB_PARTY_GUEST_LAMPS=0 --ienv
+  1:BB_PARTY_HEADSTONES=0`): the guest logged `party patches dc9c9f68ba35... (32 hooks)` and was refused
+  12 s into the run, at the title: `rejected: version mismatch with the host: party patches differ
+  (host only: lamp multiplayer gate +0x49 (party lamps) @+0x12f831c, talk IsMultiplayerInProgress
+  (party headstones) @+0x203c564; yours only: -): use the same bbport build and party options
+  (BB_PARTY_* switches) as the host`. The status board turns that into the party UI's "host refused:
+  ..." (RejectText, party-status-bridge-test). Not tried live: two different builds (needs a second
+  build; covered by party-link-test and test_simguest).
