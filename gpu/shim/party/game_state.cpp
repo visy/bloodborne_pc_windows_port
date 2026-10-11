@@ -281,6 +281,12 @@ bool WritePlayerInsight(int insight) {
     return SafeWrite(rec + kRecInsight, &v, 4);
 }
 
+bool WritePlayerEchoes(int echoes) {
+    const std::uint64_t rec = Field<std::uint64_t>(Slot(kGameDataMan), 8, 0);
+    const std::int32_t v = echoes;
+    return rec && SafeWrite(rec + kRecEchoes, &v, 4);
+}
+
 // ---- Campaign start ----
 
 bool ReadEventFlag(std::uint32_t flag, bool* value) {

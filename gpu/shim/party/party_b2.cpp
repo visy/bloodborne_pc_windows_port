@@ -10,6 +10,7 @@
 #include "coop_hooks.h"
 #include "game_state.h"
 #include "party_travel.h"
+#include "party_ids.h"
 #include "lua_events.h"
 #include "seamless_rules.h"
 #include "../../party_env.h"
@@ -611,6 +612,8 @@ struct State {
     double hsince = 0;
     bool arrived = false;  // a guest said it arrived (under mu)
     bool respawn_request = false;  // a guest died alone and reloads this world (under mu)
+    bool respawn_have_pos = false;  // where it died (its member chr here stands there)
+    float respawn_pos[3] = {};
     bool have_dest = false; // guest: the host's post-load transform (under mu)
     int hp_before = -1;      // guest: its HP at the host's travel event (kept through the B2 load)
     std::vector<std::pair<int, float>> buffs_before;  // guest: timed SpEffects (id, s left) at the travel
@@ -1167,6 +1170,9 @@ void FallRecoveryTick(const GameSnapshot& s, double now) {
 /// Any failed or timed-out B2 step on a guest: hand the host's travel to B1 (party_travel): the
 /// guest warps to the destination in its own world (the funnel leaves the session then, as
 /// vanilla) and the director's bells re-summon it. Never leaves the guest stranded.
+extern std::atomic<bool> g_dead_follow;
+extern std::atomic<bool> g_solo_respawn;
+
 void FallbackToB1(const char* why) {
     State& st = S();
     TravelIntent t;
@@ -1186,6 +1192,16 @@ void FallbackToB1(const char* why) {
         SafeWrite(flow + 0x84, &four, 4);
     }
     g_fell_back = true;
+    if (g_solo_respawn.exchange(false)) {
+        // A lone death's respawn that failed (no snapshot): the old death redirect - the host's
+        // last lamp in the own world, a leave, the bell (live r20: a plain B1 replay of the
+        // synthetic intent was dropped as "not newer" and the guest stayed dead in the host world).
+        g_dead_follow = false;
+        Log("guest: FALLBACK (%s; flow was %d): the lone death's respawn failed; the usual death redirect runs", why,
+            fs);
+        GuestDeathRedirectNow();
+        return;
+    }
     Log("guest: FALLBACK to B1 (%s; flow was %d)%s", why, fs, have ? "" : " - no travel to replay");
     if (have) {
         RequestGuestTravel(t);
@@ -1292,9 +1308,52 @@ bool LampIntent(u32 id, TravelIntent* t) {
 /// again as a dead follow (the host's last-lamp records written before the death load), i.e. it
 /// respawns at the host's last lamp in the host's world. No leave, no bell. False: not possible
 /// (no session, no host lamp, off) - the caller runs the old redirect.
-bool SoloRespawn(double held_for) {
+/// A lit lamp of the map the guest stands in (the host's world): the ReturnPointParam ids AAB295k
+/// of that map whose lamp flag 1AAB7800 + 20k (2009[5] registration, party_flags.inc) is set in
+/// the host-world overlay. The first one (lowest k); 0 if none.
+u32 LitLampInMap(u32 map) {
+    const u64 man = Slot(0x553b100);
+    if (!man) {
+        return 0;
+    }
+    using Get = u32(BB_COOP_SYSV*)(u64, u32, u32);
+    u32 first = 0;
+    std::string seen;
+    for (u32 id : ids::kPartyReturnPoints) {
+        if (ids::EntityMap(id) != (map & 0xffff0000u) || id % 10000 / 10 != 295) {
+            continue;
+        }
+        // common event 7000's lamp registration flag (2009[5]): m24_01 lamps 2410950.. use
+        // 12417800, 820, 840, 860 (EMEVD args), i.e. 1AAB7800 + 20k for return point AAB295k.
+        const u32 flag = 10000000u + id / 10000 * 10000 + 7800 + 20 * (id % 10);
+        const u32 lit = reinterpret_cast<Get>(Guest(0x13cfd80))(man, flag, 1);
+        seen += " " + std::to_string(id) + (lit ? ":lit" : ":-");
+        if (lit) {
+            Log("guest: lamps of %s:%s", MapName(map).c_str(), seen.c_str());
+            return id;
+        }
+        if (!first) {
+            first = id;
+        }
+    }
+    // None reads lit here (the host-world overlay may not carry these flags): a lamp of this map
+    // all the same - any ReturnPointParam row of the map is a valid respawn spot in it.
+    Log("guest: lamps of %s:%s; none read lit, using %u", MapName(map).c_str(), seen.c_str(), first);
+    return first;
+}
+
+bool SoloRespawn(double held_for, u32 map_now) {
     static const bool on = !(std::getenv("BB_PARTY_B2_SOLO_RESPAWN") && std::getenv("BB_PARTY_B2_SOLO_RESPAWN")[0] == '0');
-    const u32 lamp = GuestDeathRedirectLamp();
+    u32 lamp = GuestDeathRedirectLamp();
+    if (on && lamp != kTravelNone && lamp != 0 && map_now != 0xffffffffu &&
+        ids::EntityMap(lamp) != (map_now & 0xffff0000u)) {
+        // The host's last lamp is in another map than the one the party is in (a stage warp, a
+        // walk into the next area): a respawn there would load another map in host-world mode
+        // (the Dream case of 6.8). A lit lamp of the current map instead.
+        const u32 here = LitLampInMap(map_now);
+        Log("guest: the host's last lamp %u is not in %s; lit lamp here: %u", lamp, MapName(map_now).c_str(), here);
+        lamp = here;
+    }
     TravelIntent t;
     if (!on || Role() != RoleClient || lamp == kTravelNone || lamp == 0 || !LampIntent(lamp, &t)) {
         return false;
@@ -1306,7 +1365,15 @@ bool SoloRespawn(double held_for) {
         g_solo_respawn = false;
         return false;
     }
-    Send(0, "{\"op\":\"respawn\"}");
+    {
+        // Where it died: the host removes the member chr standing there (the remote chrs' HP does
+        // not tell the dead one apart: live r19 read hp 1 on both guests and removed both).
+        float p[3] = {0, 0, 0};
+        ChrPos(Field<u64>(Slot(kSlotWorldChrMan), 0x60), p);
+        char b[128];
+        std::snprintf(b, sizeof b, "{\"op\":\"respawn\",\"pos\":[%.3f,%.3f,%.3f]}", p[0], p[1], p[2]);
+        Send(0, b);
+    }
     Log("guest: died alone (no host travel in %.1f s): respawn at the host's lamp %u in the host's world (%s); "
         "asked the host for a snapshot",
         held_for, lamp, DescribeTravel(t).c_str());
@@ -1341,7 +1408,7 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         return;
     }
     g_death_held_at = 0;
-    if (SoloRespawn(now - at)) {
+    if (SoloRespawn(now - at, s.map_id)) {
         return;
     }
     Log("guest: no host travel %.1f s after its death; the usual death redirect runs", now - at);
@@ -1582,13 +1649,46 @@ void HostTick(const GameSnapshot& s, double now) {
         // at the lamp, 0 tasks rewound): removed as the task's own STEP_DeleteWait 0x1E50A70 does
         // (slot release 0x15BC080, WorldChrMan remove 0x19186E0); the task is kept and rewound to
         // STEP_Create on "arrived", which builds the chr again from the member's GameData row.
+        bool have_pos;
+        float dpos[3];
+        {
+            std::lock_guard<std::mutex> lk(st.mu);
+            have_pos = st.respawn_have_pos;
+            std::memcpy(dpos, st.respawn_pos, sizeof dpos);
+        }
+        // The member chr nearest to where the guest died (within 6 m); without a position, a lone
+        // member's chr.
+        u64 victim = 0;
+        float best = 36.0f;
+        int members = 0;
+        for (const TaskInfo& t : Tasks(false)) {
+            const u64 c = t.mode == 1 ? PlayerForPeer(t.task + kTaskPeer) : 0;
+            if (!c) {
+                continue;
+            }
+            ++members;
+            float p[3];
+            if (have_pos && ChrPos(c, p)) {
+                const float d = (p[0] - dpos[0]) * (p[0] - dpos[0]) + (p[1] - dpos[1]) * (p[1] - dpos[1]) +
+                                (p[2] - dpos[2]) * (p[2] - dpos[2]);
+                if (d < best) {
+                    best = d;
+                    victim = c;
+                }
+            } else if (!have_pos) {
+                victim = c;
+            }
+        }
+        if (!have_pos && members != 1) {
+            victim = 0;
+        }
         for (const TaskInfo& t : Tasks(false)) {
             if (t.mode != 1) {
                 continue;
             }
             const u64 chr = PlayerForPeer(t.task + kTaskPeer);
             const int hp = Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0x128, -1);
-            if (!chr || hp > 1) {
+            if (!chr || chr != victim) {
                 continue;
             }
             using Release = u64(BB_COOP_SYSV*)(u64, u32);
@@ -1597,7 +1697,13 @@ void HostTick(const GameSnapshot& s, double now) {
             reinterpret_cast<Remove>(Guest(0x19186e0))(Slot(kSlotWorldChrMan), chr);
             Log("host: dead member chr %#llx (hp %d) removed; its task is kept for the re-creation", ull(chr), hp);
         }
+        static const bool fail = std::getenv("BB_PARTY_B2_TEST_FAIL") &&
+                                 std::strcmp(std::getenv("BB_PARTY_B2_TEST_FAIL"), "resync") == 0;
         for (u64 id : Members()) {
+            if (fail) {
+                Log("test fail: join snapshot NOT re-sent (respawn)");
+                continue;
+            }
             ResyncMember(id);
         }
         SendDest(s);
@@ -2010,8 +2116,14 @@ void OnLinkEvent(int from_slot, const std::string& body) {
         return;
     }
     if (body.find("\"respawn\"") != std::string::npos) {
+        float p[3] = {0, 0, 0};
+        const char* pp = std::strstr(body.c_str(), "\"pos\":[");
+        const bool have = pp && std::sscanf(pp, "\"pos\":[%f,%f,%f]", &p[0], &p[1], &p[2]) == 3 &&
+                          std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]);
         std::lock_guard<std::mutex> lk(S().mu);
         S().respawn_request = true;
+        S().respawn_have_pos = have;
+        std::memcpy(S().respawn_pos, p, sizeof p);
         Log("host: slot %d died alone and respawns in this world; re-sending the snapshot", from_slot);
         return;
     }
