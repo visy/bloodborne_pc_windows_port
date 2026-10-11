@@ -94,9 +94,18 @@ and the destination, as `respawn` without the death), `{"op":"meet"}` (either wa
 again without a load, Dream). `TravelIntent::alone` ("alone": 1 in the travel JSON) marks a
 host travel the guests do not follow.
 
-For hostdeath: a host death outside a boss fight is a host travel with `alone` set (the capture
-of `HostDeath` in party_travel with `HostTravelAloneNext()` armed); a guest's death is
-`TravelAlone(LampIntent(own last lamp), AloneWhy::Death)`.
+For hostdeath (party_travel.h / party_b2.h):
+
+* **Host death, the guests play on**: `coop::SetHostDeathAlone(true)` - every captured
+  `TravelKind::HostDeath` is then sent with `alone` set; the guests stay where they are (no load,
+  the host's chr is removed on their side), the host loads its own last lamp, re-sends nothing
+  (`LastAloneCaptureAgo() < 10 s` at its load) and meets the guests again without a load when it
+  is back in their area (SplitTick: chrs re-created, net sync re-registered).
+* **Guest death, own last lamp**: `coop::b2::RespawnAloneAtOwnLamp()` (main thread, the held
+  death's place: `HeldDeathTick` / `SoloRespawn`) = `TravelAlone(LampIntent(GSM +0x1528),
+  AloneWhy::Death)`: a re-join when that lamp is in the host's area, else an alone load. The death
+  load uses the guest's own respawn records, which already name that lamp.
+* `MembersApart()` > 0 keeps the host watchdog quiet and K5 suppressed.
 
 ## 4. Status
 
