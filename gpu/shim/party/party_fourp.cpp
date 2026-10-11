@@ -56,7 +56,7 @@ std::string RulesTag(const Config& c) {
     if (!c.on) {
         return "4p:off";
     }
-    std::string t = "4p:v1:H1";
+    std::string t = "4p:v2:H1,H5";
     if (c.scaling) {
         t += ",H2,H3,H4";
     }
@@ -73,6 +73,13 @@ std::string FourpRulesTag() {
 int EffectiveMaxPlayers(int local_max, bool guest, bool connected, int host_max) {
     int m = guest && connected && host_max > 0 ? host_max : local_max;
     return m < 2 ? 2 : m > kMaxPlayers ? kMaxPlayers : m;
+}
+
+int SelectorMaxCoop(int max_players) {
+    // The SOS filter 0x1874710 refuses a cooperator request when max <= pending + cooperators,
+    // the selector update 0x1876b10 stops at pending + cooperators >= max: vanilla 3 = 2
+    // cooperators + the one being summoned. A party of N needs N (N - 1 cooperators + 1 pending).
+    return max_players >= 4 ? max_players : 3;
 }
 
 bool LiftCoopSlot(int rec0_status, int coop_count, int max_players) {
@@ -180,6 +187,7 @@ std::atomic<int> g_max{3};
 bool g_init = false;
 bool g_h1 = false, g_h2 = false, g_h3 = false, g_h4 = false, g_e6 = false, g_p5 = false;
 
+std::atomic<u64> g_h5_writes{0};
 std::atomic<u64> g_h1_lifts{0}, g_h1_calls{0}, g_h2_clamps{0}, g_h4_upgrades{0}, g_e6_rewrites{0},
     g_e6_reverts{0};
 
@@ -229,6 +237,19 @@ BB_COOP_SYSV u64 SlotSummary(u64 out, u64 sel, u64 dbg) {
     perf::Scope z(perf::Zone::HookFourpSlot);
     g_h1_calls.fetch_add(1, std::memory_order_relaxed);
     const int max = g_max.load(std::memory_order_relaxed);
+    // H5: the selector's own "max cooperators" (sel+0x1fc, ctor 0x1871259 writes 3), read by the SOS
+    // filter 0x1874710 (pending + cooperators < max) and the selector update 0x1876b10. Live
+    // (2026-10-11, 4 clients): with 2 cooperators in the world the 3rd one's request was refused
+    // whenever its own entry was pending (1 + 2 >= 3): its invite was dropped in the handshake.
+    // Only values the game or we wrote (3 / party size) are touched.
+    if (sel) {
+        const i32 want = SelectorMaxCoop(max);
+        i32 cur = 0;
+        if (SafeGet(sel + 0x1fc, &cur) && cur != want && (cur == 3 || (cur >= 4 && cur <= kMaxPlayers)) &&
+            SafeWrite(sel + 0x1fc, &want, 4) && g_h5_writes.fetch_add(1) < 16) {
+            Log("H5: selector max cooperators %d -> %d (max players %d)", cur, want, max);
+        }
+    }
     if (max < 4 || !sel || !out) {
         return r;
     }

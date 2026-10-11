@@ -147,7 +147,7 @@ Switches: `BB_PARTY_FOURP=0` (nothing), `BB_PARTY_FOURP_SCALING=0` (no H2-H4),
 `BB_PARTY_FOURP_NPC_SIGNS=0` (no E6), `BB_PARTY_FOURP_RECRUIT=0` (no P5).
 
 **Max players and the version check.** `party_runtime` sets `LinkConfig::rules` =
-`"max <BB_PARTY_MAX> players, <rule tag>"` (tag `4p:off` / `4p:v1:H1,H2,H3,H4,E6`), sent last in
+`"max <BB_PARTY_MAX> players, <rule tag>"` (tag `4p:off` / `4p:v2:H1,H5,H2,H3,H4,E6`), sent last in
 HELLO and compared by `identity_mismatch` next to eboot / gameplay patches / gameplay mods: a
 guest with another max players or rule set gets a Mismatch REJECT "party rules differ (host max 4
 players, 4p:v1:...; yours max 3 players, ...)". So every player sets the same Max players (the
