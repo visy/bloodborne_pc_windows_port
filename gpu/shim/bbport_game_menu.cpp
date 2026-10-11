@@ -45,6 +45,7 @@
 #include <cstdlib>
 #include <cctype>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -415,6 +416,34 @@ BB_SYSV const char16_t* LookupHook(void* repository, u32 table, u32 category, u3
         const char* env = std::getenv("BB_GAME_MENU_TRACE");
         return env && env[0] == '1';
     }();
+    // BB_GAME_MENU_TRACE_TEXT=<ASCII text>: which message (category / id) and which caller show a
+    // text containing it (reverse engineering a dialog; each id + caller once).
+    static const char* trace_text = [] {
+        const char* env = std::getenv("BB_GAME_MENU_TRACE_TEXT");
+        return env && env[0] ? env : nullptr;
+    }();
+    if (trace_text && text) {
+        const std::size_t n = std::strlen(trace_text);
+        for (const char16_t* p = text; *p; ++p) {
+            std::size_t k = 0;
+            while (k < n && p[k] && std::tolower(static_cast<unsigned char>(p[k] < 128 ? p[k] : 0)) ==
+                                        std::tolower(static_cast<unsigned char>(trace_text[k]))) {
+                ++k;
+            }
+            if (k == n) {
+                static std::mutex mu;
+                static std::vector<std::pair<u64, u64>> seen;
+                const u64 from = reinterpret_cast<u64>(__builtin_return_address(0)) - image_base;
+                std::lock_guard<std::mutex> lk(mu);
+                if (std::find(seen.begin(), seen.end(), std::make_pair(u64(id), from)) == seen.end() && seen.size() < 64) {
+                    seen.emplace_back(u64(id), from);
+                    std::printf("Game menu: '%s' is text %#x/%u (%#x) from %#llx\n", trace_text, category, id, id,
+                                (unsigned long long)from);
+                }
+                break;
+            }
+        }
+    }
     if (trace && id >= 110000 && id < 120000) {
         std::printf("Game menu: text %#x/%u%s from %#llx\n", category, id, title_override ? " (our page)" : "",
                     (unsigned long long)(reinterpret_cast<u64>(__builtin_return_address(0)) - image_base));

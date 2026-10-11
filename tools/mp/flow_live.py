@@ -56,6 +56,7 @@ def main():
     ap.add_argument("--guest-world", default="", help="the guest's in-world walk after the restart")
     ap.add_argument("--host-world", default="", help="the host's in-world walk after the restart")
     ap.add_argument("--until", action="append", default=[])
+    ap.add_argument("--env", action="append", default=[], help="KEY=VALUE for both instances")
     a = ap.parse_args()
     root = Path(a.root)
     port0 = instances.base_port(root)
@@ -100,11 +101,11 @@ def main():
            "BB_TEST_NAME=Hunter{i}"]
     cmd = [sys.executable, str(HERE / "instances.py"), "run", "--count", "2", "--root", str(root), "--game", a.game,
            "--saves", str(root / "nosaves"), "--build", str(REPO), "--seconds", str(a.seconds), "--idle", "0",
-           "--label", f"flowlive {a.phase}"]
-    for e in env:
+           "--label", f"flowlive {a.phase}", "--timestamps"]
+    for e in env + a.env:
         cmd += ["--env", e]
     # The summon, and a little of the log after it (the screenshots at +3 s).
-    for u in a.until or [r"(?m)^Party: session trying-to-join .* -> client \(6[\s\S]{1500}"]:
+    for u in a.until or [r"Party: session trying-to-join .* -> client \(6[\s\S]{1500}"]:
         cmd += ["--until", u]
     subprocess.run([sys.executable, str(HERE / "instances.py"), "setup", "--count", "2", "--root", str(root),
                     "--build", str(REPO), "--game", a.game, "--saves", str(root / "nosaves")], check=True)
