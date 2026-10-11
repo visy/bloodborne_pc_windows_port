@@ -77,6 +77,24 @@ Findings:
 - Fixed on the way: the guest-lamp diagnostics printed a line every second while a guest stood
   near a world lamp. They are now silent outside tests.
 
+### 3b. Simulated NAT, no port forward (2026-10-11, run `NAT sim: link over UDP`)
+
+`BB_NET_SIM=lat=30,jit=5,loss=1,nat=1` on both, host has no TCP listener, the guest's code goes
+to the host through `BB_PARTY_GUEST_CODE_FILE` (standing in for chat):
+
+| Time (instance clock) | Host | Guest |
+|---|---|---|
+| +27.4 | | `guest code BBG1-0ZR0-000V-PPCD (UDP 127.0.0.1:47961)` |
+| +28.3 | `punching towards a guest at 127.0.0.1:47961` | |
+| +28.9 | `a guest connects over UDP` | `no TCP answer from the host; connecting over UDP`, `connected over UDP` (+0.07 s) |
+| +29.1 | flag snapshot due | `connected: slot 1` |
+| +44.5 | game P2P `punch Hunter1 ... peer heard after 500 ms` | same towards Hunter0 |
+| +47.1 / +52.3 | `cooperators 0 -> 1` | `client (6)` (bell join) |
+| +74.4 | | B2 travel: `arrived in the host world` |
+
+So the link (events, RPC, mirror) and the game's own session both crossed the simulated NAT;
+without the guest code the guest never connects (`test_udp_nat_link`, Bob).
+
 Not covered here: a real NAT and a real ISP (no 2-PC test). The simulator also does not model
 bandwidth limits (the party's bandwidth is small: ~180 KB/min UDP per guest in the runs above,
 plus the 10 KB mirror image at join).
@@ -124,7 +142,7 @@ plus the 10 KB mirror image at join).
     the simulated NAT connects over UDP in ~0.6 s, 200 events in order; a guest without a code
     does not). The simulator has a NAT mode (`BB_NET_SIM=...,nat=1`): inbound UDP is dropped
     unless we sent to that address:port first, and the host's TCP listener is off. Live run: see
-    §3b.
+    §3b (link over UDP 0.6 s after the punch started, bell join and B2 travel as usual).
 - **What CGNAT / hard NAT still cannot do** (no server anywhere, by design):
   - **Symmetric (endpoint-dependent) NAT** on either side - many mobile carriers and some
     carrier-grade NATs - gives the punch a different external port than STUN saw, so the guest
@@ -134,11 +152,14 @@ plus the 10 KB mirror image at join).
     the punch; the guest code then goes stale (the guest rejoins to get a new one).
   - **No inbound at all** (some campus / corporate firewalls block unsolicited UDP even after an
     outbound packet) cannot be punched.
-  - There is no third-party relay or TURN server. A **party member with an open port could relay**
-    (the host already relays guest-to-guest game traffic), but a relay for the *host* itself would
-    need that member to be reachable by both - the same requirement as hosting. So the remedy is:
-    let the player whose port is reachable host, or use a VPN that puts everyone on one network
-    (Tailscale, ZeroTier, Radmin VPN) and the host's VPN address.
+  - There is no third-party relay or TURN server. **Relay through a member with an open port**
+    (considered, not built): when the host cannot be reached at all but member A can, both the host
+    and guest B could connect *out* to A and A would forward the link and the game's UDP between
+    them (the host already relays guest-to-guest game traffic the same way, `PeerPaths`). It would
+    keep the host's world, at the cost of A's upload (~3 KB/s per relayed guest) and one more hop
+    of latency. Not built because the simpler remedies cover it: let A host (the world is then A's),
+    or use a VPN that puts everyone on one network (Tailscale, ZeroTier, Radmin VPN) and the
+    host's VPN address.
 - There is no relay server: the host itself is the rendezvous and the relay. That is why only the
   host needs a port (or a guest code per guest).
 

@@ -1694,7 +1694,11 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
         static double last = 0;
         if (Now() - last >= 5.0) {
             last = Now();
-            const std::int32_t ent = std::atoi(g.test.c_str() + ep + 9);
+            // "entprobe=A:B:C": several entities.
+            for (const char* q = g.test.c_str() + ep + 9; *q >= '0' && *q <= '9';) {
+            char* qe = nullptr;
+            const std::int32_t ent = static_cast<std::int32_t>(std::strtol(q, &qe, 10));
+            q = (qe && *qe == ':') ? qe + 1 : "";
             std::uint32_t idx = 0xffffffffu;
             using Find = std::uint64_t(BB_COOP_SYSV*)(std::int32_t, std::uint32_t*);
             const std::uint64_t rec = reinterpret_cast<Find>(Guest(0x13c9af0))(ent, &idx);
@@ -1706,6 +1710,7 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
                     me[2], MapName(s.map_id).c_str());
             } else {
                 Log("test: entprobe %d: no map object here (map %s)", ent, MapName(s.map_id).c_str());
+            }
             }
         }
     }
