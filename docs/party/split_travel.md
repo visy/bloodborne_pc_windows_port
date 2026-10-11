@@ -107,6 +107,38 @@ For hostdeath (party_travel.h / party_b2.h):
   load uses the guest's own respawn records, which already name that lamp.
 * `MembersApart()` > 0 keeps the host watchdog quiet and K5 suppressed.
 
+## 3a. Moves inside the loaded map: no loading screen (B4 / H1)
+
+User priority (2026-10-11): only a real map change may show a loading screen. The lamp spots come
+from the game data: `tools/party/ids_tool.py gen-inc` now also writes `kPartyReturnSpotIds` /
+`kPartyReturnSpots` (x, y, z, yaw) for 75 of the 85 ReturnPointParam rows - the MSB revive event
+named by `returnPointEntityId` (EVENT_PARAM_ST entry: base data +8 entity id, type data +0 region
+index) and that region's position / rotation (POINT_PARAM_ST +0x14 / +0x20, degrees) [C]. Checked:
+2412951 -> (-193.40, -28.65, 68.50) 45 deg, 2412952 -> (-124.8, -26.88, 64.3), 2102950 ->
+(-9.2, -6.77, -19.4) -135 deg: the hosts' logged arrival spots. The 10 without a spot are Chalice
+Dungeon / DLC points without a revive event (29xxxxx is never warped in-world: generated layouts).
+
+`party_ids.h ReturnSpot(id)`, `b2::WarpToLampNoLoad(id, beside)` (the chr warp vfunc +0x5F8 when the
+lamp is in the block the player stands in) and `b2::HostPartyWarpNoLoad(id)` (host + EVENT b2
+`warp`: guests of this map warp beside it, guests elsewhere travel there with their own one load).
+
+Audit of what loads a stage in a party, and what is same-map:
+
+| Load | Same map possible? | Now |
+|---|---|---|
+| Host lamp / headstone / Hunter's Mark (0x13CDF30, Mark item funnel site 0x18FFA1D) | Mark to a lamp of this map; a lamp of this map from the question | in-world (host + the guests of this map), no load |
+| Guest lamp / headstone / Mark "alone" | Mark, lamp of the host's loaded map | in-world, no load |
+| Guest lamp "with the party" (lamp_request, host runs it) | as the host's | `HostPartyWarpNoLoad` first |
+| Guest B2 follow of a host load (host death, stage warp, a host that loaded anyway) | destination block = the guest's block | `InWorldFollow`: no load; the guest waits for the host's `dest`, drains the snapshot packets, warps beside it, says `arrived` (the host re-creates its chr) |
+| Fall recovery (6 s falling) | the lamp of this map | in-world |
+| World lamp -> Dream, headstone -> world | never (another map) | load (alone: the traveller only) |
+| Gather before a bell (guest's own world -> the host's last lamp) | never (it runs only when the maps differ) | load (own world) |
+| Bell join (own world -> host world) | the world changes even with the same map id | load |
+| Guest lone death respawn (SoloRespawn: dead follow, host's lamp) | yes | still a death load: a dead chr needs the revive (hostdeath agent: revive + `WarpToLampNoLoad`) |
+| Host death respawn | yes | hostdeath agent (same mechanism; guests then follow in-world) |
+
+`BB_PARTY_INWORLD=0` turns the in-world follow off (A/B tests).
+
 ## 4. Implementation (gpu/shim/party/party_split.cpp, party_b2.cpp, party_travel.cpp)
 
 **The question.** A lamp or headstone warp `0x13CDF30(id)` the player starts, or the Hunter's Mark
