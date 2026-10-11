@@ -402,7 +402,11 @@ add_executable(bbport
 if (WIN32)
     # The exe's version resource (Properties -> Details): file and product version.
     enable_language(RC)
-    string(REPLACE "." "," BBPORT_VERSION_COMMAS "${BBPORT_VERSION}")
+    # Exactly four numbers (0.5 -> 0,5,0,0; 0.5.1 -> 0,5,1,0) for FILEVERSION / PRODUCTVERSION.
+    string(REPLACE "." ";" _bb_ver_parts "${BBPORT_VERSION}")
+    list(APPEND _bb_ver_parts 0 0 0)
+    list(SUBLIST _bb_ver_parts 0 4 _bb_ver_parts)
+    string(REPLACE ";" "," BBPORT_VERSION_COMMAS "${_bb_ver_parts}")
     configure_file(../src/bbport.rc.in "${CMAKE_CURRENT_BINARY_DIR}/bbport.rc" @ONLY)
     target_sources(bbport PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/bbport.rc")
 endif()
