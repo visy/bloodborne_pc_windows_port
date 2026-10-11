@@ -1196,7 +1196,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         auto hp_of = [] {
             std::uint64_t pl = LocalPlayer(), ins = 0, dm = 0;
             int hp = -1;
-            if (pl && SafeGet(pl + 0x3b0, &ins) && ins && SafeGet(ins + 0x20, &dm) && dm) SafeGet(dm + 0x128, &hp);
+            if (pl && SafeGet(pl + 0x3b0, &ins) && ins && SafeGet(ins + 0x20, &dm) && dm) SafeGet(dm + 0xf8, &hp);
             return hp;
         };
         const int hp0 = hp_of();

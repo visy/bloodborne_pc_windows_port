@@ -674,8 +674,8 @@ LinkCallbacks make_callbacks(bool host) {
                 // A crash (RST): the connection is expired early (nr_fast_expire), so a short hold.
                 const bool crashed = m.lost_why.find("reset") != std::string::npos &&
                                      !(env("BB_PARTY_NR_FAST_EXPIRE") && !env_on("BB_PARTY_NR_FAST_EXPIRE"));
-                if (crashed) nr_fast_expire(m.name);
-                bbnet::party::FromApi::instance().hold_signs(m.name, crashed ? 6000 : 26000);
+                bbnet::party::FromApi::instance().hold_signs(m.name, 26000);
+                if (crashed) nr_fast_expire(m.name);  // shortens that hold once the timeout is lowered
             }
             if (slot_kept) {
                 plog("%s (slot %d) lost; slot kept", m.name.c_str(), m.slot);
@@ -1264,8 +1264,8 @@ std::vector<std::uint32_t*> g_nr_hits;  // g_nr_mu
 void nr_scan_locked(const char* why) {
     const auto t0 = Clock::now();
     // The game's heap layout repeats from run to run: the last place they were found
-    // (user/party/nr_hint.txt) +-512 MiB first, the whole process only when that misses.
-    const fs::path hint_file = fs::path(user_dir()) / "party" / "nr_hint.txt";
+    // (user/party_nr_hint.txt) +-512 MiB first, the whole process only when that misses.
+    const fs::path hint_file = fs::path(user_dir()) / "party_nr_hint.txt";
     std::string body;
     const char* how = "whole process";
     g_nr_hits.clear();
@@ -1275,7 +1275,15 @@ void nr_scan_locked(const char* why) {
             g_nr_hits = nr_config_copies(reinterpret_cast<std::uint8_t*>(h - (512ull << 20)),
                                          reinterpret_cast<std::uint8_t*>(h + (512ull << 20)));
             how = "near the last place";
+            if (g_nr_hits.empty())
+                plog("game transport config: none within 512 MiB of %llx (%.0f ms); the whole process next",
+                     static_cast<unsigned long long>(h),
+                     std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
+        } else {
+            plog("game transport config: hint '%s' not usable", body.c_str());
         }
+    } else {
+        plog("game transport config: no hint file %s", hint_file.string().c_str());
     }
     if (g_nr_hits.empty()) {
         how = "whole process";
@@ -1284,8 +1292,6 @@ void nr_scan_locked(const char* why) {
     if (!g_nr_hits.empty()) {
         char hx[32];
         std::snprintf(hx, sizeof hx, "%llx\n", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(g_nr_hits[0])));
-        std::error_code ec;
-        fs::create_directories(hint_file.parent_path(), ec);
         write_text_file(hint_file, hx);
     }
     const double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
@@ -1332,6 +1338,8 @@ void nr_fast_expire(const std::string& name) {
         }
         plog("%s crashed (connection reset): game transport idle timeout 25 -> 4 s for 8 s (%zu config copies)",
              name.c_str(), hits.size());
+        // The dead connection now expires within ~4 s: the sign hold (26 s at the drop) ends 5 s from now.
+        if (!hits.empty()) bbnet::party::FromApi::instance().hold_signs(name, 5000);
         std::this_thread::sleep_for(std::chrono::seconds(8));
         for (std::uint32_t* h : hits) {
             if (nr_copy_ok(h) && h[4] == 4000) {
