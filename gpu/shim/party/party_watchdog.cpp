@@ -49,7 +49,7 @@ bool HostWatchdog::Update(const HostWatchdogInput& in) {
     if (in.cooperators < 0) {
         return false; // unknown this frame: keep the clocks as they are
     }
-    if (!in.in_world || in.session_role != kRoleHost || in.cooperators > 0) {
+    if (!in.in_world || in.session_role != kRoleHost || in.cooperators > 0 || in.members_apart > 0) {
         armed_ = false;
         incoming_since_ = -1;
         return false;

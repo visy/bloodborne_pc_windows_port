@@ -557,6 +557,7 @@ int host_lost_grace_ms() {
 }
 
 void host_lost(const std::string& why) {
+    coop::RequestGuestSendHome(why);  // home at once, not the game's room-gone notice 10 s later
     if (bbnet::np::party_host_lost(why)) plog("host lost (%s): the game leaves the host's world", why.c_str());
     else plog("host lost (%s): not in the host's world", why.c_str());
 }

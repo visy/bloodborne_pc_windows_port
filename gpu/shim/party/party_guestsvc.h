@@ -171,6 +171,9 @@ std::vector<EmevdSkipRule> GuestServicesSkipRules();
 void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link);
 /// Host: EVENT "lamp_request" from guest `slot` (PartyLink callback thread). False + why: refused.
 bool GuestServicesOnLampRequest(int slot, const std::string& body, std::string* why);
+/// Guest: a lamp / headstone warp `id` becomes a request to the host (the party travels together;
+/// split travel's "with the party"). False: lamps off or not a guest.
+bool GuestLampRequestNow(std::uint32_t id);
 /// A guest lit a lamp in the host's world (EVENT lamp_lit, host side): queued for the host's tick.
 bool GuestServicesOnLampLit(int slot, const std::string& body, std::string* why);
 /// Open right now (diagnostics, the Party tab).

@@ -25,6 +25,7 @@
 //  - New pages: add them in Pages::DefineAll (MaxPages below caps the System items).
 #include "bbport_game_menu.h"
 #include "party/party_flow.h"
+#include "net/bbnet_internal.h"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -45,6 +46,7 @@
 #include <cstdlib>
 #include <cctype>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -193,7 +195,95 @@ void MakeTexts(u8* pair, u32 name, u32 help) {
     Game<Make>(MakeText)(pair + TextSize, TextHelp, help);
 }
 
+bool Trace();
+// ---- Live value columns ----
+// A left/right row's widget (a ComboBox, 0x1B2A100) copies its two value texts' pointers (our
+// run-time buffers) when built, and draws them again only when its value changes: a value that
+// changes while the page is open (a saved party address, the party status) stayed old until the
+// page was opened again. The rows' widgets are kept (a reference each) and told to redraw their
+// items (0x1ACFB20 on the widget's list at +0xA0) when a run-time text changed, from the game's
+// own menu thread (the next lookup of one of our texts), while the page still holds them.
+constexpr u64 PageRows = 0xe50;          ///< page + this: {?, begin, end, capacity} of 0x90-byte rows
+constexpr std::size_t PageRowSize = 0x90, RowWidget = 0x80; // a row: name+help texts, widget at +0x80
+constexpr u64 ListRedraw = 0x1acfb20;    ///< (widget + 0xA0): redraws the items from their texts
+constexpr u64 WidgetList = 0xa0;
+std::vector<u64> live_widgets;           // menu thread only
+std::uint64_t live_seen_changes = 0;
+thread_local bool in_redraw = false;
+
+int RefCount(u64 obj) { return *reinterpret_cast<volatile int*>(obj + 8); }
+void Release(u64 obj) {
+    if (__atomic_sub_fetch(reinterpret_cast<int*>(obj + 8), 1, __ATOMIC_ACQ_REL) == 0) {
+        using Destroy = void(BB_SYSV*)(u64);
+        reinterpret_cast<Destroy>(**reinterpret_cast<u64**>(obj))(obj);
+    }
+}
+bool LiveValuesOn() {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_GAME_MENU_LIVE_VALUES");
+        return !env || env[0] != '0';
+    }();
+    return on;
+}
+/// After a PairRow: the page's newest row's widget, referenced.
+void KeepNewestWidget(void* page) {
+    if (!LiveValuesOn()) return;
+    const u64 rows = reinterpret_cast<u64>(page) + PageRows;
+    u64 begin = 0, end = 0;
+    if (!bbnet::guest_read(rows + 8, &begin, 8) || !bbnet::guest_read(rows + 0x10, &end, 8) || end < begin + PageRowSize ||
+        (end - begin) % PageRowSize) {
+        if (Trace()) std::printf("Game menu: live values: page rows %#llx..%#llx not as expected\n",
+                                 (unsigned long long)begin, (unsigned long long)end);
+        return;
+    }
+    u64 widget = 0, vtable = 0;
+    if (!bbnet::guest_read(end - PageRowSize + RowWidget, &widget, 8) || !widget || !bbnet::guest_read(widget, &vtable, 8) ||
+        vtable < image_base || RefCount(widget) < 1 || RefCount(widget) > 64) {
+        if (Trace()) std::printf("Game menu: live values: no widget in the newest row (%#llx)\n", (unsigned long long)widget);
+        return;
+    }
+    if (Trace()) std::printf("Game menu: live values: row widget %#llx (vtable +%#llx, refs %d)\n", (unsigned long long)widget,
+                             (unsigned long long)(vtable - image_base), RefCount(widget));
+    __atomic_add_fetch(reinterpret_cast<int*>(widget + 8), 1, __ATOMIC_ACQ_REL);
+    live_widgets.push_back(widget);
+}
+/// A page is being built: the previous page's widgets are let go.
+void DropWidgets() {
+    for (u64 w : live_widgets) Release(w);
+    live_widgets.clear();
+    live_seen_changes = P::DynamicChanges();
+}
+/// The menu thread, between lookups: redraw the kept widgets once a run-time text changed.
+void RedrawChangedValues() {
+    if (in_redraw || live_widgets.empty()) return;
+    const std::uint64_t changes = P::DynamicChanges();
+    if (changes == live_seen_changes) return;
+    live_seen_changes = changes;
+    if (Trace()) std::printf("Game menu: live values: run-time text change %llu; %zu widget(s)\n",
+                             (unsigned long long)changes, live_widgets.size());
+    in_redraw = true;
+    std::size_t redrawn = 0;
+    for (auto it = live_widgets.begin(); it != live_widgets.end();) {
+        if (RefCount(*it) <= 1) {  // the page let it go: only our reference is left
+            Release(*it);
+            it = live_widgets.erase(it);
+            continue;
+        }
+        using Redraw = void(BB_SYSV*)(u64);
+        Game<Redraw>(ListRedraw)(*it + WidgetList);
+        ++redrawn;
+        ++it;
+    }
+    in_redraw = false;
+    static int logs = 0;
+    if (redrawn && logs < 5 && Trace()) {
+        ++logs;
+        std::printf("Game menu: %zu value column(s) redrawn after a run-time text change\n", redrawn);
+    }
+}
+
 void AddRows(void* page, const std::vector<Row>& all) {
+    DropWidgets();
     // Rows shown now (the party's member rows: one per member).
     std::vector<Row> rows;
     for (const Row& row : all) {
@@ -225,6 +315,7 @@ void AddRows(void* page, const std::vector<Row>& all) {
                 DestroyText(value + 8);
             }
             Game<PairRowFn>(PairRow)(page, pair, P::Byte(row.field), two, P::DefaultByte(row.field));
+            if (P::IsDynamic(row.choices[0]) || P::IsDynamic(row.choices[1])) KeepNewestWidget(page);
             DestroyValues(two, PairCountOffset);
             AlignedFree(two);
             DestroyTexts(pair);
@@ -405,6 +496,7 @@ BB_SYSV const char16_t* LookupHook(void* repository, u32 table, u32 category, u3
             }
         }
         const char16_t* ours = TextOf(id);
+        RedrawChangedValues();  // the game's menu thread, our page on screen
         NoteText(ours); // the port's page texts too (TextSeenMs: scripted walks wait for its rows)
         return ours;
     }
@@ -412,12 +504,56 @@ BB_SYSV const char16_t* LookupHook(void* repository, u32 table, u32 category, u3
         return title_override;
     }
     const char16_t* text = lookup_original(repository, table, category, id);
+    RedrawChangedValues();  // the game's menu code (our page's own texts are not looked up again)
     NoteLookup(category, id);
     NoteText(text);
     static const bool trace = [] {
         const char* env = std::getenv("BB_GAME_MENU_TRACE");
         return env && env[0] == '1';
     }();
+    // BB_GAME_MENU_TRACE_TEXT=<ASCII text>: which message (category / id) and which caller show a
+    // text containing it (reverse engineering a dialog; each id + caller once).
+    static const char* trace_text = [] {
+        const char* env = std::getenv("BB_GAME_MENU_TRACE_TEXT");
+        return env && env[0] ? env : nullptr;
+    }();
+    if (trace_text && text) {
+        const std::size_t n = std::strlen(trace_text);
+        for (const char16_t* p = text; *p; ++p) {
+            std::size_t k = 0;
+            while (k < n && p[k] && std::tolower(static_cast<unsigned char>(p[k] < 128 ? p[k] : 0)) ==
+                                        std::tolower(static_cast<unsigned char>(trace_text[k]))) {
+                ++k;
+            }
+            if (k == n) {
+                static std::mutex mu;
+                static std::vector<std::pair<u64, u64>> seen;
+                const u64 from = reinterpret_cast<u64>(__builtin_return_address(0)) - image_base;
+                std::lock_guard<std::mutex> lk(mu);
+                if (std::find(seen.begin(), seen.end(), std::make_pair(u64(id), from)) == seen.end() && seen.size() < 64) {
+                    seen.emplace_back(u64(id), from);
+                    // The callers above (the game keeps frame pointers: rbp chain).
+                    char chain[160] = {0};
+                    std::size_t used = 0;
+                    const u64* fp = static_cast<const u64*>(__builtin_frame_address(0));
+                    for (int depth = 0; depth < 6 && fp; ++depth) {
+                        u64 next = 0, ret = 0;
+                        if (!bbnet::guest_read(reinterpret_cast<std::uintptr_t>(fp), &next, 8) ||
+                            !bbnet::guest_read(reinterpret_cast<std::uintptr_t>(fp) + 8, &ret, 8))
+                            break;
+                        if (depth > 0 && used < sizeof chain - 24)
+                            used += std::snprintf(chain + used, sizeof chain - used, " %#llx",
+                                                  (unsigned long long)(ret - image_base));
+                        if (next <= reinterpret_cast<u64>(fp)) break;
+                        fp = reinterpret_cast<const u64*>(next);
+                    }
+                    std::printf("Game menu: '%s' is text %#x/%u (%#x) from %#llx; callers%s\n", trace_text, category,
+                                id, id, (unsigned long long)from, chain);
+                }
+                break;
+            }
+        }
+    }
     if (trace && id >= 110000 && id < 120000) {
         std::printf("Game menu: text %#x/%u%s from %#llx\n", category, id, title_override ? " (our page)" : "",
                     (unsigned long long)(reinterpret_cast<u64>(__builtin_return_address(0)) - image_base));

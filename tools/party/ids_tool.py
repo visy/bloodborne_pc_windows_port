@@ -24,7 +24,7 @@ Tables (every array sorted ascending, no duplicates):
   kPartyRemos        cutscene ids AABBNNNN of remo/sAA_BB_NNNN.remobnd(.dcx) plus every id an
                      EMEVD 2002[1..7] plays (a played id without a file is reported).
 """
-import argparse, array, re, sys
+import argparse, array, math, re, struct, sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -69,6 +69,49 @@ def msb_entities(msbs):
             words.byteswap()
         out.update(v for v in words if lo <= v < lo + 10000)
     return out
+
+
+def msb_lists(data):
+    """[(list name, [entry offsets], end)] of an MSB (MSBB: MODEL, EVENT, POINT, ROUTE, LAYER, PARTS)."""
+    out, off = [], 0x10
+    while off and off < len(data):
+        _ver, cnt, name_off = struct.unpack_from("<iiq", data, off)
+        name = ft.utf16z(data, name_off) if name_off else ""
+        offs = struct.unpack_from(f"<{cnt}q", data, off + 16)
+        out.append((name, list(offs[:-1])))
+        off = offs[-1]
+    return out
+
+
+def return_spots(msbs, rp_ids):
+    """{return point entity id: (x, y, z, yaw radians)}: where a lamp / headstone warp puts the
+    player. ReturnPointParam.returnPointEntityId names an MSB event (EVENT_PARAM_ST entry: +0x18
+    base data offset -> +8 entity id; +0x20 type data offset -> +0 the region index) whose region
+    (POINT_PARAM_ST entry: +0x14 position, +0x20 rotation in degrees) is the spot. Checked live:
+    2412951 -> region 595 of m24_01 at (-193.4, -28.65, 68.5), 45 deg = the host's arrival."""
+    want = set(rp_ids)
+    spots = {}
+    for (a, b, c, d), path in msbs:
+        if c or d or b >= 10:
+            continue
+        data = ft.read_maybe_dcx(path)
+        lists = dict(msb_lists(data))
+        events, points = lists.get("EVENT_PARAM_ST", []), lists.get("POINT_PARAM_ST", [])
+        for o in events:
+            base, typ = struct.unpack_from("<qq", data, o + 0x18)
+            if not base or not typ or o + base + 12 > len(data):
+                continue
+            eid = struct.unpack_from("<i", data, o + base + 8)[0]
+            if eid not in want or eid in spots:
+                continue
+            region = struct.unpack_from("<i", data, o + typ)[0]
+            if not 0 <= region < len(points):
+                continue
+            r = points[region]
+            x, y, z = struct.unpack_from("<3f", data, r + 0x14)
+            yaw = struct.unpack_from("<3f", data, r + 0x20)[1]
+            spots[eid] = (x, y, z, math.radians(yaw))
+    return spots
 
 
 def emevd_ids(game):
@@ -144,6 +187,17 @@ def cmd_gen_inc(a):
     out += array_lines("kPartyReturnPoints", "std::uint32_t", rp)
     out += array_lines("kPartyEntities", "std::uint32_t", ents, 10)
     out += array_lines("kPartyRemos", "std::uint32_t", remos)
+    rows = {r["id"]: r["returnPointEntityId"] for r in P["ReturnPointParam"] if r["id"] in rp}
+    spots = return_spots(msbs, set(rows.values()))
+    spot_ids = sorted(i for i in rows if rows[i] in spots)
+    out += [f"// {len(spot_ids)} return point spots (x, y, z, yaw radians) from the MSB revive events; "
+            f"without a spot: {sorted(set(rp) - set(spot_ids))}"]
+    out += array_lines("kPartyReturnSpotIds", "std::uint32_t", spot_ids)
+    out.append(f"PARTY_IDS_ARRAY(kPartyReturnSpots, float, {len(spot_ids) * 4}) = {{")
+    for i in spot_ids:
+        x, y, z, yaw = spots[rows[i]]
+        out.append(f"    {x:.4f}f, {y:.4f}f, {z:.4f}f, {yaw:.6f}f,  // {i}")
+    out.append("};")
     outp = Path(a.out)
     outp.parent.mkdir(parents=True, exist_ok=True)
     outp.write_text("\n".join(out) + "\n", encoding="utf-8", newline="\n")

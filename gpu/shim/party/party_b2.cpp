@@ -135,6 +135,8 @@ std::atomic<bool> g_on{false};
 std::atomic<bool> g_force{false};
 std::atomic<bool> g_rejoin{false};  // a B2 re-join is in flight (K5 / K6 armed)
 std::atomic<bool> g_k1_xml{false};  // the XML retarget already keeps the room at 0x19471B1
+std::atomic<int> g_apart_k5{0};     // members in another area (split travel): K5 stands aside
+std::atomic<double> g_split_change_at{-100.0};  // the last split chr removal / meet rewind (Now())
 
 bool IdEquals(u64 a, u64 b) {
     using Fn = bool(BB_COOP_SYSV*)(u64, u64);
@@ -385,7 +387,18 @@ BB_COOP_SYSV void HostDeathReturnHook(u64 man, u64 id) {
 }
 
 /// Guest: HostDead_1's send-home is dropped (the host's death travel brings the guest along).
+bool SplitHostReachable();
 bool SendHomeVeto(u64 site) {
+    // Split travel: OnLeave_Limit (0x138A51C: the room-gone / irregular-leave path) sent a guest
+    // home 5 s after the host travelled alone (live split4) although the room and the party link
+    // were up. While the host is apart (or just left alone) and its link is fresh, it is dropped.
+    if (g_on.load() && Role() == RoleClient && site == 0x138a51c && SplitHostReachable()) {
+        Log("guest: send-home at +0x138a51c (OnLeave_Limit) dropped: split travel, the host is in another area and "
+            "connected (session %d, flow %d, flow +0xF4 %.1f, session +0x2E0 %.1f +0x2F0 %.1f)",
+            Role(), Field<int>(Slot(kSlotFlow), 0x84, -1), double(Field<float>(Slot(kSlotFlow), 0xf4)),
+            double(Field<float>(Slot(kSlotSession), 0x2e0)), double(Field<float>(Slot(kSlotSession), 0x2f0)));
+        return true;
+    }
     if (g_on.load() && Role() == RoleClient &&
         (site == kHostDead1Call || site == 0x13856f4 || site == 0x13859df)) {
         Log("guest: send-home at +0x%llx dropped (B2: %s)", ull(site),
@@ -556,8 +569,11 @@ BB_COOP_SYSV u64 FlagApplyHook(u64 man, u64 blob) {
 
 // K5: Lua OnMatchingCheck: a member's chr is missing (it is loading).
 BB_COOP_SYSV u64 MatchCheckHook(u64 session) {
-    if (g_on.load() && g_rejoin.load()) {
-        Log("K5: OnMatchingCheck leave suppressed (re-join in flight)");
+    // Split travel: a member apart (no chr here, by design), or a chr removed / re-created in the
+    // last 15 s (live split1: the leave came 50 ms after a meet's rewind, the chr not built yet).
+    const bool split = g_apart_k5.load() > 0 || Now() - g_split_change_at.load() < 15.0;
+    if (g_on.load() && (g_rejoin.load() || split)) {
+        Log("K5: OnMatchingCheck leave suppressed (%s)", g_rejoin.load() ? "re-join in flight" : "split travel: members apart");
         return 0;
     }
     using Fn = u64(BB_COOP_SYSV*)(u64);
@@ -796,7 +812,7 @@ std::string DescribePresence(bool deep = false) {
     return out;
 }
 
-enum class GuestPhase { Idle, AwaitSnapshot, Loading, Rewinding };
+enum class GuestPhase { Idle, AwaitSnapshot, Loading, Rewinding, AwayLoading, InWorldFollow };
 enum class HostPhase { Idle, Loading, Resynced };
 
 struct State {
@@ -812,9 +828,22 @@ struct State {
     // host
     HostPhase hphase = HostPhase::Idle;
     double hsince = 0;
+    bool alone_load = false;  // host: this own load is an alone travel (split travel)
     bool arrived = false;  // a guest said it arrived (under mu)
     bool rejoined_logged = false; // host: an "arrived" came since the resync
     bool respawn_request = false;  // a guest died alone and reloads this world (under mu)
+    bool respawn_live = false;     // ... or it travels alone into this world ("rejoin": not dead)
+    bool away_request = false;     // a guest leaves this area alone ("away"): drop its chr (under mu)
+    bool away_have_pos = false;
+    float away_pos[3] = {};
+    bool enter_state1 = false;     // guest: the follow's flow state 1 is entered by the main thread
+    // guest: the running re-join is this guest's own travel (split travel): the destination is
+    // its own (no transform beside the host, no summoned placement); the GSM +0x1521 it cleared.
+    bool solo = false;
+    bool blobs_saved = false;  // guest: this re-join's host world blobs were copied
+    int saved_1521 = -1;
+    u32 warp_lamp = 0;      // guest: the host's in-world party move to follow (main thread)
+    double inworld_since = 0;  // guest: an in-world follow of a host load into this block
     bool respawn_have_pos = false;  // where it died (its member chr here stands there)
     float respawn_pos[3] = {};
     bool have_dest = false; // guest: the host's post-load transform (under mu)
@@ -837,11 +866,13 @@ void Send(int slot, const std::string& body) {
     S().out.emplace_back(slot, body);
 }
 
+std::string DescribeBlobs();
 void ProbeTick(const GameSnapshot& s) {
     State& st = S();
     const bool loading = s.loading || !s.world_up;
     if (loading && !st.was_loading) {
         st.player_before = s.player;
+        Log("load started: blobs %s", DescribeBlobs().c_str());
         Log("load started: local PlayerIns %#llx, role %d, flow %d; tasks:%s; presence %s", ull(s.player), Role(),
             Field<int>(Slot(kSlotFlow), 0x84, -1), DescribeTasks().c_str(), DescribePresence().c_str());
     } else if (!loading && st.was_loading) {
@@ -851,12 +882,388 @@ void ProbeTick(const GameSnapshot& s) {
             Field<int>(Slot(kSlotWorldChrMan), 0x30, -1), Role(), Field<int>(Slot(kSlotFlow), 0x84, -1),
             DescribeTasks().c_str());
         Log("B2 load report: presence %s", DescribePresence().c_str());
+        const u64 gsm = Slot(kSlotGsm);
+        Log("B2 load report: GSM +0x1593 %u +0x1594 %#x +0x1598 %u +0x159c %#x, GameDataMan +0x68 %#x, +0x0c %#x",
+            unsigned(Field<u8>(gsm, 0x1593)), Field<u32>(gsm, 0x1594), unsigned(Field<u8>(gsm, 0x1598)),
+            Field<u32>(gsm, 0x159c), Field<u32>(Slot(kSlotGameData), 0x68), Field<u32>(gsm, 0x0c));
+        Log("B2 load report: blobs %s", DescribeBlobs().c_str());
     }
     st.was_loading = loading;
 }
 
 std::atomic<int> g_local_slot{-1};
 std::atomic<bool> g_fell_back{false};  // a B1 fallback ran: clean the network flow once idle
+
+// ---- Split travel (docs/party/split_travel.md): members in different areas ----
+// Where every member is, from the party link's vitals (the director, every tick): map (0xAABBCCDD)
+// and position as that member's own game reads them.
+std::vector<Where> g_where;  // main thread
+std::atomic<int> g_apart{0};  // members whose area differs from ours (K5, the host watchdog)
+std::atomic<bool> g_host_alone_next{false};  // host: the next own load is an alone travel
+std::atomic<double> g_host_alone_at{0};
+std::atomic<bool> g_host_left{false};  // guest: the host travelled alone; drop its chr here
+std::atomic<double> g_host_alone_seen{0};  // guest: when the host's last alone travel arrived (Now())
+// A member that just travelled alone still reports its old map for a moment (its vitals stay
+// until its load ends): no meet with it until its vitals show another area, or 30 s passed
+// (live split3: the host re-created a guest's chr right after its "away").
+std::atomic<double> g_away_until[8] = {};
+void NoteAway(int slot) {
+    if (slot >= 0 && slot < 8) {
+        g_away_until[slot] = Now() + 30.0;
+    }
+}
+
+u32 AreaOf(u32 map) {
+    return (map == 0 || map == 0xffffffffu) ? 0u : map >> 24;
+}
+
+const Where* WhereOf(int slot) {
+    for (const Where& w : g_where) {
+        if (w.slot == slot) {
+            return &w;
+        }
+    }
+    return nullptr;
+}
+
+/// The host's current map as the vitals say (guest side); 0 unknown.
+u32 HostMap() {
+    const Where* w = WhereOf(0);
+    return w && w->age_ms < 5000 ? w->map : 0u;
+}
+
+/// Removes a remote player chr as its task's STEP_DeleteWait 0x1E50A70 does (presentation slot
+/// release 0x15BC080, WorldChrMan remove 0x19186E0); the task is kept (rewound to STEP_Create
+/// when the two meet again). Main thread.
+void RemoveRemoteChr(u64 chr, const char* why) {
+    using Release = u64(BB_COOP_SYSV*)(u64, u32);
+    using Remove = void(BB_COOP_SYSV*)(u64, u64);
+    float p[3] = {};
+    ChrPos(chr, p);
+    reinterpret_cast<Release>(Guest(0x15bc080))(Field<u64>(Slot(kSlotGsm), 0x16f8), Field<u32>(chr, 8));
+    reinterpret_cast<Remove>(Guest(0x19186e0))(Slot(kSlotWorldChrMan), chr);
+    g_split_change_at = Now();
+    Log("split: remote chr %#llx at (%.1f, %.1f, %.1f) removed (%s); its task is kept", ull(chr), p[0], p[1], p[2], why);
+}
+
+/// The member slot whose reported position is nearest to `p` (within `max_m`), -1 none.
+int SlotNear(const float p[3], float max_m) {
+    int best = -1;
+    float bd = max_m * max_m;
+    for (const Where& w : g_where) {
+        if (w.slot == g_local_slot.load() || !w.has_pos || w.age_ms > 3000) {
+            continue;
+        }
+        const float d = (w.pos[0] - p[0]) * (w.pos[0] - p[0]) + (w.pos[1] - p[1]) * (w.pos[1] - p[1]) +
+                        (w.pos[2] - p[2]) * (w.pos[2] - p[2]);
+        if (d < bd) {
+            bd = d;
+            best = w.slot;
+        }
+    }
+    return best;
+}
+
+/// The remote chr standing nearest `p` (within 6 m), 0 none.
+u64 ChrNear(const float p[3]) {
+    u64 victim = 0;
+    float best = 36.0f;
+    for (const TaskInfo& t : Tasks(false)) {
+        const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        float q[3];
+        if (c && ChrPos(c, q)) {
+            const float d = (q[0] - p[0]) * (q[0] - p[0]) + (q[1] - p[1]) * (q[1] - p[1]) + (q[2] - p[2]) * (q[2] - p[2]);
+            if (d < best) {
+                best = d;
+                victim = c;
+            }
+        }
+    }
+    return victim;
+}
+
+/// Guest, main thread, before any flow state 1: the host's join-snapshot packets (0x19, 0x11,
+/// 0x10) that arrived while this guest did not follow wait in the receive queue (0x1783160 pops
+/// them only in state 1) and would be applied first - another map's, older flags. Popped and
+/// dropped with the game's own receive 0x17893E0(flow, type, buf, size) (role 3/6 only).
+void DrainSnapshotQueue(const char* why) {
+    static std::vector<u8> buf(0x10000);
+    using Recv = int(BB_COOP_SYSV*)(u64, u32, void*, u32);
+    const u64 flow = Slot(kSlotFlow);
+    if (!flow || Role() != RoleClient) {
+        return;
+    }
+    std::string got;
+    for (u32 type : {0x19u, 0x11u, 0x10u}) {
+        int n = 0;
+        for (int i = 0; i < 16; ++i) {
+            const int r = reinterpret_cast<Recv>(Guest(0x17893e0))(flow, type, buf.data(), u32(buf.size()));
+            if (r <= 0) {
+                break;
+            }
+            ++n;
+        }
+        if (n) {
+            char b[32];
+            std::snprintf(b, sizeof b, " 0x%x x%d", type, n);
+            got += b;
+        }
+    }
+    if (!got.empty()) {
+        Log("split: stale snapshot packets dropped before flow state 1 (%s):%s", why, got.c_str());
+    }
+}
+
+/// Host: the per-peer net sync of this world (WorldChrMan +0xA40) for every member, without the
+/// snapshot packets (a meet without a load: nobody is in flow state 1).
+void NetSyncMembers() {
+    using Three = void(BB_COOP_SYSV*)(u64, u64, u32);
+    const u64 netsync = Field<u64>(Slot(kSlotWorldChrMan), 0xa40);
+    const u64 arg = Slot(kSlotNetSyncArg);
+    if (!netsync || !arg) {
+        return;
+    }
+    const u32 a = Field<u32>(arg, 0x20);
+    for (u64 id : Members()) {
+        reinterpret_cast<Three>(Guest(kNetSyncJoin))(netsync, id, a);
+        reinterpret_cast<Three>(Guest(kNetSyncData))(netsync, id, a);
+    }
+}
+
+/// Both roles, main thread, steady world, no re-join running. (1) A remote chr whose owner (the
+/// member reporting a position next to it) is in another area is removed; (2) members in our
+/// area whose chr is missing here are built again (rewind), at most every 10 s: a meet without a
+/// load (the host also re-registers its net sync); (3) the count of members apart.
+void SplitTick(const GameSnapshot& s, double now) {
+    static double last_meet = 0;
+    static std::map<int, std::pair<u32, double>> seen;  // slot -> (area, since)
+    if (!SessionUp() || !s.world_up || s.loading || !s.player) {
+        return;
+    }
+    const u32 mine = AreaOf(s.map_id);
+    if (mine == 0) {
+        return;  // our own map not known yet (right after a load)
+    }
+    int apart = 0;
+    bool meet = false;
+    for (const Where& w : g_where) {
+        if (w.slot == g_local_slot.load() || !w.connected) {
+            continue;
+        }
+        const u32 a = w.age_ms < 5000 ? AreaOf(w.map) : 0u;
+        auto& sn = seen[w.slot];
+        if (sn.first != a) {
+            sn = {a, now};
+        }
+        if (a == 0) {
+            continue;  // loading / unknown: no decision
+        }
+        if (a != mine) {
+            ++apart;
+            if (w.slot >= 0 && w.slot < 8) {
+                g_away_until[w.slot] = 0;  // elsewhere now: a later return to our area is a meet
+            }
+            continue;
+        }
+        // In our area for 2 s: its chr should be here.
+        const float p[3] = {w.pos[0], w.pos[1], w.pos[2]};
+        if (w.slot >= 0 && w.slot < 8 && g_away_until[w.slot].load() > now) {
+            continue;  // left alone a moment ago; its vitals still show this area
+        }
+        if (now - sn.second >= 2.0 && w.has_pos && w.age_ms < 1500 && !ChrNear(p)) {
+            meet = true;
+        }
+    }
+    if (apart != g_apart.load()) {
+        Log("split: %d member(s) in another area than ours (%s)", apart, MapName(s.map_id).c_str());
+    }
+    g_apart = apart;
+    g_apart_k5 = apart;
+    if (g_host_left.exchange(false) && Role() == RoleClient) {
+        for (const TaskInfo& t : Tasks(false)) {
+            if (t.mode == 2) {
+                if (const u64 c = PlayerForPeer(t.task + kTaskPeer)) {
+                    RemoveRemoteChr(c, "the host travelled alone");
+                }
+            }
+        }
+    }
+    // (1) chrs of members that are elsewhere.
+    for (const TaskInfo& t : Tasks(false)) {
+        const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        float p[3];
+        if (!c || !ChrPos(c, p)) {
+            continue;
+        }
+        const int slot = SlotNear(p, 5.0f);
+        const Where* w = slot >= 0 ? WhereOf(slot) : nullptr;
+        if (w && AreaOf(w->map) != 0 && AreaOf(w->map) != mine) {
+            char why[96];
+            std::snprintf(why, sizeof why, "slot %d is in %s, we are in %s", slot, MapName(w->map).c_str(),
+                          MapName(s.map_id).c_str());
+            RemoveRemoteChr(c, why);
+        }
+    }
+    // (2) a meet without a load.
+    if (meet && now - last_meet >= 10.0) {
+        bool chrless = false;
+        for (const TaskInfo& t : Tasks(false)) {
+            chrless = chrless || ((t.mode == 1 || t.mode == 2) && t.step >= kStepCreate && !(t.flags & 2) &&
+                                  !PlayerForPeer(t.task + kTaskPeer));
+        }
+        if (chrless) {
+            last_meet = now;
+            if (Role() == RoleClient) {
+                DrainSnapshotQueue("meet");
+            } else {
+                NetSyncMembers();
+            }
+            g_split_change_at = now;
+            const int n = RewindRemoteTasks("split meet");
+            Log("split: a member is in our area (%s) without its chr here: %d task(s) rewound (no load)",
+                MapName(s.map_id).c_str(), n);
+        }
+    }
+}
+
+/// Guest: the host is apart (another area, or it travelled alone in the last 60 s) and its party
+/// link entry is connected and fresh.
+bool SplitHostReachable() {
+    const Where* h = WhereOf(0);
+    const bool apart = g_apart.load() > 0 || Now() - g_host_alone_seen.load() < 60.0;
+    return apart && h && h->connected && h->age_ms < 5000;
+}
+
+// ---- The host's world blobs of packet 0x11 (GSM +0x16C0/+0x16C8 decals, +0x16A0/+0x16A8 map
+// items, +0x1684/+0x1688 CHR), kept for an alone load. A host-world load into a map the host has
+// not loaded (no snapshot) built no world (live split5/split7: map "-", the player falling through
+// nothing - the user's "grey screen"). The map items blob is what the host-world loader reads
+// (getter 0x156C600: +0x16B0 own world / +0x16A0 host world); copies of the last ones the host sent
+// are put back (game heap, *0x5540420 vfunc +0x58) when they are empty before an alone load.
+struct Blob {
+    u64 size_off, ptr_off;
+    std::vector<u8> data;
+};
+Blob g_blobs[3] = {{0x16c0, 0x16c8, {}}, {0x16a0, 0x16a8, {}}, {0x1684, 0x1688, {}}};
+
+std::string DescribeBlobs() {
+    const u64 gsm = Slot(kSlotGsm);
+    char b[160];
+    std::snprintf(b, sizeof b, "decals %d, map items %d, chr %d (own: %d / %d / %d)", Field<int>(gsm, 0x16c0),
+                  Field<int>(gsm, 0x16a0), Field<int>(gsm, 0x1684), Field<int>(gsm, 0x16d0), Field<int>(gsm, 0x16b0),
+                  Field<int>(gsm, 0x1690));
+    return b;
+}
+
+void SaveHostBlobs() {
+    const u64 gsm = Slot(kSlotGsm);
+    for (Blob& bl : g_blobs) {
+        const int n = Field<int>(gsm, bl.size_off);
+        const u64 p = Field<u64>(gsm, bl.ptr_off);
+        if (n > 0 && n < (1 << 22) && p) {
+            bl.data.resize(std::size_t(n));
+            if (!SafeRead(p, bl.data.data(), bl.data.size())) {
+                bl.data.clear();
+            }
+        }
+    }
+    Log("guest: host world blobs kept for alone loads (%s)", DescribeBlobs().c_str());
+}
+
+void RestoreHostBlobs() {
+    const u64 gsm = Slot(kSlotGsm);
+    const u64 heap = Slot(0x5540420);
+    if (!gsm || !heap) {
+        return;
+    }
+    using Alloc = u64(BB_COOP_SYSV*)(u64, u64, u64);
+    const u64 alloc = Field<u64>(Field<u64>(heap, 0), 0x58);
+    std::string put;
+    for (Blob& bl : g_blobs) {
+        if (bl.data.empty() || Field<int>(gsm, bl.size_off) > 0 || Field<u64>(gsm, bl.ptr_off) || !alloc) {
+            continue;
+        }
+        const u64 p = reinterpret_cast<Alloc>(alloc)(heap, bl.data.size(), 1);
+        if (!p || !SafeWrite(p, bl.data.data(), bl.data.size())) {
+            continue;
+        }
+        const int n = int(bl.data.size());
+        SafeWrite(gsm + bl.ptr_off, &p, 8);
+        SafeWrite(gsm + bl.size_off, &n, 4);
+        char b[32];
+        std::snprintf(b, sizeof b, " +0x%llx (%d B)", ull(bl.size_off), n);
+        put += b;
+    }
+    Log("guest: alone load: host world blobs before (%s); put back:%s", DescribeBlobs().c_str(),
+        put.empty() ? " none" : put.c_str());
+}
+
+// ---- In-world warps: a move inside the loaded map needs no load (no loading screen) ----
+void BesideHost(float pos[4], const float rot[4], int slot);
+/// The local player's current map (packed), 0xffffffff unknown.
+u32 LocalMap() {
+    const GameSnapshot g = ReadGameState(false);
+    return g.world_up && !g.loading ? g.map_id : 0xffffffffu;
+}
+
+/// `map` (packed) is the block the local player stands in: area and block equal.
+bool InLoadedBlock(u32 map) {
+    const u32 cur = LocalMap();
+    return cur != 0xffffffffu && map != 0 && map != 0xffffffffu && (map >> 16) == (cur >> 16);
+}
+
+/// The chr warp vfunc +0x5F8 (0x18CD600(chr, pos, rot, 1), as the NPC summon step and the B2
+/// spacing use it) on the local player: same map, no load. Main thread.
+bool WarpLocal(const float pos[3], float yaw, const char* why) {
+    const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+    const u64 fn = player ? Field<u64>(Field<u64>(player, 0), 0x5f8) : 0;
+    if (!fn) {
+        return false;
+    }
+    alignas(16) float p16[4] = {pos[0], pos[1], pos[2], 1.0f};
+    alignas(16) float r16[4] = {0.0f, yaw, 0.0f, 0.0f};
+    float before[3] = {};
+    ChrPos(player, before);
+    using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
+    reinterpret_cast<Warp>(fn)(player, p16, r16, 1);
+    Log("in-world warp (%s): (%.1f, %.1f, %.1f) -> (%.1f, %.1f, %.1f) in %s, no load", why, before[0], before[1], before[2],
+        pos[0], pos[1], pos[2], MapName(LocalMap()).c_str());
+    return true;
+}
+
+/// Lamp / return point `id` is in the loaded block and its spot is known.
+bool LampInLoadedBlock(u32 id, float spot[4]) {
+    return id != 0 && id != kTravelNone && id / 100000 != 29 && ids::ReturnSpot(id, spot) &&
+           InLoadedBlock(ids::EntityMap(id));
+}
+
+/// To lamp `id`'s spot without a load; beside it by party slot when `beside` (the spacing of
+/// BesideHost: guests never stand inside each other).
+bool WarpToLampInWorld(u32 id, bool beside, const char* why) {
+    float spot[4];
+    if (!LampInLoadedBlock(id, spot)) {
+        return false;
+    }
+    float pos[4] = {spot[0], spot[1], spot[2], 1.0f};
+    const float rot[4] = {0.0f, spot[3], 0.0f, 0.0f};
+    if (beside && g_local_slot.load() > 0) {
+        BesideHost(pos, rot, g_local_slot.load());
+    }
+    char b[96];
+    std::snprintf(b, sizeof b, "%s, lamp %u", why, id);
+    return WarpLocal(pos, spot[3], b);
+}
+
+std::string DescribeWhere() {
+    std::string out;
+    for (const Where& w : g_where) {
+        char b[96];
+        std::snprintf(b, sizeof b, " [slot %d %s %s (%.0f, %.0f, %.0f) %u ms]", w.slot, w.connected ? "" : "lost",
+                      MapName(w.map).c_str(), w.pos[0], w.pos[1], w.pos[2], w.age_ms);
+        out += b;
+    }
+    return out;
+}
 
 /// A guest's spot beside the host (never on it: character collision shoves the host): BB_PARTY_SUMMON_OFFSET
 /// (default 0.5 m, 0 = off), side by side in a line: right (party slot 1), left (2), 2x right (3+) of
@@ -1255,6 +1662,7 @@ void HostMemberWatchTick(const GameSnapshot& s, double now) {
 /// before the load; nothing moves it afterwards. True while it is still moving (no ring yet).
 bool PreRingSpacing(const GameSnapshot& s, u32 host_map) {
     static int attempt = -1, wait = 0;
+    static std::chrono::steady_clock::time_point moved_at{};
     static u64 done_for = 0;  // the PlayerIns it was done for (a new one after every load)
     alignas(16) static float start[4], target[4], start_rot[4];
     const float d = SummonOffset();
@@ -1269,7 +1677,10 @@ bool PreRingSpacing(const GameSnapshot& s, u32 host_map) {
     }
     using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
     if (attempt >= 0) {
-        if (++wait < 30) {
+        // 0.8 s after the warp (a fall off a ledge has lost > 1.5 m by then): 30 ticks were up to
+        // 3.4 s per side at a slow frame rate (A4: the guest's first bell came 6.9 s late).
+        (void)wait;
+        if (std::chrono::steady_clock::now() - moved_at < std::chrono::milliseconds(800)) {
             return true;
         }
         const float off =
@@ -1292,6 +1703,7 @@ bool PreRingSpacing(const GameSnapshot& s, u32 host_map) {
     }
     ++attempt;
     wait = 0;
+    moved_at = std::chrono::steady_clock::now();
     const int side = coop::fourp::SpotForTry(g_local_slot.load(), attempt);
     std::memcpy(target, start, sizeof start);
     BesideHost(target, start_rot, side);
@@ -1359,6 +1771,9 @@ void FallRecoveryTick(const GameSnapshot& s, double now) {
             const u32 lamp = use_host ? host : own;
             Log("recovery: falling for 6 s at (%.1f, %.1f, %.1f); warping to %s last lamp %u", p[0], p[1], p[2],
                 use_host ? "the host's" : "the own", lamp);
+            if (lamp && lamp != 0xffffffffu && WarpToLampInWorld(lamp, false, "fall recovery")) {
+                return;  // the lamp is in this map: no load
+            }
             if (lamp && lamp != 0xffffffffu) {
                 using Fn = void(BB_COOP_SYSV*)(u32);
                 reinterpret_cast<Fn>(Guest(0x13cdf30))(lamp);
@@ -1374,6 +1789,7 @@ void FallRecoveryTick(const GameSnapshot& s, double now) {
 /// vanilla) and the director's bells re-summon it. Never leaves the guest stranded.
 extern std::atomic<bool> g_dead_follow;
 extern std::atomic<bool> g_solo_respawn;
+bool BeginRejoin(const TravelIntent& t, bool main_thread, bool solo);
 
 void FallbackToB1(const char* why) {
     State& st = S();
@@ -1384,6 +1800,13 @@ void FallbackToB1(const char* why) {
         have = st.have_intent;
         t = st.intent;
         st.gphase = GuestPhase::Idle;
+        st.solo = false;
+        st.enter_state1 = false;
+    }
+    if (st.saved_1521 >= 0) {
+        const u8 v = u8(st.saved_1521);
+        SafeWrite(Slot(kSlotGsm) + 0x1521, &v, 1);
+        st.saved_1521 = -1;
     }
     DropLoadingScreen(why);
     g_rejoin = false;
@@ -1598,7 +2021,7 @@ bool SoloRespawn(double held_for, u32 map_now) {
     }
     g_dead_follow = true;
     g_solo_respawn = true;
-    if (!OnHostTravel(t)) {
+    if (!BeginRejoin(t, true, false)) {
         g_dead_follow = false;
         g_solo_respawn = false;
         return false;
@@ -1645,10 +2068,10 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
     if (now - at < DeathGrace() || s.loading) {
         return;
     }
+    static double limbo_logged = 0;
     {
         // ERSC: a death in a boss fight waits (limbo) until the boss is gone, the party wipes (the
         // host's death travel takes the guest along, above) or someone rests (a travel, same).
-        static double limbo_logged = 0;
         std::string boss;
         if (BossFightActive(&boss)) {
             if (limbo_logged != at) {
@@ -1662,6 +2085,17 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         }
     }
     g_death_held_at = 0;
+    // Design decisions (ERSC_PARITY.md): outside a boss fight a dead player respawns at its OWN last
+    // lamp (split travel: a re-join when that lamp is in the host's area, else an alone load);
+    // after a boss fight everyone uses the party's lamp, the host's last lamp (SoloRespawn).
+    static const bool own_lamp = !(std::getenv("BB_PARTY_GUEST_OWN_LAMP") && std::getenv("BB_PARTY_GUEST_OWN_LAMP")[0] == '0');
+    if (limbo_logged != at && own_lamp) {
+        if (RespawnAloneAtOwnLamp()) {
+            Log("guest: died alone (no host travel in %.1f s): respawn at its own last lamp %u", now - at,
+                Field<u32>(Slot(kSlotGsm), 0x1528));
+            return;
+        }
+    }
     if (SoloRespawn(now - at, s.map_id)) {
         return;
     }
@@ -1975,6 +2409,22 @@ bool HostDeathIntercept() {
     const u64 gsm = Slot(kSlotGsm);
     const u32 lamp = Field<u32>(gsm, 0x1528);
     const u32 stage = Field<u32>(Field<u64>(Slot(kSlotWorldChrMan), 0x60), 0x3f8);  // the player's stage
+    // The lamp's spawn spot: the one seen at the last lamp arrival, else the MSB revive point of the
+    // lamp from the game data (party_ids ReturnSpot, split_travel.md 3a), when it is in this map.
+    if (!(g_lamp_spot.valid && g_lamp_spot.lamp == lamp)) {
+        float rs[4];
+        if (lamp != 0 && lamp != kTravelNone && (ids::EntityMap(lamp) >> 16) == (stage >> 16) && ids::ReturnSpot(lamp, rs)) {
+            LampSpot d;
+            d.valid = true;
+            d.lamp = lamp;
+            d.map = ids::EntityMap(lamp);
+            d.pos[0] = rs[0], d.pos[1] = rs[1], d.pos[2] = rs[2], d.pos[3] = 1.0f;
+            d.rot[1] = rs[3] * 3.14159265f / 180.0f;
+            g_lamp_spot = d;
+            Log("lamp spot: lamp %u from the game data (%.2f, %.2f, %.2f) yaw %.0f deg", lamp, double(rs[0]),
+                double(rs[1]), double(rs[2]), double(rs[3]));
+        }
+    }
     const LampSpot& sp = g_lamp_spot;
     // The stage id (PlayerIns +0x3F8) and the map id share the area / block bytes.
     const bool here = sp.valid && sp.lamp == lamp && (sp.map >> 16) == (stage >> 16);
@@ -1990,9 +2440,14 @@ bool HostDeathIntercept() {
         return true;
     }
     if (!here) {
-        Log("host death: last lamp %u %s (spot: %s lamp %u in %s; stage now %#x): the party moves with the host as before",
-            lamp, sp.valid && sp.lamp == lamp ? "is in another map" : "has no known spawn spot",
-            sp.valid ? "seen for" : "never seen", sp.lamp, MapName(sp.map).c_str(), stage);
+        // Design decision 1: the host respawns at its own last lamp in another map ALONE; the
+        // guests stay where they are (split travel: the captured TravelIntent carries `alone`).
+        static const bool alone = !(std::getenv("BB_PARTY_HOST_DEATH_ALONE") && std::getenv("BB_PARTY_HOST_DEATH_ALONE")[0] == '0');
+        if (alone) {
+            HostTravelAloneNext();
+        }
+        Log("host death: last lamp %u is not in the loaded map (stage %#x): the host loads it %s", lamp, stage,
+            alone ? "alone (the guests stay)" : "and the party moves with it");
         return false;
     }
     if (g_host_down.exchange(true)) {
@@ -2228,9 +2683,10 @@ void HostDownTick(const GameSnapshot& s, double now) {
         const LampSpot& sp = g_lamp_spot;
         const bool here = sp.valid && sp.lamp == lamp && (sp.map >> 16) == (Field<u32>(s.player, 0x3f8) >> 16);
         Log("host death: the boss fight is over (%.1f s after the death); %s", now - g_host_down_at.load(),
-            here ? "respawn at the lamp here" : "the lamp is in another map: the party moves with the host");
+            here ? "respawn at the lamp here" : "the lamp is in another map: the host loads it alone");
         if (!here) {
             g_host_down = false;
+            HostTravelAloneNext();
             HostDeathFunnelNow();
             return;
         }
@@ -2304,9 +2760,98 @@ void GuestTick(const GameSnapshot& s, double now) {
         phase = st.gphase;
     }
     switch (phase) {
-    case GuestPhase::Idle:
+    case GuestPhase::Idle: {
+        u32 lamp = 0;
+        {
+            std::lock_guard<std::mutex> lk(st.mu);
+            std::swap(lamp, st.warp_lamp);
+        }
+        if (lamp && s.world_up && !s.loading) {
+            if (WarpToLampInWorld(lamp, true, "the host's party move")) {
+                return;
+            }
+            // Not in this block (apart): the party move brings it along - one load, its own.
+            TravelIntent t;
+            if (LampIntent(lamp, &t) && TravelAlone(t, AloneWhy::Lamp)) {
+                return;
+            }
+            Log("guest: could not follow the host's in-world move to lamp %u", lamp);
+        }
         return;
+    }
+    case GuestPhase::InWorldFollow: {
+        // The host loads a map this guest already stands in: no load here. Once the host is in
+        // (its "dest"), stand beside it, drop the snapshot packets it sent, say "arrived" (the host
+        // re-creates this guest's chr; the host's own chr here follows its new PlayerIns).
+        bool have_dest;
+        float pos[4], rot[4];
+        {
+            std::lock_guard<std::mutex> lk(st.mu);
+            have_dest = st.have_dest;
+            std::memcpy(pos, st.dest_pos, sizeof pos);
+            std::memcpy(rot, st.dest_rot, sizeof rot);
+        }
+        if (have_dest && s.world_up && !s.loading) {
+            DrainSnapshotQueue("in-world follow");
+            BesideHost(pos, rot, g_local_slot.load());
+            WarpLocal(pos, rot[1], "follow the host's load into this map");
+            const int n = RewindRemoteTasks("guest in-world follow");
+            Send(0, "{\"op\":\"arrived\"}");
+            Log("guest: followed the host inside the loaded map (%s): no load; %d task(s) rewound",
+                MapName(s.map_id).c_str(), n);
+            g_rejoin = false;
+            std::lock_guard<std::mutex> lk(st.mu);
+            st.gphase = GuestPhase::Idle;
+        } else if (now - st.since > 60.0) {
+            g_rejoin = false;
+            Log("guest: in-world follow: no host destination within 60 s; staying");
+            std::lock_guard<std::mutex> lk(st.mu);
+            st.gphase = GuestPhase::Idle;
+        }
+        return;
+    }
+    case GuestPhase::AwayLoading: {
+        // Split travel: this guest's alone load (flow 3 -> the game's 4 at the end of the load).
+        const bool loading = s.loading || !s.world_up;
+        st.load_seen = st.load_seen || loading;
+        st.stable = (!loading && st.load_seen) ? st.stable + 1 : 0;
+        if (st.stable >= 30 && fstate == 4) {
+            if (st.saved_1521 >= 0) {
+                const u8 v = u8(st.saved_1521);
+                SafeWrite(Slot(kSlotGsm) + 0x1521, &v, 1);
+                st.saved_1521 = -1;
+            }
+            g_rejoin = false;
+            g_dead_follow = false;
+            Log("guest: arrived alone in %s (host in %s), still a client (role %d); %s; tasks:%s",
+                MapName(s.map_id).c_str(), MapName(HostMap()).c_str(), Role(), DescribeChr(s.player).c_str(),
+                DescribeTasks().c_str());
+            std::lock_guard<std::mutex> lk(st.mu);
+            st.gphase = GuestPhase::Idle;
+        } else if (now - st.since > 90.0) {
+            if (fstate == 3) {
+                const int four = 4;
+                SafeWrite(flow + 0x84, &four, 4);
+            }
+            g_rejoin = false;
+            Log("guest: the alone load did not finish within 90 s (flow %d, %s)", fstate, loading ? "loading" : "in world");
+            std::lock_guard<std::mutex> lk(st.mu);
+            st.gphase = GuestPhase::Idle;
+        }
+        return;
+    }
     case GuestPhase::AwaitSnapshot:
+        if (st.enter_state1) {
+            // A follow taken on the link thread: flow state 1 from the main thread, after the
+            // stale snapshot packets are gone (split travel; DrainSnapshotQueue).
+            st.enter_state1 = false;
+            DrainSnapshotQueue("the host travels");
+            const int one = 1;
+            const float zero = 0.0f;
+            SafeWrite(flow + 0x84, &one, 4);
+            SafeWrite(flow + 0x108, &zero, 4);
+            return;
+        }
         if (!st.screen_done) {
             st.screen_done = true;
             SaveOverlay();
@@ -2331,6 +2876,10 @@ void GuestTick(const GameSnapshot& s, double now) {
             std::lock_guard<std::mutex> lk(st.mu);
             have_dest = st.have_dest;
         }
+        if (fstate == 2 && !st.blobs_saved) {
+            st.blobs_saved = true;
+            SaveHostBlobs();
+        }
         if (fstate == 2 && have_dest) {
             // The game applied the host's 0x11 world snapshot and 0x10 flags (+0x84 = 2; K6 ate
             // the Lua join start). Load the host's destination in host-world mode.
@@ -2345,6 +2894,51 @@ void GuestTick(const GameSnapshot& s, double now) {
             }
             const int three = 3;
             SafeWrite(flow + 0x84, &three, 4);  // the setter 0x178D9A0's write
+            bool solo;
+            {
+                std::lock_guard<std::mutex> lk(st.mu);
+                solo = st.solo;
+            }
+            if (solo) {
+                // Split travel: the guest's own destination (its lamp), not the host's spot: the
+                // summoned placement (GSM +0x1521 set by the join) would put it beside the host.
+                const u64 gsm = Slot(kSlotGsm);
+                const u8 was = Field<u8>(gsm, 0x1521), zero = 0;
+                if (was) {
+                    st.saved_1521 = was;
+                    SafeWrite(gsm + 0x1521, &zero, 1);
+                }
+                {
+                    // The host-world load takes its stage from the summoned placement +0x14C4 (live
+                    // split10: still the Dream's after an alone load, so the return to m24_01
+                    // landed in m21): the lamp's own spot goes there.
+                    const std::uint32_t lamp = t.lamp_id != kTravelNone && t.lamp_id ? t.lamp_id
+                                                                                     : static_cast<std::uint32_t>(t.last_lamp);
+                    float spot[4];
+                    if (lamp / 100000 != 29 && ids::ReturnSpot(lamp, spot)) {
+                        const u32 stage = ids::EntityMap(lamp);
+                        alignas(16) float p16[4] = {spot[0], spot[1], spot[2], 1.0f};
+                        alignas(16) float r16[4] = {0.0f, spot[3], 0.0f, 0.0f};
+                        SafeWrite(gsm + 0x14c4, &stage, 4);
+                        SafeWrite(gsm + 0x14d0, p16, 16);
+                        SafeWrite(gsm + 0x14e0, r16, 16);
+                        t.kind = TravelKind::Transform;
+                        t.has_pos = true;
+                        t.pos_map = stage;
+                        std::memcpy(t.pos, p16, sizeof t.pos);
+                        std::memcpy(t.rot, r16, sizeof t.rot);
+                    }
+                }
+                RestoreZeroedOverlay();
+                coop::progress::OnVanillaSnapshotApplied();
+                FunnelKeepRoom keep;
+                Log("guest: host snapshot applied; travelling alone to %s in host-world mode (K7 %s, GSM +0x1521 %u)",
+                    DescribeTravel(t).c_str(), keep.armed ? "armed" : "NOT armed: the room will close", unsigned(was));
+                if (!ReplayTravelNow(t)) {
+                    FallbackToB1("no usable destination");
+                }
+                return;
+            }
             {
                 // A guest's loads use the summoned placement (GSM +0x1521 set by the join):
                 // +0x14C4 stage, +0x14D0 position, +0x14E0 rotation - the host's, 1.5 m aside.
@@ -2431,6 +3025,19 @@ void GuestTick(const GameSnapshot& s, double now) {
             st.buffs_before.clear();
             if (!TestSpEffects().empty()) {
                 LogGuestState(s, "after the buff restore");
+            }
+            if (st.saved_1521 >= 0) {
+                const u8 v = u8(st.saved_1521);
+                SafeWrite(Slot(kSlotGsm) + 0x1521, &v, 1);
+                st.saved_1521 = -1;
+            }
+            {
+                std::lock_guard<std::mutex> lk(st.mu);
+                if (st.solo) {
+                    Log("guest: arrived alone at %s in the host's area (%s)", DescribeTravel(st.intent).c_str(),
+                        DescribeChr(s.player).c_str());
+                }
+                st.solo = false;
             }
             const int n = RewindRemoteTasks("guest");
             Log("guest: arrived in the host world (flow 4); %d remote task(s) rewound", n);
@@ -2524,10 +3131,29 @@ void HostTick(const GameSnapshot& s, double now) {
         st.hphase = HostPhase::Idle;
         return;
     }
-    bool respawn = false;
+    bool respawn = false, away = false, away_have = false, live = false;
+    float apos[3] = {};
     {
         std::lock_guard<std::mutex> lk(st.mu);
-        std::swap(respawn, st.respawn_request);
+        std::swap(away, st.away_request);
+        away_have = st.away_have_pos;
+        std::memcpy(apos, st.away_pos, sizeof apos);
+        if (!loading) {
+            std::swap(respawn, st.respawn_request);
+            live = st.respawn_live;
+        }
+    }
+    if (away) {
+        // A guest travels alone into another area (split travel): its chr here goes now (it would
+        // stand frozen, then follow coordinates of another map); the task is kept.
+        const u64 c = away_have ? ChrNear(apos) : 0;
+        if (c) {
+            RemoveRemoteChr(c, "the guest travels alone");
+        }
+        Log("host: a guest travels alone (%s); tasks:%s", c ? "its chr removed" : "no chr of it here", DescribeTasks().c_str());
+    }
+    if (respawn && live) {
+        Log("host: a guest travels alone into this area (split travel): the snapshot again, as for a lone respawn");
     }
     if (respawn && !loading) {
         // A guest died alone and reloads this world (SoloRespawn): the join snapshot again and
@@ -2609,11 +3235,23 @@ void HostTick(const GameSnapshot& s, double now) {
             st.hsince = now;
             st.stable = 0;
             g_rejoin = true;
-            Log("host: own load with a session; members keep the room");
+            st.alone_load = (g_host_alone_next.exchange(false) && now - g_host_alone_at.load() < 10.0) ||
+                            LastAloneCaptureAgo() < 10.0;
+            Log("host: own load with a session; members keep the room%s",
+                st.alone_load ? " (an alone travel: the guests stay where they are)" : "");
         }
         return;
     case HostPhase::Loading:
         st.stable = loading ? 0 : st.stable + 1;
+        if (st.stable >= 30 && st.alone_load) {
+            // Split travel: nobody follows; no snapshot (it would wait in every guest's receive
+            // queue). Members already in this area are met without a load (SplitTick).
+            st.alone_load = false;
+            st.hphase = HostPhase::Idle;
+            g_rejoin = false;
+            Log("host: arrived alone in %s; tasks:%s", MapName(s.map_id).c_str(), DescribeTasks().c_str());
+            return;
+        }
         if (st.stable >= 30) {
             // BB_PARTY_B2_TEST_FAIL=resync: the host sends nothing (the guests' B1 fallback test).
             static const bool fail = std::getenv("BB_PARTY_B2_TEST_FAIL") &&
@@ -2654,7 +3292,10 @@ void HostTick(const GameSnapshot& s, double now) {
             st.hsince = now;
             st.stable = 0;
             g_rejoin = true;
-            Log("host: another own load before the last re-join settled; members keep the room, re-sync after it");
+            st.alone_load = (g_host_alone_next.exchange(false) && now - g_host_alone_at.load() < 10.0) ||
+                            LastAloneCaptureAgo() < 10.0;
+            Log("host: another own load before the last re-join settled; members keep the room, re-sync after it%s",
+                st.alone_load ? " (alone: no re-sync)" : "");
             return;
         }
         bool arrived;
@@ -2942,6 +3583,7 @@ void Tick(const GameSnapshot& s) {
             Field<float>(Slot(kSlotFlow), 0x98), unsigned(Field<u8>(Slot(kSlotGsm), 0x1521)),
             remo ? int(Field<u8>(remo, 0x168) & 1) : -1, int(g_rejoin.load()), s.cooperators, DescribeTasks().c_str(),
             DescribePresence(true).c_str(), DescribePresentation().c_str());
+        Log("status: where%s; apart %d", DescribeWhere().c_str(), g_apart.load());
     }
     {
         static double last_hit_log = 0;
@@ -2993,6 +3635,16 @@ void Tick(const GameSnapshot& s) {
     LampSpotTick(s);
     HostDownTick(s, now);
     HostRevivedTick(s);
+    {
+        GuestPhase gp;
+        {
+            std::lock_guard<std::mutex> lk(S().mu);
+            gp = S().gphase;
+        }
+        if (gp == GuestPhase::Idle && S().hphase == HostPhase::Idle && !g_rejoin.load()) {
+            SplitTick(s, now);
+        }
+    }
     if (Role() == RoleClient) {
         GuestTick(s, now);
     } else {
@@ -3008,14 +3660,18 @@ void Tick(const GameSnapshot& s) {
     }
 }
 
-bool OnHostTravel(const TravelIntent& t) {
-    if (!g_on.load() || Role() != RoleClient) {
-        return false;
-    }
+namespace {
+/// The guest's B2 follow / re-join: flow state 1, then GuestTick. `main_thread`: state 1 now
+/// (after dropping stale snapshot packets); else the next GuestTick enters it (the link thread
+/// must not call the game). `solo`: the guest's own travel (split travel).
+bool BeginRejoin(const TravelIntent& t, bool main_thread, bool solo) {
     State& st = S();
     {
         std::lock_guard<std::mutex> lk(st.mu);
         if (st.gphase != GuestPhase::Idle) {
+            if (st.gphase == GuestPhase::AwayLoading || st.solo || solo) {
+                return solo ? false : true;  // the guest's own travel runs: it keeps it
+            }
             st.intent = t;  // newer destination; the running re-join takes it
             return true;
         }
@@ -3023,20 +3679,73 @@ bool OnHostTravel(const TravelIntent& t) {
         st.have_intent = true;
         st.have_dest = false;
         st.screen_done = false;
+        st.blobs_saved = false;
+        st.solo = solo;
         st.gphase = GuestPhase::AwaitSnapshot;
         st.since = Now();
+        st.enter_state1 = !main_thread;
     }
     g_rejoin = true;
-    // Back to "joined, awaiting the host's snapshot" (event 8/9 state); the host's 0x11 / 0x10
-    // are read by 0x1783160 only in state 1. Main thread does the rest; this write is a plain
-    // int the game polls (it also clears the 60 s state timer).
-    const u64 flow = Slot(kSlotFlow);
-    const int one = 1;
-    const float zero = 0.0f;
-    SafeWrite(flow + 0x84, &one, 4);
-    SafeWrite(flow + 0x108, &zero, 4);
-    Log("guest: host travels (%s); waiting in flow state 1 for its snapshot", DescribeTravel(t).c_str());
+    if (main_thread) {
+        // Back to "joined, awaiting the host's snapshot" (event 8/9 state); the host's 0x11 / 0x10
+        // are read by 0x1783160 only in state 1 (it also clears the 60 s state timer).
+        DrainSnapshotQueue(solo ? "own travel" : "follow");
+        const u64 flow = Slot(kSlotFlow);
+        const int one = 1;
+        const float zero = 0.0f;
+        SafeWrite(flow + 0x84, &one, 4);
+        SafeWrite(flow + 0x108, &zero, 4);
+    }
+    Log("guest: %s (%s); waiting in flow state 1 for the host's snapshot", solo ? "travels alone into the host's area"
+                                                                               : "host travels",
+        DescribeTravel(t).c_str());
     return true;
+}
+} // namespace
+
+bool OnHostTravel(const TravelIntent& t) {
+    if (!g_on.load() || Role() != RoleClient) {
+        return false;
+    }
+    if (t.alone) {
+        // Split travel: the host goes alone; this guest stays and does not load. Its chr here
+        // goes (main thread, SplitTick); the two meet again when they share an area.
+        {
+            std::lock_guard<std::mutex> lk(S().mu);
+            if (S().gphase != GuestPhase::Idle && !S().solo && S().gphase != GuestPhase::AwayLoading) {
+                Log("guest: the host travels alone (%s) during a re-join; the re-join goes on", DescribeTravel(t).c_str());
+                return true;
+            }
+        }
+        g_host_left = true;
+        g_host_alone_seen = Now();
+        NoteAway(0);
+        Log("guest: the host travels alone (%s); staying here (no load)", DescribeTravel(t).c_str());
+        return true;
+    }
+    {
+        // The host's destination is the block this guest stands in (a host death or a stage warp
+        // inside the map): no load for the guest (B4 / H1), only a move beside the host.
+        const GameSnapshot g = ReadGameState(false);
+        const std::uint32_t dest = DestMapOf(t);
+        static const bool inworld = !(std::getenv("BB_PARTY_INWORLD") && std::getenv("BB_PARTY_INWORLD")[0] == '0');
+        if (inworld && dest != 0 && g.world_up && !g.loading && g.map_id != 0xffffffffu && (dest >> 16) == (g.map_id >> 16) &&
+            !g_dead_follow.load()) {
+            std::lock_guard<std::mutex> lk(S().mu);
+            if (S().gphase == GuestPhase::Idle) {
+                S().intent = t;
+                S().have_intent = true;
+                S().have_dest = false;
+                S().gphase = GuestPhase::InWorldFollow;
+                S().since = Now();
+                g_rejoin = true;
+                Log("guest: host travels inside this map (%s): no load here, a move beside it once it is in",
+                    DescribeTravel(t).c_str());
+                return true;
+            }
+        }
+    }
+    return BeginRejoin(t, false, false);
 }
 
 void OnLinkEvent(int from_slot, const std::string& body) {
@@ -3066,16 +3775,43 @@ void OnLinkEvent(int from_slot, const std::string& body) {
         }
         return;
     }
-    if (body.find("\"respawn\"") != std::string::npos) {
+    if (body.find("\"warp\"") != std::string::npos) {
+        // The host's in-world party move (HostPartyWarpNoLoad): run on the main thread.
+        unsigned id = 0;
+        const char* pl = std::strstr(body.c_str(), "\"lamp\":");
+        if (pl && std::sscanf(pl, "\"lamp\":%u", &id) == 1 && TravelLampKnown(id)) {
+            std::lock_guard<std::mutex> lk(S().mu);
+            S().warp_lamp = id;
+            Log("guest: the host moved to lamp %u inside its map (no load); following", id);
+        }
+        return;
+    }
+    if (body.find("\"away\"") != std::string::npos) {
+        float p[3] = {0, 0, 0};
+        const char* pp = std::strstr(body.c_str(), "\"pos\":[");
+        const bool have = pp && std::sscanf(pp, "\"pos\":[%f,%f,%f]", &p[0], &p[1], &p[2]) == 3 &&
+                          std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]);
+        std::lock_guard<std::mutex> lk(S().mu);
+        S().away_request = true;
+        NoteAway(from_slot);
+        S().away_have_pos = have;
+        std::memcpy(S().away_pos, p, sizeof p);
+        Log("host: slot %d travels alone into another area", from_slot);
+        return;
+    }
+    if (body.find("\"rejoin\"") != std::string::npos || body.find("\"respawn\"") != std::string::npos) {
+        const bool live = body.find("\"rejoin\"") != std::string::npos;
         float p[3] = {0, 0, 0};
         const char* pp = std::strstr(body.c_str(), "\"pos\":[");
         const bool have = pp && std::sscanf(pp, "\"pos\":[%f,%f,%f]", &p[0], &p[1], &p[2]) == 3 &&
                           std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]);
         std::lock_guard<std::mutex> lk(S().mu);
         S().respawn_request = true;
+        S().respawn_live = live;
         S().respawn_have_pos = have;
         std::memcpy(S().respawn_pos, p, sizeof p);
-        Log("host: slot %d died alone and respawns in this world; re-sending the snapshot", from_slot);
+        Log("host: slot %d %s; re-sending the snapshot", from_slot,
+            live ? "travels alone into this area" : "died alone and respawns in this world");
         return;
     }
     if (body.find("\"host_revived\"") != std::string::npos) {
@@ -3100,6 +3836,215 @@ void OnLinkEvent(int from_slot, const std::string& body) {
         S().arrived = true;
         Log("host: slot %d arrived", from_slot);
     }
+}
+
+bool LampTravelIntent(std::uint32_t id, TravelIntent* t) {
+    return g_on.load() && LampIntent(id, t);
+}
+
+bool HostHasMembers() {
+    return Role() == RoleHost && HostHasMemberTasks();
+}
+
+bool WarpToLampNoLoad(std::uint32_t id, bool beside) {
+    return g_on.load() && WarpToLampInWorld(id, beside, beside ? "party move" : "own move");
+}
+
+bool HostPartyWarpNoLoad(std::uint32_t id) {
+    if (!g_on.load() || Role() != RoleHost || !WarpToLampInWorld(id, false, "the host's party move")) {
+        return false;
+    }
+    char b[64];
+    std::snprintf(b, sizeof b, "{\"op\":\"warp\",\"lamp\":%u}", id);
+    Send(-1, b);
+    Log("host: party move to lamp %u inside the loaded map: no load; guests in this map follow in-world", id);
+    return true;
+}
+
+void SetWhere(const std::vector<Where>& members) {
+    g_where = members;
+}
+
+int MembersApart() {
+    return g_apart.load();
+}
+
+const char* AloneWhyName(AloneWhy w) {
+    switch (w) {
+    case AloneWhy::Lamp: return "lamp";
+    case AloneWhy::Headstone: return "headstone";
+    case AloneWhy::HuntersMark: return "hunters_mark";
+    case AloneWhy::Death: return "death";
+    }
+    return "?";
+}
+
+void HostTravelAloneNext() {
+    g_host_alone_at = Now();
+    g_host_alone_next = true;
+    SetNextHostTravelAlone(true);
+}
+
+/// The destination map of an intent: the packed map, else the lamp / last-lamp record's map
+/// (ReturnPointParam ids AAB295k: map mAA_0B), 0 unknown.
+std::uint32_t DestMapOf(const TravelIntent& t) {
+    if (t.packed_map != kTravelNone && t.packed_map != 0 && TravelMapKnown(t.packed_map & 0xffff0000u)) {
+        return t.packed_map;
+    }
+    std::uint32_t id = t.lamp_id;
+    if (id == kTravelNone || id == 0) {
+        id = static_cast<std::uint32_t>(t.last_lamp);
+    }
+    if (id == kTravelNone || id == 0) {
+        return 0;
+    }
+    return ((id / 100000) << 24) | (((id / 10000) % 10) << 16);
+}
+
+bool TravelAlone(const TravelIntent& t, AloneWhy why) {
+    if (!g_on.load() || Role() != RoleClient) {
+        return false;
+    }
+    const GameSnapshot s = ReadGameState(false);
+    const std::uint32_t dest = DestMapOf(t);
+    if (!s.world_up || s.loading || !s.player || dest == 0) {
+        Log("guest: travel alone (%s) refused: %s", AloneWhyName(why), dest == 0 ? "no destination map" : "not in the world");
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lk(S().mu);
+        if (S().gphase != GuestPhase::Idle) {
+            Log("guest: travel alone (%s) refused: a re-join is running", AloneWhyName(why));
+            return false;
+        }
+    }
+    const std::uint32_t host = HostMap();
+    float p[3] = {0, 0, 0};
+    ChrPos(s.player, p);
+    char pos[96];
+    std::snprintf(pos, sizeof pos, "\"pos\":[%.3f,%.3f,%.3f]", p[0], p[1], p[2]);
+    g_dead_follow = why == AloneWhy::Death;
+    if (host != 0 && AreaOf(host) == AreaOf(dest)) {
+        // Into the host's area (the shared Dream included): a re-join, one load for this guest.
+        if (!BeginRejoin(t, true, true)) {
+            g_dead_follow = false;
+            return false;
+        }
+        Send(0, std::string("{\"op\":\"rejoin\",") + pos + "}");
+        Log("guest: travels alone (%s) to %s, the host's area (%s): a re-join with the host's snapshot",
+            AloneWhyName(why), MapName(dest).c_str(), MapName(host).c_str());
+        return true;
+    }
+    // Elsewhere: the alone load, host-world mode, no snapshot. The destination as an exact
+    // transform (the lamp's MSB revive spot, party_ids ReturnSpot): the lamp warp itself landed
+    // the guest at the map origin of a non-existent block (live split3: m24_9999 asked for,
+    // (0, -5, 0), an endless fall) - without the snapshot states 1-2 a host-world load does not
+    // resolve the lamp's map. The transform is the path every B2 load uses.
+    TravelIntent tt = t;
+    {
+        const std::uint32_t lamp = t.lamp_id != kTravelNone && t.lamp_id != 0 ? t.lamp_id
+                                                                                : static_cast<std::uint32_t>(t.last_lamp);
+        float spot[4];
+        if (why == AloneWhy::Death || lamp / 100000 == 29 || !ids::ReturnSpot(lamp, spot)) {
+            Log("guest: travel alone (%s) to %u refused: %s", AloneWhyName(why), lamp,
+                why == AloneWhy::Death ? "a death outside the host's area is not an alone load yet"
+                                       : "no known spot for that lamp");
+            g_dead_follow = false;
+            return false;
+        }
+        tt.kind = TravelKind::Transform;
+        tt.has_pos = true;
+        tt.pos_map = ids::EntityMap(lamp);
+        tt.pos[0] = spot[0], tt.pos[1] = spot[1], tt.pos[2] = spot[2], tt.pos[3] = 1.0f;
+        tt.rot[0] = 0.0f, tt.rot[1] = spot[3], tt.rot[2] = 0.0f, tt.rot[3] = 0.0f;
+    }
+    State& st = S();
+    const u64 flow = Slot(kSlotFlow);
+    if (Field<int>(flow, 0x84, -1) != 4) {
+        Log("guest: travel alone refused: flow %d (not in the host's world)", Field<int>(flow, 0x84, -1));
+        g_dead_follow = false;
+        return false;
+    }
+    DrainSnapshotQueue("alone load");
+    const u64 gsm = Slot(kSlotGsm);
+    const u8 was = Field<u8>(gsm, 0x1521), zero = 0;
+    {
+        std::lock_guard<std::mutex> lk(st.mu);
+        st.intent = t;
+        st.have_intent = true;
+        st.solo = true;
+        st.saved_1521 = was ? int(was) : -1;
+        st.gphase = GuestPhase::AwayLoading;
+        st.since = Now();
+        st.load_seen = false;
+        st.stable = 0;
+    }
+    if (was) {
+        SafeWrite(gsm + 0x1521, &zero, 1);
+    }
+    {
+        // The host's packet-0x19 value sticks in GSM +0x1598 / +0x159C and goes into every later
+        // host-world load's descriptor (+0x8C -> GameDataMan +0x68); for a map the host is not in
+        // it is the wrong one (live split5: an alone load to the Dream built no map, a grey screen).
+        Log("guest: alone load: GSM +0x1593 %u +0x1594 %#x +0x1598 %u +0x159c %#x, GameDataMan +0x68 %#x",
+            unsigned(Field<u8>(gsm, 0x1593)), Field<u32>(gsm, 0x1594), unsigned(Field<u8>(gsm, 0x1598)),
+            Field<u32>(gsm, 0x159c), Field<u32>(Slot(kSlotGameData), 0x68));
+        static const bool keep = std::getenv("BB_PARTY_SPLIT_KEEP_1598") != nullptr;
+        if (!keep) {
+            SafeWrite(gsm + 0x1598, &zero, 1);
+            SafeWrite(gsm + 0x1593, &zero, 1);
+        }
+    }
+    g_rejoin = true;
+    RestoreHostBlobs();
+    {
+        // The summoned placement GSM +0x14C4 stage / +0x14D0 position / +0x14E0 rotation still held
+        // the host's last spot (m24_01) and a host-world load takes its stage from it whatever the
+        // forced transform says (live split7 / split9: PlayerIns stage 0x18010000 at the Dream's
+        // coordinates, area-24 resources, no world). The destination's goes there too.
+        alignas(16) float p16[4] = {tt.pos[0], tt.pos[1], tt.pos[2], 1.0f};
+        alignas(16) float r16[4] = {tt.rot[0], tt.rot[1], tt.rot[2], tt.rot[3]};
+        Log("guest: alone load: summoned placement stage %#x -> %#x", Field<u32>(gsm, 0x14c4), tt.pos_map);
+        SafeWrite(gsm + 0x14c4, &tt.pos_map, 4);
+        SafeWrite(gsm + 0x14d0, p16, 16);
+        SafeWrite(gsm + 0x14e0, r16, 16);
+    }
+    const int three = 3;
+    SafeWrite(flow + 0x84, &three, 4);
+    Send(0, std::string("{\"op\":\"away\",") + pos + "}");
+    bool ok;
+    {
+        FunnelKeepRoom keep;
+        Log("guest: travels alone (%s) to %s, the host is in %s: alone load in host-world mode (K7 %s)", AloneWhyName(why),
+            MapName(dest).c_str(), host ? MapName(host).c_str() : "an unknown map", keep.armed ? "armed" : "NOT armed");
+        ok = ReplayTravelNow(tt);
+    }
+    if (!ok) {
+        const int four = 4;
+        SafeWrite(flow + 0x84, &four, 4);
+        if (was) {
+            SafeWrite(gsm + 0x1521, &was, 1);
+        }
+        g_rejoin = false;
+        g_dead_follow = false;
+        std::lock_guard<std::mutex> lk(st.mu);
+        st.gphase = GuestPhase::Idle;
+        st.solo = false;
+        st.saved_1521 = -1;
+        Log("guest: travel alone: no usable destination in %s", DescribeTravel(t).c_str());
+        return false;
+    }
+    return true;
+}
+
+bool RespawnAloneAtOwnLamp() {
+    const u32 own = Field<u32>(Slot(kSlotGsm), 0x1528);
+    TravelIntent t;
+    if (!g_on.load() || own == 0 || own == kTravelNone || !LampIntent(own, &t)) {
+        Log("guest: own-lamp respawn refused (own last lamp %u)", own);
+        return false;
+    }
+    return TravelAlone(t, AloneWhy::Death);
 }
 
 bool PopOutgoing(int* slot, std::string* body) {

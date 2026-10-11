@@ -88,6 +88,10 @@ struct TravelIntent {
     /// The host's Chalice Dungeon (party_chalice.h ChannelId) when the destination is inside one
     /// (TravelIntoChalice); 0 otherwise.
     std::uint64_t chalice_channel = 0;
+    /// The traveller goes alone (docs/party/split_travel.md): the other members stay where they
+    /// are and do not load. False (the default, also when a peer omits it): the party travels
+    /// together (B2 follow).
+    bool alone = false;
 
     std::uint32_t Area() const { return (packed_map >> 24) & 0xff; }
     std::uint32_t Block() const { return (packed_map >> 16) & 0xff; }
@@ -237,6 +241,9 @@ bool ReplayTravelNow(const TravelIntent& t);
 /// death). `fn(site)` true = the send-home at `site` is dropped (nothing runs). Any thread.
 using SendHomeVetoFn = bool (*)(std::uint64_t site);
 void SetSendHomeVeto(SendHomeVetoFn fn);
+/// The next send-home (a guest's Leave: OnLeave_Limit called by the party itself) goes home as
+/// in vanilla: no party travel retarget, no B2 veto.
+void AllowNextSendHome();
 /// Guest: a hold on its own death's funnel call (PartyGhostDeath_2 0x1382663). `fn()` true = held:
 /// nothing runs now; the holder later either drops it (the host's travel brings the guest along)
 /// or runs GuestDeathRedirectNow(). Game thread.
@@ -282,6 +289,23 @@ using LampUseObserver = void (*)(std::uint32_t id);
 void SetLampUseObserver(LampUseObserver fn);
 /// The native lamp warp 0x13CDF30(id) (main thread; the host's travel hooks see it as usual).
 void RunLampWarp(std::uint32_t id);
+/// The same, decided already (split travel: the player chose alone / with the party): the lamp
+/// interceptor is not asked again. On the host `alone` marks the captured travel
+/// (TravelIntent::alone: the guests stay).
+void RunLampWarpDecided(std::uint32_t id, bool alone);
+/// Host: the next travel the funnel captures is alone (split travel; cleared by the capture).
+void SetNextHostTravelAlone(bool alone);
+/// Host: every captured host death (TravelKind::HostDeath) is an alone travel (the guests play
+/// on; the hostdeath rule "everyone respawns at their own last lamp"). Any thread.
+void SetHostDeathAlone(bool alone);
+/// Host: seconds since the funnel captured an alone travel (1e9: never). B2 uses it to tell an
+/// alone load (no snapshot re-send, nobody to wait for).
+double LastAloneCaptureAgo();
+/// The Hunter's Mark item reaching the funnel (site 0x18FFA1D, any role; not our replays):
+/// `fn(last lamp id)` true = consumed (no stage request; split travel asks, then runs a decided
+/// lamp warp to that lamp). Game thread.
+using MarkInterceptor = bool (*)(std::uint32_t last_lamp);
+void SetMarkInterceptor(MarkInterceptor fn);
 /// The lamp warp 0x13CDF30(id) as a travel replay (main thread): the travel capture, the guest
 /// lamp interceptor and the send-home retarget stand aside, the forced placement is cleared. On
 /// a summoned guest it leaves the host's world and loads the own one (C4's ending replay).
