@@ -38,7 +38,28 @@ can touch a single-player save.
 
 Text entry is the window's text box (the same as the character name): type on the keyboard,
 **Ctrl+V** pastes, Enter confirms, Esc (or Circle) cancels. The pad cannot type; the address and
-password are typed once and remembered.
+password are typed once and remembered. The text rows (*Host address*, *Password*, *Party name*)
+open the box on every press (a *Once* row runs on each change of its toggle; before, the second
+press only reset the row's text). The value column is the game's copy from when the page opened: a
+saved address shows after the page is opened again; the help line says *Host address saved* at
+once.
+
+**Leave in the world (guest)**: *System > Party > Leave the party* (twice) first calls the game's
+own session leave (0x13CDDA0, the host watchdog's helper) and stops the party link once the game's
+session is idle (`party_status_bridge.cpp`): client -> leaving -> idle in 0.3 s and the load into the
+guest's own world, instead of the game noticing a dead session 13 s later. (The game still shows
+its *Session lost* notice once.) After Leave the page shows *Status (Not running), Host party, Join
+party, Single player* - Copy code / Rejoin / Leave need a running link. **Join party** then starts a
+fresh link; the guest registers its NP context with the host again (`party_runtime.cpp`
+`fresh_link`) and a pending signaling resolve is retried every 2 s (`np_signaling.cpp`): before,
+the host's game kept summoning the rejoined guest and the summons never arrived.
+
+**Party name** (title page, before the first party character: the page shows six rows): every
+player needs their own - the host admits one player per name. Without one, the first party action
+picks `<Windows user name>-xxxx` (`DefaultName`: the name's `[A-Za-z0-9_-]`, at most 11, plus four
+random base-36 digits) and keeps it in party.json. (Live, 2026-10-11: before this every menu player
+was "Hunter" and the host refused the second friend: `rejected: the name Hunter is already in the
+party`.)
 
 ## 2. Design decision: a quick restart instead of switching in place
 
@@ -135,6 +156,7 @@ everything).
   is true. The game's own *Continue* in the party process loads the party save's last-used slot,
   which is the party character (the party saves hold no other).
 * **role**: the last party role; *Continue party game* uses it.
+* **name**: the party name (online id); chosen automatically on the first party action (section 1).
 
 ## 5. Saves: the party save is the only co-op path
 
@@ -160,6 +182,22 @@ everything).
 * `BB_PARTY_FLOW_TEST=<action>[@seconds]` (`new`, `join`, `continue`, `host`, `leave`, `solo`;
   `world:` prefix = in the world): runs that action once, as the row would – the in-game
   verification below uses it besides driving the menu with the pad.
+* **The real menus, live** (`tools/mp/flow_live.py fresh|continue --root DIR --game DIR
+  [--guest-world SCRIPT]`): two instances start as the single-player game; `BB_TEST_MENU_FILE`
+  gives each process start one line (`title|world <seconds> <MenuScript>`, or `-`; the run.bat
+  relaunch loop's next process takes the next line) and the walk goes through the game's own pad
+  path (`runtime_pad_director_press`). MenuScript (`test_newgame.h`): `~button@text` presses once
+  `text` was looked up since the previous press (the title menu and the page rows look their texts
+  up when built - the help lines too, so the focused row cannot be told from its help: the
+  walks count rows, the screenshots check them), `type=TEXT` / `enter` / `esc` reach the
+  window's text box as SDL key events (`WindowSDL::TestType`: no OS input, no focus), `options`,
+  `mark=NAME` (a named pause: screenshot points). Character creation after the restart:
+  `BB_TEST_NEWGAME=party` / `BB_TEST_PROLOGUE_SKIP=party` (only in the party process) with
+  `BB_TEST_NAME` (the name box). Screenshots: `ROOT/shots/<phase>/` (`shot.py --watch`).
+  `joined <s>`: in the world once the party is together (summoned / members in). Navigation
+  (English, 1.09): title of an empty save *New Game / Party / System / Log In*; the
+  Party page opens on *Status*; in the world *Options, Right, Right, Cross* (System) and *Up* x5 =
+  *Party* (the list ends *Party, Party members, Brightness, Network, Exit Game*).
 
 Evidence of the in-game runs: §7.
 
@@ -218,3 +256,29 @@ inst1: Party: session trying-to-join (4, sub 0) -> client (6, sub 0)        <- s
 
 With the event-driven new-game driver (screen changes from the message lookups) the same run
 reached the summon in 61 s of harness time instead of 90 s, without a retried press.
+
+**The real menus, two instances, 2026-10-11** (`tools/mp/flow_live.py`, no BB_PARTY_FLOW_TEST, no
+OS input; screenshots in `<root>/shots/<phase>/`):
+
+* *fresh* - both start single-player on empty saves. Host: title *Party* -> *Password* (text box,
+  shown as asterisks) -> *New party game* (twice) -> exit 75 -> run.bat restarts it hosting
+  (`party name vp797-rz2z (automatic)`) -> New Game (test driver) -> hosting. Guest: *Party* ->
+  *Host address* `127.0.0.1:<port>` -> *Password* -> *Join party game* (twice) -> restart ->
+  `joining 127.0.0.1:48660 as vp797-jime` -> New Game -> `trying-to-join -> client` (summoned,
+  52.9 s after its restart). party.json: `password_dpapi` only (no clear `password`), role,
+  host_address, name, has_character, slot, the host's host_secret.
+* *continue* - both start single-player again: *Party -> Continue party game* (twice; the guest first
+  reopens *Host address* twice: Enter keeps the saved address, Esc cancels) -> restart -> the party
+  character loads by itself -> summoned 23 s after the restart.
+* *in the world* (guest, same run): *Options, System, Party, Leave the party* (twice) ->
+  `the game's session leave: role leaving`, `client -> leaving -> idle` in 0.4 s, the load into its
+  own world; reopened Party page: *Status (Not running), Host party, Join party, Single player* ->
+  *Join party* (twice) -> `Rejoin: connecting`, `context registered again with the host`, on the
+  host `vp797-jime registered with the host: resolving its pending connection again`, `signaling
+  resolved` -> summoned again (t 135 s).
+
+Bugs found and fixed on the way: every menu player was "Hunter" (the second friend refused);
+Once rows needed two presses for a second edit; a guest's Leave cut the link under a live session;
+after Leave the page had seven rows (Single player cut, Rejoin next to Join party); Join party after
+Leave was summoned in vain (no NP context re-registration; a resolving signaling connection killed
+by the room's end, and a single resolve attempt).

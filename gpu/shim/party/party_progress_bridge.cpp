@@ -20,6 +20,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <iterator>
+#include <chrono>
 #include <map>
 #include <set>
 #include <string>
@@ -46,6 +47,8 @@ struct Bridge {  // main thread only
     std::map<int, std::string> connected;  // slot -> name, members connected at the last tick
     std::set<int> want_snapshot;
     bool waiting_logged = false;
+    int host_past_prologue = -1;  // host: 12410000 && 9401 in its own world at the last check (-1 unknown)
+    double prologue_checked = 0;
 };
 
 Bridge& B() {
@@ -79,6 +82,28 @@ void HostSide(Bridge& b, party::PartyLink* link) {
         if (it == b.connected.end() || it->second != name) {
             b.want_snapshot.insert(slot);
             BLog("member %s (slot %d) connected: flag snapshot due", name.c_str(), slot);
+        }
+    }
+    {
+        // The guests' late-joiner catch-up (party_catchup) decides from the host's snapshot whether
+        // the host is past its prologue; the prologue flags are not in the change stream. A host
+        // that finishes its prologue after the members connected (both sides started a new game
+        // together: the guest waited in its first Dream for good, soak 2026-10-11) re-sends the
+        // snapshot once it is past it.
+        const double t = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (t - b.prologue_checked >= 1.0) {
+            b.prologue_checked = t;
+            bool opening = false, dream = false;
+            if (FlagLoadMode() == 0 && ReadFlag(12410000, &opening) && ReadFlag(9401, &dream)) {
+                const int past = opening && dream ? 1 : 0;
+                if (b.host_past_prologue == 0 && past == 1) {
+                    for (const auto& [slot, name] : now) {
+                        b.want_snapshot.insert(slot);
+                    }
+                    BLog("the host is past its prologue now: flag snapshot due to %zu member(s)", now.size());
+                }
+                b.host_past_prologue = past;
+            }
         }
     }
     for (auto it = b.want_snapshot.begin(); it != b.want_snapshot.end();) {

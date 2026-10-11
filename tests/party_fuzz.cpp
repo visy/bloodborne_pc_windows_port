@@ -449,6 +449,7 @@ Corpus json_corpus() {
     lr.id = 2102950;
     lr.seq = 3;
     c.add(coop::LampRequestToJsonText(lr));
+    c.add(coop::LampLitToJsonText({12417830, 12417831, 72410201}));
     std::vector<coop::progress::FlagChange> ch(2);
     ch[0] = {12401800, true, coop::progress::CategoryOf(12401800), 5};
     ch[1] = {70002802, false, coop::progress::CategoryOf(70002802), 6};
@@ -675,6 +676,11 @@ void run_lamp(Rng& r, const Corpus& c) {
     set_input("lamp", s);
     coop::LampRequest q;
     std::string err;
+    std::vector<std::uint32_t> lit;
+    if (coop::LampLitFromJsonText(s, &lit, &err)) {  // EVENT lamp_lit (a guest lit a lamp)
+        INVARIANT(lit.size() <= coop::kMaxLampLitIds);
+        for (std::uint32_t id : lit) INVARIANT(coop::LampLitFlagAllowed(id));
+    }
     if (!coop::LampRequestFromJsonText(s, &q, &err)) return;
     if (coop::SanitizePeerLampRequest(q, &err)) INVARIANT(coop::TravelLampKnown(q.id));
 }

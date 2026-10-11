@@ -318,6 +318,9 @@ struct Runtime {
     std::unique_ptr<UpnpMapper> upnp;
     std::map<std::string, std::shared_ptr<Pump>> pumps;  // host: per guest online id
     bool rpc_wired = false;
+    // A fresh link after Leave (rejoin_main): the host dropped our NP context and relay
+    // registration with the old member, so they are registered again once connected.
+    bool fresh_link = false;
     bool have_local_state = false;
     MemberState local_state = MemberState::Title;
     std::uint32_t local_map = 0;
@@ -546,11 +549,13 @@ void on_state(LinkState s, const std::string& detail) {
         plog("connected to the host as slot %d (we are seen at %s)%s%s", slot, link->observed_address().c_str(),
              detail.empty() ? "" : ": ", detail.c_str());
         const bool resumed = link->last_welcome_resumed();
-        bool again;
+        bool again, fresh;
         Clock::time_point lost_at;
         {
             std::lock_guard<std::mutex> lk(r.mu);
             again = r.rpc_wired;
+            fresh = r.fresh_link;
+            r.fresh_link = false;
             lost_at = r.lost_at;
             r.was_connected = true;
         }
@@ -589,6 +594,13 @@ void on_state(LinkState s, const std::string& detail) {
                  bbnet::party::ip_text(r.host_ip_nbo).c_str(), r.host_port);
         } else if (!rg) {
             plog("warning: this process has no RemoteGuest transport (BB_PARTY_HOST set on a guest?)");
+        }
+        if (fresh) {
+            // Join party after Leave (live: the host's game could not resolve us, 'not registered',
+            // and its summons never arrived): our NP context and relay registration again
+            // (after the RPC is wired to the new link).
+            plog("rejoined after Leave: registering our session with the host again");
+            bbnet::session::host_session_reset();
         }
         break;
     }
@@ -668,6 +680,11 @@ LinkCallbacks make_callbacks(bool host) {
         };
         cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
             if (name == coop::b2::kEventName) coop::b2::OnLinkEvent(slot, body);  // B2: a guest arrived
+            if (name == coop::kLampLitEventName) {  // a guest lit a lamp of the host's world
+                std::string err;
+                if (!coop::GuestServicesOnLampLit(slot, body, &err)) plog("lamp_lit from slot %d refused: %s", slot, err.c_str());
+                return;
+            }
             if (name == coop::kLampRequestEventName) {  // a guest used a lamp / headstone
                 std::string err;
                 if (!coop::GuestServicesOnLampRequest(slot, body, &err)) plog("lamp request from slot %d refused: %s", slot, err.c_str());
@@ -1299,6 +1316,7 @@ void rejoin_main() {
         r.link = link;
         r.left = false;
         r.rpc_wired = false;  // the RemoteGuest RPC goes over the new link
+        r.fresh_link = !host;
         r.st.last_error.clear();
     }
     write_marker();  // back in a party: a crash rejoins again

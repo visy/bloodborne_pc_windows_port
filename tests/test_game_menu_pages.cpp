@@ -191,9 +191,13 @@ static void Party() {
     // Member rows: one per member, name, state and ping; the host's own row cannot be kicked.
     int visible = 0;
     for (const P::Row& row : members.rows) visible += !row.visible || row.visible();
-    assert(visible == 6); // three members, the notices and party HUD switches, the last event
+    // three members, the notices, party HUD and guest lamps switches, the last event (the game
+    // shows the first six: the last event gives way with three or more members)
+    assert(visible == 7);
     const P::Row& hud = RowNamed(members, u"Party HUD");
     assert(hud.visible && hud.visible());
+    const P::Row& lamps = RowNamed(members, u"Guests use lamps");
+    assert(lamps.visible && lamps.visible());
     assert(std::u16string(P::Text(members.rows[0].name, false)) == u"Hunter0 (host) (you)");
     assert(std::u16string(P::Text(members.rows[1].choices[0], false)) == u"In world, 42 ms");
     assert(std::u16string(P::Text(members.rows[1].choices[1], false)) == u"Press again: kick");
@@ -222,8 +226,8 @@ static void Party() {
     // Rejoin: at once; Leave: confirmed.
     Press(party.rows[2]);
     assert(ps::PopCommand(&cmd) && cmd.type == ps::CommandType::Rejoin);
-    Press(party.rows[2]); // back to "Request": nothing
-    assert(!ps::PopCommand(&cmd));
+    Press(party.rows[2]); // every press runs a Once row (the text box rows: each press opens it)
+    assert(ps::PopCommand(&cmd) && cmd.type == ps::CommandType::Rejoin);
     const P::Row& leave = RowNamed(party, u"Leave the party");
     Press(leave);
     assert(!ps::PopCommand(&cmd));
@@ -244,7 +248,7 @@ static void Party() {
     P::Load();
     visible = 0;
     for (const P::Row& row : members.rows) visible += !row.visible || row.visible();
-    assert(visible == 4 && std::u16string(P::Text(members.rows[0].name, false)) == u"No one yet");
+    assert(visible == 5 && std::u16string(P::Text(members.rows[0].name, false)) == u"No one yet");
 
     // Party mode off (single player): no commands from the buttons; the party-only rows (copy,
     // rejoin, leave) are hidden, the extension row shows (in order).
@@ -258,8 +262,8 @@ static void Party() {
     const int runs = extension_runs;
     Press(*shown[1]);
     assert(extension_runs == runs + 1);
-    Press(*shown[1]); // back: only the text
-    assert(extension_runs == runs + 1);
+    Press(*shown[1]); // every press runs it
+    assert(extension_runs == runs + 2);
     assert(std::u16string(P::Text(party.rows[0].choices[0], false)) == u"Single player");
     Press(party.rows[2]);
     Press(leave);

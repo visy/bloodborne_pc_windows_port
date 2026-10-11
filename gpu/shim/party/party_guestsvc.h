@@ -78,9 +78,23 @@ bool GuestServiceTalkAllowed(std::uint32_t talk, const std::string& extra);
 /// Dream headstones and warp menus whose multiplayer / client tests the lamp part lifts:
 /// 210000-210003 (headstones), 210721 (warp menu with StartWarpMenuInit).
 bool HeadstoneTalk(std::uint32_t talk);
+/// Lamp talk scripts: tAAB000-tAAB003 of a map (m24_01 -> t241000..t241003; the Dream's are its
+/// headstones t210000..t210003). Their talk tests IsMultiplayerInProgress / IsClientPlayer keep a
+/// lamp shut while a session is up; the party lifts them (host: party mode, guest: BB_PARTY_GUEST_LAMPS).
+bool LampTalk(std::uint32_t talk);
 
 // ---- Lamp requests (guest -> host) ----
 constexpr const char* kLampRequestEventName = "lamp_request";
+/// A guest lit a lamp of the host's world: the flags its game set in the host-world overlay, for
+/// the host to set in its own world (the mirror brings them back). Never the guest's own save.
+constexpr const char* kLampLitEventName = "lamp_lit";
+constexpr std::size_t kMaxLampLitIds = 16;
+/// Ids a guest may ask the host to set for a lamp it lit: the lamp's own pair base+10 / base+11 of
+/// its object flag base 1AAB78x0 (T1 zone 7, x800..x899, id % 20 = 10 or 11) and the lamp-lit
+/// flags 7AAB02xx (T7 zone 0, 200..299).
+bool LampLitFlagAllowed(std::uint32_t id);
+std::string LampLitToJsonText(const std::vector<std::uint32_t>& ids);
+bool LampLitFromJsonText(const std::string& text, std::vector<std::uint32_t>* ids, std::string* error);
 struct LampRequest {
     std::uint32_t id = kTravelNone; ///< the ReturnPointParam id the guest's lamp / headstone warp asked for
     std::uint64_t seq = 0;          ///< guest counter (diagnostics)
@@ -134,8 +148,9 @@ struct PlayerRecord {
 /// "level 10 -> 11, echoes 5000 -> 3200" (the changed fields only; "" when equal or unknown).
 std::string DescribeRecordChange(const PlayerRecord& before, const PlayerRecord& after);
 
-/// "BB_PARTY_GUEST_LAMPS" value -> on only for "1" (opt-in).
-bool GuestLampsEnabledFromEnv(const char* value);
+/// "BB_PARTY_GUEST_LAMPS" value: "0" off, "1" on, anything else -> `fallback` (the Party page
+/// setting party_guest_lamps, on by default).
+bool GuestLampsEnabledFromEnv(const char* value, bool fallback = true);
 /// "BB_PARTY_GUEST_SERVICES" value -> on/off (unset / "" / anything but "0" = on).
 bool GuestServicesEnabledFromEnv(const char* value);
 
@@ -156,6 +171,8 @@ std::vector<EmevdSkipRule> GuestServicesSkipRules();
 void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link);
 /// Host: EVENT "lamp_request" from guest `slot` (PartyLink callback thread). False + why: refused.
 bool GuestServicesOnLampRequest(int slot, const std::string& body, std::string* why);
+/// A guest lit a lamp in the host's world (EVENT lamp_lit, host side): queued for the host's tick.
+bool GuestServicesOnLampLit(int slot, const std::string& body, std::string* why);
 /// Open right now (diagnostics, the Party tab).
 bool GuestServicesOpen();
 /// The ChrIns of a map character by its talk script / entity id (WorldChrMan chr sets), 0 if none

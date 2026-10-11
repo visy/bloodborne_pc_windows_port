@@ -321,13 +321,17 @@ struct SeenText {
     std::atomic<std::int64_t> ms{0};
 };
 SeenText seen_texts[4096];
+struct SeenId {
+    std::atomic<u32> id{0};
+    std::atomic<std::int64_t> ms{0};
+};
+SeenId seen_ids[4096]; // by id only (LastLookupMs)
 // The last lookups with their texts (TextSeenMs: test aids wait for a given screen's text).
 struct RecentText {
     std::atomic<const char16_t*> text{nullptr};
     std::atomic<std::int64_t> ms{0};
 };
-RecentText recent_texts[512];
-std::atomic<u32> recent_next{0};
+RecentText recent_texts[4096 + 3];
 void NoteText(const char16_t* text) {
     if (!text || !text[0]) {
         return;
@@ -335,17 +339,24 @@ void NoteText(const char16_t* text) {
     const std::int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
                                  std::chrono::steady_clock::now().time_since_epoch())
                                  .count();
-    // Repeats (a screen looks its texts up every frame) refresh their slot instead of filling the ring.
-    const u32 h = u32((reinterpret_cast<std::uintptr_t>(text) >> 3) * 0x9E3779B1u) >> 23; // 0..511
-    RecentText& r = recent_texts[h];
-    r.text.store(text, std::memory_order_relaxed);
-    r.ms.store(now, std::memory_order_release);
+    // Repeats (a screen looks its texts up every frame) refresh their slot. Four slots per hash,
+    // the oldest replaced: with one, texts looked up every frame evicted a dialog's text that was
+    // looked up once (live: "Session lost" after Leave never matched).
+    const u32 h = u32((reinterpret_cast<std::uintptr_t>(text) >> 3) * 0x9E3779B1u) >> 20; // 0..4095
+    RecentText* slot = &recent_texts[h];
+    for (u32 k = 0; k < 4; ++k) {
+        RecentText& r = recent_texts[h + k];
+        if (r.text.load(std::memory_order_relaxed) == text) {
+            slot = &r;
+            break;
+        }
+        if (r.ms.load(std::memory_order_relaxed) < slot->ms.load(std::memory_order_relaxed)) {
+            slot = &r;
+        }
+    }
+    slot->text.store(text, std::memory_order_relaxed);
+    slot->ms.store(now, std::memory_order_release);
 }
-struct SeenId {
-    std::atomic<u32> id{0};
-    std::atomic<std::int64_t> ms{0};
-};
-SeenId seen_ids[4096]; // by id only (LastLookupMs)
 void NoteLookup(u32 category, u32 id) {
     const std::int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
                                  std::chrono::steady_clock::now().time_since_epoch())
@@ -390,7 +401,9 @@ BB_SYSV const char16_t* LookupHook(void* repository, u32 table, u32 category, u3
                             (unsigned long long)lookups.exchange(0), id - P::IdBase);
             }
         }
-        return TextOf(id);
+        const char16_t* ours = TextOf(id);
+        NoteText(ours); // the port's page texts too (TextSeenMs: scripted walks wait for its rows)
+        return ours;
     }
     if (title_override && category == TextName && id == ControlsTitle) {
         return title_override;

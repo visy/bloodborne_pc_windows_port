@@ -484,14 +484,34 @@ Bugs found and fixed:
   unlisted, so the host's travel was never broadcast and the guest stayed in the old world without
   the host. Now `HuntersMark` (host: captured; guest: redirected to the host's last lamp).
 
+Fixed after the first report (same day):
+
+* **Host / guest crash when the other player stands in a block this game streams out** (a guest
+  walking away or left behind, the host walking on; also the guest's game with the host far
+  away). A chr keeps the map hit it stands on in `+0x288` (setter `0x18BBA70`; `+0x350` a second
+  one). Map chrs die with their block and the local player's block never unloads, but a *remote*
+  player chr kept a hit of a block that left the hit registry (`*0x553E850`: `+0x20` blocks,
+  records of 0xB8 with `+0x78` count / `+0x80` hits of 0x138; the table `0x13C9FB0` resolves
+  from). The hit record's `+0x18` (its block's collision resource) was freed, and the chr physics
+  pre-step `0x18CB0E0` (rdi = chr) read `[[hit+0x18]+0x88]` -> fault at `0x18CB16A`/`0x18CB17D`.
+  Hit watch (live): the guest's hit dropped out of the registry ~0.7 s after the host's block
+  change, the crash followed 0.25 s later. Vanilla never has a remote player there (the host
+  leaves at the block change, 1.0; the confinement walls of common event 7600 keep phantoms in).
+  Fix (party_b2.cpp, both roles): an entry hook on `0x18CB0E0` clears `+0x288` / `+0x350` of a
+  *remote player* chr whose hit is no longer in the registry (pointer range checks only; the stale
+  hit is never read). The chr then has no ground hit until it stands on loaded collision again;
+  its position keeps coming from its owner. Live: host teleported 146 m into the other block
+  (crashed 4/4 before): `stale map hit cleared 1 time(s)`, no crash; then the guest moved 146 m
+  away from the host into the other block: the guest's game cleared the host chr's hit, no crash;
+  both stayed in session (host 3 / guest 6, cooperators 1) for 2+ minutes 146 m apart.
+* **Dropped re-join after a guest's Hunter's Mark**: not a stale member task (the host deleted it).
+  The session event handler `0x178B5E0` arms the network flow's "host gone" timer `+0xF4` = 10 s
+  (`0x178D35D`) when a member leaves a guest in the host's world; the flow update `0x1789B60` counts
+  it down and leaves (`0x178A6BE`). Left on its own and summoned again within 10 s, the guest
+  carried it into the new session and was dropped 3 s after joining. A (re)join now starts with
+  it off (-1, the flow ctor's value).
+
 Open:
 
-* A remote chr left in a block the host's game streams out crashes the host (~0.8 s, remote chr's
-  physics, `[[chr+0x288]+0x18]+0x88` freed at `0x18CB16A`/`0x18CB17D`). Reproduced 3 times by
-  *teleporting* the host 146 m into the other block with the guest left behind, also when the
-  vanilla leave ran at the block change (so it is not caused by K3 keeping the room). Walking
-  together it did not happen. Whether a guest walking far behind can trigger it is untested.
-* Guest Hunter's Mark: the first re-join after it was dropped by a leave at `+0x178a6be` (the host
-  still held the departed guest's member task, B2 keeps tasks); recovered by itself in 20 s.
 * Headstone menu: three Cross presses after the row (row, then the confirmation dialog); the menu
   text ids were not identified (the script waits for fresh text lookups).

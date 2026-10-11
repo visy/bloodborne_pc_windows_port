@@ -162,6 +162,11 @@ int main() {
     TestJson();
     TestPlans();
     TestBat();
+    // Automatic party names: the user name's allowed characters + '-' + 4 base-36 digits.
+    assert(DefaultName("Visa Pimi\xc3\xa4", 0) == "Visa_Pimi-0000");
+    assert(DefaultName("", 35) == "Hunter-z000");
+    assert(DefaultName("averyveryverylongname", 1).size() == 16);
+    assert(DefaultName("x", 1) != DefaultName("x", 2));
     assert(NormalizeAddress(" bbp1-ab ") == "BBP1-AB");
     assert(NormalizeAddress(" host.example:9307 ") == "host.example:9307");
     std::puts("PASS: party flow");

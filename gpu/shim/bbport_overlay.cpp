@@ -1203,6 +1203,12 @@ void PartyTab() {
              "Имена и здоровье спутников в левом нижнем углу (серым, пока они не в вашем мире); на той "
              "же карте - расстояние, стрелка направления и имя над спутником."),
            on);
+    Toggle("party_guest_lamps", T("Guests use lamps", "Фонари гостям"), s.party_guest_lamps,
+           T("Guests may use lamps and the Dream's headstones; the host leads and the whole party "
+             "travels. After a restart.",
+             "Гости могут пользоваться фонарями и надгробиями Сна; ведёт хост, группа перемещается "
+             "вместе. После перезапуска."),
+           on);
     if (!b.last_event.empty()) {
         ImGui::Spacing();
         std::snprintf(line, sizeof(line), T("Last: %s", "Последнее: %s"), b.last_event.c_str());
