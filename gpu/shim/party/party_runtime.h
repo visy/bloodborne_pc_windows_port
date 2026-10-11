@@ -39,6 +39,7 @@ struct RuntimeStatus {
     std::string internet_code, lan_code;  // host
     std::string public_address;        // host: "ip:port (source)"
     std::string host_address;          // guest: the host we connect to
+    std::string guest_code;            // guest: BBG1-... (its public UDP endpoint, for a host behind a NAT)
     std::string upnp;                  // host: UPnP outcome
     std::vector<RosterEntry> roster;
     std::string last_error;            // the latest failure / rejection, empty when none
@@ -70,6 +71,11 @@ void runtime_leave();
 // The Party tab's Rejoin: 0 the link is up (nothing done: the caller rings), 1 reconnecting now,
 // 2 a fresh link is starting (after Leave or a rejection; same config and codes), -1 nothing to do.
 int runtime_rejoin();
+/// Host: guest code text (one or more BBG1-..., comma / newline separated): punch towards each
+/// valid one. Returns how many were valid.
+int runtime_add_guest_code(const std::string& text);
+/// Host: finds the game transport's config copies in the background (C6 crash rejoin; a cooperator joined).
+void runtime_nr_prescan();
 RuntimeStatus runtime_status();
 // One line for the overlay / status: "party host Hunter0: hosting :47600, 2/3 (Hunter1 3 ms)".
 std::string party_status_line();

@@ -3,6 +3,7 @@
 
 #include "party_crypto.h"
 #include "party_sock.h"
+#include "party_rudp.h"
 #include "../net/netsim.h"
 
 #include <algorithm>
@@ -596,6 +597,8 @@ struct PartyLink::Impl {
         Bucket frames, bytes;        // host: the member's rate (admit)
         std::uint32_t flood_drops = 0;
         std::uint64_t flood_total = 0;
+        // UDP path: the connection is a reliable stream over UDP instead of the TCP socket `s`.
+        std::shared_ptr<rudp::Stream> us;
         // Network simulator (BB_NET_SIM, netsim.h): received bytes wait here until due.
         std::unique_ptr<bbnet::netsim::StreamDelay> sim;
         std::deque<std::pair<Clock::time_point, std::vector<std::uint8_t>>> held;
@@ -681,6 +684,15 @@ struct PartyLink::Impl {
     Clock::time_point last_roster_bcast{};
     std::set<std::string> banned;  // kicked names: refused for the rest of this session
     std::uint64_t refused_conns = 0;
+
+    // UDP path (party_rudp.h).
+    rudp::Mux umux{static_cast<std::uint32_t>(Clock::now().time_since_epoch().count())};
+    sock::Socket usock = sock::kInvalid;  // own UDP socket (no external transport)
+    std::uint16_t uport = 0;
+    PartyLink::UdpSend uext;
+    std::mutex uin_mu;
+    std::deque<std::pair<rudp::Endpoint, std::vector<std::uint8_t>>> uin;  // from on_udp_datagram
+    bool udp_prefer = false;  // guest: the last working connection was UDP: dial it at once
 
     // Guest.
     std::string host_name;
@@ -881,6 +893,14 @@ struct PartyLink::Impl {
     void flush(Conn* c) {
         if (c->dead || c->phase == Phase::Connecting) return;
         if (freeze_until > Clock::now()) return;
+        if (c->us) {
+            if (c->out_off < c->out.size() && c->us->write(c->out.data() + c->out_off, c->out.size() - c->out_off)) {
+                c->out.clear();
+                c->out_off = 0;
+            }
+            if (c->out_off == c->out.size() && c->close_after_flush) close_conn(c);
+            return;
+        }
         while (c->out_off < c->out.size()) {
             long r = sock::send_some(c->s, c->out.data() + c->out_off, c->out.size() - c->out_off);
             if (r < 0) {
@@ -900,12 +920,142 @@ struct PartyLink::Impl {
         }
     }
 
+    // ---------- UDP path ----------
+    bool udp_enabled() const { return cfg.udp_link; }
+    void udp_out(const rudp::Datagram& d) {
+        if (uext) {
+            uext(d.to.addr, d.to.port, d.data.data(), d.data.size());
+            return;
+        }
+        if (usock == sock::kInvalid) return;
+        if (bbnet::netsim::config().nat) bbnet::netsim::nat_note_out(d.to.addr, d.to.port);
+        sockaddr_in sa{};
+        sa.sin_family = AF_INET;
+        sa.sin_addr.s_addr = d.to.addr;
+        sa.sin_port = d.to.port;
+        ::sendto(usock, reinterpret_cast<const char*>(d.data.data()), static_cast<int>(d.data.size()), 0,
+                 reinterpret_cast<const sockaddr*>(&sa), sizeof sa);
+    }
+    bool open_udp_socket(std::uint16_t want) {  // mu held or before the threads
+        if (uext || usock != sock::kInvalid) return true;
+        sock::Socket s = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (s == sock::kInvalid) return false;
+        sockaddr_in a{};
+        a.sin_family = AF_INET;
+        a.sin_port = htons(want);
+        if (sock::loopback_only() || cfg.bind_addr == "127.0.0.1") a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        else a.sin_addr.s_addr = htonl(INADDR_ANY);
+        if (::bind(s, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0) {
+            sock::close(s);
+            return false;
+        }
+        sock::set_nonblocking(s);
+        sockaddr_in b{};
+        sock::socklen bl = sizeof b;
+        getsockname(s, reinterpret_cast<sockaddr*>(&b), &bl);
+        usock = s;
+        uport = ntohs(b.sin_port);
+        return true;
+    }
+    void udp_in(rudp::Endpoint from, const std::uint8_t* d, std::size_t n, Clock::time_point now) {
+        if (bbnet::netsim::config().nat && !bbnet::netsim::nat_allow_in(from.addr, from.port)) return;
+        umux.on_datagram(from, d, n, now);
+    }
+    // Guest: the TCP connect got no answer (or was refused): the same connection over UDP.
+    bool switch_to_udp(Conn* c, const char* why) {
+        if (host || c->us || !udp_enabled() || c->dead) return false;
+        if (!uext && usock == sock::kInvalid && !open_udp_socket(0)) return false;
+        if (c->s != sock::kInvalid) {
+            sock::close(c->s);
+            c->s = sock::kInvalid;
+        }
+        rudp::Endpoint ep;
+        std::memcpy(&ep.addr, c->peer_ip.data(), 4);
+        ep.port = htons(c->peer_port);
+        c->us = umux.connect(ep, Clock::now(), cfg.connect_timeout_ms);
+        c->created = c->last_rx = Clock::now();
+        log(std::string("party link: ") + why + "; connecting over UDP (hole punching; give the host your guest code if it is behind a NAT)");
+        return true;
+    }
+    // Every pass (mu held): datagrams in, accepted streams, stream <-> connection bytes, datagrams out.
+    void udp_pump() {
+        const Clock::time_point now = Clock::now();
+        if (usock != sock::kInvalid) {
+            std::uint8_t buf[2048];
+            for (int k = 0; k < 512; ++k) {
+                sockaddr_in sa{};
+                sock::socklen sl = sizeof sa;
+                const long r = ::recvfrom(usock, reinterpret_cast<char*>(buf), sizeof buf, 0,
+                                          reinterpret_cast<sockaddr*>(&sa), &sl);
+                if (r <= 0) break;
+                udp_in({sa.sin_addr.s_addr, sa.sin_port}, buf, static_cast<std::size_t>(r), now);
+            }
+        }
+        {
+            std::deque<std::pair<rudp::Endpoint, std::vector<std::uint8_t>>> q;
+            {
+                std::lock_guard<std::mutex> lk(uin_mu);
+                q.swap(uin);
+            }
+            for (auto& [ep, d] : q) udp_in(ep, d.data(), d.size(), now);
+        }
+        if (host) {
+            while (auto st = umux.accept()) {
+                auto c = std::make_unique<Conn>();
+                c->id = next_conn_id++;
+                c->us = st;
+                c->phase = Phase::WaitHello;
+                c->created = c->last_rx = now;
+                const rudp::Endpoint ep = st->peer();
+                std::memcpy(c->peer_ip.data(), &ep.addr, 4);
+                c->peer_port = ntohs(ep.port);
+                log("party link: a guest connects over UDP from " + std::to_string(c->peer_ip[0]) + "." +
+                    std::to_string(c->peer_ip[1]) + "." + std::to_string(c->peer_ip[2]) + "." +
+                    std::to_string(c->peer_ip[3]) + ":" + std::to_string(c->peer_port));
+                conns.push_back(std::move(c));
+            }
+        }
+        for (std::size_t i = 0; i < conns.size(); ++i) {
+            Conn* c = conns[i].get();
+            if (c->dead || !c->us) continue;
+            const auto st = c->us->state();
+            if (st == rudp::Stream::State::Failed || st == rudp::Stream::State::Closed) {
+                lose(c, c->phase == Phase::Connecting ? "no UDP answer from the host (behind a NAT: it needs your guest code)"
+                                                      : "UDP link closed");
+                continue;
+            }
+            if (c->phase == Phase::Connecting) {
+                if (st != rudp::Stream::State::Open) continue;
+                if (!host) udp_prefer = true;
+                log("party link: connected over UDP");
+                on_connected(c);
+            }
+            bool got = false;
+            std::uint8_t buf[16384];
+            while (!c->input_pending) {
+                const std::size_t r = c->us->read(buf, sizeof buf);
+                if (!r) break;
+                c->in.insert(c->in.end(), buf, buf + r);
+                got = true;
+            }
+            if (got) process_input(c);
+            if (!c->dead && c->out_off < c->out.size()) flush(c);
+        }
+        std::vector<rudp::Datagram> out;
+        umux.poll(now, out);
+        for (const rudp::Datagram& d : out) udp_out(d);
+    }
+
     void close_conn(Conn* c) {
         if (c->dead) return;
         c->dead = true;
         if (c->s != sock::kInvalid) {
             sock::close(c->s);
             c->s = sock::kInvalid;
+        }
+        if (c->us) {
+            c->us->close();  // a FIN on the next pump
+            c->us.reset();
         }
         c->tx.reset();
         c->rx.reset();
@@ -937,6 +1087,7 @@ struct PartyLink::Impl {
                     log("party link: lost " + m.name + " (slot " + std::to_string(m.slot) + "): " + why +
                         "; keeping the slot " + std::to_string(cfg.slot_keep_ms / 1000) + " s");
                     RosterEntry e = entry_of(m);
+                    e.lost_why = why;
                     if (cb.on_member_left) post([this, e] { cb.on_member_left(e, true); });
                     broadcast_roster();
                 }
@@ -1685,8 +1836,12 @@ struct PartyLink::Impl {
         if (raw->s == sock::kInvalid) return lose(raw, "socket() failed");
         raw->peer_ip = d.ip;
         raw->peer_port = host_port;
-        if (d.failed) return lose(raw, "connect failed");
+        if (d.failed) {
+            if (switch_to_udp(raw, "TCP connect to the host failed")) return;
+            return lose(raw, "connect failed");
+        }
         attach_sim(raw);
+        if (udp_prefer && !d.connected && switch_to_udp(raw, "the last connection worked over UDP")) return;
         if (d.connected) on_connected(raw);
     }
 
@@ -1726,6 +1881,10 @@ struct PartyLink::Impl {
                 if (refused_conns == 1 || refused_conns % 100 == 0)
                     log("party link: refused " + std::to_string(refused_conns) +
                         " connection(s): too many handshakes in progress");
+                continue;
+            }
+            if (bbnet::netsim::config().nat && bbnet::netsim::applies_to(bbnet::netsim::config(), a.sin_addr.s_addr)) {
+                sock::close(s);  // simulated NAT without a port forward: inbound TCP never arrives
                 continue;
             }
             auto c = std::make_unique<Conn>();
@@ -1775,7 +1934,10 @@ struct PartyLink::Impl {
             Conn* c = cp.get();
             if (c->dead) continue;
             if (c->phase == Phase::Connecting) {
-                if (ms_between(c->created, now) > cfg.connect_timeout_ms) lose(c, "connect timed out");
+                if (!c->us && !host && udp_enabled() && ms_between(c->created, now) > cfg.tcp_fallback_ms &&
+                    switch_to_udp(c, "no TCP answer from the host"))
+                    continue;
+                if (!c->us && ms_between(c->created, now) > cfg.connect_timeout_ms) lose(c, "connect timed out");
                 continue;
             }
             if (host && c->phase != Phase::Open &&
@@ -1882,8 +2044,10 @@ struct PartyLink::Impl {
                             int err = 0;
                             sock::socklen el = sizeof err;
                             getsockopt(c->s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&err), &el);
-                            if (err != 0 || (re & (POLLERR | POLLHUP) && !(re & POLLOUT)))
-                                lose(c, "cannot connect to the host (" + std::to_string(err) + ")");
+                            if (err != 0 || (re & (POLLERR | POLLHUP) && !(re & POLLOUT))) {
+                                if (!switch_to_udp(c, "TCP connect to the host refused"))
+                                    lose(c, "cannot connect to the host (" + std::to_string(err) + ")");
+                            }
                             else
                                 on_connected(c);
                         }
@@ -1904,6 +2068,7 @@ struct PartyLink::Impl {
                 if (!c->dead && c->input_pending && c->backlog->load() < kMaxCallbackBacklog) process_input(c);
             }
             timers();
+            udp_pump();
             conns.erase(std::remove_if(conns.begin(), conns.end(), [](const std::unique_ptr<Conn>& c) { return c->dead; }),
                         conns.end());
             publish();
@@ -1976,7 +2141,10 @@ bool PartyLink::start_host(std::string* error) {
         sock::close(s);
         return fail("party port " + std::to_string(I.cfg.port) + " is in use (another game instance?)");
     }
-    if (::listen(s, 8) != 0) {
+    // A simulated NAT without a port forward (netsim nat=1): the port is bound but never
+    // listens, so a guest's TCP connect is refused as on the internet it would go unanswered.
+    const bool nat_sim = bbnet::netsim::config().nat && sock::loopback_only();
+    if (!nat_sim && ::listen(s, 8) != 0) {
         sock::close(s);
         return fail("listen() failed");
     }
@@ -1984,9 +2152,19 @@ bool PartyLink::start_host(std::string* error) {
     sockaddr_in b{};
     sock::socklen bl = sizeof b;
     getsockname(s, reinterpret_cast<sockaddr*>(&b), &bl);
+    if (I.cfg.udp_link) {
+        I.umux.accepting = true;
+        if (!I.open_udp_socket(ntohs(b.sin_port)))
+            I.log("party link: UDP port " + std::to_string(ntohs(b.sin_port)) + " unavailable: TCP only");
+    }
     {
         std::lock_guard<std::mutex> lk(I.mu);
         I.listen_s = s;
+        if (nat_sim) {
+            sock::close(s);  // nothing accepts TCP: the UDP path only
+            I.listen_s = sock::kInvalid;
+            I.log("party link: simulated NAT: no TCP listener (UDP path only)");
+        }
         I.port = ntohs(b.sin_port);
         I.start_time = Clock::now();
         for (auto& [slot, m] : I.members)
@@ -2013,6 +2191,9 @@ bool PartyLink::start_guest(const std::string& host, std::uint16_t port, std::st
     Impl::Dial d = Impl::dial(host, port);
     {
         std::lock_guard<std::mutex> lk(I.mu);
+        // The UDP path's own socket at once: its port is the endpoint a host behind a NAT punches
+        // towards (the guest code); the game passes its party port instead (set_udp_transport).
+        if (I.cfg.udp_link && !I.uext) I.open_udp_socket(0);
         I.host_name = host;
         I.host_port = port;
         I.start_time = Clock::now();
@@ -2038,7 +2219,18 @@ void PartyLink::stop(bool graceful) {
                 if (!c->dead && c->phase == Impl::Phase::Open) I.send(c.get(), kBye, w);
         }
         I.stopping = true;
+        for (auto& c : I.conns)
+            if (!c->dead && c->us) I.flush(c.get());
         for (auto& c : I.conns) I.close_conn(c.get());
+        {
+            std::vector<rudp::Datagram> out;  // the BYEs and FINs of UDP connections
+            I.umux.poll(Clock::now(), out);
+            for (const rudp::Datagram& d : out) I.udp_out(d);
+        }
+        if (I.usock != sock::kInvalid) {
+            sock::close(I.usock);
+            I.usock = sock::kInvalid;
+        }
         if (I.listen_s != sock::kInvalid) {
             sock::close(I.listen_s);
             I.listen_s = sock::kInvalid;
@@ -2404,6 +2596,37 @@ bool PartyLink::reconnect_now() {
     I.next_attempt = Clock::now();
     I.backoff_ms = 0;
     return true;
+}
+
+void PartyLink::set_udp_transport(UdpSend send) {
+    std::lock_guard<std::mutex> lk(impl_->mu);
+    impl_->uext = std::move(send);
+}
+
+void PartyLink::on_udp_datagram(std::uint32_t addr, std::uint16_t port, const std::uint8_t* d, std::size_t n) {
+    if (!rudp::is_rudp(d, n)) return;
+    std::lock_guard<std::mutex> lk(impl_->uin_mu);
+    if (impl_->uin.size() < 4096) impl_->uin.emplace_back(rudp::Endpoint{addr, port}, std::vector<std::uint8_t>(d, d + n));
+}
+
+void PartyLink::punch_guest(std::uint32_t addr, std::uint16_t port) {
+    std::lock_guard<std::mutex> lk(impl_->mu);
+    impl_->umux.punch({addr, port}, Clock::now(), 60000, 200);
+    char b[96];
+    const auto* ip = reinterpret_cast<const std::uint8_t*>(&addr);
+    std::snprintf(b, sizeof b, "party link: punching towards a guest at %u.%u.%u.%u:%u (60 s)", ip[0], ip[1], ip[2], ip[3],
+                  static_cast<unsigned>(ntohs(port)));
+    impl_->log(b);
+}
+
+std::uint16_t PartyLink::udp_local_port() const {
+    std::lock_guard<std::mutex> lk(impl_->mu);
+    return impl_->uport;
+}
+
+bool PartyLink::connected_over_udp() const {
+    std::lock_guard<std::mutex> lk(impl_->mu);
+    return impl_->gconn && impl_->gconn->us && impl_->gconn->phase == Impl::Phase::Open;
 }
 
 void PartyLink::debug_freeze(int ms) {
