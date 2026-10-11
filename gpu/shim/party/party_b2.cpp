@@ -2009,8 +2009,9 @@ bool SoloRespawn(double held_for, u32 map_now) {
 // Cleric Beast, ForceDead and a fall into the void both set HP 0, but no guest_died funnel, no
 // respawn, the guest stayed dead in the host's world). The boss-clear Lua state BlockClear2_3 ends
 // in the send-home tail jump K10 drops, so the phantom's state machine never leaves it and never
-// runs PartyGhostDeath. Watchdog: HP 0 for 12 s after a K10 on this load, with no death funnel
-// (the normal path fires ~8.6 s after the death) -> the guest death redirect runs from here.
+// runs PartyGhostDeath. A death in the arena during the fight stayed unprocessed too (17 s until
+// the kill). Watchdog: HP 0 for 12 s (after a K10 on this load) or 15 s, with no death funnel or
+// hold (the normal path fires ~8.6 s after the death) -> the guest death redirect runs from here.
 void DeadAfterClearTick(const GameSnapshot& s, double now) {
     static double dead_since = 0;
     static bool fired = false;
@@ -2028,10 +2029,13 @@ void DeadAfterClearTick(const GameSnapshot& s, double now) {
         return;
     }
     if (dead_since <= 0) dead_since = now;
-    if (fired || now - dead_since < 12.0 || !g_k10_this_load.load() || g_death_held_at.load() >= dead_since) return;
+    // 12 s after a K10 on this load (the normal path fires ~8.6 s after the death), 15 s otherwise
+    // (live: a death in the Cleric Beast's arena during the fight was not processed either).
+    const double limit = g_k10_this_load.load() ? 12.0 : 15.0;
+    if (fired || now - dead_since < limit || g_death_held_at.load() >= dead_since) return;
     fired = true;
-    Log("guest: dead for %.0f s after a boss clear and the game's death state never ran (BlockClear "
-        "state kept by K10): the guest death redirect runs now", now - dead_since);
+    Log("guest: dead for %.0f s and the game's death state never ran (%s): the guest death redirect runs now",
+        now - dead_since, g_k10_this_load.load() ? "after a boss clear: BlockClear state kept by K10" : "no PartyGhostDeath");
     GuestDeathRedirectNow();
 }
 
