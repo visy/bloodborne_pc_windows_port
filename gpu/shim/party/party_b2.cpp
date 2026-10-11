@@ -215,18 +215,21 @@ bool ChrPos(u64 chr, float out[3]) {
 
 std::string DescribeChr(u64 chr) {
     float p[3] = {0, 0, 0};
-    char b[128];
+    char b[192];
     if (!chr || !ChrPos(chr, p)) {
         return "-";
     }
+    float drawn[4] = {};
+    SafeRead(chr + 0xc0, drawn, 16);
     // +0x78 chr type (0 own body, 1 white phantom, ...); vfunc +0x558 is what the cooperator count
     // 0x15BDC20 tests (counted when in {1, 5, 7, 19}).
     using TypeFn = u32(BB_COOP_SYSV*)(u64);
     const u64 vt = Field<u64>(chr, 0);
     const u64 fn = vt ? Field<u64>(vt, 0x558) : 0;
     const u32 pres = fn ? reinterpret_cast<TypeFn>(fn)(chr) : ~0u;
-    std::snprintf(b, sizeof b, "stage %#x type %d/%d pos (%.1f, %.1f, %.1f) hp %d", Field<u32>(chr, 0x3f8),
-                  Field<int>(chr, 0x78, -1), int(pres), p[0], p[1], p[2],
+    std::snprintf(b, sizeof b, "stage %#x type %d/%d pos (%.1f, %.1f, %.1f) drawn (%.1f, %.1f, %.1f) hp %d",
+                  Field<u32>(chr, 0x3f8), Field<int>(chr, 0x78, -1), int(pres), p[0], p[1], p[2], drawn[0], drawn[1],
+                  drawn[2],
                   Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0xf8, -1));
     return b;
 }
@@ -1472,6 +1475,50 @@ u32 NearestEnemy(const GameSnapshot& s, float max_m) {
         }
     });
     return best;
+}
+
+/// Remote player chrs whose drawn position (chr +0xC0, what the name plate and the model use)
+/// is far from their physics position (+0x58 -> +8 -> +0x3B0 -> +0x68 +0x1E0, which the owner's
+/// network updates move): after a re-creation (a meet, a B2 re-join, a host death) the host's
+/// copy of a guest stood invisible with its plate at an old spot while its physics position was
+/// 0.85 m from the host (user reports split24 / hd22, the Dream). Such a chr is warped to its
+/// physics position with the chr warp vfunc +0x5F8, which moves both. Both roles, main thread.
+void RemoteDrawFixTick(double now) {
+    static std::map<u64, double> off_since, last_fix;
+    for (const TaskInfo& t : Tasks(false)) {
+        const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        if (!c) {
+            continue;
+        }
+        const u64 pm = Field<u64>(Field<u64>(Field<u64>(Field<u64>(c, 0x58), 8), 0x3b0), 0x68);
+        alignas(16) float phys[4] = {}, rot[4] = {}, draw[4] = {};
+        if (!pm || !SafeRead(pm + 0x1e0, phys, 16) || !SafeRead(pm + 0x1d0, rot, 16) || !SafeRead(c + 0xc0, draw, 16)) {
+            continue;
+        }
+        const float dx = phys[0] - draw[0], dy = phys[1] - draw[1], dz = phys[2] - draw[2];
+        const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (!(d > 3.0f) || !std::isfinite(d)) {
+            off_since.erase(c);
+            continue;
+        }
+        auto it = off_since.emplace(c, now).first;
+        if (now - it->second < 1.0 || now - last_fix[c] < 5.0) {
+            continue;
+        }
+        last_fix[c] = now;
+        const u64 fn = Field<u64>(Field<u64>(c, 0), 0x5f8);
+        if (!fn) {
+            continue;
+        }
+        alignas(16) float p16[4] = {phys[0], phys[1], phys[2], 1.0f};
+        using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
+        reinterpret_cast<Warp>(fn)(c, p16, rot, 1);
+        float after[4] = {};
+        SafeRead(c + 0xc0, after, 16);
+        Log("remote chr %#llx (mode %d): drawn at (%.1f, %.1f, %.1f), %.1f m from its position (%.1f, %.1f, %.1f): warped "
+            "there (drawn now (%.1f, %.1f, %.1f))", ull(c), t.mode, draw[0], draw[1], draw[2], double(d), phys[0], phys[1],
+            phys[2], after[0], after[1], after[2]);
+    }
 }
 
 std::string DescribeWhere() {
@@ -3193,6 +3240,9 @@ void Tick(const GameSnapshot& s) {
             SplitTick(s, now);
         }
         if (s.world_up && !s.loading) {
+            if (SessionUp()) {
+                RemoteDrawFixTick(now);
+            }
             if (g_arrived_at > 0 && now >= g_arrived_at) {
                 g_arrived_at = 0;
                 Send(0, "{\"op\":\"arrived\"}");
