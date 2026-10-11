@@ -1317,8 +1317,12 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             Log("test: goods %d x%d -> x%d (%s)", id, before, GoodsCount(std::uint32_t(id)), ok ? "ok" : "failed");
         }
     }
-    if (t.stand && !t.stand_done && s.world_up && !s.loading && s.player && Seconds(st.world_at, now) >= 10.0 &&
-        Seconds(t.st_at, now) >= 0.0) {
+    // With place= the stand waits for the placed map (the Ritual Altar is in m21_01, not the Dream
+    // block m21_00 a save starts in: a stand there kept the player where it was).
+    const bool stand_map_ok =
+        !t.place || (t.place_done && (s.map_id & 0xffff0000u) == (t.place_map & 0xffff0000u));
+    if (t.stand && !t.stand_done && stand_map_ok && s.world_up && !s.loading && s.player &&
+        Seconds(st.world_at, now) >= 10.0 && Seconds(t.st_at, now) >= 0.0) {
         if (t.st_phase == 0) {
             alignas(16) float pos[4] = {t.st_pos[0], t.st_pos[1], t.st_pos[2], 1.0f};
             alignas(16) float rot[4] = {0, t.st_yaw, 0, 0};
