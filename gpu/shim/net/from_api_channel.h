@@ -107,6 +107,9 @@ public:
     /// session's ritual: the board lives in the host's process): add it with its FormData, so
     /// summons into it work. False when known already or the FormData is unusable.
     bool adopt(std::uint64_t id, const std::string& b64, const std::string& owner);
+    /// A member's game holds dungeon `id` in its current slot (its own ritual, this session or an
+    /// earlier one): it counts as that member's latest ritual (latest_ritual).
+    void note_made(const std::string& member, std::uint64_t id);
     /// The channel's FormData as the board has it ("" when unknown or none).
     std::string form_data(std::uint64_t id) const;
     /// The glyph for a FormData (deterministic: the same dungeon keeps its glyph and id).

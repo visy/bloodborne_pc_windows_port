@@ -607,7 +607,7 @@ bool PopGuestForm(std::string* body) {
     return true;
 }
 
-void OnGuestForm(int slot, const std::string& body) {
+void OnGuestForm(int slot, const std::string& member, const std::string& body) {
     json::Value v;
     std::string err;
     const json::Value* id = nullptr;
@@ -620,14 +620,30 @@ void OnGuestForm(int slot, const std::string& body) {
         return;
     }
     const std::uint64_t channel = std::strtoull(id->string.c_str(), nullptr, 10);
+    if (!channel || member.empty()) {
+        return;
+    }
     bbnet::party::ChannelBoard& board = bbnet::party::FromApi::instance().channels();
-    // Only a dungeon the board has without a FormData (a shared fixed dungeon a member's ritual
-    // made by search): never replaces an uploaded one.
-    const bool ok = channel && board.known(channel) && board.form_data(channel).empty() &&
-                    board.set_form_data(channel, form->string);
-    std::printf("Party: chalice: dungeon %llu: FormData from slot %d's ritual %s\n",
-                static_cast<unsigned long long>(channel), slot, ok ? "on the board" : "not taken (unknown or has one)");
-    std::fflush(stdout);
+    // A dungeon the board does not know (an earlier session's ritual) is added; one it knows
+    // without a FormData (a shared fixed dungeon a ritual made by search) gets it; an uploaded
+    // one is never replaced.
+    const char* what = "already on the board";
+    if (!board.known(channel)) {
+        what = board.adopt(channel, form->string, member) ? "added to the board" : "refused";
+    } else if (board.form_data(channel).empty()) {
+        what = board.set_form_data(channel, form->string) ? "on the board" : "refused";
+    }
+    if (board.known(channel)) {
+        board.note_made(member, channel);  // the party's dungeon at the host's altar
+    }
+    static std::string last;
+    const std::string line = std::to_string(channel) + "/" + member + "/" + what;
+    if (line != last) {
+        last = line;
+        std::printf("Party: chalice: dungeon %llu of %s (slot %d): FormData %s\n", static_cast<unsigned long long>(channel),
+                    member.c_str(), slot, what);
+        std::fflush(stdout);
+    }
 }
 
 std::uint64_t LocalChannel() {
