@@ -9,6 +9,7 @@
 #include "party_code.h"
 #include "party_crypto.h"
 #include "party_b2.h"
+#include "party_balance.h"
 #include "party_director.h"
 #include "party_flow.h"
 #include "party_story.h"
@@ -731,6 +732,11 @@ LinkCallbacks make_callbacks(bool host) {
             }
             if (name == coop::b2::kEventName) {  // B2: a guest arrived in the host world
                 coop::b2::OnLinkEvent(slot, body);
+                return;
+            }
+            if (name == coop::balance::kEventName) {  // the host's party rules (party_balance.h)
+                std::string err;
+                if (!coop::balance::OnHostRules(body, &err)) plog("balance event refused: %s", err.c_str());
                 return;
             }
             if (name == coop::kStoryEventName) {  // C4: the host's cutscene / ending

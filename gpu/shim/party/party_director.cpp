@@ -3,7 +3,9 @@
 // droogie/bbhost src/engine/np_test.cpp @8f2746c (GPL-3.0-or-later): world-up detection, the
 // Insight write and the bell events.
 #include "party_director.h"
+#include "../net/netsim.h"
 #include "party_hud.h"
+#include "party_balance.h"
 #include "party_async_io.h"
 
 #include "coop_hooks.h"
@@ -114,7 +116,9 @@ struct TravelStep {
     // 1.2 m in front, Cross), wait for its menu, Down N times, Cross (args id:N).
     enum Kind {
         HostWarp, HostDie, GuestDie, HostKill, HostMove, GuestMove,
-        HostPress, GuestPress, HostMark, GuestMark, HostStage, HostWalk, HostHeadstone, HostFlag, HostSkipRemo, GuestSkipRemo, HostLastLamp
+        HostPress, GuestPress, HostMark, GuestMark, HostStage, HostWalk, HostHeadstone, HostFlag, HostSkipRemo, GuestSkipRemo,
+        HostLastLamp,
+        HostOutage, GuestOutage  // a simulated total network outage of `buttons` ms (BB_NET_SIM on)
     } kind = HostWarp;
     std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30; HostKill: the entity id
     float pos[3] = {};    // HostMove / GuestMove: the chr warp target (map coordinates)
@@ -787,6 +791,8 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::GuestMove: return "guest_move";
     case TravelStep::HostPress: return "host_press";
     case TravelStep::GuestPress: return "guest_press";
+    case TravelStep::HostOutage: return "host_outage";
+    case TravelStep::GuestOutage: return "guest_outage";
     case TravelStep::HostMark: return "host_mark";
     case TravelStep::GuestMark: return "guest_mark";
     case TravelStep::HostStage: return "host_stage";
@@ -1028,7 +1034,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     auto mine = [&](const TravelStep& step) {
         return (step.kind == TravelStep::GuestDie || step.kind == TravelStep::GuestMove ||
                 step.kind == TravelStep::GuestPress || step.kind == TravelStep::GuestMark ||
-                step.kind == TravelStep::GuestSkipRemo) == (role == PartyRole::Guest);
+                step.kind == TravelStep::GuestSkipRemo || step.kind == TravelStep::GuestOutage) == (role == PartyRole::Guest);
     };
     if (t.script_on) {
         RunTravelScript(st, s, now);
@@ -1051,6 +1057,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     if (t.next_step < t.steps.size() &&
         (next_kind == TravelStep::HostKill || next_kind == TravelStep::HostMove || next_kind == TravelStep::GuestMove ||
          next_kind == TravelStep::HostPress || next_kind == TravelStep::GuestPress || next_kind == TravelStep::HostWalk ||
+         next_kind == TravelStep::HostOutage || next_kind == TravelStep::GuestOutage ||
          next_kind == TravelStep::HostLastLamp ||
          next_kind == TravelStep::HostMark || next_kind == TravelStep::GuestMark || !t.steps[t.next_step].map.empty())) {
         if (!steady || (!t.ran && !t.armed) || t.joins < t.steps[t.next_step].min_join) {
@@ -1116,6 +1123,9 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             Log("test: host_lastlamp %#llx -> %#llx", static_cast<unsigned long long>(rec),
                 static_cast<unsigned long long>(now_rec));
         }
+    } else if (step.kind == TravelStep::HostOutage || step.kind == TravelStep::GuestOutage) {
+        bbnet::netsim::outage_now(double(step.buttons));
+        Log("test: %s %u ms (%s)", TravelStepName(step.kind), step.buttons, Describe(s).c_str());
     } else if (step.kind == TravelStep::HostPress || step.kind == TravelStep::GuestPress) {
         // In-process pad input (runtime_pad_director_press, OR-ed into every pad sample; no OS
         // input): a tap, released 0.15 s later.
@@ -1737,9 +1747,12 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("guest_die", 0) == 0 || item.rfind("host_kill=", 0) == 0 ||
                        item.rfind("host_move=", 0) == 0 || item.rfind("guest_move=", 0) == 0 ||
                        item.rfind("host_press=", 0) == 0 || item.rfind("guest_press=", 0) == 0 ||
-                       item.rfind("host_lastlamp=", 0) == 0) {
+                       item.rfind("host_lastlamp=", 0) == 0 || item.rfind("host_outage=", 0) == 0 ||
+                       item.rfind("guest_outage=", 0) == 0) {
                 TravelStep step;
-                step.kind = item.rfind("guest_move", 0) == 0    ? TravelStep::GuestMove
+                step.kind = item.rfind("guest_outage", 0) == 0  ? TravelStep::GuestOutage
+                            : item.rfind("host_outage", 0) == 0   ? TravelStep::HostOutage
+                            : item.rfind("guest_move", 0) == 0    ? TravelStep::GuestMove
                             : item.rfind("guest_press", 0) == 0  ? TravelStep::GuestPress
                             : item.rfind("host_press", 0) == 0   ? TravelStep::HostPress
                             : item.rfind("host_lastlamp", 0) == 0 ? TravelStep::HostLastLamp
@@ -1757,6 +1770,9 @@ void PartyDirector::ConfigureFromEnv() {
                 if ((step.kind == TravelStep::HostDie || step.kind == TravelStep::GuestDie) && item.find('%') != std::string::npos) {
                     // host_die@S%MAP: S s after the last load / previous step, in that map (no re-join)
                     step.map = item.substr(item.find('%') + 1);
+                }
+                if (step.kind == TravelStep::HostOutage || step.kind == TravelStep::GuestOutage) {
+                    step.buttons = static_cast<std::uint32_t>(std::strtoul(item.c_str() + item.find('=') + 1, nullptr, 10));
                 }
                 if (step.kind == TravelStep::HostPress || step.kind == TravelStep::GuestPress) {
                     step.buttons = static_cast<std::uint32_t>(std::strtoul(item.c_str() + item.find('=') + 1, nullptr, 0));
@@ -1966,6 +1982,8 @@ void PartyDirector::Tick() {
     }
     // The party HUD: our vitals out, the companions' board for the overlay (party_hud.h).
     if (role != PartyRole::None) PartyHudTick(s, link, LocalState(s, st.start_ready));
+    // C4 rot, D7 enemy scaling, E2 extras: the host's rules for the party (party_balance.h).
+    if (role != PartyRole::None) balance::Tick(s, link, role == PartyRole::Host);
     // B1: the host's warps go to every guest (reliable: replayed to a member who reconnects).
     if (link && role == PartyRole::Host) {
         TravelIntent t;
@@ -2280,6 +2298,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     InstallItemsPatches();  // C3: award hook, parity patches (byte-verified)
     PhantomInit();          // guest respawn at the host's lamp, refill, boss Insight
     GuestServicesInit();    // guest Doll / shops / workshop in the host's Dream (byte-verified)
+    balance::Init();        // C4 rot hook, D7 scaling (party_balance.h)
     g_tick_installed = HookPrologue(kFlipperUpdate,
                                     {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48,
                                      0x83, 0xec, 0x38},

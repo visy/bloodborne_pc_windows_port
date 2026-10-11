@@ -118,6 +118,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.mk_deadzone = Clamp(f, 0.0f, 0.2f);
     } else if (key == "mk_smoothing") {
         v.mk_smoothing = Clamp(f, 0.0f, 0.8f);
+    } else if (key == "mk_wheel") {
+        v.mk_wheel = i != 0;
     } else if (key == "async_pipelines") {
         v.async_shaders = i != 0;
     } else if (key == "async_shaders") {
@@ -136,6 +138,22 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_hud = i != 0;
     } else if (key == "party_guest_lamps") {
         v.party_guest_lamps = i != 0;
+    } else if (key == "party_rot") {
+        v.party_rot = i != 0;
+    } else if (key == "party_boss_hp") {
+        v.party_boss_hp = std::clamp(i, 0, 400);
+    } else if (key == "party_boss_damage") {
+        v.party_boss_damage = std::clamp(i, 0, 100);
+    } else if (key == "party_boss_poise") {
+        v.party_boss_poise = std::clamp(i, -100, 300);
+    } else if (key == "party_enemy_hp") {
+        v.party_enemy_hp = std::clamp(i, 0, 400);
+    } else if (key == "party_enemy_damage") {
+        v.party_enemy_damage = std::clamp(i, 0, 100);
+    } else if (key == "party_enemy_poise") {
+        v.party_enemy_poise = std::clamp(i, -100, 300);
+    } else if (key == "party_overhead") {
+        v.party_overhead = std::clamp(i, 0, 4);
     } else if (key == "menu_pos") {
         float x = -1.0f, y = -1.0f;
         if (std::sscanf(value.c_str(), "%f,%f", &x, &y) == 2 && x >= 0.0f && x <= 1.0f && y >= 0.0f &&
@@ -358,12 +376,21 @@ void Save() {
     put("mk_invert_y", flag(v.mk_invert_y));
     put("mk_deadzone", fixed(v.mk_deadzone, 2));
     put("mk_smoothing", fixed(v.mk_smoothing, 2));
+    put("mk_wheel", flag(v.mk_wheel));
     put("async_pipelines", flag(v.async_shaders));
     put("gpl", flag(v.gpl));
     put("compile_indicator", flag(v.compile_indicator));
     put("party_toasts", flag(v.party_toasts));
     put("party_hud", flag(v.party_hud));
     put("party_guest_lamps", flag(v.party_guest_lamps));
+    put("party_rot", flag(v.party_rot));
+    put("party_boss_hp", std::to_string(v.party_boss_hp.load()));
+    put("party_boss_damage", std::to_string(v.party_boss_damage.load()));
+    put("party_boss_poise", std::to_string(v.party_boss_poise.load()));
+    put("party_enemy_hp", std::to_string(v.party_enemy_hp.load()));
+    put("party_enemy_damage", std::to_string(v.party_enemy_damage.load()));
+    put("party_enemy_poise", std::to_string(v.party_enemy_poise.load()));
+    put("party_overhead", std::to_string(v.party_overhead.load()));
     put("fsr4_auto_exposure", flag(v.fsr4_auto_exposure));
     put("fsr4_invert_jitter", flag(v.fsr4_invert_jitter));
     // Read by patches.py at start.
@@ -444,7 +471,7 @@ void ReloadMouseTuning() {
     // Only the tuning: mk_enabled comes from the launcher (BB_MOUSE_KEYBOARD) or the menu, and
     // the other keys are the menu's (a full re-read would undo its unsaved changes).
     static constexpr const char* tuning[] = {"mk_sens_x", "mk_sens_y", "mk_invert_x", "mk_invert_y",
-                                             "mk_deadzone", "mk_smoothing"};
+                                             "mk_deadzone", "mk_smoothing", "mk_wheel"};
     auto& v = Get();
     if (FILE* file = std::fopen(Path(), "r")) {
         char line[256];
