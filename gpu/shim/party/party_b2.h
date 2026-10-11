@@ -100,6 +100,8 @@ std::uint32_t DestMapOf(const TravelIntent& t);
 /// the spot by party slot. False: not in this block (a real map change: load as before).
 /// For hostdeath: a respawn at a lamp of the current map is this plus the revive.
 bool WarpToLampNoLoad(std::uint32_t id, bool beside);
+/// The local player already stands at lamp `id`'s spot (same block, within 2 m): a warp there is a no-op.
+bool AtLampSpot(std::uint32_t id);
 /// Host, main thread: the party's move to lamp `id` inside the loaded map: the host warps
 /// in-world and EVENT b2 {"op":"warp","lamp":id} moves the guests of this map beside it (others,
 /// apart, travel there with one load of their own). False: not in this block.

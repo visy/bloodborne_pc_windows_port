@@ -3627,6 +3627,16 @@ bool SameMapLampWarp(std::uint32_t id, bool alone) {
 }
 } // namespace
 
+bool AtLampSpot(std::uint32_t id) {
+    float spot[4], p[3] = {};
+    const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+    if (!g_on.load() || !player || !LampInLoadedBlock(id, spot) || !ChrPos(player, p)) {
+        return false;
+    }
+    const float dx = p[0] - spot[0], dy = p[1] - spot[1], dz = p[2] - spot[2];
+    return dx * dx + dy * dy + dz * dz < 4.0f;
+}
+
 bool WarpToLampNoLoad(std::uint32_t id, bool beside) {
     if (!g_on.load() || !WarpToLampInWorld(id, beside, beside ? "party move" : "own move")) {
         return false;
