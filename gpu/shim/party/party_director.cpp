@@ -2035,6 +2035,14 @@ void PartyDirector::Tick() {
         if (chalice::PopHostGoods(&chalices)) {
             link->post_event(party::kBroadcast, chalice::kGoodsEventName, chalice::GoodsToJsonText(chalices));
         }
+        // The host's own online id: the party's dungeon at its altar is another member's ritual.
+        static Clock::time_point host_name_at{};
+        if (Seconds(host_name_at, Clock::now()) >= 2.0) {
+            host_name_at = Clock::now();
+            for (const party::RosterEntry& e : link->roster()) {
+                if (e.slot == party::kHostSlot) chalice::SetHostName(e.name);
+            }
+        }
         int slot = -1;
         while (TakeHostFullItems(&slot, &items)) {
             link->post_event(slot, kItemsFullEventName, ItemsToJsonText(items));

@@ -92,6 +92,11 @@ public:
     /// The channel a member's game reported last (0: none).
     std::uint64_t member_channel(const std::string& member) const;
 
+    /// The dungeon the newest ritual of a member other than `except` made or joined (its fixed
+    /// search or its upload) within `within`: the party's dungeon a host can enter from its altar
+    /// without typing the glyph. False when none.
+    bool latest_ritual(const std::string& except, std::chrono::seconds within, Channel* out, std::string* member) const;
+
     std::vector<Channel> channels() const;
     /// The board has this dungeon (a summoned member's game can fetch it).
     bool known(std::uint64_t id) const;
@@ -124,6 +129,8 @@ private:
 
     std::map<std::string, std::pair<std::uint64_t, std::chrono::steady_clock::time_point>> ritual_;
 
+    /// member -> (the dungeon of its last ritual: fixed search or upload, when).
+    std::map<std::string, std::pair<std::uint64_t, std::chrono::steady_clock::time_point>> made_;
     static constexpr std::chrono::seconds kRitualWindow{120};
     std::vector<Channel> channels_;
     std::vector<std::pair<std::string, std::pair<std::uint64_t, std::uint64_t>>> member_channel_;  // member -> {id, clock}

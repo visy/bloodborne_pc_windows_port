@@ -184,10 +184,31 @@ std::string ChannelBoard::upload(const std::string& caller, std::uint64_t uid, c
     c->wish_materials = wish_list(body);
     c->last_play = now;
     c->touched = ++clock_;
+    made_[caller] = {c->id, std::chrono::steady_clock::now()};
     const std::string reply =
         "{\"ResKind\":0,\"ChannelId\":" + jnum(static_cast<long long>(c->id)) + ",\"DiscernmentWord\":" + jstr(c->glyph) + "}";
     drop_excess();
     return reply;
+}
+
+bool ChannelBoard::latest_ritual(const std::string& except, std::chrono::seconds within, Channel* out,
+                                 std::string* member) const {
+    std::lock_guard<std::mutex> lk(mu_);
+    const auto now = std::chrono::steady_clock::now();
+    const std::pair<const std::string, std::pair<std::uint64_t, std::chrono::steady_clock::time_point>>* best = nullptr;
+    for (const auto& m : made_) {
+        if (m.first == except || now - m.second.second > within) continue;
+        if (!best || m.second.second > best->second.second) best = &m;
+    }
+    if (!best) return false;
+    for (const Channel& c : channels_) {
+        if (c.id == best->second.first) {
+            if (out) *out = c;
+            if (member) *member = best->first;
+            return true;
+        }
+    }
+    return false;
 }
 
 std::string ChannelBoard::share(const std::string& caller, const json::Value& body) {
@@ -271,6 +292,7 @@ std::string ChannelBoard::search(const std::string& caller, const json::Value& b
         if (c) {
             c->touched = ++clock_;
             ritual_[caller] = {c->id, std::chrono::steady_clock::now()};
+            made_[caller] = {c->id, std::chrono::steady_clock::now()};
             return "{\"ResKind\":0,\"ChannelList\":[" + entry(*c, false) + "]}";
         }
     }
