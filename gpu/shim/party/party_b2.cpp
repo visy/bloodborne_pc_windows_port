@@ -1221,6 +1221,16 @@ void FallbackCleanupTick(const GameSnapshot& s) {
 // was gone and the bell had to re-summon it (live r5). With no host travel within the grace
 // (BB_PARTY_B2_DEATH_GRACE s, default 8; 0 = no hold) the usual redirect runs.
 std::atomic<double> g_death_held_at{0};
+// The guest is dead and follows the host's travel: its load is a death load, which goes to its
+// own respawn records (GSM +0x1528 last lamp, +0x1538 mode, +0x153C respawn: often the Hunter's
+// Dream) whatever the forced placement says (live r11: loaded m21_00 in host-world mode, 142 m
+// from the host). The host's records are written for that load and the own ones put back after.
+std::atomic<bool> g_dead_follow{false};
+struct OwnRespawn {
+    bool saved = false;
+    u64 last_lamp = 0, respawn = 0;
+    u32 mode = 0;
+} g_own_respawn;
 
 double DeathGrace() {
     static const double g = [] {
@@ -1240,6 +1250,9 @@ bool HoldGuestDeath() {
         phase = S().gphase;
     }
     g_death_held_at = Now();
+    if (phase != GuestPhase::Idle) {
+        g_dead_follow = true;
+    }
     Log("guest: own death in the host's world held (%s)",
         phase != GuestPhase::Idle ? "the host's travel is in flight: it takes the guest along"
                                   : "waiting for a host travel");
@@ -1248,6 +1261,12 @@ bool HoldGuestDeath() {
 
 /// Main thread: a held guest death goes with the host's travel, or runs after the grace.
 void HeldDeathTick(const GameSnapshot& s, double now) {
+    if (g_dead_follow.load() && !SessionUp()) {
+        // The follow ended without an arrival (B1 fallback): the host's records stay, which is
+        // where the fallback and the gather take the guest anyway.
+        g_dead_follow = false;
+        g_own_respawn.saved = false;
+    }
     const double at = g_death_held_at.load();
     if (at <= 0) {
         return;
@@ -1259,6 +1278,7 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
     }
     if (phase != GuestPhase::Idle) {
         g_death_held_at = 0;
+        g_dead_follow = true;
         Log("guest: held death goes with the host's travel (%.1f s after it); no redirect, no leave", now - at);
         return;
     }
@@ -1347,6 +1367,23 @@ void GuestTick(const GameSnapshot& s, double now) {
                     std::memcpy(t.rot, st.dest_rot, sizeof t.rot);
                 }
             }
+            if (g_dead_follow.load()) {
+                const u64 gsm = Slot(kSlotGsm);
+                OwnRespawn& o = g_own_respawn;
+                o.saved = gsm && SafeGet(gsm + 0x1528, &o.last_lamp) && SafeGet(gsm + 0x1538, &o.mode) &&
+                          SafeGet(gsm + 0x153c, &o.respawn);
+                if (o.saved) {
+                    const u64 lamp = t.last_lamp != ~0ull ? t.last_lamp : o.last_lamp;
+                    const u64 resp = t.respawn_record != ~0ull ? t.respawn_record : lamp;
+                    const u32 mode = t.respawn_mode ? t.respawn_mode : 1;
+                    SafeWrite(gsm + 0x1528, &lamp, 8);
+                    SafeWrite(gsm + 0x1538, &mode, 4);
+                    SafeWrite(gsm + 0x153c, &resp, 8);
+                    Log("guest: dead, follows the host: respawn records = the host's (last lamp %#llx -> %#llx, "
+                        "mode %u -> %u, respawn %#llx -> %#llx)",
+                        ull(o.last_lamp), ull(lamp), o.mode, mode, ull(o.respawn), ull(resp));
+                }
+            }
             RestoreZeroedOverlay();
             LogIntroFlags("before the host-world load");
             FunnelKeepRoom keep;
@@ -1389,6 +1426,33 @@ void GuestTick(const GameSnapshot& s, double now) {
             }
             const int n = RewindRemoteTasks("guest");
             Log("guest: arrived in the host world (flow 4); %d remote task(s) rewound", n);
+            if (g_dead_follow.exchange(false) && g_own_respawn.saved) {
+                const u64 gsm = Slot(kSlotGsm);
+                OwnRespawn& o = g_own_respawn;
+                SafeWrite(gsm + 0x1528, &o.last_lamp, 8);
+                SafeWrite(gsm + 0x1538, &o.mode, 4);
+                SafeWrite(gsm + 0x153c, &o.respawn, 8);
+                o.saved = false;
+                Log("guest: own respawn records put back after the death follow (map now %s)", MapName(s.map_id).c_str());
+                // A death load lands on the lamp spot itself (the forced placement is ignored):
+                // the guest stood inside the host (live r13: 0.00 m, the host pushed). Beside it.
+                float pos[4], rot[4];
+                {
+                    std::lock_guard<std::mutex> lk(st.mu);
+                    std::memcpy(pos, st.dest_pos, sizeof pos);
+                    std::memcpy(rot, st.dest_rot, sizeof rot);
+                }
+                if (SummonOffset() > 0.0f && s.player) {
+                    BesideHost(pos, rot, g_local_slot.load());
+                    alignas(16) float p16[4] = {pos[0], pos[1], pos[2], 1.0f}, r16[4] = {rot[0], rot[1], rot[2], rot[3]};
+                    using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
+                    if (const u64 fn = Field<u64>(Field<u64>(s.player, 0), 0x5f8)) {
+                        reinterpret_cast<Warp>(fn)(s.player, p16, r16, 1);
+                        Log("guest: placed beside the host after the death follow (%.2f, %.2f, %.2f)", double(pos[0]),
+                            double(pos[1]), double(pos[2]));
+                    }
+                }
+            }
             Send(0, "{\"op\":\"arrived\"}");  // guest: slot 0 = the host
             std::lock_guard<std::mutex> lk(st.mu);
             st.gphase = GuestPhase::Rewinding;
