@@ -1308,6 +1308,8 @@ bool EnemyReconcilable(u32 id, u32 block_map) {
 // and is dead now. HP 0 alone means nothing: the game keeps unspawned / far chrs at HP 0 (live
 // split20: 119 chrs of m24_01, 7 alive).
 std::map<u32, bool> g_enemy_alive;  // entity -> alive at the last scan (main thread)
+std::atomic<u32> g_watch_enemy{0};      // test: an enemy to log for a few seconds
+std::atomic<double> g_watch_until{0};
 std::vector<u32> g_killed_apart;
 u32 g_killed_map = 0;
 
@@ -1330,6 +1332,10 @@ void EnemyWatchTick(const GameSnapshot& s, double now) {
         const u64 dm = Field<u64>(Field<u64>(chr, 0x3b0), 0x20);
         const int hp = Field<int>(dm, 0x128, 0), mx = Field<int>(dm, 0x12c, 0);
         const bool alive = dm && mx > 0 && hp > 0;
+        if (id == g_watch_enemy.load() && now < g_watch_until.load()) {
+            Log("split: watched enemy %u hp %d / %d (alive %d, apart %d, seen alive %d)", id, hp, mx, int(alive), int(apart),
+                g_enemy_alive.count(id) ? int(g_enemy_alive[id]) : -1);
+        }
         auto it = g_enemy_alive.find(id);
         if (it != g_enemy_alive.end() && it->second && !alive && mx > 0 && apart && g_killed_apart.size() < 128) {
             g_killed_apart.push_back(id);
@@ -3599,6 +3605,8 @@ std::uint32_t NearestEnemyForTest(float max_m) {
         }
     });
     const u32 id = NearestEnemy(s, max_m);
+    g_watch_enemy = id;
+    g_watch_until = Now() + 4.0;
     Log("test: map chrs %d, of %s %d (%d alive); nearest within %.0f m: %u; first:%s", all, MapName(s.map_id).c_str(), ours,
         alive, double(max_m), id, sample.c_str());
     return id;
