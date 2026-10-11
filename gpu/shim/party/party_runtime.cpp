@@ -740,6 +740,13 @@ LinkCallbacks make_callbacks(bool host) {
         };
         cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
             if (name == coop::b2::kEventName) coop::b2::OnLinkEvent(slot, body);  // B2: a guest arrived
+            if (name == coop::chalice::kGoodsEventName) {  // a guest's chalices (party_chalice.h)
+                std::vector<std::uint32_t> ids;
+                std::string err;
+                if (coop::chalice::GoodsFromJsonText(body, &ids, &err)) coop::chalice::RequestGuestGoods(ids);
+                else plog("%s event from slot %d: %s", name.c_str(), slot, err.c_str());
+                return;
+            }
             if (name == coop::kLampLitEventName) {  // a guest lit a lamp of the host's world
                 std::string err;
                 if (!coop::GuestServicesOnLampLit(slot, body, &err)) plog("lamp_lit from slot %d refused: %s", slot, err.c_str());
