@@ -81,6 +81,8 @@ struct Values {
     std::atomic<bool> mk_invert_x{false}, mk_invert_y{false};
     std::atomic<float> mk_deadzone{0.05f};  ///< fraction of full stick deflection ignored
     std::atomic<float> mk_smoothing{0.2f};  ///< 0 raw .. 0.8 heavy smoothing of the mouse look
+    /// The wheel as d-pad up / down (quick items), one short press per notch (upstream 0.51, #52).
+    std::atomic<bool> mk_wheel{true};
     /// The settings menu's position (fraction of the screen), -1 until it is moved.
     std::atomic<float> menu_x{-1.0f}, menu_y{-1.0f};
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.
@@ -160,7 +162,7 @@ bool RestartNeeded();
 void Save();
 /// Window thread, about once a second: when the file changed on disk since it was last read or
 /// written (the launcher's mouse & keyboard dialog while the game runs), re-reads the mouse
-/// tuning keys (mk_sens_*, mk_invert_*, mk_deadzone, mk_smoothing) only.
+/// tuning keys (mk_sens_*, mk_invert_*, mk_deadzone, mk_smoothing, mk_wheel) only.
 void ReloadMouseTuning();
 
 /// Render resolution divisor of a preset (1.0 native, 1.5 quality, ...).

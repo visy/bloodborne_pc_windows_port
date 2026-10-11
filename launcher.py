@@ -401,6 +401,7 @@ MK_BINDINGS = [
     ("Shift + right click", "L1: transform trick weapon"),
     ("Middle click / Q", "R3: lock on / reset camera"),
     ("Mouse side buttons", "L1 (back) / R2 (forward)"),
+    ("Mouse wheel", "D-pad up / down: quick items, tools"),
     ("W A S D", "Move (left stick)"),
     ("Space", "Circle: dodge, run (hold)"),
     ("E / Enter", "Cross: interact, confirm"),
@@ -804,7 +805,7 @@ class BloodborneLauncher(tk.Tk):
         browse_btn = ttk.Button(select_frame, text="Browse...", style="Secondary.TButton",
                                 command=self.browse_eboot)
         browse_btn.pack(side="right")
-        eboot_tip = ("The game's eboot.bin, or the folder that contains it: Bloodborne CUSA03173 with "
+        eboot_tip = ("The game's eboot.bin, or the folder that contains it: Bloodborne (any retail region) with "
                      "update 1.09 merged. The folder is passed to run.bat as BB_GAME_DIR.")
         Tooltip(eboot_entry, eboot_tip)
         Tooltip(browse_btn, "Pick the game's eboot.bin. " + eboot_tip.split(": ", 1)[1])
@@ -997,6 +998,25 @@ class BloodborneLauncher(tk.Tk):
         self.aniso_desc_lbl.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(0, 2))
         sec.next_row += 1
         self.update_aniso_desc()
+        # Upstream 0.51: NVIDIA's DLSS library chosen by the player (vk_dlss.cpp looks in
+        # <user>/dlss first, then next to bbport.exe; the bridge bbport_dlss.dll stays next to it).
+        dlss_row = ttk.Frame(sec, style="Card.TFrame")
+        dlss_row.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=3)
+        sec.next_row += 1
+        dlss_tip = ("DLSS (NVIDIA RTX) needs NVIDIA's nvngx_dlss.dll. A newer one (from a game or "
+                    "NVIDIA's DLSS SDK) can be chosen here: it is copied to user\\dlss and used instead "
+                    "of the one next to bbport.exe. Remove goes back to that one.")
+        lbl = ttk.Label(dlss_row, text="DLSS library:", style="Card.TLabel")
+        lbl.pack(side="left", padx=(0, 8))
+        self.dlss_var = tk.StringVar(value=self.dlss_status())
+        status = ttk.Label(dlss_row, textvariable=self.dlss_var, style="Hint.TLabel")
+        status.pack(side="left", padx=(0, 8))
+        choose = ttk.Button(dlss_row, text="Choose...", style="Secondary.TButton", command=self.choose_dlss_dll)
+        choose.pack(side="left", padx=(0, 4))
+        remove = ttk.Button(dlss_row, text="Remove", style="Secondary.TButton", command=self.remove_dlss_dll)
+        remove.pack(side="left")
+        for widget in (lbl, status, choose, remove):
+            Tooltip(widget, dlss_tip)
 
         sec = self._section(tab, 1, "Streaming & effects")
         self._combo(sec, "VRAM pre-upload:", self.preupload_var, [c[0] for c in PREUPLOAD_CHOICES],
@@ -2095,6 +2115,7 @@ class BloodborneLauncher(tk.Tk):
 
         invert_x = tk.BooleanVar(value=ini.get("mk_invert_x", "0") not in ("", "0"))
         invert_y = tk.BooleanVar(value=ini.get("mk_invert_y", "0") not in ("", "0"))
+        wheel = tk.BooleanVar(value=ini.get("mk_wheel", "1") not in ("", "0"))
         inv_row = ttk.Frame(main, style="Card.TFrame")
         inv_row.grid(row=row, column=0, columnspan=3, sticky="w", pady=(4, 8))
         row += 1
@@ -2103,6 +2124,10 @@ class BloodborneLauncher(tk.Tk):
             cb = ttk.Checkbutton(inv_row, text=text, variable=var, style="Card.TCheckbutton")
             cb.pack(side="left", padx=(0, 16))
             Tooltip(cb, f"Turns the camera the other way for this mouse axis (bbport.ini {key}).")
+        cb = ttk.Checkbutton(inv_row, text="Mouse wheel: quick items", variable=wheel, style="Card.TCheckbutton")
+        cb.pack(side="left", padx=(0, 16))
+        Tooltip(cb, "The wheel steps the quick items and tools (d-pad up / down), one press per notch "
+                    "(bbport.ini mk_wheel).")
 
         ttk.Label(main, text="BINDINGS (WHILE MOUSE & KEYBOARD CONTROLS ARE ON)", style="Section.TLabel").grid(
             row=row, column=0, columnspan=3, sticky="w", pady=(4, 4))
@@ -2119,7 +2144,8 @@ class BloodborneLauncher(tk.Tk):
                       foreground="#cccccc").grid(row=r, column=c + 1, sticky="w", padx=(0, 18), pady=1)
         ttk.Label(main, text="The mouse is captured while you play and released while the in-game menu "
                              "(Insert) or the name box is open. Rebind keys with mkkey.<input>= lines in "
-                             "bbport.ini (key.<input>= lines are the classic layout's). Off: the classic "
+                             "bbport.ini (key.<input>= lines are the classic layout's); mouse buttons and "
+                             "the wheel are names there too (Mouse Left, Mouse X1, Wheel Down ...). Off: the classic "
                              "layout (WASD / IJKL / Space / Shift ...) is used and the mouse does nothing.",
                   style="Hint.TLabel", wraplength=580, justify="left").grid(
             row=row, column=0, columnspan=3, sticky="w", pady=(8, 0))
@@ -2131,6 +2157,7 @@ class BloodborneLauncher(tk.Tk):
             values = {key: f"{var.get():.2f}" for key, var in tuning_vars.items()}
             values["mk_invert_x"] = "1" if invert_x.get() else "0"
             values["mk_invert_y"] = "1" if invert_y.get() else "0"
+            values["mk_wheel"] = "1" if wheel.get() else "0"
             try:
                 update_ini(ini_path, values)
                 self.log(f"[M&K] Saved to {ini_path}: " + ", ".join(f"{k}={v}" for k, v in values.items()))
@@ -2352,6 +2379,41 @@ class BloodborneLauncher(tk.Tk):
                             f"{stats['added']} new files merged ({stats['existing']} already present)."
                             f"{note}\n\nThe next launch prepares them before the intro.")
 
+    # ------------------------------------------------------------- DLSS library (upstream 0.51)
+    @staticmethod
+    def dlss_user_dll() -> Path:
+        return party_user_dir() / "dlss" / "nvngx_dlss.dll"
+
+    def dlss_status(self) -> str:
+        if self.dlss_user_dll().is_file():
+            return "your own (user\\dlss)"
+        if (APP_DIR / "out" / "nvngx_dlss.dll").is_file() or (APP_DIR / "nvngx_dlss.dll").is_file():
+            return "bundled"
+        return "none (DLSS falls back to FSR)"
+
+    def choose_dlss_dll(self):
+        chosen = filedialog.askopenfilename(title="Select NVIDIA's nvngx_dlss.dll",
+                                            filetypes=[("NVIDIA DLSS", "nvngx_dlss.dll"), ("DLL", "*.dll")])
+        if not chosen:
+            return
+        target = self.dlss_user_dll()
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            import shutil
+            shutil.copyfile(chosen, target)
+            self.log(f"[DLSS] {chosen} copied to {target}")
+        except OSError as e:
+            self.log(f"[ERROR] Could not copy the DLSS library: {e}")
+        self.dlss_var.set(self.dlss_status())
+
+    def remove_dlss_dll(self):
+        try:
+            self.dlss_user_dll().unlink(missing_ok=True)
+            self.log("[DLSS] Your own DLSS library removed; the bundled one is used")
+        except OSError as e:
+            self.log(f"[ERROR] Could not remove the DLSS library: {e}")
+        self.dlss_var.set(self.dlss_status())
+
     # ------------------------------------------------------------- actions
     def browse_eboot(self):
         current = resolve_game_dir(self.eboot_var.get()) if self.eboot_var.get().strip() else None
@@ -2380,7 +2442,7 @@ class BloodborneLauncher(tk.Tk):
         eboot_mb = eboot_size / (1024 * 1024)
         details.append(f"[OK] Game executable: eboot.bin ({eboot_mb:.1f} MiB)")
 
-        # 1b. Game Title & Version verification (CUSA03173 1.09)
+        # 1b. Game Title & Version verification (any retail release, 1.09)
         try:
             import sys
             scripts_dir = str(APP_DIR / "scripts")
@@ -2403,12 +2465,12 @@ class BloodborneLauncher(tk.Tk):
                 return False, (
                     f"Game File Verification Failed ({kind}):\n\n"
                     f"{explanation}\n\n"
-                    f"Expected: Bloodborne CUSA03173 with Update 1.09 merged.\n"
+                    f"Expected: a retail Bloodborne release (any region, e.g. CUSA03173 or CUSA00900) with Update 1.09 merged.\n"
                     f"Why blocked: Upstream port patches and memory hooks rely strictly on the 1.09 executable layout.\n"
                     f"To bypass (not recommended): set environment variable BB_SKIP_GAME_CHECK=1."
                 ), details
             else:
-                details.append("[OK] Game Title & Version: Bloodborne CUSA03173 v1.09 verified")
+                details.append("[OK] Game Title & Version: Bloodborne v1.09 verified")
         except Exception as e:
             details.append(f"[NOTE] Game version check check skipped: {e}")
 

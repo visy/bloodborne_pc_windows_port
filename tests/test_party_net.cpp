@@ -289,6 +289,62 @@ static void test_netsim() {
         if (v != i) ordered = false;
     }
     CHECK(ordered);
+
+    {
+        // jit alias, one-shot outage `at` (from the epoch), loopback-only unless any=1.
+        Config c2;
+        CHECK(parse("lat=60,jit=15,loss=1,outage=5000,at=30000", &c2, &err) && c2.jitter_ms == 15 &&
+              c2.outage_at_ms == 30000 && c2.outage_ms == 5000 && !c2.any_addr);
+        CHECK(describe(c2).find("at=30000") != std::string::npos);
+        const auto e = Clock::now();
+        Clock::time_point end;
+        CHECK(!outage_at(c2, e, e, e + std::chrono::seconds(29), &end));
+        CHECK(outage_at(c2, e, e, e + std::chrono::seconds(31), &end) && end == e + std::chrono::seconds(35));
+        CHECK(!outage_at(c2, e, e, e + std::chrono::seconds(36), &end));
+        const std::uint32_t lo = 0x0100007f, lan = 0x0a01a8c0;  // 127.0.0.1, 192.168.1.10 (network order)
+        CHECK(applies_to(c2, lo) && !applies_to(c2, lan));
+        CHECK(parse("lat=60,any=1", &c2, &err) && applies_to(c2, lan));
+        Config off;
+        CHECK(!applies_to(off, lo));
+        // Queue: the one-shot outage drops everything inside it, nothing outside.
+        CHECK(parse("lat=10,outage=1000,at=2000", &c2, &err));
+        Queue q(c2);
+        q.set_epoch(e);
+        const std::uint8_t d[4] = {1, 2, 3, 4};
+        CHECK(q.submit(e + std::chrono::milliseconds(1500), 1, lo, 1, d, 4) == 1);
+        CHECK(q.submit(e + std::chrono::milliseconds(2500), 1, lo, 1, d, 4) == 0);
+        CHECK(q.submit(e + std::chrono::milliseconds(3100), 1, lo, 1, d, 4) == 1);
+        CHECK(q.stats().blacked_out == 1);
+        // StreamDelay: in order, at least the latency, retransmission delays, outage hold.
+        CHECK(parse("lat=50,jit=20,loss=10,seed=5,outage=1000,at=2000", &c2, &err));
+        StreamDelay sd(c2, e, 1);
+        Clock::time_point prev{};
+        bool ordered = true, late_enough = true;
+        for (int i = 0; i < 1000; ++i) {
+            const Clock::time_point now = e + std::chrono::milliseconds(i);
+            const Clock::time_point due = sd.schedule(now);
+            ordered = ordered && due >= prev;
+            late_enough = late_enough && due >= now + std::chrono::milliseconds(30);
+            prev = due;
+        }
+        CHECK(ordered && late_enough);
+        CHECK(sd.retransmits() > 50 && sd.retransmits() < 160);  // ~10 % of 1000
+        const Clock::time_point held = sd.schedule(e + std::chrono::milliseconds(2200));
+        CHECK(held >= e + std::chrono::milliseconds(3000 + 50) && sd.outage_holds() == 1);
+        // outage_now: a process-wide window (director steps host_outage / guest_outage).
+        CHECK(!blackout_at(Clock::now(), nullptr));
+        outage_now(80);
+        CHECK(blackout_at(Clock::now(), nullptr));
+        {
+            StreamDelay s3(c2, Clock::now() - std::chrono::hours(1), 2);
+            const Clock::time_point t = Clock::now();
+            CHECK(s3.schedule(t) >= t + std::chrono::milliseconds(70) && s3.outage_holds() == 1);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        CHECK(!blackout_at(Clock::now(), nullptr));
+        std::printf("netsim: stream delay ok (%llu retransmits of 1000)\n",
+                    static_cast<unsigned long long>(sd.retransmits()));
+    }
     std::printf("netsim: ok (loss %.2f%%, dup %.2f%%, reordered %llu, inversions %d)\n", loss, dup,
                 static_cast<unsigned long long>(s.reordered), inversions);
 }

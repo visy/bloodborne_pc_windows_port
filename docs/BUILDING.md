@@ -1,0 +1,44 @@
+# Building from source
+
+Back to the [README](../README.md).
+
+## Build dependencies
+- MinGW-w64 GCC (via [w64devkit](https://github.com/skeeto/w64devkit) or MSYS2 MinGW64).
+- CMake 3.25+.
+- Ninja build tool.
+- SDL3 development libraries.
+- Vulkan SDK or Vulkan-Headers.
+- Optional, for DLSS: the [NVIDIA DLSS SDK](https://github.com/NVIDIA/DLSS) and Visual Studio 2022 (MSVC), see below.
+
+## Build
+
+Clone the repository recursively:
+```cmd
+git clone --recursive https://github.com/visy/bloodborne_pc_windows_port.git
+cd bloodborne_pc_windows_port
+```
+
+> **Windows Path Length Warning**: FidelityFX contains deeply nested shader files that can exceed Windows' default 260-character path limit (`MAX_PATH`). If your project folder is located deep in your directory structure, either enable long paths in Git via `git config --system core.longpaths true` (or clone close to a drive root like `C:\bbport`), or set up a mapped drive with `subst X: .`.
+
+Ensure MinGW, CMake, and Ninja are accessible in your environment or PATH (set `W64DEVKIT_DIR`, `SDL3_DIR`, `VULKAN_SDK` as needed), then run:
+```cmd
+build.bat
+```
+
+This compiles LibAtrac9, the Vulkan video core (`out/gpu/bbgpu.dll`), and the main loader executable (`out/bbport.exe`).
+
+**DLSS (NVIDIA GeForce RTX, optional).** NVIDIA's DLSS SDK is not included. Check out
+[github.com/NVIDIA/DLSS](https://github.com/NVIDIA/DLSS) and build with `DLSS_SDK_ROOT` set:
+```cmd
+set DLSS_SDK_ROOT=C:\src\DLSS
+build.bat
+```
+`build.bat` then builds the bridge `out\bbport_dlss.dll` (`gpu/dlss_bridge`, the only code that uses the SDK; it needs Visual Studio 2022, since the SDK's library is MSVC-only) and copies NVIDIA's `nvngx_dlss.dll` next to `out\bbport.exe`. Pick *DLSS* in the in-game menu (or `upscaler=dlss` in `bbport.ini`): the preset sets the render size, Native AA is DLAA. Without the DLLs, on other GPUs or with `BB_DLSS=0` it is listed as unavailable and a DLSS setting falls back to FSR 3.1.
+
+**Faster builds for your own PC (optional).**
+- `-DBB_MARCH=native` (or a CPU name such as `skylake`) when configuring `out/gpu` tunes the code for your processor; the result may not start on older CPUs. Release builds use `-DBB_MARCH=x86-64-v3`, the AVX2 baseline the port already requires (Intel Haswell / AMD Ryzen and newer).
+- Profile-guided optimization: configure a second build folder with `-DBB_PGO=generate -DBB_OUT_DIR=<folder>`, play about 20 minutes with that `bbport.exe` (it writes a profile into `pgo\` every 30 s), then reconfigure the same build folder with `-DBB_PGO=use` and build again. Only the port's own code is optimized (GPU command translation, caches, runtime), so it helps in CPU-limited scenes.
+
+## Upscaler assets
+
+FSR 3.1 needs none. FSR 4 (v07) and FSR 4.1.1 need assets that are not included: `tools/fetch_fsr4_assets.sh` downloads FSR 4 v07, and FSR 4.1.1 is built from your own AMD `amd_fidelityfx_upscaler_dx12.dll` (4.1.x) by `tools/fsr4cap` (upstream runs this under Proton on Linux; the resulting `fsr4_411` folder can be copied here). On RDNA4 the FP8 variant is picked automatically; `BB_FSR411_VARIANT=int8` forces INT8.

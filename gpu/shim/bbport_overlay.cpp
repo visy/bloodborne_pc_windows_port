@@ -90,6 +90,7 @@ extern "C" const unsigned char bb_serif_ttf[];
 extern "C" const unsigned char bb_serif_ttf_end[];
 
 extern "C" void runtime_restart(void); // bb-probe (probe.c)
+extern "C" void bbgpu_request_quit(void); // bbgpu.cpp: as the window's close button
 
 namespace BbOverlay {
 
@@ -359,6 +360,7 @@ void SetOpen(bool value) {
     if (menu_open.exchange(value) == value) {
         return;
     }
+    std::printf("Overlay: menu %s\n", value ? "opened" : "closed");
     // The system cursor shows over the menu (window.cpp); ImGui learns where it is now, not at
     // the next motion: mouse motion is not passed on while the menu is closed.
     if (value) {
@@ -928,14 +930,19 @@ void ControlsTab() {
                 "Движение мыши медленнее этой доли полного наклона стика не учитывается (дрожание "
                 "руки)."),
               mk);
+    Toggle("mk_wheel", T("Mouse wheel: quick items", "Колесо мыши: быстрые предметы"), s.mk_wheel,
+           T("The wheel steps the quick items and tools (d-pad up / down), one press per notch.",
+             "Колесо листает быстрые предметы и инструменты (крестовина вверх / вниз), одно нажатие "
+             "на щелчок."),
+           mk);
     ImGui::Spacing();
     Note(mk ? T("Mouse: move = camera, left = R1, Shift + left = R2, right = L2, Shift + right = L1, "
-                "middle = R3 (lock-on), side buttons = L1 / R2.  Keys: WASD move, Space = Circle "
+                "middle = R3 (lock-on), side buttons = L1 / R2, wheel = d-pad up / down.  Keys: WASD move, Space = Circle "
                 "(dodge), E / Enter = Cross, R = Square, X = Triangle, Q = R3, C / Z = L3, Esc / F1 = "
                 "Options, Tab / G = touchpad, Backspace = right touchpad, arrows or 1 2 3 4 = d-pad, "
                 "IJKL = camera.",
                 "Мышь: движение — камера, левая — R1, Shift + левая — R2, правая — L2, Shift + правая "
-                "— L1, средняя — R3 (захват цели), боковые — L1 / R2.  Клавиши: WASD — движение, "
+                "— L1, средняя — R3 (захват цели), боковые — L1 / R2, колесо — крестовина вверх / вниз.  Клавиши: WASD — движение, "
                 "Пробел — Круг (уклонение), E / Enter — Крест, R — Квадрат, X — Треугольник, Q — R3, "
                 "C / Z — L3, Esc / F1 — Options, Tab / G — тачпад, Backspace — правая сторона тачпада, "
                 "стрелки или 1 2 3 4 — крестовина, IJKL — камера.")
@@ -1400,6 +1407,28 @@ void Menu() {
                 true) != 0) {
             BbSettings::Save();
             runtime_restart();
+        }
+    }
+    // Upstream 0.51 (#74, #116): leaving the game from the pad or the keyboard. The second
+    // press within 5 s quits, as the window's close button does (party: goodbye to the others).
+    {
+        static double quit_armed_at = -1.0;
+        const double now = ImGui::GetTime();
+        const bool armed = quit_armed_at >= 0.0 && now - quit_armed_at <= 5.0;
+        ImGui::Spacing();
+        if (Row("quit", T("Quit the game", "Выйти из игры"),
+                armed ? T("Press again", "Нажмите ещё раз") : T("Quit", "Выйти"),
+                T("Closes the game like the window's close button. The game saves as you play; "
+                  "in a party the others are told you left.",
+                  "Закрывает игру, как кнопка закрытия окна. Игра сохраняется по ходу; в группе "
+                  "остальные узнают, что вы вышли."),
+                true) != 0) {
+            std::printf("Overlay: %s\n", armed ? "quit" : "quit armed (press again)");
+            if (armed) {
+                BbSettings::Save();
+                bbgpu_request_quit();
+            }
+            quit_armed_at = armed ? -1.0 : now;
         }
     }
     // Up / down: the next enabled row (also off a row that became disabled).

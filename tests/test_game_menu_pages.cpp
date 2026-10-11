@@ -23,6 +23,7 @@ namespace P = BbGameMenu::Pages;
 
 static std::filesystem::path ini;
 static int restarts = 0;
+static int quits = 0;
 static int extension_runs = 0;
 static std::int64_t now = 1000000;
 
@@ -133,7 +134,7 @@ static void EverySettingSaved() {
         "upscaler", "preset", "sharpen", "sharpness", "jitter", "object_motion", "reactive", "reactive_scale",
         "reactive_threshold", "reactive_max", "debug_view", "show_fps", "show_hud", "hud_position", "hud_opacity",
         "hud_scale", "hud_graph", "hud_vram", "hud_gpu", "hud_cpu", "hud_ram", "mk_enabled", "mk_sens_x",
-        "mk_sens_y", "mk_invert_x", "mk_invert_y", "mk_deadzone", "mk_smoothing", "async_pipelines", "gpl",
+        "mk_sens_y", "mk_invert_x", "mk_invert_y", "mk_deadzone", "mk_smoothing", "mk_wheel", "async_pipelines", "gpl",
         "compile_indicator", "party_toasts", "party_hud", "fsr4_auto_exposure", "fsr4_invert_jitter", "model_lod",
         "output_res", "live_resolution", "menu_language"};
     for (const char* key : overlay) {
@@ -280,6 +281,16 @@ static void Restart() {
     assert(restarts == 1);
 }
 
+// Upstream 0.51 (#74, #116): "Quit the game" asks for a second press, as Restart does.
+static void Quit() {
+    P::Load();
+    const P::Row& row = RowNamed(PageNamed(u"Game patches"), u"Quit the game");
+    Press(row);
+    assert(quits == 0);
+    Press(row);
+    assert(quits == 1);
+}
+
 /// --labels FILE: the English page / row names and help lines, for test drivers that read the
 /// focused item off the screen (tools: the QA menu driver matches OCR text against them).
 static void DumpLabels(const char* path) {
@@ -317,6 +328,7 @@ int main(int argc, char** argv) {
     BbSettings::ConfigureDlssSupport(true, nullptr);
     party::status::ResetForTest(false);
     P::SetRestartHandler([] { ++restarts; });
+    P::SetQuitHandler([] { ++quits; });
     // An extension row (party flow): hidden unless party mode is off, a confirmed action.
     {
         P::PartyRow row;
@@ -340,6 +352,7 @@ int main(int argc, char** argv) {
     assert(ReadIni()["key.cross"] == "X, Space"); // the launcher's keys stay
     Party();
     Restart();
+    Quit();
     std::filesystem::remove(ini);
     std::printf("game menu pages: %zu pages, %d fields, %zu texts: ok\n", P::All().size(), P::FieldCount(),
                 P::TextCount());

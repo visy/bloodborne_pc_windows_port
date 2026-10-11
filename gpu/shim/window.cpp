@@ -300,6 +300,15 @@ bool WindowSDL::PollEvents() {
                 mouse_buttons |= MouseButtonBit(event.button.button);
             }
         }
+        // The wheel (upstream 0.51, #52): notches for runtime_pad.c (d-pad up / down, quick items).
+        if (event.type == SDL_EVENT_MOUSE_WHEEL && BbSettings::Get().mk_enabled && !text_active &&
+            !BbOverlay::CapturesInput()) {
+            const float notches = event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -event.wheel.y : event.wheel.y;
+            if (notches != 0.0f) {
+                std::scoped_lock lock{mouse_mutex};
+                (notches > 0.0f ? wheel_up : wheel_down) += 1;
+            }
+        }
         switch (event.type) {
         case SDL_EVENT_WINDOW_FOCUS_LOST:
         case SDL_EVENT_WINDOW_FOCUS_GAINED:
@@ -310,6 +319,7 @@ bool WindowSDL::PollEvents() {
                 std::scoped_lock lock{mouse_mutex};
                 mouse_dx = mouse_dy = 0.0f;
                 mouse_buttons = 0;
+                wheel_up = wheel_down = 0;
             }
             break;
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
@@ -348,12 +358,33 @@ void WindowSDL::UpdateMouseMode() {
         std::scoped_lock lock{mouse_mutex};
         mouse_dx = mouse_dy = 0.0f;
         mouse_buttons = 0;
+        wheel_up = wheel_down = 0;
     }
     // The launcher's mouse & keyboard dialog may change the tuning while the game runs.
     const u64 now = SDL_GetTicks();
     if (mk && now - last_tuning_check_ms >= 1000 && !BbOverlay::MenuOpen()) {
         last_tuning_check_ms = now;
         BbSettings::ReloadMouseTuning();
+    }
+}
+
+void WindowSDL::TakeWheel(int& up, int& down) {
+    std::scoped_lock lock{mouse_mutex};
+    up = wheel_up;
+    down = wheel_down;
+    wheel_up = wheel_down = 0;
+}
+
+void WindowSDL::TestKey(u32 key) {
+    for (const bool down : {true, false}) {
+        SDL_Event e;
+        SDL_zero(e);
+        e.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+        e.key.windowID = SDL_GetWindowID(window);
+        e.key.key = SDL_Keycode(key);
+        e.key.scancode = SDL_GetScancodeFromKey(SDL_Keycode(key), nullptr);
+        e.key.down = down;
+        SDL_PushEvent(&e);
     }
 }
 
