@@ -145,6 +145,19 @@ static void Geometry() {
     const float p[3] = {2.5f, 2.5f, 5};
     assert(hud::Project(view, proj, p, &u, &v, &d) && Near(u, 0.75f) && Near(v, 0.75f));
     assert(!hud::Project(view, proj, behind, &u, &v, &d));
+    // WorldToScreen: pixels on a 1280 x 720 display; off screen (in front) and behind.
+    hud::ScreenPoint sp = hud::WorldToScreen(view, proj, p, 1280, 720);
+    assert(sp.in_front && sp.visible && Near(sp.x, 960) && Near(sp.y, 540) && Near(sp.depth, 5));
+    const float far_right[3] = {20, 0, 5};
+    sp = hud::WorldToScreen(view, proj, far_right, 1280, 720);
+    assert(sp.in_front && !sp.visible && sp.x > 1280);
+    assert(!hud::WorldToScreen(view, proj, behind, 1280, 720).in_front);
+    // Member colours: distinct per slot, cream outside 0..3.
+    float c0[3], c1[3], cx[3];
+    hud::MemberColour(0, c0);
+    hud::MemberColour(1, c1);
+    hud::MemberColour(9, cx);
+    assert(!(Near(c0[0], c1[0]) && Near(c0[1], c1[1]) && Near(c0[2], c1[2])) && Near(cx[0], 0.96f));
 }
 
 static void Handover() {

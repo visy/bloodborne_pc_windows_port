@@ -1,11 +1,13 @@
 # Bloodborne PC — native Windows port
 
-Run the PS4 version of *Bloodborne* (CUSA03173, v1.09) natively on Windows with Vulkan.
-Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28 (Linux).
+Run the PS4 version of *Bloodborne* (v1.09, any retail release) natively on Windows with Vulkan.
+Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28 (Linux) and the original
+[Windows port](https://github.com/Mrsuss60/bloodborne_pc_windows_port) by Mrsuss60.
 
-**Version 0.5** · Playable · Party co-op in development
+**Version 0.5.1** · Playable · Party co-op in development
 
-> No game files are included: you need your own decrypted dump (CUSA03173, v1.09).
+> No game files are included: you need your own decrypted dump with update 1.09 (any retail
+> release: CUSA03173, CUSA00900, ...; they share the same 1.09 executable).
 > Not affiliated with Sony, FromSoftware, AMD or NVIDIA. Not related to shadPS4: questions about
 > the Linux port go to its [Discord](https://discord.gg/KYZRKk9CB).
 
@@ -34,7 +36,7 @@ Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28
 | GPU | Vulkan 1.3: NVIDIA GTX 10-series+, AMD RX 400+, Intel Arc |
 | CPU | x86-64 with AVX2 |
 | Python | 3.10+ (launcher and patch compiler) |
-| Game | Decrypted `CUSA03173` folder, v1.09 (update merged into the base game) |
+| Game | Decrypted game folder (`CUSA03173` or another retail release), v1.09 (update merged into the base game); an `eboot.bin` with a 60 fps patch baked in is refused |
 
 ## Quick start
 
@@ -87,6 +89,9 @@ PC (several game copies, simulated internet lag), not yet between two PCs.
   guests too.
 - **Crashes recover.** A crashed game restarts and rejoins by itself.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
+- **Death has a cost.** Each death stacks "rot" (−10% max HP, up to 5); using a lamp clears it.
+  On by default; the host can turn it off on the *Party rules* page.
+- **Names over party members**, in each player's colour, with level, health or deaths (your choice).
 - **Party HUD.** Party members and events are shown in a small HUD; all party settings are on the
   *Party* pages of the game's *System* menu.
 
@@ -104,16 +109,17 @@ PC (several game copies, simulated internet lag), not yet between two PCs.
 |---|---|
 | "Travel alone / Travel with party" choice at lamps | In progress |
 | Every player, host included, respawns at their own last lamp | In progress |
-| Dying in a boss fight: spectate until the fight ends | In progress |
+| Dying in a boss fight: spectate until the fight ends, then everyone respawns at one shared lamp | In progress |
 | Bloodstains for everyone, like single-player | In progress |
-| Death debuff (stacks on death, cleared at a lamp; on by default, can be turned off) | In progress |
-| Enemy scaling settings (harder than vanilla by default) | In progress |
+| Enemy scaling: harder than vanilla by default (settings done; boss fights not yet verified) | In progress |
 | Guests open doors, pull levers, talk to NPCs; NPC choices shared | In progress |
+| Item pickups and enemy drops per player: everyone gets their own | In progress |
 | Cutscenes play for the whole party | Planned |
 | Joining during a boss fight waits outside until it ends | Planned |
 | 4 players (3 work today) | In progress |
-| Names over party members | In progress |
 | Chalice dungeons: full clear in a party, rituals by anyone | In progress |
+| PvP / friendly fire the host can switch on and off | Later |
+| Pings: party members and marked spots visible through walls, with distance and player colours | Later |
 
 ### Connecting over the internet
 
@@ -156,6 +162,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | Who | What |
 |---|---|
 | deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors |
+| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes |
 | shadPS4 team | Vulkan video core and shader recompiler (GPL-2.0+), sirit |
 | droogie and the bbhost team | Long-session stability fixes ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |
 | FireBurn | FSR-Vulkan (MIT); AMD FidelityFX SDK (MIT) |

@@ -6,7 +6,8 @@
 // Offsets (ours = bbhost - 0x400000, 1.09 eboot), as the party code already reads them:
 //   WorldChrMan slot 0x553e878: +0x60 the local PlayerIns, +0x30 player count, +0x38 the player
 //     set (entries 0x38 apart, PlayerIns at +0): party_b2 PlayerForPeer
-//   PlayerIns +0x3b0 -> +0x20 data module: HP +0x128, max HP +0x12c, stamina +0x134, max +0x138
+//   PlayerIns +0x3b0 -> +0x20 data module: HP +0xf8, max HP +0xfc (0x18bf9a0 / 0x1a0d7d0), stamina
+//     +0x134, max +0x138
 //     (party_b2 guest HP keep, docs/party/npc_peer.md Return step)
 //   PlayerIns +0x58 -> +8 -> +0x3b0 -> +0x68 physics: position +0x1e0, rotation +0x1d0 (yaw [1])
 //     (party_b2 ChrPos / the B2 destination)
@@ -17,11 +18,13 @@
 // 1 / 1 (the remote data module is not kept up to date): HP comes from VITALS, the position (exact,
 // every frame) from the chr.
 #include "party_hud.h"
+#include "party_balance.h"
 #include "game_state.h"
 #include "coop_hooks.h"
 #include "party_async_io.h"
 #include "../bbport_camera.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
@@ -76,7 +79,10 @@ bool PlausibleHp(int hp, int mx) {
 ChrRead ReadChr(u64 chr) {
     ChrRead r;
     const u64 dm = Field<u64>(Field<u64>(chr, 0x3b0), 0x20);
-    const int hp = Field<int>(dm, 0x128, -1), mx = Field<int>(dm, 0x12c, -1);
+    // HP +0xf8 / max +0xfc: the HP struct at +0xf0 that the game's kill (0x18bf9a0 writes +0xf8 = 0)
+    // and per-frame HP update (0x1a0d7d0) use; +0x128 / +0x12c (read before 2026-10-11) stayed at
+    // 106 / 106 on a 719 HP hunter (party_balance live run), so the bars never moved.
+    const int hp = Field<int>(dm, 0xf8, -1), mx = Field<int>(dm, 0xfc, -1);
     if (dm && PlausibleHp(hp, mx)) {
         r.have_hp = true;
         r.hp = hp;
@@ -155,7 +161,10 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
         // Positions to a tenth of a millimetre are noise: a standing player sends keepalives only.
         for (int i = 0; i < 3; ++i) me.pos[i] = std::round(mine.pos[i] * 100.0f) / 100.0f;
         me.yaw = std::round(mine.yaw * 100.0f) / 100.0f;
+        me.level = static_cast<std::uint16_t>(s.level > 0 && s.level < 1000 ? s.level : 0);
     }
+    me.deaths = static_cast<std::uint16_t>(std::min(balance::LocalDeaths(), 65535));
+    me.rot = static_cast<std::uint8_t>(balance::LocalRotStacks());
     link->set_local_vitals(me);
 
     st.roster = link->roster();

@@ -14,13 +14,16 @@ int bbgpu_text_input_is_active(void) { return 0; }
 static int mk_mode;
 static float mk_dx;
 static uint32_t mk_buttons;
+static int mk_wheel_down;
 int bbgpu_mouse_keyboard(BbMouseState *state, int consume_motion) {
     memset(state,0,sizeof(*state));
     state->dx=mk_dx; state->buttons=mk_buttons;
     state->sens_x=state->sens_y=1.0f; state->deadzone=0.05f; state->smoothing=0.0f;
-    if (consume_motion) mk_dx=0.0f;
+    state->wheel=1;
+    if (consume_motion) { mk_dx=0.0f; state->wheel_down=mk_wheel_down; mk_wheel_down=0; }
     return mk_mode;
 }
+int bbgpu_test_key(const char *name) { (void)name; return 1; }
 #ifdef _WIN32
 uint64_t host_monotonic_ns(void) {
     LARGE_INTEGER f, c;
@@ -51,7 +54,8 @@ int main(void) {
     const int config_created=bb_test_temp_file(config,sizeof(config),"bbport-pad-config-");
     assert(config_created==0);
     const char controls[]="upscaler=fsr3\npad.cross=b\npad.circle=a\npad.r2=rightshoulder\n"
-                          "pad.r1=righttrigger\nkey.cross=X, Space\npad.bogus=a\nmkkey.triangle=T\n";
+                          "pad.r1=righttrigger\nkey.cross=X, Space\npad.bogus=a\nmkkey.triangle=T\n"
+                          "mkkey.square=R, Mouse X1\n";
     const int written=bb_test_write_file(config,controls,sizeof(controls)-1);
     assert(written==0);
     bb_test_setenv("BB_CONFIG",config);
@@ -136,6 +140,36 @@ int main(void) {
     usleep(20000);
     mk_dx=100.0f; /* 5000 px/s: full deflection */
     assert(pad_read_state(1,&data)==0 && data.right_x==255);
+    /* Upstream 0.51 #52: mouse names in bindings; a bound side button leaves the built-in scheme
+     * (X1 is Square here, not L1); the wheel a short d-pad press per notch; pad-file mouse tokens. */
+    assert(key_from_name("Mouse Left")==MOUSE_KEY+SDL_BUTTON_LEFT && key_from_name("wheel down")==MOUSE_WHEEL_DOWN);
+    assert(bindings[IN_SQUARE].key_count==2 && bindings[IN_SQUARE].keys[1]==MOUSE_KEY+SDL_BUTTON_X1);
+    mk_buttons=8;
+    usleep(5000);
+    assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_SQUARE) && !(data.buttons & BTN_L1));
+    mk_buttons=0;
+    usleep(5000);
+    mk_wheel_down=1;
+    assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_DOWN));
+    usleep(70000);
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_DOWN));
+    usleep(70000);
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_DOWN));
+    mouse_wheel_step(1000000,0,2);
+    assert(wheel_phase[1]==1 && mouse_key_down(MOUSE_WHEEL_DOWN));
+    mouse_wheel_step(1070000,0,0);
+    assert(!mouse_key_down(MOUSE_WHEEL_DOWN));
+    mouse_wheel_step(1140000,0,0);
+    assert(mouse_key_down(MOUSE_WHEEL_DOWN) && wheel_pending[1]==0);
+    mouse_wheel_reset();
+    inject(path,"mouse_right mouse=3000,0");
+    usleep(5000);
+    assert(pad_read_state(1,&data)==0);
+    usleep(10000);
+    assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_L2) && data.l2==255 && data.right_x>200);
+    inject(path,"");
+    for (int i=0;i<30;++i) { usleep(5000); pad_read_state(1,&data); }
+    assert(!(data.buttons & BTN_L2) && data.right_x==128);
     mk_mode=0; mk_buttons=0;
     assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_R1) && data.right_x==128 &&
            bindings[IN_CROSS].keys[0]==SDL_SCANCODE_X);
@@ -146,5 +180,5 @@ int main(void) {
     SDL_Quit();
     unlink(path);
     unlink(config);
-    puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch coordinates, overlay capture, controls, mouse & keyboard mode");
+    puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch coordinates, overlay capture, controls, mouse & keyboard mode, mouse bindings and wheel");
 }

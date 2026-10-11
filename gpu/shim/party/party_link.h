@@ -107,6 +107,10 @@ struct MemberVitals {
     float pos[3] = {0, 0, 0};
     float yaw = 0;             // facing (radians; forward = (sin, 0, cos))
     std::uint32_t age_ms = 0;  // vitals(): how long ago it arrived (0 for our own)
+    // Overhead display extras (party_balance.h; a trailer older peers ignore): 0 = unknown.
+    std::uint16_t level = 0;   // Blood Echoes level (PlayerGameData +0x90)
+    std::uint16_t deaths = 0;  // deaths since the game started
+    std::uint8_t rot = 0;      // death debuff stacks (0..5)
 };
 // Bounds a peer's entry: unknown flags cleared, slot outside 0..3 -> false (dropped), HP /
 // stamina clamped (hp <= max_hp), a non-finite or absurd position drops kVitalsHasPos, the yaw
