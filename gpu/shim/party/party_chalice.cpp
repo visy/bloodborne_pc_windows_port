@@ -388,8 +388,9 @@ void Tick(bool host) {
             }
         }
     }
-    if (host) {
-        // The host's chalices: sent when they change, and every 60 s for members that (re)joined.
+    {
+        // Every member's chalices (the host's and, since any member may perform the ritual,
+        // each guest's): sent when they change, and every 60 s for members that (re)joined.
         std::vector<std::uint32_t> own;
         for (std::uint32_t id : kChaliceGoods) {
             if (GoodsCount(id) > 0) {
@@ -399,7 +400,7 @@ void Tick(bool host) {
         std::lock_guard<std::mutex> lk(g_mu);
         if (own != g_host_goods || now - g_host_sent_at >= 60.0) {
             if (own != g_host_goods) {
-                std::printf("Party: chalice: the host owns %zu chalice(s)\n", own.size());
+                std::printf("Party: chalice: the %s owns %zu chalice(s)\n", host ? "host" : "guest", own.size());
                 std::fflush(stdout);
             }
             g_host_goods = own;
@@ -407,8 +408,9 @@ void Tick(bool host) {
             g_host_dirty = true;
             g_host_sent_at = now;
         }
-    } else if (s.load_mode == 0) {
-        // A guest in its own world: the host's chalices it lacks.
+    }
+    if (s.load_mode == 0) {
+        // In the own world (a host always): the peers' chalices this game lacks.
         std::vector<std::uint32_t> want;
         {
             std::lock_guard<std::mutex> lk(g_mu);
@@ -420,7 +422,7 @@ void Tick(bool host) {
         for (std::uint32_t id : want) {
             if (IsChaliceGoods(id) && GoodsCount(id) == 0) {
                 const bool ok = GiveGoods(id, 1);
-                std::printf("Party: chalice: the host's chalice %u %s\n", id, ok ? "given" : "NOT given");
+                std::printf("Party: chalice: a party member's chalice %u %s\n", id, ok ? "given" : "NOT given");
                 std::fflush(stdout);
             }
         }
@@ -490,9 +492,11 @@ bool PopHostGoods(std::vector<std::uint32_t>* out) {
 
 void RequestGuestGoods(const std::vector<std::uint32_t>& ids) {
     std::lock_guard<std::mutex> lk(g_mu);
-    g_guest_goods.clear();
+    if (!g_guest_dirty) {
+        g_guest_goods.clear();  // lists that arrive before the next Tick (several guests) add up
+    }
     for (std::uint32_t id : ids) {
-        if (IsChaliceGoods(id)) {
+        if (IsChaliceGoods(id) && std::find(g_guest_goods.begin(), g_guest_goods.end(), id) == g_guest_goods.end()) {
             g_guest_goods.push_back(id);
         }
     }

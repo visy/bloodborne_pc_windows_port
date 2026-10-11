@@ -91,6 +91,12 @@ run from two new characters to the end credits passed
   ending with the end credits play for every party member.
 - **The host's world is shared live.** A door or shortcut opened by the host is open for the
   guests too.
+- **Up to 4 players** (host + 3), all in the host's world. The 4th player's summon can take a
+  minute or two.
+- **Same version for everyone.** A player whose bbport build, game files, patches, mods or party
+  options differ is refused on joining; the message says what differs and what to do.
+- **Chalice dungeons together.** Guests join the host's dungeon; levers, doors, the layer boss, its
+  loot (for each player) and the lift down work for the whole party.
 - **Crashes recover.** A crashed game restarts and rejoins by itself.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
 - **Death has a cost.** Each death stacks "rot" (−10% max HP, up to 5); using a lamp clears it.
@@ -120,8 +126,8 @@ run from two new characters to the end credits passed
 | Item pickups and enemy drops per player: everyone gets their own | In progress |
 | Every cutscene for the whole party (story cutscenes and endings already work) | In progress |
 | Joining during a boss fight waits outside until it ends | Planned |
-| 4 players (3 work today) | In progress |
-| Chalice dungeons: full clear in a party, rituals by anyone | In progress |
+| The 4th player joins as fast as the others | In progress |
+| Chalice dungeons: rituals by any player (guest's dungeon entered by the party) | In progress |
 | PvP / friendly fire the host can switch on and off | Later |
 | Pings: party members and marked spots visible through walls, with distance and player colours | Later |
 
