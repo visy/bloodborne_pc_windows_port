@@ -1909,9 +1909,11 @@ void PartyHud() {
         }
         // Above the game's own phantom label ("Cooperator" / name in blue, ~2.1 m): 2.45 m.
         const float head[3] = {c.pos[0], c.pos[1] + 2.45f, c.pos[2]};
-        float u = 0, v = 0, depth = 0;
-        if (!party::hud::Project(cam.view.data(), cam.proj.data(), head, &u, &v, &depth) || u < 0.02f ||
-            u > 0.98f || v < 0.04f || v > 0.96f) {
+        // The reusable world-space marker projection (party_hud.h WorldToScreen; I2 pings reuse it).
+        const party::hud::ScreenPoint sp =
+            party::hud::WorldToScreen(cam.view.data(), cam.proj.data(), head, display.x, display.y, 0.02f);
+        const float u = sp.x / display.x, v = sp.y / display.y;
+        if (!sp.visible || v < 0.04f || v > 0.96f) {
             continue;
         }
         // Clear of the game's own HUD (bars and item slots top left, echoes bottom right).
@@ -1939,7 +1941,9 @@ void PartyHud() {
         const ImVec2 ts = ImGui::CalcTextSize(label);
         const ImVec2 at(u * display.x - ts.x * 0.5f, v * display.y - ts.y);
         bg->AddText(ImVec2(at.x + 1.0f, at.y + 1.0f), Rgba(0.0f, 0.0f, 0.0f, 0.8f * alpha), label);
-        bg->AddText(at, Rgba(0.96f, 0.88f, 0.70f, alpha), label);
+        float rgb[3];
+        party::hud::MemberColour(c.slot, rgb);  // the member's colour, the same for I2's pings
+        bg->AddText(at, Rgba(rgb[0], rgb[1], rgb[2], alpha), label);
         ImGui::PopFont();
         if (overhead == 3 && c.have_hp && c.max_hp > 0) {
             const float w = 56.0f * s, h = 3.0f * s;

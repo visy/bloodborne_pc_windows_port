@@ -107,6 +107,20 @@ float Bearing(const float from[3], const float to[3], float fx, float fz, float 
 /// u, v in 0..1 across the scene (outside when off screen).
 bool Project(const float view[12], const float proj[4], const float p[3], float* u, float* v, float* depth);
 
+/// World point -> display pixels: the reusable world-space marker projection (E2 name tags; I2
+/// pings and through-wall markers reuse it). `w` x `h`: the display size in pixels. `visible`: in
+/// front of the camera and inside the display minus `margin` (a fraction of each side); x / y are
+/// set whenever the point is in front (an off-screen marker can be clamped to the edge by the caller).
+struct ScreenPoint {
+    bool in_front = false, visible = false;
+    float x = 0, y = 0, depth = 0;  // pixels, metres from the camera
+};
+ScreenPoint WorldToScreen(const float view[12], const float proj[4], const float p[3], float w, float h,
+                          float margin = 0.02f);
+/// A party member's colour by slot (0 host .. 3), RGB 0..1: the same everywhere a member is drawn
+/// (tags now, I2 pings later). Slot outside 0..3: the game's cream.
+void MemberColour(int slot, float rgb[3]);
+
 /// Tests: back to the start.
 void ResetForTest();
 

@@ -122,6 +122,19 @@ before, which stayed at 106 / 106 on a 719 HP hunter in the live runs (so the ba
 party_hud_game now reads +0xf8 / +0xfc. (party_b2's guest HP keep still uses +0x128: worth a
 look by its owner.)
 
+**Reusable for I2 (pings, through-wall markers).** `party::hud::WorldToScreen(view, proj, world
+point, display w, h, margin)` (party_hud.h, pure, tested in party-hud-test) projects a world point to
+display pixels with the game camera (`BbCamera::Latest()`: view 3x4 + projection scales, captured
+from the frame's constants), reports in-front / on-screen, and keeps x / y for off-screen points so
+a caller can clamp an edge arrow. `party::hud::MemberColour(slot)` gives each member a fixed colour
+(host gold, then pale blue, green, violet); the tags draw names in it. Approach found viable: the
+**overlay** (ImGui background draw list over the presented frame) - live-verified for the tags,
+drawn after the game's frame, so it naturally shows through walls (no depth test; I2 wants that).
+The game's own Scaleform HUD (lock-on / enemy HP bar markers) was not investigated here; its
+phantom label exists (blue "Cooperator" + name above phantoms) but its draw path is native.
+Caveats for I2: the camera matrix is trusted only within 15 m of the player (cutscene cameras),
+and the 1-80 m range filter is the tags' choice, not the projection's.
+
 Level, deaths and rot stacks travel in a VITALS trailer: after the entries, `u8 n`, then per entry
 `u16 level, u16 deaths, u8 rot`. Older peers stop reading after the entries; a frame without the
 trailer reads as zeros (unknown: the tag shows the name only). The guest's single-entry VITALS
