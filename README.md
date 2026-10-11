@@ -87,6 +87,8 @@ PC (several game copies, simulated internet lag), not yet between two PCs.
   into every player's own save. A guest who is behind catches up.
 - **The host's world is shared live.** A door or shortcut opened by the host is open for the
   guests too.
+- **Chalice dungeons together.** Guests join the host's dungeon; levers, doors, the layer boss, its
+  loot (for each player) and the lift down work for the whole party.
 - **Crashes recover.** A crashed game restarts and rejoins by itself.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
 - **Death has a cost.** Each death stacks "rot" (−10% max HP, up to 5); using a lamp clears it.
@@ -117,7 +119,7 @@ PC (several game copies, simulated internet lag), not yet between two PCs.
 | Cutscenes play for the whole party | Planned |
 | Joining during a boss fight waits outside until it ends | Planned |
 | 4 players (3 work today) | In progress |
-| Chalice dungeons: full clear in a party, rituals by anyone | In progress |
+| Chalice dungeons: rituals by any player (guest's dungeon entered by the party) | In progress |
 | PvP / friendly fire the host can switch on and off | Later |
 | Pings: party members and marked spots visible through walls, with distance and player colours | Later |
 
