@@ -46,11 +46,15 @@ with a reference from page+0xE50's rows) redraw their items (0x1ACFB20) after a 
 changed, from the game's menu thread (`bbport_game_menu.cpp` live value columns;
 `BB_GAME_MENU_LIVE_VALUES=0` turns it off).
 
-**Leave in the world (guest)**: *System > Party > Leave the party* (twice) first calls the game's
-own session leave (0x13CDDA0, the host watchdog's helper) and stops the party link once the game's
-session is idle (`party_status_bridge.cpp`): client -> leaving -> idle in 0.3 s and the load into the
-guest's own world, instead of the game noticing a dead session 13 s later. (The game still shows
-its *Session lost* notice once.) After Leave the page shows *Status (Not running), Host party, Join
+**Leave in the world (guest)**: *System > Party > Leave the party* (twice) first runs the game's own
+voluntary leave and stops the party link once the game's session is idle (`party_status_bridge.cpp`).
+The vanilla path (Ghidra): `OnLeaveMenu_Yes 0x1389FB0` = session leave (0x13CDDA0: BeginLeaveSession
+0x1ED07A0 + drop) and, for a phantom, `OnLeave_Limit 0x138A4A0` at once (pre-summon spot, the funnel
+0x13CDE30, the load home). The party now calls `OnLeave_Limit` for a summoned guest
+(`coop::LeaveGameSession`; party_travel's send-home retarget lets this one through,
+`AllowNextSendHome`). With the session leave alone the game noticed the empty room 10 s later and
+showed *Session lost* (message 0xcc/5001, found with `BB_GAME_MENU_TRACE_TEXT`) before going home. A
+host's Leave with guests in ends the game session first (0x13CDDA0), then the link. After Leave the page shows *Status (Not running), Host party, Join
 party, Single player* - Copy code / Rejoin / Leave need a running link. **Join party** then starts a
 fresh link; the guest registers its NP context with the host again (`party_runtime.cpp`
 `fresh_link`) and a pending signaling resolve is retried every 2 s (`np_signaling.cpp`): before,

@@ -1225,6 +1225,7 @@ void HostMemberWatchTick(const GameSnapshot& s, double now) {
 /// before the load; nothing moves it afterwards. True while it is still moving (no ring yet).
 bool PreRingSpacing(const GameSnapshot& s, u32 host_map) {
     static int attempt = -1, wait = 0;
+    static std::chrono::steady_clock::time_point moved_at{};
     static u64 done_for = 0;  // the PlayerIns it was done for (a new one after every load)
     alignas(16) static float start[4], target[4], start_rot[4];
     const float d = SummonOffset();
@@ -1239,7 +1240,10 @@ bool PreRingSpacing(const GameSnapshot& s, u32 host_map) {
     }
     using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
     if (attempt >= 0) {
-        if (++wait < 30) {
+        // 0.8 s after the warp (a fall off a ledge has lost > 1.5 m by then): 30 ticks were up to
+        // 3.4 s per side at a slow frame rate (A4: the guest's first bell came 6.9 s late).
+        (void)wait;
+        if (std::chrono::steady_clock::now() - moved_at < std::chrono::milliseconds(800)) {
             return true;
         }
         const float off =
@@ -1262,6 +1266,7 @@ bool PreRingSpacing(const GameSnapshot& s, u32 host_map) {
     }
     ++attempt;
     wait = 0;
+    moved_at = std::chrono::steady_clock::now();
     const int slot = g_local_slot.load() == 2 ? 2 : 1;
     const int side = attempt == 0 ? slot : attempt == 1 ? (slot == 1 ? 2 : 1) : 3;
     std::memcpy(target, start, sizeof start);

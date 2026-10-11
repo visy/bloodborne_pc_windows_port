@@ -49,7 +49,7 @@ def scripts(phase, port0):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("phase", choices=["fresh", "continue"])
+    ap.add_argument("phase", choices=["fresh", "continue", "world"])
     ap.add_argument("--root", required=True)
     ap.add_argument("--game", required=True)
     ap.add_argument("--seconds", type=int, default=420)
@@ -63,7 +63,11 @@ def main():
     a = ap.parse_args()
     root = Path(a.root)
     port0 = instances.base_port(root)
-    host, guest = scripts(a.phase, port0)
+    # world: both start straight in the party game (the launcher's way: BB_PARTY, party.json via
+    # BB_PARTY_MENU, Continue on its own) - no title walk, no restart: short runs for in-world tests.
+    host, guest = scripts("continue" if a.phase == "world" else a.phase, port0)
+    if a.phase == "world":
+        host, guest = ["-", "-"], ["-", "-"]
     host = [("title 5 " + l) if l != "-" else l for l in host]
     guest = [("title 5 " + l) if l != "-" else l for l in guest]
     # The party process after the restart: an in-world walk (Options > System > Party ...).
@@ -71,7 +75,10 @@ def main():
         host[1] = f"joined {a.host_delay} " + a.host_world
     if a.guest_world:
         guest[1] = "joined 8 " + a.guest_world
-    if a.count > 2 and a.phase == "continue":
+    if a.phase == "world":
+        host = [host[1]] + ["-"] * 3
+        guest = [guest[1]] + ["-"] * 3
+    if a.count > 2 and a.phase in ("continue", "world"):
         import json as _json
         for k in range(2, a.count):
             src, dst = root / "inst1" / "user", root / f"inst{k}" / "user"
@@ -116,6 +123,15 @@ def main():
     cmd = [sys.executable, str(HERE / "instances.py"), "run", "--count", str(a.count), "--root", str(root), "--game", a.game,
            "--saves", str(root / "nosaves"), "--build", str(REPO), "--seconds", str(a.seconds), "--idle", "0",
            "--label", f"flowlive {a.phase}", "--timestamps"]
+    if a.phase == "world":
+        env += ["BB_PARTY_MENU=1", "BB_PARTY_SAVE=separate", "BB_PARTY_AUTOCONTINUE=1",
+                "BB_SKIP_NETWORK_CHOICE=online", "BB_PATCHES=Skip Intro"]
+        cmd += ["--ienv", "0:BB_PARTY=host"] + sum((["--ienv", f"{k}:BB_PARTY=join"] for k in range(1, a.count)), [])
+        import json as _json
+        for k in range(a.count):  # the relaunch sets BB_PARTY_NAME from party.json; so does this
+            pj = root / f"inst{k}" / "user" / "party.json"
+            if pj.exists() and _json.loads(pj.read_text(encoding="utf-8")).get("name"):
+                cmd += ["--ienv", f"{k}:BB_PARTY_NAME=" + _json.loads(pj.read_text(encoding="utf-8"))["name"]]
     for e in env + a.env:
         cmd += ["--env", e]
     # The summon, and a little of the log after it (the screenshots at +3 s).
