@@ -61,7 +61,7 @@ def _locked(pool: str = "game"):
             os.write(fd, str(os.getpid()).encode())
             os.close(fd)
             break
-        except FileExistsError:
+        except (FileExistsError, PermissionError):  # Windows: the lock is being deleted right now
             # A lock older than 30 s belongs to a process that died mid-edit.
             try:
                 if time.time() - lock.stat().st_mtime > 30:
