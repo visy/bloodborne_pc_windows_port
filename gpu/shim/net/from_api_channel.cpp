@@ -203,7 +203,11 @@ std::string ChannelBoard::share(const std::string& caller, const json::Value& bo
 std::string ChannelBoard::entry(const Channel& c, bool root) const {
     std::string e = root ? "{\"ResKind\":0," : "{";
     e += "\"ChannelId\":" + jnum(static_cast<long long>(c.id));
-    e += ",\"ShareLevel\":" + jnum(c.share_level);
+    // A reader's game copies Status into the channel object (+0x54) only when ShareLevel != 0
+    // (0x1e6dea2); StateSwitch (0x1aaa3d0) needs +0x54 == 1 for the joined state 5, else a
+    // summoned member's quick join ends in state 3 and is cancelled (0x1ac3ef0 -> request 7).
+    // The party shares every dungeon with its members: never 0 on the wire.
+    e += ",\"ShareLevel\":" + jnum(c.share_level ? c.share_level : 1);
     e += ",\"Status\":" + jnum(c.status);
     e += ",\"FormDataVersion\":0";
     e += ",\"FormData\":" + jstr(c.form_data);
@@ -336,7 +340,7 @@ std::string ChannelBoard::info(const json::Value& body) {
             if (!first) list += ",";
             first = false;
             list += "{\"ChannelId\":" + jnum(static_cast<long long>(c->id)) + ",\"Status\":" + jnum(c->status) +
-                    ",\"ShareLevel\":" + jnum(c->share_level) + ",\"TurnoutLevel\":" + jnum(c->turnout) + "}";
+                    ",\"ShareLevel\":" + jnum(c->share_level ? c->share_level : 1) + ",\"TurnoutLevel\":" + jnum(c->turnout) + "}";
         }
     }
     return "{\"ResKind\":0,\"ChannelInfoList\":" + list + "]}";

@@ -995,6 +995,9 @@ static void test_chalice_channels() {
         const json::Value* e = count(d, "ChannelList") == 1 ? &d.find("ChannelList")->array[0] : nullptr;
         const json::Value* fd = e ? e->find("FormData") : nullptr;
         CHECK(fd && fd->string == slot_fd);
+        // ShareLevel != 0 and Status 1: the reader's game takes Status only with a ShareLevel,
+        // and a quick join needs it (else the join is cancelled).
+        CHECK(e && int_of(*e, "ShareLevel", 0) != 0 && int_of(*e, "Status", 0) == 1);
     }
     const std::string fixed_up = R"({"HolyGrailTypeId":0,"FormDataVersion":0,"Status":1,"FixedOrGeneral":2,"FormData":")" +
                                  bbnet::party::b64_encode(std::string("fixed layout")) +
