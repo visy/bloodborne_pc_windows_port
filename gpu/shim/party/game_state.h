@@ -121,6 +121,8 @@ bool LampWarp(std::uint32_t return_point);
 /// its fade), in multiplayer it sets the scene's own skip vote (+0x13D). Main thread. False when
 /// the code differs or there is no remo object; *skippable reports bit 1.
 bool RequestRemoSkip(bool* skippable = nullptr);
+/// A cutscene (remo) is playing: SprjRemo 0x5540058 +8 -> player +0x168 bit 0 (as party_story).
+bool CutscenePlaying();
 
 // ---- Save requests (summoned writes: C2 pool flags, C3 direct gives, C4 story state) ----
 // A guest that stays summoned (seamless play) may go a long time without the game saving: what

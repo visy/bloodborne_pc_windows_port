@@ -474,6 +474,8 @@ void TraceInstruction(u64 event, i32 event_id, i32 bank, i32 id, u64 instr, bool
 }
 
 std::atomic<EmevdSkipPredicate> g_skip_pred{nullptr};
+// A11: the boss health bar (EMEVD 2003[11] DisplayBossHealthBar: first argument 1 on, 0 off).
+std::atomic<bool> g_boss_bar{false};
 
 BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
     perf::Scope z(perf::Zone::HookEmevd);
@@ -500,6 +502,19 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
     if (!skip && instr) {
         if (const EmevdSkipPredicate pred = g_skip_pred.load(std::memory_order_relaxed)) {
             skip = pred(event_id, bank, id);
+        }
+    }
+    if (instr && !skip && bank == 2003 && id == 11) {
+        u8 args[16] = {};
+        u32 arg_size = 0;
+        const u64 at = EmevdInstructionArgs(event, instr, &arg_size);
+        const std::size_t n = arg_size < sizeof args ? arg_size : sizeof args;
+        if (at && n && SafeRead(at, args, n)) {
+            const bool on = args[0] != 0;
+            if (g_boss_bar.exchange(on) != on) {
+                Log("boss health bar %s (event %d, entity %d)", on ? "shown: a boss fight" : "hidden", event_id,
+                    n >= 8 ? *reinterpret_cast<const i32*>(args + 4) : -1);
+            }
         }
     }
     if (g_emevd_observe && instr && !skip &&
@@ -602,6 +617,14 @@ void SetEmevdRewriter(EmevdRewriter fn) {
 
 void SetEmevdRewriter2(EmevdRewriter fn) {
     g_rewriter2.store(fn);
+}
+
+bool BossBarShown() {
+    return g_boss_bar.load(std::memory_order_relaxed);
+}
+
+void BossBarReset() {
+    if (g_boss_bar.exchange(false)) Log("boss health bar: reset (a load)");
 }
 
 bool EnsureEmevdFilter() {

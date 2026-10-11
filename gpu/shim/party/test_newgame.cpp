@@ -310,8 +310,13 @@ bool MenuScript::Parse(const std::string& text, std::string* bad) {
         std::string tok = text.substr(a, e - a);
         a = e + 1;
         if (tok.empty()) continue;
-        Press p{0, false, tok, std::string(), false, std::string()};
-        if (tok[0] == '?') {
+        Press p;
+        p.name = tok;
+        if (tok[0] == '!') {  // strict: no text in 10 s -> the script stops (STUCK), no blind press
+            p.strict = true;
+            tok.erase(0, 1);
+        }
+        if (!tok.empty() && tok[0] == '?') {
             p.optional = true;
             tok.erase(0, 1);
         }
@@ -386,6 +391,13 @@ std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen
                 pressed_at_ = t;
                 if (log) *log = "no '" + p.text + "' in 3.5 s: Cross again (step " + std::to_string(next_) + ")";
                 return kPadCross; // held as steps_[next_ - 1] (the previous Cross), then the gap
+            }
+            if (p.strict) {
+                if (t - wait_from_ >= 10.0) {
+                    stuck_ = true;
+                    if (log) *log = "STUCK at step " + std::to_string(next_ + 1) + ": no '" + p.text + "' in 10 s";
+                }
+                return 0;
             }
             if (t - wait_from_ < 7.0) {
                 return 0;

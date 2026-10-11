@@ -177,6 +177,9 @@ json::Value TravelToJson(const TravelIntent& t) {
     if (t.chalice_channel) {
         v.set("chalice", json::hex(t.chalice_channel));
     }
+    if (t.alone) {
+        v.set("alone", 1u);
+    }
     if (t.has_pos) {
         json::Value p = json::Value::make_object();
         p.set("map", t.pos_map);
@@ -209,6 +212,9 @@ bool TravelFromJson(const json::Value& v, TravelIntent* out, std::string* error)
         t.last_lamp = json::u64(v, "last_lamp");
         if (v.find("chalice")) {
             t.chalice_channel = json::u64(v, "chalice");
+        }
+        if (v.find("alone")) {
+            t.alone = json::u32(v, "alone") != 0;
         }
         if (const json::Value* p = v.find("transform")) {
             t.pos_map = json::u32(*p, "map");
@@ -486,6 +492,23 @@ std::uint32_t HostLampFromTravel(const TravelIntent& t) {
     return id == 0 ? kTravelNone : id;
 }
 
+std::uint32_t GatherLampFor(std::uint32_t host_lamp, std::uint32_t host_map) {
+    if (host_map == 0 || host_map == 0xffffffffu) {
+        return host_lamp;
+    }
+    const std::uint32_t area = (host_map >> 24) & 0xff, block = (host_map >> 16) & 0xff;
+    auto in_map = [&](std::uint32_t id) { return id / 100000 == area && (id / 10000) % 10 == block; };
+    if (host_lamp != kTravelNone && host_lamp != 0 && in_map(host_lamp)) {
+        return host_lamp;
+    }
+    for (const std::uint32_t id : ids::kPartyReturnPoints) {
+        if (in_map(id)) {
+            return id;
+        }
+    }
+    return host_lamp;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Game part
 // ---------------------------------------------------------------------------------------------
@@ -574,6 +597,11 @@ void* g_funnel_orig = nullptr;
 void* g_block_clear3_orig = nullptr;
 void* g_lamp_warp_orig = nullptr;
 std::atomic<LampWarpInterceptor> g_lamp_intercept{nullptr};
+std::atomic<bool> g_lamp_decided{false};  // RunLampWarpDecided: the interceptor stands aside
+std::atomic<MarkInterceptor> g_mark_intercept{nullptr};
+std::atomic<bool> g_next_alone{false};    // host: the next captured travel is alone (split travel)
+std::atomic<bool> g_death_alone{false};   // host: every captured HostDeath is alone (hostdeath)
+std::atomic<double> g_last_alone_at{0};   // host: when the last alone travel was captured (Now())
 std::atomic<LampUseObserver> g_lamp_observer{nullptr};
 
 // Seeded from the wall clock: a restarted host keeps counting upward, so guests that saw the
@@ -705,6 +733,10 @@ void CaptureHost(u64 site, TravelKind kind) {
     if (kind == TravelKind::Lamp) {
         t.lamp_id = g_lamp_key.exchange(kTravelNone);
     }
+    t.alone = g_next_alone.exchange(false) || (kind == TravelKind::HostDeath && g_death_alone.load());
+    if (t.alone) {
+        g_last_alone_at = Now();
+    }
     {
         // One warp, one TRAVEL: the game can reach the funnel twice for the same lamp warp within a
         // few frames (live: a guest's lamp request run by the host captured twice, 26 ms apart, two
@@ -726,7 +758,8 @@ void CaptureHost(u64 site, TravelKind kind) {
     }
     g_host_left_at = Now(); // the room is closed once the host has arrived (TravelTick)
     g_last_capture = Now();
-    Log("host travel %s -> %s", DescribeTravel(t).c_str(), ReplayMethodName(ChooseReplay(t).method));
+    Log("host travel %s -> %s%s", DescribeTravel(t).c_str(), ReplayMethodName(ChooseReplay(t).method),
+        t.alone ? " (alone: the guests stay)" : "");
 }
 
 // Replaces 0x13CDF30 (void(u32 id)): the key for the host's capture, and the interceptor.
@@ -734,7 +767,7 @@ __attribute__((noinline)) BB_COOP_SYSV void LampWarpHook(u64 id) {
     perf::Scope z(perf::Zone::HookLampWarp);
     if (!g_in_replay.load()) {
         if (LampUseObserver obs = g_lamp_observer.load()) obs(static_cast<u32>(id));
-        if (LampWarpInterceptor fn = g_lamp_intercept.load(); fn && fn(static_cast<u32>(id))) {
+        if (LampWarpInterceptor fn = g_lamp_intercept.load(); fn && !g_lamp_decided.load() && fn(static_cast<u32>(id))) {
             return;
         }
         g_lamp_key = static_cast<u32>(id);
@@ -807,7 +840,13 @@ bool Replay(const TravelIntent& t, const ReplayPlan& p) {
 }
 
 /// A stock "send home" warp at `site` on a guest: go to the party's destination instead.
+std::atomic<bool> g_allow_send_home{false};
+
 bool RetargetSendHome(u64 site) {
+    if (g_allow_send_home.exchange(false)) {
+        Log("send-home at +0x%llx: the guest's Leave, home as usual", ull(site));
+        return false;
+    }
     if (!g_travel_on.load() || g_in_replay.load() || Role() != PartyRole::Guest) {
         return false;
     }
@@ -894,6 +933,14 @@ __attribute__((noinline)) BB_COOP_SYSV u64 FunnelHook() {
             // Not a travel the host broadcasts: logged so an unlisted path shows up in live runs.
             Log("funnel: %s from +0x%llx (role %s, not a party travel)", TravelKindName(TravelKindFromCallSite(site)),
                 ull(site), Role() == PartyRole::Host ? "host" : Role() == PartyRole::Guest ? "guest" : "none");
+        }
+        if (ret - Guest(0) - 5 == kMarkItemCall) {
+            // Split travel: the Hunter's Mark asks "Travel with the party?" first (the answer runs
+            // a decided lamp warp to the same last lamp). Consumed: no stage request now.
+            const u32 lamp = static_cast<u32>(WtsField<u64>(Wts(), kWtsLastLamp, ~0ull));
+            if (MarkInterceptor fn = g_mark_intercept.load(); fn && lamp != kTravelNone && fn(lamp)) {
+                return 1;
+            }
         }
         if (g_block_clear3.load() > 0) {
             if (RetargetSendHome(kBlockClear3Jump)) {
@@ -1220,6 +1267,10 @@ void GuestDeathRedirectNow() {
     reinterpret_cast<FunnelFn>(g_funnel_orig ? g_funnel_orig : reinterpret_cast<void*>(Guest(kFunnel)))();
 }
 
+void AllowNextSendHome() {
+    g_allow_send_home = true;
+}
+
 void SetSendHomeVeto(SendHomeVetoFn fn) {
     g_send_home_veto = fn;
 }
@@ -1254,6 +1305,33 @@ void SetLampWarpInterceptor(LampWarpInterceptor fn) {
 
 void RunLampWarp(std::uint32_t id) {
     reinterpret_cast<LampWarpFn>(Guest(kLampWarp))(id);
+}
+
+void RunLampWarpDecided(std::uint32_t id, bool alone) {
+    if (Role() == PartyRole::Host) {
+        g_next_alone = alone;
+    }
+    g_lamp_decided = true;
+    reinterpret_cast<LampWarpFn>(Guest(kLampWarp))(id);
+    g_lamp_decided = false;
+    g_next_alone = false;  // a warp the funnel did not capture: nothing carries over
+}
+
+void SetMarkInterceptor(MarkInterceptor fn) {
+    g_mark_intercept = fn;
+}
+
+void SetNextHostTravelAlone(bool alone) {
+    g_next_alone = alone;
+}
+
+void SetHostDeathAlone(bool alone) {
+    g_death_alone = alone;
+}
+
+double LastAloneCaptureAgo() {
+    const double at = g_last_alone_at.load();
+    return at > 0 ? Now() - at : 1e9;
 }
 
 void RunLampWarpReplay(std::uint32_t id) {

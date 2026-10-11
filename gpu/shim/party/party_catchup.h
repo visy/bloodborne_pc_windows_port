@@ -16,7 +16,7 @@ namespace coop {
 
 /// Main thread, once a frame (the director's tick). `guest_connected`: this process is the
 /// party's guest and its link to the host is up.
-void CatchupTick(const GameSnapshot& s, bool guest_connected, double now);
+void CatchupTick(const GameSnapshot& s, bool guest_connected, double now, std::uint32_t host_map = 0);
 /// Applying / warping: the director holds its bells and grants.
 bool CatchupBusy();
 

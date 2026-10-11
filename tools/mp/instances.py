@@ -487,8 +487,8 @@ def main():
     # 4 instances share one 8 GB card: 4 x 1792 MiB plus the desktop fit; 3072 each overcommitted
     # VRAM and spilled into system RAM.
     ap.add_argument("--vram", type=int, default=int(os.environ.get("BB_MP_VRAM", "1792")))
-    ap.add_argument("--fps", default=os.environ.get("BB_MP_FPS", "20"),
-                    help="frame cap of the test instances (20 default: 4 test games share the CPU; 30, 60, 90, uncap)")
+    ap.add_argument("--fps", default=os.environ.get("BB_MP_FPS", "30"),
+                    help="frame cap of the test instances (30, 60, 90, uncap: the game patch presets)")
     ap.add_argument("--stagger", type=float, default=8.0)
     ap.add_argument("--party", action="store_true", help="instance 0 hosts a loopback party, the others join")
     ap.add_argument("--crash-at", type=float, default=0, help="run: kill one instance's game this many s in")

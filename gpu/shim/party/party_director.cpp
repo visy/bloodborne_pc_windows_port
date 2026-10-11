@@ -21,6 +21,7 @@
 #include "party_items.h"
 #include "party_npc_test.h"
 #include "party_guestsvc.h"
+#include "party_split.h"
 #include "party_phantom.h"
 #include "party_start.h"
 #include "party_runtime.h"
@@ -116,7 +117,11 @@ struct TravelStep {
     // 1.2 m in front, Cross), wait for its menu, Down N times, Cross (args id:N).
     enum Kind {
         HostWarp, HostDie, GuestDie, HostKill, HostMove, GuestMove,
-        HostPress, GuestPress, HostMark, GuestMark, HostStage, HostWalk, HostHeadstone, HostFlag, HostLastLamp, HostLamp,
+        HostPress, GuestPress, HostMark, GuestMark, HostStage, HostWalk, HostHeadstone, HostFlag, HostSkipRemo, GuestSkipRemo, HostLastLamp,
+        // Split travel (docs/party/split_travel.md): host_lamp=ID / guest_lamp=ID use lamp ID as the
+        // player would (0x13CDF30 through the interceptor: the "Travel with the party?" question);
+        // host_alone=ID: the host travels to ID alone, decided (no question).
+        HostLamp, GuestLamp, HostAlone,
         HostOutage, GuestOutage  // a simulated total network outage of `buttons` ms (BB_NET_SIM on)
     } kind = HostWarp;
     std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30; HostKill: the entity id
@@ -211,6 +216,7 @@ struct State {
     bool auto_ring = true;
     int auto_continue = -1; // BB_PARTY_AUTOCONTINUE: -1 default (on in party mode), 0 off, 1 on
     double ring_every = 30.0;
+    bool a11_waiting = false;  // A11: the host's bell held (boss fight / cutscene)
     // BB_PARTY_FAST_JOIN (default on; docs/party/join_timing.md): shorter director pauses.
     bool fast_join = true;
     double ring_delay = 0.3;        // s in a steady world before the first bell (5 without fast join)
@@ -455,6 +461,7 @@ void LogTransitions(State& st, const GameSnapshot& now) {
     const GameSnapshot& was = st.last;
     if (now.world_up != was.world_up) {
         Log("world %s: %s", now.world_up ? "up" : "down", Describe(now).c_str());
+        if (!now.world_up) BossBarReset();  // A11: a load ends any boss fight
     }
     if (now.loading != was.loading) {
         Log("loading screen %s", now.loading ? "up" : "gone");
@@ -574,6 +581,9 @@ int ClearStalePeers(const std::string& online_id) {
 }
 
 void Ring(State& st, const char* event, const char* why, Clock::time_point now) {
+    if (!st.rung_ever && st.world_seen) {  // A4 join speed: the first bell's wait in the world
+        Log("first bell %.1f s after the world was steady", Seconds(st.world_at, now));
+    }
     st.last_ring = now;
     st.rung_ever = true;
     st.poll_logged = false;
@@ -801,6 +811,10 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::HostWalk: return "host_walk";
     case TravelStep::HostHeadstone: return "host_headstone";
     case TravelStep::HostFlag: return "host_flag";
+    case TravelStep::GuestLamp: return "guest_lamp";
+    case TravelStep::HostAlone: return "host_alone";
+    case TravelStep::HostSkipRemo: return "host_skipremo";
+    case TravelStep::GuestSkipRemo: return "guest_skipremo";
     }
     return "?";
 }
@@ -1033,7 +1047,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     auto mine = [&](const TravelStep& step) {
         return (step.kind == TravelStep::GuestDie || step.kind == TravelStep::GuestMove ||
                 step.kind == TravelStep::GuestPress || step.kind == TravelStep::GuestMark ||
-                step.kind == TravelStep::GuestOutage) == (role == PartyRole::Guest);
+                step.kind == TravelStep::GuestLamp || step.kind == TravelStep::GuestSkipRemo || step.kind == TravelStep::GuestOutage) == (role == PartyRole::Guest);
     };
     if (t.script_on) {
         RunTravelScript(st, s, now);
@@ -1043,7 +1057,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         ++t.next_step;
     }
     // Steady world with the party (HostKill's clock): restarts at every load / leave.
-    const bool steady = joined && s.world_up && !s.loading;
+    // Split travel: members apart (no cooperator here) still count as the party being together.
+    const bool steady = (joined || b2::MembersApart() > 0) && s.world_up && !s.loading;
     if (steady != t.steady) {
         t.steady = steady;
         t.steady_at = now;
@@ -1089,7 +1104,12 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         step.kind == TravelStep::HostWarp ? " to lamp " : step.kind == TravelStep::HostKill ? " entity " : "",
         step.kind == TravelStep::HostWarp || step.kind == TravelStep::HostKill ? step.id : 0u, Describe(s).c_str());
     if (step.kind == TravelStep::HostWarp) {
-        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint32_t)>(Guest(kLampWarp))(step.id);
+        RunLampWarpDecided(step.id, false);  // the party move (no split-travel question)
+    } else if (step.kind == TravelStep::HostAlone) {
+        b2::HostTravelAloneNext();
+        RunLampWarpDecided(step.id, true);
+    } else if (step.kind == TravelStep::HostLamp || step.kind == TravelStep::GuestLamp) {
+        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint32_t)>(Guest(kLampWarp))(step.id);  // as the player
     } else if (step.kind == TravelStep::HostMove || step.kind == TravelStep::GuestMove) {
         // The local chr to a spot (the chr warp vfunc +0x5F8 = 0x18CD600(chr, pos, rot, 1), as the
         // NPC summon step and the B2 spacing do), keeping its rotation.
@@ -1150,6 +1170,13 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             Log("test: Hunter's Mark: SpEffect %d %s (%s)", effect, ok ? "applied" : "NOT applied",
                 DescribeHere(s).c_str());
         }
+    } else if (step.kind == TravelStep::HostSkipRemo || step.kind == TravelStep::GuestSkipRemo) {
+        // The game's own cutscene skip request (what the skip input does; in a session it is this
+        // player's skip vote).
+        bool skippable = false;
+        const bool ok = RequestRemoSkip(&skippable);
+        Log("test: %s: skip request %s (skippable bit %d)", TravelStepName(step.kind), ok ? "sent" : "NOT possible",
+            skippable ? 1 : 0);
     } else if (step.kind == TravelStep::HostFlag) {
         // A story choice the game makes in a talk menu (e.g. 72100131 = refuse Gehrman): SetEventFlag.
         const std::uint32_t id = static_cast<std::uint32_t>(std::strtoul(step.args.c_str(), nullptr, 10));
@@ -1184,6 +1211,15 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     } else if (step.kind == TravelStep::HostKill) {
         // A boss (or any enemy) killed as the game's own death path: ForceDead on its entity id; the
         // boss-defeat EMEVD (4[00] death state -> 2003[12]) and the Lua boss clear follow.
+        {
+            const std::uint64_t chr = GuestSvcFindChr(step.id);
+            float d[4] = {};
+            if (chr) {
+                SafeRead(chr + 0xc0, d, sizeof d);
+            }
+            Log("test: host_kill: entity %u %s (%.1f, %.1f, %.1f)", step.id, chr ? "loaded at" : "NOT loaded here", d[0], d[1],
+                d[2]);
+        }
         reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, step.id);
     } else {
         reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, 10000);
@@ -1262,7 +1298,44 @@ std::string DescribeSessionMembers() {
 
 } // namespace
 
+namespace {
+constexpr std::uint64_t kOnLeaveLimit = 0x138a4a0;
+bool OnLeaveLimitOk() {
+    static const bool ok = Matches(kOnLeaveLimit, {0x55, 0x48, 0x89, 0xe5}) && CallsTo(kOnLeaveLimit + 0x77, 0x1332bc0);
+    return ok;
+}
+/// The game's own send-home of a phantom (OnLeave_Limit), let through party_travel's retarget.
+void RunOnLeaveLimit() {
+    AllowNextSendHome();
+    using LimitFn = void(BB_COOP_SYSV*)(std::uint64_t);
+    reinterpret_cast<LimitFn>(Guest(kOnLeaveLimit))(0);
+}
+std::atomic<bool> g_send_home_request{false};
+std::string g_send_home_why;  // under g_send_home_mu
+std::mutex g_send_home_mu;
+} // namespace
+
+void RequestGuestSendHome(const std::string& why) {
+    {
+        std::lock_guard<std::mutex> lk(g_send_home_mu);
+        g_send_home_why = why;
+    }
+    g_send_home_request = true;
+}
+
 bool LeaveGameSession() {
+    // A guest (a phantom in the host's world): the game's own voluntary leave - OnLeave_Limit
+    // (0x138A4A0, what OnLeaveMenu_Yes 0x1389FB0 runs for a phantom after the session leave): the
+    // pre-summon spot, then the funnel (BeginLeave + the load home) at once. The session leave
+    // alone left the game to notice a dead room 10 s later ("Session lost" 0xcc/5001, then home).
+    const GameSnapshot before = ReadGameState(false);
+    if (before.session_role == RoleClient && OnLeaveLimitOk()) {
+        RunOnLeaveLimit();
+        const GameSnapshot after = ReadGameState(false);
+        Log("leave: OnLeave_Limit (the guest's own leave): role %s (%d)", SessionRoleName(after.session_role),
+            after.session_role);
+        return true;
+    }
     static const bool ok =
         Matches(kLeaveSessionAndDrop, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x53, 0x50, 0x48, 0x8b, 0x05,
                                        0xc7, 0x88, 0x18, 0x04, 0x48, 0x8b, 0x98, 0xf8, 0x16, 0x00, 0x00}) &&
@@ -1283,6 +1356,7 @@ void HostWatchdogTick(State& st, const GameSnapshot& s, party::PartyLink* link, 
     in.in_world = InWorld(s) && st.world_seen;
     in.session_role = s.session_role;
     in.cooperators = s.cooperators;
+    in.members_apart = b2::MembersApart();
     if (link) {
         in.roster = link->roster();
     }
@@ -1762,6 +1836,7 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("host_move=", 0) == 0 || item.rfind("guest_move=", 0) == 0 ||
                        item.rfind("host_press=", 0) == 0 || item.rfind("guest_press=", 0) == 0 ||
                        item.rfind("host_lastlamp=", 0) == 0 || item.rfind("host_lamp=", 0) == 0 ||
+                       item.rfind("guest_lamp=", 0) == 0 || item.rfind("host_alone=", 0) == 0 ||
                        item.rfind("host_outage=", 0) == 0 || item.rfind("guest_outage=", 0) == 0) {
                 TravelStep step;
                 step.kind = item.rfind("guest_outage", 0) == 0  ? TravelStep::GuestOutage
@@ -1770,7 +1845,9 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("guest_press", 0) == 0  ? TravelStep::GuestPress
                             : item.rfind("host_press", 0) == 0   ? TravelStep::HostPress
                             : item.rfind("host_lastlamp", 0) == 0 ? TravelStep::HostLastLamp
-                            : item.rfind("host_lamp", 0) == 0     ? TravelStep::HostLamp
+                            : item.rfind("host_lamp=", 0) == 0   ? TravelStep::HostLamp
+                            : item.rfind("guest_lamp=", 0) == 0  ? TravelStep::GuestLamp
+                            : item.rfind("host_alone=", 0) == 0  ? TravelStep::HostAlone
                             : item[0] == 'g'                     ? TravelStep::GuestDie
                             : item.rfind("host_die", 0) == 0     ? TravelStep::HostDie
                             : item.rfind("host_kill", 0) == 0    ? TravelStep::HostKill
@@ -1784,6 +1861,10 @@ void PartyDirector::ConfigureFromEnv() {
                 }
                 if (step.kind == TravelStep::HostLastLamp) {
                     step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 14, nullptr, 10));
+                }
+                if (step.kind == TravelStep::HostLamp || step.kind == TravelStep::GuestLamp ||
+                    step.kind == TravelStep::HostAlone) {
+                    step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + item.find('=') + 1, nullptr, 10));
                 }
                 if ((step.kind == TravelStep::HostDie || step.kind == TravelStep::GuestDie) && item.find('%') != std::string::npos) {
                     // host_die@S%MAP: S s after the last load / previous step, in that map (no re-join)
@@ -1828,13 +1909,16 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.steps.push_back(step);
             } else if (item.rfind("host_mark", 0) == 0 || item.rfind("guest_mark", 0) == 0 ||
                        item.rfind("host_stage=", 0) == 0 || item.rfind("host_walk=", 0) == 0 ||
-                       item.rfind("host_headstone=", 0) == 0 || item.rfind("host_flag=", 0) == 0) {
+                       item.rfind("host_headstone=", 0) == 0 || item.rfind("host_flag=", 0) == 0 ||
+                       item.rfind("host_skipremo", 0) == 0 || item.rfind("guest_skipremo", 0) == 0) {
                 TravelStep step;
                 step.kind = item.rfind("guest_mark", 0) == 0    ? TravelStep::GuestMark
                             : item.rfind("host_mark", 0) == 0   ? TravelStep::HostMark
                             : item.rfind("host_stage=", 0) == 0 ? TravelStep::HostStage
                             : item.rfind("host_walk=", 0) == 0  ? TravelStep::HostWalk
                             : item.rfind("host_flag=", 0) == 0  ? TravelStep::HostFlag
+                            : item.rfind("host_skipremo", 0) == 0  ? TravelStep::HostSkipRemo
+                            : item.rfind("guest_skipremo", 0) == 0 ? TravelStep::GuestSkipRemo
                                                                 : TravelStep::HostHeadstone;
                 if (const std::size_t pc = item.find('%'); pc != std::string::npos) {
                     step.map = item.substr(pc + 1); // only while the current map name contains it
@@ -1922,6 +2006,27 @@ void PartyDirector::Tick() {
         s.cooperators = st.last.cooperators;
     }
     LogTransitions(st, s);
+    // A6: the host ended the party (or is gone) while this guest stands in its world: home at once
+    // through the game's own send-home (OnLeave_Limit) instead of the game's room-gone path 10 s
+    // later with "Session lost" (0xcc/5001 from OnRoomDisappeared 0x138A590, live).
+    if (g_send_home_request.load(std::memory_order_relaxed) && s.world_up && !s.loading) {
+        g_send_home_request = false;
+        std::uint64_t wts = 0;
+        std::uint8_t own = 1;
+        SafeGet(Guest(0x5556678), &wts);
+        if (wts) SafeGet(wts + 0x1592, &own);
+        std::string why;
+        {
+            std::lock_guard<std::mutex> lk(g_send_home_mu);
+            why = g_send_home_why;
+        }
+        if (own == 0 && OnLeaveLimitOk()) {
+            RunOnLeaveLimit();
+            Log("host lost (%s): home now (OnLeave_Limit)", why.c_str());
+        } else {
+            Log("host lost (%s): already in the own world", why.c_str());
+        }
+    }
     if (s.world_up && !s.loading && !st.world_seen) {
         st.world_seen = true;
         st.world_at = now;
@@ -1950,8 +2055,18 @@ void PartyDirector::Tick() {
     NewGameTestTick(s, TitleReadyForInput(role, link));
     // Late joiner catch-up (party_catchup.h): a guest behind the host is brought up to it and
     // gathered at the host's lamp before any summon.
-    CatchupTick(s, role == PartyRole::Guest && link && link->state() == party::LinkState::Connected,
-                Seconds(st.start, now));
+    {
+        std::uint32_t host_map = 0;
+        if (role == PartyRole::Guest && link) {
+            for (const party::RosterEntry& e : link->roster()) {
+                if (e.slot == party::kHostSlot) {
+                    host_map = e.map_id;
+                }
+            }
+        }
+        CatchupTick(s, role == PartyRole::Guest && link && link->state() == party::LinkState::Connected,
+                    Seconds(st.start, now), host_map);
+    }
     // C1: the campaign start (readiness, bells).
     if (full || !st.start_logged) {
         perf::Scope z(perf::Zone::DirStart);
@@ -2051,6 +2166,29 @@ void PartyDirector::Tick() {
     // B2 (party_b2.h): guest "arrived" / host notes.
     if (link) {
         b2::SetLocalSlot(link->local_slot());
+        {
+            // Split travel: where every member is (party_b2 SplitTick; docs/party/split_travel.md).
+            party::MemberVitals vit[party::kMaxVitals];
+            const int vn = link->vitals(vit, party::kMaxVitals);
+            const std::vector<party::RosterEntry> roster = link->roster();
+            std::vector<b2::Where> where;
+            for (int i = 0; i < vn; ++i) {
+                b2::Where w;
+                w.slot = vit[i].slot;
+                w.map = vit[i].map_id;
+                w.has_pos = (vit[i].flags & party::kVitalsHasPos) != 0;
+                std::memcpy(w.pos, vit[i].pos, sizeof w.pos);
+                w.age_ms = vit[i].age_ms;
+                w.connected = false;
+                for (const party::RosterEntry& e : roster) {
+                    if (e.slot == w.slot) {
+                        w.connected = e.connected;
+                    }
+                }
+                where.push_back(w);
+            }
+            b2::SetWhere(where);
+        }
         int b2slot = party::kBroadcast;
         std::string b2body;
         while (b2::PopOutgoing(&b2slot, &b2body)) {
@@ -2076,6 +2214,7 @@ void PartyDirector::Tick() {
     PhantomTick(link);
     // Guests use the Doll, shops and workshop in the host's Dream (party_guestsvc.h).
     GuestServicesTick(s, link);
+    split::Tick(s);  // split travel: the lamp choice dialog (party_split.h)
     zone.Next(perf::Zone::DirRing);
     if (st.test.on) {
         RunTravelSteps(st, s, role, now);
@@ -2161,6 +2300,23 @@ void PartyDirector::Tick() {
     if (st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {
         return;
     }
+    // A11 (ERSC_PARITY.md, user decision): a player joining while the host fights a boss or
+    // watches a cutscene waits outside - the host does not ring until it ends (the guest's sign
+    // waits at the host's lamp in its own world, GatherGuest).
+    if (role == PartyRole::Host) {
+        const bool boss = BossBarShown(), remo = CutscenePlaying();
+        if (boss || remo) {
+            if (!st.a11_waiting) {
+                st.a11_waiting = true;
+                Log("A11: no bell while the host %s: joiners wait outside", boss ? "fights a boss" : "watches a cutscene");
+            }
+            return;
+        }
+        if (st.a11_waiting) {
+            st.a11_waiting = false;
+            Log("A11: the boss fight / cutscene is over: ringing for waiting joiners again");
+        }
+    }
     // C1 (party_start.h): no bell before this player finished its start (clinic / first death
     // pitfalls); the host rings only for members that are ready (roster Home / Joining).
     if (role == PartyRole::Guest) {
@@ -2233,7 +2389,9 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
             host_map = e.map_id;
         }
     }
-    const std::uint32_t lamp = GuestDeathRedirectLamp();
+    // The host's last lamp unless it lies in another map than the one the host stands in (a fresh
+    // host's default record): then a lamp of the host's map.
+    const std::uint32_t lamp = GatherLampFor(GuestDeathRedirectLamp(), host_map);
     if (!host_map || host_map == 0xffffffffu || s.map_id == 0xffffffffu || lamp == kTravelNone || lamp == 0) {
         return false;
     }
@@ -2261,7 +2419,7 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
     TravelIntent t;
     t.kind = TravelKind::Lamp;
     t.lamp_id = lamp;
-    Log("gather: own world %s, host in %s; to the host's last lamp %u before ringing", MapName(s.map_id).c_str(),
+    Log("gather: own world %s, host in %s; to the host's lamp %u before ringing", MapName(s.map_id).c_str(),
         MapName(host_map).c_str(), lamp);
     return ReplayTravelNow(t);
 }
@@ -2317,6 +2475,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     }
     InstallTravelPatches(); // B1: Dream gate + travel hooks (byte-verified)
     b2::Init();             // B2 seamless prototype (BB_PARTY_B2=1; byte-verified)
+    split::Init();          // split travel's "Travel with the party?" (needs B2)
     InstallStoryHooks();    // C4: bank-2002 capture, guest mirror / replay (byte-verified)
     InstallItemsPatches();  // C3: award hook, parity patches (byte-verified)
     PhantomInit();          // guest respawn at the host's lamp, refill, boss Insight
