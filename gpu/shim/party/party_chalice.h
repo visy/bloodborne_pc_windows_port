@@ -88,8 +88,12 @@ void RequestGuestGoods(const std::vector<std::uint32_t>& ids);
 constexpr const char* kFormEventName = "chalice_form";
 /// Guest: its own ritual dungeon's FormData for the host's board ({"id":"N","form":"b64"}).
 bool PopGuestForm(std::string* body);
-/// Host: a guest's FormData event: put on the board for a dungeon it has without one.
-void OnGuestForm(int slot, const std::string& body);
+/// Host: a guest's FormData event (`member`: its roster name): the dungeon goes on the board (added,
+/// or its missing FormData) and counts as that member's latest ritual.
+void OnGuestForm(int slot, const std::string& member, const std::string& body);
+/// Host: true once after the altar's glyph box took the party dungeon's glyph: the director then
+/// answers the remaining prompts (OK, the search result, YES, the altar, the awaken point).
+bool TakeAltarAutopilot();
 /// Host: its own online id (the roster's host entry), so the party's dungeon at its altar is
 /// another member's ritual (docs/party/chalice.md 7).
 void SetHostName(const std::string& name);

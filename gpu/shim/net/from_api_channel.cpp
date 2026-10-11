@@ -454,6 +454,13 @@ bool ChannelBoard::adopt(std::uint64_t id, const std::string& b64, const std::st
     return true;
 }
 
+void ChannelBoard::note_made(const std::string& member, std::uint64_t id) {
+    std::lock_guard<std::mutex> lk(mu_);
+    auto it = made_.find(member);
+    if (it != made_.end() && it->second.first == id) return;  // keeps the time of the ritual
+    made_[member] = {id, std::chrono::steady_clock::now()};
+}
+
 std::string ChannelBoard::form_data(std::uint64_t id) const {
     std::lock_guard<std::mutex> lk(mu_);
     for (const Channel& c : channels_) {

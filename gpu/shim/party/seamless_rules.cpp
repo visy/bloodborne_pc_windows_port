@@ -7,6 +7,7 @@
 // (GPL-3.0-or-later) src/engine/params.cpp @8f2746c; row layouts from its
 // include/bbhost/params.hpp, the EMEVD event layout from include/bbhost/engine/sprj/emk_system.hpp.
 // Every offset was checked against our 1.09 eboot (docs/party/seamless_rules.md).
+#include <algorithm>
 #include "seamless_rules.h"
 #include "party_async_io.h"
 #include "party_perf.h"
@@ -91,14 +92,14 @@ constexpr Site kSites[] = {
     {"Party: Bells without Insight", 0x157fa5c, "0f9fc0", "30c090"},
     {"Party: Bells without Insight", 0x18c92bb, "410fb64738f7d8", "31c00f1f440000"},
     // Join timing (docs/party/join_timing.md; BB_PARTY_FAST_JOIN / BB_PARTY_FAST_MESSAGES).
-    {"Party: Fast join", 0x196d3a8, "c7051e77c0030000a040", "c7051e77c0030000003f"},
+    {"Party: Fast join", 0x196d3a8, "c7051e77c0030000a040", "c7051e77c003cdcccc3d"},
     {"Party: Fast join", 0x196d3b2, "c7051c77c0030000a040", "c7051c77c0030000803f"},
     {"Party: Fast join", 0x196d3c6, "c7051077c0030000a040", "c7051077c0030000803f"},
     {"Party: Fast join", 0x196d3d0, "c7050e77c00300000040", "c7050e77c0030000003f"},
     {"Party: Fast join", 0x14b80c4, "41c7451c00004040", "41c7451c0000003f"},
     {"Party: Fast join", 0x14b4975, "41c744241801000500", "41c744241801001e00"},
     {"Party: Fast join", 0x14bb067, "c7431801000500", "c7431801001e00"},
-    {"Party: Fast join", 0xcdb2e8, "c7842488000000b80b0000", "c7842488000000e8030000"},
+    {"Party: Fast join", 0xcdb2e8, "c7842488000000b80b0000", "c78424880000002c010000"},
     {"Party: Fast bell sign", 0x18a9264, "c747280000a040", "c7472800000040"},
     {"Party: Fast bell sign", 0x18a9324, "c747280000a040", "c7472800000040"},
     {"Party: Fast bell sign", 0x189a095, "c743280000a040", "c7432800000040"},
@@ -453,7 +454,22 @@ void TraceInstruction(u64 event, i32 event_id, i32 bank, i32 id, u64 instr, bool
         std::lock_guard<std::mutex> lk(g_emevd_mu);
         n = ++g_emevd_seen[key];
     }
-    if (n != 1 && n != 1000 && n != 100000) {
+    // BB_PARTY_EMEVD_TRACE_ALL=ID[,ID...]: every call of these events (a lift's second ride).
+    static const std::vector<i32> all = [] {
+        std::vector<i32> v;
+        if (const char* e = std::getenv("BB_PARTY_EMEVD_TRACE_ALL")) {
+            for (const char* p = e; *p;) {
+                char* end = nullptr;
+                const long x = std::strtol(p, &end, 10);
+                if (end == p) break;
+                v.push_back(i32(x));
+                p = *end == ',' ? end + 1 : end;
+            }
+        }
+        return v;
+    }();
+    const bool every = std::find(all.begin(), all.end(), event_id) != all.end();
+    if (!every && n != 1 && n != 1000 && n != 100000) {
         return;
     }
     u32 map = 0, arg_size = 0;
@@ -503,6 +519,9 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
         if (const EmevdSkipPredicate pred = g_skip_pred.load(std::memory_order_relaxed)) {
             skip = pred(event_id, bank, id);
         }
+    }
+    if (instr && !skip && bank == 2003 && (id == 12 || id == 15 || id == 53) && g_boss_bar.exchange(false)) {
+        Log("boss health bar: off (a boss defeat, event %d 2003[%d])", event_id, id);
     }
     if (instr && !skip && bank == 2003 && id == 11) {
         u8 args[16] = {};
