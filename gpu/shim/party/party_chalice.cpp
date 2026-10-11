@@ -52,6 +52,7 @@ bool GoodsFromJsonText(const std::string& text, std::vector<std::uint32_t>* out,
 #include "coop_hooks.h"
 #include "game_state.h"
 
+#include "../bbport_game_menu.h"
 #include "../net/from_api.h"
 #include "../net/party_util.h"
 
@@ -72,7 +73,52 @@ std::atomic<std::uint64_t> g_local{0};
 std::mutex g_mu;
 std::vector<std::uint32_t> g_host_goods, g_host_pending, g_guest_goods;
 bool g_host_dirty = false, g_guest_dirty = false;
+std::string g_form_pending;      // guest: {"id":"N","form":"b64"} for the host's board
 double g_host_sent_at = 0;
+
+// The party's dungeon (host): the newest ritual of another member, offered at the host's altar as
+// "Enter the party's dungeon" (menu item 262002 "Search by Chalice Glyph" renamed, its glyph
+// confirmed in the ImeDialog without typing).
+constexpr std::uint32_t kGlyphSearchText = 262002;
+constexpr std::uint32_t kGlyphLength = 8;
+std::string g_host_name;
+char g_party_glyph[16] = {};               // "" when none (read by the ImeDialog)
+char16_t g_party_label[64] = {};           // the altar menu item
+char16_t g_party_help[160] = {};           // its help line
+std::atomic<bool> g_party_dungeon{false};
+
+void CopyU16(char16_t* out, std::size_t cap, const std::string& text) {
+    std::size_t n = 0;
+    for (; n + 1 < cap && n < text.size(); ++n) out[n] = static_cast<unsigned char>(text[n]);
+    out[n] = 0;
+}
+
+const char16_t* AltarText(std::uint32_t, std::uint32_t id, const char16_t* original) {
+    if (id != kGlyphSearchText || !g_party_dungeon.load(std::memory_order_acquire) || !original) {
+        return nullptr;
+    }
+    // The same id names the menu item (short) and its help line (long), in two message tables.
+    std::size_t len = 0;
+    while (original[len] && len < 200) ++len;
+    return len <= 40 ? g_party_label : g_party_help;
+}
+
+const char* PartyGlyph(std::uint32_t max_length) {
+    if (max_length != kGlyphLength || !g_party_dungeon.load(std::memory_order_acquire)) {
+        return nullptr;
+    }
+    // Only for the glyph box the altar opened (its menu shown within the last 20 s).
+    const std::int64_t seen = BbGameMenu::LastLookupMs(kGlyphSearchText);
+    const std::int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now().time_since_epoch())
+                                 .count();
+    if (!seen || now - seen > 20000) {
+        return nullptr;
+    }
+    std::printf("Party: chalice: the altar's glyph box gets the party dungeon's glyph %s\n", g_party_glyph);
+    std::fflush(stdout);
+    return g_party_glyph;
+}
 
 double Seconds() {
     using namespace std::chrono;
@@ -206,6 +252,8 @@ void InstallProbes() {
         return;
     }
     done = true;
+    BbGameMenu::SetTextOverride(&AltarText);
+    BbGameMenu::SetImePreset(&PartyGlyph);
     HookPrologue(0x14ba340, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, &SummonMessageProbe, "chalice: summon message probe");
     HookPrologue(0x1aa5280, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, &QuickJoinRequestProbe, "chalice: quick join request probe");
     HookPrologue(0x1aa81d0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, &QuickJoinStepProbe, "chalice: quick join step probe");
@@ -367,6 +415,56 @@ void Tick(bool host) {
             std::fflush(stdout);
         }
     }
+    if (host) {
+        // The party's dungeon: another member's newest ritual (within an hour) that the host's
+        // current slot does not hold already.
+        bbnet::party::ChannelBoard::Channel c;
+        std::string member, name;
+        {
+            std::lock_guard<std::mutex> lk(g_mu);
+            name = g_host_name;
+        }
+        const bool any = !name.empty() &&
+                         bbnet::party::FromApi::instance().channels().latest_ritual(name, std::chrono::hours(1), &c, &member) &&
+                         c.glyph.size() == kGlyphLength && !(s.load_mode == 0 && s.slot >= 0 && s.channel == c.id);
+        static std::string shown;
+        const std::string key = any ? c.glyph + "/" + member : "";
+        if (key != shown) {
+            shown = key;
+            g_party_dungeon.store(false, std::memory_order_release);
+            if (any) {
+                std::snprintf(g_party_glyph, sizeof g_party_glyph, "%s", c.glyph.c_str());
+                CopyU16(g_party_label, sizeof g_party_label / sizeof g_party_label[0], "Enter the party's dungeon");
+                CopyU16(g_party_help, sizeof g_party_help / sizeof g_party_help[0],
+                        "Enter the Chalice Dungeon " + member + " made (glyph " + c.glyph + ") with the party.");
+                g_party_dungeon.store(true, std::memory_order_release);
+            }
+            std::printf("Party: chalice: party dungeon at the altar: %s\n",
+                        any ? (std::to_string(c.id) + " by " + member + ", glyph " + c.glyph).c_str() : "none");
+            std::fflush(stdout);
+        }
+    }
+    if (!host && s.load_mode == 0 && s.slot >= 0 && s.channel) {
+        // A guest's own ritual dungeon: its FormData for the host's board (a shared fixed dungeon is
+        // never uploaded; the host's glyph join and a summon need it). Once per dungeon and minute.
+        static std::uint64_t sent_for = 0;
+        static double sent_at = -100;
+        if (sent_for != s.channel || now - sent_at >= 60.0) {
+            const std::vector<std::uint8_t> fd = SlotFormData(s.slot);
+            if (!fd.empty()) {
+                const std::string b64 = bbnet::party::b64_encode(fd.data(), fd.size());
+                std::lock_guard<std::mutex> lk(g_mu);
+                g_form_pending = "{" + std::string("\"id\":\"") + std::to_string(s.channel) + "\",\"form\":\"" + b64 + "\"}";
+                if (sent_for != s.channel) {
+                    std::printf("Party: chalice: dungeon %llu: FormData of slot %d (%zu bytes) for the host's board\n",
+                                static_cast<unsigned long long>(s.channel), s.slot, fd.size());
+                    std::fflush(stdout);
+                }
+                sent_for = s.channel;
+                sent_at = now;
+            }
+        }
+    }
     if (host && s.load_mode == 0 && s.slot >= 0 && s.channel) {
         // The host's dungeon on the channel board with its FormData: a shared fixed dungeon was
         // joined through search and never uploaded, so the board's entry had none and a summoned
@@ -374,6 +472,18 @@ void Tick(bool host) {
         static std::uint64_t done_for = 0;
         if (done_for != s.channel) {
             bbnet::party::ChannelBoard& board = bbnet::party::FromApi::instance().channels();
+            if (!board.known(s.channel)) {
+                // Entered from an earlier session's ritual (the board is new each session).
+                const std::vector<std::uint8_t> fd = SlotFormData(s.slot);
+                std::string name;
+                {
+                    std::lock_guard<std::mutex> lk(g_mu);
+                    name = g_host_name;
+                }
+                if (!fd.empty()) {
+                    board.adopt(s.channel, bbnet::party::b64_encode(fd.data(), fd.size()), name.empty() ? "host" : name);
+                }
+            }
             if (board.known(s.channel)) {
                 const std::vector<std::uint8_t> fd = SlotFormData(s.slot);
                 const std::string b64 = fd.empty() ? "" : bbnet::party::b64_encode(fd.data(), fd.size());
@@ -474,6 +584,44 @@ void Tick(bool host) {
         std::fflush(stdout);
         last = s;
     }
+}
+
+void SetHostName(const std::string& name) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    g_host_name = name;
+}
+
+bool PopGuestForm(std::string* body) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    if (g_form_pending.empty()) {
+        return false;
+    }
+    *body = g_form_pending;
+    g_form_pending.clear();
+    return true;
+}
+
+void OnGuestForm(int slot, const std::string& body) {
+    json::Value v;
+    std::string err;
+    const json::Value* id = nullptr;
+    const json::Value* form = nullptr;
+    if (!json::parse(body, v, err) || v.type != json::Value::Type::Object || !(id = v.find("id")) ||
+        id->type != json::Value::Type::String || !(form = v.find("form")) || form->type != json::Value::Type::String ||
+        form->string.size() > 4096) {
+        std::printf("Party: chalice: FormData event from slot %d refused (malformed)\n", slot);
+        std::fflush(stdout);
+        return;
+    }
+    const std::uint64_t channel = std::strtoull(id->string.c_str(), nullptr, 10);
+    bbnet::party::ChannelBoard& board = bbnet::party::FromApi::instance().channels();
+    // Only a dungeon the board has without a FormData (a shared fixed dungeon a member's ritual
+    // made by search): never replaces an uploaded one.
+    const bool ok = channel && board.known(channel) && board.form_data(channel).empty() &&
+                    board.set_form_data(channel, form->string);
+    std::printf("Party: chalice: dungeon %llu: FormData from slot %d's ritual %s\n",
+                static_cast<unsigned long long>(channel), slot, ok ? "on the board" : "not taken (unknown or has one)");
+    std::fflush(stdout);
 }
 
 std::uint64_t LocalChannel() {

@@ -81,6 +81,11 @@ bool party_trace();
 std::uint16_t p2p_bound_port();
 // Opens the party UDP port now (the game opens it at its first P2P bind); false on failure.
 bool p2p_open();
+// The party link's UDP path (party_rudp.h) shares the party port: a datagram out of it (addr /
+// port network order), and the handler that gets the link's datagrams (magic fa 'L') from the
+// port's reader thread.
+bool p2p_send_raw(std::uint32_t addr, std::uint16_t port, const std::uint8_t* d, std::size_t n);
+void p2p_set_link_handler(std::function<void(std::uint32_t, std::uint16_t, const std::uint8_t*, std::size_t)> fn);
 // Sends a STUN Binding Request from the party port to host:port and waits for the answer;
 // with `want_relay` the request carries the relay HELLO and a relay in the answer turns
 // relay framing on for that server's other ports.

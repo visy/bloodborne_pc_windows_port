@@ -923,6 +923,21 @@ static void test_chalice_channels() {
     CHECK(int_of(w, "ResKind", -1) == 0 && int_of(w, "ChannelId", 0) == id && str_of(w, "FormData") == form);
     CHECK(int_of(w, "FormDataVersion", -1) == 0 && int_of(w, "HolyGrailTypeId", 0) == 1100);
     CHECK(int_of(w, "FixedOrGeneral", -1) == 0 && int_of(w, "RitualLevel", 0) == 1);
+    CHECK(int_of(w, "ShareLevel", 0) != 0);  // the join needs the Status taken (run c19)
+    {
+        // The party's dungeon for another member's altar: GuestA's ritual (its upload).
+        bbnet::party::ChannelBoard::Channel c;
+        std::string member;
+        CHECK(api.channels().latest_ritual("Host", std::chrono::hours(1), &c, &member) && member == "GuestA" &&
+              c.id == static_cast<std::uint64_t>(id) && c.glyph == glyph);
+        CHECK(!api.channels().latest_ritual("GuestA", std::chrono::hours(1), &c, &member) || member != "GuestA");
+        // The host's game in a dungeon from an earlier session: added once, with its FormData.
+        CHECK(!api.channels().adopt(static_cast<std::uint64_t>(id), form, "Host"));  // known already
+        bbnet::party::ChannelBoard own;  // a separate board: the checks below count this one's entries
+        CHECK(own.adopt(4242424242ull, form, "Host") && own.known(4242424242ull) &&
+              own.form_data(4242424242ull) == form && !own.adopt(4242424242ull, form, "Host"));
+        CHECK(!own.adopt(4242424243ull, "%%%%", "Host"));
+    }
     const json::Value* wish = w.find("WishMaterialList");
     CHECK(wish && wish->type == json::Value::Type::Array && wish->array.size() == 1);
     CHECK(int_of(post("GuestA", "/channel/word_search", R"({"SearchWord":"zzzzzzzz"})"), "ResKind", 0) == 0x1040a);

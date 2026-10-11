@@ -23,6 +23,7 @@
 #include "party_worldact.h"
 #include "coop_hooks.h"
 #include "upnp_win.h"
+#include "party_rudp.h"
 
 #include "../net/bbnet_internal.h"
 #include "../net/np_hle.h"
@@ -88,6 +89,7 @@ bool env_on(const char* name) {
 }
 
 bool loopback_mode() { return env_on("BB_PARTY_LOOPBACK") || env_on("BB_MP_LOCAL_TEST"); }
+void nr_fast_expire(const std::string& name);  // below (C6)
 
 std::string lower(std::string s) {
     for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -730,8 +732,12 @@ LinkCallbacks make_callbacks(bool host) {
             // joining) its world until the transport times out; a restarted game summoned before
             // that never gets the summon data (docs/party/join_timing.md).
             if (m.state == MemberState::InHostWorld || m.state == MemberState::Joining ||
-                m.state == MemberState::Loading)
+                m.state == MemberState::Loading) {
+                // A crash (RST): the connection is expired early (nr_fast_expire), so a short hold.
+                const bool crashed = m.lost_why.find("reset") != std::string::npos && env_on("BB_PARTY_NR_FAST_EXPIRE");
                 bbnet::party::FromApi::instance().hold_signs(m.name, 26000);
+                if (crashed) nr_fast_expire(m.name);  // shortens that hold once the timeout is lowered
+            }
             if (slot_kept) {
                 plog("%s (slot %d) lost; slot kept", m.name.c_str(), m.slot);
                 return;
@@ -743,6 +749,10 @@ LinkCallbacks make_callbacks(bool host) {
         };
         cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
             if (name == coop::b2::kEventName) coop::b2::OnLinkEvent(slot, body);  // B2: a guest arrived
+            if (name == coop::chalice::kFormEventName) {  // a guest's ritual dungeon (party_chalice.h)
+                coop::chalice::OnGuestForm(slot, body);
+                return;
+            }
             if (name == coop::chalice::kGoodsEventName) {  // a guest's chalices (party_chalice.h)
                 std::vector<std::uint32_t> ids;
                 std::string err;
@@ -966,6 +976,10 @@ bool previous_party(std::array<std::uint8_t, 8>* secret, std::vector<KeptMember>
     return false;
 }
 
+void add_guest_code_text(const std::string& text);
+void punch_guest_codes_tick();
+void attach_udp_path(PartyLink* link);
+
 void start_host(LinkConfig cfg) {
     Runtime& r = R();
     const bool lb = loopback_mode();
@@ -998,6 +1012,14 @@ void start_host(LinkConfig cfg) {
     if (!bbnet::p2p_open()) plog("warning: cannot open the party UDP port %u (another program?)", port);
 
     auto* link = new PartyLink(cfg, make_callbacks(true));
+    attach_udp_path(link);
+    if (const char* gc = env("BB_PARTY_GUEST_CODES")) add_guest_code_text(gc);
+    std::thread([] {  // guest codes: punch towards each new one (env, file, menu)
+        while (!stopping()) {
+            punch_guest_codes_tick();
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
+    }).detach();
     {
         std::lock_guard<std::mutex> lk(r.mu);
         r.link = link;
@@ -1136,6 +1158,278 @@ void start_host(LinkConfig cfg) {
     if (const char* cf = env("BB_PARTY_CODE_FILE")) write_text_file(cf, text);
 }
 
+
+// ---- The party link's UDP path (party_rudp.h): hole punching, guest codes ----
+// The link's datagrams share the game's party UDP port (one NAT mapping for both).
+void attach_udp_path(PartyLink* link) {
+    link->set_udp_transport([](std::uint32_t a, std::uint16_t p, const std::uint8_t* d, std::size_t n) {
+        return bbnet::p2p_send_raw(a, p, d, n);
+    });
+    bbnet::p2p_set_link_handler([](std::uint32_t a, std::uint16_t p, const std::uint8_t* d, std::size_t n) {
+        if (PartyLink* l = runtime_link()) l->on_udp_datagram(a, p, d, n);
+    });
+}
+
+// Guest: its own public UDP endpoint as a guest code (BBG1-...), for a host behind a NAT without a
+// port forward: the host enters it (or BB_PARTY_GUEST_CODES) and punches towards it.
+void publish_guest_code() {
+    std::uint32_t ma = 0;
+    std::uint16_t mp = 0;
+    std::string source;
+    if (loopback_mode()) {
+        ma = 0x0100007fu;  // 127.0.0.1, network order
+        mp = static_cast<std::uint16_t>((bbnet::settings().party_port >> 8) | (bbnet::settings().party_port << 8));
+        source = "loopback";
+    } else {
+        const char* stun_env = env("BB_PARTY_STUN");
+        const std::string server = stun_env ? stun_env : "stun.l.google.com:19302";
+        if (server == "off" || server == "0") return;
+        std::string host_part = server;
+        std::uint16_t sport = 19302;
+        if (const auto c = server.rfind(':'); c != std::string::npos) {
+            host_part = server.substr(0, c);
+            sport = static_cast<std::uint16_t>(std::strtoul(server.c_str() + c + 1, nullptr, 10));
+        }
+        bool ok = false;
+        for (int i = 0; i < 3 && !ok && !stopping(); ++i) ok = bbnet::p2p_stun(host_part.c_str(), sport, 2000, &ma, &mp);
+        if (!ok) {
+            plog("guest code: STUN %s did not answer (no guest code; a host behind a NAT then needs a port forward)",
+                 server.c_str());
+            return;
+        }
+        source = "stun " + server;
+    }
+    const std::string code = rudp::encode_guest_code(ma, mp);
+    {
+        std::lock_guard<std::mutex> lk(R().mu);
+        R().st.guest_code = code;
+    }
+    bridge::OnGuestCode(code);
+    write_text_file(fs::path(user_dir()) / "party_guest_code.txt", code + "\n");
+    if (const char* f = env("BB_PARTY_GUEST_CODE_FILE")) write_text_file(f, code + "\n");
+    const auto* ip = reinterpret_cast<const std::uint8_t*>(&ma);
+    plog("guest code %s (UDP %u.%u.%u.%u:%u, %s): give it to the host if it cannot open a port", code.c_str(), ip[0], ip[1],
+         ip[2], ip[3], static_cast<unsigned>(static_cast<std::uint16_t>((mp >> 8) | (mp << 8))), source.c_str());
+}
+
+// Host: guest codes from BB_PARTY_GUEST_CODES (comma list), BB_PARTY_GUEST_CODE_FILE (polled) and
+// the menu (AddGuestCode): each opens our NAT mapping towards that guest for 60 s.
+std::mutex g_codes_mu;
+std::set<std::string> g_codes_seen;
+std::vector<std::string> g_codes_new;
+
+void add_guest_code_text(const std::string& text) {
+    std::lock_guard<std::mutex> lk(g_codes_mu);
+    std::string cur;
+    auto flush = [&] {
+        while (!cur.empty() && (cur.back() == ' ' || cur.back() == '\r' || cur.back() == '\n')) cur.pop_back();
+        while (!cur.empty() && cur.front() == ' ') cur.erase(cur.begin());
+        if (!cur.empty() && g_codes_seen.insert(cur).second) g_codes_new.push_back(cur);
+        cur.clear();
+    };
+    for (char c : text) {
+        if (c == ',' || c == '\n') flush();
+        else cur.push_back(c);
+    }
+    flush();
+}
+
+void punch_guest_codes_tick() {
+    static auto last_file = Clock::time_point{};
+    if (const char* f = env("BB_PARTY_GUEST_CODE_FILE"); f && Clock::now() - last_file > std::chrono::seconds(1)) {
+        last_file = Clock::now();
+        std::string body;
+        if (read_file(f, &body)) add_guest_code_text(body);
+    }
+    std::vector<std::string> codes;
+    {
+        std::lock_guard<std::mutex> lk(g_codes_mu);
+        codes.swap(g_codes_new);
+    }
+    PartyLink* l = runtime_link();
+    for (const std::string& c : codes) {
+        std::uint32_t a = 0;
+        std::uint16_t p = 0;
+        if (!rudp::decode_guest_code(c, &a, &p)) {
+            plog("guest code '%s' is not valid (BBG1-XXXX-XXXX-XXXX)", c.c_str());
+            continue;
+        }
+        if (l) l->punch_guest(a, p);
+        // The game's own UDP traffic to that guest too: one probe out of the party port opens the
+        // same mapping (the link's punches already share it).
+        std::lock_guard<std::mutex> lk(g_codes_mu);
+        g_codes_seen.insert(c);
+    }
+}
+
+// ---- C6: a crashed guest's stale game connection, expired early ----
+// The host's game keeps its NexusRevolution transport connection to a member until that
+// connection's idle timeout (25 s; config built at 0xcdb250: 0x4d0, 3000, 5000, 6000, 25000,
+// 20000, 200 ms) and would send a restarted guest's summon over it (docs/party/join_timing.md).
+// When the guest's link ends with "connection reset" (its OS answered for a dead process: a crash,
+// not a network hiccup), the host lowers the live copies of those two timeouts for a few seconds,
+// so the dead connection expires within ~4 s instead of 25, then restores them.
+// Experimental: BB_PARTY_NR_FAST_EXPIRE=1 on (off by default).
+std::mutex g_nr_mu;
+std::atomic<int> g_nr_epoch{0};
+
+std::vector<std::uint32_t*> nr_config_copies(std::uint8_t* lo, std::uint8_t* hi) {
+    static const std::uint32_t pat[7] = {0x4d0, 3000, 5000, 6000, 25000, 20000, 200};
+    std::vector<std::uint32_t*> hits;
+#ifdef _WIN32
+    struct WsInfo {
+        void* va;
+        std::uint64_t attr;
+    };
+    using Qws = BOOL(WINAPI*)(HANDLE, PVOID, DWORD);
+    static const auto qws = reinterpret_cast<Qws>(GetProcAddress(GetModuleHandleA("kernel32.dll"), "K32QueryWorkingSetEx"));
+    MEMORY_BASIC_INFORMATION mbi;
+    std::uint8_t* at = lo;
+    while (at < hi && VirtualQuery(at, &mbi, sizeof mbi) == sizeof mbi) {
+        auto* base = static_cast<std::uint8_t*>(mbi.BaseAddress);
+        const std::size_t size = mbi.RegionSize;
+        if (mbi.State == MEM_COMMIT && (mbi.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)) &&
+            !(mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) && qws) {
+            // Only pages that are resident: reading a never-touched committed page would make
+            // Windows back it with RAM (the guest's direct memory is GiBs of those).
+            constexpr std::size_t kPage = 4096, kBatch = 4096;
+            std::vector<WsInfo> info(kBatch);
+            for (std::size_t off = 0; off < size; off += kBatch * kPage) {
+                const std::size_t pages = std::min(kBatch, (size - off) / kPage);
+                for (std::size_t k = 0; k < pages; ++k) {
+                    info[k].va = base + off + k * kPage;
+                    info[k].attr = 0;
+                }
+                if (!qws(GetCurrentProcess(), info.data(), static_cast<DWORD>(pages * sizeof(WsInfo)))) continue;
+                for (std::size_t k = 0; k < pages; ++k) {
+                    if (!(info[k].attr & 1)) continue;  // Valid
+                    const auto* w = reinterpret_cast<const std::uint32_t*>(base + off + k * kPage);
+                    for (std::size_t i = 0; i + 7 <= kPage / 4; ++i) {
+                        if (w[i] == 0x4d0 && w[i + 4] == 25000 && std::memcmp(w + i, pat, sizeof pat) == 0)
+                            hits.push_back(const_cast<std::uint32_t*>(w + i));
+                    }
+                }
+            }
+        }
+        at = base + size;
+        if (reinterpret_cast<std::uintptr_t>(at) >= (1ull << 47)) break;
+    }
+#endif
+    return hits;
+}
+
+// Experimental, off by default (BB_PARTY_NR_FAST_EXPIRE=1): the copies were found in 2 of 3 live
+// runs (none in the third) and an early expiry was never shown (docs/party/join_timing.md).
+bool nr_disabled() { return !env_on("BB_PARTY_NR_FAST_EXPIRE"); }
+
+bool nr_copy_ok(const std::uint32_t* h) {
+    std::uint32_t v[7] = {};
+#ifdef _WIN32
+    MEMORY_BASIC_INFORMATION mi{};
+    if (VirtualQuery(h, &mi, sizeof mi) != sizeof mi || mi.State != MEM_COMMIT ||
+        !(mi.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)) || (mi.Protect & PAGE_GUARD) ||
+        reinterpret_cast<const std::uint8_t*>(h) + sizeof v >
+            static_cast<const std::uint8_t*>(mi.BaseAddress) + mi.RegionSize)
+        return false;
+#endif
+    std::memcpy(v, h, sizeof v);
+    return v[0] == 0x4d0 && v[1] == 3000 && v[2] == 5000 && v[3] == 6000 && v[6] == 200;
+}
+
+std::vector<std::uint32_t*> g_nr_hits;  // g_nr_mu
+
+// Finds the copies ahead of time (the scan of the resident heap takes seconds): when the host's
+// game gets a cooperator (its transport holds them), and again at a crash if they moved.
+void nr_scan_locked(const char* why) {
+    const auto t0 = Clock::now();
+    // The game's heap layout repeats from run to run: the last place they were found
+    // (user/party_nr_hint.txt) +-512 MiB first, the whole process only when that misses.
+    const fs::path hint_file = fs::path(user_dir()) / "party_nr_hint.txt";
+    std::string body;
+    const char* how = "whole process";
+    g_nr_hits.clear();
+    if (read_file(hint_file, &body)) {
+        const std::uintptr_t h = static_cast<std::uintptr_t>(std::strtoull(body.c_str(), nullptr, 16));
+        if (h > (1ull << 30)) {
+            g_nr_hits = nr_config_copies(reinterpret_cast<std::uint8_t*>(h - (512ull << 20)),
+                                         reinterpret_cast<std::uint8_t*>(h + (512ull << 20)));
+            how = "near the last place";
+            if (g_nr_hits.empty())
+                plog("game transport config: none within 512 MiB of %llx (%.0f ms); the whole process next",
+                     static_cast<unsigned long long>(h),
+                     std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
+        } else {
+            plog("game transport config: hint '%s' not usable", body.c_str());
+        }
+    } else {
+        plog("game transport config: no hint file %s", hint_file.string().c_str());
+    }
+    if (g_nr_hits.empty()) {
+        how = "whole process";
+        g_nr_hits = nr_config_copies(nullptr, reinterpret_cast<std::uint8_t*>(1ull << 47));
+    }
+    if (!g_nr_hits.empty()) {
+        char hx[32];
+        std::snprintf(hx, sizeof hx, "%llx\n", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(g_nr_hits[0])));
+        write_text_file(hint_file, hx);
+    }
+    const double ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+    plog("game transport config: %zu copies (%s, scan %.0f ms, %s)", g_nr_hits.size(), why, ms, how);
+    for (std::uint32_t* h : g_nr_hits) {
+        MEMORY_BASIC_INFORMATION mi{};
+        VirtualQuery(h, &mi, sizeof mi);
+        plog("  at %p, region %p + %#llx (type %#lx)", static_cast<void*>(h), mi.AllocationBase,
+             static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(h) -
+                                             reinterpret_cast<std::uintptr_t>(mi.AllocationBase)),
+             static_cast<unsigned long>(mi.Type));
+    }
+}
+}  // namespace
+
+void runtime_nr_prescan() {
+    if (nr_disabled()) return;
+    std::thread([] {
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        std::unique_lock<std::mutex> lk(g_nr_mu, std::try_to_lock);
+        if (!lk.owns_lock()) return;
+        bool ok = !g_nr_hits.empty();
+        for (const std::uint32_t* h : g_nr_hits) ok = ok && nr_copy_ok(h);
+        if (!ok) nr_scan_locked("a cooperator joined");
+    }).detach();
+}
+
+namespace {
+void nr_fast_expire(const std::string& name) {
+    if (nr_disabled()) return;
+    const int epoch = ++g_nr_epoch;
+    std::thread([name, epoch] {
+        std::lock_guard<std::mutex> lk(g_nr_mu);
+        std::vector<std::uint32_t*> hits;
+        for (std::uint32_t* h : g_nr_hits)
+            if (nr_copy_ok(h) && (h[4] == 25000 || h[4] == 4000)) hits.push_back(h);
+        if (hits.empty()) {
+            nr_scan_locked("at the crash");
+            hits = g_nr_hits;
+        }
+        for (std::uint32_t* h : hits) {
+            h[4] = 4000;
+            h[5] = 3000;
+        }
+        plog("%s crashed (connection reset): game transport idle timeout 25 -> 4 s for 8 s (%zu config copies)",
+             name.c_str(), hits.size());
+        // The dead connection now expires within ~4 s: the sign hold (26 s at the drop) ends 5 s from now.
+        if (!hits.empty()) bbnet::party::FromApi::instance().hold_signs(name, 5000);
+        std::this_thread::sleep_for(std::chrono::seconds(8));
+        for (std::uint32_t* h : hits) {
+            if (nr_copy_ok(h) && h[4] == 4000) {
+                h[4] = 25000;
+                h[5] = 20000;
+            }
+        }
+        plog("game transport idle timeout restored (25 s)%s", g_nr_epoch.load() != epoch ? " (another crash since)" : "");
+    }).detach();
+}
+
 // The code a guest uses: BB_PARTY_CODE, BB_PARTY=<code>, or BB_PARTY_CODE_FILE (waits <= 60 s).
 bool guest_code(PartyCode* code, std::string* error, std::string* used) {
     std::string text;
@@ -1207,7 +1501,9 @@ void start_guest(LinkConfig cfg) {
         plog("warning: the host requires a password (BB_PARTY_PASSWORD)");
     std::uint32_t nbo = 0;
     std::memcpy(&nbo, ip.data(), 4);
+    if (!bbnet::p2p_open()) plog("warning: cannot open the party UDP port %u (another program?)", bbnet::settings().party_port);
     auto* link = new PartyLink(cfg, make_callbacks(false));
+    attach_udp_path(link);
     {
         std::lock_guard<std::mutex> lk(r.mu);
         r.link = link;
@@ -1227,6 +1523,7 @@ void start_guest(LinkConfig cfg) {
         return;
     }
     coop::PartyDirector::Get().SetLink(link);
+    publish_guest_code();
 }
 
 void startup_main() {
@@ -1573,6 +1870,24 @@ void RuntimeApi::set_local_state(MemberState state, std::uint32_t map_id) const 
 const RuntimeApi& runtime() {
     static const RuntimeApi api;
     return api;
+}
+
+int runtime_add_guest_code(const std::string& text) {
+    int valid = 0;
+    std::string cur;
+    auto one = [&] {
+        std::uint32_t a = 0;
+        std::uint16_t p = 0;
+        if (!cur.empty() && rudp::decode_guest_code(cur, &a, &p)) ++valid;
+        cur.clear();
+    };
+    for (char c : text) {
+        if (c == ',' || c == '\n' || c == '\r' || c == ' ') one();
+        else cur.push_back(c);
+    }
+    one();
+    if (valid) add_guest_code_text(text);
+    return valid;
 }
 
 PartyLink* runtime_link() {

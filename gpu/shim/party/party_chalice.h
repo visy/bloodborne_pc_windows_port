@@ -85,6 +85,14 @@ void Tick(bool host);
 bool PopHostGoods(std::vector<std::uint32_t>* out);
 /// A peer's chalices (any thread; applied by Tick in the own world).
 void RequestGuestGoods(const std::vector<std::uint32_t>& ids);
+constexpr const char* kFormEventName = "chalice_form";
+/// Guest: its own ritual dungeon's FormData for the host's board ({"id":"N","form":"b64"}).
+bool PopGuestForm(std::string* body);
+/// Host: a guest's FormData event: put on the board for a dungeon it has without one.
+void OnGuestForm(int slot, const std::string& body);
+/// Host: its own online id (the roster's host entry), so the party's dungeon at its altar is
+/// another member's ritual (docs/party/chalice.md 7).
+void SetHostName(const std::string& name);
 /// The dungeon the local game has in its current slot while it is in its own world (load mode
 /// 0); 0 when none or unknown. Any thread (the last Tick's value).
 std::uint64_t LocalChannel();

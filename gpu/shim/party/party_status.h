@@ -52,6 +52,7 @@ struct Board {
     State state = State::Off;
     std::string detail;    // with the state ("2/3, Hunter1 waiting", the reject reason ...)
     std::string code;      // the party code to share (host) / joined (guest)
+    std::string guest_code;  // guest: BBG1-... (its public UDP endpoint, for a host behind a NAT)
     std::vector<Member> members;
     std::string last_event;
     std::uint64_t event_seq = 0;  // +1 per SetLastEvent
@@ -62,6 +63,7 @@ struct Board {
 // --- producer side ---
 void SetRole(Role role);
 void SetCode(const std::string& code);
+void SetGuestCode(const std::string& code);
 void SetState(State state, const std::string& detail = {});
 void SetMembers(const std::vector<Member>& members);
 /// A one-line event for the log line and the toast ("Hunter1 joined", "Travelling to ...").
@@ -75,12 +77,12 @@ std::uint64_t EventSeq();
 bool Enabled();
 
 // --- commands: UI -> party code ---
-enum class CommandType : std::uint8_t { Leave, Rejoin, Kick };
+enum class CommandType : std::uint8_t { Leave, Rejoin, Kick, AddGuestCode };
 const char* CommandName(CommandType type);
 
 struct Command {
     CommandType type = CommandType::Leave;
-    std::string name;  // Kick: the member's name
+    std::string name;  // Kick: the member's name; AddGuestCode: the code text
 };
 
 void RequestLeave();
@@ -91,6 +93,11 @@ bool KickMember(const std::string& name);
 /// Copies the current party code to the Windows clipboard (UI thread, no queue). False when
 /// there is no code or the clipboard is busy.
 bool RequestCopyCode();
+/// Guest: copies its guest code (BBG1-...) to the clipboard.
+bool RequestCopyGuestCode();
+/// Host: queues the guest code(s) on the clipboard (the host then punches towards each). False
+/// when the clipboard holds no BBG1 text. `got` (optional): the text.
+bool RequestAddGuestCodeFromClipboard(std::string* got = nullptr);
 /// The director, once a frame: true and *out filled while commands are queued (FIFO; at most 16
 /// kept, a repeated Leave / Rejoin / Kick of the same name is coalesced).
 bool PopCommand(Command* out);
