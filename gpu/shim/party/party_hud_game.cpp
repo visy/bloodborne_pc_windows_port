@@ -238,6 +238,33 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
         if (open_chrs == 1 && open_members == 1)
             std::snprintf(chrs[open_chr].name, sizeof chrs[open_chr].name, "%s", st.roster[open_member].name.c_str());
     }
+    // Ghost check (the host-cannot-see-guest bug, 2026-10-11): where this game draws a member's chr
+    // vs where that member's own game says it stands (VITALS, fresh). Over 2 m: a "GAP" line, at
+    // most every 5 s per member (always on: a cheap loop over at most 3 chrs).
+    {
+        static std::chrono::steady_clock::time_point gap_logged[party::kMaxVitals]{};
+        for (int c = 0; c < chrs_n; ++c) {
+            if (!chrs[c].name[0]) continue;
+            for (int v = 0; v < vit_n; ++v) {
+                const party::RosterEntry* e = nullptr;
+                for (const party::RosterEntry& r : st.roster)
+                    if (r.slot == vit[v].slot) e = &r;
+                if (!e || e->name != chrs[c].name || !(vit[v].flags & party::kVitalsHasPos) || vit[v].age_ms > 1500)
+                    continue;
+                const float dx = chrs[c].pos[0] - vit[v].pos[0], dy = chrs[c].pos[1] - vit[v].pos[1],
+                            dz = chrs[c].pos[2] - vit[v].pos[2];
+                const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+                const int slot = vit[v].slot;
+                if (d > 2.0f && slot >= 0 && slot < party::kMaxVitals && now - gap_logged[slot] >= std::chrono::seconds(5)) {
+                    gap_logged[slot] = now;
+                    Log("GAP %s (slot %d): this game draws its chr at (%.2f %.2f %.2f), it reports (%.2f %.2f %.2f) "
+                        "map %08x: %.1f m apart",
+                        chrs[c].name, slot, chrs[c].pos[0], chrs[c].pos[1], chrs[c].pos[2], vit[v].pos[0],
+                        vit[v].pos[1], vit[v].pos[2], vit[v].map_id, d);
+                }
+            }
+        }
+    }
     if (log_now)
         for (int c = 0; c < chrs_n; ++c) {
             char b[160];
