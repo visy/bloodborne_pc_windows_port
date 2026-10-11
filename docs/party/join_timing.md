@@ -229,3 +229,21 @@ transport's first connect (1.8 s), the guest's prologue / effect (1.2 s) and the
 world. A guest already in the host's map still loads it (split travel removes same-map loads,
 docs/party/split_travel.md when it lands); Continue still loads the guest's own world first (the
 sign is put up from there).
+
+## 2026-10-11 (later): shorter transport retry and prologue
+
+`Party: Fast join` now sets the NexusRevolution first retransmission timeout to 300 ms (was 1000;
+0xcdb2e8) and the guest's self-prologue to 0.1 s (was 0.5; 0x196d3a8). Live (flowlive, 2 players):
+`JoinRoom` -> client (6) 0.93 s (was 1.8), client (6) -> loading screen 0.80 s (was 1.2). In the
+same run the bell -> `summon_messenger/create` took 7.6 s instead of 2.0: the waiting guest had the
+item catch-up's key-item cards on screen (the game's full-screen card for a badge / key item), which
+the sign sender waits behind - the items catch-up (party_items) should give key items without the
+card, or before the bell.
+
+Not done yet: Continue straight into the host's world (one load from the title), and the 0.5 s
+bell timer race (2 of 6 joins stalled before; not reproduced or understood yet).
+
+Also: a guest that is not in the host's world no longer follows the host's death or a host travel
+within the map it already stands in (party_travel.cpp; live: a waiting joiner loaded for the host's
+lamp warp and death in its own m24_01). Two-player Leave / Join party: the host had no load at the
+guest's join, leave or re-join (one load in the whole run).
