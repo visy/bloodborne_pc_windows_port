@@ -35,6 +35,11 @@ Guest (`worldact::GuestTick`, main thread, role 6, load mode 1, world up, not lo
   Client branches of events end early (`1003[6]` "end if client"), and an ended event writes its
   completion flag (0x12ED100) - those must never reach the host. Live: 93-102 such differences
   per load (m21_00, m24_01).
+* **own map block only**: a map flag (`TAABZnnn`) is sent only when its area and block are the
+  guest's current map's. A streamed-in neighbour block runs its constructors on the guest (live
+  run 9: m24_00's NPC init flags 12400501.. appeared while the guest's map was m24_01 and were
+  sent - wrong); now they stay local (run 10: m27's 12700701.. "kept local"), and once the guest's
+  map is that block the new baseline holds them back.
 * every 0.25 s: new local differences. Allowed ones (`WorldActionAllowed`, below) go to the host
   as `{"v":1,"map":<guest map>,"set":[ids],"clr":[ids]}` (at most 32 / 16 ids); the set ones are
   also written into the guest's **own pool** (its own save keeps the progress; a save request
@@ -111,7 +116,10 @@ Instancing (`progress::SetInstancedItems`): the world mirror leaves the item_lot
 bits (full copy after a rebuild, set-only live so a fresh pickup is not undone) - the guest sees the
 treasure it has not taken itself, whatever the host took. A guest's pickup sets the bit in its
 overlay; `GuestLocalWorldChanges` reports overlay item bits the pool lacks and the guest writes
-them into its own pool (never to the host). The host's world keeps its item. C3 still hands the
+them into its own pool (never to the host). Only map treasure flags (`5AABZnnn`, area > 0) and
+only within 15 s of a real pickup (`0x17D8570` entry logged): the guest game's own global item
+bookkeeping (9042-9075, set at its load) is not a pickup (run 10 recorded those - fixed). Pickups
+are never part of the baseline (a pickup during a map change still counts). The host's world keeps its item. C3 still hands the
 host's pickups to the guests (their pool flag then hides the treasure for them too); boss rewards
 and key items stay C3's (everyone present).
 
@@ -195,11 +203,27 @@ it set). Host screenshots `lever_0.5s_inst0.png` (gate closed) / `lever_9s_inst0
 Run 4 (Iosefka again, the quest already advanced in the host's save): guest `set
 12410739(npc_quest)` -> host `12410739=1(was)`.
 
+Runs 6-9 (D4): the guest **sees world treasure** in the host's world (`pickup_0.5s_inst1.png`: an
+item glow at the guest's feet; vanilla never spawns treasure on a client; 264 MSB treasure spawns
+logged on the guest), and **takes it**: run 9 `map item pickup on this game (role 6)` after the
+"Search Body" prompt (10010101), item-get dialog "Madman's Knowledge" on the guest
+(`drop_0.5s_inst1.png`). That pickup happened while the guest's map changed (m24_01 -> m24_00),
+so the 3 s baseline swallowed its flag (not written to the own save) - fixed (pickups are never
+baselined). Run 9 also: the guest's game rolls enemy drops itself (`enemy drop roll on this game
+(role 6)`); a kill by the fixture's local ForceDead did not reach the host's game (no host roll),
+so "a guest kills an enemy" with real damage is still to be run.
+
+Run 10 (Cathedral Ward, host lamp-warps to 2402950, `map=m24_00` fixture): Oedon Chapel Dweller
+(chr 2400700) talk prompt 10010200 -> guest `set 72400310(npc_quest)` -> host `72400310=1`;
+Eileen (chr 2400900) talk -> guest `set 72400520(npc_quest)` -> host `72400520=1`
+(`cw_npc_*`, `eileen_*` screenshots). Alfred (2400760/762/763) had no talk prompt in this save
+state (not placed / not talkable yet).
+
 ## 10. Open items
 
-* The host-side **animation** of a guest's lever / door: see section 3 / run 3.
 * Elevators: toggling state flags are shortcut_door; a guest and the host using one elevator at
   the same time can fight over the state (not tested).
 * Area gate flags 2AAx are not caught up (section 7).
-* Live pickup of a treasure by a guest (the patches are in; not exercised live yet).
+* Instanced pickup into the own save: the fixed path (no baseline) not yet re-run live; enemy
+  drops: a guest's real kill (damage, not a local ForceDead) and both players' rolls not yet seen.
 * Memory Altar / covenants / chalice ritual by a guest not run live.
