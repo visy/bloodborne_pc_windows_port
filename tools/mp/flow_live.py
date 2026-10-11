@@ -27,6 +27,17 @@ PASSWORD = "Moon-42"
 TITLE_TO_PARTY = "~down@New Game/cross/!~mark=page@Host address"
 
 
+def to_party_page():
+    """The in-world walk from the Options grid to System > Party: Right, Right, Cross (System), then
+    Up from the top (wrapping to the bottom: Exit Game, Network, Brightness, then the port's pages
+    after Party, read from bbport_game_menu_pages.cpp so a new page does not break the walks), Cross."""
+    import re as _re
+    src = (REPO / "gpu" / "shim" / "bbport_game_menu_pages.cpp").read_text(encoding="utf-8", errors="replace")
+    pages = _re.findall(r'AddPage\("([^"]+)"', src)
+    after = len(pages) - pages.index("Party") - 1
+    return "options/right/right/cross/" + "/".join(["up"] * (3 + after + 1)) + "/cross"
+
+
 def scripts(phase, port0):
     host_addr = f"127.0.0.1:{port0}"
     if phase == "fresh":
@@ -57,6 +68,7 @@ def main():
     ap.add_argument("--host-world", default="", help="the host's in-world walk after the restart")
     ap.add_argument("--until", action="append", default=[])
     ap.add_argument("--env", action="append", default=[], help="KEY=VALUE for both instances")
+    ap.add_argument("--host-env", action="append", default=[], help="KEY=VALUE for the host only")
     ap.add_argument("--count", type=int, default=2, help="continue: 3 = a second guest (a copy of inst1's party "
                     "character and party.json under another name)")
     ap.add_argument("--host-delay", type=int, default=8, help="seconds in the joined world before --host-world")
@@ -71,6 +83,9 @@ def main():
     host = [("title 5 " + l) if l != "-" else l for l in host]
     guest = [("title 5 " + l) if l != "-" else l for l in guest]
     # The party process after the restart: an in-world walk (Options > System > Party ...).
+    # {PARTY} in a walk: Options > System > Party (to_party_page).
+    a.host_world = a.host_world.replace("{PARTY}", to_party_page())
+    a.guest_world = a.guest_world.replace("{PARTY}", to_party_page())
     if a.host_world:
         host[1] = f"joined {a.host_delay} " + a.host_world
     if a.guest_world:
@@ -114,7 +129,14 @@ def main():
               "--watch", r"session trying-to-join .* -> client \(6=summoned@1,3",
               "--watch", r"test menu: step .*(leave|join)\w*=world_step@1.5",
               "--watch", r"Party flow: leave=left@4",
-              "--watch", r"STUCK=stuck@0"]
+              "--watch", r"STUCK=stuck@0",
+              # Every live check needs pictures of all windows at join, arrival and leave.
+              "--watch", r"cooperators 0 -> 1=arrival1@2,8",
+              "--watch", r"cooperators 1 -> 2=arrival2@2,8,20",
+              "--watch", r"Leave pressed=leave@1,4,8",
+              "--watch", r"host lost .*home now=hostlost@2,6",
+              "--watch", r"boss health bar shown=bossbar@1",
+              "--watch", r"boss health bar: off=bossoff@1,10"]
     shot = subprocess.Popen([sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out", str(shots),
                              "--seconds", "7200"] + watch)
     env = [f"BB_TEST_MENU_FILE={root}\\menu{{i}}.txt", "BB_PARTY_PORT={port}", "BB_PARTY_UPNP=0",
@@ -124,6 +146,9 @@ def main():
            "--saves", str(root / "nosaves"), "--build", str(REPO), "--seconds", str(a.seconds), "--idle", "0",
            "--label", f"flowlive {a.phase}", "--timestamps"]
     if a.phase == "world":
+        # Pre-made characters: no new-game driver (its "skip the opening" Options presses opened
+        # the in-game menu on a loaded character and kept the guests in item screens).
+        env = [e for e in env if not e.startswith(("BB_TEST_NEWGAME=", "BB_TEST_PROLOGUE_SKIP=", "BB_TEST_NAME="))]
         env += ["BB_PARTY_MENU=1", "BB_PARTY_SAVE=separate", "BB_PARTY_AUTOCONTINUE=1",
                 "BB_SKIP_NETWORK_CHOICE=online", "BB_PATCHES=Skip Intro"]
         cmd += ["--ienv", "0:BB_PARTY=host"] + sum((["--ienv", f"{k}:BB_PARTY=join"] for k in range(1, a.count)), [])
@@ -134,6 +159,8 @@ def main():
                 cmd += ["--ienv", f"{k}:BB_PARTY_NAME=" + _json.loads(pj.read_text(encoding="utf-8"))["name"]]
     for e in env + a.env:
         cmd += ["--env", e]
+    for e in a.host_env:
+        cmd += ["--ienv", "0:" + e]
     # The summon, and a little of the log after it (the screenshots at +3 s).
     for u in a.until or [r"Party: session trying-to-join .* -> client \(6[\s\S]{1500}"]:
         cmd += ["--until", u]

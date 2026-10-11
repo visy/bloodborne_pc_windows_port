@@ -138,7 +138,7 @@ run from two new characters to the end credits passed, and a three-player travel
 | Guests open doors, pull levers, talk to NPCs; NPC choices shared | In progress |
 | Item pickups and enemy drops per player: everyone gets their own | In progress |
 | Every cutscene for the whole party (story cutscenes and endings already work) | In progress |
-| Joining during a boss fight or cutscene waits outside until it ends | In progress (no summon while the host's boss bar or a cutscene is up) |
+| Joining during a boss fight or cutscene waits outside until it ends | Works for boss fights (verified live); cutscenes in progress |
 | The 4th player joins as fast as the others | In progress |
 | Chalice dungeons: deeper layers checked in a party; entering the party's dungeon in one press | In progress |
 | PvP / friendly fire the host can switch on and off | Later |

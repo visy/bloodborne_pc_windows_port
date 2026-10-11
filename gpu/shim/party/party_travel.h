@@ -212,6 +212,8 @@ public:
     std::optional<TravelIntent> Destination() const;
     /// The send-home retarget replayed it itself: no second replay from Step.
     void MarkReplayed(double now);
+    /// Forget the current travel (a guest it does not concern).
+    void Drop() { phase_ = Phase::Idle; }
     Phase GetPhase() const { return phase_; }
     std::uint64_t LastSeq() const { return last_seq_; }
 
