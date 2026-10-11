@@ -11,6 +11,7 @@
 #include <mutex>
 
 #include "bbport_settings.h"
+#include "party/party_link.h"  // kMaxPartyPlayers
 #include "party/party_status.h"
 
 namespace BbGameMenu::Pages {
@@ -183,7 +184,7 @@ bool UpscalerAvailable(int i) {
 int upscaler_field = -1;
 
 // ---- Party (party_status.h): the run-time texts and the members the rows stand for ----
-constexpr int MaxMembers = 4; // the host and three guests (party_link max_players)
+constexpr int MaxMembers = party::kMaxPartyPlayers; // the host and the guests (party_link.h)
 struct MemberTexts {
     u32 member_name[MaxMembers], member_value[MaxMembers], member_confirm[MaxMembers],
         member_help[MaxMembers];
@@ -780,26 +781,30 @@ void DefineAll() {
                party.member_name[k], party.member_help[k], {party.member_value[k], party.member_confirm[k]},
                Kind::Toggle, [k] { return k < member_rows; });
     }
-    // At most four member rows: the page's six rows hold the notices and the party HUD switch too
-    // (the last event, after them, shows while fewer than four hunters are in the party).
-    AddRow(Flag(&Values::party_toasts), "Join/leave notices", "Уведомления",
-           "A short notice in a top corner when a hunter joins or leaves",
-           "Короткое уведомление в углу, когда охотник входит или выходит", toggle, Kind::Toggle);
-    // Party HUD (party_hud.h): party mode only. With four members the last event row gives way.
-    AddRow(Flag(&Values::party_hud), AddText("Party HUD", "Панель группы"),
-           AddText("Companions' names, health and where they are, in the bottom left corner",
-                   "Имена, здоровье и местоположение спутников в левом нижнем углу"),
-           toggle, Kind::Toggle, [] { return party::status::Enabled(); });
-    // Guests use lamps and headstones (party_guestsvc; read at the next start). Shown while fewer
-    // than four hunters are in the party (the page holds six rows).
-    AddRow(Flag(&Values::party_guest_lamps), AddText("Guests use lamps", "Фонари гостям"),
-           AddText("Guests may use lamps and headstones; the whole party travels (after a restart)",
-                   "Гости могут пользоваться фонарями и надгробиями; группа идёт вместе (после перезапуска)"),
-           toggle, Kind::Toggle, [] { return party::status::Enabled(); });
+    // One row per member (at most RowsPerPage), then the last event. The switches are on "Party
+    // options", so a full party keeps all of them (A7: with four members the old page cut the
+    // guest lamps switch and the last event).
     party.event_value = AddDynamic(MaxValueLength);
     party.event_help = AddDynamic(MaxHelpLength);
     AddRow(Info(), AddText("Last event", "Последнее"), party.event_help, {party.event_value, party.event_value},
            Kind::Toggle);
+
+    // ---- Party options: notices, the party HUD and guest lamps (party mode). ----
+    AddPage("Party options", "Настройки группы", "Join/leave notices, the party HUD, guests and lamps (bbport)",
+            "Уведомления, панель группы, гости и фонари (bbport)");
+    AddRow(Flag(&Values::party_toasts), "Join/leave notices", "Уведомления",
+           "A short notice in a top corner when a hunter joins or leaves",
+           "Короткое уведомление в углу, когда охотник входит или выходит", toggle, Kind::Toggle);
+    // Party HUD (party_hud.h): party mode only.
+    AddRow(Flag(&Values::party_hud), AddText("Party HUD", "Панель группы"),
+           AddText("Companions' names, health and where they are, in the bottom left corner",
+                   "Имена, здоровье и местоположение спутников в левом нижнем углу"),
+           toggle, Kind::Toggle, [] { return party::status::Enabled(); });
+    // Guests use lamps and headstones (party_guestsvc; read at the next start).
+    AddRow(Flag(&Values::party_guest_lamps), AddText("Guests use lamps", "Фонари гостям"),
+           AddText("Guests may use lamps and headstones; the whole party travels (after a restart)",
+                   "Гости могут пользоваться фонарями и надгробиями; группа идёт вместе (после перезапуска)"),
+           toggle, Kind::Toggle, [] { return party::status::Enabled(); });
 }
 
 } // namespace

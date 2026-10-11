@@ -15,7 +15,7 @@ What they do for a player: [docs/PARTY.md](../PARTY.md).
 |---|---|---|
 | `BB_PARTY` | Party tab: Mode | unset (off); `host` / `join` |
 | `BB_PARTY_NAME` | Your name | Windows user name |
-| `BB_PARTY_MAX` | Max players | 3 |
+| `BB_PARTY_MAX` | Max players | 3 (2..4) |
 | `BB_PARTY_AUTO` | Automatic summoning | 1 |
 | `BB_PARTY_SEAMLESS` | Seamless party rules | 1 |
 | `BB_PARTY_SAVE` | Separate party saves (always on) | `separate`; every party session uses `savedata_party`, `shared` is ignored |
@@ -62,6 +62,7 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_LOCAL_IP` | Forces the local IPv4 address the network layer reports and binds | default-route adapter | `gpu/shim/net/net_socket.cpp` |
 | `BB_PARTY_FORCE_RELAY` | Sends all guest-to-guest game traffic through the host relay | off | `gpu/shim/net/party_udp.cpp` |
 | `BB_PARTY_HASH_PATCHES` | `0`: gameplay patches are not compared in the version check | compared | `gpu/shim/party/party_runtime.cpp` |
+| `BB_PARTY_CHECK_BUILD` | `0` on the host: the bbport build id is not compared in the version check (A9, docs/party/version_check.md) | compared | `gpu/shim/party/party_runtime.cpp` |
 | `BB_PARTY_HOST_LOST_MS` | Guest: ms after the host's link drops before the game leaves the host's world | 2000 | `gpu/shim/party/party_runtime.cpp` |
 | `BB_PARTY_RESTARTED` | Set to `1` by `run.bat` on a crash restart: rejoin path, `restart` backup | unset | `run.bat`, `gpu/shim/party/party_runtime.cpp`, `src/runtime_savepolicy.c` |
 | `BB_PARTY_RESTART_MAX` | Most crash restarts in 10 minutes | 5 | `run.bat` |

@@ -5,6 +5,7 @@
 #include "party_sock.h"
 
 #include <algorithm>
+#include <cctype>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -397,14 +398,29 @@ std::string set_clause(const char* what, const std::array<std::uint8_t, 32>& hos
 
 std::string identity_mismatch(const LinkConfig& host, const LinkConfig& guest) {
     std::vector<std::string> parts;
+    // Each clause: what differs (host's / yours) and what to do about it.
+    if (host.check_build && host.build_id != guest.build_id)
+        parts.push_back("bbport build differs (host " + (host.build_id.empty() ? std::string("unknown") : host.build_id) +
+                        ", yours " + (guest.build_id.empty() ? std::string("unknown: an older build") : guest.build_id) +
+                        "): install the same bbport release as the host");
     if (host.eboot_sha256 != guest.eboot_sha256)
         parts.push_back("eboot.bin differs (host " + short_hex(host.eboot_sha256) + ", yours " +
                         short_hex(guest.eboot_sha256) + ": another game version or dump; the port needs 1.09)");
+    if (host.params_sha256 != guest.params_sha256)
+        parts.push_back("game params differ (gameparam.parambnd.dcx: host " + short_hex(host.params_sha256) +
+                        ", yours " + short_hex(guest.params_sha256) +
+                        "): another game version or edited params; use the same game dump (1.09) as the host");
     if (host.patches_hash != guest.patches_hash)
         parts.push_back(set_clause("gameplay patches", host.patches_hash, host.patch_names, guest.patches_hash,
-                                   guest.patch_names));
+                                   guest.patch_names) +
+                        ": turn on the same patches as the host (launcher Patches tab)");
     if (host.mods_hash != guest.mods_hash)
-        parts.push_back(set_clause("gameplay mods", host.mods_hash, host.mod_names, guest.mods_hash, guest.mod_names));
+        parts.push_back(set_clause("gameplay mods", host.mods_hash, host.mod_names, guest.mods_hash, guest.mod_names) +
+                        ": enable the same mods as the host (launcher Mods tab)");
+    if (host.hooks_hash != guest.hooks_hash)
+        parts.push_back(set_clause("party patches", host.hooks_hash, host.hook_names, guest.hooks_hash,
+                                   guest.hook_names) +
+                        ": use the same bbport build and party options (BB_PARTY_* switches) as the host");
     if (host.rules != guest.rules)
         parts.push_back("party rules differ (host " + (host.rules.empty() ? std::string("none") : host.rules) +
                         "; yours " + (guest.rules.empty() ? std::string("none: an older build") : guest.rules) +
@@ -413,6 +429,26 @@ std::string identity_mismatch(const LinkConfig& host, const LinkConfig& guest) {
     std::string s = "version mismatch with the host: ";
     for (std::size_t i = 0; i < parts.size(); ++i) s += (i ? "; " : "") + parts[i];
     return s;
+}
+
+bool diagnostic_hook_name(const std::string& name) {
+    std::string n;
+    for (char c : name) n += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    for (const char* w : {"probe", "trace", "(log)", " log", "log (", "observer", "fixture", "test"})
+        if (n.find(w) != std::string::npos) return true;
+    return false;
+}
+
+std::array<std::uint8_t, 32> hook_set_hash(std::vector<std::string> names) {
+    std::array<std::uint8_t, 32> h{};
+    std::sort(names.begin(), names.end());
+    names.erase(std::unique(names.begin(), names.end()), names.end());
+    if (names.empty()) return h;
+    std::string blob("bbparty-hooks-v1\0", 17);
+    for (const std::string& n : names) blob += n + '\n';
+    const auto k = crypto::blake2b256(blob.data(), blob.size());
+    std::memcpy(h.data(), k.data(), 32);
+    return h;
 }
 
 bool parse_identity_file(const std::string& text, const std::string& item_key, std::array<std::uint8_t, 32>* hash,
@@ -497,7 +533,7 @@ void apply_link_env(LinkConfig& cfg) {
     }
     if (const char* v = std::getenv("BB_PARTY_MAX"); v && *v) {
         long m = std::strtol(v, nullptr, 10);
-        cfg.max_players = static_cast<int>(std::clamp<long>(m, 2, 4));
+        cfg.max_players = static_cast<int>(std::clamp<long>(m, 2, kMaxPartyPlayers));
     }
     if (const char* v = std::getenv("BB_PARTY_PASSWORD"); v && *v) cfg.password = v;
 }
@@ -693,7 +729,7 @@ struct PartyLink::Impl {
     std::thread dthread;
 
     Impl(LinkConfig c, LinkCallbacks k) : cfg(std::move(c)), cb(std::move(k)) {
-        cfg.max_players = std::clamp(cfg.max_players, 2, 4);
+        cfg.max_players = std::clamp(cfg.max_players, 2, kMaxPartyPlayers);
     }
 
     // ---------- callback thread ----------
@@ -1037,6 +1073,12 @@ struct PartyLink::Impl {
             theirs.patch_names = split_names(r.str16());
             theirs.mod_names = split_names(r.str16());
             if (r.ok && r.n) theirs.rules = r.str16();  // absent before the party rules existed
+            if (r.ok && r.n) {  // A9 fingerprint: absent from older builds (they then differ)
+                theirs.build_id = sanitize_text(r.str16(), 96);
+                r.bytes(theirs.params_sha256.data(), 32);
+                r.bytes(theirs.hooks_hash.data(), 32);
+                theirs.hook_names = split_names(r.str16());
+            }
             if (!r.ok) return lose(c, "short HELLO");
             const std::string mismatch = identity_mismatch(cfg, theirs);
             if (!mismatch.empty()) return reject_conn(c, RejectCode::Mismatch, mismatch);
@@ -1328,7 +1370,7 @@ struct PartyLink::Impl {
             r.bytes(tok.data(), 16);
             auto ros = read_roster(r);
             if (!r.ok) return lose(c, "short WELCOME");
-            if (slot < 1 || slot > 3 || maxp < 2 || maxp > 4 || slot >= maxp)
+            if (slot < 1 || slot >= kMaxPartyPlayers || maxp < 2 || maxp > kMaxPartyPlayers || slot >= maxp)
                 return lose(c, "bad WELCOME (slot " + std::to_string(slot) + " of " + std::to_string(maxp) + ")");
             c->tx.init(c->pending_tx);
             crypto::wipe(c->pending_tx.data(), 32);
@@ -1596,6 +1638,8 @@ struct PartyLink::Impl {
         w.bytes(cfg.eboot_sha256.data(), 32).bytes(cfg.mods_hash.data(), 32).bytes(my_token.data(), 16);
         w.bytes(cfg.patches_hash.data(), 32).str16(join_names(cfg.patch_names)).str16(join_names(cfg.mod_names));
         w.str16(cfg.rules);
+        w.str16(cfg.build_id).bytes(cfg.params_sha256.data(), 32).bytes(cfg.hooks_hash.data(), 32);
+        w.str16(join_names(cfg.hook_names));
         send(c, kHello, w);
     }
 

@@ -20,7 +20,7 @@
 // H2-H4 change nothing while at most 2 cooperators exist (vanilla cap), so they are installed for
 // every party; only H1 / E6 follow the max players, which can change at run time.
 //
-// Max players: BB_PARTY_MAX (clamped 2..4, PartyLink). It and FourpRulesTag() form the party
+// Max players: BB_PARTY_MAX (clamped 2..kMaxPlayers = 4, PartyLink). It and FourpRulesTag() form the party
 // rules ("max 4 players, 4p:v1:..."), part of the PartyLink version check (LinkConfig::rules,
 // HELLO): a guest with another max players or rule set is rejected with a reason naming both.
 // The host's value also arrives in WELCOME (party::PartyLink::max_players) and FourpTick applies
@@ -39,12 +39,15 @@ namespace coop::fourp {
 
 // ---- Pure rules (no game; tests/test_party_fourp.cpp) ----
 
+/// Players in a party, the host included (= party::kMaxPartyPlayers): host + 3 (A7).
+constexpr int kMaxPlayers = 4;
+
 struct Config {
     bool on = false;        // BB_PARTY set and BB_PARTY_FOURP != 0
     bool scaling = true;    // H2-H4
     bool npc_signs = true;  // E6
     bool recruit = true;    // P5
-    int local_max = 3;      // BB_PARTY_MAX clamped 2..4 (default 3)
+    int local_max = 3;      // BB_PARTY_MAX clamped 2..kMaxPlayers (default 3)
 };
 /// From the environment.
 Config ConfigFromEnv();
@@ -61,6 +64,12 @@ bool LiftCoopSlot(int rec0_status, int coop_count, int max_players);
 int BossCount(int count);
 /// H4: the SpEffect the game applies (7501 -> 7502 with >= 3 cooperators).
 int DopingSpEffect(int sp_effect, int coop_count);
+/// B2 / summon placement around the host: spot 1..3 (0 = the host; 4, 5 defined for a larger
+/// party) as offsets along the host's right and forward axes, `d` (BB_PARTY_SUMMON_OFFSET,
+/// 2.2 m) apart.
+void SpotOffset(int spot, float d, float* right, float* forward);
+/// The spot party slot `slot` tries on attempt 0, 1, 2 (its own, the mirrored one, behind).
+int SpotForTry(int slot, int attempt);
 /// E6: an NPC summon sign event (xx04400..xx04406 or 12906962).
 bool IsNpcSignEvent(int event_id);
 /// E6: the new count byte for the 3[29] argument bytes `a` (group, client type, comparison, count)
@@ -73,7 +82,7 @@ int NpcSignCount(const std::uint8_t a[4], int max_players);
 void FourpInit();
 /// Call once a frame from the main-thread coop tick.
 void FourpTick();
-/// Max players in force (2..4).
+/// Max players in force (2..kMaxPlayers).
 int FourpEffectiveMax();
 
 } // namespace coop::fourp

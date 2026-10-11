@@ -48,7 +48,7 @@ Config ConfigFromEnv() {
     if (const char* v = std::getenv("BB_PARTY_MAX"); v && *v) {
         m = std::atoi(v);
     }
-    c.local_max = m < 2 ? 2 : m > 4 ? 4 : m;
+    c.local_max = m < 2 ? 2 : m > kMaxPlayers ? kMaxPlayers : m;
     return c;
 }
 
@@ -72,7 +72,7 @@ std::string FourpRulesTag() {
 
 int EffectiveMaxPlayers(int local_max, bool guest, bool connected, int host_max) {
     int m = guest && connected && host_max > 0 ? host_max : local_max;
-    return m < 2 ? 2 : m > 4 ? 4 : m;
+    return m < 2 ? 2 : m > kMaxPlayers ? kMaxPlayers : m;
 }
 
 bool LiftCoopSlot(int rec0_status, int coop_count, int max_players) {
@@ -86,6 +86,32 @@ int BossCount(int count) {
 
 int DopingSpEffect(int sp_effect, int coop_count) {
     return sp_effect == 7501 && coop_count >= 3 ? 7502 : sp_effect;
+}
+
+void SpotOffset(int spot, float d, float* right, float* forward) {
+    // 1 right, 2 left, 3 behind (4 behind right, 5 behind left for a larger party): every two
+    // spots (and the host, spot 0) at least d apart.
+    static const float kRight[6] = {0, 1, -1, 0, 1, -1};
+    static const float kForward[6] = {0, 0, 0, -1, -1, -1};
+    if (spot < 0 || spot >= 6) {
+        spot = 3;
+    }
+    *right = kRight[spot] * d;
+    *forward = kForward[spot] * d;
+}
+
+int SpotForTry(int slot, int attempt) {
+    if (slot < 1 || slot >= 6) {
+        slot = 1;
+    }
+    static const int kMirror[6] = {0, 2, 1, 4, 3, 5};
+    if (attempt <= 0) {
+        return slot;
+    }
+    if (attempt == 1) {
+        return kMirror[slot] == slot ? 3 : kMirror[slot];
+    }
+    return slot == 3 ? 5 : 3;
 }
 
 bool IsNpcSignEvent(int event_id) {

@@ -6,6 +6,7 @@
 // is System V: every call into it goes through a BB_COOP_SYSV pointer at Guest(off).
 #include "party_b2.h"
 #include "party_async_io.h"
+#include "party_fourp.h"
 
 #include "coop_hooks.h"
 #include "game_state.h"
@@ -840,16 +841,15 @@ float SummonOffset() {
     return d;
 }
 
-void BesideHost(float pos[4], const float rot[4], int slot) {
-    const float yaw = rot[1], d = SummonOffset();
+// `spot` 1..5 around the host (coop::fourp::SpotOffset: right, left, behind, behind right, behind
+// left; a party slot is its own spot), every two spots SummonOffset() apart: six players (A7).
+void BesideHost(float pos[4], const float rot[4], int spot) {
+    const float yaw = rot[1];
     const float fx = std::sin(yaw), fz = std::cos(yaw), rx = std::cos(yaw), rz = -std::sin(yaw);
-    if (slot == 2) {
-        pos[0] -= rx * d, pos[2] -= rz * d;
-    } else if (slot >= 3) {
-        pos[0] -= fx * d, pos[2] -= fz * d;
-    } else {
-        pos[0] += rx * d, pos[2] += rz * d;
-    }
+    float right = 0, forward = 0;
+    coop::fourp::SpotOffset(spot, SummonOffset(), &right, &forward);
+    pos[0] += rx * right + fx * forward;
+    pos[2] += rz * right + fz * forward;
 }
 
 /// Guest, after any host-world arrival (a bell join or a B2 travel: flow 3 -> 4): once the host's chr
@@ -1262,8 +1262,7 @@ bool PreRingSpacing(const GameSnapshot& s, u32 host_map) {
     }
     ++attempt;
     wait = 0;
-    const int slot = g_local_slot.load() == 2 ? 2 : 1;
-    const int side = attempt == 0 ? slot : attempt == 1 ? (slot == 1 ? 2 : 1) : 3;
+    const int side = coop::fourp::SpotForTry(g_local_slot.load(), attempt);
     std::memcpy(target, start, sizeof start);
     BesideHost(target, start_rot, side);
     reinterpret_cast<Warp>(Field<u64>(Field<u64>(s.player, 0), 0x5f8))(s.player, target, start_rot, 1);

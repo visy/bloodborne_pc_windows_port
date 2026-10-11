@@ -191,13 +191,15 @@ static void Party() {
     // Member rows: one per member, name, state and ping; the host's own row cannot be kicked.
     int visible = 0;
     for (const P::Row& row : members.rows) visible += !row.visible || row.visible();
-    // three members, the notices, party HUD and guest lamps switches, the last event (the game
-    // shows the first six: the last event gives way with three or more members)
-    assert(visible == 7);
-    const P::Row& hud = RowNamed(members, u"Party HUD");
+    // three members and the last event; the switches are on Party options (a full party of four
+    // keeps every row: tested below)
+    assert(visible == 4);
+    const P::Page& options = PageNamed(u"Party options");
+    const P::Row& hud = RowNamed(options, u"Party HUD");
     assert(hud.visible && hud.visible());
-    const P::Row& lamps = RowNamed(members, u"Guests use lamps");
+    const P::Row& lamps = RowNamed(options, u"Guests use lamps");
     assert(lamps.visible && lamps.visible());
+    (void)RowNamed(options, u"Join/leave notices");
     assert(std::u16string(P::Text(members.rows[0].name, false)) == u"Hunter0 (host) (you)");
     assert(std::u16string(P::Text(members.rows[1].choices[0], false)) == u"In world, 42 ms");
     assert(std::u16string(P::Text(members.rows[1].choices[1], false)) == u"Press again: kick");
@@ -248,7 +250,25 @@ static void Party() {
     P::Load();
     visible = 0;
     for (const P::Row& row : members.rows) visible += !row.visible || row.visible();
-    assert(visible == 5 && std::u16string(P::Text(members.rows[0].name, false)) == u"No one yet");
+    assert(visible == 2 && std::u16string(P::Text(members.rows[0].name, false)) == u"No one yet");
+
+    // A full party (host + three, A7): four member rows, the last event, nothing cut.
+    ps::SetMembers({{"Hunter0", true, true, -1, 0, "", true},
+                    {"Hunter1", true, true, 11, 1, "", false},
+                    {"Hunter2", true, false, 12, 2, "", false},
+                    {"Hunter3", true, true, 13, 3, "", false}});
+    P::Load();
+    std::vector<const P::Row*> full;
+    for (const P::Row& row : members.rows) if (!row.visible || row.visible()) full.push_back(&row);
+    assert(full.size() == 5 && full.size() <= P::RowsPerPage);
+    assert(std::u16string(P::Text(full[3]->name, false)) == u"Hunter3");
+    assert(std::u16string(P::Text(full[3]->choices[0], false)) == u"In world, 13 ms");
+    assert(std::u16string(P::Text(full[2]->choices[0], false)) == u"In own world, 12 ms");
+    assert(std::u16string(P::Text(full[4]->name, false)) == u"Last event");
+    while (ps::PopCommand(&cmd)) {}
+    Press(*full[3]);
+    Press(*full[3]);
+    assert(ps::PopCommand(&cmd) && cmd.type == ps::CommandType::Kick && cmd.name == "Hunter3");
 
     // Party mode off (single player): no commands from the buttons; the party-only rows (copy,
     // rejoin, leave) are hidden, the extension row shows (in order).

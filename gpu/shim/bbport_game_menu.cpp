@@ -21,7 +21,7 @@
 //  - Party page: an action table. Pages::AddPartyRow(PartyRow) before PatchImage adds a row
 //    (order, texts made from party::status::Board, Press None / Once / Confirm, run(board), or a
 //    settings toggle); built-in rows use the same table (status 10, copy code 20, rejoin 30,
-//    leave 40; the notices switch and the last event are on Party members).
+//    leave 40; the last event is on Party members, the notices / HUD / guest lamps switches on Party options).
 //  - New pages: add them in Pages::DefineAll (MaxPages below caps the System items).
 #include "bbport_game_menu.h"
 #include "party/party_flow.h"
