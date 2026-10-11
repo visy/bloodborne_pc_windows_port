@@ -97,6 +97,8 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_SPLIT_ENEMIES` | `1`: enemies killed while the party is apart are reconciled at a meet without a load (the other side's copy killed; docs/party/split_travel.md 5) - not verified live | off | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_SPLIT_SELFHEAL` | `1`: a remote chr > 4 m from every member's reported position for 3 s is removed and built again | off | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_RENDER_PROBE` | `1`: raw bytes of every remote chr and its modules in the B2 status line (the invisible-chr diff, split_travel.md 7) | off | `gpu/shim/party/party_b2.cpp` |
+| `BB_PARTY_TITLE_JOIN` | `1`: prototype: the guest joins the host's session from the title so Continue loads the host's world (one load); falls back to the old Continue on any failure (join_timing.md) | off | `gpu/shim/party/party_b2.cpp` |
+| `BB_PARTY_TITLE_JOIN_PROBE` | `1`: the host logs its serialized session descriptor at each bell join (compare with the guest's summon message head) | off | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_SPLIT_KEEP_1598` | Set: an alone load keeps the host's packet-0x19 value (GSM +0x1598 / +0x1593) | unset (cleared) | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_B2_KEEP_BUFFS` | `0`: a guest's timed SpEffects lost in a B2 load are not re-applied | on | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_B2_HOST_REVIVE` | `0`: a host that dies with a member in its world moves the whole party to its lamp again (one load for everyone) instead of being revived alone at its lamp in the loaded map, with no load (docs/party/b2_seamless.md 6.13) | on | `gpu/shim/party/party_b2.cpp` |

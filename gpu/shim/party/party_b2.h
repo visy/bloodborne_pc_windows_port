@@ -69,6 +69,13 @@ void OnLinkEvent(int from_slot, const std::string& body);
 /// An event to send (the director's tick drains it): slot -1 = to the host / broadcast.
 bool PopOutgoing(int* slot, std::string* body);
 
+// ---- Title join (BB_PARTY_TITLE_JOIN; docs/party/join_timing.md) ----
+/// The guest joins the host's session from the title and Continue loads the host's world.
+bool TitleJoinRequested();
+/// Guest at the title, before AutoContinue presses Continue (main thread): true while the title
+/// join runs (hold Continue); false to press (joined and ready, failed, or off).
+bool TitleJoinHold(const GameSnapshot& s);
+
 // ---- Split travel (docs/party/split_travel.md) ----
 /// Where a member is (the party link's vitals): the director passes every member each tick.
 struct Where {

@@ -856,6 +856,11 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
         st.continue_last = now;
         return;
     }
+    // Guest: join the host's session from here first, so Continue loads the host's world (one load).
+    if (role == PartyRole::Guest && b2::TitleJoinHold(s)) {
+        st.continue_last = now - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(st.continue_every));
+        return;
+    }
     if (Seconds(st.continue_last, now) >= st.continue_every) {
         st.continue_last = now;
         st.continue_held = true;
