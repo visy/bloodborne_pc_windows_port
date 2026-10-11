@@ -234,6 +234,8 @@ std::string DescribeChr(u64 chr) {
     return b;
 }
 
+std::string DescribeRender(u64 chr);
+
 std::string DescribeTasks() {
     std::string s;
     char b[192];
@@ -243,7 +245,7 @@ std::string DescribeTasks() {
             const u64 c = PlayerForPeer(t.task + kTaskPeer);
             char h[48];
             std::snprintf(h, sizeof h, " handle %08x at %#llx", c ? Field<u32>(c, 8, ~0u) : ~0u, ull(c));
-            chrs = c ? " chr " + DescribeChr(c) + h : " NO-chr";
+            chrs = c ? " chr " + DescribeChr(c) + h + DescribeRender(c) : " NO-chr";
         }
         const char* chr = chrs.c_str();
         std::snprintf(b, sizeof b, " [human mode %d step %d next %d slot %u flags 0x%02x%s]", t.mode, t.step, t.next,
@@ -915,6 +917,7 @@ void NoteAway(int slot) {
 
 void SendDeadEnemies(const GameSnapshot& s, const char* why);
 std::string DescribeEnterLeave();
+std::string DescribeRender(u64 chr);
 double g_meet_rewind_at = 0;
 std::atomic<bool> g_record_request{false};
 double g_arrived_at = 0;  // guest: send "arrived" then (after an in-world follow)  // a member asked for our record (EVENT b2 record)  // main thread: the meet's re-creation, after the records arrived
@@ -1569,48 +1572,42 @@ u32 NearestEnemy(const GameSnapshot& s, float max_m) {
     return best;
 }
 
-/// Remote player chrs whose drawn position (chr +0xC0, what the name plate and the model use)
-/// is far from their physics position (+0x58 -> +8 -> +0x3B0 -> +0x68 +0x1E0, which the owner's
-/// network updates move): after a re-creation (a meet, a B2 re-join, a host death) the host's
-/// copy of a guest stood invisible with its plate at an old spot while its physics position was
-/// 0.85 m from the host (user reports split24 / hd22, the Dream). Such a chr is warped to its
-/// physics position with the chr warp vfunc +0x5F8, which moves both. Both roles, main thread.
-void RemoteDrawFixTick(double now) {
-    static std::map<u64, double> off_since, last_fix;
-    for (const TaskInfo& t : Tasks(false)) {
-        const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
-        if (!c) {
-            continue;
-        }
-        const u64 pm = Field<u64>(Field<u64>(Field<u64>(Field<u64>(c, 0x58), 8), 0x3b0), 0x68);
-        alignas(16) float phys[4] = {}, rot[4] = {}, draw[4] = {};
-        if (!pm || !SafeRead(pm + 0x1e0, phys, 16) || !SafeRead(pm + 0x1d0, rot, 16) || !SafeRead(c + 0xc0, draw, 16)) {
-            continue;
-        }
-        const float dx = phys[0] - draw[0], dy = phys[1] - draw[1], dz = phys[2] - draw[2];
-        const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (!(d > 3.0f) || !std::isfinite(d)) {
-            off_since.erase(c);
-            continue;
-        }
-        auto it = off_since.emplace(c, now).first;
-        if (now - it->second < 1.0 || now - last_fix[c] < 5.0) {
-            continue;
-        }
-        last_fix[c] = now;
-        const u64 fn = Field<u64>(Field<u64>(c, 0), 0x5f8);
-        if (!fn) {
-            continue;
-        }
-        alignas(16) float p16[4] = {phys[0], phys[1], phys[2], 1.0f};
-        using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
-        reinterpret_cast<Warp>(fn)(c, p16, rot, 1);
-        float after[4] = {};
-        SafeRead(c + 0xc0, after, 16);
-        Log("remote chr %#llx (mode %d): drawn at (%.1f, %.1f, %.1f), %.1f m from its position (%.1f, %.1f, %.1f): warped "
-            "there (drawn now (%.1f, %.1f, %.1f))", ull(c), t.mode, draw[0], draw[1], draw[2], double(d), phys[0], phys[1],
-            phys[2], after[0], after[1], after[2]);
+/// Every remote player chr in its task's Update step is drawn: the leave flag the task's
+/// STEP_Delete sets (chr +0x3B0 -> +8, byte +0x1BC bit 1) is cleared if a re-created chr carries
+/// it (user reports split24 / hd22 / hd26: "I see the health bar but no model" on the host after
+/// a re-creation - the bar is the chr's, the model is not drawn). Logs every change. Both roles.
+void RemoteVisibleTick(double now) {
+    static double next = 0;
+    if (now < next) {
+        return;
     }
+    next = now + 0.25;
+    for (const TaskInfo& t : Tasks(false)) {
+        if ((t.mode != 1 && t.mode != 2) || t.step != kStepUpdate || (t.flags & 2)) {
+            continue;
+        }
+        const u64 c = PlayerForPeer(t.task + kTaskPeer);
+        const u64 cd = c ? Field<u64>(Field<u64>(c, 0x3b0), 8) : 0;
+        if (!cd) {
+            continue;
+        }
+        const u8 v = Field<u8>(cd, 0x1bc);
+        if (v & 2) {
+            const u8 w = u8(v & ~2u);
+            SafeWrite(cd + 0x1bc, &w, 1);
+            Log("remote chr %#llx (mode %d, handle %x): leave flag +0x1BC %#x set in its Update step -> %#x (drawn again); "
+                "enterleave%s", ull(c), t.mode, Field<u32>(c, 8), unsigned(v), unsigned(w), DescribeEnterLeave().c_str());
+        }
+    }
+}
+
+std::string DescribeRender(u64 chr) {
+    const u64 cd = Field<u64>(Field<u64>(chr, 0x3b0), 8);
+    char b[160];
+    std::snprintf(b, sizeof b, " render[+0x1bc %#x cd %#llx +0x1b8 %08x +0x1c0 %08x chr+0x1e0 %08x chr+0x524 %08x]",
+                  unsigned(Field<u8>(cd, 0x1bc)), ull(cd), Field<u32>(cd, 0x1b8), Field<u32>(cd, 0x1c0), Field<u32>(chr, 0x1e0),
+                  Field<u32>(chr, 0x524));
+    return b;
 }
 
 std::string DescribeWhere() {
@@ -3337,7 +3334,7 @@ void Tick(const GameSnapshot& s) {
         }
         if (s.world_up && !s.loading) {
             if (SessionUp()) {
-                RemoteDrawFixTick(now);
+                RemoteVisibleTick(now);
             }
             RemovalTick(now);
             if (g_arrived_at > 0 && now >= g_arrived_at) {
