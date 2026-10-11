@@ -260,7 +260,13 @@ t = seconds since the host's start):
   nobody in a wall or under the floor, the party HUD with three rows at 0.9-1.2 m. They stand as a loose
   group rather than a clean line: one cooperator stands about 0.5 m behind the host.
 
-**Open: the 3rd cooperator's summon is slow.** Hunter3's first two invites (host `summons Hunter3`
+- third run (merged build 0.5.1 (0.51-613-g77c74f5281), all four identical, 36 party hooks):
+  `0 -> 1 (t 25.6 s)`, `1 -> 2 (t 43.6 s)`; Hunter3 was invited twice and dropped both times as
+  below, then the queue's 240 s lease (12 runs waiting) ended the run before a third invite. So the
+  4th player got in on 2 of 3 runs, 57 s and 108 s after the 2nd cooperator. Pre-ring spacing put the
+  guests at side 1 / 2 / 3, 0.5 m apart along the right axis, each `side try 0 OK`.
+
+**Open: the 3rd cooperator's summon is slow and not reliable.** Hunter3's first two invites (host `summons Hunter3`
 right after `cooperators 1 -> 2`, and ~30 s later) reached its game (`guest_invite`, signaling up,
 about 8 small vport-40 packets) but its game never called `JoinRoom`: the exchange stopped and
 the connection was deactivated (host side `member 65282`: never a room member). The third invite, ~100 s after Hunter2's arrival, went through (16 / 9 / 38 / 267-byte
