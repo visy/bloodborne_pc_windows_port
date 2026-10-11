@@ -211,7 +211,14 @@ std::string DescribeChr(u64 chr) {
     if (!chr || !ChrPos(chr, p)) {
         return "-";
     }
-    std::snprintf(b, sizeof b, "stage %#x pos (%.1f, %.1f, %.1f)", Field<u32>(chr, 0x3f8), p[0], p[1], p[2]);
+    // +0x78 chr type (0 own body, 1 white phantom, ...); vfunc +0x558 is what the cooperator count
+    // 0x15BDC20 tests (counted when in {1, 5, 7, 19}).
+    using TypeFn = u32(BB_COOP_SYSV*)(u64);
+    const u64 vt = Field<u64>(chr, 0);
+    const u64 fn = vt ? Field<u64>(vt, 0x558) : 0;
+    const u32 pres = fn ? reinterpret_cast<TypeFn>(fn)(chr) : ~0u;
+    std::snprintf(b, sizeof b, "stage %#x type %d/%d pos (%.1f, %.1f, %.1f)", Field<u32>(chr, 0x3f8),
+                  Field<int>(chr, 0x78, -1), int(pres), p[0], p[1], p[2]);
     return b;
 }
 
@@ -222,7 +229,9 @@ std::string DescribeTasks() {
         std::string chrs;
         if (t.mode == 1 || t.mode == 2) {
             const u64 c = PlayerForPeer(t.task + kTaskPeer);
-            chrs = c ? " chr " + DescribeChr(c) : " NO-chr";
+            char h[24];
+            std::snprintf(h, sizeof h, " handle %08x", c ? Field<u32>(c, 8, ~0u) : ~0u);
+            chrs = c ? " chr " + DescribeChr(c) + h : " NO-chr";
         }
         const char* chr = chrs.c_str();
         std::snprintf(b, sizeof b, " [human mode %d step %d next %d slot %u flags 0x%02x%s]", t.mode, t.step, t.next,
@@ -234,6 +243,30 @@ std::string DescribeTasks() {
         s += b;
     }
     return s.empty() ? std::string(" none") : s;
+}
+
+/// The presentation slots (GSM +0x16F8 table: +0x14 used, +0x18 count, 5 entries of 0x14 bytes
+/// from +0x1C: {chr handle, kind, state, a, b}) - what the cooperator count 0x15BDC20 reads (a
+/// handle counts when it resolves to a live chr in WorldChrMan +0x850).
+std::string DescribePresentation() {
+    const u64 t = Field<u64>(Slot(kSlotGsm), 0x16f8);
+    if (!t) {
+        return "pres -";
+    }
+    char b[96];
+    std::snprintf(b, sizeof b, "pres used %d count %d max %d:", Field<int>(t, 0x14, -1), Field<int>(t, 0x18, -1),
+                  Field<int>(Slot(kSlotFlow), 0xc, -1));
+    std::string s = b;
+    for (int i = 0; i < 5; ++i) {
+        const u64 e = t + 0x1c + 0x14 * u64(i);
+        const u32 h = Field<u32>(e, 0, ~0u);
+        if (h == ~0u) {
+            continue;
+        }
+        std::snprintf(b, sizeof b, " [%d %08x k%d s%d]", i, h, Field<int>(e, 4), Field<int>(e, 8));
+        s += b;
+    }
+    return s;
 }
 
 // ---- Hooks ----
@@ -337,6 +370,29 @@ BB_COOP_SYSV u64 BossClearLeaveHook(u64 session) {
     }
     using Fn = u64(BB_COOP_SYSV*)(u64);
     return reinterpret_cast<Fn>(Guest(kBeginLeave))(session);
+}
+
+// K12 / K13: OnReviveMagic 0x1389D20 (the Hunter's Mark) leaves the session at once
+// (BeginLeaveSession at 0x1389DDD, then 0x15BED10 at 0x1389DFE) before OnReviveMagic_1 warps to the
+// last lamp. On a B2 host with members the room is kept: the mark's warp is captured as a party
+// travel (party_travel ReviveMagicEntry) and the members follow as for a lamp.
+bool HostKeepsRoomOnMark() {
+    return g_on.load() && Role() == RoleHost && HostHasMemberTasks();
+}
+BB_COOP_SYSV u64 MarkLeaveHook(u64 session) {
+    if (HostKeepsRoomOnMark()) {
+        Log("K12: host Hunter's Mark: session kept (the party follows to the host's lamp)");
+        return 0;
+    }
+    using Fn = u64(BB_COOP_SYSV*)(u64);
+    return reinterpret_cast<Fn>(Guest(kBeginLeave))(session);
+}
+BB_COOP_SYSV void MarkDropHook(u64 slots) {
+    if (HostKeepsRoomOnMark()) {
+        return;
+    }
+    using Fn = void(BB_COOP_SYSV*)(u64);
+    reinterpret_cast<Fn>(Guest(kDropPresentation))(slots);
 }
 
 // K11: the packet-0x10 apply 0x13BECA0(SprjEventFlagMan, blob) at 0x17851CE. At a vanilla join
@@ -520,8 +576,11 @@ struct State {
     HostPhase hphase = HostPhase::Idle;
     double hsince = 0;
     bool arrived = false;  // a guest said it arrived (under mu)
+    bool rejoined_logged = false; // host: an "arrived" came since the resync
     bool have_dest = false; // guest: the host's post-load transform (under mu)
     int hp_before = -1;      // guest: its HP at the host's travel event (kept through the B2 load)
+    int session_type = -1;   // guest: local PlayerGameData +0x5D8 at the travel event (its presentation slot)
+    bool session_type_fixed = false;
     u32 dest_stage = 0;
     float dest_pos[4] = {}, dest_rot[4] = {};
     // probe
@@ -928,6 +987,8 @@ void GuestTick(const GameSnapshot& s, double now) {
             st.screen_done = true;
             SaveOverlay();
             st.hp_before = Field<int>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0x128, -1);
+            st.session_type = Field<int>(Field<u64>(Slot(kSlotGameData), 8), 0x5d8, -1);
+            st.session_type_fixed = false;
             static const bool early = !(std::getenv("BB_PARTY_B2_EARLY_SCREEN") &&
                                         std::getenv("BB_PARTY_B2_EARLY_SCREEN")[0] == '0');
             if (early) {
@@ -997,6 +1058,25 @@ void GuestTick(const GameSnapshot& s, double now) {
     case GuestPhase::Loading: {
         const bool loading = s.loading || !s.world_up;
         st.load_seen = st.load_seen || loading;
+        if (loading) {
+            // The host-world MoveMapStep ctor (0x1937570, flow 3) writes local PlayerGameData +0x5D8
+            // (the session type / presentation slot: the chr vfunc +0x558 the cooperator count
+            // 0x15BDC20 and the presentation code test; 7 = a summoned white phantom's slot) from
+            // its descriptor's +0x88, which only the summoned-placement path (GSM +0x1521) fills
+            // from GSM +0x16F4; our lamp / transform warp leaves 0. With 0 the host counts no
+            // cooperator after a B2 travel (its watchdog then ended the session 60 s later). Put
+            // back the value of the join before InGameStart re-broadcasts this player's record.
+            const u64 gd = Field<u64>(Slot(kSlotGameData), 8);
+            const int now_type = Field<int>(gd, 0x5d8, -1);
+            if (gd && st.session_type > 0 && now_type != st.session_type) {
+                SafeWrite(gd + 0x5d8, &st.session_type, 4);
+                if (!st.session_type_fixed) {
+                    st.session_type_fixed = true;
+                    Log("guest: session type (PlayerGameData +0x5D8) %d -> %d (the join's) during the host-world load",
+                        now_type, st.session_type);
+                }
+            }
+        }
         st.stable = (!loading && st.load_seen) ? st.stable + 1 : 0;
         if (st.stable >= 30 && fstate == 4) {
             g_early_screen = false;  // the load's own InGameStart cleared it
@@ -1095,25 +1175,51 @@ void HostTick(const GameSnapshot& s, double now) {
             }
             st.hphase = HostPhase::Resynced;
             st.hsince = now;
+            st.rejoined_logged = false;
             std::lock_guard<std::mutex> lk(st.mu);
             st.arrived = false;
         }
         return;
     case HostPhase::Resynced: {
+        if (loading) {
+            // The next travel before every member is back (repeated lamp warps): start over; the
+            // old wait would otherwise run out its 60 s and rewind against the wrong world.
+            st.hphase = HostPhase::Loading;
+            st.hsince = now;
+            st.stable = 0;
+            g_rejoin = true;
+            Log("host: own load again before the re-join finished; members keep the room");
+            return;
+        }
         bool arrived;
         {
             std::lock_guard<std::mutex> lk(st.mu);
             arrived = st.arrived;
             st.arrived = false;
         }
-        if (arrived || now - st.hsince > 60.0) {
+        const bool timeout = now - st.hsince > 60.0;
+        if (arrived || timeout) {
             const int n = RewindRemoteTasks("host");
             Log("host: %s; %d member task(s) rewound", arrived ? "a guest arrived" : "60 s without arrival", n);
-            if (now - st.hsince > 60.0 || n == 0) {
+            if (timeout) {
                 st.hphase = HostPhase::Idle;
                 g_rejoin = false;
+                return;
             }
         }
+        // Done once every member task has its chr again (each guest's "arrived" rewinds it).
+        bool all = true;
+        for (const TaskInfo& t : Tasks(false)) {
+            if (t.mode == 1 && !PlayerForPeer(t.task + kTaskPeer)) {
+                all = false;
+            }
+        }
+        if (all && (arrived || st.rejoined_logged)) {
+            st.hphase = HostPhase::Idle;
+            g_rejoin = false;
+            Log("host: re-join done after %.1f s; tasks:%s", now - st.hsince, DescribeTasks().c_str());
+        }
+        st.rejoined_logged = st.rejoined_logged || arrived;
         return;
     }
     }
@@ -1184,6 +1290,8 @@ void Init() {
                 "B2 K8 host death return-all");
     InstallCall(0x13858f5, kBeginLeave, reinterpret_cast<const void*>(&BossClearLeaveHook), "B2 K10 boss-clear leave (a)");
     InstallCall(0x1385a95, kBeginLeave, reinterpret_cast<const void*>(&BossClearLeaveHook), "B2 K10 boss-clear leave (b)");
+    InstallCall(0x1389ddd, kBeginLeave, reinterpret_cast<const void*>(&MarkLeaveHook), "B2 K12 Hunter's Mark leave");
+    InstallCall(0x1389dfe, kDropPresentation, reinterpret_cast<const void*>(&MarkDropHook), "B2 K13 Hunter's Mark drop");
     SetSendHomeVeto(&SendHomeVeto);
     InstallCall(0x17851ce, 0x13beca0, reinterpret_cast<const void*>(&FlagApplyHook), "B2 K11 flag snapshot apply");
     SetEmevdSkipPredicate(&ClientIntroSkip);
@@ -1350,10 +1458,11 @@ void Tick(const GameSnapshot& s) {
     if ((Role() == RoleHost || Role() == RoleClient) && s.world_up && !s.loading && now - last_status >= 10.0) {
         last_status = now;
         const u64 remo = Field<u64>(Slot(0x5540058), 8);
-        Log("status: local %s, role %d, flow %d (timer %.2f, GSM+0x1521 %u, remo %d), rejoin %d; tasks:%s",
-            DescribeChr(s.player).c_str(), Role(), Field<int>(Slot(kSlotFlow), 0x84, -1),
+        Log("status: local %s (handle %08x), role %d, flow %d (timer %.2f, GSM+0x1521 %u, remo %d), rejoin %d, %s; tasks:%s",
+            DescribeChr(s.player).c_str(), Field<u32>(s.player, 8, ~0u), Role(), Field<int>(Slot(kSlotFlow), 0x84, -1),
             Field<float>(Slot(kSlotFlow), 0x98), unsigned(Field<u8>(Slot(kSlotGsm), 0x1521)),
-            remo ? int(Field<u8>(remo, 0x168) & 1) : -1, int(g_rejoin.load()), DescribeTasks().c_str());
+            remo ? int(Field<u8>(remo, 0x168) & 1) : -1, int(g_rejoin.load()), DescribePresentation().c_str(),
+            DescribeTasks().c_str());
     }
     ProbeTick(s);
     TestWarpTick(s, now);

@@ -97,6 +97,7 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_GUEST_SERVICES` | `0`: guests cannot use the Doll, shops or workshop in the host's Dream (vanilla client gates) | on in party mode | `gpu/shim/party/party_guestsvc.cpp` |
 | `BB_PARTY_GUEST_SERVICES_TALK` | `all` or a comma list of more talk script ids the guest may use (diagnostics) | built-in list | `gpu/shim/party/party_guestsvc.cpp` |
 | `BB_PARTY_GUEST_LAMPS` | `1`: lamps and headstones work in a party; a guest's lamp / headstone use moves the whole party (host-led) | off (opt-in until run live) | `gpu/shim/party/party_guestsvc.cpp` |
+| `BB_PARTY_HEADSTONES` | `0`: the Hunter's Dream headstones stay vanilla (no headstone travel while guests are present) | on in party mode (the host's headstone travel moves the party) | `gpu/shim/party/party_guestsvc.cpp` |
 | `BB_PARTY_GUESTSVC_TEST` | `echoes=N;warp=x,y,z,yaw[/...]`: live-test fixture on the guest, 15 s after the guest-services gate opened | off | `gpu/shim/party/party_guestsvc.cpp` |
 | `BB_PARTY_PHANTOM_PROBE` | `insight`, `refill`: one offline probe 5 s after the world is up | off | `gpu/shim/party/party_phantom.cpp` |
 | `BB_PARTY_TRACE` | `1`: logs every FROM API / HTTP request and answer (default: the first few) | off | `gpu/shim/net/bbnet_glue.cpp` |

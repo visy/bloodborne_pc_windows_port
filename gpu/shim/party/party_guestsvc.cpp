@@ -208,6 +208,11 @@ constexpr u64 kMultiJmp = 0x203C569;       // e9 61 29 00 00 -> 0x203EECF
 constexpr u64 kLampMultiGate = 0x12F831C;  // test ecx,ecx; setg cl; or cl,al (then mov [r13+0x49], cl)
 
 std::atomic<bool> g_lamps{false};
+// The host's headstones in a party (default on; BB_PARTY_HEADSTONES=0 off): IsMultiplayerInProgress
+// answers 0 for the headstone scripts, so the host can travel from the Dream with guests present
+// (the party follows by B2 / B1 travel). A guest's headstones stay behind IsClientPlayer unless
+// BB_PARTY_GUEST_LAMPS=1.
+std::atomic<bool> g_headstones{false};
 std::atomic<int> g_session_role{-1};       // the tick's last read (the interceptor's thread)
 std::atomic<std::uint32_t> g_multi_overrides{0};
 std::mutex g_lamp_mu;
@@ -292,7 +297,8 @@ void DollRewriter(int event_id, int bank, int id, std::uint64_t event, std::uint
 // Main thread (talk scripts): IsMultiplayerInProgress for talk environment `env` (both roles):
 // the headstones work in a party.
 std::uint64_t BB_COOP_SYSV MultiFilter(std::uint64_t env, std::uint64_t value) {
-    if (!g_lamps.load(std::memory_order_relaxed) || (value & 0xff) == 0) {
+    if (!(g_lamps.load(std::memory_order_relaxed) || g_headstones.load(std::memory_order_relaxed)) ||
+        (value & 0xff) == 0) {
         return value;
     }
     const std::uint32_t talk = *reinterpret_cast<const std::uint32_t*>(env + 0x10);
@@ -911,10 +917,21 @@ void GuestServicesInit() {
         g.extra = e;
     }
     g_lamps = GuestLampsEnabledFromEnv(std::getenv("BB_PARTY_GUEST_LAMPS"));
+    const char* hs = std::getenv("BB_PARTY_HEADSTONES");
+    const bool headstones = g_lamps.load() || !(hs && hs[0] == '0' && !hs[1]);
+    bool multi_ok = false;
+    if (headstones) {
+        multi_ok = Matches(kMultiJmp, {0xe9, 0x61, 0x29, 0x00, 0x00}) &&
+                   HookValueFilter(kMultiOr, {0x08, 0xc1, 0x0f, 0xb6, 0xc1}, {0x4c, 0x89, 0xff, 0x89, 0xc6}, &MultiFilter,
+                                   kTestResultInt, "talk IsMultiplayerInProgress (party headstones)");
+        g_headstones = multi_ok;
+        Log("headstones %s: the host travels from the Hunter's Dream with guests present (the party follows)",
+            multi_ok ? "on" : "NOT installed");
+    } else {
+        Log("headstones off (BB_PARTY_HEADSTONES=0): vanilla, no headstone travel while in a party");
+    }
     if (g_lamps.load()) {
-        bool ok = Matches(kMultiJmp, {0xe9, 0x61, 0x29, 0x00, 0x00}) &&
-                  HookValueFilter(kMultiOr, {0x08, 0xc1, 0x0f, 0xb6, 0xc1}, {0x4c, 0x89, 0xff, 0x89, 0xc6}, &MultiFilter,
-                                  kTestResultInt, "talk IsMultiplayerInProgress (party headstones)");
+        bool ok = multi_ok;
         ok = PatchBytes(kLampMultiGate, {0x85, 0xc9, 0x0f, 0x9f, 0xc1, 0x08, 0xc1}, {0x31, 0xc9, 0x90, 0x90, 0x90, 0x90, 0x90},
                         "lamp multiplayer gate +0x49 (party lamps)") && ok;
         SetLampWarpInterceptor(&GuestLampIntercept);
@@ -1152,6 +1169,10 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
         g.changed_at = 0;
         Log("own character steady for 15 s: level %d, echoes %d, Insight %d", r.level, r.echoes, r.insight);
     }
+}
+
+std::uint64_t GuestSvcFindChr(std::uint32_t id) {
+    return FindChr(id);
 }
 
 bool GuestServicesOpen() {
