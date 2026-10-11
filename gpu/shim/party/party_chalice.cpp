@@ -86,6 +86,7 @@ char g_party_glyph[16] = {};               // "" when none (read by the ImeDialo
 char16_t g_party_label[64] = {};           // the altar menu item
 char16_t g_party_help[160] = {};           // its help line
 std::atomic<bool> g_party_dungeon{false};
+std::atomic<bool> g_altar_auto{false};     // the glyph box took the party glyph: walk the rest
 
 void CopyU16(char16_t* out, std::size_t cap, const std::string& text) {
     std::size_t n = 0;
@@ -117,6 +118,7 @@ const char* PartyGlyph(std::uint32_t max_length) {
     }
     std::printf("Party: chalice: the altar's glyph box gets the party dungeon's glyph %s\n", g_party_glyph);
     std::fflush(stdout);
+    g_altar_auto.store(true, std::memory_order_release);
     return g_party_glyph;
 }
 
@@ -584,6 +586,10 @@ void Tick(bool host) {
         std::fflush(stdout);
         last = s;
     }
+}
+
+bool TakeAltarAutopilot() {
+    return g_altar_auto.exchange(false, std::memory_order_acq_rel);
 }
 
 void SetHostName(const std::string& name) {

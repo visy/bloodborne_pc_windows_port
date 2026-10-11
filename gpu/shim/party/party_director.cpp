@@ -2056,6 +2056,62 @@ PartyRole PartyDirector::Role() const {
 
 bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_point now);
 
+/// "Enter the party's dungeon" in one press (docs/party/chalice.md 7): after the altar's glyph box
+/// took the party dungeon's glyph, the remaining prompts are answered on the game's own pad path:
+/// OK on "Search using Chalice Glyph", the search result, YES on "Join the selected Chalice
+/// Dungeon?", the altar again and its first awaken point. Text-gated and strict: a prompt that
+/// does not come in 10 s stops the walk (no blind presses). BB_PARTY_ALTAR_AUTO=0: off.
+void AltarAutopilotTick(const GameSnapshot& s) {
+    static const bool off = [] {
+        const char* e = std::getenv("BB_PARTY_ALTAR_AUTO");
+        return e && e[0] == '0';
+    }();
+    static MenuScript script;
+    static bool on = false;
+    if (off) {
+        return;
+    }
+    if (chalice::TakeAltarAutopilot()) {
+        script = MenuScript{};
+        std::string bad;
+        on = script.Parse("!cross@Search using Chalice Glyph/!cross@Search Results/!left@Join the selected Chalice Dungeon/"
+                          "cross/wait/cross/!cross@Select location to awaken in/wait/cross",
+                          &bad);
+        Log("altar: entering the party's dungeon (%s)", on ? "prompts answered for the player" : bad.c_str());
+    }
+    if (!on) {
+        return;
+    }
+    if (s.loading || !s.world_up) {
+        // The awaken load started: done.
+        runtime_pad_director_press(0);
+        on = false;
+        Log("altar: the party's dungeon is loading");
+        return;
+    }
+    std::uint64_t seq = 0;
+    std::int64_t last_ms = 0;
+    BbGameMenu::TextActivity(&seq, &last_ms);
+    const auto now = Clock::now();
+    const std::int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+    const double secs = std::chrono::duration<double>(now.time_since_epoch()).count();
+    std::string line;
+    const std::uint32_t held = script.Step(secs, seq, seq ? double(now_ms - last_ms) / 1000.0 : 1e9, &line,
+                                           [](const std::string& text) {
+                                               const std::int64_t ms = BbGameMenu::TextSeenMs(text.c_str());
+                                               return ms > 0 ? double(ms) / 1000.0 : -1.0;
+                                           });
+    runtime_pad_director_press(held);
+    if (!line.empty()) {
+        Log("altar: %s", line.c_str());
+    }
+    if (script.finished()) {
+        runtime_pad_director_press(0);
+        on = false;
+        Log("altar: %s", script.stuck() ? "a prompt did not come; the player takes over" : "prompts answered");
+    }
+}
+
 void PartyDirector::Tick() {
     State& st = S();
     const auto now = Clock::now();
@@ -2309,6 +2365,9 @@ void PartyDirector::Tick() {
     // A guest's levers / doors / NPC talk change the host's world (party_worldact.h).
     worldact::Tick(s, link);
     split::Tick(s);  // split travel: the lamp choice dialog (party_split.h)
+    if (role == PartyRole::Host) {
+        AltarAutopilotTick(s);  // "Enter the party's dungeon" in one press
+    }
     zone.Next(perf::Zone::DirRing);
     if (st.test.on) {
         RunTravelSteps(st, s, role, now);
