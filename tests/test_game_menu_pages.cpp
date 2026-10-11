@@ -258,8 +258,8 @@ static void Party() {
     const int runs = extension_runs;
     Press(*shown[1]);
     assert(extension_runs == runs + 1);
-    Press(*shown[1]); // back: only the text
-    assert(extension_runs == runs + 1);
+    Press(*shown[1]); // every press runs it
+    assert(extension_runs == runs + 2);
     assert(std::u16string(P::Text(party.rows[0].choices[0], false)) == u"Single player");
     Press(party.rows[2]);
     Press(leave);
