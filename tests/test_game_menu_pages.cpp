@@ -222,8 +222,8 @@ static void Party() {
     // Rejoin: at once; Leave: confirmed.
     Press(party.rows[2]);
     assert(ps::PopCommand(&cmd) && cmd.type == ps::CommandType::Rejoin);
-    Press(party.rows[2]); // back to "Request": nothing
-    assert(!ps::PopCommand(&cmd));
+    Press(party.rows[2]); // every press runs a Once row (the text box rows: each press opens it)
+    assert(ps::PopCommand(&cmd) && cmd.type == ps::CommandType::Rejoin);
     const P::Row& leave = RowNamed(party, u"Leave the party");
     Press(leave);
     assert(!ps::PopCommand(&cmd));

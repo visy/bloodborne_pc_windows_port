@@ -73,16 +73,11 @@ struct Field {
     std::function<void(int)> set;                    ///< applies a setting
     std::function<void(int from, int to, std::int64_t now)> act; ///< a button
     bool debounce = false; ///< applied once the value rests for 0.4 s (re-creates targets)
-    /// A momentary button (Party page "Once" rows): back to 0 by itself `hold_ms` after the press
-    /// that ran it, once `busy` (if any) is false - the next press runs it again, and the value
-    /// column shows the row's value (a saved address) instead of the pressed text.
-    std::int64_t hold_ms = 0;
-    std::function<bool()> busy;
 };
 std::vector<Field> fields;
 std::vector<int> values, defaults, applied, resting;
 std::vector<u8> bytes, default_bytes;
-std::vector<std::int64_t> rested_since, armed_at, pressed_at;
+std::vector<std::int64_t> rested_since, armed_at;
 std::atomic<bool> loaded{false};
 std::atomic<std::int64_t> last_refresh{-1000000};
 void (*restart_handler)() = nullptr;
@@ -760,10 +755,10 @@ void DefineAll() {
                 Field f;
                 f.kind = Kind::Toggle;
                 f.act = [act](int from, int to, std::int64_t) {
-                    if (from == 0 && to == 1) act(); // a press within hold_ms back to 0: nothing
+                    // Every press (live: the press back to 0 only reset the text, so a second edit of
+                    // the address took two presses and showed 'Type, then Enter' after Enter).
+                    if (from != to) act();
                 };
-                f.hold_ms = 1500;  // momentary: every later press runs it again (the text box rows)
-                f.busy = r.busy;
                 e.field = AddField(std::move(f));
             }
         }
@@ -858,7 +853,6 @@ void Define() {
     default_bytes.assign(n, 0);
     rested_since.assign(n, 0);
     armed_at.assign(n, -1000000);
-    pressed_at.assign(n, -1000000);
     for (const Page& p : pages) {
         for (const Row& r : p.rows) {
             Field& f = fields[std::size_t(r.field)];
@@ -969,14 +963,6 @@ void Poll(std::int64_t now_ms) {
             // A slider with choices: its position, not the choice's number.
             values[i] = f.steps ? ChoiceFromPosition(bytes[i], f.steps) : bytes[i];
         }
-        if (f.hold_ms && values[i] == 1 && applied[i] == 1 && now_ms - pressed_at[i] >= f.hold_ms &&
-            !(f.busy && f.busy())) {
-            bytes[i] = 0;  // the game shows the row from this byte
-            values[i] = applied[i] = resting[i] = 0;
-            default_bytes[i] = 0;
-            defaults[i] = 0;
-            continue;
-        }
         const int value = values[i];
         if (value == applied[i]) {
             resting[i] = value;
@@ -997,7 +983,6 @@ void Poll(std::int64_t now_ms) {
         const int from = applied[i];
         applied[i] = value;
         if (f.act) {
-            if (from == 0 && value == 1) pressed_at[i] = now_ms;
             f.act(from, value, now_ms);
             // The game's "Default" sets this: a button's default follows its value, so Default
             // does not press it.

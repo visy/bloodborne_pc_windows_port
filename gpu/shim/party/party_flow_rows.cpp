@@ -111,14 +111,13 @@ void RegisterMenuRows() {
         const Saved s = Current();
         return s.host_address.empty() ? T("Not set", "Не задан") : Texts{Short(s.host_address), Short(s.host_address)};
     };
-    addr.pressed = [](const Board&) { return T("Type, then Enter", "Введите, Enter"); };
+    addr.pressed = addr.value;  // every press opens the text box: the value in both states
     addr.help = [](const Board&) {
         return WithMessage(T("Party code or host:port from the host; type it on the keyboard (Ctrl+V pastes)",
                              "Код группы или хост:порт; введите с клавиатуры (Ctrl+V вставляет)"));
     };
     addr.visible = [](const Board&) { return SoloTitle(); };
     addr.press = Row::Press::Once;
-    addr.busy = [] { return Editing(); };  // the text box open: "Type, then Enter"
     addr.run = [](const Board&) { BeginEdit(Field::Address); };
     P::AddPartyRow(addr);
 
@@ -126,14 +125,13 @@ void RegisterMenuRows() {
     pass.order = 18;
     pass.name = [](const Board&) { return T("Password", "Пароль"); };
     pass.value = [](const Board&) { return Current().password.empty() ? T("None", "Нет") : T("Set", "Задан"); };
-    pass.pressed = [](const Board&) { return T("Type, then Enter", "Введите, Enter"); };
+    pass.pressed = pass.value;  // every press opens the text box: the value in both states
     pass.help = [](const Board&) {
         return WithMessage(T("The party's password (host and guests the same); saved protected for this Windows user",
                              "Пароль группы (у всех одинаковый); хранится защищённым для этого пользователя"));
     };
     pass.visible = [](const Board&) { return SoloTitle(); };
     pass.press = Row::Press::Once;
-    pass.busy = [] { return Editing(); };  // the text box open: "Type, then Enter"
     pass.run = [](const Board&) { BeginEdit(Field::Password); };
     P::AddPartyRow(pass);
 
@@ -144,14 +142,13 @@ void RegisterMenuRows() {
         const Saved s = Current();
         return s.name.empty() ? T("Automatic", "Автоматически") : Texts{Short(s.name), Short(s.name)};
     };
-    name.pressed = [](const Board&) { return T("Type, then Enter", "Введите, Enter"); };
+    name.pressed = name.value;  // every press opens the text box: the value in both states
     name.help = [](const Board&) {
         return WithMessage(T("Your name in the party (1-16 of A-Z a-z 0-9 _ -); each player needs their own",
                              "Ваше имя в группе (1-16 из A-Z a-z 0-9 _ -); у каждого своё"));
     };
     name.visible = [](const Board&) { return SoloTitle(); };
     name.press = Row::Press::Once;
-    name.busy = [] { return Editing(); };  // the text box open: "Type, then Enter"
     name.run = [](const Board&) { BeginEdit(Field::Name); };
     P::AddPartyRow(name);
 
