@@ -1371,6 +1371,11 @@ bool WarpLocal(const float pos[3], float yaw, const char* why) {
     ChrPos(player, before);
     using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
     reinterpret_cast<Warp>(fn)(player, p16, r16, 1);
+    // The camera stayed where it was and swung through the walls after a long in-world warp
+    // (live vis6: the host looked out of the geometry 3 s after a 68 m move): the Lua CamReset
+    // 0x132F5A0(ctx, 10000 = the local player, 1) puts it behind the player.
+    using CamReset = u64(BB_COOP_SYSV*)(u64, u32, u32);
+    reinterpret_cast<CamReset>(Guest(0x132f5a0))(0, 10000, 1);
     Log("in-world warp (%s): (%.1f, %.1f, %.1f) -> (%.1f, %.1f, %.1f) in %s, no load", why, before[0], before[1], before[2],
         pos[0], pos[1], pos[2], MapName(LocalMap()).c_str());
     return true;
