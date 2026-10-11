@@ -108,23 +108,49 @@ std::atomic<double> g_quick_join_at{0};
 void* g_set_load_mode = nullptr;
 } // namespace
 
-// Quick join's last step (0x1aa8410(helper)): writes the fetched channel into the helper's slot record
-// (+0xc8 slot, +0xd0 the channel object) and clears the chalice groups (docs/party/chalice.md 4).
-BB_COOP_SYSV void QuickJoinStepProbe(u64 helper, u64, u64, u64, u64, u64) {
-    std::uint32_t slot = 0xffffffffu;
-    std::uint64_t ch = 0, q[6] = {};
+// The ritual helper's steps around a summoned member's quick join (step table 0x1aaa8c0):
+// request 6 (0x1aa5280) -> STEP_Exec_forQuickJoin 0x1aa81d0 (the fetched channel -> the helper's
+// slot record), request 7 -> STEP_Exec_forCancel 0x1aa8410 (the slot record reset to empty).
+namespace {
+void LogHelperStep(const char* what, u64 helper) {
+    std::uint32_t slot = 0xffffffffu, state = 0, busy = 0;
+    std::uint64_t ch = 0, id = 0;
     SafeGet(helper + 0xc8, &slot);
     SafeGet(helper + 0xd0, &ch);
-    for (int i = 0; ch && i < 6; ++i) SafeGet(ch + 8 * i, &q[i]);
+    SafeGet(helper + 0x25c, &state);
+    SafeGet(helper + 0x264, &busy);
+    if (ch) SafeGet(ch + 0x10, &id);
     std::uint32_t bits = 0;
     ReadEventFlagValue(9020, 7, &bits);
-    g_quick_join_at.store(Seconds());
-    std::printf("Party: chalice: quick join writes slot %u (current slots 0x%x), channel object %llx: %llx %llx %llx %llx %llx %llx%s",
-                slot, bits, static_cast<unsigned long long>(ch), static_cast<unsigned long long>(q[0]),
-                static_cast<unsigned long long>(q[1]), static_cast<unsigned long long>(q[2]),
-                static_cast<unsigned long long>(q[3]), static_cast<unsigned long long>(q[4]),
-                static_cast<unsigned long long>(q[5]), "\n");
+    std::printf("Party: chalice: helper %s: slot %u (current slots 0x%x), state %u, busy %u, channel object %s (id 0x%llx)\n",
+                what, slot, bits, state, busy, ch ? "set" : "none", static_cast<unsigned long long>(id));
     std::fflush(stdout);
+}
+} // namespace
+
+BB_COOP_SYSV void QuickJoinRequestProbe(u64 helper, u64 channel_at, u64, u64, u64, u64) {
+    std::uint64_t want = 0, net = 0;
+    std::uint8_t on = 0, b9f6 = 0, b9f8 = 0, ba50 = 0;
+    SafeGet(channel_at, &want);
+    const std::uint64_t at = Guest(0x553b120);
+    if (at && SafeGet(at, &net) && net) {
+        SafeGet(net + 8, &on);
+        SafeGet(net + 0x9f6, &b9f6);
+        SafeGet(net + 0x9f8, &b9f8);
+        SafeGet(net + 0xa50, &ba50);
+    }
+    std::printf("Party: chalice: quick join request for 0x%llx (net online %u, 9f6 %u, 9f8 %u, a50 %u)\n",
+                static_cast<unsigned long long>(want), on, b9f6, b9f8, ba50);
+    LogHelperStep("quick join request", helper);
+}
+
+BB_COOP_SYSV void QuickJoinStepProbe(u64 helper, u64, u64, u64, u64, u64) {
+    g_quick_join_at.store(Seconds());
+    LogHelperStep("STEP_Exec_forQuickJoin", helper);
+}
+
+BB_COOP_SYSV void CancelStepProbe(u64 helper, u64, u64, u64, u64, u64) {
+    LogHelperStep("STEP_Exec_forCancel", helper);
 }
 
 // A summoned member's game quick-joins the host's dungeon into its slot record (0x1aa8410), then
@@ -181,7 +207,9 @@ void InstallProbes() {
     }
     done = true;
     HookPrologue(0x14ba340, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, &SummonMessageProbe, "chalice: summon message probe");
-    HookPrologue(0x1aa8410, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, &QuickJoinStepProbe, "chalice: quick join step probe");
+    HookPrologue(0x1aa5280, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, &QuickJoinRequestProbe, "chalice: quick join request probe");
+    HookPrologue(0x1aa81d0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, &QuickJoinStepProbe, "chalice: quick join step probe");
+    HookPrologue(0x1aa8410, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, &CancelStepProbe, "chalice: cancel step probe");
     ReplacePrologue(0x13bb590, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, reinterpret_cast<const void*>(&SetLoadModeHook),
                     &g_set_load_mode, "chalice: carry the slot record into load mode 1");
 }
