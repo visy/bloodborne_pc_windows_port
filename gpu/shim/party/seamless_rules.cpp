@@ -504,6 +504,9 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
             skip = pred(event_id, bank, id);
         }
     }
+    if (instr && !skip && bank == 2003 && (id == 12 || id == 15 || id == 53) && g_boss_bar.exchange(false)) {
+        Log("boss health bar: off (a boss defeat, event %d 2003[%d])", event_id, id);
+    }
     if (instr && !skip && bank == 2003 && id == 11) {
         u8 args[16] = {};
         u32 arg_size = 0;

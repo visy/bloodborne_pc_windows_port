@@ -57,6 +57,7 @@ def main():
     ap.add_argument("--host-world", default="", help="the host's in-world walk after the restart")
     ap.add_argument("--until", action="append", default=[])
     ap.add_argument("--env", action="append", default=[], help="KEY=VALUE for both instances")
+    ap.add_argument("--host-env", action="append", default=[], help="KEY=VALUE for the host only")
     ap.add_argument("--count", type=int, default=2, help="continue: 3 = a second guest (a copy of inst1's party "
                     "character and party.json under another name)")
     ap.add_argument("--host-delay", type=int, default=8, help="seconds in the joined world before --host-world")
@@ -134,6 +135,8 @@ def main():
                 cmd += ["--ienv", f"{k}:BB_PARTY_NAME=" + _json.loads(pj.read_text(encoding="utf-8"))["name"]]
     for e in env + a.env:
         cmd += ["--env", e]
+    for e in a.host_env:
+        cmd += ["--ienv", "0:" + e]
     # The summon, and a little of the log after it (the screenshots at +3 s).
     for u in a.until or [r"Party: session trying-to-join .* -> client \(6[\s\S]{1500}"]:
         cmd += ["--until", u]

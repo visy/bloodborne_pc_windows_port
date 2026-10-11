@@ -137,6 +137,15 @@ struct TravelStep {
 
 struct Test {
     bool on = false;
+    // A11 fixture (no cooperator needed): a11_move=X:Y:Z@S moves the host's chr there S s after its
+    // world is steady (into a boss arena: the fight starts); a11_kill=ENTITY@S ForceDeads ENTITY S s
+    // after the boss bar came up (the fight ends) - a joiner must wait outside meanwhile.
+    bool a11_move = false, a11_moved = false, a11_kill = false, a11_killed = false;
+    float a11_pos[3] = {0, 0, 0};
+    double a11_move_at = 0, a11_kill_after = 0;
+    std::uint32_t a11_entity = 0;
+    Clock::time_point a11_bar_at{};
+    bool a11_bar_seen = false;
     bool log_state = false;
     int insight = -1;
     int echoes = -1; // echoes=N: writes the player's Blood Echoes once (test saves)
@@ -1409,6 +1418,29 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
     if (!st.world_seen) {
         return;
     }
+    if (t.a11_move && !t.a11_moved && s.world_up && !s.loading && Seconds(st.world_at, now) >= t.a11_move_at) {
+        t.a11_moved = true;
+        const std::uint64_t player = LocalPlayer();
+        std::uint64_t vt = 0, fn = 0;
+        alignas(16) float pos[4] = {t.a11_pos[0], t.a11_pos[1], t.a11_pos[2], 1.0f}, rot[4] = {0, 0, 0, 0};
+        if (player && SafeGet(player, &vt) && vt && SafeGet(vt + 0x5f8, &fn) && fn) {
+            reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, const float*, const float*, std::uint32_t)>(fn)(
+                player, pos, rot, 1);
+            Log("test: a11_move to (%.2f, %.2f, %.2f)", double(pos[0]), double(pos[1]), double(pos[2]));
+        }
+    }
+    if (t.a11_kill && !t.a11_killed) {
+        if (BossBarShown() && !t.a11_bar_seen) {
+            t.a11_bar_seen = true;
+            t.a11_bar_at = now;
+            Log("test: a11: boss bar up; the kill in %.0f s", t.a11_kill_after);
+        }
+        if (t.a11_bar_seen && Seconds(t.a11_bar_at, now) >= t.a11_kill_after) {
+            t.a11_killed = true;
+            Log("test: a11_kill: entity %u", t.a11_entity);
+            reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, t.a11_entity);
+        }
+    }
     // bell_host / bell_guest: the bell through the item path (SpEffect -> SendSign -> sign
     // create / search on the FROM server) once this player is ready, bells granted, 5 s idle.
     // bell_host@AA: the host's own map in area AA; bell_guest@AA: the host's (roster) map.
@@ -1814,6 +1846,23 @@ void PartyDirector::ConfigureFromEnv() {
                     const std::string b = button;
                     st.test.ap_button = b == "cross" ? 0x4000u : b == "triangle" ? 0x1000u : b == "square" ? 0x8000u
                                       : b == "circle" ? 0x2000u : 0u;
+                }
+            } else if (item.rfind("a11_move=", 0) == 0) {
+                float x = 0, y = 0, z = 0, at = 2;
+                if (std::sscanf(item.c_str() + 9, "%f:%f:%f@%f", &x, &y, &z, &at) >= 3) {
+                    st.test.a11_move = true;
+                    st.test.a11_pos[0] = x;
+                    st.test.a11_pos[1] = y;
+                    st.test.a11_pos[2] = z;
+                    st.test.a11_move_at = at;
+                }
+            } else if (item.rfind("a11_kill=", 0) == 0) {
+                unsigned id = 0;
+                float after = 20;
+                if (std::sscanf(item.c_str() + 9, "%u@%f", &id, &after) >= 1) {
+                    st.test.a11_kill = true;
+                    st.test.a11_entity = id;
+                    st.test.a11_kill_after = after;
                 }
             } else if (item == "log_pos") {
                 st.test.log_pos = true;
