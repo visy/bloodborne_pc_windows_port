@@ -436,6 +436,24 @@ bool ChannelBoard::set_form_data(std::uint64_t id, const std::string& b64) {
     return true;
 }
 
+bool ChannelBoard::adopt(std::uint64_t id, const std::string& b64, const std::string& owner) {
+    if (!id || !form_data_ok(b64)) return false;
+    std::lock_guard<std::mutex> lk(mu_);
+    if (find_id(id)) return false;
+    Channel n;
+    n.id = id;
+    n.glyph = GlyphOf(b64);
+    n.owner = owner;
+    n.form_data = b64;
+    n.status = 1;
+    n.touched = ++clock_;
+    channels_.push_back(std::move(n));
+    log("from api: %s's game is in chalice dungeon %llu (not on the board yet): added, glyph %s", owner.c_str(),
+        static_cast<unsigned long long>(id), channels_.back().glyph.c_str());
+    drop_excess();
+    return true;
+}
+
 std::string ChannelBoard::form_data(std::uint64_t id) const {
     std::lock_guard<std::mutex> lk(mu_);
     for (const Channel& c : channels_) {

@@ -931,6 +931,12 @@ static void test_chalice_channels() {
         CHECK(api.channels().latest_ritual("Host", std::chrono::hours(1), &c, &member) && member == "GuestA" &&
               c.id == static_cast<std::uint64_t>(id) && c.glyph == glyph);
         CHECK(!api.channels().latest_ritual("GuestA", std::chrono::hours(1), &c, &member) || member != "GuestA");
+        // The host's game in a dungeon from an earlier session: added once, with its FormData.
+        CHECK(!api.channels().adopt(static_cast<std::uint64_t>(id), form, "Host"));  // known already
+        bbnet::party::ChannelBoard own;  // a separate board: the checks below count this one's entries
+        CHECK(own.adopt(4242424242ull, form, "Host") && own.known(4242424242ull) &&
+              own.form_data(4242424242ull) == form && !own.adopt(4242424242ull, form, "Host"));
+        CHECK(!own.adopt(4242424243ull, "%%%%", "Host"));
     }
     const json::Value* wish = w.find("WishMaterialList");
     CHECK(wish && wish->type == json::Value::Type::Array && wish->array.size() == 1);

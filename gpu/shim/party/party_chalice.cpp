@@ -472,6 +472,18 @@ void Tick(bool host) {
         static std::uint64_t done_for = 0;
         if (done_for != s.channel) {
             bbnet::party::ChannelBoard& board = bbnet::party::FromApi::instance().channels();
+            if (!board.known(s.channel)) {
+                // Entered from an earlier session's ritual (the board is new each session).
+                const std::vector<std::uint8_t> fd = SlotFormData(s.slot);
+                std::string name;
+                {
+                    std::lock_guard<std::mutex> lk(g_mu);
+                    name = g_host_name;
+                }
+                if (!fd.empty()) {
+                    board.adopt(s.channel, bbnet::party::b64_encode(fd.data(), fd.size()), name.empty() ? "host" : name);
+                }
+            }
             if (board.known(s.channel)) {
                 const std::vector<std::uint8_t> fd = SlotFormData(s.slot);
                 const std::string b64 = fd.empty() ? "" : bbnet::party::b64_encode(fd.data(), fd.size());

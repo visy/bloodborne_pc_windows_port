@@ -103,6 +103,10 @@ public:
     /// The host's own game: the FormData of channel `id` rebuilt from its slot record (a shared
     /// fixed dungeon joined through search was never uploaded). False when unknown / not base64.
     bool set_form_data(std::uint64_t id, const std::string& b64);
+    /// The host's own game is in dungeon `id` the board does not know (entered from an earlier
+    /// session's ritual: the board lives in the host's process): add it with its FormData, so
+    /// summons into it work. False when known already or the FormData is unusable.
+    bool adopt(std::uint64_t id, const std::string& b64, const std::string& owner);
     /// The channel's FormData as the board has it ("" when unknown or none).
     std::string form_data(std::uint64_t id) const;
     /// The glyph for a FormData (deterministic: the same dungeon keeps its glyph and id).
