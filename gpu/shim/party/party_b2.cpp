@@ -49,6 +49,7 @@ constexpr u64 kSlotFlow = 0x553d6d0;         // network flow: +0x84 state, +0x68
 constexpr u64 kSlotMultiPlay = 0x5540230;    // CSMultiPlayMan: human tasks +0x10/+0x18, NPC +0x38/+0x40
 constexpr u64 kSlotSession = 0x5540290;      // SprjSessionManager +0x124 role
 constexpr u64 kSlotGameData = 0x553b130;     // GameDataMan +0x68 (packet 0x19 payload)
+constexpr u64 kSessionTypeDesc = 0x553d750;   // + st * 0x80: +0x15 net chr type (party_npc_test)
 constexpr u64 kSlotGsm = 0x5556678;          // WorldTransitionState: +0x16f4 presentation slot byte, +0x16f8 slots
 constexpr u64 kSlotBullet = 0x553e8d0;       // SprjBulletManager
 constexpr u64 kSlotNetSyncArg = 0x553b148;   // *(+0x20) third argument of 0x18F0DB0 / 0x18F0E80
@@ -328,15 +329,36 @@ bool SendHomeVeto(u64 site) {
     return false;
 }
 
-// K10: the boss-clear Lua states' BeginLeaveSession (0x13858F5 in 0x13858A0, 0x1385A95 in
-// 0x13859F0): a B2 guest stays in the session after the boss.
+// K10: the boss-clear Lua states' BeginLeaveSession (0x13858F5 in BlockClear2_1 0x13858A0,
+// 0x1385A95 in BlockClear2_3 0x13859F0): the party stays in the session after the boss. Both
+// roles run these states after a kill (live run r3: the host left 12 s after the kill, which
+// ended the guest's session although its own leave was dropped), so both are kept.
 BB_COOP_SYSV u64 BossClearLeaveHook(u64 session) {
-    if (g_on.load() && Role() == RoleClient) {
-        Log("K10: boss-clear leave suppressed (party stays)");
+    const int role = Role();
+    if (g_on.load() && (role == RoleClient || role == RoleHost)) {
+        Log("K10: boss-clear leave suppressed (%s; party stays)", role == RoleHost ? "host" : "guest");
         return 0;
     }
     using Fn = u64(BB_COOP_SYSV*)(u64);
     return reinterpret_cast<Fn>(Guest(kBeginLeave))(session);
+}
+
+// BeginLeaveSession entry (ReplacePrologue: jumped to, so the return address is the caller's):
+// logs which call site ends a B2 session; the call itself is unchanged.
+void* g_leave_orig = nullptr;
+__attribute__((noinline)) BB_COOP_SYSV u64 LeaveEntryHook(u64 session) {
+    const u64 ret = reinterpret_cast<u64>(__builtin_return_address(0));
+    const int role = Role();
+    if (g_on.load() && (role == RoleClient || role == RoleHost)) {
+        const u64 base = Guest(0);
+        if (ret > base + 5 && ret - base < 0x6000000) {
+            Log("leave: BeginLeaveSession called from +0x%llx (role %d)", ull(ret - base - 5), role);
+        } else {
+            Log("leave: BeginLeaveSession called through a party hook (role %d)", role);
+        }
+    }
+    using Fn = u64(BB_COOP_SYSV*)(u64);
+    return reinterpret_cast<Fn>(g_leave_orig)(session);
 }
 
 // K11: the packet-0x10 apply 0x13BECA0(SprjEventFlagMan, blob) at 0x17851CE. At a vanilla join
@@ -503,6 +525,73 @@ void ResyncMember(u64 id) {
         flags ? "ok" : "FAILED", world ? "ok" : "FAILED");
 }
 
+/// The chr behind a WorldChrMan handle ((set << 14) | index; table +0x850, entries 0x38), as the
+/// game resolves it (0x15BDC20), with every read checked. 0 when stale.
+u64 ChrOfHandle(u32 h) {
+    const u64 wcm = Slot(kSlotWorldChrMan);
+    if (!wcm || h == 0xffffffffu) {
+        return 0;
+    }
+    const u32 set = h >> 14 & 0x3f, idx = h & 0x3fff;
+    if (int(set) >= Field<int>(Field<u64>(wcm, 8), 0x18, -2) + 2) {
+        return 0;
+    }
+    const u64 tab = Field<u64>(wcm, 0x850 + u64(set) * 8);
+    if (!tab || int(idx) >= Field<int>(tab, 0, 0)) {
+        return 0;
+    }
+    return Field<u64>(Field<u64>(tab, 8) + u64(idx) * 0x38, 0);
+}
+
+/// The presentation slot table (GSM +0x16F8): 5 entries at +0x1C (stride 0x14: chr handle, kind,
+/// state, a, b), the counts +0x8/+0xC/+0x10/+0x14, the handle list +0x80..+0x8C (+0x90 count)
+/// and the max (flow +0xC). The game's cooperator count (0x15BDC20) walks the entries.
+std::string DescribePresence(bool deep = false) {
+    const u64 t = Field<u64>(Slot(kSlotGsm), 0x16f8);
+    if (!t) {
+        return "none";
+    }
+    std::string out;
+    char b[160];
+    std::snprintf(b, sizeof b, "count %d (h %d n %d e %d) max %d; local %x;", Field<int>(t, 0x14, -1),
+                  Field<int>(t, 0x8, -1), Field<int>(t, 0xc, -1), Field<int>(t, 0x10, -1),
+                  Field<int>(Slot(kSlotFlow), 0xc, -1), Field<u32>(Field<u64>(Slot(kSlotWorldChrMan), 0x60), 8, ~0u));
+    out += b;
+    for (int i = 0; i < 5; ++i) {
+        const u64 e = t + 0x1c + u64(i) * 0x14;
+        const u32 h = Field<u32>(e, 0, ~0u);
+        if (h == 0xffffffffu) {
+            continue;
+        }
+        const u64 chr = ChrOfHandle(h);
+        std::snprintf(b, sizeof b, " [%d h %x kind %d st %d %d %d chr %s", i, h, Field<int>(e, 4), Field<int>(e, 8),
+                      Field<int>(e, 0xc), Field<int>(e, 0x10),
+                      !chr ? "STALE" : Field<u32>(chr, 8, ~0u) == h ? "ok" : "other");
+        out += b;
+        if (deep && chr && Field<u32>(chr, 8, ~0u) == h) {
+            // What the cooperator count asks (vfunc +0x558: the net chr type, counted when in
+            // {1,5,7,19}) and where it comes from: GameData (vfunc +0x1C8) +0x5D8 session type ->
+            // SessionTypeDesc 0x553D750 + st * 0x80 +0x15; +0xA4 chr type.
+            using Get = u64(BB_COOP_SYSV*)(u64);
+            const u64 vt = Field<u64>(chr, 0);
+            const u64 f558 = Field<u64>(vt, 0x558), f1c8 = Field<u64>(vt, 0x1c8);
+            const int net = f558 ? int(u32(reinterpret_cast<Get>(f558)(chr))) : -1;
+            const u64 gd = f1c8 ? reinterpret_cast<Get>(f1c8)(chr) : 0;
+            const int st = Field<int>(gd, 0x5d8, -1);
+            std::snprintf(b, sizeof b, " net %d (fn +%llx) gd st %d desc %d a4 %d", net,
+                          ull(f558 ? f558 - Guest(0) : 0), st,
+                          st >= 0 && st < 64 ? int(Field<u8>(Guest(kSessionTypeDesc + u64(st) * 0x80), 0x15, 0xff)) : -1,
+                          Field<int>(gd, 0xa4, -1));
+            out += b;
+        }
+        out += "]";
+    }
+    std::snprintf(b, sizeof b, " list %x %x %x %x (%d)", Field<u32>(t, 0x80), Field<u32>(t, 0x84), Field<u32>(t, 0x88),
+                  Field<u32>(t, 0x8c), Field<int>(t, 0x90, -1));
+    out += b;
+    return out;
+}
+
 enum class GuestPhase { Idle, AwaitSnapshot, Loading, Rewinding };
 enum class HostPhase { Idle, Loading, Resynced };
 
@@ -522,6 +611,7 @@ struct State {
     bool arrived = false;  // a guest said it arrived (under mu)
     bool have_dest = false; // guest: the host's post-load transform (under mu)
     int hp_before = -1;      // guest: its HP at the host's travel event (kept through the B2 load)
+    std::vector<std::pair<int, float>> buffs_before;  // guest: timed SpEffects (id, s left) at the travel
     u32 dest_stage = 0;
     float dest_pos[4] = {}, dest_rot[4] = {};
     // probe
@@ -544,14 +634,15 @@ void ProbeTick(const GameSnapshot& s) {
     const bool loading = s.loading || !s.world_up;
     if (loading && !st.was_loading) {
         st.player_before = s.player;
-        Log("load started: local PlayerIns %#llx, role %d, flow %d; tasks:%s", ull(s.player), Role(),
-            Field<int>(Slot(kSlotFlow), 0x84, -1), DescribeTasks().c_str());
+        Log("load started: local PlayerIns %#llx, role %d, flow %d; tasks:%s; presence %s", ull(s.player), Role(),
+            Field<int>(Slot(kSlotFlow), 0x84, -1), DescribeTasks().c_str(), DescribePresence().c_str());
     } else if (!loading && st.was_loading) {
         Log("B2 load report: map %s, local PlayerIns %#llx -> %#llx (%s), player set %d, role %d, flow %d; tasks:%s",
             MapName(s.map_id).c_str(), ull(st.player_before), ull(s.player),
             st.player_before == s.player ? "SAME object" : "re-created",
             Field<int>(Slot(kSlotWorldChrMan), 0x30, -1), Role(), Field<int>(Slot(kSlotFlow), 0x84, -1),
             DescribeTasks().c_str());
+        Log("B2 load report: presence %s", DescribePresence().c_str());
     }
     st.was_loading = loading;
 }
@@ -672,7 +763,118 @@ void RestoreZeroedOverlay() {
 }
 
 /// The flags the opening cutscene depends on, as the store answers now (overlay in load mode 1).
-/// The guest's consumables (goods counts) and HP / stamina, for the "state kept" check.
+/// BB_PARTY_B2_TEST_SPEFFECT=<id>[,<id>...]: SpEffects the guest applies to itself at the host's
+/// travel event (as a buff item would), to see what a B2 load does to them.
+std::vector<int> TestSpEffects() {
+    std::vector<int> ids;
+    if (const char* v = std::getenv("BB_PARTY_B2_TEST_SPEFFECT"); v && v[0]) {
+        for (const char* p = v; *p;) {
+            char* end = nullptr;
+            const long id = std::strtol(p, &end, 10);
+            if (end == p) {
+                break;
+            }
+            if (id > 0) {
+                ids.push_back(int(id));
+            }
+            p = *end ? end + 1 : end;
+        }
+    }
+    return ids;
+}
+
+/// The active SpEffects of a chr (ChrIns +0x1C8 -> +8 first node; node: param id +0x40, next
+/// +0x58; party_director HasSpEffect; +0x00 s left, +0x04 duration (f32), runtime-checked with a
+/// freshly applied 60 s buff: 60/60).
+std::string DescribeSpEffects(u64 chr) {
+    std::string out;
+    u64 node = Field<u64>(Field<u64>(chr, 0x1c8), 8);
+    int n = 0;
+    for (int guard = 0; node && guard < 256; ++guard, ++n) {
+        const int id = Field<int>(node, 0x40, -1);
+        char b[48];
+        const float left = Field<float>(node, 0), total = Field<float>(node, 4);
+        if (total > 0.f) {
+            std::snprintf(b, sizeof b, " %d(%.1f/%.0f s)", id, double(left), double(total));
+        } else {
+            std::snprintf(b, sizeof b, " %d", id);
+        }
+        out += b;
+        node = Field<u64>(node, 0x58);
+    }
+    return std::to_string(n) + ":" + out;
+}
+
+/// Timed SpEffects (a duration, time left) of a chr: buffs a load drops. The multiplayer / bell
+/// system effects (9000-9199) are left to the game.
+std::vector<std::pair<int, float>> TimedSpEffects(u64 chr) {
+    std::vector<std::pair<int, float>> out;
+    u64 node = Field<u64>(Field<u64>(chr, 0x1c8), 8);
+    for (int guard = 0; node && guard < 256; ++guard) {
+        const int id = Field<int>(node, 0x40, -1);
+        const float left = Field<float>(node, 0), total = Field<float>(node, 4);
+        if (id > 0 && !(id >= 9000 && id < 9200) && total > 0.f && left > 0.f && left <= total) {
+            out.emplace_back(id, left);
+        }
+        node = Field<u64>(node, 0x58);
+    }
+    return out;
+}
+
+/// Guest after a B2 load: the timed buffs it had at the host's travel event and lost in the load,
+/// applied again (chr vfunc +0x3F0) with the time they had left then (the guest's load is a pause
+/// for it, as for its HP). BB_PARTY_B2_KEEP_BUFFS=0: off.
+void RestoreBuffs(u64 player, const std::vector<std::pair<int, float>>& before) {
+    static const bool on = !(std::getenv("BB_PARTY_B2_KEEP_BUFFS") && std::getenv("BB_PARTY_B2_KEEP_BUFFS")[0] == '0');
+    if (!on || before.empty() || !player) {
+        return;
+    }
+    u64 vt = 0, fn = 0;
+    if (!SafeGet(player, &vt) || !vt || !SafeGet(vt + 0x3f0, &fn) || !fn) {
+        return;
+    }
+    using Fn = void(BB_COOP_SYSV*)(u64, u64, u64, u64, u64, u64, u64, float, float, float, float, float);
+    std::string done;
+    for (const auto& [id, left] : before) {
+        bool have = false;
+        for (u64 node = Field<u64>(Field<u64>(player, 0x1c8), 8); node && !have; node = Field<u64>(node, 0x58)) {
+            have = Field<int>(node, 0x40, -1) == id;
+        }
+        if (have) {
+            continue;
+        }
+        reinterpret_cast<Fn>(fn)(player, u64(id), player, 0, 1, 0, 0, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f);
+        for (u64 node = Field<u64>(Field<u64>(player, 0x1c8), 8); node; node = Field<u64>(node, 0x58)) {
+            if (Field<int>(node, 0x40, -1) == id) {
+                if (left < Field<float>(node, 4)) {
+                    SafeWrite(node, &left, 4);
+                }
+                char b[32];
+                std::snprintf(b, sizeof b, " %d(%.1f s)", id, double(left));
+                done += b;
+                break;
+            }
+        }
+    }
+    if (!done.empty()) {
+        Log("guest: buffs lost in the load restored:%s", done.c_str());
+    }
+}
+
+/// Guest: the test SpEffects on itself (chr vfunc +0x3F0, the call shape of party_director's bell).
+void ApplyTestSpEffects(u64 player) {
+    u64 vt = 0, fn = 0;
+    if (!player || !SafeGet(player, &vt) || !vt || !SafeGet(vt + 0x3f0, &fn) || !fn) {
+        return;
+    }
+    using Fn = void(BB_COOP_SYSV*)(u64, u64, u64, u64, u64, u64, u64, float, float, float, float, float);
+    for (int id : TestSpEffects()) {
+        reinterpret_cast<Fn>(fn)(player, u64(id), player, 0, 1, 0, 0, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f);
+        Log("test speffect: %d applied to the guest", id);
+    }
+}
+
+/// The guest's consumables (goods counts), HP / stamina and SpEffects, for the "state kept" check.
 void LogGuestState(const GameSnapshot& s, const char* when) {
     const u64 dm = Field<u64>(Field<u64>(s.player, 0x3b0), 0x20);
     std::string g;
@@ -681,8 +883,9 @@ void LogGuestState(const GameSnapshot& s, const char* when) {
         std::snprintf(b, sizeof b, " %u:%d", id, GoodsCount(id));
         g += b;
     }
-    Log("guest state %s: HP %d/%d stamina %d/%d; goods%s", when, Field<int>(dm, 0x128, -1), Field<int>(dm, 0x12c, -1),
-        Field<int>(dm, 0x134, -1), Field<int>(dm, 0x138, -1), g.c_str());
+    Log("guest state %s: HP %d/%d stamina %d/%d; goods%s; speffects %s", when, Field<int>(dm, 0x128, -1),
+        Field<int>(dm, 0x12c, -1), Field<int>(dm, 0x134, -1), Field<int>(dm, 0x138, -1), g.c_str(),
+        DescribeSpEffects(s.player).c_str());
 }
 
 void LogIntroFlags(const char* when) {
@@ -696,6 +899,55 @@ void LogIntroFlags(const char* when) {
         "12411800=%u 2410=%u",
         when, Field<int>(man, 0x80, -1), unsigned(Field<u8>(Slot(kSlotGsm), 0x1592)), f(12410000), f(9401), f(9402),
         f(12417810), f(9180), f(12410105), f(12411800), f(2410));
+}
+
+/// A remote member's net chr type (what the game's cooperator count 0x15BDC20 and the EMEVD
+/// co-op client count ask: chr vfunc +0x558 = SessionTypeDesc[GameData +0x5D8] +0x15, counted
+/// when in {1,5,7,19}) is remembered per member task while it counts; if a B2 re-creation leaves
+/// the member's GameData with another session type, the remembered one is put back. A guest's own
+/// player is checked the same way (key 0): its B2 host-world load sets its own +0x5D8 to 0 (live
+/// r6: st 7 -> 0, so its record re-broadcast at InGameStart carried 0 to the host as well).
+void MemberSessionTypeTick(const GameSnapshot& s) {
+    static std::map<u64, int> good;  // task (0: the guest itself) -> session type while counted
+    if (!SessionUp()) {
+        good.clear();
+        return;
+    }
+    if (!s.world_up || s.loading) {
+        return;
+    }
+    using Get = u64(BB_COOP_SYSV*)(u64);
+    std::vector<std::pair<u64, u64>> members;  // (key, chr)
+    for (const TaskInfo& t : Tasks(false)) {
+        if (t.mode == 1 || t.mode == 2) {
+            members.emplace_back(t.task, PlayerForPeer(t.task + kTaskPeer));
+        }
+    }
+    if (Role() == RoleClient) {
+        members.emplace_back(0, s.player);
+    }
+    for (const auto& [key, chr] : members) {
+        const u64 f1c8 = chr ? Field<u64>(Field<u64>(chr, 0), 0x1c8) : 0;
+        const u64 gd = f1c8 ? reinterpret_cast<Get>(f1c8)(chr) : 0;
+        if (!gd) {
+            continue;
+        }
+        const int st = Field<int>(gd, 0x5d8, -1);
+        const auto counted = [](int type) {
+            if (type < 0 || type >= 64) {
+                return false;
+            }
+            const u8 net = Field<u8>(Guest(kSessionTypeDesc + u64(type) * 0x80), 0x15, 0xff);
+            return net < 20 && ((0x800a2u >> net) & 1);
+        };
+        if (counted(st)) {
+            good[key] = st;
+        } else if (const auto it = good.find(key); it != good.end() && it->second != st) {
+            SafeWrite(gd + 0x5d8, &it->second, 4);
+            Log("%s: session type %d after the load / re-creation (not a cooperator) -> %d as before",
+                key ? "member task" : "guest (own player)", st, it->second);
+        }
+    }
 }
 
 /// After any host-world arrival (flow 3 -> 4): the local and the remote players' positions every
@@ -967,6 +1219,8 @@ void GuestTick(const GameSnapshot& s, double now) {
             st.screen_done = true;
             SaveOverlay();
             st.hp_before = Field<int>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0x128, -1);
+            ApplyTestSpEffects(s.player);
+            st.buffs_before = TimedSpEffects(s.player);
             LogGuestState(s, "at the host's travel");
             static const bool early = !(std::getenv("BB_PARTY_B2_EARLY_SCREEN") &&
                                         std::getenv("BB_PARTY_B2_EARLY_SCREEN")[0] == '0');
@@ -1055,6 +1309,11 @@ void GuestTick(const GameSnapshot& s, double now) {
                 }
             }
             LogGuestState(s, "after the B2 load");
+            RestoreBuffs(s.player, st.buffs_before);
+            st.buffs_before.clear();
+            if (!TestSpEffects().empty()) {
+                LogGuestState(s, "after the buff restore");
+            }
             const int n = RewindRemoteTasks("guest");
             Log("guest: arrived in the host world (flow 4); %d remote task(s) rewound", n);
             Send(0, "{\"op\":\"arrived\"}");  // guest: slot 0 = the host
@@ -1226,6 +1485,12 @@ void Init() {
     InstallCall(0x13858f5, kBeginLeave, reinterpret_cast<const void*>(&BossClearLeaveHook), "B2 K10 boss-clear leave (a)");
     InstallCall(0x1385a95, kBeginLeave, reinterpret_cast<const void*>(&BossClearLeaveHook), "B2 K10 boss-clear leave (b)");
     SetSendHomeVeto(&SendHomeVeto);
+    // Every BeginLeaveSession with a session logs its caller (which game path ends a party).
+    // push rbp; mov rbp, rsp; push r15 (6 bytes, position-independent).
+    if (!ReplacePrologue(kBeginLeave, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57},
+                         reinterpret_cast<const void*>(&LeaveEntryHook), &g_leave_orig, "B2 leave trace (0x1ED07A0)")) {
+        g_leave_orig = nullptr;
+    }
     InstallCall(0x17851ce, 0x13beca0, reinterpret_cast<const void*>(&FlagApplyHook), "B2 K11 flag snapshot apply");
     SetEmevdSkipPredicate(&ClientIntroSkip);
     EnsureEmevdFilter();
@@ -1391,16 +1656,19 @@ void Tick(const GameSnapshot& s) {
     if ((Role() == RoleHost || Role() == RoleClient) && s.world_up && !s.loading && now - last_status >= 10.0) {
         last_status = now;
         const u64 remo = Field<u64>(Slot(0x5540058), 8);
-        Log("status: local %s, role %d, flow %d (timer %.2f, GSM+0x1521 %u, remo %d), rejoin %d; tasks:%s",
+        Log("status: local %s, role %d, flow %d (timer %.2f, GSM+0x1521 %u, remo %d), rejoin %d, cooperators %d; "
+            "tasks:%s; presence %s",
             DescribeChr(s.player).c_str(), Role(), Field<int>(Slot(kSlotFlow), 0x84, -1),
             Field<float>(Slot(kSlotFlow), 0x98), unsigned(Field<u8>(Slot(kSlotGsm), 0x1521)),
-            remo ? int(Field<u8>(remo, 0x168) & 1) : -1, int(g_rejoin.load()), DescribeTasks().c_str());
+            remo ? int(Field<u8>(remo, 0x168) & 1) : -1, int(g_rejoin.load()), s.cooperators, DescribeTasks().c_str(),
+            DescribePresence(true).c_str());
     }
     ProbeTick(s);
     TestWarpTick(s, now);
     KickStalledTasks(s, now);
     TestBossTick(s, now);
     ArrivalWatchTick(s, now);
+    MemberSessionTypeTick(s);
     HostMemberWatchTick(s, now);
     FallbackCleanupTick(s);
     FallRecoveryTick(s, now);
