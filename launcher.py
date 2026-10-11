@@ -100,7 +100,7 @@ PARTY_SWITCHES = [
     ("party_open_world", "BB_PARTY_OPEN_WORLD", True),
     ("party_guest_respawn", "BB_PARTY_GUEST_RESPAWN", True),
     ("party_guest_refill", "BB_PARTY_GUEST_REFILL", True),
-    ("party_guest_mark", "BB_PARTY_GUEST_MARK", False),
+    ("party_guest_mark", "BB_PARTY_GUEST_MARK", True),
     ("party_full_rewards", "BB_PARTY_FULL_REWARDS", True),
     ("party_items", "BB_PARTY_ITEMS", True),
     ("party_progress", "BB_PARTY_PROGRESS", True),
@@ -1596,9 +1596,10 @@ class BloodborneLauncher(tk.Tk):
                     "lamp, dies or travels to the Dream, as the host does. Applies to you while you are a "
                     "guest. Default: on (BB_PARTY_GUEST_REFILL).", command=save)
         self._check(sec, "Guests can use Hunter's Mark", var["party_guest_mark"],
-                    "Lets a guest use the Hunter's Mark (and Bold Hunter's Mark); it takes the guest to the "
-                    "host's last lamp, like a death. Off: guests cannot use it, as in the normal game. "
-                    "Default: off (BB_PARTY_GUEST_MARK).", command=save)
+                    "Lets a guest use the Hunter's Mark (and Bold Hunter's Mark). Like a lamp it asks "
+                    "\"Travel with the party?\": alone to your own last lamp, or the party to the host's. "
+                    "Off: guests cannot use it, as in the normal game. Default: on (BB_PARTY_GUEST_MARK).",
+                    command=save)
         self._check(sec, "Full rewards for guests", var["party_full_rewards"],
                     "Guests get the full Blood Echoes for kills and bosses and the full enemy drops, like the "
                     "host. Off: the game's co-op rules (half echoes, only vials and bullets drop). Applies "

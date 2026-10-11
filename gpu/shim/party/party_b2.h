@@ -104,6 +104,8 @@ bool WarpToLampNoLoad(std::uint32_t id, bool beside);
 /// in-world and EVENT b2 {"op":"warp","lamp":id} moves the guests of this map beside it (others,
 /// apart, travel there with one load of their own). False: not in this block.
 bool HostPartyWarpNoLoad(std::uint32_t id);
+/// Test aid: the nearest living enemy of the local block within `max_m` m (entity id; 0 none).
+std::uint32_t NearestEnemyForTest(float max_m);
 /// Host, main thread: the next own travel is alone (TravelIntent::alone): the guests do not
 /// follow and the host does not re-send its snapshot after its load. Expires after 10 s.
 void HostTravelAloneNext();

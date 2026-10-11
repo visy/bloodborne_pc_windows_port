@@ -884,6 +884,7 @@ void NoteAway(int slot) {
     }
 }
 
+void SendDeadEnemies(const GameSnapshot& s, const char* why);
 u32 AreaOf(u32 map) {
     return (map == 0 || map == 0xffffffffu) ? 0u : map >> 24;
 }
@@ -1090,6 +1091,7 @@ void SplitTick(const GameSnapshot& s, double now) {
                 NetSyncMembers();
             }
             g_split_change_at = now;
+            SendDeadEnemies(s, "meet without a load");
             const int n = RewindRemoteTasks("split meet");
             Log("split: a member is in our area (%s) without its chr here: %d task(s) rewound (no load)",
                 MapName(s.map_id).c_str(), n);
@@ -1223,6 +1225,155 @@ bool WarpToLampInWorld(u32 id, bool beside, const char* why) {
     char b[96];
     std::snprintf(b, sizeof b, "%s, lamp %u", why, id);
     return WarpLocal(pos, spot[3], b);
+}
+
+/// An alone travel to a world lamp makes it this player's own last lamp (GSM +0x1528 {return
+/// point entity, anim}: what the Hunter's Mark and a death go to), as the lamp warp 0x13CDF30
+/// would have written it (our travel replaces that warp with a transform / an in-world move).
+/// The Hunter's Dream is never a last lamp.
+void SetOwnLastLamp(const TravelIntent& t) {
+    const u32 id = t.lamp_id != kTravelNone && t.lamp_id ? t.lamp_id : 0;
+    if (!id || id / 100000 == 21 || t.last_lamp == ~0ull || !t.last_lamp) {
+        return;
+    }
+    const u64 gsm = Slot(kSlotGsm);
+    const u64 was = Field<u64>(gsm, 0x1528);
+    if (gsm && was != t.last_lamp && SafeWrite(gsm + 0x1528, &t.last_lamp, 8)) {
+        Log("own last lamp %#llx -> %#llx (lamp %u, an alone travel)", ull(was), ull(t.last_lamp), id);
+    }
+}
+
+// ---- Enemies killed while apart (reconciled when players meet again without a load) ----
+// Each game simulates its own copies of a map's enemies while the players are apart (a map the
+// host is not in, or the host away while a guest stays). Meeting again without a load (SplitTick,
+// the in-world follow) each side sends the enemies of the shared block that are dead in its world
+// (EVENT b2 {"op":"dead"}); the other side kills those that still live in its own (HP 0: the
+// game's own death of the chr). A kill on either side stays a kill (the union); bosses (entity
+// AAB08xx) stay with their defeat flags (D1 / D3), never by this.
+template <class F>
+void ForEachMapChr(F&& fn) {
+    const u64 wcm = Slot(kSlotWorldChrMan);
+    const int sets = Field<int>(wcm, 0x90);
+    if (!wcm || sets <= 0 || sets > 4096) {
+        return;
+    }
+    const int blocks = Field<int>(wcm, 0x20);
+    const u64 base = Field<u64>(wcm, 0x28), list38 = Field<u64>(wcm, 0x38);
+    for (int i = 0; i < sets; ++i) {
+        const u64 set = Field<u64>(wcm, 0x98 + 8 * u64(i));
+        const int n = Field<int>(set, 0xf0);
+        const u64 arr = Field<u64>(set, 0xf8);
+        if (!set || !arr || n <= 0 || n > 100000) {
+            continue;
+        }
+        for (int k = 0; k < n; ++k) {
+            const int id = Field<int>(arr + 8 * u64(k), 0);
+            const int handle = Field<int>(arr + 8 * u64(k), 4, -1);
+            if (id <= 0 || handle < 0) {
+                continue;
+            }
+            const u32 block = (u32(handle) >> 14) & 0x3f, index = u32(handle) & 0x3fff;
+            u64 entry = 0;
+            if (int(block) < blocks) {
+                const u64 lst = Field<u64>(base + u64(block) * 0x160, 0xc0);
+                entry = lst ? lst + u64(index) * 0x38 : 0;
+            } else {
+                entry = list38 ? list38 + u64(index) * 0x38 : 0;
+            }
+            const u64 chr = Field<u64>(entry, 0);
+            if (chr) {
+                fn(u32(id), chr);
+            }
+        }
+    }
+}
+
+bool EnemyReconcilable(u32 id, u32 block_map) {
+    return id >= 1000000 && ids::EntityMap(id) == (block_map & 0xffff0000u) && id % 10000 / 100 != 8;
+}
+
+std::vector<u32> DeadEnemiesHere(u32 map) {
+    std::vector<u32> out;
+    ForEachMapChr([&](u32 id, u64 chr) {
+        const u64 dm = Field<u64>(Field<u64>(chr, 0x3b0), 0x20);
+        const int hp = Field<int>(dm, 0x128, 1), mx = Field<int>(dm, 0x12c, 0);
+        if (dm && mx > 0 && hp <= 0 && EnemyReconcilable(id, map) && out.size() < 128) {
+            out.push_back(id);
+        }
+    });
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+/// Sends the dead enemies of our block to the others (host: everyone; guest: the host, which
+/// relays nothing - every guest sends its own).
+void SendDeadEnemies(const GameSnapshot& s, const char* why) {
+    const std::vector<u32> dead = DeadEnemiesHere(s.map_id);
+    std::string body = "{\"op\":\"dead\",\"map\":" + std::to_string(s.map_id) + ",\"ids\":[";
+    for (std::size_t i = 0; i < dead.size(); ++i) {
+        body += (i ? "," : "") + std::to_string(dead[i]);
+    }
+    body += "]}";
+    Send(Role() == RoleHost ? -1 : 0, body);
+    Log("split: %zu dead enemies of %s sent (%s)", dead.size(), MapName(s.map_id).c_str(), why);
+}
+
+std::mutex g_dead_mu;
+std::vector<std::pair<u32, std::vector<u32>>> g_dead_in;  // (map, ids) received
+
+void ApplyDeadEnemies(const GameSnapshot& s) {
+    std::vector<std::pair<u32, std::vector<u32>>> in;
+    {
+        std::lock_guard<std::mutex> lk(g_dead_mu);
+        in.swap(g_dead_in);
+    }
+    for (const auto& [map, list] : in) {
+        if ((map >> 16) != (s.map_id >> 16)) {
+            Log("split: dead enemies of %s ignored (we are in %s)", MapName(map).c_str(), MapName(s.map_id).c_str());
+            continue;
+        }
+        int killed = 0, already = 0;
+        ForEachMapChr([&](u32 id, u64 chr) {
+            if (!EnemyReconcilable(id, s.map_id) || !std::binary_search(list.begin(), list.end(), id)) {
+                return;
+            }
+            const u64 dm = Field<u64>(Field<u64>(chr, 0x3b0), 0x20);
+            const int hp = Field<int>(dm, 0x128, 0);
+            if (dm && hp > 0) {
+                const int zero = 0;
+                SafeWrite(dm + 0x128, &zero, 4);
+                ++killed;
+            } else {
+                ++already;
+            }
+        });
+        Log("split: enemies killed by the other side while apart: %d here now dead too (%d already dead, %zu sent)",
+            killed, already, list.size());
+    }
+}
+
+/// Test aid: the nearest living enemy of our block within `max_m` (entity id, 0 none).
+u32 NearestEnemy(const GameSnapshot& s, float max_m) {
+    float me[3] = {};
+    if (!ChrPos(s.player, me)) {
+        return 0;
+    }
+    u32 best = 0;
+    float bd = max_m * max_m;
+    ForEachMapChr([&](u32 id, u64 chr) {
+        const u64 dm = Field<u64>(Field<u64>(chr, 0x3b0), 0x20);
+        float p[3];
+        if (!EnemyReconcilable(id, s.map_id) || Field<int>(dm, 0x128, 0) <= 0 || !ChrPos(chr, p)) {
+            return;
+        }
+        const float d = (p[0] - me[0]) * (p[0] - me[0]) + (p[1] - me[1]) * (p[1] - me[1]) + (p[2] - me[2]) * (p[2] - me[2]);
+        if (d < bd) {
+            bd = d;
+            best = id;
+        }
+    });
+    return best;
 }
 
 std::string DescribeWhere() {
@@ -2058,6 +2209,7 @@ void GuestTick(const GameSnapshot& s, double now) {
             DrainSnapshotQueue("in-world follow");
             BesideHost(pos, rot, g_local_slot.load());
             WarpLocal(pos, rot[1], "follow the host's load into this map");
+            SendDeadEnemies(s, "in-world follow");
             const int n = RewindRemoteTasks("guest in-world follow");
             Send(0, "{\"op\":\"arrived\"}");
             Log("guest: followed the host inside the loaded map (%s): no load; %d task(s) rewound",
@@ -2903,6 +3055,9 @@ void Tick(const GameSnapshot& s) {
         if (gp == GuestPhase::Idle && S().hphase == HostPhase::Idle && !g_rejoin.load()) {
             SplitTick(s, now);
         }
+        if (s.world_up && !s.loading) {
+            ApplyDeadEnemies(s);
+        }
     }
     if (Role() == RoleClient) {
         GuestTick(s, now);
@@ -3034,6 +3189,33 @@ void OnLinkEvent(int from_slot, const std::string& body) {
         }
         return;
     }
+    if (body.find("\"dead\"") != std::string::npos) {
+        unsigned map = 0;
+        const char* pm = std::strstr(body.c_str(), "\"map\":");
+        const char* pi = std::strstr(body.c_str(), "\"ids\":[");
+        if (!pm || !pi || std::sscanf(pm, "\"map\":%u", &map) != 1 || !TravelMapKnown(map & 0xffff0000u)) {
+            Log("split: bad dead-enemies event refused");
+            return;
+        }
+        std::vector<u32> list;
+        for (const char* p = pi + 7; *p && *p != ']' && list.size() < 128;) {
+            char* end = nullptr;
+            const unsigned long v = std::strtoul(p, &end, 10);
+            if (end == p) {
+                break;
+            }
+            if (EnemyReconcilable(u32(v), map)) {
+                list.push_back(u32(v));
+            }
+            p = *end == ',' ? end + 1 : end;
+        }
+        std::sort(list.begin(), list.end());
+        std::lock_guard<std::mutex> lk(g_dead_mu);
+        if (g_dead_in.size() < 8) {
+            g_dead_in.emplace_back(map, std::move(list));
+        }
+        return;
+    }
     if (body.find("\"warp\"") != std::string::npos) {
         // The host's in-world party move (HostPartyWarpNoLoad): run on the main thread.
         unsigned id = 0;
@@ -3089,12 +3271,22 @@ bool HostHasMembers() {
 }
 
 bool WarpToLampNoLoad(std::uint32_t id, bool beside) {
-    return g_on.load() && WarpToLampInWorld(id, beside, beside ? "party move" : "own move");
+    if (!g_on.load() || !WarpToLampInWorld(id, beside, beside ? "party move" : "own move")) {
+        return false;
+    }
+    TravelIntent t;
+    if (LampIntent(id, &t)) {
+        SetOwnLastLamp(t);  // a lamp reached in-world is the last lamp too (a Mark: unchanged anyway)
+    }
+    return true;
 }
 
 bool HostPartyWarpNoLoad(std::uint32_t id) {
     if (!g_on.load() || Role() != RoleHost || !WarpToLampInWorld(id, false, "the host's party move")) {
         return false;
+    }
+    if (TravelIntent t; LampIntent(id, &t)) {
+        SetOwnLastLamp(t);
     }
     char b[64];
     std::snprintf(b, sizeof b, "{\"op\":\"warp\",\"lamp\":%u}", id);
@@ -3166,6 +3358,9 @@ bool TravelAlone(const TravelIntent& t, AloneWhy why) {
     char pos[96];
     std::snprintf(pos, sizeof pos, "\"pos\":[%.3f,%.3f,%.3f]", p[0], p[1], p[2]);
     g_dead_follow = why == AloneWhy::Death;
+    if (why == AloneWhy::Lamp || why == AloneWhy::Headstone) {
+        SetOwnLastLamp(t);
+    }
     if (host != 0 && AreaOf(host) == AreaOf(dest)) {
         // Into the host's area (the shared Dream included): a re-join, one load for this guest.
         if (!BeginRejoin(t, true, true)) {
@@ -3287,6 +3482,11 @@ bool RespawnAloneAtOwnLamp() {
         return false;
     }
     return TravelAlone(t, AloneWhy::Death);
+}
+
+std::uint32_t NearestEnemyForTest(float max_m) {
+    const GameSnapshot s = ReadGameState(false);
+    return g_on.load() && s.world_up && !s.loading ? NearestEnemy(s, max_m) : 0u;
 }
 
 bool PopOutgoing(int* slot, std::string* body) {

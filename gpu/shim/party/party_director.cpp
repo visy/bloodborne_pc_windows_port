@@ -121,7 +121,7 @@ struct TravelStep {
         // Split travel (docs/party/split_travel.md): host_lamp=ID / guest_lamp=ID use lamp ID as the
         // player would (0x13CDF30 through the interceptor: the "Travel with the party?" question);
         // host_alone=ID: the host travels to ID alone, decided (no question).
-        HostLamp, GuestLamp, HostAlone,
+        HostLamp, GuestLamp, HostAlone, GuestKill,
         HostOutage, GuestOutage  // a simulated total network outage of `buttons` ms (BB_NET_SIM on)
     } kind = HostWarp;
     std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30; HostKill: the entity id
@@ -812,6 +812,7 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::HostHeadstone: return "host_headstone";
     case TravelStep::HostFlag: return "host_flag";
     case TravelStep::GuestLamp: return "guest_lamp";
+    case TravelStep::GuestKill: return "guest_kill";
     case TravelStep::HostAlone: return "host_alone";
     case TravelStep::HostSkipRemo: return "host_skipremo";
     case TravelStep::GuestSkipRemo: return "guest_skipremo";
@@ -1047,7 +1048,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     auto mine = [&](const TravelStep& step) {
         return (step.kind == TravelStep::GuestDie || step.kind == TravelStep::GuestMove ||
                 step.kind == TravelStep::GuestPress || step.kind == TravelStep::GuestMark ||
-                step.kind == TravelStep::GuestLamp || step.kind == TravelStep::GuestSkipRemo || step.kind == TravelStep::GuestOutage) == (role == PartyRole::Guest);
+                step.kind == TravelStep::GuestLamp || step.kind == TravelStep::GuestSkipRemo || step.kind == TravelStep::GuestKill || step.kind == TravelStep::GuestOutage) == (role == PartyRole::Guest);
     };
     if (t.script_on) {
         RunTravelScript(st, s, now);
@@ -1208,6 +1209,14 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         t.script_on = true;
         Log("test: %s %s from %s", TravelStepName(step.kind), step.args.c_str(), DescribeHere(s).c_str());
         return;
+    } else if (step.kind == TravelStep::GuestKill) {
+        // guest_kill=ENTITY@S%MAP (0: the nearest living enemy within 60 m): ForceDead on the guest's
+        // own copy (split travel: an enemy killed while the players are apart).
+        const std::uint32_t id = step.id ? step.id : b2::NearestEnemyForTest(60.0f);
+        Log("test: guest_kill: entity %u", id);
+        if (id) {
+            reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, id);
+        }
     } else if (step.kind == TravelStep::HostKill) {
         // A boss (or any enemy) killed as the game's own death path: ForceDead on its entity id; the
         // boss-defeat EMEVD (4[00] death state -> 2003[12]) and the Lua boss clear follow.
@@ -1836,7 +1845,7 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("host_move=", 0) == 0 || item.rfind("guest_move=", 0) == 0 ||
                        item.rfind("host_press=", 0) == 0 || item.rfind("guest_press=", 0) == 0 ||
                        item.rfind("host_lastlamp=", 0) == 0 || item.rfind("host_lamp=", 0) == 0 ||
-                       item.rfind("guest_lamp=", 0) == 0 || item.rfind("host_alone=", 0) == 0 ||
+                       item.rfind("guest_lamp=", 0) == 0 || item.rfind("host_alone=", 0) == 0 || item.rfind("guest_kill=", 0) == 0 ||
                        item.rfind("host_outage=", 0) == 0 || item.rfind("guest_outage=", 0) == 0) {
                 TravelStep step;
                 step.kind = item.rfind("guest_outage", 0) == 0  ? TravelStep::GuestOutage
@@ -1848,6 +1857,7 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("host_lamp=", 0) == 0   ? TravelStep::HostLamp
                             : item.rfind("guest_lamp=", 0) == 0  ? TravelStep::GuestLamp
                             : item.rfind("host_alone=", 0) == 0  ? TravelStep::HostAlone
+                            : item.rfind("guest_kill=", 0) == 0  ? TravelStep::GuestKill
                             : item[0] == 'g'                     ? TravelStep::GuestDie
                             : item.rfind("host_die", 0) == 0     ? TravelStep::HostDie
                             : item.rfind("host_kill", 0) == 0    ? TravelStep::HostKill
@@ -1863,7 +1873,7 @@ void PartyDirector::ConfigureFromEnv() {
                     step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 14, nullptr, 10));
                 }
                 if (step.kind == TravelStep::HostLamp || step.kind == TravelStep::GuestLamp ||
-                    step.kind == TravelStep::HostAlone) {
+                    step.kind == TravelStep::HostAlone || step.kind == TravelStep::GuestKill) {
                     step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + item.find('=') + 1, nullptr, 10));
                 }
                 if ((step.kind == TravelStep::HostDie || step.kind == TravelStep::GuestDie) && item.find('%') != std::string::npos) {

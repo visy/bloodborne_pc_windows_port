@@ -30,7 +30,7 @@ What they do for a player: [docs/PARTY.md](../PARTY.md).
 | `BB_PARTY_OPEN_WORLD` | Open world (no co-op area walls) | 1 |
 | `BB_PARTY_GUEST_RESPAWN` | Respawn at the host's lamp | 1 |
 | `BB_PARTY_GUEST_REFILL` | Refill vials and bullets | 1 |
-| `BB_PARTY_GUEST_MARK` | Guests can use Hunter's Mark | 0 (opt-in) |
+| `BB_PARTY_GUEST_MARK` | Guests can use Hunter's Mark (asks "Travel with the party?") | 1 |
 | `BB_PARTY_FULL_REWARDS` | Full rewards for guests | 1 |
 | `BB_PARTY_ITEMS` | Share the host's item rewards | 1 |
 | `BB_PARTY_GUEST_INSIGHT` | Insight for bosses | `parity` (`full`, `0`) |
