@@ -20,6 +20,7 @@
 #include "bbport_frame_state.h"
 #include "bbport_settings.h"
 #include "party/party_hud.h"
+#include "party/party_balance_rules.h"
 #include "party/party_status.h"
 #include "bbport_camera.h"
 #include "imgui.h"
@@ -133,6 +134,12 @@ const bool party_tags_on = [] {
 
 bool PartyHudWanted() {
     return party::status::Enabled() && BbSettings::Get().party_hud && party::hud::Shown();
+}
+
+/// The overhead display (E2, bbport.ini party_overhead; independent of the panel).
+bool PartyTagsWanted() {
+    return party_tags_on && party::status::Enabled() && BbSettings::Get().party_overhead.load() != 0 &&
+           party::hud::Shown();
 }
 
 bool ToastWanted() {
@@ -1216,6 +1223,55 @@ void PartyTab() {
              "Гости могут пользоваться фонарями и надгробиями Сна; ведёт хост, группа перемещается "
              "вместе. После перезапуска."),
            on);
+    // Party rules (party_balance.h): the host's values count for the whole party.
+    ImGui::Spacing();
+    Note(T("Party rules (the host's count for everyone)", "Правила группы (действуют правила хоста)"), Dim());
+    Toggle("party_rot", T("Rot on death", "Гниль при смерти"), s.party_rot,
+           T("Each death lowers max HP by 10 % (up to 5 times); resting at a lamp cleanses it.",
+             "Каждая смерть снижает здоровье на 10 % (до 5 раз); отдых у фонаря снимает."),
+           on);
+    static const char* overhead_en[] = {"Nothing", "Name", "Name and level", "Name and health", "Name and deaths"};
+    static const char* overhead_ru[] = {"Ничего", "Имя", "Имя и уровень", "Имя и здоровье", "Имя и смерти"};
+    Choice("party_overhead", T("Above companions", "Над спутниками"), std::clamp(s.party_overhead.load(), 0, 4), 5,
+           [](int i) { return T(overhead_en[i], overhead_ru[i]); }, [](int) { return true; },
+           T("What shows above party members in view (only on your screen).",
+             "Что показывать над спутниками в поле зрения (только у вас)."),
+           on, [&](int i) { Store(s.party_overhead, i, true); });
+    struct Scale {
+        const char* id;
+        const char* en;
+        const char* ru;
+        std::atomic<int>* value;
+        const int* table;
+        int kind;  // 0 HP, 1 damage, 2 poise
+    };
+    const Scale scales[] = {
+        {"party_boss_hp", "Boss health", "Здоровье боссов", &s.party_boss_hp, coop::balance::kHpTable, 0},
+        {"party_boss_damage", "Boss damage", "Урон боссов", &s.party_boss_damage, coop::balance::kDamageTable, 1},
+        {"party_boss_poise", "Boss poise", "Стойкость боссов", &s.party_boss_poise, coop::balance::kPoiseTable, 2},
+        {"party_enemy_hp", "Enemy health", "Здоровье врагов", &s.party_enemy_hp, coop::balance::kHpTable, 0},
+        {"party_enemy_damage", "Enemy damage", "Урон врагов", &s.party_enemy_damage, coop::balance::kDamageTable, 1},
+        {"party_enemy_poise", "Enemy poise", "Стойкость врагов", &s.party_enemy_poise, coop::balance::kPoiseTable, 2},
+    };
+    const bool ru = BbSettings::MenuText("en", "ru")[0] == 'r';
+    static std::string scale_text[11];
+    for (const Scale& sc : scales) {
+        const int pos = coop::balance::Position(sc.table, sc.value->load());
+        for (int i = 0; i < 11; ++i) {
+            const int v = sc.table[i];
+            scale_text[i] = sc.kind == 0   ? coop::balance::DescribeHp(v, ru)
+                            : sc.kind == 1 ? coop::balance::DescribeDamage(v, ru)
+                                           : coop::balance::DescribePoise(v, ru);
+        }
+        Choice(sc.id, T(sc.en, sc.ru), pos, 11, [](int i) { return scale_text[i].c_str(); }, [](int) { return true; },
+               sc.kind == 1 ? T("Per extra hunter in the party; Bloodborne itself adds none.",
+                                "За каждого охотника в группе; в самой игре прибавки нет.")
+                            : T("Per extra hunter, in % of Bloodborne's own boss step (100 % = the game's; normal "
+                                "enemies get none in the game). Negative poise: easier to stagger.",
+                                "За каждого охотника, в % от шага самой игры для боссов (100 % = как в игре; "
+                                "обычные враги в игре не усиливаются). Отрицательная стойкость: легче оглушить."),
+               on, [&](int i) { Store(*sc.value, sc.table[std::clamp(i, 0, 10)], true); });
+    }
     if (!b.last_event.empty()) {
         ImGui::Spacing();
         std::snprintf(line, sizeof(line), T("Last: %s", "Последнее: %s"), b.last_event.c_str());
@@ -1751,7 +1807,8 @@ void PartyHudDiag() {
 void PartyHud() {
     using namespace PartyHudDraw;
     party_hud_top = -1.0f;
-    if (!PartyHudWanted() || BbFrameState::IsMenuOrLoading()) {
+    const bool panel = PartyHudWanted(), tags = PartyTagsWanted();
+    if ((!panel && !tags) || BbFrameState::IsMenuOrLoading()) {
         return;
     }
     party::hud::Read(&hud_board);
@@ -1763,6 +1820,7 @@ void PartyHud() {
     const Axes axes = DirectionAxes(b, cam);
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float s = base_scale;
+    if (panel) {
     const float pad = 12.0f * s;
     const float bottom = perf_hud_bottom_left ? perf_hud_top - 6.0f * s
                                               : viewport->WorkPos.y + viewport->WorkSize.y - pad;
@@ -1830,11 +1888,14 @@ void PartyHud() {
     party_hud_top = ImGui::GetWindowPos().y;
     ImGui::End();
     ImGui::PopStyleVar(3);
+    }
 
-    // Name tags above the companions in view (only with the game camera in the player's space).
-    if (!party_tags_on || !axes.camera) {
+    // Name tags above the companions in view (only with the game camera in the player's space):
+    // the overhead display (E2): name, plus level / health bar / deaths (party_overhead).
+    if (!tags || !axes.camera) {
         return;
     }
+    const int overhead = BbSettings::Get().party_overhead.load();
     const ImVec2 display = viewport->Size;
     ImDrawList* bg = ImGui::GetBackgroundDrawList();
     for (int i = 0; i < b.count; ++i) {
@@ -1846,10 +1907,13 @@ void PartyHud() {
         if (d < 1.0f || d > 80.0f) {
             continue;
         }
-        const float head[3] = {c.pos[0], c.pos[1] + 2.05f, c.pos[2]};
-        float u = 0, v = 0, depth = 0;
-        if (!party::hud::Project(cam.view.data(), cam.proj.data(), head, &u, &v, &depth) || u < 0.02f ||
-            u > 0.98f || v < 0.04f || v > 0.96f) {
+        // Above the game's own phantom label ("Cooperator" / name in blue, ~2.1 m): 2.45 m.
+        const float head[3] = {c.pos[0], c.pos[1] + 2.45f, c.pos[2]};
+        // The reusable world-space marker projection (party_hud.h WorldToScreen; I2 pings reuse it).
+        const party::hud::ScreenPoint sp =
+            party::hud::WorldToScreen(cam.view.data(), cam.proj.data(), head, display.x, display.y, 0.02f);
+        const float u = sp.x / display.x, v = sp.y / display.y;
+        if (!sp.visible || v < 0.04f || v > 0.96f) {
             continue;
         }
         // Clear of the game's own HUD (bars and item slots top left, echoes bottom right).
@@ -1858,13 +1922,30 @@ void PartyHud() {
         }
         const float alpha = std::clamp((80.0f - d) / 30.0f, 0.0f, 1.0f) * 0.95f;
         const float size = std::clamp(15.0f * 12.0f / std::max(d, 6.0f), 11.0f, 15.0f);
+        // Name, with the level ("Lv 42") or the deaths ("3 deaths, rot 2") after it.
+        char label[96];
+        const bool ru = BbSettings::MenuText("en", "ru")[0] == 'r';
+        if (overhead == 2 && c.level > 0) {
+            if (ru) std::snprintf(label, sizeof label, "%s  ур. %d", c.name, c.level);
+            else std::snprintf(label, sizeof label, "%s  Lv %d", c.name, c.level);
+        } else if (overhead == 4 && c.rot > 0) {
+            if (ru) std::snprintf(label, sizeof label, "%s  смертей %d, гниль %d", c.name, c.deaths, c.rot);
+            else std::snprintf(label, sizeof label, "%s  deaths %d, rot %d", c.name, c.deaths, c.rot);
+        } else if (overhead == 4) {
+            if (ru) std::snprintf(label, sizeof label, "%s  смертей %d", c.name, c.deaths);
+            else std::snprintf(label, sizeof label, "%s  deaths %d", c.name, c.deaths);
+        } else {
+            std::snprintf(label, sizeof label, "%s", c.name);
+        }
         ImGui::PushFont(serif_font, size);
-        const ImVec2 ts = ImGui::CalcTextSize(c.name);
+        const ImVec2 ts = ImGui::CalcTextSize(label);
         const ImVec2 at(u * display.x - ts.x * 0.5f, v * display.y - ts.y);
-        bg->AddText(ImVec2(at.x + 1.0f, at.y + 1.0f), Rgba(0.0f, 0.0f, 0.0f, 0.8f * alpha), c.name);
-        bg->AddText(at, Rgba(0.96f, 0.88f, 0.70f, alpha), c.name);
+        bg->AddText(ImVec2(at.x + 1.0f, at.y + 1.0f), Rgba(0.0f, 0.0f, 0.0f, 0.8f * alpha), label);
+        float rgb[3];
+        party::hud::MemberColour(c.slot, rgb);  // the member's colour, the same for I2's pings
+        bg->AddText(at, Rgba(rgb[0], rgb[1], rgb[2], alpha), label);
         ImGui::PopFont();
-        if (c.have_hp && c.max_hp > 0) {
+        if (overhead == 3 && c.have_hp && c.max_hp > 0) {
             const float w = 56.0f * s, h = 3.0f * s;
             const ImVec2 p0(u * display.x - w * 0.5f, at.y + ts.y + 2.0f * s);
             Bar(bg, p0, ImVec2(p0.x + w, p0.y + h), float(c.hp) / float(c.max_hp), Rgba(0.62f, 0.07f, 0.06f, alpha),
@@ -2222,7 +2303,7 @@ bool HandleEvent(const SDL_Event& event) {
 bool Visible() {
     return initialized &&
            (menu_open || prompt_active || BbSettings::Get().show_fps || BbSettings::Get().show_hud ||
-            CompileIndicatorShown() || ToastWanted() || PartyHudWanted());
+            CompileIndicatorShown() || ToastWanted() || PartyHudWanted() || PartyTagsWanted());
 }
 
 bool MenuOpen() {

@@ -9,6 +9,7 @@
 //   story      StoryFromJsonText + SanitizePeerStory + GuestStory
 //   items      ItemsFromJsonText + FilterPeerItems + GuestItems
 //   phantom    PhantomEventFromJsonText
+//   balance    balance::FromJson (the host's party rules, guest side): values within the menu's ranges
 //   lamp       LampRequestFromJsonText + SanitizePeerLampRequest (a guest's lamp request, host side)
 //   progress   ChangesFromJson / SnapshotFromJson / GuestApplier queue / WorldImageFromJson +
 //              GuestWorldMirror / BbpfDecode
@@ -39,6 +40,7 @@
 #include "party_udp.h"
 #include "party_util.h"
 #include "party_sign_blob.h"
+#include "party/party_balance_rules.h"
 #include "party/party_code.h"
 #include "party/party_ids.h"
 #include "party/party_crypto.h"
@@ -579,6 +581,20 @@ void run_udp(Rng& r, const Corpus& c) {
         net::stun::Relay rel;
         INVARIANT(net::stun::parse_binding_response(out, n, in.data() + 4, &ma, &mp, &rel) || mp == 0);
         client.on_answer(addr, port, rel);
+    }
+}
+
+void run_balance(Rng& r, const Corpus& c) {
+    const std::string s = text_of(next_input(r, c, true));
+    set_input("balance", s);
+    coop::balance::Rules rules;
+    std::string err;
+    if (!coop::balance::FromJson(s, &rules, &err)) return;
+    INVARIANT(rules == coop::balance::Clamped(rules));
+    for (int n = 0; n <= 4; ++n) {
+        const coop::balance::Doping b = coop::balance::Boss(rules, n), e = coop::balance::Enemy(rules, n);
+        INVARIANT(b.hp_rate >= 1.0f && b.hp_rate <= 7.0f && e.hp_rate >= 1.0f && e.hp_rate <= 7.0f);
+        INVARIANT(b.attack_rate >= 1.0f && b.attack_rate <= 4.0f && std::abs(b.super_armor) <= 270);
     }
 }
 
@@ -1839,7 +1855,7 @@ int main(int argc, char** argv) {
     std::vector<Named> targets = {
         {"json", run_json, &jc, 1},       {"code", run_code, &bin, 0.5},     {"stun", run_stun, &bin, 0.5},
         {"udp", run_udp, &bin, 0.7},      {"travel", run_travel, &jc, 1},    {"story", run_story, &jc, 1},
-        {"items", run_items, &jc, 1},     {"phantom", run_phantom, &jc, 0.5}, {"lamp", run_lamp, &jc, 0.3}, {"progress", run_progress, &jc, 1},
+        {"items", run_items, &jc, 1},     {"phantom", run_phantom, &jc, 0.5}, {"lamp", run_lamp, &jc, 0.3}, {"balance", run_balance, &jc, 0.2}, {"progress", run_progress, &jc, 1},
         {"hostsvc", run_hostsvc, &jc, 1.5}, {"linkhost", run_linkhost, &jc, 2}, {"linkguest", run_linkguest, &jc, 2},
     };
     double total_share = 0;
