@@ -99,9 +99,12 @@ void Log(const char* fmt, ...) {
 /// runs S seconds after this player's next (re)join - the host's cooperators 0 -> >= 1, the
 /// guest's client session with the world loaded - on the main thread, in list order.
 struct TravelStep {
-    enum Kind { HostWarp, HostDie, GuestDie, HostKill, HostMove, GuestMove } kind = HostWarp;
+    enum Kind { HostWarp, HostDie, GuestDie, HostKill, HostMove, GuestMove, HostPress, GuestPress } kind = HostWarp;
     std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30; HostKill: the entity id
     float pos[3] = {};    // HostMove / GuestMove: the chr warp target (map coordinates)
+    float yaw = 0;        // HostMove / GuestMove: rotation about Y (radians) when has_yaw
+    bool has_yaw = false;
+    std::uint32_t buttons = 0;  // HostPress / GuestPress: pad buttons tapped (0.15 s)
     std::string map;      // HostMove / GuestMove "%NAME": only while the current map name contains it
     double delay = 15.0;
     int min_join = 0;     // "#N": not before this player's Nth join
@@ -136,6 +139,8 @@ struct Test {
     // after the world was steady again with a cooperator, counted from here.
     Clock::time_point steady_at{};
     bool steady = false;
+    Clock::time_point release_at{};  // a press step's buttons are released then
+    bool pressing = false;
 };
 
 struct State {
@@ -695,6 +700,8 @@ const char* TravelStepName(TravelStep::Kind k) {
            : k == TravelStep::HostKill  ? "host_kill"
            : k == TravelStep::HostMove  ? "host_move"
            : k == TravelStep::GuestMove ? "guest_move"
+           : k == TravelStep::HostPress ? "host_press"
+           : k == TravelStep::GuestPress ? "guest_press"
                                         : "guest_die";
 }
 
@@ -728,7 +735,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     }
     // The other role's steps are that instance's: skip them.
     auto mine = [&](const TravelStep& step) {
-        return (step.kind == TravelStep::GuestDie || step.kind == TravelStep::GuestMove) == (role == PartyRole::Guest);
+        return (step.kind == TravelStep::GuestDie || step.kind == TravelStep::GuestMove ||
+                step.kind == TravelStep::GuestPress) == (role == PartyRole::Guest);
     };
     while (t.next_step < t.steps.size() && !mine(t.steps[t.next_step])) {
         ++t.next_step;
@@ -740,8 +748,13 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         t.steady_at = now;
     }
     const TravelStep::Kind next_kind = t.next_step < t.steps.size() ? t.steps[t.next_step].kind : TravelStep::HostWarp;
-    if (t.next_step < t.steps.size() && (next_kind == TravelStep::HostKill || next_kind == TravelStep::HostMove ||
-                                         next_kind == TravelStep::GuestMove)) {
+    if (t.pressing && now >= t.release_at) {
+        t.pressing = false;
+        runtime_pad_director_press(0);
+    }
+    if (t.next_step < t.steps.size() &&
+        (next_kind == TravelStep::HostKill || next_kind == TravelStep::HostMove || next_kind == TravelStep::GuestMove ||
+         next_kind == TravelStep::HostPress || next_kind == TravelStep::GuestPress || !t.steps[t.next_step].map.empty())) {
         if (!steady || (!t.ran && !t.armed) || t.joins < t.steps[t.next_step].min_join) {
             return; // as the first step of a chain it still waits for the join
         }
@@ -782,13 +795,26 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         if (player && SafeGet(player + 0x58, &a) && a && SafeGet(a + 8, &b) && b && SafeGet(b + 0x3b0, &pm) && pm &&
             SafeGet(pm + 0x68, &pm) && pm && SafeRead(pm + 0x1d0, rot, sizeof rot) && SafeGet(player, &vt) && vt &&
             SafeGet(vt + 0x5f8, &fn) && fn) {
+            if (step.has_yaw) {
+                rot[0] = 0;
+                rot[1] = step.yaw;  // the B2 "dest" event's rot is {0, yaw, 0, 0}
+                rot[2] = 0;
+                rot[3] = 0;
+            }
             reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, const float*, const float*, std::uint32_t)>(fn)(
                 player, pos, rot, 1);
-            Log("test: %s to (%.2f, %.2f, %.2f)", TravelStepName(step.kind), double(pos[0]), double(pos[1]),
-                double(pos[2]));
+            Log("test: %s to (%.2f, %.2f, %.2f) rot y %.3f", TravelStepName(step.kind), double(pos[0]),
+                double(pos[1]), double(pos[2]), double(rot[1]));
         } else {
             Log("test: %s: no player / transform", TravelStepName(step.kind));
         }
+    } else if (step.kind == TravelStep::HostPress || step.kind == TravelStep::GuestPress) {
+        // In-process pad input (runtime_pad_director_press, OR-ed into every pad sample; no OS
+        // input): a tap, released 0.15 s later.
+        runtime_pad_director_press(step.buttons);
+        t.pressing = true;
+        t.release_at = now + std::chrono::milliseconds(150);
+        Log("test: %s 0x%x", TravelStepName(step.kind), step.buttons);
     } else if (step.kind == TravelStep::HostKill) {
         // A boss (or any enemy) killed as the game's own death path: ForceDead on its entity id; the
         // boss-defeat EMEVD (4[00] death state -> 2003[12]) and the Lua boss clear follow.
@@ -1075,9 +1101,12 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.insight = std::atoi(item.c_str() + 8);
             } else if (item.rfind("host_warp=", 0) == 0 || item.rfind("host_die", 0) == 0 ||
                        item.rfind("guest_die", 0) == 0 || item.rfind("host_kill=", 0) == 0 ||
-                       item.rfind("host_move=", 0) == 0 || item.rfind("guest_move=", 0) == 0) {
+                       item.rfind("host_move=", 0) == 0 || item.rfind("guest_move=", 0) == 0 ||
+                       item.rfind("host_press=", 0) == 0 || item.rfind("guest_press=", 0) == 0) {
                 TravelStep step;
-                step.kind = item.rfind("guest_move", 0) == 0 ? TravelStep::GuestMove
+                step.kind = item.rfind("guest_move", 0) == 0    ? TravelStep::GuestMove
+                            : item.rfind("guest_press", 0) == 0  ? TravelStep::GuestPress
+                            : item.rfind("host_press", 0) == 0   ? TravelStep::HostPress
                             : item[0] == 'g'                     ? TravelStep::GuestDie
                             : item.rfind("host_die", 0) == 0     ? TravelStep::HostDie
                             : item.rfind("host_kill", 0) == 0    ? TravelStep::HostKill
@@ -1086,6 +1115,16 @@ void PartyDirector::ConfigureFromEnv() {
                 if (step.kind == TravelStep::HostWarp || step.kind == TravelStep::HostKill) {
                     step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 10, nullptr, 10));
                 }
+                if ((step.kind == TravelStep::HostDie || step.kind == TravelStep::GuestDie) && item.find('%') != std::string::npos) {
+                    // host_die@S%MAP: S s after the last load / previous step, in that map (no re-join)
+                    step.map = item.substr(item.find('%') + 1);
+                }
+                if (step.kind == TravelStep::HostPress || step.kind == TravelStep::GuestPress) {
+                    step.buttons = static_cast<std::uint32_t>(std::strtoul(item.c_str() + item.find('=') + 1, nullptr, 0));
+                    if (const std::size_t pc = item.find('%'); pc != std::string::npos) {
+                        step.map = item.substr(pc + 1);
+                    }
+                }
                 if (step.kind == TravelStep::HostMove || step.kind == TravelStep::GuestMove) {
                     // host_move=X:Y:Z@S[%MAP] (':' separates: ',' separates the list items)
                     const char* p = item.c_str() + item.find('=') + 1;
@@ -1093,6 +1132,10 @@ void PartyDirector::ConfigureFromEnv() {
                         char* end = nullptr;
                         step.pos[k] = std::strtof(p, &end);
                         p = (end && *end == ':') ? end + 1 : end;
+                    }
+                    if (p && p > item.c_str() && p[-1] == ':') {  // X:Y:Z:YAW
+                        step.yaw = std::strtof(p, nullptr);
+                        step.has_yaw = true;
                     }
                     if (const std::size_t pc = item.find('%'); pc != std::string::npos) {
                         step.map = item.substr(pc + 1);
@@ -1107,7 +1150,7 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.steps.push_back(step);
             } else if (!item.empty()) {
                 Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, start, grant_bells, drop_bells, award_lot=N, set_flag=N[:N], insight=N, "
-                    "ring_host, ring_guest, bell_host, bell_guest, host_warp=ID@S, host_kill=ENTITY@S, host_move=X:Y:Z@S[%MAP], guest_move=X:Y:Z@S[%MAP], host_die@S or guest_die@S; ignored",
+                    "ring_host, ring_guest, bell_host, bell_guest, host_warp=ID@S, host_kill=ENTITY@S, host_move=X:Y:Z[:YAW]@S[%MAP], guest_move=..., host_press=BUTTONS@S, guest_press=BUTTONS@S, host_die@S or guest_die@S; ignored",
                     item.c_str());
             }
         }
