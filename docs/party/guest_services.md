@@ -242,15 +242,22 @@ whoever uses a lamp or headstone, **the whole party travels**, led by the host (
 * **One TRAVEL per warp [fixed]**: the host captured a guest-requested lamp warp twice, 26 ms apart
   (two TRAVEL, two "rested"). `CaptureHost` now drops the same warp (kind, lamp, map, respawn
   record) seen again within 1 s; the next runs logged one TRAVEL.
-* **Guest button press at a world lamp [R, not working yet]**: after following the host to Central
-  Yharnam, the guest's lamp object (entity 2411951, test probe on the lamp update 0x12F5C40) has
-  all four "unavailable" bytes 0 (+0x49 patched) but **type (+0x28) 0** and action row 90000,
-  where the host's lit lamp has type 1..4 and row 90000 + type; Cross does nothing. The lamp's
-  state on the guest comes from the guest's flag overlay, and the B2 overlay guard reported 890 of
-  900 overlay groups all-zero after the host-world snapshot: the lamp's lit state is not in the
-  guest's overlay. Fix direction: carry the host's lamp flags (the 2009[5] lamp flags, 1AAB78x0,
-  of the current map) into the guest's overlay (progress mirror), then re-test the press. The
-  request path behind it works (lamp flag test above).
+* **Guest button press at a world lamp [R, not working yet; not a flag problem]**: after following the
+  host to Central Yharnam the guest's lamp object (entity 2411951) has all four "unavailable" bytes
+  0 (+0x49 patched) but type (+0x28) 0. The host-world mirror (event_flags.md 12) did not change
+  that: with the mirror the guest's overlay holds every lamp flag the host has (72410201-203,
+  12417810/830/831 ... - dump: 0 host-only bits), the lamp looks the same with the mirror on and off
+  (A/B screenshots), and **the host's own lamp object reads the same** (type 0, `+0xC70 entry: +0xC
+  0 +0xE 0 lit 0 reg 1 +0x14 12417820 +0x18 1` on both). What the bytes are: type = FUN_0146E360,
+  the level (0-4) of the FrpgNetMan +0xC70 "FrpgNetBonfireDbItem" entry's +0xC counter against
+  param 0x96 thresholds (an online lamp-activity level, set by the lamp DB / 0x146D890), and
+  +0x2C = 90000 + type is an **SFX id** (the flame effect; 0x15F95.. are SFX ids in the same
+  function), not an action-button row (ActionButtonParam has no rows 90000-90005). Live
+  (`lampprobe;lampwalk`: the player is warped 1 m in front of the lamp, matrix translation at the
+  0x13C9AF0 record +0x24C/+0x25C/+0x26C = (-196.8, -28.6, 65.4)): **neither the host nor the guest
+  gets a lamp prompt there in a party session** (PromptUp none, screenshots). So the world-lamp gate
+  is still elsewhere (session-gated action, not the overlay); the request path behind it works
+  (`lampflag=` test above) and the Dream headstones now give guests the same party travel.
 * Open: `+0x4B` and the lamp's chr-type range branch for a guest.
 
 ## 4. Safety
