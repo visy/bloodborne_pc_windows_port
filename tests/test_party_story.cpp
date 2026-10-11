@@ -259,13 +259,77 @@ static void test_missed_scene_replayed_while_summoned() {
     a = Until(g, ph, t);
     CHECK(a && a->kind == StoryAction::SetFlags && a->flags == std::vector<std::uint32_t>{12800434});
     CHECK(g.Seen(28000040));
-    // The ending stays queued while summoned.
-    CHECK(!Until(g, ph, t, 80));
-    CHECK(g.QueueSize() == 1 && g.Busy());
-    // Home: the ending runs (Dream warp first).
-    StoryState own = OwnWorld();
-    a = Until(g, own, t);
-    CHECK(a && a->kind == StoryAction::TravelDream);
+    // The ending comes last; summoned it starts with the warp home (out of the host's world).
+    a = Until(g, ph, t);
+    CHECK(a && a->kind == StoryAction::TravelDream && a->id == GuestStory::kDreamLamp);
+    CHECK(g.QueueSize() == 0 && g.Busy() && g.ReplayBusy());
+}
+
+static void test_summoned_ending() {
+    // Summoned in the host's Hunter's Dream (m21, not the own one): the warp still runs; the
+    // program waits for the own Dream (load, own world, steady) and goes on there.
+    {
+        GuestStory g;
+        double t = 0;
+        StoryIntent e;
+        e.seq = 7;
+        e.kind = StoryKind::Ending;
+        e.id = 2;
+        CHECK(g.Offer(e, true, t));
+        StoryState ph = Phantom();
+        ph.map_id = 0x15000000;
+        auto a = Until(g, ph, t);
+        CHECK(a && a->kind == StoryAction::TravelDream);
+        // Still the host's world (the warp has not started yet): nothing more.
+        CHECK(!Until(g, ph, t, 60));
+        StoryState load = ph;
+        load.loading = true;
+        load.world_up = false;
+        load.session_role = 0;
+        CHECK(!Until(g, load, t, 30));
+        StoryState dream = OwnWorld();
+        dream.map_id = 0x15000000;
+        a = Until(g, dream, t);
+        CHECK(a && a->kind == StoryAction::SetFlags && a->flags == (std::vector<std::uint32_t>{12101800, 9180}));
+        a = Until(g, dream, t);
+        CHECK(a && a->kind == StoryAction::PlayRemo && a->id == 21000020 && a->mode == 0);
+        PlayToEnd(g, dream, t);
+        a = Until(g, dream, t);
+        CHECK(a && a->kind == StoryAction::SetFlags && !a->on);
+        a = Until(g, dream, t);
+        CHECK(a && a->kind == StoryAction::NgCycle);
+    }
+    // Not calm: the guest does not leave in a fight.
+    {
+        GuestStory g;
+        double t = 0;
+        StoryIntent e;
+        e.seq = 1;
+        e.kind = StoryKind::Ending;
+        e.id = 1;
+        g.Offer(e, true, t);
+        StoryState ph = Phantom();
+        ph.calm = false;
+        CHECK(!Until(g, ph, t, 120));
+        ph.calm = true;
+        auto a = Until(g, ph, t);
+        CHECK(a && a->kind == StoryAction::TravelDream);
+    }
+    // BB_PARTY_STORY_ENDING_SUMMONED=0: the old wait for the own world.
+    {
+        GuestStory g;
+        g.summoned_ending = false;
+        double t = 0;
+        StoryIntent e;
+        e.seq = 1;
+        e.kind = StoryKind::Ending;
+        e.id = 3;
+        g.Offer(e, true, t);
+        CHECK(!Until(g, Phantom(), t, 120));
+        CHECK(g.QueueSize() == 1);
+        auto a = Until(g, OwnWorld(), t);
+        CHECK(a && a->kind == StoryAction::TravelDream);
+    }
 }
 
 static void test_replay_unseen_with_sex_and_tod_guard() {
@@ -478,6 +542,7 @@ int main() {
     test_mirror_then_replay();
     test_replay_waits_home_when_summoned_off();
     test_missed_scene_replayed_while_summoned();
+    test_summoned_ending();
     test_replay_unseen_with_sex_and_tod_guard();
     test_remo_never_starts();
     test_mirror_dropped_when_sent_home();
