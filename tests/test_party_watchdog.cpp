@@ -201,8 +201,23 @@ static void test_config() {
     CHECK(e.on && e.stall_s == 30 && e.gone_s == 25 && e.wait_s == 90 && e.hard_s == 240);
 }
 
+// Split travel: a member alone in another area is present (no chr in the host's world, so 0
+// cooperators): never a stop while it stays apart; once it is no longer apart the clocks start.
+static void test_members_apart() {
+    HostWatchdog w;
+    bool stopped = false;
+    for (double t = 0; t < 900; t += 0.5) {
+        HostWatchdogInput in = In(t, 3, 0, Roster(MemberState::InHostWorld, true, 0x15000000));
+        in.members_apart = 1;
+        stopped = stopped || w.Update(in);
+    }
+    CHECK(!stopped);
+    CHECK(RunUntilStop(w, 900, 2000, 3, 0, Roster(MemberState::InHostWorld)) > 900);
+}
+
 int main() {
     test_not_host();
+    test_members_apart();
     test_guest_gone();
     test_stuck_summon();
     test_progress_keeps_it();

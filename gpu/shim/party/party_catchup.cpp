@@ -87,8 +87,50 @@ void ApplyStart() {
 
 } // namespace
 
-void CatchupTick(const GameSnapshot& s, bool guest_connected, double now) {
+/// The host's time of day (9800..9802, 3 bits: the Blood Moon and the night) into the guest's own
+/// save when the guest's is behind. The C2 change stream carries booleans of the synced
+/// categories, not this value, so a guest that was not summoned when the host's world changed
+/// phase (a late joiner, or a quit before the save) kept day in its own save (campaign_soak.md
+/// open 2 / 2b). Own pool only; the world shown stays whatever the game loaded. Once per second.
+/// (Only increases: a new NG cycle starts at day again in both saves.)
+void TimeOfDayCatchup(const GameSnapshot& s, bool guest_connected, double now) {
+    static double last = 0;
+    if (!guest_connected || !s.world_up || s.loading || now - last < 1.0) {
+        return;
+    }
+    last = now;
+    // The value: while summoned (load mode 1) the game's own view is the host's overlay; else the
+    // host's C2 snapshot when it carries these flags (it does not today, live 2026-10-11).
+    const bool summoned = s.session_role == RoleClient && progress::FlagLoadMode() == 1;
+    int host = 0, own = 0;
+    for (std::uint32_t i = 0; i < 3; ++i) {
+        bool h = false, o = false;
+        const bool hk = summoned ? progress::ReadFlag(9800 + i, &h) : progress::HostSnapshotFlag(9800 + i, &h);
+        if (!hk || !progress::ReadFlagOwnSave(9800 + i, &o)) {
+            return;
+        }
+        host = host << 1 | (h ? 1 : 0);
+        own = own << 1 | (o ? 1 : 0);
+    }
+    if (host <= own) {
+        return;
+    }
+    for (std::uint32_t i = 0; i < 3; ++i) {
+        progress::WriteFlagOwnSave(9800 + i, ((host >> (2 - i)) & 1) != 0);
+    }
+    int after = 0;
+    for (std::uint32_t i = 0; i < 3; ++i) {
+        bool o = false;
+        progress::ReadFlagOwnSave(9800 + i, &o);
+        after = after << 1 | (o ? 1 : 0);
+    }
+    Log("time of day behind the host's: own save 9800..9802 %d -> %d (host %d)", own, after, host);
+    RequestGameSave("catch-up time of day");
+}
+
+void CatchupTick(const GameSnapshot& s, bool guest_connected, double now, std::uint32_t host_map) {
     State& st = S();
+    TimeOfDayCatchup(s, guest_connected, now);
     if (st.c.phase() == Catchup::Phase::Done) {
         return;
     }
@@ -138,7 +180,7 @@ void CatchupTick(const GameSnapshot& s, bool guest_connected, double now) {
         ApplyStart();
         break;
     case CatchupAction::Warp: {
-        const std::uint32_t lamp = GuestDeathRedirectLamp();
+        const std::uint32_t lamp = GatherLampFor(GuestDeathRedirectLamp(), host_map);
         const std::uint32_t to = lamp != kTravelNone && lamp != 0 ? lamp : kDreamLamp;
         const bool ok = LampWarp(to);
         Log("%s: lamp warp to %u%s: %s", a.why.c_str(), to, to == lamp ? " (the host's last lamp)" : " (host lamp unknown: the Dream)",
