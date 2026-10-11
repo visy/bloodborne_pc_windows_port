@@ -196,7 +196,14 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
         /* Apply per-channel volume, channel remap, and soft-knee saturation to prevent harsh clipping */
         unsigned char converted[2048*8*4];
         static const int remap[8]={0,1,2,3,6,7,4,5};
-        float master_gain=(p->channels==8) ? 0.60f : 1.0f;
+        static float audio_boost = -1.0f;
+        if (audio_boost < 0.0f) {
+            const char *env = getenv("BB_AUDIO_BOOST");
+            audio_boost = env ? (float)atof(env) : 1.40f;
+            if (audio_boost < 0.1f) audio_boost = 0.1f;
+            else if (audio_boost > 4.0f) audio_boost = 4.0f;
+        }
+        float master_gain = ((p->channels==8) ? 0.75f : 1.25f) * audio_boost;
         for (size_t f=0;f<(size_t)p->frames;++f) for (int c=0;c<p->channels;++c) {
             int target=p->channels==8 && !p->std_layout ? remap[c] : c;
             size_t from=f*(size_t)p->channels+(size_t)c, to=f*(size_t)p->channels+(size_t)target;
