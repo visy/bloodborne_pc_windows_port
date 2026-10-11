@@ -187,4 +187,10 @@ std::uint64_t summon_requests();
 // (online_watch.cpp); started by the first sceHttpInit under BB_PARTY.
 void online_watch_start();
 
+// Diagnostic packet trace (party_fourp's probe sets it; null = off): every P2P datagram the game
+// sends (send = true, on the game's thread) or that is queued for it, with its vports and payload.
+using PacketTraceFn = void (*)(bool send, unsigned src_vport, unsigned dst_vport, const unsigned char* data,
+                               std::size_t len);
+void set_packet_trace(PacketTraceFn fn);
+
 }  // namespace bbnet

@@ -58,6 +58,9 @@ std::string RulesTag(const Config& c);
 std::string FourpRulesTag();
 /// Max players in force: the host's from WELCOME on a connected guest, else the local setting.
 int EffectiveMaxPlayers(int local_max, bool guest, bool connected, int host_max);
+/// H5: the selector's "max cooperators" (sel+0x1fc) for a party of `max_players`: 3 (vanilla) below
+/// 4, else the party size (the SOS filter counts the pending request too).
+int SelectorMaxCoop(int max_players);
 /// H1: report a used 2nd cooperator slot (status 2) free?
 bool LiftCoopSlot(int rec0_status, int coop_count, int max_players);
 /// H2: the cooperator count the boss events see.
