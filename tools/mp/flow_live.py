@@ -115,7 +115,14 @@ def main():
               "--watch", r"session trying-to-join .* -> client \(6=summoned@1,3",
               "--watch", r"test menu: step .*(leave|join)\w*=world_step@1.5",
               "--watch", r"Party flow: leave=left@4",
-              "--watch", r"STUCK=stuck@0"]
+              "--watch", r"STUCK=stuck@0",
+              # Every live check needs pictures of all windows at join, arrival and leave.
+              "--watch", r"cooperators 0 -> 1=arrival1@2,8",
+              "--watch", r"cooperators 1 -> 2=arrival2@2,8,20",
+              "--watch", r"Leave pressed=leave@1,4,8",
+              "--watch", r"host lost .*home now=hostlost@2,6",
+              "--watch", r"boss health bar shown=bossbar@1",
+              "--watch", r"boss health bar: off=bossoff@1,10"]
     shot = subprocess.Popen([sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out", str(shots),
                              "--seconds", "7200"] + watch)
     env = [f"BB_TEST_MENU_FILE={root}\\menu{{i}}.txt", "BB_PARTY_PORT={port}", "BB_PARTY_UPNP=0",

@@ -147,6 +147,9 @@ struct Test {
     float a11_pos[3] = {0, 0, 0};
     double a11_move_at = 0, a11_kill_after = 0;
     std::uint32_t a11_entity = 0;
+    std::uint32_t a11_lamp = 0;  // a11_lamp=ID: the lamp warp first (2 s after the first steady world)
+    bool a11_lamp_done = false, a11_reloaded = false;
+    Clock::time_point a11_lamp_world_at{};
     Clock::time_point a11_bar_at{};
     bool a11_bar_seen = false;
     bool log_state = false;
@@ -1480,10 +1483,21 @@ void HostWatchdogTick(State& st, const GameSnapshot& s, party::PartyLink* link, 
 
 void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
     Test& t = st.test;
+    if (t.a11_lamp_done && st.world_at != t.a11_lamp_world_at) {
+        t.a11_reloaded = true;  // the lamp warp's load: a11_move after the next steady world
+    }
     if (!st.world_seen) {
         return;
     }
-    if (t.a11_move && !t.a11_moved && s.world_up && !s.loading && Seconds(st.world_at, now) >= t.a11_move_at) {
+    if (t.a11_lamp && !t.a11_lamp_done && s.world_up && !s.loading && Seconds(st.world_at, now) >= 2.0) {
+        t.a11_lamp_done = true;
+        t.a11_lamp_world_at = st.world_at;
+        Log("test: a11_lamp %u", t.a11_lamp);
+        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint32_t)>(Guest(kLampWarp))(t.a11_lamp);
+        return;
+    }
+    if (t.a11_move && !t.a11_moved && (!t.a11_lamp || (t.a11_lamp_done && t.a11_reloaded)) && s.world_up &&
+        !s.loading && Seconds(st.world_at, now) >= t.a11_move_at) {
         t.a11_moved = true;
         const std::uint64_t player = LocalPlayer();
         std::uint64_t vt = 0, fn = 0;
@@ -1930,6 +1944,8 @@ void PartyDirector::ConfigureFromEnv() {
                     st.test.a11_pos[2] = z;
                     st.test.a11_move_at = at;
                 }
+            } else if (item.rfind("a11_lamp=", 0) == 0) {
+                st.test.a11_lamp = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 9, nullptr, 10));
             } else if (item.rfind("a11_kill=", 0) == 0) {
                 unsigned id = 0;
                 float after = 20;
