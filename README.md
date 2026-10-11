@@ -103,8 +103,8 @@ run from two new characters to the end credits passed, and a three-player travel
   guest's own save).
 - **Guests can talk to NPCs** in the host's world (Gilbert, Iosefka, Eileen ...); quest choices
   are shared by the whole party.
-- **Loot is per player.** Each player can take each world item once into their own save, and
-  every player gets their own roll of each enemy's drop.
+- **Cutscenes for everyone.** A story scene a guest triggers in the host's world plays for the
+  whole party too.
 - **Up to 4 players** (host + 3), all in the host's world. The 4th player's summon can take a
   minute or two.
 - **Same version for everyone.** A player whose bbport build, game files, patches, mods or party

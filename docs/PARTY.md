@@ -216,9 +216,10 @@ Instead of a code, a guest can also enter the host's address directly as `host:p
   anyone makes - host or guest, guests can talk to NPCs in the host's world - applies to the
   host's world and to every player's save. Gifts an NPC gives in dialogue go to whoever talked.
 - **Chalice Dungeons** are not part of party play.
-- World treasure is per player: a guest sees and takes the host world's items into its own save
-  (each player once); enemy drops are rolled for every player. The host's pickups are also handed
-  to guests through the item sharing above.
+- World treasure a guest picks up while in the host's world does not exist for guests in the
+  normal game; the host's pickups are handed to guests through the item sharing above.
+  Instanced treasure and full per-player enemy drops for guests are experimental and off in
+  0.5.2 (`BB_PARTY_GUEST_PICKUP=1`, `BB_PARTY_GUEST_DROPS=1`).
 
 ## Settings (Rules & sync)
 
