@@ -340,6 +340,8 @@ void AddRows(void* page, const std::vector<Row>& all) {
     }
 }
 
+std::atomic<TextOverrideFn> text_override{nullptr};
+std::atomic<ImePresetFn> ime_preset{nullptr};
 std::atomic<const char16_t*> title_override{nullptr}; // while the game builds one of our pages (its menu thread)
 // Called by the game's menu code (guest threads, System V ABI like the game), one set per page.
 bool Trace();
@@ -504,6 +506,9 @@ BB_SYSV const char16_t* LookupHook(void* repository, u32 table, u32 category, u3
         return title_override;
     }
     const char16_t* text = lookup_original(repository, table, category, id);
+    if (const TextOverrideFn fn = text_override.load(std::memory_order_acquire)) {
+        if (const char16_t* other = fn(category, id, text)) text = other;
+    }
     RedrawChangedValues();  // the game's menu code (our page's own texts are not looked up again)
     NoteLookup(category, id);
     NoteText(text);
@@ -811,6 +816,19 @@ void RecentTexts(std::int64_t since_ms, void (*fn)(const char16_t* text, std::in
             fn(t, ms, user);
         }
     }
+}
+
+void SetTextOverride(TextOverrideFn fn) {
+    text_override.store(fn, std::memory_order_release);
+}
+
+void SetImePreset(ImePresetFn fn) {
+    ime_preset.store(fn, std::memory_order_release);
+}
+
+const char* ImePreset(std::uint32_t max_length) {
+    const ImePresetFn fn = ime_preset.load(std::memory_order_acquire);
+    return fn ? fn(max_length) : nullptr;
 }
 
 std::int64_t LastLookupMs(std::uint32_t id) {

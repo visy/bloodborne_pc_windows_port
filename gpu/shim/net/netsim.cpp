@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <set>
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
@@ -82,6 +83,7 @@ bool parse(const char* spec, Config* out, std::string* error) {
         else if (key == "jitter" || key == "jit") out->jitter_ms = v;
         else if (key == "at") out->outage_at_ms = v;
         else if (key == "any") out->any_addr = v != 0;
+        else if (key == "nat") out->nat = v != 0;
         else if (key == "loss") out->loss_pct = std::min(v, 100.0);
         else if (key == "dup") out->dup_pct = std::min(v, 100.0);
         else if (key == "reorder") out->reorder_pct = std::min(v, 100.0);
@@ -112,6 +114,7 @@ std::string describe(const Config& c) {
         s += buf;
     }
     if (c.any_addr) s += ",any=1";
+    if (c.nat) s += ",nat=1";
     return s;
 }
 
@@ -355,6 +358,19 @@ namespace {
 std::atomic<std::int64_t> g_black_from{0}, g_black_until{0};  // steady_clock ticks
 }  // namespace
 
+std::mutex g_nat_mu;
+std::set<std::uint64_t> g_nat_out;
+
+void nat_note_out(std::uint32_t addr, std::uint16_t port) {
+    std::lock_guard<std::mutex> lk(g_nat_mu);
+    g_nat_out.insert(static_cast<std::uint64_t>(addr) << 16 | port);
+}
+
+bool nat_allow_in(std::uint32_t addr, std::uint16_t port) {
+    std::lock_guard<std::mutex> lk(g_nat_mu);
+    return g_nat_out.count(static_cast<std::uint64_t>(addr) << 16 | port) != 0;
+}
+
 bool blackout_at(Clock::time_point now, Clock::time_point* end) {
     const std::int64_t t = now.time_since_epoch().count();
     const std::int64_t from = g_black_from.load(), until = g_black_until.load();
@@ -386,6 +402,17 @@ void configure(const Config& c) {
     s.queue->set_epoch(s.epoch);
     std::printf("Net: network simulator on (%s)%s\n", describe(c).c_str(),
                 c.any_addr ? "" : " (loopback peers only)");
+}
+
+void reconfigure_for_tests(const Config& c) {
+    Sim& s = sim();
+    std::lock_guard<std::mutex> lk(s.mu);
+    if (!c.enabled) return;
+    s.queue = new Queue(c);  // the old one is leaked on purpose: the sender thread may hold it
+    s.cfg = c;
+    s.epoch = Clock::now();
+    s.queue->set_epoch(s.epoch);
+    std::printf("Net: network simulator reconfigured (%s)\n", describe(c).c_str());
 }
 
 Config config() {

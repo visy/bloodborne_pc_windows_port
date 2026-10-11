@@ -10,7 +10,8 @@
 //   items      ItemsFromJsonText + FilterPeerItems + GuestItems
 //   phantom    PhantomEventFromJsonText
 //   balance    balance::FromJson (the host's party rules, guest side): values within the menu's ranges
-//   lamp       LampRequestFromJsonText + SanitizePeerLampRequest (a guest's lamp request, host side)
+//   lamp       LampRequestFromJsonText + SanitizePeerLampRequest (a guest's lamp request, host side),
+//              LampLitFromJsonText, worldact::RequestFromJson (EVENT world_action: levers, doors, NPC talk)
 //   progress   ChangesFromJson / SnapshotFromJson / GuestApplier queue / WorldImageFromJson +
 //              GuestWorldMirror / BbpfDecode
 //   hostsvc    PartyHostService::handle and FromApi::handle_json (guest RPCs, the sign board)
@@ -52,6 +53,7 @@
 #include "party/party_sock.h"
 #include "party/party_story.h"
 #include "party/party_travel.h"
+#include "party/party_worldact.h"
 
 #include <algorithm>
 #include <array>
@@ -452,6 +454,15 @@ Corpus json_corpus() {
     lr.seq = 3;
     c.add(coop::LampRequestToJsonText(lr));
     c.add(coop::LampLitToJsonText({12417830, 12417831, 72410201}));
+    {
+        coop::worldact::Request wa;
+        wa.map = 0x18010000;
+        wa.set = {12410200, 12410202, 12100110};
+        wa.clr = {12410203};
+        c.add(coop::worldact::RequestToJson(wa));
+        wa.kick = {2410000, 2410001};
+        c.add(coop::worldact::RequestToJson(wa));
+    }
     std::vector<coop::progress::FlagChange> ch(2);
     ch[0] = {12401800, true, coop::progress::CategoryOf(12401800), 5};
     ch[1] = {70002802, false, coop::progress::CategoryOf(70002802), 6};
@@ -696,6 +707,28 @@ void run_lamp(Rng& r, const Corpus& c) {
     if (coop::LampLitFromJsonText(s, &lit, &err)) {  // EVENT lamp_lit (a guest lit a lamp)
         INVARIANT(lit.size() <= coop::kMaxLampLitIds);
         for (std::uint32_t id : lit) INVARIANT(coop::LampLitFlagAllowed(id));
+    }
+    coop::worldact::Request wa;  // EVENT world_action (a guest's lever / door / NPC talk, host side)
+    if (coop::worldact::RequestFromJson(s, &wa, &err)) {
+        INVARIANT(wa.set.size() <= coop::worldact::kMaxSet && wa.clr.size() <= coop::worldact::kMaxClear);
+        INVARIANT(!wa.set.empty() || !wa.clr.empty() || !wa.kick.empty());
+        INVARIANT(wa.kick.size() <= coop::worldact::kMaxKicks);
+        for (std::int32_t k : wa.kick) INVARIANT(k > 0 && k <= 99999999);
+        for (std::uint32_t id : wa.set) {
+            const std::uint32_t area = id >= 10000000u ? id / 100000u % 100u : 21u;
+            INVARIANT(coop::worldact::WorldActionAllowed(id, false, area << 24));
+            INVARIANT(!coop::progress::NeverWritable(id));
+            const auto cat = coop::progress::CategoryOf(id);
+            INVARIANT(cat != coop::progress::Category::boss_defeated && cat != coop::progress::Category::item_lot_picked &&
+                      cat != coop::progress::Category::session_runtime && cat != coop::progress::Category::never_sync);
+        }
+        for (std::uint32_t id : wa.clr) {
+            const std::uint32_t area = id >= 10000000u ? id / 100000u % 100u : 21u;
+            INVARIANT(coop::worldact::WorldActionAllowed(id, true, area << 24));
+        }
+        std::string again;
+        coop::worldact::Request back;
+        INVARIANT(coop::worldact::RequestFromJson(coop::worldact::RequestToJson(wa), &back, &again) && back == wa);
     }
     if (!coop::LampRequestFromJsonText(s, &q, &err)) return;
     if (coop::SanitizePeerLampRequest(q, &err)) INVARIANT(coop::TravelLampKnown(q.id));

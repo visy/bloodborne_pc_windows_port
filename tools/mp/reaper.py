@@ -123,6 +123,26 @@ def main():
             with _locked("game") as st:
                 _prune(st)
                 holders = [dict(e) for e in st["holders"]]
+                # Fairness for 3-4 client tests (agents run their own, possibly old, copy of
+                # game_queue.py, whose backfill lets 2-client tests jump the line forever): while a
+                # waiting job of 3+ clients has waited over 60 s, cap the pool at 3 so no 2-client
+                # job fits next to a running one; restore the normal 4 afterwards.
+                def waited(e):
+                    if "t" in e:
+                        return time.time() - e["t"]
+                    try:
+                        h, m, sec = map(int, e.get("since", "").split(":"))
+                        lt = time.localtime()
+                        return (lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec - (h * 3600 + m * 60 + sec)) % 86400
+                    except ValueError:
+                        return 0
+                starved = any(e["count"] >= 3 and waited(e) > 60 for e in st["queue"])
+                want = 3 if starved else st.get("normal_max", 4)
+                if st.get("max_clients") != want:
+                    st.setdefault("normal_max", 4)
+                    st["max_clients"] = want
+                    print(time.strftime("%H:%M:%S"), f"fairness: game pool max {want}"
+                          + (" (a 3-4 client test is waiting)" if starved else ""), flush=True)
         except (SystemExit, OSError):
             holders = []
         now = time.time()

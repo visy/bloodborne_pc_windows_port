@@ -8,7 +8,7 @@ must do about NAT.
 
 | Channel | Protocol | What it carries | Reliability |
 |---|---|---|---|
-| Party link (`party_link.h`) | TCP to the host's party port (default 9307) | Roster, RPC (the guest game's FROM API / matchmaking), our EVENTs: travel, `flags`, `flag_snapshot`, `world_groups`, items, story, lamp requests, `lamp_lit`... | TCP (in order, retransmitted), plus a per-stream event cursor: unacked events are replayed after a reconnect and de-duplicated. Lost = no frame for 10 s; the slot is kept 60 s; the guest reconnects with backoff 1-8 s. |
+| Party link (`party_link.h`) | TCP to the host's party port (default 9307); or a reliable UDP stream on the party UDP port (`party_rudp.h`) when TCP does not get through | Roster, RPC (the guest game's FROM API / matchmaking), our EVENTs: travel, `flags`, `flag_snapshot`, `world_groups`, items, story, lamp requests, `lamp_lit`... | TCP (in order, retransmitted), plus a per-stream event cursor: unacked events are replayed after a reconnect and de-duplicated. Lost = no frame for 10 s; the slot is kept 60 s; the guest reconnects with backoff 1-8 s. |
 | Game P2P (`net_socket.cpp`, `party_udp.h`) | UDP on the same port number | The game's own session traffic (players, enemies, damage, the join data) | The game's own protocol over UDP. Guest-to-guest pairs hole-punch, falling back to the host relay (PeerPaths). |
 
 So our own events are reliable and ordered by construction. The open question was whether the
@@ -77,6 +77,24 @@ Findings:
 - Fixed on the way: the guest-lamp diagnostics printed a line every second while a guest stood
   near a world lamp. They are now silent outside tests.
 
+### 3b. Simulated NAT, no port forward (2026-10-11, run `NAT sim: link over UDP`)
+
+`BB_NET_SIM=lat=30,jit=5,loss=1,nat=1` on both, host has no TCP listener, the guest's code goes
+to the host through `BB_PARTY_GUEST_CODE_FILE` (standing in for chat):
+
+| Time (instance clock) | Host | Guest |
+|---|---|---|
+| +27.4 | | `guest code BBG1-0ZR0-000V-PPCD (UDP 127.0.0.1:47961)` |
+| +28.3 | `punching towards a guest at 127.0.0.1:47961` | |
+| +28.9 | `a guest connects over UDP` | `no TCP answer from the host; connecting over UDP`, `connected over UDP` (+0.07 s) |
+| +29.1 | flag snapshot due | `connected: slot 1` |
+| +44.5 | game P2P `punch Hunter1 ... peer heard after 500 ms` | same towards Hunter0 |
+| +47.1 / +52.3 | `cooperators 0 -> 1` | `client (6)` (bell join) |
+| +74.4 | | B2 travel: `arrived in the host world` |
+
+So the link (events, RPC, mirror) and the game's own session both crossed the simulated NAT;
+without the guest code the guest never connects (`test_udp_nat_link`, Bob).
+
 Not covered here: a real NAT and a real ISP (no 2-PC test). The simulator also does not model
 bandwidth limits (the party's bandwidth is small: ~180 KB/min UDP per guest in the runs above,
 plus the 10 KB mirror image at join).
@@ -88,7 +106,7 @@ plus the 10 KB mirror image at join).
   the STUN Binding Response at the host's port tell each guest its public address).
   Guest-to-guest game traffic hole-punches. Where that fails (symmetric NAT), it goes through the
   host relay automatically (`PeerPaths`; `BB_PARTY_FORCE_RELAY=1` forces it).
-- **Host**: one port must be reachable from the internet, **UDP and TCP, default 9307**
+- **Host**, best case: one port reachable from the internet, **UDP and TCP, default 9307**
   (`BB_PARTY_PORT` / Party tab).
   1. **UPnP** (already implemented: `party/upnp_win.cpp`, Windows' own IUPnPNAT, on by default,
      `BB_PARTY_UPNP=0` off) asks the router to map both protocols while the game runs and removes
@@ -103,11 +121,47 @@ plus the 10 KB mirror image at join).
   4. **The party code** carries the public address found by STUN (`BB_PARTY_STUN`, default
      Google's) or reported by the UPnP router, plus a LAN code for same-network guests. A fixed
      IP, DNS name or VPN address can be set as *Public address* (`BB_PARTY_PUBLIC_ADDR`).
-  5. **Carrier-grade NAT / no forwarding possible** (mobile, some ISPs): the host cannot be
-     reached. Use a VPN that puts everyone on one network (Tailscale, ZeroTier, Radmin VPN) and
-     the host's VPN address, or let a player with a reachable port host.
+- **Host without UPnP or a port forward: UDP hole punching with a guest code** (2026-10-11).
+  1. The party code already carries the host's STUN-mapped public UDP endpoint.
+  2. Each guest, on joining, finds its own public UDP endpoint of the party port by STUN and shows
+     it as a **guest code** `BBG1-XXXX-XXXX-XXXX` (Crockford base32 of IPv4 + port + CRC-8;
+     overlay Party page *Your guest code: copy*; also `user/party_guest_code.txt`).
+  3. The guest sends that code to the host out of band (chat), the host presses *Add a guest
+     code (paste)* (or `BB_PARTY_GUEST_CODES=...`, or a file named by `BB_PARTY_GUEST_CODE_FILE`).
+  4. The host then sends small punch datagrams from its party port to the guest's endpoint every
+     200 ms for 30 s. That opens the host's NAT mapping for that guest; the guest's own outbound
+     packets opened its side. Both sides' NAT then pass the traffic (simultaneous open).
+  5. The guest tries TCP first; after 1.5 s without an answer, or at once on *refused*, the party
+     link switches to a **reliable UDP stream** on the same UDP port (`party_rudp.h`: SYN / DATA /
+     cumulative ACK / FIN, 1180-byte segments, window 256, RTO from the smoothed RTT, 150 ms to
+     2 s, keep-alive 1 s, 30 s idle limit). The link's frames, encryption, events and replay run
+     over it unchanged. TCP simultaneous open was not used: Windows and most NATs handle it badly.
+  6. The game's own UDP session uses the same port and thus the same NAT mapping, so it passes too.
+  - Tests: `party-link-test` (`test_rudp`: clean, 10 % loss with 60 ms jitter, 2 x 300 KB in order;
+    NAT filter without a punch fails, with a punch connects; `test_udp_nat_link`: a guest behind
+    the simulated NAT connects over UDP in ~0.6 s, 200 events in order; a guest without a code
+    does not). The simulator has a NAT mode (`BB_NET_SIM=...,nat=1`): inbound UDP is dropped
+    unless we sent to that address:port first, and the host's TCP listener is off. Live run: see
+    §3b (link over UDP 0.6 s after the punch started, bell join and B2 travel as usual).
+- **What CGNAT / hard NAT still cannot do** (no server anywhere, by design):
+  - **Symmetric (endpoint-dependent) NAT** on either side - many mobile carriers and some
+    carrier-grade NATs - gives the punch a different external port than STUN saw, so the guest
+    code points at the wrong port and the punch fails. Two symmetric NATs can never meet without
+    a relay.
+  - **Port-restricted CGNAT with short mapping timeouts** may drop the mapping between STUN and
+    the punch; the guest code then goes stale (the guest rejoins to get a new one).
+  - **No inbound at all** (some campus / corporate firewalls block unsolicited UDP even after an
+    outbound packet) cannot be punched.
+  - There is no third-party relay or TURN server. **Relay through a member with an open port**
+    (considered, not built): when the host cannot be reached at all but member A can, both the host
+    and guest B could connect *out* to A and A would forward the link and the game's UDP between
+    them (the host already relays guest-to-guest game traffic the same way, `PeerPaths`). It would
+    keep the host's world, at the cost of A's upload (~3 KB/s per relayed guest) and one more hop
+    of latency. Not built because the simpler remedies cover it: let A host (the world is then A's),
+    or use a VPN that puts everyone on one network (Tailscale, ZeroTier, Radmin VPN) and the
+    host's VPN address.
 - There is no relay server: the host itself is the rendezvous and the relay. That is why only the
-  host needs a port.
+  host needs a port (or a guest code per guest).
 
 ## 5. Running the profiles
 
