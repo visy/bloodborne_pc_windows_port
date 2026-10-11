@@ -91,8 +91,9 @@ run from two new characters to the end credits passed, and a three-player travel
   headstones all work for guests.
 - **Progress counts for everyone.** Bosses, items, doors, shortcuts, lamps, story and endings go
   into every player's own save. A guest who is behind catches up, including the Blood Moon.
-- **Story cutscenes and endings play for everyone.** The Blood Moon, Gehrman's scenes and the
-  ending with the end credits play for every party member.
+- **Story cutscenes and endings play for everyone.** The Blood Moon, Amelia's skull (evening to
+  night), Mergo's Wet Nurse's arena, Gehrman's scenes and the ending with the end credits
+  play for every party member.
 - **The host's world is shared live, both ways.** A door or shortcut opened by the host is open
   for the guests too, and a lever or door a guest uses opens in the host's world (and in the
   guest's own save).
