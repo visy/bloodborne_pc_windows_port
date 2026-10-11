@@ -24,7 +24,7 @@ PASSWORD = "Moon-42"
 # The title menu (empty single-player save): New Game, Party, System, Log In. The Party page opens
 # on Status: Status, New party game, Join party game, [Continue party game,] Host address, Password,
 # Defaults. Value rows act on Left / Right ("Confirm" rows: twice).
-TITLE_TO_PARTY = "~down@New Game/cross/~mark=page@Host address"
+TITLE_TO_PARTY = "~down@New Game/cross/!~mark=page@Host address"
 
 
 def scripts(phase, port0):
