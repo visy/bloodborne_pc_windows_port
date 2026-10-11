@@ -980,6 +980,22 @@ static void test_chalice_channels() {
     CHECK(fixed_id > 0 && int_of(f1.find("ChannelList")->array[0], "FixedOrGeneral", 0) == 2);
     json::Value f2 = post("GuestA", "/channel/search", fixed_q);
     CHECK(count(f2, "ChannelList") == 1 && int_of(f2.find("ChannelList")->array[0], "ChannelId", 0) == fixed_id);
+    // The synthetic channel has no FormData until the host's game puts its slot record's on it
+    // (a summoned member's quick join reads it through get_details_info).
+    const std::uint64_t fid = static_cast<std::uint64_t>(fixed_id);
+    CHECK(api.channels().form_data(fid).empty());
+    const std::string slot_fd = bbnet::party::b64_encode(std::string("slot record layout"));
+    CHECK(!api.channels().set_form_data(fid, "not base64!"));
+    CHECK(!api.channels().set_form_data(fid + 1, slot_fd));
+    CHECK(api.channels().set_form_data(fid, slot_fd) && api.channels().form_data(fid) == slot_fd);
+    {
+        json::Value d = post("GuestA", "/channel/get_details_info",
+                             R"({"ChannelIdList":[{"ChannelId":)" + std::to_string(fixed_id) + "}]}");
+        CHECK(count(d, "ChannelList") == 1);
+        const json::Value* e = count(d, "ChannelList") == 1 ? &d.find("ChannelList")->array[0] : nullptr;
+        const json::Value* fd = e ? e->find("FormData") : nullptr;
+        CHECK(fd && fd->string == slot_fd);
+    }
     const std::string fixed_up = R"({"HolyGrailTypeId":0,"FormDataVersion":0,"Status":1,"FixedOrGeneral":2,"FormData":")" +
                                  bbnet::party::b64_encode(std::string("fixed layout")) +
                                  R"(","ShareLevel":1,"SubFeatureFlag":256,"RitualLevel":1})";

@@ -107,6 +107,23 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
   area 29), else the newest other member's upload; never the caller's own; the target list's
   family / depth limits are ignored (the party joins its own dungeons).
 * `share`: only the uploader changes the share level. `add_material`: `CompleteFlag` 0.
+* **Shared fixed search** (live, the altar's ritual with a chalice): the game does not upload a
+  "fixed" chalice's dungeon; it searches `FixedOrGeneralList [{2}]` with the chalice's
+  HolyGrailTypeId / RitualLevel / SubFeatureFlag and **must** find one (an empty list -> 0x80000005
+  -> msg 0x11f9 "Failed to connect to Bloodborne server" and back to the title). The board answers
+  with a synthetic channel keyed `fixed:grail:level:rites` (same id for every member, also for the
+  caller's own ritual) without FormData; the game then fetches it (get_details_info), writes the id
+  into its slot record and generates the fixed layout locally. A later `upload` with
+  FixedOrGeneral 2 reuses that id.
+* **FormData** (reader 0x1a9c490; version 5 = 0x8C bytes, 4 = 0x7C bytes without the name):
+  `+0 u32 version, +4 u32 size, +8 u32 (helper +0xe0), +0xc u32 (helper +0xe8), +0x10 18 u32 (9
+  layout pairs, helper +0xf8), +0x58 16 bytes (helper +0x140), +0x68 creator name (v5)`. The slot
+  record (event flags 94000000 + k*100000, written by 0x13bcdf0 as 32-bit chunks) holds the same:
+  ChannelId +32/+64, +96, +128, +160..+735 the pairs, +736 the 16 bytes, +992 the name. The host's
+  `party_chalice::Tick` rebuilds a version-4 FormData from its current slot's record and puts it on
+  the board for the synthetic channel (`FormData from slot S's record (124 bytes) on the board`):
+  otherwise the summoned guest's quick join fetched an entry with no layout and loaded an empty map
+  (live run V: it fell to y -1500 and died).
 
 ## 4. Co-op inside a dungeon
 
@@ -130,6 +147,15 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
   its ChannelId is on the board; otherwise none ("held back" in the log) — the summoned game would
   build its own slot's dungeon. Outside the dungeons nothing changes. The board notes each
   member's current ChannelId from these calls (`random_join` uses it).
+* **The summon message carries the ChannelId only for a waiting guest** (C): the host's game fills
+  +0x2c from FrpgNetMan +0xa88 only in area 29, and the guest's 0x14ba340 takes it only with
+  FrpgNetMan +0xb14 bit 0 set (from +0xb9c bit 0 = SpEffect stateInfo 269 = **SpEffect 9900**, the
+  vanilla Dream bell's "chalice wait"). The party rings with its own bell patch (9005), so the
+  director also applies 9900 to a guest that rings while the host's roster map is in area 29
+  (live: `summon message type 1, host map 0x1d0a5a00, ChannelId 0x3f22b458bd799` -> two
+  get_details_info -> quick join).
+* **No gather into a dungeon**: GatherGuest skips the gather while the host's map or lamp is in
+  area 29 (it warped the guest to the host's dungeon lamp = its own slot's dungeon).
 * **The automatic flow**: host and guests are in the Hunter's Dream (B1 travel follows the host
   there); the host performs the ritual / enters its dungeon at the altar (the upload reaches the
   board); the guests stay (below) and keep ringing the Small Resonant Bell (PartyDirector); the
