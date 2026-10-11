@@ -1220,11 +1220,15 @@ void TravelTick() {
         now = g_guest.Step(s, Now());
         after = g_guest.GetPhase();
     }
-    if (now && now->kind == TravelKind::HostDeath && g.session_role != 6) {
+    const bool same_map = now && now->packed_map != kTravelNone && g.map_id && g.map_id != 0xffffffffu &&
+                          (now->packed_map >> 16) == (g.map_id >> 16);
+    if (now && g.session_role != 6 && (now->kind == TravelKind::HostDeath || same_map)) {
         // A guest that is not in the host's world (waiting to join, or apart) does not follow the
-        // host's death: no loading screen for a player the death did not concern (live: a joiner
-        // waiting outside a boss fight loaded when the host died in it). Only a summoned guest
-        // moves with the host here (hostdeath: everyone respawns at their own lamp).
+        // host's death, nor a host travel within the map it already stands in: no loading screen
+        // for a player it does not concern (live: a joiner waiting outside a boss fight loaded when
+        // the host died in it, and again for the host's lamp warp in the same m24_01). Only a
+        // summoned guest moves with the host here; a joiner in another map is gathered before it
+        // rings (GatherGuest).
         Log("replay %s: this guest is not in the host's world; staying", DescribeTravel(*now).c_str());
         std::lock_guard<std::mutex> lk(g_guest_mu);
         g_guest.Drop();
