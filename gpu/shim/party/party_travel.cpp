@@ -79,6 +79,10 @@ constexpr CallSiteKind kCallSites[] = {
     {0x1332b84, TravelKind::LuaStageKick},   // WarpNextStageKick
     {0x1381ede, TravelKind::HostDeath},      // SoloPlayDeath_2
     {0x1389f20, TravelKind::HuntersMark},    // OnReviveMagic_1 (tail jump)
+    // The Hunter's Mark item (goods 100, SpEffect 2100, stateInfo 16): the special-effect update
+    // 0x18FEF50 calls 0x1317550(ctx, 1) at 0x18FFA1D, which selects the last lamp (0x1332BC0) and
+    // tail-jumps to the funnel at 0x13175EF - so the funnel's return address is this call's.
+    {0x18ffa1d, TravelKind::HuntersMark},
     {0x1381a93, TravelKind::GuestSentHome},  // HostDead_1
     {0x138a51c, TravelKind::GuestSentHome},  // OnLeave_Limit
     {0x1382663, TravelKind::GuestDied},      // PartyGhostDeath_2
@@ -481,6 +485,7 @@ constexpr u64 kBlockClear3 = 0x1385930;   // Lua state BlockClear2_3: tail jump 
 constexpr u64 kBlockClear3Jump = 0x13859df;
 constexpr u64 kGuestDiedCall = 0x1382663; // PartyGhostDeath_2: `call 0x13CDE30` (e8 c8 b7 04 00)
 constexpr u64 kMarkTailJump = 0x1389f20;  // OnReviveMagic_1: `jmp 0x13CDE30` (e9 0b 3f 04 00)
+constexpr u64 kMarkItemCall = 0x18ffa1d;  // `call 0x1317550` (Hunter's Mark item); its tail jump reaches the funnel
 constexpr u64 kWarpNextStage = 0x132e010; // (ctx unused, area, block, region, u8 index, warp point)
 constexpr u64 kWarpBonfire = 0x132e050;   // (ctx unused, id)
 constexpr u64 kSetForcedMap = 0x156cf10;  // (const u32*) -> +0x14F0
@@ -550,6 +555,7 @@ HostTravelQueue g_host_queue; // under g_host_mu
 // Host: when its last broadcast travel started (Now()); 0 none. Main thread / the funnel hook
 // (also the main thread).
 std::atomic<double> g_host_left_at{0};
+std::atomic<double> g_last_capture{0}; // host: the last CaptureHost (Now())
 bool g_host_load_seen = false;
 
 // 0x13CDDA0: BeginLeaveSession(SprjSessionManager) 0x1ED07A0 (role -> 7, LeaveRoom), then
@@ -664,6 +670,7 @@ void CaptureHost(u64 site, TravelKind kind) {
         g_host_queue.Push(t);
     }
     g_host_left_at = Now(); // the room is closed once the host has arrived (TravelTick)
+    g_last_capture = Now();
     Log("host travel %s -> %s", DescribeTravel(t).c_str(), ReplayMethodName(ChooseReplay(t).method));
 }
 
@@ -822,6 +829,11 @@ __attribute__((noinline)) BB_COOP_SYSV u64 FunnelHook() {
     const u64 ret = reinterpret_cast<u64>(__builtin_return_address(0));
     perf::Scope z(perf::Zone::HookFunnel);
     if (g_travel_on.load() && !g_in_replay.load()) {
+        if (const u64 site = ret - Guest(0) - 5; !TravelKindBroadcast(TravelKindFromCallSite(site))) {
+            // Not a travel the host broadcasts: logged so an unlisted path shows up in live runs.
+            Log("funnel: %s from +0x%llx (role %s, not a party travel)", TravelKindName(TravelKindFromCallSite(site)),
+                ull(site), Role() == PartyRole::Host ? "host" : Role() == PartyRole::Guest ? "guest" : "none");
+        }
         if (g_block_clear3.load() > 0) {
             if (RetargetSendHome(kBlockClear3Jump)) {
                 return 1;
@@ -829,11 +841,18 @@ __attribute__((noinline)) BB_COOP_SYSV u64 FunnelHook() {
         } else if (Role() == PartyRole::Host) {
             const u64 site = ret - Guest(0) - 5;
             const TravelKind kind = TravelKindFromCallSite(site);
-            if (TravelKindBroadcast(kind) && kind != TravelKind::HuntersMark) {
+            // OnReviveMagic_1's mark is captured at OnReviveMagic's entry (it left the session first).
+            if (TravelKindBroadcast(kind) && site != kMarkTailJump) {
                 CaptureHost(site, kind);
             }
         } else if (ret - Guest(0) - 5 == kGuestDiedCall) {
             if (RedirectGuest(kGuestDiedCall, TravelKind::GuestDied)) {
+                return 1;
+            }
+        } else if (ret - Guest(0) - 5 == kMarkItemCall) {
+            // A guest's Hunter's Mark (the item): to the host's lamp instead of its own, as for
+            // OnReviveMagic_1 (MarkTailHook). The funnel would leave the session either way.
+            if (RedirectGuest(kMarkItemCall, TravelKind::HuntersMark)) {
                 return 1;
             }
         }
@@ -1031,6 +1050,20 @@ void TravelTick() {
         return;
     }
     if (Role() == PartyRole::Host) {
+        // A host load no hook captured (no party travel): the stage request's fields, to find the
+        // path (live: the Hunter's Mark, SpEffect 2100, did not reach the funnel's listed sites).
+        static bool was_loading = false;
+        const GameSnapshot h = ReadGameState(false);
+        const bool loading = h.loading || !h.world_up;
+        if (loading && !was_loading && Now() - g_last_capture.load() > 3.0) {
+            const u64 wts = Wts();
+            Log("host load without a party travel: map 0x%08x, point %d, forced %u, mode %u, respawn 0x%016llx, last lamp "
+                "0x%016llx",
+                WtsField<u32>(wts, kWtsMap, 0), static_cast<int>(WtsField<u32>(wts, kWtsWarpPoint, 0)),
+                unsigned(WtsField<u8>(wts, kWtsForced, 0)), WtsField<u32>(wts, kWtsRespawnMode, 0),
+                ull(WtsField<u64>(wts, kWtsRespawn, 0)), ull(WtsField<u64>(wts, kWtsLastLamp, 0)));
+        }
+        was_loading = loading;
         // B2 keeps the room while a member's task exists; once the guest fell back to B1 (task
         // gone) the empty room is closed as in B1.
         if (!b2::Enabled() || !b2::HostHasMemberTasks()) {

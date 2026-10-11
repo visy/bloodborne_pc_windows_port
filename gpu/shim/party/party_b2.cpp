@@ -323,17 +323,16 @@ BB_COOP_SYSV void ResetHook(u64 man) {
 }
 
 // K3: in-game stage update, stage-record UID changed (the host walked into another streamed block,
-// e.g. Great Bridge m24_01 <-> Cathedral Ward m24_00): the host's BeginLeaveSession.
-// The room is kept while every member's chr is near the host. A member chr left far behind stands
-// in a block the host's game streams out: live (edgetravel 2026-10-11, host put 150 m away into the
-// other block) the host crashed 0.8 s after the change in the remote chr's physics update
-// (0x18CB171 / 0x18CB17D: [[chr+0x288]+0x18]+0x88 freed). Vanilla avoids this by leaving; so with a
-// member farther than kUidKeepRange the vanilla leave runs (the guest goes home and the bells
-// bring it back), which is safe.
-constexpr float kUidKeepRange = 60.0f;
-std::atomic<bool> g_uid_left{false};  // K3 let the vanilla leave run: K4 drops as vanilla too
+// e.g. Great Bridge m24_01 <-> Cathedral Ward m24_00): the host's BeginLeaveSession. The room is
+// kept; the log names how far the farthest member chr is.
+// Live (edgetravel 2026-10-11): with the guest moving along (2 m) two block changes kept the
+// session with no crash. With the host *teleported* 146 m into the other block and the guest left
+// behind, the host crashed ~0.8 s later in the remote chr's physics update (0x18CB16A..0x18CB17D:
+// [[chr+0x288]+0x18]+0x88 freed, RBX = the guest's chr) - also when the vanilla leave ran at the
+// change (session idle 0.5 s before the crash), so the leave does not protect against it: the
+// block the remote chr stood in was streamed out before its task deleted the chr. Open risk for
+// a guest far behind the host when a block streams out (docs/party/travel.md 6.1).
 BB_COOP_SYSV u64 UidLeaveHook(u64 session) {
-    g_uid_left = false;
     if (g_on.load() && SessionUp()) {
         const u64 me = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
         float mp[3] = {};
@@ -353,15 +352,9 @@ BB_COOP_SYSV u64 UidLeaveHook(u64 session) {
             const float dx = p[0] - mp[0], dy = p[1] - mp[1], dz = p[2] - mp[2];
             farthest = std::max(farthest, std::sqrt(dx * dx + dy * dy + dz * dz));
         }
-        if (farthest <= kUidKeepRange) {
-            Log("K3: stage-record change with a session (stage %#x, %d member chr(s), farthest %.1f m): no leave",
-                me ? Field<u32>(me, 0x3f8) : 0u, members, farthest);
-            return 0;
-        }
-        Log("K3: stage-record change with a member %.1f m away (> %.0f m, in a block this game streams out): "
-            "vanilla leave",
-            farthest, kUidKeepRange);
-        g_uid_left = true;
+        Log("K3: stage-record change with a session (stage %#x, %d member chr(s), farthest %.1f m): no leave",
+            me ? Field<u32>(me, 0x3f8) : 0u, members, farthest);
+        return 0;
     }
     using Fn = u64(BB_COOP_SYSV*)(u64);
     return reinterpret_cast<Fn>(Guest(kBeginLeave))(session);
@@ -369,7 +362,7 @@ BB_COOP_SYSV u64 UidLeaveHook(u64 session) {
 
 // K4: the 0x15BED10 that follows it (every role).
 BB_COOP_SYSV void UidDropHook(u64 slots) {
-    if (g_on.load() && SessionUp() && !g_uid_left.exchange(false)) {
+    if (g_on.load() && SessionUp()) {
         return;
     }
     using Fn = void(BB_COOP_SYSV*)(u64);
@@ -410,29 +403,6 @@ BB_COOP_SYSV u64 BossClearLeaveHook(u64 session) {
     }
     using Fn = u64(BB_COOP_SYSV*)(u64);
     return reinterpret_cast<Fn>(Guest(kBeginLeave))(session);
-}
-
-// K12 / K13: OnReviveMagic 0x1389D20 (the Hunter's Mark) leaves the session at once
-// (BeginLeaveSession at 0x1389DDD, then 0x15BED10 at 0x1389DFE) before OnReviveMagic_1 warps to the
-// last lamp. On a B2 host with members the room is kept: the mark's warp is captured as a party
-// travel (party_travel ReviveMagicEntry) and the members follow as for a lamp.
-bool HostKeepsRoomOnMark() {
-    return g_on.load() && Role() == RoleHost && HostHasMemberTasks();
-}
-BB_COOP_SYSV u64 MarkLeaveHook(u64 session) {
-    if (HostKeepsRoomOnMark()) {
-        Log("K12: host Hunter's Mark: session kept (the party follows to the host's lamp)");
-        return 0;
-    }
-    using Fn = u64(BB_COOP_SYSV*)(u64);
-    return reinterpret_cast<Fn>(Guest(kBeginLeave))(session);
-}
-BB_COOP_SYSV void MarkDropHook(u64 slots) {
-    if (HostKeepsRoomOnMark()) {
-        return;
-    }
-    using Fn = void(BB_COOP_SYSV*)(u64);
-    reinterpret_cast<Fn>(Guest(kDropPresentation))(slots);
 }
 
 // BeginLeaveSession entry (ReplacePrologue: jumped to, so the return address is the caller's):
@@ -1603,8 +1573,6 @@ void Init() {
                 "B2 K8 host death return-all");
     InstallCall(0x13858f5, kBeginLeave, reinterpret_cast<const void*>(&BossClearLeaveHook), "B2 K10 boss-clear leave (a)");
     InstallCall(0x1385a95, kBeginLeave, reinterpret_cast<const void*>(&BossClearLeaveHook), "B2 K10 boss-clear leave (b)");
-    InstallCall(0x1389ddd, kBeginLeave, reinterpret_cast<const void*>(&MarkLeaveHook), "B2 K12 Hunter's Mark leave");
-    InstallCall(0x1389dfe, kDropPresentation, reinterpret_cast<const void*>(&MarkDropHook), "B2 K13 Hunter's Mark drop");
     SetSendHomeVeto(&SendHomeVeto);
     // Every BeginLeaveSession with a session logs its caller (which game path ends a party).
     // push rbp; mov rbp, rsp; push r15 (6 bytes, position-independent).

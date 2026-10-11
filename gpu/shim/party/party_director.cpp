@@ -101,7 +101,7 @@ void Log(const char* fmt, ...) {
 /// runs S seconds after this player's next (re)join - the host's cooperators 0 -> >= 1, the
 /// guest's client session with the world loaded - on the main thread, in list order.
 struct TravelStep {
-    // HostMark / GuestMark: the Hunter's Mark (the Lua event "OnReviveMagic", what the player's
+    // HostMark / GuestMark (steady-world clock, as host_move; %MAP filter): the Hunter's Mark (the Lua event "OnReviveMagic", what the player's
     // special-effect update 0x18FEF50 raises for a stateInfo 0x17 effect). HostStage: Lua
     // WarpNextStage 0x132E010 (args area:block:region:index:warp point), or WarpNextStage_Bonfire
     // 0x132E050 (args bonfire:ID). HostWalk: the host's chr put at each x:y:z:yaw (separated by
@@ -959,7 +959,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     }
     const TravelStep::Kind next_kind = t.next_step < t.steps.size() ? t.steps[t.next_step].kind : TravelStep::HostWarp;
     if (t.next_step < t.steps.size() && (next_kind == TravelStep::HostKill || next_kind == TravelStep::HostMove ||
-                                         next_kind == TravelStep::GuestMove || next_kind == TravelStep::HostWalk)) {
+                                         next_kind == TravelStep::GuestMove || next_kind == TravelStep::HostWalk ||
+                                         next_kind == TravelStep::HostMark || next_kind == TravelStep::GuestMark)) {
         if (!steady || (!t.ran && !t.armed) || t.joins < t.steps[t.next_step].min_join) {
             return; // as the first step of a chain it still waits for the join
         }
@@ -1008,10 +1009,19 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             Log("test: %s: no player / transform", TravelStepName(step.kind));
         }
     } else if (step.kind == TravelStep::HostMark || step.kind == TravelStep::GuestMark) {
-        std::int64_t r = -1;
-        const bool ok = LuaEventRaiseNow("OnReviveMagic", &r);
-        Log("test: Hunter's Mark: Lua event OnReviveMagic %s (dispatcher %lld)", ok ? "raised" : "NOT raised",
-            static_cast<long long>(r));
+        if (step.args == "lua") {
+            std::int64_t r = -1;
+            const bool ok = LuaEventRaiseNow("OnReviveMagic", &r);
+            Log("test: Lua event OnReviveMagic %s (dispatcher %lld)", ok ? "raised" : "NOT raised",
+                static_cast<long long>(r));
+        } else {
+            // The Hunter's Mark item (EquipParamGoods 100) is SpEffect 2100 (stateInfo 16): applied
+            // to the local player as the item use does; the game takes it from there.
+            const int effect = step.args.empty() ? 2100 : std::atoi(step.args.c_str());
+            const bool ok = ApplySpEffect(effect);
+            Log("test: Hunter's Mark: SpEffect %d %s (%s)", effect, ok ? "applied" : "NOT applied",
+                DescribeHere(s).c_str());
+        }
     } else if (step.kind == TravelStep::HostStage) {
         unsigned a = 0, b = 0, r = 0, i = 0;
         int wp = -1;
@@ -1360,8 +1370,11 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("host_stage=", 0) == 0 ? TravelStep::HostStage
                             : item.rfind("host_walk=", 0) == 0  ? TravelStep::HostWalk
                                                                 : TravelStep::HostHeadstone;
+                if (const std::size_t pc = item.find('%'); pc != std::string::npos) {
+                    step.map = item.substr(pc + 1); // only while the current map name contains it
+                }
                 if (const std::size_t eq = item.find('='); eq != std::string::npos) {
-                    const std::size_t stop = item.find_first_of("@#", eq);
+                    const std::size_t stop = item.find_first_of("@#%", eq);
                     step.args = item.substr(eq + 1, stop == std::string::npos ? std::string::npos : stop - eq - 1);
                 }
                 if (const std::size_t at_sign = item.find('@'); at_sign != std::string::npos) {

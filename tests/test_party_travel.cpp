@@ -32,6 +32,7 @@ static void test_call_sites() {
     CHECK(TravelKindFromCallSite(0x138c5f0) == TravelKind::LuaBonfireWarp);
     CHECK(TravelKindFromCallSite(0x1332b84) == TravelKind::LuaStageKick);
     CHECK(TravelKindFromCallSite(0x1381ede) == TravelKind::HostDeath);
+    CHECK(TravelKindFromCallSite(0x18ffa1d) == TravelKind::HuntersMark); // the Hunter's Mark item
     CHECK(TravelKindFromCallSite(0x1381a93) == TravelKind::GuestSentHome);
     CHECK(TravelKindFromCallSite(0x138a51c) == TravelKind::GuestSentHome);
     CHECK(TravelKindFromCallSite(0x1382663) == TravelKind::GuestDied);
