@@ -212,6 +212,8 @@ public:
     std::optional<TravelIntent> Destination() const;
     /// The send-home retarget replayed it itself: no second replay from Step.
     void MarkReplayed(double now);
+    /// Forget the current travel (a guest it does not concern).
+    void Drop() { phase_ = Phase::Idle; }
     Phase GetPhase() const { return phase_; }
     std::uint64_t LastSeq() const { return last_seq_; }
 
@@ -249,6 +251,14 @@ void AllowNextSendHome();
 /// or runs GuestDeathRedirectNow(). Game thread.
 using GuestDeathHoldFn = bool (*)();
 void SetGuestDeathHold(GuestDeathHoldFn fn);
+/// Host: an interceptor of its own death's funnel call (SoloPlayDeath_2 0x1381EDE). `fn()` true =
+/// taken: no capture, no broadcast, no stage request (B2 revives the host in place, party_b2.h);
+/// the holder may later run HostDeathFunnelNow(). Game thread.
+using HostDeathInterceptFn = bool (*)();
+void SetHostDeathIntercept(HostDeathInterceptFn fn);
+/// A taken host death carried out the vanilla way now (main thread): the travel captured and
+/// broadcast (the party follows) and the stock funnel (the respawn load).
+void HostDeathFunnelNow();
 /// A held guest death, carried out now (main thread): the redirect to the host's last lamp, or
 /// the stock funnel (home) when there is none.
 void GuestDeathRedirectNow();
