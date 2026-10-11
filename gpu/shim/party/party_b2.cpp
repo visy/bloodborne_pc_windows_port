@@ -1147,7 +1147,7 @@ void SplitTick(const GameSnapshot& s, double now) {
         const int n = RewindRemoteTasks("split meet");
         Log("split: meet: %d task(s) rewound to STEP_Create", n);
     }
-    // Self-heal: a remote chr standing far (> 15 m) from every member's reported position for 5 s,
+    // Self-heal: a remote chr standing > 4 m from every member's reported position for 3 s,
     // while all of them report positions in our area, is a stale one: removed, the meet builds it
     // again (with fresh records).
     static std::map<u64, double> far_since;
@@ -1159,18 +1159,18 @@ void SplitTick(const GameSnapshot& s, double now) {
         }
         bool all_known = true;
         for (const Where& w : g_where) {
-            if (w.slot != g_local_slot.load() && w.connected && (!w.has_pos || w.age_ms > 2000 || AreaOf(w.map) != mine)) {
+            if (w.slot != g_local_slot.load() && w.connected && (!w.has_pos || w.age_ms > 700 || AreaOf(w.map) != mine)) {
                 all_known = false;
             }
         }
-        if (!all_known || SlotNear(p, 15.0f) >= 0) {
+        if (!all_known || SlotNear(p, 4.0f) >= 0) {
             far_since.erase(c);
             continue;
         }
         auto it = far_since.emplace(c, now).first;
-        if (now - it->second >= 5.0) {
+        if (now - it->second >= 3.0) {
             far_since.erase(c);
-            RemoveRemoteChr(c, "no member reports a position near it for 5 s (stale)");
+            RemoveRemoteChr(c, "no member reports a position within 4 m of it for 3 s (stale)");
             last_meet = 0;  // the meet re-creates it at once
         }
     }
