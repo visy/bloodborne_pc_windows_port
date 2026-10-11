@@ -1476,7 +1476,9 @@ void EnemyWatchTick(const GameSnapshot& s, double now) {
     }
     g_killed_map = s.map_id;
     const bool apart = g_apart.load() > 0;
+    std::map<u32, bool> seen;
     ForEachMapChr([&](u32 id, u64 chr) {
+        seen[id] = true;
         if (!EnemyReconcilable(id, s.map_id)) {
             return;
         }
@@ -1494,6 +1496,19 @@ void EnemyWatchTick(const GameSnapshot& s, double now) {
         }
         g_enemy_alive[id] = alive;
     });
+    // A chr that was alive and is gone from the tables now (live split26: the dead enemy left the
+    // tables before the next scan) died too.
+    for (auto it = g_enemy_alive.begin(); it != g_enemy_alive.end();) {
+        if (!seen.count(it->first)) {
+            if (it->second && apart && g_killed_apart.size() < 128) {
+                g_killed_apart.push_back(it->first);
+                Log("split: enemy %u gone while the party is apart (a kill; sent at the next meet)", it->first);
+            }
+            it = g_enemy_alive.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 std::vector<u32> DeadEnemiesHere(u32 map) {
