@@ -94,9 +94,11 @@ struct PartyRow {
     std::function<Texts(const Board&)> value;   ///< the value column (null: "-")
     std::function<Texts(const Board&)> pressed; ///< the second value text (null: = value)
     std::function<bool(const Board&)> visible;  ///< null: always shown
-    /// None: a read-only line. Once: `run` on the first press (0 -> 1; the press back only resets
-    /// the text). Confirm: the first press arms (shows `pressed`), the second within 10 s runs.
+    /// None: a read-only line. Once: `run` on each press (shows `pressed` for 1.5 s and while
+    /// `busy`, then the value again). Confirm: the first press arms (shows `pressed`), the second
+    /// within 10 s runs.
     enum class Press { None, Once, Confirm } press = Press::None;
+    std::function<bool()> busy; ///< Once rows: still working (the text box open): keep `pressed`
     std::function<void(const Board&)> run; ///< menu thread / present thread: queue, never block
     /// A settings toggle instead of a button (value = off text, pressed = on text): saved to
     /// bbport.ini through BbSettings::Save after toggle_set.

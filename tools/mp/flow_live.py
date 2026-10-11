@@ -6,7 +6,7 @@ SDL key events, no OS input) and every restart goes through run.bat's exit-75 lo
 
   python tools/mp/flow_live.py fresh    --root DIR --game DIR   # 1+2: New party game / Join party game
   python tools/mp/flow_live.py continue --root DIR --game DIR   # 3: Continue party game, both
-  python tools/mp/flow_live.py leave    --root DIR --game DIR   # 4: in the world: Leave, then Join party
+      [--guest-world SCRIPT]     # 4: then in the world (MenuScript): e.g. Party > Leave, Join party
 
 Screenshots go to ROOT/shots/<phase>/ (tools/mp/shot.py --watch on the run logs). The password is
 PASSWORD below; the guest types the host's 127.0.0.1:<port> address.
@@ -40,37 +40,34 @@ def scripts(phase, port0):
         # With a party character: ... Join party game, Continue party game, Host address ...
         line = TITLE_TO_PARTY + "/down/down/down/mark={w}_cont/right/mark={w}_cont_again/right/mark={w}_restart"
         return [line.format(w="h"), "-"], [line.format(w="g"), "-"]
-    if phase == "leave":
-        # Started straight into the party game (the launcher's way, BB_PARTY + party.json via
-        # BB_PARTY_MENU): in the world, Options -> System -> Party -> Leave (twice) -> Join party (twice).
-        return ["-"], ["-"]
     raise SystemExit("unknown phase " + phase)
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("phase", choices=["fresh", "continue", "leave"])
+    ap.add_argument("phase", choices=["fresh", "continue"])
     ap.add_argument("--root", required=True)
     ap.add_argument("--game", required=True)
     ap.add_argument("--seconds", type=int, default=420)
-    ap.add_argument("--guest-world", default="", help="leave: the guest's in-world MenuScript line")
-    ap.add_argument("--host-world", default="", help="leave: the host's in-world MenuScript line")
+    ap.add_argument("--guest-world", default="", help="the guest's in-world walk after the restart")
+    ap.add_argument("--host-world", default="", help="the host's in-world walk after the restart")
     ap.add_argument("--until", action="append", default=[])
     a = ap.parse_args()
     root = Path(a.root)
     port0 = instances.base_port(root)
     host, guest = scripts(a.phase, port0)
-    if a.phase == "leave":
-        host = [("world 20 " + a.host_world) if a.host_world else "-"] + ["-"] * 3
-        guest = [("world 25 " + a.guest_world) if a.guest_world else "-"] + ["-"] * 3
-    else:
-        host = [("title 1 " + l) if l != "-" else l for l in host]
-        guest = [("title 1 " + l) if l != "-" else l for l in guest]
+    host = [("title 5 " + l) if l != "-" else l for l in host]
+    guest = [("title 5 " + l) if l != "-" else l for l in guest]
+    # The party process after the restart: an in-world walk (Options > System > Party ...).
+    if a.host_world:
+        host[1] = "world 30 " + a.host_world
+    if a.guest_world:
+        guest[1] = "world 30 " + a.guest_world
     for i, lines in enumerate((host, guest)):
         user = root / f"inst{i}" / "user"
         user.mkdir(parents=True, exist_ok=True)
         if a.phase == "fresh":
-            for name in ("party.json", "party_code.txt", "party_relaunch.bat"):
+            for name in ("party.json", "party_code.txt", "party_relaunch.bat", "party_state.json"):
                 (user / name).unlink(missing_ok=True)
             for d in ("savedata", "savedata_party"):
                 shutil.rmtree(user / d, ignore_errors=True)
@@ -82,31 +79,28 @@ def main():
     for tag in ("page", "h_pw_typed", "h_pw_saved", "h_new", "h_new_again", "g_addr_typed", "g_addr_saved",
                 "g_pw_typed", "g_pw_saved", "g_join", "g_join_again", "h_cont", "h_cont_again", "g_cont", "g_cont_again"):
         watch += ["--watch", rf"step \d+/\d+: ~?mark={tag}(@|\s)={tag}@1.2"]
+    for n in range(1, 16):  # in-world walks: mark=w1 ... mark=w15
+        watch += ["--watch", rf"step \d+/\d+: ~?mark=w{n}(@|\s)=w{n}@1.2"]
     watch += ["--watch", r"relaunching \(exit code 75=relaunch@0.3",
               "--watch", r"Party: starting the party game \(join\)=restarted@25,45",
               "--watch", r"newgame: .*done=newgame_done@2",
               "--watch", r"session trying-to-host .* -> host=hosting@3",
-              "--watch", r"session trying-to-join .* -> client \(6=summoned@3,12",
+              "--watch", r"session trying-to-join .* -> client \(6=summoned@1,3",
               "--watch", r"test menu: step .*(leave|join)\w*=world_step@1.5",
               "--watch", r"Party flow: leave=left@4",
               "--watch", r"STUCK=stuck@0"]
     shot = subprocess.Popen([sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out", str(shots),
-                             "--seconds", str(a.seconds + 120)] + watch)
+                             "--seconds", "7200"] + watch)
     env = [f"BB_TEST_MENU_FILE={root}\\menu{{i}}.txt", "BB_PARTY_PORT={port}", "BB_PARTY_UPNP=0",
            "BB_PARTY_STUN=off", "BB_TEST_NEWGAME=party", "BB_TEST_PROLOGUE_SKIP=party",
            "BB_TEST_NAME=Hunter{i}"]
-    if a.phase == "leave":
-        # Straight into the party game from the start, the saved party.json (role / address / password).
-        env += ["BB_PARTY_MENU=1", "BB_PARTY_SAVE=separate", "BB_SKIP_NETWORK_CHOICE=online",
-                "BB_PARTY_AUTOCONTINUE=1", "BB_PATCHES=Skip Intro"]
     cmd = [sys.executable, str(HERE / "instances.py"), "run", "--count", "2", "--root", str(root), "--game", a.game,
            "--saves", str(root / "nosaves"), "--build", str(REPO), "--seconds", str(a.seconds), "--idle", "0",
            "--label", f"flowlive {a.phase}"]
     for e in env:
         cmd += ["--env", e]
-    if a.phase == "leave":
-        cmd += ["--ienv", "0:BB_PARTY=host", "--ienv", "1:BB_PARTY=join"]
-    for u in a.until or [r"(?m)^Party: session trying-to-join .* -> client \(6"]:
+    # The summon, and a little of the log after it (the screenshots at +3 s).
+    for u in a.until or [r"(?m)^Party: session trying-to-join .* -> client \(6[\s\S]{1500}"]:
         cmd += ["--until", u]
     subprocess.run([sys.executable, str(HERE / "instances.py"), "setup", "--count", "2", "--root", str(root),
                     "--build", str(REPO), "--game", a.game, "--saves", str(root / "nosaves")], check=True)

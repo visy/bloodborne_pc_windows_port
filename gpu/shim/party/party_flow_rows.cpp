@@ -118,6 +118,7 @@ void RegisterMenuRows() {
     };
     addr.visible = [](const Board&) { return SoloTitle(); };
     addr.press = Row::Press::Once;
+    addr.busy = [] { return Editing(); };  // the text box open: "Type, then Enter"
     addr.run = [](const Board&) { BeginEdit(Field::Address); };
     P::AddPartyRow(addr);
 
@@ -132,6 +133,7 @@ void RegisterMenuRows() {
     };
     pass.visible = [](const Board&) { return SoloTitle(); };
     pass.press = Row::Press::Once;
+    pass.busy = [] { return Editing(); };  // the text box open: "Type, then Enter"
     pass.run = [](const Board&) { BeginEdit(Field::Password); };
     P::AddPartyRow(pass);
 
@@ -149,6 +151,7 @@ void RegisterMenuRows() {
     };
     name.visible = [](const Board&) { return SoloTitle(); };
     name.press = Row::Press::Once;
+    name.busy = [] { return Editing(); };  // the text box open: "Type, then Enter"
     name.run = [](const Board&) { BeginEdit(Field::Name); };
     P::AddPartyRow(name);
 
