@@ -69,6 +69,9 @@ void Compose(const ComposeIn& in, Board* out) {
             const MemberVitals& v = in.vitals[i];
             if (v.slot != slot) continue;
             c.age_ms = v.age_ms;
+            c.level = v.level;
+            c.deaths = v.deaths;
+            c.rot = v.rot;
             if (v.flags & kVitalsValid) {
                 c.have_hp = true;
                 c.hp = static_cast<int>(v.hp);
@@ -150,6 +153,29 @@ bool Project(const float view[12], const float proj[4], const float p[3], float*
     *v = (y * proj[1] / z) * 0.5f + 0.5f;
     *depth = z;
     return std::isfinite(*u) && std::isfinite(*v);
+}
+
+ScreenPoint WorldToScreen(const float view[12], const float proj[4], const float p[3], float w, float h,
+                          float margin) {
+    ScreenPoint sp;
+    float u = 0, v = 0, depth = 0;
+    if (!Project(view, proj, p, &u, &v, &depth)) return sp;
+    sp.in_front = true;
+    sp.x = u * w;
+    sp.y = v * h;
+    sp.depth = depth;
+    sp.visible = u >= margin && u <= 1.0f - margin && v >= margin && v <= 1.0f - margin;
+    return sp;
+}
+
+void MemberColour(int slot, float rgb[3]) {
+    // Host gold, then pale blue, green, violet: readable on Yharnam's greys, distinct from the
+    // game's own blue phantom label and red HP.
+    static const float kColours[4][3] = {
+        {0.96f, 0.80f, 0.42f}, {0.55f, 0.78f, 1.00f}, {0.55f, 0.92f, 0.55f}, {0.86f, 0.62f, 1.00f}};
+    static const float kCream[3] = {0.96f, 0.88f, 0.70f};
+    const float* c = slot >= 0 && slot < 4 ? kColours[slot] : kCream;
+    for (int i = 0; i < 3; ++i) rgb[i] = c[i];
 }
 
 void ResetForTest() {
