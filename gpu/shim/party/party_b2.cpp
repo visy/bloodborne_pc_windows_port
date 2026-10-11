@@ -3517,6 +3517,47 @@ std::uint32_t NearestEnemyForTest(float max_m) {
             alive += Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0x128, 0) > 0 ? 1 : 0;
         }
     });
+    {
+        // Probe: the chr tables WorldChrMan +0x850 + set * 8 ({int n; entries @+8 of 0x38}) and,
+        // per chr, the offsets holding an entity id of this map (AAB0000..AAB9999).
+        const u64 wcm = Slot(kSlotWorldChrMan);
+        const int sets = Field<int>(Field<u64>(wcm, 8), 0x18, -2) + 2;
+        const u32 lo = (s.map_id >> 24) * 100000 + ((s.map_id >> 16) & 0xff) * 10000;
+        std::string probe;
+        int shown = 0, total = 0;
+        for (int set = 0; set < sets && set < 64; ++set) {
+            const u64 tab = Field<u64>(wcm, 0x850 + u64(set) * 8);
+            const int n = Field<int>(tab, 0);
+            if (!tab || n <= 0 || n > 4096) {
+                continue;
+            }
+            for (int k = 0; k < n; ++k) {
+                const u64 chr = Field<u64>(Field<u64>(tab, 8) + u64(k) * 0x38, 0);
+                if (!chr) {
+                    continue;
+                }
+                ++total;
+                if (shown >= 6) {
+                    continue;
+                }
+                std::string offs;
+                for (u64 o = 0; o < 0x800; o += 4) {
+                    const u32 v = Field<u32>(chr, o);
+                    if (v >= lo && v < lo + 10000) {
+                        char b[24];
+                        std::snprintf(b, sizeof b, " +%llx=%u", ull(o), v);
+                        offs += b;
+                    }
+                }
+                char b[64];
+                std::snprintf(b, sizeof b, " [set %d #%d hp %d:", set, k,
+                              Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0x128, -1));
+                probe += b + offs + "]";
+                ++shown;
+            }
+        }
+        Log("test: chr tables: %d chrs (%d sets);%s", total, sets, probe.c_str());
+    }
     const u32 id = NearestEnemy(s, max_m);
     Log("test: map chrs %d, of %s %d (%d alive); nearest within %.0f m: %u; first:%s", all, MapName(s.map_id).c_str(), ours,
         alive, double(max_m), id, sample.c_str());
