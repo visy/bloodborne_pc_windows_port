@@ -49,6 +49,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -281,6 +282,85 @@ bool ChangesFromJson(const std::string& text, u64* epoch, std::vector<FlagChange
 std::string SnapshotToJson(const FlagSnapshot& s);
 bool SnapshotFromJson(const std::string& text, FlagSnapshot* out, std::string* error);
 
+// ---- host-world mirror: the guest's flag overlay (load mode 1) as a copy of the host's world ----
+//
+// The vanilla join snapshot (packet 0x10) fills only 12 of the ~900 overlay groups (globals 0-1999,
+// 5000-5999, 9000-9999 and the host's current map type-1 zones 0,1,4-7 / type-6 zones 0,1); every
+// other group of the guest's host-world overlay is zero: the host's lit lamps (7AAB02xx, 1AAB78x0),
+// item pickups (5AABZnnn), boss / area gates (2000-4999), other maps. The host sends the raw bytes
+// of every mirror group of its own pool ("world_groups": a full image to each new member, then the
+// groups that changed); the guest writes them into its overlay buffers (SprjEventFlagMan +0x88,
+// key = GroupKey) right after each vanilla snapshot apply (a full copy) and, while it stays, only
+// the bits the host changed since (its own runtime bits in the overlay stay). Never the own pool:
+// the overlay is discarded on return home.
+//
+// Mirror groups: global types 0,1,5,6,7 minus blocks 6-8 (6000-8999 stay in the own pool in mode 1)
+// and 60009000+ (C3's ledger); map types 1,5,6,7 of the 17 table maps minus type-1 zones 4-6
+// (boss-fight state and enemy AI: the vanilla snapshot carries the current map's, a live copy breaks
+// the fog / boss scripts) and the chalice maps (29, 40-47). Bits never written: 2000-2099 (session
+// flags the guest's own session code keeps) and 9020-9026 (chalice slot, set by SetLoadMode(1)).
+
+struct MemOps;
+using GroupBytes = std::array<u8, kBlockBytes>;
+bool WorldMirrorKey(int key);
+/// Every mirror key, ascending.
+const std::vector<int>& WorldMirrorKeys();
+/// The bits of a mirror key the guest writes (1 = written; all zero for a key outside the mirror).
+const GroupBytes& WorldMirrorMask(int key);
+
+/// Groups of the host's world: key -> 125 bytes. `full`: an image of every mirror group, absent
+/// keys are all zero; otherwise only the groups that changed.
+struct WorldImage {
+    u64 epoch = 0;
+    bool full = false;
+    std::map<u32, GroupBytes> groups;
+    bool operator==(const WorldImage& o) const { return epoch == o.epoch && full == o.full && groups == o.groups; }
+};
+
+/// Host: shadow of the mirror groups of its own pool (1200 x 125 bytes, pool order).
+class HostWorldTracker {
+public:
+    /// The pool as the game holds it now; the changed mirror groups are added to `out` (latest
+    /// bytes win). The first call only takes the baseline.
+    void Observe(const u8* pool, WorldImage* out);
+    bool has_baseline() const { return baseline_; }
+    /// Every non-zero mirror group (full = true).
+    WorldImage Full(u64 epoch) const;
+
+private:
+    bool baseline_ = false;
+    std::vector<GroupBytes> shadow_;
+};
+
+/// Guest: the host's world image and what was written to the overlay. Not thread-safe by itself.
+class GuestWorldMirror {
+public:
+    /// An image from the host (a full one replaces the whole image; a partial one its groups).
+    void Receive(const WorldImage& img);
+    bool has_image() const { return have_; }
+    std::size_t Dirty() const { return dirty_.size(); }
+    struct Result {
+        std::size_t groups = 0, bytes = 0, bits = 0;  ///< groups written, bytes and bits that changed
+        std::size_t missing = 0;                      ///< mirror groups with data the overlay lacks
+        std::vector<std::pair<int, int>> changed;     ///< (key, bits changed) per group written
+    };
+    /// `overlay`: key -> buffer address (the overlay's current groups). Full: every mirror group
+    /// becomes the host's (masked bits). Otherwise only the bits the host changed since the last
+    /// apply. False (nothing written) without an image.
+    bool Apply(const std::map<u32, u64>& overlay, const MemOps& ops, bool full, Result* r);
+    /// The host's bytes of a group (zero when unknown).
+    const GroupBytes& Group(int key) const;
+
+private:
+    bool have_ = false;
+    std::vector<GroupBytes> image_, applied_;
+    std::set<int> dirty_;
+};
+
+constexpr const char* kEventWorldGroups = "world_groups";
+std::string WorldImageToJson(const WorldImage& img);
+bool WorldImageFromJson(const std::string& text, WorldImage* out, std::string* error);
+
 // ---- the store (SprjEventFlagMan 0x553b100) over injectable memory access ----
 
 struct MemOps {
@@ -292,7 +372,8 @@ struct MemOps {
 
 /// SprjEventFlagMan field offsets (docs/party/event_flags.md section 2; checked in 0x13cfcc0).
 namespace man {
-constexpr u64 kBits = 0x1c, kStride = 0x20, kCount = 0x24, kPool = 0x28, kTreeHead = 0x38, kLoadMode = 0x80;
+constexpr u64 kBits = 0x1c, kStride = 0x20, kCount = 0x24, kPool = 0x28, kTreeHead = 0x38, kLoadMode = 0x80,
+              kOverlayHead = 0x90;
 // MSVC std::map node: left +0, parent +8, right +0x10, is_nil +0x19, key +0x20, kind +0x28,
 // storage +0x30 (kind 1: u32 pool index; kind 2: buffer pointer). The head's parent is the root.
 constexpr u64 kNodeLeft = 0, kNodeParent = 8, kNodeRight = 0x10, kNodeIsNil = 0x19, kNodeKey = 0x20,
@@ -327,6 +408,12 @@ public:
     /// Writes through the visible tree (mode 1: the overlay). SetEventFlag when provided.
     bool WriteVisible(u32 id, bool value) const;
     bool WritePoolBit(u32 id, bool value) const;
+    /// The host-world overlay (+0x88/+0x90: std::map<u32 group key, u8* buffer>, node key +0x20,
+    /// buffer +0x28): key -> buffer address. False when it looked corrupt.
+    bool OverlayGroups(std::map<u32, u64>* out, std::size_t max_nodes = 4096) const;
+    /// The overlay's identity (map head, root node, size): changes when 0x13BECA0 rebuilds it.
+    u64 OverlayIdentity() const;
+    const MemOps& ops() const { return ops_; }
 
 private:
     u64 man_ = 0;
@@ -402,11 +489,18 @@ std::vector<FlagChange> PopHostFlagChanges();
 /// The host's candidate flags as of the last scan; false before the first full scan. Any thread.
 bool FullSnapshot(FlagSnapshot* out);
 u64 HostEpoch();
+/// Host-world mirror: the mirror groups that changed since the last call (partial image). Any thread.
+WorldImage PopHostWorldChanges();
+/// The full image of the host's mirror groups; false before the first scan. Any thread.
+bool HostWorldImage(WorldImage* out);
 
 // Guest. Any thread (the link callback): queued, applied by Tick at a safe point.
 void ApplyHostFlags(u64 epoch, const std::vector<FlagChange>& changes);
 void ApplyHostSnapshot(const FlagSnapshot& snap);
 /// Parses the EVENT body and queues it; false (and *error) on a bad body or another name.
+/// Guest, the thread of the vanilla packet-0x10 apply (party_b2 K11, right after 0x13BECA0): the
+/// host's world image into the freshly built overlay, before the host-world load reads it.
+void OnVanillaSnapshotApplied();
 bool OnLinkEvent(const std::string& name, const std::string& body, std::string* error = nullptr);
 void SetPolicy(const Policy& p);
 Policy CurrentPolicy();

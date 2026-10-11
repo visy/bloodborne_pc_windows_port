@@ -67,7 +67,10 @@ Marks: **[C]** confirmed in disassembly / decompile, **[R]** confirmed at runtim
   `SetLoadMode(1)`); +0x1592 is set back to 1 by the stage-end step `0x1942720` and re-zeroed by
   the next ctor if +0x84 is still 3. [C]
 * The flags of a host-world load come from the overlay (+0x88 of SprjEventFlagMan), filled only
-  by the packet 0x10 apply `0x13BECA0` (12 groups: globals + **the current map**). [C]
+  by the packet 0x10 apply `0x13BECA0` (12 groups: globals + **the current map**). [C] Since
+  2026-10-11 the host-world mirror fills the rest right after that apply (K11 calls
+  `progress::OnVanillaSnapshotApplied`, and again after the overlay guard below): every group of
+  the host's world but the boss / enemy zones (event_flags.md 12). [R]
 * The enemy / object state of a host-world load comes from the host's packet 0x11: the receive
   (state 1 only) stores three blobs at GSM +0x16C0 / +0x16A0 / +0x1684; WorldChrMan `0x191BDD0`
   applies the `CHR ` blob (+0x1684 in host-world mode, the guest's own +0x1690 at home). [C]
@@ -467,6 +470,35 @@ anything in its own world): full HP; buffs end (not restored, unlike a plain B2 
 Insight and consumables are kept (no bloodstain in the host's world: a phantom's echoes are not
 part of the host's world, and the guest's own world is not where it died); the host's world is not
 reset. Fallback: no snapshot within 45 s -> the B1 fallback as before (redirect, leave, bell).
+
+### 6.10 Runs r18-r25: lone-death variants [R]
+
+* **Host's last lamp in another map** (r24-r25; fixture `host_lastlamp=2402950`: the host's
+  +0x1528 names a Cathedral Ward lamp while the party stands in m24_01 - the state after walking
+  into the next area. A stage warp 0x132E010 to m24_00 was tried first: points 2402950 /
+  2401950 are no warp regions, the host fell and recovered, r18/r21). `SoloRespawn` sees the lamp's
+  map (`ids::EntityMap`) differ from the current one and picks a lamp of the current map:
+  ReturnPointParam ids AAB295k, lit = common event 7000's 2009[5] flag `1AAB7800 + 20k` (m24_01:
+  2410950.. -> 12417800 / 820 / 840 / 860, from the EMEVD args). In the host-world overlay these
+  flags read 0 for every lamp (r25: `2412950:- 2412951:- 2412952:- ...`), so the first lamp of the
+  map is used (any ReturnPointParam row of the map is a valid respawn spot). r24 (before that
+  fallback) found none and took the old redirect (leave, bell; re-summoned 60 s later). r25: `the
+  host's last lamp 2402950 is not in m24_01_00_00; lit lamp here: 2412950` -> respawned in m24_01 at
+  (-199.7, -50.8, 179.4), still a client; the host removed the dead chr and re-created it.
+* **Three players** (r19, r22): r19 removed **both** guests' chrs on the host (remote chrs' HP read
+  1 on both). Now the guest sends where it died (`{"op":"respawn","pos":[...]}`) and the host
+  removes only the member chr within 6 m of it. r22: one removal, host cooperators 2 -> 1 -> 2, the
+  other guest untouched (its own view of the dying guest re-created 0.5 s later).
+* **45 s fallback** (r20, r23; host `BB_PARTY_B2_TEST_FAIL=resync`, both in the Dream): r20 stayed
+  dead in the host's world - the B1 replay of the synthetic intent was dropped ("not newer than
+  the last"). Fix: a failed lone-death respawn runs `GuestDeathRedirectNow` (r23: `FALLBACK (no host
+  snapshot within 45 s): the lone death's respawn failed; the usual death redirect runs` -> leave,
+  own-world respawn at the host's last lamp, bell). **Open**: in r23 the bell re-summon did not
+  complete in the 2 min left (host sign polled, signaling resolved, no join; the host room timed
+  out twice via +0x1789F99) - in r24 the same redirect re-summoned in 60 s, so the test-fail mode or
+  the Dream may matter; not resolved.
+* **Echoes** (r21, r25; `echoes=5000` director test aid on the guest): `echoes 5000` at the death and
+  after the respawn load; nothing dropped, as decided in 6.9.
 
 ## 7. Risks / open items
 

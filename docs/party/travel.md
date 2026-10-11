@@ -101,7 +101,8 @@ summoned guest in someone else's world". Consequence:
    `+0x48` (lamp type 0x7A8 + event state), `+0x4A` (no lamp record `0x13C9AF0` or record `+0x270 == 0`),
    `+0x4B = FUN_0191B6E0(WorldChrMan, lampEntity)` (computed only if `+0x48/+0x49/+0x4A` are all 0: scans
    the other chr sets for a character whose current action-target entity equals the lamp and whose state
-   is in table `0x5127DF0`). The action-button row is `r15 = 90000 + type` when all are 0, `90000` when
+   is in table `0x5127DF0`). The "action-button row" (+0x2C; 2026-10-11: really the flame **SFX id**, see
+   guest_services.md 3.3) is `r15 = 90000 + type` when all are 0, `90000` when
    `+0x49`/`+0x4B`, `90005` for `+0x48`, `-1` for `+0x4A`; the final enable is
    `FUN_0146E250(entity, all4==0, type)` at `0x12F8EBF` (writes `FrpgNetMan+0xC70` list entry `+0x48/+0x49`).
    Every interaction path also refreshes `+0x1528` (last-lamp record) from `entity + 1000` via
