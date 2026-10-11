@@ -327,14 +327,10 @@ std::atomic<double> g_k3_at{-100.0};  // the last K3 (Now()), for the hit watch
 
 // K3: in-game stage update, stage-record UID changed (the host walked into another streamed block,
 // e.g. Great Bridge m24_01 <-> Cathedral Ward m24_00): the host's BeginLeaveSession. The room is
-// kept; the log names how far the farthest member chr is.
-// Live (edgetravel 2026-10-11): with the guest moving along (2 m) two block changes kept the
-// session with no crash. With the host *teleported* 146 m into the other block and the guest left
-// behind, the host crashed ~0.8 s later in the remote chr's physics update (0x18CB16A..0x18CB17D:
-// [[chr+0x288]+0x18]+0x88 freed, RBX = the guest's chr) - also when the vanilla leave ran at the
-// change (session idle 0.5 s before the crash), so the leave does not protect against it: the
-// block the remote chr stood in was streamed out before its task deleted the chr. Open risk for
-// a guest far behind the host when a block streams out (docs/party/travel.md 6.1).
+// kept; the log names how far the farthest member chr is. A member left in a block this game then
+// streams out is handled by the stale map hit guard (ChrPreStepHook below): before it, the host
+// crashed ~0.8 s after such a change in the remote chr's physics pre-step (0x18CB16A..0x18CB17D),
+// also when the vanilla leave ran at the change (docs/party/travel.md 7).
 BB_COOP_SYSV u64 UidLeaveHook(u64 session) {
     g_k3_at = Now();
     if (g_on.load() && SessionUp()) {
@@ -2133,6 +2129,26 @@ void Tick(const GameSnapshot& s) {
             }
             Log("hit watch: local %s", DescribeHit(s.player).c_str());
         }
+    }
+    {
+        // A stale "host gone" timer: the session event handler 0x178B5E0 arms network flow +0xF4 =
+        // 10 s when a member leaves a guest in the host's world (0x178D35D); the flow update
+        // 0x1789B60 counts it down and then leaves (0x178A6BE). A guest that left on its own (a
+        // Hunter's Mark) and is summoned again within those 10 s carried it into the new session
+        // and was dropped 3 s after joining (live, edgetravel). A (re)join starts with it off
+        // (-1, the flow ctor's value).
+        static int prev_role = -1;
+        const int role = Role();
+        if ((role == 4 || role == 6) && prev_role != 4 && prev_role != 6) {
+            const u64 flow = Slot(kSlotFlow);
+            const float t = Field<float>(flow, 0xf4, -1.0f);
+            if (flow && t > 0.0f) {
+                const float off = -1.0f;
+                SafeWrite(flow + 0xf4, &off, 4);
+                Log("join: stale leave timer (flow +0xF4 = %.1f s from the last session) cleared", double(t));
+            }
+        }
+        prev_role = role;
     }
     if (const u32 n = g_stale_hits.exchange(0, std::memory_order_relaxed)) {
         Log("remote chr on a streamed-out block: stale map hit cleared %u time(s); tasks:%s", n, DescribeTasks().c_str());
