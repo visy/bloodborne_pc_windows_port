@@ -22,6 +22,7 @@ DEFAULT_GAME = Path(os.environ.get("BB_GAME_DIR", "../CUSA03173"))
 
 FPS_CHOICES = ["uncap", "60", "90", "30"]
 RES_CHOICES = ["1920x1080 (Native)", "1280x720", "2560x1440", "3840x2160"]
+WINDOW_MODE_CHOICES = ["Windowed", "Borderless", "Fullscreen"]
 TIMEOUT_CHOICES = ["0 (no limit)", "10", "30", "60", "120", "300", "600"]
 ANISO_CHOICES = [
     ("16x", "16", "16x anisotropic filtering of scene textures (recommended)"),
@@ -243,7 +244,17 @@ class BloodborneLauncher(tk.Tk):
 
         self.fps_var = tk.StringVar(value=fps if fps in FPS_CHOICES else "uncap")
         self.res_var = tk.StringVar(value=res if res in RES_CHOICES else RES_CHOICES[0])
-        self.fullscreen = tk.BooleanVar(value=self.settings.get("fullscreen", False))
+        # Window mode: Windowed, Borderless, Fullscreen (backward compat with "fullscreen": bool)
+        initial_win_mode = self.settings.get("window_mode")
+        if not initial_win_mode:
+            if self.settings.get("fullscreen", False):
+                initial_win_mode = "Fullscreen"
+            else:
+                initial_win_mode = "Windowed"
+        if initial_win_mode not in WINDOW_MODE_CHOICES:
+            initial_win_mode = "Windowed"
+        self.window_mode_var = tk.StringVar(value=initial_win_mode)
+        self.fullscreen = tk.BooleanVar(value=(initial_win_mode != "Windowed"))
         self.timeout_var = tk.StringVar(value=matching_choice)
         self.aniso_var = tk.StringVar(value=aniso)
         self.aniso_desc_var = tk.StringVar()
@@ -255,9 +266,13 @@ class BloodborneLauncher(tk.Tk):
         ttk.Label(opts, text="Render Resolution:", style="Card.TLabel").grid(row=1, column=2, sticky="w", pady=3)
         self.res_combo = ttk.Combobox(opts, textvariable=self.res_var, values=RES_CHOICES,
                                       state="readonly", width=16)
-        self.res_combo.grid(row=1, column=3, sticky="w", pady=3, padx=(6, 0))
-        ttk.Checkbutton(opts, text="Fullscreen", variable=self.fullscreen,
-                        style="Card.TCheckbutton").grid(row=1, column=4, sticky="w", pady=3, padx=(12, 0))
+        self.res_combo.grid(row=1, column=3, sticky="w", pady=3, padx=(6, 20))
+
+        ttk.Label(opts, text="Window Mode:", style="Card.TLabel").grid(row=1, column=4, sticky="w", pady=3)
+        self.win_mode_combo = ttk.Combobox(opts, textvariable=self.window_mode_var,
+                                           values=WINDOW_MODE_CHOICES,
+                                           state="readonly", width=12)
+        self.win_mode_combo.grid(row=1, column=5, sticky="w", pady=3, padx=(6, 0))
 
         ttk.Label(opts, text="Anisotropic Filtering:", style="Card.TLabel").grid(row=2, column=0, sticky="w", pady=3)
         self.aniso_combo = ttk.Combobox(opts, textvariable=self.aniso_var,
@@ -847,7 +862,8 @@ class BloodborneLauncher(tk.Tk):
             "feat_hud": self.feat_hud.get(),
             "feat_fps_patch": self.feat_fps_patch.get(),
             "feat_res_scaling": self.feat_res_scaling.get(),
-            "fullscreen": self.fullscreen.get(),
+            "window_mode": self.window_mode_var.get(),
+            "fullscreen": self.window_mode_var.get() == "Fullscreen",
             "enabled_patches": sorted(list(self.enabled_patches)),
         }
         try:
@@ -1128,8 +1144,10 @@ class BloodborneLauncher(tk.Tk):
         else:
             res_choice = "Native (1080p, scaling off)"
 
-        # Fullscreen window (read by gpu/shim/window.cpp)
-        env["BB_FULLSCREEN"] = "1" if self.fullscreen.get() else "0"
+        # Window mode (Windowed, Borderless, Fullscreen) read by gpu/shim/window.cpp
+        win_mode_val = self.window_mode_var.get().lower()
+        env["BB_WINDOW_MODE"] = win_mode_val
+        env["BB_FULLSCREEN"] = "1" if win_mode_val != "windowed" else "0"
 
         # Frame ahead queue (smooth frametimes & bound queue latency: 2 = balanced)
         env.setdefault("BB_FRAMES_AHEAD", "2")
@@ -1158,7 +1176,7 @@ class BloodborneLauncher(tk.Tk):
             f"FPSPatch={'on' if self.feat_fps_patch.get() else 'off'}, "
             f"Mods={'on' if self.feat_mods.get() else 'off'}, "
             f"ResScaling={'on' if self.feat_res_scaling.get() else 'off'}, "
-            f"Fullscreen={'on' if self.fullscreen.get() else 'off'}"
+            f"WindowMode={self.window_mode_var.get()}"
         )
 
         self.hidden_count = 0

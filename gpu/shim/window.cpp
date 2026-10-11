@@ -8,6 +8,10 @@
 #include "bbport_overlay.h"
 #include "bbport_settings.h"
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 namespace Frontend {
 
 WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}, height{height_} {
@@ -15,6 +19,36 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         UNREACHABLE_MSG("Failed to initialize SDL video: {}", SDL_GetError());
     }
+
+    // If an explicit render/output resolution is specified, use it for window size
+    if (const char* res_env = std::getenv("BB_RENDER_RES")) {
+        int rw = 0, rh = 0;
+        if (std::sscanf(res_env, "%dx%d", &rw, &rh) == 2 && rw > 0 && rh > 0) {
+            width_ = rw;
+            height_ = rh;
+        }
+    }
+
+    const char* win_mode = std::getenv("BB_WINDOW_MODE");
+    const char* fullscreen = std::getenv("BB_FULLSCREEN");
+
+    bool is_fullscreen = false;
+    bool is_borderless = false;
+
+    if (win_mode && win_mode[0]) {
+        if (!std::strcmp(win_mode, "fullscreen")) {
+            is_fullscreen = true;
+        } else if (!std::strcmp(win_mode, "borderless")) {
+            is_fullscreen = true;
+            is_borderless = true;
+        } else if (!std::strcmp(win_mode, "windowed")) {
+            is_fullscreen = false;
+            is_borderless = false;
+        }
+    } else if (fullscreen && fullscreen[0] == '1') {
+        is_fullscreen = true;
+    }
+
     SDL_PropertiesID props = SDL_CreateProperties();
     SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, title);
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED);
@@ -23,12 +57,49 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height_);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_VULKAN_BOOLEAN, true);
-    const char* fullscreen = std::getenv("BB_FULLSCREEN");
-    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, fullscreen && fullscreen[0] == '1');
+    if (is_fullscreen) {
+        SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, true);
+    }
+    if (is_borderless) {
+        SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_BORDERLESS_BOOLEAN, true);
+    }
+
     base_title = title;
     window = SDL_CreateWindowWithProperties(props);
     SDL_DestroyProperties(props);
     ASSERT_MSG(window, "Failed to create window: {}", SDL_GetError());
+
+    if (!is_fullscreen) {
+        SDL_SetWindowFullscreen(window, false);
+        SDL_SetWindowBordered(window, true);
+        SDL_SetWindowSize(window, width_, height_);
+        SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+        SDL_SyncWindow(window);
+
+#if defined(_WIN32)
+        const SDL_PropertiesID wp_init = SDL_GetWindowProperties(window);
+        HWND hwnd = static_cast<HWND>(SDL_GetPointerProperty(wp_init, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+        if (hwnd) {
+            LONG style = GetWindowLong(hwnd, GWL_STYLE);
+            style &= ~(WS_POPUP);
+            style |= (WS_OVERLAPPEDWINDOW | WS_VISIBLE);
+            SetWindowLong(hwnd, GWL_STYLE, style);
+
+            RECT rc = { 0, 0, width_, height_ };
+            AdjustWindowRect(&rc, style, FALSE);
+            int win_w = rc.right - rc.left;
+            int win_h = rc.bottom - rc.top;
+
+            int screen_w = GetSystemMetrics(SM_CXSCREEN);
+            int screen_h = GetSystemMetrics(SM_CYSCREEN);
+            int pos_x = (screen_w - win_w) / 2;
+            int pos_y = (screen_h - win_h) / 2;
+
+            SetWindowPos(hwnd, nullptr, pos_x, pos_y, win_w, win_h,
+                         SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        }
+#endif
+    }
 
     const char* driver = SDL_GetCurrentVideoDriver();
     const SDL_PropertiesID wp = SDL_GetWindowProperties(window);
