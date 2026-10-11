@@ -214,6 +214,67 @@ game): max 4 - three guests in one room on slots 1-3, SimC crashes and is back i
   not active below max 4) the 2nd summon happened: the summary is not what limits a bell summon
   of the 2nd cooperator; whether it limits the 3rd needs the 4-client run (step 3 below).
 
+### A7: four players, live with 4 real clients (2026-10-11, agent/sixp)
+
+**Scope.** The party is capped at 4 (host + 3) by the user's decision (2026-10-11; ERSC allows 6).
+One constant holds it: `party::kMaxPartyPlayers = 4` (party_link.h; `coop::fourp::kMaxPlayers`
+mirrors it). Everything party-side follows it: BB_PARTY_MAX clamp 2..4 (PartyLink, director,
+fourp), WELCOME slot / max checks, VITALS (`kMaxVitals`), party HUD rows (`kMaxCompanions`), the
+Party members page (`MaxMembers`). Raising it later needs the engine work of section 1 ("A 4th
+cooperator is not possible without rewriting fixed-size tables") and nothing else hard-coded.
+
+**Changes.**
+- System menu: Party members has one row per member (`MaxMembers = party::kMaxPartyPlayers`), then
+  the notices, party HUD and guest lamps switches and the last event. The game shows the first six
+  visible rows, so a full party of four shows the four members, notices and party HUD; guest lamps
+  (also on the overlay's Party tab) and the last event give way. A separate page is not possible: the
+  System menu is at its 12 pages (game-menu-pages-test: a full party of four, the six rows shown,
+  kick on the 4th member's row).
+- Placement (B2 / pre-ring spacing): `coop::fourp::SpotOffset` / `SpotForTry` (pure, tested):
+  upstream's 0.5 m line (slot 1 right, slot 2 left, slot 3 2x right, nothing behind), each slot
+  tries its own spot, then the mirrored one, then 3 / 1.
+- Version check: see version_check.md (A9); the 4 live instances all logged the same build,
+  params and party patch hashes.
+
+**Live run (4 real clients, loopback, `instances.py run --count 4 --party --env BB_PARTY_MAX=4
+--env BB_PARTY_RING_EVERY=10`, 1792 MiB VRAM each, lowest settings).** Evidence (host log,
+t = seconds since the host's start):
+- every instance: `party rules: max 4 players, 4p:v1:H1,H2,H3,H4,E6`, `build 0.5 (0.5-590-g5bd14843cf),
+  params 581e28302a23..., party patches da32cddaed85... (35 hooks)` - identical, all admitted.
+- roster Hunter0..Hunter3 on slots 0..3; every guest auto-continued into its own world, rang.
+- `from api: Hunter0 summons Hunter1` -> `cooperators 0 -> 1 (t 35.3 s)`; `summons Hunter2` ->
+  `cooperators 1 -> 2 (t 50.1 s)`; `Party 4p: H1: a cooperator slot opened (2 cooperators in the
+  world ...)` -> `summons Hunter3` -> **`cooperators 2 -> 3 (t 158.8 s)`**. Hunter3 logged
+  `joined room 1001 as member 4 with 3 peers`, `session trying-to-join -> client (6)`.
+- every client then sees the same world: B2 status on each shows `cooperators 3`, `presence count 4
+  (h 3 ...)`, four chrs with handles 10044000..10044003 in stage 0x15000000 (Hunter's Dream).
+- placement (host's world, metres): host (-10.8, -6.9, -20.8); guests (-11.5, -7.0, -19.8),
+  (-10.3, -7.0, -21.5), (-11.6, -7.0, -20.7): same height as the host (no wall / floor clip), 0.6 to
+  1.1 m away. Pre-ring spacing put them at side 1 / 2 / 3 (0.5 m right, 0.5 m left, 1.0 m right of
+  the start spot), each `side try 0 OK`.
+- no link lost, no crash; the run ended by the queue's lease (240 s) with all four in the world.
+- second run (same settings): `cooperators 0 -> 1 (t 32.3 s)`, `1 -> 2 (t 44.3 s)`, `2 -> 3 (t 101.3 s)`.
+  Screenshots 4 s and 12 s after `2 -> 3` (`tools/mp/shot.py`, one per window; kept in
+  `agents/sixp/shots/c3_12s_inst*.png`, not committed): every window shows the four hunters together on
+  the Hunter's Dream path (host + 3 cooperators, "Co-operator Hunter1..3" / "Beckoner Hunter0" plates),
+  nobody in a wall or under the floor, the party HUD with three rows at 0.9-1.2 m. They stand as a loose
+  group rather than a clean line: one cooperator stands about 0.5 m behind the host.
+
+- third run (merged build 0.5.1 (0.51-613-g77c74f5281), all four identical, 36 party hooks):
+  `0 -> 1 (t 25.6 s)`, `1 -> 2 (t 43.6 s)`; Hunter3 was invited twice and dropped both times as
+  below, then the queue's 240 s lease (12 runs waiting) ended the run before a third invite. So the
+  4th player got in on 2 of 3 runs, 57 s and 108 s after the 2nd cooperator. Pre-ring spacing put the
+  guests at side 1 / 2 / 3, 0.5 m apart along the right axis, each `side try 0 OK`.
+
+**Open: the 3rd cooperator's summon is slow and not reliable.** Hunter3's first two invites (host `summons Hunter3`
+right after `cooperators 1 -> 2`, and ~30 s later) reached its game (`guest_invite`, signaling up,
+about 8 small vport-40 packets) but its game never called `JoinRoom`: the exchange stopped and
+the connection was deactivated (host side `member 65282`: never a room member). The third invite, ~100 s after Hunter2's arrival, went through (16 / 9 / 38 / 267-byte
+exchange, then `JoinRoom`). Hunter1 and Hunter2 joined on their first invite. Candidates: a host-
+side cap evaluated in the session handshake that H1 does not cover (the SOS filter 0x1874710 (b)
+counts `sel+0x1c8` outgoing requests; the selector update 0x1876b10 `pending + coop >= 3`), or a
+timer after the 2nd arrival. Next: trace 0x1874710's verdict on the host during the 3rd summon.
+
 ### Live test plan for 3 and 4 clients (when the machine allows 3+ game clients, or on two PCs)
 
 Setup: `instances.py run --count 3|4 --party --env BB_PARTY_MAX=3|4 --vram 1536 --fps 30

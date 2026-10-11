@@ -1607,7 +1607,7 @@ void PartyDirector::Configure(PartyRole role, int max_players) {
     State& st = S();
     std::lock_guard<std::mutex> lk(st.mu);
     st.role = role;
-    st.max_players = max_players < 2 ? 2 : max_players > 4 ? 4 : max_players;
+    st.max_players = max_players < 2 ? 2 : max_players > party::kMaxPartyPlayers ? party::kMaxPartyPlayers : max_players;
 }
 
 void PartyDirector::ConfigureFromEnv() {
