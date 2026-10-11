@@ -117,6 +117,7 @@ PC (several game copies, simulated internet lag), not yet between two PCs.
 | Names over party members | In progress |
 | Chalice dungeons: full clear in a party, rituals by anyone | In progress |
 | PvP / friendly fire the host can switch on and off | Later |
+| Pings: party members and marked spots visible through walls, with distance and player colours | Later |
 
 ### Connecting over the internet
 
