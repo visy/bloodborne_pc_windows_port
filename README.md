@@ -82,7 +82,12 @@ run from two new characters to the end credits passed, and a three-player travel
 - **Travel together or alone.** Lamps, headstones and the Hunter's Mark ask "Travel with the party?".
   Yes moves the whole party with one loading screen; No moves only you, and the others don't load.
 - **No loading screen inside the same map.** A lamp or Hunter's Mark to a spot in the map you are
-  already in is an instant warp, for the whole party too.
+  already in is an instant warp, for the whole party too; at the lamp you already stand at, nothing
+  moves at all.
+- **Guests can use the Hunter's Mark** (on by default; launcher switch "Guests can use Hunter's
+  Mark"): alone it takes you to your own last lamp, with the party to the host's.
+- **Apart and back together.** While players are in different maps each sees only the others in
+  its own map; meeting again shows them at once, without a loading screen.
 - **Everyone can use lamps.** Vanilla disables lamps during co-op; here they work for everyone.
   A lamp lit by anyone is lit for the party.
 - **Resting resets the world for the party.** Enemies respawn; everyone's HP, vials and bullets

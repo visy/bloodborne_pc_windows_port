@@ -99,7 +99,7 @@ class LauncherEnvTests(unittest.TestCase):
             "BB_PARTY_START": "prologue_solo", "BB_PARTY_GUEST_INSIGHT": "parity",
             "BB_SAVE_BACKUP_MINUTES": "10", "BB_SAVE_BACKUP_KEEP": "10",
             "BB_PARTY_GRANT_BELLS": "1", "BB_PARTY_OPEN_WORLD": "1", "BB_PARTY_GUEST_RESPAWN": "1",
-            "BB_PARTY_GUEST_REFILL": "1", "BB_PARTY_GUEST_MARK": "0", "BB_PARTY_FULL_REWARDS": "1",
+            "BB_PARTY_GUEST_REFILL": "1", "BB_PARTY_GUEST_MARK": "1", "BB_PARTY_FULL_REWARDS": "1",
             "BB_PARTY_ITEMS": "1", "BB_PARTY_PROGRESS": "1", "BB_PARTY_PROGRESS_NPC": "1",
             "BB_PARTY_STORY": "1", "BB_PARTY_STORY_MIRROR": "1", "BB_PARTY_RESTART": "1",
         }
