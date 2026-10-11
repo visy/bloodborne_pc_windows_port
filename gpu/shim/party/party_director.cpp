@@ -877,7 +877,20 @@ void RunTravelScript(State& st, const GameSnapshot& s, Clock::time_point now) {
         }
         float p[3] = {};
         float yaw = 0;
-        if (!at || std::sscanf(at, "%f:%f:%f:%f", &p[0], &p[1], &p[2], &yaw) != 4) {
+        unsigned near_id = 0;
+        if (at && std::sscanf(at, "chr%u", &near_id) == 1) {
+            // "chrENTITY": 2 m beside that map character (e.g. Queen Yharnam for the Blood Moon).
+            const std::uint64_t chr = GuestSvcFindChr(near_id);
+            float d[4] = {};
+            if (!chr || !SafeRead(chr + 0xc0, d, sizeof d)) {
+                done("FAILED: no character with that entity id");
+                return;
+            }
+            p[0] = d[0] + 2.0f;
+            p[1] = d[1] + 0.3f;
+            p[2] = d[2];
+            Log("test: host_walk: chr %u stands at (%.2f, %.2f, %.2f)", near_id, d[0], d[1], d[2]);
+        } else if (!at || std::sscanf(at, "%f:%f:%f:%f", &p[0], &p[1], &p[2], &yaw) != 4) {
             done("done");
             return;
         }
