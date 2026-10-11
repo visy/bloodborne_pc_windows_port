@@ -12,6 +12,14 @@ per player; NPC quest choices are **shared** (the first choice anyone makes appl
 world and every player's save); a guest behind the host **catches up fully** (bosses, Blood Moon,
 lamps, shortcuts in its own save).
 
+**0.5.2 defaults.** On: world actions (levers, doors, shortcuts, NPC talk and quest flags), NPC
+talk for guests, shared NPC quests, ObjAct kick log / replay, guest-triggered cutscenes for the
+party (D10), encounter Insight for guests. **Off (opt-in)**: instanced treasure
+(`BB_PARTY_GUEST_PICKUP=1`), full per-player enemy drops (`BB_PARTY_GUEST_DROPS=1`), the area-gate
+catch-up (`BB_PARTY_GATE_CATCHUP=1`), the time-of-day catch-up (`BB_PARTY_TOD_CATCHUP=1`; its first
+version queued a story item on a guest still at home, which held the guest's bell: it never
+joined - fixed to "only once in the host's world", not re-run).
+
 ## 1. The model: a guest's game writes the host's world copy
 
 A summoned guest (session role 6) runs its own EMEVD events, talk scripts and ObjActs on its copy

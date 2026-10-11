@@ -1259,7 +1259,12 @@ void HostPoll(const GameSnapshot& g) {
     // Only once the member is in the host's world (a cooperator): a time-of-day item queued on a
     // guest still at home made its story queue busy, and a busy queue holds its bell - live, the
     // guest never rang and never joined.
-    if (g_member_joined.load() && tod_value > 0 && ReadGameState(true).cooperators > 0 && g_member_joined.exchange(false)) {
+    static const bool tod_catchup = [] {  // opt-in for 0.5.2 (BB_PARTY_TOD_CATCHUP=1): not re-run live
+        const char* v = std::getenv("BB_PARTY_TOD_CATCHUP");
+        return v && v[0] == '1';
+    }();
+    if (tod_catchup && g_member_joined.load() && tod_value > 0 && ReadGameState(true).cooperators > 0 &&
+        g_member_joined.exchange(false)) {
         // Catch-up (user decision: a guest behind the host gets the Blood Moon too): a member that
         // joined late never saw the change; the guest's planner never turns its clock back.
         StoryIntent t;
