@@ -50,6 +50,10 @@ void SetEmevdRewriter2(EmevdRewriter fn);
 /// Installs the EMEVD dispatch filter (0x17b93a0) now if SeamlessRulesInit did not (idempotent,
 /// whether or not the seamless rules are on). True once installed.
 bool EnsureEmevdFilter();
+/// A11: a boss health bar is up (EMEVD 2003[11] seen with "on" and not yet "off"; a load resets
+/// it): the host is in a boss fight.
+bool BossBarShown();
+void BossBarReset();
 /// The argument bytes of instruction record `instr` of `event` (the copied arguments at
 /// event+0xb8, else the EVD data); 0 when unknown. *size receives the argument size.
 std::uint64_t EmevdInstructionArgs(std::uint64_t event, std::uint64_t instr, std::uint32_t* size);

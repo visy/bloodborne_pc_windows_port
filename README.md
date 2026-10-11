@@ -62,7 +62,9 @@ Mouse and keyboard, free camera, debug menu: [docs/SETTINGS.md](docs/SETTINGS.md
 
 Play the whole game with friends in one session, from the first lamp to the end credits.
 Modelled on Elden Ring Seamless Co-op, adapted to Bloodborne. **In development:** tested on one
-PC (several game copies, simulated internet lag), not yet between two PCs.
+PC (several game copies, simulated internet lag), not yet between two PCs. A scripted two-player
+run from two new characters to the end credits passed, and a three-player travel run
+([docs/party/campaign_soak.md](docs/party/campaign_soak.md)).
 
 ### How it plays
 
@@ -71,12 +73,16 @@ PC (several game copies, simulated internet lag), not yet between two PCs.
   password are remembered, so later sessions are one press.
 - **Fast join.** The bell, beckoner and summon-sign waits are gone: a guest is in the host's world
   within seconds.
+- **Leave any time.** *System → Party → Leave the party* takes a guest home at once; the host's
+  *Leave* ends the party and every guest goes home. *Join party* brings a guest back.
 - **The session never ends by itself.** Boss kills, area clears, deaths and travel don't send
   anyone home.
 - **No multiplayer walls.** The fog walls that keep phantoms near the host are gone; the party can
   split up and explore.
-- **Travel together.** Lamps, headstones, the Hunter's Mark and scripted transitions move the
-  whole party with one loading screen.
+- **Travel together or alone.** Lamps, headstones and the Hunter's Mark ask "Travel with the party?".
+  Yes moves the whole party with one loading screen; No moves only you, and the others don't load.
+- **No loading screen inside the same map.** A lamp or Hunter's Mark to a spot in the map you are
+  already in is an instant warp, for the whole party too.
 - **Everyone can use lamps.** Vanilla disables lamps during co-op; here they work for everyone.
   A lamp lit by anyone is lit for the party.
 - **Resting resets the world for the party.** Enemies respawn; everyone's HP, vials and bullets
@@ -84,7 +90,9 @@ PC (several game copies, simulated internet lag), not yet between two PCs.
 - **Guests are full players.** The Doll (level up), shops, the workbench, storage, lamps and
   headstones all work for guests.
 - **Progress counts for everyone.** Bosses, items, doors, shortcuts, lamps, story and endings go
-  into every player's own save. A guest who is behind catches up.
+  into every player's own save. A guest who is behind catches up, including the Blood Moon.
+- **Story cutscenes and endings play for everyone.** The Blood Moon, Gehrman's scenes and the
+  ending with the end credits play for every party member.
 - **The host's world is shared live.** A door or shortcut opened by the host is open for the
   guests too.
 - **Up to 4 players** (host + 3), all in the host's world. The 4th player's summon can take a
@@ -117,14 +125,13 @@ PC (several game copies, simulated internet lag), not yet between two PCs.
 
 | Change | Status |
 |---|---|
-| "Travel alone / Travel with party" choice at lamps | In progress |
 | Every player, host included, respawns at their own last lamp | In progress |
 | Dying in a boss fight: spectate until the fight ends, then everyone respawns at one shared lamp | In progress |
 | Bloodstains for everyone, like single-player | In progress |
 | Guests open doors, pull levers, talk to NPCs; NPC choices shared | In progress |
 | Item pickups and enemy drops per player: everyone gets their own | In progress |
-| Cutscenes play for the whole party | Planned |
-| Joining during a boss fight waits outside until it ends | Planned |
+| Every cutscene for the whole party (story cutscenes and endings already work) | In progress |
+| Joining during a boss fight or cutscene waits outside until it ends | In progress (no summon while the host's boss bar or a cutscene is up) |
 | The 4th player joins as fast as the others | In progress |
 | Chalice dungeons: rituals by any player (guest's dungeon entered by the party) | In progress |
 | PvP / friendly fire the host can switch on and off | Later |

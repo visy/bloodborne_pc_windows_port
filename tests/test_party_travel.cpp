@@ -35,6 +35,12 @@ static void test_call_sites() {
     CHECK(TravelKindFromCallSite(0x1332b84) == TravelKind::LuaStageKick);
     CHECK(TravelKindFromCallSite(0x1381ede) == TravelKind::HostDeath);
     CHECK(TravelKindFromCallSite(0x18ffa1d) == TravelKind::HuntersMark); // the Hunter's Mark item
+    // Gather target: the host's lamp when it is in the host's map, else a lamp of that map.
+    CHECK(GatherLampFor(2412951, 0x18010000) == 2412951);
+    CHECK(GatherLampFor(2412959, 0x15000000) / 10000 == 210); // fresh host in the Dream: a Dream lamp
+    CHECK(GatherLampFor(2412959, 0) == 2412959);
+    CHECK(GatherLampFor(kTravelNone, 0x18000000) / 10000 == 240);
+    CHECK(GatherLampFor(2412951, 0x7f000000) == 2412951); // no lamp in that map: as it is
     CHECK(TravelKindFromCallSite(0x1381a93) == TravelKind::GuestSentHome);
     CHECK(TravelKindFromCallSite(0x138a51c) == TravelKind::GuestSentHome);
     CHECK(TravelKindFromCallSite(0x1382663) == TravelKind::GuestDied);
@@ -316,6 +322,11 @@ static void test_chalice() {
     CHECK(TravelFromJsonText(TravelToJsonText(t), &back) && back.chalice_channel == 77);
     t.chalice_channel = 0;
     CHECK(TravelFromJsonText(TravelToJsonText(t), &back) && back.chalice_channel == 0);
+    // Split travel: "alone" is optional (absent = the party travels together) and round-trips.
+    CHECK(!back.alone && TravelToJsonText(t).find("alone") == std::string::npos);
+    t.alone = true;
+    CHECK(TravelFromJsonText(TravelToJsonText(t), &back) && back.alone);
+    t.alone = false;
     // Lamps 29xxxxx, a dungeon respawn, an exact position in area 29.
     TravelIntent l;
     l.kind = TravelKind::Lamp;
