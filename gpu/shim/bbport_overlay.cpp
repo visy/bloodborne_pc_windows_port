@@ -1902,7 +1902,20 @@ void PartyHud() {
     ImDrawList* bg = ImGui::GetBackgroundDrawList();
     for (int i = 0; i < b.count; ++i) {
         const party::hud::Companion& c = b.c[i];
-        if (!c.same_world || !c.connected || !c.have_pos || !c.same_map) {
+        // Only a live chr here, alive, on our map, from a fresh board (a dead / re-spawned / removed
+        // member or a stalled game tick: no tag; user report "health bars floating in midair").
+        const char* why = "";
+        const bool show = party::hud::TagVisible(c, party::hud::NowMs() - b.published_ms, &why);
+        {
+            static char last_why[party::kMaxVitals][24];
+            const int slot = c.slot >= 0 && c.slot < party::kMaxVitals ? c.slot : 0;
+            if (std::strncmp(last_why[slot], why, sizeof last_why[slot]) != 0) {
+                std::snprintf(last_why[slot], sizeof last_why[slot], "%s", why);
+                if (why[0]) std::printf("Party HUD: tag %s hidden: %s\n", c.name, why);
+                else std::printf("Party HUD: tag %s shown\n", c.name);
+            }
+        }
+        if (!show) {
             continue;
         }
         const float d = party::hud::Distance(b.me_pos, c.pos);

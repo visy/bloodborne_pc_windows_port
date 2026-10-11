@@ -83,8 +83,10 @@ the default keeps vanilla poise.
   isSoulGetByBoss (0x149 bit 4) gets SpEffect 7503 (chr vfunc +0x3f0), unless it is a boss: the 34
   entities the boss events dope (EMEVD 2004[8] with SpEffect 7500 / 7501, scanned in every 1.09
   map; `kBossEntities`), resolved each pass with GetChrByEntityId 0x13c97a0, never get it, so a
-  boss is scaled once, by the boss rows. (Removing 7503 from a boss at its doping, 0x17e1d90 =
-  EMEVD 2004[21]'s remove, was tried first: the Cleric Beast died on the spot, HP 6597 -> 0.)
+  boss is scaled once, by the boss rows. (The first version removed 7503 from a boss when its
+  doping arrived, 0x17e1d90 = EMEVD 2004[21]'s remove; the Cleric Beast died in that run, but it
+  also died ~30 s into later fights with no removal and no guest death, see 2.4, so the removal
+  was probably not the cause. The entity table avoids the question.)
   Chalice bosses (m29): the 66 entities the parameterised chalice boss events (12904877, 12904881,
   12906791, 12906795, 12906806) are started with (2000[0] / 2000[6] arguments; `kChaliceBossEntities`,
   resolved only in area 29), plus isSoulGetByBoss. The game's per-frame HP update (0x1a0d7d0) recomputes max HP from the
