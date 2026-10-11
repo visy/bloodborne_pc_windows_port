@@ -3501,16 +3501,25 @@ std::uint32_t NearestEnemyForTest(float max_m) {
         return 0;
     }
     int all = 0, ours = 0, alive = 0;
+    std::string sample;
     ForEachMapChr([&](u32 id, u64 chr) {
         ++all;
+        if (all <= 12) {
+            float p[3] = {};
+            ChrPos(chr, p);
+            char b[64];
+            std::snprintf(b, sizeof b, " %u(hp %d at %.0f,%.0f,%.0f)", id,
+                          Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0x128, -1), p[0], p[1], p[2]);
+            sample += b;
+        }
         if (EnemyReconcilable(id, s.map_id)) {
             ++ours;
             alive += Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0x128, 0) > 0 ? 1 : 0;
         }
     });
     const u32 id = NearestEnemy(s, max_m);
-    Log("test: map chrs %d, of %s %d (%d alive); nearest within %.0f m: %u", all, MapName(s.map_id).c_str(), ours, alive,
-        double(max_m), id);
+    Log("test: map chrs %d, of %s %d (%d alive); nearest within %.0f m: %u; first:%s", all, MapName(s.map_id).c_str(), ours,
+        alive, double(max_m), id, sample.c_str());
     return id;
 }
 
