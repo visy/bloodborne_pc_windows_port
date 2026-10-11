@@ -209,3 +209,23 @@ Not done / open:
 * Three or more players apart: chrs are matched to members by the vitals' positions (works for
   any count in principle), not run live.
 * A guest's own last-lamp record is not updated by an alone travel.
+
+## Floating phantom name plate: what agent/balance learned (2026-10-11)
+
+User screenshots (split24 run; also a 3-player Dream run): on the host the guest's chr is not drawn
+and the game's own blue "Co-operator / name" plate with its HP bar floats where nobody stands; the
+guest sees both players fine.
+
+* The plate is the game's `FrpgMenuDlgFloatingPCGauge` (string 0x4930683; built next to the enemy
+  bars in 0x167c460), drawn over the host's own copy of the guest PlayerIns, at that copy's
+  position. The party HUD showed the guest 0.9 m away at the same time: that distance comes from
+  the guest's own VITALS because the host's copy was more than 8 m from the guest's report, i.e.
+  the host's copy kept a stale position (no updates) and was not drawn: consistent with the host's
+  chr remove / rebuild leaving a stale or hidden copy whose plate stays alive.
+* A disabled chr (ChrIns_SetDisable 0x18c6390 sets [chr+0x18]+0x20 bit 0 and [chr+0x58]+0x114 bit
+  0x40) is not drawn; if the copy is disabled while its plate is up, the plate is the leftover.
+* The port's own HUD / tags no longer imply a member is there: a disabled chr is not "here", a chr
+  more than 8 m from its member's own report is never matched to it (logged as `stale remote
+  chr? ...`, once a minute), and a tag needs a chr read this tick, alive, on our map, from a fresh
+  board (`party::hud::TagVisible`; `Party HUD: tag X hidden: why`). `BB_PARTY_HUD_POSDIAG=1` (with
+  `BB_PARTY_HUD_LOG=1`) dumps position-like values in each remote PlayerIns for the anchor hunt.

@@ -39,6 +39,8 @@ namespace coop {
 namespace {
 
 using u32 = std::uint32_t;
+using u16 = std::uint16_t;
+using u8 = std::uint8_t;
 constexpr u64 kSlotWorldChrMan = 0x553e878;
 
 void Log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -228,6 +230,10 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
             if (!chr || chr == s.player) continue;
             const ChrRead r = ReadChr(chr);
             if (!r.have_pos) continue;
+            // A disabled chr (ChrIns_SetDisable 0x18c6390: [chr+0x18]+0x20 bit 0, [chr+0x58]+0x114
+            // bit 0x40) is not drawn: it is not "here" for the HUD or the tags (split travel removes
+            // and rebuilds remote chrs; a hidden copy must not get a tag).
+            if ((Field<u8>(Field<u64>(chr, 0x18), 0x20) & 1) || (Field<u16>(Field<u64>(chr, 0x58), 0x114) & 0x40)) continue;
             if (log_now && PosDiag()) DumpPositions(chr, r.pos);
             party::hud::LocalChr& l = chrs[chrs_n++];
             l.have_hp = r.have_hp;
