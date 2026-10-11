@@ -1256,7 +1256,10 @@ void HostPoll(const GameSnapshot& g) {
             PushHost(e);
         }
     }
-    if (g_member_joined.exchange(false) && tod_value > 0) {
+    // Only once the member is in the host's world (a cooperator): a time-of-day item queued on a
+    // guest still at home made its story queue busy, and a busy queue holds its bell - live, the
+    // guest never rang and never joined.
+    if (g_member_joined.load() && tod_value > 0 && ReadGameState(true).cooperators > 0 && g_member_joined.exchange(false)) {
         // Catch-up (user decision: a guest behind the host gets the Blood Moon too): a member that
         // joined late never saw the change; the guest's planner never turns its clock back.
         StoryIntent t;
