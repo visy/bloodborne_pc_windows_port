@@ -406,11 +406,73 @@ for 2.5 min** until the lease ended the run; host cooperators 1 throughout. Gues
 the join from the host's history (`guest got 1 grants from the host, 0 new` at the kill: no
 duplicate).
 
+### 6.8 Runs r8-r15: wipes (guest and host dead), fog gate by pad [R]
+
+Steps: host `host_warp=2412952@8,host_die@4#2`, guest `guest_die@S%m24_01` (die steps with
+`%MAP` run S s after the last load, no re-join needed).
+
+* r8: the guest's death went first and B1 took it (redirect to the host's lamp in its own world =
+  a leave, then the bell re-summon). Now **held** (`HoldGuestDeath`, party_travel
+  `SetGuestDeathHold`, `BB_PARTY_B2_DEATH_GRACE` 8 s): a host travel in flight or arriving within
+  the grace takes the guest along (`held death goes with the host's travel (2.8 s after it); no
+  redirect, no leave`); otherwise the usual redirect runs (`GuestDeathRedirectNow`).
+* r8 then waited 45 s for a snapshot and fell back to B1: the host was still in
+  `HostPhase::Resynced` from the warp's re-join (it stays there up to 60 s) when it died, so its
+  second load was never noticed and nothing was re-sent - also the cause of r5's 30 s wait. Fix:
+  a load in `Resynced` re-enters `Loading` (`host: another own load before the last re-join
+  settled`); r11-r15 re-sent after the death load.
+* r11 then reproduced the **Hunter's Dream placement**: the dead guest's load is a death load and
+  goes to its own respawn records (GSM +0x1528 / +0x1538 / +0x153C: the Dream) whatever the forced
+  transform says - it loaded m21_00 in host-world mode, 142 m from the host on both screens
+  (`host watch: ... guest (-9.20, -6.77, -19.40) 142.72 m`). Fix: for a dead follow the host's
+  records from the travel intent are written before the load and the own ones put back after the
+  arrival (`respawn records = the host's (last lamp 0x18b50002016b1 -> 0x18b2b0024d198, mode 0 ->
+  1, respawn -1 -> 0x18b2b0024d198)`); a death load lands on the lamp spot itself (0.00 m from the
+  host in r13/r14), so the guest is then warped beside the host (chr warp +0x5F8).
+  r13 (guest dies first) and r14 (host first: `held (the host's travel is in flight)`): the guest
+  arrives in m24_01 in the host's world, client throughout, host cooperators back to 1.
+* r12 (both fall through the bridge): the host's fall recovery lamp-warps it (a travel); the
+  falling guest follows before it dies and arrives 2.2 m beside the host. Fall recovery of a party
+  guest now targets the host's last lamp (not its own, often the Dream) and leaves a pending
+  stage request alone.
+* r10, fog gate by in-process pad: `guest_move=-155.15:-26.6:34.37:-2.35@4,guest_press=0x4000@1.5`
+  (fog 2411800 at (-154.44, -27.02, 35.07); yaw -2.35 = the fog object's own facing; Cross via
+  `runtime_pad_director_press`, no OS input): EMEVD 12414731 ran [8] (turn + walk-through anim
+  101130) and [17] set **12414701** (the guest entered the boss room) after the host's 12414700.
+  The earlier try (yaw 0.79, before 12414700 was set) did nothing.
+
+### 6.9 Runs r16-r17: a guest dying alone respawns in the host's world [R]
+
+ER-Seamless-style: a guest that dies while the host lives stays a client and respawns at the
+host's last lamp in the host's world. After the held death's grace (6.8) without a host travel,
+`SoloRespawn` (guest, `BB_PARTY_B2_SOLO_RESPAWN=0`: off) builds a lamp intent for the host's last
+lamp (ReturnPointParam row via `0x1F26B40(out, id)`, record {+4, +8} as 0x13CDF30 writes it), runs
+the B2 re-join as a dead follow (flow 1, host's records into GSM +0x1528 / +0x1538 / +0x153C, death
+load in host-world mode, own records back on arrival, no beside-the-host warp) and sends
+`{"op":"respawn"}`. The host re-sends the snapshot and its spot, and removes the dead member chr
+the way the task's own STEP_DeleteWait 0x1E50A70 does (slot release `0x15BC080`, WorldChrMan
+remove `0x19186E0`), keeping the task (K8 already keeps it on any death while hosting); on
+"arrived" the task is rewound to STEP_Create and the chr is built again from the member's
+GameData row.
+
+* r16 (without the removal): the guest respawned at the lamp in m24_01, still a client, but the
+  host kept its dead chr (`hp 1`, presence state 5) at the death spot and rewound 0 tasks.
+* r17: `host: dead member chr ... (hp 1) removed; its task is kept`, guest `respawned at the host's
+  lamp in the host's world (stage 0x18010000 pos (-124.8, -27.0, 64.3) hp 106), still a client`,
+  host `task mode 1 rewound to STEP_Create`, cooperators 0 -> 1 14 s after the death; screenshot:
+  the host sees "Co-operator Hunter1" alive 0.8 m away at the lamp. No leave, no bell.
+
+Death rules on a lone respawn (as a vanilla phantom's death, which never costs the phantom
+anything in its own world): full HP; buffs end (not restored, unlike a plain B2 load); echoes,
+Insight and consumables are kept (no bloodstain in the host's world: a phantom's echoes are not
+part of the host's world, and the guest's own world is not where it died); the host's world is not
+reset. Fallback: no snapshot within 45 s -> the B1 fallback as before (redirect, leave, bell).
+
 ## 7. Risks / open items
 
-* (Closed in 6.7) K10 / boss clear with a real kill. Open: the guest's fog-gate entry
-  (12414731, action button) not exercised without input; a host death in a boss arena with the
-  guest inside (r5, a fall) went through the guest's own death -> B1 fallback -> bell rejoin.
+* (Closed in 6.7 / 6.8) K10 / boss clear with a real kill; wipes (guest and host dead) and falls
+  follow the host; the guest's fog-gate entry by the in-process pad. A guest that dies alone respawns in
+  the host's world (6.9).
 
 * (Closed in run 9) Guest rewind not executing in run 5. Static analysis: the update `0x1E52FE0` copies
   +0x54 to +0x50 unconditionally on entry, so `step 6 next 4` means the task update was not

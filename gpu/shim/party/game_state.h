@@ -68,6 +68,8 @@ std::string MapName(std::uint32_t map_id);
 std::string Describe(const GameSnapshot& s);
 /// Writes the local player's Insight (PlayerGameData +0x84); false when there is no record.
 bool WritePlayerInsight(int insight);
+/// Writes the local player's Blood Echoes (PlayerGameData +0x94; test fixtures).
+bool WritePlayerEchoes(int echoes);
 
 // ---- Campaign start (C1, docs/party/campaign_start.md). Game functions: main thread only. ----
 // Each function's first bytes are compared with the 1.09 code before the first call; a mismatch
@@ -82,6 +84,8 @@ bool WritePlayerInsight(int insight);
 
 /// The flag's value; false when it cannot be read (no EventFlagMan, code differs).
 bool ReadEventFlag(std::uint32_t flag, bool* value);
+/// GetEventFlagValue(first, bits): `bits` consecutive flags, the last one bit 0 (bits 1..32).
+bool ReadEventFlagValue(std::uint32_t first, std::uint32_t bits, std::uint32_t* value);
 bool WriteEventFlag(std::uint32_t flag, bool value);
 /// How many of goods `id` the local player holds: 0 = none, -1 = unknown (no record / code differs).
 int GoodsCount(std::uint32_t goods_id);

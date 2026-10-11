@@ -3,12 +3,14 @@
 // caller -> kind table, the EVENT "travel" JSON round trip, the host queue and the guest's
 // newest-seq / replay-gate / under-way logic with an injected game state.
 // Build and run: ninja -C out/gpu party-travel-test && out/gpu/party-travel-test.exe
+#include "party/party_chalice.h"
 #include "party/party_travel.h"
 
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 using namespace coop;
 
@@ -297,6 +299,60 @@ static void test_guest() {
     CHECK(!p.Destination());
 }
 
+// Chalice Dungeons: a guest follows a warp into a dungeon only into the one its game has.
+static void test_chalice() {
+    TravelIntent t;
+    t.seq = 9;
+    t.kind = TravelKind::ScriptedWarp;
+    t.packed_map = 0x18010000u;  // m24_01: not a dungeon
+    CHECK(!TravelIntoChalice(t) && ChaliceReplayAllowed(t, 0));
+    t.packed_map = 0x1D010A0Cu;  // m29_01_10_12: a dungeon piece
+    CHECK(TravelIntoChalice(t));
+    CHECK(!ChaliceReplayAllowed(t, 0) && !ChaliceReplayAllowed(t, 77));
+    t.chalice_channel = 77;
+    CHECK(ChaliceReplayAllowed(t, 77) && !ChaliceReplayAllowed(t, 78) && !ChaliceReplayAllowed(t, 0));
+    // The channel travels in the event (hex) and is optional.
+    TravelIntent back;
+    CHECK(TravelFromJsonText(TravelToJsonText(t), &back) && back.chalice_channel == 77);
+    t.chalice_channel = 0;
+    CHECK(TravelFromJsonText(TravelToJsonText(t), &back) && back.chalice_channel == 0);
+    // Lamps 29xxxxx, a dungeon respawn, an exact position in area 29.
+    TravelIntent l;
+    l.kind = TravelKind::Lamp;
+    l.lamp_id = 2902950;
+    CHECK(TravelIntoChalice(l));
+    l.lamp_id = 2102950;
+    CHECK(!TravelIntoChalice(l));
+    l.kind = TravelKind::HostDeath;
+    l.lamp_id = kTravelNone;
+    l.last_lamp = 2902951;
+    CHECK(TravelIntoChalice(l));
+    TravelIntent p;
+    p.kind = TravelKind::Transform;
+    p.has_pos = true;
+    p.pos_map = 0x1D000000u;
+    CHECK(TravelIntoChalice(p));
+}
+
+
+// The local chalice slot and the party's chalices (party_chalice.h).
+static void test_chalice_state() {
+    using namespace coop::chalice;
+    CHECK(SlotFromBits(0) == -1);
+    CHECK(SlotFromBits(0x40) == 0);  // flag 9020 (the first of 7, the value's bit 6)
+    CHECK(SlotFromBits(0x01) == 6);  // flag 9026
+    CHECK(SlotFromBits(0x04) == 4);
+    CHECK(ChannelFromDwords(0, 0x80000000u) == 0);  // the game's "never uploaded"
+    CHECK(ChannelFromDwords(0x12345678u, 0x9u) == 0x912345678ull);
+    CHECK(IsChaliceGoods(6109) && IsChaliceGoods(6539) && !IsChaliceGoods(7000) && !IsChaliceGoods(200));
+    std::vector<std::uint32_t> ids;
+    CHECK(GoodsFromJsonText(GoodsToJsonText({6109, 6209}), &ids) && ids == (std::vector<std::uint32_t>{6109, 6209}));
+    // A peer's list: only chalices, once each.
+    CHECK(GoodsFromJsonText(R"({"goods":[6109,6109,200,7000,-5,1e300,"x",6100]})", &ids) &&
+          ids == (std::vector<std::uint32_t>{6109, 6100}));
+    CHECK(!GoodsFromJsonText("[]", &ids) && !GoodsFromJsonText(R"({"goods":5})", &ids));
+}
+
 int main() {
     test_call_sites();
     test_json();
@@ -304,6 +360,8 @@ int main() {
     test_host_queue();
     test_gate();
     test_guest();
+    test_chalice();
+    test_chalice_state();
     std::printf("party-travel-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

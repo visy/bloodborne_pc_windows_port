@@ -134,7 +134,7 @@ static void EverySettingSaved() {
         "reactive_threshold", "reactive_max", "debug_view", "show_fps", "show_hud", "hud_position", "hud_opacity",
         "hud_scale", "hud_graph", "hud_vram", "hud_gpu", "hud_cpu", "hud_ram", "mk_enabled", "mk_sens_x",
         "mk_sens_y", "mk_invert_x", "mk_invert_y", "mk_deadzone", "mk_smoothing", "async_pipelines", "gpl",
-        "compile_indicator", "party_toasts", "fsr4_auto_exposure", "fsr4_invert_jitter", "model_lod",
+        "compile_indicator", "party_toasts", "party_hud", "fsr4_auto_exposure", "fsr4_invert_jitter", "model_lod",
         "output_res", "live_resolution", "menu_language"};
     for (const char* key : overlay) {
         if (!changed.count(key)) {
@@ -191,7 +191,9 @@ static void Party() {
     // Member rows: one per member, name, state and ping; the host's own row cannot be kicked.
     int visible = 0;
     for (const P::Row& row : members.rows) visible += !row.visible || row.visible();
-    assert(visible == 5); // three members, the notices switch, the last event
+    assert(visible == 6); // three members, the notices and party HUD switches, the last event
+    const P::Row& hud = RowNamed(members, u"Party HUD");
+    assert(hud.visible && hud.visible());
     assert(std::u16string(P::Text(members.rows[0].name, false)) == u"Hunter0 (host) (you)");
     assert(std::u16string(P::Text(members.rows[1].choices[0], false)) == u"In world, 42 ms");
     assert(std::u16string(P::Text(members.rows[1].choices[1], false)) == u"Press again: kick");
@@ -242,13 +244,14 @@ static void Party() {
     P::Load();
     visible = 0;
     for (const P::Row& row : members.rows) visible += !row.visible || row.visible();
-    assert(visible == 3 && std::u16string(P::Text(members.rows[0].name, false)) == u"No one yet");
+    assert(visible == 4 && std::u16string(P::Text(members.rows[0].name, false)) == u"No one yet");
 
     // Party mode off (single player): no commands from the buttons; the party-only rows (copy,
     // rejoin, leave) are hidden, the extension row shows (in order).
     ps::ResetForTest(false);
     P::Load();
     assert(P::PartyRowCount() == 5); // status, copy, rejoin, leave + the extension row
+    assert(!hud.visible()); // the party HUD switch: party mode only
     std::vector<const P::Row*> shown;
     for (const P::Row& row : party.rows) if (!row.visible || row.visible()) shown.push_back(&row);
     assert(shown.size() == 2 && std::u16string(P::Text(shown[1]->name, true)) == u"Создать группу");

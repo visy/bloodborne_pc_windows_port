@@ -85,6 +85,9 @@ struct TravelIntent {
     std::uint32_t pos_map = kTravelNone;
     float pos[4] = {0, 0, 0, 0};
     float rot[4] = {0, 0, 0, 0};
+    /// The host's Chalice Dungeon (party_chalice.h ChannelId) when the destination is inside one
+    /// (TravelIntoChalice); 0 otherwise.
+    std::uint64_t chalice_channel = 0;
 
     std::uint32_t Area() const { return (packed_map >> 24) & 0xff; }
     std::uint32_t Block() const { return (packed_map >> 16) & 0xff; }
@@ -118,6 +121,16 @@ bool TravelBonfireKnown(std::uint32_t id);
 /// far-out coordinates is dropped (has_pos false). The guest's game is then only asked to warp
 /// somewhere its own data names.
 bool SanitizePeerTravel(TravelIntent* t, std::string* why = nullptr);
+
+// ---- Chalice Dungeons (docs/party/chalice.md) ----
+/// The destination is inside a Chalice Dungeon (area 29): the map, the exact-position map, the
+/// lamp (ReturnPointParam 29xxxxx) or the bonfire / warp point entity.
+bool TravelIntoChalice(const TravelIntent& t);
+/// A guest replays a warp into a Chalice Dungeon only into the dungeon its own game has in its
+/// current chalice slot (`local_channel`): the layout is generated locally from that slot, so a
+/// warp into another one (or none) would load a different dungeon. The guest joins the host's
+/// dungeon at the altar first (the channel board's glyph / random join).
+bool ChaliceReplayAllowed(const TravelIntent& t, std::uint64_t local_channel);
 
 // ---- How a guest replays an intent ----
 enum class ReplayMethod : std::uint8_t {
@@ -218,8 +231,21 @@ bool ReplayTravelNow(const TravelIntent& t);
 /// death). `fn(site)` true = the send-home at `site` is dropped (nothing runs). Any thread.
 using SendHomeVetoFn = bool (*)(std::uint64_t site);
 void SetSendHomeVeto(SendHomeVetoFn fn);
+/// Guest: a hold on its own death's funnel call (PartyGhostDeath_2 0x1382663). `fn()` true = held:
+/// nothing runs now; the holder later either drops it (the host's travel brings the guest along)
+/// or runs GuestDeathRedirectNow(). Game thread.
+using GuestDeathHoldFn = bool (*)();
+void SetGuestDeathHold(GuestDeathHoldFn fn);
+/// A held guest death, carried out now (main thread): the redirect to the host's last lamp, or
+/// the stock funnel (home) when there is none.
+void GuestDeathRedirectNow();
 /// The travel hooks are installed and on (BB_PARTY_TRAVEL is not 0 and the funnel hook is in).
 bool TravelEnabled();
+/// Test fixtures (BB_PARTY_DIRECTOR_TEST place=...): warps the local player to an exact transform
+/// through the forced-placement sequence (main thread, world up). False when the map is unknown.
+bool TravelPlaceForTest(std::uint32_t map, const float pos[3], float yaw);
+/// Test fixtures (warp=MAP:POINT): a stage warp 0x132E010 to warp point / entity `point` of `map`.
+bool TravelWarpForTest(std::uint32_t map, std::uint32_t point);
 /// Guest: the host's last lamp id for the death / Hunter's Mark redirect (kTravelNone: no redirect,
 /// the guest goes home as in vanilla). Any thread. A travel intent with a last-lamp record also
 /// updates it.

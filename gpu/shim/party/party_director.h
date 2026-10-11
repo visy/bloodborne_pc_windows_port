@@ -28,6 +28,11 @@
 //        grant_bells  grants the missing bells once ready (also without a party / with
 //                     BB_PARTY_GRANT_BELLS=0) and logs the counts before and after
 //        insight=N    writes the player's Insight once the world is up
+//        echoes=N     writes the player's Blood Echoes once the world is up
+//        goods=ID:N   tops goods ID up to N once, 8 s after the world is up (repeatable item)
+//        log_pos      the player's area / position (FrpgNetMan +0xa7c / +0xaac) every 3 s
+//        place=MAP:X:Y:Z:YAW  one forced placement (hex packed map), 15 s after the world is up
+//        warp=MAP:POINT       one stage warp to warp point / entity POINT of MAP instead
 //        ring_host / ring_guest  raises that bell once, BB_PARTY_DIRECTOR_TEST_DELAY s (default 10)
 //                     after the world is up, and logs what follows (and the start flags/bells)
 //        host_warp=ID@S  host: S s after its next guest joined, the lamp warp 0x13CDF30(ID) on
@@ -39,7 +44,9 @@
 //                     previous step (no re-join needed: a B2 host keeps its cooperators)
 //        host_move=X:Y:Z@S[%MAP] / guest_move=...  that role's chr warped to (X, Y, Z) (chr vfunc
 //                     +0x5F8) S s after the later of its last load and its previous step, only
-//                     in a map whose name contains MAP (e.g. %m24_01)
+//                     in a map whose name contains MAP (e.g. %m24_01); X:Y:Z:YAW also sets the facing
+//        host_press=BUTTONS@S / guest_press=...  that role taps pad buttons (0x4000 Cross) through
+//                     runtime_pad_director_press (in-process, no OS input), same timing
 //                     A "#N" suffix (host_die@15#2) holds a step until this player's Nth join.
 //                     The travel steps run in list order, each after a join that followed
 //                     the previous step (a chain: warp, rejoin, die, rejoin, ...); with them the

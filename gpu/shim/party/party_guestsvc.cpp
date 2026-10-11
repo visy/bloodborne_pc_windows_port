@@ -890,8 +890,8 @@ void LevelUpTick(const GameSnapshot& s, double now) {
             if (b) {
                 Tap(b, now);
             }
-            Log("test: levelup: key %s (level %d, echoes %d, Insight %d, Blood Stone Shards %d, Twin %d)", k.c_str(), s.level,
-                s.echoes, s.insight, GoodsCount(3000), GoodsCount(3010));
+            Log("test: levelup: key %s (level %d, echoes %d, Insight %d, Blood Stone Shards %d, Twin %d, Blood Vials %d)",
+                k.c_str(), s.level, s.echoes, s.insight, GoodsCount(3000), GoodsCount(3010), GoodsCount(1000));
             L.at = now;
         }
         break;
@@ -1017,6 +1017,8 @@ bool RunTestFixture(const GameSnapshot& s, int step) {
 
 } // namespace
 
+BB_COOP_SYSV void LampObjEntry(u64 obj, u64, u64, u64, u64, u64); // test probe (below)
+
 void GuestServicesInit() {
     if (g.init) {
         return;
@@ -1069,6 +1071,12 @@ void GuestServicesInit() {
         return;
     }
     SetEmevdRewriter2(&DollRewriter);
+    if (g.test.find("lampprobe") != std::string::npos) {
+        // push rbp; mov rbp, rsp; push r15..r12, rbx; sub rsp, 0x2848 (20 bytes; then mov [rbp-0x2820], rdx).
+        HookPrologue(0x12F5C40, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x81,
+                                 0xec, 0x48, 0x28, 0x00, 0x00},
+                     &LampObjEntry, "lamp object update (test probe)");
+    }
     if (!g.test.empty()) {
         // Trace hooks for the live tests only (BB_PARTY_GUESTSVC_TEST): the LevelUp menu factory,
         // the talk command ids, the menu requests.
@@ -1133,6 +1141,39 @@ bool GuestServicesOnLampRequest(int slot, const std::string& body, std::string* 
 // Live test (BB_PARTY_GUESTSVC_TEST "lamppress"): a guest in the host's world outside the Dream
 // presses Cross whenever an action prompt is up (it arrives at the host's lamp after a host warp),
 // at most 8 times, 1.5 s apart, until its lamp warp became a request.
+// Test-only lamp object probe ("lampprobe"): the lamp action-object update 0x12F5C40(obj) records
+// its objects; the tick logs each one's entity (+0x20), type (+0x28), current row (+0x2C) and the
+// four "unavailable" bytes +0x48..+0x4B (travel.md 1.1: 0x48 lamp state, 0x49 multiplayer,
+// 0x4A no lamp record, 0x4B someone else at it).
+std::atomic<std::uint64_t> g_lamp_objs[16];
+BB_COOP_SYSV void LampObjEntry(u64 obj, u64, u64, u64, u64, u64) {
+    for (auto& slot : g_lamp_objs) {
+        std::uint64_t cur = slot.load(std::memory_order_relaxed);
+        if (cur == obj) {
+            return;
+        }
+        if (cur == 0 && slot.compare_exchange_strong(cur, obj)) {
+            return;
+        }
+    }
+}
+void LogLampObjs() {
+    for (auto& slot : g_lamp_objs) {
+        const std::uint64_t o = slot.load(std::memory_order_relaxed);
+        if (!o) {
+            continue;
+        }
+        std::int32_t ent = 0, row = 0;
+        std::uint8_t type = 0, b[4] = {};
+        SafeGet(o + 0x20, &ent);
+        SafeGet(o + 0x28, &type);
+        SafeGet(o + 0x2c, &row);
+        SafeRead(o + 0x48, b, 4);
+        Log("test: lamp object %p entity %d type %u row %d: +0x48 %u +0x49 %u +0x4A %u +0x4B %u",
+            reinterpret_cast<void*>(o), ent, type, row, b[0], b[1], b[2], b[3]);
+    }
+}
+
 struct LampPress {
     double next = 0, release = 0;
     int presses = 0;
@@ -1155,6 +1196,9 @@ void LampPressTick(const GameSnapshot& s, double now) {
         return;
     }
     P.next = now + 1.5;
+    if (g.test.find("lampprobe") != std::string::npos) {
+        LogLampObjs();
+    }
     if (const std::size_t f = g.test.find("lampflag="); f != std::string::npos) {
         // The lamp's own "used" flag (the one its common event 7200 instance waits for), as the
         // lamp interaction would set it on this game (load mode 1: the host-world overlay).
@@ -1226,6 +1270,34 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
 
 void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
     LampTick(s, link);
+    // Live test "hostheadstone[;keys=...]": the HOST uses a Dream headstone (t210000) with a guest
+    // present (IsMultiplayerInProgress lift), 20 s after the first cooperator: the party follows.
+    {
+        static bool started = false;
+        static double coop_at = 0;
+        if (!started && g.test.find("hostheadstone") != std::string::npos && s.session_role == 3 &&
+            IsDreamMap(s.map_id) && s.world_up && !s.loading && s.cooperators >= 1) {
+            if (coop_at == 0) {
+                coop_at = Now();
+            } else if (Now() - coop_at >= 20.0 && FindChr(210000)) {
+                started = true;
+                g_lvl = LevelUpScript{};
+                g_lvl.open = true;
+                g_lvl.target = 210000;
+                g_lvl.menu_text = 0;
+                if (const std::size_t k = g.test.find("keys="); k != std::string::npos) {
+                    const std::size_t e = g.test.find(';', k);
+                    g_lvl.keys = g.test.substr(k + 5, e == std::string::npos ? std::string::npos : e - k - 5);
+                }
+                g_lvl.stage = LevelUpScript::WaitPlaced;
+                g_lvl.at = Now();
+                Log("test: host headstone: starting (cooperators %d)", s.cooperators);
+            }
+        }
+        if (started && s.session_role == 3) {
+            LevelUpTick(s, Now());
+        }
+    }
     static bool progress_logged = false;
     if (!g.test.empty() && s.world_up && !s.loading && IsDreamMap(s.map_id) && !progress_logged) {
         progress_logged = true;
