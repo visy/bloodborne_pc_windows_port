@@ -707,6 +707,11 @@ skipped while +0x1521 is clear (they were unused then), but the drift stayed: th
 re-wrote the return spot to the host-world spot during the B2 load, and the save's position source
 is not identified yet. Next: find the save serializer's map / position source while +0x1592 == 0
 and pin it to the pre-summon spot.
+`BB_PARTY_POS_SCAN=1` (diagnostics) found the live copies of the player's position in GSM: +0x15B0
+and +0x15F0 follow the chr in the own world AND in the host's world (a likely save source), +0x14A0
+is the return spot (pre-summon), +0x14D0 the summoned placement, +0x1500 the forced placement (pos1
+run). Pinning +0x15B0/+0x15F0 (and their map ids) to the return spot while a client is the next step;
+not done for 0.5.2.
 
 ## 7. Risks / open items
 
