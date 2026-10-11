@@ -38,6 +38,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace coop {
 struct TravelIntent;
@@ -67,5 +68,37 @@ bool OnHostTravel(const TravelIntent& t);
 void OnLinkEvent(int from_slot, const std::string& body);
 /// An event to send (the director's tick drains it): slot -1 = to the host / broadcast.
 bool PopOutgoing(int* slot, std::string* body);
+
+// ---- Split travel (docs/party/split_travel.md) ----
+/// Where a member is (the party link's vitals): the director passes every member each tick.
+struct Where {
+    int slot = -1;
+    bool connected = true;
+    std::uint32_t map = 0;  ///< 0xAABBCCDD, 0 unknown
+    bool has_pos = false;
+    float pos[3] = {0, 0, 0};
+    std::uint32_t age_ms = 0;
+};
+/// Main thread (the director, every tick, before Tick).
+void SetWhere(const std::vector<Where>& members);
+/// Why a member travels alone (logs; Death keeps the player's own respawn records).
+enum class AloneWhy { Lamp, Headstone, HuntersMark, Death };
+const char* AloneWhyName(AloneWhy w);
+/// Guest, main thread: loads t's destination ALONE and stays in the session; the other members
+/// do not load. Destination in the host's area: a B2 re-join (the host re-sends its snapshot; one
+/// load for this guest only) at the destination itself; elsewhere: an alone load in host-world
+/// mode (no snapshot; flags from the mirror). False: not possible now (no session, a re-join
+/// running, no destination) - the caller keeps the old behaviour.
+bool TravelAlone(const TravelIntent& t, AloneWhy why);
+/// Host, main thread: the next own travel is alone (TravelIntent::alone): the guests do not
+/// follow and the host does not re-send its snapshot after its load. Expires after 10 s.
+void HostTravelAloneNext();
+/// Members in another area than this player's (host: guests elsewhere; guest: the host and other
+/// guests elsewhere). The host watchdog counts them as present.
+int MembersApart();
+/// A lamp / headstone id as a travel intent (ReturnPointParam row; main thread). False: no row.
+bool LampTravelIntent(std::uint32_t id, TravelIntent* t);
+/// Host in a session with at least one member task (someone to travel with or without).
+bool HostHasMembers();
 
 } // namespace coop::b2

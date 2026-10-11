@@ -267,6 +267,17 @@ using LampWarpInterceptor = bool (*)(std::uint32_t id);
 void SetLampWarpInterceptor(LampWarpInterceptor fn);
 /// The native lamp warp 0x13CDF30(id) (main thread; the host's travel hooks see it as usual).
 void RunLampWarp(std::uint32_t id);
+/// The same, decided already (split travel: the player chose alone / with the party): the lamp
+/// interceptor is not asked again. On the host `alone` marks the captured travel
+/// (TravelIntent::alone: the guests stay).
+void RunLampWarpDecided(std::uint32_t id, bool alone);
+/// Host: the next travel the funnel captures is alone (split travel; cleared by the capture).
+void SetNextHostTravelAlone(bool alone);
+/// The Hunter's Mark item reaching the funnel (site 0x18FFA1D, any role; not our replays):
+/// `fn(last lamp id)` true = consumed (no stage request; split travel asks, then runs a decided
+/// lamp warp to that lamp). Game thread.
+using MarkInterceptor = bool (*)(std::uint32_t last_lamp);
+void SetMarkInterceptor(MarkInterceptor fn);
 /// The lamp warp 0x13CDF30(id) as a travel replay (main thread): the travel capture, the guest
 /// lamp interceptor and the send-home retarget stand aside, the forced placement is cleared. On
 /// a summoned guest it leaves the host's world and loads the own one (C4's ending replay).

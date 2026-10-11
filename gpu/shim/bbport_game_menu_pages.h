@@ -49,6 +49,8 @@ struct Page {
 
 /// Builds the texts, fields and pages (once; later calls do nothing).
 void Define();
+/// Split travel's question text id (0: "Travel with the party?" YES / NO), for a game dialog.
+u32 SplitTravelText(int which);
 const std::vector<Page>& All();
 int FieldCount();
 

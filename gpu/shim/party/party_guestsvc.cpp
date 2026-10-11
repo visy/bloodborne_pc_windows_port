@@ -249,6 +249,7 @@ bool GuestServicesEnabledFromEnv(const char* v) {
 #include "party_director.h"
 #include "party_link.h"
 #include "party_progress.h"
+#include "party_split.h"
 #include "bbport_game_menu.h"
 #include "bbport_settings.h"
 
@@ -497,9 +498,23 @@ void LogEnv(std::uint64_t env) {
 }
 
 // Game thread (0x13CDF30, not our replays): a guest in the host's world used a lamp / headstone.
+// Split travel asks first (alone / with the party) and consumes the warp; its answer "with the
+// party" comes back through GuestLampRequestNow.
 bool GuestLampIntercept(std::uint32_t id) {
+    if (split::OnLampWarp(id)) {
+        g_lamp_requests_made.fetch_add(1);  // the lamppress test stops here too
+        return true;
+    }
     if (!g_lamps.load() || PartyDirector::Get().Role() != PartyRole::Guest ||
         g_session_role.load() != kSessionRoleClient) {
+        return false;
+    }
+    return GuestLampRequestNow(id);
+}
+} // namespace
+
+bool GuestLampRequestNow(std::uint32_t id) {
+    if (!g_lamps.load() || PartyDirector::Get().Role() != PartyRole::Guest) {
         return false;
     }
     LampRequest r;
@@ -515,6 +530,8 @@ bool GuestLampIntercept(std::uint32_t id) {
     g_lamp_requests_made.fetch_add(1);
     return true;
 }
+
+namespace {
 
 // Diagnostics (BB_PARTY_GUESTSVC_TEST "probe"): the character with `entity` the way the talk
 // environment finds it (0x203AC3D..0x203AD09): WorldChrMan +0x90 count of chr sets, +0x98[i] a set
