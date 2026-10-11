@@ -18,25 +18,28 @@ inline bool IsFsr4(int upscaler) {
 enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerformance, PresetCount };
 enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugMotion = 2, DebugViewCount };
 enum HudQuadrant : int { HudTopLeft = 0, HudTopRight = 1, HudBottomLeft = 2, HudBottomRight = 3, HudQuadrantCount };
+/// Language of the in-game menu (bbport.ini `language=en|ru`, BB_LANG overrides).
+enum Language : int { LangEn = 0, LangRu = 1, LanguageCount };
 
 /// Game effects switched by the community patches at start (patches.py EFFECTS): ini key,
-/// menu label, default (the game's own behaviour).
+/// menu label (English, Russian), default (the game's own behaviour).
 struct Effect {
     const char* key;
-    const char* label;
+    const char* label_en;
+    const char* label_ru;
     bool default_on;
 };
 inline constexpr Effect Effects[] = {
-    {"effect_chromatic_aberration", "Хроматическая аберрация", true},
-    {"effect_dof", "Глубина резкости (DoF)", true},
-    {"effect_motion_blur", "Размытие в движении", true},
-    {"effect_ssao", "Затенение SSAO", true},
-    {"effect_game_aa", "Собственное сглаживание игры", true},
-    {"effect_dynamic_shadows", "Тени от динамических источников", true},
-    {"effect_ssr", "Отражения SSR (не было в игре)", false},
-    {"skip_intro", "Пропуск заставок при запуске", false},
-    {"debug_camera", "Свободная камера (Cross + L3)", false},
-    {"debug_menu", "Debug menu (нужны файлы шрифтов)", false},
+    {"effect_chromatic_aberration", "Chromatic aberration", "Хроматическая аберрация", true},
+    {"effect_dof", "Depth of field (DoF)", "Глубина резкости (DoF)", true},
+    {"effect_motion_blur", "Motion blur", "Размытие в движении", true},
+    {"effect_ssao", "SSAO shading", "Затенение SSAO", true},
+    {"effect_game_aa", "The game's own anti-aliasing", "Собственное сглаживание игры", true},
+    {"effect_dynamic_shadows", "Dynamic light shadows", "Тени от динамических источников", true},
+    {"effect_ssr", "SSR reflections (not in the original game)", "Отражения SSR (не было в игре)", false},
+    {"skip_intro", "Skip the intro videos at start", "Пропуск заставок при запуске", false},
+    {"debug_camera", "Free camera (Cross + L3)", "Свободная камера (Cross + L3)", false},
+    {"debug_menu", "Debug menu (needs the font files)", "Debug menu (нужны файлы шрифтов)", false},
 };
 inline constexpr int EffectCount = int(sizeof(Effects) / sizeof(Effects[0]));
 /// Live output resolutions: the upscaler's output and the UI host targets.
@@ -81,6 +84,8 @@ struct Values {
     /// Live resolution and preset changes (run.sh): 0 off by default (startup patch, fastest
     /// on the Steam Deck and older GPUs), -1 auto (strong discrete GPUs), 1 on. On restart.
     std::atomic<int> live_resolution{0};
+    /// Menu language (Language).
+    std::atomic<int> language{LangEn};
     /// Why FSR 4 cannot run (assets, device features), or null. Set by the renderer.
     std::atomic<const char*> fsr4_problem{nullptr};
     std::atomic<bool> fsr4_supported{false}, fsr411_supported{false};
@@ -96,6 +101,11 @@ struct Values {
 };
 
 Values& Get();
+
+/// The menu text in the selected language: English by default, Russian with language=ru.
+inline const char* Tr(const char* en, const char* ru) {
+    return Get().language.load() == LangRu ? ru : en;
+}
 
 /// Reads the file, then the environment overrides. Called once at start.
 void Load();

@@ -108,7 +108,7 @@ Save files and shader caches are stored in `user/`. Settings are saved to `bbpor
 ## Controls and In-Game Features
 
 - **Gamepad**: Controllers are supported out of the box through SDL3.
-- **In-Game Settings**: Press `Insert` on keyboard or `L3 + R3` on gamepad to toggle the overlay menu.
+- **In-Game Settings**: Press `Insert` on keyboard or `L3 + R3` on gamepad to toggle the overlay menu. Changes are written to `bbport.ini` when the menu closes. The menu is in English by default; pick Русский under *Other → Language*, or set `language=ru` in `bbport.ini` (`BB_LANG=ru` overrides it).
 - **Free Camera**: When enabled in the launcher or overlay, hold `Cross` and press `L3` (or hold `Space` and press `Z` on keyboard) to cycle camera modes.
 - **Debug Menu**: If debug fonts (`DbgFont14h.ccm` and `DbgFont14h.tpf`) are installed into `dvdroot_ps4/font/`, open the menu using `Tab` or the controller touchpad.
 
