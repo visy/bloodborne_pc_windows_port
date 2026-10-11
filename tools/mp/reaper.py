@@ -44,8 +44,8 @@ def all_in_world(root: Path) -> bool:
             text = log.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return False
-        worlds = re.findall(r"^Party: (world up|world down)", text, re.M)
-        loads = re.findall(r"^Party: loading screen (up|gone)", text, re.M)
+        worlds = re.findall(r"^Party: (?:\[[^\]]*\] )?(world up|world down)\b", text, re.M)
+        loads = re.findall(r"^Party: (?:\[[^\]]*\] )?loading screen (up|gone)\b", text, re.M)
         if not worlds or worlds[-1] != "world up" or (loads and loads[-1] == "up"):
             return False
     return True
