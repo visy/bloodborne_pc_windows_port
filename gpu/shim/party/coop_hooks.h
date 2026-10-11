@@ -14,6 +14,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <string>
+#include <vector>
 
 #define BB_COOP_SYSV __attribute__((sysv_abi))
 
@@ -21,6 +23,10 @@ namespace coop {
 
 using u8 = std::uint8_t;
 using u64 = std::uint64_t;
+
+/// Every install so far ("<name> @+0x<off>", in order; failed ones are not listed). The party
+/// version check (A9, party_runtime) hashes the non-diagnostic ones: peers must run the same set.
+std::vector<std::string> InstalledHooks();
 
 /// Binds the hook helper to the loaded image (bbgpu_patch_image). Idempotent; false without an image.
 bool HooksInit(unsigned char* image, u64 size);

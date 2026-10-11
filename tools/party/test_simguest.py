@@ -200,6 +200,9 @@ def main() -> int:
             ("other game version -> REJECT mismatch", ["--code", code, "--key-hex", key.hex(), "--name", "SimE",
                                                        "--eboot-sha256", "11" * 32, "--script", "join"] +
              log("mismatch"), False, "rejected (mismatch)"),
+            ("other bbport build -> REJECT mismatch (A9)", ["--code", code, "--key-hex", key.hex(), "--name", "SimV",
+                                                            "--build-id", "0.4 (v0.4-1-g0000000000)", "--script",
+                                                            "join"] + log("build"), False, "bbport build differs"),
             ("host:port + secret", ["--host", "127.0.0.1", "--port", str(port), "--secret", secret,
                                     "--key-hex", key.hex(), "--name", "SimF", "--script", "join"] + log("plain"),
              True, ""),

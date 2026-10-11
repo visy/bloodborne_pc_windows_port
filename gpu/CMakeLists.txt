@@ -227,6 +227,16 @@ else()
         shadps4/core/libraries/videodec/video_utils.cpp)
 endif()
 add_dependencies(bbgpu host_shaders)
+# The build's identity for the party version check (A9): "<VERSION> (<git describe>)", regenerated
+# on every build, rewritten only when it changes (one small file recompiles after a commit).
+set(BBPORT_BUILD_ID_C "${CMAKE_CURRENT_BINARY_DIR}/generated/bbport_build_id.c")
+add_custom_target(bbport_build_id
+    COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/.. -DOUT=${BBPORT_BUILD_ID_C}
+            -DVERSION=${BBPORT_VERSION} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/bbport_build_id.cmake
+    BYPRODUCTS ${BBPORT_BUILD_ID_C}
+    COMMENT "bbport build id" VERBATIM)
+target_sources(bbgpu PRIVATE ${BBPORT_BUILD_ID_C})
+add_dependencies(bbgpu bbport_build_id)
 # In-game settings menu: Dear ImGui (third_party/imgui, MIT) with its Vulkan backend, and an
 # embedded Cyrillic font (third_party/fonts).
 target_sources(bbgpu PRIVATE third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp

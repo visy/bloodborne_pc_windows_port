@@ -12,7 +12,8 @@
 //
 //   party-host-harness.exe [--port 9317] [--password PW] [--secret HEX16] [--name Host]
 //                          [--max 3] [--eboot-sha256 HEX64] [--patches-hash HEX64]
-//                          [--mods-hash HEX64]
+//                          [--mods-hash HEX64] [--build-id TEXT] [--params-hash HEX64]
+//                          [--hooks-hash HEX64] [--rules TEXT]   (A9 identity; default empty / zeros)
 //                          [--advertise 127.0.0.1] [--duration SEC] [--no-udp] [--no-bot]
 //                          [--fast] [--trace]
 //
@@ -120,6 +121,7 @@ struct Options {
     std::string name = "Host";
     int max_players = 3;
     std::string eboot_hex, patches_hex, mods_hex;
+    std::string build_id, params_hex, hooks_hex, rules;
     std::string advertise = "127.0.0.1";
     int duration_s = 0;
     bool udp = true;
@@ -394,6 +396,10 @@ int main(int argc, char** argv) {
         else if (a == "--eboot-sha256") o.eboot_hex = next();
         else if (a == "--patches-hash") o.patches_hex = next();
         else if (a == "--mods-hash") o.mods_hex = next();
+        else if (a == "--build-id") o.build_id = next();
+        else if (a == "--params-hash") o.params_hex = next();
+        else if (a == "--hooks-hash") o.hooks_hex = next();
+        else if (a == "--rules") o.rules = next();
         else if (a == "--advertise") o.advertise = next();
         else if (a == "--duration") o.duration_s = std::atoi(next().c_str());
         else if (a == "--no-udp") o.udp = false;
@@ -436,6 +442,13 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "--mods-hash wants 64 hex digits\n");
         return 2;
     }
+    if ((!o.params_hex.empty() && !parse_hex(o.params_hex, cfg.params_sha256.data(), 32)) ||
+        (!o.hooks_hex.empty() && !parse_hex(o.hooks_hex, cfg.hooks_hash.data(), 32))) {
+        std::fprintf(stderr, "--params-hash / --hooks-hash want 64 hex digits\n");
+        return 2;
+    }
+    cfg.build_id = o.build_id;
+    cfg.rules = o.rules;
     if (!o.secret_hex.empty()) {
         if (!parse_hex(o.secret_hex, cfg.secret.data(), 8)) {
             std::fprintf(stderr, "--secret wants 16 hex digits\n");

@@ -88,7 +88,7 @@ IN THE GAME
 - If a game crashes, it restarts by itself and rejoins the party.
 
 IF JOINING FAILS
-- "version mismatch": the game files, gameplay patches, gameplay mods or Max players differ from the host's. The message says which.
+- "version mismatch": the bbport build, the game files or params, gameplay patches, gameplay mods, party options or Max players differ from the host's. The message says which and what to do.
 - "wrong password or party code": copy the code again; check the Password field on both sides.
 - Nothing happens: the host's port is not reachable. See step 3 for the host.
 

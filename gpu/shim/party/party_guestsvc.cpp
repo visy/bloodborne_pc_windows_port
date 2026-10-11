@@ -1635,13 +1635,13 @@ void LampPressTick(const GameSnapshot& s, double now) {
         P.walked = WalkToLamp(s);  // then the prompt check on the next round
         if (P.walked && g.test.find("hurt") != std::string::npos) {
             // "hurt": half HP before the rest (does the party rest heal the guest?). Chr data module
-            // chr +0x3B0 -> +0x20: HP +0x128, max +0x12C.
+            // chr +0x3B0 -> +0x20: HP +0xf8, max +0xFC.
             std::uint64_t cm = 0, dm = 0;
             std::int32_t mx = 0;
-            if (SafeGet(s.player + 0x3b0, &cm) && cm && SafeGet(cm + 0x20, &dm) && dm && SafeGet(dm + 0x12c, &mx) &&
+            if (SafeGet(s.player + 0x3b0, &cm) && cm && SafeGet(cm + 0x20, &dm) && dm && SafeGet(dm + 0xfc, &mx) &&
                 mx > 1) {
                 const std::int32_t half = mx / 2;
-                SafeWrite(dm + 0x128, &half, 4);
+                SafeWrite(dm + 0xf8, &half, 4);
                 Log("test: hurt: guest HP set to %d / %d before the rest", half, mx);
             }
         }

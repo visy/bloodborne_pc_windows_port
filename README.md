@@ -62,7 +62,9 @@ Mouse and keyboard, free camera, debug menu: [docs/SETTINGS.md](docs/SETTINGS.md
 
 Play the whole game with friends in one session, from the first lamp to the end credits.
 Modelled on Elden Ring Seamless Co-op, adapted to Bloodborne. **In development:** tested on one
-PC (several game copies, simulated internet lag), not yet between two PCs.
+PC (several game copies, simulated internet lag), not yet between two PCs. A scripted two-player
+run from two new characters to the end credits passed, and a three-player travel run
+([docs/party/campaign_soak.md](docs/party/campaign_soak.md)).
 
 ### How it plays
 
@@ -84,13 +86,25 @@ PC (several game copies, simulated internet lag), not yet between two PCs.
 - **Guests are full players.** The Doll (level up), shops, the workbench, storage, lamps and
   headstones all work for guests.
 - **Progress counts for everyone.** Bosses, items, doors, shortcuts, lamps, story and endings go
-  into every player's own save. A guest who is behind catches up.
+  into every player's own save. A guest who is behind catches up, including the Blood Moon.
+- **Story cutscenes and endings play for everyone.** The Blood Moon, Gehrman's scenes and the
+  ending with the end credits play for every party member.
 - **The host's world is shared live.** A door or shortcut opened by the host is open for the
   guests too.
+- **Up to 4 players** (host + 3), all in the host's world. The 4th player's summon can take a
+  minute or two.
+- **Same version for everyone.** A player whose bbport build, game files, patches, mods or party
+  options differ is refused on joining; the message says what differs and what to do.
+- **Chalice dungeons together.** Guests join the host's dungeon; levers, doors, the layer boss, its
+  loot (for each player) and the lift down work for the whole party.
 - **Crashes recover.** A crashed game restarts and rejoins by itself.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
-- **Death has a cost.** Each death stacks "rot" (−10% max HP, up to 5); using a lamp clears it.
+- **Death has a cost.** Each death stacks "rot" (−10% max HP or stamina, picked at random, up to
+  5); using a lamp clears it.
   On by default; the host can turn it off on the *Party rules* page.
+- **Enemies scale with the party, harder than vanilla.** Bosses get more health (and a little more
+  damage) per extra hunter than the game gives them, normal enemies get tougher too; all six values
+  (boss / enemy health, damage, poise) are on the *Enemy scaling* page, the host's count.
 - **Names over party members**, in each player's colour, with level, health or deaths (your choice).
 - **Party HUD.** Party members and events are shown in a small HUD; all party settings are on the
   *Party* pages of the game's *System* menu.
@@ -111,13 +125,12 @@ PC (several game copies, simulated internet lag), not yet between two PCs.
 | Every player, host included, respawns at their own last lamp | In progress |
 | Dying in a boss fight: spectate until the fight ends, then everyone respawns at one shared lamp | In progress |
 | Bloodstains for everyone, like single-player | In progress |
-| Enemy scaling: harder than vanilla by default (settings done; boss fights not yet verified) | In progress |
 | Guests open doors, pull levers, talk to NPCs; NPC choices shared | In progress |
 | Item pickups and enemy drops per player: everyone gets their own | In progress |
-| Cutscenes play for the whole party | Planned |
+| Every cutscene for the whole party (story cutscenes and endings already work) | In progress |
 | Joining during a boss fight waits outside until it ends | Planned |
-| 4 players (3 work today) | In progress |
-| Chalice dungeons: full clear in a party, rituals by anyone | In progress |
+| The 4th player joins as fast as the others | In progress |
+| Chalice dungeons: rituals by any player (guest's dungeon entered by the party) | In progress |
 | PvP / friendly fire the host can switch on and off | Later |
 | Pings: party members and marked spots visible through walls, with distance and player colours | Later |
 
