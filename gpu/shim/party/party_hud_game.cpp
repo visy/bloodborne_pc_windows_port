@@ -39,6 +39,8 @@ namespace coop {
 namespace {
 
 using u32 = std::uint32_t;
+using u16 = std::uint16_t;
+using u8 = std::uint8_t;
 constexpr u64 kSlotWorldChrMan = 0x553e878;
 
 void Log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -105,6 +107,52 @@ ChrRead ReadChr(u64 chr) {
         }
     }
     return r;
+}
+
+/// BB_PARTY_HUD_POSDIAG=1 (diagnostics for the game's phantom name plate, which was seen floating
+/// away from its chr): every position-like (x, y, z, 0|1) quad in a remote PlayerIns and the
+/// objects its first 0x400 bytes point to, that lies 1..500 m from the physics position.
+bool PosDiag() {
+    static const bool on = [] {
+        const char* v = std::getenv("BB_PARTY_HUD_POSDIAG");
+        return v && v[0] == '1';
+    }();
+    return on;
+}
+
+void ScanPositions(u64 base, std::size_t size, const float pos[3], const char* what, std::string* out) {
+    std::vector<float> buf(size / 4);
+    if (!base || !SafeRead(base, buf.data(), size)) return;
+    for (std::size_t i = 0; i + 4 <= buf.size(); i += 4) {
+        const float* q = &buf[i];
+        if (!(q[3] == 0.0f || q[3] == 1.0f)) continue;
+        bool ok = true;
+        for (int k = 0; k < 3; ++k) ok = ok && std::isfinite(q[k]) && std::fabs(q[k]) < 5000.0f && std::fabs(q[k]) > 0.01f;
+        if (!ok) continue;
+        const float dx = q[0] - pos[0], dy = q[1] - pos[1], dz = q[2] - pos[2];
+        const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (d < 1.0f || d > 500.0f) continue;
+        char b[96];
+        std::snprintf(b, sizeof b, " %s+%zx (%.1f %.1f %.1f) d %.1f;", what, i * 4, q[0], q[1], q[2], d);
+        *out += b;
+    }
+}
+
+void DumpPositions(u64 chr, const float pos[3]) {
+    std::string out;
+    ScanPositions(chr, 0x1000, pos, "chr", &out);
+    std::vector<u64> ptrs(0x400 / 8);
+    if (SafeRead(chr, ptrs.data(), 0x400)) {
+        for (std::size_t i = 0; i < ptrs.size(); ++i) {
+            const u64 p = ptrs[i];
+            if (p < 0x10000 || (p & 7)) continue;
+            char what[24];
+            std::snprintf(what, sizeof what, "[chr+%zx]", i * 8);
+            ScanPositions(p, 0x400, pos, what, &out);
+        }
+    }
+    Log("posdiag chr %llx at (%.1f %.1f %.1f):%s", static_cast<unsigned long long>(chr), pos[0], pos[1], pos[2],
+        out.empty() ? " nothing else" : out.c_str());
 }
 
 struct HudState {
@@ -182,6 +230,11 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
             if (!chr || chr == s.player) continue;
             const ChrRead r = ReadChr(chr);
             if (!r.have_pos) continue;
+            // A disabled chr (ChrIns_SetDisable 0x18c6390: [chr+0x18]+0x20 bit 0, [chr+0x58]+0x114
+            // bit 0x40) is not drawn: it is not "here" for the HUD or the tags (split travel removes
+            // and rebuilds remote chrs; a hidden copy must not get a tag).
+            if ((Field<u8>(Field<u64>(chr, 0x18), 0x20) & 1) || (Field<u16>(Field<u64>(chr, 0x58), 0x114) & 0x40)) continue;
+            if (log_now && PosDiag()) DumpPositions(chr, r.pos);
             party::hud::LocalChr& l = chrs[chrs_n++];
             l.have_hp = r.have_hp;
             l.hp = r.hp;
@@ -219,6 +272,32 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
         if (bc < 0) break;
         std::snprintf(chrs[bc].name, sizeof chrs[bc].name, "%s", st.roster[bm].name.c_str());
     }
+    // A remote chr here that no member's own report is near: this game's copy of that player is
+    // stale (no position updates: seen as the game's phantom name plate floating away from where
+    // the player really is, host side, 3 players). Logged once a minute per chr with the nearest report.
+    {
+        static std::chrono::steady_clock::time_point next_stale{};
+        if (now >= next_stale) {
+            for (int c = 0; c < chrs_n; ++c) {
+                if (chrs[c].name[0]) continue;
+                float best = 1e18f;
+                int bs = -1;
+                for (int v = 0; v < vit_n; ++v) {
+                    if (!(vit[v].flags & party::kVitalsHasPos) || vit[v].slot == link->local_slot()) continue;
+                    const float dx = chrs[c].pos[0] - vit[v].pos[0], dy = chrs[c].pos[1] - vit[v].pos[1],
+                                dz = chrs[c].pos[2] - vit[v].pos[2];
+                    const float d2 = dx * dx + dy * dy + dz * dz;
+                    if (d2 < best) best = d2, bs = vit[v].slot;
+                }
+                if (bs >= 0 && best > 8.0f * 8.0f) {
+                    next_stale = now + std::chrono::seconds(60);
+                    Log("stale remote chr? one at (%.1f %.1f %.1f) HP %d/%d is %.1f m from the nearest member report "
+                        "(slot %d); no tag for it",
+                        chrs[c].pos[0], chrs[c].pos[1], chrs[c].pos[2], chrs[c].hp, chrs[c].max_hp, std::sqrt(best), bs);
+                }
+            }
+        }
+    }
     // One chr and one member in this world left over: each other (no VITALS position yet).
     {
         int open_chr = -1, open_chrs = 0, open_member = -1, open_members = 0;
@@ -229,7 +308,13 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
             if (!e.connected || !party::hud::SameWorld(link->local_slot(), local_state, e.slot, e.state)) continue;
             bool taken = false;
             for (int k = 0; k < chrs_n; ++k) taken = taken || e.name == chrs[k].name;
-            if (!taken) open_member = i, ++open_members;
+            // A member whose own game reports a position (VITALS) that no chr here is near is not
+            // standing here (it respawned elsewhere; the chr left over is a corpse / a stale copy):
+            // no fallback match, or its tag would float over the old spot.
+            bool reported = false;
+            for (int v = 0; v < vit_n; ++v)
+                if (vit[v].slot == e.slot && (vit[v].flags & party::kVitalsHasPos)) reported = true;
+            if (!taken && !reported) open_member = i, ++open_members;
         }
         if (open_chrs == 1 && open_members == 1)
             std::snprintf(chrs[open_chr].name, sizeof chrs[open_chr].name, "%s", st.roster[open_member].name.c_str());

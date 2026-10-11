@@ -3,6 +3,7 @@
 // droogie/bbhost src/engine/np_test.cpp @8f2746c (GPL-3.0-or-later): world-up detection, the
 // Insight write and the bell events.
 #include "party_director.h"
+#include "../boot_marks.h"
 #include "../net/netsim.h"
 #include "party_hud.h"
 #include "party_ids.h"
@@ -238,8 +239,10 @@ struct State {
     // BB_PARTY_FAST_JOIN (default on; docs/party/join_timing.md): shorter director pauses.
     bool fast_join = true;
     double ring_delay = 0.3;        // s in a steady world before the first bell (5 without fast join)
-    double continue_settle = 1.0;   // s on the title before the first Continue press (4)
-    double continue_every = 1.0;    // s between Continue presses (2.5)
+    // The title takes no input until it has loaded (~5 s after the first tick) and then the first
+    // press starts the FROM sign-in: short steps press as soon as it accepts (docs/STARTUP.md).
+    double continue_settle = 0.0;   // s on the title before the first Continue press (4)
+    double continue_every = 0.35;   // s between Continue presses, each held 0.15 s (2.5)
     StartMode start_mode = StartMode::PrologueSolo;
     bool grant_bells = true;
     Test test;
@@ -474,15 +477,25 @@ void GrantBells(State& st, const GameSnapshot& s) {
 void LogTransitions(State& st, const GameSnapshot& now) {
     if (!st.have_last) {
         Log("state at the first tick: %s", Describe(now).c_str());
+        bb_boot_mark("party director: first tick");
         return;
     }
     const GameSnapshot& was = st.last;
     if (now.world_up != was.world_up) {
         Log("world %s: %s", now.world_up ? "up" : "down", Describe(now).c_str());
+        static bool first_world = true;
+        if (now.world_up && first_world) {
+            first_world = false;
+            bb_boot_mark("world up (loading)");
+        }
         if (!now.world_up) BossBarReset();  // A11: a load ends any boss fight
     }
     if (now.loading != was.loading) {
         Log("loading screen %s", now.loading ? "up" : "gone");
+        static int load_marks = 0;
+        if (load_marks < 2 && (load_marks == 0) == now.loading) {
+            bb_boot_mark(load_marks++ == 0 ? "first loading screen up" : "first loading screen gone (in the world)");
+        }
     }
     if (now.session_role != was.session_role || now.session_sub_state != was.session_sub_state) {
         Log("session %s (%d, sub %d) -> %s (%d, sub %d) (t %.1f s)", SessionRoleName(was.session_role), was.session_role,
@@ -760,7 +773,7 @@ std::string DescribeSignPolling() {
 
 /// Title screen: confirms "Continue" (the main menu's default item once a save exists) with the
 /// game's own pad path (runtime_pad_director_press: no OS input) until the world loads. Cross is
-/// pressed 0.15 s every 2 s while no world was seen in this run, never in the world or while a
+/// pressed 0.15 s every 0.35 s (2.5 s without fast join) while no world was seen in this run, never in the world or while a
 /// loading screen is up; the party link must be up first (the online login runs through it).
 void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::PartyLink* link, Clock::time_point now) {
     if (st.continue_done) {
@@ -772,6 +785,24 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
             st.continue_held = false;
         }
     };
+    static const bool trace = std::getenv("BB_PARTY_TITLE_TRACE") && std::getenv("BB_PARTY_TITLE_TRACE")[0] == '1';
+    if (trace) {
+        // The title's screens by their texts (message ids looked up in the last 0.4 s).
+        static std::string last;
+        std::uint32_t ids[64];
+        const int n = BbGameMenu::RecentLookups(400, ids, 64);
+        std::sort(ids, ids + (n < 64 ? n : 64));
+        std::string text;
+        for (int i = 0; i < n && i < 64; ++i) {
+            char b[16];
+            std::snprintf(b, sizeof b, " %#x", ids[i]);
+            text += b;
+        }
+        if (text != last) {
+            Log("title texts:%s", text.c_str());
+            last = text;
+        }
+    }
     if (s.world_up || st.world_seen) {
         release();
         st.continue_done = true;
@@ -796,6 +827,7 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
         st.continue_last = now;
         Log("auto-continue: party link up; confirming Continue on the title (%s)",
             party::runtime().restarted() ? "crash restart" : "party mode");
+        bb_boot_mark("auto-continue: title, party link up");
     }
     // Let the title settle (logos, online login) before the first press.
     if (Seconds(st.continue_ready, now) < st.continue_settle) {
@@ -813,6 +845,9 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
     const bool signing_in = op.ss_info > 0 && op.notice == 0 && op.since_last >= 0 && op.since_last < 30.0;
     if (signing_in != st.continue_signin) {
         st.continue_signin = signing_in;
+        if (!signing_in) {
+            st.continue_last = now - std::chrono::milliseconds(int(st.continue_every * 1000)); // Continue at once
+        }
         Log("auto-continue: %s (ss.info %d, login %d, chara id %d, notice %d, failures %d); %s",
             signing_in ? "the FROM sign-in runs; holding Continue" : "the FROM sign-in is over", op.ss_info, op.login,
             op.chara_id, op.notice, op.failures, DescribeFromClient().c_str());
@@ -826,7 +861,10 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
         st.continue_held = true;
         ++st.continue_presses;
         runtime_pad_director_press(kPadCross);
-        if (st.continue_presses <= 5 || st.continue_presses % 10 == 0) {
+        if (st.continue_presses == 1) {
+            bb_boot_mark("auto-continue: first Cross");
+        }
+        if (st.continue_presses <= 12 || st.continue_presses % 10 == 0) {
             Log("auto-continue: Cross #%d (%s; %s)", st.continue_presses, Describe(s).c_str(), DescribeFromClient().c_str());
         }
     }
@@ -2192,6 +2230,63 @@ PartyRole PartyDirector::Role() const {
 
 bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_point now);
 
+/// "Enter the party's dungeon" in one press (docs/party/chalice.md 7): after the altar's glyph box
+/// took the party dungeon's glyph, the remaining prompts are answered on the game's own pad path:
+/// OK on "Search using Chalice Glyph", the search result, YES on "Join the selected Chalice
+/// Dungeon?", the altar again and its first awaken point. Text-gated and strict: a prompt that
+/// does not come in 10 s stops the walk (no blind presses). Off by default until verified live
+/// (0.5.2): BB_PARTY_ALTAR_AUTO=1 turns it on.
+void AltarAutopilotTick(const GameSnapshot& s) {
+    static const bool off = [] {
+        const char* e = std::getenv("BB_PARTY_ALTAR_AUTO");
+        return !(e && e[0] == '1');
+    }();
+    static MenuScript script;
+    static bool on = false;
+    if (off) {
+        return;
+    }
+    if (chalice::TakeAltarAutopilot()) {
+        script = MenuScript{};
+        std::string bad;
+        on = script.Parse("!cross@Search using Chalice Glyph/!cross@Search Results/!left@Join the selected Chalice Dungeon/"
+                          "cross/wait/cross/!cross@Select location to awaken in/wait/cross",
+                          &bad);
+        Log("altar: entering the party's dungeon (%s)", on ? "prompts answered for the player" : bad.c_str());
+    }
+    if (!on) {
+        return;
+    }
+    if (s.loading || !s.world_up) {
+        // The awaken load started: done.
+        runtime_pad_director_press(0);
+        on = false;
+        Log("altar: the party's dungeon is loading");
+        return;
+    }
+    std::uint64_t seq = 0;
+    std::int64_t last_ms = 0;
+    BbGameMenu::TextActivity(&seq, &last_ms);
+    const auto now = Clock::now();
+    const std::int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+    const double secs = std::chrono::duration<double>(now.time_since_epoch()).count();
+    std::string line;
+    const std::uint32_t held = script.Step(secs, seq, seq ? double(now_ms - last_ms) / 1000.0 : 1e9, &line,
+                                           [](const std::string& text) {
+                                               const std::int64_t ms = BbGameMenu::TextSeenMs(text.c_str());
+                                               return ms > 0 ? double(ms) / 1000.0 : -1.0;
+                                           });
+    runtime_pad_director_press(held);
+    if (!line.empty()) {
+        Log("altar: %s", line.c_str());
+    }
+    if (script.finished()) {
+        runtime_pad_director_press(0);
+        on = false;
+        Log("altar: %s", script.stuck() ? "a prompt did not come; the player takes over" : "prompts answered");
+    }
+}
+
 void PartyDirector::Tick() {
     State& st = S();
     const auto now = Clock::now();
@@ -2445,6 +2540,9 @@ void PartyDirector::Tick() {
     // A guest's levers / doors / NPC talk change the host's world (party_worldact.h).
     worldact::Tick(s, link);
     split::Tick(s);  // split travel: the lamp choice dialog (party_split.h)
+    if (role == PartyRole::Host) {
+        AltarAutopilotTick(s);  // "Enter the party's dungeon" in one press
+    }
     zone.Next(perf::Zone::DirRing);
     if (st.test.on) {
         RunTravelSteps(st, s, role, now);

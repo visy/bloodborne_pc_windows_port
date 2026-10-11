@@ -1870,7 +1870,9 @@ void PartyHud() {
         // Name (serif, the game's cream; grey outside our world), state / distance on the right.
         const ImVec2 row = ImGui::GetCursorScreenPos();
         ImGui::PushFont(serif_font, 17.0f);
-        ImGui::TextColored(here ? ImVec4(0.96f, 0.88f, 0.70f, 1.0f) : ImVec4(0.62f, 0.60f, 0.57f, alpha), "%s",
+        float mc[3];
+        party::hud::MemberColour(c.slot, mc);  // the same colour as the member's tag (and I2's pings)
+        ImGui::TextColored(here ? ImVec4(mc[0], mc[1], mc[2], 1.0f) : ImVec4(0.62f, 0.60f, 0.57f, alpha), "%s",
                            c.name);
         const float name_h = ImGui::GetItemRectSize().y;
         ImGui::PopFont();
@@ -1924,7 +1926,20 @@ void PartyHud() {
     ImDrawList* bg = ImGui::GetBackgroundDrawList();
     for (int i = 0; i < b.count; ++i) {
         const party::hud::Companion& c = b.c[i];
-        if (!c.same_world || !c.connected || !c.have_pos || !c.same_map) {
+        // Only a live chr here, alive, on our map, from a fresh board (a dead / re-spawned / removed
+        // member or a stalled game tick: no tag; user report "health bars floating in midair").
+        const char* why = "";
+        const bool show = party::hud::TagVisible(c, party::hud::NowMs() - b.published_ms, &why);
+        {
+            static char last_why[party::kMaxVitals][24];
+            const int slot = c.slot >= 0 && c.slot < party::kMaxVitals ? c.slot : 0;
+            if (std::strncmp(last_why[slot], why, sizeof last_why[slot]) != 0) {
+                std::snprintf(last_why[slot], sizeof last_why[slot], "%s", why);
+                if (why[0]) std::printf("Party HUD: tag %s hidden: %s\n", c.name, why);
+                else std::printf("Party HUD: tag %s shown\n", c.name);
+            }
+        }
+        if (!show) {
             continue;
         }
         const float d = party::hud::Distance(b.me_pos, c.pos);

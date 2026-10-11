@@ -6,6 +6,7 @@
 #include "party/party_hud.h"
 
 #include <cassert>
+#include <string>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -160,6 +161,34 @@ static void Geometry() {
     assert(!(Near(c0[0], c1[0]) && Near(c0[1], c1[1]) && Near(c0[2], c1[2])) && Near(cx[0], 0.96f));
 }
 
+// Overhead tags: only a live chr here, alive, on our map, from a fresh board (user report: health
+// bars floating in midair).
+static void Tags() {
+    hud::Companion c;
+    c.connected = c.same_world = c.local_read = c.have_pos = c.same_map = true;
+    c.have_hp = true;
+    c.hp = 100;
+    c.max_hp = 100;
+    const char* why = nullptr;
+    assert(hud::TagVisible(c, 100, &why) && why[0] == 0);
+    assert(!hud::TagVisible(c, hud::kTagFreshMs + 1, &why) && std::string(why) == "stale");
+    hud::Companion d = c;
+    d.local_read = false;  // only a network report: never a tag
+    assert(!hud::TagVisible(d, 0, &why) && std::string(why) == "no chr here");
+    d = c;
+    d.alive = false;
+    assert(!hud::TagVisible(d, 0, &why) && std::string(why) == "dead");
+    d = c;
+    d.local_dead = true;  // its chr here is a corpse
+    assert(!hud::TagVisible(d, 0, &why) && std::string(why) == "dead");
+    d = c;
+    d.same_map = false;
+    assert(!hud::TagVisible(d, 0, &why));
+    d = c;
+    d.connected = false;
+    assert(!hud::TagVisible(d, 0, &why));
+}
+
 static void Handover() {
     hud::ResetForTest();
     Board b;
@@ -179,6 +208,7 @@ static void Handover() {
 }
 
 int main() {
+    Tags();
     SameWorldRules();
     ComposeBoard();
     Geometry();

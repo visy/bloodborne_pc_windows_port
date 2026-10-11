@@ -19,7 +19,7 @@ class ResolutionMemoryTests(unittest.TestCase):
             (root / 'eboot.bin').touch()
             scripts = root / 'scripts'
             scripts.mkdir()
-            for name in ('mods', 'prepare', 'link_libc', 'link_modules', 'content_profile'):
+            for name in ('mods', 'boot_image', 'prepare', 'link_libc', 'link_modules', 'content_profile'):
                 (scripts / f'{name}.py').write_text('pass\n')
             (scripts / 'patches.py').write_text(
                 'import json, os, sys\n'

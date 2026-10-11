@@ -3404,6 +3404,72 @@ void RemoteChrRenderWatch(const GameSnapshot& s, double now) {
     }
 }
 
+/// Diagnostics (BB_PARTY_POS_SCAN=1): where the local player's position is kept besides the chr -
+/// GSM (*0x5556678, 0x2000 bytes), GameDataMan (*0x553B130, 0x400) and PlayerGameData (GameDataMan
+/// +8, 0x2000): every float triple within 1 m of the player's position, every 10 s while it changes.
+void PosScanTick(const GameSnapshot& s, double now) {
+    static const bool on = std::getenv("BB_PARTY_POS_SCAN") && std::getenv("BB_PARTY_POS_SCAN")[0] == '1';
+    static double next = 0;
+    static std::string last;
+    if (!on || !s.world_up || s.loading || !s.player || now < next) {
+        return;
+    }
+    next = now + 10.0;
+    float me[4];
+    float rot[4];
+    if (!ChrTransform(s.player, me, rot)) {
+        return;
+    }
+    struct Area {
+        const char* name;
+        u64 base;
+        std::size_t n;
+    } areas[] = {{"gsm", Slot(kSlotGsm), 0x2000}, {"gdm", Slot(kSlotGameData), 0x400},
+                 {"pgd", Field<u64>(Slot(kSlotGameData), 8), 0x2000}};
+    std::string out;
+    for (const Area& a : areas) {
+        std::vector<u8> buf(a.n);
+        if (!a.base || !SafeRead(a.base, buf.data(), a.n)) {
+            continue;
+        }
+        for (std::size_t o = 0; o + 12 <= a.n; o += 4) {
+            float v[3];
+            std::memcpy(v, &buf[o], 12);
+            if (std::fabs(v[0] - me[0]) < 1.0f && std::fabs(v[1] - me[1]) < 1.0f && std::fabs(v[2] - me[2]) < 1.0f) {
+                char b[96];
+                std::snprintf(b, sizeof b, " %s+%#zx(%.1f,%.1f,%.1f)", a.name, o, double(v[0]), double(v[1]), double(v[2]));
+                out += b;
+            }
+        }
+    }
+    const u64 gsm = Slot(kSlotGsm);
+    char h[256];
+    std::snprintf(h, sizeof h, "pos scan: me (%.1f, %.1f, %.1f) stage %#x own-world %u; gsm+0x14c4 %#x +0x1644 %#x +0x14f0 %#x:",
+                  double(me[0]), double(me[1]), double(me[2]), Field<u32>(s.player, 0x3f8), unsigned(Field<u8>(gsm, 0x1592)),
+                  Field<u32>(gsm, 0x14c4), Field<u32>(gsm, 0x1644), Field<u32>(gsm, 0x14f0));
+    if (out != last) {
+        last = out;
+        Log("%s%s", h, out.empty() ? " none" : out.c_str());
+        std::string d;
+        for (u64 o = 0x1490; o < 0x1660; o += 4) {
+            const u32 v = Field<u32>(gsm, o);
+            char b[40];
+            if (v == 0) {
+                continue;
+            }
+            float f;
+            std::memcpy(&f, &v, 4);
+            if (std::fabs(f) > 0.01f && std::fabs(f) < 100000.0f) {
+                std::snprintf(b, sizeof b, " %llx:%.2f", ull(o), double(f));
+            } else {
+                std::snprintf(b, sizeof b, " %llx:%08x", ull(o), v);
+            }
+            d += b;
+        }
+        Log("pos scan: gsm 0x1490..0x1660:%s", d.c_str());
+    }
+}
+
 void HostRevivedTick(const GameSnapshot& s) {
     static double watch_until = 0, next_watch = 0;
     const double now = Now();
@@ -4372,6 +4438,7 @@ void Tick(const GameSnapshot& s) {
     LampSpotTick(s);
     HostDownTick(s, now);
     HostRevivedTick(s);
+    PosScanTick(s, Now());
     RemoteChrRenderWatch(s, Now());
     MemberRevivedTick(s);
     ReviveRearmTick(s);

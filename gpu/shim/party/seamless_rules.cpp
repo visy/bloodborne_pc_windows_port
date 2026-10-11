@@ -7,6 +7,7 @@
 // (GPL-3.0-or-later) src/engine/params.cpp @8f2746c; row layouts from its
 // include/bbhost/params.hpp, the EMEVD event layout from include/bbhost/engine/sprj/emk_system.hpp.
 // Every offset was checked against our 1.09 eboot (docs/party/seamless_rules.md).
+#include <algorithm>
 #include "seamless_rules.h"
 #include "party_async_io.h"
 #include "party_perf.h"
@@ -454,7 +455,22 @@ void TraceInstruction(u64 event, i32 event_id, i32 bank, i32 id, u64 instr, bool
         std::lock_guard<std::mutex> lk(g_emevd_mu);
         n = ++g_emevd_seen[key];
     }
-    if (n != 1 && n != 1000 && n != 100000) {
+    // BB_PARTY_EMEVD_TRACE_ALL=ID[,ID...]: every call of these events (a lift's second ride).
+    static const std::vector<i32> all = [] {
+        std::vector<i32> v;
+        if (const char* e = std::getenv("BB_PARTY_EMEVD_TRACE_ALL")) {
+            for (const char* p = e; *p;) {
+                char* end = nullptr;
+                const long x = std::strtol(p, &end, 10);
+                if (end == p) break;
+                v.push_back(i32(x));
+                p = *end == ',' ? end + 1 : end;
+            }
+        }
+        return v;
+    }();
+    const bool every = std::find(all.begin(), all.end(), event_id) != all.end();
+    if (!every && n != 1 && n != 1000 && n != 100000) {
         return;
     }
     u32 map = 0, arg_size = 0;

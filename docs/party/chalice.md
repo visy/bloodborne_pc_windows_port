@@ -302,4 +302,25 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
   was already at the top (the car starts there) or from 0.5 m further back.
 * **Layer 2**: the next layer boss 2900200 (MSB (56.3, -59.7, -35.2)) is not loaded at the bottom of
   the first lift (host_kill: NOT loaded); a real descent through layer 2 needs its route (not done).
+  Lamps 2902950..2902959 are the dungeon's ReturnPoints; the lamp objects 2900950..2900958 stand at
+  (40, 31.5, -54) layer 1 start, (-48.1, 30.7, -93.4) layer 1 boss room, (-106, 10.1, -89.8),
+  (-132.7, 17.4, -15.5), (-128, -10.9, 53.2), (24.5, -17, 49.5), (98.7, -59.9, 50), (95, -66, -115.5)
+  (a lamp id +2000 = its object id is a guess, not checked).
+* **Since 0.5.2 work (2026-10-11, runs c24-c26)**:
+  - a guest's current dungeon (from any session) reaches the host's board through its FormData event
+    and becomes the party's dungeon at the host's altar (`dungeon N of Hunter1 (slot 1): FormData
+    added to the board`, `party dungeon at the altar: ...`, c24b/c24c: verified up to the altar;
+    both runs were ended early by the central idle reaper before the host's entry);
+  - "one press": `BB_PARTY_ALTAR_AUTO=1` answers the prompts after the glyph box (OK, the result,
+    YES, the altar, the first awaken point). **Off by default: not verified live** (no run reached
+    it before the 0.5.2 freeze);
+  - the bottom lift lever 2901006 (c26b, from (-71.5, 10.6, -91.9) facing -z and (-71.5, 10.6,
+    -93.5) facing +z) showed no lift call; the guest's top-lever call (c22, c25) did not repeat in
+    c26b (the guest stood at z -90.5 after the warp, 0.4 m further back than in c22). Open;
+  - a guest outside a dungeon that holds its own copy no longer follows the host into it (one load
+    instead of two): code in place, not confirmed live (c24c ended before the entry);
+  - screenshots c26_* (entry, boss, lift, both instances): item-get boxes on both, the boss-clear
+    banner fading on the guest; no floating bars or tags, no ghost characters.
+  - test harness: the central reaper (tools/mp/reaper.py) ends runs whose party log lines do not
+    change for 10 s; a `<root>/noreap` file with seconds lets the long ritual / altar phases pass.
 
