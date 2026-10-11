@@ -156,12 +156,17 @@ bool WindowSDL::PollEvents() {
         }
     }
  
-    // Periodically reload bbport.ini so external edits (launcher dialog) apply in real time
+    // Periodically reload bbport.ini so external edits (launcher dialog) apply in real time.
+    // Not while the in-game menu is open: it keeps its changes in memory and writes the file
+    // when it closes, so a reload now would put the old values back (every change reverted
+    // within half a second).
     static uint64_t last_ini_check_ms = 0;
     const uint64_t current_ticks = SDL_GetTicks();
     if (current_ticks - last_ini_check_ms >= 500) {
         last_ini_check_ms = current_ticks;
-        BbSettings::Reload();
+        if (!BbOverlay::CapturesInput()) {
+            BbSettings::Reload();
+        }
     }
 
     const bool overlay_capturing = BbOverlay::CapturesInput() || text_active;
