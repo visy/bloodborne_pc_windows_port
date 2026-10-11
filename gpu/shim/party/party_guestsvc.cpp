@@ -1195,10 +1195,72 @@ void LogLampObjs() {
     }
 }
 
+/// "lampwalk" (with lampprobe): stand the local player 1 m in front of the nearest probed lamp
+/// object, facing it. The lamp's map object comes from 0x13C9AF0(entity, &index) (the lamp
+/// update's own lookup, 0x2E0-byte record); its world matrix: 3x4 rows at +0x240..+0x26F, the
+/// translation in column 3 (+0x24C, +0x25C, +0x26C; live: Central Yharnam's lamp 2411951 at
+/// (-196.8, -28.6, 65.4), 5 m from the host's lamp arrival spot - out of the prompt's range).
+bool WalkToLamp(const GameSnapshot& s) {
+    float me[4] = {};
+    if (!s.player || !SafeRead(s.player + 0xc0, me, sizeof me)) {
+        return false;
+    }
+    float best_d = 1e9f, best[3] = {};
+    std::int32_t best_ent = 0;
+    for (auto& slot : g_lamp_objs) {
+        const std::uint64_t o = slot.load(std::memory_order_relaxed);
+        std::int32_t ent = 0;
+        if (!o || !SafeGet(o + 0x20, &ent) || ent <= 0) {
+            continue;
+        }
+        std::uint32_t idx = 0xffffffffu;
+        using Find = std::uint64_t(BB_COOP_SYSV*)(std::int32_t, std::uint32_t*);
+        const std::uint64_t rec = reinterpret_cast<Find>(Guest(0x13c9af0))(ent, &idx);
+        float m[16] = {};
+        if (!rec || !SafeRead(rec + 0x230, m, sizeof m)) {
+            continue;
+        }
+        const float t[3] = {m[7], m[11], m[15]};  // 3x4 rows at +0x240: translation in column 3
+        const float dx = t[0] - me[0], dy = t[1] - me[1], dz = t[2] - me[2];
+        const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+        Log("test: lampwalk: lamp %d record %p: rows %.1f %.1f %.1f %.1f | %.1f %.1f %.1f %.1f | %.1f %.1f %.1f %.1f | "
+            "%.1f %.1f %.1f %.1f; player (%.1f, %.1f, %.1f), %.1f m", ent, reinterpret_cast<void*>(rec), m[0], m[1],
+            m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11], m[12], m[13], m[14], m[15], me[0], me[1],
+            me[2], d);
+        if (d < best_d) {
+            best_d = d;
+            best_ent = ent;
+            std::memcpy(best, t, sizeof best);
+        }
+    }
+    if (!best_ent || best_d > 30.0f) {
+        return false;
+    }
+    float dx = me[0] - best[0], dz = me[2] - best[2];
+    const float h = std::sqrt(dx * dx + dz * dz);
+    if (h < 0.01f) {
+        dx = 0, dz = 1;
+    } else {
+        dx /= h, dz /= h;
+    }
+    alignas(16) float pos[4] = {best[0] + dx * 1.0f, best[1], best[2] + dz * 1.0f, 1.0f};
+    const float a = std::atan2(best[0] - pos[0], best[2] - pos[2]);
+    alignas(16) float rot[4] = {0, a + 3.14159265f, 0, 0};
+    std::uint64_t vtbl = 0, fn = 0;
+    if (!SafeGet(s.player, &vtbl) || !SafeGet(vtbl + 0x5f8, &fn) || !fn) {
+        return false;
+    }
+    using WarpFn = void(BB_COOP_SYSV*)(std::uint64_t, const float*, const float*, std::uint64_t);
+    reinterpret_cast<WarpFn>(fn)(s.player, pos, rot, 0);
+    Log("test: lampwalk: standing 1 m in front of lamp %d at (%.1f, %.1f, %.1f)", best_ent, pos[0], pos[1], pos[2]);
+    return true;
+}
+
 struct LampPress {
     double next = 0, release = 0;
     int presses = 0;
     bool done = false;
+    bool walked = false;
 } g_lamp_press;
 
 void LampPressTick(const GameSnapshot& s, double now) {
@@ -1234,6 +1296,12 @@ void LampPressTick(const GameSnapshot& s, double now) {
         }
         return;
     }
+    if (g.test.find("lampwalk") != std::string::npos && !P.walked) {
+        P.walked = WalkToLamp(s);  // then the prompt check on the next round
+        if (P.walked) {
+            return;
+        }
+    }
     std::uint32_t prompt = 0;
     const bool up = PromptUp(&prompt);
     if (!up && P.presses == 0 && P.next - now < 1.6) {
@@ -1263,6 +1331,14 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
             !IsDreamMap(s.map_id) && Now() - last_host_probe >= 3.0) {
             last_host_probe = Now();  // the host's view of the same lamp objects (comparison)
             LogLampObjs();
+            static bool host_walked = false;
+            if (!host_walked && g.test.find("lampwalk") != std::string::npos) {
+                host_walked = WalkToLamp(s);  // the host at its lamp too: is there a prompt?
+            } else if (host_walked) {
+                std::uint32_t prompt = 0;
+                const bool up = PromptUp(&prompt);
+                Log("test: lampwalk: host at the lamp: prompt %s %u", up ? "up" : "not seen", prompt);
+            }
         }
     }
     if (!g_lamps.load()) {

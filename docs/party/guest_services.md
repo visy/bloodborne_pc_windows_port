@@ -223,10 +223,18 @@ whoever uses a lamp or headstone, **the whole party travels**, led by the host (
   the press needs the guest standing at the lamp with its prompt up). The host's capture logged
   the warp twice (two TRAVEL / rested events for one warp: harmless, deduplicated by seq on the
   guest, but worth a look).
-* **Guest headstones [R, kept host-only]**: choosing an area in a headstone's menu crashed a guest
-  every time (fault in a library call under the menu code 0x1BEA2D4; the warp list is built from
-  lamp flags the guest's overlay does not have). Guests now keep the headstones' client wait; the
-  host's headstones work in a party (IsMultiplayerInProgress lift) and the party follows the host.
+* **Guest headstones [R, fixed 2026-10-11]**: choosing an area crashed a guest (fault under the
+  menu code 0x1BEA2D4: the warp list is built from the lamp flags of the guest's overlay, which the
+  vanilla join snapshot left empty). The host-world mirror (event_flags.md 12) now copies the host's
+  lamp flags (72xx02xx etc.) into the overlay. Live (`guestheadstone;keys=cross,cross,cross,cross`,
+  guest in the host's Dream): the guest's "Awaken Above Ground" list shows the host's 7 lamps (1st
+  Floor Sickroom ... Old Yharnam; screenshot), choosing 1st Floor Sickroom sets that lamp's flag,
+  m21 event **12107000** (headstone warp, one instance per lamp: `1003[6]` end if client, wait for
+  the flag, `2003[49]` warp) runs with the new client-end skip `12107000:1003:6@0` (LampSkipRules),
+  its `0x13CDF30(2412950)` becomes `lamp: request 2412950 sent to the host`, the host warps (`host
+  travel ... lamp 2412950`), the guest follows (B2 `replay now ... lamp 2412950`, `arrived in the
+  host world`) and stands beside the host in the clinic. No crash. The guest's IsClientPlayer
+  answer is lifted for t210000-t210003 whenever `BB_PARTY_GUEST_LAMPS=1` (t210721 stays excluded).
 * **Host headstone with a guest present [R]** (`hostheadstone;keys=cross,cross,left,cross,cross`, host
   side): the headstone's menu opened for the host (the IsMultiplayerInProgress lift), the host
   chose a lamp and warped (`host travel ... lamp 2412950`, one TRAVEL); the guest replayed it (B2:
@@ -243,8 +251,6 @@ whoever uses a lamp or headstone, **the whole party travels**, led by the host (
   guest's overlay. Fix direction: carry the host's lamp flags (the 2009[5] lamp flags, 1AAB78x0,
   of the current map) into the guest's overlay (progress mirror), then re-test the press. The
   request path behind it works (lamp flag test above).
-* **Guest headstones**: still blocked (same missing-flag cause; the warp list then indexes past its
-  end). Not quick; kept host-only.
 * Open: `+0x4B` and the lamp's chr-type range branch for a guest.
 
 ## 4. Safety

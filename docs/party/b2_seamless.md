@@ -67,7 +67,10 @@ Marks: **[C]** confirmed in disassembly / decompile, **[R]** confirmed at runtim
   `SetLoadMode(1)`); +0x1592 is set back to 1 by the stage-end step `0x1942720` and re-zeroed by
   the next ctor if +0x84 is still 3. [C]
 * The flags of a host-world load come from the overlay (+0x88 of SprjEventFlagMan), filled only
-  by the packet 0x10 apply `0x13BECA0` (12 groups: globals + **the current map**). [C]
+  by the packet 0x10 apply `0x13BECA0` (12 groups: globals + **the current map**). [C] Since
+  2026-10-11 the host-world mirror fills the rest right after that apply (K11 calls
+  `progress::OnVanillaSnapshotApplied`, and again after the overlay guard below): every group of
+  the host's world but the boss / enemy zones (event_flags.md 12). [R]
 * The enemy / object state of a host-world load comes from the host's packet 0x11: the receive
   (state 1 only) stores three blobs at GSM +0x16C0 / +0x16A0 / +0x1684; WorldChrMan `0x191BDD0`
   applies the `CHR ` blob (+0x1684 in host-world mode, the guest's own +0x1690 at home). [C]
