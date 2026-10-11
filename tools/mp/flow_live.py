@@ -132,6 +132,9 @@ def main():
            "--saves", str(root / "nosaves"), "--build", str(REPO), "--seconds", str(a.seconds), "--idle", "0",
            "--label", f"flowlive {a.phase}", "--timestamps"]
     if a.phase == "world":
+        # Pre-made characters: no new-game driver (its "skip the opening" Options presses opened
+        # the in-game menu on a loaded character and kept the guests in item screens).
+        env = [e for e in env if not e.startswith(("BB_TEST_NEWGAME=", "BB_TEST_PROLOGUE_SKIP=", "BB_TEST_NAME="))]
         env += ["BB_PARTY_MENU=1", "BB_PARTY_SAVE=separate", "BB_PARTY_AUTOCONTINUE=1",
                 "BB_SKIP_NETWORK_CHOICE=online", "BB_PATCHES=Skip Intro"]
         cmd += ["--ienv", "0:BB_PARTY=host"] + sum((["--ienv", f"{k}:BB_PARTY=join"] for k in range(1, a.count)), [])
