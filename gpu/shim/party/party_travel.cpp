@@ -585,6 +585,7 @@ std::atomic<MarkInterceptor> g_mark_intercept{nullptr};
 std::atomic<bool> g_next_alone{false};    // host: the next captured travel is alone (split travel)
 std::atomic<bool> g_death_alone{false};   // host: every captured HostDeath is alone (hostdeath)
 std::atomic<double> g_last_alone_at{0};   // host: when the last alone travel was captured (Now())
+std::atomic<LampUseObserver> g_lamp_observer{nullptr};
 
 // Seeded from the wall clock: a restarted host keeps counting upward, so guests that saw the
 // old host's intents do not drop the new ones as duplicates.
@@ -748,6 +749,7 @@ void CaptureHost(u64 site, TravelKind kind) {
 __attribute__((noinline)) BB_COOP_SYSV void LampWarpHook(u64 id) {
     perf::Scope z(perf::Zone::HookLampWarp);
     if (!g_in_replay.load()) {
+        if (LampUseObserver obs = g_lamp_observer.load()) obs(static_cast<u32>(id));
         if (LampWarpInterceptor fn = g_lamp_intercept.load(); fn && !g_lamp_decided.load() && fn(static_cast<u32>(id))) {
             return;
         }
@@ -1264,6 +1266,10 @@ void SetGuestDeathRedirect(std::uint32_t host_lamp_id) {
 
 std::uint32_t GuestDeathRedirectLamp() {
     return g_death_lamp.load();
+}
+
+void SetLampUseObserver(LampUseObserver fn) {
+    g_lamp_observer = fn;
 }
 
 void SetLampWarpInterceptor(LampWarpInterceptor fn) {
