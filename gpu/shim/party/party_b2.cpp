@@ -914,6 +914,7 @@ void NoteAway(int slot) {
 }
 
 void SendDeadEnemies(const GameSnapshot& s, const char* why);
+std::string DescribeEnterLeave();
 double g_meet_rewind_at = 0;
 std::atomic<bool> g_record_request{false};
 double g_arrived_at = 0;  // guest: send "arrived" then (after an in-world follow)  // a member asked for our record (EVENT b2 record)  // main thread: the meet's re-creation, after the records arrived
@@ -2777,6 +2778,7 @@ void GuestTick(const GameSnapshot& s, double now) {
         }
         if (all || now - st.since > 60.0) {
             const u64 remo = Field<u64>(Slot(0x5540058), 8);
+            Log("guest: enterleave at the re-join's end:%s", DescribeEnterLeave().c_str());
             Log("guest: re-join %s after %.1f s (SprjRemo %d); tasks:%s", all ? "done" : "INCOMPLETE",
                 now - st.since, remo ? int(Field<u8>(remo, 0x168) & 1) : -1, DescribeTasks().c_str());
             if (!all) {
@@ -3009,7 +3011,8 @@ void HostTick(const GameSnapshot& s, double now) {
         if (all && (arrived || st.rejoined_logged)) {
             st.hphase = HostPhase::Idle;
             g_rejoin = false;
-            Log("host: re-join done after %.1f s; tasks:%s", now - st.hsince, DescribeTasks().c_str());
+            Log("host: re-join done after %.1f s; tasks:%s; enterleave%s", now - st.hsince, DescribeTasks().c_str(),
+                DescribeEnterLeave().c_str());
         }
         st.rejoined_logged = st.rejoined_logged || arrived;
         return;
@@ -3056,6 +3059,10 @@ bool Enabled() {
     return g_on.load();
 }
 
+namespace {
+bool SameMapLampWarp(std::uint32_t id, bool alone);
+} // namespace
+
 void Init() {
     if (!Requested() || g_on.load()) {
         return;
@@ -3098,6 +3105,7 @@ void Init() {
     }
     InstallCall(0x17851ce, 0x13beca0, reinterpret_cast<const void*>(&FlagApplyHook), "B2 K11 flag snapshot apply");
     SetEmevdSkipPredicate(&ClientIntroSkip);
+    SetSameMapWarp(&SameMapLampWarp);
     EnsureEmevdFilter();
     Log("K7 funnel branch +0x%llx %s", ull(kFunnelLeaveJne),
         Matches(kFunnelLeaveJne, {0x75, 0x6c}) ? "verified (75 6c), written only around the guest's own warp"
@@ -3557,6 +3565,38 @@ bool LampTravelIntent(std::uint32_t id, TravelIntent* t) {
 bool HostHasMembers() {
     return Role() == RoleHost && HostHasMemberTasks();
 }
+
+namespace {
+/// party_travel's same-map hook (every lamp warp): a lamp of the block the player stands in is an
+/// in-world move - none at all when it already stands there (within 2 m: only the last-lamp record)
+/// - and in a party the host's move takes the guests of this map along unless it travels alone.
+/// A dead player keeps the game's death load (no revive here).
+bool SameMapLampWarp(std::uint32_t id, bool alone) {
+    float spot[4];
+    if (!g_on.load() || !LampInLoadedBlock(id, spot)) {
+        return false;
+    }
+    const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+    if (!player || Field<int>(Field<u64>(Field<u64>(player, 0x3b0), 0x20), 0x128, 0) <= 0) {
+        return false;
+    }
+    float p[3] = {};
+    ChrPos(player, p);
+    const float dx = p[0] - spot[0], dy = p[1] - spot[1], dz = p[2] - spot[2];
+    TravelIntent t;
+    if (dx * dx + dy * dy + dz * dz < 4.0f) {
+        if (LampIntent(id, &t)) {
+            SetOwnLastLamp(t);
+        }
+        Log("lamp %u: already standing at it (%.1f m): no warp, no load", id, double(std::sqrt(dx * dx + dy * dy + dz * dz)));
+        return true;
+    }
+    if (Role() == RoleHost && !alone && HostHasMemberTasks()) {
+        return HostPartyWarpNoLoad(id);
+    }
+    return WarpToLampNoLoad(id, false);
+}
+} // namespace
 
 bool WarpToLampNoLoad(std::uint32_t id, bool beside) {
     if (!g_on.load() || !WarpToLampInWorld(id, beside, beside ? "party move" : "own move")) {

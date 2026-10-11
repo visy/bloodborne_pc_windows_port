@@ -600,6 +600,7 @@ void* g_lamp_warp_orig = nullptr;
 std::atomic<LampWarpInterceptor> g_lamp_intercept{nullptr};
 std::atomic<bool> g_lamp_decided{false};  // RunLampWarpDecided: the interceptor stands aside
 std::atomic<MarkInterceptor> g_mark_intercept{nullptr};
+std::atomic<SameMapWarpFn> g_same_map{nullptr};
 std::atomic<bool> g_next_alone{false};    // host: the next captured travel is alone (split travel)
 std::atomic<bool> g_death_alone{false};   // host: every captured HostDeath is alone (hostdeath)
 std::atomic<double> g_last_alone_at{0};   // host: when the last alone travel was captured (Now())
@@ -769,6 +770,12 @@ __attribute__((noinline)) BB_COOP_SYSV void LampWarpHook(u64 id) {
     if (!g_in_replay.load()) {
         if (LampUseObserver obs = g_lamp_observer.load()) obs(static_cast<u32>(id));
         if (LampWarpInterceptor fn = g_lamp_intercept.load(); fn && !g_lamp_decided.load() && fn(static_cast<u32>(id))) {
+            return;
+        }
+        // A lamp of the loaded map: no load at all (party_b2 InWorldLampWarp; every caller: the
+        // lamp menu, a headstone, a test step, a request run by the host).
+        if (SameMapWarpFn fn = g_same_map.load(); fn && fn(static_cast<u32>(id), g_next_alone.load())) {
+            g_next_alone = false;
             return;
         }
         g_lamp_key = static_cast<u32>(id);
@@ -1330,6 +1337,10 @@ void RunLampWarpDecided(std::uint32_t id, bool alone) {
     reinterpret_cast<LampWarpFn>(Guest(kLampWarp))(id);
     g_lamp_decided = false;
     g_next_alone = false;  // a warp the funnel did not capture: nothing carries over
+}
+
+void SetSameMapWarp(SameMapWarpFn fn) {
+    g_same_map = fn;
 }
 
 void SetMarkInterceptor(MarkInterceptor fn) {
