@@ -62,7 +62,9 @@ Mouse and keyboard, free camera, debug menu: [docs/SETTINGS.md](docs/SETTINGS.md
 
 Play the whole game with friends in one session, from the first lamp to the end credits.
 Modelled on Elden Ring Seamless Co-op, adapted to Bloodborne. **In development:** tested on one
-PC (several game copies, simulated internet lag), not yet between two PCs.
+PC (several game copies, simulated internet lag), not yet between two PCs. A scripted two-player
+run from two new characters to the end credits passed
+([docs/party/campaign_soak.md](docs/party/campaign_soak.md)).
 
 ### How it plays
 
@@ -84,7 +86,9 @@ PC (several game copies, simulated internet lag), not yet between two PCs.
 - **Guests are full players.** The Doll (level up), shops, the workbench, storage, lamps and
   headstones all work for guests.
 - **Progress counts for everyone.** Bosses, items, doors, shortcuts, lamps, story and endings go
-  into every player's own save. A guest who is behind catches up.
+  into every player's own save. A guest who is behind catches up, including the Blood Moon.
+- **Story cutscenes and endings play for everyone.** The Blood Moon, Gehrman's scenes and the
+  ending with the end credits play for every party member.
 - **The host's world is shared live.** A door or shortcut opened by the host is open for the
   guests too.
 - **Crashes recover.** A crashed game restarts and rejoins by itself.
@@ -114,7 +118,7 @@ PC (several game copies, simulated internet lag), not yet between two PCs.
 | Enemy scaling: harder than vanilla by default (settings done; boss fights not yet verified) | In progress |
 | Guests open doors, pull levers, talk to NPCs; NPC choices shared | In progress |
 | Item pickups and enemy drops per player: everyone gets their own | In progress |
-| Cutscenes play for the whole party | Planned |
+| Every cutscene for the whole party (story cutscenes and endings already work) | In progress |
 | Joining during a boss fight waits outside until it ends | Planned |
 | 4 players (3 work today) | In progress |
 | Chalice dungeons: full clear in a party, rituals by anyone | In progress |
