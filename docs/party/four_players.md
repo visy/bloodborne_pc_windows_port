@@ -275,6 +275,42 @@ side cap evaluated in the session handshake that H1 does not cover (the SOS filt
 counts `sel+0x1c8` outgoing requests; the selector update 0x1876b10 `pending + coop >= 3`), or a
 timer after the 2nd arrival. Next: trace 0x1874710's verdict on the host during the 3rd summon.
 
+### The 4th player's dropped invites: what is known (2026-10-11, agent/sixp; open)
+
+- **Not the SOS filter.** `0x1874710(sel, req, flag)` refuses a cooperator request when
+  `sel+0x1fc (max coop, 3) <= pending + cooperators` - for the 3rd cooperator 1 + 2 = 3 - and
+  `0x1876b10` stops at the same field. H5 (party_fourp: `sel+0x1fc` = party size while max players
+  >= 4, `SelectorMaxCoop`, rules tag `4p:v2:H1,H5,...`) lifts that, but a probe run
+  (`BB_PARTY_FOURP_PROBE=1`) showed the host's filter returning a request for **every** call,
+  Hunter3's two included (`slots coop 2 ... all 3, room max 5; max coop 4; pending 0`). The guests
+  never call it. H5 is kept (it is the game's own limit for 3 cooperators) but does not fix the drop:
+  two H5 runs still dropped Hunter3's (and once Hunter2's) first invites.
+- **Where it stops.** The summon handshake on vport 40 (guest side): recv 15 / send 24 / recv 62 /
+  signaling up / send 53 / recv 17 / send 17-26 / send 54 / recv 18 / recv 54 / send 9, then on a
+  good join **recv 267** and the guest's game calls `sceNpMatching2JoinRoom`. On a dropped invite the
+  267-byte message never comes (once it came and the guest still did not join); ~10 s later both
+  sides deactivate the connection (`member 65282`: never a room member). The room is not full (the
+  game was told max 5 at CreateJoinRoom; 3 members). So the host's game decides after the guest's
+  54-byte reply, outside the filter.
+- **Next:** `BB_PARTY_FOURP_PROBE=1` also logs every vport-40 datagram's first 32 bytes and, on a send,
+  the game's return addresses (bbnet `set_packet_trace`): one run with 4 clients shows which state
+  machine sends (or does not send) the 267-byte message and what it checks. Not run: the user
+  limited the machine to 2 game clients (2026-10-11), so 3-4 client runs are paused.
+
+### Host does not draw a guest / its plate floats away (user, 2026-10-11)
+
+Seen with 2 and 3 players (user screenshots; split24 and a hostdeath run): on the host the guest's
+plate ("Co-operator Hunter1") hangs far away at the Central Yharnam lamp arrival point and no guest
+model is near, while the party HUD (VITALS) puts the guest 0.9 m away and the guest sees both
+players correctly. The party code's local warps of the guest (B2 BesideHost / split travel's in-world
+warp, `WarpLocal`: chr vfunc +0x5F8 on the local player) are not replicated to the host's copy of the
+guest's chr; the splittravel agent owns that fix. Not a per-slot bug: the 4-client runs here
+(summons into the Dream, guests placed in their own world before the summon, no warp after the
+arrival) showed every chr where its player stood, on every screen. Detection: the party HUD now logs
+`GAP <name> (slot N): this game draws its chr at (...), it reports (...): d m apart` when a drawn chr
+and the member's own reported position differ by more than 2 m (always on, every 5 s at most per
+member); `BB_PARTY_HUD_LOG=1000` traces both positions every second on every peer.
+
 ### Live test plan for 3 and 4 clients (when the machine allows 3+ game clients, or on two PCs)
 
 Setup: `instances.py run --count 3|4 --party --env BB_PARTY_MAX=3|4 --vram 1536 --fps 30
