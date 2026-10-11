@@ -159,6 +159,13 @@ Instead of a code, a guest can also enter the host's address directly as `host:p
 - **Public address**: normally found automatically (STUN server `stun.l.google.com:19302`, or
   UPnP). For a fixed IP, a DNS name or a VPN address, enter it in *Public address* (host only).
   *STUN server* `off` turns the lookup off (LAN / VPN only).
+- **No UPnP and no port forward: guest codes.** Each guest's overlay *Party* page shows *Your
+  guest code* (`BBG1-XXXX-XXXX-XXXX`, its public UDP address; also `user/party_guest_code.txt`).
+  The guest copies it and sends it to the host; the host copies it and presses *Add a guest code
+  (paste)* (or sets `BB_PARTY_GUEST_CODES`). The host then punches a path through its router
+  towards that guest, and the party link switches to UDP when TCP gets no answer. Works with most
+  home routers; not with symmetric NAT (see next point). Details:
+  [party/network_robustness.md](party/network_robustness.md) §4.
 - **Carrier-grade NAT / no port forwarding possible**: use a VPN that puts all players in one
   virtual network, such as Tailscale or ZeroTier. The host shares its VPN address as
   `address:9307` (or sets it as *Public address*, so the code contains it).

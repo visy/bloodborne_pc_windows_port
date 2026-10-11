@@ -413,14 +413,40 @@ bool SendHomeVeto(u64 site) {
 // 0x1385A95 in BlockClear2_3 0x13859F0): the party stays in the session after the boss. Both
 // roles run these states after a kill (live run r3: the host left 12 s after the kill, which
 // ended the guest's session although its own leave was dropped), so both are kept.
+std::atomic<double> g_k10_at{0};  // when K10 last kept the party (BossClearInvincibleTick)
+std::atomic<bool> g_k10_this_load{false};  // K10 ran since the last load (DeadAfterClearTick)
 BB_COOP_SYSV u64 BossClearLeaveHook(u64 session) {
     const int role = Role();
     if (g_on.load() && (role == RoleClient || role == RoleHost)) {
         Log("K10: boss-clear leave suppressed (%s; party stays)", role == RoleHost ? "host" : "guest");
+        g_k10_at = Now();
+        g_k10_this_load = true;
         return 0;
     }
     using Fn = u64(BB_COOP_SYSV*)(u64);
     return reinterpret_cast<Fn>(Guest(kBeginLeave))(session);
+}
+
+// After K10 the party stays. In case the boss-clear states left the players invincible for the
+// clear animation (Lua EnableInvincible 0x1332EF0: chr +0x1E1 bit 14) with no leave to end it,
+// the local player's flag is cleared 10 s after K10 (live runs: it was never still on).
+void BossClearInvincibleTick(const GameSnapshot& s, double now) {
+    const double at = g_k10_at.load();
+    if (at <= 0 || now - at < 10.0 || !s.world_up || s.loading || !s.player) {
+        return;
+    }
+    g_k10_at = 0;
+    std::uint32_t f = 0;
+    if (!SafeRead(s.player + 0x1e1, &f, 4)) {
+        return;
+    }
+    if (f & (1u << 14)) {
+        f &= ~(1u << 14);
+        SafeWrite(s.player + 0x1e1, &f, 4);
+        Log("K10: the boss-clear invincibility was still on 10 s after the clear; cleared (the party stays)");
+    } else {
+        Log("K10: no invincibility left 10 s after the clear");
+    }
 }
 
 // ---- Remote player chrs on a streamed-out block (host and guest) ----
@@ -1986,6 +2012,40 @@ bool SoloRespawn(double held_for, u32 map_now) {
 }
 
 /// Main thread: a held guest death goes with the host's travel, or runs after the grace.
+// Guest: a death after a boss clear never reached PartyGhostDeath (live 2026-10-11: after the
+// Cleric Beast, ForceDead and a fall into the void both set HP 0, but no guest_died funnel, no
+// respawn, the guest stayed dead in the host's world). The boss-clear Lua state BlockClear2_3 ends
+// in the send-home tail jump K10 drops, so the phantom's state machine never leaves it and never
+// runs PartyGhostDeath. A death in the arena during the fight stayed unprocessed too (17 s until
+// the kill). Watchdog: HP 0 for 12 s (after a K10 on this load) or 15 s, with no death funnel or
+// hold (the normal path fires ~8.6 s after the death) -> the guest death redirect runs from here.
+void DeadAfterClearTick(const GameSnapshot& s, double now) {
+    static double dead_since = 0;
+    static bool fired = false;
+    if (!g_on.load() || Role() != RoleClient || !s.world_up || s.loading || !s.player) {
+        if (s.loading) g_k10_this_load = false;
+        dead_since = 0;
+        fired = false;
+        return;
+    }
+    const u64 dm = Field<u64>(Field<u64>(s.player, 0x3b0), 0x20);
+    const int hp = Field<int>(dm, 0xf8, -1), mx = Field<int>(dm, 0xfc, -1);
+    if (hp != 0 || mx <= 1) {
+        dead_since = 0;
+        fired = false;
+        return;
+    }
+    if (dead_since <= 0) dead_since = now;
+    // 12 s after a K10 on this load (the normal path fires ~8.6 s after the death), 15 s otherwise
+    // (live: a death in the Cleric Beast's arena during the fight was not processed either).
+    const double limit = g_k10_this_load.load() ? 12.0 : 15.0;
+    if (fired || now - dead_since < limit || g_death_held_at.load() >= dead_since) return;
+    fired = true;
+    Log("guest: dead for %.0f s and the game's death state never ran (%s): the guest death redirect runs now",
+        now - dead_since, g_k10_this_load.load() ? "after a boss clear: BlockClear state kept by K10" : "no PartyGhostDeath");
+    GuestDeathRedirectNow();
+}
+
 void HeldDeathTick(const GameSnapshot& s, double now) {
     if (g_dead_follow.load() && !SessionUp()) {
         // The follow ended without an arrival (B1 fallback): the host's records stay, which is
@@ -2901,6 +2961,8 @@ void Tick(const GameSnapshot& s) {
     FallbackCleanupTick(s);
     FallRecoveryTick(s, now);
     HeldDeathTick(s, now);
+    BossClearInvincibleTick(s, now);
+    DeadAfterClearTick(s, now);
     {
         GuestPhase gp;
         {

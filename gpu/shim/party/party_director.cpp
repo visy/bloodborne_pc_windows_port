@@ -55,6 +55,7 @@
 #include <vector>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 #ifdef _WIN32
@@ -157,6 +158,7 @@ struct Test {
     float st_pos[3] = {0, 0, 0}, st_yaw = 0;
     std::uint32_t st_button = 0;
     int st_phase = 0;
+    int st_retries = 0;  // stand: warps repeated while not in place
     MenuScript st_seq; // seq=...: after stand (and its button), the menu walk (test_newgame.h)
     bool st_seq_on = false;
     std::string st_last_texts;
@@ -481,6 +483,7 @@ void LogTransitions(State& st, const GameSnapshot& now) {
     }
     if (now.cooperators != was.cooperators && now.cooperators >= 0 && was.cooperators >= 0) {
         Log("cooperators %d -> %d (t %.1f s)", was.cooperators, now.cooperators, Seconds(st.start, Clock::now()));
+        if (now.cooperators > was.cooperators && now.session_role == RoleHost) party::runtime_nr_prescan();
     }
     if (now.online_mode != was.online_mode) {
         Log("online mode %d -> %d", was.online_mode, now.online_mode);
@@ -1241,7 +1244,50 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         }
         reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, step.id);
     } else {
-        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, 10000);
+        // ForceDead's own gates (0x18BF9A0): GSM +0x176F set = HP left alone; chr +0x18 -> +0x30 ->
+        // +0x18 bit 0 = no death call. Logged: a die step that "did nothing" names its gate.
+        std::uint64_t gsm = 0, player = LocalPlayer(), a18 = 0, a30 = 0;
+        std::uint8_t no_hp = 0xff, no_die = 0xff;
+        if (SafeGet(Guest(0x5556678), &gsm) && gsm) SafeGet(gsm + 0x176f, &no_hp);
+        if (player && SafeGet(player + 0x18, &a18) && a18 && SafeGet(a18 + 0x30, &a30) && a30) SafeGet(a30 + 0x18, &no_die);
+        std::uint8_t f1e0[8] = {};
+        if (player) SafeRead(player + 0x1e0, f1e0, sizeof f1e0);
+        Log("test: ForceDead gates: GSM +0x176F %u, chr +0x18/+0x30/+0x18 %u (bit 0 blocks the death); chr +0x1e0: "
+            "%02x %02x %02x %02x %02x %02x %02x %02x (+0x1e1 bit 6 = EnableInvincible)", no_hp, no_die, f1e0[0], f1e0[1],
+            f1e0[2], f1e0[3], f1e0[4], f1e0[5], f1e0[6], f1e0[7]);
+        auto hp_of = [] {
+            std::uint64_t pl = LocalPlayer(), ins = 0, dm = 0;
+            int hp = -1;
+            if (pl && SafeGet(pl + 0x3b0, &ins) && ins && SafeGet(ins + 0x20, &dm) && dm) SafeGet(dm + 0xf8, &hp);
+            return hp;
+        };
+        const int hp0 = hp_of();
+        // Lua ForceDead (0x13320C0) finds the chr by entity id (0x13C97A0) and does nothing when that
+        // finds none: entity 10000 is not always the local player (after a boss clear on a guest it
+        // was not). Then the death path 0x18BF9A0 runs on our own chr directly.
+        std::uint64_t by_id = 0;
+        if (std::uint64_t lua_on = 0; SafeGet(Guest(0x553b0c8), &lua_on) && lua_on)
+            by_id = reinterpret_cast<std::uint64_t(BB_COOP_SYSV*)(std::uint32_t, std::uint32_t, std::uint32_t)>(
+                Guest(0x13c97a0))(10000, 10000, 0);
+        if (by_id && by_id == player) {
+            reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, 10000);
+        } else if (player) {
+            std::uint8_t b3 = 0;
+            if (SafeGet(player + 0x1e3, &b3)) {
+                b3 &= 0xdf;
+                SafeWrite(player + 0x1e3, &b3, 1);
+            }
+            reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t)>(Guest(0x18bf9a0))(player);
+        }
+        Log("test: die: entity 10000 -> %#llx, local player %#llx (%s); HP %d -> %d right after",
+            static_cast<unsigned long long>(by_id), static_cast<unsigned long long>(player),
+            by_id == player ? "ForceDead" : "the death path on our chr", hp0, hp_of());
+        std::thread([hp_of] {
+            for (int i = 1; i <= 4; ++i) {
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+                Log("test: die: HP %d (+%d s)", hp_of(), 2 * i);
+            }
+        }).detach();
     }
     std::uint8_t after = 0;
     SafeGet(wts + 8, &after);
@@ -1508,6 +1554,15 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             float at[3] = {}, r[4] = {};
             SafeRead(s.player + 0xc0, at, sizeof at);
             SafeRead(s.player + 0xd0, r, sizeof r);
+            const float dx = at[0] - t.st_pos[0], dz = at[2] - t.st_pos[2];
+            if (dx * dx + dz * dz > 2.25f && t.st_retries < 10) {
+                // Not there (a place= reload that never came, a warp the game dropped): warp again.
+                ++t.st_retries;
+                Log("test: stand: still at (%.2f, %.2f, %.2f); warping again (%d)", at[0], at[1], at[2], t.st_retries);
+                t.st_phase = 0;
+                t.st_at = now + std::chrono::milliseconds(2000);
+                return;
+            }
             if (t.st_button) {
                 runtime_pad_director_press(t.st_button);
             }
@@ -2175,6 +2230,14 @@ void PartyDirector::Tick() {
         if (chalice::PopHostGoods(&chalices)) {
             link->post_event(party::kBroadcast, chalice::kGoodsEventName, chalice::GoodsToJsonText(chalices));
         }
+        // The host's own online id: the party's dungeon at its altar is another member's ritual.
+        static Clock::time_point host_name_at{};
+        if (Seconds(host_name_at, Clock::now()) >= 2.0) {
+            host_name_at = Clock::now();
+            for (const party::RosterEntry& e : link->roster()) {
+                if (e.slot == party::kHostSlot) chalice::SetHostName(e.name);
+            }
+        }
         int slot = -1;
         while (TakeHostFullItems(&slot, &items)) {
             link->post_event(slot, kItemsFullEventName, ItemsToJsonText(items));
@@ -2186,6 +2249,10 @@ void PartyDirector::Tick() {
         std::vector<std::uint32_t> chalices;
         if (chalice::PopHostGoods(&chalices)) {
             link->post_event(party::kHostSlot, chalice::kGoodsEventName, chalice::GoodsToJsonText(chalices));
+        }
+        std::string form;  // its own ritual dungeon's FormData for the host's board
+        if (chalice::PopGuestForm(&form)) {
+            link->post_event(party::kHostSlot, chalice::kFormEventName, form);
         }
     }
     // B2 (party_b2.h): guest "arrived" / host notes.

@@ -184,10 +184,31 @@ std::string ChannelBoard::upload(const std::string& caller, std::uint64_t uid, c
     c->wish_materials = wish_list(body);
     c->last_play = now;
     c->touched = ++clock_;
+    made_[caller] = {c->id, std::chrono::steady_clock::now()};
     const std::string reply =
         "{\"ResKind\":0,\"ChannelId\":" + jnum(static_cast<long long>(c->id)) + ",\"DiscernmentWord\":" + jstr(c->glyph) + "}";
     drop_excess();
     return reply;
+}
+
+bool ChannelBoard::latest_ritual(const std::string& except, std::chrono::seconds within, Channel* out,
+                                 std::string* member) const {
+    std::lock_guard<std::mutex> lk(mu_);
+    const auto now = std::chrono::steady_clock::now();
+    const std::pair<const std::string, std::pair<std::uint64_t, std::chrono::steady_clock::time_point>>* best = nullptr;
+    for (const auto& m : made_) {
+        if (m.first == except || now - m.second.second > within) continue;
+        if (!best || m.second.second > best->second.second) best = &m;
+    }
+    if (!best) return false;
+    for (const Channel& c : channels_) {
+        if (c.id == best->second.first) {
+            if (out) *out = c;
+            if (member) *member = best->first;
+            return true;
+        }
+    }
+    return false;
 }
 
 std::string ChannelBoard::share(const std::string& caller, const json::Value& body) {
@@ -271,6 +292,7 @@ std::string ChannelBoard::search(const std::string& caller, const json::Value& b
         if (c) {
             c->touched = ++clock_;
             ritual_[caller] = {c->id, std::chrono::steady_clock::now()};
+            made_[caller] = {c->id, std::chrono::steady_clock::now()};
             return "{\"ResKind\":0,\"ChannelList\":[" + entry(*c, false) + "]}";
         }
     }
@@ -303,7 +325,10 @@ std::string ChannelBoard::word_search(const std::string& caller, const json::Val
             c.last_play = now;
             log("from api: %s found chalice dungeon %llu by its glyph %s", caller.c_str(),
                 static_cast<unsigned long long>(c.id), word.c_str());
-            return entry(c, true);
+            // As in details(): a ShareLevel makes the reader's game take the Status, which the join
+            // needs (+0x54 == 1). With the stored 0 of a shared fixed dungeon made by a member's
+            // ritual search, "Join the selected Chalice Dungeon?" -> YES did nothing (run c19).
+            return entry(c, true, c.share_level ? c.share_level : 1);
         }
     }
     log("from api: %s: no chalice dungeon with the glyph '%s'", caller.c_str(), word.c_str());
@@ -408,6 +433,24 @@ bool ChannelBoard::set_form_data(std::uint64_t id, const std::string& b64) {
     Channel* c = find_id(id);
     if (!c) return false;
     c->form_data = b64;
+    return true;
+}
+
+bool ChannelBoard::adopt(std::uint64_t id, const std::string& b64, const std::string& owner) {
+    if (!id || !form_data_ok(b64)) return false;
+    std::lock_guard<std::mutex> lk(mu_);
+    if (find_id(id)) return false;
+    Channel n;
+    n.id = id;
+    n.glyph = GlyphOf(b64);
+    n.owner = owner;
+    n.form_data = b64;
+    n.status = 1;
+    n.touched = ++clock_;
+    channels_.push_back(std::move(n));
+    log("from api: %s's game is in chalice dungeon %llu (not on the board yet): added, glyph %s", owner.c_str(),
+        static_cast<unsigned long long>(id), channels_.back().glyph.c_str());
+    drop_excess();
     return true;
 }
 

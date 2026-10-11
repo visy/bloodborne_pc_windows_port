@@ -29,6 +29,16 @@ std::int64_t LastLookupMs(std::uint32_t id);
 /// Message ids looked up within the last `within_ms` (up to `max` of them into `out`); the count.
 int RecentLookups(std::int64_t within_ms, std::uint32_t* out, int max);
 
+/// A text override for the game's own messages (party co-op: the altar's "Enter the party's
+/// dungeon"): called for each lookup with the original text; non-null replaces it. Any thread.
+using TextOverrideFn = const char16_t* (*)(std::uint32_t category, std::uint32_t id, const char16_t* original);
+void SetTextOverride(TextOverrideFn fn);
+/// The text an ImeDialog of `max_length` characters starts confirmed with (party co-op: the party
+/// dungeon's glyph); null for none. SetImePreset registers the provider.
+using ImePresetFn = const char* (*)(std::uint32_t max_length);
+void SetImePreset(ImePresetFn fn);
+const char* ImePreset(std::uint32_t max_length);
+
 /// Applies what the player changed on the port's pages (each presented frame).
 void Poll();
 } // namespace BbGameMenu
