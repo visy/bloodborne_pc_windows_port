@@ -124,7 +124,7 @@ run from two new characters to the end credits passed, and a three-player travel
 
 | Who dies | What happens |
 |---|---|
-| A guest | Respawns alone at a lamp in the party's area and drops its Blood Echoes in a bloodstain; the others keep playing |
+| A guest | Gets up again at its own lamp with no loading screen when that lamp is in the loaded area (else at the host's lamp); drops its Blood Echoes in a bloodstain; the others keep playing |
 | The host | Gets up again at its own lamp with no loading screen for anyone; its echoes stay in a bloodstain where it fell. If that lamp is in another area, only the host loads; the guests stay where they are |
 | Anyone, during a boss fight | Stays down until the boss dies (then respawns at the host's lamp), everyone dies, or someone travels |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |

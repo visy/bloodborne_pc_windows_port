@@ -1292,6 +1292,20 @@ std::string DescribeWhere() {
     return out;
 }
 
+/// The summoned placement (GSM +0x14C4 stage, +0x14D0 position, +0x14E0 rotation) a guest's load
+/// uses while GSM +0x1521 is set; the same bytes overlap the guest's return spot (+0x14A0..). Written
+/// only when +0x1521 is set (otherwise the load takes the forced transform and these writes only
+/// replaced the return spot with a host-world spot). Not the cause of the Continue drift (hd32:
+/// the guest still continued at the host-world spot), see b2_seamless.md 6.13.
+void WriteSummonedPlacement(u64 gsm, const void* stage, const void* pos, const void* rot) {
+    if (!gsm || Field<u8>(gsm, 0x1521) == 0) {
+        return;
+    }
+    SafeWrite(gsm + 0x14c4, stage, 4);
+    SafeWrite(gsm + 0x14d0, pos, 16);
+    SafeWrite(gsm + 0x14e0, rot, 16);
+}
+
 /// A guest's spot beside the host (never on it: character collision shoves the host): BB_PARTY_SUMMON_OFFSET
 /// (default 0.5 m, 0 = off), side by side in a line: right (party slot 1), left (2), 2x right (3+) of
 /// the host's facing, same height and facing. Wider offsets (2.2 m) put guests into walls at narrow
@@ -2886,6 +2900,50 @@ void HostDownTick(const GameSnapshot& s, double now) {
 
 /// Guest: the host was revived in place; its chr here died with it: removed and built again by
 /// its task (as the host does for a guest's lone respawn, 6.9).
+/// Diagnostics (always on in a session, 1 line / s while anything changes): every remote player
+/// chr's render state - position, distance, +0x208 (draw factor, 0 after a death dissolve),
+/// +0x20C/+0x210 (alpha / rate), +0x1E1 flags, HP - to tell a ghost (plate, no body) apart.
+void RemoteChrRenderWatch(const GameSnapshot& s, double now) {
+    static double next = 0;
+    static std::string last;
+    if (!g_on.load() || !SessionUp() || !s.world_up || s.loading || now < next) {
+        return;
+    }
+    next = now + 1.0;
+    float me[3] = {};
+    ChrPos(s.player, me);
+    std::string line;
+    for (const TaskInfo& t : Tasks(false)) {
+        if (t.mode != 1 && t.mode != 2) {
+            continue;
+        }
+        const u64 c = PlayerForPeer(t.task + kTaskPeer);
+        char b[240];
+        float p[3] = {};
+        if (!c || !ChrPos(c, p)) {
+            std::snprintf(b, sizeof b, " [mode %d no chr]", t.mode);
+        } else {
+            u64 f = 0;
+            SafeRead(c + 0x1e1, &f, 5);
+            const float d = std::sqrt((p[0] - me[0]) * (p[0] - me[0]) + (p[2] - me[2]) * (p[2] - me[2]));
+            std::snprintf(b, sizeof b, " [mode %d %#llx (%.1f, %.1f, %.1f) %.1f m draw %.2f alpha %.2f/%+.2f f %010llx hp %d]",
+                          t.mode, ull(c), double(p[0]), double(p[1]), double(p[2]), double(d),
+                          double(Field<float>(c, 0x208)), double(Field<float>(c, 0x20c)), double(Field<float>(c, 0x210)),
+                          ull(f), ChrHp(c));
+        }
+        line += b;
+    }
+    // Rounded so a standing chr does not log every second.
+    std::string key;
+    for (char ch : line) {
+        key += (ch >= '0' && ch <= '9') ? '#' : ch;
+    }
+    if (line != last) {
+        last = line;
+        Log("remote chrs:%s", line.c_str());
+    }
+}
+
 void HostRevivedTick(const GameSnapshot& s) {
     static double watch_until = 0, next_watch = 0;
     const double now = Now();
@@ -3106,9 +3164,7 @@ void GuestTick(const GameSnapshot& s, double now) {
                         const u32 stage = ids::EntityMap(lamp);
                         alignas(16) float p16[4] = {spot[0], spot[1], spot[2], 1.0f};
                         alignas(16) float r16[4] = {0.0f, spot[3], 0.0f, 0.0f};
-                        SafeWrite(gsm + 0x14c4, &stage, 4);
-                        SafeWrite(gsm + 0x14d0, p16, 16);
-                        SafeWrite(gsm + 0x14e0, r16, 16);
+                        WriteSummonedPlacement(gsm, &stage, p16, r16);
                         t.kind = TravelKind::Transform;
                         t.has_pos = true;
                         t.pos_map = stage;
@@ -3134,9 +3190,7 @@ void GuestTick(const GameSnapshot& s, double now) {
                 float pos[4];
                 std::memcpy(pos, st.dest_pos, sizeof pos);
                 BesideHost(pos, st.dest_rot, g_local_slot.load());
-                SafeWrite(gsm + 0x14c4, &st.dest_stage, 4);
-                SafeWrite(gsm + 0x14d0, pos, 16);
-                SafeWrite(gsm + 0x14e0, st.dest_rot, 16);
+                WriteSummonedPlacement(gsm, &st.dest_stage, pos, st.dest_rot);
                 Log("guest: summoned placement = stage %#x pos (%.1f, %.1f, %.1f), GSM +0x1521 = %u", st.dest_stage,
                     pos[0], pos[1], pos[2], unsigned(Field<u8>(gsm, 0x1521)));
             }
@@ -3822,6 +3876,7 @@ void Tick(const GameSnapshot& s) {
     LampSpotTick(s);
     HostDownTick(s, now);
     HostRevivedTick(s);
+    RemoteChrRenderWatch(s, Now());
     MemberRevivedTick(s);
     ReviveRearmTick(s);
     BossClearInvincibleTick(s, now);
@@ -4213,9 +4268,7 @@ bool TravelAlone(const TravelIntent& t, AloneWhy why) {
         alignas(16) float p16[4] = {tt.pos[0], tt.pos[1], tt.pos[2], 1.0f};
         alignas(16) float r16[4] = {tt.rot[0], tt.rot[1], tt.rot[2], tt.rot[3]};
         Log("guest: alone load: summoned placement stage %#x -> %#x", Field<u32>(gsm, 0x14c4), tt.pos_map);
-        SafeWrite(gsm + 0x14c4, &tt.pos_map, 4);
-        SafeWrite(gsm + 0x14d0, p16, 16);
-        SafeWrite(gsm + 0x14e0, r16, 16);
+        WriteSummonedPlacement(gsm, &tt.pos_map, p16, r16);
     }
     const int three = 3;
     SafeWrite(flow + 0x84, &three, 4);

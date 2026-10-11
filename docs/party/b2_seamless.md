@@ -643,11 +643,25 @@ forced pre-summon spot), both put back: `guest: bloodstain recorded: echoes 5000
 echoes at (...) map 0x18010000`. The stain is in the guest's own records, so it shows in the guest's
 game (in the host's world after its respawn load, and in its own world in that map).
 
-**Guest deaths outside a boss fight** go to the guest's OWN last lamp (design decision 1) through split
-travel's `RespawnAloneAtOwnLamp` (`BB_PARTY_GUEST_OWN_LAMP=0`: off); when it refuses (hd19: own lamp
-2102961 in the Dream while the party is in m24_01: `a death outside the host's area is not an alone
-load yet`) the lone respawn at the host's lamp (6.9) runs as before. After a boss fight it is always
-the host's lamp (shared boss lamp).
+**Guest deaths: no load when the lamp is in the loaded map** (Bloodborne rule; user, hd24). After the
+held death's grace (limbo aside) the guest picks its lamp - its OWN last lamp outside a boss fight,
+the host's last lamp after one (shared boss lamp) - and when that lamp is in the loaded map
+(`ids::EntityMap` area/block = the player's stage, spot from `ids::ReturnSpot`) it is revived exactly
+like the host (`ReviveLocal`; the `recover` step is host-only: 0x1900710 writes PlayerIns +0x78 = 0,
+which would turn the phantom into a body) and put on the spot; `{"op":"member_revived","pos":...}`
+(where it died) makes the host and the other guests remove the dead member chr nearest to that spot
+and rewind its task (the chr is built again at the member's new spot). Own lamp in another map:
+split travel's `RespawnAloneAtOwnLamp` (a load for this guest only); when it refuses (a death
+outside the host's area, hd19) the host's lamp, in place if it is in the loaded map, else the old
+lone respawn (6.9). A member standing on the spot: the revived player is put 0.5 m beside it
+(`BesideHost`). `BB_PARTY_GUEST_REVIVE=0`: off.
+Live hd25 / hd26: `guest: died alone: revived at its own last lamp 2412951 in the loaded map
+(-193.4, -28.6, 68.5), no load`, `guest revive #1: after: hp 431 ... type 1` (still a phantom), host
+`slot 1 was revived in place (no load)`, `member revived in place: its dead chr ... removed (0.0 m
+from where it died); re-created`; no loading screen on either game after the first summon; the
+guest's screen shows both hunters side by side at the lamp. The overlay watchdog of 6.12
+(`DeadAfterClearTick`) now also respects a hold that was already consumed by a respawn (hd22: it
+redirected a guest 8 s into its lone respawn and ended the session).
 
 **Live runs** (2026-10-11, two / three loopback instances, base save savedata_20261010):
 * hd10-hd12, Central Yharnam 2412951, two revivals per run: see the revive table above; hd12 both
@@ -670,6 +684,29 @@ Placement (coordinator check, upstream 12490f5 BesideHost 0.5 m): in the Central
 screenshots of these runs the guest stands 0.7-2.4 m from the host on open cobblestones beside the
 lamp (not in a wall); the host is not visibly shoved. The revived host itself goes to the lamp's
 spawn spot (it is the lamp's player, so no BesideHost).
+
+**Remote copies after a death (user report "health bar floating, no model").** `remote chrs:` lines
+(`RemoteChrRenderWatch`) log every remote player chr's position, distance, draw factor (PlayerIns
++0x208: 0 -> 1 when built, 1 -> 0 in the death dissolve), alpha and flags. hd28: the guest's copy on
+the host dissolved to `draw 0.00` after its death and was replaced by a new copy `0.5 m draw 1.00`
+after its in-place revive (`member revived in place: its dead chr ... removed ...; re-created`); the
+guest's view of the revived host likewise (screenshots hd25-hd30: both hunters side by side on the
+guest's screen). The remaining "plate at the summon spot, no body" on the HOST's screen exists
+from the bell join on (hd27/hd28 `dead_1s` / `join` shots, before any death) - the B2 arrival / remote
+chr path splittravel is fixing (split_travel.md 3b has these findings). A chr warp of a remote
+copy does not move its plate (tried, removed).
+
+**Test setup.** The director's `host_warp=ID` now only sets the last-lamp record when the host already
+stands within 5 m of that lamp (`host_warp 2412951 skipped: already at that lamp (last-lamp record
+set, no load)`, hd30): no setup loading screen that looks like the join's.
+
+**Guest Continue drift (open).** A guest killed while summoned continued at its host-world spot
+(m24_01 beside the host) instead of its own world's (Dream) spot (hd31 / hd32, fresh saves). The B2
+placement writes to GSM +0x14C4/+0x14D0/+0x14E0 (overlapping the return spot +0x14A0..) are now
+skipped while +0x1521 is clear (they were unused then), but the drift stayed: the game itself
+re-wrote the return spot to the host-world spot during the B2 load, and the save's position source
+is not identified yet. Next: find the save serializer's map / position source while +0x1592 == 0
+and pin it to the pre-summon spot.
 
 ## 7. Risks / open items
 
