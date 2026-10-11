@@ -26,7 +26,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("build_dir", nargs="?", default=str(REPO / "out" / "gpu"))
     ap.add_argument("--target", action="append", default=[])
-    ap.add_argument("-j", type=int, default=int(os.environ.get("BB_BUILD_JOBS", "8")))
+    ap.add_argument("-j", type=int, default=int(os.environ.get("BB_BUILD_JOBS", "6")))
     a = ap.parse_args()
     env = os.environ.copy()
     env["PATH"] = MINGW + os.pathsep + env.get("PATH", "")
