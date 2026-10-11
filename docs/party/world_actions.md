@@ -55,10 +55,11 @@ guest; C2 puts it into every guest's save.
 
 | Category | Set | Clear | Notes |
 |---|---|---|---|
-| shortcut_door | yes | yes | levers, gates, one-way doors, ladders, elevators (they toggle) |
+| shortcut_door | yes | yes | levers, gates, one-way doors, ladders; **not** two-state lift flags (C2's state ids, e.g. 12410350/351): the lift's own network-synced events and the replicated kick move it on the host, a guest's late value would fight the host's ride |
 | world_state | yes | yes | world objects' states |
 | npc_quest | yes | yes | shared NPC quests; a quest step clears the old state flag and sets the new one (Iosefka live: 1141 off, 1143 on) |
 | key_event | yes | no | world progression |
+| cutscene_seen | yes | no | D10: a scene a guest's event played counts as seen in the host's world |
 | anything else | no | no | boss_defeated, boss_area, lamp_unlocked (EVENT lamp_lit), cutscene_seen, item_lot_picked (instanced, 4), session_runtime, time_of_day, never_sync |
 
 Also required: a mirror group and mirror-mask bit (`WorldMirrorKey`, `WorldMirrorMask`: never
@@ -145,6 +146,19 @@ for a client when `WorldTalkAllowed(talk)`: the world maps' scripts (map 220-369
 flags reach every guest's save through C2 (`BB_PARTY_PROGRESS_NPC`, now **on** by default: the
 user's decision). Gifts given in dialogue go to the player who talked (its own inventory).
 
+## 5.1 Cutscenes for the whole party (D10)
+
+Host-triggered scenes already play for every guest (C4 live mirror, cutscenes_endings.md). New:
+a scene a **guest's** own event plays in the host's world. The guest's bank-2002 handler hook
+(`party_story` `RemoHandlerEntry`, which only logged on a guest before) turns a plain play
+(2002[1/3/7], a known remo, no warp) into EVENT `story_up` to the host and remembers it; the host
+(`HostStoryFromGuest`, sanitized like any peer story) plays it itself (mode 0) once it is in its own
+world and no remo plays, then broadcasts it as a story of its own (`PushHost`): every other guest
+watches it through the live mirror; the guest that triggered it drops the copy (it watched it,
+180 s window). The scene's flags travel as world actions (cutscene_seen, set only). Warp variants
+(2002[2/4/6]) stay with the triggering player. Test: `BB_PARTY_STORY_TEST=up:<remo>` on a guest
+plays the remo there as its own event would and sends it up.
+
 ## 6. Insight and the bath (G2)
 
 * Boss Insight: native +1 for a white phantom plus the director's N-1 (`phantom_limits.md` 5).
@@ -167,7 +181,7 @@ user's decision). Gifts given in dialogue go to the player who talked (its own i
 | NPC quests | yes (now default) | C2 with BB_PARTY_PROGRESS_NPC=1 (default) |
 | Blood Moon / time of day (9800-9802) | yes (**new**) | C4: the host now re-sends its time of day to each member that joins (`StoryMemberJoined`); the guest's planner never turns its clock back |
 | Items the host picked up | yes | C3 full list on join |
-| Area gate flags 2AAx (boss cleared per area) | no | never_sync on purpose (2410-style flags block summons, event_flags.md 7) - open item |
+| Area gate flags 2AAx / 3AAx (boss cleared per area) | yes (**new**) | still never_sync in C2 (2410-style flags block summons in the host's world); the guest derives them in its OWN save from its own boss flags: `worldact::GateRules()` (from every EMEVD boss-defeat event: its flag and the 2000-3999 flags it sets; 2410 needs 12411800 and 12411700), applied at each steady world (`GateCatchup`, log "guest catch-up: area gate flags") |
 
 ## 8. Character freedom audit (H5)
 
@@ -230,7 +244,6 @@ state (not placed / not talkable yet).
 
 * Elevators: toggling state flags are shortcut_door; a guest and the host using one elevator at
   the same time can fight over the state (not tested).
-* Area gate flags 2AAx are not caught up (section 7).
 * Instanced pickup into the own save: the fixed path (no baseline) not yet re-run live; enemy
   drops: a guest's real kill (damage, not a local ForceDead) and both players' rolls not yet seen.
 * Memory Altar / covenants / chalice ritual by a guest not run live.
