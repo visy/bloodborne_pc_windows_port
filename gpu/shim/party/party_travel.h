@@ -231,6 +231,14 @@ bool ReplayTravelNow(const TravelIntent& t);
 /// death). `fn(site)` true = the send-home at `site` is dropped (nothing runs). Any thread.
 using SendHomeVetoFn = bool (*)(std::uint64_t site);
 void SetSendHomeVeto(SendHomeVetoFn fn);
+/// Guest: a hold on its own death's funnel call (PartyGhostDeath_2 0x1382663). `fn()` true = held:
+/// nothing runs now; the holder later either drops it (the host's travel brings the guest along)
+/// or runs GuestDeathRedirectNow(). Game thread.
+using GuestDeathHoldFn = bool (*)();
+void SetGuestDeathHold(GuestDeathHoldFn fn);
+/// A held guest death, carried out now (main thread): the redirect to the host's last lamp, or
+/// the stock funnel (home) when there is none.
+void GuestDeathRedirectNow();
 /// The travel hooks are installed and on (BB_PARTY_TRAVEL is not 0 and the funnel hook is in).
 bool TravelEnabled();
 /// Test fixtures (BB_PARTY_DIRECTOR_TEST place=...): warps the local player to an exact transform

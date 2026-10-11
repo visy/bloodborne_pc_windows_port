@@ -564,6 +564,7 @@ bool LampUsable(u32 lamp) {
 std::atomic<GuestRedirectFn> g_redirect_cb{nullptr};
 std::atomic<bool> g_death_redirect_on{true};
 std::atomic<SendHomeVetoFn> g_send_home_veto{nullptr};
+std::atomic<GuestDeathHoldFn> g_guest_death_hold{nullptr};
 void* g_funnel_orig = nullptr;
 void* g_block_clear3_orig = nullptr;
 void* g_lamp_warp_orig = nullptr;
@@ -891,6 +892,9 @@ __attribute__((noinline)) BB_COOP_SYSV u64 FunnelHook() {
                 CaptureHost(site, kind);
             }
         } else if (ret - Guest(0) - 5 == kGuestDiedCall) {
+            if (GuestDeathHoldFn hold = g_guest_death_hold.load(); hold && Role() == PartyRole::Guest && hold()) {
+                return 1;  // B2: held (the host's travel may bring the guest along)
+            }
             if (RedirectGuest(kGuestDiedCall, TravelKind::GuestDied)) {
                 return 1;
             }
@@ -1167,6 +1171,18 @@ bool TravelPlaceForTest(std::uint32_t map, const float pos[3], float yaw) {
     Log("test: place the player at m%02u_%02u_%02u_%02u (%.2f, %.2f, %.2f) yaw %.2f", (map >> 24) & 0xff,
         (map >> 16) & 0xff, (map >> 8) & 0xff, map & 0xff, pos[0], pos[1], pos[2], yaw);
     return Replay(t, {ReplayMethod::Transform, kTravelNone});
+}
+
+void SetGuestDeathHold(GuestDeathHoldFn fn) {
+    g_guest_death_hold = fn;
+}
+
+void GuestDeathRedirectNow() {
+    if (RedirectGuest(kGuestDiedCall, TravelKind::GuestDied)) {
+        return;
+    }
+    Log("held guest death: no redirect; the stock funnel (home)");
+    reinterpret_cast<FunnelFn>(g_funnel_orig ? g_funnel_orig : reinterpret_cast<void*>(Guest(kFunnel)))();
 }
 
 void SetSendHomeVeto(SendHomeVetoFn fn) {
