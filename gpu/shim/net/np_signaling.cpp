@@ -125,8 +125,8 @@ void resolve_pending(const std::string& peer, int attempt) {
         std::string error;
         if (!session::server_signaling_resolve(peer, &addr, &port, error)) {
             if (attempt % 15 == 0) {
-                log("np: signaling resolve %s: %s%s", peer.c_str(), error.c_str(),
-                    attempt < 90 ? "; asking again every 2 s" : "; giving up");
+                log("np: signaling resolve %s: %s%s (attempt %d)", peer.c_str(), error.c_str(),
+                    attempt < 90 ? "; asking again every 2 s" : "; giving up", attempt + 1);
             }
             if (attempt < 90) resolve_pending(peer, attempt + 1);
             return;
@@ -144,6 +144,21 @@ void resolve_pending(const std::string& peer, int attempt) {
     });
 }
 
+}  // namespace
+
+void signaling_peer_registered(const std::string& online_id) {
+    bool waiting = false;
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        for (auto& [cid, cc] : g_conn) waiting = waiting || (!cc.dead && cc.online_id == online_id && !cc.member_id);
+    }
+    if (!waiting) return;
+    log("np: %s registered with the host: resolving its pending connection again", online_id.c_str());
+    resolve_pending(online_id, 0);
+}
+
+namespace {
+
 BBNET_ABI int sig_activate(unsigned ctx, const void* npid, unsigned* conn_out) {
     BBNET_GUEST_RETURN();
     if (!conn_out) return kErrInvalidArg;
@@ -153,9 +168,16 @@ BBNET_ABI int sig_activate(unsigned ctx, const void* npid, unsigned* conn_out) {
         for (auto& [id, c] : g_conn) {
             if (c.ctx == ctx && c.online_id == peer && !c.dead) {
                 *conn_out = id;
+                const std::uint16_t before = c.member_id;
                 if (!c.member_id) {
                     session::Peer p;
                     if (session::peers_find_online(peer, &p)) c.member_id = p.member_id;
+                }
+                static unsigned reuse_logs = 0;
+                if (reuse_logs < 40) {
+                    ++reuse_logs;
+                    log("sceNpSignalingActivateConnection %s -> conn %u again (member %u%s)", peer.c_str(), id,
+                        c.member_id, before ? "" : c.member_id ? ", now known" : ", still resolving");
                 }
                 announce_locked(id, c);
                 return 0;
@@ -190,6 +212,8 @@ BBNET_ABI int sig_deactivate(unsigned ctx, unsigned conn) {
     std::lock_guard<std::mutex> lk(g_mu);
     auto it = g_conn.find(conn);
     if (it != g_conn.end() && it->second.ctx == ctx) {
+        log("sceNpSignalingDeactivateConnection conn %u (%s, member %u)", conn, it->second.online_id.c_str(),
+            it->second.member_id);
         it->second.dead = true;
         if (it->second.member_id) session::peers_set_conn(it->second.member_id, conn, 0);
     }
@@ -257,7 +281,11 @@ void signaling_reset() {
     std::lock_guard<std::mutex> lk(g_mu);
     for (auto& [id, c] : g_conn) {
         (void)id;
-        c.dead = true;
+        // A connection still resolving (a peer the game is about to summon, not a room member) is
+        // not part of the room that ended: it stays, its resolve keeps going. Live: the host's game
+        // activated one to a guest that had just left; the room's end killed it silently, the game
+        // never activated another, and the guest's later Join party was summoned in vain.
+        if (c.member_id) c.dead = true;
     }
 }
 
