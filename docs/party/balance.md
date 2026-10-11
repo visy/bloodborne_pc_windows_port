@@ -113,8 +113,9 @@ name tags (projected with the game camera above each companion in view, 1-80 m),
 their own, independent of the HUD panel: System > Party rules > "Above companions": Nothing / Name
 / Name and level ("Hunter1  Lv 37") / Name and health (default, the HP bar as before) / Name and
 deaths ("Hunter0  deaths 1, rot 1"). Local only. Bloodborne itself draws a phantom label (the
-blue "Cooperator" / name text, about 2.1 m up); our tag sits above it (2.45 m) and adds what the
-game's does not show. Ping is not offered (the Party members page shows it).
+blue "Co-operator" / name text and a thin HP bar, about 2.1 m up); our tag sits above it (2.45 m,
+live screenshot 2026-10-11) in the member's colour and adds what the game's does not show (level,
+deaths, rot; names for members the game does not label). Ping is not offered (the Party members page shows it).
 
 The HP behind the bars: data module (`chr+0x3b0 -> +0x20`) +0xf8 HP / +0xfc max, the HP struct the
 game's kill (0x18bf9a0) and per-frame update (0x1a0d7d0) use. The party HUD read +0x128 / +0x12c
