@@ -87,6 +87,7 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_PROGRESS_MIRROR` | `1`: also writes set-only flags into a summoned guest's host-world overlay | off | `gpu/shim/party/party_progress.cpp` |
 | `BB_PARTY_FLAG_DUMP` | `1`: BBPF event-flag snapshots to `<user>/party/flags_*.bbpf` (`tools/party/flag_tool.py`): a `start` dump at the first steady world (what the save held), then session boundaries and syncs | off | `gpu/shim/party/party_progress.cpp` |
 | `BB_PARTY_B2_DEATH_GRACE` | s a guest's own death in the host's world is held for a host travel (a wipe: the guest follows the host's respawn, docs/party/b2_seamless.md 6.8); 0 = no hold | 8 | `gpu/shim/party/party_b2.cpp` |
+| `BB_PARTY_B2_SOLO_RESPAWN` | `0`: a guest that dies alone (host alive) takes the old redirect (leave, bell) instead of respawning at the host's last lamp in the host's world (docs/party/b2_seamless.md 6.9) | on | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_B2_KEEP_BUFFS` | `0`: a guest's timed SpEffects lost in a B2 load are not re-applied | on | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_PROGRESS_TEST_CLEAR` | `<id>[,<id>...]`: clears these flags once in the own save at the first steady own world, before any host flag is applied (a guest save that lacks host progress; test saves only) | off | `gpu/shim/party/party_progress.cpp` |
 | `BB_PARTY_STORY_PLAYER` | Player argument of the remo call (10000 = local player, -1 = no appearance snapshot) | 10000 | `gpu/shim/party/party_story.cpp` |

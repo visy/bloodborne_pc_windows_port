@@ -441,11 +441,38 @@ Steps: host `host_warp=2412952@8,host_die@4#2`, guest `guest_die@S%m24_01` (die 
   101130) and [17] set **12414701** (the guest entered the boss room) after the host's 12414700.
   The earlier try (yaw 0.79, before 12414700 was set) did nothing.
 
+### 6.9 Runs r16-r17: a guest dying alone respawns in the host's world [R]
+
+ER-Seamless-style: a guest that dies while the host lives stays a client and respawns at the
+host's last lamp in the host's world. After the held death's grace (6.8) without a host travel,
+`SoloRespawn` (guest, `BB_PARTY_B2_SOLO_RESPAWN=0`: off) builds a lamp intent for the host's last
+lamp (ReturnPointParam row via `0x1F26B40(out, id)`, record {+4, +8} as 0x13CDF30 writes it), runs
+the B2 re-join as a dead follow (flow 1, host's records into GSM +0x1528 / +0x1538 / +0x153C, death
+load in host-world mode, own records back on arrival, no beside-the-host warp) and sends
+`{"op":"respawn"}`. The host re-sends the snapshot and its spot, and removes the dead member chr
+the way the task's own STEP_DeleteWait 0x1E50A70 does (slot release `0x15BC080`, WorldChrMan
+remove `0x19186E0`), keeping the task (K8 already keeps it on any death while hosting); on
+"arrived" the task is rewound to STEP_Create and the chr is built again from the member's
+GameData row.
+
+* r16 (without the removal): the guest respawned at the lamp in m24_01, still a client, but the
+  host kept its dead chr (`hp 1`, presence state 5) at the death spot and rewound 0 tasks.
+* r17: `host: dead member chr ... (hp 1) removed; its task is kept`, guest `respawned at the host's
+  lamp in the host's world (stage 0x18010000 pos (-124.8, -27.0, 64.3) hp 106), still a client`,
+  host `task mode 1 rewound to STEP_Create`, cooperators 0 -> 1 14 s after the death; screenshot:
+  the host sees "Co-operator Hunter1" alive 0.8 m away at the lamp. No leave, no bell.
+
+Death rules on a lone respawn (as a vanilla phantom's death, which never costs the phantom
+anything in its own world): full HP; buffs end (not restored, unlike a plain B2 load); echoes,
+Insight and consumables are kept (no bloodstain in the host's world: a phantom's echoes are not
+part of the host's world, and the guest's own world is not where it died); the host's world is not
+reset. Fallback: no snapshot within 45 s -> the B1 fallback as before (redirect, leave, bell).
+
 ## 7. Risks / open items
 
 * (Closed in 6.7 / 6.8) K10 / boss clear with a real kill; wipes (guest and host dead) and falls
-  follow the host; the guest's fog-gate entry by the in-process pad. Open: a guest that dies alone
-  (host alive) still takes the B1 redirect after the 8 s grace (leave + bell).
+  follow the host; the guest's fog-gate entry by the in-process pad. A guest that dies alone respawns in
+  the host's world (6.9).
 
 * (Closed in run 9) Guest rewind not executing in run 5. Static analysis: the update `0x1E52FE0` copies
   +0x54 to +0x50 unconditionally on entry, so `step 6 next 4` means the task update was not
