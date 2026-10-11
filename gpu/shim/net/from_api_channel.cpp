@@ -106,7 +106,7 @@ std::string ChannelBoard::handle(const std::string& api, const std::string& call
     if (api == "share") return share(caller, body);
     if (api == "search") return search(caller, body);
     if (api == "word_search") return word_search(caller, body, now);
-    if (api == "get_details_info") return details(body);
+    if (api == "get_details_info") return details(caller, body);
     if (api == "get_info") return info(body);
     if (api == "random_join") return random_join(caller, body, now);
     if (api == "add_material") return R"({"ResKind":0,"CompleteFlag":0})";
@@ -200,14 +200,10 @@ std::string ChannelBoard::share(const std::string& caller, const json::Value& bo
     return R"({"ResKind":0})";
 }
 
-std::string ChannelBoard::entry(const Channel& c, bool root) const {
+std::string ChannelBoard::entry(const Channel& c, bool root, long long share_level) const {
     std::string e = root ? "{\"ResKind\":0," : "{";
     e += "\"ChannelId\":" + jnum(static_cast<long long>(c.id));
-    // A reader's game copies Status into the channel object (+0x54) only when ShareLevel != 0
-    // (0x1e6dea2); StateSwitch (0x1aaa3d0) needs +0x54 == 1 for the joined state 5, else a
-    // summoned member's quick join ends in state 3 and is cancelled (0x1ac3ef0 -> request 7).
-    // The party shares every dungeon with its members: never 0 on the wire.
-    e += ",\"ShareLevel\":" + jnum(c.share_level ? c.share_level : 1);
+    e += ",\"ShareLevel\":" + jnum(share_level >= 0 ? share_level : c.share_level);
     e += ",\"Status\":" + jnum(c.status);
     e += ",\"FormDataVersion\":0";
     e += ",\"FormData\":" + jstr(c.form_data);
@@ -274,6 +270,7 @@ std::string ChannelBoard::search(const std::string& caller, const json::Value& b
         }
         if (c) {
             c->touched = ++clock_;
+            ritual_[caller] = {c->id, std::chrono::steady_clock::now()};
             return "{\"ResKind\":0,\"ChannelList\":[" + entry(*c, false) + "]}";
         }
     }
@@ -313,16 +310,26 @@ std::string ChannelBoard::word_search(const std::string& caller, const json::Val
     return "{\"ResKind\":" + jnum(kChannelLost) + "}";
 }
 
-std::string ChannelBoard::details(const json::Value& body) {
+std::string ChannelBoard::details(const std::string& caller, const json::Value& body) {
     const std::vector<std::uint64_t> ids = id_list(body);
     std::lock_guard<std::mutex> lk(mu_);
+    // A reader's game copies an entry's Status into its channel object (+0x54) only with a
+    // ShareLevel (0x1e6dea2); the ritual helper's StateSwitch (0x1aaa3d0) needs +0x54 == 1 for the
+    // joined state 5, else a summoned member's quick join ends in state 3 and 0x1ac3ef0 cancels it
+    // (live, run #11). The member performing the ritual of that dungeon (its fixed search within
+    // kRitualWindow) gets the stored ShareLevel (0): with 1 its ritual took the local path (run #12).
+    const auto now = std::chrono::steady_clock::now();
+    auto in_ritual = [&](std::uint64_t id) {
+        auto it = ritual_.find(caller);
+        return it != ritual_.end() && it->second.first == id && now - it->second.second < kRitualWindow;
+    };
     std::string list = "[";
     bool first = true;
     for (std::uint64_t id : ids) {
         if (const Channel* c = find_id(id)) {
             if (!first) list += ",";
             first = false;
-            list += entry(*c, false);
+            list += entry(*c, false, in_ritual(id) || c->share_level ? c->share_level : 1);
         }
     }
     return "{\"ResKind\":0,\"ChannelList\":" + list + "]}";
@@ -340,7 +347,7 @@ std::string ChannelBoard::info(const json::Value& body) {
             if (!first) list += ",";
             first = false;
             list += "{\"ChannelId\":" + jnum(static_cast<long long>(c->id)) + ",\"Status\":" + jnum(c->status) +
-                    ",\"ShareLevel\":" + jnum(c->share_level ? c->share_level : 1) + ",\"TurnoutLevel\":" + jnum(c->turnout) + "}";
+                    ",\"ShareLevel\":" + jnum(c->share_level) + ",\"TurnoutLevel\":" + jnum(c->turnout) + "}";
         }
     }
     return "{\"ResKind\":0,\"ChannelInfoList\":" + list + "]}";

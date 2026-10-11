@@ -153,7 +153,7 @@ BB_COOP_SYSV void CancelStepProbe(u64 helper, u64, u64, u64, u64, u64) {
     LogHelperStep("STEP_Exec_forCancel", helper);
 }
 
-// A summoned member's game quick-joins the host's dungeon into its slot record (0x1aa8410), then
+// A summoned member's game quick-joins the host's dungeon into its slot record (0x1aa81d0), then
 // the session load switches its event flags to load mode 1 (SetLoadMode 0x13bb590: the flag groups
 // move onto other storage, only the slot bit 9020+k is carried over). The map load (0x1928680) then
 // reads the slot record's dungeon map (+96) from that storage, finds none and loads m255 (live: the

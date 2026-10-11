@@ -34,8 +34,10 @@
 
 #include "json.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -109,14 +111,20 @@ private:
     std::string share(const std::string& caller, const json::Value& body);
     std::string search(const std::string& caller, const json::Value& body);
     std::string word_search(const std::string& caller, const json::Value& body, const std::string& now);
-    std::string details(const json::Value& body);
+    std::string details(const std::string& caller, const json::Value& body);
     std::string info(const json::Value& body);
     std::string random_join(const std::string& caller, const json::Value& body, const std::string& now);
-    std::string entry(const Channel& c, bool root) const;
+    std::string entry(const Channel& c, bool root, long long share_level = -1) const;
     Channel* find_id(std::uint64_t id);
     void drop_excess();
 
     mutable std::mutex mu_;
+
+    /// member -> (shared fixed channel it searched for its ritual, when): its ritual is in progress.
+
+    std::map<std::string, std::pair<std::uint64_t, std::chrono::steady_clock::time_point>> ritual_;
+
+    static constexpr std::chrono::seconds kRitualWindow{120};
     std::vector<Channel> channels_;
     std::vector<std::pair<std::string, std::pair<std::uint64_t, std::uint64_t>>> member_channel_;  // member -> {id, clock}
     std::uint64_t clock_ = 0;

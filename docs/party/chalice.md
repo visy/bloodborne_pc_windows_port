@@ -44,9 +44,10 @@ Code: `gpu/shim/net/from_api_channel.{h,cpp}` (the channel board), `gpu/shim/net
 
 Steps (names at 0x49955ee.., functions registered at 0x1aaa978..0x1aaae0a): 0 Init 0x1aa64a0,
 1 Wait_forRequest 0x1aa64c0, 2 Exec_forSuspend, 3 Exec_forResume, 4 Wait_forResume,
-5 ExecUpload_forResume, 6 WaitUpload_forResume, 7 Finish_forResume, 8 Exec_forSetupHolygrail
-0x1aa7c00, 9 Exec_forJoin 0x1aa7e40, 10 Exec_forRandomJoin 0x1aa7e60, 11 Wait_forRandomJoin
-0x1aa7f80, 12 Finish_forRandomJoin 0x1aa81d0, 13 Exec_forQuickJoin 0x1aa8410, 14 Exec_forCancel,
+5 ExecUpload_forResume, 6 WaitUpload_forResume, 7 Finish_forResume 0x1aa76b0, 8
+Exec_forSetupHolygrail 0x1aa79c0, 9 Exec_forJoin 0x1aa7c00, 10 Exec_forRandomJoin 0x1aa7e40, 11
+Wait_forRandomJoin 0x1aa7e60, 12 Finish_forRandomJoin 0x1aa7f80, 13 Exec_forQuickJoin 0x1aa81d0,
+14 Exec_forCancel 0x1aa8410 (the slot record reset to empty),
 15..21 PresentOffering (offer materials: ChannelAddMaterial), 22..27 ChangeShareLevel, 28
 ErrorRecovery, 29 StateSwitch 0x1aaa3d0, 30 Finish.
 

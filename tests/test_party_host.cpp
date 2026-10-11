@@ -989,7 +989,7 @@ static void test_chalice_channels() {
     CHECK(!api.channels().set_form_data(fid + 1, slot_fd));
     CHECK(api.channels().set_form_data(fid, slot_fd) && api.channels().form_data(fid) == slot_fd);
     {
-        json::Value d = post("GuestA", "/channel/get_details_info",
+        json::Value d = post("GuestB", "/channel/get_details_info",
                              R"({"ChannelIdList":[{"ChannelId":)" + std::to_string(fixed_id) + "}]}");
         CHECK(count(d, "ChannelList") == 1);
         const json::Value* e = count(d, "ChannelList") == 1 ? &d.find("ChannelList")->array[0] : nullptr;
@@ -998,6 +998,10 @@ static void test_chalice_channels() {
         // ShareLevel != 0 and Status 1: the reader's game takes Status only with a ShareLevel,
         // and a quick join needs it (else the join is cancelled).
         CHECK(e && int_of(*e, "ShareLevel", 0) != 0 && int_of(*e, "Status", 0) == 1);
+        // A member in its own ritual of that dungeon (it searched it just now) gets ShareLevel 0.
+        json::Value r = post("GuestA", "/channel/get_details_info",
+                             R"({"ChannelIdList":[{"ChannelId":)" + std::to_string(fixed_id) + "}]}");
+        CHECK(count(r, "ChannelList") == 1 && int_of(r.find("ChannelList")->array[0], "ShareLevel", -1) == 0);
     }
     const std::string fixed_up = R"({"HolyGrailTypeId":0,"FormDataVersion":0,"Status":1,"FixedOrGeneral":2,"FormData":")" +
                                  bbnet::party::b64_encode(std::string("fixed layout")) +

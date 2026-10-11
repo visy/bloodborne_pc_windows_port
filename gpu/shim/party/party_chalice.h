@@ -11,7 +11,7 @@
 //   +160..+735  9 x {u32, u32} (helper +0xf8, the layout parameters)            0x1ab2f70
 //   +736        16 bytes (helper +0x140)
 //   +992..      0x30 bytes (helper +0x158, the creator's online id serialization)
-// (writers 0x1aa7c00 SetupHolygrail, 0x1aa7f80 / 0x1aa81d0 random join, 0x1aa8410 quick join,
+// (writers 0x1aa7c00 Join, 0x1aa7f80 random join, 0x1aa81d0 quick join, 0x1aa8410 cancel,
 // 0x1aaa3d0 state switch). The ChannelId is the board's id (from_api_channel.h), so two games
 // with the same ChannelId in their current slot generate the same dungeon.
 //
