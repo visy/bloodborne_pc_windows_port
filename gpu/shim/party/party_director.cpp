@@ -155,6 +155,7 @@ struct Test {
     float st_pos[3] = {0, 0, 0}, st_yaw = 0;
     std::uint32_t st_button = 0;
     int st_phase = 0;
+    int st_retries = 0;  // stand: warps repeated while not in place
     MenuScript st_seq; // seq=...: after stand (and its button), the menu walk (test_newgame.h)
     bool st_seq_on = false;
     std::string st_last_texts;
@@ -1489,6 +1490,15 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             float at[3] = {}, r[4] = {};
             SafeRead(s.player + 0xc0, at, sizeof at);
             SafeRead(s.player + 0xd0, r, sizeof r);
+            const float dx = at[0] - t.st_pos[0], dz = at[2] - t.st_pos[2];
+            if (dx * dx + dz * dz > 2.25f && t.st_retries < 10) {
+                // Not there (a place= reload that never came, a warp the game dropped): warp again.
+                ++t.st_retries;
+                Log("test: stand: still at (%.2f, %.2f, %.2f); warping again (%d)", at[0], at[1], at[2], t.st_retries);
+                t.st_phase = 0;
+                t.st_at = now + std::chrono::milliseconds(2000);
+                return;
+            }
             if (t.st_button) {
                 runtime_pad_director_press(t.st_button);
             }
