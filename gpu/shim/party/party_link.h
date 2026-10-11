@@ -80,6 +80,7 @@ struct RosterEntry {
     bool connected = false;  // false while the host keeps a lost member's slot
     std::uint32_t map_id = 0;
     std::uint32_t ping_ms = 0;  // as measured by the host
+    std::string lost_why;       // host, on_member_left: why the connection went ("connection reset"...)
 };
 
 // Party HUD (party_hud.h): one member's health and whereabouts, as its own game reads them.

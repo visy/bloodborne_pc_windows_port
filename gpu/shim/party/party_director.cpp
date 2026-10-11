@@ -472,6 +472,7 @@ void LogTransitions(State& st, const GameSnapshot& now) {
     }
     if (now.cooperators != was.cooperators && now.cooperators >= 0 && was.cooperators >= 0) {
         Log("cooperators %d -> %d (t %.1f s)", was.cooperators, now.cooperators, Seconds(st.start, Clock::now()));
+        if (now.cooperators > was.cooperators && now.session_role == RoleHost) party::runtime_nr_prescan();
     }
     if (now.online_mode != was.online_mode) {
         Log("online mode %d -> %d", was.online_mode, now.online_mode);
@@ -1187,7 +1188,11 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         std::uint8_t no_hp = 0xff, no_die = 0xff;
         if (SafeGet(Guest(0x5556678), &gsm) && gsm) SafeGet(gsm + 0x176f, &no_hp);
         if (player && SafeGet(player + 0x18, &a18) && a18 && SafeGet(a18 + 0x30, &a30) && a30) SafeGet(a30 + 0x18, &no_die);
-        Log("test: ForceDead gates: GSM +0x176F %u, chr +0x18/+0x30/+0x18 %u (bit 0 blocks the death)", no_hp, no_die);
+        std::uint8_t f1e0[8] = {};
+        if (player) SafeRead(player + 0x1e0, f1e0, sizeof f1e0);
+        Log("test: ForceDead gates: GSM +0x176F %u, chr +0x18/+0x30/+0x18 %u (bit 0 blocks the death); chr +0x1e0: "
+            "%02x %02x %02x %02x %02x %02x %02x %02x (+0x1e1 bit 6 = EnableInvincible)", no_hp, no_die, f1e0[0], f1e0[1],
+            f1e0[2], f1e0[3], f1e0[4], f1e0[5], f1e0[6], f1e0[7]);
         auto hp_of = [] {
             std::uint64_t pl = LocalPlayer(), ins = 0, dm = 0;
             int hp = -1;
@@ -1195,8 +1200,26 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             return hp;
         };
         const int hp0 = hp_of();
-        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, 10000);
-        Log("test: die: HP %d -> %d right after ForceDead", hp0, hp_of());
+        // Lua ForceDead (0x13320C0) finds the chr by entity id (0x13C97A0) and does nothing when that
+        // finds none: entity 10000 is not always the local player (after a boss clear on a guest it
+        // was not). Then the death path 0x18BF9A0 runs on our own chr directly.
+        std::uint64_t by_id = 0;
+        if (std::uint64_t lua_on = 0; SafeGet(Guest(0x553b0c8), &lua_on) && lua_on)
+            by_id = reinterpret_cast<std::uint64_t(BB_COOP_SYSV*)(std::uint32_t, std::uint32_t, std::uint32_t)>(
+                Guest(0x13c97a0))(10000, 10000, 0);
+        if (by_id && by_id == player) {
+            reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, 10000);
+        } else if (player) {
+            std::uint8_t b3 = 0;
+            if (SafeGet(player + 0x1e3, &b3)) {
+                b3 &= 0xdf;
+                SafeWrite(player + 0x1e3, &b3, 1);
+            }
+            reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t)>(Guest(0x18bf9a0))(player);
+        }
+        Log("test: die: entity 10000 -> %#llx, local player %#llx (%s); HP %d -> %d right after",
+            static_cast<unsigned long long>(by_id), static_cast<unsigned long long>(player),
+            by_id == player ? "ForceDead" : "the death path on our chr", hp0, hp_of());
         std::thread([hp_of] {
             for (int i = 1; i <= 4; ++i) {
                 std::this_thread::sleep_for(std::chrono::seconds(2));

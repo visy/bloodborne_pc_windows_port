@@ -1051,6 +1051,7 @@ struct PartyLink::Impl {
                     log("party link: lost " + m.name + " (slot " + std::to_string(m.slot) + "): " + why +
                         "; keeping the slot " + std::to_string(cfg.slot_keep_ms / 1000) + " s");
                     RosterEntry e = entry_of(m);
+                    e.lost_why = why;
                     if (cb.on_member_left) post([this, e] { cb.on_member_left(e, true); });
                     broadcast_roster();
                 }

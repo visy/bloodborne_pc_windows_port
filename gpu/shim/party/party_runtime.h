@@ -74,6 +74,8 @@ int runtime_rejoin();
 /// Host: guest code text (one or more BBG1-..., comma / newline separated): punch towards each
 /// valid one. Returns how many were valid.
 int runtime_add_guest_code(const std::string& text);
+/// Host: finds the game transport's config copies in the background (C6 crash rejoin; a cooperator joined).
+void runtime_nr_prescan();
 RuntimeStatus runtime_status();
 // One line for the overlay / status: "party host Hunter0: hosting :47600, 2/3 (Hunter1 3 ms)".
 std::string party_status_line();
