@@ -209,3 +209,27 @@ Not done / open:
 * Three or more players apart: chrs are matched to members by the vitals' positions (works for
   any count in principle), not run live.
 * A guest's own last-lamp record is not updated by an alone travel.
+
+## 6. A lone guest's world actions in a map the host is not in (D3 interface, for guestprog)
+
+guestprog's world actions (`party_worldact`, EVENT `world_action` {v, map, set, clr, kick}; not
+merged when this was written) send a guest's local overlay changes to the host, which checks each
+id with `WorldActionAllowed(id, clear, host_map)` - "the host's area" - and sets it with
+SetEventFlag. A guest that travelled alone stands in another area, so every map flag it sets there
+would be refused. The interface split travel provides and expects:
+
+* `coop::b2::MemberApart(slot)` / `coop::b2::MemberMap(slot)` (party_b2.h): whether party slot
+  `slot` is in another area than the host, and its map (the party link's vitals, ~4 Hz).
+* Host side of world_action: `const u32 check_map = b2::MemberApart(slot) ? b2::MemberMap(slot) :
+  host_map;` and `WorldActionAllowed(id, clear, check_map)`: a flag of the map the guest stands in
+  is accepted while it is there alone; the host's own world gets it (doors, levers, shortcuts,
+  elevators stay open for everyone; the mirror and C2 carry it back).
+* Boss kills while alone (category `boss_defeated`, never synced by world_action today): allowed
+  only from an apart guest, for the area it stands in, set-only. The host then holds the boss as
+  defeated in its world (no rewards for the host; the guest got its own; D1's K10 / Insight are the
+  guest's game's). Until that lands, a lone guest's boss kill lives in its own save only (C2) and
+  the boss is alive again in the host's world.
+* Items: instanced per player (decision "World item pickups"); nothing to send.
+* Enemies: section 5 / the `dead` op (union of kills at a meet without a load); ordinary enemies
+  respawn on every load as in single-player.
+

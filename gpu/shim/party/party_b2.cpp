@@ -3484,6 +3484,17 @@ bool RespawnAloneAtOwnLamp() {
     return TravelAlone(t, AloneWhy::Death);
 }
 
+std::uint32_t MemberMap(int slot) {
+    const Where* w = WhereOf(slot);
+    return w && w->age_ms < 5000 ? w->map : 0u;
+}
+
+bool MemberApart(int slot) {
+    const std::uint32_t m = MemberMap(slot);
+    const std::uint32_t mine = LocalMap();
+    return m != 0 && m != 0xffffffffu && mine != 0xffffffffu && AreaOf(m) != AreaOf(mine);
+}
+
 std::uint32_t NearestEnemyForTest(float max_m) {
     const GameSnapshot s = ReadGameState(false);
     return g_on.load() && s.world_up && !s.loading ? NearestEnemy(s, max_m) : 0u;

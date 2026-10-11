@@ -104,6 +104,11 @@ bool WarpToLampNoLoad(std::uint32_t id, bool beside);
 /// in-world and EVENT b2 {"op":"warp","lamp":id} moves the guests of this map beside it (others,
 /// apart, travel there with one load of their own). False: not in this block.
 bool HostPartyWarpNoLoad(std::uint32_t id);
+/// Party slot `slot`'s map as its vitals report it (0 unknown) and whether it is in another area
+/// than this player (split travel). For world actions (D3): a host validates an apart guest's
+/// flags against the guest's own map (docs/party/split_travel.md 6).
+std::uint32_t MemberMap(int slot);
+bool MemberApart(int slot);
 /// Test aid: the nearest living enemy of the local block within `max_m` m (entity id; 0 none).
 std::uint32_t NearestEnemyForTest(float max_m);
 /// Host, main thread: the next own travel is alone (TravelIntent::alone): the guests do not
