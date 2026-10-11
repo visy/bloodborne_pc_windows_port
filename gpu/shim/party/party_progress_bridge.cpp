@@ -94,6 +94,13 @@ void HostSide(Bridge& b, party::PartyLink* link) {
         SessionEnded();
     }
 
+    WorldImage world = PopHostWorldChanges();  // always drained too
+    if (!world.groups.empty() && any_member) {
+        // The host-world mirror: the groups that changed (absolute bytes; guests write the bits
+        // that differ into their overlay).
+        link->post_event(party::kBroadcast, kEventWorldGroups, WorldImageToJson(world));
+        BLog("world mirror: %zu changed group(s) sent to the party", world.groups.size());
+    }
     if (!changes.empty() && any_member) {
         link->post_event(party::kBroadcast, kEventFlags, ChangesToJson(HostEpoch(), changes));
         BLog("%zu flag changes (seq %llu..%llu) sent to the party", changes.size(),
@@ -101,7 +108,8 @@ void HostSide(Bridge& b, party::PartyLink* link) {
     }
     if (!b.want_snapshot.empty()) {
         FlagSnapshot snap;
-        if (!FullSnapshot(&snap)) {
+        WorldImage image;
+        if (!FullSnapshot(&snap) || !HostWorldImage(&image)) {
             if (!b.waiting_logged) {
                 b.waiting_logged = true;
                 BLog("flag snapshot waits for the host's baseline (world not steady yet)");
@@ -110,7 +118,11 @@ void HostSide(Bridge& b, party::PartyLink* link) {
         }
         b.waiting_logged = false;
         const std::string body = SnapshotToJson(snap);
+        const std::string world_body = WorldImageToJson(image);
         for (int slot : b.want_snapshot) {
+            link->post_event(slot, kEventWorldGroups, world_body);
+            BLog("world mirror: full image (%zu non-zero groups, %zu bytes) sent to slot %d", image.groups.size(),
+                 world_body.size(), slot);
             link->post_event(slot, kEventFlagSnapshot, body);
             BLog("flag snapshot (%zu blocks, seq %llu, %zu bytes) sent to slot %d", snap.blocks.size(),
                  static_cast<unsigned long long>(snap.seq), body.size(), slot);

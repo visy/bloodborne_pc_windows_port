@@ -722,7 +722,8 @@ LinkCallbacks make_callbacks(bool host) {
                 else plog("story event refused: %s", err.c_str());
                 return;
             }
-            if (name == coop::progress::kEventFlags || name == coop::progress::kEventFlagSnapshot) {
+            if (name == coop::progress::kEventFlags || name == coop::progress::kEventFlagSnapshot ||
+                name == coop::progress::kEventWorldGroups) {
                 std::string err;  // C2: the host's flags, applied by the main-thread tick
                 if (!coop::progress::OnLinkEvent(name, body, &err)) plog("%s event: %s", name.c_str(), err.c_str());
                 return;

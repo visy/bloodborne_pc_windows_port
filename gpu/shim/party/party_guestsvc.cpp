@@ -1258,8 +1258,13 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
     {
         static bool started = false;
         static double coop_at = 0;
-        if (!started && g.test.find("hostheadstone") != std::string::npos && s.session_role == 3 &&
-            IsDreamMap(s.map_id) && s.world_up && !s.loading && s.cooperators >= 1) {
+        // "guestheadstone[;keys=...]": the same on the GUEST (a client in the host's Dream; needs
+        // the headstones allowed for guests, BB_PARTY_GUEST_LAMPS=1).
+        static const int role = g.test.find("guestheadstone") != std::string::npos ? kSessionRoleClient
+                                : g.test.find("hostheadstone") != std::string::npos ? 3
+                                                                                      : -1;
+        if (!started && role >= 0 && s.session_role == role &&
+            IsDreamMap(s.map_id) && s.world_up && !s.loading && (role != 3 || s.cooperators >= 1)) {
             if (coop_at == 0) {
                 coop_at = Now();
             } else if (Now() - coop_at >= 20.0 && FindChr(210000)) {
@@ -1274,10 +1279,10 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
                 }
                 g_lvl.stage = LevelUpScript::WaitPlaced;
                 g_lvl.at = Now();
-                Log("test: host headstone: starting (cooperators %d)", s.cooperators);
+                Log("test: %s headstone: starting (cooperators %d)", role == 3 ? "host" : "guest", s.cooperators);
             }
         }
-        if (started && s.session_role == 3) {
+        if (started && s.session_role == role) {
             LevelUpTick(s, Now());
         }
     }

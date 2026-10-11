@@ -9,6 +9,7 @@
 
 #include "coop_hooks.h"
 #include "game_state.h"
+#include "party_progress.h"
 #include "party_travel.h"
 #include "lua_events.h"
 #include "seamless_rules.h"
@@ -374,9 +375,12 @@ BB_COOP_SYSV u64 FlagApplyHook(u64 man, u64 blob) {
         reinterpret_cast<Mode>(Guest(0x13bb590))(man, 0);
         const u64 r = reinterpret_cast<Apply>(Guest(0x13beca0))(man, blob);
         Log("K11: host flag snapshot applied in load mode 0 (was 1) -> %llu", ull(r));
+        coop::progress::OnVanillaSnapshotApplied();  // the host's whole world into the new overlay
         return r;
     }
-    return reinterpret_cast<Apply>(Guest(0x13beca0))(man, blob);
+    const u64 r = reinterpret_cast<Apply>(Guest(0x13beca0))(man, blob);
+    coop::progress::OnVanillaSnapshotApplied();  // the vanilla snapshot has 12 groups: the mirror adds the rest
+    return r;
 }
 
 // K5: Lua OnMatchingCheck: a member's chr is missing (it is loading).
@@ -1275,6 +1279,7 @@ void GuestTick(const GameSnapshot& s, double now) {
                 }
             }
             RestoreZeroedOverlay();
+            coop::progress::OnVanillaSnapshotApplied();  // the host's image wins over the saved copy
             LogIntroFlags("before the host-world load");
             FunnelKeepRoom keep;
             Log("guest: host snapshot applied; loading %s in host-world mode (K7 %s)", DescribeTravel(t).c_str(),

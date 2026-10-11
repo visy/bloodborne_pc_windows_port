@@ -537,6 +537,178 @@ static void TestApplier() {
     CHECK(!own.PoolBit(9021));
 }
 
+// The host-world overlay map (SprjEventFlagMan +0x88/+0x90: key +0x20, buffer +0x28) over the
+// fake store's mode-1 overlay buffers (the visible tree's kind-2 nodes point at the same buffers).
+struct OvNode {
+    u64 left = 0, parent = 0, right = 0;
+    u8 color = 0, is_nil = 0;
+    u8 pad[6] = {};
+    u32 key = 0, pad2 = 0;
+    u64 buffer = 0;
+};
+static_assert(offsetof(OvNode, key) == 0x20 && offsetof(OvNode, buffer) == 0x28);
+
+struct FakeOverlayMap {
+    std::vector<std::unique_ptr<OvNode>> nodes;
+    std::unique_ptr<OvNode> head = std::make_unique<OvNode>();
+    void Build(FakeStore& fs) {
+        std::vector<std::pair<u32, u64>> sorted;
+        for (int key = 0; key < int(kPoolBlocks); ++key) {
+            const u32 block = BlockOfPoolKey(key);
+            if (block >= 6 && block <= 8) continue;
+            auto it = fs.overlay.find(block);
+            if (it == fs.overlay.end()) continue;
+            sorted.emplace_back(u32(key), reinterpret_cast<u64>(it->second.data()));
+        }
+        nodes.clear();
+        head = std::make_unique<OvNode>();
+        head->is_nil = 1;
+        const u64 nil = reinterpret_cast<u64>(head.get());
+        std::function<u64(int, int, u64)> build = [&](int lo, int hi, u64 parent) -> u64 {
+            if (lo > hi) return nil;
+            const int mid = (lo + hi) / 2;
+            nodes.push_back(std::make_unique<OvNode>());
+            OvNode* n = nodes.back().get();
+            n->key = sorted[mid].first;
+            n->buffer = sorted[mid].second;
+            n->parent = parent;
+            const u64 self = reinterpret_cast<u64>(n);
+            n->left = build(lo, mid - 1, self);
+            n->right = build(mid + 1, hi, self);
+            return self;
+        };
+        head->parent = build(0, int(sorted.size()) - 1, nil);
+        u64 leftmost = head->parent;
+        while (leftmost != nil && reinterpret_cast<OvNode*>(leftmost)->left != nil) {
+            leftmost = reinterpret_cast<OvNode*>(leftmost)->left;
+        }
+        head->left = leftmost;
+        std::memcpy(fs.man.data() + 0x90, &nil, 8);
+    }
+};
+
+static void TestWorldMirror() {
+    // the mirror set
+    CHECK(WorldMirrorKey(PoolKeyOfId(72410201)));   // lamp lit, T7 m24_01 zone 0
+    CHECK(WorldMirrorKey(PoolKeyOfId(12411780)));   // lamp object, T1 zone 7
+    CHECK(WorldMirrorKey(PoolKeyOfId(52410100)));   // item pickup
+    CHECK(WorldMirrorKey(PoolKeyOfId(12411000)));   // T1 zone 1 (doors)
+    CHECK(WorldMirrorKey(PoolKeyOfId(2200)));       // boss / area gates
+    CHECK(WorldMirrorKey(PoolKeyOfId(9401)));
+    CHECK(WorldMirrorKey(PoolKeyOfId(70000030)));   // T7 global
+    CHECK(!WorldMirrorKey(PoolKeyOfId(12404800)));  // boss-fight state (zone 4)
+    CHECK(!WorldMirrorKey(PoolKeyOfId(12415000)));  // enemy zones 5, 6
+    CHECK(!WorldMirrorKey(PoolKeyOfId(12416000)));
+    CHECK(!WorldMirrorKey(PoolKeyOfId(6100)) && !WorldMirrorKey(PoolKeyOfId(7600)) &&
+          !WorldMirrorKey(PoolKeyOfId(8100)));       // the own pool in mode 1
+    CHECK(!WorldMirrorKey(PoolKeyOfId(60009000)));  // C3's ledger
+    CHECK(!WorldMirrorKey(PoolKeyOfId(92410000)));  // type 9
+    CHECK(!WorldMirrorKey(PoolKeyOfId(12900100)) && !WorldMirrorKey(PoolKeyOfId(14100000)));  // chalice
+    CHECK(!WorldMirrorKey(-1) && !WorldMirrorKey(1200));
+    const GroupBytes& m2 = WorldMirrorMask(PoolKeyOfId(2000));
+    CHECK(!GetBit(m2.data(), 0) && !GetBit(m2.data(), 99) && GetBit(m2.data(), 100) && GetBit(m2.data(), 200));
+    const GroupBytes& m9 = WorldMirrorMask(PoolKeyOfId(9000));
+    CHECK(GetBit(m9.data(), 19) && !GetBit(m9.data(), 20) && !GetBit(m9.data(), 26) && GetBit(m9.data(), 27));
+    CHECK(WorldMirrorKeys().size() == 46 + 16 * 37);  // globals; 16 maps x (T1 7 zones + T5/6/7)
+    std::printf("world mirror: %zu mirror groups\n", WorldMirrorKeys().size());
+
+    // host tracker
+    FakeStore host;
+    host.Build(0);
+    HostWorldTracker ht;
+    WorldImage out;
+    host.SetPoolBit(72410201, true);
+    host.SetPoolBit(2200, true);
+    host.SetPoolBit(2006, true);      // session flag: sent (the guest's mask drops it)
+    host.SetPoolBit(9025, true);      // chalice slot: idem
+    host.SetPoolBit(12404800, true);  // not a mirror group: never sent
+    ht.Observe(host.pool.data(), &out);
+    CHECK(ht.has_baseline() && out.groups.empty());
+    WorldImage full = ht.Full(7);
+    CHECK(full.full && full.epoch == 7 && full.groups.size() == 3);
+    CHECK(full.groups.count(u32(PoolKeyOfId(72410201))) && !full.groups.count(u32(PoolKeyOfId(12404800))));
+
+    // JSON
+    WorldImage back;
+    std::string err;
+    CHECK(WorldImageFromJson(WorldImageToJson(full), &back, &err) && back == full);
+    CHECK(!WorldImageFromJson("{\"v\":1,\"epoch\":\"0x1\",\"full\":1,\"g\":[[30,\"" + std::string(250, '0') + "\"]]}",
+                              &back, &err));  // block 6: not a mirror group
+    CHECK(!WorldImageFromJson("{\"v\":1,\"epoch\":\"0x1\",\"full\":0,\"g\":[[0,\"00\"]]}", &back, &err));
+    CHECK(!WorldImageFromJson("{\"v\":1,\"epoch\":\"0x1\",\"full\":0,\"g\":[[0,\"" + std::string(250, 'x') + "\"]]}",
+                              &back, &err));
+
+    // guest overlay (mode 1)
+    FakeStore guest;
+    guest.Build(1);
+    FakeOverlayMap ovm;
+    ovm.Build(guest);
+    const FlagStore gs = guest.view();
+    CHECK(gs.Valid() && gs.LoadMode() == 1);
+    std::map<u32, u64> ov;
+    CHECK(gs.OverlayGroups(&ov) && ov.size() == kPoolBlocks - 3);
+    const u64 id1 = gs.OverlayIdentity();
+    CHECK(id1 != 0);
+    guest.SetOverlayBit(9020, true);     // the host's chalice slot bit, set by SetLoadMode(1)
+    guest.SetOverlayBit(2005, true);     // the guest's session flag
+    guest.SetOverlayBit(72410050, true); // stale: the full copy makes it the host's (0)
+    guest.SetPoolBit(72410201, false);   // own save untouched throughout
+    GuestWorldMirror gm;
+    GuestWorldMirror::Result r;
+    CHECK(!gm.Apply(ov, guest.ops(), true, &r));  // no image yet
+    gm.Receive(back.full ? full : full);
+    CHECK(gm.has_image());
+    CHECK(gm.Apply(ov, guest.ops(), true, &r));
+    bool v = false;
+    CHECK(gs.ReadVisible(72410201, &v) && v);
+    CHECK(gs.ReadVisible(2200, &v) && v);
+    CHECK(gs.ReadVisible(9020, &v) && v);     // kept
+    CHECK(gs.ReadVisible(9025, &v) && !v);    // never written
+    CHECK(gs.ReadVisible(2005, &v) && v);     // kept
+    CHECK(gs.ReadVisible(2006, &v) && !v);    // never written
+    CHECK(gs.ReadVisible(72410050, &v) && !v);
+    CHECK(!guest.PoolBit(72410201) && !guest.PoolBit(2200));
+    CHECK(r.groups == 2 && r.changed.size() == 2);  // T7 m24_01 zone 0 and block 2 (the 9xxx group: only masked bits)
+
+    // live: only the bits the host changed; the guest's own runtime bits stay
+    guest.SetOverlayBit(72410060, true);
+    host.SetPoolBit(72410202, true);
+    host.SetPoolBit(72410201, false);
+    host.SetPoolBit(52410100, true);
+    out = WorldImage{};
+    ht.Observe(host.pool.data(), &out);
+    CHECK(!out.full && out.groups.size() == 2);
+    CHECK(WorldImageFromJson(WorldImageToJson(out), &back, &err) && back == out);
+    gm.Receive(back);
+    CHECK(gm.Dirty() == 2);
+    CHECK(gm.Apply(ov, guest.ops(), false, &r) && r.groups == 2 && r.bits == 3);
+    CHECK(gs.ReadVisible(72410202, &v) && v);
+    CHECK(gs.ReadVisible(72410201, &v) && !v);
+    CHECK(gs.ReadVisible(52410100, &v) && v);
+    CHECK(gs.ReadVisible(72410060, &v) && v);  // kept
+    CHECK(gm.Dirty() == 0 && gm.Apply(ov, guest.ops(), false, &r) && r.groups == 0);
+
+    // a rebuilt overlay (new buffers, zeroed): new identity, the full copy restores the host's world
+    guest.Build(1);
+    ovm.Build(guest);
+    const FlagStore gs2 = guest.view();
+    CHECK(gs2.OverlayIdentity() != id1);
+    CHECK(gs2.OverlayGroups(&ov));
+    CHECK(gm.Apply(ov, guest.ops(), true, &r) && r.groups == 3);
+    CHECK(gs2.ReadVisible(72410202, &v) && v);
+    CHECK(gs2.ReadVisible(52410100, &v) && v);
+    CHECK(gs2.ReadVisible(2200, &v) && v);
+    // a full image replaces: groups absent from it become zero
+    WorldImage only_lamp;
+    only_lamp.full = true;
+    only_lamp.groups[u32(PoolKeyOfId(72410202))] = gm.Group(PoolKeyOfId(72410202));
+    gm.Receive(only_lamp);
+    CHECK(gm.Apply(ov, guest.ops(), false, &r));
+    CHECK(gs2.ReadVisible(2200, &v) && !v);
+    CHECK(gs2.ReadVisible(52410100, &v) && !v);
+    CHECK(gs2.ReadVisible(72410202, &v) && v);
+}
+
 static void TestBbpf(const char* source_dir) {
     FakeStore f;
     f.Build(1);
@@ -619,6 +791,7 @@ int main(int argc, char** argv) {
     TestDiffAndDedupe();
     TestJson();
     TestApplier();
+    TestWorldMirror();
     TestBbpf(source_dir);
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
