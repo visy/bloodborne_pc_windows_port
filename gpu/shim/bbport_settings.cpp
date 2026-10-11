@@ -68,6 +68,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.model_lod = std::clamp(i, -2, 2);
     } else if (key == "live_resolution") {
         v.live_resolution = value == "auto" ? -1 : std::clamp(i, 0, 1);
+    } else if (key == "language") {
+        v.language = value == "ru" ? LangRu : LangEn;
     } else if (key == "mk_enabled") {
         v.mk_enabled = i != 0;
     } else if (key == "mk_sens_x") {
@@ -137,6 +139,7 @@ void Load() {
         {"BB_UPSCALE_PRESET", "preset"},            {"BB_OBJECT_MOTION", "object_motion"},
         {"BB_HUD", "show_hud"},                     {"BB_HUD_QUADRANT", "hud_quadrant"},
         {"BB_HUD_OPACITY", "hud_opacity"},          {"BB_HUD_SCALE", "hud_scale"},
+        {"BB_LANG", "language"},
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env)) {
@@ -239,6 +242,7 @@ void Save() {
     // Read by run.sh at start.
     std::fprintf(file, "live_resolution=%s\n", v.live_resolution < 0 ? "auto"
                                                   : v.live_resolution ? "1" : "0");
+    std::fprintf(file, "language=%s\n", v.language == LangRu ? "ru" : "en");
     std::fclose(file);
 }
 
