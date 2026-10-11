@@ -289,7 +289,7 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
                     const float d2 = dx * dx + dy * dy + dz * dz;
                     if (d2 < best) best = d2, bs = vit[v].slot;
                 }
-                if (bs >= 0) {
+                if (bs >= 0 && best > 8.0f * 8.0f) {
                     next_stale = now + std::chrono::seconds(60);
                     Log("stale remote chr? one at (%.1f %.1f %.1f) HP %d/%d is %.1f m from the nearest member report "
                         "(slot %d); no tag for it",
