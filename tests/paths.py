@@ -21,6 +21,9 @@ def test_exe(name):
     return ROOT / 'out' / (name + '.exe' if os.name == 'nt' else name)
 
 
+test_exe.__test__ = False  # a helper the test modules import, not a pytest test
+
+
 def build_hint(name):
     """The skip reason when out/<name> has not been built."""
     if os.name == 'nt':

@@ -107,6 +107,8 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_NET_TRACE` | `1`: logs every datagram (default: the first 400) | capped | `gpu/shim/net/net_socket.cpp` |
 | `BB_NET_SIM` | Network simulator: `lat=80,jitter=20,loss=2,dup=0.5,reorder=1,seed=7` or a preset `lan`, `wifi`, `dsl`, `mobile`, `bad` | off | `gpu/shim/net/netsim.h`, `gpu/shim/net/bbnet_glue.cpp` |
 | `BB_PARTY_STATUS_LOG` | `1`: a `Party: status ...` line every 10 s and on each change | off | `gpu/shim/party/party_status_bridge.cpp` |
+| `BB_PARTY_HUD_LOG` | `1`: a `Party HUD: ...` line every 5 s (own / remote PlayerIns reads, camera, the board) | off | `gpu/shim/party/party_hud_game.cpp` |
+| `BB_PARTY_HUD_TAGS` | `0`: no name tags above companions (the panel stays) | on | `gpu/shim/bbport_overlay.cpp` |
 | `BB_PARTY_STATUS_TEST` | `host:kick:Hunter1@40,guest:leave@60,rejoin@80`: presses the overlay Party tab's buttons on a timer | off | `gpu/shim/party/party_status_bridge.cpp` |
 | `BB_PARTY_TEST_NPC` | `<entity>[:<session type>][,...]` or `auto`: single-instance NPC-summon fixture | off | `gpu/shim/party/party_npc_test.cpp` |
 | `BB_PARTY_TEST_NPC_MODE` | `summon`, `cap`, `filter`, `log` | `summon` | `gpu/shim/party/party_npc_test.cpp` |

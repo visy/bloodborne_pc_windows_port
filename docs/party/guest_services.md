@@ -227,9 +227,25 @@ whoever uses a lamp or headstone, **the whole party travels**, led by the host (
   every time (fault in a library call under the menu code 0x1BEA2D4; the warp list is built from
   lamp flags the guest's overlay does not have). Guests now keep the headstones' client wait; the
   host's headstones work in a party (IsMultiplayerInProgress lift) and the party follows the host.
-* Open: `+0x4B` (another character targeting the lamp) and the lamp's chr-type range branch for a
-  guest standing at a lamp; the host's own lamp with guests present (the `+0x49` patch) was not
-  pressed by hand in a live run.
+* **Host headstone with a guest present [R]** (`hostheadstone;keys=cross,cross,left,cross,cross`, host
+  side): the headstone's menu opened for the host (the IsMultiplayerInProgress lift), the host
+  chose a lamp and warped (`host travel ... lamp 2412950`, one TRAVEL); the guest replayed it (B2:
+  host snapshot applied, `replay now ... lamp 2412950`, host-world load).
+* **One TRAVEL per warp [fixed]**: the host captured a guest-requested lamp warp twice, 26 ms apart
+  (two TRAVEL, two "rested"). `CaptureHost` now drops the same warp (kind, lamp, map, respawn
+  record) seen again within 1 s; the next runs logged one TRAVEL.
+* **Guest button press at a world lamp [R, not working yet]**: after following the host to Central
+  Yharnam, the guest's lamp object (entity 2411951, test probe on the lamp update 0x12F5C40) has
+  all four "unavailable" bytes 0 (+0x49 patched) but **type (+0x28) 0** and action row 90000,
+  where the host's lit lamp has type 1..4 and row 90000 + type; Cross does nothing. The lamp's
+  state on the guest comes from the guest's flag overlay, and the B2 overlay guard reported 890 of
+  900 overlay groups all-zero after the host-world snapshot: the lamp's lit state is not in the
+  guest's overlay. Fix direction: carry the host's lamp flags (the 2009[5] lamp flags, 1AAB78x0,
+  of the current map) into the guest's overlay (progress mirror), then re-test the press. The
+  request path behind it works (lamp flag test above).
+* **Guest headstones**: still blocked (same missing-flag cause; the warp list then indexes past its
+  end). Not quick; kept host-only.
+* Open: `+0x4B` and the lamp's chr-type range branch for a guest.
 
 ## 4. Safety
 
@@ -271,7 +287,8 @@ into the host's Dream), guest log `Party guest services:` [R]:
   save holds echoes 19640, the host's save is unchanged. Screenshots:
   `agents/guestsvc/evidence/workbench_upgrade`.
 * **Storage (t210693) [R]**: the "Storage" menu opened on the guest (prompt text 70000000 at
-  1.0 m) with the deposit quantity dialog (`agents/guestsvc/evidence/storage`).
+  1.0 m); Cross on Blood Vial, Cross on the quantity dialog: carried Blood Vials 15 -> 14 (one
+  deposited) (`agents/guestsvc/evidence/storage`).
 * **Mirror (t210696)**: not checked: the fixture did not find a character for t210696 in the talk
   table, so the run never placed the guest.
 * **Doll level up [R]**: with 2.4-2.6 in place (`echoes=20000;warp=doll;levelup`): talk, her

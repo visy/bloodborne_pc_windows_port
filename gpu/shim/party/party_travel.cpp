@@ -661,6 +661,21 @@ void CaptureHost(u64 site, TravelKind kind) {
         t.lamp_id = g_lamp_key.exchange(kTravelNone);
     }
     {
+        // One warp, one TRAVEL: the game can reach the funnel twice for the same lamp warp within a
+        // few frames (live: a guest's lamp request run by the host captured twice, 26 ms apart, two
+        // TRAVEL and two "rested" events). Same kind, lamp, map and respawn within 1 s = the same warp.
+        static TravelIntent last{};
+        static double last_at = -1e9;
+        const double now = Now();
+        if (now - last_at < 1.0 && last.kind == t.kind && last.lamp_id == t.lamp_id && last.packed_map == t.packed_map &&
+            last.respawn_record == t.respawn_record) {
+            Log("host travel at +0x%llx: the same warp again within 1 s; not sent twice", ull(site));
+            return;
+        }
+        last = t;
+        last_at = now;
+    }
+    {
         std::lock_guard<std::mutex> lk(g_host_mu);
         g_host_queue.Push(t);
     }
