@@ -469,6 +469,8 @@ bool trace_now(std::atomic<int>& count) {
 
 int net_alloc() { return g_net_next++; }
 
+std::atomic<PacketTraceFn> g_packet_trace{nullptr};
+
 // bbport: the host answers a peer's STUN Binding Request (and its relay HELLO).
 void answer_stun(P2pPort& port, const std::uint8_t* buf, std::size_t n, const sockaddr_in& sa) {
     std::uint8_t out[net::stun::kMaxResponse];
@@ -625,6 +627,8 @@ void p2p_reader(std::shared_ptr<P2pPort> port) {
         dg.addr = sa.sin_addr.s_addr;
         dg.port = sa.sin_port;
         dg.vport = src;
+        if (PacketTraceFn tf = g_packet_trace.load(std::memory_order_relaxed))
+            tf(false, src, dst, dg.data.data(), dg.data.size());
         if (trace_now(logs)) {
             char ip[32];
             write_ipv4(ip, sizeof(ip), sa.sin_addr.s_addr);
@@ -861,6 +865,8 @@ int dgram_send(int s, const void* buf, std::uint64_t len, int flags, const SceSo
     } else {
         n = raw_sendto(fd, body, hdr + static_cast<std::size_t>(len), &sa);
     }
+    if (PacketTraceFn tf = g_packet_trace.load(std::memory_order_relaxed); tf && sock.p2p && buf)
+        tf(true, sock.vport, dst_vport, static_cast<const unsigned char*>(buf), static_cast<std::size_t>(len));
     static std::atomic<int> logs{0};
     if (sock.p2p && trace_now(logs)) {
         char ip[32];
@@ -1963,5 +1969,7 @@ std::string p2p_status() {
     const std::string pp = p2p_paths_status();
     return pp.empty() ? std::string(buf) : std::string(buf) + "; peers " + pp;
 }
+
+void set_packet_trace(PacketTraceFn fn) { g_packet_trace.store(fn); }
 
 }  // namespace bbnet

@@ -15,6 +15,11 @@
 #include "game_state.h"
 #include "party_runtime.h"
 #include "seamless_rules.h"
+#include "../net/bbnet_internal.h"
+#ifdef _WIN32
+extern "C" __declspec(dllimport) unsigned short __stdcall RtlCaptureStackBackTrace(unsigned long skip, unsigned long n,
+                                                                                    void** frames, unsigned long* hash);
+#endif
 
 #include <atomic>
 #include <chrono>
@@ -353,6 +358,36 @@ BB_COOP_SYSV u64 SosFilterProbe(u64 sel, u64 req, u64 flag) {
     return r;
 }
 
+// Diagnostic (with the probe): vport-40 session packets (the summon handshake): direction, size,
+// the first 32 bytes, and on a send the game's return addresses (our offsets).
+std::atomic<int> g_pkt_logs{0};
+void PacketTrace(bool send, unsigned src, unsigned dst, const unsigned char* d, std::size_t n) {
+    if (src != 40 && dst != 40) return;
+    if (g_pkt_logs.fetch_add(1, std::memory_order_relaxed) >= 3000) return;
+    char hex[3 * 32 + 1] = {};
+    for (std::size_t i = 0; i < n && i < 32; ++i) std::snprintf(hex + 3 * i, 4, "%02x ", d[i]);
+    std::string stack;
+#ifdef _WIN32
+    if (send) {
+        void* frames[40] = {};
+        const unsigned short got = RtlCaptureStackBackTrace(0, 40, frames, nullptr);
+        const u64 base = reinterpret_cast<u64>(Image()), size = ImageSize();
+        int kept = 0;
+        for (unsigned short i = 0; i < got && kept < 12; ++i) {
+            const u64 a = reinterpret_cast<u64>(frames[i]);
+            if (base && a >= base && a < base + size) {
+                char f[24];
+                std::snprintf(f, sizeof f, " +%llx", ull(a - base));
+                stack += f;
+                ++kept;
+            }
+        }
+    }
+#endif
+    Log("pkt %s %u->%u %zu B: %s%s%s", send ? "send" : "recv", src, dst, n, hex, stack.empty() ? "" : "| stack",
+        stack.c_str());
+}
+
 // H2
 BB_COOP_SYSV i32 BossCooperatorCount(u64 slots) {
     const i32 n = reinterpret_cast<CountFn>(Guest(kCooperatorCount))(slots);
@@ -526,6 +561,7 @@ void FourpInit() {
                             "4p SOS filter probe (0x1874710)")) {
             g_sos_original = reinterpret_cast<SosFilterFn>(sos_original);
         }
+        bbnet::set_packet_trace(&PacketTrace);
     }
     if (g_cfg.scaling) {
         g_h2 = HookCallSite(kBossCountCall, kCooperatorCount, reinterpret_cast<const void*>(&BossCooperatorCount),
