@@ -325,7 +325,10 @@ std::string ChannelBoard::word_search(const std::string& caller, const json::Val
             c.last_play = now;
             log("from api: %s found chalice dungeon %llu by its glyph %s", caller.c_str(),
                 static_cast<unsigned long long>(c.id), word.c_str());
-            return entry(c, true);
+            // As in details(): a ShareLevel makes the reader's game take the Status, which the join
+            // needs (+0x54 == 1). With the stored 0 of a shared fixed dungeon made by a member's
+            // ritual search, "Join the selected Chalice Dungeon?" -> YES did nothing (run c19).
+            return entry(c, true, c.share_level ? c.share_level : 1);
         }
     }
     log("from api: %s: no chalice dungeon with the glyph '%s'", caller.c_str(), word.c_str());
