@@ -1592,12 +1592,7 @@ void RemoteVisibleTick(double now) {
             continue;
         }
         const u8 v = Field<u8>(cd, 0x1bc);
-        if (v & 2) {
-            const u8 w = u8(v & ~2u);
-            SafeWrite(cd + 0x1bc, &w, 1);
-            Log("remote chr %#llx (mode %d, handle %x): leave flag +0x1BC %#x set in its Update step -> %#x (drawn again); "
-                "enterleave%s", ull(c), t.mode, Field<u32>(c, 8), unsigned(v), unsigned(w), DescribeEnterLeave().c_str());
-        }
+        (void)v;  // live vis1: the game sets +0x1BC bit 1 on visible remote chrs too: not the draw switch
     }
 }
 
@@ -3273,6 +3268,33 @@ void Tick(const GameSnapshot& s) {
             remo ? int(Field<u8>(remo, 0x168) & 1) : -1, int(g_rejoin.load()), s.cooperators, DescribeTasks().c_str(),
             DescribePresence(true).c_str(), DescribePresentation().c_str());
         Log("status: where%s; apart %d; enterleave%s", DescribeWhere().c_str(), g_apart.load(), DescribeEnterLeave().c_str());
+        // Render-state probe (the invisible remote chr: "the health bar but no model"): raw bytes of
+        // each remote chr and of its +0x3B0 modules' first entries, to diff a visible against an
+        // invisible one (docs/party/split_travel.md 7).
+        for (const TaskInfo& t : Tasks(false)) {
+            const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+            if (!c) {
+                continue;
+            }
+            auto hex = [](u64 base, u64 n) {
+                std::string h;
+                h.reserve(n * 2);
+                for (u64 o = 0; o < n; o += 4) {
+                    char b[12];
+                    std::snprintf(b, sizeof b, "%08x", Field<u32>(base, o));
+                    h += b;
+                }
+                return h;
+            };
+            const u64 mods = Field<u64>(c, 0x3b0);
+            Log("render probe: chr %#llx mode %d chr[0..0x600] %s", ull(c), t.mode, hex(c, 0x600).c_str());
+            for (u64 m = 0; m < 0x60; m += 8) {
+                const u64 mod = Field<u64>(mods, m);
+                if (mod) {
+                    Log("render probe: chr %#llx module +0x%llx %#llx [0..0x200] %s", ull(c), ull(m), ull(mod), hex(mod, 0x200).c_str());
+                }
+            }
+        }
     }
     {
         static double last_hit_log = 0;
