@@ -12,12 +12,16 @@
  * Mrsuss60/bloodborne_pc_windows_port) replaces the layout above while it is on:
  *   mouse: motion right stick (camera; mk_sens_x/y, mk_invert_x/y, mk_deadzone, mk_smoothing),
  *   left button R1, Shift+left R2, right button L2, Shift+right L1, middle R3 (lock-on),
- *   side buttons X1 L1, X2 R2;
+ *   side buttons X1 L1, X2 R2, wheel up / down the d-pad's up / down (quick items, mk_wheel;
+ *   one short press per notch; upstream 0.51 #52);
  *   keys: WASD left stick, IJKL right stick, Space Circle (dodge), E/Enter Cross, R Square,
  *   X Triangle, Q R3 (lock-on), C/Z L3, Esc/F1 Options, Tab/G left touchpad, Backspace right
  *   touchpad, arrow keys and 1 2 3 4 d-pad (up down left right).
  * bbport.ini mkkey.<input>= lines rebind that layout as key.<input>= lines do the classic one;
- * pad.<input>= lines apply in both. The mouse is captured (relative mode) only while the menu and
+ * pad.<input>= lines apply in both. Mouse buttons and the wheel are keys there too ("Mouse Left",
+ * "Mouse Right", "Mouse Middle", "Mouse X1", "Mouse X2", "Wheel Up", "Wheel Down"; upstream 0.51
+ * #52): a mouse button named in an mkkey line leaves the built-in mouse scheme above. The mouse is
+ * read only in mouse & keyboard mode. The mouse is captured (relative mode) only while the menu and
  * the name box are closed.
  *
  * Stick neutral: SDL exposes no way to read a pad's calibration and some clones report a
@@ -308,11 +312,31 @@ static const uint32_t input_buttons[IN_COUNT]={
 };
 #define MAX_BIND 4
 enum { PAD_LEFT_TRIGGER=SDL_GAMEPAD_BUTTON_COUNT, PAD_RIGHT_TRIGGER }; /* triggers as buttons */
-typedef struct { int key_count, pad_count; SDL_Scancode keys[MAX_BIND]; int pad[MAX_BIND]; } Binding;
+/* Mouse buttons and the wheel as keys (upstream 0.51 #52): codes past SDL's scancodes. */
+enum { MOUSE_KEY=SDL_SCANCODE_COUNT, MOUSE_WHEEL_UP=MOUSE_KEY+SDL_BUTTON_X2+1, MOUSE_WHEEL_DOWN };
+static const struct { const char *name; int code; } mouse_keys[]={
+    {"Mouse Left",MOUSE_KEY+SDL_BUTTON_LEFT}, {"Mouse Right",MOUSE_KEY+SDL_BUTTON_RIGHT},
+    {"Mouse Middle",MOUSE_KEY+SDL_BUTTON_MIDDLE}, {"Mouse X1",MOUSE_KEY+SDL_BUTTON_X1},
+    {"Mouse X2",MOUSE_KEY+SDL_BUTTON_X2}, {"Wheel Up",MOUSE_WHEEL_UP}, {"Wheel Down",MOUSE_WHEEL_DOWN},
+};
+typedef struct { int key_count, pad_count; int keys[MAX_BIND]; int pad[MAX_BIND]; } Binding;
 static Binding bindings[IN_COUNT];
 static int bindings_mode=-1; /* the layout loaded: 0 classic, 1 mouse & keyboard, -1 none yet */
+/* BbMouseState's button bits (0 left, 1 right, 2 middle, 3 X1, 4 X2) of an SDL button. */
+static uint32_t mouse_bit(int sdl_button) {
+    switch (sdl_button) {
+    case SDL_BUTTON_LEFT: return 1u;
+    case SDL_BUTTON_RIGHT: return 2u;
+    case SDL_BUTTON_MIDDLE: return 4u;
+    case SDL_BUTTON_X1: return 8u;
+    case SDL_BUTTON_X2: return 16u;
+    default: return 0;
+    }
+}
+/* The mouse buttons some binding names: they leave the built-in mouse scheme (sample_mouse). */
+static uint32_t mouse_bound_mask;
 
-typedef struct { int input; SDL_Scancode key; } KeyDefault;
+typedef struct { int input; int key; } KeyDefault;
 /* Mouse & keyboard mode's keys (Mrsuss60/bloodborne_pc_windows_port's scheme); the attacks and
  * L1/L2/R2 are on the mouse (sample_mouse). */
 static const KeyDefault mk_keys[]={
@@ -326,6 +350,7 @@ static const KeyDefault mk_keys[]={
     {IN_MOVE_UP,SDL_SCANCODE_W}, {IN_MOVE_DOWN,SDL_SCANCODE_S}, {IN_MOVE_LEFT,SDL_SCANCODE_A},
     {IN_MOVE_RIGHT,SDL_SCANCODE_D}, {IN_LOOK_UP,SDL_SCANCODE_I}, {IN_LOOK_DOWN,SDL_SCANCODE_K},
     {IN_LOOK_LEFT,SDL_SCANCODE_J}, {IN_LOOK_RIGHT,SDL_SCANCODE_L},
+    {IN_UP,MOUSE_WHEEL_UP}, {IN_DOWN,MOUSE_WHEEL_DOWN}, /* quick items (mk_wheel) */
 };
 
 static void bind_defaults(int mk) {
@@ -368,6 +393,12 @@ static int pad_button_from_name(const char *name) {
     const SDL_GamepadButton b=SDL_GetGamepadButtonFromString(name);
     return b==SDL_GAMEPAD_BUTTON_INVALID ? -1 : (int)b;
 }
+static int key_from_name(const char *name) {
+    for (size_t i=0;i<sizeof(mouse_keys)/sizeof(*mouse_keys);++i)
+        if (!SDL_strcasecmp(name,mouse_keys[i].name)) return mouse_keys[i].code;
+    const SDL_Scancode s=SDL_GetScancodeFromName(name);
+    return s==SDL_SCANCODE_UNKNOWN ? -1 : (int)s;
+}
 /* key.<input>= (classic layout) / mkkey.<input>= (mouse & keyboard mode) / pad.<input>= lines of
  * the settings file. */
 static void load_bindings(int mk) {
@@ -394,8 +425,8 @@ static void load_bindings(int mk) {
             for (char *end=name+strlen(name); end>name && end[-1]==' ';) *--end=0;
             if (!*name) continue;
             if (keyboard) {
-                const SDL_Scancode s=SDL_GetScancodeFromName(name);
-                if (s==SDL_SCANCODE_UNKNOWN) printf("Runtime: controls: unknown key \"%s\" for %s\n",name,input_name);
+                const int s=key_from_name(name);
+                if (s<0) printf("Runtime: controls: unknown key \"%s\" for %s\n",name,input_name);
                 else if (b->key_count<MAX_BIND) b->keys[b->key_count++]=s;
             } else {
                 const int button=pad_button_from_name(name);
@@ -406,8 +437,40 @@ static void load_bindings(int mk) {
     }
     fclose(f);
 }
+static void note_mouse_bindings(void) {
+    mouse_bound_mask=0;
+    for (int i=0;i<IN_COUNT;++i)
+        for (int j=0;j<bindings[i].key_count;++j) {
+            const int code=bindings[i].keys[j];
+            if (code>MOUSE_KEY && code<=MOUSE_KEY+SDL_BUTTON_X2) mouse_bound_mask|=mouse_bit(code-MOUSE_KEY);
+        }
+}
+/* The mouse in mouse & keyboard mode: buttons held, and the wheel as short presses (one per notch,
+ * each held and then released for 60 ms so the game sees it; upstream 0.51 mouse_wheel_step). */
+static uint32_t mouse_held;
+static int wheel_pending[2], wheel_phase[2]; /* [up, down]; phase 0 idle, 1 pressed, 2 released */
+static uint64_t wheel_until[2];
+static void mouse_wheel_step(uint64_t now, int up, int down) {
+    wheel_pending[0]+=up; wheel_pending[1]+=down;
+    for (int i=0;i<2;++i) {
+        if (wheel_pending[i]>8) wheel_pending[i]=8;
+        if (wheel_phase[i] && now<wheel_until[i]) continue;
+        if (wheel_phase[i]==1) { wheel_phase[i]=2; wheel_until[i]=now+60000; }
+        else if (wheel_pending[i]>0) { --wheel_pending[i]; wheel_phase[i]=1; wheel_until[i]=now+60000; }
+        else wheel_phase[i]=0;
+    }
+}
+static void mouse_wheel_reset(void) { wheel_pending[0]=wheel_pending[1]=wheel_phase[0]=wheel_phase[1]=0; }
+static int mouse_key_down(int code) {
+    if (code==MOUSE_WHEEL_UP) return wheel_phase[0]==1;
+    if (code==MOUSE_WHEEL_DOWN) return wheel_phase[1]==1;
+    return (mouse_held & mouse_bit(code-MOUSE_KEY))!=0;
+}
 static int key_down(const bool *k, int input) {
-    for (int i=0;i<bindings[input].key_count;++i) if (k[bindings[input].keys[i]]) return 1;
+    for (int i=0;i<bindings[input].key_count;++i) {
+        const int code=bindings[input].keys[i];
+        if (code>=MOUSE_KEY ? mouse_key_down(code) : k && k[code]) return 1;
+    }
     return 0;
 }
 /* The bound gamepad buttons' state; triggers as their analog value. */
@@ -470,13 +533,36 @@ static void sample_mouse(PadData *d, const BbMouseState *m, int consumed, float 
         d->right_y=(uint8_t)(128+(int)(oy>=0.0f ? oy+0.5f : oy-0.5f));
     }
     const int shift=k && (k[SDL_SCANCODE_LSHIFT] || k[SDL_SCANCODE_RSHIFT]);
-    if (m->buttons & 1u) d->buttons|=shift ? BTN_R2 : BTN_R1;
-    if (m->buttons & 2u) d->buttons|=shift ? BTN_L1 : BTN_L2;
-    if (m->buttons & 4u) d->buttons|=BTN_R3;
-    if (m->buttons & 8u) d->buttons|=BTN_L1;
-    if (m->buttons & 16u) d->buttons|=BTN_R2;
+    const uint32_t b=m->buttons & ~mouse_bound_mask; /* the others act through their bindings */
+    if (b & 1u) d->buttons|=shift ? BTN_R2 : BTN_R1;
+    if (b & 2u) d->buttons|=shift ? BTN_L1 : BTN_L2;
+    if (b & 4u) d->buttons|=BTN_R3;
+    if (b & 8u) d->buttons|=BTN_L1;
+    if (b & 16u) d->buttons|=BTN_R2;
     if (d->buttons & BTN_L2) d->l2=255;
     if (d->buttons & BTN_R2) d->r2=255;
+    /* BB_MOUSE_TRACE=1 (live checks): the look stick and buttons at most once a second while used. */
+    static int trace=-1; static uint64_t traced;
+    if (trace<0) { const char *v=getenv("BB_MOUSE_TRACE"); trace=v && v[0]=='1'; }
+    if (trace && (ox!=0.0f || oy!=0.0f || m->buttons || m->wheel_up || m->wheel_down) &&
+        (now_us()-traced>=1000000 || m->wheel_up || m->wheel_down)) {
+        traced=now_us();
+        printf("Runtime: mouse look: right stick %u,%u buttons 0x%x (pad 0x%x) wheel %d/%d\n",d->right_x,d->right_y,
+               m->buttons,d->buttons,m->wheel_up,m->wheel_down);
+    }
+}
+
+/* BB_PAD_FILE mouse tokens (test aid, mouse & keyboard mode only; no OS input, no focus): mouse=DX,DY
+ * moves the mouse DX,DY pixels a second while listed, mouse_left / mouse_right / mouse_middle /
+ * mouse_x1 / mouse_x2 hold a button, wheel_up / wheel_down turn the wheel one notch each time the
+ * file changes. They reach the game through the same path as the real mouse (sample_mouse). */
+static struct { float rate_x, rate_y; uint32_t buttons; int wheel_up, wheel_down; } mouse_inject;
+static void mouse_test_input(BbMouseState *m, int consume, float dt) {
+    m->buttons|=mouse_inject.buttons;
+    if (!consume) return;
+    if (dt>0.0f && dt<0.1f) { m->dx+=mouse_inject.rate_x*dt; m->dy+=mouse_inject.rate_y*dt; }
+    m->wheel_up+=mouse_inject.wheel_up; m->wheel_down+=mouse_inject.wheel_down;
+    mouse_inject.wheel_up=mouse_inject.wheel_down=0;
 }
 
 static void sample_host(PadData *d) {
@@ -497,11 +583,18 @@ static void sample_host(PadData *d) {
     else if (consume) look_last=now;
     if (bindings_mode!=mk) {
         load_bindings(mk);
+        note_mouse_bindings();
         if (bindings_mode>=0) printf("Runtime: controls: %s layout\n",mk ? "mouse & keyboard" : "classic keyboard");
         bindings_mode=mk;
     }
-    if (bbgpu_overlay_captures_input() || bbgpu_text_input_is_active()) { look_x=look_y=0.0f; return; } /* settings menu open or typing: neutral input */
+    if (bbgpu_overlay_captures_input() || bbgpu_text_input_is_active()) { /* settings menu open or typing: neutral input */
+        look_x=look_y=0.0f; mouse_held=0; mouse_wheel_reset(); return;
+    }
     const bool *k=SDL_WasInit(SDL_INIT_VIDEO) ? SDL_GetKeyboardState(NULL) : NULL;
+    if (mk) mouse_test_input(&mouse,consume,dt);
+    mouse_held=mk ? mouse.buttons : 0;
+    if (mk && mouse.wheel) mouse_wheel_step(now,mouse.wheel_up,mouse.wheel_down);
+    else mouse_wheel_reset();
     if (g) {
         int touch_right=0;
         for (int i=IN_CROSS;i<=IN_RIGHT;++i) {
@@ -536,9 +629,10 @@ static void sample_host(PadData *d) {
         if (touch_right) touch_click(d,1);
     }
     if (mk) sample_mouse(d,&mouse,consume,dt,k);
-    /* Alt+Enter toggles fullscreen (window.cpp): its Enter is not the game's Cross. */
-    if (k && !((k[SDL_SCANCODE_LALT] || k[SDL_SCANCODE_RALT]) &&
-               (k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER]))) apply_keyboard(d,k);
+    /* Alt+Enter toggles fullscreen (window.cpp): its Enter is not the game's Cross. The bound
+     * mouse buttons and the wheel count without a keyboard state too. */
+    if (!(k && (k[SDL_SCANCODE_LALT] || k[SDL_SCANCODE_RALT]) &&
+          (k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER]))) apply_keyboard(d,k);
 }
 
 /* BB_PAD_FILE=<file>: scripted input for automated runs. The file holds whitespace-separated
@@ -590,6 +684,11 @@ static void read_inject(void) {
         {"up",BTN_UP}, {"down",BTN_DOWN}, {"left",BTN_LEFT}, {"right",BTN_RIGHT},
     };
     static const char *sticks[]={"lx=","ly=","rx=","ry="};
+    static const struct { const char *name; uint32_t bit; } mouse_names[]={
+        {"mouse_left",1u}, {"mouse_right",2u}, {"mouse_middle",4u}, {"mouse_x1",8u}, {"mouse_x2",16u},
+    };
+    mouse_inject.rate_x=mouse_inject.rate_y=0.0f;
+    mouse_inject.buttons=0;
     injected.buttons=0;
     injected.touch_side=-1;
     for (int i=0;i<4;++i) injected.stick[i]=-1;
@@ -602,8 +701,22 @@ static void read_inject(void) {
         }
         for (size_t i=0;i<sizeof(names)/sizeof(*names);++i) if (!strcmp(token,names[i].name)) injected.buttons|=names[i].ps;
         for (int i=0;i<4;++i) if (!strncmp(token,sticks[i],3)) { int v=atoi(token+3); injected.stick[i]=v<0 ? 0 : v>255 ? 255 : v; }
+        for (size_t i=0;i<sizeof(mouse_names)/sizeof(*mouse_names);++i)
+            if (!strcmp(token,mouse_names[i].name)) mouse_inject.buttons|=mouse_names[i].bit;
+        if (!strncmp(token,"mouse=",6)) {
+            char *end=NULL;
+            mouse_inject.rate_x=strtof(token+6,&end);
+            mouse_inject.rate_y=end && *end==',' ? strtof(end+1,NULL) : 0.0f;
+        }
+        if (!strcmp(token,"wheel_up")) ++mouse_inject.wheel_up;
+        if (!strcmp(token,"wheel_down")) ++mouse_inject.wheel_down;
+        /* key=NAME: a key press queued into the game window (the overlay menu: key=Insert). */
+        if (!strncmp(token,"key=",4) && !bbgpu_test_key(token+4)) printf("Runtime: pad file: unknown key %s\n",token+4);
     }
     fclose(f);
+    if (mouse_inject.rate_x!=0.0f || mouse_inject.rate_y!=0.0f || mouse_inject.buttons)
+        printf("Runtime: pad file: mouse %.0f,%.0f px/s buttons 0x%x\n",mouse_inject.rate_x,mouse_inject.rate_y,
+               mouse_inject.buttons);
     printf("Runtime: pad file: buttons 0x%x sticks %d %d %d %d\n",injected.buttons,
            injected.stick[0],injected.stick[1],injected.stick[2],injected.stick[3]);
 }
@@ -695,6 +808,8 @@ static void touch_ids(PadData *d) {
  * held neutral until everything is released (from Supermedo/bloodborne_pc 1.4). */
 static int hold_after_capture;
 static void sample(PadData *d) {
+    /* Read first: the file's key= steps also drive the open settings menu (live tests). */
+    read_inject();
     sample_host(d);
     if (bbgpu_overlay_captures_input() || bbgpu_text_input_is_active()) { hold_after_capture=1; return; }
     if (hold_after_capture) {
@@ -702,7 +817,6 @@ static void sample(PadData *d) {
         hold_after_capture=0;
     }
     record_sample(d);
-    read_inject();
     replay_sample(d);
     d->buttons|=injected.buttons|director_buttons;
     last_sample_buttons=d->buttons;

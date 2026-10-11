@@ -264,6 +264,11 @@ void SetGuestDeathRedirectEnabled(bool on);
 /// use becomes a request to the host).
 using LampWarpInterceptor = bool (*)(std::uint32_t id);
 void SetLampWarpInterceptor(LampWarpInterceptor fn);
+/// Runs on the game thread for every lamp / headstone warp 0x13CDF30(id) the game itself starts
+/// (not our replays), before the interceptor; observes only (party_balance: a lamp rest cleanses
+/// the death debuff). One observer; nullptr removes it.
+using LampUseObserver = void (*)(std::uint32_t id);
+void SetLampUseObserver(LampUseObserver fn);
 /// The native lamp warp 0x13CDF30(id) (main thread; the host's travel hooks see it as usual).
 void RunLampWarp(std::uint32_t id);
 /// The lamp warp 0x13CDF30(id) as a travel replay (main thread): the travel capture, the guest

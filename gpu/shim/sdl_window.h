@@ -46,6 +46,10 @@ public:
     /// Mouse & keyboard mode (any thread): mouse motion since the last consuming call (pixels)
     /// and the buttons held (bit 0 left, 1 right, 2 middle, 3 X1, 4 X2).
     void ReadMouse(float& dx, float& dy, u32& buttons, bool consume);
+    /// Wheel notches since the last call (taken with a consuming ReadMouse, upstream 0.51 #52).
+    void TakeWheel(int& up, int& down);
+    /// Test aid (any thread): a key press and release queued as if typed (no OS input, no focus).
+    void TestKey(u32 key);
 
 private:
     std::atomic<s32> width, height;
@@ -65,6 +69,7 @@ private:
     std::mutex mouse_mutex;
     float mouse_dx{}, mouse_dy{};
     u32 mouse_buttons{};
+    int wheel_up{}, wheel_down{};
     bool relative_mouse{};
     u64 last_tuning_check_ms{};
     SDL_Window* window{};

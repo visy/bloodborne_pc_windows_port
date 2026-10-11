@@ -574,6 +574,7 @@ void* g_funnel_orig = nullptr;
 void* g_block_clear3_orig = nullptr;
 void* g_lamp_warp_orig = nullptr;
 std::atomic<LampWarpInterceptor> g_lamp_intercept{nullptr};
+std::atomic<LampUseObserver> g_lamp_observer{nullptr};
 
 // Seeded from the wall clock: a restarted host keeps counting upward, so guests that saw the
 // old host's intents do not drop the new ones as duplicates.
@@ -732,6 +733,7 @@ void CaptureHost(u64 site, TravelKind kind) {
 __attribute__((noinline)) BB_COOP_SYSV void LampWarpHook(u64 id) {
     perf::Scope z(perf::Zone::HookLampWarp);
     if (!g_in_replay.load()) {
+        if (LampUseObserver obs = g_lamp_observer.load()) obs(static_cast<u32>(id));
         if (LampWarpInterceptor fn = g_lamp_intercept.load(); fn && fn(static_cast<u32>(id))) {
             return;
         }
@@ -1250,6 +1252,10 @@ void SetGuestDeathRedirect(std::uint32_t host_lamp_id) {
 
 std::uint32_t GuestDeathRedirectLamp() {
     return g_death_lamp.load();
+}
+
+void SetLampUseObserver(LampUseObserver fn) {
+    g_lamp_observer = fn;
 }
 
 void SetLampWarpInterceptor(LampWarpInterceptor fn) {
