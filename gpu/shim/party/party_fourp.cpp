@@ -284,6 +284,75 @@ BB_COOP_SYSV u64 SlotSummary(u64 out, u64 sel, u64 dbg) {
     return r;
 }
 
+// Diagnostic (BB_PARTY_FOURP_PROBE=1): the SOS request filter 0x1874710(sel, request, flag) - its
+// verdict and every count it reads (slots +8 coop / +0xc invaders / +0x10 other / +0x14 all, the
+// room max *(0x553d6d0)+0xc, sel+0x1c8 outgoing, sel+0x1fc / +0x200 max coop / invaders, the pending
+// session entries of sel+0x1c0 by team), each time that tuple changes (first 200).
+using SosFilterFn = u64(BB_COOP_SYSV*)(u64 sel, u64 req, u64 flag);
+SosFilterFn g_sos_original = nullptr;
+std::mutex g_sos_mu;
+std::string g_sos_last;
+int g_sos_logs = 0;
+BB_COOP_SYSV u64 SosFilterProbe(u64 sel, u64 req, u64 flag) {
+    const u64 r = g_sos_original(sel, req, flag);
+    u64 flow = 0, slots = 0, roomcfg = 0;
+    i32 c8 = -1, cc = -1, c10 = -1, c14 = -1, room = -1, out = -1, mc = -1, mi = -1;
+    SafeGet(Guest(kNetFlow), &flow);
+    if (flow) SafeGet(flow + 0x16f8, &slots);
+    if (slots) {
+        SafeGet(slots + 8, &c8);
+        SafeGet(slots + 0xc, &cc);
+        SafeGet(slots + 0x10, &c10);
+        SafeGet(slots + 0x14, &c14);
+    }
+    SafeGet(Guest(0x553d6d0), &roomcfg);
+    if (roomcfg) SafeGet(roomcfg + 0xc, &room);
+    if (sel) {
+        SafeGet(sel + 0x1c8, &out);
+        SafeGet(sel + 0x1fc, &mc);
+        SafeGet(sel + 0x200, &mi);
+    }
+    // sel+0x1c0: a list head; nodes {next, prev, data}; data+8 = the session kind (char), the
+    // descriptor 0x553d760 + kind * 0x80 = its team (1 coop, 2 invader).
+    int pend[3] = {0, 0, 0}, nodes = 0;
+    u64 head = 0;
+    if (sel && SafeGet(sel + 0x1c0, &head) && head) {
+        u64 n = 0;
+        SafeGet(head, &n);
+        while (n && n != head && nodes < 32) {
+            u64 data = 0;
+            std::int8_t kind = -1;
+            i32 team = -1;
+            SafeGet(n + 0x10, &data);
+            if (data && SafeGet(data + 8, &kind) && kind >= 0 && kind < 0x22) {
+                SafeGet(Guest(0x553d760) + u64(kind) * 0x80, &team);
+            }
+            pend[team == 1 ? 1 : team == 2 ? 2 : 0]++;
+            ++nodes;
+            u64 next = 0;
+            if (!SafeGet(n, &next)) break;
+            n = next;
+        }
+    }
+    u8 rq[16] = {};
+    if (req) SafeRead(req, rq, sizeof rq);
+    char b[400];
+    std::snprintf(b, sizeof b,
+                  "-> %llx (flag %llu); slots coop %d inv %d other %d all %d, room max %d; sel out %d, max coop %d inv %d; "
+                  "pending coop %d inv %d other %d; game cooperators %d; req %02x%02x%02x%02x %02x%02x%02x%02x "
+                  "%02x%02x%02x%02x %02x%02x%02x%02x",
+                  ull(r), ull(flag & 0xff), c8, cc, c10, c14, room, out, mc, mi, pend[1], pend[2], pend[0],
+                  CooperatorsNowFast(), rq[0], rq[1], rq[2], rq[3], rq[4], rq[5], rq[6], rq[7], rq[8], rq[9], rq[10],
+                  rq[11], rq[12], rq[13], rq[14], rq[15]);
+    std::lock_guard<std::mutex> lk(g_sos_mu);
+    if (g_sos_logs < 200 && g_sos_last != b) {
+        g_sos_last = b;
+        ++g_sos_logs;
+        Log("SOS filter probe: %s", b);
+    }
+    return r;
+}
+
 // H2
 BB_COOP_SYSV i32 BossCooperatorCount(u64 slots) {
     const i32 n = reinterpret_cast<CountFn>(Guest(kCooperatorCount))(slots);
@@ -450,6 +519,13 @@ void FourpInit() {
                            "4p H1 cooperator slots (SessionSlotSummary)");
     if (g_h1) {
         g_summary_original = reinterpret_cast<SummaryFn>(original);
+    }
+    if (const char* pr = std::getenv("BB_PARTY_FOURP_PROBE"); pr && pr[0] == '1') {
+        void* sos_original = nullptr;
+        if (ReplacePrologue(0x1874710, kPrologue13, reinterpret_cast<const void*>(&SosFilterProbe), &sos_original,
+                            "4p SOS filter probe (0x1874710)")) {
+            g_sos_original = reinterpret_cast<SosFilterFn>(sos_original);
+        }
     }
     if (g_cfg.scaling) {
         g_h2 = HookCallSite(kBossCountCall, kCooperatorCount, reinterpret_cast<const void*>(&BossCooperatorCount),
