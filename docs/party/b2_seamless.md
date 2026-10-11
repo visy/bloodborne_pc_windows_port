@@ -584,11 +584,15 @@ STEP_Create: the chr comes back at the lamp from the task (`guest (host revived)
 no loading screen, still a client (role 6, flow 4); the host keeps its member tasks (K8).
 
 **Fallbacks / other cases.**
-* Lamp in another map (or its spot never seen since the game started): the vanilla party move (6.5).
-  Design decision 1 wants the host to load its lamp's map alone while the guests stay: that is the
-  split-party travel (agent/splittravel, docs/party/split_travel.md). Interface needed from it: "the
-  host loads map M at lamp L alone; members keep their world and session; the host's chr leaves their
-  world and comes back when they meet again". `HostDeathIntercept` is the place to call it.
+* Lamp in another map (design decision 1): the host loads it ALONE and the guests stay - the
+  captured TravelIntent carries split travel's `alone` (`HostTravelAloneNext`, docs/party/split_travel.md
+  3): hd18, host's last lamp set to the Dream (2102961) while the party stood in m24_01: `host death:
+  last lamp 2102961 is not in the loaded map (stage 0x18010000): the host loads it alone (the guests
+  stay)`, the host `arrived alone in m21_00_00_00`, the guest (no load) `the host travels alone ...`,
+  `remote chr ... removed (the host travelled alone); its task is kept`. `BB_PARTY_HOST_DEATH_ALONE=0`:
+  the old party move.
+* Spot of a lamp never arrived at in this session: the MSB revive point from the game data
+  (`ids::ReturnSpot`, split_travel.md 3a; yaw in degrees) when the lamp's map is the loaded one.
 * Every member down too (each guest sends `{"op":"dead"}` when its death is held; cleared on its
   "arrived"): a wipe, the vanilla funnel and the party respawns together at the host's lamp (6.8).
   Also while the host waits for its revive: `every member went down while the host was ... the
@@ -617,6 +621,34 @@ same record `0x13D2910` runs with GSM +0x1592 = 1 and +0x1770 = 1 for the call (
 forced pre-summon spot), both put back: `guest: bloodstain recorded: echoes 5000 -> 0, stain 5000
 echoes at (...) map 0x18010000`. The stain is in the guest's own records, so it shows in the guest's
 game (in the host's world after its respawn load, and in its own world in that map).
+
+**Guest deaths outside a boss fight** go to the guest's OWN last lamp (design decision 1) through split
+travel's `RespawnAloneAtOwnLamp` (`BB_PARTY_GUEST_OWN_LAMP=0`: off); when it refuses (hd19: own lamp
+2102961 in the Dream while the party is in m24_01: `a death outside the host's area is not an alone
+load yet`) the lone respawn at the host's lamp (6.9) runs as before. After a boss fight it is always
+the host's lamp (shared boss lamp).
+
+**Live runs** (2026-10-11, two / three loopback instances, base save savedata_20261010):
+* hd10-hd12, Central Yharnam 2412951, two revivals per run: see the revive table above; hd12 both
+  post-revive lamp warps loaded and the guest followed (B2) each time.
+* hd17, the Hunter's Dream 2102961: `host death taken`, `host revive #1: after: hp 719 ... at lamp
+  2102961`, then the host's lamp warp to Central Yharnam re-armed and loaded, the guest followed.
+* hd16: host revived, then the guest died alone: `guest: bloodstain recorded: echoes 5000 -> 0`,
+  lone respawn at the host's lamp, the host `slot 1 died alone and respawns in this world`.
+* hd13 (Cleric Beast un-killed with the 6.7 fixture): host died in the fight -> limbo; host_kill of
+  the boss -> `the boss fight is over (...); respawn at the lamp here` -> revived; K10 kept the party.
+* hd14c: guest died while the boss bar was up -> `limbo`; then the host died -> `every member is down
+  too (1 of 1): a wipe` -> stock funnel, TRAVEL, the guest's held death went with it. That run's
+  host death load took > 60 s on the loaded machine, so the guest's 45 s snapshot wait fell back to
+  B1 (redirect + bell): the wait does not know the host is still loading (open; not C2-specific).
+* hd15c: a guest respawning when the host died counted as down -> wipe path (by design).
+* Movement: a Circle tap (in-process pad) 3 s after a revive backstepped the host 2.3 m (hd11, hd12);
+  the camera follows the revived chr; the HUD, the bloodstain prompt and the next loads work.
+
+Placement (coordinator check, upstream 12490f5 BesideHost 0.5 m): in the Central Yharnam
+screenshots of these runs the guest stands 0.7-2.4 m from the host on open cobblestones beside the
+lamp (not in a wall); the host is not visibly shoved. The revived host itself goes to the lamp's
+spawn spot (it is the lamp's player, so no BesideHost).
 
 ## 7. Risks / open items
 
