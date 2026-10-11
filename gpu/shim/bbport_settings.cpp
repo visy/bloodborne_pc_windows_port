@@ -134,6 +134,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_toasts = i != 0;
     } else if (key == "party_hud") {
         v.party_hud = i != 0;
+    } else if (key == "party_guest_lamps") {
+        v.party_guest_lamps = i != 0;
     } else if (key == "menu_pos") {
         float x = -1.0f, y = -1.0f;
         if (std::sscanf(value.c_str(), "%f,%f", &x, &y) == 2 && x >= 0.0f && x <= 1.0f && y >= 0.0f &&
@@ -361,6 +363,7 @@ void Save() {
     put("compile_indicator", flag(v.compile_indicator));
     put("party_toasts", flag(v.party_toasts));
     put("party_hud", flag(v.party_hud));
+    put("party_guest_lamps", flag(v.party_guest_lamps));
     put("fsr4_auto_exposure", flag(v.fsr4_auto_exposure));
     put("fsr4_invert_jitter", flag(v.fsr4_invert_jitter));
     // Read by patches.py at start.

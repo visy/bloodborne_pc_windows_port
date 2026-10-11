@@ -138,8 +138,9 @@ struct PlayerRecord {
 /// "level 10 -> 11, echoes 5000 -> 3200" (the changed fields only; "" when equal or unknown).
 std::string DescribeRecordChange(const PlayerRecord& before, const PlayerRecord& after);
 
-/// "BB_PARTY_GUEST_LAMPS" value -> on only for "1" (opt-in).
-bool GuestLampsEnabledFromEnv(const char* value);
+/// "BB_PARTY_GUEST_LAMPS" value: "0" off, "1" on, anything else -> `fallback` (the Party page
+/// setting party_guest_lamps, on by default).
+bool GuestLampsEnabledFromEnv(const char* value, bool fallback = true);
 /// "BB_PARTY_GUEST_SERVICES" value -> on/off (unset / "" / anything but "0" = on).
 bool GuestServicesEnabledFromEnv(const char* value);
 

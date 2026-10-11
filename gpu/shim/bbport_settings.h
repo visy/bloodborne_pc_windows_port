@@ -113,6 +113,9 @@ struct Values {
     /// Party mode: the party HUD, companions' names / health / whereabouts in the bottom left
     /// corner (party_hud.h; ini party_hud). Never shown solo. Live.
     std::atomic<bool> party_hud{true};
+    /// Party mode: guests may use world lamps and Dream headstones too; their use moves the whole
+    /// party, host-led (ini party_guest_lamps; env BB_PARTY_GUEST_LAMPS overrides). On restart.
+    std::atomic<bool> party_guest_lamps{true};
 
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
     int startup_preset = NativeAA;

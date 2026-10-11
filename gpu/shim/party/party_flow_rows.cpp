@@ -50,8 +50,8 @@ bool Party() { return CurrentContext().party_process; }
 }  // namespace
 
 void RegisterMenuRows() {
-    if (!Enabled()) return;
     using Row = P::PartyRow;
+    if (!Enabled()) return;
 
     Row fresh;
     fresh.order = 12;

@@ -174,8 +174,14 @@ bool DollLevelUpCharTypeTest(int event_id, int bank, int id, int entity, int typ
            (type == 0 || type == 1);
 }
 
-bool GuestLampsEnabledFromEnv(const char* v) {
-    return v && v[0] == '1' && !v[1];
+bool GuestLampsEnabledFromEnv(const char* v, bool fallback) {
+    if (v && v[0] == '0' && !v[1]) {
+        return false;
+    }
+    if (v && v[0] == '1' && !v[1]) {
+        return true;
+    }
+    return fallback;
 }
 
 bool GuestServicesEnabledFromEnv(const char* v) {
@@ -192,6 +198,7 @@ bool GuestServicesEnabledFromEnv(const char* v) {
 #include "party_link.h"
 #include "party_progress.h"
 #include "bbport_game_menu.h"
+#include "bbport_settings.h"
 
 #include <atomic>
 #include <chrono>
@@ -203,6 +210,11 @@ bool GuestServicesEnabledFromEnv(const char* v) {
 extern "C" void runtime_pad_director_press(std::uint32_t buttons); // src/runtime_pad.c
 
 namespace coop {
+
+/// Guest lamps / headstones: env BB_PARTY_GUEST_LAMPS ("0" / "1") over the Party page setting.
+bool GuestLampsOn() {
+    return GuestLampsEnabledFromEnv(std::getenv("BB_PARTY_GUEST_LAMPS"), BbSettings::Get().party_guest_lamps.load());
+}
 namespace {
 
 constexpr u64 kIsClientLoad = 0x203BA78;   // movzx eax, byte [r15+0x25]
@@ -1098,7 +1110,7 @@ void GuestServicesInit() {
     if (const char* e = std::getenv("BB_PARTY_GUEST_SERVICES_TALK")) {
         g.extra = e;
     }
-    g_lamps = GuestLampsEnabledFromEnv(std::getenv("BB_PARTY_GUEST_LAMPS"));
+    g_lamps = GuestLampsOn();
     const char* hs = std::getenv("BB_PARTY_HEADSTONES");
     const bool headstones = g_lamps.load() || !(hs && hs[0] == '0' && !hs[1]);
     bool multi_ok = false;
@@ -1179,7 +1191,7 @@ std::vector<EmevdSkipRule> GuestServicesSkipRules() {
         return {};
     }
     std::vector<EmevdSkipRule> out = DollPlacementRules();
-    if (GuestLampsEnabledFromEnv(std::getenv("BB_PARTY_GUEST_LAMPS"))) {
+    if (GuestLampsOn()) {
         for (const EmevdSkipRule& r : LampSkipRules()) {
             out.push_back(r);
         }
