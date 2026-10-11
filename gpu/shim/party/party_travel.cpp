@@ -1186,6 +1186,13 @@ void RunLampWarp(std::uint32_t id) {
     reinterpret_cast<LampWarpFn>(Guest(kLampWarp))(id);
 }
 
+void RunLampWarpReplay(std::uint32_t id) {
+    g_in_replay = true;
+    ClearForcedPlacement();
+    reinterpret_cast<LampWarpFn>(Guest(kLampWarp))(id);
+    g_in_replay = false;
+}
+
 void SetGuestRedirectCallback(GuestRedirectFn fn) {
     g_redirect_cb = fn;
 }

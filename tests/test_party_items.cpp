@@ -476,6 +476,85 @@ static void test_items_json() {
     CHECK(!ItemsFromJsonText(many, &out, &err));
 }
 
+static GrantItem Gem(std::int32_t id) {
+    GrantItem it{8, id, 1};
+    it.has_gem = true;
+    const std::int32_t data[kGemFields] = {0, 7, 100202, 110001, -1, -1, -1, -1};
+    for (std::size_t k = 0; k < kGemFields; ++k) {
+        it.gem[k] = data[k];
+    }
+    return it;
+}
+
+static void test_gems() {
+    auto none = [](std::int32_t) { return false; };
+    // Blood gem treasure (lot 20000: slot 100202): the host's generated gem (slot id + offset).
+    LotRowData g = Row(20000, 50000400);
+    Slot(&g, 0, 8, 100202, 1, 100);
+    CHECK(LotChainHasGem({g}));
+    CHECK(PlanSummonedLot({g}, {}, none).result == LotPlanResult::Unsupported); // no gem data
+    LotPlan p = PlanSummonedLot({g}, {Gem(100203)}, none);
+    CHECK(p.result == LotPlanResult::Give && p.why == "host's item list" && p.items.size() == 1);
+    CHECK(p.items[0].has_gem && p.items[0].gem[2] == 100202 && p.row_flags == std::vector<std::int32_t>{50000400});
+    CHECK(PlanSummonedLot({g}, {Gem(100202)}, none).result == LotPlanResult::Give);
+    // Outside the slot's range, below it, a count of 2 or no data: not the host's list.
+    CHECK(PlanSummonedLot({g}, {Gem(100202 + kMaxGemIdOffset + 1)}, none).result == LotPlanResult::Unsupported);
+    CHECK(PlanSummonedLot({g}, {Gem(100201)}, none).result == LotPlanResult::Unsupported);
+    GrantItem two = Gem(100203);
+    two.count = 2;
+    CHECK(PlanSummonedLot({g}, {two}, none).result == LotPlanResult::Unsupported);
+    GrantItem bare{8, 100203, 1};
+    CHECK(PlanSummonedLot({g}, {bare}, none).result == LotPlanResult::Unsupported);
+    // A gem cannot stand for a goods slot or the other way round.
+    LotRowData t = Row(2400450, 52400450);
+    Slot(&t, 0, 4, 4002, 1, 100);
+    CHECK(!LotChainHasGem({t}));
+    CHECK(PlanSummonedLot({t}, {Gem(4002)}, none).why != "host's item list");
+    CHECK(PlanSummonedLot({g}, {{4, 100202, 1}}, none).result == LotPlanResult::Unsupported);
+    // Gem + goods chain: both from the host's list.
+    LotRowData g2 = Row(20001, 50000401);
+    Slot(&g2, 0, 4, 1000, 2, 100);
+    p = PlanSummonedLot({g, g2}, {Gem(100203), {4, 1000, 2}}, none);
+    CHECK(p.result == LotPlanResult::Give && p.items.size() == 2 && p.row_flags.size() == 2);
+    // The plausibility rules.
+    CHECK(GrantItemSupported(Gem(100203)) && !GrantItemSupported(bare) && GrantItemSupported({4, 1000, 1}));
+    GrantItem bad = Gem(100203);
+    bad.gem[0] = 4;
+    CHECK(!GrantItemSupported(bad));
+    bad = Gem(100203);
+    bad.gem[1] = 1001;
+    CHECK(!GrantItemSupported(bad));
+    bad = Gem(100203);
+    bad.gem[5] = -2;
+    CHECK(!GrantItemSupported(bad));
+    GrantItem goods_with_gem = Gem(1000);
+    goods_with_gem.category = 4;
+    CHECK(!GrantItemSupported(goods_with_gem));
+    // JSON: [8, id, 1, [8 fields]] round trip; no data / bad data refused.
+    ItemGrant row{9, 20000, 50000400, kItemNone, ItemSource::Award};
+    row.items = {Gem(100203), {4, 1000, 2}};
+    std::vector<ItemGrant> out;
+    std::string err;
+    CHECK(ItemsFromJsonText(ItemsToJsonText({row}), &out, &err));
+    CHECK(out.size() == 1 && out[0].items == row.items && out[0].items[0].gem[3] == 110001);
+    CHECK(ItemsFromJsonText(R"({"items":[[1,20000,50000400,-1,"award",[[8,100203,1,[0,7,1,2,-1,-1,-1,-1]]]]]})",
+                            &out, &err));
+    CHECK(!ItemsFromJsonText(R"({"items":[[1,20000,50000400,-1,"award",[[8,100203,1]]]]})", &out, &err));
+    CHECK(!ItemsFromJsonText(R"({"items":[[1,20000,50000400,-1,"award",[[8,100203,2,[0,7,1,2,-1,-1,-1,-1]]]]]})",
+                             &out, &err));
+    CHECK(!ItemsFromJsonText(R"({"items":[[1,20000,50000400,-1,"award",[[8,100203,1,[0,7,1,2,-1,-1,-1]]]]]})",
+                             &out, &err));
+    CHECK(!ItemsFromJsonText(R"({"items":[[1,20000,50000400,-1,"award",[[8,100203,1,[9,7,1,2,-1,-1,-1,-1]]]]]})",
+                             &out, &err));
+    CHECK(!ItemsFromJsonText(R"({"items":[[1,20000,50000400,-1,"award",[[4,1000,1,[0,7,1,2,-1,-1,-1,-1]]]]]})",
+                             &out, &err));
+    // The host never rolls a gem chain (no instance data for a roll): the guest waits for home.
+    LotRowData rg = Row(64000, -1);
+    Slot(&rg, 0, 8, 50000, 1, 200);
+    Slot(&rg, 1, 4, 1000, 1, 800);
+    CHECK(LotChainRandom({rg}) && LotChainHasGem({rg}));
+}
+
 static void test_guest_summoned() {
     GuestItems q;
     std::vector<ItemGrant> in = {{1, 2400450, 52400450, kItemNone, ItemSource::Flag},
@@ -545,6 +624,7 @@ int main() {
     test_summoned_gate();
     test_plan();
     test_items_json();
+    test_gems();
     test_guest_summoned();
     std::printf("party-items-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

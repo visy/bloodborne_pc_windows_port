@@ -123,7 +123,7 @@ def main():
             with _locked("game") as st:
                 _prune(st)
                 holders = [dict(e) for e in st["holders"]]
-        except SystemExit:
+        except (SystemExit, OSError):
             holders = []
         now = time.time()
         live = set()

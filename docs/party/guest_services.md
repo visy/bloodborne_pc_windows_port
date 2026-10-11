@@ -210,15 +210,26 @@ whoever uses a lamp or headstone, **the whole party travels**, led by the host (
 * Opt-in: `BB_PARTY_GUEST_LAMPS=1` (it also changes the host's lamp gate); default off until a
   live run confirms 3.3.
 
-### 3.3 Still open [I]
+### 3.3 Live results and open items
 
-* `+0x4B` (`0x191B6E0`): another character whose action target is the lamp (presumably the other
-  player standing at it) still blocks the prompt; the lamp's chr-type range branch
-  (`(type | 8) == 8` at the interaction distance code) may give a guest a different range.
-* Whether the guest's lamp interaction itself sets the lamp's flag on the guest (ObjAct `0x2D`
-  replication may also start the host's own 7200 instance - then the host warps natively and the
-  guest's request is dropped by the 10 s gate).
-* Headstone warp menu: confirm that the selection reaches `0x13CDF30` (shadp2p: menu travel does).
+* **Guest lamp -> party rest [R]** (`BB_PARTY_GUEST_LAMPS=1`, `host_warp=2412951@15`, guest test
+  `lamppress;lampflag=72410101`): the host warped to Central Yharnam, the guest followed (B2,
+  still a client in m24_01); the guest's lamp flag 72410101 started its own common event 7200 (the
+  `7200:1003:6@0` rule lets it run on a client), whose warp `0x13CDF30(2102950)` became
+  `lamp: request 2102950 sent to the host`; the host ran the same warp (`lamp: slot 1 used a lamp /
+  headstone: the host warps to 2102950, the party follows`), sent "rested", and the guest refilled
+  after the follow load (`refill (host rested): vials and bullets topped up`) and re-joined in the
+  Dream. Not yet shown: the guest's own button press at a world lamp (the run set the lamp's flag;
+  the press needs the guest standing at the lamp with its prompt up). The host's capture logged
+  the warp twice (two TRAVEL / rested events for one warp: harmless, deduplicated by seq on the
+  guest, but worth a look).
+* **Guest headstones [R, kept host-only]**: choosing an area in a headstone's menu crashed a guest
+  every time (fault in a library call under the menu code 0x1BEA2D4; the warp list is built from
+  lamp flags the guest's overlay does not have). Guests now keep the headstones' client wait; the
+  host's headstones work in a party (IsMultiplayerInProgress lift) and the party follows the host.
+* Open: `+0x4B` (another character targeting the lamp) and the lamp's chr-type range branch for a
+  guest standing at a lamp; the host's own lamp with guests present (the `+0x49` patch) was not
+  pressed by hand in a live run.
 
 ## 4. Safety
 
@@ -253,6 +264,16 @@ into the host's Dream), guest log `Party guest services:` [R]:
 * **Insight shop purchase (t210698) [R]**: same script (`warp=talk:210698;buy`): the Insight
   messenger's Purchase list opened on the guest and the first row was bought: `Insight 6 -> 5`;
   after the session the guest's party save holds Insight 5 (+0x86DC), the host's save Insight 6.
+* **Workbench upgrade (t210692) [R]** (`echoes=20000;shards=10;warp=talk:210692;open=15000110;
+  keys=cross,left,cross,cross`): the "Workshop" prompt (text 70000001) came up at 1.0 m, the
+  Workshop menu opened, "Fortify Weapon" listed the guest's weapons; Threaded Cane +3 -> +4: echoes
+  20000 -> 19640, Twin Blood Stone Shards 10 -> 7 (the fixture gives goods 3000 / 3010); the guest's
+  save holds echoes 19640, the host's save is unchanged. Screenshots:
+  `agents/guestsvc/evidence/workbench_upgrade`.
+* **Storage (t210693) [R]**: the "Storage" menu opened on the guest (prompt text 70000000 at
+  1.0 m) with the deposit quantity dialog (`agents/guestsvc/evidence/storage`).
+* **Mirror (t210696)**: not checked: the fixture did not find a character for t210696 in the talk
+  table, so the run never placed the guest.
 * **Doll level up [R]**: with 2.4-2.6 in place (`echoes=20000;warp=doll;levelup`): talk, her
   lines, "Channel the Blood Echoes", the kneel and her gesture (12100112 / 12100113 rewritten),
   then talk command 31 OpenSoul and the LevelUp menu factory 0x1BB7F60 run on the guest; the
