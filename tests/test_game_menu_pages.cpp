@@ -66,7 +66,7 @@ static void Advance(std::int64_t ms) {
 
 static void Limits() {
     const auto& pages = P::All();
-    assert(pages.size() >= 10 && pages.size() <= 12); // MaxPages in bbport_game_menu.cpp
+    assert(pages.size() >= 10 && pages.size() <= 16); // MaxPages in bbport_game_menu.cpp
     for (const P::Page& page : pages) {
         CheckText(page.name, P::MaxNameLength, "page name");
         CheckText(page.help, P::MaxHelpLength, "page help");

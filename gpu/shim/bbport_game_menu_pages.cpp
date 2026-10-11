@@ -823,13 +823,25 @@ void DefineAll() {
     AddRow(Info(), AddText("Last event", "Последнее"), party.event_help, {party.event_value, party.event_value},
            Kind::Toggle);
 
-    // ---- Party rules (party_balance.h): the death debuff, enemy scaling (health, damage; poise in
-    // the overlay's Party tab and bbport.ini: the System menu holds 12 pages), the overhead display.
-    AddPage("Party rules", "Правила группы", "Death debuff, enemy scaling, what shows above companions (bbport)",
-            "Штраф за смерть, сила врагов, что видно над спутниками (bbport)");
+    // ---- Party rules (party_balance.h): the death debuff and the overhead display. ----
+    AddPage("Party rules", "Правила группы", "Death debuff, what shows above companions (bbport)",
+            "Штраф за смерть, что видно над спутниками (bbport)");
     balance.rot_help = AddDynamic(MaxHelpLength);
     AddRow(Flag(&Values::party_rot), AddText("Rot on death", "Гниль при смерти"), balance.rot_help, toggle,
            Kind::Toggle);
+    AddRow(Setting(
+               Kind::List, [](const Values& v) { return std::clamp(v.party_overhead.load(), 0, 4); },
+               [](int i) { BbSettings::Get().party_overhead = std::clamp(i, 0, 4); }),
+           AddText("Above companions", "Над спутниками"),
+           AddText("What shows above party members in view (only you see it)",
+                   "Что показывать над спутниками в поле зрения (только у вас)"),
+           {AddText("Nothing", "Ничего"), AddText("Name", "Имя"), AddText("Name and level", "Имя и уровень"),
+            AddText("Name and health", "Имя и здоровье"), AddText("Name and deaths", "Имя и смерти")},
+           Kind::List);
+
+    // ---- Enemy scaling (party_balance.h): per extra hunter, the host's values count. ----
+    AddPage("Enemy scaling", "Сила врагов", "Boss and enemy health, damage and poise per extra hunter (bbport)",
+            "Здоровье, урон и стойкость боссов и врагов за каждого охотника (bbport)");
     const auto scale_row = [&](std::atomic<int> Values::*member, const int* table, const char* en, const char* ru,
                                int index) {
         balance.scale_help[index] = AddDynamic(MaxHelpLength);
@@ -842,17 +854,10 @@ void DefineAll() {
     using namespace coop::balance;
     scale_row(&Values::party_boss_hp, kHpTable, "Boss health", "Здоровье боссов", 0);
     scale_row(&Values::party_boss_damage, kDamageTable, "Boss damage", "Урон боссов", 1);
+    scale_row(&Values::party_boss_poise, kPoiseTable, "Boss poise", "Стойкость боссов", 2);
     scale_row(&Values::party_enemy_hp, kHpTable, "Enemy health", "Здоровье врагов", 3);
     scale_row(&Values::party_enemy_damage, kDamageTable, "Enemy damage", "Урон врагов", 4);
-    AddRow(Setting(
-               Kind::List, [](const Values& v) { return std::clamp(v.party_overhead.load(), 0, 4); },
-               [](int i) { BbSettings::Get().party_overhead = std::clamp(i, 0, 4); }),
-           AddText("Above companions", "Над спутниками"),
-           AddText("What shows above party members in view (only you see it)",
-                   "Что показывать над спутниками в поле зрения (только у вас)"),
-           {AddText("Nothing", "Ничего"), AddText("Name", "Имя"), AddText("Name and level", "Имя и уровень"),
-            AddText("Name and health", "Имя и здоровье"), AddText("Name and deaths", "Имя и смерти")},
-           Kind::List);
+    scale_row(&Values::party_enemy_poise, kPoiseTable, "Enemy poise", "Стойкость врагов", 5);
 }
 
 /// The party rules' help lines: the current value, and on a guest that the host's rules count.

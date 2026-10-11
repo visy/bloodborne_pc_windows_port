@@ -14,9 +14,9 @@
 //       world gets SpEffect 7503 (chr vfunc +0x3f0); a boss that gets its doping loses 7503
 //       (0x17e1d90, EMEVD 2004[21]'s remove). The game's own per-frame HP update (0x1a0d7d0)
 //       raises current HP with the max, so full-health enemies stay full.
-//   C4  "Rot": each death of the local player (HP > 0 -> 0 in the world) adds a stack (max 5);
-//       each stack lowers max HP by 10 % through the max-HP rate function 0x17e46e0 (prologue
-//       replaced: the local player's SpEffect list only). A lamp / headstone use started by the
+//   C4  "Rot": each death of the local player (HP > 0 -> 0 in the world) adds a stack (max 5) of
+//       a kind picked at random: max HP -10 % (the max-HP rate 0x17e46e0) or max stamina -10 %
+//       (the stamina rate 0x17e4a20); both prologues replaced, the local player's list only. A lamp / headstone use started by the
 //       player (party_travel SetLampUseObserver; not the respawn warp of a death) cleanses it.
 //       Kept in <user>/party_rot.txt across restarts. Echoes are not touched (the bloodstain is
 //       the hostdeath work).
