@@ -937,6 +937,10 @@ static void test_chalice_channels() {
         CHECK(own.adopt(4242424242ull, form, "Host") && own.known(4242424242ull) &&
               own.form_data(4242424242ull) == form && !own.adopt(4242424242ull, form, "Host"));
         CHECK(!own.adopt(4242424243ull, "%%%%", "Host"));
+        // A member holding that dungeon (an earlier session's ritual): the party's dungeon.
+        own.note_made("GuestC", 4242424242ull);
+        CHECK(own.latest_ritual("Host", std::chrono::hours(1), &c, &member) && member == "GuestC" &&
+              c.id == 4242424242ull);
     }
     const json::Value* wish = w.find("WishMaterialList");
     CHECK(wish && wish->type == json::Value::Type::Array && wish->array.size() == 1);

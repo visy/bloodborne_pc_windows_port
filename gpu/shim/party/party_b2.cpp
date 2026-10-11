@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <array>
 #include <deque>
 #include <map>
 #include <mutex>
@@ -563,7 +564,10 @@ __attribute__((noinline)) BB_COOP_SYSV u64 LeaveEntryHook(u64 session) {
     if (g_on.load() && (role == RoleClient || role == RoleHost)) {
         const u64 base = Guest(0);
         if (ret > base + 5 && ret - base < 0x6000000) {
-            Log("leave: BeginLeaveSession called from +0x%llx (role %d)", ull(ret - base - 5), role);
+            Log("leave: BeginLeaveSession called from +0x%llx (role %d); session event handler state: flow +0x84 %d, "
+                "GSM +0x1592 %u, flow +0xF4 %.1f",
+                ull(ret - base - 5), role, Field<int>(Slot(kSlotFlow), 0x84, -1), unsigned(Field<u8>(Slot(kSlotGsm), 0x1592)),
+                double(Field<float>(Slot(kSlotFlow), 0xf4)));
         } else {
             Log("leave: BeginLeaveSession called through a party hook (role %d)", role);
         }
@@ -758,6 +762,35 @@ u64 ChrOfHandle(u32 h) {
         return 0;
     }
     return Field<u64>(Field<u64>(tab, 8) + u64(idx) * 0x38, 0);
+}
+
+/// A boss fight is on in this world: a boss health bar is up. EMEVD 2003[11] (DisplayBossHealthBar,
+/// in the bank-2003 handler 0x17C0420) writes the HUD object *0x5562878 +0x1658 + slot * 0x14
+/// {name id, chr handle, ...} for slots 0..2 and resets them all to -1 when the bar goes. Counted
+/// while the handle resolves to a living chr. `who` (optional): the boss's handle and HP.
+bool BossFightActive(std::string* who = nullptr) {
+    const u64 hud = Slot(0x5562878);
+    if (!hud) {
+        return false;
+    }
+    for (int i = 0; i < 3; ++i) {
+        const u32 h = Field<u32>(hud, 0x165c + u64(i) * 0x14, ~0u);
+        if (h == ~0u) {
+            continue;
+        }
+        const u64 chr = ChrOfHandle(h);
+        const int hp = Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0xf8, -1);
+        if (chr && hp > 0) {
+            if (who) {
+                char b[96];
+                std::snprintf(b, sizeof b, "boss bar %d: name %d chr %08x hp %d", i,
+                              Field<int>(hud, 0x1658 + u64(i) * 0x14, -1), h, hp);
+                *who = b;
+            }
+            return true;
+        }
+    }
+    return false;
 }
 
 /// The presentation slot table (GSM +0x16F8): 5 entries at +0x1C (stride 0x14: chr handle, kind,
@@ -1262,6 +1295,20 @@ std::string DescribeWhere() {
     return out;
 }
 
+/// The summoned placement (GSM +0x14C4 stage, +0x14D0 position, +0x14E0 rotation) a guest's load
+/// uses while GSM +0x1521 is set; the same bytes overlap the guest's return spot (+0x14A0..). Written
+/// only when +0x1521 is set (otherwise the load takes the forced transform and these writes only
+/// replaced the return spot with a host-world spot). Not the cause of the Continue drift (hd32:
+/// the guest still continued at the host-world spot), see b2_seamless.md 6.13.
+void WriteSummonedPlacement(u64 gsm, const void* stage, const void* pos, const void* rot) {
+    if (!gsm || Field<u8>(gsm, 0x1521) == 0) {
+        return;
+    }
+    SafeWrite(gsm + 0x14c4, stage, 4);
+    SafeWrite(gsm + 0x14d0, pos, 16);
+    SafeWrite(gsm + 0x14e0, rot, 16);
+}
+
 /// A guest's spot beside the host (never on it: character collision shoves the host): BB_PARTY_SUMMON_OFFSET
 /// (default 0.5 m, 0 = off), side by side in a line: right (party slot 1), left (2), 2x right (3+) of
 /// the host's facing, same height and facing. Wider offsets (2.2 m) put guests into walls at narrow
@@ -1727,7 +1774,69 @@ bool ClientIntroSkip(int event_id, int bank, int id) {
 /// Recovery net (any role, own world only): a player that keeps falling for 6 s (an endless fall
 /// out of the map after a bad saved position - the game's own death plane did not catch it) is
 /// warped to its own last lamp (0x13CDF30 with the low dword of WorldTransitionState +0x1528).
+/// A summoned guest (in the host's world) that keeps falling for 6 s (live, 3 players: a guest fell
+/// through the host's m24_01 from y -28 to -1500 after the second guest arrived and was never
+/// recovered - own-world recovery only) is put back where it last stood still, in place (the chr
+/// warp +0x5F8, no load).
+void HostWorldFallTick(const GameSnapshot& s, double now) {
+    static float stable[4] = {0, 0, 0, 0}, last_y = 0;
+    static double last_t = 0, falling_since = 0, still_since = 0;
+    static u64 last_player = 0;
+    static bool have_stable = false;
+    if (!s.world_up || s.loading || !s.player || Field<u8>(Slot(kSlotGsm), 0x1592) != 0) {
+        falling_since = still_since = 0;
+        have_stable = false;
+        last_player = 0;
+        return;
+    }
+    if (now - last_t < 0.5) {
+        return;
+    }
+    const u64 pm = Field<u64>(Field<u64>(Field<u64>(Field<u64>(s.player, 0x58), 8), 0x3b0), 0x68);
+    alignas(16) float p[4];
+    if (!pm || !SafeRead(pm + 0x1e0, p, 16)) {
+        return;
+    }
+    const float dy = last_player == s.player ? last_y - p[1] : 0.0f;
+    last_y = p[1];
+    last_t = now;
+    if (last_player != s.player) {
+        have_stable = false;
+    }
+    last_player = s.player;
+    if (std::fabs(dy) < 0.05f) {  // standing (or walking on the level): a known good spot
+        if (still_since == 0) still_since = now;
+        if (now - still_since >= 1.0) {
+            std::memcpy(stable, p, sizeof p);
+            have_stable = true;
+        }
+        falling_since = 0;
+        return;
+    }
+    still_since = 0;
+    if (dy < 0.7f) {  // 0.5 s: more than 0.7 m down is a fall
+        falling_since = 0;
+        return;
+    }
+    if (falling_since == 0) {
+        falling_since = now;
+        return;
+    }
+    if (now - falling_since < 6.0 || !have_stable) {
+        return;
+    }
+    falling_since = 0;
+    alignas(16) float to[4] = {stable[0], stable[1] + 0.3f, stable[2], 1.0f};
+    alignas(16) float rot[4] = {0, 0, 0, 0};
+    SafeRead(pm + 0x1d0, rot, 16);
+    using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
+    reinterpret_cast<Warp>(Field<u64>(Field<u64>(s.player, 0), 0x5f8))(s.player, to, rot, 1);
+    Log("recovery: falling for 6 s in the host's world at (%.1f, %.1f, %.1f); back to (%.1f, %.1f, %.1f) where it last stood",
+        p[0], p[1], p[2], to[0], to[1], to[2]);
+}
+
 void FallRecoveryTick(const GameSnapshot& s, double now) {
+    HostWorldFallTick(s, now);
     static float last_y = 0;
     static double last_t = 0, falling_since = 0;
     static u64 last_player = 0;
@@ -1861,6 +1970,7 @@ void FallbackCleanupTick(const GameSnapshot& s) {
 // was gone and the bell had to re-summon it (live r5). With no host travel within the grace
 // (BB_PARTY_B2_DEATH_GRACE s, default 8; 0 = no hold) the usual redirect runs.
 std::atomic<double> g_death_held_at{0};
+std::atomic<double> g_last_hold_at{0};  // the last held death (not cleared when the hold is consumed)
 // The guest is dead and follows the host's travel: its load is a death load, which goes to its
 // own respawn records (GSM +0x1528 last lamp, +0x1538 mode, +0x153C respawn: often the Hunter's
 // Dream) whatever the forced placement says (live r11: loaded m21_00 in host-world mode, 142 m
@@ -1881,6 +1991,38 @@ double DeathGrace() {
     return g;
 }
 
+/// ERSC / single-player rule (design decision 3): a guest dying in the host's world drops its echoes
+/// into a bloodstain, as the host does. The game's own record 0x13D2910(SprjEventMan +0x80, chr, 1)
+/// (what SoloPlayDeath_2 calls) is used; in host-world mode (GSM +0x1592 == 0) it would place the
+/// stain at the guest's pre-summon spot (forced placement +0x1500), so the call runs with +0x1592 = 1
+/// (the chr's own position and map) and +0x1770 = 1 (the record gate), both put back after.
+/// BB_PARTY_GUEST_BLOODSTAIN=0: off (a phantom keeps its echoes, vanilla).
+void GuestBloodstain() {
+    static const bool on = !(std::getenv("BB_PARTY_GUEST_BLOODSTAIN") && std::getenv("BB_PARTY_GUEST_BLOODSTAIN")[0] == '0');
+    const u64 gsm = Slot(kSlotGsm), player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+    const u64 pgd = Field<u64>(Slot(kSlotGameData), 8);
+    const u64 events = Field<u64>(Slot(0x553b108), 0x80);
+    const int echoes = Field<int>(pgd, 0x94, -1);
+    if (!on || !gsm || !player || !pgd || !events || echoes <= 0) {
+        if (on) {
+            Log("guest: no bloodstain (echoes %d)", echoes);
+        }
+        return;
+    }
+    const u8 own = Field<u8>(gsm, 0x1592), gate = Field<u8>(gsm, 0x1770), one = 1;
+    SafeWrite(gsm + 0x1592, &one, 1);
+    SafeWrite(gsm + 0x1770, &one, 1);
+    reinterpret_cast<void(BB_COOP_SYSV*)(u64, u64, u32)>(Guest(0x13d2910))(events, player, 1);
+    SafeWrite(gsm + 0x1592, &own, 1);
+    SafeWrite(gsm + 0x1770, &gate, 1);
+    const u64 rec = Field<u64>(Slot(kSlotGameData), 0x30);
+    float pos[3] = {};
+    SafeRead(rec + 0x18, pos, 12);
+    Log("guest: bloodstain recorded: echoes %d -> %d, stain %d echoes at (%.1f, %.1f, %.1f) map %#x (gate was %u)", echoes,
+        Field<int>(pgd, 0x94, -1), Field<int>(rec, 0x38, -1), double(pos[0]), double(pos[1]), double(pos[2]),
+        Field<u32>(rec, 0x3c), unsigned(gate));
+}
+
 bool HoldGuestDeath() {
     if (!g_on.load() || Role() != RoleClient || DeathGrace() <= 0) {
         return false;
@@ -1891,6 +2033,9 @@ bool HoldGuestDeath() {
         phase = S().gphase;
     }
     g_death_held_at = Now();
+    g_last_hold_at = g_death_held_at.load();
+    GuestBloodstain();
+    Send(0, "{\"op\":\"dead\"}");  // the host counts its members down (C2: a wipe while it is down)
     if (phase != GuestPhase::Idle) {
         g_dead_follow = true;
     }
@@ -2032,13 +2177,20 @@ void DeadAfterClearTick(const GameSnapshot& s, double now) {
     // 12 s after a K10 on this load (the normal path fires ~8.6 s after the death), 15 s otherwise
     // (live: a death in the Cleric Beast's arena during the fight was not processed either).
     const double limit = g_k10_this_load.load() ? 12.0 : 15.0;
-    if (fired || now - dead_since < limit || g_death_held_at.load() >= dead_since) return;
+    // The game's death state did run when B2 held the death (HoldGuestDeath) - also once the hold
+    // was consumed by a lone respawn or a dead follow that is still loading (hostdeath hd22: this
+    // watchdog redirected a guest 8 s into its lone respawn, which ended the session).
+    if (fired || now - dead_since < limit || g_death_held_at.load() >= dead_since ||
+        g_last_hold_at.load() >= dead_since || g_dead_follow.load() || g_solo_respawn.load()) {
+        return;
+    }
     fired = true;
     Log("guest: dead for %.0f s and the game's death state never ran (%s): the guest death redirect runs now",
         now - dead_since, g_k10_this_load.load() ? "after a boss clear: BlockClear state kept by K10" : "no PartyGhostDeath");
     GuestDeathRedirectNow();
 }
 
+bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why);
 void HeldDeathTick(const GameSnapshot& s, double now) {
     if (g_dead_follow.load() && !SessionUp()) {
         // The follow ended without an arrival (B1 fallback): the host's records stay, which is
@@ -2065,12 +2217,913 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
     if (now - at < DeathGrace() || s.loading) {
         return;
     }
+    static double limbo_logged = 0;
+    {
+        // ERSC: a death in a boss fight waits (limbo) until the boss is gone, the party wipes (the
+        // host's death travel takes the guest along, above) or someone rests (a travel, same).
+        std::string boss;
+        if (BossFightActive(&boss)) {
+            if (limbo_logged != at) {
+                limbo_logged = at;
+                Log("guest: dead in a boss fight (%s): limbo until the boss is gone, a wipe or a rest", boss.c_str());
+            }
+            return;
+        }
+        if (limbo_logged == at) {
+            Log("guest: the boss fight is over (%.1f s after the death); respawning", now - at);
+        }
+    }
     g_death_held_at = 0;
+    // Design decisions (ERSC_PARITY.md): outside a boss fight a dead player respawns at its OWN last
+    // lamp (split travel: a re-join when that lamp is in the host's area, else an alone load);
+    // after a boss fight everyone uses the party's lamp, the host's last lamp (SoloRespawn).
+    static const bool own_lamp = !(std::getenv("BB_PARTY_GUEST_OWN_LAMP") && std::getenv("BB_PARTY_GUEST_OWN_LAMP")[0] == '0');
+    {
+        // The respawn lamp in the loaded map: revived where it lies and put on the lamp, no load
+        // for anyone (own last lamp outside a boss fight, the host's after one). Own lamp in
+        // another map: split travel loads it for this guest alone; if it cannot, the host's lamp.
+        const u32 own = Field<u32>(Slot(kSlotGsm), 0x1528);
+        const u32 party = GuestDeathRedirectLamp();
+        const bool boss = limbo_logged == at;
+        if (!boss && own_lamp) {
+            if (GuestReviveInPlace(s, own, "its own last lamp")) {
+                return;
+            }
+            if (RespawnAloneAtOwnLamp()) {
+                Log("guest: died alone (no host travel in %.1f s): its own last lamp %u is in another map: a load for "
+                    "this guest only", now - at, own);
+                return;
+            }
+        }
+        if (GuestReviveInPlace(s, party, "the host's last lamp")) {
+            return;
+        }
+    }
     if (SoloRespawn(now - at, s.map_id)) {
         return;
     }
     Log("guest: no host travel %.1f s after its death; the usual death redirect runs", now - at);
     GuestDeathRedirectNow();
+}
+
+// ---- C2: the host dies alone (docs/party/b2_seamless.md 6.13) ----
+// Vanilla: SoloPlayDeath_2 0x1381DE0 selects the last lamp (0x1332BC0), calls the funnel
+// 0x13CDE30 (stage request -> MoveMapStep: the whole world, and with it every member chr, is
+// rebuilt; with B2 the guests follow in one load), then records the bloodstain 0x13D2910 (echoes
+// -> GameDataMan +0x30, PlayerGameData +0x94 = 0). With a member in the world the host's funnel
+// call is taken instead (party_travel SetHostDeathIntercept): no stage request, no broadcast; the
+// rest of SoloPlayDeath_2 runs as usual (bloodstain, echoes lost). A moment later the host's chr is
+// revived where it lies and put on its lamp's spawn spot in the loaded map; the guests never load.
+// Falls back to the vanilla party move when the lamp is not in the loaded map (or its spawn spot
+// was never seen), and runs the vanilla funnel when every guest is down too (a wipe, 6.8).
+using u16 = std::uint16_t;
+struct LampSpot {
+    bool valid = false;
+    u32 lamp = 0, map = 0;
+    alignas(16) float pos[4] = {};
+    alignas(16) float rot[4] = {};
+};
+LampSpot g_lamp_spot;  // main thread
+std::atomic<bool> g_host_down{false};    // the host's death was taken; not revived yet
+std::atomic<double> g_host_down_at{0};
+std::atomic<int> g_revivals{0};
+std::atomic<bool> g_host_limbo{false};   // the host's death came in a boss fight: it waits for the end
+std::mutex g_dead_mu;
+std::map<int, double> g_dead_members;    // host: party slot -> when it said it died (under g_dead_mu)
+std::atomic<bool> g_host_revived_note{false};  // guest: the host was revived in place (re-create its chr)
+
+// What a chr death writes (ChrIns_OnDeath 0x18C49F0 and its followers 0x18C4F90 / 0x18C5070, the
+// per-frame trigger 0x18BD9D0), snapshot while the host is alive.
+struct DeathFields {
+    u64 f1e1 = 0;          // ChrIns +0x1E1, 5 bytes of flags (0x10000 dying, 0x22000 / 0x40000 death drops done)
+    u16 ctrl114 = 0;       // ChrCtrl (+0x58) +0x114 (bit 0 set on death)
+    u8 ctrl38_48 = 0;      // [ChrCtrl +0x38] +0x48 (bit 0 set on death)
+    int m8_1b4 = 0, m8_1b8 = 0;  // [+0x3B0] +8: +0x1B4 / +0x1B8 (death kind 2/9, 2)
+    u16 m20_200 = 0;       // HP module [+0x3B0] +0x20 +0x200 (dead mode / no-dead bits)
+    int type = 0;          // +0x78
+    float alpha = 0, alpha_rate = 0;  // +0x20C draw alpha, +0x210 its rate (ChrFadeIn / ChrFadeOut 0x1339010 / 0x13390B0)
+    int upd_state = 0;     // [+0x18] +0x10 (4: disabled, IsDisable 0x1337E70), +0x20 bits
+    u8 upd_bits = 0;
+};
+bool ReadDeathFields(u64 chr, DeathFields* d) {
+    if (!chr) {
+        return false;
+    }
+    const u64 ctrl = Field<u64>(chr, 0x58), m8 = Field<u64>(Field<u64>(chr, 0x3b0), 8),
+              m20 = Field<u64>(Field<u64>(chr, 0x3b0), 0x20);
+    d->f1e1 = 0;
+    SafeRead(chr + 0x1e1, &d->f1e1, 5);
+    d->ctrl114 = Field<u16>(ctrl, 0x114);
+    d->ctrl38_48 = Field<u8>(Field<u64>(ctrl, 0x38), 0x48);
+    d->m8_1b4 = Field<int>(m8, 0x1b4);
+    d->m8_1b8 = Field<int>(m8, 0x1b8);
+    d->m20_200 = Field<u16>(m20, 0x200);
+    d->type = Field<int>(chr, 0x78);
+    d->alpha = Field<float>(chr, 0x20c);
+    d->alpha_rate = Field<float>(chr, 0x210);
+    d->upd_state = Field<int>(Field<u64>(chr, 0x18), 0x10);
+    d->upd_bits = Field<u8>(Field<u64>(chr, 0x18), 0x20);
+    return ctrl && m8 && m20;
+}
+std::string DescribeDeathFields(const DeathFields& d) {
+    char b[260];
+    std::snprintf(b, sizeof b,
+                  "+0x1e1 %010llx ctrl+0x114 %04x ctrl38+0x48 %02x m8 %d/%d hp+0x200 %04x type %d alpha %.2f (%+.2f/s) "
+                  "upd %d/%02x",
+                  ull(d.f1e1), unsigned(d.ctrl114), unsigned(d.ctrl38_48), d.m8_1b4, d.m8_1b8, unsigned(d.m20_200),
+                  d.type, double(d.alpha), double(d.alpha_rate), d.upd_state, unsigned(d.upd_bits));
+    return b;
+}
+DeathFields g_alive_fields;  // main thread: the host's, last seen alive
+bool g_seen_dying = false;   // main thread: the host's chr went down (until the revive or a load)
+// The revive cleared the death bits of ChrCtrl +0x114 / [+0x38] +0x48 (the chr acts again). With
+// them clear a later stage request (lamp warp, death, Hunter's Mark) stayed armed and no load began
+// (live hd11, as with the full alive copy in hd6/hd7); with them set it loads (hd10). So once a
+// stage request is armed (GSM +8) they are set again for the load (which re-creates the chr).
+u64 g_ctrl_cleared_for = 0;
+
+// Diagnostics (BB_PARTY_B2_REVIVE_DIFF=1): raw copies of the host's chr and its parts while alive,
+// diffed against the dead chr at the revive (which fields a death changes).
+struct RawPart {
+    const char* name;
+    u64 base = 0;
+    std::vector<u8> bytes;
+};
+std::vector<RawPart> g_alive_raw;
+std::vector<RawPart> SnapshotRaw(u64 chr) {
+    std::vector<RawPart> out;
+    auto add = [&](const char* name, u64 base, std::size_t n) {
+        RawPart r{name, base, std::vector<u8>(n)};
+        if (base && SafeRead(base, r.bytes.data(), n)) {
+            out.push_back(std::move(r));
+        }
+    };
+    add("chr", chr, 0x800);
+    add("ctrl", Field<u64>(chr, 0x58), 0x400);
+    add("ctrl38", Field<u64>(Field<u64>(chr, 0x58), 0x38), 0x100);
+    add("upd18", Field<u64>(chr, 0x18), 0x80);
+    static const char* names[] = {"mod+0", "mod+8", "mod+10", "mod+18", "mod+20", "mod+28", "mod+30", "mod+38",
+                                  "mod+40", "mod+48", "mod+50", "mod+58", "mod+60", "mod+68", "mod+70", "mod+78",
+                                  "mod+80", "mod+88", "mod+90", "mod+98"};
+    const u64 bag = Field<u64>(chr, 0x3b0);
+    for (int i = 0; i < 20; ++i) {
+        add(names[i], Field<u64>(bag, u64(i) * 8), 0x300);
+    }
+    return out;
+}
+/// What a death changes besides HP (live diff of the host's chr alive vs dead, run hd5), put back
+/// from the alive copy: PlayerIns +0x208 (draw factor 1 -> 0: the dissolve) and +0x7E0;
+/// ChrCtrl +0x114 (0 -> 0x10001) and +0x288; the action-request block ChrCtrl +0x370 (+0x3C, +0x40,
+/// +0x48, +0x58, +0x64, +0x68: the death request); module [+0x3B0] +8 (+0x10, +0x188, +0x190,
+/// +0x1BC, +0x204, +0x208). Only dwords that differ are written; positions and animation slots are
+/// left alone.
+struct RestoreSpec {
+    const char* part;
+    std::vector<u32> offs;  // empty: every differing dword of the part
+};
+int RestoreAliveFields(u64 chr) {
+    static const RestoreSpec specs[] = {
+        {"chr", {0x208, 0x7e0}},
+        {"ctrl", {0x114, 0x288}},
+        {"ctrl38", {}},
+        {"mod+8", {}},
+    };
+    const std::vector<RawPart> now = SnapshotRaw(chr);
+    int n = 0;
+    for (const RestoreSpec& sp : specs) {
+        for (const RawPart& a : g_alive_raw) {
+            if (std::strcmp(a.name, sp.part) != 0) {
+                continue;
+            }
+            for (const RawPart& b : now) {
+                if (std::strcmp(b.name, sp.part) != 0 || a.base != b.base) {
+                    continue;
+                }
+                auto put = [&](std::size_t o) {
+                    if (o + 4 <= a.bytes.size() && std::memcmp(&a.bytes[o], &b.bytes[o], 4) != 0) {
+                        SafeWrite(a.base + o, &a.bytes[o], 4);
+                        ++n;
+                    }
+                };
+                if (sp.offs.empty()) {
+                    for (std::size_t o = 0; o + 4 <= a.bytes.size(); o += 4) {
+                        put(o);
+                    }
+                } else {
+                    for (u32 o : sp.offs) {
+                        put(o);
+                    }
+                }
+            }
+        }
+    }
+    return n;
+}
+
+void LogRawDiff(u64 chr) {
+    const std::vector<RawPart> now = SnapshotRaw(chr);
+    int shown = 0;
+    for (const RawPart& a : g_alive_raw) {
+        for (const RawPart& b : now) {
+            if (std::strcmp(a.name, b.name) != 0 || a.base != b.base) {
+                continue;
+            }
+            std::string line;
+            for (std::size_t o = 0; o + 4 <= a.bytes.size() && shown < 400; o += 4) {
+                u32 x, y;
+                std::memcpy(&x, &a.bytes[o], 4);
+                std::memcpy(&y, &b.bytes[o], 4);
+                if (x == y) {
+                    continue;
+                }
+                float fx, fy;
+                std::memcpy(&fx, &x, 4);
+                std::memcpy(&fy, &y, 4);
+                char t[96];
+                std::snprintf(t, sizeof t, " +%zx:%08x->%08x(%g->%g)", o, x, y, double(fx), double(fy));
+                line += t;
+                ++shown;
+            }
+            if (!line.empty()) {
+                Log("revive diff %s (%#llx):%s", a.name, ull(a.base), line.c_str());
+            }
+        }
+    }
+}
+bool g_alive_fields_ok = false;
+
+/// HP module ([+0x3B0] +0x20): +0xF8 HP, +0xFC max HP (ChrIns_OnDeath 0x18C49F0 reads them; the
+/// live diff of a death showed +0xF8 going to 0).
+int ChrHp(u64 chr) {
+    return Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0xf8, -1);
+}
+
+bool ChrTransform(u64 chr, float pos[4], float rot[4]) {
+    const u64 a = Field<u64>(Field<u64>(Field<u64>(Field<u64>(chr, 0x58), 8), 0x3b0), 0x68);
+    return a && SafeRead(a + 0x1e0, pos, 16) && SafeRead(a + 0x1d0, rot, 16);
+}
+
+bool HostReviveOn() {
+    static const bool on = !(std::getenv("BB_PARTY_B2_HOST_REVIVE") && std::getenv("BB_PARTY_B2_HOST_REVIVE")[0] == '0');
+    return on;
+}
+
+/// BB_PARTY_B2_REVIVE_RECIPE (diagnostics): which revive steps run (comma list).
+bool RecipeHas(const char* step) {
+    // '|' separates the recipes of successive revivals (the last one repeats): one run tries several.
+    static const std::vector<std::string> list = [] {
+        const char* v = std::getenv("BB_PARTY_B2_REVIVE_RECIPE");
+        std::string all = v && v[0] ? v : "recover,flags,ctrl,fade,reset,idle,warp,gsm";
+        std::vector<std::string> out;
+        for (std::size_t a = 0;;) {
+            const std::size_t b = all.find('|', a);
+            out.push_back(all.substr(a, b == std::string::npos ? std::string::npos : b - a));
+            if (b == std::string::npos) {
+                break;
+            }
+            a = b + 1;
+        }
+        return out;
+    }();
+    const std::string& r = list[std::min<std::size_t>(std::size_t(g_revivals.load()), list.size() - 1)];
+    return ("," + r + ",").find(std::string(",") + step + ",") != std::string::npos;
+}
+
+/// Where the player stands right after a load that put it on its lamp (a lamp warp, a death, a
+/// Hunter's Mark: GSM +0x1538 respawn mode 1/2 with a +0x153C record, or +0x1524 "at the last
+/// lamp" from the selector 0x1332BC0): that lamp's spawn spot in this map (the game's own
+/// placement; where a revive puts the host). Own world only.
+void LampSpotTick(const GameSnapshot& s) {
+    static bool was_loading = false;
+    static bool lamp_load = false;
+    static int stable = 0;
+    const bool loading = s.loading || !s.world_up;
+    const u64 gsm = Slot(kSlotGsm);
+    if (loading && !was_loading) {
+        const u32 mode = Field<u32>(gsm, 0x1538);
+        const u32 rec = Field<u32>(gsm, 0x153c);
+        lamp_load = ((mode == 1 || mode == 2) && rec != 0xffffffffu && rec != 0) || Field<u8>(gsm, 0x1524) != 0;
+        stable = 0;
+        Log("lamp spot: load starts (respawn mode %u, record %u, at-last-lamp %u, last lamp %u)%s", mode, rec,
+            unsigned(Field<u8>(gsm, 0x1524)), Field<u32>(gsm, 0x1528), lamp_load ? ": a lamp arrival" : "");
+    }
+    was_loading = loading;
+    if (loading || !lamp_load || !s.player) {
+        return;
+    }
+    if (++stable < 30) {
+        return;
+    }
+    lamp_load = false;
+    if (Field<u8>(gsm, 0x1592) != 1) {
+        return;  // a guest in the host's world: not its own lamp
+    }
+    LampSpot sp;
+    sp.lamp = Field<u32>(gsm, 0x1528);
+    sp.map = s.map_id;
+    if (sp.lamp == 0 || sp.lamp == 0xffffffffu || !ChrTransform(s.player, sp.pos, sp.rot)) {
+        return;
+    }
+    sp.valid = true;
+    g_lamp_spot = sp;
+    Log("lamp spot: lamp %u in %s at (%.2f, %.2f, %.2f) yaw %.2f (the host's revive spot)", sp.lamp,
+        MapName(sp.map).c_str(), double(sp.pos[0]), double(sp.pos[1]), double(sp.pos[2]), double(sp.rot[1]));
+}
+
+/// Host: how many members said they are down ("dead", until they arrive again; 90 s at most).
+int DeadMemberCount() {
+    std::lock_guard<std::mutex> lk(g_dead_mu);
+    const double now = Now();
+    for (auto it = g_dead_members.begin(); it != g_dead_members.end();) {
+        it = now - it->second > 90.0 ? g_dead_members.erase(it) : std::next(it);
+    }
+    return int(g_dead_members.size());
+}
+
+int MemberTaskCount() {
+    int n = 0;
+    for (const TaskInfo& t : Tasks(false)) {
+        n += t.mode == 1 ? 1 : 0;
+    }
+    return n;
+}
+
+/// The host's death funnel (game thread, SoloPlayDeath_2): taken when the host can be revived in
+/// this map with a member in the world.
+/// BB_PARTY_B2_HOST_REVIVE_SOLO=1 (test fixture, one instance): the revive also without a session
+/// or a member (several deaths in one run, BB_PARTY_B2_REVIVE_RECIPE a|b|c).
+bool SoloReviveTest() {
+    static const bool on = std::getenv("BB_PARTY_B2_HOST_REVIVE_SOLO") && std::getenv("BB_PARTY_B2_HOST_REVIVE_SOLO")[0] == '1';
+    return on;
+}
+
+bool HostDeathIntercept() {
+    if (!g_on.load() || !HostReviveOn() || (Role() != RoleHost && !SoloReviveTest())) {
+        return false;
+    }
+    const int members = MemberTaskCount(), dead = DeadMemberCount();
+    if (members <= 0 && !SoloReviveTest()) {
+        return false;
+    }
+    if (members > 0 && dead >= members) {
+        Log("host death: every member is down too (%d of %d): a wipe; the party respawns together", dead, members);
+        return false;
+    }
+    const u64 gsm = Slot(kSlotGsm);
+    const u32 lamp = Field<u32>(gsm, 0x1528);
+    const u32 stage = Field<u32>(Field<u64>(Slot(kSlotWorldChrMan), 0x60), 0x3f8);  // the player's stage
+    // The lamp's spawn spot: the one seen at the last lamp arrival, else the MSB revive point of the
+    // lamp from the game data (party_ids ReturnSpot, split_travel.md 3a), when it is in this map.
+    if (!(g_lamp_spot.valid && g_lamp_spot.lamp == lamp)) {
+        float rs[4];
+        if (lamp != 0 && lamp != kTravelNone && (ids::EntityMap(lamp) >> 16) == (stage >> 16) && ids::ReturnSpot(lamp, rs)) {
+            LampSpot d;
+            d.valid = true;
+            d.lamp = lamp;
+            d.map = ids::EntityMap(lamp);
+            d.pos[0] = rs[0], d.pos[1] = rs[1], d.pos[2] = rs[2], d.pos[3] = 1.0f;
+            d.rot[1] = rs[3] * 3.14159265f / 180.0f;
+            g_lamp_spot = d;
+            Log("lamp spot: lamp %u from the game data (%.2f, %.2f, %.2f) yaw %.0f deg", lamp, double(rs[0]),
+                double(rs[1]), double(rs[2]), double(rs[3]));
+        }
+    }
+    const LampSpot& sp = g_lamp_spot;
+    // The stage id (PlayerIns +0x3F8) and the map id share the area / block bytes.
+    const bool here = sp.valid && sp.lamp == lamp && (sp.map >> 16) == (stage >> 16);
+    std::string boss;
+    if (BossFightActive(&boss)) {
+        if (!g_host_down.exchange(true)) {
+            g_host_down_at = Now();
+            g_host_limbo = true;
+            Log("host death in a boss fight (%s): limbo until the boss is gone (then the respawn), a wipe or a rest; "
+                "%d member(s), %d down",
+                boss.c_str(), members, dead);
+        }
+        return true;
+    }
+    if (!here) {
+        // Design decision 1: the host respawns at its own last lamp in another map ALONE; the
+        // guests stay where they are (split travel: the captured TravelIntent carries `alone`).
+        static const bool alone = !(std::getenv("BB_PARTY_HOST_DEATH_ALONE") && std::getenv("BB_PARTY_HOST_DEATH_ALONE")[0] == '0');
+        if (alone) {
+            HostTravelAloneNext();
+        }
+        Log("host death: last lamp %u is not in the loaded map (stage %#x): the host loads it %s", lamp, stage,
+            alone ? "alone (the guests stay)" : "and the party moves with it");
+        return false;
+    }
+    if (g_host_down.exchange(true)) {
+        return true;  // the same death's funnel again
+    }
+    g_host_down_at = Now();
+    Log("host death taken: no stage request, no party move; revive at lamp %u (%.1f, %.1f, %.1f) in %s; %d member(s), "
+        "%d down; echoes %d go to the bloodstain",
+        lamp, double(sp.pos[0]), double(sp.pos[1]), double(sp.pos[2]), MapName(sp.map).c_str(), members, dead,
+        Field<int>(Field<u64>(Slot(kSlotGameData), 8), 0x94, -1));
+    return true;
+}
+
+/// Main thread: the taken host death's revive.
+void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host);
+void ReviveHost(const GameSnapshot& s) {
+    ReviveLocal(s, g_lamp_spot, true);
+}
+
+/// Main thread: the local player's chr revived where it lies and put on `sp` (its lamp's spawn
+/// spot in the loaded map). `host`: the party host (peers re-create its chr on "host_revived");
+/// otherwise a guest (peers re-create the member chr nearest to where it died, "member_revived").
+void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
+    const u64 p = s.player;
+    float died_at[4] = {}, died_rot[4] = {};
+    ChrTransform(p, died_at, died_rot);
+    DeathFields before;
+    ReadDeathFields(p, &before);
+    Log("host revive: before: hp %d, %s; alive: %s; echoes %d", ChrHp(p), DescribeDeathFields(before).c_str(),
+        g_alive_fields_ok ? DescribeDeathFields(g_alive_fields).c_str() : "-", s.echoes);
+    static const bool diff = std::getenv("BB_PARTY_B2_REVIVE_DIFF") && std::getenv("BB_PARTY_B2_REVIVE_DIFF")[0] == '1';
+    if (diff && !g_alive_raw.empty()) {
+        LogRawDiff(p);
+    }
+    if (RecipeHas("restore") && !g_alive_raw.empty() && Field<u64>(p, 0x58) == [&] {
+            for (const RawPart& r : g_alive_raw) {
+                if (std::strcmp(r.name, "chr") == 0) {
+                    u64 v = 0;
+                    std::memcpy(&v, &r.bytes[0x58], 8);
+                    return v;
+                }
+            }
+            return u64(0);
+        }()) {
+        Log("host revive: %d death field(s) put back from the alive copy", RestoreAliveFields(p));
+    }
+    const u64 ctrl = Field<u64>(p, 0x58), m8 = Field<u64>(Field<u64>(p, 0x3b0), 8),
+              m20 = Field<u64>(Field<u64>(p, 0x3b0), 0x20);
+    if (RecipeHas("recover") && host) {  // a guest keeps its phantom type (0x1900710 writes +0x78 = 0)
+        // RevivePlayer / OnSpEffectRevive's 0x1900710: body form, SpEffects reset, HP to max.
+        reinterpret_cast<void(BB_COOP_SYSV*)(u64)>(Guest(0x1900710))(p);
+    }
+    if (RecipeHas("flags")) {
+        u64 f = 0;
+        SafeRead(p + 0x1e1, &f, 5);
+        f &= ~u64(0x10000 | 0x20000 | 0x2000 | 0x40000);
+        SafeWrite(p + 0x1e1, &f, 5);
+    }
+    if (RecipeHas("ctrl") && ctrl) {
+        // ChrIns_OnDeath sets ChrCtrl +0x114 bit 0 (and +0x116 bit 0: the live diff read 0 -> 0x10001).
+        const u32 c = Field<u32>(ctrl, 0x114) & ~0x10001u;
+        SafeWrite(ctrl + 0x114, &c, 4);
+        g_ctrl_cleared_for = p;
+        if (const u64 c38 = Field<u64>(ctrl, 0x38)) {
+            const u8 b = u8(Field<u8>(c38, 0x48) & ~1u);
+            SafeWrite(c38 + 0x48, &b, 1);
+        }
+    }
+    if (RecipeHas("module") && m8 && g_alive_fields_ok) {
+        SafeWrite(m8 + 0x1b4, &g_alive_fields.m8_1b4, 4);
+        SafeWrite(m8 + 0x1b8, &g_alive_fields.m8_1b8, 4);
+    }
+    if (RecipeHas("v158")) {
+        // ChrIns_OnDeath calls vfunc +0x158(chr, 1).
+        if (const u64 fn = Field<u64>(Field<u64>(p, 0), 0x158)) {
+            reinterpret_cast<void(BB_COOP_SYSV*)(u64, u64)>(fn)(p, 0);
+        }
+    }
+    if (m20) {
+        const int mx = Field<int>(m20, 0xfc, -1);
+        if (mx > 0) {
+            SafeWrite(m20 + 0xf8, &mx, 4);  // HP to max
+        }
+    }
+    if (RecipeHas("fade")) {
+        // The death dissolve (+0x20C alpha -> 0, +0x1E5 bit 2): faded in again from 0 over ~0.7 s,
+        // as ChrFadeIn does (rate = (1 - alpha) / time).
+        const float a0 = 0.0f, rate = 1.5f;
+        SafeWrite(p + 0x20c, &a0, 4);
+        SafeWrite(p + 0x210, &rate, 4);
+        const u8 b = u8(Field<u8>(p, 0x1e5) & ~4u);
+        SafeWrite(p + 0x1e5, &b, 1);
+    }
+    if (RecipeHas("gsm")) {
+        const u64 gsm = Slot(kSlotGsm);
+        const u8 zero = 0;
+        SafeWrite(gsm + 0x1522, &zero, 1);  // "the local player died" (ChrIns_OnDeath)
+        SafeWrite(gsm + 0x1523, &zero, 1);
+    }
+    if (RecipeHas("reset")) {
+        // Lua ChrResetRequest 0x13370B0: 0x18BCF30(chr, 1) (transform re-applied, ChrCtrl vfunc +0x38,
+        // the behavior graph reset) and +0x1E4 |= 2.
+        reinterpret_cast<void(BB_COOP_SYSV*)(u64, u32)>(Guest(0x18bcf30))(p, 1);
+        const u8 b = u8(Field<u8>(p, 0x1e4) | 2);
+        SafeWrite(p + 0x1e4, &b, 1);
+    }
+    if (RecipeHas("idle")) {
+        // Lua ChrResetAnimation 0x13370F0: the behavior event L"Idle_wild" (0x4992C40) through
+        // 0x1A19F60(behavior [+0x3B0]+0x30, name) when its +0x384 is set: out of BeDead to idle.
+        const u64 m30 = Field<u64>(Field<u64>(p, 0x3b0), 0x30);
+        if (m30 && Field<u8>(m30, 0x384)) {
+            reinterpret_cast<void(BB_COOP_SYSV*)(u64, u64)>(Guest(0x1a19f60))(m30, Guest(0x4992c40));
+        } else {
+            Log("host revive: no behavior to reset (gate %u)", unsigned(Field<u8>(m30, 0x384)));
+        }
+    }
+    if (RecipeHas("anim")) {
+        // Lua ForcePlayAnimation (0x132E290 -> 0x13CBFD0(entity, anim, 0, 0)); 10000 = local player.
+        // BB_PARTY_B2_REVIVE_ANIM: '|' separates the animations of successive revivals.
+        int anim = 0;
+        if (const char* v = std::getenv("BB_PARTY_B2_REVIVE_ANIM"); v && v[0]) {
+            const char* p = v;
+            for (int k = 0; k < g_revivals.load() && std::strchr(p, '|'); ++k) {
+                p = std::strchr(p, '|') + 1;
+            }
+            anim = std::atoi(p);
+        }
+        const u64 m30 = Field<u64>(Field<u64>(p, 0x3b0), 0x30);
+        Log("host revive: ForcePlayAnimation(10000, %d); anim gate [+0x3B0]+0x30 +0x384 = %u", anim,
+            unsigned(Field<u8>(m30, 0x384)));
+        reinterpret_cast<void(BB_COOP_SYSV*)(u32, u32, u32, u32)>(Guest(0x13cbfd0))(10000, u32(anim), 0, 0);
+    }
+    if (RecipeHas("warp") && sp.valid) {
+        alignas(16) float pos[4], rot[4];
+        std::memcpy(pos, sp.pos, sizeof pos);
+        std::memcpy(rot, sp.rot, sizeof rot);
+        pos[3] = 1.0f;
+        // Another party member standing on the lamp spot (within 1 m): side by side instead of inside
+        // it (BesideHost: 0.5 m by party slot).
+        for (const TaskInfo& t : Tasks(false)) {
+            const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+            float q[3];
+            if (c && ChrPos(c, q) && (q[0] - pos[0]) * (q[0] - pos[0]) + (q[2] - pos[2]) * (q[2] - pos[2]) < 1.0f &&
+                std::fabs(q[1] - pos[1]) < 2.0f) {
+                BesideHost(pos, rot, host ? 2 : (g_local_slot.load() > 0 ? g_local_slot.load() : 1));
+                Log("revive: a member stands on the lamp spot; placed beside it (%.2f, %.2f, %.2f)", double(pos[0]),
+                    double(pos[1]), double(pos[2]));
+                break;
+            }
+        }
+        if (const u64 fn = Field<u64>(Field<u64>(p, 0), 0x5f8)) {
+            reinterpret_cast<void(BB_COOP_SYSV*)(u64, const float*, const float*, u32)>(fn)(p, pos, rot, 1);
+        }
+    }
+    DeathFields after;
+    ReadDeathFields(p, &after);
+    g_revivals.fetch_add(1);
+    g_seen_dying = false;
+    Log("%s revive #%d: after: hp %d, %s; at lamp %u (%s)", host ? "host" : "guest", g_revivals.load(), ChrHp(p),
+        DescribeDeathFields(after).c_str(), sp.lamp, DescribeChr(p).c_str());
+    if (host) {
+        Send(-1, "{\"op\":\"host_revived\"}");
+    } else {
+        char b[128];
+        std::snprintf(b, sizeof b, "{\"op\":\"member_revived\",\"pos\":[%.3f,%.3f,%.3f]}", died_at[0], died_at[1],
+                      died_at[2]);
+        Send(-1, b);
+    }
+}
+
+/// Guest, main thread: its held death respawns at `lamp` in the loaded map with no load (the
+/// Bloodborne rule: a load only for a real map change). False: the lamp is not in this map or has
+/// no known spawn spot (the caller loads as before).
+bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
+    static const bool on = !(std::getenv("BB_PARTY_GUEST_REVIVE") && std::getenv("BB_PARTY_GUEST_REVIVE")[0] == '0');
+    const u32 stage = Field<u32>(s.player, 0x3f8);
+    float rs[4];
+    if (!on || !s.player || lamp == 0 || lamp == kTravelNone || (ids::EntityMap(lamp) >> 16) != (stage >> 16) ||
+        !ids::ReturnSpot(lamp, rs)) {
+        return false;
+    }
+    LampSpot sp;
+    sp.valid = true;
+    sp.lamp = lamp;
+    sp.map = ids::EntityMap(lamp);
+    sp.pos[0] = rs[0], sp.pos[1] = rs[1], sp.pos[2] = rs[2], sp.pos[3] = 1.0f;
+    sp.rot[1] = rs[3] * 3.14159265f / 180.0f;
+    Log("guest: died alone: revived at %s %u in the loaded map (%.1f, %.1f, %.1f), no load", why, lamp, double(rs[0]),
+        double(rs[1]), double(rs[2]));
+    ReviveLocal(s, sp, false);
+    return true;
+}
+
+/// Any role: a stage request armed after a revive (the ChrCtrl death bits were cleared): set them
+/// again so the load goes ahead (see g_ctrl_cleared_for).
+void ReviveRearmTick(const GameSnapshot& s) {
+    if (!s.player || g_ctrl_cleared_for != s.player || Field<u8>(Slot(kSlotGsm), 8) == 0) {
+        return;
+    }
+    g_ctrl_cleared_for = 0;
+    const u64 ctrl = Field<u64>(s.player, 0x58);
+    const u32 c = Field<u32>(ctrl, 0x114) | 0x10001u;
+    SafeWrite(ctrl + 0x114, &c, 4);
+    if (const u64 c38 = Field<u64>(ctrl, 0x38)) {
+        const u8 b = u8(Field<u8>(c38, 0x48) | 1u);
+        SafeWrite(c38 + 0x48, &b, 1);
+    }
+    Log("revive: a stage request after the revive; ChrCtrl death bits set again for the load");
+}
+
+std::mutex g_member_revived_mu;
+std::vector<std::array<float, 3>> g_member_revived;  // positions where revived members died (under mu)
+
+/// Host and guests: a member revived in place: its chr here (dead where it fell) is removed and
+/// built again by its task at the member's new spot.
+void MemberRevivedTick(const GameSnapshot& s) {
+    if (!s.world_up || s.loading) {
+        return;
+    }
+    std::vector<std::array<float, 3>> todo;
+    {
+        std::lock_guard<std::mutex> lk(g_member_revived_mu);
+        todo.swap(g_member_revived);
+    }
+    for (const auto& at : todo) {
+        u64 victim = 0;
+        float best = 36.0f;
+        for (const TaskInfo& t : Tasks(false)) {
+            const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+            float p[3];
+            if (c && ChrPos(c, p)) {
+                const float d = (p[0] - at[0]) * (p[0] - at[0]) + (p[1] - at[1]) * (p[1] - at[1]) +
+                                (p[2] - at[2]) * (p[2] - at[2]);
+                if (d < best) {
+                    best = d;
+                    victim = c;
+                }
+            }
+        }
+        if (!victim) {
+            Log("member revived: no member chr within 6 m of (%.1f, %.1f, %.1f) here", double(at[0]), double(at[1]),
+                double(at[2]));
+            continue;
+        }
+        using Release = u64(BB_COOP_SYSV*)(u64, u32);
+        using Remove = void(BB_COOP_SYSV*)(u64, u64);
+        reinterpret_cast<Release>(Guest(0x15bc080))(Field<u64>(Slot(kSlotGsm), 0x16f8), Field<u32>(victim, 8));
+        reinterpret_cast<Remove>(Guest(0x19186e0))(Slot(kSlotWorldChrMan), victim);
+        Log("member revived in place: its dead chr %#llx here removed (%.1f m from where it died); re-created",
+            ull(victim), double(std::sqrt(best)));
+        RewindRemoteTasks("member revived");
+    }
+}
+
+/// Main thread, host: the alive snapshot, the taken death's revive (or a wipe's vanilla funnel)
+/// and a 10 s watch of the revived chr.
+void HostDownTick(const GameSnapshot& s, double now) {
+    static double watch_until = 0, next_watch = 0;
+    if (Role() != RoleHost && !SoloReviveTest()) {
+        if (g_host_down.exchange(false)) {
+            Log("host death: the session ended while the host was down; the stock funnel runs");
+            HostDeathFunnelNow();
+        }
+        std::lock_guard<std::mutex> lk(g_dead_mu);
+        g_dead_members.clear();
+        return;
+    }
+    if (s.loading && g_host_down.load()) {
+        g_host_down = false;  // a travel (a rest, a guest's lamp) took over: the load revives everyone
+        g_host_limbo = false;
+        Log("host death: a load started while the host was down; nothing left to revive");
+    }
+    if (!s.world_up || s.loading || !s.player) {
+        g_seen_dying = false;  // a load re-creates the chr
+        return;
+    }
+    {
+        // Diagnostics: the local chr's death state as it changes (hp, +0x1E1 0x10000 "dying").
+        static int last_hp = -2;
+        static u64 last_f = ~0ull;
+        u64 f = 0;
+        SafeRead(s.player + 0x1e1, &f, 5);
+        const int hp = ChrHp(s.player);
+        if (f & 0x10000) {
+            g_seen_dying = true;  // dead until the revive (the flag itself clears before the funnel)
+        }
+        if ((hp <= 0) != (last_hp <= 0) || ((f ^ last_f) & 0x10000)) {
+            Log("host chr: hp %d, +0x1e1 %010llx (%s)", hp, ull(f), (f & 0x10000) ? "dying" : "alive");
+        }
+        last_hp = hp;
+        last_f = f;
+    }
+    // (stage-request re-arm: ReviveRearmTick, any role)
+    if (!g_host_down.load()) {
+        if (ChrHp(s.player) > 0 && !(Field<u64>(s.player, 0x1e1) & 0x10000) && !g_seen_dying) {
+            g_alive_fields_ok = ReadDeathFields(s.player, &g_alive_fields);
+            static double next_raw = 0;
+            if (now >= next_raw && watch_until == 0) {
+                next_raw = now + 1.0;
+                g_alive_raw = SnapshotRaw(s.player);
+            }
+        }
+        if (watch_until > 0 && now >= next_watch) {
+            next_watch = now + 0.5;
+            DeathFields d;
+            ReadDeathFields(s.player, &d);
+            Log("host revive watch: %s, %s", DescribeChr(s.player).c_str(), DescribeDeathFields(d).c_str());
+            if (now >= watch_until) {
+                watch_until = 0;
+            }
+        }
+        return;
+    }
+    const int members = MemberTaskCount(), dead = DeadMemberCount();
+    if (members > 0 && dead >= members) {
+        g_host_down = false;
+        g_host_limbo = false;
+        Log("host death: every member went down while the host was (%d of %d): a wipe; the stock funnel runs", dead,
+            members);
+        HostDeathFunnelNow();
+        return;
+    }
+    static const double delay = [] {
+        const char* v = std::getenv("BB_PARTY_B2_HOST_REVIVE_DELAY");
+        return v && v[0] ? std::atof(v) : 1.0;
+    }();
+    if (now - g_host_down_at.load() < delay) {
+        return;
+    }
+    if (g_host_limbo.load()) {
+        if (BossFightActive()) {
+            return;
+        }
+        g_host_limbo = false;
+        const u32 lamp = Field<u32>(Slot(kSlotGsm), 0x1528);
+        const LampSpot& sp = g_lamp_spot;
+        const bool here = sp.valid && sp.lamp == lamp && (sp.map >> 16) == (Field<u32>(s.player, 0x3f8) >> 16);
+        Log("host death: the boss fight is over (%.1f s after the death); %s", now - g_host_down_at.load(),
+            here ? "respawn at the lamp here" : "the lamp is in another map: the host loads it alone");
+        if (!here) {
+            g_host_down = false;
+            HostTravelAloneNext();
+            HostDeathFunnelNow();
+            return;
+        }
+    }
+    g_host_down = false;
+    ReviveHost(s);
+    watch_until = now + 10.0;
+    next_watch = now + 0.5;
+}
+
+/// Guest: the host was revived in place; its chr here died with it: removed and built again by
+/// its task (as the host does for a guest's lone respawn, 6.9).
+/// Diagnostics (always on in a session, 1 line / s while anything changes): every remote player
+/// chr's render state - position, distance, +0x208 (draw factor, 0 after a death dissolve),
+/// +0x20C/+0x210 (alpha / rate), +0x1E1 flags, HP - to tell a ghost (plate, no body) apart.
+void RemoteChrRenderWatch(const GameSnapshot& s, double now) {
+    static double next = 0;
+    static std::string last;
+    if (!g_on.load() || !SessionUp() || !s.world_up || s.loading || now < next) {
+        return;
+    }
+    next = now + 1.0;
+    float me[3] = {};
+    ChrPos(s.player, me);
+    std::string line;
+    for (const TaskInfo& t : Tasks(false)) {
+        if (t.mode != 1 && t.mode != 2) {
+            continue;
+        }
+        const u64 c = PlayerForPeer(t.task + kTaskPeer);
+        char b[240];
+        float p[3] = {};
+        if (!c || !ChrPos(c, p)) {
+            std::snprintf(b, sizeof b, " [mode %d no chr]", t.mode);
+        } else {
+            u64 f = 0;
+            SafeRead(c + 0x1e1, &f, 5);
+            const float d = std::sqrt((p[0] - me[0]) * (p[0] - me[0]) + (p[2] - me[2]) * (p[2] - me[2]));
+            std::snprintf(b, sizeof b, " [mode %d %#llx (%.1f, %.1f, %.1f) %.1f m draw %.2f alpha %.2f/%+.2f f %010llx hp %d]",
+                          t.mode, ull(c), double(p[0]), double(p[1]), double(p[2]), double(d),
+                          double(Field<float>(c, 0x208)), double(Field<float>(c, 0x20c)), double(Field<float>(c, 0x210)),
+                          ull(f), ChrHp(c));
+        }
+        line += b;
+    }
+    // Rounded so a standing chr does not log every second.
+    std::string key;
+    for (char ch : line) {
+        key += (ch >= '0' && ch <= '9') ? '#' : ch;
+    }
+    if (line != last) {
+        last = line;
+        Log("remote chrs:%s", line.c_str());
+    }
+}
+
+/// Diagnostics (BB_PARTY_POS_SCAN=1): where the local player's position is kept besides the chr -
+/// GSM (*0x5556678, 0x2000 bytes), GameDataMan (*0x553B130, 0x400) and PlayerGameData (GameDataMan
+/// +8, 0x2000): every float triple within 1 m of the player's position, every 10 s while it changes.
+void PosScanTick(const GameSnapshot& s, double now) {
+    static const bool on = std::getenv("BB_PARTY_POS_SCAN") && std::getenv("BB_PARTY_POS_SCAN")[0] == '1';
+    static double next = 0;
+    static std::string last;
+    if (!on || !s.world_up || s.loading || !s.player || now < next) {
+        return;
+    }
+    next = now + 10.0;
+    float me[4];
+    float rot[4];
+    if (!ChrTransform(s.player, me, rot)) {
+        return;
+    }
+    struct Area {
+        const char* name;
+        u64 base;
+        std::size_t n;
+    } areas[] = {{"gsm", Slot(kSlotGsm), 0x2000}, {"gdm", Slot(kSlotGameData), 0x400},
+                 {"pgd", Field<u64>(Slot(kSlotGameData), 8), 0x2000}};
+    std::string out;
+    for (const Area& a : areas) {
+        std::vector<u8> buf(a.n);
+        if (!a.base || !SafeRead(a.base, buf.data(), a.n)) {
+            continue;
+        }
+        for (std::size_t o = 0; o + 12 <= a.n; o += 4) {
+            float v[3];
+            std::memcpy(v, &buf[o], 12);
+            if (std::fabs(v[0] - me[0]) < 1.0f && std::fabs(v[1] - me[1]) < 1.0f && std::fabs(v[2] - me[2]) < 1.0f) {
+                char b[96];
+                std::snprintf(b, sizeof b, " %s+%#zx(%.1f,%.1f,%.1f)", a.name, o, double(v[0]), double(v[1]), double(v[2]));
+                out += b;
+            }
+        }
+    }
+    const u64 gsm = Slot(kSlotGsm);
+    char h[256];
+    std::snprintf(h, sizeof h, "pos scan: me (%.1f, %.1f, %.1f) stage %#x own-world %u; gsm+0x14c4 %#x +0x1644 %#x +0x14f0 %#x:",
+                  double(me[0]), double(me[1]), double(me[2]), Field<u32>(s.player, 0x3f8), unsigned(Field<u8>(gsm, 0x1592)),
+                  Field<u32>(gsm, 0x14c4), Field<u32>(gsm, 0x1644), Field<u32>(gsm, 0x14f0));
+    if (out != last) {
+        last = out;
+        Log("%s%s", h, out.empty() ? " none" : out.c_str());
+        std::string d;
+        for (u64 o = 0x1490; o < 0x1660; o += 4) {
+            const u32 v = Field<u32>(gsm, o);
+            char b[40];
+            if (v == 0) {
+                continue;
+            }
+            float f;
+            std::memcpy(&f, &v, 4);
+            if (std::fabs(f) > 0.01f && std::fabs(f) < 100000.0f) {
+                std::snprintf(b, sizeof b, " %llx:%.2f", ull(o), double(f));
+            } else {
+                std::snprintf(b, sizeof b, " %llx:%08x", ull(o), v);
+            }
+            d += b;
+        }
+        Log("pos scan: gsm 0x1490..0x1660:%s", d.c_str());
+    }
+}
+
+void HostRevivedTick(const GameSnapshot& s) {
+    static double watch_until = 0, next_watch = 0;
+    const double now = Now();
+    if (watch_until > 0 && now >= next_watch && s.world_up && !s.loading) {
+        next_watch = now + 1.0;
+        for (const TaskInfo& t : Tasks(false)) {
+            if (t.mode == 2) {
+                const u64 chr = PlayerForPeer(t.task + kTaskPeer);
+                DeathFields d;
+                ReadDeathFields(chr, &d);
+                Log("guest: revived host chr watch: %s, %s", chr ? DescribeChr(chr).c_str() : "none",
+                    DescribeDeathFields(d).c_str());
+            }
+        }
+        if (now >= watch_until) {
+            watch_until = 0;
+        }
+    }
+    if (!g_host_revived_note.load() || !s.world_up || s.loading) {
+        return;
+    }
+    watch_until = now + 6.0;
+    next_watch = now + 1.0;
+    g_host_revived_note = false;
+    if (Role() != RoleClient) {
+        return;
+    }
+    static const bool recreate = !(std::getenv("BB_PARTY_B2_HOST_REVIVE_RECREATE") &&
+                                   std::getenv("BB_PARTY_B2_HOST_REVIVE_RECREATE")[0] == '0');
+    for (const TaskInfo& t : Tasks(false)) {
+        if (t.mode != 2) {
+            continue;
+        }
+        const u64 chr = PlayerForPeer(t.task + kTaskPeer);
+        DeathFields d;
+        ReadDeathFields(chr, &d);
+        Log("guest: the host revived in place; its chr here: %s, %s%s", chr ? DescribeChr(chr).c_str() : "none",
+            DescribeDeathFields(d).c_str(), recreate && chr ? "; re-created" : "");
+        if (!chr || !recreate) {
+            continue;
+        }
+        using Release = u64(BB_COOP_SYSV*)(u64, u32);
+        using Remove = void(BB_COOP_SYSV*)(u64, u64);
+        reinterpret_cast<Release>(Guest(0x15bc080))(Field<u64>(Slot(kSlotGsm), 0x16f8), Field<u32>(chr, 8));
+        reinterpret_cast<Remove>(Guest(0x19186e0))(Slot(kSlotWorldChrMan), chr);
+    }
+    if (recreate) {
+        RewindRemoteTasks("guest (host revived)");
+    }
 }
 
 void GuestTick(const GameSnapshot& s, double now) {
@@ -2242,9 +3295,7 @@ void GuestTick(const GameSnapshot& s, double now) {
                         const u32 stage = ids::EntityMap(lamp);
                         alignas(16) float p16[4] = {spot[0], spot[1], spot[2], 1.0f};
                         alignas(16) float r16[4] = {0.0f, spot[3], 0.0f, 0.0f};
-                        SafeWrite(gsm + 0x14c4, &stage, 4);
-                        SafeWrite(gsm + 0x14d0, p16, 16);
-                        SafeWrite(gsm + 0x14e0, r16, 16);
+                        WriteSummonedPlacement(gsm, &stage, p16, r16);
                         t.kind = TravelKind::Transform;
                         t.has_pos = true;
                         t.pos_map = stage;
@@ -2270,9 +3321,7 @@ void GuestTick(const GameSnapshot& s, double now) {
                 float pos[4];
                 std::memcpy(pos, st.dest_pos, sizeof pos);
                 BesideHost(pos, st.dest_rot, g_local_slot.load());
-                SafeWrite(gsm + 0x14c4, &st.dest_stage, 4);
-                SafeWrite(gsm + 0x14d0, pos, 16);
-                SafeWrite(gsm + 0x14e0, st.dest_rot, 16);
+                WriteSummonedPlacement(gsm, &st.dest_stage, pos, st.dest_rot);
                 Log("guest: summoned placement = stage %#x pos (%.1f, %.1f, %.1f), GSM +0x1521 = %u", st.dest_stage,
                     pos[0], pos[1], pos[2], unsigned(Field<u8>(gsm, 0x1521)));
             }
@@ -2804,6 +3853,7 @@ void Init() {
     }
     SetSendHomeVeto(&SendHomeVeto);
     SetGuestDeathHold(&HoldGuestDeath);
+    SetHostDeathIntercept(&HostDeathIntercept);
     // Every BeginLeaveSession with a session logs its caller (which game path ends a party).
     // push rbp; mov rbp, rsp; push r15 (6 bytes, position-independent).
     if (!ReplacePrologue(kBeginLeave, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57},
@@ -3030,6 +4080,13 @@ void Tick(const GameSnapshot& s) {
     FallbackCleanupTick(s);
     FallRecoveryTick(s, now);
     HeldDeathTick(s, now);
+    LampSpotTick(s);
+    HostDownTick(s, now);
+    HostRevivedTick(s);
+    PosScanTick(s, Now());
+    RemoteChrRenderWatch(s, Now());
+    MemberRevivedTick(s);
+    ReviveRearmTick(s);
     BossClearInvincibleTick(s, now);
     DeadAfterClearTick(s, now);
     {
@@ -3211,7 +4268,41 @@ void OnLinkEvent(int from_slot, const std::string& body) {
             live ? "travels alone into this area" : "died alone and respawns in this world");
         return;
     }
+    if (body.find("\"member_revived\"") != std::string::npos) {
+        float p[3] = {0, 0, 0};
+        const char* pp = std::strstr(body.c_str(), "\"pos\":[");
+        if (pp && std::sscanf(pp, "\"pos\":[%f,%f,%f]", &p[0], &p[1], &p[2]) == 3 && std::isfinite(p[0]) &&
+            std::isfinite(p[1]) && std::isfinite(p[2])) {
+            std::lock_guard<std::mutex> lk(g_member_revived_mu);
+            if (g_member_revived.size() < 8) {
+                g_member_revived.push_back({p[0], p[1], p[2]});
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lk(g_dead_mu);
+            g_dead_members.erase(from_slot);
+        }
+        Log("slot %d was revived in place (no load)", from_slot);
+        return;
+    }
+    if (body.find("\"host_revived\"") != std::string::npos) {
+        g_host_revived_note = true;
+        Log("guest: the host was revived in place (no load)");
+        return;
+    }
+    if (body.find("\"dead\"") != std::string::npos) {
+        std::lock_guard<std::mutex> lk(g_dead_mu);
+        if (from_slot > 0 && from_slot < 16) {
+            g_dead_members[from_slot] = Now();
+        }
+        Log("host: slot %d is down (%zu member(s) down)", from_slot, g_dead_members.size());
+        return;
+    }
     if (body.find("\"arrived\"") != std::string::npos) {
+        {
+            std::lock_guard<std::mutex> lk(g_dead_mu);
+            g_dead_members.erase(from_slot);
+        }
         std::lock_guard<std::mutex> lk(S().mu);
         S().arrived = true;
         Log("host: slot %d arrived", from_slot);
@@ -3385,9 +4476,7 @@ bool TravelAlone(const TravelIntent& t, AloneWhy why) {
         alignas(16) float p16[4] = {tt.pos[0], tt.pos[1], tt.pos[2], 1.0f};
         alignas(16) float r16[4] = {tt.rot[0], tt.rot[1], tt.rot[2], tt.rot[3]};
         Log("guest: alone load: summoned placement stage %#x -> %#x", Field<u32>(gsm, 0x14c4), tt.pos_map);
-        SafeWrite(gsm + 0x14c4, &tt.pos_map, 4);
-        SafeWrite(gsm + 0x14d0, p16, 16);
-        SafeWrite(gsm + 0x14e0, r16, 16);
+        WriteSummonedPlacement(gsm, &tt.pos_map, p16, r16);
     }
     const int three = 3;
     SafeWrite(flow + 0x84, &three, 4);
