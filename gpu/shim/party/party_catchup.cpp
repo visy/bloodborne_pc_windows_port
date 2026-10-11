@@ -128,7 +128,7 @@ void TimeOfDayCatchup(const GameSnapshot& s, bool guest_connected, double now) {
     RequestGameSave("catch-up time of day");
 }
 
-void CatchupTick(const GameSnapshot& s, bool guest_connected, double now) {
+void CatchupTick(const GameSnapshot& s, bool guest_connected, double now, std::uint32_t host_map) {
     State& st = S();
     TimeOfDayCatchup(s, guest_connected, now);
     if (st.c.phase() == Catchup::Phase::Done) {
@@ -180,7 +180,7 @@ void CatchupTick(const GameSnapshot& s, bool guest_connected, double now) {
         ApplyStart();
         break;
     case CatchupAction::Warp: {
-        const std::uint32_t lamp = GuestDeathRedirectLamp();
+        const std::uint32_t lamp = GatherLampFor(GuestDeathRedirectLamp(), host_map);
         const std::uint32_t to = lamp != kTravelNone && lamp != 0 ? lamp : kDreamLamp;
         const bool ok = LampWarp(to);
         Log("%s: lamp warp to %u%s: %s", a.why.c_str(), to, to == lamp ? " (the host's last lamp)" : " (host lamp unknown: the Dream)",

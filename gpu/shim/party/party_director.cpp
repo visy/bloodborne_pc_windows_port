@@ -1972,8 +1972,18 @@ void PartyDirector::Tick() {
     NewGameTestTick(s, TitleReadyForInput(role, link));
     // Late joiner catch-up (party_catchup.h): a guest behind the host is brought up to it and
     // gathered at the host's lamp before any summon.
-    CatchupTick(s, role == PartyRole::Guest && link && link->state() == party::LinkState::Connected,
-                Seconds(st.start, now));
+    {
+        std::uint32_t host_map = 0;
+        if (role == PartyRole::Guest && link) {
+            for (const party::RosterEntry& e : link->roster()) {
+                if (e.slot == party::kHostSlot) {
+                    host_map = e.map_id;
+                }
+            }
+        }
+        CatchupTick(s, role == PartyRole::Guest && link && link->state() == party::LinkState::Connected,
+                    Seconds(st.start, now), host_map);
+    }
     // C1: the campaign start (readiness, bells).
     if (full || !st.start_logged) {
         perf::Scope z(perf::Zone::DirStart);
@@ -2255,7 +2265,9 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
             host_map = e.map_id;
         }
     }
-    const std::uint32_t lamp = GuestDeathRedirectLamp();
+    // The host's last lamp unless it lies in another map than the one the host stands in (a fresh
+    // host's default record): then a lamp of the host's map.
+    const std::uint32_t lamp = GatherLampFor(GuestDeathRedirectLamp(), host_map);
     if (!host_map || host_map == 0xffffffffu || s.map_id == 0xffffffffu || lamp == kTravelNone || lamp == 0) {
         return false;
     }
@@ -2283,7 +2295,7 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
     TravelIntent t;
     t.kind = TravelKind::Lamp;
     t.lamp_id = lamp;
-    Log("gather: own world %s, host in %s; to the host's last lamp %u before ringing", MapName(s.map_id).c_str(),
+    Log("gather: own world %s, host in %s; to the host's lamp %u before ringing", MapName(s.map_id).c_str(),
         MapName(host_map).c_str(), lamp);
     return ReplayTravelNow(t);
 }
