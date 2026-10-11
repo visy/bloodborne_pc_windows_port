@@ -137,7 +137,7 @@ def main():
                     except ValueError:
                         return 0
                 starved = any(e["count"] >= 3 and waited(e) > 60 for e in st["queue"])
-                want = 3 if starved else st.get("normal_max", 4)
+                want = min(3, st.get("normal_max", 4)) if starved else st.get("normal_max", 4)
                 if st.get("max_clients") != want:
                     st.setdefault("normal_max", 4)
                     st["max_clients"] = want

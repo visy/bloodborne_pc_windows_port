@@ -139,6 +139,26 @@ Audit of what loads a stage in a party, and what is same-map:
 
 `BB_PARTY_INWORLD=0` turns the in-world follow off (A/B tests).
 
+
+### 3b. From hostdeath: remote chr render state, and re-creating a remote chr (2026-10-11)
+
+* A remote player chr's draw factor is **PlayerIns +0x208** (float): it fades 0 -> 1 when the chr is
+  built and 1 -> 0 in the death dissolve (live: `draw 0.25 / 0.75 / 1.00` after a summon, `0.88 /
+  0.47 / 0.05 / 0.00` over 4 s after the owner died). The name plate and HP bar stay where the chr is
+  even at draw 0: a dead copy left in a world is a "plate without a body". +0x20C/+0x210 (ChrFadeIn /
+  ChrFadeOut alpha) stayed 1 / 0 throughout. A copy re-created by its task reads +0x1E1 `0001000098`
+  (bit 0x1000 clear) where the first copy read `0001001098`; meaning unknown.
+* hostdeath re-creates the copy of a player who respawned without a load the way the host does for
+  a lone respawn: remove the dead copy (slot release `0x15BC080`, WorldChrMan remove `0x19186E0`) and
+  rewind its task to STEP_Create (`member_revived` / `host_revived`, party_b2.cpp
+  `MemberRevivedTick` / `HostRevivedTick`). The new copy is built at the owner's current position
+  with draw 1 (live hd28: `0.5 m draw 1.00`). A shared "re-create the remote chr on all peers" path
+  for split travel's arrival can reuse it.
+* `remote chrs:` log lines (party_b2.cpp `RemoteChrRenderWatch`, any session) print every remote
+  chr's position, distance, draw factor, alpha, flags and HP when they change.
+* A local chr warp (vfunc +0x5F8) on a REMOTE copy does not move its name plate (tried: plate stayed at
+  the summon spot); the ghost plate at the summon spot after a B2 arrival is not fixed that way.
+
 ## 4. Implementation (gpu/shim/party/party_split.cpp, party_b2.cpp, party_travel.cpp)
 
 **The question.** A lamp or headstone warp `0x13CDF30(id)` the player starts, or the Hunter's Mark

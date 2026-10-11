@@ -124,23 +124,23 @@ run from two new characters to the end credits passed, and a three-player travel
 
 | Who dies | What happens |
 |---|---|
-| A guest | Respawns alone at a lit lamp in the party's area; the others keep playing |
-| The host | The session stays; the party moves to the host's lamp with one loading screen |
-| Everyone | Everyone respawns together; the session stays |
+| A guest | Gets up again at its own lamp with no loading screen when that lamp is in the loaded area (else at the host's lamp); drops its Blood Echoes in a bloodstain; the others keep playing |
+| The host | Gets up again at its own lamp with no loading screen for anyone; its echoes stay in a bloodstain where it fell. If that lamp is in another area, only the host loads; the guests stay where they are |
+| Anyone, during a boss fight | Stays down until the boss dies (then respawns at the host's lamp), everyone dies, or someone travels |
+| Everyone | Everyone respawns together at the host's lamp; the session stays |
 
 ### Coming next
 
 | Change | Status |
 |---|---|
-| Every player, host included, respawns at their own last lamp | In progress |
-| Dying in a boss fight: spectate until the fight ends, then everyone respawns at one shared lamp | In progress |
-| Bloodstains for everyone, like single-player | In progress |
+| A guest respawns at its own last lamp (today: the host's lamp) | In progress |
+| Dying in a boss fight: watch a living party member until the fight ends | In progress |
 | Guests open doors, pull levers, talk to NPCs; NPC choices shared | In progress |
 | Item pickups and enemy drops per player: everyone gets their own | In progress |
 | Every cutscene for the whole party (story cutscenes and endings already work) | In progress |
-| Joining during a boss fight or cutscene waits outside until it ends | In progress (no summon while the host's boss bar or a cutscene is up) |
+| Joining during a boss fight or cutscene waits outside until it ends | Works for boss fights (verified live); cutscenes in progress |
 | The 4th player joins as fast as the others | In progress |
-| Chalice dungeons: deeper layers checked in a party; entering the party's dungeon in one press | In progress |
+| Chalice dungeons: deeper layers checked in a party; entering the party's dungeon in one press (the altar still asks a few prompts) | In progress |
 | PvP / friendly fire the host can switch on and off | Later |
 | Pings: party members and marked spots visible through walls, with distance and player colours | Later |
 

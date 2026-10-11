@@ -750,7 +750,12 @@ LinkCallbacks make_callbacks(bool host) {
         cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
             if (name == coop::b2::kEventName) coop::b2::OnLinkEvent(slot, body);  // B2: a guest arrived
             if (name == coop::chalice::kFormEventName) {  // a guest's ritual dungeon (party_chalice.h)
-                coop::chalice::OnGuestForm(slot, body);
+                std::string member;
+                if (PartyLink* link = R().link) {
+                    for (const RosterEntry& e : link->roster())
+                        if (e.slot == slot) member = e.name;
+                }
+                coop::chalice::OnGuestForm(slot, member, body);
                 return;
             }
             if (name == coop::chalice::kGoodsEventName) {  // a guest's chalices (party_chalice.h)
