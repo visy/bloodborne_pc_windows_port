@@ -114,7 +114,7 @@ struct TravelStep {
     // 1.2 m in front, Cross), wait for its menu, Down N times, Cross (args id:N).
     enum Kind {
         HostWarp, HostDie, GuestDie, HostKill, HostMove, GuestMove,
-        HostPress, GuestPress, HostMark, GuestMark, HostStage, HostWalk, HostHeadstone, HostLastLamp
+        HostPress, GuestPress, HostMark, GuestMark, HostStage, HostWalk, HostHeadstone, HostFlag, HostLastLamp
     } kind = HostWarp;
     std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30; HostKill: the entity id
     float pos[3] = {};    // HostMove / GuestMove: the chr warp target (map coordinates)
@@ -793,6 +793,7 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::HostLastLamp: return "host_lastlamp";
     case TravelStep::HostWalk: return "host_walk";
     case TravelStep::HostHeadstone: return "host_headstone";
+    case TravelStep::HostFlag: return "host_flag";
     }
     return "?";
 }
@@ -1133,6 +1134,14 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             Log("test: Hunter's Mark: SpEffect %d %s (%s)", effect, ok ? "applied" : "NOT applied",
                 DescribeHere(s).c_str());
         }
+    } else if (step.kind == TravelStep::HostFlag) {
+        // A story choice the game makes in a talk menu (e.g. 72100131 = refuse Gehrman): SetEventFlag.
+        const std::uint32_t id = static_cast<std::uint32_t>(std::strtoul(step.args.c_str(), nullptr, 10));
+        bool before = false, after = false;
+        ReadEventFlag(id, &before);
+        const bool ok = WriteEventFlag(id, true);
+        ReadEventFlag(id, &after);
+        Log("test: host_flag %u: %d -> %d (%s)", id, int(before), int(after), ok ? "written" : "NOT written");
     } else if (step.kind == TravelStep::HostStage) {
         unsigned a = 0, b = 0, r = 0, i = 0;
         int wp = -1;
@@ -1749,12 +1758,13 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.steps.push_back(step);
             } else if (item.rfind("host_mark", 0) == 0 || item.rfind("guest_mark", 0) == 0 ||
                        item.rfind("host_stage=", 0) == 0 || item.rfind("host_walk=", 0) == 0 ||
-                       item.rfind("host_headstone=", 0) == 0) {
+                       item.rfind("host_headstone=", 0) == 0 || item.rfind("host_flag=", 0) == 0) {
                 TravelStep step;
                 step.kind = item.rfind("guest_mark", 0) == 0    ? TravelStep::GuestMark
                             : item.rfind("host_mark", 0) == 0   ? TravelStep::HostMark
                             : item.rfind("host_stage=", 0) == 0 ? TravelStep::HostStage
                             : item.rfind("host_walk=", 0) == 0  ? TravelStep::HostWalk
+                            : item.rfind("host_flag=", 0) == 0  ? TravelStep::HostFlag
                                                                 : TravelStep::HostHeadstone;
                 if (const std::size_t pc = item.find('%'); pc != std::string::npos) {
                     step.map = item.substr(pc + 1); // only while the current map name contains it
