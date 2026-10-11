@@ -325,17 +325,16 @@ BB_COOP_SYSV void ResetHook(u64 man) {
     reinterpret_cast<Fn>(Guest(kMultiPlayReset))(man);
 }
 
+std::atomic<double> g_k3_at{-100.0};  // the last K3 (Now()), for the hit watch
+
 // K3: in-game stage update, stage-record UID changed (the host walked into another streamed block,
 // e.g. Great Bridge m24_01 <-> Cathedral Ward m24_00): the host's BeginLeaveSession. The room is
-// kept; the log names how far the farthest member chr is.
-// Live (edgetravel 2026-10-11): with the guest moving along (2 m) two block changes kept the
-// session with no crash. With the host *teleported* 146 m into the other block and the guest left
-// behind, the host crashed ~0.8 s later in the remote chr's physics update (0x18CB16A..0x18CB17D:
-// [[chr+0x288]+0x18]+0x88 freed, RBX = the guest's chr) - also when the vanilla leave ran at the
-// change (session idle 0.5 s before the crash), so the leave does not protect against it: the
-// block the remote chr stood in was streamed out before its task deleted the chr. Open risk for
-// a guest far behind the host when a block streams out (docs/party/travel.md 6.1).
+// kept; the log names how far the farthest member chr is. A member left in a block this game then
+// streams out is handled by the stale map hit guard (ChrPreStepHook below): before it, the host
+// crashed ~0.8 s after such a change in the remote chr's physics pre-step (0x18CB16A..0x18CB17D),
+// also when the vanilla leave ran at the change (docs/party/travel.md 7).
 BB_COOP_SYSV u64 UidLeaveHook(u64 session) {
+    g_k3_at = Now();
     if (g_on.load() && SessionUp()) {
         const u64 me = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
         float mp[3] = {};
@@ -406,6 +405,112 @@ BB_COOP_SYSV u64 BossClearLeaveHook(u64 session) {
     }
     using Fn = u64(BB_COOP_SYSV*)(u64);
     return reinterpret_cast<Fn>(Guest(kBeginLeave))(session);
+}
+
+// ---- Remote player chrs on a streamed-out block (host and guest) ----
+// A chr keeps the map hit (collision part) it stands on in +0x288 (set by 0x18BBA70; +0x350 a
+// second one the respawn path 0x18BB670 re-applies). A map's own chrs die with their block and the
+// local player's block never unloads under it, but a *remote* player chr standing in a block this
+// game streams out (the other player far away, past the confinement walls the party opens) keeps
+// a pointer into the freed hit array: the physics pre-step 0x18CB0E0 then reads
+// [[hit+0x18]+0x88] and the game faults at 0x18CB16A / 0x18CB17D (live, edgetravel 2026-10-11).
+// Before that pre-step, a remote player chr's hit that is no longer in the hit registry
+// (*0x553E850: +0x20 block count, +0x28 block records of 0xB8: +0x78 hit count, +0x80 hits of
+// 0x138 - the table 0x13C9FB0 resolves hits from) is cleared; only pointers are compared, the
+// stale hit is never read. The chr then has no ground hit until it stands on loaded collision
+// again (its position keeps coming from its owner).
+constexpr u64 kSlotHitMan = 0x553e850;
+std::atomic<u32> g_stale_hits{0};
+bool HitLive(u64 hit) {
+    const u64 man = *reinterpret_cast<const u64*>(Guest(kSlotHitMan));
+    if (!man) {
+        return false;
+    }
+    const int blocks = *reinterpret_cast<const int*>(man + 0x20);
+    const u64 recs = *reinterpret_cast<const u64*>(man + 0x28);
+    if (!recs || blocks <= 0 || blocks > 4096) {
+        return false;
+    }
+    for (int i = 0; i < blocks; ++i) {
+        const u64 rec = recs + u64(i) * 0xb8;
+        const int n = *reinterpret_cast<const int*>(rec + 0x78);
+        const u64 base = *reinterpret_cast<const u64*>(rec + 0x80);
+        if (base && n > 0 && hit >= base && hit < base + u64(n) * 0x138) {
+            return (hit - base) % 0x138 == 0;
+        }
+    }
+    return false;
+}
+/// Diagnostics: the hit of a chr and where the registry holds it.
+std::string DescribeHit(u64 chr) {
+    const u64 hit = Field<u64>(chr, 0x288);
+    char b[200];
+    if (!hit) {
+        return "hit 0";
+    }
+    const u64 man = Slot(kSlotHitMan);
+    const int blocks = Field<int>(man, 0x20);
+    const u64 recs = Field<u64>(man, 0x28);
+    int at = -1;
+    for (int i = 0; recs && i < blocks && i < 4096; ++i) {
+        const u64 rec = recs + u64(i) * 0xb8;
+        const int n = Field<int>(rec, 0x78);
+        const u64 base = Field<u64>(rec, 0x80);
+        if (base && n > 0 && hit >= base && hit < base + u64(n) * 0x138) {
+            at = i;
+        }
+    }
+    const u64 r18 = Field<u64>(hit, 0x18);
+    std::snprintf(b, sizeof b, "hit %#llx block #%d/%d +0xc0 %02x +0x18 %#llx (+0x344 %#x) +0x20 %#llx",
+                  ull(hit), at, blocks, unsigned(Field<u8>(hit, 0xc0)), ull(r18), Field<u32>(r18, 0x344),
+                  ull(Field<u64>(hit, 0x20)));
+    std::string out = b;
+    if (at >= 0) {
+        const u64 rec = recs + u64(at) * 0xb8;
+        std::snprintf(b, sizeof b, " rec[+0..+0x20] %llx %llx %llx %llx %llx", ull(Field<u64>(rec, 0)),
+                      ull(Field<u64>(rec, 8)), ull(Field<u64>(rec, 0x10)), ull(Field<u64>(rec, 0x18)),
+                      ull(Field<u64>(rec, 0x20)));
+        out += b;
+    }
+    return out;
+}
+
+bool RemotePlayerChr(u64 chr) {
+    const u64 wcm = *reinterpret_cast<const u64*>(Guest(kSlotWorldChrMan));
+    if (!wcm || chr == *reinterpret_cast<const u64*>(wcm + 0x60)) {
+        return false;
+    }
+    const int n = *reinterpret_cast<const int*>(wcm + 0x30);
+    const u64 entries = *reinterpret_cast<const u64*>(wcm + 0x38);
+    if (!entries || n <= 0 || n > 8) {
+        return false;
+    }
+    for (int i = 0; i < n; ++i) {
+        if (*reinterpret_cast<const u64*>(entries + u64(i) * 0x38) == chr) {
+            return true;
+        }
+    }
+    return false;
+}
+BB_COOP_SYSV void ChrPreStepHook(u64 chr, u64, u64, u64, u64, u64) {  // rdi = the chr (mov rbx, rdi)
+    if (!chr) {
+        return;
+    }
+    u64* hit = reinterpret_cast<u64*>(chr + 0x288);
+    u64* hit2 = reinterpret_cast<u64*>(chr + 0x350);
+    if ((!*hit || HitLive(*hit)) && (!*hit2 || HitLive(*hit2))) {
+        return;
+    }
+    if (!RemotePlayerChr(chr)) {
+        return;
+    }
+    if (*hit && !HitLive(*hit)) {
+        *hit = 0;
+    }
+    if (*hit2 && !HitLive(*hit2)) {
+        *hit2 = 0;
+    }
+    g_stale_hits.fetch_add(1, std::memory_order_relaxed);
 }
 
 // BeginLeaveSession entry (ReplacePrologue: jumped to, so the return address is the caller's):
@@ -1944,6 +2049,12 @@ void Init() {
                 "B2 K8 host death return-all");
     InstallCall(0x13858f5, kBeginLeave, reinterpret_cast<const void*>(&BossClearLeaveHook), "B2 K10 boss-clear leave (a)");
     InstallCall(0x1385a95, kBeginLeave, reinterpret_cast<const void*>(&BossClearLeaveHook), "B2 K10 boss-clear leave (b)");
+    // Not B2-specific (B1 bell joins stream too): installed whenever B2 is.
+    if (!HookPrologue(0x18cb0e0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x81,
+                                  0xec, 0xf8, 0x07, 0x00, 0x00},
+                      &ChrPreStepHook, "remote chr stale map hit guard (0x18CB0E0)")) {
+        Log("remote chr stale map hit guard: NOT installed (bytes differ)");
+    }
     SetSendHomeVeto(&SendHomeVeto);
     SetGuestDeathHold(&HoldGuestDeath);
     // Every BeginLeaveSession with a session logs its caller (which game path ends a party).
@@ -2123,6 +2234,43 @@ void Tick(const GameSnapshot& s) {
             Field<float>(Slot(kSlotFlow), 0x98), unsigned(Field<u8>(Slot(kSlotGsm), 0x1521)),
             remo ? int(Field<u8>(remo, 0x168) & 1) : -1, int(g_rejoin.load()), s.cooperators, DescribeTasks().c_str(),
             DescribePresence(true).c_str(), DescribePresentation().c_str());
+    }
+    {
+        static double last_hit_log = 0;
+        if (s.world_up && !s.loading && now - last_hit_log >= 0.2 && now - g_k3_at.load() < 15.0) {
+            last_hit_log = now;
+            for (const TaskInfo& t : Tasks(false)) {
+                if (t.mode == 1 || t.mode == 2) {
+                    if (const u64 c = PlayerForPeer(t.task + kTaskPeer)) {
+                        Log("hit watch: remote chr %#llx %s", ull(c), DescribeHit(c).c_str());
+                    }
+                }
+            }
+            Log("hit watch: local %s", DescribeHit(s.player).c_str());
+        }
+    }
+    {
+        // A stale "host gone" timer: the session event handler 0x178B5E0 arms network flow +0xF4 =
+        // 10 s when a member leaves a guest in the host's world (0x178D35D); the flow update
+        // 0x1789B60 counts it down and then leaves (0x178A6BE). A guest that left on its own (a
+        // Hunter's Mark) and is summoned again within those 10 s carried it into the new session
+        // and was dropped 3 s after joining (live, edgetravel). A (re)join starts with it off
+        // (-1, the flow ctor's value).
+        static int prev_role = -1;
+        const int role = Role();
+        if ((role == 4 || role == 6) && prev_role != 4 && prev_role != 6) {
+            const u64 flow = Slot(kSlotFlow);
+            const float t = Field<float>(flow, 0xf4, -1.0f);
+            if (flow && t > 0.0f) {
+                const float off = -1.0f;
+                SafeWrite(flow + 0xf4, &off, 4);
+                Log("join: stale leave timer (flow +0xF4 = %.1f s from the last session) cleared", double(t));
+            }
+        }
+        prev_role = role;
+    }
+    if (const u32 n = g_stale_hits.exchange(0, std::memory_order_relaxed)) {
+        Log("remote chr on a streamed-out block: stale map hit cleared %u time(s); tasks:%s", n, DescribeTasks().c_str());
     }
     ProbeTick(s);
     TestWarpTick(s, now);
