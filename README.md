@@ -3,7 +3,7 @@
 Run the PS4 version of *Bloodborne* (v1.09, any retail release) natively on Windows with Vulkan.
 Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28 (Linux).
 
-**Version 0.5** · Playable · Party co-op in development
+**Version 0.5.1** · Playable · Party co-op in development
 
 > No game files are included: you need your own decrypted dump with update 1.09 (any retail
 > release: CUSA03173, CUSA00900, ...; they share the same 1.09 executable).

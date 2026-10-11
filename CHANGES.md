@@ -3,6 +3,12 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## 0.5.1 (Windows port 0.5.1, with upstream bbport 0.51)
+
+- **Upstream 0.51** ([docs/UPSTREAM_0.51_INTEGRATION.md](docs/UPSTREAM_0.51_INTEGRATION.md)): game profile for every 1.09 retail region, motion blur smear fix, 4 GB VRAM fallback, title flicker fix above 1080p, swapchain recreation fix, DLSS library choice in the launcher, mouse wheel and mouse bindings in mouse & keyboard mode, *Quit the game* in the overlay and System menu. The shadNet online module is not included (needs a server; conflicts with party co-op).
+- **Party co-op** (in development; see the README's *Party co-op* section): in-game New / Join / Continue / Leave party flow, lamps and headstones for everyone, host-world state shared live, guest lone-death respawn, re-join fixes, crash fix when players split across map areas, internet robustness (lag / loss / outage tested), guests placed 0.5 m beside the host.
+- **README** rewritten as a short page; details moved to docs/ (BUILDING, SETTINGS, SHADERS, SAVES, WINDOWS_PORT, CREDITS).
+
 ## 0.5 (Windows port 0.5, merged with upstream bbport 0.5)
 
 - **Version**: 0.5 everywhere: `VERSION` at the repository root feeds CMake (`project(... VERSION)`, the `BBPORT_VERSION` define and the `bbport.exe` version resource), `bbport.exe --version` and its first log line, the launcher's title bar and the overlay menu's corner.
