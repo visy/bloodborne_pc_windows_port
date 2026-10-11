@@ -202,7 +202,7 @@ Dlss::Dlss() : impl{std::make_unique<Impl>()} {
     }
     const auto ngx = NgxDirectory();
     if (ngx.empty()) {
-        impl->Disable("NVIDIA's DLSS library is missing: choose it in the launcher (Upscaler)");
+        impl->Disable("NVIDIA's DLSS library is missing: choose it in the launcher (DLSS library)");
         return;
     }
     // NGX writes its logs and model updates here: beside the saves and shader caches.
