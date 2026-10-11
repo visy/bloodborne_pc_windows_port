@@ -39,7 +39,11 @@ def scripts(phase, port0):
     if phase == "continue":
         # With a party character: ... Join party game, Continue party game, Host address ...
         line = TITLE_TO_PARTY + "/down/down/down/mark={w}_cont/right/mark={w}_cont_again/right/mark={w}_restart"
-        return [line.format(w="h"), "-"], [line.format(w="g"), "-"]
+        # The guest first opens Host address twice (the saved address comes up; Enter keeps it, Esc
+        # cancels): every press of a text row opens the box.
+        guest = (TITLE_TO_PARTY + "/down/down/down/down/right/mark=g_addr_open/enter/mark=g_addr_kept/right"
+                 "/mark=g_addr_open2/esc/up/mark=g_cont/right/mark=g_cont_again/right/mark=g_restart")
+        return [line.format(w="h"), "-"], [guest, "-"]
     raise SystemExit("unknown phase " + phase)
 
 
@@ -77,7 +81,7 @@ def main():
     shots.mkdir(parents=True)
     watch = []
     for tag in ("page", "h_pw_typed", "h_pw_saved", "h_new", "h_new_again", "g_addr_typed", "g_addr_saved",
-                "g_pw_typed", "g_pw_saved", "g_join", "g_join_again", "h_cont", "h_cont_again", "g_cont", "g_cont_again"):
+                "g_pw_typed", "g_pw_saved", "g_join", "g_join_again", "g_addr_open", "g_addr_kept", "g_addr_open2", "h_cont", "h_cont_again", "g_cont", "g_cont_again"):
         watch += ["--watch", rf"step \d+/\d+: ~?mark={tag}(@|\s)={tag}@1.2"]
     for n in range(1, 16):  # in-world walks: mark=w1 ... mark=w15
         watch += ["--watch", rf"step \d+/\d+: ~?mark=w{n}(@|\s)=w{n}@1.2"]

@@ -39,8 +39,20 @@ can touch a single-player save.
 Text entry is the window's text box (the same as the character name): type on the keyboard,
 **Ctrl+V** pastes, Enter confirms, Esc (or Circle) cancels. The pad cannot type; the address and
 password are typed once and remembered. The text rows (*Host address*, *Password*, *Party name*)
-act on every press: the value column shows *Type, then Enter* while the box is open and goes back
-to the value 1.5 s after it closes (`PartyRow::busy`, a momentary field).
+open the box on every press (a *Once* row runs on each change of its toggle; before, the second
+press only reset the row's text). The value column is the game's copy from when the page opened: a
+saved address shows after the page is opened again; the help line says *Host address saved* at
+once.
+
+**Leave in the world (guest)**: *System > Party > Leave the party* (twice) first calls the game's
+own session leave (0x13CDDA0, the host watchdog's helper) and stops the party link once the game's
+session is idle (`party_status_bridge.cpp`): client -> leaving -> idle in 0.3 s and the load into the
+guest's own world, instead of the game noticing a dead session 13 s later. (The game still shows
+its *Session lost* notice once.) After Leave the page shows *Status (Not running), Host party, Join
+party, Single player* - Copy code / Rejoin / Leave need a running link. **Join party** then starts a
+fresh link; the guest registers its NP context with the host again (`party_runtime.cpp`
+`fresh_link`) and a pending signaling resolve is retried every 2 s (`np_signaling.cpp`): before,
+the host's game kept summoning the rejoined guest and the summons never arrived.
 
 **Party name** (title page, before the first party character: the page shows six rows): every
 player needs their own - the host admits one player per name. Without one, the first party action
