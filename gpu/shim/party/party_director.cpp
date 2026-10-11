@@ -197,7 +197,7 @@ struct State {
     bool have_last = false;
     bool world_seen = false;
     Clock::time_point world_at{};
-    Clock::time_point last_full{}, last_log{}, last_ring{};
+    Clock::time_point last_full{}, last_log{}, last_ring{}, chalice_wait_at{};
     bool rung_ever = false;
     bool poll_logged = true; // the sign polling 2.5 s after a bell (join timing)
     std::uint64_t signs_seen = 0; // host: bbnet::sign_board_changes() last acted on
@@ -1694,6 +1694,23 @@ void PartyDirector::Tick() {
         Seconds(st.world_at, now) < st.ring_delay || !SessionMayRing(role == PartyRole::Host, s.session_role) ||
         PrologueSkipBusy() || CatchupBusy()) {
         return;
+    }
+    if (role == PartyRole::Guest && st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {
+        // The host entered its Chalice Dungeon after this guest rang: the waiting sign gets the
+        // chalice wait (9900) too, else the host's summon loads the guest without the quick join
+        // (live: the guest rang ~10 s before the host's roster showed area 29).
+        const std::uint64_t player = LocalPlayer();
+        std::uint32_t host_map = 0;
+        for (const party::RosterEntry& e : link->roster()) {
+            if (e.slot == party::kHostSlot) host_map = e.map_id;
+        }
+        if (((host_map >> 24) & 0xff) == 29 && host_map != 0xffffffffu && HasSpEffect(player, kGuestBellEffect) &&
+            !HasSpEffect(player, kChaliceWaitEffect) && Seconds(st.chalice_wait_at, now) >= 5.0) {
+            st.chalice_wait_at = now;
+            const bool ok = ApplySpEffect(kChaliceWaitEffect);
+            Log("bell: the host entered a chalice dungeon (%s) while this guest waits: SpEffect %d %s",
+                MapName(host_map).c_str(), kChaliceWaitEffect, ok ? "applied" : "NOT applied");
+        }
     }
     if (st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {
         return;
