@@ -63,7 +63,7 @@ Mouse and keyboard, free camera, debug menu: [docs/SETTINGS.md](docs/SETTINGS.md
 Play the whole game with friends in one session, from the first lamp to the end credits.
 Modelled on Elden Ring Seamless Co-op, adapted to Bloodborne. **In development:** tested on one
 PC (several game copies, simulated internet lag), not yet between two PCs. A scripted two-player
-run from two new characters to the end credits passed
+run from two new characters to the end credits passed, and a three-player travel run
 ([docs/party/campaign_soak.md](docs/party/campaign_soak.md)).
 
 ### How it plays
@@ -99,8 +99,12 @@ run from two new characters to the end credits passed
   loot (for each player) and the lift down work for the whole party.
 - **Crashes recover.** A crashed game restarts and rejoins by itself.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
-- **Death has a cost.** Each death stacks "rot" (−10% max HP, up to 5); using a lamp clears it.
+- **Death has a cost.** Each death stacks "rot" (−10% max HP or stamina, picked at random, up to
+  5); using a lamp clears it.
   On by default; the host can turn it off on the *Party rules* page.
+- **Enemies scale with the party, harder than vanilla.** Bosses get more health (and a little more
+  damage) per extra hunter than the game gives them, normal enemies get tougher too; all six values
+  (boss / enemy health, damage, poise) are on the *Enemy scaling* page, the host's count.
 - **Names over party members**, in each player's colour, with level, health or deaths (your choice).
 - **Party HUD.** Party members and events are shown in a small HUD; all party settings are on the
   *Party* pages of the game's *System* menu.
@@ -121,7 +125,6 @@ run from two new characters to the end credits passed
 | Every player, host included, respawns at their own last lamp | In progress |
 | Dying in a boss fight: spectate until the fight ends, then everyone respawns at one shared lamp | In progress |
 | Bloodstains for everyone, like single-player | In progress |
-| Enemy scaling: harder than vanilla by default (settings done; boss fights not yet verified) | In progress |
 | Guests open doors, pull levers, talk to NPCs; NPC choices shared | In progress |
 | Item pickups and enemy drops per player: everyone gets their own | In progress |
 | Every cutscene for the whole party (story cutscenes and endings already work) | In progress |
