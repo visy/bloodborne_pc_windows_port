@@ -104,3 +104,9 @@ BB_GAME_DIR=/path/to/CUSA03173 BB_MODS_ENABLED=0 bash run.sh
 прохода нет. RCAS применяется к готовой сцене перед HUD. В историю TAA сохраняется
 цвет до повышения резкости, чтобы она не усиливалась при повторном накоплении.
 Ровные участки сохраняют исходный цвет, включая HDR; дополнительный буфер не нужен.
+
+## DLC (The Old Hunters)
+
+**DLC:** The Old Hunters' data is part of patch 1.09 (maps `m34`–`m36`); the game only needs the add-on reported as installed. `run.bat` does that automatically on a fresh install by creating `user\addcont\CUSA03173\SPEXPANSIONDLC03` when those maps exist (`BB_AUTO_DLC=0` skips it). **That folder stays empty, and that is correct:** its name is all the game checks, so nothing needs to be copied into it. The log confirms it with `AppContent add-ons reported installed (...): 1`; in game, the Eye of a Blood-drunk Hunter takes you to the Hunter's Nightmare. To set it up by hand, just create that empty folder. Other add-on dumps go in `user\addcont\<title id>\<entitlement label>\`.
+
+- **DLC**: folders in `user\addcont\<title id>\<entitlement label>\` (shadPS4's layout) are reported to the game as installed add-ons. For The Old Hunters an **empty** `user\addcont\CUSA03173\SPEXPANSIONDLC03` folder is enough (its data is in patch 1.09), and `run.bat` creates it automatically (see [Mods, patches and DLC](#mods-patches-and-dlc)).

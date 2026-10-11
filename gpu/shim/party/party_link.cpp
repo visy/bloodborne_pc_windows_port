@@ -3,6 +3,7 @@
 
 #include "party_crypto.h"
 #include "party_sock.h"
+#include "../net/netsim.h"
 
 #include <algorithm>
 #include <array>
@@ -531,7 +532,36 @@ struct PartyLink::Impl {
         Bucket frames, bytes;        // host: the member's rate (admit)
         std::uint32_t flood_drops = 0;
         std::uint64_t flood_total = 0;
+        // Network simulator (BB_NET_SIM, netsim.h): received bytes wait here until due.
+        std::unique_ptr<bbnet::netsim::StreamDelay> sim;
+        std::deque<std::pair<Clock::time_point, std::vector<std::uint8_t>>> held;
     };
+
+    // Attaches the network simulator to a connection with a loopback peer (or any, any=1).
+    void attach_sim(Conn* c) {
+        if (!bbnet::netsim::enabled()) return;
+        const bbnet::netsim::Config sc = bbnet::netsim::config();
+        std::uint32_t ip = 0;
+        std::memcpy(&ip, c->peer_ip.data(), 4);
+        if (!bbnet::netsim::applies_to(sc, ip)) return;
+        c->sim = std::make_unique<bbnet::netsim::StreamDelay>(sc, bbnet::netsim::epoch(), c->id);
+        if (!sim_logged) {
+            sim_logged = true;
+            log("party link: network simulator on this link (" + bbnet::netsim::describe(sc) + ")");
+        }
+    }
+    bool sim_logged = false;
+    // Moves the held bytes that are due into `in`; true when any moved.
+    bool release_held(Conn* c, Clock::time_point now) {
+        bool moved = false;
+        while (!c->held.empty() && c->held.front().first <= now) {
+            auto& b = c->held.front().second;
+            c->in.insert(c->in.end(), b.begin(), b.end());
+            c->held.pop_front();
+            moved = true;
+        }
+        return moved;
+    }
 
     struct Member {
         int slot = 0;
@@ -1585,6 +1615,7 @@ struct PartyLink::Impl {
         raw->peer_ip = d.ip;
         raw->peer_port = host_port;
         if (d.failed) return lose(raw, "connect failed");
+        attach_sim(raw);
         if (d.connected) on_connected(raw);
     }
 
@@ -1631,6 +1662,7 @@ struct PartyLink::Impl {
             c->created = c->last_rx = Clock::now();
             std::memcpy(c->peer_ip.data(), &a.sin_addr, 4);
             c->peer_port = ntohs(a.sin_port);
+            attach_sim(c.get());
             conns.push_back(std::move(c));
         }
     }
@@ -1643,15 +1675,24 @@ struct PartyLink::Impl {
         while (!c->input_pending && got < kReadBudget) {
             long r = sock::recv_some(c->s, buf, sizeof buf);
             if (r > 0) {
-                c->in.insert(c->in.end(), buf, buf + r);
+                if (c->sim) {
+                    c->held.emplace_back(c->sim->schedule(Clock::now()), std::vector<std::uint8_t>(buf, buf + r));
+                } else {
+                    c->in.insert(c->in.end(), buf, buf + r);
+                }
                 got += static_cast<std::size_t>(r);
                 if (r < static_cast<long>(sizeof buf)) break;
                 continue;
             }
-            if (r == 0) return lose(c, "connection closed by peer");
+            if (r == 0) {
+                if (!c->held.empty()) break;  // the simulated in-flight bytes first (then 0 again)
+                return lose(c, "connection closed by peer");
+            }
             if (sock::would_block(sock::last_error())) break;
+            if (!c->held.empty()) break;
             return lose(c, "connection reset");
         }
+        if (c->sim) release_held(c, Clock::now());
         process_input(c);
     }
 
@@ -1778,6 +1819,11 @@ struct PartyLink::Impl {
                     if (re & (POLLIN | POLLERR | POLLHUP)) read_conn(c);
                     if (!c->dead && (re & POLLOUT)) flush(c);
                 }
+            }
+            // Simulated in-flight bytes that are due now.
+            for (std::size_t i = 0; i < conns.size(); ++i) {
+                Conn* c = conns[i].get();
+                if (!c->dead && !c->held.empty() && release_held(c, Clock::now())) process_input(c);
             }
             // Frames left over from an earlier pass (kFramesPerPass, callback backlog).
             for (std::size_t i = 0; i < conns.size(); ++i) {

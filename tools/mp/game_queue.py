@@ -5,7 +5,7 @@ Each pool is one JSON file next to E:\\games\\bbport\\agents\\game_queue.json (B
 the "game" pool is game_queue.json, others are <pool>_queue.json (e.g. build_queue.json). Each is
 edited under an exclusive lock file next to it:
 
-  {"max_clients": 2,
+  {"max_clients": 3, "max_solo": 4,   # jobs up to max_solo slots run only alone
    "holders": [{"id", "pid", "count", "root", "since"}],   # runs that hold slots
    "queue":   [{"id", "pid", "count", "root", "since"}]}   # waiting, first come first served
 
@@ -21,7 +21,7 @@ import contextlib, json, os, sys, time
 from pathlib import Path
 
 QUEUE_FILE = Path(os.environ.get("BB_GAME_QUEUE_FILE", r"E:\games\bbport\agents\game_queue.json"))
-POOL_DEFAULTS = {"game": int(os.environ.get("BB_GAME_QUEUE_MAX", "4")),
+POOL_DEFAULTS = {"game": int(os.environ.get("BB_GAME_QUEUE_MAX", "3")),
                  "build": int(os.environ.get("BB_BUILD_QUEUE_MAX", "3"))}
 
 
@@ -78,6 +78,9 @@ def _locked(pool: str = "game"):
         except (OSError, ValueError):
             state = {}
         state.setdefault("max_clients", POOL_DEFAULTS.get(pool, 2))
+        # A job bigger than max_clients (e.g. a 4-player test) may still run, but only alone:
+        # max_solo is the largest such job (game pool: 4; 4 games at once starve the CPU otherwise).
+        state.setdefault("max_solo", 4 if pool == "game" else state["max_clients"])
         state.setdefault("holders", [])
         state.setdefault("queue", [])
         yield state
@@ -104,7 +107,7 @@ def game_slots(count: int, root: str, pool: str = "game", label: str = ""):
           "since": time.strftime("%H:%M:%S")}
     with _locked(pool) as st:
         _prune(st)
-        if count > st["max_clients"]:
+        if count > max(st["max_clients"], st.get("max_solo", 0)):
             raise SystemExit(f"{pool} queue: this job needs {count} slots but the machine-wide limit is "
                              f"{st['max_clients']} ({pool_file(pool)}: max_clients)")
         st["queue"].append(me)
@@ -126,18 +129,22 @@ def game_slots(count: int, root: str, pool: str = "game", label: str = ""):
                 first = order and order[0]["id"] == me["id"]
                 # Backfill: when the head of the queue doesn't fit in the free slots, the earliest
                 # waiter that does fit may go (runs are short, so the head isn't starved for long).
+                def fits(e):  # within max_clients, or a big job alone (up to max_solo)
+                    return used + e["count"] <= st["max_clients"] or (used == 0 and e["count"] <= st.get("max_solo", 0))
                 if not first and order:
                     free = st["max_clients"] - used
-                    head_fits = order[0]["count"] <= free
+                    head_fits = fits(order[0])
                     if not head_fits:
-                        fitting = next((e for e in order if e["count"] <= free), None)
+                        # Never backfill past a waiting big job: it needs the machine to itself.
+                        big = order[0]["count"] > st["max_clients"]
+                        fitting = None if big else next((e for e in order if e["count"] <= free), None)
                         first = fitting is not None and fitting["id"] == me["id"]
                 # Gate (gate.txt next to the queue file, e.g. "only the join speed-up may test until
                 # its fix is merged"): while it exists, only priority roots get game slots.
                 gate = (QUEUE_FILE.parent / "gate.txt").exists()
                 if gate and pool == "game" and not is_prio(me):
                     first = False
-                if first and used + count <= st["max_clients"]:
+                if first and fits(me):
                     st["queue"] = [e for e in st["queue"] if e["id"] != me["id"]]
                     me["since"] = time.strftime("%H:%M:%S")
                     # Slot numbers (0..max-1) not held by anyone: the game pool uses them as screen

@@ -1678,7 +1678,8 @@ void LogLampTalks() {
         return;
     }
     last = Now();
-    if (const std::uint32_t m = g_lamp_talk_overrides.exchange(0, std::memory_order_relaxed)) {
+    // Counted silently (the lamp script asks 30 times a second while near); logged in tests only.
+    if (const std::uint32_t m = g_lamp_talk_overrides.exchange(0, std::memory_order_relaxed); m && !g.test.empty()) {
         Log("guest lamp talk asked IsClientPlayer %u times (answered 0)", m);
     }
     static std::uint32_t client_logged[16] = {};

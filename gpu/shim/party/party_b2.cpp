@@ -1071,24 +1071,25 @@ std::string DescribeWhere() {
 }
 
 /// A guest's spot beside the host (never on it: character collision shoves the host): BB_PARTY_SUMMON_OFFSET
-/// (default 2.2 m, 0 = off) to
-/// the right (party slot 1), left (2) or behind (3+) of the host's facing, same height and facing.
+/// (default 0.5 m, 0 = off), side by side in a line: right (party slot 1), left (2), 2x right (3+) of
+/// the host's facing, same height and facing. Wider offsets (2.2 m) put guests into walls at narrow
+/// lamp spots (Central Yharnam).
 /// rot[1] is the yaw (radians); forward = (sin, 0, cos), right = (cos, 0, -sin).
 float SummonOffset() {
     static const float d = [] {
         const char* v = std::getenv("BB_PARTY_SUMMON_OFFSET");
-        return v && v[0] ? float(std::atof(v)) : 2.2f;
+        return v && v[0] ? float(std::atof(v)) : 0.5f;
     }();
     return d;
 }
 
 void BesideHost(float pos[4], const float rot[4], int slot) {
     const float yaw = rot[1], d = SummonOffset();
-    const float fx = std::sin(yaw), fz = std::cos(yaw), rx = std::cos(yaw), rz = -std::sin(yaw);
+    const float rx = std::cos(yaw), rz = -std::sin(yaw);
     if (slot == 2) {
         pos[0] -= rx * d, pos[2] -= rz * d;
     } else if (slot >= 3) {
-        pos[0] -= fx * d, pos[2] -= fz * d;
+        pos[0] += rx * d * 2.0f, pos[2] += rz * d * 2.0f;
     } else {
         pos[0] += rx * d, pos[2] += rz * d;
     }
