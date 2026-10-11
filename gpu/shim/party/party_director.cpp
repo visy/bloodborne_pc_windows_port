@@ -21,6 +21,7 @@
 #include "party_items.h"
 #include "party_npc_test.h"
 #include "party_guestsvc.h"
+#include "party_split.h"
 #include "party_phantom.h"
 #include "party_start.h"
 #include "party_runtime.h"
@@ -116,8 +117,11 @@ struct TravelStep {
     // 1.2 m in front, Cross), wait for its menu, Down N times, Cross (args id:N).
     enum Kind {
         HostWarp, HostDie, GuestDie, HostKill, HostMove, GuestMove,
-        HostPress, GuestPress, HostMark, GuestMark, HostStage, HostWalk, HostHeadstone, HostFlag, HostSkipRemo, GuestSkipRemo,
-        HostLastLamp, HostLamp,
+        HostPress, GuestPress, HostMark, GuestMark, HostStage, HostWalk, HostHeadstone, HostFlag, HostSkipRemo, GuestSkipRemo, HostLastLamp,
+        // Split travel (docs/party/split_travel.md): host_lamp=ID / guest_lamp=ID use lamp ID as the
+        // player would (0x13CDF30 through the interceptor: the "Travel with the party?" question);
+        // host_alone=ID: the host travels to ID alone, decided (no question).
+        HostLamp, GuestLamp, HostAlone,
         HostOutage, GuestOutage  // a simulated total network outage of `buttons` ms (BB_NET_SIM on)
     } kind = HostWarp;
     std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30; HostKill: the entity id
@@ -807,6 +811,8 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::HostWalk: return "host_walk";
     case TravelStep::HostHeadstone: return "host_headstone";
     case TravelStep::HostFlag: return "host_flag";
+    case TravelStep::GuestLamp: return "guest_lamp";
+    case TravelStep::HostAlone: return "host_alone";
     case TravelStep::HostSkipRemo: return "host_skipremo";
     case TravelStep::GuestSkipRemo: return "guest_skipremo";
     }
@@ -1041,7 +1047,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     auto mine = [&](const TravelStep& step) {
         return (step.kind == TravelStep::GuestDie || step.kind == TravelStep::GuestMove ||
                 step.kind == TravelStep::GuestPress || step.kind == TravelStep::GuestMark ||
-                step.kind == TravelStep::GuestSkipRemo || step.kind == TravelStep::GuestOutage) == (role == PartyRole::Guest);
+                step.kind == TravelStep::GuestLamp || step.kind == TravelStep::GuestSkipRemo || step.kind == TravelStep::GuestOutage) == (role == PartyRole::Guest);
     };
     if (t.script_on) {
         RunTravelScript(st, s, now);
@@ -1051,7 +1057,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         ++t.next_step;
     }
     // Steady world with the party (HostKill's clock): restarts at every load / leave.
-    const bool steady = joined && s.world_up && !s.loading;
+    // Split travel: members apart (no cooperator here) still count as the party being together.
+    const bool steady = (joined || b2::MembersApart() > 0) && s.world_up && !s.loading;
     if (steady != t.steady) {
         t.steady = steady;
         t.steady_at = now;
@@ -1097,7 +1104,12 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         step.kind == TravelStep::HostWarp ? " to lamp " : step.kind == TravelStep::HostKill ? " entity " : "",
         step.kind == TravelStep::HostWarp || step.kind == TravelStep::HostKill ? step.id : 0u, Describe(s).c_str());
     if (step.kind == TravelStep::HostWarp) {
-        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint32_t)>(Guest(kLampWarp))(step.id);
+        RunLampWarpDecided(step.id, false);  // the party move (no split-travel question)
+    } else if (step.kind == TravelStep::HostAlone) {
+        b2::HostTravelAloneNext();
+        RunLampWarpDecided(step.id, true);
+    } else if (step.kind == TravelStep::HostLamp || step.kind == TravelStep::GuestLamp) {
+        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint32_t)>(Guest(kLampWarp))(step.id);  // as the player
     } else if (step.kind == TravelStep::HostMove || step.kind == TravelStep::GuestMove) {
         // The local chr to a spot (the chr warp vfunc +0x5F8 = 0x18CD600(chr, pos, rot, 1), as the
         // NPC summon step and the B2 spacing do), keeping its rotation.
@@ -1344,6 +1356,7 @@ void HostWatchdogTick(State& st, const GameSnapshot& s, party::PartyLink* link, 
     in.in_world = InWorld(s) && st.world_seen;
     in.session_role = s.session_role;
     in.cooperators = s.cooperators;
+    in.members_apart = b2::MembersApart();
     if (link) {
         in.roster = link->roster();
     }
@@ -1823,6 +1836,7 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("host_move=", 0) == 0 || item.rfind("guest_move=", 0) == 0 ||
                        item.rfind("host_press=", 0) == 0 || item.rfind("guest_press=", 0) == 0 ||
                        item.rfind("host_lastlamp=", 0) == 0 || item.rfind("host_lamp=", 0) == 0 ||
+                       item.rfind("guest_lamp=", 0) == 0 || item.rfind("host_alone=", 0) == 0 ||
                        item.rfind("host_outage=", 0) == 0 || item.rfind("guest_outage=", 0) == 0) {
                 TravelStep step;
                 step.kind = item.rfind("guest_outage", 0) == 0  ? TravelStep::GuestOutage
@@ -1831,7 +1845,9 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("guest_press", 0) == 0  ? TravelStep::GuestPress
                             : item.rfind("host_press", 0) == 0   ? TravelStep::HostPress
                             : item.rfind("host_lastlamp", 0) == 0 ? TravelStep::HostLastLamp
-                            : item.rfind("host_lamp", 0) == 0     ? TravelStep::HostLamp
+                            : item.rfind("host_lamp=", 0) == 0   ? TravelStep::HostLamp
+                            : item.rfind("guest_lamp=", 0) == 0  ? TravelStep::GuestLamp
+                            : item.rfind("host_alone=", 0) == 0  ? TravelStep::HostAlone
                             : item[0] == 'g'                     ? TravelStep::GuestDie
                             : item.rfind("host_die", 0) == 0     ? TravelStep::HostDie
                             : item.rfind("host_kill", 0) == 0    ? TravelStep::HostKill
@@ -1845,6 +1861,10 @@ void PartyDirector::ConfigureFromEnv() {
                 }
                 if (step.kind == TravelStep::HostLastLamp) {
                     step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 14, nullptr, 10));
+                }
+                if (step.kind == TravelStep::HostLamp || step.kind == TravelStep::GuestLamp ||
+                    step.kind == TravelStep::HostAlone) {
+                    step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + item.find('=') + 1, nullptr, 10));
                 }
                 if ((step.kind == TravelStep::HostDie || step.kind == TravelStep::GuestDie) && item.find('%') != std::string::npos) {
                     // host_die@S%MAP: S s after the last load / previous step, in that map (no re-join)
@@ -2146,6 +2166,29 @@ void PartyDirector::Tick() {
     // B2 (party_b2.h): guest "arrived" / host notes.
     if (link) {
         b2::SetLocalSlot(link->local_slot());
+        {
+            // Split travel: where every member is (party_b2 SplitTick; docs/party/split_travel.md).
+            party::MemberVitals vit[party::kMaxVitals];
+            const int vn = link->vitals(vit, party::kMaxVitals);
+            const std::vector<party::RosterEntry> roster = link->roster();
+            std::vector<b2::Where> where;
+            for (int i = 0; i < vn; ++i) {
+                b2::Where w;
+                w.slot = vit[i].slot;
+                w.map = vit[i].map_id;
+                w.has_pos = (vit[i].flags & party::kVitalsHasPos) != 0;
+                std::memcpy(w.pos, vit[i].pos, sizeof w.pos);
+                w.age_ms = vit[i].age_ms;
+                w.connected = false;
+                for (const party::RosterEntry& e : roster) {
+                    if (e.slot == w.slot) {
+                        w.connected = e.connected;
+                    }
+                }
+                where.push_back(w);
+            }
+            b2::SetWhere(where);
+        }
         int b2slot = party::kBroadcast;
         std::string b2body;
         while (b2::PopOutgoing(&b2slot, &b2body)) {
@@ -2171,6 +2214,7 @@ void PartyDirector::Tick() {
     PhantomTick(link);
     // Guests use the Doll, shops and workshop in the host's Dream (party_guestsvc.h).
     GuestServicesTick(s, link);
+    split::Tick(s);  // split travel: the lamp choice dialog (party_split.h)
     zone.Next(perf::Zone::DirRing);
     if (st.test.on) {
         RunTravelSteps(st, s, role, now);
@@ -2431,6 +2475,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     }
     InstallTravelPatches(); // B1: Dream gate + travel hooks (byte-verified)
     b2::Init();             // B2 seamless prototype (BB_PARTY_B2=1; byte-verified)
+    split::Init();          // split travel's "Travel with the party?" (needs B2)
     InstallStoryHooks();    // C4: bank-2002 capture, guest mirror / replay (byte-verified)
     InstallItemsPatches();  // C3: award hook, parity patches (byte-verified)
     PhantomInit();          // guest respawn at the host's lamp, refill, boss Insight

@@ -154,6 +154,7 @@ int Info() {
 
 // ---- Pages ----
 std::vector<Page> pages;
+u32 split_text[1] = {0};
 
 void AddPage(const char* en, const char* ru, const char* help_en, const char* help_ru) {
     const u32 name = AddText(en, ru);
@@ -829,6 +830,11 @@ void DefineAll() {
     AddRow(Info(), AddText("Last event", "Последнее"), party.event_help, {party.event_value, party.event_value},
            Kind::Toggle);
 
+    // The split-travel question (party_split.cpp): a game dialog with YES / NO after a lamp,
+    // headstone or Hunter's Mark in a party (docs/party/split_travel.md).
+    split_text[0] = AddText("Travel with the party?\nYES: everyone travels together.  NO: you travel alone.",
+                            "Путешествовать всей группой?\nДА: вся группа вместе.  НЕТ: только вы.");
+
     // ---- Party rules (party_balance.h): the death debuff and the overhead display. ----
     AddPage("Party rules", "Правила группы", "Death debuff, what shows above companions (bbport)",
             "Штраф за смерть, что видно над спутниками (bbport)");
@@ -891,6 +897,11 @@ void RefreshBalance() {
 }
 
 } // namespace
+
+u32 SplitTravelText(int which) {
+    Define();
+    return which == 0 ? split_text[0] : 0;
+}
 
 std::u16string Utf16(const char* utf8) {
     std::u16string out;
