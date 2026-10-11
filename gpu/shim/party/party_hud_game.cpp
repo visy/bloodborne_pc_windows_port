@@ -43,7 +43,7 @@ constexpr u64 kSlotWorldChrMan = 0x553e878;
 
 void Log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 void Log(const char* fmt, ...) {
-    char line[1024];
+    char line[2048];
     va_list ap;
     va_start(ap, fmt);
     std::vsnprintf(line, sizeof line, fmt, ap);
@@ -111,6 +111,7 @@ struct HudState {
     std::chrono::steady_clock::time_point next{}, next_log{};
     bool published_inactive = false;
     bool log = false, log_init = false;
+    long log_ms = 5000;  // BB_PARTY_HUD_LOG interval
     bool together = false;  // a companion's PlayerIns was read here (since together_at)
     std::chrono::steady_clock::time_point together_at{};
     std::vector<party::RosterEntry> roster;  // reused: no allocation once warm
@@ -130,6 +131,9 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
         st.log_init = true;
         const char* v = std::getenv("BB_PARTY_HUD_LOG");
         st.log = v && v[0] && v[0] != '0';
+        // "1": every 5 s; a number above 1: every that many ms (position tracing, A7).
+        const long ms = v ? std::strtol(v, nullptr, 10) : 0;
+        st.log_ms = ms > 1 ? std::max(200L, ms) : 5000;
     }
     const auto now = std::chrono::steady_clock::now();
     if (now < st.next) return;
@@ -144,7 +148,7 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
     st.published_inactive = false;
     const bool in_world = s.world_up && !s.loading && s.player;
     const bool log_now = st.log && now >= st.next_log;
-    if (log_now) st.next_log = now + std::chrono::seconds(5);
+    if (log_now) st.next_log = now + std::chrono::milliseconds(st.log_ms);
 
     // This player's vitals (sent whether or not its own HUD is on: the others' HUD needs them).
     party::MemberVitals me;
@@ -265,6 +269,13 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
     st.together = any_local;
 
     if (log_now) {
+        // What each member's own game reports (VITALS): compare with the chr positions above.
+        for (int v = 0; v < vit_n; ++v) {
+            char t[120];
+            std::snprintf(t, sizeof t, " <slot %d says (%.2f %.2f %.2f) map %08x age %u ms>", vit[v].slot, vit[v].pos[0],
+                          vit[v].pos[1], vit[v].pos[2], vit[v].map_id, vit[v].age_ms);
+            log_chrs += t;
+        }
         std::string comp;
         for (int i = 0; i < b.count; ++i) {
             const party::hud::Companion& c = b.c[i];
