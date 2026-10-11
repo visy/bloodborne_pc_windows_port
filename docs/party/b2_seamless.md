@@ -281,7 +281,8 @@ warp's own target was used; with +0x1521 = 1 our +0x14C4/D0/E0 write gives the s
   effect (the descriptor is built earlier); instead after any host-world arrival (flow 3 → 4,
   bell join or B2) the guest's chr is warped beside the host with the chr warp vfunc +0x5F8
   (`0x18CD600(chr, pos, rot, 1)`, as the NPC summon step does): `BB_PARTY_SUMMON_OFFSET` metres
-  (default 2.2; 3.0 judged too far, 1.5 too close), right / left / behind by slot, each try checked
+  (default 0.5 since 2026-10-11, side by side: right / left / 2x right by slot; 2.2 put guests
+  into walls at narrow lamp spots such as Central Yharnam; 3.0 judged too far), each try checked
   30 ticks later (reached, same height ±1.5 m) with the next side as fallback and a log of how far
   the host moved (push check). Run 15 (3 m): warped from 0.4 m to 3.0 m. No ground probe yet:
   the host's height is used.
