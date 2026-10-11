@@ -249,6 +249,7 @@ bool GuestServicesEnabledFromEnv(const char* v) {
 #include "party_director.h"
 #include "party_link.h"
 #include "party_progress.h"
+#include "party_worldact.h"
 #include "party_split.h"
 #include "party_b2.h"
 #include "bbport_game_menu.h"
@@ -281,6 +282,8 @@ constexpr u64 kMultiJmp = 0x203C569;       // e9 61 29 00 00 -> 0x203EECF
 constexpr u64 kLampMultiGate = 0x12F831C;  // test ecx,ecx; setg cl; or cl,al (then mov [r13+0x49], cl)
 
 std::atomic<bool> g_lamps{false};
+std::atomic<bool> g_world_talk{false};      // D8: guests talk to the host world's NPCs (BB_PARTY_GUEST_TALK)
+std::atomic<std::uint32_t> g_world_talk_overrides{0};
 // The host's headstones in a party (default on; BB_PARTY_HEADSTONES=0 off): IsMultiplayerInProgress
 // answers 0 for the headstone scripts, so the host can travel from the Dream with guests present
 // (the party follows by B2 / B1 travel). A guest's headstones stay behind IsClientPlayer unless
@@ -376,6 +379,14 @@ std::uint64_t BB_COOP_SYSV IsClientFilter(std::uint64_t env, std::uint64_t value
         NoteTalk(g_client_talks, *reinterpret_cast<const std::uint32_t*>(env + 0x10));
     }
     if ((value & 0xff) != 0 && LampClientAnswer(env, value) == 0) {
+        return 0;
+    }
+    // D8: a guest talks to the NPCs of the host's world (their quest flags then go to the host and
+    // the guest's own save as world actions, party_worldact.h).
+    if ((value & 0xff) != 0 && g_world_talk.load(std::memory_order_relaxed) &&
+        g_session_role.load(std::memory_order_relaxed) == kSessionRoleClient &&
+        worldact::WorldTalkAllowed(*reinterpret_cast<const std::uint32_t*>(env + 0x10))) {
+        g_world_talk_overrides.fetch_add(1, std::memory_order_relaxed);
         return 0;
     }
     if (!g_gate.load(std::memory_order_relaxed) || (value & 0xff) == 0) {
@@ -1181,6 +1192,11 @@ void GuestServicesInit() {
         g.extra = e;
     }
     g_lamps = GuestLampsOn();
+    {
+        const char* wt = std::getenv("BB_PARTY_GUEST_TALK");
+        g_world_talk = !(wt && wt[0] == '0');
+        Log("guests %s talk to NPCs in the host's world (BB_PARTY_GUEST_TALK)", g_world_talk.load() ? "can" : "cannot");
+    }
     const char* hs = std::getenv("BB_PARTY_HEADSTONES");
     const bool headstones = g_lamps.load() || !(hs && hs[0] == '0' && !hs[1]);
     bool multi_ok = false;
@@ -1679,7 +1695,10 @@ void LogLampTalks() {
         return;
     }
     last = Now();
-    // Counted silently (the lamp script asks 30 times a second while near); logged in tests only.
+    // Counted silently (the scripts ask 30 times a second while near); logged in tests only.
+    if (const std::uint32_t m = g_world_talk_overrides.exchange(0, std::memory_order_relaxed); m && !g.test.empty()) {
+        Log("guest NPC talk in the host's world asked IsClientPlayer %u times (answered 0)", m);
+    }
     if (const std::uint32_t m = g_lamp_talk_overrides.exchange(0, std::memory_order_relaxed); m && !g.test.empty()) {
         Log("guest lamp talk asked IsClientPlayer %u times (answered 0)", m);
     }
@@ -1980,6 +1999,10 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
 
 std::uint64_t GuestSvcFindChr(std::uint32_t id) {
     return FindChr(id);
+}
+
+bool GuestSvcPromptUp(std::uint32_t* id) {
+    return PromptUp(id);
 }
 
 bool GuestServicesOpen() {
