@@ -233,3 +233,48 @@ would be refused. The interface split travel provides and expects:
 * Enemies: section 5 / the `dead` op (union of kills at a meet without a load); ordinary enemies
   respawn on every load as in single-player.
 
+## 7. Remote chrs: visible, at the right spot, on every peer (shared path; for hostdeath / balance / fourp)
+
+User reports (split24, hd22, hd26, a guest death respawn, once in the Dream): on the host "the health
+bar but no model" of the guest - the plate where the guest stands, no body. Findings (live,
+render probe diffing a visible and an invisible remote chr, vis2-vis4):
+
+* Not a position problem: the remote chr's physics position (+0x58 -> +8 -> +0x3B0 -> +0x68
+  +0x1E0) was 0.85 m from the host, where the guest stood (`host watch`), on both screens. (chr
+  +0xC0 is not a position: it reads 0 on remote chrs.)
+* The difference is **chr +0x1E0 bit 20 (0x00100000)**: set on every drawn player chr (local and
+  remote, both games: `0x00109800`), clear on the invisible re-created one (`0x00009800`,
+  `0x400`). The chr data module's +0x1BC bit 1 (what STEP_Delete sets at a leave) is NOT it: the
+  game sets it on visible remote chrs too.
+* **Shared fix, automatic on every peer**: `RemoteVisibleTick` (party_b2, every 0.25 s from
+  `b2::Tick`, host and guests): every remote player chr whose task is in its Update step and
+  lacks the bit gets it back (`remote chr ... draw bit +0x1E0 0x400 -> 0x100400 (was not
+  drawn)`). Live vis4: the guest invisible on the host after a meet, fixed within 0.25 s
+  (screenshot: both hunters on both windows). It covers every path that re-creates a remote chr
+  (B2 arrival, a meet, a respawn, hostdeath's respawns): nothing to call.
+* Removing a remote chr (split travel, a dead member's respawn): `RemoveRemoteChr` plays the
+  task's own STEP_Delete leave first (EnterleaveDirector `0x19704B0`, then slot release
+  `0x15BC080` and WorldChrMan remove `0x19186E0` when the leave has played or after 2 s).
+* A meet without a load: both sides re-broadcast their own player record (`0x1781AC0`, what
+  InGameStart sends after a load; EVENT b2 `record` asks the other side) and re-create 1.5 s
+  later; a remote chr that stays > 4 m from every member's reported position for 3 s is removed
+  and built again (self-heal).
+* In-world warps reset the camera (Lua CamReset `0x132F5A0(ctx, 10000, 1)`): before it the
+  camera swung through the walls after a long in-world move (vis6 screenshot).
+
+Start positions (the "2.2 m" report): measured 0.57 - 0.9 m apart on both screens after a bell
+join, a B2 party travel and an in-world party move (logs: the guest's own position and the host's
+copy of it agree, e.g. guest `(-192.9, -28.6, 68.0)`, host's copy `(-192.9, -28.6, 68.0)`, host
+`(-193.5, -28.6, 68.6)`). It was case (c) of the coordinator's list in appearance only: the guest
+was placed at 0.5 m and the host's copy was there too, but invisible, while the plate looked
+offset by the camera angle. Fixed by the draw bit above.
+
+Same-map warps, every entry point: party_travel's lamp warp hook (every `0x13CDF30(id)`, after the
+question) calls `SameMapLampWarp`: a lamp of the loaded block is an in-world move (a host with
+members: the party move unless it travels alone), and a lamp the player already stands at (within
+2 m) is a no-op that only records it as the last lamp - no question either. Live vis6: test step
+`host_lamp=2412951` at the lamp: `already standing at it (0.2 m): no warp, no load`; from 68 m
+away: `in-world warp (the host's party move ...) no load`, the guest followed in-world. Not covered
+yet: a Lua WarpNextStage (0x132E010) to a warp point of the loaded map (its entity position is
+not in the spot table) and death respawns (the revive is hostdeath's).
+
