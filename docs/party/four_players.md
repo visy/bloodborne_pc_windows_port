@@ -224,10 +224,12 @@ Party members page (`MaxMembers`). Raising it later needs the engine work of sec
 cooperator is not possible without rewriting fixed-size tables") and nothing else hard-coded.
 
 **Changes.**
-- System menu: the Party members page had six rows for up to 4 members + notices + HUD + guest
-  lamps + last event, so a full party cut the guest lamps switch and the last event. The switches
-  moved to a new **Party options** page; Party members holds one row per member + the last event
-  (game-menu-pages-test: a full party of four, every row visible, kick on the 4th row).
+- System menu: Party members has one row per member (`MaxMembers = party::kMaxPartyPlayers`), then
+  the notices, party HUD and guest lamps switches and the last event. The game shows the first six
+  visible rows, so a full party of four shows the four members, notices and party HUD; guest lamps
+  (also on the overlay's Party tab) and the last event give way. A separate page is not possible: the
+  System menu is at its 12 pages (game-menu-pages-test: a full party of four, the six rows shown,
+  kick on the 4th member's row).
 - Placement (B2 / pre-ring spacing): `coop::fourp::SpotOffset` / `SpotForTry` (pure, tested):
   upstream's 0.5 m line (slot 1 right, slot 2 left, slot 3 2x right, nothing behind), each slot
   tries its own spot, then the mirrored one, then 3 / 1.

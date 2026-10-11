@@ -23,6 +23,7 @@ namespace P = BbGameMenu::Pages;
 
 static std::filesystem::path ini;
 static int restarts = 0;
+static int quits = 0;
 static int extension_runs = 0;
 static std::int64_t now = 1000000;
 
@@ -133,7 +134,7 @@ static void EverySettingSaved() {
         "upscaler", "preset", "sharpen", "sharpness", "jitter", "object_motion", "reactive", "reactive_scale",
         "reactive_threshold", "reactive_max", "debug_view", "show_fps", "show_hud", "hud_position", "hud_opacity",
         "hud_scale", "hud_graph", "hud_vram", "hud_gpu", "hud_cpu", "hud_ram", "mk_enabled", "mk_sens_x",
-        "mk_sens_y", "mk_invert_x", "mk_invert_y", "mk_deadzone", "mk_smoothing", "async_pipelines", "gpl",
+        "mk_sens_y", "mk_invert_x", "mk_invert_y", "mk_deadzone", "mk_smoothing", "mk_wheel", "async_pipelines", "gpl",
         "compile_indicator", "party_toasts", "party_hud", "fsr4_auto_exposure", "fsr4_invert_jitter", "model_lod",
         "output_res", "live_resolution", "menu_language"};
     for (const char* key : overlay) {
@@ -191,15 +192,13 @@ static void Party() {
     // Member rows: one per member, name, state and ping; the host's own row cannot be kicked.
     int visible = 0;
     for (const P::Row& row : members.rows) visible += !row.visible || row.visible();
-    // three members and the last event; the switches are on Party options (a full party of four
-    // keeps every row: tested below)
-    assert(visible == 4);
-    const P::Page& options = PageNamed(u"Party options");
-    const P::Row& hud = RowNamed(options, u"Party HUD");
+    // three members, the notices, party HUD and guest lamps switches, the last event (the game
+    // shows the first six: the last event gives way with three or more members)
+    assert(visible == 7);
+    const P::Row& hud = RowNamed(members, u"Party HUD");
     assert(hud.visible && hud.visible());
-    const P::Row& lamps = RowNamed(options, u"Guests use lamps");
+    const P::Row& lamps = RowNamed(members, u"Guests use lamps");
     assert(lamps.visible && lamps.visible());
-    (void)RowNamed(options, u"Join/leave notices");
     assert(std::u16string(P::Text(members.rows[0].name, false)) == u"Hunter0 (host) (you)");
     assert(std::u16string(P::Text(members.rows[1].choices[0], false)) == u"In world, 42 ms");
     assert(std::u16string(P::Text(members.rows[1].choices[1], false)) == u"Press again: kick");
@@ -250,9 +249,10 @@ static void Party() {
     P::Load();
     visible = 0;
     for (const P::Row& row : members.rows) visible += !row.visible || row.visible();
-    assert(visible == 2 && std::u16string(P::Text(members.rows[0].name, false)) == u"No one yet");
+    assert(visible == 5 && std::u16string(P::Text(members.rows[0].name, false)) == u"No one yet");
 
-    // A full party (host + three, A7): four member rows, the last event, nothing cut.
+    // A full party (host + three, A7): the game shows the first six visible rows: the four members,
+    // the notices and the party HUD switch.
     ps::SetMembers({{"Hunter0", true, true, -1, 0, "", true},
                     {"Hunter1", true, true, 11, 1, "", false},
                     {"Hunter2", true, false, 12, 2, "", false},
@@ -260,11 +260,12 @@ static void Party() {
     P::Load();
     std::vector<const P::Row*> full;
     for (const P::Row& row : members.rows) if (!row.visible || row.visible()) full.push_back(&row);
-    assert(full.size() == 5 && full.size() <= P::RowsPerPage);
+    assert(full.size() == 8 && P::RowsPerPage == 6);
     assert(std::u16string(P::Text(full[3]->name, false)) == u"Hunter3");
     assert(std::u16string(P::Text(full[3]->choices[0], false)) == u"In world, 13 ms");
     assert(std::u16string(P::Text(full[2]->choices[0], false)) == u"In own world, 12 ms");
-    assert(std::u16string(P::Text(full[4]->name, false)) == u"Last event");
+    assert(std::u16string(P::Text(full[4]->name, false)) == u"Join/leave notices");
+    assert(std::u16string(P::Text(full[5]->name, false)) == u"Party HUD");
     while (ps::PopCommand(&cmd)) {}
     Press(*full[3]);
     Press(*full[3]);
@@ -298,6 +299,16 @@ static void Restart() {
     assert(restarts == 0);
     Press(row);
     assert(restarts == 1);
+}
+
+// Upstream 0.51 (#74, #116): "Quit the game" asks for a second press, as Restart does.
+static void Quit() {
+    P::Load();
+    const P::Row& row = RowNamed(PageNamed(u"Game patches"), u"Quit the game");
+    Press(row);
+    assert(quits == 0);
+    Press(row);
+    assert(quits == 1);
 }
 
 /// --labels FILE: the English page / row names and help lines, for test drivers that read the
@@ -337,6 +348,7 @@ int main(int argc, char** argv) {
     BbSettings::ConfigureDlssSupport(true, nullptr);
     party::status::ResetForTest(false);
     P::SetRestartHandler([] { ++restarts; });
+    P::SetQuitHandler([] { ++quits; });
     // An extension row (party flow): hidden unless party mode is off, a confirmed action.
     {
         P::PartyRow row;
@@ -360,6 +372,7 @@ int main(int argc, char** argv) {
     assert(ReadIni()["key.cross"] == "X, Space"); // the launcher's keys stay
     Party();
     Restart();
+    Quit();
     std::filesystem::remove(ini);
     std::printf("game menu pages: %zu pages, %d fields, %zu texts: ok\n", P::All().size(), P::FieldCount(),
                 P::TextCount());

@@ -9,6 +9,7 @@ This project is licensed under the **GNU General Public License v3 or later** ([
 Special thanks to the original creators and open source projects that made this port possible:
 
 - **deadinside28**: Creator of the original Linux port (`bbport`), pioneering the flat memory image architecture, custom Vulkan two-stage pipeline, and synthetic motion vector generation.
+- **Mrsuss60**: creator of the original native Windows port ([bloodborne_pc_windows_port](https://github.com/Mrsuss60/bloodborne_pc_windows_port)): the Win32 runtime and Vulkan on Windows, the Windows build scripts, character creation and keyboard menu fixes, and merging community pull requests.
 - **shadPS4 Team**: Base Vulkan video core and shader recompiler.
 - **FireBurn**: FSR-Vulkan runtime and temporal upscaling backend.
 - **Thealexbarney**: LibAtrac9 audio decoding library.

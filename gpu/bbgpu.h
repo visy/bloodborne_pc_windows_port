@@ -36,15 +36,25 @@ int bbgpu_overlay_captures_input(void);
 /* Mouse & keyboard controls (scheme from Mrsuss60/bloodborne_pc_windows_port): the mouse state
  * gathered by the window thread and the menu's look tuning. Mouse motion (pixels, relative mode)
  * accumulates until a call with consume_motion set takes it. buttons: bit 0 left, 1 right,
- * 2 middle, 3 X1, 4 X2. Nothing is gathered while the menu or the name box is open. */
+ * 2 middle, 3 X1, 4 X2. Nothing is gathered while the menu or the name box is open.
+ * wheel_up / wheel_down: wheel notches since the last consuming call (upstream 0.51, #52);
+ * wheel: 1 when the wheel drives the d-pad (bbport.ini mk_wheel). */
 typedef struct {
     float dx, dy;
     uint32_t buttons;
     float sens_x, sens_y, deadzone, smoothing;
     int invert_x, invert_y;
+    int wheel_up, wheel_down, wheel;
 } BbMouseState;
 /* 1 when mouse & keyboard mode is on (bbport.ini mk_enabled, BB_MOUSE_KEYBOARD, the menu). */
 int bbgpu_mouse_keyboard(BbMouseState *state, int consume_motion);
+/* Test aid (BB_PAD_FILE "key=NAME"): a key press and release queued into the game window's
+ * events as if typed (SDL key name: Insert, Up, Return, ...); no OS input, no focus needed.
+ * 0 when the name is unknown or there is no window. */
+int bbgpu_test_key(const char *sdl_key_name);
+/* Quits the game as the window's close button does (overlay / System menu "Quit the game",
+ * upstream 0.51 #74 #116): the party says goodbye, the process ends. Any thread. */
+void bbgpu_request_quit(void);
 /* 0 while the game window is in the background and BB_MUTE_UNFOCUSED is not 0: audio is muted. */
 int bbgpu_audio_audible(void);
 /* Patches the loaded image before the game runs (image still writable): libGnm entry hooks. */

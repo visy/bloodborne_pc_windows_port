@@ -21,7 +21,7 @@
 //  - Party page: an action table. Pages::AddPartyRow(PartyRow) before PatchImage adds a row
 //    (order, texts made from party::status::Board, Press None / Once / Confirm, run(board), or a
 //    settings toggle); built-in rows use the same table (status 10, copy code 20, rejoin 30,
-//    leave 40; the last event is on Party members, the notices / HUD / guest lamps switches on Party options).
+//    leave 40; the notices switch and the last event are on Party members).
 //  - New pages: add them in Pages::DefineAll (MaxPages below caps the System items).
 #include "bbport_game_menu.h"
 #include "party/party_flow.h"
@@ -54,6 +54,7 @@
 
 extern "C" void* runtime_low_map(size_t size, int prot); // src/runtime_memory.c
 extern "C" void runtime_restart(void);                  // src/probe.c
+extern "C" void bbgpu_request_quit(void);              // bbgpu.cpp
 
 // The game's code is called, and calls the hooks below, with the System V ABI (the PS4's): the
 // default on Linux, said explicitly for Windows.
@@ -606,6 +607,7 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
     party::flow::RegisterMenuRows(); // the party flow's rows on the Party page (party_flow_rows.cpp)
     P::Define();
     P::SetRestartHandler(&runtime_restart);
+    P::SetQuitHandler(&bbgpu_request_quit);
     if (P::All().size() > MaxPages) {
         std::printf("Game menu: %zu pages, only %zu shown\n", P::All().size(), MaxPages);
     }

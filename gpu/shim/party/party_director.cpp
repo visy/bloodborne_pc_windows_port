@@ -5,6 +5,7 @@
 #include "party_director.h"
 #include "../net/netsim.h"
 #include "party_hud.h"
+#include "party_balance.h"
 #include "party_async_io.h"
 
 #include "coop_hooks.h"
@@ -1959,6 +1960,8 @@ void PartyDirector::Tick() {
     }
     // The party HUD: our vitals out, the companions' board for the overlay (party_hud.h).
     if (role != PartyRole::None) PartyHudTick(s, link, LocalState(s, st.start_ready));
+    // C4 rot, D7 enemy scaling, E2 extras: the host's rules for the party (party_balance.h).
+    if (role != PartyRole::None) balance::Tick(s, link, role == PartyRole::Host);
     // B1: the host's warps go to every guest (reliable: replayed to a member who reconnects).
     if (link && role == PartyRole::Host) {
         TravelIntent t;
@@ -2273,6 +2276,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     InstallItemsPatches();  // C3: award hook, parity patches (byte-verified)
     PhantomInit();          // guest respawn at the host's lamp, refill, boss Insight
     GuestServicesInit();    // guest Doll / shops / workshop in the host's Dream (byte-verified)
+    balance::Init();        // C4 rot hook, D7 scaling (party_balance.h)
     g_tick_installed = HookPrologue(kFlipperUpdate,
                                     {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48,
                                      0x83, 0xec, 0x38},

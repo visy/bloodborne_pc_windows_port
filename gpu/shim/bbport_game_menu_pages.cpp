@@ -11,6 +11,7 @@
 #include <mutex>
 
 #include "bbport_settings.h"
+#include "party/party_balance_rules.h"
 #include "party/party_link.h"  // kMaxPartyPlayers
 #include "party/party_status.h"
 
@@ -82,6 +83,7 @@ std::vector<std::int64_t> rested_since, armed_at;
 std::atomic<bool> loaded{false};
 std::atomic<std::int64_t> last_refresh{-1000000};
 void (*restart_handler)() = nullptr;
+void (*quit_handler)() = nullptr;
 
 Values& DefaultSettings() {
     static Values* v = [] {
@@ -191,6 +193,10 @@ struct MemberTexts {
     u32 restart_help;
     u32 event_value, event_help;
 } party;
+struct BalanceTexts {
+    u32 rot_help = 0;
+    u32 scale_help[6]{};
+} balance;
 std::string member_names[MaxMembers]; // the member row k stands for (kick)
 bool member_kickable[MaxMembers]{};
 int member_rows = 1;                  // rows the Members page shows (one when nobody is there)
@@ -694,12 +700,6 @@ void DefineAll() {
     AddRow(Scaled(&Values::mk_sens_y, SensTable), "Vertical speed", "Скорость по вертикали",
            "Mouse sensitivity: 0 = 0.25, 5 = 1.0 (default), 10 = 5.0",
            "Чувствительность мыши: 0 = 0.25, 5 = 1.0 (по умолчанию), 10 = 5.0", {}, Kind::Slider);
-    AddRow(Scaled(&Values::mk_smoothing, SmoothTable), "Mouse smoothing", "Сглаживание мыши",
-           "Averages the mouse over frames: 0 raw, 4 = 0.2 (default), 10 = 0.8",
-           "Усреднение мыши: 0 без него, 4 = 0.2 (по умолчанию), 10 = 0.8", {}, Kind::Slider);
-    AddRow(Scaled(&Values::mk_deadzone, DeadTable), "Mouse dead zone", "Мёртвая зона",
-           "Ignores slow movement (tremor): 0 none, 5 = 0.05 (default), 10 = 0.2",
-           "Не учитывает медленное движение: 0 нет, 5 = 0.05 (по умолчанию), 10 = 0.2", {}, Kind::Slider);
     AddRow(Setting(
                Kind::List,
                [](const Values& v) { return int(v.mk_invert_x.load()) | int(v.mk_invert_y.load()) << 1; },
@@ -712,10 +712,23 @@ void DefineAll() {
            {AddText("None", "Нет"), AddText("Horizontal", "По горизонтали"), AddText("Vertical", "По вертикали"),
             AddText("Both", "Обе оси")},
            Kind::List);
+    // A page holds six rows: the fine tuning and the wheel (upstream 0.51, #52) have their own.
+    AddPage("Mouse tuning", "Настройка мыши", "Mouse look smoothing, dead zone and the wheel (bbport)",
+            "Сглаживание и мёртвая зона обзора мышью, колесо (bbport)");
+    AddRow(Scaled(&Values::mk_smoothing, SmoothTable), "Mouse smoothing", "Сглаживание мыши",
+           "Averages the mouse over frames: 0 raw, 4 = 0.2 (default), 10 = 0.8",
+           "Усреднение мыши: 0 без него, 4 = 0.2 (по умолчанию), 10 = 0.8", {}, Kind::Slider);
+    AddRow(Scaled(&Values::mk_deadzone, DeadTable), "Mouse dead zone", "Мёртвая зона",
+           "Ignores slow movement (tremor): 0 none, 5 = 0.05 (default), 10 = 0.2",
+           "Не учитывает медленное движение: 0 нет, 5 = 0.05 (по умолчанию), 10 = 0.2", {}, Kind::Slider);
+    AddRow(Flag(&Values::mk_wheel), "Mouse wheel", "Колесо мыши",
+           "Quick items and tools (d-pad up / down), one press per notch",
+           "Быстрые предметы и инструменты (крестовина вверх / вниз), по нажатию на щелчок", toggle,
+           Kind::Toggle);
 
     // ---- Game patches (after a restart) and the restart itself. ----
-    AddPage("Game patches", "Патчи игры", "The game's own AA, intros, free camera, debug menu (bbport)",
-            "Сглаживание игры, заставки, свободная камера, отладочное меню (bbport)");
+    AddPage("Game patches", "Патчи игры", "The game's own AA, intros, free camera, debug menu, restart, quit (bbport)",
+            "Сглаживание игры, заставки, свободная камера, отладочное меню, перезапуск, выход (bbport)");
     for (const Short& sh : patches) effect_row(sh);
     party.restart_help = AddDynamic(MaxHelpLength);
     AddRow(Confirmed([] {
@@ -724,6 +737,15 @@ void DefineAll() {
            }),
            AddText("Restart the game", "Перезапуск игры"), party.restart_help,
            {AddText("Restart", "Перезапуск"), AddText("Press again", "Нажмите ещё раз")}, Kind::Toggle);
+    // Upstream 0.51 (#74, #116): quit from the menu, as the window's close button.
+    AddRow(Confirmed([] {
+               BbSettings::Save();
+               if (quit_handler) quit_handler();
+           }),
+           "Quit the game", "Выход из игры",
+           "Closes the game like the window's close button; in a party the others are told",
+           "Закрывает игру, как кнопка закрытия окна; группа об этом узнает",
+           {AddText("Quit", "Выйти"), AddText("Press again", "Нажмите ещё раз")}, Kind::Toggle);
 
     // ---- Party (party_status.h): the action table's rows. ----
     AddPage("Party", "Группа", "Party co-op: status, code, rejoin, leave (bbport)",
@@ -781,30 +803,83 @@ void DefineAll() {
                party.member_name[k], party.member_help[k], {party.member_value[k], party.member_confirm[k]},
                Kind::Toggle, [k] { return k < member_rows; });
     }
-    // One row per member (at most RowsPerPage), then the last event. The switches are on "Party
-    // options", so a full party keeps all of them (A7: with four members the old page cut the
-    // guest lamps switch and the last event).
+    // One row per member (kMaxPartyPlayers = 4), then the switches: a full party of four still
+    // shows the notices and party HUD switches (the page's six rows); guest lamps and the last
+    // event show while fewer than four hunters are in the party (lamps also: overlay Party tab).
+    // The System menu is at its 12 pages, so the switches cannot move to a page of their own.
+    AddRow(Flag(&Values::party_toasts), "Join/leave notices", "Уведомления",
+           "A short notice in a top corner when a hunter joins or leaves",
+           "Короткое уведомление в углу, когда охотник входит или выходит", toggle, Kind::Toggle);
+    // Party HUD (party_hud.h): party mode only. With four members the last event row gives way.
+    AddRow(Flag(&Values::party_hud), AddText("Party HUD", "Панель группы"),
+           AddText("Companions' names, health and where they are, in the bottom left corner",
+                   "Имена, здоровье и местоположение спутников в левом нижнем углу"),
+           toggle, Kind::Toggle, [] { return party::status::Enabled(); });
+    // Guests use lamps and headstones (party_guestsvc; read at the next start). Shown while fewer
+    // than four hunters are in the party (the page holds six rows).
+    AddRow(Flag(&Values::party_guest_lamps), AddText("Guests use lamps", "Фонари гостям"),
+           AddText("Guests may use lamps and headstones; the whole party travels (after a restart)",
+                   "Гости могут пользоваться фонарями и надгробиями; группа идёт вместе (после перезапуска)"),
+           toggle, Kind::Toggle, [] { return party::status::Enabled(); });
     party.event_value = AddDynamic(MaxValueLength);
     party.event_help = AddDynamic(MaxHelpLength);
     AddRow(Info(), AddText("Last event", "Последнее"), party.event_help, {party.event_value, party.event_value},
            Kind::Toggle);
 
-    // ---- Party options: notices, the party HUD and guest lamps (party mode). ----
-    AddPage("Party options", "Настройки группы", "Join/leave notices, the party HUD, guests and lamps (bbport)",
-            "Уведомления, панель группы, гости и фонари (bbport)");
-    AddRow(Flag(&Values::party_toasts), "Join/leave notices", "Уведомления",
-           "A short notice in a top corner when a hunter joins or leaves",
-           "Короткое уведомление в углу, когда охотник входит или выходит", toggle, Kind::Toggle);
-    // Party HUD (party_hud.h): party mode only.
-    AddRow(Flag(&Values::party_hud), AddText("Party HUD", "Панель группы"),
-           AddText("Companions' names, health and where they are, in the bottom left corner",
-                   "Имена, здоровье и местоположение спутников в левом нижнем углу"),
-           toggle, Kind::Toggle, [] { return party::status::Enabled(); });
-    // Guests use lamps and headstones (party_guestsvc; read at the next start).
-    AddRow(Flag(&Values::party_guest_lamps), AddText("Guests use lamps", "Фонари гостям"),
-           AddText("Guests may use lamps and headstones; the whole party travels (after a restart)",
-                   "Гости могут пользоваться фонарями и надгробиями; группа идёт вместе (после перезапуска)"),
-           toggle, Kind::Toggle, [] { return party::status::Enabled(); });
+    // ---- Party rules (party_balance.h): the death debuff, enemy scaling (health, damage; poise in
+    // the overlay's Party tab and bbport.ini: the System menu holds 12 pages), the overhead display.
+    AddPage("Party rules", "Правила группы", "Death debuff, enemy scaling, what shows above companions (bbport)",
+            "Штраф за смерть, сила врагов, что видно над спутниками (bbport)");
+    balance.rot_help = AddDynamic(MaxHelpLength);
+    AddRow(Flag(&Values::party_rot), AddText("Rot on death", "Гниль при смерти"), balance.rot_help, toggle,
+           Kind::Toggle);
+    const auto scale_row = [&](std::atomic<int> Values::*member, const int* table, const char* en, const char* ru,
+                               int index) {
+        balance.scale_help[index] = AddDynamic(MaxHelpLength);
+        AddRow(Setting(
+                   Kind::Slider,
+                   [member, table](const Values& v) { return coop::balance::Position(table, (v.*member).load()); },
+                   [member, table](int i) { (BbSettings::Get().*member) = coop::balance::AtPosition(table, i); }),
+               AddText(en, ru), balance.scale_help[index], {}, Kind::Slider);
+    };
+    using namespace coop::balance;
+    scale_row(&Values::party_boss_hp, kHpTable, "Boss health", "Здоровье боссов", 0);
+    scale_row(&Values::party_boss_damage, kDamageTable, "Boss damage", "Урон боссов", 1);
+    scale_row(&Values::party_enemy_hp, kHpTable, "Enemy health", "Здоровье врагов", 3);
+    scale_row(&Values::party_enemy_damage, kDamageTable, "Enemy damage", "Урон врагов", 4);
+    AddRow(Setting(
+               Kind::List, [](const Values& v) { return std::clamp(v.party_overhead.load(), 0, 4); },
+               [](int i) { BbSettings::Get().party_overhead = std::clamp(i, 0, 4); }),
+           AddText("Above companions", "Над спутниками"),
+           AddText("What shows above party members in view (only you see it)",
+                   "Что показывать над спутниками в поле зрения (только у вас)"),
+           {AddText("Nothing", "Ничего"), AddText("Name", "Имя"), AddText("Name and level", "Имя и уровень"),
+            AddText("Name and health", "Имя и здоровье"), AddText("Name and deaths", "Имя и смерти")},
+           Kind::List);
+}
+
+/// The party rules' help lines: the current value, and on a guest that the host's rules count.
+void RefreshBalance() {
+    if (!balance.rot_help) return;
+    const auto& v = BbSettings::Get();
+    const bool guest = party::status::Snapshot().role == party::status::Role::Guest;
+    const std::string g_en = guest ? " (host decides)" : "", g_ru = guest ? " (решает хост)" : "";
+    SetDynamic(balance.rot_help, "Each death: max HP -10 % (up to 5), a lamp rest cleanses it" + g_en,
+               "Каждая смерть: -10 % здоровья (до 5 раз), отдых у фонаря снимает" + g_ru);
+    using namespace coop::balance;
+    const int values[6] = {v.party_boss_hp, v.party_boss_damage, v.party_boss_poise,
+                           v.party_enemy_hp, v.party_enemy_damage, v.party_enemy_poise};
+    for (int k = 0; k < 6; ++k) {
+        const int kind = k % 3;
+        const std::string en = kind == 0 ? DescribeHp(values[k], false)
+                               : kind == 1 ? DescribeDamage(values[k], false) : DescribePoise(values[k], false);
+        const std::string ru = kind == 0 ? DescribeHp(values[k], true)
+                               : kind == 1 ? DescribeDamage(values[k], true) : DescribePoise(values[k], true);
+        const char* ref_en = k < 3 ? "; 100 % = Bloodborne" : "; vanilla 0";
+        const char* ref_ru = k < 3 ? "; 100 % = как в игре" : "; в игре 0";
+        if (!balance.scale_help[k]) continue;  // poise: overlay Party tab / bbport.ini only
+        SetDynamic(balance.scale_help[k], en + (kind == 1 ? "" : ref_en) + g_en, ru + (kind == 1 ? "" : ref_ru) + g_ru);
+    }
 }
 
 } // namespace
@@ -956,6 +1031,7 @@ void RefreshDynamic() {
     std::scoped_lock lock{StateMutex()};
     RefreshParty();
     RefreshRestart();
+    RefreshBalance();
 }
 
 void Poll(std::int64_t now_ms) {
@@ -1019,6 +1095,10 @@ int PartyRowCount() {
 
 void SetRestartHandler(void (*restart)()) {
     restart_handler = restart;
+}
+
+void SetQuitHandler(void (*quit)()) {
+    quit_handler = quit;
 }
 
 } // namespace BbGameMenu::Pages
