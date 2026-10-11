@@ -941,18 +941,108 @@ u32 HostMap() {
     return w && w->age_ms < 5000 ? w->map : 0u;
 }
 
-/// Removes a remote player chr as its task's STEP_DeleteWait 0x1E50A70 does (presentation slot
-/// release 0x15BC080, WorldChrMan remove 0x19186E0); the task is kept (rewound to STEP_Create
-/// when the two meet again). Main thread.
-void RemoveRemoteChr(u64 chr, const char* why) {
+/// Removes a remote player chr the way its task's STEP_Delete 0x1E50880 / STEP_DeleteWait
+/// 0x1E50A70 do, the task kept (rewound to STEP_Create when the two meet again): first the
+/// EnterleaveDirector leave (0x19704B0(director *0x553E8B0, chr handle, presentation slot task
+/// +0xEC) marks the entry leaving, +0xFD = 1; chr data +0x3B0 -> +8 +0x1BC |= 2), then, once the
+/// entry's leave has played (+0x135) or 2 s later, the presentation slot release 0x15BC080 and the
+/// WorldChrMan remove 0x19186E0. Without the leave the director kept the old entry (it is keyed by
+/// the member's PlayerId): the re-created chr found it (find-or-create 0x19700A0) and stayed
+/// invisible while its name plate hung at the old spot (user reports split24 / hd22). Main thread.
+struct PendingRemoval {
+    u64 chr = 0, entry = 0;
+    double since = 0;
+    std::string why;
+};
+std::vector<PendingRemoval> g_removals;
+
+/// The EnterleaveDirector's entries (*0x553E8B0 +0xF0: list sentinel, node [3] = entry; entry
+/// +0xD0 key, +0xF8 handle?, +0xFC presentation slot, +0xFD leaving, +0x134 / +0x135 flags).
+std::string DescribeEnterLeave() {
+    const u64 d = Slot(0x553e8b0);
+    const u64 head = Field<u64>(d, 0xf0);
+    std::string out;
+    u64 node = Field<u64>(head, 0);
+    for (int guard = 0; head && node && node != head && guard < 16; ++guard) {
+        const u64 e = Field<u64>(node, 0x18);
+        char b[128];
+        std::snprintf(b, sizeof b, " [%#llx key %x h %x slot %d leave %u f134 %u f135 %u]", ull(e), Field<u32>(e, 0xd0),
+                      Field<u32>(e, 0xf8), int(int8_t(Field<u8>(e, 0xfc))), unsigned(Field<u8>(e, 0xfd)),
+                      unsigned(Field<u8>(e, 0x134)), unsigned(Field<u8>(e, 0x135)));
+        out += b;
+        node = Field<u64>(node, 0);
+    }
+    return out.empty() ? " none" : out;
+}
+
+void FinishRemoval(const PendingRemoval& r, const char* how) {
     using Release = u64(BB_COOP_SYSV*)(u64, u32);
     using Remove = void(BB_COOP_SYSV*)(u64, u64);
+    bool still = false;
+    for (const TaskInfo& t : Tasks(false)) {
+        still = still || ((t.mode == 1 || t.mode == 2) && PlayerForPeer(t.task + kTaskPeer) == r.chr);
+    }
+    if (!still) {
+        Log("split: remote chr %#llx already gone (%s)", ull(r.chr), r.why.c_str());
+        return;
+    }
     float p[3] = {};
-    ChrPos(chr, p);
-    reinterpret_cast<Release>(Guest(0x15bc080))(Field<u64>(Slot(kSlotGsm), 0x16f8), Field<u32>(chr, 8));
-    reinterpret_cast<Remove>(Guest(0x19186e0))(Slot(kSlotWorldChrMan), chr);
+    ChrPos(r.chr, p);
+    reinterpret_cast<Release>(Guest(0x15bc080))(Field<u64>(Slot(kSlotGsm), 0x16f8), Field<u32>(r.chr, 8));
+    reinterpret_cast<Remove>(Guest(0x19186e0))(Slot(kSlotWorldChrMan), r.chr);
     g_split_change_at = Now();
-    Log("split: remote chr %#llx at (%.1f, %.1f, %.1f) removed (%s); its task is kept", ull(chr), p[0], p[1], p[2], why);
+    Log("split: remote chr %#llx at (%.1f, %.1f, %.1f) removed (%s; leave %s); its task is kept", ull(r.chr), p[0], p[1],
+        p[2], r.why.c_str(), how);
+}
+
+void RemoveRemoteChr(u64 chr, const char* why) {
+    for (const PendingRemoval& r : g_removals) {
+        if (r.chr == chr) {
+            return;  // already leaving
+        }
+    }
+    u8 pslot = 0;
+    for (const TaskInfo& t : Tasks(false)) {
+        if ((t.mode == 1 || t.mode == 2) && PlayerForPeer(t.task + kTaskPeer) == chr) {
+            pslot = t.slot;
+        }
+    }
+    PendingRemoval r;
+    r.chr = chr;
+    r.since = Now();
+    r.why = why;
+    const u64 director = Slot(0x553e8b0);
+    if (director) {
+        using Leave = u64(BB_COOP_SYSV*)(u64, u32, u64);
+        const u64 e = reinterpret_cast<Leave>(Guest(0x19704b0))(director, Field<u32>(chr, 8), u64(int(int8_t(pslot))));
+        r.entry = e == ~0ull ? 0 : e;
+        const u64 cd = Field<u64>(Field<u64>(chr, 0x3b0), 8);
+        if (cd) {
+            const u8 v = u8(Field<u8>(cd, 0x1bc) | 2);
+            SafeWrite(cd + 0x1bc, &v, 1);
+        }
+    }
+    g_split_change_at = Now();
+    Log("split: remote chr %#llx (handle %x) leaves (%s): presentation entry %#llx; enterleave%s", ull(chr),
+        Field<u32>(chr, 8), why, ull(r.entry), DescribeEnterLeave().c_str());
+    g_removals.push_back(r);
+}
+
+/// Main thread, every frame: removals whose leave has played (or timed out).
+void RemovalTick(double now) {
+    for (std::size_t i = 0; i < g_removals.size();) {
+        const PendingRemoval& r = g_removals[i];
+        const bool played = r.entry && Field<u8>(r.entry, 0x135) != 0;
+        if (played || now - r.since >= 2.0 || !SessionUp()) {
+            const PendingRemoval done = r;
+            g_removals.erase(g_removals.begin() + std::ptrdiff_t(i));
+            if (SessionUp()) {
+                FinishRemoval(done, played ? "played" : "timed out");
+            }
+            continue;
+        }
+        ++i;
+    }
 }
 
 /// The member slot whose reported position is nearest to `p` (within `max_m`), -1 none.
@@ -1144,6 +1234,7 @@ void SplitTick(const GameSnapshot& s, double now) {
     }
     if (g_meet_rewind_at > 0 && now >= g_meet_rewind_at) {
         g_meet_rewind_at = 0;
+        Log("split: meet: enterleave before the re-creation:%s", DescribeEnterLeave().c_str());
         const int n = RewindRemoteTasks("split meet");
         Log("split: meet: %d task(s) rewound to STEP_Create", n);
     }
@@ -2802,10 +2893,7 @@ void HostTick(const GameSnapshot& s, double now) {
             if (!chr || chr != victim) {
                 continue;
             }
-            using Release = u64(BB_COOP_SYSV*)(u64, u32);
-            using Remove = void(BB_COOP_SYSV*)(u64, u64);
-            reinterpret_cast<Release>(Guest(0x15bc080))(Field<u64>(Slot(kSlotGsm), 0x16f8), Field<u32>(chr, 8));
-            reinterpret_cast<Remove>(Guest(0x19186e0))(Slot(kSlotWorldChrMan), chr);
+            RemoveRemoteChr(chr, "a dead member respawns");  // with the presentation leave
             Log("host: dead member chr %#llx (hp %d) removed; its task is kept for the re-creation", ull(chr), hp);
         }
         static const bool fail = std::getenv("BB_PARTY_B2_TEST_FAIL") &&
@@ -3179,7 +3267,7 @@ void Tick(const GameSnapshot& s) {
             Field<float>(Slot(kSlotFlow), 0x98), unsigned(Field<u8>(Slot(kSlotGsm), 0x1521)),
             remo ? int(Field<u8>(remo, 0x168) & 1) : -1, int(g_rejoin.load()), s.cooperators, DescribeTasks().c_str(),
             DescribePresence(true).c_str(), DescribePresentation().c_str());
-        Log("status: where%s; apart %d", DescribeWhere().c_str(), g_apart.load());
+        Log("status: where%s; apart %d; enterleave%s", DescribeWhere().c_str(), g_apart.load(), DescribeEnterLeave().c_str());
     }
     {
         static double last_hit_log = 0;
@@ -3243,6 +3331,7 @@ void Tick(const GameSnapshot& s) {
             if (SessionUp()) {
                 RemoteDrawFixTick(now);
             }
+            RemovalTick(now);
             if (g_arrived_at > 0 && now >= g_arrived_at) {
                 g_arrived_at = 0;
                 Send(0, "{\"op\":\"arrived\"}");
