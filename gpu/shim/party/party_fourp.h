@@ -64,11 +64,11 @@ bool LiftCoopSlot(int rec0_status, int coop_count, int max_players);
 int BossCount(int count);
 /// H4: the SpEffect the game applies (7501 -> 7502 with >= 3 cooperators).
 int DopingSpEffect(int sp_effect, int coop_count);
-/// B2 / summon placement around the host: spot 1..3 (0 = the host; 4, 5 defined for a larger
-/// party) as offsets along the host's right and forward axes, `d` (BB_PARTY_SUMMON_OFFSET,
-/// 2.2 m) apart.
+/// B2 / summon placement beside the host: spot 1..3 (0 = the host; 4 defined for a larger party)
+/// as offsets along the host's right and forward axes: a line, right / left / 2x right, neighbours
+/// `d` (BB_PARTY_SUMMON_OFFSET, 0.5 m) apart.
 void SpotOffset(int spot, float d, float* right, float* forward);
-/// The spot party slot `slot` tries on attempt 0, 1, 2 (its own, the mirrored one, behind).
+/// The spot party slot `slot` tries on attempt 0, 1, 2 (its own, the mirrored one, then 3 or 1).
 int SpotForTry(int slot, int attempt);
 /// E6: an NPC summon sign event (xx04400..xx04406 or 12906962).
 bool IsNpcSignEvent(int event_id);

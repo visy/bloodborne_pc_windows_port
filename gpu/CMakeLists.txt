@@ -459,7 +459,7 @@ endif()
 set(PARTY_LINK_SOURCES shim/party/party_link.cpp shim/party/party_code.cpp shim/party/party_addr.cpp
     shim/party/party_crypto.cpp shim/party/upnp_win.cpp)
 add_executable(party-link-test EXCLUDE_FROM_ALL ../tests/test_party_link.cpp ${PARTY_LINK_SOURCES}
-    shim/net/net_stun.cpp third_party/monocypher/monocypher.c)
+    shim/net/net_stun.cpp shim/net/netsim.cpp third_party/monocypher/monocypher.c)
 target_compile_options(party-link-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-link-test PRIVATE shim)
 set_target_properties(party-link-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
@@ -564,7 +564,7 @@ target_link_options(party-fuzz-ubsan PRIVATE -fsanitize=undefined -fsanitize-und
 # Party HUD board (shim/party/party_hud.cpp; in bbgpu through SHIM_SOURCES): same-world rules,
 # composition from roster / VITALS / local reads, geometry. cmake --build out/gpu --target party-hud-test
 add_executable(party-hud-test EXCLUDE_FROM_ALL ../tests/test_party_hud.cpp shim/party/party_hud.cpp
-    ${PARTY_LINK_SOURCES} shim/net/net_stun.cpp third_party/monocypher/monocypher.c)
+    ${PARTY_LINK_SOURCES} shim/net/net_stun.cpp shim/net/netsim.cpp third_party/monocypher/monocypher.c)
 target_compile_options(party-hud-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-hud-test PRIVATE shim)
 set_target_properties(party-hud-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
@@ -575,7 +575,7 @@ endif()
 # game facts -> the Party tab's state, roster, events, commands. ninja -C out/gpu party-status-bridge-test
 add_executable(party-status-bridge-test EXCLUDE_FROM_ALL ../tests/test_party_status_bridge.cpp
     shim/party/party_status_bridge.cpp shim/party/party_status.cpp shim/party/party_async_io.cpp
-    ${PARTY_LINK_SOURCES} shim/net/net_stun.cpp third_party/monocypher/monocypher.c)
+    ${PARTY_LINK_SOURCES} shim/net/net_stun.cpp shim/net/netsim.cpp third_party/monocypher/monocypher.c)
 target_compile_definitions(party-status-bridge-test PRIVATE BB_PARTY_BRIDGE_NO_GAME)
 target_compile_options(party-status-bridge-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-status-bridge-test PRIVATE shim)

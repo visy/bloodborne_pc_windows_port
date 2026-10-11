@@ -830,19 +830,20 @@ std::atomic<int> g_local_slot{-1};
 std::atomic<bool> g_fell_back{false};  // a B1 fallback ran: clean the network flow once idle
 
 /// A guest's spot beside the host (never on it: character collision shoves the host): BB_PARTY_SUMMON_OFFSET
-/// (default 2.2 m, 0 = off) to
-/// the right (party slot 1), left (2) or behind (3+) of the host's facing, same height and facing.
+/// (default 0.5 m, 0 = off), side by side in a line: right (party slot 1), left (2), 2x right (3+) of
+/// the host's facing, same height and facing. Wider offsets (2.2 m) put guests into walls at narrow
+/// lamp spots (Central Yharnam).
 /// rot[1] is the yaw (radians); forward = (sin, 0, cos), right = (cos, 0, -sin).
 float SummonOffset() {
     static const float d = [] {
         const char* v = std::getenv("BB_PARTY_SUMMON_OFFSET");
-        return v && v[0] ? float(std::atof(v)) : 2.2f;
+        return v && v[0] ? float(std::atof(v)) : 0.5f;
     }();
     return d;
 }
 
-// `spot` 1..5 around the host (coop::fourp::SpotOffset: right, left, behind, behind right, behind
-// left; a party slot is its own spot), every two spots SummonOffset() apart: six players (A7).
+// `spot` 1..3 beside the host (coop::fourp::SpotOffset: a line along the host's right axis, right,
+// left, 2x right; a party slot is its own spot), neighbours SummonOffset() apart (A7, host + 3).
 void BesideHost(float pos[4], const float rot[4], int spot) {
     const float yaw = rot[1];
     const float fx = std::sin(yaw), fz = std::cos(yaw), rx = std::cos(yaw), rz = -std::sin(yaw);

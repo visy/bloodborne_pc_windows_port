@@ -129,25 +129,25 @@ static void test_npc_signs() {
     CHECK(NpcSignCount(eq0, 4) == -1);
 }
 
-// B2 / summon placement (A7): host + 3 on distinct spots, every pair at least the offset apart.
+// B2 / summon placement (A7): host + 3 side by side in a line, distinct spots, neighbours the offset apart.
 static void test_spots() {
-    const float d = 2.2f;
+    const float d = 0.5f;
     float x[4] = {}, z[4] = {};
     for (int spot = 1; spot <= 3; ++spot) SpotOffset(spot, d, &x[spot], &z[spot]);
-    CHECK(x[1] == d && z[1] == 0);   // slot 1: right
-    CHECK(x[2] == -d && z[2] == 0);  // slot 2: left
-    CHECK(x[3] == 0 && z[3] == -d);  // slot 3: behind
+    CHECK(x[1] == d && z[1] == 0);         // slot 1: right
+    CHECK(x[2] == -d && z[2] == 0);        // slot 2: left
+    CHECK(x[3] == 2 * d && z[3] == 0);     // slot 3: 2x right, nobody behind
     for (int a = 0; a < 4; ++a)
         for (int b = a + 1; b < 4; ++b) CHECK(std::hypot(x[a] - x[b], z[a] - z[b]) >= d - 1e-4f);
-    // Each slot tries its own spot first, then another free side, then behind.
+    // Each slot tries its own spot first, then another.
     for (int slot = 1; slot < kMaxPlayers; ++slot) {
         CHECK(SpotForTry(slot, 0) == slot);
         CHECK(SpotForTry(slot, 1) != slot && SpotForTry(slot, 2) != slot);
     }
-    CHECK(SpotForTry(1, 1) == 2 && SpotForTry(2, 1) == 1 && SpotForTry(1, 2) == 3);
+    CHECK(SpotForTry(1, 1) == 2 && SpotForTry(2, 1) == 1 && SpotForTry(1, 2) == 3 && SpotForTry(3, 2) == 1);
     float rx = 0, fz = 0;
-    SpotOffset(99, d, &rx, &fz);  // out of range: behind
-    CHECK(rx == 0 && fz == -d);
+    SpotOffset(99, d, &rx, &fz);  // out of range: slot 3's spot
+    CHECK(rx == 2 * d && fz == 0);
     CHECK(kMaxPlayers == 4);
 }
 

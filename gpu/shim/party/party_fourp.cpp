@@ -89,29 +89,29 @@ int DopingSpEffect(int sp_effect, int coop_count) {
 }
 
 void SpotOffset(int spot, float d, float* right, float* forward) {
-    // 1 right, 2 left, 3 behind (4 behind right, 5 behind left for a larger party): every two
-    // spots (and the host, spot 0) at least d apart.
-    static const float kRight[6] = {0, 1, -1, 0, 1, -1};
-    static const float kForward[6] = {0, 0, 0, -1, -1, -1};
-    if (spot < 0 || spot >= 6) {
+    // Side by side in a line on the host's right axis (upstream 12490f5: wider offsets or spots
+    // behind put guests into walls at narrow lamp spots): 1 right, 2 left, 3 2x right; 4 2x left
+    // for a larger party. Neighbours d apart, nobody on the host (spot 0).
+    static const float kRight[5] = {0, 1, -1, 2, -2};
+    if (spot < 0 || spot >= 5) {
         spot = 3;
     }
     *right = kRight[spot] * d;
-    *forward = kForward[spot] * d;
+    *forward = 0;
 }
 
 int SpotForTry(int slot, int attempt) {
-    if (slot < 1 || slot >= 6) {
+    if (slot < 1 || slot >= 5) {
         slot = 1;
     }
-    static const int kMirror[6] = {0, 2, 1, 4, 3, 5};
+    static const int kOther[5] = {0, 2, 1, 4, 3}; // the mirrored spot
     if (attempt <= 0) {
         return slot;
     }
     if (attempt == 1) {
-        return kMirror[slot] == slot ? 3 : kMirror[slot];
+        return kOther[slot];
     }
-    return slot == 3 ? 5 : 3;
+    return slot == 3 ? 1 : 3;
 }
 
 bool IsNpcSignEvent(int event_id) {

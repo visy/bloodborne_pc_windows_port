@@ -8,6 +8,7 @@
 #include "party/party_code.h"
 #include "party/party_crypto.h"
 #include "party/party_link.h"
+#include "net/netsim.h"
 #include "party/party_sock.h"
 #include "party/upnp_win.h"
 #include "net/net_stun.h"
@@ -841,6 +842,61 @@ static void test_kick() {
     CHECK(!host.reconnect_now());
 }
 
+// The link under the network simulator (BB_NET_SIM, netsim.h; configured process-wide, so this
+// runs last): 60 ms one way + 20 jitter + 5 % segment loss (retransmission delays) + a 1.5 s
+// total outage mid-stream. Every event arrives once, in order; the link never drops; the ping
+// shows the latency.
+static void test_netsim_link() {
+    bbnet::netsim::Config sc;
+    std::string err;
+    CHECK(bbnet::netsim::parse("lat=60,jit=20,loss=5,seed=3,outage=1500,at=2500", &sc, &err));
+    bbnet::netsim::configure(sc);
+    CHECK(bbnet::netsim::enabled());
+    Recorder hr, ar;
+    // The game's timeouts are 10 s; the tests' 0.7 s would call the 1.5 s outage a lost link.
+    LinkConfig hc = base_cfg("Host", "hunter2"), gc = base_cfg("Alice", "hunter2");
+    hc.lost_timeout_ms = gc.lost_timeout_ms = 4000;
+    hc.connect_timeout_ms = gc.connect_timeout_ms = 4000;
+    PartyLink host(hc, recorder_callbacks(hr, "host"));
+    CHECK(host.start_host(&err));
+    PartyLink a(gc, recorder_callbacks(ar, "alice"));
+    const auto t0 = std::chrono::steady_clock::now();
+    CHECK(a.start_guest("127.0.0.1", host.bound_port(), &err));
+    CHECK(a.wait_connected(8000));
+    const auto joined_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    std::printf("  joined in %lld ms under the simulator\n", static_cast<long long>(joined_ms));
+    CHECK(joined_ms >= 2 * 60);  // the handshake's round trips pay the latency
+    const int kEvents = 300;
+    for (int k = 0; k < kEvents; ++k) {
+        host.post_event(kBroadcast, "e_" + std::to_string(k), "{}");
+        std::this_thread::sleep_for(std::chrono::milliseconds(15));  // ~4.5 s: across the outage
+    }
+    CHECK(wait_for([&] { return ar.count_event("e_" + std::to_string(kEvents - 1)) >= 1; }, 10000));
+    {
+        std::lock_guard<std::mutex> lk(ar.mu);
+        int next = 0, bad = 0;
+        for (const std::string& n : ar.event_names) {
+            if (n.rfind("e_", 0) != 0) continue;
+            if (n != "e_" + std::to_string(next)) ++bad;
+            ++next;
+        }
+        CHECK(next == kEvents && bad == 0);
+        std::printf("  %d events in order through 5 %% loss and a 1.5 s outage (%d out of place)\n", next, bad);
+    }
+    CHECK(a.state() == LinkState::Connected);
+    CHECK(hr.left_kept.load() == 0 && hr.left_released.load() == 0);
+    std::uint32_t ping = 0;
+    CHECK(wait_for([&] {
+        for (const RosterEntry& e : a.roster())
+            if (e.slot != kHostSlot && e.ping_ms > 0) ping = e.ping_ms;
+        return ping >= 100;
+    }, 5000));
+    std::printf("  ping %u ms (2 x 60 ms simulated)\n", ping);
+    a.stop();
+    host.stop();
+}
+
 int main() {
     // Loopback-only sockets: no Windows Firewall prompt for a test program (party_sock.h).
     if (!std::getenv("BB_PARTY_LOOPBACK")) {
@@ -872,6 +928,8 @@ int main() {
     test_vitals();
     std::printf("host restart: slots restored\n");
     test_host_restart();
+    std::printf("network simulator on the link (last: process-wide)\n");
+    test_netsim_link();
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     std::printf(g_failures ? "FAILED\n" : "OK\n");
     return g_failures ? 1 : 0;
