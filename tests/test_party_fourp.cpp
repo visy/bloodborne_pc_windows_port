@@ -48,20 +48,20 @@ static void test_config_and_tag() {
     c = ConfigFromEnv();
     CHECK(c.on && c.scaling && c.npc_signs && c.recruit);
     CHECK(c.local_max == 4);
-    CHECK(FourpRulesTag() == "4p:v1:H1,H2,H3,H4,E6");
+    CHECK(FourpRulesTag() == "4p:v2:H1,H5,H2,H3,H4,E6");
 
     // Max players does not change the tag: the host's value is sent in WELCOME.
     set_env("BB_PARTY_MAX", "3");
-    CHECK(FourpRulesTag() == "4p:v1:H1,H2,H3,H4,E6");
+    CHECK(FourpRulesTag() == "4p:v2:H1,H5,H2,H3,H4,E6");
     set_env("BB_PARTY_MAX", "9");
     CHECK(ConfigFromEnv().local_max == 4);
     set_env("BB_PARTY_MAX", "1");
     CHECK(ConfigFromEnv().local_max == 2);
 
     set_env("BB_PARTY_FOURP_SCALING", "0");
-    CHECK(FourpRulesTag() == "4p:v1:H1,E6");
+    CHECK(FourpRulesTag() == "4p:v2:H1,H5,E6");
     set_env("BB_PARTY_FOURP_NPC_SIGNS", "0");
-    CHECK(FourpRulesTag() == "4p:v1:H1");
+    CHECK(FourpRulesTag() == "4p:v2:H1,H5");
     set_env("BB_PARTY_FOURP", "0");
     CHECK(FourpRulesTag() == "4p:off");
     set_env("BB_PARTY_FOURP", "1");
@@ -130,6 +130,15 @@ static void test_npc_signs() {
 }
 
 // B2 / summon placement (A7): host + 3 side by side in a line, distinct spots, neighbours the offset apart.
+static void test_selector_max() {
+    CHECK(SelectorMaxCoop(2) == 3 && SelectorMaxCoop(3) == 3);  // vanilla
+    CHECK(SelectorMaxCoop(4) == 4);  // 3 cooperators + 1 pending pass the SOS filter
+    // the filter: refuse when max <= pending + cooperators
+    const int max = SelectorMaxCoop(4), pending = 1, coop = 2;
+    CHECK(!(max <= pending + coop));
+    CHECK(SelectorMaxCoop(3) <= pending + coop);  // the vanilla value refused the 3rd cooperator
+}
+
 static void test_spots() {
     const float d = 0.5f;
     float x[4] = {}, z[4] = {};
@@ -166,6 +175,7 @@ int main() {
     test_scaling();
     test_npc_signs();
     test_spots();
+    test_selector_max();
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

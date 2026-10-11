@@ -84,6 +84,16 @@ private:
 /// not Gehrman's ending choice.
 bool WorldTalkAllowed(std::uint32_t talk);
 
+/// Catch-up (user decision: a guest behind the host gets every boss into its own save): the area
+/// gate flags 2AAx / 3AAx a boss's defeat event writes next to its boss flag (EMEVD data,
+/// docs/party/world_actions.md 7). C2 never syncs them (they are never_sync: 2410-style flags
+/// block summons in the host's world); the guest derives them in its own pool from its own boss
+/// flags. `pairs` = {boss flag, gate flag}; 2410 needs both 12411800 and 12411700.
+struct GateRule {
+    std::uint32_t boss, gate, also = 0;  ///< also: a second boss flag the gate needs (0: none)
+};
+const std::vector<GateRule>& GateRules();
+
 // ---- game side ----
 void Init();
 bool Enabled();

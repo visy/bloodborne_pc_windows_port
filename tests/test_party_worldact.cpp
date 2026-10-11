@@ -21,6 +21,8 @@ int main() {
     assert(WorldActionAllowed(12410200, false, m2400));  // same area (Yharnam blocks 24_00 / 24_01)
     assert(!WorldActionAllowed(12410200, false, m2200)); // another area: not the host's world
     assert(!WorldActionAllowed(12410200, false, 0xffffffffu));
+    // Elevator state flags: never (the lift's own sync moves it on the host).
+    assert(!WorldActionAllowed(12410350, false, m2401) && !WorldActionAllowed(12410351, true, m2401));
     // Not a guest's to change: boss kills, item pickups (instanced), session runtime, endings,
     // the chalice slot, ids outside the mirror.
     assert(!WorldActionAllowed(12411800, false, m2401)); // Gascoigne defeated
@@ -44,7 +46,7 @@ int main() {
             WorldActionAllowed(id, true, (id / 100000 % 100) << 24)) {
             const auto c = pg::CategoryOf(id);
             assert(c == pg::Category::shortcut_door || c == pg::Category::world_state ||
-                   c == pg::Category::key_event || c == pg::Category::npc_quest);
+                   c == pg::Category::key_event || c == pg::Category::npc_quest || c == pg::Category::cutscene_seen);
             assert(!pg::NeverWritable(id));
             assert(pg::WorldMirrorKey(pg::PoolKeyOfId(id)));
         }
@@ -107,6 +109,12 @@ int main() {
     assert(!WorldTalkAllowed(210305));  // Gehrman's ending choice
     assert(!WorldTalkAllowed(210304));  // the Doll (guest services' list)
     assert(!WorldTalkAllowed(0) && !WorldTalkAllowed(99999) && !WorldTalkAllowed(1000000));
+    // Gate catch-up table: boss flags are boss_defeated, gates are 2000-3999 never_sync flags.
+    for (const GateRule& g : GateRules()) {
+        assert(pg::CategoryOf(g.boss) == pg::Category::boss_defeated);
+        assert(g.gate >= 2000 && g.gate < 4000);
+        assert(!g.also || pg::CategoryOf(g.also) == pg::Category::boss_defeated);
+    }
     std::printf("party-worldact-test: ok\n");
     return 0;
 }

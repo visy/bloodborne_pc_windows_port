@@ -63,7 +63,43 @@ def broken_files(game, folder=CHECKED_FOLDER):
     return [f.relative_to(root).as_posix() for f in sorted((root / folder).rglob('*.dcx')) if dcx_broken(f)]
 
 
-def problem(game, image_hash=None):
+def _pass_key(game):
+    """Sizes and modification times of what the check reads (eboot.bin, param.sfo, the shaders)."""
+    root = Path(game)
+    files = [root / 'eboot.bin', root / 'sce_sys/param.sfo'] + sorted((root / CHECKED_FOLDER).rglob('*.dcx'))
+    parts = [str(root.resolve())]
+    for f in files:
+        st = f.stat()
+        parts.append(f'{f.name}:{st.st_size}:{st.st_mtime_ns}')
+    return hashlib.sha256('|'.join(parts).encode()).hexdigest()
+
+
+def problem(game, image_hash=None, cache=None):
+    """problem() as below; with `cache` (a JSON file), a pass is remembered for the same files (the
+    launcher's check before every start: ~1 s of hashing and unpacking saved)."""
+    if cache is None or os.environ.get('BB_SKIP_GAME_CHECK') == '1':
+        return _problem(game, image_hash)
+    import json
+    try:
+        k = _pass_key(game)
+    except OSError:
+        k = None
+    try:
+        if k and json.loads(Path(cache).read_text(encoding='utf-8')).get('passed') == k:
+            return None
+    except (OSError, ValueError, AttributeError):
+        pass
+    found = _problem(game, image_hash)
+    if found is None and k:
+        try:
+            Path(cache).parent.mkdir(parents=True, exist_ok=True)
+            Path(cache).write_text(json.dumps({'passed': k}), encoding='utf-8')
+        except OSError:
+            pass
+    return found
+
+
+def _problem(game, image_hash=None):
     """None for the supported game, else (kind, title, version): kind is 'missing_update' (base
     game or an older update), 'wrong_eboot' (param.sfo says 1.09, eboot.bin is another version),
     'patched_eboot' (the 1.09 eboot.bin with a 60 fps patch baked in), 'other_title' (another

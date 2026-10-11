@@ -136,7 +136,12 @@ def main():
               "--watch", r"Leave pressed=leave@1,4,8",
               "--watch", r"host lost .*home now=hostlost@2,6",
               "--watch", r"boss health bar shown=bossbar@1",
-              "--watch", r"boss health bar: off=bossoff@1,10"]
+              "--watch", r"boss health bar: off=bossoff@1,10",
+              # Title join (BB_PARTY_TITLE_JOIN): the title, the load, the arrival.
+              "--watch", r"title join: host snapshot applied=tj_ready@0.3",
+              "--watch", r"title join: loading=tj_load@1",
+              "--watch", r"title join: in the world=tj_world@1,5,12",
+              "--watch", r"title join: FAILED=tj_fail@1,6"]
     shot = subprocess.Popen([sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out", str(shots),
                              "--seconds", "7200"] + watch)
     env = [f"BB_TEST_MENU_FILE={root}\\menu{{i}}.txt", "BB_PARTY_PORT={port}", "BB_PARTY_UPNP=0",

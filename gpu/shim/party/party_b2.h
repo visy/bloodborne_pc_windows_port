@@ -69,6 +69,13 @@ void OnLinkEvent(int from_slot, const std::string& body);
 /// An event to send (the director's tick drains it): slot -1 = to the host / broadcast.
 bool PopOutgoing(int* slot, std::string* body);
 
+// ---- Title join (BB_PARTY_TITLE_JOIN; docs/party/join_timing.md) ----
+/// The guest joins the host's session from the title and Continue loads the host's world.
+bool TitleJoinRequested();
+/// Guest at the title, before AutoContinue presses Continue (main thread): true while the title
+/// join runs (hold Continue); false to press (joined and ready, failed, or off).
+bool TitleJoinHold(const GameSnapshot& s);
+
 // ---- Split travel (docs/party/split_travel.md) ----
 /// Where a member is (the party link's vitals): the director passes every member each tick.
 struct Where {
@@ -100,10 +107,21 @@ std::uint32_t DestMapOf(const TravelIntent& t);
 /// the spot by party slot. False: not in this block (a real map change: load as before).
 /// For hostdeath: a respawn at a lamp of the current map is this plus the revive.
 bool WarpToLampNoLoad(std::uint32_t id, bool beside);
+/// The local player already stands at lamp `id`'s spot (same block, within 2 m): a warp there is a no-op.
+bool AtLampSpot(std::uint32_t id);
 /// Host, main thread: the party's move to lamp `id` inside the loaded map: the host warps
 /// in-world and EVENT b2 {"op":"warp","lamp":id} moves the guests of this map beside it (others,
 /// apart, travel there with one load of their own). False: not in this block.
 bool HostPartyWarpNoLoad(std::uint32_t id);
+/// Party slot `slot`'s map as its vitals report it (0 unknown) and whether it is in another area
+/// than this player (split travel). For world actions (D3): a host validates an apart guest's
+/// flags against the guest's own map (docs/party/split_travel.md 6).
+std::uint32_t MemberMap(int slot);
+bool MemberApart(int slot);
+/// Test aid: the nearest living enemy of the local block within `max_m` m (entity id; 0 none).
+std::uint32_t NearestEnemyForTest(float max_m);
+/// Test aid: kills enemy `id` of the local world (HP 0; a client's Lua ForceDead does nothing).
+bool KillEnemyForTest(std::uint32_t id);
 /// Host, main thread: the next own travel is alone (TravelIntent::alone): the guests do not
 /// follow and the host does not re-send its snapshot after its load. Expires after 10 s.
 void HostTravelAloneNext();

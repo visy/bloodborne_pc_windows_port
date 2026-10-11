@@ -314,12 +314,13 @@ ParamRule g_param_rules[] = {
     {"Beckoning Bell without Insight (EquipParamGoods 200 consumeHeroPoint)", "EquipParamGoods",
      "EQUIP_PARAM_GOODS_ST", 0x6c, 200, 0x38, 1, 1.0f, 0.0f, "BB_PARTY_BELL_NO_INSIGHT"},
     // Hunter's Mark for guests (phantom_limits.md 1.1 / 3.2): byte 0x44 |= enable_white (bit 2) |
-    // enable_multi (bit 4); 1.09 data 0x43 / 0xC3. Opt-in: a guest's Mark then goes to the host's
-    // last lamp (party_travel's OnReviveMagic_1 redirect), the host's is a party travel.
+    // enable_multi (bit 4); 1.09 data 0x43 / 0xC3. On by default (BB_PARTY_GUEST_MARK=0 off): a
+    // guest's Mark asks "Travel with the party?" (party_split: alone to its own last lamp, or the
+    // party to the host's last lamp), the host's likewise.
     {"Hunter's Mark for phantoms (EquipParamGoods 100 enable_white / enable_multi)", "EquipParamGoods",
-     "EQUIP_PARAM_GOODS_ST", 0x6c, 100, 0x44, 1, 67.0f, 87.0f, "BB_PARTY_GUEST_MARK", true},
+     "EQUIP_PARAM_GOODS_ST", 0x6c, 100, 0x44, 1, 67.0f, 87.0f, "BB_PARTY_GUEST_MARK"},
     {"Bold Hunter's Mark for phantoms (EquipParamGoods 1400 enable_white / enable_multi)", "EquipParamGoods",
-     "EQUIP_PARAM_GOODS_ST", 0x6c, 1400, 0x44, 1, 195.0f, 215.0f, "BB_PARTY_GUEST_MARK", true},
+     "EQUIP_PARAM_GOODS_ST", 0x6c, 1400, 0x44, 1, 195.0f, 215.0f, "BB_PARTY_GUEST_MARK"},
     // Guest services (guest_services.md 2.4): on a client, chr creation 0x18E4F94..0x18E4FDC turns an
     // NPC whose NpcParam has isChangeWanderGhost (byte 0x145 bit 7) into a wandering ghost (chr type
     // 4: translucent, no collision, no talk). The Doll (NpcParam 803000, 1.09 byte 0x80) stays a

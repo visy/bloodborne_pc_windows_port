@@ -230,6 +230,75 @@ Not done / open:
   any count in principle), not run live.
 * A guest's own last-lamp record is not updated by an alone travel.
 
+## 6. A lone guest's world actions in a map the host is not in (D3 interface, for guestprog)
+
+guestprog's world actions (`party_worldact`, EVENT `world_action` {v, map, set, clr, kick}; not
+merged when this was written) send a guest's local overlay changes to the host, which checks each
+id with `WorldActionAllowed(id, clear, host_map)` - "the host's area" - and sets it with
+SetEventFlag. A guest that travelled alone stands in another area, so every map flag it sets there
+would be refused. The interface split travel provides and expects:
+
+* `coop::b2::MemberApart(slot)` / `coop::b2::MemberMap(slot)` (party_b2.h): whether party slot
+  `slot` is in another area than the host, and its map (the party link's vitals, ~4 Hz).
+* Host side of world_action: `const u32 check_map = b2::MemberApart(slot) ? b2::MemberMap(slot) :
+  host_map;` and `WorldActionAllowed(id, clear, check_map)`: a flag of the map the guest stands in
+  is accepted while it is there alone; the host's own world gets it (doors, levers, shortcuts,
+  elevators stay open for everyone; the mirror and C2 carry it back).
+* Boss kills while alone (category `boss_defeated`, never synced by world_action today): allowed
+  only from an apart guest, for the area it stands in, set-only. The host then holds the boss as
+  defeated in its world (no rewards for the host; the guest got its own; D1's K10 / Insight are the
+  guest's game's). Until that lands, a lone guest's boss kill lives in its own save only (C2) and
+  the boss is alive again in the host's world.
+* Items: instanced per player (decision "World item pickups"); nothing to send.
+* Enemies: section 5 / the `dead` op (union of kills at a meet without a load); ordinary enemies
+  respawn on every load as in single-player.
+
+## 7. Remote chrs: visible, at the right spot, on every peer (shared path; for hostdeath / balance / fourp)
+
+User reports (split24, hd22, hd26, a guest death respawn, once in the Dream): on the host "the health
+bar but no model" of the guest - the plate where the guest stands, no body. Findings (live,
+render probe diffing a visible and an invisible remote chr, vis2-vis4):
+
+* Not a position problem: the remote chr's physics position (+0x58 -> +8 -> +0x3B0 -> +0x68
+  +0x1E0) was 0.85 m from the host, where the guest stood (`host watch`), on both screens. (chr
+  +0xC0 is not a position: it reads 0 on remote chrs.)
+* The difference is **chr +0x1E0 bit 20 (0x00100000)**: set on every drawn player chr (local and
+  remote, both games: `0x00109800`), clear on the invisible re-created one (`0x00009800`,
+  `0x400`). The chr data module's +0x1BC bit 1 (what STEP_Delete sets at a leave) is NOT it: the
+  game sets it on visible remote chrs too.
+* **Shared fix, automatic on every peer**: `RemoteVisibleTick` (party_b2, every 0.25 s from
+  `b2::Tick`, host and guests): every remote player chr whose task is in its Update step and
+  lacks the bit gets it back (`remote chr ... draw bit +0x1E0 0x400 -> 0x100400 (was not
+  drawn)`). Live vis4: the guest invisible on the host after a meet, fixed within 0.25 s
+  (screenshot: both hunters on both windows). It covers every path that re-creates a remote chr
+  (B2 arrival, a meet, a respawn, hostdeath's respawns): nothing to call.
+* Removing a remote chr (split travel, a dead member's respawn): `RemoveRemoteChr` plays the
+  task's own STEP_Delete leave first (EnterleaveDirector `0x19704B0`, then slot release
+  `0x15BC080` and WorldChrMan remove `0x19186E0` when the leave has played or after 2 s).
+* A meet without a load: both sides re-broadcast their own player record (`0x1781AC0`, what
+  InGameStart sends after a load; EVENT b2 `record` asks the other side) and re-create 1.5 s
+  later; a remote chr that stays > 4 m from every member's reported position for 3 s is removed
+  and built again (self-heal).
+* In-world warps reset the camera (Lua CamReset `0x132F5A0(ctx, 10000, 1)`): before it the
+  camera swung through the walls after a long in-world move (vis6 screenshot).
+
+Start positions (the "2.2 m" report): measured 0.57 - 0.9 m apart on both screens after a bell
+join, a B2 party travel and an in-world party move (logs: the guest's own position and the host's
+copy of it agree, e.g. guest `(-192.9, -28.6, 68.0)`, host's copy `(-192.9, -28.6, 68.0)`, host
+`(-193.5, -28.6, 68.6)`). It was case (c) of the coordinator's list in appearance only: the guest
+was placed at 0.5 m and the host's copy was there too, but invisible, while the plate looked
+offset by the camera angle. Fixed by the draw bit above.
+
+Same-map warps, every entry point: party_travel's lamp warp hook (every `0x13CDF30(id)`, after the
+question) calls `SameMapLampWarp`: a lamp of the loaded block is an in-world move (a host with
+members: the party move unless it travels alone), and a lamp the player already stands at (within
+2 m) is a no-op that only records it as the last lamp - no question either. Live vis6: test step
+`host_lamp=2412951` at the lamp: `already standing at it (0.2 m): no warp, no load`; from 68 m
+away: `in-world warp (the host's party move ...) no load`, the guest followed in-world. Not covered
+yet: a Lua WarpNextStage (0x132E010) to a warp point of the loaded map (its entity position is
+not in the spot table) and death respawns (the revive is hostdeath's).
+
+
 ## Floating phantom name plate: what agent/balance learned (2026-10-11)
 
 User screenshots (split24 run; also a 3-player Dream run): on the host the guest's chr is not drawn
@@ -249,3 +318,5 @@ guest sees both players fine.
   chr? ...`, once a minute), and a tag needs a chr read this tick, alive, on our map, from a fresh
   board (`party::hud::TagVisible`; `Party HUD: tag X hidden: why`). `BB_PARTY_HUD_POSDIAG=1` (with
   `BB_PARTY_HUD_LOG=1`) dumps position-like values in each remote PlayerIns for the anchor hunt.
+
+Note (splittravel): in the vis2-vis4 runs the host's copy did get position updates (0.85 m from the host, matching the guest's own); the difference to a drawn chr was chr +0x1E0 bit 20 (section 7).

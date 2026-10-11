@@ -256,6 +256,14 @@ void RequestGuestStory(const StoryIntent& s);
 bool StoryMirroredEvent(std::uint32_t event_id);
 /// Main thread, once a frame (the coop tick): host polls, guest mirror / replay.
 void StoryTick();
+/// D10 (cutscenes play for the whole party): a story cutscene a GUEST's own events play in the
+/// host's world. Guest: PopGuestStoryUp() gives each one for EVENT "story_up" to the host; the
+/// guest then drops the host's broadcast of that same remo (it has watched it). Host:
+/// HostStoryFromGuest() (link thread) queues it; StoryTick plays it on the host (mode 0) and sends
+/// it to every guest like a captured play of its own.
+constexpr const char* kStoryUpEventName = "story_up";
+bool PopGuestStoryUp(StoryIntent* out);
+bool HostStoryFromGuest(int slot, const std::string& body, std::string* why);
 /// Host, any thread: a member joined (its catch-up gets the host's time of day, e.g. the Blood Moon).
 void StoryMemberJoined();
 /// The guest is replaying a story item (hold the bell / rejoin).

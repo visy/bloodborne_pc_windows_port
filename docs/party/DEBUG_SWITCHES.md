@@ -30,7 +30,7 @@ What they do for a player: [docs/PARTY.md](../PARTY.md).
 | `BB_PARTY_OPEN_WORLD` | Open world (no co-op area walls) | 1 |
 | `BB_PARTY_GUEST_RESPAWN` | Respawn at the host's lamp | 1 |
 | `BB_PARTY_GUEST_REFILL` | Refill vials and bullets | 1 |
-| `BB_PARTY_GUEST_MARK` | Guests can use Hunter's Mark | 0 (opt-in) |
+| `BB_PARTY_GUEST_MARK` | Guests can use Hunter's Mark (asks "Travel with the party?") | 1 |
 | `BB_PARTY_FULL_REWARDS` | Full rewards for guests | 1 |
 | `BB_PARTY_ITEMS` | Share the host's item rewards | 1 |
 | `BB_PARTY_GUEST_INSIGHT` | Insight for bosses | `parity` (`full`, `0`) |
@@ -94,6 +94,11 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_SPLIT_TEST` | Tests: `yes,no,...` answers the questions in order with the in-process pad (YES = Cross; NO = Right, Cross) | off | `gpu/shim/party/party_split.cpp` |
 | `BB_PARTY_SPLIT_DIALOG` | Probing: `kind,button1,button2` of the question's generic dialog | `8,3,4` | `gpu/shim/party/party_split.cpp` |
 | `BB_PARTY_INWORLD` | `0`: a guest whose map the host's travel lands in reloads it (B2) instead of an in-world move beside the host | on | `gpu/shim/party/party_b2.cpp` |
+| `BB_PARTY_SPLIT_ENEMIES` | `1`: enemies killed while the party is apart are reconciled at a meet without a load (the other side's copy killed; docs/party/split_travel.md 5) - not verified live | off | `gpu/shim/party/party_b2.cpp` |
+| `BB_PARTY_SPLIT_SELFHEAL` | `1`: a remote chr > 4 m from every member's reported position for 3 s is removed and built again | off | `gpu/shim/party/party_b2.cpp` |
+| `BB_PARTY_RENDER_PROBE` | `1`: raw bytes of every remote chr and its modules in the B2 status line (the invisible-chr diff, split_travel.md 7) | off | `gpu/shim/party/party_b2.cpp` |
+| `BB_PARTY_TITLE_JOIN` | `1`: prototype: the guest joins the host's session from the title so Continue loads the host's world (one load); falls back to the old Continue on any failure (join_timing.md) | off | `gpu/shim/party/party_b2.cpp` |
+| `BB_PARTY_TITLE_JOIN_PROBE` | `1`: the host logs its serialized session descriptor at each bell join (compare with the guest's summon message head) | off | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_SPLIT_KEEP_1598` | Set: an alone load keeps the host's packet-0x19 value (GSM +0x1598 / +0x1593) | unset (cleared) | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_B2_KEEP_BUFFS` | `0`: a guest's timed SpEffects lost in a B2 load are not re-applied | on | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_B2_HOST_REVIVE` | `0`: a host that dies with a member in its world moves the whole party to its lamp again (one load for everyone) instead of being revived alone at its lamp in the loaded map, with no load (docs/party/b2_seamless.md 6.13) | on | `gpu/shim/party/party_b2.cpp` |
@@ -129,8 +134,10 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_HEADSTONES` | `0`: the Hunter's Dream headstones and the world lamps stay vanilla (no headstone / lamp use while a session is up) | on in party mode (the host's headstone or lamp travel moves the party; lamp object gate +0x49 patched, lamp talk scripts' IsMultiplayerInProgress answered 0) | `gpu/shim/party/party_guestsvc.cpp` |
 | `BB_PARTY_GUESTSVC_TEST` | `echoes=N;warp=x,y,z,yaw[/...]`: live-test fixture on the guest, 15 s after the guest-services gate opened; also `lamppress`, `lampflag=ID`, `lampprobe` (lamp objects and their FrpgNetMan +0xC70 entries; host side too), `hostheadstone` / `guestheadstone` with `keys=cross,...` (that role uses headstone t210000), `lampwalk` (stand 1 m in front of the nearest lamp), `hostlamppress` (host: Cross, Left, Cross at the lamp), `hurt` (with `lampwalk` on the guest: half HP before the rest), `buttonprobe`, `talkprobe` | off | `gpu/shim/party/party_guestsvc.cpp` |
 | `BB_PARTY_WORLD_ACTIONS` | `0`: a guest's levers / doors / shortcuts / NPC talk stay in its copy of the host's world (no EVENT `world_action`, no own-save write); also drops the treasure pickup patches (docs/party/world_actions.md) | on in party mode | `gpu/shim/party/party_worldact.cpp` |
-| `BB_PARTY_GUEST_PICKUP` | `0`: no treasure for guests in the host's world (the vanilla client gates 0x17DC3D6 / 0x17DC3E3 / 0x17D6838 stay); on: instanced pickups into the guest's own save | on in party mode | `gpu/shim/party/party_worldact.cpp` |
-| `BB_PARTY_GUEST_DROPS` | `0`: a guest keeps only Blood Vials / Quicksilver Bullets of an enemy's drop (vanilla client filter 0x17DD764); default: every player rolls and keeps each enemy's full drop | on in party mode (with `BB_PARTY_GUEST_PICKUP`) | `gpu/shim/party/party_worldact.cpp` |
+| `BB_PARTY_GUEST_PICKUP` | `1`: instanced world treasure for guests (treasure spawned on a guest in the host's world, its pickup into the guest's own save only; patches 0x17DC3D6 / 0x17DC3E3 / 0x17D6838) - opt-in for 0.5.2 | off | `gpu/shim/party/party_worldact.cpp` |
+| `BB_PARTY_GUEST_DROPS` | `1`: a guest keeps its whole own roll of each enemy's drop (client filter 0x17DD764 off); default: vials / bullets only (vanilla) - opt-in for 0.5.2 | off | `gpu/shim/party/party_worldact.cpp` |
+| `BB_PARTY_GATE_CATCHUP` | `1`: a guest derives the area gate flags 2AAx / 3AAx of its own killed bosses into its own save (docs/party/world_actions.md 7) - opt-in for 0.5.2 | off | `gpu/shim/party/party_worldact.cpp` |
+| `BB_PARTY_TOD_CATCHUP` | `1`: the host re-sends its time of day (Blood Moon) to a member once it is in the host's world | off | `gpu/shim/party/party_story.cpp` |
 | `BB_PARTY_GUEST_TALK` | `0`: world NPCs refuse a guest again (their talk scripts' IsClientPlayer stays 1) | on in party mode | `gpu/shim/party/party_guestsvc.cpp` |
 | `BB_PARTY_WORLD_WATCH` | `id,...`: logs the visible / own-save / host-image value of these flags on every change (both roles) | off | `gpu/shim/party/party_worldact.cpp` |
 | `BB_PARTY_WORLDACT_TEST` | Guest live fixture `obj=E[/E..];chr=E[/E..];pickup=N[;flag=F];kill=N;after=S`: S s after a steady world in the host's world, stand at each map object, then each character (8 directions x 1.0 / 1.6 m) until an action prompt shows, press Cross (talk: 3 more); then the N nearest treasures this player has not taken (logged spawns; `flag=F` only that pickup flag), Cross on each; then `kill=N`: the nearest live enemy (AAB0000-AAB0699, 25 m) ForceDead, stand on its spot, Cross x3 (its drop) | off | `gpu/shim/party/party_worldact.cpp` |

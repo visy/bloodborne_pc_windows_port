@@ -15,6 +15,11 @@
 #include "game_state.h"
 #include "party_runtime.h"
 #include "seamless_rules.h"
+#include "../net/bbnet_internal.h"
+#ifdef _WIN32
+extern "C" __declspec(dllimport) unsigned short __stdcall RtlCaptureStackBackTrace(unsigned long skip, unsigned long n,
+                                                                                    void** frames, unsigned long* hash);
+#endif
 
 #include <atomic>
 #include <chrono>
@@ -56,7 +61,7 @@ std::string RulesTag(const Config& c) {
     if (!c.on) {
         return "4p:off";
     }
-    std::string t = "4p:v1:H1";
+    std::string t = "4p:v2:H1,H5";
     if (c.scaling) {
         t += ",H2,H3,H4";
     }
@@ -73,6 +78,13 @@ std::string FourpRulesTag() {
 int EffectiveMaxPlayers(int local_max, bool guest, bool connected, int host_max) {
     int m = guest && connected && host_max > 0 ? host_max : local_max;
     return m < 2 ? 2 : m > kMaxPlayers ? kMaxPlayers : m;
+}
+
+int SelectorMaxCoop(int max_players) {
+    // The SOS filter 0x1874710 refuses a cooperator request when max <= pending + cooperators,
+    // the selector update 0x1876b10 stops at pending + cooperators >= max: vanilla 3 = 2
+    // cooperators + the one being summoned. A party of N needs N (N - 1 cooperators + 1 pending).
+    return max_players >= 4 ? max_players : 3;
 }
 
 bool LiftCoopSlot(int rec0_status, int coop_count, int max_players) {
@@ -180,6 +192,7 @@ std::atomic<int> g_max{3};
 bool g_init = false;
 bool g_h1 = false, g_h2 = false, g_h3 = false, g_h4 = false, g_e6 = false, g_p5 = false;
 
+std::atomic<u64> g_h5_writes{0};
 std::atomic<u64> g_h1_lifts{0}, g_h1_calls{0}, g_h2_clamps{0}, g_h4_upgrades{0}, g_e6_rewrites{0},
     g_e6_reverts{0};
 
@@ -229,6 +242,19 @@ BB_COOP_SYSV u64 SlotSummary(u64 out, u64 sel, u64 dbg) {
     perf::Scope z(perf::Zone::HookFourpSlot);
     g_h1_calls.fetch_add(1, std::memory_order_relaxed);
     const int max = g_max.load(std::memory_order_relaxed);
+    // H5: the selector's own "max cooperators" (sel+0x1fc, ctor 0x1871259 writes 3), read by the SOS
+    // filter 0x1874710 (pending + cooperators < max) and the selector update 0x1876b10. Live
+    // (2026-10-11, 4 clients): with 2 cooperators in the world the 3rd one's request was refused
+    // whenever its own entry was pending (1 + 2 >= 3): its invite was dropped in the handshake.
+    // Only values the game or we wrote (3 / party size) are touched.
+    if (sel) {
+        const i32 want = SelectorMaxCoop(max);
+        i32 cur = 0;
+        if (SafeGet(sel + 0x1fc, &cur) && cur != want && (cur == 3 || (cur >= 4 && cur <= kMaxPlayers)) &&
+            SafeWrite(sel + 0x1fc, &want, 4) && g_h5_writes.fetch_add(1) < 16) {
+            Log("H5: selector max cooperators %d -> %d (max players %d)", cur, want, max);
+        }
+    }
     if (max < 4 || !sel || !out) {
         return r;
     }
@@ -261,6 +287,105 @@ BB_COOP_SYSV u64 SlotSummary(u64 out, u64 sel, u64 dbg) {
         }
     }
     return r;
+}
+
+// Diagnostic (BB_PARTY_FOURP_PROBE=1): the SOS request filter 0x1874710(sel, request, flag) - its
+// verdict and every count it reads (slots +8 coop / +0xc invaders / +0x10 other / +0x14 all, the
+// room max *(0x553d6d0)+0xc, sel+0x1c8 outgoing, sel+0x1fc / +0x200 max coop / invaders, the pending
+// session entries of sel+0x1c0 by team), each time that tuple changes (first 200).
+using SosFilterFn = u64(BB_COOP_SYSV*)(u64 sel, u64 req, u64 flag);
+SosFilterFn g_sos_original = nullptr;
+std::mutex g_sos_mu;
+std::string g_sos_last;
+int g_sos_logs = 0;
+BB_COOP_SYSV u64 SosFilterProbe(u64 sel, u64 req, u64 flag) {
+    const u64 r = g_sos_original(sel, req, flag);
+    u64 flow = 0, slots = 0, roomcfg = 0;
+    i32 c8 = -1, cc = -1, c10 = -1, c14 = -1, room = -1, out = -1, mc = -1, mi = -1;
+    SafeGet(Guest(kNetFlow), &flow);
+    if (flow) SafeGet(flow + 0x16f8, &slots);
+    if (slots) {
+        SafeGet(slots + 8, &c8);
+        SafeGet(slots + 0xc, &cc);
+        SafeGet(slots + 0x10, &c10);
+        SafeGet(slots + 0x14, &c14);
+    }
+    SafeGet(Guest(0x553d6d0), &roomcfg);
+    if (roomcfg) SafeGet(roomcfg + 0xc, &room);
+    if (sel) {
+        SafeGet(sel + 0x1c8, &out);
+        SafeGet(sel + 0x1fc, &mc);
+        SafeGet(sel + 0x200, &mi);
+    }
+    // sel+0x1c0: a list head; nodes {next, prev, data}; data+8 = the session kind (char), the
+    // descriptor 0x553d760 + kind * 0x80 = its team (1 coop, 2 invader).
+    int pend[3] = {0, 0, 0}, nodes = 0;
+    u64 head = 0;
+    if (sel && SafeGet(sel + 0x1c0, &head) && head) {
+        u64 n = 0;
+        SafeGet(head, &n);
+        while (n && n != head && nodes < 32) {
+            u64 data = 0;
+            std::int8_t kind = -1;
+            i32 team = -1;
+            SafeGet(n + 0x10, &data);
+            if (data && SafeGet(data + 8, &kind) && kind >= 0 && kind < 0x22) {
+                SafeGet(Guest(0x553d760) + u64(kind) * 0x80, &team);
+            }
+            pend[team == 1 ? 1 : team == 2 ? 2 : 0]++;
+            ++nodes;
+            u64 next = 0;
+            if (!SafeGet(n, &next)) break;
+            n = next;
+        }
+    }
+    u8 rq[16] = {};
+    if (req) SafeRead(req, rq, sizeof rq);
+    char b[400];
+    std::snprintf(b, sizeof b,
+                  "-> %llx (flag %llu); slots coop %d inv %d other %d all %d, room max %d; sel out %d, max coop %d inv %d; "
+                  "pending coop %d inv %d other %d; game cooperators %d; req %02x%02x%02x%02x %02x%02x%02x%02x "
+                  "%02x%02x%02x%02x %02x%02x%02x%02x",
+                  ull(r), ull(flag & 0xff), c8, cc, c10, c14, room, out, mc, mi, pend[1], pend[2], pend[0],
+                  CooperatorsNowFast(), rq[0], rq[1], rq[2], rq[3], rq[4], rq[5], rq[6], rq[7], rq[8], rq[9], rq[10],
+                  rq[11], rq[12], rq[13], rq[14], rq[15]);
+    std::lock_guard<std::mutex> lk(g_sos_mu);
+    if (g_sos_logs < 200 && g_sos_last != b) {
+        g_sos_last = b;
+        ++g_sos_logs;
+        Log("SOS filter probe: %s", b);
+    }
+    return r;
+}
+
+// Diagnostic (with the probe): vport-40 session packets (the summon handshake): direction, size,
+// the first 32 bytes, and on a send the game's return addresses (our offsets).
+std::atomic<int> g_pkt_logs{0};
+void PacketTrace(bool send, unsigned src, unsigned dst, const unsigned char* d, std::size_t n) {
+    if (src != 40 && dst != 40) return;
+    if (g_pkt_logs.fetch_add(1, std::memory_order_relaxed) >= 3000) return;
+    char hex[3 * 32 + 1] = {};
+    for (std::size_t i = 0; i < n && i < 32; ++i) std::snprintf(hex + 3 * i, 4, "%02x ", d[i]);
+    std::string stack;
+#ifdef _WIN32
+    if (send) {
+        void* frames[40] = {};
+        const unsigned short got = RtlCaptureStackBackTrace(0, 40, frames, nullptr);
+        const u64 base = reinterpret_cast<u64>(Image()), size = ImageSize();
+        int kept = 0;
+        for (unsigned short i = 0; i < got && kept < 12; ++i) {
+            const u64 a = reinterpret_cast<u64>(frames[i]);
+            if (base && a >= base && a < base + size) {
+                char f[24];
+                std::snprintf(f, sizeof f, " +%llx", ull(a - base));
+                stack += f;
+                ++kept;
+            }
+        }
+    }
+#endif
+    Log("pkt %s %u->%u %zu B: %s%s%s", send ? "send" : "recv", src, dst, n, hex, stack.empty() ? "" : "| stack",
+        stack.c_str());
 }
 
 // H2
@@ -429,6 +554,14 @@ void FourpInit() {
                            "4p H1 cooperator slots (SessionSlotSummary)");
     if (g_h1) {
         g_summary_original = reinterpret_cast<SummaryFn>(original);
+    }
+    if (const char* pr = std::getenv("BB_PARTY_FOURP_PROBE"); pr && pr[0] == '1') {
+        void* sos_original = nullptr;
+        if (ReplacePrologue(0x1874710, kPrologue13, reinterpret_cast<const void*>(&SosFilterProbe), &sos_original,
+                            "4p SOS filter probe (0x1874710)")) {
+            g_sos_original = reinterpret_cast<SosFilterFn>(sos_original);
+        }
+        bbnet::set_packet_trace(&PacketTrace);
     }
     if (g_cfg.scaling) {
         g_h2 = HookCallSite(kBossCountCall, kCooperatorCount, reinterpret_cast<const void*>(&BossCooperatorCount),
