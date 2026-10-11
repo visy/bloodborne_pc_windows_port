@@ -41,9 +41,12 @@ the code (docs/party/four_players.md section 4):
 
 ### 2.2 Settings
 
-System > Party rules: Boss health, Boss damage, Enemy health, Enemy damage (sliders; the help line
-shows the value). The System menu holds 12 pages (MaxPages, all used), so the two poise values are
-in the overlay's Party tab (all six there) and bbport.ini.
+System > Enemy scaling: six sliders (boss / enemy health, damage, poise; the help line shows the
+value), also in the overlay's Party tab and bbport.ini. The page layout the port uses
+("ControllSetting") has six rows; the System list itself scrolls, and the port's page cap
+(MaxPages, one factory per page: our own constant, not the game's) is now 16. Live 2026-10-11
+(single instance, the title's System menu walked with BB_TEST_MENU_FILE, BB_GAME_MENU_TRACE):
+`Game menu: page 11 Party rules open`, `Game menu: page 12 Enemy scaling open` (the 13th page).
 
 Per extra hunter (cooperator), Nightreign semantics where vanilla has a step (100 = vanilla):
 
@@ -77,23 +80,39 @@ the default keeps vanilla poise.
 - Normal enemies: every 2 s, with cooperators present and any enemy setting not zero, every chr of
   this world's chr sets (WorldChrMan +0x850 tables) that is not a player and whose NpcParam row
   (`[[chr+0x3c8]+8]`) has teamType 23 (5792 of 6010 rows: the hostile enemies) and no
-  isSoulGetByBoss (0x149 bit 4) gets SpEffect 7503 (chr vfunc +0x3f0). A chr that carries the boss
-  doping (7500-7502) loses 7503 again (0x17e1d90, EMEVD 2004[21]'s remove), so a boss is scaled
-  once, by the boss rows. The game's per-frame HP update (0x1a0d7d0) recomputes max HP from the
+  isSoulGetByBoss (0x149 bit 4) gets SpEffect 7503 (chr vfunc +0x3f0), unless it is a boss: the 34
+  entities the boss events dope (EMEVD 2004[8] with SpEffect 7500 / 7501, scanned in every 1.09
+  map; `kBossEntities`), resolved each pass with GetChrByEntityId 0x13c97a0, never get it, so a
+  boss is scaled once, by the boss rows. (Removing 7503 from a boss at its doping, 0x17e1d90 =
+  EMEVD 2004[21]'s remove, was tried first: the Cleric Beast died on the spot, HP 6597 -> 0.)
+  Chalice bosses (m29: event parameters / Lua_MultiDoping) are kept out by isSoulGetByBoss only. The game's per-frame HP update (0x1a0d7d0) recomputes max HP from the
   rows and raises current HP with the "independent" rate, so a full-health enemy stays full.
 - Same HP on every screen: every peer writes the host's values and applies them to its copy of the
   enemies; the cooperator count is the game's, which counts the same on host and guests.
 
+### 2.4 Live (2026-10-11, Cleric Beast, host + 1 guest)
+
+`BB_PARTY_PROGRESS_TEST_CLEAR` un-killed the Cleric Beast, `host_move` into region 2412805 started
+the fight. Both peers: `boss chr 1001409f: SpEffect 7500 (flags 4): HP 5277 / 5277 base 2700, rate
+1.955` (2700 x 1.117 area row 7002 x 1.75; vanilla 1.5 would give 4523); the boss and Father
+Gascoigne's two entities stayed out of 7503 (`3 bosses`). Normal enemies: sample max HP 520 ->
+650. Damage, boss_damage 0 vs 100 (x1.0 vs x2.0 attack power at 1 cooperator): the players' hits
+were 61-126 (largest 239) vs 216-534 (the defense formula is not linear, so not exactly x2). Poise:
+the row's changeSuperArmorPoint is written; stagger was not measured.
+
 ## 3. C4: death debuff ("rot")
 
 ERSC: optional rot, 5 kinds, one random per death, stacking, removed only at a grace. Ours
-(Bloodborne-themed, one kind):
+(Bloodborne-themed, two kinds):
 
-- Each death of the local player (HP > 0 -> 0 in the world, any role) adds a stack, at most 5;
-  each stack lowers max HP by 10 % (5 stacks: half). A toast says "Rot 2/5: max HP -20 % until you
-  rest at a lamp".
-- The max HP is lowered through the max-HP rate function 0x17e46e0 (prologue `55 48 89 e5 53 50`
-  replaced; the result is multiplied only for the local player's SpEffect list, `PlayerIns+0x1c8`).
+- Each death of the local player (HP > 0 -> 0 in the world, any role) adds a stack, at most 5, of
+  a kind picked at random: max HP -10 % or max stamina -10 % per stack. A toast after the respawn
+  says "Rot 2/5: max HP -10 %, stamina -10 % until you rest at a lamp".
+- Max HP through the max-HP rate 0x17e46e0 (prologue `55 48 89 e5 53 50`), max stamina through the
+  stamina rate 0x17e4a20 (`55 48 89 e5 48 83 ec 10`; the SpEffects' maxStaminaRate +0x18, read by
+  the per-frame update 0x1a572e0 into stamina max +0x138); both replaced, the result multiplied
+  only for the local player's SpEffect list (`PlayerIns+0x1c8`). ERSC's other kinds (damage dealt,
+  item discovery, vials) would need SpEffect rows of our own and are not done.
   No param row or SpEffect is used, so nothing reaches the other peers' copies.
 - A lamp / headstone warp the player starts (0x13CDF30, party_travel `SetLampUseObserver`,
   before the guest lamp interceptor) cleanses it; the respawn warp of a death (within 20 s of it)

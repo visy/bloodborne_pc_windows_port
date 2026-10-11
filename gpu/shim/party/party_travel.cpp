@@ -486,6 +486,23 @@ std::uint32_t HostLampFromTravel(const TravelIntent& t) {
     return id == 0 ? kTravelNone : id;
 }
 
+std::uint32_t GatherLampFor(std::uint32_t host_lamp, std::uint32_t host_map) {
+    if (host_map == 0 || host_map == 0xffffffffu) {
+        return host_lamp;
+    }
+    const std::uint32_t area = (host_map >> 24) & 0xff, block = (host_map >> 16) & 0xff;
+    auto in_map = [&](std::uint32_t id) { return id / 100000 == area && (id / 10000) % 10 == block; };
+    if (host_lamp != kTravelNone && host_lamp != 0 && in_map(host_lamp)) {
+        return host_lamp;
+    }
+    for (const std::uint32_t id : ids::kPartyReturnPoints) {
+        if (in_map(id)) {
+            return id;
+        }
+    }
+    return host_lamp;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Game part
 // ---------------------------------------------------------------------------------------------

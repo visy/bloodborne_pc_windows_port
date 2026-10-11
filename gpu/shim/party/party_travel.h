@@ -176,6 +176,12 @@ GuestRedirect ChooseGuestRedirect(TravelKind kind, bool have_travel_destination,
 /// The host's last lamp id (low dword of its WorldTransitionState +0x1528) from an intent;
 /// kTravelNone when it has none.
 std::uint32_t HostLampFromTravel(const TravelIntent& t);
+/// Where a guest gathers before its summon: the host's last lamp when that lamp is in the map
+/// (area / block) the host stands in, else a lamp of the host's map (the first ReturnPointParam
+/// row there), else the last lamp as it is. `host_map` packed (AA BB CC DD; 0 / all ones unknown).
+/// A fresh character's last-lamp record is a default in Central Yharnam while it stands in the
+/// Hunter's Dream (campaign_soak.md open 1).
+std::uint32_t GatherLampFor(std::uint32_t host_lamp, std::uint32_t host_map);
 
 /// What the gate needs from the game (injectable for tests).
 struct ReplayState {
