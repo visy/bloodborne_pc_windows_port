@@ -904,9 +904,11 @@ void LogIntroFlags(const char* when) {
 /// A remote member's net chr type (what the game's cooperator count 0x15BDC20 and the EMEVD
 /// co-op client count ask: chr vfunc +0x558 = SessionTypeDesc[GameData +0x5D8] +0x15, counted
 /// when in {1,5,7,19}) is remembered per member task while it counts; if a B2 re-creation leaves
-/// the member's GameData with another session type, the remembered one is put back.
+/// the member's GameData with another session type, the remembered one is put back. A guest's own
+/// player is checked the same way (key 0): its B2 host-world load sets its own +0x5D8 to 0 (live
+/// r6: st 7 -> 0, so its record re-broadcast at InGameStart carried 0 to the host as well).
 void MemberSessionTypeTick(const GameSnapshot& s) {
-    static std::map<u64, int> good;  // task -> session type while counted
+    static std::map<u64, int> good;  // task (0: the guest itself) -> session type while counted
     if (!SessionUp()) {
         good.clear();
         return;
@@ -915,11 +917,16 @@ void MemberSessionTypeTick(const GameSnapshot& s) {
         return;
     }
     using Get = u64(BB_COOP_SYSV*)(u64);
+    std::vector<std::pair<u64, u64>> members;  // (key, chr)
     for (const TaskInfo& t : Tasks(false)) {
-        if (t.mode != 1 && t.mode != 2) {
-            continue;
+        if (t.mode == 1 || t.mode == 2) {
+            members.emplace_back(t.task, PlayerForPeer(t.task + kTaskPeer));
         }
-        const u64 chr = PlayerForPeer(t.task + kTaskPeer);
+    }
+    if (Role() == RoleClient) {
+        members.emplace_back(0, s.player);
+    }
+    for (const auto& [key, chr] : members) {
         const u64 f1c8 = chr ? Field<u64>(Field<u64>(chr, 0), 0x1c8) : 0;
         const u64 gd = f1c8 ? reinterpret_cast<Get>(f1c8)(chr) : 0;
         if (!gd) {
@@ -934,11 +941,11 @@ void MemberSessionTypeTick(const GameSnapshot& s) {
             return net < 20 && ((0x800a2u >> net) & 1);
         };
         if (counted(st)) {
-            good[t.task] = st;
-        } else if (const auto it = good.find(t.task); it != good.end() && it->second != st) {
+            good[key] = st;
+        } else if (const auto it = good.find(key); it != good.end() && it->second != st) {
             SafeWrite(gd + 0x5d8, &it->second, 4);
-            Log("member task mode %d: session type %d after the re-creation (not a cooperator) -> %d as before", t.mode,
-                st, it->second);
+            Log("%s: session type %d after the load / re-creation (not a cooperator) -> %d as before",
+                key ? "member task" : "guest (own player)", st, it->second);
         }
     }
 }
