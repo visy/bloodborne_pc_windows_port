@@ -1,5 +1,5 @@
 """Exercise run.sh across a re-exec with lightweight preparation/probe stand-ins."""
-from paths import ROOT
+from paths import ROOT, posix_env, posix_tool
 import json
 import os
 from pathlib import Path
@@ -65,9 +65,9 @@ class RestartResolutionTests(unittest.TestCase):
                 tools = data / 'bin'
                 tools.mkdir()
                 for name in ('bash', 'dirname', 'mkdir', 'realpath'):
-                    (tools / name).symlink_to(shutil.which(name))
+                    (tools / name).symlink_to(posix_tool(name))
                 env['PATH'] = str(tools)
-            subprocess.run([shutil.which('bash'), 'run.sh'], cwd=ROOT, env=env,
+            subprocess.run([posix_tool('bash'), 'run.sh'], cwd=ROOT, env=env if bare_path else posix_env(env),
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=30)
             return [json.loads(line) for line in (data / 'environments').read_text().splitlines()]
 
