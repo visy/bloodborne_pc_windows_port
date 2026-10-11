@@ -1111,6 +1111,30 @@ void PartyTab() {
         }
     }
 
+    // NAT path (party_rudp.h): a guest's own code for a host that cannot open its port, and the
+    // host's way to add one (the clipboard: no text input needed).
+    if (b.role == ps::Role::Guest && !b.guest_code.empty()) {
+        if (ActionRow("party_guest_code", T("Your guest code: copy", "Ваш гостевой код: копировать"),
+                      b.guest_code.c_str(),
+                      T("Only needed when the host cannot open its port (no UPnP / port forward): send this "
+                        "code to the host; it adds it and the game connects through both routers.",
+                        "Нужен, только если хост не может открыть порт (нет UPnP / проброса): отправьте код "
+                        "хосту, он добавит его, и игра соединится через оба роутера."),
+                      on)) {
+            ps::RequestCopyGuestCode();
+        }
+    }
+    if (b.role == ps::Role::Host) {
+        if (ActionRow("party_add_guest", T("Add a guest code (paste)", "Добавить гостевой код (вставить)"), nullptr,
+                      T("Copy a guest's code (BBG1-...) and press: without an open port, the game then "
+                        "reaches that guest through both routers (UDP hole punching).",
+                        "Скопируйте код гостя (BBG1-...) и нажмите: без открытого порта игра свяжется с "
+                        "гостем через оба роутера (UDP hole punching)."),
+                      on)) {
+            ps::RequestAddGuestCodeFromClipboard();
+        }
+    }
+
     // Members.
     ImGui::Spacing();
     Note(T("Hunters", "Охотники"), Gold(0.8f));

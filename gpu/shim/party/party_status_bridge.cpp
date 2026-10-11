@@ -126,6 +126,7 @@ Actions DefaultActions() {
         PartyLink* link = party::runtime_link();
         return link && link->is_host() && link->kick_name(name, "kicked by the host");
     };
+    a.add_guest_code = [](const std::string& text) { return party::runtime_add_guest_code(text); };
     return a;
 }
 #else
@@ -161,6 +162,14 @@ void HandleCommand(Bridge& b, const status::Command& c, const TickIn& in, TickOu
         } else if (r == 1) {
             status::SetLastEvent("Reconnecting now");
         }
+        break;
+    }
+    case status::CommandType::AddGuestCode: {
+        if (!in.host) break;
+        const int n = a.add_guest_code ? a.add_guest_code(c.name) : 0;
+        Log("status: Add guest code: %d valid code(s)", n);
+        status::SetLastEvent(n > 0 ? "Guest code added: opening the way for that guest"
+                                   : "No valid guest code (BBG1-XXXX-XXXX-XXXX) on the clipboard");
         break;
     }
     case status::CommandType::Kick: {
@@ -292,6 +301,7 @@ void OnRuntimeStart(bool host, const std::string& name) {
 }
 
 void OnCode(const std::string& code) { status::SetCode(code); }
+void OnGuestCode(const std::string& code) { status::SetGuestCode(code); }
 
 void OnRuntimeError(const std::string& error) {
     bool have_link;

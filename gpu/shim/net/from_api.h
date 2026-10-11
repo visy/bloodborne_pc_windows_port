@@ -108,6 +108,8 @@ public:
     // the restarted game over it fails (the guest waits for summon data that goes to the dead
     // connection). Its new signs are not offered to anyone for `ms` (docs/party/join_timing.md).
     void hold_signs(const std::string& online_id, int ms);
+    // Ends a hold early (the restarted game came back from another endpoint: no stale connection).
+    bool release_hold(const std::string& online_id);
     std::uint64_t user_id_of(const std::string& online_id);
     /// The Chalice Dungeon channel board (tests, the party layer).
     ChannelBoard& channels() { return channels_; }

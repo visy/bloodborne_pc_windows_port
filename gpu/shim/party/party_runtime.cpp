@@ -20,6 +20,7 @@
 #include "party_progress.h"
 #include "party_travel.h"
 #include "upnp_win.h"
+#include "party_rudp.h"
 
 #include "../net/bbnet_internal.h"
 #include "../net/np_hle.h"
@@ -886,6 +887,10 @@ bool previous_party(std::array<std::uint8_t, 8>* secret, std::vector<KeptMember>
     return false;
 }
 
+void add_guest_code_text(const std::string& text);
+void punch_guest_codes_tick();
+void attach_udp_path(PartyLink* link);
+
 void start_host(LinkConfig cfg) {
     Runtime& r = R();
     const bool lb = loopback_mode();
@@ -918,6 +923,14 @@ void start_host(LinkConfig cfg) {
     if (!bbnet::p2p_open()) plog("warning: cannot open the party UDP port %u (another program?)", port);
 
     auto* link = new PartyLink(cfg, make_callbacks(true));
+    attach_udp_path(link);
+    if (const char* gc = env("BB_PARTY_GUEST_CODES")) add_guest_code_text(gc);
+    std::thread([] {  // guest codes: punch towards each new one (env, file, menu)
+        while (!stopping()) {
+            punch_guest_codes_tick();
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
+    }).detach();
     {
         std::lock_guard<std::mutex> lk(r.mu);
         r.link = link;
@@ -1056,6 +1069,110 @@ void start_host(LinkConfig cfg) {
     if (const char* cf = env("BB_PARTY_CODE_FILE")) write_text_file(cf, text);
 }
 
+
+// ---- The party link's UDP path (party_rudp.h): hole punching, guest codes ----
+// The link's datagrams share the game's party UDP port (one NAT mapping for both).
+void attach_udp_path(PartyLink* link) {
+    link->set_udp_transport([](std::uint32_t a, std::uint16_t p, const std::uint8_t* d, std::size_t n) {
+        return bbnet::p2p_send_raw(a, p, d, n);
+    });
+    bbnet::p2p_set_link_handler([](std::uint32_t a, std::uint16_t p, const std::uint8_t* d, std::size_t n) {
+        if (PartyLink* l = runtime_link()) l->on_udp_datagram(a, p, d, n);
+    });
+}
+
+// Guest: its own public UDP endpoint as a guest code (BBG1-...), for a host behind a NAT without a
+// port forward: the host enters it (or BB_PARTY_GUEST_CODES) and punches towards it.
+void publish_guest_code() {
+    std::uint32_t ma = 0;
+    std::uint16_t mp = 0;
+    std::string source;
+    if (loopback_mode()) {
+        ma = 0x0100007fu;  // 127.0.0.1, network order
+        mp = static_cast<std::uint16_t>((bbnet::settings().party_port >> 8) | (bbnet::settings().party_port << 8));
+        source = "loopback";
+    } else {
+        const char* stun_env = env("BB_PARTY_STUN");
+        const std::string server = stun_env ? stun_env : "stun.l.google.com:19302";
+        if (server == "off" || server == "0") return;
+        std::string host_part = server;
+        std::uint16_t sport = 19302;
+        if (const auto c = server.rfind(':'); c != std::string::npos) {
+            host_part = server.substr(0, c);
+            sport = static_cast<std::uint16_t>(std::strtoul(server.c_str() + c + 1, nullptr, 10));
+        }
+        bool ok = false;
+        for (int i = 0; i < 3 && !ok && !stopping(); ++i) ok = bbnet::p2p_stun(host_part.c_str(), sport, 2000, &ma, &mp);
+        if (!ok) {
+            plog("guest code: STUN %s did not answer (no guest code; a host behind a NAT then needs a port forward)",
+                 server.c_str());
+            return;
+        }
+        source = "stun " + server;
+    }
+    const std::string code = rudp::encode_guest_code(ma, mp);
+    {
+        std::lock_guard<std::mutex> lk(R().mu);
+        R().st.guest_code = code;
+    }
+    bridge::OnGuestCode(code);
+    write_text_file(fs::path(user_dir()) / "party_guest_code.txt", code + "\n");
+    if (const char* f = env("BB_PARTY_GUEST_CODE_FILE")) write_text_file(f, code + "\n");
+    const auto* ip = reinterpret_cast<const std::uint8_t*>(&ma);
+    plog("guest code %s (UDP %u.%u.%u.%u:%u, %s): give it to the host if it cannot open a port", code.c_str(), ip[0], ip[1],
+         ip[2], ip[3], static_cast<unsigned>(static_cast<std::uint16_t>((mp >> 8) | (mp << 8))), source.c_str());
+}
+
+// Host: guest codes from BB_PARTY_GUEST_CODES (comma list), BB_PARTY_GUEST_CODE_FILE (polled) and
+// the menu (AddGuestCode): each opens our NAT mapping towards that guest for 60 s.
+std::mutex g_codes_mu;
+std::set<std::string> g_codes_seen;
+std::vector<std::string> g_codes_new;
+
+void add_guest_code_text(const std::string& text) {
+    std::lock_guard<std::mutex> lk(g_codes_mu);
+    std::string cur;
+    auto flush = [&] {
+        while (!cur.empty() && (cur.back() == ' ' || cur.back() == '\r' || cur.back() == '\n')) cur.pop_back();
+        while (!cur.empty() && cur.front() == ' ') cur.erase(cur.begin());
+        if (!cur.empty() && g_codes_seen.insert(cur).second) g_codes_new.push_back(cur);
+        cur.clear();
+    };
+    for (char c : text) {
+        if (c == ',' || c == '\n') flush();
+        else cur.push_back(c);
+    }
+    flush();
+}
+
+void punch_guest_codes_tick() {
+    static auto last_file = Clock::time_point{};
+    if (const char* f = env("BB_PARTY_GUEST_CODE_FILE"); f && Clock::now() - last_file > std::chrono::seconds(1)) {
+        last_file = Clock::now();
+        std::string body;
+        if (read_file(f, &body)) add_guest_code_text(body);
+    }
+    std::vector<std::string> codes;
+    {
+        std::lock_guard<std::mutex> lk(g_codes_mu);
+        codes.swap(g_codes_new);
+    }
+    PartyLink* l = runtime_link();
+    for (const std::string& c : codes) {
+        std::uint32_t a = 0;
+        std::uint16_t p = 0;
+        if (!rudp::decode_guest_code(c, &a, &p)) {
+            plog("guest code '%s' is not valid (BBG1-XXXX-XXXX-XXXX)", c.c_str());
+            continue;
+        }
+        if (l) l->punch_guest(a, p);
+        // The game's own UDP traffic to that guest too: one probe out of the party port opens the
+        // same mapping (the link's punches already share it).
+        std::lock_guard<std::mutex> lk(g_codes_mu);
+        g_codes_seen.insert(c);
+    }
+}
+
 // The code a guest uses: BB_PARTY_CODE, BB_PARTY=<code>, or BB_PARTY_CODE_FILE (waits <= 60 s).
 bool guest_code(PartyCode* code, std::string* error, std::string* used) {
     std::string text;
@@ -1127,7 +1244,9 @@ void start_guest(LinkConfig cfg) {
         plog("warning: the host requires a password (BB_PARTY_PASSWORD)");
     std::uint32_t nbo = 0;
     std::memcpy(&nbo, ip.data(), 4);
+    if (!bbnet::p2p_open()) plog("warning: cannot open the party UDP port %u (another program?)", bbnet::settings().party_port);
     auto* link = new PartyLink(cfg, make_callbacks(false));
+    attach_udp_path(link);
     {
         std::lock_guard<std::mutex> lk(r.mu);
         r.link = link;
@@ -1147,6 +1266,7 @@ void start_guest(LinkConfig cfg) {
         return;
     }
     coop::PartyDirector::Get().SetLink(link);
+    publish_guest_code();
 }
 
 void startup_main() {
@@ -1167,9 +1287,23 @@ void startup_main() {
             r.st.restarted = ri.restarted;
         }
         if (ri.restarted) plog("restarted after an unclean exit (%s): rejoining", ri.why.c_str());
+        // A restarted guest takes another UDP port than its crashed game: the host's game keeps its
+        // transport connection to the old address:port until that times out (~25 s; a summon in
+        // that window goes to the dead game), but a new endpoint is a new peer - the host then
+        // releases the sign hold at once (PartyHostService context_start). Alternates between the
+        // configured port and port + 4 (guests need no open port; BB_PARTY_GUEST_PORT_SWAP=0 off).
+        if (!host && ri.restarted && !(env("BB_PARTY_GUEST_PORT_SWAP") && !env_on("BB_PARTY_GUEST_PORT_SWAP"))) {
+            const std::uint16_t base = s.party_port;
+            std::uint16_t old = base;
+            if (const auto at = ri.marker_body.find("\"udp_port\":"); at != std::string::npos)
+                old = static_cast<std::uint16_t>(std::strtoul(ri.marker_body.c_str() + at + 11, nullptr, 10));
+            const std::uint16_t want = old == base ? static_cast<std::uint16_t>(base + 4) : base;
+            bbnet::set_party_port(want);
+            plog("restarted guest: party UDP port %u (the crashed game had %u): the host sees a new peer", want, old);
+        }
         const fs::path m = marker_path();
         char body[256];
-        std::snprintf(body, sizeof body, "\"pid\":%lu,\"role\":\"%s\",\"name\":\"%s\",\"started\":%lld",
+        std::snprintf(body, sizeof body, "\"pid\":%lu,\"role\":\"%s\",\"name\":\"%s\",\"udp_port\":%u,\"started\":%lld",
                       static_cast<unsigned long>(
 #if defined(_WIN32)
                           GetCurrentProcessId()
@@ -1177,7 +1311,7 @@ void startup_main() {
                           0
 #endif
                               ),
-                      host ? "host" : "guest", s.online_id.c_str(),
+                      host ? "host" : "guest", s.online_id.c_str(), static_cast<unsigned>(bbnet::settings().party_port),
                       static_cast<long long>(std::chrono::duration_cast<std::chrono::seconds>(
                                                  std::chrono::system_clock::now().time_since_epoch())
                                                  .count()));
@@ -1484,6 +1618,24 @@ void RuntimeApi::set_local_state(MemberState state, std::uint32_t map_id) const 
 const RuntimeApi& runtime() {
     static const RuntimeApi api;
     return api;
+}
+
+int runtime_add_guest_code(const std::string& text) {
+    int valid = 0;
+    std::string cur;
+    auto one = [&] {
+        std::uint32_t a = 0;
+        std::uint16_t p = 0;
+        if (!cur.empty() && rudp::decode_guest_code(cur, &a, &p)) ++valid;
+        cur.clear();
+    };
+    for (char c : text) {
+        if (c == ',' || c == '\n' || c == '\r' || c == ' ') one();
+        else cur.push_back(c);
+    }
+    one();
+    if (valid) add_guest_code_text(text);
+    return valid;
 }
 
 PartyLink* runtime_link() {

@@ -398,14 +398,39 @@ bool SendHomeVeto(u64 site) {
 // 0x1385A95 in BlockClear2_3 0x13859F0): the party stays in the session after the boss. Both
 // roles run these states after a kill (live run r3: the host left 12 s after the kill, which
 // ended the guest's session although its own leave was dropped), so both are kept.
+std::atomic<double> g_k10_at{0};  // when K10 last kept the party (BossClearInvincibleTick)
 BB_COOP_SYSV u64 BossClearLeaveHook(u64 session) {
     const int role = Role();
     if (g_on.load() && (role == RoleClient || role == RoleHost)) {
         Log("K10: boss-clear leave suppressed (%s; party stays)", role == RoleHost ? "host" : "guest");
+        g_k10_at = Now();
         return 0;
     }
     using Fn = u64(BB_COOP_SYSV*)(u64);
     return reinterpret_cast<Fn>(Guest(kBeginLeave))(session);
+}
+
+// After K10 the party stays, but the boss-clear states made the players invincible for the clear
+// animation (Lua EnableInvincible 0x1332EF0: chr +0x1E1 bit 14) and the leave that would have
+// ended it never comes: a guest could not die any more after a boss (live: guest_die after the
+// Cleric Beast did nothing, HP stayed full). 10 s after K10, the local player's flag is cleared.
+void BossClearInvincibleTick(const GameSnapshot& s, double now) {
+    const double at = g_k10_at.load();
+    if (at <= 0 || now - at < 10.0 || !s.world_up || s.loading || !s.player) {
+        return;
+    }
+    g_k10_at = 0;
+    std::uint32_t f = 0;
+    if (!SafeRead(s.player + 0x1e1, &f, 4)) {
+        return;
+    }
+    if (f & (1u << 14)) {
+        f &= ~(1u << 14);
+        SafeWrite(s.player + 0x1e1, &f, 4);
+        Log("K10: the boss-clear invincibility was still on 10 s after the clear; cleared (the party stays)");
+    } else {
+        Log("K10: no invincibility left 10 s after the clear");
+    }
 }
 
 // ---- Remote player chrs on a streamed-out block (host and guest) ----
@@ -2285,6 +2310,7 @@ void Tick(const GameSnapshot& s) {
     FallbackCleanupTick(s);
     FallRecoveryTick(s, now);
     HeldDeathTick(s, now);
+    BossClearInvincibleTick(s, now);
     if (Role() == RoleClient) {
         GuestTick(s, now);
     } else {

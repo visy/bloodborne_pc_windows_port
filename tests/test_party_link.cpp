@@ -8,12 +8,17 @@
 #include "party/party_code.h"
 #include "party/party_crypto.h"
 #include "party/party_link.h"
+#include "party/party_rudp.h"
 #include "net/netsim.h"
 #include "party/party_sock.h"
 #include "party/upnp_win.h"
 #include "net/net_stun.h"
 
 #include <atomic>
+#include <algorithm>
+#include <cctype>
+#include <set>
+#include <random>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -774,6 +779,115 @@ static void test_kick() {
     CHECK(!host.reconnect_now());
 }
 
+// ---- reliable UDP stream (party_rudp.h): a lossy, reordering channel on a virtual clock ----
+static void test_rudp() {
+    using namespace party::rudp;
+    // Guest codes.
+    {
+        std::uint32_t a = 0x0a01a8c0;  // 192.168.1.10 (network order)
+        std::uint16_t p = 0x5b24;      // 9307 (network order)
+        const std::string code = encode_guest_code(a, p);
+        std::uint32_t a2 = 0;
+        std::uint16_t p2 = 0;
+        CHECK(code.rfind("BBG1-", 0) == 0 && code.size() == 19);
+        CHECK(decode_guest_code(code, &a2, &p2) && a2 == a && p2 == p);
+        std::string lower = code;
+        for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        CHECK(decode_guest_code(lower, &a2, &p2) && a2 == a);
+        std::string bad = code;
+        bad[6] = bad[6] == 'A' ? 'B' : 'A';
+        CHECK(!decode_guest_code(bad, &a2, &p2));
+        CHECK(!decode_guest_code("BBP1-0000", &a2, &p2));
+        std::printf("  guest code %s\n", code.c_str());
+    }
+    struct Flight {
+        double at;
+        int to;  // 0 host, 1 guest
+        Endpoint from;
+        std::vector<std::uint8_t> data;
+    };
+    // `nat`: each side drops datagrams from an endpoint it has not sent to yet (restricted cone),
+    // the host does not punch (first pass) or punches the guest's endpoint (second pass).
+    auto run = [](double loss, double lat, double jit, bool nat, bool punch, std::size_t bytes, double* secs,
+                  std::uint64_t* resends) -> int {
+        std::mt19937 rng(7);
+        std::uniform_real_distribution<double> u(0, 1);
+        const Endpoint H{0x0100007f, 0x1111}, G{0x0100007f, 0x2222};
+        Mux host(3), guest(5);
+        host.accepting = true;
+        std::set<std::pair<int, std::uint64_t>> sent_to;  // side, endpoint key
+        auto key = [](const Endpoint& e) { return (static_cast<std::uint64_t>(e.addr) << 16) | e.port; };
+        std::vector<Flight> wire;
+        double now_ms = 0;
+        const auto t0 = Clock::now();
+        auto at = [&](double m) { return t0 + std::chrono::microseconds(static_cast<long long>(m * 1000)); };
+        if (punch) host.punch(G, at(0), 30000, 200);
+        auto gs = guest.connect(H, at(0), 8000);
+        std::shared_ptr<Stream> hs;
+        std::vector<std::uint8_t> src(bytes), got_h, got_g;
+        for (std::size_t i = 0; i < bytes; ++i) src[i] = static_cast<std::uint8_t>(rng());
+        std::size_t wrote_g = 0, wrote_h = 0;
+        for (int step = 0; step < 200000; ++step, now_ms += 2) {
+            const auto now = at(now_ms);
+            std::vector<Datagram> out;
+            host.poll(now, out);
+            for (auto& d : out) {
+                sent_to.insert({0, key(d.to)});
+                if (u(rng) >= loss) wire.push_back({now_ms + lat + (u(rng) * 2 - 1) * jit, 1, H, d.data});
+            }
+            out.clear();
+            guest.poll(now, out);
+            for (auto& d : out) {
+                sent_to.insert({1, key(d.to)});
+                if (u(rng) >= loss) wire.push_back({now_ms + lat + (u(rng) * 2 - 1) * jit, 0, G, d.data});
+            }
+            for (auto it = wire.begin(); it != wire.end();) {
+                if (it->at > now_ms) {
+                    ++it;
+                    continue;
+                }
+                if (!nat || sent_to.count({it->to, key(it->from)})) {
+                    (it->to == 0 ? host : guest).on_datagram(it->from, it->data.data(), it->data.size(), now);
+                }
+                it = wire.erase(it);
+            }
+            if (!hs) hs = host.accept();
+            if (gs->state() == Stream::State::Failed) return -1;
+            if (gs->state() == Stream::State::Open && wrote_g < bytes) {
+                const std::size_t k = std::min<std::size_t>(64 * 1024, bytes - wrote_g);
+                if (gs->write(src.data() + wrote_g, k)) wrote_g += k;
+            }
+            if (hs && wrote_h < bytes) {
+                const std::size_t k = std::min<std::size_t>(64 * 1024, bytes - wrote_h);
+                if (hs->write(src.data() + wrote_h, k)) wrote_h += k;
+            }
+            std::uint8_t buf[8192];
+            if (hs)
+                for (std::size_t r; (r = hs->read(buf, sizeof buf)) > 0;) got_h.insert(got_h.end(), buf, buf + r);
+            for (std::size_t r; (r = gs->read(buf, sizeof buf)) > 0;) got_g.insert(got_g.end(), buf, buf + r);
+            if (got_h.size() == bytes && got_g.size() == bytes) {
+                *secs = now_ms / 1000;
+                *resends = gs->resends() + (hs ? hs->resends() : 0);
+                return (got_h == src && got_g == src) ? 1 : 0;
+            }
+        }
+        return -2;
+    };
+    double secs = 0;
+    std::uint64_t resends = 0;
+    CHECK(run(0, 1, 0, false, false, 200000, &secs, &resends) == 1);
+    std::printf("  clean: 2 x 200 KB in %.2f s\n", secs);
+    CHECK(run(0.10, 60, 20, false, false, 300000, &secs, &resends) == 1);
+    std::printf("  10 %% loss, 60 +- 20 ms: 2 x 300 KB intact in %.2f s (%llu resends)\n", secs,
+                static_cast<unsigned long long>(resends));
+    CHECK(resends > 0);
+    // NAT on both sides: without the host's punch the guest's SYNs never get in.
+    CHECK(run(0, 30, 5, true, false, 1000, &secs, &resends) == -1);
+    // With the punch (the guest code given to the host): connects and transfers.
+    CHECK(run(0.02, 30, 5, true, true, 100000, &secs, &resends) == 1);
+    std::printf("  simulated NAT both sides: no punch -> no connection; punch -> 2 x 100 KB in %.2f s\n", secs);
+}
+
 // The link under the network simulator (BB_NET_SIM, netsim.h; configured process-wide, so this
 // runs last): 60 ms one way + 20 jitter + 5 % segment loss (retransmission delays) + a 1.5 s
 // total outage mid-stream. Every event arrives once, in order; the link never drops; the ping
@@ -829,6 +943,64 @@ static void test_netsim_link() {
     host.stop();
 }
 
+// A host behind a NAT without a port forward (netsim nat=1: unsolicited inbound UDP dropped,
+// inbound TCP refused). Without the guest's code the guest cannot get in; with it (the host
+// punches the guest's UDP endpoint) the link comes up over UDP and carries events in order.
+static void test_udp_nat_link() {
+    bbnet::netsim::Config sc;
+    std::string err;
+    CHECK(bbnet::netsim::parse("lat=0,nat=1", &sc, &err) && sc.nat);
+    bbnet::netsim::reconfigure_for_tests(sc);
+    Recorder hr, ar, br;
+    LinkConfig hc = base_cfg("Host", "hunter2"), gc = base_cfg("Alice", "hunter2"), bc = base_cfg("Bob_2", "hunter2");
+    for (LinkConfig* c : {&hc, &gc, &bc}) {
+        c->lost_timeout_ms = 4000;
+        c->connect_timeout_ms = 3000;
+        c->tcp_fallback_ms = 500;
+    }
+    PartyLink host(hc, recorder_callbacks(hr, "host"));
+    CHECK(host.start_host(&err));
+    const std::uint32_t lo = htonl(INADDR_LOOPBACK);
+    // Bob has no code with the host: refused TCP, then UDP SYNs the host's NAT drops.
+    PartyLink b(bc, recorder_callbacks(br, "bob"));
+    CHECK(b.start_guest("127.0.0.1", host.bound_port(), &err));
+    // Alice gave the host her guest code (her UDP endpoint): the host punches it.
+    PartyLink a(gc, recorder_callbacks(ar, "alice"));
+    CHECK(a.start_guest("127.0.0.1", host.bound_port(), &err));
+    CHECK(a.udp_local_port() != 0);
+    host.punch_guest(lo, htons(a.udp_local_port()));
+    const auto t0 = std::chrono::steady_clock::now();
+    CHECK(a.wait_connected(8000));
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    CHECK(a.connected_over_udp());
+    std::printf("  alice (punched) connected over UDP in %lld ms\n", static_cast<long long>(ms));
+    for (int k = 0; k < 200; ++k) host.post_event(kBroadcast, "u_" + std::to_string(k), "{}");
+    a.post_event(0, "from_alice", "{}");
+    CHECK(wait_for([&] { return ar.count_event("u_199") == 1 && hr.has_event("from_alice"); }, 5000));
+    {
+        std::lock_guard<std::mutex> lk(ar.mu);
+        int next = 0, bad = 0;
+        for (const std::string& n : ar.event_names) {
+            if (n.rfind("u_", 0) != 0) continue;
+            if (n != "u_" + std::to_string(next)) ++bad;
+            ++next;
+        }
+        CHECK(next == 200 && bad == 0);
+    }
+    std::uint32_t ping = 0;
+    CHECK(wait_for([&] {
+        for (const RosterEntry& e : a.roster())
+            if (e.slot != kHostSlot && e.ping_ms > 0) ping = e.ping_ms;
+        return ping > 0;
+    }, 4000));
+    CHECK(!b.wait_connected(1500) && b.state() != LinkState::Connected);
+    std::printf("  200 events in order over UDP, ping %u ms; bob (no code) not connected: %s\n", ping,
+                link_state_name(b.state()));
+    b.stop();
+    a.stop();
+    host.stop();
+}
+
 int main() {
     // Loopback-only sockets: no Windows Firewall prompt for a test program (party_sock.h).
     if (!std::getenv("BB_PARTY_LOOPBACK")) {
@@ -839,6 +1011,8 @@ int main() {
 #endif
     }
     std::setvbuf(stdout, nullptr, _IONBF, 0);
+    std::printf("reliable udp stream\n");
+    test_rudp();
     std::printf("party codes\n");
     test_codes();
     std::printf("crypto\n");
@@ -862,6 +1036,8 @@ int main() {
     test_host_restart();
     std::printf("network simulator on the link (last: process-wide)\n");
     test_netsim_link();
+    std::printf("host behind a simulated NAT: the link over UDP with hole punching\n");
+    test_udp_nat_link();
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     std::printf(g_failures ? "FAILED\n" : "OK\n");
     return g_failures ? 1 : 0;

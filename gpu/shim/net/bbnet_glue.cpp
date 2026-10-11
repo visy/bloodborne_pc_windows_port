@@ -100,6 +100,12 @@ const Settings& settings() {
     return *g_settings;
 }
 
+void set_party_port(std::uint16_t port) {
+    settings();
+    std::lock_guard<std::mutex> lk(g_settings_mu);
+    if (port) g_settings->party_port = port;
+}
+
 void set_dirs(const char* app0, const char* user_dir) {
     settings();
     std::lock_guard<std::mutex> lk(g_settings_mu);

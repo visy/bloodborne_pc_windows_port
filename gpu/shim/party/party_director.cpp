@@ -1179,6 +1179,13 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         // boss-defeat EMEVD (4[00] death state -> 2003[12]) and the Lua boss clear follow.
         reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, step.id);
     } else {
+        // ForceDead's own gates (0x18BF9A0): GSM +0x176F set = HP left alone; chr +0x18 -> +0x30 ->
+        // +0x18 bit 0 = no death call. Logged: a die step that "did nothing" names its gate.
+        std::uint64_t gsm = 0, player = LocalPlayer(), a18 = 0, a30 = 0;
+        std::uint8_t no_hp = 0xff, no_die = 0xff;
+        if (SafeGet(Guest(0x5556678), &gsm) && gsm) SafeGet(gsm + 0x176f, &no_hp);
+        if (player && SafeGet(player + 0x18, &a18) && a18 && SafeGet(a18 + 0x30, &a30) && a30) SafeGet(a30 + 0x18, &no_die);
+        Log("test: ForceDead gates: GSM +0x176F %u, chr +0x18/+0x30/+0x18 %u (bit 0 blocks the death)", no_hp, no_die);
         reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, 10000);
     }
     std::uint8_t after = 0;
