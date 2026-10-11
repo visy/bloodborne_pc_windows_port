@@ -1390,9 +1390,11 @@ u32 LitLampInMap(u32 map) {
         if (ids::EntityMap(id) != (map & 0xffff0000u) || id % 10000 / 10 != 295) {
             continue;
         }
-        // common event 7000's lamp registration flag (2009[5]): m24_01 lamps 2410950.. use
-        // 12417800, 820, 840, 860 (EMEVD args), i.e. 1AAB7800 + 20k for return point AAB295k.
-        const u32 flag = 10000000u + id / 10000 * 10000 + 7800 + 20 * (id % 10);
+        // "Lamp lit": common event 7100's flag for lamp object AAB195k is 7AAB0200 + k (m24_01:
+        // 72410200..203 for 2411950..953, from the EMEVD args), a T7 group the host-world mirror
+        // (party_progress world_groups) copies into the guest's overlay. (The 2009[5] registration
+        // flags 1AAB7800 + 20k read 0 here: T1 zone 7 is not mirrored.)
+        const u32 flag = 70000000u + id / 10000 * 10000 + 200 + (id % 10);
         const u32 lit = reinterpret_cast<Get>(Guest(0x13cfd80))(man, flag, 1);
         seen += " " + std::to_string(id) + (lit ? ":lit" : ":-");
         if (lit) {
@@ -1701,6 +1703,12 @@ void HostTick(const GameSnapshot& s, double now) {
     State& st = S();
     const bool loading = s.loading || !s.world_up;
     if (Role() != RoleHost) {
+        if (st.hphase != HostPhase::Idle && Role() != RoleClient) {
+            // The room ended during a re-join (a member's respawn, a travel): nothing of it
+            // carries over into the next room (r23: g_rejoin stayed set across two later rooms).
+            g_rejoin = false;
+            Log("host: the session ended during a re-join; re-join state cleared");
+        }
         st.hphase = HostPhase::Idle;
         return;
     }
