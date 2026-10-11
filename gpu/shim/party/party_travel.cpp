@@ -805,7 +805,13 @@ bool Replay(const TravelIntent& t, const ReplayPlan& p) {
 }
 
 /// A stock "send home" warp at `site` on a guest: go to the party's destination instead.
+std::atomic<bool> g_allow_send_home{false};
+
 bool RetargetSendHome(u64 site) {
+    if (g_allow_send_home.exchange(false)) {
+        Log("send-home at +0x%llx: the guest's Leave, home as usual", ull(site));
+        return false;
+    }
     if (!g_travel_on.load() || g_in_replay.load() || Role() != PartyRole::Guest) {
         return false;
     }
@@ -1216,6 +1222,10 @@ void GuestDeathRedirectNow() {
     }
     Log("held guest death: no redirect; the stock funnel (home)");
     reinterpret_cast<FunnelFn>(g_funnel_orig ? g_funnel_orig : reinterpret_cast<void*>(Guest(kFunnel)))();
+}
+
+void AllowNextSendHome() {
+    g_allow_send_home = true;
 }
 
 void SetSendHomeVeto(SendHomeVetoFn fn) {

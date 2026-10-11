@@ -57,6 +57,8 @@ const char16_t* Text(u32 id, bool russian);
 std::size_t TextCount();
 /// For the test: whether `id` is made at run time.
 bool IsDynamic(u32 id);
+/// Counts the run-time text changes (a value column to redraw while its page is open).
+std::uint64_t DynamicChanges();
 
 /// What the game's rows bind (stable addresses for the run).
 int* Value(int field);

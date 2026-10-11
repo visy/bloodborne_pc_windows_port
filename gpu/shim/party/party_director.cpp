@@ -1247,6 +1247,23 @@ std::string DescribeSessionMembers() {
 } // namespace
 
 bool LeaveGameSession() {
+    // A guest (a phantom in the host's world): the game's own voluntary leave - OnLeave_Limit
+    // (0x138A4A0, what OnLeaveMenu_Yes 0x1389FB0 runs for a phantom after the session leave): the
+    // pre-summon spot, then the funnel (BeginLeave + the load home) at once. The session leave
+    // alone left the game to notice a dead room 10 s later ("Session lost" 0xcc/5001, then home).
+    constexpr std::uint64_t kOnLeaveLimit = 0x138a4a0;
+    const GameSnapshot before = ReadGameState(false);
+    static const bool limit_ok = Matches(kOnLeaveLimit, {0x55, 0x48, 0x89, 0xe5}) &&
+                                 CallsTo(kOnLeaveLimit + 0x77, 0x1332bc0);
+    if (before.session_role == RoleClient && limit_ok) {
+        AllowNextSendHome();
+        using LimitFn = void(BB_COOP_SYSV*)(std::uint64_t);
+        reinterpret_cast<LimitFn>(Guest(kOnLeaveLimit))(0);
+        const GameSnapshot after = ReadGameState(false);
+        Log("leave: OnLeave_Limit (the guest's own leave): role %s (%d)", SessionRoleName(after.session_role),
+            after.session_role);
+        return true;
+    }
     static const bool ok =
         Matches(kLeaveSessionAndDrop, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x53, 0x50, 0x48, 0x8b, 0x05,
                                        0xc7, 0x88, 0x18, 0x04, 0x48, 0x8b, 0x98, 0xf8, 0x16, 0x00, 0x00}) &&

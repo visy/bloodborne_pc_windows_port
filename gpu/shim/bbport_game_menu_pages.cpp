@@ -43,6 +43,8 @@ u32 AddDynamic(std::size_t limit) {
 
 /// Writes a run-time text in place (the game may hold the pointer): cut to the text's limit
 /// with an ellipsis, rewritten only when it changed.
+std::atomic<std::uint64_t> dynamic_changes{0};
+
 void SetDynamic(u32 id, const std::string& english, const std::string& russian) {
     Dynamic& d = *dynamics[std::size_t(texts[id - IdBase].dynamic)];
     for (int lang = 0; lang < 2; ++lang) {
@@ -61,6 +63,7 @@ void SetDynamic(u32 id, const std::string& english, const std::string& russian) 
         buffer[text.size()] = 0; // shorter first: a reader never runs past the new end
         std::copy(text.begin(), text.end(), buffer.begin());
         buffer[text.size()] = 0;
+        dynamic_changes.fetch_add(1, std::memory_order_release);
     }
 }
 
@@ -896,6 +899,10 @@ const char16_t* Text(u32 id, bool russian) {
 
 std::size_t TextCount() {
     return texts.size();
+}
+
+std::uint64_t DynamicChanges() {
+    return dynamic_changes.load(std::memory_order_acquire);
 }
 
 bool IsDynamic(u32 id) {

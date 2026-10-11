@@ -231,6 +231,9 @@ bool ReplayTravelNow(const TravelIntent& t);
 /// death). `fn(site)` true = the send-home at `site` is dropped (nothing runs). Any thread.
 using SendHomeVetoFn = bool (*)(std::uint64_t site);
 void SetSendHomeVeto(SendHomeVetoFn fn);
+/// The next send-home (a guest's Leave: OnLeave_Limit called by the party itself) goes home as
+/// in vanilla: no party travel retarget, no B2 veto.
+void AllowNextSendHome();
 /// Guest: a hold on its own death's funnel call (PartyGhostDeath_2 0x1382663). `fn()` true = held:
 /// nothing runs now; the holder later either drops it (the host's travel brings the guest along)
 /// or runs GuestDeathRedirectNow(). Game thread.
