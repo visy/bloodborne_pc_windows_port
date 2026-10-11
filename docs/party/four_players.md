@@ -306,3 +306,27 @@ prologue: `start ... READY`). Logs: `instances.py logs --grep "Party|from api|4p
    ran (`E6: NPC sign event ...`).
 8. Leave: one guest leaves (overlay Leave) -> its phantom vanishes on every screen, the others
    stay, the director rings for it again when it is Home.
+
+## 8. The floating phantom name plate (agent/balance findings, 2026-10-11)
+
+User report (3 players, Hunter's Dream, host view): the game's own blue "Co-operator / Hunter1"
+plate with its HP bar floats over the stairs ~10 m away with no character under it, while the
+party HUD says Hunter1 is 0.9 m away; "2 players side by side on the host, one healthbar far
+away, 3 players on both guests".
+
+* The plate is the game's (`FrpgMenuDlgFloatingPCGauge`, string 0x4930683; the enemy bars are
+  built in 0x167c460 next to it), not the port's overlay tag. It is drawn over the HOST's own
+  copy of the guest's PlayerIns.
+* The party HUD's 0.9 m came from VITALS (the guest's own game), because the matching in
+  party_hud_game only pairs a chr here with a member whose report is within 8 m: the host's copy
+  of Hunter1 was more than 8 m from where Hunter1 really was, i.e. the host's copy of that guest
+  stopped getting position updates (and is not drawn there: no model under the plate). The guests'
+  copies are right. So the anchor is the copy's own (stale) position; the fix belongs in the
+  host's per-slot position path for the third member (the four-player agent is on it), not in
+  the plate.
+* Diagnostics added: party_hud_game logs `stale remote chr? one at (x y z) HP h/m is D m from the
+  nearest member report (slot S)` (once a minute) and, with `BB_PARTY_HUD_POSDIAG=1` +
+  `BB_PARTY_HUD_LOG=1`, every position-like quad in each remote PlayerIns and the objects its first
+  0x400 bytes point to (to find a second, stale anchor if the copy's physics position is right).
+* The port's own overhead tags (E2) now draw only for a chr read this tick, alive, on our map, from
+  a fresh board (`party::hud::TagVisible`), so they never float; `Party HUD: tag X hidden: why`.

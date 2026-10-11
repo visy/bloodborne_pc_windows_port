@@ -43,6 +43,7 @@ struct Companion {
     bool same_map = false;     // both on one map with positions: distance / direction mean something
     float pos[3] = {0, 0, 0};
     std::uint32_t age_ms = 0;  // VITALS age (0 for a local read)
+    bool local_dead = false;   // its chr here reads HP 0 (a corpse left behind, a held death)
     int level = 0;             // VITALS extras (0 = unknown): the overhead display (E2)
     int deaths = 0;
     int rot = 0;
@@ -57,6 +58,7 @@ struct Board {
     float me_yaw = 0;     // facing (forward = (sin, 0, cos)): the direction fallback without a camera
     std::uint32_t me_map = 0;
     std::uint64_t seq = 0;  // +1 per Publish
+    std::int64_t published_ms = 0;  // steady clock (ms) of the Publish: the game tick's freshness
 };
 
 /// A remote player's PlayerIns as read in this world, matched to a member by name.
@@ -120,6 +122,15 @@ ScreenPoint WorldToScreen(const float view[12], const float proj[4], const float
 /// A party member's colour by slot (0 host .. 3), RGB 0..1: the same everywhere a member is drawn
 /// (tags now, I2 pings later). Slot outside 0..3: the game's cream.
 void MemberColour(int slot, float rgb[3]);
+
+/// Overhead tags (E2): a tag shows only for a member whose chr the game has in this world right
+/// now (read this tick, not a VITALS report), alive, on our map, with the board fresh (the game's
+/// tick published it within kTagFreshMs; a load or a stalled tick stops publishing). Otherwise
+/// `why` names the reason ("stale", "dead", "not here", ...).
+constexpr std::int64_t kTagFreshMs = 500;
+bool TagVisible(const Companion& c, std::int64_t board_age_ms, const char** why);
+/// Steady clock in ms (the board's timestamps).
+std::int64_t NowMs();
 
 /// Tests: back to the start.
 void ResetForTest();
