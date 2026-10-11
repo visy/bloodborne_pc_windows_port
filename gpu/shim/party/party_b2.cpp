@@ -851,6 +851,15 @@ std::atomic<int> g_apart{0};  // members whose area differs from ours (K5, the h
 std::atomic<bool> g_host_alone_next{false};  // host: the next own load is an alone travel
 std::atomic<double> g_host_alone_at{0};
 std::atomic<bool> g_host_left{false};  // guest: the host travelled alone; drop its chr here
+// A member that just travelled alone still reports its old map for a moment (its vitals stay
+// until its load ends): no meet with it until its vitals show another area, or 30 s passed
+// (live split3: the host re-created a guest's chr right after its "away").
+std::atomic<double> g_away_until[8] = {};
+void NoteAway(int slot) {
+    if (slot >= 0 && slot < 8) {
+        g_away_until[slot] = Now() + 30.0;
+    }
+}
 
 u32 AreaOf(u32 map) {
     return (map == 0 || map == 0xffffffffu) ? 0u : map >> 24;
@@ -999,11 +1008,17 @@ void SplitTick(const GameSnapshot& s, double now) {
         }
         if (a != mine) {
             ++apart;
+            if (w.slot >= 0 && w.slot < 8) {
+                g_away_until[w.slot] = 0;  // elsewhere now: a later return to our area is a meet
+            }
             continue;
         }
         // In our area for 2 s: its chr should be here.
         const float p[3] = {w.pos[0], w.pos[1], w.pos[2]};
-        if (now - sn.second >= 2.0 && w.has_pos && !ChrNear(p)) {
+        if (w.slot >= 0 && w.slot < 8 && g_away_until[w.slot].load() > now) {
+            continue;  // left alone a moment ago; its vitals still show this area
+        }
+        if (now - sn.second >= 2.0 && w.has_pos && w.age_ms < 1500 && !ChrNear(p)) {
             meet = true;
         }
     }
@@ -2731,6 +2746,7 @@ bool OnHostTravel(const TravelIntent& t) {
             }
         }
         g_host_left = true;
+        NoteAway(0);
         Log("guest: the host travels alone (%s); staying here (no load)", DescribeTravel(t).c_str());
         return true;
     }
@@ -2771,6 +2787,7 @@ void OnLinkEvent(int from_slot, const std::string& body) {
                           std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]);
         std::lock_guard<std::mutex> lk(S().mu);
         S().away_request = true;
+        NoteAway(from_slot);
         S().away_have_pos = have;
         std::memcpy(S().away_pos, p, sizeof p);
         Log("host: slot %d travels alone into another area", from_slot);
@@ -2880,7 +2897,29 @@ bool TravelAlone(const TravelIntent& t, AloneWhy why) {
             AloneWhyName(why), MapName(dest).c_str(), MapName(host).c_str());
         return true;
     }
-    // Elsewhere: the alone load, host-world mode, no snapshot.
+    // Elsewhere: the alone load, host-world mode, no snapshot. The destination as an exact
+    // transform (the lamp's MSB revive spot, party_ids ReturnSpot): the lamp warp itself landed
+    // the guest at the map origin of a non-existent block (live split3: m24_9999 asked for,
+    // (0, -5, 0), an endless fall) - without the snapshot states 1-2 a host-world load does not
+    // resolve the lamp's map. The transform is the path every B2 load uses.
+    TravelIntent tt = t;
+    {
+        const std::uint32_t lamp = t.lamp_id != kTravelNone && t.lamp_id != 0 ? t.lamp_id
+                                                                                : static_cast<std::uint32_t>(t.last_lamp);
+        float spot[4];
+        if (why == AloneWhy::Death || lamp / 100000 == 29 || !ids::ReturnSpot(lamp, spot)) {
+            Log("guest: travel alone (%s) to %u refused: %s", AloneWhyName(why), lamp,
+                why == AloneWhy::Death ? "a death outside the host's area is not an alone load yet"
+                                       : "no known spot for that lamp");
+            g_dead_follow = false;
+            return false;
+        }
+        tt.kind = TravelKind::Transform;
+        tt.has_pos = true;
+        tt.pos_map = ids::EntityMap(lamp);
+        tt.pos[0] = spot[0], tt.pos[1] = spot[1], tt.pos[2] = spot[2], tt.pos[3] = 1.0f;
+        tt.rot[0] = 0.0f, tt.rot[1] = spot[3], tt.rot[2] = 0.0f, tt.rot[3] = 0.0f;
+    }
     State& st = S();
     const u64 flow = Slot(kSlotFlow);
     if (Field<int>(flow, 0x84, -1) != 4) {
@@ -2914,7 +2953,7 @@ bool TravelAlone(const TravelIntent& t, AloneWhy why) {
         FunnelKeepRoom keep;
         Log("guest: travels alone (%s) to %s, the host is in %s: alone load in host-world mode (K7 %s)", AloneWhyName(why),
             MapName(dest).c_str(), host ? MapName(host).c_str() : "an unknown map", keep.armed ? "armed" : "NOT armed");
-        ok = ReplayTravelNow(t);
+        ok = ReplayTravelNow(tt);
     }
     if (!ok) {
         const int four = 4;

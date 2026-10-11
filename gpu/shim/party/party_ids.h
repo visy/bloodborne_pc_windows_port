@@ -47,6 +47,22 @@ inline bool EntityKnown(std::uint32_t id) {
 inline bool WarpPointKnown(std::uint32_t packed_map, std::uint32_t point) {
     return EntityKnown(point) && EntityMap(point) == (packed_map & 0xffff0000u);
 }
+/// Where the lamp / headstone warp of ReturnPointParam row `id` puts the player in its map: x, y,
+/// z and the yaw (radians) of the MSB region its revive event names. False: no spot (a Chalice
+/// Dungeon point, whose layout is generated, or no revive event).
+inline bool ReturnSpot(std::uint32_t id, float out[4]) {
+    const auto* b = std::begin(kPartyReturnSpotIds);
+    const auto* e = std::end(kPartyReturnSpotIds);
+    const auto* it = std::lower_bound(b, e, id);
+    if (it == e || *it != id) {
+        return false;
+    }
+    const std::size_t i = static_cast<std::size_t>(it - b) * 4;
+    for (int k = 0; k < 4; ++k) {
+        out[k] = kPartyReturnSpots[i + static_cast<std::size_t>(k)];
+    }
+    return true;
+}
 /// A cutscene id with a remo/sAA_BB_NNNN.remobnd file (or one an EMEVD 2002 plays).
 inline bool RemoKnown(std::uint32_t remo_id) {
     return InSorted(kPartyRemos, remo_id);
