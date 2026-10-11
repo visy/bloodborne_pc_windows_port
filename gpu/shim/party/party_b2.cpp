@@ -386,7 +386,18 @@ BB_COOP_SYSV void HostDeathReturnHook(u64 man, u64 id) {
 }
 
 /// Guest: HostDead_1's send-home is dropped (the host's death travel brings the guest along).
+bool SplitHostReachable();
 bool SendHomeVeto(u64 site) {
+    // Split travel: OnLeave_Limit (0x138A51C: the room-gone / irregular-leave path) sent a guest
+    // home 5 s after the host travelled alone (live split4) although the room and the party link
+    // were up. While the host is apart (or just left alone) and its link is fresh, it is dropped.
+    if (g_on.load() && Role() == RoleClient && site == 0x138a51c && SplitHostReachable()) {
+        Log("guest: send-home at +0x138a51c (OnLeave_Limit) dropped: split travel, the host is in another area and "
+            "connected (session %d, flow %d, flow +0xF4 %.1f, session +0x2E0 %.1f +0x2F0 %.1f)",
+            Role(), Field<int>(Slot(kSlotFlow), 0x84, -1), double(Field<float>(Slot(kSlotFlow), 0xf4)),
+            double(Field<float>(Slot(kSlotSession), 0x2e0)), double(Field<float>(Slot(kSlotSession), 0x2f0)));
+        return true;
+    }
     if (g_on.load() && Role() == RoleClient &&
         (site == kHostDead1Call || site == 0x13856f4 || site == 0x13859df)) {
         Log("guest: send-home at +0x%llx dropped (B2: %s)", ull(site),
@@ -851,6 +862,7 @@ std::atomic<int> g_apart{0};  // members whose area differs from ours (K5, the h
 std::atomic<bool> g_host_alone_next{false};  // host: the next own load is an alone travel
 std::atomic<double> g_host_alone_at{0};
 std::atomic<bool> g_host_left{false};  // guest: the host travelled alone; drop its chr here
+std::atomic<double> g_host_alone_seen{0};  // guest: when the host's last alone travel arrived (Now())
 // A member that just travelled alone still reports its old map for a moment (its vitals stay
 // until its load ends): no meet with it until its vitals show another area, or 30 s passed
 // (live split3: the host re-created a guest's chr right after its "away").
@@ -1072,6 +1084,14 @@ void SplitTick(const GameSnapshot& s, double now) {
                 MapName(s.map_id).c_str(), n);
         }
     }
+}
+
+/// Guest: the host is apart (another area, or it travelled alone in the last 60 s) and its party
+/// link entry is connected and fresh.
+bool SplitHostReachable() {
+    const Where* h = WhereOf(0);
+    const bool apart = g_apart.load() > 0 || Now() - g_host_alone_seen.load() < 60.0;
+    return apart && h && h->connected && h->age_ms < 5000;
 }
 
 std::string DescribeWhere() {
@@ -2746,6 +2766,7 @@ bool OnHostTravel(const TravelIntent& t) {
             }
         }
         g_host_left = true;
+        g_host_alone_seen = Now();
         NoteAway(0);
         Log("guest: the host travels alone (%s); staying here (no load)", DescribeTravel(t).c_str());
         return true;
