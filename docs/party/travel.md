@@ -172,6 +172,15 @@ FUN_015bed10(st);
 FUN_0130fd40(0,0,-1,0,-1,1);
 FUN_0132b1c0(..., 0xfce, "OnReviveMagic_1", ...);   // next Lua state
 ```
+**Correction (live 2026-10-11, section 7):** the Hunter's Mark *item* (EquipParamGoods 100 -> SpEffect
+2100, stateInfo 16) does not use these Lua states. The special-effect update `0x18FEF50` calls
+`0x1317550(LuaEventMan, 1)` at `0x18FFA1D`; case 1 selects the last lamp (`0x1332BC0`, `+0x1520 == 0`)
+and tail-jumps to the funnel at `0x13175EF`, so the funnel's return address is `0x18FFA22` (site
+`0x18FFA1D`). Host and guest alike (a guest leaves at `0x13CDEF6`). `OnReviveMagic` is raised for a
+stateInfo 23 effect (SpEffect 1904) and is the phantom "return home" path (Lua: `SetSosSignWarp`,
+`SetDefaultMapUid`, `RevivePlayerNext`, `WarpNextStageKick`): raised on a host it warps to the forced
+map `+0x14F0` (never set for a host) and the game ends on the title screen.
+
 `OnReviveMagic_1 0x1389E80`: `*(GSM+0x1520)=1; FUN_01332bc0(ctx,-1); *(GameDataMan+0x8c)=0; FUN_013cde30();`
 (forced placement path → own lamp). So **host or guest**: the leave is immediate at `0x1389DDD`,
 reason `0xFF000023`, before any load. The guest goes to *its own* last lamp in its own world.
@@ -237,7 +246,7 @@ if (own && n < 2)                   → state "SoloPlayDeath"   (solo)
 | `0x13856F4` / `0x13859DF` | `BlockClear2_1/_3` | boss cleared |
 | `0x138B513` / `0x1383A5C` | `Failed_BossAreaMission_LeaveMap` / `PlayerKill_4030_1` | mission/PK |
 | `0x132E11E`, `0x132E166` | `0x132E0C0` | map `0x01000000` (title/tutorial style) |
-| `0x13175EF`, `0x1317632` | `0x1317550` | leftover debug preset maps (DS1 ids) |
+| `0x13175EF` (tail jump; the funnel sees the caller `0x18FFA1D`), `0x1317632` | `0x1317550` | **the Hunter's Mark item** (case 1: last lamp; 2-6: fixed maps for stateInfo 0xA1-0xA5), see 1.3 |
 
 ## 2. Why co-op is blocked in the Hunter's Dream, and the patch
 
@@ -435,3 +444,53 @@ Not covered live: headstone travel from the Dream (warp menu), scripted transiti
 stage warps, Hunter's Mark, boss clear, a 3rd/4th member; the send-home retarget (`OnLeave_Limit` /
 `HostDead_1`) did not fire in these runs because the TRAVEL message always arrived (< 0.1 s) before the
 room teardown, so the guest left by its own replay.
+
+## 7. Live verification of the remaining travel cases (2026-10-11, B2 default, edgetravel)
+
+Two loopback instances (`instances.py run --count 2 --party`, base save `savedata_20261010` in each
+`savedata_party`, B2 on by default). Director test steps (BB_PARTY_DIRECTOR_TEST, no OS input):
+`host_headstone=TALK:DOWNS` (stand 1.2 m in front of the talker, Cross, wait for the menu's text
+lookups, Down N, Cross, Cross on the confirmations until the stage request is armed),
+`host_stage=A:B:R:I:POINT` (Lua WarpNextStage `0x132E010`) or `host_stage=bonfire:ID` (`0x132E050`),
+`host_mark` / `guest_mark` (the Hunter's Mark item: SpEffect 2100 on the local player; `=lua` raises
+the Lua event instead), `host_walk=X:Y:Z:YAW/...` (chr warp vfunc +0x5F8 hops 1 s apart, no load);
+upstream's `host_move` / `guest_move` (one hop, steady-world clock, `%MAP` filter). t = 0 at the step.
+
+| Case | Run | Evidence | Result |
+|---|---|---|---|
+| 1 Headstone t210000, row 2 (host, Dream -> 1st Floor Sickroom) | 06:04 | menu +3.3 s, travel +10.1 s (three confirm presses) `host travel ... lamp 2412950 (site +0x13ce002)`; guest `host travels` -> B2 load -> `re-join done` +28.3 s; host `(re)joined #2` +28.8 s | **pass** after the fix below (headstones default on) |
+| 2 Scripted transition: WarpNextStage(m21_00, point 2100980) = the EMEVD `2003[14]` args of the chalice exit (m29 events 12900700/12901710) | 05:31 | `host travel ... lua_stage_warp (site +0x132e03e) ... warp point 2100980`; guest B2 `re-join done` +10.4 s, host +10.4 s, both in the Dream | **pass** |
+| 3 Host Hunter's Mark (Great Bridge) | 06:58 | `host travel ... hunters_mark (site +0x18ffa1d) ... last lamp 2412952`; guest B2 load, `re-join done` +12.1 s; host `(re)joined #3` +12.2 s | **pass** after the fix below |
+| 4 Guest Hunter's Mark | 06:59 | `hunters_mark at +0x18ffa1d: to the host's last lamp 2412952` (session left at `0x13CDEF6`, as vanilla), client again +10.5 s; that join was dropped 3 s later (leave from `+0x178a6be` during its summon reload), the bells brought it back +29.9 s | **pass** (one dropped re-join, open item) |
+| 5 Walk between streamed blocks, Cathedral Ward m24_00 <-> Great Bridge m24_01, guest moving along | 05:30 | `K3: stage-record change with a session (stage 0x18010000, 1 member chr(s), farthest 2.4 m): no leave`, and back (1.9 m); host role 3 / guest role 6 throughout, no load | **pass** |
+| 6 Five lamp warps in a row (GB 2412952, CW 2402950, Central 2412951, Grand Cathedral 2402951, Dream 2102950) | 03:01 | guest `re-join done` +24.2 / +52.3 / +25.0 / +28.9 / +10.9 s (the 2nd: first Cathedral Ward load, host 24 s + guest 28 s); no fallback, no session loss | **pass** after the fixes below |
+
+Bugs found and fixed:
+
+* **Cooperators 0 after every B2 travel** (all cases): the host-world MoveMapStep writes the guest's
+  PlayerGameData `+0x5D8` (session type = presentation slot, 7) from its descriptor `+0x88`, filled
+  only on the summoned-placement path (GSM `+0x16F4`); our lamp / transform warp left 0. The chr
+  vfunc `+0x558` the cooperator count `0x15BDC20` tests then read 0 on both sides, so the host's
+  watchdog ended the session 60 s after the travel ("stuck summon"). Fixed here by a load-time restore,
+  then superseded by upstream's MemberSessionTypeTick (also the guest's own player) in the merge.
+* **Repeated travel**: HostTick stayed in its "re-join" wait 60 s after an arrival; a second travel in
+  that window was not seen as a load (no re-send, guest fell back to B1 after 45 s). The wait now
+  ends when every member task has its chr again, and a new own load restarts it.
+* **Headstones with guests present**: the headstone scripts park while `IsMultiplayerInProgress`
+  (the host too); the filter was only installed with `BB_PARTY_GUEST_LAMPS=1`. It is now on in party
+  mode (`BB_PARTY_HEADSTONES=0` off); guests' headstones stay behind `IsClientPlayer`.
+* **Host Hunter's Mark not followed**: the item reaches the funnel from `0x18FFA1D` (1.3), which was
+  unlisted, so the host's travel was never broadcast and the guest stayed in the old world without
+  the host. Now `HuntersMark` (host: captured; guest: redirected to the host's last lamp).
+
+Open:
+
+* A remote chr left in a block the host's game streams out crashes the host (~0.8 s, remote chr's
+  physics, `[[chr+0x288]+0x18]+0x88` freed at `0x18CB16A`/`0x18CB17D`). Reproduced 3 times by
+  *teleporting* the host 146 m into the other block with the guest left behind, also when the
+  vanilla leave ran at the block change (so it is not caused by K3 keeping the room). Walking
+  together it did not happen. Whether a guest walking far behind can trigger it is untested.
+* Guest Hunter's Mark: the first re-join after it was dropped by a leave at `+0x178a6be` (the host
+  still held the departed guest's member task, B2 keeps tasks); recovered by itself in 20 s.
+* Headstone menu: three Cross presses after the row (row, then the confirmation dialog); the menu
+  text ids were not identified (the script waits for fresh text lookups).
