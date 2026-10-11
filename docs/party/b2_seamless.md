@@ -336,7 +336,7 @@ warp's own target was used; with +0x1521 = 1 our +0x14C4/D0/E0 write gives the s
   refilled the guest to 106; B2 now puts back the HP it had at the host's travel event
   (`guest: HP 106 after the load -> 100 as before the travel`). Items / buffs: a phantom's
   inventory lives in its own PlayerGameData and is not touched by the load (not measured).
-* Respawn in place (no guest reload) - not feasible with the game's code: every death goes
+* (Superseded by 6.12: the host is now revived in place.) Respawn in place (no guest reload) - not feasible with the game's code: every death goes
   through the funnel 0x13CDE30 → a stage request → MoveMapStep, and the world dtor 0x1547B40
   frees every chr set (WorldChrMan 0x1914F40); the game has no revive-in-place for the host
   (DS2's seamless mod found the same). A custom one (cancel the death load, revive the chr, warp
@@ -466,11 +466,9 @@ GameData row.
   host `task mode 1 rewound to STEP_Create`, cooperators 0 -> 1 14 s after the death; screenshot:
   the host sees "Co-operator Hunter1" alive 0.8 m away at the lamp. No leave, no bell.
 
-Death rules on a lone respawn (as a vanilla phantom's death, which never costs the phantom
-anything in its own world): full HP; buffs end (not restored, unlike a plain B2 load); echoes,
-Insight and consumables are kept (no bloodstain in the host's world: a phantom's echoes are not
-part of the host's world, and the guest's own world is not where it died); the host's world is not
-reset. Fallback: no snapshot within 45 s -> the B1 fallback as before (redirect, leave, bell).
+Death rules on a lone respawn: full HP; buffs end (not restored, unlike a plain B2 load);
+Insight and consumables are kept; echoes go into a bloodstain since 6.12 (design decision 3; before,
+they were kept as a vanilla phantom's); the host's world is not reset. Fallback: no snapshot within 45 s -> the B1 fallback as before (redirect, leave, bell).
 
 ### 6.10 Runs r18-r25: lone-death variants [R]
 
@@ -523,6 +521,102 @@ reset. Fallback: no snapshot within 45 s -> the B1 fallback as before (redirect,
   AAB195k (m24_01: 72410200..203, EMEVD args; a T7 group the host-world mirror copies). r27, host's
   last lamp set to another map: `lamps of m24_01_00_00: 2412950:- 2412951:lit` -> respawned at the
   lit Central Yharnam lamp (-193.4, -28.6, 68.5); unlit 2412950 (1st Floor Sickroom) skipped.
+
+### 6.12 C2: the host dies alone - revived at its lamp, the guests stay (hostdeath, 2026-10-11) [R]
+
+ERSC rule (user decisions, ERSC_PARITY.md): a dead player respawns at its own last lamp and the
+others play on; nobody else loads. Until now every host death went through the funnel and moved
+the whole party (6.5). Now:
+
+**The death.** SoloPlayDeath_2 `0x1381DE0` (Lua state after YOU DIED) selects the last lamp
+(`0x1332BC0`), calls the funnel `0x13CDE30` at **0x1381EDE**, then records the bloodstain
+`0x13D2910(SprjEventMan +0x80, player, 1)` (GameDataMan +0x30 record: position, map, echoes;
+PlayerGameData +0x94 = 0; GameDataMan +0x28 = 1) [C]. party_travel's funnel hook now asks an
+interceptor first (`SetHostDeathIntercept`); B2's `HostDeathIntercept` takes the call when a member
+task exists, not every member is down and the host's last lamp has a known spawn spot in the loaded
+map: no stage request, no capture, no TRAVEL broadcast. The rest of SoloPlayDeath_2 runs as usual,
+so the echoes go into a live bloodstain at the death spot ("Acquire Blood Echoes" prompt on the
+revived host, hd10) [R].
+
+**The lamp's spot.** After every own load that put the player on its lamp (GSM +0x1538 respawn mode
+1/2 with a +0x153C record, or +0x1524 from the selector) the player's transform is kept with the
+lamp id (GSM +0x1528 after the load) and map: `lamp spot: lamp 2412951 in m24_01_00_00 at
+(-193.40, -28.65, 68.50) yaw 0.79`. The revive uses it when +0x1528 still names that lamp and the
+map's area/block match the player's stage (PlayerIns +0x3F8).
+
+**The revive** (`ReviveHost`, main thread, 1 s after the taken funnel, `BB_PARTY_B2_HOST_REVIVE_DELAY`).
+What a death leaves, from a live dword diff of the host's chr alive vs dead (`BB_PARTY_B2_REVIVE_DIFF=1`, hd5)
+and the decompiles: HP module (+0x3B0 -> +0x20) **+0xF8 HP = 0** (+0xFC max; +0x128 is not the HP);
+PlayerIns +0x1E1 bit 0x10000 (dying, cleared again by the game before the funnel), +0x208 draw factor
+1 -> 0; ChrCtrl (+0x58) +0x114 0 -> 0x10001; the action request block ChrCtrl +0x370 and module +8
+(death request, kind +0x1B4/+0x1B8 = 2/9); the behavior in state BeDead (c0000.hks), the model
+dissolved. Steps (`BB_PARTY_B2_REVIVE_RECIPE`, default `recover,flags,ctrl,fade,reset,idle,warp,gsm`):
+
+| Step | What | Source |
+|---|---|---|
+| recover | `0x1900710(player)` (RevivePlayer / OnSpEffectRevive: body form, SpEffects, stamina) | Lua RevivePlayer 0x1332B20 |
+| HP | HP module +0xF8 = +0xFC | always |
+| flags | +0x1E1 &= ~(0x10000 \| 0x20000 \| 0x2000 \| 0x40000) (dying, death drops done) | 0x18BD9D0, 0x18C4F90, 0x18C5070 |
+| ctrl | ChrCtrl +0x114 &= ~0x10001, [ChrCtrl +0x38] +0x48 &= ~1 | ChrIns_OnDeath 0x18C49F0 |
+| fade | +0x20C alpha 0 -> 1 at 1.5/s, +0x1E5 &= ~4 | ChrFadeIn 0x1339010 |
+| reset | `0x18BCF30(player, 1)` + PlayerIns +0x1E4 \|= 2 (transform re-applied, ChrCtrl vfunc +0x38, behavior graph reset) | Lua ChrResetRequest 0x13370B0 |
+| idle | behavior event L"Idle_wild" (0x4992C40) via `0x1A19F60([+0x3B0]+0x30, name)` when its +0x384 is set: out of BeDead | Lua ChrResetAnimation 0x13370F0 |
+| warp | chr warp vfunc +0x5F8 to the lamp spot | as the B2 spacing |
+| gsm | GSM +0x1522 / +0x1523 (local player died / fell) = 0 | ChrIns_OnDeath |
+
+Live (hd2-hd12, 2 instances, Central Yharnam lamp 2412951): with HP written to +0x128 (wrong
+field) the chr stayed dead; with HP but without `reset` + `idle` it stood at the lamp invisible on
+both screens and did not act; with `reset` + `idle` it is visible on the host and the guest (hd10
+r2 screenshots: the host beside its bloodstain, "Acquire Blood Echoes"); with `ctrl` too it acts: a
+Circle tap (in-process pad) backsteps it 2.3 m, (-193.4, 68.5) -> (-191.8, 70.1) (hd11, hd12, both
+revivals). With the ChrCtrl death bits clear, a later stage request stayed armed and no load began
+(hd11: the next lamp warp never loaded, the guest fell back to B1 after 45 s; the same with the full
+alive copy of ChrCtrl +0x370 / module +8 written back, hd6 / hd7). So the bits are set again as soon
+as a stage request is armed after a revive (`a stage request after the revive; ChrCtrl death bits
+set again for the load`); the load re-creates the chr anyway (hd12: both post-revive lamp warps
+loaded, the guest followed with B2 each time).
+
+**The guests.** `{"op":"host_revived"}` to every member: each guest removes its copy of the host's
+chr (it died with the host: +0x1E1 0x10000, invisible) as the host does for a guest's lone respawn
+(slot release `0x15BC080`, WorldChrMan remove `0x19186E0`) and rewinds the host's task to
+STEP_Create: the chr comes back at the lamp from the task (`guest (host revived): task mode 2
+(step 6) rewound to STEP_Create`). The guest's HostDead_1 send-home is still vetoed (K9). No load,
+no loading screen, still a client (role 6, flow 4); the host keeps its member tasks (K8).
+
+**Fallbacks / other cases.**
+* Lamp in another map (or its spot never seen since the game started): the vanilla party move (6.5).
+  Design decision 1 wants the host to load its lamp's map alone while the guests stay: that is the
+  split-party travel (agent/splittravel, docs/party/split_travel.md). Interface needed from it: "the
+  host loads map M at lamp L alone; members keep their world and session; the host's chr leaves their
+  world and comes back when they meet again". `HostDeathIntercept` is the place to call it.
+* Every member down too (each guest sends `{"op":"dead"}` when its death is held; cleared on its
+  "arrived"): a wipe, the vanilla funnel and the party respawns together at the host's lamp (6.8).
+  Also while the host waits for its revive: `every member went down while the host was ... the
+  stock funnel runs` (`HostDeathFunnelNow`: capture + broadcast + stock funnel).
+* A load starting while the host is down (a guest's lamp request, a rest) ends the wait: the load
+  re-creates everyone.
+
+**Boss fights (C5, limbo).** A boss fight = a boss health bar is up: EMEVD 2003[11] (handler
+`0x17C0420` case 0xB) writes the HUD object `*0x5562878 +0x1658 + slot*0x14` {name id, chr handle} for
+slots 0..2 and resets them to -1; counted while the handle resolves to a living chr (HP +0xF8 > 0).
+* Host dies in a boss fight: the death is taken but not revived (`host death in a boss fight (boss bar
+  0: ...): limbo`); it lies dead (YOU DIED, no load) until the bar goes (boss killed: revived at its
+  lamp as above, or the party move if the lamp is elsewhere), every guest is down (a wipe: the stock
+  funnel, everyone to the host's lamp) or a load starts (someone rests).
+* A guest dies in a boss fight: its held death (6.8) is kept past the grace while the bar is up
+  (`guest: dead in a boss fight (...): limbo until the boss is gone, a wipe or a rest`), then the lone
+  respawn (6.9) at the host's last lamp; a host travel (wipe, rest) takes it along as before.
+* Shared boss lamp (design decision, ERSC_PARITY @ 7552b38): every respawn after a boss fight goes to
+  the same lamp - the host's last lamp (a guest's lone respawn already uses the host's last lamp, or
+  a lit lamp of the loaded map, 6.10; the wipe and the host use the host's lamp).
+* Spectating: none; the dead player's camera stays on its body.
+
+**Echoes (design decision 3).** The host: vanilla (bloodstain via SoloPlayDeath_2, live and
+pickable at once, hd10). A guest (`BB_PARTY_GUEST_BLOODSTAIN`, default on): at its held death the
+same record `0x13D2910` runs with GSM +0x1592 = 1 and +0x1770 = 1 for the call (else it takes the
+forced pre-summon spot), both put back: `guest: bloodstain recorded: echoes 5000 -> 0, stain 5000
+echoes at (...) map 0x18010000`. The stain is in the guest's own records, so it shows in the guest's
+game (in the host's world after its respawn load, and in its own world in that map).
 
 ## 7. Risks / open items
 
