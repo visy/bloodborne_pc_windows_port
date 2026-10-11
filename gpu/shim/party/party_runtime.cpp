@@ -20,6 +20,7 @@
 #include "party_fourp.h"
 #include "party_progress.h"
 #include "party_travel.h"
+#include "party_worldact.h"
 #include "coop_hooks.h"
 #include "upnp_win.h"
 #include "party_rudp.h"
@@ -720,6 +721,7 @@ LinkCallbacks make_callbacks(bool host) {
             pump_start(m);
             write_marker();
             coop::RequestHostFullItems(m.slot);  // C3: everything the host has, for its own save
+            coop::StoryMemberJoined();           // C4 catch-up: the host's time of day (Blood Moon)
         };
         cb.on_member_left = [](const RosterEntry& m, bool slot_kept) {
             bridge::OnMemberLeft(m.name, slot_kept);
@@ -757,6 +759,11 @@ LinkCallbacks make_callbacks(bool host) {
             if (name == coop::kLampLitEventName) {  // a guest lit a lamp of the host's world
                 std::string err;
                 if (!coop::GuestServicesOnLampLit(slot, body, &err)) plog("lamp_lit from slot %d refused: %s", slot, err.c_str());
+                return;
+            }
+            if (name == coop::worldact::kEventName) {  // a guest's lever / door / NPC talk (D3, D8)
+                std::string err;
+                if (!coop::worldact::OnHostEvent(slot, body, &err)) plog("world_action from slot %d refused: %s", slot, err.c_str());
                 return;
             }
             if (name == coop::kLampRequestEventName) {  // a guest used a lamp / headstone
