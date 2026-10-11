@@ -117,7 +117,8 @@ cooperator the game's data intended). The boss log line shows the engine's sum (
 ## 3. C4: death debuff ("rot")
 
 ERSC: optional rot, 5 kinds, one random per death, stacking, removed only at a grace. Ours
-(Bloodborne-themed, five kinds):
+(Bloodborne-themed, five kinds; 0.5.2 ships two: health and stamina, live-verified. The other
+three are behind `BB_PARTY_ROT_ALL_KINDS=1`, default off, until a live run shows their effect):
 
 - Each death of the local player (HP > 0 -> 0 in the world, any role) adds a stack, at most 5, of
   a kind picked at random among the five; a toast after the respawn names it ("Rot 2/5: rally
