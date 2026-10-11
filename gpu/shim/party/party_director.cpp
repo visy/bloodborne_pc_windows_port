@@ -553,6 +553,31 @@ bool HasSpEffect(std::uint64_t player, int id) {
     return false;
 }
 
+/// Main thread only: removes SpEffect `id` from the local player through the game's own
+/// RemoveSpEffect 0x17E1D90(list, node, 1) (EMEVD 2004[21]). False when it is not on.
+bool RemoveSpEffect(int id) {
+    const std::uint64_t player = LocalPlayer();
+    std::uint64_t list = 0, node = 0;
+    if (!player || !SafeGet(player + 0x1c8, &list) || !list || !SafeGet(list + 8, &node)) {
+        return false;
+    }
+    for (int guard = 0; node && guard < 512; ++guard) {
+        std::int32_t nid = 0;
+        if (!SafeGet(node + 0x40, &nid)) {
+            return false;
+        }
+        if (nid == id) {
+            using Fn = void(BB_COOP_SYSV*)(std::uint64_t, std::uint64_t, std::uint32_t);
+            reinterpret_cast<Fn>(Guest(0x17e1d90))(list, node, 1);
+            return true;
+        }
+        if (!SafeGet(node + 0x58, &node)) {
+            return false;
+        }
+    }
+    return false;
+}
+
 /// Main thread only (the director's tick).
 bool ApplySpEffect(int id) {
     const std::uint64_t player = LocalPlayer();
@@ -2439,6 +2464,28 @@ void PartyDirector::Tick() {
         PrologueSkipBusy() || CatchupBusy()) {
         return;
     }
+    // A11 (ERSC_PARITY.md, user decision): a player joining while the host fights a boss or
+    // watches a cutscene waits outside - the host does not ring until it ends (the guest's sign
+    // waits at the host's lamp in its own world, GatherGuest).
+    if (role == PartyRole::Host) {
+        const bool boss = BossBarShown(), remo = CutscenePlaying();
+        if (boss || remo) {
+            if (!st.a11_waiting) {
+                st.a11_waiting = true;
+                // A bell rung before the fight keeps the game searching (live: summoned 29 s into
+                // the fight): it goes now.
+                const bool dropped = RemoveSpEffect(kHostBellEffect);
+                Log("A11: no bell while the host %s: joiners wait outside%s", boss ? "fights a boss" : "watches a cutscene",
+                    dropped ? " (the ringing bell stopped)" : "");
+            }
+            return;
+        }
+        if (st.a11_waiting) {
+            st.a11_waiting = false;
+            st.rung_ever = false;  // ring at once
+            Log("A11: the boss fight / cutscene is over: ringing for waiting joiners again");
+        }
+    }
     if (role == PartyRole::Guest && st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {
         // The host entered its Chalice Dungeon after this guest rang: the waiting sign gets the
         // chalice wait (9900) too, else the host's summon loads the guest without the quick join
@@ -2458,23 +2505,6 @@ void PartyDirector::Tick() {
     }
     if (st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {
         return;
-    }
-    // A11 (ERSC_PARITY.md, user decision): a player joining while the host fights a boss or
-    // watches a cutscene waits outside - the host does not ring until it ends (the guest's sign
-    // waits at the host's lamp in its own world, GatherGuest).
-    if (role == PartyRole::Host) {
-        const bool boss = BossBarShown(), remo = CutscenePlaying();
-        if (boss || remo) {
-            if (!st.a11_waiting) {
-                st.a11_waiting = true;
-                Log("A11: no bell while the host %s: joiners wait outside", boss ? "fights a boss" : "watches a cutscene");
-            }
-            return;
-        }
-        if (st.a11_waiting) {
-            st.a11_waiting = false;
-            Log("A11: the boss fight / cutscene is over: ringing for waiting joiners again");
-        }
     }
     // C1 (party_start.h): no bell before this player finished its start (clinic / first death
     // pitfalls); the host rings only for members that are ready (roster Home / Joining).
