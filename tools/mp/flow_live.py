@@ -60,9 +60,9 @@ def main():
     guest = [("title 5 " + l) if l != "-" else l for l in guest]
     # The party process after the restart: an in-world walk (Options > System > Party ...).
     if a.host_world:
-        host[1] = "world 30 " + a.host_world
+        host[1] = "joined 8 " + a.host_world
     if a.guest_world:
-        guest[1] = "world 30 " + a.guest_world
+        guest[1] = "joined 8 " + a.guest_world
     for i, lines in enumerate((host, guest)):
         user = root / f"inst{i}" / "user"
         user.mkdir(parents=True, exist_ok=True)

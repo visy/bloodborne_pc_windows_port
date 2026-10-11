@@ -331,11 +331,12 @@ namespace {
 
 /// BB_TEST_MENU_FILE (test aid, tools/mp/flow_live.py): a menu walk through the REAL menus for this
 /// process. Each start of the game takes the file's first line (and removes it), so the run.bat
-/// relaunch loop's next process gets the next one: "<title|world> <seconds> <MenuScript>" (after
-/// that many seconds at the title / in the world; MenuScript tokens, test_newgame.h) or "-" (no
+/// relaunch loop's next process gets the next one: "<title|world|joined> <seconds> <MenuScript>"
+/// (after that many seconds at the title / in the world / in the world with the party together;
+/// MenuScript tokens, test_newgame.h) or "-" (no
 /// walk this time). type= / enter / esc go to the text box as SDL key events (no OS input).
 struct MenuTest {
-    bool loaded = false, active = false, in_world = false, done = false;
+    bool loaded = false, active = false, in_world = false, joined = false, done = false;
     double delay = 0;
     coop::MenuScript script;
     std::chrono::steady_clock::time_point since{};
@@ -382,7 +383,8 @@ void LoadMenuTest() {
         Log("test menu: unknown token '%s'", bad.c_str());
         return;
     }
-    m.in_world = std::strcmp(where, "world") == 0;
+    m.joined = std::strcmp(where, "joined") == 0;  // in the world and together (summoned / members in)
+    m.in_world = m.joined || std::strcmp(where, "world") == 0;
     m.delay = delay;
     m.active = true;
     Log("test menu: %zu steps %s after %.0f s: %s", m.script.size(), m.in_world ? "in the world" : "at the title",
@@ -398,7 +400,8 @@ void MenuTestTick(bool at_title, bool world_up) {
         // The title: once its menu is up (its texts looked up; the boot, logos and the
         // "Creating save data" / network checks come before).
         const bool title_menu = BbGameMenu::TextSeenMs("New Game") > 0 || BbGameMenu::TextSeenMs("Continue") > 0;
-        if (!(m.in_world ? world_up : at_title && title_menu)) return;
+        const bool together = party::status::Snapshot().state == party::status::State::Joined;
+        if (!(m.in_world ? world_up && (!m.joined || together) : at_title && title_menu)) return;
         m.since = now;
         Log("test menu: %s; starting in %.0f s", m.in_world ? "in the world" : "title menu up", m.delay);
     }

@@ -38,7 +38,16 @@ can touch a single-player save.
 
 Text entry is the window's text box (the same as the character name): type on the keyboard,
 **Ctrl+V** pastes, Enter confirms, Esc (or Circle) cancels. The pad cannot type; the address and
-password are typed once and remembered.
+password are typed once and remembered. The text rows (*Host address*, *Password*, *Party name*)
+act on every press: the value column shows *Type, then Enter* while the box is open and goes back
+to the value 1.5 s after it closes (`PartyRow::busy`, a momentary field).
+
+**Party name** (title page, before the first party character: the page shows six rows): every
+player needs their own - the host admits one player per name. Without one, the first party action
+picks `<Windows user name>-xxxx` (`DefaultName`: the name's `[A-Za-z0-9_-]`, at most 11, plus four
+random base-36 digits) and keeps it in party.json. (Live, 2026-10-11: before this every menu player
+was "Hunter" and the host refused the second friend: `rejected: the name Hunter is already in the
+party`.)
 
 ## 2. Design decision: a quick restart instead of switching in place
 
@@ -135,6 +144,7 @@ everything).
   is true. The game's own *Continue* in the party process loads the party save's last-used slot,
   which is the party character (the party saves hold no other).
 * **role**: the last party role; *Continue party game* uses it.
+* **name**: the party name (online id); chosen automatically on the first party action (section 1).
 
 ## 5. Saves: the party save is the only co-op path
 
@@ -160,6 +170,22 @@ everything).
 * `BB_PARTY_FLOW_TEST=<action>[@seconds]` (`new`, `join`, `continue`, `host`, `leave`, `solo`;
   `world:` prefix = in the world): runs that action once, as the row would – the in-game
   verification below uses it besides driving the menu with the pad.
+* **The real menus, live** (`tools/mp/flow_live.py fresh|continue --root DIR --game DIR
+  [--guest-world SCRIPT]`): two instances start as the single-player game; `BB_TEST_MENU_FILE`
+  gives each process start one line (`title|world <seconds> <MenuScript>`, or `-`; the run.bat
+  relaunch loop's next process takes the next line) and the walk goes through the game's own pad
+  path (`runtime_pad_director_press`). MenuScript (`test_newgame.h`): `~button@text` presses once
+  `text` was looked up since the previous press (the title menu and the page rows look their texts
+  up when built - the help lines too, so the focused row cannot be told from its help: the
+  walks count rows, the screenshots check them), `type=TEXT` / `enter` / `esc` reach the
+  window's text box as SDL key events (`WindowSDL::TestType`: no OS input, no focus), `options`,
+  `mark=NAME` (a named pause: screenshot points). Character creation after the restart:
+  `BB_TEST_NEWGAME=party` / `BB_TEST_PROLOGUE_SKIP=party` (only in the party process) with
+  `BB_TEST_NAME` (the name box). Screenshots: `ROOT/shots/<phase>/` (`shot.py --watch`).
+  `joined <s>`: in the world once the party is together (summoned / members in). Navigation
+  (English, 1.09): title of an empty save *New Game / Party / System / Log In*; the
+  Party page opens on *Status*; in the world *Options, Right, Right, Cross* (System) and *Up* x5 =
+  *Party* (the list ends *Party, Party members, Brightness, Network, Exit Game*).
 
 Evidence of the in-game runs: §7.
 
