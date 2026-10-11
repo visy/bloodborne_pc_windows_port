@@ -81,6 +81,7 @@ std::vector<std::int64_t> rested_since, armed_at;
 std::atomic<bool> loaded{false};
 std::atomic<std::int64_t> last_refresh{-1000000};
 void (*restart_handler)() = nullptr;
+void (*quit_handler)() = nullptr;
 
 Values& DefaultSettings() {
     static Values* v = [] {
@@ -693,12 +694,6 @@ void DefineAll() {
     AddRow(Scaled(&Values::mk_sens_y, SensTable), "Vertical speed", "Скорость по вертикали",
            "Mouse sensitivity: 0 = 0.25, 5 = 1.0 (default), 10 = 5.0",
            "Чувствительность мыши: 0 = 0.25, 5 = 1.0 (по умолчанию), 10 = 5.0", {}, Kind::Slider);
-    AddRow(Scaled(&Values::mk_smoothing, SmoothTable), "Mouse smoothing", "Сглаживание мыши",
-           "Averages the mouse over frames: 0 raw, 4 = 0.2 (default), 10 = 0.8",
-           "Усреднение мыши: 0 без него, 4 = 0.2 (по умолчанию), 10 = 0.8", {}, Kind::Slider);
-    AddRow(Scaled(&Values::mk_deadzone, DeadTable), "Mouse dead zone", "Мёртвая зона",
-           "Ignores slow movement (tremor): 0 none, 5 = 0.05 (default), 10 = 0.2",
-           "Не учитывает медленное движение: 0 нет, 5 = 0.05 (по умолчанию), 10 = 0.2", {}, Kind::Slider);
     AddRow(Setting(
                Kind::List,
                [](const Values& v) { return int(v.mk_invert_x.load()) | int(v.mk_invert_y.load()) << 1; },
@@ -711,10 +706,23 @@ void DefineAll() {
            {AddText("None", "Нет"), AddText("Horizontal", "По горизонтали"), AddText("Vertical", "По вертикали"),
             AddText("Both", "Обе оси")},
            Kind::List);
+    // A page holds six rows: the fine tuning and the wheel (upstream 0.51, #52) have their own.
+    AddPage("Mouse tuning", "Настройка мыши", "Mouse look smoothing, dead zone and the wheel (bbport)",
+            "Сглаживание и мёртвая зона обзора мышью, колесо (bbport)");
+    AddRow(Scaled(&Values::mk_smoothing, SmoothTable), "Mouse smoothing", "Сглаживание мыши",
+           "Averages the mouse over frames: 0 raw, 4 = 0.2 (default), 10 = 0.8",
+           "Усреднение мыши: 0 без него, 4 = 0.2 (по умолчанию), 10 = 0.8", {}, Kind::Slider);
+    AddRow(Scaled(&Values::mk_deadzone, DeadTable), "Mouse dead zone", "Мёртвая зона",
+           "Ignores slow movement (tremor): 0 none, 5 = 0.05 (default), 10 = 0.2",
+           "Не учитывает медленное движение: 0 нет, 5 = 0.05 (по умолчанию), 10 = 0.2", {}, Kind::Slider);
+    AddRow(Flag(&Values::mk_wheel), "Mouse wheel", "Колесо мыши",
+           "Quick items and tools (d-pad up / down), one press per notch",
+           "Быстрые предметы и инструменты (крестовина вверх / вниз), по нажатию на щелчок", toggle,
+           Kind::Toggle);
 
     // ---- Game patches (after a restart) and the restart itself. ----
-    AddPage("Game patches", "Патчи игры", "The game's own AA, intros, free camera, debug menu (bbport)",
-            "Сглаживание игры, заставки, свободная камера, отладочное меню (bbport)");
+    AddPage("Game patches", "Патчи игры", "The game's own AA, intros, free camera, debug menu, restart, quit (bbport)",
+            "Сглаживание игры, заставки, свободная камера, отладочное меню, перезапуск, выход (bbport)");
     for (const Short& sh : patches) effect_row(sh);
     party.restart_help = AddDynamic(MaxHelpLength);
     AddRow(Confirmed([] {
@@ -723,6 +731,15 @@ void DefineAll() {
            }),
            AddText("Restart the game", "Перезапуск игры"), party.restart_help,
            {AddText("Restart", "Перезапуск"), AddText("Press again", "Нажмите ещё раз")}, Kind::Toggle);
+    // Upstream 0.51 (#74, #116): quit from the menu, as the window's close button.
+    AddRow(Confirmed([] {
+               BbSettings::Save();
+               if (quit_handler) quit_handler();
+           }),
+           "Quit the game", "Выход из игры",
+           "Closes the game like the window's close button; in a party the others are told",
+           "Закрывает игру, как кнопка закрытия окна; группа об этом узнает",
+           {AddText("Quit", "Выйти"), AddText("Press again", "Нажмите ещё раз")}, Kind::Toggle);
 
     // ---- Party (party_status.h): the action table's rows. ----
     AddPage("Party", "Группа", "Party co-op: status, code, rejoin, leave (bbport)",
@@ -1014,6 +1031,10 @@ int PartyRowCount() {
 
 void SetRestartHandler(void (*restart)()) {
     restart_handler = restart;
+}
+
+void SetQuitHandler(void (*quit)()) {
+    quit_handler = quit;
 }
 
 } // namespace BbGameMenu::Pages
