@@ -849,6 +849,10 @@ void ProbeTick(const GameSnapshot& s) {
             Field<int>(Slot(kSlotWorldChrMan), 0x30, -1), Role(), Field<int>(Slot(kSlotFlow), 0x84, -1),
             DescribeTasks().c_str());
         Log("B2 load report: presence %s", DescribePresence().c_str());
+        const u64 gsm = Slot(kSlotGsm);
+        Log("B2 load report: GSM +0x1593 %u +0x1594 %#x +0x1598 %u +0x159c %#x, GameDataMan +0x68 %#x, +0x0c %#x",
+            unsigned(Field<u8>(gsm, 0x1593)), Field<u32>(gsm, 0x1594), unsigned(Field<u8>(gsm, 0x1598)),
+            Field<u32>(gsm, 0x159c), Field<u32>(Slot(kSlotGameData), 0x68), Field<u32>(gsm, 0x0c));
     }
     st.was_loading = loading;
 }
@@ -3121,6 +3125,19 @@ bool TravelAlone(const TravelIntent& t, AloneWhy why) {
     }
     if (was) {
         SafeWrite(gsm + 0x1521, &zero, 1);
+    }
+    {
+        // The host's packet-0x19 value sticks in GSM +0x1598 / +0x159C and goes into every later
+        // host-world load's descriptor (+0x8C -> GameDataMan +0x68); for a map the host is not in
+        // it is the wrong one (live split5: an alone load to the Dream built no map, a grey screen).
+        Log("guest: alone load: GSM +0x1593 %u +0x1594 %#x +0x1598 %u +0x159c %#x, GameDataMan +0x68 %#x",
+            unsigned(Field<u8>(gsm, 0x1593)), Field<u32>(gsm, 0x1594), unsigned(Field<u8>(gsm, 0x1598)),
+            Field<u32>(gsm, 0x159c), Field<u32>(Slot(kSlotGameData), 0x68));
+        static const bool keep = std::getenv("BB_PARTY_SPLIT_KEEP_1598") != nullptr;
+        if (!keep) {
+            SafeWrite(gsm + 0x1598, &zero, 1);
+            SafeWrite(gsm + 0x1593, &zero, 1);
+        }
     }
     g_rejoin = true;
     const int three = 3;
