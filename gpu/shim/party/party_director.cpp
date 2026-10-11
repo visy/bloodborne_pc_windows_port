@@ -149,6 +149,7 @@ struct Test {
     std::uint32_t a11_entity = 0;
     std::uint32_t a11_lamp = 0;  // a11_lamp=ID: the lamp warp first (2 s after the first steady world)
     bool a11_lamp_done = false, a11_reloaded = false;
+    bool a11_mortal = false;  // a11_mortal: not invincible (the boss may kill the host)
     Clock::time_point a11_lamp_world_at{};
     Clock::time_point a11_bar_at{};
     bool a11_bar_seen = false;
@@ -1533,7 +1534,7 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             // Invincible for the fight (EnableInvincible, chr +0x1E1 bit 14): the fight must outlast
             // the joiner's arrival in its own world.
             std::uint32_t f = 0;
-            if (SafeRead(player + 0x1e1, &f, 4)) {
+            if (!t.a11_mortal && SafeRead(player + 0x1e1, &f, 4)) {
                 f |= 1u << 14;
                 SafeWrite(player + 0x1e1, &f, 4);
             }
@@ -1983,6 +1984,8 @@ void PartyDirector::ConfigureFromEnv() {
                     st.test.a11_pos[2] = z;
                     st.test.a11_move_at = at;
                 }
+            } else if (item == "a11_mortal") {
+                st.test.a11_mortal = true;
             } else if (item.rfind("a11_lamp=", 0) == 0) {
                 st.test.a11_lamp = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 9, nullptr, 10));
             } else if (item.rfind("a11_kill=", 0) == 0) {

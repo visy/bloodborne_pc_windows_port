@@ -563,7 +563,10 @@ __attribute__((noinline)) BB_COOP_SYSV u64 LeaveEntryHook(u64 session) {
     if (g_on.load() && (role == RoleClient || role == RoleHost)) {
         const u64 base = Guest(0);
         if (ret > base + 5 && ret - base < 0x6000000) {
-            Log("leave: BeginLeaveSession called from +0x%llx (role %d)", ull(ret - base - 5), role);
+            Log("leave: BeginLeaveSession called from +0x%llx (role %d); session event handler state: flow +0x84 %d, "
+                "GSM +0x1592 %u, flow +0xF4 %.1f",
+                ull(ret - base - 5), role, Field<int>(Slot(kSlotFlow), 0x84, -1), unsigned(Field<u8>(Slot(kSlotGsm), 0x1592)),
+                double(Field<float>(Slot(kSlotFlow), 0xf4)));
         } else {
             Log("leave: BeginLeaveSession called through a party hook (role %d)", role);
         }
