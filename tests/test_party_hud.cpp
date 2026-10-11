@@ -98,10 +98,11 @@ static void ComposeBoard() {
     Board b;
     hud::Compose(in, &b);
     assert(b.active && b.count == 3);
-    // The host: in our world, read from its PlayerIns here (newer than its VITALS).
+    // The host: in our world; its position from its PlayerIns here, HP from its VITALS (a remote
+    // data module lags).
     const hud::Companion& h = b.c[0];
     assert(std::strcmp(h.name, "Hunter0") == 0 && h.slot == 0 && h.same_world && h.local_read);
-    assert(h.have_hp && h.hp == 420 && h.max_hp == 1000 && h.alive && h.have_stamina && h.stamina == 50);
+    assert(h.have_hp && h.hp == 500 && h.max_hp == 1000 && h.alive && !h.have_stamina);
     assert(h.have_pos && h.same_map && Near(h.pos[0], 3) && h.age_ms == 0);
     assert(Near(hud::Distance(b.me_pos, h.pos), 5));
     // The other guest at home: from its VITALS, greyed (not our world), other map, dead.
@@ -112,6 +113,11 @@ static void ComposeBoard() {
     const hud::Companion& l = b.c[2];
     assert(l.slot == 3 && !l.connected && !l.same_world && !l.have_hp && !l.have_pos);
 
+    // Without VITALS HP, the local read's HP counts.
+    v[0].flags = kVitalsHasPos;
+    hud::Compose(in, &b);
+    assert(b.c[0].have_hp && b.c[0].hp == 420 && b.c[0].have_stamina && b.c[0].stamina == 50);
+    v[0].flags = kVitalsValid | kVitalsAlive | kVitalsHasPos;
     // A chr that did not match by name changes nothing; without the local read the host comes
     // from its VITALS (same map: distance).
     std::snprintf(chr.name, sizeof chr.name, "Nobody");

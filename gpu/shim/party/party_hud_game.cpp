@@ -10,8 +10,12 @@
 //     (party_b2 guest HP keep, docs/party/npc_peer.md Return step)
 //   PlayerIns +0x58 -> +8 -> +0x3b0 -> +0x68 physics: position +0x1e0, rotation +0x1d0 (yaw [1])
 //     (party_b2 ChrPos / the B2 destination)
-//   PlayerIns +0x3d8 the peer's PlayerId (party_b2 PlayerForPeer: IdEquals): it holds the member's
-//     online id (= its PartyLink name, net/bbnet_internal.h), which matches a chr to a member.
+// A remote PlayerIns does not say whose it is in a readable way (its PlayerId at +0x3d8 holds
+// pointers, not the online id: BB_PARTY_HUD_LOG run, 2026-10-11), so chrs are matched to members
+// by position: each to the member in this world whose own game reported the nearest position
+// (VITALS, <= 8 m); a single chr left over goes to the single member left over. Its HP here reads
+// 1 / 1 (the remote data module is not kept up to date): HP comes from VITALS, the position (exact,
+// every frame) from the chr.
 #include "party_hud.h"
 #include "game_state.h"
 #include "coop_hooks.h"
@@ -33,8 +37,6 @@ namespace {
 
 using u32 = std::uint32_t;
 constexpr u64 kSlotWorldChrMan = 0x553e878;
-constexpr u64 kPeerIdOff = 0x3d8;
-constexpr std::size_t kPeerIdBytes = 0x40;
 
 void Log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 void Log(const char* fmt, ...) {
@@ -66,9 +68,9 @@ struct ChrRead {
     float yaw = 0;
 };
 
-// HP 0..99999 and max > 0: a live data module (anything else is a half-built or freed chr).
+// HP 0..99999 and max > 1: a live data module (a remote player's reads 1 / 1) (anything else is a half-built or freed chr).
 bool PlausibleHp(int hp, int mx) {
-    return mx > 0 && mx <= 99999 && hp >= 0 && hp <= mx;
+    return mx > 1 && mx <= 99999 && hp >= 0 && hp <= mx;
 }
 
 ChrRead ReadChr(u64 chr) {
@@ -97,29 +99,6 @@ ChrRead ReadChr(u64 chr) {
         }
     }
     return r;
-}
-
-// The member whose online id the chr's PlayerId holds (a NUL-terminated copy of the name).
-int MatchName(const std::uint8_t* id, std::size_t n, const party::RosterEntry* roster, int roster_n) {
-    for (int i = 0; i < roster_n; ++i) {
-        const std::string& name = roster[i].name;
-        if (name.empty() || name.size() >= n) continue;
-        for (std::size_t at = 0; at + name.size() < n; ++at)
-            if (std::memcmp(id + at, name.data(), name.size()) == 0 && id[at + name.size()] == 0 &&
-                (at == 0 || id[at - 1] == 0 || id[at - 1] < 0x20))
-                return i;
-    }
-    return -1;
-}
-
-std::string Hex(const std::uint8_t* b, std::size_t n) {
-    std::string s;
-    char t[4];
-    for (std::size_t i = 0; i < n; ++i) {
-        std::snprintf(t, sizeof t, "%02x", b[i]);
-        s += t;
-    }
-    return s;
 }
 
 struct HudState {
@@ -192,19 +171,9 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
         for (int i = 0; entries && n > 0 && n <= 8 && i < n && chrs_n < party::kMaxVitals; ++i) {
             const u64 chr = Field<u64>(entries + u64(i) * 0x38, 0);
             if (!chr || chr == s.player) continue;
-            std::uint8_t id[kPeerIdBytes] = {};
-            if (!SafeRead(chr + kPeerIdOff, id, sizeof id)) continue;
-            const int m = MatchName(id, sizeof id, st.roster.data(), roster_n);
             const ChrRead r = ReadChr(chr);
-            if (log_now) {
-                char b[256];
-                std::snprintf(b, sizeof b, " [chr %d: %s, HP %d/%d st %d/%d, pos %s(%.1f %.1f %.1f), id %s]", i,
-                              m >= 0 ? st.roster[m].name.c_str() : "?", r.hp, r.max_hp, r.stamina, r.max_stamina,
-                              r.have_pos ? "" : "none ", r.pos[0], r.pos[1], r.pos[2], Hex(id, 0x30).c_str());
-                log_chrs += b;
-            }
+            if (!r.have_pos) continue;
             party::hud::LocalChr& l = chrs[chrs_n++];
-            if (m >= 0) std::snprintf(l.name, sizeof l.name, "%s", st.roster[m].name.c_str());
             l.have_hp = r.have_hp;
             l.hp = r.hp;
             l.max_hp = r.max_hp;
@@ -214,8 +183,34 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
             std::memcpy(l.pos, r.pos, sizeof l.pos);
         }
     }
-    // A chr whose PlayerId did not name anyone: when exactly one chr and exactly one member in
-    // this world are left unmatched, they are each other (a two-player party always).
+    party::MemberVitals vit[party::kMaxVitals];
+    const int vit_n = link->vitals(vit, party::kMaxVitals);
+    // Chrs to members by the positions the members' games reported (nearest first, <= 8 m).
+    for (;;) {
+        float best = 8.0f * 8.0f;
+        int bc = -1, bm = -1;
+        for (int c = 0; c < chrs_n; ++c) {
+            if (chrs[c].name[0]) continue;
+            for (int v = 0; v < vit_n; ++v) {
+                if (!(vit[v].flags & party::kVitalsHasPos) || vit[v].slot == link->local_slot()) continue;
+                const party::RosterEntry* e = nullptr;
+                for (const party::RosterEntry& r : st.roster)
+                    if (r.slot == vit[v].slot) e = &r;
+                if (!e || !e->connected || !party::hud::SameWorld(link->local_slot(), local_state, e->slot, e->state))
+                    continue;
+                bool taken = false;
+                for (int k = 0; k < chrs_n; ++k) taken = taken || e->name == chrs[k].name;
+                if (taken) continue;
+                const float d2 = (chrs[c].pos[0] - vit[v].pos[0]) * (chrs[c].pos[0] - vit[v].pos[0]) +
+                                 (chrs[c].pos[1] - vit[v].pos[1]) * (chrs[c].pos[1] - vit[v].pos[1]) +
+                                 (chrs[c].pos[2] - vit[v].pos[2]) * (chrs[c].pos[2] - vit[v].pos[2]);
+                if (d2 < best) best = d2, bc = c, bm = static_cast<int>(e - st.roster.data());
+            }
+        }
+        if (bc < 0) break;
+        std::snprintf(chrs[bc].name, sizeof chrs[bc].name, "%s", st.roster[bm].name.c_str());
+    }
+    // One chr and one member in this world left over: each other (no VITALS position yet).
     {
         int open_chr = -1, open_chrs = 0, open_member = -1, open_members = 0;
         for (int i = 0; i < chrs_n; ++i)
@@ -230,8 +225,14 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
         if (open_chrs == 1 && open_members == 1)
             std::snprintf(chrs[open_chr].name, sizeof chrs[open_chr].name, "%s", st.roster[open_member].name.c_str());
     }
-    party::MemberVitals vit[party::kMaxVitals];
-    const int vit_n = link->vitals(vit, party::kMaxVitals);
+    if (log_now)
+        for (int c = 0; c < chrs_n; ++c) {
+            char b[160];
+            std::snprintf(b, sizeof b, " [chr %s: HP %d/%d st %d/%d, pos (%.1f %.1f %.1f)]",
+                          chrs[c].name[0] ? chrs[c].name : "?", chrs[c].hp, chrs[c].max_hp, chrs[c].stamina,
+                          chrs[c].max_stamina, chrs[c].pos[0], chrs[c].pos[1], chrs[c].pos[2]);
+            log_chrs += b;
+        }
 
     party::hud::ComposeIn in;
     in.local_slot = link->local_slot();

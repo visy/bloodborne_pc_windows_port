@@ -91,7 +91,7 @@ void Compose(const ComposeIn& in, Board* out) {
                 if (std::strncmp(l.name, c.name, kNameBytes) != 0) continue;
                 c.local_read = true;
                 c.age_ms = 0;
-                if (l.have_hp) {
+                if (l.have_hp && !c.have_hp) {  // VITALS first: the remote data module lags
                     c.have_hp = true;
                     c.hp = l.hp;
                     c.max_hp = l.max_hp;
