@@ -1011,6 +1011,8 @@ bool RunTestFixture(const GameSnapshot& s, int step) {
 
 } // namespace
 
+BB_COOP_SYSV void LampObjEntry(u64 obj, u64, u64, u64, u64, u64); // test probe (below)
+
 void GuestServicesInit() {
     if (g.init) {
         return;
@@ -1052,6 +1054,12 @@ void GuestServicesInit() {
         return;
     }
     SetEmevdRewriter2(&DollRewriter);
+    if (g.test.find("lampprobe") != std::string::npos) {
+        // push rbp; mov rbp, rsp; push r15..r12, rbx; sub rsp, 0x2848 (20 bytes; then mov [rbp-0x2820], rdx).
+        HookPrologue(0x12F5C40, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x81,
+                                 0xec, 0x48, 0x28, 0x00, 0x00},
+                     &LampObjEntry, "lamp object update (test probe)");
+    }
     if (!g.test.empty()) {
         // Trace hooks for the live tests only (BB_PARTY_GUESTSVC_TEST): the LevelUp menu factory,
         // the talk command ids, the menu requests.
@@ -1116,6 +1124,39 @@ bool GuestServicesOnLampRequest(int slot, const std::string& body, std::string* 
 // Live test (BB_PARTY_GUESTSVC_TEST "lamppress"): a guest in the host's world outside the Dream
 // presses Cross whenever an action prompt is up (it arrives at the host's lamp after a host warp),
 // at most 8 times, 1.5 s apart, until its lamp warp became a request.
+// Test-only lamp object probe ("lampprobe"): the lamp action-object update 0x12F5C40(obj) records
+// its objects; the tick logs each one's entity (+0x20), type (+0x28), current row (+0x2C) and the
+// four "unavailable" bytes +0x48..+0x4B (travel.md 1.1: 0x48 lamp state, 0x49 multiplayer,
+// 0x4A no lamp record, 0x4B someone else at it).
+std::atomic<std::uint64_t> g_lamp_objs[16];
+BB_COOP_SYSV void LampObjEntry(u64 obj, u64, u64, u64, u64, u64) {
+    for (auto& slot : g_lamp_objs) {
+        std::uint64_t cur = slot.load(std::memory_order_relaxed);
+        if (cur == obj) {
+            return;
+        }
+        if (cur == 0 && slot.compare_exchange_strong(cur, obj)) {
+            return;
+        }
+    }
+}
+void LogLampObjs() {
+    for (auto& slot : g_lamp_objs) {
+        const std::uint64_t o = slot.load(std::memory_order_relaxed);
+        if (!o) {
+            continue;
+        }
+        std::int32_t ent = 0, row = 0;
+        std::uint8_t type = 0, b[4] = {};
+        SafeGet(o + 0x20, &ent);
+        SafeGet(o + 0x28, &type);
+        SafeGet(o + 0x2c, &row);
+        SafeRead(o + 0x48, b, 4);
+        Log("test: lamp object %p entity %d type %u row %d: +0x48 %u +0x49 %u +0x4A %u +0x4B %u",
+            reinterpret_cast<void*>(o), ent, type, row, b[0], b[1], b[2], b[3]);
+    }
+}
+
 struct LampPress {
     double next = 0, release = 0;
     int presses = 0;
@@ -1138,6 +1179,9 @@ void LampPressTick(const GameSnapshot& s, double now) {
         return;
     }
     P.next = now + 1.5;
+    if (g.test.find("lampprobe") != std::string::npos) {
+        LogLampObjs();
+    }
     if (const std::size_t f = g.test.find("lampflag="); f != std::string::npos) {
         // The lamp's own "used" flag (the one its common event 7200 instance waits for), as the
         // lamp interaction would set it on this game (load mode 1: the host-world overlay).
