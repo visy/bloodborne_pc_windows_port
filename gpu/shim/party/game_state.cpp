@@ -450,6 +450,11 @@ bool GiveItem(std::uint32_t type_bits, std::uint32_t id, int count) {
     return true;
 }
 
+bool CutscenePlaying() {
+    const std::uint64_t player = Field<std::uint64_t>(Slot(kSprjRemo), 8, 0);
+    return (Field<std::uint8_t>(player, 0x168, 0) & 1) != 0;
+}
+
 bool RequestRemoSkip(bool* skippable) {
     const std::uint64_t remo = Slot(kSprjRemo);
     const std::uint64_t player = Field<std::uint64_t>(remo, 8, 0);

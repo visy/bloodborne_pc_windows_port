@@ -56,6 +56,8 @@ struct HostWatchdogInput {
     bool in_world = false;    ///< world up, no loading screen
     int session_role = -1;    ///< SprjSessionManager +0x124
     int cooperators = -1;     ///< -1: unknown (then nothing changes)
+    /// Members in another area (split travel, docs/party/split_travel.md): present, not stuck.
+    int members_apart = 0;
     std::vector<party::RosterEntry> roster;
 };
 

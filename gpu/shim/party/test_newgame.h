@@ -120,6 +120,7 @@ private:
 /// box, or Enter / Esc there, in-process by the caller: TakeTyped, "\n" = Enter, "\x1b" = Esc). A
 /// pause (wait, mark=) is not a press: a text wait after it looks back to the last real press. A
 /// '~' prefix is accepted and means the default (looked up since the previous press).
+/// A '!' prefix makes a text wait strict: no text in 10 s -> the script stops (STUCK), no blind press.
 class MenuScript {
 public:
     static constexpr std::uint32_t kWait = 0xffffffffu;
@@ -144,11 +145,12 @@ public:
 
 private:
     struct Press {
-        std::uint32_t buttons;
-        bool new_screen;
+        std::uint32_t buttons = 0;
+        bool new_screen = false;
         std::string name;
         std::string text;   ///< @text: wait for it
         bool optional = false;
+        bool strict = false;  ///< '!': no text in 10 s -> STUCK instead of a blind press
         std::string typed;  ///< type=TEXT / enter / esc
     };
     static std::uint32_t Held(std::uint32_t b) { return b == kWait || b == kType ? 0 : b; }

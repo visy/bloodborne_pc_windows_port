@@ -49,6 +49,8 @@ struct Page {
 
 /// Builds the texts, fields and pages (once; later calls do nothing).
 void Define();
+/// Split travel's question text id (0: "Travel with the party?" YES / NO), for a game dialog.
+u32 SplitTravelText(int which);
 const std::vector<Page>& All();
 int FieldCount();
 
@@ -57,6 +59,8 @@ const char16_t* Text(u32 id, bool russian);
 std::size_t TextCount();
 /// For the test: whether `id` is made at run time.
 bool IsDynamic(u32 id);
+/// Counts the run-time text changes (a value column to redraw while its page is open).
+std::uint64_t DynamicChanges();
 
 /// What the game's rows bind (stable addresses for the run).
 int* Value(int field);
