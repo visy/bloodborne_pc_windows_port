@@ -98,8 +98,10 @@ int main() {
     }
     {
         const std::vector<EmevdSkipRule> rules = LampSkipRules();
-        assert(rules.size() == 1);
+        assert(rules.size() == 2);
         assert(EmevdSkipMatches(rules[0], 7200, 1003, 6, 0));
+        assert(EmevdSkipMatches(rules[1], 12107000, 1003, 6, 0));
+        assert(!EmevdSkipMatches(rules[1], 12107000, 2003, 49, 4));
         assert(!EmevdSkipMatches(rules[0], 7200, 1003, 6, 1));
         assert(!EmevdSkipMatches(rules[0], 7300, 1003, 6, 0));
     }

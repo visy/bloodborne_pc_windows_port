@@ -149,7 +149,9 @@ bool LampRequestGate::Accept(bool host_ready, double now, std::string* why) {
 
 std::vector<EmevdSkipRule> LampSkipRules() {
     std::vector<EmevdSkipRule> out;
-    ParseEmevdSkipRules("7200:1003:6@0", &out);
+    // 7200: a world lamp -> the Dream; 12107000: a Dream headstone -> its lamp (m21_00_00_00, one
+    // instance per lamp: 1003[6] end if client, wait for the menu's flag, 2003[49] warp).
+    ParseEmevdSkipRules("7200:1003:6@0,12107000:1003:6@0", &out);
     return out;
 }
 
@@ -268,10 +270,13 @@ std::uint64_t BB_COOP_SYSV IsClientFilter(std::uint64_t env, std::uint64_t value
     // The talk script id (t210304 -> 210304; the case-19 environment is valid here: the game
     // just read +0x25).
     const std::uint32_t talk = *reinterpret_cast<const std::uint32_t*>(env + 0x10);
-    // Headstones stay in their client wait on a guest (live: choosing an area in the headstone menu
-    // crashed the guest at once - the warp list is built from lamp flags the guest's overlay lacks);
-    // the host's headstones work in a party (MultiFilter) and the party follows the host.
-    if (!GuestServiceTalkAllowed(talk, g.extra)) {
+    // Headstones (t210000-t210003) on a guest with the party lamps on: their warp list comes from
+    // the lamp flags of the host-world overlay, which the host-world mirror (party_progress) now
+    // fills (before it, choosing an area crashed the guest: the list indexed past its end). The
+    // choice sets the lamp's flag; m21's event 12107000 (client end skipped, LampSkipRules) warps,
+    // which becomes the guest's lamp request to the host (the party follows the host's warp).
+    const bool headstone = g_lamps.load(std::memory_order_relaxed) && talk >= 210000 && talk <= 210003;
+    if (!headstone && !GuestServiceTalkAllowed(talk, g.extra)) {
         return value;
     }
     g_overrides.fetch_add(1, std::memory_order_relaxed);
@@ -1169,15 +1174,110 @@ void LogLampObjs() {
         SafeGet(o + 0x28, &type);
         SafeGet(o + 0x2c, &row);
         SafeRead(o + 0x48, b, 4);
-        Log("test: lamp object %p entity %d type %u row %d: +0x48 %u +0x49 %u +0x4A %u +0x4B %u",
-            reinterpret_cast<void*>(o), ent, type, row, b[0], b[1], b[2], b[3]);
+        // Its FrpgNetMan (0x553B120) +0xC70 lamp entry (the type's source, 0x146E360): list at
+        // +0x30 (node +0 next, +0x10 entry), entry +8 entity, +0xC / +0xE s16 counters, +0x10 lit,
+        // +0x11 registered, +0x14 flag base, +0x18.
+        std::string entry = "no +0xC70 entry";
+        std::uint64_t net = 0, c70 = 0, head = 0;
+        if (SafeGet(Guest(0x553b120), &net) && net && SafeGet(net + 0xc70, &c70) && c70 &&
+            SafeGet(c70 + 0x30, &head) && head) {
+            std::uint64_t n = 0;
+            SafeGet(head, &n);
+            for (int guard = 0; n && n != head && guard < 512; ++guard) {
+                std::uint64_t e = 0;
+                std::int32_t eent = 0;
+                if (SafeGet(n + 0x10, &e) && e && SafeGet(e + 8, &eent) && eent == ent) {
+                    std::int16_t c = 0, d = 0;
+                    std::uint8_t lit = 0, reg = 0;
+                    std::int32_t f14 = 0, f18 = 0;
+                    SafeGet(e + 0xc, &c);
+                    SafeGet(e + 0xe, &d);
+                    SafeGet(e + 0x10, &lit);
+                    SafeGet(e + 0x11, &reg);
+                    SafeGet(e + 0x14, &f14);
+                    SafeGet(e + 0x18, &f18);
+                    char t[160];
+                    std::snprintf(t, sizeof t, "+0xC70 entry %p: +0xC %d +0xE %d lit %u reg %u +0x14 %d +0x18 %d",
+                                  reinterpret_cast<void*>(e), c, d, lit, reg, f14, f18);
+                    entry = t;
+                    break;
+                }
+                if (!SafeGet(n, &n)) {
+                    break;
+                }
+            }
+        }
+        Log("test: lamp object %p entity %d type %u row %d: +0x48 %u +0x49 %u +0x4A %u +0x4B %u; %s",
+            reinterpret_cast<void*>(o), ent, type, row, b[0], b[1], b[2], b[3], entry.c_str());
     }
+}
+
+/// "lampwalk" (with lampprobe): stand the local player 1 m in front of the nearest probed lamp
+/// object, facing it. The lamp's map object comes from 0x13C9AF0(entity, &index) (the lamp
+/// update's own lookup, 0x2E0-byte record); its world matrix: 3x4 rows at +0x240..+0x26F, the
+/// translation in column 3 (+0x24C, +0x25C, +0x26C; live: Central Yharnam's lamp 2411951 at
+/// (-196.8, -28.6, 65.4), 5 m from the host's lamp arrival spot - out of the prompt's range).
+bool WalkToLamp(const GameSnapshot& s) {
+    float me[4] = {};
+    if (!s.player || !SafeRead(s.player + 0xc0, me, sizeof me)) {
+        return false;
+    }
+    float best_d = 1e9f, best[3] = {};
+    std::int32_t best_ent = 0;
+    for (auto& slot : g_lamp_objs) {
+        const std::uint64_t o = slot.load(std::memory_order_relaxed);
+        std::int32_t ent = 0;
+        if (!o || !SafeGet(o + 0x20, &ent) || ent <= 0) {
+            continue;
+        }
+        std::uint32_t idx = 0xffffffffu;
+        using Find = std::uint64_t(BB_COOP_SYSV*)(std::int32_t, std::uint32_t*);
+        const std::uint64_t rec = reinterpret_cast<Find>(Guest(0x13c9af0))(ent, &idx);
+        float m[16] = {};
+        if (!rec || !SafeRead(rec + 0x230, m, sizeof m)) {
+            continue;
+        }
+        const float t[3] = {m[7], m[11], m[15]};  // 3x4 rows at +0x240: translation in column 3
+        const float dx = t[0] - me[0], dy = t[1] - me[1], dz = t[2] - me[2];
+        const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+        Log("test: lampwalk: lamp %d record %p: rows %.1f %.1f %.1f %.1f | %.1f %.1f %.1f %.1f | %.1f %.1f %.1f %.1f | "
+            "%.1f %.1f %.1f %.1f; player (%.1f, %.1f, %.1f), %.1f m", ent, reinterpret_cast<void*>(rec), m[0], m[1],
+            m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11], m[12], m[13], m[14], m[15], me[0], me[1],
+            me[2], d);
+        if (d < best_d) {
+            best_d = d;
+            best_ent = ent;
+            std::memcpy(best, t, sizeof best);
+        }
+    }
+    if (!best_ent || best_d > 30.0f) {
+        return false;
+    }
+    float dx = me[0] - best[0], dz = me[2] - best[2];
+    const float h = std::sqrt(dx * dx + dz * dz);
+    if (h < 0.01f) {
+        dx = 0, dz = 1;
+    } else {
+        dx /= h, dz /= h;
+    }
+    alignas(16) float pos[4] = {best[0] + dx * 1.0f, best[1], best[2] + dz * 1.0f, 1.0f};
+    const float a = std::atan2(best[0] - pos[0], best[2] - pos[2]);
+    alignas(16) float rot[4] = {0, a + 3.14159265f, 0, 0};
+    std::uint64_t vtbl = 0, fn = 0;
+    if (!SafeGet(s.player, &vtbl) || !SafeGet(vtbl + 0x5f8, &fn) || !fn) {
+        return false;
+    }
+    using WarpFn = void(BB_COOP_SYSV*)(std::uint64_t, const float*, const float*, std::uint64_t);
+    reinterpret_cast<WarpFn>(fn)(s.player, pos, rot, 0);
+    Log("test: lampwalk: standing 1 m in front of lamp %d at (%.1f, %.1f, %.1f)", best_ent, pos[0], pos[1], pos[2]);
+    return true;
 }
 
 struct LampPress {
     double next = 0, release = 0;
     int presses = 0;
     bool done = false;
+    bool walked = false;
 } g_lamp_press;
 
 void LampPressTick(const GameSnapshot& s, double now) {
@@ -1213,6 +1313,12 @@ void LampPressTick(const GameSnapshot& s, double now) {
         }
         return;
     }
+    if (g.test.find("lampwalk") != std::string::npos && !P.walked) {
+        P.walked = WalkToLamp(s);  // then the prompt check on the next round
+        if (P.walked) {
+            return;
+        }
+    }
     std::uint32_t prompt = 0;
     const bool up = PromptUp(&prompt);
     if (!up && P.presses == 0 && P.next - now < 1.6) {
@@ -1237,6 +1343,20 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
     g_session_role = s.session_role;
     if (!g.test.empty()) {
         LampPressTick(s, Now());
+        static double last_host_probe = 0;
+        if (g.test.find("lampprobe") != std::string::npos && s.session_role == 3 && s.world_up && !s.loading &&
+            !IsDreamMap(s.map_id) && Now() - last_host_probe >= 3.0) {
+            last_host_probe = Now();  // the host's view of the same lamp objects (comparison)
+            LogLampObjs();
+            static bool host_walked = false;
+            if (!host_walked && g.test.find("lampwalk") != std::string::npos) {
+                host_walked = WalkToLamp(s);  // the host at its lamp too: is there a prompt?
+            } else if (host_walked) {
+                std::uint32_t prompt = 0;
+                const bool up = PromptUp(&prompt);
+                Log("test: lampwalk: host at the lamp: prompt %s %u", up ? "up" : "not seen", prompt);
+            }
+        }
     }
     if (!g_lamps.load()) {
         return;
@@ -1275,8 +1395,13 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
     {
         static bool started = false;
         static double coop_at = 0;
-        if (!started && g.test.find("hostheadstone") != std::string::npos && s.session_role == 3 &&
-            IsDreamMap(s.map_id) && s.world_up && !s.loading && s.cooperators >= 1) {
+        // "guestheadstone[;keys=...]": the same on the GUEST (a client in the host's Dream; needs
+        // the headstones allowed for guests, BB_PARTY_GUEST_LAMPS=1).
+        static const int role = g.test.find("guestheadstone") != std::string::npos ? kSessionRoleClient
+                                : g.test.find("hostheadstone") != std::string::npos ? 3
+                                                                                      : -1;
+        if (!started && role >= 0 && s.session_role == role &&
+            IsDreamMap(s.map_id) && s.world_up && !s.loading && (role != 3 || s.cooperators >= 1)) {
             if (coop_at == 0) {
                 coop_at = Now();
             } else if (Now() - coop_at >= 20.0 && FindChr(210000)) {
@@ -1291,10 +1416,10 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
                 }
                 g_lvl.stage = LevelUpScript::WaitPlaced;
                 g_lvl.at = Now();
-                Log("test: host headstone: starting (cooperators %d)", s.cooperators);
+                Log("test: %s headstone: starting (cooperators %d)", role == 3 ? "host" : "guest", s.cooperators);
             }
         }
-        if (started && s.session_role == 3) {
+        if (started && s.session_role == role) {
             LevelUpTick(s, Now());
         }
     }

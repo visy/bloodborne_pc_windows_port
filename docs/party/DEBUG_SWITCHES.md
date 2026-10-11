@@ -85,6 +85,7 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_FOURP_RECRUIT` | `0`: no cosmetic server-side cap patch (P5) | on | `gpu/shim/party/party_fourp.cpp` |
 | `BB_PARTY_PROGRESS_SCAN_MS` | Host flag diff period in ms (min 100) | 1000 | `gpu/shim/party/party_progress.cpp` |
 | `BB_PARTY_PROGRESS_MIRROR` | `1`: also writes set-only flags into a summoned guest's host-world overlay | off | `gpu/shim/party/party_progress.cpp` |
+| `BB_PARTY_WORLD_MIRROR` | `0`: the guest no longer copies the host's world (EVENT `world_groups`) into its host-world flag overlay (vanilla: only the 12 groups of packet 0x10; A/B tests) | on | `gpu/shim/party/party_progress.cpp` |
 | `BB_PARTY_FLAG_DUMP` | `1`: BBPF event-flag snapshots to `<user>/party/flags_*.bbpf` (`tools/party/flag_tool.py`): a `start` dump at the first steady world (what the save held), then session boundaries and syncs | off | `gpu/shim/party/party_progress.cpp` |
 | `BB_PARTY_B2_DEATH_GRACE` | s a guest's own death in the host's world is held for a host travel (a wipe: the guest follows the host's respawn, docs/party/b2_seamless.md 6.8); 0 = no hold | 8 | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_B2_SOLO_RESPAWN` | `0`: a guest that dies alone (host alive) takes the old redirect (leave, bell) instead of respawning at the host's last lamp in the host's world (docs/party/b2_seamless.md 6.9) | on | `gpu/shim/party/party_b2.cpp` |
@@ -101,7 +102,7 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_GUEST_SERVICES_TALK` | `all` or a comma list of more talk script ids the guest may use (diagnostics) | built-in list | `gpu/shim/party/party_guestsvc.cpp` |
 | `BB_PARTY_GUEST_LAMPS` | `1`: lamps and headstones work in a party; a guest's lamp / headstone use moves the whole party (host-led) | off (opt-in until run live) | `gpu/shim/party/party_guestsvc.cpp` |
 | `BB_PARTY_HEADSTONES` | `0`: the Hunter's Dream headstones stay vanilla (no headstone travel while guests are present) | on in party mode (the host's headstone travel moves the party) | `gpu/shim/party/party_guestsvc.cpp` |
-| `BB_PARTY_GUESTSVC_TEST` | `echoes=N;warp=x,y,z,yaw[/...]`: live-test fixture on the guest, 15 s after the guest-services gate opened | off | `gpu/shim/party/party_guestsvc.cpp` |
+| `BB_PARTY_GUESTSVC_TEST` | `echoes=N;warp=x,y,z,yaw[/...]`: live-test fixture on the guest, 15 s after the guest-services gate opened; also `lamppress`, `lampflag=ID`, `lampprobe` (lamp objects and their FrpgNetMan +0xC70 entries; host side too), `hostheadstone` / `guestheadstone` with `keys=cross,...` (that role uses headstone t210000) | off | `gpu/shim/party/party_guestsvc.cpp` |
 | `BB_PARTY_PHANTOM_PROBE` | `insight`, `refill`: one offline probe 5 s after the world is up | off | `gpu/shim/party/party_phantom.cpp` |
 | `BB_PARTY_TRACE` | `1`: logs every FROM API / HTTP request and answer (default: the first few) | off | `gpu/shim/net/bbnet_glue.cpp` |
 | `BB_PARTY_TRACE_SSINFO` | `1`: logs the game's ss.info parse result | off | `gpu/shim/party/party_director.cpp` |
