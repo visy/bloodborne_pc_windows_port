@@ -215,7 +215,7 @@ ssize_type raw_recvfrom(sockfd_t fd, void* buf, std::size_t len, int flags, sock
 }
 // Every UDP datagram leaves here: through the network simulator when BB_NET_SIM is on.
 ssize_type raw_sendto(sockfd_t fd, const void* buf, std::size_t len, const sockaddr_in* sa) {
-    if (netsim::enabled()) {
+    if (netsim::enabled() && netsim::applies_to(netsim::config(), sa->sin_addr.s_addr)) {
         return netsim::sendto(static_cast<std::uintptr_t>(fd), buf, len, sa->sin_addr.s_addr, sa->sin_port);
     }
     return ::sendto(fd, static_cast<const char*>(buf), static_cast<int>(len), 0, reinterpret_cast<const sockaddr*>(sa),

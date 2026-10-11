@@ -78,7 +78,9 @@ bool parse(const char* spec, Config* out, std::string* error) {
             return false;
         }
         if (key == "lat") out->lat_ms = v;
-        else if (key == "jitter") out->jitter_ms = v;
+        else if (key == "jitter" || key == "jit") out->jitter_ms = v;
+        else if (key == "at") out->outage_at_ms = v;
+        else if (key == "any") out->any_addr = v != 0;
         else if (key == "loss") out->loss_pct = std::min(v, 100.0);
         else if (key == "dup") out->dup_pct = std::min(v, 100.0);
         else if (key == "reorder") out->reorder_pct = std::min(v, 100.0);
@@ -104,7 +106,69 @@ std::string describe(const Config& c) {
         std::snprintf(buf, sizeof(buf), ",outage=%g,every=%g", c.outage_ms, c.outage_every_ms);
         s += buf;
     }
+    if (c.outage_ms > 0 && c.outage_at_ms > 0) {
+        std::snprintf(buf, sizeof(buf), ",outage=%g,at=%g", c.outage_ms, c.outage_at_ms);
+        s += buf;
+    }
+    if (c.any_addr) s += ",any=1";
     return s;
+}
+
+bool outage_at(const Config& c, Clock::time_point epoch, Clock::time_point first, Clock::time_point now,
+               Clock::time_point* end) {
+    using ms = std::chrono::duration<double, std::milli>;
+    auto to_dur = [](double v) { return std::chrono::duration_cast<Clock::duration>(ms(v)); };
+    if (c.outage_ms <= 0) return false;
+    if (c.outage_at_ms > 0) {
+        const Clock::time_point from = epoch + to_dur(c.outage_at_ms), until = from + to_dur(c.outage_ms);
+        if (now >= from && now < until) {
+            if (end) *end = until;
+            return true;
+        }
+    }
+    if (c.outage_every_ms > 0) {
+        const double since = ms(now - first).count();
+        if (since >= c.outage_every_ms) {
+            const double into = std::fmod(since, c.outage_every_ms);
+            if (into < c.outage_ms) {
+                if (end) *end = now + to_dur(c.outage_ms - into);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool applies_to(const Config& c, std::uint32_t addr_net_order) {
+    if (!c.enabled) return false;
+    const auto* b = reinterpret_cast<const std::uint8_t*>(&addr_net_order);
+    return c.any_addr || b[0] == 127;
+}
+
+StreamDelay::StreamDelay(const Config& c, Clock::time_point epoch, std::uint64_t salt)
+    : cfg_(c), epoch_(epoch), rng_(c.seed * 0x9e3779b97f4a7c15ull + salt) {}
+
+Clock::time_point StreamDelay::schedule(Clock::time_point now) {
+    using ms = std::chrono::duration<double, std::milli>;
+    auto uniform = [this] { return std::uniform_real_distribution<double>(0.0, 1.0)(rng_); };
+    double d = cfg_.lat_ms;
+    if (cfg_.jitter_ms > 0) d += (uniform() * 2.0 - 1.0) * cfg_.jitter_ms;
+    if (d < 0) d = 0;
+    if (cfg_.loss_pct > 0 && uniform() * 100.0 < cfg_.loss_pct) {
+        // TCP: a lost segment is sent again after the retransmission timeout (at least 200 ms).
+        d += std::max(200.0, 3.0 * cfg_.lat_ms);
+        ++retransmits_;
+    }
+    Clock::time_point due = now + std::chrono::duration_cast<Clock::duration>(ms(d));
+    Clock::time_point end;
+    if (outage_at(cfg_, epoch_, epoch_, now, &end)) {
+        const Clock::time_point after = end + std::chrono::duration_cast<Clock::duration>(ms(cfg_.lat_ms));
+        if (after > due) due = after;
+        ++outage_holds_;
+    }
+    if (due < last_) due = last_;
+    last_ = due;
+    return due;
 }
 
 Queue::Queue(const Config& c) : cfg_(c), rng_(c.seed) {}
@@ -131,10 +195,7 @@ bool Queue::in_outage(Clock::time_point now) {
         first_ = now;
     }
     if (now >= black_from_ && now < black_until_) return true;
-    if (cfg_.outage_ms <= 0 || cfg_.outage_every_ms <= 0) return false;
-    const double since = std::chrono::duration<double, std::milli>(now - first_).count();
-    if (since < cfg_.outage_every_ms) return false;
-    return std::fmod(since, cfg_.outage_every_ms) < cfg_.outage_ms;
+    return outage_at(cfg_, has_epoch_ ? epoch_ : first_, first_, now, nullptr);
 }
 
 int Queue::submit(Clock::time_point now, std::uintptr_t fd, std::uint32_t addr, std::uint16_t port, const void* data,
@@ -245,6 +306,8 @@ struct Sim {
     Waiter waiter;
     Queue* queue = nullptr;  // never freed: the sender thread lives as long as the process
     bool thread_started = false;
+    Config cfg;
+    Clock::time_point epoch{};
 };
 Sim& sim() {
     static Sim* s = new Sim;
@@ -293,7 +356,23 @@ void configure(const Config& c) {
     if (s.queue) return;  // once per process
     if (!c.enabled) return;
     s.queue = new Queue(c);
-    std::printf("Net: network simulator on (%s)\n", describe(c).c_str());
+    s.cfg = c;
+    s.epoch = Clock::now();
+    s.queue->set_epoch(s.epoch);
+    std::printf("Net: network simulator on (%s)%s\n", describe(c).c_str(),
+                c.any_addr ? "" : " (loopback peers only)");
+}
+
+Config config() {
+    Sim& s = sim();
+    std::lock_guard<std::mutex> lk(s.mu);
+    return s.queue ? s.cfg : Config{};
+}
+
+Clock::time_point epoch() {
+    Sim& s = sim();
+    std::lock_guard<std::mutex> lk(s.mu);
+    return s.epoch;
 }
 
 bool enabled() {
