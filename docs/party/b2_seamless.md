@@ -471,6 +471,58 @@ Insight and consumables are kept (no bloodstain in the host's world: a phantom's
 part of the host's world, and the guest's own world is not where it died); the host's world is not
 reset. Fallback: no snapshot within 45 s -> the B1 fallback as before (redirect, leave, bell).
 
+### 6.10 Runs r18-r25: lone-death variants [R]
+
+* **Host's last lamp in another map** (r24-r25; fixture `host_lastlamp=2402950`: the host's
+  +0x1528 names a Cathedral Ward lamp while the party stands in m24_01 - the state after walking
+  into the next area. A stage warp 0x132E010 to m24_00 was tried first: points 2402950 /
+  2401950 are no warp regions, the host fell and recovered, r18/r21). `SoloRespawn` sees the lamp's
+  map (`ids::EntityMap`) differ from the current one and picks a lamp of the current map:
+  ReturnPointParam ids AAB295k, lit = common event 7000's 2009[5] flag `1AAB7800 + 20k` (m24_01:
+  2410950.. -> 12417800 / 820 / 840 / 860, from the EMEVD args). In the host-world overlay these
+  flags read 0 for every lamp (r25: `2412950:- 2412951:- 2412952:- ...`), so the first lamp of the
+  map is used (any ReturnPointParam row of the map is a valid respawn spot). r24 (before that
+  fallback) found none and took the old redirect (leave, bell; re-summoned 60 s later). r25: `the
+  host's last lamp 2402950 is not in m24_01_00_00; lit lamp here: 2412950` -> respawned in m24_01 at
+  (-199.7, -50.8, 179.4), still a client; the host removed the dead chr and re-created it.
+* **Three players** (r19, r22): r19 removed **both** guests' chrs on the host (remote chrs' HP read
+  1 on both). Now the guest sends where it died (`{"op":"respawn","pos":[...]}`) and the host
+  removes only the member chr within 6 m of it. r22: one removal, host cooperators 2 -> 1 -> 2, the
+  other guest untouched (its own view of the dying guest re-created 0.5 s later).
+* **45 s fallback** (r20, r23; host `BB_PARTY_B2_TEST_FAIL=resync`, both in the Dream): r20 stayed
+  dead in the host's world - the B1 replay of the synthetic intent was dropped ("not newer than
+  the last"). Fix: a failed lone-death respawn runs `GuestDeathRedirectNow` (r23: `FALLBACK (no host
+  snapshot within 45 s): the lone death's respawn failed; the usual death redirect runs` -> leave,
+  own-world respawn at the host's last lamp, bell). **Open**: in r23 the bell re-summon did not
+  complete in the 2 min left (host sign polled, signaling resolved, no join; the host room timed
+  out twice via +0x1789F99) - in r24 the same redirect re-summoned in 60 s, so the test-fail mode or
+  the Dream may matter; not resolved.
+* **Echoes** (r21, r25; `echoes=5000` director test aid on the guest): `echoes 5000` at the death and
+  after the respawn load; nothing dropped, as decided in 6.9.
+
+### 6.11 Runs r26-r32: re-summon after a redirect / crash; lit lamps [R]
+
+* **r23's failed re-summon did not reproduce** in 6 later attempts: r28 and r31 (the same scenario:
+  host `BB_PARTY_B2_TEST_FAIL=resync`, lone death in the Dream, 45 s fallback, redirect), r26 and r29
+  (plain redirect, `BB_PARTY_B2_SOLO_RESPAWN=0`), r32 (three redirects in a row in one run), r30
+  (guest crash at 60 s, `--crash-at`). Every re-join completed: bell -> client 4.4-6.5 s after the
+  guest's own world was ready, ~19.5 s after the redirect (13 s of that is the guest's own load; the
+  host's lone room times out via OnRoomTimeOut +0x1789F99 and is re-made 7 s later meanwhile).
+  r32: three consecutive redirect -> re-join cycles, 4.5 s ring -> client each.
+* What r23 showed: the guest got the host's `guest_invite` but its game never called
+  `sceNpMatching2JoinRoom`; the host's game sent no vport-40 summon handshake (no
+  ActivateConnection at the summon, its conn 2 to the guest was made right after the guest left).
+  A re-announce of ESTABLISHED on a re-activated signaling connection was tried and dropped: r28 /
+  r31 joined without any re-activation, so it is not the cause. One stale state found and fixed:
+  the host's `g_rejoin` stayed set across later rooms when its room ended during a member's
+  respawn re-join (r23: `rejoin 1` at both failed summons) - now cleared with the session
+  (`host: the session ended during a re-join; re-join state cleared`, r31). K5 (the only host-side
+  user) suppresses OnMatchingCheck leaves while it is set.
+* **Lit lamps** (r27): the lamp-lit flag is common event 7100's `7AAB0200 + k` for lamp object
+  AAB195k (m24_01: 72410200..203, EMEVD args; a T7 group the host-world mirror copies). r27, host's
+  last lamp set to another map: `lamps of m24_01_00_00: 2412950:- 2412951:lit` -> respawned at the
+  lit Central Yharnam lamp (-193.4, -28.6, 68.5); unlit 2412950 (1st Floor Sickroom) skipped.
+
 ## 7. Risks / open items
 
 * (Closed in 6.7 / 6.8) K10 / boss clear with a real kill; wipes (guest and host dead) and falls

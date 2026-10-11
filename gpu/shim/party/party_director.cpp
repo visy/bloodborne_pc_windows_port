@@ -114,7 +114,7 @@ struct TravelStep {
     // 1.2 m in front, Cross), wait for its menu, Down N times, Cross (args id:N).
     enum Kind {
         HostWarp, HostDie, GuestDie, HostKill, HostMove, GuestMove,
-        HostPress, GuestPress, HostMark, GuestMark, HostStage, HostWalk, HostHeadstone
+        HostPress, GuestPress, HostMark, GuestMark, HostStage, HostWalk, HostHeadstone, HostLastLamp
     } kind = HostWarp;
     std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30; HostKill: the entity id
     float pos[3] = {};    // HostMove / GuestMove: the chr warp target (map coordinates)
@@ -790,6 +790,7 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::HostMark: return "host_mark";
     case TravelStep::GuestMark: return "guest_mark";
     case TravelStep::HostStage: return "host_stage";
+    case TravelStep::HostLastLamp: return "host_lastlamp";
     case TravelStep::HostWalk: return "host_walk";
     case TravelStep::HostHeadstone: return "host_headstone";
     }
@@ -1033,6 +1034,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     if (t.next_step < t.steps.size() &&
         (next_kind == TravelStep::HostKill || next_kind == TravelStep::HostMove || next_kind == TravelStep::GuestMove ||
          next_kind == TravelStep::HostPress || next_kind == TravelStep::GuestPress || next_kind == TravelStep::HostWalk ||
+         next_kind == TravelStep::HostLastLamp ||
          next_kind == TravelStep::HostMark || next_kind == TravelStep::GuestMark || !t.steps[t.next_step].map.empty())) {
         if (!steady || (!t.ran && !t.armed) || t.joins < t.steps[t.next_step].min_join) {
             return; // as the first step of a chain it still waits for the join
@@ -1086,6 +1088,16 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                 double(pos[1]), double(pos[2]), double(rot[1]));
         } else {
             Log("test: %s: no player / transform", TravelStepName(step.kind));
+        }
+    } else if (step.kind == TravelStep::HostLastLamp) {
+        // Test fixture: the host's last-lamp record (WorldTransitionState +0x1528 {id, aux}) names
+        // a lamp of another map - the state after walking into the next area without resting.
+        std::uint64_t w = 0, rec = 0;
+        if (SafeGet(Guest(0x5556678), &w) && w && SafeGet(w + 0x1528, &rec)) {
+            const std::uint64_t now_rec = (rec & 0xffffffff00000000ull) | step.id;
+            SafeWrite(w + 0x1528, &now_rec, 8);
+            Log("test: host_lastlamp %#llx -> %#llx", static_cast<unsigned long long>(rec),
+                static_cast<unsigned long long>(now_rec));
         }
     } else if (step.kind == TravelStep::HostPress || step.kind == TravelStep::GuestPress) {
         // In-process pad input (runtime_pad_director_press, OR-ed into every pad sample; no OS
@@ -1666,11 +1678,13 @@ void PartyDirector::ConfigureFromEnv() {
             } else if (item.rfind("host_warp=", 0) == 0 || item.rfind("host_die", 0) == 0 ||
                        item.rfind("guest_die", 0) == 0 || item.rfind("host_kill=", 0) == 0 ||
                        item.rfind("host_move=", 0) == 0 || item.rfind("guest_move=", 0) == 0 ||
-                       item.rfind("host_press=", 0) == 0 || item.rfind("guest_press=", 0) == 0) {
+                       item.rfind("host_press=", 0) == 0 || item.rfind("guest_press=", 0) == 0 ||
+                       item.rfind("host_lastlamp=", 0) == 0) {
                 TravelStep step;
                 step.kind = item.rfind("guest_move", 0) == 0    ? TravelStep::GuestMove
                             : item.rfind("guest_press", 0) == 0  ? TravelStep::GuestPress
                             : item.rfind("host_press", 0) == 0   ? TravelStep::HostPress
+                            : item.rfind("host_lastlamp", 0) == 0 ? TravelStep::HostLastLamp
                             : item[0] == 'g'                     ? TravelStep::GuestDie
                             : item.rfind("host_die", 0) == 0     ? TravelStep::HostDie
                             : item.rfind("host_kill", 0) == 0    ? TravelStep::HostKill
@@ -1678,6 +1692,9 @@ void PartyDirector::ConfigureFromEnv() {
                                                                  : TravelStep::HostWarp;
                 if (step.kind == TravelStep::HostWarp || step.kind == TravelStep::HostKill) {
                     step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 10, nullptr, 10));
+                }
+                if (step.kind == TravelStep::HostLastLamp) {
+                    step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 14, nullptr, 10));
                 }
                 if ((step.kind == TravelStep::HostDie || step.kind == TravelStep::GuestDie) && item.find('%') != std::string::npos) {
                     // host_die@S%MAP: S s after the last load / previous step, in that map (no re-join)
