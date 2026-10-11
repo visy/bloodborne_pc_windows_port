@@ -88,6 +88,7 @@ struct RosterEntry {
     bool connected = false;  // false while the host keeps a lost member's slot
     std::uint32_t map_id = 0;
     std::uint32_t ping_ms = 0;  // as measured by the host
+    std::string lost_why;       // host, on_member_left: why the connection went ("connection reset"...)
 };
 
 // Party HUD (party_hud.h): one member's health and whereabouts, as its own game reads them.
@@ -183,6 +184,13 @@ struct LinkConfig {
     int backoff_jitter_pct = 20;   // each wait randomized +-20 %
     int connect_timeout_ms = 5000;
     int roster_refresh_ms = 5000;  // host re-broadcasts the roster (fresh pings) this often
+    // The UDP path (party_rudp.h, docs/party/network_robustness.md 4): a host also accepts the link
+    // over a reliable UDP stream on its port (hole punching: no port forward needed when both NATs
+    // keep a mapping per endpoint); a guest whose TCP connect gets no answer within
+    // tcp_fallback_ms (or is refused) tries UDP. Without an external transport
+    // (set_udp_transport) the link uses its own UDP socket on the same port number.
+    bool udp_link = true;
+    int tcp_fallback_ms = 1500;
 };
 
 // What differs between the host's and a guest's game (bbport build, eboot.bin, game params,
@@ -313,6 +321,20 @@ public:
     std::int64_t debug_lock_hold_max_us(bool reset = false, std::uint64_t* cycles = nullptr);
     // Tests: stop all IO (no reads, writes or pings) for `ms`, simulating a frozen network.
     void debug_freeze(int ms);
+    // ---- UDP path (party_rudp.h) ----
+    // An external datagram transport (the game's party UDP port, shared with the game's traffic):
+    // `send` puts a datagram on the wire (addr / port network order; any thread, called from the
+    // link's IO thread); datagrams for the link arrive through on_udp_datagram (any thread). Call
+    // before start_host / start_guest.
+    using UdpSend = std::function<bool(std::uint32_t addr, std::uint16_t port, const std::uint8_t* d, std::size_t n)>;
+    void set_udp_transport(UdpSend send);
+    void on_udp_datagram(std::uint32_t addr, std::uint16_t port, const std::uint8_t* d, std::size_t n);
+    // Host: open our NAT mapping towards a guest's public endpoint (its guest code) for 60 s.
+    void punch_guest(std::uint32_t addr, std::uint16_t port);
+    // The link's own UDP socket's port (host order; 0 without one) and whether the guest's
+    // connection to the host runs over UDP.
+    std::uint16_t udp_local_port() const;
+    bool connected_over_udp() const;
     // Tests: abort the current connection(s) without BYE (guest then reconnects).
     void debug_drop_connections();
 

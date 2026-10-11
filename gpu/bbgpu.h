@@ -27,6 +27,9 @@ void bbgpu_dump_guest_writes(void *ucontext);
 /* Keyboard text entry through the game window (IME dialog). begin returns 0 when
  * no window exists; poll returns 0 typing, 1 confirmed, 2 cancelled (UTF-8 text). */
 int bbgpu_text_input_begin(const char *initial_utf8, const char *prompt_utf8);
+/* The text an ImeDialog of max_length characters is confirmed with at once (party co-op: the
+ * party's Chalice Dungeon glyph at the altar), or NULL to ask the player. */
+const char *bbgpu_ime_preset(uint32_t max_length);
 int bbgpu_text_input_poll(char *out_utf8, uint64_t size);
 int bbgpu_text_input_is_active(void);
 /* Test aid: keys into the text box as if typed (ASCII; '\n' Enter, '\x1b' Esc, '\b' Backspace). */

@@ -269,14 +269,37 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
   Cross from (-58.5, -90.6). host_lamp=2102961 -> both in the Dream with one load each, the guest
   re-joined (cooperators 1).
 * **A ritual by a guest** (user decision: anyone performs the ritual, the party enters together).
-  Chosen design: the guest performs the ritual in its own Dream (its slot gets the dungeon; for a
-  shared fixed chalice the board makes the same channel for everyone, glyph wmqbhonw); the host
-  then enters that dungeon from its own altar (Search by Chalice Glyph, top menu item 3; the board
-  answers the glyph) and the guests are summoned as for a host ritual. The host needs a chalice to
-  open the altar at all, hence the two-way chalice share (section 5). c16: without a chalice the
-  altar only says "A Holy Chalice is required to conduct a ritual."; c17: the guest's chalice
-  reached the host (`a party member's chalice 6109 given`), the host reached the glyph dialog, but
-  the preset IME text came out as 'wmqbhon' (the IME buffer counted the terminator; fixed in
-  src/runtime_services.c). Open: verify the host's entry by glyph and the guest summon (c18), and
-  an automatic "enter the guest's dungeon" button instead of typing the glyph.
+  The guest performs the ritual in its own Dream; the host enters that dungeon from its own altar
+  with one menu choice, and the guests are summoned as for a host ritual. Pieces:
+  - the chalices go both ways (section 5): the altar refuses everything without one (c16:
+    "A Holy Chalice is required to conduct a ritual.");
+  - the board remembers each member's last ritual (`latest_ritual`: its fixed search or upload);
+    while another member's dungeon is newer than an hour and not in the host's slot, the host's
+    altar item 262002 "Search by Chalice Glyph" reads **"Enter the party's dungeon"** (help: "Enter
+    the Chalice Dungeon <member> made (glyph ...) with the party.") through a text override on the
+    game's message lookup, and its 8-character glyph box is confirmed at once with that glyph
+    (`bbgpu_ime_preset`; logs `party dungeon at the altar: ...`, `the altar's glyph box gets the
+    party dungeon's glyph ...`). No typing;
+  - the guest sends its slot's FormData (`chalice_form` event; a shared fixed dungeon is never
+    uploaded): without it the host's join did nothing (c18);
+  - the glyph answer carries a ShareLevel (as get_details_info does): with the stored 0, "Join the
+    selected Chalice Dungeon?" -> YES returned to the altar without a load (c19);
+  - a guest outside a dungeon no longer follows the host's warp into its own copy of the same
+    dungeon (it was then summoned out of it again: two loads, c20); it waits for the summon;
+  - the IME buffer holds maxTextLength + 1 units (the glyph lost its 8th character, c17).
+  **Run c20** (2026-10-11): guest ritual -> host altar "Enter the party's dungeon" -> OK -> the
+  result -> YES -> altar -> "Select location to awaken in" -> m29; guest summoned by quick join;
+  boss kill (K10 both), guest's own lots, the lift down with the host (31.5 -> 10.5). c23 repeated
+  the entry up to the join. Still more presses than needed: the search result, YES and the
+  awaken prompt could be taken automatically.
+* **A dungeon from an earlier session** (c22): the board is new each session, so a host entering a
+  dungeon of an earlier ritual had no ChannelId on it and the members' signs were held back. The
+  host's game now adds it (`... is in chalice dungeon N (not on the board yet): added`); the guest
+  was summoned (c22, host started from a post-ritual test save).
+* **The lift call lever** (c22): the guest, in the host's world at the top, pulled 2901005 from
+  (-58.5, 31.6, -90.1) facing +z while the car was at the bottom with the host: EMEVD 12900351 ran
+  and the car came up to the guest. The earlier "did nothing" (c13/c15) was a press while the car
+  was already at the top (the car starts there) or from 0.5 m further back.
+* **Layer 2**: the next layer boss 2900200 (MSB (56.3, -59.7, -35.2)) is not loaded at the bottom of
+  the first lift (host_kill: NOT loaded); a real descent through layer 2 needs its route (not done).
 

@@ -336,7 +336,7 @@ warp's own target was used; with +0x1521 = 1 our +0x14C4/D0/E0 write gives the s
   refilled the guest to 106; B2 now puts back the HP it had at the host's travel event
   (`guest: HP 106 after the load -> 100 as before the travel`). Items / buffs: a phantom's
   inventory lives in its own PlayerGameData and is not touched by the load (not measured).
-* (Superseded by 6.12: the host is now revived in place.) Respawn in place (no guest reload) - not feasible with the game's code: every death goes
+* (Superseded by 6.13: the host is now revived in place.) Respawn in place (no guest reload) - not feasible with the game's code: every death goes
   through the funnel 0x13CDE30 → a stage request → MoveMapStep, and the world dtor 0x1547B40
   frees every chr set (WorldChrMan 0x1914F40); the game has no revive-in-place for the host
   (DS2's seamless mod found the same). A custom one (cancel the death load, revive the chr, warp
@@ -467,7 +467,7 @@ GameData row.
   the host sees "Co-operator Hunter1" alive 0.8 m away at the lamp. No leave, no bell.
 
 Death rules on a lone respawn: full HP; buffs end (not restored, unlike a plain B2 load);
-Insight and consumables are kept; echoes go into a bloodstain since 6.12 (design decision 3; before,
+Insight and consumables are kept; echoes go into a bloodstain since 6.13 (design decision 3; before,
 they were kept as a vanilla phantom's); the host's world is not reset. Fallback: no snapshot within 45 s -> the B1 fallback as before (redirect, leave, bell).
 
 ### 6.10 Runs r18-r25: lone-death variants [R]
@@ -522,7 +522,28 @@ they were kept as a vanilla phantom's); the host's world is not reset. Fallback:
   last lamp set to another map: `lamps of m24_01_00_00: 2412950:- 2412951:lit` -> respawned at the
   lit Central Yharnam lamp (-193.4, -28.6, 68.5); unlit 2412950 (1st Floor Sickroom) skipped.
 
-### 6.12 C2: the host dies alone - revived at its lamp, the guests stay (hostdeath, 2026-10-11) [R]
+### 6.12 A guest dying after (or during) a boss fight stayed dead (2026-10-11, overlay)
+
+The "guest_die after the boss did nothing" test oddity was a real bug, not the test step:
+
+* The die step's own gates were open (`ForceDead gates: GSM +0x176F 0, chr ... 0`), entity 10000
+  was our chr, and ForceDead set HP (data module +0xF8; +0x128 is not HP) to 0 at once:
+  `HP 503 -> 0 right after`. A fall into the void after the kill (no die step) did the same:
+  `Party balance: death 1`, no respawn for 100+ s.
+* Yet no `guest_died` funnel call came: the guest lay dead in the host's world. The boss-clear Lua
+  state BlockClear2_3 (0x1385930) ends in the send-home tail jump K10 drops, so the phantom's
+  state machine never leaves it and never runs PartyGhostDeath (0x13824C0). One run also had a
+  death *during* the Cleric Beast fight (before the kill) that went unprocessed for 17 s.
+* Fix (`DeadAfterClearTick`, party_b2.cpp): guest, HP 0 for 12 s after a K10 on this load (15 s
+  otherwise) with no death funnel or B2 death hold -> `GuestDeathRedirectNow()`, the normal lone
+  death path (respawn at the host's last lamp, the bell brings the guest back).
+  Live (`guest dies after boss: watchdog 2`): kill +0, guest ForceDead +23 s, `dead for 12 s and the
+  game's death state never ran (after a boss clear ...)`, `guest_died ... to the host's last lamp
+  2412952`, loading screen 5 s later.
+* The K10 invincibility guess (Lua EnableInvincible, chr +0x1E1 bit 14) was wrong: `no invincibility
+  left 10 s after the clear` in every run; the clear stays as a harmless check.
+
+### 6.13 C2: the host dies alone - revived at its lamp, the guests stay (hostdeath, 2026-10-11) [R]
 
 ERSC rule (user decisions, ERSC_PARITY.md): a dead player respawns at its own last lamp and the
 others play on; nobody else loads. Until now every host death went through the funnel and moved

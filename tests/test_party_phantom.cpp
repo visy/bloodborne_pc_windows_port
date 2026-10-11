@@ -97,6 +97,11 @@ static void test_events() {
     ins.source_event = 12411800;
     CHECK(PhantomEventFromJsonText(PhantomEventToJsonText(ins), &out, &err));
     CHECK(out.kind == PhantomEventKind::Insight && out.insight == 3 && out.source_event == 12411800u && out.seq == 7);
+    CHECK(out.boss);
+    ins.boss = false;  // G2: a first encounter / story Insight
+    CHECK(PhantomEventFromJsonText(PhantomEventToJsonText(ins), &out) && !out.boss && out.insight == 3);
+    CHECK(!PhantomEventFromJsonText("{\"kind\":\"insight\",\"seq\":\"0x1\",\"n\":2,\"event\":5,\"boss\":1}", &out));
+    ins.boss = true;
 
     PhantomEvent rest;
     rest.kind = PhantomEventKind::Rested;

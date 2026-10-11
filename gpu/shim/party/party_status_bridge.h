@@ -71,6 +71,7 @@ std::string SnapshotLine(const status::Board& b);
 // ---- producers (game build) ----
 void OnRuntimeStart(bool host, const std::string& name);
 void OnCode(const std::string& code);
+void OnGuestCode(const std::string& code);
 void OnRuntimeError(const std::string& error);
 void OnHostAddress(const std::string& address);
 void OnLinkState(LinkState state, const std::string& detail, RejectCode reject, const std::string& reason);
@@ -105,6 +106,7 @@ struct Actions {
     std::function<void()> leave;
     std::function<int()> rejoin;  // 0 link up, 1 reconnecting now, 2 a fresh link, -1 nothing to do
     std::function<bool(const std::string&)> kick;
+    std::function<int(const std::string&)> add_guest_code;  // valid codes added (host)
     /// Guest Leave while summoned: the game's own session leave first (main thread), so the game
     /// sends the guest home itself instead of noticing a dead session ("Session lost" dialog).
     std::function<bool()> leave_session;

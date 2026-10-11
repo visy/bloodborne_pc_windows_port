@@ -104,7 +104,7 @@ PARTY_SWITCHES = [
     ("party_full_rewards", "BB_PARTY_FULL_REWARDS", True),
     ("party_items", "BB_PARTY_ITEMS", True),
     ("party_progress", "BB_PARTY_PROGRESS", True),
-    ("party_progress_npc", "BB_PARTY_PROGRESS_NPC", False),
+    ("party_progress_npc", "BB_PARTY_PROGRESS_NPC", True),
     ("party_story", "BB_PARTY_STORY", True),
     ("party_story_mirror", "BB_PARTY_STORY_MIRROR", True),
     ("party_restart", "BB_PARTY_RESTART", True),
@@ -1627,10 +1627,10 @@ class BloodborneLauncher(tk.Tk):
                     "events - is copied into each guest's own save, so the guests' worlds keep up with "
                     "the host's. Needs to be on for the host and for each guest. "
                     "Default: on (BB_PARTY_PROGRESS).", command=update_dependents)
-        npc_cb = self._check(sec, "    Also NPC quests (experimental)", var["party_progress_npc"],
-                             "Also copies the host's NPC quest steps (Eileen, Alfred, Djura ...) into the "
-                             "guests' saves. Quests are chains of steps, so a partly copied quest can get "
-                             "stuck. Guest's setting. Default: off (BB_PARTY_PROGRESS_NPC).", command=save)
+        npc_cb = self._check(sec, "    Also NPC quests", var["party_progress_npc"],
+                             "NPC quest choices are shared: the first choice anyone makes (Eileen, Alfred, "
+                             "Djura ...) applies to the host's world and every player's save. Guest's setting. "
+                             "Default: on (BB_PARTY_PROGRESS_NPC).", command=save)
         self._check(sec, "Share cutscenes and endings", var["party_story"],
                     "Every guest also sees the cutscenes the host triggers (shown again in the guest's own "
                     "world if needed), the time of day (evening, night, Blood Moon) follows the host, and "
