@@ -18,4 +18,4 @@ The pipeline cache in `user\cache\CUSA03173\` can be copied as-is to another PC,
 
 ## Planned: world warper
 
-A solo mode that warps through every map, engages every enemy and boss, triggers every cutscene and uses every attack, weapon form, firearm, item and Hunter tool, then exports the shader cache as one `.zip`, so a new install starts with a near-complete cache. Tracked as I3 in [party/ERSC_PARITY.md](party/ERSC_PARITY.md). The zip is for your own use or for other owners of the game; the project never publishes shader caches.
+A solo mode that warps through every map, engages every enemy and boss, triggers every cutscene and uses every attack, weapon form, firearm, item and Hunter tool, and wears every armor piece, then exports the shader cache as one `.zip`, so a new install starts with a near-complete cache. Tracked as I3 in [party/ERSC_PARITY.md](party/ERSC_PARITY.md). The zip is for your own use or for other owners of the game; the project never publishes shader caches.
