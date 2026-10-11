@@ -89,6 +89,9 @@ PC (several game copies, simulated internet lag), not yet between two PCs.
   guests too.
 - **Crashes recover.** A crashed game restarts and rejoins by itself.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
+- **Death has a cost.** Each death stacks "rot" (−10% max HP, up to 5); using a lamp clears it.
+  On by default; the host can turn it off on the *Party rules* page.
+- **Names over party members**, in each player's colour, with level, health or deaths (your choice).
 - **Party HUD.** Party members and events are shown in a small HUD; all party settings are on the
   *Party* pages of the game's *System* menu.
 
@@ -108,14 +111,12 @@ PC (several game copies, simulated internet lag), not yet between two PCs.
 | Every player, host included, respawns at their own last lamp | In progress |
 | Dying in a boss fight: spectate until the fight ends, then everyone respawns at one shared lamp | In progress |
 | Bloodstains for everyone, like single-player | In progress |
-| Death debuff (stacks on death, cleared at a lamp; on by default, can be turned off) | In progress |
-| Enemy scaling settings (harder than vanilla by default) | In progress |
+| Enemy scaling: harder than vanilla by default (settings done; boss fights not yet verified) | In progress |
 | Guests open doors, pull levers, talk to NPCs; NPC choices shared | In progress |
 | Item pickups and enemy drops per player: everyone gets their own | In progress |
 | Cutscenes play for the whole party | Planned |
 | Joining during a boss fight waits outside until it ends | Planned |
 | 4 players (3 work today) | In progress |
-| Names over party members | In progress |
 | Chalice dungeons: full clear in a party, rituals by anyone | In progress |
 | PvP / friendly fire the host can switch on and off | Later |
 | Pings: party members and marked spots visible through walls, with distance and player colours | Later |
