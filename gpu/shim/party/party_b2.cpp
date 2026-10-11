@@ -1279,7 +1279,8 @@ void SplitTick(const GameSnapshot& s, double now) {
     // while all of them report positions in our area, is a stale one: removed, the meet builds it
     // again (with fresh records).
     static std::map<u64, double> far_since;
-    for (const TaskInfo& t : Tasks(false)) {
+    static const bool heal = std::getenv("BB_PARTY_SPLIT_SELFHEAL") && std::getenv("BB_PARTY_SPLIT_SELFHEAL")[0] == '1';
+    for (const TaskInfo& t : heal ? Tasks(false) : std::vector<TaskInfo>{}) {
         const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
         float p[3];
         if (!c || !ChrPos(c, p)) {
@@ -1557,7 +1558,17 @@ std::vector<u32> DeadEnemiesHere(u32 map) {
 
 /// Sends the dead enemies of our block to the others (host: everyone; guest: the host, which
 /// relays nothing - every guest sends its own).
+/// BB_PARTY_SPLIT_ENEMIES=1: enemies killed while apart are sent / applied at a meet (not yet
+/// verified live; off by default for 0.5.2).
+bool SplitEnemiesOn() {
+    static const bool on = std::getenv("BB_PARTY_SPLIT_ENEMIES") && std::getenv("BB_PARTY_SPLIT_ENEMIES")[0] == '1';
+    return on;
+}
+
 void SendDeadEnemies(const GameSnapshot& s, const char* why) {
+    if (!SplitEnemiesOn()) {
+        return;
+    }
     const std::vector<u32> dead = DeadEnemiesHere(s.map_id);
     std::string body = "{\"op\":\"dead\",\"map\":" + std::to_string(s.map_id) + ",\"ids\":[";
     for (std::size_t i = 0; i < dead.size(); ++i) {
@@ -4285,7 +4296,8 @@ void Tick(const GameSnapshot& s) {
         // Render-state probe (the invisible remote chr: "the health bar but no model"): raw bytes of
         // each remote chr and of its +0x3B0 modules' first entries, to diff a visible against an
         // invisible one (docs/party/split_travel.md 7).
-        for (const TaskInfo& t : Tasks(false)) {
+        static const bool probe = std::getenv("BB_PARTY_RENDER_PROBE") && std::getenv("BB_PARTY_RENDER_PROBE")[0] == '1';
+        for (const TaskInfo& t : probe ? Tasks(false) : std::vector<TaskInfo>{}) {
             const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
             if (!c) {
                 continue;
@@ -4386,8 +4398,10 @@ void Tick(const GameSnapshot& s) {
             if (g_record_request.exchange(false) && SessionUp()) {
                 RebroadcastOwnRecord("a member asked (meet)");
             }
-            ApplyDeadEnemies(s);
-            EnemyWatchTick(s, now);
+            if (SplitEnemiesOn()) {
+                ApplyDeadEnemies(s);
+                EnemyWatchTick(s, now);
+            }
         }
     }
     if (Role() == RoleClient) {
