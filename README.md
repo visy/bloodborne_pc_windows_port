@@ -1,273 +1,177 @@
-# bloodborne_pc_windows_port: Native Windows Port of Bloodborne
+# Bloodborne PC — native Windows port
 
-> This project is not related to shadPS4. Questions about the upstream Linux port go to its
-> Discord server (https://discord.gg/KYZRKk9CB), not to the shadPS4 server.
+Run the PS4 version of *Bloodborne* (v1.09, any retail release) natively on Windows with Vulkan.
+Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28 (Linux) and the original
+[Windows port](https://github.com/Mrsuss60/bloodborne_pc_windows_port) by Mrsuss60.
 
-`bloodborne_pc_windows_port` is a native 64-bit Windows port of the PlayStation 4 executable of *Bloodborne* (CUSA03173, version 1.09). 
+**Version 0.5.1** · Playable · Party co-op in development
 
-**Version 0.5** (in step with upstream bbport 0.5; `bbport.exe --version`, the launcher's title bar and the overlay menu show it). Party co-op is included but still **in development** (see [Party co-op](#party-co-op-in-development)).
-
-This project is a Windows adaptation of the original Linux port ([`bbport`](https://github.com/deadinside28/bloodborne_pc) by `deadinside28`). It replaces the Linux-specific kernel, memory mapping, and POSIX threading implementation with a native Win32 runtime, allowing the game to run directly on Windows with Vulkan.
-
-bbport is the counterpart of Wine + DXVK for a single game: the game's original executable runs directly on the PC.
-
-- **As in Wine**, the game's x86-64 code runs on the CPU directly, and a runtime written for this one game replaces the PS4 system libraries.
-- **As in DXVK**, the game's graphics are translated to Vulkan by a renderer derived from [shadPS4](https://github.com/shadps4-emu/shadPS4) and heavily extended for this game, including temporal upscaling with AMD FSR 3.1, FSR 4 and FSR 4.1.1 (and NVIDIA DLSS when built with NVIDIA's SDK).
-
-> **No game files or copyrighted assets are included.** You must provide your own decrypted dump of Bloodborne (CUSA03173, version 1.09).
-> This project is not affiliated with Sony Interactive Entertainment, FromSoftware, AMD, or NVIDIA.
-
-**Status: Playable on Windows.** The game boots, loads saves, and runs with audio, gamepad support, and state persistence.
+> No game files are included: you need your own decrypted dump with update 1.09 (any retail
+> release: CUSA03173, CUSA00900, ...; they share the same 1.09 executable).
+> Not affiliated with Sony, FromSoftware, AMD or NVIDIA. Not related to shadPS4: questions about
+> the Linux port go to its [Discord](https://discord.gg/KYZRKk9CB).
 
 ---
 
-## Windows Port Changes
+## What this port adds
 
-This repository adapts the original Linux codebase specifically for Windows systems:
-
-- **Win32 Memory & Synchronization**: Replaced Linux `mmap`, `mprotect`, and POSIX primitives with Windows `VirtualAlloc`, `VirtualProtect`, and native Win32 synchronization events (`src/win32_compat.c`, `src/win32_memory.c`, `src/runtime_host.c`).
-- **Graphical Launcher**: Includes `launch_gui.bat` (powered by `launcher.py`), a desktop control panel to configure target frame rates (30, 60, 90, uncap), rendering resolution, FSR upscaling, monitor choice, and all toggleable community patches from `Bloodborne.xml`.
-- **Command Line Launcher**: `run.bat` provides direct scripted startup, automatic patch compilation, and mod staging on Windows. Started on its own, it applies the launcher's last saved settings (`launcher_settings.json`; `BB_NO_LAUNCHER_SETTINGS=1` skips them).
-- **Vulkan Frame Pacing**: Integrated presenter queue pacing (`BB_FRAMES_AHEAD=2`) to bound GPU run-ahead, stabilizing frametimes and smoothing 0.1% and 1.0% stutter lows.
-- **Texture Barrier Fix**: Fixed dynamic texture streaming race conditions in `tile_manager.cpp`, ensuring item icons in the HUD and loading screens render correctly without static noise.
-- **AT9 Audio Playback**: Bundles LibAtrac9 compilation to decode AT9 game audio natively on Windows.
-- **Windows Build System**: Standalone `build.bat` script that compiles the complete project with MinGW-w64 (GCC), CMake, and Ninja.
-- **Launcher with categories and tooltips**: settings grouped in tabs (Display, Graphics, Performance & Shaders, Game, Input & Audio, Advanced / Debug); hover any option for what it does, its trade-off, default and environment variable.
-- **No shader stutter in known areas**: before the intro logos the port builds every pipeline in the shader cache on all cores, with a progress screen the first time (`BB_SHADER_PRECOMPILE`, on by default; Esc skips). *Async shader compilation* (`BB_ASYNC_SHADERS`, on by default) and the optional *graphics pipeline library* (`BB_GPL`) handle shaders the cache does not have yet. A small "Compiling shaders: NN%" note appears only on loading screens and menus, never in gameplay (`BB_COMPILE_INDICATOR`).
-- **Shareable, GPU-independent shader cache**: export and import it as one `.zip` from the launcher; a cache made on another GPU is rebuilt for yours before the intro (see [Sharing the shader cache](#sharing-the-shader-cache)).
-- **The Old Hunters automatically**: its data ships with patch 1.09; `run.bat` reports the add-on as installed on a fresh install (`BB_AUTO_DLC=0` skips this).
-- **Window and audio**: `Alt+Enter` switches fullscreen at any time; the game is muted while its window is in the background (launcher option, `BB_MUTE_UNFOCUSED`); the mouse cursor shows only while the overlay menu is open.
-- **Clean exit**: closing the window, the in-game restart and timeouts end the process without unloading the Vulkan driver under the loader lock, which could leave a hung process holding the game's memory.
-- **VRAM guard**: *Full* VRAM pre-upload drops to normal on GPUs with less than ~11 GB (`BB_PREUPLOAD_FORCE=1` keeps it).
-- **Upstream 0.5** ([changes](docs/CHANGES_0.5.md)): the game's own *System → Display / Effects* pages with slider-style choices (applied once a slider rests for 0.4 s), the GPU command decoder and game profiles, GPU timestamps, fewer hitches from background pipeline compiles (full-screen passes and indirect draws now wait for their pipeline: no grey frames), the texture collector's emergency pass on low-VRAM cards, the damaged-extraction check and the shared write traps of the memory layer, all built natively for Windows. Upstream's *Auto* memory model (the new model on AMD) is Linux-only: it needs the game's memory in dma-buf/memfd chunks that the Windows runtime cannot provide, so Windows keeps the 0.3 memory model with every fix since (`BB_PC_MODEL` is still accepted). The AppImage-only parts (NVIDIA EGL vendor files, RADV `nohiz`, MangoHud) do not apply on Windows. The overlay menu keeps this port's game-styled tabbed layout.
-- **Upstream 0.5-pre4** ([changes](docs/CHANGES_0.5-pre4.md)): the memory module's fixes, the command-recording crash fix (#100, reported on Windows), the damaged-extraction check (#81: `run.bat` and the launcher report game files whose shaders do not unpack; `python scripts\game_check.py GAME_DIR` checks every file) are included. The settings menu keeps this port's game-styled layout (tabs, rows like the game's dialogs) rather than upstream's return to the 0.3-style window. The drivers' shader-cache variables `run.sh` sets (`__GL_SHADER_DISK_CACHE*`, `MESA_SHADER_CACHE_MAX_SIZE`) are Linux-only; the NVIDIA driver on Windows uses its control-panel *Shader Cache Size* setting.
-
----
-
-## Technical Highlights
-
-- **Native Execution**: The game eboot is converted offline into a flat memory image; PS4 libc and libSceFios2 functions are linked directly into the binary. No CPU emulation or instruction translation occurs at run time.
-- **High Framerate Support**: Community simulation patches allow running at 60 FPS, 90 FPS, or uncapped with accurate physics and movement speeds.
-- **Synthetic Motion Vectors & Temporal Upscaling**: Because Bloodborne lacks an internal velocity buffer, the port computes camera motion from depth buffers and object motion from previous frame vertex positions. The scene can render at lower internal resolutions (e.g., 720p or 1080p) while FSR 3.1 / 4 / 4.1.1 (or DLSS) upscales to your display resolution, leaving UI elements crisp at native resolution.
-- **Multi-threaded Draw Pipeline**: PS4 command buffers are decoded on one thread while draw calls are bound and recorded on another, preventing CPU bottlenecks.
-- **Settings inside the game's own menu**: every setting of the port is a page of the game's *System* menu (after *Environment*, i.e. Screen/Sound, on the title screen and in the pause menu), built and drawn by the game itself, in the game's language (English or Russian): *Display* (output resolution, preset, sharpness, FPS counter, model detail, upscaler), *Effects* (the graphics patches), *Upscaler* (jitter, character motion vectors, reactive mask, FSR 4 options, live resolution), *Advanced* (reactive mask tuning, async shaders, pipeline libraries, debug view), *Performance HUD* (on/off, opacity, size, shader indicator, the port's language, position), *HUD details* (graph, VRAM, GPU, CPU, RAM), *Mouse & keyboard* (on/off, sensitivity, smoothing, dead zone, invert), *Game patches* (the game's own AA, skip intros, free camera, debug menu, *Restart the game*), *Party* and *Party members* (see [docs/PARTY.md](docs/PARTY.md)). Changes apply at once and are saved to `bbport.ini`; the bottom line explains each row (slider positions included). Buttons are rows switched with left/right; *Leave*, *Kick* and *Restart* need a second press. The game's *Default* button restores the port's defaults. `BB_GAME_MENU=0` leaves the game's menu untouched.
-- **In-Game Overlay**: Press `Insert` (or `L3 + R3` on your controller, when enabled in the launcher) to open the overlay menu, styled like the game's dialogs: the same settings with longer descriptions, with gamepad, keyboard and mouse. It is a fallback (and a debugging aid); normal settings are all in the game's own menu.
-- **No online/offline screen**: there is no PSN, so the *Play online / offline* choice is skipped by a game patch (*Skip Online/Offline Choice*) and the game opens its main menu offline. The launcher's *Skip online/offline choice* switch, or `BB_SKIP_NETWORK_CHOICE=0`, shows the screen again.
-- **DLC**: folders in `user\addcont\<title id>\<entitlement label>\` (shadPS4's layout) are reported to the game as installed add-ons. For The Old Hunters an **empty** `user\addcont\CUSA03173\SPEXPANSIONDLC03` folder is enough (its data is in patch 1.09), and `run.bat` creates it automatically (see [Mods, patches and DLC](#mods-patches-and-dlc)).
-- **Save safety**: save files are written to a temporary copy and moved into place when the game closes them, so a crash in the middle of saving leaves the previous save intact (`BB_SAVE_TRACE=1` logs every save file operation). At start the game checks its save files (sizes, an emptied game-data file, characters missing compared with the newest backup) and logs `Saves: check OK` or a warning.
-- **Party saves and backups**: a party session always plays from `user\savedata_party` (launcher or in-game start; the title's own *Continue* / *New Game* stay single-player), so `user\savedata` (single-player) is never written by it; the first time, the launcher offers to copy the single-player save (it only reads it; also the *Copy single-player save to party save* button). In a party session the game copies the active save folder to `user\save_backups\<folder>\<date>-<time>-<reason>\` at start and every 10 minutes (`BB_SAVE_BACKUP=0|1`, `BB_SAVE_BACKUP_MINUTES`, `BB_SAVE_BACKUP_KEEP`, default 10 kept; unchanged saves are not copied again). A copy that fails the check is kept as `...-suspect` and never pushes good backups out, so a crash that damages the save cannot rotate the last good one away. **Restore**: close the game, rename the save folder (e.g. `user\savedata_party` to `savedata_party.broken`), create it again and copy the backup folder's contents (the numbered folder, not `BACKUP_INFO.txt`) into it; `user\save_backups\README.txt` has the same steps.
-- **Game file check**: the launcher and `run.bat` check that the game folder holds the 1.09 executable (the base game 1.00 crashes at start) and say what is missing; `BB_SKIP_GAME_CHECK=1` skips the check. A dumped update is a separate folder: copy it over the base game, replacing files. Plain ELF `eboot.bin` dumps (without the SELF wrapper) are accepted too.
-
-### Wine + DXVK for one game
-
-- **CPU.** The PS4 CPU is x86-64, so the game's code runs directly on the PC's CPU, with no
-  emulation and no instruction translation.
-- **System libraries.** As Wine replaces the Windows API, the bbport runtime (`src/runtime_*.c`)
-  implements exactly the PS4 OS functions Bloodborne calls: memory, threads, files, audio, pad,
-  saves.
-- **Memory.** Upstream has an experimental *New memory and translation model* (`BB_PC_MODEL=1`,
-  off by default): the game's data in system RAM, VRAM used the way a PC game uses it. It is
-  developed and tested on Linux; on this Windows port the default (old) memory model is the one
-  that is supported.
-- **Graphics.** The PS4 GPU's command stream (PM4) is a recording of the game's graphics API
-  calls: it is written by 99 functions of the statically linked libGnm, so decoding the stream
-  and translating the calls themselves come to the same thing. GCN shaders are translated to
-  SPIR-V. Resource descriptors (textures, buffers) are read by the translator on the CPU, as DXVK
-  reads resource bindings: a PS4 texture has to be converted from the PS4 tiling into a Vulkan
-  image before the draw runs. The game's occlusion queries are Vulkan occlusion queries;
-  predication, `COPY_DATA` and `COND_EXEC` are translated too (check: `BB_PM4_SELFTEST=1`).
-  Details: [docs/EMULATION_REMOVAL_PLAN.ru.md](docs/EMULATION_REMOVAL_PLAN.ru.md), "Шаг 4" (Russian).
-
-"Port" here means a build for this one game, not a rewrite of its source code, which the project
-neither has nor includes.
-
-### How it differs from shadPS4
-
-| | shadPS4 | bbport |
-|---|---|---|
-| Scope | General PS4 emulator, many games | One game: Bloodborne v1.09 |
-| Loading | Its own ELF loader and kernel emulation at run time | The eboot is converted offline (`scripts/`) into an image with PS4 libc/Fios2 linked in; a C loader maps it and jumps into the game |
-| System libraries | Broad HLE of the PS4 OS | A small runtime (`src/runtime_*.c`) that implements exactly what Bloodborne calls: memory, threads, sync, files, audio (incl. ATRAC9), pad, saves, AppContent |
-| GPU | shadPS4 video core and shader recompiler | The same core (vendored, GPL) with marked changes (`bbport:`) plus new modules: two-stage draw pipeline, render-state and texture-set memoization, render-scale proxies, motion vectors, FSR 3.1/4/4.1.1, DLSS bridge, frame capture and GPU profiler |
-| GPU thread | One thread processes the whole command stream (the bottleneck in Bloodborne) | Decode and draw recording run on separate threads |
-| Upscaling | — | Temporal (FSR 3.1, FSR 4, FSR 4.1.1, DLSS) with the game's own motion vectors and jitter |
-| Game patches | Patch files applied by the emulator | The same community patches, compiled at start (`scripts/patches.py`); render resolution, effects and FPS from the launcher |
-
----
+| Feature | What you get |
+|---|---|
+| **Native on Windows** | No emulator, no Wine. The game's own code runs on your CPU; the graphics go through Vulkan. |
+| **Party co-op, no server** | Play the whole campaign with friends over a direct connection: no PSN, no server. Modelled on Elden Ring Seamless Co-op. [More](#party-co-op) |
+| **Settings in the game's menu** | Every port setting is a page in the game's own *System* menu, with gamepad navigation. |
+| **High frame rates** | 30 / 60 / 90 / uncapped, with correct game speed (community patches). |
+| **Upscaling** | FSR 3.1, FSR 4, FSR 4.1.1 and DLSS, with motion vectors added for this game. |
+| **No shader stutter** | Known shaders are built before the intro. New ones compile in the background. |
+| **Shareable shader cache** | Export / import one `.zip`, works across GPUs. |
+| **Save safety** | Crash-safe saving, save checks at start, automatic backups in party play. |
+| **The Old Hunters** | DLC enabled automatically (its data ships with patch 1.09). |
+| **Mods and patches** | Loose-file mods and shadPS4-format XML patches, with load order. |
 
 ## Requirements
 
-- **Operating System**: Windows 10 or Windows 11 (64-bit).
-- **Graphics Card**: A Vulkan 1.3 capable GPU with current vendor drivers:
-  - NVIDIA GeForce GTX 10-series or newer (DLSS: GeForce RTX).
-  - AMD Radeon RX 400-series or newer.
-  - Intel Arc A-series or newer.
-  - FSR 4 / 4.1.1 require shader Float16, Int8/Int16, integer dot products, linear compute derivatives and extended storage image formats; FSR 4.1.1 additionally requires `VK_VALVE_shader_mixed_float_dot_product`. Unsupported choices fall back to FSR 3.1 before the first frame and are disabled in the in-game menu.
-- **Processor**: x86-64 processor with AVX2 support.
-- **Python**: Python 3.10 or newer (needed for the patch compiler and launcher).
-- **Game Files**: Decrypted `CUSA03173` directory containing `eboot.bin` (version 1.09, the update merged into the base game).
-
-### Build Dependencies (Only if compiling from source)
-- MinGW-w64 GCC (via [w64devkit](https://github.com/skeeto/w64devkit) or MSYS2 MinGW64).
-- CMake 3.25+.
-- Ninja build tool.
-- SDL3 development libraries.
-- Vulkan SDK or Vulkan-Headers.
-- Optional, for DLSS: the [NVIDIA DLSS SDK](https://github.com/NVIDIA/DLSS) and Visual Studio 2022 (MSVC), see below.
-
----
-
-## Building and Running
-
-### 1. Build from Source
-
-Clone the repository recursively:
-```cmd
-git clone --recursive https://github.com/visy/bloodborne_pc_windows_port.git
-cd bloodborne_pc_windows_port
-```
-
-> **Windows Path Length Warning**: FidelityFX contains deeply nested shader files that can exceed Windows' default 260-character path limit (`MAX_PATH`). If your project folder is located deep in your directory structure, either enable long paths in Git via `git config --system core.longpaths true` (or clone close to a drive root like `C:\bbport`), or set up a mapped drive with `subst X: .`.
-
-Ensure MinGW, CMake, and Ninja are accessible in your environment or PATH (set `W64DEVKIT_DIR`, `SDL3_DIR`, `VULKAN_SDK` as needed), then run:
-```cmd
-build.bat
-```
-
-This compiles LibAtrac9, the Vulkan video core (`out/gpu/bbgpu.dll`), and the main loader executable (`out/bbport.exe`).
-
-**DLSS (NVIDIA GeForce RTX, optional).** NVIDIA's DLSS SDK is not included. Check out
-[github.com/NVIDIA/DLSS](https://github.com/NVIDIA/DLSS) and build with `DLSS_SDK_ROOT` set:
-```cmd
-set DLSS_SDK_ROOT=C:\src\DLSS
-build.bat
-```
-`build.bat` then builds the bridge `out\bbport_dlss.dll` (`gpu/dlss_bridge`, the only code that uses the SDK; it needs Visual Studio 2022, since the SDK's library is MSVC-only) and copies NVIDIA's `nvngx_dlss.dll` next to `out\bbport.exe`. Pick *DLSS* in the in-game menu (or `upscaler=dlss` in `bbport.ini`): the preset sets the render size, Native AA is DLAA. Without the DLLs, on other GPUs or with `BB_DLSS=0` it is listed as unavailable and a DLSS setting falls back to FSR 3.1.
-
-**Faster builds for your own PC (optional).**
-- `-DBB_MARCH=native` (or a CPU name such as `skylake`) when configuring `out/gpu` tunes the code for your processor; the result may not start on older CPUs. Release builds use `-DBB_MARCH=x86-64-v3`, the AVX2 baseline the port already requires (Intel Haswell / AMD Ryzen and newer).
-- Profile-guided optimization: configure a second build folder with `-DBB_PGO=generate -DBB_OUT_DIR=<folder>`, play about 20 minutes with that `bbport.exe` (it writes a profile into `pgo\` every 30 s), then reconfigure the same build folder with `-DBB_PGO=use` and build again. Only the port's own code is optimized (GPU command translation, caches, runtime), so it helps in CPU-limited scenes.
-
-### 2. Launch the Game
-
-By default the game folder is expected next to the repository (`..\CUSA03173`). Saves and the shader cache go to `user\`; settings to `bbport.ini`.
-
-#### Option A: Using the Graphical Launcher (Recommended)
-Double-click `launch_gui.bat` or run:
-```cmd
-launch_gui.bat
-```
-- Select your `eboot.bin` file or game folder.
-- **Display**: target frame rate (60 FPS recommended), render resolution, fullscreen, monitor (`BB_DISPLAY`), frames ahead (1 = least input lag, 2 = default, 3 = smoothest).
-- **Graphics**: upscaler, object motion vectors, anisotropic filtering, VRAM pre-upload (*Full* needs a 12 GB+ GPU).
-- **Performance & Shaders**: *Performance Patch*, draw preparation workers, shader precompile, async shaders, GPL, the compile indicator, and **Export / Import shader cache**.
-- **Game**: skip intro, skip the online/offline choice, settings in the game's System menu, mods, and *All XML Patches...*.
-- **Input & Audio**: controller (`BB_GAMEPAD`), overlay on `L3 + R3`, mute in background.
-- **Party**: host or join a co-op party, connection settings, *Rules & sync...* and *Party help* ([guide](docs/PARTY.md)).
-- Hover any option for details, then click **Launch Bloodborne**. `run.bat` started on its own uses the same saved settings.
-
-#### Option B: Using the Command Line
-Run `run.bat` pointing to your game directory:
-```cmd
-run.bat "C:\Games\Bloodborne\CUSA03173"
-```
-
-Save files and shader caches are stored in `user\`. Settings are saved to `bbport.ini`.
-
-### Mods, patches and DLC
-
-**Mods:** loose-file mod folders in `mods\` (with `dvdroot_ps4\`, an extra wrapper folder, or the game folders such as `chr\` directly; file name case does not matter), with enable switches and load order in `mods.json`. A sibling `CUSA03173-mods\` overlay also works. The original game is preserved; later mods override conflicting files.
-
-**Third-party patches:** shadPS4-format XML patch files in `patches\`, switched on and off in `patches.json`. See [mods and patches](docs/MODS.md).
-
-**DLC:** The Old Hunters' data is part of patch 1.09 (maps `m34`–`m36`); the game only needs the add-on reported as installed. `run.bat` does that automatically on a fresh install by creating `user\addcont\CUSA03173\SPEXPANSIONDLC03` when those maps exist (`BB_AUTO_DLC=0` skips it). **That folder stays empty, and that is correct:** its name is all the game checks, so nothing needs to be copied into it. The log confirms it with `AppContent add-ons reported installed (...): 1`; in game, the Eye of a Blood-drunk Hunter takes you to the Hunter's Nightmare. To set it up by hand, just create that empty folder. Other add-on dumps go in `user\addcont\<title id>\<entitlement label>\`.
-
-### Upscaler assets
-
-FSR 3.1 needs none. FSR 4 (v07) and FSR 4.1.1 need assets that are not included: `tools/fetch_fsr4_assets.sh` downloads FSR 4 v07, and FSR 4.1.1 is built from your own AMD `amd_fidelityfx_upscaler_dx12.dll` (4.1.x) by `tools/fsr4cap` (upstream runs this under Proton on Linux; the resulting `fsr4_411` folder can be copied here). On RDNA4 the FP8 variant is picked automatically; `BB_FSR411_VARIANT=int8` forces INT8.
-
----
-
-## Party co-op (in development)
-
-Play the campaign together with 2-4 players, without PSN or a server: one player hosts and
-sends a party code (`BBP1-...`), the others join with it: in the game itself (title screen: **Party**, right
-after *New Game*: *New party game*, *Join party game*, *Continue party game*; the game restarts into
-party mode by itself and remembers the address and password) or with the launcher's **Party** tab. Guests are
-summoned automatically, follow the host between areas, and the host's progress, item rewards,
-cutscenes and ending are carried into each guest's own save; party play uses a separate save
-folder with automatic backups, and a crashed game restarts and rejoins by itself.
-**Status:** early. The parts have been tested on one PC (unit tests, several game copies
-connecting to each other, single-copy checks in the game); a real session between **two PCs has
-not been tested yet**. Guide (hosting, joining, ports / UPnP / firewall, what is shared, saves, troubleshooting):
-[docs/PARTY.md](docs/PARTY.md). Development status: [docs/PARTY_COOP_PLAN.md](docs/PARTY_COOP_PLAN.md).
-
----
-
-## Controls and In-Game Features
-
-- **Gamepad**: Controllers are supported out of the box through SDL3. With several connected, `BB_GAMEPAD=<GUID or part of the name>` picks one. The keyboard works too, also next to a connected gamepad. The character name is typed on the keyboard in a box over the game.
-- **Touchpad**: its left half (`Tab`, Back/Select) opens the gestures, the right half (`Backspace`) the key items.
-- **In-Game Settings**: *System* in the game's own menu (*Display*, *Effects*, *Upscaler*, *Advanced*, *Performance HUD*, *HUD details*, *Mouse & keyboard*, *Game patches*, *Party*, *Party members*), or press `Insert` on keyboard (`L3 + R3` on gamepad when enabled in the launcher) to toggle the overlay menu.
-- **Free Camera**: When enabled in the launcher or overlay, hold `Cross` and press `L3` (or hold `Space` and press `Z` on keyboard) to cycle camera modes. Uses Lance McDonald's GoldHEN patch; conflicts with *Enemy Control*.
-- **Debug Menu**: If debug fonts (`DbgFont14h.ccm` and `DbgFont14h.tpf`, from [Debug Menu and XML Patch](https://www.nexusmods.com/bloodborne/mods/253)) are installed into `dvdroot_ps4/font/` (or `adhoc/font/`), open the menu using `Tab` or the left half of the controller touchpad. Startup rejects missing or empty font files instead of launching the unsafe patch.
-
-### Shader compilation
-
-A PC GPU needs every shader combination compiled into a pipeline before it can draw it, which is where first-time stutter comes from. The port records each pipeline the game uses in `user\cache\CUSA03173\` and:
-- **Precompiles the cache before the intro** (`BB_SHADER_PRECOMPILE`, default on): all cores build every cached pipeline before the logos; a progress screen appears when this takes longer than a moment (first launch, a new GPU, a grown cache). Later launches reuse the driver's own disk cache and are quick. `Esc` quits during the screen.
-- **Async shader compilation** (`BB_ASYNC_SHADERS`, upstream's name `BB_ASYNC_PIPELINES` works too; default on since 0.5-pre4, can be switched live in the overlay): a new pipeline of a pass whose render targets were drawn to in each of the last 8 frames is built in the background and its draws are skipped for a frame or two instead of stopping the game. Compute work, frame-defining and screen-space passes, loading screens and one-off render targets are never skipped. `BB_ASYNC_SHADERS_POLICY=balanced` uses the looser 0.3.x rule (targets in 2 of the last 3 frames); `BB_ASYNC_PIPELINE_THREADS` / `BB_SHADER_THREADS` set the worker count. `BB_FRAME_STATS=1` logs `GPU: N pipelines compiled in the background, M draws went without theirs` and any wait over 50 ms.
-- **Graphics pipeline library** (`BB_GPL`, default off, restart needed): builds pipeline parts separately and links them quickly, with an optimized relink in the background; needs `VK_EXT_graphics_pipeline_library` with fast linking (falls back to whole pipelines otherwise).
-- **Compile indicator** (`BB_COMPILE_INDICATOR`, default on): "Compiling shaders: NN%" in a corner, only on loading screens and menus (frames without the game's 3D G-buffer pass), never during gameplay.
-
-Shaders the game has never used on any machine cannot be prepared up front: a pipeline depends on draw state the game only sets while running. A shared cache from a player who visited more areas covers them.
-
-### Sharing the shader cache
-
-The launcher's **Export shader cache...** saves the cache as one `.zip`; **Import shader cache...** merges one into yours without overwriting anything (GPU-specific files are taken only when they were made for the same GPU; the rest is rebuilt before the intro). Caches from several players can be combined.
-
-The pipeline cache in `user\cache\CUSA03173\` can be copied as-is to another PC, also one with a different GPU. Next to the compiled shaders it keeps each shader's source (`.src` files: the game's shader code and the inputs of its translation). When the cache was made for another GPU (or by a build with a changed shader translator), the first launch translates every shader again from these sources for the current GPU ("Shader cache: rebuilding N shaders for this GPU..." in the log) instead of throwing the cache away. `BB_SHADER_CACHE_REBUILD=1` forces this rebuild, `BB_SHADER_CACHE_REBUILD_THREADS=N` sets its thread count. `BB_SHADER_CACHE_SELFTEST=1` translates each newly compiled shader a second time from its stored source and logs any difference (a developer check). The cache contains data derived from the game's shaders: share it only with people who own the game, and never commit it to this repository.
-
-### Useful environment variables
-
-`BB_FRAME_STATS=1` (frame statistics), `BB_SAVE_LOG=1` (frame and readback statistics into `logs\<time>.frames.csv` / `.readbacks.csv`; the launcher's own log is `launcher.log`), `BB_ANISO=N` (anisotropic filtering; 16 by default, 0 = the game's own), `BB_UPSCALER=taa|fsr3|fsr4|fsr411|dlss|off`, `BB_FRAMES_AHEAD=N`, `BB_PRESENT_THREAD=0`, `BB_LIVE_RES=1`, `BB_PREUPLOAD=0|1|2` (background upload of GPU memory into VRAM: 1 by default, 2 = all of it, ~3 GB more VRAM, 0 = off), `BB_READBACKS=0|1|2`, `BB_GPU_PROFILE=1`, `BB_BREADCRUMBS=0`, `BB_DISPLAY`, `BB_GAMEPAD`, `BB_SKIP_NETWORK_CHOICE=0`, `BB_GAME_MENU=0`, `BB_SKIP_GAME_CHECK=1`, `BB_FULLSCREEN=1`, `BB_MUTE_UNFOCUSED=0`, `BB_OVERLAY_PAD=1` (overlay on `L3 + R3`), `BB_AUTO_DLC=0`, `BB_PREUPLOAD_FORCE=1`, `BB_SHADER_PRECOMPILE=0`, `BB_ASYNC_SHADERS=0` / `BB_ASYNC_PIPELINES=0` (async compilation off; with `BB_ASYNC_SHADERS_POLICY=balanced|aggressive`, `BB_ASYNC_SHADERS_MAX_SKIP_FRAMES`, `BB_ASYNC_SHADERS_QUEUE`, `BB_SHADER_THREADS`, `BB_ASYNC_PIPELINE_THREADS`), `BB_GPL=1` (`BB_GPL_STATS=1`), `BB_COMPILE_INDICATOR=0`, `BB_COMPILE_PROGRESS_TEST=1`.
-More in [docs/](docs); recent upstream changes: [docs/CHANGES_after_0.4.md](docs/CHANGES_after_0.4.md), [docs/CHANGES_0.4.md](docs/CHANGES_0.4.md) (in Russian), [docs/CHANGES_2026-10-06.md](docs/CHANGES_2026-10-06.md).
-
-> Upstream (Linux) also ships a GTK4 launcher, an AppImage for the Steam Deck, MangoHud integration and `run.sh`/`build.sh`; those are kept in this repository for reference but are not used on Windows.
-
----
-
-## Repository Layout
-
-| Path | Description |
+| | |
 |---|---|
-| `src/` | Win32 loader (`probe.c`), memory management, and PS4 HLE runtime |
-| `gpu/` | Vulkan video core, multi-stage command pipeline, upscaler integration, DLSS bridge (`gpu/dlss_bridge`) |
-| `scripts/` | Eboot preparation, game file check, patch compiler (`patches.py`), and DLL staging |
-| `patches/` | Community XML patches for Bloodborne version 1.09 |
-| `launcher.py` | Tkinter desktop launcher for Windows |
-| `launch_gui.bat` | One-click shortcut for the graphical launcher |
-| `build.bat` | Windows build script |
-| `run.bat` | Direct execution batch script |
-| `launcher/`, `run.sh`, `build.sh` | Upstream's Linux launcher and scripts |
-| `tools/` | Developer utilities and patch extraction scripts |
-| `tests/` | Loader, runtime, patch and renderer tests (`build.bat --test`) |
-| `docs/` | Architecture notes, upscaler documentation, and change logs |
+| OS | Windows 10 / 11, 64-bit |
+| GPU | Vulkan 1.3: NVIDIA GTX 10-series+, AMD RX 400+, Intel Arc |
+| CPU | x86-64 with AVX2 |
+| Python | 3.10+ (launcher and patch compiler) |
+| Game | Decrypted game folder (`CUSA03173` or another retail release), v1.09 (update merged into the base game); an `eboot.bin` with a 60 fps patch baked in is refused |
 
----
+## Quick start
 
-## Credits and Licenses
+1. Get a release, or [build from source](docs/BUILDING.md).
+2. Put your game folder next to the port (`..\CUSA03173`), or pick it in the launcher.
+3. Start **`launch_gui.bat`**, choose your settings, click **Launch Bloodborne**.
+   Or run `run.bat "C:\Games\Bloodborne\CUSA03173"`.
 
-This project is licensed under the **GNU General Public License v3 or later** ([LICENSE](LICENSE)). Up to v0.3.2 it was distributed under GPL-2.0-or-later; every component allows the move to version 3 (the shadPS4 parts and the port's own files are GPL-2.0-or-later), and it lets the port include code from [bbhost](https://github.com/droogie/bbhost) by droogie and team (GPL-3.0-or-later). Third-party components keep their licenses: [shadPS4](https://github.com/shadps4-emu/shadPS4) video core and shader recompiler (GPL-2.0+), [sirit](https://github.com/shadps4-emu/sirit), [half](https://half.sourceforge.net/), [FSR-Vulkan](https://github.com/FireBurn/FSR-Vulkan) by FireBurn (MIT), AMD FidelityFX SDK (MIT), [LibAtrac9](https://github.com/Thealexbarney/LibAtrac9) (MIT), [Dear ImGui](https://github.com/ocornut/imgui) (MIT), DejaVu fonts, [dxil-spirv](https://github.com/HansKristian-Work/dxil-spirv) (MIT, used to build the FSR 4.1.1 assets). The DLSS bridge (`gpu/dlss_bridge`, MIT) and loader come from [Supermedo's Windows port](https://github.com/Supermedo/bloodborne_pc), adapted from [IFreemz/shadPS4-Bloodborne-DLSS-FSR](https://github.com/IFreemz/shadPS4-Bloodborne-DLSS-FSR). AMD's FSR 4 DLLs and model data and NVIDIA's DLSS SDK are not distributed here. Release packages include NVIDIA's `nvngx_dlss.dll` runtime under its license (`out/NVIDIA_DLSS_LICENSE.txt`).
+Saves and the shader cache are stored in `user\`. Settings are stored in `bbport.ini`.
 
-Special thanks to the original creators and open source projects that made this port possible:
+## Controls
 
-- **deadinside28**: Creator of the original Linux port (`bbport`), pioneering the flat memory image architecture, custom Vulkan two-stage pipeline, and synthetic motion vector generation.
-- **shadPS4 Team**: Base Vulkan video core and shader recompiler.
-- **FireBurn**: FSR-Vulkan runtime and temporal upscaling backend.
-- **Thealexbarney**: LibAtrac9 audio decoding library.
-- **ocornut**: Dear ImGui library for the in-game settings overlay.
-- **Supermedo** and **IFreemz**: DLSS bridge.
-- **droogie and the bbhost team** ([bbhost](https://github.com/droogie/bbhost), GPL-3.0-or-later): the long-session stability fixes in `gpu/shim/bbport_stability.cpp` and `gpu/shim/bbport_ribbons.cpp` (heap size table growth, GX resource-table reclaim wait, frame-pool borrow fix, red-zone-free effect ribbon writers, blend write-mask fix, 6 GiB direct memory) come from or follow bbhost.
-- **Community Patch Authors**: Kyo, Lance McDonald, illusion, emoose, auser1337, and contributors for the 60 FPS, camera, and engine patches.
-- **zackcage6**: testing and bug reporting.
+| Action | Gamepad | Keyboard |
+|---|---|---|
+| Port settings | *System* in the game's menu | *System* in the game's menu |
+| Overlay menu (fallback) | `L3 + R3` (enable in launcher) | `Insert` |
+| Gestures / key items | Touchpad left / right half | `Tab` / `Backspace` |
+| Fullscreen | — | `Alt + Enter` |
+
+Mouse and keyboard, free camera, debug menu: [docs/SETTINGS.md](docs/SETTINGS.md).
+
+## Party co-op
+
+Play the whole game with friends in one session, from the first lamp to the end credits.
+Modelled on Elden Ring Seamless Co-op, adapted to Bloodborne. **In development:** tested on one
+PC (several game copies, simulated internet lag), not yet between two PCs.
+
+### How it plays
+
+- **No PSN, no server.** One player hosts, the others join with the host's address and a password.
+- **Start from the title screen:** *Party* → *New / Join / Continue party game*. The address and
+  password are remembered, so later sessions are one press.
+- **Fast join.** The bell, beckoner and summon-sign waits are gone: a guest is in the host's world
+  within seconds.
+- **The session never ends by itself.** Boss kills, area clears, deaths and travel don't send
+  anyone home.
+- **No multiplayer walls.** The fog walls that keep phantoms near the host are gone; the party can
+  split up and explore.
+- **Travel together.** Lamps, headstones, the Hunter's Mark and scripted transitions move the
+  whole party with one loading screen.
+- **Everyone can use lamps.** Vanilla disables lamps during co-op; here they work for everyone.
+  A lamp lit by anyone is lit for the party.
+- **Resting resets the world for the party.** Enemies respawn; everyone's HP, vials and bullets
+  refill.
+- **Guests are full players.** The Doll (level up), shops, the workbench, storage, lamps and
+  headstones all work for guests.
+- **Progress counts for everyone.** Bosses, items, doors, shortcuts, lamps, story and endings go
+  into every player's own save. A guest who is behind catches up.
+- **The host's world is shared live.** A door or shortcut opened by the host is open for the
+  guests too.
+- **Crashes recover.** A crashed game restarts and rejoins by itself.
+- **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
+- **Death has a cost.** Each death stacks "rot" (−10% max HP, up to 5); using a lamp clears it.
+  On by default; the host can turn it off on the *Party rules* page.
+- **Names over party members**, in each player's colour, with level, health or deaths (your choice).
+- **Party HUD.** Party members and events are shown in a small HUD; all party settings are on the
+  *Party* pages of the game's *System* menu.
+
+### Deaths
+
+| Who dies | What happens |
+|---|---|
+| A guest | Respawns alone at a lit lamp in the party's area; the others keep playing |
+| The host | The session stays; the party moves to the host's lamp with one loading screen |
+| Everyone | Everyone respawns together; the session stays |
+
+### Coming next
+
+| Change | Status |
+|---|---|
+| "Travel alone / Travel with party" choice at lamps | In progress |
+| Every player, host included, respawns at their own last lamp | In progress |
+| Dying in a boss fight: spectate until the fight ends, then everyone respawns at one shared lamp | In progress |
+| Bloodstains for everyone, like single-player | In progress |
+| Enemy scaling: harder than vanilla by default (settings done; boss fights not yet verified) | In progress |
+| Guests open doors, pull levers, talk to NPCs; NPC choices shared | In progress |
+| Item pickups and enemy drops per player: everyone gets their own | In progress |
+| Cutscenes play for the whole party | Planned |
+| Joining during a boss fight waits outside until it ends | Planned |
+| 4 players (3 work today) | In progress |
+| Chalice dungeons: full clear in a party, rituals by anyone | In progress |
+| PvP / friendly fire the host can switch on and off | Later |
+| Pings: party members and marked spots visible through walls, with distance and player colours | Later |
+
+### Connecting over the internet
+
+The host needs port 9307 (UDP and TCP) reachable. Most routers open it automatically (UPnP);
+otherwise forward it by hand. Allow the Windows Firewall prompt once. Guests need nothing.
+Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
+
+Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
+[docs/party/ERSC_PARITY.md](docs/party/ERSC_PARITY.md)
+
+## Documentation
+
+| Topic | File |
+|---|---|
+| Building from source, DLSS, FSR 4 assets | [docs/BUILDING.md](docs/BUILDING.md) |
+| Settings, launcher, controls, environment variables | [docs/SETTINGS.md](docs/SETTINGS.md) |
+| Shader compilation and sharing the cache | [docs/SHADERS.md](docs/SHADERS.md) |
+| Saves, backups, restoring, game file check | [docs/SAVES.md](docs/SAVES.md) |
+| Mods, XML patches, DLC | [docs/MODS.md](docs/MODS.md) |
+| How the port works, vs. shadPS4, upstream merges | [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) |
+| Upscalers | [docs/upscaler.md](docs/upscaler.md) |
+| Changes | [CHANGES.md](CHANGES.md), [docs/](docs) |
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `src/` | Win32 loader, memory management, PS4 runtime |
+| `gpu/` | Vulkan renderer, upscalers, DLSS bridge, party co-op (`gpu/shim/party`) |
+| `scripts/` | Eboot preparation, game check, patch compiler |
+| `patches/` | Community XML patches for v1.09 |
+| `launcher.py`, `launch_gui.bat`, `run.bat`, `build.bat` | Windows launcher and scripts |
+| `tools/`, `tests/`, `docs/` | Developer tools, tests, documentation |
+| `launcher/`, `run.sh`, `build.sh` | Upstream Linux scripts (reference only) |
+
+## Credits and licenses
+
+**GPL-3.0-or-later** ([LICENSE](LICENSE)). Third-party parts keep their own licenses. Full text and license history: [docs/CREDITS.md](docs/CREDITS.md).
+
+| Who | What |
+|---|---|
+| deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors |
+| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes |
+| shadPS4 team | Vulkan video core and shader recompiler (GPL-2.0+), sirit |
+| droogie and the bbhost team | Long-session stability fixes ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |
+| FireBurn | FSR-Vulkan (MIT); AMD FidelityFX SDK (MIT) |
+| Supermedo, IFreemz | DLSS bridge and Windows loader |
+| Thealexbarney | LibAtrac9 audio (MIT) |
+| ocornut | Dear ImGui (MIT) |
+| Kyo, Lance McDonald, illusion, emoose, auser1337 | 60 FPS, camera and engine patches |
+| zackcage6 | Testing and bug reports |
+
+Also used: half, DejaVu fonts, dxil-spirv (MIT). AMD's FSR 4 files and NVIDIA's DLSS SDK are not
+included here. Release packages include NVIDIA's `nvngx_dlss.dll` under its license
+(`out/NVIDIA_DLSS_LICENSE.txt`).

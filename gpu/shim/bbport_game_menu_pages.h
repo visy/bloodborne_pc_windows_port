@@ -112,6 +112,8 @@ int PartyRowCount();
 
 /// The "Restart the game" button (runtime_restart in the game; tests count calls).
 void SetRestartHandler(void (*restart)());
+/// The "Quit the game" button (bbgpu_request_quit in the game; tests count calls).
+void SetQuitHandler(void (*quit)());
 
 // ---- helpers, exposed for the test ----
 int ChoiceFromPosition(u8 position, int count);

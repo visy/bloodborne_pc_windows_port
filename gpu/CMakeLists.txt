@@ -300,7 +300,7 @@ target_compile_options(settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(settings-test PRIVATE .. shim)
 # The port's pages in the game's System menu (shim/bbport_game_menu_pages.cpp): limits, settings, party buttons.
 add_executable(game-menu-pages-test EXCLUDE_FROM_ALL ../tests/test_game_menu_pages.cpp shim/bbport_game_menu_pages.cpp
-    shim/bbport_settings.cpp shim/party/party_status.cpp)
+    shim/bbport_settings.cpp shim/party/party_status.cpp shim/party/party_balance_rules.cpp shim/net/json.cpp)
 target_compile_options(game-menu-pages-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(game-menu-pages-test PRIVATE .. shim)
 set_target_properties(game-menu-pages-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
@@ -402,7 +402,11 @@ add_executable(bbport
 if (WIN32)
     # The exe's version resource (Properties -> Details): file and product version.
     enable_language(RC)
-    string(REPLACE "." "," BBPORT_VERSION_COMMAS "${BBPORT_VERSION}")
+    # Exactly four numbers (0.5 -> 0,5,0,0; 0.5.1 -> 0,5,1,0) for FILEVERSION / PRODUCTVERSION.
+    string(REPLACE "." ";" _bb_ver_parts "${BBPORT_VERSION}")
+    list(APPEND _bb_ver_parts 0 0 0)
+    list(SUBLIST _bb_ver_parts 0 4 _bb_ver_parts)
+    string(REPLACE ";" "," BBPORT_VERSION_COMMAS "${_bb_ver_parts}")
     configure_file(../src/bbport.rc.in "${CMAKE_CURRENT_BINARY_DIR}/bbport.rc" @ONLY)
     target_sources(bbport PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/bbport.rc")
 endif()
@@ -449,7 +453,7 @@ endif()
 set(PARTY_LINK_SOURCES shim/party/party_link.cpp shim/party/party_code.cpp shim/party/party_addr.cpp
     shim/party/party_crypto.cpp shim/party/upnp_win.cpp)
 add_executable(party-link-test EXCLUDE_FROM_ALL ../tests/test_party_link.cpp ${PARTY_LINK_SOURCES}
-    shim/net/net_stun.cpp third_party/monocypher/monocypher.c)
+    shim/net/net_stun.cpp shim/net/netsim.cpp third_party/monocypher/monocypher.c)
 target_compile_options(party-link-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-link-test PRIVATE shim)
 set_target_properties(party-link-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
@@ -535,7 +539,7 @@ endif()
 set(PARTY_FUZZ_SOURCES ../tests/party_fuzz.cpp ${PARTY_NET_SOURCES} ${PARTY_LINK_SOURCES}
     third_party/monocypher/monocypher.c shim/party/party_travel.cpp shim/party/party_story.cpp
     shim/party/party_items.cpp shim/party/party_phantom.cpp shim/party/party_progress.cpp
-    shim/party/party_guestsvc.cpp)
+    shim/party/party_guestsvc.cpp shim/party/party_balance_rules.cpp)
 foreach(fuzz_target party-fuzz party-security-test party-fuzz-ubsan)
     add_executable(${fuzz_target} EXCLUDE_FROM_ALL ${PARTY_FUZZ_SOURCES})
     target_compile_definitions(${fuzz_target} PRIVATE BB_PARTY_TRAVEL_NO_GAME BB_PARTY_STORY_NO_GAME
@@ -551,10 +555,17 @@ target_compile_definitions(party-security-test PRIVATE PARTY_FUZZ_QUICK)
 target_compile_options(party-fuzz-ubsan PRIVATE -fsanitize=undefined -fsanitize-undefined-trap-on-error
     -fno-sanitize-recover=all -D_GLIBCXX_ASSERTIONS -O1)
 target_link_options(party-fuzz-ubsan PRIVATE -fsanitize=undefined -fsanitize-undefined-trap-on-error)
+# Party balance rules (shim/party/party_balance_rules.cpp; in bbgpu through SHIM_SOURCES): scaling
+# rows, rot, the "balance" event JSON. cmake --build out/gpu --target party-balance-test
+add_executable(party-balance-test EXCLUDE_FROM_ALL ../tests/test_party_balance.cpp shim/party/party_balance_rules.cpp
+    shim/net/json.cpp)
+target_compile_options(party-balance-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-balance-test PRIVATE shim)
+set_target_properties(party-balance-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Party HUD board (shim/party/party_hud.cpp; in bbgpu through SHIM_SOURCES): same-world rules,
 # composition from roster / VITALS / local reads, geometry. cmake --build out/gpu --target party-hud-test
 add_executable(party-hud-test EXCLUDE_FROM_ALL ../tests/test_party_hud.cpp shim/party/party_hud.cpp
-    ${PARTY_LINK_SOURCES} shim/net/net_stun.cpp third_party/monocypher/monocypher.c)
+    ${PARTY_LINK_SOURCES} shim/net/net_stun.cpp shim/net/netsim.cpp third_party/monocypher/monocypher.c)
 target_compile_options(party-hud-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-hud-test PRIVATE shim)
 set_target_properties(party-hud-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
@@ -565,7 +576,7 @@ endif()
 # game facts -> the Party tab's state, roster, events, commands. ninja -C out/gpu party-status-bridge-test
 add_executable(party-status-bridge-test EXCLUDE_FROM_ALL ../tests/test_party_status_bridge.cpp
     shim/party/party_status_bridge.cpp shim/party/party_status.cpp shim/party/party_async_io.cpp
-    ${PARTY_LINK_SOURCES} shim/net/net_stun.cpp third_party/monocypher/monocypher.c)
+    ${PARTY_LINK_SOURCES} shim/net/net_stun.cpp shim/net/netsim.cpp third_party/monocypher/monocypher.c)
 target_compile_definitions(party-status-bridge-test PRIVATE BB_PARTY_BRIDGE_NO_GAME)
 target_compile_options(party-status-bridge-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-status-bridge-test PRIVATE shim)

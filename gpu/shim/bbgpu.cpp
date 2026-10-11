@@ -521,6 +521,22 @@ extern "C" int bbgpu_text_input_is_active(void) {
     return (g_window && g_window->IsTextInputActive()) ? 1 : 0;
 }
 
+extern "C" int bbgpu_test_key(const char* name) {
+    if (!g_window || !name) return 0;
+    const SDL_Keycode key = SDL_GetKeyFromName(name);
+    if (key == SDLK_UNKNOWN) return 0;
+    g_window->TestKey(u32(key));
+    return 1;
+}
+
+extern "C" void bbgpu_request_quit(void) {
+    // Like the window's close button: the window thread ends the process (party BYE first).
+    SDL_Event quit;
+    SDL_zero(quit);
+    quit.type = SDL_EVENT_QUIT;
+    SDL_PushEvent(&quit);
+}
+
 // Mouse & keyboard controls (after Mrsuss60/bloodborne_pc_windows_port's
 // bbgpu_consume_mouse_delta / bbgpu_get_mk_config, as one call).
 extern "C" int bbgpu_mouse_keyboard(BbMouseState* state, int consume_motion) {
@@ -530,7 +546,11 @@ extern "C" int bbgpu_mouse_keyboard(BbMouseState* state, int consume_motion) {
         *state = BbMouseState{};
         if (on && g_window) {
             g_window->ReadMouse(state->dx, state->dy, state->buttons, consume_motion != 0);
+            if (consume_motion) {
+                g_window->TakeWheel(state->wheel_up, state->wheel_down);
+            }
         }
+        state->wheel = s.mk_wheel.load() ? 1 : 0;
         state->sens_x = s.mk_sens_x.load();
         state->sens_y = s.mk_sens_y.load();
         state->deadzone = s.mk_deadzone.load();

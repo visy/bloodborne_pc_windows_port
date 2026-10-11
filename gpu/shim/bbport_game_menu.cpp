@@ -54,6 +54,7 @@
 
 extern "C" void* runtime_low_map(size_t size, int prot); // src/runtime_memory.c
 extern "C" void runtime_restart(void);                  // src/probe.c
+extern "C" void bbgpu_request_quit(void);              // bbgpu.cpp
 
 // The game's code is called, and calls the hooks below, with the System V ABI (the PS4's): the
 // default on Linux, said explicitly for Windows.
@@ -606,6 +607,7 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
     party::flow::RegisterMenuRows(); // the party flow's rows on the Party page (party_flow_rows.cpp)
     P::Define();
     P::SetRestartHandler(&runtime_restart);
+    P::SetQuitHandler(&bbgpu_request_quit);
     if (P::All().size() > MaxPages) {
         std::printf("Game menu: %zu pages, only %zu shown\n", P::All().size(), MaxPages);
     }

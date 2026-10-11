@@ -126,12 +126,16 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
     };
     // bbport BB_GUEST_IN_PLACE: the GPU copies the image into the game's memory itself, in stream
     // order: before the fences that follow, no wait here and no CPU copy afterwards.
+    // Where the memory has a VRAM copy the GPU copies into that copy as well: buffers bound over
+    // it read the image's data in stream order (issue #122: motion blur read a render target as a
+    // buffer, 0x104ff00000, from a VRAM copy refreshed only once the CPU copy below landed, frames
+    // later: the frame smeared while the camera turned). The game's memory still gets it below.
     if (GuestInPlace() && image.info.guest_address != 0) {
         const auto [arena, offset] =
             buffer_cache.ObtainBuffer(image.info.guest_address, download_size, true);
+        image_copy.bufferOffset = offset;
+        runtime.DownloadImage(&image, arena, std::span{&image_copy, 1});
         if (buffer_cache.IsInPlace(image.info.guest_address, download_size)) {
-            image_copy.bufferOffset = offset;
-            runtime.DownloadImage(&image, arena, std::span{&image_copy, 1});
             return;
         }
     }
@@ -1210,6 +1214,15 @@ void TextureCache::GarbageCollectImages() {
                                .count());
     if (second != gc_second) {
         gc_second = second;
+        // bbport: the driver's budget for our process, once a second: near it the collector evicts
+        // by submissions (as before 0.5) rather than keeping textures for seconds (NoteVramShort).
+        if (instance.CanReportMemoryUsage() && !instance.IsIntegrated()) {
+            const u64 budget = instance.GetDeviceMemoryBudgetNow();
+            if (budget != 0 && total_used_memory >= budget / 100 * 92 &&
+                vram_short_until.load(std::memory_order_relaxed) < second + 2) {
+                vram_short_until.store(second + 2, std::memory_order_relaxed);
+            }
+        }
         BbStats::coarse_second.store(u32(second), std::memory_order_relaxed);
         gc_tick_at_second[second % gc_tick_at_second.size()] = gc_tick;
     }
@@ -1264,6 +1277,12 @@ void TextureCache::GarbageCollectImages() {
             // Still over the critical mark after the 1 s pass: by submissions (upstream 0.5).
             below_tick = gc_tick - std::min<u64>(160, gc_tick);
             num_deletions = 16;
+        } else if ((aggresive || pressured) &&
+                   second < vram_short_until.load(std::memory_order_relaxed)) {
+            // Upstream 0.51: VRAM ran out (NoteVramShort, or near the driver's budget): by
+            // submissions as before 0.5 instead of keeping unused textures for seconds.
+            below_tick = gc_tick - std::min<u64>(aggresive ? 160 : 80, gc_tick);
+            num_deletions = aggresive ? 16 : 6;
         } else if (aggresive) {
             below_tick = critical_tick;
             num_deletions = 16;
@@ -1392,6 +1411,13 @@ void TextureCache::GarbageCollectSamplers() {
         configure(true);
         sampler_lru_cache.ForEachItemBelow(gc_tick - ticks_to_destroy, clean_up);
     }
+}
+
+void TextureCache::NoteVramShort() {
+    const u64 now = u64(std::chrono::duration_cast<std::chrono::seconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count());
+    vram_short_until.store(now + 30, std::memory_order_relaxed);
 }
 
 void TextureCache::RunGarbageCollector() {
