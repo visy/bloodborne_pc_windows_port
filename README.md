@@ -100,7 +100,9 @@ run from two new characters to the end credits passed, and a three-player travel
 - **Same version for everyone.** A player whose bbport build, game files, patches, mods or party
   options differ is refused on joining; the message says what differs and what to do.
 - **Chalice dungeons together.** Guests join the host's dungeon; levers, doors, the layer boss, its
-  loot (for each player) and the lift down work for the whole party.
+  loot (for each player) and the lift work for the whole party. Any player can perform the ritual:
+  the host's altar then offers *Enter the party's dungeon* (no glyph typing), and chalices are
+  shared between all players.
 - **Crashes recover.** A crashed game restarts and rejoins by itself.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
 - **Death has a cost.** Each death stacks "rot" (−10% max HP or stamina, picked at random, up to
@@ -133,7 +135,7 @@ run from two new characters to the end credits passed, and a three-player travel
 | Every cutscene for the whole party (story cutscenes and endings already work) | In progress |
 | Joining during a boss fight or cutscene waits outside until it ends | In progress (no summon while the host's boss bar or a cutscene is up) |
 | The 4th player joins as fast as the others | In progress |
-| Chalice dungeons: rituals by any player (guest's dungeon entered by the party) | In progress |
+| Chalice dungeons: deeper layers checked in a party; entering the party's dungeon in one press | In progress |
 | PvP / friendly fire the host can switch on and off | Later |
 | Pings: party members and marked spots visible through walls, with distance and player colours | Later |
 
