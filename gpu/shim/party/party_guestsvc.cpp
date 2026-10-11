@@ -149,7 +149,9 @@ bool LampRequestGate::Accept(bool host_ready, double now, std::string* why) {
 
 std::vector<EmevdSkipRule> LampSkipRules() {
     std::vector<EmevdSkipRule> out;
-    ParseEmevdSkipRules("7200:1003:6@0", &out);
+    // 7200: a world lamp -> the Dream; 12107000: a Dream headstone -> its lamp (m21_00_00_00, one
+    // instance per lamp: 1003[6] end if client, wait for the menu's flag, 2003[49] warp).
+    ParseEmevdSkipRules("7200:1003:6@0,12107000:1003:6@0", &out);
     return out;
 }
 
@@ -263,10 +265,13 @@ std::uint64_t BB_COOP_SYSV IsClientFilter(std::uint64_t env, std::uint64_t value
     // The talk script id (t210304 -> 210304; the case-19 environment is valid here: the game
     // just read +0x25).
     const std::uint32_t talk = *reinterpret_cast<const std::uint32_t*>(env + 0x10);
-    // Headstones stay in their client wait on a guest (live: choosing an area in the headstone menu
-    // crashed the guest at once - the warp list is built from lamp flags the guest's overlay lacks);
-    // the host's headstones work in a party (MultiFilter) and the party follows the host.
-    if (!GuestServiceTalkAllowed(talk, g.extra)) {
+    // Headstones (t210000-t210003) on a guest with the party lamps on: their warp list comes from
+    // the lamp flags of the host-world overlay, which the host-world mirror (party_progress) now
+    // fills (before it, choosing an area crashed the guest: the list indexed past its end). The
+    // choice sets the lamp's flag; m21's event 12107000 (client end skipped, LampSkipRules) warps,
+    // which becomes the guest's lamp request to the host (the party follows the host's warp).
+    const bool headstone = g_lamps.load(std::memory_order_relaxed) && talk >= 210000 && talk <= 210003;
+    if (!headstone && !GuestServiceTalkAllowed(talk, g.extra)) {
         return value;
     }
     g_overrides.fetch_add(1, std::memory_order_relaxed);
@@ -1152,8 +1157,41 @@ void LogLampObjs() {
         SafeGet(o + 0x28, &type);
         SafeGet(o + 0x2c, &row);
         SafeRead(o + 0x48, b, 4);
-        Log("test: lamp object %p entity %d type %u row %d: +0x48 %u +0x49 %u +0x4A %u +0x4B %u",
-            reinterpret_cast<void*>(o), ent, type, row, b[0], b[1], b[2], b[3]);
+        // Its FrpgNetMan (0x553B120) +0xC70 lamp entry (the type's source, 0x146E360): list at
+        // +0x30 (node +0 next, +0x10 entry), entry +8 entity, +0xC / +0xE s16 counters, +0x10 lit,
+        // +0x11 registered, +0x14 flag base, +0x18.
+        std::string entry = "no +0xC70 entry";
+        std::uint64_t net = 0, c70 = 0, head = 0;
+        if (SafeGet(Guest(0x553b120), &net) && net && SafeGet(net + 0xc70, &c70) && c70 &&
+            SafeGet(c70 + 0x30, &head) && head) {
+            std::uint64_t n = 0;
+            SafeGet(head, &n);
+            for (int guard = 0; n && n != head && guard < 512; ++guard) {
+                std::uint64_t e = 0;
+                std::int32_t eent = 0;
+                if (SafeGet(n + 0x10, &e) && e && SafeGet(e + 8, &eent) && eent == ent) {
+                    std::int16_t c = 0, d = 0;
+                    std::uint8_t lit = 0, reg = 0;
+                    std::int32_t f14 = 0, f18 = 0;
+                    SafeGet(e + 0xc, &c);
+                    SafeGet(e + 0xe, &d);
+                    SafeGet(e + 0x10, &lit);
+                    SafeGet(e + 0x11, &reg);
+                    SafeGet(e + 0x14, &f14);
+                    SafeGet(e + 0x18, &f18);
+                    char t[160];
+                    std::snprintf(t, sizeof t, "+0xC70 entry %p: +0xC %d +0xE %d lit %u reg %u +0x14 %d +0x18 %d",
+                                  reinterpret_cast<void*>(e), c, d, lit, reg, f14, f18);
+                    entry = t;
+                    break;
+                }
+                if (!SafeGet(n, &n)) {
+                    break;
+                }
+            }
+        }
+        Log("test: lamp object %p entity %d type %u row %d: +0x48 %u +0x49 %u +0x4A %u +0x4B %u; %s",
+            reinterpret_cast<void*>(o), ent, type, row, b[0], b[1], b[2], b[3], entry.c_str());
     }
 }
 
@@ -1220,6 +1258,12 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
     g_session_role = s.session_role;
     if (!g.test.empty()) {
         LampPressTick(s, Now());
+        static double last_host_probe = 0;
+        if (g.test.find("lampprobe") != std::string::npos && s.session_role == 3 && s.world_up && !s.loading &&
+            !IsDreamMap(s.map_id) && Now() - last_host_probe >= 3.0) {
+            last_host_probe = Now();  // the host's view of the same lamp objects (comparison)
+            LogLampObjs();
+        }
     }
     if (!g_lamps.load()) {
         return;

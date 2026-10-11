@@ -641,6 +641,17 @@ static void TestWorldMirror() {
     // guest overlay (mode 1)
     FakeStore guest;
     guest.Build(1);
+    {
+        CHECK(guest.view().OverlayIdentity() == 0);  // no overlay map
+        OvNode empty;
+        empty.is_nil = 1;
+        empty.parent = empty.left = empty.right = reinterpret_cast<u64>(&empty);
+        const u64 h = reinterpret_cast<u64>(&empty);
+        std::memcpy(guest.man.data() + 0x90, &h, 8);
+        std::map<u32, u64> none;
+        CHECK(guest.view().OverlayIdentity() == 0);  // empty: nothing to fill yet
+        CHECK(guest.view().OverlayGroups(&none) && none.empty());
+    }
     FakeOverlayMap ovm;
     ovm.Build(guest);
     const FlagStore gs = guest.view();

@@ -10,7 +10,8 @@
 //   items      ItemsFromJsonText + FilterPeerItems + GuestItems
 //   phantom    PhantomEventFromJsonText
 //   lamp       LampRequestFromJsonText + SanitizePeerLampRequest (a guest's lamp request, host side)
-//   progress   ChangesFromJson / SnapshotFromJson / GuestApplier queue / BbpfDecode
+//   progress   ChangesFromJson / SnapshotFromJson / GuestApplier queue / WorldImageFromJson +
+//              GuestWorldMirror / BbpfDecode
 //   hostsvc    PartyHostService::handle and FromApi::handle_json (guest RPCs, the sign board)
 //   linkhost   a real PartyLink host over loopback: garbage and pre-auth frames, then
 //              authenticated encrypted frames of every type (RPC_REQ into the host service)
@@ -459,6 +460,12 @@ Corpus json_corpus() {
     snap.blocks[12401] = {800, 801};
     snap.blocks[70002] = {802};
     c.add(coop::progress::SnapshotToJson(snap));
+    coop::progress::WorldImage img;  // host-world mirror groups (EVENT world_groups)
+    img.epoch = 77;
+    img.full = true;
+    img.groups[coop::progress::PoolKeyOfId(72410201)][25] = 0x40;
+    img.groups[coop::progress::PoolKeyOfId(2200)][25] = 0x80;
+    c.add(coop::progress::WorldImageToJson(img));
     // Host service / FromApi requests.
     for (const char* s :
          {R"({"OnlineId":"fz0","SignalingAddr":"10.0.0.2","SignalingPort":3658,"MappedAddr":"203.0.113.9","MappedPort":3658,"RelayPort":50002})",
@@ -697,6 +704,14 @@ void run_progress(Rng& r, const Corpus& c) {
         applier.QueueSnapshot(snap);
     }
     INVARIANT(applier.Pending() <= coop::progress::kMaxPendingItems);
+    static coop::progress::GuestWorldMirror mirror;
+    coop::progress::WorldImage img;
+    if (coop::progress::WorldImageFromJson(s, &img, &err)) {
+        INVARIANT(img.groups.size() <= coop::progress::kPoolBlocks);
+        for (const auto& [key, g] : img.groups) INVARIANT(coop::progress::WorldMirrorKey(int(key)));
+        mirror.Receive(img);
+        INVARIANT(mirror.Dirty() <= coop::progress::WorldMirrorKeys().size());
+    }
     coop::progress::BbpfHeader h;
     std::vector<coop::progress::BbpfBlock> blocks;
     (void)coop::progress::BbpfDecode(in, &h, &blocks);
