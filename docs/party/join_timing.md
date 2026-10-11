@@ -164,8 +164,45 @@ Fixes:
    went up, so it costs about that much. Lowering the transport timeout would remove it, but would
    also drop players on a real network hiccup that short.
 
+### Profile and what was tried (2026-10-11, C6)
+
+Run `crash rejoin` (loopback, 2 instances, guest killed right after it reached the host's world,
+`join_timeline.py --from '1:Launching Bloodborne:2'`):
+
+| Step | Time | Note |
+|---|---|---|
+| crash -> host link drop | ~0.6 s | TCP RST from the dead process |
+| guest restart -> party link | 2.5-2.9 s | game boot |
+| -> Continue pressed | +1.0 s | |
+| -> world up -> load done | +9.0 +2.2 s | the guest's own save loads |
+| -> bell rung, sign up | +1.3 +2.0 s | same as a normal join |
+| sign up -> hold ends | 2-5 s | **the 26 s sign hold** (from the drop) |
+| summon -> client -> in the host's world | +0.4 +2.1 +4.5 s | same as a normal join |
+| **total, restart -> cooperators** | **~30 s** (crash -> cooperators ~34 s) | world up -> cooperators ~15 s vs ~4.5 s for a normal join |
+
+So everything but the hold is the normal join plus the guest's own boot and load. Tried:
+
+1. **Another UDP port for the restarted guest** (so the host's old transport connection would not
+   match): failed. The host's game sends the summon data to the address it keeps for that online
+   id (`send 3 -> 127.0.0.1:47961` after the guest moved to 47965); the restarted game never got
+   it and the join took 60 s. Reverted.
+2. **Expire the dead connection early**: when the link ends with *connection reset* (a crash,
+   not a network hiccup), lower the live copies of the transport config's idle timeouts
+   (25000 / 20000 ms, pattern `0x4d0, 3000, 5000, 6000, 25000, 20000, 200`) to 4 / 3 s for 8 s
+   and shorten the hold to 5 s from then. The copies (mapped heap, e.g. `0x110dcbxxxx`) were found
+   in 2 of 3 runs by a 35 s background scan of the resident memory, none in the third, and no
+   run showed the connection actually expiring early (in the run where the patch came in time the
+   25 s timeout ended at the same moment). Kept **off by default** (`BB_PARTY_NR_FAST_EXPIRE=1`).
+   The hold is dynamic now: 26 s at the drop, shortened only once such a patch is in.
+
+Result: crash rejoin stays ~30 s after the restart (~34 s after the crash). The floor without
+the hold is ~22 s after the crash (boot + own load + a normal join).
+
 ## Open
 
+- Finding where the NexusRevolution transport keeps its idle timeout per connection (the config
+  built at 0xcdb250 is handed to the transport factory `param_3->vtable[0x10]`) would let the host
+  drop one dead connection on a crash (RST) and cut ~4-8 s from C6.
 - A lower transport idle timeout (0xcdb309 25000 / 0xcdb314 20000 ms) would end the crash hold
   sooner, and the host would notice a crashed guest sooner too (today ~16 s). Not done: it is also
   the tolerance for real network hiccups.

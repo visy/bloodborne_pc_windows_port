@@ -731,8 +731,7 @@ LinkCallbacks make_callbacks(bool host) {
             if (m.state == MemberState::InHostWorld || m.state == MemberState::Joining ||
                 m.state == MemberState::Loading) {
                 // A crash (RST): the connection is expired early (nr_fast_expire), so a short hold.
-                const bool crashed = m.lost_why.find("reset") != std::string::npos &&
-                                     !(env("BB_PARTY_NR_FAST_EXPIRE") && !env_on("BB_PARTY_NR_FAST_EXPIRE"));
+                const bool crashed = m.lost_why.find("reset") != std::string::npos && env_on("BB_PARTY_NR_FAST_EXPIRE");
                 bbnet::party::FromApi::instance().hold_signs(m.name, 26000);
                 if (crashed) nr_fast_expire(m.name);  // shortens that hold once the timeout is lowered
             }
@@ -1258,7 +1257,7 @@ void punch_guest_codes_tick() {
 // When the guest's link ends with "connection reset" (its OS answered for a dead process: a crash,
 // not a network hiccup), the host lowers the live copies of those two timeouts for a few seconds,
 // so the dead connection expires within ~4 s instead of 25, then restores them.
-// BB_PARTY_NR_FAST_EXPIRE=0 off.
+// Experimental: BB_PARTY_NR_FAST_EXPIRE=1 on (off by default).
 std::mutex g_nr_mu;
 std::atomic<int> g_nr_epoch{0};
 
@@ -1307,7 +1306,9 @@ std::vector<std::uint32_t*> nr_config_copies(std::uint8_t* lo, std::uint8_t* hi)
     return hits;
 }
 
-bool nr_disabled() { return env("BB_PARTY_NR_FAST_EXPIRE") && !env_on("BB_PARTY_NR_FAST_EXPIRE"); }
+// Experimental, off by default (BB_PARTY_NR_FAST_EXPIRE=1): the copies were found in 2 of 3 live
+// runs (none in the third) and an early expiry was never shown (docs/party/join_timing.md).
+bool nr_disabled() { return !env_on("BB_PARTY_NR_FAST_EXPIRE"); }
 
 bool nr_copy_ok(const std::uint32_t* h) {
     std::uint32_t v[7] = {};
