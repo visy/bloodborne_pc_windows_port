@@ -135,6 +135,7 @@ std::atomic<bool> g_force{false};
 std::atomic<bool> g_rejoin{false};  // a B2 re-join is in flight (K5 / K6 armed)
 std::atomic<bool> g_k1_xml{false};  // the XML retarget already keeps the room at 0x19471B1
 std::atomic<int> g_apart_k5{0};     // members in another area (split travel): K5 stands aside
+std::atomic<double> g_split_change_at{-100.0};  // the last split chr removal / meet rewind (Now())
 
 bool IdEquals(u64 a, u64 b) {
     using Fn = bool(BB_COOP_SYSV*)(u64, u64);
@@ -556,8 +557,11 @@ BB_COOP_SYSV u64 FlagApplyHook(u64 man, u64 blob) {
 
 // K5: Lua OnMatchingCheck: a member's chr is missing (it is loading).
 BB_COOP_SYSV u64 MatchCheckHook(u64 session) {
-    if (g_on.load() && (g_rejoin.load() || g_apart_k5.load() > 0)) {
-        Log("K5: OnMatchingCheck leave suppressed (%s)", g_rejoin.load() ? "re-join in flight" : "members apart: split travel");
+    // Split travel: a member apart (no chr here, by design), or a chr removed / re-created in the
+    // last 15 s (live split1: the leave came 50 ms after a meet's rewind, the chr not built yet).
+    const bool split = g_apart_k5.load() > 0 || Now() - g_split_change_at.load() < 15.0;
+    if (g_on.load() && (g_rejoin.load() || split)) {
+        Log("K5: OnMatchingCheck leave suppressed (%s)", g_rejoin.load() ? "re-join in flight" : "split travel: members apart");
         return 0;
     }
     using Fn = u64(BB_COOP_SYSV*)(u64);
@@ -877,6 +881,7 @@ void RemoveRemoteChr(u64 chr, const char* why) {
     ChrPos(chr, p);
     reinterpret_cast<Release>(Guest(0x15bc080))(Field<u64>(Slot(kSlotGsm), 0x16f8), Field<u32>(chr, 8));
     reinterpret_cast<Remove>(Guest(0x19186e0))(Slot(kSlotWorldChrMan), chr);
+    g_split_change_at = Now();
     Log("split: remote chr %#llx at (%.1f, %.1f, %.1f) removed (%s); its task is kept", ull(chr), p[0], p[1], p[2], why);
 }
 
@@ -975,6 +980,9 @@ void SplitTick(const GameSnapshot& s, double now) {
         return;
     }
     const u32 mine = AreaOf(s.map_id);
+    if (mine == 0) {
+        return;  // our own map not known yet (right after a load)
+    }
     int apart = 0;
     bool meet = false;
     for (const Where& w : g_where) {
@@ -1043,6 +1051,7 @@ void SplitTick(const GameSnapshot& s, double now) {
             } else {
                 NetSyncMembers();
             }
+            g_split_change_at = now;
             const int n = RewindRemoteTasks("split meet");
             Log("split: a member is in our area (%s) without its chr here: %d task(s) rewound (no load)",
                 MapName(s.map_id).c_str(), n);
