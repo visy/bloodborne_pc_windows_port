@@ -213,6 +213,13 @@ baselined). Run 9 also: the guest's game rolls enemy drops itself (`enemy drop r
 (role 6)`); a kill by the fixture's local ForceDead did not reach the host's game (no host roll),
 so "a guest kills an enemy" with real damage is still to be run.
 
+Run 12 (host kill fixture `kill=2` on the host, guest `pickup=2`): the host's kill of an enemy
+rolled its drop on **both** games for the same enemy: host `enemy drop roll on this game (role
+3): chr handle 0x10014001` at 161.366, guest `... (role 6): chr handle 0x10014001` at 162.315 -
+each player has its own roll; with `0x17DD764` patched the guest keeps all of it. The m24_00
+neighbour block's NPC init flags (12400501..) now stay local ("kept local", own-block rule). The
+guest's two treasure tries found no "Search Body" spot (no pickup).
+
 Run 10 (Cathedral Ward, host lamp-warps to 2402950, `map=m24_00` fixture): Oedon Chapel Dweller
 (chr 2400700) talk prompt 10010200 -> guest `set 72400310(npc_quest)` -> host `72400310=1`;
 Eileen (chr 2400900) talk -> guest `set 72400520(npc_quest)` -> host `72400520=1`
