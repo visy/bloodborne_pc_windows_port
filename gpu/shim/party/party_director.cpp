@@ -105,7 +105,7 @@ struct TravelStep {
     // special-effect update 0x18FEF50 raises for a stateInfo 0x17 effect). HostStage: Lua
     // WarpNextStage 0x132E010 (args area:block:region:index:warp point), or WarpNextStage_Bonfire
     // 0x132E050 (args bonfire:ID). HostWalk: the host's chr put at each x:y:z:yaw (separated by
-    // '/') 3 s apart, no load (streamed blocks). HostHeadstone: talk to the headstone t<id> (stand
+    // '/') 1 s apart (repeat a spot to stay there), no load (streamed blocks). HostHeadstone: talk to the headstone t<id> (stand
     // 1.2 m in front, Cross), wait for its menu, Down N times, Cross (args id:N).
     enum Kind {
         HostWarp, HostDie, GuestDie, HostKill, HostMove, GuestMove,
@@ -795,7 +795,7 @@ void RunTravelScript(State& st, const GameSnapshot& s, Clock::time_point now) {
             done("FAILED: a load started");
             return;
         }
-        if (sc.stage > 0 && since < 3.0) {
+        if (sc.stage > 0 && since < 1.0) {
             return;
         }
         const char* at = sc.args.c_str();

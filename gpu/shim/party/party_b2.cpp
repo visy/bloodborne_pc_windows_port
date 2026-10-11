@@ -14,6 +14,7 @@
 #include "seamless_rules.h"
 #include "../../party_env.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -230,8 +231,8 @@ std::string DescribeTasks() {
         std::string chrs;
         if (t.mode == 1 || t.mode == 2) {
             const u64 c = PlayerForPeer(t.task + kTaskPeer);
-            char h[24];
-            std::snprintf(h, sizeof h, " handle %08x", c ? Field<u32>(c, 8, ~0u) : ~0u);
+            char h[48];
+            std::snprintf(h, sizeof h, " handle %08x at %#llx", c ? Field<u32>(c, 8, ~0u) : ~0u, ull(c));
             chrs = c ? " chr " + DescribeChr(c) + h : " NO-chr";
         }
         const char* chr = chrs.c_str();
@@ -321,11 +322,46 @@ BB_COOP_SYSV void ResetHook(u64 man) {
     reinterpret_cast<Fn>(Guest(kMultiPlayReset))(man);
 }
 
-// K3: in-game stage update, stage-record UID changed: the host's BeginLeaveSession.
+// K3: in-game stage update, stage-record UID changed (the host walked into another streamed block,
+// e.g. Great Bridge m24_01 <-> Cathedral Ward m24_00): the host's BeginLeaveSession.
+// The room is kept while every member's chr is near the host. A member chr left far behind stands
+// in a block the host's game streams out: live (edgetravel 2026-10-11, host put 150 m away into the
+// other block) the host crashed 0.8 s after the change in the remote chr's physics update
+// (0x18CB171 / 0x18CB17D: [[chr+0x288]+0x18]+0x88 freed). Vanilla avoids this by leaving; so with a
+// member farther than kUidKeepRange the vanilla leave runs (the guest goes home and the bells
+// bring it back), which is safe.
+constexpr float kUidKeepRange = 60.0f;
+std::atomic<bool> g_uid_left{false};  // K3 let the vanilla leave run: K4 drops as vanilla too
 BB_COOP_SYSV u64 UidLeaveHook(u64 session) {
+    g_uid_left = false;
     if (g_on.load() && SessionUp()) {
-        Log("K3: stage-record change with a session: no leave");
-        return 0;
+        const u64 me = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+        float mp[3] = {};
+        const bool have_me = me && ChrPos(me, mp);
+        float farthest = 0.0f;
+        int members = 0;
+        for (const TaskInfo& t : Tasks(false)) {
+            if (t.mode != 1 && t.mode != 2) {
+                continue;
+            }
+            const u64 c = PlayerForPeer(t.task + kTaskPeer);
+            float p[3] = {};
+            if (!c || !have_me || !ChrPos(c, p)) {
+                continue;
+            }
+            ++members;
+            const float dx = p[0] - mp[0], dy = p[1] - mp[1], dz = p[2] - mp[2];
+            farthest = std::max(farthest, std::sqrt(dx * dx + dy * dy + dz * dz));
+        }
+        if (farthest <= kUidKeepRange) {
+            Log("K3: stage-record change with a session (stage %#x, %d member chr(s), farthest %.1f m): no leave",
+                me ? Field<u32>(me, 0x3f8) : 0u, members, farthest);
+            return 0;
+        }
+        Log("K3: stage-record change with a member %.1f m away (> %.0f m, in a block this game streams out): "
+            "vanilla leave",
+            farthest, kUidKeepRange);
+        g_uid_left = true;
     }
     using Fn = u64(BB_COOP_SYSV*)(u64);
     return reinterpret_cast<Fn>(Guest(kBeginLeave))(session);
@@ -333,7 +369,7 @@ BB_COOP_SYSV u64 UidLeaveHook(u64 session) {
 
 // K4: the 0x15BED10 that follows it (every role).
 BB_COOP_SYSV void UidDropHook(u64 slots) {
-    if (g_on.load() && SessionUp()) {
+    if (g_on.load() && SessionUp() && !g_uid_left.exchange(false)) {
         return;
     }
     using Fn = void(BB_COOP_SYSV*)(u64);
@@ -1741,9 +1777,9 @@ void Tick(const GameSnapshot& s) {
     if ((Role() == RoleHost || Role() == RoleClient) && s.world_up && !s.loading && now - last_status >= 10.0) {
         last_status = now;
         const u64 remo = Field<u64>(Slot(0x5540058), 8);
-        Log("status: local %s, role %d, flow %d (timer %.2f, GSM+0x1521 %u, remo %d), rejoin %d, cooperators %d; "
+        Log("status: local %s (%#llx), role %d, flow %d (timer %.2f, GSM+0x1521 %u, remo %d), rejoin %d, cooperators %d; "
             "tasks:%s; presence %s; %s",
-            DescribeChr(s.player).c_str(), Role(), Field<int>(Slot(kSlotFlow), 0x84, -1),
+            DescribeChr(s.player).c_str(), ull(s.player), Role(), Field<int>(Slot(kSlotFlow), 0x84, -1),
             Field<float>(Slot(kSlotFlow), 0x98), unsigned(Field<u8>(Slot(kSlotGsm), 0x1521)),
             remo ? int(Field<u8>(remo, 0x168) & 1) : -1, int(g_rejoin.load()), s.cooperators, DescribeTasks().c_str(),
             DescribePresence(true).c_str(), DescribePresentation().c_str());
