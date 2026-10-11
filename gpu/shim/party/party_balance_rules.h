@@ -1,0 +1,81 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Party balance rules (ERSC parity rows C4 death penalty, D7 enemy scaling, E2 overhead display):
+// the pure part, no game code (tests/test_party_balance.cpp). The game side is party_balance.h.
+//
+// D7, enemy scaling. Bloodborne's own co-op scaling (measured in the 1.09 params and code,
+// docs/party/four_players.md section 4 and docs/party/balance.md):
+//   - bosses: the boss events (EMEVD 1003[109] -> 2004[8]) and Lua_MultiDoping put SpEffect 7500
+//     (1 cooperator) / 7501 (2) on the boss (party_fourp H4: 7502 for 3): per cooperator
+//     maxHpRate +0.5, status resist rates +0.5, changeSuperArmorPoint (poise) +30, damage +0;
+//   - normal enemies: nothing (0x17e46e0 only multiplies SpEffect maxHpRate, the NG+ table and
+//     the 9200 level sync).
+// Our settings are per extra hunter (cooperator), as a percentage of that vanilla step
+// (Nightreign semantics: 100 = vanilla): HP and poise "% of the vanilla boss step"; damage, for
+// which vanilla has no step, "+% per extra hunter". Normal enemies use the same boss step as the
+// reference (vanilla for them is 0 %). The values go into SpEffect rows 7500-7502 (bosses, by
+// cooperator count) and 7503 (normal enemies; unused in 1.09) on every peer, the host's values.
+#pragma once
+
+#include <cstdint>
+#include <string>
+
+namespace coop::balance {
+
+constexpr int kRotMaxStacks = 5;
+constexpr int kRotHpPercentPerStack = 10;  ///< each stack: max HP -10 % (5 stacks: -50 %)
+constexpr float kVanillaHpStep = 0.5f;     ///< SpEffect 7500 - 1.0
+constexpr int kVanillaPoiseStep = 30;      ///< SpEffect 7500 changeSuperArmorPoint
+
+/// What is shown above party members (ERSC overhead_player_display).
+enum class Overhead : int { Off = 0, Name = 1, Level = 2, Health = 3, Deaths = 4, Count = 5 };
+
+/// The party's rules: the host's settings, sent to every guest (event "balance").
+struct Rules {
+    bool rot = true;       ///< C4: death debuff on (user decision 2026-10-11: on by default)
+    int boss_hp = 150;     ///< % of the vanilla boss HP step (+50 % per cooperator) per extra hunter
+    int boss_damage = 10;  ///< + % damage per extra hunter (vanilla: 0)
+    int boss_poise = 100;  ///< % of the vanilla poise step (+30 per cooperator)
+    int enemy_hp = 50;     ///< normal enemies: % of the boss HP step (vanilla: 0)
+    int enemy_damage = 0;  ///< + % damage per extra hunter
+    int enemy_poise = 0;   ///< % of the poise step; negative = easier to stagger (ERSC 3-4 players)
+    bool operator==(const Rules& o) const;
+    bool operator!=(const Rules& o) const { return !(*this == o); }
+};
+/// Bloodborne's own behaviour (all scaling as in 1.09, no rot).
+Rules Vanilla();
+
+/// The menu sliders' 11 positions (0..10) for each kind of value.
+extern const int kHpTable[11];      ///< % of the HP step: 0 .. 400
+extern const int kDamageTable[11];  ///< + % per extra hunter: 0 .. 100
+extern const int kPoiseTable[11];   ///< % of the poise step: -100 .. 300
+int Position(const int* table, int value);  ///< the nearest position
+int AtPosition(const int* table, int position);
+
+/// Values clamped to the tables' ranges.
+Rules Clamped(const Rules& r);
+std::string ToJson(const Rules& r);
+/// False (and *error) on malformed JSON; missing members keep the defaults; values are clamped.
+bool FromJson(const std::string& text, Rules* out, std::string* error = nullptr);
+
+/// One SpEffect row's values for `cooperators` extra hunters (0: identity).
+struct Doping {
+    float hp_rate = 1.0f;      ///< maxHpRate (+0x10)
+    float resist_rate = 1.0f;  ///< regist{Poizon,Illness,Blood,Curse}ChangeRate (+0x108..+0x114)
+    float attack_rate = 1.0f;  ///< {physics,magic,fire,thunder}AttackPowerRate (+0x48..+0x54)
+    int super_armor = 0;       ///< changeSuperArmorPoint (+0x13a, s16)
+    bool operator==(const Doping& o) const;
+};
+Doping Boss(const Rules& r, int cooperators);
+Doping Enemy(const Rules& r, int cooperators);
+/// The normal enemy row only matters when it changes something.
+bool EnemyScalingActive(const Rules& r);
+
+/// C4: the max HP factor for `stacks` rot stacks (clamped 0..kRotMaxStacks).
+float RotHpFactor(int stacks);
+
+/// Short value texts for the menu (help line): "150 % (+75 % HP per extra hunter)".
+std::string DescribeHp(int percent, bool russian);
+std::string DescribeDamage(int percent, bool russian);
+std::string DescribePoise(int percent, bool russian);
+
+}  // namespace coop::balance

@@ -222,6 +222,28 @@ void write_vitals(Writer& w, const MemberVitals* v, int n) {
         w.u32(e.map_id).u32(float_bits(e.pos[0])).u32(float_bits(e.pos[1])).u32(float_bits(e.pos[2]));
         w.u32(float_bits(e.yaw));
     }
+    // Trailer (overhead display): per entry, in the same order, u16 level, u16 deaths, u8 rot.
+    // Older readers stop after the entries; a frame without it reads as all zeros.
+    w.u8(static_cast<std::uint8_t>(n));
+    for (int i = 0; i < n; ++i) w.u16(v[i].level).u16(v[i].deaths).u8(v[i].rot);
+}
+
+// The trailer of write_vitals for `n` entries just read (the first `n` of `e`, in frame order;
+// absent from older peers: then nothing changes and the reader stays ok).
+void read_vitals_extras(Reader& r, MemberVitals* e, int n) {
+    if (r.n < 1) return;
+    Reader t = r;
+    const unsigned k = t.u8();
+    for (unsigned i = 0; i < k && t.ok; ++i) {
+        const std::uint16_t level = t.u16(), deaths = t.u16();
+        const std::uint8_t rot = t.u8();
+        if (!t.ok) break;
+        if (static_cast<int>(i) < n) {
+            e[i].level = std::min<std::uint16_t>(level, 999);
+            e[i].deaths = deaths;
+            e[i].rot = std::min<std::uint8_t>(rot, 5);
+        }
+    }
 }
 
 // One entry as sent (not yet sanitized); false when the frame is short.
@@ -242,13 +264,19 @@ bool read_vitals_entry(Reader& r, MemberVitals& e) {
 // (0 for a short frame).
 int read_vitals(Reader& r, MemberVitals* out, int max) {
     const unsigned n = r.u8();
+    MemberVitals all[kMaxVitals];
+    unsigned read = 0;
+    for (unsigned i = 0; i < n && i < static_cast<unsigned>(kMaxVitals); ++i, ++read) {
+        if (!read_vitals_entry(r, all[i])) return 0;
+    }
+    if (!r.ok) return 0;
+    if (n <= static_cast<unsigned>(kMaxVitals)) read_vitals_extras(r, all, static_cast<int>(read));
     int got = 0;
-    for (unsigned i = 0; i < n && i < static_cast<unsigned>(kMaxVitals); ++i) {
-        MemberVitals e;
-        if (!read_vitals_entry(r, e)) return 0;
+    for (unsigned i = 0; i < read; ++i) {
+        MemberVitals e = all[i];
         if (sanitize_vitals(e) && got < max) out[got++] = e;
     }
-    return r.ok ? got : 0;
+    return got;
 }
 
 using Token = std::array<std::uint8_t, 16>;
@@ -1115,7 +1143,8 @@ struct PartyLink::Impl {
         }
         case kVitals: {  // the guest's own entry: its slot is the one it holds, whatever it says
             MemberVitals e;
-            if (r.u8() < 1 || !read_vitals_entry(r, e)) break;
+            if (r.u8() != 1 || !read_vitals_entry(r, e)) break;
+            read_vitals_extras(r, &e, 1);
             e.slot = m.slot;
             if (!sanitize_vitals(e)) break;
             m.vitals = e;
@@ -2170,7 +2199,8 @@ void PartyLink::set_local_vitals(const MemberVitals& v) {
     const MemberVitals& o = I.snap_local_vitals;
     const bool same = I.snap_local_vitals_set && o.flags == c.flags && o.hp == c.hp && o.max_hp == c.max_hp &&
                       o.stamina == c.stamina && o.max_stamina == c.max_stamina && o.map_id == c.map_id &&
-                      std::memcmp(o.pos, c.pos, sizeof c.pos) == 0 && o.yaw == c.yaw;
+                      std::memcmp(o.pos, c.pos, sizeof c.pos) == 0 && o.yaw == c.yaw && o.level == c.level &&
+                      o.deaths == c.deaths && o.rot == c.rot;
     if (same) return;
     I.snap_local_vitals = c;
     I.snap_local_vitals_set = true;

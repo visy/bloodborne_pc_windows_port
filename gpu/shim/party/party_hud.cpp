@@ -69,6 +69,9 @@ void Compose(const ComposeIn& in, Board* out) {
             const MemberVitals& v = in.vitals[i];
             if (v.slot != slot) continue;
             c.age_ms = v.age_ms;
+            c.level = v.level;
+            c.deaths = v.deaths;
+            c.rot = v.rot;
             if (v.flags & kVitalsValid) {
                 c.have_hp = true;
                 c.hp = static_cast<int>(v.hp);

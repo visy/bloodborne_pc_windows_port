@@ -134,6 +134,12 @@ bool PartyHudWanted() {
     return party::status::Enabled() && BbSettings::Get().party_hud && party::hud::Shown();
 }
 
+/// The overhead display (E2, bbport.ini party_overhead; independent of the panel).
+bool PartyTagsWanted() {
+    return party_tags_on && party::status::Enabled() && BbSettings::Get().party_overhead.load() != 0 &&
+           party::hud::Shown();
+}
+
 bool ToastWanted() {
     return party::status::Enabled() && BbSettings::Get().party_toasts &&
            (party::status::EventSeq() != toast_seen.load() || SteadyMs() < toast_until_ms.load());
@@ -1722,7 +1728,8 @@ void PartyHudDiag() {
 void PartyHud() {
     using namespace PartyHudDraw;
     party_hud_top = -1.0f;
-    if (!PartyHudWanted() || BbFrameState::IsMenuOrLoading()) {
+    const bool panel = PartyHudWanted(), tags = PartyTagsWanted();
+    if ((!panel && !tags) || BbFrameState::IsMenuOrLoading()) {
         return;
     }
     party::hud::Read(&hud_board);
@@ -1734,6 +1741,7 @@ void PartyHud() {
     const Axes axes = DirectionAxes(b, cam);
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float s = base_scale;
+    if (panel) {
     const float pad = 12.0f * s;
     const float bottom = perf_hud_bottom_left ? perf_hud_top - 6.0f * s
                                               : viewport->WorkPos.y + viewport->WorkSize.y - pad;
@@ -1801,11 +1809,14 @@ void PartyHud() {
     party_hud_top = ImGui::GetWindowPos().y;
     ImGui::End();
     ImGui::PopStyleVar(3);
+    }
 
-    // Name tags above the companions in view (only with the game camera in the player's space).
-    if (!party_tags_on || !axes.camera) {
+    // Name tags above the companions in view (only with the game camera in the player's space):
+    // the overhead display (E2): name, plus level / health bar / deaths (party_overhead).
+    if (!tags || !axes.camera) {
         return;
     }
+    const int overhead = BbSettings::Get().party_overhead.load();
     const ImVec2 display = viewport->Size;
     ImDrawList* bg = ImGui::GetBackgroundDrawList();
     for (int i = 0; i < b.count; ++i) {
@@ -1829,13 +1840,28 @@ void PartyHud() {
         }
         const float alpha = std::clamp((80.0f - d) / 30.0f, 0.0f, 1.0f) * 0.95f;
         const float size = std::clamp(15.0f * 12.0f / std::max(d, 6.0f), 11.0f, 15.0f);
+        // Name, with the level ("Lv 42") or the deaths ("3 deaths, rot 2") after it.
+        char label[96];
+        const bool ru = BbSettings::MenuText("en", "ru")[0] == 'r';
+        if (overhead == 2 && c.level > 0) {
+            if (ru) std::snprintf(label, sizeof label, "%s  ур. %d", c.name, c.level);
+            else std::snprintf(label, sizeof label, "%s  Lv %d", c.name, c.level);
+        } else if (overhead == 4 && c.rot > 0) {
+            if (ru) std::snprintf(label, sizeof label, "%s  смертей %d, гниль %d", c.name, c.deaths, c.rot);
+            else std::snprintf(label, sizeof label, "%s  deaths %d, rot %d", c.name, c.deaths, c.rot);
+        } else if (overhead == 4) {
+            if (ru) std::snprintf(label, sizeof label, "%s  смертей %d", c.name, c.deaths);
+            else std::snprintf(label, sizeof label, "%s  deaths %d", c.name, c.deaths);
+        } else {
+            std::snprintf(label, sizeof label, "%s", c.name);
+        }
         ImGui::PushFont(serif_font, size);
-        const ImVec2 ts = ImGui::CalcTextSize(c.name);
+        const ImVec2 ts = ImGui::CalcTextSize(label);
         const ImVec2 at(u * display.x - ts.x * 0.5f, v * display.y - ts.y);
-        bg->AddText(ImVec2(at.x + 1.0f, at.y + 1.0f), Rgba(0.0f, 0.0f, 0.0f, 0.8f * alpha), c.name);
-        bg->AddText(at, Rgba(0.96f, 0.88f, 0.70f, alpha), c.name);
+        bg->AddText(ImVec2(at.x + 1.0f, at.y + 1.0f), Rgba(0.0f, 0.0f, 0.0f, 0.8f * alpha), label);
+        bg->AddText(at, Rgba(0.96f, 0.88f, 0.70f, alpha), label);
         ImGui::PopFont();
-        if (c.have_hp && c.max_hp > 0) {
+        if (overhead == 3 && c.have_hp && c.max_hp > 0) {
             const float w = 56.0f * s, h = 3.0f * s;
             const ImVec2 p0(u * display.x - w * 0.5f, at.y + ts.y + 2.0f * s);
             Bar(bg, p0, ImVec2(p0.x + w, p0.y + h), float(c.hp) / float(c.max_hp), Rgba(0.62f, 0.07f, 0.06f, alpha),
@@ -2193,7 +2219,7 @@ bool HandleEvent(const SDL_Event& event) {
 bool Visible() {
     return initialized &&
            (menu_open || prompt_active || BbSettings::Get().show_fps || BbSettings::Get().show_hud ||
-            CompileIndicatorShown() || ToastWanted() || PartyHudWanted());
+            CompileIndicatorShown() || ToastWanted() || PartyHudWanted() || PartyTagsWanted());
 }
 
 bool MenuOpen() {

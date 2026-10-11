@@ -43,6 +43,9 @@ struct Companion {
     bool same_map = false;     // both on one map with positions: distance / direction mean something
     float pos[3] = {0, 0, 0};
     std::uint32_t age_ms = 0;  // VITALS age (0 for a local read)
+    int level = 0;             // VITALS extras (0 = unknown): the overhead display (E2)
+    int deaths = 0;
+    int rot = 0;
 };
 
 struct Board {

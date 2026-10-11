@@ -11,6 +11,7 @@
 #include <mutex>
 
 #include "bbport_settings.h"
+#include "party/party_balance_rules.h"
 #include "party/party_status.h"
 
 namespace BbGameMenu::Pages {
@@ -190,6 +191,10 @@ struct MemberTexts {
     u32 restart_help;
     u32 event_value, event_help;
 } party;
+struct BalanceTexts {
+    u32 rot_help = 0;
+    u32 scale_help[6]{};
+} balance;
 std::string member_names[MaxMembers]; // the member row k stands for (kick)
 bool member_kickable[MaxMembers]{};
 int member_rows = 1;                  // rows the Members page shows (one when nobody is there)
@@ -800,6 +805,65 @@ void DefineAll() {
     party.event_help = AddDynamic(MaxHelpLength);
     AddRow(Info(), AddText("Last event", "Последнее"), party.event_help, {party.event_value, party.event_value},
            Kind::Toggle);
+
+    // ---- Party rules (party_balance.h): the death debuff and the overhead display. ----
+    AddPage("Party rules", "Правила группы", "Death debuff, what shows above companions (bbport)",
+            "Штраф за смерть, что видно над спутниками (bbport)");
+    balance.rot_help = AddDynamic(MaxHelpLength);
+    AddRow(Flag(&Values::party_rot), AddText("Rot on death", "Гниль при смерти"), balance.rot_help, toggle,
+           Kind::Toggle);
+    AddRow(Setting(
+               Kind::List, [](const Values& v) { return std::clamp(v.party_overhead.load(), 0, 4); },
+               [](int i) { BbSettings::Get().party_overhead = std::clamp(i, 0, 4); }),
+           AddText("Above companions", "Над спутниками"),
+           AddText("What shows above party members in view (only you see it)",
+                   "Что показывать над спутниками в поле зрения (только у вас)"),
+           {AddText("Nothing", "Ничего"), AddText("Name", "Имя"), AddText("Name and level", "Имя и уровень"),
+            AddText("Name and health", "Имя и здоровье"), AddText("Name and deaths", "Имя и смерти")},
+           Kind::List);
+
+    // ---- Enemy scaling (party_balance.h): per extra hunter, the host's values count. ----
+    AddPage("Enemy scaling", "Сила врагов", "Boss and enemy health, damage and poise per extra hunter (bbport)",
+            "Здоровье, урон и стойкость боссов и врагов за каждого охотника (bbport)");
+    const auto scale_row = [&](std::atomic<int> Values::*member, const int* table, const char* en, const char* ru,
+                               int index) {
+        balance.scale_help[index] = AddDynamic(MaxHelpLength);
+        AddRow(Setting(
+                   Kind::Slider,
+                   [member, table](const Values& v) { return coop::balance::Position(table, (v.*member).load()); },
+                   [member, table](int i) { (BbSettings::Get().*member) = coop::balance::AtPosition(table, i); }),
+               AddText(en, ru), balance.scale_help[index], {}, Kind::Slider);
+    };
+    using namespace coop::balance;
+    scale_row(&Values::party_boss_hp, kHpTable, "Boss health", "Здоровье боссов", 0);
+    scale_row(&Values::party_boss_damage, kDamageTable, "Boss damage", "Урон боссов", 1);
+    scale_row(&Values::party_boss_poise, kPoiseTable, "Boss poise", "Стойкость боссов", 2);
+    scale_row(&Values::party_enemy_hp, kHpTable, "Enemy health", "Здоровье врагов", 3);
+    scale_row(&Values::party_enemy_damage, kDamageTable, "Enemy damage", "Урон врагов", 4);
+    scale_row(&Values::party_enemy_poise, kPoiseTable, "Enemy poise", "Стойкость врагов", 5);
+}
+
+/// The party rules' help lines: the current value, and on a guest that the host's rules count.
+void RefreshBalance() {
+    if (!balance.rot_help) return;
+    const auto& v = BbSettings::Get();
+    const bool guest = party::status::Snapshot().role == party::status::Role::Guest;
+    const std::string g_en = guest ? " (host decides)" : "", g_ru = guest ? " (решает хост)" : "";
+    SetDynamic(balance.rot_help, "Each death: max HP -10 % (up to 5), a lamp rest cleanses it" + g_en,
+               "Каждая смерть: -10 % здоровья (до 5 раз), отдых у фонаря снимает" + g_ru);
+    using namespace coop::balance;
+    const int values[6] = {v.party_boss_hp, v.party_boss_damage, v.party_boss_poise,
+                           v.party_enemy_hp, v.party_enemy_damage, v.party_enemy_poise};
+    for (int k = 0; k < 6; ++k) {
+        const int kind = k % 3;
+        const std::string en = kind == 0 ? DescribeHp(values[k], false)
+                               : kind == 1 ? DescribeDamage(values[k], false) : DescribePoise(values[k], false);
+        const std::string ru = kind == 0 ? DescribeHp(values[k], true)
+                               : kind == 1 ? DescribeDamage(values[k], true) : DescribePoise(values[k], true);
+        const char* ref_en = k < 3 ? "; 100 % = Bloodborne" : "; vanilla 0";
+        const char* ref_ru = k < 3 ? "; 100 % = как в игре" : "; в игре 0";
+        SetDynamic(balance.scale_help[k], en + (kind == 1 ? "" : ref_en) + g_en, ru + (kind == 1 ? "" : ref_ru) + g_ru);
+    }
 }
 
 } // namespace
@@ -951,6 +1015,7 @@ void RefreshDynamic() {
     std::scoped_lock lock{StateMutex()};
     RefreshParty();
     RefreshRestart();
+    RefreshBalance();
 }
 
 void Poll(std::int64_t now_ms) {

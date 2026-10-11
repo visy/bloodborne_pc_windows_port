@@ -116,6 +116,17 @@ struct Values {
     /// Party mode: guests may use world lamps and Dream headstones too; their use moves the whole
     /// party, host-led (ini party_guest_lamps; env BB_PARTY_GUEST_LAMPS overrides). On restart.
     std::atomic<bool> party_guest_lamps{true};
+    /// Party rules (party_balance.h; the host's values are the party's, sent to every guest. Live).
+    /// C4: the death debuff "rot": each death stacks max HP -10 % (5 stacks), a lamp rest cleanses
+    /// it (ini party_rot; on by default, user decision 2026-10-11).
+    std::atomic<bool> party_rot{true};
+    /// D7: enemy scaling per extra hunter (coop::balance::Rules): HP / poise in % of Bloodborne's
+    /// boss step (100 = vanilla), damage + % (ini party_boss_hp ... party_enemy_poise).
+    std::atomic<int> party_boss_hp{150}, party_boss_damage{10}, party_boss_poise{100};
+    std::atomic<int> party_enemy_hp{50}, party_enemy_damage{0}, party_enemy_poise{0};
+    /// E2: what is shown above party members (coop::balance::Overhead: 0 off, 1 name, 2 name +
+    /// level, 3 name + health bar, 4 name + deaths; ini party_overhead). Live, local.
+    std::atomic<int> party_overhead{3};
 
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
     int startup_preset = NativeAA;

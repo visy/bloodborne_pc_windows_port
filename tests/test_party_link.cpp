@@ -634,6 +634,15 @@ static void test_vitals() {
     // A change gets through within a few send intervals.
     a.set_local_vitals(mk(10, 2));
     CHECK(wait_for([&] { return find(b, sa, &got) && got.hp == 10; }, 3000));
+    // The overhead display extras (the VITALS trailer): guest -> host -> the other guest.
+    MemberVitals ext = mk(10, 2);
+    ext.level = 42;
+    ext.deaths = 7;
+    ext.rot = 3;
+    a.set_local_vitals(ext);
+    CHECK(wait_for([&] { return find(b, sa, &got) && got.level == 42; }, 3000));
+    CHECK(got.deaths == 7 && got.rot == 3 && got.hp == 10);
+    CHECK(wait_for([&] { return find(host, sa, &got) && got.level == 42 && got.rot == 3; }, 3000));
     // A guest that leaves goes stale on the others.
     b.stop();
     CHECK(wait_for([&] { return !find(a, sb, &got); }, kVitalsStaleMs + 3000));
