@@ -5,6 +5,7 @@
 #include "party_director.h"
 #include "../net/netsim.h"
 #include "party_hud.h"
+#include "party_ids.h"
 #include "party_balance.h"
 #include "party_async_io.h"
 
@@ -140,6 +141,19 @@ struct TravelStep {
 
 struct Test {
     bool on = false;
+    // A11 fixture (no cooperator needed): a11_move=X:Y:Z@S moves the host's chr there S s after its
+    // world is steady (into a boss arena: the fight starts); a11_kill=ENTITY@S ForceDeads ENTITY S s
+    // after the boss bar came up (the fight ends) - a joiner must wait outside meanwhile.
+    bool a11_move = false, a11_moved = false, a11_kill = false, a11_killed = false;
+    float a11_pos[3] = {0, 0, 0};
+    double a11_move_at = 0, a11_kill_after = 0;
+    std::uint32_t a11_entity = 0;
+    std::uint32_t a11_lamp = 0;  // a11_lamp=ID: the lamp warp first (2 s after the first steady world)
+    bool a11_lamp_done = false, a11_reloaded = false;
+    bool a11_mortal = false;  // a11_mortal: not invincible (the boss may kill the host)
+    Clock::time_point a11_lamp_world_at{};
+    Clock::time_point a11_bar_at{};
+    bool a11_bar_seen = false;
     bool log_state = false;
     int insight = -1;
     int echoes = -1; // echoes=N: writes the player's Blood Echoes once (test saves)
@@ -532,6 +546,31 @@ bool HasSpEffect(std::uint64_t player, int id) {
             return false;
         }
         if (nid == id) {
+            return true;
+        }
+        if (!SafeGet(node + 0x58, &node)) {
+            return false;
+        }
+    }
+    return false;
+}
+
+/// Main thread only: removes SpEffect `id` from the local player through the game's own
+/// RemoveSpEffect 0x17E1D90(list, node, 1) (EMEVD 2004[21]). False when it is not on.
+bool RemoveSpEffect(int id) {
+    const std::uint64_t player = LocalPlayer();
+    std::uint64_t list = 0, node = 0;
+    if (!player || !SafeGet(player + 0x1c8, &list) || !list || !SafeGet(list + 8, &node)) {
+        return false;
+    }
+    for (int guard = 0; node && guard < 512; ++guard) {
+        std::int32_t nid = 0;
+        if (!SafeGet(node + 0x40, &nid)) {
+            return false;
+        }
+        if (nid == id) {
+            using Fn = void(BB_COOP_SYSV*)(std::uint64_t, std::uint64_t, std::uint32_t);
+            reinterpret_cast<Fn>(Guest(0x17e1d90))(list, node, 1);
             return true;
         }
         if (!SafeGet(node + 0x58, &node)) {
@@ -1115,7 +1154,25 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         step.kind == TravelStep::HostWarp ? " to lamp " : step.kind == TravelStep::HostKill ? " entity " : "",
         step.kind == TravelStep::HostWarp || step.kind == TravelStep::HostKill ? step.id : 0u, Describe(s).c_str());
     if (step.kind == TravelStep::HostWarp) {
-        RunLampWarpDecided(step.id, false);  // the party move (no split-travel question)
+        // Test setup should stay invisible: a host already standing at that lamp (within 5 m, same
+        // map) only gets the lamp as its last-lamp record (+0x1528), no warp and no loading screen.
+        float spot[4], me[4];
+        std::uint64_t w = 0, rec = 0, pm = 0, a = 0, b = 0;
+        const std::uint64_t player = LocalPlayer();
+        bool at_lamp = false;
+        if (ids::ReturnSpot(step.id, spot) && (ids::EntityMap(step.id) >> 16) == (s.map_id >> 16) && player &&
+            SafeGet(player + 0x58, &a) && a && SafeGet(a + 8, &b) && b && SafeGet(b + 0x3b0, &pm) && pm &&
+            SafeGet(pm + 0x68, &pm) && pm && SafeRead(pm + 0x1e0, me, sizeof me)) {
+            const float dx = me[0] - spot[0], dy = me[1] - spot[1], dz = me[2] - spot[2];
+            at_lamp = dx * dx + dy * dy + dz * dz < 25.0f;
+        }
+        if (at_lamp && SafeGet(Guest(0x5556678), &w) && w && SafeGet(w + 0x1528, &rec)) {
+            const std::uint64_t now_rec = (rec & 0xffffffff00000000ull) | step.id;
+            SafeWrite(w + 0x1528, &now_rec, 8);
+            Log("test: host_warp %u skipped: already at that lamp (last-lamp record set, no load)", step.id);
+        } else {
+            RunLampWarpDecided(step.id, false);  // the party move (no split-travel question)
+        }
     } else if (step.kind == TravelStep::HostAlone) {
         b2::HostTravelAloneNext();
         RunLampWarpDecided(step.id, true);
@@ -1471,8 +1528,56 @@ void HostWatchdogTick(State& st, const GameSnapshot& s, party::PartyLink* link, 
 
 void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
     Test& t = st.test;
+    if (t.a11_lamp_done && st.world_at != t.a11_lamp_world_at) {
+        t.a11_reloaded = true;  // the lamp warp's load: a11_move after the next steady world
+    }
     if (!st.world_seen) {
         return;
+    }
+    if (t.a11_lamp && !t.a11_lamp_done && s.world_up && !s.loading && Seconds(st.world_at, now) >= 2.0) {
+        t.a11_lamp_done = true;
+        t.a11_lamp_world_at = st.world_at;
+        Log("test: a11_lamp %u", t.a11_lamp);
+        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint32_t)>(Guest(kLampWarp))(t.a11_lamp);
+        return;
+    }
+    if (t.a11_move && !t.a11_moved && (!t.a11_lamp || (t.a11_lamp_done && t.a11_reloaded)) && s.world_up &&
+        !s.loading && Seconds(st.world_at, now) >= t.a11_move_at) {
+        t.a11_moved = true;
+        const std::uint64_t player = LocalPlayer();
+        std::uint64_t vt = 0, fn = 0;
+        alignas(16) float pos[4] = {t.a11_pos[0], t.a11_pos[1], t.a11_pos[2], 1.0f}, rot[4] = {0, 0, 0, 0};
+        if (player && SafeGet(player, &vt) && vt && SafeGet(vt + 0x5f8, &fn) && fn) {
+            reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, const float*, const float*, std::uint32_t)>(fn)(
+                player, pos, rot, 1);
+            // Invincible for the fight (EnableInvincible, chr +0x1E1 bit 14): the fight must outlast
+            // the joiner's arrival in its own world.
+            std::uint32_t f = 0;
+            if (!t.a11_mortal && SafeRead(player + 0x1e1, &f, 4)) {
+                f |= 1u << 14;
+                SafeWrite(player + 0x1e1, &f, 4);
+            }
+            Log("test: a11_move to (%.2f, %.2f, %.2f), invincible", double(pos[0]), double(pos[1]), double(pos[2]));
+        }
+    }
+    if (t.a11_kill && !t.a11_killed) {
+        if (BossBarShown() && !t.a11_bar_seen) {
+            t.a11_bar_seen = true;
+            t.a11_bar_at = now;
+            Log("test: a11: boss bar up; the kill in %.0f s", t.a11_kill_after);
+        }
+        if (t.a11_bar_seen && Seconds(t.a11_bar_at, now) >= t.a11_kill_after) {
+            t.a11_killed = true;
+            Log("test: a11_kill: entity %u", t.a11_entity);
+            if (const std::uint64_t pl = LocalPlayer()) {
+                std::uint32_t f = 0;
+                if (SafeRead(pl + 0x1e1, &f, 4)) {
+                    f &= ~(1u << 14);
+                    SafeWrite(pl + 0x1e1, &f, 4);
+                }
+            }
+            reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, t.a11_entity);
+        }
     }
     // bell_host / bell_guest: the bell through the item path (SpEffect -> SendSign -> sign
     // create / search on the FROM server) once this player is ready, bells granted, 5 s idle.
@@ -1888,6 +1993,27 @@ void PartyDirector::ConfigureFromEnv() {
                     const std::string b = button;
                     st.test.ap_button = b == "cross" ? 0x4000u : b == "triangle" ? 0x1000u : b == "square" ? 0x8000u
                                       : b == "circle" ? 0x2000u : 0u;
+                }
+            } else if (item.rfind("a11_move=", 0) == 0) {
+                float x = 0, y = 0, z = 0, at = 2;
+                if (std::sscanf(item.c_str() + 9, "%f:%f:%f@%f", &x, &y, &z, &at) >= 3) {
+                    st.test.a11_move = true;
+                    st.test.a11_pos[0] = x;
+                    st.test.a11_pos[1] = y;
+                    st.test.a11_pos[2] = z;
+                    st.test.a11_move_at = at;
+                }
+            } else if (item == "a11_mortal") {
+                st.test.a11_mortal = true;
+            } else if (item.rfind("a11_lamp=", 0) == 0) {
+                st.test.a11_lamp = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 9, nullptr, 10));
+            } else if (item.rfind("a11_kill=", 0) == 0) {
+                unsigned id = 0;
+                float after = 20;
+                if (std::sscanf(item.c_str() + 9, "%u@%f", &id, &after) >= 1) {
+                    st.test.a11_kill = true;
+                    st.test.a11_entity = id;
+                    st.test.a11_kill_after = after;
                 }
             } else if (item == "log_pos") {
                 st.test.log_pos = true;
@@ -2374,6 +2500,28 @@ void PartyDirector::Tick() {
         PrologueSkipBusy() || CatchupBusy()) {
         return;
     }
+    // A11 (ERSC_PARITY.md, user decision): a player joining while the host fights a boss or
+    // watches a cutscene waits outside - the host does not ring until it ends (the guest's sign
+    // waits at the host's lamp in its own world, GatherGuest).
+    if (role == PartyRole::Host) {
+        const bool boss = BossBarShown(), remo = CutscenePlaying();
+        if (boss || remo) {
+            if (!st.a11_waiting) {
+                st.a11_waiting = true;
+                // A bell rung before the fight keeps the game searching (live: summoned 29 s into
+                // the fight): it goes now.
+                const bool dropped = RemoveSpEffect(kHostBellEffect);
+                Log("A11: no bell while the host %s: joiners wait outside%s", boss ? "fights a boss" : "watches a cutscene",
+                    dropped ? " (the ringing bell stopped)" : "");
+            }
+            return;
+        }
+        if (st.a11_waiting) {
+            st.a11_waiting = false;
+            st.rung_ever = false;  // ring at once
+            Log("A11: the boss fight / cutscene is over: ringing for waiting joiners again");
+        }
+    }
     if (role == PartyRole::Guest && st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {
         // The host entered its Chalice Dungeon after this guest rang: the waiting sign gets the
         // chalice wait (9900) too, else the host's summon loads the guest without the quick join
@@ -2393,23 +2541,6 @@ void PartyDirector::Tick() {
     }
     if (st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {
         return;
-    }
-    // A11 (ERSC_PARITY.md, user decision): a player joining while the host fights a boss or
-    // watches a cutscene waits outside - the host does not ring until it ends (the guest's sign
-    // waits at the host's lamp in its own world, GatherGuest).
-    if (role == PartyRole::Host) {
-        const bool boss = BossBarShown(), remo = CutscenePlaying();
-        if (boss || remo) {
-            if (!st.a11_waiting) {
-                st.a11_waiting = true;
-                Log("A11: no bell while the host %s: joiners wait outside", boss ? "fights a boss" : "watches a cutscene");
-            }
-            return;
-        }
-        if (st.a11_waiting) {
-            st.a11_waiting = false;
-            Log("A11: the boss fight / cutscene is over: ringing for waiting joiners again");
-        }
     }
     // C1 (party_start.h): no bell before this player finished its start (clinic / first death
     // pitfalls); the host rings only for members that are ready (roster Home / Joining).
