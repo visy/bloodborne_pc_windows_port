@@ -11,8 +11,9 @@
 //       cooperator count (param writes, re-checked every second; a row whose maxHpRate is
 //       neither the 1.09 value nor ours is left alone). With cooperators present and enemy
 //       scaling not zero, every normal enemy (NpcParam teamType 23, not a boss soul) in this
-//       world gets SpEffect 7503 (chr vfunc +0x3f0); a boss that gets its doping loses 7503
-//       (0x17e1d90, EMEVD 2004[21]'s remove). The game's own per-frame HP update (0x1a0d7d0)
+//       world gets SpEffect 7503 (chr vfunc +0x3f0), except the bosses (the entities the boss
+//       events dope, resolved with 0x13c97a0; removing 7503 from a boss killed it, live). The
+//       game's own per-frame HP update (0x1a0d7d0)
 //       raises current HP with the max, so full-health enemies stay full.
 //   C4  "Rot": each death of the local player (HP > 0 -> 0 in the world) adds a stack (max 5) of
 //       a kind picked at random: max HP -10 % (the max-HP rate 0x17e46e0) or max stamina -10 %
