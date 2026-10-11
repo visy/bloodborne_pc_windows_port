@@ -102,6 +102,24 @@ BB_COOP_SYSV void SummonMessageProbe(u64, u64, u64 wrapper, u64, u64, u64) {
     std::fflush(stdout);
 }
 
+// Quick join's last step (0x1aa8410(helper)): writes the fetched channel into the helper's slot record
+// (+0xc8 slot, +0xd0 the channel object) and clears the chalice groups (docs/party/chalice.md 4).
+BB_COOP_SYSV void QuickJoinStepProbe(u64 helper, u64, u64, u64, u64, u64) {
+    std::uint32_t slot = 0xffffffffu;
+    std::uint64_t ch = 0, q[6] = {};
+    SafeGet(helper + 0xc8, &slot);
+    SafeGet(helper + 0xd0, &ch);
+    for (int i = 0; ch && i < 6; ++i) SafeGet(ch + 8 * i, &q[i]);
+    std::uint32_t bits = 0;
+    ReadEventFlagValue(9020, 7, &bits);
+    std::printf("Party: chalice: quick join writes slot %u (current slots 0x%x), channel object %llx: %llx %llx %llx %llx %llx %llx%s",
+                slot, bits, static_cast<unsigned long long>(ch), static_cast<unsigned long long>(q[0]),
+                static_cast<unsigned long long>(q[1]), static_cast<unsigned long long>(q[2]),
+                static_cast<unsigned long long>(q[3]), static_cast<unsigned long long>(q[4]),
+                static_cast<unsigned long long>(q[5]), "\n");
+    std::fflush(stdout);
+}
+
 void InstallProbes() {
     static bool done = false;
     if (done) {
@@ -109,6 +127,7 @@ void InstallProbes() {
     }
     done = true;
     HookPrologue(0x14ba340, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, &SummonMessageProbe, "chalice: summon message probe");
+    HookPrologue(0x1aa8410, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, &QuickJoinStepProbe, "chalice: quick join step probe");
 }
 
 std::vector<std::uint8_t> SlotFormData(int slot) {
