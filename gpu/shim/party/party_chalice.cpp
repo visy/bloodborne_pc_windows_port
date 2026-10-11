@@ -52,9 +52,13 @@ bool GoodsFromJsonText(const std::string& text, std::vector<std::uint32_t>* out,
 #include "coop_hooks.h"
 #include "game_state.h"
 
+#include "../net/from_api.h"
+#include "../net/party_util.h"
+
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <mutex>
 
 namespace coop::chalice {
@@ -105,6 +109,45 @@ void InstallProbes() {
     }
     done = true;
     HookPrologue(0x14ba340, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, &SummonMessageProbe, "chalice: summon message probe");
+}
+
+std::vector<std::uint8_t> SlotFormData(int slot) {
+    std::vector<std::uint8_t> out;
+    if (slot < 0 || slot >= kSlots) {
+        return out;
+    }
+    const std::uint32_t base = kRecordBase + static_cast<std::uint32_t>(slot) * kRecordStride;
+    std::vector<std::uint32_t> words = {4, 0x7c};
+    auto get = [&](std::uint32_t bit) {
+        std::uint32_t v = 0;
+        if (!ReadEventFlagValue(base + bit, 32, &v)) {
+            words.clear();
+        }
+        return v;
+    };
+    std::uint32_t e0 = get(96), e8 = get(128);
+    if (words.empty()) {
+        return out;
+    }
+    words.push_back(e0);
+    words.push_back(e8);
+    for (int i = 0; i < 18 && !words.empty(); ++i) {
+        const std::uint32_t v = get(160 + 32 * i);
+        if (!words.empty()) words.push_back(v);
+    }
+    for (int i = 0; i < 4 && !words.empty(); ++i) {
+        const std::uint32_t v = get(736 + 32 * i);
+        if (!words.empty()) words.push_back(v);
+    }
+    if (words.empty()) {
+        return out;
+    }
+    while (words.size() < 0x7c / 4) {
+        words.push_back(0);
+    }
+    out.resize(0x7c);
+    std::memcpy(out.data(), words.data(), 0x7c);
+    return out;
 }
 
 State Read() {
@@ -159,6 +202,27 @@ void Tick(bool host) {
             last_net_channel = ch;
             std::printf("Party: chalice: FrpgNetMan ChannelId 0x%llx\n", static_cast<unsigned long long>(ch));
             std::fflush(stdout);
+        }
+    }
+    if (host && s.load_mode == 0 && s.slot >= 0 && s.channel) {
+        // The host's dungeon on the channel board with its FormData: a shared fixed dungeon was
+        // joined through search and never uploaded, so the board's entry had none and a summoned
+        // member's quick join built nothing (live: the guest fell through an empty map).
+        static std::uint64_t done_for = 0;
+        if (done_for != s.channel) {
+            bbnet::party::ChannelBoard& board = bbnet::party::FromApi::instance().channels();
+            if (board.known(s.channel)) {
+                const std::vector<std::uint8_t> fd = SlotFormData(s.slot);
+                const std::string b64 = fd.empty() ? "" : bbnet::party::b64_encode(fd.data(), fd.size());
+                if (!b64.empty() && board.form_data(s.channel).empty()) {
+                    const bool ok = board.set_form_data(s.channel, b64);
+                    std::printf("Party: chalice: dungeon %llu: FormData from slot %d's record (%zu bytes) %s\n",
+                                static_cast<unsigned long long>(s.channel), s.slot, fd.size(),
+                                ok ? "on the board" : "NOT taken");
+                    std::fflush(stdout);
+                }
+                done_for = s.channel;
+            }
         }
     }
     if (host) {

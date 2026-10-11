@@ -69,6 +69,10 @@ struct State {
 #ifndef BB_PARTY_CHALICE_NO_GAME
 /// The summon message probe (logs each summon message's map / ChannelId, 0x14ba340). Once, at init.
 void InstallProbes();
+/// The FormData (version 4, 0x7C bytes; reader 0x1a9c490) of the dungeon in `slot`, rebuilt from
+/// the slot record: {4, 0x7C, +96 u32, +128 u32, +160 18 u32 (layout), +736 4 u32, 0...}. Empty
+/// when unreadable. What a summoned member's quick join needs (docs/party/chalice.md 4).
+std::vector<std::uint8_t> SlotFormData(int slot);
 /// Reads the local game's chalice slot and its ChannelId.
 State Read();
 /// Once a frame (coop tick): re-reads every ~2 s, logs changes, and keeps LocalChannel(); the

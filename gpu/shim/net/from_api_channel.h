@@ -93,6 +93,11 @@ public:
     std::vector<Channel> channels() const;
     /// The board has this dungeon (a summoned member's game can fetch it).
     bool known(std::uint64_t id) const;
+    /// The host's own game: the FormData of channel `id` rebuilt from its slot record (a shared
+    /// fixed dungeon joined through search was never uploaded). False when unknown / not base64.
+    bool set_form_data(std::uint64_t id, const std::string& b64);
+    /// The channel's FormData as the board has it ("" when unknown or none).
+    std::string form_data(std::uint64_t id) const;
     /// The glyph for a FormData (deterministic: the same dungeon keeps its glyph and id).
     static std::string GlyphOf(const std::string& form_data);
     static std::uint64_t IdOf(const std::string& form_data);

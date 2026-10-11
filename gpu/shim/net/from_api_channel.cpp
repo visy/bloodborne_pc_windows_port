@@ -391,6 +391,23 @@ std::uint64_t ChannelBoard::member_channel(const std::string& member) const {
     return 0;
 }
 
+bool ChannelBoard::set_form_data(std::uint64_t id, const std::string& b64) {
+    if (!form_data_ok(b64)) return false;
+    std::lock_guard<std::mutex> lk(mu_);
+    Channel* c = find_id(id);
+    if (!c) return false;
+    c->form_data = b64;
+    return true;
+}
+
+std::string ChannelBoard::form_data(std::uint64_t id) const {
+    std::lock_guard<std::mutex> lk(mu_);
+    for (const Channel& c : channels_) {
+        if (c.id == id) return c.form_data;
+    }
+    return {};
+}
+
 bool ChannelBoard::known(std::uint64_t id) const {
     std::lock_guard<std::mutex> lk(mu_);
     for (const Channel& c : channels_) {
