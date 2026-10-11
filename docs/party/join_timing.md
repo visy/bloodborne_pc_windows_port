@@ -170,3 +170,25 @@ Fixes:
   sooner, and the host would notice a crashed guest sooner too (today ~16 s). Not done: it is also
   the tolerance for real network hiccups.
 - Host crash rejoin was not measured; the guest's link reconnect cap is now 2 s.
+
+## 2026-10-11 profile (flowlive, after the pre-ring spacing fix)
+
+`tools/mp/flow_live.py world --count 3` (both start straight in the party game, pre-made
+characters, lowest-cost settings, 3 games on the machine), `join_timeline.py`:
+
+| Step | Time |
+|---|---|
+| guest in world (load done) -> rings | 1.2 s (pre-ring spacing 0.8 s per side try + 0.3 s; was 6.9 s with 30 ticks per try at a low frame rate) |
+| rings -> `summon_messenger/create` | 2.0 s (`Party: Fast bell sign`) |
+| create -> `guest_invite` | 0.5 s |
+| invite -> `JoinRoom` | 0.8 s |
+| `JoinRoom` -> client (6) | 1.8 s |
+| client (6) -> loading screen | 1.2 s |
+| loading the host's world | 4.3 s |
+| **guest in world -> in the host's world** | **11.8 s** (50.53 -> 62.30) |
+
+What is left for "instant" joining: the 2 s bell timer (0.5 s broke 2 of 6 joins, above), the
+transport's first connect (1.8 s), the guest's prologue / effect (1.2 s) and the load of the host's
+world. A guest already in the host's map still loads it (split travel removes same-map loads,
+docs/party/split_travel.md when it lands); Continue still loads the guest's own world first (the
+sign is put up from there).

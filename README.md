@@ -71,6 +71,8 @@ PC (several game copies, simulated internet lag), not yet between two PCs.
   password are remembered, so later sessions are one press.
 - **Fast join.** The bell, beckoner and summon-sign waits are gone: a guest is in the host's world
   within seconds.
+- **Leave any time.** *System → Party → Leave the party* takes a guest home at once; the host's
+  *Leave* ends the party and every guest goes home. *Join party* brings a guest back.
 - **The session never ends by itself.** Boss kills, area clears, deaths and travel don't send
   anyone home.
 - **No multiplayer walls.** The fog walls that keep phantoms near the host are gone; the party can
@@ -121,7 +123,7 @@ PC (several game copies, simulated internet lag), not yet between two PCs.
 | Guests open doors, pull levers, talk to NPCs; NPC choices shared | In progress |
 | Item pickups and enemy drops per player: everyone gets their own | In progress |
 | Cutscenes play for the whole party | Planned |
-| Joining during a boss fight waits outside until it ends | Planned |
+| Joining during a boss fight or cutscene waits outside until it ends | In progress (no summon while the host's boss bar or a cutscene is up) |
 | The 4th player joins as fast as the others | In progress |
 | Chalice dungeons: rituals by any player (guest's dungeon entered by the party) | In progress |
 | PvP / friendly fire the host can switch on and off | Later |
