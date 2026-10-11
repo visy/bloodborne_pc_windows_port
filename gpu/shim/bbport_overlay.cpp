@@ -1846,7 +1846,9 @@ void PartyHud() {
         // Name (serif, the game's cream; grey outside our world), state / distance on the right.
         const ImVec2 row = ImGui::GetCursorScreenPos();
         ImGui::PushFont(serif_font, 17.0f);
-        ImGui::TextColored(here ? ImVec4(0.96f, 0.88f, 0.70f, 1.0f) : ImVec4(0.62f, 0.60f, 0.57f, alpha), "%s",
+        float mc[3];
+        party::hud::MemberColour(c.slot, mc);  // the same colour as the member's tag (and I2's pings)
+        ImGui::TextColored(here ? ImVec4(mc[0], mc[1], mc[2], 1.0f) : ImVec4(0.62f, 0.60f, 0.57f, alpha), "%s",
                            c.name);
         const float name_h = ImGui::GetItemRectSize().y;
         ImGui::PopFont();
