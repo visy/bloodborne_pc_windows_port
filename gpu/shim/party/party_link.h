@@ -16,7 +16,7 @@
 // per-direction key and an implicit per-direction counter nonce (party_crypto.h).
 // Runtime: PING/PONG (1 Hz both ways, RTT), ROSTER, RPC_REQ/RPC_RESP, EVENT/EVENT_ACK (cursor;
 // unacked events are replayed after a reconnect and de-duplicated by cursor), PARTY_CMD,
-// PROGRESS, BYE. No frame for lost_timeout (10 s) = connection lost; the host keeps a lost
+// PROGRESS, VITALS (party HUD: HP, map, position; ~4 Hz, see MemberVitals), BYE. No frame for lost_timeout (10 s) = connection lost; the host keeps a lost
 // member's slot (and its event queue) for slot_keep (60 s); the guest reconnects with
 // exponential backoff 1, 2, 4, 8 s (then every 8 s, each wait +-20 % so guests that lost the
 // host together do not retry in lockstep) and gets the same slot back (resume token). A restarted
@@ -81,6 +81,37 @@ struct RosterEntry {
     std::uint32_t map_id = 0;
     std::uint32_t ping_ms = 0;  // as measured by the host
 };
+
+// Party HUD (party_hud.h): one member's health and whereabouts, as its own game reads them.
+// Wire (VITALS, fire-and-forget, ~4 Hz): guest -> host its own entry; host -> every guest all
+// fresh entries (the host's and every member's). Peers that do not know VITALS ignore it.
+constexpr int kMaxVitals = 4;                 // party slots 0..3
+constexpr std::uint32_t kMaxVitalsHp = 99999;  // HP / max HP above this: refused (clamped)
+constexpr std::uint32_t kMaxVitalsStamina = 9999;
+constexpr float kMaxVitalsCoord = 100000.0f;  // |x|, |y|, |z| past this: no position
+constexpr int kVitalsSendMs = 250;            // at most this often per sender (4 Hz)
+constexpr int kVitalsKeepaliveMs = 1000;      // unchanged vitals are re-sent this often
+constexpr int kVitalsStaleMs = 3000;          // older entries are not relayed / count as unknown
+enum : std::uint8_t {
+    kVitalsValid = 1,   // hp / max_hp / stamina read from a live player
+    kVitalsAlive = 2,   // hp > 0
+    kVitalsHasPos = 4,  // pos / yaw valid
+    kVitalsKnownFlags = 7,
+};
+struct MemberVitals {
+    int slot = -1;
+    std::uint8_t flags = 0;
+    std::uint32_t hp = 0, max_hp = 0;
+    std::uint16_t stamina = 0, max_stamina = 0;
+    std::uint32_t map_id = 0;  // 0xAABBCCDD; 0 = unknown
+    float pos[3] = {0, 0, 0};
+    float yaw = 0;             // facing (radians; forward = (sin, 0, cos))
+    std::uint32_t age_ms = 0;  // vitals(): how long ago it arrived (0 for our own)
+};
+// Bounds a peer's entry: unknown flags cleared, slot outside 0..3 -> false (dropped), HP /
+// stamina clamped (hp <= max_hp), a non-finite or absurd position drops kVitalsHasPos, the yaw
+// wrapped to [-pi, pi]. Alive needs Valid and hp > 0.
+bool sanitize_vitals(MemberVitals& v);
 
 enum class RejectCode : std::uint8_t {
     None = 0,
@@ -222,6 +253,13 @@ public:
     bool send_progress(int slot, const std::vector<std::uint8_t>& blob);
     // This player's roster entry (host: broadcast to all; guest: reported to the host).
     void set_local_state(MemberState state, std::uint32_t map_id);
+    // This player's vitals (party HUD), from the game's main thread: never waits for the IO
+    // thread (a short copy under the snapshot lock). The IO thread sends them at most every
+    // kVitalsSendMs when they changed, else every kVitalsKeepaliveMs. The slot is filled in.
+    void set_local_vitals(const MemberVitals& v);
+    // Everyone's latest vitals (ours included, others' up to kVitalsStaleMs old), into a caller's
+    // array (no allocation); returns how many were written (<= max, <= kMaxVitals).
+    int vitals(MemberVitals* out, int max) const;
     // Host: every member's slot, name and resume token (for the crash marker).
     std::vector<KeptMember> kept_members() const;
     // Host, before start_host: members of the previous (crashed) run, as lost members whose slot

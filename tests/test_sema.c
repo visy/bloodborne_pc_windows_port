@@ -8,6 +8,7 @@ void runtime_restart(void) { abort(); }
 /* probe.c's too: no guest TLS block on these host threads (FS is the host's), and no restart. */
 ABI void restore_guest_fs(void) {}
 volatile int runtime_restarting;
+const char *runtime_file_user_dir(void) { return "."; }
 #endif
 #include <assert.h>
 #include <pthread.h>

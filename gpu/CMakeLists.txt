@@ -551,6 +551,16 @@ target_compile_definitions(party-security-test PRIVATE PARTY_FUZZ_QUICK)
 target_compile_options(party-fuzz-ubsan PRIVATE -fsanitize=undefined -fsanitize-undefined-trap-on-error
     -fno-sanitize-recover=all -D_GLIBCXX_ASSERTIONS -O1)
 target_link_options(party-fuzz-ubsan PRIVATE -fsanitize=undefined -fsanitize-undefined-trap-on-error)
+# Party HUD board (shim/party/party_hud.cpp; in bbgpu through SHIM_SOURCES): same-world rules,
+# composition from roster / VITALS / local reads, geometry. cmake --build out/gpu --target party-hud-test
+add_executable(party-hud-test EXCLUDE_FROM_ALL ../tests/test_party_hud.cpp shim/party/party_hud.cpp
+    ${PARTY_LINK_SOURCES} shim/net/net_stun.cpp third_party/monocypher/monocypher.c)
+target_compile_options(party-hud-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-hud-test PRIVATE shim)
+set_target_properties(party-hud-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+if (WIN32)
+    target_link_libraries(party-hud-test PRIVATE ws2_32 iphlpapi ole32 oleaut32)
+endif()
 # Party status bridge (shim/party/party_status_bridge.cpp; in bbgpu through SHIM_SOURCES): link /
 # game facts -> the Party tab's state, roster, events, commands. ninja -C out/gpu party-status-bridge-test
 add_executable(party-status-bridge-test EXCLUDE_FROM_ALL ../tests/test_party_status_bridge.cpp

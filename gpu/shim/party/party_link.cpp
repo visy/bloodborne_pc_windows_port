@@ -5,8 +5,10 @@
 #include "party_sock.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -41,6 +43,7 @@ enum MsgType : std::uint8_t {
     kPartyCmd = 17,
     kProgress = 18,
     kBye = 19,
+    kVitals = 20,  // party HUD (MemberVitals); unknown to older peers, which ignore it
     kEncrypted = 0xE0,
 };
 
@@ -195,6 +198,57 @@ std::vector<RosterEntry> read_roster(Reader& r) {
         if (e.slot <= 7 && out.size() < kMaxRosterEntries) out.push_back(std::move(e));
     }
     return out;
+}
+
+// VITALS: u8 count, then per entry u8 slot, u8 flags, u32 hp, u32 max hp, u16 stamina,
+// u16 max stamina, u32 map, f32 x, y, z, yaw (IEEE bits, LE). 36 bytes an entry.
+std::uint32_t float_bits(float f) {
+    std::uint32_t u;
+    std::memcpy(&u, &f, 4);
+    return u;
+}
+float bits_float(std::uint32_t u) {
+    float f;
+    std::memcpy(&f, &u, 4);
+    return f;
+}
+
+void write_vitals(Writer& w, const MemberVitals* v, int n) {
+    n = std::clamp(n, 0, kMaxVitals);
+    w.u8(static_cast<std::uint8_t>(n));
+    for (int i = 0; i < n; ++i) {
+        const MemberVitals& e = v[i];
+        w.u8(static_cast<std::uint8_t>(e.slot)).u8(e.flags).u32(e.hp).u32(e.max_hp).u16(e.stamina).u16(e.max_stamina);
+        w.u32(e.map_id).u32(float_bits(e.pos[0])).u32(float_bits(e.pos[1])).u32(float_bits(e.pos[2]));
+        w.u32(float_bits(e.yaw));
+    }
+}
+
+// One entry as sent (not yet sanitized); false when the frame is short.
+bool read_vitals_entry(Reader& r, MemberVitals& e) {
+    e.slot = r.u8();
+    e.flags = r.u8();
+    e.hp = r.u32();
+    e.max_hp = r.u32();
+    e.stamina = r.u16();
+    e.max_stamina = r.u16();
+    e.map_id = r.u32();
+    for (float& c : e.pos) c = bits_float(r.u32());
+    e.yaw = bits_float(r.u32());
+    return r.ok;
+}
+
+// At most `max` entries (each sanitized; bad slots dropped); returns how many went to `out`
+// (0 for a short frame).
+int read_vitals(Reader& r, MemberVitals* out, int max) {
+    const unsigned n = r.u8();
+    int got = 0;
+    for (unsigned i = 0; i < n && i < static_cast<unsigned>(kMaxVitals); ++i) {
+        MemberVitals e;
+        if (!read_vitals_entry(r, e)) return 0;
+        if (sanitize_vitals(e) && got < max) out[got++] = e;
+    }
+    return r.ok ? got : 0;
 }
 
 using Token = std::array<std::uint8_t, 16>;
@@ -409,6 +463,33 @@ bool valid_member_name(const std::string& name) {
     return true;
 }
 
+bool sanitize_vitals(MemberVitals& v) {
+    if (v.slot < 0 || v.slot >= kMaxVitals) return false;
+    v.flags &= kVitalsKnownFlags;
+    v.max_hp = std::min(v.max_hp, kMaxVitalsHp);
+    v.hp = std::min(v.hp, v.max_hp);
+    v.max_stamina = static_cast<std::uint16_t>(std::min<std::uint32_t>(v.max_stamina, kMaxVitalsStamina));
+    v.stamina = std::min(v.stamina, v.max_stamina);
+    if (!(v.flags & kVitalsValid)) {
+        v.hp = v.max_hp = 0;
+        v.stamina = v.max_stamina = 0;
+        v.flags &= static_cast<std::uint8_t>(~kVitalsAlive);
+    } else if (v.hp == 0) {
+        v.flags &= static_cast<std::uint8_t>(~kVitalsAlive);
+    }
+    bool pos_ok = std::isfinite(v.yaw);
+    for (float c : v.pos) pos_ok = pos_ok && std::isfinite(c) && std::fabs(c) <= kMaxVitalsCoord;
+    if (!pos_ok) {
+        v.flags &= static_cast<std::uint8_t>(~kVitalsHasPos);
+        v.pos[0] = v.pos[1] = v.pos[2] = 0;
+        v.yaw = 0;
+    } else {
+        v.yaw = std::remainder(v.yaw, 6.28318530718f);  // [-pi, pi]
+    }
+    v.age_ms = 0;
+    return true;
+}
+
 void apply_link_env(LinkConfig& cfg) {
     if (const char* v = std::getenv("BB_PARTY_PORT"); v && *v) {
         long p = std::strtol(v, nullptr, 10);
@@ -463,6 +544,9 @@ struct PartyLink::Impl {
         std::uint32_t ping_ms = 0;
         EventStream ev;
         bool restored = false;  // from restore_members: the previous host process's member
+        MemberVitals vitals;    // party HUD: the member's last VITALS (has_vitals)
+        bool has_vitals = false;
+        Clock::time_point vitals_at{};
     };
 
     struct Pending {
@@ -514,6 +598,9 @@ struct PartyLink::Impl {
     Token my_token{};
     EventStream gev;
     std::vector<RosterEntry> groster;
+    std::array<MemberVitals, kMaxVitals> gvitals{};      // by slot, from the host's VITALS
+    std::array<Clock::time_point, kMaxVitals> gvitals_at{};
+    std::array<bool, kMaxVitals> ghas_vitals{};
     std::map<std::uint32_t, Pending> pending;
     std::uint32_t next_rpc = 1;
     int backoff_ms = 0;
@@ -532,9 +619,40 @@ struct PartyLink::Impl {
     MemberState snap_local_state = MemberState::Title;
     std::uint32_t snap_local_map = 0;
     int snap_max_players = 0;  // host: cfg.max_players; guest: the host's (WELCOME), 0 before it
+    // Party HUD. Ours: written by set_local_vitals (main thread), seq +1 per change. Others':
+    // published from the members table (host) / the host's VITALS (guest).
+    MemberVitals snap_local_vitals;
+    bool snap_local_vitals_set = false;
+    std::uint64_t snap_local_vitals_seq = 0;
+    std::array<MemberVitals, kMaxVitals> snap_vitals{};
+    std::array<Clock::time_point, kMaxVitals> snap_vitals_at{};
+    int snap_vitals_n = 0;
+    // IO thread: what was sent last.
+    std::uint64_t sent_vitals_seq = 0;
+    Clock::time_point last_vitals_send{};
+    bool host_vitals_dirty = false;  // host: a member's VITALS arrived since the last broadcast
     void publish() {  // mu held
         std::vector<RosterEntry> r = host ? host_roster() : groster;
+        std::array<MemberVitals, kMaxVitals> pv{};
+        std::array<Clock::time_point, kMaxVitals> pat{};
+        int pn = 0;
+        if (host) {
+            for (const auto& [slot, m] : members)
+                if (m.has_vitals && pn < kMaxVitals) {
+                    pv[pn] = m.vitals;
+                    pat[pn++] = m.vitals_at;
+                }
+        } else {
+            for (int i = 0; i < kMaxVitals; ++i)
+                if (ghas_vitals[i] && i != my_slot) {
+                    pv[pn] = gvitals[i];
+                    pat[pn++] = gvitals_at[i];
+                }
+        }
         std::lock_guard<std::mutex> lk(snap_mu);
+        snap_vitals = pv;
+        snap_vitals_at = pat;
+        snap_vitals_n = pn;
         snap_state = state;
         snap_slot = host ? kHostSlot : my_slot;
         snap_roster.swap(r);
@@ -995,6 +1113,17 @@ struct PartyLink::Impl {
             }
             break;
         }
+        case kVitals: {  // the guest's own entry: its slot is the one it holds, whatever it says
+            MemberVitals e;
+            if (r.u8() < 1 || !read_vitals_entry(r, e)) break;
+            e.slot = m.slot;
+            if (!sanitize_vitals(e)) break;
+            m.vitals = e;
+            m.has_vitals = true;
+            m.vitals_at = Clock::now();
+            host_vitals_dirty = true;
+            break;
+        }
         case kRpcReq: {
             std::uint32_t id = r.u32();
             std::string kind = r.str16();
@@ -1252,6 +1381,19 @@ struct PartyLink::Impl {
             if (cb.on_roster) post([this, ros] { cb.on_roster(ros); });
             break;
         }
+        case kVitals: {  // everyone's, from the host
+            MemberVitals v[kMaxVitals];
+            const int n = read_vitals(r, v, kMaxVitals);
+            const auto now = Clock::now();
+            for (int i = 0; i < n; ++i) {
+                const int s = v[i].slot;  // 0..3 (sanitize_vitals)
+                if (s == my_slot) continue;
+                gvitals[s] = v[i];
+                gvitals_at[s] = now;
+                ghas_vitals[s] = true;
+            }
+            break;
+        }
         case kRpcResp: {
             std::uint32_t id = r.u32();
             bool ok = r.u8() != 0;
@@ -1303,6 +1445,62 @@ struct PartyLink::Impl {
         }
         default: break;
         }
+    }
+
+    // Party HUD: our vitals as set_local_vitals left them; `changed` = new since the last send.
+    bool local_vitals(MemberVitals* v, bool* changed) {  // mu held
+        std::lock_guard<std::mutex> sl(snap_mu);
+        if (!snap_local_vitals_set) return false;
+        *v = snap_local_vitals;
+        *changed = snap_local_vitals_seq != sent_vitals_seq;
+        sent_vitals_seq = snap_local_vitals_seq;
+        return true;
+    }
+    bool vitals_due(Clock::time_point now, bool changed) const {
+        const auto since = ms_between(last_vitals_send, now);
+        return since >= kVitalsSendMs && (changed || since >= kVitalsKeepaliveMs);
+    }
+    void send_vitals_guest(Clock::time_point now) {  // mu held
+        if (!gconn || gconn->phase != Phase::Open || my_slot < 0 || my_slot >= kMaxVitals) return;
+        if (ms_between(last_vitals_send, now) < kVitalsSendMs) return;
+        std::uint64_t seq_before = sent_vitals_seq;
+        MemberVitals v;
+        bool changed = false;
+        if (!local_vitals(&v, &changed)) return;
+        if (!vitals_due(now, changed)) {
+            sent_vitals_seq = seq_before;  // not sent: still pending
+            return;
+        }
+        v.slot = my_slot;
+        Writer w;
+        write_vitals(w, &v, 1);
+        send(gconn, kVitals, w);
+        last_vitals_send = now;
+    }
+    void send_vitals_host(Clock::time_point now) {  // mu held
+        if (state != LinkState::Hosting || ms_between(last_vitals_send, now) < kVitalsSendMs) return;
+        std::uint64_t seq_before = sent_vitals_seq;
+        MemberVitals v[kMaxVitals];
+        int n = 0;
+        bool changed = false;
+        if (local_vitals(&v[0], &changed)) {
+            v[0].slot = kHostSlot;
+            n = 1;
+        }
+        for (const auto& [slot, m] : members)
+            if (m.conn && m.has_vitals && ms_between(m.vitals_at, now) <= kVitalsStaleMs && n < kMaxVitals)
+                v[n++] = m.vitals;
+        changed = changed || host_vitals_dirty;
+        if (n == 0 || !vitals_due(now, changed)) {
+            sent_vitals_seq = seq_before;
+            return;
+        }
+        host_vitals_dirty = false;
+        Writer w;
+        write_vitals(w, v, n);
+        for (auto& [slot, m] : members)
+            if (m.conn && m.conn->phase == Phase::Open) send(m.conn, kVitals, w);
+        last_vitals_send = now;
     }
 
     void send_local_state(Conn* c) {
@@ -1494,7 +1692,9 @@ struct PartyLink::Impl {
                 release_member(s, false);
             }
             if (ms_between(last_roster_bcast, now) >= cfg.roster_refresh_ms) broadcast_roster();
+            send_vitals_host(now);
         } else {
+            send_vitals_guest(now);
             if (!gconn && state == LinkState::Reconnecting && now >= next_attempt) want_connect = true;
             for (auto it = pending.begin(); it != pending.end();) {
                 if (!it->second.sync && now >= it->second.deadline) {
@@ -1959,6 +2159,41 @@ void PartyLink::set_local_state(MemberState state, std::uint32_t map_id) {
         I.send_local_state(I.gconn);
     }
     I.publish();
+}
+
+void PartyLink::set_local_vitals(const MemberVitals& v) {
+    Impl& I = *impl_;
+    MemberVitals c = v;
+    c.slot = 0;  // filled in when sent
+    if (!sanitize_vitals(c)) return;
+    std::lock_guard<std::mutex> sl(I.snap_mu);
+    const MemberVitals& o = I.snap_local_vitals;
+    const bool same = I.snap_local_vitals_set && o.flags == c.flags && o.hp == c.hp && o.max_hp == c.max_hp &&
+                      o.stamina == c.stamina && o.max_stamina == c.max_stamina && o.map_id == c.map_id &&
+                      std::memcmp(o.pos, c.pos, sizeof c.pos) == 0 && o.yaw == c.yaw;
+    if (same) return;
+    I.snap_local_vitals = c;
+    I.snap_local_vitals_set = true;
+    ++I.snap_local_vitals_seq;
+}
+
+int PartyLink::vitals(MemberVitals* out, int max) const {
+    const Impl& I = *impl_;
+    const auto now = Clock::now();
+    int n = 0;
+    std::lock_guard<std::mutex> sl(I.snap_mu);
+    if (n < max && I.snap_local_vitals_set && I.snap_slot >= 0 && I.snap_slot < kMaxVitals) {
+        out[n] = I.snap_local_vitals;
+        out[n].slot = I.snap_slot;
+        out[n++].age_ms = 0;
+    }
+    for (int i = 0; i < I.snap_vitals_n && n < max; ++i) {
+        const auto age = ms_between(I.snap_vitals_at[i], now);
+        if (age < 0 || age > kVitalsStaleMs) continue;
+        out[n] = I.snap_vitals[i];
+        out[n++].age_ms = static_cast<std::uint32_t>(age);
+    }
+    return n;
 }
 
 std::vector<KeptMember> PartyLink::kept_members() const {
