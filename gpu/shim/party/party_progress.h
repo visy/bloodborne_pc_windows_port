@@ -307,6 +307,12 @@ bool WorldMirrorKey(int key);
 const std::vector<int>& WorldMirrorKeys();
 /// The bits of a mirror key the guest writes (1 = written; all zero for a key outside the mirror).
 const GroupBytes& WorldMirrorMask(int key);
+/// The item_lot_picked bits of a mirror key (D4). With instanced items on, the mirror leaves them
+/// alone: the guest's overlay shows the guest's OWN pickups (its pool), not the host's.
+const GroupBytes& WorldItemMask(int key);
+/// D4 (user decision: world items are instanced per player). Any thread; set once at init.
+void SetInstancedItems(bool on);
+bool InstancedItems();
 
 /// Groups of the host's world: key -> 125 bytes. `full`: an image of every mirror group, absent
 /// keys are all zero; otherwise only the groups that changed.
@@ -350,6 +356,12 @@ public:
     bool Apply(const std::map<u32, u64>& overlay, const MemOps& ops, bool full, Result* r);
     /// The host's bytes of a group (zero when unknown).
     const GroupBytes& Group(int key) const;
+    /// D3 (guest actions): the mirror bits of `overlay` (key -> buffer) that differ from what the
+    /// host's image last put there - the guest's own changes in the host's world. Keys with a host
+    /// change not yet applied are skipped (their difference may be the host's). Each entry is
+    /// (flag id, the overlay's value). At most `max` entries.
+    std::vector<std::pair<u32, bool>> LocalChanges(const std::map<u32, u64>& overlay, const MemOps& ops,
+                                                   std::size_t max) const;
 
 private:
     bool have_ = false;
@@ -518,6 +530,9 @@ bool HostSnapshotFlag(u32 id, bool* value);
 bool HostWorldFlag(u32 id, bool* value);
 /// The flag store's load mode: 0 own world, 1 the host-world overlay, -1 no store.
 int FlagLoadMode();
+/// Guest, main thread, load mode 1: the flags the guest's own game changed in the host-world
+/// overlay (GuestWorldMirror::LocalChanges); false when there is no image / overlay.
+bool GuestLocalWorldChanges(std::vector<std::pair<u32, bool>>* out, std::size_t max);
 
 struct Stats {
     u64 hook_hits = 0, hook_candidates = 0, scans = 0, host_changes = 0;

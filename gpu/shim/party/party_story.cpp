@@ -1200,6 +1200,8 @@ void SaveSidecar() {
 
 // ---- Host polls: endings (flags 21/22/23) and time of day ----
 
+std::atomic<bool> g_member_joined{false};
+
 void HostPoll(const GameSnapshot& g) {
     if (!g.world_up || g.loading || !OwnWorld()) {
         g_tick.host_baseline = false;
@@ -1225,6 +1227,15 @@ void HostPoll(const GameSnapshot& g) {
             e.id = static_cast<u32>(i);
             PushHost(e);
         }
+    }
+    if (g_member_joined.exchange(false) && tod_value > 0) {
+        // Catch-up (user decision: a guest behind the host gets the Blood Moon too): a member that
+        // joined late never saw the change; the guest's planner never turns its clock back.
+        StoryIntent t;
+        t.seq = NextSeq();
+        t.kind = StoryKind::TimeOfDay;
+        t.id = static_cast<u32>(TodFromFlagValue(tod_value));
+        PushHost(t);
     }
     if (tod_value > g_tick.last_tod_value && tod_value >= 0) {
         StoryIntent t;
@@ -1531,6 +1542,9 @@ void StoryTick() {
     SaveSidecar(); // writes only when the queue / seen set changed
 }
 
-#endif // BB_PARTY_STORY_NO_GAME
+void StoryMemberJoined() {
+    g_member_joined.store(true);
+}
 
+#endif // BB_PARTY_STORY_NO_GAME
 } // namespace coop

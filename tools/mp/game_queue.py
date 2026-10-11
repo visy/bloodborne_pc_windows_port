@@ -104,6 +104,7 @@ def game_slots(count: int, root: str, pool: str = "game", label: str = ""):
     """Hold `count` slots of `pool` for the duration of the block (waits its turn); yields the
     slot numbers held."""
     me = {"id": f"{os.getpid()}-{time.time():.0f}", "pid": os.getpid(), "count": count, "root": str(root), "label": label,
+          "t": time.time(),
           "since": time.strftime("%H:%M:%S")}
     with _locked(pool) as st:
         _prune(st)
@@ -136,7 +137,10 @@ def game_slots(count: int, root: str, pool: str = "game", label: str = ""):
                     head_fits = fits(order[0])
                     if not head_fits:
                         # Never backfill past a waiting big job: it needs the machine to itself.
-                        big = order[0]["count"] > st["max_clients"]
+                        # ...nor past a head that has waited over 60 s (3-4 client tests starved
+                        # behind a stream of 2-client backfills).
+                        waited = time.time() - order[0].get("t", time.time())
+                        big = order[0]["count"] > st["max_clients"] or waited > 60
                         fitting = None if big else next((e for e in order if e["count"] <= free), None)
                         first = fitting is not None and fitting["id"] == me["id"]
                 # Gate (gate.txt next to the queue file, e.g. "only the join speed-up may test until
