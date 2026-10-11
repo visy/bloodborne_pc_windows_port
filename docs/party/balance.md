@@ -2,8 +2,8 @@
 
 Code: `gpu/shim/party/party_balance.{h,cpp}` (game side), `party_balance_rules.{h,cpp}` (pure,
 `tests/test_party_balance.cpp`), settings in `bbport_settings.h` (`party_rot`, `party_boss_*`,
-`party_enemy_*`, `party_overhead`), menu pages in `bbport_game_menu_pages.cpp` ("Party rules",
-"Enemy scaling"), tags in `bbport_overlay.cpp` (`PartyHud`), the VITALS trailer in `party_link.cpp`.
+`party_enemy_*`, `party_overhead`), the System menu page "Party rules" in `bbport_game_menu_pages.cpp`, the
+overlay's Party tab and tags in `bbport_overlay.cpp`, the VITALS trailer in `party_link.cpp`.
 Addresses are our offsets (raw ELF VA of `out/eboot.elf`, 1.09).
 
 ## 1. The party's rules come from the host
@@ -39,7 +39,11 @@ the code (docs/party/four_players.md section 4):
   0x4731ed0 by clear count and the 9200 level sync. BB's gameparam has no multiplayer correction
   param (no MultiHPCorrectionParam etc.).
 
-### 2.2 Settings (System > Enemy scaling, six sliders)
+### 2.2 Settings
+
+System > Party rules: Boss health, Boss damage, Enemy health, Enemy damage (sliders; the help line
+shows the value). The System menu holds 12 pages (MaxPages, all used), so the two poise values are
+in the overlay's Party tab (all six there) and bbport.ini.
 
 Per extra hunter (cooperator), Nightreign semantics where vanilla has a step (100 = vanilla):
 
@@ -95,7 +99,7 @@ ERSC: optional rot, 5 kinds, one random per death, stacking, removed only at a g
   before the guest lamp interceptor) cleanses it; the respawn warp of a death (within 20 s of it)
   does not. Travelling along with the party (a replay) does not either: only who rests is cleansed.
 - Kept in `<user>/party_rot.txt` across restarts. Party mode only; host and guests alike; the
-  host's on/off is the party's. Setting: System > Party rules > "Rot on death" (on by default,
+  host's on/off is the party's. Setting: System > Party rules > "Rot on death" (and the overlay's Party tab) (on by default,
   user decision 2026-10-11).
 - Echoes / bloodstain: unchanged here. The user's decision is single-player behaviour for everyone
   (echoes drop into a recoverable bloodstain); that is the hostdeath work. Rot only touches max HP,
@@ -107,9 +111,16 @@ ERSC: optional rot, 5 kinds, one random per death, stacking, removed only at a g
 ERSC `overhead_player_display`: normal / none / ping / level / death count. Ours: the party HUD's
 name tags (projected with the game camera above each companion in view, 1-80 m), now a setting of
 their own, independent of the HUD panel: System > Party rules > "Above companions": Nothing / Name
-/ Name and level / Name and health (default, the HP bar as before) / Name and deaths ("deaths 3,
-rot 2"). Local only. The game draws no phantom names of its own in Bloodborne, so the overlay is
-the way.
+/ Name and level ("Hunter1  Lv 37") / Name and health (default, the HP bar as before) / Name and
+deaths ("Hunter0  deaths 1, rot 1"). Local only. Bloodborne itself draws a phantom label (the
+blue "Cooperator" / name text, about 2.1 m up); our tag sits above it (2.45 m) and adds what the
+game's does not show. Ping is not offered (the Party members page shows it).
+
+The HP behind the bars: data module (`chr+0x3b0 -> +0x20`) +0xf8 HP / +0xfc max, the HP struct the
+game's kill (0x18bf9a0) and per-frame update (0x1a0d7d0) use. The party HUD read +0x128 / +0x12c
+before, which stayed at 106 / 106 on a 719 HP hunter in the live runs (so the bars never moved);
+party_hud_game now reads +0xf8 / +0xfc. (party_b2's guest HP keep still uses +0x128: worth a
+look by its owner.)
 
 Level, deaths and rot stacks travel in a VITALS trailer: after the entries, `u8 n`, then per entry
 `u16 level, u16 deaths, u8 rot`. Older peers stop reading after the entries; a frame without the
@@ -121,5 +132,5 @@ must say count 1 now.
 - `party-balance-test`: vanilla rules reproduce rows 7500-7502, defaults, poise below zero, JSON
   round trip / clamping / malformed input, rot factors, slider tables.
 - `party-link-test` (vitals): level / deaths / rot relayed guest -> host -> other guest.
-- `game-menu-pages-test`: the two new pages keep the menu's limits (12 pages = MaxPages).
+- `game-menu-pages-test`: the new page keeps the menu's limits (12 pages = MaxPages).
 - Live: see the ERSC_PARITY rows C4 / D7 / E2 for the runs.
