@@ -681,6 +681,10 @@ LinkCallbacks make_callbacks(bool host) {
         };
         cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
             if (name == coop::b2::kEventName) coop::b2::OnLinkEvent(slot, body);  // B2: a guest arrived
+            if (name == coop::chalice::kFormEventName) {  // a guest's ritual dungeon (party_chalice.h)
+                coop::chalice::OnGuestForm(slot, body);
+                return;
+            }
             if (name == coop::chalice::kGoodsEventName) {  // a guest's chalices (party_chalice.h)
                 std::vector<std::uint32_t> ids;
                 std::string err;

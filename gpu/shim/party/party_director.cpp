@@ -2055,6 +2055,10 @@ void PartyDirector::Tick() {
         if (chalice::PopHostGoods(&chalices)) {
             link->post_event(party::kHostSlot, chalice::kGoodsEventName, chalice::GoodsToJsonText(chalices));
         }
+        std::string form;  // its own ritual dungeon's FormData for the host's board
+        if (chalice::PopGuestForm(&form)) {
+            link->post_event(party::kHostSlot, chalice::kFormEventName, form);
+        }
     }
     // B2 (party_b2.h): guest "arrived" / host notes.
     if (link) {

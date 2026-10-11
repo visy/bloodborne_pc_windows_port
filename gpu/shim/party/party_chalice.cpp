@@ -73,6 +73,7 @@ std::atomic<std::uint64_t> g_local{0};
 std::mutex g_mu;
 std::vector<std::uint32_t> g_host_goods, g_host_pending, g_guest_goods;
 bool g_host_dirty = false, g_guest_dirty = false;
+std::string g_form_pending;      // guest: {"id":"N","form":"b64"} for the host's board
 double g_host_sent_at = 0;
 
 // The party's dungeon (host): the newest ritual of another member, offered at the host's altar as
@@ -443,6 +444,27 @@ void Tick(bool host) {
             std::fflush(stdout);
         }
     }
+    if (!host && s.load_mode == 0 && s.slot >= 0 && s.channel) {
+        // A guest's own ritual dungeon: its FormData for the host's board (a shared fixed dungeon is
+        // never uploaded; the host's glyph join and a summon need it). Once per dungeon and minute.
+        static std::uint64_t sent_for = 0;
+        static double sent_at = -100;
+        if (sent_for != s.channel || now - sent_at >= 60.0) {
+            const std::vector<std::uint8_t> fd = SlotFormData(s.slot);
+            if (!fd.empty()) {
+                const std::string b64 = bbnet::party::b64_encode(fd.data(), fd.size());
+                std::lock_guard<std::mutex> lk(g_mu);
+                g_form_pending = "{" + std::string("\"id\":\"") + std::to_string(s.channel) + "\",\"form\":\"" + b64 + "\"}";
+                if (sent_for != s.channel) {
+                    std::printf("Party: chalice: dungeon %llu: FormData of slot %d (%zu bytes) for the host's board\n",
+                                static_cast<unsigned long long>(s.channel), s.slot, fd.size());
+                    std::fflush(stdout);
+                }
+                sent_for = s.channel;
+                sent_at = now;
+            }
+        }
+    }
     if (host && s.load_mode == 0 && s.slot >= 0 && s.channel) {
         // The host's dungeon on the channel board with its FormData: a shared fixed dungeon was
         // joined through search and never uploaded, so the board's entry had none and a summoned
@@ -555,6 +577,39 @@ void Tick(bool host) {
 void SetHostName(const std::string& name) {
     std::lock_guard<std::mutex> lk(g_mu);
     g_host_name = name;
+}
+
+bool PopGuestForm(std::string* body) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    if (g_form_pending.empty()) {
+        return false;
+    }
+    *body = g_form_pending;
+    g_form_pending.clear();
+    return true;
+}
+
+void OnGuestForm(int slot, const std::string& body) {
+    json::Value v;
+    std::string err;
+    const json::Value* id = nullptr;
+    const json::Value* form = nullptr;
+    if (!json::parse(body, v, err) || v.type != json::Value::Type::Object || !(id = v.find("id")) ||
+        id->type != json::Value::Type::String || !(form = v.find("form")) || form->type != json::Value::Type::String ||
+        form->string.size() > 4096) {
+        std::printf("Party: chalice: FormData event from slot %d refused (malformed)\n", slot);
+        std::fflush(stdout);
+        return;
+    }
+    const std::uint64_t channel = std::strtoull(id->string.c_str(), nullptr, 10);
+    bbnet::party::ChannelBoard& board = bbnet::party::FromApi::instance().channels();
+    // Only a dungeon the board has without a FormData (a shared fixed dungeon a member's ritual
+    // made by search): never replaces an uploaded one.
+    const bool ok = channel && board.known(channel) && board.form_data(channel).empty() &&
+                    board.set_form_data(channel, form->string);
+    std::printf("Party: chalice: dungeon %llu: FormData from slot %d's ritual %s\n",
+                static_cast<unsigned long long>(channel), slot, ok ? "on the board" : "not taken (unknown or has one)");
+    std::fflush(stdout);
 }
 
 std::uint64_t LocalChannel() {
