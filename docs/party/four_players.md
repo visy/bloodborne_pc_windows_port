@@ -147,7 +147,7 @@ Switches: `BB_PARTY_FOURP=0` (nothing), `BB_PARTY_FOURP_SCALING=0` (no H2-H4),
 `BB_PARTY_FOURP_NPC_SIGNS=0` (no E6), `BB_PARTY_FOURP_RECRUIT=0` (no P5).
 
 **Max players and the version check.** `party_runtime` sets `LinkConfig::rules` =
-`"max <BB_PARTY_MAX> players, <rule tag>"` (tag `4p:off` / `4p:v1:H1,H2,H3,H4,E6`), sent last in
+`"max <BB_PARTY_MAX> players, <rule tag>"` (tag `4p:off` / `4p:v2:H1,H5,H2,H3,H4,E6`), sent last in
 HELLO and compared by `identity_mismatch` next to eboot / gameplay patches / gameplay mods: a
 guest with another max players or rule set gets a Mismatch REJECT "party rules differ (host max 4
 players, 4p:v1:...; yours max 3 players, ...)". So every player sets the same Max players (the
@@ -275,6 +275,42 @@ side cap evaluated in the session handshake that H1 does not cover (the SOS filt
 counts `sel+0x1c8` outgoing requests; the selector update 0x1876b10 `pending + coop >= 3`), or a
 timer after the 2nd arrival. Next: trace 0x1874710's verdict on the host during the 3rd summon.
 
+### The 4th player's dropped invites: what is known (2026-10-11, agent/sixp; open)
+
+- **Not the SOS filter.** `0x1874710(sel, req, flag)` refuses a cooperator request when
+  `sel+0x1fc (max coop, 3) <= pending + cooperators` - for the 3rd cooperator 1 + 2 = 3 - and
+  `0x1876b10` stops at the same field. H5 (party_fourp: `sel+0x1fc` = party size while max players
+  >= 4, `SelectorMaxCoop`, rules tag `4p:v2:H1,H5,...`) lifts that, but a probe run
+  (`BB_PARTY_FOURP_PROBE=1`) showed the host's filter returning a request for **every** call,
+  Hunter3's two included (`slots coop 2 ... all 3, room max 5; max coop 4; pending 0`). The guests
+  never call it. H5 is kept (it is the game's own limit for 3 cooperators) but does not fix the drop:
+  two H5 runs still dropped Hunter3's (and once Hunter2's) first invites.
+- **Where it stops.** The summon handshake on vport 40 (guest side): recv 15 / send 24 / recv 62 /
+  signaling up / send 53 / recv 17 / send 17-26 / send 54 / recv 18 / recv 54 / send 9, then on a
+  good join **recv 267** and the guest's game calls `sceNpMatching2JoinRoom`. On a dropped invite the
+  267-byte message never comes (once it came and the guest still did not join); ~10 s later both
+  sides deactivate the connection (`member 65282`: never a room member). The room is not full (the
+  game was told max 5 at CreateJoinRoom; 3 members). So the host's game decides after the guest's
+  54-byte reply, outside the filter.
+- **Next:** `BB_PARTY_FOURP_PROBE=1` also logs every vport-40 datagram's first 32 bytes and, on a send,
+  the game's return addresses (bbnet `set_packet_trace`): one run with 4 clients shows which state
+  machine sends (or does not send) the 267-byte message and what it checks. Not run: the user
+  limited the machine to 2 game clients (2026-10-11), so 3-4 client runs are paused.
+
+### Host does not draw a guest / its plate floats away (user, 2026-10-11)
+
+Seen with 2 and 3 players (user screenshots; split24 and a hostdeath run): on the host the guest's
+plate ("Co-operator Hunter1") hangs far away at the Central Yharnam lamp arrival point and no guest
+model is near, while the party HUD (VITALS) puts the guest 0.9 m away and the guest sees both
+players correctly. The party code's local warps of the guest (B2 BesideHost / split travel's in-world
+warp, `WarpLocal`: chr vfunc +0x5F8 on the local player) are not replicated to the host's copy of the
+guest's chr; the splittravel agent owns that fix. Not a per-slot bug: the 4-client runs here
+(summons into the Dream, guests placed in their own world before the summon, no warp after the
+arrival) showed every chr where its player stood, on every screen. Detection: the party HUD now logs
+`GAP <name> (slot N): this game draws its chr at (...), it reports (...): d m apart` when a drawn chr
+and the member's own reported position differ by more than 2 m (always on, every 5 s at most per
+member); `BB_PARTY_HUD_LOG=1000` traces both positions every second on every peer.
+
 ### Live test plan for 3 and 4 clients (when the machine allows 3+ game clients, or on two PCs)
 
 Setup: `instances.py run --count 3|4 --party --env BB_PARTY_MAX=3|4 --vram 1536 --fps 30
@@ -306,3 +342,27 @@ prologue: `start ... READY`). Logs: `instances.py logs --grep "Party|from api|4p
    ran (`E6: NPC sign event ...`).
 8. Leave: one guest leaves (overlay Leave) -> its phantom vanishes on every screen, the others
    stay, the director rings for it again when it is Home.
+
+## 8. The floating phantom name plate (agent/balance findings, 2026-10-11)
+
+User report (3 players, Hunter's Dream, host view): the game's own blue "Co-operator / Hunter1"
+plate with its HP bar floats over the stairs ~10 m away with no character under it, while the
+party HUD says Hunter1 is 0.9 m away; "2 players side by side on the host, one healthbar far
+away, 3 players on both guests".
+
+* The plate is the game's (`FrpgMenuDlgFloatingPCGauge`, string 0x4930683; the enemy bars are
+  built in 0x167c460 next to it), not the port's overlay tag. It is drawn over the HOST's own
+  copy of the guest's PlayerIns.
+* The party HUD's 0.9 m came from VITALS (the guest's own game), because the matching in
+  party_hud_game only pairs a chr here with a member whose report is within 8 m: the host's copy
+  of Hunter1 was more than 8 m from where Hunter1 really was, i.e. the host's copy of that guest
+  stopped getting position updates (and is not drawn there: no model under the plate). The guests'
+  copies are right. So the anchor is the copy's own (stale) position; the fix belongs in the
+  host's per-slot position path for the third member (the four-player agent is on it), not in
+  the plate.
+* Diagnostics added: party_hud_game logs `stale remote chr? one at (x y z) HP h/m is D m from the
+  nearest member report (slot S)` (once a minute) and, with `BB_PARTY_HUD_POSDIAG=1` +
+  `BB_PARTY_HUD_LOG=1`, every position-like quad in each remote PlayerIns and the objects its first
+  0x400 bytes point to (to find a second, stale anchor if the copy's physics position is right).
+* The port's own overhead tags (E2) now draw only for a chr read this tick, alive, on our map, from
+  a fresh board (`party::hud::TagVisible`), so they never float; `Party HUD: tag X hidden: why`.

@@ -771,6 +771,11 @@ LinkCallbacks make_callbacks(bool host) {
                 if (!coop::GuestServicesOnLampLit(slot, body, &err)) plog("lamp_lit from slot %d refused: %s", slot, err.c_str());
                 return;
             }
+            if (name == coop::kStoryUpEventName) {  // D10: a guest's cutscene, played for everyone
+                std::string err;
+                if (!coop::HostStoryFromGuest(slot, body, &err)) plog("story_up from slot %d refused: %s", slot, err.c_str());
+                return;
+            }
             if (name == coop::worldact::kEventName) {  // a guest's lever / door / NPC talk (D3, D8)
                 std::string err;
                 if (!coop::worldact::OnHostEvent(slot, body, &err)) plog("world_action from slot %d refused: %s", slot, err.c_str());

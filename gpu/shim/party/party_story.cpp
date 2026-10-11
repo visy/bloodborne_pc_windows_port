@@ -855,6 +855,7 @@ struct Tick {
     double test_coop_since = 0; // host test: when a cooperator was first seen (0 = not yet)
     double test_coop_poll = 0;
     u32 test_remo = 0;
+    bool test_up = false;       // up:<remo>: the guest plays it as its own event would and sends it up (D10)
     double test_delay = 10.0;
     // remo watch (logs)
     bool remo_was_playing = false;
@@ -919,6 +920,12 @@ void PushHost(const StoryIntent& s) {
 
 // ---- Host capture: the bank-2002 handler entry ----
 
+// D10 (see the header): guest -> host plays, the guest's own recent plays, the host's queue.
+std::mutex g_up_mu;
+std::deque<StoryIntent> g_up;                              // guest: to send
+std::vector<std::pair<u32, double>> g_self_played;         // guest: (remo, time) it played itself
+std::deque<std::pair<int, StoryIntent>> g_from_guests;     // host: to play and broadcast
+
 BB_COOP_SYSV void RemoHandlerEntry(u64, u64 event, u64, u64, u64, u64) {
     perf::Scope z(perf::Zone::HookRemo);
     if (g_story_on.load() && event && Role() == PartyRole::Guest) {
@@ -930,6 +937,27 @@ BB_COOP_SYSV void RemoHandlerEntry(u64, u64 event, u64, u64, u64, u64) {
             SafeGet(event + 0x28, &gev);
             SafeGet(event + 0x68, &gmap);
             Log("guest: EMEVD 2002[%d] (remo) from event %u, map %08x, own world %d", gid, gev, gmap, int(OwnWorld()));
+            // D10: a plain play (1, 3, 7: no warp) of the guest's own event in the host's world
+            // goes up to the host, who plays it for everyone.
+            u64 args = 0;
+            u32 remo = 0, mode = 0;
+            SafeGet(event + 0xb8, &args);
+            if (!OwnWorld() && (gid == 1 || gid == 3 || gid == 7) && args && SafeGet(args, &remo) &&
+                SafeGet(args + 4, &mode) && StoryRemoKnown(remo)) {
+                StoryIntent up;
+                up.kind = StoryKind::Cutscene;
+                up.instr = static_cast<u32>(gid);
+                up.id = remo;
+                up.mode = mode;
+                up.event_id = gev;
+                up.map = gmap;
+                up.seq = NextSeq();
+                std::lock_guard<std::mutex> lk(g_up_mu);
+                if (g_up.size() < 8) {
+                    g_up.push_back(up);
+                }
+                g_self_played.emplace_back(remo, Now());
+            }
         }
     }
     if (!g_story_on.load() || Role() != PartyRole::Host || !event) {
@@ -1228,7 +1256,15 @@ void HostPoll(const GameSnapshot& g) {
             PushHost(e);
         }
     }
-    if (g_member_joined.exchange(false) && tod_value > 0) {
+    // Only once the member is in the host's world (a cooperator): a time-of-day item queued on a
+    // guest still at home made its story queue busy, and a busy queue holds its bell - live, the
+    // guest never rang and never joined.
+    static const bool tod_catchup = [] {  // opt-in for 0.5.2 (BB_PARTY_TOD_CATCHUP=1): not re-run live
+        const char* v = std::getenv("BB_PARTY_TOD_CATCHUP");
+        return v && v[0] == '1';
+    }();
+    if (tod_catchup && g_member_joined.load() && tod_value > 0 && ReadGameState(true).cooperators > 0 &&
+        g_member_joined.exchange(false)) {
         // Catch-up (user decision: a guest behind the host gets the Blood Moon too): a member that
         // joined late never saw the change; the guest's planner never turns its clock back.
         StoryIntent t;
@@ -1265,6 +1301,14 @@ void ParseTest() {
             g_tick.test_delay = std::atof(d);
         }
         Log("test: host plays remo %u and sends it to the party %.0f s after a cooperator is in the world",
+            g_tick.test_remo, g_tick.test_delay);
+    } else if (s.rfind("up:", 0) == 0) {
+        g_tick.test_on = g_tick.test_up = true;
+        g_tick.test_remo = static_cast<u32>(std::strtoul(s.c_str() + 3, nullptr, 0));
+        if (const char* d = std::getenv("BB_PARTY_STORY_TEST_DELAY"); d && d[0]) {
+            g_tick.test_delay = std::atof(d);
+        }
+        Log("test: the guest plays remo %u as if its own event did, %.0f s after it is summoned, and sends it up (D10)",
             g_tick.test_remo, g_tick.test_delay);
     } else if (s.rfind("ending:", 0) == 0) {
         g_tick.test_on = true;
@@ -1354,6 +1398,16 @@ void RequestGuestStory(const StoryIntent& s) {
     // Role from SprjSessionManager without calling the game (any thread).
     const GameSnapshot g = ReadGameState(false);
     const bool phantom = g.session_role == RoleClient;
+    if (s.kind == StoryKind::Cutscene) {
+        std::lock_guard<std::mutex> lk(g_up_mu);
+        for (const auto& [remo, at] : g_self_played) {
+            if (remo == s.id && Now() - at < 180.0) {
+                Log("guest %s: this player triggered and watched it itself; the host's copy is dropped",
+                    DescribeStory(s).c_str());
+                return;
+            }
+        }
+    }
     bool taken;
     {
         std::lock_guard<std::mutex> lk(g_guest_mu);
@@ -1370,6 +1424,8 @@ bool StoryBusy() {
     std::lock_guard<std::mutex> lk(g_guest_mu);
     return g_guest.ReplayBusy();
 }
+
+void HostPlayGuestStory(const GameSnapshot& g, const StoryState& st);
 
 void StoryTick() {
     if (!g_story_on.load()) {
@@ -1425,6 +1481,30 @@ void StoryTick() {
             }
         }
         g_tick.remo_was_playing = st.remo_playing;
+    }
+    HostPlayGuestStory(g, st);  // D10: a guest's cutscene, for everyone
+    if (g_tick.test_up && !g_tick.test_done && g.world_up && !g.loading && g.session_role == RoleClient &&
+        !st.remo_playing) {
+        if (!g_tick.test_coop_since) {
+            g_tick.test_coop_since = now;
+        } else if (now - g_tick.test_coop_since >= g_tick.test_delay) {
+            g_tick.test_done = true;
+            StoryAction a;  // what the guest's own 2002 play does on a phantom: the remo, here, now
+            a.kind = StoryAction::PlayRemo;
+            a.id = RemoForSex(g_tick.test_remo, SexVariant());
+            a.mode = 2;
+            a.why = "test: the guest's own cutscene";
+            Run(a);
+            StoryIntent up;
+            up.kind = StoryKind::Cutscene;
+            up.instr = 1;
+            up.id = g_tick.test_remo;
+            up.mode = 0;
+            up.seq = NextSeq();
+            std::lock_guard<std::mutex> lk(g_up_mu);
+            g_up.push_back(up);
+            g_self_played.emplace_back(up.id, Now());
+        }
     }
     // Host test: as if an EMEVD 2002 play of our own world had been captured (the hook's intent),
     // once a cooperator has been in the world for the delay; the host plays it too.
@@ -1540,6 +1620,75 @@ void StoryTick() {
         }
     }
     SaveSidecar(); // writes only when the queue / seen set changed
+}
+
+bool PopGuestStoryUp(StoryIntent* out) {
+    std::lock_guard<std::mutex> lk(g_up_mu);
+    if (g_up.empty()) {
+        return false;
+    }
+    *out = g_up.front();
+    g_up.pop_front();
+    return true;
+}
+
+bool HostStoryFromGuest(int slot, const std::string& body, std::string* why) {
+    if (!g_story_on.load() || Role() != PartyRole::Host) {
+        if (why) {
+            *why = "story off / not the host";
+        }
+        return false;
+    }
+    StoryIntent s;
+    if (!StoryFromJsonText(body, &s, why) || !SanitizePeerStory(&s, why)) {
+        return false;
+    }
+    if (s.kind != StoryKind::Cutscene || !(s.instr == 1 || s.instr == 3 || s.instr == 7) || !StoryRemoKnown(s.id)) {
+        if (why) {
+            *why = "not a plain cutscene play";
+        }
+        return false;
+    }
+    std::lock_guard<std::mutex> lk(g_up_mu);
+    for (const auto& [sl, q] : g_from_guests) {
+        if (q.id == s.id) {
+            return true;  // already queued (two guests in the same scene)
+        }
+    }
+    if (g_from_guests.size() < 8) {
+        g_from_guests.emplace_back(slot, s);
+    }
+    return true;
+}
+
+/// Host, main thread: a guest's cutscene, played here (mode 0) and sent to every guest.
+void HostPlayGuestStory(const GameSnapshot& g, const StoryState& st) {
+    if (Role() != PartyRole::Host || !g.world_up || g.loading || !OwnWorld() || st.remo_playing) {
+        return;
+    }
+    std::pair<int, StoryIntent> item;
+    {
+        std::lock_guard<std::mutex> lk(g_up_mu);
+        if (g_from_guests.empty()) {
+            return;
+        }
+        item = g_from_guests.front();
+        g_from_guests.pop_front();
+    }
+    StoryIntent s = item.second;
+    s.instr = 1;
+    s.tod = -1;
+    s.flags = StoryFlagsForRemo(s.id);
+    s.seq = NextSeq();
+    StoryAction a;
+    a.kind = StoryAction::PlayRemo;
+    a.id = RemoForSex(s.id, SexVariant());
+    a.mode = 0;
+    a.why = "a guest's cutscene (D10)";
+    Run(a);
+    Log("host: slot %d triggered cutscene %u (event %u): played here and sent to every guest", item.first, s.id,
+        s.event_id);
+    PushHost(s);
 }
 
 void StoryMemberJoined() {

@@ -21,7 +21,7 @@ BB_PARTY_PORT=base+i, BB_PARTY_NAME=Hunter{i}, no UPnP, no public STUN, 127.0.0.
 test action on the guest). --crash-at S kills instance --crash-instance's bbport.exe
 (TerminateProcess, as a crash) S seconds into the run; run.bat then restarts it (BB_PARTY_RESTART).
 """
-import argparse, ctypes, os, re, shutil, subprocess, sys, threading, time
+import argparse, ctypes, json, os, re, shutil, subprocess, sys, threading, time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -152,9 +152,35 @@ def validate_instances(root, count):
     return bad
 
 
+def snapshot_exes(build: Path, root: Path):
+    """One checked copy of the build's executables per setup (ROOT\\exe): the instances hard-link
+    it. bbport.exe is ~360 MB; a copy per instance was most of setup's time and disk writes. A copy
+    (not a link to the build's own file): a rebuild rewrites that in place."""
+    snap = root / "exe"
+    snap.mkdir(parents=True, exist_ok=True)
+    for f in (build / "out").iterdir():
+        if f.suffix.lower() == ".exe":
+            t = snap / f.name
+            try:
+                same = t.stat().st_size == f.stat().st_size and t.stat().st_mtime_ns == f.stat().st_mtime_ns
+            except OSError:
+                same = False
+            if not same:
+                # Never rewrite the snapshot in place: running games may hold links to it.
+                if t.exists():
+                    try:
+                        t.unlink()
+                    except OSError:
+                        t.rename(t.with_name("%s.old%d" % (t.name, time.time())))
+                copy_exe(f, t)
+    return snap
+
+
 def setup(a):
     build = Path(a.build)
     wait_for_builds(build)
+    t0 = time.time()
+    snap = snapshot_exes(build, Path(a.root))
     for i in range(a.count):
         inst = Path(a.root) / f"inst{i}"
         (inst / "out").mkdir(parents=True, exist_ok=True)
@@ -166,15 +192,13 @@ def setup(a):
         for f in (build / "out").iterdir():
             if f.suffix.lower() in (".exe", ".dll"):
                 t = inst / "out" / f.name
-                if f.suffix.lower() == ".exe":
-                    copy_exe(f, t)  # a copy: a rebuild may rewrite the build's exe in place
-                    continue
+                src = snap / f.name if f.suffix.lower() == ".exe" else f
                 if t.exists():
                     t.unlink()
                 try:
-                    os.link(f, t)
+                    os.link(src, t)
                 except OSError:
-                    shutil.copy2(f, t)
+                    shutil.copy2(src, t)
         user = inst / "user"
         user.mkdir(exist_ok=True)
         if a.saves and Path(a.saves).is_dir() and not (user / "savedata").exists():
@@ -190,6 +214,69 @@ def party_saves_from(user: Path):
         shutil.copytree(user / "savedata", user / "savedata_party")
 
 
+PID_FILE = "harness_pids.json"  # the run.bat shells of the last run (stop_leftovers)
+
+
+def list_processes():
+    """(pid, parent pid, exe name) of every process (Toolhelp snapshot; Windows only)."""
+    from ctypes import wintypes
+
+    class PE(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD),
+                    ("cntThreads", wintypes.DWORD), ("th32ParentProcessID", wintypes.DWORD),
+                    ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_wchar * 260)]
+    k32 = ctypes.windll.kernel32
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    snap = k32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    out = []
+    if not snap or snap == wintypes.HANDLE(-1).value:
+        return out
+    try:
+        e = PE()
+        e.dwSize = ctypes.sizeof(PE)
+        ok = k32.Process32FirstW(wintypes.HANDLE(snap), ctypes.byref(e))
+        while ok:
+            out.append((e.th32ProcessID, e.th32ParentProcessID, e.szExeFile))
+            ok = k32.Process32NextW(wintypes.HANDLE(snap), ctypes.byref(e))
+    finally:
+        k32.CloseHandle(wintypes.HANDLE(snap))
+    return out
+
+
+def _open_query(pid):
+    k32 = ctypes.windll.kernel32
+    k32.OpenProcess.restype = ctypes.c_void_p
+    return k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+
+
+def process_path(pid) -> str:
+    h = _open_query(pid)
+    if not h:
+        return ""
+    try:
+        buf = ctypes.create_unicode_buffer(1024)
+        n = ctypes.c_ulong(1024)
+        ok = ctypes.windll.kernel32.QueryFullProcessImageNameW(ctypes.c_void_p(h), 0, buf, ctypes.byref(n))
+        return buf.value if ok else ""
+    finally:
+        ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(h))
+
+
+def process_created(pid) -> int:
+    """The process's creation time (FILETIME as an integer; 0 if unknown): tells a recorded PID
+    from a later process that reuses it."""
+    h = _open_query(pid)
+    if not h:
+        return 0
+    try:
+        t = [ctypes.c_ulonglong() for _ in range(4)]
+        ok = ctypes.windll.kernel32.GetProcessTimes(ctypes.c_void_p(h), *(ctypes.byref(x) for x in t))
+        return t[0].value if ok else 0
+    finally:
+        ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(h))
+
+
 def stop_leftovers(root):
     """Ends what an earlier run of this root left behind (the harness killed by a timeout leaves
     run.bat's restart loop and the game running): its game would keep writing into the new
@@ -197,6 +284,29 @@ def stop_leftovers(root):
     if os.name != "nt":
         return
     wants = {str(Path(root)).lower(), str(Path(root).resolve()).lower()}
+    pid_file = Path(root) / PID_FILE
+    if pid_file.exists():
+        # Fast path (no PowerShell, ~0.9 s): the run.bat shells the last run recorded, and every
+        # game process whose executable lies under this root.
+        try:
+            recorded = json.loads(pid_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            recorded = []
+        procs = list_processes()
+        for pid, _ppid, name in procs:
+            if pid == os.getpid():
+                continue
+            hit = False
+            low = name.lower()
+            if low == "cmd.exe":
+                hit = any(r.get("pid") == pid and r.get("created") == process_created(pid) for r in recorded)
+            elif low.startswith(("bbport", "bb-probe")):
+                path = process_path(pid).lower()
+                hit = any(path.startswith(w + os.sep) for w in wants)
+            if hit:
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+                print(f"stopped a leftover {name} ({pid}) of an earlier run", flush=True)
+        return
     ps = ("Get-CimInstance Win32_Process -Filter \"Name='cmd.exe' or Name like 'bbport%' or Name like 'bb-probe%'\" | "
           "ForEach-Object { $_.ProcessId.ToString() + '|' + $_.Name + '|' + $_.ExecutablePath + '|' + $_.CommandLine }")
     out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True).stdout
@@ -273,6 +383,7 @@ def stamp_lines(src, log, t0):
 
 
 def run(a):
+    t_slot = time.time()
     # A rebuild since the last setup: copy it first, or the run would test the old exe.
     built = Path(a.build) / "out" / "bbport.exe"
     inst0 = Path(a.root) / "inst0" / "out" / "bbport.exe"
@@ -291,6 +402,7 @@ def run(a):
         ctypes.windll.kernel32.SetErrorMode(0x0001 | 0x0002 | 0x8000)
     procs = []
     ts0 = time.time()
+    print("[harness] %.1f s from the game slot to the first start (setup, leftovers check)" % (ts0 - t_slot), flush=True)
     starts = [0] * a.count  # where this run begins in each run.log
     code_file = Path(a.root) / "party_code.txt"
     if a.party and code_file.exists():
@@ -303,6 +415,8 @@ def run(a):
             "BB_FULLSCREEN": "0", "BB_FPS": str(a.fps), "BB_TIMEOUT": str(a.seconds), "BB_VRAM_LIMIT_MB": str(a.vram),
             "BB_SHADER_PRECOMPILE": "1", "BB_MUTE_UNFOCUSED": "1", "BB_WINDOW_BACKGROUND": "1",
             "BB_AUDIO": "none",  # test games are silent (timer audio backend, also less CPU)
+            # One boot image for every instance (scripts/boot_image.py), hard-linked into each instance
+            "BB_BOOT_CACHE_DIR": str(Path(a.root) / "bootcache"),
             # Fewer worker threads per test game: 4 games share one CPU.
             "BB_SHADER_THREADS": "2", "BB_ASYNC_PIPELINE_THREADS": "2", "BB_PREP_WORKERS": "1",
             "BB_PATCHES": "Skip Online/Offline Choice;Skip Intro",
@@ -343,8 +457,18 @@ def run(a):
             p = subprocess.Popen(["cmd", "/c", str(inst / "run.bat")], cwd=inst, env=env,
                                  stdout=log, stderr=subprocess.STDOUT, creationflags=prio)
         procs.append((i, p, log))
-        time.sleep(a.stagger)
-    t0 = time.time()
+        print("[harness +%.1f s] instance %d started" % (time.time() - ts0, i), flush=True)
+        if os.name == "nt":
+            try:
+                (Path(a.root) / PID_FILE).write_text(json.dumps(
+                    [{"pid": q.pid, "created": process_created(q.pid)} for _, q, _ in procs]), encoding="utf-8")
+            except OSError:
+                pass
+        if i + 1 < a.count:
+            time.sleep(a.stagger)
+    # The run's clock (--crash-at, --seconds, the lease) starts one stagger after the last start,
+    # as before the stagger was skipped after the last instance.
+    t0 = time.time() + (a.stagger if a.count > 1 else 0)
     crashed = False
     want_crash = bool(a.crash_at or a.crash_when)
     crash_rx = re.compile(a.crash_when) if a.crash_when else None
@@ -489,7 +613,8 @@ def main():
     ap.add_argument("--vram", type=int, default=int(os.environ.get("BB_MP_VRAM", "1792")))
     ap.add_argument("--fps", default=os.environ.get("BB_MP_FPS", "30"),
                     help="frame cap of the test instances (30, 60, 90, uncap: the game patch presets)")
-    ap.add_argument("--stagger", type=float, default=8.0)
+    ap.add_argument("--stagger", type=float, default=float(os.environ.get("BB_MP_STAGGER", "2")),
+                    help="run: s between instance starts (guests wait for the host's party code file anyway)")
     ap.add_argument("--party", action="store_true", help="instance 0 hosts a loopback party, the others join")
     ap.add_argument("--crash-at", type=float, default=0, help="run: kill one instance's game this many s in")
     ap.add_argument("--crash-instance", type=int, default=1)

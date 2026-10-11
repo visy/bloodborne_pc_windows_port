@@ -212,6 +212,9 @@ bool Hold(std::uint32_t id, bool mark) {
     if (!guest && !host) {
         return false;  // nobody to travel with: the plain warp
     }
+    if (!mark && b2::AtLampSpot(id)) {
+        return false;  // standing at it already: no question, no move (the same-map hook: last lamp only)
+    }
     if (CurrentMode() == Mode::Party && host) {
         return false;  // the host's warp is the party move (the funnel capture)
     }
@@ -295,7 +298,7 @@ void Tick(const GameSnapshot& s) {
         const int asked = g_asked;
         {
             static double last_dump = 0;
-            if (now - last_dump > 0.5) {
+            if (p.test_step == 0 && now - last_dump > 5.0) {
                 last_dump = now;
                 std::string d;
                 for (u64 o = 0; o < 0x40; o += 4) {

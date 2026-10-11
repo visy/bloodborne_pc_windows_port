@@ -307,6 +307,10 @@ double LastAloneCaptureAgo();
 /// `fn(last lamp id)` true = consumed (no stage request; split travel asks, then runs a decided
 /// lamp warp to that lamp). Game thread.
 using MarkInterceptor = bool (*)(std::uint32_t last_lamp);
+/// Every lamp warp 0x13CDF30(id) that is not our replay, after the interceptor: `fn(id, alone)`
+/// true = done without a load (the lamp is in the loaded map: an in-world move). Game thread.
+using SameMapWarpFn = bool (*)(std::uint32_t id, bool alone);
+void SetSameMapWarp(SameMapWarpFn fn);
 void SetMarkInterceptor(MarkInterceptor fn);
 /// The lamp warp 0x13CDF30(id) as a travel replay (main thread): the travel capture, the guest
 /// lamp interceptor and the send-home retarget stand aside, the forced placement is cleared. On

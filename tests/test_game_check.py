@@ -72,6 +72,19 @@ class GameCheckTests(unittest.TestCase):
         with mock.patch.object(game_check, 'SUPPORTED_IMAGE', game_check.image_sha256(game)):
             self.assertIsNone(game_check.problem(game))
 
+    def test_a_pass_is_remembered_until_the_files_change(self):
+        # The launcher's check before every start (cache=): a pass is not computed again.
+        game = self.game('CUSA03173', '01.09')
+        cache = Path(self.tmp.name) / 'out' / 'game_check.json'
+        with mock.patch.object(game_check, 'SUPPORTED_IMAGE', game_check.image_sha256(game)):
+            self.assertIsNone(game_check.problem(game, cache=cache))
+        self.assertTrue(cache.exists())
+        with mock.patch.object(game_check, '_problem', side_effect=AssertionError('checked again')):
+            self.assertIsNone(game_check.problem(game, cache=cache))
+        # Another eboot.bin: checked again (and fails).
+        (game / 'eboot.bin').write_bytes(b'junk')
+        self.assertEqual(game_check.problem(game, cache=cache)[0], 'unreadable')
+
     def shaders(self, game, data):
         folder = game / game_check.CHECKED_FOLDER
         folder.mkdir(parents=True, exist_ok=True)

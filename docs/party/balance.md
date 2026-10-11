@@ -83,9 +83,13 @@ the default keeps vanilla poise.
   isSoulGetByBoss (0x149 bit 4) gets SpEffect 7503 (chr vfunc +0x3f0), unless it is a boss: the 34
   entities the boss events dope (EMEVD 2004[8] with SpEffect 7500 / 7501, scanned in every 1.09
   map; `kBossEntities`), resolved each pass with GetChrByEntityId 0x13c97a0, never get it, so a
-  boss is scaled once, by the boss rows. (Removing 7503 from a boss at its doping, 0x17e1d90 =
-  EMEVD 2004[21]'s remove, was tried first: the Cleric Beast died on the spot, HP 6597 -> 0.)
-  Chalice bosses (m29: event parameters / Lua_MultiDoping) are kept out by isSoulGetByBoss only. The game's per-frame HP update (0x1a0d7d0) recomputes max HP from the
+  boss is scaled once, by the boss rows. (The first version removed 7503 from a boss when its
+  doping arrived, 0x17e1d90 = EMEVD 2004[21]'s remove; the Cleric Beast died in that run, but it
+  also died ~30 s into later fights with no removal and no guest death, see 2.4, so the removal
+  was probably not the cause. The entity table avoids the question.)
+  Chalice bosses (m29): the 66 entities the parameterised chalice boss events (12904877, 12904881,
+  12906791, 12906795, 12906806) are started with (2000[0] / 2000[6] arguments; `kChaliceBossEntities`,
+  resolved only in area 29), plus isSoulGetByBoss. The game's per-frame HP update (0x1a0d7d0) recomputes max HP from the
   rows and raises current HP with the "independent" rate, so a full-health enemy stays full.
 - Same HP on every screen: every peer writes the host's values and applies them to its copy of the
   enemies; the cooperator count is the game's, which counts the same on host and guests.
@@ -98,22 +102,42 @@ the fight. Both peers: `boss chr 1001409f: SpEffect 7500 (flags 4): HP 5277 / 52
 Gascoigne's two entities stayed out of 7503 (`3 bosses`). Normal enemies: sample max HP 520 ->
 650. Damage, boss_damage 0 vs 100 (x1.0 vs x2.0 attack power at 1 cooperator): the players' hits
 were 61-126 (largest 239) vs 216-534 (the defense formula is not linear, so not exactly x2). Poise:
-the row's changeSuperArmorPoint is written; stagger was not measured.
+see 2.5.
+
+### 2.5 Poise: the game's own boss poise bonus never applied
+
+Every poise sum in the engine (0x17e8590, 0x18d0351, 0x18fd400: `cmp word [row+0x156], 0x9b`)
+counts an effect's changeSuperArmorPoint (+0x13a) only when its stateInfo (+0x156) is 155. The
+1.09 doping rows 7500 / 7501 carry +30 / +60 with stateInfo 0, so vanilla bosses get no poise
+from co-op at all (15 other rows with a poise change do use 155). Our rows set stateInfo 155
+whenever the poise value is not 0, so the poise settings work (and boss poise 100 % = the +30 per
+cooperator the game's data intended). The boss log line shows the engine's sum ("poise bonus +60
+(counted)").
 
 ## 3. C4: death debuff ("rot")
 
 ERSC: optional rot, 5 kinds, one random per death, stacking, removed only at a grace. Ours
-(Bloodborne-themed, two kinds):
+(Bloodborne-themed, five kinds; 0.5.2 ships two: health and stamina, live-verified. The other
+three are behind `BB_PARTY_ROT_ALL_KINDS=1`, default off, until a live run shows their effect):
 
 - Each death of the local player (HP > 0 -> 0 in the world, any role) adds a stack, at most 5, of
-  a kind picked at random: max HP -10 % or max stamina -10 % per stack. A toast after the respawn
-  says "Rot 2/5: max HP -10 %, stamina -10 % until you rest at a lamp".
-- Max HP through the max-HP rate 0x17e46e0 (prologue `55 48 89 e5 53 50`), max stamina through the
-  stamina rate 0x17e4a20 (`55 48 89 e5 48 83 ec 10`; the SpEffects' maxStaminaRate +0x18, read by
-  the per-frame update 0x1a572e0 into stamina max +0x138); both replaced, the result multiplied
-  only for the local player's SpEffect list (`PlayerIns+0x1c8`). ERSC's other kinds (damage dealt,
-  item discovery, vials) would need SpEffect rows of our own and are not done.
-  No param row or SpEffect is used, so nothing reaches the other peers' copies.
+  a kind picked at random among the five; a toast after the respawn names it ("Rot 2/5: rally
+  -15 % until you rest at a lamp"). `BB_PARTY_ROT_KIND=N[,N...]` forces the kinds (tests).
+
+  | Kind | Per stack | Rate function (1.09, prologue replaced) | SpEffect field it multiplies |
+  |---|---|---|---|
+  | health | max HP -10 % | 0x17e46e0 `55 48 89 e5 53 50` | maxHpRate +0x10 (HP update 0x1a0d7d0) |
+  | stamina | max stamina -10 % | 0x17e4a20 `55 48 89 e5 48 83 ec 10` | maxStaminaRate +0x18 (0x1a572e0) |
+  | stamina cost | stamina use +10 % | 0x17e4c50 `55 48 89 e5 41 56 53` | consumeStaminaRate +0x1b8 |
+  | rally | rally (regain) -15 % | 0x17e5590 `55 48 89 e5 41 56 53` | regainRate +0x1f4 |
+  | discovery | item discovery -10 | 0x17e8010 `48 8b 47 08 c5 f8 57 c0` (a sum) | itemDropRate +0x1fc (points) |
+
+  Each hook changes the result only for the local player's SpEffect list (`PlayerIns+0x1c8`). No
+  param row or SpEffect is used (no unused SpEffect rows could be proven unreferenced), so nothing
+  reaches the other peers' copies. ERSC's "damage dealt" kind is replaced by stamina cost / rally:
+  the attack power rates are summed inside a large aggregator (0x17e5a30, ~7 KB of code), not a rate
+  function. (SpEffect paramdef note: `hasTarget : 1` has spaces; flag_tool now parses it, so the
+  fields after +0x164 have their real offsets.)
 - A lamp / headstone warp the player starts (0x13CDF30, party_travel `SetLampUseObserver`,
   before the guest lamp interceptor) cleanses it; the respawn warp of a death (within 20 s of it)
   does not. Travelling along with the party (a replay) does not either: only who rests is cleansed.

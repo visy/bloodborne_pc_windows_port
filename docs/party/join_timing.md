@@ -280,7 +280,7 @@ guest's join, leave or re-join (one load in the whole run).
   (host killed by the boss, then the join) joined cleanly (`trying-to-join -> client`, host
   `cooperators 0 -> 1`). The B2 leave trace now also logs flow +0x84, GSM +0x1592 and flow +0xF4.
 
-## Continue straight into the host's world (one load): design, not done
+## Continue straight into the host's world (one load): design (prototype below)
 
 What the engine needs for a host-world load (b2_seamless.md 1.3, split_travel.md 1): the network
 flow in state 3 (`+0x84`), which the MoveMapStep ctor 0x1937570 turns into host-world mode
@@ -295,3 +295,50 @@ but the summon step machine 0x14B5E10 is a world task), (3) enter state 1, take 
 let the title's Continue load run as the state-3 load. Step (1) and (2) are the unknowns; the
 cheaper path is to keep the own-world load short (it is the save's own load, 4 s here) and ring at
 once (0.3 s after the world is steady today). Left for a dedicated RE pass.
+
+## 2026-10-11 (flowlive): title join RE pass and prototype (`BB_PARTY_TITLE_JOIN=1`, off by default)
+
+RE (our offsets):
+
+* The guest's join is not tied to the sign once the room data is in hand. The summon message
+  handler 0x14BA340 (FrpgNetMan +0xC50 = the summon manager; own signs in its +0x158 list) only
+  stores the host's room data in the sign entry (+0xB8, state +0xC8); the in-world net task
+  0x1947310 -> 0x1872360 -> 0x14BB200 picks that entry up, reads `[u32 -> GSM +0x16F0]
+  [u32, low byte -> GSM +0x16F4 (presentation slot)]` and the session descriptor (0xC8FBF0 ctor,
+  0xC90DD0 read; +0x28 name, +0x60 key, +0x68/+0x70 blob), then calls **0x1789010(flow, room)** ->
+  SprjSessionManager 0x1ED0670 (role 4, JoinRoom). It also writes the return spot (GSM
+  +0x14A0..+0x14C0 = the sign spot) and the summoned placement (+0x14C4 host map, +0x14D0 pos,
+  +0x14E0 rot) and FrpgNetMan +0xA98.
+* The host writes the same descriptor from its own session (0xC8F500(SessionMan+0x18, +0x38, 1),
+  copy 0xC90270, 0xC90B00 into a DLMemoryWriter: vtable 0x53B2C80, +0x10 buffer, +0x18 capacity,
+  +0x30 end).
+* SendSign 0x1901320 / the sign sender 0x18A9900 / 0x14B9180 need the PlayerIns (vfunc +0x1C8,
+  chr +0x3F8, position): a sign without a world is not practical; the room data does not need it.
+* The flow update 0x1789B60 (float dt, flow) runs the SessionManager update 0x1ED0B20 and the
+  packet handler 0x1783160; it is called only by the in-game net task 0x1947310 and three load
+  steps (0x1962940, 0x1B39480, 0x195B920) - not at the title, so a title join must run it itself.
+* The host-world switch is the MoveMapStep ctor 0x1937570 (built by step 0x1929220): flow +0x84 == 3
+  -> GSM +0x1592 = 0, FrpgNetMan +0xB14 |= 8, GameData +0x5D8, SetLoadMode(1) (overlay kept); any
+  other state clears the overlay groups (0x13CF9E0). The guest's Lua `SummonReloadStart`
+  (0x1389440 / 0x1389620) runs the own-world serializer 0x131E5C0 (+0x84 = 3) before its warp.
+
+Prototype (party_b2.cpp, "Title join"): the guest's AutoContinue holds Continue after the FROM
+sign-in and sends b2 `title_req`; the host answers (once it has a room) with the serialized
+descriptor (head = slot, session-type table 0x553D75C + slot * 0x80) and its stage / position; the
+guest reads it, joins (0x1789010), runs 0x1789B60 at the title while the game does not, and once
+the host's snapshot is applied (flow 2) writes flow 3 and the summoned placement, then presses
+Continue so that the save's first load is the host-world load. Any failure (no answer 45 s, no
+snapshot 20 s, refused join) leaves the session and continues as before (own world, then the bell).
+`BB_PARTY_TITLE_JOIN_PROBE=1` logs the host's descriptor at an ordinary bell join next to the
+guest's `summon message ... (head ...)` line for comparison.
+
+Open (why it stays off): not yet verified live (the 2-client run was still queued at the 0.5.2
+wrap-up); unknowns are whether the Continue save load keeps the overlay applied at the title,
+the own-world snapshot / return spot (none at the title: going home loads the save's own spot),
+and the GameData rows of the host member across the save load.
+
+Cleric Beast at the lamp after the host's respawn (screenshot of the a11_mortal run): a test
+artefact. The A11 fixture lit lamp 2412952 (Great Bridge, (-124.8, -26.9, 64.3)) and cleared the
+boss flags (`BB_PARTY_PROGRESS_TEST_CLEAR`); that lamp stands in the Cleric Beast's arena
+((-136.5, -26.6, 52.8), 16 m away), so the respawn put the host next to a live boss. In the game the
+lamp only exists after the boss is dead. No bug.

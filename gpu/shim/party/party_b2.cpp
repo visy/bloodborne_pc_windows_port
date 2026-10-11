@@ -216,21 +216,26 @@ bool ChrPos(u64 chr, float out[3]) {
 
 std::string DescribeChr(u64 chr) {
     float p[3] = {0, 0, 0};
-    char b[128];
+    char b[192];
     if (!chr || !ChrPos(chr, p)) {
         return "-";
     }
+    float drawn[4] = {};
+    SafeRead(chr + 0xc0, drawn, 16);
     // +0x78 chr type (0 own body, 1 white phantom, ...); vfunc +0x558 is what the cooperator count
     // 0x15BDC20 tests (counted when in {1, 5, 7, 19}).
     using TypeFn = u32(BB_COOP_SYSV*)(u64);
     const u64 vt = Field<u64>(chr, 0);
     const u64 fn = vt ? Field<u64>(vt, 0x558) : 0;
     const u32 pres = fn ? reinterpret_cast<TypeFn>(fn)(chr) : ~0u;
-    std::snprintf(b, sizeof b, "stage %#x type %d/%d pos (%.1f, %.1f, %.1f) hp %d", Field<u32>(chr, 0x3f8),
-                  Field<int>(chr, 0x78, -1), int(pres), p[0], p[1], p[2],
+    std::snprintf(b, sizeof b, "stage %#x type %d/%d pos (%.1f, %.1f, %.1f) drawn (%.1f, %.1f, %.1f) hp %d",
+                  Field<u32>(chr, 0x3f8), Field<int>(chr, 0x78, -1), int(pres), p[0], p[1], p[2], drawn[0], drawn[1],
+                  drawn[2],
                   Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0xf8, -1));
     return b;
 }
+
+std::string DescribeRender(u64 chr);
 
 std::string DescribeTasks() {
     std::string s;
@@ -241,7 +246,7 @@ std::string DescribeTasks() {
             const u64 c = PlayerForPeer(t.task + kTaskPeer);
             char h[48];
             std::snprintf(h, sizeof h, " handle %08x at %#llx", c ? Field<u32>(c, 8, ~0u) : ~0u, ull(c));
-            chrs = c ? " chr " + DescribeChr(c) + h : " NO-chr";
+            chrs = c ? " chr " + DescribeChr(c) + h + DescribeRender(c) : " NO-chr";
         }
         const char* chr = chrs.c_str();
         std::snprintf(b, sizeof b, " [human mode %d step %d next %d slot %u flags 0x%02x%s]", t.mode, t.step, t.next,
@@ -943,6 +948,17 @@ void NoteAway(int slot) {
     }
 }
 
+void SendDeadEnemies(const GameSnapshot& s, const char* why);
+std::string DescribeEnterLeave();
+std::string DescribeRender(u64 chr);
+double g_meet_rewind_at = 0;
+std::atomic<bool> g_record_request{false};
+double g_arrived_at = 0;  // guest: send "arrived" then (after an in-world follow)  // a member asked for our record (EVENT b2 record)  // main thread: the meet's re-creation, after the records arrived
+/// This player's record to every member (0x1781AC0, what InGameStart runs after a load). Main thread.
+void RebroadcastOwnRecord(const char* why) {
+    reinterpret_cast<void(BB_COOP_SYSV*)()>(Guest(0x1781ac0))();
+    Log("split: own player record re-broadcast (%s)", why);
+}
 u32 AreaOf(u32 map) {
     return (map == 0 || map == 0xffffffffu) ? 0u : map >> 24;
 }
@@ -962,18 +978,108 @@ u32 HostMap() {
     return w && w->age_ms < 5000 ? w->map : 0u;
 }
 
-/// Removes a remote player chr as its task's STEP_DeleteWait 0x1E50A70 does (presentation slot
-/// release 0x15BC080, WorldChrMan remove 0x19186E0); the task is kept (rewound to STEP_Create
-/// when the two meet again). Main thread.
-void RemoveRemoteChr(u64 chr, const char* why) {
+/// Removes a remote player chr the way its task's STEP_Delete 0x1E50880 / STEP_DeleteWait
+/// 0x1E50A70 do, the task kept (rewound to STEP_Create when the two meet again): first the
+/// EnterleaveDirector leave (0x19704B0(director *0x553E8B0, chr handle, presentation slot task
+/// +0xEC) marks the entry leaving, +0xFD = 1; chr data +0x3B0 -> +8 +0x1BC |= 2), then, once the
+/// entry's leave has played (+0x135) or 2 s later, the presentation slot release 0x15BC080 and the
+/// WorldChrMan remove 0x19186E0. Without the leave the director kept the old entry (it is keyed by
+/// the member's PlayerId): the re-created chr found it (find-or-create 0x19700A0) and stayed
+/// invisible while its name plate hung at the old spot (user reports split24 / hd22). Main thread.
+struct PendingRemoval {
+    u64 chr = 0, entry = 0;
+    double since = 0;
+    std::string why;
+};
+std::vector<PendingRemoval> g_removals;
+
+/// The EnterleaveDirector's entries (*0x553E8B0 +0xF0: list sentinel, node [3] = entry; entry
+/// +0xD0 key, +0xF8 handle?, +0xFC presentation slot, +0xFD leaving, +0x134 / +0x135 flags).
+std::string DescribeEnterLeave() {
+    const u64 d = Slot(0x553e8b0);
+    const u64 head = Field<u64>(d, 0xf0);
+    std::string out;
+    u64 node = Field<u64>(head, 0);
+    for (int guard = 0; head && node && node != head && guard < 16; ++guard) {
+        const u64 e = Field<u64>(node, 0x18);
+        char b[128];
+        std::snprintf(b, sizeof b, " [%#llx key %x h %x slot %d leave %u f134 %u f135 %u]", ull(e), Field<u32>(e, 0xd0),
+                      Field<u32>(e, 0xf8), int(int8_t(Field<u8>(e, 0xfc))), unsigned(Field<u8>(e, 0xfd)),
+                      unsigned(Field<u8>(e, 0x134)), unsigned(Field<u8>(e, 0x135)));
+        out += b;
+        node = Field<u64>(node, 0);
+    }
+    return out.empty() ? " none" : out;
+}
+
+void FinishRemoval(const PendingRemoval& r, const char* how) {
     using Release = u64(BB_COOP_SYSV*)(u64, u32);
     using Remove = void(BB_COOP_SYSV*)(u64, u64);
+    bool still = false;
+    for (const TaskInfo& t : Tasks(false)) {
+        still = still || ((t.mode == 1 || t.mode == 2) && PlayerForPeer(t.task + kTaskPeer) == r.chr);
+    }
+    if (!still) {
+        Log("split: remote chr %#llx already gone (%s)", ull(r.chr), r.why.c_str());
+        return;
+    }
     float p[3] = {};
-    ChrPos(chr, p);
-    reinterpret_cast<Release>(Guest(0x15bc080))(Field<u64>(Slot(kSlotGsm), 0x16f8), Field<u32>(chr, 8));
-    reinterpret_cast<Remove>(Guest(0x19186e0))(Slot(kSlotWorldChrMan), chr);
+    ChrPos(r.chr, p);
+    reinterpret_cast<Release>(Guest(0x15bc080))(Field<u64>(Slot(kSlotGsm), 0x16f8), Field<u32>(r.chr, 8));
+    reinterpret_cast<Remove>(Guest(0x19186e0))(Slot(kSlotWorldChrMan), r.chr);
     g_split_change_at = Now();
-    Log("split: remote chr %#llx at (%.1f, %.1f, %.1f) removed (%s); its task is kept", ull(chr), p[0], p[1], p[2], why);
+    Log("split: remote chr %#llx at (%.1f, %.1f, %.1f) removed (%s; leave %s); its task is kept", ull(r.chr), p[0], p[1],
+        p[2], r.why.c_str(), how);
+}
+
+void RemoveRemoteChr(u64 chr, const char* why) {
+    for (const PendingRemoval& r : g_removals) {
+        if (r.chr == chr) {
+            return;  // already leaving
+        }
+    }
+    u8 pslot = 0;
+    for (const TaskInfo& t : Tasks(false)) {
+        if ((t.mode == 1 || t.mode == 2) && PlayerForPeer(t.task + kTaskPeer) == chr) {
+            pslot = t.slot;
+        }
+    }
+    PendingRemoval r;
+    r.chr = chr;
+    r.since = Now();
+    r.why = why;
+    const u64 director = Slot(0x553e8b0);
+    if (director) {
+        using Leave = u64(BB_COOP_SYSV*)(u64, u32, u64);
+        const u64 e = reinterpret_cast<Leave>(Guest(0x19704b0))(director, Field<u32>(chr, 8), u64(int(int8_t(pslot))));
+        r.entry = e == ~0ull ? 0 : e;
+        const u64 cd = Field<u64>(Field<u64>(chr, 0x3b0), 8);
+        if (cd) {
+            const u8 v = u8(Field<u8>(cd, 0x1bc) | 2);
+            SafeWrite(cd + 0x1bc, &v, 1);
+        }
+    }
+    g_split_change_at = Now();
+    Log("split: remote chr %#llx (handle %x) leaves (%s): presentation entry %#llx; enterleave%s", ull(chr),
+        Field<u32>(chr, 8), why, ull(r.entry), DescribeEnterLeave().c_str());
+    g_removals.push_back(r);
+}
+
+/// Main thread, every frame: removals whose leave has played (or timed out).
+void RemovalTick(double now) {
+    for (std::size_t i = 0; i < g_removals.size();) {
+        const PendingRemoval& r = g_removals[i];
+        const bool played = r.entry && Field<u8>(r.entry, 0x135) != 0;
+        if (played || now - r.since >= 2.0 || !SessionUp()) {
+            const PendingRemoval done = r;
+            g_removals.erase(g_removals.begin() + std::ptrdiff_t(i));
+            if (SessionUp()) {
+                FinishRemoval(done, played ? "played" : "timed out");
+            }
+            continue;
+        }
+        ++i;
+    }
 }
 
 /// The member slot whose reported position is nearest to `p` (within `max_m`), -1 none.
@@ -1149,9 +1255,52 @@ void SplitTick(const GameSnapshot& s, double now) {
                 NetSyncMembers();
             }
             g_split_change_at = now;
-            const int n = RewindRemoteTasks("split meet");
-            Log("split: a member is in our area (%s) without its chr here: %d task(s) rewound (no load)",
-                MapName(s.map_id).c_str(), n);
+            SendDeadEnemies(s, "meet without a load");
+            // The member's player record (GameData row: 0xB / 8 / 0x3B / 0x3C / 0xD) is what
+            // STEP_Create builds its chr from. After a load each player re-broadcasts it at
+            // InGameStart (0x1781AC0); the side that did NOT load holds a stale row and built an
+            // invisible chr whose name plate hung at an old spot (user report, split24: the host saw
+            // "Co-operator Hunter1" floating, no body). So both sides re-broadcast now (and ask the
+            // other to), and the rewind waits for the records.
+            RebroadcastOwnRecord("meet");
+            Send(Role() == RoleHost ? -1 : 0, "{\"op\":\"record\"}");
+            g_meet_rewind_at = now + 1.5;
+            Log("split: a member is in our area (%s) without its chr here: records exchanged, re-creation in 1.5 s "
+                "(no load)", MapName(s.map_id).c_str());
+        }
+    }
+    if (g_meet_rewind_at > 0 && now >= g_meet_rewind_at) {
+        g_meet_rewind_at = 0;
+        Log("split: meet: enterleave before the re-creation:%s", DescribeEnterLeave().c_str());
+        const int n = RewindRemoteTasks("split meet");
+        Log("split: meet: %d task(s) rewound to STEP_Create", n);
+    }
+    // Self-heal: a remote chr standing > 4 m from every member's reported position for 3 s,
+    // while all of them report positions in our area, is a stale one: removed, the meet builds it
+    // again (with fresh records).
+    static std::map<u64, double> far_since;
+    static const bool heal = std::getenv("BB_PARTY_SPLIT_SELFHEAL") && std::getenv("BB_PARTY_SPLIT_SELFHEAL")[0] == '1';
+    for (const TaskInfo& t : heal ? Tasks(false) : std::vector<TaskInfo>{}) {
+        const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        float p[3];
+        if (!c || !ChrPos(c, p)) {
+            continue;
+        }
+        bool all_known = true;
+        for (const Where& w : g_where) {
+            if (w.slot != g_local_slot.load() && w.connected && (!w.has_pos || w.age_ms > 700 || AreaOf(w.map) != mine)) {
+                all_known = false;
+            }
+        }
+        if (!all_known || SlotNear(p, 4.0f) >= 0) {
+            far_since.erase(c);
+            continue;
+        }
+        auto it = far_since.emplace(c, now).first;
+        if (now - it->second >= 3.0) {
+            far_since.erase(c);
+            RemoveRemoteChr(c, "no member reports a position within 4 m of it for 3 s (stale)");
+            last_meet = 0;  // the meet re-creates it at once
         }
     }
 }
@@ -1256,6 +1405,11 @@ bool WarpLocal(const float pos[3], float yaw, const char* why) {
     ChrPos(player, before);
     using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
     reinterpret_cast<Warp>(fn)(player, p16, r16, 1);
+    // The camera stayed where it was and swung through the walls after a long in-world warp
+    // (live vis6: the host looked out of the geometry 3 s after a 68 m move): the Lua CamReset
+    // 0x132F5A0(ctx, 10000 = the local player, 1) puts it behind the player.
+    using CamReset = u64(BB_COOP_SYSV*)(u64, u32, u32);
+    reinterpret_cast<CamReset>(Guest(0x132f5a0))(0, 10000, 1);
     Log("in-world warp (%s): (%.1f, %.1f, %.1f) -> (%.1f, %.1f, %.1f) in %s, no load", why, before[0], before[1], before[2],
         pos[0], pos[1], pos[2], MapName(LocalMap()).c_str());
     return true;
@@ -1282,6 +1436,247 @@ bool WarpToLampInWorld(u32 id, bool beside, const char* why) {
     char b[96];
     std::snprintf(b, sizeof b, "%s, lamp %u", why, id);
     return WarpLocal(pos, spot[3], b);
+}
+
+/// An alone travel to a world lamp makes it this player's own last lamp (GSM +0x1528 {return
+/// point entity, anim}: what the Hunter's Mark and a death go to), as the lamp warp 0x13CDF30
+/// would have written it (our travel replaces that warp with a transform / an in-world move).
+/// The Hunter's Dream is never a last lamp.
+void SetOwnLastLamp(const TravelIntent& t) {
+    const u32 id = t.lamp_id != kTravelNone && t.lamp_id ? t.lamp_id : 0;
+    if (!id || id / 100000 == 21 || t.last_lamp == ~0ull || !t.last_lamp) {
+        return;
+    }
+    const u64 gsm = Slot(kSlotGsm);
+    const u64 was = Field<u64>(gsm, 0x1528);
+    if (gsm && was != t.last_lamp && SafeWrite(gsm + 0x1528, &t.last_lamp, 8)) {
+        Log("own last lamp %#llx -> %#llx (lamp %u, an alone travel)", ull(was), ull(t.last_lamp), id);
+    }
+}
+
+// ---- Enemies killed while apart (reconciled when players meet again without a load) ----
+// Each game simulates its own copies of a map's enemies while the players are apart (a map the
+// host is not in, or the host away while a guest stays). Meeting again without a load (SplitTick,
+// the in-world follow) each side sends the enemies of the shared block that are dead in its world
+// (EVENT b2 {"op":"dead"}); the other side kills those that still live in its own (HP 0: the
+// game's own death of the chr). A kill on either side stays a kill (the union); bosses (entity
+// AAB08xx) stay with their defeat flags (D1 / D3), never by this.
+template <class F>
+void ForEachMapChr(F&& fn) {
+    // The chr tables WorldChrMan +0x850 + set * 8 ({int n; entries @+8, stride 0x38, [0] = ChrIns};
+    // sets up to [+8]+0x18 + 2, as ChrOfHandle resolves handles); a chr's entity id is +0x1F0
+    // (live split19: Central Yharnam's enemies 2410700, 2410740, ... in set 5).
+    const u64 wcm = Slot(kSlotWorldChrMan);
+    const int sets = Field<int>(Field<u64>(wcm, 8), 0x18, -2) + 2;
+    for (int set = 0; wcm && set < sets && set < 64; ++set) {
+        const u64 tab = Field<u64>(wcm, 0x850 + u64(set) * 8);
+        const int n = Field<int>(tab, 0);
+        const u64 entries = Field<u64>(tab, 8);
+        if (!tab || !entries || n <= 0 || n > 4096) {
+            continue;
+        }
+        for (int k = 0; k < n; ++k) {
+            const u64 chr = Field<u64>(entries + u64(k) * 0x38, 0);
+            const u32 id = chr ? Field<u32>(chr, 0x1f0) : 0;
+            if (chr && id) {
+                fn(id, chr);
+            }
+        }
+    }
+}
+
+bool EnemyReconcilable(u32 id, u32 block_map) {
+    return id >= 1000000 && ids::EntityMap(id) == (block_map & 0xffff0000u) && id % 10000 / 100 != 8;
+}
+
+// Kills seen while members are apart: an enemy of our block that was alive (HP > 0, max HP > 0)
+// and is dead now. HP 0 alone means nothing: the game keeps unspawned / far chrs at HP 0 (live
+// split20: 119 chrs of m24_01, 7 alive).
+std::map<u32, bool> g_enemy_alive;  // entity -> alive at the last scan (main thread)
+std::atomic<u32> g_watch_enemy{0};      // test: an enemy to log for a few seconds
+std::atomic<double> g_watch_until{0};
+std::vector<u32> g_killed_apart;
+u32 g_killed_map = 0;
+
+void EnemyWatchTick(const GameSnapshot& s, double now) {
+    static double next = 0;
+    if (now < next || !s.world_up || s.loading || s.map_id == 0xffffffffu) {
+        return;
+    }
+    next = now + 0.5;
+    if (g_killed_map && (g_killed_map >> 16) != (s.map_id >> 16)) {
+        g_killed_apart.clear();  // another map: those kills are gone with the load
+        g_enemy_alive.clear();
+    }
+    g_killed_map = s.map_id;
+    const bool apart = g_apart.load() > 0;
+    std::map<u32, bool> seen;
+    ForEachMapChr([&](u32 id, u64 chr) {
+        seen[id] = true;
+        if (!EnemyReconcilable(id, s.map_id)) {
+            return;
+        }
+        const u64 dm = Field<u64>(Field<u64>(chr, 0x3b0), 0x20);
+        const int hp = Field<int>(dm, 0x128, 0), mx = Field<int>(dm, 0x12c, 0);
+        const bool alive = dm && mx > 0 && hp > 0;
+        if (id == g_watch_enemy.load() && now < g_watch_until.load()) {
+            Log("split: watched enemy %u hp %d / %d (alive %d, apart %d, seen alive %d)", id, hp, mx, int(alive), int(apart),
+                g_enemy_alive.count(id) ? int(g_enemy_alive[id]) : -1);
+        }
+        auto it = g_enemy_alive.find(id);
+        if (it != g_enemy_alive.end() && it->second && !alive && mx > 0 && apart && g_killed_apart.size() < 128) {
+            g_killed_apart.push_back(id);
+            Log("split: enemy %u killed while the party is apart (sent at the next meet)", id);
+        }
+        g_enemy_alive[id] = alive;
+    });
+    // A chr that was alive and is gone from the tables now (live split26: the dead enemy left the
+    // tables before the next scan) died too.
+    for (auto it = g_enemy_alive.begin(); it != g_enemy_alive.end();) {
+        if (!seen.count(it->first)) {
+            if (it->second && apart && g_killed_apart.size() < 128) {
+                g_killed_apart.push_back(it->first);
+                Log("split: enemy %u gone while the party is apart (a kill; sent at the next meet)", it->first);
+            }
+            it = g_enemy_alive.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+std::vector<u32> DeadEnemiesHere(u32 map) {
+    std::vector<u32> out;
+    if (g_killed_map && (g_killed_map >> 16) == (map >> 16)) {
+        out = g_killed_apart;
+    }
+    g_killed_apart.clear();
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+/// Sends the dead enemies of our block to the others (host: everyone; guest: the host, which
+/// relays nothing - every guest sends its own).
+/// BB_PARTY_SPLIT_ENEMIES=1: enemies killed while apart are sent / applied at a meet (not yet
+/// verified live; off by default for 0.5.2).
+bool SplitEnemiesOn() {
+    static const bool on = std::getenv("BB_PARTY_SPLIT_ENEMIES") && std::getenv("BB_PARTY_SPLIT_ENEMIES")[0] == '1';
+    return on;
+}
+
+void SendDeadEnemies(const GameSnapshot& s, const char* why) {
+    if (!SplitEnemiesOn()) {
+        return;
+    }
+    const std::vector<u32> dead = DeadEnemiesHere(s.map_id);
+    std::string body = "{\"op\":\"dead\",\"map\":" + std::to_string(s.map_id) + ",\"ids\":[";
+    for (std::size_t i = 0; i < dead.size(); ++i) {
+        body += (i ? "," : "") + std::to_string(dead[i]);
+    }
+    body += "]}";
+    Send(Role() == RoleHost ? -1 : 0, body);
+    Log("split: %zu dead enemies of %s sent (%s)", dead.size(), MapName(s.map_id).c_str(), why);
+}
+
+std::mutex g_enemy_dead_mu;
+std::vector<std::pair<u32, std::vector<u32>>> g_dead_in;  // (map, ids) received
+
+void ApplyDeadEnemies(const GameSnapshot& s) {
+    std::vector<std::pair<u32, std::vector<u32>>> in;
+    {
+        std::lock_guard<std::mutex> lk(g_enemy_dead_mu);
+        in.swap(g_dead_in);
+    }
+    for (const auto& [map, list] : in) {
+        if ((map >> 16) != (s.map_id >> 16)) {
+            Log("split: dead enemies of %s ignored (we are in %s)", MapName(map).c_str(), MapName(s.map_id).c_str());
+            continue;
+        }
+        int killed = 0, already = 0;
+        ForEachMapChr([&](u32 id, u64 chr) {
+            if (!EnemyReconcilable(id, s.map_id) || !std::binary_search(list.begin(), list.end(), id)) {
+                return;
+            }
+            const u64 dm = Field<u64>(Field<u64>(chr, 0x3b0), 0x20);
+            const int hp = Field<int>(dm, 0x128, 0);
+            if (dm && hp > 0) {
+                const int zero = 0;
+                SafeWrite(dm + 0x128, &zero, 4);
+                ++killed;
+            } else {
+                ++already;
+            }
+        });
+        Log("split: enemies killed by the other side while apart: %d here now dead too (%d already dead, %zu sent)",
+            killed, already, list.size());
+    }
+}
+
+/// Test aid: the nearest living enemy of our block within `max_m` (entity id, 0 none).
+u32 NearestEnemy(const GameSnapshot& s, float max_m) {
+    float me[3] = {};
+    if (!ChrPos(s.player, me)) {
+        return 0;
+    }
+    u32 best = 0;
+    float bd = max_m * max_m;
+    ForEachMapChr([&](u32 id, u64 chr) {
+        const u64 dm = Field<u64>(Field<u64>(chr, 0x3b0), 0x20);
+        float p[3];
+        if (!EnemyReconcilable(id, s.map_id) || Field<int>(dm, 0x128, 0) <= 0 || !ChrPos(chr, p)) {
+            return;
+        }
+        const float d = (p[0] - me[0]) * (p[0] - me[0]) + (p[1] - me[1]) * (p[1] - me[1]) + (p[2] - me[2]) * (p[2] - me[2]);
+        if (d < bd) {
+            bd = d;
+            best = id;
+        }
+    });
+    return best;
+}
+
+/// Every remote player chr in its task's Update step is drawn: the leave flag the task's
+/// STEP_Delete sets (chr +0x3B0 -> +8, byte +0x1BC bit 1) is cleared if a re-created chr carries
+/// it (user reports split24 / hd22 / hd26: "I see the health bar but no model" on the host after
+/// a re-creation - the bar is the chr's, the model is not drawn). Logs every change. Both roles.
+void RemoteVisibleTick(double now) {
+    static double next = 0;
+    if (now < next) {
+        return;
+    }
+    next = now + 0.25;
+    for (const TaskInfo& t : Tasks(false)) {
+        if ((t.mode != 1 && t.mode != 2) || t.step != kStepUpdate || (t.flags & 2)) {
+            continue;
+        }
+        const u64 c = PlayerForPeer(t.task + kTaskPeer);
+        const u64 cd = c ? Field<u64>(Field<u64>(c, 0x3b0), 8) : 0;
+        if (!cd) {
+            continue;
+        }
+        const u8 v = Field<u8>(cd, 0x1bc);
+        (void)v;  // live vis1: the game sets +0x1BC bit 1 on visible remote chrs too: not the draw switch
+        // chr +0x1E0 bit 20: set on every drawn player chr (local and remote, both games), clear on
+        // the invisible re-created one ("the health bar but no model", live vis3 render probe:
+        // 0x00009800 vs 0x00109800). Put back.
+        const u32 f = Field<u32>(c, 0x1e0);
+        if (f && !(f & 0x100000u)) {
+            const u32 g = f | 0x100000u;
+            SafeWrite(c + 0x1e0, &g, 4);
+            Log("remote chr %#llx (mode %d, handle %x): draw bit +0x1E0 %#x -> %#x (was not drawn); enterleave%s", ull(c),
+                t.mode, Field<u32>(c, 8), f, g, DescribeEnterLeave().c_str());
+        }
+    }
+}
+
+std::string DescribeRender(u64 chr) {
+    const u64 cd = Field<u64>(Field<u64>(chr, 0x3b0), 8);
+    char b[160];
+    std::snprintf(b, sizeof b, " render[+0x1bc %#x cd %#llx +0x1b8 %08x +0x1c0 %08x chr+0x1e0 %08x chr+0x524 %08x]",
+                  unsigned(Field<u8>(cd, 0x1bc)), ull(cd), Field<u32>(cd, 0x1b8), Field<u32>(cd, 0x1c0), Field<u32>(chr, 0x1e0),
+                  Field<u32>(chr, 0x524));
+    return b;
 }
 
 std::string DescribeWhere() {
@@ -3171,8 +3566,12 @@ void GuestTick(const GameSnapshot& s, double now) {
             DrainSnapshotQueue("in-world follow");
             BesideHost(pos, rot, g_local_slot.load());
             WarpLocal(pos, rot[1], "follow the host's load into this map");
+            SendDeadEnemies(s, "in-world follow");
             const int n = RewindRemoteTasks("guest in-world follow");
-            Send(0, "{\"op\":\"arrived\"}");
+            // The host loaded and holds this guest's record from before: send it fresh, and the
+            // "arrived" (the host's re-creation) a moment later (see the meet in SplitTick).
+            RebroadcastOwnRecord("in-world follow");
+            g_arrived_at = now + 1.5;
             Log("guest: followed the host inside the loaded map (%s): no load; %d task(s) rewound",
                 MapName(s.map_id).c_str(), n);
             g_rejoin = false;
@@ -3461,6 +3860,7 @@ void GuestTick(const GameSnapshot& s, double now) {
         }
         if (all || now - st.since > 60.0) {
             const u64 remo = Field<u64>(Slot(0x5540058), 8);
+            Log("guest: enterleave at the re-join's end:%s", DescribeEnterLeave().c_str());
             Log("guest: re-join %s after %.1f s (SprjRemo %d); tasks:%s", all ? "done" : "INCOMPLETE",
                 now - st.since, remo ? int(Field<u8>(remo, 0x168) & 1) : -1, DescribeTasks().c_str());
             if (!all) {
@@ -3577,10 +3977,7 @@ void HostTick(const GameSnapshot& s, double now) {
             if (!chr || chr != victim) {
                 continue;
             }
-            using Release = u64(BB_COOP_SYSV*)(u64, u32);
-            using Remove = void(BB_COOP_SYSV*)(u64, u64);
-            reinterpret_cast<Release>(Guest(0x15bc080))(Field<u64>(Slot(kSlotGsm), 0x16f8), Field<u32>(chr, 8));
-            reinterpret_cast<Remove>(Guest(0x19186e0))(Slot(kSlotWorldChrMan), chr);
+            RemoveRemoteChr(chr, "a dead member respawns");  // with the presentation leave
             Log("host: dead member chr %#llx (hp %d) removed; its task is kept for the re-creation", ull(chr), hp);
         }
         static const bool fail = std::getenv("BB_PARTY_B2_TEST_FAIL") &&
@@ -3696,7 +4093,8 @@ void HostTick(const GameSnapshot& s, double now) {
         if (all && (arrived || st.rejoined_logged)) {
             st.hphase = HostPhase::Idle;
             g_rejoin = false;
-            Log("host: re-join done after %.1f s; tasks:%s", now - st.hsince, DescribeTasks().c_str());
+            Log("host: re-join done after %.1f s; tasks:%s; enterleave%s", now - st.hsince, DescribeTasks().c_str(),
+                DescribeEnterLeave().c_str());
         }
         st.rejoined_logged = st.rejoined_logged || arrived;
         return;
@@ -3761,6 +4159,313 @@ void InstallCall(u64 off, u64 target, const void* handler, const char* name) {
     }
 }
 
+// ---- Title join (BB_PARTY_TITLE_JOIN): Continue straight into the host's world ----
+// The guest joins the host's session from the title screen (no world, no sign): the host
+// serializes its session descriptor as its summon message does (0x1872360: [u32 -> GSM +0x16f0]
+// [u32, low byte -> GSM +0x16f4] [descriptor 0xc90b00]), the guest deserializes it (0xc90dd0) and
+// joins (0x1789010 -> SprjSessionManager 0x1ED0670: JoinRoom). The flow update 0x1789B60 (session
+// update 0x1ED0B20 + packet handler) only runs in the world / load steps: the guest runs it at the
+// title until the host's join snapshot is applied (flow +0x84 = 2), then sets +0x84 = 3 and the
+// summoned placement (GSM +0x14C4 stage, +0x14D0 pos, +0x14E0 rot) and lets Continue run: the
+// MoveMapStep ctor 0x1937570 makes that first load a host-world load. docs/party/join_timing.md.
+constexpr u64 kRoomCtor = 0xc8fbf0;     // void (room*)
+constexpr u64 kRoomDtor = 0xc90520;     // void (room*)
+constexpr u64 kRoomRead = 0xc90dd0;     // bool (room*, reader*)
+constexpr u64 kRoomWrite = 0xc90b00;    // bool (room*, writer*)
+constexpr u64 kRoomFetch = 0xc8f500;    // bool (SessionMan+0x18, room* = SessionMan+0x38, bool)
+constexpr u64 kRoomCopy = 0xc90270;     // void (room* dst, const room* src)
+constexpr u64 kRoomValid = 0xc90d80;    // bool (room*)
+constexpr u64 kStreamWrite = 0x2078780; // u64 (writer*, const void*, u64)
+constexpr u64 kJoinSession = 0x1789010; // bool (flow, room*)
+constexpr u64 kFlowUpdate = 0x1789b60;  // void (float dt, flow)
+constexpr u64 kWriterVtable = 0x53b2c80, kReaderVtable = 0x53b2be0;
+
+enum class TitlePhase { Off, Idle, Requested, Joining, Snapshot, Ready, Loading, Done, Failed };
+const char* TitlePhaseName(TitlePhase p) {
+    switch (p) {
+    case TitlePhase::Off: return "off";
+    case TitlePhase::Idle: return "idle";
+    case TitlePhase::Requested: return "requested";
+    case TitlePhase::Joining: return "joining";
+    case TitlePhase::Snapshot: return "snapshot";
+    case TitlePhase::Ready: return "ready";
+    case TitlePhase::Loading: return "loading";
+    case TitlePhase::Done: return "done";
+    case TitlePhase::Failed: return "failed";
+    }
+    return "?";
+}
+
+struct TitleJoin {
+    std::mutex mu;
+    TitlePhase phase = TitlePhase::Idle;
+    double since = 0, last_update = 0;
+    float last_timer = -1.0f;
+    int updates = 0;
+    bool have_reply = false;
+    std::vector<u8> room;  // the host's reply: head + descriptor
+    u32 stage = 0;
+    float pos[4] = {}, rot[4] = {};
+    int last_role = -2, last_state = -2;
+    std::vector<int> requests;  // host: slots that asked
+};
+TitleJoin& TJ() {
+    static TitleJoin t;
+    return t;
+}
+
+bool TitleJoinOn() {
+    static const bool on = EnvOn("BB_PARTY_TITLE_JOIN");
+    return on;
+}
+
+std::string Hex(const std::vector<u8>& b, std::size_t max) {
+    std::string s;
+    char h[3];
+    for (std::size_t i = 0; i < b.size() && i < max; ++i) {
+        std::snprintf(h, sizeof h, "%02x", b[i]);
+        s += h;
+    }
+    return s;
+}
+
+bool Unhex(const char* p, std::vector<u8>* out) {
+    out->clear();
+    auto nib = [](char c) -> int {
+        return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+    };
+    while (p[0] && p[0] != '"') {
+        const int a = nib(p[0]), b = p[1] ? nib(p[1]) : -1;
+        if (a < 0 || b < 0 || out->size() >= 0x400) {
+            return false;
+        }
+        out->push_back(u8(a << 4 | b));
+        p += 2;
+    }
+    return !out->empty();
+}
+
+/// Host: the session descriptor as the summon message carries it, behind the 8-byte head.
+bool SerializeRoom(u32 head0, u32 head1, std::vector<u8>* out) {
+    const u64 ssm = Slot(kSlotSession);
+    if (!ssm || Role() != RoleHost) {
+        return false;
+    }
+    using Fetch = u8(BB_COOP_SYSV*)(u64, u64, u32);
+    using Copy = void(BB_COOP_SYSV*)(u64, u64);
+    using One = u8(BB_COOP_SYSV*)(u64);
+    using Two = u8(BB_COOP_SYSV*)(u64, u64);
+    using Dtor = void(BB_COOP_SYSV*)(u64);
+    using Put = u64(BB_COOP_SYSV*)(u64, const void*, u64);
+    reinterpret_cast<Fetch>(Guest(kRoomFetch))(ssm + 0x18, ssm + 0x38, 1);
+    alignas(16) u8 room[0x200] = {};
+    reinterpret_cast<Copy>(Guest(kRoomCopy))(u64(room), ssm + 0x38);
+    bool ok = false;
+    if (reinterpret_cast<One>(Guest(kRoomValid))(u64(room)) & 1) {
+        // DLMemoryWriter as 0x1872360 builds it: +8 allocator (none: never grows), +0x10 buffer,
+        // +0x18 capacity, +0x20 growable, +0x30 end, +0x38 grow step.
+        alignas(16) u8 buf[0x400] = {};
+        alignas(16) u64 w[11] = {};
+        w[0] = u64(Guest(kWriterVtable));
+        w[2] = u64(buf);
+        w[3] = sizeof buf;
+        w[7] = sizeof buf;
+        reinterpret_cast<Put>(Guest(kStreamWrite))(u64(w), &head0, 4);
+        reinterpret_cast<Put>(Guest(kStreamWrite))(u64(w), &head1, 4);
+        ok = reinterpret_cast<Two>(Guest(kRoomWrite))(u64(room), u64(w)) & 1;
+        const u64 n = w[6];
+        if (ok && n > 8 && n <= sizeof buf) {
+            out->assign(buf, buf + n);
+        } else {
+            ok = false;
+        }
+    }
+    reinterpret_cast<Dtor>(Guest(kRoomDtor))(u64(room));
+    return ok;
+}
+
+/// The head the host's summon message puts before the descriptor for presentation slot `slot`
+/// (0x1872360: the session-type table 0x553D750 + slot * 0x80, its +0xC, then the slot).
+void RoomHead(int slot, u32* head0, u32* head1) {
+    *head1 = u32(slot);
+    *head0 = 0;
+    SafeGet(u64(Guest(kSessionTypeDesc + 0xc + u64(slot) * 0x80)), head0);
+}
+
+void TitleJoinHostTick(const GameSnapshot& s) {
+    std::vector<int> req;
+    {
+        std::lock_guard<std::mutex> lk(TJ().mu);
+        req.swap(TJ().requests);
+    }
+    static double first_wait = 0;
+    if (!req.empty() && (Role() != RoleHost || !s.world_up || s.loading)) {
+        // No room yet (the host rings its bell once it is in the world): asked again next frame.
+        const double now = Now();
+        if (first_wait == 0) {
+            first_wait = now;
+            Log("title join: slot %d asked for the room; waiting for a room here (role %d, world %d)", req[0], Role(),
+                int(s.world_up));
+        }
+        if (now - first_wait < 40.0) {
+            std::lock_guard<std::mutex> lk(TJ().mu);
+            TJ().requests.insert(TJ().requests.end(), req.begin(), req.end());
+            return;
+        }
+        for (int slot : req) {
+            Send(slot, "{\"op\":\"title_room\",\"room\":\"\"}");
+        }
+        first_wait = 0;
+        Log("title join: no room here within 40 s; refused");
+        return;
+    }
+    first_wait = 0;
+    for (int slot : req) {
+        u32 h0 = 0, h1 = 0;
+        RoomHead(slot, &h0, &h1);
+        std::vector<u8> room;
+        const bool ok = SerializeRoom(h0, h1, &room);
+        const u64 a = Field<u64>(Field<u64>(Field<u64>(Field<u64>(s.player, 0x58), 8), 0x3b0), 0x68);
+        float pos[4] = {}, rot[4] = {};
+        SafeRead(a + 0x1e0, pos, 16);
+        SafeRead(a + 0x1d0, rot, 16);
+        std::string b = "{\"op\":\"title_room\",\"room\":\"" + (ok ? Hex(room, room.size()) : std::string()) + "\"";
+        char tail[256];
+        std::snprintf(tail, sizeof tail, ",\"stage\":%u,\"pos\":[%.4f,%.4f,%.4f,%.4f],\"rot\":[%.6f,%.6f,%.6f,%.6f]}",
+                      Field<u32>(s.player, 0x3f8), pos[0], pos[1], pos[2], pos[3], rot[0], rot[1], rot[2], rot[3]);
+        b += tail;
+        Send(slot, b);
+        Log("title join: slot %d asked for the room: %s (%zu bytes, head %s), stage %#x", slot, ok ? "sent" : "NOT serialized",
+            room.size(), Hex(room, 24).c_str(), Field<u32>(s.player, 0x3f8));
+    }
+    // Validation in an ordinary bell join: the descriptor as this host would send it, next to the
+    // guest's `summon message ... (head ...)` line.
+    static int last_coop = 0;
+    if (s.world_up && Role() == RoleHost && s.cooperators > last_coop && EnvOn("BB_PARTY_TITLE_JOIN_PROBE")) {
+        u32 h0 = 0, h1 = 0;
+        RoomHead(1, &h0, &h1);
+        std::vector<u8> room;
+        const bool ok = SerializeRoom(h0, h1, &room);
+        Log("title join probe: host descriptor %s, %zu bytes, head %s", ok ? "ok" : "FAILED", room.size(), Hex(room, 24).c_str());
+    }
+    if (s.cooperators >= 0) {
+        last_coop = s.cooperators;
+    }
+}
+
+void TitleJoinFail(const char* why) {
+    const int role = Role();
+    if (role == 4 || role == RoleClient) {
+        using Fn = u8(BB_COOP_SYSV*)(u64);
+        reinterpret_cast<Fn>(Guest(kBeginLeave))(Slot(kSlotSession));
+    }
+    g_rejoin = false;
+    std::lock_guard<std::mutex> lk(TJ().mu);
+    TJ().phase = TitlePhase::Failed;
+    Log("title join: FAILED (%s; role %d, flow %d); Continue loads the own world as before", why, role,
+        Field<int>(Slot(kSlotFlow), 0x84, -1));
+}
+
+bool TitleJoinStart() {
+    TitleJoin& t = TJ();
+    std::vector<u8> room;
+    {
+        std::lock_guard<std::mutex> lk(t.mu);
+        room = t.room;
+    }
+    if (room.size() <= 8) {
+        TitleJoinFail("the host sent no room");
+        return false;
+    }
+    using Ctor = void(BB_COOP_SYSV*)(u64);
+    using Read = u8(BB_COOP_SYSV*)(u64, u64);
+    using Join = u8(BB_COOP_SYSV*)(u64, u64);
+    alignas(16) u8 obj[0x200] = {};
+    reinterpret_cast<Ctor>(Guest(kRoomCtor))(u64(obj));
+    // DLMemoryReader as 0x1872360 builds it over the descriptor (after the 8-byte head).
+    alignas(16) u64 r[6] = {};
+    r[0] = u64(Guest(kReaderVtable));
+    r[1] = room.size() - 8;
+    r[2] = u64(room.data() + 8);
+    r[3] = 0;
+    reinterpret_cast<u8*>(r)[0x24] = 1;
+    const bool read = reinterpret_cast<Read>(Guest(kRoomRead))(u64(obj), u64(r)) & 1;
+    bool joined = false;
+    if (read) {
+        const u64 gsm = Slot(kSlotGsm);
+        u32 h0 = 0, h1 = 0;
+        std::memcpy(&h0, room.data(), 4);
+        std::memcpy(&h1, room.data() + 4, 4);
+        const u8 slot = u8(h1);
+        SafeWrite(gsm + 0x16f0, &h0, 4);
+        SafeWrite(gsm + 0x16f4, &slot, 1);
+        g_rejoin = true;  // K5 / K6 quiet: no Lua join start at the title
+        joined = reinterpret_cast<Join>(Guest(kJoinSession))(Slot(kSlotFlow), u64(obj)) & 1;
+        Log("title join: descriptor read (%zu bytes, head %08x %08x); JoinSession -> %d (role %d)", room.size(), h0, h1,
+            int(joined), Role());
+    }
+    reinterpret_cast<Ctor>(Guest(kRoomDtor))(u64(obj));
+    if (!read) {
+        TitleJoinFail("the descriptor did not parse");
+        return false;
+    }
+    if (!joined) {
+        TitleJoinFail("JoinSession refused");
+        return false;
+    }
+    std::lock_guard<std::mutex> lk(t.mu);
+    t.phase = TitlePhase::Joining;
+    t.since = Now();
+    return true;
+}
+
+/// The flow update at the title (nothing else runs it there): only while the game's own does not
+/// advance the flow timer (+0x98).
+void TitleFlowUpdate(double now) {
+    TitleJoin& t = TJ();
+    const u64 flow = Slot(kSlotFlow);
+    const float timer = Field<float>(flow, 0x98, -1.0f);
+    const double dt = t.last_update > 0 ? std::min(0.1, std::max(0.0, now - t.last_update)) : 1.0 / 30.0;
+    t.last_update = now;
+    if (timer != t.last_timer || !flow) {
+        t.last_timer = timer;
+        return;  // the game updated it this frame (or no flow)
+    }
+    using Upd = void(BB_COOP_SYSV*)(float, u64);
+    reinterpret_cast<Upd>(Guest(kFlowUpdate))(float(dt), flow);
+    t.last_timer = Field<float>(flow, 0x98, -1.0f);
+    if (++t.updates == 1) {
+        Log("title join: running the flow update at the title (the game does not)");
+    }
+}
+
+/// Guest, after Continue: the host-world load of a title join, then its arrival (flow 4).
+void TitleJoinGuestTick(const GameSnapshot& s, double now) {
+    TitleJoin& t = TJ();
+    TitlePhase phase;
+    {
+        std::lock_guard<std::mutex> lk(t.mu);
+        phase = t.phase;
+    }
+    if (phase == TitlePhase::Ready && s.loading) {
+        std::lock_guard<std::mutex> lk(t.mu);
+        t.phase = TitlePhase::Loading;
+        Log("title join: loading (flow %d, GSM+0x1592 %u)", Field<int>(Slot(kSlotFlow), 0x84, -1),
+            unsigned(Field<u8>(Slot(kSlotGsm), 0x1592)));
+        return;
+    }
+    if (phase == TitlePhase::Loading && s.world_up && !s.loading) {
+        g_rejoin = false;
+        {
+            std::lock_guard<std::mutex> lk(t.mu);
+            t.phase = TitlePhase::Done;
+        }
+        Log("title join: in the world after %.1f s: map %s, flow %d, GSM+0x1592 %u, role %d, cooperators %d",
+            now - t.since, MapName(s.map_id).c_str(), Field<int>(Slot(kSlotFlow), 0x84, -1),
+            unsigned(Field<u8>(Slot(kSlotGsm), 0x1592)), Role(), s.cooperators);
+    }
+}
+
 } // namespace
 
 std::string NrFindTimeouts(u64 base, std::size_t span) {
@@ -3785,6 +4490,105 @@ std::string NrFindTimeouts(u64 base, std::size_t span) {
 std::vector<NrTransport> NrTransports() {
     std::lock_guard<std::mutex> lk(g_nr_mu);
     return {g_nr.begin(), g_nr.end()};
+}
+
+bool TitleJoinRequested() {
+    return TitleJoinOn() && Requested();
+}
+
+bool TitleJoinHold(const GameSnapshot& s) {
+    if (!TitleJoinOn() || !g_on.load()) {
+        return false;
+    }
+    TitleJoin& t = TJ();
+    const double now = Now();
+    TitlePhase phase;
+    {
+        std::lock_guard<std::mutex> lk(t.mu);
+        phase = t.phase;
+    }
+    const int role = Role();
+    const int fstate = Field<int>(Slot(kSlotFlow), 0x84, -1);
+    if (role != t.last_role || fstate != t.last_state) {
+        Log("title join: %s: role %d -> %d, flow %d -> %d (%.1f s)", TitlePhaseName(phase), t.last_role, role, t.last_state,
+            fstate, t.since > 0 ? now - t.since : 0.0);
+        t.last_role = role;
+        t.last_state = fstate;
+    }
+    switch (phase) {
+    case TitlePhase::Idle: {
+        Send(0, "{\"op\":\"title_req\"}");
+        std::lock_guard<std::mutex> lk(t.mu);
+        t.phase = TitlePhase::Requested;
+        t.since = now;
+        Log("title join: asking the host for its room");
+        return true;
+    }
+    case TitlePhase::Requested: {
+        bool have;
+        {
+            std::lock_guard<std::mutex> lk(t.mu);
+            have = t.have_reply;
+        }
+        if (have) {
+            TitleJoinStart();
+            return true;
+        }
+        if (now - t.since > 45.0) {
+            TitleJoinFail("no answer from the host within 45 s");
+            return false;
+        }
+        return true;
+    }
+    case TitlePhase::Joining:
+    case TitlePhase::Snapshot: {
+        TitleFlowUpdate(now);
+        const int st2 = Field<int>(Slot(kSlotFlow), 0x84, -1);
+        if (phase == TitlePhase::Joining && Role() == RoleClient && st2 == 1) {
+            std::lock_guard<std::mutex> lk(t.mu);
+            t.phase = TitlePhase::Snapshot;
+            Log("title join: client, waiting for the host's snapshot (%.1f s)", now - t.since);
+        }
+        if (st2 == 2) {
+            // The snapshot is applied: the own-world serializer 0x131E5C0 has nothing to save (no
+            // world); host-world load next with the summoned placement.
+            const u64 gsm = Slot(kSlotGsm);
+            const u64 flow = Slot(kSlotFlow);
+            u32 stage;
+            float pos[4], rot[4];
+            {
+                std::lock_guard<std::mutex> lk(t.mu);
+                stage = t.stage;
+                std::memcpy(pos, t.pos, sizeof pos);
+                std::memcpy(rot, t.rot, sizeof rot);
+                t.phase = TitlePhase::Ready;
+            }
+            BesideHost(pos, rot, g_local_slot.load() > 0 ? g_local_slot.load() : 1);
+            const int three = 3;
+            SafeWrite(gsm + 0x14c4, &stage, 4);
+            SafeWrite(gsm + 0x14d0, pos, 16);
+            SafeWrite(gsm + 0x14e0, rot, 16);
+            SafeWrite(flow + 0x84, &three, 4);
+            Log("title join: host snapshot applied after %.1f s; flow 3, placement stage %#x pos (%.1f, %.1f, %.1f): "
+                "Continue now loads the host's world",
+                now - t.since, stage, pos[0], pos[1], pos[2]);
+            return false;
+        }
+        if (Role() != 4 && Role() != RoleClient && now - t.since > 3.0) {
+            TitleJoinFail("the join ended");
+            return false;
+        }
+        if (now - t.since > 20.0) {
+            TitleJoinFail("no snapshot within 20 s");
+            return false;
+        }
+        return true;
+    }
+    case TitlePhase::Ready:
+        return false;
+    default:
+        return false;
+    }
 }
 
 bool Requested() {
@@ -3817,6 +4621,10 @@ bool HostHasMemberTasks() {
 bool Enabled() {
     return g_on.load();
 }
+
+namespace {
+bool SameMapLampWarp(std::uint32_t id, bool alone);
+} // namespace
 
 void Init() {
     if (!Requested() || g_on.load()) {
@@ -3862,6 +4670,7 @@ void Init() {
     }
     InstallCall(0x17851ce, 0x13beca0, reinterpret_cast<const void*>(&FlagApplyHook), "B2 K11 flag snapshot apply");
     SetEmevdSkipPredicate(&ClientIntroSkip);
+    SetSameMapWarp(&SameMapLampWarp);
     EnsureEmevdFilter();
     Log("K7 funnel branch +0x%llx %s", ull(kFunnelLeaveJne),
         Matches(kFunnelLeaveJne, {0x75, 0x6c}) ? "verified (75 6c), written only around the guest's own warp"
@@ -4031,7 +4840,35 @@ void Tick(const GameSnapshot& s) {
             Field<float>(Slot(kSlotFlow), 0x98), unsigned(Field<u8>(Slot(kSlotGsm), 0x1521)),
             remo ? int(Field<u8>(remo, 0x168) & 1) : -1, int(g_rejoin.load()), s.cooperators, DescribeTasks().c_str(),
             DescribePresence(true).c_str(), DescribePresentation().c_str());
-        Log("status: where%s; apart %d", DescribeWhere().c_str(), g_apart.load());
+        Log("status: where%s; apart %d; enterleave%s", DescribeWhere().c_str(), g_apart.load(), DescribeEnterLeave().c_str());
+        // Render-state probe (the invisible remote chr: "the health bar but no model"): raw bytes of
+        // each remote chr and of its +0x3B0 modules' first entries, to diff a visible against an
+        // invisible one (docs/party/split_travel.md 7).
+        static const bool probe = std::getenv("BB_PARTY_RENDER_PROBE") && std::getenv("BB_PARTY_RENDER_PROBE")[0] == '1';
+        for (const TaskInfo& t : probe ? Tasks(false) : std::vector<TaskInfo>{}) {
+            const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+            if (!c) {
+                continue;
+            }
+            auto hex = [](u64 base, u64 n) {
+                std::string h;
+                h.reserve(n * 2);
+                for (u64 o = 0; o < n; o += 4) {
+                    char b[12];
+                    std::snprintf(b, sizeof b, "%08x", Field<u32>(base, o));
+                    h += b;
+                }
+                return h;
+            };
+            const u64 mods = Field<u64>(c, 0x3b0);
+            Log("render probe: chr %#llx mode %d chr[0..0x600] %s", ull(c), t.mode, hex(c, 0x600).c_str());
+            for (u64 m = 0; m < 0x60; m += 8) {
+                const u64 mod = Field<u64>(mods, m);
+                if (mod) {
+                    Log("render probe: chr %#llx module +0x%llx %#llx [0..0x200] %s", ull(c), ull(m), ull(mod), hex(mod, 0x200).c_str());
+                }
+            }
+        }
     }
     {
         static double last_hit_log = 0;
@@ -4071,6 +4908,10 @@ void Tick(const GameSnapshot& s) {
         Log("remote chr on a streamed-out block: stale map hit cleared %u time(s); tasks:%s", n, DescribeTasks().c_str());
     }
     ProbeTick(s);
+    if (TitleJoinOn() || EnvOn("BB_PARTY_TITLE_JOIN_PROBE")) {
+        TitleJoinHostTick(s);
+        TitleJoinGuestTick(s, now);
+    }
     TestWarpTick(s, now);
     KickStalledTasks(s, now);
     TestBossTick(s, now);
@@ -4097,6 +4938,23 @@ void Tick(const GameSnapshot& s) {
         }
         if (gp == GuestPhase::Idle && S().hphase == HostPhase::Idle && !g_rejoin.load()) {
             SplitTick(s, now);
+        }
+        if (s.world_up && !s.loading) {
+            if (SessionUp()) {
+                RemoteVisibleTick(now);
+            }
+            RemovalTick(now);
+            if (g_arrived_at > 0 && now >= g_arrived_at) {
+                g_arrived_at = 0;
+                Send(0, "{\"op\":\"arrived\"}");
+            }
+            if (g_record_request.exchange(false) && SessionUp()) {
+                RebroadcastOwnRecord("a member asked (meet)");
+            }
+            if (SplitEnemiesOn()) {
+                ApplyDeadEnemies(s);
+                EnemyWatchTick(s, now);
+            }
         }
     }
     if (Role() == RoleClient) {
@@ -4206,6 +5064,36 @@ void OnLinkEvent(int from_slot, const std::string& body) {
     if (!g_on.load()) {
         return;
     }
+    if (body.find("\"title_req\"") != std::string::npos) {
+        std::lock_guard<std::mutex> lk(TJ().mu);
+        TJ().requests.push_back(from_slot);
+        return;
+    }
+    if (body.find("\"title_room\"") != std::string::npos) {
+        const char* b = body.c_str();
+        const char* pr = std::strstr(b, "\"room\":\"");
+        std::vector<u8> room;
+        const bool ok = pr && Unhex(pr + 8, &room);
+        u32 stage = 0;
+        float p[4] = {}, r[4] = {};
+        const char* ps = std::strstr(b, "\"stage\":");
+        const char* pp = std::strstr(b, "\"pos\":[");
+        const char* pq = std::strstr(b, "\"rot\":[");
+        const bool where = ps && pp && pq && std::sscanf(ps, "\"stage\":%u", &stage) == 1 &&
+                           std::sscanf(pp, "\"pos\":[%f,%f,%f,%f]", &p[0], &p[1], &p[2], &p[3]) == 4 &&
+                           std::sscanf(pq, "\"rot\":[%f,%f,%f,%f]", &r[0], &r[1], &r[2], &r[3]) == 4 &&
+                           TravelMapKnown(stage) && std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]) &&
+                           std::fabs(p[0]) < 1e5f && std::fabs(p[1]) < 1e5f && std::fabs(p[2]) < 1e5f;
+        std::lock_guard<std::mutex> lk(TJ().mu);
+        TJ().have_reply = true;
+        TJ().room = ok && where ? room : std::vector<u8>{};
+        TJ().stage = stage;
+        std::memcpy(TJ().pos, p, sizeof p);
+        std::memcpy(TJ().rot, r, sizeof r);
+        Log("title join: the host's room: %zu bytes, stage %#x pos (%.1f, %.1f, %.1f)%s", room.size(), stage, p[0], p[1], p[2],
+            ok && where ? "" : " (refused)");
+        return;
+    }
     if (body.find("\"dest\"") != std::string::npos) {
         u32 stage = 0;
         float p[4] = {}, r[4] = {};
@@ -4226,6 +5114,37 @@ void OnLinkEvent(int from_slot, const std::string& body) {
             Log("guest: host destination stage %#x pos (%.1f, %.1f, %.1f)", stage, p[0], p[1], p[2]);
         } else {
             Log("guest: bad destination event refused");
+        }
+        return;
+    }
+    if (body.find("\"record\"") != std::string::npos) {
+        g_record_request = true;  // main thread: RebroadcastOwnRecord
+        return;
+    }
+    if (body.find("\"dead\"") != std::string::npos) {
+        unsigned map = 0;
+        const char* pm = std::strstr(body.c_str(), "\"map\":");
+        const char* pi = std::strstr(body.c_str(), "\"ids\":[");
+        if (!pm || !pi || std::sscanf(pm, "\"map\":%u", &map) != 1 || !TravelMapKnown(map & 0xffff0000u)) {
+            Log("split: bad dead-enemies event refused");
+            return;
+        }
+        std::vector<u32> list;
+        for (const char* p = pi + 7; *p && *p != ']' && list.size() < 128;) {
+            char* end = nullptr;
+            const unsigned long v = std::strtoul(p, &end, 10);
+            if (end == p) {
+                break;
+            }
+            if (EnemyReconcilable(u32(v), map)) {
+                list.push_back(u32(v));
+            }
+            p = *end == ',' ? end + 1 : end;
+        }
+        std::sort(list.begin(), list.end());
+        std::lock_guard<std::mutex> lk(g_enemy_dead_mu);
+        if (g_dead_in.size() < 8) {
+            g_dead_in.emplace_back(map, std::move(list));
         }
         return;
     }
@@ -4317,13 +5236,65 @@ bool HostHasMembers() {
     return Role() == RoleHost && HostHasMemberTasks();
 }
 
+namespace {
+/// party_travel's same-map hook (every lamp warp): a lamp of the block the player stands in is an
+/// in-world move - none at all when it already stands there (within 2 m: only the last-lamp record)
+/// - and in a party the host's move takes the guests of this map along unless it travels alone.
+/// A dead player keeps the game's death load (no revive here).
+bool SameMapLampWarp(std::uint32_t id, bool alone) {
+    float spot[4];
+    if (!g_on.load() || !LampInLoadedBlock(id, spot)) {
+        return false;
+    }
+    const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+    if (!player || Field<int>(Field<u64>(Field<u64>(player, 0x3b0), 0x20), 0x128, 0) <= 0) {
+        return false;
+    }
+    float p[3] = {};
+    ChrPos(player, p);
+    const float dx = p[0] - spot[0], dy = p[1] - spot[1], dz = p[2] - spot[2];
+    TravelIntent t;
+    if (dx * dx + dy * dy + dz * dz < 4.0f) {
+        if (LampIntent(id, &t)) {
+            SetOwnLastLamp(t);
+        }
+        Log("lamp %u: already standing at it (%.1f m): no warp, no load", id, double(std::sqrt(dx * dx + dy * dy + dz * dz)));
+        return true;
+    }
+    if (Role() == RoleHost && !alone && HostHasMemberTasks()) {
+        return HostPartyWarpNoLoad(id);
+    }
+    return WarpToLampNoLoad(id, false);
+}
+} // namespace
+
+bool AtLampSpot(std::uint32_t id) {
+    float spot[4], p[3] = {};
+    const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+    if (!g_on.load() || !player || !LampInLoadedBlock(id, spot) || !ChrPos(player, p)) {
+        return false;
+    }
+    const float dx = p[0] - spot[0], dy = p[1] - spot[1], dz = p[2] - spot[2];
+    return dx * dx + dy * dy + dz * dz < 4.0f;
+}
+
 bool WarpToLampNoLoad(std::uint32_t id, bool beside) {
-    return g_on.load() && WarpToLampInWorld(id, beside, beside ? "party move" : "own move");
+    if (!g_on.load() || !WarpToLampInWorld(id, beside, beside ? "party move" : "own move")) {
+        return false;
+    }
+    TravelIntent t;
+    if (LampIntent(id, &t)) {
+        SetOwnLastLamp(t);  // a lamp reached in-world is the last lamp too (a Mark: unchanged anyway)
+    }
+    return true;
 }
 
 bool HostPartyWarpNoLoad(std::uint32_t id) {
     if (!g_on.load() || Role() != RoleHost || !WarpToLampInWorld(id, false, "the host's party move")) {
         return false;
+    }
+    if (TravelIntent t; LampIntent(id, &t)) {
+        SetOwnLastLamp(t);
     }
     char b[64];
     std::snprintf(b, sizeof b, "{\"op\":\"warp\",\"lamp\":%u}", id);
@@ -4395,6 +5366,9 @@ bool TravelAlone(const TravelIntent& t, AloneWhy why) {
     char pos[96];
     std::snprintf(pos, sizeof pos, "\"pos\":[%.3f,%.3f,%.3f]", p[0], p[1], p[2]);
     g_dead_follow = why == AloneWhy::Death;
+    if (why == AloneWhy::Lamp || why == AloneWhy::Headstone) {
+        SetOwnLastLamp(t);
+    }
     if (host != 0 && AreaOf(host) == AreaOf(dest)) {
         // Into the host's area (the shared Dream included): a re-join, one load for this guest.
         if (!BeginRejoin(t, true, true)) {
@@ -4514,6 +5488,60 @@ bool RespawnAloneAtOwnLamp() {
         return false;
     }
     return TravelAlone(t, AloneWhy::Death);
+}
+
+std::uint32_t MemberMap(int slot) {
+    const Where* w = WhereOf(slot);
+    return w && w->age_ms < 5000 ? w->map : 0u;
+}
+
+bool MemberApart(int slot) {
+    const std::uint32_t m = MemberMap(slot);
+    const std::uint32_t mine = LocalMap();
+    return m != 0 && m != 0xffffffffu && mine != 0xffffffffu && AreaOf(m) != AreaOf(mine);
+}
+
+bool KillEnemyForTest(std::uint32_t id) {
+    bool done = false;
+    ForEachMapChr([&](u32 e, u64 chr) {
+        const u64 dm = Field<u64>(Field<u64>(chr, 0x3b0), 0x20);
+        if (e == id && dm && Field<int>(dm, 0x128, 0) > 0) {
+            const int zero = 0;
+            done = SafeWrite(dm + 0x128, &zero, 4);
+        }
+    });
+    Log("test: enemy %u HP set to 0 %s", id, done ? "(the game's own death follows)" : "- not found alive");
+    return done;
+}
+
+std::uint32_t NearestEnemyForTest(float max_m) {
+    const GameSnapshot s = ReadGameState(false);
+    if (!g_on.load() || !s.world_up || s.loading) {
+        return 0;
+    }
+    int all = 0, ours = 0, alive = 0;
+    std::string sample;
+    ForEachMapChr([&](u32 id, u64 chr) {
+        ++all;
+        if (all <= 12) {
+            float p[3] = {};
+            ChrPos(chr, p);
+            char b[64];
+            std::snprintf(b, sizeof b, " %u(hp %d at %.0f,%.0f,%.0f)", id,
+                          Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0x128, -1), p[0], p[1], p[2]);
+            sample += b;
+        }
+        if (EnemyReconcilable(id, s.map_id)) {
+            ++ours;
+            alive += Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0x128, 0) > 0 ? 1 : 0;
+        }
+    });
+    const u32 id = NearestEnemy(s, max_m);
+    g_watch_enemy = id;
+    g_watch_until = Now() + 4.0;
+    Log("test: map chrs %d, of %s %d (%d alive); nearest within %.0f m: %u; first:%s", all, MapName(s.map_id).c_str(), ours,
+        alive, double(max_m), id, sample.c_str());
+    return id;
 }
 
 bool PopOutgoing(int* slot, std::string* body) {

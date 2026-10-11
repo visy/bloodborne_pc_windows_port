@@ -427,7 +427,7 @@ def paramdef_layout(b):
         nm = b[o + 0x90:o + 0xb0].split(b"\0")[0].decode("latin-1")
         cnt, = struct.unpack_from("<I", b, o + 0x64)
         base = t if t in PFMT else (None if t.startswith(("dummy", "fixstr")) else BYSZ.get(cnt))
-        m = re.match(r"(\w+):\s*(\d+)$", nm)
+        m = re.match(r"(\w+)\s*:\s*(\d+)$", nm)  # "hasTarget : 1" has spaces (SpEffect)
         if m and base:
             w = int(m.group(2))
             if bt != base or bit + w > PSZ[base] * 8:
