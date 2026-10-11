@@ -183,6 +183,29 @@ members are apart and 15 s after any split chr change).
 `host_alone=ID` (decided alone); `BB_PARTY_SPLIT_TEST=no,yes,...` answers the questions in order
 with the in-process pad (YES = Cross; NO = Right, then Cross: the cursor starts on YES).
 
-## 5. Live results
+## 5. Live results (2026-10-11, two loopback instances, base save savedata_20261010)
 
-(see below)
+Director steps: `host_warp=2412951` (party to Central Yharnam first), then `guest_lamp=` /
+`host_alone=` / `host_mark` with `BB_PARTY_SPLIT_TEST` answers.
+
+| Run | What | Result |
+|---|---|---|
+| split2 | First dialog: kind 7, buttons 1/2 | A one-button "OK" box (screenshot); fixed: kind 8, buttons 3/4 = YES/NO, result [6] 1 YES / 2 NO |
+| split3, split5, split7, split9 | Guest alone to the Dream (host in m24_01) | **Grey screen** (the user's report): the guest loaded no world and fell (`m24_9999` asked for, PlayerIns stage 0x18010000 at the Dream's coordinates). Neither the lamp warp, a forced transform, the 0x19 value (+0x1598) nor the world blobs fixed it |
+| split10 | + the summoned placement GSM +0x14C4 / +0x14D0 / +0x14E0 = the destination | **Fixed**: `arrived alone in m21_00_00_00 ... stage 0x15000000 pos (-9.2, -6.8, -19.4)`, the Doll in view (screenshot); the host never loaded. The return then landed in the Dream again (+0x14C4 now the Dream's) |
+| split13 | Guest: m24_01 -> Dream alone -> lamp 2412952 alone | Full cycle: alone load to the Dream (host stays, `split: 1 member(s) in another area`), back with one load for the guest only (`re-join with the host's snapshot`, arrived at the lamp's spot, host `slot 1 travels alone into this area` -> `a guest arrived; 1 member task(s) rewound`) |
+| split4 / split6 | Host alone to the Dream | Guest stays, no load; guest sent home by OnLeave_Limit 5 s later -> fixed (dropped while the host is apart and connected) |
+| split14 | Host: m24_01 -> Dream alone -> m24_01 alone | Guest never loads; the host's chr is removed on its side; send-home dropped; back in m24_01 both sides `split meet ... rewound (no load)`, the guest is a cooperator again (`(re)joined #3`) |
+| inworld1 | Host Hunter's Mark (alone) and guest lamp 2412952 (alone) inside m24_01 | Both `in-world warp ... no load` (no loading screen) |
+| inworld2 | Host Mark "with the party" + guest lamp "with the party" inside m24_01 | Host and guest move together in-world (`the host moved to lamp 2412951 inside its map (no load); following`), the guest's request becomes `HostPartyWarpNoLoad`; no loading screen on either |
+
+Not done / open:
+
+* A guest's death in a map the host is not in (TravelAlone refuses `Death` elsewhere; hostdeath
+  owns the death rules, `RespawnAloneAtOwnLamp` covers the host's area).
+* Flags a guest sets in a map the host is not in (bosses, levers) are not routed to the host (D3).
+* Enemy state is per player while apart; a meet without a load does not reconcile it (each game
+  keeps its own copies; the host re-registers its net sync).
+* Three or more players apart: chrs are matched to members by the vitals' positions (works for
+  any count in principle), not run live.
+* A guest's own last-lamp record is not updated by an alone travel.

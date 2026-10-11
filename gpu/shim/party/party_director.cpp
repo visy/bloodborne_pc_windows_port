@@ -117,7 +117,7 @@ struct TravelStep {
     // 1.2 m in front, Cross), wait for its menu, Down N times, Cross (args id:N).
     enum Kind {
         HostWarp, HostDie, GuestDie, HostKill, HostMove, GuestMove,
-        HostPress, GuestPress, HostMark, GuestMark, HostStage, HostWalk, HostHeadstone, HostFlag, HostLastLamp,
+        HostPress, GuestPress, HostMark, GuestMark, HostStage, HostWalk, HostHeadstone, HostFlag, HostSkipRemo, GuestSkipRemo, HostLastLamp,
         // Split travel (docs/party/split_travel.md): host_lamp=ID / guest_lamp=ID use lamp ID as the
         // player would (0x13CDF30 through the interceptor: the "Travel with the party?" question);
         // host_alone=ID: the host travels to ID alone, decided (no question).
@@ -808,6 +808,8 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::HostFlag: return "host_flag";
     case TravelStep::GuestLamp: return "guest_lamp";
     case TravelStep::HostAlone: return "host_alone";
+    case TravelStep::HostSkipRemo: return "host_skipremo";
+    case TravelStep::GuestSkipRemo: return "guest_skipremo";
     }
     return "?";
 }
@@ -1040,7 +1042,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     auto mine = [&](const TravelStep& step) {
         return (step.kind == TravelStep::GuestDie || step.kind == TravelStep::GuestMove ||
                 step.kind == TravelStep::GuestPress || step.kind == TravelStep::GuestMark ||
-                step.kind == TravelStep::GuestLamp || step.kind == TravelStep::GuestOutage) == (role == PartyRole::Guest);
+                step.kind == TravelStep::GuestLamp || step.kind == TravelStep::GuestSkipRemo || step.kind == TravelStep::GuestOutage) == (role == PartyRole::Guest);
     };
     if (t.script_on) {
         RunTravelScript(st, s, now);
@@ -1163,6 +1165,13 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             Log("test: Hunter's Mark: SpEffect %d %s (%s)", effect, ok ? "applied" : "NOT applied",
                 DescribeHere(s).c_str());
         }
+    } else if (step.kind == TravelStep::HostSkipRemo || step.kind == TravelStep::GuestSkipRemo) {
+        // The game's own cutscene skip request (what the skip input does; in a session it is this
+        // player's skip vote).
+        bool skippable = false;
+        const bool ok = RequestRemoSkip(&skippable);
+        Log("test: %s: skip request %s (skippable bit %d)", TravelStepName(step.kind), ok ? "sent" : "NOT possible",
+            skippable ? 1 : 0);
     } else if (step.kind == TravelStep::HostFlag) {
         // A story choice the game makes in a talk menu (e.g. 72100131 = refuse Gehrman): SetEventFlag.
         const std::uint32_t id = static_cast<std::uint32_t>(std::strtoul(step.args.c_str(), nullptr, 10));
@@ -1197,6 +1206,15 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     } else if (step.kind == TravelStep::HostKill) {
         // A boss (or any enemy) killed as the game's own death path: ForceDead on its entity id; the
         // boss-defeat EMEVD (4[00] death state -> 2003[12]) and the Lua boss clear follow.
+        {
+            const std::uint64_t chr = GuestSvcFindChr(step.id);
+            float d[4] = {};
+            if (chr) {
+                SafeRead(chr + 0xc0, d, sizeof d);
+            }
+            Log("test: host_kill: entity %u %s (%.1f, %.1f, %.1f)", step.id, chr ? "loaded at" : "NOT loaded here", d[0], d[1],
+                d[2]);
+        }
         reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, step.id);
     } else {
         reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, 10000);
@@ -1849,13 +1867,16 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.steps.push_back(step);
             } else if (item.rfind("host_mark", 0) == 0 || item.rfind("guest_mark", 0) == 0 ||
                        item.rfind("host_stage=", 0) == 0 || item.rfind("host_walk=", 0) == 0 ||
-                       item.rfind("host_headstone=", 0) == 0 || item.rfind("host_flag=", 0) == 0) {
+                       item.rfind("host_headstone=", 0) == 0 || item.rfind("host_flag=", 0) == 0 ||
+                       item.rfind("host_skipremo", 0) == 0 || item.rfind("guest_skipremo", 0) == 0) {
                 TravelStep step;
                 step.kind = item.rfind("guest_mark", 0) == 0    ? TravelStep::GuestMark
                             : item.rfind("host_mark", 0) == 0   ? TravelStep::HostMark
                             : item.rfind("host_stage=", 0) == 0 ? TravelStep::HostStage
                             : item.rfind("host_walk=", 0) == 0  ? TravelStep::HostWalk
                             : item.rfind("host_flag=", 0) == 0  ? TravelStep::HostFlag
+                            : item.rfind("host_skipremo", 0) == 0  ? TravelStep::HostSkipRemo
+                            : item.rfind("guest_skipremo", 0) == 0 ? TravelStep::GuestSkipRemo
                                                                 : TravelStep::HostHeadstone;
                 if (const std::size_t pc = item.find('%'); pc != std::string::npos) {
                     step.map = item.substr(pc + 1); // only while the current map name contains it
@@ -1971,8 +1992,18 @@ void PartyDirector::Tick() {
     NewGameTestTick(s, TitleReadyForInput(role, link));
     // Late joiner catch-up (party_catchup.h): a guest behind the host is brought up to it and
     // gathered at the host's lamp before any summon.
-    CatchupTick(s, role == PartyRole::Guest && link && link->state() == party::LinkState::Connected,
-                Seconds(st.start, now));
+    {
+        std::uint32_t host_map = 0;
+        if (role == PartyRole::Guest && link) {
+            for (const party::RosterEntry& e : link->roster()) {
+                if (e.slot == party::kHostSlot) {
+                    host_map = e.map_id;
+                }
+            }
+        }
+        CatchupTick(s, role == PartyRole::Guest && link && link->state() == party::LinkState::Connected,
+                    Seconds(st.start, now), host_map);
+    }
     // C1: the campaign start (readiness, bells).
     if (full || !st.start_logged) {
         perf::Scope z(perf::Zone::DirStart);
@@ -2278,7 +2309,9 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
             host_map = e.map_id;
         }
     }
-    const std::uint32_t lamp = GuestDeathRedirectLamp();
+    // The host's last lamp unless it lies in another map than the one the host stands in (a fresh
+    // host's default record): then a lamp of the host's map.
+    const std::uint32_t lamp = GatherLampFor(GuestDeathRedirectLamp(), host_map);
     if (!host_map || host_map == 0xffffffffu || s.map_id == 0xffffffffu || lamp == kTravelNone || lamp == 0) {
         return false;
     }
@@ -2306,7 +2339,7 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
     TravelIntent t;
     t.kind = TravelKind::Lamp;
     t.lamp_id = lamp;
-    Log("gather: own world %s, host in %s; to the host's last lamp %u before ringing", MapName(s.map_id).c_str(),
+    Log("gather: own world %s, host in %s; to the host's lamp %u before ringing", MapName(s.map_id).c_str(),
         MapName(host_map).c_str(), lamp);
     return ReplayTravelNow(t);
 }
