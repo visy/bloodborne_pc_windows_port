@@ -256,3 +256,29 @@ inst1: Party: session trying-to-join (4, sub 0) -> client (6, sub 0)        <- s
 
 With the event-driven new-game driver (screen changes from the message lookups) the same run
 reached the summon in 61 s of harness time instead of 90 s, without a retried press.
+
+**The real menus, two instances, 2026-10-11** (`tools/mp/flow_live.py`, no BB_PARTY_FLOW_TEST, no
+OS input; screenshots in `<root>/shots/<phase>/`):
+
+* *fresh* - both start single-player on empty saves. Host: title *Party* -> *Password* (text box,
+  shown as asterisks) -> *New party game* (twice) -> exit 75 -> run.bat restarts it hosting
+  (`party name vp797-rz2z (automatic)`) -> New Game (test driver) -> hosting. Guest: *Party* ->
+  *Host address* `127.0.0.1:<port>` -> *Password* -> *Join party game* (twice) -> restart ->
+  `joining 127.0.0.1:48660 as vp797-jime` -> New Game -> `trying-to-join -> client` (summoned,
+  52.9 s after its restart). party.json: `password_dpapi` only (no clear `password`), role,
+  host_address, name, has_character, slot, the host's host_secret.
+* *continue* - both start single-player again: *Party -> Continue party game* (twice; the guest first
+  reopens *Host address* twice: Enter keeps the saved address, Esc cancels) -> restart -> the party
+  character loads by itself -> summoned 23 s after the restart.
+* *in the world* (guest, same run): *Options, System, Party, Leave the party* (twice) ->
+  `the game's session leave: role leaving`, `client -> leaving -> idle` in 0.4 s, the load into its
+  own world; reopened Party page: *Status (Not running), Host party, Join party, Single player* ->
+  *Join party* (twice) -> `Rejoin: connecting`, `context registered again with the host`, on the
+  host `vp797-jime registered with the host: resolving its pending connection again`, `signaling
+  resolved` -> summoned again (t 135 s).
+
+Bugs found and fixed on the way: every menu player was "Hunter" (the second friend refused);
+Once rows needed two presses for a second edit; a guest's Leave cut the link under a live session;
+after Leave the page had seven rows (Single player cut, Rejoin next to Join party); Join party after
+Leave was summoned in vain (no NP context re-registration; a resolving signaling connection killed
+by the room's end, and a single resolve attempt).
