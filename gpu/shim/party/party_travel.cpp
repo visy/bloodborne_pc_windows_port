@@ -1220,6 +1220,16 @@ void TravelTick() {
         now = g_guest.Step(s, Now());
         after = g_guest.GetPhase();
     }
+    if (now && now->kind == TravelKind::HostDeath && g.session_role != 6) {
+        // A guest that is not in the host's world (waiting to join, or apart) does not follow the
+        // host's death: no loading screen for a player the death did not concern (live: a joiner
+        // waiting outside a boss fight loaded when the host died in it). Only a summoned guest
+        // moves with the host here (hostdeath: everyone respawns at their own lamp).
+        Log("replay %s: this guest is not in the host's world; staying", DescribeTravel(*now).c_str());
+        std::lock_guard<std::mutex> lk(g_guest_mu);
+        g_guest.Drop();
+        now.reset();
+    }
     if (now) {
         const ReplayPlan p = ChooseReplay(*now);
         if (p.method == ReplayMethod::None) {
