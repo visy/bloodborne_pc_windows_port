@@ -58,20 +58,71 @@ Mouse and keyboard, free camera, debug menu: [docs/SETTINGS.md](docs/SETTINGS.md
 
 ## Party co-op
 
-| | |
+Play the whole game with friends in one session, from the first lamp to the end credits.
+Modelled on Elden Ring Seamless Co-op, adapted to Bloodborne. **In development:** tested on one
+PC (several game copies, simulated internet lag), not yet between two PCs.
+
+### How it plays
+
+- **No PSN, no server.** One player hosts, the others join with the host's address and a password.
+- **Start from the title screen:** *Party* → *New / Join / Continue party game*. The address and
+  password are remembered, so later sessions are one press.
+- **Fast join.** The bell, beckoner and summon-sign waits are gone: a guest is in the host's world
+  within seconds.
+- **The session never ends by itself.** Boss kills, area clears, deaths and travel don't send
+  anyone home.
+- **No multiplayer walls.** The fog walls that keep phantoms near the host are gone; the party can
+  split up and explore.
+- **Travel together.** Lamps, headstones, the Hunter's Mark and scripted transitions move the
+  whole party with one loading screen.
+- **Everyone can use lamps.** Vanilla disables lamps during co-op; here they work for everyone.
+  A lamp lit by anyone is lit for the party.
+- **Resting resets the world for the party.** Enemies respawn; everyone's HP, vials and bullets
+  refill.
+- **Guests are full players.** The Doll (level up), shops, the workbench, storage, lamps and
+  headstones all work for guests.
+- **Progress counts for everyone.** Bosses, items, doors, shortcuts, lamps, story and endings go
+  into every player's own save. A guest who is behind catches up.
+- **The host's world is shared live.** A door or shortcut opened by the host is open for the
+  guests too.
+- **Crashes recover.** A crashed game restarts and rejoins by itself.
+- **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
+- **Party HUD.** Party members and events are shown in a small HUD; all party settings are on the
+  *Party* pages of the game's *System* menu.
+
+### Deaths
+
+| Who dies | What happens |
 |---|---|
-| Players | Up to 4 (host + 3; 3 tested so far) |
-| Connection | Direct P2P with a password. No PSN, no server. The host may need port 9307 open (UPnP does this on most routers). |
-| Start | Title screen → **Party** → *New / Join / Continue party game*. The address and password are remembered. |
-| Travel | One loading screen for the whole party. Bosses, deaths and lamps don't end the session. |
-| Progress | Bosses, items, doors, lamps and story go into every player's own save. |
-| Guests | Can use the Doll, shops, workbench, storage, lamps and headstones. |
-| Saves | Separate party save. Your single-player save is never touched. |
-| Status | In development. Tested on one PC (several game copies, simulated lag); **not yet tested between two PCs**. |
+| A guest | Respawns alone at a lit lamp in the party's area; the others keep playing |
+| The host | The session stays; the party moves to the host's lamp with one loading screen |
+| Everyone | Everyone respawns together; the session stays |
+
+### Coming next
+
+| Change | Status |
+|---|---|
+| "Travel alone / Travel with party" choice at lamps | In progress |
+| Every player, host included, respawns at their own last lamp | In progress |
+| Dying in a boss fight: spectate until the fight ends | In progress |
+| Bloodstains for everyone, like single-player | In progress |
+| Death debuff (stacks on death, cleared at a lamp; on by default, can be turned off) | In progress |
+| Enemy scaling settings (harder than vanilla by default) | In progress |
+| Guests open doors, pull levers, talk to NPCs; NPC choices shared | In progress |
+| Cutscenes play for the whole party | Planned |
+| Joining during a boss fight waits outside until it ends | Planned |
+| 4 players (3 work today) | In progress |
+| Names over party members | In progress |
+| Chalice dungeons: full clear in a party, rituals by anyone | In progress |
+
+### Connecting over the internet
+
+The host needs port 9307 (UDP and TCP) reachable. Most routers open it automatically (UPnP);
+otherwise forward it by hand. Allow the Windows Firewall prompt once. Guests need nothing.
+Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
 
 Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
-[docs/party/ERSC_PARITY.md](docs/party/ERSC_PARITY.md) · Internet / NAT:
-[docs/party/network_robustness.md](docs/party/network_robustness.md)
+[docs/party/ERSC_PARITY.md](docs/party/ERSC_PARITY.md)
 
 ## Documentation
 
