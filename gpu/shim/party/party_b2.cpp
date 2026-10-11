@@ -6,6 +6,7 @@
 // is System V: every call into it goes through a BB_COOP_SYSV pointer at Guest(off).
 #include "party_b2.h"
 #include "party_async_io.h"
+#include "party_fourp.h"
 
 #include "coop_hooks.h"
 #include "game_state.h"
@@ -226,7 +227,7 @@ std::string DescribeChr(u64 chr) {
     const u32 pres = fn ? reinterpret_cast<TypeFn>(fn)(chr) : ~0u;
     std::snprintf(b, sizeof b, "stage %#x type %d/%d pos (%.1f, %.1f, %.1f) hp %d", Field<u32>(chr, 0x3f8),
                   Field<int>(chr, 0x78, -1), int(pres), p[0], p[1], p[2],
-                  Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0x128, -1));
+                  Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0xf8, -1));
     return b;
 }
 
@@ -1248,16 +1249,15 @@ float SummonOffset() {
     return d;
 }
 
-void BesideHost(float pos[4], const float rot[4], int slot) {
-    const float yaw = rot[1], d = SummonOffset();
-    const float rx = std::cos(yaw), rz = -std::sin(yaw);
-    if (slot == 2) {
-        pos[0] -= rx * d, pos[2] -= rz * d;
-    } else if (slot >= 3) {
-        pos[0] += rx * d * 2.0f, pos[2] += rz * d * 2.0f;
-    } else {
-        pos[0] += rx * d, pos[2] += rz * d;
-    }
+// `spot` 1..3 beside the host (coop::fourp::SpotOffset: a line along the host's right axis, right,
+// left, 2x right; a party slot is its own spot), neighbours SummonOffset() apart (A7, host + 3).
+void BesideHost(float pos[4], const float rot[4], int spot) {
+    const float yaw = rot[1];
+    const float fx = std::sin(yaw), fz = std::cos(yaw), rx = std::cos(yaw), rz = -std::sin(yaw);
+    float right = 0, forward = 0;
+    coop::fourp::SpotOffset(spot, SummonOffset(), &right, &forward);
+    pos[0] += rx * right + fx * forward;
+    pos[2] += rz * right + fz * forward;
 }
 
 /// Guest, after any host-world arrival (a bell join or a B2 travel: flow 3 -> 4): once the host's chr
@@ -1469,8 +1469,8 @@ void LogGuestState(const GameSnapshot& s, const char* when) {
         std::snprintf(b, sizeof b, " %u:%d", id, GoodsCount(id));
         g += b;
     }
-    Log("guest state %s: HP %d/%d stamina %d/%d echoes %d insight %d; goods%s; speffects %s", when, Field<int>(dm, 0x128, -1),
-        Field<int>(dm, 0x12c, -1), Field<int>(dm, 0x134, -1), Field<int>(dm, 0x138, -1), s.echoes, s.insight, g.c_str(),
+    Log("guest state %s: HP %d/%d stamina %d/%d echoes %d insight %d; goods%s; speffects %s", when, Field<int>(dm, 0xf8, -1),
+        Field<int>(dm, 0xfc, -1), Field<int>(dm, 0x134, -1), Field<int>(dm, 0x138, -1), s.echoes, s.insight, g.c_str(),
         DescribeSpEffects(s.player).c_str());
 }
 
@@ -1670,8 +1670,7 @@ bool PreRingSpacing(const GameSnapshot& s, u32 host_map) {
     }
     ++attempt;
     wait = 0;
-    const int slot = g_local_slot.load() == 2 ? 2 : 1;
-    const int side = attempt == 0 ? slot : attempt == 1 ? (slot == 1 ? 2 : 1) : 3;
+    const int side = coop::fourp::SpotForTry(g_local_slot.load(), attempt);
     std::memcpy(target, start, sizeof start);
     BesideHost(target, start_rot, side);
     reinterpret_cast<Warp>(Field<u64>(Field<u64>(s.player, 0), 0x5f8))(s.player, target, start_rot, 1);
@@ -2114,10 +2113,10 @@ void GuestTick(const GameSnapshot& s, double now) {
         if (!st.screen_done) {
             st.screen_done = true;
             SaveOverlay();
-            st.hp_before = Field<int>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0x128, -1);
+            st.hp_before = Field<int>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0xf8, -1);
             if (st.hp_before <= 0) {
                 // Dead at the host's travel (a held death): back with full HP, as the host respawns.
-                st.hp_before = Field<int>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0x12c, -1);
+                st.hp_before = Field<int>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0xfc, -1);
                 Log("guest: dead at the host's travel; full HP (%d) after the load", st.hp_before);
             }
             ApplyTestSpEffects(s.player);
@@ -2166,6 +2165,27 @@ void GuestTick(const GameSnapshot& s, double now) {
                 if (was) {
                     st.saved_1521 = was;
                     SafeWrite(gsm + 0x1521, &zero, 1);
+                }
+                {
+                    // The host-world load takes its stage from the summoned placement +0x14C4 (live
+                    // split10: still the Dream's after an alone load, so the return to m24_01
+                    // landed in m21): the lamp's own spot goes there.
+                    const std::uint32_t lamp = t.lamp_id != kTravelNone && t.lamp_id ? t.lamp_id
+                                                                                     : static_cast<std::uint32_t>(t.last_lamp);
+                    float spot[4];
+                    if (lamp / 100000 != 29 && ids::ReturnSpot(lamp, spot)) {
+                        const u32 stage = ids::EntityMap(lamp);
+                        alignas(16) float p16[4] = {spot[0], spot[1], spot[2], 1.0f};
+                        alignas(16) float r16[4] = {0.0f, spot[3], 0.0f, 0.0f};
+                        SafeWrite(gsm + 0x14c4, &stage, 4);
+                        SafeWrite(gsm + 0x14d0, p16, 16);
+                        SafeWrite(gsm + 0x14e0, r16, 16);
+                        t.kind = TravelKind::Transform;
+                        t.has_pos = true;
+                        t.pos_map = stage;
+                        std::memcpy(t.pos, p16, sizeof t.pos);
+                        std::memcpy(t.rot, r16, sizeof t.rot);
+                    }
                 }
                 RestoreZeroedOverlay();
                 coop::progress::OnVanillaSnapshotApplied();
@@ -2244,15 +2264,15 @@ void GuestTick(const GameSnapshot& s, double now) {
             g_early_screen = false;  // the load's own InGameStart cleared it
             {
                 // The guest's state is not the load's business (no rest): its HP as before the
-                // host's travel (a load may refill it). Data module: chr +0x3B0 -> +0x20: HP +0x128,
-                // max +0x12C.
+                // host's travel (a load may refill it). Data module: chr +0x3B0 -> +0x20: HP +0xf8,
+                // max +0xFC.
                 const u64 dm = Field<u64>(Field<u64>(s.player, 0x3b0), 0x20);
-                const int hp = Field<int>(dm, 0x128, -1), mx = Field<int>(dm, 0x12c, -1);
+                const int hp = Field<int>(dm, 0xf8, -1), mx = Field<int>(dm, 0xfc, -1);
                 if (RestedFromTravel(st.intent)) {
                     Log("guest: HP %d after the load (a rest travel: the refill heals, max %d)", hp, mx);
                 } else if (dm && st.hp_before > 0 && hp >= 0 && hp != st.hp_before) {
                     const int keep = st.hp_before < mx ? st.hp_before : mx;
-                    SafeWrite(dm + 0x128, &keep, 4);
+                    SafeWrite(dm + 0xf8, &keep, 4);
                     Log("guest: HP %d after the load -> %d as before the travel (max %d)", hp, keep, mx);
                 } else {
                     Log("guest: HP %d after the load (before %d, max %d)", hp, st.hp_before, mx);
@@ -2439,7 +2459,7 @@ void HostTick(const GameSnapshot& s, double now) {
                 continue;
             }
             const u64 chr = PlayerForPeer(t.task + kTaskPeer);
-            const int hp = Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0x128, -1);
+            const int hp = Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0xf8, -1);
             if (!chr || chr != victim) {
                 continue;
             }
@@ -2734,9 +2754,9 @@ void TestBossTick(const GameSnapshot& s, double now) {
         const int hp = std::atoi(env + 3);
         const u64 dm = Field<u64>(Field<u64>(s.player, 0x3b0), 0x20);
         if (dm && hp > 0) {
-            SafeWrite(dm + 0x128, &hp, 4);
+            SafeWrite(dm + 0xf8, &hp, 4);
         }
-        Log("test hp: guest HP set to %d (max %d)", hp, Field<int>(dm, 0x12c, -1));
+        Log("test hp: guest HP set to %d (max %d)", hp, Field<int>(dm, 0xfc, -1));
         return;
     }
     std::int64_t r = -1;
