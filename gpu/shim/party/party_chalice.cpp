@@ -130,7 +130,67 @@ void InstallProbes() {
     HookPrologue(0x1aa8410, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, &QuickJoinStepProbe, "chalice: quick join step probe");
 }
 
+namespace {
+
+// SprjHolygrail (0x553e9e8) +8 -> obj[7] (SprjDungeonGateIns); +0x108 its CSDungeonRitualHelper:
+// +0xc8 slot, +0xd0 channel object (= obj +0x1d8, what the map load reads), +0xd8 ChannelId,
+// +0xe0 u32, +0xe8 chalice goods id, +0xf8 18 u32 layout, +0x140 16-byte online id (0x1a9c490).
+std::uint64_t HelperOf(int slot) {
+    std::uint64_t grail = 0, arr = 0, obj = 0;
+    const std::uint64_t at = Guest(0x553e9e8);
+    if (slot < 0 || slot >= kSlots || !at || !SafeGet(at, &grail) || grail < 0x10000 ||
+        !SafeGet(grail + 8, &arr) || arr < 0x10000 || !SafeGet(arr + 8 * slot, &obj) || obj < 0x10000) {
+        return 0;
+    }
+    return obj + 0x108;
+}
+
+bool HelperFields(int slot, std::uint32_t out[0x1e]) {
+    const std::uint64_t h = HelperOf(slot);
+    if (!h) return false;
+    // FormData v4 words: {4, 0x7c, +0xe0, +0xe8, +0xf8 x18, +0x140 x4}
+    out[0] = 4;
+    out[1] = 0x7c;
+    bool ok = SafeGet(h + 0xe0, &out[2]) && SafeGet(h + 0xe8, &out[3]);
+    for (int i = 0; ok && i < 18; ++i) ok = SafeGet(h + 0xf8 + 4 * i, &out[4 + i]);
+    for (int i = 0; ok && i < 4; ++i) ok = SafeGet(h + 0x140 + 4 * i, &out[22 + i]);
+    return ok;
+}
+
+std::string HelperDump(int slot) {
+    const std::uint64_t h = HelperOf(slot);
+    if (!h) return "-";
+    std::uint64_t ch_obj = 0, id = 0;
+    std::uint32_t hs = 0, mode = 0;
+    SafeGet(h + 0xc8, &hs);
+    SafeGet(h + 0xd0, &ch_obj);
+    SafeGet(h + 0xd8, &id);
+    SafeGet(h - 0x108 + 0x364, &mode);
+    std::string s = "slot " + std::to_string(hs) + ", gate mode " + std::to_string(mode) + ", channel object " +
+                    (ch_obj ? "set" : "none") + ", id " + std::to_string(id) + ", fields";
+    std::uint32_t w[0x1e] = {};
+    if (HelperFields(slot, w)) {
+        char b[16];
+        for (int i = 2; i < 26; ++i) {
+            std::snprintf(b, sizeof b, " %x", w[i]);
+            s += b;
+        }
+    }
+    return s;
+}
+
+} // namespace
+
 std::vector<std::uint8_t> SlotFormData(int slot) {
+    // The live helper first (what the game itself would upload, 0x1a9a8f0), else the slot record.
+    {
+        std::uint32_t w[0x1f] = {};
+        if (HelperFields(slot, w) && w[3] != 0) {
+            std::vector<std::uint8_t> out(0x7c);
+            std::memcpy(out.data(), w, 0x7c);
+            return out;
+        }
+    }
     std::vector<std::uint8_t> out;
     if (slot < 0 || slot >= kSlots) {
         return out;
@@ -324,6 +384,7 @@ void Tick(bool host) {
     if (s.slot != last.slot || s.channel != last.channel || s.load_mode != last.load_mode) {
         std::printf("Party: chalice: slot %d, dungeon %llu, load mode %d (map %s)\n", s.slot,
                     static_cast<unsigned long long>(s.channel), s.load_mode, MapName(g.map_id).c_str());
+        std::printf("Party: chalice: slot %d helper: %s\n", s.slot, HelperDump(s.slot).c_str());
         std::fflush(stdout);
         last = s;
     }
