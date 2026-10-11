@@ -1593,6 +1593,16 @@ void RemoteVisibleTick(double now) {
         }
         const u8 v = Field<u8>(cd, 0x1bc);
         (void)v;  // live vis1: the game sets +0x1BC bit 1 on visible remote chrs too: not the draw switch
+        // chr +0x1E0 bit 20: set on every drawn player chr (local and remote, both games), clear on
+        // the invisible re-created one ("the health bar but no model", live vis3 render probe:
+        // 0x00009800 vs 0x00109800). Put back.
+        const u32 f = Field<u32>(c, 0x1e0);
+        if (f && !(f & 0x100000u)) {
+            const u32 g = f | 0x100000u;
+            SafeWrite(c + 0x1e0, &g, 4);
+            Log("remote chr %#llx (mode %d, handle %x): draw bit +0x1E0 %#x -> %#x (was not drawn); enterleave%s", ull(c),
+                t.mode, Field<u32>(c, 8), f, g, DescribeEnterLeave().c_str());
+        }
     }
 }
 
