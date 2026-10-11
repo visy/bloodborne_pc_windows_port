@@ -44,8 +44,8 @@ def all_in_world(root: Path) -> bool:
             text = log.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return False
-        worlds = re.findall(r"^Party: (world up|world down)", text, re.M)
-        loads = re.findall(r"^Party: loading screen (up|gone)", text, re.M)
+        worlds = re.findall(r"^Party: (?:\[[^\]]*\] )?(world up|world down)\b", text, re.M)
+        loads = re.findall(r"^Party: (?:\[[^\]]*\] )?loading screen (up|gone)\b", text, re.M)
         if not worlds or worlds[-1] != "world up" or (loads and loads[-1] == "up"):
             return False
     return True
@@ -137,7 +137,7 @@ def main():
                     except ValueError:
                         return 0
                 starved = any(e["count"] >= 3 and waited(e) > 60 for e in st["queue"])
-                want = 3 if starved else st.get("normal_max", 4)
+                want = min(3, st.get("normal_max", 4)) if starved else st.get("normal_max", 4)
                 if st.get("max_clients") != want:
                     st.setdefault("normal_max", 4)
                     st["max_clients"] = want

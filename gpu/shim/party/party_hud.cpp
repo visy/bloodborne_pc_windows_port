@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <mutex>
@@ -94,6 +95,7 @@ void Compose(const ComposeIn& in, Board* out) {
                 if (std::strncmp(l.name, c.name, kNameBytes) != 0) continue;
                 c.local_read = true;
                 c.age_ms = 0;
+                c.local_dead = l.have_hp && l.hp <= 0;
                 if (l.have_hp && !c.have_hp) {  // VITALS first: the remote data module lags
                     c.have_hp = true;
                     c.hp = l.hp;
@@ -120,7 +122,25 @@ void Publish(const Board& b) {
     const std::uint64_t seq = g_board.seq + 1;
     g_board = b;
     g_board.seq = seq;
+    g_board.published_ms = NowMs();
     g_shown.store(b.active && b.count > 0, std::memory_order_relaxed);
+}
+
+std::int64_t NowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+bool TagVisible(const Companion& c, std::int64_t board_age_ms, const char** why) {
+    const char* w = nullptr;
+    if (!c.connected) w = "not connected";
+    else if (!c.same_world) w = "not in this world";
+    else if (!c.local_read) w = "no chr here";  // only the live chr's position, never a network report
+    else if (!c.have_pos || !c.same_map) w = "not on this map";
+    else if (!c.alive || (c.have_hp && c.hp <= 0) || c.local_dead) w = "dead";
+    else if (board_age_ms < 0 || board_age_ms > kTagFreshMs) w = "stale";
+    if (why) *why = w ? w : "";
+    return w == nullptr;
 }
 
 void Read(Board* out) {

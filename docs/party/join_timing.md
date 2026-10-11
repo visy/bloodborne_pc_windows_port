@@ -229,3 +229,53 @@ transport's first connect (1.8 s), the guest's prologue / effect (1.2 s) and the
 world. A guest already in the host's map still loads it (split travel removes same-map loads,
 docs/party/split_travel.md when it lands); Continue still loads the guest's own world first (the
 sign is put up from there).
+
+## 2026-10-11 (later): shorter transport retry and prologue
+
+`Party: Fast join` now sets the NexusRevolution first retransmission timeout to 300 ms (was 1000;
+0xcdb2e8) and the guest's self-prologue to 0.1 s (was 0.5; 0x196d3a8). Live (flowlive, 2 players):
+`JoinRoom` -> client (6) 0.93 s (was 1.8), client (6) -> loading screen 0.80 s (was 1.2). In the
+same run the bell -> `summon_messenger/create` took 7.6 s instead of 2.0: the waiting guest had the
+item catch-up's key-item cards on screen (the game's full-screen card for a badge / key item), which
+the sign sender waits behind - the items catch-up (party_items) should give key items without the
+card, or before the bell.
+
+Not done yet: Continue straight into the host's world (one load from the title), and the 0.5 s
+bell timer race (2 of 6 joins stalled before; not reproduced or understood yet).
+
+Also: a guest that is not in the host's world no longer follows the host's death or a host travel
+within the map it already stands in (party_travel.cpp; live: a waiting joiner loaded for the host's
+lamp warp and death in its own m24_01). Two-player Leave / Join party: the host had no load at the
+guest's join, leave or re-join (one load in the whole run).
+
+## 2026-10-11 (flowlive): the "item cards" and the failed join
+
+* The full-screen item cards seen on guests (Hand Lantern, Monocular, Sword Hunter Badge, Bastard
+  of Loran, Blood Gem Workshop Tool) are **the game's loading-screen item tips**, not the item
+  catch-up: they show exactly while `Party: loading screen up` -> `gone`, a different item each
+  load, and the item-get probe (`BB_PARTY_ITEMGET_PROBE=1`) had 0 entries in the dialog list at the
+  same moments; the catch-up of that run only skipped lots (`already given`). Nothing to fix. (The
+  bell -> sign delay of one run coincided with a loading screen of the waiting guest, which the
+  party_travel fix below removed.)
+* The failed join (guest client -> leaving at once, BeginLeaveSession from +0x178C118 = the session
+  event handler 0x178B5E0's event 0x1E: Lua `OnBeKickOut` / `OnJoinClearedRoom`) followed a load
+  of the *waiting* guest for the host's death travel. With that load gone (a guest outside the
+  host's world no longer follows the host's death or a same-map host travel) the same scenario
+  (host killed by the boss, then the join) joined cleanly (`trying-to-join -> client`, host
+  `cooperators 0 -> 1`). The B2 leave trace now also logs flow +0x84, GSM +0x1592 and flow +0xF4.
+
+## Continue straight into the host's world (one load): design, not done
+
+What the engine needs for a host-world load (b2_seamless.md 1.3, split_travel.md 1): the network
+flow in state 3 (`+0x84`), which the MoveMapStep ctor 0x1937570 turns into host-world mode
+(GSM +0x1592 = 0), a session (room + NexusRevolution session client, role 6) and the host's
+packets 0x10 / 0x11 for the overlay and the enemy state. B2 re-joins get there from inside a
+session (state 4 -> 1 -> 3); a fresh join gets there only through the summon: the guest's sign
+(posted by its bell from its own world) -> the host's summon data -> JoinRoom -> client -> state 1.
+A title-time join would have to (1) create the guest's sign / summon request without a PlayerIns
+(the sign sender object 0x18A9050 and SendSign 0x1901320 read the local player), (2) take the
+host's summon data and JoinRoom at the title (SprjSessionManager runs at the title in online mode,
+but the summon step machine 0x14B5E10 is a world task), (3) enter state 1, take the snapshot, then
+let the title's Continue load run as the state-3 load. Step (1) and (2) are the unknowns; the
+cheaper path is to keep the own-world load short (it is the save's own load, 4 s here) and ring at
+once (0.3 s after the world is steady today). Left for a dedicated RE pass.

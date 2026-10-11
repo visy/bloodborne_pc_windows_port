@@ -139,6 +139,26 @@ Audit of what loads a stage in a party, and what is same-map:
 
 `BB_PARTY_INWORLD=0` turns the in-world follow off (A/B tests).
 
+
+### 3b. From hostdeath: remote chr render state, and re-creating a remote chr (2026-10-11)
+
+* A remote player chr's draw factor is **PlayerIns +0x208** (float): it fades 0 -> 1 when the chr is
+  built and 1 -> 0 in the death dissolve (live: `draw 0.25 / 0.75 / 1.00` after a summon, `0.88 /
+  0.47 / 0.05 / 0.00` over 4 s after the owner died). The name plate and HP bar stay where the chr is
+  even at draw 0: a dead copy left in a world is a "plate without a body". +0x20C/+0x210 (ChrFadeIn /
+  ChrFadeOut alpha) stayed 1 / 0 throughout. A copy re-created by its task reads +0x1E1 `0001000098`
+  (bit 0x1000 clear) where the first copy read `0001001098`; meaning unknown.
+* hostdeath re-creates the copy of a player who respawned without a load the way the host does for
+  a lone respawn: remove the dead copy (slot release `0x15BC080`, WorldChrMan remove `0x19186E0`) and
+  rewind its task to STEP_Create (`member_revived` / `host_revived`, party_b2.cpp
+  `MemberRevivedTick` / `HostRevivedTick`). The new copy is built at the owner's current position
+  with draw 1 (live hd28: `0.5 m draw 1.00`). A shared "re-create the remote chr on all peers" path
+  for split travel's arrival can reuse it.
+* `remote chrs:` log lines (party_b2.cpp `RemoteChrRenderWatch`, any session) print every remote
+  chr's position, distance, draw factor, alpha, flags and HP when they change.
+* A local chr warp (vfunc +0x5F8) on a REMOTE copy does not move its name plate (tried: plate stayed at
+  the summon spot); the ghost plate at the summon spot after a B2 arrival is not fixed that way.
+
 ## 4. Implementation (gpu/shim/party/party_split.cpp, party_b2.cpp, party_travel.cpp)
 
 **The question.** A lamp or headstone warp `0x13CDF30(id)` the player starts, or the Hunter's Mark
@@ -209,3 +229,23 @@ Not done / open:
 * Three or more players apart: chrs are matched to members by the vitals' positions (works for
   any count in principle), not run live.
 * A guest's own last-lamp record is not updated by an alone travel.
+
+## Floating phantom name plate: what agent/balance learned (2026-10-11)
+
+User screenshots (split24 run; also a 3-player Dream run): on the host the guest's chr is not drawn
+and the game's own blue "Co-operator / name" plate with its HP bar floats where nobody stands; the
+guest sees both players fine.
+
+* The plate is the game's `FrpgMenuDlgFloatingPCGauge` (string 0x4930683; built next to the enemy
+  bars in 0x167c460), drawn over the host's own copy of the guest PlayerIns, at that copy's
+  position. The party HUD showed the guest 0.9 m away at the same time: that distance comes from
+  the guest's own VITALS because the host's copy was more than 8 m from the guest's report, i.e.
+  the host's copy kept a stale position (no updates) and was not drawn: consistent with the host's
+  chr remove / rebuild leaving a stale or hidden copy whose plate stays alive.
+* A disabled chr (ChrIns_SetDisable 0x18c6390 sets [chr+0x18]+0x20 bit 0 and [chr+0x58]+0x114 bit
+  0x40) is not drawn; if the copy is disabled while its plate is up, the plate is the leftover.
+* The port's own HUD / tags no longer imply a member is there: a disabled chr is not "here", a chr
+  more than 8 m from its member's own report is never matched to it (logged as `stale remote
+  chr? ...`, once a minute), and a tag needs a chr read this tick, alive, on our map, from a fresh
+  board (`party::hud::TagVisible`; `Party HUD: tag X hidden: why`). `BB_PARTY_HUD_POSDIAG=1` (with
+  `BB_PARTY_HUD_LOG=1`) dumps position-like values in each remote PlayerIns for the anchor hunt.
