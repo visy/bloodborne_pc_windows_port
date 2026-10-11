@@ -635,11 +635,6 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
 }
 
 
-std::int64_t LastLookupMs(std::uint32_t id) {
-    const SeenId& e = seen_ids[(u64(id) * 0x9E3779B97F4A7C15ull) >> 52];
-    return e.id.load(std::memory_order_relaxed) == id ? e.ms.load(std::memory_order_relaxed) : 0;
-}
-
 std::int64_t TextSeenMs(const char* needle) {
     std::int64_t best = 0;
     const std::size_t n = std::strlen(needle);
@@ -666,6 +661,21 @@ std::int64_t TextSeenMs(const char* needle) {
         }
     }
     return best;
+}
+
+void RecentTexts(std::int64_t since_ms, void (*fn)(const char16_t* text, std::int64_t ms, void* user), void* user) {
+    for (RecentText& r : recent_texts) {
+        const std::int64_t ms = r.ms.load(std::memory_order_acquire);
+        const char16_t* t = r.text.load(std::memory_order_relaxed);
+        if (t && ms > since_ms) {
+            fn(t, ms, user);
+        }
+    }
+}
+
+std::int64_t LastLookupMs(std::uint32_t id) {
+    const SeenId& e = seen_ids[(u64(id) * 0x9E3779B97F4A7C15ull) >> 52];
+    return e.id.load(std::memory_order_relaxed) == id ? e.ms.load(std::memory_order_relaxed) : 0;
 }
 
 int RecentLookups(std::int64_t within_ms, std::uint32_t* out, int max) {

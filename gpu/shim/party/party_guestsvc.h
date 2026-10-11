@@ -158,6 +158,9 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link);
 bool GuestServicesOnLampRequest(int slot, const std::string& body, std::string* why);
 /// Open right now (diagnostics, the Party tab).
 bool GuestServicesOpen();
+/// The ChrIns of a map character by its talk script / entity id (WorldChrMan chr sets), 0 if none
+/// (main thread; live test fixtures).
+std::uint64_t GuestSvcFindChr(std::uint32_t id);
 #endif
 
 } // namespace coop

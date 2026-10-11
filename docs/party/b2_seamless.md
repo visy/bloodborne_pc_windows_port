@@ -67,7 +67,10 @@ Marks: **[C]** confirmed in disassembly / decompile, **[R]** confirmed at runtim
   `SetLoadMode(1)`); +0x1592 is set back to 1 by the stage-end step `0x1942720` and re-zeroed by
   the next ctor if +0x84 is still 3. [C]
 * The flags of a host-world load come from the overlay (+0x88 of SprjEventFlagMan), filled only
-  by the packet 0x10 apply `0x13BECA0` (12 groups: globals + **the current map**). [C]
+  by the packet 0x10 apply `0x13BECA0` (12 groups: globals + **the current map**). [C] Since
+  2026-10-11 the host-world mirror fills the rest right after that apply (K11 calls
+  `progress::OnVanillaSnapshotApplied`, and again after the overlay guard below): every group of
+  the host's world but the boss / enemy zones (event_flags.md 12). [R]
 * The enemy / object state of a host-world load comes from the host's packet 0x11: the receive
   (state 1 only) stores three blobs at GSM +0x16C0 / +0x16A0 / +0x1684; WorldChrMan `0x191BDD0`
   applies the `CHR ` blob (+0x1684 in host-world mode, the guest's own +0x1690 at home). [C]
@@ -161,6 +164,8 @@ only in state 1 (queued until then). Enemy net sync per peer is re-armed by `0x1
 | K7 | 0x13CDEAE | `75 6c` | `eb 6c` written / restored around the guest's own warp (main thread) | guest warp without leaving |
 | K8 | 0x18C4D7D | `e8 2e 00 59 00` call 0x1E54DB0 | skip on the host (role 3) | ChrIns_OnDeath asks every human task to return when the host dies |
 | K9 | 0x1381A93 (B1 SendHomeHook) | - | `SetSendHomeVeto`: a B2 guest drops HostDead_1's send-home | the guest follows the host's death travel instead of going home |
+| K10 | 0x13858F5 / 0x1385A95 | `e8 a6 ae b4 00` / `e8 06 ad b4 00` call 0x1ED07A0 | call-site hook: no leave with role 3 or 6 | the party stays after a boss (BlockClear2_1 / _3 run on host and guest; 6.7) |
+| S1 | GameData +0x5D8 of members / the guest itself | - | last counted session type put back after a load | cooperator count 0x15BDC20 (watchdog, EMEVD 1003[109]) stays right (6.7) |
 | E1 | NowLoading `*0x5562878` | - | guest at the host's travel event: +0x808 = 5, byte 0x556286B = 1, +0x17C0 = 0, +0x804 = 1 (the inline request of 0x1929007); dropped with 0x176D3C0 on a fallback | one continuous loading screen for the guest |
 | D4 | task update | - | a rewound task whose +0x54 stays unapplied for 2 s gets one update run by us (`0x1E52FE0(task, &{0x52EFD40, dt})`, as 0x1E556F0 does), not during SprjRemo | rewind gap fallback |
 | D1 | flow +0x84 | - | guest: 1 on host travel, 3 after the snapshot (the setter 0x178D9A0's write) | host-world load |
@@ -354,14 +359,152 @@ warp's own target was used; with +0x1521 = 1 our +0x14C4/D0/E0 write gives the s
   100/100 identical before the travel and after the B2 load; HP refilled by the load and put back
   (100/106). Buffs (SpEffects) not measured.
 
+### 6.7 Runs r1-r7 (bossk10): a real boss kill with the party, cooperator count, buffs [R]
+
+Setup: base save `savedata_20261010` on both instances; the Cleric Beast "un-killed" with
+`BB_PARTY_PROGRESS_TEST_CLEAR=12411700,12411701,12411702,12411703,12414700,12414701,12414223,
+72410511,2411,9456,2410` (both saves; log `test: cleared ... 12411700:1->0 ... 2410:1->0`).
+Note: in m24_01 the Cleric Beast is **12411700** (EMEVD name 教区長, entity **2410800**, lot
+50000010, boss-count bit 9456, area bit 2411); **12411800 is Father Gascoigne** (2410810/811,
+cutscene 24010010, lot 31000). First fight: host (chr type 0) inside region **2412805** (box
+12 x 2 x 4 at (-136.5, -27.4, 52.8), MSB) -> 12411702 short-warps the boss (2412831) -> 12414702.
+No fog on the first fight (the fog object 2411800 only for a rematch, 12414730); the guest's own
+"enter boss room" 12414731 needs the fog action button (no OS input here), so the guest was
+warped into the arena instead. Test chain (director): host `host_warp=2412952@8,
+host_move=-136.5:-26.6:52.8@12%m24_01,host_kill=2410800@6`, guest
+`guest_move=-134.6:-26.6:54.7@3%m24_01` (y -27.4 = the region floor: r5 fell through the
+bridge, both players died falling).
+
+Bugs found and fixed:
+* **Host cooperator count 0 after every B2 load (r1, r2)** -> the host watchdog ended the party
+  60 s after any host travel ("joining member made no progress"). The presence slot table was
+  intact (`[1 h 10044001 kind 1 st 3 chr ok]`); the count 0x15BDC20 also asks chr vfunc +0x558 =
+  SessionTypeDesc[GameData +0x5D8] +0x15 (counted in {1,5,7,19}). r3: the re-created guest chr
+  had session type **0** (was 7) on the host, and the guest's **own** +0x5D8 read 0 after its
+  host-world load (r6), so its InGameStart record carried 0. Fix `MemberSessionTypeTick`: the last
+  counted session type per member task (and a guest's own player) is put back (`member task:
+  session type 0 after the load / re-creation (not a cooperator) -> 7 as before`, both sides in r7;
+  cooperators stay 1 on host and guest).
+* **Host leaves after a boss (r3)**: 12 s after the kill the host went 3 -> leaving 7 and the
+  guest's session ended although its own K10 fired. The host runs the same BlockClear2_1 / _3
+  Lua states; **K10 now drops the leave for both roles** (r5-r7: `K10: boss-clear leave
+  suppressed (host; party stays)`). A BeginLeaveSession entry trace (ReplacePrologue on 0x1ED07A0,
+  `leave: BeginLeaveSession called from +0x...`) names any other path that ends a B2 session
+  (r5: +0x1789F99 = flow update after the host's 60 s arrival timeout; +0x13CDEF6 = the funnel
+  on a guest's death).
+* **Guest buffs lost in a B2 load** (r1: 13 SpEffects at the travel -> 9 after; the test buffs
+  3240 / 2200, 60 s, gone; 9006 / 9120 / 9121 -> 9110 are the session's own). SpEffect node: +0x00
+  time left, +0x04 duration (f32), +0x40 id, +0x58 next. Fix `RestoreBuffs`: timed effects (not
+  9000-9199) held at the host's travel and missing after the load are applied again with the time
+  they had left (`buffs lost in the load restored: 3240(60.0 s) 2200(60.0 s)`;
+  `BB_PARTY_B2_KEEP_BUFFS=0` off). Test aid `BB_PARTY_B2_TEST_SPEFFECT=id[,id]` (guest, at the
+  travel event).
+
+r7 (final, merged tree): fight started (12411702 [12] boss warp, 12414702), host_kill 6 s later:
+both instances ran 12411700 [10] 2007[02] (PREY SLAUGHTERED banner, screenshot on the guest
+with the host beside it) and [15] **2003[12]**; host `host boss kill ... 3 Insight`, K10 (host);
+guest K10 (guest) + `send-home at +0x13859df dropped`, stayed **client (6) in the host's m24_01
+for 2.5 min** until the lease ended the run; host cooperators 1 throughout. Guest rewards: Insight
+6 -> 9 (C-phantom parity), echoes 0 -> 4000, C3 lot 50000010 (Sword Hunter Badge) already given at
+the join from the host's history (`guest got 1 grants from the host, 0 new` at the kill: no
+duplicate).
+
+### 6.8 Runs r8-r15: wipes (guest and host dead), fog gate by pad [R]
+
+Steps: host `host_warp=2412952@8,host_die@4#2`, guest `guest_die@S%m24_01` (die steps with
+`%MAP` run S s after the last load, no re-join needed).
+
+* r8: the guest's death went first and B1 took it (redirect to the host's lamp in its own world =
+  a leave, then the bell re-summon). Now **held** (`HoldGuestDeath`, party_travel
+  `SetGuestDeathHold`, `BB_PARTY_B2_DEATH_GRACE` 8 s): a host travel in flight or arriving within
+  the grace takes the guest along (`held death goes with the host's travel (2.8 s after it); no
+  redirect, no leave`); otherwise the usual redirect runs (`GuestDeathRedirectNow`).
+* r8 then waited 45 s for a snapshot and fell back to B1: the host was still in
+  `HostPhase::Resynced` from the warp's re-join (it stays there up to 60 s) when it died, so its
+  second load was never noticed and nothing was re-sent - also the cause of r5's 30 s wait. Fix:
+  a load in `Resynced` re-enters `Loading` (`host: another own load before the last re-join
+  settled`); r11-r15 re-sent after the death load.
+* r11 then reproduced the **Hunter's Dream placement**: the dead guest's load is a death load and
+  goes to its own respawn records (GSM +0x1528 / +0x1538 / +0x153C: the Dream) whatever the forced
+  transform says - it loaded m21_00 in host-world mode, 142 m from the host on both screens
+  (`host watch: ... guest (-9.20, -6.77, -19.40) 142.72 m`). Fix: for a dead follow the host's
+  records from the travel intent are written before the load and the own ones put back after the
+  arrival (`respawn records = the host's (last lamp 0x18b50002016b1 -> 0x18b2b0024d198, mode 0 ->
+  1, respawn -1 -> 0x18b2b0024d198)`); a death load lands on the lamp spot itself (0.00 m from the
+  host in r13/r14), so the guest is then warped beside the host (chr warp +0x5F8).
+  r13 (guest dies first) and r14 (host first: `held (the host's travel is in flight)`): the guest
+  arrives in m24_01 in the host's world, client throughout, host cooperators back to 1.
+* r12 (both fall through the bridge): the host's fall recovery lamp-warps it (a travel); the
+  falling guest follows before it dies and arrives 2.2 m beside the host. Fall recovery of a party
+  guest now targets the host's last lamp (not its own, often the Dream) and leaves a pending
+  stage request alone.
+* r10, fog gate by in-process pad: `guest_move=-155.15:-26.6:34.37:-2.35@4,guest_press=0x4000@1.5`
+  (fog 2411800 at (-154.44, -27.02, 35.07); yaw -2.35 = the fog object's own facing; Cross via
+  `runtime_pad_director_press`, no OS input): EMEVD 12414731 ran [8] (turn + walk-through anim
+  101130) and [17] set **12414701** (the guest entered the boss room) after the host's 12414700.
+  The earlier try (yaw 0.79, before 12414700 was set) did nothing.
+
+### 6.9 Runs r16-r17: a guest dying alone respawns in the host's world [R]
+
+ER-Seamless-style: a guest that dies while the host lives stays a client and respawns at the
+host's last lamp in the host's world. After the held death's grace (6.8) without a host travel,
+`SoloRespawn` (guest, `BB_PARTY_B2_SOLO_RESPAWN=0`: off) builds a lamp intent for the host's last
+lamp (ReturnPointParam row via `0x1F26B40(out, id)`, record {+4, +8} as 0x13CDF30 writes it), runs
+the B2 re-join as a dead follow (flow 1, host's records into GSM +0x1528 / +0x1538 / +0x153C, death
+load in host-world mode, own records back on arrival, no beside-the-host warp) and sends
+`{"op":"respawn"}`. The host re-sends the snapshot and its spot, and removes the dead member chr
+the way the task's own STEP_DeleteWait 0x1E50A70 does (slot release `0x15BC080`, WorldChrMan
+remove `0x19186E0`), keeping the task (K8 already keeps it on any death while hosting); on
+"arrived" the task is rewound to STEP_Create and the chr is built again from the member's
+GameData row.
+
+* r16 (without the removal): the guest respawned at the lamp in m24_01, still a client, but the
+  host kept its dead chr (`hp 1`, presence state 5) at the death spot and rewound 0 tasks.
+* r17: `host: dead member chr ... (hp 1) removed; its task is kept`, guest `respawned at the host's
+  lamp in the host's world (stage 0x18010000 pos (-124.8, -27.0, 64.3) hp 106), still a client`,
+  host `task mode 1 rewound to STEP_Create`, cooperators 0 -> 1 14 s after the death; screenshot:
+  the host sees "Co-operator Hunter1" alive 0.8 m away at the lamp. No leave, no bell.
+
+Death rules on a lone respawn (as a vanilla phantom's death, which never costs the phantom
+anything in its own world): full HP; buffs end (not restored, unlike a plain B2 load); echoes,
+Insight and consumables are kept (no bloodstain in the host's world: a phantom's echoes are not
+part of the host's world, and the guest's own world is not where it died); the host's world is not
+reset. Fallback: no snapshot within 45 s -> the B1 fallback as before (redirect, leave, bell).
+
+### 6.10 Runs r18-r25: lone-death variants [R]
+
+* **Host's last lamp in another map** (r24-r25; fixture `host_lastlamp=2402950`: the host's
+  +0x1528 names a Cathedral Ward lamp while the party stands in m24_01 - the state after walking
+  into the next area. A stage warp 0x132E010 to m24_00 was tried first: points 2402950 /
+  2401950 are no warp regions, the host fell and recovered, r18/r21). `SoloRespawn` sees the lamp's
+  map (`ids::EntityMap`) differ from the current one and picks a lamp of the current map:
+  ReturnPointParam ids AAB295k, lit = common event 7000's 2009[5] flag `1AAB7800 + 20k` (m24_01:
+  2410950.. -> 12417800 / 820 / 840 / 860, from the EMEVD args). In the host-world overlay these
+  flags read 0 for every lamp (r25: `2412950:- 2412951:- 2412952:- ...`), so the first lamp of the
+  map is used (any ReturnPointParam row of the map is a valid respawn spot). r24 (before that
+  fallback) found none and took the old redirect (leave, bell; re-summoned 60 s later). r25: `the
+  host's last lamp 2402950 is not in m24_01_00_00; lit lamp here: 2412950` -> respawned in m24_01 at
+  (-199.7, -50.8, 179.4), still a client; the host removed the dead chr and re-created it.
+* **Three players** (r19, r22): r19 removed **both** guests' chrs on the host (remote chrs' HP read
+  1 on both). Now the guest sends where it died (`{"op":"respawn","pos":[...]}`) and the host
+  removes only the member chr within 6 m of it. r22: one removal, host cooperators 2 -> 1 -> 2, the
+  other guest untouched (its own view of the dying guest re-created 0.5 s later).
+* **45 s fallback** (r20, r23; host `BB_PARTY_B2_TEST_FAIL=resync`, both in the Dream): r20 stayed
+  dead in the host's world - the B1 replay of the synthetic intent was dropped ("not newer than
+  the last"). Fix: a failed lone-death respawn runs `GuestDeathRedirectNow` (r23: `FALLBACK (no host
+  snapshot within 45 s): the lone death's respawn failed; the usual death redirect runs` -> leave,
+  own-world respawn at the host's last lamp, bell). **Open**: in r23 the bell re-summon did not
+  complete in the 2 min left (host sign polled, signaling resolved, no join; the host room timed
+  out twice via +0x1789F99) - in r24 the same redirect re-summoned in 60 s, so the test-fail mode or
+  the Dream may matter; not resolved.
+* **Echoes** (r21, r25; `echoes=5000` director test aid on the guest): `echoes 5000` at the death and
+  after the respawn load; nothing dropped, as decided in 6.9.
+
 ## 7. Risks / open items
 
-* K10 / boss clear with a real kill: the test save has Cleric Beast / Gascoigne already dead
-  (12411800 = 1, 2410 = 1). Plan: a save before a boss near a lamp (Vicar Amelia from the
-  Cathedral Ward lamp, or a chalice boss), both players in the arena via director test actions
-  (`host_warp`), the fight started by its EMEVD fog event, then `ForceDead(boss entity)` on the
-  host (the boss-death EMEVD 2003[12] and Lua 4050 run as in a real kill); expect the guest's
-  K10 / send-home veto lines and the session kept.
+* (Closed in 6.7 / 6.8) K10 / boss clear with a real kill; wipes (guest and host dead) and falls
+  follow the host; the guest's fog-gate entry by the in-process pad. A guest that dies alone respawns in
+  the host's world (6.9).
 
 * (Closed in run 9) Guest rewind not executing in run 5. Static analysis: the update `0x1E52FE0` copies
   +0x54 to +0x50 unconditionally on entry, so `step 6 next 4` means the task update was not
@@ -374,10 +517,10 @@ warp's own target was used; with +0x1521 = 1 our +0x14C4/D0/E0 write gives the s
 * Host death (K8/K9, untested live): the host keeps its member tasks, respawns at its lamp through
   the funnel (B1 captures HostDeath and broadcasts it), the guests drop HostDead_1 and follow the
   travel event with B2.
-* Boss clear (K10 + veto, untested live): the guest's boss-clear Lua states leave at 0x13858F5 /
-  0x1385A95 (`e8 a6 ae b4 00` / `e8 06 ad b4 00` → 0x1ED07A0) and send home at 0x13856F4 /
-  0x13859DF; with B2 both are dropped on a guest, so the party stays in the cleared area (the host's
-  own boss rewards / 4050 handling are unchanged).
+* Boss clear (K10 + veto, live in 6.7): the boss-clear Lua states leave at 0x13858F5 /
+  0x1385A95 (`e8 a6 ae b4 00` / `e8 06 ad b4 00` → 0x1ED07A0) on **both roles** and send home at
+  0x13856F4 / 0x13859DF (guest); with B2 the leaves are dropped on host and guest and the guest's
+  send-home is vetoed, so the party stays in the cleared area (rewards unchanged).
 * Early loading screen (E1, untested live): what the request byte does while the guest is still
   in the world (input, pause) is unknown; the guest's own load clears it at InGameStart.
 * Loading-screen count: host 1, guest 1 (its own load starts when the host's snapshot arrives,

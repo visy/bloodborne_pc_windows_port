@@ -785,10 +785,16 @@ void DefineAll() {
                party.member_name[k], party.member_help[k], {party.member_value[k], party.member_confirm[k]},
                Kind::Toggle, [k] { return k < member_rows; });
     }
-    // At most four member rows: the page's six rows hold these two too.
+    // At most four member rows: the page's six rows hold the notices and the party HUD switch too
+    // (the last event, after them, shows while fewer than four hunters are in the party).
     AddRow(Flag(&Values::party_toasts), "Join/leave notices", "Уведомления",
            "A short notice in a top corner when a hunter joins or leaves",
            "Короткое уведомление в углу, когда охотник входит или выходит", toggle, Kind::Toggle);
+    // Party HUD (party_hud.h): party mode only. With four members the last event row gives way.
+    AddRow(Flag(&Values::party_hud), AddText("Party HUD", "Панель группы"),
+           AddText("Companions' names, health and where they are, in the bottom left corner",
+                   "Имена, здоровье и местоположение спутников в левом нижнем углу"),
+           toggle, Kind::Toggle, [] { return party::status::Enabled(); });
     party.event_value = AddDynamic(MaxValueLength);
     party.event_help = AddDynamic(MaxHelpLength);
     AddRow(Info(), AddText("Last event", "Последнее"), party.event_help, {party.event_value, party.event_value},

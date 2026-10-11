@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -556,6 +557,89 @@ static void test_four_players() {
           e.reject_reason().find("max 4 players") != std::string::npos);
 }
 
+// Party HUD vitals: the sanitizer, then host + 2 guests exchanging VITALS (each sees the others).
+static void test_vitals() {
+    MemberVitals v;
+    v.slot = 2;
+    v.flags = 0xff;
+    v.hp = 500000;
+    v.max_hp = 4000000;
+    v.stamina = 60000;
+    v.max_stamina = 60000;
+    v.pos[0] = 1e9f;
+    CHECK(sanitize_vitals(v));
+    CHECK(v.flags == (kVitalsValid | kVitalsAlive) && v.max_hp == kMaxVitalsHp && v.hp == kMaxVitalsHp);
+    CHECK(v.max_stamina == kMaxVitalsStamina && v.stamina == kMaxVitalsStamina && v.pos[0] == 0.0f);
+    MemberVitals w;
+    w.slot = 4;
+    CHECK(!sanitize_vitals(w));
+    w.slot = 1;
+    w.flags = kVitalsValid | kVitalsAlive | kVitalsHasPos;
+    w.hp = 0;
+    w.max_hp = 100;
+    w.pos[1] = std::nanf("");
+    w.yaw = 7.0f;
+    CHECK(sanitize_vitals(w));
+    CHECK(w.flags == kVitalsValid);  // dead, no position
+    w.pos[1] = 3.0f;
+    w.flags = kVitalsHasPos;
+    w.hp = 50;
+    w.yaw = 7.0f;
+    CHECK(sanitize_vitals(w) && w.hp == 0 && w.max_hp == 0 && w.flags == kVitalsHasPos && w.yaw < 3.1416f &&
+          w.yaw > 0.7f);
+
+    PartyLink host(base_cfg("Host", ""), LinkCallbacks{});
+    std::string err;
+    CHECK(host.start_host(&err));
+    const std::uint16_t port = host.bound_port();
+    PartyLink a(base_cfg("Alice", ""), LinkCallbacks{}), b(base_cfg("Bob", ""), LinkCallbacks{});
+    CHECK(a.start_guest("127.0.0.1", port, &err) && b.start_guest("127.0.0.1", port, &err));
+    CHECK(a.wait_connected(5000) && b.wait_connected(5000));
+    auto mk = [](std::uint32_t hp, float x) {
+        MemberVitals m;
+        m.slot = 3;  // ignored: the link fills in its own slot
+        m.flags = kVitalsValid | kVitalsAlive | kVitalsHasPos;
+        m.hp = hp;
+        m.max_hp = 1000;
+        m.stamina = 80;
+        m.max_stamina = 100;
+        m.map_id = 0x18000000;
+        m.pos[0] = x;
+        m.pos[1] = 1;
+        m.pos[2] = -x;
+        m.yaw = 0.5f;
+        return m;
+    };
+    host.set_local_vitals(mk(900, 1));
+    a.set_local_vitals(mk(800, 2));
+    b.set_local_vitals(mk(700, 3));
+    auto find = [](const PartyLink& l, int slot, MemberVitals* out) {
+        MemberVitals all[kMaxVitals];
+        const int n = l.vitals(all, kMaxVitals);
+        for (int i = 0; i < n; ++i)
+            if (all[i].slot == slot) {
+                *out = all[i];
+                return true;
+            }
+        return false;
+    };
+    MemberVitals got;
+    const int sa = a.local_slot(), sb = b.local_slot();
+    CHECK(wait_for([&] { return find(host, sa, &got) && got.hp == 800; }, 3000));
+    CHECK(got.pos[0] == 2.0f && got.map_id == 0x18000000 && got.stamina == 80 && got.yaw == 0.5f);
+    CHECK(wait_for([&] { return find(a, 0, &got) && got.hp == 900; }, 3000));
+    CHECK(wait_for([&] { return find(a, sb, &got) && got.hp == 700 && got.pos[2] == -3.0f; }, 3000));
+    CHECK(wait_for([&] { return find(b, sa, &got) && got.hp == 800; }, 3000));
+    CHECK(find(a, sa, &got) && got.hp == 800 && got.age_ms == 0);  // its own
+    // A change gets through within a few send intervals.
+    a.set_local_vitals(mk(10, 2));
+    CHECK(wait_for([&] { return find(b, sa, &got) && got.hp == 10; }, 3000));
+    // A guest that leaves goes stale on the others.
+    b.stop();
+    CHECK(wait_for([&] { return !find(a, sb, &got); }, kVitalsStaleMs + 3000));
+    std::printf("  vitals relayed (slots %d, %d)\n", sa, sb);
+}
+
 // A crashed host restarted on the same port with the same secret and the member table it kept:
 // every guest gets its old slot back (a new session: not resumed), nobody is rejected.
 static void test_host_restart() {
@@ -716,6 +800,8 @@ int main() {
     test_kick();
     std::printf("four players (host + 3 guests), game rules\n");
     test_four_players();
+    std::printf("party HUD vitals\n");
+    test_vitals();
     std::printf("host restart: slots restored\n");
     test_host_restart();
     std::printf("%d checks, %d failures\n", g_checks, g_failures);

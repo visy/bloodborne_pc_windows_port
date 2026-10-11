@@ -6,8 +6,9 @@
 //   <gameurl>/basic_utils/{login,get_datetime,get_normal_notice,get_emergency_notice,
 //                          get_user_agreement,sync_chara_id}
 //   <gameurl>/summon_messenger/{create,get,delete,request}   (the party sign board)
+//   <gameurl>/channel/*                                       (Chalice Dungeons, from_api_channel.h)
 //   https://bb-playlog-{test,prod}.s3.amazonaws.com/...       (play logs: PUT, answered 200)
-// and everything else under gameurl (messages, bloodstains, ghosts, Chalice channels) gets an
+// and everything else under gameurl (messages, bloodstains, ghosts) gets an
 // empty success. Bodies and answers whose exact format is not confirmed live in one table,
 // from_api_formats.inc. BB_PARTY_TRACE=1 logs every request and answer.
 //
@@ -15,8 +16,12 @@
 // guest's create puts its sign up, the host's get lists every other member's signs, and the
 // host's request queues a guest_invite (party_transport.h) for the sign's owner with the
 // host's room and addresses - what bbhost's np_matching2.cpp on_server_event reads.
+// Chalice Dungeons (docs/party/chalice.md): a host whose sign query is in area 29 gets signs only
+// while its ChannelId is on the channel board: the summoned game fetches that dungeon by id and
+// quick-joins it, so nobody is summoned into a dungeon layout its own game cannot build.
 #pragma once
 
+#include "from_api_channel.h"
 #include "json.h"
 #include "party_host_service.h"
 
@@ -91,6 +96,7 @@ public:
         std::string data_b64;
         long long chara_id = 0;
         long long version = 3;  // SummonDataVersion as sent
+        long long channel = 0;  // ChannelId as sent (the Chalice Dungeon the sign is in)
         json::Value request;  // the create body as sent
     };
     std::vector<Sign> signs() const;
@@ -103,6 +109,8 @@ public:
     // connection). Its new signs are not offered to anyone for `ms` (docs/party/join_timing.md).
     void hold_signs(const std::string& online_id, int ms);
     std::uint64_t user_id_of(const std::string& online_id);
+    /// The Chalice Dungeon channel board (tests, the party layer).
+    ChannelBoard& channels() { return channels_; }
 
     // The process's (the host's), over PartyHostService::instance().
     static FromApi& instance();
@@ -116,6 +124,7 @@ private:
     std::string sign_request(const Caller& caller, const json::Value& body);
 
     PartyHostService& service_;
+    ChannelBoard channels_;
     mutable std::mutex mu_;
     std::vector<Sign> signs_;
     std::vector<std::pair<std::string, std::int64_t>> holds_;  // online id -> steady ms until

@@ -223,13 +223,42 @@ whoever uses a lamp or headstone, **the whole party travels**, led by the host (
   the press needs the guest standing at the lamp with its prompt up). The host's capture logged
   the warp twice (two TRAVEL / rested events for one warp: harmless, deduplicated by seq on the
   guest, but worth a look).
-* **Guest headstones [R, kept host-only]**: choosing an area in a headstone's menu crashed a guest
-  every time (fault in a library call under the menu code 0x1BEA2D4; the warp list is built from
-  lamp flags the guest's overlay does not have). Guests now keep the headstones' client wait; the
-  host's headstones work in a party (IsMultiplayerInProgress lift) and the party follows the host.
-* Open: `+0x4B` (another character targeting the lamp) and the lamp's chr-type range branch for a
-  guest standing at a lamp; the host's own lamp with guests present (the `+0x49` patch) was not
-  pressed by hand in a live run.
+* **Guest headstones [R, fixed 2026-10-11]**: choosing an area crashed a guest (fault under the
+  menu code 0x1BEA2D4: the warp list is built from the lamp flags of the guest's overlay, which the
+  vanilla join snapshot left empty). The host-world mirror (event_flags.md 12) now copies the host's
+  lamp flags (72xx02xx etc.) into the overlay. Live (`guestheadstone;keys=cross,cross,cross,cross`,
+  guest in the host's Dream): the guest's "Awaken Above Ground" list shows the host's 7 lamps (1st
+  Floor Sickroom ... Old Yharnam; screenshot), choosing 1st Floor Sickroom sets that lamp's flag,
+  m21 event **12107000** (headstone warp, one instance per lamp: `1003[6]` end if client, wait for
+  the flag, `2003[49]` warp) runs with the new client-end skip `12107000:1003:6@0` (LampSkipRules),
+  its `0x13CDF30(2412950)` becomes `lamp: request 2412950 sent to the host`, the host warps (`host
+  travel ... lamp 2412950`), the guest follows (B2 `replay now ... lamp 2412950`, `arrived in the
+  host world`) and stands beside the host in the clinic. No crash. The guest's IsClientPlayer
+  answer is lifted for t210000-t210003 whenever `BB_PARTY_GUEST_LAMPS=1` (t210721 stays excluded).
+* **Host headstone with a guest present [R]** (`hostheadstone;keys=cross,cross,left,cross,cross`, host
+  side): the headstone's menu opened for the host (the IsMultiplayerInProgress lift), the host
+  chose a lamp and warped (`host travel ... lamp 2412950`, one TRAVEL); the guest replayed it (B2:
+  host snapshot applied, `replay now ... lamp 2412950`, host-world load).
+* **One TRAVEL per warp [fixed]**: the host captured a guest-requested lamp warp twice, 26 ms apart
+  (two TRAVEL, two "rested"). `CaptureHost` now drops the same warp (kind, lamp, map, respawn
+  record) seen again within 1 s; the next runs logged one TRAVEL.
+* **Guest button press at a world lamp [R, not working yet; not a flag problem]**: after following the
+  host to Central Yharnam the guest's lamp object (entity 2411951) has all four "unavailable" bytes
+  0 (+0x49 patched) but type (+0x28) 0. The host-world mirror (event_flags.md 12) did not change
+  that: with the mirror the guest's overlay holds every lamp flag the host has (72410201-203,
+  12417810/830/831 ... - dump: 0 host-only bits), the lamp looks the same with the mirror on and off
+  (A/B screenshots), and **the host's own lamp object reads the same** (type 0, `+0xC70 entry: +0xC
+  0 +0xE 0 lit 0 reg 1 +0x14 12417820 +0x18 1` on both). What the bytes are: type = FUN_0146E360,
+  the level (0-4) of the FrpgNetMan +0xC70 "FrpgNetBonfireDbItem" entry's +0xC counter against
+  param 0x96 thresholds (an online lamp-activity level, set by the lamp DB / 0x146D890), and
+  +0x2C = 90000 + type is an **SFX id** (the flame effect; 0x15F95.. are SFX ids in the same
+  function), not an action-button row (ActionButtonParam has no rows 90000-90005). Live
+  (`lampprobe;lampwalk`: the player is warped 1 m in front of the lamp, matrix translation at the
+  0x13C9AF0 record +0x24C/+0x25C/+0x26C = (-196.8, -28.6, 65.4)): **neither the host nor the guest
+  gets a lamp prompt there in a party session** (PromptUp none, screenshots). So the world-lamp gate
+  is still elsewhere (session-gated action, not the overlay); the request path behind it works
+  (`lampflag=` test above) and the Dream headstones now give guests the same party travel.
+* Open: `+0x4B` and the lamp's chr-type range branch for a guest.
 
 ## 4. Safety
 
@@ -271,7 +300,8 @@ into the host's Dream), guest log `Party guest services:` [R]:
   save holds echoes 19640, the host's save is unchanged. Screenshots:
   `agents/guestsvc/evidence/workbench_upgrade`.
 * **Storage (t210693) [R]**: the "Storage" menu opened on the guest (prompt text 70000000 at
-  1.0 m) with the deposit quantity dialog (`agents/guestsvc/evidence/storage`).
+  1.0 m); Cross on Blood Vial, Cross on the quantity dialog: carried Blood Vials 15 -> 14 (one
+  deposited) (`agents/guestsvc/evidence/storage`).
 * **Mirror (t210696)**: not checked: the fixture did not find a character for t210696 in the talk
   table, so the run never placed the guest.
 * **Doll level up [R]**: with 2.4-2.6 in place (`echoes=20000;warp=doll;levelup`): talk, her

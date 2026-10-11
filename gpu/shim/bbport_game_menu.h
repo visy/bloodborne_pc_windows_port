@@ -20,6 +20,8 @@ void TextActivity(std::uint64_t* seq, std::int64_t* last_ms);
 /// The last steady-clock ms a message text containing `needle` (ASCII, case-insensitive) was looked
 /// up (a screen looks its texts up while it is shown); 0 when not among the recent lookups.
 std::int64_t TextSeenMs(const char* needle);
+/// Every recent lookup's text looked up after `since_ms` (test aids' text logs).
+void RecentTexts(std::int64_t since_ms, void (*fn)(const char16_t* text, std::int64_t ms, void* user), void* user);
 
 /// The steady-clock ms of the last lookup of message `id` (any category), 0 when never; shown
 /// texts are looked up every frame, so "within the last ~300 ms" = on screen (test aids).

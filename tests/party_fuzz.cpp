@@ -10,7 +10,8 @@
 //   items      ItemsFromJsonText + FilterPeerItems + GuestItems
 //   phantom    PhantomEventFromJsonText
 //   lamp       LampRequestFromJsonText + SanitizePeerLampRequest (a guest's lamp request, host side)
-//   progress   ChangesFromJson / SnapshotFromJson / GuestApplier queue / BbpfDecode
+//   progress   ChangesFromJson / SnapshotFromJson / GuestApplier queue / WorldImageFromJson +
+//              GuestWorldMirror / BbpfDecode
 //   hostsvc    PartyHostService::handle and FromApi::handle_json (guest RPCs, the sign board)
 //   linkhost   a real PartyLink host over loopback: garbage and pre-auth frames, then
 //              authenticated encrypted frames of every type (RPC_REQ into the host service)
@@ -459,6 +460,12 @@ Corpus json_corpus() {
     snap.blocks[12401] = {800, 801};
     snap.blocks[70002] = {802};
     c.add(coop::progress::SnapshotToJson(snap));
+    coop::progress::WorldImage img;  // host-world mirror groups (EVENT world_groups)
+    img.epoch = 77;
+    img.full = true;
+    img.groups[coop::progress::PoolKeyOfId(72410201)][25] = 0x40;
+    img.groups[coop::progress::PoolKeyOfId(2200)][25] = 0x80;
+    c.add(coop::progress::WorldImageToJson(img));
     // Host service / FromApi requests.
     for (const char* s :
          {R"({"OnlineId":"fz0","SignalingAddr":"10.0.0.2","SignalingPort":3658,"MappedAddr":"203.0.113.9","MappedPort":3658,"RelayPort":50002})",
@@ -697,6 +704,14 @@ void run_progress(Rng& r, const Corpus& c) {
         applier.QueueSnapshot(snap);
     }
     INVARIANT(applier.Pending() <= coop::progress::kMaxPendingItems);
+    static coop::progress::GuestWorldMirror mirror;
+    coop::progress::WorldImage img;
+    if (coop::progress::WorldImageFromJson(s, &img, &err)) {
+        INVARIANT(img.groups.size() <= coop::progress::kPoolBlocks);
+        for (const auto& [key, g] : img.groups) INVARIANT(coop::progress::WorldMirrorKey(int(key)));
+        mirror.Receive(img);
+        INVARIANT(mirror.Dirty() <= coop::progress::WorldMirrorKeys().size());
+    }
     coop::progress::BbpfHeader h;
     std::vector<coop::progress::BbpfBlock> blocks;
     (void)coop::progress::BbpfDecode(in, &h, &blocks);
@@ -852,7 +867,41 @@ bool read_frame(Socket s, party::crypto::Aead* rx, u8* type, Bytes* body) {
 }
 
 enum : u8 { kHello = 1, kChallenge = 2, kAuth = 3, kWelcome = 4, kReject = 5, kPing = 10, kPong = 11, kRoster = 12,
-            kRpcReq = 13, kRpcResp = 14, kEvent = 15, kEventAck = 16, kPartyCmd = 17, kProgress = 18, kBye = 19 };
+            kRpcReq = 13, kRpcResp = 14, kEvent = 15, kEventAck = 16, kPartyCmd = 17, kProgress = 18, kBye = 19,
+            kVitals = 20 };
+
+// A VITALS body: up to 6 entries (the link reads at most kMaxVitals), random fields, sometimes
+// absurd floats (NaN / inf / huge) and out-of-range slots.
+void vitals_body(Rng& r, W& w) {
+    const int n = static_cast<int>(r.below(7));
+    w.u8_(static_cast<u8>(r.chance(8) ? r.below(256) : n));
+    static const std::uint32_t floats[] = {0x00000000u, 0x7fc00000u, 0x7f800000u, 0xff800000u, 0x4f000000u,
+                                           0x42c80000u, 0xc2c80000u, 0x7f7fffffu, 0x00000001u};
+    for (int i = 0; i < n; ++i) {
+        w.u8_(static_cast<u8>(r.chance(3) ? r.below(256) : r.below(4))).u8_(static_cast<u8>(r.below(256)));
+        w.u32(static_cast<std::uint32_t>(r.next())).u32(static_cast<std::uint32_t>(r.next()));
+        w.u16(static_cast<std::uint16_t>(r.next())).u16(static_cast<std::uint16_t>(r.next()));
+        w.u32(static_cast<std::uint32_t>(r.next()));
+        for (int k = 0; k < 4; ++k)
+            w.u32(r.chance(2) ? floats[r.below(std::size(floats))] : static_cast<std::uint32_t>(r.next()));
+    }
+}
+
+// What a link publishes after any VITALS: bounded and sane.
+void check_vitals(const party::PartyLink& link) {
+    party::MemberVitals v[party::kMaxVitals + 2];
+    const int n = link.vitals(v, party::kMaxVitals + 2);
+    INVARIANT(n >= 0 && n <= party::kMaxVitals);
+    for (int i = 0; i < n; ++i) {
+        INVARIANT(v[i].slot >= 0 && v[i].slot < party::kMaxVitals);
+        INVARIANT(v[i].hp <= v[i].max_hp && v[i].max_hp <= party::kMaxVitalsHp);
+        INVARIANT(v[i].stamina <= v[i].max_stamina && v[i].max_stamina <= party::kMaxVitalsStamina);
+        INVARIANT((v[i].flags & ~party::kVitalsKnownFlags) == 0);
+        if (v[i].flags & party::kVitalsHasPos)
+            for (float p : v[i].pos) INVARIANT(std::isfinite(p) && std::fabs(p) <= party::kMaxVitalsCoord);
+        INVARIANT(std::isfinite(v[i].yaw));
+    }
+}
 
 Bytes hello_body(const std::string& name, std::uint16_t version = party::kLinkProtocolVersion) {
     W w;
@@ -963,7 +1012,7 @@ struct LinkHostRig {
 Bytes member_frame(Rng& r, const Corpus& c, party::crypto::Aead& tx) {
     static const char* const kinds[] = {"context_start", "create_room", "join_room", "leave_room", "heartbeat",
                                         "kick_member", "signaling_resolve", "signaling_update", "http", "x"};
-    const u8 types[] = {kPing, kPong, kRoster, kRpcReq, kEvent, kEventAck, kPartyCmd, kProgress, kHello, kWelcome, 0, 200};
+    const u8 types[] = {kPing, kPong, kRoster, kRpcReq, kEvent, kEventAck, kPartyCmd, kProgress, kVitals, kHello, kWelcome, 0, 200};
     const u8 type = types[r.below(std::size(types))];
     W w;
     const std::string json = text_of(next_input(r, c, true));
@@ -992,6 +1041,7 @@ Bytes member_frame(Rng& r, const Corpus& c, party::crypto::Aead& tx) {
     case kEventAck: w.u64(r.next()); break;
     case kPartyCmd: w.str16("cmd").str32(json); break;
     case kProgress: w.str32(json); break;
+    case kVitals: vitals_body(r, w); break;
     default: w.raw(json.data(), std::min<std::size_t>(json.size(), 64)); break;
     }
     Bytes body = w.b;
@@ -1051,6 +1101,7 @@ void run_linkhost(Rng& r, const Corpus& c) {
     setsockopt(cl.s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&to), sizeof to);
     while (Clock::now() < until && read_frame(cl.s, &cl.rx, &type, &body)) {
     }
+    check_vitals(*rig->link);
     if (r.chance(2)) {
         const Bytes bye = sealed_frame(cl.tx, kBye, {});
         send_all(cl.s, bye.data(), bye.size());
@@ -1191,7 +1242,7 @@ void run_linkguest(Rng& r, const Corpus& c) {
     const int n = static_cast<int>(r.below(mode == 4 ? 300 : 20));
     static const char* const names[] = {"travel", "story", "items", "items_full", "phantom", "flags", "flag_snapshot", "room_member_joined"};
     for (int i = 0; i < n; ++i) {
-        const u8 types[] = {kPing, kPong, kRoster, kRpcResp, kEvent, kEvent, kEvent, kPartyCmd, kProgress, kBye, kEventAck, 77};
+        const u8 types[] = {kPing, kPong, kRoster, kRpcResp, kEvent, kEvent, kEvent, kPartyCmd, kProgress, kBye, kEventAck, kVitals, 77};
         const u8 t = types[r.below(std::size(types))];
         W w;
         const std::string json = text_of(next_input(r, c, true));
@@ -1204,6 +1255,7 @@ void run_linkguest(Rng& r, const Corpus& c) {
         case kRpcResp: w.u32(static_cast<std::uint32_t>(r.below(8))).u8_(1).str32(json); break;
         case kBye: if (!r.chance(8)) continue; w.u8_(static_cast<u8>(r.below(10))).str16(std::string(r.below(2000), '\x1b')); break;
         case kPong: w.u64(r.next()).u64(r.next()); break;
+        case kVitals: vitals_body(r, w); break;
         default: w.u64(r.next()).str16("x").str32(json); break;
         }
         Bytes b = w.b;
@@ -1219,6 +1271,7 @@ void run_linkguest(Rng& r, const Corpus& c) {
     while (Clock::now() < until && read_frame(s, &rx, &type, &body)) {
     }
     party::sock::close(s);
+    check_vitals(*rig->guest);
     rig->guest->reconnect_now();
 }
 

@@ -122,8 +122,9 @@ std::uint32_t NewGameDriver::Step(const NewGameInput& in, std::string* log) {
         }
         // A save with a character: Continue fades out before its loading screen shows; give it the
         // time before treating the title as an empty save's (Brightness would get Down / Cross).
-        // (an empty save's Brightness screen shows at once: its new texts end the wait).
-        if (in_phase < 4.0 && !(in.screen_seq != screen_mark_ && in.screen_quiet >= kSettle)) {
+        // No early exit on new texts: Continue looks texts up while it fades too (seen live: the
+        // Brightness presses went out 1 tick after Continue's texts). An empty save waits 5 s more.
+        if (in_phase < 5.0) {
             break;
         }
         // Brightness: Down once it is up (4 s at most), Cross on Next.
@@ -309,8 +310,7 @@ bool MenuScript::Parse(const std::string& text, std::string* bad) {
         std::string tok = text.substr(a, e - a);
         a = e + 1;
         if (tok.empty()) continue;
-        Press p;
-        p.name = tok;
+        Press p{0, false, tok, std::string(), false, std::string()};
         if (tok[0] == '?') {
             p.optional = true;
             tok.erase(0, 1);
@@ -319,11 +319,8 @@ bool MenuScript::Parse(const std::string& text, std::string* bad) {
             p.new_screen = true;
             tok.erase(0, 1);
         }
-        if (!tok.empty() && tok[0] == '~') {
-            p.appeared = true;
-            tok.erase(0, 1);
-        }
-        if (tok.rfind("type=", 0) == 0 || tok == "enter" || tok == "esc") { // the text box, in-process
+        if (!tok.empty() && tok[0] == '~') tok.erase(0, 1);  // the default: looked up since the press
+        if (tok.rfind("type=", 0) == 0 || tok == "enter" || tok == "esc") {  // the text box, in-process
             p.typed = tok == "enter" ? "\n" : tok == "esc" ? "\x1b" : tok.substr(5);
             p.buttons = kType;
             steps_.push_back(p);
@@ -357,18 +354,19 @@ std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen
     if (holding_) {
         if (t < until_) return Held(steps_[next_ - 1].buttons);
         holding_ = false;
-        until_ = t + 0.6;
+        // 1 s between presses; 1.2 s after a direction (the Doll's level-up dialog: Left, 1.2 s, Cross).
+        until_ = t + ((last_buttons_ & (kPadLeft | kPadRight | kPadUp | kPadDown)) ? 1.2 : 1.0);
         return 0;
     }
     if (next_ >= steps_.size() || t < until_) return 0;
     const Press& p = steps_[next_];
     if (!p.text.empty()) {
         if (wait_from_ < 0) wait_from_ = t;
+        // Looked up after the previous press (seen live: a screen or dialog looks its texts up once,
+        // when it builds - not every frame), then 0.4 s for it to take input.
         const double seen = text_seen ? text_seen(p.text) : -1.0;
-        const bool on_screen = seen > pressed_at_ && (p.appeared || t - seen <= 0.5);
-        if (!on_screen) {
-            text_since_ = -1;
-        } else if (text_since_ < 0) {
+        const bool on_screen = seen >= 0 && seen > pressed_at_;
+        if (on_screen && text_since_ < 0) {
             text_since_ = t;
         }
         if (!on_screen || t - text_since_ < 0.4) {
@@ -379,11 +377,21 @@ std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen
                 wait_from_ = -1;
                 return 0;
             }
-            if (t - wait_from_ >= 10.0) {
-                stuck_ = true;
-                if (log) *log = "STUCK at step " + std::to_string(next_ + 1) + ": no '" + p.text + "' in 10 s";
+            // The previous Cross may have been swallowed (seen live: the tutorial's OK while it
+            // opened): press it once more after 3.5 s without the text.
+            if (t - wait_from_ >= 3.5 && !retried_ && next_ > 0 && steps_[next_ - 1].buttons == kPadCross) {
+                retried_ = true;
+                holding_ = true;
+                until_ = t + 0.12;
+                pressed_at_ = t;
+                if (log) *log = "no '" + p.text + "' in 3.5 s: Cross again (step " + std::to_string(next_) + ")";
+                return kPadCross; // held as steps_[next_ - 1] (the previous Cross), then the gap
             }
-            return 0;
+            if (t - wait_from_ < 7.0) {
+                return 0;
+            }
+            // Never hang: the text may be drawn through another path; press anyway, logged.
+            if (log) *log = "no '" + p.text + "' in 7 s, pressed anyway; ";
         }
         text_since_ = -1;
     }
@@ -392,16 +400,24 @@ std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen
         const bool built = screen_seq != mark_ && screen_quiet >= 0.3;
         if (!built && t - wait_from_ < 8.0) return 0;
         if (log) *log = built ? "" : "no new screen in 8 s; ";
+    } else if (log && !p.text.empty() && log->empty()) {
+        *log = "";
     }
     wait_from_ = -1;
+    retried_ = false;
     ++next_;
-    if (p.buttons != kWait) { // a pause (wait, mark=) is not a press: text waits look back past it
+    if (p.buttons != kWait) {  // a pause (wait, mark=) is not a press: text waits look back past it
         mark_ = screen_seq;
         pressed_at_ = t;
     }
+    last_buttons_ = Held(p.buttons);
     holding_ = true;
     until_ = t + (p.buttons == kWait ? 2.5 : 0.12);
-    if (p.buttons == kType) typed_ = p.typed, has_typed_ = true;
+    if (p.buttons == kType) {
+        typed_ = p.typed;
+        has_typed_ = true;
+    }
+    text_since_ = -1;
     if (log) *log += "step " + std::to_string(next_) + "/" + std::to_string(steps_.size()) + ": " + p.name;
     return Held(p.buttons);
 }

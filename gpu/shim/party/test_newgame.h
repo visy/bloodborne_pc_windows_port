@@ -107,16 +107,19 @@ private:
 
 /// A scripted menu walk for test fixtures (BB_PARTY_DIRECTOR_TEST stand=...,seq=...): one token
 /// per press, '/'-separated: cross, circle, square, triangle, up, down, left, right, wait (a 2.5 s
-/// pause; not a press: text waits look back past it to the last real press), mark=NAME (the same
-/// pause, named in the log: a screenshot point), options, type=TEXT / enter / esc (types TEXT into the open text box, or presses Enter /
-/// Esc there, in-process: the caller does that, TakeTyped; "\n" = Enter, "\x1b" = Esc). `button@text` waits until a message text containing `text`
-/// (ASCII, case-insensitive) is on screen - looked up after the previous press and still being looked up - for 0.4 s, then
-/// presses (10 s at most, then the script stops: STUCK). A '?' prefix makes such a step optional: no
-/// text in 3 s -> skipped without a press (a first-time tutorial message). A '~' prefix: the text
-/// looked up once since the previous press is enough (screens that look their texts up only when built,
-/// like the title menu). A '+' prefix waits for any
+/// pause). `button@text` waits until a message text containing `text` (ASCII, case-insensitive) is
+/// on screen - looked up after the previous press (screens look their texts up once, when they
+/// build) - for 0.4 s, then
+/// presses (no text 3.5 s after a Cross: that Cross once more - it may have been swallowed; 7 s at
+/// most, then it presses anyway and logs it). A '?' prefix makes such a step optional: no
+/// text in 3 s -> skipped without a press (a first-time tutorial message). A '+' prefix waits for any
 /// new screen (TextActivity; 8 s at most). Each press is held 0.12 s (menus auto-repeat a held
-/// direction: 0.25 s moved a 2-item dialog twice), the next one no sooner than 0.6 s after it.
+/// direction: 0.25 s moved a 2-item dialog twice), the next one no sooner than 1 s after it.
+/// Also (the party flow's live walk, tools/mp/flow_live.py): options; mark=NAME (a 2.5 s pause
+/// named in the log: a screenshot point); type=TEXT / enter / esc (TEXT typed into the open text
+/// box, or Enter / Esc there, in-process by the caller: TakeTyped, "\n" = Enter, "\x1b" = Esc). A
+/// pause (wait, mark=) is not a press: a text wait after it looks back to the last real press. A
+/// '~' prefix is accepted and means the default (looked up since the previous press).
 class MenuScript {
 public:
     static constexpr std::uint32_t kWait = 0xffffffffu;
@@ -131,7 +134,7 @@ public:
     std::uint32_t Step(double t, std::uint64_t screen_seq, double screen_quiet, std::string* log,
                        const std::function<double(const std::string&)>& text_seen = {});
     bool stuck() const { return stuck_; }
-    /// A `type=` step started: its text, once.
+    /// A `type=` / enter / esc step started: its keys, once.
     bool TakeTyped(std::string* text) {
         if (!has_typed_) return false;
         has_typed_ = false;
@@ -141,18 +144,18 @@ public:
 
 private:
     struct Press {
-        std::uint32_t buttons = 0;
-        bool new_screen = false;
+        std::uint32_t buttons;
+        bool new_screen;
         std::string name;
         std::string text;   ///< @text: wait for it
         bool optional = false;
-        std::string typed;  ///< type=TEXT
-        bool appeared = false; ///< '~': the text looked up since the previous press is enough
+        std::string typed;  ///< type=TEXT / enter / esc
     };
     static std::uint32_t Held(std::uint32_t b) { return b == kWait || b == kType ? 0 : b; }
     std::string typed_;
     bool has_typed_ = false;
-    bool stuck_ = false;
+    bool stuck_ = false, retried_ = false;
+    std::uint32_t last_buttons_ = 0;
     double pressed_at_ = -1e9, text_since_ = -1;
     std::vector<Press> steps_;
     std::size_t next_ = 0;

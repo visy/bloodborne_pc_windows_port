@@ -69,6 +69,7 @@ struct Model {
                     screen = continue_fade > 0 ? Screen::Fade : Screen::Loading;
                     until = t + continue_fade + 5;
                     fade_until = t + continue_fade;
+                    texts_at = t + 0.2; // Continue looks texts up while it fades (seen live)
                 } else {
                     Go(Screen::Brightness, t);
                 }
@@ -198,7 +199,7 @@ void TestHappyPath() {
     // Event driven: from the title (5 s) to the contract's loading screen in a few seconds, every
     // press as soon as its screen took input (the fixed waits took ~30 s).
     std::printf("happy path: title at 5.0 s, loading at %.1f s, %d taps\n", m.loading_at, taps);
-    CHECK(m.loading_at > 5 && m.loading_at < 14);
+    CHECK(m.loading_at > 5 && m.loading_at < 19); // incl. the 5 s Continue wait after New Game
 }
 
 void TestNoScreenSignal() {
@@ -385,17 +386,19 @@ void TestMenuScriptRitual() {
 // screens whose count differs from the plan shift every '+' step). Each step waits for its screen's
 // own text. ----
 struct AltarModel {
-    enum S { None, Tutorial, Menu, ChaliceList, Ritual, Confirm, Done, Cancelled } s = None;
+    enum S { Prompt, None, Tutorial, Menu, ChaliceList, Ritual, Confirm, Done, Cancelled } s = Prompt;
     bool tutorial = true, yes = false;
+    int swallow = 0; // presses the tutorial ignores (seen live: its OK while it was opening)
     double ready_at = 0, built_at = 0, held_since = -1;
     std::uint32_t last = 0;
     std::map<std::string, double> seen;  // text -> last lookup time
     const char* Text() const {
         switch (s) {
+        case None: return "First Ritual Altar";
         case Tutorial: return "Use the Ritual Altar to create a Chalice Dungeon with a chalice ritual";
-        case Menu: return "Chalice Ritual|Chalice Dungeon Search|Search for Chalice Glyph";
-        case ChaliceList: return "Chalice Ritual|Select chalice to use in ritual.";
-        case Ritual: return "Chalice Ritual|Basic materials|Conduct Chalice Ritual to create Chalice Dungeon.";
+        case Menu: return "Ritual Altar|Chalice Ritual|Chalice Dungeon Search|Search by Chalice Glyph";
+        case ChaliceList: return "Chalice Ritual|Select chalice to use in ritual.|Shared Fixed Dungeon";
+        case Ritual: return "Pthumerian Labyrinth|Rite materials|Chalice Ritual";
         case Confirm: return "Conduct a ritual to create a Chalice Dungeon?|Basic materials";
         default: return "";
         }
@@ -406,7 +409,8 @@ struct AltarModel {
         built_at = t + build - 0.1;
     }
     void Tick(double t, std::uint32_t held) {
-        if (t >= built_at) {
+        if (t >= built_at && built_at >= 0) {
+            built_at = -1; // a screen looks its texts up once, when it builds (seen live)
             std::string all = Text(), part;
             for (std::size_t a = 0; a <= all.size();) {
                 std::size_t e = all.find('|', a);
@@ -429,7 +433,14 @@ struct AltarModel {
         if (!down || t < ready_at) return;
         switch (s) {
         case None: if (down & kPadCross) Go(tutorial ? Tutorial : Menu, t, 0.6); break;
-        case Tutorial: if (down & kPadCross) Go(Menu, t, 0.5); break;
+        case Prompt: break;
+        case Tutorial:
+            if ((down & kPadCross) && swallow > 0) {
+                --swallow;
+                break;
+            }
+            if (down & kPadCross) Go(Menu, t, 0.5);
+            break;
         case Menu:
             if (down & kPadLeft) s = Cancelled;  // a stray Left: off the Ritual row
             if (down & kPadCross) Go(ChaliceList, t, 1.2);
@@ -448,9 +459,11 @@ struct AltarModel {
     }
 };
 
-AltarModel::S RunAltar(const char* script, bool tutorial) {
+AltarModel::S RunAltar(const char* script, bool tutorial, int swallow = 0) {
     AltarModel m;
     m.tutorial = tutorial;
+    m.swallow = swallow;
+    m.Go(AltarModel::None, 0.5, 0.8); // the examine prompt shows as the player arrives
     MenuScript ms;
     CHECK(ms.Parse(script));
     auto seen = [&](const std::string& needle) {
@@ -473,26 +486,37 @@ AltarModel::S RunAltar(const char* script, bool tutorial) {
 }
 
 void TestMenuScriptTexts() {
-    const char* script = "cross/?cross@Use the Ritual Altar/cross@Chalice Dungeon Search/cross@Select chalice/"
-                         "cross@Basic materials/left@Conduct a ritual to create a Chalice Dungeon?/cross";
-    CHECK(RunAltar(script, true) == AltarModel::Done);   // with the first-time tutorial message
-    CHECK(RunAltar(script, false) == AltarModel::Done);  // without it (skipped after 3 s)
+    // The live order: the examine prompt, the optional tutorial, the altar menu, the chalice list, the
+    // ritual screen (no texts of its own: they were looked up with the list), the confirm dialog.
+    const char* script = "cross@First Ritual Altar/?cross@Use the Ritual Altar/cross@Search by Chalice Glyph/"
+                         "cross@Select chalice to use/cross@Rite materials/"
+                         "left@Conduct a ritual to create a Chalice Dungeon?/cross";
+    CHECK(RunAltar(script, true) == AltarModel::Done);     // with the first-time tutorial message
+    CHECK(RunAltar(script, false) == AltarModel::Done);    // without it (skipped after 3 s)
+    CHECK(RunAltar(script, true, 1) == AltarModel::Done);  // its OK swallowed once: Cross again
     // The previous '+' script miscounts screens when the tutorial shows up.
     CHECK(RunAltar("cross/+cross/+cross/+cross/+left/cross", true) != AltarModel::Done);
+    // The previous text script (an examine before its prompt, texts expected to be looked up every frame).
+    CHECK(RunAltar("cross/?cross@Use the Ritual Altar/cross@Chalice Dungeon Search/cross@Select chalice/"
+                   "cross@Basic materials/left@Conduct a ritual to create a Chalice Dungeon?/cross",
+                   true) != AltarModel::Done);
     MenuScript ms;
     CHECK(ms.Parse("?cross@Use the/left@a b?") && ms.size() == 2);
     std::string bad;
     CHECK(!ms.Parse("cross@", &bad));
 }
 
+} // namespace
+
+namespace {
 // The party flow's live walk (tools/mp/flow_live.py): the title's texts are looked up once when the
-// menu is built ('~': seen since the previous press is enough), the text box (type= / enter / esc:
-// TakeTyped, no buttons held), mark= pauses and Options.
+// menu is built, the text box (type= / enter / esc: TakeTyped, no buttons held), mark= pauses
+// (not presses: a text wait after one still sees a text looked up after the press before it) and
+// Options.
 void TestMenuScriptTextBox() {
     MenuScript ms;
     CHECK(ms.Parse("~down@New Game/cross/options/type=127.0.0.1:47600/mark=typed/enter/esc") && ms.size() == 7);
-    double new_game_at = 0.5; // looked up once, while the title was built
-    auto seen = [&](const std::string& n) { return n == "New Game" ? new_game_at : -1.0; };
+    auto seen = [](const std::string& n) { return n == "New Game" ? 0.5 : -1.0; };  // looked up once
     std::vector<std::uint32_t> pressed;
     std::vector<std::string> typed;
     for (double t = 5; t < 40 && !ms.finished(); t += 1.0 / 30) {
@@ -502,19 +526,23 @@ void TestMenuScriptTextBox() {
         std::string keys;
         if (ms.TakeTyped(&keys)) typed.push_back(keys);
     }
-    CHECK(!ms.stuck());
+    CHECK(ms.finished() && !ms.stuck());
     CHECK((pressed == std::vector<std::uint32_t>{kPadDown, kPadCross, kPadOptions}));
     CHECK((typed == std::vector<std::string>{"127.0.0.1:47600", "\n", "\x1b"}));
-    // Without '~' the same title text (not looked up again) never counts as on screen.
-    MenuScript strict;
-    CHECK(strict.Parse("down@New Game"));
-    for (double t = 5; t < 20 && !strict.finished(); t += 1.0 / 30) {
+    // A dialog that shows up during the pauses after a press (live: "Session lost" after Leave).
+    MenuScript pause;
+    CHECK(pause.Parse("right/wait/wait/?cross@Session lost"));
+    double dialog_at = -1;
+    std::vector<std::uint32_t> p2;
+    for (double t = 0; t < 30 && !pause.finished(); t += 1.0 / 30) {
+        if (dialog_at < 0 && t >= 2.0) dialog_at = t;  // during the first wait
         std::string log;
-        strict.Step(t, 0, 1e9, &log, seen);
+        const std::uint32_t held =
+            pause.Step(t, 0, 1e9, &log, [&](const std::string&) { return dialog_at; });
+        if (!log.empty() && held) p2.push_back(held);
     }
-    CHECK(strict.stuck());
+    CHECK((p2 == std::vector<std::uint32_t>{kPadRight, kPadCross}));
 }
-
 } // namespace
 
 int main() {

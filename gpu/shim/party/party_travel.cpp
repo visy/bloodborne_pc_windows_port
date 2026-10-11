@@ -20,6 +20,7 @@
 #include "coop_hooks.h"
 #include "game_state.h"
 #include "party_b2.h"
+#include "party_chalice.h"
 #include "party_director.h"
 
 #include <atomic>
@@ -79,6 +80,10 @@ constexpr CallSiteKind kCallSites[] = {
     {0x1332b84, TravelKind::LuaStageKick},   // WarpNextStageKick
     {0x1381ede, TravelKind::HostDeath},      // SoloPlayDeath_2
     {0x1389f20, TravelKind::HuntersMark},    // OnReviveMagic_1 (tail jump)
+    // The Hunter's Mark item (goods 100, SpEffect 2100, stateInfo 16): the special-effect update
+    // 0x18FEF50 calls 0x1317550(ctx, 1) at 0x18FFA1D, which selects the last lamp (0x1332BC0) and
+    // tail-jumps to the funnel at 0x13175EF - so the funnel's return address is this call's.
+    {0x18ffa1d, TravelKind::HuntersMark},
     {0x1381a93, TravelKind::GuestSentHome},  // HostDead_1
     {0x138a51c, TravelKind::GuestSentHome},  // OnLeave_Limit
     {0x1382663, TravelKind::GuestDied},      // PartyGhostDeath_2
@@ -145,12 +150,17 @@ std::string DescribeTravel(const TravelIntent& t) {
     char text[384];
     std::snprintf(text, sizeof text,
                   "#%llu %s (site +0x%x): lamp %d, map m%02u_%02u_%02u_%02u (0x%08x), warp point %d, mode %u, "
-                  "respawn 0x%016llx, last lamp 0x%016llx%s",
+                  "respawn 0x%016llx, last lamp 0x%016llx%s%s",
                   static_cast<unsigned long long>(t.seq), TravelKindName(t.kind), t.call_site,
                   static_cast<int>(t.lamp_id), t.Area(), t.Block(), t.Region(), t.Index(), t.packed_map,
                   static_cast<int>(t.warp_point), t.respawn_mode, static_cast<unsigned long long>(t.respawn_record),
-                  static_cast<unsigned long long>(t.last_lamp), t.has_pos ? ", exact position" : "");
-    return text;
+                  static_cast<unsigned long long>(t.last_lamp), t.has_pos ? ", exact position" : "",
+                  t.chalice_channel ? ", chalice dungeon" : "");
+    std::string out = text;
+    if (t.chalice_channel) {
+        out += " " + std::to_string(t.chalice_channel);
+    }
+    return out;
 }
 
 json::Value TravelToJson(const TravelIntent& t) {
@@ -164,6 +174,9 @@ json::Value TravelToJson(const TravelIntent& t) {
     v.set("mode", t.respawn_mode);
     v.set("respawn", json::hex(t.respawn_record));
     v.set("last_lamp", json::hex(t.last_lamp));
+    if (t.chalice_channel) {
+        v.set("chalice", json::hex(t.chalice_channel));
+    }
     if (t.has_pos) {
         json::Value p = json::Value::make_object();
         p.set("map", t.pos_map);
@@ -194,6 +207,9 @@ bool TravelFromJson(const json::Value& v, TravelIntent* out, std::string* error)
         t.respawn_mode = json::u32(v, "mode");
         t.respawn_record = json::u64(v, "respawn");
         t.last_lamp = json::u64(v, "last_lamp");
+        if (v.find("chalice")) {
+            t.chalice_channel = json::u64(v, "chalice");
+        }
         if (const json::Value* p = v.find("transform")) {
             t.pos_map = json::u32(*p, "map");
             const std::vector<json::Value>& pos = json::arr(*p, "pos");
@@ -231,6 +247,21 @@ bool TravelLampKnown(std::uint32_t id) {
 bool TravelBonfireKnown(std::uint32_t id) {
     // 0x132E050 derives the map from the id itself (area id / 100000, block id / 10000 % 10).
     return ids::EntityKnown(id) && ids::MapKnown(ids::EntityMap(id));
+}
+
+bool TravelIntoChalice(const TravelIntent& t) {
+    auto area_of_map = [](std::uint32_t m) { return m != kTravelNone && ((m >> 24) & 0xff) == 29; };
+    auto area_of_id = [](std::uint32_t id) { return id != kTravelNone && id / 100000 == 29; };
+    const bool lamp_kind = t.kind == TravelKind::Lamp || t.kind == TravelKind::HostDeath ||
+                           t.kind == TravelKind::HuntersMark;
+    return area_of_map(t.packed_map) || (t.has_pos && area_of_map(t.pos_map)) ||
+           (lamp_kind && area_of_id(t.lamp_id)) || (t.kind == TravelKind::LuaBonfireWarp && area_of_id(t.warp_point)) ||
+           ((t.kind == TravelKind::HostDeath || t.kind == TravelKind::HuntersMark) &&
+            area_of_id(static_cast<std::uint32_t>(t.last_lamp)));
+}
+
+bool ChaliceReplayAllowed(const TravelIntent& t, std::uint64_t local_channel) {
+    return !TravelIntoChalice(t) || (t.chalice_channel != 0 && t.chalice_channel == local_channel);
 }
 
 bool SanitizePeerTravel(TravelIntent* t, std::string* why) {
@@ -481,6 +512,7 @@ constexpr u64 kBlockClear3 = 0x1385930;   // Lua state BlockClear2_3: tail jump 
 constexpr u64 kBlockClear3Jump = 0x13859df;
 constexpr u64 kGuestDiedCall = 0x1382663; // PartyGhostDeath_2: `call 0x13CDE30` (e8 c8 b7 04 00)
 constexpr u64 kMarkTailJump = 0x1389f20;  // OnReviveMagic_1: `jmp 0x13CDE30` (e9 0b 3f 04 00)
+constexpr u64 kMarkItemCall = 0x18ffa1d;  // `call 0x1317550` (Hunter's Mark item); its tail jump reaches the funnel
 constexpr u64 kWarpNextStage = 0x132e010; // (ctx unused, area, block, region, u8 index, warp point)
 constexpr u64 kWarpBonfire = 0x132e050;   // (ctx unused, id)
 constexpr u64 kSetForcedMap = 0x156cf10;  // (const u32*) -> +0x14F0
@@ -523,9 +555,21 @@ std::atomic<bool> g_in_replay{false};       // our own warp is running: the hook
 std::atomic<u32> g_lamp_key{kTravelNone};   // 0x13CDF30's edi, read by the funnel it calls
 std::atomic<int> g_block_clear3{0};         // inside BlockClear2_3 (its funnel call is a tail jump)
 std::atomic<u32> g_death_lamp{kTravelNone}; // guest: the host's last lamp (SetGuestDeathRedirect)
+std::atomic<std::uint64_t> g_host_chalice{0};  // guest: the host's chalice dungeon (its last intent's)
+
+/// A host lamp a guest may be sent to: one in a Chalice Dungeon only when the guest's own game
+/// has the host's dungeon in its current slot (party_chalice.h).
+bool LampUsable(u32 lamp) {
+    if (lamp == kTravelNone || lamp / 100000 != 29) {
+        return true;
+    }
+    const std::uint64_t host = g_host_chalice.load();
+    return host != 0 && host == chalice::LocalChannel();
+}
 std::atomic<GuestRedirectFn> g_redirect_cb{nullptr};
 std::atomic<bool> g_death_redirect_on{true};
 std::atomic<SendHomeVetoFn> g_send_home_veto{nullptr};
+std::atomic<GuestDeathHoldFn> g_guest_death_hold{nullptr};
 void* g_funnel_orig = nullptr;
 void* g_block_clear3_orig = nullptr;
 void* g_lamp_warp_orig = nullptr;
@@ -550,6 +594,7 @@ HostTravelQueue g_host_queue; // under g_host_mu
 // Host: when its last broadcast travel started (Now()); 0 none. Main thread / the funnel hook
 // (also the main thread).
 std::atomic<double> g_host_left_at{0};
+std::atomic<double> g_last_capture{0}; // host: the last CaptureHost (Now())
 bool g_host_load_seen = false;
 
 // 0x13CDDA0: BeginLeaveSession(SprjSessionManager) 0x1ED07A0 (role -> 7, LeaveRoom), then
@@ -660,10 +705,26 @@ void CaptureHost(u64 site, TravelKind kind) {
         t.lamp_id = g_lamp_key.exchange(kTravelNone);
     }
     {
+        // One warp, one TRAVEL: the game can reach the funnel twice for the same lamp warp within a
+        // few frames (live: a guest's lamp request run by the host captured twice, 26 ms apart, two
+        // TRAVEL and two "rested" events). Same kind, lamp, map and respawn within 1 s = the same warp.
+        static TravelIntent last{};
+        static double last_at = -1e9;
+        const double now = Now();
+        if (now - last_at < 1.0 && last.kind == t.kind && last.lamp_id == t.lamp_id && last.packed_map == t.packed_map &&
+            last.respawn_record == t.respawn_record) {
+            Log("host travel at +0x%llx: the same warp again within 1 s; not sent twice", ull(site));
+            return;
+        }
+        last = t;
+        last_at = now;
+    }
+    {
         std::lock_guard<std::mutex> lk(g_host_mu);
         g_host_queue.Push(t);
     }
     g_host_left_at = Now(); // the room is closed once the host has arrived (TravelTick)
+    g_last_capture = Now();
     Log("host travel %s -> %s", DescribeTravel(t).c_str(), ReplayMethodName(ChooseReplay(t).method));
 }
 
@@ -788,7 +849,12 @@ bool RedirectGuest(u64 site, TravelKind kind) {
         std::lock_guard<std::mutex> lk(g_guest_mu);
         have_dest = g_guest.Destination().has_value();
     }
-    const u32 lamp = g_death_lamp.load();
+    u32 lamp = g_death_lamp.load();
+    if (!LampUsable(lamp)) {
+        Log("%s at +0x%llx: the host's last lamp %u is in a chalice dungeon this game does not have",
+            TravelKindName(kind), ull(site), lamp);
+        lamp = kTravelNone;
+    }
     const GuestRedirect how = ChooseGuestRedirect(kind, have_dest, lamp);
     bool done = false;
     GuestRedirect used = how;
@@ -822,6 +888,11 @@ __attribute__((noinline)) BB_COOP_SYSV u64 FunnelHook() {
     const u64 ret = reinterpret_cast<u64>(__builtin_return_address(0));
     perf::Scope z(perf::Zone::HookFunnel);
     if (g_travel_on.load() && !g_in_replay.load()) {
+        if (const u64 site = ret - Guest(0) - 5; !TravelKindBroadcast(TravelKindFromCallSite(site))) {
+            // Not a travel the host broadcasts: logged so an unlisted path shows up in live runs.
+            Log("funnel: %s from +0x%llx (role %s, not a party travel)", TravelKindName(TravelKindFromCallSite(site)),
+                ull(site), Role() == PartyRole::Host ? "host" : Role() == PartyRole::Guest ? "guest" : "none");
+        }
         if (g_block_clear3.load() > 0) {
             if (RetargetSendHome(kBlockClear3Jump)) {
                 return 1;
@@ -829,11 +900,21 @@ __attribute__((noinline)) BB_COOP_SYSV u64 FunnelHook() {
         } else if (Role() == PartyRole::Host) {
             const u64 site = ret - Guest(0) - 5;
             const TravelKind kind = TravelKindFromCallSite(site);
-            if (TravelKindBroadcast(kind) && kind != TravelKind::HuntersMark) {
+            // OnReviveMagic_1's mark is captured at OnReviveMagic's entry (it left the session first).
+            if (TravelKindBroadcast(kind) && site != kMarkTailJump) {
                 CaptureHost(site, kind);
             }
         } else if (ret - Guest(0) - 5 == kGuestDiedCall) {
+            if (GuestDeathHoldFn hold = g_guest_death_hold.load(); hold && Role() == PartyRole::Guest && hold()) {
+                return 1;  // B2: held (the host's travel may bring the guest along)
+            }
             if (RedirectGuest(kGuestDiedCall, TravelKind::GuestDied)) {
+                return 1;
+            }
+        } else if (ret - Guest(0) - 5 == kMarkItemCall) {
+            // A guest's Hunter's Mark (the item): to the host's lamp instead of its own, as for
+            // OnReviveMagic_1 (MarkTailHook). The funnel would leave the session either way.
+            if (RedirectGuest(kMarkItemCall, TravelKind::HuntersMark)) {
                 return 1;
             }
         }
@@ -1018,6 +1099,15 @@ void RequestGuestTravel(const TravelIntent& t) {
     if (const u32 lamp = HostLampFromTravel(t); lamp != kTravelNone) {
         g_death_lamp = lamp;
     }
+    g_host_chalice = t.chalice_channel;
+    // Chalice Dungeons: only into the dungeon this game has (docs/party/chalice.md).
+    if (!ChaliceReplayAllowed(t, chalice::LocalChannel())) {
+        Log("guest travel %s not followed: the host enters chalice dungeon %llu, this game has %llu "
+            "(the summon brings it in: quick join by ChannelId)",
+            DescribeTravel(t).c_str(), static_cast<unsigned long long>(t.chalice_channel),
+            static_cast<unsigned long long>(chalice::LocalChannel()));
+        return;
+    }
     bool taken;
     {
         std::lock_guard<std::mutex> lk(g_guest_mu);
@@ -1031,6 +1121,20 @@ void TravelTick() {
         return;
     }
     if (Role() == PartyRole::Host) {
+        // A host load no hook captured (no party travel): the stage request's fields, to find the
+        // path (live: the Hunter's Mark, SpEffect 2100, did not reach the funnel's listed sites).
+        static bool was_loading = false;
+        const GameSnapshot h = ReadGameState(false);
+        const bool loading = h.loading || !h.world_up;
+        if (loading && !was_loading && Now() - g_last_capture.load() > 3.0) {
+            const u64 wts = Wts();
+            Log("host load without a party travel: map 0x%08x, point %d, forced %u, mode %u, respawn 0x%016llx, last lamp "
+                "0x%016llx",
+                WtsField<u32>(wts, kWtsMap, 0), static_cast<int>(WtsField<u32>(wts, kWtsWarpPoint, 0)),
+                unsigned(WtsField<u8>(wts, kWtsForced, 0)), WtsField<u32>(wts, kWtsRespawnMode, 0),
+                ull(WtsField<u64>(wts, kWtsRespawn, 0)), ull(WtsField<u64>(wts, kWtsLastLamp, 0)));
+        }
+        was_loading = loading;
         // B2 keeps the room while a member's task exists; once the guest fell back to B1 (task
         // gone) the empty room is closed as in B1.
         if (!b2::Enabled() || !b2::HostHasMemberTasks()) {
@@ -1070,6 +1174,48 @@ void TravelTick() {
 
 bool TravelEnabled() {
     return g_travel_on.load();
+}
+
+bool TravelWarpForTest(std::uint32_t map, std::uint32_t point) {
+    if (!TravelMapKnown(map) || !ids::WarpPointKnown(map, point)) {
+        return false;
+    }
+    TravelIntent t;
+    t.kind = TravelKind::ScriptedWarp;
+    t.packed_map = map;
+    t.warp_point = point;
+    Log("test: warp the player to m%02u_%02u_%02u_%02u point %u", (map >> 24) & 0xff, (map >> 16) & 0xff,
+        (map >> 8) & 0xff, map & 0xff, point);
+    return Replay(t, {ReplayMethod::StageWarp, kTravelNone});
+}
+
+bool TravelPlaceForTest(std::uint32_t map, const float pos[3], float yaw) {
+    if (!TravelMapKnown(map)) {
+        return false;
+    }
+    TravelIntent t;
+    t.kind = TravelKind::Transform;
+    t.has_pos = true;
+    t.pos_map = map;
+    for (int i = 0; i < 3; ++i) {
+        t.pos[i] = pos[i];
+    }
+    t.rot[1] = yaw;
+    Log("test: place the player at m%02u_%02u_%02u_%02u (%.2f, %.2f, %.2f) yaw %.2f", (map >> 24) & 0xff,
+        (map >> 16) & 0xff, (map >> 8) & 0xff, map & 0xff, pos[0], pos[1], pos[2], yaw);
+    return Replay(t, {ReplayMethod::Transform, kTravelNone});
+}
+
+void SetGuestDeathHold(GuestDeathHoldFn fn) {
+    g_guest_death_hold = fn;
+}
+
+void GuestDeathRedirectNow() {
+    if (RedirectGuest(kGuestDiedCall, TravelKind::GuestDied)) {
+        return;
+    }
+    Log("held guest death: no redirect; the stock funnel (home)");
+    reinterpret_cast<FunnelFn>(g_funnel_orig ? g_funnel_orig : reinterpret_cast<void*>(Guest(kFunnel)))();
 }
 
 void SetSendHomeVeto(SendHomeVetoFn fn) {
