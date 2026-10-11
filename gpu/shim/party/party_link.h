@@ -5,7 +5,10 @@
 // Wire: every frame is [u32 len LE][u8 type][payload], len = 1 + payload size.
 //   guest -> HELLO     {magic "BBPL", u16 version, str name, sha256 eboot[32], mods hash[32], token[16],
 //                       gameplay patches hash[32], str patch names, str mod names,  (newline-separated)
-//                       str party rules}  (max players + 4-player rule set, party_fourp.h)
+//                       str party rules,  (max players + 4-player rule set, party_fourp.h)
+//                       str build id, sha256 params[32], party hooks hash[32], str hook names}
+//                       (A9 build / patch-set fingerprint: docs/party/version_check.md; each
+//                       trailing field is optional on the wire: absent = an older build)
 //   host  -> CHALLENGE {nonce[24]}                         (or REJECT on version / hash / name; a
 //                       Mismatch REJECT names what differs: identity_mismatch)
 //   guest -> AUTH      {nonce[24], proof[32]}              proof = keyed BLAKE2b (party_crypto.h)
@@ -46,6 +49,11 @@ namespace party {
 
 constexpr std::uint16_t kLinkProtocolVersion = 2;  // 2: HELLO carries the patch / mod sets
 constexpr int kBroadcast = -1;  // send_* target: every member (host side)
+// Players in a party, the host included (BB_PARTY_MAX is clamped to 2..kMaxPartyPlayers): host +
+// 3 guests (the user's decision, 2026-10-11; ERSC allows 6). Every party-side table (link slots,
+// VITALS, HUD rows, the Party members page) follows this constant; raising it also needs the engine
+// work of docs/party/four_players.md ("A 4th cooperator").
+constexpr int kMaxPartyPlayers = 4;
 
 // Peer input limits (bbport security pass). Every byte a peer sends is untrusted: a frame is
 // refused (connection dropped) past these, and the host meters each member.
@@ -86,7 +94,7 @@ struct RosterEntry {
 // Party HUD (party_hud.h): one member's health and whereabouts, as its own game reads them.
 // Wire (VITALS, fire-and-forget, ~4 Hz): guest -> host its own entry; host -> every guest all
 // fresh entries (the host's and every member's). Peers that do not know VITALS ignore it.
-constexpr int kMaxVitals = 4;                 // party slots 0..3
+constexpr int kMaxVitals = kMaxPartyPlayers;  // party slots 0..3
 constexpr std::uint32_t kMaxVitalsHp = 99999;  // HP / max HP above this: refused (clamped)
 constexpr std::uint32_t kMaxVitalsStamina = 9999;
 constexpr float kMaxVitalsCoord = 100000.0f;  // |x|, |y|, |z| past this: no position
@@ -113,7 +121,7 @@ struct MemberVitals {
     std::uint16_t deaths = 0;  // deaths since the game started
     std::uint8_t rot = 0;      // death debuff stacks (0..5)
 };
-// Bounds a peer's entry: unknown flags cleared, slot outside 0..3 -> false (dropped), HP /
+// Bounds a peer's entry: unknown flags cleared, slot outside 0..kMaxVitals-1 -> false (dropped), HP /
 // stamina clamped (hp <= max_hp), a non-finite or absurd position drops kVitalsHasPos, the yaw
 // wrapped to [-pi, pi]. Alive needs Valid and hp > 0.
 bool sanitize_vitals(MemberVitals& v);
@@ -153,11 +161,20 @@ struct LinkConfig {
     // The party's game rules: "max N players, 4p:..." (party_runtime from BB_PARTY_MAX and
     // party_fourp.h FourpRulesTag). Part of the version check: must equal the host's.
     std::string rules;
+    // A9 build / patch-set fingerprint (party_runtime): the bbport build ("0.5 (git describe)",
+    // bbport_build_id.cmake), the game's param set (sha256 of dvdroot_ps4/param/gameparam/
+    // gameparam.parambnd.dcx; zeros: not read) and the party's installed game hooks (hook_set_hash
+    // over coop_hooks' install names without diagnostics; the names explain a mismatch).
+    std::string build_id;
+    std::array<std::uint8_t, 32> params_sha256{};
+    std::array<std::uint8_t, 32> hooks_hash{};
+    std::vector<std::string> hook_names;
+    bool check_build = true;            // host: compare build_id (BB_PARTY_CHECK_BUILD=0: not)
     std::string password;               // BB_PARTY_PASSWORD (optional)
     std::array<std::uint8_t, 8> secret{};  // the party code's secret (zeros for plain host:port)
     std::uint16_t port = 9307;          // host: listen port (0 = ephemeral, see bound_port())
     std::string bind_addr = "0.0.0.0";  // host
-    int max_players = 3;                // 2..4 including the host (BB_PARTY_MAX)
+    int max_players = 3;                // 2..kMaxPartyPlayers (4) including the host (BB_PARTY_MAX)
     // Timing (tests shrink these).
     int ping_interval_ms = 1000;
     int lost_timeout_ms = 10000;
@@ -176,16 +193,22 @@ struct LinkConfig {
     int tcp_fallback_ms = 1500;
 };
 
-// What differs between the host's and a guest's game (eboot.bin, gameplay patches, gameplay mods),
-// one clause each, with the patch / mod names only one side has; empty when they match. The host
-// sends it as the Mismatch REJECT reason.
+// What differs between the host's and a guest's game (bbport build, eboot.bin, game params,
+// gameplay patches, gameplay mods, party hooks, party rules), one clause each with what to do,
+// with the names only one side has; empty when they match. The host sends it as the Mismatch
+// REJECT reason (the guest's party UI shows it).
 std::string identity_mismatch(const LinkConfig& host, const LinkConfig& guest);
+// A9: is an installed hook's name a diagnostic (log / probe / trace / test), not a gameplay patch?
+bool diagnostic_hook_name(const std::string& name);
+// A9: the party hook set's hash: BLAKE2b-256 over the sorted, de-duplicated names (diagnostics
+// left out by the caller); zeros for an empty set.
+std::array<std::uint8_t, 32> hook_set_hash(std::vector<std::string> names);
 // Reads an identity file (out/party_patch_hash.txt, out/party_mods.txt): "hash <64 hex>" and
 // "<item_key> <name>" lines; '#' lines are comments. False when it has no valid hash line.
 bool parse_identity_file(const std::string& text, const std::string& item_key, std::array<std::uint8_t, 32>* hash,
                          std::vector<std::string>* items);
 
-// BB_PARTY_PORT, BB_PARTY_MAX (clamped 2..4), BB_PARTY_PASSWORD over `cfg`.
+// BB_PARTY_PORT, BB_PARTY_MAX (clamped 2..kMaxPartyPlayers), BB_PARTY_PASSWORD over `cfg`.
 void apply_link_env(LinkConfig& cfg);
 bool valid_member_name(const std::string& name);
 

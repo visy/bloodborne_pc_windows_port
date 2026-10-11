@@ -20,6 +20,7 @@
 #include "party_fourp.h"
 #include "party_progress.h"
 #include "party_travel.h"
+#include "coop_hooks.h"
 #include "upnp_win.h"
 #include "party_rudp.h"
 
@@ -57,6 +58,9 @@
 #endif
 
 namespace party {
+
+// The build's identity, generated at build time (gpu/cmake/bbport_build_id.cmake).
+extern "C" const char* bbport_build_id(void);
 
 namespace {
 
@@ -251,6 +255,60 @@ std::array<std::uint8_t, 32> eboot_hash() {
     plog("eboot.bin sha256 %s... (%.0f ms)", hex_prefix(h).c_str(),
          std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
     return h;
+}
+
+// A9: the game's param set, dvdroot_ps4/param/gameparam/gameparam.parambnd.dcx under the game
+// directory (mods replacing it count under the gameplay mods). Zeros (logged) when unreadable.
+std::array<std::uint8_t, 32> params_hash() {
+    std::array<std::uint8_t, 32> h{};
+    std::string dir = bbnet::settings().app0;
+    if (dir.empty() && env("BB_GAME_DIR")) dir = env("BB_GAME_DIR");
+    if (dir.empty()) return h;
+    const fs::path p = fs::path(dir) / "dvdroot_ps4" / "param" / "gameparam" / "gameparam.parambnd.dcx";
+    if (!sha256_file(p, &h)) {
+        plog("warning: cannot read %s for the version check (params not compared)", p.string().c_str());
+        return std::array<std::uint8_t, 32>{};
+    }
+    return h;
+}
+
+// A9: this game's full version-check identity in <user dir>/party_identity.txt (what HELLO
+// carries), for tools/party/simguest.py --identity: a simulated member that joins this host
+// (or this guest's host) with the same identity. Never holds the password or the party secret.
+void write_identity_file(const LinkConfig& cfg) {
+    const auto hex = [](const std::array<std::uint8_t, 32>& h) {
+        static const char* d = "0123456789abcdef";
+        std::string s;
+        for (std::uint8_t b : h) s += d[b >> 4], s += d[b & 15];
+        return s;
+    };
+    std::string t = "# bbport party identity (A9 version check; party_runtime.cpp)\n";
+    t += "build " + cfg.build_id + "\n";
+    t += "rules " + cfg.rules + "\n";
+    t += "eboot " + hex(cfg.eboot_sha256) + "\n";
+    t += "params " + hex(cfg.params_sha256) + "\n";
+    t += "patches " + hex(cfg.patches_hash) + "\n";
+    t += "mods " + hex(cfg.mods_hash) + "\n";
+    t += "hooks " + hex(cfg.hooks_hash) + "\n";
+    for (const std::string& n : cfg.patch_names) t += "patch " + n + "\n";
+    for (const std::string& n : cfg.mod_names) t += "mod " + n + "\n";
+    for (const std::string& n : cfg.hook_names) t += "hook " + n + "\n";
+    std::error_code ec;
+    fs::create_directories(user_dir(), ec);
+    std::ofstream f(fs::path(user_dir()) / "party_identity.txt", std::ios::binary | std::ios::trunc);
+    if (f) f << t;
+}
+
+// A9: the party's installed game hooks (coop_hooks), diagnostics (logs, probes, traces, test
+// fixtures) left out: every peer must run the same gameplay patch set.
+void hook_identity(LinkConfig& cfg) {
+    std::vector<std::string> names;
+    for (const std::string& n : coop::InstalledHooks())
+        if (!diagnostic_hook_name(n)) names.push_back(n);
+    std::sort(names.begin(), names.end());
+    names.erase(std::unique(names.begin(), names.end()), names.end());
+    cfg.hooks_hash = hook_set_hash(names);
+    cfg.hook_names = std::move(names);
 }
 
 // The gameplay patches (BB_PARTY_HASH_PATCHES=0: not compared): out/party_patch_hash.txt, which
@@ -615,8 +673,9 @@ void on_state(LinkState s, const std::string& detail) {
             // The host names what differs (identity_mismatch): eboot.bin, gameplay patches, mods.
             set_error("host refused: " + link->reject_reason());
             plog("the host refused this game: %s", link->reject_reason().c_str());
-            plog("make the listed patches / mods / game version the same as the host's (the launcher's Patches "
-                 "and Mods tabs), or BB_PARTY_HASH_PATCHES=0 on every player to skip the patch check");
+            plog("make what is listed the same as the host's: the bbport build, the game dump, the launcher's "
+                 "Patches and Mods tabs, the party options; BB_PARTY_HASH_PATCHES=0 / BB_PARTY_CHECK_BUILD=0 on "
+                 "the host skip the patch / build comparison");
             break;
         }
         const std::string why = std::string("rejected (") + std::to_string(static_cast<int>(code)) +
@@ -688,6 +747,13 @@ LinkCallbacks make_callbacks(bool host) {
         };
         cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
             if (name == coop::b2::kEventName) coop::b2::OnLinkEvent(slot, body);  // B2: a guest arrived
+            if (name == coop::chalice::kGoodsEventName) {  // a guest's chalices (party_chalice.h)
+                std::vector<std::uint32_t> ids;
+                std::string err;
+                if (coop::chalice::GoodsFromJsonText(body, &ids, &err)) coop::chalice::RequestGuestGoods(ids);
+                else plog("%s event from slot %d: %s", name.c_str(), slot, err.c_str());
+                return;
+            }
             if (name == coop::kLampLitEventName) {  // a guest lit a lamp of the host's world
                 std::string err;
                 if (!coop::GuestServicesOnLampLit(slot, body, &err)) plog("lamp_lit from slot %d refused: %s", slot, err.c_str());
@@ -1509,6 +1575,11 @@ void startup_main() {
     mod_identity(cfg, &what);
     // Max players and the 4-player rule set (party_fourp.h): the same for every player.
     cfg.rules = "max " + std::to_string(cfg.max_players) + " players, " + coop::fourp::FourpRulesTag();
+    // A9 build / patch-set fingerprint (party_link.h identity_mismatch).
+    cfg.build_id = bbport_build_id();
+    cfg.check_build = !(env("BB_PARTY_CHECK_BUILD") && !env_on("BB_PARTY_CHECK_BUILD"));
+    cfg.params_sha256 = params_hash();
+    hook_identity(cfg);
     plog("%s %s, port %u, up to %d players; version check: eboot %s..., patches %s..., mods %s... (%s)%s",
          host ? "host" : "guest", cfg.name.c_str(), cfg.port, cfg.max_players, hex_prefix(cfg.eboot_sha256).c_str(),
          hex_prefix(cfg.patches_hash).c_str(), hex_prefix(cfg.mods_hash).c_str(), what.c_str(),
@@ -1516,6 +1587,10 @@ void startup_main() {
     plog("gameplay patches: %s", joined(cfg.patch_names).c_str());
     plog("gameplay mods: %s", joined(cfg.mod_names).c_str());
     plog("party rules: %s", cfg.rules.c_str());
+    write_identity_file(cfg);
+    plog("build %s%s, params %s..., party patches %s... (%zu hooks)", cfg.build_id.c_str(),
+         cfg.check_build ? "" : " (not compared: BB_PARTY_CHECK_BUILD=0)", hex_prefix(cfg.params_sha256).c_str(),
+         hex_prefix(cfg.hooks_hash).c_str(), cfg.hook_names.size());
     {
         std::lock_guard<std::mutex> lk(r.mu);
         if (r.stopping) return;

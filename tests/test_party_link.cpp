@@ -240,6 +240,10 @@ static LinkConfig base_cfg(const char* name, const char* password) {
     c.patches_hash.fill(0x22);
     c.patch_names = {"Party: Bells anywhere", "Party: Skip Online/Offline Choice (Online)"};
     c.mod_names = {"Better Params (12 files)"};
+    c.build_id = "0.5 (v0.5-42-gabcdef1234)";
+    c.params_sha256.fill(0x33);
+    c.hook_names = {"4p H1 cooperator slots (SessionSlotSummary) @+0x186fe40", "travel lamp warp (0x13CDF30) @+0x13cdf30"};
+    c.hooks_hash = hook_set_hash(c.hook_names);
     c.port = 0;  // ephemeral: tests never collide with a running game
     c.bind_addr = "127.0.0.1";
     c.max_players = 3;
@@ -346,6 +350,23 @@ static void test_party() {
         CHECK(why.find("yours only: Player No Dead (Read note)") != std::string::npos);
         CHECK(why.find("mods") == std::string::npos);
         std::printf("  mismatched eboot + patches: %s\n", why.c_str());
+    }
+    {
+        // A9 over the wire: another bbport build and another party hook set.
+        Recorder xr;
+        LinkConfig c = base_cfg("Oldbuild", "hunter2");
+        c.build_id = "0.5 (v0.5-7-g1111111111-dirty)";
+        c.hook_names.pop_back();
+        c.hooks_hash = hook_set_hash(c.hook_names);
+        PartyLink bad(c, recorder_callbacks(xr, "oldbuild"));
+        CHECK(bad.start_guest("127.0.0.1", port, &err));
+        CHECK(bad.wait_state(LinkState::Rejected, 5000));
+        CHECK(bad.reject_code() == RejectCode::Mismatch);
+        const std::string why = bad.reject_reason();
+        CHECK(why.find("bbport build differs") != std::string::npos && why.find("v0.5-7-g1111111111-dirty") != std::string::npos);
+        CHECK(why.find("party patches differ (host only: travel lamp warp") != std::string::npos);
+        CHECK(why.find("eboot") == std::string::npos && why.find("game params") == std::string::npos);
+        std::printf("  other build + hooks: %s\n", why.c_str());
     }
     {
         // Cosmetic patches never reach the hash: only the gameplay set is compared, so a guest
@@ -520,11 +541,12 @@ static void test_plain_address_password() {
 static void test_four_players() {
     Recorder hr, ar, br, cr;
     LinkConfig hc = base_cfg("Host", "");
-    hc.max_players = 4;
+    hc.max_players = 9;  // clamped to kMaxPartyPlayers (A7: host + 3)
     hc.rules = "max 4 players, 4p:v1:H1,H2,H3,H4,E6";
     PartyLink host(hc, recorder_callbacks(hr, "host"));
     std::string err;
     CHECK(host.start_host(&err));
+    CHECK(host.max_players() == kMaxPartyPlayers && kMaxPartyPlayers == 4);
     const std::uint16_t port = host.bound_port();
     auto guest_cfg = [&](const char* name) {
         LinkConfig c = base_cfg(name, "");
@@ -750,6 +772,52 @@ static void test_identity() {
     CHECK(!parse_identity_file("hash " + std::string(64, 'g') + "\n", "patch", &h, &items));
     const std::array<std::uint8_t, 32> zero{};
     CHECK(parse_identity_file("hash " + std::string(64, '0') + "\n", "mod", &h, &items) && items.empty() && h == zero);
+
+    // A9: build, params, party hooks; each clause says what to do.
+    {
+        LinkConfig hb = base_cfg("H", ""), gb = base_cfg("G", "");
+        CHECK(identity_mismatch(hb, gb).empty());
+        gb.build_id = "0.5 (v0.5-40-g0123456789)";
+        std::string w = identity_mismatch(hb, gb);
+        CHECK(w.find("bbport build differs (host 0.5 (v0.5-42-gabcdef1234), yours 0.5 (v0.5-40-g0123456789))") !=
+              std::string::npos);
+        CHECK(w.find("install the same bbport release as the host") != std::string::npos);
+        CHECK(w.find("params") == std::string::npos && w.find("party patches") == std::string::npos);
+        hb.check_build = false;  // BB_PARTY_CHECK_BUILD=0 on the host
+        CHECK(identity_mismatch(hb, gb).empty());
+        hb.check_build = true;
+        gb.build_id.clear();  // an older build sends none
+        CHECK(identity_mismatch(hb, gb).find("unknown: an older build") != std::string::npos);
+        gb.build_id = hb.build_id;
+        gb.params_sha256[7] ^= 0x40;
+        w = identity_mismatch(hb, gb);
+        CHECK(w.find("game params differ (gameparam.parambnd.dcx") != std::string::npos);
+        CHECK(w.find("use the same game dump (1.09) as the host") != std::string::npos);
+        gb.params_sha256 = hb.params_sha256;
+        gb.hook_names = {"4p H1 cooperator slots (SessionSlotSummary) @+0x186fe40",
+                         "talk IsClientPlayer (guest services) @+0x1234"};
+        gb.hooks_hash = hook_set_hash(gb.hook_names);
+        w = identity_mismatch(hb, gb);
+        CHECK(w.find("party patches differ (host only: travel lamp warp (0x13CDF30) @+0x13cdf30; yours only: talk "
+                     "IsClientPlayer (guest services) @+0x1234)") != std::string::npos);
+        CHECK(w.find("same bbport build and party options") != std::string::npos);
+        std::printf("  A9: %s\n", w.c_str());
+        // Order and duplicates do not matter; the empty set hashes to zeros.
+        CHECK(hook_set_hash({"b", "a", "a"}) == hook_set_hash({"a", "b"}));
+        CHECK(hook_set_hash({"a"}) != hook_set_hash({"a", "b"}));
+        CHECK(hook_set_hash({}) == zero);
+        // Diagnostics stay out of the hook set.
+        for (const char* d : {"ss.info parse log @+0x1", "level-up menu factory (log) @+0x2", "B2 leave trace (0x1ED07A0)",
+                              "HUD tick (item-get probe)", "NPC fixture: SOS filter observer (0x1874710)",
+                              "action-button registration (test probe)", "Lua event log (LuaEvent_DispatchByName)",
+                              "FROM client drop-offline log (0x1ea5ce0)", "item give log (0x17D89F0)"})
+            CHECK(diagnostic_hook_name(d));
+        for (const char* g : {"4p H1 cooperator slots (SessionSlotSummary)", "travel funnel (SessionWorldTransition)",
+                              "main-thread tick (SprjFlipper::Update)", "progress: SetEventFlag",
+                              "lamp multiplayer gate +0x49 (party lamps)", "EMEVD instruction dispatch filter",
+                              "chalice: carry the slot record into load mode 1"})
+            CHECK(!diagnostic_hook_name(g));
+    }
 }
 
 // Kick by name: BYE Kicked "kicked by the host" to that guest, its slot freed, and the name refused

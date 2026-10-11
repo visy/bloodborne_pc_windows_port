@@ -196,11 +196,14 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
 ## 5. Progress and rewards
 
 * **Chalices for everyone** (party_chalice.h): the chalices (goods 6100..6539 that are
-  HolygrailExParam rows; isOnlyOne, never consumed by a ritual) the host owns go to every guest
-  that lacks them (`chalice_goods` event, every change and every 60 s; the guest gives itself the
-  missing ones with GiveItemDirect in its own world, load mode 0). Whichever member's dungeon the
-  party clears, every member can perform the next ritual itself. A peer's list is filtered to the
-  25 chalice ids (no other goods can be given this way).
+  HolygrailExParam rows; isOnlyOne, never consumed by a ritual) any member owns go to every member
+  that lacks them (`chalice_goods` event, every change and every 60 s): a guest sends its list to
+  the host, the host gives itself the missing ones and broadcasts its (now merged) list, and each
+  guest gives itself the missing ones in its own world (load mode 0; GiveItemDirect). Whichever
+  member's dungeon the party clears, every member can perform the next ritual itself, and the host
+  can open the altar menu for a dungeon a guest made (the altar refuses everything with "A Holy
+  Chalice is required to conduct a ritual." when the player owns no chalice, run c16). A peer's
+  list is filtered to the 25 chalice ids (no other goods can be given this way).
 * Dungeon flags (layer doors, boss kills, treasure in area 29, 1100xxxxx / 2001xxxxx lots) live in
   the **slot's own groups** (areas 40..47 remapped from area 29 by the slot), so a summoned guest
   (load mode 1, the host's overlay) never progresses its own copy, exactly like vanilla. They are
@@ -254,3 +257,26 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
 * The exact meaning of ShareLevel / TurnoutLevel values, FixedOrGeneral 1 vs 2; uploaded (root /
   "general") dungeons with pending rite materials (Status 0) are not joinable by a summon (as in
   vanilla: +0x54 stays 0).
+* **Full clear of a layer, 2026-10-11 (runs c11-c15, 2 instances, 1792 MiB each)**: host ritual at
+  the First Ritual Altar (MenuScript), guest summoned (bell_host@29 / bell_guest@29); lever
+  12900192 and the layer door by host_press; layer boss 2900100 by host_kill: PREY SLAUGHTERED on
+  both, `K10: boss-clear leave suppressed` for host and guest, the guest's send-home at +0x13859df
+  dropped; guest award lots 131302160 / 110001000 "in another's world" (item-get on screen).
+  The post-boss lift 2901004 (EMEVD 12900354 / 12900351, regions 2903020 top y 31 / 2903021 bottom
+  y 10): host on the car at (-65, 31.6, -91), guest at (-64.6, 31.6, -90.4) -> both ride 31.5 ->
+  10.5 in 6 s (log_pos, c15). Warping 114 m straight from the lamp into the empty shaft (c13) fell
+  to death (the car rests at the bottom until called); the call lever 2901005 did not react to a
+  Cross from (-58.5, -90.6). host_lamp=2102961 -> both in the Dream with one load each, the guest
+  re-joined (cooperators 1).
+* **A ritual by a guest** (user decision: anyone performs the ritual, the party enters together).
+  Chosen design: the guest performs the ritual in its own Dream (its slot gets the dungeon; for a
+  shared fixed chalice the board makes the same channel for everyone, glyph wmqbhonw); the host
+  then enters that dungeon from its own altar (Search by Chalice Glyph, top menu item 3; the board
+  answers the glyph) and the guests are summoned as for a host ritual. The host needs a chalice to
+  open the altar at all, hence the two-way chalice share (section 5). c16: without a chalice the
+  altar only says "A Holy Chalice is required to conduct a ritual."; c17: the guest's chalice
+  reached the host (`a party member's chalice 6109 given`), the host reached the glyph dialog, but
+  the preset IME text came out as 'wmqbhon' (the IME buffer counted the terminator; fixed in
+  src/runtime_services.c). Open: verify the host's entry by glyph and the guest summon (c18), and
+  an automatic "enter the guest's dungeon" button instead of typing the glyph.
+

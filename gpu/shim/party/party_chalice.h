@@ -47,8 +47,9 @@ constexpr std::uint64_t ChannelFromDwords(std::uint32_t lo, std::uint32_t hi) {
 
 // ---- The party's chalices (progress for everyone) ----
 // The chalices (goods; HolygrailExParam rows that are EquipParamGoods, isOnlyOne, never consumed
-// by a ritual) the host owns go to every guest that lacks them, in the guest's own world:
-// whichever dungeon the party clears, every member can perform the next ritual itself.
+// by a ritual) any member owns go to every member that lacks them (a guest's to the host, the
+// host's to every guest), in the receiver's own world: whichever dungeon the party clears, every
+// member can perform the next ritual itself, and the host can enter a dungeon a guest made.
 constexpr std::uint32_t kChaliceGoods[] = {6100, 6109, 6200, 6209, 6210, 6219, 6300, 6302, 6309,
                                            6310, 6312, 6319, 6401, 6409, 6420, 6429, 6500, 6502,
                                            6509, 6520, 6522, 6529, 6530, 6532, 6539};
@@ -76,12 +77,13 @@ std::vector<std::uint8_t> SlotFormData(int slot);
 /// Reads the local game's chalice slot and its ChannelId.
 State Read();
 /// Once a frame (coop tick): re-reads every ~2 s, logs changes, and keeps LocalChannel(); the
-/// host also notes the chalices it owns (PopHostGoods), a guest gives itself the host's chalices
-/// it lacks (in its own world).
+/// every member notes the chalices it owns (PopHostGoods) and gives itself the peers' chalices it
+/// lacks (in its own world; a host always): any member can perform the next ritual.
 void Tick(bool host);
-/// Host: the chalices to send (when they changed, and every 60 s for members that rejoined).
+/// The local chalices to send (when they changed, and every 60 s for members that rejoined):
+/// a host broadcasts them, a guest sends them to the host (which then has them and re-broadcasts).
 bool PopHostGoods(std::vector<std::uint32_t>* out);
-/// Guest: the host's chalices (any thread; applied by Tick).
+/// A peer's chalices (any thread; applied by Tick in the own world).
 void RequestGuestGoods(const std::vector<std::uint32_t>& ids);
 /// The dungeon the local game has in its current slot while it is in its own world (load mode
 /// 0); 0 when none or unknown. Any thread (the last Tick's value).

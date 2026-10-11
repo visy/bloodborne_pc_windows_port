@@ -265,7 +265,9 @@ static ABI int32_t ime_init(const ImeParam *param, const void *extended) {
     if (ime.running) return (int32_t)0x80BC0003;                                  /* BUSY */
     ++ime_opened;
     memset(&ime,0,sizeof(ime));
-    ime.buffer=param->buffer; ime.max_length=param->max_length; ime.running=1;
+    /* maxTextLength excludes the terminator (the buffer holds max_length + 1 UTF-16 units): an
+       8-character Chalice Glyph lost its last character when the terminator was counted in. */
+    ime.buffer=param->buffer; ime.max_length=param->max_length + 1; ime.running=1;
     char initial[512], prompt[256];
     utf16_to_utf8(param->buffer,param->max_length,initial,sizeof(initial));
     utf16_to_utf8(param->title,128,prompt,sizeof(prompt));
