@@ -112,6 +112,8 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_GUEST_OWN_LAMP` | `0`: a guest that dies outside a boss fight respawns at the host's last lamp instead of its own last lamp (split travel `RespawnAloneAtOwnLamp`) | on | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_GUEST_REVIVE` | `0`: a guest whose respawn lamp is in the loaded map respawns with a load as before instead of being revived in place | on | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_POS_SCAN` | `1`: diagnostics: logs where the local player's position is kept in GSM / GameDataMan / PlayerGameData (`pos scan:` lines, every 10 s) | off | `gpu/shim/party/party_b2.cpp` |
+| `BB_PARTY_GUEST_PIN_SAVE_POS` | `1`: keeps a summoned guest's own save spot records (GSM +0x14A0 / +0x15B0 / +0x15F0, forced placement) at its pre-summon spot (not a fix yet, b2_seamless.md 6.13) | off | `gpu/shim/party/party_b2.cpp` |
+| `BB_PARTY_GUEST_DEATH_ALONE` | `1`: a guest whose own last lamp is in another map is revived in place, then travels alone to it (not verified live) | off | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_B2_HOST_REVIVE_SOLO` | `1`: test fixture: the host revive also without a session or a member | off | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_PROGRESS_TEST_CLEAR` | `<id>[,<id>...]`: clears these flags once in the own save at the first steady own world, before any host flag is applied (a guest save that lacks host progress; test saves only) | off | `gpu/shim/party/party_progress.cpp` |
 | `BB_PARTY_STORY_PLAYER` | Player argument of the remo call (10000 = local player, -1 = no appearance snapshot) | 10000 | `gpu/shim/party/party_story.cpp` |

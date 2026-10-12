@@ -2599,6 +2599,7 @@ void DeadAfterClearTick(const GameSnapshot& s, double now) {
 }
 
 bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why);
+bool GuestDeathAloneToOwnLamp(const GameSnapshot& s, u32 own);
 void HeldDeathTick(const GameSnapshot& s, double now) {
     if (g_dead_follow.load() && !SessionUp()) {
         // The follow ended without an arrival (B1 fallback): the host's records stay, which is
@@ -2655,6 +2656,12 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         const bool boss = limbo_logged == at;
         if (!boss && own_lamp) {
             if (GuestReviveInPlace(s, own, "its own last lamp")) {
+                return;
+            }
+            // BB_PARTY_GUEST_DEATH_ALONE=1 (not verified live yet: off): split travel refuses a dead
+            // traveller's alone load, so the guest is first revived where it lies (no warp) and
+            // then travels alone to its own lamp like a living player (one load, this guest only).
+            if (GuestDeathAloneToOwnLamp(s, own)) {
                 return;
             }
             if (RespawnAloneAtOwnLamp()) {
@@ -3212,6 +3219,22 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
     return true;
 }
 
+bool GuestDeathAloneToOwnLamp(const GameSnapshot& s, u32 own) {
+    static const bool on = std::getenv("BB_PARTY_GUEST_DEATH_ALONE") && std::getenv("BB_PARTY_GUEST_DEATH_ALONE")[0] == '1';
+    TravelIntent lt;
+    if (!on || own == 0 || own == kTravelNone || !LampIntent(own, &lt)) {
+        return false;
+    }
+    LampSpot none;  // not valid: revived where it lies, no warp
+    ReviveLocal(s, none, false);
+    if (!TravelAlone(lt, AloneWhy::Lamp)) {
+        Log("guest: died alone: revived, but the alone travel to %u was refused", own);
+        return false;
+    }
+    Log("guest: died alone: revived, then travels alone to its own last lamp %u in another map", own);
+    return true;
+}
+
 /// Any role: a stage request armed after a revive (the ChrCtrl death bits were cleared): set them
 /// again so the load goes ahead (see g_ctrl_cleared_for).
 void ReviveRearmTick(const GameSnapshot& s) {
@@ -3427,7 +3450,7 @@ void PosScanTick(const GameSnapshot& s, double now) {
     if (!on || !s.world_up || s.loading || !s.player || now < next) {
         return;
     }
-    next = now + 10.0;
+    next = now + 5.0;
     float me[4];
     float rot[4];
     if (!ChrTransform(s.player, me, rot)) {
@@ -3445,7 +3468,15 @@ void PosScanTick(const GameSnapshot& s, double now) {
         if (!a.base || !SafeRead(a.base, buf.data(), a.n)) {
             continue;
         }
+        const u32 stage = Field<u32>(s.player, 0x3f8) & 0xffff0000u;
         for (std::size_t o = 0; o + 12 <= a.n; o += 4) {
+            u32 w;
+            std::memcpy(&w, &buf[o], 4);
+            if (w == stage) {
+                char b[48];
+                std::snprintf(b, sizeof b, " %s+%#zx=map", a.name, o);
+                out += b;
+            }
             float v[3];
             std::memcpy(v, &buf[o], 12);
             if (std::fabs(v[0] - me[0]) < 1.0f && std::fabs(v[1] - me[1]) < 1.0f && std::fabs(v[2] - me[2]) < 1.0f) {
@@ -3480,6 +3511,77 @@ void PosScanTick(const GameSnapshot& s, double now) {
             d += b;
         }
         Log("pos scan: gsm 0x1490..0x1660:%s", d.c_str());
+    }
+}
+
+/// Guest: its own save took the host-world position (Continue started it beside the host's spot in
+/// the host's map, sometimes in a wall; user, hd31/hd32). GSM +0x15B0 (pos) / +0x15C0 (rot) /
+/// +0x15E0 (map) and +0x15F0 / +0x1600 follow the chr also in the host's world (BB_PARTY_POS_SCAN);
+/// +0x14A0 / +0x14B0 / +0x14C0 hold the pre-summon spot after the join, but a B2 host-world load
+/// rewrites it too. So the pre-summon spot is copied once per session (the first steady world as a
+/// client after the bell join) and, while the guest is in the host's world and no B2 load runs,
+/// written back into all three records and the forced placement. BB_PARTY_GUEST_PIN_SAVE_POS=1: on
+/// (default off: hd pin1-pin4, the Continue still started at the B2 arrival spot - the save is
+/// taken at the arrival load, before this runs).
+void PinOwnSpotTick(const GameSnapshot& s) {
+    static const bool on = std::getenv("BB_PARTY_GUEST_PIN_SAVE_POS") && std::getenv("BB_PARTY_GUEST_PIN_SAVE_POS")[0] == '1';
+    struct Spot {
+        float pos[4], rot[4];
+        u32 map;
+    };
+    static Spot own;
+    static bool have = false;
+    static int logged = 0;
+    if (!on || !g_on.load() || Role() != RoleClient) {
+        have = false;
+        return;
+    }
+    if (!s.world_up || s.loading || g_rejoin.load()) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lk(S().mu);
+        if (S().gphase != GuestPhase::Idle) {
+            return;
+        }
+    }
+    const u64 gsm = Slot(kSlotGsm);
+    if (!gsm || Field<u8>(gsm, 0x1592) != 0 || Field<int>(Slot(kSlotFlow), 0x84, -1) != 4) {
+        return;
+    }
+    if (!have) {
+        if (!SafeRead(gsm + 0x14a0, own.pos, 16) || !SafeRead(gsm + 0x14b0, own.rot, 16) ||
+            !SafeGet(gsm + 0x14c0, &own.map) || own.map == 0 || own.map == 0xffffffffu) {
+            return;
+        }
+        have = true;
+        logged = 0;
+        Log("guest: own save spot pinned for this session: map %#x (%.1f, %.1f, %.1f)", own.map, double(own.pos[0]),
+            double(own.pos[1]), double(own.pos[2]));
+        return;
+    }
+    const u32 m15e0 = Field<u32>(gsm, 0x15e0);
+    float p15b0[4];
+    SafeRead(gsm + 0x15b0, p15b0, 16);
+    const bool moved = m15e0 != own.map || std::fabs(p15b0[0] - own.pos[0]) > 0.01f || std::fabs(p15b0[2] - own.pos[2]) > 0.01f;
+    SafeWrite(gsm + 0x14a0, own.pos, 16);
+    SafeWrite(gsm + 0x14b0, own.rot, 16);
+    SafeWrite(gsm + 0x14c0, &own.map, 4);
+    SafeWrite(gsm + 0x15b0, own.pos, 16);
+    SafeWrite(gsm + 0x15c0, own.rot, 16);
+    SafeWrite(gsm + 0x15e0, &own.map, 4);
+    SafeWrite(gsm + 0x15f0, own.pos, 16);
+    SafeWrite(gsm + 0x1600, own.rot, 16);
+    // The forced placement (+0x14F0 map, +0x1500 position, +0x1510 rotation; what the B2 loads'
+    // exact transform wrote): the Continue spawned exactly there (pin3b: (-193.05, -28.65, 68.15),
+    // the spot beside the host). Vanilla's send-home writes the pre-summon spot there.
+    SafeWrite(gsm + 0x14f0, &own.map, 4);
+    SafeWrite(gsm + 0x1500, own.pos, 16);
+    SafeWrite(gsm + 0x1510, own.rot, 16);
+    if (moved && logged++ < 3) {
+        Log("guest: own save spot kept at map %#x (%.1f, %.1f, %.1f) (the record read map %#x (%.1f, %.1f, %.1f))",
+            own.map, double(own.pos[0]), double(own.pos[1]), double(own.pos[2]), m15e0, double(p15b0[0]),
+            double(p15b0[1]), double(p15b0[2]));
     }
 }
 
@@ -4937,6 +5039,7 @@ void Tick(const GameSnapshot& s) {
     LampSpotTick(s);
     HostDownTick(s, now);
     HostRevivedTick(s);
+    PinOwnSpotTick(s);
     PosScanTick(s, Now());
     RemoteChrRenderWatch(s, Now());
     MemberRevivedTick(s);

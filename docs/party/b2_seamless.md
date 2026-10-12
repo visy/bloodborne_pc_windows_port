@@ -713,6 +713,25 @@ is the return spot (pre-summon), +0x14D0 the summoned placement, +0x1500 the for
 run). Pinning +0x15B0/+0x15F0 (and their map ids) to the return spot while a client is the next step;
 not done for 0.5.2.
 
+**2026-10-12 follow-ups.**
+* Continue drift: `PinOwnSpotTick` (`BB_PARTY_GUEST_PIN_SAVE_POS=1`, default OFF) pins the pre-summon
+  spot into GSM +0x14A0 / +0x15B0 / +0x15F0 and the forced placement +0x14F0 / +0x1500 / +0x1510
+  while a guest is in the host's world. Not a fix: on fresh saves (pin3, pin4) the Continue still
+  started at the B2 arrival spot beside the host (-193.05, -28.65, 68.15) - exactly the B2 load's
+  forced transform - so the save is taken at the arrival load itself, before the pin runs. Next: keep
+  the B2 load from leaving the forced transform as the save's spawn (e.g. place the guest with a
+  chr warp after a plain host-world load instead of the forced transform), or find the autosave at
+  load end. pos4 also showed a confound: an enemy killed a low-HP guest in Central Yharnam, its death
+  state never ran, the overlay watchdog redirected it home (session left) and the bell re-joined it
+  from Central Yharnam, so its own world legitimately moved there.
+* Guest bloodstain pickup (stain1-stain3): the guest's stain is recorded in its own records
+  (`bloodstain recorded: echoes 5000 -> 0, stain 5000 echoes at (-192.8, -28.6, 66.1)`) but no
+  stain object appears in the host's world: standing on the spot and pressing Cross gave no
+  "Acquire Blood Echoes" prompt and echoes stayed 0 (screenshots). It can only be picked up in the
+  guest's own world (not verified). Open.
+* `BB_PARTY_GUEST_DEATH_ALONE=1` (default OFF, not run live): a guest whose own lamp is in another
+  map is revived where it lies and then travels alone (split travel `TravelAlone`, Lamp) to it.
+
 ## 7. Risks / open items
 
 * (Closed in 6.7 / 6.8) K10 / boss clear with a real kill; wipes (guest and host dead) and falls
