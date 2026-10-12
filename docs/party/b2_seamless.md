@@ -732,6 +732,26 @@ not done for 0.5.2.
 * `BB_PARTY_GUEST_DEATH_ALONE=1` (default OFF, not run live): a guest whose own lamp is in another
   map is revived where it lies and then travels alone (split travel `TravelAlone`, Lamp) to it.
 
+**2026-10-12 (2): Continue drift fixed, guest stain recoverable in its own world.**
+* The guest's own save records the FORCED placement (GSM +0x14F0 map, +0x1500 position, +0x1510
+  rotation): the join leaves the pre-summon spot there, and the B2 loads replaced it with their exact
+  transform beside the host - a later Continue started there (pin3 / pin4). Now (`BB_PARTY_B2_ARRIVAL_WARP`,
+  default on) a guest's B2 load is the host's own travel (a lamp warp etc.; the stage comes from
+  +0x14C4 = the host's stage) without a forced transform, and the guest is put beside the host with a
+  chr warp once it arrived: `guest: arrived by the host's own travel; placed beside the host
+  (-193.05, -28.65, 68.15); forced placement (own save spot) map 0x15000000 (-11.1, -7.0, -20.6)`.
+  Fresh saves: B2 load Dream -> Central Yharnam, then Continue (arr1b) and again after a second B2 load
+  (arr1d): `map - -> m21_00_00_00`, the guest at its pre-summon spot in its own Dream (screenshot);
+  arrival screenshot: both hunters side by side in Central Yharnam. The dead follow (wipe) and split
+  travel's alone loads still use the forced transform (not changed). `PinOwnSpotTick`
+  (`BB_PARTY_GUEST_PIN_SAVE_POS`, off) is no longer needed.
+* The guest's bloodstain (its own record, 6.13) is recoverable in its OWN world, ERSC-like ("echoes
+  drop into a recoverable bloodstain"): bs2 the guest died in the host's Dream (stain 5000 echoes at
+  (-10.2, -6.8, -19.7) map 0x15000000); bs4 its next Continue in its own Dream: `own world: bloodstain
+  flag 1, record 5000 echoes at (-10.2, -6.8, -19.7)`, and the screenshot shows the stain and
+  "Acquire Blood Echoes". Not shown in the host's world (stain1-3). Design: a guest recovers its echoes
+  in its own world, at the spot where it died (same map coordinates).
+
 ## 7. Risks / open items
 
 * (Closed in 6.7 / 6.8) K10 / boss clear with a real kill; wipes (guest and host dead) and falls

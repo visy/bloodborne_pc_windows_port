@@ -3628,6 +3628,25 @@ void PinOwnSpotTick(const GameSnapshot& s) {
     }
 }
 
+/// Once per own-world load (not summoned): the own bloodstain record (GameDataMan +0x28 flag, the
+/// +0x30 record: position +0x18, echoes +0x38, map +0x3C) - where a guest's party-death stain lives.
+void OwnStainLogTick(const GameSnapshot& s) {
+    static u64 logged_for = 0;
+    const u64 gsm = Slot(kSlotGsm);
+    if (!g_on.load() || !s.world_up || s.loading || !s.player || logged_for == s.player || Field<u8>(gsm, 0x1592) != 1) {
+        return;
+    }
+    logged_for = s.player;
+    const u64 gdm = Slot(kSlotGameData);
+    const u64 rec = Field<u64>(gdm, 0x30);
+    float p[3] = {}, me[3] = {};
+    SafeRead(rec + 0x18, p, 12);
+    ChrPos(s.player, me);
+    Log("own world: bloodstain flag %u, record %d echoes at (%.1f, %.1f, %.1f) map %#x; me (%.1f, %.1f, %.1f) map %#x, "
+        "echoes %d", unsigned(Field<u8>(gdm, 0x28)), Field<int>(rec, 0x38, -1), double(p[0]), double(p[1]), double(p[2]),
+        Field<u32>(rec, 0x3c), double(me[0]), double(me[1]), double(me[2]), s.map_id, s.echoes);
+}
+
 void HostRevivedTick(const GameSnapshot& s) {
     static double watch_until = 0, next_watch = 0;
     const double now = Now();
@@ -3678,6 +3697,15 @@ void HostRevivedTick(const GameSnapshot& s) {
         RewindRemoteTasks("guest (host revived)");
     }
 }
+
+/// BB_PARTY_B2_ARRIVAL_WARP (default on): a guest's B2 load is the host's own travel (no forced
+/// transform); it is put beside the host with a chr warp once it has arrived.
+bool ArrivalWarpMode() {
+    static const bool on = !(std::getenv("BB_PARTY_B2_ARRIVAL_WARP") && std::getenv("BB_PARTY_B2_ARRIVAL_WARP")[0] == '0');
+    return on;
+}
+bool g_arrival_warp_pending = false;
+alignas(16) float g_arrival_pos[4] = {}, g_arrival_rot[4] = {};
 
 void GuestTick(const GameSnapshot& s, double now) {
     State& st = S();
@@ -3878,7 +3906,15 @@ void GuestTick(const GameSnapshot& s, double now) {
                 float pos[4];
                 std::memcpy(pos, st.dest_pos, sizeof pos);
                 BesideHost(pos, st.dest_rot, g_local_slot.load());
-                WriteSummonedPlacement(gsm, &st.dest_stage, pos, st.dest_rot);
+                if (ArrivalWarpMode()) {
+                    // The host-world load takes its stage from +0x14C4: the host's spot itself (the
+                    // guest is put beside it with a chr warp after the load, ArrivalWarpTick).
+                    SafeWrite(gsm + 0x14c4, &st.dest_stage, 4);
+                    SafeWrite(gsm + 0x14d0, st.dest_pos, 16);
+                    SafeWrite(gsm + 0x14e0, st.dest_rot, 16);
+                } else {
+                    WriteSummonedPlacement(gsm, &st.dest_stage, pos, st.dest_rot);
+                }
                 Log("guest: summoned placement = stage %#x pos (%.1f, %.1f, %.1f), GSM +0x1521 = %u", st.dest_stage,
                     pos[0], pos[1], pos[2], unsigned(Field<u8>(gsm, 0x1521)));
             }
@@ -3886,7 +3922,17 @@ void GuestTick(const GameSnapshot& s, double now) {
                 // Written once, before the load: an exact transform (forced placement +0x14F0 map,
                 // +0x1500 position, +0x1510 rotation, +0x1520) beside the host's arrival spot.
                 std::lock_guard<std::mutex> lk(st.mu);
-                if (SummonOffset() > 0.0f) {
+                if (ArrivalWarpMode() && !g_dead_follow.load()) {
+                    // No forced transform: the game's own placement of the travel (a lamp warp's
+                    // spawn spot), then a chr warp beside the host after the load. The forced
+                    // placement keeps the pre-summon spot the join wrote, which is what the guest's
+                    // own save records (a Continue after a B2 load started at the forced spot beside
+                    // the host, hd pin3/pin4).
+                    g_arrival_warp_pending = true;
+                    std::memcpy(g_arrival_pos, st.dest_pos, sizeof g_arrival_pos);
+                    std::memcpy(g_arrival_rot, st.dest_rot, sizeof g_arrival_rot);
+                    BesideHost(g_arrival_pos, g_arrival_rot, g_local_slot.load());
+                } else if (SummonOffset() > 0.0f) {
                     t.kind = TravelKind::Transform;
                     t.has_pos = true;
                     t.pos_map = st.dest_stage;
@@ -3970,6 +4016,19 @@ void GuestTick(const GameSnapshot& s, double now) {
             }
             const int n = RewindRemoteTasks("guest");
             Log("guest: arrived in the host world (flow 4); %d remote task(s) rewound", n);
+            if (g_arrival_warp_pending && s.player) {
+                g_arrival_warp_pending = false;
+                alignas(16) float p16[4] = {g_arrival_pos[0], g_arrival_pos[1], g_arrival_pos[2], 1.0f};
+                alignas(16) float r16[4] = {g_arrival_rot[0], g_arrival_rot[1], g_arrival_rot[2], g_arrival_rot[3]};
+                if (const u64 fn = Field<u64>(Field<u64>(s.player, 0), 0x5f8)) {
+                    reinterpret_cast<void(BB_COOP_SYSV*)(u64, const float*, const float*, u32)>(fn)(s.player, p16, r16, 1);
+                }
+                const u64 gsm = Slot(kSlotGsm);
+                Log("guest: arrived by the host's own travel; placed beside the host (%.2f, %.2f, %.2f); forced placement "
+                    "(own save spot) map %#x (%.1f, %.1f, %.1f)",
+                    double(p16[0]), double(p16[1]), double(p16[2]), Field<u32>(gsm, 0x14f0), double(Field<float>(gsm, 0x1500)),
+                    double(Field<float>(gsm, 0x1504)), double(Field<float>(gsm, 0x1508)));
+            }
             if (g_dead_follow.exchange(false) && g_own_respawn.saved) {
                 const u64 gsm = Slot(kSlotGsm);
                 OwnRespawn& o = g_own_respawn;
@@ -5166,6 +5225,7 @@ void Tick(const GameSnapshot& s) {
     LampSpotTick(s);
     HostDownTick(s, now);
     HostRevivedTick(s);
+    OwnStainLogTick(s);
     PinOwnSpotTick(s);
     PosScanTick(s, Now());
     RemoteChrRenderWatch(s, Now());
