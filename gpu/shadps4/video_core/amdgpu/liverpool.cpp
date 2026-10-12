@@ -522,7 +522,15 @@ void RunMemSemaphoreSignal(Vulkan::Rasterizer& rasterizer, const u8* data) {
 
 void RunDmaData(Vulkan::Rasterizer& rasterizer, const u8* data) {
     const auto* dma_data = reinterpret_cast<const PM4DmaData*>(data);
-    ASSERT(dma_data->command.das == 0);
+    // bbport: DAS=1 (destination is a register address) is not a memory copy; was an ASSERT
+    // (a crash). Skip it with a one-time warning (Mrsuss60 196ba93 dropped the assert).
+    if (dma_data->command.das != 0) {
+        static bool warned = false;
+        if (!std::exchange(warned, true)) {
+            LOG_WARNING(Render, "DmaData with DAS=1 skipped (register destination)");
+        }
+        return;
+    }
     // bbport: a DMA into guest memory is written by this thread (FillBuffer/CopyBuffer) when the
     // GPU has not modified the range. Like WriteData, it must not overtake the copies and the
     // fences deferred to the recording thread: the guest, seeing it, frees objects whose labels
@@ -2433,7 +2441,9 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
             if (dma_data->dst_addr_lo == 0x3022C || !rasterizer) {
                 break;
             }
-            ASSERT(dma_data->command.das == 0);
+            if (dma_data->command.das != 0) {
+                break; // bbport: register destination, not a memory copy (see RunDmaData)
+            }
             if (dma_data->src_sel == DmaDataSrc::Data && dma_data->dst_sel == DmaDataDst::Gds) {
                 rasterizer->FillBuffer(dma_data->dst_addr_lo, dma_data->NumBytes(), dma_data->data,
                                        true);
