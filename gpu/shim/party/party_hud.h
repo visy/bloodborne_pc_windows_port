@@ -147,14 +147,14 @@ constexpr float kTagBarHeightM = 1.82f;
 /// the left cap with its baseline 0.017 h above the bar, blue (49,155,199) with a dark shadow /
 /// outline; the bar red (95,13,31) over burnt orange (106,43,15). The console footage the user
 /// gave (players 2-4 m away) shows the same plate ~1.55x larger; ours follows the measured plate
-/// at range and grows near (bigger near, smaller far): PlateScale.
+/// at every distance (the game's own plate keeps one screen size): PlateScale.
 constexpr float kPlateFontH = 0.019f, kPlateBarW = 0.0996f, kPlateBarH = 0.0043f, kPlateCapH = 0.0085f,
                 kPlateCapRise = 0.0043f, kPlateNameInset = 0.0085f, kPlateBaselineGap = 0.017f,
                 kPlateCapToFont = 0.77f;  // Libre Baskerville: cap height / font size
 /// Scale of our plate over the game's measured size by camera depth (metres from the camera):
-/// 1 from kPlateFarDepth on, growing as 1/depth nearer, at most kPlateMaxScale (the console
-/// footage's size, ~2-3 m from the player with the default camera).
-constexpr float kPlateFarDepth = 10.0f, kPlateMaxScale = 1.6f;
+/// 1 from kPlateFarDepth on, growing as 1/depth nearer, at most kPlateMaxScale; kPlateMaxScale 1
+/// keeps the game's fixed size (a larger value would grow the plate near the camera).
+constexpr float kPlateFarDepth = 10.0f, kPlateMaxScale = 1.0f;  // fixed size, like the game's plate (user, 2026-10-12)
 float PlateScale(float depth);
 struct PlateLayout {
     float font = 0;                        // font size, px
