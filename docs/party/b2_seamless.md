@@ -752,6 +752,23 @@ not done for 0.5.2.
   "Acquire Blood Echoes". Not shown in the host's world (stain1-3). Design: a guest recovers its echoes
   in its own world, at the spot where it died (same map coordinates).
 
+**2026-10-12 (3): no forced transform in the dead follow and the solo re-join either; wipes.**
+* The dead follow (a wipe / lone respawn load) and split travel's solo re-join into the host's area
+  no longer write a forced transform (the death load uses the respawn records anyway; the solo re-join
+  writes the stage into +0x14C4 whatever +0x1521 says - the summoned-placement gate of 6.13 had
+  skipped it - and is put on the lamp spot by a chr warp on arrival). Split travel's alone load into
+  another area still uses its forced transform (it needs it to resolve the map): a Continue after one
+  can still start there (open).
+* Op clash fixed: split travel's dead-enemies event is also `"op":"dead"`; the guest's "I am down"
+  note is now `member_down` (before, the host never counted a dead guest, so a host death after a
+  guest's became a revive instead of a wipe).
+* A dead guest whose host's death load goes in-world (split travel's same-map follow) is now revived
+  beside the host (it stayed dead before).
+* Live wipe5a/5b (fresh saves): guest died, then the host: `every member is down too (1 of 1): a
+  wipe`, `held death goes with the host's travel`, `dead at the host's in-world respawn (a wipe):
+  revived beside the host, no load`; screenshots: both hunters side by side on both screens; the
+  following Continue: `map - -> m21_00_00_00` (the guest's pre-summon Dream).
+
 ## 7. Risks / open items
 
 * (Closed in 6.7 / 6.8) K10 / boss clear with a real kill; wipes (guest and host dead) and falls

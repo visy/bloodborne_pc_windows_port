@@ -2486,7 +2486,7 @@ bool HoldGuestDeath() {
     g_death_held_at = Now();
     g_last_hold_at = g_death_held_at.load();
     GuestBloodstain();
-    Send(0, "{\"op\":\"dead\"}");  // the host counts its members down (C2: a wipe while it is down)
+    Send(0, "{\"op\":\"member_down\"}");  // the host counts its members down (C2: a wipe while it is down)
     if (phase != GuestPhase::Idle) {
         g_dead_follow = true;
     }
@@ -3751,7 +3751,21 @@ void GuestTick(const GameSnapshot& s, double now) {
         if (have_dest && s.world_up && !s.loading) {
             DrainSnapshotQueue("in-world follow");
             BesideHost(pos, rot, g_local_slot.load());
-            WarpLocal(pos, rot[1], "follow the host's load into this map");
+            if (ChrHp(s.player) <= 0) {
+                // A dead guest following the host's death load in this map (a wipe): revived beside
+                // the host instead of only moved (it would stay dead: hostdeath wipe4a).
+                LampSpot sp;
+                sp.valid = true;
+                std::memcpy(sp.pos, pos, sizeof sp.pos);
+                std::memcpy(sp.rot, rot, sizeof sp.rot);
+                sp.map = s.map_id;
+                ReviveLocal(s, sp, false);
+                g_dead_follow = false;
+                g_solo_respawn = false;
+                Log("guest: dead at the host's in-world respawn (a wipe): revived beside the host, no load");
+            } else {
+                WarpLocal(pos, rot[1], "follow the host's load into this map");
+            }
             SendDeadEnemies(s, "in-world follow");
             const int n = RewindRemoteTasks("guest in-world follow");
             // The host loaded and holds this guest's record from before: send it fresh, and the
@@ -3880,12 +3894,23 @@ void GuestTick(const GameSnapshot& s, double now) {
                         const u32 stage = ids::EntityMap(lamp);
                         alignas(16) float p16[4] = {spot[0], spot[1], spot[2], 1.0f};
                         alignas(16) float r16[4] = {0.0f, spot[3], 0.0f, 0.0f};
-                        WriteSummonedPlacement(gsm, &stage, p16, r16);
-                        t.kind = TravelKind::Transform;
-                        t.has_pos = true;
-                        t.pos_map = stage;
-                        std::memcpy(t.pos, p16, sizeof t.pos);
-                        std::memcpy(t.rot, r16, sizeof t.rot);
+                        // The stage of the host-world load (split10); written whatever +0x1521 says.
+                        SafeWrite(gsm + 0x14c4, &stage, 4);
+                        SafeWrite(gsm + 0x14d0, p16, 16);
+                        SafeWrite(gsm + 0x14e0, r16, 16);
+                        if (ArrivalWarpMode()) {
+                            // No forced transform (it would become the own save's spawn spot): the
+                            // lamp travel itself, then a chr warp onto the lamp's spot on arrival.
+                            g_arrival_warp_pending = true;
+                            std::memcpy(g_arrival_pos, p16, sizeof g_arrival_pos);
+                            std::memcpy(g_arrival_rot, r16, sizeof g_arrival_rot);
+                        } else {
+                            t.kind = TravelKind::Transform;
+                            t.has_pos = true;
+                            t.pos_map = stage;
+                            std::memcpy(t.pos, p16, sizeof t.pos);
+                            std::memcpy(t.rot, r16, sizeof t.rot);
+                        }
                     }
                 }
                 RestoreZeroedOverlay();
@@ -3922,7 +3947,11 @@ void GuestTick(const GameSnapshot& s, double now) {
                 // Written once, before the load: an exact transform (forced placement +0x14F0 map,
                 // +0x1500 position, +0x1510 rotation, +0x1520) beside the host's arrival spot.
                 std::lock_guard<std::mutex> lk(st.mu);
-                if (ArrivalWarpMode() && !g_dead_follow.load()) {
+                if (ArrivalWarpMode() && g_dead_follow.load()) {
+                    // A dead follow (a wipe, a lone respawn): its death load goes to the respawn
+                    // records whatever a forced transform says, and the forced transform would
+                    // become the own save's spawn spot; none. (Placed after arrival as before.)
+                } else if (ArrivalWarpMode()) {
                     // No forced transform: the game's own placement of the travel (a lamp warp's
                     // spawn spot), then a chr warp beside the host after the load. The forced
                     // placement keeps the pre-summon spot the join wrote, which is what the guest's
@@ -5512,7 +5541,7 @@ void OnLinkEvent(int from_slot, const std::string& body) {
         Log("guest: the host was revived in place (no load)");
         return;
     }
-    if (body.find("\"dead\"") != std::string::npos) {
+    if (body.find("\"member_down\"") != std::string::npos) {
         std::lock_guard<std::mutex> lk(g_dead_mu);
         if (from_slot > 0 && from_slot < 16) {
             g_dead_members[from_slot] = Now();
