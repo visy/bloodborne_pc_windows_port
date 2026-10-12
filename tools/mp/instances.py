@@ -474,6 +474,20 @@ def run(a):
             print("[harness +%.1f s] the first guest joined (or 300 s passed): headless instances in %.0f s"
                   % (time.time() - ts0, a.headless_delay_after_join), flush=True)
             time.sleep(a.headless_delay_after_join)
+        if getattr(a, "join_sequential", False) and a.party and i >= 2:
+            # One guest at a time: guest i starts once guest i-1 has joined (the host's
+            # "cooperators i-2 -> i-1"), at least --stagger s after the last start; 300 s at most.
+            host_log = Path(a.root) / "inst0" / "run.log"
+            want = f"cooperators {i - 2} -> {i - 1}"
+            deadline = time.time() + 300
+            while time.time() < deadline and any(q.poll() is None for _, q, _ in procs):
+                try:
+                    if want in host_log.read_text(encoding="utf-8", errors="replace"):
+                        break
+                except OSError:
+                    pass
+                time.sleep(2)
+            print("[harness +%.1f s] %s: starting instance %d" % (time.time() - ts0, want, i), flush=True)
         log, starts[i] = open_log(inst / "run.log")
         # Test games run ABOVE_NORMAL (children inherit) so agents' builds never starve them.
         prio = 0x00008000 if os.name == "nt" else 0
@@ -646,6 +660,8 @@ def main():
     ap.add_argument("--headless-delay-after-join", type=float, default=0,
                     help="run (--party --headless N): start the headless instances this many s after the host's "
                          "first join (cooperators 0 -> 1)")
+    ap.add_argument("--join-sequential", action="store_true",
+                    help="run --party: each guest starts once the previous one has joined the host (and --stagger s apart)")
     ap.add_argument("--headless", type=int, default=0,
                     help="run: the last N instances headless-lite (BB_HEADLESS=1: minimised, no draws, no present)")
     ap.add_argument("--fps", default=os.environ.get("BB_MP_FPS", "30"),
