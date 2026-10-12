@@ -290,8 +290,7 @@ static int test_refusal() {
                          RejectCode::Kicked, RejectCode::Name, RejectCode::Protocol}) {
         CHECK(RefusalPlaysSolo(c));
         const std::string t = RefusalNotice(c, "");
-        CHECK(t.rfind("Party: ", 0) == 0 && t.find('
-') != std::string::npos);
+        CHECK(t.rfind("Party: ", 0) == 0 && t.find('\n') != std::string::npos);
     }
     CHECK(RefusalNotice(RejectCode::Shutdown, "x").empty() && RefusalNotice(RejectCode::None, "").empty());
     const std::string auth = RefusalNotice(RejectCode::Auth, bridge::AuthRejectText(true, true, true));

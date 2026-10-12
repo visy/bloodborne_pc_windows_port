@@ -73,8 +73,7 @@ void SetMembers(const std::vector<Member>& members);
 /// A one-line event for the log line and the toast ("Hunter1 joined", "Travelling to ...").
 void SetLastEvent(const std::string& text);
 /// An important notice shown as a message box in the middle of the screen for a while (lines
-/// split by '
-'; the first is its title). Empty clears it.
+/// split by '\n'; the first is its title). Empty clears it.
 void SetAlert(const std::string& text);
 
 // --- consumer side ---

@@ -71,8 +71,7 @@ std::string AuthRejectText(bool coded, bool code_needs_password, bool sent_passw
 /// A guest the host refused for this reason plays online alone in its own world (everything but
 /// the host ending the party, and None).
 bool RefusalPlaysSolo(RejectCode code);
-/// The message box for a guest's refusal ("title
-what to do"); `reason` as for RejectText (an
+/// The message box for a guest's refusal ("title\nwhat to do"); `reason` as for RejectText (an
 /// Auth refusal: AuthRejectText). Empty when RefusalPlaysSolo is false.
 std::string RefusalNotice(RejectCode code, const std::string& reason);
 /// The password a guest's Rejoin sends: System > Party's when it changed since the link started

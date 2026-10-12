@@ -2097,8 +2097,7 @@ void PartyAlert() {
         return;
     }
     const float alpha = std::clamp(float(left) / 1000.0f, 0.0f, 1.0f);
-    const std::size_t nl = alert_text.find('
-');
+    const std::size_t nl = alert_text.find('\n');
     const std::string title = alert_text.substr(0, nl);
     const std::string body = nl == std::string::npos ? std::string() : alert_text.substr(nl + 1);
     const ImGuiViewport* viewport = ImGui::GetMainViewport();

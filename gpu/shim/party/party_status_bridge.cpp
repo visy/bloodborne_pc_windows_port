@@ -247,9 +247,7 @@ std::string RefusalNotice(RejectCode code, const std::string& reason) {
         todo = "System > Party > Rejoin the host tries again.";
         break;
     }
-    return "Party: " + title + "
-" + todo + "
-You play online alone in your own world until then.";
+    return "Party: " + title + "\n" + todo + "\nYou play online alone in your own world until then.";
 }
 
 std::string RejoinPassword(const std::string& joined_with, const std::string& flow_at_start,
