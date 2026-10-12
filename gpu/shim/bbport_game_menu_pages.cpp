@@ -547,8 +547,8 @@ void DefineAll() {
     AddPage("Sound", "Звук", "Master volume boost with a soft limiter (bbport)",
             "Усиление общей громкости с мягким ограничителем (bbport)");
     AddRow(Scaled(&Values::audio_boost, BoostTable), "Volume boost", "Усиление громкости",
-           "Master volume, with a soft limiter against clipping: 0 = 1.0 (original), 4 = 1.4 (default), 10 = 3.0 (BB_AUDIO_BOOST overrides)",
-           "Общая громкость с мягким ограничителем: 0 = 1.0 (оригинал), 4 = 1.4 (по умолчанию), 10 = 3.0 (BB_AUDIO_BOOST переопределяет)",
+           "Master volume with a soft limiter: 0 = 1.0 (original), 4 = 1.4 (default), 10 = 3.0",
+           "Общая громкость с мягким ограничителем: 0 = 1.0 (оригинал), 4 = 1.4 (по умолч.), 10 = 3.0",
            {}, Kind::Slider);
 
     // ---- Effects: the game's graphics patches (after a restart). ----
