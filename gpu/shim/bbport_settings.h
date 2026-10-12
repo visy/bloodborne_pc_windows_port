@@ -84,6 +84,8 @@ struct Values {
     std::atomic<float> mk_smoothing{0.2f};  ///< 0 raw .. 0.8 heavy smoothing of the mouse look
     /// The wheel as d-pad up / down (quick items), one short press per notch (upstream 0.51, #52).
     std::atomic<bool> mk_wheel{true};
+    /// Mouse turns the camera directly (1:1, no stick deadzone/curve; window.cpp, bloodborne_cam)
+    std::atomic<bool> mk_direct_camera{false};
     /// The settings menu's position (fraction of the screen), -1 until it is moved.
     std::atomic<float> menu_x{-1.0f}, menu_y{-1.0f};
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.

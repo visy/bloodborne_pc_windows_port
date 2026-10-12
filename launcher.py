@@ -2418,6 +2418,12 @@ class BloodborneLauncher(tk.Tk):
         cb.pack(side="left", padx=(0, 16))
         Tooltip(cb, "The wheel steps the quick items and tools (d-pad up / down), one press per notch "
                     "(bbport.ini mk_wheel).")
+        direct_cam = tk.BooleanVar(value=ini.get("mk_direct_camera", "0") not in ("", "0"))
+        cb = ttk.Checkbutton(inv_row, text="Direct mouse camera", variable=direct_cam, style="Card.TCheckbutton")
+        cb.pack(side="left", padx=(0, 16))
+        Tooltip(cb, "The mouse turns the camera itself, 1:1 like a PC game, instead of through the right "
+                    "stick (no dead zone or turn curve); the stick look is kept while locked on. "
+                    "Imedved's Bloodborne mouse camera (bbport.ini mk_direct_camera).")
 
         ttk.Label(main, text="BINDINGS (WHILE MOUSE & KEYBOARD CONTROLS ARE ON)", style="Section.TLabel").grid(
             row=row, column=0, columnspan=3, sticky="w", pady=(4, 4))
@@ -2448,6 +2454,7 @@ class BloodborneLauncher(tk.Tk):
             values["mk_invert_x"] = "1" if invert_x.get() else "0"
             values["mk_invert_y"] = "1" if invert_y.get() else "0"
             values["mk_wheel"] = "1" if wheel.get() else "0"
+            values["mk_direct_camera"] = "1" if direct_cam.get() else "0"
             try:
                 update_ini(ini_path, values)
                 self.log(f"[M&K] Saved to {ini_path}: " + ", ".join(f"{k}={v}" for k, v in values.items()))
