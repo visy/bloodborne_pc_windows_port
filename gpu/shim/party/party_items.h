@@ -144,6 +144,10 @@ std::optional<ItemGrant> ClassifyAward(std::int32_t lot, bool host_only);
 /// Host flag: the grant for item flag `flag`; `captured` maps flags to lots the hook saw (it
 /// wins over the table for shared flags).
 std::optional<ItemGrant> ClassifyFlag(std::int32_t flag, const std::map<std::int32_t, std::int32_t>& captured);
+/// Per-player world treasure (D4, `instanced`: guests pick up their own copy): a map treasure's
+/// pickup flag (5AABZnnn, area > 0) the host set by picking it up (no award hook `captured` it)
+/// is not handed to the party - every player takes the treasure in the own world.
+bool InstancedTreasureFlag(std::int32_t flag, bool instanced, bool captured);
 
 // ---- PartyLink EVENT "items" / "items_full" payload ----
 constexpr const char* kItemsEventName = "items";

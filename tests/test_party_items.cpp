@@ -105,6 +105,12 @@ static void test_classify() {
     CHECK(f && f->lot == 2400450 && f->flag == 52400450 && f->source == ItemSource::Flag);
     f = ClassifyFlag(50001700, captured);
     CHECK(f && f->lot == 33000);
+    // D4 per-player treasure: a picked-up map treasure is not forwarded; global flags and awards are.
+    CHECK(InstancedTreasureFlag(52410140, true, false));
+    CHECK(!InstancedTreasureFlag(52410140, false, false));
+    CHECK(!InstancedTreasureFlag(52410140, true, true));
+    CHECK(!InstancedTreasureFlag(50001700, true, false));
+    CHECK(!InstancedTreasureFlag(12410000, true, false));
     captured[50001700] = 33010; // the hook saw the NG variant
     f = ClassifyFlag(50001700, captured);
     CHECK(f && f->lot == 33010);
