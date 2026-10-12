@@ -1102,7 +1102,14 @@ void start_host(LinkConfig cfg) {
     } else if (!menu_secret.empty() && unhex(menu_secret, cfg.secret.data(), cfg.secret.size())) {
         plog("party game from the menu: the party code of the last session (secret from party.json)");
     } else {
-        crypto::random_bytes(cfg.secret.data(), cfg.secret.size());
+        cfg.secret = {};
+        crypto::random_bytes(cfg.secret.data(), 6);  // BBP2 codes carry 48 bits (party_code.h)
+    }
+    if (cfg.secret[6] || cfg.secret[7]) {
+        // An 8-byte secret from before BBP2: shortened so the code is a short BBP2 one. The party
+        // key changes with it, so friends need the new code once.
+        cfg.secret[6] = cfg.secret[7] = 0;
+        plog("party secret shortened to 48 bits for the shorter BBP2 code: send your friends the new code");
     }
     flow::StoreHostSecret(hex_of(cfg.secret.data(), cfg.secret.size()));
     // <user>/party_secret.txt: the restart's second source after the crash marker.
@@ -1726,17 +1733,22 @@ bool guest_code(PartyCode* code, std::string* error, std::string* used) {
 // unreachable at its public address (no hairpin NAT on the router). When that address does not
 // answer a TCP connect within 1.5 s, or our own public address (STUN) is the code's, ask the LAN
 // (party_lan.h, ~2 s): a host of this party answers with its LAN address, and we join that.
-void lan_fallback(const PartyCode& code, const LinkConfig& cfg, std::array<std::uint8_t, 4>* ip, std::uint16_t* port) {
-    if (code.flags & kCodeFlagLan) return;           // already a LAN address
-    if (code.plain && cfg.password.empty()) return;  // no secret and no password: nothing to prove
-    if (!lan_discovery_enabled()) return;
+// A BBP2 LAN code (lan_partial) takes part too: its first three octets are only our own guess.
+// `forced`: ask the LAN straight away for this reason (a LAN code and no local IPv4 to guess with).
+bool lan_fallback(const PartyCode& code, const LinkConfig& cfg, std::array<std::uint8_t, 4>* ip, std::uint16_t* port,
+                  const char* forced = nullptr) {
+    if ((code.flags & kCodeFlagLan) && !code.lan_partial) return false;  // a full LAN address
+    if (code.plain && cfg.password.empty()) return false;  // no secret and no password: nothing to prove
+    if (!lan_discovery_enabled()) return false;
     const bool lb = loopback_mode();
     std::uint32_t nbo = 0;
     std::memcpy(&nbo, ip->data(), 4);
     std::string why;
-    if (!lan::tcp_reachable(nbo, *port, 1500)) {
+    if (forced) {
+        why = forced;
+    } else if (!lan::tcp_reachable(nbo, *port, 1500)) {
         why = "the host's address " + format_ipv4(*ip) + ":" + std::to_string(*port) + " did not answer in 1.5 s";
-    } else if (!lb) {
+    } else if (!lb && !(code.flags & kCodeFlagLan)) {
         const char* stun_env = env("BB_PARTY_STUN");
         const std::string server = stun_env ? stun_env : "stun.l.google.com:19302";
         if (server != "off" && server != "0") {
@@ -1752,7 +1764,7 @@ void lan_fallback(const PartyCode& code, const LinkConfig& cfg, std::array<std::
                 why = "our public address is the host's (same network)";
         }
     }
-    if (why.empty()) return;
+    if (why.empty()) return false;
     const std::array<std::uint8_t, 8> no_secret{};
     const crypto::Key key = crypto::derive_party_key(cfg.password, code.plain ? no_secret.data() : code.secret.data());
     const std::vector<std::uint32_t> targets = lb ? std::vector<std::uint32_t>{0x0100007fu} : lan::broadcast_targets();
@@ -1764,10 +1776,11 @@ void lan_fallback(const PartyCode& code, const LinkConfig& cfg, std::array<std::
         *port = f.port;
         plog("LAN fallback: found host at %s:%u (it reports %s; %s)", format_ipv4(*ip).c_str(), *port,
              format_ipv4(f.said).c_str(), note.c_str());
-    } else {
-        plog("LAN fallback: no host of this party answered on this network (%s); trying %s:%u", note.c_str(),
-             format_ipv4(*ip).c_str(), *port);
+        return true;
     }
+    plog("LAN fallback: no host of this party answered on this network (%s); trying %s:%u", note.c_str(),
+         format_ipv4(*ip).c_str(), *port);
+    return false;
 }
 
 void start_guest(LinkConfig cfg) {
@@ -1778,6 +1791,19 @@ void start_guest(LinkConfig cfg) {
         set_error(err);
         plog("%s", err.c_str());
         return;
+    }
+    const char* lan_forced = nullptr;
+    if (code.lan_partial) {
+        // A BBP2 LAN code holds the host's last octet: the rest is our own /24.
+        std::array<std::uint8_t, 4> local{127, 0, 0, 1};
+        if (loopback_mode() || best_local_ipv4(&local)) {
+            fill_lan_prefix(&code, local);
+            plog("LAN code: host %s (first three octets from our address %s)", code.host.c_str(),
+                 format_ipv4(local).c_str());
+        } else {
+            code.host = format_ipv4(code.ipv4);
+            lan_forced = "a LAN code and no local IPv4 address to complete it";
+        }
     }
     std::array<std::uint8_t, 4> ip{};
     std::uint16_t port = code.port;
@@ -1797,7 +1823,11 @@ void start_guest(LinkConfig cfg) {
         cfg.password.clear();
     }
     if (!bbnet::p2p_open()) plog("warning: cannot open the party UDP port %u (another program?)", bbnet::settings().party_port);
-    lan_fallback(code, cfg, &ip, &port);
+    if (!lan_fallback(code, cfg, &ip, &port, lan_forced) && lan_forced) {
+        set_error("cannot find the host of this LAN code (no local IPv4 address, no LAN answer)");
+        plog("cannot find the host of this LAN code (no local IPv4 address, no LAN answer)");
+        return;
+    }
     std::uint32_t nbo = 0;
     std::memcpy(&nbo, ip.data(), 4);
     auto* link = new PartyLink(cfg, make_callbacks(false));

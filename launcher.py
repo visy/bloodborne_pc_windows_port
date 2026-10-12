@@ -58,8 +58,9 @@ PARTY_MAX_CHOICES = ["2", "3", "4"]
 PARTY_DEFAULT_PORT = 9307
 PARTY_DEFAULT_STUN = "stun.l.google.com:19302"
 PARTY_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,16}$")
-# BBP1- + Crockford base32 groups (I/L/O accepted as aliases of 1/1/0, U is never used)
-PARTY_CODE_RE = re.compile(r"^BBP1(-[0-9A-HJ-NP-TV-Z]+)+$", re.IGNORECASE)
+# BBP2- (or the older BBP1-) + Crockford base32 groups (I/L/O accepted as aliases of 1/1/0, U is never used)
+PARTY_CODE_RE = re.compile(r"^BBP[12IL](-[0-9A-HJ-NP-TV-Z]+)+$", re.IGNORECASE)
+PARTY_CODE_PREFIXES = ("BBP1", "BBPI", "BBPL", "BBP2")
 PARTY_HOSTPORT_RE = re.compile(r"^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+):(\d{1,5})$")
 MP_INSTANCES = APP_DIR / "tools" / "mp" / "instances.py"
 PARTY_GUIDE = APP_DIR / "docs" / "PARTY.md"
@@ -79,7 +80,7 @@ PARTY_HELP = """Party co-op lets 2 to 4 players play the campaign together. It i
 
 HOST
 1. Party tab: Mode = Host a party, enter your name. Max players: 3 is the game's normal limit.
-2. Launch the game. Once it is running, your party code (BBP1-...) appears under Your code. Click Copy code and send it to your friends.
+2. Launch the game. Once it is running, your party code (BBP2-...) appears under Your code. Click Copy code and send it to your friends.
 3. Leave UPnP on. If friends cannot connect, forward the port (default 9307, UDP and TCP) to this PC in your router, or use a VPN such as Tailscale and give them your VPN address as host:port.
 
 JOIN
@@ -204,40 +205,47 @@ def party_port(value, default: int = PARTY_DEFAULT_PORT):
 
 
 def party_code_problem(code: str) -> str:
-    """'' when `code` is a party code (BBP1-...) or host:port, else what is wrong with it."""
+    """'' when `code` is a party code (BBP2-... / BBP1-...) or host:port, else what is wrong with it."""
     code = (code or "").strip()
     if not code:
-        return "enter the party code the host gave you (BBP1-...) or host:port"
-    if code.upper().startswith("BBP1"):
-        if PARTY_CODE_RE.match(code):
-            return ""
-        return "a party code is BBP1- followed by groups of 0-9 / A-Z (no U), separated by -"
+        return "enter the party code the host gave you (BBP2-...) or host:port"
+    if code.upper().startswith(PARTY_CODE_PREFIXES):
+        if not PARTY_CODE_RE.match(code):
+            return "a party code is BBP2- followed by groups of 0-9 / A-Z (no U), separated by -"
+        return "" if party_code_flags(code) is not None else "this party code has a typo (checksum mismatch)"
     m = PARTY_HOSTPORT_RE.match(code)
     if m:
         port = int(m.group(2))
         return "" if 1 <= port <= 65535 else "the port after : must be 1-65535"
-    return "not a party code (BBP1-...) or host:port"
+    return "not a party code (BBP2-...) or host:port"
 
 
 PARTY_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 PARTY_FLAG_LAN, PARTY_FLAG_PASSWORD = 1, 2  # party_code.h kCodeFlagLan / kCodeFlagPasswordRequired
 
 
-def party_code_flags(code: str):
-    """The flags byte of a valid BBP1 code (checksum checked, as the game decodes it), else None
-    (host:port, a typo, empty)."""
-    t = (code or "").strip().upper()
-    if not t.startswith(("BBP1", "BBPI", "BBPL")):
-        return None
-    vals = []
-    for c in t[4:]:
-        if c in "- \t":
-            continue
-        c = {"I": "1", "L": "1", "O": "0"}.get(c, c)
-        if c not in PARTY_CODE_ALPHABET:
-            return None
-        vals.append(PARTY_CODE_ALPHABET.index(c))
-    if len(vals) != 29:
+def _crc8(data: bytes) -> int:
+    """party_code.h crc8: poly 0x07, init 0."""
+    crc = 0
+    for b in data:
+        crc ^= b
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x07) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
+    return crc
+
+
+def _crc16_ccitt(data: bytes) -> int:
+    crc = 0xFFFF
+    for b in data:
+        crc ^= b << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+    return crc
+
+
+def _symbols_to_bytes(vals, n):
+    """Crockford symbols -> n bytes (zero padding bits), else None."""
+    if len(vals) != (n * 8 + 4) // 5:
         return None
     acc = bits = 0
     raw = bytearray()
@@ -247,14 +255,37 @@ def party_code_flags(code: str):
         if bits >= 8:
             raw.append((acc >> (bits - 8)) & 0xFF)
             bits -= 8
-    if len(raw) != 18 or raw[0] != 1:
+    if acc & ((1 << bits) - 1):
         return None
-    crc = 0xFFFF
-    for b in raw[:16]:
-        crc ^= b << 8
-        for _ in range(8):
-            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
-    if crc != (raw[16] << 8 | raw[17]):
+    return bytes(raw)
+
+
+def party_code_flags(code: str):
+    """The flags byte of a valid BBP2 / BBP1 code (checksum checked, as the game decodes it), else
+    None (host:port, a typo, empty)."""
+    t = (code or "").strip().upper()
+    if not t.startswith(PARTY_CODE_PREFIXES):
+        return None
+    vals = []
+    for c in t[4:]:
+        if c in "- \t":
+            continue
+        c = {"I": "1", "L": "1", "O": "0"}.get(c, c)
+        if c not in PARTY_CODE_ALPHABET:
+            return None
+        vals.append(PARTY_CODE_ALPHABET.index(c))
+    if t[3] == "2":
+        # flags | ipv4[4] (LAN: last octet) | port[2] (absent with flag 8) | secret[6] | crc8
+        if len(vals) < 2:
+            return None
+        wire = (vals[0] << 3 | vals[1] >> 2) & 0xFF
+        size = 1 + (1 if wire & PARTY_FLAG_LAN else 4) + (0 if wire & 8 else 2) + 6 + 1
+        raw = _symbols_to_bytes(vals, size)
+        if raw is None or _crc8(raw[:-1]) != raw[-1] or wire & ~0x0F:
+            return None
+        return wire & ~8
+    raw = _symbols_to_bytes(vals, 18)
+    if raw is None or raw[0] != 1 or _crc16_ccitt(raw[:16]) != (raw[16] << 8 | raw[17]):
         return None
     return raw[1]
 
@@ -336,7 +367,7 @@ def party_env(s: dict) -> dict:
     env["BB_PARTY_PORT"] = str(port or PARTY_DEFAULT_PORT)
     if mode == "join":
         code = str(s.get("party_code", "") or "").strip()
-        env["BB_PARTY_CODE"] = (code.upper() if code.upper().startswith("BBP1") else code) or None
+        env["BB_PARTY_CODE"] = (code.upper() if code.upper().startswith(PARTY_CODE_PREFIXES) else code) or None
     env["BB_PARTY_PASSWORD"] = password or None
     env["BB_PARTY_UPNP"] = "1" if s.get("party_upnp", True) else "0"
     env["BB_PARTY_STUN"] = stun or None  # game default: stun.l.google.com:19302; "off" disables
@@ -1588,7 +1619,7 @@ class BloodborneLauncher(tk.Tk):
             "Optional extra password: the host and every member must enter the same one. The party code "
             "already contains a secret; a password also keeps out people who get hold of the code. "
             "Stored in launcher_settings.json. Default: none (BB_PARTY_PASSWORD).", show="*")
-        code_tip = ("The code the host gave you: BBP1- followed by letter/digit groups (letters are not "
+        code_tip = ("The code the host gave you: BBP2- followed by letter/digit groups (letters are not "
                     "case-sensitive), or the host's address as host:port (LAN, VPN, port forwarding). "
                     "(BB_PARTY_CODE)")
         code_lbl, self.party_code_entry, paste_btn, _ = self._entry(

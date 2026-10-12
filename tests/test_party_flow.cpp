@@ -168,6 +168,7 @@ int main() {
     assert(DefaultName("averyveryverylongname", 1).size() == 16);
     assert(DefaultName("x", 1) != DefaultName("x", 2));
     assert(NormalizeAddress(" bbp1-ab ") == "BBP1-AB");
+    assert(NormalizeAddress("bbp2-ab12-cd") == "BBP2-AB12-CD");
     assert(NormalizeAddress(" host.example:9307 ") == "host.example:9307");
     std::puts("PASS: party flow");
     return 0;

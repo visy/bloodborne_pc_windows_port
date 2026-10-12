@@ -28,7 +28,7 @@ Verdict lines on stdout: "PASS <script>: ..." or "FAIL <script>: <reason>" (exit
 step lines "  ok   <step>: ..." / "  FAIL <step>: ...". A JSON log of every step, RPC, event and
 verdict goes to --json-log (default simguest-<name>.json; "-" = none).
 
-Connect with a party code ("BBP1-XXXX-...", carries host, port and secret) or --host/--port
+Connect with a party code ("BBP2-XXXX-...", carries host, port and secret) or --host/--port
 (plain host:port parties: password only). The host checks the game version (PartyLink v2: eboot,
 gameplay patches, gameplay mods): pass --game-dir DIR (DIR/eboot.bin sha256 and DIR/out/
 party_patch_hash.txt, party_mods.txt as party_runtime.cpp reads them) or --eboot-sha256 /
@@ -44,10 +44,10 @@ The key is derived once per process (crash-rejoin and soak reuse it). --key-hex 
 derivation (the hex the first run prints with -v).
 
 Examples:
-  python tools/party/simguest.py --code BBP1-.... --password pw --script join
+  python tools/party/simguest.py --code BBP2-.... --password pw --script join
   python tools/party/simguest.py --host 127.0.0.1 --port 9317 --secret 0011223344556677 \
       --script crash-rejoin --name Sim1
-  python tools/party/simguest.py --code BBP1-.... --script soak 10 --hold 5
+  python tools/party/simguest.py --code BBP2-.... --script soak 10 --hold 5
 """
 from __future__ import annotations
 
@@ -439,6 +439,57 @@ def crc16_ccitt(d: bytes) -> int:
     return crc
 
 
+def crc8(d: bytes) -> int:
+    crc = 0
+    for b in d:
+        crc ^= b
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x07) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
+    return crc
+
+
+def _local_prefix() -> list:
+    """The first three octets of this machine's outbound IPv4 (127.0.0 when there is none)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9))  # no packet is sent
+            return [int(x) for x in s.getsockname()[0].split(".")[:3]]
+    except OSError:
+        return [127, 0, 0]
+
+
+def _decode_v2(vals: list) -> dict:
+    """BBP2: flags | ipv4[4] (LAN: last octet) | port[2] (absent with flag 8) | secret[6] | crc8."""
+    if len(vals) < 2:
+        raise ValueError("party code too short")
+    wire = (vals[0] << 3 | vals[1] >> 2) & 0xFF
+    size = 1 + (1 if wire & 1 else 4) + (0 if wire & 8 else 2) + 6 + 1
+    if len(vals) != (size * 8 + 4) // 5:
+        raise ValueError(f"party code has {len(vals)} symbols, expected {(size * 8 + 4) // 5}")
+    acc, bits, raw = 0, 0, bytearray()
+    for v in vals:
+        acc = (acc << 5) | v
+        bits += 5
+        if bits >= 8:
+            raw.append((acc >> (bits - 8)) & 0xFF)
+            bits -= 8
+    if crc8(bytes(raw[:-1])) != raw[-1] or acc & ((1 << bits) - 1):
+        raise ValueError("party code checksum mismatch (typo?)")
+    n = 1
+    if wire & 1:
+        ip = _local_prefix() + [raw[n]]
+        n += 1
+    else:
+        ip = list(raw[n:n + 4])
+        n += 4
+    port = DEFAULT_PORT
+    if not wire & 8:
+        port = raw[n] << 8 | raw[n + 1]
+        n += 2
+    return {"host": ".".join(str(b) for b in ip), "port": port, "secret": bytes(raw[n:n + 6]) + b"\0\0",
+            "flags": wire & ~8, "plain": False}
+
+
 def decode_party_code(text: str) -> dict:
     """{'host', 'port', 'secret', 'flags', 'plain'}; raises ValueError."""
     t = text.strip()
@@ -449,8 +500,9 @@ def decode_party_code(text: str) -> dict:
         if not host:
             host, port = t, str(DEFAULT_PORT)
         return {"host": host, "port": int(port), "secret": b"\0" * 8, "flags": 0, "plain": True}
-    if not t.upper().startswith("BBP1"):
+    if t[3:4].upper() not in ("1", "I", "L", "2"):
         raise ValueError("unknown party code version")
+    v2 = t[3] == "2"
     body = t[4:]
     vals = []
     for c in body:
@@ -461,6 +513,8 @@ def decode_party_code(text: str) -> dict:
         if c not in ALPHABET:
             raise ValueError(f"bad character {c!r} in the party code")
         vals.append(ALPHABET.index(c))
+    if v2:
+        return _decode_v2(vals)
     if len(vals) != 29:
         raise ValueError(f"party code has {len(vals)} symbols, expected 29")
     acc, bits, raw = 0, 0, bytearray()
@@ -1704,7 +1758,7 @@ def read_party_identity(path: str) -> dict:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Headless simulated party guest (see the module docstring).",
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--code", help="party code BBP1-... (or host:port)")
+    ap.add_argument("--code", help="party code BBP2-... (or host:port)")
     ap.add_argument("--host", help="host address (instead of --code)")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT, help="host party port (TCP; UDP the same)")
     ap.add_argument("--udp-port-host", type=int, default=0, help="host party UDP port if not the TCP port")

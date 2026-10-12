@@ -246,7 +246,8 @@ std::string DefaultName(const std::string& user, std::uint32_t random) {
 
 std::string NormalizeAddress(const std::string& text) {
     std::string s = Trim(text);
-    if (s.size() > 4 && (s.rfind("bbp1", 0) == 0 || s.rfind("BBP1", 0) == 0 || s.rfind("Bbp1", 0) == 0)) {
+    // A party code (BBP2-... / BBP1-...): upper case. A host name starting with "bbp" has no '-' at [4].
+    if (s.size() > 5 && (s[0] | 0x20) == 'b' && (s[1] | 0x20) == 'b' && (s[2] | 0x20) == 'p' && (s[4] == '-' || s[4] == ' ')) {
         for (char& c : s) c = char(std::toupper((unsigned char)c));
     }
     return s;

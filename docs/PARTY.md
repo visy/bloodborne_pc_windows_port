@@ -136,9 +136,12 @@ when that sits in the bottom left; join / leave notices appear above the panel.
 
 ## The party code
 
-A code looks like `BBP1-XXXX-XXXX-...`. It holds the host's address and port and a secret; the
-secret is what lets a guest in, so share the code only with the people you play with. Letters are
-not case-sensitive. The host has two codes (`user\party_code.txt`, the launcher, *System → Party*
+A code looks like `BBP2-XXXX-XXXX-XXXX-XXXX-XXXX` (Internet) or `BBP2-XXXX-XXXX-XXXX-XXX` (LAN). It
+holds the host's address, the port (only when it is not 9307) and a secret; the secret is what lets
+a guest in, so share the code only with the people you play with. Letters are not case-sensitive,
+I/L count as 1 and O as 0, and a checksum catches a mistyped character. The LAN code carries only
+the last number of the host's address: the guest takes the first three from its own address (same
+home network), or searches the LAN when it has none. Older `BBP1-...` codes still work. The host has two codes (`user\party_code.txt`, the launcher, *System → Party*
 and the overlay's Party tab):
 
 | Code | Holds | Use it for |
@@ -154,7 +157,7 @@ host at ...`). This adds about 2 s. The probe carries only a hash made from the 
 the secret; the host answers only probes for its own party, at most 5 a second.
 `BB_PARTY_LAN_DISCOVERY=0` turns it off. With `host:port` it works only when a password is set.
 
-The code's secret is new for each hosting session, except when the game restarts after a crash or
+The code's secret (48 bits) is new for each hosting session, except when the game restarts after a crash or
 the party is started again from the title screen's *Party* page. A guest using a code without a
 password ignores a password saved in its launcher or *Party* page (log: `code needs no password;
 saved password ignored`).

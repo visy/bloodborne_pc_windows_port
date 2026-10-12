@@ -140,7 +140,7 @@ everything).
 ## 4. user\party.json
 
 ```json
-{ "version": 1, "name": "Hunter", "role": "join", "host_address": "BBP1-....",
+{ "version": 1, "name": "Hunter", "role": "join", "host_address": "BBP2-....",
   "password_dpapi": "<base64>", "port": 0, "has_character": true, "slot": 2,
   "host_secret": "0123456789abcdef" }
 ```
@@ -150,7 +150,7 @@ everything).
   `"password"` is accepted and re-stored protected. Never in the environment, `launcher.log` or
   `party_relaunch.bat`. (On Linux it is stored in clear text; the page says "stored protected"
   only where it is.)
-* **host_address**: a BBP1 party code or `host[:port]` (checked with `decode_party_code` when typed).
+* **host_address**: a BBP2 (or BBP1) party code or `host[:port]` (checked with `decode_party_code` when typed).
 * **host_secret**: the host's party-code secret, reused by menu runs (`BB_PARTY_MENU=1`) so the
   code friends saved stays valid next session (as long as the public address and port stay the
   same). A plain `host:port` address carries no secret: it joins a host **that has a password**
@@ -222,7 +222,7 @@ Runtime: ending with exit code 75: run.bat starts the game again
 Party: starting the party game (host)
 Patches: party co-op: Party: Skip Online/Offline Choice (Online), Party: Bells anywhere, ...
 Saves: party session with separate saves: using .\user/savedata_party (the single-player saves in .\user/savedata are not touched)
-Party: hosting on port 48000 as Hunter0; code (Internet): BBP1-0417-...
+Party: hosting on port 48000 as Hunter0; code (Internet): BBP2-0417-...
 Party: auto-continue: party link up; confirming Continue on the title (party mode)
 Party: auto-continue: world up after 2 press(es)
 Party flow: party character in the world (save slot 0): Continue party game will load it

@@ -54,10 +54,10 @@ static bool wait_for(const std::function<bool()>& pred, int timeout_ms) {
 }
 
 static void test_codes() {
-    std::array<std::uint8_t, 8> secret = {0xde, 0xad, 0xbe, 0xef, 0x01, 0x23, 0x45, 0x67};
+    std::array<std::uint8_t, 8> secret = {0xde, 0xad, 0xbe, 0xef, 0x01, 0x23, 0, 0};  // 48 bits, padded
     std::string code = make_party_code({203, 0, 113, 7}, 9307, secret, kCodeFlagPasswordRequired);
     std::printf("  code: %s\n", code.c_str());
-    CHECK(code.rfind("BBP1-", 0) == 0);
+    CHECK(code.rfind("BBP2-", 0) == 0 && code.size() == 5 + 20 + 4);  // default port: no port bytes
     PartyCode pc;
     std::string err;
     CHECK(decode_party_code(code, &pc, &err));
@@ -105,12 +105,61 @@ static void test_codes() {
     CHECK(!decode_party_code("1.2.3.4:70000", &pc2, &err));
     CHECK(!decode_party_code("", &pc2, &err));
     CHECK(crc16_ccitt(reinterpret_cast<const std::uint8_t*>("123456789"), 9) == 0x29B1);
+    CHECK(crc8(reinterpret_cast<const std::uint8_t*>("123456789"), 9) == 0xF4);
+
+    // Another port: two more bytes (23 symbols); round trip with every field.
+    const std::string ported = make_party_code({198, 51, 100, 9}, 48000, secret, kCodeFlagRelayOnly);
+    CHECK(ported.rfind("BBP2-", 0) == 0 && ported.size() == 5 + 23 + 5);
+    CHECK(decode_party_code(ported, &pc2, &err) && pc2.port == 48000 && pc2.flags == kCodeFlagRelayOnly &&
+          pc2.address() == "198.51.100.9:48000" && pc2.secret == secret && !pc2.lan_partial);
+    std::printf("  port 48000: %s\n", ported.c_str());
+
+    // BBP1 still decodes; an 8-byte secret (an old host's) is encoded as BBP1.
+    const std::array<std::uint8_t, 8> secret8 = {0xde, 0xad, 0xbe, 0xef, 0x01, 0x23, 0x45, 0x67};
+    const std::string v1 = make_party_code({203, 0, 113, 7}, 9307, secret8, kCodeFlagPasswordRequired);
+    CHECK(v1.rfind("BBP1-", 0) == 0 && v1.size() == 5 + 29 + 7);
+    CHECK(decode_party_code(v1, &pc2, &err) && pc2.version == 1 && pc2.secret == secret8 && pc2.port == 9307 &&
+          pc2.flags == kCodeFlagPasswordRequired && pc2.address() == "203.0.113.7:9307");
+    PartyCode v1_struct;
+    v1_struct.version = 1;
+    v1_struct.flags = kCodeFlagPasswordRequired;
+    v1_struct.ipv4 = {203, 0, 113, 7};
+    v1_struct.secret = secret;
+    const std::string v1b = encode_party_code(v1_struct);
+    CHECK(v1b.rfind("BBP1-", 0) == 0);
+    CHECK(decode_party_code(v1b, &pc2, &err) && pc2.secret == secret && pc2.address() == "203.0.113.7:9307");
+
+    // The key a BBP2 guest derives equals the host's (the 6-byte secret zero padded to 8), and
+    // the same secret's BBP1 code gives the same key.
+    PartyCode from_v2, from_v1;
+    CHECK(decode_party_code(code, &from_v2, &err) && decode_party_code(v1b, &from_v1, &err));
+    const auto host_key = crypto::derive_party_key("pw", secret.data());
+    CHECK(crypto::derive_party_key("pw", from_v2.secret.data()) == host_key);
+    CHECK(crypto::derive_party_key("pw", from_v1.secret.data()) == host_key);
+
+    // A typo in the flags symbol changes the expected length: still rejected.
+    std::string flagtypo = code;
+    flagtypo[5] = flagtypo[5] == '0' ? '1' : '0';
+    CHECK(!decode_party_code(flagtypo, &pc2, &err));
+
+    // LAN code: only the last octet; the guest completes it from its own address.
+    const std::string lan_code = make_party_code({192, 168, 1, 42}, 9307, secret, kCodeFlagLan);
+    CHECK(lan_code.rfind("BBP2-", 0) == 0 && lan_code.size() == 5 + 15 + 3);
+    CHECK(decode_party_code(lan_code, &pc2, &err) && pc2.lan_partial && (pc2.flags & kCodeFlagLan) &&
+          pc2.ipv4[3] == 42 && pc2.host.empty() && pc2.secret == secret && pc2.port == 9307);
+    CHECK(pc2.address() == "*.*.*.42:9307");
+    fill_lan_prefix(&pc2, {10, 0, 7, 3});
+    CHECK(pc2.address() == "10.0.7.42:9307" && pc2.ipv4 == (std::array<std::uint8_t, 4>{10, 0, 7, 42}));
+    const std::string lan_port = make_party_code({192, 168, 1, 42}, 47001, secret, kCodeFlagLan);
+    CHECK(decode_party_code(lan_port, &pc2, &err) && pc2.port == 47001 && pc2.lan_partial &&
+          lan_port.size() == 5 + 18 + 4);
+    std::printf("  LAN code: %s, port 47001: %s\n", lan_code.c_str(), lan_port.c_str());
 
     std::array<std::uint8_t, 4> lan{};
     if (best_local_ipv4(&lan)) {
         std::string lc;
         CHECK(make_lan_code(9307, secret, 0, &lc));
-        CHECK(decode_party_code(lc, &pc2, &err) && (pc2.flags & kCodeFlagLan));
+        CHECK(decode_party_code(lc, &pc2, &err) && (pc2.flags & kCodeFlagLan) && pc2.ipv4[3] == lan[3]);
         std::printf("  LAN address %s -> %s\n", format_ipv4(lan).c_str(), lc.c_str());
     } else {
         std::printf("  (no LAN adapter)\n");
