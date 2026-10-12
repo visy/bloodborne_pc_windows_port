@@ -146,15 +146,21 @@ if "%BB_AUTO_RENDER_RES%"=="1" (
 if "%BB_FPS%"=="" set "BB_FPS=uncap"
 set "fps=%BB_FPS%"
 
+REM The scaled sizes go through a file, like mods.py above: read with for /f ('"%PYTHON%" ...
+REM "%BB_CONFIG%"') the command lost its quotes and printed nothing, so an output other than
+REM 1080p never got its startup patch (or its direct memory) and always ran live.
 set "scaled_render="
 set "scaled_output="
-if "%BB_RENDER_RES%"=="" (
-    for /f "tokens=1,2" %%a in ('"%PYTHON%" scripts\patches.py --print-scaled --settings "%BB_CONFIG%" 2^>nul') do (
-        set "scaled_render=%%a"
-        set "scaled_output=%%b"
-    )
+set "scaled_result=%out%\scaled_sizes.txt"
+if exist "%scaled_result%" del "%scaled_result%"
+if "%BB_RENDER_RES%"=="" "%PYTHON%" scripts\patches.py --print-scaled --settings "%BB_CONFIG%" > "%scaled_result%" 2>nul
+if exist "%scaled_result%" for /f "usebackq tokens=1,2" %%a in ("%scaled_result%") do (
+    set "scaled_render=%%a"
+    set "scaled_output=%%b"
 )
 
+REM One statement per line: inside a ( ) block %live% keeps the value it had before the block,
+REM which turned live_resolution=1 and auto from bbport.ini back into 0.
 set "live=0"
 if "%scaled_output%"=="" goto live_done
 if not "%BB_LIVE_RES%"=="" set "live=%BB_LIVE_RES%"
