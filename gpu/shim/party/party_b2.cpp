@@ -5043,6 +5043,19 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
                 SafeWrite(gsm + 0x14b0, rot, 16);
                 SafeWrite(gsm + 0x14c0, &map, 4);
                 Log("title join: return spot = own last lamp %u (map %#x, %.1f, %.1f, %.1f)", own, map, pos[0], pos[1], pos[2]);
+                // The forced placement too (what the guest's save records as its spawn): with the own
+                // spot unknown (a save in the host's map; the record held m24_01 (0, 0, 0)) a later
+                // solo Continue started at the map origin (live cont c4 fell through m24_01, c6 stood
+                // at (0, 0, 0) in the Dream). The own last lamp is always a valid spawn.
+                if (!(std::getenv("BB_PARTY_TITLE_OWN_LAMP_SPOT") && std::getenv("BB_PARTY_TITLE_OWN_LAMP_SPOT")[0] == '0')) {
+                    alignas(16) float p16[4] = {pos[0], pos[1], pos[2], 1.0f}, r16[4] = {rot[0], rot[1], rot[2], rot[3]};
+                    u32 m = map;
+                    using PtrFn = void(BB_COOP_SYSV*)(const void*);
+                    reinterpret_cast<PtrFn>(Guest(0x156cf10))(&m);
+                    reinterpret_cast<PtrFn>(Guest(0x156cf20))(p16);
+                    reinterpret_cast<PtrFn>(Guest(0x156cf40))(r16);
+                    Log("title join: forced placement = own last lamp %u (the own save spot is not known)", own);
+                }
             } else {
                 Log("title join: no own last lamp (%u) for the return spot", own);
             }
@@ -5084,13 +5097,34 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
             SafeRead(gsm + 0x1510, t.own_rot, 16);
             Log("title join: own save spot: map %#x (%.1f, %.1f, %.1f)", cur, double(t.own_pos[0]), double(t.own_pos[1]),
                 double(t.own_pos[2]));
+        } else if (cur == stage && cur != 0 && cur != 0xffffffffu) {
+            // The own save is in the host's map (e.g. both in the Dream): the forced placement is
+            // still the save's own spot (no host spot written over it yet). Without this the record
+            // below (+0x15E0; m24_01 at (0, 0, 0) in a Dream save, live cont run) went into the
+            // forced placement and the guest's next solo Continue fell through the world.
+            alignas(16) float p0[4], r0[4];
+            SafeRead(gsm + 0x1500, p0, 16);
+            SafeRead(gsm + 0x1510, r0, 16);
+            std::lock_guard<std::mutex> lk(t.mu);
+            if (!t.own_have && (p0[0] != 0.0f || p0[1] != 0.0f || p0[2] != 0.0f)) {
+                t.own_have = true;
+                t.own_map = cur;
+                std::memcpy(t.own_pos, p0, sizeof p0);
+                std::memcpy(t.own_rot, r0, sizeof r0);
+                Log("title join: own save spot (in the host's map): map %#x (%.1f, %.1f, %.1f)", cur, double(p0[0]),
+                    double(p0[1]), double(p0[2]));
+            }
         }
         {
             // The save's own spot record (+0x15B0 pos, +0x15C0 rot, +0x15E0 map; hostdeath's pos scan)
             // when the forced placement holds none.
             const u32 rec = Field<u32>(gsm, 0x15e0);
             std::lock_guard<std::mutex> lk(t.mu);
-            if (!t.own_have && rec != 0 && rec != 0xffffffffu && rec != stage) {
+            alignas(16) float rp[4];
+            SafeRead(gsm + 0x15b0, rp, 16);
+            // A record at (0, 0, 0) is no spot (a Dream save held m24_01 (0, 0, 0) there).
+            if (!t.own_have && rec != 0 && rec != 0xffffffffu && rec != stage &&
+                (rp[0] != 0.0f || rp[1] != 0.0f || rp[2] != 0.0f)) {
                 t.own_have = true;
                 t.own_map = rec;
                 SafeRead(gsm + 0x15b0, t.own_pos, 16);
