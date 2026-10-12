@@ -297,6 +297,32 @@ timer after the 2nd arrival. Next: trace 0x1874710's verdict on the host during 
   machine sends (or does not send) the 267-byte message and what it checks. Not run: the user
   limited the machine to 2 game clients (2026-10-11), so 3-4 client runs are paused.
 
+### 4 players with title join and headless guests (2026-10-12, agent/sixp, 0.5.6)
+
+Since 0.5.6 guests join from the title (B2 title join, `BB_PARTY_TITLE_JOIN`), not by the bell,
+so the bell path's dropped 3rd-cooperator invite above no longer decides a 4-player join. Runs with
+2 rendering + 2 headless instances (`instances.py --headless 2`, `--fresh-saves`; headless-lite:
+`BB_HEADLESS`, DEBUG_SWITCHES.md):
+- all 4 started together: once all three counted within 5 s (27.1 / 29.7 / 32.0 s); once the host's
+  game never finished one guest's first sync (it re-sent the data request 0xA 38 times; cooperators
+  stayed at 2) and that guest's window stayed on the loading screen;
+- headless guests started 20 s after the first join (`--headless-delay-after-join 20`): all three
+  counted (24.2 / 104.7 / 118.7 s), each title join on the first try, but every headless guest only
+  ~48 s after its own load ended (the host's first-sync request repeated ~33 times);
+- screenshots: the host shows all four side by side with plates on the right heads; the first
+  guest (rendering) is in the world, not stuck.
+- **Bug (title join, B2 owner):** a title-joined guest has chrs only for the players already in the
+  world when it arrived. Run 2's remote chr lists (B2 `remote chrs:` / `presence count`): host 3
+  guests; Hunter1 only the host; Hunter2 and Hunter3 the host + Hunter1, not each other. Signaling
+  works (every pair `peer heard`), so the newcomer's chr is not announced to the guests already in
+  the world (its first sync goes to the host only). Bell joins (the 4-client runs of 2026-10-11) gave
+  every guest every chr. This is the user's "guest 1 didn't see the third player".
+- reproduced with only the host rendering and the guests started one at a time
+  (`--headless 3 --join-sequential --stagger 10`, run 5): joins at 24.8 / 48.2 / 84.7 s, each on the
+  first try; `presence count` per peer: host 4, Hunter1 2, Hunter2 3, Hunter3 4 - every guest misses
+  exactly the guests that came after it. Host screenshot: all four together, three plates and HUD
+  rows at 0.9-1.0 m (Hunter3's plate drawn higher than the others; Hunter3 stands behind Hunter1).
+
 ### Host does not draw a guest / its plate floats away (user, 2026-10-11)
 
 Seen with 2 and 3 players (user screenshots; split24 and a hostdeath run): on the host the guest's

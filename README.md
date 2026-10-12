@@ -122,8 +122,8 @@ single-player save is never touched. Settings: *System → Party* pages in the g
 - **Enemy drops for each player.** Every player gets their own roll of each enemy's drop.
 - **Cutscenes for everyone.** A story scene a guest triggers in the host's world plays for the
   whole party too.
-- **Up to 4 players** (host + 3), all in the host's world. The 4th player's summon can take a
-  minute or two.
+- **Up to 4 players** (host + 3), all in the host's world. With 3 guests, a guest does not yet see
+  the guests who joined after it.
 - **Same version for everyone.** A player whose bbport build, game files, patches, mods or party
   options differ is refused on joining; the message says what differs and what to do.
 - **Chalice dungeons together.** Guests join the host's dungeon; levers, doors, the layer boss, its
@@ -158,7 +158,7 @@ single-player save is never touched. Settings: *System → Party* pages in the g
 | Item pickups and enemy drops per player: everyone gets their own | In progress |
 | Every cutscene for the whole party (story cutscenes, endings and guest-triggered scenes already work) | In progress |
 | Joining during a boss fight or cutscene waits outside until it ends | Works for boss fights (verified live); cutscenes in progress |
-| The 4th player joins as fast as the others | In progress |
+| With 3 guests, every guest sees every other guest | In progress |
 | Chalice dungeons: deeper layers checked in a party; entering the party's dungeon in one press (the altar still asks a few prompts) | In progress |
 | PvP / friendly fire the host can switch on and off | Later |
 | Pings: party members and marked spots visible through walls, with distance and player colours | Later |
