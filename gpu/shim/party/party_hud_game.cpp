@@ -374,6 +374,18 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
     in.chrs_n = chrs_n;
     party::hud::Board b;
     party::hud::Compose(in, &b);
+    // The game's own phantom plates (party_hud.h GamePlate): the overlay draws ours only where
+    // none is visible.
+    if (const u64 mm = Slot(0x5562878)) {
+        b.have_plates = true;
+        for (int i = 0; i < party::hud::kGamePlates; ++i) {
+            const u64 e = mm + 0x900 + u64(i) * 0x90;
+            party::hud::GamePlate& p = b.plates[i];
+            p.visible = Field<u8>(e, 0xc) != 0;
+            p.u = Field<float>(e, 0) / 1280.0f;
+            p.depth = Field<float>(e, 8);
+        }
+    }
     party::hud::Publish(b);
     bool any_local = false;
     for (int i = 0; i < b.count; ++i) any_local = any_local || b.c[i].local_read;

@@ -1977,17 +1977,37 @@ void PartyHud() {
             continue;
         }
         const float d = party::hud::Distance(b.me_pos, c.pos);
-        if (d < 1.0f || d > 80.0f) {
+        if (d > 80.0f) {
             continue;
         }
-        // Above the game's own phantom label ("Cooperator" / name in blue, ~2.1 m): 2.45 m.
-        const float head[3] = {c.pos[0], c.pos[1] + 2.45f, c.pos[2]};
+        const float head[3] = {c.pos[0], c.pos[1] + party::hud::kTagBarHeightM, c.pos[2]};
         // The reusable world-space marker projection (party_hud.h WorldToScreen; I2 pings reuse it).
         const party::hud::ScreenPoint sp =
             party::hud::WorldToScreen(cam.view.data(), cam.proj.data(), head, display.x, display.y, 0.02f);
         const float u = sp.x / display.x, v = sp.y / display.y;
         if (!sp.visible || v < 0.04f || v > 0.96f) {
             continue;
+        }
+        // The game's own phantom plate over this member is visible: leave it to the game (ours
+        // fills in where the game shows none: far, behind a wall). Same height either way
+        // (party_hud.h kTagBarHeightM), so ours reads as the game's.
+        {
+            static std::int64_t plate_seen_ms[party::kMaxVitals];
+            static bool ours_was[party::kMaxVitals];
+            const int slot = c.slot >= 0 && c.slot < party::kMaxVitals ? c.slot : 0;
+            const std::int64_t now_ms = party::hud::NowMs();
+            if (b.have_plates && party::hud::GamePlateAt(b.plates, party::hud::kGamePlates, u)) {
+                plate_seen_ms[slot] = now_ms;
+            }
+            const bool ours = now_ms - plate_seen_ms[slot] > party::hud::kGamePlateHoldMs;
+            if (ours != ours_was[slot]) {
+                ours_was[slot] = ours;
+                std::printf("Party HUD: tag %s %s at %.1f m\n", c.name,
+                            ours ? "drawn (no game plate)" : "left to the game's plate", d);
+            }
+            if (!ours) {
+                continue;
+            }
         }
         // Clear of the game's own HUD (bars and item slots top left, echoes bottom right).
         if ((u < 0.34f && v < 0.26f) || (u > 0.80f && v > 0.86f)) {
@@ -2012,17 +2032,20 @@ void PartyHud() {
         }
         ImGui::PushFont(serif_font, size);
         const ImVec2 ts = ImGui::CalcTextSize(label);
-        const ImVec2 at(u * display.x - ts.x * 0.5f, v * display.y - ts.y);
+        // Laid out as the game's plate: the HP bar's bottom on the anchor, the name above it.
+        const bool with_bar = overhead == 3 && c.have_hp && c.max_hp > 0;
+        const float bar_w = 56.0f * s, bar_h = 3.0f * s, gap = 2.0f * s;
+        const ImVec2 at(u * display.x - ts.x * 0.5f,
+                        party::hud::TagTextTop(v * display.y, ts.y, with_bar, bar_h, gap));
         bg->AddText(ImVec2(at.x + 1.0f, at.y + 1.0f), Rgba(0.0f, 0.0f, 0.0f, 0.8f * alpha), label);
         float rgb[3];
         party::hud::MemberColour(c.slot, rgb);  // the member's colour, the same for I2's pings
         bg->AddText(at, Rgba(rgb[0], rgb[1], rgb[2], alpha), label);
         ImGui::PopFont();
-        if (overhead == 3 && c.have_hp && c.max_hp > 0) {
-            const float w = 56.0f * s, h = 3.0f * s;
-            const ImVec2 p0(u * display.x - w * 0.5f, at.y + ts.y + 2.0f * s);
-            Bar(bg, p0, ImVec2(p0.x + w, p0.y + h), float(c.hp) / float(c.max_hp), Rgba(0.62f, 0.07f, 0.06f, alpha),
-                alpha);
+        if (with_bar) {
+            const ImVec2 p0(u * display.x - bar_w * 0.5f, at.y + ts.y + gap);
+            Bar(bg, p0, ImVec2(p0.x + bar_w, p0.y + bar_h), float(c.hp) / float(c.max_hp),
+                Rgba(0.62f, 0.07f, 0.06f, alpha), alpha);
         }
     }
 }

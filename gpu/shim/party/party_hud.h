@@ -26,6 +26,11 @@ namespace party::hud {
 constexpr int kMaxCompanions = kMaxVitals - 1;
 constexpr int kNameBytes = 17;  // 16 + NUL (valid_member_name)
 
+struct GamePlate {
+    bool visible = false;
+    float u = 0, depth = 0;  // u: x / 1280
+};
+constexpr int kGamePlates = 7;
 struct Companion {
     char name[kNameBytes] = {};
     int slot = -1;
@@ -59,6 +64,8 @@ struct Board {
     std::uint32_t me_map = 0;
     std::uint64_t seq = 0;  // +1 per Publish
     std::int64_t published_ms = 0;  // steady clock (ms) of the Publish: the game tick's freshness
+    bool have_plates = false;  // the game's plate table was readable
+    GamePlate plates[kGamePlates];
 };
 
 /// A remote player's PlayerIns as read in this world, matched to a member by name.
@@ -131,6 +138,24 @@ void MemberColour(int slot, float rgb[3]);
 /// `why` names the reason ("stale", "dead", "not here", ...).
 constexpr std::int64_t kTagFreshMs = 500;
 bool TagVisible(const Companion& c, std::int64_t board_age_ms, const char** why);
+/// The game's own phantom plate (FrpgMenuDlgFloatingPCGauge: blue "Co-operator" / name and a thin
+/// HP bar). Its state lives in MenuMan (0x5562878): 7 entries at +0x900, 0x90 apart: screen x, y
+/// (1280 x 720 menu space), depth (m from the camera), +0xc visible (the debug menu "Floating PC
+/// Gauge": PosX / PosY / PosZ / Visible, FUN_01763db0). It is not a plain distance rule: live, the
+/// plate showed at 25 m and hid at 10-20 m behind a tree or a corner. Ours draws only while no
+/// visible plate stands where our tag would (the same screen column; its PosY / PosZ are not used:
+/// their meaning is not confirmed), and for kGamePlateHoldMs after one did (no flicker).
+constexpr float kGamePlateMatchU = 0.06f;
+constexpr std::int64_t kGamePlateHoldMs = 300;
+/// Whether a visible game plate stands in the screen column u (0..1) of our tag.
+bool GamePlateAt(const GamePlate* plates, int n, float u);
+/// The game plate's HP bar sits this high above the chr's position (both screenshots at 7 and 16
+/// m: 1.82 m); its name text stacks above the bar in pixels. Ours anchors the same way.
+constexpr float kTagBarHeightM = 1.82f;
+/// Tag layout in pixels from the projected anchor (the bar's bottom edge, y down): the bar
+/// (bar_h tall, when drawn) ends at anchor_y, the name's bottom sits `gap` above the bar (or at
+/// the anchor without a bar). Returns the name's top-left y for a name `text_h` tall.
+float TagTextTop(float anchor_y, float text_h, bool with_bar, float bar_h, float gap);
 /// Steady clock in ms (the board's timestamps).
 std::int64_t NowMs();
 

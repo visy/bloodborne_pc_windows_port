@@ -144,6 +144,18 @@ bool TagVisible(const Companion& c, std::int64_t board_age_ms, const char** why)
     return w == nullptr;
 }
 
+bool GamePlateAt(const GamePlate* plates, int n, float u) {
+    for (int i = 0; plates && i < n; ++i) {
+        const GamePlate& p = plates[i];
+        if (p.visible && std::isfinite(p.u) && std::fabs(p.u - u) <= kGamePlateMatchU) return true;
+    }
+    return false;
+}
+
+float TagTextTop(float anchor_y, float text_h, bool with_bar, float bar_h, float gap) {
+    return anchor_y - (with_bar ? bar_h + gap : 0.0f) - text_h;
+}
+
 void Read(Board* out) {
     std::lock_guard<std::mutex> lk(g_mu);
     *out = g_board;

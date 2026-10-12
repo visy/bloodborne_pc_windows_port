@@ -189,6 +189,23 @@ static void Tags() {
     assert(!hud::TagVisible(d, 0, &why));
 }
 
+// Ours only where no visible game plate stands in its screen column; the same anchor height.
+static void GamePlate() {
+    hud::GamePlate p[hud::kGamePlates];
+    assert(!hud::GamePlateAt(p, hud::kGamePlates, 0.5f));
+    p[1].u = 0.5f;  // a plate there, hidden (far / behind a wall): ours draws
+    assert(!hud::GamePlateAt(p, hud::kGamePlates, 0.5f));
+    p[1].visible = true;
+    assert(hud::GamePlateAt(p, hud::kGamePlates, 0.53f));
+    assert(!hud::GamePlateAt(p, hud::kGamePlates, 0.7f));  // another column: another member
+    p[1].u = std::nanf("");
+    assert(!hud::GamePlateAt(p, hud::kGamePlates, 0.5f));
+    assert(hud::kTagBarHeightM > 1.6f && hud::kTagBarHeightM < 2.1f);
+    // Bar bottom on the anchor (y 100), 3 px bar, 2 px gap, 10 px text: text top 85; no bar: 90.
+    assert(Near(hud::TagTextTop(100.0f, 10.0f, true, 3.0f, 2.0f), 85.0f));
+    assert(Near(hud::TagTextTop(100.0f, 10.0f, false, 3.0f, 2.0f), 90.0f));
+}
+
 static void Handover() {
     hud::ResetForTest();
     Board b;
@@ -209,6 +226,7 @@ static void Handover() {
 
 int main() {
     Tags();
+    GamePlate();
     SameWorldRules();
     ComposeBoard();
     Geometry();
