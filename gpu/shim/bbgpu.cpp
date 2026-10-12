@@ -543,6 +543,14 @@ extern "C" void bbgpu_request_quit(void) {
 
 // Mouse & keyboard controls (after Mrsuss60/bloodborne_pc_windows_port's
 // bbgpu_consume_mouse_delta / bbgpu_get_mk_config, as one call).
+extern "C" float bbgpu_audio_boost() {
+    static const float env = [] {
+        const char* e = std::getenv("BB_AUDIO_BOOST");
+        return e && *e ? std::clamp(float(std::atof(e)), 0.1f, 4.0f) : -1.0f;
+    }();
+    return env > 0.0f ? env : BbSettings::Get().audio_boost.load();
+}
+
 extern "C" int bbgpu_mouse_keyboard(BbMouseState* state, int consume_motion) {
     const auto& s = BbSettings::Get();
     const bool on = s.mk_enabled.load();

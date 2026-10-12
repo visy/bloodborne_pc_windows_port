@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <chrono>
 #include <thread>
 #include <pthread.h>
@@ -521,7 +522,15 @@ void RunMemSemaphoreSignal(Vulkan::Rasterizer& rasterizer, const u8* data) {
 
 void RunDmaData(Vulkan::Rasterizer& rasterizer, const u8* data) {
     const auto* dma_data = reinterpret_cast<const PM4DmaData*>(data);
-    ASSERT(dma_data->command.das == 0);
+    // bbport: DAS=1 (destination is a register address) is not a memory copy; was an ASSERT
+    // (a crash). Skip it with a one-time warning (Mrsuss60 196ba93 dropped the assert).
+    if (dma_data->command.das != 0) {
+        static bool warned = false;
+        if (!std::exchange(warned, true)) {
+            LOG_WARNING(Render, "DmaData with DAS=1 skipped (register destination)");
+        }
+        return;
+    }
     // bbport: a DMA into guest memory is written by this thread (FillBuffer/CopyBuffer) when the
     // GPU has not modified the range. Like WriteData, it must not overtake the copies and the
     // fences deferred to the recording thread: the guest, seeing it, frees objects whose labels
@@ -1473,11 +1482,17 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             ReportBadPacket(base_addr, dcb_dwords, dcb.data(), seq, dcb_depth);
             UNREACHABLE_MSG("Wrong PM4 type {}", type);
             break;
-        case 0:
+        case 0: {
+            // Ported from Mrsuss60 196ba93: zero dwords ending a chunk are padding.
+            if (std::ranges::all_of(dcb, [](u32 w) { return w == 0; })) {
+                dcb = {};
+                continue;
+            }
             ReportBadPacket(base_addr, dcb_dwords, dcb.data(), seq, dcb_depth);
             UNREACHABLE_MSG("Unimplemented PM4 type 0, base reg: {}, size: {}",
                             header->type0.base.Value(), header->type0.NumWords());
             break;
+        }
         case 2:
             // Type-2 packet are used for padding purposes
             dcb = NextPacket(dcb, 1);
@@ -2389,6 +2404,14 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
         }
 
         if (header->type != 3) {
+            // Ported from Mrsuss60 196ba93: a chunk's trailing zero dwords are padding.
+            if (std::ranges::all_of(acb, [](u32 w) { return w == 0; })) {
+                if constexpr (!is_indirect) {
+                    *queue.read_addr += acb.size();
+                    *queue.read_addr %= queue.ring_size_dw;
+                }
+                break;
+            }
             // No other types of packets were spotted so far
             UNREACHABLE_MSG("Invalid PM4 type {}", header->type.Value());
         }
@@ -2418,7 +2441,9 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
             if (dma_data->dst_addr_lo == 0x3022C || !rasterizer) {
                 break;
             }
-            ASSERT(dma_data->command.das == 0);
+            if (dma_data->command.das != 0) {
+                break; // bbport: register destination, not a memory copy (see RunDmaData)
+            }
             if (dma_data->src_sel == DmaDataSrc::Data && dma_data->dst_sel == DmaDataDst::Gds) {
                 rasterizer->FillBuffer(dma_data->dst_addr_lo, dma_data->NumBytes(), dma_data->data,
                                        true);

@@ -16,6 +16,7 @@ namespace {
 std::mutex g_mu;
 Board g_board;  // g_mu
 std::atomic<bool> g_shown{false};
+std::atomic<bool> g_cutscene{false};  // a remo plays: the panel and tags stay hidden
 
 void CopyName(char (&dst)[kNameBytes], const std::string& src) {
     const std::size_t n = std::min<std::size_t>(src.size(), kNameBytes - 1);
@@ -149,7 +150,11 @@ void Read(Board* out) {
 }
 
 bool Shown() {
-    return g_shown.load(std::memory_order_relaxed);
+    return g_shown.load(std::memory_order_relaxed) && !g_cutscene.load(std::memory_order_relaxed);
+}
+
+void SetCutscene(bool playing) {
+    g_cutscene.store(playing, std::memory_order_relaxed);
 }
 
 float Distance(const float a[3], const float b[3]) {

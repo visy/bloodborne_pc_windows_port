@@ -116,6 +116,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.mk_invert_y = i != 0;
     } else if (key == "mk_deadzone") {
         v.mk_deadzone = Clamp(f, 0.0f, 0.2f);
+    } else if (key == "audio_boost") {
+        v.audio_boost = Clamp(f, 0.5f, 3.0f);
     } else if (key == "mk_smoothing") {
         v.mk_smoothing = Clamp(f, 0.0f, 0.8f);
     } else if (key == "mk_wheel") {
@@ -376,6 +378,7 @@ void Save() {
     put("mk_invert_y", flag(v.mk_invert_y));
     put("mk_deadzone", fixed(v.mk_deadzone, 2));
     put("mk_smoothing", fixed(v.mk_smoothing, 2));
+    put("audio_boost", fixed(v.audio_boost, 2));
     put("mk_wheel", flag(v.mk_wheel));
     put("async_pipelines", flag(v.async_shaders));
     put("gpl", flag(v.gpl));

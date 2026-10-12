@@ -6,6 +6,10 @@
   python tools/mp/shot.py --root DIR --out DIR --watch "regex=tag[@delay[,delay...]]" ...
       tails DIR\\inst*\\run.log and shoots every window when a line matches regex
       (after each delay in s; default 0), until --seconds pass.
+  python tools/mp/shot.py --root DIR --out DIR --grey [--watch ...]
+      also every 2 s: a window whose 3D view (the centre, without the HUD corners) is nearly
+      uniform for over 3 s while its log says the world is up (no loading screen) is a grey
+      screen: "GREY SCREEN instN" on stdout and in DIR/grey.log, with a PNG in --out.
 """
 import argparse, ctypes, ctypes.wintypes as wt, os, re, time
 from pathlib import Path
@@ -97,6 +101,60 @@ def shoot(root, out, tag):
     print("shot", tag, names, flush=True)
 
 
+def view_stddev(img):
+    """Luminance std-dev of the 3D view: the centre (x 20-80 %, y 15-70 %), clear of the HUD's
+    corners (HP / stamina / quick items, Insight, the party panel)."""
+    w, h = img.size
+    box = img.crop((int(w * 0.2), int(h * 0.15), int(w * 0.8), int(h * 0.7))).convert("L").resize((96, 48))
+    px = list(box.getdata())
+    m = sum(px) / len(px)
+    return (sum((v - m) ** 2 for v in px) / len(px)) ** 0.5
+
+
+class GreyCheck:
+    """Per instance: the loading state from its run.log and how long the view has been uniform."""
+
+    def __init__(self, root, out):
+        self.root, self.out = Path(root), Path(out)
+        self.loading, self.since, self.flagged, self.next = {}, {}, set(), 0.0
+
+    def note_log(self, inst, text):
+        for line in text.splitlines():
+            if "loading screen up" in line or "world down" in line:
+                self.loading[inst] = True
+            elif "loading screen gone" in line or "world up" in line and "loading no" in line:
+                self.loading[inst] = False
+
+    def tick(self):
+        now = time.time()
+        if now < self.next:
+            return
+        self.next = now + 2.0
+        for inst, hwnd in windows(self.root):
+            if self.loading.get(inst, True):
+                self.since.pop(inst, None)
+                continue
+            try:
+                img = grab(hwnd)
+                sd = view_stddev(img)
+            except Exception:
+                continue
+            if sd >= 4.0:
+                self.since.pop(inst, None)
+                self.flagged.discard(inst)
+                continue
+            first = self.since.setdefault(inst, now)
+            if now - first > 3.0 and inst not in self.flagged:
+                self.flagged.add(inst)
+                self.out.mkdir(parents=True, exist_ok=True)
+                name = f"GREY_inst{inst}_{time.strftime('%H%M%S')}.png"
+                img.save(self.out / name)
+                line = f"GREY SCREEN inst{inst} {time.strftime('%H:%M:%S')} (view std-dev {sd:.1f}) {name}"
+                print(line, flush=True)
+                with open(self.root / "grey.log", "a", encoding="utf-8") as f:
+                    f.write(line + "\n")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", required=True)
@@ -104,9 +162,11 @@ def main():
     ap.add_argument("--tag", default="shot")
     ap.add_argument("--watch", action="append", default=[])
     ap.add_argument("--seconds", type=float, default=600)
+    ap.add_argument("--grey", action="store_true", help="also flag grey screens (see above)")
     a = ap.parse_args()
     out = Path(a.out)
-    if not a.watch:
+    grey = GreyCheck(a.root, out) if a.grey else None
+    if not a.watch and not grey:
         shoot(a.root, out, a.tag)
         return
     rules = []
@@ -128,6 +188,9 @@ def main():
                 f.seek(pos.get(p, 0))
                 text = f.read().decode("utf-8", "replace")
                 pos[p] = size
+            if grey:
+                m = re.search(r"inst(\d+)", str(p))
+                grey.note_log(int(m.group(1)) if m else -1, text)
             for rx, tag, delays in rules:
                 if tag not in fired and rx.search(text):
                     fired.add(tag)
@@ -138,7 +201,9 @@ def main():
             if item[0] <= now:
                 shoot(a.root, out, item[1])
                 pending.remove(item)
-        if len(fired) == len(rules) and not pending:
+        if grey:
+            grey.tick()
+        elif len(fired) == len(rules) and not pending:
             return
         time.sleep(0.2)
 

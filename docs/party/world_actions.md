@@ -164,7 +164,9 @@ a scene a **guest's** own event plays in the host's world. The guest's bank-2002
 world and no remo plays, then broadcasts it as a story of its own (`PushHost`): every other guest
 watches it through the live mirror; the guest that triggered it drops the copy (it watched it,
 180 s window). The scene's flags travel as world actions (cutscene_seen, set only). Warp variants
-(2002[2/4/6]) stay with the triggering player. Test: `BB_PARTY_STORY_TEST=up:<remo>` on a guest
+(2002[2/4/6]) stay with the triggering player. While a remo plays on a game, its party HUD panel
+and name tags are hidden (`party::hud::SetCutscene`, from the story tick; live 2026-10-12: both
+instances show the bare scene, the panel and the partner's tag return after it). Test: `BB_PARTY_STORY_TEST=up:<remo>` on a guest
 plays the remo there as its own event would and sends it up.
 
 ## 6. Insight and the bath (G2)
