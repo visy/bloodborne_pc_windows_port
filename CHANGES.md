@@ -3,6 +3,14 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## 0.5.5 (Windows port 0.5.5, party co-op)
+
+- **Continue party game straight into the host's world**: one loading screen, the guest lands beside the host, even when its own save is in another map; falls back to the normal join if the host isn't up yet.
+- **Spectating**: a player who dies in a boss fight watches a living party member until the fight ends.
+- **Resting during a boss fight** is a real rest (the fight and enemies reset).
+- **Joining a host in another map**: the guest gathers to the host's map first and is placed beside the host.
+- **README**: step-by-step "Start playing" for host and guest.
+
 ## 0.5.4 (Windows port 0.5.4, fixes)
 
 - **Party wipes work again**: in 0.5.3 a guest's "down" message was ignored (a name clash with split travel), so a host death after a guest's became a revive instead of a wipe. A guest left dead by a same-map wipe is now revived beside the host.
