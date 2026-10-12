@@ -400,3 +400,19 @@ away, 3 players on both guests".
   0x400 bytes point to (to find a second, stale anchor if the copy's physics position is right).
 * The port's own overhead tags (E2) now draw only for a chr read this tick, alive, on our map, from
   a fresh board (`party::hud::TagVisible`), so they never float; `Party HUD: tag X hidden: why`.
+
+### Title join: every peer builds every chr (2026-10-12, flowlive)
+
+The late-joiner bug above: a title joiner's first sync (its data, packet 0xC and the 0x168 record,
+sent only in reply to a data request 0xA and only with its GameData +0x10 set) reached the host
+only, because only the host's title-join code asked for it. Now every peer in the world (host or
+guest) asks any member whose task waits at FirstSyncCompleteWait (step 3, no chr) for its data
+(0xA, after 1 s, every 2 s), and the title joiner sets its GameData (+0x10 2, +0xA4 1, +0x5D8 7) as
+soon as its load is in the host's world (flow 4) instead of at the end of its loading screen.
+Live (host rendering + 2 headless, `--join-sequential --fresh-saves --stagger 10`, root
+flowlive/mp3, saves from flowlive/saves3): every peer's member tasks at Update with a chr, two
+remote chrs each (host: guests 1 and 2; guest 1: host + guest 2; guest 2: host + guest 1;
+`presence count 3` on all three); host `cooperators 1 -> 2` at 46.3 s for a guest whose own
+loading screen ended at 51.8 s (no longer ~48 s after it).
+Note: `--saves` must be a save set with a character and the system data; a missing directory gives
+new saves, and the game then waits on its first-launch brightness screen.
