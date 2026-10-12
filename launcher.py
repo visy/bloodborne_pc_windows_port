@@ -4,6 +4,7 @@
 import json
 import locale
 import os
+import hashlib
 import queue
 import re
 import subprocess
@@ -20,6 +21,8 @@ APP_DIR = Path(__file__).resolve().parent
 PORT_VERSION = "0.5.8"
 RUN_BAT = APP_DIR / "run.bat"
 LOG_FILE = APP_DIR / "launcher.log"
+LOG_DIR = APP_DIR / "logs"
+LOG_KEEP = 20
 SETTINGS_FILE = APP_DIR / "launcher_settings.json"
 PATCHES_XML = APP_DIR / "patches" / "Bloodborne.xml"
 DEFAULT_GAME = Path(os.environ.get("BB_GAME_DIR", "../CUSA03173"))
@@ -110,6 +113,14 @@ PARTY_SWITCHES = [
     ("party_story_mirror", "BB_PARTY_STORY_MIRROR", True),
     ("party_restart", "BB_PARTY_RESTART", True),
 ]
+# Stale bbport.exe guard: a safety net, never a reason for the launcher not to start.
+try:
+    sys.path.insert(0, str(APP_DIR / "scripts"))
+    import bb_guard
+except Exception:
+    bb_guard = None
+
+_instance_mutex = []
 
 
 def load_xml_patches(xml_path: Path = PATCHES_XML):
@@ -720,6 +731,14 @@ def stop_tree(proc: subprocess.Popen, timeout: float = 8.0, log=None) -> str:
         say("Stopping: no game window found; force-killing the process tree.")
     kill_tree(proc)
     return "killed"
+def running_instances():
+    """bbport.exe processes of this install that are alive (empty when the guard is unavailable)."""
+    if bb_guard is None:
+        return []
+    try:
+        return bb_guard.find_instances(APP_DIR / "out")
+    except Exception:
+        return []
 
 
 def kill_tree(proc: subprocess.Popen):
@@ -730,6 +749,9 @@ def kill_tree(proc: subprocess.Popen):
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             creationflags=NO_WINDOW,
         )
+        # The tree walk misses a bbport.exe orphaned by an in-game restart or a hung crash handler.
+        for instance in running_instances():
+            bb_guard.terminate(instance.pid)
     else:
         proc.kill()
 
@@ -826,6 +848,21 @@ class Tooltip:
             except tk.TclError:
                 pass
             self.tip = None
+def acquire_single_instance():
+    """True for the first launcher of this install; a second window could start a second game."""
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        name = "Local\\BloodborneLauncher_" + hashlib.md5(str(APP_DIR).lower().encode()).hexdigest()[:12]
+        handle = kernel32.CreateMutexW(None, False, name)
+        if handle and ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+            return False
+        _instance_mutex.append(handle)  # held until the process exits
+    except Exception:
+        pass
+    return True
 
 
 class BloodborneLauncher(tk.Tk):
@@ -2755,8 +2792,40 @@ class BloodborneLauncher(tk.Tk):
             self.log(f"[PRE-LAUNCH ERROR] {err_msg.splitlines()[0]}")
             messagebox.showerror("Pre-Launch Verification Failed", err_msg)
 
+    def blocked_by_running_instance(self) -> bool:
+        """True while another bbport.exe is alive: a second copy exhausts RAM and VRAM.
+
+        The launch stays blocked until the old process is gone, closed by hand or terminated here.
+        """
+        found = running_instances()
+        if not found:
+            return False
+        lines = "\n".join(bb_guard.describe(i) for i in found)
+        self.log(f"[PRE-LAUNCH] bbport.exe is already running ({lines.replace(chr(10), '; ')})")
+        if not messagebox.askyesno(
+                "Bloodborne is already running",
+                f"bbport.exe is still running:\n\n{lines}\n\n"
+                "A second copy would run out of memory, so the launch is blocked until it is gone.\n"
+                "Terminate it now and continue?",
+                icon="warning"):
+            self.log("[PRE-LAUNCH] Launch cancelled: close the running bbport.exe first.")
+            return True
+        survivors = [i.pid for i in found if not bb_guard.terminate(i.pid)]
+        if survivors:
+            self.log(f"[PRE-LAUNCH ERROR] Could not terminate PID {', '.join(map(str, survivors))}")
+            messagebox.showerror(
+                "Cannot terminate bbport.exe",
+                f"PID {', '.join(map(str, survivors))} did not exit (stuck in the GPU driver?).\n"
+                "End it in Task Manager or restart Windows, then launch again.")
+            return True
+        self.log("[PRE-LAUNCH] Old bbport.exe terminated.")
+        return False
+
     def launch_game(self):
         if self.proc is not None:
+            return
+
+        if self.blocked_by_running_instance():
             return
 
         target = self.eboot_var.get().strip()
@@ -2898,6 +2967,9 @@ class BloodborneLauncher(tk.Tk):
             self.log(f"({self.hidden_count} Vulkan warning lines hidden; full output is in launcher.log)")
         code = f"{rc}" if 0 <= rc < 256 else f"{rc} (0x{rc & 0xFFFFFFFF:08X})"
         self.log(f"Process finished with code: {code}")
+        for instance in running_instances():
+            self.log(f"[WARNING] bbport.exe is still running after the game ended "
+                     f"({bb_guard.describe(instance)}); the next launch will ask to terminate it.")
         self.proc = None
         self.close_log_file()
         self.launch_btn.config(state="normal")
@@ -2939,4 +3011,8 @@ if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[1] == "--write-env":
         write_env_bat(Path(sys.argv[2]))
     else:
+        if not acquire_single_instance():
+            tk.Tk().withdraw()
+            messagebox.showinfo("Bloodborne PC Launcher", "The launcher is already open.")
+            sys.exit(0)
         BloodborneLauncher().mainloop()
