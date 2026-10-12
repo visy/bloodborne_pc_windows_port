@@ -4859,7 +4859,11 @@ void TitleJoinHostTick(const GameSnapshot& s) {
     // a title-joined guest's load ended before it was the host's pending member, so its task here
     // waits at FirstSyncCompleteWait (step 3) for the 0xC it never sends. Ask for its data again.
     static std::map<u64, double> asked;
-    if (Now() - served_at < 120.0 && s.world_up && !s.loading && Role() == RoleHost) {
+    // Every member already in the world, host or guest: a title joiner announces itself to nobody
+    // (its first sync went to the host only; four_players.md: each guest missed the later joiners),
+    // so each peer asks the newcomer for its data itself.
+    static std::map<u64, int> asked_n;
+    if (s.world_up && !s.loading && SessionUp() && Field<int>(Slot(kSlotFlow), 0x84, -1) == 4) {
         using SendFn = int(BB_COOP_SYSV*)(u64, u64, u32, const void*, u32);
         for (const TaskInfo& t : Tasks(false)) {
             if (t.mode != 1 || t.step != 3 || PlayerForPeer(t.task + kTaskPeer)) {
@@ -4867,17 +4871,22 @@ void TitleJoinHostTick(const GameSnapshot& s) {
             }
             double& at = asked[t.task];
             if (at == 0) {
-                at = Now() - 1.0;  // first ask 2 s after the task waits
+                at = Now() - 1.0;  // first ask 1 s after the task waits
                 continue;
             }
-            if (Now() - at >= 3.0) {
+            if (Now() - at >= 2.0) {
                 at = Now();
                 const u8 zero = 0;
                 const int r = reinterpret_cast<SendFn>(Guest(kSendPacket))(Slot(kSlotFlow), t.task + kTaskPeer, 0xa, &zero, 1);
-                Log("title join: the guest's task waits for its first sync: data request (0xA) sent -> %d", r);
+                const int n = ++asked_n[t.task];
+                if (n <= 3 || n % 10 == 0) {
+                    Log("first sync: a member's task waits at FirstSyncCompleteWait: data request (0xA) #%d sent -> %d (role %d)", n,
+                        r, Role());
+                }
             }
         }
     }
+    (void)served_at;
     // Validation in an ordinary bell join: the descriptor as this host would send it, next to the
     // guest's `summon message ... (head ...)` line.
     static int last_coop = 0;
@@ -5041,6 +5050,23 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
         Log("title join: diag: flow %d, flow+0x10 %#llx, GameData+0x10 %d, +0xa4 %d, +0x5d8 %d; tasks:%s",
             Field<int>(Slot(kSlotFlow), 0x84, -1), ull(Field<u64>(Slot(kSlotFlow), 0x10)), Field<int>(gd, 0x10, -9),
             Field<int>(gd, 0xa4, -9), Field<int>(gd, 0x5d8, -9), DescribeTasks().c_str());
+    }
+    // The summoned guest's GameData (+0x10 2: the 0x168 record and the first-sync 0xC are sent
+    // only with it; +0xA4 1 white phantom; +0x5D8 7 co-op) as soon as the load is in the host's
+    // world (flow 4, the end of the MoveMapStep), not at the loading screen's end: the members'
+    // data requests come then (four_players.md: a headless guest was counted ~48 s late).
+    static bool gd_set = false;
+    if ((phase == TitlePhase::Loading || phase == TitlePhase::Done) && !gd_set && Role() == RoleClient &&
+        Field<int>(Slot(kSlotFlow), 0x84, -1) == 4 && Field<u64>(Slot(kSlotWorldChrMan), 0x60)) {
+        if (const u64 gd = Field<u64>(Slot(kSlotGameData), 8)) {
+            gd_set = true;
+            const int two = 2, one = 1, seven = 7;
+            SafeWrite(gd + 0x10, &two, 4);
+            SafeWrite(gd + 0xa4, &one, 4);
+            SafeWrite(gd + 0x5d8, &seven, 4);
+            Log("title join: own GameData as a summoned guest's (+0x10 2, +0xA4 1, +0x5D8 7) at flow 4 (%s)",
+                s.loading ? "loading screen still up" : "in the world");
+        }
     }
     static bool typed = false;
     if (phase == TitlePhase::Done && !typed && s.world_up && !s.loading && Role() == RoleClient) {
