@@ -250,8 +250,9 @@ void DataBase::Load(BlobType type, const std::string& name, std::vector<u32>& da
     return LoadVector(type, path, data);
 }
 
-void DataBase::ForEachBlob(BlobType type, const std::function<void(std::vector<u8>&& data)>& func) {
+u32 DataBase::ForEachBlob(BlobType type, const std::function<bool(std::vector<u8>&& data)>& func) {
     const auto& ext = GetBlobFileExtension(type);
+    std::vector<std::filesystem::path> rejected;
     if (EmulatorSettings.IsPipelineCacheArchived()) {
         const auto num_files = mz_zip_reader_get_num_files(&zip_ar);
         for (int index = 0; index < num_files; ++index) {
@@ -270,15 +271,27 @@ void DataBase::ForEachBlob(BlobType type, const std::function<void(std::vector<u
         for (const auto& file_name : std::filesystem::directory_iterator{cache_path}) {
             if (file_name.path().extension().string().ends_with(ext)) {
                 using namespace Common::FS;
-                const auto& file = IOFile{file_name, FileAccessMode::Read};
-                if (file.IsOpen()) {
-                    std::vector<u8> data(file.GetSize());
+                std::vector<u8> data;
+                {
+                    const auto& file = IOFile{file_name, FileAccessMode::Read};
+                    if (!file.IsOpen()) {
+                        continue;
+                    }
+                    data.resize(file.GetSize());
                     file.Read(data);
-                    func(std::move(data));
+                }
+                if (!func(std::move(data))) {
+                    rejected.push_back(file_name.path());
                 }
             }
         }
     }
+    u32 removed = 0;
+    std::error_code ec;
+    for (const auto& path : rejected) {
+        removed += std::filesystem::remove(path, ec) ? 1 : 0;
+    }
+    return removed;
 }
 
 void DataBase::Clear() {

@@ -40,7 +40,9 @@ void RegisterPipelineData(const ComputePipelineKey& key,
 
 void RegisterPipelineData(const GraphicsPipelineKey& key, u64 hash,
                           GraphicsPipeline::SerializationSupport& sdata) {
-    if (!Storage::DataBase::Instance().IsOpened()) {
+    // Motion vector pipelines are rebuilt every session (LoadShaderMeta never loads their
+    // vertex stage), so a saved key could only fail at the next warm-up.
+    if (!Storage::DataBase::Instance().IsOpened() || key.motion_vectors) {
         return;
     }
 
@@ -359,8 +361,10 @@ void PipelineCache::WarmUp() {
     u32 num_pipelines{};
     u32 num_total_pipelines{};
 
+    u32 num_removed{};
+
     try {
-        Storage::DataBase::Instance().ForEachBlob(
+        num_removed = Storage::DataBase::Instance().ForEachBlob(
             Storage::BlobType::PipelineKey, [&](std::vector<u8>&& data) {
                 ++num_total_pipelines;
 
@@ -370,7 +374,7 @@ void PipelineCache::WarmUp() {
                 u32 version{};
                 pldata.Read(version);
                 if (version != Serialization::PipelineKeyVersion) {
-                    return;
+                    return false;
                 }
 
                 u32 is_compute{};
@@ -386,20 +390,29 @@ void PipelineCache::WarmUp() {
                 if (result) {
                     ++num_pipelines;
                 }
+                return result;
             });
     } catch (const Serialization::CorruptData& e) {
         LOG_ERROR(Render, "Corrupted pipeline cache detected during WarmUp: {}. Clearing cache.",
                   e.what());
         Storage::DataBase::Instance().Clear();
         Storage::DataBase::Instance().FinishPreload();
+        // Without its profile the next start would skip the warm-up altogether.
+        profile_data.resize(sizeof(profile));
+        std::memcpy(profile_data.data(), &profile, sizeof(profile));
+        Storage::DataBase::Instance().Save(Storage::BlobType::ShaderProfile, "profile",
+                                           std::move(profile_data));
         return;
     }
 
     LOG_INFO(Render, "Preloaded {} pipelines", num_pipelines);
     if (num_total_pipelines > num_pipelines) {
-        LOG_WARNING(Render, "{} stale pipelines were found: clearing cache to regenerate cleanly",
-                    num_total_pipelines - num_pipelines);
-        Storage::DataBase::Instance().Clear();
+        // bbport: only the unusable keys go. Clearing the whole cache here also deleted the
+        // profile (so the next start loaded nothing) and the shaders of the pipelines just
+        // preloaded (whose later keys then referenced missing files): every other start
+        // threw the cache away and the one in between started cold.
+        LOG_WARNING(Render, "{} cached pipelines could not be loaded: removed {} keys, kept {}",
+                    num_total_pipelines - num_pipelines, num_removed, num_pipelines);
     }
 
     Storage::DataBase::Instance().FinishPreload();
