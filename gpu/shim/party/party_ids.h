@@ -63,6 +63,21 @@ inline bool ReturnSpot(std::uint32_t id, float out[4]) {
     }
     return true;
 }
+/// Where a stage warp's warp point `id` (EMEVD 2003[14] / Lua WarpNextStage, GSM +0x10) puts the
+/// player: x, y, z, yaw (radians) of the MSB region with that entity id. False: not in a block MSB.
+inline bool WarpSpot(std::uint32_t id, float out[4]) {
+    const auto* b = std::begin(kPartyWarpSpotIds);
+    const auto* e = std::end(kPartyWarpSpotIds);
+    const auto* it = std::lower_bound(b, e, id);
+    if (it == e || *it != id) {
+        return false;
+    }
+    const std::size_t i = static_cast<std::size_t>(it - b) * 4;
+    for (int k = 0; k < 4; ++k) {
+        out[k] = kPartyWarpSpots[i + static_cast<std::size_t>(k)];
+    }
+    return true;
+}
 /// A cutscene id with a remo/sAA_BB_NNNN.remobnd file (or one an EMEVD 2002 plays).
 inline bool RemoKnown(std::uint32_t remo_id) {
     return InSorted(kPartyRemos, remo_id);

@@ -311,6 +311,11 @@ using MarkInterceptor = bool (*)(std::uint32_t last_lamp);
 /// true = done without a load (the lamp is in the loaded map: an in-world move). Game thread.
 using SameMapWarpFn = bool (*)(std::uint32_t id, bool alone);
 void SetSameMapWarp(SameMapWarpFn fn);
+/// A scripted stage warp (EMEVD 2003[14] / Lua WarpNextStage) reaching the funnel with GSM +0x0C the
+/// packed map and +0x10 the warp point: `fn(map, point)` true = done without a load (an in-world
+/// move to the point inside the loaded map). Game thread.
+using SameMapStageFn = bool (*)(std::uint32_t map, std::uint32_t point);
+void SetSameMapStage(SameMapStageFn fn);
 void SetMarkInterceptor(MarkInterceptor fn);
 /// The lamp warp 0x13CDF30(id) as a travel replay (main thread): the travel capture, the guest
 /// lamp interceptor and the send-home retarget stand aside, the forced placement is cleared. On

@@ -5391,6 +5391,7 @@ bool Enabled() {
 
 namespace {
 bool SameMapLampWarp(std::uint32_t id, bool alone);
+bool SameMapStageWarp(std::uint32_t map, std::uint32_t point);
 } // namespace
 
 void Init() {
@@ -5438,6 +5439,7 @@ void Init() {
     InstallCall(0x17851ce, 0x13beca0, reinterpret_cast<const void*>(&FlagApplyHook), "B2 K11 flag snapshot apply");
     SetEmevdSkipPredicate(&ClientIntroSkip);
     SetSameMapWarp(&SameMapLampWarp);
+    SetSameMapStage(&SameMapStageWarp);
     EnsureEmevdFilter();
     Log("K7 funnel branch +0x%llx %s", ull(kFunnelLeaveJne),
         Matches(kFunnelLeaveJne, {0x75, 0x6c}) ? "verified (75 6c), written only around the guest's own warp"
@@ -6049,6 +6051,36 @@ namespace {
 /// in-world move - none at all when it already stands there (within 2 m: only the last-lamp record)
 /// - and in a party the host's move takes the guests of this map along unless it travels alone.
 /// A dead player keeps the game's death load (no revive here).
+/// A scripted stage warp (EMEVD 2003[14] / Lua WarpNextStage) to warp point `point` of the loaded
+/// map: an in-world move to the point's MSB region (ids::WarpSpot; the same region the game puts
+/// the player at after the load). BB_PARTY_STAGE_INWORLD=1 (default off: not verified on a real
+/// scripted warp yet). Not with members in the session (the party would not follow), not in a boss
+/// fight, not for a point that is not in the loaded block's MSB.
+bool SameMapStageWarp(std::uint32_t map, std::uint32_t point) {
+    // 1: alone only; 2: also a host with members (the host moves alone, the guests stay in the map).
+    static const int mode = std::getenv("BB_PARTY_STAGE_INWORLD") ? std::atoi(std::getenv("BB_PARTY_STAGE_INWORLD")) : 0;
+    const bool on = mode > 0;
+    float spot[4];
+    if (!on || !g_on.load() || g_force_load_warp.load() || point == 0 || point == kTravelNone ||
+        !ids::WarpSpot(point, spot) || !InLoadedBlock(map) || (ids::EntityMap(point) >> 16) != (map >> 16)) {
+        return false;
+    }
+    if (Role() == RoleClient || (Role() == RoleHost && HostHasMemberTasks() && mode < 2)) {
+        Log("stage warp to point %u of the loaded map %s: with a party, the game's own load", point, MapName(map).c_str());
+        return false;
+    }
+    if (std::string boss; BossFightActive(&boss)) {
+        return false;
+    }
+    const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+    if (!player || Field<int>(Field<u64>(Field<u64>(player, 0x3b0), 0x20), 0x128, 0) <= 0) {
+        return false;
+    }
+    char why[64];
+    std::snprintf(why, sizeof why, "stage warp, point %u", point);
+    return WarpLocal(spot, spot[3], why);
+}
+
 bool SameMapLampWarp(std::uint32_t id, bool alone) {
     float spot[4];
     if (!g_on.load() || g_force_load_warp.load() || !LampInLoadedBlock(id, spot)) {
