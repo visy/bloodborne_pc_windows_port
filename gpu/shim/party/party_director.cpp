@@ -776,6 +776,7 @@ std::string DescribeSignPolling() {
 /// pressed 0.15 s every 0.35 s (2.5 s without fast join) while no world was seen in this run, never in the world or while a
 /// loading screen is up; the party link must be up first (the online login runs through it).
 void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::PartyLink* link, Clock::time_point now) {
+    b2::SetTitleContinuing(!st.continue_done && !s.world_up);
     if (st.continue_done) {
         return;
     }

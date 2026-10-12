@@ -410,3 +410,24 @@ A guest whose title join gets no room within 10 s (the host still at its title o
 join once the host is up. Live (host Continue held 30 s with the test switch
 `BB_PARTY_CONTINUE_SETTLE=30`): guest asked at 5 s, fell back at 15 s, own world loading at 16 s;
 the host loaded at 35 s; bell join `trying-to-join -> client` at 50 s, host `cooperators 0 -> 1`.
+
+## 2026-10-12: title join from another map (Dream -> Central Yharnam), own save spot
+
+* Continue loads the map of the save's spawn **record** (GSM +0x15B0 pos, +0x15C0 rot, +0x15E0
+  map), not the forced placement: with only the forced placement set, a guest whose save was in
+  the Dream loaded the Dream in host-world mode (hostdeath agent's finding: then it left and
+  gathered). The title join now writes, every frame between Continue and the load start, the
+  record and the forced placement (+0x14F0 / +0x1500 / +0x1510, +0x1520) to the host's map beside
+  the host, and GSM +0x1521 = 1 so the summoned placement (+0x14C4 / +0x14D0 / +0x14E0) applies
+  (without it the guest stood at its Dream coordinates inside the host's map).
+* The save's own spot (the record's value before it is overwritten; the forced placement holds
+  none at the title) is kept and written back at the arrival into the forced placement and the
+  return spot, so the guest's save keeps its own spawn.
+* A host still at its title: the host sends `title_wait` every 2 s (at its title, or continuing /
+  loading / in the world); the guest waits 10 s for a host idle at its title, 40 s for one on its
+  way (the host's AutoContinue), then Continues the usual way.
+* Live (2 clients, mp2): guest save in the Dream (m21_00, (-9.2, -6.8, -19.4)), host in Central
+  Yharnam (Iosefka's Clinic lamp): one loading screen each, the guest in m24_01 at the host's
+  side (type 1/7), "Entered the world of vp797-rz2z" and the Co-operator / Beckoner tags on the two
+  screenshots; host `cooperators 0 -> 1`. Next run without title join: the guest's Continue
+  started in the Dream (its own spot).

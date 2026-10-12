@@ -395,7 +395,8 @@ BB_COOP_SYSV void HostDeathReturnHook(u64 man, u64 id) {
 
 /// Guest: HostDead_1's send-home is dropped (the host's death travel brings the guest along).
 bool SplitHostReachable();
-std::atomic<bool> g_force_load_warp{false};  // the next lamp warp loads (title-join home)
+std::atomic<bool> g_force_load_warp{false};
+std::atomic<bool> g_title_continuing{false};  // the director's AutoContinue is pressing Continue  // the next lamp warp loads (title-join home)
 std::atomic<bool> g_title_joined{false};  // this guest came in by a title join (no own world loaded)
 std::atomic<bool> g_title_home_now{false};
 
@@ -4555,6 +4556,10 @@ struct TitleJoin {
     float last_timer = -1.0f;
     int updates = 0;
     bool have_reply = false, acked = false;
+    int host_state = -1;    // the host's last title_wait: 0 title, 1 loading / in its world
+    bool own_have = false;  // the guest's own save spot (the forced placement its save loaded)
+    u32 own_map = 0;
+    float own_pos[4] = {}, own_rot[4] = {};
     std::vector<u8> room;  // the host's reply: head + descriptor
     u32 stage = 0;
     float pos[4] = {}, rot[4] = {};
@@ -4676,6 +4681,15 @@ void TitleJoinHostTick(const GameSnapshot& s) {
             const bool ok = reinterpret_cast<Create>(Guest(0x1ecfcd0))(arg, Slot(kSlotSession), members) & 1;
             Log("title join: creating this host's room for the waiting guest (%.1f, %d members) -> %d, role %d", double(arg),
                 members, int(ok), Role());
+        }
+        static double last_wait = 0;
+        if (now - last_wait >= 2.0) {
+            last_wait = now;
+            // "At its title" only while nothing there continues into the world (AutoContinue).
+            const bool at_title = !s.world_up && !s.loading && !g_title_continuing.load();
+            for (int slot : req) {
+                Send(slot, at_title ? "{\"op\":\"title_wait\",\"host\":0}" : "{\"op\":\"title_wait\",\"host\":1}");
+            }
         }
         if (now - first_wait < 60.0) {
             std::lock_guard<std::mutex> lk(TJ().mu);
@@ -4923,10 +4937,34 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
         }
         (void)host_chr;
         typed = true;
+        // The guest's own save spot back into the forced placement (what its save records as the
+        // spawn: a later Continue starts there) and the return spot.
+        bool own_have;
+        u32 own_map;
+        alignas(16) float own_pos[4], own_rot[4];
+        {
+            std::lock_guard<std::mutex> lk(t.mu);
+            own_have = t.own_have;
+            own_map = t.own_map;
+            std::memcpy(own_pos, t.own_pos, sizeof own_pos);
+            std::memcpy(own_rot, t.own_rot, sizeof own_rot);
+        }
+        if (own_have) {
+            const u64 gsm = Slot(kSlotGsm);
+            using PtrFn = void(BB_COOP_SYSV*)(const void*);
+            reinterpret_cast<PtrFn>(Guest(0x156cf10))(&own_map);
+            reinterpret_cast<PtrFn>(Guest(0x156cf20))(own_pos);
+            reinterpret_cast<PtrFn>(Guest(0x156cf40))(own_rot);
+            SafeWrite(gsm + 0x14a0, own_pos, 16);
+            SafeWrite(gsm + 0x14b0, own_rot, 16);
+            SafeWrite(gsm + 0x14c0, &own_map, 4);
+            Log("title join: forced placement and return spot = own save spot map %#x (%.1f, %.1f, %.1f)", own_map,
+                double(own_pos[0]), double(own_pos[1]), double(own_pos[2]));
+        }
         // The return spot a summon writes from the sign (GSM +0x14A0 pos, +0x14B0 rot, +0x14C0 map;
         // 0x1872360): the guest's own last lamp (GSM +0x1528, known once the save is loaded). Without
         // it the guest's Leave loaded nothing and fell back to the title (live run 18).
-        {
+        if (!own_have) {
             const u64 gsm = Slot(kSlotGsm);
             const u32 own = Field<u32>(gsm, 0x1528);
             float spot[4];
@@ -4951,6 +4989,69 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
             SafeWrite(gd + 0xa4, &one, 4);
             SafeWrite(gd + 0x5d8, &seven, 4);
             Log("title join: own GameData as a summoned guest's (+0x10 2, +0xA4 1, +0x5D8 7)");
+        }
+    }
+    // Ready (Continue pressed, the load not started): the save's spawn is the forced placement
+    // (GSM +0x14F0 map, +0x1500 pos, +0x1510 rot, +0x1520 on); a Continue loaded the guest's own
+    // map (e.g. the Dream) in host-world mode, apart from the host (hostdeath agent). Every frame
+    // until the load starts: a value that is not ours is the save's own spot (kept for the return
+    // and for the save), then the host's spot beside it goes in.
+    if (phase == TitlePhase::Ready && !s.loading) {
+        const u64 gsm = Slot(kSlotGsm);
+        u32 stage;
+        float pos[4], rot[4];
+        {
+            std::lock_guard<std::mutex> lk(t.mu);
+            stage = t.stage;
+            std::memcpy(pos, t.pos, sizeof pos);
+            std::memcpy(rot, t.rot, sizeof rot);
+        }
+        BesideHost(pos, rot, g_local_slot.load() > 0 ? g_local_slot.load() : 1);
+        pos[3] = 1.0f;
+        const u32 cur = Field<u32>(gsm, 0x14f0);
+        if (cur != stage && cur != 0 && cur != 0xffffffffu) {
+            std::lock_guard<std::mutex> lk(t.mu);
+            t.own_have = true;
+            t.own_map = cur;
+            SafeRead(gsm + 0x1500, t.own_pos, 16);
+            SafeRead(gsm + 0x1510, t.own_rot, 16);
+            Log("title join: own save spot: map %#x (%.1f, %.1f, %.1f)", cur, double(t.own_pos[0]), double(t.own_pos[1]),
+                double(t.own_pos[2]));
+        }
+        {
+            // The save's own spot record (+0x15B0 pos, +0x15C0 rot, +0x15E0 map; hostdeath's pos scan)
+            // when the forced placement holds none.
+            const u32 rec = Field<u32>(gsm, 0x15e0);
+            std::lock_guard<std::mutex> lk(t.mu);
+            if (!t.own_have && rec != 0 && rec != 0xffffffffu && rec != stage) {
+                t.own_have = true;
+                t.own_map = rec;
+                SafeRead(gsm + 0x15b0, t.own_pos, 16);
+                SafeRead(gsm + 0x15c0, t.own_rot, 16);
+                Log("title join: own save spot (record): map %#x (%.1f, %.1f, %.1f)", rec, double(t.own_pos[0]),
+                    double(t.own_pos[1]), double(t.own_pos[2]));
+            }
+        }
+        if (Field<u32>(gsm, 0x15e0) != stage && t.own_have) {
+            // The record is what Continue loads (its map: the guest's own, e.g. the Dream, with
+            // the forced placement alone; live Dream run): the host's spot there too.
+            SafeWrite(gsm + 0x15b0, pos, 16);
+            SafeWrite(gsm + 0x15c0, rot, 16);
+            SafeWrite(gsm + 0x15e0, &stage, 4);
+            Log("title join: spawn record = the host's map %#x", stage);
+        }
+        if (cur != stage) {
+            alignas(16) float p16[4], r16[4];
+            std::memcpy(p16, pos, sizeof p16);
+            std::memcpy(r16, rot, sizeof r16);
+            using PtrFn = void(BB_COOP_SYSV*)(const void*);
+            using VoidFn = void(BB_COOP_SYSV*)();
+            reinterpret_cast<PtrFn>(Guest(0x156cf10))(&stage);
+            reinterpret_cast<PtrFn>(Guest(0x156cf20))(p16);
+            reinterpret_cast<PtrFn>(Guest(0x156cf40))(r16);
+            reinterpret_cast<VoidFn>(Guest(0x156cf60))();
+            Log("title join: forced placement = the host's map %#x beside the host (%.1f, %.1f, %.1f)", stage, double(pos[0]),
+                double(pos[1]), double(pos[2]));
         }
     }
     if (phase == TitlePhase::Ready && s.loading) {
@@ -5018,6 +5119,10 @@ std::vector<NrTransport> NrTransports() {
     return {g_nr.begin(), g_nr.end()};
 }
 
+void SetTitleContinuing(bool on) {
+    g_title_continuing = on;
+}
+
 bool TitleJoinPending() {
     std::lock_guard<std::mutex> lk(TJ().mu);
     return !TJ().requests.empty();
@@ -5077,9 +5182,16 @@ bool TitleJoinHold(const GameSnapshot& s) {
         // The host is not in its world yet (still at its title or loading): Continue the usual way
         // after 10 s (own world, then the bell joins once the host is up) instead of holding the
         // title for up to a minute.
-        if (now - t.since > 10.0) {
+        int host_state;
+        {
+            std::lock_guard<std::mutex> lk(t.mu);
+            host_state = t.host_state;
+        }
+        // 10 s while the host still sits at its title; a host that is loading (its Continue
+        // pressed) or in its world opens its room soon: up to 40 s then.
+        if (now - t.since > (host_state == 1 ? 40.0 : 10.0)) {
             Send(0, "{\"op\":\"title_cancel\"}");
-            TitleJoinFail("no room from the host within 10 s (the host is not in its world yet)");
+            TitleJoinFail(host_state == 1 ? "no room from the host within 40 s" : "the host is still at its title (10 s)");
             return false;
         }
         if (now - t.since > 70.0) {
@@ -5117,9 +5229,12 @@ bool TitleJoinHold(const GameSnapshot& s) {
             SafeWrite(gsm + 0x14d0, pos, 16);
             SafeWrite(gsm + 0x14e0, rot, 16);
             SafeWrite(flow + 0x84, &three, 4);
-            // GSM +0x1521 (the Lua OnJoinMutiplay's "summoned placement") stays 0: with it set the
-            // host's task for this guest stalled at FirstSyncCompleteWait (live run 9 / 10); the
-            // guest is moved beside the host after the load instead.
+            // GSM +0x1521 (what the Lua OnJoinMutiplay sets): the summoned placement +0x14C4 / +0x14D0
+            // / +0x14E0 applies (else a Continue from another map put the guest at its own save's
+            // coordinates inside the host's map). (The host-side stall seen with it in runs 9 / 10
+            // was the missing GameData +0x10, fixed at the arrival.)
+            const u8 one = 1;
+            SafeWrite(gsm + 0x1521, &one, 1);
             Log("title join: host snapshot applied after %.1f s; flow 3, placement stage %#x pos (%.1f, %.1f, %.1f): "
                 "Continue now loads the host's world",
                 now - t.since, stage, pos[0], pos[1], pos[2]);
@@ -5633,6 +5748,11 @@ void OnLinkEvent(int from_slot, const std::string& body) {
         auto& r = TJ().requests;
         r.erase(std::remove(r.begin(), r.end(), from_slot), r.end());
         Log("title join: slot %d stopped waiting (Continue the usual way)", from_slot);
+        return;
+    }
+    if (body.find("\"title_wait\"") != std::string::npos) {
+        std::lock_guard<std::mutex> lk(TJ().mu);
+        TJ().host_state = body.find("\"host\":0") != std::string::npos ? 0 : 1;
         return;
     }
     if (body.find("\"title_ack\"") != std::string::npos) {
