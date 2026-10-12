@@ -119,6 +119,7 @@ single-player save is never touched. Settings: *System → Party* pages in the g
   guest's own save).
 - **Guests can talk to NPCs** in the host's world (Gilbert, Iosefka, Eileen ...); quest choices
   are shared by the whole party.
+- **Enemy drops for each player.** Every player gets their own roll of each enemy's drop.
 - **Cutscenes for everyone.** A story scene a guest triggers in the host's world plays for the
   whole party too.
 - **Up to 4 players** (host + 3), all in the host's world. The 4th player's summon can take a

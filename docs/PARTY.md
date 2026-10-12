@@ -218,8 +218,9 @@ Instead of a code, a guest can also enter the host's address directly as `host:p
 - **Chalice Dungeons** are not part of party play.
 - World treasure a guest picks up while in the host's world does not exist for guests in the
   normal game; the host's pickups are handed to guests through the item sharing above.
-  Instanced treasure and full per-player enemy drops for guests are experimental and off in
-  0.5.2 (`BB_PARTY_GUEST_PICKUP=1`, `BB_PARTY_GUEST_DROPS=1`).
+  Enemy drops are per player: every player's game rolls each enemy's drop and keeps the whole of
+  its own roll, guests included. Instanced world treasure for guests is experimental and off
+  (`BB_PARTY_GUEST_PICKUP=1`).
 
 ## Settings (Rules & sync)
 
