@@ -90,6 +90,19 @@ class NativeUiTests(unittest.TestCase):
         self.assertIsNone(scaled_sizes({'output_res': '1280x720', 'upscaler': 'taa', 'preset': '3'}))
 
 
+class PhysicsStepTests(unittest.TestCase):
+    # The FPS presets set the physics step, a float immediate at 0x00F383CA (1/30 in the game).
+    # The file had it at 0x011383CA, inside a NOP, with garbled values; these are the values of
+    # shadPS4's maintained patch file (shadps4-emu/ps4_cheats PATCHES/Bloodborne.xml).
+    def test_presets_write_the_physics_step(self):
+        for preset, step in [('30 FPS++', 60), ('60 FPS++', 30), ('90 FPS++', 90), ('Uncap FPS++', 120)]:
+            with self.subTest(preset=preset):
+                writes = dict(compile_patches(XML, [preset], '01.09', SEGMENTS))
+                value = struct.unpack('<f', writes[0x00F383CA - EBOOT_BASE])[0]
+                self.assertAlmostEqual(1 / value, step, places=2)
+                self.assertNotIn(0x011383CA - EBOOT_BASE, writes)
+
+
 class DebugPatchTests(unittest.TestCase):
     def test_camera_patch_is_optional_and_compatible_with_fps_and_debug_menu(self):
         self.assertEqual(effect_patches({'debug_camera': '0', 'debug_menu': '0'}), [])
