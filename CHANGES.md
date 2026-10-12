@@ -3,7 +3,7 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
-## 0.5.8 (unreleased)
+## 0.5.8 (Windows port 0.5.8, party co-op)
 
 - **No more warps before the party forms**: a host's lamp travel or death no longer moves a player who is still in the prologue or playing in their own world without being summoned (a guest in the Hunter's Dream was warped into the clinic, or sent back to the Dream by the host's death).
 - **Both party codes shown**: the launcher, *System → Party* and the overlay's Party tab show the host's **Internet code** (friends elsewhere) and **LAN code** (same network), each with its own copy button. The launcher used to show the raw `internet=...` line.
@@ -13,6 +13,8 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 - **Password checks before joining**: the launcher (and the title screen's *Party* page) says "This party needs a password" when the code needs one and the password is empty.
 - **Clearer join refusal**: the guest's notice and *System → Party* say "Old party code: ask the host for the current one", "This party needs a password" or "Wrong party password" instead of only the game's "Failed to acquire Bloodborne server information".
 - **Launcher Stop closes the game normally**: Stop and quitting the launcher ask the game to close (party goodbye, UPnP mapping removed, GPU released) and kill it only after 8 s. A force-kill could leave bbport.exe stuck with port 9307 held.
+- **Gesture and Personal Effects menus** open again from the emulated touchpad (Mrsuss60).
+- **Shader cache kept between starts**: motion vector pipelines are no longer saved; they could never be reloaded, so every start removed them again ("N stale pipelines") (Vorshim92).
 
 ## 0.5.7 (Windows port 0.5.7, hotfix)
 
