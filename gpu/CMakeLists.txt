@@ -317,6 +317,13 @@ add_executable(game-menu-pages-test EXCLUDE_FROM_ALL ../tests/test_game_menu_pag
 target_compile_options(game-menu-pages-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(game-menu-pages-test PRIVATE .. shim)
 set_target_properties(game-menu-pages-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# The same pages with the party flow's rows: no page shows more rows than its slots in any party state.
+add_executable(game-menu-rows-test EXCLUDE_FROM_ALL ../tests/test_game_menu_rows.cpp shim/bbport_game_menu_pages.cpp
+    shim/party/party_flow_rows.cpp shim/bbport_settings.cpp shim/party/party_status.cpp shim/party/party_balance_rules.cpp
+    shim/net/json.cpp)
+target_compile_options(game-menu-rows-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(game-menu-rows-test PRIVATE .. shim)
+set_target_properties(game-menu-rows-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 
 add_executable(scene-resolution-test EXCLUDE_FROM_ALL ../tests/test_scene_resolution.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(scene-resolution-test PRIVATE shim shadps4 third_party/gcn/include)

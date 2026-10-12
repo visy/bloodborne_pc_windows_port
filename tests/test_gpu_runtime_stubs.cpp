@@ -57,6 +57,7 @@ uint64_t runtime_memory_pool_size() { return 0; }
 void runtime_memory_grow_flexible(uint64_t) { std::abort(); }
 void runtime_pad_director_press(uint32_t) { std::abort(); }
 uint32_t runtime_pad_last_buttons() { return 0; }
+uint32_t runtime_pad_cross_presses() { return 0; }
 const char* runtime_symbol(const char*) { return nullptr; }
 void runtime_thread_set_blocked(const char*, uint64_t) {}
 void runtime_thread_clear_blocked() {}

@@ -127,6 +127,7 @@ void runtime_pad_report(void);
 /* The party director's held buttons (PS4 pad bits, 0 releases); see runtime_pad.c. */
 void runtime_pad_director_press(uint32_t buttons);
 uint32_t runtime_pad_last_buttons(void);
+uint32_t runtime_pad_cross_presses(void);
 /* How many ImeDialogs (name entry) the game opened so far; see runtime_services.c. */
 int runtime_ime_dialog_count(void);
 /* Save data mounts so far (the title mounts the save before its menu); runtime_savedata.c. */

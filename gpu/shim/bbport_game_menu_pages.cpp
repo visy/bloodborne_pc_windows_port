@@ -47,10 +47,10 @@ u32 AddDynamic(std::size_t limit) {
 /// with an ellipsis, rewritten only when it changed.
 std::atomic<std::uint64_t> dynamic_changes{0};
 
-void SetDynamic(u32 id, const std::string& english, const std::string& russian) {
+void SetDynamic16(u32 id, const std::u16string& english, const std::u16string& russian) {
     Dynamic& d = *dynamics[std::size_t(texts[id - IdBase].dynamic)];
     for (int lang = 0; lang < 2; ++lang) {
-        std::u16string text = Utf16(lang ? russian.c_str() : english.c_str());
+        std::u16string text = lang ? russian : english;
         if (text.size() > d.limit) {
             text.resize(d.limit - 3);
             if (!text.empty() && text.back() >= 0xd800 && text.back() < 0xdc00) {
@@ -68,6 +68,9 @@ void SetDynamic(u32 id, const std::string& english, const std::string& russian) 
         dynamic_changes.fetch_add(1, std::memory_order_release);
     }
 }
+void SetDynamic(u32 id, const std::string& english, const std::string& russian) {
+    SetDynamic16(id, Utf16(english.c_str()), Utf16(russian.c_str()));
+}
 
 // ---- Fields: what the rows edit ----
 using Values = BbSettings::Values;
@@ -76,7 +79,8 @@ struct Field {
     int steps = 0; ///< Steps rows: the number of choices
     std::function<int(const Values&)> get;          ///< null: a button (0 when the page opens)
     std::function<void(int)> set;                    ///< applies a setting
-    std::function<void(int from, int to, std::int64_t now)> act; ///< a button
+    std::function<void()> run;                       ///< a button's action (null: a read-only line)
+    bool confirm = false;  ///< a button that arms on the first press and runs on the second
     bool debounce = false; ///< applied once the value rests for 0.4 s (re-creates targets)
 };
 std::vector<Field> fields;
@@ -127,34 +131,48 @@ int Scaled(std::atomic<float> Values::*member, const float* table) {
         [member, table](int i) { (BbSettings::Get().*member) = table[std::clamp(i, 0, 10)]; });
 }
 
-/// A confirmed button: the first change arms it (its second value text says "press again"),
-/// the change back within 10 s runs `fn`.
-int Confirmed(std::function<void()> fn) {
+/// A button (Kind::Button): `fn` on every press (Press).
+int Button(std::function<void()> fn) {
     Field f;
-    f.kind = Kind::Toggle;
-    const int index = int(fields.size());
-    f.act = [fn = std::move(fn), index](int from, int to, std::int64_t now) {
-        if (from == 0 && to == 1) {
-            armed_at[std::size_t(index)] = now;
-        } else if (from == 1 && to == 0 && now - armed_at[std::size_t(index)] <= 10000) {
-            armed_at[std::size_t(index)] = -1000000;
-            fn();
-        }
-    };
+    f.kind = Kind::Button;
+    f.run = std::move(fn);
     return AddField(std::move(f));
 }
 
-/// A read-only line: a toggle whose two value texts are the same.
+/// A confirmed button: the first press arms it (its help line says "press again to confirm"),
+/// a second press within ConfirmMs runs `fn`.
+constexpr std::int64_t ConfirmMs = 10000;
+int Confirmed(std::function<void()> fn) {
+    Field f;
+    f.kind = Kind::Button;
+    f.run = std::move(fn);
+    f.confirm = true;
+    return AddField(std::move(f));
+}
+
+/// A read-only line: a button without an action (one value, no arrows).
 int Info() {
     Field f;
-    f.kind = Kind::Toggle;
-    f.act = [](int, int, std::int64_t) {};
+    f.kind = Kind::Button;
     return AddField(std::move(f));
+}
+
+bool Armed(int field, std::int64_t now) {
+    return now - armed_at[std::size_t(field)] <= ConfirmMs;
 }
 
 // ---- Pages ----
 std::vector<Page> pages;
 u32 split_text[1] = {0};
+
+/// A confirmed button's help line: the row's own help, or "press again to confirm" while armed
+/// (a run-time text of its own wrapping the row's).
+struct ConfirmHelp {
+    int field = 0;
+    u32 base = 0, shown = 0;
+};
+std::vector<ConfirmHelp> confirm_helps;
+u32 HelpFor(int field, u32 help);
 
 void AddPage(const char* en, const char* ru, const char* help_en, const char* help_ru) {
     const u32 name = AddText(en, ru);
@@ -162,11 +180,31 @@ void AddPage(const char* en, const char* ru, const char* help_en, const char* he
 }
 void AddRow(int field, u32 name, u32 help, std::vector<u32> choices, Kind kind,
             std::function<bool()> visible = nullptr) {
-    pages.back().rows.push_back({field, name, help, std::move(choices), kind, std::move(visible)});
+    pages.back().rows.push_back({field, name, HelpFor(field, help), std::move(choices), kind, std::move(visible)});
 }
 void AddRow(int field, const char* en, const char* ru, const char* help_en, const char* help_ru,
             std::vector<u32> choices, Kind kind) {
     AddRow(field, AddText(en, ru), AddText(help_en, help_ru), std::move(choices), kind);
+}
+
+u32 HelpFor(int field, u32 help) {
+    if (!fields[std::size_t(field)].confirm) return help;
+    const u32 shown = AddDynamic(MaxHelpLength);
+    confirm_helps.push_back({field, help, shown});
+    return shown;
+}
+/// The confirmed buttons' help lines: "press again" while armed, else the row's own help.
+void RefreshConfirmHelps() {
+    const std::int64_t now = last_refresh.load();
+    for (const ConfirmHelp& h : confirm_helps) {
+        if (Armed(h.field, now)) {
+            SetDynamic(h.shown, "Press again to confirm", "Нажмите ещё раз для подтверждения");
+        } else {
+            const char16_t* en = Text(h.base, false);
+            const char16_t* ru = Text(h.base, true);
+            SetDynamic16(h.shown, en ? en : u"", ru ? ru : u"");
+        }
+    }
 }
 
 constexpr float SharpnessStep = 0.2f; // Display's slider: 0 off, 1..10 -> 0.2 .. 2.0
@@ -193,10 +231,10 @@ int upscaler_field = -1;
 // ---- Party (party_status.h): the run-time texts and the members the rows stand for ----
 constexpr int MaxMembers = party::kMaxPartyPlayers; // the host and the guests (party_link.h)
 struct MemberTexts {
-    u32 member_name[MaxMembers], member_value[MaxMembers], member_confirm[MaxMembers],
-        member_help[MaxMembers];
+    u32 member_name[MaxMembers], member_value[MaxMembers], member_help[MaxMembers];
     u32 restart_help;
     u32 event_value, event_help;
+    u32 mode_none;
 } party;
 struct BalanceTexts {
     u32 rot_help = 0;
@@ -210,9 +248,10 @@ int member_rows = 1;                  // rows the Members page shows (one when n
 /// texts and the field its game row edits.
 struct PartyEntry {
     PartyRow spec;
-    u32 name = 0, help = 0, value = 0, pressed = 0;
+    u32 name = 0, help = 0, value = 0;
     int field = -1;
 };
+PartyStatusHooks status_hooks;
 std::vector<PartyRow> pending_party_rows; // AddPartyRow before Define
 std::vector<PartyEntry> party_rows;       // sorted by order, fixed after Define
 std::vector<char> party_row_visible;      // per entry, at the last refresh
@@ -270,13 +309,13 @@ void RefreshParty() {
         const Texts name = r.name ? r.name(b) : Texts{};
         const Texts help = r.help ? r.help(b) : Texts{};
         const Texts value = r.value ? r.value(b) : Texts{"-", "-"};
-        const Texts pressed = r.pressed ? r.pressed(b) : value;
         SetDynamic(e.name, name.en, name.ru);
         SetDynamic(e.help, help.en, help.ru);
         SetDynamic(e.value, value.en, value.ru);
-        SetDynamic(e.pressed, pressed.en, pressed.ru);
         party_row_visible[i] = !r.visible || r.visible(b);
     }
+
+    SetDynamic(party.mode_none, "Single player", "Одиночная игра");
 
     // Last event (Party members page).
     both([&](bool r) { return b.last_event.empty() ? std::string(L(r, "None", "Нет")) : b.last_event; });
@@ -296,7 +335,6 @@ void RefreshParty() {
             both([&](bool r) { return std::string(k == 0 ? L(r, "No one yet", "Пока никого") : "-"); });
             SetDynamic(party.member_name[k], en, ru);
             SetDynamic(party.member_value[k], "-", "-");
-            SetDynamic(party.member_confirm[k], "-", "-");
             both([&](bool r) {
                 return std::string(on ? L(r, "Hunters appear here once they connect",
                                           "Охотники появятся здесь после подключения")
@@ -327,17 +365,12 @@ void RefreshParty() {
         };
         both(where);
         SetDynamic(party.member_value[k], en, ru);
-        if (member_kickable[k]) {
-            SetDynamic(party.member_confirm[k], "Press again: kick", "Ещё раз: исключить");
-        } else {
-            SetDynamic(party.member_confirm[k], en, ru);
-        }
         both([&](bool r) {
             std::string text = where(r);
             if (!m.connected) text += L(r, ", slot kept", ", место сохранено");
             if (!m.area.empty()) text += ", " + m.area;
             if (member_kickable[k]) {
-                text += L(r, ". Twice left/right: kick", ". Дважды влево/вправо: исключить");
+                text += L(r, ". Press twice: kick", ". Нажмите дважды: исключить");
             }
             return text;
         });
@@ -350,8 +383,8 @@ void RefreshRestart() {
         SetDynamic(party.restart_help, "Changes wait for a restart: press twice to restart the game now",
                    "Изменения ждут перезапуска: нажмите дважды, чтобы перезапустить игру");
     } else {
-        SetDynamic(party.restart_help, "Twice left/right: restart the game (title screen; progress is saved)",
-                   "Дважды влево/вправо: перезапустить игру (титульный экран; прогресс сохранён)");
+        SetDynamic(party.restart_help, "Press twice: restart the game (title screen; progress is saved)",
+                   "Нажмите дважды: перезапустить игру (титульный экран; прогресс сохранён)");
     }
 }
 
@@ -368,25 +401,22 @@ bool Running(const party::status::Board& b) {
     return Active(b) && b.state != party::status::State::Off;
 }
 
-/// The Copy party code row with two codes (host: Internet + LAN): which one the next press copies
-/// (0 Internet, 1 LAN), which one was copied last and when (the Poll clock, ms).
-std::atomic<int> copy_next{0}, copied_which{-1};
+/// The copy rows: which code was copied last (0 Internet / the only one, 1 LAN) and when (the
+/// Poll clock, ms): its row says "Copied" for a moment.
+std::atomic<int> copied_which{-1};
 std::atomic<std::int64_t> copied_at{0};
 bool TwoCodes(const party::status::Board& b) {
     return b.role == party::status::Role::Host && !b.code.empty() && !b.lan_code.empty();
 }
-Texts CopyValue(const party::status::Board& b, bool pressed) {
-    if (!TwoCodes(b)) return pressed ? T2("Copied", "Скопирован") : T2("Copy", "Копировать");
-    if (copied_which.load() >= 0 && last_refresh.load() - copied_at.load() < 2500)
-        return copied_which.load() == 1 ? T2("LAN code copied", "Код LAN скопирован")
-                                        : T2("Internet code copied", "Интернет-код скопирован");
-    return copy_next.load() == 1 ? T2("Copy LAN code", "Копировать код LAN")
-                                 : T2("Copy Internet code", "Копировать интернет-код");
+Texts CopyValue(const std::string& code, int which) {
+    if (copied_which.load() == which && last_refresh.load() - copied_at.load() < 2500)
+        return T2("Copied", "Скопирован");
+    return code.empty() ? T2("Not known yet", "Ещё неизвестен") : Texts{code, code};
 }
 
-/// The Party page's own rows (orders 10..40): status, copy code, rejoin, leave. The join/leave
-/// notices switch and the last event are on the Party members page (room for the party flow's
-/// rows here).
+/// The Party page's own rows (orders 10..40): status, copy code (two rows for a host with an
+/// Internet and a LAN code), rejoin, leave. The join/leave notices switch and the last event are
+/// on the Party members page (room for the party flow's rows here).
 void DefineBuiltinPartyRows() {
     namespace ps = party::status;
     using B = ps::Board;
@@ -394,10 +424,14 @@ void DefineBuiltinPartyRows() {
     status.order = 10;
     status.name = [](const B&) { return T2("Status", "Состояние"); };
     status.value = [](const B& b) {
+        Texts value, help;
+        if (status_hooks.describe && status_hooks.describe(b, &value, &help)) return value;
         return b.enabled ? Texts{StateShort(b.state, false), StateShort(b.state, true)}
                          : T2("Single player", "Одиночная игра");
     };
     status.help = [](const B& b) {
+        Texts value, help;
+        if (status_hooks.describe && status_hooks.describe(b, &value, &help)) return help;
         if (!b.enabled) {
             // The party flow's rows (party_flow_rows.cpp) start or join a party game on the title.
             return T2("Single-player saves. Party games start on the title screen (System > Party)",
@@ -414,58 +448,66 @@ void DefineBuiltinPartyRows() {
         }
         return t;
     };
+    status.visible = [](const B&) { return !(status_hooks.hidden && status_hooks.hidden()); };
     party_rows.push_back({status});
 
-    // Copy party code. A host with two codes (party_status.h lan_code): the presses alternate
-    // between the Internet code (friends elsewhere) and the LAN code (same network); the value
-    // says which comes next and which was just copied. The help line shows both.
+    // Copy the party code: one row per code, the value shows the code ("Copied" for a moment).
+    // A host has two (party_status.h lan_code): Internet (friends elsewhere) and LAN (same network).
     PartyRow copy;
     copy.order = 20;
-    copy.name = [](const B&) { return T2("Copy party code", "Копировать код"); };
-    copy.value = [](const B& b) { return CopyValue(b, false); };
-    copy.pressed = [](const B& b) { return CopyValue(b, true); };
+    copy.name = [](const B& b) {
+        return TwoCodes(b) ? T2("Copy Internet code", "Копировать интернет-код") : T2("Copy party code", "Копировать код");
+    };
+    copy.value = [](const B& b) { return CopyValue(b.code, 0); };
     copy.help = [](const B& b) {
-        if (!b.enabled) return T2("Party mode is off", "Режим группы выключен");
         if (b.code.empty()) return T2("The party code is not known yet", "Код группы ещё неизвестен");
-        const bool host = b.role == ps::Role::Host;
         if (TwoCodes(b))
-            return Texts{"Internet: " + b.code + "  LAN: " + b.lan_code,
-                         "Интернет: " + b.code + "  LAN: " + b.lan_code};
-        return Texts{std::string(host ? "Left/right: copy the code for friends: " : "Left/right: copy the code: ") +
-                         b.code,
-                     std::string(host ? "Влево/вправо: копировать код для друзей: " : "Влево/вправо: копировать код: ") +
-                         b.code};
+            return T2("Press: copy the code for friends on other networks (the Internet)",
+                      "Нажмите: копировать код для друзей из других сетей (интернет)");
+        return b.role == ps::Role::Host ? T2("Press: copy the code for your friends", "Нажмите: копировать код для друзей")
+                                        : T2("Press: copy the party code", "Нажмите: копировать код группы");
     };
     copy.visible = [](const B& b) { return Running(b); }; // party flow: the solo title's rows instead
     copy.press = PartyRow::Press::Once;
     copy.run = [](const B& b) {
-        if (!TwoCodes(b)) {
-            ps::RequestCopyCode();
-            return;
-        }
-        const int which = copy_next.load();
-        if (which == 1 ? ps::RequestCopyLanCode() : ps::RequestCopyCode()) {
-            copied_which = which;
+        if (!b.code.empty() && ps::RequestCopyCode()) {
+            copied_which = 0;
             copied_at = last_refresh.load();
-            copy_next = 1 - which;
         }
     };
     party_rows.push_back({copy});
+
+    PartyRow lan;
+    lan.order = 21;
+    lan.name = [](const B&) { return T2("Copy LAN code", "Копировать код LAN"); };
+    lan.value = [](const B& b) { return CopyValue(b.lan_code, 1); };
+    lan.help = [](const B&) {
+        return T2("Press: copy the code for players on your own network (LAN)",
+                  "Нажмите: копировать код для игроков в вашей сети (LAN)");
+    };
+    lan.visible = [](const B& b) { return Running(b) && TwoCodes(b); };
+    lan.press = PartyRow::Press::Once;
+    lan.run = [](const B& b) {
+        if (TwoCodes(b) && ps::RequestCopyLanCode()) {
+            copied_which = 1;
+            copied_at = last_refresh.load();
+        }
+    };
+    party_rows.push_back({lan});
 
     PartyRow rejoin;
     rejoin.order = 30;
     rejoin.name = [](const B& b) {
         return b.role == ps::Role::Host ? T2("Summon again", "Призвать снова") : T2("Rejoin the host", "Вернуться к хосту");
     };
-    rejoin.value = [](const B&) { return T2("Request", "Запросить"); };
-    rejoin.pressed = [](const B&) { return T2("Requested", "Запрошено"); };
+    rejoin.value = [](const B& b) { return b.role == ps::Role::Host ? T2("Ring the bell", "Позвонить") : T2("Rejoin", "Вернуться"); };
     rejoin.help = [](const B& b) {
         return b.role == ps::Role::Host
-                   ? T2("Left/right: ring the Beckoning Bell again for waiting hunters",
-                        "Влево/вправо: снова позвонить в манящий колокол для ожидающих")
+                   ? T2("Press: ring the Beckoning Bell again for waiting hunters",
+                        "Нажмите: снова позвонить в манящий колокол для ожидающих")
                : b.role == ps::Role::Guest
-                   ? T2("Left/right: reconnect to the host now and ring the bell",
-                        "Влево/вправо: переподключиться к хосту и позвонить в колокол")
+                   ? T2("Press: reconnect to the host now and ring the bell",
+                        "Нажмите: переподключиться к хосту и позвонить в колокол")
                    : T2("Party mode is off", "Режим группы выключен");
     };
     rejoin.visible = [](const B& b) { return Running(b); };
@@ -478,15 +520,14 @@ void DefineBuiltinPartyRows() {
     PartyRow leave;
     leave.order = 40;
     leave.name = [](const B&) { return T2("Leave the party", "Покинуть группу"); };
-    leave.value = [](const B&) { return T2("Leave", "Покинуть"); };
-    leave.pressed = [](const B&) { return T2("Press again", "Нажмите ещё раз"); };
+    leave.value = [](const B& b) { return b.role == ps::Role::Host ? T2("End the party", "Завершить") : T2("Leave", "Покинуть"); };
     leave.help = [](const B& b) {
         return b.role == ps::Role::Host
-                   ? T2("Twice left/right: end the party, every guest returns home",
-                        "Дважды влево/вправо: завершить группу, гости вернутся в свои миры")
+                   ? T2("Press twice: end the party, every guest returns home",
+                        "Нажмите дважды: завершить группу, гости вернутся в свои миры")
                : b.role == ps::Role::Guest
-                   ? T2("Twice left/right: return to your world, stop rejoining",
-                        "Дважды влево/вправо: вернуться в свой мир и не возвращаться к хосту")
+                   ? T2("Press twice: return to your world, stop rejoining",
+                        "Нажмите дважды: вернуться в свой мир и не возвращаться к хосту")
                    : T2("Party mode is off", "Режим группы выключен");
     };
     leave.visible = [](const B& b) { return Running(b); };
@@ -495,7 +536,6 @@ void DefineBuiltinPartyRows() {
         if (Active(b)) ps::RequestLeave();
     };
     party_rows.push_back({leave});
-
 }
 
 void DefineAll() {
@@ -780,21 +820,21 @@ void DefineAll() {
                BbSettings::Save();
                if (restart_handler) restart_handler();
            }),
-           AddText("Restart the game", "Перезапуск игры"), party.restart_help,
-           {AddText("Restart", "Перезапуск"), AddText("Press again", "Нажмите ещё раз")}, Kind::Toggle);
+           AddText("Restart the game", "Перезапуск игры"), party.restart_help, {AddText("Restart", "Перезапуск")},
+           Kind::Button);
     // Upstream 0.51 (#74, #116): quit from the menu, as the window's close button.
     AddRow(Confirmed([] {
                BbSettings::Save();
                if (quit_handler) quit_handler();
            }),
            "Quit the game", "Выход из игры",
-           "Closes the game like the window's close button; in a party the others are told",
-           "Закрывает игру, как кнопка закрытия окна; группа об этом узнает",
-           {AddText("Quit", "Выйти"), AddText("Press again", "Нажмите ещё раз")}, Kind::Toggle);
+           "Press twice: closes the game like the window's close button; in a party the others are told",
+           "Нажмите дважды: закрыть игру, как кнопкой окна; группа об этом узнает", {AddText("Quit", "Выйти")},
+           Kind::Button);
 
-    // ---- Party (party_status.h): the action table's rows. ----
-    AddPage("Party", "Группа", "Party co-op: status, code, rejoin, leave (bbport)",
-            "Совместная игра: состояние, код, возврат, выход (bbport)");
+    // ---- Party (party_status.h): the action table's rows, on two pages: Party (status, codes,
+    // rejoin, leave; the solo title's party game rows) and Party mode (switching role, single
+    // player). Each keeps within the six rows in every state (tests/test_game_menu_rows.cpp). ----
     DefineBuiltinPartyRows();
     for (PartyRow& r : pending_party_rows) party_rows.push_back({std::move(r)});
     pending_party_rows.clear();
@@ -806,7 +846,6 @@ void DefineAll() {
         e.name = AddDynamic(MaxNameLength);
         e.help = AddDynamic(MaxHelpLength);
         e.value = AddDynamic(MaxValueLength);
-        e.pressed = AddDynamic(MaxValueLength);
         const PartyRow& r = e.spec;
         if (r.toggle) {
             e.field = Setting(
@@ -817,22 +856,39 @@ void DefineAll() {
         } else {
             const auto run = r.run;
             const auto act = [run] { run(party::status::Snapshot()); };
-            if (r.press == PartyRow::Press::Confirm) {
-                e.field = Confirmed(act);
+            e.field = r.press == PartyRow::Press::Confirm ? Confirmed(act) : Button(act);
+        }
+    }
+    const u32 off_on[2] = {off, on};
+    for (int page = 0; page < 2; ++page) {
+        if (page == 0) {
+            AddPage("Party", "Группа", "Party co-op: status, codes, rejoin, leave (bbport)",
+                    "Совместная игра: состояние, коды, возврат, выход (bbport)");
+        } else {
+            AddPage("Party mode", "Режим группы", "Party co-op: host, join, back to single player (bbport)",
+                    "Совместная игра: хост, вход, одиночная игра (bbport)");
+        }
+        for (std::size_t i = 0; i < party_rows.size(); ++i) {
+            const PartyEntry& e = party_rows[i];
+            if (e.spec.page != page) continue;
+            if (e.spec.toggle) {
+                AddRow(e.field, e.name, e.help, {off_on[0], off_on[1]}, Kind::Toggle,
+                       [i] { return party_row_visible[i] != 0; });
             } else {
-                Field f;
-                f.kind = Kind::Toggle;
-                f.act = [act](int from, int to, std::int64_t) {
-                    // Every press (live: the press back to 0 only reset the text, so a second edit of
-                    // the address took two presses and showed 'Type, then Enter' after Enter).
-                    if (from != to) act();
-                };
-                e.field = AddField(std::move(f));
+                AddRow(e.field, e.name, e.help, {e.value}, Kind::Button, [i] { return party_row_visible[i] != 0; });
             }
         }
-        AddRow(e.field, e.name, e.help, {e.value, e.pressed}, Kind::Toggle,
-               [i] { return party_row_visible[i] != 0; });
     }
+    // The Party mode page in a single-player process (no mode rows): one line says where to go.
+    party.mode_none = AddDynamic(MaxValueLength);
+    AddRow(Info(), AddText("Party mode", "Режим группы"),
+           AddText("Single player. Party games start on the title screen (Party)",
+                   "Одиночная игра. Игра группой начинается на титульном экране (Группа)"),
+           {party.mode_none}, Kind::Button, [] {
+               for (std::size_t i = 0; i < party_rows.size(); ++i)
+                   if (party_rows[i].spec.page == 1 && party_row_visible[i]) return false;
+               return true;
+           });
 
     // ---- Party members: one row each (state, ping); the host kicks with two presses. ----
     AddPage("Party members", "Участники группы", "The hunters in the party, their state and ping (bbport)",
@@ -840,18 +896,16 @@ void DefineAll() {
     for (int k = 0; k < MaxMembers; ++k) {
         party.member_name[k] = AddDynamic(MaxNameLength);
         party.member_value[k] = AddDynamic(MaxValueLength);
-        party.member_confirm[k] = AddDynamic(MaxValueLength);
         party.member_help[k] = AddDynamic(MaxHelpLength);
         AddRow(Confirmed([k] {
                    if (member_kickable[k] && !member_names[k].empty()) party::status::KickMember(member_names[k]);
                }),
-               party.member_name[k], party.member_help[k], {party.member_value[k], party.member_confirm[k]},
-               Kind::Toggle, [k] { return k < member_rows; });
+               party.member_name[k], party.member_help[k], {party.member_value[k]}, Kind::Button,
+               [k] { return k < member_rows; });
     }
-    // One row per member (kMaxPartyPlayers = 4), then the switches: a full party of four still
-    // shows the notices and party HUD switches (the page's six rows); guest lamps and the last
-    // event show while fewer than four hunters are in the party (lamps also: overlay Party tab).
-    // The System menu is at its 12 pages, so the switches cannot move to a page of their own.
+    // One row per member (kMaxPartyPlayers = 4), then the switches, within the page's six rows:
+    // a full party of four shows the notices and party HUD switches, three also guest lamps
+    // (also on the overlay's Party tab), two or fewer also the last event.
     AddRow(Flag(&Values::party_toasts), "Join/leave notices", "Уведомления",
            "A short notice in a top corner when a hunter joins or leaves",
            "Короткое уведомление в углу, когда охотник входит или выходит", toggle, Kind::Toggle);
@@ -865,11 +919,11 @@ void DefineAll() {
     AddRow(Flag(&Values::party_guest_lamps), AddText("Guests use lamps", "Фонари гостям"),
            AddText("Guests may use lamps and headstones; the whole party travels (after a restart)",
                    "Гости могут пользоваться фонарями и надгробиями; группа идёт вместе (после перезапуска)"),
-           toggle, Kind::Toggle, [] { return party::status::Enabled(); });
+           toggle, Kind::Toggle, [] { return party::status::Enabled() && member_rows <= 3; });
     party.event_value = AddDynamic(MaxValueLength);
     party.event_help = AddDynamic(MaxHelpLength);
-    AddRow(Info(), AddText("Last event", "Последнее"), party.event_help, {party.event_value, party.event_value},
-           Kind::Toggle);
+    AddRow(Info(), AddText("Last event", "Последнее"), party.event_help, {party.event_value}, Kind::Button,
+           [] { return !party::status::Enabled() || member_rows <= 2; });
 
     // The split-travel question (party_split.cpp): a game dialog with YES / NO after a lamp,
     // headstone or Hunter's Mark in a party (docs/party/split_travel.md).
@@ -1096,6 +1150,40 @@ void RefreshDynamic() {
     RefreshParty();
     RefreshRestart();
     RefreshBalance();
+    RefreshConfirmHelps();
+}
+
+bool IsButton(int field) {
+    return field >= 0 && std::size_t(field) < fields.size() && fields[std::size_t(field)].kind == Kind::Button;
+}
+
+void Press(int field, std::int64_t now_ms) {
+    std::scoped_lock lock{StateMutex()};
+    if (!IsButton(field)) return;
+    const Field& f = fields[std::size_t(field)];
+    if (!f.run) return;
+    if (f.confirm && !Armed(field, now_ms)) {
+        armed_at[std::size_t(field)] = now_ms;
+        RefreshConfirmHelps();
+        return;
+    }
+    armed_at[std::size_t(field)] = -1000000;
+    RefreshConfirmHelps();
+    f.run();
+    RefreshDynamic(); // the row's new state ("Copied", the flow's message) right away
+}
+
+std::vector<const Row*> ShownRows(const Page& page) {
+    std::vector<const Row*> rows;
+    for (const Row& row : page.rows) {
+        if (!row.visible || row.visible()) rows.push_back(&row);
+    }
+    if (rows.empty() && !page.rows.empty()) rows.push_back(&page.rows.front());
+    return rows;
+}
+
+void SetPartyStatusHooks(PartyStatusHooks hooks) {
+    status_hooks = std::move(hooks);
 }
 
 void Poll(std::int64_t now_ms) {
@@ -1131,15 +1219,8 @@ void Poll(std::int64_t now_ms) {
                 continue;
             }
         }
-        const int from = applied[i];
         applied[i] = value;
-        if (f.act) {
-            f.act(from, value, now_ms);
-            // The game's "Default" sets this: a button's default follows its value, so Default
-            // does not press it.
-            default_bytes[i] = bytes[i];
-            defaults[i] = value;
-        } else if (f.set) {
+        if (f.set) {
             f.set(value);
             save = true;
         }

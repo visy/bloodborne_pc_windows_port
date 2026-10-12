@@ -83,6 +83,10 @@ static void Limits() {
                 assert(row.choices.size() >= 2 && row.choices.size() <= 32);
             }
             if (row.kind == P::Kind::Toggle) assert(row.choices.size() == 2);
+            // A button: one value (no arrows); no "press again" value pretending to be a choice.
+            if (row.kind == P::Kind::Button) assert(row.choices.size() == 1 && P::IsButton(row.field));
+            for (P::u32 c : row.choices)
+                assert(P::IsDynamic(c) || std::u16string(P::Text(c, false)).find(u"Press again") == std::u16string::npos);
             if (row.kind == P::Kind::Steps) assert(row.choices.size() >= 2 && row.choices.size() <= 11);
             assert(P::ByteField(row.field) == (row.kind != P::Kind::List));
         }
@@ -105,6 +109,7 @@ static void EverySettingSaved() {
     const auto& pages = P::All();
     for (const P::Page& page : pages) {
         for (const P::Row& row : page.rows) {
+            if (row.kind == P::Kind::Button) continue; // buttons save nothing
             const auto before = ReadIni();
             P::Load();
             const int f = row.field;
@@ -168,8 +173,10 @@ static const P::Row& RowNamed(const P::Page& page, const char16_t* name) {
     return page.rows.front();
 }
 
+/// Cross on a button row (the glue calls Press while the row has the cursor).
 static void Press(const P::Row& row) {
-    *P::Byte(row.field) = P::u8(1 - *P::Byte(row.field));
+    assert(row.kind == P::Kind::Button);
+    P::Press(row.field, now);
     Advance(16);
 }
 
@@ -187,32 +194,40 @@ static void Party() {
     const P::Page& members = PageNamed(u"Party members");
     assert(std::u16string(P::Text(party.rows[0].choices[0], false)) == u"Together");
     assert(std::u16string(P::Text(party.rows[0].help, false)).find(u"Host (your world)") == 0);
-    assert(std::u16string(P::Text(party.rows[1].help, true)).find(u"BBP1-ABCD-EFGH-IJKL") != std::u16string::npos);
+    // One code (no LAN code): one copy row, the code as its value; the LAN row hidden.
+    assert(std::u16string(P::Text(party.rows[1].name, false)) == u"Copy party code");
+    assert(std::u16string(P::Text(party.rows[1].choices[0], false)) == u"BBP1-ABCD-EFGH-IJKL");
+    assert(!party.rows[2].visible());
+    ps::SetLanCode("BBP1-LLLL-AAAA-NNNN");
+    P::Load();
+    assert(std::u16string(P::Text(party.rows[1].name, false)) == u"Copy Internet code" && party.rows[2].visible());
+    assert(std::u16string(P::Text(party.rows[2].name, false)) == u"Copy LAN code");
+    assert(std::u16string(P::Text(party.rows[2].choices[0], false)) == u"BBP1-LLLL-AAAA-NNNN");
 
     // Member rows: one per member, name, state and ping; the host's own row cannot be kicked.
     int visible = 0;
     for (const P::Row& row : members.rows) visible += !row.visible || row.visible();
-    // three members, the notices, party HUD and guest lamps switches, the last event (the game
-    // shows the first six: the last event gives way with three or more members)
-    assert(visible == 7);
+    // three members, the notices, party HUD and guest lamps switches (the last event gives way with
+    // three or more members: six rows)
+    assert(visible == 6);
     const P::Row& hud = RowNamed(members, u"Party HUD");
     assert(hud.visible && hud.visible());
     const P::Row& lamps = RowNamed(members, u"Guests use lamps");
     assert(lamps.visible && lamps.visible());
     assert(std::u16string(P::Text(members.rows[0].name, false)) == u"Hunter0 (host) (you)");
     assert(std::u16string(P::Text(members.rows[1].choices[0], false)) == u"In world, 42 ms");
-    assert(std::u16string(P::Text(members.rows[1].choices[1], false)) == u"Press again: kick");
     assert(std::u16string(P::Text(members.rows[2].choices[0], true)) == u"Связь потеряна");
-    assert(std::u16string(P::Text(members.rows[0].choices[1], false)) ==
-           std::u16string(P::Text(members.rows[0].choices[0], false)));
 
     ps::Command cmd;
     while (ps::PopCommand(&cmd)) {}
-    // Kick: the first press arms (the row says "press again"), the second kicks.
+    // Kick: the first press arms (the help line says "press again"), the second kicks.
+    const std::u16string kick_help = P::Text(members.rows[1].help, false);
     Press(members.rows[1]);
     assert(!ps::PopCommand(&cmd));
-    assert(*P::DefaultByte(members.rows[1].field) == 1); // the game's Default does not press it
+    assert(std::u16string(P::Text(members.rows[1].help, false)) == u"Press again to confirm");
+    assert(std::u16string(P::Text(members.rows[1].choices[0], false)) == u"In world, 42 ms"); // one value
     Press(members.rows[1]);
+    assert(std::u16string(P::Text(members.rows[1].help, false)) == kick_help);
     assert(ps::PopCommand(&cmd) && cmd.type == ps::CommandType::Kick && cmd.name == "Hunter1");
     // Not the host's own row.
     Press(members.rows[0]);
@@ -225,9 +240,10 @@ static void Party() {
     assert(!ps::PopCommand(&cmd));
 
     // Rejoin: at once; Leave: confirmed.
-    Press(party.rows[2]);
+    const P::Row& rejoin = RowNamed(party, u"Summon again");
+    Press(rejoin);
     assert(ps::PopCommand(&cmd) && cmd.type == ps::CommandType::Rejoin);
-    Press(party.rows[2]); // every press runs a Once row (the text box rows: each press opens it)
+    Press(rejoin); // every press runs a Once row (the text box rows: each press opens it)
     assert(ps::PopCommand(&cmd) && cmd.type == ps::CommandType::Rejoin);
     const P::Row& leave = RowNamed(party, u"Leave the party");
     Press(leave);
@@ -260,7 +276,7 @@ static void Party() {
     P::Load();
     std::vector<const P::Row*> full;
     for (const P::Row& row : members.rows) if (!row.visible || row.visible()) full.push_back(&row);
-    assert(full.size() == 8 && P::RowsPerPage == 6);
+    assert(full.size() == 6 && P::RowsPerPage == 6);
     assert(std::u16string(P::Text(full[3]->name, false)) == u"Hunter3");
     assert(std::u16string(P::Text(full[3]->choices[0], false)) == u"In world, 13 ms");
     assert(std::u16string(P::Text(full[2]->choices[0], false)) == u"In own world, 12 ms");
@@ -275,7 +291,7 @@ static void Party() {
     // rejoin, leave) are hidden, the extension row shows (in order).
     ps::ResetForTest(false);
     P::Load();
-    assert(P::PartyRowCount() == 5); // status, copy, rejoin, leave + the extension row
+    assert(P::PartyRowCount() == 6); // status, copy, LAN copy, rejoin, leave + the extension row
     assert(!hud.visible()); // the party HUD switch: party mode only
     std::vector<const P::Row*> shown;
     for (const P::Row& row : party.rows) if (!row.visible || row.visible()) shown.push_back(&row);
@@ -286,7 +302,7 @@ static void Party() {
     Press(*shown[1]); // every press runs it
     assert(extension_runs == runs + 2);
     assert(std::u16string(P::Text(party.rows[0].choices[0], false)) == u"Single player");
-    Press(party.rows[2]);
+    Press(rejoin);
     Press(leave);
     Press(leave);
     assert(!ps::PopCommand(&cmd));

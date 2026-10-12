@@ -5,13 +5,17 @@
 // commands). No game code here: unit-tested by tests/test_game_menu_pages.cpp.
 //
 // The game's limits, kept by every page (the test checks them):
-//  - at most RowsPerPage rows (the "ControllSetting" layout the pages use has six);
+//  - at most RowsPerPage rows (the "ControllSetting" layout the pages use has six widget slots;
+//    a row past them has nowhere to draw): every page's visible rows stay within it in every
+//    state (tests/test_game_menu_rows.cpp walks the party states);
 //  - a pop-up list only as the last row (it opens downwards over the rows below it);
 //  - short row names (the name column is narrow), one-line help texts.
 // Rows: Toggle (left/right between two values), Slider (0..10), Steps (a slider standing for a
-// few ordered choices), List (pop-up). Read-only lines and buttons are toggles whose value texts
-// are made at run time (Dynamic texts): a button acts when its value changes, a confirmed one
-// (Leave, Kick, Restart) on the second press.
+// few ordered choices), List (pop-up), Button (the game's choice row with a single value: no
+// arrows, left/right do nothing; the glue runs it on Cross while the row has the cursor, see
+// Press). Read-only lines are buttons without an action. A confirmed button (Leave, Kick,
+// Restart, Quit ...) arms on the first press (its help line says "press again to confirm") and
+// runs on a second press within 10 s.
 #pragma once
 
 #include <cstddef>
@@ -33,12 +37,12 @@ constexpr std::size_t RowsPerPage = 6;
 constexpr std::size_t MaxNameLength = 24, MaxValueLength = 26, MaxHelpLength = 110;
 constexpr std::size_t DynamicCapacity = 160; ///< a run-time text's buffer (UTF-16 units)
 
-enum class Kind { List, Toggle, Slider, Steps };
+enum class Kind { List, Toggle, Slider, Steps, Button };
 
 struct Row {
     int field = 0;
     u32 name = 0, help = 0;
-    std::vector<u32> choices; ///< value texts, value = index (a toggle: two)
+    std::vector<u32> choices; ///< value texts, value = index (a toggle: two, a button: one)
     Kind kind = Kind::List;
     std::function<bool()> visible; ///< null: always; checked when the page opens
 };
@@ -67,7 +71,13 @@ int* Value(int field);
 u8* Byte(int field);
 const int* DefaultValue(int field);
 const u8* DefaultByte(int field);
-bool ByteField(int field); ///< toggle and slider rows bind bytes, lists ints
+bool ByteField(int field); ///< toggle, slider and button rows bind bytes, lists ints
+/// A button row's field (Kind::Button): Press runs it.
+bool IsButton(int field);
+/// Cross on a button row (the glue: the row has the page's cursor). A plain button runs at once;
+/// a confirmed one arms first and runs on a second press within 10 s; a read-only line does
+/// nothing. Present thread (BbGameMenu::Poll). `now_ms`: the Poll clock.
+void Press(int field, std::int64_t now_ms);
 /// A list row's choice `choice` can be offered (the upscalers this GPU and build run).
 bool ChoiceAvailable(int field, int choice);
 
@@ -85,34 +95,43 @@ void RefreshDynamic();
 struct Texts {
     std::string en, ru;
 };
-/// One row of the Party page. Every text is made from the party board when the page opens and a
-/// few times a second while it is open (Poll), so a row can change its name, value and help with
-/// the party's state. The row is a game toggle row: its two value texts are `value` (idle) and
-/// `pressed` (after the first press: "Copied", "Press again" ...).
+/// One row of the Party page (or the Party mode page). Every text is made from the party board
+/// when the page opens and a few times a second while it is open (Poll), so a row can change its
+/// name, value and help with the party's state. The row is a button (Kind::Button: one value, no
+/// arrows) or, with `toggle`, an On/Off row.
 struct PartyRow {
     using Board = party::status::Board;
-    int order = 0; ///< position on the page; built-in rows: status 10, copy code 20, rejoin 30,
-                   ///< leave 40 (notices and last event: Party members page)
+    int order = 0; ///< position on the page; built-in rows: status 10, copy code 20/21, rejoin
+                   ///< 30, leave 40 (notices and last event: Party members page)
+    int page = 0;  ///< 0: the Party page, 1: the Party mode page (switching role / single player)
     std::function<Texts(const Board&)> name;    ///< at most MaxNameLength units (cut otherwise)
     std::function<Texts(const Board&)> help;    ///< the bottom line, at most MaxHelpLength
     std::function<Texts(const Board&)> value;   ///< the value column (null: "-")
-    std::function<Texts(const Board&)> pressed; ///< the second value text (null: = value)
     std::function<bool(const Board&)> visible;  ///< null: always shown
-    /// None: a read-only line. Once: `run` on every press (the value column alternates between
-    /// `value` and `pressed`). Confirm: the first press arms (shows `pressed`), the second within
-    /// 10 s runs.
+    /// None: a read-only line. Once: `run` on every press. Confirm: the first press arms (the
+    /// help line says "press again to confirm"), a second press within 10 s runs.
     enum class Press { None, Once, Confirm } press = Press::None;
     std::function<void(const Board&)> run; ///< menu thread / present thread: queue, never block
-    /// A settings toggle instead of a button (value = off text, pressed = on text): saved to
-    /// bbport.ini through BbSettings::Save after toggle_set.
+    /// A settings toggle instead of a button (value texts Off / On): saved to bbport.ini through
+    /// BbSettings::Save after toggle_set.
     bool toggle = false;
     std::function<bool()> toggle_get;
     std::function<void(bool)> toggle_set;
 };
 /// Adds a row to the Party page. Call before Define() (BbGameMenu::PatchImage, at start). The
-/// game shows at most RowsPerPage rows: the first six visible ones in `order`.
+/// game shows at most RowsPerPage rows: keep the visible ones within it in every state.
 void AddPartyRow(PartyRow row);
 int PartyRowCount();
+/// The party flow's say on the Party page's Status line (before Define): `hidden` (the solo
+/// title, where the flow's own rows fill the page) and `describe` (a party process before its
+/// link runs: the role and what happens next instead of "Single player"; false: the default).
+struct PartyStatusHooks {
+    std::function<bool()> hidden;
+    std::function<bool(const party::status::Board&, Texts* value, Texts* help)> describe;
+};
+void SetPartyStatusHooks(PartyStatusHooks hooks);
+/// The rows the page `page` shows now (visible ones, in order): what the game is given.
+std::vector<const Row*> ShownRows(const Page& page);
 
 /// The "Restart the game" button (runtime_restart in the game; tests count calls).
 void SetRestartHandler(void (*restart)());

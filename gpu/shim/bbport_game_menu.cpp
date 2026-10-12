@@ -9,7 +9,10 @@
 //  - Row: a field (index of the value it edits), name / help text ids, value text ids
 //    (`choices`) and a Kind: Toggle (PairRow: two values, left/right), Slider (SliderRow 0..10),
 //    Steps (SliderRow standing for a few choices; the help line says which positions), List
-//    (ListRow pop-up; only as a page's last row, it opens over the rows below).
+//    (ListRow pop-up; only as a page's last row, it opens over the rows below), Button (PairRow
+//    with ONE value: the game draws no arrows and left/right have nothing to step to, as
+//    droogie/bbhost's key binding rows; Cross on it while it has the page's cursor runs it,
+//    PollButtons below).
 //  - Texts: ids from Pages::IdBase, answered by LookupHook in the game's language. Run-time
 //    ("dynamic") texts are fixed buffers rewritten in place by Pages::RefreshDynamic (party
 //    state, member rows), so a row can show live values.
@@ -57,6 +60,7 @@
 extern "C" void* runtime_low_map(size_t size, int prot); // src/runtime_memory.c
 extern "C" void runtime_restart(void);                  // src/probe.c
 extern "C" void bbgpu_request_quit(void);              // bbgpu.cpp
+extern "C" std::uint32_t runtime_pad_cross_presses(void); // src/runtime_pad.c
 
 // The game's code is called, and calls the hooks below, with the System V ABI (the PS4's): the
 // default on Linux, said explicitly for Windows.
@@ -207,8 +211,15 @@ constexpr u64 PageRows = 0xe50;          ///< page + this: {?, begin, end, capac
 constexpr std::size_t PageRowSize = 0x90, RowWidget = 0x80; // a row: name+help texts, widget at +0x80
 constexpr u64 ListRedraw = 0x1acfb20;    ///< (widget + 0xA0): redraws the items from their texts
 constexpr u64 WidgetList = 0xa0;
-std::vector<u64> live_widgets;           // menu thread only
+std::vector<u64> live_widgets;           // menu thread builds / redraws, present thread checks (widgets_mu)
 std::uint64_t live_seen_changes = 0;
+// Buttons: the open page (the dialog its rows were built into), the field of each of its rows and
+// a kept widget of it (alive while the page holds its other reference), the Cross presses counted
+// when it was built (the press that opened it is not a press on a row).
+std::recursive_mutex widgets_mu;
+u64 open_dialog = 0, open_widget = 0;
+std::vector<int> open_fields;
+std::uint32_t open_presses = 0;
 thread_local bool in_redraw = false;
 
 int RefCount(u64 obj) { return *reinterpret_cast<volatile int*>(obj + 8); }
@@ -252,10 +263,13 @@ void DropWidgets() {
     for (u64 w : live_widgets) Release(w);
     live_widgets.clear();
     live_seen_changes = P::DynamicChanges();
+    open_dialog = open_widget = 0;
+    open_fields.clear();
 }
 /// The menu thread, between lookups: redraw the kept widgets once a run-time text changed.
 void RedrawChangedValues() {
     if (in_redraw || live_widgets.empty()) return;
+    std::lock_guard<std::recursive_mutex> lk(widgets_mu);
     const std::uint64_t changes = P::DynamicChanges();
     if (changes == live_seen_changes) return;
     live_seen_changes = changes;
@@ -282,15 +296,51 @@ void RedrawChangedValues() {
     }
 }
 
-void AddRows(void* page, const std::vector<Row>& all) {
+/// The present thread, each frame: a Cross press (counted by the pad sampling, so a short tap is
+/// not missed) while one of our pages is open runs the button row that has its cursor. The page's
+/// rows list (dialog + 0xA70, the cursor at +0x74, a pointer's override at +0x78: droogie/bbhost
+/// engine/menu_pointer.cpp) says which row that is.
+constexpr u64 DialogRowsList = 0xa70, ListCursor = 0x74, ListCursorOverride = 0x78;
+void PollButtons(std::int64_t now_ms) {
+    static std::uint32_t seen = runtime_pad_cross_presses();
+    const std::uint32_t presses = runtime_pad_cross_presses();
+    if (presses == seen) return;
+    seen = presses;
+    if (party::flow::Editing()) return; // the text box has the keyboard (its Enter is not ours)
+    int field = -1, index = -1;
+    {
+        std::lock_guard<std::recursive_mutex> lk(widgets_mu);
+        // Not the press that opened the page; the page still holds its rows (our reference is not
+        // the last one).
+        if (!open_dialog || !open_widget || std::int32_t(presses - open_presses) <= 0 || RefCount(open_widget) <= 1)
+            return;
+        std::int32_t cursor = -1, cursor_override = -1;
+        if (!bbnet::guest_read(open_dialog + DialogRowsList + ListCursor, &cursor, 4) ||
+            !bbnet::guest_read(open_dialog + DialogRowsList + ListCursorOverride, &cursor_override, 4))
+            return;
+        index = cursor_override >= 0 ? cursor_override : cursor;
+        if (index < 0 || index >= int(open_fields.size())) return;
+        field = open_fields[std::size_t(index)];
+    }
+    if (!P::IsButton(field)) return;
+    if (Trace()) std::printf("Game menu: button row %d pressed (field %d)\n", index, field);
+    P::Press(field, now_ms);
+}
+
+void AddRows(void* page, const P::Page& from) {
+    std::lock_guard<std::recursive_mutex> lk(widgets_mu);
     DropWidgets();
     // Rows shown now (the party's member rows: one per member).
     std::vector<Row> rows;
-    for (const Row& row : all) {
-        if (!row.visible || row.visible()) rows.push_back(row);
+    for (const Row* row : P::ShownRows(from)) rows.push_back(*row);
+    if (rows.size() > P::RowsPerPage) {
+        // The layout's widget slots (a row past them has nowhere to draw); the pages keep within
+        // them (tests/test_game_menu_rows.cpp), so this is a bug when it shows.
+        std::printf("Game menu: %zu rows on a page of %zu, the last ones dropped\n", rows.size(), P::RowsPerPage);
+        rows.resize(P::RowsPerPage);
     }
-    if (rows.empty()) rows.push_back(all.front());
-    if (rows.size() > P::RowsPerPage) rows.resize(P::RowsPerPage); // the layout's rows
+    open_dialog = reinterpret_cast<u64>(page);
+    open_presses = runtime_pad_cross_presses();
     using Push = void(BB_SYSV*)(void*, void*);
     using AddRow = void(BB_SYSV*)(void*, void*, int*, void*, const int*);
     using Make = void*(BB_SYSV*)(void*, u32, u32);
@@ -298,16 +348,19 @@ void AddRows(void* page, const std::vector<Row>& all) {
         alignas(16) u8 pair[2 * TextSize] = {};
         MakeTexts(pair, row.name, row.help);
         if (row.kind == Kind::Slider || row.kind == Kind::Steps) {
+            open_fields.push_back(row.field);
             using Slider = void(BB_SYSV*)(void*, void*, u8*, const u8*);
             Game<Slider>(SliderRow)(page, pair, P::Byte(row.field), P::DefaultByte(row.field));
             DestroyTexts(pair);
             continue;
         }
-        if (row.kind == Kind::Toggle) {
+        open_fields.push_back(row.field);
+        if (row.kind == Kind::Toggle || row.kind == Kind::Button) {
             using PairRowFn = void(BB_SYSV*)(void*, void*, u8*, void*, const u8*);
             u8* two = static_cast<u8*>(AlignedAlloc(PairListSize));
             std::memset(two, 0, PairListSize);
-            for (std::size_t i = 0; i < 2; ++i) {
+            const std::size_t count = row.kind == Kind::Button ? 1 : 2;
+            for (std::size_t i = 0; i < count; ++i) {
                 alignas(16) u8 value[ValueSize] = {};
                 value[0] = u8(i);
                 Game<Make>(MakeText)(value + 8, TextName, row.choices[i]);
@@ -315,7 +368,10 @@ void AddRows(void* page, const std::vector<Row>& all) {
                 DestroyText(value + 8);
             }
             Game<PairRowFn>(PairRow)(page, pair, P::Byte(row.field), two, P::DefaultByte(row.field));
-            if (P::IsDynamic(row.choices[0]) || P::IsDynamic(row.choices[1])) KeepNewestWidget(page);
+            bool keep = row.kind == Kind::Button;
+            for (std::size_t i = 0; i < count; ++i) keep = keep || P::IsDynamic(row.choices[i]);
+            if (keep) KeepNewestWidget(page);
+            if (row.kind == Kind::Button && !open_widget && !live_widgets.empty()) open_widget = live_widgets.back();
             DestroyValues(two, PairCountOffset);
             AlignedFree(two);
             DestroyTexts(pair);
@@ -354,7 +410,7 @@ BB_SYSV void Rows(void* page, void*) {
         std::printf("Game menu: page %d %s open\n", N, ascii.c_str());
     }
     P::Load();
-    AddRows(page, P::All()[N].rows);
+    AddRows(page, P::All()[N]);
 }
 template <int N>
 BB_SYSV void* Content(void* a, void* b) {
@@ -631,6 +687,10 @@ BB_SYSV void* CommandHook(void* list, void* pair, void* functor, void* x) {
         if (party >= 0) {
             const auto& page = P::All()[std::size_t(party)];
             AddItem(list, page.name, page.help, factories[std::size_t(party)]);
+            // A party process: also Party mode (host / join / single player), the page after it.
+            const std::size_t mode = std::size_t(party) + 1;
+            if (party::flow::CurrentContext().party_process && mode < P::All().size() && mode < MaxPages)
+                AddItem(list, P::All()[mode].name, P::All()[mode].help, factories[mode]);
         }
     }
     return result;
@@ -857,9 +917,11 @@ void TextActivity(std::uint64_t* seq, std::int64_t* last_ms) {
 
 void Poll() {
     party::flow::Tick(); // the party flow: text box, party character note (party_flow.h)
-    P::Poll(std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch())
-                .count());
+    const std::int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now().time_since_epoch())
+                                 .count();
+    P::Poll(now);
+    PollButtons(now);
 }
 
 } // namespace BbGameMenu

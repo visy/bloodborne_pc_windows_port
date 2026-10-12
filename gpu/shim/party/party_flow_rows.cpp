@@ -4,11 +4,15 @@
 // the row kinds and the press handling are the game menu's (bbport_game_menu_pages.h). What the
 // rows do is party_flow.h.
 //
-//   single-player process, title:  New party game, Join party game, Continue party game (once a
-//                                  party character exists), Host address, Password
+//   single-player process, title:  New party game, Join party game, Continue party game (once the
+//                                  party saves hold a character), Host address, Password, Party
+//                                  name (no Status line: six rows, the page's limit)
 //   single-player process, world:  the status line explains how to start a party game
-//   party process:                 Host party / Join party (the other role, or again after Leave),
-//                                  Single player (back to the single-player game)
+//   party process:                 Party page: the status (role, before the link runs too);
+//                                  Party mode page: Host party / Join party (the other role, or
+//                                  again after Leave), Single player (back to the single-player game)
+// Every row is a button (one value, no arrows; Cross runs it); the ones that restart the game ask
+// for a second press (the help line says so).
 #include "party_flow.h"
 
 #include "../bbport_game_menu_pages.h"
@@ -53,14 +57,42 @@ void RegisterMenuRows() {
     using Row = P::PartyRow;
     if (!Enabled()) return;
 
+    // The Status line: not on the solo title (the rows below fill its six); in a party process
+    // before the link runs (the title, the load) it says which party game this is instead of
+    // "Not running".
+    P::PartyStatusHooks hooks;
+    hooks.hidden = [] { return SoloTitle(); };
+    hooks.describe = [](const Board& b, Texts* value, Texts* help) {
+        const Context c = CurrentContext();
+        if (!c.party_process || b.state != party::status::State::Off) return false;
+        if (c.in_world) {  // after Leave
+            *value = T("Not in a party", "Не в группе");
+            *help = WithMessage(T("Party mode page: host again, join a host, or back to single player",
+                                  "Страница «Режим группы»: снова хост, вход к хосту или одиночная игра"));
+        } else if (c.host) {
+            *value = T("Host, not open yet", "Хост, ещё не открыта");
+            *help = WithMessage(T("Party game as host (party saves): the party opens with your hunter in the world",
+                                  "Игра группой, хост (сохранения группы): группа откроется, когда охотник в мире"));
+        } else {
+            const Saved s = Current();
+            *value = T("Guest, not joined yet", "Гость, ещё не вошли");
+            *help = WithMessage(s.host_address.empty()
+                                    ? T("Party game as guest: no host address set (title screen, Party)",
+                                        "Игра группой, гость: адрес хоста не задан (титульный экран, Группа)")
+                                    : Texts{"Party game as guest: joins " + s.host_address + " with your hunter in the world",
+                                            "Игра группой, гость: вход к " + s.host_address + ", когда охотник в мире"});
+        }
+        return true;
+    };
+    P::SetPartyStatusHooks(std::move(hooks));
+
     Row fresh;
     fresh.order = 12;
     fresh.name = [](const Board&) { return T("New party game", "Новая игра группой"); };
     fresh.value = [](const Board&) { return T("Host", "Хост"); };
-    fresh.pressed = [](const Board&) { return T("Press again", "Нажмите ещё раз"); };
     fresh.help = [](const Board&) {
-        return WithMessage(T("Twice: restart as the party's host with the party saves, then New Game",
-                             "Дважды: перезапуск хостом группы на сохранениях группы, затем Новая игра"));
+        return WithMessage(T("Press twice: restart as the party's host with the party saves, then New Game",
+                             "Нажмите дважды: перезапуск хостом группы на сохранениях группы, затем Новая игра"));
     };
     fresh.visible = [](const Board&) { return SoloTitle(); };
     fresh.press = Row::Press::Confirm;
@@ -74,14 +106,13 @@ void RegisterMenuRows() {
         const Saved s = Current();
         return s.host_address.empty() ? T("Set address first", "Сначала адрес") : T("Join", "Войти");
     };
-    join.pressed = [](const Board&) { return T("Press again", "Нажмите ещё раз"); };
     join.help = [](const Board&) {
         const Saved s = Current();
         return WithMessage(s.has_character
-                               ? T("Twice: restart and join the saved host with your party character",
-                                   "Дважды: перезапуск и вход к хосту с персонажем группы")
-                               : T("Twice: restart and join the saved host; then New Game for your hunter",
-                                   "Дважды: перезапуск и вход к хосту; затем Новая игра"));
+                               ? T("Press twice: restart and join the saved host with your party character",
+                                   "Нажмите дважды: перезапуск и вход к хосту с персонажем группы")
+                               : T("Press twice: restart and join the saved host; then New Game for your hunter",
+                                   "Нажмите дважды: перезапуск и вход к хосту; затем Новая игра"));
     };
     join.visible = [](const Board&) { return SoloTitle(); };
     join.press = Row::Press::Confirm;
@@ -94,12 +125,11 @@ void RegisterMenuRows() {
     cont.value = [](const Board&) {
         return Current().role == "join" ? T("As guest", "Гостем") : T("As host", "Хостом");
     };
-    cont.pressed = [](const Board&) { return T("Press again", "Нажмите ещё раз"); };
     cont.help = [](const Board&) {
-        return WithMessage(T("Twice: restart with the party saves and continue your party character",
-                             "Дважды: перезапуск на сохранениях группы и продолжение персонажа группы"));
+        return WithMessage(T("Press twice: restart with the party saves and continue your party character",
+                             "Нажмите дважды: перезапуск на сохранениях группы и продолжение персонажа группы"));
     };
-    cont.visible = [](const Board&) { return SoloTitle() && Current().has_character; };
+    cont.visible = [](const Board&) { return SoloTitle() && Current().has_character; }; // party.json or the party saves
     cont.press = Row::Press::Confirm;
     cont.run = [](const Board&) { Run(Action::ContinueParty); };
     P::AddPartyRow(cont);
@@ -111,10 +141,9 @@ void RegisterMenuRows() {
         const Saved s = Current();
         return s.host_address.empty() ? T("Not set", "Не задан") : Texts{Short(s.host_address), Short(s.host_address)};
     };
-    addr.pressed = addr.value;  // every press opens the text box: the value in both states
     addr.help = [](const Board&) {
-        return WithMessage(T("Party code or host:port from the host; type it on the keyboard (Ctrl+V pastes)",
-                             "Код группы или хост:порт; введите с клавиатуры (Ctrl+V вставляет)"));
+        return WithMessage(T("Press to type the party code or host:port from the host (Ctrl+V pastes)",
+                             "Нажмите, чтобы ввести код группы или хост:порт (Ctrl+V вставляет)"));
     };
     addr.visible = [](const Board&) { return SoloTitle(); };
     addr.press = Row::Press::Once;
@@ -125,10 +154,9 @@ void RegisterMenuRows() {
     pass.order = 18;
     pass.name = [](const Board&) { return T("Password", "Пароль"); };
     pass.value = [](const Board&) { return Current().password.empty() ? T("None", "Нет") : T("Set", "Задан"); };
-    pass.pressed = pass.value;  // every press opens the text box: the value in both states
     pass.help = [](const Board&) {
-        return WithMessage(T("The party's password (host and guests the same); saved protected for this Windows user",
-                             "Пароль группы (у всех одинаковый); хранится защищённым для этого пользователя"));
+        return WithMessage(T("Press to type the party's password (the same for all); saved protected for this Windows user",
+                             "Нажмите, чтобы ввести пароль группы (у всех одинаковый); хранится защищённым"));
     };
     pass.visible = [](const Board&) { return SoloTitle(); };
     pass.press = Row::Press::Once;
@@ -142,10 +170,9 @@ void RegisterMenuRows() {
         const Saved s = Current();
         return s.name.empty() ? T("Automatic", "Автоматически") : Texts{Short(s.name), Short(s.name)};
     };
-    name.pressed = name.value;  // every press opens the text box: the value in both states
     name.help = [](const Board&) {
-        return WithMessage(T("Your name in the party (1-16 of A-Z a-z 0-9 _ -); each player needs their own",
-                             "Ваше имя в группе (1-16 из A-Z a-z 0-9 _ -); у каждого своё"));
+        return WithMessage(T("Press to type your name in the party (1-16 of A-Z a-z 0-9 _ -); each player needs their own",
+                             "Нажмите, чтобы ввести имя в группе (1-16 из A-Z a-z 0-9 _ -); у каждого своё"));
     };
     name.visible = [](const Board&) { return SoloTitle(); };
     name.press = Row::Press::Once;
@@ -156,17 +183,17 @@ void RegisterMenuRows() {
     host.order = 25;
     host.name = [](const Board&) { return T("Host party", "Стать хостом"); };
     host.value = [](const Board&) { return CurrentContext().host ? T("Host again", "Снова хостом") : T("Switch", "Сменить"); };
-    host.pressed = [](const Board&) { return T("Press again", "Нажмите ещё раз"); };
     host.help = [](const Board&) {
         return WithMessage(CurrentContext().host
-                               ? T("Twice: host the party again", "Дважды: снова открыть группу")
-                               : T("Twice: restart as the host (your party character continues)",
-                                   "Дважды: перезапуск хостом (персонаж группы продолжает)"));
+                               ? T("Press twice: host the party again", "Нажмите дважды: снова открыть группу")
+                               : T("Press twice: restart as the host (your party character continues)",
+                                   "Нажмите дважды: перезапуск хостом (персонаж группы продолжает)"));
     };
     host.visible = [](const Board&) {
         const Context c = CurrentContext();
         return c.party_process && (!c.host || !c.link_active);
     };
+    host.page = 1;
     host.press = Row::Press::Confirm;
     host.run = [](const Board&) { Run(Action::HostParty); };
     P::AddPartyRow(host);
@@ -175,18 +202,18 @@ void RegisterMenuRows() {
     guest.order = 26;
     guest.name = [](const Board&) { return T("Join party", "Войти в группу"); };
     guest.value = [](const Board&) { return CurrentContext().host ? T("Switch", "Сменить") : T("Join again", "Снова войти"); };
-    guest.pressed = [](const Board&) { return T("Press again", "Нажмите ещё раз"); };
     guest.help = [](const Board&) {
         const Saved s = Current();
         if (s.host_address.empty())
             return WithMessage(T("No host address saved: set it on the title screen (System > Party)",
                                  "Адрес хоста не задан: укажите его на титульном экране"));
-        return WithMessage(Texts{"Twice: join " + s.host_address, "Дважды: войти к " + s.host_address});
+        return WithMessage(Texts{"Press twice: join " + s.host_address, "Нажмите дважды: войти к " + s.host_address});
     };
     guest.visible = [](const Board&) {
         const Context c = CurrentContext();
         return c.party_process && (c.host || !c.link_active);
     };
+    guest.page = 1;
     guest.press = Row::Press::Confirm;
     guest.run = [](const Board&) { Run(Action::JoinParty); };
     P::AddPartyRow(guest);
@@ -195,12 +222,12 @@ void RegisterMenuRows() {
     solo.order = 45;
     solo.name = [](const Board&) { return T("Single player", "Одиночная игра"); };
     solo.value = [](const Board&) { return T("Switch", "Перейти"); };
-    solo.pressed = [](const Board&) { return T("Press again", "Нажмите ещё раз"); };
     solo.help = [](const Board&) {
-        return WithMessage(T("Twice: leave and restart into the single-player game and saves",
-                             "Дважды: выйти и перезапустить одиночную игру и её сохранения"));
+        return WithMessage(T("Press twice: leave and restart into the single-player game and saves",
+                             "Нажмите дважды: выйти и перезапустить одиночную игру и её сохранения"));
     };
     solo.visible = [](const Board&) { return Party(); };
+    solo.page = 1;
     solo.press = Row::Press::Confirm;
     solo.run = [](const Board&) { Run(Action::SinglePlayer); };
     P::AddPartyRow(solo);

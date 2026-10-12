@@ -657,6 +657,10 @@ void runtime_pad_director_press(uint32_t buttons) { director_buttons=buttons; }
 /* runtime_pad_last_buttons: the buttons of the last sample the game read (test aids' logs). */
 static volatile uint32_t last_sample_buttons;
 uint32_t runtime_pad_last_buttons(void) { return last_sample_buttons; }
+/* runtime_pad_cross_presses: Cross presses (rising edges) the game read, counted here so a short
+ * tap is never missed by a reader that looks once a frame (the game menu's button rows). */
+static volatile uint32_t cross_presses;
+uint32_t runtime_pad_cross_presses(void) { return cross_presses; }
 static int replay_armed;      /* 1 while a BB_PAD_REPLAY recording plays, 2 once it ended */
 static uint64_t replay_start; /* 0: (re)start at the next sample */
 static void read_inject(void) {
@@ -828,6 +832,7 @@ static void sample(PadData *d) {
     record_sample(d);
     replay_sample(d);
     d->buttons|=injected.buttons|director_buttons;
+    if ((d->buttons & BTN_CROSS) && !(last_sample_buttons & BTN_CROSS)) cross_presses=cross_presses+1;
     last_sample_buttons=d->buttons;
     if (injected.touch_side>=0) touch_click(d,injected.touch_side);
     else if ((d->buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d,0);

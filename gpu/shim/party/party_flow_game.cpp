@@ -44,6 +44,7 @@ int bbgpu_text_input_poll(char* out_utf8, unsigned long long size);
 int bbgpu_text_input_is_active(void);
 int bbgpu_text_input_test_type(const char* keys);
 void runtime_pad_director_press(std::uint32_t buttons);  // src/runtime_pad.c
+#include "../../../src/save_policy.h"            // runtime_savepolicy_check: slots in the party saves
 }
 
 namespace party::flow {
@@ -95,6 +96,19 @@ Saved LoadedLocked() {
             std::string e2;
             Store(SettingsPath(), g_saved, &e2);
             g_saved.password_plain = false;
+        }
+        // A party character exists when the party saves hold one, also when party.json does not
+        // know it (a launcher-started party game: NoteCharacterInWorld only runs in the menu flow's
+        // own processes): Continue party game shows (party.json keeps it with its next change).
+        if (!g_saved.has_character) {
+            const std::string folder = (fs::path(UserDir()) / "savedata_party").string();
+            SavePolicyCheck check{};
+            std::error_code ec;
+            if (fs::is_directory(folder, ec) && runtime_savepolicy_check(folder.c_str(), nullptr, 0, &check) == 0 &&
+                check.slots_used > 0) {
+                g_saved.has_character = true;
+                Log("the party saves hold %d character(s): Continue party game is offered", check.slots_used);
+            }
         }
     }
     return g_saved;
