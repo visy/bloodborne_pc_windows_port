@@ -58,6 +58,8 @@ struct Board {
     std::string last_event;
     std::uint64_t event_seq = 0;  // +1 per SetLastEvent
     std::int64_t event_ms = 0;    // steady clock (ms) of the last event
+    std::string alert;            // an important notice for a message box (the host refused us); empty: none
+    std::uint64_t alert_seq = 0;  // +1 per SetAlert
     std::uint64_t version = 0;    // +1 per change of anything above
 };
 
@@ -70,11 +72,17 @@ void SetState(State state, const std::string& detail = {});
 void SetMembers(const std::vector<Member>& members);
 /// A one-line event for the log line and the toast ("Hunter1 joined", "Travelling to ...").
 void SetLastEvent(const std::string& text);
+/// An important notice shown as a message box in the middle of the screen for a while (lines
+/// split by '
+'; the first is its title). Empty clears it.
+void SetAlert(const std::string& text);
 
 // --- consumer side ---
 Board Snapshot();
 /// Cheap (atomic): changes whenever SetLastEvent is called.
 std::uint64_t EventSeq();
+/// Cheap (atomic): changes whenever SetAlert is called.
+std::uint64_t AlertSeq();
 /// BB_PARTY turns party mode on for this run (party_env.h: unset, empty, 0, off, false, no = off) (read once, or forced by tests via ResetForTest).
 bool Enabled();
 

@@ -281,8 +281,45 @@ static int test_prologue() {
     return 0;
 }
 
+// A refused guest: plays alone online, gets one message box with what to do; Rejoin's password.
+static int test_refusal() {
+    using bridge::RefusalNotice;
+    using bridge::RefusalPlaysSolo;
+    CHECK(!RefusalPlaysSolo(RejectCode::None) && !RefusalPlaysSolo(RejectCode::Shutdown));
+    for (RejectCode c : {RejectCode::Auth, RejectCode::Full, RejectCode::Version, RejectCode::Mismatch,
+                         RejectCode::Kicked, RejectCode::Name, RejectCode::Protocol}) {
+        CHECK(RefusalPlaysSolo(c));
+        const std::string t = RefusalNotice(c, "");
+        CHECK(t.rfind("Party: ", 0) == 0 && t.find('
+') != std::string::npos);
+    }
+    CHECK(RefusalNotice(RejectCode::Shutdown, "x").empty() && RefusalNotice(RejectCode::None, "").empty());
+    const std::string auth = RefusalNotice(RejectCode::Auth, bridge::AuthRejectText(true, true, true));
+    CHECK(auth.find("Wrong party password") != std::string::npos && auth.find("Rejoin the host") != std::string::npos);
+    CHECK(RefusalNotice(RejectCode::Full, "").find("full") != std::string::npos);
+    CHECK(RefusalNotice(RejectCode::Mismatch, "eboot.bin differs").find("eboot.bin differs") != std::string::npos);
+    // Rejoin: System > Party's password when it changed, else what the link joined with.
+    CHECK(bridge::RejoinPassword("env-wrong", "", "", false) == "env-wrong");
+    CHECK(bridge::RejoinPassword("env-wrong", "", "fixed", false) == "fixed");
+    CHECK(bridge::RejoinPassword("old", "old", "old", false) == "old");
+    CHECK(bridge::RejoinPassword("old", "old", "", false).empty());  // cleared in the menu
+    CHECK(bridge::RejoinPassword("x", "", "y", true).empty());       // the code carries no password
+
+    // The board: the box on a guest's refusal, cleared once in.
+    status::ResetForTest(true);
+    bridge::OnRuntimeStart(false, "Guest1");
+    bridge::OnLinkState(LinkState::Connecting, "", RejectCode::None, "");
+    bridge::OnLinkState(LinkState::Rejected, "", RejectCode::Auth, "Wrong or missing party password");
+    status::Board b = status::Snapshot();
+    CHECK(b.alert_seq == 1 && b.alert.find("Wrong or missing party password") != std::string::npos);
+    bridge::OnLinkState(LinkState::Connected, "", RejectCode::None, "");
+    b = status::Snapshot();
+    CHECK(b.alert_seq == 2 && b.alert.empty());
+    return 0;
+}
+
 int main() {
-    if (test_map_state() || test_members() || test_board_and_commands() || test_prologue()) return 1;
+    if (test_map_state() || test_members() || test_board_and_commands() || test_prologue() || test_refusal()) return 1;
     std::printf("%d checks OK\n", g_checks);
     return 0;
 }

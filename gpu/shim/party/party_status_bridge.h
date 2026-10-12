@@ -68,6 +68,17 @@ std::string RejectText(RejectCode code, const std::string& reason);
 /// A guest's own words for an Auth refusal, from what it knows: whether it joined with a BBP1 code
 /// (`coded`), whether that code says the host has a password, and whether it sent one.
 std::string AuthRejectText(bool coded, bool code_needs_password, bool sent_password);
+/// A guest the host refused for this reason plays online alone in its own world (everything but
+/// the host ending the party, and None).
+bool RefusalPlaysSolo(RejectCode code);
+/// The message box for a guest's refusal ("title
+what to do"); `reason` as for RejectText (an
+/// Auth refusal: AuthRejectText). Empty when RefusalPlaysSolo is false.
+std::string RefusalNotice(RejectCode code, const std::string& reason);
+/// The password a guest's Rejoin sends: System > Party's when it changed since the link started
+/// (`flow_at_start` -> `flow_now`), else the one it joined with; none for a code that carries none.
+std::string RejoinPassword(const std::string& joined_with, const std::string& flow_at_start,
+                           const std::string& flow_now, bool code_ignores_password);
 /// One line for BB_PARTY_STATUS_LOG.
 std::string SnapshotLine(const status::Board& b);
 

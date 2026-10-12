@@ -150,6 +150,13 @@ public:
     void start_events(const std::string& online_id, EventHandler handler) override;
     void stop_events() override;
     bool host_is_local() const override;
+    // Solo (a guest the host refused: wrong password, old code, full, version): the game's calls
+    // go to this process's own host service and FromApi, like a host with no guests, so the game
+    // plays online alone in its own world instead of failing its server checks ("Failed to
+    // acquire Bloodborne server information"). Off again once a new link is up (Rejoin). Returns
+    // whether the mode changed.
+    bool set_solo(bool on);
+    bool solo() const;
 
 private:
     void fix_host_addresses(json::Value& v) const;
