@@ -196,13 +196,14 @@ static void Party() {
     assert(std::u16string(P::Text(party.rows[0].help, false)).find(u"Host (your world)") == 0);
     // One code (no LAN code): one copy row, the code as its value; the LAN row hidden.
     assert(std::u16string(P::Text(party.rows[1].name, false)) == u"Copy party code");
-    assert(std::u16string(P::Text(party.rows[1].choices[0], false)) == u"BBP1-ABCD-EFGH-IJKL");
+    assert(std::u16string(P::Text(party.rows[1].choices[0], false)) == u"Copy");
+    assert(std::u16string(P::Text(party.rows[1].help, true)).find(u"BBP1-ABCD-EFGH-IJKL") != std::u16string::npos);
     assert(!party.rows[2].visible());
     ps::SetLanCode("BBP1-LLLL-AAAA-NNNN");
     P::Load();
     assert(std::u16string(P::Text(party.rows[1].name, false)) == u"Copy Internet code" && party.rows[2].visible());
     assert(std::u16string(P::Text(party.rows[2].name, false)) == u"Copy LAN code");
-    assert(std::u16string(P::Text(party.rows[2].choices[0], false)) == u"BBP1-LLLL-AAAA-NNNN");
+    assert(std::u16string(P::Text(party.rows[2].help, false)).find(u"BBP1-LLLL-AAAA-NNNN") != std::u16string::npos);
 
     // Member rows: one per member, name, state and ping; the host's own row cannot be kicked.
     int visible = 0;

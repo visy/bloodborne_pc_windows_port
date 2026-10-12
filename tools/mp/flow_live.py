@@ -22,8 +22,8 @@ import instances  # noqa: E402
 PASSWORD = "Moon-42"
 
 # The title menu (empty single-player save): New Game, Party, System, Log In. The Party page opens
-# on Status: Status, New party game, Join party game, [Continue party game,] Host address, Password,
-# Defaults. Value rows act on Left / Right ("Confirm" rows: twice).
+# on its first row: New party game, Join party game, [Continue party game,] Host address, Password,
+# Party name. Every row is a button acting on Cross ("Confirm" rows: twice).
 TITLE_TO_PARTY = "~down@New Game/cross/!~mark=page@Host address"
 
 
@@ -41,19 +41,19 @@ def to_party_page():
 def scripts(phase, port0):
     host_addr = f"127.0.0.1:{port0}"
     if phase == "fresh":
-        host = [TITLE_TO_PARTY + "/down/down/down/down/right/type=" + PASSWORD + "/mark=h_pw_typed/enter/mark=h_pw_saved"
-                "/up/up/up/mark=h_new/right/mark=h_new_again/right/mark=h_restart", "-"]
-        guest = [TITLE_TO_PARTY + "/down/down/down/right/type=" + host_addr + "/mark=g_addr_typed/enter/mark=g_addr_saved"
-                 "/down/right/type=" + PASSWORD + "/mark=g_pw_typed/enter/mark=g_pw_saved"
-                 "/up/up/mark=g_join/right/mark=g_join_again/right/mark=g_restart", "-"]
+        host = [TITLE_TO_PARTY + "/down/down/down/cross/type=" + PASSWORD + "/mark=h_pw_typed/enter/mark=h_pw_saved"
+                "/up/up/up/mark=h_new/cross/mark=h_new_again/cross/mark=h_restart", "-"]
+        guest = [TITLE_TO_PARTY + "/down/down/cross/type=" + host_addr + "/mark=g_addr_typed/enter/mark=g_addr_saved"
+                 "/down/cross/type=" + PASSWORD + "/mark=g_pw_typed/enter/mark=g_pw_saved"
+                 "/up/up/mark=g_join/cross/mark=g_join_again/cross/mark=g_restart", "-"]
         return host, guest
     if phase == "continue":
-        # With a party character: ... Join party game, Continue party game, Host address ...
-        line = TITLE_TO_PARTY + "/down/down/down/mark={w}_cont/right/mark={w}_cont_again/right/mark={w}_restart"
+        # With a party character: New party game, Join party game, Continue party game, Host address ...
+        line = TITLE_TO_PARTY + "/down/down/mark={w}_cont/cross/mark={w}_cont_again/cross/mark={w}_restart"
         # The guest first opens Host address twice (the saved address comes up; Enter keeps it, Esc
         # cancels): every press of a text row opens the box.
-        guest = (TITLE_TO_PARTY + "/down/down/down/down/right/mark=g_addr_open/enter/mark=g_addr_kept/right"
-                 "/mark=g_addr_open2/esc/up/mark=g_cont/right/mark=g_cont_again/right/mark=g_restart")
+        guest = (TITLE_TO_PARTY + "/down/down/down/cross/mark=g_addr_open/enter/mark=g_addr_kept/cross"
+                 "/mark=g_addr_open2/esc/up/mark=g_cont/cross/mark=g_cont_again/cross/mark=g_restart")
         return [line.format(w="h"), "-"], [guest, "-"]
     raise SystemExit("unknown phase " + phase)
 

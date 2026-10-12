@@ -411,7 +411,8 @@ bool TwoCodes(const party::status::Board& b) {
 Texts CopyValue(const std::string& code, int which) {
     if (copied_which.load() == which && last_refresh.load() - copied_at.load() < 2500)
         return T2("Copied", "Скопирован");
-    return code.empty() ? T2("Not known yet", "Ещё неизвестен") : Texts{code, code};
+    // Not the code itself: the value column shows ~15 characters of it (live), the help line all.
+    return code.empty() ? T2("Not known yet", "Ещё неизвестен") : T2("Copy", "Копировать");
 }
 
 /// The Party page's own rows (orders 10..40): status, copy code (two rows for a host with an
@@ -462,10 +463,9 @@ void DefineBuiltinPartyRows() {
     copy.help = [](const B& b) {
         if (b.code.empty()) return T2("The party code is not known yet", "Код группы ещё неизвестен");
         if (TwoCodes(b))
-            return T2("Press: copy the code for friends on other networks (the Internet)",
-                      "Нажмите: копировать код для друзей из других сетей (интернет)");
-        return b.role == ps::Role::Host ? T2("Press: copy the code for your friends", "Нажмите: копировать код для друзей")
-                                        : T2("Press: copy the party code", "Нажмите: копировать код группы");
+            return Texts{"Press: copy the code for friends elsewhere: " + b.code,
+                         "Нажмите: копировать код для друзей из других сетей: " + b.code};
+        return Texts{"Press: copy the party code: " + b.code, "Нажмите: копировать код группы: " + b.code};
     };
     copy.visible = [](const B& b) { return Running(b); }; // party flow: the solo title's rows instead
     copy.press = PartyRow::Press::Once;
@@ -481,9 +481,9 @@ void DefineBuiltinPartyRows() {
     lan.order = 21;
     lan.name = [](const B&) { return T2("Copy LAN code", "Копировать код LAN"); };
     lan.value = [](const B& b) { return CopyValue(b.lan_code, 1); };
-    lan.help = [](const B&) {
-        return T2("Press: copy the code for players on your own network (LAN)",
-                  "Нажмите: копировать код для игроков в вашей сети (LAN)");
+    lan.help = [](const B& b) {
+        return Texts{"Press: copy the code for players on your network: " + b.lan_code,
+                     "Нажмите: копировать код для игроков в вашей сети: " + b.lan_code};
     };
     lan.visible = [](const B& b) { return Running(b) && TwoCodes(b); };
     lan.press = PartyRow::Press::Once;

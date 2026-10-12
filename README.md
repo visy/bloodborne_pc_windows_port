@@ -98,13 +98,16 @@ single-player save is never touched. Settings: *System → Party* pages in the g
 ### How it plays
 
 - **No PSN, no server.** One player hosts, the others join with the host's address and a password.
-- **Start from the title screen:** *Party* → *New / Join / Continue party game*. The address and
-  password are remembered, so later sessions are one press.
+- **Start from the title screen:** *Party* → *New / Join / Continue party game* (press Cross; the
+  ones that restart the game ask for a second press). The address and password are remembered, so
+  later sessions are one press. *Continue party game* shows whenever the party saves hold a
+  character, also if you started party games from the launcher.
 - **Fast join.** The bell, beckoner and summon-sign waits are gone: a guest is in the host's world
   within seconds. *Continue party game* takes a guest straight into the host's world with a single
   loading screen.
 - **Leave any time.** *System → Party → Leave the party* takes a guest home at once; the host's
-  *Leave* ends the party and every guest goes home. *Join party* brings a guest back.
+  *Leave* ends the party and every guest goes home. *System → Party mode → Join party* brings a
+  guest back; *Host party* and *Single player* are there too.
 - **The session never ends by itself.** Boss kills, area clears, deaths and travel don't send
   anyone home.
 - **No multiplayer walls.** The fog walls that keep phantoms near the host are gone; the party can
@@ -238,7 +241,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors |
 | Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD |
 | shadPS4 team | Vulkan video core and shader recompiler (GPL-2.0+), sirit |
-| droogie and the bbhost team | Long-session stability fixes ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |
+| droogie and the bbhost team | Long-session stability fixes; menu button rows and the menu cursor's offsets ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |
 | FireBurn | FSR-Vulkan (MIT); AMD FidelityFX SDK (MIT) |
 | Supermedo, IFreemz | DLSS bridge and Windows loader |
 | Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, texture-cache and shader-walker fixes, skipped draws for failed pipelines; andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows) |
