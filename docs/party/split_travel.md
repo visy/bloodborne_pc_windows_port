@@ -383,5 +383,13 @@ Note (splittravel): in the vis2-vis4 runs the host's copy did get position updat
   m21_00_00_00, no load`; screenshots: host in the Dream's flower field, the guest still at the
   lamp (host's tag at 48 m). Off by default: no real scripted warp of the loaded map was exercised,
   and the party semantics (should guests follow?) are open.
+  0.5.9 (inworld): closed, stays off. An EMEVD scan of every warp instruction: the 12 points with a
+  spot are all cutscene warps (2002[4] / [6]: 12101802 / 12101852 Gehrman ending, 12400750 Cathedral
+  Ward day to evening, boss intros 13300200, 13401851, 13404825, 13501105, 13501801), whose move does
+  not go through the travel funnel (no 2002 site among its 15 callers, travel.md 1.6), so
+  `SameMapStageWarp` never sees them; the only 2003[14] warps into their own block are the Chalice
+  layers (m29_02 event 12901710, points 2900980-89: no MSB spot, and a new layer layout needs the
+  load). Lua WarpNextStage points are not in the table either. No real warp reaches the switch, so
+  turning it on would change nothing in play; it stays as a test aid (`host_stage`).
 * Test aid note: `BB_PARTY_SPLIT_TEST=no` missed its Right press once (cont1: the dialog took YES and
   the host travelled); `BB_PARTY_TRAVEL_CHOICE=alone` on the guest is the deterministic choice.
