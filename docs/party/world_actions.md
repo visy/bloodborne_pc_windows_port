@@ -250,6 +250,18 @@ Eileen (chr 2400900) talk -> guest `set 72400520(npc_quest)` -> host `72400520=1
 (`cw_npc_*`, `eileen_*` screenshots). Alfred (2400760/762/763) had no talk prompt in this save
 state (not placed / not talkable yet).
 
+Runs 20-25 (2026-10-12, opt-ins on, `pickup=1;kill=1;attack`): not verified, the switches stay off.
+The test tool is what failed, not the features: around the Central Yharnam lamp every treasure
+within 30 m is taken in the test save (C3 re-gives the host's pickups on join, so clearing a pickup
+flag on one side does not stick; the guest's own-world `TEST_CLEAR` never runs on a fast-joining
+guest), the nearest untaken one (53 m, (-208.5, -47.5, 115.7)) showed no pickup at 17 spots
+(screenshot: bare cobblestones, 8 fps). Enemy HP is read from the ChrIns data module `+0xF8` (max
+`+0xFC`); the nearest live non-player chr near the lamp (HP 194, chr type field 4) took no damage
+from 60 R1 taps: not a hostile enemy (screenshot: the guest swinging at empty air by the lamp).
+A decisive test needs a known hostile enemy's entity and a treasure flag the host never took
+(placed by hand), or a manual play test. Fixture lines now carry `step-xx` tags (no digits) so the
+harness reaper sees activity.
+
 ## 10. Open items
 
 * Elevators: toggling state flags are shortcut_door; a guest and the host using one elevator at

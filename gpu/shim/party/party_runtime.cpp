@@ -22,6 +22,7 @@
 #include "party_travel.h"
 #include "party_worldact.h"
 #include "coop_hooks.h"
+#include "game_state.h"
 #include "upnp_win.h"
 #include "party_rudp.h"
 
@@ -737,6 +738,13 @@ LinkCallbacks make_callbacks(bool host) {
                 // A crash (RST): the connection is expired early (nr_fast_expire), so a short hold.
                 const bool crashed = m.lost_why.find("reset") != std::string::npos && env_on("BB_PARTY_NR_FAST_EXPIRE");
                 bbnet::party::FromApi::instance().hold_signs(m.name, 26000);
+                // Experimental (BB_PARTY_CRASH_LEAVE=1, off): on a crash (TCP reset) the member's
+                // room membership ends at once so no game keeps its frozen character (~6-8 s
+                // otherwise). Live 2026-10-12: the host's game then froze ~20 s later (2 runs).
+                if (m.lost_why.find("reset") != std::string::npos && env_on("BB_PARTY_CRASH_LEAVE"))
+                    std::thread([name = m.name] {  // not on the link's callback thread (lock order)
+                        bbnet::party::PartyHostService::instance().member_crashed(name);
+                    }).detach();
                 if (crashed) nr_fast_expire(m.name);  // shortens that hold once the timeout is lowered
             }
             if (slot_kept) {
@@ -1335,16 +1343,10 @@ bool nr_disabled() { return !env_on("BB_PARTY_NR_FAST_EXPIRE"); }
 
 bool nr_copy_ok(const std::uint32_t* h) {
     std::uint32_t v[7] = {};
-#ifdef _WIN32
-    MEMORY_BASIC_INFORMATION mi{};
-    if (VirtualQuery(h, &mi, sizeof mi) != sizeof mi || mi.State != MEM_COMMIT ||
-        !(mi.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)) || (mi.Protect & PAGE_GUARD) ||
-        reinterpret_cast<const std::uint8_t*>(h) + sizeof v >
-            static_cast<const std::uint8_t*>(mi.BaseAddress) + mi.RegionSize)
-        return false;
-#endif
-    std::memcpy(v, h, sizeof v);
-    return v[0] == 0x4d0 && v[1] == 3000 && v[2] == 5000 && v[3] == 6000 && v[6] == 200;
+    if (!coop::SafeRead(reinterpret_cast<std::uint64_t>(h), v, sizeof v)) return false;
+    // The live transport keeps the run from 5000 on (+0x84..+0x94 of the transport; the words
+    // before it are in use), so 0x4d0 / 3000 are not required.
+    return v[2] == 5000 && v[3] == 6000 && v[6] == 200;
 }
 
 std::vector<std::uint32_t*> g_nr_hits;  // g_nr_mu
@@ -1438,25 +1440,55 @@ void nr_scan_locked(const char* why) {
     g_nr_hits.clear();
     for (const coop::b2::NrTransport& t : coop::b2::NrTransports()) {
         if (t.config && nr_copy_ok(t.config)) g_nr_hits.push_back(t.config);
-        // Seen live: a copy at transport +0x14c (pattern written after the create returns).
-        auto* c = reinterpret_cast<std::uint32_t*>(t.transport + 0x14c);
-        if (t.transport && !t.config && nr_copy_ok(c)) g_nr_hits.push_back(c);
+        // Live (2026-10-12 search): the transport keeps 5000 6000 25000 20000 200 at +0x84..+0x94
+        // and again at +0x254c..+0x255c (two connection-config blocks); h = start - 8.
+        for (const std::uint64_t off : {0x7cull, 0x2544ull}) {
+            auto* c = reinterpret_cast<std::uint32_t*>(t.transport + off);
+            if (t.transport && nr_copy_ok(c)) g_nr_hits.push_back(c);
+        }
         if (t.transport) {
             std::uint32_t w[16] = {};
             MEMORY_BASIC_INFORMATION mi{};
             plog("transport %#llx timing values:%s", static_cast<unsigned long long>(t.transport),
                  coop::b2::NrFindTimeouts(t.transport, 0x8000).c_str());
+            {
+                // The transport's connection array (FUN_027163B0: transport +0xd0, count +0x6c,
+                // 0xc0 bytes each): timing values in each element and one pointer level down.
+                std::uint64_t arr = 0;
+                std::uint32_t cnt = 0;
+                coop::SafeRead(t.transport + 0xd0, &arr, 8);
+                coop::SafeRead(t.transport + 0x6c, &cnt, 4);
+                plog("transport %#llx connections: array %#llx count %u", static_cast<unsigned long long>(t.transport),
+                     static_cast<unsigned long long>(arr), cnt);
+                for (std::uint32_t k = 0; arr && k < cnt && k < 8; ++k) {
+                    const std::uint64_t el = arr + k * 0xc0ull;
+                    std::string sub;
+                    std::uint64_t q[24] = {};
+                    coop::SafeRead(el, q, sizeof q);
+                    for (int w = 0; w < 24; ++w) {
+                        if (q[w] >> 32 != 0x11 && q[w] >> 32 != 0x10) continue;
+                        const std::string f = coop::b2::NrFindTimeouts(q[w], 0x800);
+                        if (!f.empty()) {
+                            char h[48];
+                            std::snprintf(h, sizeof h, " [+%#x -> %#llx]", w * 8, static_cast<unsigned long long>(q[w]));
+                            sub += h + f;
+                        }
+                    }
+                    plog("  conn %u at %#llx:%s |%s", k, static_cast<unsigned long long>(el),
+                         coop::b2::NrFindTimeouts(el, 0xc0).c_str(), sub.c_str());
+                }
+            }
             plog("factory %#llx timing values:%s", static_cast<unsigned long long>(t.factory),
                  coop::b2::NrFindTimeouts(t.factory, 0x4000).c_str());
             plog("owner %#llx timing values:%s", static_cast<unsigned long long>(t.owner),
                  coop::b2::NrFindTimeouts(t.owner, 0xc0).c_str());
-            if (VirtualQuery(reinterpret_cast<void*>(t.transport), &mi, sizeof mi) && mi.State == MEM_COMMIT) {
-                std::memcpy(w, reinterpret_cast<const void*>(t.transport + 0x140), sizeof w);
+            if (coop::SafeRead(t.transport + 0x140, w, sizeof w)) {
                 plog("transport %#llx +0x140: %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x",
                      static_cast<unsigned long long>(t.transport), w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8],
                      w[9], w[10], w[11], w[12], w[13], w[14], w[15]);
             }
         }
+        if (!g_nr_hits.empty()) break;  // the newest transport only
     }
     if (!g_nr_hits.empty()) {
         plog("game transport config: %zu cop%s from the transport-create hook", g_nr_hits.size(),
