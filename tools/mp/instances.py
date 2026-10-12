@@ -415,6 +415,7 @@ def run(a):
             "BB_FULLSCREEN": "0", "BB_FPS": str(a.fps), "BB_TIMEOUT": str(a.seconds), "BB_VRAM_LIMIT_MB": str(a.vram),
             "BB_SHADER_PRECOMPILE": "1", "BB_MUTE_UNFOCUSED": "1", "BB_WINDOW_BACKGROUND": "1",
             "BB_AUDIO": "none",  # test games are silent (timer audio backend, also less CPU)
+            "BB_DLSS": "0",  # no DLSS probe or library in test games (upscaler is off anyway)
             # One boot image for every instance (scripts/boot_image.py), hard-linked into each instance
             "BB_BOOT_CACHE_DIR": str(Path(a.root) / "bootcache"),
             # Fewer worker threads per test game: 4 games share one CPU.
