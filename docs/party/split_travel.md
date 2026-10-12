@@ -349,3 +349,39 @@ Note (splittravel): in the vis2-vis4 runs the host's copy did get position updat
   args, e.g. 2100980) are not entities of any MSB (ids_tool: "warp points not in an MSB"), so the
   destination spot is not known without the game's own resolution.
 
+## 9. 0.5.6 round (2026-10-12)
+
+* **Alone load without a forced transform.** A guest's alone travel into another area is now the
+  plain lamp warp (host-world load with the summoned placement GSM +0x14C4 / +0x14D0 / +0x14E0 for
+  the stage) and a chr warp onto the lamp's spot after the arrival (hostdeath's B2 arrival approach,
+  b2_seamless.md §6.13): the forced placement (GSM +0x14F0 / +0x1500 / +0x1510, what the own save
+  records as its spawn) keeps the own save spot. `BB_PARTY_SPLIT_ALONE_FORCED=1`: the old forced
+  transform. Live c7a: `alone arrival 0.0 m from the lamp's spot; forced placement (own save spot)
+  map 0x15000000 (-9.2, -6.8, -19.4)`, screenshot in Central Yharnam at the clinic lamp (host in
+  the Dream, no load for it).
+* **The own save spot of a title-joined guest whose save is in the host's map.** The title join read
+  the own spot from the forced placement only when its map differed from the host's, else from the
+  spawn record (+0x15B0 / +0x15E0), which in a Dream save held m24_01 at (0, 0, 0): that went into the
+  forced placement, and the guest's next solo Continue fell through Central Yharnam (c4: y -390,
+  -895 ...), after the fix of the record alone it stood at the Dream's origin (c6). Now a record at
+  (0, 0, 0) is no spot, a forced placement in the host's map is read as the own spot when it holds
+  one, and with no known own spot the forced placement becomes the own last lamp
+  (`BB_PARTY_TITLE_OWN_LAMP_SPOT`, on). Live c7: party run with the guest's alone travel to Central
+  Yharnam, then the guest's save Continued (as instance 0): `map - -> m21_00_00_00`, (-9.2, -6.8,
+  -19.4), screenshot at its own Dream lamp - not at the alone-travel lamp.
+* **Scripted stage warps inside the loaded map** (`BB_PARTY_STAGE_INWORLD`, default off). The warp
+  point of a stage warp (GSM +0x10, written by Lua WarpNextStage 0x132E010 and EMEVD 2003[14]) is the
+  entity id of an MSB region (POINT_PARAM_ST entry: +0x48 entity data offset -> +0 the id; +0x14
+  position, +0x20 rotation): the earlier "not in any MSB" was the AAB-range scan. `ids_tool.py
+  gen-inc` writes `kPartyWarpSpotIds` / `kPartyWarpSpots` (12 of the 27 EMEVD warp points: Dream
+  2102808 / 2102809, m24_00 2402200, Nightmare / Hamlet / Research Hall points; the rest are Chalice
+  or not in a block MSB) and `ids::WarpSpot`. The funnel hook (party_travel `SetSameMapStage`) hands
+  every ScriptedWarp / LuaStageWarp site the map (+0x0C) and point; `SameMapStageWarp` makes it a
+  chr warp + camera reset when the point is in the loaded block (1: alone; 2: also a host with
+  members, who then moves alone). Live st1 (mode 2, test step `host_stage=21:0:0:0:2102808`):
+  `in-world warp (stage warp, point 2102808): (-10.6, -7.0, -21.2) -> (28.4, -9.2, 5.6) in
+  m21_00_00_00, no load`; screenshots: host in the Dream's flower field, the guest still at the
+  lamp (host's tag at 48 m). Off by default: no real scripted warp of the loaded map was exercised,
+  and the party semantics (should guests follow?) are open.
+* Test aid note: `BB_PARTY_SPLIT_TEST=no` missed its Right press once (cont1: the dialog took YES and
+  the host travelled); `BB_PARTY_TRAVEL_CHOICE=alone` on the guest is the deterministic choice.

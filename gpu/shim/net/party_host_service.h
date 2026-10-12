@@ -62,6 +62,10 @@ public:
     // The member's link went away: its context is dropped, peers hear peer_deactivated; its room
     // membership then times out as usual (or is held while the roster says loading).
     void context_gone(const std::string& online_id);
+    // A member's game died (its party link ended with a TCP reset): its room memberships end now
+    // (MEMBER_LEFT + signaling DEAD to the other games), as at its restart, so no game keeps its
+    // frozen character until the session's own timeout.
+    void member_crashed(const std::string& online_id);
     // Members whose game registered a new context while the host still knew their old one (a
     // crash restart), since the last call; the host's director clears the host game's stale peer
     // reservation for them (fast join, docs/party/join_timing.md).

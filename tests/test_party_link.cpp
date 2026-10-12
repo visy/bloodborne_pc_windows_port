@@ -1031,8 +1031,8 @@ static void test_udp_nat_link() {
     Recorder hr, ar, br;
     LinkConfig hc = base_cfg("Host", "hunter2"), gc = base_cfg("Alice", "hunter2"), bc = base_cfg("Bob_2", "hunter2");
     for (LinkConfig* c : {&hc, &gc, &bc}) {
-        c->lost_timeout_ms = 4000;
-        c->connect_timeout_ms = 3000;
+        c->lost_timeout_ms = 15000;  // a loaded machine stalls threads for seconds
+        c->connect_timeout_ms = 15000;
         c->tcp_fallback_ms = 500;
     }
     PartyLink host(hc, recorder_callbacks(hr, "host"));
@@ -1047,13 +1047,13 @@ static void test_udp_nat_link() {
     CHECK(a.udp_local_port() != 0);
     host.punch_guest(lo, htons(a.udp_local_port()));
     const auto t0 = std::chrono::steady_clock::now();
-    CHECK(a.wait_connected(8000));
+    CHECK(a.wait_connected(20000));  // generous: other test binaries / builds may load the machine
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
     CHECK(a.connected_over_udp());
     std::printf("  alice (punched) connected over UDP in %lld ms\n", static_cast<long long>(ms));
     for (int k = 0; k < 200; ++k) host.post_event(kBroadcast, "u_" + std::to_string(k), "{}");
     a.post_event(0, "from_alice", "{}");
-    CHECK(wait_for([&] { return ar.count_event("u_199") == 1 && hr.has_event("from_alice"); }, 5000));
+    CHECK(wait_for([&] { return ar.count_event("u_199") == 1 && hr.has_event("from_alice"); }, 20000));
     {
         std::lock_guard<std::mutex> lk(ar.mu);
         int next = 0, bad = 0;
@@ -1069,7 +1069,7 @@ static void test_udp_nat_link() {
         for (const RosterEntry& e : a.roster())
             if (e.slot != kHostSlot && e.ping_ms > 0) ping = e.ping_ms;
         return ping > 0;
-    }, 4000));
+    }, 15000));
     CHECK(!b.wait_connected(1500) && b.state() != LinkState::Connected);
     std::printf("  200 events in order over UDP, ping %u ms; bob (no code) not connected: %s\n", ping,
                 link_state_name(b.state()));

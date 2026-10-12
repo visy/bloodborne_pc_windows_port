@@ -602,6 +602,7 @@ std::atomic<LampWarpInterceptor> g_lamp_intercept{nullptr};
 std::atomic<bool> g_lamp_decided{false};  // RunLampWarpDecided: the interceptor stands aside
 std::atomic<MarkInterceptor> g_mark_intercept{nullptr};
 std::atomic<SameMapWarpFn> g_same_map{nullptr};
+std::atomic<SameMapStageFn> g_same_map_stage{nullptr};
 std::atomic<bool> g_next_alone{false};    // host: the next captured travel is alone (split travel)
 std::atomic<bool> g_death_alone{false};   // host: every captured HostDeath is alone (hostdeath)
 std::atomic<double> g_last_alone_at{0};   // host: when the last alone travel was captured (Now())
@@ -946,6 +947,15 @@ __attribute__((noinline)) BB_COOP_SYSV u64 FunnelHook() {
             // Not a travel the host broadcasts: logged so an unlisted path shows up in live runs.
             Log("funnel: %s from +0x%llx (role %s, not a party travel)", TravelKindName(TravelKindFromCallSite(site)),
                 ull(site), Role() == PartyRole::Host ? "host" : Role() == PartyRole::Guest ? "guest" : "none");
+        }
+        if (const TravelKind k = TravelKindFromCallSite(ret - Guest(0) - 5);
+            k == TravelKind::ScriptedWarp || k == TravelKind::LuaStageWarp) {
+            // A scripted stage warp to a point of the loaded map: an in-world move (no loading screen).
+            const u64 wts = Wts();
+            if (SameMapStageFn fn = g_same_map_stage.load();
+                fn && wts && fn(WtsField<u32>(wts, kWtsMap, kTravelNone), WtsField<u32>(wts, kWtsWarpPoint, kTravelNone))) {
+                return 1;
+            }
         }
         if (ret - Guest(0) - 5 == kMarkItemCall) {
             // Split travel: the Hunter's Mark asks "Travel with the party?" first (the answer runs
@@ -1377,6 +1387,10 @@ void RunLampWarpDecided(std::uint32_t id, bool alone) {
 
 void SetSameMapWarp(SameMapWarpFn fn) {
     g_same_map = fn;
+}
+
+void SetSameMapStage(SameMapStageFn fn) {
+    g_same_map_stage = fn;
 }
 
 void SetMarkInterceptor(MarkInterceptor fn) {

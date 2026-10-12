@@ -658,6 +658,17 @@ void PartyHostService::set_loading_query(std::function<bool(const std::string&)>
     d_->loading_query = std::move(query);
 }
 
+void PartyHostService::member_crashed(const std::string& online_id) {
+    std::lock_guard<std::mutex> lk(d_->mu);
+    const auto rooms = d_->memberships_locked(online_id);
+    for (const auto& [rid, mid] : rooms) {
+        log("party host: %s's game died while in room %llu; its membership ends", online_id.c_str(),
+            static_cast<unsigned long long>(rid));
+        d_->remove_member_locked(rid, mid, "restarted", nullptr);
+    }
+    if (!rooms.empty()) d_->restarted.push_back(online_id);
+}
+
 void PartyHostService::context_gone(const std::string& online_id) {
     std::lock_guard<std::mutex> lk(d_->mu);
     if (!d_->contexts.erase(online_id)) return;

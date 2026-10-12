@@ -18,6 +18,7 @@
 #include "lua_events.h"
 #include "seamless_rules.h"
 #include "../../party_env.h"
+#include "../net/from_api.h"
 
 #include <algorithm>
 #include <atomic>
@@ -978,7 +979,10 @@ std::vector<Where> g_where;  // main thread
 std::atomic<int> g_apart{0};  // members whose area differs from ours (K5, the host watchdog)
 std::atomic<bool> g_host_alone_next{false};  // host: the next own load is an alone travel
 std::atomic<double> g_host_alone_at{0};
-std::atomic<bool> g_host_left{false};  // guest: the host travelled alone; drop its chr here
+std::atomic<bool> g_host_left{false};
+bool g_alone_spot_valid = false;  // guest: an alone load's lamp spot to stand on after the arrival
+float g_alone_spot[4] = {};
+float g_alone_spot_yaw = 0;  // guest: the host travelled alone; drop its chr here
 std::atomic<double> g_host_alone_seen{0};  // guest: when the host's last alone travel arrived (Now())
 // A member that just travelled alone still reports its old map for a moment (its vitals stay
 // until its load ends): no meet with it until its vitals show another area, or 30 s passed
@@ -3956,6 +3960,19 @@ void GuestTick(const GameSnapshot& s, double now) {
             }
             g_rejoin = false;
             g_dead_follow = false;
+            if (g_alone_spot_valid) {
+                g_alone_spot_valid = false;
+                float p[3] = {};
+                ChrPos(s.player, p);
+                const float dx = p[0] - g_alone_spot[0], dy = p[1] - g_alone_spot[1], dz = p[2] - g_alone_spot[2];
+                const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+                if (d > 2.0f) {
+                    WarpLocal(g_alone_spot, g_alone_spot_yaw, "alone arrival onto the lamp's spot");
+                }
+                Log("guest: alone arrival %.1f m from the lamp's spot; forced placement (own save spot) map %#x (%.1f, %.1f, %.1f)",
+                    double(d), Field<u32>(Slot(kSlotGsm), 0x14f0), double(Field<float>(Slot(kSlotGsm), 0x1500)),
+                    double(Field<float>(Slot(kSlotGsm), 0x1504)), double(Field<float>(Slot(kSlotGsm), 0x1508)));
+            }
             Log("guest: arrived alone in %s (host in %s), still a client (role %d); %s; tasks:%s",
                 MapName(s.map_id).c_str(), MapName(HostMap()).c_str(), Role(), DescribeChr(s.player).c_str(),
                 DescribeTasks().c_str());
@@ -4711,6 +4728,25 @@ void TitleJoinHostTick(const GameSnapshot& s) {
         req.swap(TJ().requests);
     }
     static double first_wait = 0;
+    // C6: a crashed member's restarted game asks at its title while our game still holds the dead
+    // game's transport connection (FromApi sign hold, ~26 s from the drop): a room sent now is
+    // joined over that connection and fails after ~20 s (live: crash rejoin 41 s). Wait it out.
+    if (!req.empty()) {
+        const std::int64_t left = bbnet::party::FromApi::instance().hold_left_ms();
+        if (left > 0) {
+            static double last = 0;
+            const double now = Now();
+            if (now - last >= 2.0) {
+                last = now;
+                for (int slot : req) Send(slot, "{\"op\":\"title_wait\",\"host\":1}");
+                Log("title join: slot %d waits %.1f s more (a crashed member's old connection is still held)", req[0],
+                    double(left) / 1000.0);
+            }
+            std::lock_guard<std::mutex> lk(TJ().mu);
+            TJ().requests.insert(TJ().requests.end(), req.begin(), req.end());
+            return;
+        }
+    }
     if (!req.empty() && (Role() != RoleHost || !s.world_up || s.loading)) {
         // No room yet (the host rings its bell once it is in the world): asked again next frame.
         const double now = Now();
@@ -5027,6 +5063,19 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
                 SafeWrite(gsm + 0x14b0, rot, 16);
                 SafeWrite(gsm + 0x14c0, &map, 4);
                 Log("title join: return spot = own last lamp %u (map %#x, %.1f, %.1f, %.1f)", own, map, pos[0], pos[1], pos[2]);
+                // The forced placement too (what the guest's save records as its spawn): with the own
+                // spot unknown (a save in the host's map; the record held m24_01 (0, 0, 0)) a later
+                // solo Continue started at the map origin (live cont c4 fell through m24_01, c6 stood
+                // at (0, 0, 0) in the Dream). The own last lamp is always a valid spawn.
+                if (!(std::getenv("BB_PARTY_TITLE_OWN_LAMP_SPOT") && std::getenv("BB_PARTY_TITLE_OWN_LAMP_SPOT")[0] == '0')) {
+                    alignas(16) float p16[4] = {pos[0], pos[1], pos[2], 1.0f}, r16[4] = {rot[0], rot[1], rot[2], rot[3]};
+                    u32 m = map;
+                    using PtrFn = void(BB_COOP_SYSV*)(const void*);
+                    reinterpret_cast<PtrFn>(Guest(0x156cf10))(&m);
+                    reinterpret_cast<PtrFn>(Guest(0x156cf20))(p16);
+                    reinterpret_cast<PtrFn>(Guest(0x156cf40))(r16);
+                    Log("title join: forced placement = own last lamp %u (the own save spot is not known)", own);
+                }
             } else {
                 Log("title join: no own last lamp (%u) for the return spot", own);
             }
@@ -5068,13 +5117,34 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
             SafeRead(gsm + 0x1510, t.own_rot, 16);
             Log("title join: own save spot: map %#x (%.1f, %.1f, %.1f)", cur, double(t.own_pos[0]), double(t.own_pos[1]),
                 double(t.own_pos[2]));
+        } else if (cur == stage && cur != 0 && cur != 0xffffffffu) {
+            // The own save is in the host's map (e.g. both in the Dream): the forced placement is
+            // still the save's own spot (no host spot written over it yet). Without this the record
+            // below (+0x15E0; m24_01 at (0, 0, 0) in a Dream save, live cont run) went into the
+            // forced placement and the guest's next solo Continue fell through the world.
+            alignas(16) float p0[4], r0[4];
+            SafeRead(gsm + 0x1500, p0, 16);
+            SafeRead(gsm + 0x1510, r0, 16);
+            std::lock_guard<std::mutex> lk(t.mu);
+            if (!t.own_have && (p0[0] != 0.0f || p0[1] != 0.0f || p0[2] != 0.0f)) {
+                t.own_have = true;
+                t.own_map = cur;
+                std::memcpy(t.own_pos, p0, sizeof p0);
+                std::memcpy(t.own_rot, r0, sizeof r0);
+                Log("title join: own save spot (in the host's map): map %#x (%.1f, %.1f, %.1f)", cur, double(p0[0]),
+                    double(p0[1]), double(p0[2]));
+            }
         }
         {
             // The save's own spot record (+0x15B0 pos, +0x15C0 rot, +0x15E0 map; hostdeath's pos scan)
             // when the forced placement holds none.
             const u32 rec = Field<u32>(gsm, 0x15e0);
             std::lock_guard<std::mutex> lk(t.mu);
-            if (!t.own_have && rec != 0 && rec != 0xffffffffu && rec != stage) {
+            alignas(16) float rp[4];
+            SafeRead(gsm + 0x15b0, rp, 16);
+            // A record at (0, 0, 0) is no spot (a Dream save held m24_01 (0, 0, 0) there).
+            if (!t.own_have && rec != 0 && rec != 0xffffffffu && rec != stage &&
+                (rp[0] != 0.0f || rp[1] != 0.0f || rp[2] != 0.0f)) {
                 t.own_have = true;
                 t.own_map = rec;
                 SafeRead(gsm + 0x15b0, t.own_pos, 16);
@@ -5341,6 +5411,7 @@ bool Enabled() {
 
 namespace {
 bool SameMapLampWarp(std::uint32_t id, bool alone);
+bool SameMapStageWarp(std::uint32_t map, std::uint32_t point);
 } // namespace
 
 void Init() {
@@ -5388,6 +5459,7 @@ void Init() {
     InstallCall(0x17851ce, 0x13beca0, reinterpret_cast<const void*>(&FlagApplyHook), "B2 K11 flag snapshot apply");
     SetEmevdSkipPredicate(&ClientIntroSkip);
     SetSameMapWarp(&SameMapLampWarp);
+    SetSameMapStage(&SameMapStageWarp);
     EnsureEmevdFilter();
     Log("K7 funnel branch +0x%llx %s", ull(kFunnelLeaveJne),
         Matches(kFunnelLeaveJne, {0x75, 0x6c}) ? "verified (75 6c), written only around the guest's own warp"
@@ -5999,6 +6071,36 @@ namespace {
 /// in-world move - none at all when it already stands there (within 2 m: only the last-lamp record)
 /// - and in a party the host's move takes the guests of this map along unless it travels alone.
 /// A dead player keeps the game's death load (no revive here).
+/// A scripted stage warp (EMEVD 2003[14] / Lua WarpNextStage) to warp point `point` of the loaded
+/// map: an in-world move to the point's MSB region (ids::WarpSpot; the same region the game puts
+/// the player at after the load). BB_PARTY_STAGE_INWORLD=1 (default off: not verified on a real
+/// scripted warp yet). Not with members in the session (the party would not follow), not in a boss
+/// fight, not for a point that is not in the loaded block's MSB.
+bool SameMapStageWarp(std::uint32_t map, std::uint32_t point) {
+    // 1: alone only; 2: also a host with members (the host moves alone, the guests stay in the map).
+    static const int mode = std::getenv("BB_PARTY_STAGE_INWORLD") ? std::atoi(std::getenv("BB_PARTY_STAGE_INWORLD")) : 0;
+    const bool on = mode > 0;
+    float spot[4];
+    if (!on || !g_on.load() || g_force_load_warp.load() || point == 0 || point == kTravelNone ||
+        !ids::WarpSpot(point, spot) || !InLoadedBlock(map) || (ids::EntityMap(point) >> 16) != (map >> 16)) {
+        return false;
+    }
+    if (Role() == RoleClient || (Role() == RoleHost && HostHasMemberTasks() && mode < 2)) {
+        Log("stage warp to point %u of the loaded map %s: with a party, the game's own load", point, MapName(map).c_str());
+        return false;
+    }
+    if (std::string boss; BossFightActive(&boss)) {
+        return false;
+    }
+    const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+    if (!player || Field<int>(Field<u64>(Field<u64>(player, 0x3b0), 0x20), 0x128, 0) <= 0) {
+        return false;
+    }
+    char why[64];
+    std::snprintf(why, sizeof why, "stage warp, point %u", point);
+    return WarpLocal(spot, spot[3], why);
+}
+
 bool SameMapLampWarp(std::uint32_t id, bool alone) {
     float spot[4];
     if (!g_on.load() || g_force_load_warp.load() || !LampInLoadedBlock(id, spot)) {
@@ -6235,7 +6337,26 @@ bool TravelAlone(const TravelIntent& t, AloneWhy why) {
         FunnelKeepRoom keep;
         Log("guest: travels alone (%s) to %s, the host is in %s: alone load in host-world mode (K7 %s)", AloneWhyName(why),
             MapName(dest).c_str(), host ? MapName(host).c_str() : "an unknown map", keep.armed ? "armed" : "NOT armed");
-        ok = ReplayTravelNow(tt);
+        // The guest's own save keeps the FORCED placement (GSM +0x14F0 / +0x1500 / +0x1510) as its
+        // spawn spot: a forced transform here made a later Continue start at the alone travel's
+        // lamp (b2_seamless.md 6.13 (3)). As the B2 arrival does since then: the lamp warp itself
+        // (the stage comes from the summoned placement +0x14C4 written above, which is what made it
+        // land in a void before), no forced transform, and a chr warp onto the lamp's spot after the
+        // arrival. BB_PARTY_SPLIT_ALONE_FORCED=1: the old forced transform.
+        static const bool forced = std::getenv("BB_PARTY_SPLIT_ALONE_FORCED") &&
+                                   std::getenv("BB_PARTY_SPLIT_ALONE_FORCED")[0] == '1';
+        if (forced || t.lamp_id == kTravelNone || t.lamp_id == 0) {
+            ok = ReplayTravelNow(tt);
+        } else {
+            g_alone_spot_valid = true;
+            std::memcpy(g_alone_spot, tt.pos, sizeof g_alone_spot);
+            g_alone_spot_yaw = tt.rot[1];
+            TravelIntent lamp = t;
+            lamp.kind = TravelKind::Lamp;
+            lamp.has_pos = false;
+            ok = ReplayTravelNow(lamp);
+            Log("guest: alone load by the lamp warp itself (no forced transform: the own save spot stays)");
+        }
     }
     if (!ok) {
         const int four = 4;

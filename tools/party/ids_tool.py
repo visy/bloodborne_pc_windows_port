@@ -159,6 +159,30 @@ def array_lines(name, ctype, values, per_line=8):
     return out
 
 
+def warp_spots(msbs, ids):
+    """{warp point entity id: (x, y, z, yaw radians)}: the MSB region (POINT_PARAM_ST entry: +0x14
+    position, +0x20 rotation in degrees, +0x48 entity data offset -> +0 entity id) a stage warp's
+    warp point names (EMEVD 2003[14] / Lua WarpNextStage, GSM +0x10). E.g. 2102808 -> region 5 of
+    m21_00 at (28.4, -9.24, 5.6), 135 deg."""
+    want = set(ids)
+    spots = {}
+    for (a, b, c, d), path in msbs:
+        if c or d or b >= 10:
+            continue
+        data = ft.read_maybe_dcx(path)
+        for r in dict(msb_lists(data)).get("POINT_PARAM_ST", []):
+            ent = struct.unpack_from("<q", data, r + 0x48)[0]
+            if not 0 < ent or r + ent + 4 > len(data):
+                continue
+            eid = struct.unpack_from("<i", data, r + ent)[0]
+            if eid not in want or eid in spots:
+                continue
+            x, y, z = struct.unpack_from("<3f", data, r + 0x14)
+            yaw = struct.unpack_from("<3f", data, r + 0x20)[1]
+            spots[eid] = (x, y, z, math.radians(yaw))
+    return spots
+
+
 def cmd_gen_inc(a):
     game = Path(a.game)
     maps, msbs = scan_maps(game)
@@ -196,6 +220,16 @@ def cmd_gen_inc(a):
     out.append(f"PARTY_IDS_ARRAY(kPartyReturnSpots, float, {len(spot_ids) * 4}) = {{")
     for i in spot_ids:
         x, y, z, yaw = spots[rows[i]]
+        out.append(f"    {x:.4f}f, {y:.4f}f, {z:.4f}f, {yaw:.6f}f,  // {i}")
+    out.append("};")
+    warps = warp_spots(msbs, {w for w in e_warps if 1000000 <= w < 100000000})
+    wids = sorted(warps)
+    out += [f"// {len(wids)} stage warp point spots (x, y, z, yaw radians) from the MSB regions; "
+            f"without a spot: {sorted({w for w in e_warps if 1000000 <= w < 100000000} - set(wids))}"]
+    out += array_lines("kPartyWarpSpotIds", "std::uint32_t", wids)
+    out.append(f"PARTY_IDS_ARRAY(kPartyWarpSpots, float, {len(wids) * 4}) = {{")
+    for i in wids:
+        x, y, z, yaw = warps[i]
         out.append(f"    {x:.4f}f, {y:.4f}f, {z:.4f}f, {yaw:.6f}f,  // {i}")
     out.append("};")
     outp = Path(a.out)
