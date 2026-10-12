@@ -978,7 +978,10 @@ std::vector<Where> g_where;  // main thread
 std::atomic<int> g_apart{0};  // members whose area differs from ours (K5, the host watchdog)
 std::atomic<bool> g_host_alone_next{false};  // host: the next own load is an alone travel
 std::atomic<double> g_host_alone_at{0};
-std::atomic<bool> g_host_left{false};  // guest: the host travelled alone; drop its chr here
+std::atomic<bool> g_host_left{false};
+bool g_alone_spot_valid = false;  // guest: an alone load's lamp spot to stand on after the arrival
+float g_alone_spot[4] = {};
+float g_alone_spot_yaw = 0;  // guest: the host travelled alone; drop its chr here
 std::atomic<double> g_host_alone_seen{0};  // guest: when the host's last alone travel arrived (Now())
 // A member that just travelled alone still reports its old map for a moment (its vitals stay
 // until its load ends): no meet with it until its vitals show another area, or 30 s passed
@@ -3956,6 +3959,19 @@ void GuestTick(const GameSnapshot& s, double now) {
             }
             g_rejoin = false;
             g_dead_follow = false;
+            if (g_alone_spot_valid) {
+                g_alone_spot_valid = false;
+                float p[3] = {};
+                ChrPos(s.player, p);
+                const float dx = p[0] - g_alone_spot[0], dy = p[1] - g_alone_spot[1], dz = p[2] - g_alone_spot[2];
+                const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+                if (d > 2.0f) {
+                    WarpLocal(g_alone_spot, g_alone_spot_yaw, "alone arrival onto the lamp's spot");
+                }
+                Log("guest: alone arrival %.1f m from the lamp's spot; forced placement (own save spot) map %#x (%.1f, %.1f, %.1f)",
+                    double(d), Field<u32>(Slot(kSlotGsm), 0x14f0), double(Field<float>(Slot(kSlotGsm), 0x1500)),
+                    double(Field<float>(Slot(kSlotGsm), 0x1504)), double(Field<float>(Slot(kSlotGsm), 0x1508)));
+            }
             Log("guest: arrived alone in %s (host in %s), still a client (role %d); %s; tasks:%s",
                 MapName(s.map_id).c_str(), MapName(HostMap()).c_str(), Role(), DescribeChr(s.player).c_str(),
                 DescribeTasks().c_str());
@@ -6235,7 +6251,26 @@ bool TravelAlone(const TravelIntent& t, AloneWhy why) {
         FunnelKeepRoom keep;
         Log("guest: travels alone (%s) to %s, the host is in %s: alone load in host-world mode (K7 %s)", AloneWhyName(why),
             MapName(dest).c_str(), host ? MapName(host).c_str() : "an unknown map", keep.armed ? "armed" : "NOT armed");
-        ok = ReplayTravelNow(tt);
+        // The guest's own save keeps the FORCED placement (GSM +0x14F0 / +0x1500 / +0x1510) as its
+        // spawn spot: a forced transform here made a later Continue start at the alone travel's
+        // lamp (b2_seamless.md 6.13 (3)). As the B2 arrival does since then: the lamp warp itself
+        // (the stage comes from the summoned placement +0x14C4 written above, which is what made it
+        // land in a void before), no forced transform, and a chr warp onto the lamp's spot after the
+        // arrival. BB_PARTY_SPLIT_ALONE_FORCED=1: the old forced transform.
+        static const bool forced = std::getenv("BB_PARTY_SPLIT_ALONE_FORCED") &&
+                                   std::getenv("BB_PARTY_SPLIT_ALONE_FORCED")[0] == '1';
+        if (forced || t.lamp_id == kTravelNone || t.lamp_id == 0) {
+            ok = ReplayTravelNow(tt);
+        } else {
+            g_alone_spot_valid = true;
+            std::memcpy(g_alone_spot, tt.pos, sizeof g_alone_spot);
+            g_alone_spot_yaw = tt.rot[1];
+            TravelIntent lamp = t;
+            lamp.kind = TravelKind::Lamp;
+            lamp.has_pos = false;
+            ok = ReplayTravelNow(lamp);
+            Log("guest: alone load by the lamp warp itself (no forced transform: the own save spot stays)");
+        }
     }
     if (!ok) {
         const int four = 4;
