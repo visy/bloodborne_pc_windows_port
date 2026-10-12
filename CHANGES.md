@@ -3,6 +3,14 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## 0.5.6 (Windows port 0.5.6, party co-op)
+
+- **Per-player enemy drops** (on by default): every enemy drops loot for each player separately, and guests keep their own drops.
+- **Players who join later are visible to everyone** (with *Continue party game* joins, earlier guests didn't see later ones).
+- **The 4th player joins reliably**; 5-player parties work in tests (`BB_PARTY_MAX=5`, experimental, not in the launcher).
+- **Fixes**: a guest's Continue after travelling alone starts at its own spot; a title join no longer records an empty spot (a later Continue could fall through Central Yharnam); crash re-join back to about 28 s (0.5.5 had made it 41 s).
+- **Known issues**: guest treasure pickups are not per-player yet; existing players flash briefly when a new one arrives; crash re-join is still ~28 s.
+
 ## 0.5.5 (Windows port 0.5.5, party co-op)
 
 - **Continue party game straight into the host's world**: one loading screen, the guest lands beside the host, even when its own save is in another map; falls back to the normal join if the host isn't up yet.
