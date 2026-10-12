@@ -862,10 +862,10 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
         st.continue_last = now - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(st.continue_every));
         return;
     }
-    if (st.continue_presses >= 15) {
+    if (Seconds(st.continue_ready, now) > 40.0) {
         release();
         st.continue_done = true;
-        Log("auto-continue: stopped after %d presses (no world yet); the title is left to the player",
+        Log("auto-continue: stopped after 40 s (%d presses, no world yet); the title is left to the player",
             st.continue_presses);
         return;
     }

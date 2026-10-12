@@ -5,7 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.5.7 (Windows port 0.5.7, hotfix)
 
-- **No automatic button presses in manual play**: starting a party from the launcher pressed Confirm repeatedly through character creation and name entry. The automatic *Continue* now runs only when asked for (automated tests, *Continue party game* / *Join party game* with an existing character, a crash restart) and stops after 15 presses.
+- **No automatic button presses in manual play**: starting a party from the launcher pressed Confirm repeatedly through character creation and name entry. The automatic *Continue* now runs only when asked for (automated tests, *Continue party game* / *Join party game* with an existing character, a crash restart) and stops after 40 s.
 
 ## 0.5.6 (Windows port 0.5.6, party co-op)
 
