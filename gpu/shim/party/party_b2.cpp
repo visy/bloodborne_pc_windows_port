@@ -697,6 +697,31 @@ struct FunnelKeepRoom {
 
 /// Rewinds every remote task (mode 1 = guest member, 2 = session owner) whose PlayerIns is gone
 /// to STEP_Create with the create bit. Returns how many.
+// A remote phantom is created hidden: STEP_Create 0x1E50090 clears chr +0x1E2 bit 4 (chr +0x1E0
+// bit 20, the draw bit) for chr types 1 / 2 / 12 (0x1E502C3), and the game shows it either with
+// the summon presentation or at the end of a load: InGameStart 0x193A3E0 sets the bit
+// (0x193A93C) and calls chr vfunc +0x610(1) for every player chr whose vfunc +0x1B8 is 0. A chr our
+// rewind re-creates in a running world gets neither (the presentation entry of that member is the
+// old one), so it stayed invisible with its plate up (split24 / hd22 / hd26). Every task we rewind
+// is remembered; once its chr exists it gets InGameStart's two steps.
+std::map<u64, double> g_rewound;  // task -> when rewound (main thread)
+
+void ShowLikeInGameStart(u64 c, const char* why) {
+    using Bool = u8(BB_COOP_SYSV*)(u64);
+    using Set = void(BB_COOP_SYSV*)(u64, u32);
+    const u64 vt = Field<u64>(c, 0);
+    const u64 f1b8 = Field<u64>(vt, 0x1b8), f610 = Field<u64>(vt, 0x610);
+    if (!f1b8 || !f610 || reinterpret_cast<Bool>(f1b8)(c)) {
+        return;
+    }
+    const u8 v = Field<u8>(c, 0x1e2);
+    const u8 w = u8(v | 0x10);
+    SafeWrite(c + 0x1e2, &w, 1);
+    reinterpret_cast<Set>(f610)(c, 1);
+    Log("remote chr %#llx (handle %x) shown as InGameStart does (%s; +0x1E2 %#x -> %#x)", ull(c), Field<u32>(c, 8), why,
+        unsigned(v), unsigned(w));
+}
+
 int RewindRemoteTasks(const char* why) {
     int n = 0;
     for (const TaskInfo& t : Tasks(false)) {
@@ -711,6 +736,7 @@ int RewindRemoteTasks(const char* why) {
         SafeWrite(t.task + kTaskFlags, &flags, 1);
         SafeWrite(t.task + kTaskNext, &next, 4);
         ++n;
+        g_rewound[t.task] = Now();
         Log("%s: task mode %d (step %d) rewound to STEP_Create", why, t.mode, t.step);
     }
     return n;
@@ -1661,13 +1687,29 @@ void RemoteVisibleTick(double now) {
         // chr +0x1E0 bit 20: set on every drawn player chr (local and remote, both games), clear on
         // the invisible re-created one ("the health bar but no model", live vis3 render probe:
         // 0x00009800 vs 0x00109800). Put back.
+        // A chr of a task we rewound: shown as at a load's end (the root cause, above).
+        if (auto it = g_rewound.find(t.task); it != g_rewound.end()) {
+            g_rewound.erase(it);
+            ShowLikeInGameStart(c, "re-created by a rewind");
+            continue;
+        }
+        // Safety net: any other remote chr without the draw bit 4 s after we first saw it so.
+        static std::map<u64, double> hidden_since;
         const u32 f = Field<u32>(c, 0x1e0);
         if (f && !(f & 0x100000u)) {
-            const u32 g = f | 0x100000u;
-            SafeWrite(c + 0x1e0, &g, 4);
-            Log("remote chr %#llx (mode %d, handle %x): draw bit +0x1E0 %#x -> %#x (was not drawn); enterleave%s", ull(c),
-                t.mode, Field<u32>(c, 8), f, g, DescribeEnterLeave().c_str());
+            auto h = hidden_since.emplace(c, now).first;
+            if (now - h->second >= 4.0) {
+                hidden_since.erase(h);
+                Log("remote chr %#llx (mode %d): no draw bit for 4 s (safety net); enterleave%s", ull(c), t.mode,
+                    DescribeEnterLeave().c_str());
+                ShowLikeInGameStart(c, "safety net");
+            }
+        } else {
+            hidden_since.erase(c);
         }
+    }
+    for (auto it = g_rewound.begin(); it != g_rewound.end();) {
+        it = now - it->second > 30.0 ? g_rewound.erase(it) : std::next(it);
     }
 }
 
