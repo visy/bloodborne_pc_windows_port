@@ -440,7 +440,7 @@ def run(a):
         if a.party:
             party_saves_from(inst / "user", getattr(a, "fresh_saves", False))
             env.update({
-                "BB_PARTY": "host" if i == 0 else "join", "BB_PARTY_CODE_FILE": str(code_file),
+                "BB_PARTY": "host" if i == 0 else "join", "BB_PARTY_AUTOCONTINUE": "1", "BB_PARTY_CODE_FILE": str(code_file),
                 "BB_PARTY_PORT": str(port0 + i), "BB_PARTY_NAME": f"Hunter{i}", "BB_PARTY_UPNP": "0",
                 "BB_PARTY_STUN": "off", "BB_PARTY_LOOPBACK": "1", "BB_PARTY_LOCAL_IP": "127.0.0.1",
                 "BB_SKIP_NETWORK_CHOICE": "online", "BB_PATCHES": "Skip Intro",

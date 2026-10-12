@@ -233,7 +233,7 @@ struct State {
     int max_players = 3;
     party::PartyLink* link = nullptr;
     bool auto_ring = true;
-    int auto_continue = -1; // BB_PARTY_AUTOCONTINUE: -1 default (on in party mode), 0 off, 1 on
+    int auto_continue = -1; // BB_PARTY_AUTOCONTINUE: 1 on (tests, party flow Continue/Join); unset/0 off (manual play)
     double ring_every = 30.0;
     bool a11_waiting = false;  // A11: the host's bell held (boss fight / cutscene)
     // BB_PARTY_FAST_JOIN (default on; docs/party/join_timing.md): shorter director pauses.
@@ -860,6 +860,13 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
     // Guest: join the host's session from here first, so Continue loads the host's world (one load).
     if (role == PartyRole::Guest && b2::TitleJoinHold(s)) {
         st.continue_last = now - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(st.continue_every));
+        return;
+    }
+    if (st.continue_presses >= 15) {
+        release();
+        st.continue_done = true;
+        Log("auto-continue: stopped after %d presses (no world yet); the title is left to the player",
+            st.continue_presses);
         return;
     }
     if (Seconds(st.continue_last, now) >= st.continue_every) {
@@ -2415,7 +2422,7 @@ void PartyDirector::Tick() {
             std::lock_guard<std::mutex> lk(st.mu);
             ac = st.auto_continue;
         }
-        if ((ac != 0 || party::runtime().restarted()) && !NewGameTestRequested()) {
+        if ((ac == 1 || party::runtime().restarted()) && !NewGameTestRequested()) {
             AutoContinue(st, s, role, link, now);
         }
     }
