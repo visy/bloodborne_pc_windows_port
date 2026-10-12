@@ -214,6 +214,26 @@ the hold is ~22 s after the crash (boot + own load + a normal join).
   owner and factory objects for the single values is built in but was not run), then the
   transport's vtable (factory `param_3->vtable[0x10]`).
 
+### 2026-10-12: live transport fields, title join after a crash
+
+- The session transport (owner + 8 from the create hook) keeps the timing block at
+  **+0x84..+0x94** (5000, 6000, **25000**, 20000, 200) and again at +0x254c..+0x255c; its
+  connection array is at +0xd0 (count +0x6c, 0xc0 bytes each) and every element points back to the
+  transport. FUN_027163B0 (the transport reset) writes those defaults. A data breakpoint on +0x8c
+  during a session and through a guest crash saw **no game read** until that reset, so the
+  per-tick idle check does not read this field: lowering it does nothing (still experimental, off).
+- **Regression found and fixed:** 0.5.5's title join let a crashed guest's restarted game ask for
+  the host's room at its title while the host's game still held the dead connection: the join
+  failed after 20 s and the guest fell back to Continue (crash rejoin **41 s** after the restart).
+  The host now answers `title_wait` while any sign hold runs (`FromApi::hold_left_ms`) and sends
+  the room when it ends. Live, 2 runs: restart -> in the host's world **28.4 / 28.5 s** (crash ->
+  joined ~32 s); the guest goes straight from its title into the host's world (no own-world load).
+  Screenshots of both games at the crash and the rejoin: no frozen character or stray HP bar after
+  the game's own drop (~6 s after the crash).
+- Tried and kept **off** (`BB_PARTY_CRASH_LEAVE=1`): ending the crashed member's room membership at
+  the TCP reset (removes its frozen character at once); the host's game froze ~20 s later in both
+  runs.
+
 ## Open
 
 - Finding where the NexusRevolution transport keeps its idle timeout per connection (the config

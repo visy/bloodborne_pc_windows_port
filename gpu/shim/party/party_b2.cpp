@@ -18,6 +18,7 @@
 #include "lua_events.h"
 #include "seamless_rules.h"
 #include "../../party_env.h"
+#include "../net/from_api.h"
 
 #include <algorithm>
 #include <atomic>
@@ -4711,6 +4712,25 @@ void TitleJoinHostTick(const GameSnapshot& s) {
         req.swap(TJ().requests);
     }
     static double first_wait = 0;
+    // C6: a crashed member's restarted game asks at its title while our game still holds the dead
+    // game's transport connection (FromApi sign hold, ~26 s from the drop): a room sent now is
+    // joined over that connection and fails after ~20 s (live: crash rejoin 41 s). Wait it out.
+    if (!req.empty()) {
+        const std::int64_t left = bbnet::party::FromApi::instance().hold_left_ms();
+        if (left > 0) {
+            static double last = 0;
+            const double now = Now();
+            if (now - last >= 2.0) {
+                last = now;
+                for (int slot : req) Send(slot, "{\"op\":\"title_wait\",\"host\":1}");
+                Log("title join: slot %d waits %.1f s more (a crashed member's old connection is still held)", req[0],
+                    double(left) / 1000.0);
+            }
+            std::lock_guard<std::mutex> lk(TJ().mu);
+            TJ().requests.insert(TJ().requests.end(), req.begin(), req.end());
+            return;
+        }
+    }
     if (!req.empty() && (Role() != RoleHost || !s.world_up || s.loading)) {
         // No room yet (the host rings its bell once it is in the world): asked again next frame.
         const double now = Now();

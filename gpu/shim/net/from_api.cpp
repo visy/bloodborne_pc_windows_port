@@ -475,6 +475,14 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
     return list;
 }
 
+std::int64_t FromApi::hold_left_ms() {
+    std::lock_guard<std::mutex> lk(mu_);
+    const std::int64_t now = steady_now_ms();
+    std::int64_t left = 0;
+    for (const auto& h : holds_) left = std::max(left, h.second - now);
+    return left;
+}
+
 void FromApi::hold_signs(const std::string& online_id, int ms) {
     std::lock_guard<std::mutex> lk(mu_);
     const std::int64_t until = steady_now_ms() + ms;
