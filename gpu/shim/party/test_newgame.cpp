@@ -440,6 +440,7 @@ std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen
 
 #include "game_state.h"
 #include "party_start.h"
+#include "party_b2.h"
 #include "../bbport_game_menu.h"
 #include "../../party_env.h"
 
@@ -451,6 +452,13 @@ std::uint32_t MenuScript::Step(double t, std::uint64_t screen_seq, double screen
 extern "C" void runtime_pad_director_press(std::uint32_t buttons); // src/runtime_pad.c
 extern "C" int runtime_ime_dialog_count(void);                     // src/runtime_services.c
 extern "C" int runtime_savedata_mount_count(void);                 // src/runtime_savedata.c
+
+namespace {
+bool GuestProcess() {
+    const char* v = std::getenv("BB_PARTY");
+    return v && (std::strcmp(v, "join") == 0 || std::strcmp(v, "JOIN") == 0);
+}
+} // namespace
 
 namespace {
 std::atomic<int> g_movies{0};
@@ -601,6 +609,11 @@ void NewGameTestTick(const GameSnapshot& s, bool title_ready) {
         in.t = t;
         // The title mounts the save right before its menu shows.
         in.title_ready = title_ready && runtime_savedata_mount_count() > 0 && !s.world_up && !s.loading;
+        // A party guest joins the host's session from the title first (title join): the first
+        // Cross (Continue on a save with a character) waits for it, as AutoContinue does.
+        if (in.title_ready && GuestProcess() && coop::b2::TitleJoinHold(s)) {
+            in.title_ready = false;
+        }
         in.ime_count = runtime_ime_dialog_count();
         {
             std::int64_t last_ms = 0;

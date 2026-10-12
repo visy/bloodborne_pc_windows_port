@@ -390,3 +390,15 @@ lamp only exists after the boss is dead. No bug.
   side with tags, Leave -> one load into the guest's own world (Iosefka's Clinic lamp). The host
   had only its own first load. The default-on build (switch unset, with the ack) is not run live
   yet (the game queue was not available to this agent at the end).
+
+## 2026-10-12 (flowlive, 0.5.4 follow-up): Continue party game, default on again
+
+The 0.5.4 default-build check went through the title's *Continue party game* (flow_live
+`continue`): there the test new-game driver (`BB_TEST_NEWGAME=party`) presses the first Cross,
+not AutoContinue, so the title join never ran and the guest took the old bell path (the run ended
+before that join). The driver now waits for the title join too (a `BB_PARTY=join` process). Live,
+absolute root `flowlive/mp2`: 3 runs in a row with `BB_PARTY_TITLE_JOIN=1` and one with the switch
+unset: each time one loading screen into the host's world (asked -> in the world 7.9-8.2 s), host
+`cooperators 0 -> 1`, screenshots 8 s after the arrival show both hunters side by side with the
+Co-operator / Beckoner tags (in one run the guest's window still showed the loading tip at 8 FPS
+while the host already saw it). Default on again; `BB_PARTY_TITLE_JOIN=0` turns it off.

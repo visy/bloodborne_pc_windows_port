@@ -72,7 +72,8 @@ run from two new characters to the end credits passed, and a three-player travel
 - **Start from the title screen:** *Party* → *New / Join / Continue party game*. The address and
   password are remembered, so later sessions are one press.
 - **Fast join.** The bell, beckoner and summon-sign waits are gone: a guest is in the host's world
-  within seconds.
+  within seconds. *Continue party game* takes a guest straight into the host's world with a single
+  loading screen.
 - **Leave any time.** *System → Party → Leave the party* takes a guest home at once; the host's
   *Leave* ends the party and every guest goes home. *Join party* brings a guest back.
 - **The session never ends by itself.** Boss kills, area clears, deaths and travel don't send
@@ -143,7 +144,6 @@ run from two new characters to the end credits passed, and a three-player travel
 | Dying in a boss fight: watch a living party member until the fight ends | In progress |
 | Guests open doors, pull levers, talk to NPCs; NPC choices shared | In progress |
 | Item pickups and enemy drops per player: everyone gets their own | In progress |
-| *Continue party game* straight into the host's world (one loading screen) | In testing (`BB_PARTY_TITLE_JOIN=1`) |
 | Every cutscene for the whole party (story cutscenes and endings already work) | In progress |
 | Joining during a boss fight or cutscene waits outside until it ends | Works for boss fights (verified live); cutscenes in progress |
 | The 4th player joins as fast as the others | In progress |

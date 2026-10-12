@@ -4475,10 +4475,10 @@ TitleJoin& TJ() {
 }
 
 bool TitleJoinOn() {
-    // Default OFF until the default path is verified live (0.5.4); BB_PARTY_TITLE_JOIN=1 turns it on.
+    // Default on (Continue party game loads the host's world directly); BB_PARTY_TITLE_JOIN=0 off.
     static const bool on = [] {
         const char* v = std::getenv("BB_PARTY_TITLE_JOIN");
-        return v && v[0] && EnvOn("BB_PARTY_TITLE_JOIN");
+        return !(v && v[0]) || EnvOn("BB_PARTY_TITLE_JOIN");
     }();
     return on;
 }
