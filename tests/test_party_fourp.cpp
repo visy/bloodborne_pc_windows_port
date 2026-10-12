@@ -130,6 +130,23 @@ static void test_npc_signs() {
 }
 
 // B2 / summon placement (A7): host + 3 side by side in a line, distinct spots, neighbours the offset apart.
+static void test_free_spot() {
+    const float d = 0.5f, yaw = 0.0f;  // right axis = +x
+    // Nobody near: the own spot.
+    CHECK(PickFreeSpot(3, d, 0, 0, yaw, nullptr, 0, 0.8f) == -1);
+    CHECK(FreeSpotRight(-1, 3, d) == 2 * d);
+    // The live case: slot 3's spot (x = 1.0) next to the first guest, who moved to x = 0.7.
+    const float g1[1][2] = {{0.7f, 0.1f}};
+    const int pick = PickFreeSpot(3, d, 0, 0, yaw, g1, 1, 0.8f);
+    CHECK(pick >= 0);
+    const float r = FreeSpotRight(pick, 3, d);
+    CHECK(std::fabs(r - 0.7f) >= 0.8f - 1e-4f || std::fabs(0.1f) >= 0.8f);  // at least 0.8 m from the guest
+    // Both sides taken near the host: further out.
+    const float two[2][2] = {{0.5f, 0}, {-0.5f, 0}};
+    const float r2 = FreeSpotRight(PickFreeSpot(1, d, 0, 0, yaw, two, 2, 0.8f), 1, d);
+    CHECK(std::fabs(r2 - 0.5f) >= 0.8f - 1e-4f && std::fabs(r2 + 0.5f) >= 0.8f - 1e-4f);
+}
+
 static void test_selector_max() {
     CHECK(SelectorMaxCoop(2) == 3 && SelectorMaxCoop(3) == 3);  // vanilla
     CHECK(SelectorMaxCoop(4) == 4);  // 3 cooperators + 1 pending pass the SOS filter
@@ -176,6 +193,7 @@ int main() {
     test_npc_signs();
     test_spots();
     test_selector_max();
+    test_free_spot();
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

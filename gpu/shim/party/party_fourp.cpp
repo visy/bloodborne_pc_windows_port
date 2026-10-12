@@ -7,6 +7,7 @@
 
 #include "../../party_env.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
@@ -110,6 +111,36 @@ void SpotOffset(int spot, float d, float* right, float* forward) {
     }
     *right = kRight[spot] * d;
     *forward = 0;
+}
+
+int PickFreeSpot(int slot, float d, float hx, float hz, float yaw, const float (*others)[2], int n,
+                 float min_gap) {
+    // Candidate offsets along the host's right axis, in spacings: the own spot first.
+    static const float kLine[6] = {1, -1, 2, -2, 3, -3};
+    float own_r = 0, own_f = 0;
+    SpotOffset(slot, d, &own_r, &own_f);
+    const float rx = std::cos(yaw), rz = -std::sin(yaw);
+    const auto free_at = [&](float r) {
+        const float x = hx + rx * r, z = hz + rz * r;
+        for (int i = 0; i < n; ++i) {
+            const float dx = x - others[i][0], dz = z - others[i][1];
+            if (dx * dx + dz * dz < min_gap * min_gap) return false;
+        }
+        return true;
+    };
+    if (free_at(own_r)) return -1;  // the own spot
+    for (int k = 0; k < 6; ++k) {
+        if (free_at(kLine[k] * d)) return k;
+    }
+    return -1;
+}
+
+float FreeSpotRight(int pick, int slot, float d) {
+    static const float kLine[6] = {1, -1, 2, -2, 3, -3};
+    if (pick >= 0 && pick < 6) return kLine[pick] * d;
+    float r = 0, f = 0;
+    SpotOffset(slot, d, &r, &f);
+    return r;
 }
 
 int SpotForTry(int slot, int attempt) {

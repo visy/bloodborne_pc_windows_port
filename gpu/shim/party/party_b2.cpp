@@ -7,6 +7,8 @@
 #include "party_b2.h"
 #include "party_async_io.h"
 #include "party_fourp.h"
+#include "party_link.h"
+#include "party_runtime.h"
 
 #include "coop_hooks.h"
 #include "game_state.h"
@@ -1787,6 +1789,30 @@ void BesideHost(float pos[4], const float rot[4], int spot) {
     const float fx = std::sin(yaw), fz = std::cos(yaw), rx = std::cos(yaw), rz = -std::sin(yaw);
     float right = 0, forward = 0;
     coop::fourp::SpotOffset(spot, SummonOffset(), &right, &forward);
+    // A free spot (coop::fourp::PickFreeSpot): not within 0.8 m of another member's reported
+    // position (VITALS, fresh), so a later joiner never lands on a guest who moved onto its spot.
+    if (party::PartyLink* link = party::runtime_link(); link && SummonOffset() > 0.0f) {
+        party::MemberVitals v[party::kMaxVitals];
+        const int n = link->vitals(v, party::kMaxVitals);
+        float others[party::kMaxVitals][2];
+        int k = 0;
+        for (int i = 0; i < n; ++i) {
+            if (v[i].slot == link->local_slot() || v[i].slot == 0 || !(v[i].flags & party::kVitalsHasPos) ||
+                v[i].age_ms > 3000) {
+                continue;  // ourselves; the host stands at the line's centre anyway
+            }
+            others[k][0] = v[i].pos[0];
+            others[k][1] = v[i].pos[2];
+            ++k;
+        }
+        const int pick = coop::fourp::PickFreeSpot(spot, SummonOffset(), pos[0], pos[2], yaw, others, k, 0.8f);
+        const float r = coop::fourp::FreeSpotRight(pick, spot, SummonOffset());
+        if (pick >= 0) {
+            Log("beside the host: slot %d's spot is taken; free spot %.1f m along the line", spot, r);
+        }
+        right = r;
+        forward = 0;
+    }
     pos[0] += rx * right + fx * forward;
     pos[2] += rz * right + fz * forward;
 }

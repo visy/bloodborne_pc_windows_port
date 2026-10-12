@@ -71,6 +71,14 @@ int DopingSpEffect(int sp_effect, int coop_count);
 /// as offsets along the host's right and forward axes: a line, right / left / 2x right, neighbours
 /// `d` (BB_PARTY_SUMMON_OFFSET, 0.5 m) apart.
 void SpotOffset(int spot, float d, float* right, float* forward);
+/// The first free spot for party slot `slot` beside a host at (hx, hz) facing `yaw`: its own spot,
+/// then right / left at 1, 2, 3 spacings `d`; free = at least `min_gap` (horizontal) from every
+/// position in `others` (n of them, x/z pairs: the other members' reported positions). The own
+/// spot when none is free. Live (2026-10-12, 4 players): the last joiner's own spot (2x right) was
+/// 0.36 m from the first guest, who had moved: it spawned on top of it.
+int PickFreeSpot(int slot, float d, float hx, float hz, float yaw, const float (*others)[2], int n, float min_gap);
+/// The right-axis offset of PickFreeSpot's result (-1: the own slot's spot).
+float FreeSpotRight(int pick, int slot, float d);
 /// The spot party slot `slot` tries on attempt 0, 1, 2 (its own, the mirrored one, then 3 or 1).
 int SpotForTry(int slot, int attempt);
 /// E6: an NPC summon sign event (xx04400..xx04406 or 12906962).
