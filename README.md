@@ -120,6 +120,7 @@ single-player save is never touched. Settings: *System → Party* pages in the g
 - **Guests can talk to NPCs** in the host's world (Gilbert, Iosefka, Eileen ...); quest choices
   are shared by the whole party.
 - **Enemy drops for each player.** Every player gets their own roll of each enemy's drop.
+- **Treasure for each player.** Items lying in the world can be picked up by every player, each into their own game.
 - **Cutscenes for everyone.** A story scene a guest triggers in the host's world plays for the
   whole party too.
 - **Up to 4 players** (host + 3), all in the host's world. With 3 guests, a guest does not yet see
@@ -155,7 +156,7 @@ single-player save is never touched. Settings: *System → Party* pages in the g
 
 | Change | Status |
 |---|---|
-| Item pickups and enemy drops per player: everyone gets their own | In progress |
+| Item pickups and enemy drops per player: everyone gets their own | Done |
 | Every cutscene for the whole party (story cutscenes, endings and guest-triggered scenes already work) | In progress |
 | Joining during a boss fight or cutscene waits outside until it ends | Works for boss fights (verified live); cutscenes in progress |
 | With 3 guests, every guest sees every other guest | In progress |

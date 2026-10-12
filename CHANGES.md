@@ -3,6 +3,10 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## 0.5.9 (unreleased)
+
+- **Per-player treasure**: guests can pick up items lying in the world (corpse glows) too, each player gets their own copy, and the host's pickup no longer takes it away from the others.
+
 ## 0.5.8 (Windows port 0.5.8, party co-op)
 
 - **No more warps before the party forms**: a host's lamp travel or death no longer moves a player who is still in the prologue or playing in their own world without being summoned (a guest in the Hunter's Dream was warped into the clinic, or sent back to the Dream by the host's death).

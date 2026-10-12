@@ -113,13 +113,22 @@ idx, -1, current state)` only when its game did not get the kick in the last 15 
 
 Vanilla: MSB treasure is never created on a client (`0x17DC300`: role 6 / session slot gates) and a
 client's pickup skips the pickup flag and the Lua event (`0x17D6780`). With
-`BB_PARTY_GUEST_PICKUP` (default on, party mode) three byte patches (6-byte NOPs, verified):
+`BB_PARTY_GUEST_PICKUP` (default on, party mode; `=0` off) byte patches (verified):
 
 | Site | Original | What |
 |---|---|---|
 | 0x17DC3D6 | `0f 84 a5 0c 00 00` (je, role 6) | treasure spawned on a client |
 | 0x17DC3E3 | `0f 85 98 0c 00 00` (jne, session slot) | treasure spawned on a client |
 | 0x17D6838 | `0f 84 2b 02 00 00` (je, not own world) | the pickup sets its flag and runs its Lua event on a client |
+| 0x17D6AF6 | `0f 84 5c 05 00 00` (je, not own world) | the pickup sets the lot's pickup flag (record +0x28) on a client |
+| 0x17D52D9 / 0x17D52E6 | `74 26` / `75 1c` (role 6 / slot) | a client's treasure record gets its own handle (all were 0x3: the pickup's lookup 0x17D81A0 found another record) |
+| 0x17D34A0 / 0x17D40AB | `e8 ..` call 0x17D5B40 | the host's item sync (net handler 0x17D2F30, "clear kind 3") no longer drops the guest's treasure records |
+
+Live 2026-10-12 (agent treasure, pristine fresh saves, clinic): before the fixes the guest spawned 53
+treasure records and the host's join sync cleared them all 4 s later. With them: the guest picked up
+treasure 52410140 through 0x17D8570 (item-get "Madman's Knowledge" on its screen, own-save flag set,
+host image 0); the host then took its own copy and C3 did not forward it (`InstancedTreasureFlag`:
+a map treasure flag 5AABZnnn with no award capture is per player).
 
 Instancing (`progress::SetInstancedItems`): the world mirror leaves the item_lot_picked bits alone
 (`WorldItemMask`); after every mirror apply the overlay's item bits become the guest's **own pool**
