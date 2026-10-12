@@ -11,6 +11,22 @@ Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28
 > Not affiliated with Sony, FromSoftware, AMD or NVIDIA. Not related to shadPS4: questions about
 > the Linux port go to its [Discord](https://discord.gg/KYZRKk9CB).
 
+### Seamless co-op progress
+
+Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](docs/party/ERSC_PARITY.md).
+
+| Area | Progress | |
+|---|---|--:|
+| **Overall** | `█████████████████░░░` | 83% |
+| Session & joining | `█████████████████░░░` | 86% |
+| World & travel | `█████████████████░░░` | 86% |
+| Death & respawn | `█████████████████░░░` | 86% |
+| Progress (anyone can progress) | `█████████████████░░░` | 84% |
+| Services & UI | `██████████████████░░` | 90% |
+| Network & robustness | `████████████████░░░░` | 78% |
+| Bloodborne-specific (chalice, Insight) | `███████████████░░░░░` | 74% |
+| Feels like single player in a party | `███████████████░░░░░` | 76% |
+
 ---
 
 ## What this port adds
@@ -219,11 +235,13 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | Who | What |
 |---|---|
 | deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors |
-| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes |
+| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD |
 | shadPS4 team | Vulkan video core and shader recompiler (GPL-2.0+), sirit |
 | droogie and the bbhost team | Long-session stability fixes ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |
 | FireBurn | FSR-Vulkan (MIT); AMD FidelityFX SDK (MIT) |
 | Supermedo, IFreemz | DLSS bridge and Windows loader |
+| Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, texture-cache and shader-walker fixes, skipped draws for failed pipelines; andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows) |
+| Vorshim92 | Pipeline cache kept between starts, stale `bbport.exe` guard, crash reaper, `run.bat` resolution fix, Reset shader cache button |
 | Thealexbarney | LibAtrac9 audio (MIT) |
 | ocornut | Dear ImGui (MIT) |
 | Kyo, Lance McDonald, illusion, emoose, auser1337 | 60 FPS, camera and engine patches |

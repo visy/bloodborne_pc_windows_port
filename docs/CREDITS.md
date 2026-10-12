@@ -15,6 +15,9 @@ Special thanks to the original creators and open source projects that made this 
 - **Thealexbarney**: LibAtrac9 audio decoding library.
 - **ocornut**: Dear ImGui library for the in-game settings overlay.
 - **Supermedo** and **IFreemz**: DLSS bridge.
+- **Supermedo and contributors** ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)): ported in 0.5.9 - red-zone-safe stores for Intel 12th gen+ (crash when hit), texture-cache LRU eviction and GPU-writable-only hashing, speculative SRT walk recovery, skipping draws whose pipeline cannot be created; andrecabralgit (stereo audio level, adapted), Jgamrot (overlay checkbox/slider updates), dGstone18 (mod files seen as 0 bytes on Windows).
+- **Mrsuss60** ([Windows port](https://github.com/Mrsuss60/bloodborne_pc_windows_port)): the original Windows port this one is based on; later also the touchpad Gestures / Personal Effects menu fix (0.5.8) and the performance HUD.
+- **Vorshim92** (via [Mrsuss60's port](https://github.com/Mrsuss60/bloodborne_pc_windows_port)): pipeline cache kept between starts (motion-vector keys), stale `bbport.exe` guard (`scripts/bb_guard.py`), crash reaper, `run.bat` scaled-size fix, Reset shader cache button.
 - **droogie and the bbhost team** ([bbhost](https://github.com/droogie/bbhost), GPL-3.0-or-later): the long-session stability fixes in `gpu/shim/bbport_stability.cpp` and `gpu/shim/bbport_ribbons.cpp` (heap size table growth, GX resource-table reclaim wait, frame-pool borrow fix, red-zone-free effect ribbon writers, blend write-mask fix, 6 GiB direct memory) come from or follow bbhost.
 - **Community Patch Authors**: Kyo, Lance McDonald, illusion, emoose, auser1337, and contributors for the 60 FPS, camera, and engine patches.
 - **zackcage6**: testing and bug reporting.
