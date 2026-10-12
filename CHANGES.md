@@ -3,9 +3,12 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## 0.6.0 (Windows port 0.6.0, party co-op)
+
+- **Direct summon, on by default**: a ringing guest takes the host's room straight over the party link and hands it to its game as a summon message (ported from [bbhost](https://github.com/droogie/bbhost)), instead of waiting for the host's game to poll and summon a bell sign. Live: bell -> in the host's room in 3.0 s, in the host's world in 11.8 s (was ~20 s locally, 63 s in a real 2-PC session); the bell signs stay as the fallback. Launcher: Party > *Direct summon* (`BB_PARTY_DIRECT_SUMMON=0` turns it off).
+
 ## 0.5.9 (Windows port 0.5.9, party co-op)
 
-- **Direct summon (experimental, off by default)**: `BB_PARTY_DIRECT_SUMMON=1` lets a ringing guest take the host's room straight over the party link and hand it to its game as a summon message (ported from bbhost), instead of waiting for the host's game to poll and summon its bell sign. Live: bell -> session client in 3.0 s; the host's arrival is not verified yet.
 - **Menu buttons act on Cross**: every action on the port's System pages (*New / Join / Continue party game*, *Host party*, *Join party*, *Single player*, *Rejoin*, *Leave*, *Kick*, *Restart the game*, *Quit the game*) and the text rows (*Host address*, *Password*, *Party name*) are now buttons with one value: Left/Right do nothing (they used to flip a two-value row showing *Press again* / *Copied*). Actions that restart or end something ask for a second press on the help line (*Press again to confirm*). Read-only lines (*Status*, *Last event*) do nothing. The value column on the focused row still shows the game's dimmed arrows.
 - **No more vanishing rows**: the game's settings pages have six row slots; the solo title's *Party* page no longer lost *Party name* (no *Status* line there now), the role switches moved to a new *System → Party mode* page (*Host party*, *Join party*, *Single player*; also on the title in a party game), and *Party members* hides *Guests use lamps* / *Last event* as the party fills up. A unit test walks 3840 party states.
 - **Copy Internet code / Copy LAN code**: a host gets two copy buttons instead of one that alternated between the codes; the help line shows the code.

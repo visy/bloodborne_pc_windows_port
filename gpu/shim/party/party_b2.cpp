@@ -4951,7 +4951,7 @@ DirectSummon& DS() {
 }
 
 bool DirectSummonOn() {
-    static const bool on = dsummon::SwitchOn(std::getenv("BB_PARTY_DIRECT_SUMMON"), false);  // experimental: opt in with =1
+    static const bool on = dsummon::SwitchOn(std::getenv("BB_PARTY_DIRECT_SUMMON"), true);  // on by default; =0 keeps the bell signs only
     return on;
 }
 

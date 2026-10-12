@@ -19,7 +19,7 @@ from tkinter import ttk, filedialog, messagebox
 
 APP_DIR = Path(__file__).resolve().parent
 # The port's version (VERSION at the repository root; the release has no such file).
-PORT_VERSION = "0.5.9"
+PORT_VERSION = "0.6.0"
 RUN_BAT = APP_DIR / "run.bat"
 LOG_FILE = APP_DIR / "launcher.log"
 LOG_DIR = APP_DIR / "logs"
@@ -349,7 +349,7 @@ def party_env(s: dict) -> dict:
     """BB_PARTY_* environment from launcher settings; party off unsets every variable."""
     keys = ["BB_PARTY", "BB_PARTY_NAME", "BB_PARTY_PORT", "BB_PARTY_CODE", "BB_PARTY_PASSWORD",
             "BB_PARTY_UPNP", "BB_PARTY_STUN", "BB_PARTY_PUBLIC_ADDR", "BB_PARTY_MAX",
-            "BB_PARTY_SEAMLESS", "BB_PARTY_AUTO", "BB_PARTY_SAVE", "BB_PARTY_START",
+            "BB_PARTY_SEAMLESS", "BB_PARTY_DIRECT_SUMMON", "BB_PARTY_AUTO", "BB_PARTY_SAVE", "BB_PARTY_START",
             "BB_PARTY_GUEST_INSIGHT", "BB_SAVE_BACKUP_MINUTES", "BB_SAVE_BACKUP_KEEP"]
     keys += [env_name for _, env_name, _ in PARTY_SWITCHES]
     env = dict.fromkeys(keys)
@@ -374,6 +374,7 @@ def party_env(s: dict) -> dict:
     env["BB_PARTY_PUBLIC_ADDR"] = (public or None) if mode == "host" else None
     env["BB_PARTY_MAX"] = max_players if max_players in PARTY_MAX_CHOICES else "3"
     env["BB_PARTY_SEAMLESS"] = "1" if s.get("party_seamless", True) else "0"
+    env["BB_PARTY_DIRECT_SUMMON"] = "1" if s.get("party_direct_summon", True) else "0"
     env["BB_PARTY_AUTO"] = "1" if s.get("party_auto", True) else "0"
     # Always the party saves (user\savedata_party): co-op sync never touches a single-player save
     # (docs/party/ingame_flow.md); the old "shared" choice is gone.
@@ -1124,6 +1125,7 @@ class BloodborneLauncher(tk.Tk):
         self.party_max_var = tk.StringVar(value=party_max if party_max in PARTY_MAX_CHOICES else "3")
         self.party_auto = tk.BooleanVar(value=self.settings.get("party_auto", True))
         self.party_seamless = tk.BooleanVar(value=self.settings.get("party_seamless", True))
+        self.party_direct_summon = tk.BooleanVar(value=self.settings.get("party_direct_summon", True))
         # Party HUD: a game setting (bbport.ini party_hud, also in the game's menus), not a launch
         # option: read from and written to bbport.ini directly.
         self.party_hud = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_hud"))
@@ -1543,6 +1545,11 @@ class BloodborneLauncher(tk.Tk):
                                   "and guests keep full HP instead of 70%. The host's setting counts. "
                                   "Default: on (BB_PARTY_SEAMLESS).",
                                   command=self.save_settings)
+        dsummon_cb = self._check(sec, "Direct summon", self.party_direct_summon,
+                                 "The host hands its world straight to a ready companion's game, so the "
+                                 "summon starts within seconds instead of waiting for bell signs (the bell "
+                                 "signs stay as the fallback). Default: on (BB_PARTY_DIRECT_SUMMON).",
+                                 command=self.save_settings)
         hud_cb = self._check(sec, "Party HUD", self.party_hud,
                              "Your companions' names and health in the bottom left corner of the game, "
                              "greyed while they are not in your world; on the same map their distance, a "
@@ -1663,7 +1670,7 @@ class BloodborneLauncher(tk.Tk):
 
         # Fields enabled in each mode: on (host or join), host only, join only
         self.party_widgets_on = [name_lbl, self.party_name_entry, self.party_max_combo, auto_cb, seamless_cb,
-                                 hud_cb, tags_cb, save_cb,
+                                 dsummon_cb, hud_cb, tags_cb, save_cb,
                                  port_lbl, self.party_port_entry, upnp_cb, stun_lbl, self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
         self.party_widgets_host = [public_lbl, self.party_public_entry,
@@ -2532,6 +2539,7 @@ class BloodborneLauncher(tk.Tk):
             "party_max": self.party_max_var.get(),
             "party_auto": self.party_auto.get(),
             "party_seamless": self.party_seamless.get(),
+            "party_direct_summon": self.party_direct_summon.get(),
             "party_separate_save": self.party_separate_save.get(),
             "party_port": self.party_port_var.get().strip(),
             "party_upnp": self.party_upnp.get(),

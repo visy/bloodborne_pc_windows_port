@@ -514,7 +514,10 @@ Expected for the logged session: 2 failures cost ~2 x 8.5 s instead of ~60 s (su
 hosting). Local 2-instance run after the change (Continue party, title join): host `host` t 13.5 s,
 `cooperators 1` t 18.2 s (unchanged, no regression).
 
-## 2026-10-13: direct summon delivery (experimental, `BB_PARTY_DIRECT_SUMMON=1`, off by default)
+## 2026-10-13: direct summon delivery (`BB_PARTY_DIRECT_SUMMON`, on by default since 0.6.0)
+
+Retest (no menu walks, existing characters): bell 35.36 s, room joined 3.0 s after the bell, host cooperators 0 -> 1 at 47.14 s (11.8 s after the bell); the host stayed connected ~77 s and shut down cleanly (no crash or hang dump). Turned on by default.
+
 
 Ported from droogie/bbhost (`engine/summon_invite.cpp`, GPL-3.0+): `party_dsummon.{h,cpp}` (wire
 format, type-1 payload, decisions; `party-dsummon-test`) and the game side in `party_b2.cpp`.

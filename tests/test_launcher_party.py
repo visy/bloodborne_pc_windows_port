@@ -172,5 +172,20 @@ class PartyNameTagsSetting(unittest.TestCase):
             self.assertTrue(self.L.ini_flag(ini, "party_name_tags"))
 
 
+class DirectSummonSetting(unittest.TestCase):
+    """The launcher's Direct summon checkbox: BB_PARTY_DIRECT_SUMMON, on unless turned off."""
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.L = load_launcher()
+        except Exception as ex:  # no tkinter here
+            raise unittest.SkipTest(f"launcher.py not importable here: {ex}")
+
+    def test_default_on_and_off(self):
+        base = {"party_mode": "host", "party_name": "A"}
+        self.assertEqual(self.L.party_env(base)["BB_PARTY_DIRECT_SUMMON"], "1")
+        self.assertEqual(self.L.party_env(dict(base, party_direct_summon=False))["BB_PARTY_DIRECT_SUMMON"], "0")
+
+
 if __name__ == "__main__":
     unittest.main()
