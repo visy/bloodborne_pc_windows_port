@@ -3753,6 +3753,57 @@ void SpectateTick(const GameSnapshot& s, double now) {
     }
 }
 
+/// Guest, after a bell join's arrival in the host's world: once the host's chr stands in this
+/// world, a guest more than 4 m away (the summon placed it at its sign spot: an own-world gather
+/// that did not reach the host's lamp put it ~150 m off, join4) is put beside the host with the
+/// chr warp, as a B2 arrival is. BB_PARTY_JOIN_BESIDE=0: off.
+void JoinBesideTick(const GameSnapshot& s, double now) {
+    static const bool on = !(std::getenv("BB_PARTY_JOIN_BESIDE") && std::getenv("BB_PARTY_JOIN_BESIDE")[0] == '0');
+    static int prev_role = -1;
+    static double pending_since = 0;
+    const int role = Role();
+    if (role == RoleClient && prev_role != RoleClient) {
+        pending_since = now;
+    }
+    prev_role = role;
+    if (!on || pending_since <= 0 || role != RoleClient) {
+        return;
+    }
+    if (now - pending_since > 60.0) {
+        pending_since = 0;
+        return;
+    }
+    if (!s.world_up || s.loading || !s.player || g_rejoin.load() || Field<int>(Slot(kSlotFlow), 0x84, -1) != 4) {
+        return;
+    }
+    for (const TaskInfo& t : Tasks(false)) {
+        const u64 host = t.mode == 2 ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        alignas(16) float hp[4], hr[4], me[4], mr[4];
+        if (!host || !ChrTransform(host, hp, hr) || !ChrTransform(s.player, me, mr)) {
+            continue;
+        }
+        pending_since = 0;
+        const float dx = hp[0] - me[0], dz = hp[2] - me[2];
+        const float d = std::sqrt(dx * dx + dz * dz);
+        static const float min_d = [] {
+            const char* v = std::getenv("BB_PARTY_JOIN_BESIDE_MIN");  // test aid: the distance kept (m)
+            return v && v[0] ? float(std::atof(v)) : 4.0f;
+        }();
+        if (d <= min_d && std::fabs(hp[1] - me[1]) < 3.0f) {
+            Log("join: arrived %.1f m from the host; left there", double(d));
+            return;
+        }
+        float pos[4];
+        std::memcpy(pos, hp, sizeof pos);
+        BesideHost(pos, hr, g_local_slot.load());
+        pos[3] = 1.0f;
+        WarpLocal(pos, hr[1], "join arrival: beside the host");
+        Log("join: arrived %.1f m from the host (%.1f, %.1f, %.1f); put beside it (%.1f, %.1f, %.1f)", double(d),
+            double(me[0]), double(me[1]), double(me[2]), double(pos[0]), double(pos[1]), double(pos[2]));
+        return;
+    }
+}
+
 void HostRevivedTick(const GameSnapshot& s) {
     static double watch_until = 0, next_watch = 0;
     const double now = Now();
@@ -5475,6 +5526,7 @@ void Tick(const GameSnapshot& s) {
     LampSpotTick(s);
     HostDownTick(s, now);
     HostRevivedTick(s);
+    JoinBesideTick(s, Now());
     SpectatorRemoveTick(s);
     SpectateTick(s, Now());
     OwnStainLogTick(s);

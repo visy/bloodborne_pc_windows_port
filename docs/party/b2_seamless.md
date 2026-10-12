@@ -809,6 +809,15 @@ not done for 0.5.2.
   leaves and gathers, and leaves the forced placement unset (`map 0xffffffff`), so a Continue after it
   has no own save spot from the join.
 
+**2026-10-12 (6): bell join arrival beside the host.** After a bell join's arrival (role becomes
+client, flow 4, the host's chr in this world), a guest more than 4 m from the host
+(`BB_PARTY_JOIN_BESIDE_MIN`, test aid) is put beside it with the chr warp (`BesideHost`, like a B2
+arrival); `BB_PARTY_JOIN_BESIDE=0`: off. Live join7b/join8 (guest's own world in the Dream, host in
+Central Yharnam): `gather: own world m21_00_00_00, host in m24_01_00_00; to the host's lamp 2412951`,
+the bell join landed 0.5 m from the host (`join: arrived 0.5 m from the host; left there`); forced
+with min 0.1 m (join8): `put beside it (-193.0, -28.6, 68.1)`; screenshots: side by side on both
+screens, the host sees the guest's body and plate. The 150 m case of join4 did not reproduce.
+
 ## 7. Risks / open items
 
 * (Closed in 6.7 / 6.8) K10 / boss clear with a real kill; wipes (guest and host dead) and falls
