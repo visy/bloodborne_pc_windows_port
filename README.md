@@ -184,6 +184,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | Mods, XML patches, DLC | [docs/MODS.md](docs/MODS.md) |
 | How the port works, vs. shadPS4, upstream merges | [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) |
 | Upscalers | [docs/upscaler.md](docs/upscaler.md) |
+| Co-op and game patches other forks can reuse | [docs/PATCHES_FOR_FORKS.md](docs/PATCHES_FOR_FORKS.md) |
 | Changes | [CHANGES.md](CHANGES.md), [docs/](docs) |
 
 ## Repository layout
