@@ -588,9 +588,9 @@ std::uint64_t MembersKey(party::PartyLink* link) {
     return h;
 }
 
-// BB_PARTY_PHANTOM_PROBE=host9350 (live G2 check, host): 15 s after a cooperator is in the world,
+// BB_PARTY_PHANTOM_PROBE=host9350 (live G2 check, host): 6 s after a cooperator is in the world,
 // feed the observer what the host's EMEVD runs for the clinic's story Insight (12410995 -> 9350(1)),
-// then 5 s later a boss kill (12411800: 2003[12], 9350(3)). A guest must get +1 and then +2 (plus
+// then 3 s later a boss kill (12411800: 2003[12], 9350(3)). A guest must get +1 and then +2 (plus
 // the native +1 on a real kill); the old 30 s one-event limit dropped the second.
 void Host9350ProbeTick(double now) {
     static double coop_at = -1.0;
@@ -602,7 +602,7 @@ void Host9350ProbeTick(double now) {
         const GameSnapshot g = ReadGameState(true);
         if (g.cooperators > 0 && g.world_up && !g.loading) {
             coop_at = now;
-            Log("probe host9350: a cooperator is in the world; synthetic Insight starts in 15 s");
+            Log("probe host9350: a cooperator is in the world; synthetic Insight starts in 6 s");
         }
         return;
     }
@@ -613,11 +613,11 @@ void Host9350ProbeTick(double now) {
         std::memcpy(args + 8, &n, 4);
         PhantomEmevdInstruction(event, 2000, 0, args, sizeof(args));
     };
-    if (step == 0 && now - coop_at >= 15.0) {
+    if (step == 0 && now - coop_at >= 6.0) {
         step = 1;
         Log("probe host9350: story Insight 12410995 -> 9350(1)");
         start9350(12410995, 1);
-    } else if (step == 1 && now - coop_at >= 20.0) {
+    } else if (step == 1 && now - coop_at >= 9.0) {
         step = 2;
         Log("probe host9350: boss kill 12411800 -> 2003[12], 9350(3)");
         PhantomEmevdInstruction(12411800, 2003, 12, nullptr, 0);

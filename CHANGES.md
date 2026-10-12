@@ -3,6 +3,10 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## 0.6.1 (unreleased)
+
+- **Guests keep all the Insight the host's world gives**: a boss's first-encounter Insight and the kill's Insight a few seconds later both reach every guest present (the second one used to be dropped by a one-event-per-30-s limit). The anti-flood cap is now 20 Insight per minute, 10 per event. Live: story +1, then a boss kill -> guest Insight 6 -> 9.
+
 ## 0.6.0 (Windows port 0.6.0, party co-op)
 
 - **Direct summon, on by default**: a ringing guest takes the host's room straight over the party link and hands it to its game as a summon message (ported from [bbhost](https://github.com/droogie/bbhost)), instead of waiting for the host's game to poll and summon a bell sign. Live: bell -> in the host's room in 3.0 s, in the host's world in 11.8 s (was ~20 s locally, 63 s in a real 2-PC session); the bell signs stay as the fallback. Launcher: Party > *Direct summon* (`BB_PARTY_DIRECT_SUMMON=0` turns it off).

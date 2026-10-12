@@ -186,6 +186,11 @@ plays the remo there as its own event would and sends it up.
   encounter, story moments such as entering a clinic) goes to every guest present too (EVENT
   `phantom {insight, n, boss:false}`; the guest applies all N, no native +1). Older hosts omit
   `boss` (= a boss kill).
+* Guest cap (0.6.1): `InsightBudget`, a rolling 60 s budget of 20 Insight, 10 per event (was one
+  event per 30 s, which dropped a boss kill's Insight right after its first-encounter +1). Live check:
+  `BB_PARTY_PHANTOM_PROBE=host9350` on the host feeds its observer a story 9350(1) 6 s after a
+  cooperator is in, then a boss kill 9350(3) 3 s later (guest log: `host encounter / story Insight`,
+  `host boss kill`, `Party: Insight 6 -> 7 -> 8 -> 9`).
 * Insight items: white-enabled (`phantom_limits.md` 1.1); they act on the guest's own record.
 * Bath Messengers (t210691/694/695/699 shops, t210698 Insight shop, t210697 dress-up): open to
   guests (guest_services.md 2.2), purchases on the guest's own echoes / Insight and own stock flags
