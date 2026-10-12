@@ -112,6 +112,7 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_GUEST_OWN_LAMP` | `0`: a guest that dies outside a boss fight respawns at the host's last lamp instead of its own last lamp (split travel `RespawnAloneAtOwnLamp`) | on | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_GUEST_REVIVE` | `0`: a guest whose respawn lamp is in the loaded map respawns with a load as before instead of being revived in place | on | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_B2_ARRIVAL_WARP` | `0`: a guest's B2 load uses the exact transform beside the host again (that transform then became its own save's spawn spot: the Continue drift) instead of the host's own travel plus a chr warp after arrival | on | `gpu/shim/party/party_b2.cpp` |
+| `BB_PARTY_SPECTATE` | `0`: no spectating in a boss-fight limbo (the dead player's camera stays on its body) | on | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_POS_SCAN` | `1`: diagnostics: logs where the local player's position is kept in GSM / GameDataMan / PlayerGameData (`pos scan:` lines, every 10 s) | off | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_GUEST_PIN_SAVE_POS` | `1`: keeps a summoned guest's own save spot records (GSM +0x14A0 / +0x15B0 / +0x15F0, forced placement) at its pre-summon spot (not a fix yet, b2_seamless.md 6.13) | off | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_GUEST_DEATH_ALONE` | `1`: a guest whose own last lamp is in another map is revived in place, then travels alone to it (not verified live) | off | `gpu/shim/party/party_b2.cpp` |

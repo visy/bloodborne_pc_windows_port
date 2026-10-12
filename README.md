@@ -132,7 +132,7 @@ run from two new characters to the end credits passed, and a three-player travel
 |---|---|
 | A guest | Gets up again at its own lamp with no loading screen when that lamp is in the loaded area (else at the host's lamp); its Blood Echoes wait in a bloodstain at that spot in its own world (pick them up there); the others keep playing |
 | The host | Gets up again at its own lamp with no loading screen for anyone; its echoes stay in a bloodstain where it fell. If that lamp is in another area, only the host loads; the guests stay where they are |
-| Anyone, during a boss fight | Stays down until the boss dies (then respawns at the host's lamp), everyone dies, or someone travels |
+| Anyone, during a boss fight | Watches a living party member fight until the boss dies (then respawns at the host's lamp), everyone dies, or someone travels |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |
 
 ### Coming next
@@ -140,7 +140,6 @@ run from two new characters to the end credits passed, and a three-player travel
 | Change | Status |
 |---|---|
 | A guest respawns at its own last lamp (today: the host's lamp) | In progress |
-| Dying in a boss fight: watch a living party member until the fight ends | In progress |
 | Guests open doors, pull levers, talk to NPCs; NPC choices shared | In progress |
 | Item pickups and enemy drops per player: everyone gets their own | In progress |
 | *Continue party game* straight into the host's world (one loading screen) | In testing (`BB_PARTY_TITLE_JOIN=1`) |

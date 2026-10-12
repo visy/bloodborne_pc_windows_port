@@ -769,6 +769,26 @@ not done for 0.5.2.
   revived beside the host, no load`; screenshots: both hunters side by side on both screens; the
   following Continue: `map - -> m21_00_00_00` (the guest's pre-summon Dream).
 
+**2026-10-12 (4): C5 spectating; C7 note.**
+* Spectate in a boss-fight limbo (`BB_PARTY_SPECTATE`, default on): the dead player's camera follows
+  its own chr, so that (dissolved, draw 0) chr is carried 3 m behind a living party member with the
+  chr warp every 0.2 s; peers get `{"op":"spectating"}` and disable the dead copy (Lua SetDisable
+  0x18C6390(chr, 1): no body, no name plate - removing it instead let its task build it again and its
+  plate followed the spectator, spec3). The revive / respawn ends it (the copy is replaced as usual;
+  `member_revived` now rewinds the task also when the copy is gone).
+  Live spec3/spec4 (Cleric Beast): host died in the fight -> `spectating a living party member`; the
+  host's screen shows the guest 3 m ahead fighting the boss (boss bar up); the guest's screen shows
+  no host body or plate; boss killed -> `the boss fight is over ... respawn at the lamp here`, host
+  revived at lamp 2412952, `spectating ended`.
+  Known: the spectator chr moves through the arena (region events see it; nothing seen to trigger).
+* C7 (c7a, inconclusive): the host's lamp warp while the boss fight is up became split travel's
+  in-world party move (no load): the guest was moved beside the host, but an in-world move does not
+  reset the boss fight or the enemies, which design decision 4 wants for a rest. A rest during a boss
+  fight should be a real load (or reset the fight); that is split travel's party-move rule.
+* Join oddity seen while setting up (spec1/spec2, not hostdeath code): a guest whose own world is the
+  Dream joining a host in Central Yharnam landed in m21_00 in the host's world - the gather does not
+  run while the guest does not know the host's last lamp yet (GatherLampFor(GuestDeathRedirectLamp())).
+
 ## 7. Risks / open items
 
 * (Closed in 6.7 / 6.8) K10 / boss clear with a real kill; wipes (guest and host dead) and falls
