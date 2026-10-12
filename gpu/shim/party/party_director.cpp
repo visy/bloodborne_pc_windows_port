@@ -1946,6 +1946,10 @@ void PartyDirector::ConfigureFromEnv() {
         st.continue_settle = 4.0;
         st.continue_every = 2.5;
     }
+    // Tests: hold Continue this long on the title (a host that comes up late).
+    if (const char* d = std::getenv("BB_PARTY_CONTINUE_SETTLE"); d && d[0] && std::atof(d) >= 0.0) {
+        st.continue_settle = std::atof(d);
+    }
     if (const char* d = std::getenv("BB_PARTY_RING_DELAY"); d && d[0] && std::atof(d) >= 0.0) {
         st.ring_delay = std::atof(d);
     }
