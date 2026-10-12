@@ -615,8 +615,14 @@ GraphicsPipeline::GraphicsPipeline(
         throw Serialization::CorruptData{"graphics pipeline rejected by the driver: " +
                                          vk::to_string(result)};
     }
-    ASSERT_MSG(result == vk::Result::eSuccess, "Failed to create graphics pipeline: {}",
-               vk::to_string(result));
+    // bbport: a driver that cannot build one pipeline (ErrorUnknown on some AMD drivers) stopped
+    // the game here; the pipeline stays empty instead and the draws that use it are skipped.
+    // (From Supermedo/bloodborne_pc 188c1f6.)
+    if (result != vk::Result::eSuccess) {
+        LOG_ERROR(Render_Vulkan, "Failed to create graphics pipeline {}: {}; its draws are skipped",
+                  debug_str, vk::to_string(result));
+        return;
+    }
     pipeline = std::move(pipe);
     handle.store(*pipeline, std::memory_order_release);
     SetObjectName(device, *pipeline, "Graphics Pipeline {}", debug_str);

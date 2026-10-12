@@ -115,8 +115,12 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
         throw Serialization::CorruptData{"cached compute pipeline rejected by the driver: " +
                                          vk::to_string(pipeline_result)};
     }
-    ASSERT_MSG(pipeline_result == vk::Result::eSuccess, "Failed to create compute pipeline: {}",
-               vk::to_string(pipeline_result));
+    // bbport: as for graphics pipelines, a driver failure skips its dispatches (188c1f6).
+    if (pipeline_result != vk::Result::eSuccess) {
+        LOG_ERROR(Render_Vulkan, "Failed to create compute pipeline {}: {}; its dispatches are skipped",
+                  debug_str, vk::to_string(pipeline_result));
+        return;
+    }
     pipeline = std::move(pipe);
     handle.store(*pipeline, std::memory_order_release);
     SetObjectName(device, *pipeline, "Compute Pipeline {}", debug_str);
