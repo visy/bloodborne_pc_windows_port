@@ -131,7 +131,7 @@ single-player save is never touched. Settings: *System → Party* pages in the g
   loot (for each player) and the lift work for the whole party. Any player can perform the ritual:
   the host's altar then offers *Enter the party's dungeon* (no glyph typing), and chalices are
   shared between all players.
-- **Crashes recover.** A crashed game restarts and rejoins by itself.
+- **Crashes recover.** A crashed game restarts and rejoins by itself (back in the host's world about 12 s after the restart).
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
 - **Death has a cost.** Each death stacks "rot" (−10% max HP or stamina, picked at random, up to
   5); using a lamp clears it.

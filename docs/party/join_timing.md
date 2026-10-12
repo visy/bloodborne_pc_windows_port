@@ -234,11 +234,44 @@ the hold is ~22 s after the crash (boot + own load + a normal join).
   the TCP reset (removes its frozen character at once); the host's game froze ~20 s later in both
   runs.
 
+### 2026-10-12: the host releases the crashed guest's game connection (H2)
+
+The wait was the host's game: after the crash it kept sending to the dead guest over its
+transport connection until the connection's own idle check (~8 s to `cooperators 1 -> 0`, the
+session left ~17 s after the crash) and the 26 s sign hold kept the restarted guest at its title
+(restart -> Matching2 JoinRoom **20.5 s**).
+
+Static RE (Ghidra) of the NexusRevolution transport (0x138 bytes, made by FUN_027157e0; vtable
+0x52c51e0 udpp2p, 0x52c5160 udp): a pre-allocated connection pool at +0xd0 (count +0x6c, 0xc0
+bytes each, set up by FUN_02716010), a hash of in-use connections at +0x100 (buckets +0x108), the
+game socket at +0x120. vtable +0x20 (FUN_02716930) takes a connection for an address; vtable +0x28
+(FUN_02716a40) **releases** one: unhashes it, resets it (FUN_0271a280) and calls the owner's close
+callback (conn +0x40 with +0x50). A connection is in use while byte +0x2c is set; its key (live
+dump): +0x20 IPv4 address and +0x28 port (host order), +0x2a vport.
+
+Fix (`party_nr_drop.h`, `coop::b2::NrDropSilentPeers`): when a member's party link ends with
+*connection reset* (a crash), 1.5 s later the host, on the game's own network thread (the shim's
+`sceNetEpollWait` / P2P receive; never from a send, which runs inside the transport's update),
+releases every in-use connection whose source has been silent since then (the other members
+keep sending; the restarted game needs >3 s to send again), and ends the sign hold 1 s later.
+`BB_PARTY_NR_DROP=0` turns it off.
+
+Live, crash run each (loopback, guest killed just after it reached the host's world,
+`join_timeline.py --from '1:Launching Bloodborne:2'`):
+
+| | before | after |
+|---|---|---|
+| crash -> host's game drops the guest (`cooperators 1 -> 0`) | 8.0 s | 3.5 s (released 2.0 s after the crash) |
+| guest restart -> title join (Matching2 JoinRoom) | 22.6 s | 2.8 s |
+| **guest restart -> host cooperators 1** | **28.4 s** | **12.4 s** (crash -> cooperators ~16.5 s) |
+
+What is left is the guest's own boot (~2 s), the session join (~1 s) and the ~7 s from its
+Continue to the host-world loading screen, then the load.
+
 ## Open
 
-- Finding where the NexusRevolution transport keeps its idle timeout per connection (the config
-  built at 0xcdb250 is handed to the transport factory `param_3->vtable[0x10]`) would let the host
-  drop one dead connection on a crash (RST) and cut ~4-8 s from C6.
+- Done 2026-10-12 another way (above): the host releases the dead connection instead of
+  shortening its idle timeout.
 - A lower transport idle timeout (0xcdb309 25000 / 0xcdb314 20000 ms) would end the crash hold
   sooner, and the host would notice a crashed guest sooner too (today ~16 s). Not done: it is also
   the tolerance for real network hiccups.
