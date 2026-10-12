@@ -541,12 +541,19 @@ static void test_plain_address_password() {
 static void test_four_players() {
     Recorder hr, ar, br, cr;
     LinkConfig hc = base_cfg("Host", "");
-    hc.max_players = 9;  // clamped to kMaxPartyPlayers (A7: host + 3)
+    hc.max_players = 4;
     hc.rules = "max 4 players, 4p:v1:H1,H2,H3,H4,E6";
     PartyLink host(hc, recorder_callbacks(hr, "host"));
     std::string err;
     CHECK(host.start_host(&err));
-    CHECK(host.max_players() == kMaxPartyPlayers && kMaxPartyPlayers == 4);
+    CHECK(host.max_players() == 4 && kMaxPartyPlayers == 5);
+    {
+        LinkConfig big = base_cfg("Big", "");
+        big.max_players = 9;  // clamped to kMaxPartyPlayers
+        PartyLink b(big, LinkCallbacks{});
+        std::string e2;
+        CHECK(b.start_host(&e2) && b.max_players() == kMaxPartyPlayers);
+    }
     const std::uint16_t port = host.bound_port();
     auto guest_cfg = [&](const char* name) {
         LinkConfig c = base_cfg(name, "");
@@ -599,7 +606,7 @@ static void test_vitals() {
     CHECK(v.flags == (kVitalsValid | kVitalsAlive) && v.max_hp == kMaxVitalsHp && v.hp == kMaxVitalsHp);
     CHECK(v.max_stamina == kMaxVitalsStamina && v.stamina == kMaxVitalsStamina && v.pos[0] == 0.0f);
     MemberVitals w;
-    w.slot = 4;
+    w.slot = kMaxVitals;
     CHECK(!sanitize_vitals(w));
     w.slot = 1;
     w.flags = kVitalsValid | kVitalsAlive | kVitalsHasPos;

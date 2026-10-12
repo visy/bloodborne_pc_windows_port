@@ -54,7 +54,8 @@ static void test_config_and_tag() {
     set_env("BB_PARTY_MAX", "3");
     CHECK(FourpRulesTag() == "4p:v2:H1,H5,H2,H3,H4,E6");
     set_env("BB_PARTY_MAX", "9");
-    CHECK(ConfigFromEnv().local_max == 4);
+    CHECK(ConfigFromEnv().local_max == 5);
+    CHECK(FourpRulesTag() == "4p:v2:H1,H5,H2,H3,H4,E6,H6");  // 5 players: H6 on every peer
     set_env("BB_PARTY_MAX", "1");
     CHECK(ConfigFromEnv().local_max == 2);
 
@@ -80,7 +81,7 @@ static void test_effective_max() {
     CHECK(EffectiveMaxPlayers(3, true, true, 4) == 4);    // guest takes the host's
     CHECK(EffectiveMaxPlayers(4, true, true, 2) == 2);
     CHECK(EffectiveMaxPlayers(4, true, true, 0) == 4);    // no WELCOME value
-    CHECK(EffectiveMaxPlayers(4, true, true, 7) == 4);    // clamped
+    CHECK(EffectiveMaxPlayers(4, true, true, 7) == 5);    // clamped (kMaxPlayers)
 }
 
 static void test_h1() {
@@ -150,6 +151,7 @@ static void test_free_spot() {
 static void test_selector_max() {
     CHECK(SelectorMaxCoop(2) == 3 && SelectorMaxCoop(3) == 3);  // vanilla
     CHECK(SelectorMaxCoop(4) == 4);  // 3 cooperators + 1 pending pass the SOS filter
+    CHECK(SelectorMaxCoop(5) == 5);  // 4 cooperators (+ H6 for the filter's guest literal)
     // the filter: refuse when max <= pending + cooperators
     const int max = SelectorMaxCoop(4), pending = 1, coop = 2;
     CHECK(!(max <= pending + coop));
@@ -174,7 +176,7 @@ static void test_spots() {
     float rx = 0, fz = 0;
     SpotOffset(99, d, &rx, &fz);  // out of range: slot 3's spot
     CHECK(rx == 2 * d && fz == 0);
-    CHECK(kMaxPlayers == 4);
+    CHECK(kMaxPlayers == 5);
 }
 
 int main() {

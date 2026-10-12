@@ -39,8 +39,8 @@ namespace coop::fourp {
 
 // ---- Pure rules (no game; tests/test_party_fourp.cpp) ----
 
-/// Players in a party, the host included (= party::kMaxPartyPlayers): host + 3 (A7).
-constexpr int kMaxPlayers = 4;
+/// Players in a party, the host included (= party::kMaxPartyPlayers): host + 4 (A7, 5 for tests).
+constexpr int kMaxPlayers = 5;
 
 struct Config {
     bool on = false;        // BB_PARTY set and BB_PARTY_FOURP != 0

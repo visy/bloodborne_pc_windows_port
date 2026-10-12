@@ -69,6 +69,9 @@ std::string RulesTag(const Config& c) {
     if (c.npc_signs) {
         t += ",E6";
     }
+    if (c.local_max >= 5) {
+        t += ",H6";  // the SOS filter's guest literal 4 -> 5 (a 4th cooperator)
+    }
     return t;
 }
 
@@ -221,7 +224,7 @@ constexpr u64 kSessionMan = 0x5540290;
 Config g_cfg;
 std::atomic<int> g_max{3};
 bool g_init = false;
-bool g_h1 = false, g_h2 = false, g_h3 = false, g_h4 = false, g_e6 = false, g_p5 = false;
+bool g_h1 = false, g_h2 = false, g_h3 = false, g_h4 = false, g_e6 = false, g_p5 = false, g_h6 = false;
 
 std::atomic<u64> g_h5_writes{0};
 std::atomic<u64> g_h1_lifts{0}, g_h1_calls{0}, g_h2_clamps{0}, g_h4_upgrades{0}, g_e6_rewrites{0},
@@ -614,14 +617,20 @@ void FourpInit() {
             SetEmevdRewriter(nullptr);
         }
     }
+    // H6 (5 players: a 4th cooperator): the SOS filter 0x1874710 refuses a request once
+    // cooperators + invaders + others + outgoing requests (slots +8/+0xc/+0x10, sel+0x1c8) reach 4:
+    // `cmp esi, 4` at 0x1874bbe -> 5. Only with BB_PARTY_MAX >= 5 (every peer: the rules tag says H6).
+    if (g_cfg.local_max >= 5) {
+        g_h6 = PatchBytes(0x1874bbe, {0x83, 0xfe, 0x04}, {0x83, 0xfe, 0x05}, "4p H6 SOS filter guests < 5 (5 players)");
+    }
     if (g_cfg.recruit && g_cfg.local_max >= 4) {
         g_p5 = PatchBytes(kRecruitNum, {0xb9, 0x02, 0x00, 0x00, 0x00}, {0xb9, 0x03, 0x00, 0x00, 0x00},
                           "4p P5 RecruitNum 2 -> 3");
     }
-    Log("rules %s: H1 %s, H2 %s, H3 %s, H4 %s, E6 %s, P5 %s; max players %d (local BB_PARTY_MAX; a guest takes "
-        "the host's)",
+    Log("rules %s: H1 %s, H2 %s, H3 %s, H4 %s, E6 %s, P5 %s, H6 %s; max players %d (local BB_PARTY_MAX; a guest "
+        "takes the host's)",
         RulesTag(g_cfg).c_str(), g_h1 ? "on" : "OFF", g_h2 ? "on" : "off", g_h3 ? "on" : "off",
-        g_h4 ? "on" : "off", g_e6 ? "on" : "off", g_p5 ? "on" : "off", g_cfg.local_max);
+        g_h4 ? "on" : "off", g_e6 ? "on" : "off", g_p5 ? "on" : "off", g_h6 ? "on" : "off", g_cfg.local_max);
     if (!g_h1 && g_cfg.local_max >= 4) {
         Log("H1 not installed: the game stays at 2 cooperators");
     }

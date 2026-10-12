@@ -49,11 +49,12 @@ namespace party {
 
 constexpr std::uint16_t kLinkProtocolVersion = 2;  // 2: HELLO carries the patch / mod sets
 constexpr int kBroadcast = -1;  // send_* target: every member (host side)
-// Players in a party, the host included (BB_PARTY_MAX is clamped to 2..kMaxPartyPlayers): host +
-// 3 guests (the user's decision, 2026-10-11; ERSC allows 6). Every party-side table (link slots,
-// VITALS, HUD rows, the Party members page) follows this constant; raising it also needs the engine
-// work of docs/party/four_players.md ("A 4th cooperator").
-constexpr int kMaxPartyPlayers = 4;
+// Players a party may hold, the host included (BB_PARTY_MAX, default 3, is clamped to
+// 2..kMaxPartyPlayers): host + 4 guests (user, 2026-10-12: 5-player tests; 4 is the verified size,
+// ERSC allows 6). Every party-side table (link slots, VITALS, HUD rows, the Party members page)
+// follows this constant. 5 = every engine table full (party_fourp H6; four_players.md); 6 needs
+// the engine's fixed tables relocated.
+constexpr int kMaxPartyPlayers = 5;
 
 // Peer input limits (bbport security pass). Every byte a peer sends is untrusted: a frame is
 // refused (connection dropped) past these, and the host meters each member.
@@ -94,7 +95,7 @@ struct RosterEntry {
 // Party HUD (party_hud.h): one member's health and whereabouts, as its own game reads them.
 // Wire (VITALS, fire-and-forget, ~4 Hz): guest -> host its own entry; host -> every guest all
 // fresh entries (the host's and every member's). Peers that do not know VITALS ignore it.
-constexpr int kMaxVitals = kMaxPartyPlayers;  // party slots 0..3
+constexpr int kMaxVitals = kMaxPartyPlayers;  // party slots 0..4
 constexpr std::uint32_t kMaxVitalsHp = 99999;  // HP / max HP above this: refused (clamped)
 constexpr std::uint32_t kMaxVitalsStamina = 9999;
 constexpr float kMaxVitalsCoord = 100000.0f;  // |x|, |y|, |z| past this: no position
@@ -174,7 +175,7 @@ struct LinkConfig {
     std::array<std::uint8_t, 8> secret{};  // the party code's secret (zeros for plain host:port)
     std::uint16_t port = 9307;          // host: listen port (0 = ephemeral, see bound_port())
     std::string bind_addr = "0.0.0.0";  // host
-    int max_players = 3;                // 2..kMaxPartyPlayers (4) including the host (BB_PARTY_MAX)
+    int max_players = 3;                // 2..kMaxPartyPlayers (5) including the host (BB_PARTY_MAX)
     // Timing (tests shrink these).
     int ping_interval_ms = 1000;
     int lost_timeout_ms = 10000;
