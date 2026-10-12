@@ -351,6 +351,10 @@ player, and say who was the host.
 
 ## Known limitations
 
+- **2-PC LAN (first real session, 0.5.7):** worked with the host's STUN server `off` and UPnP off.
+  The summon took ~63 s from the host opening the party to the cooperator arriving (~20-30 s on
+  one PC). Open item.
+
 - **Not tested between two PCs.** Everything so far ran on one PC with several game copies; real
   Internet connections, routers and firewalls have not been tried.
 - A full campaign has not been played through as a party. Several parts (guest respawn, open
