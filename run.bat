@@ -79,6 +79,9 @@ if "%BB_FRAME_LOG%"=="" set "BB_FRAME_LOG=%BB_DATA_DIR%\logs\%stamp%.frames.csv"
 if "%BB_READBACK_LOG%"=="" set "BB_READBACK_LOG=%BB_DATA_DIR%\logs\%stamp%.readbacks.csv"
 echo Frame statistics: %BB_FRAME_LOG%
 :save_log_done
+REM An in-game restart or a crash can leave the old bbport.exe alive with gigabytes of RAM and
+REM VRAM. Give it a few seconds to exit, then terminate it (the guard never fails the launch).
+if exist scripts\bb_guard.py "%PYTHON%" scripts\bb_guard.py --exe-dir out --wait 10
 
 REM Game directory containing eboot.bin
 set "EXTRA_ARGS="
