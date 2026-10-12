@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <time.h>
 #include <SDL3/SDL.h>
 #include "gpu/bbgpu.h"
@@ -62,9 +63,12 @@ static uint64_t now_ns(void) { return host_monotonic_ns(); }
 static void sleep_until(uint64_t deadline) { host_sleep_until_ns(deadline); }
 
 static inline float soft_clip(float x) {
-    if (x > 1.0f) return 1.0f - 1.0f / (1.0f + (x - 1.0f));
-    if (x < -1.0f) return -1.0f + 1.0f / (1.0f + (-x - 1.0f));
-    return x;
+    /* Linear to 0.75, then a tanh knee that approaches (never reaches) full scale: continuous,
+     * monotonic, |out| < 1, so the boosted loud scenes cannot clip. */
+    const float knee = 0.75f, a = x < 0.0f ? -x : x;
+    if (a <= knee) return x;
+    const float o = knee + (1.0f - knee) * tanhf((a - knee) / (1.0f - knee));
+    return x < 0.0f ? -o : o;
 }
 
 static int sdl_audio(void) {
@@ -198,7 +202,7 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
         /* Apply per-channel volume, channel remap, and soft-knee saturation to prevent harsh clipping */
         unsigned char converted[2048*8*4];
         static const int remap[8]={0,1,2,3,6,7,4,5};
-        float master_gain=(p->channels==8) ? 0.60f : 1.0f;
+        float master_gain=((p->channels==8) ? 0.60f : 1.0f) * bbgpu_audio_boost();
         for (size_t f=0;f<(size_t)p->frames;++f) for (int c=0;c<p->channels;++c) {
             int target=p->channels==8 && !p->std_layout ? remap[c] : c;
             size_t from=f*(size_t)p->channels+(size_t)c, to=f*(size_t)p->channels+(size_t)target;
