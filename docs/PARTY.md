@@ -323,8 +323,12 @@ connecting has been checked (on one PC); a third helper actually summoned into a
 
 The launcher log (and `launcher.log`) shows the game's `Party:` lines. *System → Party* in the
 game's menu (and the overlay's Party tab) shows the state and the last error. When the host
-refuses a guest, the game may still show its own *Failed to acquire Bloodborne server
-information* box; the party notice and *System → Party* say why.
+refuses a guest (wrong or missing password, old code, full party, different version), the guest
+gets one message box saying why and what to do, and its game stays online alone in its own world
+(no *Failed to acquire Bloodborne server information* box). Fix the cause, then *System → Party →
+Rejoin the host*: it sends the password currently set in *System → Party → Password* (when you
+changed it there; otherwise the one you started with). A changed party code or address still
+needs *Join party* (restart).
 
 | Message / symptom | Cause | Fix |
 |---|---|---|
