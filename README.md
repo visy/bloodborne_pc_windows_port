@@ -72,7 +72,8 @@ run from two new characters to the end credits passed, and a three-player travel
 - **Start from the title screen:** *Party* → *New / Join / Continue party game*. The address and
   password are remembered, so later sessions are one press.
 - **Fast join.** The bell, beckoner and summon-sign waits are gone: a guest is in the host's world
-  within seconds.
+  within seconds. *Continue party game* takes a guest straight into the host's world with a single
+  loading screen.
 - **Leave any time.** *System → Party → Leave the party* takes a guest home at once; the host's
   *Leave* ends the party and every guest goes home. *Join party* brings a guest back.
 - **The session never ends by itself.** Boss kills, area clears, deaths and travel don't send

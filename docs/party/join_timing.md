@@ -365,3 +365,28 @@ lamp only exists after the boss is dead. No bug.
   never re-joins (the run the user saw). Next: the guest's 0xA / 0xC exchange after a title join
   (0x178D9C0 sends 0xA to the flow's pending members at the load end) and a home load when a title
   join's session ends. Until then `BB_PARTY_TITLE_JOIN` stays off.
+
+## 2026-10-12 (flowlive, later): title join finished, on by default
+
+* **The host's chr of the guest** (task stuck at FirstSyncCompleteWait): the guest sends its
+  first-sync packet 0xC (and the 0x168 record) only with its own GameData +0x10 set; a summon
+  load leaves +0x10 2, +0xA4 1 (white phantom), +0x5D8 7 (session type) (read live from a vanilla
+  join). The title-joined guest writes them at its arrival; the host asks for its data (packet 0xA
+  to the member, 0x178D9C0's packet) while the task waits. Result: host `cooperators 0 -> 1`,
+  "Co-operator" / "Beckoner" tags, "Entered the world of ..." banner.
+* K5 (Lua OnMatchingCheck: a member's chr missing) left the session 0.1 s after the arrival in one
+  run: quiet for 15 s after a title join's arrival.
+* **Home**: the guest's own world was never loaded (no own-world snapshot); the game's return load
+  fell back to the title ("Failed to acquire Bloodborne server information"). A title-joined
+  guest's send-home (OnLeave_Limit 0x138A51C, its Leave or a lost session) now leaves the session
+  and takes it home with a lamp warp to its own last lamp (GSM +0x1528, with GSM +0x1592 = 1 and
+  the same-map no-load shortcut off): an ordinary own-world load (`apply gate open: own world`).
+  The return spot GSM +0x14A0 / +0x14B0 / +0x14C0 is that lamp too.
+* Handshake: the host answers `title_ack` at once; a guest without it within 6 s (an older host,
+  or `BB_PARTY_TITLE_JOIN=0` there) presses Continue the old way.
+* Live (2 clients, mp2, 2026-10-12, `BB_PARTY_TITLE_JOIN=1` + guest Leave 13 s after its world
+  came up): 4 runs in a row: title -> client 0.9 s, host reply -> in the host's world 7.6-7.8 s
+  (one loading screen), host `cooperators 0 -> 1`, both screenshots show the two hunters side by
+  side with tags, Leave -> one load into the guest's own world (Iosefka's Clinic lamp). The host
+  had only its own first load. The default-on build (switch unset, with the ack) is not run live
+  yet (the game queue was not available to this agent at the end).

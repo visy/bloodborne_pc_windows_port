@@ -69,6 +69,7 @@ def main():
     ap.add_argument("--until", action="append", default=[])
     ap.add_argument("--env", action="append", default=[], help="KEY=VALUE for both instances")
     ap.add_argument("--host-env", action="append", default=[], help="KEY=VALUE for the host only")
+    ap.add_argument("--guest-env", action="append", default=[], help="KEY=VALUE for the guest (inst1) only")
     ap.add_argument("--count", type=int, default=2, help="continue: 3 = a second guest (a copy of inst1's party "
                     "character and party.json under another name)")
     ap.add_argument("--host-delay", type=int, default=8, help="seconds in the joined world before --host-world")
@@ -140,7 +141,7 @@ def main():
               # Title join (BB_PARTY_TITLE_JOIN): the title, the load, the arrival.
               "--watch", r"title join: host snapshot applied=tj_ready@0.3",
               "--watch", r"title join: loading=tj_load@1",
-              "--watch", r"title join: in the world=tj_world@1,5,12",
+              "--watch", r"title join: in the world=tj_world@1,4,8",
               "--watch", r"title join: FAILED=tj_fail@1,6"]
     shot = subprocess.Popen([sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out", str(shots),
                              "--seconds", "7200"] + watch)
@@ -166,6 +167,8 @@ def main():
         cmd += ["--env", e]
     for e in a.host_env:
         cmd += ["--ienv", "0:" + e]
+    for e in a.guest_env:
+        cmd += ["--ienv", "1:" + e]
     # The summon, and a little of the log after it (the screenshots at +3 s).
     for u in a.until or [r"Party: session trying-to-join .* -> client \(6[\s\S]{1500}"]:
         cmd += ["--until", u]
