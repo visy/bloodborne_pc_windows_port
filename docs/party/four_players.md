@@ -321,7 +321,15 @@ so the bell path's dropped 3rd-cooperator invite above no longer decides a 4-pla
   (`--headless 3 --join-sequential --stagger 10`, run 5): joins at 24.8 / 48.2 / 84.7 s, each on the
   first try; `presence count` per peer: host 4, Hunter1 2, Hunter2 3, Hunter3 4 - every guest misses
   exactly the guests that came after it. Host screenshot: all four together, three plates and HUD
-  rows at 0.9-1.0 m (Hunter3's plate drawn higher than the others; Hunter3 stands behind Hunter1).
+  rows at 0.9-1.0 m (Hunter3's plate drawn higher than the others: the user saw the last joiner
+  spawn on top of Hunter1 - its spot (2x right, 0.5 m beyond slot 1's) was 0.36 m from Hunter1, who
+  had moved).
+- **Placement fix (a20af90):** `BesideHost` takes a free spot (`coop::fourp::PickFreeSpot`: the own
+  spot, else right / left at 1-3 spacings; free = 0.8 m from every other member's fresh VITALS
+  position; unit-tested). Run 6 (same setup): joins 19.3 / 42.6 / 79.2 s, the host's screenshot shows
+  the four in a clean line, none on another - but the free-spot choice did not trigger there (a
+  title joiner at its title may not have the members' VITALS yet), so the fix itself is not proven
+  live. The late-guest visibility bug reproduced again (presence count 4 / 2 / 3 / 4).
 
 ### Host does not draw a guest / its plate floats away (user, 2026-10-11)
 
