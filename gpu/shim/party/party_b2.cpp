@@ -4951,7 +4951,7 @@ DirectSummon& DS() {
 }
 
 bool DirectSummonOn() {
-    static const bool on = dsummon::SwitchOn(std::getenv("BB_PARTY_DIRECT_SUMMON"), true);
+    static const bool on = dsummon::SwitchOn(std::getenv("BB_PARTY_DIRECT_SUMMON"), false);  // experimental: opt in with =1
     return on;
 }
 
@@ -5063,7 +5063,7 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         }
         const u64 net = Field<u64>(Guest(kNetMan), 0, 0);
         room.area = Field<u32>(net, 0xa7c, 0);
-        room.level = Field<u32>(net, 0xaa8, 0);
+        room.level = 0;  // bbhost's FrpgNetMan +0xaa8 holds a float on our 1.09 (live: 0x3f49...): not sent
         SafeRead(net + 0xaac, room.pos, 12);
         if (!name.empty()) bbnet::party::FromApi::instance().hold_signs(name, 20000);
         Send(slot, dsummon::EncodeRoom(room));

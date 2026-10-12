@@ -513,3 +513,27 @@ Fix (both host side, loopback-tested; the failure path itself could not be repro
 Expected for the logged session: 2 failures cost ~2 x 8.5 s instead of ~60 s (summon ~20 s after
 hosting). Local 2-instance run after the change (Continue party, title join): host `host` t 13.5 s,
 `cooperators 1` t 18.2 s (unchanged, no regression).
+
+## 2026-10-13: direct summon delivery (experimental, `BB_PARTY_DIRECT_SUMMON=1`, off by default)
+
+Ported from droogie/bbhost (`engine/summon_invite.cpp`, GPL-3.0+): `party_dsummon.{h,cpp}` (wire
+format, type-1 payload, decisions; `party-dsummon-test`) and the game side in `party_b2.cpp`.
+The guest sends `dsum_req` when its director rings the Small Resonant Bell; the host (in its
+world, not full, its game not summoning a sign in the last 20 s, no crash hold) creates its room
+if it has none (0x1ECFCD0, as the title join), serializes it (`SerializeRoom`, head type 7, 209
+bytes) and answers `dsum_room` with FrpgNetMan +0xa7c area / +0xaac position, holding the guest's
+signs (20 s) so its game does not summon the same guest by sign. The guest, on the game thread,
+waits for the bell's own passive entry (SummonStepManager [FrpgNetMan+0xc50] +0x158, entry
++0xc8 == 0), builds the item with the game's wrapper ctor 0x1486a10 (vtable 0x5322570, verified:
+23 sites `lea 0x5322560; add 0x10`) and calls handleIncomingItem 0x14ba340 (checked as the
+manager's vtable +0x10). `dsum_done` ends the hold (a failure renews the signs at once).
+bbhost's level field (FrpgNetMan +0xaa8) holds a float on our 1.09; level is sent as 0.
+
+Live (one session, loopback, `continue`, both in m24_01, title join off): guest rings 69.73 ->
+host room 69.94 -> item delivered 71.77 (the entry appeared with the 2 s bell sign timer; state
+1) -> `trying-to-join` 71.80 -> client (6) 72.73 -> loading screen 73.53: **bell -> client 3.0 s**
+(sign path: rings -> create 2.0 + create -> invite 0.5 + invite -> JoinRoom 0.8 + JoinRoom ->
+client 0.9 = ~4.2 s). Then the host's process ended at 73.5 s (no log line; the guest showed
+"Connection to the host lost"), so the arrival / host `cooperators 1` was not seen and it is not
+known whether the host crashed or the run was stopped. Kept off until a run shows the arrival;
+the default (sign) path is unchanged.
