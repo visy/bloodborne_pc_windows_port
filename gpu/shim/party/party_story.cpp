@@ -5,6 +5,7 @@
 // byte before anything is written. Offsets are ours (raw ELF VA). The game's code is System V:
 // every call into it goes through a BB_COOP_SYSV pointer at Guest(off).
 #include "party_story.h"
+#include "party_hud.h"
 #include "party_async_io.h"
 #include "party_perf.h"
 #include "party_ids.h"
@@ -1487,6 +1488,7 @@ void StoryTick() {
         st.tod_value = tv < 0 ? 0 : tv;
         st.calm = Calm(now);
     }
+    party::hud::SetCutscene(st.remo_playing);  // no party HUD / tags over a cutscene
     // Remo watch: the playing bit's edges (both roles; the evidence for tests).
     if (st.remo_playing != g_tick.remo_was_playing) {
         if (st.remo_playing) {
