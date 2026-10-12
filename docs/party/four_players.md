@@ -365,6 +365,22 @@ owner), and repeat runs before 5 becomes a user setting.
   (its first frame stalls with five games running). 5 stays a test setting (BB_PARTY_MAX=5), not in
   the launcher.
 
+### "Joined players' join animation replays when a new player joins" (user, 2026-10-12)
+
+- **No chr is rebuilt and no slot is mixed up.** In the 5-player run 5 and a 3-player run, every
+  peer's B2 `remote chrs:` list keeps each existing member's PlayerIns address unchanged across every
+  join (host: 1 -> 2 -> 3 -> 4 chrs, only appended; guests likewise), with draw alpha 1.00 throughout
+  (no ChrFadeIn of an existing chr at the 1 s log granularity).
+- **The effect is real, at the newcomer's arrival.** 3-player run (host rendering, 2 headless,
+  sequential), host screenshots every 3 s after Hunter2 entered the room: 12 s in, before the host
+  counts it, the host and Hunter1 both glow translucent blue (the summon / arrival look) for a moment;
+  before and after they are normal. In the host's log that window holds only the new first-sync data
+  requests (`first sync: a member's task waits at FirstSyncCompleteWait: data request (0xA) #1-#3`,
+  e214b5b, flowlive) and the newcomer's chr appearing.
+- Next (flowlive): an A/B with those every-peer 0xA requests off, host screenshots at 0.5 s steps
+  across the newcomer's arrival; and the same moment in a bell join (vanilla) to see whether the game
+  itself flashes existing phantoms when a new one arrives.
+
 ### Host does not draw a guest / its plate floats away (user, 2026-10-11)
 
 Seen with 2 and 3 players (user screenshots; split24 and a hostdeath run): on the host the guest's
