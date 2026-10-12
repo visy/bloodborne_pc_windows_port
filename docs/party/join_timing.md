@@ -402,3 +402,11 @@ unset: each time one loading screen into the host's world (asked -> in the world
 `cooperators 0 -> 1`, screenshots 8 s after the arrival show both hunters side by side with the
 Co-operator / Beckoner tags (in one run the guest's window still showed the loading tip at 8 FPS
 while the host already saw it). Default on again; `BB_PARTY_TITLE_JOIN=0` turns it off.
+
+## 2026-10-12: a host that is not up yet
+
+A guest whose title join gets no room within 10 s (the host still at its title or loading) sends
+`title_cancel` (the host drops its request) and Continues the usual way: own world, then the bell
+join once the host is up. Live (host Continue held 30 s with the test switch
+`BB_PARTY_CONTINUE_SETTLE=30`): guest asked at 5 s, fell back at 15 s, own world loading at 16 s;
+the host loaded at 35 s; bell join `trying-to-join -> client` at 50 s, host `cooperators 0 -> 1`.
