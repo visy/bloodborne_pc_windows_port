@@ -2669,6 +2669,21 @@ void PartyDirector::Tick() {
             return; // C4: a cutscene / ending replay first, then the rejoin
         }
         if (GuestMayRing(st.start_ready, link->state() == party::LinkState::Connected)) {
+            // Not before the host's map is known (it is still loading): the gather below needs it,
+            // and a guest that rang meanwhile was summoned at its own world's spot (the Hunter's
+            // Dream) into a host standing in Central Yharnam (hostdeath spec1 / spec2).
+            std::uint32_t host_map_now = 0;
+            for (const party::RosterEntry& e : link->roster()) {
+                if (e.slot == party::kHostSlot) host_map_now = e.map_id;
+            }
+            if (host_map_now == 0 || host_map_now == 0xffffffffu) {
+                static Clock::time_point said{};
+                if (Seconds(said, now) >= 10.0) {
+                    said = now;
+                    Log("bell: waiting for the host's map (the host is still loading) before ringing");
+                }
+                return;
+            }
             if (GatherGuest(s, link, now)) {
                 return; // travelling to the host's lamp in its own world first; ring there
             }
@@ -2740,7 +2755,34 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
     }
     // The host's last lamp unless it lies in another map than the one the host stands in (a fresh
     // host's default record): then a lamp of the host's map.
-    const std::uint32_t lamp = GatherLampFor(GuestDeathRedirectLamp(), host_map);
+    std::uint32_t lamp = GatherLampFor(GuestDeathRedirectLamp(), host_map);
+    {
+        // The host's last lamp not known yet (a fresh session) or not in its map: the lamp of the
+        // host's map nearest to where the host stands (its VITALS position), not simply the map's
+        // first one (m24_01's first is the clinic's 1st Floor Sickroom).
+        const std::uint32_t known = GuestDeathRedirectLamp();
+        const bool usable = known != kTravelNone && known != 0 && ids::EntityMap(known) >> 16 == host_map >> 16;
+        party::MemberVitals vit[party::kMaxVitals];
+        const int vn = link->vitals(vit, party::kMaxVitals);
+        for (int i = 0; i < vn && !usable; ++i) {
+            if (vit[i].slot != party::kHostSlot || !(vit[i].flags & party::kVitalsHasPos)) {
+                continue;
+            }
+            float best = 1e18f;
+            for (const std::uint32_t id : ids::kPartyReturnPoints) {
+                float sp[4];
+                if (ids::EntityMap(id) >> 16 != host_map >> 16 || !ids::ReturnSpot(id, sp)) {
+                    continue;
+                }
+                const float dx = sp[0] - vit[i].pos[0], dy = sp[1] - vit[i].pos[1], dz = sp[2] - vit[i].pos[2];
+                const float d = dx * dx + dy * dy + dz * dz;
+                if (d < best) {
+                    best = d;
+                    lamp = id;
+                }
+            }
+        }
+    }
     if (!host_map || host_map == 0xffffffffu || s.map_id == 0xffffffffu || lamp == kTravelNone || lamp == 0) {
         return false;
     }
@@ -2761,7 +2803,9 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
         return false;
     }
     if (ever && Seconds(last, now) < 90.0) {
-        return false;
+        // Still in another map than the host's while the gather's warp has not loaded yet: no
+        // ring here (it would summon this guest at its own world's spot into the host's map).
+        return true;
     }
     ever = true;
     last = now;
@@ -2770,7 +2814,13 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
     t.lamp_id = lamp;
     Log("gather: own world %s, host in %s; to the host's lamp %u before ringing", MapName(s.map_id).c_str(),
         MapName(host_map).c_str(), lamp);
-    return ReplayTravelNow(t);
+    // No ring this tick either way: the warp may run through split travel's lamp interceptor and
+    // report false while the load goes ahead (a bell rung now placed the sign before the gather's
+    // load, hostdeath join2b); the next ring comes after the load (one gather per 90 s).
+    if (!ReplayTravelNow(t)) {
+        Log("gather: the replay reported no warp; ringing after the next steady world");
+    }
+    return true;
 }
 
 bool PartyRequested() {

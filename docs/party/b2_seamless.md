@@ -789,6 +789,26 @@ not done for 0.5.2.
   Dream joining a host in Central Yharnam landed in m21_00 in the host's world - the gather does not
   run while the guest does not know the host's last lamp yet (GatherLampFor(GuestDeathRedirectLamp())).
 
+**2026-10-12 (5): C7 rest during a boss fight; bell join into the host's map.**
+* A lamp use while a boss bar is up is a real rest: split travel's same-map moves
+  (`WarpToLampNoLoad`, `HostPartyWarpNoLoad`) and the guest's in-world follow of a host load step
+  aside during a boss fight, so the host loads (the fight and the enemies reset) and the guests
+  follow with their own B2 load. Live c7c (Cleric Beast): guest in the arena with the boss bar up
+  (screenshot), host lamp 2412952 -> `the party moves with a real load (fight and enemies reset)`,
+  guest `host travels ... arrived by the host's own travel; placed beside the host`, `A11: the boss
+  fight / cutscene is over`; screenshot after: both hunters at the Great Bridge lamp, no boss bar.
+* Bell join (party_director): a guest no longer rings while the host's roster map is unknown (the
+  host still loading; spec1/spec2 rang then and were summoned at the guest's own Dream spot into a
+  host in Central Yharnam); the gather picks the lamp of the host's map nearest to the host's VITALS
+  position when the host's last lamp is not known yet (not the map's first lamp, the clinic); and no
+  ring follows a gather until its load (join4: `gather: own world m21_00_00_00, host in m24_01_00_00;
+  to the host's lamp 2412951 before ringing`, then the ring in m24_01).
+  Open: (a) the gather's own-world lamp warp to 2412951 landed the guest at (-195.6, -40.5, 220.3),
+  far from that lamp (the lamp not lit in the guest's own world?), so the summon placed it 150 m from
+  the host; (b) the title-join path (another agent's) still joins at the guest's own map first, then
+  leaves and gathers, and leaves the forced placement unset (`map 0xffffffff`), so a Continue after it
+  has no own save spot from the join.
+
 ## 7. Risks / open items
 
 * (Closed in 6.7 / 6.8) K10 / boss clear with a real kill; wipes (guest and host dead) and falls

@@ -5589,7 +5589,7 @@ bool OnHostTravel(const TravelIntent& t) {
         const std::uint32_t dest = DestMapOf(t);
         static const bool inworld = !(std::getenv("BB_PARTY_INWORLD") && std::getenv("BB_PARTY_INWORLD")[0] == '0');
         if (inworld && dest != 0 && g.world_up && !g.loading && g.map_id != 0xffffffffu && (dest >> 16) == (g.map_id >> 16) &&
-            !g_dead_follow.load()) {
+            !g_dead_follow.load() && !BossFightActive()) {  // during a boss fight: a real load (C7)
             std::lock_guard<std::mutex> lk(S().mu);
             if (S().gphase == GuestPhase::Idle) {
                 S().intent = t;
@@ -5850,7 +5850,16 @@ bool AtLampSpot(std::uint32_t id) {
 }
 
 bool WarpToLampNoLoad(std::uint32_t id, bool beside) {
-    if (!g_on.load() || !WarpToLampInWorld(id, beside, beside ? "party move" : "own move")) {
+    if (!g_on.load()) {
+        return false;
+    }
+    // C7 / design decision 4: a rest during a boss fight is a real rest - a load resets the fight
+    // and the enemies and takes the others out of the boss room - not an in-world move.
+    if (std::string boss; BossFightActive(&boss)) {
+        Log("lamp %u during a boss fight (%s): a real load (the fight and the enemies reset)", id, boss.c_str());
+        return false;
+    }
+    if (!WarpToLampInWorld(id, beside, beside ? "party move" : "own move")) {
         return false;
     }
     TravelIntent t;
@@ -5861,7 +5870,15 @@ bool WarpToLampNoLoad(std::uint32_t id, bool beside) {
 }
 
 bool HostPartyWarpNoLoad(std::uint32_t id) {
-    if (!g_on.load() || Role() != RoleHost || !WarpToLampInWorld(id, false, "the host's party move")) {
+    if (!g_on.load() || Role() != RoleHost) {
+        return false;
+    }
+    if (std::string boss; BossFightActive(&boss)) {
+        Log("host: lamp %u during a boss fight (%s): the party moves with a real load (fight and enemies reset)", id,
+            boss.c_str());
+        return false;
+    }
+    if (!WarpToLampInWorld(id, false, "the host's party move")) {
         return false;
     }
     if (TravelIntent t; LampIntent(id, &t)) {
