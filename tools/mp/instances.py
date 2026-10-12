@@ -207,9 +207,17 @@ def setup(a):
         print("instance", i, "->", inst)
 
 
-def party_saves_from(user: Path):
+def party_saves_from(user: Path, fresh: bool = False):
     r"""A party session always plays from user\savedata_party (src/runtime_savepolicy.c): the test
-    saves are copied there too the first time, so --party runs keep their characters."""
+    saves are copied there too the first time, so --party runs keep their characters. fresh
+    (--fresh-saves): copied again for every run, so a run never inherits the last run's state (a
+    guest dropped in the host's world saved its spot there and spawned outside the map next time).
+    Only the instance's own test copy under the run root is touched."""
+    if fresh and (user / "savedata").is_dir():
+        if (user / "savedata_party").exists():
+            shutil.rmtree(user / "savedata_party")
+        for state in ("party_state.json", "party_story.json"):  # the last run's crash marker, story state
+            (user / state).unlink(missing_ok=True)
     if (user / "savedata").is_dir() and not (user / "savedata_party").exists():
         shutil.copytree(user / "savedata", user / "savedata_party")
 
@@ -430,7 +438,7 @@ def run(a):
                if (r := tile_rect(getattr(a, "slots", list(range(a.count)))[i])) else {}),
         })
         if a.party:
-            party_saves_from(inst / "user")
+            party_saves_from(inst / "user", getattr(a, "fresh_saves", False))
             env.update({
                 "BB_PARTY": "host" if i == 0 else "join", "BB_PARTY_CODE_FILE": str(code_file),
                 "BB_PARTY_PORT": str(port0 + i), "BB_PARTY_NAME": f"Hunter{i}", "BB_PARTY_UPNP": "0",
@@ -616,6 +624,8 @@ def main():
     # 4 instances share one 8 GB card: 4 x 1792 MiB plus the desktop fit; 3072 each overcommitted
     # VRAM and spilled into system RAM.
     ap.add_argument("--vram", type=int, default=int(os.environ.get("BB_MP_VRAM", "1792")))
+    ap.add_argument("--fresh-saves", action="store_true",
+                    help="run: every instance's party save starts again from its test save (no state from the last run)")
     ap.add_argument("--headless", type=int, default=0,
                     help="run: the last N instances headless-lite (BB_HEADLESS=1: minimised, no draws, no present)")
     ap.add_argument("--fps", default=os.environ.get("BB_MP_FPS", "30"),

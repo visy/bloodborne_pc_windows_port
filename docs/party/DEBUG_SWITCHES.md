@@ -62,6 +62,7 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_LOCAL_IP` | Forces the local IPv4 address the network layer reports and binds | default-route adapter | `gpu/shim/net/net_socket.cpp` |
 | `BB_PARTY_FORCE_RELAY` | Sends all guest-to-guest game traffic through the host relay | off | `gpu/shim/net/party_udp.cpp` |
 | `BB_PARTY_HASH_PATCHES` | `0`: gameplay patches are not compared in the version check | compared | `gpu/shim/party/party_runtime.cpp` |
+| `BB_HEADLESS` | `1`: headless-lite test game: the window starts minimised, nothing is presented and no draw call is recorded (compute, copies, the PM4 stream, fences and labels run as usual: game logic and party code unchanged); `tools/mp/instances.py --headless N` sets it (and the upscaler off, `BB_DLSS=0`) for the last N instances. Measured (2026-10-12, 2 instances in the Hunter's Dream): rendering 2.55 cores CPU / 23 % GPU, headless 2.07 cores / 8.5 % GPU | off | `gpu/shim/bbport_headless.h` |
 | `BB_PARTY_CHECK_BUILD` | `0` on the host: the bbport build id is not compared in the version check (A9, docs/party/version_check.md) | compared | `gpu/shim/party/party_runtime.cpp` |
 | `BB_PARTY_HOST_LOST_MS` | Guest: ms after the host's link drops before the game leaves the host's world | 2000 | `gpu/shim/party/party_runtime.cpp` |
 | `BB_PARTY_RESTARTED` | Set to `1` by `run.bat` on a crash restart: rejoin path, `restart` backup | unset | `run.bat`, `gpu/shim/party/party_runtime.cpp`, `src/runtime_savepolicy.c` |
