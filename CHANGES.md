@@ -3,6 +3,13 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## 0.5.4 (Windows port 0.5.4, fixes)
+
+- **Party wipes work again**: in 0.5.3 a guest's "down" message was ignored (a name clash with split travel), so a host death after a guest's became a revive instead of a wipe. A guest left dead by a same-map wipe is now revived beside the host.
+- **Guest starts at its own spot after Continue**: party travel, wipes and lone re-joins no longer overwrite the guest's own save position with the spot beside the host.
+- **Guest bloodstain**: recoverable in the guest's own world (documented).
+- *Continue party game straight into the host's world* (one loading screen) is in, but off by default until verified (`BB_PARTY_TITLE_JOIN=1`).
+
 ## 0.5.3 (Windows port 0.5.3, stability release)
 
 - **Party co-op fixes**: the invisible guest on the host is fixed at its root (rebuilt characters are shown the way the game shows a summoned phantom); the guest grey screen after a party travel is fixed; the party HUD and name tags hide during cutscenes.
