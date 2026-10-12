@@ -144,12 +144,9 @@ bool TagVisible(const Companion& c, std::int64_t board_age_ms, const char** why)
     return w == nullptr;
 }
 
-bool GamePlateAt(const GamePlate* plates, int n, float u) {
-    for (int i = 0; plates && i < n; ++i) {
-        const GamePlate& p = plates[i];
-        if (p.visible && std::isfinite(p.u) && std::fabs(p.u - u) <= kGamePlateMatchU) return true;
-    }
-    return false;
+bool OursInsteadOfGameTag(float distance, bool was_shown, float range) {
+    if (!std::isfinite(distance)) return false;
+    return distance >= range + (was_shown ? 0.0f : kGameTagHysteresis);
 }
 
 float TagTextTop(float anchor_y, float text_h, bool with_bar, float bar_h, float gap) {

@@ -1977,6 +1977,27 @@ void PartyHud() {
             continue;
         }
         const float d = party::hud::Distance(b.me_pos, c.pos);
+        // The game draws its own phantom plate over a member it can see nearby: ours only fills
+        // in beyond kGameTagRange (party_hud.h), at the plate's height, so it reads as the game's.
+        {
+            static bool ours_on[party::kMaxVitals];
+            const int slot = c.slot >= 0 && c.slot < party::kMaxVitals ? c.slot : 0;
+            const bool was = ours_on[slot];
+            static const float range = [] {
+                const char* e = std::getenv("BB_PARTY_HUD_GAME_RANGE");
+                const float r = e ? static_cast<float>(std::atof(e)) : 0.0f;
+                return r > 0.0f ? r : party::hud::kGameTagRange;
+            }();
+            ours_on[slot] = party::hud::OursInsteadOfGameTag(d, was, range);
+            if (ours_on[slot] != was) {
+                std::printf("Party HUD: tag %s %s at %.1f m\n", c.name,
+                            ours_on[slot] ? "drawn (beyond the game's plate)" : "left to the game's plate", d);
+            }
+            static const bool both = std::getenv("BB_PARTY_HUD_TAG_BOTH") != nullptr;  // test: compare with the plate
+            if (!ours_on[slot] && !both) {
+                continue;
+            }
+        }
         if (d > 80.0f) {
             continue;
         }
@@ -1988,33 +2009,13 @@ void PartyHud() {
         if (!sp.visible || v < 0.04f || v > 0.96f) {
             continue;
         }
-        // The game's own phantom plate over this member is visible: leave it to the game (ours
-        // fills in where the game shows none: far, behind a wall). Same height either way
-        // (party_hud.h kTagBarHeightM), so ours reads as the game's.
-        {
-            static std::int64_t plate_seen_ms[party::kMaxVitals];
-            static bool ours_was[party::kMaxVitals];
-            const int slot = c.slot >= 0 && c.slot < party::kMaxVitals ? c.slot : 0;
-            const std::int64_t now_ms = party::hud::NowMs();
-            if (b.have_plates && party::hud::GamePlateAt(b.plates, party::hud::kGamePlates, u)) {
-                plate_seen_ms[slot] = now_ms;
-            }
-            const bool ours = now_ms - plate_seen_ms[slot] > party::hud::kGamePlateHoldMs;
-            if (ours != ours_was[slot]) {
-                ours_was[slot] = ours;
-                std::printf("Party HUD: tag %s %s at %.1f m\n", c.name,
-                            ours ? "drawn (no game plate)" : "left to the game's plate", d);
-            }
-            if (!ours) {
-                continue;
-            }
-        }
         // Clear of the game's own HUD (bars and item slots top left, echoes bottom right).
         if ((u < 0.34f && v < 0.26f) || (u > 0.80f && v > 0.86f)) {
             continue;
         }
         const float alpha = std::clamp((80.0f - d) / 30.0f, 0.0f, 1.0f) * 0.95f;
-        const float size = std::clamp(15.0f * 12.0f / std::max(d, 6.0f), 11.0f, 15.0f);
+        // The game's plate is a fixed screen size: its name ~15 px tall at 720p.
+        const float size = 15.0f * display.y / 720.0f;
         // Name, with the level ("Lv 42") or the deaths ("3 deaths, rot 2") after it.
         char label[96];
         const bool ru = BbSettings::MenuText("en", "ru")[0] == 'r';
@@ -2034,8 +2035,10 @@ void PartyHud() {
         const ImVec2 ts = ImGui::CalcTextSize(label);
         // Laid out as the game's plate: the HP bar's bottom on the anchor, the name above it.
         const bool with_bar = overhead == 3 && c.have_hp && c.max_hp > 0;
-        const float bar_w = 56.0f * s, bar_h = 3.0f * s, gap = 2.0f * s;
-        const ImVec2 at(u * display.x - ts.x * 0.5f,
+        // The game's plate: a bar ~0.096 of the display wide centred on the anchor, the name
+        // left-aligned on the bar's left edge (live screenshots 2026-10-12, both drawn).
+        const float bar_w = 0.096f * display.x, bar_h = 3.0f * display.y / 720.0f, gap = 2.0f * s;
+        const ImVec2 at(u * display.x - bar_w * 0.5f,
                         party::hud::TagTextTop(v * display.y, ts.y, with_bar, bar_h, gap));
         bg->AddText(ImVec2(at.x + 1.0f, at.y + 1.0f), Rgba(0.0f, 0.0f, 0.0f, 0.8f * alpha), label);
         float rgb[3];
