@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 
 import bb_guard
@@ -60,6 +61,16 @@ class StaleInstanceGuardTests(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertIn(f'terminated stale bbport.exe PID {proc.pid}', run.stdout)
         self.assertIsNotNone(proc.wait(timeout=10))
+
+    def test_command_line_reports_a_process_that_exits_by_itself(self):
+        proc, folder = self.start_fake('out')
+        threading.Timer(0.5, proc.kill).start()  # the old instance finishing its exit
+        run = subprocess.run([sys.executable, str(ROOT / 'scripts' / 'bb_guard.py'),
+                              '--exe-dir', str(folder), '--wait', '10'],
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn(f'previous bbport.exe (PID {proc.pid}', run.stdout)
+        self.assertNotIn('terminated', run.stdout)
 
     def test_no_kill_only_reports(self):
         proc, folder = self.start_fake('out')

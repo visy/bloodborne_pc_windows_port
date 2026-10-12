@@ -182,18 +182,25 @@ def main(argv=None):
         instances = find_instances(args.exe_dir)
         if not instances:
             return 0
-        for instance in instances:
-            print(f'Guard: bbport.exe is still running ({describe(instance)})', flush=True)
         if args.no_kill:
+            for instance in instances:
+                print(f'Guard: bbport.exe is still running ({describe(instance)})', flush=True)
             return 0
-        print(f'Guard: giving it {args.wait:.0f} s to exit', flush=True)
+        # After an in-game restart the old process is normally still exiting: say how long
+        # it took, so a slow or stuck exit shows up in launcher.log.
+        start = time.monotonic()
         left = wait_gone([i.pid for i in instances], args.wait)
-        for pid in left:
-            if terminate(pid):
-                print(f'Guard: terminated stale bbport.exe PID {pid}', flush=True)
-            else:
-                print(f'Guard: could not terminate PID {pid} (stuck in the GPU driver? reboot may be needed)',
+        waited = time.monotonic() - start
+        for instance in instances:
+            if instance.pid not in left:
+                print(f'Guard: previous bbport.exe ({describe(instance)}) exited after {waited:.1f} s',
                       flush=True)
+            elif terminate(instance.pid):
+                print(f'Guard: terminated stale bbport.exe PID {instance.pid} '
+                      f'({describe(instance)}): still running after {waited:.0f} s', flush=True)
+            else:
+                print(f'Guard: could not terminate PID {instance.pid} '
+                      '(stuck in the GPU driver? reboot may be needed)', flush=True)
     except Exception as ex:  # a guard problem must never stop the launch
         print(f'Guard: skipped ({ex})', flush=True)
     return 0
