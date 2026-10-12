@@ -448,7 +448,10 @@ def run(a):
         if i >= a.count - getattr(a, "headless", 0):
             # Headless-lite (gpu/shim/bbport_headless.h): minimised, nothing drawn or presented,
             # game logic and the party code as usual. Its window gives no screenshots.
+            # Less VRAM: nothing is drawn (5 instances x 1792 MiB overcommitted an 8 GB GPU and the
+            # last one's first frame stalled: "Stall during rendering at flush 1", 2026-10-12).
             env.update({"BB_HEADLESS": "1", "BB_DLSS": "0", "BB_UPSCALER": "off",
+                        "BB_VRAM_LIMIT_MB": str(min(int(a.vram), 1024)),
                         "BB_WINDOW_TITLE": env["BB_WINDOW_TITLE"] + " [headless]"})
         for kv in a.env or []:
             k, _, v = kv.partition("=")
