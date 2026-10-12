@@ -448,7 +448,8 @@ def run(a):
         if i >= a.count - getattr(a, "headless", 0):
             # Headless-lite (gpu/shim/bbport_headless.h): minimised, nothing drawn or presented,
             # game logic and the party code as usual. Its window gives no screenshots.
-            env.update({"BB_HEADLESS": "1", "BB_DLSS": "0", "BB_UPSCALER": "off"})
+            env.update({"BB_HEADLESS": "1", "BB_DLSS": "0", "BB_UPSCALER": "off",
+                        "BB_WINDOW_TITLE": env["BB_WINDOW_TITLE"] + " [headless]"})
         for kv in a.env or []:
             k, _, v = kv.partition("=")
             env[k] = v.replace("{i}", str(i)).replace("{port}", str(port0 + i))
