@@ -1789,23 +1789,39 @@ void BesideHost(float pos[4], const float rot[4], int spot) {
     const float fx = std::sin(yaw), fz = std::cos(yaw), rx = std::cos(yaw), rz = -std::sin(yaw);
     float right = 0, forward = 0;
     coop::fourp::SpotOffset(spot, SummonOffset(), &right, &forward);
-    // A free spot (coop::fourp::PickFreeSpot): not within 0.8 m of another member's reported
-    // position (VITALS, fresh), so a later joiner never lands on a guest who moved onto its spot.
+    // A free spot (coop::fourp::PickFreeSpot): not within 1.0 m of another player's chr in this world
+    // or reported position (VITALS, fresh), so a later joiner never lands on a guest who moved onto
+    // its spot (title join: the in-world re-placement on arrival).
     if (party::PartyLink* link = party::runtime_link(); link && SummonOffset() > 0.0f) {
         party::MemberVitals v[party::kMaxVitals];
         const int n = link->vitals(v, party::kMaxVitals);
-        float others[party::kMaxVitals][2];
+        float others[2 * party::kMaxVitals + 8][2];
         int k = 0;
+        // The other players' chrs in this world (known as soon as it is up; VITALS can lag).
+        const u64 wcm = Slot(kSlotWorldChrMan);
+        const u64 me = Field<u64>(wcm, 0x60);
+        const int pn = Field<int>(wcm, 0x30, 0);
+        const u64 entries = Field<u64>(wcm, 0x38);
+        for (int i = 0; entries && pn > 0 && pn <= 8 && i < pn; ++i) {
+            const u64 chr = Field<u64>(entries + u64(i) * 0x38, 0);
+            float cp[3] = {};
+            if (!chr || chr == me || !ChrPos(chr, cp)) continue;
+            const float hx = cp[0] - pos[0], hz = cp[2] - pos[2];
+            if (hx * hx + hz * hz < 0.25f) continue;  // the host itself (the line's centre)
+            others[k][0] = cp[0];
+            others[k][1] = cp[2];
+            ++k;
+        }
         for (int i = 0; i < n; ++i) {
             if (v[i].slot == link->local_slot() || v[i].slot == 0 || !(v[i].flags & party::kVitalsHasPos) ||
-                v[i].age_ms > 3000) {
+                v[i].age_ms > 3000 || k >= 2 * party::kMaxVitals + 8) {
                 continue;  // ourselves; the host stands at the line's centre anyway
             }
             others[k][0] = v[i].pos[0];
             others[k][1] = v[i].pos[2];
             ++k;
         }
-        const int pick = coop::fourp::PickFreeSpot(spot, SummonOffset(), pos[0], pos[2], yaw, others, k, 0.8f);
+        const int pick = coop::fourp::PickFreeSpot(spot, SummonOffset(), pos[0], pos[2], yaw, others, k, 1.0f);
         const float r = coop::fourp::FreeSpotRight(pick, spot, SummonOffset());
         if (pick >= 0) {
             Log("beside the host: slot %d's spot is taken; free spot %.1f m along the line", spot, r);
