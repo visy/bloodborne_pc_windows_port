@@ -2656,6 +2656,8 @@ void DeadAfterClearTick(const GameSnapshot& s, double now) {
 }
 
 bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why);
+void SpectateBegin(const char* who);
+void SpectateEnd();
 bool GuestDeathAloneToOwnLamp(const GameSnapshot& s, u32 own);
 void HeldDeathTick(const GameSnapshot& s, double now) {
     if (g_dead_follow.load() && !SessionUp()) {
@@ -2692,11 +2694,13 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
             if (limbo_logged != at) {
                 limbo_logged = at;
                 Log("guest: dead in a boss fight (%s): limbo until the boss is gone, a wipe or a rest", boss.c_str());
+                SpectateBegin("guest");
             }
             return;
         }
         if (limbo_logged == at) {
             Log("guest: the boss fight is over (%.1f s after the death); respawning", now - at);
+            SpectateEnd();
         }
     }
     g_death_held_at = 0;
@@ -3071,6 +3075,7 @@ bool HostDeathIntercept() {
             Log("host death in a boss fight (%s): limbo until the boss is gone (then the respawn), a wipe or a rest; "
                 "%d member(s), %d down",
                 boss.c_str(), members, dead);
+            SpectateBegin("host");
         }
         return true;
     }
@@ -3311,6 +3316,35 @@ void ReviveRearmTick(const GameSnapshot& s) {
 
 std::mutex g_member_revived_mu;
 std::vector<std::array<float, 3>> g_member_revived;  // positions where revived members died (under mu)
+std::vector<std::array<float, 3>> g_spectators;      // positions where members entered a limbo (under mu)
+
+/// Peers: while a member spectates (boss-fight limbo), its dead copy here is disabled (Lua
+/// SetDisable 0x1332060 -> 0x18C6390(chr, 1): not drawn, no name plate) instead of removed - a
+/// removed copy was built again by its task and its plate followed the spectator around (spec3).
+/// Its revive / respawn replaces the copy with a fresh one as usual.
+std::atomic<double> g_spectator_until{0};
+void SpectatorRemoveTick(const GameSnapshot& s) {
+    {
+        std::lock_guard<std::mutex> lk(g_member_revived_mu);
+        if (!g_spectators.empty()) {
+            g_spectators.clear();
+            g_spectator_until = Now() + 300.0;
+        }
+    }
+    if (!s.world_up || s.loading || Now() > g_spectator_until.load()) {
+        return;
+    }
+    static std::map<u64, bool> done;
+    for (const TaskInfo& t : Tasks(false)) {
+        const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        if (!c || ChrHp(c) != 0 || done[c]) {
+            continue;
+        }
+        done[c] = true;
+        reinterpret_cast<void(BB_COOP_SYSV*)(u64, u32)>(Guest(0x18c6390))(c, 1);
+        Log("spectator: its dead copy %#llx here disabled (not drawn, no plate) until it respawns", ull(c));
+    }
+}
 
 /// Host and guests: a member revived in place: its chr here (dead where it fell) is removed and
 /// built again by its task at the member's new spot.
@@ -3339,8 +3373,10 @@ void MemberRevivedTick(const GameSnapshot& s) {
             }
         }
         if (!victim) {
-            Log("member revived: no member chr within 6 m of (%.1f, %.1f, %.1f) here", double(at[0]), double(at[1]),
-                double(at[2]));
+            // Already removed (its limbo: "spectating") or never here: built again by its task.
+            const int n = RewindRemoteTasks("member revived");
+            Log("member revived: no member chr within 6 m of (%.1f, %.1f, %.1f) here; %d task(s) rewound", double(at[0]),
+                double(at[1]), double(at[2]), n);
             continue;
         }
         using Release = u64(BB_COOP_SYSV*)(u64, u32);
@@ -3659,6 +3695,62 @@ void OwnStainLogTick(const GameSnapshot& s) {
     Log("own world: bloodstain flag %u, record %d echoes at (%.1f, %.1f, %.1f) map %#x; me (%.1f, %.1f, %.1f) map %#x, "
         "echoes %d", unsigned(Field<u8>(gdm, 0x28)), Field<int>(rec, 0x38, -1), double(p[0]), double(p[1]), double(p[2]),
         Field<u32>(rec, 0x3c), double(me[0]), double(me[1]), double(me[2]), s.map_id, s.echoes);
+}
+
+// ---- C5: spectate in a boss-fight limbo (BB_PARTY_SPECTATE, default on) ----
+// The dead player's camera follows its own chr: that chr (dissolved, draw 0) is carried along
+// 3 m behind a living party member with the chr warp, so the camera shows the fight. Peers remove
+// the dead copy meanwhile ("spectating"); the respawn (revive, a wipe load) builds it again.
+std::atomic<bool> g_spectating{false};
+bool SpectateOn() {
+    static const bool on = !(std::getenv("BB_PARTY_SPECTATE") && std::getenv("BB_PARTY_SPECTATE")[0] == '0');
+    return on;
+}
+void SpectateBegin(const char* who) {
+    if (!SpectateOn() || g_spectating.exchange(true)) {
+        return;
+    }
+    float p[3] = {0, 0, 0};
+    ChrPos(Field<u64>(Slot(kSlotWorldChrMan), 0x60), p);
+    char b[128];
+    std::snprintf(b, sizeof b, "{\"op\":\"spectating\",\"pos\":[%.3f,%.3f,%.3f]}", p[0], p[1], p[2]);
+    Send(-1, b);
+    Log("%s: spectating a living party member until the respawn", who);
+}
+void SpectateEnd() {
+    if (g_spectating.exchange(false)) {
+        Log("spectating ended");
+    }
+}
+void SpectateTick(const GameSnapshot& s, double now) {
+    static double next = 0;
+    if (!g_spectating.load()) {
+        return;
+    }
+    if (!SessionUp() || s.loading || !s.world_up || !s.player || ChrHp(s.player) > 0) {
+        SpectateEnd();  // a load or a revive took over
+        return;
+    }
+    if (now < next) {
+        return;
+    }
+    next = now + 0.2;
+    for (const TaskInfo& t : Tasks(false)) {
+        const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        alignas(16) float pos[4], rot[4];
+        if (!c || ChrHp(c) == 0 || !ChrTransform(c, pos, rot)) {
+            continue;
+        }
+        const float yaw = rot[1];
+        pos[0] -= std::sin(yaw) * 3.0f;
+        pos[2] -= std::cos(yaw) * 3.0f;
+        pos[1] += 0.5f;
+        pos[3] = 1.0f;
+        if (const u64 fn = Field<u64>(Field<u64>(s.player, 0), 0x5f8)) {
+            reinterpret_cast<void(BB_COOP_SYSV*)(u64, const float*, const float*, u32)>(fn)(s.player, pos, rot, 1);
+        }
+        return;
+    }
 }
 
 void HostRevivedTick(const GameSnapshot& s) {
@@ -5375,6 +5467,8 @@ void Tick(const GameSnapshot& s) {
     LampSpotTick(s);
     HostDownTick(s, now);
     HostRevivedTick(s);
+    SpectatorRemoveTick(s);
+    SpectateTick(s, Now());
     OwnStainLogTick(s);
     PinOwnSpotTick(s);
     PosScanTick(s, Now());
@@ -5647,6 +5741,21 @@ void OnLinkEvent(int from_slot, const std::string& body) {
         std::memcpy(S().respawn_pos, p, sizeof p);
         Log("host: slot %d %s; re-sending the snapshot", from_slot,
             live ? "travels alone into this area" : "died alone and respawns in this world");
+        return;
+    }
+    if (body.find("\"spectating\"") != std::string::npos) {
+        // A dead member in a boss-fight limbo follows a living one with its (dissolved) chr: its
+        // copy here is removed meanwhile (no plate drifting along); its revive builds it again.
+        float p[3] = {0, 0, 0};
+        const char* pp = std::strstr(body.c_str(), "\"pos\":[");
+        if (pp && std::sscanf(pp, "\"pos\":[%f,%f,%f]", &p[0], &p[1], &p[2]) == 3 && std::isfinite(p[0]) &&
+            std::isfinite(p[1]) && std::isfinite(p[2])) {
+            std::lock_guard<std::mutex> lk(g_member_revived_mu);
+            if (g_spectators.size() < 8) {
+                g_spectators.push_back({p[0], p[1], p[2]});
+            }
+        }
+        Log("slot %d spectates (boss-fight limbo); its dead copy here is hidden until it respawns", from_slot);
         return;
     }
     if (body.find("\"member_revived\"") != std::string::npos) {
