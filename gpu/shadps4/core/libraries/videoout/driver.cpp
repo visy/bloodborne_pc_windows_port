@@ -771,9 +771,10 @@ void VideoOutDriver::Flip(const Request& req) {
                     spikes += ms > 1.5 * median;
                 }
                 const double mean = sum / intervals.size();
-                std::printf("Frame pacing: median %.2f ms, stddev %.2f ms, p99 %.2f ms, "
-                            "%u frames over 1.5x median\n",
+                std::printf("Frame pacing: median %.2f ms, stddev %.2f ms, min %.2f ms, p1 %.2f ms, "
+                            "p99 %.2f ms, %u frames over 1.5x median\n",
                             median, std::sqrt(std::max(0.0, sq / intervals.size() - mean * mean)),
+                            sorted.front(), sorted[sorted.size() / 100],
                             sorted[std::min(sorted.size() - 1, sorted.size() * 99 / 100)], spikes);
             }
             intervals.clear();
