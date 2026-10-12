@@ -14,8 +14,9 @@ lamps, shortcuts in its own save).
 
 **0.5.2 defaults.** On: world actions (levers, doors, shortcuts, NPC talk and quest flags), NPC
 talk for guests, shared NPC quests, ObjAct kick log / replay, guest-triggered cutscenes for the
-party (D10), encounter Insight for guests. **Off (opt-in)**: instanced treasure
-(`BB_PARTY_GUEST_PICKUP=1`), full per-player enemy drops (`BB_PARTY_GUEST_DROPS=1`), the area-gate
+party (D10), encounter Insight for guests. **On since 2026-10-12**: full per-player
+enemy drops (`BB_PARTY_GUEST_DROPS=0` turns it off). **Off (opt-in)**: instanced treasure
+(`BB_PARTY_GUEST_PICKUP=1`), the area-gate
 catch-up (`BB_PARTY_GATE_CATCHUP=1`), the time-of-day catch-up (`BB_PARTY_TOD_CATCHUP=1`; its first
 version queued a story item on a guest still at home, which held the guest's bell: it never
 joined - fixed to "only once in the host's world", not re-run).
@@ -273,6 +274,20 @@ gave no pickup at 17 spots (the guest saw the item's glow beside it): `BB_PARTY_
 stays opt-in. Test-driver fix found on the way: the ImeDialog now opens the overlay's text box,
 so the scripted new game (BB_TEST_NEWGAME) stood at "Please Enter Name" - it now gets "Hunter"
 without the box (src/runtime_services.c; players type as before).
+
+Runs 40-43 (2026-10-12, fresh characters; run 43 on pristine saves restored before the run, no
+player moves): the host killed two clinic enemies (ForceDead on the host, no walk); each death rolled
+a drop on **both** games for the same enemy (host `role 3`, guest `role 6`, handles 0x10014053,
+0x10014058); the guest took its own drop through the game's pickup function: run 40 "Pebble",
+run 43 **"Iosefka's Blood Vial"** (item-get dialogs on the guest's screen, `gloot_*_inst1.png`) -
+items a guest's game dropped before the patch (not isGuestDrop). **`BB_PARTY_GUEST_DROPS` is on by
+default now.** Treasure (`BB_PARTY_GUEST_PICKUP`): the guest's MapItemMan held no treasure record at
+all (kind-3 list +0x28 empty, run 43), though the treasure spawn hook ran 53 times on the guest -
+the records are not created on a client by the three patches: stays opt-in (open).
+Run 45 (default build, no D4 switch set, pristine saves): the same result - the guest kept "Iosefka's
+Blood Vial" from its own roll; the join banner "Entered the world of Hunter0" was still on screen over
+the item-get box (cosmetic). Test hygiene since: saves restored from a pristine copy before every
+run, no player moves in the D4 runs, wait lines with fixed text and hard timeouts.
 
 ## 10. Open items
 

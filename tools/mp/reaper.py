@@ -113,6 +113,28 @@ def tile_windows():
             u.SetWindowPos(hwnd, 0, x, y, w + fw, h + fh, 0x0004 | 0x0010)
 
 
+
+def stop_unqueued(holders, state, now):
+    ps = (r"Get-CimInstance Win32_Process -Filter \"Name='bbport.exe'\" | "
+          r"ForEach-Object { $_.ProcessId.ToString() + '|' + $_.ExecutablePath }")
+    out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True).stdout
+    roots = [e["root"].replace("/", "\\").rstrip("\\").lower() + "\\" for e in holders]
+    for line in out.splitlines():
+        if "|" not in line:
+            continue
+        pid, path = line.split("|", 1)
+        low = path.lower()
+        if not low.startswith("e:\\games\\bbport\\agents\\"):
+            continue  # never the user's own game
+        if any(low.startswith(r) for r in roots):
+            state.pop("unq:" + pid, None)
+            continue
+        first = state.setdefault("unq:" + pid, now)
+        if now - first > 30:
+            subprocess.run(["taskkill", "/PID", pid, "/F", "/T"], capture_output=True)
+            print(time.strftime("%H:%M:%S"), f"unqueued game ended: {path}", flush=True)
+            state.pop("unq:" + pid, None)
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--idle", type=float, default=10)
@@ -241,12 +263,18 @@ def main():
                 print(time.strftime("%H:%M:%S"), f"idle {idle:.0f}s: ended {e.get('label') or root} "
                       f"({len(pids)} processes)", flush=True)
                 state[hid] = (n, now + 3600)  # don't repeat while the harness winds down
+        # Games outside the queue: a test game (bbport.exe under an agents root) whose root holds no
+        # game slot is ended after a 30 s grace (setup/teardown), so nothing runs unqueued.
+        try:
+            stop_unqueued(holders, state, now)
+        except Exception as ex:  # never let this break the reaper
+            print("unqueued:", ex, flush=True)
         try:
             tile_windows()
         except Exception as ex:  # never let layout break the reaper
             print("tile:", ex, flush=True)
         for hid in list(state):
-            if hid not in live and not (hid.split(":", 1)[-1] in live and ":" in hid):
+            if not hid.startswith("unq:") and hid not in live and not (hid.split(":", 1)[-1] in live and ":" in hid):
                 del state[hid]
         time.sleep(2)
 
