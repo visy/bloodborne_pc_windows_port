@@ -162,11 +162,13 @@ def main():
     ap.add_argument("--tag", default="shot")
     ap.add_argument("--watch", action="append", default=[])
     ap.add_argument("--seconds", type=float, default=600)
+    ap.add_argument("--every", type=float, default=0,
+                    help="also shoot every N seconds (a timed series: TAG_<elapsed>s)")
     ap.add_argument("--grey", action="store_true", help="also flag grey screens (see above)")
     a = ap.parse_args()
     out = Path(a.out)
     grey = GreyCheck(a.root, out) if a.grey else None
-    if not a.watch and not grey:
+    if not a.watch and not grey and not a.every:
         shoot(a.root, out, a.tag)
         return
     rules = []
@@ -177,7 +179,22 @@ def main():
     logs = sorted(Path(a.root).glob("inst*/run.log"))
     pos = {p: (p.stat().st_size if p.exists() else 0) for p in logs}
     fired, pending, t0 = set(), [], time.time()
+    next_shot, seen_window, last_window = (t0 + a.every if a.every else None), False, t0
     while time.time() - t0 < a.seconds:
+        # Logs of instances that start after the watcher (a run folder made later) are read from
+        # their first line.
+        for p in Path(a.root).glob("inst*/run.log"):
+            if p not in pos:
+                pos[p] = 0
+                logs.append(p)
+        # Done when the games are gone: no window of this root for 20 s after one was seen.
+        if windows(a.root):
+            seen_window, last_window = True, time.time()
+        elif seen_window and time.time() - last_window > 20:
+            return
+        if next_shot and time.time() >= next_shot:
+            shoot(a.root, out, f"{a.tag}_{int(time.time() - t0)}s")
+            next_shot += a.every
         for p in logs:
             if not p.exists():
                 continue
@@ -203,7 +220,7 @@ def main():
                 pending.remove(item)
         if grey:
             grey.tick()
-        elif len(fired) == len(rules) and not pending:
+        elif rules and len(fired) == len(rules) and not pending and not a.every:
             return
         time.sleep(0.2)
 
