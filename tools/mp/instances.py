@@ -458,6 +458,22 @@ def run(a):
             if who.strip() == str(i):
                 k, _, v = kv.partition("=")
                 env[k] = v.replace("{i}", str(i)).replace("{port}", str(port0 + i))
+        if (getattr(a, "headless_delay_after_join", 0) and a.party and i > 0 and
+                i == a.count - getattr(a, "headless", 0)):
+            # The headless instances start once the first guest has joined (the host's
+            # "cooperators 0 -> 1") plus the delay: the first join and load are not slowed by them.
+            host_log = Path(a.root) / "inst0" / "run.log"
+            deadline = time.time() + 300
+            while time.time() < deadline and any(q.poll() is None for _, q, _ in procs):
+                try:
+                    if "cooperators 0 -> 1" in host_log.read_text(encoding="utf-8", errors="replace"):
+                        break
+                except OSError:
+                    pass
+                time.sleep(2)
+            print("[harness +%.1f s] the first guest joined (or 300 s passed): headless instances in %.0f s"
+                  % (time.time() - ts0, a.headless_delay_after_join), flush=True)
+            time.sleep(a.headless_delay_after_join)
         log, starts[i] = open_log(inst / "run.log")
         # Test games run ABOVE_NORMAL (children inherit) so agents' builds never starve them.
         prio = 0x00008000 if os.name == "nt" else 0
@@ -627,6 +643,9 @@ def main():
     ap.add_argument("--vram", type=int, default=int(os.environ.get("BB_MP_VRAM", "1792")))
     ap.add_argument("--fresh-saves", action="store_true",
                     help="run: every instance's party save starts again from its test save (no state from the last run)")
+    ap.add_argument("--headless-delay-after-join", type=float, default=0,
+                    help="run (--party --headless N): start the headless instances this many s after the host's "
+                         "first join (cooperators 0 -> 1)")
     ap.add_argument("--headless", type=int, default=0,
                     help="run: the last N instances headless-lite (BB_HEADLESS=1: minimised, no draws, no present)")
     ap.add_argument("--fps", default=os.environ.get("BB_MP_FPS", "30"),
