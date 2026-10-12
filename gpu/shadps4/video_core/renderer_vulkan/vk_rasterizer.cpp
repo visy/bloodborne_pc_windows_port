@@ -11,6 +11,7 @@
 #include "bbport_sections.h"
 #include "game_profile.h"
 #include "bbport_ce_stats.h"
+#include "bbport_headless.h"
 #include "bbport_toggles.h"
 #include "bbport_write_log.h"
 #include "bbport_free_check.h"
@@ -1556,6 +1557,9 @@ bool Rasterizer::FilterDrawPasses() const {
 void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* prepared) {
     RENDERER_TRACE;
     BbStats::draws.fetch_add(1, std::memory_order_relaxed);
+    if (BbHeadless::On()) {
+        return;  // headless-lite test mode (bbport_headless.h): no draw recorded
+    }
 
     // bbport: with the draw pipeline this thread only selects the pipeline and hands the draw
     // to the recording thread (DrawRecord there); draws FilterDraw handles itself run here.
@@ -1825,6 +1829,9 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
                               u32 max_count, VAddr count_address, u16 vertex_sgpr_offset,
                               u16 instance_sgpr_offset) {
     RENDERER_TRACE;
+    if (BbHeadless::On()) {
+        return;  // headless-lite test mode (bbport_headless.h)
+    }
     // bbport: like direct draws, handed to the recording thread after the pipeline selection
     // (else the GPU thread waited here for a whole frame of queued draws).
     const bool pipelined = UseDrawPipe() && FilterDrawPasses() &&

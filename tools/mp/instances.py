@@ -437,6 +437,10 @@ def run(a):
                 "BB_PARTY_STUN": "off", "BB_PARTY_LOOPBACK": "1", "BB_PARTY_LOCAL_IP": "127.0.0.1",
                 "BB_SKIP_NETWORK_CHOICE": "online", "BB_PATCHES": "Skip Intro",
             })
+        if i >= a.count - getattr(a, "headless", 0):
+            # Headless-lite (gpu/shim/bbport_headless.h): minimised, nothing drawn or presented,
+            # game logic and the party code as usual. Its window gives no screenshots.
+            env.update({"BB_HEADLESS": "1", "BB_DLSS": "0", "BB_UPSCALER": "off"})
         for kv in a.env or []:
             k, _, v = kv.partition("=")
             env[k] = v.replace("{i}", str(i)).replace("{port}", str(port0 + i))
@@ -612,6 +616,8 @@ def main():
     # 4 instances share one 8 GB card: 4 x 1792 MiB plus the desktop fit; 3072 each overcommitted
     # VRAM and spilled into system RAM.
     ap.add_argument("--vram", type=int, default=int(os.environ.get("BB_MP_VRAM", "1792")))
+    ap.add_argument("--headless", type=int, default=0,
+                    help="run: the last N instances headless-lite (BB_HEADLESS=1: minimised, no draws, no present)")
     ap.add_argument("--fps", default=os.environ.get("BB_MP_FPS", "30"),
                     help="frame cap of the test instances (30, 60, 90, uncap: the game patch presets)")
     ap.add_argument("--stagger", type=float, default=float(os.environ.get("BB_MP_STAGGER", "2")),

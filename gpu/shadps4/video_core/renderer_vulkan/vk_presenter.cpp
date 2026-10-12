@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "bbport_headless.h"
 #include "common/debug.h"
 #include "common/elf_info.h"
 #include "common/io_file.h"
@@ -730,8 +731,9 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         }
     };
 
-    // bbport: nothing to present to while the window is minimised (a 0x0 surface, issue #31).
-    if (window.GetWidth() == 0 || window.GetHeight() == 0) {
+    // bbport: nothing to present to while the window is minimised (a 0x0 surface, issue #31), or in
+    // the headless-lite test mode (bbport_headless.h).
+    if (BbHeadless::On() || window.GetWidth() == 0 || window.GetHeight() == 0) {
         free_frame();
         return;
     }

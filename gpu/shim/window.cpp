@@ -1,4 +1,5 @@
 // bbport: SDL3 window for the Vulkan swapchain (X11 or Wayland).
+#include "bbport_headless.h"
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -140,6 +141,12 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     if (const char* t = std::getenv("BB_WINDOW_TITLE"); t && *t) {
         base_title = t;
         SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, t);
+    }
+    // Headless-lite test mode (bbport_headless.h): minimised, never focused, nothing presented.
+    if (BbHeadless::On()) {
+        SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
+        SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FOCUSABLE_BOOLEAN, false);
+        SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_MINIMIZED_BOOLEAN, true);
     }
     window = SDL_CreateWindowWithProperties(props);
     SDL_DestroyProperties(props);
