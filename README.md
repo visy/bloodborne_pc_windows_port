@@ -94,6 +94,8 @@ single-player save is never touched. Settings: *System → Party* pages in the g
   split up and explore.
 - **Travel together or alone.** Lamps, headstones and the Hunter's Mark ask "Travel with the party?".
   Yes moves the whole party with one loading screen; No moves only you, and the others don't load.
+  A guest's own save keeps its own spot: playing it solo later starts where it was, not at the
+  lamp it travelled to with the party.
 - **No loading screen inside the same map.** A lamp or Hunter's Mark to a spot in the map you are
   already in is an instant warp, for the whole party too; at the lamp you already stand at, nothing
   moves at all.
