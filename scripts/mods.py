@@ -192,7 +192,13 @@ def write_party_mods_file(out, layers):
 
 
 def make_link(link_path, target_path, target_is_directory=False):
+    # Windows: files are hard links (copies across volumes), never symlinks. The runtime's UCRT
+    # _stat64 and FindFirstFileA report a file symlink's own size (0), not its target's, and the
+    # game panics loading it (FileTransferTask.cpp(865)) with Developer Mode on. Directories are
+    # symlinks, or junctions without the symlink privilege. (From Supermedo/bloodborne_pc e06e48f.)
     try:
+        if sys.platform == 'win32' and not target_is_directory:
+            raise OSError('files are hard-linked on Windows')
         link_path.symlink_to(target_path, target_is_directory=target_is_directory)
     except OSError:
         if sys.platform == 'win32':
