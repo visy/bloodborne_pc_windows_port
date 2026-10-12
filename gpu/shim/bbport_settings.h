@@ -80,6 +80,7 @@ struct Values {
     std::atomic<float> mk_sens_x{1.0f}, mk_sens_y{1.0f};
     std::atomic<bool> mk_invert_x{false}, mk_invert_y{false};
     std::atomic<float> mk_deadzone{0.05f};  ///< fraction of full stick deflection ignored
+    std::atomic<float> audio_boost{1.4f};   ///< master volume multiplier (1.0 = original); BB_AUDIO_BOOST overrides
     std::atomic<float> mk_smoothing{0.2f};  ///< 0 raw .. 0.8 heavy smoothing of the mouse look
     /// The wheel as d-pad up / down (quick items), one short press per notch (upstream 0.51, #52).
     std::atomic<bool> mk_wheel{true};

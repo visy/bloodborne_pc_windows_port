@@ -24,6 +24,7 @@ SETTINGS_FILE = APP_DIR / "launcher_settings.json"
 PATCHES_XML = APP_DIR / "patches" / "Bloodborne.xml"
 DEFAULT_GAME = Path(os.environ.get("BB_GAME_DIR", "../CUSA03173"))
 
+WINDOW_MODE_CHOICES = ["Windowed", "Borderless", "Fullscreen"]
 FPS_CHOICES = ["uncap", "60", "90", "30"]
 RES_CHOICES = ["From in-game menu", "1280x720", "1920x1080", "2560x1440", "3840x2160"]
 # Earlier name of RES_CHOICES[0] in saved settings
@@ -310,7 +311,13 @@ def settings_env(s: dict) -> dict:
     env["BB_TIMEOUT"] = str(s.get("timeout", "0")).split()[0]
     env["BB_WATCHDOG"] = None if on("feat_watchdog") else "0"
     env["BB_PREP_WORKERS"] = None if on("feat_draw_prep") else "0"
-    env["BB_FULLSCREEN"] = "1" if on("feat_fullscreen", bool(s.get("fullscreen", False))) else "0"
+    # Window mode (Mrsuss60 e2a647d): Windowed / Borderless / Fullscreen; older settings only have
+    # the fullscreen toggle. The game reads BB_WINDOW_MODE, BB_FULLSCREEN stays for older builds.
+    win_mode = str(s.get("window_mode") or "").lower()
+    if win_mode not in ("windowed", "borderless", "fullscreen"):
+        win_mode = "fullscreen" if on("feat_fullscreen", bool(s.get("fullscreen", False))) else "windowed"
+    env["BB_WINDOW_MODE"] = win_mode
+    env["BB_FULLSCREEN"] = "1" if win_mode == "fullscreen" else "0"
     # Overlay menu toggle on gamepad L3 + R3 (Insert always works)
     env["BB_OVERLAY_PAD"] = "1" if on("feat_overlay_pad", False) else "0"
 
@@ -864,6 +871,9 @@ class BloodborneLauncher(tk.Tk):
         self.feat_draw_prep = tk.BooleanVar(value=self.settings.get("feat_draw_prep", True))
         self.feat_fullscreen = tk.BooleanVar(  # "fullscreen": key of the upstream launcher toggle (PR #39)
             value=self.settings.get("feat_fullscreen", self.settings.get("fullscreen", False)))
+        _wm = str(self.settings.get("window_mode") or "").capitalize()
+        self.window_mode_var = tk.StringVar(
+            value=_wm if _wm in WINDOW_MODE_CHOICES else ("Fullscreen" if self.feat_fullscreen.get() else "Windowed"))
         self.feat_overlay_pad = tk.BooleanVar(value=self.settings.get("feat_overlay_pad", False))
         self.feat_game_menu = tk.BooleanVar(value=self.settings.get("feat_game_menu", True))
         self.feat_skip_network_choice = tk.BooleanVar(value=self.settings.get("feat_skip_network_choice", True))
@@ -954,9 +964,10 @@ class BloodborneLauncher(tk.Tk):
             "here renders the 3D scene at exactly that size for the whole session and overrides the "
             "in-game preset (BB_RENDER_RES).",
             width=18, indent=True)
-        self._check(sec, "Fullscreen", self.feat_fullscreen,
-                    "Starts the game in fullscreen instead of a window. You can also toggle it in game with "
-                    "Alt+Enter. Default: off (BB_FULLSCREEN).")
+        self._combo(sec, "Window mode:", self.window_mode_var, WINDOW_MODE_CHOICES,
+                    "Windowed (default): a normal window with title bar. Borderless: a frameless window "
+                    "covering the monitor. Fullscreen: exclusive-style fullscreen. Alt+Enter toggles "
+                    "fullscreen in game (BB_WINDOW_MODE).", width=12)
         self._combo(sec, "Monitor:", self.display_var, [c[0] for c in self.display_choices],
                     "Which monitor the game opens on. The list comes from bb-gpu-capabilities; "
                     "Primary (default) uses the main monitor (BB_DISPLAY).", width=24)
@@ -2212,7 +2223,8 @@ class BloodborneLauncher(tk.Tk):
             "feat_tracing": self.feat_tracing.get(),
             "feat_watchdog": self.feat_watchdog.get(),
             "feat_draw_prep": self.feat_draw_prep.get(),
-            "feat_fullscreen": self.feat_fullscreen.get(),
+            "feat_fullscreen": self.window_mode_var.get() == "Fullscreen",
+            "window_mode": self.window_mode_var.get().lower(),
             "feat_overlay_pad": self.feat_overlay_pad.get(),
             "feat_game_menu": self.feat_game_menu.get(),
             "feat_skip_network_choice": self.feat_skip_network_choice.get(),
@@ -2622,7 +2634,7 @@ class BloodborneLauncher(tk.Tk):
             f"Tracing={'on' if self.feat_tracing.get() else 'off'}, "
             f"Watchdog={'on' if self.feat_watchdog.get() else 'off'}, "
             f"DrawPrep={'on' if self.feat_draw_prep.get() else 'off'}, "
-            f"Fullscreen={'on' if self.feat_fullscreen.get() else 'off'}, "
+            f"WindowMode={self.window_mode_var.get()}, "
             f"OverlayPad={'on' if self.feat_overlay_pad.get() else 'off'}, "
             f"GameMenu={'on' if self.feat_game_menu.get() else 'off'}, "
             f"SkipOnlineChoice={'on' if self.feat_skip_network_choice.get() else 'off'}, "
