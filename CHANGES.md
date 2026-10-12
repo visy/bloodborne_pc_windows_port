@@ -3,6 +3,15 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## 0.5.3 (Windows port 0.5.3, stability release)
+
+- **Party co-op fixes**: the invisible guest on the host is fixed at its root (rebuilt characters are shown the way the game shows a summoned phantom); the guest grey screen after a party travel is fixed; the party HUD and name tags hide during cutscenes.
+- **Louder sound by default** (1.4x master volume with a soft limiter; the old limiter dropped to silence at full scale). *Sound* page in the game's System menu; `BB_AUDIO_BOOST=1.0` restores the original level.
+- **Window mode**: windowed / borderless / fullscreen (`BB_WINDOW_MODE`, launcher).
+- **From Mrsuss60's Windows port**: Microsoft Store Python found by the launcher and run.bat; F / V also heal; a GPU command padding guard. A rare DMA packet (DAS=1) is skipped instead of asserting.
+- **Test tooling**: grey-screen detector; the reaper handles time-stamped logs.
+- **Known issues** (unchanged from 0.5.2): a guest who died while summoned can start in the wrong place after Continue; a guest's bloodstain is not visible in the host's world; no spectator camera in boss limbo; 4-player joins unreliable; 2-PC play untested.
+
 ## 0.5.2 (Windows port 0.5.2, party co-op milestone)
 
 - **Party co-op** (still in development; README *Party co-op*, docs/party/ERSC_PARITY.md ~81%):
