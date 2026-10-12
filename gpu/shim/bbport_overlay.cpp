@@ -89,6 +89,31 @@ asm(".section .rodata\n"
 #endif
 extern "C" const unsigned char bb_serif_ttf[];
 extern "C" const unsigned char bb_serif_ttf_end[];
+// Libre Baskerville (SIL OFL 1.1, gpu/third_party/fonts/OFL-LibreBaskerville.txt): the game's
+// Baskerville look for the in-game party text (name tags, party HUD, notices) and menu labels.
+#ifdef _WIN32
+asm(".section .rdata,\"dr\"\n"
+    ".balign 16\n"
+    ".global bb_game_ttf\n"
+    "bb_game_ttf:\n"
+    ".incbin \"" BB_GAME_FONT_PATH "\"\n"
+    ".global bb_game_ttf_end\n"
+    "bb_game_ttf_end:\n"
+    ".text\n");
+#else
+asm(".section .rodata\n"
+    ".balign 16\n"
+    ".hidden bb_game_ttf\n"
+    ".global bb_game_ttf\n"
+    "bb_game_ttf:\n"
+    ".incbin \"" BB_GAME_FONT_PATH "\"\n"
+    ".hidden bb_game_ttf_end\n"
+    ".global bb_game_ttf_end\n"
+    "bb_game_ttf_end:\n"
+    ".previous\n");
+#endif
+extern "C" const unsigned char bb_game_ttf[];
+extern "C" const unsigned char bb_game_ttf_end[];
 
 extern "C" void runtime_restart(void); // bb-probe (probe.c)
 extern "C" void bbgpu_request_quit(void); // bbgpu.cpp: as the window's close button
@@ -106,6 +131,7 @@ bool dirty = false; // settings changed while open: saved on close
 float base_scale = 1.0f;
 ImFont* sans_font = nullptr;
 ImFont* serif_font = nullptr;
+ImFont* game_font = nullptr; // Libre Baskerville, DejaVu Serif merged in for Cyrillic
 bool focus_request = true; // the menu was opened: its first row takes the focus
 
 // Party mode notices (join / leave / travel, party_status SetLastEvent): a toast in a bottom corner
@@ -575,8 +601,10 @@ int Row(const char* id, const char* label, const char* value, const char* hint, 
         }
     }
     const ImU32 label_color = !enabled ? Dim() : focused ? Bright() : Plain();
+    ImGui::PushFont(game_font, ImGui::GetFontSize());  // labels in the game's Baskerville, values as before
     const ImVec2 label_size = ImGui::CalcTextSize(label);
     draw->AddText(ImVec2(at.x + S(28.0f), mid_y - label_size.y * 0.5f), label_color, label);
+    ImGui::PopFont();
 
     // The value column: "<  value  >" centred, or a bar for sliders.
     const float col0 = at.x + width * 0.56f, col1 = at.x + width - S(28.0f);
@@ -1034,8 +1062,10 @@ void Info(const char* label, const char* value, ImU32 value_color) {
     ImGui::Dummy(ImVec2(width, height));
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const float mid_y = at.y + height * 0.5f;
+    ImGui::PushFont(game_font, ImGui::GetFontSize());
     const ImVec2 label_size = ImGui::CalcTextSize(label);
     draw->AddText(ImVec2(at.x + S(28.0f), mid_y - label_size.y * 0.5f), Plain(0.8f), label);
+    ImGui::PopFont();
     if (value && value[0]) {
         const float col0 = at.x + width * 0.56f, col1 = at.x + width - S(28.0f);
         const ImVec2 size = ImGui::CalcTextSize(value);
@@ -1418,7 +1448,7 @@ void Menu() {
     }
 
     // Title.
-    ImGui::PushFont(serif_font, 34.0f);
+    ImGui::PushFont(game_font, 34.0f);
     const char* title = T("Settings", "Настройки");
     const float title_w = ImGui::CalcTextSize(title).x;
     ImGui::SetCursorPosX((size.x - title_w) * 0.5f);
@@ -1903,7 +1933,7 @@ void PartyHud() {
         }
         // Name (serif, the game's cream; grey outside our world), state / distance on the right.
         const ImVec2 row = ImGui::GetCursorScreenPos();
-        ImGui::PushFont(serif_font, 17.0f);
+        ImGui::PushFont(game_font, 17.0f);
         float mc[3];
         party::hud::MemberColour(c.slot, mc);  // the same colour as the member's tag (and I2's pings)
         ImGui::TextColored(here ? ImVec4(mc[0], mc[1], mc[2], 1.0f) : ImVec4(0.62f, 0.60f, 0.57f, alpha), "%s",
@@ -1924,7 +1954,7 @@ void PartyHud() {
             std::snprintf(right_text, sizeof right_text, "%s", here ? "" : StateText(c));
         }
         if (right_text[0]) {
-            ImGui::PushFont(sans_font, 13.0f);
+            ImGui::PushFont(game_font, 14.0f);
             const ImVec2 ts = ImGui::CalcTextSize(right_text);
             draw->AddText(ImVec2(right_edge - ts.x, row.y + (name_h - ts.y) * 0.5f),
                           Rgba(0.80f, 0.76f, 0.68f, 0.9f * alpha), right_text);
@@ -1977,27 +2007,6 @@ void PartyHud() {
             continue;
         }
         const float d = party::hud::Distance(b.me_pos, c.pos);
-        // The game draws its own phantom plate over a member it can see nearby: ours only fills
-        // in beyond kGameTagRange (party_hud.h), at the plate's height, so it reads as the game's.
-        {
-            static bool ours_on[party::kMaxVitals];
-            const int slot = c.slot >= 0 && c.slot < party::kMaxVitals ? c.slot : 0;
-            const bool was = ours_on[slot];
-            static const float range = [] {
-                const char* e = std::getenv("BB_PARTY_HUD_GAME_RANGE");
-                const float r = e ? static_cast<float>(std::atof(e)) : 0.0f;
-                return r > 0.0f ? r : party::hud::kGameTagRange;
-            }();
-            ours_on[slot] = party::hud::OursInsteadOfGameTag(d, was, range);
-            if (ours_on[slot] != was) {
-                std::printf("Party HUD: tag %s %s at %.1f m\n", c.name,
-                            ours_on[slot] ? "drawn (beyond the game's plate)" : "left to the game's plate", d);
-            }
-            static const bool both = std::getenv("BB_PARTY_HUD_TAG_BOTH") != nullptr;  // test: compare with the plate
-            if (!ours_on[slot] && !both) {
-                continue;
-            }
-        }
         if (d > 80.0f) {
             continue;
         }
@@ -2014,8 +2023,9 @@ void PartyHud() {
             continue;
         }
         const float alpha = std::clamp((80.0f - d) / 30.0f, 0.0f, 1.0f) * 0.95f;
-        // The game's plate is a fixed screen size: its name ~15 px tall at 720p.
-        const float size = 15.0f * display.y / 720.0f;
+        // In the game's phantom plate style (the game's own plate is off in party mode,
+        // party_hud_game.cpp): a fixed screen size, Baskerville, the plate's blue.
+        const float size = 17.0f * display.y / 720.0f;
         // Name, with the level ("Lv 42") or the deaths ("3 deaths, rot 2") after it.
         char label[96];
         const bool ru = BbSettings::MenuText("en", "ru")[0] == 'r';
@@ -2031,24 +2041,30 @@ void PartyHud() {
         } else {
             std::snprintf(label, sizeof label, "%s", c.name);
         }
-        ImGui::PushFont(serif_font, size);
+        ImGui::PushFont(game_font, size);
         const ImVec2 ts = ImGui::CalcTextSize(label);
         // Laid out as the game's plate: the HP bar's bottom on the anchor, the name above it.
         const bool with_bar = overhead == 3 && c.have_hp && c.max_hp > 0;
         // The game's plate: a bar ~0.096 of the display wide centred on the anchor, the name
         // left-aligned on the bar's left edge (live screenshots 2026-10-12, both drawn).
-        const float bar_w = 0.096f * display.x, bar_h = 3.0f * display.y / 720.0f, gap = 2.0f * s;
+        const float bar_w = 0.096f * display.x, bar_h = 4.0f * display.y / 720.0f, gap = 2.0f * s;
         const ImVec2 at(u * display.x - bar_w * 0.5f,
                         party::hud::TagTextTop(v * display.y, ts.y, with_bar, bar_h, gap));
         bg->AddText(ImVec2(at.x + 1.0f, at.y + 1.0f), Rgba(0.0f, 0.0f, 0.0f, 0.8f * alpha), label);
-        float rgb[3];
-        party::hud::MemberColour(c.slot, rgb);  // the member's colour, the same for I2's pings
-        bg->AddText(at, Rgba(rgb[0], rgb[1], rgb[2], alpha), label);
+        bg->AddText(at, Rgba(0.19f, 0.62f, 0.79f, alpha), label);  // the plate's blue (screenshot 49,157,201)
         ImGui::PopFont();
         if (with_bar) {
+            // The plate's thin bar: a dark frame, red over burnt orange, the empty part dark.
             const ImVec2 p0(u * display.x - bar_w * 0.5f, at.y + ts.y + gap);
-            Bar(bg, p0, ImVec2(p0.x + bar_w, p0.y + bar_h), float(c.hp) / float(c.max_hp),
-                Rgba(0.62f, 0.07f, 0.06f, alpha), alpha);
+            const ImVec2 p1(p0.x + bar_w, p0.y + bar_h);
+            const float frac = std::clamp(float(c.hp) / float(c.max_hp), 0.0f, 1.0f);
+            bg->AddRectFilled(ImVec2(p0.x - 1.0f, p0.y - 1.0f), ImVec2(p1.x + 1.0f, p1.y + 1.0f),
+                              Rgba(0.08f, 0.05f, 0.04f, 0.85f * alpha));
+            bg->AddRectFilled(p0, p1, Rgba(0.18f, 0.10f, 0.09f, 0.8f * alpha));
+            if (frac > 0.0f) {
+                const ImU32 top = Rgba(0.62f, 0.12f, 0.11f, alpha), bottom = Rgba(0.47f, 0.21f, 0.01f, alpha);
+                bg->AddRectFilledMultiColor(p0, ImVec2(p0.x + bar_w * frac, p1.y), top, top, bottom, bottom);
+            }
         }
     }
 }
@@ -2086,7 +2102,7 @@ void PartyToast() {
     ImGui::SetNextWindowBgAlpha(0.6f * alpha);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f * base_scale, 8.0f * base_scale));
-    ImGui::PushFont(serif_font, 19.0f);
+    ImGui::PushFont(game_font, 19.0f);
     ImGui::Begin("##party_toast", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                      ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
@@ -2143,12 +2159,12 @@ void PartyAlert() {
                      ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
                      ImGuiWindowFlags_NoSavedSettings);
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::PushFont(serif_font, 22.0f);
+    ImGui::PushFont(game_font, 22.0f);
     ImGui::TextColored(ImVec4(0.96f, 0.88f, 0.70f, alpha), "%s", title.c_str());
     ImGui::PopFont();
     if (!body.empty()) {
         ImGui::Dummy(ImVec2(0.0f, 6.0f * base_scale));
-        ImGui::PushFont(serif_font, 18.0f);
+        ImGui::PushFont(game_font, 18.0f);
         ImGui::TextColored(ImVec4(0.90f, 0.90f, 0.88f, alpha), "%s", body.c_str());
         ImGui::PopFont();
     }
@@ -2284,6 +2300,19 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     serif_config.FontDataOwnedByAtlas = false;
     serif_font = io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(bb_serif_ttf),
                                                 int(bb_serif_ttf_end - bb_serif_ttf), 21.0f, &serif_config);
+    ImFontConfig game_config;
+    game_config.FontDataOwnedByAtlas = false;
+    game_font = io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(bb_game_ttf),
+                                               int(bb_game_ttf_end - bb_game_ttf), 21.0f, &game_config);
+    if (game_font) {
+        ImFontConfig merge;  // glyphs Libre Baskerville lacks (Cyrillic): DejaVu Serif
+        merge.FontDataOwnedByAtlas = false;
+        merge.MergeMode = true;
+        io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(bb_serif_ttf), int(bb_serif_ttf_end - bb_serif_ttf),
+                                       21.0f, &merge);
+    } else {
+        game_font = serif_font;
+    }
 
     const vk::Instance vk_instance = instance.GetInstance();
     ImGui_ImplVulkan_LoadFunctions(

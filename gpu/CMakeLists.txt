@@ -255,9 +255,10 @@ set_source_files_properties(third_party/imgui/imgui.cpp third_party/imgui/imgui_
     COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
 target_compile_definitions(bbgpu PRIVATE IMGUI_IMPL_VULKAN_NO_PROTOTYPES
     BB_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf"
-    BB_SERIF_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSerif.ttf")
+    BB_SERIF_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSerif.ttf"
+    BB_GAME_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/LibreBaskerville.ttf")
 set_source_files_properties(shim/bbport_overlay.cpp PROPERTIES
-    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf;${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSerif.ttf")
+    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf;${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSerif.ttf;${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/LibreBaskerville.ttf")
 # Code guest threads run in place of the game's (System V functions): no red zone (Windows
 # exception frames from the write watch would land on it), and the ribbon writers compute the
 # game's bits exactly (no fused multiply-adds).

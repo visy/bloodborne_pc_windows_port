@@ -173,8 +173,29 @@ HudState& S() {
 }  // namespace
 
 /// The director, once a frame (main thread). Cheap: works every 100 ms.
+/// The game's own phantom plate (FrpgMenuDlgFloatingPCGauge) off while in a party: our tag
+/// (bbport_overlay.cpp, its style) replaces it at every distance. FUN_0176cfa0 (the plate entry
+/// setter, called from FUN_016439b0) copies each entry into MenuMan+0x900+i*0x90; its visible
+/// byte (+0xc) is loaded by `mov al,[r13+0xc]` at 0x176cfc3: `mov al,0` stores "hidden". Restored
+/// outside party mode.
+static void GamePlateOff(bool off) {
+    static int state = -1;  // -1 untouched, 0 stock, 1 off
+    if (state == int(off)) return;
+    static const bool keep = [] {  // BB_PARTY_HUD_GAME_PLATE=1: keep the game's plate (comparison)
+        const char* e = std::getenv("BB_PARTY_HUD_GAME_PLATE");
+        return e && e[0] == '1';
+    }();
+    if (keep && off) return;
+    const bool ok = off ? PatchBytes(0x176cfc3, {0x41, 0x8a, 0x45, 0x0c}, {0xb0, 0x00, 0x90, 0x90}, "game phantom plate off")
+                        : (state < 0 || PatchBytes(0x176cfc3, {0xb0, 0x00, 0x90, 0x90}, {0x41, 0x8a, 0x45, 0x0c},
+                                                   "game phantom plate restored"));
+    (void)ok;  // logged by PatchBytes; not retried every tick (unexpected bytes stay unexpected)
+    state = int(off);
+}
+
 void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberState local_state) {
     HudState& st = S();
+    GamePlateOff(link != nullptr);
     if (!st.log_init) {
         st.log_init = true;
         const char* v = std::getenv("BB_PARTY_HUD_LOG");

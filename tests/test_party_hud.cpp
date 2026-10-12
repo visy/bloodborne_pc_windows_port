@@ -189,15 +189,8 @@ static void Tags() {
     assert(!hud::TagVisible(d, 0, &why));
 }
 
-// Ours only beyond the game's plate range (30 m), with hysteresis; the same anchor height.
+// Our tag's anchor height and layout (the game's plate: bar on the anchor, name above).
 static void GamePlate() {
-    assert(!hud::OursInsteadOfGameTag(3.0f, false));
-    assert(!hud::OursInsteadOfGameTag(30.1f, false));  // inside the hysteresis: still the game's
-    assert(hud::OursInsteadOfGameTag(30.4f, false));
-    assert(hud::OursInsteadOfGameTag(30.1f, true));     // stays on until back inside 30 m
-    assert(!hud::OursInsteadOfGameTag(29.9f, true));
-    assert(!hud::OursInsteadOfGameTag(std::nanf(""), true));
-    assert(hud::OursInsteadOfGameTag(20.4f, false, 20.0f));  // a measured override
     assert(hud::kTagBarHeightM > 1.6f && hud::kTagBarHeightM < 2.1f);
     // Bar bottom on the anchor (y 100), 3 px bar, 2 px gap, 10 px text: text top 85; no bar: 90.
     assert(Near(hud::TagTextTop(100.0f, 10.0f, true, 3.0f, 2.0f), 85.0f));

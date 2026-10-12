@@ -155,10 +155,15 @@ ERSC `overhead_player_display`: normal / none / ping / level / death count. Ours
 name tags (projected with the game camera above each companion in view, 1-80 m), now a setting of
 their own, independent of the HUD panel: System > Party rules > "Above companions": Nothing / Name
 / Name and level ("Hunter1  Lv 37") / Name and health (default, the HP bar as before) / Name and
-deaths ("Hunter0  deaths 1, rot 1"). Local only. Bloodborne itself draws a phantom label (the
-blue "Co-operator" / name text and a thin HP bar, about 2.1 m up); our tag sits above it (2.45 m,
-live screenshot 2026-10-11) in the member's colour and adds what the game's does not show (level,
-deaths, rot; names for members the game does not label). Ping is not offered (the Party members page shows it).
+deaths ("Hunter0  deaths 1, rot 1"). Local only. Bloodborne itself draws a phantom plate
+(FrpgMenuDlgFloatingPCGauge: blue role line, name, thin HP bar), but hides it whenever anything is
+in the way (live 2026-10-12: shown at 3-26 m in clear view, gone at 10-23 m behind a tree or a
+corner), so in party mode it is off (party_hud_game.cpp: the entry setter FUN_0176cfa0 stores its
+visible byte, MenuMan+0x900+i*0x90+0xc, as 0 at 0x176cfc3; restored outside a party;
+BB_PARTY_HUD_GAME_PLATE=1 keeps it for comparisons) and ours replaces it everywhere in its style:
+the HP bar's bottom at 1.82 m (the plate's bar, measured against it in screenshots), name
+left-aligned on a bar 0.096 of the display wide, fixed screen size, the plate's blue, Libre
+Baskerville (no role line). Our tag also adds level, deaths, rot when chosen. Ping is not offered (the Party members page shows it).
 
 The HP behind the bars: data module (`chr+0x3b0 -> +0x20`) +0xf8 HP / +0xfc max, the HP struct the
 game's kill (0x18bf9a0) and per-frame update (0x1a0d7d0) use. The party HUD read +0x128 / +0x12c

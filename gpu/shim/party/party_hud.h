@@ -131,15 +131,10 @@ void MemberColour(int slot, float rgb[3]);
 /// `why` names the reason ("stale", "dead", "not here", ...).
 constexpr std::int64_t kTagFreshMs = 500;
 bool TagVisible(const Companion& c, std::int64_t board_age_ms, const char** why);
-/// The game's own phantom plate (FrpgMenuDlgFloatingPCGauge: blue "Co-operator" / name and a thin
-/// HP bar) shows over a remote player it can see: live 2026-10-12 it showed at 3-25 m in clear
-/// view and hid at 10-23 m behind a tree or a corner (occlusion; its real range was not reached).
-/// MenuMan (0x5562878) +0x900 holds 7 "Floating PC Gauge" entries (PosX/Y/Z, Visible +0xc: the
-/// debug menu FUN_01763db0) but they are not live (stale while the plate shows), so ours uses a
-/// distance rule instead (BB_PARTY_HUD_GAME_RANGE=M overrides, for measuring): off within kGameTagRange, on past it + kGameTagHysteresis.
-constexpr float kGameTagRange = 30.0f;  // unverified: the plate still showed at 26 m
-constexpr float kGameTagHysteresis = 0.3f;
-bool OursInsteadOfGameTag(float distance, bool was_shown, float range = kGameTagRange);
+/// The game's own phantom plate (FrpgMenuDlgFloatingPCGauge: role line, name, thin HP bar) is
+/// turned off in party mode (party_hud_game.cpp: its per-entry visible flag, written by
+/// FUN_0176cfa0 into MenuMan+0x900+i*0x90+0xc, is stored as 0) and ours, drawn in its style,
+/// replaces it at every distance (the game hid its plate behind any occluder, so members vanished).
 /// The game plate's HP bar sits this high above the chr's position (both screenshots at 7 and 16
 /// m: 1.82 m); its name text stacks above the bar in pixels. Ours anchors the same way.
 constexpr float kTagBarHeightM = 1.82f;

@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.5.9 (unreleased)
 
+- **Party name tags in the game's style**: in a party the game's own phantom plate (which vanished behind any tree or corner) is off; ours replaces it at every distance at the same spot (name in the plate's blue over a thin red bar, left-aligned); the party HUD, notices and the settings menu's titles and labels now use Libre Baskerville (SIL OFL 1.1) like the game's UI.
 - **Shorter party codes**: the Internet code is now `BBP2-XXXX-XXXX-XXXX-XXXX-XXXX` (was 29 characters), the LAN code `BBP2-XXXX-XXXX-XXXX-XXX` (it holds only the last number of the host's address; the guest adds the rest from its own). Old `BBP1-` codes still work; a host's code changes once with this update.
 - **Faster re-join after a crash**: when a guest's game crashes, the host's game now drops its connection to the dead game at once (through the game's own connection release) instead of waiting ~25 s for it to time out; the restarted guest is back in the host's world ~12 s after its restart (was ~28 s).
 - Checked every scripted warp of the game for needless loading screens inside the same map: the only ones are cutscene warps (boss intros, the Cathedral Ward evening, the ending) and Chalice layers, which keep the game's own behavior (no change in play).

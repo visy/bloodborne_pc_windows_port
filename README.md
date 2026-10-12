@@ -156,7 +156,7 @@ single-player save is never touched. Settings: *System → Party* pages in the g
 - **Enemies scale with the party, harder than vanilla.** Bosses get more health (and a little more
   damage) per extra hunter than the game gives them, normal enemies get tougher too; all six values
   (boss / enemy health, damage, poise) are on the *Enemy scaling* page, the host's count.
-- **Names over party members**, in each player's colour, with level, health or deaths (your choice).
+- **Names over party members**, in the game's own style (replacing its plate, which hid behind walls), at any distance, with level, health or deaths (your choice).
 - **Party HUD.** Party members and events are shown in a small HUD; all party settings are on the
   *Party* pages of the game's *System* menu.
 
@@ -248,6 +248,6 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | Kyo, Lance McDonald, illusion, emoose, auser1337 | 60 FPS, camera and engine patches |
 | zackcage6 | Testing and bug reports |
 
-Also used: half, DejaVu fonts, dxil-spirv (MIT). AMD's FSR 4 files and NVIDIA's DLSS SDK are not
+Also used: half, DejaVu fonts, Libre Baskerville (SIL OFL 1.1), dxil-spirv (MIT). AMD's FSR 4 files and NVIDIA's DLSS SDK are not
 included here. Release packages include NVIDIA's `nvngx_dlss.dll` under its license
 (`out/NVIDIA_DLSS_LICENSE.txt`).
