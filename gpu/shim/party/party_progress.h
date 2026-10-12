@@ -20,9 +20,9 @@
 //   set-only:  boss_defeated, lamp_unlocked, shortcut_door, key_event (not the endings),
 //              cutscene_seen, world_state
 //   state:     elevators / toggling gates (both 0 and 1 follow the host)
+//   follow:    npc_quest (shared quest choices; BB_PARTY_PROGRESS_NPC=0 turns it off)
 //   off:       item_lot_picked (always: C3, party_items, owns item pickups - the host side hands
-//              every item-pickup flag it sees set to the SetItemFlagObserver), npc_quest
-//              (switchable, BB_PARTY_PROGRESS_NPC=1), boss_area,
+//              every item-pickup flag it sees set to the SetItemFlagObserver), boss_area,
 //              session_runtime, time_of_day (C4 cutscene replay only), never_sync (incl. the area
 //              gate flags of 0x47304B0/0x47301B0 - ON blocks the bells - and the ending flags),
 //              ids the game randomises / counts / rebuilds each load.
@@ -33,7 +33,7 @@
 //      BB_PARTY_FLAG_DUMP=1 writes BBPF v1 snapshots (tools/party/flag_tool.py) to
 //        <user dir>/party/flags_<label>_<frame>.bbpf at session start / end and on each sync
 //        (at most one per 2 s), plus the raw own pool ("<label>-pool").
-//      BB_PARTY_PROGRESS_NPC=1 applies npc_quest (set-only) on guests. BB_PARTY_PROGRESS_MIRROR=1 also writes set-only flags into the
+//      BB_PARTY_PROGRESS_NPC=0 stops npc_quest (default on, SyncMode::Follow) on guests. BB_PARTY_PROGRESS_MIRROR=1 also writes set-only flags into the
 //        host-world overlay while in load mode 1 (visible at once; default off: the overlay
 //        already follows the host through the vanilla snapshot / CompleteEvent channels).
 //      BB_PARTY_PROGRESS_SCAN_MS (host diff period, default 1000, min 100).
@@ -129,7 +129,12 @@ bool NeverWritable(u32 id);
 
 // ---- policy ----
 
-enum class SyncMode : u8 { Off = 0, SetOnly = 1, State = 2 };
+// Follow (npc_quest, D8 shared quest choices): the host's live changes are applied both ways (a
+// quest step clears the old state flag and sets the new one: Iosefka 1141 off, 1143 on); a
+// snapshot (catch-up) sets only, except the 1000-1999 NPC state machines (20 flags per NPC): a
+// group the host has any bit of is copied exactly, so the guest's save never keeps a stale
+// state next to the host's (two states of one NPC at once).
+enum class SyncMode : u8 { Off = 0, SetOnly = 1, State = 2, Follow = 3 };
 struct Policy {
     std::array<SyncMode, kCategoryCount> mode{};
     bool mirror_overlay = false;
@@ -142,6 +147,8 @@ struct Policy {
 /// What the guest does with `id` (category, the state list, the exclusions, NeverWritable).
 SyncMode ModeFor(const Policy& p, u32 id, Category cat);
 inline SyncMode ModeFor(const Policy& p, u32 id) { return ModeFor(p, id, CategoryOf(id)); }
+/// The 1000-1999 NPC quest state machine of `id` (0-49), or -1.
+int NpcStateGroup(u32 id);
 /// The host captures and sends this id (any category a guest may enable, minus the exclusions).
 bool HostCandidate(u32 id, Category cat);
 inline bool HostCandidate(u32 id) { return HostCandidate(id, CategoryOf(id)); }
@@ -221,7 +228,7 @@ class FlagStore;
 class GuestApplier {
 public:
     struct Counters {
-        u64 received = 0, applied = 0, already = 0, skipped = 0, dropped_seq = 0, failed = 0;
+        u64 received = 0, applied = 0, already = 0, skipped = 0, dropped_seq = 0, failed = 0, npc_cleared = 0;
     };
     void QueueChanges(u64 epoch, const std::vector<FlagChange>& changes);
     void QueueSnapshot(const FlagSnapshot& snap);

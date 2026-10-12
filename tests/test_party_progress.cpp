@@ -539,6 +539,72 @@ static void TestApplier() {
     CHECK(!own.PoolBit(9021));
 }
 
+// D8 shared NPC quest choices (Policy::FromEnv: npc_quest Follow). The host's quest step (Iosefka:
+// 1141 off, 1143 on) reaches the guest's own save both ways; a catch-up snapshot copies each
+// 1000-1999 NPC state machine the host has any bit of, and sets only elsewhere.
+static void TestNpcFollow() {
+    CHECK(NpcStateGroup(999) == -1 && NpcStateGroup(1000) == 0 && NpcStateGroup(1141) == 7 &&
+          NpcStateGroup(1159) == 7 && NpcStateGroup(1999) == 49 && NpcStateGroup(2000) == -1);
+    const Policy p = Policy::FromEnv();
+    CHECK(ModeFor(p, 1141) == SyncMode::Follow);
+    CHECK(ModeFor(Policy::Defaults(), 1141) == SyncMode::Off);
+
+    FakeStore host;
+    host.Build(0);
+    host.SetPoolBit(1143, true);      // host: Iosefka moved on (1141 cleared)
+    host.SetPoolBit(72410337, true);  // per-map NPC state
+    FlagStore hs = host.view();
+    HostTracker tr(9);
+    Scan(tr, hs);
+    FlagSnapshot wire;
+    std::string err;
+    CHECK(SnapshotFromJson(SnapshotToJson(tr.Snapshot(0)), &wire, &err));
+
+    FakeStore guest;
+    guest.Build(1);
+    guest.SetPoolBit(1141, true);      // stale state of the same NPC: cleared by the catch-up
+    guest.SetPoolBit(1205, true);      // another NPC the host never met: kept
+    guest.SetPoolBit(72410338, true);  // per-map NPC flag outside the state machines: kept (set-only)
+    FlagStore gs = guest.view();
+    GuestApplier ap;
+    ap.QueueSnapshot(wire, GuestApplier::PlanSnapshot(wire, p));
+    CHECK(ap.Apply(gs, p, false) > 0);
+    CHECK(guest.PoolBit(1143) && !guest.PoolBit(1141));
+    CHECK(guest.PoolBit(1205) && guest.PoolBit(72410337) && guest.PoolBit(72410338));
+    CHECK(ap.counters().npc_cleared == 1);
+    // same result without the precomputed plan
+    {
+        FakeStore g2;
+        g2.Build(1);
+        g2.SetPoolBit(1141, true);
+        g2.SetPoolBit(1205, true);
+        FlagStore v = g2.view();
+        GuestApplier a;
+        a.QueueSnapshot(wire);
+        a.Apply(v, p, false);
+        CHECK(g2.PoolBit(1143) && !g2.PoolBit(1141) && g2.PoolBit(1205));
+    }
+
+    // live: the host's next step clears 1143 and sets 1144 -> both reach the guest
+    host.SetPoolBit(1143, false);
+    host.SetPoolBit(1144, true);
+    host.SetPoolBit(72410337, false);
+    auto ch = Scan(tr, hs);
+    CHECK(ch.size() == 3);
+    ap.QueueChanges(9, ch);
+    ap.Apply(gs, p, false);
+    CHECK(!guest.PoolBit(1143) && guest.PoolBit(1144) && !guest.PoolBit(72410337));
+    CHECK(ap.counters().npc_cleared == 3);
+    // other categories stay set-only under the same policy
+    host.SetPoolBit(12411800, true);
+    ap.QueueChanges(9, Scan(tr, hs));
+    ap.Apply(gs, p, false);
+    host.SetPoolBit(12411800, false);
+    ap.QueueChanges(9, Scan(tr, hs));
+    ap.Apply(gs, p, false);
+    CHECK(guest.PoolBit(12411800));
+}
+
 // The host-world overlay map (SprjEventFlagMan +0x88/+0x90: key +0x20, buffer +0x28) over the
 // fake store's mode-1 overlay buffers (the visible tree's kind-2 nodes point at the same buffers).
 struct OvNode {
@@ -845,6 +911,7 @@ int main(int argc, char** argv) {
     TestDiffAndDedupe();
     TestJson();
     TestApplier();
+    TestNpcFollow();
     TestWorldMirror();
     TestBbpf(source_dir);
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
