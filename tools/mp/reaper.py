@@ -241,7 +241,11 @@ def main():
             n = distinct_party_lines(root)
             # Only once every instance has reached its world: boots, title and loads are quiet
             # phases that must not end a run.
-            if not all_in_world(root):
+            # Not every slot's game has started yet (e.g. headless clients started late): a quiet
+            # phase, not an idle run. Count only logs written since this run took its slots.
+            run_start = e.get('t') or (now - 3600)
+            started = sum(1 for lg in root.glob('inst*/run.log') if lg.stat().st_mtime >= run_start - 5)
+            if started < e.get('count', 0) or not all_in_world(root):
                 state[hid] = (n, now)
                 # Stuck before the world (e.g. a first-run screen nobody presses through): no new
                 # kind of party line for 120 s while not in the world ends the run too (the game
