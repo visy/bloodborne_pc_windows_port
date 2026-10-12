@@ -77,6 +77,8 @@ bool TitleJoinRequested();
 bool TitleJoinHold(const GameSnapshot& s);
 /// Host: a guest at its title waits for this host's room (the director rings for it).
 bool TitleJoinPending();
+/// Host: its AutoContinue is on the way into the world (a waiting title-join guest keeps waiting).
+void SetTitleContinuing(bool on);
 
 // ---- Split travel (docs/party/split_travel.md) ----
 /// Where a member is (the party link's vitals): the director passes every member each tick.
