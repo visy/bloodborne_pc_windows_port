@@ -17,8 +17,8 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 
 | Area | Progress | |
 |---|---|--:|
-| **Overall** | `█████████████████░░░` | 83% |
-| Session & joining | `█████████████████░░░` | 86% |
+| **Overall** | `█████████████████░░░` | 84% |
+| Session & joining | `█████████████████░░░` | 87% |
 | World & travel | `█████████████████░░░` | 86% |
 | Death & respawn | `█████████████████░░░` | 86% |
 | Progress (anyone can progress) | `█████████████████░░░` | 85% |
@@ -179,7 +179,7 @@ single-player save is never touched. Settings: *System → Party* pages in the g
 |---|---|
 | Item pickups and enemy drops per player: everyone gets their own | Done |
 | Every cutscene for the whole party (story cutscenes, endings and guest-triggered scenes already work) | In progress |
-| Joining during a boss fight or cutscene waits outside until it ends | Works for boss fights (verified live); cutscenes in progress |
+| Joining during a boss fight or cutscene waits outside until it ends | Works for boss fights with every join path (bell, title join, direct summon; verified live), the Party status says why you wait; cutscenes not yet tested live |
 | With 3 guests, every guest sees every other guest | In progress |
 | Chalice dungeons: deeper layers checked in a party; entering the party's dungeon in one press (the altar still asks a few prompts) | In progress |
 | PvP / friendly fire the host can switch on and off | Later |

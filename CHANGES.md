@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.6.1 (unreleased)
 
+- **No joining into a boss fight or cutscene by any path**: joining from the title and the direct summon now wait too while the host fights a boss or watches a cutscene (a guest used to load straight into the Cleric Beast fight). The guest plays on in its own world and is summoned right after the fight; the Party status shows "Waiting: the host is in a boss fight" (host: "Joiners wait: you are in a boss fight"). Live: refused at 48.7 s, kill 75.7 s, guest beside the host after.
 - **Guests keep all the Insight the host's world gives**: a boss's first-encounter Insight and the kill's Insight a few seconds later both reach every guest present (the second one used to be dropped by a one-event-per-30-s limit). The anti-flood cap is now 20 Insight per minute, 10 per event. Live: story +1, then a boss kill -> guest Insight 6 -> 9.
 - **NPC quest steps reach every guest's own save in full**: when an NPC moves on in the host's world (Iosefka 1141 -> 1143), the old state is now cleared in each guest's save too, and a guest catching up takes over the host's state of every NPC the host has met, so no save ends up with two states of one NPC. Live: guest `1141=1 1143=0` -> NPC state cleared 1 at the join catch-up.
 
