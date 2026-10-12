@@ -395,7 +395,21 @@ BB_COOP_SYSV void HostDeathReturnHook(u64 man, u64 id) {
 
 /// Guest: HostDead_1's send-home is dropped (the host's death travel brings the guest along).
 bool SplitHostReachable();
+std::atomic<bool> g_force_load_warp{false};  // the next lamp warp loads (title-join home)
+std::atomic<bool> g_title_joined{false};  // this guest came in by a title join (no own world loaded)
+std::atomic<bool> g_title_home_now{false};
+
 bool SendHomeVeto(u64 site) {
+    // A title-joined guest has no own-world return data (no snapshot: its own world was never
+    // loaded): the game's return load fell back to the title (live run 18 / 19). Leave the session
+    // here; TitleJoinGuestTick takes it home with a lamp warp to its own last lamp.
+    if (g_on.load() && g_title_joined.load() && Role() == RoleClient && site == 0x138a51c) {
+        using Fn = u8(BB_COOP_SYSV*)(u64);
+        reinterpret_cast<Fn>(Guest(kBeginLeave))(Slot(kSlotSession));
+        g_title_home_now = true;
+        Log("title join: send-home at +0x138a51c replaced: session left, home by a lamp warp next");
+        return true;
+    }
     // Split travel: OnLeave_Limit (0x138A51C: the room-gone / irregular-leave path) sent a guest
     // home 5 s after the host travelled alone (live split4) although the room and the party link
     // were up. While the host is apart (or just left alone) and its link is fresh, it is dropped.
@@ -4360,7 +4374,7 @@ struct TitleJoin {
     double since = 0, last_update = 0, done_load = 0;
     float last_timer = -1.0f;
     int updates = 0;
-    bool have_reply = false;
+    bool have_reply = false, acked = false;
     std::vector<u8> room;  // the host's reply: head + descriptor
     u32 stage = 0;
     float pos[4] = {}, rot[4] = {};
@@ -4373,7 +4387,11 @@ TitleJoin& TJ() {
 }
 
 bool TitleJoinOn() {
-    static const bool on = EnvOn("BB_PARTY_TITLE_JOIN");
+    // Default on (Continue party game loads the host's world directly); BB_PARTY_TITLE_JOIN=0 off.
+    static const bool on = [] {
+        const char* v = std::getenv("BB_PARTY_TITLE_JOIN");
+        return !(v && v[0]) || EnvOn("BB_PARTY_TITLE_JOIN");
+    }();
     return on;
 }
 
@@ -4529,6 +4547,30 @@ void TitleJoinHostTick(const GameSnapshot& s) {
             }
         }
     }
+    // The guest's first sync: a vanilla joiner gets the host's packet 0xA (data request) when the
+    // host loads or the guest's summon load ends at the host (0x178D9C0 over the pending members);
+    // a title-joined guest's load ended before it was the host's pending member, so its task here
+    // waits at FirstSyncCompleteWait (step 3) for the 0xC it never sends. Ask for its data again.
+    static std::map<u64, double> asked;
+    if (Now() - served_at < 120.0 && s.world_up && !s.loading && Role() == RoleHost) {
+        using SendFn = int(BB_COOP_SYSV*)(u64, u64, u32, const void*, u32);
+        for (const TaskInfo& t : Tasks(false)) {
+            if (t.mode != 1 || t.step != 3 || PlayerForPeer(t.task + kTaskPeer)) {
+                continue;
+            }
+            double& at = asked[t.task];
+            if (at == 0) {
+                at = Now() - 1.0;  // first ask 2 s after the task waits
+                continue;
+            }
+            if (Now() - at >= 3.0) {
+                at = Now();
+                const u8 zero = 0;
+                const int r = reinterpret_cast<SendFn>(Guest(kSendPacket))(Slot(kSlotFlow), t.task + kTaskPeer, 0xa, &zero, 1);
+                Log("title join: the guest's task waits for its first sync: data request (0xA) sent -> %d", r);
+            }
+        }
+    }
     // Validation in an ordinary bell join: the descriptor as this host would send it, next to the
     // guest's `summon message ... (head ...)` line.
     static int last_coop = 0;
@@ -4650,19 +4692,85 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
     // passes and Continue's does not. Written only once the host's chr stands here (the first sync
     // is done): written at the arrival, the host's task for this guest stalled at
     // FirstSyncCompleteWait (live runs 9-11).
+    // The session ended under a title-joined guest: it has no own world loaded (that load never
+    // happened), so it goes home with a lamp warp to its own last lamp (GSM +0x1528): an own-world
+    // load (flow is no longer 3).
+    // Only when no home load of the game's own follows (a Leave or a send-home loads by itself,
+    // with the return spot written below).
+    static bool sent_home = false;
+    static double ended_at = 0;
+    const bool stranded = phase == TitlePhase::Done && !sent_home && s.world_up && !s.loading && Role() != RoleClient &&
+                          Role() != 4 && Field<u8>(Slot(kSlotGsm), 0x1592) == 0;
+    if (!stranded) {
+        ended_at = 0;
+    } else if (ended_at == 0) {
+        ended_at = now;
+    }
+    if (stranded && now - ended_at > (g_title_home_now.load() ? 0.5 : 5.0)) {
+        g_title_home_now = false;
+        g_title_joined = false;
+        sent_home = true;
+        const u32 own = Field<u32>(Slot(kSlotGsm), 0x1528);
+        if (own != 0 && own != kTravelNone && TravelLampKnown(own)) {
+            Log("title join: the session ended (role %d); home to the own last lamp %u", Role(), own);
+            // The world is still flagged the host's (GSM +0x1592 = 0): the lamp warp does nothing
+            // there (live run 21). Own world from here on.
+            const u8 one = 1;
+            SafeWrite(Slot(kSlotGsm) + 0x1592, &one, 1);
+            using Warp = void(BB_COOP_SYSV*)(u32);
+            g_force_load_warp = true;  // the loaded world is the host's copy: a real load home
+            reinterpret_cast<Warp>(Guest(0x13cdf30))(own);
+            g_force_load_warp = false;
+        } else {
+            Log("title join: the session ended (role %d); no own last lamp (%u) to go home to", Role(), own);
+        }
+    }
+    static double last_diag = 0;
+    if (((phase == TitlePhase::Done && now - t.since < 40.0) ||
+         (!TitleJoinOn() && Role() == RoleClient && s.world_up && !s.loading)) &&
+        now - last_diag > 3.0) {
+        last_diag = now;
+        const u64 gd = Field<u64>(Slot(kSlotGameData), 8);
+        Log("title join: diag: flow %d, flow+0x10 %#llx, GameData+0x10 %d, +0xa4 %d, +0x5d8 %d; tasks:%s",
+            Field<int>(Slot(kSlotFlow), 0x84, -1), ull(Field<u64>(Slot(kSlotFlow), 0x10)), Field<int>(gd, 0x10, -9),
+            Field<int>(gd, 0xa4, -9), Field<int>(gd, 0x5d8, -9), DescribeTasks().c_str());
+    }
     static bool typed = false;
     if (phase == TitlePhase::Done && !typed && s.world_up && !s.loading && Role() == RoleClient) {
         bool host_chr = false;
         for (const TaskInfo& k : Tasks(false)) {
             host_chr = host_chr || (k.mode == 2 && PlayerForPeer(k.task + kTaskPeer) && k.step == kStepUpdate);
         }
-        if (host_chr && now - t.since > 2.0) {
-            typed = true;
-            if (const u64 gd = Field<u64>(Slot(kSlotGameData), 8)) {
-                const int seven = 7;
-                SafeWrite(gd + 0x5d8, &seven, 4);
-                Log("title join: own session type -> 7 (co-op) after the first sync");
+        (void)host_chr;
+        typed = true;
+        // The return spot a summon writes from the sign (GSM +0x14A0 pos, +0x14B0 rot, +0x14C0 map;
+        // 0x1872360): the guest's own last lamp (GSM +0x1528, known once the save is loaded). Without
+        // it the guest's Leave loaded nothing and fell back to the title (live run 18).
+        {
+            const u64 gsm = Slot(kSlotGsm);
+            const u32 own = Field<u32>(gsm, 0x1528);
+            float spot[4];
+            if (own != 0 && own != kTravelNone && ids::ReturnSpot(own, spot)) {
+                const float pos[4] = {spot[0], spot[1], spot[2], 1.0f};
+                const float rot[4] = {0.0f, spot[3], 0.0f, 0.0f};
+                const u32 map = ids::EntityMap(own);
+                SafeWrite(gsm + 0x14a0, pos, 16);
+                SafeWrite(gsm + 0x14b0, rot, 16);
+                SafeWrite(gsm + 0x14c0, &map, 4);
+                Log("title join: return spot = own last lamp %u (map %#x, %.1f, %.1f, %.1f)", own, map, pos[0], pos[1], pos[2]);
+            } else {
+                Log("title join: no own last lamp (%u) for the return spot", own);
             }
+        }
+        // A summoned guest's own GameData as the summon load leaves it (live, vanilla join):
+        // +0x10 2 (the 0x168 record and the first-sync packet 0xC are sent only with it set),
+        // +0xA4 1 (white phantom, packet 0xB), +0x5D8 7 (session type).
+        if (const u64 gd = Field<u64>(Slot(kSlotGameData), 8)) {
+            const int two = 2, one = 1, seven = 7;
+            SafeWrite(gd + 0x10, &two, 4);
+            SafeWrite(gd + 0xa4, &one, 4);
+            SafeWrite(gd + 0x5d8, &seven, 4);
+            Log("title join: own GameData as a summoned guest's (+0x10 2, +0xA4 1, +0x5D8 7)");
         }
     }
     if (phase == TitlePhase::Ready && s.loading) {
@@ -4677,6 +4785,10 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
         {
             std::lock_guard<std::mutex> lk(t.mu);
             t.phase = TitlePhase::Done;
+            g_title_joined = true;
+            // K5 (OnMatchingCheck: a member's chr missing) quiet for 15 s while the host builds
+            // this guest's chr (live verification run 1: the guest left 0.1 s after arriving).
+            g_split_change_at = now;
             t.done_load = now - t.since;
             t.since = now;
         }
@@ -4772,6 +4884,15 @@ bool TitleJoinHold(const GameSnapshot& s) {
         if (have && Role() >= 0 && Slot(kSlotGsm)) {
             TitleJoinStart();
             return true;
+        }
+        bool acked;
+        {
+            std::lock_guard<std::mutex> lk(t.mu);
+            acked = t.acked;
+        }
+        if (!acked && now - t.since > 6.0) {
+            TitleJoinFail("the host does not answer title joins (an older build, or off there)");
+            return false;
         }
         if (now - t.since > 70.0) {
             TitleJoinFail("no answer from the host within 70 s");
@@ -5308,8 +5429,17 @@ void OnLinkEvent(int from_slot, const std::string& body) {
         return;
     }
     if (body.find("\"title_req\"") != std::string::npos) {
+        if (!TitleJoinOn()) {
+            return;  // the guest's ack timeout sends it the usual way
+        }
+        Send(from_slot, "{\"op\":\"title_ack\"}");
         std::lock_guard<std::mutex> lk(TJ().mu);
         TJ().requests.push_back(from_slot);
+        return;
+    }
+    if (body.find("\"title_ack\"") != std::string::npos) {
+        std::lock_guard<std::mutex> lk(TJ().mu);
+        TJ().acked = true;
         return;
     }
     if (body.find("\"title_room\"") != std::string::npos) {
@@ -5486,7 +5616,7 @@ namespace {
 /// A dead player keeps the game's death load (no revive here).
 bool SameMapLampWarp(std::uint32_t id, bool alone) {
     float spot[4];
-    if (!g_on.load() || !LampInLoadedBlock(id, spot)) {
+    if (!g_on.load() || g_force_load_warp.load() || !LampInLoadedBlock(id, spot)) {
         return false;
     }
     const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);

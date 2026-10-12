@@ -853,6 +853,10 @@ std::atomic<bool> g_allow_send_home{false};
 
 bool RetargetSendHome(u64 site) {
     if (g_allow_send_home.exchange(false)) {
+        // B2 may still take the guest's own Leave home its own way (a title-joined guest).
+        if (SendHomeVetoFn veto = g_send_home_veto.load(); veto && veto(site)) {
+            return true;
+        }
         Log("send-home at +0x%llx: the guest's Leave, home as usual", ull(site));
         return false;
     }
