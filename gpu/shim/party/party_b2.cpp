@@ -1733,13 +1733,14 @@ std::string DescribeWhere() {
     return out;
 }
 
-/// The summoned placement (GSM +0x14C4 stage, +0x14D0 position, +0x14E0 rotation) a guest's load
-/// uses while GSM +0x1521 is set; the same bytes overlap the guest's return spot (+0x14A0..). Written
-/// only when +0x1521 is set (otherwise the load takes the forced transform and these writes only
-/// replaced the return spot with a host-world spot). Not the cause of the Continue drift (hd32:
-/// the guest still continued at the host-world spot), see b2_seamless.md 6.13.
+/// The summoned placement (GSM +0x14C4 stage, +0x14D0 position, +0x14E0 rotation). Written for
+/// every host-world load, also with GSM +0x1521 clear: a host-world load takes its STAGE from
+/// +0x14C4 whatever the forced transform says (split travel 4 / split10: a stale +0x14C4 loaded the
+/// Dream at Central Yharnam's coordinates - the guest fell through a grey world; it came back in
+/// split31 when this write was made conditional). The bytes overlap the guest's return spot
+/// (+0x14A0..); that was found not to be the cause of the Continue drift (hd32, b2_seamless.md 6.13).
 void WriteSummonedPlacement(u64 gsm, const void* stage, const void* pos, const void* rot) {
-    if (!gsm || Field<u8>(gsm, 0x1521) == 0) {
+    if (!gsm) {
         return;
     }
     SafeWrite(gsm + 0x14c4, stage, 4);
