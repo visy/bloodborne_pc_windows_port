@@ -237,8 +237,9 @@ Instead of a code, a guest can also enter the host's address directly as `host:p
 - World treasure a guest picks up while in the host's world does not exist for guests in the
   normal game; the host's pickups are handed to guests through the item sharing above.
   Enemy drops are per player: every player's game rolls each enemy's drop and keeps the whole of
-  its own roll, guests included. Instanced world treasure for guests is experimental and off
-  (`BB_PARTY_GUEST_PICKUP=1`).
+  its own roll, guests included. World treasure is per player too (on by default,
+  `BB_PARTY_GUEST_PICKUP=0` turns it off): every player picks up their own copy into their own
+  save, and the host's treasure pickups are not handed to the guests.
 
 ## Settings (Rules & sync)
 
