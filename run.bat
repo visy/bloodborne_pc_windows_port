@@ -17,10 +17,12 @@ echo Boot: run.bat started at %TIME%
 REM Find Python 3
 if "%PYTHON%"=="" (
     for %%P in (
+        "C:\Program Files\Python314\python.exe"
         "C:\Program Files\Python313\python.exe"
         "C:\Program Files\Python312\python.exe"
         "C:\Program Files\Python311\python.exe"
         "C:\Program Files\Python310\python.exe"
+        "%LocalAppData%\Programs\Python\Python314\python.exe"
         "%LocalAppData%\Programs\Python\Python313\python.exe"
         "%LocalAppData%\Programs\Python\Python312\python.exe"
         "%LocalAppData%\Programs\Python\Python311\python.exe"
@@ -31,9 +33,10 @@ if "%PYTHON%"=="" (
 )
 if "%PYTHON%"=="" (
     for /f "delims=" %%i in ('where python.exe 2^>nul') do (
-        set "pycand=%%i"
-        if not "%%~dpi"=="%LocalAppData%\Microsoft\WindowsApps\" (
-            if "%PYTHON%"=="" set "PYTHON=%%i"
+        REM Real Python 3.10+ only: also finds the Microsoft Store install, rejects its placeholder alias.
+        if "%PYTHON%"=="" (
+            "%%i" -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>nul
+            if not errorlevel 1 set "PYTHON=%%i"
         )
     )
 )

@@ -177,6 +177,7 @@ const float SensTable[11] = {0.25f, 0.40f, 0.50f, 0.60f, 0.80f, 1.00f, 1.25f, 1.
 const float SmoothTable[11] = {0.0f, 0.05f, 0.10f, 0.15f, 0.20f, 0.30f, 0.40f, 0.50f, 0.60f, 0.70f, 0.80f};
 const float DeadTable[11] = {0.0f, 0.01f, 0.02f, 0.03f, 0.04f, 0.05f, 0.06f, 0.08f, 0.10f, 0.15f, 0.20f};
 const float MaskScaleTable[11] = {0.0f, 0.25f, 0.50f, 0.75f, 1.00f, 1.25f, 1.50f, 2.00f, 2.50f, 3.00f, 4.00f};
+const float BoostTable[11] = {1.0f, 1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.8f, 2.0f, 2.5f, 3.0f};
 const float TenthsTable[11] = {0.0f, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 1.0f};
 
 bool UpscalerAvailable(int i) {
@@ -542,6 +543,13 @@ void DefineAll() {
            {off, AddText("FSR 3.1", "FSR 3.1"), AddText("FSR 4", "FSR 4"), AddText("FSR 4.1.1", "FSR 4.1.1"),
             AddText("TAA", "TAA"), AddText("DLSS", "DLSS")},
            Kind::List);
+    // ---- Sound: master volume boost (Display has its 6 rows). ----
+    AddPage("Sound", "Звук", "Master volume boost with a soft limiter (bbport)",
+            "Усиление общей громкости с мягким ограничителем (bbport)");
+    AddRow(Scaled(&Values::audio_boost, BoostTable), "Volume boost", "Усиление громкости",
+           "Master volume with a soft limiter: 0 = 1.0 (original), 4 = 1.4 (default), 10 = 3.0",
+           "Общая громкость с мягким ограничителем: 0 = 1.0 (оригинал), 4 = 1.4 (по умолч.), 10 = 3.0",
+           {}, Kind::Slider);
 
     // ---- Effects: the game's graphics patches (after a restart). ----
     AddPage("Effects", "Эффекты", "The game's effects (bbport; after a restart)",

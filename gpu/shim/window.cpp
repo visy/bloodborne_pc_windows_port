@@ -107,8 +107,28 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     }
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_VULKAN_BOOLEAN, true);
+    // Window mode (ported from Mrsuss60/bloodborne_pc_windows_port e2a647d, adapted): BB_WINDOW_MODE
+    // = windowed | borderless | fullscreen; without it BB_FULLSCREEN=1 means fullscreen. Borderless
+    // is a frameless window covering the whole display (no video mode switch).
     const char* fullscreen = std::getenv("BB_FULLSCREEN");
-    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, fullscreen && fullscreen[0] == '1');
+    const char* win_mode = std::getenv("BB_WINDOW_MODE");
+    bool is_fullscreen = fullscreen && fullscreen[0] == '1';
+    bool is_borderless = false;
+    if (win_mode && win_mode[0]) {
+        is_fullscreen = !SDL_strcasecmp(win_mode, "fullscreen");
+        is_borderless = !SDL_strcasecmp(win_mode, "borderless");
+    }
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, is_fullscreen);
+    if (is_borderless) {
+        SDL_Rect bounds{};
+        if (SDL_GetDisplayBounds(display, &bounds)) {
+            SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, bounds.x);
+            SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, bounds.y);
+            SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, bounds.w);
+            SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, bounds.h);
+        }
+        SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_BORDERLESS_BOOLEAN, true);
+    }
     // Test runs (BB_WINDOW_BACKGROUND=1): never take focus from the desktop's user. The window is
     // shown without activation and cannot be focused; scripted input (BB_PAD_FILE) does not need it.
     if (const char* bg = std::getenv("BB_WINDOW_BACKGROUND"); bg && bg[0] == '1') {

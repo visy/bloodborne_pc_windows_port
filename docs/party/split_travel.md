@@ -320,3 +320,32 @@ guest sees both players fine.
   `BB_PARTY_HUD_LOG=1`) dumps position-like values in each remote PlayerIns for the anchor hunt.
 
 Note (splittravel): in the vis2-vis4 runs the host's copy did get position updates (0.85 m from the host, matching the guest's own); the difference to a drawn chr was chr +0x1E0 bit 20 (section 7).
+
+## 8. 0.5.3 round (2026-10-12)
+
+* **Draw bit, root cause.** `CSMultiPlayerInsTask::STEP_Create` (0x1E50090) creates a remote
+  phantom hidden: at 0x1E502C3 it clears chr +0x1E2 bit 4 (= +0x1E0 bit 20) for chr types 1 / 2 /
+  12 (`0x1006 >> type & 1`). The game shows it either through the summon presentation or at the end
+  of a load: InGameStart 0x193A3E0 sets the bit (0x193A93C) and calls chr vfunc +0x610(1) for every
+  player chr whose vfunc +0x1B8 is 0. A chr re-created by our rewind in a running world got
+  neither. Now every task `RewindRemoteTasks` rewinds is remembered and its new chr gets
+  InGameStart's two steps (`remote chr ... shown as InGameStart does (re-created by a rewind)`,
+  live split31-split36 on host and guest after B2 arrivals; host screenshot: the guest drawn
+  beside it). The old repair is a safety net only (a remote chr without the bit for 4 s).
+* **Grey screen regression (split31).** A plain B2 party travel landed the guest in the Dream's
+  stage at Central Yharnam's coordinates: the summoned placement (GSM +0x14C4 stage) had been made
+  conditional on GSM +0x1521 upstream; a host-world load takes its stage from +0x14C4 regardless.
+  The write is unconditional again (`WriteSummonedPlacement`). Live split32-split36: no grey screen.
+* **Grey-screen detector**: `tools/mp/shot.py --grey` grabs every window each 2 s; a 3D view (the
+  centre, without the HUD corners) with a luminance std-dev under 4 for over 3 s while the log says
+  the world is up is logged `GREY SCREEN instN` (stdout, `<root>/grey.log`, a PNG). Measured: grey
+  screens 0.1 / 1.1, normal views 13-20.
+* Lone guest in a map the host is not in: alone travel to Central Yharnam with the host in the
+  Dream works (screenshot), an enemy killed there is recorded (`enemy 2410740 killed while the party
+  is apart`); the meet that applies it and the world action of a lever / flag there were not reached
+  in the time the test runs had (the central reaper ends a run after 10 s without new party log
+  lines). `BB_PARTY_SPLIT_ENEMIES` stays off.
+* Not done: a Lua stage warp (0x132E010) inside the loaded map: its warp point ids (EMEVD 2003[14]
+  args, e.g. 2100980) are not entities of any MSB (ids_tool: "warp points not in an MSB"), so the
+  destination spot is not known without the game's own resolution.
+
