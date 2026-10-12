@@ -499,6 +499,21 @@ static int pad_value(SDL_Gamepad *g, int input) {
 static uint8_t key_axis(uint8_t value, int negative, int positive) {
     return negative || positive ? (uint8_t)(128-(negative ? 128 : 0)+(positive ? 127 : 0)) : value;
 }
+/* Keyboard sticks (after Supermedo/bloodborne_pc a147eb8 and 576514c): two opposite keys held
+ * together give the one pressed last ("snap tap") instead of cancelling out, so rolling from A to
+ * D never passes through a neutral stick, which ends a sprint. -1, 0 or 1; `since` orders the
+ * presses by sample. */
+typedef struct { uint64_t negative_since, positive_since; } KeyAxisState;
+static KeyAxisState key_axes[4]; /* move x, move y, look x, look y */
+static uint64_t key_sample;
+static int key_direction(KeyAxisState *s, int negative, int positive) {
+    ++key_sample;
+    s->negative_since=negative ? (s->negative_since ? s->negative_since : key_sample) : 0;
+    s->positive_since=positive ? (s->positive_since ? s->positive_since : key_sample) : 0;
+    if (negative && positive && s->negative_since!=s->positive_since)
+        return s->positive_since>s->negative_since ? 1 : -1;
+    return positive-negative;
+}
 static void apply_keyboard(PadData *d, const bool *k) {
     for (int i=IN_CROSS;i<=IN_RIGHT;++i)
         if (i!=IN_TOUCHPAD && i!=IN_TOUCHPAD_RIGHT && key_down(k,i)) d->buttons|=input_buttons[i];
@@ -506,10 +521,19 @@ static void apply_keyboard(PadData *d, const bool *k) {
     if (key_down(k,IN_TOUCHPAD_RIGHT)) touch_click(d,1);
     if (key_down(k,IN_L2)) d->l2=255;
     if (key_down(k,IN_R2)) d->r2=255;
-    d->left_x=key_axis(d->left_x,key_down(k,IN_MOVE_LEFT),key_down(k,IN_MOVE_RIGHT));
-    d->left_y=key_axis(d->left_y,key_down(k,IN_MOVE_UP),key_down(k,IN_MOVE_DOWN));
-    d->right_x=key_axis(d->right_x,key_down(k,IN_LOOK_LEFT),key_down(k,IN_LOOK_RIGHT));
-    d->right_y=key_axis(d->right_y,key_down(k,IN_LOOK_UP),key_down(k,IN_LOOK_DOWN));
+    int lx=key_direction(&key_axes[0],key_down(k,IN_MOVE_LEFT),key_down(k,IN_MOVE_RIGHT));
+    int ly=key_direction(&key_axes[1],key_down(k,IN_MOVE_UP),key_down(k,IN_MOVE_DOWN));
+    if (lx && ly) { /* round gate: a diagonal is full deflection, not the square's corner */
+        d->left_x=(uint8_t)(lx<0 ? 128-90 : 128+90);
+        d->left_y=(uint8_t)(ly<0 ? 128-90 : 128+90);
+    } else {
+        d->left_x=key_axis(d->left_x,lx<0,lx>0);
+        d->left_y=key_axis(d->left_y,ly<0,ly>0);
+    }
+    const int rx=key_direction(&key_axes[2],key_down(k,IN_LOOK_LEFT),key_down(k,IN_LOOK_RIGHT));
+    const int ry=key_direction(&key_axes[3],key_down(k,IN_LOOK_UP),key_down(k,IN_LOOK_DOWN));
+    d->right_x=key_axis(d->right_x,rx<0,rx>0);
+    d->right_y=key_axis(d->right_y,ry<0,ry>0);
 }
 
 /* Mouse & keyboard mode (from Mrsuss60/bloodborne_pc_windows_port, reworked): the mouse's speed

@@ -44,8 +44,27 @@ static void inject(const char *path, const char *tokens) {
     usleep(25000);
 }
 
+/* Keyboard sticks (after Supermedo/bloodborne_pc a147eb8, 576514c): last-wins opposite keys and
+ * a round gate for diagonals. Classic layout: W/A/S/D move. */
+static void test_keyboard_sticks(void) {
+    static bool k[SDL_SCANCODE_COUNT];
+    PadData d;
+    memset(&d,0,sizeof(d)); d.left_x=d.left_y=d.right_x=d.right_y=128;
+    k[SDL_SCANCODE_A]=true; apply_keyboard(&d,k); assert(d.left_x==0);
+    k[SDL_SCANCODE_D]=true; apply_keyboard(&d,k); assert(d.left_x==255); /* D pressed last */
+    k[SDL_SCANCODE_A]=false; apply_keyboard(&d,k); k[SDL_SCANCODE_A]=true; apply_keyboard(&d,k);
+    assert(d.left_x==0); /* A pressed again last */
+    k[SDL_SCANCODE_A]=k[SDL_SCANCODE_D]=false;
+    memset(&d,0,sizeof(d)); d.left_x=d.left_y=d.right_x=d.right_y=128;
+    k[SDL_SCANCODE_W]=k[SDL_SCANCODE_D]=true; apply_keyboard(&d,k);
+    assert(d.left_x==218 && d.left_y==38); /* full deflection on the circle, not the corner */
+    k[SDL_SCANCODE_W]=k[SDL_SCANCODE_D]=false;
+}
+
 int main(void) {
     char path[512];
+    load_bindings(0);
+    test_keyboard_sticks();
     const int created=bb_test_temp_file(path,sizeof(path),"bbport-pad-test-");
     assert(created==0);
     bb_test_setenv("BB_PAD_FILE",path);
