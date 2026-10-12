@@ -6,7 +6,10 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <string>
 #include <mutex>
 
 namespace party::hud {
@@ -149,22 +152,86 @@ float PlateScale(float depth) {
     return std::clamp(kPlateFarDepth / depth, 1.0f, kPlateMaxScale);
 }
 
-PlateLayout LayoutPlate(float ax, float ay, float w, float h, float depth) {
+PlateLayout LayoutPlate(float ax, float ay, float w, float h, float depth, const PlateParams& p) {
     const float k = PlateScale(depth) * h;
+    auto px = [&](float f, float lo) { return std::max(lo, std::round(f * k)); };
     PlateLayout l;
-    l.font = kPlateFontH * k;
-    const float bar_w = kPlateBarW * w * PlateScale(depth);
-    const float bar_h = std::max(2.0f, std::round(kPlateBarH * k));
+    l.font = p.font_h * k;
+    const float bar_w = p.bar_w * w * PlateScale(depth);
     l.bar_x0 = std::round(ax - bar_w * 0.5f);
     l.bar_x1 = std::round(ax + bar_w * 0.5f);
     l.bar_y0 = std::round(ay);
-    l.bar_y1 = l.bar_y0 + bar_h;
-    l.cap_w = std::max(1.0f, std::round(0.0021f * k));
-    l.cap_y0 = l.bar_y0 - std::max(1.0f, std::round(kPlateCapRise * k));
-    l.name_x = l.bar_x0 + kPlateNameInset * k;
-    l.name_baseline = l.bar_y0 - kPlateBaselineGap * k;
-    l.outline = std::max(1.0f, std::round(0.0021f * k));
+    l.bar_y1 = l.bar_y0 + px(p.bar_h, 1.0f);
+    l.cap_w = px(p.cap_w, 1.0f);
+    l.cap_y0 = l.bar_y0 - std::round(p.cap_rise * k);
+    l.cap_y1 = l.cap_y0 + px(p.cap_h, 1.0f);
+    const float dx = std::round(p.cap_dx * k);
+    l.cap_l = l.bar_x0 + dx;
+    l.cap_r = l.bar_x1 - dx - l.cap_w;
+    l.name_x = l.bar_x0 + std::round(p.name_inset * k);
+    l.name_baseline = l.bar_y0 - std::round(p.baseline_gap * k);
+    l.outline = p.outline > 0.0f ? px(p.outline, 1.0f) : 0.0f;
     return l;
+}
+
+namespace {
+PlateParams g_tune;  // overlay thread only
+}
+
+int ParsePlateTune(const char* text, PlateParams* p) {
+    struct Key { const char* name; float* v; int n; };
+    const Key keys[] = {
+        {"font_h", &p->font_h, 1}, {"bar_w", &p->bar_w, 1}, {"bar_h", &p->bar_h, 1}, {"cap_w", &p->cap_w, 1},
+        {"cap_h", &p->cap_h, 1}, {"cap_rise", &p->cap_rise, 1}, {"cap_dx", &p->cap_dx, 1},
+        {"name_inset", &p->name_inset, 1}, {"baseline_gap", &p->baseline_gap, 1}, {"outline", &p->outline, 1},
+        {"rim", &p->rim, 1}, {"glow", &p->glow, 1}, {"name_rgb", p->name_rgb, 3}, {"bar_top", p->bar_top, 3},
+        {"bar_bottom", p->bar_bottom, 3}, {"cap_rgb", p->cap_rgb, 3},
+    };
+    int applied = 0;
+    while (text && *text) {
+        const char* end = std::strchr(text, '\n');
+        const std::size_t len = end ? std::size_t(end - text) : std::strlen(text);
+        char line[160] = {};
+        std::memcpy(line, text, std::min(len, sizeof line - 1));
+        text = end ? end + 1 : nullptr;
+        char* eq = std::strchr(line, '=');
+        if (line[0] == '#' || !eq) continue;
+        *eq = 0;
+        char* name = line;
+        while (*name == ' ' || *name == '\t') ++name;
+        for (char* e = eq - 1; e >= name && (*e == ' ' || *e == '\t'); --e) *e = 0;
+        for (const Key& k : keys) {
+            if (std::strcmp(name, k.name) != 0) continue;
+            float v[3] = {};
+            const int got = k.n == 1 ? std::sscanf(eq + 1, "%f", &v[0]) : std::sscanf(eq + 1, "%f,%f,%f", &v[0], &v[1], &v[2]);
+            if (got != k.n) break;
+            for (int i = 0; i < k.n; ++i) k.v[i] = k.n == 3 ? v[i] / 255.0f : v[i];
+            ++applied;
+        }
+    }
+    return applied;
+}
+
+const PlateParams& CurrentPlateParams() { return g_tune; }
+
+void PlateTunePoll() {
+    static const char* path = std::getenv("BB_PARTY_HUD_TUNE_FILE");
+    static std::int64_t last = 0;
+    if (!path || NowMs() - last < 500) return;
+    last = NowMs();
+    std::FILE* f = std::fopen(path, "rb");
+    if (!f) return;
+    char buf[4096];
+    const std::size_t n = std::fread(buf, 1, sizeof buf - 1, f);
+    std::fclose(f);
+    buf[n] = 0;
+    static std::string prev;
+    if (prev == buf) return;
+    prev = buf;
+    PlateParams p;
+    const int keys = ParsePlateTune(buf, &p);
+    g_tune = p;
+    std::printf("Party HUD: tune file read (%d keys)\n", keys);
 }
 
 float TagTextTop(float anchor_y, float text_h, bool with_bar, float bar_h, float gap) {

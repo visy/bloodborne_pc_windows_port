@@ -200,20 +200,28 @@ static void GamePlate() {
     assert(Near(hud::PlateScale(8.0f), 1.0f) && Near(hud::kPlateMaxScale, 1.0f));
     assert(Near(hud::PlateScale(5.0f), hud::kPlateMaxScale) && Near(hud::PlateScale(0.5f), hud::kPlateMaxScale));
     assert(Near(hud::PlateScale(0.0f), hud::kPlateMaxScale) && Near(hud::PlateScale(std::nanf("")), hud::kPlateMaxScale));
-    // At range on the measured 833x469 window: the game's plate (bar 83 px centred, 2 px thick,
-    // its top on the anchor; name ~8.9 px font, baseline 8 px above the bar, 4 px in).
+    // The tuned 833x469 plate (live, side by side with the game's): bar 83 px centred, 2 px, its
+    // top on the anchor; caps 1 px on the bar ends, 2 px above to 1 px below; name ~9.8 px font,
+    // baseline 6 px above the bar, 1 px in from the left cap.
     const hud::PlateLayout far = hud::LayoutPlate(336.0f, 139.0f, 833.0f, 469.0f, 20.0f);
     assert(Near(far.bar_x1 - far.bar_x0, 83.0f, 1.5f) && Near((far.bar_x0 + far.bar_x1) * 0.5f, 336.0f, 1.0f));
     assert(Near(far.bar_y0, 139.0f) && Near(far.bar_y1 - far.bar_y0, 2.0f));
-    assert(Near(far.font, 8.9f, 0.1f) && Near(far.bar_y0 - far.name_baseline, 8.0f, 0.5f));
-    assert(Near(far.name_x - far.bar_x0, 4.0f, 0.5f) && far.cap_w >= 1.0f && far.cap_y0 < far.bar_y0);
-    // Near, the same size as far (the game's plate does not scale); 1080p at range: font ~20.5 px, bar 191 px.
+    assert(Near(far.cap_w, 1.0f) && Near(far.cap_l, far.bar_x0) && Near(far.cap_r, far.bar_x1 - 1.0f));
+    assert(Near(far.bar_y0 - far.cap_y0, 2.0f) && Near(far.cap_y1 - far.bar_y1, 1.0f));
+    assert(Near(far.font, 9.85f, 0.1f) && Near(far.bar_y0 - far.name_baseline, 6.0f));
+    assert(Near(far.name_x - far.bar_x0, 1.0f));
+    // Near, the same size as far (the game's plate does not scale); 1080p: font ~22.7 px, bar 191 px.
     const hud::PlateLayout near = hud::LayoutPlate(336.0f, 139.0f, 833.0f, 469.0f, 5.0f);
     assert(Near(near.font / far.font, hud::kPlateMaxScale, 0.01f));
     assert(Near((near.bar_x1 - near.bar_x0) / (far.bar_x1 - far.bar_x0), hud::kPlateMaxScale, 0.05f));
     assert(Near(near.bar_y0 - near.name_baseline, far.bar_y0 - far.name_baseline, 0.01f));
     const hud::PlateLayout hd = hud::LayoutPlate(960.0f, 500.0f, 1920.0f, 1080.0f, 30.0f);
-    assert(Near(hd.font, 20.5f, 0.2f) && Near(hd.bar_x1 - hd.bar_x0, 191.0f, 1.5f));
+    assert(Near(hd.font, 22.7f, 0.2f) && Near(hd.bar_x1 - hd.bar_x0, 191.0f, 1.5f));
+    // The live tune file (BB_PARTY_HUD_TUNE_FILE): key=value lines, colours 0..255, others ignored.
+    hud::PlateParams p;
+    assert(hud::ParsePlateTune("# c\nfont_h = 0.03\r\nbar_top=255,0,51\nbogus=1\nrim=x\n", &p) == 2);
+    assert(Near(p.font_h, 0.03f) && Near(p.bar_top[0], 1.0f) && Near(p.bar_top[2], 0.2f) && Near(p.rim, 0.0f));
+    assert(Near(hud::LayoutPlate(0, 0, 833.0f, 469.0f, 20.0f, p).font, 14.07f, 0.05f));
 }
 
 static void Handover() {

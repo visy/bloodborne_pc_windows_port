@@ -2074,8 +2074,10 @@ void PartyHud() {
             const char* e = std::getenv("BB_PARTY_HUD_TAG_SHIFT");
             return e ? static_cast<float>(std::atof(e)) : 0.0f;
         }();
+        party::hud::PlateTunePoll();  // test: BB_PARTY_HUD_TUNE_FILE live parameters
+        const party::hud::PlateParams& pp = party::hud::CurrentPlateParams();
         const party::hud::PlateLayout pl =
-            party::hud::LayoutPlate(sp.x + shift * display.x, sp.y, display.x, display.y, sp.depth);
+            party::hud::LayoutPlate(sp.x + shift * display.x, sp.y, display.x, display.y, sp.depth, pp);
         const bool with_bar = overhead == 3 && c.have_hp && c.max_hp > 0;
         // pl.font is the em size (as the plate was measured); ImGui sizes a font by its line
         // height (ascent - descent), smaller per em: convert through the cap height of 'H' (live
@@ -2098,22 +2100,29 @@ void PartyHud() {
             bg->AddText(ImVec2(at.x + d4.x, at.y + d4.y), dark, label);
         }
         bg->AddText(ImVec2(at.x + o, at.y + o), Rgba(0.02f, 0.03f, 0.03f, 0.9f * alpha), label);  // drop shadow
-        bg->AddText(at, Rgba(0.19f, 0.61f, 0.78f, alpha), label);  // the plate's blue (49,155,199)
+        bg->AddText(at, Rgba(pp.name_rgb[0], pp.name_rgb[1], pp.name_rgb[2], alpha), label);  // the plate's blue
         ImGui::PopFont();
         if (with_bar) {
             // The plate's thin bar: red over burnt orange, the empty part dark, a dark rim, light end caps.
             const ImVec2 p0(pl.bar_x0, pl.bar_y0), p1(pl.bar_x1, pl.bar_y1);
             const float frac = std::clamp(float(c.hp) / float(c.max_hp), 0.0f, 1.0f);
-            bg->AddRectFilled(ImVec2(p0.x, p0.y - 1.0f), ImVec2(p1.x, p1.y + 1.0f), Rgba(0.05f, 0.04f, 0.04f, 0.6f * alpha));
+            if (pp.rim > 0.0f) {
+                bg->AddRectFilled(ImVec2(p0.x, p0.y - pp.rim), ImVec2(p1.x, p1.y + pp.rim),
+                                  Rgba(0.05f, 0.04f, 0.04f, 0.6f * alpha));
+            }
             bg->AddRectFilled(p0, p1, Rgba(0.16f, 0.09f, 0.09f, 0.85f * alpha));
             if (frac > 0.0f) {
-                const ImU32 top = Rgba(0.37f, 0.05f, 0.12f, alpha), bottom = Rgba(0.42f, 0.17f, 0.06f, alpha);
+                const ImU32 top = Rgba(pp.bar_top[0], pp.bar_top[1], pp.bar_top[2], alpha),
+                            bottom = Rgba(pp.bar_bottom[0], pp.bar_bottom[1], pp.bar_bottom[2], alpha);
                 bg->AddRectFilledMultiColor(p0, ImVec2(p0.x + (p1.x - p0.x) * frac, p1.y), top, top, bottom, bottom);
             }
-            const ImU32 cap = Rgba(0.91f, 0.95f, 0.97f, alpha), glow = Rgba(0.55f, 0.62f, 0.70f, 0.45f * alpha);
-            for (const float cx : {p0.x - pl.cap_w, p1.x}) {
-                bg->AddRectFilled(ImVec2(cx - 1.0f, pl.cap_y0 - 1.0f), ImVec2(cx + pl.cap_w + 1.0f, p1.y + 1.0f), glow);
-                bg->AddRectFilled(ImVec2(cx, pl.cap_y0), ImVec2(cx + pl.cap_w, p1.y), cap);
+            const ImU32 cap = Rgba(pp.cap_rgb[0], pp.cap_rgb[1], pp.cap_rgb[2], alpha),
+                        glow = Rgba(0.55f, 0.62f, 0.70f, pp.glow * alpha);
+            for (const float cx : {pl.cap_l, pl.cap_r}) {
+                if (pp.glow > 0.0f) {
+                    bg->AddRectFilled(ImVec2(cx - 1.0f, pl.cap_y0 - 1.0f), ImVec2(cx + pl.cap_w + 1.0f, pl.cap_y1 + 1.0f), glow);
+                }
+                bg->AddRectFilled(ImVec2(cx, pl.cap_y0), ImVec2(cx + pl.cap_w, pl.cap_y1), cap);
             }
         }
     }
