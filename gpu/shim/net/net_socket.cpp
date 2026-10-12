@@ -343,6 +343,9 @@ struct SockQueue {
     // Counters for the desync work: what came in, what went out, how deep the inbox got.
     std::uint64_t in_dgrams = 0, in_bytes = 0, out_dgrams = 0, out_bytes = 0, forwarded = 0;
     std::size_t hiwater = 0;
+    // When each source (as the game sees it, source_key) last reached this socket: C6 finds a
+    // crashed member's connection by its silence.
+    std::map<std::uint64_t, Clock::time_point> heard;
 };
 // The party UDP port, shared by every game socket that binds a vport on it (the game binds
 // 40 at boot and 30 for a session, both on 3658). A reader thread drains it into the queues.
@@ -496,6 +499,7 @@ bool trace_now(std::atomic<int>& count) {
 int net_alloc() { return g_net_next++; }
 
 std::atomic<PacketTraceFn> g_packet_trace{nullptr};
+std::atomic<P2pRecvHookFn> g_p2p_recv_hook{nullptr};
 
 // bbport: the host answers a peer's STUN Binding Request (and its relay HELLO).
 void answer_stun(P2pPort& port, const std::uint8_t* buf, std::size_t n, const sockaddr_in& sa) {
@@ -684,6 +688,8 @@ void p2p_reader(std::shared_ptr<P2pPort> port) {
             std::lock_guard<std::mutex> lk(q->mu);
             ++q->in_dgrams;
             q->in_bytes += dg.data.size();
+            if (q->heard.size() < kMaxHeard || q->heard.count(source_key(dg.addr, dg.port)))
+                q->heard[source_key(dg.addr, dg.port)] = Clock::now();
             if (forwarded) ++q->forwarded;
             if (q->q.size() >= kMaxInbox) {  // the game is not reading (or a flood): oldest go
                 q->q.pop_front();
@@ -820,6 +826,7 @@ int sock_recv(int s, void* buf, std::uint64_t len, int flags, SceSockaddrIn* fro
     const bool peek = flags & 0x2;
     if (sock.p2p) {
         if (!sock.queue) return net_again();
+        if (P2pRecvHookFn h = g_p2p_recv_hook.load(std::memory_order_relaxed)) h(s);
         SockQueue& q = *sock.queue;
         Datagram dg;
         {
@@ -2061,5 +2068,15 @@ std::string p2p_status() {
 }
 
 void set_packet_trace(PacketTraceFn fn) { g_packet_trace.store(fn); }
+void set_p2p_recv_hook(P2pRecvHookFn fn) { g_p2p_recv_hook.store(fn); }
+std::map<std::uint64_t, std::int64_t> p2p_heard(int sock) {
+    std::map<std::uint64_t, std::int64_t> out;
+    NetSock ns;
+    if (!sock_state(sock, &ns) || !ns.p2p || !ns.queue) return out;
+    std::lock_guard<std::mutex> lk(ns.queue->mu);
+    for (const auto& [k, t] : ns.queue->heard)
+        out[k] = std::chrono::duration_cast<std::chrono::milliseconds>(t.time_since_epoch()).count();
+    return out;
+}
 
 }  // namespace bbnet

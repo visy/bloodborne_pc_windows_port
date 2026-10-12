@@ -501,6 +501,11 @@ set_target_properties(party-watchdog-test PROPERTIES INTERPROCEDURAL_OPTIMIZATIO
 add_executable(party-env-test EXCLUDE_FROM_ALL ../tests/test_party_env.cpp)
 target_compile_options(party-env-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 set_target_properties(party-env-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# C6 crash rejoin: the crashed member's connections (party_nr_drop.h). ninja -C out/gpu party-nr-drop-test
+add_executable(party-nr-drop-test EXCLUDE_FROM_ALL ../tests/test_party_nr_drop.cpp)
+target_compile_options(party-nr-drop-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-nr-drop-test PRIVATE shim)
+set_target_properties(party-nr-drop-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 
 
 # Party progress sync (shim/party/party_progress, C2): keys, categories, policy, diff, JSON, BBPF

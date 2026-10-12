@@ -760,6 +760,9 @@ LinkCallbacks make_callbacks(bool host) {
                         bbnet::party::PartyHostService::instance().member_crashed(name);
                     }).detach();
                 if (crashed) nr_fast_expire(m.name);  // shortens that hold once the timeout is lowered
+                // A crash: the host's game releases its connection to the dead game now (C6).
+                if (m.lost_why.find("reset") != std::string::npos && !(env("BB_PARTY_NR_DROP") && env("BB_PARTY_NR_DROP")[0] == '0'))
+                    coop::b2::NrDropSilentPeers(m.name);
             }
             if (slot_kept) {
                 plog("%s (slot %d) lost; slot kept", m.name.c_str(), m.slot);

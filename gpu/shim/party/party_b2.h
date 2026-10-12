@@ -144,6 +144,11 @@ struct NrTransport {
     std::uint32_t* config = nullptr;
 };
 std::vector<NrTransport> NrTransports();
+/// C6 crash rejoin (host): `name`'s link ended with a connection reset (its game crashed). 1.5 s
+/// later, on the game's own thread, the game's transport connections to sources silent since
+/// then are released through the transport's own release (vtable +0x28), and the sign hold for
+/// `name` ends 1 s after that (party_nr_drop.h). BB_PARTY_NR_DROP=0 turns it off.
+void NrDropSilentPeers(const std::string& name);
 /// RE: offsets in [base, base+span) holding the transport config's timing values.
 std::string NrFindTimeouts(std::uint64_t base, std::size_t span);
 

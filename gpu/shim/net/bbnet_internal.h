@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
 
 #define BBNET_ABI __attribute__((sysv_abi))
@@ -192,5 +193,13 @@ void online_watch_start();
 using PacketTraceFn = void (*)(bool send, unsigned src_vport, unsigned dst_vport, const unsigned char* data,
                                std::size_t len);
 void set_packet_trace(PacketTraceFn fn);
+
+// C6 crash rejoin: called on the game's own thread at the start of every receive on a P2P game
+// socket (null = off); the party layer drops a crashed member's game connection from there.
+using P2pRecvHookFn = void (*)(int sock);
+void set_p2p_recv_hook(P2pRecvHookFn fn);
+// When the P2P game socket `sock` last heard each source, as the game sees it (key: addr |
+// port << 32, both network order; value: steady-clock ms). Empty for other sockets.
+std::map<std::uint64_t, std::int64_t> p2p_heard(int sock);
 
 }  // namespace bbnet
