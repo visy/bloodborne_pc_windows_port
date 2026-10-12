@@ -805,11 +805,7 @@ void HudOverlay() {
                 // Only count dedicated DeviceLocal heaps (VRAM)
                 if (is_device_local) {
                     total_vram_alloc += budgets[h].statistics.allocationBytes;
-                    if (budgets[h].budget > 0) {
-                        total_vram_budget += budgets[h].budget;
-                    } else {
-                        total_vram_budget += mem_props.memoryHeaps[h].size;
-                    }
+                    total_vram_budget += mem_props.memoryHeaps[h].size;
                 }
             }
 

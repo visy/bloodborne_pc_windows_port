@@ -71,10 +71,19 @@ static uint8_t trigger(int16_t v) { int x=v>>7; return (uint8_t)(x<0 ? 0 : x>255
 static uint16_t touch_axis(float v, int max) {
     return (uint16_t)(v<=0.0f ? 0 : v>=1.0f ? max : (int)(v*max+0.5f));
 }
+static uint8_t synth_touch_id = 1;
+static uint64_t touch_down_us = 0;
+
 static void touch_click(PadData *d, int right) {
-    d->buttons|=BTN_TOUCHPAD;
-    d->touch_count=1;
-    d->touches[0]=(PadTouch){.x=right ? 1440 : 480,.y=471,.id=0};
+    uint64_t t = now_us();
+    if (!touch_down_us) {
+        touch_down_us = t;
+        if (++synth_touch_id > 127 || synth_touch_id == 0) synth_touch_id = 1;
+    }
+    d->buttons |= BTN_TOUCHPAD;
+    d->touch_count = 1;
+    d->touch_held_time = (uint32_t)(t - touch_down_us);
+    d->touches[0] = (PadTouch){.x = right ? 1440 : 480, .y = 471, .id = synth_touch_id};
 }
 
 /* Opens the first gamepad SDL knows about; called under lock. */
@@ -432,6 +441,7 @@ static void sample(PadData *d) {
     d->buttons|=injected.buttons;
     if (injected.touch_side>=0) touch_click(d,injected.touch_side);
     else if ((d->buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d,0);
+    if (!d->touch_count) touch_down_us = 0;
     if (injected.buttons & BTN_L2) d->l2=255;
     if (injected.buttons & BTN_R2) d->r2=255;
     uint8_t *axes[4]={&d->left_x,&d->left_y,&d->right_x,&d->right_y};
