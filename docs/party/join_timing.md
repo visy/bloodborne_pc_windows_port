@@ -342,3 +342,26 @@ artefact. The A11 fixture lit lamp 2412952 (Great Bridge, (-124.8, -26.9, 64.3))
 boss flags (`BB_PARTY_PROGRESS_TEST_CLEAR`); that lamp stands in the Cleric Beast's arena
 ((-136.5, -26.6, 52.8), 16 m away), so the respawn put the host next to a live boss. In the game the
 lamp only exists after the boss is dead. No bug.
+
+## 2026-10-12 (flowlive): title join live (2 clients, mp2 runs 2-12), still off
+
+* Setup: the "path not found" exits came from a setup run with another Python (msys) on PATH: the
+  root path hashed to another port range, so the guest's saved host address pointed nowhere. Runs
+  now use a fresh root and `BB_MP_BASE_PORT`.
+* The host has no room until it summons a sign (the bell alone opens none): on a title request it
+  now creates one (0x1ECFCD0(float [0x49271C8], SessionMan, flow +0xC), as the flow's event 0x1E).
+* The descriptor head is `ffffffff 07000000` (type 7, a co-op summon; the guest's summon message
+  of an ordinary join has the same head and the same 209 bytes).
+* 0x1789010 panics at the title (SprjLuaEventMan does not exist there): the guest calls 0x1ED0670
+  directly.
+* Result: title -> JoinRoom -> client in 0.9 s, the host's snapshot in 0.03 s more, **one load**
+  into the host's world (loading screen 5 s; host reply -> in the world 7.5 s), the guest beside the
+  host (in-world warp after the load; with GSM +0x1521 set the summoned placement worked too), the
+  guest sees the host's chr (guest `cooperators 0 -> 1`, session type 7 written after the first sync).
+* **Blocker: the host never builds the guest's chr.** Its task for the guest stays at step 3
+  FirstSyncCompleteWait (no packet 0xC from the guest; once, run 7, it got through); the host
+  watchdog then ends the session after 60 s. The guest then shows "Session lost" and stays in the
+  host-world copy (no own world to return to: GSM +0x1592 stays 0), so its bell posts no sign and it
+  never re-joins (the run the user saw). Next: the guest's 0xA / 0xC exchange after a title join
+  (0x178D9C0 sends 0xA to the flow's pending members at the load end) and a home load when a title
+  join's session ends. Until then `BB_PARTY_TITLE_JOIN` stays off.

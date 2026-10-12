@@ -75,6 +75,8 @@ bool TitleJoinRequested();
 /// Guest at the title, before AutoContinue presses Continue (main thread): true while the title
 /// join runs (hold Continue); false to press (joined and ready, failed, or off).
 bool TitleJoinHold(const GameSnapshot& s);
+/// Host: a guest at its title waits for this host's room (the director rings for it).
+bool TitleJoinPending();
 
 // ---- Split travel (docs/party/split_travel.md) ----
 /// Where a member is (the party link's vitals): the director passes every member each tick.
