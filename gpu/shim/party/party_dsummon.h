@@ -12,6 +12,10 @@
 // {"op":"dsum_room","room":"<hex>","area":A,"pos":[x,y,z],"level":L} or {"op":"dsum_room","room":""}
 // (refused: the bell sign path goes on); guest -> host {"op":"dsum_done","ok":0|1} (the host ends
 // its hold on the guest's signs; on a failure they are offered to its game again at once).
+// A11 (ERSC_PARITY.md, user decision: joiners wait outside fights and cutscenes): a refusal while
+// the host fights a boss or watches a cutscene carries "wait":"boss"|"cutscene", and the host
+// broadcasts {"op":"dsum_busy","wait":"boss"|"cutscene"|"none"} when that starts / ends, so the
+// waiting guest shows why it waits (the host rings again right after; the sign path summons it).
 // This file is game-free (unit tests: tests/test_party_dsummon.cpp); the game side is in party_b2.
 #pragma once
 
@@ -31,12 +35,25 @@ struct Room {
     std::uint32_t level = 0;         // FrpgNetMan +0xaa8
 };
 
-enum class Kind { None, Req, Room, Done };
+enum class Kind { None, Req, Room, Done, Busy };
 Kind KindOf(const std::string& body);
+
+/// A11: why the host holds every join now.
+enum class Busy { None, Boss, Cutscene };
+/// The boss bar wins over a cutscene (a boss intro cutscene ends in the fight).
+Busy HostBusy(bool boss_bar_up, bool cutscene_playing);
+/// "boss" / "cutscene" / "none" (the wire word).
+const char* BusyWord(Busy b);
+/// The player-facing wait line: the guest's ("Waiting: the host is in a boss fight") or the
+/// host's own; empty for None.
+std::string BusyText(Busy b, bool host);
+/// The "wait" word of a dsum_room refusal or a dsum_busy event (None when absent / unknown).
+Busy WaitOf(const std::string& body);
 
 std::string EncodeReq();
 std::string EncodeRoom(const Room& r);
-std::string EncodeRefuse();
+std::string EncodeRefuse(Busy why = Busy::None);
+std::string EncodeBusy(Busy b);
 std::string EncodeDone(bool ok);
 /// False for a refusal or a bad message (`err` says which); a refusal sets *refused.
 bool DecodeRoom(const std::string& body, Room* out, bool* refused, std::string* err);
@@ -55,6 +72,7 @@ struct HostView {
     int cooperators = 0, max_cooperators = 3;
     long long ms_since_sign_summon = 1 << 30;  // the host's game asked to summon a sign this long ago
     long long other_hold_ms = 0;               // a crash hold running (C6)
+    Busy busy = Busy::None;                    // A11: a boss fight / cutscene: joiners wait
 };
 const char* HostRefusal(const HostView& v);
 

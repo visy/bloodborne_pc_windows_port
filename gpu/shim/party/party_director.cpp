@@ -236,6 +236,8 @@ struct State {
     int auto_continue = -1; // BB_PARTY_AUTOCONTINUE: 1 on (tests, party flow Continue/Join); unset/0 off (manual play)
     double ring_every = 30.0;
     bool a11_waiting = false;  // A11: the host's bell held (boss fight / cutscene)
+    int a11_kind = 0;          // 1 boss, 2 cutscene: what the guests were last told
+    Clock::time_point a11_told{};
     // BB_PARTY_FAST_JOIN (default on; docs/party/join_timing.md): shorter director pauses.
     bool fast_join = true;
     double ring_delay = 0.3;        // s in a steady world before the first bell (5 without fast join)
@@ -2653,6 +2655,14 @@ void PartyDirector::Tick() {
     if (role == PartyRole::Host) {
         const bool boss = BossBarShown(), remo = CutscenePlaying();
         if (boss || remo) {
+            // Both sides see why (party status line) and the guests get it again every 10 s
+            // (a guest connecting mid-fight); direct summon refuses meanwhile (party_dsummon).
+            const int kind = boss ? 1 : 2;
+            if (kind != st.a11_kind || Seconds(st.a11_told, now) >= 10.0) {
+                st.a11_kind = kind;
+                st.a11_told = now;
+                coop::b2::HostBusyChanged(boss, remo);
+            }
             if (!st.a11_waiting) {
                 st.a11_waiting = true;
                 // A bell rung before the fight keeps the game searching (live: summoned 29 s into
@@ -2665,6 +2675,8 @@ void PartyDirector::Tick() {
         }
         if (st.a11_waiting) {
             st.a11_waiting = false;
+            st.a11_kind = 0;
+            coop::b2::HostBusyChanged(false, false);
             st.rung_ever = false;  // ring at once
             Log("A11: the boss fight / cutscene is over: ringing for waiting joiners again");
         }

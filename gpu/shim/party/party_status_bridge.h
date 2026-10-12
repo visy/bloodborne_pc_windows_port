@@ -51,6 +51,9 @@ struct Facts {
     // C1 campaign start (party_start.h): in the own world but not ready for summons yet.
     bool prologue = false;
     std::string prologue_step;       // "clinic", "first-dream" ...
+    // A11: joins wait while the host fights a boss / watches a cutscene (party_dsummon BusyText):
+    // the host's own line or the guest's "Waiting: the host is in a boss fight"; empty = none.
+    std::string host_busy;
 };
 
 struct Mapped {
@@ -95,6 +98,8 @@ void OnMemberJoined(const std::string& name, bool rejoined);
 void OnMemberLeft(const std::string& name, bool slot_kept);
 void OnTravel(const std::string& what);
 void OnRing();
+/// A11: the host's boss fight / cutscene hold started (`text`, BusyText) or ended (empty).
+void OnHostBusy(const std::string& text);
 /// Leave / Rejoin done by the runtime (any thread).
 void OnLeft(bool host);
 void OnRejoining();

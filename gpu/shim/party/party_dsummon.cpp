@@ -19,11 +19,43 @@ Kind KindOf(const std::string& b) {
     if (b.find("\"op\":\"dsum_req\"") != std::string::npos) return Kind::Req;
     if (b.find("\"op\":\"dsum_room\"") != std::string::npos) return Kind::Room;
     if (b.find("\"op\":\"dsum_done\"") != std::string::npos) return Kind::Done;
+    if (b.find("\"op\":\"dsum_busy\"") != std::string::npos) return Kind::Busy;
     return Kind::None;
 }
 
 std::string EncodeReq() { return "{\"op\":\"dsum_req\"}"; }
-std::string EncodeRefuse() { return "{\"op\":\"dsum_room\",\"room\":\"\"}"; }
+Busy HostBusy(bool boss_bar_up, bool cutscene_playing) {
+    return boss_bar_up ? Busy::Boss : cutscene_playing ? Busy::Cutscene : Busy::None;
+}
+
+const char* BusyWord(Busy b) {
+    switch (b) {
+    case Busy::Boss: return "boss";
+    case Busy::Cutscene: return "cutscene";
+    default: return "none";
+    }
+}
+
+std::string BusyText(Busy b, bool host) {
+    switch (b) {
+    case Busy::Boss: return host ? "Joiners wait: you are in a boss fight" : "Waiting: the host is in a boss fight";
+    case Busy::Cutscene: return host ? "Joiners wait: a cutscene is playing" : "Waiting: the host is watching a cutscene";
+    default: return {};
+    }
+}
+
+Busy WaitOf(const std::string& body) {
+    if (body.find("\"wait\":\"boss\"") != std::string::npos) return Busy::Boss;
+    if (body.find("\"wait\":\"cutscene\"") != std::string::npos) return Busy::Cutscene;
+    return Busy::None;
+}
+
+std::string EncodeRefuse(Busy why) {
+    if (why == Busy::None) return "{\"op\":\"dsum_room\",\"room\":\"\"}";
+    return std::string("{\"op\":\"dsum_room\",\"room\":\"\",\"wait\":\"") + BusyWord(why) + "\"}";
+}
+
+std::string EncodeBusy(Busy b) { return std::string("{\"op\":\"dsum_busy\",\"wait\":\"") + BusyWord(b) + "\"}"; }
 std::string EncodeDone(bool ok) { return ok ? "{\"op\":\"dsum_done\",\"ok\":1}" : "{\"op\":\"dsum_done\",\"ok\":0}"; }
 
 std::string EncodeRoom(const Room& r) {
@@ -118,6 +150,8 @@ std::vector<std::uint8_t> BuildPayload(const std::uint8_t entry_id[8], const Roo
 
 const char* HostRefusal(const HostView& v) {
     if (!v.world_up || v.loading) return "the host is not in its world";
+    if (v.busy == Busy::Boss) return "the host is in a boss fight: joiners wait outside";
+    if (v.busy == Busy::Cutscene) return "the host is watching a cutscene: joiners wait";
     if (v.cooperators >= v.max_cooperators) return "the host's world is full";
     if (v.ms_since_sign_summon < 20000) return "the host's game is summoning a sign";
     if (v.other_hold_ms > 0) return "a crashed member's connection is still held";

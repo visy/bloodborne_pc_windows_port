@@ -69,6 +69,9 @@ void OnLinkEvent(int from_slot, const std::string& body);
 /// Direct summon (party_dsummon.h): the guest rang its bell; the online id of a link slot.
 void DirectSummonRing();
 void DirectSummonName(int slot, const std::string& name);
+/// Host, A11: its boss fight / cutscene hold started, ended or is re-announced: the party status
+/// line on both sides ("Waiting: the host is in a boss fight") and a dsum_busy event to the guests.
+void HostBusyChanged(bool boss_bar_up, bool cutscene_playing);
 /// An event to send (the director's tick drains it): slot -1 = to the host / broadcast.
 bool PopOutgoing(int* slot, std::string* body);
 

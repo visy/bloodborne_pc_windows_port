@@ -24,6 +24,7 @@
 #include "../net/bbnet_internal.h"
 #include "party_nr_drop.h"
 #include "party_dsummon.h"
+#include "party_status_bridge.h"
 
 #include <algorithm>
 #include <atomic>
@@ -5027,9 +5028,10 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         v.cooperators = s.cooperators < 0 ? 0 : s.cooperators;
         v.ms_since_sign_summon = bbnet::party::FromApi::instance().ms_since_request();
         v.other_hold_ms = bbnet::party::FromApi::instance().hold_left_ms();
+        v.busy = dsummon::HostBusy(BossBarShown(), CutscenePlaying());  // A11: joiners wait outside
         const std::string name = names.count(slot) ? names[slot] : std::string();
         if (const char* why = dsummon::HostRefusal(v)) {
-            Send(slot, dsummon::EncodeRefuse());
+            Send(slot, dsummon::EncodeRefuse(v.busy));
             Log("direct summon: slot %d refused (%s): the bell sign path goes on", slot, why);
             continue;
         }
@@ -5105,6 +5107,13 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
 
 void DirectSummonEvent(int from_slot, const std::string& body) {
     switch (dsummon::KindOf(body)) {
+    case dsummon::Kind::Busy: {  // guest: A11, the host's boss fight / cutscene started or ended
+        if (Role() == RoleHost) return;
+        const dsummon::Busy b = dsummon::WaitOf(body);
+        party::bridge::OnHostBusy(dsummon::BusyText(b, false));
+        Log("A11: the host's hold: %s%s", dsummon::BusyWord(b), b == dsummon::Busy::None ? " (its bell rings again)" : "");
+        return;
+    }
     case dsummon::Kind::Req: {
         if (!DirectSummonOn()) {
             Send(from_slot, dsummon::EncodeRefuse());
@@ -5123,7 +5132,10 @@ void DirectSummonEvent(int from_slot, const std::string& body) {
         std::lock_guard<std::mutex> lk(DS().mu);
         if (ok) DS().room = r;
         dsummon::OnRoom(DS().g, Now(), !ok);
-        Log("direct summon: the host's answer: %s", ok ? "its room" : err.c_str());
+        const dsummon::Busy busy = refused ? dsummon::WaitOf(body) : dsummon::Busy::None;
+        if (busy != dsummon::Busy::None) party::bridge::OnHostBusy(dsummon::BusyText(busy, false));  // A11
+        Log("direct summon: the host's answer: %s%s%s", ok ? "its room" : err.c_str(),
+            busy != dsummon::Busy::None ? " - " : "", dsummon::BusyText(busy, false).c_str());
         return;
     }
     case dsummon::Kind::Done: {
@@ -6860,6 +6872,12 @@ void DirectSummonRing() {
     Send(0, dsummon::EncodeReq());
     Log("direct summon: asked the host for its room (rang the bell)");
 }
+void HostBusyChanged(bool boss_bar_up, bool cutscene_playing) {
+    const dsummon::Busy b = dsummon::HostBusy(boss_bar_up, cutscene_playing);
+    party::bridge::OnHostBusy(dsummon::BusyText(b, true));
+    Send(-1, dsummon::EncodeBusy(b));  // every guest: why it waits (or that it ended)
+}
+
 void DirectSummonName(int slot, const std::string& name) {
     std::lock_guard<std::mutex> lk(DS().mu);
     DS().names[slot] = name;

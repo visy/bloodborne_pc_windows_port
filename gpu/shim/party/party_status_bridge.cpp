@@ -289,13 +289,16 @@ Mapped MapState(const Facts& f) {
         return {host ? State::Hosting : State::WaitingForWorld, host ? count + ", " + why : why};
     }
     if (host) {
+        const std::string busy = f.host_busy.empty() ? std::string() : ", " + f.host_busy;  // A11
         if (f.session_role == kRoleHost && f.cooperators > 0)
-            return {State::Joined, std::to_string(f.cooperators + 1) + " in your world, " + count + " in the party"};
+            return {State::Joined, std::to_string(f.cooperators + 1) + " in your world, " + count + " in the party" + busy};
+        if (!busy.empty()) return {State::Hosting, count + busy};
         if (f.session_role == kRoleTryingToHost || (f.bell_recent && f.session_role == kRoleIdle))
             return {State::RingingBell, count};
         return {State::Hosting, count};
     }
     if (f.session_role == kRoleClient) return {State::Joined, "in the host's world"};
+    if (!f.host_busy.empty()) return {State::WaitingForWorld, f.host_busy};  // A11: the summon follows
     if (f.session_role == kRoleTryingToJoin || (f.bell_recent && f.session_role == kRoleIdle))
         return {State::RingingBell, {}};
     return {State::WaitingForWorld, "connected; waiting for the host's bell"};
@@ -460,6 +463,18 @@ void OnRing() {
     b.rung = true;
     b.f.bell_recent = true;
     PublishLocked(b);
+}
+
+void OnHostBusy(const std::string& text) {
+    bool changed = false;
+    {
+        Bridge& b = B();
+        std::lock_guard<std::mutex> lk(b.mu);
+        changed = b.f.host_busy != text;
+        b.f.host_busy = text;
+        if (changed) PublishLocked(b);
+    }
+    if (changed && !text.empty()) status::SetLastEvent(text);
 }
 
 void OnLeft(bool host) {

@@ -43,6 +43,17 @@ int main() {
     v.cooperators = 3; CHECK(HostRefusal(v)); v.cooperators = 1;
     v.ms_since_sign_summon = 5000; CHECK(HostRefusal(v)); v.ms_since_sign_summon = 30000;
     v.other_hold_ms = 100; CHECK(HostRefusal(v)); v.other_hold_ms = 0; CHECK(!HostRefusal(v));
+    // A11: a boss fight / cutscene holds every join (direct summon included), with the reason
+    CHECK(HostBusy(false, false) == Busy::None && HostBusy(true, false) == Busy::Boss &&
+          HostBusy(false, true) == Busy::Cutscene && HostBusy(true, true) == Busy::Boss);
+    v.busy = Busy::Boss; CHECK(HostRefusal(v) && std::strstr(HostRefusal(v), "boss"));
+    v.busy = Busy::Cutscene; CHECK(HostRefusal(v) && std::strstr(HostRefusal(v), "cutscene"));
+    v.busy = Busy::None; CHECK(!HostRefusal(v));
+    CHECK(!DecodeRoom(EncodeRefuse(Busy::Boss), &d, &refused, &err) && refused);
+    CHECK(WaitOf(EncodeRefuse(Busy::Boss)) == Busy::Boss && WaitOf(EncodeRefuse()) == Busy::None);
+    CHECK(KindOf(EncodeBusy(Busy::Cutscene)) == Kind::Busy && WaitOf(EncodeBusy(Busy::Cutscene)) == Busy::Cutscene);
+    CHECK(KindOf(EncodeBusy(Busy::None)) == Kind::Busy && WaitOf(EncodeBusy(Busy::None)) == Busy::None);
+    CHECK(BusyText(Busy::Boss, false) == "Waiting: the host is in a boss fight" && BusyText(Busy::None, true).empty());
     // guest: no answer -> failed quietly
     Guest g; OnAsked(g, 0);
     CHECK(Step(g, 1, false, false) == Action::None && g.phase == Phase::Asked);

@@ -281,6 +281,33 @@ static int test_prologue() {
     return 0;
 }
 
+// A11: a join held by the host's boss fight / cutscene says why, on both sides; a summon wins.
+static int test_host_busy() {
+    using party::LinkState;
+    using party::status::Role;
+    using party::status::State;
+    Facts f;
+    f.role = Role::Guest;
+    f.have_link = true;
+    f.link = LinkState::Connected;
+    f.world_up = true;
+    f.session_role = 0;
+    f.host_busy = "Waiting: the host is in a boss fight";
+    CHECK(MapState(f).state == State::WaitingForWorld && MapState(f).detail == "Waiting: the host is in a boss fight");
+    f.session_role = 6;  // summoned after the fight
+    CHECK(MapState(f).state == State::Joined);
+    f.role = Role::Host;
+    f.link = LinkState::Hosting;
+    f.members_connected = 2;
+    f.max_players = 2;
+    f.session_role = 0;
+    f.host_busy = "Joiners wait: you are in a boss fight";
+    CHECK(MapState(f).state == State::Hosting && MapState(f).detail == "2/2, Joiners wait: you are in a boss fight");
+    f.host_busy.clear();
+    CHECK(MapState(f).detail == "2/2");
+    return 0;
+}
+
 // A refused guest: plays alone online, gets one message box with what to do; Rejoin's password.
 static int test_refusal() {
     using bridge::RefusalNotice;
@@ -318,7 +345,7 @@ static int test_refusal() {
 }
 
 int main() {
-    if (test_map_state() || test_members() || test_board_and_commands() || test_prologue() || test_refusal()) return 1;
+    if (test_map_state() || test_members() || test_board_and_commands() || test_prologue() || test_host_busy() || test_refusal()) return 1;
     std::printf("%d checks OK\n", g_checks);
     return 0;
 }
