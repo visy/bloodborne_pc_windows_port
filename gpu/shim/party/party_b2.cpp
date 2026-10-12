@@ -4982,6 +4982,14 @@ bool TitleJoinHold(const GameSnapshot& s) {
             TitleJoinFail("the host does not answer title joins (an older build, or off there)");
             return false;
         }
+        // The host is not in its world yet (still at its title or loading): Continue the usual way
+        // after 10 s (own world, then the bell joins once the host is up) instead of holding the
+        // title for up to a minute.
+        if (now - t.since > 10.0) {
+            Send(0, "{\"op\":\"title_cancel\"}");
+            TitleJoinFail("no room from the host within 10 s (the host is not in its world yet)");
+            return false;
+        }
         if (now - t.since > 70.0) {
             TitleJoinFail("no answer from the host within 70 s");
             return false;
@@ -5524,6 +5532,13 @@ void OnLinkEvent(int from_slot, const std::string& body) {
         Send(from_slot, "{\"op\":\"title_ack\"}");
         std::lock_guard<std::mutex> lk(TJ().mu);
         TJ().requests.push_back(from_slot);
+        return;
+    }
+    if (body.find("\"title_cancel\"") != std::string::npos) {
+        std::lock_guard<std::mutex> lk(TJ().mu);
+        auto& r = TJ().requests;
+        r.erase(std::remove(r.begin(), r.end(), from_slot), r.end());
+        Log("title join: slot %d stopped waiting (Continue the usual way)", from_slot);
         return;
     }
     if (body.find("\"title_ack\"") != std::string::npos) {
