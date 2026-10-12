@@ -239,7 +239,7 @@ def link(game, out, module_names=DEFAULT_MODULES, red_zones=os.name == 'nt'):
 
     red_zone_sites = 0
     if red_zones and RED_ZONE_SITES.is_file():
-        sites = json.loads(RED_ZONE_SITES.read_text())['sites']
+        sites = json.loads(RED_ZONE_SITES.read_text(encoding='utf-8'))['sites']
         code, red_zone_sites = protect_red_zones(image, sites, base, sorted(r[0] for r in relocs))
         if code:
             image.extend(bytes(base - len(image)) + code)
