@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <chrono>
 #include <thread>
 #include <pthread.h>
@@ -1473,11 +1474,17 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             ReportBadPacket(base_addr, dcb_dwords, dcb.data(), seq, dcb_depth);
             UNREACHABLE_MSG("Wrong PM4 type {}", type);
             break;
-        case 0:
+        case 0: {
+            // Ported from Mrsuss60 196ba93: zero dwords ending a chunk are padding.
+            if (std::ranges::all_of(dcb, [](u32 w) { return w == 0; })) {
+                dcb = {};
+                continue;
+            }
             ReportBadPacket(base_addr, dcb_dwords, dcb.data(), seq, dcb_depth);
             UNREACHABLE_MSG("Unimplemented PM4 type 0, base reg: {}, size: {}",
                             header->type0.base.Value(), header->type0.NumWords());
             break;
+        }
         case 2:
             // Type-2 packet are used for padding purposes
             dcb = NextPacket(dcb, 1);
@@ -2389,6 +2396,14 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
         }
 
         if (header->type != 3) {
+            // Ported from Mrsuss60 196ba93: a chunk's trailing zero dwords are padding.
+            if (std::ranges::all_of(acb, [](u32 w) { return w == 0; })) {
+                if constexpr (!is_indirect) {
+                    *queue.read_addr += acb.size();
+                    *queue.read_addr %= queue.ring_size_dw;
+                }
+                break;
+            }
             // No other types of packets were spotted so far
             UNREACHABLE_MSG("Invalid PM4 type {}", header->type.Value());
         }
