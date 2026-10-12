@@ -66,4 +66,5 @@ void runtime_relaunch(int) { std::abort(); }
 int runtime_ime_dialog_count() { return 0; }
 int runtime_savedata_mount_count() { return 0; }
 const char* runtime_savepolicy_dir() { return "."; }
+int runtime_savepolicy_check(const char*, const char*, int, void*) { return -1; }
 }
