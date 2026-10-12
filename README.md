@@ -11,6 +11,22 @@ Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28
 > Not affiliated with Sony, FromSoftware, AMD or NVIDIA. Not related to shadPS4: questions about
 > the Linux port go to its [Discord](https://discord.gg/KYZRKk9CB).
 
+### Seamless co-op progress
+
+Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](docs/party/ERSC_PARITY.md).
+
+| Area | Progress | |
+|---|---|--:|
+| **Overall** | `█████████████████░░░` | 83% |
+| Session & joining | `█████████████████░░░` | 86% |
+| World & travel | `█████████████████░░░` | 86% |
+| Death & respawn | `█████████████████░░░` | 86% |
+| Progress (anyone can progress) | `█████████████████░░░` | 84% |
+| Services & UI | `██████████████████░░` | 90% |
+| Network & robustness | `████████████████░░░░` | 78% |
+| Bloodborne-specific (chalice, Insight) | `███████████████░░░░░` | 74% |
+| Feels like single player in a party | `███████████████░░░░░` | 76% |
+
 ---
 
 ## What this port adds
