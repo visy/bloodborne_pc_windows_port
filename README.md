@@ -66,6 +66,18 @@ PC (several game copies, simulated internet lag), not yet between two PCs. A scr
 run from two new characters to the end credits passed, and a three-player travel run
 ([docs/party/campaign_soak.md](docs/party/campaign_soak.md)).
 
+### Start playing
+
+| | Host | Guest |
+|---|---|---|
+| 1 | Title screen → **Party** → set a **Password** | Title screen → **Party** → **Host address** (e.g. `192.168.1.20:9307`) → **Password** |
+| 2 | **New party game** (first time: new character) or **Continue party game** | **Join party game** (first time) or **Continue party game** |
+| 3 | Allow the Windows Firewall prompt once | The game restarts into party mode and puts you beside the host |
+
+Everyone needs the same bbport version and game files. Address and password are remembered, so
+later sessions are just *Continue party game* for everyone. Party play uses its own save; your
+single-player save is never touched. Settings: *System → Party* pages in the game's menu.
+
 ### How it plays
 
 - **No PSN, no server.** One player hosts, the others join with the host's address and a password.
@@ -140,10 +152,8 @@ run from two new characters to the end credits passed, and a three-player travel
 
 | Change | Status |
 |---|---|
-| A guest respawns at its own last lamp (today: the host's lamp) | In progress |
-| Guests open doors, pull levers, talk to NPCs; NPC choices shared | In progress |
 | Item pickups and enemy drops per player: everyone gets their own | In progress |
-| Every cutscene for the whole party (story cutscenes and endings already work) | In progress |
+| Every cutscene for the whole party (story cutscenes, endings and guest-triggered scenes already work) | In progress |
 | Joining during a boss fight or cutscene waits outside until it ends | Works for boss fights (verified live); cutscenes in progress |
 | The 4th player joins as fast as the others | In progress |
 | Chalice dungeons: deeper layers checked in a party; entering the party's dungeon in one press (the altar still asks a few prompts) | In progress |
