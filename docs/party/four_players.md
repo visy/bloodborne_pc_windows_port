@@ -466,3 +466,12 @@ remote chrs each (host: guests 1 and 2; guest 1: host + guest 2; guest 2: host +
 loading screen ended at 51.8 s (no longer ~48 s after it).
 Note: `--saves` must be a save set with a character and the system data; a missing directory gives
 new saves, and the game then waits on its first-launch brightness screen.
+
+### Late joiner re-check on 0.6.0+ (2026-10-13, a7)
+
+Same setup (host rendering, 2 headless title-joined guests, `--join-sequential --stagger 10
+--fresh-saves`, root agents/a7/mp1 + mp2): both runs give every peer `presence count 3` and two
+remote chrs (guest 1: host + guest 2 from 43.5 s), host `cooperators 1 -> 2` at 38.7 s against
+guest 2's `in the world` at 40.2 s - the late-joiner bug above stays fixed and the ~48 s first-sync
+lag is gone. The host's screenshots (shot.py PrintWindow) came out all black in both runs, so this
+check is log-only; 4 players were not re-run.

@@ -18,7 +18,7 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | Area | Progress | |
 |---|---|--:|
 | **Overall** | `█████████████████░░░` | 84% |
-| Session & joining | `█████████████████░░░` | 87% |
+| Session & joining | `██████████████████░░` | 88% |
 | World & travel | `█████████████████░░░` | 86% |
 | Death & respawn | `█████████████████░░░` | 86% |
 | Progress (anyone can progress) | `█████████████████░░░` | 85% |
