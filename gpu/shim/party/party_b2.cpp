@@ -4212,7 +4212,7 @@ const char* TitlePhaseName(TitlePhase p) {
 struct TitleJoin {
     std::mutex mu;
     TitlePhase phase = TitlePhase::Idle;
-    double since = 0, last_update = 0;
+    double since = 0, last_update = 0, done_load = 0;
     float last_timer = -1.0f;
     int updates = 0;
     bool have_reply = false;
@@ -4299,10 +4299,10 @@ bool SerializeRoom(u32 head0, u32 head1, std::vector<u8>* out) {
 
 /// The head the host's summon message puts before the descriptor for presentation slot `slot`
 /// (0x1872360: the session-type table 0x553D750 + slot * 0x80, its +0xC, then the slot).
-void RoomHead(int slot, u32* head0, u32* head1) {
-    *head1 = u32(slot);
+void RoomHead(int type, u32* head0, u32* head1) {
+    *head1 = u32(type);
     *head0 = 0;
-    SafeGet(u64(Guest(kSessionTypeDesc + 0xc + u64(slot) * 0x80)), head0);
+    SafeGet(u64(Guest(kSessionTypeDesc + 0xc + u64(type) * 0x80)), head0);
 }
 
 void TitleJoinHostTick(const GameSnapshot& s) {
@@ -4320,7 +4320,21 @@ void TitleJoinHostTick(const GameSnapshot& s) {
             Log("title join: slot %d asked for the room; waiting for a room here (role %d, world %d)", req[0], Role(),
                 int(s.world_up));
         }
-        if (now - first_wait < 40.0) {
+        // The host's room comes with a summon only (the bell alone opens none): create it as the
+        // flow's event 0x1E does (0x178E400: 0x1ECFCD0(float [0x49271C8], SessionMan, flow +0xC)).
+        static double last_create = -100.0;
+        if (s.world_up && !s.loading && Role() == 0 && now - last_create > 15.0) {
+            last_create = now;
+            float arg = 0;
+            SafeGet(u64(Guest(0x49271c8)), &arg);
+            const u64 flow = Slot(kSlotFlow);
+            const int members = Field<int>(flow, 0xc, 4);
+            using Create = u8(BB_COOP_SYSV*)(float, u64, int);
+            const bool ok = reinterpret_cast<Create>(Guest(0x1ecfcd0))(arg, Slot(kSlotSession), members) & 1;
+            Log("title join: creating this host's room for the waiting guest (%.1f, %d members) -> %d, role %d", double(arg),
+                members, int(ok), Role());
+        }
+        if (now - first_wait < 60.0) {
             std::lock_guard<std::mutex> lk(TJ().mu);
             TJ().requests.insert(TJ().requests.end(), req.begin(), req.end());
             return;
@@ -4329,13 +4343,13 @@ void TitleJoinHostTick(const GameSnapshot& s) {
             Send(slot, "{\"op\":\"title_room\",\"room\":\"\"}");
         }
         first_wait = 0;
-        Log("title join: no room here within 40 s; refused");
+        Log("title join: no room here within 60 s; refused");
         return;
     }
     first_wait = 0;
     for (int slot : req) {
         u32 h0 = 0, h1 = 0;
-        RoomHead(slot, &h0, &h1);
+        RoomHead(7, &h0, &h1);  // 7: a co-op summon (the bell sign's type; live head ffffffff 07000000)
         std::vector<u8> room;
         const bool ok = SerializeRoom(h0, h1, &room);
         const u64 a = Field<u64>(Field<u64>(Field<u64>(Field<u64>(s.player, 0x58), 8), 0x3b0), 0x68);
@@ -4351,12 +4365,31 @@ void TitleJoinHostTick(const GameSnapshot& s) {
         Log("title join: slot %d asked for the room: %s (%zu bytes, head %s), stage %#x", slot, ok ? "sent" : "NOT serialized",
             room.size(), Hex(room, 24).c_str(), Field<u32>(s.player, 0x3f8));
     }
+    // The guest that came in from its title has session type 0 here (its Continue load carries
+    // none): its chr is no cooperator (0x15BDC20 counts net types 1/5/7/19) until its row says 7.
+    static double served_at = -100.0;
+    if (!req.empty()) {
+        served_at = Now();
+    }
+    if (Now() - served_at < 120.0 && s.world_up && !s.loading && Role() == RoleHost) {
+        using Get = u64(BB_COOP_SYSV*)(u64);
+        for (const TaskInfo& t : Tasks(false)) {
+            const u64 chr = t.mode == 1 ? PlayerForPeer(t.task + kTaskPeer) : 0;
+            const u64 f1c8 = chr ? Field<u64>(Field<u64>(chr, 0), 0x1c8) : 0;
+            const u64 gd = f1c8 ? reinterpret_cast<Get>(f1c8)(chr) : 0;
+            if (gd && Field<int>(gd, 0x5d8, -1) == 0) {
+                const int seven = 7;
+                SafeWrite(gd + 0x5d8, &seven, 4);
+                Log("title join: the guest's chr here: session type 0 -> 7 (co-op)");
+            }
+        }
+    }
     // Validation in an ordinary bell join: the descriptor as this host would send it, next to the
     // guest's `summon message ... (head ...)` line.
     static int last_coop = 0;
     if (s.world_up && Role() == RoleHost && s.cooperators > last_coop && EnvOn("BB_PARTY_TITLE_JOIN_PROBE")) {
         u32 h0 = 0, h1 = 0;
-        RoomHead(1, &h0, &h1);
+        RoomHead(7, &h0, &h1);
         std::vector<u8> room;
         const bool ok = SerializeRoom(h0, h1, &room);
         Log("title join probe: host descriptor %s, %zu bytes, head %s", ok ? "ok" : "FAILED", room.size(), Hex(room, 24).c_str());
@@ -4413,7 +4446,15 @@ bool TitleJoinStart() {
         SafeWrite(gsm + 0x16f0, &h0, 4);
         SafeWrite(gsm + 0x16f4, &slot, 1);
         g_rejoin = true;  // K5 / K6 quiet: no Lua join start at the title
-        joined = reinterpret_cast<Join>(Guest(kJoinSession))(Slot(kSlotFlow), u64(obj)) & 1;
+        // 0x1789010 without its Lua part (SprjLuaEventMan does not exist at the title: its
+        // singleton check panics): the join 0x1ED0670 and the reset of the host-world blobs.
+        joined = reinterpret_cast<Join>(Guest(0x1ed0670))(Slot(kSlotSession), u64(obj)) & 1;
+        for (u64 off : {u64(0x16a0), u64(0x1684)}) {
+            const u32 zero = 0;
+            if (Field<u64>(gsm, off + 8) == 0) {
+                SafeWrite(gsm + off, &zero, 4);
+            }
+        }
         Log("title join: descriptor read (%zu bytes, head %08x %08x); JoinSession -> %d (role %d)", room.size(), h0, h1,
             int(joined), Role());
     }
@@ -4460,6 +4501,25 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
         std::lock_guard<std::mutex> lk(t.mu);
         phase = t.phase;
     }
+    // The session type of a co-op summon (7: net chr type 1, a white phantom), which the summon load
+    // passes and Continue's does not. Written only once the host's chr stands here (the first sync
+    // is done): written at the arrival, the host's task for this guest stalled at
+    // FirstSyncCompleteWait (live runs 9-11).
+    static bool typed = false;
+    if (phase == TitlePhase::Done && !typed && s.world_up && !s.loading && Role() == RoleClient) {
+        bool host_chr = false;
+        for (const TaskInfo& k : Tasks(false)) {
+            host_chr = host_chr || (k.mode == 2 && PlayerForPeer(k.task + kTaskPeer) && k.step == kStepUpdate);
+        }
+        if (host_chr && now - t.since > 2.0) {
+            typed = true;
+            if (const u64 gd = Field<u64>(Slot(kSlotGameData), 8)) {
+                const int seven = 7;
+                SafeWrite(gd + 0x5d8, &seven, 4);
+                Log("title join: own session type -> 7 (co-op) after the first sync");
+            }
+        }
+    }
     if (phase == TitlePhase::Ready && s.loading) {
         std::lock_guard<std::mutex> lk(t.mu);
         t.phase = TitlePhase::Loading;
@@ -4472,9 +4532,25 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
         {
             std::lock_guard<std::mutex> lk(t.mu);
             t.phase = TitlePhase::Done;
+            t.done_load = now - t.since;
+            t.since = now;
+        }
+        {
+            u32 stage;
+            float pos[4], rot[4];
+            {
+                std::lock_guard<std::mutex> lk(t.mu);
+                stage = t.stage;
+                std::memcpy(pos, t.pos, sizeof pos);
+                std::memcpy(rot, t.rot, sizeof rot);
+            }
+            if (Field<u32>(s.player, 0x3f8) == stage) {
+                BesideHost(pos, rot, g_local_slot.load() > 0 ? g_local_slot.load() : 1);
+                WarpLocal(pos, rot[1], "title join: beside the host");
+            }
         }
         Log("title join: in the world after %.1f s: map %s, flow %d, GSM+0x1592 %u, role %d, cooperators %d",
-            now - t.since, MapName(s.map_id).c_str(), Field<int>(Slot(kSlotFlow), 0x84, -1),
+            t.done_load, MapName(s.map_id).c_str(), Field<int>(Slot(kSlotFlow), 0x84, -1),
             unsigned(Field<u8>(Slot(kSlotGsm), 0x1592)), Role(), s.cooperators);
     }
 }
@@ -4503,6 +4579,11 @@ std::string NrFindTimeouts(u64 base, std::size_t span) {
 std::vector<NrTransport> NrTransports() {
     std::lock_guard<std::mutex> lk(g_nr_mu);
     return {g_nr.begin(), g_nr.end()};
+}
+
+bool TitleJoinPending() {
+    std::lock_guard<std::mutex> lk(TJ().mu);
+    return !TJ().requests.empty();
 }
 
 bool TitleJoinRequested() {
@@ -4543,12 +4624,12 @@ bool TitleJoinHold(const GameSnapshot& s) {
             std::lock_guard<std::mutex> lk(t.mu);
             have = t.have_reply;
         }
-        if (have) {
+        if (have && Role() >= 0 && Slot(kSlotGsm)) {
             TitleJoinStart();
             return true;
         }
-        if (now - t.since > 45.0) {
-            TitleJoinFail("no answer from the host within 45 s");
+        if (now - t.since > 70.0) {
+            TitleJoinFail("no answer from the host within 70 s");
             return false;
         }
         return true;
@@ -4582,6 +4663,9 @@ bool TitleJoinHold(const GameSnapshot& s) {
             SafeWrite(gsm + 0x14d0, pos, 16);
             SafeWrite(gsm + 0x14e0, rot, 16);
             SafeWrite(flow + 0x84, &three, 4);
+            // GSM +0x1521 (the Lua OnJoinMutiplay's "summoned placement") stays 0: with it set the
+            // host's task for this guest stalled at FirstSyncCompleteWait (live run 9 / 10); the
+            // guest is moved beside the host after the load instead.
             Log("title join: host snapshot applied after %.1f s; flow 3, placement stage %#x pos (%.1f, %.1f, %.1f): "
                 "Continue now loads the host's world",
                 now - t.since, stage, pos[0], pos[1], pos[2]);

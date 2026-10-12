@@ -2688,6 +2688,10 @@ void PartyDirector::Tick() {
         if (link->state() == party::LinkState::Hosting &&
             HostMayRing(st.start_ready, s.cooperators, max_players, link->roster())) {
             Ring(st, kHostBell, "host ready, a ready party member waits", now);
+        } else if (link->state() == party::LinkState::Hosting && st.start_ready && b2::TitleJoinPending() &&
+                   s.cooperators + 1 < max_players) {
+            // A guest at its title asks for this room (title join): the room comes with the bell.
+            Ring(st, kHostBell, "host ready, a guest joins from its title", now);
         }
     }
 }
