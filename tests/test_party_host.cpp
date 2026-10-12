@@ -920,6 +920,17 @@ static void test_impersonation() {
                R"({"SummonType":1,"AreaId":402718720,"MatchingLevel":50,"SummonData":")" +
                    bbnet::party::b64_encode(party_test::sign_blob("Alice")) + R"("})") == 200);
     CHECK(api.signs().size() == 1 && api.signs()[0].online_id == "Alice");
+    // A failed summon of Alice (the host's game dropped her before she joined): her sign comes
+    // back under a new id and the board counts a change; nobody else's sign moves.
+    {
+        const std::uint64_t first = api.signs()[0].id;
+        const std::uint64_t changes = bbnet::sign_board_changes();
+        CHECK(api.renew_signs("Mallory") == 0);
+        CHECK(bbnet::sign_board_changes() == changes);
+        CHECK(api.renew_signs("Alice") == 1);
+        CHECK(api.signs().size() == 1 && api.signs()[0].id > first && api.signs()[0].online_id == "Alice");
+        CHECK(bbnet::sign_board_changes() == changes + 1);
+    }
     const std::string alice_sign = std::to_string(api.signs()[0].id);
     CHECK(post("Mallory", "/summon_messenger/delete", "{\"SummonDataId\":" + alice_sign + "}") == 200);
     CHECK(api.signs().size() == 1);

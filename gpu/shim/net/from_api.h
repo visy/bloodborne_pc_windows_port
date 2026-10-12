@@ -103,6 +103,12 @@ public:
     // A member's link went away (crash, timeout, leave): its signs leave the board, so no host
     // summons a game that is not there (returns how many). A restarted game puts up a new one.
     std::size_t drop_signs(const std::string& online_id);
+    // The host's game gave up a summon of this member before it joined (it deactivated the
+    // signaling connection to a peer that never became a room member). Its signs still on the
+    // board get new ids, so the host's game sees a new sign at its next poll and summons again
+    // at once instead of waiting for the member's 30 s sign resend (a failed LAN summon cost
+    // ~30 s each, docs/party/join_timing.md). Returns how many.
+    std::size_t renew_signs(const std::string& online_id);
     // A member that was in (or joining) the host's world lost its link: the host's game keeps its
     // transport connection to that address until the transport's own timeout (25 s), and summoning
     // the restarted game over it fails (the guest waits for summon data that goes to the dead

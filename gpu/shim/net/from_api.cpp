@@ -507,6 +507,21 @@ std::size_t FromApi::drop_signs(const std::string& online_id) {
     return n;
 }
 
+std::size_t FromApi::renew_signs(const std::string& online_id) {
+    std::lock_guard<std::mutex> lk(mu_);
+    std::size_t n = 0;
+    for (Sign& s : signs_) {
+        if (s.online_id != online_id) continue;
+        const std::uint64_t old = s.id;
+        s.id = next_sign_++;
+        ++n;
+        log("from api: the summon of %s failed before it joined: sign %llu is now %llu (summoned again)",
+            online_id.c_str(), static_cast<unsigned long long>(old), static_cast<unsigned long long>(s.id));
+    }
+    if (n) g_sign_changes.fetch_add(1, std::memory_order_relaxed);
+    return n;
+}
+
 std::string FromApi::sign_delete(const Caller& caller, const json::Value& body) {
     const auto id = static_cast<std::uint64_t>(int_of(body, "SummonDataId", 0));
     std::lock_guard<std::mutex> lk(mu_);

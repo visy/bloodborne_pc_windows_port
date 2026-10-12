@@ -12,6 +12,7 @@
 // context_start.
 #include "bbnet_internal.h"
 #include "np_hle.h"
+#include "from_api.h"
 #include "np_session.h"
 
 #include "../../party_env.h"
@@ -209,14 +210,22 @@ BBNET_ABI int sig_activate(unsigned ctx, const void* npid, unsigned* conn_out) {
 }
 BBNET_ABI int sig_deactivate(unsigned ctx, unsigned conn) {
     BBNET_GUEST_RETURN();
-    std::lock_guard<std::mutex> lk(g_mu);
-    auto it = g_conn.find(conn);
-    if (it != g_conn.end() && it->second.ctx == ctx) {
-        log("sceNpSignalingDeactivateConnection conn %u (%s, member %u)", conn, it->second.online_id.c_str(),
-            it->second.member_id);
-        it->second.dead = true;
-        if (it->second.member_id) session::peers_set_conn(it->second.member_id, conn, 0);
+    std::string never_joined;
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        auto it = g_conn.find(conn);
+        if (it != g_conn.end() && it->second.ctx == ctx) {
+            log("sceNpSignalingDeactivateConnection conn %u (%s, member %u)", conn, it->second.online_id.c_str(),
+                it->second.member_id);
+            if (!it->second.dead && (it->second.member_id == 0 || it->second.member_id >= 0xff00))
+                never_joined = it->second.online_id;
+            it->second.dead = true;
+            if (it->second.member_id) session::peers_set_conn(it->second.member_id, conn, 0);
+        }
     }
+    // The game dropped a peer it was summoning that never joined the room: a failed summon.
+    // Offer that member's sign again now (host only: a guest's board copy has no signs).
+    if (!never_joined.empty()) party::FromApi::instance().renew_signs(never_joined);
     return 0;
 }
 // (ctxId, connId, status*, SceNetInAddr*, SceInPort_t*)
