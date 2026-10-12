@@ -2264,14 +2264,12 @@ bool PreRingSpacing(const GameSnapshot& s, u32 host_map) {
 /// Safety net: a client in the host's world (GSM+0x1592 == 0) never plays the opening cutscene
 /// (event 12410000's EMEVD 2002 remo): its flags come from the host's overlay, which may lack them.
 bool ClientIntroSkip(int event_id, int bank, int id) {
-    // Opt-in (BB_PARTY_STORY_DEDUPE=1) until verified live: Mergo's 26000010 replayed once on the
-    // guest (run 5f), but a skipped 2002 could also stall a client's event chain.
-    static const bool dedupe = [] {
-        const char* v = std::getenv("BB_PARTY_STORY_DEDUPE");
-        return v && v[0] == '1';
-    }();
-    if (dedupe && bank == 2002 && id >= 1 && id <= 7 && event_id > 0 && Role() == RoleClient &&
-        StoryMirroredEvent(static_cast<std::uint32_t>(event_id))) {
+    // D10: on by default (BB_PARTY_STORY_DEDUPE=0 off): the guest's own copy of a mirrored event's
+    // 2002 would play the scene a second time (soak run 5f).
+    static const bool dedupe = StoryDedupeEnabled(std::getenv("BB_PARTY_STORY_DEDUPE"));
+    if (event_id > 0 && bank == 2002 &&
+        StoryDedupeSkip(dedupe, bank, id, event_id, Role() == RoleClient,
+                        StoryMirroredEvent(static_cast<std::uint32_t>(event_id)))) {
         // The live mirror (party_story) already played this event's scene with the host.
         Log("client: event %d's 2002[%d] skipped: its cutscene already played as the live mirror", event_id, id);
         return true;

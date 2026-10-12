@@ -535,6 +535,21 @@ static void test_persistence() {
     CHECK(h.QueueSize() == 2); // untouched on error
 }
 
+static void test_dedupe_skip() {
+    // On by default; only "0" turns it off.
+    CHECK(StoryDedupeEnabled(nullptr));
+    CHECK(StoryDedupeEnabled("1"));
+    CHECK(!StoryDedupeEnabled("0"));
+    // A client's own 2002 of a mirrored event is skipped; nothing else is.
+    CHECK(StoryDedupeSkip(true, 2002, 3, 12601802, true, true));
+    CHECK(!StoryDedupeSkip(false, 2002, 3, 12601802, true, true));
+    CHECK(!StoryDedupeSkip(true, 2002, 3, 12601802, false, true));  // host
+    CHECK(!StoryDedupeSkip(true, 2002, 3, 12601802, true, false));  // not mirrored
+    CHECK(!StoryDedupeSkip(true, 2003, 3, 12601802, true, true));   // other bank
+    CHECK(!StoryDedupeSkip(true, 2002, 8, 12601802, true, true));   // 2002[8] = travel
+    CHECK(!StoryDedupeSkip(true, 2002, 3, 0, true, true));
+}
+
 int main() {
     test_tables();
     test_json();
@@ -548,6 +563,7 @@ int main() {
     test_mirror_dropped_when_sent_home();
     test_endings();
     test_persistence();
+    test_dedupe_skip();
     std::printf("party-story-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

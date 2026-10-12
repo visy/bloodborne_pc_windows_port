@@ -244,6 +244,16 @@ private:
     bool load_seen_ = false;
 };
 
+/// D10: a client's own copy of a host-world event runs that event's 2002 remo right after the
+/// live mirror played the same scene (campaign soak run 5f: Mergo 26000010, Gehrman 21000040), so
+/// the guest saw it twice. Skip that 2002[1..7] when the event's scene was mirrored. On by default
+/// (BB_PARTY_STORY_DEDUPE=0 turns it off). Skipping only the remo keeps the event chain running.
+inline bool StoryDedupeSkip(bool enabled, int bank, int id, int event_id, bool client, bool mirrored) {
+    return enabled && client && bank == 2002 && id >= 1 && id <= 7 && event_id > 0 && mirrored;
+}
+/// BB_PARTY_STORY_DEDUPE: unset / anything but "0" = on.
+inline bool StoryDedupeEnabled(const char* env) { return !(env && env[0] == '0' && env[1] == 0); }
+
 #ifndef BB_PARTY_STORY_NO_GAME
 /// bbgpu_patch_image, once, after coop::HooksInit (party mode only): the bank-2002 capture hook.
 void InstallStoryHooks();
