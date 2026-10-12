@@ -3,7 +3,7 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
-## 0.5.9 (unreleased)
+## 0.5.9 (Windows port 0.5.9, party co-op)
 
 - **Direct summon (experimental, off by default)**: `BB_PARTY_DIRECT_SUMMON=1` lets a ringing guest take the host's room straight over the party link and hand it to its game as a summon message (ported from bbhost), instead of waiting for the host's game to poll and summon its bell sign. Live: bell -> session client in 3.0 s; the host's arrival is not verified yet.
 - **Menu buttons act on Cross**: every action on the port's System pages (*New / Join / Continue party game*, *Host party*, *Join party*, *Single player*, *Rejoin*, *Leave*, *Kick*, *Restart the game*, *Quit the game*) and the text rows (*Host address*, *Password*, *Party name*) are now buttons with one value: Left/Right do nothing (they used to flip a two-value row showing *Press again* / *Copied*). Actions that restart or end something ask for a second press on the help line (*Press again to confirm*). Read-only lines (*Status*, *Last event*) do nothing. The value column on the focused row still shows the game's dimmed arrows.
