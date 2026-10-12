@@ -331,6 +331,28 @@ so the bell path's dropped 3rd-cooperator invite above no longer decides a 4-pla
   title joiner at its title may not have the members' VITALS yet), so the fix itself is not proven
   live. The late-guest visibility bug reproduced again (presence count 4 / 2 / 3 / 4).
 
+### Five players (2026-10-12, agent/sixp; test setting, not the default)
+
+`party::kMaxPartyPlayers` = 5 (BB_PARTY_MAX still defaults to 3; the launcher offers 2-4). With
+BB_PARTY_MAX=5 every peer installs **H6** (`0x1874bbe cmp esi,4` -> 5: the SOS filter's "cooperators +
+invaders + others + outgoing < 4", rules tag `...,H6`) and H5 writes the selector's max cooperators
+5 (the field counts the pending request: 5 = 4 cooperators). Host + 4 fills every engine table
+(presentation 5, remote data rows 4, ChrSet 5, room 5). Runs: host rendering + 4 headless
+(`--count 5 --headless 4 --join-sequential --fresh-saves`, queue max_solo 5):
+- run 1 (before flowlive's e214b5b): when the 3rd guest's first sync never completed, the host's game
+  left its own session (`BeginLeaveSession` from the session event handler +0x178980d) and every
+  guest dropped (cooperators 2 -> 0, rejoins, again);
+- run 2 (with e214b5b): 3 guests in, every peer built every other chr (presence count 4 everywhere);
+  the 4th guest was admitted (room member 5 of 5) but its game stalled before its first frame
+  ("== Stall during rendering at flush 1": 5 x 1792 MiB VRAM on an 8 GB GPU) and exited;
+- run 3 (headless 1024 MiB VRAM): **all four guests in: cooperators 0 -> 1 -> 2 -> 3 -> 4 at 20.7 / 42.4 /
+  74.0 / 117.9 s**, each on the first try; every guest's presence count 5 (all five chrs on every
+  guest). Host screenshot 5 s after the 4th: five hunters, but slots 3 and 4 stand almost on slots 1
+  and 2 (plates overlap in pairs: the 0.5 m line puts 2x right / 2x left 0.5 m past them, and the
+  free-spot choice had no member positions yet), and one overlay name tag ("Hunter2") floats high.
+So 5 players work end to end in one run; open: placement of slots 3-4, the floating tag (name-plate
+owner), and repeat runs before 5 becomes a user setting.
+
 ### Host does not draw a guest / its plate floats away (user, 2026-10-11)
 
 Seen with 2 and 3 players (user screenshots; split24 and a hostdeath run): on the host the guest's
