@@ -3,6 +3,8 @@
 cmake_minimum_required(VERSION 3.24)
 # The Windows port's version: VERSION at the repository root (launcher.py and the tests read it too).
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION" BBPORT_VERSION)
+# Reconfigure when VERSION changes (otherwise a version bump keeps the old string in the exe).
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION")
 string(STRIP "${BBPORT_VERSION}" BBPORT_VERSION)
 project(bbgpu VERSION ${BBPORT_VERSION} LANGUAGES C CXX)
 add_compile_definitions(BBPORT_VERSION="${BBPORT_VERSION}")
