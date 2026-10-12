@@ -21,7 +21,7 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | Session & joining | `█████████████████░░░` | 86% |
 | World & travel | `█████████████████░░░` | 86% |
 | Death & respawn | `█████████████████░░░` | 86% |
-| Progress (anyone can progress) | `█████████████████░░░` | 84% |
+| Progress (anyone can progress) | `█████████████████░░░` | 85% |
 | Services & UI | `██████████████████░░` | 90% |
 | Network & robustness | `████████████████░░░░` | 78% |
 | Bloodborne-specific (chalice, Insight) | `███████████████░░░░░` | 77% |
@@ -138,7 +138,8 @@ single-player save is never touched. Settings: *System → Party* pages in the g
   for the guests too, and a lever or door a guest uses opens in the host's world (and in the
   guest's own save).
 - **Guests can talk to NPCs** in the host's world (Gilbert, Iosefka, Eileen ...); quest choices
-  are shared by the whole party.
+  are shared by the whole party: a quest step the host makes also moves the NPC in every guest's
+  own save (no stale NPC state left behind).
 - **Enemy drops for each player.** Every player gets their own roll of each enemy's drop.
 - **Treasure for each player.** Items lying in the world can be picked up by every player, each into their own game.
 - **Cutscenes for everyone.** A story scene a guest triggers in the host's world plays for the
