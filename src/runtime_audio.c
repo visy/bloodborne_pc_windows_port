@@ -36,6 +36,7 @@
 
 typedef struct {
     int used, type, channels, is_float, frames, sample_bytes, std_layout;
+    int out_channels; /* channels sent to SDL: the device's when it has fewer (folded here) */
     int32_t volume[8];
     SDL_AudioStream *stream;
     int muted; /* gain 0 while the game window is in the background (bbgpu_audio_audible) */
@@ -69,6 +70,34 @@ static inline float soft_clip(float x) {
     if (a <= knee) return x;
     const float o = knee + (1.0f - knee) * tanhf((a - knee) / (1.0f - knee));
     return x < 0.0f ? -o : o;
+}
+
+/* Channels of the default playback device, 0 when unknown. (From Supermedo/bloodborne_pc d41e3da.)
+ * SDL's 7.1-to-stereo mix scales the front channels by about 0.21, so the 8-channel game mix
+ * played roughly 13 dB below other PC audio on stereo devices; mono and stereo devices get a
+ * fold made here with the fronts at unity (fold_frame) and the stream opened in their count. */
+static int device_channels(void) {
+    static int cached=-1;
+    if (cached<0) {
+        SDL_AudioSpec spec;
+        cached=SDL_GetAudioDeviceFormat(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,&spec,NULL) &&
+               spec.channels>=1 && spec.channels<=8 ? spec.channels : 0;
+        printf("Runtime: audio device %d ch\n", cached);
+    }
+    return cached;
+}
+
+/* One frame in SDL 7.1 order (L R C LFE BL BR SL SR) folded to 1 or 2 channels. */
+static void fold_frame(const float *in, int channels, float *out, int out_channels) {
+    const float k=0.70710678f;
+    float l=in[0], r=channels>1 ? in[1] : in[0];
+    if (channels==8) {
+        const float c=k*in[2]+0.5f*in[3];
+        l+=c+k*in[4]+k*in[6];
+        r+=c+k*in[5]+k*in[7];
+    }
+    if (out_channels==1) out[0]=0.5f*(l+r);
+    else { out[0]=l; out[1]=r; }
 }
 
 static int sdl_audio(void) {
@@ -131,9 +160,12 @@ static ABI int32_t audio_open(int32_t user, int32_t type, int32_t index, uint32_
     host_mutex_init(&p->lock);
     p->used=1; p->type=type; p->channels=channels[format]; p->is_float=format>=3 && format!=6;
     p->sample_bytes=p->is_float ? 4 : 2; p->frames=(int)length; p->std_layout=format>=6;
+    p->out_channels=p->channels;
     for (int c=0;c<8;++c) p->volume[c]=VOLUME_0DB;
     if (sdl_audio()) {
-        SDL_AudioSpec spec={p->is_float ? SDL_AUDIO_F32 : SDL_AUDIO_S16, p->channels, 48000};
+        const int device=device_channels();
+        if (device>=1 && device<=2 && device<p->channels) p->out_channels=device;
+        SDL_AudioSpec spec={p->is_float ? SDL_AUDIO_F32 : SDL_AUDIO_S16, p->out_channels, 48000};
         p->stream=SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,&spec,NULL,NULL);
         if (p->stream) {
             SDL_ResumeAudioStreamDevice(p->stream);
@@ -145,7 +177,7 @@ static ABI int32_t audio_open(int32_t user, int32_t type, int32_t index, uint32_
                 if (pf >= 1 && pf <= 8) prefill_count = pf;
             }
             unsigned char silence[2048*8*4]={0};
-            size_t prefill_bytes=(size_t)p->frames*(size_t)p->channels*(size_t)p->sample_bytes*(size_t)prefill_count;
+            size_t prefill_bytes=(size_t)p->frames*(size_t)p->out_channels*(size_t)p->sample_bytes*(size_t)prefill_count;
             if (prefill_bytes<=sizeof(silence)) SDL_PutAudioStreamData(p->stream,silence,(int)prefill_bytes);
         } else {
             fprintf(stderr,"Runtime: SDL audio stream failed (%s); port %d uses the timer sink\n",SDL_GetError(),id);
@@ -155,7 +187,7 @@ static ABI int32_t audio_open(int32_t user, int32_t type, int32_t index, uint32_
     const char *dump=getenv("BB_AUDIO_DUMP");
     if (dump) {
         char path[4096];
-        snprintf(path,sizeof(path),"%s.port%d.%dch.%s",dump,id,p->channels,p->is_float ? "f32" : "s16");
+        snprintf(path,sizeof(path),"%s.port%d.%dch.%s",dump,id,p->out_channels,p->is_float ? "f32" : "s16");
         p->dump=fopen(path,"wb");
     }
     ++ports_opened;
@@ -196,30 +228,43 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
     }
 #endif
     host_lock(&p->lock);
-    size_t samples=(size_t)p->frames*(size_t)p->channels, bytes=samples*(size_t)p->sample_bytes;
+    size_t samples=(size_t)p->frames*(size_t)p->channels; /* the guest's count */
+    size_t bytes=(size_t)p->frames*(size_t)p->out_channels*(size_t)p->sample_bytes;
     uint64_t period=(uint64_t)p->frames*1000000000u/48000u;
     if (data) {
         /* Apply per-channel volume, channel remap, and soft-knee saturation to prevent harsh clipping */
         unsigned char converted[2048*8*4];
         static const int remap[8]={0,1,2,3,6,7,4,5};
         float master_gain=((p->channels==8) ? 0.60f : 1.0f) * bbgpu_audio_boost();
-        for (size_t f=0;f<(size_t)p->frames;++f) for (int c=0;c<p->channels;++c) {
-            int target=p->channels==8 && !p->std_layout ? remap[c] : c;
-            size_t from=f*(size_t)p->channels+(size_t)c, to=f*(size_t)p->channels+(size_t)target;
-            float gain=((float)p->volume[c]/VOLUME_0DB)*master_gain;
-            if (p->is_float) {
-                float v; memcpy(&v,(const char *)data+from*4,4);
-                v*=gain;
-                v=soft_clip(v);
-                memcpy(converted+to*4,&v,4);
-            } else {
-                int16_t v; memcpy(&v,(const char *)data+from*2,2);
-                float fv=((float)v/32768.0f)*gain;
-                fv=soft_clip(fv);
-                int32_t iv=(int32_t)(fv*32767.0f);
-                if (iv>32767) iv=32767; else if (iv<-32768) iv=-32768;
-                int16_t sv=(int16_t)iv;
-                memcpy(converted+to*2,&sv,2);
+        const int out_channels=p->out_channels;
+        for (size_t f=0;f<(size_t)p->frames;++f) {
+            float frame[8];
+            for (int c=0;c<p->channels;++c) {
+                int target=p->channels==8 && !p->std_layout ? remap[c] : c;
+                size_t from=f*(size_t)p->channels+(size_t)c;
+                float gain=((float)p->volume[c]/VOLUME_0DB)*master_gain;
+                if (p->is_float) {
+                    float v; memcpy(&v,(const char *)data+from*4,4);
+                    frame[target]=v*gain;
+                } else {
+                    int16_t v; memcpy(&v,(const char *)data+from*2,2);
+                    frame[target]=((float)v/32768.0f)*gain;
+                }
+            }
+            float folded[2];
+            const float *out=frame;
+            if (out_channels!=p->channels) { fold_frame(frame,p->channels,folded,out_channels); out=folded; }
+            for (int c=0;c<out_channels;++c) {
+                const float v=soft_clip(out[c]);
+                size_t to=f*(size_t)out_channels+(size_t)c;
+                if (p->is_float) {
+                    memcpy(converted+to*4,&v,4);
+                } else {
+                    int32_t iv=(int32_t)(v*32767.0f);
+                    if (iv>32767) iv=32767; else if (iv<-32768) iv=-32768;
+                    int16_t sv=(int16_t)iv;
+                    memcpy(converted+to*2,&sv,2);
+                }
             }
         }
         if (p->dump) fwrite(converted,1,bytes,p->dump);

@@ -10,6 +10,11 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 - **Faster bell summons on a real network**: when a summon attempt fails, the guest's sign is offered again at once (no 30 s wait for the next sign), and a stuck attempt gives up after 8 s instead of 15 s. The first 2-PC LAN session took 63 s to summon because of two such failures.
 - **Clear message when the host refuses you**: a wrong or missing password, an old code, a full party or a different version now shows one message box saying what to do; your game stays online alone in your own world (no more *Failed to acquire Bloodborne server information*), and *System → Party → Rejoin the host* retries with the password set there.
 - **Per-player treasure**: guests can pick up items lying in the world (corpse glows) too, each player gets their own copy, and the host's pickup no longer takes it away from the others.
+- **No crash when hit on Intel 12th gen and later** (from Supermedo/bloodborne_pc, DarkSpartan): stores of 607 small game functions now run below the area Windows overwrites when it handles a fault on those CPUs.
+- **Louder game audio on stereo speakers and headphones** (from Supermedo/bloodborne_pc, andrecabralgit): the 7.1 mix is folded to stereo by the port with the front channels at full level (SDL's fold played it ~13 dB quieter); the volume boost setting is unchanged.
+- **Mods with Developer Mode on**: replaced files are no longer seen by the game as 0 bytes (from Supermedo/bloodborne_pc, gStone).
+- Overlay checkboxes and sliders keep their changes (from Supermedo/bloodborne_pc, Jgamrot).
+- A pipeline the graphics driver cannot create (some AMD/older drivers) now skips its draws instead of stopping the game; fewer texture-cache stalls (unneeded hashing of streamed textures, a garbage-collector walk that never stopped early); SRT walker faults from speculative draw preparation no longer patch the shader walker (from Supermedo/bloodborne_pc).
 
 ## 0.5.8 (Windows port 0.5.8, party co-op)
 
