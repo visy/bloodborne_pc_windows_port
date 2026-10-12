@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.5.9 (unreleased)
 
+- **Faster bell summons on a real network**: when a summon attempt fails, the guest's sign is offered again at once (no 30 s wait for the next sign), and a stuck attempt gives up after 8 s instead of 15 s. The first 2-PC LAN session took 63 s to summon because of two such failures.
 - **Per-player treasure**: guests can pick up items lying in the world (corpse glows) too, each player gets their own copy, and the host's pickup no longer takes it away from the others.
 
 ## 0.5.8 (Windows port 0.5.8, party co-op)

@@ -451,3 +451,32 @@ the host loaded at 35 s; bell join `trying-to-join -> client` at 50 s, host `coo
   side (type 1/7), "Entered the world of vp797-rz2z" and the Co-operator / Beckoner tags on the two
   screenshots; host `cooperators 0 -> 1`. Next run without title join: the guest's Continue
   started in the Dream (its own spot).
+
+## 2026-10-12: first 2-PC LAN session, 63 s bell summon (0.5.7)
+
+Host log (`launcher.log`, session 18:41:58): host -> `host` at t 78.0 s, `cooperators 0 -> 1` at
+t 141.2 s. Where the time went (host side; the guest log was not available):
+
+| Attempt | Host | Result |
+|---|---|---|
+| 1 (t ~78) | the guest's sign was already up; summon at once, signaling resolved, vport 40 handshake complete | the host's game never sent the summon data (no 267/271-byte message); it gave up after its 15 s connected-peer window (`DeactivateConnection`, member 0xff00 = never joined) |
+| 2 (~30 s later) | the guest's 30 s sign resend, summoned at once | same failure |
+| 3 (~60 s after 1) | same | summon data sent, JoinRoom, `cooperators 1` ~3 s later |
+
+So ~60 of the 63 s were two failed attempts, each costing the 15 s window plus the wait for the
+guest's next sign (the host's game summons a sign id only once). The failure itself (host sees the
+guest as not connected although the transport handshake went through; the crossing 54-byte
+messages differ from the good attempt) is not understood yet and needs a guest log.
+
+Fix (both host side, loopback-tested; the failure path itself could not be reproduced locally):
+
+- `np_signaling.cpp` `sig_deactivate` -> `FromApi::renew_signs`: when the host's game drops a
+  peer it was summoning that never joined, that member's signs on the board get new ids and the
+  board change zeroes the game's poll countdown: the next attempt starts ~0.5 s after the failure
+  instead of at the guest's next sign (up to 30 s).
+- `Party: Fast join` tries 30 -> 16 (0x14b4975, 0x14bb067): the connected-peer window is 8 s
+  instead of 15 s (a good LAN/loopback summon passes it in < 1 s; relay fallback is 2.5 s).
+
+Expected for the logged session: 2 failures cost ~2 x 8.5 s instead of ~60 s (summon ~20 s after
+hosting). Local 2-instance run after the change (Continue party, title join): host `host` t 13.5 s,
+`cooperators 1` t 18.2 s (unchanged, no regression).
