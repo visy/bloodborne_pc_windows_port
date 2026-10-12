@@ -908,16 +908,22 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
     Common::AccurateTimer timer{vblank_period};
 
     // bbport: frame limit (see EmulatorSettings::GetFrameLimit). A request waits in the queue
-    // until its slot, and the next slot is one period after the flip actually made: two flips
-    // are never closer than the period. The game's movement slows down above ~120 FPS (the
-    // character runs slower), and the flip times are the frame times it sees (flip status).
-    // Slots used to stay on a fixed grid that "never lags behind by more than a period": the
-    // frame after a late one was flipped early, and the millisecond sleeps of Windows woke the
-    // limiter up to ~1 ms late, so single intervals of 6-7 ms (140-160 FPS) passed at a cap of
-    // 120. Slots are now waited for precisely (PreciseSleepUntil).
+    // until its slot. The flip times are the frame times the game sees (flip status). Slots
+    // used to stay on a fixed grid that "never lags behind by more than a period": the frame
+    // after a late one was flipped early, and the millisecond sleeps of Windows woke the
+    // limiter up to ~1 ms late, so single intervals of 6 ms (165 FPS) passed at a cap of 120.
+    // Slots are now waited for precisely (PreciseSleepUntil), and the next one is a period
+    // after the slot, but no earlier than a period minus `slack` after the flip made. Counting
+    // only from the flip (PR #28 as proposed) added the wake-up delay to every frame: 116 FPS
+    // at a cap of 120.
     const u32 frame_limit = EmulatorSettings.GetFrameLimit();
     const auto frame_period = frame_limit ? std::chrono::nanoseconds(1000000000 / frame_limit)
                                           : std::chrono::nanoseconds(0);
+    const auto slack = frame_period / 16;
+    const auto next_slot = [&](std::chrono::steady_clock::time_point slot) {
+        return std::max(slot + frame_period,
+                        std::chrono::steady_clock::now() + frame_period - slack);
+    };
     auto next_flip = std::chrono::steady_clock::now();
     std::printf("VideoOut: vblank %u Hz, frame limit %u FPS\n",
                 EmulatorSettings.GetVblankFrequency(), frame_limit);
@@ -954,7 +960,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
         if (flip_slot && vblank_status.count % (main_port.flip_rate + 1) == 0) {
             const auto request = receive_request();
             if (request && frame_limit) {
-                next_flip = std::chrono::steady_clock::now() + frame_period;
+                next_flip = next_slot(next_flip);
             }
             if (!request) {
                 if (timer.GetTotalWait().count() < 0) { // Dont draw too fast
@@ -1014,7 +1020,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
             }
             const auto request = receive_request();
             if (request) {
-                next_flip = std::chrono::steady_clock::now() + frame_period;
+                next_flip = next_slot(next_flip);
                 Flip(request);
                 FRAME_END;
             }
