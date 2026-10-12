@@ -142,6 +142,18 @@ bool PartyTagsWanted() {
            party::hud::Shown();
 }
 
+// Party alert (party_status SetAlert: the host refused us): a message box in the middle of the
+// screen for AlertMs, whatever the notices switch says. Never takes input.
+std::atomic<std::uint64_t> alert_seen{0};
+std::atomic<std::int64_t> alert_until_ms{0};
+std::string alert_text; // present thread (imgui_mutex)
+constexpr std::int64_t AlertMs = 15000;
+
+bool AlertWanted() {
+    return party::status::Enabled() &&
+           (party::status::AlertSeq() != alert_seen.load() || SteadyMs() < alert_until_ms.load());
+}
+
 bool ToastWanted() {
     return party::status::Enabled() && BbSettings::Get().party_toasts &&
            (party::status::EventSeq() != toast_seen.load() || SteadyMs() < toast_until_ms.load());
@@ -2067,6 +2079,57 @@ void PartyToast() {
     ImGui::PopStyleVar(2);
 }
 
+/// The party alert: a bordered box in the upper middle (clear of the game's own dialogs), its
+/// first line as the title, then the text; fades out over its last second.
+void PartyAlert() {
+    if (!party::status::Enabled()) {
+        return;
+    }
+    const std::int64_t now = SteadyMs();
+    if (party::status::AlertSeq() != alert_seen.load()) {
+        const party::status::Board b = party::status::Snapshot();
+        alert_seen = b.alert_seq;
+        alert_text = b.alert;
+        alert_until_ms = alert_text.empty() ? 0 : now + AlertMs;
+    }
+    const std::int64_t left = alert_until_ms.load() - now;
+    if (left <= 0 || alert_text.empty()) {
+        return;
+    }
+    const float alpha = std::clamp(float(left) / 1000.0f, 0.0f, 1.0f);
+    const std::size_t nl = alert_text.find('\n');
+    const std::string title = alert_text.substr(0, nl);
+    const std::string body = nl == std::string::npos ? std::string() : alert_text.substr(nl + 1);
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float width = std::min(viewport->WorkSize.x - 32.0f * base_scale, 760.0f * base_scale);
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                                   viewport->WorkPos.y + viewport->WorkSize.y * 0.22f),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowSize(ImVec2(width, 0.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.85f * alpha);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24.0f * base_scale, 16.0f * base_scale));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.80f, 0.68f, 0.46f, 0.85f * alpha));
+    ImGui::Begin("##party_alert", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoSavedSettings);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::PushFont(serif_font, 22.0f);
+    ImGui::TextColored(ImVec4(0.96f, 0.88f, 0.70f, alpha), "%s", title.c_str());
+    ImGui::PopFont();
+    if (!body.empty()) {
+        ImGui::Dummy(ImVec2(0.0f, 6.0f * base_scale));
+        ImGui::PushFont(serif_font, 18.0f);
+        ImGui::TextColored(ImVec4(0.90f, 0.90f, 0.88f, alpha), "%s", body.c_str());
+        ImGui::PopFont();
+    }
+    ImGui::PopTextWrapPos();
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+}
+
 void TextPrompt() {
     std::string title, text;
     {
@@ -2362,7 +2425,7 @@ bool HandleEvent(const SDL_Event& event) {
 bool Visible() {
     return initialized &&
            (menu_open || prompt_active || BbSettings::Get().show_fps || BbSettings::Get().show_hud ||
-            CompileIndicatorShown() || ToastWanted() || PartyHudWanted() || PartyTagsWanted());
+            CompileIndicatorShown() || ToastWanted() || AlertWanted() || PartyHudWanted() || PartyTagsWanted());
 }
 
 bool MenuOpen() {
@@ -2518,6 +2581,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
         CompileIndicator();
         PartyHud(); // before the toast: it stacks above the panel
         PartyToast();
+        PartyAlert();
     }
     if (prompt_active && !menu_open) {
         TextPrompt();

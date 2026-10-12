@@ -126,6 +126,7 @@ struct RemoteGuest::State {
     std::string online_id;
     std::uint64_t last_event = 0;
     bool events_on = false;
+    std::shared_ptr<LocalHost> solo;  // set_solo(true)
 };
 
 RemoteGuest::RemoteGuest() : st_(std::make_shared<State>()) {}
@@ -149,7 +150,7 @@ void RemoteGuest::set_host_online_id(const std::string& id) {
 
 bool RemoteGuest::host_is_local() const {
     std::lock_guard<std::mutex> lk(st_->mu);
-    return st_->host_loopback;
+    return st_->host_loopback || st_->solo;  // solo: our own service is the host
 }
 
 // A record (or invite) naming the host with no address this guest can use gets the address
@@ -214,10 +215,13 @@ void RemoteGuest::fix_host_addresses(json::Value& v) const {
 bool RemoteGuest::rpc(const char* kind, const json::Value& request, json::Value& reply, std::string& error,
                       int timeout_ms) {
     RpcFn fn;
+    std::shared_ptr<LocalHost> solo;
     {
         std::lock_guard<std::mutex> lk(st_->mu);
         fn = st_->rpc;
+        solo = st_->solo;
     }
+    if (solo) return solo->rpc(kind, request, reply, error, timeout_ms);
     if (!fn) {
         error = "no party link";  // TODO(A4): PartyLink::rpc_call
         return false;
@@ -257,16 +261,57 @@ void RemoteGuest::reset_event_cursor() {
 }
 
 void RemoteGuest::start_events(const std::string& online_id, EventHandler handler) {
-    std::lock_guard<std::mutex> lk(st_->mu);
-    st_->online_id = online_id;
-    st_->handler = std::move(handler);
-    st_->events_on = true;
+    std::shared_ptr<LocalHost> solo;
+    {
+        std::lock_guard<std::mutex> lk(st_->mu);
+        st_->online_id = online_id;
+        st_->handler = handler;
+        st_->events_on = true;
+        solo = st_->solo;
+    }
+    if (solo) solo->start_events(online_id, std::move(handler));
 }
 
 void RemoteGuest::stop_events() {
+    std::shared_ptr<LocalHost> solo;
+    {
+        std::lock_guard<std::mutex> lk(st_->mu);
+        st_->events_on = false;
+        st_->handler = nullptr;
+        solo = st_->solo;
+    }
+    if (solo) solo->stop_events();
+}
+
+bool RemoteGuest::set_solo(bool on) {
+    std::shared_ptr<LocalHost> old, fresh;
+    std::string id;
+    EventHandler h;
+    bool events = false;
+    {
+        std::lock_guard<std::mutex> lk(st_->mu);
+        if (on == static_cast<bool>(st_->solo)) return false;
+        if (on) {
+            fresh = std::make_shared<LocalHost>(PartyHostService::instance(), &FromApi::instance());
+            st_->solo = fresh;
+            events = st_->events_on;
+            id = st_->online_id;
+            h = st_->handler;
+        } else {
+            old = std::move(st_->solo);
+            st_->solo.reset();
+        }
+    }
+    if (fresh && events && h) fresh->start_events(id, std::move(h));
+    if (old) old->stop_events();
+    log("party transport: %s", on ? "solo (this game's own host service: the party host refused us)"
+                                  : "remote-guest again (the party link is up)");
+    return true;
+}
+
+bool RemoteGuest::solo() const {
     std::lock_guard<std::mutex> lk(st_->mu);
-    st_->events_on = false;
-    st_->handler = nullptr;
+    return static_cast<bool>(st_->solo);
 }
 
 // ---- the process's transport ---------------------------------------------------------------

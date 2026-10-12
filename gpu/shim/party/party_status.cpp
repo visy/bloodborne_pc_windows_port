@@ -31,6 +31,7 @@ std::mutex mutex;
 Board board;  // guarded by mutex
 std::deque<Command> commands;  // guarded by mutex
 std::atomic<std::uint64_t> event_seq{0};
+std::atomic<std::uint64_t> alert_seq{0};
 std::atomic<int> enabled_override{-1};  // -1: from BB_PARTY
 
 bool EnvEnabled() {
@@ -150,6 +151,13 @@ void SetLastEvent(const std::string& text) {
     ++board.version;
 }
 
+void SetAlert(const std::string& text) {
+    std::scoped_lock lock{mutex};
+    board.alert = text;
+    board.alert_seq = alert_seq.fetch_add(1) + 1;
+    ++board.version;
+}
+
 Board Snapshot() {
     Board copy;
     {
@@ -162,6 +170,10 @@ Board Snapshot() {
 
 std::uint64_t EventSeq() {
     return event_seq.load(std::memory_order_acquire);
+}
+
+std::uint64_t AlertSeq() {
+    return alert_seq.load(std::memory_order_acquire);
 }
 
 bool Enabled() {
@@ -314,6 +326,7 @@ void ResetForTest(bool enabled) {
     board = Board{};
     commands.clear();
     event_seq = 0;
+    alert_seq = 0;
     enabled_override = enabled ? 1 : 0;
 }
 

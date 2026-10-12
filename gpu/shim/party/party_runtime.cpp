@@ -404,6 +404,8 @@ struct Runtime {
     std::uint32_t host_ip_nbo = 0;
     // Guest: what it joined with, for a readable Auth refusal (bridge::AuthRejectText).
     bool code_coded = false, code_needs_password = false, sent_password = false;
+    bool code_ignores_password = false;  // the code carries no password (its key ignores one)
+    std::string flow_password_at_start;   // System > Party's password when the link started
     std::uint16_t host_port = 0;
     bool was_connected = false;
     std::uint64_t loss_gen = 0;  // bumps on every link state change (host-lost grace check)
@@ -589,6 +591,15 @@ void on_state(LinkState s, const std::string& detail) {
         reason = bridge::AuthRejectText(r.code_coded, r.code_needs_password, r.sent_password);
     }
     if (s == LinkState::Rejected && !host) plog("refused by the host: %s", reason.c_str());
+    if (s == LinkState::Rejected && !host && bridge::RefusalPlaysSolo(link->reject_code())) {
+        // The game must not fail its server checks ("Failed to acquire Bloodborne server
+        // information" covered our message): it plays online alone in its own world, answered
+        // by this process's own host service, until a Rejoin gets a link up.
+        if (bbnet::party::RemoteGuest* rg = bbnet::party::remote_guest(); rg && rg->set_solo(true)) {
+            plog("refused: playing online alone in this world (System > Party > Rejoin the host retries)");
+            bbnet::session::host_session_reset();  // a context the game already started: our own service now
+        }
+    }
     bridge::OnLinkState(s, detail, link->reject_code(), reason);
     if (!host && (s == LinkState::Reconnecting || s == LinkState::Rejected)) {
         bool first = false;
@@ -644,6 +655,8 @@ void on_state(LinkState s, const std::string& detail) {
             }
         }
         bbnet::party::RemoteGuest* rg = bbnet::party::remote_guest();
+        // Refused before, now in: the host's service answers again (registered below: fresh).
+        if (rg && rg->set_solo(false)) fresh = true;
         bool wire = false;
         {
             std::lock_guard<std::mutex> lk(r.mu);
@@ -1796,6 +1809,8 @@ void start_guest(LinkConfig cfg) {
         r.code_coded = !code.plain;
         r.code_needs_password = (code.flags & kCodeFlagPasswordRequired) != 0;
         r.sent_password = !cfg.password.empty();
+        r.code_ignores_password = code_ignores_password(code);
+        r.flow_password_at_start = flow::RuntimePassword();
         r.host_port = port;
         r.st.host_address = format_ipv4(ip) + ":" + std::to_string(port);
         r.cfg = cfg;
@@ -1977,6 +1992,14 @@ void rejoin_main() {
         std::lock_guard<std::mutex> lk(r.mu);
         cfg = r.cfg;
         host = r.st.role == RuntimeRole::Host;
+        if (!host) {
+            // A password set in System > Party since the start (a refused guest fixing it) is
+            // the one this Rejoin sends.
+            cfg.password = bridge::RejoinPassword(cfg.password, r.flow_password_at_start, flow::RuntimePassword(),
+                                                  r.code_ignores_password);
+            r.cfg.password = cfg.password;
+            r.sent_password = !cfg.password.empty();
+        }
         host_text = bbnet::party::ip_text(r.host_ip_nbo);
         port = r.host_port;
         old = r.link;

@@ -8,6 +8,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 - **Faster re-join after a crash**: when a guest's game crashes, the host's game now drops its connection to the dead game at once (through the game's own connection release) instead of waiting ~25 s for it to time out; the restarted guest is back in the host's world ~12 s after its restart (was ~28 s).
 - Checked every scripted warp of the game for needless loading screens inside the same map: the only ones are cutscene warps (boss intros, the Cathedral Ward evening, the ending) and Chalice layers, which keep the game's own behavior (no change in play).
 - **Faster bell summons on a real network**: when a summon attempt fails, the guest's sign is offered again at once (no 30 s wait for the next sign), and a stuck attempt gives up after 8 s instead of 15 s. The first 2-PC LAN session took 63 s to summon because of two such failures.
+- **Clear message when the host refuses you**: a wrong or missing password, an old code, a full party or a different version now shows one message box saying what to do; your game stays online alone in your own world (no more *Failed to acquire Bloodborne server information*), and *System → Party → Rejoin the host* retries with the password set there.
 - **Per-player treasure**: guests can pick up items lying in the world (corpse glows) too, each player gets their own copy, and the host's pickup no longer takes it away from the others.
 
 ## 0.5.8 (Windows port 0.5.8, party co-op)

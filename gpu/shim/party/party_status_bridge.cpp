@@ -211,6 +211,51 @@ std::string AuthRejectText(bool coded, bool code_needs_password, bool sent_passw
     return "Old party code: ask the host for the current one";
 }
 
+bool RefusalPlaysSolo(RejectCode code) {
+    return code != RejectCode::None && code != RejectCode::Shutdown;
+}
+
+std::string RefusalNotice(RejectCode code, const std::string& reason) {
+    if (!RefusalPlaysSolo(code)) return {};
+    std::string title, todo;
+    switch (code) {
+    case RejectCode::Auth:
+        title = reason.empty() ? "Wrong or missing party password" : reason;
+        todo = "Check the password and code with the host, set them in System > Party, then choose Rejoin the host.";
+        break;
+    case RejectCode::Full:
+        title = "The party is full";
+        todo = "Ask the host to make room, then choose System > Party > Rejoin the host.";
+        break;
+    case RejectCode::Version:
+    case RejectCode::Mismatch:
+        title = "The host's game differs from yours";
+        if (!reason.empty()) title += ": " + reason;
+        todo = "Use the same bbport version, patches and mods as the host (launcher), then restart.";
+        break;
+    case RejectCode::Kicked:
+        title = "The host removed you from the party";
+        todo = "System > Party > Rejoin the host asks to join again.";
+        break;
+    case RejectCode::Name:
+        title = reason.empty() ? "Your party name was refused" : "Party name refused: " + reason;
+        todo = "Choose another Party name in System > Party, then restart to join.";
+        break;
+    default:
+        title = "The host refused to let you join";
+        if (!reason.empty()) title += ": " + reason;
+        todo = "System > Party > Rejoin the host tries again.";
+        break;
+    }
+    return "Party: " + title + "\n" + todo + "\nYou play online alone in your own world until then.";
+}
+
+std::string RejoinPassword(const std::string& joined_with, const std::string& flow_at_start,
+                           const std::string& flow_now, bool code_ignores_password) {
+    if (code_ignores_password) return {};
+    return flow_now != flow_at_start ? flow_now : joined_with;
+}
+
 Mapped MapState(const Facts& f) {
     const bool host = f.role == Role::Host;
     if (f.role == Role::Off) return {State::Off, {}};
@@ -359,11 +404,13 @@ void OnLinkState(LinkState state, const std::string& detail, RejectCode reject, 
     // Out of the party: the old roster is no longer ours.
     if (state == LinkState::Rejected || state == LinkState::Stopped) status::SetMembers({});
     if (state == LinkState::Connected) {
+        status::SetAlert({});  // a refusal's box: in now
         status::SetLastEvent(was == LinkState::Reconnecting ? "Rejoined the party" : "Joined the party");
     } else if (state == LinkState::Reconnecting && (was == LinkState::Connected)) {
         status::SetLastEvent("Connection to the host lost");
     } else if (state == LinkState::Rejected) {
         status::SetLastEvent(RejectText(reject, reason));
+        if (!host) status::SetAlert(RefusalNotice(reject, reason));
     } else if (state == LinkState::Hosting && host) {
         status::SetLastEvent("Party open");
     }
