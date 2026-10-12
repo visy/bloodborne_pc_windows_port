@@ -3,6 +3,10 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## 0.5.7 (Windows port 0.5.7, hotfix)
+
+- **No automatic button presses in manual play**: starting a party from the launcher pressed Confirm repeatedly through character creation and name entry. The automatic *Continue* now runs only when asked for (automated tests, *Continue party game* / *Join party game* with an existing character, a crash restart) and stops after 15 presses.
+
 ## 0.5.6 (Windows port 0.5.6, party co-op)
 
 - **Per-player enemy drops** (on by default): every enemy drops loot for each player separately, and guests keep their own drops.
