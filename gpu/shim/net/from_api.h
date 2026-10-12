@@ -116,6 +116,8 @@ public:
     void hold_signs(const std::string& online_id, int ms);
     // The longest sign hold still running, ms (0: none). The title join waits it out too.
     std::int64_t hold_left_ms();
+    // How long ago the host's game asked to summon a sign (summon_messenger/request), ms.
+    std::int64_t ms_since_request();
     std::uint64_t user_id_of(const std::string& online_id);
     /// The Chalice Dungeon channel board (tests, the party layer).
     ChannelBoard& channels() { return channels_; }
@@ -137,6 +139,7 @@ private:
     std::vector<Sign> signs_;
     std::vector<std::pair<std::string, std::int64_t>> holds_;  // online id -> steady ms until
     std::uint64_t next_sign_ = 1;
+    std::int64_t last_request_ms_ = -(1LL << 40);
     std::vector<std::pair<std::string, std::uint64_t>> users_;  // online id -> UserId
     std::uint64_t next_user_ = 1001;
 };

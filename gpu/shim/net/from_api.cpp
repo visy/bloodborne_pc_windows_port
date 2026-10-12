@@ -475,6 +475,11 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
     return list;
 }
 
+std::int64_t FromApi::ms_since_request() {
+    std::lock_guard<std::mutex> lk(mu_);
+    return steady_now_ms() - last_request_ms_;
+}
+
 std::int64_t FromApi::hold_left_ms() {
     std::lock_guard<std::mutex> lk(mu_);
     const std::int64_t now = steady_now_ms();
@@ -537,6 +542,7 @@ std::string FromApi::sign_request(const Caller& caller, const json::Value& body)
     std::string target;
     {
         std::lock_guard<std::mutex> lk(mu_);
+        last_request_ms_ = steady_now_ms();
         for (const Sign& s : signs_) {
             if ((target_uid && s.user_id == target_uid) || (sign_id && s.id == sign_id)) {
                 target = s.online_id;

@@ -787,6 +787,11 @@ LinkCallbacks make_callbacks(bool host) {
             bbnet::party::PartyHostService::instance().context_gone(m.name);
         };
         cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
+            if (name == coop::b2::kEventName && body.find("\"dsum_") != std::string::npos) {
+                if (PartyLink* link = R().link)
+                    for (const RosterEntry& e : link->roster())
+                        if (e.slot == slot) coop::b2::DirectSummonName(slot, e.name);
+            }
             if (name == coop::b2::kEventName) coop::b2::OnLinkEvent(slot, body);  // B2: a guest arrived
             if (name == coop::chalice::kFormEventName) {  // a guest's ritual dungeon (party_chalice.h)
                 std::string member;
@@ -864,6 +869,10 @@ LinkCallbacks make_callbacks(bool host) {
                 return;
             }
             if (name == coop::b2::kEventName) {  // B2: a guest arrived in the host world
+                if (body.find("\"dsum_") != std::string::npos)
+                    if (PartyLink* link = R().link)
+                        for (const RosterEntry& e : link->roster())
+                            if (e.slot == slot) coop::b2::DirectSummonName(slot, e.name);
                 coop::b2::OnLinkEvent(slot, body);
                 return;
             }

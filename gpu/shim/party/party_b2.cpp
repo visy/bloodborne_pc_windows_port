@@ -23,6 +23,7 @@
 #include "../net/from_api.h"
 #include "../net/bbnet_internal.h"
 #include "party_nr_drop.h"
+#include "party_dsummon.h"
 
 #include <algorithm>
 #include <atomic>
@@ -4925,6 +4926,227 @@ void TitleJoinHostTick(const GameSnapshot& s) {
     }
 }
 
+
+// ---- Direct summon delivery (BB_PARTY_DIRECT_SUMMON, party_dsummon.h; from droogie/bbhost) ----
+// The guest asks when it rings; the host answers with its room (made at once if it has none, as
+// the title join does) and holds the guest's signs so its game does not summon the same guest by
+// sign meanwhile; the guest hands the room to its game's SummonStepManager as a type-1 summon
+// message for the bell's own waiting entry, and the game joins as if the host's game had sent it.
+constexpr u64 kNetMan = 0x553b120;          // FrpgNetMan*: +0xc50 SummonStepManager, +0xa7c area, +0xaa8 level, +0xaac pos
+constexpr u64 kWrapperCtor = 0x1486a10;     // bool (wrapper*, u8 type, u16 len, const void* data)
+constexpr u64 kWrapperVtable = 0x5322570;   // the wrapper's vtable (address point; 23 sites lea 0x5322560 + 0x10)
+constexpr u64 kHandleItem = 0x14ba340;      // SummonStepManager vtable +0x10: handleIncomingItem(ssm, sender, wrapper)
+
+struct DirectSummon {
+    std::mutex mu;
+    std::vector<int> requests;          // host: slots that asked
+    std::map<int, std::string> names;   // slot -> online id (from the runtime)
+    dsummon::Guest g;                   // guest
+    dsummon::Room room;
+    double asked_at = 0;
+};
+DirectSummon& DS() {
+    static DirectSummon d;
+    return d;
+}
+
+bool DirectSummonOn() {
+    static const bool on = dsummon::SwitchOn(std::getenv("BB_PARTY_DIRECT_SUMMON"), false);  // experimental: opt in with =1
+    return on;
+}
+
+u64 SummonStepManager() {
+    const u64 net = Field<u64>(Guest(kNetMan), 0, 0);
+    return net ? Field<u64>(net, 0xc50, 0) : 0;
+}
+
+/// The bell's passive guest entry still waiting for a summon message (SSM +0x158 list; node
+/// {next, prev, entry}; entry +0x10 its 8-byte id, +0xc8 state, 0 = waiting).
+u64 WaitingGuestEntry() {
+    const u64 ssm = SummonStepManager();
+    const u64 head = ssm ? Field<u64>(ssm, 0x158, 0) : 0;
+    if (!head) return 0;
+    u64 node = Field<u64>(head, 0, 0);
+    for (int n = 0; node && node != head && n < 32; ++n) {
+        const u64 e = Field<u64>(node, 0x10, 0);
+        if (e && Field<u32>(e, 0xc8, 1) == 0) return e;
+        node = Field<u64>(node, 0, 0);
+    }
+    return 0;
+}
+
+bool DeliverSummon(const dsummon::Room& room, const std::string& host_name) {
+    const u64 ssm = SummonStepManager();
+    const u64 entry = WaitingGuestEntry();
+    if (!ssm || !entry) return false;
+    const u64 fn = Field<u64>(Field<u64>(ssm, 0, 0), 0x10, 0);
+    if (fn != u64(Guest(kHandleItem))) {
+        Log("direct summon: the manager's handler is %#llx, not the 1.09 one: not delivered", (unsigned long long)fn);
+        return false;
+    }
+    u8 id[8] = {};
+    SafeRead(entry + 0x10, id, 8);
+    const std::vector<u8> payload = dsummon::BuildPayload(id, room);
+    alignas(16) u64 wrapper[2] = {u64(Guest(kWrapperVtable)), 0};
+    using Make = u8(BB_COOP_SYSV*)(u64, u64, u64, const void*);
+    const bool made = reinterpret_cast<Make>(Guest(kWrapperCtor))(u64(wrapper), 1, u64(payload.size()), payload.data()) & 1;
+    if (!made || !wrapper[1]) {
+        Log("direct summon: the game's wrapper constructor refused");
+        return false;
+    }
+    // The sender as the handler sees it: +0x20 -> the sender's 16-byte online id.
+    char ident[17] = {};
+    std::snprintf(ident, sizeof ident, "%s", host_name.c_str());
+    alignas(16) u8 sender[0x40] = {};
+    const u64 idp = u64(ident);
+    std::memcpy(sender + 0x20, &idp, 8);
+    using Handle = u64(BB_COOP_SYSV*)(u64, u64, u64);
+    reinterpret_cast<Handle>(fn)(ssm, u64(sender), u64(wrapper));
+    const u32 state = Field<u32>(entry, 0xc8, 0);
+    Log("direct summon: the host's room (%zu bytes) handed to the game as a type-1 summon message: entry state %u",
+        room.data.size(), state);
+    return state != 0;
+}
+
+void DirectSummonTick(const GameSnapshot& s, double now) {
+    if (!DirectSummonOn()) return;
+    // Host: serve the requests.
+    std::vector<int> req;
+    std::map<int, std::string> names;
+    {
+        std::lock_guard<std::mutex> lk(DS().mu);
+        req.swap(DS().requests);
+        names = DS().names;
+    }
+    static double first = 0;
+    std::vector<int> keep;
+    for (int slot : req) {
+        dsummon::HostView v;
+        v.world_up = s.world_up;
+        v.loading = s.loading;
+        v.cooperators = s.cooperators < 0 ? 0 : s.cooperators;
+        v.ms_since_sign_summon = bbnet::party::FromApi::instance().ms_since_request();
+        v.other_hold_ms = bbnet::party::FromApi::instance().hold_left_ms();
+        const std::string name = names.count(slot) ? names[slot] : std::string();
+        if (const char* why = dsummon::HostRefusal(v)) {
+            Send(slot, dsummon::EncodeRefuse());
+            Log("direct summon: slot %d refused (%s): the bell sign path goes on", slot, why);
+            continue;
+        }
+        if (Role() != RoleHost) {
+            static double last_create = -100.0;
+            if (first == 0) first = now;
+            if (now - last_create > 5.0 && Role() != RoleClient) {
+                last_create = now;
+                float arg = 0;
+                SafeGet(u64(Guest(0x49271c8)), &arg);
+                const int members = Field<int>(Slot(kSlotFlow), 0xc, 4);
+                using Create = u8(BB_COOP_SYSV*)(float, u64, int);
+                const bool ok = reinterpret_cast<Create>(Guest(0x1ecfcd0))(arg, Slot(kSlotSession), members) & 1;
+                Log("direct summon: creating this host's room for slot %d -> %d", slot, int(ok));
+            }
+            if (now - first < 4.0) {
+                keep.push_back(slot);
+            } else {
+                Send(slot, dsummon::EncodeRefuse());
+                Log("direct summon: slot %d refused (no room here within 4 s)", slot);
+            }
+            continue;
+        }
+        dsummon::Room room;
+        u32 h0 = 0, h1 = 0;
+        RoomHead(7, &h0, &h1);
+        if (!SerializeRoom(h0, h1, &room.data)) {
+            Send(slot, dsummon::EncodeRefuse());
+            Log("direct summon: slot %d refused (the room did not serialize)", slot);
+            continue;
+        }
+        const u64 net = Field<u64>(Guest(kNetMan), 0, 0);
+        room.area = Field<u32>(net, 0xa7c, 0);
+        room.level = 0;  // bbhost's FrpgNetMan +0xaa8 holds a float on our 1.09 (live: 0x3f49...): not sent
+        SafeRead(net + 0xaac, room.pos, 12);
+        if (!name.empty()) bbnet::party::FromApi::instance().hold_signs(name, 20000);
+        Send(slot, dsummon::EncodeRoom(room));
+        Log("direct summon: slot %d (%s) gets this host's room (%zu bytes, area %#x, level %u); its signs are held", slot,
+            name.c_str(), room.data.size(), room.area, room.level);
+    }
+    if (keep.empty()) first = 0;
+    {
+        std::lock_guard<std::mutex> lk(DS().mu);
+        DS().requests.insert(DS().requests.end(), keep.begin(), keep.end());
+    }
+    // Guest: deliver and report.
+    dsummon::Action a;
+    dsummon::Room room;
+    std::string host_name;
+    double asked_at = 0;
+    {
+        std::lock_guard<std::mutex> lk(DS().mu);
+        const dsummon::Phase before = DS().g.phase;
+        a = dsummon::Step(DS().g, now, s.world_up && !s.loading && WaitingGuestEntry() != 0, Role() == RoleClient);
+        if (before == dsummon::Phase::Asked && DS().g.phase == dsummon::Phase::Failed) {
+            Log("direct summon: no answer from the host within %.0f s: the bell sign path", dsummon::kAnswerWait);
+        }
+        room = DS().room;
+        host_name = DS().names.count(0) ? DS().names[0] : std::string();
+        asked_at = DS().asked_at;
+    }
+    if (a == dsummon::Action::Deliver) {
+        const bool ok = DeliverSummon(room, host_name);
+        std::lock_guard<std::mutex> lk(DS().mu);
+        dsummon::OnDelivered(DS().g, now, ok);
+    } else if (a == dsummon::Action::ReportOk || a == dsummon::Action::ReportFail) {
+        const bool ok = a == dsummon::Action::ReportOk;
+        Send(0, dsummon::EncodeDone(ok));
+        Log("direct summon: %s (%.1f s after the request)", ok ? "joined the host's room" : "FAILED: the bell sign path takes over",
+            now - asked_at);
+    }
+}
+
+void DirectSummonEvent(int from_slot, const std::string& body) {
+    switch (dsummon::KindOf(body)) {
+    case dsummon::Kind::Req: {
+        if (!DirectSummonOn()) {
+            Send(from_slot, dsummon::EncodeRefuse());
+            return;
+        }
+        std::lock_guard<std::mutex> lk(DS().mu);
+        if (std::find(DS().requests.begin(), DS().requests.end(), from_slot) == DS().requests.end())
+            DS().requests.push_back(from_slot);
+        return;
+    }
+    case dsummon::Kind::Room: {
+        dsummon::Room r;
+        bool refused = false;
+        std::string err;
+        const bool ok = dsummon::DecodeRoom(body, &r, &refused, &err);
+        std::lock_guard<std::mutex> lk(DS().mu);
+        if (ok) DS().room = r;
+        dsummon::OnRoom(DS().g, Now(), !ok);
+        Log("direct summon: the host's answer: %s", ok ? "its room" : err.c_str());
+        return;
+    }
+    case dsummon::Kind::Done: {
+        bool ok = false;
+        dsummon::DecodeDone(body, &ok);
+        std::string name;
+        {
+            std::lock_guard<std::mutex> lk(DS().mu);
+            if (DS().names.count(from_slot)) name = DS().names[from_slot];
+        }
+        if (!name.empty()) {
+            bbnet::party::FromApi::instance().hold_signs(name, ok ? 3000 : 1);
+            if (!ok) bbnet::party::FromApi::instance().renew_signs(name);
+        }
+        Log("direct summon: slot %d (%s) reports %s", from_slot, name.c_str(),
+            ok ? "it joined" : "a failure: its signs are offered again");
+        return;
+    }
+    default:
+        return;
+    }
+}
+
 void TitleJoinFail(const char* why) {
     const int role = Role();
     if (role == 4 || role == RoleClient) {
@@ -5866,6 +6088,7 @@ void Tick(const GameSnapshot& s) {
         Log("remote chr on a streamed-out block: stale map hit cleared %u time(s); tasks:%s", n, DescribeTasks().c_str());
     }
     ProbeTick(s);
+    DirectSummonTick(s, now);
     if (TitleJoinOn() || EnvOn("BB_PARTY_TITLE_JOIN_PROBE")) {
         TitleJoinHostTick(s);
         TitleJoinGuestTick(s, now);
@@ -6025,6 +6248,10 @@ bool OnHostTravel(const TravelIntent& t) {
 
 void OnLinkEvent(int from_slot, const std::string& body) {
     if (!g_on.load()) {
+        return;
+    }
+    if (dsummon::KindOf(body) != dsummon::Kind::None) {
+        DirectSummonEvent(from_slot, body);
         return;
     }
     if (body.find("\"title_req\"") != std::string::npos) {
@@ -6621,3 +6848,20 @@ bool PopOutgoing(int* slot, std::string* body) {
 }
 
 } // namespace coop::b2
+
+namespace coop::b2 {
+void DirectSummonRing() {
+    if (!DirectSummonOn() || !g_on.load() || Role() == RoleHost || Role() == RoleClient) return;
+    std::lock_guard<std::mutex> lk(DS().mu);
+    const dsummon::Phase p = DS().g.phase;
+    if (p == dsummon::Phase::Asked || p == dsummon::Phase::HaveRoom || p == dsummon::Phase::Delivered) return;
+    dsummon::OnAsked(DS().g, Now());
+    DS().asked_at = Now();
+    Send(0, dsummon::EncodeReq());
+    Log("direct summon: asked the host for its room (rang the bell)");
+}
+void DirectSummonName(int slot, const std::string& name) {
+    std::lock_guard<std::mutex> lk(DS().mu);
+    DS().names[slot] = name;
+}
+}  // namespace coop::b2

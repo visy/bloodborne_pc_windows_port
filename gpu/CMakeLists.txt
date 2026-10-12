@@ -492,6 +492,11 @@ add_executable(party-start-test EXCLUDE_FROM_ALL ../tests/test_party_start.cpp s
 target_compile_options(party-start-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-start-test PRIVATE shim)
 set_target_properties(party-start-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Direct summon delivery (shim/party/party_dsummon.cpp): wire format, type-1 payload, decisions.
+add_executable(party-dsummon-test EXCLUDE_FROM_ALL ../tests/test_party_dsummon.cpp shim/party/party_dsummon.cpp)
+target_compile_options(party-dsummon-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-dsummon-test PRIVATE shim)
+set_target_properties(party-dsummon-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Test aids (shim/party/test_newgame.cpp, BB_TEST_NEWGAME / BB_TEST_PROLOGUE_SKIP): the scripted
 # new game driver against a model of the title menus. ninja -C out/gpu party-newgame-test
 add_executable(party-newgame-test EXCLUDE_FROM_ALL ../tests/test_party_newgame.cpp shim/party/test_newgame.cpp)
