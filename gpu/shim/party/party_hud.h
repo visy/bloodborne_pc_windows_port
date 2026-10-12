@@ -138,33 +138,52 @@ bool TagVisible(const Companion& c, std::int64_t board_age_ms, const char** why)
 /// The game plate's HP bar sits this high above the chr's position (both screenshots at 7 and 16
 /// m: 1.82 m); its name text stacks above the bar in pixels. Ours anchors the same way.
 constexpr float kTagBarHeightM = 1.82f;
-/// Our name plate, laid out as the game's phantom plate (FrpgMenuDlgFloatingPCGauge), measured
-/// live 2026-10-12 (both drawn, one run, the guest walked 2 -> 21 m, camera depth 5.7 -> 23.9 m,
-/// an 833x469 window): the game's plate is a FIXED screen size at every distance - name font
-/// 0.019 of the display height (cap height 0.0149), a 2 px (0.0043 h) red bar 0.0996 of the
-/// display width centred on the anchor, its top on the anchor (1.82 m above the chr), light 1 px
-/// end caps 0.0085 h tall standing 0.0043 h above the bar, the name left-aligned 0.0085 h right of
-/// the left cap with its baseline 0.017 h above the bar, blue (49,155,199) with a dark shadow /
-/// outline; the bar red (95,13,31) over burnt orange (106,43,15). The console footage the user
-/// gave (players 2-4 m away) shows the same plate ~1.55x larger; ours follows the measured plate
-/// at every distance (the game's own plate keeps one screen size): PlateScale.
-constexpr float kPlateFontH = 0.019f, kPlateBarW = 0.0996f, kPlateBarH = 0.0043f, kPlateCapH = 0.0085f,
-                kPlateCapRise = 0.0043f, kPlateNameInset = 0.0085f, kPlateBaselineGap = 0.017f,
+/// Our name plate, laid out as the game's phantom plate (FrpgMenuDlgFloatingPCGauge), tuned
+/// pixel by pixel against it live 2026-10-12 (both drawn side by side, BB_PARTY_HUD_TUNE_FILE, one
+/// run at 1, 11.5 and 21 m, an 833x469 window): the game's plate is a FIXED screen size - a 2 px
+/// (0.0043 h) bar 0.0996 of the display width centred on the anchor, its top on the anchor (1.82 m
+/// above the chr), 1 px light end caps ON the bar's ends from 2 px above it to 1 px below (5 px:
+/// 0.0107 h), no dark rim; the name line (cap height 8 px: font 0.021 h) left-aligned 1 px in from
+/// the left cap, its baseline 6 px (0.0118 h) above the bar, blue (49,155,199) with a dark
+/// shadow / outline; the bar red (95,22,32) over burnt orange (102,36,24). No role line.
+constexpr float kPlateFontH = 0.021f, kPlateBarW = 0.0996f, kPlateBarH = 0.0043f, kPlateCapH = 0.0107f,
+                kPlateCapRise = 0.0043f, kPlateNameInset = 0.0021f, kPlateBaselineGap = 0.0118f,
                 kPlateCapToFont = 0.77f;  // Libre Baskerville: cap height / font size
 /// Scale of our plate over the game's measured size by camera depth (metres from the camera):
 /// 1 from kPlateFarDepth on, growing as 1/depth nearer, at most kPlateMaxScale; kPlateMaxScale 1
 /// keeps the game's fixed size (a larger value would grow the plate near the camera).
 constexpr float kPlateFarDepth = 10.0f, kPlateMaxScale = 1.0f;  // fixed size, like the game's plate (user, 2026-10-12)
 float PlateScale(float depth);
+/// The plate's tunable parameters (sizes: fractions of the display height, bar_w of the width;
+/// colours RGB 0..1). Defaults: the k* constants. Test aid BB_PARTY_HUD_TUNE_FILE=<path>: the
+/// overlay re-reads key=value lines from that file every 0.5 s (PlateTunePoll; keys = the field
+/// names, colours as r,g,b in 0..255), so a live run can tune ours against the game's plate.
+struct PlateParams {
+    float font_h = kPlateFontH, bar_w = kPlateBarW, bar_h = kPlateBarH;
+    float cap_w = 0.0021f, cap_h = kPlateCapH, cap_rise = kPlateCapRise;  // cap top kPlateCapRise above the bar
+    float cap_dx = 0.0f;                    // caps' inner offset from the bar ends (h)
+    float name_inset = kPlateNameInset, baseline_gap = kPlateBaselineGap;
+    float outline = 0.0021f, rim = 0.0f, glow = 0.45f;  // outline (h), bar rim px, cap glow alpha
+    float name_rgb[3] = {0.19f, 0.61f, 0.78f};
+    float bar_top[3] = {95 / 255.0f, 22 / 255.0f, 32 / 255.0f}, bar_bottom[3] = {102 / 255.0f, 36 / 255.0f, 24 / 255.0f};
+    float cap_rgb[3] = {0.91f, 0.95f, 0.97f};
+};
+/// Applies "key=value" lines (unknown keys ignored, '#' comments) to `p`; returns keys applied.
+int ParsePlateTune(const char* text, PlateParams* p);
+/// The parameters in use (defaults, or the tune file's last read).
+const PlateParams& CurrentPlateParams();
+/// Overlay, once a frame: re-reads BB_PARTY_HUD_TUNE_FILE (when set) every 0.5 s.
+void PlateTunePoll();
 struct PlateLayout {
     float font = 0;                        // font size, px
-    float bar_x0 = 0, bar_y0 = 0, bar_x1 = 0, bar_y1 = 0;  // the bar (without the caps)
-    float cap_w = 0, cap_y0 = 0;           // end caps: [bar_x0 - cap_w, bar_x0] and [bar_x1, bar_x1 + cap_w], cap_y0..bar_y1
+    float bar_x0 = 0, bar_y0 = 0, bar_x1 = 0, bar_y1 = 0;  // the bar
+    float cap_w = 0, cap_y0 = 0, cap_y1 = 0;  // end caps, cap_w wide, cap_y0..cap_y1
+    float cap_l = 0, cap_r = 0;            // left x of the left / right cap
     float name_x = 0, name_baseline = 0;   // the name's left edge and baseline
     float outline = 0;                     // shadow / outline offset, px
 };
 /// The plate around the projected anchor (ax, ay) on a display w x h at camera depth `depth`.
-PlateLayout LayoutPlate(float ax, float ay, float w, float h, float depth);
+PlateLayout LayoutPlate(float ax, float ay, float w, float h, float depth, const PlateParams& p = PlateParams{});
 /// Tag layout in pixels from the projected anchor (the bar's bottom edge, y down): the bar
 /// (bar_h tall, when drawn) ends at anchor_y, the name's bottom sits `gap` above the bar (or at
 /// the anchor without a bar). Returns the name's top-left y for a name `text_h` tall.
