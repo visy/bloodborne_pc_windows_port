@@ -543,6 +543,9 @@ void DefineAll() {
            {off, AddText("FSR 3.1", "FSR 3.1"), AddText("FSR 4", "FSR 4"), AddText("FSR 4.1.1", "FSR 4.1.1"),
             AddText("TAA", "TAA"), AddText("DLSS", "DLSS")},
            Kind::List);
+    // ---- Sound: master volume boost (Display has its 6 rows). ----
+    AddPage("Sound", "Звук", "Master volume boost with a soft limiter (bbport)",
+            "Усиление общей громкости с мягким ограничителем (bbport)");
     AddRow(Scaled(&Values::audio_boost, BoostTable), "Volume boost", "Усиление громкости",
            "Master volume, with a soft limiter against clipping: 0 = 1.0 (original), 4 = 1.4 (default), 10 = 3.0 (BB_AUDIO_BOOST overrides)",
            "Общая громкость с мягким ограничителем: 0 = 1.0 (оригинал), 4 = 1.4 (по умолчанию), 10 = 3.0 (BB_AUDIO_BOOST переопределяет)",
