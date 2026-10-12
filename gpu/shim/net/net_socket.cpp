@@ -826,7 +826,7 @@ int sock_recv(int s, void* buf, std::uint64_t len, int flags, SceSockaddrIn* fro
     const bool peek = flags & 0x2;
     if (sock.p2p) {
         if (!sock.queue) return net_again();
-        if (P2pRecvHookFn h = g_p2p_recv_hook.load(std::memory_order_relaxed)) h(s);
+        if (P2pRecvHookFn h = g_p2p_recv_hook.load(std::memory_order_relaxed)) h(s, 0);
         SockQueue& q = *sock.queue;
         Datagram dg;
         {
@@ -881,6 +881,8 @@ int dgram_send(int s, const void* buf, std::uint64_t len, int flags, const SceSo
     const sockfd_t fd = sock.port ? sock.port->fd : sock.fd;
     if (!sock_ok(fd)) return static_cast<int>(len);
     if (!to) return net_err(bsd::kEDESTADDRREQ);
+    if (sock.p2p)
+        if (P2pRecvHookFn h = g_p2p_recv_hook.load(std::memory_order_relaxed)) h(s, 2);
     std::uint8_t pkt[udp::kMaxDatagram + kRelayHeader];
     std::uint8_t* body = pkt + kRelayHeader;
     std::size_t hdr = 0;
@@ -1361,6 +1363,7 @@ BBNET_ABI int net_epoll_control(int id, int op, int sock, void* event) {
 }
 BBNET_ABI int net_epoll_wait(int id, void* events, int maxevents, int timeout) {
     BBNET_GUEST_RETURN();
+    if (P2pRecvHookFn h = g_p2p_recv_hook.load(std::memory_order_relaxed)) h(id, 1);
     std::shared_ptr<NetEpoll> ep;
     {
         std::lock_guard<std::mutex> lock(g_net_mu);

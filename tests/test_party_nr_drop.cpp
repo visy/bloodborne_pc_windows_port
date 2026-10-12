@@ -36,19 +36,21 @@ int main() {
     CHECK(SilentSources(heard, 11000, 1500, 60000).empty());  // too soon after the crash
     CHECK(SilentSources({}, 12000, 1500, 60000).empty());
 
-    // SceNetSockaddrIn as the connection keys it: len, family, port, addr, vport, zero.
-    std::uint8_t key[16] = {16, 2};
-    std::memcpy(key + 2, &dead, 2);
-    std::memcpy(key + 4, &lo, 4);
-    key[8] = 0;
-    key[9] = 30;
+    // The connection's key as seen live (conn +0x10): zero, then 127.0.0.1 and port 0xbb29 in
+    // host order, vport 30.
+    std::uint8_t key[kKeySize] = {};
+    const std::uint32_t lo_host = 0x7f000001;
+    const std::uint16_t dead_host = 0xbb29, vport = 30;
+    std::memcpy(key + 0x10, &lo_host, 4);
+    std::memcpy(key + 0x18, &dead_host, 2);
+    std::memcpy(key + 0x1a, &vport, 2);
     CHECK(KeyMatches(key, s[0]));
     CHECK(KeyMatchesAny(key, s));
     Source other{lo, alive};
     CHECK(!KeyMatches(key, other));
     Source other_ip{0x0200007f, dead};
     CHECK(!KeyMatches(key, other_ip));
-    std::uint8_t empty[16] = {};
+    std::uint8_t empty[kKeySize] = {};
     CHECK(!KeyMatches(empty, Source{}));  // a free connection never matches
     CHECK(!KeyMatchesAny(key, {}));
 

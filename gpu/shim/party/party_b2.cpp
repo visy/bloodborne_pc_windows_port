@@ -5322,6 +5322,7 @@ std::atomic<std::int64_t> g_nrd_at{0};  // steady ms from which to look (0 = not
 std::mutex g_nrd_mu;
 std::string g_nrd_name;  // g_nrd_mu
 std::atomic<bool> g_nrd_busy{false};
+bool g_nrd_listed = false;  // under g_nrd_busy
 
 std::int64_t SteadyMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
@@ -5329,11 +5330,15 @@ std::int64_t SteadyMs() {
 }
 
 // On the game's thread, at a receive on one of its P2P sockets (bbnet::set_p2p_recv_hook).
-void NrRecvHook(int sock) {
+void NrRecvHook(int sock, int where) {
     const std::int64_t at = g_nrd_at.load(std::memory_order_relaxed);
     if (!at) return;
     const std::int64_t now = SteadyMs();
     if (now < at) return;
+    static const char* const kWhere[] = {"receive", "epoll wait", "send"};
+    static std::atomic<int> logged[3];
+    if (logged[where].fetch_add(1) == 0) Log("C6: first %s (socket %d) since the crash", kWhere[where], sock);
+    if (where == 2) return;  // inside the transport's own update: not a safe place to release
     bool expect = false;
     if (!g_nrd_busy.compare_exchange_strong(expect, true)) return;
     std::string name;
@@ -5341,45 +5346,48 @@ void NrRecvHook(int sock) {
         std::lock_guard<std::mutex> lk(g_nrd_mu);
         name = g_nrd_name;
     }
-    if (now > at + 4000) {  // the hold (26 s) stays: the game times the connection out itself
+    if (now > at + 5000) {  // the hold (26 s) stays: the game times the connection out itself
         g_nrd_at.store(0);
         Log("C6: no game connection of %s found to drop; it times out by itself", name.c_str());
         g_nrd_busy.store(false);
         return;
     }
-    const std::vector<nrdrop::Source> silent = nrdrop::SilentSources(bbnet::p2p_heard(sock), now, 1500, 60000);
     int dropped = 0, seen = 0;
+    std::size_t silent_n = 0;
     for (const NrTransport& t : NrTransports()) {
         u64 vt = 0, arr = 0;
         std::int32_t fd = -1;
         std::uint32_t cnt = 0;
-        if (!t.transport || !SafeRead(t.transport, &vt, 8) || !SafeRead(t.transport + 0x120, &fd, 4) || fd != sock)
-            continue;
+        if (!t.transport || !SafeRead(t.transport, &vt, 8) || !SafeRead(t.transport + 0x120, &fd, 4) || fd < 0) continue;
         if (vt != Guest(kNrVtableUdpP2p) && vt != Guest(kNrVtableUdp)) continue;
         if (!SafeRead(t.transport + 0xd0, &arr, 8) || !SafeRead(t.transport + 0x6c, &cnt, 4) || !arr || cnt > 64) continue;
         u64 release = 0;
         if (!SafeRead(vt + 0x28, &release, 8) || !release) continue;
+        const std::vector<nrdrop::Source> silent = nrdrop::SilentSources(bbnet::p2p_heard(fd), now, 1500, 60000);
+        silent_n += silent.size();
         for (std::uint32_t k = 0; k < cnt; ++k) {
             const u64 el = arr + k * 0xc0ull;
             std::uint8_t used = 0;
-            std::uint8_t key[16] = {};
-            if (!SafeRead(el + 0x2c, &used, 1) || !used || !SafeRead(el + 0x10, key, 16)) continue;
+            std::uint8_t key[nrdrop::kKeySize] = {};
+            if (!SafeRead(el + 0x2c, &used, 1) || !used || !SafeRead(el + 0x10, key, sizeof key)) continue;
             ++seen;
             std::uint16_t port = 0;
-            std::memcpy(&port, key + 2, 2);
+            std::memcpy(&port, key + 0x18, 2);
             const bool match = nrdrop::KeyMatchesAny(key, silent);
-            Log("C6: socket %d connection %u to %u.%u.%u.%u:%u%s", sock, k, key[4], key[5], key[6], key[7],
-                static_cast<unsigned>((port >> 8) | ((port & 0xff) << 8)), match ? ": silent since the crash, released" : "");
+            if (match || !g_nrd_listed) Log("C6: socket %d connection %u to %u.%u.%u.%u:%u%s (at %s)", fd, k, key[0x13], key[0x12], key[0x11], key[0x10],
+                static_cast<unsigned>(port), match ? ": silent since the crash, released" : "",
+                kWhere[where]);
             if (!match) continue;
             using Fn = void(BB_COOP_SYSV*)(u64, u64);
             reinterpret_cast<Fn>(release)(t.transport, el);
             ++dropped;
         }
     }
+    g_nrd_listed = true;
     if (dropped) {
         g_nrd_at.store(0);
         Log("C6: %s crashed: %d game connection(s) released (%zu silent source(s), %d in use)", name.c_str(), dropped,
-            silent.size(), seen);
+            silent_n, seen);
         // Its restarted game can be summoned now: the sign hold ends in 1 s.
         bbnet::party::FromApi::instance().hold_signs(name, 1000);
     }
@@ -5392,7 +5400,10 @@ void NrDropSilentPeers(const std::string& name) {
         std::lock_guard<std::mutex> lk(g_nrd_mu);
         g_nrd_name = name;
     }
+    g_nrd_listed = false;
     bbnet::set_p2p_recv_hook(&NrRecvHook);
+    Log("C6: %s crashed: looking for its game connection in 1.5 s (%zu transport(s) seen)", name.c_str(),
+        NrTransports().size());
     // The other members keep sending; the crashed one has been silent since the crash (the link
     // reset comes ~0.6 s after it). Its restarted game (same address) takes >3 s to send again.
     g_nrd_at.store(SteadyMs() + 1500);

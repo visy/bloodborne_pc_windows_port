@@ -195,8 +195,9 @@ using PacketTraceFn = void (*)(bool send, unsigned src_vport, unsigned dst_vport
 void set_packet_trace(PacketTraceFn fn);
 
 // C6 crash rejoin: called on the game's own thread at the start of every receive on a P2P game
-// socket (null = off); the party layer drops a crashed member's game connection from there.
-using P2pRecvHookFn = void (*)(int sock);
+// socket (where 0), every epoll wait (where 1, sock = the epoll id) and every P2P send (where 2);
+// null = off. The party layer drops a crashed member's game connection from there.
+using P2pRecvHookFn = void (*)(int sock, int where);
 void set_p2p_recv_hook(P2pRecvHookFn fn);
 // When the P2P game socket `sock` last heard each source, as the game sees it (key: addr |
 // port << 32, both network order; value: steady-clock ms). Empty for other sockets.
