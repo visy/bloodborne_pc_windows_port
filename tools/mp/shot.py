@@ -89,13 +89,10 @@ def grab(hwnd):
     gdi32.DeleteDC(mdc)
     user32.ReleaseDC(hwnd, hdc)
     img = Image.frombytes("RGBA", (w, h), buf.raw, "raw", "BGRA").convert("RGB")
-    if img.getbbox() is None:
-        # PrintWindow returns pure black for a window in independent-flip / direct scanout (the
-        # foreground game window); copy its client area from the screen instead.
-        pt = wt.POINT(0, 0)
-        user32.ClientToScreen(hwnd, ctypes.byref(pt))
-        from PIL import ImageGrab
-        img = ImageGrab.grab(bbox=(pt.x, pt.y, pt.x + w, pt.y + h), all_screens=True)
+    if img.convert("L").resize((64, 36)).getextrema()[1] < 12 and not getattr(grab, "warned", False):
+        grab.warned = True  # 2026-10-13: every shot black while the desktop was locked (LockApp up)
+        print("WARNING: black capture - is the desktop locked or the display off? DWM then draws no "
+              "game window (PrintWindow and screen copies are black)", flush=True)
     return img
 
 
