@@ -262,6 +262,18 @@ A decisive test needs a known hostile enemy's entity and a treasure flag the hos
 (placed by hand), or a manual play test. Fixture lines now carry `step-xx` tags (no digits) so the
 harness reaper sees activity.
 
+Runs 32-34 (2026-10-12, FRESH characters: BB_TEST_NEWGAME, both in Iosefka's Clinic, opt-ins on):
+the host's debug kill of the clinic beast (entity 2410019) rolled its drop on **both** games for
+the same enemy (host `role 3`, guest `role 6`, chr handle 0x10014009); the guest stood on the
+corpse and picked up **its own** drop: `map item pickup on this game (role 6)`, item-get dialog
+"Blood Vial x3" on the guest's screen (`pickhook_2s_inst1.png`); both players got the kill's 535
+echoes. Blood Vials are guest-allowed in vanilla too, so the full-drop patch itself (materials,
+gems) is still unproven: `BB_PARTY_GUEST_DROPS` stays opt-in. The clinic floor treasure (12.9 m)
+gave no pickup at 17 spots (the guest saw the item's glow beside it): `BB_PARTY_GUEST_PICKUP`
+stays opt-in. Test-driver fix found on the way: the ImeDialog now opens the overlay's text box,
+so the scripted new game (BB_TEST_NEWGAME) stood at "Please Enter Name" - it now gets "Hunter"
+without the box (src/runtime_services.c; players type as before).
+
 ## 10. Open items
 
 * Elevators: toggling state flags are shortcut_door; a guest and the host using one elevator at

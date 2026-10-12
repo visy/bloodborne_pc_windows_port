@@ -279,6 +279,11 @@ static ABI int32_t ime_init(const ImeParam *param, const void *extended) {
     const char *preset=getenv("BB_TEST_NAME");
     if (!preset || !*preset) preset=getenv("BB_IME_TEXT");
     if (!preset || !*preset) preset=bbgpu_ime_preset(param->max_length); /* party: the party dungeon's glyph */
+    /* BB_TEST_NEWGAME (scripted new game, nobody at the keyboard): the default name. Since the
+       ImeDialog opens the overlay's text box (bbgpu_text_input_begin), nothing fell through to
+       "Hunter" any more and the driver stood at "Please Enter Name" until it gave up. */
+    if ((!preset || !*preset) && getenv("BB_TEST_NEWGAME") && getenv("BB_TEST_NEWGAME")[0] &&
+        getenv("BB_TEST_NEWGAME")[0] != '0') preset="Hunter";
     if (preset) { ime_complete(0,preset); return 0; }
     if (!bbgpu_text_input_begin(initial,prompt[0] ? prompt : "Name")) {
         const char *name=getenv("BB_USER_NAME");
