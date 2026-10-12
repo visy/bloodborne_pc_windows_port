@@ -66,6 +66,9 @@ void Tick(const GameSnapshot& s);
 bool OnHostTravel(const TravelIntent& t);
 /// A PartyLink EVENT "b2" from `from_slot` (any thread).
 void OnLinkEvent(int from_slot, const std::string& body);
+/// Direct summon (party_dsummon.h): the guest rang its bell; the online id of a link slot.
+void DirectSummonRing();
+void DirectSummonName(int slot, const std::string& name);
 /// An event to send (the director's tick drains it): slot -1 = to the host / broadcast.
 bool PopOutgoing(int* slot, std::string* body);
 

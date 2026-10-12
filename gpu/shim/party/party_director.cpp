@@ -689,6 +689,7 @@ void Ring(State& st, const char* event, const char* why, Clock::time_point now) 
     }
     if (ok) {
         party::bridge::OnRing();
+        if (!host) b2::DirectSummonRing();  // party_dsummon.h
     }
     Log("bell: %s", DescribeFromClient().c_str());
     Log("bell: %s", DescribeSignPolling().c_str());
