@@ -4798,6 +4798,21 @@ void TitleJoinHostTick(const GameSnapshot& s) {
             return;
         }
     }
+    // A11 (ERSC_PARITY.md, user decision): no title join into a boss fight / cutscene (live: the
+    // guest's Continue put it beside the host in the Cleric Beast's arena mid-fight). Refused with
+    // the reason: the guest continues into its own world and waits; the host's bell after the end
+    // summons it (party_director A11).
+    if (!req.empty() && Role() == RoleHost && s.world_up && !s.loading) {
+        const dsummon::Busy busy = dsummon::HostBusy(BossBarShown(), CutscenePlaying());
+        if (busy != dsummon::Busy::None) {
+            for (int slot : req) {
+                Send(slot, std::string("{\"op\":\"title_room\",\"room\":\"\",\"wait\":\"") + dsummon::BusyWord(busy) + "\"}");
+                Log("title join: slot %d refused: %s (A11: it waits in its own world; the bell after the end summons it)",
+                    slot, dsummon::BusyText(busy, false).c_str());
+            }
+            return;
+        }
+    }
     if (!req.empty() && (Role() != RoleHost || !s.world_up || s.loading)) {
         // No room yet (the host rings its bell once it is in the world): asked again next frame.
         const double now = Now();
@@ -6313,8 +6328,10 @@ void OnLinkEvent(int from_slot, const std::string& body) {
         TJ().stage = stage;
         std::memcpy(TJ().pos, p, sizeof p);
         std::memcpy(TJ().rot, r, sizeof r);
-        Log("title join: the host's room: %zu bytes, stage %#x pos (%.1f, %.1f, %.1f)%s", room.size(), stage, p[0], p[1], p[2],
-            ok && where ? "" : " (refused)");
+        const dsummon::Busy busy = dsummon::WaitOf(body);  // A11: refused for a boss fight / cutscene
+        if (busy != dsummon::Busy::None) party::bridge::OnHostBusy(dsummon::BusyText(busy, false));
+        Log("title join: the host's room: %zu bytes, stage %#x pos (%.1f, %.1f, %.1f)%s%s", room.size(), stage, p[0], p[1], p[2],
+            ok && where ? "" : " (refused)", busy != dsummon::Busy::None ? (" - " + dsummon::BusyText(busy, false)).c_str() : "");
         return;
     }
     if (body.find("\"dest\"") != std::string::npos) {
