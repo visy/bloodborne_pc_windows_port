@@ -23,6 +23,7 @@
 #include "coop_hooks.h"
 #include "party_async_io.h"
 #include "../bbport_camera.h"
+#include "../bbport_settings.h"
 
 #include <algorithm>
 #include <chrono>
@@ -195,7 +196,7 @@ static void GamePlateOff(bool off) {
 
 void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberState local_state) {
     HudState& st = S();
-    GamePlateOff(link != nullptr);
+    GamePlateOff(link != nullptr && BbSettings::Get().party_name_tags);  // off: the game's plate, vanilla
     if (!st.log_init) {
         st.log_init = true;
         const char* v = std::getenv("BB_PARTY_HUD_LOG");

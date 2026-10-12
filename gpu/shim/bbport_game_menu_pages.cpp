@@ -936,6 +936,11 @@ void DefineAll() {
     balance.rot_help = AddDynamic(MaxHelpLength);
     AddRow(Flag(&Values::party_rot), AddText("Rot on death", "Гниль при смерти"), balance.rot_help, toggle,
            Kind::Toggle);
+    // Party name tags (party_hud_game.cpp): ours instead of the game's phantom plate, or the game's.
+    AddRow(Flag(&Values::party_name_tags), AddText("Party name tags", "Имена над спутниками"),
+           AddText("On: our name plates above companions (never hidden by walls). Off: the game's own",
+                   "Вкл.: наши таблички над спутниками (не прячутся за стенами). Выкл.: игровые"),
+           toggle, Kind::Toggle);
     AddRow(Setting(
                Kind::List, [](const Values& v) { return std::clamp(v.party_overhead.load(), 0, 4); },
                [](int i) { BbSettings::Get().party_overhead = std::clamp(i, 0, 4); }),

@@ -555,6 +555,12 @@ def read_ini(path: Path) -> dict:
     return values
 
 
+def ini_flag(path: Path, key: str, default: bool = True) -> bool:
+    """A 0/1 game setting from bbport.ini (party_hud, party_name_tags): `default` when not set."""
+    value = read_ini(path).get(key)
+    return default if value is None or value == "" else value != "0"
+
+
 def update_ini(path: Path, values: dict):
     """Sets keys of bbport.ini, keeping its other lines (the game's settings, key.* bindings)."""
     try:
@@ -1120,7 +1126,8 @@ class BloodborneLauncher(tk.Tk):
         self.party_seamless = tk.BooleanVar(value=self.settings.get("party_seamless", True))
         # Party HUD: a game setting (bbport.ini party_hud, also in the game's menus), not a launch
         # option: read from and written to bbport.ini directly.
-        self.party_hud = tk.BooleanVar(value=read_ini(bbport_ini_path()).get("party_hud", "1") != "0")
+        self.party_hud = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_hud"))
+        self.party_name_tags = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_name_tags"))
         self.party_separate_save = tk.BooleanVar(value=self.settings.get("party_separate_save", True))
         self.party_port_var = tk.StringVar(value=str(self.settings.get("party_port", PARTY_DEFAULT_PORT)))
         self.party_upnp = tk.BooleanVar(value=self.settings.get("party_upnp", True))
@@ -1543,6 +1550,13 @@ class BloodborneLauncher(tk.Tk):
                              "in the game: System > Party members > Party HUD. Default: on (bbport.ini "
                              "party_hud).",
                              command=self.save_party_hud)
+        tags_cb = self._check(sec, "Party name tags", self.party_name_tags,
+                              "On: in a party our name plate (name and a thin health bar) above each "
+                              "companion replaces the game's own phantom plate, which hides behind any "
+                              "tree or corner. Off: the game's own plate, as in the original game. Also in "
+                              "the game: System > Party rules > Party name tags. Default: on (bbport.ini "
+                              "party_name_tags).",
+                              command=self.save_party_name_tags)
         self.party_separate_save.set(True)
         save_cb = self._check(sec, "Separate party saves (always)", self.party_separate_save,
                               "Party play always uses its own save folder (user\\savedata_party), so your "
@@ -1649,7 +1663,7 @@ class BloodborneLauncher(tk.Tk):
 
         # Fields enabled in each mode: on (host or join), host only, join only
         self.party_widgets_on = [name_lbl, self.party_name_entry, self.party_max_combo, auto_cb, seamless_cb,
-                                 hud_cb, save_cb,
+                                 hud_cb, tags_cb, save_cb,
                                  port_lbl, self.party_port_entry, upnp_cb, stun_lbl, self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
         self.party_widgets_host = [public_lbl, self.party_public_entry,
@@ -1670,6 +1684,14 @@ class BloodborneLauncher(tk.Tk):
             update_ini(bbport_ini_path(), {"party_hud": "1" if self.party_hud.get() else "0"})
         except OSError as ex:
             self.log(f"[PARTY] Could not save the Party HUD setting to bbport.ini: {ex}")
+
+    def save_party_name_tags(self):
+        """The Party name tags checkbox: bbport.ini party_name_tags (a running game picks it up on its
+        next start; in game: System > Party rules)."""
+        try:
+            update_ini(bbport_ini_path(), {"party_name_tags": "1" if self.party_name_tags.get() else "0"})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save the Party name tags setting to bbport.ini: {ex}")
 
     def on_party_change(self):
         self.update_party_state()

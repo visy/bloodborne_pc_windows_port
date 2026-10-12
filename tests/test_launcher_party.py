@@ -147,5 +147,30 @@ class StopTree(unittest.TestCase):
         self.assertEqual(self.L.stop_tree(proc), "exited")
 
 
+class PartyNameTagsSetting(unittest.TestCase):
+    """The launcher's Party name tags checkbox: bbport.ini party_name_tags, on unless set to 0."""
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.L = load_launcher()
+        except Exception as ex:  # no tkinter here
+            raise unittest.SkipTest(f"launcher.py not importable here: {ex}")
+
+    def test_default_on_and_round_trip(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            ini = Path(d) / "bbport.ini"
+            self.assertTrue(self.L.ini_flag(ini, "party_name_tags"))  # no file: on
+            ini.write_text("party_hud=1\nkey.cross=Enter\n", encoding="utf-8")
+            self.assertTrue(self.L.ini_flag(ini, "party_name_tags"))  # not set: on
+            self.L.update_ini(ini, {"party_name_tags": "0"})
+            self.assertFalse(self.L.ini_flag(ini, "party_name_tags"))
+            self.assertTrue(self.L.ini_flag(ini, "party_hud"))
+            self.assertIn("key.cross=Enter", ini.read_text(encoding="utf-8"))  # other lines kept
+            self.L.update_ini(ini, {"party_name_tags": "1"})
+            self.assertTrue(self.L.ini_flag(ini, "party_name_tags"))
+
+
 if __name__ == "__main__":
     unittest.main()

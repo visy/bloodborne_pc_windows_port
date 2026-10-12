@@ -144,6 +144,29 @@ bool TagVisible(const Companion& c, std::int64_t board_age_ms, const char** why)
     return w == nullptr;
 }
 
+float PlateScale(float depth) {
+    if (!std::isfinite(depth) || depth <= 0.0f) return kPlateMaxScale;
+    return std::clamp(kPlateFarDepth / depth, 1.0f, kPlateMaxScale);
+}
+
+PlateLayout LayoutPlate(float ax, float ay, float w, float h, float depth) {
+    const float k = PlateScale(depth) * h;
+    PlateLayout l;
+    l.font = kPlateFontH * k;
+    const float bar_w = kPlateBarW * w * PlateScale(depth);
+    const float bar_h = std::max(2.0f, std::round(kPlateBarH * k));
+    l.bar_x0 = std::round(ax - bar_w * 0.5f);
+    l.bar_x1 = std::round(ax + bar_w * 0.5f);
+    l.bar_y0 = std::round(ay);
+    l.bar_y1 = l.bar_y0 + bar_h;
+    l.cap_w = std::max(1.0f, std::round(0.0021f * k));
+    l.cap_y0 = l.bar_y0 - std::max(1.0f, std::round(kPlateCapRise * k));
+    l.name_x = l.bar_x0 + kPlateNameInset * k;
+    l.name_baseline = l.bar_y0 - kPlateBaselineGap * k;
+    l.outline = std::max(1.0f, std::round(0.0021f * k));
+    return l;
+}
+
 float TagTextTop(float anchor_y, float text_h, bool with_bar, float bar_h, float gap) {
     return anchor_y - (with_bar ? bar_h + gap : 0.0f) - text_h;
 }

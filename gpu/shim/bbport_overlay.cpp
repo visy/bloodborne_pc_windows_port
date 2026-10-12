@@ -164,7 +164,8 @@ bool PartyHudWanted() {
 
 /// The overhead display (E2, bbport.ini party_overhead; independent of the panel).
 bool PartyTagsWanted() {
-    return party_tags_on && party::status::Enabled() && BbSettings::Get().party_overhead.load() != 0 &&
+    return party_tags_on && party::status::Enabled() && BbSettings::Get().party_name_tags &&
+           BbSettings::Get().party_overhead.load() != 0 &&
            party::hud::Shown();
 }
 
@@ -1305,6 +1306,12 @@ void PartyTab() {
              "Имена и здоровье спутников в левом нижнем углу (серым, пока они не в вашем мире); на той "
              "же карте - расстояние, стрелка направления и имя над спутником."),
            on);
+    Toggle("party_name_tags", T("Party name tags", "Имена над спутниками"), s.party_name_tags,
+           T("On: our name plate above companions replaces the game's (which hides behind any tree or "
+             "corner). Off: the game's own plate, as in the original game.",
+             "Вкл.: наша табличка с именем над спутниками вместо игровой (та прячется за любым деревом "
+             "или углом). Выкл.: игровая табличка, как в оригинальной игре."),
+           on);
     Toggle("party_guest_lamps", T("Guests use lamps", "Фонари гостям"), s.party_guest_lamps,
            T("Guests may use lamps and the Dream's headstones; the host leads and the whole party "
              "travels. After a restart.",
@@ -2022,10 +2029,21 @@ void PartyHud() {
         if ((u < 0.34f && v < 0.26f) || (u > 0.80f && v > 0.86f)) {
             continue;
         }
+        {   // Test aids: BB_PARTY_HUD_TAGLOG=1 logs the tag's distance / camera depth / anchor once a
+            // second (plate measurements); BB_PARTY_HUD_TAG_HIDE=1 draws no tag (the game's plate alone).
+            static const bool taglog = std::getenv("BB_PARTY_HUD_TAGLOG") != nullptr;
+            static std::int64_t last_log = 0;
+            if (taglog && party::hud::NowMs() - last_log >= 1000) {
+                last_log = party::hud::NowMs();
+                std::printf("Party HUD: tagdiag %s d=%.2f depth=%.2f x=%.1f y=%.1f display=%.0fx%.0f\n", c.name, d,
+                            sp.depth, sp.x, sp.y, display.x, display.y);
+            }
+            static const bool hide = std::getenv("BB_PARTY_HUD_TAG_HIDE") != nullptr;
+            if (hide) {
+                continue;
+            }
+        }
         const float alpha = std::clamp((80.0f - d) / 30.0f, 0.0f, 1.0f) * 0.95f;
-        // In the game's phantom plate style (the game's own plate is off in party mode,
-        // party_hud_game.cpp): a fixed screen size, Baskerville, the plate's blue.
-        const float size = 17.0f * display.y / 720.0f;
         // Name, with the level ("Lv 42") or the deaths ("3 deaths, rot 2") after it.
         char label[96];
         const bool ru = BbSettings::MenuText("en", "ru")[0] == 'r';
@@ -2041,29 +2059,54 @@ void PartyHud() {
         } else {
             std::snprintf(label, sizeof label, "%s", c.name);
         }
-        ImGui::PushFont(game_font, size);
-        const ImVec2 ts = ImGui::CalcTextSize(label);
-        // Laid out as the game's plate: the HP bar's bottom on the anchor, the name above it.
+        // Laid out as the game's phantom plate (party_hud.h LayoutPlate: measured live; the game's
+        // own plate is off in party mode, party_hud_game.cpp): the bar's top on the anchor with
+        // light end caps, the name left-aligned above it, Baskerville in the plate's blue with a
+        // dark outline and shadow. Bigger near, the game's size from 10 m camera depth on.
+        static const float shift = [] {  // test: BB_PARTY_HUD_TAG_SHIFT=F moves ours F of the width right
+            const char* e = std::getenv("BB_PARTY_HUD_TAG_SHIFT");
+            return e ? static_cast<float>(std::atof(e)) : 0.0f;
+        }();
+        const party::hud::PlateLayout pl =
+            party::hud::LayoutPlate(sp.x + shift * display.x, sp.y, display.x, display.y, sp.depth);
         const bool with_bar = overhead == 3 && c.have_hp && c.max_hp > 0;
-        // The game's plate: a bar ~0.096 of the display wide centred on the anchor, the name
-        // left-aligned on the bar's left edge (live screenshots 2026-10-12, both drawn).
-        const float bar_w = 0.096f * display.x, bar_h = 4.0f * display.y / 720.0f, gap = 2.0f * s;
-        const ImVec2 at(u * display.x - bar_w * 0.5f,
-                        party::hud::TagTextTop(v * display.y, ts.y, with_bar, bar_h, gap));
-        bg->AddText(ImVec2(at.x + 1.0f, at.y + 1.0f), Rgba(0.0f, 0.0f, 0.0f, 0.8f * alpha), label);
-        bg->AddText(at, Rgba(0.19f, 0.62f, 0.79f, alpha), label);  // the plate's blue (screenshot 49,157,201)
+        // pl.font is the em size (as the plate was measured); ImGui sizes a font by its line
+        // height (ascent - descent), smaller per em: convert through the cap height of 'H' (live
+        // 2026-10-12: without this our name came out at 0.6 of the game's).
+        static float size_per_em = 0.0f;
+        if (size_per_em <= 0.0f) {
+            ImGui::PushFont(game_font, 100.0f);
+            const ImFontGlyph* g = ImGui::GetFontBaked()->FindGlyph('H');
+            const float cap = g ? g->Y1 - g->Y0 : 0.0f;  // cap height in px at ImGui size 100
+            ImGui::PopFont();
+            size_per_em = cap > 1.0f ? 100.0f * party::hud::kPlateCapToFont / cap : 1.0f;
+            std::printf("Party HUD: plate font size per em %.3f\n", size_per_em);
+        }
+        ImGui::PushFont(game_font, pl.font * size_per_em);
+        const float ascent = ImGui::GetFontBaked()->Ascent;
+        const ImVec2 at(std::round(pl.name_x), std::round(pl.name_baseline - ascent));
+        const ImU32 dark = Rgba(0.02f, 0.03f, 0.03f, 0.55f * alpha);
+        const float o = pl.outline;
+        for (const ImVec2 d4 : {ImVec2(-o, 0), ImVec2(o, 0), ImVec2(0, -o), ImVec2(0, o)}) {
+            bg->AddText(ImVec2(at.x + d4.x, at.y + d4.y), dark, label);
+        }
+        bg->AddText(ImVec2(at.x + o, at.y + o), Rgba(0.02f, 0.03f, 0.03f, 0.9f * alpha), label);  // drop shadow
+        bg->AddText(at, Rgba(0.19f, 0.61f, 0.78f, alpha), label);  // the plate's blue (49,155,199)
         ImGui::PopFont();
         if (with_bar) {
-            // The plate's thin bar: a dark frame, red over burnt orange, the empty part dark.
-            const ImVec2 p0(u * display.x - bar_w * 0.5f, at.y + ts.y + gap);
-            const ImVec2 p1(p0.x + bar_w, p0.y + bar_h);
+            // The plate's thin bar: red over burnt orange, the empty part dark, a dark rim, light end caps.
+            const ImVec2 p0(pl.bar_x0, pl.bar_y0), p1(pl.bar_x1, pl.bar_y1);
             const float frac = std::clamp(float(c.hp) / float(c.max_hp), 0.0f, 1.0f);
-            bg->AddRectFilled(ImVec2(p0.x - 1.0f, p0.y - 1.0f), ImVec2(p1.x + 1.0f, p1.y + 1.0f),
-                              Rgba(0.08f, 0.05f, 0.04f, 0.85f * alpha));
-            bg->AddRectFilled(p0, p1, Rgba(0.18f, 0.10f, 0.09f, 0.8f * alpha));
+            bg->AddRectFilled(ImVec2(p0.x, p0.y - 1.0f), ImVec2(p1.x, p1.y + 1.0f), Rgba(0.05f, 0.04f, 0.04f, 0.6f * alpha));
+            bg->AddRectFilled(p0, p1, Rgba(0.16f, 0.09f, 0.09f, 0.85f * alpha));
             if (frac > 0.0f) {
-                const ImU32 top = Rgba(0.62f, 0.12f, 0.11f, alpha), bottom = Rgba(0.47f, 0.21f, 0.01f, alpha);
-                bg->AddRectFilledMultiColor(p0, ImVec2(p0.x + bar_w * frac, p1.y), top, top, bottom, bottom);
+                const ImU32 top = Rgba(0.37f, 0.05f, 0.12f, alpha), bottom = Rgba(0.42f, 0.17f, 0.06f, alpha);
+                bg->AddRectFilledMultiColor(p0, ImVec2(p0.x + (p1.x - p0.x) * frac, p1.y), top, top, bottom, bottom);
+            }
+            const ImU32 cap = Rgba(0.91f, 0.95f, 0.97f, alpha), glow = Rgba(0.55f, 0.62f, 0.70f, 0.45f * alpha);
+            for (const float cx : {p0.x - pl.cap_w, p1.x}) {
+                bg->AddRectFilled(ImVec2(cx - 1.0f, pl.cap_y0 - 1.0f), ImVec2(cx + pl.cap_w + 1.0f, p1.y + 1.0f), glow);
+                bg->AddRectFilled(ImVec2(cx, pl.cap_y0), ImVec2(cx + pl.cap_w, p1.y), cap);
             }
         }
     }

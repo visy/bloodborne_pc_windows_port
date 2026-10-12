@@ -26,8 +26,8 @@ static RosterEntry Entry(int slot, const char* name, MemberState st, std::uint32
     return e;
 }
 
-static bool Near(float a, float b) {
-    return std::fabs(a - b) < 1e-3f;
+static bool Near(float a, float b, float eps = 1e-3f) {
+    return std::fabs(a - b) < eps;
 }
 
 static void SameWorldRules() {
@@ -195,6 +195,25 @@ static void GamePlate() {
     // Bar bottom on the anchor (y 100), 3 px bar, 2 px gap, 10 px text: text top 85; no bar: 90.
     assert(Near(hud::TagTextTop(100.0f, 10.0f, true, 3.0f, 2.0f), 85.0f));
     assert(Near(hud::TagTextTop(100.0f, 10.0f, false, 3.0f, 2.0f), 90.0f));
+    // The plate scale: the game's measured size from 10 m camera depth on, bigger nearer, capped.
+    assert(Near(hud::PlateScale(10.0f), 1.0f) && Near(hud::PlateScale(24.0f), 1.0f));
+    assert(Near(hud::PlateScale(8.0f), 1.25f));
+    assert(Near(hud::PlateScale(5.0f), hud::kPlateMaxScale) && Near(hud::PlateScale(0.5f), hud::kPlateMaxScale));
+    assert(Near(hud::PlateScale(0.0f), hud::kPlateMaxScale) && Near(hud::PlateScale(std::nanf("")), hud::kPlateMaxScale));
+    // At range on the measured 833x469 window: the game's plate (bar 83 px centred, 2 px thick,
+    // its top on the anchor; name ~8.9 px font, baseline 8 px above the bar, 4 px in).
+    const hud::PlateLayout far = hud::LayoutPlate(336.0f, 139.0f, 833.0f, 469.0f, 20.0f);
+    assert(Near(far.bar_x1 - far.bar_x0, 83.0f, 1.5f) && Near((far.bar_x0 + far.bar_x1) * 0.5f, 336.0f, 1.0f));
+    assert(Near(far.bar_y0, 139.0f) && Near(far.bar_y1 - far.bar_y0, 2.0f));
+    assert(Near(far.font, 8.9f, 0.1f) && Near(far.bar_y0 - far.name_baseline, 8.0f, 0.5f));
+    assert(Near(far.name_x - far.bar_x0, 4.0f, 0.5f) && far.cap_w >= 1.0f && far.cap_y0 < far.bar_y0);
+    // Near, the whole plate grows by the same scale; 1080p at range: font ~20.5 px, bar 191 px.
+    const hud::PlateLayout near = hud::LayoutPlate(336.0f, 139.0f, 833.0f, 469.0f, 5.0f);
+    assert(Near(near.font / far.font, hud::kPlateMaxScale, 0.01f));
+    assert(Near((near.bar_x1 - near.bar_x0) / (far.bar_x1 - far.bar_x0), hud::kPlateMaxScale, 0.05f));
+    assert(near.bar_y0 - near.name_baseline > far.bar_y0 - far.name_baseline);
+    const hud::PlateLayout hd = hud::LayoutPlate(960.0f, 500.0f, 1920.0f, 1080.0f, 30.0f);
+    assert(Near(hd.font, 20.5f, 0.2f) && Near(hd.bar_x1 - hd.bar_x0, 191.0f, 1.5f));
 }
 
 static void Handover() {

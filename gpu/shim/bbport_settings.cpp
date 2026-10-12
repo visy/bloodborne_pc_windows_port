@@ -154,6 +154,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_enemy_damage = std::clamp(i, 0, 100);
     } else if (key == "party_enemy_poise") {
         v.party_enemy_poise = std::clamp(i, -100, 300);
+    } else if (key == "party_name_tags") {
+        v.party_name_tags = i != 0;
     } else if (key == "party_overhead") {
         v.party_overhead = std::clamp(i, 0, 4);
     } else if (key == "menu_pos") {
@@ -385,6 +387,7 @@ void Save() {
     put("compile_indicator", flag(v.compile_indicator));
     put("party_toasts", flag(v.party_toasts));
     put("party_hud", flag(v.party_hud));
+    put("party_name_tags", flag(v.party_name_tags));
     put("party_guest_lamps", flag(v.party_guest_lamps));
     put("party_rot", flag(v.party_rot));
     put("party_boss_hp", std::to_string(v.party_boss_hp.load()));

@@ -130,6 +130,10 @@ struct Values {
     /// E2: what is shown above party members (coop::balance::Overhead: 0 off, 1 name, 2 name +
     /// level, 3 name + health bar, 4 name + deaths; ini party_overhead). Live, local.
     std::atomic<int> party_overhead{3};
+    /// Party name tags: on (default) = in a party our name plate replaces the game's phantom plate
+    /// (which hides behind any occluder); off = the game's own plate as in vanilla, ours not drawn
+    /// (ini party_name_tags; env BB_PARTY_HUD_GAME_PLATE=1 keeps the game's plate for tests). Live.
+    std::atomic<bool> party_name_tags{true};
 
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
     int startup_preset = NativeAA;

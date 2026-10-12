@@ -138,6 +138,33 @@ bool TagVisible(const Companion& c, std::int64_t board_age_ms, const char** why)
 /// The game plate's HP bar sits this high above the chr's position (both screenshots at 7 and 16
 /// m: 1.82 m); its name text stacks above the bar in pixels. Ours anchors the same way.
 constexpr float kTagBarHeightM = 1.82f;
+/// Our name plate, laid out as the game's phantom plate (FrpgMenuDlgFloatingPCGauge), measured
+/// live 2026-10-12 (both drawn, one run, the guest walked 2 -> 21 m, camera depth 5.7 -> 23.9 m,
+/// an 833x469 window): the game's plate is a FIXED screen size at every distance - name font
+/// 0.019 of the display height (cap height 0.0149), a 2 px (0.0043 h) red bar 0.0996 of the
+/// display width centred on the anchor, its top on the anchor (1.82 m above the chr), light 1 px
+/// end caps 0.0085 h tall standing 0.0043 h above the bar, the name left-aligned 0.0085 h right of
+/// the left cap with its baseline 0.017 h above the bar, blue (49,155,199) with a dark shadow /
+/// outline; the bar red (95,13,31) over burnt orange (106,43,15). The console footage the user
+/// gave (players 2-4 m away) shows the same plate ~1.55x larger; ours follows the measured plate
+/// at range and grows near (bigger near, smaller far): PlateScale.
+constexpr float kPlateFontH = 0.019f, kPlateBarW = 0.0996f, kPlateBarH = 0.0043f, kPlateCapH = 0.0085f,
+                kPlateCapRise = 0.0043f, kPlateNameInset = 0.0085f, kPlateBaselineGap = 0.017f,
+                kPlateCapToFont = 0.77f;  // Libre Baskerville: cap height / font size
+/// Scale of our plate over the game's measured size by camera depth (metres from the camera):
+/// 1 from kPlateFarDepth on, growing as 1/depth nearer, at most kPlateMaxScale (the console
+/// footage's size, ~2-3 m from the player with the default camera).
+constexpr float kPlateFarDepth = 10.0f, kPlateMaxScale = 1.6f;
+float PlateScale(float depth);
+struct PlateLayout {
+    float font = 0;                        // font size, px
+    float bar_x0 = 0, bar_y0 = 0, bar_x1 = 0, bar_y1 = 0;  // the bar (without the caps)
+    float cap_w = 0, cap_y0 = 0;           // end caps: [bar_x0 - cap_w, bar_x0] and [bar_x1, bar_x1 + cap_w], cap_y0..bar_y1
+    float name_x = 0, name_baseline = 0;   // the name's left edge and baseline
+    float outline = 0;                     // shadow / outline offset, px
+};
+/// The plate around the projected anchor (ax, ay) on a display w x h at camera depth `depth`.
+PlateLayout LayoutPlate(float ax, float ay, float w, float h, float depth);
 /// Tag layout in pixels from the projected anchor (the bar's bottom edge, y down): the bar
 /// (bar_h tall, when drawn) ends at anchor_y, the name's bottom sits `gap` above the bar (or at
 /// the anchor without a bar). Returns the name's top-left y for a name `text_h` tall.
