@@ -352,6 +352,18 @@ invaders + others + outgoing < 4", rules tag `...,H6`) and H5 writes the selecto
   free-spot choice had no member positions yet), and one overlay name tag ("Hunter2") floats high.
 So 5 players work end to end in one run; open: placement of slots 3-4, the floating tag (name-plate
 owner), and repeat runs before 5 becomes a user setting.
+- Placement check: run 3's final positions show the pairs ~0.8 m apart (not stacked; everyone shifted
+  after the spawn, the host too, and from behind the host the outer guests line up with the inner
+  ones in depth, so the plates overlap). b9d9eeb: the free spot now also counts the chrs already in
+  this world (title join re-places the guest on arrival) and keeps 1.0 m. The green "Hunter2" tag is
+  the E2 overhead tag, drawn 2.45 m up on purpose (above the game's plate; `TagVisible` hides it
+  without a live chr here): not a fault.
+- Repeat runs (b9d9eeb): run 4 - the 5th game stalled again before its first frame ("Stall during
+  rendering at flush 1") and exited, the 4th guest never joined (the other three in, each first
+  try); run 5 - **all four guests in** (17.1 / 33.0 / 62.1 / 99.6 s), every guest's presence count 5.
+  So the party code takes 5 players; what fails 1 run in 3 is the 5th game process on this machine
+  (its first frame stalls with five games running). 5 stays a test setting (BB_PARTY_MAX=5), not in
+  the launcher.
 
 ### Host does not draw a guest / its plate floats away (user, 2026-10-11)
 
