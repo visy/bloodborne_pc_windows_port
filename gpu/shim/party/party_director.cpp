@@ -271,6 +271,7 @@ struct State {
     bool start_ready = false, start_logged = false;
     StartStep start_step = StartStep::NoWorld;
     bool granted = false; // bells granted (or found owned) in this world
+    Clock::time_point last_hosting{}; // host: when its session role last was host (3): travel audience
     // Title "Continue" (AutoContinue).
     bool continue_done = false, continue_held = false;
     int continue_presses = 0;
@@ -441,6 +442,7 @@ void UpdateStart(State& st, const GameSnapshot& s, StartMode mode) {
     }
     st.start_step = step;
     st.start_ready = ready;
+    SetLocalStartReady(ready);
 }
 
 /// The bells a ready player lacks (§4.3), once per world, in its own world only.
@@ -2452,7 +2454,19 @@ void PartyDirector::Tick() {
     }
     if (link && role == PartyRole::Host) {
         TravelIntent t;
+        if (s.session_role == RoleHost) {
+            st.last_hosting = now;
+        }
+        const bool hosting_recently =
+            st.last_hosting != Clock::time_point{} && now - st.last_hosting < std::chrono::seconds(60);
+        const bool audience = HostTravelHasAudience(hosting_recently, link->roster());
         while (PopHostTravel(&t)) {
+            if (!audience) {
+                // Nobody in this world: the members in their prologue or own worlds stay put.
+                Log("travel #%llu (%s) not sent: nobody is in this world (members in their prologue or own worlds)",
+                    static_cast<unsigned long long>(t.seq), TravelKindName(t.kind));
+                continue;
+            }
             // Into (or respawning in) a Chalice Dungeon: which one (guests follow only into it).
             if (TravelIntoChalice(t) || static_cast<std::uint32_t>(t.last_lamp) / 100000 == 29) {
                 t.chalice_channel = chalice::Read().channel;

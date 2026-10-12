@@ -400,6 +400,26 @@ bool HostTravelQueue::Pop(TravelIntent* out) {
     return true;
 }
 
+const char* TravelFollowName(TravelFollow f) {
+    switch (f) {
+    case TravelFollow::Follow: return "follow";
+    case TravelFollow::IgnorePrologue: return "in own world (prologue)";
+    case TravelFollow::IgnoreOwnWorld: return "in own world (not summoned)";
+    }
+    return "?";
+}
+
+TravelFollow GuestFollowsHostTravel(const FollowState& s) {
+    constexpr int kJoining = 4, kClient = 6; // RoleTryingToJoin, RoleClient (game_state.h)
+    if (s.session_role == kClient || s.session_role == kJoining) {
+        return TravelFollow::Follow;
+    }
+    if (s.client_ago >= 0 && s.client_ago <= kFollowClientWindow) {
+        return TravelFollow::Follow; // just left the host's world (sent home, B2 fallback)
+    }
+    return s.start_ready ? TravelFollow::IgnoreOwnWorld : TravelFollow::IgnorePrologue;
+}
+
 bool ReplayAllowedNow(const ReplayState& s) {
     return s.world_up && !s.loading && !s.transition_requested && s.session_role != 4 /* joining */ &&
            s.session_role != 7 /* leaving */;
@@ -580,6 +600,20 @@ std::atomic<int> g_block_clear3{0};         // inside BlockClear2_3 (its funnel 
 std::atomic<u32> g_guest_map{0};            // guest: its current map (TravelTick), 0 unknown
 std::atomic<u32> g_death_lamp{kTravelNone}; // guest: the host's last lamp (SetGuestDeathRedirect)
 std::atomic<std::uint64_t> g_host_chalice{0};  // guest: the host's chalice dungeon (its last intent's)
+std::atomic<bool> g_start_ready{true};      // the director's party start READY (SetLocalStartReady)
+std::atomic<double> g_last_client{-1.0};    // guest: Now() when its session role last was client (6)
+std::atomic<double> g_offer_at{-1.0};       // guest: Now() when the pending travel was taken
+
+/// Whether this guest follows a host travel now; `at` the moment that counts for "just left the
+/// host's world" (the offer's time for a pending travel).
+TravelFollow FollowNow(int session_role, double at) {
+    FollowState f;
+    f.start_ready = g_start_ready.load();
+    f.session_role = session_role;
+    const double last = g_last_client.load();
+    f.client_ago = last < 0 ? -1.0 : std::max(0.0, at - last);
+    return GuestFollowsHostTravel(f);
+}
 
 /// A host lamp a guest may be sent to: one in a Chalice Dungeon only when the guest's own game
 /// has the host's dungeon in its current slot (party_chalice.h).
@@ -1196,10 +1230,27 @@ void RequestGuestTravel(const TravelIntent& t) {
             return;
         }
     }
+    // Only a member in the host's session follows (summoned, joining, or just sent home); one in
+    // its prologue or alone in its own world stays (ERSC_PARITY.md B3).
+    {
+        const GameSnapshot g = ReadGameState(false);
+        if (g.session_role == 6) {
+            g_last_client.store(Now());
+        }
+        const TravelFollow f = FollowNow(g.session_role, Now());
+        if (f != TravelFollow::Follow) {
+            Log("travel #%llu ignored: %s (%s; session role %d)", static_cast<unsigned long long>(t.seq),
+                TravelFollowName(f), DescribeTravel(t).c_str(), g.session_role);
+            return;
+        }
+    }
     bool taken;
     {
         std::lock_guard<std::mutex> lk(g_guest_mu);
         taken = g_guest.Offer(t, Now());
+    }
+    if (taken) {
+        g_offer_at.store(Now());
     }
     Log("guest travel %s %s", DescribeTravel(t).c_str(), taken ? "queued" : "ignored (not newer than the last)");
 }
@@ -1234,6 +1285,9 @@ void TravelTick() {
     if (g.world_up && !g.loading && g.map_id && g.map_id != 0xffffffffu) {
         g_guest_map.store(g.map_id);
     }
+    if (g.session_role == 6) {
+        g_last_client.store(Now());
+    }
     ReplayState s;
     s.world_up = g.world_up;
     s.loading = g.loading;
@@ -1262,6 +1316,17 @@ void TravelTick() {
         now.reset();
     }
     if (now) {
+        // Still a member of the host's session? (It may have been queued while it was.)
+        const TravelFollow f = FollowNow(g.session_role, g_offer_at.load());
+        if (f != TravelFollow::Follow) {
+            Log("travel #%llu ignored: %s (%s; session role %d)", static_cast<unsigned long long>(now->seq),
+                TravelFollowName(f), DescribeTravel(*now).c_str(), g.session_role);
+            std::lock_guard<std::mutex> lk(g_guest_mu);
+            g_guest.Drop();
+            now.reset();
+        }
+    }
+    if (now) {
         const ReplayPlan p = ChooseReplay(*now);
         if (p.method == ReplayMethod::None) {
             Log("replay %s: no usable destination; staying", DescribeTravel(*now).c_str());
@@ -1275,6 +1340,10 @@ void TravelTick() {
                                                   : "travel finished (arrived, or %.0f s passed)",
             before == GuestTravel::Phase::Pending ? GuestTravel::kPendingTimeout : GuestTravel::kActiveTimeout);
     }
+}
+
+void SetLocalStartReady(bool ready) {
+    g_start_ready.store(ready);
 }
 
 bool TravelEnabled() {

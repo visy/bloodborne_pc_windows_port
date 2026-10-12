@@ -99,6 +99,12 @@ bool GuestMayRing(bool guest_ready, bool connected);
 /// hosting (the game's own Beckoning Bell works there). Never while trying to host / join,
 /// failing, as a client or leaving.
 bool SessionMayRing(bool host, int session_role);
+/// Host: a travel of its own concerns the party (is broadcast) only while someone is in its
+/// session: it hosts (session role 3) or hosted moments ago (`hosting_recently`: the travel's
+/// own leave may already have dropped the role), or a connected member is in its world or
+/// joining it. Members in their prologue or alone in their own worlds are not moved (the
+/// receivers check again: GuestFollowsHostTravel, party_travel.h).
+bool HostTravelHasAudience(bool hosting_recently, const std::vector<party::RosterEntry>& roster);
 
 // ---- Late joiner catch-up (party_catchup.cpp is the game glue) ----
 // A guest whose save is behind the host's (a fresh character, or one still in the prologue) is

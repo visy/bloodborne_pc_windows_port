@@ -197,6 +197,27 @@ struct ReplayState {
 /// World up, no loading screen, no stage request pending, not joining (4) or leaving (7).
 bool ReplayAllowedNow(const ReplayState& s);
 
+// ---- Who follows a host travel (docs/party/ERSC_PARITY.md B3) ----
+/// Only members in the host's session follow its travel: a summoned guest (session role 6), one
+/// on its way in (joining, 4), or one that left the host's world moments ago (sent home by the
+/// travel itself, a B2 fallback: `client_ago` s since it last was a client, < 0 never). A member
+/// still in its prologue (party start not READY) or playing alone in its own world without being
+/// summoned stays where it is: no load, no warp (live: a guest in the Dream was warped into the
+/// clinic by the host's prologue lamp; a host's prologue death sent an unsummoned guest home).
+enum class TravelFollow : std::uint8_t {
+    Follow,
+    IgnorePrologue, ///< party start not READY: in its own prologue
+    IgnoreOwnWorld, ///< ready, but alone in its own world (not summoned)
+};
+const char* TravelFollowName(TravelFollow f);
+struct FollowState {
+    bool start_ready = true;  ///< party_start READY (the director's UpdateStart)
+    int session_role = -1;    ///< SprjSessionManager +0x124
+    double client_ago = -1;   ///< s since the session role last was client (6); < 0 never
+};
+constexpr double kFollowClientWindow = 60.0; ///< s after leaving the host's world that still follow
+TravelFollow GuestFollowsHostTravel(const FollowState& s);
+
 class GuestTravel {
 public:
     static constexpr int kStableTicks = 30;          ///< frames the gate must hold before a replay
@@ -264,6 +285,8 @@ void HostDeathFunnelNow();
 void GuestDeathRedirectNow();
 /// The travel hooks are installed and on (BB_PARTY_TRAVEL is not 0 and the funnel hook is in).
 bool TravelEnabled();
+/// The director's party start readiness (party_start.h StartReady), for GuestFollowsHostTravel.
+void SetLocalStartReady(bool ready);
 /// Test fixtures (BB_PARTY_DIRECTOR_TEST place=...): warps the local player to an exact transform
 /// through the forced-placement sequence (main thread, world up). False when the map is unknown.
 bool TravelPlaceForTest(std::uint32_t map, const float pos[3], float yaw);

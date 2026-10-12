@@ -126,6 +126,19 @@ bool GuestMayRing(bool guest_ready, bool connected) {
     return guest_ready && connected;
 }
 
+bool HostTravelHasAudience(bool hosting_recently, const std::vector<party::RosterEntry>& roster) {
+    if (hosting_recently) {
+        return true;
+    }
+    for (const party::RosterEntry& e : roster) {
+        if (e.slot != party::kHostSlot && e.connected &&
+            (e.state == party::MemberState::InHostWorld || e.state == party::MemberState::Joining)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool SessionMayRing(bool host, int session_role) {
     constexpr int kIdle = 0, kHost = 3; // RoleIdle, RoleHost (game_state.h)
     return session_role == kIdle || (host && session_role == kHost);

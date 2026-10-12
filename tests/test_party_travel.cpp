@@ -364,7 +364,34 @@ static void test_chalice_state() {
     CHECK(!GoodsFromJsonText("[]", &ids) && !GoodsFromJsonText(R"({"goods":5})", &ids));
 }
 
+static void test_follow() {
+    auto at = [](bool ready, int role, double ago) {
+        FollowState f;
+        f.start_ready = ready;
+        f.session_role = role;
+        f.client_ago = ago;
+        return GuestFollowsHostTravel(f);
+    };
+    // Summoned / joining: follow (also while the flags read as not ready in the host's world).
+    CHECK(at(true, 6, 0) == TravelFollow::Follow);
+    CHECK(at(false, 6, -1) == TravelFollow::Follow);
+    CHECK(at(true, 4, -1) == TravelFollow::Follow);
+    // Sent home by the travel itself / a B2 fallback moments ago: follow.
+    CHECK(at(true, 0, 0.5) == TravelFollow::Follow);
+    CHECK(at(true, 7, 10) == TravelFollow::Follow);
+    CHECK(at(true, 0, kFollowClientWindow) == TravelFollow::Follow);
+    // The 2-PC bug: a guest in its own prologue / Dream, never summoned.
+    CHECK(at(false, 0, -1) == TravelFollow::IgnorePrologue);
+    CHECK(at(false, -1, -1) == TravelFollow::IgnorePrologue);
+    // Ready but alone in its own world (not summoned, or summoned long ago; crash restart).
+    CHECK(at(true, 0, -1) == TravelFollow::IgnoreOwnWorld);
+    CHECK(at(true, 0, kFollowClientWindow + 1) == TravelFollow::IgnoreOwnWorld);
+    CHECK(at(true, 3, -1) == TravelFollow::IgnoreOwnWorld); // hosting its own session
+    CHECK(std::strcmp(TravelFollowName(TravelFollow::IgnorePrologue), "in own world (prologue)") == 0);
+}
+
 int main() {
+    test_follow();
     test_call_sites();
     test_json();
     test_replay_plan();

@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.5.8 (unreleased)
 
+- **No more warps before the party forms**: a host's lamp travel or death no longer moves a player who is still in the prologue or playing in their own world without being summoned (a guest in the Hunter's Dream was warped into the clinic, or sent back to the Dream by the host's death).
 - **Both party codes shown**: the launcher, *System → Party* and the overlay's Party tab show the host's **Internet code** (friends elsewhere) and **LAN code** (same network), each with its own copy button. The launcher used to show the raw `internet=...` line.
 - **Same-network fallback**: a guest on the host's network using the Internet code (routers without hairpin NAT gave "Failed to acquire Bloodborne server information") now finds the host on the LAN by itself, in about 2 s. Probes carry only a hash of the code's secret; the host answers only its own party, rate-limited.
 - **Saved password ignored for codes without one**: a password left in the guest's launcher no longer causes "wrong password or party code" when the host has none.

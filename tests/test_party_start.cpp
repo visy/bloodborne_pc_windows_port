@@ -277,7 +277,22 @@ static void test_catchup() {
     }
 }
 
+static void test_travel_audience() {
+    using MS = party::MemberState;
+    // Both in their prologues (the 2-PC bug: the host's prologue death sent the guest home).
+    CHECK(!HostTravelHasAudience(false, {Member(0, MS::Prologue), Member(1, MS::Prologue)}));
+    CHECK(!HostTravelHasAudience(false, {Member(0, MS::Home), Member(1, MS::Home)}));    // own world, ready
+    CHECK(!HostTravelHasAudience(false, {Member(0, MS::Home), Member(1, MS::Loading)})); // its own load
+    CHECK(!HostTravelHasAudience(false, {Member(0, MS::Home), Member(1, MS::InHostWorld, false)}));
+    CHECK(HostTravelHasAudience(false, {Member(0, MS::Home), Member(1, MS::InHostWorld)}));
+    CHECK(HostTravelHasAudience(false, {Member(0, MS::Home), Member(1, MS::Joining)}));   // on its way in
+    CHECK(HostTravelHasAudience(true, {Member(0, MS::Home), Member(1, MS::Loading)}));   // hosting
+    CHECK(HostTravelHasAudience(true, {Member(0, MS::Home)}));
+    CHECK(HostTravelHasAudience(false, {Member(0, MS::Home), Member(1, MS::Prologue), Member(2, MS::InHostWorld)}));
+}
+
 int main() {
+    test_travel_audience();
     test_mode();
     test_steps();
     test_ready();
