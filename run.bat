@@ -109,29 +109,28 @@ if "%BB_AUTO_RENDER_RES%"=="1" (
 if "%BB_FPS%"=="" set "BB_FPS=uncap"
 set "fps=%BB_FPS%"
 
+REM The scaled sizes go through a file, like mods.py above: read with for /f ('"%PYTHON%" ...
+REM "%BB_CONFIG%"') the command lost its quotes and printed nothing, so an output other than
+REM 1080p never got its startup patch (or its direct memory) and always ran live.
 set "scaled_render="
 set "scaled_output="
-if "%BB_RENDER_RES%"=="" (
-    for /f "tokens=1,2" %%a in ('"%PYTHON%" scripts\patches.py --print-scaled --settings "%BB_CONFIG%" 2^>nul') do (
-        set "scaled_render=%%a"
-        set "scaled_output=%%b"
-    )
+set "scaled_result=%out%\scaled_sizes.txt"
+if exist "%scaled_result%" del "%scaled_result%"
+if "%BB_RENDER_RES%"=="" "%PYTHON%" scripts\patches.py --print-scaled --settings "%BB_CONFIG%" > "%scaled_result%" 2>nul
+if exist "%scaled_result%" for /f "usebackq tokens=1,2" %%a in ("%scaled_result%") do (
+    set "scaled_render=%%a"
+    set "scaled_output=%%b"
 )
 
+REM One statement per line: inside a ( ) block %live% keeps the value it had before the block,
+REM which turned live_resolution=1 and auto from bbport.ini back into 0.
 set "live=0"
-if not "%scaled_output%"=="" (
-    if not "%BB_LIVE_RES%"=="" set "live=%BB_LIVE_RES%"
-    if "%live%"=="0" if exist "%BB_CONFIG%" (
-        for /f "tokens=1,2 delims==" %%a in ('type "%BB_CONFIG%" 2^>nul') do (
-            if "%%a"=="live_resolution" set "live=%%b"
-        )
-    )
-    if "%live%"=="auto" (
-        set "caps=out\bb-gpu-capabilities.exe"
-        for /f "delims=" %%c in ('"%caps%" --live-resolution 2^>nul') do set "live=%%c"
-    )
-    if not "%live%"=="1" set "live=0"
-)
+if "%scaled_output%"=="" goto live_chosen
+if not "%BB_LIVE_RES%"=="" set "live=%BB_LIVE_RES%"
+if "%live%"=="0" if exist "%BB_CONFIG%" for /f "usebackq tokens=1,2 delims==" %%a in ("%BB_CONFIG%") do if "%%a"=="live_resolution" set "live=%%b"
+if "%live%"=="auto" for /f "delims=" %%c in ('out\bb-gpu-capabilities.exe --live-resolution 2^>nul') do set "live=%%c"
+if not "%live%"=="1" set "live=0"
+:live_chosen
 
 if "%live%"=="1" (
     echo Output %scaled_output%: live resolution changes ^(live_resolution=0: startup patch^)
@@ -140,8 +139,9 @@ if "%live%"=="1" (
     set "BB_OUTPUT_RES=%scaled_output%"
     set "BB_AUTO_RENDER_RES=1"
     if "%BB_DMEM_MB%"=="" set "BB_DMEM_MB=9152"
-    echo Output %scaled_output%: scene %scaled_render%, direct memory %BB_DMEM_MB% MiB ^(live_resolution=1: live changes^)
 )
+REM Outside the block, so the message shows the memory just set.
+if defined BB_AUTO_RENDER_RES echo Output %scaled_output%: scene %scaled_render%, direct memory %BB_DMEM_MB% MiB ^(live_resolution=1: live changes^)
 
 REM Explicit launcher resolutions skip scaled_output above, but patches.py still adds
 REM Increased Graphics Heap Sizes above 1080p. Match that patch's direct-memory budget.
