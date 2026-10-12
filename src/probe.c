@@ -947,6 +947,54 @@ static void veh_write(const char *msg) {
     }
 }
 
+/* A fatal exception must end the process even when its handler blocks (a lock held by a
+ * crashed thread in the GPU dump, a full pipe to the launcher): bbport.exe then stayed alive
+ * with gigabytes of RAM and VRAM. This thread exists before the game runs, so arming it takes
+ * no lock: it terminates the process a few seconds after the first fatal exception. */
+static HANDLE g_crash_event;
+static volatile LONG g_crash_thread;
+static int g_crash_test_hang;
+
+static DWORD WINAPI crash_reaper(LPVOID param) {
+    (void)param;
+    WaitForSingleObject(g_crash_event, INFINITE);
+    Sleep(5000);
+    TerminateProcess(GetCurrentProcess(), 128 + 11);
+    return 0;
+}
+
+/* First step of every fatal path. Another thread faulting meanwhile waits for the first
+ * dump instead of interleaving its own; the reaper ends both. */
+static void crash_begin(void) {
+    if (g_crash_event) SetEvent(g_crash_event);
+    const LONG self = (LONG)GetCurrentThreadId();
+    const LONG owner = InterlockedCompareExchange(&g_crash_thread, self, 0);
+    if (owner != 0 && owner != self) Sleep(INFINITE);
+}
+
+/* BB_CRASH_TEST=fault|hang[:seconds] exercises the crash path: a host thread faults after
+ * the delay (20 s by default), and with "hang" the handler then blocks the way a stuck dump
+ * would. */
+static DWORD WINAPI crash_test_worker(LPVOID param) {
+    Sleep((DWORD)(uintptr_t)param);
+    *(volatile int *)(uintptr_t)8 = 0;
+    return 0;
+}
+
+static void start_crash_reaper(void) {
+    g_crash_event = CreateEventA(NULL, TRUE, FALSE, NULL);
+    if (g_crash_event) CreateThread(NULL, 0, crash_reaper, NULL, 0, NULL);
+    const char *test = getenv("BB_CRASH_TEST");
+    if (test && *test) {
+        g_crash_test_hang = !strncmp(test, "hang", 4);
+        const char *delay = strchr(test, ':');
+        const unsigned long seconds = delay ? strtoul(delay + 1, NULL, 10) : 20;
+        printf("[CRASH TEST] host fault in %lu s%s\n", seconds,
+               g_crash_test_hang ? ", then a blocked crash handler" : "");
+        CreateThread(NULL, 0, crash_test_worker, (LPVOID)(uintptr_t)(seconds * 1000), 0, NULL);
+    }
+}
+
 static void write_crash_dump(EXCEPTION_POINTERS *ep, void *fault_addr, uintptr_t rip, DWORD code) {
     char crash_path[MAX_PATH];
     SYSTEMTIME st;
@@ -1116,6 +1164,7 @@ static LONG WINAPI win_veh_handler(EXCEPTION_POINTERS *ep) {
          * creation. Its first-chance AV belongs to Windows' own SEH handler.
          * Keep GPU page tracking and speculative guest recovery ahead of it. */
         if (win_fault_is_read_probe(rip)) return EXCEPTION_CONTINUE_SEARCH;
+        crash_begin();
         write_crash_dump(ep, fault_addr, rip, code);
         char line[512];
         if (rip - (uintptr_t)image < 0x10000000)
@@ -1152,12 +1201,14 @@ static LONG WINAPI win_veh_handler(EXCEPTION_POINTERS *ep) {
         snprintf(line, sizeof(line), "FS_BASE=%p GS_SELECTOR=0x%x\n", cur_fs, (unsigned int)ep->ContextRecord->SegGs);
         veh_write(line);
         if (gpu_enabled) bbgpu_dump_guest_writes(ep);
+        if (g_crash_test_hang) Sleep(INFINITE);
         TerminateProcess(GetCurrentProcess(), 128 + 11);
     } else if (code == EXCEPTION_ILLEGAL_INSTRUCTION || code == EXCEPTION_PRIV_INSTRUCTION ||
                code == EXCEPTION_INT_DIVIDE_BY_ZERO || code == EXCEPTION_STACK_OVERFLOW ||
                code == 0xC0000409 /* STATUS_STACK_BUFFER_OVERRUN */ ||
                code == 0xC0000374 /* STATUS_HEAP_CORRUPTION */) {
         uintptr_t rip = ep->ContextRecord->Rip;
+        crash_begin();
         write_crash_dump(ep, (void *)rip, rip, code);
         char line[512];
         if (rip - (uintptr_t)image < 0x10000000)
@@ -1521,6 +1572,7 @@ int main(int argc, char **argv) {
     }
     SYSTEM_INFO system_info; GetSystemInfo(&system_info); page_size = system_info.dwPageSize;
     AddVectoredExceptionHandler(1, win_veh_handler);
+    start_crash_reaper();
     start_timeout(timeout_seconds);
 #else
     page_size = (size_t)sysconf(_SC_PAGESIZE);

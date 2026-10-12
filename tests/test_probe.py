@@ -1,6 +1,7 @@
 """Boundary tests for the native loader; uses tiny synthetic x86-64 images."""
 from paths import ROOT, EXE
 from pathlib import Path
+import os
 import struct
 import subprocess
 import tempfile
@@ -115,6 +116,29 @@ class LoaderTests(unittest.TestCase):
         r = self.run_image(package(b'\x0f\x0b'))
         self.assertEqual(r.returncode, 132)
         self.assertIn('at guest offset 0x0,', r.stderr)
+
+    def run_spinning_image(self, *options, env=None, timeout=30):
+        """A guest that loops forever (jmp $): only a timeout or a crash ends it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'boot.bin'
+            path.write_bytes(package(b'\xeb\xfe'))
+            return subprocess.run([str(EXE.resolve()), str(path), '--cpu-only', *options],
+                                  capture_output=True, text=True, timeout=timeout, cwd=tmp,
+                                  env=None if env is None else {**os.environ, **env})
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows exit path')
+    def test_timeout_terminates_the_process(self):
+        r = self.run_spinning_image('--timeout', '1')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn('[TIMEOUT]', r.stdout)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows crash handler')
+    def test_blocked_crash_handler_still_ends_the_process(self):
+        # The handler blocks after the dump (BB_CRASH_TEST=hang): the reaper thread must
+        # terminate the process a few seconds later instead of leaving it alive.
+        r = self.run_spinning_image('--timeout', '0', env={'BB_CRASH_TEST': 'hang:1'})
+        self.assertEqual(r.returncode, 139, r.stdout + r.stderr)
+        self.assertIn('Fault at RIP', r.stderr)
 
     def test_runtime_returns_from_verified_init_env(self):
         # Align stack, call _init_env through +32, then tail-jump to unknown +40.
