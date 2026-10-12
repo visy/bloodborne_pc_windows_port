@@ -460,6 +460,55 @@ std::vector<PeerPaths::PeerView> PeerPaths::peers() const {
 
 // ---- routing ----
 
+void EndpointAliases::set(std::uint32_t pa, std::uint16_t pp, std::uint32_t aa, std::uint16_t ap) {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (auto it = out_.find(key(pa, pp)); it != out_.end()) in_.erase(it->second);
+    if (pa == aa && pp == ap) {
+        out_.erase(key(pa, pp));
+        return;
+    }
+    out_[key(pa, pp)] = key(aa, ap);
+    in_[key(aa, ap)] = key(pa, pp);
+}
+
+void EndpointAliases::clear(std::uint32_t pa, std::uint16_t pp) {
+    std::lock_guard<std::mutex> lk(mu_);
+    auto it = out_.find(key(pa, pp));
+    if (it == out_.end()) return;
+    in_.erase(it->second);
+    out_.erase(it);
+}
+
+bool EndpointAliases::outgoing(std::uint32_t* addr, std::uint16_t* port) const {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (out_.empty()) return false;
+    auto it = out_.find(key(*addr, *port));
+    if (it == out_.end()) return false;
+    *addr = static_cast<std::uint32_t>(it->second);
+    *port = static_cast<std::uint16_t>(it->second >> 32);
+    return true;
+}
+
+bool EndpointAliases::incoming(std::uint32_t* addr, std::uint16_t* port) const {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (in_.empty()) return false;
+    auto it = in_.find(key(*addr, *port));
+    if (it == in_.end()) return false;
+    *addr = static_cast<std::uint32_t>(it->second);
+    *port = static_cast<std::uint16_t>(it->second >> 32);
+    return true;
+}
+
+std::size_t EndpointAliases::size() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return out_.size();
+}
+
+int punch_choice(bool primary_heard, bool local_heard, bool have_local) {
+    (void)primary_heard;
+    return have_local && local_heard ? 1 : 0;
+}
+
 bool force_relay_from_env() {
     const char* v = std::getenv("BB_PARTY_FORCE_RELAY");
     return v && *v && v[0] != '0';

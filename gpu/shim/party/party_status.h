@@ -52,6 +52,7 @@ struct Board {
     State state = State::Off;
     std::string detail;    // with the state ("2/3, Hunter1 waiting", the reject reason ...)
     std::string code;      // the party code to share (host) / joined (guest)
+    std::string lan_code;  // host: the LAN code (same network), when `code` is the Internet one
     std::string guest_code;  // guest: BBG1-... (its public UDP endpoint, for a host behind a NAT)
     std::vector<Member> members;
     std::string last_event;
@@ -64,6 +65,7 @@ struct Board {
 void SetRole(Role role);
 void SetCode(const std::string& code);
 void SetGuestCode(const std::string& code);
+void SetLanCode(const std::string& code);
 void SetState(State state, const std::string& detail = {});
 void SetMembers(const std::vector<Member>& members);
 /// A one-line event for the log line and the toast ("Hunter1 joined", "Travelling to ...").
@@ -93,6 +95,8 @@ bool KickMember(const std::string& name);
 /// Copies the current party code to the Windows clipboard (UI thread, no queue). False when
 /// there is no code or the clipboard is busy.
 bool RequestCopyCode();
+/// Host: copies the LAN code (same network) to the clipboard. False when there is none.
+bool RequestCopyLanCode();
 /// Guest: copies its guest code (BBG1-...) to the clipboard.
 bool RequestCopyGuestCode();
 /// Host: queues the guest code(s) on the clipboard (the host then punches towards each). False

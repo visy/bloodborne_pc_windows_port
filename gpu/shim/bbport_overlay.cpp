@@ -1072,6 +1072,7 @@ const char* PartyStateText(party::status::State st, party::status::Role role) {
 
 struct PartyUiState {
     double copied_until = 0.0;       ///< "Copied" shown in the code row until then (ImGui time)
+    double lan_copied_until = 0.0;   ///< the same for the host's LAN code row
     double leave_confirm_until = 0.0;
     double kick_confirm_until = 0.0;
     std::string kick_confirm;        ///< the member a second press kicks
@@ -1106,12 +1107,18 @@ void PartyTab() {
                                      : T("None", "Нет"),
          on ? Plain() : Dim());
 
-    // Party code + copy.
+    // Party code + copy. A host has two when it knows its public address: the Internet code
+    // (friends elsewhere) and the LAN code (same network: most routers cannot loop back to their
+    // own public address).
+    const bool two_codes = b.role == ps::Role::Host && !b.lan_code.empty();
     const bool copied = now < party_ui.copied_until;
     const char* code_value = copied          ? T("Copied to clipboard", "Скопирован в буфер обмена")
                              : b.code.empty() ? T("not yet known", "ещё неизвестен")
                                               : b.code.c_str();
-    if (ActionRow("party_copy", T("Party code: copy", "Код группы: копировать"), code_value,
+    if (ActionRow("party_copy",
+                  two_codes ? T("Internet code (friends elsewhere): copy", "Код для интернета (друзья не рядом): копировать")
+                            : T("Party code: copy", "Код группы: копировать"),
+                  code_value,
                   b.role == ps::Role::Host
                       ? T("The code friends paste into the launcher to join you: your address, port and "
                           "the party's secret. Share it only with them.",
@@ -1122,6 +1129,19 @@ void PartyTab() {
                   on && !b.code.empty())) {
         if (ps::RequestCopyCode()) {
             party_ui.copied_until = now + 2.0;
+        }
+    }
+    if (two_codes) {
+        const char* lan_value = now < party_ui.lan_copied_until ? T("Copied to clipboard", "Скопирован в буфер обмена")
+                                                                : b.lan_code.c_str();
+        if (ActionRow("party_copy_lan", T("LAN code (same network): copy", "Код для локальной сети: копировать"),
+                      lan_value,
+                      T("For players on your own network (same router). The Internet code also finds you "
+                        "there, a few seconds slower.",
+                        "Для игроков в вашей сети (тот же роутер). Код для интернета тоже найдёт вас, "
+                        "на несколько секунд дольше."),
+                      on)) {
+            if (ps::RequestCopyLanCode()) party_ui.lan_copied_until = now + 2.0;
         }
     }
 

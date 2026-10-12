@@ -393,6 +393,28 @@ void note_heard_locked(P2pPort& port, std::uint64_t key) {
 udp::RelayClient g_relay;
 // A guest's paths to the other guests (party_udp.h PeerPaths): direct while their probes are
 // answered, else through the host relay; BB_PARTY_FORCE_RELAY=1 relays them always.
+udp::EndpointAliases& aliases() {
+    static udp::EndpointAliases* a = new udp::EndpointAliases;
+    return *a;
+}
+
+void alias_out(sockaddr_in& sa) {
+    std::uint32_t a = sa.sin_addr.s_addr;
+    std::uint16_t p = sa.sin_port;
+    if (aliases().outgoing(&a, &p)) {
+        sa.sin_addr.s_addr = a;
+        sa.sin_port = p;
+    }
+}
+void alias_in(sockaddr_in& sa) {
+    std::uint32_t a = sa.sin_addr.s_addr;
+    std::uint16_t p = sa.sin_port;
+    if (aliases().incoming(&a, &p)) {
+        sa.sin_addr.s_addr = a;
+        sa.sin_port = p;
+    }
+}
+
 udp::PeerPaths& paths() {
     static udp::PeerPaths* p = [] {
         udp::PeerPaths::Config c;
@@ -530,6 +552,7 @@ void p2p_reader(std::shared_ptr<P2pPort> port) {
                 t.sin_family = AF_INET;
                 t.sin_addr.s_addr = a;
                 t.sin_port = p;
+                alias_out(t);
                 raw_sendto(port->fd, udp::kProbe, sizeof(udp::kProbe), &t);
             }
             for (const std::string& line : notes) log("%s", line.c_str());
@@ -543,7 +566,8 @@ void p2p_reader(std::shared_ptr<P2pPort> port) {
         if (netsim::enabled() && netsim::config().nat && netsim::applies_to(netsim::config(), sa.sin_addr.s_addr) &&
             !netsim::nat_allow_in(sa.sin_addr.s_addr, sa.sin_port))
             continue;
-        if (n >= 16 && buf[0] == 0xfa && buf[1] == 'L') {  // the party link's UDP path (party_rudp.h)
+        // The party link's UDP path (party_rudp.h) and LAN discovery (party_lan.h: probes / replies).
+        if ((n >= 16 && buf[0] == 0xfa && buf[1] == 'L') || (n >= 4 && buf[0] == 0xfa && buf[1] == 'D')) {
             std::function<void(std::uint32_t, std::uint16_t, const std::uint8_t*, std::size_t)> h;
             {
                 std::lock_guard<std::mutex> lk(g_link_handler_mu);
@@ -580,7 +604,10 @@ void p2p_reader(std::shared_ptr<P2pPort> port) {
             // STUN server's answer to our request. None reaches a game socket.
             if (udp::is_probe(buf, static_cast<std::size_t>(n))) {
                 if (udp::is_probe_ack(buf, static_cast<std::size_t>(n))) {
-                    paths().on_ack(sa.sin_addr.s_addr, sa.sin_port, Clock::now());
+                    std::uint32_t pa = sa.sin_addr.s_addr;
+                    std::uint16_t pp = sa.sin_port;
+                    aliases().incoming(&pa, &pp);  // an aliased peer's ack counts for its primary
+                    paths().on_ack(pa, pp, Clock::now());
                 } else {
                     raw_sendto(port->fd, udp::kProbeAck, sizeof(udp::kProbeAck), &sa);  // the path works
                 }
@@ -639,6 +666,7 @@ void p2p_reader(std::shared_ptr<P2pPort> port) {
             }
         }
         if (!q) continue;
+        alias_in(sa);  // the game knows the peer by its primary
         Datagram dg;
         dg.data.assign(buf + hdr, buf + n);
         dg.addr = sa.sin_addr.s_addr;
@@ -880,6 +908,7 @@ int dgram_send(int s, const void* buf, std::uint64_t len, int flags, const SceSo
         n = raw_sendto(fd, pkt, kRelayHeader + hdr + static_cast<std::size_t>(len), &stun_sa);
         if (n >= 0) n -= static_cast<ssize_type>(kRelayHeader);
     } else {
+        if (sock.p2p) alias_out(sa);  // a peer heard on its LAN address
         n = raw_sendto(fd, body, hdr + static_cast<std::size_t>(len), &sa);
     }
     if (PacketTraceFn tf = g_packet_trace.load(std::memory_order_relaxed); tf && sock.p2p && buf)
@@ -1962,12 +1991,14 @@ void p2p_punch(const char* label, std::uint32_t addr, std::uint16_t port_host, s
         int sent = 0;
         bool heard = false;
         // Anything from either address since the start: the peer is through.
+        auto heard_one = [&](const sockaddr_in& t) {
+            auto it = port->heard.find(source_key(t.sin_addr.s_addr, t.sin_port));
+            return it != port->heard.end() && it->second >= start;
+        };
         auto heard_since_start = [&] {
             std::lock_guard<std::mutex> lk(port->mu);
-            for (const sockaddr_in& t : targets) {
-                auto it = port->heard.find(source_key(t.sin_addr.s_addr, t.sin_port));
-                if (it != port->heard.end() && it->second >= start) return true;
-            }
+            for (const sockaddr_in& t : targets)
+                if (heard_one(t)) return true;
             return false;
         };
         for (int i = 0; i < 40 && !port->stop.load(std::memory_order_relaxed); ++i) {
@@ -1978,6 +2009,28 @@ void p2p_punch(const char* label, std::uint32_t addr, std::uint16_t port_host, s
             if (heard_since_start()) {
                 heard = true;
                 break;
+            }
+        }
+        if (heard && targets.size() > 1) {
+            // Give the other candidate a moment to answer too, then pick (the local one wins).
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            bool primary_heard, local_heard;
+            {
+                std::lock_guard<std::mutex> lk(port->mu);
+                primary_heard = heard_one(targets[0]);
+                local_heard = heard_one(targets[1]);
+            }
+            char pip[32], lip[32];
+            write_ipv4(pip, sizeof(pip), targets[0].sin_addr.s_addr);
+            write_ipv4(lip, sizeof(lip), targets[1].sin_addr.s_addr);
+            if (udp::punch_choice(primary_heard, local_heard, true) == 1) {
+                aliases().set(targets[0].sin_addr.s_addr, targets[0].sin_port, targets[1].sin_addr.s_addr,
+                              targets[1].sin_port);
+                log("punch %s: using its local address %s:%u (heard%s; %s:%u stays its game address)", name.c_str(),
+                    lip, bswap16(targets[1].sin_port), primary_heard ? ", the public one too" : "", pip,
+                    bswap16(targets[0].sin_port));
+            } else {
+                aliases().clear(targets[0].sin_addr.s_addr, targets[0].sin_port);
             }
         }
         char ip[32];

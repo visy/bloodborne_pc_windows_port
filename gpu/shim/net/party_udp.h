@@ -234,6 +234,33 @@ private:
     std::map<std::uint64_t, Peer> peers_;
 };
 
+// A peer the game knows by one address (its advertised, usually public, endpoint) that answers
+// at another (its LAN address: the punch's "+local" candidate, heard while the public one was
+// not or as well; a router without hairpin NAT drops the public path). The game keeps the
+// primary address: its datagrams to the primary leave for the alias, and the alias's datagrams
+// reach the game as if from the primary. Thread-safe.
+class EndpointAliases {
+public:
+    // addr network order, ports network order.
+    void set(std::uint32_t primary_addr, std::uint16_t primary_port, std::uint32_t alias_addr, std::uint16_t alias_port);
+    void clear(std::uint32_t primary_addr, std::uint16_t primary_port);
+    // Outgoing: a primary becomes its alias (true when rewritten).
+    bool outgoing(std::uint32_t* addr, std::uint16_t* port) const;
+    // Incoming: an alias becomes its primary (true when rewritten).
+    bool incoming(std::uint32_t* addr, std::uint16_t* port) const;
+    std::size_t size() const;
+
+private:
+    static std::uint64_t key(std::uint32_t a, std::uint16_t p) { return a | (static_cast<std::uint64_t>(p) << 32); }
+    mutable std::mutex mu_;
+    std::map<std::uint64_t, std::uint64_t> out_, in_;
+};
+
+// The punch's choice between the primary (advertised) address and the "+local" candidate: the
+// local one wins whenever it was heard (a LAN path beats a hairpinned or dropped public one).
+// 0 = keep the primary, 1 = use the local candidate.
+int punch_choice(bool primary_heard, bool local_heard, bool have_local);
+
 // BB_PARTY_FORCE_RELAY=1: a guest sends its game traffic for other guests through the host
 // relay even when the direct path would work (tests, strict NATs). Traffic to the host goes to
 // the host's party port, which is the relay itself.

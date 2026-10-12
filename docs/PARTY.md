@@ -89,8 +89,9 @@ have a party character. Details: [party/ingame_flow.md](party/ingame_flow.md).
 6. Click **Launch Bloodborne**. Party play always uses its own saves; the first time the launcher
    offers to copy your single-player save into the party save folder (or start with an empty
    one for a new character).
-7. Once the game runs, your **party code** appears under **Your code** (the launcher log shows it
-   too). Click **Copy code** and send it to your friends (chat, mail ...).
+7. Once the game runs, your two **party codes** appear (the launcher log shows them too):
+   **Internet code** for friends elsewhere and **LAN code** for players on your own network.
+   Click **Copy** next to one and send it (chat, mail ...).
 8. Play. In party mode the game confirms **Continue** on the title screen by itself a few
    seconds after the party is up, so your last character loads without input (with an empty
    party save, create a character as usual). The others are summoned into your world
@@ -137,9 +138,26 @@ when that sits in the bottom left; join / leave notices appear above the panel.
 
 A code looks like `BBP1-XXXX-XXXX-...`. It holds the host's address and port and a secret; the
 secret is what lets a guest in, so share the code only with the people you play with. Letters are
-not case-sensitive. The game writes two codes to `user\party_code.txt`: an **Internet** code (your
-public address, found through the STUN server or the router's UPnP) and a **LAN** code (for
-players on the same home network). The launcher shows the Internet code.
+not case-sensitive. The host has two codes (`user\party_code.txt`, the launcher, *System → Party*
+and the overlay's Party tab):
+
+| Code | Holds | Use it for |
+|---|---|---|
+| **Internet code** | Your public address (STUN or the router's UPnP) | Friends elsewhere |
+| **LAN code** | Your address on your home network | Players on the same network (same router) |
+
+Most home routers cannot reach their own public address from inside (no "hairpin NAT"). A guest on
+your network who uses the Internet code therefore searches the LAN when the public address does not
+answer within 1.5 s (or its own public address is yours): it broadcasts a small probe on the party
+port, your game answers with its LAN address, and the guest joins that (log: `LAN fallback: found
+host at ...`). This adds about 2 s. The probe carries only a hash made from the code's secret, never
+the secret; the host answers only probes for its own party, at most 5 a second.
+`BB_PARTY_LAN_DISCOVERY=0` turns it off. With `host:port` it works only when a password is set.
+
+The code's secret is new for each hosting session, except when the game restarts after a crash or
+the party is started again from the title screen's *Party* page. A guest using a code without a
+password ignores a password saved in its launcher or *Party* page (log: `code needs no password;
+saved password ignored`).
 
 Instead of a code, a guest can also enter the host's address directly as `host:port`, e.g.
 `192.168.1.20:9307` on a LAN or `100.64.1.5:9307` over a VPN.
@@ -303,7 +321,9 @@ connecting has been checked (on one PC); a third helper actually summoned into a
 ## Troubleshooting
 
 The launcher log (and `launcher.log`) shows the game's `Party:` lines. *System → Party* in the
-game's menu (and the overlay's Party tab) shows the state and the last error.
+game's menu (and the overlay's Party tab) shows the state and the last error. When the host
+refuses a guest, the game may still show its own *Failed to acquire Bloodborne server
+information* box; the party notice and *System → Party* say why.
 
 | Message / symptom | Cause | Fix |
 |---|---|---|
@@ -312,13 +332,18 @@ game's menu (and the overlay's Party tab) shows the state and the last error.
 | *... gameplay mods differ* | Different mods in `mods\` | Use the same gameplay mods, or turn mods off on all PCs. |
 | *... party rules differ (host max 4 players ...; yours max 3 ...)* | Different *Max players* (or 4-player switches) | Set the same Max players everywhere. |
 | *different party protocol version ...: update the port* | Different builds of the port | Everyone updates to the same build. |
-| *wrong password or party code* | Typo, old code, or password differs | Copy the code again; same Password on all sides (or none). |
+| *Old party code: ask the host for the current one* | The code is from an earlier session of the host | Ask the host for the current code (a new party gets a new code). |
+| *This party needs a password* (launcher hint, or in the game) | The host set a password; yours is empty | Enter the host's password (launcher *Password*, or *Party → Password* on the title screen). |
+| *Wrong party password (or an old party code ...)* | Your password differs from the host's | Same Password on all sides; copy the current code again. |
+| *Wrong or missing party password* | Joined by `host:port` and the password differs | Same Password on all sides. |
+| *Failed to acquire Bloodborne server information* when joining a host on the same network with the Internet code | The router cannot loop back to its own public address | Update the port (the guest now finds the host on the LAN by itself), or use the host's **LAN code**. |
 | *the name X is already in the party* / *invalid name* | Duplicate or invalid name | Pick another name (1-16 of A-Z a-z 0-9 _ -). |
 | *the party is full* | Max players reached | Raise Max players (on everyone's PC) or wait. |
 | *kicked by the host* | The host kicked you | Ask the host. |
 | Guest stays at *Connecting* | The host's port is not reachable | Host: check UPnP in the log, forward UDP+TCP 9307, allow the firewall prompt; or use the LAN code / a VPN. |
+| LAN: connected, the bell join times out (~48 s) again and again | 0.5.7 and older: the guest sent game traffic to the host's public address, which the router does not loop back | Update. Workaround for 0.5.7: the host sets *STUN server* to `off` and unchecks *UPnP* (or sets *Public address* to its LAN IP) for LAN play. |
 | Connected, but never summoned | The guest is still in the prologue, in a menu, or the host is in a loading screen / boss fight | Finish the prologue; wait for the next bell (every 30 s); use *Rejoin* (*System → Party*). |
-| No code under *Your code* | The game has not started hosting yet | Wait until the game is at the title screen; check the log for `Party:` errors. |
+| No code under *Internet code* / *LAN code* | The game has not started hosting yet | Wait until the game is at the title screen; check the log for `Party:` errors. |
 | Save looks wrong after a session | - | Restore a backup (above) and report it with the logs. |
 
 When reporting a problem, include `launcher.log` (and `out\run.log` if present) from every

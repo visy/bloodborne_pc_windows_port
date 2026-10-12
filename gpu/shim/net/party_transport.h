@@ -138,6 +138,8 @@ public:
     void set_rpc(RpcFn fn);
     // The host's address and party UDP port as this guest reaches them (PartyLink's peer).
     void set_host_endpoint(std::uint32_t addr_nbo, std::uint16_t port, bool loopback);
+    // The host's online id: its signaling_resolve answer gets the same address fix-up.
+    void set_host_online_id(const std::string& id);
     // An EVENT frame's payload from PartyLink; returns the EventId to ACK (0 when unparsable).
     std::uint64_t on_link_event(const std::string& event_json);
     // The host restarted (PartyLink WELCOME not resumed): its EventIds start again at 1.

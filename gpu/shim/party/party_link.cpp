@@ -426,6 +426,12 @@ std::string set_clause(const char* what, const std::array<std::uint8_t, 32>& hos
 
 }  // namespace
 
+std::string auth_reject_reason(bool host_has_password) {
+    if (host_has_password)
+        return "wrong password, or a party code from another hosting session";
+    return "party code from another hosting session: ask the host for the current one (no password needed)";
+}
+
 std::string identity_mismatch(const LinkConfig& host, const LinkConfig& guest) {
     std::vector<std::string> parts;
     // Each clause: what differs (host's / yours) and what to do about it.
@@ -1310,7 +1316,7 @@ struct PartyLink::Impl {
             if (!crypto::equal32(expect.data(), proof)) {
                 const Key by_password = crypto::auth_proof(password_key, c->hn, c->gn);
                 if (cfg.password.empty() || !crypto::equal32(by_password.data(), proof))
-                    return reject_conn(c, RejectCode::Auth, "wrong password or party code");
+                    return reject_conn(c, RejectCode::Auth, auth_reject_reason(!cfg.password.empty()));
                 c->password_only = true;  // a plain address and the right password
             }
             admit(c);

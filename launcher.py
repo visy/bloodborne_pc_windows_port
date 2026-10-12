@@ -207,6 +207,54 @@ def party_code_problem(code: str) -> str:
     return "not a party code (BBP1-...) or host:port"
 
 
+PARTY_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+PARTY_FLAG_LAN, PARTY_FLAG_PASSWORD = 1, 2  # party_code.h kCodeFlagLan / kCodeFlagPasswordRequired
+
+
+def party_code_flags(code: str):
+    """The flags byte of a valid BBP1 code (checksum checked, as the game decodes it), else None
+    (host:port, a typo, empty)."""
+    t = (code or "").strip().upper()
+    if not t.startswith(("BBP1", "BBPI", "BBPL")):
+        return None
+    vals = []
+    for c in t[4:]:
+        if c in "- \t":
+            continue
+        c = {"I": "1", "L": "1", "O": "0"}.get(c, c)
+        if c not in PARTY_CODE_ALPHABET:
+            return None
+        vals.append(PARTY_CODE_ALPHABET.index(c))
+    if len(vals) != 29:
+        return None
+    acc = bits = 0
+    raw = bytearray()
+    for v in vals:
+        acc = (acc << 5) | v
+        bits += 5
+        if bits >= 8:
+            raw.append((acc >> (bits - 8)) & 0xFF)
+            bits -= 8
+    if len(raw) != 18 or raw[0] != 1:
+        return None
+    crc = 0xFFFF
+    for b in raw[:16]:
+        crc ^= b << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+    if crc != (raw[16] << 8 | raw[17]):
+        return None
+    return raw[1]
+
+
+def party_password_problem(code: str, password: str) -> str:
+    """'' unless the code says the host uses a password and none is entered."""
+    flags = party_code_flags(code)
+    if flags is not None and flags & PARTY_FLAG_PASSWORD and not (password or "").strip():
+        return "This party needs a password"
+    return ""
+
+
 def party_user_dir() -> Path:
     """The game's user folder as run.bat finds it: BB_USER_DIR, else <BB_DATA_DIR or launcher dir>\\user."""
     user = os.environ.get("BB_USER_DIR")
@@ -215,13 +263,34 @@ def party_user_dir() -> Path:
     return Path(os.environ.get("BB_DATA_DIR", str(APP_DIR))) / "user"
 
 
-def read_party_code() -> str:
-    """The last code the hosting game wrote to <user dir>\\party_code.txt ('' if none)."""
+def parse_party_codes(text: str) -> tuple:
+    """(internet, lan) from party_code.txt ("internet=..." / "lan=..." lines; a bare line counts as
+    the Internet code). Either may be ''."""
+    internet = lan = ""
+    for ln in (text or "").splitlines():
+        ln = ln.strip()
+        if ln.startswith("internet="):
+            internet = ln[len("internet="):].strip()
+        elif ln.startswith("lan="):
+            lan = ln[len("lan="):].strip()
+        elif ln and not internet:
+            internet = ln
+    return internet, lan
+
+
+def read_party_codes() -> tuple:
+    """(internet, lan): the codes the hosting game wrote to <user dir>\\party_code.txt ('' if none)."""
     try:
         text = (party_user_dir() / "party_code.txt").read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return ""
-    return next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+        return "", ""
+    return parse_party_codes(text)
+
+
+def read_party_code() -> str:
+    """The code to give friends: the Internet code, else the LAN code ('' if none)."""
+    internet, lan = read_party_codes()
+    return internet or lan
 
 
 def party_saves_module():
@@ -568,6 +637,91 @@ def rotate_launcher_log(keep: int = LOG_HISTORY):
         pass
 
 
+def descendant_pids(root_pid: int) -> list:
+    """Every process started (directly or not) by root_pid, root included (Windows; [root] elsewhere)."""
+    if os.name != "nt":
+        return [root_pid]
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                    ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_void_p),
+                    ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long),
+                    ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_wchar * 260)]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    snap = k32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if not snap or snap == wintypes.HANDLE(-1).value:
+        return [root_pid]
+    parent = {}
+    try:
+        e = PROCESSENTRY32W()
+        e.dwSize = ctypes.sizeof(e)
+        ok = k32.Process32FirstW(snap, ctypes.byref(e))
+        while ok:
+            parent[e.th32ProcessID] = e.th32ParentProcessID
+            ok = k32.Process32NextW(snap, ctypes.byref(e))
+    finally:
+        k32.CloseHandle(snap)
+    out, todo = [root_pid], [root_pid]
+    while todo:
+        p = todo.pop()
+        for child, par in parent.items():
+            if par == p and child not in out and child != p:
+                out.append(child)
+                todo.append(child)
+    return out
+
+
+def close_windows_of(pids: list) -> int:
+    """Posts WM_CLOSE to the visible top-level windows of these processes; how many got it."""
+    if os.name != "nt" or not pids:
+        return 0
+    import ctypes
+    from ctypes import wintypes
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    want = set(pids)
+    hits = []
+    proc_t = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def cb(hwnd, _):
+        pid = wintypes.DWORD()
+        u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value in want and u32.IsWindowVisible(hwnd):
+            hits.append(hwnd)
+        return True
+
+    u32.EnumWindows(proc_t(cb), 0)
+    for hwnd in hits:
+        u32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE: the game shuts down normally (party BYE, UPnP unmap)
+    return len(hits)
+
+
+def stop_tree(proc: subprocess.Popen, timeout: float = 8.0, log=None) -> str:
+    """Stops run.bat and the game: WM_CLOSE to the game's window(s) first, so it exits normally
+    (party BYE, UPnP mappings removed, the GPU released), then kill_tree after `timeout` seconds
+    or when there is no window. Returns "closed", "killed" or "exited"."""
+    say = log or (lambda m: None)
+    if proc.poll() is not None:
+        return "exited"
+    sent = close_windows_of(descendant_pids(proc.pid))
+    if sent:
+        say(f"Stopping: asked the game to close ({sent} window(s)); waiting up to {timeout:.0f} s...")
+        try:
+            proc.wait(timeout=timeout)
+            say("Stopping: the game closed normally.")
+            return "closed"
+        except subprocess.TimeoutExpired:
+            say(f"Stopping: the game did not close in {timeout:.0f} s; force-killing the process tree.")
+    else:
+        say("Stopping: no game window found; force-killing the process tree.")
+    kill_tree(proc)
+    return "killed"
+
+
 def kill_tree(proc: subprocess.Popen):
     """Kill run.bat and everything it started (bbport.exe included)."""
     if os.name == "nt":
@@ -905,7 +1059,9 @@ class BloodborneLauncher(tk.Tk):
         self.party_stun_var = tk.StringVar(value=str(self.settings.get("party_stun", PARTY_DEFAULT_STUN) or ""))
         self.party_password_var = tk.StringVar(value=str(self.settings.get("party_password", "") or ""))
         self.party_code_var = tk.StringVar(value=str(self.settings.get("party_code", "") or ""))
-        self.party_host_code_var = tk.StringVar(value=read_party_code())
+        _internet, _lan = read_party_codes()
+        self.party_host_code_var = tk.StringVar(value=_internet)
+        self.party_lan_code_var = tk.StringVar(value=_lan)
         self.party_status_var = tk.StringVar()
         self.party_test_running = False
         # Party rules & sync dialog (PARTY_SWITCHES, start mode, guest Insight, backups)
@@ -1395,16 +1551,23 @@ class BloodborneLauncher(tk.Tk):
         code_lbl, self.party_code_entry, paste_btn, _ = self._entry(
             sec, "Party code:", self.party_code_var, code_tip, width=20,
             button=("Paste", self.paste_party_code, "Pastes the party code from the clipboard."))
-        host_tip = ("The code of your party, to give to your friends (they paste it with Join a party). "
-                    "The game writes it to party_code.txt in the user folder once it starts hosting, so "
-                    "it appears here after the game has started; it changes when your address or port "
-                    "changes.")
+        host_tip = ("Your party code for friends elsewhere (they paste it with Join a party). It "
+                    "appears after the game starts hosting (user\\party_code.txt). Players on your own "
+                    "network can use it too: the game then finds you on the LAN.")
         host_lbl, self.party_host_code_entry, copy_btn, _ = self._entry(
-            sec, "Your code:", self.party_host_code_var, host_tip, width=20,
-            button=("Copy code", self.copy_party_code, "Copies your party code to the clipboard."))
+            sec, "Internet code\n(friends elsewhere):", self.party_host_code_var, host_tip, width=20,
+            button=("Copy", self.copy_party_code, "Copies the Internet code to the clipboard."))
         self.party_host_code_entry.state(["readonly"])
+        lan_tip = ("Your party code for players on the same network (same router). Use it when the "
+                   "Internet code does not work at home: most routers cannot reach their own public "
+                   "address.")
+        lan_lbl, self.party_lan_code_entry, lan_copy_btn, _ = self._entry(
+            sec, "LAN code\n(same network):", self.party_lan_code_var, lan_tip, width=20,
+            button=("Copy", self.copy_lan_code, "Copies the LAN code to the clipboard."))
+        self.party_lan_code_entry.state(["readonly"])
         self.party_join_row = [code_lbl, self.party_code_entry.master]
-        self.party_host_row = [host_lbl, self.party_host_code_entry.master]
+        self.party_host_row = [host_lbl, self.party_host_code_entry.master,
+                               lan_lbl, self.party_lan_code_entry.master]
         self.party_status_lbl = ttk.Label(sec, textvariable=self.party_status_var, style="Hint.TLabel",
                                           wraplength=340, justify="left")
         self.party_status_lbl.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(2, 0))
@@ -1416,9 +1579,10 @@ class BloodborneLauncher(tk.Tk):
                                  port_lbl, self.party_port_entry, upnp_cb, stun_lbl, self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
         self.party_widgets_host = [public_lbl, self.party_public_entry,
-                                   host_lbl, self.party_host_code_entry, copy_btn]
+                                   host_lbl, self.party_host_code_entry, copy_btn,
+                                   lan_lbl, self.party_lan_code_entry, lan_copy_btn]
         self.party_widgets_join = [code_lbl, self.party_code_entry, paste_btn]
-        for var in (self.party_name_var, self.party_port_var, self.party_code_var):
+        for var in (self.party_name_var, self.party_port_var, self.party_code_var, self.party_password_var):
             var.trace_add("write", lambda *a: self.update_party_hints())
         self.after(2000, self.party_code_tick)
 
@@ -1469,6 +1633,10 @@ class BloodborneLauncher(tk.Tk):
             problem = party_code_problem(self.party_code_var.get())
             if problem:
                 problems.append(f"Party code: {problem}.")
+            else:
+                pw_problem = party_password_problem(self.party_code_var.get(), self.party_password_var.get())
+                if pw_problem:
+                    problems.append(f"{pw_problem}: enter the host's password under Password.")
         return problems
 
     def update_party_hints(self):
@@ -1479,19 +1647,29 @@ class BloodborneLauncher(tk.Tk):
         elif problems:
             text = "✗ " + " ".join(problems)
         elif mode == "host":
-            text = ("Give your code to your friends." if self.party_host_code_var.get() else
-                    "The code appears here after the game starts hosting.")
+            text = ("Give a code to your friends: Internet code for friends elsewhere, LAN code "
+                    "for players on your network."
+                    if self.party_host_code_var.get() or self.party_lan_code_var.get() else
+                    "The codes appear here after the game starts hosting.")
         else:
             text = "✓ Party code OK. Start the game after the host's game is running."
         self.party_status_var.set(text)
         self.party_status_lbl.config(foreground="#d06060" if problems else "#888888")
 
     def refresh_party_code(self):
-        code = read_party_code()
-        if code != self.party_host_code_var.get():
-            self.party_host_code_var.set(code)
-            if code and self.party_mode() == "host":
-                self.log(f"[PARTY] Party code: {code}")
+        internet, lan = read_party_codes()
+        changed = False
+        if internet != self.party_host_code_var.get():
+            self.party_host_code_var.set(internet)
+            changed = True
+            if internet and self.party_mode() == "host":
+                self.log(f"[PARTY] Internet code (friends elsewhere): {internet}")
+        if lan != self.party_lan_code_var.get():
+            self.party_lan_code_var.set(lan)
+            changed = True
+            if lan and self.party_mode() == "host":
+                self.log(f"[PARTY] LAN code (same network): {lan}")
+        if changed:
             self.update_party_hints()
 
     def party_code_tick(self):
@@ -1499,16 +1677,20 @@ class BloodborneLauncher(tk.Tk):
             self.refresh_party_code()
         self.after(2000, self.party_code_tick)
 
-    def copy_party_code(self):
+    def copy_party_code(self, lan: bool = False):
         self.refresh_party_code()
-        code = self.party_host_code_var.get()
+        code = (self.party_lan_code_var if lan else self.party_host_code_var).get()
+        what = "LAN code" if lan else "Internet code"
         if not code:
-            messagebox.showinfo("No party code yet", "The party code appears after the game starts hosting "
+            messagebox.showinfo(f"No {what} yet", f"The {what} appears after the game starts hosting "
                                 f"(it writes {party_user_dir() / 'party_code.txt'}).")
             return
         self.clipboard_clear()
         self.clipboard_append(code)
-        self.log("[PARTY] Party code copied to the clipboard.")
+        self.log(f"[PARTY] {what} copied to the clipboard.")
+
+    def copy_lan_code(self):
+        self.copy_party_code(lan=True)
 
     def paste_party_code(self):
         try:
@@ -2700,9 +2882,16 @@ class BloodborneLauncher(tk.Tk):
 
     def stop_game(self):
         proc = self.proc
-        if proc is not None and proc.poll() is None:
-            self.log("Stopping game process tree...")
-            kill_tree(proc)
+        if proc is not None and proc.poll() is None and not getattr(self, "_stopping", False):
+            self._stopping = True
+            self.stop_btn.config(state="disabled")
+
+            def run():
+                try:
+                    stop_tree(proc, log=self.log_queue.put)
+                finally:
+                    self._stopping = False
+            threading.Thread(target=run, daemon=True).start()
 
     def on_finished(self, rc: int):
         if self.hidden_count:
@@ -2726,7 +2915,21 @@ class BloodborneLauncher(tk.Tk):
         if self.proc is not None and self.proc.poll() is None:
             if not messagebox.askokcancel("Quit", "Bloodborne is still running. Stop it and quit?"):
                 return
-            kill_tree(self.proc)
+            # Close the game normally first (up to 8 s), then quit; the window stays responsive.
+            self.stop_game()
+            self._quit_wait = 0
+
+            def wait_then_quit():
+                self._quit_wait += 1
+                if (self.proc is not None and self.proc.poll() is None) and self._quit_wait < 100:
+                    self.after(100, wait_then_quit)
+                    return
+                if self.proc is not None and self.proc.poll() is None:
+                    kill_tree(self.proc)
+                self.save_settings()
+                self.destroy()
+            self.after(100, wait_then_quit)
+            return
         self.save_settings()
         self.destroy()
 

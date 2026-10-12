@@ -203,6 +203,14 @@ std::string RejectText(RejectCode code, const std::string& reason) {
     }
 }
 
+std::string AuthRejectText(bool coded, bool code_needs_password, bool sent_password) {
+    if (!coded) return "Wrong or missing party password";
+    if (code_needs_password)
+        return sent_password ? "Wrong party password (or an old party code: ask the host for the current one)"
+                             : "This party needs a password: enter the host's password";
+    return "Old party code: ask the host for the current one";
+}
+
 Mapped MapState(const Facts& f) {
     const bool host = f.role == Role::Host;
     if (f.role == Role::Off) return {State::Off, {}};
@@ -275,6 +283,7 @@ std::string SnapshotLine(const status::Board& b) {
     std::string s = std::string("status ") + status::RoleName(b.role) + " " + status::StateName(b.state);
     if (!b.detail.empty()) s += " (" + b.detail + ")";
     if (!b.code.empty()) s += " code " + b.code;
+    if (!b.lan_code.empty()) s += " lan " + b.lan_code;
     s += "; members " + std::to_string(b.members.size());
     if (!b.members.empty()) {
         s += ":";
@@ -306,6 +315,7 @@ void OnRuntimeStart(bool host, const std::string& name) {
 
 void OnCode(const std::string& code) { status::SetCode(code); }
 void OnGuestCode(const std::string& code) { status::SetGuestCode(code); }
+void OnLanCode(const std::string& code) { status::SetLanCode(code); }
 
 void OnRuntimeError(const std::string& error) {
     bool have_link;

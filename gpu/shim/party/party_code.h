@@ -54,6 +54,12 @@ std::string make_party_code(const std::array<std::uint8_t, 4>& ipv4, std::uint16
 bool make_lan_code(std::uint16_t port, const std::array<std::uint8_t, 8>& secret, std::uint8_t flags,
                    std::string* code);
 
+// A guest joining with this code uses no password: a BBP1 code whose host set none
+// (no kCodeFlagPasswordRequired). A plain host:port carries no flags: the password is kept.
+inline bool code_ignores_password(const PartyCode& code) {
+    return !code.plain && !(code.flags & kCodeFlagPasswordRequired);
+}
+
 bool parse_ipv4(std::string_view s, std::array<std::uint8_t, 4>* out);
 std::string format_ipv4(const std::array<std::uint8_t, 4>& ip);
 

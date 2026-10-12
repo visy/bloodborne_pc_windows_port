@@ -133,5 +133,12 @@ inline std::string ip_text(std::uint32_t nbo) {
     return buf;
 }
 inline bool ip_is_loopback(std::uint32_t nbo) { return (nbo & 0xff) == 127; }
+// A private / LAN address (network order): 10/8, 172.16/12, 192.168/16, 100.64/10 (CGNAT, VPNs
+// such as Tailscale), 169.254/16 (link-local). Not loopback.
+inline bool ip_is_private(std::uint32_t nbo) {
+    const std::uint8_t a = nbo & 0xff, b = (nbo >> 8) & 0xff;
+    return a == 10 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168) || (a == 100 && b >= 64 && b <= 127) ||
+           (a == 169 && b == 254);
+}
 
 }  // namespace bbnet::party

@@ -142,6 +142,11 @@ void RemoteGuest::set_host_endpoint(std::uint32_t addr_nbo, std::uint16_t port, 
     st_->host_loopback = loopback;
 }
 
+void RemoteGuest::set_host_online_id(const std::string& id) {
+    std::lock_guard<std::mutex> lk(st_->mu);
+    st_->host_online = id;
+}
+
 bool RemoteGuest::host_is_local() const {
     std::lock_guard<std::mutex> lk(st_->mu);
     return st_->host_loopback;
@@ -164,12 +169,31 @@ void RemoteGuest::fix_host_addresses(json::Value& v) const {
         const std::uint32_t x = ip_parse(a);
         return !x || (ip_is_loopback(x) && !loopback);
     };
+    // The link reached the host on a LAN / VPN address: game traffic takes that path too, never
+    // the advertised public endpoint (a router without hairpin NAT drops it; live: the bell
+    // join timed out after 48 s with 9 datagrams each way).
+    const bool lan_link = ip_is_private(addr);
     auto fix_record = [&](json::Value& r, const char* addr_key, const char* port_key) {
         if (r.type != json::Value::Type::Object) return;
-        if (!unusable(str_of(r, addr_key))) return;
+        const std::string have = str_of(r, addr_key);
+        if (lan_link && ip_parse(have) != addr) {
+            r.set(addr_key, ip_text(addr));
+            r.set(port_key, static_cast<int>(port));
+            return;
+        }
+        if (!unusable(have)) return;
         r.set(addr_key, ip_text(addr));
         if (int_of(r, port_key, 0) <= 0) r.set(port_key, static_cast<int>(port));
     };
+    if (str_of(v, "Name").empty() && v.find("ResKind") && !v.find("Members") && !v.find("RoomId")) {  // signaling_resolve
+        std::string host_online;
+        {
+            std::lock_guard<std::mutex> lk(st_->mu);
+            host_online = st_->host_online;
+        }
+        if (!host_online.empty() && str_of(v, "OnlineId") == host_online) fix_record(v, "Addr", "Port");
+        return;
+    }
     if (str_of(v, "Name") == "guest_invite") {
         fix_record(v, "HostAddr", "HostPort");
         return;
@@ -204,7 +228,8 @@ bool RemoteGuest::rpc(const char* kind, const json::Value& request, json::Value&
         error = "bad reply: " + error;
         return false;
     }
-    if (std::string(kind) == call::kJoinRoom) fix_host_addresses(reply);
+    if (std::string(kind) == call::kJoinRoom || std::string(kind) == call::kSignalingResolve)
+        fix_host_addresses(reply);
     return true;
 }
 

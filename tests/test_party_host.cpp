@@ -721,6 +721,53 @@ static void test_remote_guest() {
     std::printf("remote guest seam: ok\n");
 }
 
+// A guest whose party link reached the host on its LAN address (LAN code / LAN fallback): the
+// host's advertised public endpoint (STUN / UPnP) is replaced by the link's address in the room
+// records and in signaling_resolve, so game traffic never takes the router's hairpin (live 2-PC:
+// the bell join timed out after 48 s). Other members' records are left alone.
+static void test_remote_guest_lan() {
+    bbnet::party::RemoteGuest rg;
+    PartyHostService svc;
+    svc.set_host_endpoint("HostVisy", "89.27.12.144", 9307);
+    rg.set_rpc([&](const char* kind, const std::string& rq, std::string& out, std::string& e, int) {
+        json::Value v, r;
+        if (!json::parse(rq, v, e)) return false;
+        svc.handle(Caller{"GuestVisy", bbnet::party::ip_parse("192.168.1.113")}, kind, v, r);
+        out = json::dump(r, 0);
+        return true;
+    });
+    call(svc, "HostVisy", "context_start",
+         obj({{"OnlineId", "HostVisy"}, {"SignalingAddr", "192.168.1.112"}, {"SignalingPort", 9307}}));
+    call(svc, "HostVisy", "signaling_update",
+         obj({{"OnlineId", "HostVisy"}, {"MappedAddr", "89.27.12.144"}, {"MappedPort", 9307}}));
+    json::Value made = call(svc, "HostVisy", "create_room", obj({{"OnlineId", "HostVisy"}}));
+    json::Value reply;
+    std::string err;
+    // Before the fix-up the host's record says its public address.
+    CHECK(rg.ok_call("signaling_resolve", obj({{"OnlineId", "HostVisy"}}), reply, err));
+    CHECK(str_of(reply, "Addr") == "89.27.12.144");
+    // Public link (an Internet guest): unchanged.
+    rg.set_host_online_id("HostVisy");
+    rg.set_host_endpoint(bbnet::party::ip_parse("89.27.12.144"), 9307, false);
+    CHECK(rg.ok_call("signaling_resolve", obj({{"OnlineId", "HostVisy"}}), reply, err));
+    CHECK(str_of(reply, "Addr") == "89.27.12.144");
+    // LAN link: the host's LAN address, in signaling_resolve and the join_room records.
+    rg.set_host_endpoint(bbnet::party::ip_parse("192.168.1.112"), 9307, false);
+    CHECK(rg.ok_call("signaling_resolve", obj({{"OnlineId", "HostVisy"}}), reply, err));
+    CHECK(str_of(reply, "Addr") == "192.168.1.112" && int_of(reply, "Port", 0) == 9307);
+    CHECK(rg.ok_call("context_start",
+                     obj({{"OnlineId", "GuestVisy"}, {"SignalingAddr", "192.168.1.113"}, {"SignalingPort", 9307}}),
+                     reply, err));
+    CHECK(rg.ok_call("join_room", obj({{"RoomId", int_of(made, "RoomId", 0)}}), reply, err));
+    const json::Value* m = reply.find("Members");
+    CHECK(m && m->array.size() == 1 && str_of(m->array[0], "Addr") == "192.168.1.112");
+    // Another member's answer (not the host) is not touched.
+    call(svc, "Other", "context_start", obj({{"OnlineId", "Other"}, {"SignalingAddr", "203.0.113.9"}, {"SignalingPort", 9307}}));
+    CHECK(rg.ok_call("signaling_resolve", obj({{"OnlineId", "Other"}}), reply, err));
+    CHECK(str_of(reply, "Addr") == "203.0.113.9");
+    std::printf("remote guest over a LAN link: host records use its LAN address\n");
+}
+
 // BB_PARTY_MAX=4 (a separate run: party_max_members() is read once): host + 3 guests in one room,
 // every member hears the others' joins, a 4th guest is refused.
 static void test_service_four() {
@@ -1095,6 +1142,7 @@ int main() {
     } else {
     test_service();
     test_remote_guest();
+    test_remote_guest_lan();
     test_matching2_host();
     test_from_api();
     test_chalice_channels();

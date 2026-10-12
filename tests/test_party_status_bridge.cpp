@@ -60,6 +60,15 @@ static int test_map_state() {
     f.reject = RejectCode::Mismatch;
     f.reject_reason = "eboot.bin differs";
     CHECK(MapState(f).detail == "host refused: eboot.bin differs");
+    // Auth: the guest's own words (what it joined with) replace the host's generic reason.
+    CHECK(party::bridge::AuthRejectText(true, false, false).rfind("Old party code", 0) == 0);
+    CHECK(party::bridge::AuthRejectText(true, false, true).rfind("Old party code", 0) == 0);  // the saved password was ignored
+    CHECK(party::bridge::AuthRejectText(true, true, false).find("needs a password") != std::string::npos);
+    CHECK(party::bridge::AuthRejectText(true, true, true).rfind("Wrong party password", 0) == 0);
+    CHECK(party::bridge::AuthRejectText(false, false, false) == "Wrong or missing party password");
+    f.reject = RejectCode::Auth;
+    f.reject_reason = party::bridge::AuthRejectText(true, true, false);
+    CHECK(MapState(f).state == State::Error && MapState(f).detail == f.reject_reason);
     f.reject = RejectCode::Shutdown;
     f.reject_reason.clear();
     CHECK(MapState(f).state == State::Off && MapState(f).detail == "the host ended the party");

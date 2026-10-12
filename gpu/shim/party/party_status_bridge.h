@@ -65,6 +65,9 @@ std::vector<status::Member> MapMembers(const std::vector<RosterEntry>& roster, c
                                        bool host, const std::function<std::string(std::uint32_t)>& area = {});
 /// "kicked by the host", "the host ended the party", the host's mismatch text ...
 std::string RejectText(RejectCode code, const std::string& reason);
+/// A guest's own words for an Auth refusal, from what it knows: whether it joined with a BBP1 code
+/// (`coded`), whether that code says the host has a password, and whether it sent one.
+std::string AuthRejectText(bool coded, bool code_needs_password, bool sent_password);
 /// One line for BB_PARTY_STATUS_LOG.
 std::string SnapshotLine(const status::Board& b);
 
@@ -72,6 +75,8 @@ std::string SnapshotLine(const status::Board& b);
 void OnRuntimeStart(bool host, const std::string& name);
 void OnCode(const std::string& code);
 void OnGuestCode(const std::string& code);
+/// Host: the LAN code beside the Internet code (empty: only one code).
+void OnLanCode(const std::string& code);
 void OnRuntimeError(const std::string& error);
 void OnHostAddress(const std::string& address);
 void OnLinkState(LinkState state, const std::string& detail, RejectCode reject, const std::string& reason);

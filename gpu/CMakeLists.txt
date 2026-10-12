@@ -463,7 +463,7 @@ if (WIN32)
 endif()
 # The link layer only: the other shim/party files (runtime wiring, game-side co-op) need the game.
 set(PARTY_LINK_SOURCES shim/party/party_link.cpp shim/party/party_rudp.cpp shim/party/party_code.cpp shim/party/party_addr.cpp
-    shim/party/party_crypto.cpp shim/party/upnp_win.cpp)
+    shim/party/party_crypto.cpp shim/party/party_lan.cpp shim/party/upnp_win.cpp)
 add_executable(party-link-test EXCLUDE_FROM_ALL ../tests/test_party_link.cpp ${PARTY_LINK_SOURCES}
     shim/net/net_stun.cpp shim/net/netsim.cpp third_party/monocypher/monocypher.c)
 target_compile_options(party-link-test PRIVATE -UNDEBUG -Wall -Wextra)

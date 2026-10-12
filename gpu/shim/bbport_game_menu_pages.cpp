@@ -368,6 +368,22 @@ bool Running(const party::status::Board& b) {
     return Active(b) && b.state != party::status::State::Off;
 }
 
+/// The Copy party code row with two codes (host: Internet + LAN): which one the next press copies
+/// (0 Internet, 1 LAN), which one was copied last and when (the Poll clock, ms).
+std::atomic<int> copy_next{0}, copied_which{-1};
+std::atomic<std::int64_t> copied_at{0};
+bool TwoCodes(const party::status::Board& b) {
+    return b.role == party::status::Role::Host && !b.code.empty() && !b.lan_code.empty();
+}
+Texts CopyValue(const party::status::Board& b, bool pressed) {
+    if (!TwoCodes(b)) return pressed ? T2("Copied", "Скопирован") : T2("Copy", "Копировать");
+    if (copied_which.load() >= 0 && last_refresh.load() - copied_at.load() < 2500)
+        return copied_which.load() == 1 ? T2("LAN code copied", "Код LAN скопирован")
+                                        : T2("Internet code copied", "Интернет-код скопирован");
+    return copy_next.load() == 1 ? T2("Copy LAN code", "Копировать код LAN")
+                                 : T2("Copy Internet code", "Копировать интернет-код");
+}
+
 /// The Party page's own rows (orders 10..40): status, copy code, rejoin, leave. The join/leave
 /// notices switch and the last event are on the Party members page (room for the party flow's
 /// rows here).
@@ -400,15 +416,21 @@ void DefineBuiltinPartyRows() {
     };
     party_rows.push_back({status});
 
+    // Copy party code. A host with two codes (party_status.h lan_code): the presses alternate
+    // between the Internet code (friends elsewhere) and the LAN code (same network); the value
+    // says which comes next and which was just copied. The help line shows both.
     PartyRow copy;
     copy.order = 20;
     copy.name = [](const B&) { return T2("Copy party code", "Копировать код"); };
-    copy.value = [](const B&) { return T2("Copy", "Копировать"); };
-    copy.pressed = [](const B&) { return T2("Copied", "Скопирован"); };
+    copy.value = [](const B& b) { return CopyValue(b, false); };
+    copy.pressed = [](const B& b) { return CopyValue(b, true); };
     copy.help = [](const B& b) {
         if (!b.enabled) return T2("Party mode is off", "Режим группы выключен");
         if (b.code.empty()) return T2("The party code is not known yet", "Код группы ещё неизвестен");
         const bool host = b.role == ps::Role::Host;
+        if (TwoCodes(b))
+            return Texts{"Internet: " + b.code + "  LAN: " + b.lan_code,
+                         "Интернет: " + b.code + "  LAN: " + b.lan_code};
         return Texts{std::string(host ? "Left/right: copy the code for friends: " : "Left/right: copy the code: ") +
                          b.code,
                      std::string(host ? "Влево/вправо: копировать код для друзей: " : "Влево/вправо: копировать код: ") +
@@ -416,7 +438,18 @@ void DefineBuiltinPartyRows() {
     };
     copy.visible = [](const B& b) { return Running(b); }; // party flow: the solo title's rows instead
     copy.press = PartyRow::Press::Once;
-    copy.run = [](const B&) { ps::RequestCopyCode(); };
+    copy.run = [](const B& b) {
+        if (!TwoCodes(b)) {
+            ps::RequestCopyCode();
+            return;
+        }
+        const int which = copy_next.load();
+        if (which == 1 ? ps::RequestCopyLanCode() : ps::RequestCopyCode()) {
+            copied_which = which;
+            copied_at = last_refresh.load();
+            copy_next = 1 - which;
+        }
+    };
     party_rows.push_back({copy});
 
     PartyRow rejoin;

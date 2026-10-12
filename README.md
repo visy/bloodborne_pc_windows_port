@@ -168,6 +168,15 @@ single-player save is never touched. Settings: *System → Party* pages in the g
 The host needs port 9307 (UDP and TCP) reachable. Most routers open it automatically (UPnP);
 otherwise forward it by hand. Allow the Windows Firewall prompt once. Guests need nothing.
 
+The host gets two party codes (launcher, *System → Party*):
+
+| Code | For |
+|---|---|
+| **Internet code** | Friends elsewhere |
+| **LAN code** | Players on the host's network (same router) |
+
+A guest on the host's network with the Internet code finds the host on the LAN by itself (~2 s).
+
 No UPnP and no port forward? Each guest copies its **guest code** (`BBG1-...`, *Party* page) and
 sends it to the host, who presses *Add a guest code*: the game then connects through both routers
 (hole punching). This fails behind symmetric / carrier-grade NAT (some mobile and ISP

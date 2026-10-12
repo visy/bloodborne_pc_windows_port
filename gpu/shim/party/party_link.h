@@ -199,6 +199,10 @@ struct LinkConfig {
 // with the names only one side has; empty when they match. The host sends it as the Mismatch
 // REJECT reason (the guest's party UI shows it).
 std::string identity_mismatch(const LinkConfig& host, const LinkConfig& guest);
+// The Auth REJECT reason the host sends (the guest's party UI shows it): with a password the
+// usual cause is a wrong one; without, a party code from another hosting session (or a guest
+// that sent a password the host does not use).
+std::string auth_reject_reason(bool host_has_password);
 // A9: is an installed hook's name a diagnostic (log / probe / trace / test), not a gameplay patch?
 bool diagnostic_hook_name(const std::string& name);
 // A9: the party hook set's hash: BLAKE2b-256 over the sorted, de-duplicated names (diagnostics

@@ -25,6 +25,7 @@
 #include "game_state.h"
 #include "upnp_win.h"
 #include "party_rudp.h"
+#include "party_lan.h"
 
 #include "../net/bbnet_internal.h"
 #include "../net/np_hle.h"
@@ -401,6 +402,8 @@ struct Runtime {
     std::array<std::uint8_t, 8> secret{};  // host: the party code's secret (kept across a crash)
     // guest
     std::uint32_t host_ip_nbo = 0;
+    // Guest: what it joined with, for a readable Auth refusal (bridge::AuthRejectText).
+    bool code_coded = false, code_needs_password = false, sent_password = false;
     std::uint16_t host_port = 0;
     bool was_connected = false;
     std::uint64_t loss_gen = 0;  // bumps on every link state change (host-lost grace check)
@@ -580,7 +583,13 @@ void on_state(LinkState s, const std::string& detail) {
         gen = ++r.loss_gen;
     }
     if (!link) return;
-    bridge::OnLinkState(s, detail, link->reject_code(), link->reject_reason());
+    std::string reason = link->reject_reason();
+    if (!host && s == LinkState::Rejected && link->reject_code() == RejectCode::Auth) {
+        std::lock_guard<std::mutex> lk(r.mu);
+        reason = bridge::AuthRejectText(r.code_coded, r.code_needs_password, r.sent_password);
+    }
+    if (s == LinkState::Rejected && !host) plog("refused by the host: %s", reason.c_str());
+    bridge::OnLinkState(s, detail, link->reject_code(), reason);
     if (!host && (s == LinkState::Reconnecting || s == LinkState::Rejected)) {
         bool first = false;
         {
@@ -707,6 +716,11 @@ void on_roster(const std::vector<RosterEntry>& roster) {
         }
     }
     if (log_it) plog("roster: %s", roster_text(roster, true).c_str());
+    // Guest: the host's name, so its signaling_resolve answer gets the link's (LAN) address too.
+    if (bbnet::party::RemoteGuest* rg = bbnet::party::remote_guest()) {
+        for (const RosterEntry& e : roster)
+            if (e.slot == kHostSlot) rg->set_host_online_id(e.name);
+    }
     PartyLink* link = runtime_link();
     bridge::OnRoster(roster, link ? link->max_players() : 0);
 }
@@ -999,6 +1013,67 @@ void add_guest_code_text(const std::string& text);
 void punch_guest_codes_tick();
 void attach_udp_path(PartyLink* link);
 
+// ---- LAN discovery (party_lan.h): the host answers same-network probes for its party ----
+// BB_PARTY_LAN_DISCOVERY=0 turns both sides off.
+struct LanResponder {
+    std::mutex mu;
+    bool on = false;
+    std::vector<crypto::Key> keys;  // the party key; with a password also the password-only key
+    std::array<std::uint8_t, 4> ip{};
+    std::uint16_t port = 0;
+    lan::ReplyLimiter limiter;
+    std::uint64_t answered = 0;
+};
+LanResponder& lan_responder() {
+    static LanResponder* l = new LanResponder;
+    return *l;
+}
+bool lan_discovery_enabled() {
+    const char* v = env("BB_PARTY_LAN_DISCOVERY");
+    if (!v) return true;
+    const std::string t = lower(v);
+    return !(t == "0" || t == "off" || t == "false" || t == "no");
+}
+void lan_responder_start(const LinkConfig& cfg, bool lb) {
+    if (!lan_discovery_enabled()) {
+        plog("LAN discovery: off (BB_PARTY_LAN_DISCOVERY=0)");
+        return;
+    }
+    std::vector<crypto::Key> keys{crypto::derive_party_key(cfg.password, cfg.secret.data())};
+    if (!cfg.password.empty()) {
+        const std::array<std::uint8_t, 8> no_secret{};
+        keys.push_back(crypto::derive_party_key(cfg.password, no_secret.data()));
+    }
+    std::array<std::uint8_t, 4> ip{127, 0, 0, 1};
+    if (!lb && !best_local_ipv4(&ip)) ip = {0, 0, 0, 0};
+    LanResponder& l = lan_responder();
+    std::lock_guard<std::mutex> lk(l.mu);
+    l.keys = std::move(keys);
+    l.ip = ip;
+    l.port = cfg.port;
+    l.on = true;
+}
+// The party UDP port's reader thread: a probe for our party gets our LAN address and port.
+void lan_on_datagram(std::uint32_t a, std::uint16_t p, const std::uint8_t* d, std::size_t n) {
+    LanResponder& l = lan_responder();
+    std::vector<std::uint8_t> reply;
+    std::uint64_t count = 0;
+    {
+        std::lock_guard<std::mutex> lk(l.mu);
+        if (!l.on) return;
+        reply = lan::answer_probe(l.keys, d, n, l.ip, l.port, &l.limiter, Clock::now());
+        if (reply.empty()) return;
+        count = ++l.answered;
+    }
+    bbnet::p2p_send_raw(a, p, reply.data(), reply.size());
+    if (count <= 5 || count % 100 == 0) {
+        const auto* b = reinterpret_cast<const std::uint8_t*>(&a);
+        plog("LAN discovery: answered a probe from %u.%u.%u.%u:%u (%llu so far)", b[0], b[1], b[2], b[3],
+             static_cast<unsigned>(static_cast<std::uint16_t>((p >> 8) | (p << 8))),
+             static_cast<unsigned long long>(count));
+    }
+}
+
 void start_host(LinkConfig cfg) {
     Runtime& r = R();
     const bool lb = loopback_mode();
@@ -1076,6 +1151,7 @@ void start_host(LinkConfig cfg) {
     }
     coop::PartyDirector::Get().SetLink(link);
     write_marker();
+    lan_responder_start(cfg, lb);
 
     bbnet::party::PartyHostService& svc = bbnet::party::PartyHostService::instance();
     svc.set_loading_query([](const std::string& id) {
@@ -1160,6 +1236,7 @@ void start_host(LinkConfig cfg) {
         r.st.local_slot = 0;
     }
     bridge::OnCode(!internet.empty() ? internet : lan);
+    bridge::OnLanCode(!internet.empty() ? lan : std::string());  // the second code, when there are two
     plog("hosting on port %u as %s; code (Internet): %s; code (LAN): %s", port, name.c_str(),
          internet.empty() ? "(no public address: set BB_PARTY_PUBLIC_ADDR)" : internet.c_str(),
          lan.empty() ? "(no LAN address)" : lan.c_str());
@@ -1185,6 +1262,7 @@ void attach_udp_path(PartyLink* link) {
         return bbnet::p2p_send_raw(a, p, d, n);
     });
     bbnet::p2p_set_link_handler([](std::uint32_t a, std::uint16_t p, const std::uint8_t* d, std::size_t n) {
+        if (lan::is_lan(d, n)) return lan_on_datagram(a, p, d, n);
         if (PartyLink* l = runtime_link()) l->on_udp_datagram(a, p, d, n);
     });
 }
@@ -1628,6 +1706,54 @@ bool guest_code(PartyCode* code, std::string* error, std::string* used) {
     return false;
 }
 
+// Guest with an Internet code (or host:port with a password): a host on our own network is often
+// unreachable at its public address (no hairpin NAT on the router). When that address does not
+// answer a TCP connect within 1.5 s, or our own public address (STUN) is the code's, ask the LAN
+// (party_lan.h, ~2 s): a host of this party answers with its LAN address, and we join that.
+void lan_fallback(const PartyCode& code, const LinkConfig& cfg, std::array<std::uint8_t, 4>* ip, std::uint16_t* port) {
+    if (code.flags & kCodeFlagLan) return;           // already a LAN address
+    if (code.plain && cfg.password.empty()) return;  // no secret and no password: nothing to prove
+    if (!lan_discovery_enabled()) return;
+    const bool lb = loopback_mode();
+    std::uint32_t nbo = 0;
+    std::memcpy(&nbo, ip->data(), 4);
+    std::string why;
+    if (!lan::tcp_reachable(nbo, *port, 1500)) {
+        why = "the host's address " + format_ipv4(*ip) + ":" + std::to_string(*port) + " did not answer in 1.5 s";
+    } else if (!lb) {
+        const char* stun_env = env("BB_PARTY_STUN");
+        const std::string server = stun_env ? stun_env : "stun.l.google.com:19302";
+        if (server != "off" && server != "0") {
+            std::string host_part = server;
+            std::uint16_t sport = 19302;
+            if (const auto c = server.rfind(':'); c != std::string::npos) {
+                host_part = server.substr(0, c);
+                sport = static_cast<std::uint16_t>(std::strtoul(server.c_str() + c + 1, nullptr, 10));
+            }
+            std::uint32_t ma = 0;
+            std::uint16_t mp = 0;
+            if (bbnet::p2p_stun(host_part.c_str(), sport, 1000, &ma, &mp) && ma == nbo)
+                why = "our public address is the host's (same network)";
+        }
+    }
+    if (why.empty()) return;
+    const std::array<std::uint8_t, 8> no_secret{};
+    const crypto::Key key = crypto::derive_party_key(cfg.password, code.plain ? no_secret.data() : code.secret.data());
+    const std::vector<std::uint32_t> targets = lb ? std::vector<std::uint32_t>{0x0100007fu} : lan::broadcast_targets();
+    plog("LAN fallback: %s; looking for the host on this network (port %u)", why.c_str(), *port);
+    lan::Found f;
+    std::string note;
+    if (lan::discover(key, targets, *port, 2000, lb, &f, &note)) {
+        std::memcpy(ip->data(), &f.addr_nbo, 4);
+        *port = f.port;
+        plog("LAN fallback: found host at %s:%u (it reports %s; %s)", format_ipv4(*ip).c_str(), *port,
+             format_ipv4(f.said).c_str(), note.c_str());
+    } else {
+        plog("LAN fallback: no host of this party answered on this network (%s); trying %s:%u", note.c_str(),
+             format_ipv4(*ip).c_str(), *port);
+    }
+}
+
 void start_guest(LinkConfig cfg) {
     Runtime& r = R();
     PartyCode code;
@@ -1648,15 +1774,25 @@ void start_guest(LinkConfig cfg) {
     cfg.secret = code.secret;
     if ((code.flags & kCodeFlagPasswordRequired) && cfg.password.empty())
         plog("warning: the host requires a password (BB_PARTY_PASSWORD)");
+    if (code_ignores_password(code) && !cfg.password.empty()) {
+        // A launcher / party.json password left over from another party would make the key differ
+        // from the host's (argon2(password || secret)): "wrong password or party code".
+        plog("code needs no password; saved password ignored");
+        cfg.password.clear();
+    }
+    if (!bbnet::p2p_open()) plog("warning: cannot open the party UDP port %u (another program?)", bbnet::settings().party_port);
+    lan_fallback(code, cfg, &ip, &port);
     std::uint32_t nbo = 0;
     std::memcpy(&nbo, ip.data(), 4);
-    if (!bbnet::p2p_open()) plog("warning: cannot open the party UDP port %u (another program?)", bbnet::settings().party_port);
     auto* link = new PartyLink(cfg, make_callbacks(false));
     attach_udp_path(link);
     {
         std::lock_guard<std::mutex> lk(r.mu);
         r.link = link;
         r.host_ip_nbo = nbo;
+        r.code_coded = !code.plain;
+        r.code_needs_password = (code.flags & kCodeFlagPasswordRequired) != 0;
+        r.sent_password = !cfg.password.empty();
         r.host_port = port;
         r.st.host_address = format_ipv4(ip) + ":" + std::to_string(port);
         r.cfg = cfg;

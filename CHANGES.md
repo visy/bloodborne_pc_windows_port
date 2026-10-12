@@ -3,6 +3,16 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## 0.5.8 (unreleased)
+
+- **Both party codes shown**: the launcher, *System → Party* and the overlay's Party tab show the host's **Internet code** (friends elsewhere) and **LAN code** (same network), each with its own copy button. The launcher used to show the raw `internet=...` line.
+- **Same-network fallback**: a guest on the host's network using the Internet code (routers without hairpin NAT gave "Failed to acquire Bloodborne server information") now finds the host on the LAN by itself, in about 2 s. Probes carry only a hash of the code's secret; the host answers only its own party, rate-limited.
+- **Saved password ignored for codes without one**: a password left in the guest's launcher no longer causes "wrong password or party code" when the host has none.
+- **LAN bell join fixed**: a guest that reached the host on its LAN address sent the game's traffic to the host's public address (the router dropped it; the bell join timed out after ~48 s). It now uses the host's LAN address, and a peer that answers on its LAN address is reached there.
+- **Password checks before joining**: the launcher (and the title screen's *Party* page) says "This party needs a password" when the code needs one and the password is empty.
+- **Clearer join refusal**: the guest's notice and *System → Party* say "Old party code: ask the host for the current one", "This party needs a password" or "Wrong party password" instead of only the game's "Failed to acquire Bloodborne server information".
+- **Launcher Stop closes the game normally**: Stop and quitting the launcher ask the game to close (party goodbye, UPnP mapping removed, GPU released) and kill it only after 8 s. A force-kill could leave bbport.exe stuck with port 9307 held.
+
 ## 0.5.7 (Windows port 0.5.7, hotfix)
 
 - **No automatic button presses in manual play**: starting a party from the launcher pressed Confirm repeatedly through character creation and name entry. The automatic *Continue* now runs only when asked for (automated tests, *Continue party game* / *Join party game* with an existing character, a crash restart) and stops after 40 s.

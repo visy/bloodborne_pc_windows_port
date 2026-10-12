@@ -111,6 +111,14 @@ void SetCode(const std::string& code) {
     }
 }
 
+void SetLanCode(const std::string& code) {
+    std::scoped_lock lock{mutex};
+    if (board.lan_code != code) {
+        board.lan_code = code;
+        ++board.version;
+    }
+}
+
 void SetGuestCode(const std::string& code) {
     std::scoped_lock lock{mutex};
     if (board.guest_code != code) {
@@ -194,6 +202,15 @@ bool RequestCopyCode() {
     {
         std::scoped_lock lock{mutex};
         code = board.code;
+    }
+    return CopyText(code);
+}
+
+bool RequestCopyLanCode() {
+    std::string code;
+    {
+        std::scoped_lock lock{mutex};
+        code = board.lan_code;
     }
     return CopyText(code);
 }

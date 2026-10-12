@@ -7,6 +7,7 @@
 #include "net_stun.h"
 #include "netsim.h"
 #include "party_udp.h"
+#include "party_util.h"
 #include "json.h"
 #include "gpu/bbnet.h"
 
@@ -194,6 +195,47 @@ static void test_peer_paths() {
     forced.tick(at(20), &probes, &notes);
     CHECK(forced.relayed(a, pa, &rp));
     std::printf("peer paths: ok\n");
+}
+
+// EndpointAliases / punch_choice (party_udp.h): a peer heard on its LAN address keeps its public
+// address in the game; the local punch candidate wins when heard.
+static void test_aliases() {
+    using bbnet::udp::EndpointAliases;
+    using bbnet::party::ip_parse;
+    EndpointAliases al;
+    const std::uint32_t pub = ip_parse("89.27.12.144"), lan = ip_parse("192.168.1.112");
+    const std::uint16_t p = htons(9307), lp = htons(9307);
+    std::uint32_t a = pub;
+    std::uint16_t q = p;
+    CHECK(!al.outgoing(&a, &q) && a == pub);
+    al.set(pub, p, lan, lp);
+    CHECK(al.outgoing(&a, &q) && a == lan && q == lp);
+    CHECK(al.incoming(&a, &q) && a == pub && q == p);
+    std::uint32_t other = ip_parse("192.168.1.50");
+    std::uint16_t op = lp;
+    CHECK(!al.incoming(&other, &op) && other == ip_parse("192.168.1.50"));
+    // Re-pointing replaces the old alias both ways.
+    const std::uint32_t lan2 = ip_parse("10.0.0.5");
+    al.set(pub, p, lan2, lp);
+    a = lan;
+    q = lp;
+    CHECK(!al.incoming(&a, &q));
+    a = pub;
+    q = p;
+    CHECK(al.outgoing(&a, &q) && a == lan2);
+    al.clear(pub, p);
+    a = pub;
+    CHECK(!al.outgoing(&a, &q) && al.size() == 0);
+    CHECK(bbnet::udp::punch_choice(true, true, true) == 1);
+    CHECK(bbnet::udp::punch_choice(false, true, true) == 1);
+    CHECK(bbnet::udp::punch_choice(true, false, true) == 0);
+    CHECK(bbnet::udp::punch_choice(false, false, false) == 0);
+    using bbnet::party::ip_is_private;
+    CHECK(ip_is_private(ip_parse("192.168.1.112")) && ip_is_private(ip_parse("10.1.2.3")) &&
+          ip_is_private(ip_parse("172.20.0.1")) && ip_is_private(ip_parse("100.100.1.1")));
+    CHECK(!ip_is_private(ip_parse("89.27.12.144")) && !ip_is_private(ip_parse("172.32.0.1")) &&
+          !ip_is_private(ip_parse("127.0.0.1")) && !ip_is_private(ip_parse("100.128.0.1")));
+    std::printf("endpoint aliases: ok\n");
 }
 
 static void test_netsim() {
@@ -742,6 +784,7 @@ int main() {
     test_stun();
     test_netsim();
     test_peer_paths();
+    test_aliases();
     test_routing();
     test_np();
     test_dispatcher();

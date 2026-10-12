@@ -275,6 +275,8 @@ void Poll() {
         }
         s.host_address = a;
         g_message = a.empty() ? "Host address cleared" : "Host address saved";
+        if (!a.empty() && !code.plain && (code.flags & kCodeFlagPasswordRequired) && s.password.empty())
+            g_message = "Saved. This party needs a password: set Password";
         break;
     }
     case Field::Password:

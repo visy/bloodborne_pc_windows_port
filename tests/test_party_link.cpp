@@ -7,6 +7,7 @@
 #include "party/party_addr.h"
 #include "party/party_code.h"
 #include "party/party_crypto.h"
+#include "party/party_lan.h"
 #include "party/party_link.h"
 #include "party/party_rudp.h"
 #include "net/netsim.h"
@@ -318,6 +319,7 @@ static void test_party() {
         CHECK(bad.start_guest("127.0.0.1", port, &err));
         CHECK(bad.wait_state(LinkState::Rejected, 5000));
         CHECK(bad.reject_code() == RejectCode::Auth);
+        CHECK(bad.reject_reason() == auth_reject_reason(true));  // the host has a password
         std::printf("  wrong password: %s\n", bad.reject_reason().c_str());
     }
     {
@@ -504,6 +506,7 @@ static void test_max_players_two() {
     PartyLink d(other, none);
     CHECK(d.start_guest("127.0.0.1", host.bound_port(), &err));
     CHECK(d.wait_state(LinkState::Rejected, 5000) && d.reject_code() == RejectCode::Auth);
+    CHECK(d.reject_reason() == auth_reject_reason(false));  // an old code, not a password problem
 }
 
 // A plain host:port (no party code, so no secret) with the right password joins a host that has
@@ -1085,6 +1088,142 @@ static void test_udp_nat_link() {
     host.stop();
 }
 
+// LAN discovery (party_lan.h): probe / reply encode and verify, the reply limiter, a loopback
+// discover() against a responder, and the guest's password rule for codes without one.
+static void test_lan() {
+    const std::array<std::uint8_t, 8> secret = {1, 2, 3, 4, 5, 6, 7, 8};
+    const std::array<std::uint8_t, 8> other = {1, 2, 3, 4, 5, 6, 7, 9};
+    const crypto::Key key = crypto::derive_party_key("", secret.data());
+    const crypto::Key wrong = crypto::derive_party_key("", other.data());
+    const crypto::Key with_pw = crypto::derive_party_key("pw", secret.data());
+    lan::Nonce nonce = {9, 8, 7, 6, 5, 4, 3, 2};
+
+    const auto probe = lan::encode_probe(key, nonce);
+    CHECK(probe.size() == lan::kProbeSize && lan::is_lan(probe.data(), probe.size()));
+    lan::Nonce got{};
+    CHECK(lan::verify_probe(key, probe.data(), probe.size(), &got) && got == nonce);
+    CHECK(!lan::verify_probe(wrong, probe.data(), probe.size(), nullptr));    // another party
+    CHECK(!lan::verify_probe(with_pw, probe.data(), probe.size(), nullptr));  // a password changes the key
+    // The secret is not in the probe.
+    CHECK(std::search(probe.begin(), probe.end(), secret.begin(), secret.end()) == probe.end());
+    for (std::size_t i = 0; i < probe.size(); ++i) {  // any flipped byte fails
+        auto bad = probe;
+        bad[i] ^= 0x01;
+        CHECK(!lan::verify_probe(key, bad.data(), bad.size(), nullptr));
+    }
+    CHECK(!lan::verify_probe(key, probe.data(), probe.size() - 1, nullptr));
+    // The rudp magic is not LAN discovery.
+    const std::uint8_t rudp_hdr[16] = {0xfa, 'L'};
+    CHECK(!lan::is_lan(rudp_hdr, sizeof rudp_hdr));
+
+    const auto reply = lan::encode_reply(key, nonce, {192, 168, 1, 112}, 9307);
+    CHECK(reply.size() == lan::kReplySize && reply.size() <= probe.size() + 8);  // no amplification to speak of
+    std::array<std::uint8_t, 4> ip{};
+    std::uint16_t port = 0;
+    CHECK(lan::parse_reply(key, nonce, reply.data(), reply.size(), &ip, &port));
+    CHECK(ip == (std::array<std::uint8_t, 4>{192, 168, 1, 112}) && port == 9307);
+    lan::Nonce stale = nonce;
+    stale[0] ^= 1;
+    CHECK(!lan::parse_reply(key, stale, reply.data(), reply.size(), &ip, &port));  // not our probe
+    CHECK(!lan::parse_reply(wrong, nonce, reply.data(), reply.size(), &ip, &port));
+    auto forged = reply;
+    forged[17] ^= 1;  // the port
+    CHECK(!lan::parse_reply(key, nonce, forged.data(), forged.size(), &ip, &port));
+    CHECK(!lan::parse_reply(key, nonce, probe.data(), probe.size(), &ip, &port));  // a probe is no reply
+
+    // Host: answers only its own party's probes, at most kRepliesPerSecond a second.
+    const auto t0 = lan::Clock::now();
+    lan::ReplyLimiter lim;
+    std::vector<crypto::Key> keys{wrong, key};  // the second key matches (password-only key case)
+    CHECK(lan::answer_probe({wrong}, probe.data(), probe.size(), ip, 9307, &lim, t0).empty());
+    int answered = 0;
+    for (int i = 0; i < 20; ++i)
+        answered += !lan::answer_probe(keys, probe.data(), probe.size(), {10, 0, 0, 2}, 9400, &lim, t0).empty();
+    CHECK(answered == lan::kRepliesPerSecond);
+    const auto ans = lan::answer_probe(keys, probe.data(), probe.size(), {10, 0, 0, 2}, 9400, &lim,
+                                       t0 + std::chrono::milliseconds(1000));
+    CHECK(ans.size() == lan::kReplySize);
+    CHECK(lan::parse_reply(key, nonce, ans.data(), ans.size(), &ip, &port) && port == 9400);
+
+    CHECK(!lan::broadcast_targets().empty() && lan::broadcast_targets()[0] == 0xffffffffu);
+
+    // discover() over loopback against a responder thread on a 127.0.0.1 UDP socket.
+    sock::startup();
+    sock::Socket rs = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    sockaddr_in ra{};
+    ra.sin_family = AF_INET;
+    ra.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    CHECK(::bind(rs, reinterpret_cast<sockaddr*>(&ra), sizeof ra) == 0);
+    sock::socklen rl = sizeof ra;
+    getsockname(rs, reinterpret_cast<sockaddr*>(&ra), &rl);
+    const std::uint16_t rport = ntohs(ra.sin_port);
+    std::atomic<bool> stop{false};
+    std::atomic<int> probes{0};
+    std::thread responder([&] {
+        lan::ReplyLimiter rlim;
+        while (!stop) {
+            sock::PollFd p{};
+            p.fd = rs;
+            p.events = POLLIN;
+            if (sock::poll(&p, 1, 20) <= 0) continue;
+            std::uint8_t buf[256];
+            sockaddr_in from{};
+            sock::socklen fl = sizeof from;
+            const long n = ::recvfrom(rs, reinterpret_cast<char*>(buf), sizeof buf, 0,
+                                      reinterpret_cast<sockaddr*>(&from), &fl);
+            if (n <= 0) continue;
+            ++probes;
+            const auto r = lan::answer_probe({key}, buf, static_cast<std::size_t>(n), {127, 0, 0, 1}, 9555, &rlim,
+                                             lan::Clock::now());
+            if (!r.empty())
+                ::sendto(rs, reinterpret_cast<const char*>(r.data()), static_cast<int>(r.size()), 0,
+                         reinterpret_cast<sockaddr*>(&from), fl);
+        }
+    });
+    lan::Found f;
+    std::string note;
+    const auto d0 = lan::Clock::now();
+    CHECK(lan::discover(key, {0x0100007fu}, rport, 2000, true, &f, &note));
+    const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(lan::Clock::now() - d0).count();
+    std::printf("  discover: %s:%u in %lld ms (%s)\n", "127.0.0.1", f.port, static_cast<long long>(took), note.c_str());
+    CHECK(f.addr_nbo == 0x0100007fu && f.port == 9555 && took < 1000);
+    // Another party's guest: no answer, the budget is kept.
+    const auto w0 = lan::Clock::now();
+    CHECK(!lan::discover(wrong, {0x0100007fu}, rport, 600, true, &f, &note));
+    const auto wtook = std::chrono::duration_cast<std::chrono::milliseconds>(lan::Clock::now() - w0).count();
+    CHECK(wtook >= 550 && wtook < 1500);
+    stop = true;
+    responder.join();
+    sock::close(rs);
+    CHECK(probes.load() >= 2);  // three rounds for the unanswered one (some may still be queued)
+
+    // tcp_reachable: a listening loopback port answers, a closed one does not.
+    sock::Socket ls = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    sockaddr_in la{};
+    la.sin_family = AF_INET;
+    la.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    CHECK(::bind(ls, reinterpret_cast<sockaddr*>(&la), sizeof la) == 0 && ::listen(ls, 4) == 0);
+    sock::socklen ll = sizeof la;
+    getsockname(ls, reinterpret_cast<sockaddr*>(&la), &ll);
+    CHECK(lan::tcp_reachable(0x0100007fu, ntohs(la.sin_port), 1000));
+    const std::uint16_t closed = ntohs(la.sin_port);
+    sock::close(ls);
+    CHECK(!lan::tcp_reachable(0x0100007fu, closed, 1000));
+
+    // The guest's password rule: a BBP1 code without kCodeFlagPasswordRequired ignores a saved one.
+    PartyCode pc;
+    CHECK(decode_party_code(make_party_code({203, 0, 113, 9}, 9307, secret, 0), &pc, nullptr));
+    CHECK(code_ignores_password(pc));
+    CHECK(decode_party_code(make_party_code({203, 0, 113, 9}, 9307, secret, kCodeFlagPasswordRequired), &pc, nullptr));
+    CHECK(!code_ignores_password(pc));
+    CHECK(decode_party_code("192.168.1.5:9307", &pc, nullptr));
+    CHECK(!code_ignores_password(pc));  // plain host:port: the password alone keys the party
+    // The Auth reject reasons tell the two cases apart.
+    CHECK(auth_reject_reason(true).find("wrong password") == 0);
+    CHECK(auth_reject_reason(false).find("another hosting session") != std::string::npos);
+    CHECK(auth_reject_reason(false).find("no password") != std::string::npos);
+}
+
 int main() {
     // Loopback-only sockets: no Windows Firewall prompt for a test program (party_sock.h).
     if (!std::getenv("BB_PARTY_LOOPBACK")) {
@@ -1101,6 +1240,8 @@ int main() {
     test_codes();
     std::printf("crypto\n");
     test_crypto();
+    std::printf("LAN discovery\n");
+    test_lan();
     std::printf("stun / env\n");
     test_stun_local();
     std::printf("version check\n");
