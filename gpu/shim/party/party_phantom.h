@@ -130,6 +130,25 @@ private:
     int wait_ = 0;
 };
 
+/// Guest: caps the Insight a host's event stream can grant (bbport security pass) without dropping
+/// legitimate grants that come close together (G2: a boss's first-encounter Insight and its kill
+/// Insight a few seconds apart, two story moments in a row). Rolling window of kWindow seconds.
+class InsightBudget {
+public:
+    static constexpr double kWindow = 60.0;
+    static constexpr int kMaxPerEvent = 10;
+    static constexpr int kMaxPerWindow = 20;
+    /// Insight the guest may apply now for an event of `n` (0 = none), and books it.
+    int Take(int n, double now);
+
+private:
+    struct Grant {
+        double at;
+        int n;
+    };
+    std::vector<Grant> grants_;
+};
+
 // ---- Vial refill ----
 enum class RefillReason : std::uint8_t { HostRested, GuestRespawn, Probe };
 const char* RefillReasonName(RefillReason r);

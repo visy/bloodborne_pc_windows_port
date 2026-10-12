@@ -19,6 +19,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
 #include <cstring>
 #include <iterator>
 #include <stdexcept>
@@ -322,6 +323,28 @@ bool InsightDripper::Step(bool allowed) {
     return true;
 }
 
+int InsightBudget::Take(int n, double now) {
+    grants_.erase(std::remove_if(grants_.begin(), grants_.end(),
+                                 [now](const Grant& g) { return now - g.at >= kWindow || now < g.at; }),
+                  grants_.end());
+    if (n <= 0) {
+        return 0;
+    }
+    int used = 0;
+    for (const Grant& g : grants_) {
+        used += g.n;
+    }
+    int give = n > kMaxPerEvent ? kMaxPerEvent : n;
+    if (give > kMaxPerWindow - used) {
+        give = kMaxPerWindow - used;
+    }
+    if (give <= 0) {
+        return 0;
+    }
+    grants_.push_back({now, give});
+    return give;
+}
+
 const char* RefillReasonName(RefillReason r) {
     switch (r) {
     case RefillReason::HostRested: return "host rested";
@@ -430,6 +453,7 @@ struct Config {
     bool respawn = true, refill = true, open_world = true;
     InsightMode insight = InsightMode::Parity;
     bool probe_insight = false, probe_refill = false;
+    bool probe_host9350 = false; // live G2 check: synthetic host encounter + boss Insight starts
 };
 Config g_cfg;
 
@@ -457,9 +481,7 @@ std::mutex g_guest_mu;
 RefillScheduler g_refill;           // under g_guest_mu
 InsightDripper g_drip;              // under g_guest_mu
 u64 g_last_rested = 0, g_last_insight = 0; // under g_guest_mu
-double g_last_insight_grant = -1e9;        // under g_guest_mu
-constexpr double kInsightMinInterval = 30.0;
-constexpr int kMaxInsightPerEvent = 10;
+InsightBudget g_insight_budget;            // under g_guest_mu
 std::atomic<double> g_last_client{-1e9};
 
 // Probe (main thread).
@@ -566,6 +588,43 @@ std::uint64_t MembersKey(party::PartyLink* link) {
     return h;
 }
 
+// BB_PARTY_PHANTOM_PROBE=host9350 (live G2 check, host): 15 s after a cooperator is in the world,
+// feed the observer what the host's EMEVD runs for the clinic's story Insight (12410995 -> 9350(1)),
+// then 5 s later a boss kill (12411800: 2003[12], 9350(3)). A guest must get +1 and then +2 (plus
+// the native +1 on a real kill); the old 30 s one-event limit dropped the second.
+void Host9350ProbeTick(double now) {
+    static double coop_at = -1.0;
+    static int step = 0;
+    if (step >= 2) {
+        return;
+    }
+    if (coop_at < 0.0) {
+        const GameSnapshot g = ReadGameState(true);
+        if (g.cooperators > 0 && g.world_up && !g.loading) {
+            coop_at = now;
+            Log("probe host9350: a cooperator is in the world; synthetic Insight starts in 15 s");
+        }
+        return;
+    }
+    auto start9350 = [](std::int32_t event, std::int32_t n) {
+        std::uint8_t args[12] = {};
+        const std::int32_t target = BossInsightTracker::kInsightEvent;
+        std::memcpy(args + 4, &target, 4);
+        std::memcpy(args + 8, &n, 4);
+        PhantomEmevdInstruction(event, 2000, 0, args, sizeof(args));
+    };
+    if (step == 0 && now - coop_at >= 15.0) {
+        step = 1;
+        Log("probe host9350: story Insight 12410995 -> 9350(1)");
+        start9350(12410995, 1);
+    } else if (step == 1 && now - coop_at >= 20.0) {
+        step = 2;
+        Log("probe host9350: boss kill 12411800 -> 2003[12], 9350(3)");
+        PhantomEmevdInstruction(12411800, 2003, 12, nullptr, 0);
+        start9350(12411800, 3);
+    }
+}
+
 void HostTick(party::PartyLink* link, double now) {
     if (g_cfg.respawn && link && now - g_last_lamp_read >= 1.0) {
         g_last_lamp_read = now;
@@ -661,6 +720,7 @@ void PhantomInit() {
     if (const char* p = std::getenv("BB_PARTY_PHANTOM_PROBE")) {
         g_cfg.probe_insight = std::strstr(p, "insight") != nullptr;
         g_cfg.probe_refill = std::strstr(p, "refill") != nullptr;
+        g_cfg.probe_host9350 = std::strstr(p, "host9350") != nullptr;
     }
     SetGuestDeathRedirectEnabled(g_cfg.respawn);
     SetGuestRedirectCallback(&OnGuestRedirect);
@@ -742,6 +802,9 @@ void PhantomTick(party::PartyLink* link) {
     const double now = Now();
     const GameSnapshot g = ReadGameState(false);
     if (role == PartyRole::Host) {
+        if (g_cfg.probe_host9350) {
+            Host9350ProbeTick(now);
+        }
         HostTick(link, now);
     } else if (role == PartyRole::Guest) {
         GuestTick(g, now);
@@ -793,22 +856,28 @@ void PhantomOnEvent(const std::string& body) {
             break;
         }
         g_last_insight = e.seq;
-        // A boss gives a few Insight, and bosses do not fall twice a minute: a host's stream of
-        // insight events is capped (bbport security pass).
-        if (now - g_last_insight_grant < kInsightMinInterval) {
-            Log("host boss kill (event %u): another Insight event %.0f s after the last; ignored", e.source_event,
-                now - g_last_insight_grant);
-            break;
-        }
+        const char* what = e.boss ? "host boss kill" : "host encounter / story Insight";
         if (!present) {
-            Log("host boss kill (event %u, %d Insight): this guest was not in the host's world; nothing", e.source_event,
+            Log("%s (event %u, %d Insight): this guest was not in the host's world; nothing", what, e.source_event,
                 e.insight);
             break;
         }
-        g_last_insight_grant = now;
-        g_drip.Add(grant > kMaxInsightPerEvent ? kMaxInsightPerEvent : grant);
-        Log("host boss kill (event %u, %d Insight): +%d here, %d with the native cooperator +1 (mode %s)",
-            e.source_event, e.insight, grant, grant + 1, InsightModeName(g_cfg.insight));
+        // A host's stream of Insight events is capped (bbport security pass), by a rolling budget
+        // so a first-encounter +1 and the kill a few seconds later both count (G2).
+        if (grant <= 0) {
+            Log("%s (event %u, %d Insight): nothing on top%s (mode %s)", what, e.source_event, e.insight,
+                e.boss ? " of the native cooperator +1" : "", InsightModeName(g_cfg.insight));
+            break;
+        }
+        const int give = g_insight_budget.Take(grant, now);
+        if (give <= 0) {
+            Log("%s (event %u, %d Insight): over the Insight budget (%d per %.0f s); ignored", what, e.source_event,
+                e.insight, InsightBudget::kMaxPerWindow, InsightBudget::kWindow);
+            break;
+        }
+        g_drip.Add(give);
+        Log("%s (event %u, %d Insight): +%d here%s (mode %s)", what, e.source_event, e.insight, give,
+            e.boss ? " plus the native cooperator +1" : "", InsightModeName(g_cfg.insight));
         break;
     }
     case PhantomEventKind::Unknown:

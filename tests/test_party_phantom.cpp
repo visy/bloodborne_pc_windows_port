@@ -182,6 +182,20 @@ static void test_insight() {
     CHECK(d.Pending() == InsightDripper::kMaxPending);
     d.Add(-4);
     CHECK(d.Pending() == InsightDripper::kMaxPending);
+
+    // G2: a boss's first-encounter +1 and its kill +3 a few seconds later both count (the old
+    // 30 s one-event limit dropped the kill); a flood is still capped.
+    InsightBudget b;
+    CHECK(b.Take(1, 100.0) == 1);
+    CHECK(b.Take(3, 105.0) == 3);
+    CHECK(b.Take(0, 106.0) == 0);
+    CHECK(b.Take(-2, 106.0) == 0);
+    CHECK(b.Take(50, 107.0) == InsightBudget::kMaxPerEvent);
+    CHECK(b.Take(10, 108.0) == InsightBudget::kMaxPerWindow - 14);
+    CHECK(b.Take(1, 109.0) == 0);
+    // The window rolls: the 100 s and 105 s grants expire first.
+    CHECK(b.Take(9, 100.0 + InsightBudget::kWindow + 6) == 4);
+    CHECK(b.Take(5, 107.0 + InsightBudget::kWindow + 1) == 5);
 }
 
 static ReplayState Up() {
