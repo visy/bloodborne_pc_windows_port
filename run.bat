@@ -39,6 +39,10 @@ set "out=%BB_DATA_DIR%\out"
 if not exist "%out%" mkdir "%out%"
 if "%BB_CONFIG%"=="" set "BB_CONFIG=%BB_DATA_DIR%\bbport.ini"
 
+REM An in-game restart or a crash can leave the old bbport.exe alive with gigabytes of RAM and
+REM VRAM. Give it a few seconds to exit, then terminate it (the guard never fails the launch).
+if exist scripts\bb_guard.py "%PYTHON%" scripts\bb_guard.py --exe-dir out --wait 10
+
 REM Game directory containing eboot.bin
 set "EXTRA_ARGS="
 :arg_loop
