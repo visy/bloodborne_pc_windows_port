@@ -5,6 +5,7 @@ import json
 import locale
 import os
 import queue
+import shutil
 import subprocess
 import threading
 import tkinter as tk
@@ -81,6 +82,12 @@ def decode_line(raw: bytes) -> str:
         return raw.decode("utf-8")
     except UnicodeDecodeError:
         return raw.decode(locale.getpreferredencoding(False), errors="replace")
+
+
+def shader_cache_dir() -> Path:
+    """user/cache of this install (or of BB_USER_DIR, as run.bat uses it)."""
+    user = Path(os.environ.get("BB_USER_DIR") or "user")
+    return (user if user.is_absolute() else APP_DIR / user) / "cache"
 
 
 def resolve_game_dir(target: str):
@@ -371,6 +378,8 @@ class BloodborneLauncher(tk.Tk):
         ttk.Button(bar, text="Clear", style="Secondary.TButton", command=self.clear_log).pack(side="left")
         ttk.Button(bar, text="Open launcher.log", style="Secondary.TButton",
                    command=self.open_log_file).pack(side="left", padx=6)
+        ttk.Button(bar, text="Reset shader cache", style="Secondary.TButton",
+                   command=self.reset_shader_cache).pack(side="right")
 
         # log text + scrollbar
         log_frame = ttk.Frame(main)
@@ -941,6 +950,30 @@ class BloodborneLauncher(tk.Tk):
             os.startfile(str(LOG_FILE))
         except (AttributeError, OSError) as ex:
             messagebox.showerror("Error", f"Could not open {LOG_FILE}:\n{ex}")
+
+    def reset_shader_cache(self):
+        """Delete the pipeline cache: a damaged entry draws parts of an area wrong until then."""
+        if self.proc is not None and self.proc.poll() is None:
+            messagebox.showinfo("Reset shader cache", "Close the game first.")
+            return
+        cache_dir = shader_cache_dir()
+        files = [p for p in cache_dir.rglob("*") if p.is_file()] if cache_dir.is_dir() else []
+        if not files:
+            messagebox.showinfo("Reset shader cache", "The shader cache is already empty.")
+            return
+        if not messagebox.askyesno(
+                "Reset shader cache",
+                f"Delete the shader cache ({len(files)} files in {cache_dir})?\n\n"
+                "Use it when an area is drawn wrong (missing or broken textures) on this PC "
+                "but not on others. The game compiles the shaders again while you play: a few "
+                "more stutters the first time each area is visited."):
+            return
+        try:
+            shutil.rmtree(cache_dir)
+        except OSError as ex:
+            messagebox.showerror("Reset shader cache", f"Could not delete {cache_dir}:\n{ex}")
+            return
+        self.log(f"[CACHE] Shader cache deleted ({len(files)} files); it is rebuilt while playing.")
 
     # ------------------------------------------------------------- actions
     def browse_eboot(self):
