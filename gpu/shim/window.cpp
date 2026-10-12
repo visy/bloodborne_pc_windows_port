@@ -10,6 +10,8 @@
 #include "sdl_window.h"
 #include "bbport_overlay.h"
 #include "bbport_settings.h"
+#include "bbport_mouse.h"
+#include "bloodborne_cam.h"
 
 namespace Frontend {
 
@@ -178,6 +180,10 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
 }
 
 WindowSDL::~WindowSDL() {
+    if (mouse_sampler_started) {
+        BbMouse::Stop();
+    }
+    Core::BloodborneCam::Instance().Shutdown();
     SDL_DestroyWindow(window);
 }
 
@@ -320,7 +326,10 @@ bool WindowSDL::PollEvents() {
         if ((event.type == SDL_EVENT_MOUSE_MOTION || event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) &&
             BbSettings::Get().mk_enabled && !text_active && !BbOverlay::CapturesInput()) {
             std::scoped_lock lock{mouse_mutex};
-            if (event.type == SDL_EVENT_MOUSE_MOTION) {
+            // Direct camera: the BbMouse thread turns motion into camera angles, so it must not
+            // also reach the stick, except while locked on, where a flick switches targets.
+            const Core::BloodborneCam& cam = Core::BloodborneCam::Instance();
+            if (event.type == SDL_EVENT_MOUSE_MOTION && (!cam.IsEnabled() || cam.IsLockedOn())) {
                 mouse_dx += event.motion.xrel;
                 mouse_dy += event.motion.yrel;
             } else {
@@ -366,8 +375,35 @@ bool WindowSDL::PollEvents() {
         }
     }
     UpdateMouseMode();
+    UpdateMouseCamera();
     UpdateCursor();
     return is_open;
+}
+
+// Direct 1:1 mouse camera (mk_direct_camera; from Supermedo/bloodborne_pc edd20a5, imedved's
+// Bloodborne mouse camera ported by mcrib884): hooked while the mouse is captured in mouse &
+// keyboard mode, unhooked otherwise so the stick drives the camera again. If the game's camera
+// code is not found it logs once and stays on the mouse-to-stick look.
+void WindowSDL::UpdateMouseCamera() {
+    Core::BloodborneCam& cam = Core::BloodborneCam::Instance();
+    const auto& s = BbSettings::Get();
+    const bool wanted = s.mk_enabled.load() && s.mk_direct_camera.load();
+    cam.Configure(wanted, 1.0f);
+    if (!wanted) {
+        cam_hook_failed = false;
+        if (cam.IsEnabled()) {
+            cam.SetEnabled(false);
+        }
+    } else if (!cam.IsEnabled() && !cam_hook_failed && relative_mouse) {
+        if (!mouse_sampler_started) {
+            BbMouse::Start();
+            mouse_sampler_started = true;
+        }
+        cam_hook_failed = !cam.SetEnabled(true);
+    }
+    if (mouse_sampler_started) {
+        BbMouse::SetActive(relative_mouse && cam.IsEnabled());
+    }
 }
 
 // Mouse & keyboard mode: while the game has the input (menu and name box closed, window

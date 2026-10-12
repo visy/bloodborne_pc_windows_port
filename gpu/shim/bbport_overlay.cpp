@@ -979,6 +979,13 @@ void ControlsTab() {
              "Колесо листает быстрые предметы и инструменты (крестовина вверх / вниз), одно нажатие "
              "на щелчок."),
            mk);
+    Toggle("mk_direct_camera", T("Direct mouse camera", "Прямая камера мышью"), s.mk_direct_camera,
+           T("The mouse turns the camera itself, 1:1 like a PC game, instead of through the right "
+             "stick (no dead zone or turn curve). Imedved's Bloodborne mouse camera; the stick look "
+             "is kept while locked on.",
+             "Мышь поворачивает камеру напрямую, 1:1, а не через правый стик (без мёртвой зоны и "
+             "кривой). Камера мыши imedved; при захвате цели работает стик."),
+           mk);
     ImGui::Spacing();
     Note(mk ? T("Mouse: move = camera, left = R1, Shift + left = R2, right = L2, Shift + right = L1, "
                 "middle = R3 (lock-on), side buttons = L1 / R2, wheel = d-pad up / down.  Keys: WASD move, Space = Circle "

@@ -122,6 +122,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.mk_smoothing = Clamp(f, 0.0f, 0.8f);
     } else if (key == "mk_wheel") {
         v.mk_wheel = i != 0;
+    } else if (key == "mk_direct_camera") {
+        v.mk_direct_camera = i != 0;
     } else if (key == "async_pipelines") {
         v.async_shaders = i != 0;
     } else if (key == "async_shaders") {
@@ -382,6 +384,7 @@ void Save() {
     put("mk_smoothing", fixed(v.mk_smoothing, 2));
     put("audio_boost", fixed(v.audio_boost, 2));
     put("mk_wheel", flag(v.mk_wheel));
+    put("mk_direct_camera", flag(v.mk_direct_camera));
     put("async_pipelines", flag(v.async_shaders));
     put("gpl", flag(v.gpl));
     put("compile_indicator", flag(v.compile_indicator));
@@ -477,7 +480,8 @@ void ReloadMouseTuning() {
     // Only the tuning: mk_enabled comes from the launcher (BB_MOUSE_KEYBOARD) or the menu, and
     // the other keys are the menu's (a full re-read would undo its unsaved changes).
     static constexpr const char* tuning[] = {"mk_sens_x", "mk_sens_y", "mk_invert_x", "mk_invert_y",
-                                             "mk_deadzone", "mk_smoothing", "mk_wheel"};
+                                             "mk_deadzone", "mk_smoothing", "mk_wheel",
+                                             "mk_direct_camera"};
     auto& v = Get();
     if (FILE* file = std::fopen(Path(), "r")) {
         char line[256];

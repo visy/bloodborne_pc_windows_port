@@ -810,6 +810,10 @@ void DefineAll() {
            "Quick items and tools (d-pad up / down), one press per notch",
            "Быстрые предметы и инструменты (крестовина вверх / вниз), по нажатию на щелчок", toggle,
            Kind::Toggle);
+    AddRow(Flag(&Values::mk_direct_camera), "Direct mouse camera", "Прямая камера мышью",
+           "The mouse turns the camera 1:1, no stick dead zone or curve (imedved's mouse camera)",
+           "Мышь поворачивает камеру 1:1, без мёртвой зоны и кривой стика (камера imedved)", toggle,
+           Kind::Toggle);
 
     // ---- Game patches (after a restart) and the restart itself. ----
     AddPage("Game patches", "Патчи игры", "The game's own AA, intros, free camera, debug menu, restart, quit (bbport)",
