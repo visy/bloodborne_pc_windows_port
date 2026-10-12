@@ -95,8 +95,10 @@ void Compose(const ComposeIn& in, Board* out);
 /// Publish (game): the overlay's next Read sees it. Read: the latest (inactive before the first).
 void Publish(const Board& b);
 void Read(Board* out);
-/// Cheap (atomic): something to show (active with at least one companion).
+/// Cheap (atomic): something to show (active with at least one companion, no cutscene playing).
 bool Shown();
+/// A cutscene (remo) plays on this game: the panel and the name tags hide (party_story's tick).
+void SetCutscene(bool playing);
 
 // ---- geometry (overlay; pure) ----
 /// The distance (3D, metres) from `a` to `b`.
