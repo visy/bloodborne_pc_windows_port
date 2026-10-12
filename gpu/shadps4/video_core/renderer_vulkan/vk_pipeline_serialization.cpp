@@ -66,7 +66,9 @@ void RegisterPipelineData(const ComputePipelineKey& key,
 
 void RegisterPipelineData(const GraphicsPipelineKey& key, u64 hash,
                           GraphicsPipeline::SerializationSupport& sdata) {
-    if (!Storage::DataBase::Instance().IsOpened()) {
+    // Motion vector pipelines are rebuilt every session (LoadShaderMeta never loads their
+    // vertex stage), so a saved key could only fail at the next warm-up (Vorshim92, 837a90b).
+    if (!Storage::DataBase::Instance().IsOpened() || key.motion_vectors) {
         return;
     }
 
