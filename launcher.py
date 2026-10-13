@@ -1225,6 +1225,7 @@ class BloodborneLauncher(tk.Tk):
             self.log(f"  {line}")
 
         env = os.environ.copy()
+        env.setdefault("PYTHON", sys.executable)
         env["BB_GAME_DIR"] = str(game_dir)
         env["BB_FPS"] = self.fps_var.get()
         env["BB_MODS_ENABLED"] = "1" if self.feat_mods.get() else "0"

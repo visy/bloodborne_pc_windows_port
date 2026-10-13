@@ -4,34 +4,25 @@ setlocal
 cd /d "%~dp0"
 
 REM Find Python 3
-if "%PYTHON%"=="" (
-    for %%P in (
-        "C:\Program Files\Python313\python.exe"
-        "C:\Program Files\Python312\python.exe"
-        "C:\Program Files\Python311\python.exe"
-        "C:\Program Files\Python310\python.exe"
-        "%LocalAppData%\Programs\Python\Python313\python.exe"
-        "%LocalAppData%\Programs\Python\Python312\python.exe"
-        "%LocalAppData%\Programs\Python\Python311\python.exe"
-        "%LocalAppData%\Programs\Python\Python310\python.exe"
-    ) do (
-        if not defined PYTHON if exist %%P set "PYTHON=%%~P"
-    )
-)
-if "%PYTHON%"=="" (
-    for /f "delims=" %%i in ('where python.exe 2^>nul') do (
-        set "pycand=%%i"
-        if not "%%~dpi"=="%LocalAppData%\Microsoft\WindowsApps\" (
-            if "%PYTHON%"=="" set "PYTHON=%%i"
-        )
-    )
-)
-if "%PYTHON%"=="" (
-    for /f "tokens=*" %%i in ('where py.exe 2^>nul') do (
-        if "%PYTHON%"=="" set "PYTHON=%%i"
-    )
-)
-if "%PYTHON%"=="" set "PYTHON=python"
+if defined PYTHON goto found_python
+for %%P in (
+    "C:\Program Files\Python314\python.exe"
+    "C:\Program Files\Python313\python.exe"
+    "C:\Program Files\Python312\python.exe"
+    "C:\Program Files\Python311\python.exe"
+    "C:\Program Files\Python310\python.exe"
+    "%LocalAppData%\Programs\Python\Python314\python.exe"
+    "%LocalAppData%\Programs\Python\Python313\python.exe"
+    "%LocalAppData%\Programs\Python\Python312\python.exe"
+    "%LocalAppData%\Programs\Python\Python311\python.exe"
+    "%LocalAppData%\Programs\Python\Python310\python.exe"
+) do if not defined PYTHON if exist %%P set "PYTHON=%%~P"
+if defined PYTHON goto found_python
+for /f "delims=" %%i in ('where python.exe 2^>nul') do if not "%%~dpi"=="%LocalAppData%\Microsoft\WindowsApps\" if not defined PYTHON set "PYTHON=%%i"
+if defined PYTHON goto found_python
+for /f "tokens=*" %%i in ('where py.exe 2^>nul') do if not defined PYTHON set "PYTHON=%%i"
+if not defined PYTHON set "PYTHON=python"
+:found_python
 
 REM Writable directory for generated files (out/), saves (user/) and bbport.ini
 if "%BB_DATA_DIR%"=="" set "BB_DATA_DIR=."
@@ -43,21 +34,21 @@ REM An in-game restart or a crash can leave the old bbport.exe alive with gigaby
 REM VRAM. Give it a few seconds to exit, then terminate it (the guard never fails the launch).
 if exist scripts\bb_guard.py "%PYTHON%" scripts\bb_guard.py --exe-dir out --wait 10
 
-REM Game directory containing eboot.bin
+REM Game directory containing eboot.bin (no parenthesized blocks so paths with '(' or ')' never break cmd.exe)
 set "EXTRA_ARGS="
 :arg_loop
 if "%~1"=="" goto arg_done
-if exist "%~1\eboot.bin" (
-    set "BB_GAME_DIR=%~1"
-    shift
-    goto arg_loop
-)
-if "%~nx1"=="eboot.bin" if exist "%~1" (
-    set "BB_GAME_DIR=%~dp1"
-    shift
-    goto arg_loop
-)
+if exist "%~1\eboot.bin" goto arg_game_dir
+if /i "%~nx1"=="eboot.bin" if exist "%~1" goto arg_eboot_file
 set EXTRA_ARGS=%EXTRA_ARGS% %1
+shift
+goto arg_loop
+:arg_game_dir
+set "BB_GAME_DIR=%~1"
+shift
+goto arg_loop
+:arg_eboot_file
+set "BB_GAME_DIR=%~dp1"
 shift
 goto arg_loop
 :arg_done
@@ -66,10 +57,10 @@ if "%BB_GAME_DIR%"=="" set "BB_GAME_DIR=..\CUSA03173"
 set "game=%BB_GAME_DIR%"
 REM Strip trailing backslash if present
 if "%game:~-1%"=="\" set "game=%game:~0,-1%"
-if not exist "%game%\eboot.bin" (
-    echo No eboot.bin in %game% ^(set BB_GAME_DIR or pass path to run.bat^). >&2
-    exit /b 1
-)
+if exist "%game%\eboot.bin" goto found_eboot
+echo No eboot.bin in "%game%" ^(set BB_GAME_DIR or pass path to run.bat^). >&2
+exit /b 1
+:found_eboot
 
 set "mods_dir=%BB_MODS_DIR%"
 if "%mods_dir%"=="" set "mods_dir=%BB_DATA_DIR%\mods"
@@ -79,12 +70,15 @@ set "mods_enabled=%BB_MODS_ENABLED%"
 if "%mods_enabled%"=="" set "mods_enabled=1"
 
 REM NOTE: for /f ('"exe" args "more args"') trips cmd's quote-stripping rule and prints
-REM "The filename, directory name, or volume label syntax is incorrect." So write the
-REM output to a temp file and read that instead (last line wins, same as before).
+REM "The filename, directory name, or volume label syntax is incorrect." Also, cmd's for /f
+REM in ("path") parser breaks if the path itself contains ')'. Write to a temp file in %out%
+REM and read it via pushd using a plain filename so ')' in paths cannot break the loop.
 set "mods_result=%out%\mods_game.txt"
 if exist "%mods_result%" del "%mods_result%"
 "%PYTHON%" scripts\mods.py "%game%" --out "%out%" --mods-dir "%mods_dir%" --config "%mods_config%" --enabled "%mods_enabled%" > "%mods_result%"
-if exist "%mods_result%" for /f "usebackq delims=" %%g in ("%mods_result%") do set "game=%%g"
+pushd "%out%"
+if exist "mods_game.txt" for /f "usebackq delims=" %%g in ("mods_game.txt") do set "game=%%g"
+popd
 
 "%PYTHON%" scripts\prepare.py "%game%" --out "%out%"
 if errorlevel 1 exit /b 1
@@ -117,17 +111,26 @@ set "scaled_output="
 set "scaled_result=%out%\scaled_sizes.txt"
 if exist "%scaled_result%" del "%scaled_result%"
 if "%BB_RENDER_RES%"=="" "%PYTHON%" scripts\patches.py --print-scaled --settings "%BB_CONFIG%" > "%scaled_result%" 2>nul
-if exist "%scaled_result%" for /f "usebackq tokens=1,2" %%a in ("%scaled_result%") do (
+pushd "%out%"
+if exist "scaled_sizes.txt" for /f "usebackq tokens=1,2" %%a in ("scaled_sizes.txt") do (
     set "scaled_render=%%a"
     set "scaled_output=%%b"
 )
+popd
 
 REM One statement per line: inside a ( ) block %live% keeps the value it had before the block,
 REM which turned live_resolution=1 and auto from bbport.ini back into 0.
 set "live=0"
 if "%scaled_output%"=="" goto live_chosen
 if not "%BB_LIVE_RES%"=="" set "live=%BB_LIVE_RES%"
-if "%live%"=="0" if exist "%BB_CONFIG%" for /f "usebackq tokens=1,2 delims==" %%a in ("%BB_CONFIG%") do if "%%a"=="live_resolution" set "live=%%b"
+if not "%live%"=="0" goto check_live_auto
+if not exist "%BB_CONFIG%" goto check_live_auto
+copy /y "%BB_CONFIG%" "%out%\bbport_ini.tmp" >nul 2>nul
+pushd "%out%"
+if exist "bbport_ini.tmp" for /f "usebackq tokens=1,2 delims==" %%a in ("bbport_ini.tmp") do if "%%a"=="live_resolution" set "live=%%b"
+if exist "bbport_ini.tmp" del /f /q "bbport_ini.tmp" >nul 2>nul
+popd
+:check_live_auto
 if "%live%"=="auto" for /f "delims=" %%c in ('out\bb-gpu-capabilities.exe --live-resolution 2^>nul') do set "live=%%c"
 if not "%live%"=="1" set "live=0"
 :live_chosen
@@ -168,15 +171,15 @@ if "%BB_VBLANK_HZ%"=="" (
     )
 )
 
-if not exist "out\bbport.exe" (
-    if exist "build.bat" (
-        call build.bat
-        if errorlevel 1 exit /b 1
-    ) else (
-        echo [ERROR] out\bbport.exe not found. >&2
-        exit /b 1
-    )
+if exist "out\bbport.exe" goto found_probe
+if exist "build.bat" (
+    call build.bat
+    if errorlevel 1 exit /b 1
+    goto found_probe
 )
+echo [ERROR] out\bbport.exe not found. >&2
+exit /b 1
+:found_probe
 
 set "probe=out\bbport.exe"
 set "user_dir=%BB_USER_DIR%"
