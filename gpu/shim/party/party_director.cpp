@@ -2532,6 +2532,25 @@ void PartyDirector::Tick() {
     }
     // Test aids: scripted new game, prologue fast-forward (test_newgame.h).
     NewGameTestTick(s, TitleReadyForInput(role, link));
+    // Test aid (BB_PARTY_TEST_START_LAMP=ID): one lamp warp 3 s after this player's first steady
+    // own world, before any join (a late-joiner run with the host in another map than the
+    // guest's save: the director's host_lamp step needs a join first).
+    if (const char* sl = std::getenv("BB_PARTY_TEST_START_LAMP"); sl && sl[0]) {
+        static bool done = false;
+        static Clock::time_point steady_at{};
+        static bool steady = false;
+        const bool now_steady = s.world_up && !s.loading && s.map_id != 0xffffffffu;
+        if (now_steady != steady) {
+            steady = now_steady;
+            steady_at = now;
+        }
+        if (!done && steady && Seconds(steady_at, now) >= 3.0) {
+            done = true;
+            const std::uint32_t id = static_cast<std::uint32_t>(std::strtoul(sl, nullptr, 10));
+            Log("test: start lamp %u (from %s)", id, MapName(s.map_id).c_str());
+            reinterpret_cast<void(BB_COOP_SYSV*)(std::uint32_t)>(Guest(kLampWarp))(id);
+        }
+    }
     // Late joiner catch-up (party_catchup.h): a guest behind the host is brought up to it and
     // gathered at the host's lamp before any summon.
     {
