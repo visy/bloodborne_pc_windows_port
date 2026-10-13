@@ -7,6 +7,7 @@
 #include "../net/netsim.h"
 #include "party_hud.h"
 #include "party_ids.h"
+#include "party_stick_args.h"
 #include "party_balance.h"
 #include "party_async_io.h"
 
@@ -127,7 +128,8 @@ struct TravelStep {
         // host_alone=ID: the host travels to ID alone, decided (no question).
         HostLamp, GuestLamp, HostAlone, GuestKill,
         HostOutage, GuestOutage, // a simulated total network outage of `buttons` ms (BB_NET_SIM on)
-        HostObj, GuestObj, HostChr, GuestChr // stand at a map object / character: ENTITY[:DIST[:ANGLE]]
+        HostObj, GuestObj, HostChr, GuestChr, // stand at a map object / character: ENTITY[:DIST[:ANGLE]]
+        GuestStick // walk by the left stick (the approach driver) to X:Z[:R[:STEPS]]: a real walk, no warp
     } kind = HostWarp;
     std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30; HostKill: the entity id
     float pos[3] = {};    // HostMove / GuestMove: the chr warp target (map coordinates)
@@ -164,6 +166,7 @@ struct Test {
     float ap_x = 0, ap_z = 0, ap_r = 1.0f;
     std::uint32_t ap_button = 0;
     int ap_steps = 0, ap_phase = 0; // 0 idle, 1 moving, 2 settling, 3 arrived, 4 pressing
+    int ap_max = 40;                // steps before it gives up (guest_stick: its STEPS)
     double ap_angle = 0;
     float ap_from[2] = {0, 0};
     Clock::time_point ap_at{};
@@ -923,6 +926,7 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::HostAlone: return "host_alone";
     case TravelStep::HostSkipRemo: return "host_skipremo";
     case TravelStep::GuestSkipRemo: return "guest_skipremo";
+    case TravelStep::GuestStick: return "guest_stick";
     }
     return "?";
 }
@@ -1156,7 +1160,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         return (step.kind == TravelStep::GuestDie || step.kind == TravelStep::GuestMove ||
                 step.kind == TravelStep::GuestPress || step.kind == TravelStep::GuestMark ||
                 step.kind == TravelStep::GuestLamp || step.kind == TravelStep::GuestSkipRemo || step.kind == TravelStep::GuestOutage || step.kind == TravelStep::GuestKill ||
-                step.kind == TravelStep::GuestObj || step.kind == TravelStep::GuestChr) == (role == PartyRole::Guest);
+                step.kind == TravelStep::GuestObj || step.kind == TravelStep::GuestChr ||
+                step.kind == TravelStep::GuestStick) == (role == PartyRole::Guest);
     };
     if (t.script_on) {
         RunTravelScript(st, s, now);
@@ -1183,6 +1188,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
          next_kind == TravelStep::HostOutage || next_kind == TravelStep::GuestOutage ||
          next_kind == TravelStep::HostLastLamp || next_kind == TravelStep::HostLamp || next_kind == TravelStep::HostObj ||
          next_kind == TravelStep::GuestObj || next_kind == TravelStep::HostChr || next_kind == TravelStep::GuestChr ||
+         next_kind == TravelStep::GuestStick ||
          next_kind == TravelStep::HostMark || next_kind == TravelStep::GuestMark || !t.steps[t.next_step].map.empty())) {
         if (!steady || (!t.ran && !t.armed) || t.joins < t.steps[t.next_step].min_join) {
             return; // as the first step of a chain it still waits for the join
@@ -1309,6 +1315,26 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                             : worldact::StandAtChr(entity, dist, angle, &what);
         Log("test: %s %d (%.1f m, %.0f deg): %s", TravelStepName(step.kind), entity, double(dist), double(angle),
             ok ? what.c_str() : "FAILED: not loaded");
+    } else if (step.kind == TravelStep::GuestStick) {
+        float x = 0, z = 0, r = 1.0f;
+        int steps = 40;
+        if (ParseStickArgs(step.args, &x, &z, &r, &steps)) {
+            Test& tt = st.test;
+            tt.approach = true;
+            tt.approach_done = false;
+            tt.ap_x = x;
+            tt.ap_z = z;
+            tt.ap_r = r;
+            tt.ap_max = steps;
+            tt.ap_button = 0;
+            tt.ap_steps = 0;
+            tt.ap_phase = 0;
+            tt.ap_at = now;
+            Log("test: guest_stick: walk to (%.2f, %.2f) within %.1f m, at most %d steps (%s)", double(x), double(z),
+                double(r), steps, DescribeHere(s).c_str());
+        } else {
+            Log("test: guest_stick '%s' is not X:Z[:R[:STEPS]]", step.args.c_str());
+        }
     } else if (step.kind == TravelStep::HostSkipRemo || step.kind == TravelStep::GuestSkipRemo) {
         // The game's own cutscene skip request (what the skip input does; in a session it is this
         // player's skip vote).
@@ -1825,7 +1851,7 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
                 }
                 Log("test: approach: (%.2f, %.2f) -> (%.2f, %.2f): %.2f m, stick %.0f deg (step %d)", pos[0], pos[2],
                     t.ap_x, t.ap_z, dist, t.ap_angle * 180 / M_PI, t.ap_steps);
-                if (dist <= t.ap_r || t.ap_steps >= 40) {
+                if (dist <= t.ap_r || t.ap_steps >= t.ap_max) {
                     t.ap_phase = 3;
                     t.ap_at = now + std::chrono::milliseconds(1200);
                     Log("test: approach: %s at %.2f m", dist <= t.ap_r ? "arrived" : "GAVE UP", dist);
@@ -2189,7 +2215,8 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("host_headstone=", 0) == 0 || item.rfind("host_flag=", 0) == 0 ||
                        item.rfind("host_obj=", 0) == 0 || item.rfind("guest_obj=", 0) == 0 ||
                        item.rfind("host_chr=", 0) == 0 || item.rfind("guest_chr=", 0) == 0 ||
-                       item.rfind("host_skipremo", 0) == 0 || item.rfind("guest_skipremo", 0) == 0) {
+                       item.rfind("host_skipremo", 0) == 0 || item.rfind("guest_skipremo", 0) == 0 ||
+                       item.rfind("guest_stick=", 0) == 0) {
                 TravelStep step;
                 step.kind = item.rfind("host_obj=", 0) == 0     ? TravelStep::HostObj
                             : item.rfind("guest_obj=", 0) == 0  ? TravelStep::GuestObj
@@ -2202,6 +2229,7 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("host_flag=", 0) == 0  ? TravelStep::HostFlag
                             : item.rfind("host_skipremo", 0) == 0  ? TravelStep::HostSkipRemo
                             : item.rfind("guest_skipremo", 0) == 0 ? TravelStep::GuestSkipRemo
+                            : item.rfind("guest_stick=", 0) == 0   ? TravelStep::GuestStick
                                                                 : TravelStep::HostHeadstone;
                 if (const std::size_t pc = item.find('%'); pc != std::string::npos) {
                     step.map = item.substr(pc + 1); // only while the current map name contains it
