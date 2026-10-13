@@ -59,9 +59,18 @@ uint64_t runtime_audio_get_underruns(void) { return g_audio_underruns; }
 static uint64_t now_ns(void) { return host_monotonic_ns(); }
 static void sleep_until(uint64_t deadline) { host_sleep_until_ns(deadline); }
 
+/* C1-continuous soft-knee limiter: linear in [-0.8, 0.8] with unit slope at the knee,
+ * smoothly saturating toward [-1.0, 1.0] for loud peaks without waveform discontinuities. */
 static inline float soft_clip(float x) {
-    if (x > 1.0f) return 1.0f - 1.0f / (1.0f + (x - 1.0f));
-    if (x < -1.0f) return -1.0f + 1.0f / (1.0f + (-x - 1.0f));
+    const float knee = 0.8f, headroom = 0.2f;
+    if (x > knee) {
+        float excess = x - knee;
+        return knee + (headroom * excess) / (headroom + excess);
+    }
+    if (x < -knee) {
+        float excess = -x - knee;
+        return -knee - (headroom * excess) / (headroom + excess);
+    }
     return x;
 }
 
@@ -233,15 +242,16 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
         }
 
         if (p->stream) {
-            /* Steer the SDL queue against hardware device rate */
+            /* Steer the SDL queue against hardware device rate. Only prefill silence when the
+             * stream has completely drained (queued == 0); injecting silence while samples are
+             * still queued splices zeros into an active waveform and causes audible pops. */
             int low=2*(int)bytes;
             int queued=SDL_GetAudioStreamQueued(p->stream);
-            if (queued<(int)bytes) {
+            if (queued==0) {
                 if (buffers_out>0) ++g_audio_underruns;
                 static const unsigned char silence[2048*8*4];
-                int fill=low-queued<(int)bytes ? low-queued : (int)bytes;
-                if (fill>0 && fill<=(int)sizeof(silence)) {
-                    SDL_PutAudioStreamData(p->stream,silence,fill);
+                if ((int)bytes<=(int)sizeof(silence)) {
+                    SDL_PutAudioStreamData(p->stream,silence,(int)bytes);
                 }
                 queued=low;
             }
