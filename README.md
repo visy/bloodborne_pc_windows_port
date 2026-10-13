@@ -19,7 +19,7 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 |---|---|--:|
 | **Overall** | `█████████████████░░░` | 84% |
 | Session & joining | `██████████████████░░` | 88% |
-| World & travel | `█████████████████░░░` | 87% |
+| World & travel | `██████████████████░░` | 88% |
 | Death & respawn | `█████████████████░░░` | 86% |
 | Progress (anyone can progress) | `█████████████████░░░` | 85% |
 | Services & UI | `██████████████████░░` | 90% |
@@ -113,6 +113,9 @@ single-player save is never touched. Settings: *System → Party* pages in the g
 - **No multiplayer walls.** The fog walls that keep phantoms near the host are gone; the party can
   split up and explore. There is no leash: a guest can walk far from the host (checked at 140 m)
   and stays in the party.
+- **Anyone can go through a boss fog first.** A guest's fog no longer waits for the host: the
+  fight starts for everyone, and the others follow through the fog. A boss's first fight with an
+  intro cutscene still starts with the host.
 - **Travel together or alone.** Lamps, headstones and the Hunter's Mark ask "Travel with the party?".
   Yes moves the whole party with one loading screen; No moves only you, and the others don't load.
   A guest's own save keeps its own spot: playing it solo later starts where it was, not at the

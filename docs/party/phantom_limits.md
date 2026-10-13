@@ -18,7 +18,7 @@ map-reload retarget, HP 0.7 -> 1.0 (SpEffect 9006/9026), bell/Insight gates, PLA
 |---|---|---|---|---|---|
 | 1a | Item use by a phantom | `EquipParamGoods.enable_white` (byte 0x44 bit 2), tested in goods availability 0x157F200 at 0x157F99B | Nothing needed for vials, bullets, Insight items, Coldbloods (already enabled). Optional: param write per row, or byte patch 0x157F99F | low | C |
 | 1b | Vials/bullets refill | Auto-replenish 0x14DACE0, run only from MoveMapStep 0x1939470 for respawn-type loads or loads into the Dream | Director calls 0x14DACE0 on the guest (own storage) at chosen moments; optional patch 0x19398D7 | low | C (guard values I) |
-| 2a | Boss fog: guest first | EMEVD "guest enters boss room" needs host-entered flag (e.g. 12414800) and chr type 1 | Keep (host enters first) | — | C |
+| 2a | Boss fog: guest first | EMEVD "guest enters boss room" needs host-entered flag (e.g. 12414800) and chr type 1 | Lifted (0.6.1, B2): the client passes the host-entered condition, the host sets its flag on the guest's `world_action` `fog` report (ERSC_PARITY B2) | — | C |
 | 2b | Multiplayer confinement walls (18 walls on block boundaries) | common event 7600, enabled while multiplayer | Index skip `7600@6`, `7600@7` together with travel B1 | medium (map-block crossing) | C |
 | 2c | Lamps / Dream warps / Doll / shops for guests | EMEVD `1003[6] End if Client` at instruction 0 (7200, 7300, 12107000, 12107100, 12105043, ...) | Keep (travel is host-led, `travel.md`) | — | C |
 | 2d | Doors, levers, elevators, ladders | No phantom gate found; clients' ObjAct starts are replicated (packet 0x2d) | Nothing; test | low | I |

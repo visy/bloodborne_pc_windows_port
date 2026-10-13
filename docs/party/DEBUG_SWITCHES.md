@@ -171,6 +171,7 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_TEST_NPC_PATCH` | `1`: both patch groups of filter mode C on for the run | off | `gpu/shim/party/party_npc_test.cpp` |
 | `BB_PARTY_TEST_NPC_WARP` | `<WarpParam id>`: one lamp warp before anything else | off | `gpu/shim/party/party_npc_test.cpp` |
 | `BB_PARTY_ITEMS_HOST_TEST` | `<lot>[,...]`: the host awards these lots through the game's `0x17DDC50` (hostOnly 1) 20 s after a cooperator appeared, 10 s apart (summoned-give check) | off | `gpu/shim/party/party_items.cpp` |
+| `BB_PARTY_GUEST_FOG_FIRST` | `0`: a guest must wait for the host at boss fogs again (vanilla); default on: the guest's fog skips the host-entered condition and the host opens the fight on its `world_action` `fog` report (B2) | on | `gpu/shim/party/seamless_rules.cpp`, `party_worldact.cpp` |
 | `BB_PARTY_GIFT_TEST` | `<lot>`: a summoned guest awards this lot itself through the game's `0x17DDC50` (hostOnly 0, as an NPC talk gift) once its world is steady for 20 s, to check the D5 gift path (guest `gift: ... reported`, host `gift from slot N ... awarded`) | off | `gpu/shim/party/party_items.cpp` |
 | `BB_PARTY_ITEMS_HOST_TEST_FLAGS` | `<id>[,...]`: flags the host sets with the first `BB_PARTY_ITEMS_HOST_TEST` award | off | `gpu/shim/party/party_items.cpp` |
 | `BB_PARTY_PROGRESS_TEST_READ` | `<id>[,...]`: logs own-save / visible values at each steady load | off | `gpu/shim/party/party_progress.cpp` |

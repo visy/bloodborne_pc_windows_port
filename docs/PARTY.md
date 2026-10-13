@@ -211,7 +211,7 @@ Instead of a code, a guest can also enter the host's address directly as `host:p
    moment alone after each trip.
 5. **A guest dies.** The guest comes back at the host's last lamp and is summoned again (instead
    of being sent home), and gets the vials and bullets refilled.
-6. **Bosses.** As in the normal game, the host has to walk through a boss fog first.
+6. **Bosses.** Anyone may walk through a boss fog first (a guest's walk-through starts the fight for everyone); a first fight with an intro cutscene still starts with the host.
 
 ## What is shared, and what is not
 
@@ -370,7 +370,7 @@ player, and say who was the host.
   built and unit-tested but have not run in a real two-player session yet.
 - Travel is "follow and rejoin": guests load separately and are summoned again after the host's
   lamp trips, deaths and area changes. A shared seamless loading screen is not planned for now.
-- The host must enter a boss fog first. In the host's Hunter's Dream a guest can level up at the
+- A first boss fight with an intro cutscene starts with the host; otherwise anyone may enter a boss fog first. In the host's Hunter's Dream a guest can level up at the
   Doll and use the Bath Messengers' shops, the Insight shop, the workbench and storage on its own
   character; lamps and headstones stay host-only for now (experimental opt-in `BB_PARTY_GUEST_LAMPS=1`).
 - NPC quests are not shared by default; dialogue gifts from NPCs are not handled.
