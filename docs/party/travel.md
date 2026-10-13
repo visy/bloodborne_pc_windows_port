@@ -511,6 +511,19 @@ Fixed after the first report (same day):
   carried it into the new session and was dropped 3 s after joining. A (re)join now starts with
   it off (-1, the flow ctor's value).
 
+### 7.1 Stick walk-away of a guest (2026-10-13, b1)
+
+One session, base save `savedata_20261010`, host `host_warp=2412952@8` (Great Bridge lamp, stays
+at (-124.8, -27.0, 64.3)); guest `BB_PAD_FILE` + `guest_move` to the bridge's fog end, then
+`guest_stick=-70:118:2:150` (walk along the bridge: blocked at the lamp after 33 m), `guest_obj` +
+`guest_stick=obj:W:10:180` / `obj:W:25:180` for the confinement walls W = 2411997 (at (1.6, -29.6,
+118.9)) and 2411999 (at (-187.2, -46.7, 102.2); 2411998 was not loaded). The guest walked through
+both walls by the stick (`approach: arrived` 10 m behind each); the host's remote chr log reached
+140.3 m. For 5 min apart: host role 3, guest role 6, cooperators 1 on both, no `send-home`, no
+leave, no K3 (these walls do not change the stage record: no block boundary was crossed by the stick,
+that stays open), `where` reports fresh (< 0.8 s). There is no leash (phantom_limits.md §4).
+Screenshots black (desktop locked). The walk driver now stops after 8 steps without moving.
+
 Open:
 
 * Headstone menu: three Cross presses after the row (row, then the confirmation dialog); the menu

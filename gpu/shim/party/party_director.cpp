@@ -167,6 +167,7 @@ struct Test {
     std::uint32_t ap_button = 0;
     int ap_steps = 0, ap_phase = 0; // 0 idle, 1 moving, 2 settling, 3 arrived, 4 pressing
     int ap_max = 40;                // steps before it gives up (guest_stick: its STEPS)
+    int ap_still = 0;               // steps in a row without moving (blocked: gives up after 8)
     double ap_angle = 0;
     float ap_from[2] = {0, 0};
     Clock::time_point ap_at{};
@@ -1346,6 +1347,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             tt.ap_max = steps;
             tt.ap_button = 0;
             tt.ap_steps = 0;
+            tt.ap_still = 0;
             tt.ap_phase = 0;
             tt.ap_at = now;
             Log("test: guest_stick: walk to (%.2f, %.2f) within %.1f m, at most %d steps (%s)", double(x), double(z),
@@ -1863,17 +1865,19 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             } else if (t.ap_phase == 0 || t.ap_phase == 2) {
                 if (t.ap_phase == 2) {
                     const double mx = pos[0] - t.ap_from[0], mz = pos[2] - t.ap_from[1];
-                    if (std::sqrt(mx * mx + mz * mz) > 0.05) {
+                    const bool moved = std::sqrt(mx * mx + mz * mz) > 0.05;
+                    t.ap_still = moved ? 0 : t.ap_still + 1;
+                    if (moved) {
                         // Camera-relative stick: correct the stick angle by how far the walk missed.
                         t.ap_angle = wrap(t.ap_angle + wrap(want - std::atan2(mx, mz)));
                     }
                 }
                 Log("test: approach: (%.2f, %.2f) -> (%.2f, %.2f): %.2f m, stick %.0f deg (step %d)", pos[0], pos[2],
                     t.ap_x, t.ap_z, dist, t.ap_angle * 180 / M_PI, t.ap_steps);
-                if (dist <= t.ap_r || t.ap_steps >= t.ap_max) {
+                if (dist <= t.ap_r || t.ap_steps >= t.ap_max || t.ap_still >= 8) {
                     t.ap_phase = 3;
                     t.ap_at = now + std::chrono::milliseconds(1200);
-                    Log("test: approach: %s at %.2f m", dist <= t.ap_r ? "arrived" : "GAVE UP", dist);
+                    Log("test: approach: %s at %.2f m", dist <= t.ap_r ? "arrived" : t.ap_still >= 8 ? "BLOCKED (8 steps without moving)" : "GAVE UP", dist);
                 } else {
                     ++t.ap_steps;
                     t.ap_from[0] = pos[0];
