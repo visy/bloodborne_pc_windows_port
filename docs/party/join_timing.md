@@ -518,6 +518,13 @@ hosting). Local 2-instance run after the change (Continue party, title join): ho
 
 Retest (no menu walks, existing characters): bell 35.36 s, room joined 3.0 s after the bell, host cooperators 0 -> 1 at 47.14 s (11.8 s after the bell); the host stayed connected ~77 s and shut down cleanly (no crash or hang dump). Turned on by default.
 
+Under simulated DSL + NAT (`BB_NET_SIM=dsl,nat=1`: 80 ms ± 20 one-way, 2 % loss, link over the
+reliable UDP stream after a guest-code punch, 2026-10-13): rang 19.54 -> room answer 19.95 (0.4 s)
+-> item delivered 21.58 -> client 22.68 (**bell -> client 3.1 s**, as on loopback) -> host
+cooperators 1 at 27.41 (7.9 s after the bell); 173 s stable after, 0 drops, no sign fallback.
+Title join on the same profile: link up 13.5 s, client 20.7 s, host cooperators 1 30.6 s.
+Details: network_robustness.md §3c.
+
 
 Ported from droogie/bbhost (`engine/summon_invite.cpp`, GPL-3.0+): `party_dsummon.{h,cpp}` (wire
 format, type-1 payload, decisions; `party-dsummon-test`) and the game side in `party_b2.cpp`.

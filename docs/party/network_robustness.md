@@ -99,6 +99,23 @@ Not covered here: a real NAT and a real ISP (no 2-PC test). The simulator also d
 bandwidth limits (the party's bandwidth is small: ~180 KB/min UDP per guest in the runs above,
 plus the 10 KB mirror image at join).
 
+### 3c. Direct summon and title join under DSL + NAT (2026-10-13, 0.6.1)
+
+The default join paths since 0.6.0 (title join and the bell's direct summon, `party_dsummon`)
+had only run on loopback at 0 ms. Two runs, `BB_NET_SIM=dsl,nat=1` on both (80 ms ± 20 one-way,
+2 % loss, 0.5 % dup, 1 % reorder; no TCP listener, guest code through `BB_PARTY_GUEST_CODE_FILE`),
+existing characters, automated Continue:
+
+| Run | Link (no TCP -> UDP) | Join | Host `cooperators 0 -> 1` | After |
+|---|---|---|---|---|
+| Title join (default) | guest `connecting over UDP` 13.0 -> `connected over UDP` 13.2 s, slot 1 at 13.5 s | Continue -> `client (6)` 20.7 s (game P2P punch heard after 500 ms) | 30.6 s | roster ping 172 ms; the run was ended by the central idle reaper at ~46 s |
+| Bell, direct summon (`BB_PARTY_TITLE_JOIN=0`) | `connected over UDP` 10.1 s (0.15 s after the switch) | rang 19.54 -> host room created and sent 19.84 -> guest has it 19.95 (0.4 s) -> item delivered 21.58 (waits for the bell's own entry) -> `client (6)` 22.68: **bell -> client 3.1 s**, `dsum_done` ok at the host 22.78 | 27.41 s (**7.9 s after the bell**, guest loaded in) | **173 s stable** in the host's world (to the 200 s end): cooperators 1 throughout, roster ping 172-184 ms, 0 link losses / reconnects, 0 fallbacks to signs, clean shutdown on both |
+
+Same as the loopback direct summon (bell -> client 3.0 s): the dsum messages ride the party link,
+which is reliable (TCP or the reliable UDP stream), so a lost datagram costs a retransmit, not the
+request; the 4 s answer wait (`kAnswerWait`) had 3.6 s to spare at 0.4 s, the 8 s entry/join
+waits 6 s. No retry or timeout change was needed.
+
 ## 4. NAT: what a host must do
 
 - **Guests**: nothing. They connect out (TCP to the host, UDP to the host's port). Their own NAT
