@@ -29,6 +29,16 @@ int main() {
     CHECK(!ParseStickArgs("10:20:1:0", &x, &z, &r, &steps));
     CHECK(!ParseStickArgs("10:20:1:5000", &x, &z, &r, &steps));
     CHECK(!ParseStickArgs("10:20:1:5x", &x, &z, &r, &steps));
+    int e = 0;
+    float d = 0, a = 0;
+    CHECK(!ParseStickArgs("obj:2411998:6:180", &x, &z, &r, &steps));
+    CHECK(ParseStickObjArgs("obj:2411998:6:180", &e, &d, &a, &r, &steps));
+    CHECK(e == 2411998 && d == 6.0f && a == 180.0f && r == 1.0f && steps == 40);
+    CHECK(ParseStickObjArgs("obj:2411998:6:0:2:80", &e, &d, &a, &r, &steps));
+    CHECK(r == 2.0f && steps == 80);
+    CHECK(!ParseStickObjArgs("obj:2411998:6", &e, &d, &a, &r, &steps));
+    CHECK(!ParseStickObjArgs("10:20", &e, &d, &a, &r, &steps));
+    CHECK(!ParseStickObjArgs("obj:0:6:0", &e, &d, &a, &r, &steps));
     if (g_failures) {
         std::fprintf(stderr, "%d failure(s)\n", g_failures);
         return 1;

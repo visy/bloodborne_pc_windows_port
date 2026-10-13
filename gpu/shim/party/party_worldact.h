@@ -104,6 +104,9 @@ void Tick(const GameSnapshot& s, party::PartyLink* link);
 /// Test fixture: stand the local chr `dist` m from map object `entity`, on the side `angle_deg`
 /// from its facing (0 = in front), facing it. False when the object is not loaded.
 bool StandAtObject(std::int32_t entity, float dist, float angle_deg, std::string* what);
+/// The point StandAtObject would use (DIST m from map object ENTITY at ANGLE degrees from its
+/// front), without moving anyone; false when the object is not loaded.
+bool ObjectPoint(std::int32_t entity, float dist, float angle_deg, float out[3]);
 /// Test fixture: the same for a character (NPC) entity.
 bool StandAtChr(std::int32_t entity, float dist, float angle_deg, std::string* what);
 /// Counters for logs / tests.

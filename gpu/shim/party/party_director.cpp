@@ -1318,7 +1318,20 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     } else if (step.kind == TravelStep::GuestStick) {
         float x = 0, z = 0, r = 1.0f;
         int steps = 40;
-        if (ParseStickArgs(step.args, &x, &z, &r, &steps)) {
+        int entity = 0;
+        float odist = 0, oangle = 0;
+        bool ok = false;
+        if (ParseStickObjArgs(step.args, &entity, &odist, &oangle, &r, &steps)) {
+            // obj:ENTITY:DIST:ANGLE: the point DIST m from that map object (e.g. through a
+            // confinement wall on a block boundary: ANGLE 180 = behind it).
+            float p[3] = {};
+            ok = worldact::ObjectPoint(entity, odist, oangle, p);
+            x = p[0], z = p[2];
+            Log("test: guest_stick: object %d %s", entity, ok ? "found" : "NOT loaded");
+        } else {
+            ok = ParseStickArgs(step.args, &x, &z, &r, &steps);
+        }
+        if (ok) {
             Test& tt = st.test;
             tt.approach = true;
             tt.approach_done = false;
@@ -1333,7 +1346,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             Log("test: guest_stick: walk to (%.2f, %.2f) within %.1f m, at most %d steps (%s)", double(x), double(z),
                 double(r), steps, DescribeHere(s).c_str());
         } else {
-            Log("test: guest_stick '%s' is not X:Z[:R[:STEPS]]", step.args.c_str());
+            Log("test: guest_stick '%s': not X:Z[:R[:STEPS]] / obj:ENTITY:DIST:ANGLE[:R[:STEPS]], or not loaded",
+                step.args.c_str());
         }
     } else if (step.kind == TravelStep::HostSkipRemo || step.kind == TravelStep::GuestSkipRemo) {
         // The game's own cutscene skip request (what the skip input does; in a session it is this
