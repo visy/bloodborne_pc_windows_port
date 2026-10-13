@@ -24,8 +24,8 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | Progress (anyone can progress) | `█████████████████░░░` | 86% |
 | Services & UI | `██████████████████░░` | 90% |
 | Network & robustness | `████████████████░░░░` | 80% |
-| Bloodborne-specific (chalice, Insight) | `███████████████░░░░░` | 77% |
-| Feels like single player in a party | `█████████████████░░░` | 83% |
+| Bloodborne-specific (chalice, Insight) | `████████████████░░░░` | 81% |
+| Feels like single player in a party | `█████████████████░░░` | 84% |
 
 ---
 
@@ -151,6 +151,8 @@ single-player save is never touched. Settings: *System → Party* pages in the g
 - **NPC gifts are shared**: an item an NPC gives a guest in the host's world goes to the host and
   every other party member too (the NPC has moved on for everyone, so nobody misses it).
 - **Enemy drops for each player.** Every player gets their own roll of each enemy's drop.
+- **Blood Echoes for every kill.** Whoever kills an enemy, every party member gets its full
+  Blood Echoes.
 - **Treasure for each player.** Items lying in the world can be picked up by every player, each into their own game.
 - **Cutscenes for everyone.** A story scene a guest triggers in the host's world plays for the
   whole party too.
