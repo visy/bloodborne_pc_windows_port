@@ -524,6 +524,11 @@ add_executable(party-spectate-test EXCLUDE_FROM_ALL ../tests/test_party_spectate
 target_compile_options(party-spectate-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-spectate-test PRIVATE shim)
 set_target_properties(party-spectate-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# H4 enemy census (party_enemy_census.h). ninja -C out/gpu party-enemy-census-test
+add_executable(party-enemy-census-test EXCLUDE_FROM_ALL ../tests/test_party_enemy_census.cpp)
+target_compile_options(party-enemy-census-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-enemy-census-test PRIVATE shim)
+set_target_properties(party-enemy-census-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # C6 crash rejoin: the crashed member's connections (party_nr_drop.h). ninja -C out/gpu party-nr-drop-test
 add_executable(party-nr-drop-test EXCLUDE_FROM_ALL ../tests/test_party_nr_drop.cpp)
 target_compile_options(party-nr-drop-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
