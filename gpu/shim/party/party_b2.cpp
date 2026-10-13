@@ -6913,6 +6913,10 @@ void DirectSummonRing() {
     Send(0, dsummon::EncodeReq());
     Log("direct summon: asked the host for its room (rang the bell)");
 }
+bool DirectSummonCarries() {
+    std::lock_guard<std::mutex> lk(DS().mu);
+    return !dsummon::GatherFirst(DirectSummonOn() && g_on.load(), DS().g.phase);
+}
 void HostBusyChanged(bool boss_bar_up, bool cutscene_playing) {
     const dsummon::Busy b = dsummon::HostBusy(boss_bar_up, cutscene_playing);
     party::bridge::OnHostBusy(dsummon::BusyText(b, true));

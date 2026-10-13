@@ -83,6 +83,9 @@ bool TitleJoinRequested();
 bool TitleJoinHold(const GameSnapshot& s);
 /// Host: a guest at its title waits for this host's room (the director rings for it).
 bool TitleJoinPending();
+/// Guest (A5): the direct summon can bring this guest from another map into the host's in one
+/// load (on, and its last attempt did not fail): no gather to the host's lamp first.
+bool DirectSummonCarries();
 /// Host: its AutoContinue is on the way into the world (a waiting title-join guest keeps waiting).
 void SetTitleContinuing(bool on);
 

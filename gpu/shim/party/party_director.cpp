@@ -2991,6 +2991,19 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
         }
         return false;
     }
+    // A5: the direct summon carries the host's area and position, so it loads this guest from
+    // its own map straight into the host's (beside it: join arrival) - no gather load first.
+    // After a failed direct summon (refused, no answer) the gather runs as before.
+    static const bool carry = !(std::getenv("BB_PARTY_GATHER_DSUM") && std::getenv("BB_PARTY_GATHER_DSUM")[0] == '0');
+    if (carry && b2::DirectSummonCarries() && !(ever && Seconds(last, now) < 90.0)) {
+        static Clock::time_point said{};
+        if (Seconds(said, now) >= 30.0) {
+            said = now;
+            Log("gather: own world %s, host in %s; no gather: the direct summon loads this guest into the host's map",
+                MapName(s.map_id).c_str(), MapName(host_map).c_str());
+        }
+        return false;
+    }
     if (ever && Seconds(last, now) < 90.0) {
         // Still in another map than the host's while the gather's warp has not loaded yet: no
         // ring here (it would summon this guest at its own world's spot into the host's map).

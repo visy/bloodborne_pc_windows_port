@@ -191,6 +191,8 @@ void OnDelivered(Guest& g, double now, bool ok) {
     }
 }
 
+bool GatherFirst(bool direct_on, Phase last) { return !direct_on || last == Phase::Failed; }
+
 Action Step(Guest& g, double now, bool entry_waiting, bool joined) {
     switch (g.phase) {
     case Phase::Asked:

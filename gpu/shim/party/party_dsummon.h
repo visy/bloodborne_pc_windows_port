@@ -94,5 +94,10 @@ Action Step(Guest& g, double now, bool entry_waiting, bool joined);
 void OnAsked(Guest& g, double now);
 void OnRoom(Guest& g, double now, bool refused);
 void OnDelivered(Guest& g, double now, bool ok);
+/// A guest whose own world is in another map than the host's (A5, late joiner): gather to the
+/// host's lamp first (one extra load) only when the direct summon cannot carry it: off, or its
+/// last attempt failed (refused: boss fight / cutscene / full, or no answer). Otherwise it rings
+/// where it stands and the direct summon loads it into the host's map in one load.
+bool GatherFirst(bool direct_on, Phase last);
 
 }  // namespace coop::dsummon

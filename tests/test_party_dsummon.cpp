@@ -82,6 +82,11 @@ int main() {
     // the sign path joined first
     g = Guest{}; OnAsked(g, 0); OnRoom(g, 0, false);
     CHECK(Step(g, 1, true, true) == Action::ReportOk);
+    // A5: gather before ringing only when the direct summon cannot carry the guest across maps
+    CHECK(GatherFirst(false, Phase::Idle));
+    CHECK(!GatherFirst(true, Phase::Idle));
+    CHECK(!GatherFirst(true, Phase::Done));
+    CHECK(GatherFirst(true, Phase::Failed));
     std::printf("party-dsummon-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }
