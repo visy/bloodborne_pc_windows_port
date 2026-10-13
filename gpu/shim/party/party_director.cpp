@@ -1358,16 +1358,20 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     } else if (step.kind == TravelStep::HostKill) {
         // A boss (or any enemy) killed as the game's own death path: ForceDead on its entity id; the
         // boss-defeat EMEVD (4[00] death state -> 2003[12]) and the Lua boss clear follow.
+        // host_kill=0: the nearest living enemy within 500 m (a regular kill: echoes for everyone).
+        const std::uint32_t id = step.id ? step.id : b2::NearestEnemyForTest(500.0f);
         {
-            const std::uint64_t chr = GuestSvcFindChr(step.id);
+            const std::uint64_t chr = id ? GuestSvcFindChr(id) : 0;
             float d[4] = {};
             if (chr) {
                 SafeRead(chr + 0xc0, d, sizeof d);
             }
-            Log("test: host_kill: entity %u %s (%.1f, %.1f, %.1f)", step.id, chr ? "loaded at" : "NOT loaded here", d[0], d[1],
+            Log("test: host_kill: entity %u %s (%.1f, %.1f, %.1f)", id, chr ? "loaded at" : "NOT loaded here", d[0], d[1],
                 d[2]);
         }
-        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, step.id);
+        if (id) {
+            reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, id);
+        }
     } else {
         // ForceDead's own gates (0x18BF9A0): GSM +0x176F set = HP left alone; chr +0x18 -> +0x30 ->
         // +0x18 bit 0 = no death call. Logged: a die step that "did nothing" names its gate.
