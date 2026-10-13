@@ -781,6 +781,12 @@ not done for 0.5.2.
   no host body or plate; boss killed -> `the boss fight is over ... respawn at the lamp here`, host
   revived at lamp 2412952, `spectating ended`.
   Known: the spectator chr moves through the arena (region events see it; nothing seen to trigger).
+* 2026-10-13 (c5): member switch: Cross (`runtime_pad_cross_presses`, a dead chr ignores it) moves
+  to the next living member in task order; a followed member that dies or leaves is replaced by the
+  next one (`SpectateTarget`, party_spectate.h, unit party-spectate-test); `spectating: following slot N`
+  logs each change. Live c5spec1/c5spec2: guest died in the Cleric Beast fight, host alive: limbo,
+  spectate (host: dead copy disabled, 3.0 m behind it), Cross logged, boss killed -> guest revived at
+  the host's lamp 2412952 in the loaded map (no load), host re-created its chr at the lamp.
 * C7 (c7a, inconclusive): the host's lamp warp while the boss fight is up became split travel's
   in-world party move (no load): the guest was moved beside the host, but an in-world move does not
   reset the boss fight or the enemies, which design decision 4 wants for a rest. A rest during a boss

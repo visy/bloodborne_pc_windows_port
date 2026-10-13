@@ -20,7 +20,7 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | **Overall** | `█████████████████░░░` | 84% |
 | Session & joining | `██████████████████░░` | 88% |
 | World & travel | `██████████████████░░` | 88% |
-| Death & respawn | `█████████████████░░░` | 86% |
+| Death & respawn | `██████████████████░░` | 88% |
 | Progress (anyone can progress) | `█████████████████░░░` | 85% |
 | Services & UI | `██████████████████░░` | 90% |
 | Network & robustness | `████████████████░░░░` | 80% |
@@ -180,7 +180,7 @@ single-player save is never touched. Settings: *System → Party* pages in the g
 |---|---|
 | A guest | Gets up again at its own lamp with no loading screen when that lamp is in the loaded area (else at the host's lamp); its Blood Echoes wait in a bloodstain at that spot in its own world (pick them up there); the others keep playing |
 | The host | Gets up again at its own lamp with no loading screen for anyone; its echoes stay in a bloodstain where it fell. If that lamp is in another area, only the host loads; the guests stay where they are |
-| Anyone, during a boss fight | Watches a living party member fight until the boss dies (then respawns at the host's lamp), everyone dies, or someone travels |
+| Anyone, during a boss fight | Watches a living party member fight (press Cross to watch the next one) until the boss dies (then gets up at the host's lamp, with no loading screen when it is in the area), everyone dies, or someone travels |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |
 
 ### Coming next
