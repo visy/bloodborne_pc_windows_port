@@ -51,14 +51,19 @@ constexpr double kRateWindow = 10.0;
 /// standing in map `host_map` (0xAABBCCDD; areas must match for map flags)?
 bool WorldActionAllowed(std::uint32_t id, bool clear, std::uint32_t host_map);
 
-constexpr std::size_t kMaxKicks = 4;
+constexpr std::size_t kMaxKicks = 4, kMaxFog = 2;
 struct Request {
     std::uint32_t map = 0;  ///< the guest's map when it sent this (logged; not trusted)
     std::vector<std::uint32_t> set, clr;
     /// ObjAct kick event ids the guest's player kicked (ObjAct entry +0xC): the host replays the
     /// kick on its own object so it animates there too (when its game did not get it itself).
     std::vector<std::int32_t> kick;
-    bool operator==(const Request& o) const { return map == o.map && set == o.set && clr == o.clr && kick == o.kick; }
+    /// B2: guest-entered flags of boss fogs (BossGate::guest_flag) the guest just went through:
+    /// the host opens that fight (BossGateHostOpens). Never written into anyone's save.
+    std::vector<std::uint32_t> fog;
+    bool operator==(const Request& o) const {
+        return map == o.map && set == o.set && clr == o.clr && kick == o.kick && fog == o.fog;
+    }
 };
 std::string RequestToJson(const Request& r);
 /// Parses and validates the shape (sizes, duplicates, u32 ids, each id allowed in some map:
@@ -105,6 +110,7 @@ struct BossGate {
 };
 const std::vector<BossGate>& BossGates();
 const BossGate* BossGateByEvent(std::int32_t guest_event);
+const BossGate* BossGateByGuestFlag(std::uint32_t guest_flag);
 /// Guest: skip condition instruction bank:id (3[0] IfEventFlag on `flag`) of event `event_id`?
 /// Only the host-entered condition of a guest-entry event; the boss-alive and intro-seen checks stay.
 bool BossGateSkipCondition(std::int32_t event_id, int bank, int id, std::uint32_t flag);

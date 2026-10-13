@@ -138,6 +138,20 @@ int main() {
     assert(!BossGateHostOpens(cb, true, false, false, m2400));   // other block
     assert(!BossGateHostOpens(cb, true, false, false, dream));
     assert(!BossGateHostOpens(cb, true, false, false, 0xffffffffu));
+    assert(BossGateByGuestFlag(12414701) == &cb && !BossGateByGuestFlag(12414700));
+    {
+        Request fr;
+        fr.map = m2401;
+        fr.fog = {12414701};
+        Request back;
+        std::string why;
+        assert(RequestFromJson(RequestToJson(fr), &back, &why) && back == fr);
+        // Only guest-entered flags of the table; at most kMaxFog; no duplicates.
+        assert(!RequestFromJson("{\"v\":1,\"map\":0,\"set\":[],\"clr\":[],\"fog\":[12414700]}", &back, &why));
+        assert(!RequestFromJson("{\"v\":1,\"map\":0,\"set\":[],\"clr\":[],\"fog\":[12414701,12414701]}", &back, &why));
+        assert(!RequestFromJson("{\"v\":1,\"map\":0,\"set\":[],\"clr\":[],\"fog\":[12414701,12414801,12204801]}", &back, &why));
+        assert(!RequestFromJson("{\"v\":1,\"map\":0,\"set\":[],\"clr\":[],\"fog\":7}", &back, &why));
+    }
     std::printf("party-worldact-test: ok\n");
     return 0;
 }
