@@ -2129,24 +2129,55 @@ bool PartyLink::start_host(std::string* error) {
         const std::array<std::uint8_t, 8> no_secret{};
         I.password_key = crypto::derive_party_key(I.cfg.password, no_secret.data());
     }
-    sock::Socket s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (s == sock::kInvalid) return fail("socket() failed");
+    // Port 0 (ephemeral) must give a port free for both TCP and UDP: guests reach the UDP
+    // link on the TCP port's number. Windows hands out TCP ephemeral ports in sequence and
+    // reserves blocks of UDP ports (Hyper-V/WSL excluded port ranges) that are free for TCP,
+    // so for a while every bind(0) lands on a number whose UDP twin is unavailable. Retry with
+    // random ports of the dynamic range instead (a reserved block is hundreds of ports wide,
+    // so stepping to the next ephemeral port can stay inside it for a long time).
+    const bool any_port = I.cfg.port == 0 && I.cfg.udp_link;
+    std::uint32_t rnd = static_cast<std::uint32_t>(Clock::now().time_since_epoch().count()) ^
+                        static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&I));
+    sock::Socket s = sock::kInvalid;
+    sockaddr_in b{};
+    for (int attempt = 0;; ++attempt) {
+        s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (s == sock::kInvalid) break;
 #if defined(_WIN32)
-    BOOL excl = TRUE;
-    setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&excl), sizeof excl);
+        BOOL excl = TRUE;
+        setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&excl), sizeof excl);
 #else
-    int one = 1;
-    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+        int one = 1;
+        setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
 #endif
-    sockaddr_in a{};
-    a.sin_family = AF_INET;
-    a.sin_port = htons(I.cfg.port);
-    if (sock::loopback_only()) a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    else if (inet_pton(AF_INET, I.cfg.bind_addr.c_str(), &a.sin_addr) != 1) a.sin_addr.s_addr = htonl(INADDR_ANY);
-    if (::bind(s, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0) {
+        sockaddr_in a{};
+        a.sin_family = AF_INET;
+        std::uint16_t want = I.cfg.port;
+        if (attempt > 0) {
+            rnd = rnd * 1664525u + 1013904223u;
+            want = static_cast<std::uint16_t>(49152 + (rnd >> 16) % 16384);
+        }
+        a.sin_port = htons(want);
+        if (sock::loopback_only()) a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        else if (inet_pton(AF_INET, I.cfg.bind_addr.c_str(), &a.sin_addr) != 1) a.sin_addr.s_addr = htonl(INADDR_ANY);
+        if (::bind(s, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0) {
+            sock::close(s);
+            s = sock::kInvalid;
+            if (attempt > 0 && attempt < 63) continue;  // that random port is taken: another one
+            break;
+        }
+        sock::socklen bl = sizeof b;
+        getsockname(s, reinterpret_cast<sockaddr*>(&b), &bl);
+        if (!I.cfg.udp_link || I.open_udp_socket(ntohs(b.sin_port))) break;
+        if (!any_port || attempt >= 63) {
+            I.log("party link: UDP port " + std::to_string(ntohs(b.sin_port)) + " unavailable: TCP only");
+            break;
+        }
         sock::close(s);
-        return fail("party port " + std::to_string(I.cfg.port) + " is in use (another game instance?)");
+        s = sock::kInvalid;
     }
+    if (s == sock::kInvalid) return fail("party port " + std::to_string(I.cfg.port) + " is in use (another game instance?)");
+    if (I.cfg.udp_link) I.umux.accepting = true;
     // A simulated NAT without a port forward (netsim nat=1): the port is bound but never
     // listens, so a guest's TCP connect is refused as on the internet it would go unanswered.
     const bool nat_sim = bbnet::netsim::config().nat && sock::loopback_only();
@@ -2155,14 +2186,6 @@ bool PartyLink::start_host(std::string* error) {
         return fail("listen() failed");
     }
     sock::set_nonblocking(s);
-    sockaddr_in b{};
-    sock::socklen bl = sizeof b;
-    getsockname(s, reinterpret_cast<sockaddr*>(&b), &bl);
-    if (I.cfg.udp_link) {
-        I.umux.accepting = true;
-        if (!I.open_udp_socket(ntohs(b.sin_port)))
-            I.log("party link: UDP port " + std::to_string(ntohs(b.sin_port)) + " unavailable: TCP only");
-    }
     {
         std::lock_guard<std::mutex> lk(I.mu);
         I.listen_s = s;
