@@ -121,6 +121,8 @@ COSMETIC_FOLDERS = {'adhoc', 'facegen', 'font', 'menu', 'movie', 'msg', 'mtd', '
 COSMETIC_SUFFIXES = ('.tpf', '.tpf.dcx', '.tpfbhd', '.tpfbdt', '.texbnd', '.texbnd.dcx', '.dds')
 PARTY_MODS_FILE = 'party_mods.txt'
 PARTY_MODS_CACHE = 'party_mods_cache.json'
+# Generated layers (name: stamp), hashed by stamp: scripts/dream_mirror.py LAYER_NAME, STAMP.
+GENERATED_STAMPS = {'Dream mirror (bbhost)': 'dream-mirror 1'}
 
 
 def mod_file_is_cosmetic(relative):
@@ -166,7 +168,10 @@ def party_mod_set(layers, cache_file=None):
             cosmetic.add(name)
             continue
         counts[name] = counts.get(name, 0) + 1
-        digest.update(b'\0file\0' + key.encode('utf-8') + b'\0' + file_sha256(source, cache).encode())
+        # The generated mirror layout is the same file everywhere (a SHA-256-checked rewrite), but
+        # its DCX bytes depend on the zlib build: it counts by its stamp.
+        content = GENERATED_STAMPS.get(name) or file_sha256(source, cache)
+        digest.update(b'\0file\0' + key.encode('utf-8') + b'\0' + content.encode())
     if cache_file:
         try:
             Path(cache_file).write_text(json.dumps(cache), encoding='utf-8')
@@ -230,6 +235,22 @@ def expand(directory):
         directory.mkdir(exist_ok=True)
 
 
+OVERLAY_DONE = '.done'  # beside the overlay: mod-game-<key>.done
+
+
+def remove_overlay(path):
+    """Deletes an overlay without following its directory links (junctions on Windows)."""
+    for entry in Path(path).iterdir():
+        if is_link(entry) or entry.is_file():
+            if is_link(entry) and entry.is_dir() and sys.platform == 'win32':
+                os.rmdir(entry)
+            else:
+                entry.unlink()
+        else:
+            remove_overlay(entry)
+    os.rmdir(path)
+
+
 def build_overlay(game, out, mods):
     game = Path(game).resolve(strict=True)
     replacements = []
@@ -248,7 +269,18 @@ def build_overlay(game, out, mods):
         return game
     out = Path(out).resolve()
     out.mkdir(parents=True, exist_ok=True)
-    overlay = Path(tempfile.mkdtemp(prefix='mod-game-', dir=out))
+    # One overlay per (game, mod files): reused while nothing changed, so a launch neither builds
+    # it again nor changes the game path (scripts/boot_image.py keys its cache on that path).
+    key = hashlib.sha256(str(game).casefold().encode())
+    for relative, source in replacements:
+        st = Path(source).stat()
+        key.update(f'|{relative.as_posix()}|{source}|{st.st_size}|{st.st_mtime_ns}'.encode())
+    final = out / f'mod-game-{key.hexdigest()[:16]}'
+    done = final.with_name(final.name + OVERLAY_DONE)
+    if done.is_file() and final.is_dir():
+        print(f'Mods: {len(replacements)} files, overlay reused', file=sys.stderr)
+        return final
+    overlay = Path(tempfile.mkdtemp(prefix='mod-game-tmp-', dir=out))
     # Overlay files a mod put there. Every other file in the overlay is a link to the game's: a
     # symlink, or without symlink rights on Windows a hard link or a copy, which are regular files.
     from_mods = set()
@@ -274,9 +306,16 @@ def build_overlay(game, out, mods):
             make_link(destination, source)
             from_mods.add(key)
         print(f'Mods: {replaced} game files replaced, {added} added', file=sys.stderr)
-        return overlay
+        try:
+            if final.exists():
+                remove_overlay(final)
+            overlay.rename(final)
+            done.write_text('ok', encoding='utf-8')
+            return final
+        except OSError:  # another instance made or holds it: this launch keeps its own copy
+            return overlay
     except BaseException:
-        shutil.rmtree(overlay)
+        remove_overlay(overlay)
         raise
 
 
@@ -303,6 +342,13 @@ def main():
         else:
             for name in selected(args.mods_dir, args.config):
                 layers.append((name, args.mods_dir / name))
+    # The Hunter's Dream mirror (scripts/dream_mirror.py, from bbhost): a generated layer first, so
+    # a user mod with its own Dream layout wins. BB_DREAM_MIRROR=0: off.
+    import dream_mirror
+    if dream_mirror.enabled(os.environ):
+        mirror = dream_mirror.ensure_layer(args.game, args.out)
+        if mirror:
+            layers.insert(0, (dream_mirror.LAYER_NAME, mirror))
     game = build_overlay(args.game, args.out, layers)
     digest, items = write_party_mods_file(args.out, layers)
     if items:

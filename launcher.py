@@ -409,6 +409,7 @@ def settings_env(s: dict) -> dict:
         env["BB_GAME_DIR"] = str(game_dir)
     env["BB_FPS"] = s.get("fps", "uncap")
     env["BB_MODS_ENABLED"] = "1" if on("mods") else "0"
+    env["BB_DREAM_MIRROR"] = None if on("dream_mirror") else "0"
     env["BB_UPSCALER"] = None if on("feat_upscaler") else "off"
     env["BB_OBJECT_MOTION"] = None if on("feat_object_motion") else "0"
     env["BB_OVERLAY"] = None if on("feat_overlay") else "0"
@@ -1095,6 +1096,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_overlay = tk.BooleanVar(value=self.settings.get("feat_overlay", True))
         self.feat_fps_patch = tk.BooleanVar(value=self.settings.get("feat_fps_patch", True))
         self.feat_mods = tk.BooleanVar(value=self.settings.get("mods", True))
+        self.feat_dream_mirror = tk.BooleanVar(value=self.settings.get("dream_mirror", True))
         self.feat_res_scaling = tk.BooleanVar(value=self.settings.get("feat_res_scaling", True))
         self.feat_tracing = tk.BooleanVar(value=self.settings.get("feat_tracing", True))
         self.feat_watchdog = tk.BooleanVar(value=self.settings.get("feat_watchdog", True))
@@ -1339,6 +1341,11 @@ class BloodborneLauncher(tk.Tk):
         self._check(sec, "Enable mods folder (mods/)", self.feat_mods,
                     "Loads loose-file mods from the mods\\ folder (switches and load order in mods.json); the "
                     "original game files are not modified. Default: on (BB_MODS_ENABLED).")
+        self._check(sec, "Hunter's Dream mirror: change appearance", self.feat_dream_mirror,
+                    "The mirror in the Hunter's Dream workshop opens the appearance editor (the developers' "
+                    "unfinished 'Put on Disguise', restored as in bbhost). Each party member edits their own "
+                    "hunter; every player in a party needs the same setting (party mod check). "
+                    "Default: on (BB_DREAM_MIRROR).")
         patches_btn = ttk.Button(sec, text="⚙  All XML Patches...", style="Secondary.TButton",
                                  command=self.open_patches_dialog)
         patches_btn.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(6, 2))
@@ -2506,6 +2513,7 @@ class BloodborneLauncher(tk.Tk):
             "aniso": self.aniso_var.get(),
             "timeout": self.timeout_var.get().split()[0],
             "mods": self.feat_mods.get(),
+            "dream_mirror": self.feat_dream_mirror.get(),
             "hide_vk": self.hide_vk_var.get(),
             "feat_upscaler": self.feat_upscaler.get(),
             "feat_object_motion": self.feat_object_motion.get(),
