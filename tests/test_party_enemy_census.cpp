@@ -68,6 +68,31 @@ int main() {
         assert(PickEnemyKillTarget({}, 0, me, 500) == -1);
         assert(EnemyIsBossEntity(2410800) && !EnemyIsBossEntity(2410740) && !EnemyIsBossEntity(800));
     }
+    {
+        // H3 kill echoes: alive -> dead (dying, unpaid) is due after the grace; paid / baseline-dead
+        // / alive again are not.
+        KillEchoTracker k;
+        const std::uint64_t dying = kKillDyingBit, paid = kKillDyingBit | 0x40000;
+        assert(k.Update({{1, true, 0}, {2, true, 0}, {3, false, dying}, {4, true, 0}}, 0).empty());  // 3: dead at baseline
+        assert(k.Update({{1, false, dying}, {2, false, paid}, {3, false, dying}, {4, false, 0}}, 1).empty());
+        assert(k.Update({{1, false, dying}, {2, false, paid}, {3, false, dying}, {4, false, dying}}, 3).empty());
+        auto d = k.Update({{1, false, dying}, {2, false, paid}, {3, false, dying}, {4, false, dying}}, 4.1);
+        assert(d.size() == 2 && d[0] == 1 && d[1] == 4);  // 4: dead since t 1, dying bit later
+        assert(k.Update({{1, false, paid}, {4, false, paid}}, 5).empty());  // paid by our call: never again
+        KillEchoTracker n;
+        n.Update({{8, true, 0}}, 0);
+        n.Update({{8, false, 0}}, 1);
+        assert(n.Update({{8, false, 0}}, 9).empty());  // HP 0 without the dying bit: not yet
+        assert(n.Update({{8, false, dying}}, 10).size() == 1);
+        KillEchoTracker r;
+        r.Update({{7, true, 0}}, 0);
+        r.Update({{7, false, dying}}, 1);
+        r.Update({{7, true, 0}}, 2);  // alive again (revived): forgotten
+        assert(r.Update({{7, false, dying}}, 3).empty() && r.Update({{7, false, dying}}, 5).empty());
+        assert(r.Update({{7, false, dying}}, 6.1).size() == 1);
+        r.Reset();
+        assert(r.Update({{7, false, dying}}, 10).empty());
+    }
     std::puts("party-enemy-census-test: ok");
     return 0;
 }

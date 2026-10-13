@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <map>
 #include <vector>
 
 struct EnemyCensusEntry {
@@ -100,3 +101,52 @@ inline int PickEnemyKillTarget(const std::vector<EnemyKillCandidate>& c, std::ui
     }
     return best;
 }
+
+/// H3 kill echoes in a party. The game's kill-echo payer (0x18C5070) pays the LOCAL player (no
+/// attacker check; full for clients with the parity patch) and marks the chr paid (+0x1E1 0x40000).
+/// In a party session the per-frame death path (0x18BD9D0) leaves a dead enemy's payer to the
+/// network death handler, and live (2026-10-13) a host kill paid nobody until the guest had left:
+/// the host's 48 echoes came 6 s after the kill, at the guest's disconnect; the guest got none.
+/// KillEchoTracker names the enemies seen alive and then dead (dying bit 0x10000) whose payer has
+/// not run after `grace` s; the game side then calls the payer itself on every player's game. The
+/// payer's own paid bit keeps a later native call from paying twice.
+struct KillEchoObs {
+    std::uint64_t chr = 0;
+    bool alive = false;
+    std::uint64_t flags = 0;  ///< chr +0x1E1, 5 bytes
+};
+constexpr std::uint64_t kKillDyingBit = 0x10000, kKillPaidBits = 0x240000;
+
+class KillEchoTracker {
+public:
+    /// One observation of the loaded enemies at `now` (s); returns the chrs whose echoes are due.
+    std::vector<std::uint64_t> Update(const std::vector<KillEchoObs>& cur, double now, double grace = 3.0) {
+        std::vector<std::uint64_t> due;
+        std::map<std::uint64_t, bool> alive;
+        std::map<std::uint64_t, double> dead_since;
+        for (const auto& o : cur) {
+            if (!o.chr) continue;
+            alive[o.chr] = o.alive;
+            if (o.alive || (o.flags & kKillPaidBits)) continue;
+            const auto was = alive_.find(o.chr);
+            const auto since = dead_since_.find(o.chr);
+            double t = -1;
+            if (since != dead_since_.end()) t = since->second;
+            else if (was != alive_.end() && was->second) t = now;  // alive before, dead now: a kill
+            if (t < 0) continue;  // dead since before we looked (a load, a baseline): not ours
+            if (now - t >= grace && (o.flags & kKillDyingBit)) due.push_back(o.chr);
+            else dead_since[o.chr] = t;
+        }
+        alive_.swap(alive);
+        dead_since_.swap(dead_since);
+        return due;
+    }
+    void Reset() {
+        alive_.clear();
+        dead_since_.clear();
+    }
+
+private:
+    std::map<std::uint64_t, bool> alive_;
+    std::map<std::uint64_t, double> dead_since_;
+};
