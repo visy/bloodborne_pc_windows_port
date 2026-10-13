@@ -522,6 +522,9 @@ void LogTransitions(State& st, const GameSnapshot& now) {
     if (now.insight != was.insight && now.insight >= 0 && was.insight >= 0) {
         Log("Insight %d -> %d", was.insight, now.insight);
     }
+    if (now.echoes != was.echoes && now.echoes >= 0 && was.echoes >= 0) {
+        Log("Echoes %d -> %d", was.echoes, now.echoes);  // H3 evidence: echoes earned in the host's world
+    }
 }
 
 std::string DescribeFromClient();
