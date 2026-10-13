@@ -67,5 +67,7 @@ std::vector<EnemyKillCandidate> LoadedEnemies();
 /// A chr's HP (+0xF8 of its data module; -1 unreadable) and physics position.
 int EnemyHp(std::uint64_t chr);
 bool ChrPosition(std::uint64_t chr, float out[3]);
+/// H3: what the game's kill-echo payer (0x18C5070) checks on a dead chr, for the logs.
+std::string DescribeKillEchoGates(std::uint64_t chr);
 
 }  // namespace coop::balance

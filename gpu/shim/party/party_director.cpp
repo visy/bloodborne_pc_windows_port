@@ -129,6 +129,7 @@ struct TravelStep {
         HostLamp, GuestLamp, HostAlone, GuestKill,
         HostOutage, GuestOutage, // a simulated total network outage of `buttons` ms (BB_NET_SIM on)
         HostObj, GuestObj, HostChr, GuestChr, // stand at a map object / character: ENTITY[:DIST[:ANGLE]]
+        HostUse, GuestUse, // use goods ID as the item does (test aid): its behaviour's SpEffect on the own chr
         GuestStick // walk by the left stick (the approach driver) to X:Z[:R[:STEPS]]: a real walk, no warp
     } kind = HostWarp;
     std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30; HostKill: the entity id
@@ -928,6 +929,8 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::HostSkipRemo: return "host_skipremo";
     case TravelStep::GuestSkipRemo: return "guest_skipremo";
     case TravelStep::GuestStick: return "guest_stick";
+    case TravelStep::HostUse: return "host_use";
+    case TravelStep::GuestUse: return "guest_use";
     }
     return "?";
 }
@@ -1132,7 +1135,7 @@ void RunTravelScript(State& st, const GameSnapshot& s, Clock::time_point now) {
 /// id chr +0x3B8, HP +0xF8; PickEnemyKillTarget), so it is loaded and alive here. The kill: Lua
 /// ForceDead by entity id (`by_id`: a boss's own defeat path), then, if HP is still above 0, the
 /// death path 0x18BF9A0 on the chr itself, then HP 0 (the game's own death follows).
-void KillLoadedEnemyForTest(const char* what, std::uint32_t want, bool by_id) {
+void KillLoadedEnemyForTest(const char* what, std::uint32_t want, bool by_id, bool hp_only = false) {
     const auto list = balance::LoadedEnemies();
     float me[3] = {};
     const std::uint64_t player = LocalPlayer();
@@ -1150,7 +1153,18 @@ void KillLoadedEnemyForTest(const char* what, std::uint32_t want, bool by_id) {
     const int hp0 = balance::EnemyHp(t.chr);
     Log("test: %s: entity %u (census key %u; loaded, HP %d) at (%.1f, %.1f, %.1f), %.1f m away; %zu loaded enemies, "
         "%d alive", what, t.entity, t.id, hp0, t.pos[0], t.pos[1], t.pos[2], std::sqrt(dx * dx + dy * dy + dz * dz), list.size(), alive);
+    const int echoes0 = ReadGameState(false).echoes;
+    Log("test: %s: before: own Echoes %d; %s", what, echoes0, balance::DescribeKillEchoGates(t.chr).c_str());
     const char* how = "none";
+    if (hp_only) {
+        // ':hp': only HP 0, the state a lethal hit leaves: the chr's own update runs its death.
+        const int zero = 0;
+        std::uint64_t ins = 0, d = 0;
+        if (SafeGet(t.chr + 0x3b0, &ins) && ins && SafeGet(ins + 0x20, &d) && d) SafeWrite(d + 0xf8, &zero, 4);
+        Log("test: %s: entity %u HP %d -> %d (HP 0 only: the game's own death follows)", what, t.entity, hp0,
+            balance::EnemyHp(t.chr));
+        return;
+    }
     if (by_id && t.entity) {
         reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, t.entity);
         how = "ForceDead by id";
@@ -1171,7 +1185,43 @@ void KillLoadedEnemyForTest(const char* what, std::uint32_t want, bool by_id) {
         if (SafeGet(t.chr + 0x3b0, &ins) && ins && SafeGet(ins + 0x20, &d) && d) SafeWrite(d + 0xf8, &zero, 4);
         how = "HP 0";
     }
-    Log("test: %s: entity %u killed by %s: HP %d -> %d", what, t.entity, how, hp0, balance::EnemyHp(t.chr));
+    Log("test: %s: entity %u killed by %s: HP %d -> %d; own Echoes %d -> %d; %s", what, t.entity, how, hp0,
+        balance::EnemyHp(t.chr), echoes0, ReadGameState(false).echoes, balance::DescribeKillEchoGates(t.chr).c_str());
+}
+
+/// host_use / guest_use=GOODS (G2 test aid): what using goods GOODS does to the own chr, without the
+/// animation: one is given if none is owned, its EquipParamGoods behaviorId (+0x14) names a
+/// BehaviorParam_PC row whose refType (+0x9) 2 = SpEffect refId (+0xC), else the goods refId (+0x0)
+/// when SpEffectParam has that row; that SpEffect is applied (Madman's Knowledge 1500: +1 Insight)
+/// and a game save is requested. Not consumed. Insight / save changes show in the state lines.
+void UseGoodsForTest(const char* what, std::uint32_t goods) {
+    const int owned = GoodsCount(goods);
+    const bool given = owned <= 0 && GiveGoods(goods, 1);
+    const std::uint64_t row = GameParamRow("EquipParamGoods", "EQUIP_PARAM_GOODS_ST", goods);
+    std::int32_t ref = -1, behavior = -1, beh_ref = -1;
+    std::uint8_t ref_type = 0xff;
+    if (row) {
+        SafeGet(row + 0x0, &ref);
+        SafeGet(row + 0x14, &behavior);
+    }
+    const std::uint64_t beh = behavior > 0 ? GameParamRow("BehaviorParam_PC", "BEHAVIOR_PARAM_ST", std::uint32_t(behavior)) : 0;
+    if (beh) {
+        SafeGet(beh + 0x9, &ref_type);
+        SafeGet(beh + 0xc, &beh_ref);
+    }
+    int effect = -1;
+    if (beh && ref_type == 2 && beh_ref > 0 && GameParamRow("SpEffectParam", "SP_EFFECT_PARAM_ST", std::uint32_t(beh_ref))) {
+        effect = beh_ref;
+    } else if (ref > 0 && GameParamRow("SpEffectParam", "SP_EFFECT_PARAM_ST", std::uint32_t(ref))) {
+        effect = ref;
+    }
+    const int insight0 = ReadGameState(false).insight;
+    const bool ok = effect > 0 && ApplySpEffect(effect);
+    Log("test: %s goods %u (owned %d%s): goods row %s refId %d behaviorId %d -> BehaviorParam_PC %s refType %u refId %d; "
+        "SpEffect %d %s; Insight %d -> %d", what, goods, owned, given ? ", one given" : "", row ? "found" : "MISSING",
+        ref, behavior, beh ? "found" : "missing", unsigned(ref_type), beh_ref, effect, ok ? "applied" : "NOT applied",
+        insight0, ReadGameState(false).insight);
+    if (ok) RequestGameSave("item use test");
 }
 
 /// The live travel test chain (TravelStep): joins are tracked in any state; a step runs in the
@@ -1208,7 +1258,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                 step.kind == TravelStep::GuestPress || step.kind == TravelStep::GuestMark ||
                 step.kind == TravelStep::GuestLamp || step.kind == TravelStep::GuestSkipRemo || step.kind == TravelStep::GuestOutage || step.kind == TravelStep::GuestKill ||
                 step.kind == TravelStep::GuestObj || step.kind == TravelStep::GuestChr ||
-                step.kind == TravelStep::GuestStick) == (role == PartyRole::Guest);
+                step.kind == TravelStep::GuestStick || step.kind == TravelStep::GuestUse) == (role == PartyRole::Guest);
     };
     if (t.script_on) {
         RunTravelScript(st, s, now);
@@ -1342,6 +1392,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         t.pressing = true;
         t.release_at = now + std::chrono::milliseconds(150);
         Log("test: %s 0x%x", TravelStepName(step.kind), step.buttons);
+    } else if (step.kind == TravelStep::HostUse || step.kind == TravelStep::GuestUse) {
+        UseGoodsForTest(TravelStepName(step.kind), static_cast<std::uint32_t>(std::strtoul(step.args.c_str(), nullptr, 10)));
     } else if (step.kind == TravelStep::HostMark || step.kind == TravelStep::GuestMark) {
         if (step.args == "lua") {
             std::int64_t r = -1;
@@ -1448,7 +1500,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         // A boss (or any enemy) killed as the game's own death path: ForceDead on its entity id; the
         // boss-defeat EMEVD (4[00] death state -> 2003[12]) and the Lua boss clear follow.
         // host_kill=0: the nearest living regular enemy within 500 m (echoes for everyone).
-        KillLoadedEnemyForTest("host_kill", step.id, true);
+        KillLoadedEnemyForTest("host_kill", step.id, true, step.args == "hp");
     } else {
         // ForceDead's own gates (0x18BF9A0): GSM +0x176F set = HP left alone; chr +0x18 -> +0x30 ->
         // +0x18 bit 0 = no death call. Logged: a die step that "did nothing" names its gate.
@@ -2212,6 +2264,9 @@ void PartyDirector::ConfigureFromEnv() {
                 if (step.kind == TravelStep::HostWarp || step.kind == TravelStep::HostKill) {
                     step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 10, nullptr, 10));
                 }
+                if (step.kind == TravelStep::HostKill && item.find(":hp") != std::string::npos) {
+                    step.args = "hp";  // host_kill=ID:hp@S: HP 0 only (the game's own death path)
+                }
                 if (step.kind == TravelStep::HostLamp) {
                     step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 10, nullptr, 10));
                 }
@@ -2269,7 +2324,8 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("host_obj=", 0) == 0 || item.rfind("guest_obj=", 0) == 0 ||
                        item.rfind("host_chr=", 0) == 0 || item.rfind("guest_chr=", 0) == 0 ||
                        item.rfind("host_skipremo", 0) == 0 || item.rfind("guest_skipremo", 0) == 0 ||
-                       item.rfind("guest_stick=", 0) == 0) {
+                       item.rfind("guest_stick=", 0) == 0 || item.rfind("host_use=", 0) == 0 ||
+                       item.rfind("guest_use=", 0) == 0) {
                 TravelStep step;
                 step.kind = item.rfind("host_obj=", 0) == 0     ? TravelStep::HostObj
                             : item.rfind("guest_obj=", 0) == 0  ? TravelStep::GuestObj
@@ -2283,6 +2339,8 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("host_skipremo", 0) == 0  ? TravelStep::HostSkipRemo
                             : item.rfind("guest_skipremo", 0) == 0 ? TravelStep::GuestSkipRemo
                             : item.rfind("guest_stick=", 0) == 0   ? TravelStep::GuestStick
+                            : item.rfind("host_use=", 0) == 0      ? TravelStep::HostUse
+                            : item.rfind("guest_use=", 0) == 0     ? TravelStep::GuestUse
                                                                 : TravelStep::HostHeadstone;
                 if (const std::size_t pc = item.find('%'); pc != std::string::npos) {
                     step.map = item.substr(pc + 1); // only while the current map name contains it
