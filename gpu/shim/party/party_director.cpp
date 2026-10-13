@@ -2584,6 +2584,10 @@ void PartyDirector::Tick() {
         if (chalice::PopGuestForm(&form)) {
             link->post_event(party::kHostSlot, chalice::kFormEventName, form);
         }
+        std::string gift;  // D5: an NPC's gift to this guest in the host's world (party_items.h)
+        while (PopGuestGift(&gift)) {
+            link->post_event(party::kHostSlot, kGiftUpEventName, gift);
+        }
     }
     // B2 (party_b2.h): guest "arrived" / host notes.
     if (link) {

@@ -167,6 +167,31 @@ bool ItemGrantFromPeerAllowed(const ItemGrant& g, std::string* why = nullptr);
 /// The allowed rows of `in`; `rejected` (optional) counts the rest.
 std::vector<ItemGrant> FilterPeerItems(const std::vector<ItemGrant>& in, std::size_t* rejected = nullptr);
 
+// ---- D5: an NPC's gift to a guest reaches the host (and through C3 every other member) ----
+// NPC choices are shared (D8): a guest's talk moves the NPC's quest in the host's world, so the
+// gift the talk handed the guest would be gone for the host and every other guest (the NPC is
+// past that step). The guest reports the lot (EVENT "gift_up"); the host takes the same lot
+// through the game's own award (skipped when its flag is already set) and C3 hands it on.
+constexpr const char* kGiftUpEventName = "gift_up";
+/// May a guest's own award of `lot` (flag `flag`) in the host's world go up: a flagged lot the
+/// tables know with exactly that flag, not denied (per-player / repeatable), not a map treasure
+/// (5AABZnnn, area > 0: instanced per player, D4).
+bool GuestGiftShareable(std::int32_t lot, std::int32_t flag);
+std::string GiftUpToJsonText(std::int32_t lot, std::int32_t flag);
+/// Parses and validates (GuestGiftShareable) one report.
+bool GiftUpFromJsonText(const std::string& text, std::int32_t* lot, std::int32_t* flag, std::string* error = nullptr);
+/// Host: gifts one guest slot may report per 60 s.
+class GiftRateLimit {
+public:
+    static constexpr int kPerWindow = 4;
+    static constexpr double kWindow = 60.0;
+    bool Take(int slot, double now);
+
+private:
+    double start_[8] = {-1e18, -1e18, -1e18, -1e18, -1e18, -1e18, -1e18, -1e18};
+    int used_[8] = {};
+};
+
 // ---- Host ledger: what was sent ----
 class HostItems {
 public:
@@ -335,6 +360,10 @@ bool TakeHostFullItems(int* slot, std::vector<ItemGrant>* out);
 void RequestGuestItems(const std::vector<ItemGrant>& items);
 /// Main thread, once a frame (the coop tick): the guest replay.
 void ItemsTick();
+/// Guest: the next NPC gift to report to the host (any thread; the director posts it).
+bool PopGuestGift(std::string* body);
+/// Host: EVENT gift_up from `slot` (link thread): validated, rate limited, queued for the tick.
+bool OnHostGiftUp(int slot, const std::string& body, std::string* why);
 #endif
 
 } // namespace coop

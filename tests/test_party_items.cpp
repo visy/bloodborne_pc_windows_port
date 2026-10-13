@@ -617,6 +617,40 @@ static void test_guest_summoned() {
     CHECK(q.Offer(in) == 0);
 }
 
+// D5: an NPC's gift to a guest goes up to the host (GuestGiftShareable, EVENT gift_up, rate limit).
+static void test_gift_up() {
+    CHECK(ItemLotFlag(17000) == 50000200);
+    CHECK(GuestGiftShareable(17000, 50000200));        // a global gift lot with its own flag
+    CHECK(!GuestGiftShareable(17000, 50000205));       // flag of another lot
+    CHECK(!GuestGiftShareable(17000, kItemNone));      // flagless: the host could not dedupe
+    CHECK(!GuestGiftShareable(31000, kItemNone));      // ledger lot (host-only award)
+    CHECK(!GuestGiftShareable(10010, 6622));           // Messenger gift: per player
+    CHECK(!GuestGiftShareable(10040, 50000100));       // Messenger, denied
+    CHECK(!GuestGiftShareable(2400450, 52400450));     // map treasure: instanced per player (D4)
+    CHECK(!GuestGiftShareable(2300090, 52300090));
+    CHECK(!GuestGiftShareable(123456789, 50000200));   // unknown lot
+
+    const std::string body = GiftUpToJsonText(17000, 50000200);
+    std::int32_t lot = 0, flag = 0;
+    std::string err;
+    CHECK(GiftUpFromJsonText(body, &lot, &flag, &err) && lot == 17000 && flag == 50000200);
+    CHECK(!GiftUpFromJsonText(GiftUpToJsonText(2400450, 52400450), &lot, &flag, &err));
+    CHECK(!GiftUpFromJsonText("{\"lot\":17000}", &lot, &flag, &err));
+    CHECK(!GiftUpFromJsonText("{\"lot\":17000.5,\"flag\":50000200}", &lot, &flag, &err));
+    CHECK(!GiftUpFromJsonText("{\"lot\":1e300,\"flag\":50000200}", &lot, &flag, &err));
+    CHECK(!GiftUpFromJsonText("[17000,50000200]", &lot, &flag, &err));
+    CHECK(!GiftUpFromJsonText("not json", &lot, &flag, &err));
+
+    GiftRateLimit r;
+    for (int i = 0; i < GiftRateLimit::kPerWindow; ++i) {
+        CHECK(r.Take(1, 10.0 + i));
+    }
+    CHECK(!r.Take(1, 20.0));                           // fifth within 60 s
+    CHECK(r.Take(2, 20.0));                            // other slots count apart
+    CHECK(r.Take(1, 10.0 + GiftRateLimit::kWindow));   // a new window
+    CHECK(!r.Take(-1, 0.0) && !r.Take(8, 0.0));
+}
+
 int main() {
     test_tables();
     test_fit();
@@ -632,6 +666,7 @@ int main() {
     test_items_json();
     test_gems();
     test_guest_summoned();
+    test_gift_up();
     std::printf("party-items-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }
