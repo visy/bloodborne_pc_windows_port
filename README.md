@@ -25,7 +25,7 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | Services & UI | `██████████████████░░` | 90% |
 | Network & robustness | `████████████████░░░░` | 80% |
 | Bloodborne-specific (chalice, Insight) | `███████████████░░░░░` | 77% |
-| Feels like single player in a party | `████████████████░░░░` | 78% |
+| Feels like single player in a party | `████████████████░░░░` | 80% |
 
 ---
 
@@ -127,8 +127,12 @@ single-player save is never touched. Settings: *System → Party* pages in the g
   A lamp lit by anyone is lit for the party.
 - **Resting resets the world for the party.** Enemies respawn; everyone's HP, vials and bullets
   refill.
-- **Guests are full players.** The Doll (level up), shops, the workbench, storage, lamps and
-  headstones all work for guests.
+- **Guests are full players.** The Doll (level up), shops, the workbench, storage, the Memory
+  Altar (runes, covenants), lamps and headstones all work for guests.
+- **Change your appearance at the Dream's mirror.** The mirror in the Hunter's Dream workshop opens
+  the appearance editor ("Put on Disguise", a feature the game left unfinished, restored as in
+  bbhost), in single player and for every party member on their own hunter. Launcher switch
+  "Hunter's Dream mirror", on by default; everyone in a party needs the same setting.
 - **Progress counts for everyone.** Bosses, items, doors, shortcuts, lamps, story and endings go
   into every player's own save. A guest who is behind catches up, including the Blood Moon.
 - **Story cutscenes and endings play for everyone.** The Blood Moon, Amelia's skull (evening to
@@ -242,7 +246,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors |
 | Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD |
 | shadPS4 team | Vulkan video core and shader recompiler (GPL-2.0+), sirit |
-| droogie and the bbhost team | Long-session stability fixes; menu button rows and the menu cursor's offsets; direct summon delivery ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |
+| droogie and the bbhost team | Long-session stability fixes; menu button rows and the menu cursor's offsets; direct summon delivery; the Hunter's Dream mirror (appearance editor) ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |
 | FireBurn | FSR-Vulkan (MIT); AMD FidelityFX SDK (MIT) |
 | Supermedo, IFreemz | DLSS bridge and Windows loader |
 | Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, FPS-preset physics step (found by FIocker), frame limiter pacing, texture-cache, pipeline-cache and shader-walker fixes, skipped draws for failed pipelines, keyboard stick movement; imedved (direct mouse camera, ported by mcrib884); andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows) |

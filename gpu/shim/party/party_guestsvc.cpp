@@ -55,7 +55,7 @@ bool GuestServiceTalk(std::uint32_t talk) {
     case 210696: // mirror: appearance (2100202)
     case 210697: // dress-up messenger (2100218)
     case 210698: // Insight messenger: Insight shop (2100219)
-    case 210699: // Bath Messenger shop (2100203)
+    case 210699: // Memory Altar: runes, covenants (2100203; prompt 70000008)
         return true;
     default:
         return false;

@@ -78,7 +78,8 @@ The filter allows by talk script id; the entity column is where the script is pl
 | 2100200 | t210693 | storage (`OpenRepository`) | yes |
 | 2100201 | t210692 | workbench: weapon upgrade, Blood Gems, repair, crush materials | yes |
 | 2100202 | t210696 | mirror (appearance, `OpenCharaMakeMenu`) | yes |
-| 2100203, 2100211, 2100215, 2100216 | t210699, t210691, t210694, t210695 | Bath Messengers: shops, sell | yes |
+| 2100203 | t210699 | Memory Altar (runes; prompt 70000008), live h5 2026-10-13 | yes |
+| 2100211, 2100215, 2100216 | t210691, t210694, t210695 | Bath Messengers: shops, sell | yes |
 | 2100218 | t210697 | dress-up messenger (attire for flags 6071..) | yes |
 | 2100219 | t210698 | Insight messenger (Insight shop) | yes |
 | 2100600 | t210305 | Gehrman (last event: the ending choice) | no |

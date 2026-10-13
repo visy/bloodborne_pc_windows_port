@@ -66,7 +66,7 @@ bool GuestServicesGate(const GuestServicesInput& in);
 /// The Hunter's Dream talk scripts a guest may use (the talk environment's +0x10 is the script id;
 /// MSB m21_00_00_00 entity in brackets): 210304 Doll (2100700: level up), 210693 storage (2100200),
 /// 210692 workbench (2100201: upgrade, Blood Gems, repair, crush), 210696 mirror (2100202),
-/// 210691 / 210694 / 210695 / 210699 Bath Messengers (shops, sell), 210697 dress-up messenger,
+/// 210699 Memory Altar (2100203), 210691 / 210694 / 210695 Bath Messengers (shops, sell), 210697 dress-up messenger,
 /// 210698 Insight messenger. Not: Gehrman 210305 (the last choice), 210306, headstones
 /// 210000-210003, the Dream lamp / warp menus 210720 / 210721 (travel: the lamp phase), chalice
 /// altars 210050 / 210100 / 210110.

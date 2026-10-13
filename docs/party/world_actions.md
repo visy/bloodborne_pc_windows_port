@@ -211,8 +211,8 @@ plays the remo there as its own event would and sends it up.
 ## 8. Character freedom audit (H5)
 
 Talk scripts of the Dream (`IsClientPlayer` counts from the talkesdbnd scan): the Doll, storage,
-workbench, mirror, every Bath Messenger (shops, Insight shop, dress-up) are on the guest list;
-t210690 (no client test) needs none. Chalice altars (t210050/100/110) stay host-only here (chalice
+workbench, Memory Altar (t210699, chr 2100203), mirror, every Bath Messenger (shops, Insight shop, dress-up) are on the guest list;
+t210690 (no client test, no character in the Dream layout) needs none. Live h5 (2026-10-13): the Memory Altar and the mirror (BB_DREAM_MIRROR layout) open for a guest in the host's Dream. Chalice altars (t210050/100/110) stay host-only here (chalice
 rows, G1). Equipment, outfits (equip menu), gestures (menu), runes already held, items in the
 storage box: local record, no gate. Blood Vials / Quicksilver Bullets: bought in the Messengers'
 shops (open), refilled by the phantom refill.
