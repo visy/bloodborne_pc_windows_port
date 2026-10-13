@@ -547,3 +547,21 @@ client 0.9 = ~4.2 s). Then the host's process ended at 73.5 s (no log line; the 
 "Connection to the host lost"), so the arrival / host `cooperators 1` was not seen and it is not
 known whether the host crashed or the run was stopped. Kept off until a run shows the arrival;
 the default (sign) path is unchanged.
+
+## 2026-10-13 (a5): direct summon from another map does not load the host's map
+
+One session + one re-run, loopback, save `save_backup/savedata_20261010` (Dream) for both, guest
+title join off (`--ienv 1:BB_PARTY_TITLE_JOIN=0`), guest started 50 s after the host.
+
+* Run 1 (host in the Dream too): guest world steady -> bell 1.4 s, `dsum_req` -> room 0.2 s ->
+  client 72.9 s, loading screen at once (one load); catch-up: own save past the prologue.
+* Run 2 (host moved to Central Yharnam by `BB_PARTY_TEST_START_LAMP=2412951`, guest rings from the
+  Dream without the gather: `BB_PARTY_GATHER_DSUM=1`): `no gather: the direct summon loads this
+  guest into the host's map`, bell -> room 0.3 s -> type-1 message (host map 0x18010000) ->
+  client 3.1 s after the request, but no load: 10 s later the guest is still in m21_00_00_00 at
+  its own spot, `apart 1`, the host's chr not in its world (run ended there). The game's summon
+  load evidently needs the joiner to be in the host's area (vanilla summons always are). So the
+  gather (own-world lamp warp to the host's lamp, then the bell) stays the default: two loads.
+* Next: after such a cross-map client join, start the B2 arrival load into the host's map (the
+  split travel's follow path) so the joiner has one load; or keep the title join (already one load)
+  as the way to join from another map. Screens black (desktop locked): verified by logs.

@@ -171,6 +171,7 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_TEST_NPC_RETURN` | Sends every summoned NPC home after N s | never | `gpu/shim/party/party_npc_test.cpp` |
 | `BB_PARTY_TEST_NPC_LOG` | `0`: no per-second state line | on | `gpu/shim/party/party_npc_test.cpp` |
 | `BB_PARTY_TEST_NPC_PATCH` | `1`: both patch groups of filter mode C on for the run | off | `gpu/shim/party/party_npc_test.cpp` |
+| `BB_PARTY_GATHER_DSUM` | `1`: experiment (A5): a guest in another map than the host rings where it stands (no gather to the host's lamp) and the direct summon is meant to carry it; live it joins the room but its game does not load the host's map (join_timing.md, 2026-10-13 a5) | off | `gpu/shim/party/party_director.cpp` |
 | `BB_PARTY_TEST_START_LAMP` | `<ReturnPointParam id>`: test aid: one lamp warp 3 s after the first steady own world, before any join (e.g. the host in Central Yharnam while a late joiner's save is in the Dream) | off | `gpu/shim/party/party_director.cpp` |
 | `BB_PARTY_TEST_NPC_WARP` | `<WarpParam id>`: one lamp warp before anything else | off | `gpu/shim/party/party_npc_test.cpp` |
 | `BB_PARTY_ITEMS_HOST_TEST` | `<lot>[,...]`: the host awards these lots through the game's `0x17DDC50` (hostOnly 1) 20 s after a cooperator appeared, 10 s apart (summoned-give check) | off | `gpu/shim/party/party_items.cpp` |

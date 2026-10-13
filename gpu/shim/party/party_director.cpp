@@ -3010,10 +3010,12 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
         }
         return false;
     }
-    // A5: the direct summon carries the host's area and position, so it loads this guest from
-    // its own map straight into the host's (beside it: join arrival) - no gather load first.
-    // After a failed direct summon (refused, no answer) the gather runs as before.
-    static const bool carry = !(std::getenv("BB_PARTY_GATHER_DSUM") && std::getenv("BB_PARTY_GATHER_DSUM")[0] == '0');
+    // A5 experiment (BB_PARTY_GATHER_DSUM=1, off): ring from the own map and let the direct
+    // summon carry this guest into the host's. Live 2026-10-13 (a5, Dream -> m24_01): the guest
+    // joined the host's room as a client in 3.1 s but its game did NOT load the host's map (still
+    // m21_00 12 s later, "apart 1"): the summon's load needs the same area. So the gather stays the
+    // default; the experiment is kept for the follow-up (a B2 arrival load after the join).
+    static const bool carry = std::getenv("BB_PARTY_GATHER_DSUM") && std::getenv("BB_PARTY_GATHER_DSUM")[0] == '1';
     if (carry && b2::DirectSummonCarries() && !(ever && Seconds(last, now) < 90.0)) {
         static Clock::time_point said{};
         if (Seconds(said, now) >= 30.0) {
