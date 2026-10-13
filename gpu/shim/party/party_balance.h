@@ -28,6 +28,10 @@
 #pragma once
 
 #include "party_balance_rules.h"
+#include "party_enemy_census.h"
+
+#include <cstdint>
+#include <vector>
 
 #include <string>
 
@@ -57,5 +61,11 @@ Rules FromSettings();
 /// For the party HUD's VITALS.
 int LocalDeaths();
 int LocalRotStacks();
+/// The loaded map's enemies as the H4 census sees them (team 23, entity id chr +0x3B8, HP +0xF8,
+/// position): the host_kill / guest_kill test steps pick from this list (main thread).
+std::vector<EnemyKillCandidate> LoadedEnemies();
+/// A chr's HP (+0xF8 of its data module; -1 unreadable) and physics position.
+int EnemyHp(std::uint64_t chr);
+bool ChrPosition(std::uint64_t chr, float out[3]);
 
 }  // namespace coop::balance

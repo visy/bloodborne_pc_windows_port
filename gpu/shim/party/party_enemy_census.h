@@ -60,3 +60,41 @@ inline std::vector<EnemyCensusEntry> CarryEnemyCensus(const std::vector<EnemyCen
     }
     return out;
 }
+
+/// A loaded enemy as the census sees it, with its position (the host_kill / guest_kill test
+/// steps pick their target from this list: an entity the census found is loaded and resolvable).
+struct EnemyKillCandidate {
+    std::uint32_t id = 0;   ///< entity id (chr +0x3B8)
+    bool alive = false;     ///< HP > 0
+    bool have_pos = false;
+    float pos[3] = {};
+    std::uint64_t chr = 0;  ///< game side only
+};
+
+/// A boss entity (AAB08xx): left to its defeat flags, never a "regular enemy" pick.
+inline bool EnemyIsBossEntity(std::uint32_t id) { return id >= 1000000 && id % 10000 / 100 == 8; }
+
+/// The kill target: `want` != 0: that entity if it is loaded and alive (-1 if not: dead or not
+/// loaded); `want` == 0: the nearest living, non-boss enemy with a position within `max_m` of `me`.
+/// Returns the index into `c`, -1 for none.
+inline int PickEnemyKillTarget(const std::vector<EnemyKillCandidate>& c, std::uint32_t want, const float me[3],
+                               float max_m) {
+    if (want) {
+        for (size_t i = 0; i < c.size(); ++i)
+            if (c[i].id == want) return c[i].alive ? int(i) : -1;
+        return -1;
+    }
+    int best = -1;
+    float bd = max_m * max_m;
+    for (size_t i = 0; i < c.size(); ++i) {
+        const auto& e = c[i];
+        if (!e.id || !e.alive || !e.have_pos || EnemyIsBossEntity(e.id)) continue;
+        const float dx = e.pos[0] - me[0], dy = e.pos[1] - me[1], dz = e.pos[2] - me[2];
+        const float d = dx * dx + dy * dy + dz * dz;
+        if (d <= bd) {
+            bd = d;
+            best = int(i);
+        }
+    }
+    return best;
+}

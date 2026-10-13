@@ -1128,6 +1128,46 @@ void RunTravelScript(State& st, const GameSnapshot& s, Clock::time_point now) {
     }
 }
 
+/// host_kill / guest_kill: the target comes from the H4 census's loaded-enemy list (team 23, entity
+/// id chr +0x3B8, HP +0xF8; PickEnemyKillTarget), so it is loaded and alive here. The kill: Lua
+/// ForceDead by entity id (`by_id`: a boss's own defeat path), then, if HP is still above 0, the
+/// death path 0x18BF9A0 on the chr itself, then HP 0 (the game's own death follows).
+void KillLoadedEnemyForTest(const char* what, std::uint32_t want, bool by_id) {
+    const auto list = balance::LoadedEnemies();
+    float me[3] = {};
+    const std::uint64_t player = LocalPlayer();
+    const bool have_me = player && balance::ChrPosition(player, me);
+    int alive = 0;
+    for (const auto& e : list) alive += e.alive ? 1 : 0;
+    const int k = have_me || want ? PickEnemyKillTarget(list, want, me, 500.0f) : -1;
+    if (k < 0) {
+        Log("test: %s: no target (%s %u): %zu loaded enemies, %d alive; host at (%.1f, %.1f, %.1f)", what,
+            want ? "entity" : "nearest of", want, list.size(), alive, me[0], me[1], me[2]);
+        return;
+    }
+    const auto& t = list[size_t(k)];
+    const float dx = t.pos[0] - me[0], dy = t.pos[1] - me[1], dz = t.pos[2] - me[2];
+    const int hp0 = balance::EnemyHp(t.chr);
+    Log("test: %s: entity %u (loaded, HP %d) at (%.1f, %.1f, %.1f), %.1f m away; %zu loaded enemies, %d alive", what,
+        t.id, hp0, t.pos[0], t.pos[1], t.pos[2], std::sqrt(dx * dx + dy * dy + dz * dz), list.size(), alive);
+    const char* how = "none";
+    if (by_id) {
+        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, t.id);
+        how = "ForceDead by id";
+    }
+    if (balance::EnemyHp(t.chr) > 0) {
+        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t)>(Guest(0x18bf9a0))(t.chr);
+        how = "the death path on the chr";
+    }
+    if (balance::EnemyHp(t.chr) > 0) {
+        const int zero = 0;
+        std::uint64_t ins = 0, d = 0;
+        if (SafeGet(t.chr + 0x3b0, &ins) && ins && SafeGet(ins + 0x20, &d) && d) SafeWrite(d + 0xf8, &zero, 4);
+        how = "HP 0";
+    }
+    Log("test: %s: entity %u killed by %s: HP %d -> %d", what, t.id, how, hp0, balance::EnemyHp(t.chr));
+}
+
 /// The live travel test chain (TravelStep): joins are tracked in any state; a step runs in the
 /// world, with no loading screen and no stage request pending.
 void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::time_point now) {
@@ -1395,30 +1435,14 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         Log("test: %s %s from %s", TravelStepName(step.kind), step.args.c_str(), DescribeHere(s).c_str());
         return;
     } else if (step.kind == TravelStep::GuestKill) {
-        // guest_kill=ENTITY@S%MAP (0: the nearest living enemy within 500 m): ForceDead on the guest's
+        // guest_kill=ENTITY@S%MAP (0: the nearest living enemy within 500 m): a kill on the guest's
         // own copy (split travel: an enemy killed while the players are apart).
-        const std::uint32_t id = step.id ? step.id : b2::NearestEnemyForTest(500.0f);
-        Log("test: guest_kill: entity %u", id);
-        if (id) {
-            b2::KillEnemyForTest(id);  // live split24: ForceDead on a client left the enemy at full HP
-        }
+        KillLoadedEnemyForTest("guest_kill", step.id, false);
     } else if (step.kind == TravelStep::HostKill) {
         // A boss (or any enemy) killed as the game's own death path: ForceDead on its entity id; the
         // boss-defeat EMEVD (4[00] death state -> 2003[12]) and the Lua boss clear follow.
-        // host_kill=0: the nearest living enemy within 500 m (a regular kill: echoes for everyone).
-        const std::uint32_t id = step.id ? step.id : b2::NearestEnemyForTest(500.0f);
-        {
-            const std::uint64_t chr = id ? GuestSvcFindChr(id) : 0;
-            float d[4] = {};
-            if (chr) {
-                SafeRead(chr + 0xc0, d, sizeof d);
-            }
-            Log("test: host_kill: entity %u %s (%.1f, %.1f, %.1f)", id, chr ? "loaded at" : "NOT loaded here", d[0], d[1],
-                d[2]);
-        }
-        if (id) {
-            reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, id);
-        }
+        // host_kill=0: the nearest living regular enemy within 500 m (echoes for everyone).
+        KillLoadedEnemyForTest("host_kill", step.id, true);
     } else {
         // ForceDead's own gates (0x18BF9A0): GSM +0x176F set = HP left alone; chr +0x18 -> +0x30 ->
         // +0x18 bit 0 = no death call. Logged: a die step that "did nothing" names its gate.

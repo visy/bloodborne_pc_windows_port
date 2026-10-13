@@ -42,6 +42,30 @@ int main() {
         // An alive one that left is not carried.
         assert(CarryEnemyCensus(V{{9, true}}, V{}).empty());
     }
+    // host_kill target selection.
+    {
+        using C = std::vector<EnemyKillCandidate>;
+        auto mk = [](std::uint32_t id, bool alive, float x, bool pos = true) {
+            EnemyKillCandidate e;
+            e.id = id;
+            e.alive = alive;
+            e.have_pos = pos;
+            e.pos[0] = x;
+            return e;
+        };
+        const float me[3] = {0, 0, 0};
+        const C c{mk(2410700, false, 1), mk(2410800, true, 2), mk(2410740, true, 30), mk(2410710, true, 10),
+                  mk(2410720, true, 3, false), mk(0, true, 1), mk(2410750, true, 600)};
+        assert(PickEnemyKillTarget(c, 0, me, 500) == 3);         // nearest alive, non-boss, with a position
+        assert(PickEnemyKillTarget(c, 0, me, 5) == -1);          // none in range
+        assert(PickEnemyKillTarget(c, 2410740, me, 500) == 2);   // explicit, loaded, alive (range ignored)
+        assert(PickEnemyKillTarget(c, 2410750, me, 5) == 6);
+        assert(PickEnemyKillTarget(c, 2410800, me, 500) == 1);   // a boss by id
+        assert(PickEnemyKillTarget(c, 2410700, me, 500) == -1);  // dead
+        assert(PickEnemyKillTarget(c, 2411111, me, 500) == -1);  // not loaded
+        assert(PickEnemyKillTarget({}, 0, me, 500) == -1);
+        assert(EnemyIsBossEntity(2410800) && !EnemyIsBossEntity(2410740) && !EnemyIsBossEntity(800));
+    }
     std::puts("party-enemy-census-test: ok");
     return 0;
 }
