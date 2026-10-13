@@ -21,7 +21,7 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | Session & joining | `██████████████████░░` | 88% |
 | World & travel | `██████████████████░░` | 88% |
 | Death & respawn | `██████████████████░░` | 88% |
-| Progress (anyone can progress) | `█████████████████░░░` | 85% |
+| Progress (anyone can progress) | `█████████████████░░░` | 86% |
 | Services & UI | `██████████████████░░` | 90% |
 | Network & robustness | `████████████████░░░░` | 80% |
 | Bloodborne-specific (chalice, Insight) | `███████████████░░░░░` | 77% |
