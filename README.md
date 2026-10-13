@@ -111,7 +111,8 @@ single-player save is never touched. Settings: *System → Party* pages in the g
 - **The session never ends by itself.** Boss kills, area clears, deaths and travel don't send
   anyone home.
 - **No multiplayer walls.** The fog walls that keep phantoms near the host are gone; the party can
-  split up and explore.
+  split up and explore. There is no leash: a guest can walk far from the host (checked at 140 m)
+  and stays in the party.
 - **Travel together or alone.** Lamps, headstones and the Hunter's Mark ask "Travel with the party?".
   Yes moves the whole party with one loading screen; No moves only you, and the others don't load.
   A guest's own save keeps its own spot: playing it solo later starts where it was, not at the
