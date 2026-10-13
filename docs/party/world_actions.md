@@ -162,7 +162,8 @@ for a client when `WorldTalkAllowed(talk)`: the world maps' scripts (map 220-369
 `BB_PARTY_GUEST_TALK=0` turns it off. What the talk sets (quest flags) is then a world action
 (npc_quest), so the host's world and the guest's own save both advance; the host's npc_quest
 flags reach every guest's save through C2 (`BB_PARTY_PROGRESS_NPC`, now **on** by default: the
-user's decision). Gifts given in dialogue go to the player who talked (its own inventory).
+user's decision). Gifts given in dialogue go to the player who talked (its own inventory). The host gets the same gift too (D5, `party_items` EVENT `gift_up`: the NPC moved on in the host's
+world, so the gift would otherwise be lost for everyone else); C3 then hands it to every other guest.
 
 ## 5.1 Cutscenes for the whole party (D10)
 
