@@ -33,7 +33,14 @@ def child(folder, name):
 def is_link(path):
     """A symlink, or a directory junction (make_link's Windows fallback without symlink rights)."""
     path = Path(path)
-    return path.is_symlink() or (hasattr(path, 'is_junction') and path.is_junction())
+    if path.is_symlink():
+        return True
+    # Path.is_junction is Python 3.12+; run.bat may pick 3.10 / 3.11, where a junction looked like
+    # a real directory and the overlay wrote into the game folder through it. Any reparse point.
+    try:
+        return bool(getattr(os.lstat(path), 'st_file_attributes', 0) & 0x400)  # FILE_ATTRIBUTE_REPARSE_POINT
+    except OSError:
+        return False
 
 
 def content_root(folder):

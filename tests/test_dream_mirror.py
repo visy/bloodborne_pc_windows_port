@@ -16,7 +16,7 @@ spec = importlib.util.spec_from_file_location('bbmods_dm', ROOT / 'scripts/mods.
 mods = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mods)
 
-GAME = Path(os.environ.get('BB_GAME_DIR', r'E:\games\bloodborne'))
+GAME = Path(os.environ.get('BB_GAME_DIR') or '/nonexistent')  # only a dump named by BB_GAME_DIR
 
 
 class DreamMirrorTests(unittest.TestCase):
@@ -87,6 +87,20 @@ class DreamMirrorTests(unittest.TestCase):
 
 
 class OverlayReuseTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'win32', 'junctions are Windows only')
+    def test_junction_is_a_link_on_every_python(self):
+        # Python 3.10 / 3.11 (run.bat's pick) have no Path.is_junction: the overlay once wrote
+        # into the game folder through a junction it took for a real directory.
+        import _winapi
+        with tempfile.TemporaryDirectory() as t:
+            target, link = Path(t) / 'target', Path(t) / 'link'
+            target.mkdir()
+            _winapi.CreateJunction(str(target), str(link))
+            self.assertTrue(mods.is_link(link))
+            self.assertFalse(mods.is_link(target))
+            os.rmdir(link)
+
+
     def test_same_mods_reuse_the_overlay(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
