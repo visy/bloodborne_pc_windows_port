@@ -25,7 +25,7 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | Services & UI | `██████████████████░░` | 90% |
 | Network & robustness | `████████████████░░░░` | 80% |
 | Bloodborne-specific (chalice, Insight) | `███████████████░░░░░` | 77% |
-| Feels like single player in a party | `████████████████░░░░` | 80% |
+| Feels like single player in a party | `████████████████░░░░` | 81% |
 
 ---
 
@@ -182,6 +182,8 @@ single-player save is never touched. Settings: *System → Party* pages in the g
 | The host | Gets up again at its own lamp with no loading screen for anyone; its echoes stay in a bloodstain where it fell. If that lamp is in another area, only the host loads; the guests stay where they are |
 | Anyone, during a boss fight | Watches a living party member fight (press Cross to watch the next one) until the boss dies (then gets up at the host's lamp, with no loading screen when it is in the area), everyone dies, or someone travels |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |
+
+A single death (guest or host) brings no enemies back: only a rest at a lamp or a party wipe resets them.
 
 ### Coming next
 
