@@ -1177,6 +1177,11 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         t.steady = steady;
         t.steady_at = now;
     }
+    // A guest_stick walk holds the chain: the next step's delay counts from the end of the walk.
+    if (t.ran && t.last_kind == TravelStep::GuestStick && t.approach && !t.approach_done) {
+        t.step_at = now;
+        return;
+    }
     const TravelStep::Kind next_kind = t.next_step < t.steps.size() ? t.steps[t.next_step].kind : TravelStep::HostWarp;
     if (t.pressing && now >= t.release_at) {
         t.pressing = false;
@@ -1332,7 +1337,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             ok = ParseStickArgs(step.args, &x, &z, &r, &steps);
         }
         if (ok) {
-            Test& tt = st.test;
+            Test& tt = t;
             tt.approach = true;
             tt.approach_done = false;
             tt.ap_x = x;
