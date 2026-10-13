@@ -25,6 +25,7 @@
 #include "party_nr_drop.h"
 #include "party_dsummon.h"
 #include "party_status_bridge.h"
+#include "party_spectate.h"
 
 #include <algorithm>
 #include <atomic>
@@ -3746,6 +3747,8 @@ void OwnStainLogTick(const GameSnapshot& s) {
         Field<u32>(rec, 0x3c), double(me[0]), double(me[1]), double(me[2]), s.map_id, s.echoes);
 }
 
+extern "C" std::uint32_t runtime_pad_cross_presses(void); // src/runtime_pad.c
+
 // ---- C5: spectate in a boss-fight limbo (BB_PARTY_SPECTATE, default on) ----
 // The dead player's camera follows its own chr: that chr (dissolved, draw 0) is carried along
 // 3 m behind a living party member with the chr warp, so the camera shows the fight. Peers remove
@@ -3773,21 +3776,44 @@ void SpectateEnd() {
 }
 void SpectateTick(const GameSnapshot& s, double now) {
     static double next = 0;
+    static int target = -1;            // the followed member's task slot
+    static u32 cross_seen = 0;
     if (!g_spectating.load()) {
+        target = -1;
         return;
     }
     if (!SessionUp() || s.loading || !s.world_up || !s.player || ChrHp(s.player) > 0) {
         SpectateEnd();  // a load or a revive took over
+        target = -1;
         return;
     }
-    if (now < next) {
+    // Cross (does nothing while dead) switches to the next living member (C5 member switch).
+    const u32 cross = runtime_pad_cross_presses();
+    const bool advance = target >= 0 && cross != cross_seen;
+    cross_seen = cross;
+    if (now < next && !advance) {
         return;
     }
     next = now + 0.2;
+    int living[8];
+    u64 chrs[8];
+    int n = 0;
     for (const TaskInfo& t : Tasks(false)) {
         const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        if (c && ChrHp(c) > 0 && n < 8) {
+            living[n] = t.slot;
+            chrs[n++] = c;
+        }
+    }
+    const int pick = SpectateTarget(living, n, target, advance);
+    if (pick != target || advance) {
+        Log("spectating: following slot %d (%d living member%s%s)", pick, n, n == 1 ? "" : "s",
+            advance ? ", Cross: next member" : "");
+    }
+    target = pick;
+    for (int i = 0; i < n; ++i) {
         alignas(16) float pos[4], rot[4];
-        if (!c || ChrHp(c) == 0 || !ChrTransform(c, pos, rot)) {
+        if (living[i] != pick || !ChrTransform(chrs[i], pos, rot)) {
             continue;
         }
         const float yaw = rot[1];
