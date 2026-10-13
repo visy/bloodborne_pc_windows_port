@@ -115,6 +115,29 @@ int main() {
         assert(g.gate >= 2000 && g.gate < 4000);
         assert(!g.also || pg::CategoryOf(g.also) == pg::Category::boss_defeated);
     }
+    // B2 boss gates: a guest may go through a boss fog before the host.
+    for (const BossGate& g : BossGates()) {
+        assert(pg::CategoryOf(g.boss_flag) == pg::Category::boss_defeated);
+        assert(g.guest_flag == g.host_flag + 1);
+        assert(g.host_flag / 10000 == g.boss_flag / 10000);  // same area block
+        assert(BossGateByEvent(static_cast<std::int32_t>(g.guest_event)) == &g);
+    }
+    // Cleric Beast: only the host-entered condition of its guest-entry event is skipped.
+    assert(BossGateSkipCondition(12414731, 3, 0, 12414700));
+    assert(!BossGateSkipCondition(12414731, 3, 0, 12411700));  // boss alive check stays
+    assert(!BossGateSkipCondition(12414731, 3, 0, 12411702));  // first fight (intro) done stays
+    assert(!BossGateSkipCondition(12414731, 1003, 2, 12414700));
+    assert(!BossGateSkipCondition(12414702, 3, 0, 12414700));  // the boss-start event itself
+    assert(!BossGateSkipCondition(12414730, 3, 0, 12414700));  // the host's own entry
+    assert(!BossGateSkipCondition(13204831, 3, 0, 13204800));  // Amygdala: left out
+    const BossGate& cb = *BossGateByEvent(12414731);
+    assert(BossGateHostOpens(cb, true, false, false, m2401));
+    assert(!BossGateHostOpens(cb, false, false, false, m2401));  // no guest in
+    assert(!BossGateHostOpens(cb, true, true, false, m2401));    // host already in
+    assert(!BossGateHostOpens(cb, true, false, true, m2401));    // boss dead
+    assert(!BossGateHostOpens(cb, true, false, false, m2400));   // other block
+    assert(!BossGateHostOpens(cb, true, false, false, dream));
+    assert(!BossGateHostOpens(cb, true, false, false, 0xffffffffu));
     std::printf("party-worldact-test: ok\n");
     return 0;
 }

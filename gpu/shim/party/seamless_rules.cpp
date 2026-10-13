@@ -19,6 +19,7 @@
 #include "party_guestsvc.h"
 #include "party_phantom.h"
 #include "party_travel.h"
+#include "party_worldact.h"
 
 #include <atomic>
 #include <chrono>
@@ -491,6 +492,34 @@ void TraceInstruction(u64 event, i32 event_id, i32 bank, i32 id, u64 instr, bool
 }
 
 std::atomic<EmevdSkipPredicate> g_skip_pred{nullptr};
+// B2: a guest may go through a boss fog before the host (party_worldact.h BossGate);
+// BB_PARTY_GUEST_FOG_FIRST=0 turns it off.
+bool g_fog_first = false;
+std::atomic<std::uint32_t> g_fog_first_logged{0};
+
+// Guest (role 6): the host-entered condition (3[0] IfEventFlag, u32 flag at +4) of a guest-entry
+// event is passed, so the fog's action prompt works before the host has gone through.
+bool FogFirstSkip(u64 event, u64 instr, i32 event_id, i32 bank, i32 id) {
+    if (!g_fog_first || bank != 3 || id != 0 || !worldact::BossGateByEvent(event_id) || LocalSessionRole() != 6) {
+        return false;
+    }
+    u8 args[8] = {};
+    u32 arg_size = 0;
+    const u64 at = EmevdInstructionArgs(event, instr, &arg_size);
+    if (!at || arg_size < 8 || !SafeRead(at, args, 8)) {
+        return false;
+    }
+    u32 flag = 0;
+    std::memcpy(&flag, args + 4, 4);
+    if (!worldact::BossGateSkipCondition(event_id, bank, id, flag)) {
+        return false;
+    }
+    if (g_fog_first_logged.exchange(u32(event_id)) != u32(event_id)) {
+        Log("boss fog: guest-entry event %d does not wait for the host (host-entered flag %u condition passed; "
+            "args %02x %02x %02x)", event_id, flag, args[0], args[1], args[2]);
+    }
+    return true;
+}
 // A11: the boss health bar (EMEVD 2003[11] DisplayBossHealthBar: first argument 1 on, 0 off).
 std::atomic<bool> g_boss_bar{false};
 
@@ -515,6 +544,9 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
                 break;
             }
         }
+    }
+    if (!skip && instr && g_fog_first) {
+        skip = FogFirstSkip(event, instr, event_id, bank, id);
     }
     if (!skip && instr) {
         if (const EmevdSkipPredicate pred = g_skip_pred.load(std::memory_order_relaxed)) {
@@ -615,7 +647,9 @@ void SeamlessRulesInit() {
     g_emevd_trace = EnvOn("BB_PARTY_EMEVD_TRACE");
     ParseSkips();
     g_emevd_observe = PhantomWantsEmevd();
-    if (g_emevd_trace || !g_skips.empty() || g_emevd_observe) {
+    g_fog_first = !EnvOff("BB_PARTY_GUEST_FOG_FIRST");
+    Log("boss fogs: a guest may go through first %s", g_fog_first ? "on" : "off (BB_PARTY_GUEST_FOG_FIRST=0)");
+    if (g_emevd_trace || !g_skips.empty() || g_emevd_observe || g_fog_first) {
         if (EnsureEmevdFilter()) {
             Log("EMEVD filter: %s, %zu skip rules, boss-Insight observer %s", g_emevd_trace ? "trace on" : "trace off",
                 g_skips.size(), g_emevd_observe ? "on" : "off");

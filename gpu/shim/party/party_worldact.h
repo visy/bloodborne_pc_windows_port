@@ -94,6 +94,25 @@ struct GateRule {
 };
 const std::vector<GateRule>& GateRules();
 
+/// B2 (ERSC parity): any party member may walk through a boss fog first. Vanilla lets a guest
+/// through only after the host ("host entered" flag ON, condition 3[0] of each guest-entry event
+/// `ゲストがボス部屋入場_*`). From every map EMEVD: the guest-entry event, the host-entered flag the
+/// boss's start event waits on, the guest-entered flag the event sets (network-synced: the host's
+/// game receives it), the boss-defeated flag. Amygdala (13204831) is left out: its guest flag is
+/// an event argument.
+struct BossGate {
+    std::uint32_t guest_event, host_flag, guest_flag, boss_flag;
+};
+const std::vector<BossGate>& BossGates();
+const BossGate* BossGateByEvent(std::int32_t guest_event);
+/// Guest: skip condition instruction bank:id (3[0] IfEventFlag on `flag`) of event `event_id`?
+/// Only the host-entered condition of a guest-entry event; the boss-alive and intro-seen checks stay.
+bool BossGateSkipCondition(std::int32_t event_id, int bank, int id, std::uint32_t flag);
+/// Host: open the boss fight for a guest who went through the fog first (set host_flag)? The boss
+/// lives, a guest is in, the host's own flag is not yet set and the host stands in the boss's area
+/// block (map 0xAABBCCDD).
+bool BossGateHostOpens(const BossGate& g, bool guest_in, bool host_in, bool boss_dead, std::uint32_t host_map);
+
 // ---- game side ----
 void Init();
 bool Enabled();
