@@ -1148,14 +1148,20 @@ void KillLoadedEnemyForTest(const char* what, std::uint32_t want, bool by_id) {
     const auto& t = list[size_t(k)];
     const float dx = t.pos[0] - me[0], dy = t.pos[1] - me[1], dz = t.pos[2] - me[2];
     const int hp0 = balance::EnemyHp(t.chr);
-    Log("test: %s: entity %u (loaded, HP %d) at (%.1f, %.1f, %.1f), %.1f m away; %zu loaded enemies, %d alive", what,
-        t.id, hp0, t.pos[0], t.pos[1], t.pos[2], std::sqrt(dx * dx + dy * dy + dz * dz), list.size(), alive);
+    Log("test: %s: entity %u (census key %u; loaded, HP %d) at (%.1f, %.1f, %.1f), %.1f m away; %zu loaded enemies, "
+        "%d alive", what, t.entity, t.id, hp0, t.pos[0], t.pos[1], t.pos[2], std::sqrt(dx * dx + dy * dy + dz * dz), list.size(), alive);
     const char* how = "none";
-    if (by_id) {
-        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, t.id);
+    if (by_id && t.entity) {
+        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, t.entity);
         how = "ForceDead by id";
     }
     if (balance::EnemyHp(t.chr) > 0) {
+        // What Lua ForceDead does with the chr it finds: clear +0x1E3 bit 5, then 0x18BF9A0(chr).
+        std::uint8_t b = 0;
+        if (SafeGet(t.chr + 0x1e3, &b)) {
+            b = std::uint8_t(b & 0xdf);
+            SafeWrite(t.chr + 0x1e3, &b, 1);
+        }
         reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t)>(Guest(0x18bf9a0))(t.chr);
         how = "the death path on the chr";
     }
@@ -1165,7 +1171,7 @@ void KillLoadedEnemyForTest(const char* what, std::uint32_t want, bool by_id) {
         if (SafeGet(t.chr + 0x3b0, &ins) && ins && SafeGet(ins + 0x20, &d) && d) SafeWrite(d + 0xf8, &zero, 4);
         how = "HP 0";
     }
-    Log("test: %s: entity %u killed by %s: HP %d -> %d", what, t.id, how, hp0, balance::EnemyHp(t.chr));
+    Log("test: %s: entity %u killed by %s: HP %d -> %d", what, t.entity, how, hp0, balance::EnemyHp(t.chr));
 }
 
 /// The live travel test chain (TravelStep): joins are tracked in any state; a step runs in the

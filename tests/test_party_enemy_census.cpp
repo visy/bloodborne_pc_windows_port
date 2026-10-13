@@ -47,7 +47,8 @@ int main() {
         using C = std::vector<EnemyKillCandidate>;
         auto mk = [](std::uint32_t id, bool alive, float x, bool pos = true) {
             EnemyKillCandidate e;
-            e.id = id;
+            e.id = id ? id + 7 : 0;  // the census key differs from the map entity id
+            e.entity = id;
             e.alive = alive;
             e.have_pos = pos;
             e.pos[0] = x;
@@ -63,6 +64,7 @@ int main() {
         assert(PickEnemyKillTarget(c, 2410800, me, 500) == 1);   // a boss by id
         assert(PickEnemyKillTarget(c, 2410700, me, 500) == -1);  // dead
         assert(PickEnemyKillTarget(c, 2411111, me, 500) == -1);  // not loaded
+        assert(PickEnemyKillTarget(c, 2410747, me, 500) == 2);   // by census key too
         assert(PickEnemyKillTarget({}, 0, me, 500) == -1);
         assert(EnemyIsBossEntity(2410800) && !EnemyIsBossEntity(2410740) && !EnemyIsBossEntity(800));
     }
