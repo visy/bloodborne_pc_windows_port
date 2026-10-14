@@ -332,12 +332,6 @@ std::atomic<std::uint64_t> g_dispatch_main{0}, g_dispatch_other{0};
 std::mutex g_dispatch_mu;
 std::map<std::string, std::uint64_t> g_dispatch_seen; // under g_dispatch_mu
 
-// F5 fallback: the host's game raised OnIrregularLeaveSession (its send queue past 1000 messages,
-// 0x17894e0, or the receive stall 0x1789b60): the session is over for every member, but the
-// host's game can take ~30 s to leave the room, and meanwhile a guest would stand in a dead
-// session (0.6.1 regression run). The director tells the guests at once (kHostSessionEndEvent).
-std::atomic<bool> g_irregular_leave{false};
-
 BB_COOP_SYSV void DispatchEntry(std::uint64_t ctx, std::uint64_t name_ptr, std::uint64_t, std::uint64_t,
                                 std::uint64_t, std::uint64_t) {
     char name[80] = "?";
@@ -353,7 +347,6 @@ BB_COOP_SYSV void DispatchEntry(std::uint64_t ctx, std::uint64_t name_ptr, std::
     const std::uint64_t tid = ThreadId();
     const bool main = tid == S().tick_thread;
     (main ? g_dispatch_main : g_dispatch_other).fetch_add(1, std::memory_order_relaxed);
-    if (std::strcmp(name, "OnIrregularLeaveSession") == 0) g_irregular_leave.store(true);
     std::uint64_t n;
     {
         std::lock_guard<std::mutex> lk(g_dispatch_mu);
@@ -2910,7 +2903,10 @@ void PartyDirector::Tick() {
             Log("story: own cutscene %u sent to the host (D10)", up.id);
         }
     }
-    if (link && role == PartyRole::Host && g_irregular_leave.exchange(false)) {
+    // F5 fallback: the host's game ended the session by itself (b2::TakeHostIrregularLeave): it is
+    // over for every member, but the host's game takes ~30 s to leave the room (live), and meanwhile
+    // a guest would stand in a dead session (0.6.1 regression run). The guests hear it at once.
+    if (link && role == PartyRole::Host && b2::TakeHostIrregularLeave()) {
         link->post_event(party::kBroadcast, kHostSessionEndEvent, "{\"why\":\"irregular_leave\"}");
         Log("F5: our game ended the session irregularly (OnIrregularLeaveSession): the members go home now");
     }
