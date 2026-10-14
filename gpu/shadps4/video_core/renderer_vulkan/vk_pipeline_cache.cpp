@@ -371,10 +371,25 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         .buffer_copy_shader_hash = Game::BufferCopyShader(),
     };
     // bbport: created before the warm-up, whose preloaded pipelines are built with it.
-    auto [cache_result, cache] = instance.GetDevice().createPipelineCacheUnique({});
+    // Seeded with the driver's own pipeline binaries of the last session on this GPU and driver
+    // version (Mrsuss60), so the warm-up and new areas skip the driver's backend compile.
+    std::vector<u8> driver_cache_data = LoadDriverPipelineCache();
+    const vk::PipelineCacheCreateInfo cache_ci{
+        .initialDataSize = driver_cache_data.size(),
+        .pInitialData = driver_cache_data.empty() ? nullptr : driver_cache_data.data(),
+    };
+    auto [cache_result, cache] = instance.GetDevice().createPipelineCacheUnique(cache_ci);
+    if (cache_result != vk::Result::eSuccess && !driver_cache_data.empty()) {
+        LOG_WARNING(Render, "Stored driver pipeline cache rejected ({}): starting empty",
+                    vk::to_string(cache_result));
+        auto [empty_result, empty_cache] = instance.GetDevice().createPipelineCacheUnique({});
+        cache_result = empty_result;
+        cache = std::move(empty_cache);
+    }
     ASSERT_MSG(cache_result == vk::Result::eSuccess, "Failed to create pipeline cache: {}",
                vk::to_string(cache_result));
     pipeline_cache = std::move(cache);
+    driver_cache_owner.store(this);
 
     if (instance.IsGraphicsPipelineLibrarySupported()) {
         gpl = std::make_unique<GplLibraryCache>(instance.GetDevice());
@@ -386,6 +401,7 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
 }
 
 PipelineCache::~PipelineCache() {
+    driver_cache_owner.store(nullptr);
     compiler.Stop();
 }
 
