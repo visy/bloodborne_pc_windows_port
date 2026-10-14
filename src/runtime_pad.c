@@ -840,6 +840,42 @@ static void touch_ids(PadData *d) {
     else if (!since) since=d->timestamp;
     d->touch_held_time=d->touch_count ? (uint32_t)(d->timestamp-since) : 0;
 }
+/* I2 pings (gpu/shim/party/party_ping.h): in a party with pings on, holding the touchpad (Tab)
+ * and pressing R3 (Q / C) places a ping. The touchpad press is held back from the game until it
+ * is released - then the game gets a short click (the Gestures menu opens on release) - or R3
+ * comes: a ping, and the game sees neither button until both are released. */
+static void ping_combo(PadData *d) {
+    static int state, right, r3_prev; /* state 0 idle, 1 touchpad held back, 2 ping sent */
+    static uint64_t click_until;
+    const uint64_t now=now_us();
+    const int tp=(d->buttons & BTN_TOUCHPAD)!=0, r3=(d->buttons & BTN_R3)!=0;
+    const int r3_rise=r3 && !r3_prev;
+    r3_prev=r3;
+    switch (state) {
+    case 0:
+        if (tp && bbgpu_ping_combo_enabled()) {
+            state=1; click_until=0;
+            right=d->touch_count>0 && d->touches[0].x>=960;
+            break;
+        }
+        if (click_until) {
+            if (now<click_until) touch_click(d,right);
+            else click_until=0;
+        }
+        return;
+    case 1:
+        if (r3_rise) { state=2; bbgpu_ping_request(); puts("Runtime: ping (touchpad + R3)"); break; }
+        if (!tp) { state=0; click_until=now+120000; touch_click(d,right); return; }
+        break;
+    default:
+        if (!tp && !r3) { state=0; return; }
+        break;
+    }
+    d->buttons&=~BTN_TOUCHPAD;
+    if (state==2) d->buttons&=~BTN_R3;
+    d->touch_count=0;
+    touch_down_us=0;
+}
 /* Set while the settings menu or the name box holds the pad: the press that closed it (Cross on
  * the name, Insert/L3+R3) stays held, and must not reach the game as a new press. Buttons are
  * held neutral until everything is released (from Supermedo/bloodborne_pc 1.4). */
@@ -862,6 +898,7 @@ static void sample(PadData *d) {
     if (injected.touch_side>=0) touch_click(d,injected.touch_side);
     else if ((d->buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d,0);
     if (!d->touch_count) touch_down_us = 0;
+    ping_combo(d);
     if (injected.buttons & BTN_L2) d->l2=255;
     if (injected.buttons & BTN_R2) d->r2=255;
     uint8_t *axes[4]={&d->left_x,&d->left_y,&d->right_x,&d->right_y};

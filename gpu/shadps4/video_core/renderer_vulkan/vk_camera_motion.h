@@ -107,6 +107,10 @@ private:
     };
 
     void Overlay(VideoCore::ImageId frame);
+    /// bbport (I2 pings): the scene depth along the screen's centre column, read back to the CPU
+    /// as world points for the request `seq` (bbport_camera.h Probe).
+    void ProbeDepth(u32 seq);
+    std::unique_ptr<VideoCore::Buffer> probe_buffer;
 
     const Instance& instance;
     Scheduler& scheduler;

@@ -10,6 +10,9 @@
 static int capture;
 int bbgpu_overlay_captures_input(void) { return capture; }
 int bbgpu_text_input_is_active(void) { return 0; }
+static int ping_on, pings;
+int bbgpu_ping_combo_enabled(void) { return ping_on; }
+void bbgpu_ping_request(void) { ++pings; }
 void bbgpu_reflex_pre_input_sample(void) {}
 void bbgpu_reflex_on_input_sampled(void) {}
 /* Mouse & keyboard mode (after Mrsuss60/bloodborne_pc_windows_port's test stubs). */
@@ -194,6 +197,31 @@ int main(void) {
     mk_mode=0; mk_buttons=0;
     assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_R1) && data.right_x==128 &&
            bindings[IN_CROSS].keys[0]==SDL_SCANCODE_X);
+    /* I2 pings: touchpad + R3 is a ping and reaches the game as neither; the touchpad alone is
+     * held back while down and given to the game as a short click when released. */
+    ping_on=1;
+    inject(path,"touchpad");
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_TOUCHPAD) && data.touch_count==0);
+    inject(path,"touchpad r3");
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & (BTN_TOUCHPAD|BTN_R3)) && data.touch_count==0 && pings==1);
+    inject(path,"r3");
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_R3) && pings==1); /* held back until released */
+    inject(path,"");
+    assert(pad_read_state(1,&data)==0 && data.buttons==0);
+    inject(path,"r3");
+    assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_R3) && pings==1); /* R3 alone: the game's */
+    inject(path,"touchpad r3");
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_TOUCHPAD) && (data.buttons & BTN_R3) &&
+           pings==1); /* R3 held before the touchpad: the game's lock-on, no ping */
+    inject(path,"");
+    assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_TOUCHPAD) && data.touch_count==1 && pings==1);
+    usleep(150000);
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_TOUCHPAD) && data.touch_count==0);
+    ping_on=0;
+    inject(path,"touchpad r3");
+    assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_TOUCHPAD) && (data.buttons & BTN_R3) && pings==1);
+    inject(path,"");
+    pad_read_state(1,&data);
     SDL_CloseJoystick(joystick);
     if (gamepad) SDL_CloseGamepad(gamepad);
     gamepad=NULL;

@@ -7,6 +7,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <mutex>
@@ -50,6 +51,49 @@ inline std::array<float, 3> Position(const State& s) {
     const auto& v = s.view;
     return {-(v[0] * v[3] + v[4] * v[7] + v[8] * v[11]), -(v[1] * v[3] + v[5] * v[7] + v[9] * v[11]),
             -(v[2] * v[3] + v[6] * v[7] + v[10] * v[11])};
+}
+
+// ---- Depth probe (I2 pings, party_ping.h) ----
+// The game thread asks (RequestProbe); the render thread, at the frame's display pass, copies the
+// scene depth along the screen's centre column into a host buffer and, once the GPU is past it,
+// publishes the world points (vk_camera_motion.cpp ProbeDepth). One probe at a time.
+constexpr int kProbeSamples = 96;
+struct Probe {
+    bool valid = false;
+    std::uint32_t seq = 0;  ///< the request it answers
+    std::array<float, 3> cam{};
+    int n = 0;              ///< samples, top of the screen first
+    int centre = 0;         ///< the sample at the screen centre
+    std::array<std::array<float, 3>, kProbeSamples> pts{};
+    std::array<std::uint8_t, kProbeSamples> hit{};  ///< 0: sky / no depth
+    std::int64_t at_ms = 0;
+};
+inline std::atomic<std::uint32_t> probe_requested{0};  ///< last request's seq
+inline std::atomic<std::uint32_t> probe_taken{0};      ///< last seq the render thread took
+inline Probe probe_result;                             ///< under `mutex`
+
+/// Game thread: a new probe; returns its seq.
+inline std::uint32_t RequestProbe() {
+    return probe_requested.fetch_add(1, std::memory_order_acq_rel) + 1;
+}
+/// Render thread: the pending request's seq (0: none). Taken once.
+inline std::uint32_t TakeProbeRequest() {
+    const std::uint32_t want = probe_requested.load(std::memory_order_acquire);
+    std::uint32_t had = probe_taken.load(std::memory_order_acquire);
+    if (want == had) return 0;
+    return probe_taken.compare_exchange_strong(had, want) ? want : 0;
+}
+inline void PublishProbe(const Probe& p) {
+    std::lock_guard<std::mutex> lk(mutex);
+    probe_result = p;
+    probe_result.at_ms = NowMs();
+}
+/// The answer to request `seq` (or a later one); false while none.
+inline bool ProbeFor(std::uint32_t seq, Probe* out) {
+    std::lock_guard<std::mutex> lk(mutex);
+    if (!probe_result.valid || probe_result.seq < seq) return false;
+    *out = probe_result;
+    return true;
 }
 
 } // namespace BbCamera

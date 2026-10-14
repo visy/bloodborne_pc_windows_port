@@ -24,6 +24,7 @@
 #include "party_travel.h"
 #include "party_worldact.h"
 #include "party_npctalk.h"
+#include "party_ping.h"
 #include "party_droproll.h"
 #include "party_log_game.h"
 #include "coop_hooks.h"
@@ -1003,6 +1004,10 @@ LinkCallbacks make_callbacks(bool host) {
                 coop::npctalk::OnEvent(slot, body);
                 return;
             }
+            if (name == party::ping::kEventName) {  // a guest's ping (I2, party_ping.h): relayed by the tick
+                coop::ping::OnEvent(slot, body);
+                return;
+            }
             if (name == coop::worldact::kEventName) {  // a guest's lever / door / NPC talk (D3, D8)
                 std::string err;
                 if (!coop::worldact::OnHostEvent(slot, body, &err)) plog("world_action from slot %d refused: %s", slot, err.c_str());
@@ -1109,6 +1114,10 @@ LinkCallbacks make_callbacks(bool host) {
             }
             if (name == coop::npctalk::kEventName) {  // a member's NPC conversation (D8, party_npctalk.h)
                 coop::npctalk::OnEvent(slot, body);
+                return;
+            }
+            if (name == party::ping::kEventName) {  // a member's ping (I2, party_ping.h)
+                coop::ping::OnEvent(slot, body);
                 return;
             }
             if (name == coop::kPhantomEventName) {  // host lamp / rested / boss Insight

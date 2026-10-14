@@ -169,6 +169,10 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_name_tags = i != 0;
     } else if (key == "party_npc_talk") {
         v.party_npc_talk = i != 0;
+    } else if (key == "party_pings") {
+        v.party_pings = i != 0;
+    } else if (key == "party_through_walls") {
+        v.party_through_walls = i != 0;
     } else if (key == "party_rendezvous") {
         v.party_rendezvous = party::traversal::rendezvous_switch(value.c_str(), false);
     } else if (key == "party_npc_talk_range") {
@@ -454,6 +458,8 @@ void Save() {
     put("party_hud", flag(v.party_hud));
     put("party_name_tags", flag(v.party_name_tags));
     put("party_npc_talk", flag(v.party_npc_talk));
+    put("party_pings", flag(v.party_pings));
+    put("party_through_walls", flag(v.party_through_walls));
     put("party_rendezvous", flag(v.party_rendezvous));
     put("party_npc_talk_range", std::to_string(v.party_npc_talk_range.load()));
     put("party_guest_lamps", flag(v.party_guest_lamps));
