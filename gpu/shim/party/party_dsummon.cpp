@@ -28,9 +28,9 @@ Busy HostBusy(bool boss_bar_up, bool cutscene_playing) {
     return boss_bar_up ? Busy::Boss : cutscene_playing ? Busy::Cutscene : Busy::None;
 }
 
-Busy TitleJoinBusy(bool boss_bar_up, bool cutscene_playing, bool host_ready) {
+Busy TitleJoinBusy(bool boss_bar_up, bool cutscene_playing, bool host_ready, bool member_in_prologue) {
     const Busy b = HostBusy(boss_bar_up, cutscene_playing);
-    return b != Busy::None ? b : host_ready ? Busy::None : Busy::Prologue;
+    return b != Busy::None ? b : !host_ready ? Busy::Prologue : member_in_prologue ? Busy::MemberPrologue : Busy::None;
 }
 
 const char* BusyWord(Busy b) {
@@ -39,6 +39,7 @@ const char* BusyWord(Busy b) {
     case Busy::Cutscene: return "cutscene";
     case Busy::Prologue: return "prologue";
     case Busy::OtherMap: return "map";
+    case Busy::MemberPrologue: return "member_prologue";
     default: return "none";
     }
 }
@@ -49,6 +50,8 @@ std::string BusyText(Busy b, bool host) {
     case Busy::Cutscene: return host ? "Joiners wait: a cutscene is playing" : "Waiting: the host is watching a cutscene";
     case Busy::Prologue: return host ? "Joiners wait: finish your prologue first" : "Waiting: the host is in its prologue";
     case Busy::OtherMap: return host ? "A joiner travels to your area first" : "Travelling to the host's area first";
+    case Busy::MemberPrologue:
+        return host ? "Joiners wait: a party member is in the prologue" : "Waiting: a party member is in the prologue";
     default: return {};
     }
 }
@@ -58,6 +61,7 @@ Busy WaitOf(const std::string& body) {
     if (body.find("\"wait\":\"cutscene\"") != std::string::npos) return Busy::Cutscene;
     if (body.find("\"wait\":\"prologue\"") != std::string::npos) return Busy::Prologue;
     if (body.find("\"wait\":\"map\"") != std::string::npos) return Busy::OtherMap;
+    if (body.find("\"wait\":\"member_prologue\"") != std::string::npos) return Busy::MemberPrologue;
     return Busy::None;
 }
 
@@ -176,6 +180,7 @@ const char* HostRefusal(const HostView& v) {
     if (v.travel_pending) return "the host is about to travel (its loading screen is next): the guest joins it there";
     if (!v.host_ready) return "the host is still in its prologue: joiners wait until it is done";
     if (v.guest_in_prologue) return "the guest is still in its own prologue";
+    if (v.member_in_prologue) return "another party member is still in its prologue: summons start once everybody is ready";
     if (v.busy == Busy::Boss) return "the host is in a boss fight: joiners wait outside";
     if (v.busy == Busy::Cutscene) return "the host is watching a cutscene: joiners wait";
     if (OtherMap(v)) return "the guest is in another map: it gathers to the host's lamp first (loading screen)";
@@ -189,6 +194,7 @@ Busy RefusalWait(const HostView& v) {
     if (!v.world_up || v.loading || v.travel_pending) return Busy::None;  // the sign path follows the host
     if (!v.host_ready) return Busy::Prologue;
     if (v.guest_in_prologue) return Busy::None;
+    if (v.member_in_prologue) return Busy::MemberPrologue;
     if (v.busy != Busy::None) return v.busy;
     if (OtherMap(v)) return Busy::OtherMap;
     return Busy::None;
@@ -208,6 +214,10 @@ bool HostBellHeld(const HostBellView& v) {
 }
 
 bool HostTravelHeld(const HostTravelHoldView& v) {
+    // par_c6 (live): a title joiner gets the room without a dsum_done; a lamp travel 4 s after the
+    // room was sent left it loading into the map the host had left (B1 fallback, re-summon 50 s
+    // later). Held until its chr is in the host's world (or the hold runs out).
+    if (v.since_title < kHostTravelHoldMax && !v.joiner_in_world) return true;
     if (!v.direct_on || v.since_served >= kHostTravelHoldMax) return false;  // nothing served lately / waited enough
     const bool done_for_this = v.since_done <= v.since_served;
     if (done_for_this && !v.done_ok) return false;                // the join failed: travel now
@@ -233,6 +243,7 @@ void OnAsked(Guest& g, double now) {
     g.deliver_tries = 0;
     g.fail_why = "";
     g.gather = false;
+    g.rearmed = false;
 }
 
 void OnRoom(Guest& g, double now, bool refused, Busy wait) {
@@ -280,9 +291,15 @@ Action Step(Guest& g, double now, bool entry_waiting, bool joined) {
             g.phase = Phase::Done;
             return Action::ReportOk;
         }
+        if (!entry_waiting && !g.rearmed && g.deliver_tries == 0 && now - g.since > kRearmAfter) {
+            g.rearmed = true;
+            g.since = now;  // the entry wait counts from the re-ring
+            return Action::Rearm;
+        }
         if (now - g.since > kEntryWait || g.deliver_tries >= 3) {
             g.phase = Phase::Failed;
             g.fail_why = g.deliver_tries >= 3 ? "the game refused the summon message 3 times"
+                         : g.rearmed          ? "the bell's own summon entry did not come up, not even after a re-ring"
                                               : "the bell's own summon entry did not come up within 8 s";
             return Action::ReportFail;
         }

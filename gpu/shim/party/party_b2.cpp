@@ -149,6 +149,7 @@ std::atomic<bool> g_rejoin{false};  // a B2 re-join is in flight (K5 / K6 armed)
 std::atomic<bool> g_k1_xml{false};  // the XML retarget already keeps the room at 0x19471B1
 std::atomic<int> g_apart_k5{0};     // members in another area (split travel): K5 stands aside
 std::atomic<double> g_split_change_at{-100.0};  // the last split chr removal / meet rewind (Now())
+std::atomic<double> g_title_served_at{-1e9};  // host: the last title-join room sent (Now()), holds lamp travel
 
 bool IdEquals(u64 a, u64 b) {
     using Fn = bool(BB_COOP_SYSV*)(u64, u64);
@@ -2450,8 +2451,15 @@ void FallbackToB1(const char* why) {
         GuestDeathRedirectNow();
         return;
     }
-    Log("guest: FALLBACK to B1 (%s; flow was %d)%s", why, fs, have ? "" : " - no travel to replay");
-    if (have) {
+    // par_c6 (live): the host crashed during its lamp travel; the guest followed that travel alone
+    // into Central Yharnam, while the restarted host Continued in the Dream (its save never got
+    // there): a second load back (gather). With the host's link down the travel is not followed;
+    // the restarted host's world decides where the guest goes (the gather before its ring).
+    party::PartyLink* link = party::runtime_link();
+    const bool host_gone = have && link && link->state() != party::LinkState::Connected;
+    Log("guest: FALLBACK to B1 (%s; flow was %d)%s", why, fs,
+        !have ? " - no travel to replay" : host_gone ? " - the host's link is down: its travel is not followed" : "");
+    if (have && !host_gone) {
         RequestGuestTravel(t);
     }
 }
@@ -5231,7 +5239,8 @@ void TitleJoinHostTick(const GameSnapshot& s) {
             return;
         }
         const dsummon::Busy busy = dsummon::TitleJoinBusy(Role() == RoleHost && BossBarShown(),
-                                                          Role() == RoleHost && CutscenePlaying(), ready);
+                                                          Role() == RoleHost && CutscenePlaying(), ready,
+                                                          !coop::OthersInPrologue().empty());
         if (busy != dsummon::Busy::None) {
             for (int slot : req) {
                 Send(slot, std::string("{\"op\":\"title_room\",\"room\":\"\",\"wait\":\"") + dsummon::BusyWord(busy) + "\"}");
@@ -5301,7 +5310,7 @@ void TitleJoinHostTick(const GameSnapshot& s) {
         b += tail;
         Send(slot, b);
         Log("title join: slot %d asked for the room: %s (%zu bytes, head %s), stage %#x", slot, ok ? "sent" : "NOT serialized",
-            room.size(), Hex(room, 24).c_str(), Field<u32>(s.player, 0x3f8));
+            room.size(), Hex(room, 24).c_str(), Field<u32>(s.player, 0x3f8));        if (ok) g_title_served_at = Now();  // the host's lamp travel waits for this joiner (HostTravelHeldForJoin)
     }
     // The guest that came in from its title has session type 0 here (its Continue load carries
     // none): its chr is no cooperator (0x15BDC20 counts net types 1/5/7/19) until its row says 7.
@@ -5482,6 +5491,7 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         int guest_state = -1;
         coop::MemberRoster(slot, &guest_state, &v.guest_map);
         v.guest_in_prologue = guest_state == int(party::MemberState::Prologue);
+        v.member_in_prologue = !coop::OthersInPrologue().empty();  // #19: everybody ready first
         v.host_map = s.map_id;
         v.carry = dsummon::CarriesAcrossMaps(s.map_id, gather_dsum);
         v.cooperators = s.cooperators < 0 ? 0 : s.cooperators;
@@ -5577,7 +5587,18 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
             Log("direct summon: the host's room is in %s, this guest in %s: not delivered",
                 MapName(DS().room.area).c_str(), MapName(s.map_id).c_str());
         } else {
-            a = dsummon::Step(DS().g, now, s.world_up && !s.loading && WaitingGuestEntry() != 0, Role() == RoleClient);
+            const bool entry = s.world_up && !s.loading && WaitingGuestEntry() != 0;
+            // Playtest 1 G4: say once per request what keeps a room from being handed over.
+            static double blocked_logged = -1;
+            if (DS().g.phase == dsummon::Phase::HaveRoom && !entry && Role() != RoleClient &&
+                now - DS().g.since > dsummon::kRearmAfter - 0.5 && blocked_logged != DS().asked_at) {
+                blocked_logged = DS().asked_at;
+                Log("direct summon: the room waits: %s (world %s, loading %s, summon manager %s, bell 9005 %s)",
+                    !s.world_up ? "no world" : s.loading ? "a load runs" : "the bell has no waiting summon entry",
+                    s.world_up ? "up" : "down", s.loading ? "yes" : "no", SummonStepManager() ? "ok" : "none",
+                    GuestBellEffectOn() ? "on" : "off");
+            }
+            a = dsummon::Step(DS().g, now, entry, Role() == RoleClient);
         }
         if (before == dsummon::Phase::Asked && DS().g.phase == dsummon::Phase::Failed) {
             Log("direct summon: no answer from the host within %.0f s: the bell sign path", dsummon::kAnswerWait);
@@ -5587,6 +5608,20 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         room = DS().room;
         host_name = DS().names.count(0) ? DS().names[0] : std::string();
         asked_at = DS().asked_at;
+    }
+    // Rearm: the bell's effect down now, up again a moment later (a new ring makes a new entry).
+    static double rearm_at = -1;
+    if (a == dsummon::Action::Rearm) {
+        const bool was_on = GuestBellEffectOn();
+        const bool dropped = DropGuestBellEffect();
+        rearm_at = now + 0.5;
+        Log("direct summon: no waiting summon entry %.1f s after the room came: re-ringing the bell (SpEffect 9005 "
+            "%s, %s)", dsummon::kRearmAfter, was_on ? "was on" : "was off", dropped ? "dropped" : "not on the list");
+    } else if (rearm_at > 0 && now >= rearm_at) {
+        rearm_at = -1;
+        const bool ok = s.world_up && !s.loading && Role() != RoleClient && ApplyGuestBellEffect();
+        Log("direct summon: bell re-rung: SpEffect 9005 %s", ok ? (GuestBellEffectOn() ? "on" : "applied, not listed")
+                                                               : "NOT applied (no world / joined)");
     }
     if (a == dsummon::Action::Deliver) {
         const bool ok = DeliverSummon(room, host_name);
@@ -6186,6 +6221,17 @@ bool TitleJoinHold(const GameSnapshot& s) {
     }
     switch (phase) {
     case TitlePhase::Idle: {
+        if (coop::SavedPrologue()) {
+            // Playtest 1 #19: this save was still in its prologue: a title join would load it
+            // straight into the host's world. Plain Continue into its own world; the bell summons
+            // it once everybody is ready.
+            static bool said = false;
+            if (!said) {
+                said = true;
+                Log("title join: skipped: the save being continued is still in its prologue (#19); plain Continue");
+            }
+            return false;
+        }
         Send(0, "{\"op\":\"title_req\"}");
         std::lock_guard<std::mutex> lk(t.mu);
         t.phase = TitlePhase::Requested;
@@ -7509,6 +7555,7 @@ bool HostTravelHeldForJoin(std::string* who) {
         v.since_done = now - DS().done_at;
         v.done_ok = DS().done_ok;
     }
+    v.since_title = now - g_title_served_at.load();
     int members = 0, missing = 0;
     for (const TaskInfo& t : Tasks(false)) {
         if (t.mode == 1) {
@@ -7520,9 +7567,14 @@ bool HostTravelHeldForJoin(std::string* who) {
     const bool held = dsummon::HostTravelHeld(v);
     if (held && who) {
         char b[160];
-        std::snprintf(b, sizeof b, "a member is joining (room sent %.1f s ago, %s, %d of %d member chr(s) missing)",
-                      v.since_served, v.since_done <= v.since_served ? (v.done_ok ? "joined" : "failed") : "no answer yet",
-                      missing, members);
+        if (v.since_title < v.since_served) {
+            std::snprintf(b, sizeof b, "a member is joining from its title (room sent %.1f s ago, %d of %d member chr(s) missing)",
+                          v.since_title, missing, members);
+        } else {
+            std::snprintf(b, sizeof b, "a member is joining (room sent %.1f s ago, %s, %d of %d member chr(s) missing)",
+                          v.since_served, v.since_done <= v.since_served ? (v.done_ok ? "joined" : "failed") : "no answer yet",
+                          missing, members);
+        }
         *who = b;
     }
     return held;

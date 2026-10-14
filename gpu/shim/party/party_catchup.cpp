@@ -11,8 +11,11 @@
 #include "party_travel.h"
 #include "test_newgame.h"
 
+#include "party_director.h"
+
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 
@@ -95,8 +98,8 @@ void ApplyStart() {
 /// (Only increases: a new NG cycle starts at day again in both saves.)
 void TimeOfDayCatchup(const GameSnapshot& s, bool guest_connected, double now) {
     static double last = 0;
-    if (!guest_connected || !s.world_up || s.loading || now - last < 1.0) {
-        return;
+    if (!guest_connected || !s.world_up || s.loading || now - last < 1.0 || PartyPrologueHold()) {
+        return;  // #19: never into a prologue world
     }
     last = now;
     // The value: while summoned (load mode 1) the game's own view is the host's overlay; else the
@@ -131,6 +134,21 @@ void TimeOfDayCatchup(const GameSnapshot& s, bool guest_connected, double now) {
 void CatchupTick(const GameSnapshot& s, bool guest_connected, double now, std::uint32_t host_map) {
     State& st = S();
     TimeOfDayCatchup(s, guest_connected, now);
+    // Playtest 1 #19 (user rule: correct over seamless): a guest plays its own prologue; the late
+    // joiner catch-up (skip the opening, write the campaign-start flags, warp to the host's lamp)
+    // changed a prologue world, so it is opt-in now: BB_PARTY_CATCHUP=1.
+    static const bool on = [] {
+        const char* e = std::getenv("BB_PARTY_CATCHUP");
+        return e && e[0] == '1';
+    }();
+    if (!on) {
+        if (guest_connected && !st.logged_wait && s.world_up && !s.loading) {
+            st.logged_wait = true;
+            Log("off (BB_PARTY_CATCHUP=1 turns it on): this guest plays its own prologue; summons start once "
+                "everybody is ready");
+        }
+        return;
+    }
     if (st.c.phase() == Catchup::Phase::Done) {
         return;
     }
@@ -138,6 +156,8 @@ void CatchupTick(const GameSnapshot& s, bool guest_connected, double now, std::u
     if (in_world && now - st.flags_at >= 0.25) {
         st.flags_at = now;
         st.flags = ReadStartFlags();
+        st.flags.map_id = s.map_id;  // #19: the first Dream visit lasts until the headstone
+        st.flags.left_first_dream = LocalStartReady();
     } else if (!s.world_up) {
         st.flags = StartFlags{};
     }

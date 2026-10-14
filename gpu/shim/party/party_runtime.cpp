@@ -20,8 +20,10 @@
 #include "party_fourp.h"
 #include "party_progress.h"
 #include "party_split.h"
+#include "party_desync.h"
 #include "party_travel.h"
 #include "party_worldact.h"
+#include "party_npctalk.h"
 #include "party_droproll.h"
 #include "party_log_game.h"
 #include "coop_hooks.h"
@@ -825,6 +827,11 @@ LinkCallbacks make_callbacks(bool host) {
                 else plog("%s event from slot %d: %s", name.c_str(), slot, err.c_str());
                 return;
             }
+            if (name == coop::desync::kResyncEvent) {  // F5: a guest's state differs from the host's digest
+                std::string err;
+                if (!coop::desync::HostQueueResync(slot, body, &err)) plog("sync_resync from slot %d refused: %s", slot, err.c_str());
+                return;
+            }
             if (name == coop::kLampLitEventName) {  // a guest lit a lamp of the host's world
                 std::string err;
                 if (!coop::GuestServicesOnLampLit(slot, body, &err)) plog("lamp_lit from slot %d refused: %s", slot, err.c_str());
@@ -838,6 +845,10 @@ LinkCallbacks make_callbacks(bool host) {
             if (name == coop::kGiftUpEventName) {  // D5: an NPC's gift to a guest; the host takes it too
                 std::string err;
                 if (!coop::OnHostGiftUp(slot, body, &err)) plog("gift_up from slot %d refused: %s", slot, err.c_str());
+                return;
+            }
+            if (name == coop::npctalk::kEventName) {  // a guest's NPC conversation (D8, party_npctalk.h)
+                coop::npctalk::OnEvent(slot, body);
                 return;
             }
             if (name == coop::worldact::kEventName) {  // a guest's lever / door / NPC talk (D3, D8)
@@ -914,7 +925,7 @@ LinkCallbacks make_callbacks(bool host) {
                 return;
             }
             if (name == coop::progress::kEventFlags || name == coop::progress::kEventFlagSnapshot ||
-                name == coop::progress::kEventWorldGroups) {
+                name == coop::progress::kEventWorldGroups || name == coop::desync::kDigestEvent) {
                 std::string err;  // C2: the host's flags, applied by the main-thread tick
                 if (!coop::progress::OnLinkEvent(name, body, &err)) plog("%s event: %s", name.c_str(), err.c_str());
                 return;
@@ -942,6 +953,10 @@ LinkCallbacks make_callbacks(bool host) {
             if (name == coop::droproll::kEventName) {  // D4b: the host's shared enemy drop roll seed
                 std::string err;
                 if (!coop::droproll::OnEvent(body, &err)) plog("drop_seed event refused: %s", err.c_str());
+                return;
+            }
+            if (name == coop::npctalk::kEventName) {  // a member's NPC conversation (D8, party_npctalk.h)
+                coop::npctalk::OnEvent(slot, body);
                 return;
             }
             if (name == coop::kPhantomEventName) {  // host lamp / rested / boss Insight

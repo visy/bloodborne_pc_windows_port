@@ -350,6 +350,12 @@ LotFit ClassifyLotFit(const std::vector<LotSlotState>& slots, std::string* why =
 /// never takes away. The guest then gets it after all (a duplicate unique key is harmless; a
 /// missing Oedon Tomb Key blocks the game).
 bool LedgerSkipSuspicious(const std::vector<LotSlotState>& slots);
+/// H3 (par_c6, live): goods given while summoned (GiveItemDirect, load mode 1) never reached the
+/// guest's save file (a save requested while summoned does not write them), so a restart or the
+/// next summon load lost them while their flags stayed set. Each give is remembered (on disk) with
+/// the held count right after it (`expect`); in the next own world the missing part is given
+/// again, min(count, expect - now) (0 when nothing is missing or a count is unknown), and saved.
+int SummonedRegiveCount(int expect, int now, int count);
 
 class GuestItems {
 public:

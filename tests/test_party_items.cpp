@@ -790,6 +790,13 @@ static void test_ledger_suspicious() {
     LotSlotState unknown = key;
     unknown.owned = -1;
     CHECK(!LedgerSkipSuspicious({unknown}));
+    // par_c6: goods given while summoned, given again in the own world when missing.
+    CHECK(SummonedRegiveCount(1, 0, 1) == 1);   // the key never reached the save
+    CHECK(SummonedRegiveCount(1, 1, 1) == 0);   // kept
+    CHECK(SummonedRegiveCount(8, 3, 8) == 5);   // 5 of 8 missing
+    CHECK(SummonedRegiveCount(8, 0, 3) == 3);   // never more than was given
+    CHECK(SummonedRegiveCount(-1, 0, 1) == 0);  // unknown counts: nothing
+    CHECK(SummonedRegiveCount(1, -1, 1) == 0);
     LotSlotState vial = key;
     vial.max_num = 20;
     vial.max_storage = 600;

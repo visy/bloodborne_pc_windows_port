@@ -27,6 +27,7 @@
 
 #include <cstdint>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -114,6 +115,10 @@ public:
     // the restarted game over it fails (the guest waits for summon data that goes to the dead
     // connection). Its new signs are not offered to anyone for `ms` (docs/party/join_timing.md).
     void hold_signs(const std::string& online_id, int ms);
+    // Playtest 1 #19: the members (online ids) still in their prologue. Their signs are not shown
+    // and a member in its prologue is shown none: no summon touches a prologue world (the party
+    // director sets this on the host every tick; a manual bell in the prologue finds nothing).
+    void set_prologue_members(const std::set<std::string>& ids);
     // The longest sign hold still running, ms (0: none). The title join waits it out too.
     std::int64_t hold_left_ms();
     // How long ago the host's game asked to summon a sign (summon_messenger/request), ms.
@@ -137,7 +142,8 @@ private:
     ChannelBoard channels_;
     mutable std::mutex mu_;
     std::vector<Sign> signs_;
-    std::vector<std::pair<std::string, std::int64_t>> holds_;  // online id -> steady ms until
+    std::vector<std::pair<std::string, std::int64_t>> holds_;
+    std::set<std::string> prologue_;  // under mu_  // online id -> steady ms until
     std::uint64_t next_sign_ = 1;
     std::int64_t last_request_ms_ = -(1LL << 40);
     std::vector<std::pair<std::string, std::uint64_t>> users_;  // online id -> UserId

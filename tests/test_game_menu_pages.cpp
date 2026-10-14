@@ -17,6 +17,7 @@
 
 #include "gpu/shim/bbport_game_menu_pages.h"
 #include "gpu/shim/bbport_settings.h"
+#include "gpu/shim/party/party_balance_rules.h"
 #include "gpu/shim/party/party_status.h"
 
 namespace P = BbGameMenu::Pages;
@@ -171,6 +172,68 @@ static const P::Row& RowNamed(const P::Page& page, const char16_t* name) {
     }
     assert(false);
     return page.rows.front();
+}
+
+/// The texts a row shows follow its value at once: a help line describing the value (enemy
+/// scaling) is rewritten in the same Poll that applies the change, and a setting changed elsewhere
+/// (the overlay menu) while a page is open moves the row's value (Byte / Value) with it.
+static void LiveValues() {
+    using namespace coop::balance;
+    P::Load();
+    Advance(300); // the periodic refresh is done: what follows must not wait for the next one
+    const P::Page& scaling = PageNamed(u"Enemy scaling");
+    const P::Row& boss_hp = RowNamed(scaling, u"Boss health");
+    assert(P::IsDynamic(boss_hp.help));
+    auto& s = BbSettings::Get();
+    const auto help = [&] { return std::u16string(P::Text(boss_hp.help, false)); };
+    const auto described = [&](int percent) { return P::Utf16(DescribeHp(percent, false).c_str()); };
+    const int start = *P::Byte(boss_hp.field);
+    assert(help().find(described(AtPosition(kHpTable, start))) == 0);
+
+    // Changed on the page: the help line text is new after one frame (no 250 ms refresh between).
+    const int next = start == 10 ? 9 : start + 1;
+    std::uint64_t texts = P::DynamicChanges();
+    *P::Byte(boss_hp.field) = P::u8(next);
+    Advance(16);
+    assert(s.party_boss_hp == AtPosition(kHpTable, next));
+    assert(P::DynamicChanges() != texts);
+    assert(help().find(described(AtPosition(kHpTable, next))) == 0);
+
+    // Changed elsewhere (the overlay's Party tab): the slider's value and its help follow.
+    const int other = next == 0 ? 5 : 0;
+    std::uint64_t values = P::ValueChanges();
+    texts = P::DynamicChanges();
+    s.party_boss_hp = AtPosition(kHpTable, other);
+    Advance(16);
+    assert(*P::Byte(boss_hp.field) == other);
+    assert(P::ValueChanges() != values && P::DynamicChanges() != texts);
+    assert(help().find(described(AtPosition(kHpTable, other))) == 0);
+    // ... and stays: the page does not write its old value back.
+    values = P::ValueChanges();
+    Advance(16);
+    Advance(16);
+    assert(s.party_boss_hp == AtPosition(kHpTable, other) && P::ValueChanges() == values);
+
+    // A toggle (rot on death), a pop-up list (above companions) and a steps row (model detail).
+    const P::Page& rules = PageNamed(u"Party rules");
+    const P::Row& rot = RowNamed(rules, u"Rot on death");
+    const P::Row& above = RowNamed(rules, u"Above companions");
+    const P::Row& detail = RowNamed(PageNamed(u"Display"), u"Model detail");
+    const bool rot_was = s.party_rot;
+    s.party_rot = !rot_was;
+    s.party_overhead = (s.party_overhead + 1) % 5;
+    s.model_lod = s.model_lod == 2 ? -2 : 2;
+    Advance(16);
+    assert(*P::Byte(rot.field) == P::u8(!rot_was));
+    assert(*P::Value(above.field) == s.party_overhead);
+    assert(P::ChoiceFromPosition(*P::Byte(detail.field), 4) == (s.model_lod == 2 ? 3 : 0));
+    // The page's own change wins over an outside one made in the same frame.
+    *P::Byte(rot.field) = P::u8(rot_was);
+    Advance(16);
+    assert(s.party_rot == rot_was);
+    s.party_boss_hp = 150;
+    s.party_rot = true;
+    Advance(16);
 }
 
 /// Cross on a button row (the glue calls Press while the row has the cursor).
@@ -386,6 +449,7 @@ int main(int argc, char** argv) {
     Limits();
     Helpers();
     EverySettingSaved();
+    LiveValues();
     assert(ReadIni()["key.cross"] == "X, Space"); // the launcher's keys stay
     Party();
     Restart();

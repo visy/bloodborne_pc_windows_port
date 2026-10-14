@@ -1004,6 +1004,16 @@ bool RetargetSendHome(u64 site) {
         Log("send-home at +0x%llx: the guest's Leave, home as usual", ull(site));
         return false;
     }
+    // Playtest 1 (H4:1855, H4:2591): a member left the host's room with an error and the host's
+    // own game ran OnLeave_Limit, the phantom's irregular-leave path. A host is in its own world:
+    // its "home" load had no return data and fell back to the title (40.5 s and 59.9 s back into
+    // the world). The host stays; the session handler closes the room for the member that left.
+    if (g_travel_on.load() && Role() == PartyRole::Host && site == 0x138a51c) {
+        Log("send-home at +0x%llx (OnLeave_Limit) on the host dropped: the host is in its own world (it went "
+            "to the title in playtest 1); session role %d, cooperators %d", ull(site),
+            ReadGameState(false).session_role, ReadGameState(false).cooperators);
+        return true;
+    }
     if (!g_travel_on.load() || g_in_replay.load() || Role() != PartyRole::Guest) {
         return false;
     }

@@ -20,6 +20,10 @@ BB_PARTY_PORT=base+i, BB_PARTY_NAME=Hunter{i}, no UPnP, no public STUN, 127.0.0.
 --env still overrides any of these; --ienv I:KEY=VALUE sets a variable for instance I only (e.g. a
 test action on the guest). --crash-at S kills instance --crash-instance's bbport.exe
 (TerminateProcess, as a crash) S seconds into the run; run.bat then restarts it (BB_PARTY_RESTART).
+--crash-plan I[/W]:REGEX[@D] (repeatable, in order): several crashes in one run; each kills instance
+I's game D s (default 0) after instance W's log (default I) matched REGEX, looking only at what was
+logged after the previous crash (e.g. the host crashes during a travel, then the guest crashes during
+the restarted host's death load: 0:step 5/5@2 then 1/0:host_die@3).
 """
 import argparse, ctypes, json, os, re, shutil, subprocess, sys, threading, time
 from pathlib import Path
@@ -516,9 +520,20 @@ def run(a):
     # The run's clock (--crash-at, --seconds, the lease) starts one stagger after the last start,
     # as before the stagger was skipped after the last instance.
     t0 = time.time() + (a.stagger if a.count > 1 else 0)
+    # The crash plan: (instance, watched log, regex or None, at s or None, delay s), run in order.
+    plan = []
+    if a.crash_at or a.crash_when:
+        plan.append((a.crash_instance, a.crash_instance, re.compile(a.crash_when) if a.crash_when else None,
+                     a.crash_at or None, 0.0))
+    for item in a.crash_plan or []:
+        who, _, rest = item.partition(":")
+        inst, _, watch = who.partition("/")
+        rx, _, delay = rest.rpartition("@") if re.search(r"@[\d.]+$", rest) else (rest, "", "0")
+        plan.append((int(inst), int(watch or inst), re.compile(rx), None, float(delay or 0)))
     crashed = False
-    want_crash = bool(a.crash_at or a.crash_when)
-    crash_rx = re.compile(a.crash_when) if a.crash_when else None
+    want_crash = bool(plan)
+    plan_next, plan_hit = 0, None
+    plan_marks = list(starts)
     until = [re.compile(u) for u in a.until or []]
     marks = list(starts)  # log offsets at the crash: --until then looks at what follows it
     verdict = None
@@ -556,13 +571,19 @@ def run(a):
                                       % (time.time() - t0, waiting))
                 print(verdict, flush=True)
                 break
-        if want_crash and not crashed:
-            hit = (a.crash_at and time.time() - t0 >= a.crash_at) or (
-                crash_rx and crash_rx.search(log_text(a.crash_instance, starts[a.crash_instance])))
-            if hit:
-                crashed = True
+        if plan_next < len(plan):
+            inst, watch, rx, at, delay = plan[plan_next]
+            if plan_hit is None and ((at and time.time() - t0 >= at) or
+                                     (rx and rx.search(log_text(watch, plan_marks[watch])))):
+                plan_hit = time.time()
+            if plan_hit is not None and time.time() - plan_hit >= delay:
+                plan_next, plan_hit = plan_next + 1, None
+                crashed = plan_next == len(plan)
                 marks = [os.path.getsize(Path(a.root) / f"inst{i}" / "run.log") for i in range(a.count)]
-                crash_instance(a.root, a.crash_instance)
+                plan_marks = list(marks)
+                print("[harness +%.1f s] crash %d of %d: instance %d" % (time.time() - ts0, plan_next, len(plan), inst),
+                      flush=True)
+                crash_instance(a.root, inst)
         if idle_limit > 0:
             # Distinct party lines with numbers blanked: periodic status/roster/state lines repeat
             # the same text and don't count as progress.
@@ -676,6 +697,9 @@ def main():
     ap.add_argument("--crash-at", type=float, default=0, help="run: kill one instance's game this many s in")
     ap.add_argument("--crash-instance", type=int, default=1)
     ap.add_argument("--crash-when", help="run: kill that instance's game once its log matches this regex")
+    ap.add_argument("--crash-plan", action="append",
+                    help="run: I[/W]:REGEX[@D], repeatable, in order: kill instance I's game D s after instance W's "
+                         "log (default I; since the previous crash) matched REGEX")
     ap.add_argument("--label", default="",
                     help="run: what this test is for; shown in the windows' title bars and the queue status")
     ap.add_argument("--idle", type=float, default=float(os.environ.get("BB_MP_IDLE", "10")),

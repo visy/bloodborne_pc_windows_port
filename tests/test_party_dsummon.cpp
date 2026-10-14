@@ -82,7 +82,17 @@ int main() {
     CHECK(Step(g, 1 + kJoinWait + 0.1, false, false) == Action::ReportFail && g.phase == Phase::Failed);
     // the entry never comes
     g = Guest{}; OnAsked(g, 0); OnRoom(g, 0, false);
-    CHECK(Step(g, kEntryWait + 0.1, false, false) == Action::ReportFail);
+    CHECK(Step(g, kRearmAfter - 0.1, false, false) == Action::None);
+    CHECK(Step(g, kRearmAfter + 0.1, false, false) == Action::Rearm && g.rearmed);  // playtest 1 G4: re-ring once
+    CHECK(Step(g, kRearmAfter + 1, false, false) == Action::None);                   // the wait starts again
+    CHECK(Step(g, kRearmAfter + 0.1 + kEntryWait + 0.1, false, false) == Action::ReportFail);
+    CHECK(std::strstr(g.fail_why, "re-ring"));
+    // the re-rung bell's entry comes up: delivered
+    g = Guest{}; OnAsked(g, 0); OnRoom(g, 0, false);
+    CHECK(Step(g, 3, false, false) == Action::Rearm);
+    CHECK(Step(g, 5, true, false) == Action::Deliver);
+    // a new request may re-ring again
+    OnAsked(g, 20); CHECK(!g.rearmed);
     // three refused deliveries
     g = Guest{}; OnAsked(g, 0); OnRoom(g, 0, false);
     for (int i = 0; i < 3; ++i) { CHECK(Step(g, 1, true, false) == Action::Deliver); OnDelivered(g, 1, false); }
@@ -104,6 +114,15 @@ int main() {
     v.host_ready = true; CHECK(!HostRefusal(v) && RefusalWait(v) == Busy::None);
     // ... nor of a guest still in its own prologue
     v.guest_in_prologue = true; CHECK(HostRefusal(v) && std::strstr(HostRefusal(v), "own prologue")); v.guest_in_prologue = false;
+    // #19: another member still in its prologue: nobody is summoned until everybody is ready
+    v.member_in_prologue = true;
+    CHECK(HostRefusal(v) && std::strstr(HostRefusal(v), "everybody is ready") && RefusalWait(v) == Busy::MemberPrologue);
+    CHECK(WaitOf(EncodeRefuse(RefusalWait(v))) == Busy::MemberPrologue);
+    CHECK(WaitOf(EncodeRefuse(Busy::Prologue)) == Busy::Prologue);  // "prologue" is not "member_prologue"
+    CHECK(BusyText(Busy::MemberPrologue, false) == "Waiting: a party member is in the prologue");
+    CHECK(TitleJoinBusy(false, false, true, true) == Busy::MemberPrologue &&
+          TitleJoinBusy(false, false, false, true) == Busy::Prologue);
+    v.member_in_prologue = false;
     // Playtest 1 #9: the guest in another map gathers first (refused with "wait":"map")
     CHECK(MapKnown(0x15000000) && !MapKnown(0) && !MapKnown(0xffffffffu));
     CHECK(SameMap(0x18010000, 0x18010000) && SameMap(0x18010000, 0x18010001) && !SameMap(0x18010000, 0x18000000));
@@ -136,7 +155,7 @@ int main() {
     g.phase = Phase::Delivered; CHECK(!RoomElsewhere(g, 0.2, 0x18010000, 0x15000000, false));   // only before delivery
     // every failure says why (logged with FAILED)
     g = Guest{}; OnAsked(g, 0); Step(g, kAnswerWait + 1, false, false); CHECK(std::strstr(g.fail_why, "no answer"));
-    g = Guest{}; OnAsked(g, 0); OnRoom(g, 0, false); Step(g, kEntryWait + 1, false, false); CHECK(std::strstr(g.fail_why, "entry"));
+    g = Guest{}; OnAsked(g, 0); OnRoom(g, 0, false); Step(g, 3, false, false); Step(g, 3 + kEntryWait + 1, false, false); CHECK(std::strstr(g.fail_why, "entry"));
     g = Guest{}; OnAsked(g, 0); OnRoom(g, 0, false); OnDelivered(g, 1, true); Step(g, 1 + kJoinWait + 1, false, false);
     CHECK(std::strstr(g.fail_why, "did not join"));
     // Playtest 1 #2: the host's bell is the direct summon's fallback only
@@ -174,6 +193,14 @@ int main() {
     h.since_done = 5; h.done_ok = false;
     CHECK(HostTravelHeld(h));                                      // an older failure does not release a new room
     h.since_served = kHostTravelHoldMax;
+    CHECK(!HostTravelHeld(h));                                     // waited long enough
+    // par_c6: a title joiner (no dsum_done) holds the travel until its chr is here, direct summon on or off.
+    h = HostTravelHoldView{};
+    h.since_title = 3;
+    CHECK(HostTravelHeld(h));                                      // room sent to a title joiner: wait
+    h.joiner_in_world = true;
+    CHECK(!HostTravelHeld(h));                                     // its chr is here: travel (it follows)
+    h.joiner_in_world = false; h.since_title = kHostTravelHoldMax;
     CHECK(!HostTravelHeld(h));                                     // waited long enough
     std::printf("party-dsummon-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

@@ -188,3 +188,53 @@ python tools/mp/instances.py run --party --count 2 --env BB_NET_SIM=lat=150,jit=
 --ienv "1:BB_PARTY_DIRECTOR_TEST=...,guest_outage=5000@29%m24_01"
 ```
 (the outage steps run S s after the last load / previous step, in the named map).
+
+## 6. Security: what a stranger on the party port meets (F3, 2026-10-14)
+
+Every byte from a peer is untrusted until the AUTH proof is checked, and still capped after it.
+
+| Threat | Defence | Test |
+|---|---|---|
+| Garbage / oversized frames before the handshake | 64 KiB handshake frame cap, connection dropped; 16 pending handshakes in all, 4 per address; a handshake that never finishes times out | party-security-test `regress_link`, fuzz `linkhost` |
+| Online password guessing | `AuthThrottle` (party_link.h): 5 wrong proofs per address per minute are free (typos, an old code), the 6th locks the address out for 30 s, every later wrong proof doubles it (to 15 min); a locked-out address is refused at HELLO with "too many wrong passwords from your address: try again in N s", the right password included. 4096 addresses tracked at most. Offline guessing of a captured handshake pays Argon2i (8 MiB, 3 passes) per guess | `regress_auth_throttle` (pure rule + a real host over loopback) |
+| Replay / forged frames after WELCOME | Every frame is sealed with a per-direction session key and a counter nonce (party_crypto): a replayed, reordered or altered frame fails to open and drops the connection | fuzz `linkhost` (forged frame at the end) |
+| A member flooding the host | Per-member token buckets (200 frames/s, 4 MiB/s, bursts 2000 / 48 MiB); RPCs over the limit get "rate limited"; 20000 drops in a row close the connection | `regress_link` flood |
+| Malformed events | Every event body has a decoder with caps and a sanitizer (travel, story, items, phantom, lamp requests, world actions, flags, snapshots, world groups, balance, chalice goods, drop seed, direct summon bodies, gift_up, sync_digest / sync_resync); each is fuzzed with random and structure-aware inputs under UBSan (party-fuzz-ubsan) | party-fuzz / party-security-test (20 s run in the test) |
+| A malicious host | The guest's decoders get the same checks (fuzz `linkguest`: mutated CHALLENGE / WELCOME / ROSTER / EVENT frames) | fuzz `linkguest` |
+
+## 7. Desync detection and long outages (F5, 2026-10-14)
+
+**Digests** (party_desync.h). The host sends every `BB_PARTY_DESYNC_S` (15 s) a `sync_digest`: 32
+bucket hashes of its host-world mirror image and 32 of its candidate flags, with the flag stream's
+seq. Each guest hashes what it holds: its mirror image (GuestWorldMirror) and a model of the host's
+flags (the last snapshot plus every change after it). The link is reliable and ordered per member,
+so the digest arrives after every change the host sent before it: any difference is a real desync
+(a lost or misapplied event, a seq gap). The guest then asks `sync_resync` with the differing
+buckets; the host answers with the world groups of those buckets (a partial `world_groups`, zero
+groups included) and, for any flag bucket or a gap, a fresh `flag_snapshot` (the join catch-up
+path: set-only, idempotent). Limits: a guest asks at most every 5 s and stops after 3 resyncs that
+did not help ("persistent", logged once; retried after 5 min); the host serves one resync per member
+per 10 s. Logs: `Party progress: desync: ...` on both sides.
+
+**Long outages** (party-link-test `test_long_outages`, timings scaled 1:10 so the test runs in
+~25 s: lost timeout 1 s for the game's 10 s, slot keep 6 s for 60 s):
+- "30 s" outage (3 s): both sides call the link lost, the host keeps the slot, the guest reconnects
+  by itself and resumes 3.1 s after the outage began; all 60 events posted before and during the
+  outage arrive once, in order.
+- "120 s" outage (12 s): past the keep the host releases the member; the guest still comes back by
+  itself as a new member (not resumed). Events posted into the released slot are gone (0 of 10);
+  the director's new-member path re-sends the full flag snapshot and world image, which covers C2.
+- A host whose event callback stalls for 4 lost timeouts (a paused / alt-tabbed / loading host)
+  keeps its member: the link thread answers pings; the 30 events sent meanwhile arrive in order.
+
+**Live (2026-10-14, 2 clients, `BB_NET_SIM=lat=30`, `BB_PARTY_DESYNC_S=5`, guest `BB_PARTY_DESYNC_TEST=3`,
+host `host_outage=30000@50`):** the first digest matched 15 s after the join; the injected
+desync (mirror group 0 flipped, one host flag forgotten) was found by the next digest ("world
+buckets 0, flag buckets 19"), the host sent 36 groups and a snapshot, and the following digest
+said "resolved". The 30 s total outage: the host's link called the guest lost after 10 s (slot
+kept); the guest's game left the session ~12 s in (its own timeout) and went home to its last lamp
+(a 3.4 s loading screen); the link resumed as the network came back (20.2 s after it was lost);
+the first direct summon was refused (the host's game still held the dead connection) and the bell
+summon brought the guest back 2.4 m from the host, 41.3 s after the outage began (two loading
+screens: correct, not seamless). 21 digests matched afterwards. Screenshots showed both players
+together before and after and the HUD's "Connection lost" during.
