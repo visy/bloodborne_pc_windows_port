@@ -153,12 +153,31 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     window = SDL_CreateWindowWithProperties(props);
     SDL_DestroyProperties(props);
     ASSERT_MSG(window, "Failed to create window: {}", SDL_GetError());
+    // BB_WINDOW_MODE=fullscreen is exclusive: a window in SDL's fullscreen state is borderless
+    // desktop fullscreen until it is given a display mode, here the desktop's (from
+    // Supermedo/bloodborne_pc PR #68 by RafaelHGOliveira). BB_FULLSCREEN=1 alone stays desktop
+    // fullscreen, and test runs (BB_WINDOW_BACKGROUND=1) never switch modes.
+    if (is_fullscreen && win_mode && !SDL_strcasecmp(win_mode, "fullscreen")) {
+        const char* bg = std::getenv("BB_WINDOW_BACKGROUND");
+        const SDL_DisplayMode* desktop = SDL_GetDesktopDisplayMode(SDL_GetDisplayForWindow(window));
+        if (bg && bg[0] == '1') {
+            std::printf("Window: exclusive fullscreen skipped (BB_WINDOW_BACKGROUND=1)\n");
+        } else if (!desktop || !SDL_SetWindowFullscreenMode(window, desktop)) {
+            std::printf("Window: exclusive fullscreen unavailable, desktop fullscreen (%s)\n",
+                        SDL_GetError());
+        } else {
+            std::printf("Window: exclusive fullscreen %dx%d@%.0f Hz\n", desktop->w, desktop->h,
+                        desktop->refresh_rate);
+        }
+    }
 
     const char* driver = SDL_GetCurrentVideoDriver();
     const SDL_PropertiesID wp = SDL_GetWindowProperties(window);
 #if defined(_WIN32)
     window_info.type = WindowSystemType::Windows;
     window_info.render_surface = SDL_GetPointerProperty(wp, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+    // Windows runs this display in HDR: an SDR swapchain is decoded with the sRGB curve there.
+    on_hdr_display = SDL_GetBooleanProperty(wp, SDL_PROP_WINDOW_HDR_ENABLED_BOOLEAN, false);
 #else
     if (driver && !std::strcmp(driver, "x11")) {
         window_info.type = WindowSystemType::X11;
@@ -177,6 +196,9 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     width = w;
     height = h;
     LOG_INFO(Frontend, "Window {}x{} on {}", w, h, driver);
+    if (on_hdr_display) {
+        std::printf("Display: HDR on in Windows (SDR picture re-encoded for gamma 2.2, BB_HDR_GAMMA)\n");
+    }
 }
 
 WindowSDL::~WindowSDL() {
@@ -366,6 +388,12 @@ bool WindowSDL::PollEvents() {
             height = h;
             break;
         }
+#ifdef _WIN32
+        // HDR switched in Windows (Win+Alt+B) or the window moved to another display.
+        case SDL_EVENT_WINDOW_HDR_STATE_CHANGED:
+            on_hdr_display = event.window.data1 != 0;
+            break;
+#endif
         case SDL_EVENT_QUIT:
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
             is_open = false;

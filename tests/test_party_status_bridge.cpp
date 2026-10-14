@@ -272,6 +272,23 @@ static int test_prologue() {
     f.role = Role::Guest;
     f.link = LinkState::Connected;
     CHECK(MapState(f).state == State::Joined);
+    // #19: whoever finished first waits for the others, and the page says for whom.
+    f.session_role = 0;
+    f.prologue = false;
+    f.others_prologue = "Hunter1";
+    CHECK(MapState(f).state == State::WaitingForWorld && MapState(f).detail == "Waiting: Hunter1 is in the prologue");
+    f.role = Role::Host;
+    f.link = LinkState::Hosting;
+    f.others_prologue = "Hunter1 and Hunter2";
+    CHECK(MapState(f).state == State::Hosting && MapState(f).detail == "2/3, Waiting: Hunter1 and Hunter2 are in the prologue");
+    f.prologue = true;  // its own prologue comes first
+    CHECK(MapState(f).detail == "2/3, prologue (first-dream), solo until ready");
+    f.prologue = false;
+    f.others_prologue.clear();
+    f.session_role = 6;
+    f.role = Role::Guest;
+    f.link = LinkState::Connected;
+    CHECK(MapState(f).state == State::Joined);
     party::RosterEntry e;
     e.name = "Hunter1";
     e.slot = 1;

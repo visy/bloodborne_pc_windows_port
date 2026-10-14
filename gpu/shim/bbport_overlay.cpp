@@ -21,7 +21,9 @@
 #include "bbport_settings.h"
 #include "party/party_hud.h"
 #include "party/party_balance_rules.h"
+#include "party/party_npctalk.h"
 #include "party/party_status.h"
+#include "party/party_log.h"
 #include "bbport_camera.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -179,6 +181,11 @@ constexpr std::int64_t AlertMs = 15000;
 bool AlertWanted() {
     return party::status::Enabled() &&
            (party::status::AlertSeq() != alert_seen.load() || SteadyMs() < alert_until_ms.load());
+}
+
+// Shared NPC dialogue (party_npctalk.h): the caption under a companion's conversation.
+bool NpcCaptionWanted() {
+    return party::status::Enabled() && coop::npctalk::CurrentCaption().until_ms > SteadyMs();
 }
 
 bool ToastWanted() {
@@ -726,7 +733,11 @@ bool RestartNeeded() {
 
 void DisplayTab() {
     auto& s = BbSettings::Get();
-    static const char* outputs[] = {"1280 x 720", "1920 x 1080", "2560 x 1440", "3840 x 2160"};
+    static const char* outputs[] = {"1280 x 720", "1920 x 1080", "2560 x 1440", "3840 x 2160",
+                                    "2560 x 1080 (21:9)", "3440 x 1440 (21:9)",
+                                    "3840 x 1600 (21:9)", "5120 x 2160 (21:9)",
+                                    "3840 x 1080 (32:9)", "5120 x 1440 (32:9)"};
+    static_assert(sizeof(outputs) / sizeof(*outputs) == BbSettings::OutputCount);
     Choice("output", T("Output resolution", "Разрешение вывода"), s.output_res, BbSettings::OutputCount,
            [](int i) { return outputs[i]; }, [](int) { return true; },
            BbSettings::FixedRenderSession()
@@ -1122,6 +1133,14 @@ const char* PartyStateText(party::status::State st, party::status::Role role) {
     return "";
 }
 
+/// A user mark (F9 / the Party tab): the log line, the peers' marks, a toast with its number.
+void MarkIssue(const char* origin) {
+    const int n = coop::plog::UserMark(origin);
+    char text[96];
+    std::snprintf(text, sizeof(text), T("Issue mark %d written to the logs", "Метка %d записана в логи"), n);
+    party::status::SetLastEvent(text);
+}
+
 struct PartyUiState {
     double copied_until = 0.0;       ///< "Copied" shown in the code row until then (ImGui time)
     double lan_copied_until = 0.0;   ///< the same for the host's LAN code row
@@ -1283,6 +1302,15 @@ void PartyTab() {
             party_ui.leave_confirm_until = now + 3.0;
         }
     }
+    // Party logging (party_log.h): a marked line in this log and the peers' logs (also F9).
+    if (ActionRow("party_mark", T("Mark an issue in the logs (F9)", "Отметить проблему в логах (F9)"), nullptr,
+                  T("Writes \"=== USER MARK n ===\" into this game's log and asks the other players' games to do the "
+                    "same, so a bug report can point at the moment it happened.",
+                    "Записывает \"=== USER MARK n ===\" в лог этой игры и просит игры других игроков сделать то же, "
+                    "чтобы в отчёте об ошибке был виден момент, когда она случилась."),
+                  true)) {
+        MarkIssue("Party tab");
+    }
     if (b.role == ps::Role::Host) {
         for (const ps::Member& m : b.members) {
             if (m.local || m.slot == 0) {
@@ -1324,6 +1352,12 @@ void PartyTab() {
              "corner). Off: the game's own plate, as in the original game.",
              "Вкл.: наша табличка с именем над спутниками вместо игровой (та прячется за любым деревом "
              "или углом). Выкл.: игровая табличка, как в оригинальной игре."),
+           on);
+    Toggle("party_npc_talk", T("Share NPC dialogue", "Общие диалоги NPC"), s.party_npc_talk,
+           T("See and hear the NPC conversations of companions near you: the game's subtitles, the NPC's "
+             "voice, their choices and gifts. Range: System > Party rules > NPC dialogue range.",
+             "Видеть и слышать разговоры спутников с NPC рядом с вами: субтитры, голос NPC, их выбор и "
+             "подарки. Дальность: Система > Правила группы > Дальность диалогов NPC."),
            on);
     Toggle("party_guest_lamps", T("Guests use lamps", "Фонари гостям"), s.party_guest_lamps,
            T("Guests may use lamps and the Dream's headstones; the host leads and the whole party "
@@ -2249,6 +2283,57 @@ void PartyAlert() {
     ImGui::PopStyleVar(2);
 }
 
+/// A companion's NPC conversation (party_npctalk.h): "Hunter talking to Gilbert" and the talker's
+/// choice / gift (or the line itself when the game's own subtitle could not be used) in the game's
+/// Baskerville, centred above the game's subtitles; fades out over its last second. No input.
+void PartyNpcCaption() {
+    if (!party::status::Enabled()) {
+        return;
+    }
+    const coop::npctalk::Caption c = coop::npctalk::CurrentCaption();
+    const std::int64_t left = c.until_ms - SteadyMs();
+    if (left <= 0 || (c.header.empty() && c.line.empty())) {
+        return;
+    }
+    const float alpha = std::clamp(float(left) / 1000.0f, 0.0f, 1.0f);
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float width = std::min(viewport->WorkSize.x - 32.0f * base_scale, 900.0f * base_scale);
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                                   viewport->WorkPos.y + viewport->WorkSize.y * 0.78f),
+                            ImGuiCond_Always, ImVec2(0.5f, 1.0f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), ImVec2(width, viewport->WorkSize.y * 0.5f));
+    ImGui::SetNextWindowBgAlpha(0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::Begin("##party_npc_caption", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoSavedSettings);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const auto centred = [&](const std::string& text, float size, ImVec4 colour) {
+        ImGui::PushFont(game_font, size);
+        const float wrap = width - 24.0f * base_scale;
+        const ImVec2 sz = ImGui::CalcTextSize(text.c_str(), nullptr, false, wrap);
+        const float avail = std::max(ImGui::GetContentRegionAvail().x, sz.x);
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (avail - sz.x) * 0.5f));
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        // A soft shadow like the game's subtitles (no box).
+        draw->AddText(nullptr, 0.0f, ImVec2(at.x + 1.5f * base_scale, at.y + 1.5f * base_scale),
+                      ImGui::GetColorU32(ImVec4(0, 0, 0, 0.85f * alpha)), text.c_str(), nullptr, wrap);
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrap);
+        ImGui::TextColored(colour, "%s", text.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::PopFont();
+    };
+    if (!c.header.empty()) {
+        centred("[" + c.header + "]", 17.0f, ImVec4(0.80f, 0.68f, 0.46f, 0.95f * alpha));
+    }
+    if (!c.line.empty()) {
+        centred(c.line, 21.0f, ImVec4(0.93f, 0.92f, 0.88f, alpha));
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+}
+
 void TextPrompt() {
     std::string title, text;
     {
@@ -2468,6 +2553,13 @@ bool HandleEvent(const SDL_Event& event) {
         // F11: the performance HUD (Mrsuss60/bloodborne_pc_windows_port). Their Shift+Tab is
         // not taken: Shift and Tab are game keys here (Circle + touchpad; in mouse & keyboard
         // mode the attack modifier + touchpad). F11 is bound to nothing in either layout.
+        // F9: a user mark in the logs (party_log.h; works without a party too).
+        if (event.key.key == SDLK_F9) {
+            if (down && !event.key.repeat) {
+                Ui::MarkIssue("F9");
+            }
+            return true;
+        }
         if (event.key.key == SDLK_F11) {
             if (down && !event.key.repeat) {
                 auto& s = BbSettings::Get();
@@ -2557,7 +2649,7 @@ bool HandleEvent(const SDL_Event& event) {
 bool Visible() {
     return initialized &&
            (menu_open || prompt_active || BbSettings::Get().show_fps || BbSettings::Get().show_hud ||
-            CompileIndicatorShown() || ToastWanted() || AlertWanted() || PartyHudWanted() || PartyTagsWanted());
+            CompileIndicatorShown() || ToastWanted() || AlertWanted() || NpcCaptionWanted() || PartyHudWanted() || PartyTagsWanted());
 }
 
 bool MenuOpen() {
@@ -2714,6 +2806,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
         PartyHud(); // before the toast: it stacks above the panel
         PartyToast();
         PartyAlert();
+        PartyNpcCaption();
     }
     if (prompt_active && !menu_open) {
         TextPrompt();

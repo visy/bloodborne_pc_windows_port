@@ -41,6 +41,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -76,6 +77,43 @@ constexpr std::size_t kMaxRosterEntries = 8;
 constexpr double kMemberFrameRate = 200, kMemberFrameBurst = 2000;
 constexpr double kMemberByteRate = 4u << 20, kMemberByteBurst = 48u << 20;
 constexpr std::uint32_t kFloodDisconnect = 20000;
+
+// Host: online password guessing (bbport security pass, F3). The party key is Argon2-derived, so
+// an offline guess is slow; online, each wrong AUTH proof from an address counts. kAuthFailFree
+// wrong proofs within kAuthFailWindowMs are free (a typo, an old code); the next one locks the
+// address out for kAuthLockoutMs, doubling with every further lockout up to kAuthLockoutMaxMs
+// (reset after kAuthForgetMs without a failure). A locked-out address gets REJECT Auth ("too many
+// wrong passwords ...") at HELLO, before any proof is checked, the right password included. At
+// most kAuthTrackedAddrs addresses are tracked (the stalest is forgotten first).
+constexpr int kAuthFailFree = 5;
+constexpr std::int64_t kAuthFailWindowMs = 60'000;
+constexpr std::int64_t kAuthLockoutMs = 30'000;
+constexpr std::int64_t kAuthLockoutMaxMs = 15 * 60'000;
+constexpr std::int64_t kAuthForgetMs = 60 * 60'000;
+constexpr std::size_t kAuthTrackedAddrs = 4096;
+
+class AuthThrottle {
+public:
+    /// The address may not try now; *remaining_ms (optional): how long it still waits.
+    bool Locked(std::uint32_t ip, std::int64_t now_ms, std::int64_t* remaining_ms = nullptr) const;
+    /// A wrong proof from `ip`; true when it started a lockout.
+    bool Fail(std::uint32_t ip, std::int64_t now_ms);
+    /// A good proof: the address's free failures start over (its lockout history stays).
+    void Success(std::uint32_t ip);
+    std::size_t Tracked() const { return addrs_.size(); }
+    std::uint64_t lockouts() const { return lockouts_; }
+
+private:
+    struct Addr {
+        int fails = 0;              // in the current window
+        std::int64_t window = 0;    // window start
+        int lockouts = 0;
+        std::int64_t until = 0;     // locked out until
+        std::int64_t last = 0;      // last failure
+    };
+    std::map<std::uint32_t, Addr> addrs_;
+    std::uint64_t lockouts_ = 0;
+};
 constexpr int kHostSlot = 0;
 
 // Prologue: in its own world, still playing the campaign start (party_start.h); not summoned yet.
@@ -192,6 +230,9 @@ struct LinkConfig {
     // (set_udp_transport) the link uses its own UDP socket on the same port number.
     bool udp_link = true;
     int tcp_fallback_ms = 1500;
+    // Host: lock out an address after repeated wrong passwords (AuthThrottle). Only the fuzzer
+    // turns it off (its random handshakes come from 127.0.0.1 like its real members).
+    bool auth_throttle = true;
 };
 
 // What differs between the host's and a guest's game (bbport build, eboot.bin, game params,
@@ -239,6 +280,9 @@ struct LinkCallbacks {
     std::function<void(const std::vector<RosterEntry>& roster)> on_roster;
     std::function<void(LinkState state, const std::string& detail)> on_state;
     std::function<void(const std::string& line)> on_log;
+    // Party logging (party_log.h): an EVENT this side sends (send_event / post_event), called on the
+    // caller's thread before the link's lock is taken. Optional.
+    std::function<void(int to_slot, const std::string& name, const std::string& json)> on_event_sent;
 };
 
 class PartyLink {
@@ -267,6 +311,7 @@ public:
     std::vector<RosterEntry> roster() const;
     std::int64_t host_clock_ms() const;  // host: its own; guest: estimated from PONGs
     std::uint32_t rtt_ms() const;        // guest: last RTT to the host
+    std::uint64_t udp_resends() const;   // RUDP segments resent on this link's UDP connections (loss)
     std::string observed_address() const;  // guest: "ip:port" the host saw us at
     // Host: the IPv4 (network byte order) member `slot` is connected from; 0 when not connected.
     std::uint32_t member_ip(int slot) const;

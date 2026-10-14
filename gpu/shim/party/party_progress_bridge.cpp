@@ -12,6 +12,7 @@
 //        EVENTs themselves arrive in party_runtime's on_event (progress::OnLinkEvent).
 #include "party_progress.h"
 #include "party_async_io.h"
+#include "party_desync.h"
 
 #include "game_state.h"
 #include "party_link.h"
@@ -49,7 +50,89 @@ struct Bridge {  // main thread only
     bool waiting_logged = false;
     int host_past_prologue = -1;  // host: 12410000 && 9401 in its own world at the last check (-1 unknown)
     double prologue_checked = 0;
+    // F5 desync detector (party_desync.h): host digest clock, resync limits.
+    double desync_period = -1;  // -1: not read yet
+    double desync_next = 0;
+    u64 desync_sent_seq = 0;    // the last flag change seq sent to the party
+    bool desync_seq_known = false;
+    desync::ServeLimit desync_serve;
 };
+
+double NowS() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+// Host: the periodic digest to every member, and the resyncs members asked for (main thread,
+// right after this frame's changes went out, so the digest matches the stream).
+void HostDesync(Bridge& b, party::PartyLink* link, const std::map<int, std::string>& connected) {
+    if (b.desync_period < 0) {
+        b.desync_period = desync::PeriodFromEnv();
+        BLog("desync check: %s", b.desync_period > 0 ? ("a digest every " + std::to_string(static_cast<int>(b.desync_period)) + " s").c_str() : "off");
+    }
+    const double now = NowS();
+    for (auto& [slot, rq] : desync::HostPopResyncs()) {
+        if (!connected.count(slot)) {
+            continue;
+        }
+        if (!b.desync_serve.Take(slot, now)) {
+            BLog("desync: slot %d asked again within %.0f s: not served", slot, desync::kServeGapS);
+            continue;
+        }
+        if (rq.epoch != HostEpoch()) {
+            BLog("desync: slot %d asked for another session's state: full snapshot", slot);
+            b.want_snapshot.insert(slot);
+            continue;
+        }
+        std::size_t groups = 0;
+        if (!rq.world.empty()) {
+            WorldImage full;
+            if (HostWorldImage(&full)) {
+                const WorldImage part = desync::WorldBuckets(full, rq.world);
+                groups = part.groups.size();
+                link->post_event(slot, kEventWorldGroups, WorldImageToJson(part));
+            }
+        }
+        bool snap_sent = false;
+        if (!rq.flags.empty() || rq.gap) {
+            FlagSnapshot snap;
+            if (FullSnapshot(&snap)) {
+                link->post_event(slot, kEventFlagSnapshot, SnapshotToJson(snap));
+                snap_sent = true;
+            }
+        }
+        BLog("desync: resync for slot %d: %zu world group(s) of %zu bucket(s), flag snapshot %s (%zu flag bucket(s)%s)",
+             slot, groups, rq.world.size(), snap_sent ? "sent" : "not needed", rq.flags.size(), rq.gap ? ", seq gap" : "");
+    }
+    // A member whose snapshot is due this frame would compare against its previous connection's model.
+    if (b.desync_period <= 0 || connected.empty() || now < b.desync_next || !b.want_snapshot.empty()) {
+        return;
+    }
+    b.desync_next = now + b.desync_period;
+    desync::Digest d;
+    d.epoch = HostEpoch();
+    FlagSnapshot snap;
+    if (FullSnapshot(&snap) && (!b.desync_seq_known || snap.seq == b.desync_sent_seq)) {
+        // Every change up to snap.seq is in the stream already (the drain above): comparable.
+        d.has_flags = true;
+        d.seq = snap.seq;
+        d.flags = desync::FlagsDigest(snap.blocks);
+    }
+    WorldImage image;
+    if (HostWorldImage(&image)) {
+        d.has_world = true;
+        d.world = desync::WorldDigest(image);
+    }
+    if (d.has_flags || d.has_world) {
+        link->post_event(party::kBroadcast, desync::kDigestEvent, desync::DigestToJson(d));
+    }
+}
+
+void GuestDesync(party::PartyLink* link) {
+    std::string body;
+    if (link && !link->is_host() && desync::GuestPopResync(&body)) {
+        link->post_event(party::kHostSlot, desync::kResyncEvent, body);
+    }
+}
 
 Bridge& B() {
     static Bridge b;
@@ -126,11 +209,16 @@ void HostSide(Bridge& b, party::PartyLink* link) {
         link->post_event(party::kBroadcast, kEventWorldGroups, WorldImageToJson(world));
         BLog("world mirror: %zu changed group(s) sent to the party", world.groups.size());
     }
+    if (!changes.empty()) {
+        b.desync_sent_seq = changes.back().seq;
+        b.desync_seq_known = any_member;  // dropped (nobody to send to): the next snapshot covers it
+    }
     if (!changes.empty() && any_member) {
         link->post_event(party::kBroadcast, kEventFlags, ChangesToJson(HostEpoch(), changes));
         BLog("%zu flag changes (seq %llu..%llu) sent to the party", changes.size(),
              static_cast<unsigned long long>(changes.front().seq), static_cast<unsigned long long>(changes.back().seq));
     }
+    HostDesync(b, link, b.connected);
     if (!b.want_snapshot.empty()) {
         FlagSnapshot snap;
         WorldImage image;
@@ -183,6 +271,8 @@ void DirectorTick(const GameSnapshot& s, party::PartyLink* link) {
         b.hosting_seen = false;
         b.connected.clear();
         b.want_snapshot.clear();
+        b.desync_seq_known = false;
+        desync::GuestReset();
         if (b.host_session) {
             b.host_session = false;
             SessionEnded();
@@ -194,6 +284,7 @@ void DirectorTick(const GameSnapshot& s, party::PartyLink* link) {
         break;
     case Role::Guest:
         GuestSide(b, s);
+        GuestDesync(link);
         break;
     default:
         break;

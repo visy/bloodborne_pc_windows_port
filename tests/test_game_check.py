@@ -107,6 +107,27 @@ class GameCheckTests(unittest.TestCase):
         self.assertEqual(game_check.broken_files(game),
                          [f'{game_check.CHECKED_FOLDER}/gxshader.shaderbnd.dcx'])
 
+    def test_unreadable_shader_does_not_stop_the_game(self):
+        # A shader locked by an antivirus or a sync tool is passed over (Supermedo PR #64).
+        game = self.game('CUSA03173', '01.09')
+        self.shaders(game, dcx(b'x' * 100))
+        real = Path.read_bytes
+        locked = lambda path: (_ for _ in ()).throw(PermissionError('locked'))             if path.suffix == '.dcx' else real(path)
+        with mock.patch.object(Path, 'read_bytes', locked):
+            self.assertEqual(game_check.broken_files(game), [])
+
+    def test_wrong_size_is_damaged(self):
+        game = self.game('CUSA03173', '01.09')
+        data = bytearray(dcx(b'x' * 100))
+        struct.pack_into('>I', data, 0x1C, 101)
+        self.shaders(game, bytes(data))
+        self.assertEqual(len(game_check.broken_files(game)), 1)
+
+    def test_script_lists_every_damaged_file(self):
+        game = self.game('CUSA03173', '01.09')
+        self.shaders(game, dcx(b'bad' * 100, b'not zlib data'))
+        self.assertEqual(game_check.main(['game_check.py', str(game)]), 1)
+
     def test_other_compressions_are_not_checked(self):
         game = self.game('CUSA03173', '01.09')
         data = bytearray(dcx(b'x' * 100))

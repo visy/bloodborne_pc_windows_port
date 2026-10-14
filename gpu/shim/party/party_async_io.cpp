@@ -2,6 +2,7 @@
 // Background file writer for the party layer (see party_async_io.h).
 #include "party_async_io.h"
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -122,7 +123,14 @@ void Replace(const std::string& path, std::string data) {
     Push(std::move(j));
 }
 
+std::atomic<LineTagger> g_tagger{nullptr};
+
+void SetLineTagger(LineTagger fn) { g_tagger.store(fn); }
+
 void Print(std::string text) {
+    if (LineTagger tag = g_tagger.load(std::memory_order_relaxed)) {
+        text = tag(text);
+    }
     Job j;
     j.print = true;
     j.data = std::make_shared<std::string>(std::move(text));

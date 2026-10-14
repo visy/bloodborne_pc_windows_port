@@ -57,10 +57,22 @@ def dcx_broken(path):
         return True
 
 
+def readable_and_broken(path):
+    """dcx_broken, but a file that cannot be read now (locked by an antivirus or a sync tool)
+    counts as intact: the check must not keep a good game from starting (from Supermedo/bloodborne_pc
+    PR #64 by parsifal295)."""
+    try:
+        return dcx_broken(path)
+    except OSError as error:
+        print(f'Game check: {path} not checked ({error})', file=sys.stderr)
+        return False
+
+
 def broken_files(game, folder=CHECKED_FOLDER):
     """The .dcx files under the game's folder that do not unpack (paths relative to the game)."""
     root = Path(game)
-    return [f.relative_to(root).as_posix() for f in sorted((root / folder).rglob('*.dcx')) if dcx_broken(f)]
+    return [f.relative_to(root).as_posix() for f in sorted((root / folder).rglob('*.dcx'))
+            if readable_and_broken(f)]
 
 
 def _pass_key(game):
@@ -162,9 +174,9 @@ def main(argv):
     files = sorted((game / 'dvdroot_ps4').rglob('*.dcx'))
     broken = []
     for number, path in enumerate(files, 1):
-        if dcx_broken(path):
+        if readable_and_broken(path):
             broken.append(path)
-            print(f'damaged: {path.relative_to(game)}')
+            print(f'damaged: {path.relative_to(game).as_posix()}')
         if number % 1000 == 0:
             print(f'{number} of {len(files)} checked', file=sys.stderr)
     print(f'{len(broken)} of {len(files)} .dcx files do not unpack')
