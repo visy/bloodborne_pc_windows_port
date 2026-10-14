@@ -965,6 +965,13 @@ static void test_identity() {
 
 // Kick by name: BYE Kicked "kicked by the host" to that guest, its slot freed, and the name refused
 // for the rest of the session (no auto-rejoin, not even with a fresh link after a restart).
+static void test_host_no_answer_hint() {
+    CHECK(host_no_answer_hint(-1).find("NAT") != std::string::npos);    // never connected: the NAT advice
+    CHECK(host_no_answer_hint(5).find("come back") != std::string::npos);  // the host just left: restarting
+    CHECK(host_no_answer_hint(5).find("NAT") == std::string::npos);
+    CHECK(host_no_answer_hint(kHostBackWaitS + 1).find("NAT") != std::string::npos);
+}
+
 static void test_kick() {
     Recorder hr;
     PartyLink host(base_cfg("Host", ""), recorder_callbacks(hr, "host"));
@@ -1494,6 +1501,8 @@ int main() {
     test_plain_address_password();
     std::printf("kick by name\n");
     test_kick();
+    std::printf("host gone: wait for it, not the NAT advice\n");
+    test_host_no_answer_hint();
     std::printf("four players (host + 3 guests), game rules\n");
     test_four_players();
     std::printf("party HUD vitals\n");

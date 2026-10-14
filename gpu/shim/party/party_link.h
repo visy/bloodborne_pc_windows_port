@@ -244,6 +244,12 @@ std::string identity_mismatch(const LinkConfig& host, const LinkConfig& guest);
 // usual cause is a wrong one; without, a party code from another hosting session (or a guest
 // that sent a password the host does not use).
 std::string auth_reject_reason(bool host_has_password);
+// Guest, the host does not answer (no TCP / UDP answer): within kHostBackWaitS of the host ending
+// the party or its link dropping (`since_host_gone_s` >= 0) the host is most likely restarting,
+// so the text says to wait for it, not the NAT advice (playtest 1: "behind a NAT: it needs your
+// guest code" while the host was only relaunching). `since_host_gone_s` < 0: never connected.
+constexpr double kHostBackWaitS = 60.0;
+std::string host_no_answer_hint(double since_host_gone_s);
 // A9: is an installed hook's name a diagnostic (log / probe / trace / test), not a gameplay patch?
 bool diagnostic_hook_name(const std::string& name);
 // A9: the party hook set's hash: BLAKE2b-256 over the sorted, de-duplicated names (diagnostics

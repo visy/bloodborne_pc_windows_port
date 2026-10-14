@@ -39,6 +39,10 @@ bool InAWorld(MemberState s) {
 
 }  // namespace
 
+bool StaleChrDue(bool far, int max_hp, double far_for_s) {
+    return far && max_hp > 0 && far_for_s >= kStaleChrHoldS;
+}
+
 bool SameWorld(int local_slot, MemberState local_state, int other_slot, MemberState other_state) {
     if (local_slot < 0 || other_slot < 0 || local_slot == other_slot) return false;
     if (!InAWorld(local_state) || !InAWorld(other_state)) return false;

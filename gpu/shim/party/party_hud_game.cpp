@@ -326,26 +326,46 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
     // the player really is, host side, 3 players). Logged once a minute per chr with the nearest report.
     {
         static std::chrono::steady_clock::time_point next_stale{};
-        if (now >= next_stale) {
-            for (int c = 0; c < chrs_n; ++c) {
-                if (chrs[c].name[0]) continue;
-                float best = 1e18f;
-                int bs = -1;
-                for (int v = 0; v < vit_n; ++v) {
-                    if (!(vit[v].flags & party::kVitalsHasPos) || vit[v].slot == link->local_slot()) continue;
-                    const float dx = chrs[c].pos[0] - vit[v].pos[0], dy = chrs[c].pos[1] - vit[v].pos[1],
-                                dz = chrs[c].pos[2] - vit[v].pos[2];
-                    const float d2 = dx * dx + dy * dy + dz * dz;
-                    if (d2 < best) best = d2, bs = vit[v].slot;
-                }
-                if (bs >= 0 && best > 8.0f * 8.0f) {
-                    next_stale = now + std::chrono::seconds(60);
-                    Log("stale remote chr? one at (%.1f %.1f %.1f) HP %d/%d is %.1f m from the nearest member report "
-                        "(slot %d); no tag for it",
-                        chrs[c].pos[0], chrs[c].pos[1], chrs[c].pos[2], chrs[c].hp, chrs[c].max_hp, std::sqrt(best), bs);
-                }
+        struct Far {
+            u64 chr;
+            std::chrono::steady_clock::time_point since;
+        };
+        static std::vector<Far> far_since;  // unnamed chrs far from every report, since when
+        std::vector<Far> still;
+        int members_here = 0;
+        for (int i = 0; i < roster_n; ++i) {
+            const party::RosterEntry& e = st.roster[i];
+            if (e.connected && e.slot != link->local_slot() &&
+                party::hud::SameWorld(link->local_slot(), local_state, e.slot, e.state))
+                ++members_here;
+        }
+        for (int c = 0; c < chrs_n; ++c) {
+            if (chrs[c].name[0]) continue;
+            float best = 1e18f;
+            int bs = -1;
+            for (int v = 0; v < vit_n; ++v) {
+                if (!(vit[v].flags & party::kVitalsHasPos) || vit[v].slot == link->local_slot()) continue;
+                const float dx = chrs[c].pos[0] - vit[v].pos[0], dy = chrs[c].pos[1] - vit[v].pos[1],
+                            dz = chrs[c].pos[2] - vit[v].pos[2];
+                const float d2 = dx * dx + dy * dy + dz * dz;
+                if (d2 < best) best = d2, bs = vit[v].slot;
+            }
+            const bool far = bs >= 0 && best > 8.0f * 8.0f;
+            if (!far) continue;
+            auto since = now;
+            for (const Far& f : far_since)
+                if (f.chr == chrs[c].chr) since = f.since;
+            still.push_back({chrs[c].chr, since});
+            const double far_for = std::chrono::duration<double>(now - since).count();
+            if (now >= next_stale && party::hud::StaleChrDue(far, chrs[c].max_hp, far_for)) {
+                next_stale = now + std::chrono::seconds(60);
+                Log("stale remote chr? one at (%.1f %.1f %.1f) HP %d/%d is %.1f m from the nearest member report "
+                    "(slot %d) for %.0f s; no tag for it (%d remote chr(s) here, %d member(s) in this world)",
+                    chrs[c].pos[0], chrs[c].pos[1], chrs[c].pos[2], chrs[c].hp, chrs[c].max_hp, std::sqrt(best), bs,
+                    far_for, chrs_n, members_here);
             }
         }
+        far_since.swap(still);
     }
     // One chr and one member in this world left over: each other (no VITALS position yet).
     {

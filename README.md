@@ -210,7 +210,7 @@ before anyone is in the game):
 - **Wrong passwords are locked out.** A few typos are fine; after 5 wrong passwords in a minute the host refuses that address for a while.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
 - **Death has a cost.** Each death stacks "rot" (−10% max HP or stamina, picked at random, up to
-  5); using a lamp clears it.
+  5); using a lamp (even just opening its box) or levelling up clears it.
   On by default; the host can turn it off on the *Party rules* page.
 - **Enemies scale with the party, harder than vanilla.** Bosses get more health (and a little more
   damage) per extra hunter than the game gives them, normal enemies get tougher too; all six values

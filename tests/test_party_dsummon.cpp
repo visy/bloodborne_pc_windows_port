@@ -82,7 +82,17 @@ int main() {
     CHECK(Step(g, 1 + kJoinWait + 0.1, false, false) == Action::ReportFail && g.phase == Phase::Failed);
     // the entry never comes
     g = Guest{}; OnAsked(g, 0); OnRoom(g, 0, false);
-    CHECK(Step(g, kEntryWait + 0.1, false, false) == Action::ReportFail);
+    CHECK(Step(g, kRearmAfter - 0.1, false, false) == Action::None);
+    CHECK(Step(g, kRearmAfter + 0.1, false, false) == Action::Rearm && g.rearmed);  // playtest 1 G4: re-ring once
+    CHECK(Step(g, kRearmAfter + 1, false, false) == Action::None);                   // the wait starts again
+    CHECK(Step(g, kRearmAfter + 0.1 + kEntryWait + 0.1, false, false) == Action::ReportFail);
+    CHECK(std::strstr(g.fail_why, "re-ring"));
+    // the re-rung bell's entry comes up: delivered
+    g = Guest{}; OnAsked(g, 0); OnRoom(g, 0, false);
+    CHECK(Step(g, 3, false, false) == Action::Rearm);
+    CHECK(Step(g, 5, true, false) == Action::Deliver);
+    // a new request may re-ring again
+    OnAsked(g, 20); CHECK(!g.rearmed);
     // three refused deliveries
     g = Guest{}; OnAsked(g, 0); OnRoom(g, 0, false);
     for (int i = 0; i < 3; ++i) { CHECK(Step(g, 1, true, false) == Action::Deliver); OnDelivered(g, 1, false); }
@@ -145,7 +155,7 @@ int main() {
     g.phase = Phase::Delivered; CHECK(!RoomElsewhere(g, 0.2, 0x18010000, 0x15000000, false));   // only before delivery
     // every failure says why (logged with FAILED)
     g = Guest{}; OnAsked(g, 0); Step(g, kAnswerWait + 1, false, false); CHECK(std::strstr(g.fail_why, "no answer"));
-    g = Guest{}; OnAsked(g, 0); OnRoom(g, 0, false); Step(g, kEntryWait + 1, false, false); CHECK(std::strstr(g.fail_why, "entry"));
+    g = Guest{}; OnAsked(g, 0); OnRoom(g, 0, false); Step(g, 3, false, false); Step(g, 3 + kEntryWait + 1, false, false); CHECK(std::strstr(g.fail_why, "entry"));
     g = Guest{}; OnAsked(g, 0); OnRoom(g, 0, false); OnDelivered(g, 1, true); Step(g, 1 + kJoinWait + 1, false, false);
     CHECK(std::strstr(g.fail_why, "did not join"));
     // Playtest 1 #2: the host's bell is the direct summon's fallback only
