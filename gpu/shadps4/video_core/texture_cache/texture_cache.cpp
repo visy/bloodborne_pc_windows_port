@@ -1065,9 +1065,9 @@ void TextureCache::GarbageCollectImages() {
     }
     static const u64 idle_seconds = [] {
         const char* env = std::getenv("BB_GC_IDLE_SECONDS");
-        return std::clamp<u64>(env ? std::strtoull(env, nullptr, 10) : 20, 1, 63);
+        return std::clamp<u64>(env ? std::strtoull(env, nullptr, 10) : 10, 1, 63);
     }();
-    // Under pressure an image goes once unused for BB_GC_PRESSURE_IDLE_SECONDS (5), over the
+    // Under pressure an image goes once unused for BB_GC_PRESSURE_IDLE_SECONDS (3), over the
     // critical mark for 1 s first, and only then by submissions as before (80/160 ticks, a
     // fraction of a second). On cards up to 8 GB the pressure mark is 40 % of the budget: the
     // usage stayed over it, so textures off screen for a moment were evicted and uploaded again
@@ -1075,7 +1075,7 @@ void TextureCache::GarbageCollectImages() {
     // time: NVIDIA testers saw the frame rate fall the longer they played.
     static const u64 pressure_idle_seconds = [] {
         const char* env = std::getenv("BB_GC_PRESSURE_IDLE_SECONDS");
-        return std::clamp<u64>(env ? std::strtoull(env, nullptr, 10) : 5, 0, 63);
+        return std::clamp<u64>(env ? std::strtoull(env, nullptr, 10) : 3, 0, 63);
     }();
     // The tick at the start of that second (an older one where no submission came then).
     const auto tick_seconds_ago = [&](u64 seconds) {
@@ -1103,14 +1103,22 @@ void TextureCache::GarbageCollectImages() {
             const u64 seconds = aggresive ? 1 : pressure_idle_seconds;
             below_tick = std::min(below_tick, tick_seconds_ago(seconds));
         }
-        num_deletions = aggresive ? 40 : pressured ? 20 : 10;
+        num_deletions = aggresive ? 80 : pressured ? 40 : 20;
         visited = 0;
     };
     const auto clean_up = [&](ImageId image_id) {
-        if (num_deletions == 0 || ++visited > 256) {
+        if (num_deletions == 0 || ++visited > 512) {
             return true;
         }
         auto& image = slot_images[image_id];
+
+        // Actively bound resources or presentation surface must not be evicted.
+        if (image.binding.is_bound || image.binding.is_target || image.usage.vo_surface) {
+            image.lru_touched_tick = gc_tick;
+            lru_cache.Touch(image.lru_id, gc_tick);
+            return false;
+        }
+
         const bool download = image.SafeToDownload();
         const bool tiled = image.info.IsTiled();
         const bool is_depth = image.info.props.is_depth;
@@ -1130,6 +1138,7 @@ void TextureCache::GarbageCollectImages() {
         // VRAM grew with every area visited up to the pressure mark (~10 GB on 16 GB).
         // Under memory pressure, stale tiled images are reclaimed rather than permanently kept.
         if ((tiled && download && !pressured) || (download && !pressured)) {
+            image.lru_touched_tick = gc_tick;
             lru_cache.Touch(image.lru_id, gc_tick);
             BbStats::gc_kept_images.fetch_add(1, std::memory_order_relaxed);
             return false;
@@ -1138,6 +1147,7 @@ void TextureCache::GarbageCollectImages() {
             if (sync_downloads_this_pass >= 1) {
                 // Rate-limit synchronous GPU flushes to at most 1 per submission pass
                 // to prevent multiple consecutive pipeline stalls and frame hitches.
+                image.lru_touched_tick = gc_tick;
                 lru_cache.Touch(image.lru_id, gc_tick);
                 return false;
             }
