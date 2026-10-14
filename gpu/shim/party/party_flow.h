@@ -40,7 +40,7 @@ constexpr const char* kRelaunchFile = "party_relaunch.bat";
 struct Saved {
     std::string name;          ///< party name (online id), empty: the user name
     std::string role;          ///< "host" / "join": the last party role ("" none yet)
-    std::string host_address;  ///< joiner: a BBP1 party code or host[:port]
+    std::string host_address;  ///< joiner: a party code (BBP3-...) or host[:port]
     std::string password;      ///< in memory only in clear text (stored protected on Windows)
     int port = 0;              ///< the party port, 0 = default (9307)
     bool has_character = false;///< a party character reached the world in a party session
@@ -104,7 +104,7 @@ bool RelaunchBat(const Plan& p, std::string* out, std::string* error);
 /// "Hunter": the second friend was refused ("the name Hunter is already in the party").
 std::string DefaultName(const std::string& user, std::uint32_t random);
 
-/// A party address as typed: trimmed; "" when empty. Accepts a BBP1 code or host[:port].
+/// A party address as typed: trimmed; "" when empty. Accepts a party code or host[:port].
 std::string NormalizeAddress(const std::string& text);
 
 // ---- game glue (party_flow.cpp; not in the unit test) ----

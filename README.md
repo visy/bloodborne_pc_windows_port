@@ -86,23 +86,47 @@ a working rejoin). The bugs reported from it are fixed in 0.6.1
 run from two new characters to the end credits passed, and a three-player travel run
 ([docs/party/campaign_soak.md](docs/party/campaign_soak.md)).
 
-### Start playing
+The host shares a **party code** such as `BBP3-NJR0-E43N-WWN9-2C2P`: it holds the host's address and a secret,
+so share it only with the people you play with. With a password the code is shorter (19
+characters without one); players on the host's own network can use the shorter **LAN code**
+(e.g. `BBP3-PAJY-EAMH-7TD`). Everyone needs the same bbport version and game files. Party play uses its
+own save; your single-player save is never touched.
+
+### Start from the title screen (recommended)
+
+Nothing to set up outside the game, and later sessions are a single press.
 
 | | Host | Guest |
 |---|---|---|
-| 1 | Title screen → **Party** → set a **Password** | Title screen → **Party** → **Host address** (e.g. `192.168.1.20:9307`) → **Password** |
-| 2 | **New party game** (first time: new character) or **Continue party game** | **Join party game** (first time) or **Continue party game** |
-| 3 | Allow the Windows Firewall prompt once | The game restarts into party mode and puts you beside the host |
+| 1 | Title screen → **Party** → set a **Password** (optional, gives a shorter code) | Title screen → **Party** → **Host address**: paste the host's party code (**Ctrl+V**, e.g. `BBP3-NJR0-E43N-WWN9-2C2P`) → **Password** (the host's, if it set one) |
+| 2 | **New party game** (first time: new character) or **Continue party game** | **Join party game** (first time) or **Continue party game**, once the host's game is running |
+| 3 | Allow the Windows Firewall prompt once; copy your code (*System → Party → Copy Internet code*) and send it | The game restarts into party mode and puts you beside the host |
 
-Everyone needs the same bbport version and game files. Address and password are remembered, so
-later sessions are just *Continue party game* for everyone. Party play uses its own save; your
-single-player save is never touched. Settings: *System → Party* pages in the game's menu.
+Code and password are remembered, so later sessions are just *Continue party game* for everyone.
+Settings: *System → Party* pages in the game's menu.
+
+### Start from the launcher
+
+The same party, set up in `launch_gui.bat` → **Party** tab (handy to see and copy the code
+before anyone is in the game):
+
+- **Host:** *Mode* = **Host a party**, enter **Your name**, optionally a **Password**, click
+  **Launch Bloodborne**. Once the game is hosting, the codes appear under **Internet code** (friends elsewhere)
+  and **LAN code** (same router); click **Copy** next to one and send it. Allow the Windows Firewall
+  prompt once.
+- **Guest:** *Mode* = **Join a party**, enter **Your name**, click **Paste** next to **Party code**
+  (e.g. `BBP3-NJR0-E43N-WWN9-2C2P`), enter the same **Password** as the host, and click **Launch Bloodborne** after the
+  host's game is running. A ✓ / ✗ line under the code says whether it is valid.
+- At home (same router) use the **LAN code**: most routers cannot reach their own public address.
+- Friends cannot connect? Leave **UPnP** on, or forward the port (default 9307, UDP and TCP) to the
+  host PC in the router, or use a VPN such as Tailscale and give the VPN address as `host:port`
+  (see *Connecting over the internet* below).
 
 ### How it plays
 
-- **No PSN, no server.** One player hosts, the others join with the host's address and a password.
+- **No PSN, no server.** One player hosts, the others join with the host's party code.
 - **Start from the title screen:** *Party* → *New / Join / Continue party game* (press Cross; the
-  ones that restart the game ask for a second press). The address and password are remembered, so
+  ones that restart the game ask for a second press). The code and password are remembered, so
   later sessions are one press. *Continue party game* shows whenever the party saves hold a
   character, also if you started party games from the launcher.
 - **Fast join.** The bell, beckoner and summon-sign waits are gone: a guest is in the host's world
@@ -221,8 +245,8 @@ The host gets two party codes (launcher, *System → Party*):
 
 | Code | For |
 |---|---|
-| **Internet code** | Friends elsewhere |
-| **LAN code** | Players on the host's network (same router) |
+| **Internet code** (e.g. `BBP3-NJR0-E43N-WWN9-2C2P`) | Friends elsewhere |
+| **LAN code** (e.g. `BBP3-PAJY-EAMH-7TD`) | Players on the host's network (same router) |
 
 A guest on the host's network with the Internet code finds the host on the LAN by itself (~2 s).
 

@@ -20,7 +20,8 @@ namespace {
 constexpr char kAlphabet[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 constexpr std::size_t kRawSize = 18;
 constexpr std::size_t kSymbols = (kRawSize * 8 + 4) / 5;  // 29
-constexpr char kPrefix[] = "BBP2";
+constexpr char kPrefix[] = "BBP3";
+constexpr char kPrefixV2[] = "BBP2";
 constexpr char kPrefixV1[] = "BBP1";
 
 int symbol_value(char c) {
@@ -143,6 +144,82 @@ std::size_t v2_size(std::uint8_t wire_flags) {
     return 1 + ((wire_flags & kCodeFlagLan) ? 1 : 4) + ((wire_flags & kCodeFlagDefaultPort) ? 0 : 2) + 6 + 1;
 }
 
+// BBP3: payload bits (flags nibble, address, port, secret) for these wire flags, and the symbol
+// count: the smallest that leaves at least 8 check bits.
+std::size_t v3_payload_bits(std::uint8_t wire_flags) {
+    return 4 + ((wire_flags & kCodeFlagLan) ? 8 : 32) + ((wire_flags & kCodeFlagDefaultPort) ? 0 : 16) +
+           8 * ((wire_flags & kCodeFlagPasswordRequired) ? kSecretBytesWithPassword : kSecretBytes);
+}
+std::size_t v3_symbols(std::uint8_t wire_flags) { return (v3_payload_bits(wire_flags) + 8 + 4) / 5; }
+
+// A CRC of `k` (8..12) bits over a bit string, MSB first, init all ones. Every polynomial has
+// the x^0 term, so every burst of up to k bits is caught: any one mistyped symbol, and with
+// k >= 10 any two neighbouring ones (a swapped pair too).
+std::uint32_t crc_bits(const std::vector<std::uint8_t>& bits, std::size_t n, int k) {
+    static const std::uint32_t kPoly[] = {0x07, 0x119, 0x233, 0x385, 0x80F};  // k = 8 .. 12
+    const std::uint32_t poly = kPoly[k - 8], mask = (1u << k) - 1;
+    std::uint32_t reg = mask;
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::uint32_t top = ((reg >> (k - 1)) & 1u) ^ bits[i];
+        reg = (reg << 1) & mask;
+        if (top) reg ^= poly;
+    }
+    return reg;
+}
+
+void put_bits(std::vector<std::uint8_t>* bits, std::uint32_t v, int n) {
+    for (int i = n - 1; i >= 0; --i) bits->push_back(static_cast<std::uint8_t>((v >> i) & 1u));
+}
+
+std::uint32_t get_bits(const std::vector<std::uint8_t>& bits, std::size_t* at, int n) {
+    std::uint32_t v = 0;
+    for (int i = 0; i < n; ++i) v = (v << 1) | bits[(*at)++];
+    return v;
+}
+
+std::uint8_t wire_flags_of(const PartyCode& code) {
+    std::uint8_t wire =
+        static_cast<std::uint8_t>(code.flags & (kCodeFlagLan | kCodeFlagPasswordRequired | kCodeFlagRelayOnly));
+    if (code.port == kDefaultPartyPort) wire |= kCodeFlagDefaultPort;
+    return wire;
+}
+
+std::string encode_v3(const PartyCode& code) {
+    const std::uint8_t wire = wire_flags_of(code);
+    std::vector<std::uint8_t> bits;
+    put_bits(&bits, wire, 4);
+    if (wire & kCodeFlagLan) {
+        put_bits(&bits, code.ipv4[3], 8);
+    } else {
+        for (std::uint8_t b : code.ipv4) put_bits(&bits, b, 8);
+    }
+    if (!(wire & kCodeFlagDefaultPort)) put_bits(&bits, code.port, 16);
+    const std::size_t secret_bytes = (wire & kCodeFlagPasswordRequired) ? kSecretBytesWithPassword : kSecretBytes;
+    for (std::size_t i = 0; i < secret_bytes; ++i) put_bits(&bits, code.secret[i], 8);
+    const std::size_t payload = bits.size();
+    const std::size_t symbols = v3_symbols(wire);
+    const int k = static_cast<int>(symbols * 5 - payload);
+    put_bits(&bits, crc_bits(bits, payload, k), k);
+    std::string out = kPrefix;
+    std::size_t at = 0;
+    for (std::size_t i = 0; i < symbols; ++i) {
+        if (i % 4 == 0) out += '-';
+        out += kAlphabet[get_bits(bits, &at, 5)];
+    }
+    return out;
+}
+
+}  // namespace
+
+bool code_fits_v3(const PartyCode& code) {
+    const std::size_t used = (code.flags & kCodeFlagPasswordRequired) ? kSecretBytesWithPassword : kSecretBytes;
+    for (std::size_t i = used; i < code.secret.size(); ++i)
+        if (code.secret[i]) return false;
+    return true;
+}
+
+namespace {
+
 }  // namespace
 
 std::uint8_t crc8(const std::uint8_t* d, std::size_t n) {
@@ -163,10 +240,10 @@ void fill_lan_prefix(PartyCode* code, const std::array<std::uint8_t, 4>& local) 
 }
 
 std::string encode_party_code(const PartyCode& code) {
+    if (code.version >= 3 && code_fits_v3(code)) return encode_v3(code);
     const bool fits_v2 = code.secret[6] == 0 && code.secret[7] == 0;
     if (code.version >= 2 && fits_v2) {
-        std::uint8_t wire = static_cast<std::uint8_t>(code.flags & ~kCodeFlagDefaultPort);
-        if (code.port == kDefaultPartyPort) wire |= kCodeFlagDefaultPort;
+        const std::uint8_t wire = wire_flags_of(code);
         std::uint8_t raw[16];
         std::size_t n = 0;
         raw[n++] = wire;
@@ -184,7 +261,7 @@ std::string encode_party_code(const PartyCode& code) {
         n += 6;
         raw[n] = crc8(raw, n);
         ++n;
-        return to_symbols(raw, n, kPrefix);
+        return to_symbols(raw, n, kPrefixV2);
     }
     std::uint8_t raw[kRawSize];
     raw[0] = 1;
@@ -209,9 +286,9 @@ bool decode_party_code(std::string_view text_in, PartyCode* out, std::string* er
 
     std::string upper;
     for (char c : text) upper += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-    // "BBP2", or "BBP1" / "BBPI" / "BBPL" (1 typed as I or L).
+    // "BBP3", "BBP2", or "BBP1" / "BBPI" / "BBPL" (1 typed as I or L).
     const int ver = upper.size() >= 4 && upper.compare(0, 3, "BBP") == 0 ? symbol_value(upper[3]) : -1;
-    bool coded = (ver == 1 || ver == 2) && (upper.size() == 4 || upper[4] == '-' || upper[4] == ' ');
+    bool coded = (ver >= 1 && ver <= 3) && (upper.size() == 4 || upper[4] == '-' || upper[4] == ' ');
     if (!coded) {
         // host:port, or a bare host (default port).
         PartyCode pc;
@@ -226,7 +303,7 @@ bool decode_party_code(std::string_view text_in, PartyCode* out, std::string* er
         if (host.empty()) return fail("missing host in host:port");
         for (char c : host)
             if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '.' || c == '-' || c == '_'))
-                return fail("not a party code (BBP2-...) or host:port");
+                return fail("not a party code (like " PARTY_CODE_EXAMPLE ") or host:port");
         pc.host = host;
         if (parse_ipv4(host, &pc.ipv4)) pc.host = format_ipv4(pc.ipv4);
         *out = pc;
@@ -253,6 +330,40 @@ bool decode_party_code(std::string_view text_in, PartyCode* out, std::string* er
 
     PartyCode pc;
     pc.version = static_cast<std::uint8_t>(ver);
+    if (ver == 3) {
+        if (vals.empty()) return wrong_length(v3_symbols(kCodeFlagDefaultPort | kCodeFlagPasswordRequired));
+        const std::uint8_t wire = static_cast<std::uint8_t>(vals[0] >> 1);
+        const std::size_t symbols = v3_symbols(wire);
+        if (vals.size() != symbols) {
+            // A typo in the flags changes the expected length: a code of another valid length is a typo.
+            for (std::uint8_t f = 0; f < 16; ++f)
+                if (vals.size() == v3_symbols(f)) return fail("party code checksum mismatch (typo?)");
+            return wrong_length(symbols);
+        }
+        std::vector<std::uint8_t> bits;
+        for (int v : vals) put_bits(&bits, static_cast<std::uint32_t>(v), 5);
+        const std::size_t payload = v3_payload_bits(wire);
+        const int k = static_cast<int>(bits.size() - payload);
+        std::size_t at = payload;
+        if (get_bits(bits, &at, k) != crc_bits(bits, payload, k)) return fail("party code checksum mismatch (typo?)");
+        at = 4;
+        pc.flags = static_cast<std::uint8_t>(wire & ~kCodeFlagDefaultPort);
+        if (wire & kCodeFlagLan) {
+            pc.ipv4 = {0, 0, 0, static_cast<std::uint8_t>(get_bits(bits, &at, 8))};
+            pc.lan_partial = true;
+        } else {
+            for (auto& b : pc.ipv4) b = static_cast<std::uint8_t>(get_bits(bits, &at, 8));
+        }
+        pc.port = (wire & kCodeFlagDefaultPort) ? kDefaultPartyPort
+                                                : static_cast<std::uint16_t>(get_bits(bits, &at, 16));
+        pc.secret = {};
+        const std::size_t secret_bytes = (wire & kCodeFlagPasswordRequired) ? kSecretBytesWithPassword : kSecretBytes;
+        for (std::size_t i = 0; i < secret_bytes; ++i) pc.secret[i] = static_cast<std::uint8_t>(get_bits(bits, &at, 8));
+        if (!pc.lan_partial) pc.host = format_ipv4(pc.ipv4);
+        if (pc.port == 0) return fail("party code has port 0");
+        *out = pc;
+        return true;
+    }
     if (ver == 2) {
         if (vals.size() < 2) return wrong_length(symbols_for(v2_size(kCodeFlagDefaultPort)));
         const std::uint8_t wire = static_cast<std::uint8_t>((vals[0] << 3) | (vals[1] >> 2));

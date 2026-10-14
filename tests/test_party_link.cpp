@@ -53,34 +53,16 @@ static bool wait_for(const std::function<bool()>& pred, int timeout_ms) {
     return pred();
 }
 
-static void test_codes() {
-    std::array<std::uint8_t, 8> secret = {0xde, 0xad, 0xbe, 0xef, 0x01, 0x23, 0, 0};  // 48 bits, padded
-    std::string code = make_party_code({203, 0, 113, 7}, 9307, secret, kCodeFlagPasswordRequired);
-    std::printf("  code: %s\n", code.c_str());
-    CHECK(code.rfind("BBP2-", 0) == 0 && code.size() == 5 + 20 + 4);  // default port: no port bytes
-    PartyCode pc;
-    std::string err;
-    CHECK(decode_party_code(code, &pc, &err));
-    CHECK(!pc.plain && pc.port == 9307 && pc.secret == secret && pc.flags == kCodeFlagPasswordRequired);
-    CHECK(pc.address() == "203.0.113.7:9307");
-
-    // Case-insensitive, blanks, I/L -> 1 and O -> 0.
-    std::string sloppy;
-    for (char c : code) sloppy += static_cast<char>(c == '1' ? 'l' : c == '0' ? 'O' : std::tolower(c));
-    sloppy = "  " + sloppy + " ";
-    PartyCode pc2;
-    CHECK(decode_party_code(sloppy, &pc2, &err));
-    CHECK(pc2.secret == secret && pc2.ipv4 == pc.ipv4);
-    std::string spaced = code;
-    for (auto& c : spaced)
-        if (c == '-') c = ' ';
-    CHECK(decode_party_code(spaced, &pc2, &err));
-
-    // Every single-character substitution is caught (CRC-16) or still decodes to the same code.
-    int caught = 0, total = 0;
+// Every single-symbol substitution and every swap of two neighbouring symbols of `code` is
+// rejected (the BBP3 check has 9-12 bits: any burst of up to 9 bits is caught).
+static void check_typos(const std::string& code) {
     const char* alpha = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-    for (std::size_t i = 5; i < code.size(); ++i) {
-        if (code[i] == '-') continue;
+    std::string err;
+    int caught = 0, total = 0;
+    std::vector<std::size_t> at;
+    for (std::size_t i = 5; i < code.size(); ++i)
+        if (code[i] != '-') at.push_back(i);
+    for (std::size_t i : at) {
         for (const char* a = alpha; *a; ++a) {
             if (*a == code[i]) continue;
             std::string t = code;
@@ -90,8 +72,108 @@ static void test_codes() {
             if (!decode_party_code(t, &x, &err)) ++caught;
         }
     }
+    int swaps = 0, swaps_caught = 0;
+    for (std::size_t j = 0; j + 1 < at.size(); ++j) {
+        if (code[at[j]] == code[at[j + 1]]) continue;
+        std::string t = code;
+        std::swap(t[at[j]], t[at[j + 1]]);
+        ++swaps;
+        PartyCode x;
+        if (!decode_party_code(t, &x, &err)) ++swaps_caught;
+    }
     CHECK(caught == total);
-    std::printf("  %d/%d single-character typos rejected\n", caught, total);
+    CHECK(swaps_caught == swaps);
+    std::printf("  %s: %d/%d typos, %d/%d swaps rejected\n", code.c_str(), caught, total, swaps_caught, swaps);
+}
+
+static void test_codes() {
+    std::array<std::uint8_t, 8> secret = {0xde, 0xad, 0xbe, 0xef, 0x01, 0x23, 0, 0};  // 48 bits, padded
+    const std::array<std::uint8_t, 8> secret4 = {0xde, 0xad, 0xbe, 0xef, 0, 0, 0, 0};  // with a password
+    std::string code = make_party_code({203, 0, 113, 7}, 9307, secret4, kCodeFlagPasswordRequired);
+    std::printf("  code: %s\n", code.c_str());
+    CHECK(code.rfind("BBP3-", 0) == 0 && code.size() == 5 + 16 + 3);  // default port: no port bits
+    PartyCode pc;
+    std::string err;
+    CHECK(decode_party_code(code, &pc, &err));
+    CHECK(!pc.plain && pc.version == 3 && pc.port == 9307 && pc.secret == secret4 &&
+          pc.flags == kCodeFlagPasswordRequired);
+    CHECK(pc.address() == "203.0.113.7:9307");
+
+    // The examples every prompt shows (launcher.py has the same strings) are real codes.
+    const std::array<std::uint8_t, 8> ex_secret = {0x5e, 0x72, 0xa9, 0x13, 0, 0, 0, 0};
+    CHECK(make_party_code({203, 0, 113, 7}, 9307, ex_secret, kCodeFlagPasswordRequired) == PARTY_CODE_EXAMPLE);
+    CHECK(make_party_code({192, 168, 1, 42}, 9307, ex_secret, kCodeFlagPasswordRequired | kCodeFlagLan) ==
+          PARTY_LAN_CODE_EXAMPLE);
+    CHECK(decode_party_code(PARTY_CODE_EXAMPLE, &pc, &err) && pc.address() == "203.0.113.7:9307");
+
+    // Every BBP3 shape: length, round trip, typos.
+    const std::array<std::uint8_t, 8> secret6 = {0x5e, 0x72, 0xa9, 0x13, 0xc4, 0x8d, 0, 0};
+    struct Shape {
+        std::uint8_t flags;
+        std::uint16_t port;
+        std::size_t symbols;
+    } shapes[] = {
+        {kCodeFlagPasswordRequired, 9307, 16},
+        {0, 9307, 19},
+        {kCodeFlagLan | kCodeFlagPasswordRequired, 9307, 11},
+        {kCodeFlagLan, 9307, 14},
+        {kCodeFlagPasswordRequired, 48000, 19},
+        {kCodeFlagRelayOnly, 48000, 22},
+        {kCodeFlagLan | kCodeFlagPasswordRequired | kCodeFlagRelayOnly, 47001, 14},
+        {kCodeFlagLan, 47001, 17},
+    };
+    for (const Shape& sh : shapes) {
+        const auto& sec = (sh.flags & kCodeFlagPasswordRequired) ? ex_secret : secret6;
+        const std::string c = make_party_code({198, 51, 100, 9}, sh.port, sec, sh.flags);
+        std::size_t syms = 0;
+        for (std::size_t i = 5; i < c.size(); ++i) syms += c[i] != '-';
+        CHECK(c.rfind("BBP3-", 0) == 0 && syms == sh.symbols);
+        PartyCode d;
+        CHECK(decode_party_code(c, &d, &err) && d.flags == sh.flags && d.port == sh.port && d.secret == sec &&
+              d.version == 3 && d.ipv4[3] == 9 && d.lan_partial == ((sh.flags & kCodeFlagLan) != 0));
+        CHECK(encode_party_code(d) == c);
+        check_typos(c);
+    }
+    // A password code whose secret has 6 bytes (a host from before BBP3) is a BBP2 code; one
+    // without a password and 6 bytes is BBP3.
+    const std::string v2pw = make_party_code({203, 0, 113, 7}, 9307, secret, kCodeFlagPasswordRequired);
+    CHECK(v2pw.rfind("BBP2-", 0) == 0 && v2pw.size() == 5 + 20 + 4);
+    CHECK(decode_party_code(v2pw, &pc, &err) && pc.version == 2 && pc.secret == secret &&
+          pc.flags == kCodeFlagPasswordRequired && pc.address() == "203.0.113.7:9307");
+    CHECK(make_party_code({203, 0, 113, 7}, 9307, secret, 0).rfind("BBP3-", 0) == 0);
+    {
+        PartyCode a, b;
+        CHECK(code_fits_v3(a));
+        b.flags = kCodeFlagPasswordRequired;
+        b.secret = secret;
+        CHECK(!code_fits_v3(b));
+        b.flags = 0;
+        CHECK(code_fits_v3(b));
+    }
+    // A BBP2 code from before this version (fixed text) still decodes.
+    {
+        const std::array<std::uint8_t, 8> s16 = {1, 2, 3, 4, 5, 6, 0, 0};
+        PartyCode old;
+        CHECK(decode_party_code("BBP2-1B5G-0W87-0410-6105-0SBG", &old, &err) && old.version == 2 &&
+              old.secret == s16 && old.flags == kCodeFlagPasswordRequired && old.address() == "203.0.113.7:9307");
+        CHECK(decode_party_code("bbp2-1cn0-20g3-og2g-cwo", &old, &err) && old.lan_partial && old.ipv4[3] == 42 &&
+              old.secret == s16 && old.flags == (kCodeFlagLan | kCodeFlagPasswordRequired));
+    }
+
+    // Case-insensitive, blanks, I/L -> 1 and O -> 0.
+    std::string sloppy;
+    for (char c : code) sloppy += static_cast<char>(c == '1' ? 'l' : c == '0' ? 'O' : std::tolower(c));
+    sloppy = "  " + sloppy + " ";
+    PartyCode pc2;
+    CHECK(decode_party_code(sloppy, &pc2, &err));
+    CHECK(pc2.secret == secret4 && pc2.ipv4 == pc.ipv4);
+    std::string spaced = code;
+    for (auto& c : spaced)
+        if (c == '-') c = ' ';
+    CHECK(decode_party_code(spaced, &pc2, &err));
+
+    check_typos(code);
+    check_typos(v2pw);
 
     std::string bad = code;
     bad[7] = 'U';  // not in Crockford's alphabet
@@ -107,9 +189,9 @@ static void test_codes() {
     CHECK(crc16_ccitt(reinterpret_cast<const std::uint8_t*>("123456789"), 9) == 0x29B1);
     CHECK(crc8(reinterpret_cast<const std::uint8_t*>("123456789"), 9) == 0xF4);
 
-    // Another port: two more bytes (23 symbols); round trip with every field.
+    // Another port: 16 more bits (22 symbols without a password); round trip with every field.
     const std::string ported = make_party_code({198, 51, 100, 9}, 48000, secret, kCodeFlagRelayOnly);
-    CHECK(ported.rfind("BBP2-", 0) == 0 && ported.size() == 5 + 23 + 5);
+    CHECK(ported.rfind("BBP3-", 0) == 0 && ported.size() == 5 + 22 + 5);
     CHECK(decode_party_code(ported, &pc2, &err) && pc2.port == 48000 && pc2.flags == kCodeFlagRelayOnly &&
           pc2.address() == "198.51.100.9:48000" && pc2.secret == secret && !pc2.lan_partial);
     std::printf("  port 48000: %s\n", ported.c_str());
@@ -130,9 +212,11 @@ static void test_codes() {
     CHECK(decode_party_code(v1b, &pc2, &err) && pc2.secret == secret && pc2.address() == "203.0.113.7:9307");
 
     // The key a BBP2 guest derives equals the host's (the 6-byte secret zero padded to 8), and
-    // the same secret's BBP1 code gives the same key.
-    PartyCode from_v2, from_v1;
-    CHECK(decode_party_code(code, &from_v2, &err) && decode_party_code(v1b, &from_v1, &err));
+    // the same secret's BBP1 code gives the same key; so does a BBP3 one without a password.
+    PartyCode from_v2, from_v1, from_v3;
+    CHECK(decode_party_code(v2pw, &from_v2, &err) && decode_party_code(v1b, &from_v1, &err));
+    CHECK(decode_party_code(make_party_code({203, 0, 113, 7}, 9307, secret, 0), &from_v3, &err));
+    CHECK(crypto::derive_party_key("pw", from_v3.secret.data()) == crypto::derive_party_key("pw", secret.data()));
     const auto host_key = crypto::derive_party_key("pw", secret.data());
     CHECK(crypto::derive_party_key("pw", from_v2.secret.data()) == host_key);
     CHECK(crypto::derive_party_key("pw", from_v1.secret.data()) == host_key);
@@ -144,7 +228,7 @@ static void test_codes() {
 
     // LAN code: only the last octet; the guest completes it from its own address.
     const std::string lan_code = make_party_code({192, 168, 1, 42}, 9307, secret, kCodeFlagLan);
-    CHECK(lan_code.rfind("BBP2-", 0) == 0 && lan_code.size() == 5 + 15 + 3);
+    CHECK(lan_code.rfind("BBP3-", 0) == 0 && lan_code.size() == 5 + 14 + 3);
     CHECK(decode_party_code(lan_code, &pc2, &err) && pc2.lan_partial && (pc2.flags & kCodeFlagLan) &&
           pc2.ipv4[3] == 42 && pc2.host.empty() && pc2.secret == secret && pc2.port == 9307);
     CHECK(pc2.address() == "*.*.*.42:9307");
@@ -152,7 +236,7 @@ static void test_codes() {
     CHECK(pc2.address() == "10.0.7.42:9307" && pc2.ipv4 == (std::array<std::uint8_t, 4>{10, 0, 7, 42}));
     const std::string lan_port = make_party_code({192, 168, 1, 42}, 47001, secret, kCodeFlagLan);
     CHECK(decode_party_code(lan_port, &pc2, &err) && pc2.port == 47001 && pc2.lan_partial &&
-          lan_port.size() == 5 + 18 + 4);
+          lan_port.size() == 5 + 17 + 4);
     std::printf("  LAN code: %s, port 47001: %s\n", lan_code.c_str(), lan_port.c_str());
 
     std::array<std::uint8_t, 4> lan{};
