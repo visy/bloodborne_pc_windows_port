@@ -2451,8 +2451,15 @@ void FallbackToB1(const char* why) {
         GuestDeathRedirectNow();
         return;
     }
-    Log("guest: FALLBACK to B1 (%s; flow was %d)%s", why, fs, have ? "" : " - no travel to replay");
-    if (have) {
+    // par_c6 (live): the host crashed during its lamp travel; the guest followed that travel alone
+    // into Central Yharnam, while the restarted host Continued in the Dream (its save never got
+    // there): a second load back (gather). With the host's link down the travel is not followed;
+    // the restarted host's world decides where the guest goes (the gather before its ring).
+    party::PartyLink* link = party::runtime_link();
+    const bool host_gone = have && link && link->state() != party::LinkState::Connected;
+    Log("guest: FALLBACK to B1 (%s; flow was %d)%s", why, fs,
+        !have ? " - no travel to replay" : host_gone ? " - the host's link is down: its travel is not followed" : "");
+    if (have && !host_gone) {
         RequestGuestTravel(t);
     }
 }
