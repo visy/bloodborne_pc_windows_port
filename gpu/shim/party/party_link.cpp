@@ -28,6 +28,20 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 using crypto::Key;
+
+// Guest: when the host last ended the party (BYE) or its open link dropped; process-wide, as a
+// rejoin starts a fresh link (host_no_answer_hint).
+std::atomic<long long> g_host_gone_ms{-1};
+void note_host_gone() {
+    g_host_gone_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
+}
+double since_host_gone_s() {
+    const long long at = g_host_gone_ms.load();
+    if (at < 0) return -1;
+    const long long now =
+        std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
+    return double(now - at) / 1000.0;
+}
 using crypto::Nonce;
 
 enum MsgType : std::uint8_t {
@@ -425,6 +439,16 @@ std::string set_clause(const char* what, const std::array<std::uint8_t, 32>& hos
 }
 
 }  // namespace
+
+std::string host_no_answer_hint(double since_host_gone_s) {
+    if (since_host_gone_s >= 0 && since_host_gone_s < kHostBackWaitS) {
+        char b[160];
+        std::snprintf(b, sizeof b, "the host left %.0f s ago (restarting?): waiting for the host to come back",
+                      since_host_gone_s);
+        return b;
+    }
+    return "behind a NAT: it needs your guest code";
+}
 
 std::string auth_reject_reason(bool host_has_password) {
     if (host_has_password)
@@ -980,7 +1004,11 @@ struct PartyLink::Impl {
         ep.port = htons(c->peer_port);
         c->us = umux.connect(ep, Clock::now(), cfg.connect_timeout_ms);
         c->created = c->last_rx = Clock::now();
-        log(std::string("party link: ") + why + "; connecting over UDP (hole punching; give the host your guest code if it is behind a NAT)");
+        const double gone = since_host_gone_s();
+        log(std::string("party link: ") + why + "; connecting over UDP (hole punching; " +
+            (gone >= 0 && gone < kHostBackWaitS ? host_no_answer_hint(gone)
+                                                : std::string("give the host your guest code if it is behind a NAT")) +
+            ")");
         return true;
     }
     // Every pass (mu held): datagrams in, accepted streams, stream <-> connection bytes, datagrams out.
@@ -1026,8 +1054,9 @@ struct PartyLink::Impl {
             if (c->dead || !c->us) continue;
             const auto st = c->us->state();
             if (st == rudp::Stream::State::Failed || st == rudp::Stream::State::Closed) {
-                lose(c, c->phase == Phase::Connecting ? "no UDP answer from the host (behind a NAT: it needs your guest code)"
-                                                      : "UDP link closed");
+                lose(c, c->phase == Phase::Connecting
+                            ? "no UDP answer from the host (" + host_no_answer_hint(host ? -1 : since_host_gone_s()) + ")"
+                            : std::string("UDP link closed"));
                 continue;
             }
             if (c->phase == Phase::Connecting) {
@@ -1104,6 +1133,7 @@ struct PartyLink::Impl {
         gconn = nullptr;
         fail_pending("connection to the host lost");
         if (stopping || state == LinkState::Rejected || state == LinkState::Stopped) return;
+        if (was_open) note_host_gone();
         if (was_open || backoff_ms == 0) backoff_ms = cfg.backoff_initial_ms;
         int wait = backoff_ms;
         if (cfg.backoff_jitter_pct > 0) {
@@ -1695,6 +1725,7 @@ struct PartyLink::Impl {
             std::string why = sanitize_text(r.str16(), 1024);
             reject = code == RejectCode::None ? RejectCode::Shutdown : code;
             reject_text = why.empty() ? "the host ended the party" : why;
+            if (reject == RejectCode::Shutdown) note_host_gone();
             close_conn(c);
             gconn = nullptr;
             fail_pending(reject_text);
