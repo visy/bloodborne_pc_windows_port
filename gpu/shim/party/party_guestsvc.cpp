@@ -1651,6 +1651,7 @@ bool WalkToLamp(const GameSnapshot& s) {
 struct LampPress {
     double next = 0, release = 0;
     int presses = 0;
+    int base = -1;  // requests made before the fixture started (a Dream headstone before it)
     bool done = false;
     bool walked = false;
 } g_lamp_press;
@@ -1665,7 +1666,10 @@ void LampPressTick(const GameSnapshot& s, double now) {
         s.session_role != kSessionRoleClient || IsDreamMap(s.map_id) || now < P.next) {
         return;
     }
-    if (g_lamp_requests_made.load() > 0) {
+    if (P.base < 0) {
+        P.base = g_lamp_requests_made.load();
+    }
+    if (g_lamp_requests_made.load() > P.base) {
         P.done = true;
         Log("test: lamppress: the guest's lamp use became a request after %d press(es)", P.presses);
         return;
