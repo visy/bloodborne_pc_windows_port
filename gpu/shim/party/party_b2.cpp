@@ -3942,9 +3942,10 @@ void HostRestLoadTick(const GameSnapshot& s, double now) {
     const u32 rest_area = LampIntent(g_rest_req_lamp.load(), &rest_t) ? AreaOf(DestMapOf(rest_t)) : 0u;
     const int expected = deathrules::RestLoadExpected(ms.data(), static_cast<int>(ms.size()), req - 1,
                                                       AreaOf(s.map_id), rest_area, carried);
-    Log("host: slot %d rested at lamp %u and travels alone: a rest load for this world where the host stands "
+    Log("host: slot %d rested at lamp %u and travels alone: a rest load for this world %s "
         "(%.1f, %.1f, %.1f) in %s (loading screen; the enemies come back); %d member(s) here follow%s",
-        req - 1, g_rest_req_lamp.load(), double(pos[0]), double(pos[1]), double(pos[2]), MapName(s.map_id).c_str(),
+        req - 1, g_rest_req_lamp.load(), out_of_boss ? "to the host's last lamp" : "where the host stands",
+        double(pos[0]), double(pos[1]), double(pos[2]), MapName(dest_map).c_str(),
         expected, expected == 0 ? " (an alone load: no arrival to wait for)" : "");
     if (carried) {
         Log("host: slot %d comes back into this area by its own re-join: served after this load (one loading screen "
