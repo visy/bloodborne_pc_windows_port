@@ -734,6 +734,12 @@ public:
     static void TracePassBreak(void* caller);
 
     /// Sets a function to be called on every scheduler submission.
+    /// bbport: submit to the instance's present queue (frame generation's independent queue)
+    /// instead of the graphics queue (presentation's own scheduler only).
+    void SetPresentQueue(bool use_present) {
+        use_present_queue = use_present;
+    }
+
     void SetSubmitCallback(SubmitFunc&& on_submit) {
         this->on_submit = std::move(on_submit);
     }
@@ -1128,6 +1134,7 @@ private:
     CommandPool command_pool;
     DynamicState dynamic_state;
     SubmitFunc on_submit{};
+    bool use_present_queue = false;
     vk::CommandBuffer current_cmdbuf;
     std::condition_variable_any event_cv;
     struct PendingOp {

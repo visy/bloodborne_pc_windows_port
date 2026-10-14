@@ -53,8 +53,10 @@ ObjectMotion::ObjectMotion(const Instance& instance_, Scheduler& scheduler_)
     : instance{instance_}, scheduler{scheduler_} {
     // Pipeline selection limits the extra attachment and vertex stores to likely
     // animated draws. A setting or environment override can still disable the path.
+    // Frame generation (chosen for this start) uses the vectors with the upscaler off too.
     if (!BbSettings::Get().object_motion ||
-        BbSettings::Get().upscaler == BbSettings::UpscalerOff) {
+        (BbSettings::Get().upscaler == BbSettings::UpscalerOff &&
+         !BbSettings::FrameGenerationStarted())) {
         std::puts("Object motion: off (enable in menu or BB_OBJECT_MOTION=1)");
         return;
     }

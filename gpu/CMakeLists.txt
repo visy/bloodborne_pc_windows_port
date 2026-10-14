@@ -147,6 +147,8 @@ add_subdirectory(third_party/sirit EXCLUDE_FROM_ALL)
 # bbport: FSR 3.1 temporal upscaling / frame generation, native Vulkan (MIT, FireBurn/FSR-Vulkan).
 set(FFX_VK_PORTABLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(FFX_VK_PORTABLE_BUILD_PROBE OFF CACHE BOOL "" FORCE)
+# FSR 3.1.6 frame generation (from Supermedo/bloodborne_pc PR #69 by FIocker).
+set(FFX_VK_PORTABLE_BUILD_FSR3_3_1_5_SCAFFOLD ON CACHE BOOL "" FORCE)
 add_subdirectory(third_party/fsr-vulkan EXCLUDE_FROM_ALL)
 
 # Host shaders -> headers (same scheme as shadPS4's host_shaders/CMakeLists.txt).
@@ -177,6 +179,8 @@ add_host_shader(post_process.frag post_process_frag)
 add_host_shader(camera_motion.comp camera_motion_comp)
 add_host_shader(upscale_merge.comp upscale_merge_comp)
 add_host_shader(upscale_reactive.comp upscale_reactive_comp)
+add_host_shader(fg_depth.comp fg_depth_comp)
+add_host_shader(fg_hud.comp fg_hud_comp)
 add_host_shader(taa.comp taa_comp)
 add_host_shader(taa_sharpen.comp taa_sharpen_comp)
 add_host_shader(taa_sharpen.comp taa_sharpen_ldr_comp LDR_OUTPUT=1)
@@ -281,7 +285,8 @@ if (NOT WIN32)
     # Runtime symbols (runtime_memory_*, runtime_process_*) resolve against bb-probe.
     target_link_options(bbgpu PRIVATE -Wl,--allow-shlib-undefined)
 endif()
-target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan)
+target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan
+                                    ffx-vulkan::fsr3-vk-framegeneration-3.1.6)
 if (WIN32)
     target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
         tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit ws2_32 iphlpapi synchronization)
@@ -308,6 +313,13 @@ target_include_directories(ui-composition-test PRIVATE ..)
 add_executable(cp-decoder-test EXCLUDE_FROM_ALL ../tests/test_cp_decoder.cpp cp/cp_decoder.cpp)
 target_compile_options(cp-decoder-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(cp-decoder-test PRIVATE cp)
+# Frame generation (Supermedo/bloodborne_pc PR #69 by FIocker): presentation cadence and settings.
+add_executable(fg-timing-test EXCLUDE_FROM_ALL ../tests/test_fg_timing.cpp)
+target_include_directories(fg-timing-test PRIVATE .. shadps4)
+target_compile_options(fg-timing-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+add_executable(fg-settings-test EXCLUDE_FROM_ALL ../tests/test_fg_settings.cpp shim/bbport_settings.cpp)
+target_include_directories(fg-settings-test PRIVATE .. shim)
+target_compile_options(fg-settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 add_executable(settings-test EXCLUDE_FROM_ALL ../tests/test_settings.cpp shim/bbport_settings.cpp)
 target_compile_options(settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(settings-test PRIVATE .. shim)

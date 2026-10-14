@@ -1028,6 +1028,12 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
         vk::PipelineStageFlagBits::eAllCommands,
         vk::PipelineStageFlagBits::eColorAttachmentOutput,
     };
+    // bbport: an independent present queue reads its source images at the transfer stage: its
+    // waits cover every stage (from Supermedo/bloodborne_pc PR #69 by FIocker).
+    static constexpr std::array<vk::PipelineStageFlags, 2> present_queue_waits = {
+        vk::PipelineStageFlagBits::eAllCommands,
+        vk::PipelineStageFlagBits::eAllCommands,
+    };
 
     const vk::TimelineSemaphoreSubmitInfo timeline_si = {
         .waitSemaphoreValueCount = info.num_wait_semas,
@@ -1040,7 +1046,7 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
         .pNext = &timeline_si,
         .waitSemaphoreCount = info.num_wait_semas,
         .pWaitSemaphores = info.wait_semas.data(),
-        .pWaitDstStageMask = wait_stage_masks.data(),
+        .pWaitDstStageMask = use_present_queue ? present_queue_waits.data() : wait_stage_masks.data(),
         .commandBufferCount = num_cmdbufs,
         .pCommandBuffers = cmdbufs.data(),
         .signalSemaphoreCount = info.num_signal_semas,
@@ -1051,7 +1057,8 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
         operation();
     }
     ImGui::Core::TextureManager::Submit();
-    auto submit_result = instance.GetGraphicsQueue().submit(submit_info, info.fence);
+    auto submit_result = (use_present_queue ? instance.GetPresentQueue() : instance.GetGraphicsQueue())
+                             .submit(submit_info, info.fence);
     if (submit_result == vk::Result::eErrorDeviceLost) {
         Breadcrumbs::ReportDeviceLost("submit");
     }

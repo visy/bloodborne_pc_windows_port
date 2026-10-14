@@ -485,10 +485,18 @@ bool Instance::CreateDevice() {
         return false;
     }
 
-    static constexpr std::array queue_priorities = {1.0f};
+    // bbport: FSR frame generation presents on a second queue of the graphics family, so its
+    // paced copies do not wait behind the next frame's draws (from Supermedo/bloodborne_pc PR #69
+    // by FIocker; BB_FSR_PRESENT_QUEUE=0: the shared queue). Same family: no ownership transfers.
+    const char* fsr_present_queue = std::getenv("BB_FSR_PRESENT_QUEUE");
+    const bool separate_present = BbSettings::FrameGenerationStarted() &&
+                                  BbSettings::Get().startup_fg_backend == BbSettings::FgFsr &&
+                                  (!fsr_present_queue || fsr_present_queue[0] != '0') &&
+                                  family_properties[queue_family_index].queueCount >= 2;
+    static constexpr std::array queue_priorities = {1.0f, 1.0f};
     const vk::DeviceQueueCreateInfo queue_info = {
         .queueFamilyIndex = queue_family_index,
-        .queueCount = static_cast<u32>(queue_priorities.size()),
+        .queueCount = separate_present ? 2u : 1u,
         .pQueuePriorities = queue_priorities.data(),
     };
     // bbport: a queue of a compute and transfer family without graphics, for reading back GPU
@@ -780,7 +788,7 @@ bool Instance::CreateDevice() {
     bb_boot_mark("DLSS init done");
 
     graphics_queue = device->getQueue(queue_family_index, 0);
-    present_queue = device->getQueue(queue_family_index, 0);
+    present_queue = device->getQueue(queue_family_index, separate_present ? 1 : 0);
     if (readback_family_index != NoFamily) {
         readback_queue = device->getQueue(readback_family_index, 0);
         LOG_INFO(Render_Vulkan, "Readback queue: family {}", readback_family_index);

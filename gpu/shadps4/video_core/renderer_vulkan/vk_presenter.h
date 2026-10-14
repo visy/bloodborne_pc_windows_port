@@ -3,7 +3,10 @@
 
 #pragma once
 
+#include <chrono>
+#include <cstdint>
 #include <deque>
+#include <memory>
 
 #include <condition_variable>
 #include <mutex>
@@ -15,6 +18,8 @@
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
+#include "video_core/renderer_vulkan/fg_timing.h"
+#include "video_core/renderer_vulkan/vk_frame_generation.h"
 #include "video_core/texture_cache/texture_cache.h"
 
 namespace Frontend {
@@ -27,6 +32,8 @@ struct Liverpool;
 
 namespace Vulkan {
 
+struct FgFrameResources;
+
 struct Frame {
     u32 width;
     u32 height;
@@ -38,7 +45,10 @@ struct Frame {
     u64 ready_tick;
     bool is_hdr{false};
     u8 id{};
-
+    /// bbport: frame generation's images of this frame (generated frames, fitted for the
+    /// swapchain) and the display buffer it shows (from Supermedo/bloodborne_pc PR #69 by FIocker).
+    std::shared_ptr<FgFrameResources> generation;
+    VAddr guest_address{};
 };
 
 enum SchedulerType {
@@ -117,6 +127,15 @@ private:
     /// bbport: one frame of the precompile screen (cleared swapchain image + overlay).
     void PresentPrecompileFrame();
 
+    /// bbport: frame generation (from Supermedo/bloodborne_pc PR #69 by FIocker). Records the
+    /// generated frames of `frame` from the display buffer's guides (GPU command thread).
+    void PrepareGeneration(Frame* frame, vk::Image display_image, u32 width, u32 height,
+                           vk::Format sample_format, vk::Format source_format);
+    /// One swapchain present of `image` (the frame's own or a generated one); `real`: the game's
+    /// frame (menu polling, dumps). `deadline` (steady clock ns, 0: none): presented no earlier.
+    bool PresentOne(Frame* frame, vk::Image image, bool real, std::int64_t deadline = 0);
+    void CountPresentation(bool real);
+
 private:
     float expected_ratio{1920.0 / 1080.0f};
     u32 expected_frame_width{1920};
@@ -146,6 +165,19 @@ private:
     std::condition_variable free_cv;
     std::condition_variable_any frame_cv;
     std::vector<VAddr> vo_buffers_addr;
+    // Frame generation: null unless chosen for this start and its provider is available.
+    std::unique_ptr<FrameGeneration> generation;
+    std::mutex generation_mutex;
+    FgHistory generation_history;
+    FgSchedule generation_schedule{true, true};
+    vk::UniqueDescriptorSetLayout hud_desc;
+    vk::UniquePipelineLayout hud_layout;
+    vk::UniquePipeline hud_pipeline;
+    int generation_factor{}, generation_backend{};
+    u64 presentation_count{}, source_count{}, generated_count{}, skipped_count{};
+    std::int64_t last_ready_ns{};
+    u64 last_ready_serial{};
+    std::chrono::steady_clock::time_point counter_start{std::chrono::steady_clock::now()};
 };
 
 } // namespace Vulkan

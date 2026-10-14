@@ -22,6 +22,7 @@
 #include "video_core/host_shaders/taa_comp.h"
 #include "video_core/host_shaders/taa_sharpen_comp.h"
 #include "video_core/host_shaders/taa_sharpen_ldr_comp.h"
+#include "video_core/host_shaders/fg_depth_comp.h"
 #include "video_core/host_shaders/fsr4_decode_comp.h"
 #include "video_core/host_shaders/fsr4_encode_comp.h"
 #include "video_core/host_shaders/fsr4_reactive_comp.h"
@@ -189,7 +190,8 @@ TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& schedul
     }
     // Available unless BB_UPSCALER=none; on/off and the parameters are the menu's settings.
     const char* env = std::getenv("BB_UPSCALER");
-    enabled = !(env && std::strcmp(env, "none") == 0);
+    // Frame generation chosen for this start needs the output-size UI path even then.
+    enabled = !(env && std::strcmp(env, "none") == 0) || BbSettings::FrameGenerationStarted();
     if (const char* hash = std::getenv("BB_UPSCALE_BEFORE_CS")) {
         trigger_hash = std::strtoull(hash, nullptr, 16);
     }
@@ -234,7 +236,7 @@ TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& schedul
 }
 
 TemporalUpscaler::~TemporalUpscaler() {
-    if (resources_ready) scheduler.Finish();
+    if (resources_ready || fg_color.image) scheduler.Finish();
     if (context) {
         scheduler.Finish();
         ffxVkPortableUpscaleContextDestroy(context);
@@ -320,6 +322,35 @@ bool TemporalUpscaler::RasterScaling() const {
 }
 
 bool TemporalUpscaler::OnFrameStart() {
+    // Frame generation (from Supermedo/bloodborne_pc PR #69 by FIocker): the frame boundary
+    // falls between the UI draws and the display pass. The finished UI is captured here, in the
+    // scene snapshot's surface and encoding, before the game's display shader transforms it.
+    frame_generation = BbSettings::Get().fg_active.load(std::memory_order_relaxed);
+    if (fg_pending.valid && ui_image) {
+        scheduler.EndRendering();
+        if (fg_ui.width != ui_width || fg_ui.height != ui_height) scheduler.WaitSubmittedWork();
+        if (fg_ui.Ensure(instance, ui_width, ui_height, vk::Format::eR8G8B8A8Unorm)) {
+            const auto cmd = scheduler.CommandBuffer();
+            const vk::ImageMemoryBarrier2 ready{
+                .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+                .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+                .oldLayout = vk::ImageLayout::eGeneral,
+                .newLayout = vk::ImageLayout::eGeneral,
+                .image = vk::Image(ui_image),
+                .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+            cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &ready});
+            FgCopy(cmd, vk::Image(ui_image), vk::ImageLayout::eGeneral, ui_width, ui_height, fg_ui);
+            fg_pending.ui = fg_ui.image;
+            fg_pending.ui_view = fg_ui.view;
+        } else {
+            fg_pending.valid = false;
+        }
+    }
+    fg_completed = fg_pending;
+    fg_pending = {};
+    ++fg_render_serial;
     // bbport: BB_PRESET_FILE=<file> holding a preset number, read about once a second: switches
     // the preset like the menu does (scripted tests of live preset changes).
     static const char* preset_file = std::getenv("BB_PRESET_FILE");
@@ -513,7 +544,9 @@ bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
         .arrayLayers = 1,
         .samples = vk::SampleCountFlagBits::e1,
         .tiling = vk::ImageTiling::eOptimal,
-        .usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
+        // Frame generation copies the motion into its guides.
+        .usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
+                 vk::ImageUsageFlagBits::eTransferSrc,
         .initialLayout = vk::ImageLayout::eUndefined,
     });
     output_image = VideoCore::UniqueImage(device, allocator);
@@ -1443,8 +1476,9 @@ bool TemporalUpscaler::Scaled() const {
     // with the native 1920x1080 viewport looked like a UI draw (OnDraw: scaled_session &&
     // native_viewport) and started the UI composition at the first scene pass: a dark frame and a
     // stretched HUD. Such a session takes the native path (the scene stays 1920x1080, fixed).
+    // Frame generation needs the scene and the UI apart: the output-size UI path at 1080p too.
     return (scaled_session && (render_width != 1920 || render_height != 1080)) ||
-           target_width != 1920 || target_height != 1080;
+           target_width != 1920 || target_height != 1080 || frame_generation;
 }
 
 void TemporalUpscaler::OnColorTarget(VideoCore::ImageId color) {
@@ -1732,6 +1766,29 @@ void TemporalUpscaler::RunUiOnly(VideoCore::ImageId color_id, VideoCore::ImageId
         barrier.newLayout = vk::ImageLayout::eGeneral;
         cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier});
     });
+    // Frame generation: a scene drawn without the upscaler (or with it failed) still gets its
+    // guides; the motion pass runs on the copied depth.
+    if (frame_generation && camera_motion.Ready() && camera_motion.Depth()) {
+        auto& scene_depth = texture_cache.GetImage(camera_motion.Depth());
+        vk::ImageView scene_view{};
+        u32 dw = scene_depth.info.size.width, dh = scene_depth.info.size.height;
+        if (!scaled_session && scene_targets.Reduced()) {
+            VideoCore::ImageViewInfo di;
+            di.format = scene_depth.info.pixel_format;
+            scene_view = scene_targets.Read(camera_motion.Depth(), di).view;
+            dw = render_width;
+            dh = render_height;
+        } else {
+            runtime.Transit(&scene_depth, vk::ImageLayout::eGeneral,
+                            vk::PipelineStageFlagBits2::eComputeShader,
+                            vk::AccessFlagBits2::eShaderRead);
+            runtime.FlushBarriers();
+            scene_view = CachedView(scene_depth, scene_depth.info.pixel_format,
+                                    vk::ImageAspectFlagBits::eDepth);
+        }
+        const auto [sw, sh] = SceneSize(dw, dh);
+        CaptureGenerationGuides(scene_view, sw, sh, 0.0f, false);
+    }
     reset = true; // returning to 3D must not reuse history from before a menu/loading screen
     done_this_frame = ui_phase = true;
     ui_color = color_id;
@@ -1972,6 +2029,9 @@ void TemporalUpscaler::RunScaled() {
                     vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eBlit,
                     vk::AccessFlagBits2::eTransferWrite, vk::ImageLayout::eGeneral,
                     vk::PipelineStageFlagBits2::eColorAttachmentOutput, color_access);
+            if (frame_generation) {
+                CaptureGenerationGuides(depth_view, w, h, frame_ms, true);
+            }
             reset = false;
             dispatched_last_frame = true;
             if (const int dump = DumpFrame(); dump >= 0) {
@@ -2082,6 +2142,9 @@ void TemporalUpscaler::RunScaled() {
             color_access);
 
     done_this_frame = true; // the UI is not jittered
+    if (ok && frame_generation) {
+        CaptureGenerationGuides(depth_view, w, h, frame_ms, true);
+    }
     if (ok) {
         ui_phase = true;
         ui_color = ldr_target;
@@ -2171,9 +2234,165 @@ bool TemporalUpscaler::RedirectColor(VideoCore::ImageId color,
         cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &b});
     });
     display.valid = true;
+    display.guides = {};
+    if (fg_completed.valid) {
+        // Frame generation: this buffer's own copy of the finished scene's guides (the next
+        // frame overwrites the upscaler's while the presenter still reads these).
+        const auto& g = fg_completed;
+        if (display.fg_color.width != g.output_width || display.fg_color.height != g.output_height ||
+            display.fg_depth.width != g.render_width || display.fg_depth.height != g.render_height) {
+            scheduler.WaitSubmittedWork();
+        }
+        if (display.fg_color.Ensure(instance, g.output_width, g.output_height, vk::Format::eR8G8B8A8Unorm) &&
+            display.fg_depth.Ensure(instance, g.render_width, g.render_height, vk::Format::eR32Sfloat) &&
+            display.fg_motion.Ensure(instance, g.render_width, g.render_height, vk::Format::eR16G16Sfloat) &&
+            display.fg_ui.Ensure(instance, g.output_width, g.output_height, vk::Format::eR8G8B8A8Unorm)) {
+            const auto cmd = scheduler.CommandBuffer();
+            const auto copy = [&](vk::Image source, u32 w, u32 h, FgImage& copy_target) {
+                const vk::ImageMemoryBarrier2 readable{
+                    .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                    .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+                    .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                    .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+                    .oldLayout = vk::ImageLayout::eGeneral,
+                    .newLayout = vk::ImageLayout::eGeneral,
+                    .image = source,
+                    .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+                cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &readable});
+                FgCopy(cmd, source, vk::ImageLayout::eGeneral, w, h, copy_target);
+            };
+            copy(g.color, g.output_width, g.output_height, display.fg_color);
+            copy(g.depth, g.render_width, g.render_height, display.fg_depth);
+            copy(g.motion, g.render_width, g.render_height, display.fg_motion);
+            copy(g.ui, g.output_width, g.output_height, display.fg_ui);
+            display.guides = g;
+            display.guides.color = display.fg_color.image;
+            display.guides.color_view = display.fg_color.view;
+            display.guides.depth = display.fg_depth.image;
+            display.guides.depth_view = display.fg_depth.view;
+            display.guides.motion = display.fg_motion.image;
+            display.guides.motion_view = display.fg_motion.view;
+            display.guides.ui = display.fg_ui.image;
+            display.guides.ui_view = display.fg_ui.view;
+        }
+    }
     target = {Mirror(vk::Image(display.image), display.views, view_info.format, {}),
               vk::ImageLayout::eGeneral, ui_width, ui_height};
     return true;
+}
+
+void TemporalUpscaler::CaptureGenerationGuides(vk::ImageView scene_depth, u32 w, u32 h,
+                                               float frame_ms, bool existing_motion) {
+    if (!frame_generation || !scene_depth || !camera_motion.Ready() || !w || !h || !ui_image) {
+        return;
+    }
+    const auto camera = camera_motion.FrameGenerationCamera();
+    if (!camera.valid) {
+        return;
+    }
+    const bool resize = fg_color.width != ui_width || fg_color.height != ui_height ||
+                        fg_depth.width != w || fg_depth.height != h;
+    if (resize && fg_color.image) scheduler.WaitSubmittedWork();
+    if (!fg_color.Ensure(instance, ui_width, ui_height, vk::Format::eR8G8B8A8Unorm) ||
+        !fg_depth.Ensure(instance, w, h, vk::Format::eR32Sfloat) ||
+        !fg_motion.Ensure(instance, w, h, vk::Format::eR16G16Sfloat)) {
+        return;
+    }
+    const auto device = instance.GetDevice();
+    if (!fg_depth_pipeline) {
+        const std::array bindings{
+            vk::DescriptorSetLayoutBinding{.binding = 0, .descriptorType = vk::DescriptorType::eSampledImage,
+                                           .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
+            vk::DescriptorSetLayoutBinding{.binding = 1, .descriptorType = vk::DescriptorType::eStorageImage,
+                                           .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute}};
+        fg_depth_desc = Check(device.createDescriptorSetLayoutUnique({
+            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
+            .bindingCount = u32(bindings.size()),
+            .pBindings = bindings.data()}));
+        fg_depth_layout = Check(device.createPipelineLayoutUnique({
+            .setLayoutCount = 1, .pSetLayouts = &*fg_depth_desc}));
+        const auto module = CompileSPV(FG_DEPTH_COMP, device);
+        fg_depth_pipeline = Check(device.createComputePipelineUnique({}, vk::ComputePipelineCreateInfo{
+            .stage = {.stage = vk::ShaderStageFlagBits::eCompute, .module = module, .pName = "main"},
+            .layout = *fg_depth_layout}));
+        device.destroyShaderModule(module);
+    }
+    scheduler.EndRendering();
+    auto cmd = scheduler.CommandBuffer();
+    // Hardware depth (0..1) as R32F at render size.
+    fg_depth.General(cmd);
+    const std::array depth_infos{
+        vk::DescriptorImageInfo{.imageView = scene_depth, .imageLayout = vk::ImageLayout::eGeneral},
+        vk::DescriptorImageInfo{.imageView = fg_depth.view, .imageLayout = vk::ImageLayout::eGeneral}};
+    const std::array depth_writes{
+        vk::WriteDescriptorSet{.dstBinding = 0, .descriptorCount = 1,
+                               .descriptorType = vk::DescriptorType::eSampledImage, .pImageInfo = &depth_infos[0]},
+        vk::WriteDescriptorSet{.dstBinding = 1, .descriptorCount = 1,
+                               .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &depth_infos[1]}};
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *fg_depth_pipeline);
+    cmd.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *fg_depth_layout, 0, depth_writes);
+    cmd.dispatch((w + 7) / 8, (h + 7) / 8, 1);
+    fg_depth.General(cmd);
+    // Motion (pixels, current to previous): the upscaler's own when it ran at this size, else
+    // the camera motion pass on the scene depth.
+    if (existing_motion && motion_image && width == w && height == h) {
+        const vk::ImageMemoryBarrier2 motion_ready{
+            .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+            .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+            .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+            .oldLayout = vk::ImageLayout::eGeneral,
+            .newLayout = vk::ImageLayout::eGeneral,
+            .image = vk::Image(motion_image),
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+        cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &motion_ready});
+        FgCopy(cmd, vk::Image(motion_image), vk::ImageLayout::eGeneral, w, h, fg_motion);
+    } else {
+        fg_motion.General(cmd);
+        camera_motion.RecordMotion(scene_depth, fg_motion.view, w, h);
+        cmd = scheduler.CommandBuffer();
+        fg_motion.General(cmd);
+    }
+    // The scene without the UI: ui_image now holds the upscaled (or copied) scene only.
+    const vk::ImageMemoryBarrier2 ready{
+        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+        .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+        .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+        .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+        .oldLayout = vk::ImageLayout::eGeneral,
+        .newLayout = vk::ImageLayout::eGeneral,
+        .image = vk::Image(ui_image),
+        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+    cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &ready});
+    FgCopy(cmd, vk::Image(ui_image), vk::ImageLayout::eGeneral, ui_width, ui_height, fg_color);
+    auto ui_ready = ready;
+    ui_ready.srcStageMask = vk::PipelineStageFlagBits2::eTransfer;
+    ui_ready.srcAccessMask = vk::AccessFlagBits2::eTransferRead;
+    ui_ready.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+    ui_ready.dstAccessMask =
+        vk::AccessFlagBits2::eColorAttachmentRead | vk::AccessFlagBits2::eColorAttachmentWrite;
+    cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &ui_ready});
+    fg_pending = {.color = fg_color.image,
+                  .depth = fg_depth.image,
+                  .motion = fg_motion.image,
+                  .color_view = fg_color.view,
+                  .depth_view = fg_depth.view,
+                  .motion_view = fg_motion.view,
+                  .output_width = ui_width,
+                  .output_height = ui_height,
+                  .render_width = w,
+                  .render_height = h,
+                  .camera = camera.camera,
+                  .serial = fg_render_serial,
+                  .frame_ms = frame_ms > 0 ? frame_ms : 16.6667f,
+                  .valid = true,
+                  .reset = Active() && reset};
+}
+
+TemporalUpscaler::GenerationGuides TemporalUpscaler::FrameGenerationGuides(VAddr address) {
+    std::scoped_lock lock{display_mutex};
+    const auto it = displays.find(address);
+    return it != displays.end() && it->second.valid ? it->second.guides : GenerationGuides{};
 }
 
 bool TemporalUpscaler::RedirectDepth(VideoCore::ImageId depth, Target& target) {

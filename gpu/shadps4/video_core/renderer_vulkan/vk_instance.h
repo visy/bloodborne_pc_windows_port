@@ -317,6 +317,13 @@ public:
     /// Returns true when the shaderSubgroupClock feature of
     /// bbport: the FSR 4 v07 INT8/DOT4 shaders can run (Float16, Int8, Int16, packed int8 dot
     /// products, linear compute derivatives, extended storage image formats).
+    /// bbport: FSR frame generation's requirement (VK_KHR_compute_shader_derivatives, linear
+    /// groups; from Supermedo/bloodborne_pc PR #69 by FIocker).
+    bool IsFsrGenerationSupported() const {
+        return compute_shader_derivatives &&
+               compute_shader_derivatives_features.computeDerivativeGroupLinear;
+    }
+
     bool IsFsr4Int8Supported() const {
         return vk12_features.shaderFloat16 && vk12_features.shaderInt8 && features.shaderInt16 &&
                vk13_features.shaderIntegerDotProduct && compute_shader_derivatives &&

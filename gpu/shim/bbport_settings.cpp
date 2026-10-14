@@ -53,6 +53,12 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         if (value == "en") v.menu_language = MenuLanguage::English;
         else if (value == "ru") v.menu_language = MenuLanguage::Russian;
         else std::printf("Settings: unknown menu_language '%s' (expected en or ru)\n", value.c_str());
+    } else if (key == "frame_generation") {
+        v.frame_generation = ParseFrameGen(value.c_str());
+        if (v.fg_backend == FgFsr && v.frame_generation > 2) v.frame_generation = 2;
+    } else if (key == "fg_backend") {
+        v.fg_backend = ParseFgBackend(value.c_str());
+        if (v.fg_backend == FgFsr && v.frame_generation > 2) v.frame_generation = 2;
     } else if (key == "upscaler") {
         for (int u = 0; u < UpscalerCount; ++u) {
             if (value == UpscalerName(u)) {
@@ -207,6 +213,8 @@ const char* MenuText(const char* english, const char* russian) {
 
 void Load() {
     auto& v = Get();
+    v.frame_generation = 0; // off unless bbport.ini or the environment chooses it
+    v.fg_backend = FgDlss;
     for (int e = 0; e < EffectCount; ++e) {
         v.effects[e] = Effects[e].default_on;
     }
@@ -253,6 +261,7 @@ void Load() {
         }
     }
     const std::pair<const char*, const char*> env_keys[] = {
+        {"BB_FG_BACKEND", "fg_backend"},          {"BB_FRAME_GENERATION", "frame_generation"},
         {"BB_FSR_SHARPNESS", "sharpness"},        {"BB_JITTER", "jitter"},
         {"BB_REACTIVE", "reactive"},              {"BB_REACTIVE_SCALE", "reactive_scale"},
         {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
@@ -282,6 +291,27 @@ void Load() {
     v.startup_output_res = v.output_res;
     v.startup_live_resolution = v.live_resolution;
     v.startup_gpl = v.gpl;
+    v.startup_frame_generation = v.frame_generation;
+    v.startup_fg_backend = v.fg_backend;
+}
+
+const char* FgBackendName(int backend) {
+    return backend == FgFsr ? "fsr" : "dlss";
+}
+
+const char* FrameGenName(int factor) {
+    return factor == 2 ? "2x" : factor == 3 ? "3x" : factor == 4 ? "4x" : "off";
+}
+
+int ParseFrameGen(const char* value) {
+    const std::string_view text{value ? value : ""};
+    return text == "2x" || text == "2" ? 2 : text == "3x" || text == "3" ? 3
+         : text == "4x" || text == "4" ? 4 : 0;
+}
+
+int ParseFgBackend(const char* value) {
+    const std::string_view text{value ? value : ""};
+    return text == "fsr" || text == "1" ? FgFsr : FgDlss;
 }
 
 void ConfigureUpscalerSupport(bool fsr4, bool fsr411) {
@@ -337,6 +367,8 @@ bool RestartNeeded() {
     const auto& s = Get();
     bool restart = s.object_motion != s.startup_object_motion || s.model_lod != s.startup_model_lod ||
                    s.live_resolution != s.startup_live_resolution || s.gpl != s.startup_gpl ||
+                   s.frame_generation != s.startup_frame_generation ||
+                   (s.frame_generation >= 2 && s.fg_backend != s.startup_fg_backend) ||
                    ResolutionNeedsRestart();
     for (int e = 0; e < EffectCount; ++e) {
         restart |= s.effects[e] != s.startup_effects[e];
@@ -361,6 +393,8 @@ void Save() {
     const auto flag = [](bool value) { return std::string(value ? "1" : "0"); };
     put("menu_language", v.menu_language == MenuLanguage::Russian ? "ru" : "en");
     put("upscaler", UpscalerName(v.upscaler));
+    put("frame_generation", FrameGenName(v.frame_generation));
+    put("fg_backend", FgBackendName(v.fg_backend));
     put("preset", std::to_string(v.preset.load()));
     put("sharpen", flag(v.sharpen));
     put("sharpness", fixed(v.sharpness, 2));
