@@ -660,7 +660,12 @@ void outage_resume_check() {
 
 void host_lost(const std::string& why) {
     bbnet::p2p_outage_keepalive(false);
-    coop::RequestGuestSendHome(why);  // home at once, not the game's room-gone notice 10 s later
+    // Only a guest in the host's room goes home. Regression run 0.6.1 (live): the link dropped while
+    // the guest was still at its title; the request stayed pending and sent the guest home 10 s
+    // later, the moment its (new) title join reached the host's world.
+    if (bbnet::np::party_guest_in_room()) {
+        coop::RequestGuestSendHome(why);  // home at once, not the game's room-gone notice 10 s later
+    }
     if (bbnet::np::party_host_lost(why)) plog("host lost (%s): the game leaves the host's world", why.c_str());
     else plog("host lost (%s): not in the host's world", why.c_str());
 }
