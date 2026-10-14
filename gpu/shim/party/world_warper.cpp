@@ -70,6 +70,7 @@ T Field(u64 base, u64 off, T fallback = T{}) {
 /// The counters an area / action is measured with (all monotonic).
 struct Counters {
     u64 created = 0, hitches = 0, hitch_us = 0, skipped = 0, waits = 0, compile_us = 0, flips = 0;
+    u64 shader_hitches = 0, shader_hitch_us = 0;
     static Counters Now() {
         Counters c;
         c.created = cp::created_total.load();
@@ -79,15 +80,22 @@ struct Counters {
         c.waits = cp::waits_total.load();
         c.compile_us = cp::gpu_thread_compile_us.load();
         c.flips = cp::flips_total.load();
+        c.shader_hitches = cp::compile_hitch_frames.load();
+        c.shader_hitch_us = cp::compile_hitch_us_total.load();
         return c;
     }
     Counters operator-(const Counters& o) const {
-        return {created - o.created, hitches - o.hitches, hitch_us - o.hitch_us, skipped - o.skipped,
-                waits - o.waits,     compile_us - o.compile_us, flips - o.flips};
+        Counters d;
+        d.created = created - o.created, d.hitches = hitches - o.hitches, d.hitch_us = hitch_us - o.hitch_us;
+        d.skipped = skipped - o.skipped, d.waits = waits - o.waits, d.compile_us = compile_us - o.compile_us;
+        d.flips = flips - o.flips, d.shader_hitches = shader_hitches - o.shader_hitches;
+        d.shader_hitch_us = shader_hitch_us - o.shader_hitch_us;
+        return d;
     }
     Counters& operator+=(const Counters& o) {
         created += o.created, hitches += o.hitches, hitch_us += o.hitch_us, skipped += o.skipped;
         waits += o.waits, compile_us += o.compile_us, flips += o.flips;
+        shader_hitches += o.shader_hitches, shader_hitch_us += o.shader_hitch_us;
         return *this;
     }
 };
@@ -215,11 +223,12 @@ void KeepAlive(u64 player) {
 }
 
 std::string Counts(const Counters& c) {
-    char b[200];
-    std::snprintf(b, sizeof b, "%llu new pipelines, %llu hitches (%.0f ms over 50 ms frames), %llu draws skipped, "
-                  "%llu GPU-thread waits, %.0f ms GPU-thread compiles",
+    char b[300];
+    std::snprintf(b, sizeof b, "%llu new pipelines, %llu hitches over 50 ms (%.0f ms; %llu of them, %.0f ms, with "
+                  "a pipeline made in the frame), %llu draws skipped, %llu GPU-thread waits, %.0f ms GPU-thread compiles",
                   static_cast<unsigned long long>(c.created), static_cast<unsigned long long>(c.hitches),
-                  c.hitch_us / 1e3, static_cast<unsigned long long>(c.skipped),
+                  c.hitch_us / 1e3, static_cast<unsigned long long>(c.shader_hitches), c.shader_hitch_us / 1e3,
+                  static_cast<unsigned long long>(c.skipped),
                   static_cast<unsigned long long>(c.waits), c.compile_us / 1e3);
     return b;
 }
@@ -394,10 +403,11 @@ void FinishRow(const GameSnapshot& s, double now, const char* note) {
         g.progress.done.insert(g.rp);
         ++g.done_rows;
         const std::size_t n = HandledCount(g.route, g.progress);
-        Log("[%zu/%zu] %s (%s)%s: +%llu new pipelines (in the world %llu: %s); %llu hitches, worst frame %.0f ms; "
+        Log("[%zu/%zu] %s (%s)%s: +%llu new pipelines (in the world %llu: %s); %llu hitches (%llu with a pipeline made), worst frame %.0f ms; "
             "%.0f s; %llu new this session", n, g.route.size(), RowName(g.rp).c_str(), MapName(s.map_id).c_str(), note,
             static_cast<unsigned long long>(all.created), static_cast<unsigned long long>(here.created),
-            ActionList(g.action_new).c_str(), static_cast<unsigned long long>(here.hitches), worst, now - g.arrive_at,
+            ActionList(g.action_new).c_str(), static_cast<unsigned long long>(here.hitches),
+            static_cast<unsigned long long>(here.shader_hitches), worst, now - g.arrive_at,
             static_cast<unsigned long long>(cp::created_total.load() - g.c_session0.created));
     } else {
         (ph == Phase::ReplayBefore ? g.replay_before : g.replay_after)[g.rp] = here;
@@ -458,7 +468,7 @@ void TickImpl(double now) {
         if (Steady(s)) {
             g.stage = Stage::Settle;
             g.steady_since = now;
-            Log("in the world (%s); starting in a few seconds", MapName(s.map_id).c_str());
+            Log("in the world; starting in a few seconds");
             SetStatus("World warper\nIn the world\nStarting...");
             return;
         }

@@ -34,15 +34,24 @@ inline std::atomic<std::uint64_t> batch_start_ns{0}, last_done_ns{0};
 inline std::atomic<std::uint64_t> created_total{0}, skipped_total{0}, waits_total{0};
 inline std::atomic<std::uint64_t> hitch_frames{0}, hitch_us_total{0}, flips_total{0};
 inline std::atomic<std::uint32_t> worst_frame_us{0};
+/// Hitches in whose frame a pipeline was created: the shader stutter part of the hitches.
+inline std::atomic<std::uint64_t> compile_hitch_frames{0}, compile_hitch_us_total{0};
 /// Time the GPU thread spent compiling pipelines itself (a frame waits for that), monotonic.
 inline std::atomic<std::uint64_t> gpu_thread_compile_us{0};
 inline void RecordFlipMs(double ms) {
     ++flips_total;
     const std::uint32_t us = ms <= 0 ? 0u : ms > 4.0e6 ? 4000000000u : std::uint32_t(ms * 1000.0);
+    static std::uint64_t last_created = 0;
+    const std::uint64_t created = created_total.load() + gpu_thread_compile_us.load();
     if (ms > 50.0) {
         ++hitch_frames;
         hitch_us_total += us;
+        if (created != last_created) {
+            ++compile_hitch_frames;  // a pipeline was made (or compiled on the GPU thread) in this frame
+            compile_hitch_us_total += us;
+        }
     }
+    last_created = created;
     std::uint32_t w = worst_frame_us.load();
     while (us > w && !worst_frame_us.compare_exchange_weak(w, us)) {
     }
