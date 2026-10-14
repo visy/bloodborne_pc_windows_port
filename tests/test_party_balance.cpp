@@ -63,6 +63,18 @@ int main() {
     // Rot.
     assert(Near(RotHpFactor(0), 1.0f) && Near(RotHpFactor(2), 0.8f) && Near(RotHpFactor(5), 0.5f));
     assert(Near(RotHpFactor(9), 0.5f) && Near(RotHpFactor(-1), 1.0f));
+    // What cleanses the rot: a lamp warp is the respawn only while the player is down from a death.
+    assert(LampWarpIsRespawn(false, 3.0, false));        // dead at the warp: the respawn
+    assert(LampWarpIsRespawn(true, 5.0, false));         // just respawned, not up yet
+    assert(!LampWarpIsRespawn(true, 19.0, true));        // playtest 1 H5:6072: revived in place, then a lamp
+    assert(!LampWarpIsRespawn(true, 60.0, false));       // long after
+    assert(!LampWarpIsRespawn(true, -1.0, false));       // no death yet
+    // #21: the lamp menu opened beside a lamp is a rest.
+    assert(LampMenuRest(true, true, 1.5f, 0.2f, -1.0f));
+    assert(!LampMenuRest(false, true, 1.5f, 0.2f, -1.0f));  // no dialog
+    assert(!LampMenuRest(true, false, 1.5f, 0.2f, -1.0f));  // dead
+    assert(!LampMenuRest(true, true, 6.0f, 0.0f, 0.0f));    // an item box elsewhere
+    assert(!LampMenuRest(true, true, 1.0f, 5.0f, 0.0f));    // a floor above
 
     // Menu texts.
     assert(DescribeHp(150, false).find("+75 %") != std::string::npos);
