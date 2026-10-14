@@ -168,6 +168,38 @@ inline LampOrigin PlanLampOrigin(double local_age, double remote_age, bool flag_
     return local && !(remote && remote_age < local_age) ? LampOrigin::Own : LampOrigin::Other;
 }
 
+/// Story warps (EMEVD `2003[49]` outside the lamp / warp-object events). Each is that player's own
+/// use when its game runs it, so the warp gets the travel question instead of being dropped as
+/// "another member's lamp" (no lamp flag is set). Live (parg, 2026-10-14): the Blood Moon warp
+/// 13201803 -> 2802958 was dropped on the host, leaving it at Moonside Lake.
+/// Host-only ones (chr type 0 / `End if Client`): 3503 DLC cleanup -> Dream, 12405263 Amygdala
+/// grab -> DLC, 12800430 Yahar'gul -> Lecture Building after the One Reborn, 13201803 Rom -> Blood
+/// Moon -> Yahar'gul. A guest's copy of these runs only by accident (its chr type reads 0 for a
+/// moment after a load, live parg re-run: the guest got its own Blood Moon question) and stays
+/// dropped there; the host's travel brings the guest. Any player's: 12200131 Hemwick carriage
+/// (action button), 12800431 Amygdala grab (own Tonsil Stone), 13200310 / 13200311 Lecture
+/// Building doors (ObjAct).
+inline bool StoryWarpEvent(std::int32_t event, bool host) {
+    switch (event) {
+    case 3503:
+    case 12405263:
+    case 12800430:
+    case 13201803:
+        return host;
+    case 12200131:
+    case 12800431:
+    case 13200310:
+    case 13200311:
+        return true;
+    default:
+        return false;
+    }
+}
+/// After a story warp's cutscene the travel question waits this long once the scene is over (live
+/// parg re-run: opened in the frame the Blood Moon scene ended, the box never showed and six Cross
+/// presses did nothing).
+constexpr double kAskAfterSceneDelay = 2.0;
+
 // ---- Playtest 1 bug 22: nobody to travel with = single player ----
 /// The party's own lamp / headstone / Hunter's Mark handling (the in-world lamp move without a
 /// load, "already standing at it", the guest's Mark to the host's lamp) applies only when there

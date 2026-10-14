@@ -18,7 +18,9 @@
 #include "game_state.h"
 #include "party_guestsvc.h"
 #include "party_npcghost.h"
+#include "party_death_rules.h"
 #include "party_phantom.h"
+#include "party_split.h"
 #include "party_travel.h"
 #include "party_worldact.h"
 
@@ -595,8 +597,23 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
             }
         }
     }
+    if (instr && !skip && bank == 2003 && id == 49 &&
+        deathrules::StoryWarpEvent(event_id, LocalSessionRole() != 6)) {
+        // A story warp (Blood Moon, carriage, Amygdala grab, ...) runs only on the game of the
+        // player who triggered it: that player's own use for the travel question (party_split).
+        u8 args[4] = {};
+        u32 arg_size = 0;
+        const u64 at = EmevdInstructionArgs(event, instr, &arg_size);
+        u32 lamp = 0;
+        if (at && arg_size >= 4 && SafeRead(at, args, 4)) {
+            std::memcpy(&lamp, args, 4);
+        }
+        split::NoteStoryWarp(lamp);
+        Log("story warp: event %d warps this player to %u (2003[49]): this player's own travel", event_id, lamp);
+    }
     if (g_emevd_observe && instr && !skip &&
-        ((bank == 2003 && (id == 12 || id == 15 || id == 53)) || (bank == 2000 && id == 0))) {
+        ((bank == 2003 && (id == 12 || id == 15 || id == 53)) || (bank == 2000 && id == 0) ||
+         (bank == 2004 && id == 8))) {
         u8 args[12] = {};
         u32 arg_size = 0;
         const u64 at = EmevdInstructionArgs(event, instr, &arg_size);

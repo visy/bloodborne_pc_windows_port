@@ -46,6 +46,9 @@ bool OnLampWarp(std::uint32_t id);
 /// Test steps that call the lamp warp "as the player" (no talk script, so no lamp flag): the
 /// next warp is this player's own use.
 void NoteLocalUse(std::uint32_t id);
+/// Game thread: a story warp of this player's game (deathrules::StoryWarpEvent) is about to run:
+/// this player's own use, and its question waits until the scene before it is over.
+void NoteStoryWarp(std::uint32_t id);
 /// Main thread, once a frame (the director); `link` sends EVENT split_choosing.
 void Tick(const GameSnapshot& s, party::PartyLink* link);
 
