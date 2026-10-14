@@ -11,7 +11,8 @@
 //   phantom    PhantomEventFromJsonText
 //   peerev     the other peer events: chalice_goods (GoodsFromJsonText), drop_seed (DropSeedFromJson),
 //              the B2 direct summon bodies (dsummon DecodeRoom / DecodeDone / WaitOf), gift_up
-//              (GiftUpFromJsonText) and sync_digest / sync_resync (party_desync.h)
+//              (GiftUpFromJsonText), sync_digest / sync_resync (party_desync.h) and map_ping
+//              (party_ping.h FromJson + the relay rate + the marker board)
 //   balance    balance::FromJson (the host's party rules, guest side): values within the menu's ranges
 //   lamp       LampRequestFromJsonText + SanitizePeerLampRequest (a guest's lamp request, host side),
 //              LampLitFromJsonText, worldact::RequestFromJson (EVENT world_action: levers, doors, NPC talk)
@@ -47,6 +48,7 @@
 #include "party/party_balance_rules.h"
 #include "party/party_chalice.h"
 #include "party/party_droproll.h"
+#include "party/party_ping.h"
 #include "party/party_dsummon.h"
 #include "party/party_desync.h"
 #include "party/party_code.h"
@@ -518,6 +520,19 @@ Corpus json_corpus() {
     // The other peer events (target peerev).
     c.add(coop::chalice::GoodsToJsonText({6100, 6109, 6539}));
     {
+        party::ping::PingEvent pe;  // EVENT map_ping (I2)
+        pe.id = 7;
+        pe.map = 0x18010000;
+        pe.pos[0] = 12.5f, pe.pos[1] = -3.25f, pe.pos[2] = 100.0f;
+        pe.hit = true;
+        pe.t = 123456;
+        c.add(party::ping::ToJson(pe));
+        pe.slot = 2;
+        pe.who = "Hunter1";
+        pe.clear = true;
+        c.add(party::ping::ToJson(pe));
+    }
+    {
         coop::droproll::DropSeed ds;
         ds.salt = 0x1234567890abcdefull;
         ds.gen = 3;
@@ -768,6 +783,26 @@ void run_peerev(Rng& r, const Corpus& c) {
     if (coop::chalice::GoodsFromJsonText(s, &goods, &err)) {
         INVARIANT(goods.size() <= 64);
         for (std::uint32_t g : goods) INVARIANT(coop::chalice::IsChaliceGoods(g));
+    }
+    party::ping::PingEvent pe;  // EVENT map_ping (I2): both sides
+    if (party::ping::FromJson(s, &pe, &err)) {
+        for (float f : pe.pos) INVARIANT(std::isfinite(f) && std::fabs(f) <= 1e5f);
+        INVARIANT(pe.slot >= -1 && pe.slot < party::ping::kMaxSlots && pe.who.size() <= 16);
+        INVARIANT(pe.clear || (pe.map != 0 && pe.map != 0xffffffffu));
+        party::ping::PingEvent back;
+        std::string again;
+        INVARIANT(party::ping::FromJson(party::ping::ToJson(pe), &back, &again) && back.map == pe.map &&
+                  back.slot == pe.slot && back.who == pe.who && back.clear == pe.clear && back.t == pe.t);
+        static party::ping::RelayRate rate;
+        if (pe.slot >= 0 && rate.Take(pe.slot, double(pe.t) / 1000.0)) {
+            party::ping::Marker m;
+            m.slot = pe.slot;
+            m.map = pe.map;
+            m.until_ms = 1000 + party::ping::LifeLeft(pe.t, 5000);
+            party::ping::Place(m);
+            party::ping::Marker out[party::ping::kMaxSlots];
+            INVARIANT(party::ping::Read(out, 1000) <= party::ping::kMaxSlots);
+        }
     }
     coop::droproll::DropSeed ds;
     if (coop::droproll::DropSeedFromJson(s, &ds, &err)) {

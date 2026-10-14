@@ -146,6 +146,17 @@ static void test_insight() {
     CHECK(GuestInsightGrant(3, InsightMode::Off) == 0);
     CHECK(GuestInsightGrant(0, InsightMode::Full) == 0);
     CHECK(GuestInsightGrant(-2, InsightMode::Full) == 0);
+    {
+        PhantomEvent e;
+        e.kind = PhantomEventKind::Insight;
+        e.seq = 7;
+        e.insight = 1;
+        e.source_event = 9422;
+        e.boss = false;
+        PhantomEvent back;
+        CHECK(PhantomEventFromJsonText(PhantomEventToJsonText(e), &back));
+        CHECK(back.kind == PhantomEventKind::Insight && back.insight == 1 && !back.boss && back.source_event == 9422);
+    }
 
     BossInsightTracker tr;
     // First encounter (no defeat marker in that event): nothing.

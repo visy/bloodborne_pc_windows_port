@@ -178,6 +178,7 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     window_info.render_surface = SDL_GetPointerProperty(wp, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
     // Windows runs this display in HDR: an SDR swapchain is decoded with the sRGB curve there.
     on_hdr_display = SDL_GetBooleanProperty(wp, SDL_PROP_WINDOW_HDR_ENABLED_BOOLEAN, false);
+    UpdateHdrLuminance();
 #else
     if (driver && !std::strcmp(driver, "x11")) {
         window_info.type = WindowSystemType::X11;
@@ -197,8 +198,26 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     height = h;
     LOG_INFO(Frontend, "Window {}x{} on {}", w, h, driver);
     if (on_hdr_display) {
-        std::printf("Display: HDR on in Windows (SDR picture re-encoded for gamma 2.2, BB_HDR_GAMMA)\n");
+        std::printf("Display: HDR on in Windows (%s), peak %.0f nits reported, SDR white %.0f nits\n",
+                    BbSettings::Get().startup_hdr ? "HDR output asked for"
+                                                  : "SDR picture re-encoded for gamma 2.2, BB_HDR_GAMMA",
+                    BbSettings::Get().hdr_display_peak.load(), sdr_white_nits);
+    } else {
+        std::printf("Display: SDR (HDR off in Windows, or not an HDR display)\n");
     }
+}
+
+/// bbport (HDR output, I4): the display's peak as Windows reports it (DXGI's MaxLuminance, via
+/// SDL's headroom over SDR white), for the curve's automatic peak.
+void WindowSDL::UpdateHdrLuminance() {
+#ifdef _WIN32
+    const SDL_PropertiesID wp = SDL_GetWindowProperties(window);
+    const float headroom = SDL_GetFloatProperty(wp, SDL_PROP_WINDOW_HDR_HEADROOM_FLOAT, 1.0f);
+    const float white = SDL_GetFloatProperty(wp, SDL_PROP_WINDOW_SDR_WHITE_LEVEL_FLOAT, 1.0f);
+    sdr_white_nits = white * 80.0f;
+    BbSettings::Get().hdr_display_peak =
+        on_hdr_display && headroom > 1.0f ? headroom * white * 80.0f : 0.0f;
+#endif
 }
 
 WindowSDL::~WindowSDL() {
@@ -392,6 +411,9 @@ bool WindowSDL::PollEvents() {
         // HDR switched in Windows (Win+Alt+B) or the window moved to another display.
         case SDL_EVENT_WINDOW_HDR_STATE_CHANGED:
             on_hdr_display = event.window.data1 != 0;
+            UpdateHdrLuminance();
+            std::printf("Display: HDR %s in Windows (peak %.0f nits reported)\n",
+                        on_hdr_display ? "on" : "off", BbSettings::Get().hdr_display_peak.load());
             break;
 #endif
         case SDL_EVENT_QUIT:

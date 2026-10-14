@@ -26,6 +26,8 @@
 #include "../bbport_settings.h"
 
 #include <algorithm>
+#include <atomic>
+#include <mutex>
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
@@ -220,37 +222,58 @@ bool PartyHudChrPos(std::uint64_t chr, const float near[3], float out[3]) {
     return true;
 }
 
+namespace {
+/// One read of the game's menu state: the full-screen menu (MenuMan fields, the menu flow through
+/// `kind`) and the dialog box. `read` false: nothing read (all zero / closed).
+struct MenuRead {
+    bool open = false, dialog = false, flow_full = false;
+    int f[party::hud::kFullscreenMenuFields] = {};
+    signed char force = -1;
+    u64 mm = 0, flow_menu = 0;
+};
+MenuRead ReadMenu(bool read, party::hud::FlowMenuKind& kind, double t) {
+    MenuRead r;
+    r.mm = read ? Slot(kSlotMenuMan) : 0;
+    if (r.mm) {
+        for (int i = 0; i < party::hud::kFullscreenMenuFields; ++i) {
+            r.f[i] = Field<int>(r.mm, party::hud::kFullscreenMenuOffsets[i], 0);
+        }
+        if (const u64 dbg = Slot(kSlotMenuForce)) r.force = Field<signed char>(dbg, 8, -1);
+    }
+    if (read) {
+        u8 new_system = 0;
+        const u64 at = Guest(kMenuNewSystem);
+        if (at && SafeGet(at, &new_system) && new_system) r.flow_menu = Field<u64>(Slot(kSlotMenuFlow), 0xa88);
+    }
+    // The YES/NO box opens through the menu flow too: only the name tags step aside for it.
+    r.dialog = r.mm && Field<int>(r.mm, 0x78, 0) != 0;
+    r.flow_full = kind.Update(r.flow_menu != 0, r.dialog, t);
+    if (r.mm || r.flow_menu) r.open = party::hud::GameMenuUp(r.flow_full, r.f, r.force);
+    return r;
+}
+double MenuClock() {
+    static const auto t0 = std::chrono::steady_clock::now();
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+}
+/// When the party tick last read the menu in the world (MenuClock s; the overlay's own read
+/// stands in when it is older than 0.5 s).
+std::atomic<double> g_party_menu_at{-1e9};
+}  // namespace
+
 /// The game's full-screen menu (party_hud.h FullscreenMenuOpen), every frame: the overlay hides
 /// the party panel / tags and holds its notices while it is up. Each change is logged with the
 /// fields (and MenuMan +0x78 dialog, +0x2e4 pad state, +0x2e8 visible state for comparison).
 static void GameMenuTick(bool in_party) {
     static int last = -1;
-    bool open = false;
-    int f[party::hud::kFullscreenMenuFields] = {};
-    signed char force = -1;
-    const u64 mm = in_party ? Slot(kSlotMenuMan) : 0;
-    if (mm) {
-        for (int i = 0; i < party::hud::kFullscreenMenuFields; ++i) {
-            f[i] = Field<int>(mm, party::hud::kFullscreenMenuOffsets[i], 0);
-        }
-        if (const u64 dbg = Slot(kSlotMenuForce)) force = Field<signed char>(dbg, 8, -1);
-    }
-    u64 flow_menu = 0;
-    if (in_party) {
-        u8 new_system = 0;
-        const u64 at = Guest(kMenuNewSystem);
-        if (at && SafeGet(at, &new_system) && new_system) flow_menu = Field<u64>(Slot(kSlotMenuFlow), 0xa88);
-    }
-    // The YES/NO box opens through the menu flow too: only the name tags step aside for it.
     static party::hud::FlowMenuKind kind;
-    static const auto t0 = std::chrono::steady_clock::now();
-    const bool dialog = mm && Field<int>(mm, 0x78, 0) != 0;
-    const bool flow_full =
-        kind.Update(flow_menu != 0, dialog,
-                    std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
-    if (mm || flow_menu) open = party::hud::GameMenuUp(flow_full, f, force);
+    const double t = MenuClock();
+    const MenuRead r = ReadMenu(in_party, kind, t);
+    if (in_party) g_party_menu_at.store(t, std::memory_order_relaxed);
+    const bool open = r.open;
+    const int* f = r.f;
+    const u64 mm = r.mm, flow_menu = r.flow_menu;
     party::hud::SetGameMenu(open);
-    party::hud::SetGameDialog(dialog || (flow_menu != 0 && !flow_full));
+    party::hud::SetGameDialog(r.dialog || (flow_menu != 0 && !r.flow_full));
     static bool box_logged = false;
     if (kind.box() != box_logged) {
         box_logged = kind.box();
@@ -264,8 +287,31 @@ static void GameMenuTick(bool in_party) {
             "dialog %d, pad %d, visible %d)",
             open ? "open: party panel / tags hidden, notices held" : "closed", (unsigned long long)flow_menu,
             (unsigned long long)(flow_menu ? Field<u64>(flow_menu, 0) : 0), f[0], f[1], f[2], f[3], f[4], f[5],
-            f[6], f[8], f[7], int(force), Field<int>(mm, 0x78, 0), Field<int>(mm, 0x2e4, 0), Field<int>(mm, 0x2e8, 0));
+            f[6], f[8], f[7], int(r.force), Field<int>(mm, 0x78, 0), Field<int>(mm, 0x2e4, 0), Field<int>(mm, 0x2e8, 0));
     }
+}
+
+void PerfHudGameState(bool* game_menu, bool* area_banner) {
+    static std::mutex mu;
+    static party::hud::FlowMenuKind kind;
+    static party::hud::AreaBannerWatch banner;
+    static double next = -1;
+    static bool menu = false, shows = false;
+    std::lock_guard<std::mutex> lk(mu);
+    const double t = MenuClock();
+    if (t >= next) {
+        next = t + 0.1;
+        const GameSnapshot q = Image() ? ReadGameState(false) : GameSnapshot{};
+        const bool in_world = q.world_up && !q.loading;
+        shows = banner.Update(in_world, q.player, q.map_id, t);
+        if (t - g_party_menu_at.load(std::memory_order_relaxed) < 0.5) {
+            menu = party::hud::GameMenu();  // the party tick's read (this frame's state)
+        } else {
+            menu = ReadMenu(in_world, kind, t).open;  // solo play: no party tick
+        }
+    }
+    *game_menu = menu;
+    *area_banner = shows;
 }
 
 void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberState local_state) {

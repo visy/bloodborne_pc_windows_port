@@ -10,6 +10,9 @@
 static int capture;
 int bbgpu_overlay_captures_input(void) { return capture; }
 int bbgpu_text_input_is_active(void) { return 0; }
+static int ping_on, pings;
+int bbgpu_ping_combo_enabled(void) { return ping_on; }
+void bbgpu_ping_request(void) { ++pings; }
 void bbgpu_reflex_pre_input_sample(void) {}
 void bbgpu_reflex_on_input_sampled(void) {}
 /* Mouse & keyboard mode (after Mrsuss60/bloodborne_pc_windows_port's test stubs). */
@@ -63,10 +66,34 @@ static void test_keyboard_sticks(void) {
     k[SDL_SCANCODE_W]=k[SDL_SCANCODE_D]=false;
 }
 
+/* Xbox pads: Back + d-pad left/right clicks the touchpad halves (after Supermedo/bloodborne_pc
+ * a04e1e95, parsifal295's PR #39); Back alone clicks the left half for 150 ms on release. */
+static void test_back_combo(void) {
+    uint64_t t=1000000;
+    assert(back_combo_step(0,0,0,0,t)==-1);
+    assert(back_combo_step(1,0,0,0,t+=10000)==-1);       /* Back held alone: nothing yet */
+    assert(back_combo_step(0,0,0,0,t+=10000)==0);        /* released: a left-half click */
+    assert(back_combo_step(0,0,0,0,t+=100000)==0);       /* ... for 150 ms */
+    assert(back_combo_step(0,0,0,0,t+=60000)==-1);
+    assert(back_combo_step(1,0,0,0,t+=10000)==-1);
+    assert(back_combo_step(1,0,1,0,t+=10000)==1);        /* Back + right: the right half */
+    assert(back_combo_step(1,0,1,0,t+=10000)==1);        /* while the d-pad is held */
+    assert(back_combo_step(1,0,0,0,t+=10000)==-1);
+    assert(back_combo_step(0,0,0,0,t+=10000)==-1);       /* no left click after a combo */
+    assert(back_combo_step(1,1,0,0,t+=10000)==0);        /* Back + left: the left half */
+    assert(back_combo_step(0,0,0,0,t+=10000)==-1);
+    assert(back_combo_step(1,0,0,1,t+=10000)==-1);     /* Back + R3: a ping (I2) */
+    assert(back_combo_step(0,0,0,0,t+=10000)==-1);     /* no gestures click after it */
+    /* The masking: Back reads released, and while it is held, d-pad left/right too. Without a
+     * gamepad pad_value reads nothing, so only the binding rule is checked here. */
+    assert(back_combo_wanted(NULL)==0);
+}
+
 int main(void) {
     char path[512];
     load_bindings(0);
     test_keyboard_sticks();
+    test_back_combo();
     const int created=bb_test_temp_file(path,sizeof(path),"bbport-pad-test-");
     assert(created==0);
     bb_test_setenv("BB_PAD_FILE",path);
@@ -194,6 +221,31 @@ int main(void) {
     mk_mode=0; mk_buttons=0;
     assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_R1) && data.right_x==128 &&
            bindings[IN_CROSS].keys[0]==SDL_SCANCODE_X);
+    /* I2 pings: touchpad + R3 is a ping and reaches the game as neither; the touchpad alone is
+     * held back while down and given to the game as a short click when released. */
+    ping_on=1;
+    inject(path,"touchpad");
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_TOUCHPAD) && data.touch_count==0);
+    inject(path,"touchpad r3");
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & (BTN_TOUCHPAD|BTN_R3)) && data.touch_count==0 && pings==1);
+    inject(path,"r3");
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_R3) && pings==1); /* held back until released */
+    inject(path,"");
+    assert(pad_read_state(1,&data)==0 && data.buttons==0);
+    inject(path,"r3");
+    assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_R3) && pings==1); /* R3 alone: the game's */
+    inject(path,"touchpad r3");
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_TOUCHPAD) && (data.buttons & BTN_R3) &&
+           pings==1); /* R3 held before the touchpad: the game's lock-on, no ping */
+    inject(path,"");
+    assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_TOUCHPAD) && data.touch_count==1 && pings==1);
+    usleep(150000);
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_TOUCHPAD) && data.touch_count==0);
+    ping_on=0;
+    inject(path,"touchpad r3");
+    assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_TOUCHPAD) && (data.buttons & BTN_R3) && pings==1);
+    inject(path,"");
+    pad_read_state(1,&data);
     SDL_CloseJoystick(joystick);
     if (gamepad) SDL_CloseGamepad(gamepad);
     gamepad=NULL;

@@ -482,11 +482,49 @@ static int key_down(const bool *k, int input) {
     }
     return 0;
 }
+/* Xbox pads: Back + d-pad left/right clicks the touchpad halves (after Supermedo/bloodborne_pc
+ * a04e1e95; the idea and timing are parsifal295's, its PR #39). Pads without a touch surface
+ * had only Back, a click on the left half (gestures): the right half (key items, the right choice
+ * of some prompts) could not be reached. While Back is bound to nothing but the touchpad (the
+ * default pad.touchpad), Back + d-pad left or right clicks that half as long as the d-pad is
+ * held, and Back alone clicks the left half for 150 ms when it is released, so Back + right does
+ * not open the gestures first. Back and, while Back is held, d-pad left/right then reach no other
+ * binding. Pads with a touch surface, and a Back moved by pad.<input>= lines, keep the old rule. */
+static int back_combo_masked; /* pad_value: 1 Back reads released, 2 also d-pad left/right */
+static int back_combo_wanted(SDL_Gamepad *g) {
+    if (!g || SDL_GetNumGamepadTouchpads(g)>0) return 0;
+    int on_touchpad=0;
+    for (int input=IN_CROSS;input<=IN_RIGHT;++input)
+        for (int i=0;i<bindings[input].pad_count;++i)
+            if (bindings[input].pad[i]==SDL_GAMEPAD_BUTTON_BACK) {
+                if (input!=IN_TOUCHPAD) return 0;
+                on_touchpad=1;
+            }
+    return on_touchpad;
+}
+/* One sample of the combo: the touchpad half to click (0 left, 1 right) or -1. */
+static int back_combo_step(int back, int left, int right, int pinged, uint64_t now) {
+    static int was_down, combo;
+    static uint64_t click_until;
+    int side=-1;
+    if (back) {
+        if (!was_down) { combo=0; click_until=0; }
+        if (left || right) { side=right ? 1 : 0; combo=1; }
+        if (pinged) combo=1; /* Back + R3 was a ping (I2): no gestures click on release */
+    } else if (was_down && !combo) {
+        click_until=now+150000;
+    }
+    was_down=back;
+    if (side<0 && now<click_until) side=0;
+    return side;
+}
 /* The bound gamepad buttons' state; triggers as their analog value. */
 static int pad_value(SDL_Gamepad *g, int input) {
     int value=0;
     for (int i=0;i<bindings[input].pad_count;++i) {
         const int b=bindings[input].pad[i];
+        if (back_combo_masked && (b==SDL_GAMEPAD_BUTTON_BACK || (back_combo_masked==2 &&
+            (b==SDL_GAMEPAD_BUTTON_DPAD_LEFT || b==SDL_GAMEPAD_BUTTON_DPAD_RIGHT)))) continue;
         const int v=b==PAD_LEFT_TRIGGER ? trigger(SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_LEFT_TRIGGER))
                   : b==PAD_RIGHT_TRIGGER ? trigger(SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_RIGHT_TRIGGER))
                   : SDL_GetGamepadButton(g,(SDL_GamepadButton)b) ? 255 : 0;
@@ -630,6 +668,9 @@ static void sample_host(PadData *d) {
     else mouse_wheel_reset();
     if (g) {
         int touch_right=0;
+        const int back_combo=back_combo_wanted(g);
+        const int back_down=back_combo && SDL_GetGamepadButton(g,SDL_GAMEPAD_BUTTON_BACK);
+        back_combo_masked=back_combo ? (back_down ? 2 : 1) : 0;
         for (int i=IN_CROSS;i<=IN_RIGHT;++i) {
             const int v=pad_value(g,i);
             if (i==IN_L2) d->l2=(uint8_t)v;
@@ -658,6 +699,26 @@ static void sample_host(PadData *d) {
             }
         }
         // Back/Select on pads without a touch surface is a left-side click.
+        back_combo_masked=0;
+        if (back_combo) {
+            /* I2 pings on pads without a touch surface: Back held + R3 is the ping (the touchpad
+             * click only comes on Back's release here, so ping_combo never sees it held). R3 then
+             * reaches the game only after it is released. */
+            static int back_r3_prev, back_r3_strip;
+            const int r3=(d->buttons & BTN_R3)!=0;
+            int pinged=0;
+            if (back_down && r3 && !back_r3_prev && bbgpu_ping_combo_enabled()) {
+                pinged=back_r3_strip=1;
+                bbgpu_ping_request();
+                puts("Runtime: ping (Back + R3)");
+            }
+            back_r3_prev=r3;
+            if (back_r3_strip) { if (r3) d->buttons&=~BTN_R3; else back_r3_strip=0; }
+            const int side=back_combo_step(back_down,
+                back_down && SDL_GetGamepadButton(g,SDL_GAMEPAD_BUTTON_DPAD_LEFT),
+                back_down && SDL_GetGamepadButton(g,SDL_GAMEPAD_BUTTON_DPAD_RIGHT),pinged,d->timestamp);
+            if (side>=0 && !d->touch_count) touch_click(d,side);
+        }
         if ((d->buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d,0);
         if (touch_right) touch_click(d,1);
     }
@@ -840,6 +901,42 @@ static void touch_ids(PadData *d) {
     else if (!since) since=d->timestamp;
     d->touch_held_time=d->touch_count ? (uint32_t)(d->timestamp-since) : 0;
 }
+/* I2 pings (gpu/shim/party/party_ping.h): in a party with pings on, holding the touchpad (Tab)
+ * and pressing R3 (Q / C) places a ping. The touchpad press is held back from the game until it
+ * is released - then the game gets a short click (the Gestures menu opens on release) - or R3
+ * comes: a ping, and the game sees neither button until both are released. */
+static void ping_combo(PadData *d) {
+    static int state, right, r3_prev; /* state 0 idle, 1 touchpad held back, 2 ping sent */
+    static uint64_t click_until;
+    const uint64_t now=now_us();
+    const int tp=(d->buttons & BTN_TOUCHPAD)!=0, r3=(d->buttons & BTN_R3)!=0;
+    const int r3_rise=r3 && !r3_prev;
+    r3_prev=r3;
+    switch (state) {
+    case 0:
+        if (tp && bbgpu_ping_combo_enabled()) {
+            state=1; click_until=0;
+            right=d->touch_count>0 && d->touches[0].x>=960;
+            break;
+        }
+        if (click_until) {
+            if (now<click_until) touch_click(d,right);
+            else click_until=0;
+        }
+        return;
+    case 1:
+        if (r3_rise) { state=2; bbgpu_ping_request(); puts("Runtime: ping (touchpad + R3)"); break; }
+        if (!tp) { state=0; click_until=now+120000; touch_click(d,right); return; }
+        break;
+    default:
+        if (!tp && !r3) { state=0; return; }
+        break;
+    }
+    d->buttons&=~BTN_TOUCHPAD;
+    if (state==2) d->buttons&=~BTN_R3;
+    d->touch_count=0;
+    touch_down_us=0;
+}
 /* Set while the settings menu or the name box holds the pad: the press that closed it (Cross on
  * the name, Insert/L3+R3) stays held, and must not reach the game as a new press. Buttons are
  * held neutral until everything is released (from Supermedo/bloodborne_pc 1.4). */
@@ -862,6 +959,7 @@ static void sample(PadData *d) {
     if (injected.touch_side>=0) touch_click(d,injected.touch_side);
     else if ((d->buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d,0);
     if (!d->touch_count) touch_down_us = 0;
+    ping_combo(d);
     if (injected.buttons & BTN_L2) d->l2=255;
     if (injected.buttons & BTN_R2) d->r2=255;
     uint8_t *axes[4]={&d->left_x,&d->left_y,&d->right_x,&d->right_y};

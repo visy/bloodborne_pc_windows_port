@@ -221,6 +221,11 @@ const float DeadTable[11] = {0.0f, 0.01f, 0.02f, 0.03f, 0.04f, 0.05f, 0.06f, 0.0
 const float MaskScaleTable[11] = {0.0f, 0.25f, 0.50f, 0.75f, 1.00f, 1.25f, 1.50f, 2.00f, 2.50f, 3.00f, 4.00f};
 const float BoostTable[11] = {1.0f, 1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.8f, 2.0f, 2.5f, 3.0f};
 const float TenthsTable[11] = {0.0f, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 1.0f};
+// HDR output (bbport_hdr.h): peak 0 = Auto (the display's), paper white, strength, saturation.
+const float HdrPeakTable[11] = {0.0f, 400.0f, 600.0f, 800.0f, 1000.0f, 1200.0f, 1500.0f, 2000.0f, 2500.0f, 3000.0f, 4000.0f};
+const float HdrPaperTable[11] = {80.0f, 100.0f, 120.0f, 150.0f, 180.0f, 200.0f, 250.0f, 300.0f, 350.0f, 400.0f, 500.0f};
+const float HdrStrengthTable[11] = {0.0f, 0.2f, 0.4f, 0.6f, 0.8f, 1.0f, 1.1f, 1.2f, 1.3f, 1.4f, 1.5f};
+const float HdrSaturationTable[11] = {0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.3f, 1.4f, 1.5f};
 
 bool UpscalerAvailable(int i) {
     const auto& s = BbSettings::Get();
@@ -240,6 +245,10 @@ struct MemberTexts {
     u32 event_value, event_help;
     u32 mode_none;
 } party;
+/// The HDR page's run-time help lines (whether HDR runs, and why not; the automatic peak).
+struct HdrTexts {
+    u32 status_help = 0, peak_help = 0;
+} hdr_texts;
 struct BalanceTexts {
     u32 rot_help = 0;
     u32 scale_help[6]{};
@@ -761,6 +770,35 @@ void DefineAll() {
            "После перезапуска. Меньше задержка на NVIDIA; Boost держит частоты",
            {off, on, AddText("On + Boost", "Вкл + Boost")}, Kind::List);
 
+    // ---- HDR output (bbport_hdr.h, I4): on/off after a restart, the curve live. ----
+    AddPage("HDR", "HDR", "HDR10 output: peak brightness, paper white, highlights, calibration (bbport)",
+            "Вывод HDR10: пиковая яркость, белый лист, блики, калибровка (bbport)");
+    hdr_texts.status_help = AddDynamic(MaxHelpLength);
+    hdr_texts.peak_help = AddDynamic(MaxHelpLength);
+    AddRow(Flag(&Values::hdr), AddText("HDR output", "Вывод HDR"), hdr_texts.status_help, toggle, Kind::Toggle);
+    AddRow(Setting(
+               Kind::Slider,
+               [](const Values& v) { return int(NearestPosition(HdrPeakTable, float(v.hdr_peak_nits.load()))); },
+               [](int i) { BbSettings::Get().hdr_peak_nits = int(HdrPeakTable[std::clamp(i, 0, 10)]); }),
+           AddText("Peak brightness", "Пиковая яркость"), hdr_texts.peak_help, {}, Kind::Slider);
+    AddRow(Setting(
+               Kind::Slider,
+               [](const Values& v) { return int(NearestPosition(HdrPaperTable, float(v.hdr_paper_white.load()))); },
+               [](int i) { BbSettings::Get().hdr_paper_white = int(HdrPaperTable[std::clamp(i, 0, 10)]); }),
+           "Paper white", "Белый лист",
+           "Mid-tones and the port's menus, nits: 0 = 80 .. 5 = 200 (default) .. 10 = 500",
+           "Средние тона и меню порта, нит: 0 = 80 .. 5 = 200 (по умолчанию) .. 10 = 500", {}, Kind::Slider);
+    AddRow(Scaled(&Values::hdr_strength, HdrStrengthTable), "Highlights", "Блики",
+           "Highlight expansion: 0 = SDR look, 5 = white reaches the peak (default), 10 = 1.5x",
+           "Расширение бликов: 0 = как SDR, 5 = белый до пика (по умолчанию), 10 = 1.5x", {}, Kind::Slider);
+    AddRow(Scaled(&Values::hdr_saturation, HdrSaturationTable), "Saturation", "Насыщенность",
+           "Colour saturation: 0 = 0.5, 5 = 1.0 (the game's, default), 10 = 1.5",
+           "Насыщенность: 0 = 0.5, 5 = 1.0 (как в игре, по умолчанию), 10 = 1.5", {}, Kind::Slider);
+    AddRow(Flag(&Values::hdr_calibration), "Calibration", "Калибровка",
+           "Test pattern at the top: raise the peak until the inner square just disappears",
+           "Тестовая таблица сверху: поднимайте пик, пока внутренний квадрат не исчезнет", toggle,
+           Kind::Toggle);
+
     // ---- Performance HUD. ----
     AddPage("Performance HUD", "Оверлей FPS", "Frame rate, frame time and load in a corner (F11) (bbport)",
             "Частота кадров, время кадра и загрузка в углу экрана (F11) (bbport)");
@@ -1014,6 +1052,18 @@ void DefineAll() {
             AddText("Name and health", "Имя и здоровье"), AddText("Name and deaths", "Имя и смерти")},
            Kind::List);
 
+    // ---- Pings (I2, party_ping.h): Party rules holds six rows already, so a page of its own. ----
+    AddPage("Pings", "Метки", "Mark a spot for the party, see companions through walls (bbport)",
+            "Отметить место для группы, видеть спутников сквозь стены (bbport)");
+    AddRow(Flag(&Values::party_pings), AddText("Pings", "Метки"),
+           AddText("Hold the touchpad and press R3 (keyboard: V) to mark where you look; everyone sees it 10 s",
+                   "Зажмите тачпад и нажмите R3 (клавиатура: V), чтобы отметить место; группа видит его 10 с"),
+           toggle, Kind::Toggle);
+    AddRow(Flag(&Values::party_through_walls), AddText("Show party through walls", "Группа сквозь стены"),
+           AddText("A small marker with the distance on each companion on your map, also behind walls",
+                   "Маленькая метка с расстоянием на каждом спутнике на вашей карте, и за стенами"),
+           toggle, Kind::Toggle);
+
     // ---- Enemy scaling (party_balance.h): per extra hunter, the host's values count. ----
     AddPage("Enemy scaling", "Сила врагов", "Boss and enemy health, damage and poise per extra hunter (bbport)",
             "Здоровье, урон и стойкость боссов и врагов за каждого охотника (bbport)");
@@ -1223,8 +1273,36 @@ void Load() {
     loaded = true;
 }
 
+/// The HDR page: whether the output runs (or why not) and the peak the curve uses.
+void RefreshHdr() {
+    if (!hdr_texts.status_help) return;
+    const auto& v = BbSettings::Get();
+    const int peak = int(BbSettings::HdrPeakNits() + 0.5f);
+    const int display = int(v.hdr_display_peak.load() + 0.5f);
+    const char* problem = v.hdr_problem.load();
+    if (v.hdr != v.startup_hdr) {
+        SetDynamic(hdr_texts.status_help, std::string("After a restart. ") + (v.hdr ? "Needs HDR on in Windows" : "SDR output"),
+                   std::string("После перезапуска. ") + (v.hdr ? "Нужен HDR в Windows" : "Вывод SDR"));
+    } else if (v.hdr_active == 1 || v.hdr_active == 2) {
+        const std::string mode = v.hdr_active == 1 ? "HDR10 (PQ, Rec.2020)" : "scRGB";
+        SetDynamic(hdr_texts.status_help, "On: " + mode + ", peak " + std::to_string(peak) + " nits",
+                   "Вкл: " + mode + ", пик " + std::to_string(peak) + " нит");
+    } else if (v.startup_hdr && problem) {
+        SetDynamic(hdr_texts.status_help, std::string("Not used: ") + problem, std::string("Не используется: ") + problem);
+    } else {
+        SetDynamic(hdr_texts.status_help, "HDR10 output for HDR displays (after a restart; HDR on in Windows)",
+                   "Вывод HDR10 на HDR-дисплей (после перезапуска; HDR включён в Windows)");
+    }
+    const std::string automatic = display > 0 ? std::to_string(display) + " nits, the display's" : "1000 nits";
+    const std::string automatic_ru = display > 0 ? std::to_string(display) + " нит, от дисплея" : "1000 нит";
+    SetDynamic(hdr_texts.peak_help,
+               "0 = Auto (" + automatic + "), 1-10 = 400 .. 4000 nits; now " + std::to_string(peak),
+               "0 = Авто (" + automatic_ru + "), 1-10 = 400 .. 4000 нит; сейчас " + std::to_string(peak));
+}
+
 void RefreshDynamic() {
     std::scoped_lock lock{StateMutex()};
+    RefreshHdr();
     RefreshParty();
     RefreshRestart();
     RefreshBalance();

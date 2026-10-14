@@ -60,6 +60,8 @@ private:
     std::atomic<bool> audible{true};
     bool mute_unfocused{true};
     std::atomic<bool> on_hdr_display{false};
+    float sdr_white_nits{80.0f};
+    void UpdateHdrLuminance();
     std::mutex text_mutex;
     bool text_requested{}, text_active{};
     int text_state{};

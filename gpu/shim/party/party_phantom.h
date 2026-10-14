@@ -229,7 +229,7 @@ void PhantomInit();
 bool PhantomWantsEmevd();
 /// Built-in EMEVD skip rules (the confinement walls unless BB_PARTY_OPEN_WORLD=0).
 std::vector<EmevdSkipRule> PhantomSkipRules();
-/// From the EMEVD filter (game thread), for 2003[12/15/53] and 2000[0] only.
+/// From the EMEVD filter (game thread), for 2003[12/15/53], 2000[0] and 2004[8] (DirectInsight) only.
 void PhantomEmevdInstruction(std::int32_t event, std::int32_t bank, std::int32_t id, const std::uint8_t* args,
                              std::size_t size);
 /// Director (host), for every travel it sends.

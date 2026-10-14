@@ -144,6 +144,31 @@ private:
     State state_ = State::Closed;
     double since_ = 0.0;
 };
+/// The game's area-name banner ("Cathedral Ward", bottom right, right after a loading screen and
+/// when the player walks into another map block): the performance HUD in the bottom-right corner
+/// lifts above it for kShowS (0.6.1 regression run: the HUD covered the banner). The banner has no
+/// readable flag here (FrpgMenuDlgTE_MapName, built by 0x17788c0, is not kept in a known slot), so
+/// the times it shows are its triggers: an arrival in the world (the local PlayerIns comes back
+/// after a load, or a new one) and a change of the map block. Pure; `t` in seconds, any monotonic
+/// clock; `map` 0 / 0xffffffff = unknown.
+class AreaBannerWatch {
+public:
+    static constexpr double kShowS = 10.0;
+    /// True while a banner may be up.
+    bool Update(bool in_world, std::uint64_t player, std::uint32_t map, double t);
+private:
+    std::uint64_t player_ = 0;
+    std::uint32_t map_ = 0xffffffffu;
+    double since_ = -1e9;
+};
+/// While the banner may be up, the bottom edge of a bottom-right performance HUD at most this
+/// fraction of the screen height from the top (the banner's text and rule span ~0.82 .. 0.91 of
+/// the height, from ~0.67 of the width to the right edge, at every resolution: the game scales it).
+constexpr float kAreaBannerTop = 0.80f;
+/// The bottom edge (pixels from the top) of a bottom-right performance HUD: `normal` (the corner)
+/// unless the banner may be up, then no lower than kAreaBannerTop * `height`.
+float PerfHudBottom(float normal, float height, bool banner);
+
 /// Set by party_hud_game's tick (game thread), read by the overlay: while the game's full-screen
 /// menu is up the party panel and the name tags hide and the party notices / NPC captions are held
 /// (not drawn, their time stopped) so they never draw crisply over the game's own menu.
@@ -261,4 +286,9 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
 /// (the one the game draws, read now), when it is still a live chr within 10 m of `near` (the
 /// board's position from the last tick); false otherwise (freed, disabled, moved far).
 bool PartyHudChrPos(std::uint64_t chr, const float near[3], float out[3]);
+/// The overlay (present thread), once a frame, for the performance HUD: whether the game's
+/// full-screen menu is up (the party tick's GameMenu() while it runs, else the same read here:
+/// solo play has no party tick) and whether the area-name banner may be up (AreaBannerWatch).
+/// Reads every 100 ms at most; false / false outside the world or before the image is known.
+void PerfHudGameState(bool* game_menu, bool* area_banner);
 }  // namespace coop

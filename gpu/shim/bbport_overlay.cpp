@@ -18,10 +18,12 @@
 #include <SDL3/SDL.h>
 #include "bbport_compile_progress.h"
 #include "bbport_frame_state.h"
+#include "bbport_hdr.h"
 #include "bbport_settings.h"
 #include "party/party_hud.h"
 #include "party/party_balance_rules.h"
 #include "party/party_npctalk.h"
+#include "party/party_ping.h"
 #include "party/party_status.h"
 #include "party/party_log.h"
 #include "bbport_camera.h"
@@ -152,6 +154,7 @@ std::int64_t SteadyMs() {
 // Party HUD (party_hud.h): companions' names and health in the bottom left corner, stacked above
 // the performance HUD when it has that corner; the toast goes above the panel. Present thread.
 party::hud::Board hud_board;          // the overlay's copy (Read each frame: fixed size, no allocation)
+bool perf_hud_banner = false;         // this frame: the game's area-name banner may be up
 bool perf_hud_bottom_left = false;    // this frame: the performance HUD's window ...
 float perf_hud_top = 0.0f;            // ... and its top edge
 float party_hud_top = -1.0f;          // this frame: the panel's top edge (-1: not drawn)
@@ -169,6 +172,19 @@ bool PartyTagsWanted() {
     return party_tags_on && party::status::Enabled() && BbSettings::Get().party_name_tags &&
            BbSettings::Get().party_overhead.load() != 0 &&
            party::hud::Shown() && !party::hud::GameDialog();  // not over the game's dimmed dialog box
+}
+
+/// I2: "Show party through walls" (bbport.ini party_through_walls; env BB_PARTY_THROUGH_WALLS=0/1
+/// over it, for tests).
+bool PartyThroughWalls() {
+    static const char* const env = std::getenv("BB_PARTY_THROUGH_WALLS");
+    return env && *env ? env[0] != '0' : BbSettings::Get().party_through_walls.load();
+}
+
+/// I2 pings and the party through walls (party_ping.h): a party with a companion, nothing hiding it.
+bool PartyPingsWanted() {
+    return party::status::Enabled() && (coop::ping::Enabled() || PartyThroughWalls()) &&
+           party::hud::Shown() && !party::hud::GameDialog();
 }
 
 // Party alert (party_status SetAlert: the host refused us): a message box in the middle of the
@@ -831,6 +847,83 @@ void DisplayTab() {
            });
 }
 
+/// Native HDR output (bbport_hdr.h, I4): on/off after a restart, the curve live.
+void HdrRows() {
+    auto& s = BbSettings::Get();
+    char line[256];
+    Toggle("hdr", T("HDR output (HDR10)", "Вывод HDR (HDR10)"), s.hdr,
+           T("An HDR10 picture (PQ, Rec.2020) for an HDR display: the game's SDR picture keeps its "
+             "mid-tones at paper white and only its highlights are expanded towards the peak. Needs "
+             "HDR on in Windows. Applies after restarting the game.",
+             "Картинка HDR10 (PQ, Rec.2020) для HDR-дисплея: средние тона SDR-картинки игры остаются "
+             "на уровне белого листа, к пику расширяются только блики. Нужен HDR в Windows. "
+             "Применяется после перезапуска игры."));
+    static const int peaks[] = {0, 400, 600, 800, 1000, 1200, 1500, 2000, 2500, 3000, 4000};
+    static const int papers[] = {80, 100, 120, 150, 180, 200, 250, 300, 350, 400, 500};
+    const auto index_of = [](const int* table, int value) {
+        int best = 0;
+        for (int i = 1; i < 11; ++i) {
+            if (std::abs(table[i] - value) < std::abs(table[best] - value)) best = i;
+        }
+        return best;
+    };
+    static char peak_names[11][32];
+    const int display = int(s.hdr_display_peak.load() + 0.5f);
+    for (int i = 0; i < 11; ++i) {
+        if (i == 0) {
+            std::snprintf(peak_names[i], sizeof(peak_names[i]), display > 0 ? T("Auto (%d nits)", "Авто (%d нит)")
+                                                                             : T("Auto (1000 nits)", "Авто (1000 нит)"),
+                          display);
+        } else {
+            std::snprintf(peak_names[i], sizeof(peak_names[i]), T("%d nits", "%d нит"), peaks[i]);
+        }
+    }
+    Choice("hdr_peak", T("HDR peak brightness", "HDR: пиковая яркость"), index_of(peaks, s.hdr_peak_nits), 11,
+           [](int i) { return peak_names[i]; }, [](int) { return true; },
+           T("The brightest the picture gets. Auto: what the display reports to Windows. Use the "
+             "calibration pattern: raise it until the inner square just disappears.",
+             "Самое яркое, что будет на экране. Авто: что дисплей сообщает Windows. По калибровочной "
+             "таблице: поднимайте, пока внутренний квадрат не исчезнет."),
+           true, [&](int i) { Store(s.hdr_peak_nits, peaks[i], true); });
+    static char paper_names[11][32];
+    for (int i = 0; i < 11; ++i) {
+        std::snprintf(paper_names[i], sizeof(paper_names[i]), T("%d nits", "%d нит"), papers[i]);
+    }
+    Choice("hdr_paper", T("HDR paper white", "HDR: белый лист"), index_of(papers, s.hdr_paper_white), 11,
+           [](int i) { return paper_names[i]; }, [](int) { return true; },
+           T("Brightness of the picture's mid-tones and of these menus. 200 nits by default; "
+             "lower in a dark room.",
+             "Яркость средних тонов картинки и этих меню. 200 нит по умолчанию; в тёмной комнате "
+             "меньше."),
+           true, [&](int i) { Store(s.hdr_paper_white, papers[i], true); });
+    SliderRow("hdr_strength", T("HDR highlights", "HDR: блики"), s.hdr_strength, 0.0f, 1.5f, 0.1f,
+              T("0: the SDR picture at paper white; 1: the game's white reaches the peak (default); "
+                "above 1 more highlights reach the peak.",
+                "0: SDR-картинка на уровне белого листа; 1: белый игры достигает пика (по умолчанию); "
+                "больше 1: больше бликов на пике."));
+    SliderRow("hdr_saturation", T("HDR saturation", "HDR: насыщенность"), s.hdr_saturation, 0.5f, 1.5f, 0.05f,
+              T("1: the game's colours; above 1 uses the wider Rec.2020 gamut.",
+                "1: цвета игры; больше 1 использует более широкий охват Rec.2020."));
+    Toggle("hdr_calibration", T("HDR calibration pattern", "HDR: калибровочная таблица"), s.hdr_calibration,
+           T("Patches at the top of the screen: a 10000-nit field with a square at the peak setting "
+             "(raise the peak until the square just disappears), paper white, a 0..peak ramp and the "
+             "game's grey levels through the curve.",
+             "Поля сверху экрана: поле 10000 нит с квадратом на уровне пика (поднимайте пик, пока "
+             "квадрат не исчезнет), белый лист, шкала 0..пик и уровни серого игры после кривой."));
+    if (s.hdr != s.startup_hdr) {
+        Note(T("HDR output: applies after restarting the game", "Вывод HDR: после перезапуска игры"), Dim());
+    } else if (s.hdr_active) {
+        std::snprintf(line, sizeof(line), T("HDR output: %s, peak %.0f nits, paper white %d nits",
+                                            "Вывод HDR: %s, пик %.0f нит, белый лист %d нит"),
+                      s.hdr_active == 1 ? "HDR10 (PQ, Rec.2020)" : "scRGB", BbSettings::HdrPeakNits(),
+                      s.hdr_paper_white.load());
+        Note(line, Dim());
+    } else if (const char* problem = s.hdr_problem.load(); problem && s.startup_hdr) {
+        std::snprintf(line, sizeof(line), T("HDR output not used: %s", "Вывод HDR не используется: %s"), problem);
+        Note(line, ImGui::GetColorU32(ImVec4(1.0f, 0.55f, 0.35f, 1.0f)));
+    }
+}
+
 void UpscalerTab() {
     auto& s = BbSettings::Get();
     const char* upscalers[] = {T("Off", "Выкл"), "FSR 3.1", "FSR 4 (INT8)", "FSR 4.1.1",
@@ -977,6 +1070,7 @@ void UpscalerTab() {
                       s.display_fps.load(), s.source_fps.load());
         Note(line, Dim());
     }
+    HdrRows();
 }
 
 void EffectsTab() {
@@ -1416,6 +1510,18 @@ void PartyTab() {
              "Видеть и слышать разговоры спутников с NPC рядом с вами: субтитры, голос NPC, их выбор и "
              "подарки. Дальность: Система > Правила группы > Дальность диалогов NPC."),
            on);
+    Toggle("party_pings", T("Pings", "Метки"), s.party_pings,
+           T("Hold the touchpad (Tab) and press R3 (Q), or press V: a marker where you look. Every party "
+             "member sees it through walls with its distance, in your colour, for 10 seconds.",
+             "Зажмите тачпад (Tab) и нажмите R3 (Q) или нажмите V: метка там, куда вы смотрите. Вся "
+             "группа видит её сквозь стены с расстоянием, вашим цветом, 10 секунд."),
+           on);
+    Toggle("party_through_walls", T("Show party through walls", "Группа сквозь стены"), s.party_through_walls,
+           T("A small diamond with the distance on every companion on your map, drawn over walls and "
+             "trees, in the companion's colour.",
+             "Маленький ромб с расстоянием на каждом спутнике на вашей карте, поверх стен и деревьев, "
+             "цветом спутника."),
+           on);
     Toggle("party_rendezvous", T("Find each other via the public DHT", "Поиск друг друга через публичный DHT"),
            s.party_rendezvous,
            T("When a direct connection fails, your address is posted on the public BitTorrent DHT under a "
@@ -1810,8 +1916,13 @@ void PerformanceHud() {
     const int position = std::clamp(s.hud_position.load(), 0, BbSettings::HudPositionCount - 1);
     const bool right = position == BbSettings::HudTopRight || position == BbSettings::HudBottomRight;
     const bool bottom = position == BbSettings::HudBottomLeft || position == BbSettings::HudBottomRight;
+    // 0.6.2: bottom right, it lifts above the game's area-name banner while that may be up.
+    float y = bottom ? viewport->WorkSize.y - pad : pad;
+    if (bottom && right) {
+        y = party::hud::PerfHudBottom(y, viewport->WorkSize.y, perf_hud_banner);
+    }
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + (right ? viewport->WorkSize.x - pad : pad),
-                                   viewport->WorkPos.y + (bottom ? viewport->WorkSize.y - pad : pad)),
+                                   viewport->WorkPos.y + y),
                             ImGuiCond_Always, ImVec2(right ? 1.0f : 0.0f, bottom ? 1.0f : 0.0f));
     ImGui::SetNextWindowBgAlpha(std::clamp(s.hud_opacity.load(), 0.1f, 1.0f));
     ImGui::PushFont(sans_font, 16.0f * hud_scale);
@@ -2259,6 +2370,137 @@ void PartyHud() {
     }
 }
 
+/// I2 (party_ping.h): every live ping of a member in this player's world on this map, through
+/// walls, in the pinger's colour with its name and distance (clamped to the screen edge with an
+/// arrow when off screen), and with "Show party through walls" every companion on this map as a
+/// small diamond with its distance. Under the game's menus, dialogs, cutscenes and loading screens
+/// nothing is drawn (PartyPingsWanted, the caller's GameMenu check). No allocation.
+void PartyPings() {
+    using namespace PartyHudDraw;
+    if (!PartyPingsWanted() || BbFrameState::IsMenuOrLoading()) {
+        return;
+    }
+    party::hud::Board& b = hud_board;
+    party::hud::Read(&b);
+    if (!b.active || !b.me_have_pos || party::hud::NowMs() - b.published_ms > 1000) {
+        return;
+    }
+    const BbCamera::State cam = BbCamera::Latest();
+    if (!DirectionAxes(b, cam).camera) {
+        return;  // no game camera in the player's space (a cutscene camera, a load)
+    }
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const ImVec2 display = viewport->Size;
+    const float s = base_scale;
+    ImDrawList* bg = ImGui::GetBackgroundDrawList();
+    char text[64];
+    const auto outlined = [&](ImVec2 at, ImU32 colour, float alpha, const char* str) {
+        const ImU32 dark = Rgba(0.02f, 0.02f, 0.02f, 0.75f * alpha);
+        for (const ImVec2 d : {ImVec2(-1, 0), ImVec2(1, 0), ImVec2(0, -1), ImVec2(0, 1), ImVec2(1, 1)}) {
+            bg->AddText(ImVec2(at.x + d.x * s, at.y + d.y * s), dark, str);
+        }
+        bg->AddText(at, colour, str);
+    };
+    const party::hud::Companion* member_of[party::ping::kMaxSlots] = {};
+    for (int i = 0; i < b.count; ++i) {
+        if (b.c[i].slot >= 0 && b.c[i].slot < party::ping::kMaxSlots) member_of[b.c[i].slot] = &b.c[i];
+    }
+
+    // Companions through walls: a diamond at the chest with the distance under it.
+    if (PartyThroughWalls()) {
+        ImGui::PushFont(game_font, 14.0f);  // FontScaleMain scales it
+        for (int i = 0; i < b.count; ++i) {
+            const party::hud::Companion& c = b.c[i];
+            const char* why = "";
+            if (!party::hud::TagVisible(c, party::hud::NowMs() - b.published_ms, &why)) continue;
+            float pos[3] = {c.pos[0], c.pos[1], c.pos[2]};
+            coop::PartyHudChrPos(c.chr, c.pos, pos);
+            const float d = party::hud::Distance(b.me_pos, pos);
+            if (d < 2.0f || d > 400.0f) continue;
+            const float chest[3] = {pos[0], pos[1] + 1.0f, pos[2]};
+            const party::hud::ScreenPoint sp =
+                party::hud::WorldToScreen(cam.view.data(), cam.proj.data(), chest, display.x, display.y, 0.02f);
+            if (!sp.visible) continue;
+            float rgb[3];
+            party::hud::MemberColour(c.slot, rgb);
+            const float a = 0.85f, r = 6.0f * s;
+            const ImVec2 c0(sp.x, sp.y);
+            const ImVec2 q[4] = {ImVec2(c0.x, c0.y - r), ImVec2(c0.x + r, c0.y), ImVec2(c0.x, c0.y + r),
+                                 ImVec2(c0.x - r, c0.y)};
+            bg->AddQuadFilled(q[0], q[1], q[2], q[3], Rgba(rgb[0], rgb[1], rgb[2], 0.35f * a));
+            bg->AddQuad(q[0], q[1], q[2], q[3], Rgba(0.02f, 0.02f, 0.02f, 0.8f * a), 3.0f * s);
+            bg->AddQuad(q[0], q[1], q[2], q[3], Rgba(rgb[0], rgb[1], rgb[2], a), 1.5f * s);
+            party::ping::FormatDistance(d, text, sizeof text);
+            const ImVec2 ts = ImGui::CalcTextSize(text);
+            outlined(ImVec2(std::round(c0.x - ts.x * 0.5f), std::round(c0.y + r + 2.0f * s)),
+                     Rgba(rgb[0], rgb[1], rgb[2], a), a, text);
+        }
+        ImGui::PopFont();
+    }
+
+    if (!coop::ping::Enabled()) {
+        return;
+    }
+    party::ping::Marker marks[party::ping::kMaxSlots];
+    const std::int64_t now = party::hud::NowMs();
+    const int n = party::ping::Read(marks, now);
+    for (int k = 0; k < n; ++k) {
+        const party::ping::Marker& m = marks[k];
+        if (m.map != b.me_map) continue;  // another map (or our own ping before a load)
+        if (!m.mine) {
+            const party::hud::Companion* c = member_of[m.slot];
+            if (!c || !c->connected || !c->same_world) continue;  // not in this player's world
+        }
+        float rgb[3];
+        party::hud::MemberColour(m.slot, rgb);
+        const std::int64_t left = m.until_ms - now, age = party::ping::kLifeMs - left;
+        const float a = party::ping::Alpha(left);
+        const ImU32 col = Rgba(rgb[0], rgb[1], rgb[2], a), dark = Rgba(0.02f, 0.02f, 0.02f, 0.8f * a);
+        const float inset = 28.0f * s;
+        const party::ping::EdgePoint e =
+            party::ping::ToScreenOrEdge(cam.view.data(), cam.proj.data(), m.pos, display.x, display.y, inset);
+        const float d = party::hud::Distance(b.me_pos, m.pos);
+        party::ping::FormatDistance(d, text, sizeof text);
+        char label[64];
+        std::snprintf(label, sizeof label, "%s  %s", m.name, text);
+        ImGui::PushFont(game_font, 16.0f);
+        const ImVec2 ts = ImGui::CalcTextSize(label);
+        if (e.on_screen) {
+            // A pin: a ring with a dot on the spot, a stem up to the label (name, distance).
+            const float r = 8.0f * s;
+            const ImVec2 at(e.x, e.y);
+            if (age < 1200) {  // an attention pulse for the first second
+                const float t = float(age) / 1200.0f;
+                bg->AddCircle(at, r * (1.0f + 2.5f * t), Rgba(rgb[0], rgb[1], rgb[2], 0.8f * (1.0f - t) * a), 32,
+                              2.0f * s);
+            }
+            bg->AddCircle(at, r, dark, 32, 4.0f * s);
+            bg->AddCircle(at, r, col, 32, 2.0f * s);
+            bg->AddCircleFilled(at, 2.5f * s, col, 12);
+            const float stem = 22.0f * s;
+            bg->AddLine(ImVec2(at.x, at.y - r), ImVec2(at.x, at.y - r - stem), dark, 3.0f * s);
+            bg->AddLine(ImVec2(at.x, at.y - r), ImVec2(at.x, at.y - r - stem), col, 1.5f * s);
+            outlined(ImVec2(std::round(at.x - ts.x * 0.5f), std::round(at.y - r - stem - ts.y - 2.0f * s)), col, a,
+                     label);
+        } else {
+            // Off screen: an arrow on the edge pointing at it, the name and distance beside it.
+            const float r = 11.0f * s, ca = std::cos(e.angle), sa = std::sin(e.angle);
+            const ImVec2 tip(e.x + ca * r, e.y + sa * r);
+            const ImVec2 left_pt(e.x - ca * r * 0.6f - sa * r * 0.8f, e.y - sa * r * 0.6f + ca * r * 0.8f);
+            const ImVec2 right_pt(e.x - ca * r * 0.6f + sa * r * 0.8f, e.y - sa * r * 0.6f - ca * r * 0.8f);
+            bg->AddTriangleFilled(tip, left_pt, right_pt, col);
+            bg->AddTriangle(tip, left_pt, right_pt, dark, 1.5f * s);
+            // The label on the screen side of the arrow.
+            float lx = e.x - ca * (r + 6.0f * s) - ts.x * 0.5f - ca * ts.x * 0.5f;
+            float ly = e.y - sa * (r + 6.0f * s) - ts.y * 0.5f - sa * ts.y * 0.5f;
+            lx = std::clamp(lx, 4.0f * s, display.x - ts.x - 4.0f * s);
+            ly = std::clamp(ly, 4.0f * s, display.y - ts.y - 4.0f * s);
+            outlined(ImVec2(std::round(lx), std::round(ly)), col, a, label);
+        }
+        ImGui::PopFont();
+    }
+}
+
 /// Party notices (join / leave / travel): the latest party_status event for ToastMs in a bottom
 /// corner, clear of the game's HUD (bottom left; bottom right while the performance HUD has the
 /// bottom left), fading out. Not
@@ -2684,6 +2926,11 @@ bool HandleEvent(const SDL_Event& event) {
             }
             return true;
         }
+        // V: a ping (I2, party_ping.h). Not taken from the game: a key.* binding of V still works.
+        if (!is_open && down && !event.key.repeat && event.key.key == SDLK_V && coop::ping::Enabled()) {
+            coop::ping::Request("V key");
+            return false;
+        }
         if (!is_open) {
             return false;
         }
@@ -2762,10 +3009,49 @@ bool HandleEvent(const SDL_Event& event) {
     }
 }
 
+/// The HDR calibration pattern's labels (the pattern itself: hdr_compose.frag).
+bool HdrPatternShown() {
+    const auto& s = BbSettings::Get();
+    return s.hdr_calibration && s.hdr_active != 0;
+}
+
+void HdrPatternLabels() {
+    const auto& s = BbSettings::Get();
+    const ImVec2 size = ImGui::GetIO().DisplaySize;
+    const float left = BbHdr::PatternLeft * size.x, top = BbHdr::PatternTop * size.y;
+    const float width = (BbHdr::PatternRight - BbHdr::PatternLeft) * size.x;
+    const float height = (BbHdr::PatternBottom - BbHdr::PatternTop) * size.y;
+    const float boxes = height * BbHdr::PatternSplitY;
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    const auto label = [&](float x0, float x1, float y, const char* text) {
+        const ImVec2 extent = ImGui::CalcTextSize(text);
+        const ImVec2 at{left + (x0 + x1) * 0.5f * width - extent.x * 0.5f, y};
+        draw->AddRectFilled({at.x - 6, at.y - 3}, {at.x + extent.x + 6, at.y + extent.y + 3},
+                            IM_COL32(0, 0, 0, 200), 4.0f);
+        draw->AddText(at, IM_COL32(235, 235, 235, 255), text);
+    };
+    char text[128];
+    const float y = top + boxes + 4.0f;
+    std::snprintf(text, sizeof(text), BbSettings::MenuText("Square: peak %.0f nits (should vanish)",
+                                                           "Квадрат: пик %.0f нит (должен исчезнуть)"),
+                  BbSettings::HdrPeakNits());
+    label(BbHdr::PeakBoxLeft, BbHdr::PeakBoxRight, y, text);
+    std::snprintf(text, sizeof(text), BbSettings::MenuText("Paper white %d nits", "Белый лист %d нит"),
+                  s.hdr_paper_white.load());
+    label(BbHdr::PaperBoxLeft, BbHdr::PaperBoxRight, y, text);
+    std::snprintf(text, sizeof(text), BbSettings::MenuText("0 .. %.0f nits", "0 .. %.0f нит"),
+                  BbSettings::HdrPeakNits());
+    label(BbHdr::RampLeft, BbHdr::RampRight, y, text);
+    label(0.0f, 1.0f, top + height + 4.0f,
+          BbSettings::MenuText("The game's levels 0 .. 1 through the HDR curve",
+                               "Уровни игры 0 .. 1 после кривой HDR"));
+}
+
 bool Visible() {
     return initialized &&
-           (menu_open || prompt_active || BbSettings::Get().show_fps || BbSettings::Get().show_hud ||
-            CompileIndicatorShown() || ToastWanted() || AlertWanted() || NpcCaptionWanted() || PartyHudWanted() || PartyTagsWanted());
+           (menu_open || prompt_active || BbSettings::Get().show_fps || BbSettings::Get().show_hud || HdrPatternShown() ||
+            CompileIndicatorShown() || ToastWanted() || AlertWanted() || NpcCaptionWanted() || PartyHudWanted() || PartyTagsWanted() ||
+            PartyPingsWanted());
 }
 
 bool MenuOpen() {
@@ -2870,7 +3156,7 @@ void RenderPrecompile(vk::CommandBuffer cmdbuf, vk::Extent2D extent) {
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmdbuf);
 }
 
-void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
+bool Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, bool clear) {
 
     // Present interval for the FPS readout (measured also while nothing is drawn).
     const auto now = std::chrono::steady_clock::now();
@@ -2890,7 +3176,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
         PartyHudDiag();
     }
     if (!Visible()) {
-        return;
+        return false;
     }
     std::scoped_lock lock{imgui_mutex};
     ImGuiIO& io = ImGui::GetIO();
@@ -2912,9 +3198,15 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     if (menu_open) {
         Menu();
     }
-    if (BbSettings::Get().show_hud && !menu_open) {
+    bool game_menu = false;
+    if (BbSettings::Get().show_hud || BbSettings::Get().show_fps) {
+        coop::PerfHudGameState(&game_menu, &perf_hud_banner);
+    }
+    // Under the game's full-screen menus (inventory, equipment, level up...) neither is drawn,
+    // as the party HUD (0.6.2).
+    if (BbSettings::Get().show_hud && !menu_open && !game_menu) {
         PerformanceHud(); // includes the frame rate: the FPS counter is not drawn too
-    } else if (BbSettings::Get().show_fps && !menu_open) {
+    } else if (BbSettings::Get().show_fps && !menu_open && !game_menu) {
         FpsCounter();
     }
     HoldPartyNoticesInGameMenu();
@@ -2922,6 +3214,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
         CompileIndicator();
         if (!party::hud::GameMenu()) {  // the game's full-screen menu: none of these over it
             PartyHud(); // before the toast: it stacks above the panel
+            PartyPings();
             PartyToast();
             PartyAlert();
             PartyNpcCaption();
@@ -2930,13 +3223,17 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     if (prompt_active && !menu_open) {
         TextPrompt();
     }
+    if (HdrPatternShown()) {
+        HdrPatternLabels();
+    }
     ImGui::Render();
 
     const vk::RenderingAttachmentInfo attachment{
         .imageView = view,
         .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-        .loadOp = vk::AttachmentLoadOp::eLoad,
+        .loadOp = clear ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad,
         .storeOp = vk::AttachmentStoreOp::eStore,
+        .clearValue = vk::ClearValue{vk::ClearColorValue{std::array{0.0f, 0.0f, 0.0f, 0.0f}}},
     };
     cmdbuf.beginRendering(vk::RenderingInfo{
         .renderArea = {{0, 0}, extent},
@@ -2950,6 +3247,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmdbuf);
     }
     cmdbuf.endRendering();
+    return true;
 }
 
 } // namespace BbOverlay

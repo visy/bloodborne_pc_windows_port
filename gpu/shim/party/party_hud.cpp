@@ -289,6 +289,24 @@ bool FlowMenuKind::Update(bool flow_open, bool dialog, double t) {
     return state_ == State::Full;
 }
 
+bool AreaBannerWatch::Update(bool in_world, std::uint64_t player, std::uint32_t map, double t) {
+    if (!in_world || !player) {
+        player_ = 0;  // the next PlayerIns is an arrival
+        return false;
+    }
+    const bool known = map != 0 && map != 0xffffffffu;
+    if (player != player_ || (known && map_ != 0xffffffffu && map != map_)) since_ = t;
+    player_ = player;
+    if (known) map_ = map;
+    return t - since_ < kShowS;
+}
+
+float PerfHudBottom(float normal, float height, bool banner) {
+    if (!banner || height <= 0.0f) return normal;
+    const float top = kAreaBannerTop * height;
+    return normal < top ? normal : top;
+}
+
 void SetGameMenu(bool open) {
     g_game_menu.store(open, std::memory_order_relaxed);
 }

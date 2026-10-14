@@ -430,6 +430,8 @@ bool Instance::CreateDevice() {
     }
     image_view_min_lod = add_extension(VK_EXT_IMAGE_VIEW_MIN_LOD_EXTENSION_NAME);
     supports_memory_budget = add_extension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+    // bbport: the HDR output's mastering metadata (bbport_hdr.h); optional.
+    hdr_metadata = add_extension(VK_EXT_HDR_METADATA_EXTENSION_NAME);
     // bbport: guest direct memory allocated here and mapped by the runtime (BbGuestMemory).
 #ifdef _WIN32
     // bbport (Windows): dma-buf export is Linux-only (the runtime maps the fd); no export here.
