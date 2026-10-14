@@ -528,7 +528,7 @@ class LauncherUI:
         sb_layout.setContentsMargins(0, 18, 0, 16)
         sb_layout.setSpacing(4)
 
-        logo_title = QLabel("BLOODBORNE")
+        logo_title = QLabel("BB LAUNCHER")
         logo_title.setStyleSheet(
             "color: #d1b87a; font-size: 15px; font-weight: 800; letter-spacing: 2px; padding: 0 20px; background: transparent;"
         )
@@ -574,7 +574,7 @@ class LauncherUI:
         tb_layout.setContentsMargins(24, 0, 0, 0)
         tb_layout.setSpacing(0)
 
-        lbl_win_title = QLabel("Bloodborne PC Launcher")
+        lbl_win_title = QLabel("Bloodborne PC Windows Launcher")
         lbl_win_title.setObjectName("TitleBarText")
         tb_layout.addWidget(lbl_win_title)
         tb_layout.addStretch()
