@@ -3,8 +3,10 @@ setlocal
 
 cd /d "%~dp0"
 
-REM Find Python 3
+REM Find Python 3 (prefer bundled embedded Python if present)
 if defined PYTHON goto found_python
+if exist "%~dp0python-embed\python.exe" set "PYTHON=%~dp0python-embed\python.exe" & goto found_python
+if exist "%~dp0python\python.exe" set "PYTHON=%~dp0python\python.exe" & goto found_python
 for %%P in (
     "C:\Program Files\Python314\python.exe"
     "C:\Program Files\Python313\python.exe"
