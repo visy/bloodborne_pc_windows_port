@@ -88,6 +88,9 @@ std::vector<int> values, defaults, applied, resting;
 std::vector<u8> bytes, default_bytes;
 std::vector<std::int64_t> rested_since, armed_at;
 std::atomic<bool> loaded{false};
+/// Counts the values taken from the settings while a page may be open (changed elsewhere: the
+/// overlay menu, bbport.ini): the glue moves the rows' widgets to them.
+std::atomic<std::uint64_t> value_changes{0};
 std::atomic<std::int64_t> last_refresh{-1000000};
 void (*restart_handler)() = nullptr;
 void (*quit_handler)() = nullptr;
@@ -1107,6 +1110,10 @@ std::uint64_t DynamicChanges() {
     return dynamic_changes.load(std::memory_order_acquire);
 }
 
+std::uint64_t ValueChanges() {
+    return value_changes.load(std::memory_order_acquire);
+}
+
 bool IsDynamic(u32 id) {
     return id >= IdBase && id < IdBase + texts.size() && texts[id - IdBase].dynamic >= 0;
 }
@@ -1206,7 +1213,8 @@ void Poll(std::int64_t now_ms) {
         last_refresh = now_ms;
         RefreshDynamic();
     }
-    bool save = false;
+    bool save = false, adopted = false;
+    const Values& settings = BbSettings::Get();
     for (std::size_t i = 0; i < fields.size(); ++i) {
         const Field& f = fields[i];
         if (f.kind != Kind::List) {
@@ -1216,6 +1224,15 @@ void Poll(std::int64_t now_ms) {
         const int value = values[i];
         if (value == applied[i]) {
             resting[i] = value;
+            // Not changed on the page: the setting may have been changed elsewhere (the overlay
+            // menu; a setter that falls back, e.g. an upscaler this GPU lacks). The row follows
+            // it, so the page never shows (or later re-applies) a stale value.
+            const int now_set = f.get ? f.get(settings) : value;
+            if (now_set != value) {
+                values[i] = applied[i] = resting[i] = now_set;
+                bytes[i] = f.steps ? ChoicePosition(now_set, f.steps) : u8(now_set);
+                adopted = true;
+            }
             continue;
         }
         if (f.debounce) {
@@ -1239,6 +1256,10 @@ void Poll(std::int64_t now_ms) {
     if (save) {
         BbSettings::Save();
     }
+    if (adopted) value_changes.fetch_add(1, std::memory_order_release);
+    // The run-time texts that describe values (the enemy scaling lines) at once, not at the next
+    // 250 ms refresh: the glue redraws the help line in the same frame.
+    if (save || adopted) RefreshDynamic();
 }
 
 void AddPartyRow(PartyRow row) {
