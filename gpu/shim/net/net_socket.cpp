@@ -14,6 +14,7 @@
 #include "bbnet_internal.h"
 #include "net_stun.h"
 #include "netsim.h"
+#include "nr_outage.h"
 #include "party_udp.h"
 
 #if defined(_WIN32)
@@ -349,6 +350,13 @@ struct SockQueue {
     // F5: each source's last small datagram (its keepalive / ack traffic), replayed to the game
     // during a network outage the party link knows about (p2p_outage_keepalive).
     std::map<std::uint64_t, Datagram> last_small;
+    // F5 (nr_outage.h): each source's last reliable data record (the keepalive that resets the
+    // game's idle deadline), and what the game sent each peer for a replay after its silence.
+    std::map<std::uint64_t, Datagram> keepalive;
+    std::map<std::uint64_t, nr::PeerReplay> replay;
+    std::map<std::uint64_t, SceSockaddrIn> replay_to;
+    std::map<std::uint64_t, Clock::time_point> strip_until;  // no dup-ack reports (resume)
+    std::uint64_t stripped = 0;
     std::uint64_t replayed = 0;
 };
 // The party UDP port, shared by every game socket that binds a vport on it (the game binds
@@ -496,6 +504,39 @@ const bool g_net_trace = [] {
     return e && e[0] == '1';
 }();
 constexpr int kTraceFirst = 400;
+// RE aid BB_NET_HEX=N: every game P2P datagram's first N bytes (both ways), for the transport's
+// header (F5 outage work).
+const int g_net_hex = [] {
+    const char* e = std::getenv("BB_NET_HEX");
+    return e ? std::max(0, std::min(64, std::atoi(e))) : 0;
+}();
+// F5: BB_PARTY_OUTAGE_REPLAY=0 turns off the resume replay and the reliable keepalive record.
+const bool g_outage_replay = [] {
+    const char* e = std::getenv("BB_PARTY_OUTAGE_REPLAY");
+    return !(e && e[0] == '0');
+}();
+int dgram_send(int s, const void* buf, std::uint64_t len, int flags, const SceSockaddrIn* to);
+// Sends the kept records again (nr_outage.h), off the reader thread, a few at a time.
+void resume_replay(int sock, SceSockaddrIn to, std::vector<std::vector<std::uint8_t>> dgs, std::size_t records,
+                   double silent_s) {
+    char ip[32];
+    write_ipv4(ip, sizeof(ip), to.addr);
+    log("outage resume: %s:%u heard again after %.1f s: %zu reliable record(s) sent again in %zu datagram(s)", ip,
+        bswap16(to.port), silent_s, records, dgs.size());
+    std::thread([sock, to, dgs = std::move(dgs)] {
+        for (std::size_t i = 0; i < dgs.size(); ++i) {
+            dgram_send(sock, dgs[i].data(), dgs[i].size(), 0, &to);
+            if (i % 8 == 7) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }).detach();
+}
+void hex_trace(bool send, unsigned src, unsigned dst, const std::uint8_t* d, std::size_t n) {
+    if (!g_net_hex || !d) return;
+    char hex[64 * 3 + 1] = {};
+    const std::size_t m = std::min<std::size_t>(n, static_cast<std::size_t>(g_net_hex));
+    for (std::size_t i = 0; i < m; ++i) std::snprintf(hex + 3 * i, 4, "%02x ", d[i]);
+    log("hex %s %u->%u %zu: %s", send ? "out" : "in ", src, dst, n, hex);
+}
 bool trace_now(std::atomic<int>& count) {
     if (g_net_trace) return true;
     return count.fetch_add(1, std::memory_order_relaxed) < kTraceFirst;
@@ -683,6 +724,7 @@ void p2p_reader(std::shared_ptr<P2pPort> port) {
         dg.vport = src;
         if (PacketTraceFn tf = g_packet_trace.load(std::memory_order_relaxed))
             tf(false, src, dst, dg.data.data(), dg.data.size());
+        hex_trace(false, src, dst, dg.data.data(), dg.data.size());
         if (trace_now(logs)) {
             char ip[32];
             write_ipv4(ip, sizeof(ip), sa.sin_addr.s_addr);
@@ -693,8 +735,43 @@ void p2p_reader(std::shared_ptr<P2pPort> port) {
             std::lock_guard<std::mutex> lk(q->mu);
             ++q->in_dgrams;
             q->in_bytes += dg.data.size();
-            if (q->heard.size() < kMaxHeard || q->heard.count(source_key(dg.addr, dg.port)))
-                q->heard[source_key(dg.addr, dg.port)] = Clock::now();
+            const std::uint64_t key = source_key(dg.addr, dg.port);
+            const auto now = Clock::now();
+            Clock::time_point prev{};
+            if (auto h = q->heard.find(key); h != q->heard.end()) prev = h->second;
+            if (q->heard.size() < kMaxHeard || q->heard.count(key)) q->heard[key] = now;
+            if (std::vector<std::uint8_t> ka = nr::keepalive_from(dg.data.data(), dg.data.size()); !ka.empty()) {
+                if (q->keepalive.size() < kMaxHeard || q->keepalive.count(key)) {
+                    Datagram k = dg;
+                    k.data = std::move(ka);
+                    q->keepalive[key] = std::move(k);
+                }
+            }
+            if (auto r = q->replay.find(key); r != q->replay.end() && g_outage_replay) {
+                std::size_t records = 0;
+                auto dgs = r->second.on_heard(now, prev, &records);
+                auto to = q->replay_to.find(key);
+                if (!dgs.empty() && to != q->replay_to.end()) {
+                    resume_replay(q->sock, to->second, std::move(dgs), records,
+                                  std::chrono::duration<double>(now - prev).count());
+                    q->strip_until[key] = now + std::chrono::seconds(3);
+                }
+            }
+            if (auto su = q->strip_until.find(key); su != q->strip_until.end()) {
+                if (now >= su->second) {
+                    log("outage resume: %llu duplicate-ack report(s) from that peer held back meanwhile",
+                        static_cast<unsigned long long>(q->stripped));
+                    q->strip_until.erase(su);
+                    q->stripped = 0;
+                } else {
+                    std::vector<std::uint8_t> kept;
+                    if (const std::size_t gone = nr::strip_dup_acks(dg.data.data(), dg.data.size(), &kept)) {
+                        q->stripped += gone;
+                        dg.data = std::move(kept);
+                    }
+                }
+            }
+            if (dg.data.empty()) continue;  // only held-back records in it
             if (dg.data.size() <= kSmallDgram &&
                 (q->last_small.size() < kMaxHeard || q->last_small.count(source_key(dg.addr, dg.port))))
                 q->last_small[source_key(dg.addr, dg.port)] = dg;
@@ -858,6 +935,12 @@ int sock_recv(int s, void* buf, std::uint64_t len, int flags, SceSockaddrIn* fro
             }
         }
         const std::size_t take = dg.data.size() < len ? dg.data.size() : static_cast<std::size_t>(len);
+        if (take < dg.data.size()) {
+            static std::atomic<int> cut{0};
+            if (cut.fetch_add(1) < 20)
+                log("recv: a %zu-byte datagram cut to the game's %llu-byte buffer", dg.data.size(),
+                    static_cast<unsigned long long>(len));
+        }
         if (buf && take) std::memcpy(buf, dg.data.data(), take);
         if (from) fill_sce_addr(from, dg.addr, dg.port, dg.vport);
         return static_cast<int>(take);
@@ -886,6 +969,26 @@ int sock_recv(int s, void* buf, std::uint64_t len, int flags, SceSockaddrIn* fro
 int dgram_send(int s, const void* buf, std::uint64_t len, int flags, const SceSockaddrIn* to) {
     NetSock sock;
     if (!sock_state(s, &sock)) return net_err(bsd::kEBADF);
+    // F5: the session transport, catching up after an outage, packs datagrams past its own MTU
+    // (1232; live up to 2042 bytes) and the peer's game reads at most its MTU: the records past it
+    // were cut off and their gap stalled the stream. Such a datagram leaves as several, split at
+    // record boundaries (each record stands alone).
+    if (sock.p2p && buf && len > nr::kGameMtu && g_outage_replay) {
+        std::vector<std::vector<std::uint8_t>> parts;
+        if (nr::split_records(static_cast<const std::uint8_t*>(buf), static_cast<std::size_t>(len), nr::kGameMtu,
+                              &parts) &&
+            parts.size() > 1) {
+            static std::atomic<int> logged{0};
+            if (logged.fetch_add(1) < 10)
+                log("send: a %llu-byte game datagram split into %zu at record boundaries",
+                    static_cast<unsigned long long>(len), parts.size());
+            for (const auto& part : parts) {
+                const int r = dgram_send(s, part.data(), part.size(), flags, to);
+                if (r < 0) return r;
+            }
+            return static_cast<int>(len);
+        }
+    }
     const sockfd_t fd = sock.port ? sock.port->fd : sock.fd;
     if (!sock_ok(fd)) return static_cast<int>(len);
     if (!to) return net_err(bsd::kEDESTADDRREQ);
@@ -930,6 +1033,18 @@ int dgram_send(int s, const void* buf, std::uint64_t len, int flags, const SceSo
     }
     if (PacketTraceFn tf = g_packet_trace.load(std::memory_order_relaxed); tf && sock.p2p && buf)
         tf(true, sock.vport, dst_vport, static_cast<const unsigned char*>(buf), static_cast<std::size_t>(len));
+    if (sock.p2p) hex_trace(true, sock.vport, dst_vport, static_cast<const std::uint8_t*>(buf), static_cast<std::size_t>(len));
+    if (sock.p2p && sock.queue && buf && g_outage_replay) {
+        const std::uint64_t key = source_key(to->addr, to->port);
+        std::lock_guard<std::mutex> lk(sock.queue->mu);
+        auto h = sock.queue->heard.find(key);
+        // Only peers the game has heard (bounded by the heard table): never a stranger's address.
+        if (h != sock.queue->heard.end()) {
+            sock.queue->replay[key].on_send(Clock::now(), h->second, static_cast<const std::uint8_t*>(buf),
+                                            static_cast<std::size_t>(len));
+            sock.queue->replay_to[key] = *to;
+        }
+    }
     static std::atomic<int> logs{0};
     if (sock.p2p && trace_now(logs)) {
         char ip[32];
@@ -2108,9 +2223,13 @@ void outage_keepalive_main() {
                 for (const auto& [key, t] : q->heard) {
                     const auto age = now - t;
                     if (age < std::chrono::milliseconds(2500) || age > std::chrono::seconds(120)) continue;
-                    auto it = q->last_small.find(key);
-                    if (it == q->last_small.end() || q->q.size() >= kMaxInbox) continue;
-                    q->q.push_back(it->second);
+                    // The last reliable data record (resets the idle deadline); the last small
+                    // datagram only for a peer that never sent one.
+                    const Datagram* ka = nullptr;
+                    if (auto k = q->keepalive.find(key); k != q->keepalive.end()) ka = &k->second;
+                    else if (auto l = q->last_small.find(key); l != q->last_small.end()) ka = &l->second;
+                    if (!ka || q->q.size() >= kMaxInbox) continue;
+                    q->q.push_back(*ka);
                     ++q->replayed;
                     ++n;
                 }
