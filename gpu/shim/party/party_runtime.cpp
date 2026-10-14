@@ -19,6 +19,7 @@
 #include "party_phantom.h"
 #include "party_fourp.h"
 #include "party_progress.h"
+#include "party_desync.h"
 #include "party_travel.h"
 #include "party_worldact.h"
 #include "party_droproll.h"
@@ -811,6 +812,11 @@ LinkCallbacks make_callbacks(bool host) {
                 else plog("%s event from slot %d: %s", name.c_str(), slot, err.c_str());
                 return;
             }
+            if (name == coop::desync::kResyncEvent) {  // F5: a guest's state differs from the host's digest
+                std::string err;
+                if (!coop::desync::HostQueueResync(slot, body, &err)) plog("sync_resync from slot %d refused: %s", slot, err.c_str());
+                return;
+            }
             if (name == coop::kLampLitEventName) {  // a guest lit a lamp of the host's world
                 std::string err;
                 if (!coop::GuestServicesOnLampLit(slot, body, &err)) plog("lamp_lit from slot %d refused: %s", slot, err.c_str());
@@ -896,7 +902,7 @@ LinkCallbacks make_callbacks(bool host) {
                 return;
             }
             if (name == coop::progress::kEventFlags || name == coop::progress::kEventFlagSnapshot ||
-                name == coop::progress::kEventWorldGroups) {
+                name == coop::progress::kEventWorldGroups || name == coop::desync::kDigestEvent) {
                 std::string err;  // C2: the host's flags, applied by the main-thread tick
                 if (!coop::progress::OnLinkEvent(name, body, &err)) plog("%s event: %s", name.c_str(), err.c_str());
                 return;

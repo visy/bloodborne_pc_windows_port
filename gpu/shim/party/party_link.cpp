@@ -689,6 +689,8 @@ struct PartyLink::Impl {
     std::map<int, Member> members;
     Clock::time_point last_roster_bcast{};
     std::set<std::string> banned;  // kicked names: refused for the rest of this session
+    AuthThrottle auth_throttle;    // wrong AUTH proofs per address (password guessing)
+    std::uint64_t locked_refusals = 0;
     std::uint64_t refused_conns = 0;
 
     // UDP path (party_rudp.h).
@@ -1067,8 +1069,8 @@ struct PartyLink::Impl {
         c->rx.reset();
     }
 
-    void reject_conn(Conn* c, RejectCode code, const std::string& reason) {
-        log("party link: rejecting " + (c->name.empty() ? std::string("connection") : c->name) + ": " + reason);
+    void reject_conn(Conn* c, RejectCode code, const std::string& reason, bool quiet = false) {
+        if (!quiet) log("party link: rejecting " + (c->name.empty() ? std::string("connection") : c->name) + ": " + reason);
         Writer w;
         w.u8(static_cast<std::uint8_t>(code)).str16(reason);
         c->tx.reset();  // REJECT is always plaintext
@@ -1274,6 +1276,18 @@ struct PartyLink::Impl {
             r.bytes(magic, 4);
             std::uint16_t ver = r.u16();
             if (!r.ok || std::memcmp(magic, kMagic, 4) != 0) return lose(c, "not a PartyLink client");
+            {
+                std::uint32_t ip = 0;
+                std::memcpy(&ip, c->peer_ip.data(), 4);
+                std::int64_t wait_ms = 0;
+                if (cfg.auth_throttle && auth_throttle.Locked(ip, now_ms(), &wait_ms)) {
+                    ++locked_refusals;  // logged sparsely: a guesser may hammer the port
+                    return reject_conn(c, RejectCode::Auth,
+                                       "too many wrong passwords from your address: try again in " +
+                                           std::to_string((wait_ms + 999) / 1000) + " s",
+                                       locked_refusals != 1 && locked_refusals % 100 != 0);
+                }
+            }
             // The version before the rest: other versions lay HELLO out differently.
             if (ver != kLinkProtocolVersion)
                 return reject_conn(c, RejectCode::Version,
@@ -1315,9 +1329,24 @@ struct PartyLink::Impl {
             Key expect = crypto::auth_proof(party_key, c->hn, c->gn);
             if (!crypto::equal32(expect.data(), proof)) {
                 const Key by_password = crypto::auth_proof(password_key, c->hn, c->gn);
-                if (cfg.password.empty() || !crypto::equal32(by_password.data(), proof))
+                if (cfg.password.empty() || !crypto::equal32(by_password.data(), proof)) {
+                    std::uint32_t ip = 0;
+                    std::memcpy(&ip, c->peer_ip.data(), 4);
+                    if (cfg.auth_throttle && auth_throttle.Fail(ip, now_ms())) {
+                        std::int64_t wait_ms = 0;
+                        auth_throttle.Locked(ip, now_ms(), &wait_ms);
+                        log("party link: " + format_peer(c) + " gave " + std::to_string(kAuthFailFree) +
+                            "+ wrong passwords: refused for " + std::to_string(wait_ms / 1000) + " s (lockout " +
+                            std::to_string(auth_throttle.lockouts()) + ")");
+                    }
                     return reject_conn(c, RejectCode::Auth, auth_reject_reason(!cfg.password.empty()));
+                }
                 c->password_only = true;  // a plain address and the right password
+            }
+            {
+                std::uint32_t ip = 0;
+                std::memcpy(&ip, c->peer_ip.data(), 4);
+                auth_throttle.Success(ip);
             }
             admit(c);
             return;
@@ -2621,6 +2650,50 @@ bool PartyLink::kick_name(const std::string& name, const std::string& reason) {
             if (m.name == name) slot = s;
     }
     return slot > 0 && kick(slot, reason);
+}
+
+bool AuthThrottle::Locked(std::uint32_t ip, std::int64_t now_ms, std::int64_t* remaining_ms) const {
+    auto it = addrs_.find(ip);
+    const bool locked = it != addrs_.end() && now_ms < it->second.until;
+    if (remaining_ms) *remaining_ms = locked ? it->second.until - now_ms : 0;
+    return locked;
+}
+
+bool AuthThrottle::Fail(std::uint32_t ip, std::int64_t now_ms) {
+    auto it = addrs_.find(ip);
+    if (it == addrs_.end()) {
+        if (addrs_.size() >= kAuthTrackedAddrs) {  // forget the stalest address (never a locked one first)
+            auto stalest = addrs_.begin();
+            for (auto j = addrs_.begin(); j != addrs_.end(); ++j) {
+                const bool jl = now_ms < j->second.until, sl = now_ms < stalest->second.until;
+                if ((sl && !jl) || (sl == jl && j->second.last < stalest->second.last)) stalest = j;
+            }
+            addrs_.erase(stalest);
+        }
+        it = addrs_.emplace(ip, Addr{}).first;
+        it->second.window = now_ms;
+    }
+    Addr& a = it->second;
+    if (a.last && now_ms - a.last > kAuthForgetMs) a = Addr{};
+    if (a.fails == 0 || now_ms - a.window > kAuthFailWindowMs) {
+        a.fails = 0;
+        a.window = now_ms;
+    }
+    a.last = now_ms;
+    // After a lockout (until forgotten) one wrong proof locks again: a typo is long past.
+    if (++a.fails <= (a.lockouts ? 0 : kAuthFailFree)) return false;
+    std::int64_t lock = kAuthLockoutMs;
+    for (int i = 0; i < a.lockouts && lock < kAuthLockoutMaxMs; ++i) lock *= 2;
+    a.until = now_ms + std::min(lock, kAuthLockoutMaxMs);
+    ++a.lockouts;
+    a.fails = 0;
+    ++lockouts_;
+    return true;
+}
+
+void AuthThrottle::Success(std::uint32_t ip) {
+    auto it = addrs_.find(ip);
+    if (it != addrs_.end()) it->second.fails = 0;
 }
 
 bool PartyLink::is_banned(const std::string& name) const {

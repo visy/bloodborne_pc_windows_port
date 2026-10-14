@@ -1221,6 +1221,114 @@ static void test_udp_nat_link() {
     host.stop();
 }
 
+// F5: long outages and a stalled host, scaled 1:10 (lost timeout 1 s for the game's 10 s, slot
+// keep 6 s for 60 s). A 3 s total outage ("30 s"): both sides call the link lost, the host keeps
+// the slot, the guest reconnects on its own and resumes; every event the host posted during the
+// outage arrives once, in order. A 12 s outage ("120 s"): past the slot keep the host releases the
+// member; the guest still comes back by itself, as a new member (not resumed: the host's director
+// then sends the full flag snapshot, party_progress_bridge.cpp). A host whose event callback is
+// blocked for 4 lost timeouts (the game paused / alt-tabbed / a long load on the host) keeps its
+// members: the link's own thread answers pings, the callback backlog only stops reading.
+static void test_long_outages() {
+    bbnet::netsim::Config sc;
+    std::string err;
+    CHECK(bbnet::netsim::parse("lat=5", &sc, &err));
+    bbnet::netsim::reconfigure_for_tests(sc);
+    Recorder hr, ar;
+    LinkConfig hc = base_cfg("Host", "hunter2"), gc = base_cfg("Alice", "hunter2");
+    for (LinkConfig* c : {&hc, &gc}) {
+        c->ping_interval_ms = 150;
+        c->lost_timeout_ms = 1000;
+        c->slot_keep_ms = 6000;
+        c->backoff_initial_ms = 100;
+        c->backoff_max_ms = 400;
+        c->connect_timeout_ms = 1500;
+    }
+    std::atomic<int> stall_ms{0};
+    LinkCallbacks hcb = recorder_callbacks(hr, "host");
+    auto rec = hcb.on_event;
+    hcb.on_event = [&, rec](int slot, std::uint64_t cur, const std::string& name, const std::string& body) {
+        if (const int ms = stall_ms.exchange(0)) std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        rec(slot, cur, name, body);
+    };
+    PartyLink host(hc, hcb);
+    CHECK(host.start_host(&err));
+    PartyLink a(gc, recorder_callbacks(ar, "alice"));
+    CHECK(a.start_guest("127.0.0.1", host.bound_port(), &err));
+    CHECK(a.wait_connected(5000));
+    auto in_order = [&](const std::string& prefix, int n) {
+        std::lock_guard<std::mutex> lk(ar.mu);
+        int next = 0, bad = 0;
+        for (const std::string& e : ar.event_names) {
+            if (e.rfind(prefix, 0) != 0) continue;
+            if (e != prefix + std::to_string(next)) ++bad;
+            ++next;
+        }
+        return next == n && bad == 0;
+    };
+
+    // "30 s": lost, kept, back, resumed, nothing lost or doubled.
+    for (int k = 0; k < 20; ++k) host.post_event(kBroadcast, "a_" + std::to_string(k), "{}");
+    CHECK(wait_for([&] { return ar.count_event("a_19") == 1; }, 5000));
+    const auto t0 = std::chrono::steady_clock::now();
+    bbnet::netsim::outage_now(3000);
+    for (int k = 20; k < 60; ++k) {
+        host.post_event(kBroadcast, "a_" + std::to_string(k), "{}");
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));  // 2 s inside the outage
+    }
+    CHECK(wait_for([&] { return hr.left_kept.load() >= 1; }, 5000));
+    CHECK(wait_for([&] { return hr.rejoined.load() >= 1 && a.state() == LinkState::Connected; }, 10000));
+    const auto back_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    CHECK(a.last_welcome_resumed());
+    CHECK(wait_for([&] { return ar.count_event("a_59") == 1; }, 5000));
+    CHECK(in_order("a_", 60));
+    CHECK(hr.left_released.load() == 0);
+    std::printf("  3 s outage (\"30 s\"): lost %d, back and resumed %lld ms after it began; 60 events once, in order\n",
+                hr.left_kept.load(), static_cast<long long>(back_ms));
+
+    // "120 s": released, then back as a new member by itself.
+    const int joined_before = hr.joined.load();
+    bbnet::netsim::outage_now(12000);
+    for (int k = 0; k < 10; ++k) host.post_event(kBroadcast, "lost_" + std::to_string(k), "{}");
+    CHECK(wait_for([&] { return hr.left_released.load() >= 1; }, 12000));  // after the 6 s keep
+    CHECK(wait_for([&] { return hr.joined.load() > joined_before && a.state() == LinkState::Connected; }, 15000));
+    CHECK(!a.last_welcome_resumed());  // a fresh session: the director re-sends the snapshot
+    for (int k = 0; k < 20; ++k) host.post_event(kBroadcast, "b_" + std::to_string(k), "{}");
+    CHECK(wait_for([&] { return ar.count_event("b_19") == 1; }, 5000));
+    CHECK(in_order("b_", 20));
+    std::printf("  12 s outage (\"120 s\"): released after the keep, rejoined as new (%d of 10 events posted into "
+                "the released slot arrived; the snapshot covers them)\n",
+                [&] {
+                    int n = 0;
+                    for (int k = 0; k < 10; ++k) n += ar.count_event("lost_" + std::to_string(k));
+                    return n;
+                }());
+
+    // A stalled host: its event callback blocks 4 s (4 lost timeouts).
+    const int left_before = hr.left_kept.load() + hr.left_released.load();
+    stall_ms = 4000;
+    a.post_event(kHostSlot, "wake", "{}");
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    for (int k = 0; k < 30; ++k) a.post_event(kHostSlot, "s_" + std::to_string(k), "{}");
+    std::this_thread::sleep_for(std::chrono::milliseconds(4500));
+    CHECK(a.state() == LinkState::Connected);
+    CHECK(hr.left_kept.load() + hr.left_released.load() == left_before);
+    CHECK(wait_for([&] { return hr.count_event("s_29") == 1; }, 5000));
+    {
+        std::lock_guard<std::mutex> lk(hr.mu);
+        int next = 0, bad = 0;
+        for (const std::string& e : hr.event_names) {
+            if (e.rfind("s_", 0) != 0) continue;
+            if (e != "s_" + std::to_string(next)) ++bad;
+            ++next;
+        }
+        CHECK(next == 30 && bad == 0);
+    }
+    std::printf("  host callback stalled 4 s: member kept, 30 events in order afterwards\n");
+    a.stop();
+    host.stop();
+}
+
 // LAN discovery (party_lan.h): probe / reply encode and verify, the reply limiter, a loopback
 // discover() against a responder, and the guest's password rule for codes without one.
 static void test_lan() {
@@ -1396,6 +1504,8 @@ int main() {
     test_netsim_link();
     std::printf("host behind a simulated NAT: the link over UDP with hole punching\n");
     test_udp_nat_link();
+    std::printf("long outages (30 s / 120 s, scaled 1:10) and a stalled host\n");
+    test_long_outages();
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     std::printf(g_failures ? "FAILED\n" : "OK\n");
     return g_failures ? 1 : 0;
