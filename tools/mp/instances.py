@@ -653,7 +653,8 @@ def main():
     ap.add_argument("--root", default=str(DEFAULT_ROOT))
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=str(DEFAULT_GAME))
-    ap.add_argument("--saves", default=str(DEFAULT_GAME / "user" / "savedata"))
+    # Never the player's live saves: a copy made from a backup (E:\games\bbport\test_saves).
+    ap.add_argument("--saves", default=os.environ.get("BB_TEST_SAVES", r"E:\games\bbport\test_saves\savedata"))
     ap.add_argument("--seconds", type=int, default=120)
     # 4 instances share one 8 GB card: 4 x 1792 MiB plus the desktop fit; 3072 each overcommitted
     # VRAM and spilled into system RAM.
