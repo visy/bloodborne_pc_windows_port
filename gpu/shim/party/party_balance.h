@@ -19,7 +19,7 @@
 //       a kind picked at random: max HP -10 % (the max-HP rate 0x17e46e0) or max stamina -10 %
 //       (the stamina rate 0x17e4a20); both prologues replaced, the local player's list only. A lamp / headstone use started by the
 //       player (party_travel SetLampUseObserver; not the respawn warp of a death) cleanses it.
-//       Kept in <user>/party_rot.txt across restarts. Echoes are not touched (the bloodstain is
+//       Kept in <user>/party_rot.txt across restarts, per save slot (character). Echoes are not touched (the bloodstain is
 //       the hostdeath work).
 //   E2  This player's level, death count and rot stacks go out with the party HUD's VITALS.
 //

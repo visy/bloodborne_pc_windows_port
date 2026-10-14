@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace coop::balance {
 
@@ -88,12 +89,38 @@ constexpr float kLampMenuRadiusM = 4.0f;
 constexpr float kLampMenuHeightM = 3.0f;
 bool LampMenuRest(bool dialog_opened, bool alive, float lamp_dx, float lamp_dy, float lamp_dz);
 
-/// The rot belongs to the character (party_rot.txt keeps it across restarts). A save in its own
-/// prologue cannot have earned any (prologue deaths give none, #19), so stacks seen while this
-/// player stands kStaleRotPrologueS in its own prologue are another character's (a new game in the
-/// same user folder): they go. A guest in the host's world is never in its prologue.
+/// The rot belongs to the character: party_rot.txt keeps it across restarts, one entry per save
+/// slot (RotFile), so a second character in the same user folder never gets the first one's. A
+/// save in its own prologue cannot have earned any (prologue deaths give none, #19), so stacks seen
+/// while this player stands kStaleRotPrologueS in its own prologue still go: a new game made in a
+/// slot whose earlier character was deleted. A guest in the host's world is never in its prologue.
 constexpr double kStaleRotPrologueS = 3.0;
 bool RotFromAnotherCharacter(int stacks, bool own_prologue, double prologue_s);
+
+/// Playtest 1 save audit S4: party_rot.txt, the rot of each character by save slot, one line per
+/// slot with rot: "slot S kinds H ST SC R D" (stacks per kind: health, stamina, stamina cost,
+/// rally, discovery). A file from before the slot key ("stacks N" + "kindK N" lines) cannot say
+/// whose rot it was: it is dropped (legacy_stacks says how much, for the log). Dropping a penalty
+/// costs nobody anything (a lamp would cleanse it anyway); giving it to the wrong character was
+/// the bug.
+constexpr int kRotFileKinds = 5;
+struct SlotRot {
+    int slot = -1;  ///< save slot 0-9, -1 unknown
+    int kind[kRotFileKinds] = {};
+    int Stacks() const;
+};
+struct RotFile {
+    std::vector<SlotRot> slots;  ///< only slots with rot
+    int legacy_stacks = 0;       ///< an old unkeyed file's stacks (dropped)
+    /// The rot of `slot` (none: all zero, slot set).
+    SlotRot Get(int slot) const;
+    /// Replaces (or removes, when it has no stacks) the entry of r.slot.
+    void Set(const SlotRot& r);
+};
+RotFile ParseRotFile(const std::string& text);
+std::string FormatRotFile(const RotFile& f);
+/// The loaded character's rot is another one's: a known save slot that is not the active one.
+bool RotSlotChanged(int active_slot, int current_slot);
 
 /// Short value texts for the menu (help line): "150 % (+75 % HP per extra hunter)".
 std::string DescribeHp(int percent, bool russian);

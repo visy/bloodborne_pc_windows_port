@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <sstream>
 
 namespace coop::balance {
 
@@ -145,6 +146,70 @@ bool LampMenuRest(bool dialog_opened, bool alive, float lamp_dx, float lamp_dy, 
 
 bool RotFromAnotherCharacter(int stacks, bool own_prologue, double prologue_s) {
     return stacks > 0 && own_prologue && prologue_s >= kStaleRotPrologueS;
+}
+
+int SlotRot::Stacks() const {
+    int n = 0;
+    for (int k : kind) n += k;
+    return n;
+}
+
+SlotRot RotFile::Get(int slot) const {
+    for (const SlotRot& r : slots)
+        if (r.slot == slot) return r;
+    SlotRot none;
+    none.slot = slot;
+    return none;
+}
+
+void RotFile::Set(const SlotRot& r) {
+    slots.erase(std::remove_if(slots.begin(), slots.end(), [&](const SlotRot& o) { return o.slot == r.slot; }),
+                slots.end());
+    if (r.Stacks() > 0) slots.push_back(r);
+}
+
+RotFile ParseRotFile(const std::string& text) {
+    RotFile f;
+    std::istringstream in(text);
+    std::string line;
+    while (std::getline(in, line)) {
+        std::istringstream l(line);
+        std::string key;
+        if (!(l >> key)) continue;
+        if (key == "stacks") {  // the old unkeyed file
+            int v = 0;
+            if (l >> v) f.legacy_stacks = std::clamp(v, 0, kRotMaxStacks);
+            continue;
+        }
+        if (key != "slot") continue;  // "kindK N" of the old file, or anything unknown
+        SlotRot r;
+        std::string word;
+        if (!(l >> r.slot >> word) || word != "kinds" || r.slot < -1 || r.slot > 9) continue;
+        int left = kRotMaxStacks;
+        for (int& k : r.kind) {
+            int n = 0;
+            if (!(l >> n)) break;
+            k = std::clamp(n, 0, left);
+            left -= k;
+        }
+        f.Set(r);  // a later line for the same slot wins
+    }
+    return f;
+}
+
+std::string FormatRotFile(const RotFile& f) {
+    std::string out;
+    for (const SlotRot& r : f.slots) {
+        if (r.Stacks() <= 0) continue;
+        out += "slot " + std::to_string(r.slot) + " kinds";
+        for (int k : r.kind) out += " " + std::to_string(k);
+        out += "\n";
+    }
+    return out;
+}
+
+bool RotSlotChanged(int active_slot, int current_slot) {
+    return current_slot >= 0 && current_slot != active_slot;
 }
 
 std::string DescribeHp(int percent, bool russian) {
