@@ -1565,9 +1565,9 @@ void PartyTab() {
                  "уведомление при изменении. По умолчанию: выкл."),
                on);
     }
-    static const char* overhead_en[] = {"Nothing", "Name", "Name and level", "Name and health", "Name and deaths"};
-    static const char* overhead_ru[] = {"Ничего", "Имя", "Имя и уровень", "Имя и здоровье", "Имя и смерти"};
-    Choice("party_overhead", T("Above companions", "Над спутниками"), std::clamp(s.party_overhead.load(), 0, 4), 5,
+    static const char* overhead_en[] = {"Nothing", "Name", "Name and level", "Name and health", "Name and deaths", "Name and ping"};
+    static const char* overhead_ru[] = {"Ничего", "Имя", "Имя и уровень", "Имя и здоровье", "Имя и смерти", "Имя и пинг"};
+    Choice("party_overhead", T("Above companions", "Над спутниками"), std::clamp(s.party_overhead.load(), 0, 5), 6,
            [](int i) { return T(overhead_en[i], overhead_ru[i]); }, [](int) { return true; },
            T("What shows above party members in view (only on your screen).",
              "Что показывать над спутниками в поле зрения (только у вас)."),
@@ -2319,6 +2319,8 @@ void PartyHud() {
         } else if (overhead == 4 && c.rot > 0) {
             if (ru) std::snprintf(label, sizeof label, "%s  смертей %d, гниль %d", c.name, c.deaths, c.rot);
             else std::snprintf(label, sizeof label, "%s  deaths %d, rot %d", c.name, c.deaths, c.rot);
+        } else if (overhead == 5 && c.ping_ms > 0) {
+            std::snprintf(label, sizeof label, ru ? "%s  %u мс" : "%s  %u ms", c.name, c.ping_ms);
         } else if (overhead == 4) {
             if (ru) std::snprintf(label, sizeof label, "%s  смертей %d", c.name, c.deaths);
             else std::snprintf(label, sizeof label, "%s  deaths %d", c.name, c.deaths);
