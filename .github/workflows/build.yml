@@ -54,15 +54,38 @@ jobs:
           mkdir -p /mingw64/include/magic_enum
           curl -sSL -o /mingw64/include/magic_enum/magic_enum.hpp https://raw.githubusercontent.com/Neargye/magic_enum/master/include/magic_enum/magic_enum.hpp
 
-      - name: Build with build.bat
+      - name: Compile Bloodborne PC Port
         shell: msys2 {0}
         run: |
-          export MINGW_DIR=$(cygpath -w /mingw64)
-          export VULKAN_SDK=$(cygpath -w /mingw64)
-          export SDL3_DIR=$(cygpath -w /mingw64)
-          export CMAKE_PREFIX_PATH=$(cygpath -w /mingw64)
-          echo "Windows path to MINGW64: $MINGW_DIR"
-          cmd.exe //c "build.bat"
+          set -e
+          mkdir -p out/atrac9 out/gpu
+          
+          echo "=== 1. Building LibAtrac9 ==="
+          gcc -std=c99 -O2 -g -w -c third_party/LibAtrac9/C/src/*.c
+          mv *.o out/atrac9/
+          ar rcs out/libatrac9.a out/atrac9/*.o
+          echo "Built out/libatrac9.a"
+
+          echo "=== 2. Applying FSR-Vulkan Patch ==="
+          if [ -f patches/fsr_vulkan_mingw.patch ]; then
+            git -C gpu/third_party/fsr-vulkan apply ../../../patches/fsr_vulkan_mingw.patch || true
+          fi
+
+          echo "=== 3. Configuring CMake ==="
+          cmake -S gpu -B out/gpu -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_PREFIX_PATH="/mingw64"
+
+          echo "=== 4. Building bbgpu and bbport ==="
+          cmake --build out/gpu --target bbgpu bbport bb-gpu-capabilities -j $(nproc)
+
+          echo "=== 5. Finalizing binaries ==="
+          cp -f out/bbport.exe out/bb-probe.exe
+
+          echo "=== 6. Staging DLLs ==="
+          python scripts/stage_dlls.py || true
+          
+          ls -la out/bbport.exe
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
