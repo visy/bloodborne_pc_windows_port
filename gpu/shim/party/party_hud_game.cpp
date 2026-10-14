@@ -209,6 +209,21 @@ static void GamePlateOff(bool off) {
     state = int(off);
 }
 
+namespace {
+std::mutex g_chr_names_mu;
+std::vector<std::pair<std::uint64_t, std::string>> g_chr_names;  // the last tick's chr -> member name
+}  // namespace
+
+std::string PartyHudChrName(std::uint64_t chr) {
+    std::lock_guard<std::mutex> lk(g_chr_names_mu);
+    for (const auto& e : g_chr_names) {
+        if (e.first == chr) {
+            return e.second;
+        }
+    }
+    return {};
+}
+
 bool PartyHudChrPos(std::uint64_t chr, const float near[3], float out[3]) {
     // Per frame from the overlay (present thread): the chr may have been freed since the tick
     // matched it (SafeRead survives the fault); a disabled one is not drawn, a reused one is far.
@@ -419,6 +434,13 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
         }
         if (bc < 0) break;
         std::snprintf(chrs[bc].name, sizeof chrs[bc].name, "%s", st.roster[bm].name.c_str());
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_chr_names_mu);
+        g_chr_names.clear();
+        for (int c = 0; c < chrs_n; ++c) {
+            if (chrs[c].name[0]) g_chr_names.emplace_back(chrs[c].chr, chrs[c].name);
+        }
     }
     // A remote chr here that no member's own report is near: this game's copy of that player is
     // stale (no position updates: seen as the game's phantom name plate floating away from where

@@ -82,6 +82,20 @@ Findings:
 - Fixed on the way: the guest-lamp diagnostics printed a line every second while a guest stood
   near a world lamp. They are now silent outside tests.
 
+### 3a. Internet profile, current build (2026-10-15, 0.6.2)
+
+Asymmetric profile, `BB_NET_SIM` per instance: host `lat=100,jit=30,loss=2,dup=0.5,reorder=1`,
+guest `lat=150,jit=40,loss=3,dup=0.5,reorder=1` (roster ping 226-287 ms); one session each run
+(`agents/parceh/runs/f1.sh`): title join, party travel to Central Yharnam, two host kills, host
+weapon fight (`host_chr=0` + R1 taps), guest death, 5 s guest outage, host death, a kill, party
+travel to the Dream.
+
+| Run | Result |
+|---|---|
+| 1 | Join, travel, kills, guest death (revived in place), outage all fine. After the host's death load `join snapshot re-sent (0x19, flags FAILED, world FAILED ...)` (never seen at 0 ms): the guest waited 45 s for a snapshot, fell back to B1 (`BeginLeaveSession` from +0x13cdef6), the host's game left its session 6 s after the failed send (+0x178980d, the session event handler, as when a first sync never completes), the guest was summoned again 64 s after the death. |
+| fix | `ResyncMember` reports the send result; a failed one is retried every 0.5 s for up to 15 s (`ResyncRetryTick`). |
+| 2 | Every step with one loading screen per player: host cooperators 0 -> 1 17 s after start, travel 16 s, kills paid on both games (ForceDead + 3 real weapon kills paid by the game), guest death in place, outage, host death (guest arrived 20.8 s after it, snapshot sent first try), Dream travel, desync digests matching (21), census 0 respawned. The retry was not needed in run 2. |
+
 ### 3b. Simulated NAT, no port forward (2026-10-11, run `NAT sim: link over UDP`)
 
 `BB_NET_SIM=lat=30,jit=5,loss=1,nat=1` on both, host has no TCP listener, the guest's code goes

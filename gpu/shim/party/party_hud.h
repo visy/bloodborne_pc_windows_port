@@ -20,6 +20,7 @@
 #include "party_link.h"
 
 #include <cstdint>
+#include <string>
 
 namespace party::hud {
 
@@ -48,6 +49,8 @@ struct Companion {
     int level = 0;             // VITALS extras (0 = unknown): the overhead display (E2)
     int deaths = 0;
     int rot = 0;
+    std::uint32_t ping_ms = 0; // the link's round trip to this member (E2 "name and ping"; 0 unknown):
+                               // the host's measure; a guest's view of the host shows its own link's
     std::uint64_t chr = 0;     // its PlayerIns here (local_read): the overlay re-reads its position
                                // every frame (coop::PartyHudChrPos), the board's is the 10 Hz tick's
 };
@@ -286,6 +289,9 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
 /// (the one the game draws, read now), when it is still a live chr within 10 m of `near` (the
 /// board's position from the last tick); false otherwise (freed, disabled, moved far).
 bool PartyHudChrPos(std::uint64_t chr, const float near[3], float out[3]);
+/// Any thread: the party member's name the last HUD tick matched to the remote PlayerIns `chr`
+/// (empty when none; C5 spectate notice).
+std::string PartyHudChrName(std::uint64_t chr);
 /// The overlay (present thread), once a frame, for the performance HUD: whether the game's
 /// full-screen menu is up (the party tick's GameMenu() while it runs, else the same read here:
 /// solo play has no party tick) and whether the area-name banner may be up (AreaBannerWatch).

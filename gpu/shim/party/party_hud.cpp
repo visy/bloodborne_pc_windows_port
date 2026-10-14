@@ -75,6 +75,12 @@ void Compose(const ComposeIn& in, Board* out) {
         c.state = r->state;
         c.connected = r->connected;
         c.map_id = r->map_id;
+        c.ping_ms = r->ping_ms;
+        if (slot == kHostSlot && in.local_slot != kHostSlot) {
+            // A guest's view of the host: the host measured this guest's link (its own entry).
+            for (int i = 0; i < in.roster_n; ++i)
+                if (in.roster[i].slot == in.local_slot) c.ping_ms = in.roster[i].ping_ms;
+        }
         c.same_world = r->connected && SameWorld(in.local_slot, in.local_state, slot, r->state);
         for (int i = 0; i < in.vitals_n; ++i) {
             const MemberVitals& v = in.vitals[i];

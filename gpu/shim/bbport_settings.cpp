@@ -180,7 +180,7 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     } else if (key == "party_npc_talk_range") {
         v.party_npc_talk_range = std::clamp(i, 0, 500);
     } else if (key == "party_overhead") {
-        v.party_overhead = std::clamp(i, 0, 4);
+        v.party_overhead = std::clamp(i, 0, 5);
     } else if (key == "hdr") {
         v.hdr = i != 0 || value == "on" || value == "true";
     } else if (key == "hdr_peak_nits") {
@@ -294,7 +294,7 @@ void Load() {
         {"BB_MOUSE_KEYBOARD", "mk_enabled"},
         {"BB_HDR", "hdr"},                          {"BB_HDR_PEAK", "hdr_peak_nits"},
         {"BB_HDR_PAPER_WHITE", "hdr_paper_white"},  {"BB_HDR_STRENGTH", "hdr_strength"},
-        {"BB_HDR_SATURATION", "hdr_saturation"},
+        {"BB_HDR_SATURATION", "hdr_saturation"},   {"BB_PARTY_OVERHEAD", "party_overhead"},
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env)) {
