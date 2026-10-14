@@ -1671,7 +1671,11 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         if (!obj && entity == 0) {
             // host_chr=0: the nearest living regular enemy of the census (a real weapon fight: stand
             // at it, then host_press attacks; H3 kill echoes by the game's own kill).
-            const auto list = balance::LoadedEnemies();
+            auto list = balance::LoadedEnemies();
+            // Only enemies with a map entity id (StandAtChr finds the chr by it).
+            list.erase(std::remove_if(list.begin(), list.end(),
+                                      [](const auto& e) { return e.entity == 0 || e.entity == 0xffffffffu; }),
+                       list.end());
             float me[3] = {};
             const std::uint64_t player = LocalPlayer();
             const int k = player && balance::ChrPosition(player, me) ? PickEnemyKillTarget(list, 0, me, 100.0f) : -1;

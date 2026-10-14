@@ -774,7 +774,52 @@ int RewindRemoteTasks(const char* why) {
 /// Host: the join-time snapshot again, to one member (after the host's own load).
 void LogIntroFlags(const char* when);
 
-void ResyncMember(u64 id) {
+// F1 (internet profile, 2026-10-15): with 100-150 ms one-way and 2-3 % loss the game's flag /
+// world sends (packets 0x10 / 0x11) can fail right after the host's own load (its reliable
+// channel to the member still busy); the member then never got its snapshot, fell back to B1 45 s
+// later and the host's game ended the session ("first sync never completed"). A failed re-send is
+// retried every 0.5 s for up to 15 s (ResyncRetryTick).
+struct ResyncRetry {
+    u64 id = 0;
+    double next = 0, until = 0;
+    int tries = 0;
+};
+std::vector<ResyncRetry> g_resync_retry;  // main thread
+bool ResyncMember(u64 id);
+void ResyncRetryTick(const GameSnapshot& s, double now) {
+    if (g_resync_retry.empty()) {
+        return;
+    }
+    const std::vector<u64> members = Members();
+    for (auto it = g_resync_retry.begin(); it != g_resync_retry.end();) {
+        const bool here = std::find(members.begin(), members.end(), it->id) != members.end();
+        if (!here || now > it->until || !s.world_up || s.loading) {
+            if (now > it->until || !here) {
+                Log("host: join snapshot re-send %s after %d retr%s", here ? "still FAILING" : "dropped (member gone)",
+                    it->tries, it->tries == 1 ? "y" : "ies");
+                it = g_resync_retry.erase(it);
+                continue;
+            }
+            ++it;
+            continue;
+        }
+        if (now < it->next) {
+            ++it;
+            continue;
+        }
+        ++it->tries;
+        it->next = now + 0.5;
+        if (ResyncMember(it->id)) {
+            Log("host: join snapshot re-sent on retry %d (%.1f s after the first try)", it->tries,
+                now - (it->until - 15.0));
+            it = g_resync_retry.erase(it);
+            continue;
+        }
+        ++it;
+    }
+}
+
+bool ResyncMember(u64 id) {
     LogIntroFlags("host at the re-send");
     const u64 flow = Slot(kSlotFlow);
     using Send = int(BB_COOP_SYSV*)(u64, u64, u32, const void*, u32);
@@ -805,6 +850,22 @@ void ResyncMember(u64 id) {
     reinterpret_cast<Send>(Guest(kSendPacket))(flow, id, 0x42, &pslot, 1);
     Log("host: join snapshot re-sent (0x19, flags %s, world %s, bullets, net sync, NPC, 0x42)",
         flags ? "ok" : "FAILED", world ? "ok" : "FAILED");
+    if (!(flags && world)) {
+        bool queued = false;
+        for (const ResyncRetry& r : g_resync_retry) {
+            queued = queued || r.id == id;
+        }
+        if (!queued) {
+            ResyncRetry r;
+            r.id = id;
+            r.next = Now() + 0.5;
+            r.until = Now() + 15.0;
+            g_resync_retry.push_back(r);
+            Log("host: the snapshot send failed: retrying every 0.5 s for up to 15 s");
+        }
+        return false;
+    }
+    return true;
 }
 
 /// The chr behind a WorldChrMan handle ((set << 14) | index; table +0x850, entries 0x38), as the
@@ -4824,6 +4885,11 @@ void SendDest(const GameSnapshot& s) {
 void HostTick(const GameSnapshot& s, double now) {
     State& st = S();
     const bool loading = s.loading || !s.world_up;
+    if (Role() == RoleHost) {
+        ResyncRetryTick(s, now);
+    } else {
+        g_resync_retry.clear();
+    }
     if (Role() != RoleHost) {
         if (st.hphase != HostPhase::Idle && Role() != RoleClient) {
             // The room ended during a re-join (a member's respawn, a travel): nothing of it
