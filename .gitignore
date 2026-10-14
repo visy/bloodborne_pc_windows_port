@@ -25,6 +25,11 @@ perf.data
 mods.json
 patches.json
 *.zip
+# Shader caches and the world warper's run folder (derived from game data: never in the repository)
+cache/
+world_warper/
+world_warper_state.txt
+*.vkp
 FORK/
 EBOOT/
 scratch/

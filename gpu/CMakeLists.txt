@@ -585,6 +585,11 @@ add_executable(lamp-travel-test EXCLUDE_FROM_ALL ../tests/test_lamp_travel.cpp)
 target_compile_options(lamp-travel-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(lamp-travel-test PRIVATE shim)
 set_target_properties(lamp-travel-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# The world warper's rules (world_warper_rules.h). ninja -C out/gpu world-warper-test
+add_executable(world-warper-test EXCLUDE_FROM_ALL ../tests/test_world_warper.cpp)
+target_compile_options(world-warper-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(world-warper-test PRIVATE shim)
+set_target_properties(world-warper-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # H4 enemy census (party_enemy_census.h). ninja -C out/gpu party-enemy-census-test
 add_executable(party-enemy-census-test EXCLUDE_FROM_ALL ../tests/test_party_enemy_census.cpp)
 target_compile_options(party-enemy-census-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
