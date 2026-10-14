@@ -229,6 +229,13 @@ before anyone is in the game):
   damage) per extra hunter than the game gives them, normal enemies get tougher too; all six values
   (boss / enemy health, damage, poise) are on the *Enemy scaling* page, the host's count.
 - **Names over party members**, in the game's own style (replacing its plate, which hid behind walls), at any distance, bigger when near, with level, health or deaths (your choice); the *Party name tags* setting (launcher or *Party rules*) turns them off for the game's own plate. Names, the party panel and party notices step aside while the game's own menus (inventory, item descriptions, level up, travel) are open; for a YES / NO box only the names do.
+- **Pings.** Hold the touchpad and press R3 (Xbox pads: hold Back, press R3; keyboard: Tab + Q, or
+  just V) to mark the spot you are looking at: every party member in your world sees the marker
+  through walls for 10 seconds, in your colour, with your name and its distance in metres (at the
+  screen edge with an arrow when it is out of view). The touchpad alone still opens the gestures
+  (when you let go). Optional: *Show party through walls* puts a small marker with the distance on
+  every companion on your map. Both on the game's *System -> Pings* page and the launcher's Party tab;
+  hidden under the game's menus like the other party text.
 - **Party HUD.** Party members and events are shown in a small HUD; all party settings are on the
   *Party* pages of the game's *System* menu.
 

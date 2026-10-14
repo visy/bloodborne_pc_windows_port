@@ -1052,6 +1052,18 @@ void DefineAll() {
             AddText("Name and health", "Имя и здоровье"), AddText("Name and deaths", "Имя и смерти")},
            Kind::List);
 
+    // ---- Pings (I2, party_ping.h): Party rules holds six rows already, so a page of its own. ----
+    AddPage("Pings", "Метки", "Mark a spot for the party, see companions through walls (bbport)",
+            "Отметить место для группы, видеть спутников сквозь стены (bbport)");
+    AddRow(Flag(&Values::party_pings), AddText("Pings", "Метки"),
+           AddText("Hold the touchpad and press R3 (keyboard: V) to mark where you look; everyone sees it 10 s",
+                   "Зажмите тачпад и нажмите R3 (клавиатура: V), чтобы отметить место; группа видит его 10 с"),
+           toggle, Kind::Toggle);
+    AddRow(Flag(&Values::party_through_walls), AddText("Show party through walls", "Группа сквозь стены"),
+           AddText("A small marker with the distance on each companion on your map, also behind walls",
+                   "Маленькая метка с расстоянием на каждом спутнике на вашей карте, и за стенами"),
+           toggle, Kind::Toggle);
+
     // ---- Enemy scaling (party_balance.h): per extra hunter, the host's values count. ----
     AddPage("Enemy scaling", "Сила врагов", "Boss and enemy health, damage and poise per extra hunter (bbport)",
             "Здоровье, урон и стойкость боссов и врагов за каждого охотника (bbport)");

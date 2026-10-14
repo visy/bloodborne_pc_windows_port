@@ -238,6 +238,27 @@ static void LiveValues() {
     s.party_boss_hp = 150;
     s.party_rot = true;
     Advance(16);
+
+    // I2: the Pings page's two switches follow the settings (pings on, through walls off by default).
+    const P::Page& pings = PageNamed(u"Pings");
+    const P::Row& pings_row = RowNamed(pings, u"Pings");
+    const P::Row& walls = RowNamed(pings, u"Show party through walls");
+    s.party_pings = false;
+    s.party_through_walls = true;
+    Advance(16);
+    s.party_pings = true;
+    s.party_through_walls = false;
+    Advance(16);
+    assert(*P::Byte(pings_row.field) == 1 && *P::Byte(walls.field) == 0);
+    s.party_through_walls = true;
+    Advance(16);
+    assert(*P::Byte(walls.field) == 1);
+    *P::Byte(pings_row.field) = 0;
+    Advance(16);
+    assert(!s.party_pings);
+    s.party_pings = true;
+    s.party_through_walls = false;
+    Advance(16);
 }
 
 /// Cross on a button row (the glue calls Press while the row has the cursor).

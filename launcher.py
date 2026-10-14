@@ -1357,6 +1357,9 @@ class BloodborneLauncher(tk.Tk):
         self.party_name_tags = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_name_tags"))
         # Shared NPC dialogue: a game setting (bbport.ini party_npc_talk, also in the game's menus).
         self.party_npc_talk = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_npc_talk"))
+        # Pings (I2): game settings (bbport.ini party_pings on, party_through_walls off by default).
+        self.party_pings = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_pings"))
+        self.party_through_walls = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_through_walls", False))
         self.party_separate_save = tk.BooleanVar(value=self.settings.get("party_separate_save", True))
         self.party_port_var = tk.StringVar(value=str(self.settings.get("party_port", PARTY_DEFAULT_PORT)))
         self.party_upnp = tk.BooleanVar(value=self.settings.get("party_upnp", True))
@@ -1880,6 +1883,17 @@ class BloodborneLauncher(tk.Tk):
                                   "no menu opens). Range: in the game, System > Party rules > NPC dialogue "
                                   "range (default 25 m). Default: on (bbport.ini party_npc_talk).",
                                   command=self.save_party_npc_talk)
+        pings_cb = self._check(sec, "Pings", self.party_pings,
+                               "Hold the touchpad (keyboard Tab) and press R3 (Q), or press V: a marker on the "
+                               "spot you look at. Every party member sees it through walls with its distance "
+                               "in metres, in your colour, for 10 seconds. Also in the game: System > Pings. "
+                               "Default: on (bbport.ini party_pings).",
+                               command=self.save_party_pings)
+        walls_cb = self._check(sec, "Show party through walls", self.party_through_walls,
+                               "A small diamond with the distance on every companion on your map, drawn over "
+                               "walls and trees in the companion's colour. Also in the game: System > Pings. "
+                               "Default: off (bbport.ini party_through_walls).",
+                               command=self.save_party_through_walls)
         self.party_separate_save.set(True)
         save_cb = self._check(sec, "Separate party saves (always)", self.party_separate_save,
                               "Party play always uses its own save folder (user\\savedata_party), so your "
@@ -1992,7 +2006,7 @@ class BloodborneLauncher(tk.Tk):
 
         # Fields enabled in each mode: on (host or join), host only, join only
         self.party_widgets_on = [name_lbl, self.party_name_entry, self.party_max_combo, auto_cb, seamless_cb,
-                                 dsummon_cb, hud_cb, tags_cb, npc_talk_cb, save_cb,
+                                 dsummon_cb, hud_cb, tags_cb, npc_talk_cb, pings_cb, walls_cb, save_cb,
                                  port_lbl, self.party_port_entry, upnp_cb, rdv_cb, stun_lbl, self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
         self.party_widgets_host = [public_lbl, self.party_public_entry,
@@ -2047,6 +2061,20 @@ class BloodborneLauncher(tk.Tk):
             update_ini(bbport_ini_path(), {"party_npc_talk": "1" if self.party_npc_talk.get() else "0"})
         except OSError as ex:
             self.log(f"[PARTY] Could not save the Share NPC dialogue setting to bbport.ini: {ex}")
+
+    def save_party_pings(self):
+        """The Pings checkbox: bbport.ini party_pings (in game: System > Pings)."""
+        try:
+            update_ini(bbport_ini_path(), {"party_pings": "1" if self.party_pings.get() else "0"})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save the Pings setting to bbport.ini: {ex}")
+
+    def save_party_through_walls(self):
+        """The Show party through walls checkbox: bbport.ini party_through_walls (in game: System > Pings)."""
+        try:
+            update_ini(bbport_ini_path(), {"party_through_walls": "1" if self.party_through_walls.get() else "0"})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save the Show party through walls setting to bbport.ini: {ex}")
 
     def on_party_change(self):
         self.update_party_state()

@@ -655,7 +655,7 @@ set(PARTY_FUZZ_SOURCES ../tests/party_fuzz.cpp ${PARTY_NET_SOURCES} ${PARTY_LINK
     shim/party/party_items.cpp shim/party/party_phantom.cpp shim/party/party_progress.cpp
     shim/party/party_guestsvc.cpp shim/party/party_worldact.cpp shim/party/party_balance_rules.cpp
     shim/party/party_chalice.cpp shim/party/party_droproll.cpp shim/party/party_dsummon.cpp
-    shim/party/party_desync.cpp shim/party/party_npctalk.cpp)
+    shim/party/party_desync.cpp shim/party/party_npctalk.cpp shim/party/party_ping.cpp)
 foreach(fuzz_target party-fuzz party-security-test party-fuzz-ubsan)
     add_executable(${fuzz_target} EXCLUDE_FROM_ALL ${PARTY_FUZZ_SOURCES})
     target_compile_definitions(${fuzz_target} PRIVATE BB_PARTY_TRAVEL_NO_GAME BB_PARTY_STORY_NO_GAME
@@ -761,6 +761,13 @@ target_compile_definitions(party-npctalk-test PRIVATE BB_PARTY_NPCTALK_NO_GAME)
 target_compile_options(party-npctalk-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-npctalk-test PRIVATE shim)
 set_target_properties(party-npctalk-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Pings (I2, shim/party/party_ping.cpp; in bbgpu through SHIM_SOURCES): EVENT map_ping JSON, the
+# relay rate, the marker board, the aim pick and the screen-edge clamp. cmake --build out/gpu --target party-ping-test
+add_executable(party-ping-test EXCLUDE_FROM_ALL ../tests/test_party_ping.cpp shim/party/party_ping.cpp
+    shim/net/json.cpp)
+target_compile_options(party-ping-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-ping-test PRIVATE shim)
+set_target_properties(party-ping-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Shared enemy drop roll (shim/party/party_droproll.cpp; in bbgpu through SHIM_SOURCES): seed,
 # MT19937 seeding, EVENT drop_seed (BB_PARTY_DROPROLL_NO_GAME). cmake --build out/gpu --target party-droproll-test
 add_executable(party-droproll-test EXCLUDE_FROM_ALL ../tests/test_party_droproll.cpp shim/party/party_droproll.cpp
