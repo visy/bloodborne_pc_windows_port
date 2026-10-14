@@ -43,8 +43,24 @@ launch_gui.bat
 - **Performance & Shaders**: *Performance Patch*, draw preparation workers, shader precompile, async shaders, GPL, the compile indicator, and **Export / Import shader cache**.
 - **Game**: skip intro, skip the online/offline choice, settings in the game's System menu, mods, and *All XML Patches...*.
 - **Input & Audio**: controller (`BB_GAMEPAD`), overlay on `L3 + R3`, mute in background.
+- **Advanced / Debug**: diagnostics, watchdog, party logging, support bundle, and the [shader cache builder](#shader-cache-builder-world-warper).
 - **Party**: host or join a co-op party, connection settings, *Rules & sync...* and *Party help* ([guide](docs/PARTY.md)).
 - Hover any option for details, then click **Launch Bloodborne**. `run.bat` started on its own uses the same saved settings.
+
+### Shader cache builder (world warper)
+
+*Advanced / Debug > Shader cache builder > Build shader cache (world warper)...* fills the shader cache by playing the game for you, so later play stutters less in places you have not been yet:
+
+- **What it does**: the game starts in a test mode (`BB_WORLD_WARPER=tour`), continues your save on the title screen and then travels through every ReturnPointParam row with a spot - the Hunter's Dream, all 44 lamps and 23 boss-arena / event respawn points (68 places in all; the Chalice Dungeons are left out) - with the game's own lamp warp and one normal loading screen each. In each place it turns the camera all the way round, walks a loop, fights and kills the two nearest enemies (within 60 m), and in the first place of each area uses the weapon in both forms (R1, R2, charged R2, firearm, transform, dodge); once per run it switches through the other weapons and quick items. Your HP is kept full meanwhile.
+- **Your saves are never changed**: it plays on a **copy** of your save folder (`user\world_warper\savedata`, made when you start; the warper moves the copy's character, uses its items and changes its last lamp). The shader cache it fills is your own (`user\cache`).
+- **Progress**: a panel at the top of the game window (place n / 68, the area, what it does, the pipelines new to the cache here and in all) and a line per place in the launcher log (`World warper: [12/68] Old Yharnam, row 2302950 (m23_00_00_00): +N new pipelines (in the world: enemy ..., look ...)`).
+- **Stop and resume**: *Stop* ends it; pressing the button again asks whether to continue where it stopped (`user\world_warper\world_warper_state.txt`) or start over. If the game crashes the launcher starts it again and it continues; a place it crashed in twice is skipped.
+- **The result**: at the end the game closes and the launcher exports the shader cache as one `.zip` (the *Export shader cache* format) where you chose when starting. It is made from the game's shaders: use it yourself or share it only with people who own the game. The project never publishes such caches.
+- It takes about an hour (measured: 56 places in 50 minutes on a test PC, plus the loading screens). Leave the window alone meanwhile; mouse, keyboard and pad input would mix with the warper's own.
+
+Measured (test PC, 30 FPS test settings, an empty cache): the tour made 425 pipelines new to the cache in 56 places (most from enemies, 154, and the camera sweeps, 114; the rest on the loading screens and while walking and attacking). A replay of the same walk through two places before and after the tour in one session: 61 -> 1 new pipelines, 53 -> 1 draws skipped for a pipeline still compiling, 342 -> 2 ms of compiling on the GPU thread. Long frames right after a loading screen (texture and map streaming) are not shader stutter and stay; the log counts both (`hitches over 50 ms`, and those with a pipeline made in the frame).
+
+Test aids: `BB_WORLD_WARPER=tour|replay|measure` with `,lamps=A+B`, `,replay=A+B`, `,max=N`, `,noact`, `,noenemy`, `,nokill`; `BB_WORLD_WARPER_STATE=<file>` (see [party/DEBUG_SWITCHES.md](party/DEBUG_SWITCHES.md)). `measure` runs the replay, the tour, and the replay again in one session and logs `stutter check: replay before / after the tour`.
 
 ### Command line
 Run `run.bat` pointing to your game directory:

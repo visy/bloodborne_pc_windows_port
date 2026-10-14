@@ -26,6 +26,7 @@
 #include "party/party_ping.h"
 #include "party/party_status.h"
 #include "party/party_log.h"
+#include "party/world_warper.h"
 #include "bbport_camera.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -1548,6 +1549,23 @@ void PartyTab() {
            T("Each death lowers max HP by 10 % (up to 5 times); resting at a lamp cleanses it.",
              "Каждая смерть снижает здоровье на 10 % (до 5 раз); отдых у фонаря снимает."),
            on);
+    // I1 friendly fire / PvP (party_pvp.h): the host's switch; a guest sees the host's rule.
+    if (b.role == ps::Role::Guest) {
+        Note(ps::FriendlyFire() ? T("Friendly fire / PvP: ON (the host's rule) - party members can hurt each other",
+                                    "Огонь по своим / PvP: ВКЛ (правило хоста) - члены группы могут ранить друг друга")
+                                : T("Friendly fire / PvP: off (the host decides)",
+                                    "Огонь по своим / PvP: выкл. (решает хост)"),
+             Dim());
+    } else {
+        Toggle("party_friendly_fire", T("Friendly fire / PvP", "Огонь по своим / PvP"), s.party_friendly_fire,
+               T("Party members can hurt each other, both ways, like invaders (ERSC's Judicator's Rulebook). "
+                 "A party kill is a normal party death; no Echoes or Insight for the killer. The host's "
+                 "setting counts and every member gets a notice when it changes. Default: off.",
+                 "Члены группы могут ранить друг друга, как захватчики. Убийство в группе - обычная смерть; "
+                 "убийца не получает отголосков и озарения. Действует настройка хоста, все получают "
+                 "уведомление при изменении. По умолчанию: выкл."),
+               on);
+    }
     static const char* overhead_en[] = {"Nothing", "Name", "Name and level", "Name and health", "Name and deaths"};
     static const char* overhead_ru[] = {"Ничего", "Имя", "Имя и уровень", "Имя и здоровье", "Имя и смерти"};
     Choice("party_overhead", T("Above companions", "Над спутниками"), std::clamp(s.party_overhead.load(), 0, 4), 5,
@@ -2555,6 +2573,44 @@ void PartyToast() {
     ImGui::PopStyleVar(2);
 }
 
+/// The world warper's progress (world_warper.h): a small panel at the top middle, the warper's
+/// own lines (phase and count, the area, what it does and the new pipelines). Not interactive.
+void WarperPanel() {
+    if (!coop::warper::Active()) {
+        return;
+    }
+    const std::string text = coop::warper::StatusText();
+    if (text.empty()) {
+        return;
+    }
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                                   viewport->WorkPos.y + 10.0f * base_scale),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.6f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f * base_scale, 6.0f * base_scale));
+    ImGui::PushFont(game_font, 17.0f);
+    ImGui::Begin("##world_warper", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings);
+    std::size_t at = 0;
+    bool first = true;
+    while (at <= text.size()) {
+        std::size_t end = text.find('\n', at);
+        if (end == std::string::npos) end = text.size();
+        const std::string line = text.substr(at, end - at);
+        at = end + 1;
+        if (line.empty()) continue;
+        ImGui::TextColored(first ? ImVec4(0.96f, 0.88f, 0.70f, 1.0f) : ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "%s",
+                           line.c_str());
+        first = false;
+    }
+    ImGui::End();
+    ImGui::PopFont();
+    ImGui::PopStyleVar(2);
+}
+
 /// The party alert: a bordered box in the upper middle (clear of the game's own dialogs), its
 /// first line as the title, then the text; fades out over its last second.
 void PartyAlert() {
@@ -3050,7 +3106,7 @@ void HdrPatternLabels() {
 bool Visible() {
     return initialized &&
            (menu_open || prompt_active || BbSettings::Get().show_fps || BbSettings::Get().show_hud || HdrPatternShown() ||
-            CompileIndicatorShown() || ToastWanted() || AlertWanted() || NpcCaptionWanted() || PartyHudWanted() || PartyTagsWanted() ||
+            CompileIndicatorShown() || coop::warper::Active() || ToastWanted() || AlertWanted() || NpcCaptionWanted() || PartyHudWanted() || PartyTagsWanted() ||
             PartyPingsWanted());
 }
 
@@ -3212,6 +3268,7 @@ bool Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, b
     HoldPartyNoticesInGameMenu();
     if (!menu_open) {
         CompileIndicator();
+        WarperPanel();
         if (!party::hud::GameMenu()) {  // the game's full-screen menu: none of these over it
             PartyHud(); // before the toast: it stacks above the panel
             PartyPings();

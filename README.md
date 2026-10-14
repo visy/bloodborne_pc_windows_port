@@ -42,6 +42,7 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | **HDR output** | Optional, off by default: HDR10 (PQ, Rec.2020) on an HDR display, the game's highlights expanded up to your display's peak while mid-tones and menus stay at paper white; peak, paper white, highlights, saturation and a calibration pattern in *System > HDR*. [More](docs/SETTINGS.md#hdr-output) |
 | **No shader stutter** | Known shaders are built before the intro. New ones compile in the background. |
 | **Shareable shader cache** | Export / import one `.zip`, works across GPUs. |
+| **Shader cache builder** | *Advanced > Build shader cache (world warper)*: the game travels through every lamp and area by itself (looks round, walks, fights), on a copy of your save, then exports the cache `.zip`. About an hour; Stop and resume. [More](docs/SETTINGS.md#shader-cache-builder-world-warper) |
 | **Save safety** | Crash-safe saving, save checks at start, automatic backups in party play. |
 | **The Old Hunters** | DLC enabled automatically (its data ships with patch 1.09). |
 | **Mods and patches** | Loose-file mods and shadPS4-format XML patches, with load order. |
@@ -242,6 +243,11 @@ before anyone is in the game):
   (when you let go). Optional: *Show party through walls* puts a small marker with the distance on
   every companion on your map. Both on the game's *System -> Pings* page and the launcher's Party tab;
   hidden under the game's menus like the other party text.
+- **Friendly fire / PvP (host's switch, off by default).** The host can let party members hurt
+  each other, both ways, like invaders: the game's *System -> Friendly fire* page, the Insert menu's
+  Party tab or the launcher's Party tab (host). Everyone gets a notice when it changes; guests see
+  the host's setting on their page but cannot change it. A party kill is a normal party death (the
+  rot applies as for any death); the killer gets no Echoes or Insight from it.
 - **Party HUD.** Party members and events are shown in a small HUD; all party settings are on the
   *Party* pages of the game's *System* menu.
 
@@ -265,8 +271,8 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 | Joining during a boss fight or cutscene waits outside until it ends | Works for boss fights with every join path (bell, title join, direct summon; verified live), the Party status says why you wait; cutscenes not yet tested live |
 | With 3 guests, every guest sees every other guest | In progress |
 | Chalice dungeons: deeper layers checked in a party; entering the party's dungeon in one press (the altar still asks a few prompts) | In progress |
-| PvP / friendly fire the host can switch on and off | Later |
-| Pings: party members and marked spots visible through walls, with distance and player colours | Later |
+| PvP / friendly fire the host can switch on and off | Done (0.6.2) |
+| Pings: party members and marked spots visible through walls, with distance and player colours | Done (0.6.2) |
 
 ### Connecting over the internet
 

@@ -861,6 +861,89 @@ def import_shader_cache(zip_path: Path, root: Path = None) -> dict:
     return stats
 
 
+# World warper (gpu/shim/party/world_warper.h): a solo run that warps through every lamp and area
+# and plays a little in each, filling the shader cache; at the end the launcher exports the cache.
+# It runs on a COPY of the save folder (user\world_warper\savedata), never on the player's saves;
+# the shader cache it fills is the player's own (BB_GPU_USER_DIR = the real user folder).
+WARPER_DIR = "world_warper"
+WARPER_STATE = "world_warper_state.txt"
+WARPER_MAX_RESTARTS = 6  # crashes in a row the launcher resumes from (the warper skips a row after 2)
+
+
+def user_root() -> Path:
+    """The user folder run.bat uses (saves, shader cache): BB_USER_DIR, else BB_DATA_DIR\\user."""
+    return shader_cache_root().parent
+
+
+def warper_paths(user: Path = None) -> dict:
+    user = user or user_root()
+    base = user / WARPER_DIR
+    return {"user": user, "base": base, "saves": base / "savedata", "state": base / WARPER_STATE}
+
+
+def read_warper_progress(state: Path) -> dict:
+    """The progress file as the warper writes it: areas done / skipped, areas the game stopped in
+    (started without a done) and whether the run finished."""
+    out = {"done": 0, "skipped": 0, "started": 0, "finished": False, "new_pipelines": 0}
+    try:
+        text = state.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return out
+    done, skipped, started = set(), set(), set()
+    for line in text.splitlines():
+        parts = line.split()
+        if parts == ["finished"]:
+            out["finished"] = True
+        elif len(parts) >= 2 and parts[1].isdigit():
+            if parts[0] == "done":
+                done.add(parts[1])
+                if len(parts) >= 3 and parts[2].isdigit():
+                    out["new_pipelines"] += int(parts[2])
+            elif parts[0] == "skip":
+                skipped.add(parts[1])
+            elif parts[0] == "start":
+                started.add(parts[1])
+    out["done"], out["skipped"] = len(done), len(skipped)
+    out["started"] = len(started - done - skipped)
+    return out
+
+
+def prepare_warper_saves(paths: dict, fresh: bool) -> int:
+    """Copies the player's save folder (user\\savedata) to the warper's own folder; `fresh` starts
+    over (the old copy and the progress removed). Returns the number of files copied (0: the
+    existing copy is kept: a resume). Raises FileNotFoundError when there is no save to copy.
+    Never writes to the player's own savedata."""
+    src = paths["user"] / "savedata"
+    if not src.is_dir() or not any(p.is_file() for p in src.rglob("*")):
+        raise FileNotFoundError(f"no save in {src}")
+    base = paths["base"]
+    if fresh and base.exists():
+        shutil.rmtree(base)
+    if paths["saves"].is_dir() and any(p.is_file() for p in paths["saves"].rglob("*")):
+        return 0
+    base.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src, paths["saves"], dirs_exist_ok=True)
+    addcont = paths["user"] / "addcont"  # the add-on (The Old Hunters) entitlement, when there is one
+    if addcont.is_dir() and not (base / "addcont").exists():
+        shutil.copytree(addcont, base / "addcont")
+    return sum(1 for p in paths["saves"].rglob("*") if p.is_file())
+
+
+def warper_env(env: dict, paths: dict, mode: str = "tour") -> dict:
+    """The game's environment for a warper run: solo (every party variable dropped), the saves from
+    the copy (BB_USER_DIR), the shader cache in the player's own user folder (BB_GPU_USER_DIR), the
+    progress file, no time limit."""
+    for key in [k for k in env if k.startswith("BB_PARTY")]:
+        env.pop(key)
+    env["BB_USER_DIR"] = str(paths["base"])
+    env["BB_GPU_USER_DIR"] = str(paths["user"])
+    env["BB_WORLD_WARPER"] = mode
+    env["BB_WORLD_WARPER_STATE"] = str(paths["state"])
+    env["BB_TIMEOUT"] = "0"
+    env["BB_LAMP_TRAVEL"] = "1"
+    return env
+
+
 LOG_HISTORY = 20  # playtest 1: a guest's restarts pushed the session's logs out
 
 
@@ -1363,6 +1446,8 @@ class BloodborneLauncher(tk.Tk):
         # Pings (I2): game settings (bbport.ini party_pings on, party_through_walls off by default).
         self.party_pings = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_pings"))
         self.party_through_walls = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_through_walls", False))
+        # I1 friendly fire / PvP: a host rule (bbport.ini party_friendly_fire, off by default).
+        self.party_friendly_fire = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_friendly_fire", False))
         self.party_separate_save = tk.BooleanVar(value=self.settings.get("party_separate_save", True))
         self.party_port_var = tk.StringVar(value=str(self.settings.get("party_port", PARTY_DEFAULT_PORT)))
         self.party_upnp = tk.BooleanVar(value=self.settings.get("party_upnp", True))
@@ -1714,6 +1799,25 @@ class BloodborneLauncher(tk.Tk):
                                                             sticky="w", pady=(4, 0))
         sec.next_row += 1
 
+        sec = self._section(tab, 0, "Shader cache builder", row=2)
+        self.warper_btn = ttk.Button(sec, text="Build shader cache (world warper)...", style="Secondary.TButton",
+                                     command=self.build_shader_cache_warper)
+        self.warper_btn.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(2, 2))
+        sec.next_row += 1
+        Tooltip(self.warper_btn,
+                "Starts the game in a test mode that travels through every lamp and area by itself (about "
+                "70 areas, one loading screen each), looks round, walks, uses the weapons and items and "
+                "fights a few enemies in each, so the shader cache holds what those areas need: later "
+                "play stutters less. Takes about an hour; Stop cancels (pressing this again resumes). "
+                "It plays on a COPY of your save folder (user\\world_warper): your own saves are never "
+                "changed. At the end the shader cache is exported as one .zip - made from the game's "
+                "shaders, so share it only with people who own the game.")
+        ttk.Label(sec, text="Long run (about an hour) on a copy of your save;\n"
+                            "exports the shader cache .zip at the end.",
+                  style="Card.TLabel", justify="left").grid(row=sec.next_row, column=0, columnspan=2,
+                                                            sticky="w", pady=(2, 0))
+        sec.next_row += 1
+
         self.update_res_scaling_state()
         self.update_party_state()
         self.notebook.bind("<<NotebookTabChanged>>", lambda e: self.refresh_party_code(), add="+")
@@ -1897,6 +2001,13 @@ class BloodborneLauncher(tk.Tk):
                                "walls and trees in the companion's colour. Also in the game: System > Pings. "
                                "Default: off (bbport.ini party_through_walls).",
                                command=self.save_party_through_walls)
+        ff_cb = self._check(sec, "Friendly fire / PvP (host)", self.party_friendly_fire,
+                            "Host only: party members can hurt each other, both ways, like invaders (ERSC's "
+                            "Judicator's Rulebook). A party kill is a normal party death; the killer gets no "
+                            "Echoes or Insight. Your setting is the party's rule: guests see it and get a notice "
+                            "when you switch it. Also in the game: System > Friendly fire (live). Default: off "
+                            "(bbport.ini party_friendly_fire).",
+                            command=self.save_party_friendly_fire)
         self.party_separate_save.set(True)
         save_cb = self._check(sec, "Separate party saves (always)", self.party_separate_save,
                               "Party play always uses its own save folder (user\\savedata_party), so your "
@@ -2012,7 +2123,7 @@ class BloodborneLauncher(tk.Tk):
                                  dsummon_cb, hud_cb, tags_cb, npc_talk_cb, pings_cb, walls_cb, save_cb,
                                  port_lbl, self.party_port_entry, upnp_cb, rdv_cb, stun_lbl, self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
-        self.party_widgets_host = [public_lbl, self.party_public_entry,
+        self.party_widgets_host = [ff_cb, public_lbl, self.party_public_entry,
                                    host_lbl, self.party_host_code_entry, copy_btn,
                                    lan_lbl, self.party_lan_code_entry, lan_copy_btn]
         self.party_widgets_join = [code_lbl, self.party_code_entry, paste_btn]
@@ -2064,6 +2175,14 @@ class BloodborneLauncher(tk.Tk):
             update_ini(bbport_ini_path(), {"party_npc_talk": "1" if self.party_npc_talk.get() else "0"})
         except OSError as ex:
             self.log(f"[PARTY] Could not save the Share NPC dialogue setting to bbport.ini: {ex}")
+
+    def save_party_friendly_fire(self):
+        """The Friendly fire / PvP checkbox (host): bbport.ini party_friendly_fire (in game: System >
+        Friendly fire)."""
+        try:
+            update_ini(bbport_ini_path(), {"party_friendly_fire": "1" if self.party_friendly_fire.get() else "0"})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save the Friendly fire setting to bbport.ini: {ex}")
 
     def save_party_pings(self):
         """The Pings checkbox: bbport.ini party_pings (in game: System > Pings)."""
@@ -3340,9 +3459,10 @@ class BloodborneLauncher(tk.Tk):
         self.log("[PRE-LAUNCH] Old bbport.exe terminated.")
         return False
 
-    def launch_game(self):
+    def launch_game(self, warper: bool = False):
         if self.proc is not None:
             return
+        self._warper_run = warper
 
         if self.blocked_by_running_instance():
             return
@@ -3357,7 +3477,7 @@ class BloodborneLauncher(tk.Tk):
             messagebox.showerror("Invalid Path", f"Could not find eboot.bin in:\n{target}")
             return
 
-        party_problems = self.party_problems()
+        party_problems = [] if warper else self.party_problems()
         if party_problems:
             self.notebook.select(self.party_tab)
             messagebox.showerror("Party settings", "Fix the Party tab before launching:\n\n"
@@ -3389,7 +3509,9 @@ class BloodborneLauncher(tk.Tk):
             else:
                 env[key] = value
         env["BB_GAME_DIR"] = str(game_dir)
-        if not self.offer_party_save_copy(env):
+        if warper:
+            warper_env(env, warper_paths())
+        elif not self.offer_party_save_copy(env):
             self.log("[PARTY] Not started (party save copy cancelled).")
             return
         res_choice = self.res_var.get() if self.feat_res_scaling.get() else "Native (1080p, scaling off)"
@@ -3432,7 +3554,10 @@ class BloodborneLauncher(tk.Tk):
         self.log(f"FPS: {self.fps_var.get()} | Res: {res_choice} | Mods: {env['BB_MODS_ENABLED']}")
         self.log(features_str)
         self.log(f"XML Patches ({len(active_patches)} active): {', '.join(active_patches) if active_patches else 'None'}")
-        if env.get("BB_PARTY"):
+        if warper:
+            self.log(f"World warper: building the shader cache on a copy of the save ({env['BB_USER_DIR']}); "
+                     f"progress file {env['BB_WORLD_WARPER_STATE']}")
+        elif env.get("BB_PARTY"):
             self.log(f"Party: {env['BB_PARTY']} | Name: {env['BB_PARTY_NAME']} | Port: {env['BB_PARTY_PORT']} | "
                      f"Max: {env['BB_PARTY_MAX']} | Auto: {env['BB_PARTY_AUTO']} | "
                      f"Seamless: {env['BB_PARTY_SEAMLESS']} | Save: {env['BB_PARTY_SAVE']} | "
@@ -3464,6 +3589,7 @@ class BloodborneLauncher(tk.Tk):
 
         self.save_settings()
         self.launch_btn.config(state="disabled")
+        self.warper_btn.config(state="disabled")
         self.stop_btn.config(state="normal")
         threading.Thread(target=self.reader_thread, args=(self.proc,), daemon=True).start()
 
@@ -3508,7 +3634,94 @@ class BloodborneLauncher(tk.Tk):
         if crashed and self.auto_support_bundle.get() and not getattr(self, "_stop_requested", False):
             self.write_support_bundle(None, note=f"automatic: the game ended with code {code}")
         self.launch_btn.config(state="normal")
+        self.warper_btn.config(state="normal")
         self.stop_btn.config(state="disabled")
+        if getattr(self, "_warper_run", False):
+            self._warper_run = False
+            self.after(500, lambda: self.warper_finished(rc))
+
+    # ---- World warper (Advanced > Shader cache builder) ----
+    def build_shader_cache_warper(self):
+        if self.proc is not None:
+            messagebox.showinfo("World warper", "Close the game first.")
+            return
+        paths = warper_paths()
+        progress = read_warper_progress(paths["state"])
+        resume = False
+        if paths["state"].is_file() and not progress["finished"] and (progress["done"] or progress["skipped"]):
+            answer = messagebox.askyesnocancel(
+                "World warper",
+                f"A shader cache run stopped after {progress['done']} areas.\n\n"
+                "Yes: continue it.\nNo: start over (a new copy of your save).")
+            if answer is None:
+                return
+            resume = answer
+        if not resume:
+            if not messagebox.askokcancel(
+                    "Build shader cache (world warper)",
+                    "The game starts in a test mode that travels through every lamp and area by itself "
+                    "(about 70 areas) and in each looks round, walks, uses the weapons and items and "
+                    "fights a few enemies, so their shaders are compiled and cached.\n\n"
+                    "- It takes a long time: about an hour. Leave the game window alone meanwhile.\n"
+                    "- It plays on a COPY of your save folder (user\\world_warper\\savedata). Your own "
+                    "saves are never changed.\n"
+                    "- Stop cancels it; pressing this button again continues where it stopped.\n"
+                    "- At the end the shader cache is exported as one .zip. It is made from the game's "
+                    "shaders: share it only with people who own the game.\n\nStart?",
+                    icon="warning"):
+                return
+        default = f"bloodborne_shader_cache_{datetime.now():%Y%m%d}.zip"
+        target = filedialog.asksaveasfilename(title="Where to save the shader cache .zip at the end",
+                                              defaultextension=".zip", initialfile=default,
+                                              filetypes=[("Zip files", "*.zip")])
+        if not target:
+            return
+        try:
+            copied = prepare_warper_saves(paths, fresh=not resume)
+        except FileNotFoundError:
+            messagebox.showerror("World warper", "There is no save to copy yet (user\\savedata). Play past "
+                                 "the opening first: the warper continues your save.")
+            return
+        except OSError as ex:
+            messagebox.showerror("World warper", f"Could not copy the save folder:\n{ex}")
+            return
+        self.log(f"[WARPER] {'Continuing' if resume else 'Starting'} the shader cache run"
+                 + (f" ({copied} save files copied to {paths['saves']})" if copied else "")
+                 + f"; the .zip goes to {target}")
+        self._warper_zip = Path(target)
+        self._warper_restarts = 0
+        self._warper_cancelled = False
+        self.launch_game(warper=True)
+
+    def warper_finished(self, rc: int):
+        paths = warper_paths()
+        progress = read_warper_progress(paths["state"])
+        if progress["finished"]:
+            try:
+                count = export_shader_cache(self._warper_zip, shader_cache_root())
+            except OSError as ex:
+                self.log(f"[WARPER] Export failed: {ex}")
+                messagebox.showerror("World warper", f"The run finished, but the export failed:\n{ex}")
+                return
+            self.log(f"[WARPER] Finished: {progress['done']} areas, {progress['skipped']} skipped, "
+                     f"{progress['new_pipelines']} new pipelines; shader cache exported: {count} files -> "
+                     f"{self._warper_zip}")
+            messagebox.showinfo("World warper",
+                                f"Done: {progress['done']} areas visited, {progress['new_pipelines']} new "
+                                f"pipelines cached.\n\nThe shader cache was exported to:\n{self._warper_zip}\n\n"
+                                "Share it only with people who own the game.")
+            return
+        if getattr(self, "_stop_requested", False):
+            self.log(f"[WARPER] Stopped after {progress['done']} areas; press the button again to continue.")
+            return
+        self._warper_restarts += 1
+        if self._warper_restarts > WARPER_MAX_RESTARTS:
+            self.log(f"[WARPER] The game ended {WARPER_MAX_RESTARTS} times without finishing; stopped "
+                     f"after {progress['done']} areas. Press the button again to continue.")
+            return
+        self.log(f"[WARPER] The game ended (code {rc}) after {progress['done']} areas; continuing "
+                 f"(restart {self._warper_restarts} of {WARPER_MAX_RESTARTS}).")
+        self.launch_game(warper=True)
 
     def save_support_bundle(self):
         """Advanced tab button: asks where, then writes the bundle in the background."""

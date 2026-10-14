@@ -179,6 +179,10 @@ struct Values {
     /// I2: every party member on this map drawn through walls as a small marker with its distance
     /// in its colour (ini party_through_walls; off by default: busy next to the name plates). Live.
     std::atomic<bool> party_through_walls{false};
+    /// I1: friendly fire / PvP - party members can hurt each other (party_pvp.h). A party rule: the
+    /// host's value is sent to every guest, a guest's own value never counts. Off by default (ini
+    /// party_friendly_fire; env BB_PARTY_FRIENDLY_FIRE=0/1 overrides at start). Live.
+    std::atomic<bool> party_friendly_fire{false};
     /// ... within this many metres of the NPC (0 = anywhere on the same map; ini
     /// party_npc_talk_range; env BB_PARTY_NPC_TALK_RANGE overrides). Live, local.
     std::atomic<int> party_npc_talk_range{25};
