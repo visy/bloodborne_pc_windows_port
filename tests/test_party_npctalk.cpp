@@ -129,6 +129,20 @@ static void TestChoices() {
     // The next menu's Clear right after the choice still reads it.
     assert(t.OnCommand(ChoiceTracker::kClear, 7, -1, -1, 0, &msg, &npc) && msg == 15000100);
     assert(t.Rows() == 0);
+    // Live (the Doll, 2026-10-14): Clear, 4 rows, the menu (0xA), then the ESD's wait command 0x44
+    // every frame with the result unchanged (-1) until the row is decided, then the branch.
+    ChoiceTracker d;
+    assert(!d.OnCommand(ChoiceTracker::kClear, 210304, -1, -1, -1, &msg, &npc));
+    for (int i = 0; i < 4; ++i) assert(!d.OnCommand(ChoiceTracker::kAdd, 210304, i, 15000100 + i, -1, &msg, &npc));
+    assert(!d.OnCommand(kShow, 210304, -1, -1, -1, &msg, &npc));
+    for (int i = 0; i < 40; ++i) assert(!d.OnCommand(0x44, 210304, -1, -1, -1, &msg, &npc));
+    assert(!d.OnCommand(0x44, 210693, -1, -1, 1, &msg, &npc)); // another NPC's script in between
+    assert(d.OnCommand(0, 210304, -1, -1, 1, &msg, &npc) && msg == 15000101 && npc == 210304);
+    // The same row again (the result stays 1): read when the next menu is cleared.
+    for (int i = 0; i < 4; ++i) assert(!d.OnCommand(ChoiceTracker::kAdd, 210304, i, 15000100 + i, 1, &msg, &npc));
+    assert(!d.OnCommand(kShow, 210304, -1, -1, 1, &msg, &npc));
+    for (int i = 0; i < 10; ++i) assert(!d.OnCommand(0x44, 210304, -1, -1, 1, &msg, &npc));
+    assert(d.OnCommand(ChoiceTracker::kClear, 210304, -1, -1, 1, &msg, &npc) && msg == 15000101);
 }
 
 static void TestRate() {

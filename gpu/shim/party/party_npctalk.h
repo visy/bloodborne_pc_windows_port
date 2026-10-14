@@ -128,8 +128,8 @@ class ChoiceTracker {
 public:
     static constexpr std::uint32_t kAdd = 0x13, kClear = 0x14;
     /// A talk command `cmd` of NPC `npc` (args a1, a2 as ints); `result` = MessageUI +0xEC0 now.
-    /// Returns true with *msg / *npc_out when this command follows a shown menu whose chosen row
-    /// is in the list.
+    /// Returns true with *msg / *npc_out once a shown menu's row was decided (the result changed
+    /// since the menu showed, or the NPC's next menu is being cleared) and that row is in the list.
     bool OnCommand(std::uint32_t cmd, std::uint32_t npc, std::int32_t a1, std::int32_t a2, std::int32_t result,
                    std::uint32_t* msg, std::uint32_t* npc_out);
     std::size_t Rows() const { return rows_.size(); }
@@ -139,6 +139,7 @@ private:
     std::uint32_t npc_ = 0;
     bool shown_ = false;
     bool armed_ = false; ///< rows were added since the last menu
+    std::int32_t shown_result_ = -1; ///< MessageUI +0xEC0 when the menu showed
 };
 
 /// Events per talker per 10 s at most (a chatty NPC chains ~1 line / 2 s).

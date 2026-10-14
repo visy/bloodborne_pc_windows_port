@@ -351,7 +351,12 @@ input on a listener.
   `+0x280` = 0.
 * Talk menu: command `0x13` AddTalkListData(index, msgId, ..) pushes `{msgId, index}` into
   MessageUI `+0xEB0`, `0x14` ClearTalkListData; the chosen row index is MessageUI `+0xEC0` (test
-  `0x17` GetTalkListEntryResult).
+  `0x17` GetTalkListEntryResult). A command argument is `{value, ?, type}`: type 1 a float, type 2
+  an int (live: AddTalkListData's index and message id are type 2). Live (the Doll): `0x14`, 4 x
+  `0x13`, `0xA` (the menu), then `0x44` every frame with `+0xEC0` unchanged until the row is
+  decided (the menu UI writes it on OK, 0x16B11C0 event 0x3ED), then the branch (`0`, `1`
+  TalkToPlayer). `+0xEC0` is never reset: it keeps the last decided row.
+* A game dialog (YES / NO, e.g. "Travel with the party?") is MessageUI `+0x78` != 0.
 * Talk text: FMG category 1 (`会話`, 2835 lines; per speaker in blocks of 10000: 190xxxx Gilbert,
   130xxxx Iosefka, 40xxxx the Doll, 50xxxx Gehrman ...). Item names: 10 goods, 11 weapons, 12 armor.
 
@@ -379,4 +384,25 @@ Logged as `Party: npc_talk: ...` (every local line with its talk id, every share
 distance decision). Switches: Party rules "Share NPC dialogue" (bbport.ini `party_npc_talk`,
 launcher Party > Share NPC dialogue, `BB_PARTY_NPC_TALK=0`), `BB_PARTY_NPC_TALK_VOICE=0`,
 `BB_PARTY_NPC_TALK_SUBTITLE=0` (our caption line instead of the game's subtitle),
-`BB_PARTY_NPC_TALK_TRACE=1` (every talk command id).
+`BB_PARTY_NPC_TALK_TRACE=1` (every talk command id with its args, the menu result, MessageUI
+`+0x58` / `+0x78`).
+
+**Choice detection.** After the menu shows, the choice is the first command of that NPC whose
+`+0xEC0` differs from its value when the menu showed, or the NPC's next ClearTalkListData (the same
+row chosen again leaves `+0xEC0` unchanged). A choice / gift line stays under the caption header for
+6 s, also when the NPC's answer line follows at once. While a game dialog is up (`+0x78`), the
+listener writes no subtitle request and draws no caption (live: both were drawn across the
+"Travel with the party?" text).
+
+**Live (2026-10-14, npctalk2, 2 instances in the Hunter's Dream).** Lines: each shared line reached
+the listener 9-30 ms after the talker's line; ends: the talker's talk stop reached the listener 10-30
+ms later (the subtitle went with the talker's, screenshots); a line the talker holds past its speaking
+time ended on the listener up to 1.1 s early (speaking-time estimate; "Very well, let the echoes
+become your strength." 5.3 s vs 6.4 s on the talker). Choices, both directions: guest -> host
+`choice shown: Hunter1 chose: Channel Blood Echoes`, host -> guest `Hunter0 chose: Channel Blood
+Echoes` in the log (before the fix of the argument types and the decision rule no choice was ever sent: rows
+read as 0, the menu resolved on the first per-frame wait command). Voice: `voice v210400250 at
+(-5.8, -5.6, -13.6) through 0x27D3A80 (handle ...)` for every shared line (muted test: log only).
+The dialog rule live: no subtitle request on the host while its dialog was up (screenshot: the dialog alone). The 6 s choice line was added after the run (unit-free, not re-run). Not seen live: the far notice (the host found no prompt at Gehrman in this save), a gift. Open: the
+caption (and the party name tags) draw over the listener's own full-screen menus (e.g. its level-up
+screen: no "game menu open" signal yet; the game's own subtitle is dimmed under the menu).
