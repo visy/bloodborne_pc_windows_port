@@ -967,11 +967,14 @@ def rotate_launcher_log(keep: int = LOG_HISTORY):
 
 
 def new_crash_logs(since) -> bool:
-    """A crash log (out\\crash_*.log) was written after `since` (a timestamp; None = never)."""
+    """A crash log (out\\crash_*.log, or a GPU device-lost report) was written after `since` (a timestamp; None = never)."""
     if since is None:
         return False
     try:
-        return any(p.stat().st_mtime >= since - 1 for p in (APP_DIR / "out").glob("crash_*.log"))
+        out = APP_DIR / "out"
+        # A GPU device lost writes its own report (vk_breadcrumbs.cpp) before the crash.
+        return any(p.stat().st_mtime >= since - 1
+                   for pattern in ("crash_*.log", "device_lost_*.log") for p in out.glob(pattern))
     except OSError:
         return False
 
