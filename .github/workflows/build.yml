@@ -53,19 +53,16 @@ jobs:
           done
           mkdir -p /mingw64/include/magic_enum
           curl -sSL -o /mingw64/include/magic_enum/magic_enum.hpp https://raw.githubusercontent.com/Neargye/magic_enum/master/include/magic_enum/magic_enum.hpp
-          echo "MSYS2 MINGW64 path verification:"
-          ls -la /mingw64/include/vulkan/vulkan.h
-          ls -la /mingw64/lib/libvulkan*
 
       - name: Build with build.bat
-        shell: cmd
-        env:
-          MINGW_DIR: C:\msys64\mingw64
-          VULKAN_SDK: C:\msys64\mingw64
-          SDL3_DIR: C:\msys64\mingw64
-          CMAKE_PREFIX_PATH: C:\msys64\mingw64
+        shell: msys2 {0}
         run: |
-          call build.bat
+          export MINGW_DIR=$(cygpath -w /mingw64)
+          export VULKAN_SDK=$(cygpath -w /mingw64)
+          export SDL3_DIR=$(cygpath -w /mingw64)
+          export CMAKE_PREFIX_PATH=$(cygpath -w /mingw64)
+          echo "Windows path to MINGW64: $MINGW_DIR"
+          cmd.exe //c "build.bat"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
