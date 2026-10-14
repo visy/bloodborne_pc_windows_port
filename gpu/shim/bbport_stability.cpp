@@ -8,13 +8,18 @@
 //   BB_HEAP_TABLE=0        the SprjMemory heap size growth (Scaleform/MENU; GFX above 1080p)
 //   BB_GFX_HEAP_MORE_MIB=N the GFX_GraphicsPrivate growth (runtime_memory.c; 0: none)
 //   BB_ARENA_PROBE=0       the log when the frame arena allocator (+0xe45560) returns NULL
-//   BB_ARENA_GUARD=0       the NULL check at +0x21d5b35 (drops the render command instead)
+//   BB_ARENA_GUARD=0       the NULL checks at +0x21d5b35 and +0x2199303 (drop the render command)
+//   BB_FRAME_ARENA_KIB=N   the per-frame command allocator behind the frame arenas (game: 256;
+//                          default 1024; 0: the game's own)
+//   BB_ARENA_FAIL_TEST=N   test aid (off by default): every N-th pass of the +0x2199303 guard
+//                          drops its command as if the arena had returned NULL
 //   BB_GX_RECLAIM_WAIT=0   the GPU catch-up wait in the GX resource-table block reclaim
 //                          (BB_GX_RECLAIM_WAIT_MS: its bound, default 100)
 //   BB_FRAME_POOL_FIX=0    the frame loop's pool borrow (+0x1067f60) is the game's own
 //   BB_RIBBON_FIX=0        the effect ribbon writers (+0x28ce7b0/+0x28ceec0) are the game's own
 //   BB_BLEND_MASK_FIX=0    the blend-state constructor's write mask (+0x2a51640) is not cleared
 #include "bbport_stability.h"
+#include "bbport_stability_logic.h"
 #include "bbport_ribbons.h"
 
 #include <algorithm>
@@ -336,8 +341,9 @@ constexpr u64 kGuardSite = 0x21d5b35;
 constexpr u64 kGuardNext = 0x21d5b3a;
 constexpr u64 kGuardExit = 0x21d5aca;
 constexpr u64 kGraphicsPrivateAllocatorVtable = 0x53aec90;
+constexpr u64 kFrameLinearVtable = 0x52e6fd0;
 
-std::atomic<u64> arena_nulls{0}, commands_dropped{0};
+std::atomic<u64> arena_nulls{0}, commands_dropped{0}, frame_high_water{0};
 
 std::string GuestName(u64 address) {
     char text[48];
@@ -365,6 +371,14 @@ BB_SYSV void ArenaNull(u64 arena, u64 size, u64 chunk) {
                 "alloc %s\n",
                 ull(n + 1), ull(arena), ull(size), ull(chunk), Rd32(arena + 8), Rd32(arena + 0x10),
                 Rd32(arena + 0x14), ull(backing), GuestName(vtable).c_str(), GuestName(alloc_fn).c_str());
+    if (vtable == reinterpret_cast<u64>(image) + kFrameLinearVtable) {
+        // The frame's linear allocator (+0xe453b0 -> +0x2085120): +8 base, +0x18 cursor, +0x20 end,
+        // +0x30 blocks handed out (reset at the frame flip).
+        const u64 base = Rd64(backing + 8), cursor = Rd64(backing + 0x18), end = Rd64(backing + 0x20);
+        std::printf("Stability:   frame allocator: %llu of %llu KiB used, %u blocks; fullest frame so far %llu KiB\n",
+                    ull((cursor - base) >> 10), ull((end - base) >> 10), Rd32(backing + 0x30),
+                    ull(frame_high_water.load() >> 10));
+    }
     if (vtable == reinterpret_cast<u64>(image) + kGraphicsPrivateAllocatorVtable) {
         const char* names[2] = {"GFX_GraphicsPrivate", "GFX_GraphicsPrivateB"};
         for (int i = 0; i < 2; ++i) {
@@ -382,12 +396,12 @@ BB_SYSV void ArenaNull(u64 arena, u64 size, u64 chunk) {
     std::fflush(stdout);
 }
 
-BB_SYSV void CommandDropped(u64 frame_ctx, u64 command) {
+BB_SYSV void CommandDropped(u64 frame_ctx, u64 command, u64 site) {
     const u64 n = commands_dropped.fetch_add(1, std::memory_order_relaxed);
     if (n < 8 || (n & 1023) == 0) {
         std::printf("Stability: render command 0x%llx dropped (#%llu): frame context 0x%llx's arena returned NULL "
-                    "(guest +0x21d5b20)\n",
-                    ull(command), ull(n + 1), ull(frame_ctx));
+                    "(guest +0x%llx)\n",
+                    ull(command), ull(n + 1), ull(frame_ctx), ull(site));
         std::fflush(stdout);
     }
 }
@@ -438,11 +452,162 @@ bool InstallArenaGuard() {
     e.SaveVolatile();
     e.Bytes({0x4c, 0x89, 0xf7}); // mov rdi, r14 (the frame context)
     e.Bytes({0x48, 0x89, 0xde}); // mov rsi, rbx (the command)
+    e.Bytes({0xba});             // mov edx, the call site
+    e.U32(0x21d5b20);
     e.CallAbs(reinterpret_cast<const void*>(&CommandDropped));
     e.RestoreVolatile();
     e.BackRedZone();
     e.JmpTo(reinterpret_cast<u64>(image) + kGuardExit);
     return WriteBranch(kGuardSite, 0xe9, PlaceStub(e), 0);
+}
+
+// ======================================================================================
+// 3b. The second unchecked arena allocation, in FUN_02198fd0 (the frame flip / post-process command
+// builder; playtest 1 crash at +0x2199310): +0x2199266 takes 0x20 bytes and checks them, +0x21992fb
+// takes 0x10 and writes through them at once (`mov [r12 + 8], r13` after the unlock). The guard
+// replaces the unlock's first two instructions (+0x2199303, 10 bytes): a NULL runs the unlock and
+// skips the command's fill and submission (+0x21b4b00) to +0x2199346, the code after it.
+// ======================================================================================
+constexpr u64 kGuard2Site = 0x2199303;
+constexpr u64 kGuard2Call = 0x219930d; // call [rax + 0x28], the unlock
+constexpr u64 kGuard2Skip = 0x2199346; // mov byte [r15 + 0x3ab], 0: after the submission
+std::atomic<u64> fail_test_passes{0};
+u64 fail_test_every = 0;
+volatile u8 fail_test_now = 0;
+
+BB_SYSV void ArenaFailTest() {
+    const u64 n = fail_test_passes.fetch_add(1, std::memory_order_relaxed);
+    fail_test_now = FailTestHit(n, fail_test_every) ? 1 : 0;
+}
+
+bool InstallArenaGuard2() {
+    // lea rdi, [rbx + 0x78]; mov esi, 0x10; mov edx, 0x10; call 0xe45560; mov r12, rax;
+    // mov rax, [rbx + 0xc8]; mov rdi, r14; call [rax + 0x28]; mov [r12 + 8], r13 ... mov rdx, r12;
+    // call 0x21b4b00; mov byte [r15 + 0x3ab], 0.
+    if (!Matches(0x21992ed, {0x48, 0x8d, 0x7b, 0x78, 0xbe, 0x10, 0x00, 0x00, 0x00, 0xba, 0x10, 0x00, 0x00, 0x00}) ||
+        !CallsTo(0x21992fb, 0xe45560) ||
+        !Matches(0x2199300, {0x49, 0x89, 0xc4, 0x48, 0x8b, 0x83, 0xc8, 0x00, 0x00, 0x00, 0x4c, 0x89, 0xf7, 0xff, 0x50,
+                             0x28, 0x4d, 0x89, 0x6c, 0x24, 0x08}) ||
+        !Matches(0x219933e, {0x4c, 0x89, 0xe2}) || !CallsTo(0x2199341, 0x21b4b00) ||
+        !Matches(kGuard2Skip, {0x41, 0xc6, 0x87, 0xab, 0x03, 0x00, 0x00, 0x00})) {
+        std::printf("Stability: arena guard: guest +0x%llx is not the expected code; left alone\n", ull(kGuard2Site));
+        return false;
+    }
+    if (const char* e = std::getenv("BB_ARENA_FAIL_TEST")) {
+        fail_test_every = std::strtoull(e, nullptr, 10);
+    }
+    Emitter e = NewStub();
+    std::size_t jz_null = 0, jnz_null = 0;
+    if (fail_test_every) {
+        e.SkipRedZone();
+        e.SaveVolatile();
+        e.CallAbs(reinterpret_cast<const void*>(&ArenaFailTest));
+        e.RestoreVolatile();
+        e.BackRedZone();
+        e.Bytes({0x49, 0xbb}); // movabs r11, &fail_test_now (r11 is dead here: between two calls)
+        e.U64(reinterpret_cast<u64>(&fail_test_now));
+        e.Bytes({0x41, 0x80, 0x3b, 0x00}); // cmp byte [r11], 0
+        e.Bytes({0x75, 0x00});             // jnz .null
+        jnz_null = e.size - 1;
+    }
+    e.Bytes({0x4d, 0x85, 0xe4}); // test r12, r12
+    e.Bytes({0x74, 0x00});       // jz .null
+    jz_null = e.size - 1;
+    e.Bytes({0x48, 0x8b, 0x83, 0xc8, 0x00, 0x00, 0x00}); // mov rax, [rbx + 0xc8]
+    e.Bytes({0x4c, 0x89, 0xf7});                         // mov rdi, r14
+    e.JmpTo(reinterpret_cast<u64>(image) + kGuard2Call);
+    // .null: unlock, log, skip the fill and the submission. The stack is the function's, as at the call.
+    const std::size_t null_at = e.size;
+    e.code[jz_null] = u8(null_at - (jz_null + 1));
+    if (jnz_null) {
+        e.code[jnz_null] = u8(null_at - (jnz_null + 1));
+    }
+    e.Bytes({0x48, 0x8b, 0x83, 0xc8, 0x00, 0x00, 0x00}); // mov rax, [rbx + 0xc8]
+    e.Bytes({0x4c, 0x89, 0xf7});                         // mov rdi, r14
+    e.Bytes({0xff, 0x50, 0x28});                         // call [rax + 0x28]
+    e.SkipRedZone();
+    e.SaveVolatile();
+    e.Bytes({0x48, 0x89, 0xdf}); // mov rdi, rbx (the frame context)
+    e.Bytes({0x4c, 0x89, 0xe6}); // mov rsi, r12 (the allocation: 0, or the fail test's)
+    e.Bytes({0xba});             // mov edx, the call site
+    e.U32(0x21992fb);
+    e.CallAbs(reinterpret_cast<const void*>(&CommandDropped));
+    e.RestoreVolatile();
+    e.BackRedZone();
+    e.JmpTo(reinterpret_cast<u64>(image) + kGuard2Skip);
+    return WriteBranch(kGuard2Site, 0xe9, PlaceStub(e), 10 - 5);
+}
+
+// ======================================================================================
+// 3c. Why the arena ran dry (playtest 1): each frame context's arenas (+0x48, +0x78; 2 KiB chunks)
+// take their chunks from a linear allocator (vtable +0x52e6fd0) of 256 KiB, one per frame context
+// (renderer +0x370 / +0x378, made by FUN_02194580 with `mov edx, 0x40000` -> +0xe45200) and reset
+// at each frame flip in FUN_02198fd0 (vtbl+0x78 at +0x2199134, +0x2199587, +0x21999a3). Once a
+// frame has used it up, every arena allocation fails for the rest of that frame. The size grows
+// (BB_FRAME_ARENA_KIB), and the flip notes how full the fullest frame got.
+// ======================================================================================
+constexpr std::array<u64, 2> kFrameArenaSizes = {0x2195c09, 0x2195c46};
+constexpr std::array<u64, 3> kFrameFlips = {0x2199134, 0x2199587, 0x21999a3};
+u64 frame_arena_bytes = kFrameArenaStock;
+std::atomic<u64> frame_fill_logged{0};
+
+BB_SYSV void FrameFlip(u64 linear) {
+    if (!linear) {
+        return;
+    }
+    const u64 base = Rd64(linear + 8), used = Rd64(linear + 0x18) - base, capacity = Rd64(linear + 0x20) - base;
+    if (used <= frame_high_water.load(std::memory_order_relaxed)) {
+        return;
+    }
+    frame_high_water.store(used, std::memory_order_relaxed);
+    u64 logged = frame_fill_logged.load(std::memory_order_relaxed);
+    if (HighWaterNews(used, logged) && frame_fill_logged.compare_exchange_strong(logged, used)) {
+        std::printf("Stability: frame allocator: the fullest frame so far used %llu of %llu KiB (%u/8; %u blocks)\n",
+                    ull(used >> 10), ull(capacity >> 10), FillEighths(used, capacity), Rd32(linear + 0x30));
+        std::fflush(stdout);
+    }
+}
+
+std::string FrameArena() {
+    const u64 want = FrameArenaBytes(std::getenv("BB_FRAME_ARENA_KIB"));
+    for (const u64 site : kFrameArenaSizes) {
+        if (!Matches(site, {0xba, 0x00, 0x00, 0x04, 0x00}) || !CallsTo(site + 5, 0xe45200)) {
+            std::printf("Stability: frame allocator: guest +0x%llx is not mov edx, 0x40000; left alone\n", ull(site));
+            return "frame-arena stock";
+        }
+    }
+    if (want != kFrameArenaStock) {
+        const u32 imm = u32(want);
+        for (const u64 site : kFrameArenaSizes) {
+            std::memcpy(image + site + 1, &imm, 4);
+        }
+        frame_arena_bytes = want;
+    }
+    return "frame-arena " + std::to_string(frame_arena_bytes >> 10) + "KiB";
+}
+
+bool InstallFrameFlipProbe() {
+    for (const u64 site : kFrameFlips) {
+        // mov rdi, [r15 + rax*8 + 0x370]; mov rax, [rdi]; call [rax + 0x78]
+        if (!Matches(site, {0x49, 0x8b, 0xbc, 0xc7, 0x70, 0x03, 0x00, 0x00, 0x48, 0x8b, 0x07, 0xff, 0x50, 0x78})) {
+            std::printf("Stability: frame allocator probe: guest +0x%llx is not the expected code; left alone\n",
+                        ull(site));
+            return false;
+        }
+    }
+    bool ok = true;
+    for (const u64 site : kFrameFlips) {
+        Emitter e = NewStub();
+        e.Bytes({0x49, 0x8b, 0xbc, 0xc7, 0x70, 0x03, 0x00, 0x00}); // mov rdi, [r15 + rax*8 + 0x370]
+        e.SkipRedZone();
+        e.SaveVolatile();
+        e.CallAbs(reinterpret_cast<const void*>(&FrameFlip));
+        e.RestoreVolatile();
+        e.BackRedZone();
+        e.JmpTo(reinterpret_cast<u64>(image) + site + 8);
+        ok = ok && WriteBranch(site, 0xe9, PlaceStub(e), 8 - 5);
+    }
+    return ok;
 }
 
 // ======================================================================================
@@ -721,7 +886,12 @@ void PatchImage(unsigned char* image_, std::uint64_t size) {
     const bool probe = On("BB_ARENA_PROBE") && stub_page && InstallArenaProbe();
     note(std::string("arena-probe ") + (probe ? "on" : "off"));
     const bool guard = On("BB_ARENA_GUARD") && stub_page && InstallArenaGuard();
-    note(std::string("arena-guard ") + (guard ? "on" : "off"));
+    const bool guard2 = On("BB_ARENA_GUARD") && stub_page && InstallArenaGuard2();
+    note(std::string("arena-guard ") + (guard && guard2 ? "on" : guard || guard2 ? "partly" : "off") +
+         (fail_test_every ? " (fail test 1/" + std::to_string(fail_test_every) + ")" : ""));
+    note(FrameArena());
+    const bool flip_probe = On("BB_ARENA_PROBE") && stub_page && InstallFrameFlipProbe();
+    note(std::string("frame-arena-probe ") + (flip_probe ? "on" : "off"));
     const bool reclaim = On("BB_GX_RECLAIM_WAIT") && stub_page && InstallReclaimWait();
     note(reclaim ? "gx-reclaim-wait " + std::to_string(reclaim_budget.count() / 1000) + "ms" : "gx-reclaim-wait off");
     const bool pool = On("BB_FRAME_POOL_FIX") && stub_page && InstallFramePool();

@@ -26,6 +26,8 @@
 #include "party_dsummon.h"
 #include "party_status_bridge.h"
 #include "party_spectate.h"
+#include "party_director.h"
+#include "party_death_rules.h"
 
 #include <algorithm>
 #include <atomic>
@@ -2989,8 +2991,12 @@ bool ChrTransform(u64 chr, float pos[4], float rot[4]) {
     return a && SafeRead(a + 0x1e0, pos, 16) && SafeRead(a + 0x1d0, rot, 16);
 }
 
+/// BB_PARTY_B2_HOST_REVIVE=1 (opt-in since playtest 1): the host's death is a revive in place at
+/// its lamp in the loaded map (no load, no world reset). Default: the vanilla respawn load for the
+/// whole party (the chr warp broke occlusion, left the guests' HostDead state half-done until their
+/// next load - blocked pickups and prompts - and reset nothing; triage bugs 6, 7, 12, 13).
 bool HostReviveOn() {
-    static const bool on = !(std::getenv("BB_PARTY_B2_HOST_REVIVE") && std::getenv("BB_PARTY_B2_HOST_REVIVE")[0] == '0');
+    static const bool on = deathrules::OptIn(std::getenv("BB_PARTY_B2_HOST_REVIVE"));
     return on;
 }
 
@@ -3084,23 +3090,19 @@ bool SoloReviveTest() {
 }
 
 bool HostDeathIntercept() {
-    if (!g_on.load() || !HostReviveOn() || (Role() != RoleHost && !SoloReviveTest())) {
+    if (!g_on.load() || (Role() != RoleHost && !SoloReviveTest())) {
         return false;
+    }
+    if (g_host_down.load()) {
+        return true;  // the same death's funnel again (a taken death: limbo or revive pending)
     }
     const int members = MemberTaskCount(), dead = DeadMemberCount();
-    if (members <= 0 && !SoloReviveTest()) {
-        return false;
-    }
-    if (members > 0 && dead >= members) {
-        Log("host death: every member is down too (%d of %d): a wipe; the party respawns together", dead, members);
-        return false;
-    }
     const u64 gsm = Slot(kSlotGsm);
     const u32 lamp = Field<u32>(gsm, 0x1528);
     const u32 stage = Field<u32>(Field<u64>(Slot(kSlotWorldChrMan), 0x60), 0x3f8);  // the player's stage
     // The lamp's spawn spot: the one seen at the last lamp arrival, else the MSB revive point of the
     // lamp from the game data (party_ids ReturnSpot, split_travel.md 3a), when it is in this map.
-    if (!(g_lamp_spot.valid && g_lamp_spot.lamp == lamp)) {
+    if (HostReviveOn() && !(g_lamp_spot.valid && g_lamp_spot.lamp == lamp)) {
         float rs[4];
         if (lamp != 0 && lamp != kTravelNone && (ids::EntityMap(lamp) >> 16) == (stage >> 16) && ids::ReturnSpot(lamp, rs)) {
             LampSpot d;
@@ -3115,34 +3117,50 @@ bool HostDeathIntercept() {
         }
     }
     const LampSpot& sp = g_lamp_spot;
-    // The stage id (PlayerIns +0x3F8) and the map id share the area / block bytes.
-    const bool here = sp.valid && sp.lamp == lamp && (sp.map >> 16) == (stage >> 16);
     std::string boss;
-    if (BossFightActive(&boss)) {
-        if (!g_host_down.exchange(true)) {
-            g_host_down_at = Now();
-            g_host_limbo = true;
-            Log("host death in a boss fight (%s): limbo until the boss is gone (then the respawn), a wipe or a rest; "
-                "%d member(s), %d down",
-                boss.c_str(), members, dead);
-            SpectateBegin("host");
-        }
-        return true;
-    }
-    if (!here) {
-        // Design decision 1: the host respawns at its own last lamp in another map ALONE; the
-        // guests stay where they are (split travel: the captured TravelIntent carries `alone`).
-        static const bool alone = !(std::getenv("BB_PARTY_HOST_DEATH_ALONE") && std::getenv("BB_PARTY_HOST_DEATH_ALONE")[0] == '0');
-        if (alone) {
-            HostTravelAloneNext();
-        }
-        Log("host death: last lamp %u is not in the loaded map (stage %#x): the host loads it %s", lamp, stage,
-            alone ? "alone (the guests stay)" : "and the party moves with it");
+    deathrules::HostDeathView v;
+    v.party_on = true;
+    v.members = members;
+    v.down_reported = dead;
+    v.boss_fight = BossFightActive(&boss);
+    v.revive_opt_in = HostReviveOn();
+    // The stage id (PlayerIns +0x3F8) and the map id share the area / block bytes.
+    v.lamp_here = sp.valid && sp.lamp == lamp && (sp.map >> 16) == (stage >> 16);
+    v.alone_opt = !(std::getenv("BB_PARTY_HOST_DEATH_ALONE") && std::getenv("BB_PARTY_HOST_DEATH_ALONE")[0] == '0');
+    v.solo_fixture = SoloReviveTest();
+    const deathrules::HostDeathPlan plan = deathrules::PlanHostDeath(v);
+    switch (plan) {
+    case deathrules::HostDeathPlan::Stock:
         return false;
+    case deathrules::HostDeathPlan::Wipe:
+        Log("host death: every member is down too (%d of %d): a wipe; the party respawns together (one load)", dead,
+            members);
+        return false;
+    case deathrules::HostDeathPlan::PartyLoad:
+        Log("host death: the respawn load for the whole party at lamp %u (vanilla loading screen, the world resets); "
+            "%d member(s), %d down%s",
+            lamp, members, dead, HostReviveOn() ? "" : " (BB_PARTY_B2_HOST_REVIVE=1: revive in place instead)");
+        return false;
+    case deathrules::HostDeathPlan::AloneLoad:
+        // Design decision 1 (revive mode): the host respawns at its own last lamp in another map
+        // ALONE; the guests stay where they are (the captured TravelIntent carries `alone`).
+        HostTravelAloneNext();
+        Log("host death: last lamp %u is not in the loaded map (stage %#x): the host loads it alone (the guests stay)",
+            lamp, stage);
+        return false;
+    case deathrules::HostDeathPlan::BossLimbo:
+        g_host_down = true;
+        g_host_down_at = Now();
+        g_host_limbo = true;
+        Log("host death in a boss fight (%s): limbo until the boss is gone (then the %s), a wipe or a rest; "
+            "%d member(s), %d down",
+            boss.c_str(), HostReviveOn() ? "respawn" : "party's respawn load", members, dead);
+        SpectateBegin("host");
+        return true;
+    case deathrules::HostDeathPlan::ReviveInPlace:
+        break;
     }
-    if (g_host_down.exchange(true)) {
-        return true;  // the same death's funnel again
-    }
+    g_host_down = true;
     g_host_down_at = Now();
     Log("host death taken: no stage request, no party move; revive at lamp %u (%.1f, %.1f, %.1f) in %s; %d member(s), "
         "%d down; echoes %d go to the bloodstain",
@@ -3499,39 +3517,52 @@ void HostDownTick(const GameSnapshot& s, double now) {
         return;
     }
     const int members = MemberTaskCount(), dead = DeadMemberCount();
-    if (members > 0 && dead >= members) {
-        g_host_down = false;
-        g_host_limbo = false;
-        Log("host death: every member went down while the host was (%d of %d): a wipe; the stock funnel runs", dead,
-            members);
-        HostDeathFunnelNow();
-        return;
-    }
     static const double delay = [] {
         const char* v = std::getenv("BB_PARTY_B2_HOST_REVIVE_DELAY");
         return v && v[0] ? std::atof(v) : 1.0;
     }();
-    if (now - g_host_down_at.load() < delay) {
-        return;
-    }
-    if (g_host_limbo.load()) {
-        if (BossFightActive()) {
-            return;
-        }
-        g_host_limbo = false;
+    deathrules::DownView dv;
+    dv.members = members;
+    dv.down_reported = dead;
+    dv.limbo = g_host_limbo.load();
+    dv.boss_active = dv.limbo && BossFightActive();
+    dv.revive_opt_in = HostReviveOn();
+    dv.down_for = now - g_host_down_at.load();
+    dv.delay = delay;
+    {
         const u32 lamp = Field<u32>(Slot(kSlotGsm), 0x1528);
         const LampSpot& sp = g_lamp_spot;
-        const bool here = sp.valid && sp.lamp == lamp && (sp.map >> 16) == (Field<u32>(s.player, 0x3f8) >> 16);
-        Log("host death: the boss fight is over (%.1f s after the death); %s", now - g_host_down_at.load(),
-            here ? "respawn at the lamp here" : "the lamp is in another map: the host loads it alone");
-        if (!here) {
-            g_host_down = false;
-            HostTravelAloneNext();
-            HostDeathFunnelNow();
-            return;
-        }
+        dv.lamp_here = sp.valid && sp.lamp == lamp && (sp.map >> 16) == (Field<u32>(s.player, 0x3f8) >> 16);
     }
+    const deathrules::DownTick plan = deathrules::PlanDownTick(dv);
+    if (plan == deathrules::DownTick::Wait) {
+        return;
+    }
+    const bool was_limbo = g_host_limbo.exchange(false);
     g_host_down = false;
+    if (plan == deathrules::DownTick::Wipe) {
+        Log("host death: every member went down while the host was (%d of %d, recounted %.1f s after the death): a "
+            "wipe; the stock funnel runs",
+            dead, members, dv.down_for);
+        HostDeathFunnelNow();
+        return;
+    }
+    if (was_limbo) {
+        Log("host death: the boss fight is over (%.1f s after the death); %s", dv.down_for,
+            plan == deathrules::DownTick::Revive      ? "respawn at the lamp here"
+            : plan == deathrules::DownTick::AloneLoad ? "the lamp is in another map: the host loads it alone"
+                                                      : "the party's respawn load");
+    }
+    if (plan == deathrules::DownTick::PartyLoad) {
+        Log("host death: the respawn load for the whole party (%d member(s), %d down)", members, dead);
+        HostDeathFunnelNow();
+        return;
+    }
+    if (plan == deathrules::DownTick::AloneLoad) {
+        HostTravelAloneNext();
+        HostDeathFunnelNow();
+        return;
+    }
     ReviveHost(s);
     watch_until = now + 10.0;
     next_watch = now + 0.5;
@@ -3745,6 +3776,122 @@ void OwnStainLogTick(const GameSnapshot& s) {
     Log("own world: bloodstain flag %u, record %d echoes at (%.1f, %.1f, %.1f) map %#x; me (%.1f, %.1f, %.1f) map %#x, "
         "echoes %d", unsigned(Field<u8>(gdm, 0x28)), Field<int>(rec, 0x38, -1), double(p[0]), double(p[1]), double(p[2]),
         Field<u32>(rec, 0x3c), double(me[0]), double(me[1]), double(me[2]), s.map_id, s.echoes);
+}
+
+/// Any role, every frame (playtest 1 bug 13: two host stains were never picked up and nothing
+/// told why): the own bloodstain record as it changes - recorded at a death, taken (the echoes
+/// came back), or replaced by a later death before it was taken (those echoes are lost).
+void OwnStainWatchTick(const GameSnapshot& s) {
+    static int flag_was = -1, echoes_was = -1;
+    static float pos_was[3] = {};
+    if (!g_on.load() || !s.world_up || s.loading || !s.player) {
+        return;
+    }
+    const u64 gdm = Slot(kSlotGameData);
+    const u64 rec = Field<u64>(gdm, 0x30);
+    if (!gdm || !rec) {
+        return;
+    }
+    const int flag = Field<u8>(gdm, 0x28), echoes = Field<int>(rec, 0x38, -1);
+    float p[3] = {};
+    SafeRead(rec + 0x18, p, 12);
+    if (flag_was < 0) {
+        flag_was = flag;
+        echoes_was = echoes;
+        std::memcpy(pos_was, p, sizeof pos_was);
+        return;
+    }
+    const deathrules::StainChange c = deathrules::PlanStainChange(flag_was, echoes_was, flag, echoes);
+    if (c != deathrules::StainChange::None) {
+        float me[3] = {};
+        ChrPos(s.player, me);
+        Log("own bloodstain %s: flag %d -> %d, echoes %d -> %d at (%.1f, %.1f, %.1f) map %#x (was at (%.1f, %.1f, %.1f)); "
+            "me (%.1f, %.1f, %.1f) %s, own echoes %d%s",
+            deathrules::StainChangeName(c), flag_was, flag, echoes_was, echoes, double(p[0]), double(p[1]), double(p[2]),
+            Field<u32>(rec, 0x3c), double(pos_was[0]), double(pos_was[1]), double(pos_was[2]), double(me[0]),
+            double(me[1]), double(me[2]), MapName(s.map_id).c_str(), s.echoes,
+            c == deathrules::StainChange::Replaced ? ": the old stain's echoes are lost" : "");
+    }
+    flag_was = flag;
+    echoes_was = echoes;
+    std::memcpy(pos_was, p, sizeof pos_was);
+}
+
+// Host: a guest's rest (playtest 1 bug 3): the slot + 1 that asked (0 none), its lamp, and when.
+std::atomic<int> g_rest_req_slot{0};
+std::atomic<u32> g_rest_req_lamp{0};
+std::atomic<double> g_rest_req_at{0};
+double g_rest_load_last = -1e9;  // main thread
+
+/// Host, main thread: a guest's rest request runs as a rest load where the host stands
+/// (HostTravelTransformNow: the vanilla loading screen, the world resets, the guests in this world
+/// follow). Waits up to 30 s for the host to be ready; dropped with a log line otherwise.
+void HostRestLoadTick(const GameSnapshot& s, double now) {
+    const int req = g_rest_req_slot.load();
+    if (req <= 0) {
+        return;
+    }
+    if (!g_on.load() || Role() != RoleHost) {
+        g_rest_req_slot = 0;
+        return;
+    }
+    deathrules::RestView v;
+    v.world_up = s.world_up;
+    v.loading = s.loading;
+    v.alive = s.player && ChrHp(s.player) > 0;
+    v.boss_fight = BossFightActive();
+    v.in_dream = (s.map_id >> 24) == 21;
+    v.travel_pending = g_host_down.load() || Field<u8>(Slot(kSlotGsm), 8) != 0 || S().hphase != HostPhase::Idle;
+    v.since_last = now - g_rest_load_last;
+    const deathrules::RestLoad r = deathrules::PlanRestLoad(v);
+    const double waited = now - g_rest_req_at.load();
+    if (r == deathrules::RestLoad::NotReady || r == deathrules::RestLoad::Busy) {
+        if (waited > 30.0) {
+            g_rest_req_slot = 0;
+            Log("host: slot %d's rest at lamp %u: no rest load (%s for 30 s)", req - 1, g_rest_req_lamp.load(),
+                deathrules::RestLoadName(r));
+        }
+        return;
+    }
+    g_rest_req_slot = 0;
+    if (r != deathrules::RestLoad::Run) {
+        Log("host: slot %d rested at lamp %u: no rest load here (%s)", req - 1, g_rest_req_lamp.load(),
+            deathrules::RestLoadName(r));
+        return;
+    }
+    float pos[4] = {}, rot[4] = {};
+    if (!ChrTransform(s.player, pos, rot)) {
+        Log("host: slot %d rested: the host's position cannot be read; no rest load", req - 1);
+        return;
+    }
+    g_rest_load_last = now;
+    Log("host: slot %d rested at lamp %u and travels alone: a rest load for this world where the host stands "
+        "(%.1f, %.1f, %.1f) in %s (loading screen; the enemies come back)",
+        req - 1, g_rest_req_lamp.load(), double(pos[0]), double(pos[1]), double(pos[2]), MapName(s.map_id).c_str());
+    if (!HostTravelTransformNow(s.map_id, pos, rot, "a guest's rest")) {
+        Log("host: the rest load could not start (travel off or a stage request pending)");
+    }
+}
+
+/// Guest in the host's world: its own chr at HP 0 tells the host at once ("member_down"), so a
+/// host death a moment later counts it (playtest 1 bug 18: the game's death state reports the
+/// death seconds later, after the host had decided "0 down" and revived alone).
+void GuestDownNoticeTick(const GameSnapshot& s) {
+    static bool sent = false;
+    if (!g_on.load() || Role() != RoleClient || !s.world_up || s.loading || !s.player) {
+        sent = false;
+        return;
+    }
+    const int hp = ChrHp(s.player);
+    if (hp > 0 || hp < 0) {
+        sent = false;
+        return;
+    }
+    if (!sent && Field<int>(Slot(kSlotFlow), 0x84, -1) == 4) {
+        sent = true;
+        Send(0, "{\"op\":\"member_down\"}");
+        Log("guest: own chr at HP 0: told the host at once (member_down)");
+    }
 }
 
 extern "C" std::uint32_t runtime_pad_cross_presses(void); // src/runtime_pad.c
@@ -4984,6 +5131,9 @@ struct DirectSummon {
     dsummon::Guest g;                   // guest
     dsummon::Room room;
     double asked_at = 0;
+    // Host: the last request / served room / outcome (the bell fallback, HostBellHeld).
+    double req_at = -1e9, served_at = -1e9, done_at = -1e9;
+    bool done_ok = false, refused_wait = false;
 };
 DirectSummon& DS() {
     static DirectSummon d;
@@ -5059,19 +5209,35 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         names = DS().names;
     }
     static double first = 0;
+    static const bool gather_dsum = EnvOn("BB_PARTY_GATHER_DSUM");  // A5 experiment: carry across maps
     std::vector<int> keep;
     for (int slot : req) {
         dsummon::HostView v;
         v.world_up = s.world_up;
         v.loading = s.loading;
+        // Playtest 1 #1 / #9: no summon into the host's prologue, none of a guest in its own prologue,
+        // and none across maps (the guest gathers with a loading screen first).
+        v.host_ready = coop::LocalStartReady();
+        int guest_state = -1;
+        coop::MemberRoster(slot, &guest_state, &v.guest_map);
+        v.guest_in_prologue = guest_state == int(party::MemberState::Prologue);
+        v.host_map = s.map_id;
+        v.carry = dsummon::CarriesAcrossMaps(s.map_id, gather_dsum);
         v.cooperators = s.cooperators < 0 ? 0 : s.cooperators;
         v.ms_since_sign_summon = bbnet::party::FromApi::instance().ms_since_request();
         v.other_hold_ms = bbnet::party::FromApi::instance().hold_left_ms();
         v.busy = dsummon::HostBusy(BossBarShown(), CutscenePlaying());  // A11: joiners wait outside
         const std::string name = names.count(slot) ? names[slot] : std::string();
         if (const char* why = dsummon::HostRefusal(v)) {
-            Send(slot, dsummon::EncodeRefuse(v.busy));
-            Log("direct summon: slot %d refused (%s): the bell sign path goes on", slot, why);
+            const dsummon::Busy wait = dsummon::RefusalWait(v);
+            Send(slot, dsummon::EncodeRefuse(wait));
+            {
+                std::lock_guard<std::mutex> lk(DS().mu);
+                DS().refused_wait = wait != dsummon::Busy::None;
+            }
+            Log("direct summon: slot %d (%s) refused (%s; host %s, guest %s, wait %s)%s", slot, name.c_str(), why,
+                MapName(v.host_map).c_str(), MapName(v.guest_map).c_str(), dsummon::BusyWord(wait),
+                wait == dsummon::Busy::None ? ": the bell sign path goes on" : "");
             continue;
         }
         if (Role() != RoleHost) {
@@ -5108,6 +5274,11 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         SafeRead(net + 0xaac, room.pos, 12);
         if (!name.empty()) bbnet::party::FromApi::instance().hold_signs(name, 20000);
         Send(slot, dsummon::EncodeRoom(room));
+        {
+            std::lock_guard<std::mutex> lk(DS().mu);
+            DS().served_at = now;
+            DS().refused_wait = false;
+        }
         Log("direct summon: slot %d (%s) gets this host's room (%zu bytes, area %#x, level %u); its signs are held", slot,
             name.c_str(), room.data.size(), room.area, room.level);
     }
@@ -5121,13 +5292,26 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
     dsummon::Room room;
     std::string host_name;
     double asked_at = 0;
+    const char* fail_why = "";
+    bool gather = false;
     {
         std::lock_guard<std::mutex> lk(DS().mu);
         const dsummon::Phase before = DS().g.phase;
-        a = dsummon::Step(DS().g, now, s.world_up && !s.loading && WaitingGuestEntry() != 0, Role() == RoleClient);
+        // Playtest 1 #9: a room of another map is never handed to the game (it would join without
+        // loading the host's map and sit in its own world as a client): fail, gather, ring again.
+        if (dsummon::RoomElsewhere(DS().g, now, DS().room.area, s.map_id,
+                                   dsummon::CarriesAcrossMaps(DS().room.area, gather_dsum))) {
+            a = dsummon::Action::ReportFail;
+            Log("direct summon: the host's room is in %s, this guest in %s: not delivered",
+                MapName(DS().room.area).c_str(), MapName(s.map_id).c_str());
+        } else {
+            a = dsummon::Step(DS().g, now, s.world_up && !s.loading && WaitingGuestEntry() != 0, Role() == RoleClient);
+        }
         if (before == dsummon::Phase::Asked && DS().g.phase == dsummon::Phase::Failed) {
             Log("direct summon: no answer from the host within %.0f s: the bell sign path", dsummon::kAnswerWait);
         }
+        fail_why = DS().g.fail_why;
+        gather = DS().g.gather;
         room = DS().room;
         host_name = DS().names.count(0) ? DS().names[0] : std::string();
         asked_at = DS().asked_at;
@@ -5139,8 +5323,13 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
     } else if (a == dsummon::Action::ReportOk || a == dsummon::Action::ReportFail) {
         const bool ok = a == dsummon::Action::ReportOk;
         Send(0, dsummon::EncodeDone(ok));
-        Log("direct summon: %s (%.1f s after the request)", ok ? "joined the host's room" : "FAILED: the bell sign path takes over",
-            now - asked_at);
+        if (ok) {
+            Log("direct summon: joined the host's room (%.1f s after the request)", now - asked_at);
+        } else {
+            Log("direct summon: FAILED (%s; %.1f s after the request): %s", fail_why, now - asked_at,
+                gather ? "the bell goes down; gather to the host's area first (loading screen), then ring again"
+                       : "the bell sign path takes over");
+        }
     }
 }
 
@@ -5156,9 +5345,12 @@ void DirectSummonEvent(int from_slot, const std::string& body) {
     case dsummon::Kind::Req: {
         if (!DirectSummonOn()) {
             Send(from_slot, dsummon::EncodeRefuse());
+            Log("direct summon: slot %d refused (direct summon is off on this host, BB_PARTY_DIRECT_SUMMON=0): "
+                "the bell sign path goes on", from_slot);
             return;
         }
         std::lock_guard<std::mutex> lk(DS().mu);
+        DS().req_at = Now();
         if (std::find(DS().requests.begin(), DS().requests.end(), from_slot) == DS().requests.end())
             DS().requests.push_back(from_slot);
         return;
@@ -5170,9 +5362,10 @@ void DirectSummonEvent(int from_slot, const std::string& body) {
         const bool ok = dsummon::DecodeRoom(body, &r, &refused, &err);
         std::lock_guard<std::mutex> lk(DS().mu);
         if (ok) DS().room = r;
-        dsummon::OnRoom(DS().g, Now(), !ok);
         const dsummon::Busy busy = refused ? dsummon::WaitOf(body) : dsummon::Busy::None;
+        dsummon::OnRoom(DS().g, Now(), !ok, busy);
         if (busy != dsummon::Busy::None) party::bridge::OnHostBusy(dsummon::BusyText(busy, false));  // A11
+        else if (ok) party::bridge::OnHostBusy(std::string());  // a wait (prologue / map) is over
         Log("direct summon: the host's answer: %s%s%s", ok ? "its room" : err.c_str(),
             busy != dsummon::Busy::None ? " - " : "", dsummon::BusyText(busy, false).c_str());
         return;
@@ -5184,6 +5377,11 @@ void DirectSummonEvent(int from_slot, const std::string& body) {
         {
             std::lock_guard<std::mutex> lk(DS().mu);
             if (DS().names.count(from_slot)) name = DS().names[from_slot];
+        }
+        {
+            std::lock_guard<std::mutex> lk(DS().mu);
+            DS().done_at = Now();
+            DS().done_ok = ok;
         }
         if (!name.empty()) {
             bbnet::party::FromApi::instance().hold_signs(name, ok ? 3000 : 1);
@@ -6160,6 +6358,9 @@ void Tick(const GameSnapshot& s) {
     SpectatorRemoveTick(s);
     SpectateTick(s, Now());
     OwnStainLogTick(s);
+    OwnStainWatchTick(s);
+    GuestDownNoticeTick(s);
+    HostRestLoadTick(s, now);
     PinOwnSpotTick(s);
     PosScanTick(s, Now());
     RemoteChrRenderWatch(s, Now());
@@ -6277,7 +6478,10 @@ bool OnHostTravel(const TravelIntent& t) {
         // inside the map): no load for the guest (B4 / H1), only a move beside the host.
         const GameSnapshot g = ReadGameState(false);
         const std::uint32_t dest = DestMapOf(t);
-        static const bool inworld = !(std::getenv("BB_PARTY_INWORLD") && std::getenv("BB_PARTY_INWORLD")[0] == '0');
+        // BB_PARTY_INWORLD=1 (opt-in since playtest 1): that move without a load. Default: the
+        // guest loads too (a host death in this map: the vanilla respawn load for everyone, which
+        // also ends the guest's HostDead state and resets the world; triage bugs 6, 7).
+        static const bool inworld = deathrules::OptIn(std::getenv("BB_PARTY_INWORLD"));
         if (inworld && dest != 0 && g.world_up && !g.loading && g.map_id != 0xffffffffu && (dest >> 16) == (g.map_id >> 16) &&
             !g_dead_follow.load() && !BossFightActive()) {  // during a boss fight: a real load (C7)
             std::lock_guard<std::mutex> lk(S().mu);
@@ -6585,6 +6789,30 @@ bool AtLampSpot(std::uint32_t id) {
     }
     const float dx = p[0] - spot[0], dy = p[1] - spot[1], dz = p[2] - spot[2];
     return dx * dx + dy * dy + dz * dz < 4.0f;
+}
+
+bool LampInLoadedMap(std::uint32_t id) {
+    float spot[4];
+    return g_on.load() && id != 0 && id != kTravelNone && LampInLoadedBlock(id, spot);
+}
+
+bool GuestSoloLampLoad(std::uint32_t id, bool mark) {
+    TravelIntent t;
+    if (!g_on.load() || Role() != RoleClient || !LampIntent(id, &t)) {
+        return false;
+    }
+    Log("guest: lamp %u is in the loaded map: this guest's own loading screen (the host does not move)", id);
+    return TravelAlone(t, mark ? AloneWhy::HuntersMark : id == 2102950 ? AloneWhy::Lamp : AloneWhy::Headstone);
+}
+
+void HostRestRequest(int slot, std::uint32_t lamp) {
+    if (slot < 0) {
+        return;
+    }
+    g_rest_req_lamp = lamp;
+    g_rest_req_at = Now();
+    g_rest_req_slot = slot + 1;
+    Log("host: slot %d rested at lamp %u (travels alone): a rest load is queued", slot, lamp);
 }
 
 bool WarpToLampNoLoad(std::uint32_t id, bool beside) {
@@ -6912,6 +7140,25 @@ void DirectSummonRing() {
     DS().asked_at = Now();
     Send(0, dsummon::EncodeReq());
     Log("direct summon: asked the host for its room (rang the bell)");
+}
+bool DirectSummonTakeGather() {
+    std::lock_guard<std::mutex> lk(DS().mu);
+    if (DS().g.phase != dsummon::Phase::Failed || !DS().g.gather) return false;
+    DS().g.gather = false;
+    return true;
+}
+bool DirectSummonHoldsHostBell(double waiting_s) {
+    std::lock_guard<std::mutex> lk(DS().mu);
+    dsummon::HostBellView v;
+    v.direct_on = DirectSummonOn() && g_on.load();
+    v.waiting_s = waiting_s;
+    const double now = Now();
+    v.since_req = now - DS().req_at;
+    v.since_served = now - DS().served_at;
+    v.since_done = now - DS().done_at;
+    v.done_ok = DS().done_ok;
+    v.refused_wait = DS().refused_wait;
+    return dsummon::HostBellHeld(v);
 }
 bool DirectSummonCarries() {
     std::lock_guard<std::mutex> lk(DS().mu);

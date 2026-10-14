@@ -824,6 +824,40 @@ the bell join landed 0.5 m from the host (`join: arrived 0.5 m from the host; le
 with min 0.1 m (join8): `put beside it (-193.0, -28.6, 68.1)`; screenshots: side by side on both
 screens, the host sees the guest's body and plate. The 150 m case of join4 did not reproduce.
 
+**2026-10-14 (pt1deaths): playtest 1 - loading screens where the no-load paths glitched.**
+User direction after the first Internet playtest (docs/party/playtest1_triage.md, batch 1): where a
+vanilla loading screen fixes a glitch, the loading screen is the default and the seamless path an
+opt-in. The decisions are pure functions in `party_death_rules.h` (unit party-death-rules-test).
+* Host death (bugs 6, 7, 12, 13): `BB_PARTY_B2_HOST_REVIVE` is now opt-in (`=1`). By default
+  `HostDeathIntercept` lets the funnel run: one respawn load for the whole party at the host's lamp
+  (the host's TRAVEL host_death; the guests' HostDead_1 send-home is dropped by K9 and this travel
+  follows, which ends their half-done HostDead state: pickups and item boxes work again).
+  `BB_PARTY_INWORLD` (the guest's in-world follow of a host travel into its map) is opt-in too, so
+  the guest loads as well (otherwise a same-map host death respawn moved it in-world). A death in a
+  boss fight still takes the funnel for the limbo (spectate); when the boss is gone the stock
+  funnel runs (the party load) unless the revive is on.
+* Wipe race (bug 18): the dead are recounted every frame while the host is down (`PlanDownTick`), and
+  a guest's chr at HP 0 sends `member_down` at once (`GuestDownNoticeTick`) instead of only when its
+  death state runs seconds later.
+* Guest rest (bug 3): a guest that answers NO at a lamp / headstone travels alone as before and sends
+  a `rest` lamp request; the host (`HostRestLoadTick`, gate `PlanRestLoad`: in the world, alive, no
+  boss fight, not in the Dream, nothing pending, 20 s apart) runs `HostTravelTransformNow`: its own
+  world loaded at its own transform (the forced-placement sequence), broadcast as a Transform travel
+  so the other guests in its world follow. Live: census 326 alive / 4 dead -> 327 / 3.
+  Open: the host then waits up to 60 s (B2 Resynced) for an arrival from a guest that is elsewhere.
+* Guest same-map lamp (bug 10): no question; split travel queues the guest's own load
+  (`GuestSoloLampLoad` -> `TravelAlone`: a re-join into the host's area) and the host ignores a guest
+  request for a lamp of its loaded map. `BB_PARTY_GUEST_LAMP_INWORLD=1`: the old chr warp.
+* The split question closes on a load, the player's death or after 30 s (Circle cancels the dialog).
+* `OwnStainWatchTick` logs every change of the own bloodstain record (recorded / taken / replaced).
+* Live (one session + a re-run, 2 instances, Central Yharnam): host death -> `the respawn load for the
+  whole party`, guest loaded and arrived beside the host, enemies reset on both (the killed 2410015
+  alive again), screenshots: both at the lamp, normal geometry, the host's stain prompt; guest rest
+  NO -> host rest load, enemies back. Not reached live: the wipe (the guest's test death was taken
+  by the boss-clear watchdog after a `host_kill` ForceDead raised BlockClear2_3 on the guest, so it
+  left and rejoined by the bell - a test-aid artifact) and the guest's same-map solo load (it came
+  while the host death's re-join ran and was correctly dropped: "nothing runs", the host stayed).
+
 ## 7. Risks / open items
 
 * (Closed in 6.7 / 6.8) K10 / boss clear with a real kill; wipes (guest and host dead) and falls

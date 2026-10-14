@@ -15,6 +15,8 @@
 #include "game_state.h"
 #include "lua_events.h"
 #include "party_b2.h"
+#include "party_dsummon.h"
+#include "../net/from_api.h"
 #include "party_fourp.h"
 #include "party_link.h"
 #include "party_story.h"
@@ -268,6 +270,9 @@ struct State {
     std::uint64_t summons_seen = 0; // host: bbnet::summon_requests() last seen
     Clock::time_point summon_at{};  // host: when our game last asked to summon someone
     std::vector<std::string> restarted; // host: members whose game restarted, stale peer not cleared yet
+    bool member_waiting = false;        // host: HostMayRing was true last tick (since member_waiting_at)
+    Clock::time_point member_waiting_at{};
+    bool bell_hold_logged = false;      // host: "no Beckoning Bell while the direct summon ..." said
     std::uint64_t tick_thread = 0;
     std::uint64_t ticks = 0, ticks_at_log = 0, foreign_ticks = 0;
     party::MemberState sent_state = party::MemberState::Title;
@@ -297,6 +302,8 @@ State& S() {
     static State s;
     return s;
 }
+
+std::atomic<bool> g_local_start_ready{false};  // LocalStartReady (any thread)
 
 std::atomic<bool> g_tick_installed{false};
 
@@ -450,6 +457,7 @@ void UpdateStart(State& st, const GameSnapshot& s, StartMode mode) {
     st.start_step = step;
     st.start_ready = ready;
     SetLocalStartReady(ready);
+    g_local_start_ready.store(ready);
 }
 
 /// The bells a ready player lacks (§4.3), once per world, in its own world only.
@@ -2803,6 +2811,13 @@ void PartyDirector::Tick() {
         if (!st.restarted.empty() && s.session_role == RoleIdle) {
             for (const std::string& name : st.restarted) {
                 Log("%s: %d stale peer(s) of our game cleared", name.c_str(), ClearStalePeers(name));
+                // Playtest 1: its sign / direct summon hold (a room served to the old run, or the
+                // lost link's 26 s) refused the new run's summon ("a crashed member's connection is
+                // still held"); our game is out of that session and its peer is gone: end the hold.
+                if (bbnet::party::FromApi::instance().hold_left_ms() > 0) {
+                    bbnet::party::FromApi::instance().hold_signs(name, 1);
+                    Log("%s: its sign hold ended (the new run can be summoned now)", name.c_str());
+                }
             }
             st.restarted.clear();
         }
@@ -2867,6 +2882,15 @@ void PartyDirector::Tick() {
                 MapName(host_map).c_str(), kChaliceWaitEffect, ok ? "applied" : "NOT applied");
         }
     }
+    if (role == PartyRole::Guest && b2::DirectSummonTakeGather()) {
+        // Playtest 1 #9: the host's room is in another map (or the host refused for it): this
+        // guest's bell sign goes down (the sign path would summon it from here just the same) and
+        // the gather below takes it to the host's lamp with a loading screen; it rings there.
+        const bool dropped = RemoveSpEffect(kGuestBellEffect);
+        st.rung_ever = false;
+        Log("bell: the host is in another map: the bell goes down%s; gathering to the host first",
+            dropped ? " (its sign withdrawn)" : "");
+    }
     if (st.rung_ever && Seconds(st.last_ring, now) < st.ring_every) {
         return;
     }
@@ -2892,6 +2916,18 @@ void PartyDirector::Tick() {
                 }
                 return;
             }
+            // Playtest 1 #9: nor before this guest's OWN map is known (it reads 0xffffffff for a few
+            // ticks after the world is up): the gather below then saw no map, the bell rang at once
+            // and the direct summon joined the host's room from the Hunter's Dream without loading
+            // the host's map.
+            if (s.map_id == 0 || s.map_id == 0xffffffffu) {
+                static Clock::time_point said{};
+                if (Seconds(said, now) >= 10.0) {
+                    said = now;
+                    Log("bell: waiting for this guest's own map before ringing (the gather needs it)");
+                }
+                return;
+            }
             if (GatherGuest(s, link, now)) {
                 return; // travelling to the host's lamp in its own world first; ring there
             }
@@ -2908,8 +2944,35 @@ void PartyDirector::Tick() {
         if (st.summons_seen && Seconds(st.summon_at, now) < 20.0) {
             return;
         }
-        if (link->state() == party::LinkState::Hosting &&
-            HostMayRing(st.start_ready, s.cooperators, max_players, link->roster())) {
+        const bool may = link->state() == party::LinkState::Hosting &&
+                         HostMayRing(st.start_ready, s.cooperators, max_players, link->roster());
+        // A waiting member still in another map than ours (it gathers to our lamp first, with a
+        // loading screen) is not waiting for this bell yet: the grace starts once it is here.
+        bool member_elsewhere = false;
+        for (const party::RosterEntry& e : link->roster()) {
+            if (e.slot != party::kHostSlot && e.connected &&
+                (e.state == party::MemberState::Home || e.state == party::MemberState::Joining) &&
+                dsummon::MapKnown(e.map_id) && dsummon::MapKnown(s.map_id) && !dsummon::SameMap(e.map_id, s.map_id)) {
+                member_elsewhere = true;
+            }
+        }
+        if (!may || member_elsewhere) {
+            st.member_waiting = false;
+            st.member_waiting_at = now;  // waited 0 s (HostBellHeld: within the grace)
+        } else if (!st.member_waiting) {
+            st.member_waiting = true;
+            st.member_waiting_at = now;
+        }
+        if (may && b2::DirectSummonHoldsHostBell(Seconds(st.member_waiting_at, now))) {
+            // Playtest 1 #2: the guest's own ring asks for this host's room (direct summon); the
+            // host's bell (its effect showed on the host) is only the fallback after a failure.
+            if (!st.bell_hold_logged) {
+                st.bell_hold_logged = true;
+                Log("bell: a party member waits; no Beckoning Bell while the direct summon handles it "
+                    "(it rings as the fallback)");
+            }
+        } else if (may) {
+            st.bell_hold_logged = false;
             Ring(st, kHostBell, "host ready, a ready party member waits", now);
         } else if (link->state() == party::LinkState::Hosting && st.start_ready && b2::TitleJoinPending() &&
                    s.cooperators + 1 < max_players) {
@@ -3044,6 +3107,30 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
         Log("gather: the replay reported no warp; ringing after the next steady world");
     }
     return true;
+}
+
+bool LocalStartReady() {
+    return g_local_start_ready.load();
+}
+
+bool MemberRoster(int slot, int* state, std::uint32_t* map) {
+    *state = -1;
+    *map = 0;
+    party::PartyLink* link;
+    {
+        State& st = S();
+        std::lock_guard<std::mutex> lk(st.mu);
+        link = st.link;
+    }
+    if (!link) return false;
+    for (const party::RosterEntry& e : link->roster()) {
+        if (e.slot == slot) {
+            *state = int(e.state);
+            *map = e.map_id;
+            return true;
+        }
+    }
+    return false;
 }
 
 bool PartyRequested() {

@@ -86,6 +86,12 @@ bool TitleJoinPending();
 /// Guest (A5, BB_PARTY_GATHER_DSUM experiment): the direct summon is on and its last attempt did
 /// not fail (dsummon::GatherFirst).
 bool DirectSummonCarries();
+/// Guest (playtest 1 #9): the last direct summon failed because this guest is in another map than
+/// the host's room: true once (the director drops the bell and gathers with a loading screen).
+bool DirectSummonTakeGather();
+/// Host (playtest 1 #2): the Beckoning Bell stays down now (dsummon::HostBellHeld): a member has
+/// waited `waiting_s`; a room is on its way, a guest just joined, or its own ring comes first.
+bool DirectSummonHoldsHostBell(double waiting_s);
 /// Host: its AutoContinue is on the way into the world (a waiting title-join guest keeps waiting).
 void SetTitleContinuing(bool on);
 
@@ -126,6 +132,17 @@ bool AtLampSpot(std::uint32_t id);
 /// in-world and EVENT b2 {"op":"warp","lamp":id} moves the guests of this map beside it (others,
 /// apart, travel there with one load of their own). False: not in this block.
 bool HostPartyWarpNoLoad(std::uint32_t id);
+/// Lamp / return point `id` lies in the block the local player stands in (playtest 1 bug 10: a
+/// guest's warp there is its own loading screen, never a party move).
+bool LampInLoadedMap(std::uint32_t id);
+/// Guest, main thread: a lamp of the loaded map as this guest's own load (a B2 re-join into the
+/// host's area: one loading screen for this guest only, the host does not move). False: not possible.
+bool GuestSoloLampLoad(std::uint32_t id, bool mark);
+/// Host, any thread: a guest (party slot `slot`) rested at a lamp and travels alone: the host's
+/// world resets with a rest load where the host stands (a vanilla loading screen; the guests in
+/// this world follow it). Queued; run by the B2 tick when the host is ready (party_death_rules
+/// PlanRestLoad).
+void HostRestRequest(int slot, std::uint32_t lamp);
 /// Party slot `slot`'s map as its vitals report it (0 unknown) and whether it is in another area
 /// than this player (split travel). For world actions (D3): a host validates an apart guest's
 /// flags against the guest's own map (docs/party/split_travel.md 6).

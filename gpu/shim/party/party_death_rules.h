@@ -1,0 +1,279 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Deaths, rests and same-map lamps in a party: the decisions (playtest 1 batch 1,
+// docs/party/playtest1_triage.md bugs 3, 6, 7, 10, 12, 13, 18). Pure logic, no game access
+// (unit test: tests/test_party_death_rules.cpp); the game side is party_b2.cpp (HostDeathIntercept,
+// HostDownTick, HostRestLoad), party_split.cpp (the question) and party_guestsvc.cpp (requests).
+//
+// Rule of thumb (user, after playtest 1): where a vanilla loading screen fixes a glitch, the
+// loading screen is the default; the seamless (no-load) variant is an opt-in switch.
+#pragma once
+
+#include <algorithm>
+#include <cstring>
+
+namespace coop::deathrules {
+
+/// An env switch that is ON only when set to a value starting with '1' (the opt-in switches:
+/// BB_PARTY_B2_HOST_REVIVE, BB_PARTY_INWORLD, BB_PARTY_GUEST_LAMP_INWORLD).
+inline bool OptIn(const char* v) {
+    return v && v[0] == '1';
+}
+
+/// Members counted down: the most of what they reported ("member_down") and what is seen (their
+/// chr at HP 0 / an early down notice). Never more than `members`.
+inline int PartyDown(int members, int reported, int seen) {
+    if (members <= 0) {
+        return 0;
+    }
+    return std::min(members, std::max(0, std::max(reported, seen)));
+}
+
+/// Every member is down too: the party wipes (one respawn load for everyone).
+inline bool Wiped(int members, int reported, int seen) {
+    return members > 0 && PartyDown(members, reported, seen) >= members;
+}
+
+// ---- The host dies (SoloPlayDeath_2's funnel call) ----
+enum class HostDeathPlan {
+    Stock,          ///< no party / not the host: the game's own death (not taken, nothing broadcast)
+    PartyLoad,      ///< the stock funnel: one respawn load, the party follows (default)
+    Wipe,           ///< every member is down too: the stock funnel, everyone loads
+    BossLimbo,      ///< in a boss fight: the host waits (spectates) until the boss is gone
+    ReviveInPlace,  ///< opt-in BB_PARTY_B2_HOST_REVIVE=1: revived at its lamp in the loaded map, no load
+    AloneLoad,      ///< opt-in revive, but the lamp is in another map: the host loads it alone
+};
+inline const char* HostDeathPlanName(HostDeathPlan p);
+struct HostDeathView {
+    bool party_on = true;      ///< B2 on, this player hosts (or the solo revive fixture)
+    int members = 0;           ///< member tasks in the world
+    int down_reported = 0;     ///< members that said they are down
+    int down_seen = 0;         ///< members seen at HP 0 (early notices)
+    bool boss_fight = false;
+    bool revive_opt_in = false;
+    bool lamp_here = false;    ///< the host's last lamp has a spawn spot in the loaded map
+    bool alone_opt = true;     ///< BB_PARTY_HOST_DEATH_ALONE (revive mode only)
+    bool solo_fixture = false; ///< BB_PARTY_B2_HOST_REVIVE_SOLO=1 (test, no members needed)
+};
+inline HostDeathPlan PlanHostDeath(const HostDeathView& v) {
+    if (!v.party_on || (v.members <= 0 && !v.solo_fixture)) {
+        return HostDeathPlan::Stock;
+    }
+    if (Wiped(v.members, v.down_reported, v.down_seen)) {
+        return HostDeathPlan::Wipe;
+    }
+    if (v.boss_fight) {
+        return HostDeathPlan::BossLimbo;
+    }
+    if (!v.revive_opt_in) {
+        return HostDeathPlan::PartyLoad;
+    }
+    if (!v.lamp_here) {
+        return v.alone_opt ? HostDeathPlan::AloneLoad : HostDeathPlan::PartyLoad;
+    }
+    return HostDeathPlan::ReviveInPlace;
+}
+/// The plan takes the game's funnel call (true) or lets it run (false: a load now).
+inline bool PlanTakesFunnel(HostDeathPlan p) {
+    return p == HostDeathPlan::BossLimbo || p == HostDeathPlan::ReviveInPlace;
+}
+
+// ---- Each frame while the host is down (a taken death) ----
+enum class DownTick {
+    Wait,           ///< not yet (the revive delay, or the boss still fights)
+    Wipe,           ///< everyone is down now: the stock funnel (a wipe load)
+    Revive,         ///< revive in place (opt-in) at the lamp here
+    PartyLoad,      ///< the stock funnel: the respawn load for everyone
+    AloneLoad,      ///< the lamp is in another map: the host loads it alone (revive mode)
+};
+inline const char* DownTickName(DownTick d);
+struct DownView {
+    int members = 0;
+    int down_reported = 0;
+    int down_seen = 0;
+    bool limbo = false;        ///< the death came in a boss fight
+    bool boss_active = false;  ///< the boss fight is still on
+    bool revive_opt_in = false;
+    bool lamp_here = false;
+    double down_for = 0;       ///< s since the death was taken
+    double delay = 1.0;        ///< BB_PARTY_B2_HOST_REVIVE_DELAY
+};
+inline DownTick PlanDownTick(const DownView& v) {
+    // Recounted every frame: a member whose death arrives a moment after the host's turns the
+    // host's lone death into a wipe (playtest 1 bug 18: "0 down" counted 0.3 s too early).
+    if (Wiped(v.members, v.down_reported, v.down_seen)) {
+        return DownTick::Wipe;
+    }
+    if (v.down_for < v.delay) {
+        return DownTick::Wait;
+    }
+    if (v.limbo && v.boss_active) {
+        return DownTick::Wait;
+    }
+    if (!v.revive_opt_in) {
+        return DownTick::PartyLoad;
+    }
+    if (!v.lamp_here) {
+        return DownTick::AloneLoad;
+    }
+    return DownTick::Revive;
+}
+
+// ---- Split travel's question ("Travel with the party?") ----
+constexpr double kAskTimeout = 30.0;  ///< s an open question waits (was 120 s)
+enum class AskClose { Keep, Load, Dead, Timeout };
+inline const char* AskCloseName(AskClose c);
+/// An asked or queued question is closed by a load (a host travel, a death load), by the local
+/// player's death, or after kAskTimeout s open (playtest 1: three questions stayed open 120 s
+/// across the host's load and death).
+inline AskClose PlanAskClose(bool open, bool loading, bool local_dead, double open_for) {
+    if (loading) {
+        return AskClose::Load;
+    }
+    if (local_dead) {
+        return AskClose::Dead;
+    }
+    if (open && open_for > kAskTimeout) {
+        return AskClose::Timeout;
+    }
+    return AskClose::Keep;
+}
+
+// ---- A guest uses a lamp / headstone / Hunter's Mark in the host's world ----
+enum class GuestLamp {
+    Plain,     ///< nothing to decide here (not a guest in the host's world, or standing at it)
+    SoloLoad,  ///< the lamp is in the loaded map: this guest's own loading screen, no party move
+    Ask,       ///< another map: the question (YES party travel, NO alone + a rest load for the host)
+};
+inline const char* GuestLampName(GuestLamp g);
+inline GuestLamp PlanGuestLamp(bool guest_in_host_world, bool at_lamp_spot, bool lamp_in_loaded_map, bool mark) {
+    if (!guest_in_host_world || (at_lamp_spot && !mark)) {
+        return GuestLamp::Plain;
+    }
+    // Playtest 1 bug 10: a guest's warp to a lamp of the map the party stands in moved the host
+    // too (an in-world party move). Now only the guest moves, with a vanilla loading screen.
+    if (lamp_in_loaded_map) {
+        return GuestLamp::SoloLoad;
+    }
+    return GuestLamp::Ask;
+}
+/// A guest that travels alone from a lamp (NO) has rested: the host's world (where the guest
+/// was) resets with a rest load for everyone there. Not for a guest's death (no rest) and not for
+/// a solo same-map load (nothing was rested).
+inline bool GuestAloneRestsHostWorld(bool alone, bool same_map_solo) {
+    return alone && !same_map_solo;
+}
+
+// ---- The host runs a rest load for a guest's rest ----
+enum class RestLoad { Run, NotReady, Dead, BossFight, InDream, Busy, TooSoon };
+inline const char* RestLoadName(RestLoad r);
+constexpr double kRestLoadMinInterval = 20.0;
+struct RestView {
+    bool world_up = false;
+    bool loading = false;
+    bool alive = false;
+    bool boss_fight = false;
+    bool in_dream = false;          ///< the Hunter's Dream has nothing to reset
+    bool travel_pending = false;    ///< a stage request is armed / the host is down
+    double since_last = 1e9;        ///< s since the last rest load
+};
+inline RestLoad PlanRestLoad(const RestView& v) {
+    if (!v.world_up || v.loading) {
+        return RestLoad::NotReady;
+    }
+    if (!v.alive) {
+        return RestLoad::Dead;  // its own death load resets the world anyway
+    }
+    if (v.boss_fight) {
+        return RestLoad::BossFight;
+    }
+    if (v.in_dream) {
+        return RestLoad::InDream;
+    }
+    if (v.travel_pending) {
+        return RestLoad::Busy;
+    }
+    if (v.since_last < kRestLoadMinInterval) {
+        return RestLoad::TooSoon;
+    }
+    return RestLoad::Run;
+}
+
+// ---- Own bloodstain record (GameDataMan +0x28 flag, +0x30 record +0x38 echoes) ----
+enum class StainChange { None, Recorded, Taken, Replaced };
+inline const char* StainChangeName(StainChange c);
+/// What changed between two reads of the own bloodstain record (echoes -1 / flag 0 = none).
+inline StainChange PlanStainChange(int flag_was, int echoes_was, int flag_now, int echoes_now) {
+    const bool had = flag_was != 0 && echoes_was > 0, has = flag_now != 0 && echoes_now > 0;
+    if (had && !has) {
+        return StainChange::Taken;
+    }
+    if (!had && has) {
+        return StainChange::Recorded;
+    }
+    if (had && has && echoes_was != echoes_now) {
+        return StainChange::Replaced;
+    }
+    return StainChange::None;
+}
+
+inline const char* HostDeathPlanName(HostDeathPlan p) {
+    switch (p) {
+    case HostDeathPlan::Stock: return "stock";
+    case HostDeathPlan::PartyLoad: return "party respawn load";
+    case HostDeathPlan::Wipe: return "wipe";
+    case HostDeathPlan::BossLimbo: return "boss limbo";
+    case HostDeathPlan::ReviveInPlace: return "revive in place";
+    case HostDeathPlan::AloneLoad: return "alone load";
+    }
+    return "?";
+}
+inline const char* DownTickName(DownTick d) {
+    switch (d) {
+    case DownTick::Wait: return "wait";
+    case DownTick::Wipe: return "wipe";
+    case DownTick::Revive: return "revive";
+    case DownTick::PartyLoad: return "party load";
+    case DownTick::AloneLoad: return "alone load";
+    }
+    return "?";
+}
+inline const char* AskCloseName(AskClose c) {
+    switch (c) {
+    case AskClose::Keep: return "keep";
+    case AskClose::Load: return "a load started";
+    case AskClose::Dead: return "the player died";
+    case AskClose::Timeout: return "no answer in 30 s";
+    }
+    return "?";
+}
+inline const char* GuestLampName(GuestLamp g) {
+    switch (g) {
+    case GuestLamp::Plain: return "plain";
+    case GuestLamp::SoloLoad: return "solo load";
+    case GuestLamp::Ask: return "ask";
+    }
+    return "?";
+}
+inline const char* RestLoadName(RestLoad r) {
+    switch (r) {
+    case RestLoad::Run: return "run";
+    case RestLoad::NotReady: return "the host is not in the world";
+    case RestLoad::Dead: return "the host is dead (its death load resets the world)";
+    case RestLoad::BossFight: return "a boss fight is on";
+    case RestLoad::InDream: return "the host is in the Hunter's Dream";
+    case RestLoad::Busy: return "a travel or death is under way";
+    case RestLoad::TooSoon: return "a rest load ran less than 20 s ago";
+    }
+    return "?";
+}
+inline const char* StainChangeName(StainChange c) {
+    switch (c) {
+    case StainChange::None: return "none";
+    case StainChange::Recorded: return "recorded";
+    case StainChange::Taken: return "taken";
+    case StainChange::Replaced: return "replaced";
+    }
+    return "?";
+}
+
+} // namespace coop::deathrules
