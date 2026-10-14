@@ -1549,6 +1549,23 @@ void PartyTab() {
            T("Each death lowers max HP by 10 % (up to 5 times); resting at a lamp cleanses it.",
              "Каждая смерть снижает здоровье на 10 % (до 5 раз); отдых у фонаря снимает."),
            on);
+    // I1 friendly fire / PvP (party_pvp.h): the host's switch; a guest sees the host's rule.
+    if (b.role == ps::Role::Guest) {
+        Note(ps::FriendlyFire() ? T("Friendly fire / PvP: ON (the host's rule) - party members can hurt each other",
+                                    "Огонь по своим / PvP: ВКЛ (правило хоста) - члены группы могут ранить друг друга")
+                                : T("Friendly fire / PvP: off (the host decides)",
+                                    "Огонь по своим / PvP: выкл. (решает хост)"),
+             Dim());
+    } else {
+        Toggle("party_friendly_fire", T("Friendly fire / PvP", "Огонь по своим / PvP"), s.party_friendly_fire,
+               T("Party members can hurt each other, both ways, like invaders (ERSC's Judicator's Rulebook). "
+                 "A party kill is a normal party death; no Echoes or Insight for the killer. The host's "
+                 "setting counts and every member gets a notice when it changes. Default: off.",
+                 "Члены группы могут ранить друг друга, как захватчики. Убийство в группе - обычная смерть; "
+                 "убийца не получает отголосков и озарения. Действует настройка хоста, все получают "
+                 "уведомление при изменении. По умолчанию: выкл."),
+               on);
+    }
     static const char* overhead_en[] = {"Nothing", "Name", "Name and level", "Name and health", "Name and deaths"};
     static const char* overhead_ru[] = {"Ничего", "Имя", "Имя и уровень", "Имя и здоровье", "Имя и смерти"};
     Choice("party_overhead", T("Above companions", "Над спутниками"), std::clamp(s.party_overhead.load(), 0, 4), 5,

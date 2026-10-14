@@ -272,6 +272,31 @@ class PingsSettings(unittest.TestCase):
         self.assertIn("System > Pings", src)
 
 
+class FriendlyFireSetting(unittest.TestCase):
+    """I1: the host's Friendly fire / PvP checkbox: bbport.ini party_friendly_fire, off by default."""
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.L = load_launcher()
+        except Exception as ex:  # no tkinter here
+            raise unittest.SkipTest(f"launcher.py not importable here: {ex}")
+
+    def test_default_off_and_round_trip(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            ini = Path(d) / "bbport.ini"
+            self.assertFalse(self.L.ini_flag(ini, "party_friendly_fire", False))
+            self.L.update_ini(ini, {"party_friendly_fire": "1"})
+            self.assertTrue(self.L.ini_flag(ini, "party_friendly_fire", False))
+            self.L.update_ini(ini, {"party_friendly_fire": "0"})
+            self.assertFalse(self.L.ini_flag(ini, "party_friendly_fire", False))
+        src = Path(self.L.__file__).read_text(encoding="utf-8")
+        self.assertIn("System > Friendly fire", src)
+        # host only: the checkbox is in the host widgets
+        self.assertIn("self.party_widgets_host = [ff_cb", src)
+
+
 class DirectSummonSetting(unittest.TestCase):
     """The launcher's Direct summon checkbox: BB_PARTY_DIRECT_SUMMON, on unless turned off."""
     @classmethod

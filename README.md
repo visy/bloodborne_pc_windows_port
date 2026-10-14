@@ -17,14 +17,14 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 
 | Area | Progress | |
 |---|---|--:|
-| **Overall** | `█████████████████░░░` | 84% |
+| **Overall** | `██████████████████░░` | 88% |
 | Session & joining | `██████████████████░░` | 89% |
 | World & travel | `██████████████████░░` | 88% |
 | Death & respawn | `██████████████████░░` | 89% |
 | Progress (anyone can progress) | `█████████████████░░░` | 87% |
 | Services & UI | `██████████████████░░` | 90% |
 | Network & robustness | `█████████████████░░░` | 86% |
-| Bloodborne-specific (chalice, Insight) | `████████████████░░░░` | 81% |
+| Bloodborne-specific (chalice, Insight) | `█████████████████░░░` | 87% |
 | Feels like single player in a party | `█████████████████░░░` | 87% |
 
 ---
@@ -183,7 +183,12 @@ before anyone is in the game):
   hold is never handed out twice (no "inventory or storage max" box).
 - **Story cutscenes and endings play for everyone.** The Blood Moon, Amelia's skull (evening to
   night), Mergo's Wet Nurse's arena, Gehrman's scenes and the ending with the end credits
-  play for every party member.
+  play for every party member; a guest still loading in when a scene starts sees it once it has
+  arrived. After the Blood Moon the host is asked "Travel with the party?" and everyone goes to
+  Yahar'gul together.
+- **Insight for everyone.** Whatever Insight the host gets (a boss's first sight and kill, story
+  moments, the kidnap's waking, Chalice Dungeon bosses) every guest present gets too. What Insight
+  shows (Amygdalas, whispers) is up to each player's own Insight, as in the original game.
 - **The host's world is shared live, both ways.** A door or shortcut opened by the host is open
   for the guests too, and a lever or door a guest uses opens in the host's world (and in the
   guest's own save).
@@ -199,7 +204,8 @@ before anyone is in the game):
   Hunter's Marks) goes to the guest, the host and every other party member, once (the NPC has moved
   on for everyone, so nobody misses it).
 - **Kidnapped by a Snatcher?** If the host is grabbed, the whole party wakes up together in the
-  Hypogean Gaol (Yahar'gul) after one loading screen. Guests cannot be kidnapped in the host's world.
+  Hypogean Gaol (Yahar'gul) after one loading screen, and the guests get the host's Insight for
+  it too. Guests cannot be kidnapped in the host's world.
 - **Enemy drops for each player, one roll.** Every player gets their own copy of each enemy's drop,
   and it is the same item for everyone (one shared roll per kill).
 - **Blood Echoes for every kill.** Whoever kills an enemy, every party member gets its full
@@ -237,6 +243,11 @@ before anyone is in the game):
   (when you let go). Optional: *Show party through walls* puts a small marker with the distance on
   every companion on your map. Both on the game's *System -> Pings* page and the launcher's Party tab;
   hidden under the game's menus like the other party text.
+- **Friendly fire / PvP (host's switch, off by default).** The host can let party members hurt
+  each other, both ways, like invaders: the game's *System -> Friendly fire* page, the Insert menu's
+  Party tab or the launcher's Party tab (host). Everyone gets a notice when it changes; guests see
+  the host's setting on their page but cannot change it. A party kill is a normal party death (the
+  rot applies as for any death); the killer gets no Echoes or Insight from it.
 - **Party HUD.** Party members and events are shown in a small HUD; all party settings are on the
   *Party* pages of the game's *System* menu.
 
@@ -260,8 +271,8 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 | Joining during a boss fight or cutscene waits outside until it ends | Works for boss fights with every join path (bell, title join, direct summon; verified live), the Party status says why you wait; cutscenes not yet tested live |
 | With 3 guests, every guest sees every other guest | In progress |
 | Chalice dungeons: deeper layers checked in a party; entering the party's dungeon in one press (the altar still asks a few prompts) | In progress |
-| PvP / friendly fire the host can switch on and off | Later |
-| Pings: party members and marked spots visible through walls, with distance and player colours | Later |
+| PvP / friendly fire the host can switch on and off | Done (0.6.2) |
+| Pings: party members and marked spots visible through walls, with distance and player colours | Done (0.6.2) |
 
 ### Connecting over the internet
 

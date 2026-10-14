@@ -30,7 +30,7 @@ map-reload retarget, HP 0.7 -> 1.0 (SpEffect 9006/9026), bell/Insight gates, PLA
 | 4b | Summon timer | None: SpEffect 9003/9005/9006/9025/9026 `effectEndurance` = -1 | — | — | C |
 | 4c | Distance leash | None found | — | — | I |
 | 5a | Insight items (Madman's Knowledge, ...) | enable_white = 1 | Nothing | — | C |
-| 5b | Insight on boss kill / first encounter | common event 9350 (`End if Client`), called only from host branches; a white phantom gets a native **+1** per boss kill (BlockClear2 0x13849A0, SpEffect 4680 at 0x13852B1) | Director mirrors the host's boss-kill N (parity: N - 1 on top of the native +1) | low | C (gate, +1 site), I (4680 = +1, runtime) |
+| 5b | Insight on boss kill / first encounter | common event 9350 (`End if Client`), called only from host branches; a white phantom gets a native **+1** per boss kill (BlockClear2 0x13849A0, SpEffect 4680 at 0x13852B1) | Director mirrors the host's boss-kill N (parity: N - 1 on top of the native +1); non-boss 9350 starts and the bare SpEffect 4680 grants of 9422 (kidnap) and the m29 chalice boss events (12901588/589/591/708/712/718/722, all `End if Client` or chr type 0) are counted per event and sent whole (DirectInsight) | low | C (gate, +1 site), I (4680 = +1, runtime) |
 | 5c | Boss echoes | BlockClear handler 0x13849A0 pays PlayerGameData+0xF8 to chr types 0, 8 **and 1** | Nothing | — | C |
 | 5d | Kill echoes | Phantom SpEffects have `soulRate` 1.0 | Nothing (verify distribution) | — | C (data), I (who gets the kill) |
 
