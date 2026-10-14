@@ -1668,6 +1668,19 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         std::sscanf(step.args.c_str(), "%d:%f:%f", &entity, &dist, &angle);
         std::string what;
         const bool obj = step.kind == TravelStep::HostObj || step.kind == TravelStep::GuestObj;
+        if (!obj && entity == 0) {
+            // host_chr=0: the nearest living regular enemy of the census (a real weapon fight: stand
+            // at it, then host_press attacks; H3 kill echoes by the game's own kill).
+            const auto list = balance::LoadedEnemies();
+            float me[3] = {};
+            const std::uint64_t player = LocalPlayer();
+            const int k = player && balance::ChrPosition(player, me) ? PickEnemyKillTarget(list, 0, me, 100.0f) : -1;
+            if (k >= 0) {
+                entity = static_cast<int>(list[size_t(k)].entity);
+                Log("test: %s 0: the nearest living enemy is entity %d (HP %d)", TravelStepName(step.kind), entity,
+                    balance::EnemyHp(list[size_t(k)].chr));
+            }
+        }
         const bool ok = obj ? worldact::StandAtObject(entity, dist, angle, &what)
                             : worldact::StandAtChr(entity, dist, angle, &what);
         Log("test: %s %d (%.1f m, %.0f deg): %s", TravelStepName(step.kind), entity, double(dist), double(angle),
