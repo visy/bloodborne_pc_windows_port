@@ -233,6 +233,13 @@ bool HostTravelHeld(const HostTravelHoldView& v) {
     return true;
 }
 
+bool JoinBesideWaits(Busy host_busy, const float host_pos[3]) {
+    if (host_busy == Busy::Boss || host_busy == Busy::Cutscene) {
+        return true;
+    }
+    return std::fabs(host_pos[0]) < 0.5f && std::fabs(host_pos[1]) < 0.5f && std::fabs(host_pos[2]) < 0.5f;
+}
+
 const char* PhaseName(Phase p) {
     switch (p) {
     case Phase::Idle: return "idle";
