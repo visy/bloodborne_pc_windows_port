@@ -370,6 +370,30 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, Frame* frame, vk::Ima
         }
     }
     auto& settings = BbSettings::Get();
+    // Test aid BB_HDR_TEST_FILE: when the file appears (consumed), its tokens change the curve
+    // live as the menu would ("pattern" toggles the calibration pattern, peak=N, paper=N,
+    // strength=F, saturation=F), for sweeps inside one game session.
+    static const char* test_file = std::getenv("BB_HDR_TEST_FILE");
+    static u32 test_polls = 0;
+    if (test_file && real && ++test_polls % 30 == 0) {
+        if (FILE* f = std::fopen(test_file, "r")) {
+            char token[64];
+            while (std::fscanf(f, "%63s", token) == 1) {
+                float value = 0.0f;
+                if (!std::strcmp(token, "pattern")) settings.hdr_calibration = !settings.hdr_calibration;
+                else if (std::sscanf(token, "peak=%f", &value) == 1) settings.hdr_peak_nits = int(value);
+                else if (std::sscanf(token, "paper=%f", &value) == 1) settings.hdr_paper_white = int(value);
+                else if (std::sscanf(token, "strength=%f", &value) == 1) settings.hdr_strength = value;
+                else if (std::sscanf(token, "saturation=%f", &value) == 1) settings.hdr_saturation = value;
+            }
+            std::fclose(f);
+            std::remove(test_file);
+            std::printf("HDR test: pattern %d peak %.0f paper white %d strength %.2f saturation %.2f\n",
+                        settings.hdr_calibration ? 1 : 0, BbSettings::HdrPeakNits(),
+                        settings.hdr_paper_white.load(), settings.hdr_strength.load(),
+                        settings.hdr_saturation.load());
+        }
+    }
     HostPasses::HdrComposePass::Constants constants{};
     if (frame && view) {
         const vk::Rect2D fit = FitImage(s32(frame->width), s32(frame->height), s32(extent.width),
