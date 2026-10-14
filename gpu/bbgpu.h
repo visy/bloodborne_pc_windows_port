@@ -73,6 +73,10 @@ uint64_t bbgpu_get_submit_count(void);
 void bbgpu_dump_host_threads_hang(void *file_handle);
 /* Computes average FPS and p95/p99 frame times in milliseconds over recent flips. */
 void bbgpu_get_frametime_percentiles(double *avg_fps, double *p95_ms, double *p99_ms);
+/* Writes the GPU caches that live only in memory (the driver's pipeline binaries) before the
+ * process ends: every exit is TerminateProcess, which runs no destructor. Waits at most a few
+ * seconds; once per process. Any thread. */
+void bbgpu_save_caches(void);
 /* Dumps GPU breadcrumbs state to log/crash files. */
 void bbgpu_dump_breadcrumbs(void *file_handle);
 #ifdef __cplusplus

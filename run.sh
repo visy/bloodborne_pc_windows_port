@@ -99,9 +99,11 @@ if [[ -n ${BB_PROBE:-} ]]; then caps=$(dirname -- "$BB_PROBE")/bb-gpu-capabiliti
 elif [[ -n ${BB_PREBUILT:-} ]]; then caps=bin/bb-gpu-capabilities
 else caps=out/bb-gpu-capabilities; fi
 if [[ -z ${BB_RENDER_RES:-} ]]; then
-    read -r scaled_render scaled_output < <("$PYTHON" scripts/patches.py --print-scaled --settings "$BB_CONFIG") || true
+    read -r scaled_render scaled_output scaled_hud < <("$PYTHON" scripts/patches.py --print-scaled --settings "$BB_CONFIG") || true
     scaled_output=${scaled_output%$'\r'}
+    scaled_hud=${scaled_hud%$'\r'}
 fi
+unset BB_UI_RES
 live=0
 if [[ -n ${scaled_output:-} ]]; then
     live=${BB_LIVE_RES:-}
@@ -117,6 +119,12 @@ if [[ -n ${scaled_output:-} ]]; then
             [[ $line == *MANGOHUD* ]] || printf '%s\n' "$line"; done >&2)) || live=0
     fi
     [[ $live == 1 ]] || live=0
+    # Ultrawide outputs (21:9, 32:9): the camera and the HUD canvas need the startup patch.
+    if [[ -n ${scaled_hud:-} && $scaled_hud != 1920x1080 ]]; then
+        live=0
+        export BB_UI_RES=$scaled_hud
+        echo "Output ${scaled_output}: ultrawide, HUD ${scaled_hud}"
+    fi
 fi
 if [[ $live == 1 ]]; then
     echo "Output ${scaled_output}: live resolution changes (live_resolution=0: startup patch)"

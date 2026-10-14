@@ -152,12 +152,15 @@ REM "%BB_CONFIG%"') the command lost its quotes and printed nothing, so an outpu
 REM 1080p never got its startup patch (or its direct memory) and always ran live.
 set "scaled_render="
 set "scaled_output="
+set "scaled_hud="
+set "BB_UI_RES="
 set "scaled_result=%out%\scaled_sizes.txt"
 if exist "%scaled_result%" del "%scaled_result%"
 if "%BB_RENDER_RES%"=="" "%PYTHON%" scripts\patches.py --print-scaled --settings "%BB_CONFIG%" > "%scaled_result%" 2>nul
-if exist "%scaled_result%" for /f "usebackq tokens=1,2" %%a in ("%scaled_result%") do (
+if exist "%scaled_result%" for /f "usebackq tokens=1,2,3" %%a in ("%scaled_result%") do (
     set "scaled_render=%%a"
     set "scaled_output=%%b"
+    set "scaled_hud=%%c"
 )
 
 REM One statement per line: inside a ( ) block %live% keeps the value it had before the block,
@@ -179,6 +182,15 @@ if exist "out\bb-gpu-capabilities.exe" (
 )
 :live_checked
 if not "%live%"=="1" set "live=0"
+REM Ultrawide outputs (21:9, 32:9; from Supermedo/bloodborne_pc PR #70): the camera and the HUD
+REM canvas need the startup patch, never live changes. The HUD canvas is wider than 1920x1080
+REM (patches.py hud_canvas); the GPU library scales it to the output (BB_UI_RES).
+if "%scaled_hud%"=="" goto ultrawide_done
+if "%scaled_hud%"=="1920x1080" goto ultrawide_done
+set "live=0"
+set "BB_UI_RES=%scaled_hud%"
+echo Output %scaled_output%: ultrawide, HUD %scaled_hud%
+:ultrawide_done
 if "%live%"=="1" (
     echo Output %scaled_output%: live resolution changes ^(live_resolution=0: startup patch^)
     goto live_done

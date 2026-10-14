@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <unordered_map>
 #include <shared_mutex>
 #include <variant>
@@ -133,6 +134,12 @@ public:
     void Sync();
     /// bbport: the startup precompile runs with a progress screen (BB_SHADER_PRECOMPILE, on).
     static bool PrecompileEnabled();
+    /// bbport: writes the driver's pipeline binaries to the cache now (after the warm-up, and
+    /// before the process ends: every exit is TerminateProcess, which runs no destructor).
+    /// `wait`: until the file is on disk. Skipped when nothing changed since the last write.
+    void SaveDriverPipelineCache(bool wait);
+    /// The live cache, for the exit paths (bbgpu_save_caches); null when there is none.
+    static std::atomic<PipelineCache*> driver_cache_owner;
 
     bool LoadComputePipeline(Serialization::Archive& ar);
     bool LoadGraphicsPipeline(Serialization::Archive& ar);
@@ -233,6 +240,10 @@ private:
         u32 last_frame;
         u32 mask; ///< bit i: a target in frame (last_frame - i)
     };
+    /// bbport: the driver's pipeline binaries (VkPipelineCache data) between sessions
+    /// (Mrsuss60): one .vkp per GPU vendor, device and driver version.
+    std::string GetDriverCacheKey() const;
+    std::vector<u8> LoadDriverPipelineCache();
 
 private:
     const Instance& instance;
@@ -255,6 +266,8 @@ private:
     PipelineSelection sel{}; ///< GPU thread selection state
     ComputePipelineKey compute_key{};
     u32 num_new_pipelines{}; // new pipelines added to the cache since the game start
+    std::mutex driver_cache_mutex; ///< bbport: SaveDriverPipelineCache
+    u64 driver_cache_saved_hash{}; ///< hash of the driver data last written or loaded
     bool preload_profile_changed{}; ///< bbport: WarmUp rebuilt the cache for another profile
     u32 selftest_runs{}, selftest_failures{};
 
