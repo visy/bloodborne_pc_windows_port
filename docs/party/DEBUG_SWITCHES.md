@@ -202,3 +202,12 @@ Not a party switch despite the name: `BB_SAVE_LOG` (frame / readback statistics,
 Advanced tab; `run.bat`). Related non-party switches the party code reads: `BB_MODS_ENABLED`
 (mods off = no gameplay mods in the version check), `BB_SKIP_NETWORK_CHOICE` (the launcher sets
 `online` in party mode; `scripts/patches.py`).
+
+Not party switches either, for any bug report: `BB_TRACE=1` (launcher Advanced / Debug: Debug
+tracing) prints a once-a-second heartbeat (flips/s, GPU submits/s), `[BLOCKED >3s]` lines while
+frames stall and hang dumps (`out/hang_dump*.log`, with thread states and the main thread's
+once-a-second RIP samples) at no measurable fps cost, since imports keep their direct calls.
+`BB_TRACE_IMPORTS=1` (or `bbport.exe --trace`) adds the full per-call import trace
+(`out/imports_<time>.log`, `[IMPORT CALL]` lines, the main thread's recent imports in hang
+dumps): every import then goes through a logging thunk, about 70% slower (102 -> 31 fps), so use
+it only to find which import a hang or crash is in. `src/probe.c`.
