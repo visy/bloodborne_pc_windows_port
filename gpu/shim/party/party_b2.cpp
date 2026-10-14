@@ -4366,6 +4366,21 @@ void JoinBesideTick(const GameSnapshot& s, double now) {
         if (!host || !ChrTransform(host, hp, hr) || !ChrTransform(s.player, me, mr)) {
             continue;
         }
+        {
+            // A11 (live a11c): the host's chr not placed yet (its first sync waits behind a
+            // cutscene): it stands at the origin here; a warp beside it fell into the void.
+            const Where* w = WhereOf(0);
+            const bool vit = w && w->has_pos && w->age_ms < 2000;
+            if (!deathrules::HostChrPlaced(hp, vit, vit ? w->pos : hp)) {
+                static double said = -100;
+                if (now - said > 10.0) {
+                    said = now;
+                    Log("join: the host's chr is not placed yet here (%.1f, %.1f, %.1f%s); no move beside it yet",
+                        double(hp[0]), double(hp[1]), double(hp[2]), vit ? ", not where the host reports itself" : "");
+                }
+                return;
+            }
+        }
         pending_since = 0;
         const float dx = hp[0] - me[0], dz = hp[2] - me[2];
         const float d = std::sqrt(dx * dx + dz * dz);

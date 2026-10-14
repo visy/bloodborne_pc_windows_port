@@ -295,6 +295,15 @@ int main() {
     CHECK(!StayApartAtHostDeath(false, false, 24, 21));
     CHECK(!StayApartAtHostDeath(false, true, 0, 21));
 
+    {
+        // A11: the host's chr at the origin (first sync waiting) is not where the host is.
+        const float origin[3] = {0, 0, 0}, host[3] = {-193.4f, -28.6f, 68.5f}, near[3] = {-193.0f, -28.6f, 68.1f};
+        CHECK(!HostChrPlaced(origin, true, host));
+        CHECK(!HostChrPlaced(origin, false, host));
+        CHECK(HostChrPlaced(near, true, host));
+        CHECK(HostChrPlaced(near, false, origin));
+        CHECK(HostChrPlaced(host, true, host));
+    }
     for (int i = 0; i < 6; ++i) {
         CHECK(HostDeathPlanName(HostDeathPlan(i))[0] != '?');
     }

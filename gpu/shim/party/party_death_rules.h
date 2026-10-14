@@ -217,6 +217,19 @@ inline bool StayApartAtHostDeath(bool guest_dead, bool guest_idle, std::uint32_t
     return !guest_dead && guest_idle && host_area != 0 && own_area != 0 && host_area != own_area;
 }
 
+// ---- A11 (live a11c): the host's chr is not placed yet ----
+/// A joiner is put beside the host's chr only when that chr stands where the host is: a host
+/// whose first sync waits (a cutscene started as the guest loaded in) leaves its chr on the
+/// guest's game at the origin (0, 0, 0); a warp beside it dropped the guest into the void.
+/// `vitals` (the host's own reported position) when known: within 10 m; else not at the origin.
+inline bool HostChrPlaced(const float chr[3], bool have_vitals, const float vitals[3]) {
+    if (have_vitals) {
+        const float dx = chr[0] - vitals[0], dy = chr[1] - vitals[1], dz = chr[2] - vitals[2];
+        return dx * dx + dy * dy + dz * dz <= 100.0f;
+    }
+    return !(chr[0] > -1.0f && chr[0] < 1.0f && chr[1] > -1.0f && chr[1] < 1.0f && chr[2] > -1.0f && chr[2] < 1.0f);
+}
+
 // ---- Playtest 1 bug 22: nobody to travel with = single player ----
 /// The party's own lamp / headstone / Hunter's Mark handling (the in-world lamp move without a
 /// load, "already standing at it", the guest's Mark to the host's lamp) applies only when there
