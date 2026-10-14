@@ -24,7 +24,7 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | Progress (anyone can progress) | `█████████████████░░░` | 87% |
 | Services & UI | `██████████████████░░` | 90% |
 | Network & robustness | `█████████████████░░░` | 86% |
-| Bloodborne-specific (chalice, Insight) | `████████████████░░░░` | 81% |
+| Bloodborne-specific (chalice, Insight) | `█████████████████░░░` | 87% |
 | Feels like single player in a party | `█████████████████░░░` | 87% |
 
 ---
@@ -180,7 +180,12 @@ before anyone is in the game):
   each time its own world loads and given again if its save lacks them.
 - **Story cutscenes and endings play for everyone.** The Blood Moon, Amelia's skull (evening to
   night), Mergo's Wet Nurse's arena, Gehrman's scenes and the ending with the end credits
-  play for every party member.
+  play for every party member; a guest still loading in when a scene starts sees it once it has
+  arrived. After the Blood Moon the host is asked "Travel with the party?" and everyone goes to
+  Yahar'gul together.
+- **Insight for everyone.** Whatever Insight the host gets (a boss's first sight and kill, story
+  moments, the kidnap's waking, Chalice Dungeon bosses) every guest present gets too. What Insight
+  shows (Amygdalas, whispers) is up to each player's own Insight, as in the original game.
 - **The host's world is shared live, both ways.** A door or shortcut opened by the host is open
   for the guests too, and a lever or door a guest uses opens in the host's world (and in the
   guest's own save).
@@ -196,7 +201,8 @@ before anyone is in the game):
   Hunter's Marks) goes to the guest, the host and every other party member, once (the NPC has moved
   on for everyone, so nobody misses it).
 - **Kidnapped by a Snatcher?** If the host is grabbed, the whole party wakes up together in the
-  Hypogean Gaol (Yahar'gul) after one loading screen. Guests cannot be kidnapped in the host's world.
+  Hypogean Gaol (Yahar'gul) after one loading screen, and the guests get the host's Insight for
+  it too. Guests cannot be kidnapped in the host's world.
 - **Enemy drops for each player, one roll.** Every player gets their own copy of each enemy's drop,
   and it is the same item for everyone (one shared roll per kill).
 - **Blood Echoes for every kill.** Whoever kills an enemy, every party member gets its full

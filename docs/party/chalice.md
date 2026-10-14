@@ -208,6 +208,10 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
   the **slot's own groups** (areas 40..47 remapped from area 29 by the slot), so a summoned guest
   (load mode 1, the host's overlay) never progresses its own copy, exactly like vanilla. They are
   never written from outside (party_progress `NeverWritable`, items.md: Chalice lots excluded).
+* Insight (parg, 0.6.2): the dungeon's boss Insight is not common 9350 but m29's own events
+  (12901718/722 first encounter, 12901708/712 kill table, 12901588/589/591 the layer boss's +2),
+  bare SpEffect 4680 that end on a client; the host's are counted and sent to the guests
+  (party_phantom DirectInsight; live by the `host4680` probe, not yet with a real boss).
 * What a guest gets as a cooperator: boss kill echoes / Insight (and the C3 parity patches' full
   rewards), the drops it picks up itself. Boss reward lots in the dungeons (Ritual materials, the
   chalice drops) are host-only `2003[4]` awards; C3 does not replay them: they are flagless and
