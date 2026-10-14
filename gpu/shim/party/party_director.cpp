@@ -3,6 +3,7 @@
 // droogie/bbhost src/engine/np_test.cpp @8f2746c (GPL-3.0-or-later): world-up detection, the
 // Insight write and the bell events.
 #include "party_director.h"
+#include "party_log_game.h"
 #include "../boot_marks.h"
 #include "../net/netsim.h"
 #include "party_hud.h"
@@ -3219,10 +3220,12 @@ void CoopTick() {
     SeamlessRulesTick(); // A6 param rules, EMEVD filter stats (seamless_rules.h)
     z.Next(Zone::Fourp);
     fourp::FourpTick(); // 4-player rules: the party's max players (party_fourp.h)
+    plog::GameTick();   // party logging: snapshots, area events (party_log_game.h; cheap at Normal)
 }
 
 void PartyInit(unsigned char* image, std::uint64_t size) {
     perf::Init(); // BB_PARTY_PERF=1 (party_perf.h), before any hook goes in
+    plog::GameInit(); // BB_PARTY_LOG: line tags, user-mark relay (party_log_game.h)
     if (!HooksInit(image, size)) {
         Log("no image; party director off");
         return;
