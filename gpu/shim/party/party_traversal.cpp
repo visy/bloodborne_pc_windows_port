@@ -9,6 +9,7 @@
 
 #include "net/netsim.h"
 #include "party/party_rdv.h"
+#include "bbport_settings.h"
 
 namespace party::traversal {
 
@@ -77,10 +78,7 @@ nat::Type detect(const Stun& stun, const nat::StunSample& first, std::uint32_t l
 }
 
 bool rendezvous_enabled(bool loopback) {
-    if (const char* v = env("BB_PARTY_RENDEZVOUS")) {
-        const std::string s = v;
-        if (s == "0" || s == "off" || s == "no" || s == "false") return false;
-    }
+    if (!BbSettings::Get().party_rendezvous.load()) return false;  // opt-in (default off)
     return !loopback || env("BB_PARTY_DHT_BOOTSTRAP");
 }
 
@@ -103,7 +101,7 @@ void start_host(const std::uint8_t* key, bool loopback,
         if (log) log("rendezvous: no UDP socket for the DHT");
         return;
     }
-    if (log) log("rendezvous: looking for guests in the DHT every 5 s (no open port; BB_PARTY_RENDEZVOUS=0 turns it off)");
+    if (log) log("rendezvous: looking for guests in the DHT every 5 s (no open port; the DHT option is on)");
     std::lock_guard<std::mutex> lk(g_mu);
     g_host = std::move(r);
 }

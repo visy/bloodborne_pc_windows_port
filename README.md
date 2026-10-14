@@ -155,7 +155,8 @@ before anyone is in the game):
 - **No loading screen inside the same map for the host.** The host's lamp or Hunter's Mark to a spot
   in the map it is already in is an instant warp, for the whole party too; a guest's gets its own
   short loading screen and the host stays where it is; at the lamp you already stand at, nothing
-  moves at all.
+  moves at all. With nobody to travel with (a host alone, or "Join a party" while the host is not
+  there) lamps, headstones and the Hunter's Mark work exactly as in single player.
 - **Guests can use the Hunter's Mark** (on by default; launcher switch "Guests can use Hunter's
   Mark"): alone it takes you to your own last lamp, with the party to the host's.
 - **Apart and back together.** While players are in different maps each sees only the others in
@@ -260,10 +261,12 @@ The host gets two party codes (launcher, *System → Party*):
 
 A guest on the host's network with the Internet code finds the host on the LAN by itself (~2 s).
 
-No UPnP and no port forward? The game now finds the way through both routers by itself (hole
-punching; the guest's address is exchanged through the public BitTorrent DHT under a hash only the
-party knows, `BB_PARTY_RENDEZVOUS=0` turns that off). If that does not work, each guest copies its
-**guest code** (`BBG1-...`, *Party* page) and sends it to the host, who presses *Add a guest code*.
+No UPnP and no port forward? Each guest copies its **guest code** (`BBG1-...`, *Party* page) and
+sends it to the host, who presses *Add a guest code*: the game then punches through both routers.
+To skip the code, turn on *Find each other through the public DHT* (launcher *Party* tab or
+*System > Party rules*) on **both** PCs: the guest's address is then exchanged through the public
+BitTorrent DHT under a hash only the party knows. It is off by default because DHT nodes see your
+IP address, as with any torrent client.
 The *Party* page's *Network* line says which NAT you have and what to do about it. This fails behind symmetric / carrier-grade NAT (some mobile and ISP
 connections); there, let another player host or use a VPN such as Tailscale. Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
 

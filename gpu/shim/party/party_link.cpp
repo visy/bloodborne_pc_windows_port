@@ -440,14 +440,18 @@ std::string set_clause(const char* what, const std::array<std::uint8_t, 32>& hos
 
 }  // namespace
 
-std::string host_no_answer_hint(double since_host_gone_s) {
+std::string host_no_answer_hint(double since_host_gone_s, bool auto_punch) {
     if (since_host_gone_s >= 0 && since_host_gone_s < kHostBackWaitS) {
         char b[160];
         std::snprintf(b, sizeof b, "the host left %.0f s ago (restarting?): waiting for the host to come back",
                       since_host_gone_s);
         return b;
     }
-    return "behind a NAT: it needs your guest code";
+    if (auto_punch)
+        return "behind a NAT: the host finds you through the DHT if it has the DHT option on too; else it needs "
+               "your guest code";
+    return "behind a NAT: automatic punching is off: send the host your guest code, or turn on the DHT "
+           "option on both PCs";
 }
 
 std::string auth_reject_reason(bool host_has_password) {
@@ -1009,7 +1013,9 @@ struct PartyLink::Impl {
         const double gone = since_host_gone_s();
         log(std::string("party link: ") + why + "; connecting over UDP (hole punching; " +
             (gone >= 0 && gone < kHostBackWaitS ? host_no_answer_hint(gone)
-                                                : std::string("give the host your guest code if it is behind a NAT")) +
+             : cfg.auto_punch ? std::string("the DHT announces us for a host behind a NAT; else give it your guest code")
+                              : std::string("give the host your guest code if it is behind a NAT, or turn on the DHT "
+                                            "option on both PCs")) +
             ")");
         return true;
     }
@@ -1057,7 +1063,7 @@ struct PartyLink::Impl {
             const auto st = c->us->state();
             if (st == rudp::Stream::State::Failed || st == rudp::Stream::State::Closed) {
                 lose(c, c->phase == Phase::Connecting
-                            ? "no UDP answer from the host (" + host_no_answer_hint(host ? -1 : since_host_gone_s()) + ")"
+                            ? "no UDP answer from the host (" + host_no_answer_hint(host ? -1 : since_host_gone_s(), cfg.auto_punch) + ")"
                             : std::string("UDP link closed"));
                 continue;
             }

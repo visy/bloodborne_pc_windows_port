@@ -4,7 +4,8 @@ party rendezvous (gpu/shim/party/party_rdv.h) without touching the internet.
 
   python tools/mp/fake_dht.py [--port 46881] [--seconds 600]
 
-Then start both game instances with BB_PARTY_DHT_BOOTSTRAP=127.0.0.1:46881 (and BB_NET_SIM with
+Then start both game instances with BB_PARTY_RENDEZVOUS=1 (opt-in) and
+BB_PARTY_DHT_BOOTSTRAP=127.0.0.1:46881 (and BB_NET_SIM with
 nat=...). It answers get_peers (token, no further nodes, stored values) and announce_peer (stores
 the sender's address with the announced port), as a BEP 5 node would. Loopback only.
 """

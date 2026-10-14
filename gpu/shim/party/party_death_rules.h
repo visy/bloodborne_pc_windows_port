@@ -168,6 +168,23 @@ inline LampOrigin PlanLampOrigin(double local_age, double remote_age, bool flag_
     return local && !(remote && remote_age < local_age) ? LampOrigin::Own : LampOrigin::Other;
 }
 
+// ---- Playtest 1 bug 22: nobody to travel with = single player ----
+/// The party's own lamp / headstone / Hunter's Mark handling (the in-world lamp move without a
+/// load, "already standing at it", the guest's Mark to the host's lamp) applies only when there
+/// is a party to travel with: a guest standing in the host's world (session client, or the flag
+/// store still on the host-world overlay, load mode 1) or a host with members. A Join-a-party
+/// guest whose host never answered (or between sessions, in its own world) and a host alone use
+/// lamps, headstones and the Mark exactly as in single player (the vanilla loading screen).
+inline bool PartyTravelActive(bool guest, bool host, bool guest_in_host_world, bool host_has_members) {
+    return (guest && guest_in_host_world) || (host && host_has_members);
+}
+/// A guest is in the host's world: its session role is client (6), or its flag store still holds
+/// the host-world overlay (load mode 1; a phantom's Hunter's Mark leaves the session before the
+/// funnel runs). Its own world: load mode 0 and no client role.
+inline bool GuestInHostWorld(int session_role, int flag_load_mode) {
+    return session_role == 6 || flag_load_mode == 1;
+}
+
 // ---- A guest uses a lamp / headstone / Hunter's Mark in the host's world ----
 enum class GuestLamp {
     Plain,     ///< nothing to decide here (not a guest in the host's world, or standing at it)

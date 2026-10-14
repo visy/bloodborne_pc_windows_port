@@ -71,8 +71,14 @@ Path predict(const Side& host, const Side& guest, bool guest_endpoint_known);
 
 // One line for the log / Party page: what the NAT means for this player and what to do.
 // `host`: we host; `port_open`: (host) UPnP / forward worked; `rendezvous`: the automatic
-// endpoint exchange is on.
-std::string advice(Type self, bool host, bool port_open, bool rendezvous, std::uint16_t port);
+// endpoint exchange through the DHT (party_rdv.h): On, Off (the player's opt-in setting is off:
+// the line says to turn it on on both PCs or use the guest code), or NotApplicable (no public
+// endpoint, a LAN / plain address code: the guest code is the only way).
+enum class Rendezvous : std::uint8_t { On, Off, NotApplicable };
+std::string advice(Type self, bool host, bool port_open, Rendezvous rendezvous, std::uint16_t port);
+// The hint when automatic punching is off, for the guest's failure message and the Party page.
+inline constexpr const char* kRendezvousOffHint =
+    "automatic punching is off: send the host your guest code, or turn on the DHT option on both PCs";
 
 // ---- a simulated NAT for tests ----
 // One public address; internal endpoints are local ports. out() maps an outbound datagram (and

@@ -242,6 +242,20 @@ int main() {
     CHECK(PlanStainChange(1, 4843, 1, 4843) == StainChange::None);
     CHECK(PlanStainChange(0, -1, 0, -1) == StainChange::None);
 
+    // Bug 22: nobody to travel with = single player (no in-world lamp move, no redirect).
+    CHECK(PartyTravelActive(true, false, true, false));              // guest in the host's world
+    CHECK(!PartyTravelActive(true, false, false, false));            // Join-a-party guest, no host
+    CHECK(!PartyTravelActive(true, false, false, true));             // own world: a host's members do not count
+    CHECK(PartyTravelActive(false, true, false, true));              // host with members
+    CHECK(!PartyTravelActive(false, true, false, false));            // host alone
+    CHECK(!PartyTravelActive(false, false, true, true));             // no party role
+    CHECK(GuestInHostWorld(6, 0));                                   // client
+    CHECK(GuestInHostWorld(7, 1));                                   // leaving, still on the overlay (Mark)
+    CHECK(GuestInHostWorld(0, 1));
+    CHECK(!GuestInHostWorld(0, 0));                                  // own world, idle session
+    CHECK(!GuestInHostWorld(-1, -1));                                // no world / no store
+    CHECK(!GuestInHostWorld(3, 0));                                  // hosting in its own world
+
     for (int i = 0; i < 6; ++i) {
         CHECK(HostDeathPlanName(HostDeathPlan(i))[0] != '?');
     }

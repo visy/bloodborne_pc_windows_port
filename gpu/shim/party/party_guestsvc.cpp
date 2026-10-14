@@ -1663,8 +1663,31 @@ void LampPressTick(const GameSnapshot& s, double now) {
         runtime_pad_director_press(0);
         P.release = 0;
     }
+    // "ownlamp" (playtest 1 bug 22): the same presses in the player's OWN world (a Join-a-party
+    // guest with no host, or any role): the lamp must work as in single player, i.e. its warp
+    // starts a loading screen. Logs "ownlamp: the lamp warp ran" or FAILED.
+    const bool own = g.test.find("ownlamp") != std::string::npos;
+    if (own && !s.world_up && !s.loading && P.presses == 0 && now >= P.next) {
+        // A guest whose host never answers stays on the title (auto-continue waits for the link):
+        // "Failed to acquire server information" -> Right (CANCEL), then Cross (Continue).
+        static int title_presses = 0;
+        if (title_presses < 40) {
+            const bool right = title_presses % 2 == 0;
+            runtime_pad_director_press(right ? kPadRight : kPadCross);
+            P.release = now + 0.12;
+            P.next = now + 1.2;
+            Log("test: ownlamp: title %s #%d", right ? "Right" : "Cross", ++title_presses);
+        }
+        return;
+    }
+    if (own && !P.done && P.presses > 0 && s.loading) {
+        P.done = true;
+        Log("test: ownlamp: the lamp warp ran (loading screen) after %d press(es)", P.presses);
+        return;
+    }
     if (P.done || g.test.find("lamppress") == std::string::npos || !s.world_up || s.loading ||
-        s.session_role != kSessionRoleClient || IsDreamMap(s.map_id) || s.map_id == 0xffffffffu) {
+        (own ? s.session_role == kSessionRoleClient : s.session_role != kSessionRoleClient) || IsDreamMap(s.map_id) ||
+        s.map_id == 0xffffffffu) {
         P.base = -1;  // the baseline is taken once the guest stands in a world map
         return;
     }
@@ -1726,7 +1749,7 @@ void LampPressTick(const GameSnapshot& s, double now) {
     }
     if (++P.presses > 8) {
         P.done = true;
-        Log("test: lamppress: FAILED: no lamp request after 8 presses");
+        Log("test: %s: FAILED: no lamp %s after 8 presses", own ? "ownlamp" : "lamppress", own ? "warp" : "request");
         return;
     }
     // With lampwalk: Cross (prompt), Left (YES: the confirm box starts on NO), Cross, repeated.
@@ -1816,6 +1839,22 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
     }
     if (!g.test.empty()) {
         LampPressTick(s, Now());
+        static double last_own_probe = 0;
+        if (g.test.find("ownprobe") != std::string::npos && s.session_role != kSessionRoleClient && s.world_up &&
+            !s.loading && Now() - last_own_probe >= 2.0) {
+            // #22: the own-world view of a lamp (a Join-a-party guest with no host): the lamp
+            // objects' gate bytes, the talk manager, the action buttons, the prompt, where we stand.
+            last_own_probe = Now();
+            float me[4] = {};
+            if (s.player) SafeRead(s.player + 0xc0, me, sizeof me);
+            std::uint32_t prompt = 0;
+            const bool up = PromptUp(&prompt);
+            Log("test: ownprobe: role %d map %s at (%.1f, %.1f, %.1f): prompt %s %u", s.session_role,
+                MapName(s.map_id).c_str(), me[0], me[1], me[2], up ? "up" : "not seen", prompt);
+            if (g.test.find("lampprobe") != std::string::npos) LogLampObjs();
+            if (g.test.find("talkprobe") != std::string::npos) LogTalkMan();
+            if (g.test.find("buttonprobe") != std::string::npos) LogButtons();
+        }
         static double last_host_probe = 0;
         if (g.test.find("lampprobe") != std::string::npos && s.session_role == 3 && s.world_up && !s.loading &&
             !IsDreamMap(s.map_id) && Now() - last_host_probe >= 3.0) {

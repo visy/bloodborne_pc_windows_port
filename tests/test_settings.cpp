@@ -7,6 +7,7 @@
 #include <sstream>
 #include <string>
 #include "gpu/shim/bbport_settings.h"
+#include "gpu/shim/party/party_traversal.h"
 #include "test_portable.h"
 
 static std::string Read(const char* path) {
@@ -27,8 +28,10 @@ int main() {
     const int env = bb_test_setenv("BB_CONFIG", path);
     assert(env == 0);
 
+    assert(bb_test_setenv("BB_PARTY_RENDEZVOUS", "") == 0);
     BbSettings::Load();
     auto& s = BbSettings::Get();
+    assert(!s.party_rendezvous);  // the DHT rendezvous is opt-in: off without the ini key / env
     assert(s.upscaler == BbSettings::UpscalerFsr3 && !s.show_fps && s.menu_x < 0.0f);
     s.show_fps = true;
     s.upscaler = BbSettings::UpscalerFsr411;
@@ -48,6 +51,26 @@ int main() {
     s.menu_y = -1.0f;
     BbSettings::Load();
     assert(s.menu_x == 0.625f && s.menu_y == 0.125f && s.upscaler == BbSettings::UpscalerFsr411);
+
+    // BB_PARTY_RENDEZVOUS (the launcher's Party tab) wins over bbport.ini party_rendezvous.
+    using party::traversal::rendezvous_switch;
+    assert(!rendezvous_switch(nullptr, false) && rendezvous_switch(nullptr, true));
+    assert(!rendezvous_switch("", false) && rendezvous_switch("1", false) && rendezvous_switch("ON", false));
+    assert(rendezvous_switch("yes", false) && rendezvous_switch("true", false));
+    assert(!rendezvous_switch("0", true) && !rendezvous_switch("off", true) && !rendezvous_switch("No", true));
+    assert(rendezvous_switch("maybe", true) && !rendezvous_switch("maybe", false));
+    assert(Read(path).find("party_rendezvous=0\n") != std::string::npos);
+    assert(bb_test_setenv("BB_PARTY_RENDEZVOUS", "1") == 0);
+    BbSettings::Load();
+    assert(s.party_rendezvous);
+    s.party_rendezvous = true;
+    BbSettings::Save();  // System > Party rules: saved to the ini
+    assert(bb_test_setenv("BB_PARTY_RENDEZVOUS", "") == 0);
+    BbSettings::Load();
+    assert(s.party_rendezvous);  // from the ini now
+    assert(bb_test_setenv("BB_PARTY_RENDEZVOUS", "0") == 0);
+    BbSettings::Load();
+    assert(!s.party_rendezvous);  // the launcher's off wins
     std::remove(path);
-    std::puts("PASS: settings save keeps other keys, menu position");
+    std::puts("PASS: settings save keeps other keys, menu position, DHT rendezvous opt-in");
 }
