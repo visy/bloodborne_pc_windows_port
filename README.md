@@ -164,6 +164,9 @@ single-player save is never touched. Settings: *System → Party* pages in the g
 - **Blood Echoes for every kill.** Whoever kills an enemy, every party member gets its full
   Blood Echoes.
 - **Treasure for each player.** Items lying in the world can be picked up by every player, each into their own game.
+  Keys and workshop tools found lying around (Hunter Chief Emblem, Upper Cathedral Key, Iron Door Key,
+  Lecture Theatre Key, Rune and Blood Gem Workshop Tools, ...) and the Eye of a Blood-drunk Hunter go to
+  the whole party as soon as the host has them, so nobody is locked out of a door.
 - **Cutscenes for everyone.** A story scene a guest triggers in the host's world plays for the
   whole party too.
 - **Up to 4 players** (host + 3), all in the host's world. With 3 guests, a guest does not yet see

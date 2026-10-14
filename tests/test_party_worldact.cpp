@@ -30,6 +30,7 @@ int main() {
     assert(!WorldActionAllowed(5000, false, m2401));     // item lot pickup
     assert(!WorldActionAllowed(2000, false, m2401));     // session
     assert(!WorldActionAllowed(9020, false, m2401));     // chalice slot
+    assert(!WorldActionAllowed(9420, false, m2401));     // Snatcher kidnap trigger: transient, never_sync
     assert(!WorldActionAllowed(21, false, m2401));       // ending
     assert(!WorldActionAllowed(6600, false, m2401));     // own pool (personal)
     assert(!WorldActionAllowed(0, false, m2401));

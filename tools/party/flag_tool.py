@@ -626,6 +626,11 @@ OVERRIDE_ROWS = (
         (21, 23, "never_sync", "ending reached A/B/C -> staff roll / NG+; C4 replay only"),
         (6600, 6604, "never_sync", "ending bookkeeping (6600 A, 6601 B, 6602 C, 6603 any, 6604 ending reached -> NG+ key item strip)"),
         (9180, 9180, "never_sync", "a cutscene is playing (runtime)"),
+        # Snatcher kidnap trigger: m24_00 12400780 / m27 12700500 set it when a Snatcher kills the
+        # own-world player (chr type 0: the host); common 9421 then sets the respawn point to the
+        # Hypogean Gaol (2802959) and clears it. A guest's save holding it would wake in the Gaol
+        # after its next solo death (docs/party/quest_audit.md).
+        (9420, 9420, "never_sync", "Snatcher kidnap trigger (transient: common 9421 moves the respawn point to the Hypogean Gaol and clears it)"),
         (9800, 9802, "time_of_day", "9800 evening, 9801 night, 9802 Blood Moon; cutscene replay only (C4)"),
         (9900, 9901, "never_sync", "C ending: 9900 three cords eaten, 9901 cord count value"),
         (9905, 9905, "never_sync", "C ending: cord count event"),
