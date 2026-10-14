@@ -13,6 +13,7 @@
 
 #include "core/libraries/videoout/buffer.h"
 #include "video_core/renderer_vulkan/host_passes/fsr_pass.h"
+#include "video_core/renderer_vulkan/host_passes/hdr_pass.h"
 #include "video_core/renderer_vulkan/host_passes/pp_pass.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
@@ -137,7 +138,12 @@ private:
                            vk::Format sample_format, vk::Format source_format);
     /// One swapchain present of `image` (the frame's own or a generated one); `real`: the game's
     /// frame (menu polling, dumps). `deadline` (steady clock ns, 0: none): presented no earlier.
-    bool PresentOne(Frame* frame, vk::Image image, bool real, std::int64_t deadline = 0);
+    bool PresentOne(Frame* frame, vk::Image image, vk::ImageView view, bool real,
+                    std::int64_t deadline = 0);
+    /// bbport: native HDR output (I4): the swapchain image drawn whole by the HDR compose pass
+    /// from `view` (the SDR frame in General, or null: `background` only) and the overlay.
+    void RecordHdrPresent(vk::CommandBuffer cmdbuf, Frame* frame, vk::Image image,
+                          vk::ImageView view, bool real, float background, bool precompile);
     void CountPresentation(bool real);
 
 private:
@@ -151,6 +157,10 @@ private:
     HostPasses::FsrPass::Settings fsr_settings{};
     HostPasses::PostProcessingPass::Settings pp_settings{};
     HostPasses::PostProcessingPass pp_pass;
+    /// bbport: native HDR output (I4): the compose pass, and the format of the presentation
+    /// frames (the SDR picture: the swapchain's format, or 10-bit UNORM under HDR output).
+    HostPasses::HdrComposePass hdr_pass;
+    vk::Format frame_format{};
     std::mutex passes_mutex; ///< bbport: the passes are recorded on the recording threads
     AmdGpu::Liverpool* liverpool;
     Scheduler draw_scheduler;

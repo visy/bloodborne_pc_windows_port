@@ -97,6 +97,15 @@ public:
         return needs_hdr;
     }
 
+    /// bbport: native HDR output (bbport_hdr.h): the swapchain's encoding this session
+    /// (BbHdr::Sdr, Pq or ScRgb), chosen once at start from the settings and the display.
+    int HdrOutput() const {
+        return hdr_output;
+    }
+    /// VK_EXT_hdr_metadata for the HDR output (Rec.2020 primaries, D65, the peak); only when
+    /// the values change. Present thread.
+    void SetHdrMetadata(float peak_nits, float paper_white_nits);
+
 private:
     /// Selects the best available swapchain image format
     void FindPresentFormat();
@@ -140,6 +149,8 @@ private:
     bool zero_extent = false; ///< bbport: the surface was 0x0 (minimised) at the last Create
     bool needs_hdr = false;    // The game requested HDR swapchain
     bool supports_hdr = false; // SC supports HDR output
+    int hdr_output = 0;         ///< bbport: BbHdr::Encoding of the HDR output
+    float metadata_peak = 0.0f, metadata_paper = 0.0f;
 };
 
 } // namespace Vulkan

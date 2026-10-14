@@ -175,6 +175,16 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_npc_talk_range = std::clamp(i, 0, 500);
     } else if (key == "party_overhead") {
         v.party_overhead = std::clamp(i, 0, 4);
+    } else if (key == "hdr") {
+        v.hdr = i != 0 || value == "on" || value == "true";
+    } else if (key == "hdr_peak_nits") {
+        v.hdr_peak_nits = value == "auto" || i <= 0 ? 0 : std::clamp(i, 100, 10000);
+    } else if (key == "hdr_paper_white") {
+        v.hdr_paper_white = std::clamp(i, 80, 500);
+    } else if (key == "hdr_strength") {
+        v.hdr_strength = Clamp(f, 0.0f, 1.5f);
+    } else if (key == "hdr_saturation") {
+        v.hdr_saturation = Clamp(f, 0.5f, 1.5f);
     } else if (key == "menu_pos") {
         float x = -1.0f, y = -1.0f;
         if (std::sscanf(value.c_str(), "%f,%f", &x, &y) == 2 && x >= 0.0f && x <= 1.0f && y >= 0.0f &&
@@ -276,6 +286,9 @@ void Load() {
         {"BB_GPL", "gpl"},                          {"BB_COMPILE_INDICATOR", "compile_indicator"},
         {"BB_HUD", "show_hud"},                     {"BB_HUD_POSITION", "hud_position"},
         {"BB_MOUSE_KEYBOARD", "mk_enabled"},
+        {"BB_HDR", "hdr"},                          {"BB_HDR_PEAK", "hdr_peak_nits"},
+        {"BB_HDR_PAPER_WHITE", "hdr_paper_white"},  {"BB_HDR_STRENGTH", "hdr_strength"},
+        {"BB_HDR_SATURATION", "hdr_saturation"},
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env)) {
@@ -303,6 +316,15 @@ void Load() {
     v.startup_frame_generation = v.frame_generation;
     v.startup_fg_backend = v.fg_backend;
     v.startup_reflex = v.reflex;
+    v.startup_hdr = v.hdr;
+    if (const char* pattern = std::getenv("BB_HDR_PATTERN")) v.hdr_calibration = pattern[0] == '1';
+}
+
+float HdrPeakNits() {
+    const auto& v = Get();
+    const int setting = v.hdr_peak_nits;
+    float peak = setting > 0 ? float(setting) : v.hdr_display_peak > 0.0f ? v.hdr_display_peak.load() : 1000.0f;
+    return std::clamp(peak, 100.0f, 10000.0f);
 }
 
 const char* ReflexModeName(int mode) {
@@ -389,7 +411,7 @@ bool RestartNeeded() {
                    s.live_resolution != s.startup_live_resolution || s.gpl != s.startup_gpl ||
                    s.frame_generation != s.startup_frame_generation ||
                    (s.frame_generation >= 2 && s.fg_backend != s.startup_fg_backend) ||
-                   s.reflex != s.startup_reflex ||
+                   s.reflex != s.startup_reflex || s.hdr != s.startup_hdr ||
                    ResolutionNeedsRestart();
     for (int e = 0; e < EffectCount; ++e) {
         restart |= s.effects[e] != s.startup_effects[e];
@@ -465,6 +487,11 @@ void Save() {
     put("party_enemy_damage", std::to_string(v.party_enemy_damage.load()));
     put("party_enemy_poise", std::to_string(v.party_enemy_poise.load()));
     put("party_overhead", std::to_string(v.party_overhead.load()));
+    put("hdr", flag(v.hdr));
+    put("hdr_peak_nits", v.hdr_peak_nits > 0 ? std::to_string(v.hdr_peak_nits.load()) : std::string("auto"));
+    put("hdr_paper_white", std::to_string(v.hdr_paper_white.load()));
+    put("hdr_strength", fixed(v.hdr_strength, 2));
+    put("hdr_saturation", fixed(v.hdr_saturation, 2));
     put("fsr4_auto_exposure", flag(v.fsr4_auto_exposure));
     put("fsr4_invert_jitter", flag(v.fsr4_invert_jitter));
     // Read by patches.py at start.

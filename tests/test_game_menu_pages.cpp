@@ -67,7 +67,7 @@ static void Advance(std::int64_t ms) {
 
 static void Limits() {
     const auto& pages = P::All();
-    assert(pages.size() >= 10 && pages.size() <= 16); // MaxPages in bbport_game_menu.cpp
+    assert(pages.size() >= 10 && pages.size() <= 20); // MaxPages in bbport_game_menu.cpp
     for (const P::Page& page : pages) {
         CheckText(page.name, P::MaxNameLength, "page name");
         CheckText(page.help, P::MaxHelpLength, "page help");
@@ -142,7 +142,8 @@ static void EverySettingSaved() {
         "hud_scale", "hud_graph", "hud_vram", "hud_gpu", "hud_cpu", "hud_ram", "mk_enabled", "mk_sens_x",
         "mk_sens_y", "mk_invert_x", "mk_invert_y", "mk_deadzone", "mk_smoothing", "mk_wheel", "async_pipelines", "gpl",
         "compile_indicator", "party_toasts", "party_hud", "fsr4_auto_exposure", "fsr4_invert_jitter", "model_lod",
-        "output_res", "live_resolution", "menu_language"};
+        "output_res", "live_resolution", "menu_language", "hdr", "hdr_peak_nits", "hdr_paper_white", "hdr_strength",
+        "hdr_saturation"};
     for (const char* key : overlay) {
         if (!changed.count(key)) {
             std::fprintf(stderr, "no game menu row changes %s\n", key);

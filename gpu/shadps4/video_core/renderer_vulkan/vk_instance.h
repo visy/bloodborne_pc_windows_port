@@ -534,6 +534,11 @@ public:
     }
 
     /// Returns whether the device can report memory usage.
+    /// bbport: VK_EXT_hdr_metadata (the HDR output's mastering metadata).
+    bool IsHdrMetadataSupported() const {
+        return hdr_metadata;
+    }
+
     bool CanReportMemoryUsage() const {
         return supports_memory_budget;
     }
@@ -645,6 +650,7 @@ private:
     bool cooperative_matrix{};      // bbport: VK_KHR_cooperative_matrix (FSR 4.1.1 FP8 variant)
     bool shader_float8{};           // bbport: VK_EXT_shader_float8 with FP8 matrices (RDNA4)
     bool supports_memory_budget{};
+    bool hdr_metadata{};
     bool supports_block_texel_view{};
     u64 total_memory_budget{};
     u64 total_local_memory{};

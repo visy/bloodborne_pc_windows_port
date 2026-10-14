@@ -198,9 +198,9 @@ std::vector<const char*> GetInstanceExtensions(Frontend::WindowSystemType window
     // its instance dependency is required even when no surface is created by a GPU test.
     extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
 
-    if (EmulatorSettings.IsHdrAllowed()) {
-        extensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
-    }
+    // bbport: always (when present): the HDR output's colour spaces (bbport_hdr.h) are offered
+    // only with it, and the swapchain logs what the display offers.
+    extensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
 
     if (enable_debug_utils) {
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
