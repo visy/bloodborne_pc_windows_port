@@ -47,6 +47,8 @@ struct Companion {
     int level = 0;             // VITALS extras (0 = unknown): the overhead display (E2)
     int deaths = 0;
     int rot = 0;
+    std::uint64_t chr = 0;     // its PlayerIns here (local_read): the overlay re-reads its position
+                               // every frame (coop::PartyHudChrPos), the board's is the 10 Hz tick's
 };
 
 struct Board {
@@ -69,6 +71,7 @@ struct LocalChr {
     int stamina = 0, max_stamina = 0;
     bool have_pos = false;
     float pos[3] = {0, 0, 0};
+    std::uint64_t chr = 0;  // the PlayerIns (guest address)
 };
 
 struct ComposeIn {
@@ -202,4 +205,8 @@ struct GameSnapshot;  // game_state.h
 /// every 100 ms): this player's VITALS out, the remote PlayerIns read, the board published.
 /// `link` null: the board goes inactive.
 void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberState local_state);
+/// Any thread (the overlay, once a frame): the current physics position of the PlayerIns `chr`
+/// (the one the game draws, read now), when it is still a live chr within 10 m of `near` (the
+/// board's position from the last tick); false otherwise (freed, disabled, moved far).
+bool PartyHudChrPos(std::uint64_t chr, const float near[3], float out[3]);
 }  // namespace coop

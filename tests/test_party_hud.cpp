@@ -84,6 +84,7 @@ static void ComposeBoard() {
     chr.have_pos = true;
     chr.pos[0] = 3;
     chr.pos[2] = 4;
+    chr.chr = 0x1234500;  // the overlay re-reads this PlayerIns every frame
 
     ComposeIn in;
     in.local_slot = 1;
@@ -104,6 +105,7 @@ static void ComposeBoard() {
     const hud::Companion& h = b.c[0];
     assert(std::strcmp(h.name, "Hunter0") == 0 && h.slot == 0 && h.same_world && h.local_read);
     assert(h.have_hp && h.hp == 500 && h.max_hp == 1000 && h.alive && !h.have_stamina);
+    assert(h.chr == 0x1234500 && b.c[1].chr == 0);
     assert(h.have_pos && h.same_map && Near(h.pos[0], 3) && h.age_ms == 0);
     assert(Near(hud::Distance(b.me_pos, h.pos), 5));
     // The other guest at home: from its VITALS, greyed (not our world), other map, dead.

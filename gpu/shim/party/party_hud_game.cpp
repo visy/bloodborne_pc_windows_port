@@ -79,6 +79,20 @@ bool PlausibleHp(int hp, int mx) {
     return mx > 1 && mx <= 99999 && hp >= 0 && hp <= mx;
 }
 
+u64 Physics(u64 chr) {
+    return Field<u64>(Field<u64>(Field<u64>(Field<u64>(chr, 0x58), 8), 0x3b0), 0x68);
+}
+
+// The physics position (+0x1e0): finite, inside the world.
+bool ReadPhysPos(u64 phys, float out[3]) {
+    float p[4] = {};
+    if (!phys || !SafeRead(phys + 0x1e0, p, sizeof p)) return false;
+    for (int i = 0; i < 3; ++i)
+        if (!std::isfinite(p[i]) || std::fabs(p[i]) >= 100000.0f) return false;
+    std::memcpy(out, p, 3 * sizeof(float));
+    return true;
+}
+
 ChrRead ReadChr(u64 chr) {
     ChrRead r;
     const u64 dm = Field<u64>(Field<u64>(chr, 0x3b0), 0x20);
@@ -96,16 +110,11 @@ ChrRead ReadChr(u64 chr) {
             r.max_stamina = smx;
         }
     }
-    const u64 phys = Field<u64>(Field<u64>(Field<u64>(Field<u64>(chr, 0x58), 8), 0x3b0), 0x68);
-    float p[4] = {}, rot[4] = {};
-    if (phys && SafeRead(phys + 0x1e0, p, sizeof p)) {
-        bool ok = true;
-        for (int i = 0; i < 3; ++i) ok = ok && std::isfinite(p[i]) && std::fabs(p[i]) < 100000.0f;
-        if (ok) {
-            r.have_pos = true;
-            std::memcpy(r.pos, p, sizeof r.pos);
-            if (SafeRead(phys + 0x1d0, rot, sizeof rot) && std::isfinite(rot[1])) r.yaw = rot[1];
-        }
+    const u64 phys = Physics(chr);
+    float rot[4] = {};
+    if (ReadPhysPos(phys, r.pos)) {
+        r.have_pos = true;
+        if (SafeRead(phys + 0x1d0, rot, sizeof rot) && std::isfinite(rot[1])) r.yaw = rot[1];
     }
     return r;
 }
@@ -194,6 +203,19 @@ static void GamePlateOff(bool off) {
     state = int(off);
 }
 
+bool PartyHudChrPos(std::uint64_t chr, const float near[3], float out[3]) {
+    // Per frame from the overlay (present thread): the chr may have been freed since the tick
+    // matched it (SafeRead survives the fault); a disabled one is not drawn, a reused one is far.
+    if (!chr) return false;
+    if ((Field<u8>(Field<u64>(chr, 0x18), 0x20) & 1) || (Field<u16>(Field<u64>(chr, 0x58), 0x114) & 0x40)) return false;
+    float p[3];
+    if (!ReadPhysPos(Physics(chr), p)) return false;
+    const float dx = p[0] - near[0], dy = p[1] - near[1], dz = p[2] - near[2];
+    if (dx * dx + dy * dy + dz * dz > 10.0f * 10.0f) return false;
+    std::memcpy(out, p, sizeof p);
+    return true;
+}
+
 void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberState local_state) {
     HudState& st = S();
     GamePlateOff(link != nullptr && BbSettings::Get().party_name_tags);  // off: the game's plate, vanilla
@@ -269,6 +291,7 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
             l.max_stamina = r.max_stamina;
             l.have_pos = r.have_pos;
             std::memcpy(l.pos, r.pos, sizeof l.pos);
+            l.chr = chr;
         }
     }
     party::MemberVitals vit[party::kMaxVitals];
