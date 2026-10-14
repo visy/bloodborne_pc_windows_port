@@ -149,6 +149,7 @@ std::atomic<bool> g_rejoin{false};  // a B2 re-join is in flight (K5 / K6 armed)
 std::atomic<bool> g_k1_xml{false};  // the XML retarget already keeps the room at 0x19471B1
 std::atomic<int> g_apart_k5{0};     // members in another area (split travel): K5 stands aside
 std::atomic<double> g_split_change_at{-100.0};  // the last split chr removal / meet rewind (Now())
+std::atomic<double> g_title_served_at{-1e9};  // host: the last title-join room sent (Now()), holds lamp travel
 
 bool IdEquals(u64 a, u64 b) {
     using Fn = bool(BB_COOP_SYSV*)(u64, u64);
@@ -5301,7 +5302,7 @@ void TitleJoinHostTick(const GameSnapshot& s) {
         b += tail;
         Send(slot, b);
         Log("title join: slot %d asked for the room: %s (%zu bytes, head %s), stage %#x", slot, ok ? "sent" : "NOT serialized",
-            room.size(), Hex(room, 24).c_str(), Field<u32>(s.player, 0x3f8));
+            room.size(), Hex(room, 24).c_str(), Field<u32>(s.player, 0x3f8));        if (ok) g_title_served_at = Now();  // the host's lamp travel waits for this joiner (HostTravelHeldForJoin)
     }
     // The guest that came in from its title has session type 0 here (its Continue load carries
     // none): its chr is no cooperator (0x15BDC20 counts net types 1/5/7/19) until its row says 7.
@@ -7509,6 +7510,7 @@ bool HostTravelHeldForJoin(std::string* who) {
         v.since_done = now - DS().done_at;
         v.done_ok = DS().done_ok;
     }
+    v.since_title = now - g_title_served_at.load();
     int members = 0, missing = 0;
     for (const TaskInfo& t : Tasks(false)) {
         if (t.mode == 1) {
@@ -7520,9 +7522,14 @@ bool HostTravelHeldForJoin(std::string* who) {
     const bool held = dsummon::HostTravelHeld(v);
     if (held && who) {
         char b[160];
-        std::snprintf(b, sizeof b, "a member is joining (room sent %.1f s ago, %s, %d of %d member chr(s) missing)",
-                      v.since_served, v.since_done <= v.since_served ? (v.done_ok ? "joined" : "failed") : "no answer yet",
-                      missing, members);
+        if (v.since_title < v.since_served) {
+            std::snprintf(b, sizeof b, "a member is joining from its title (room sent %.1f s ago, %d of %d member chr(s) missing)",
+                          v.since_title, missing, members);
+        } else {
+            std::snprintf(b, sizeof b, "a member is joining (room sent %.1f s ago, %s, %d of %d member chr(s) missing)",
+                          v.since_served, v.since_done <= v.since_served ? (v.done_ok ? "joined" : "failed") : "no answer yet",
+                          missing, members);
+        }
         *who = b;
     }
     return held;

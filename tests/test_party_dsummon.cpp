@@ -175,6 +175,14 @@ int main() {
     CHECK(HostTravelHeld(h));                                      // an older failure does not release a new room
     h.since_served = kHostTravelHoldMax;
     CHECK(!HostTravelHeld(h));                                     // waited long enough
+    // par_c6: a title joiner (no dsum_done) holds the travel until its chr is here, direct summon on or off.
+    h = HostTravelHoldView{};
+    h.since_title = 3;
+    CHECK(HostTravelHeld(h));                                      // room sent to a title joiner: wait
+    h.joiner_in_world = true;
+    CHECK(!HostTravelHeld(h));                                     // its chr is here: travel (it follows)
+    h.joiner_in_world = false; h.since_title = kHostTravelHoldMax;
+    CHECK(!HostTravelHeld(h));                                     // waited long enough
     std::printf("party-dsummon-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

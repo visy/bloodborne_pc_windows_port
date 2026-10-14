@@ -162,6 +162,7 @@ struct HostTravelHoldView {
     double since_done = 1e9;    // the last dsum_done arrived this long ago
     bool done_ok = false;       // ... and said the guest joined
     bool joiner_in_world = false;  // every joining member's chr is in the host's world
+    double since_title = 1e9;   // the host last sent its room to a title joiner this long ago
 };
 constexpr double kHostTravelHoldMax = 30.0;
 /// True: the host's lamp travel waits now.
