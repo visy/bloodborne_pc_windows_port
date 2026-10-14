@@ -672,6 +672,9 @@ std::atomic<bool> g_next_alone{false};    // host: the next captured travel is a
 std::atomic<bool> g_death_alone{false};   // host: every captured HostDeath is alone (hostdeath)
 std::atomic<double> g_last_alone_at{0};   // host: when the last alone travel was captured (Now())
 std::atomic<LampUseObserver> g_lamp_observer{nullptr};
+// RunLampWarpNotRest: the warp running now is no lamp use of the player (going home / falling
+// recovery): the observer (party_balance's rest) does not see it.
+std::atomic<const char*> g_warp_not_rest{nullptr};
 
 // Seeded from the wall clock: a restarted host keeps counting upward, so guests that saw the
 // old host's intents do not drop the new ones as duplicates.
@@ -850,7 +853,11 @@ void CaptureHost(u64 site, TravelKind kind) {
 __attribute__((noinline)) BB_COOP_SYSV void LampWarpHook(u64 id) {
     perf::Scope z(perf::Zone::HookLampWarp);
     if (!g_in_replay.load()) {
-        if (LampUseObserver obs = g_lamp_observer.load(); obs && !g_hold_release.load()) obs(static_cast<u32>(id));
+        if (const char* why = g_warp_not_rest.load()) {
+            Log("lamp warp %u (%s): no lamp use of the player, not a rest", static_cast<u32>(id), why);
+        } else if (LampUseObserver obs = g_lamp_observer.load(); obs && !g_hold_release.load()) {
+            obs(static_cast<u32>(id));
+        }
         if (LampWarpInterceptor fn = g_lamp_intercept.load(); fn && !g_lamp_decided.load() && fn(static_cast<u32>(id))) {
             return;
         }
@@ -1569,6 +1576,12 @@ void SetLampWarpInterceptor(LampWarpInterceptor fn) {
 
 void RunLampWarp(std::uint32_t id) {
     reinterpret_cast<LampWarpFn>(Guest(kLampWarp))(id);
+}
+
+void RunLampWarpNotRest(std::uint32_t id, const char* why) {
+    g_warp_not_rest = why ? why : "not a rest";
+    reinterpret_cast<LampWarpFn>(Guest(kLampWarp))(id);
+    g_warp_not_rest = nullptr;
 }
 
 void RunLampWarpDecided(std::uint32_t id, bool alone) {

@@ -148,6 +148,7 @@ struct TravelStep {
     std::string args;     // HostStage / HostWalk / HostHeadstone
     double delay = 15.0;
     int min_join = 0;     // "#N": not before this player's Nth join
+    bool alive = false;   // "!" on a press step: waits as a step with the own chr (alive, world up)
 };
 
 struct Test {
@@ -1497,7 +1498,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         const bool own_chr = !(k == TravelStep::HostPress || k == TravelStep::GuestPress || k == TravelStep::HostOutage ||
                                k == TravelStep::GuestOutage || k == TravelStep::HostFlag ||
                                k == TravelStep::HostSkipRemo || k == TravelStep::GuestSkipRemo ||
-                               k == TravelStep::HostLastLamp || k == TravelStep::HostKill || k == TravelStep::GuestKill);
+                               k == TravelStep::HostLastLamp || k == TravelStep::HostKill || k == TravelStep::GuestKill) ||
+                             t.steps[t.next_step].alive;
         if (deathrules::TestStepWaits(own_chr, b2::LocalHp() > 0, s.world_up && !s.loading, b2::RejoinRunning())) {
             if (!t.step_waiting) {
                 Log("test: travel step %zu (%s) waits: %s", t.next_step + 1, TravelStepName(k),
@@ -2480,8 +2482,11 @@ void PartyDirector::ConfigureFromEnv() {
                 }
                 if (step.kind == TravelStep::HostPress || step.kind == TravelStep::GuestPress) {
                     step.buttons = static_cast<std::uint32_t>(std::strtoul(item.c_str() + item.find('=') + 1, nullptr, 0));
+                    // "!": only once the own chr is alive and the world up (not into a death screen).
+                    step.alive = item.find('!') != std::string::npos;
                     if (const std::size_t pc = item.find('%'); pc != std::string::npos) {
-                        step.map = item.substr(pc + 1);
+                        step.map = item.substr(pc + 1, item.find('!', pc) == std::string::npos ? std::string::npos
+                                                                                              : item.find('!', pc) - pc - 1);
                     }
                 }
                 if (step.map.empty() && item.find('%') != std::string::npos) {
@@ -2552,7 +2557,7 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.steps.push_back(step);
             } else if (!item.empty()) {
                 Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, start, grant_bells, drop_bells, award_lot=N, set_flag=N[:N], insight=N, "
-                    "ring_host, ring_guest, bell_host, bell_guest, host_warp=ID@S, host_kill=ENTITY@S, host_move=X:Y:Z[:YAW]@S[%MAP], guest_move=..., host_press=BUTTONS@S, guest_press=BUTTONS@S, host_die@S, guest_die@S, "
+                    "ring_host, ring_guest, bell_host, bell_guest, host_warp=ID@S, host_kill=ENTITY@S, host_move=X:Y:Z[:YAW]@S[%MAP], guest_move=..., host_press=BUTTONS@S[%MAP][!], guest_press=BUTTONS@S[%MAP][! = alive], host_die@S, guest_die@S, "
                     "host_mark[=lua|=EFFECT]@S, guest_mark@S, host_stage=A:B:R:I:P|bonfire:ID@S, host_walk=X:Y:Z:YAW[/...]@S or host_headstone=TALK:DOWNS@S; ignored",
                     item.c_str());
             }

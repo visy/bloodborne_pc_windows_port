@@ -26,9 +26,11 @@ int main() {
     CHECK(GuestChrTypeFixDue(true, 0, 500, 4, 2.5));
     CHECK(!GuestChrTypeFixDue(true, 1, 500, 4, 9.0));   // already a phantom
     CHECK(!GuestChrTypeFixDue(true, 8, 500, 4, 9.0));   // grey own body: not ours to touch
-    CHECK(!GuestChrTypeFixDue(true, 0, 0, 4, 9.0));     // dead: its death is already dispatched
+    CHECK(GuestChrTypeFixDue(true, 0, 0, 4, 0.0));      // down right after the arrival: at once
+    CHECK(GuestChrTypeFixDue(true, 0, 500, 4, 0.5));    // playtest 1: a death ~1 s after a title join
+    CHECK(!GuestChrTypeFixDue(true, 0, -1, 4, 9.0));    // HP unknown
     CHECK(!GuestChrTypeFixDue(true, 0, 500, 1, 9.0));   // not in flow 4 (still loading in)
-    CHECK(!GuestChrTypeFixDue(true, 0, 500, 4, 1.0));   // the summon load may still set it
+    CHECK(!GuestChrTypeFixDue(true, 0, 500, 4, 0.1));   // the first frames of the arrival
     CHECK(!GuestChrTypeFixDue(false, 0, 500, 4, 9.0));  // own world / host
     CHECK(OptIn("1"));
 
