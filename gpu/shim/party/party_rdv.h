@@ -16,8 +16,9 @@
 //
 // What this exposes: DHT nodes see the guest's IP and the host's lookups under an opaque hash
 // (like any torrent client). Only when needed (guest: TCP failed; host: no open port), and off
-// with BB_PARTY_RENDEZVOUS=0. A forged peer can only make the host send a few punch datagrams
-// (the link still needs the party key); punching is limited per endpoint.
+// unless the player opts in (BB_PARTY_RENDEZVOUS=1 / System > Party rules, on both PCs). A forged
+// peer can only make the host send a few punch datagrams (the link still needs the party key);
+// punching is limited per endpoint.
 //
 // Pure parts (bencode, KRPC messages, the iterative Lookup) take datagrams in and return
 // datagrams out like party_rudp; Rendezvous owns a UDP socket and a thread.

@@ -124,7 +124,8 @@ waits 6 s. No retry or timeout change was needed.
 ### 3d. No guest code: the DHT rendezvous under the NAT sim (2026-10-14, 0.6.1)
 
 `BB_NET_SIM=dsl,nat=1` on both (no TCP listener on the host, unsolicited UDP dropped), **no
-`BB_PARTY_GUEST_CODE_FILE`**, `BB_PARTY_DHT_BOOTSTRAP=127.0.0.1:46881` pointing at
+`BB_PARTY_GUEST_CODE_FILE`**, `BB_PARTY_RENDEZVOUS=1` (opt-in since 2026-10-14; the run predates
+that and had it on by default), `BB_PARTY_DHT_BOOTSTRAP=127.0.0.1:46881` pointing at
 `tools/mp/fake_dht.py` (one DHT node on loopback standing in for the public DHT). Title join with
 existing characters, one clock for both logs:
 
@@ -194,9 +195,16 @@ on 127.0.0.1.
     does not). The simulator has a NAT mode (`BB_NET_SIM=...,nat=1`): inbound UDP is dropped
     unless we sent to that address:port first, and the host's TCP listener is off. Live run: see
     §3b (link over UDP 0.6 s after the punch started, bell join and B2 travel as usual).
-- **No guest code needed: the automatic rendezvous (DHT)** (2026-10-14, 0.6.1, `party_rdv.h`,
-  `party_traversal.h`). Without any server of ours, the guest's public UDP endpoint now reaches
-  the host through the public BitTorrent DHT (BEP 5 "mainline", as any torrent client uses):
+- **No guest code needed: the automatic rendezvous (DHT), opt-in** (2026-10-14, 0.6.1,
+  `party_rdv.h`, `party_traversal.h`). Without any server of ours, the guest's public UDP endpoint
+  reaches the host through the public BitTorrent DHT (BEP 5 "mainline", as any torrent client
+  uses). **Off by default** (user decision 2026-10-14: it posts the guest's IP on public DHT
+  nodes): launcher *Party* tab *Find each other through the public DHT* or *System > Party rules*
+  (`BB_PARTY_RENDEZVOUS=1/0`, which wins over bbport.ini `party_rendezvous`; unset = the ini,
+  default 0). Host **and** guest need it on. Off, the host's *Network* line says "with their guest
+  code (Add a guest code; automatic punching is off: turn on the DHT option on both PCs ...)" and
+  the guest's line and its "no UDP answer from the host" failure say "automatic punching is off:
+  send the host your guest code, or turn on the DHT option on both PCs".
   1. The DHT key is `BLAKE2b("bbport rendezvous v1" || party key)` cut to 20 bytes. Only someone
      with the code (and the password) can compute it; DHT nodes see an opaque hash.
   2. Guest: when its party link has not come up 3 s after the start (TCP failed), it does an
@@ -209,7 +217,8 @@ on 127.0.0.1.
      code (at most once per 50 s per endpoint). The guest's UDP SYNs then get in (§ above).
   4. Bootstrap: `router.bittorrent.com`, `dht.transmissionbt.com`, `router.utorrent.com`,
      `dht.libtorrent.org` (`BB_PARTY_DHT_BOOTSTRAP=host:port,...` replaces them).
-     `BB_PARTY_RENDEZVOUS=0` turns it off; the guest code still works as before.
+     The guest code works either way. Loopback runs use the DHT only with
+     `BB_PARTY_RENDEZVOUS=1` **and** `BB_PARTY_DHT_BOOTSTRAP` (a fake node).
   - Exposure: the guest's public IP and the host's lookups appear on public DHT nodes under that
     hash, only when needed. A forged entry can only make the host send a few punch datagrams; the
     link still needs the party key.

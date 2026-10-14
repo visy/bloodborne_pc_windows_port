@@ -149,6 +149,11 @@ struct Values {
     /// ... within this many metres of the NPC (0 = anywhere on the same map; ini
     /// party_npc_talk_range; env BB_PARTY_NPC_TALK_RANGE overrides). Live, local.
     std::atomic<int> party_npc_talk_range{25};
+    /// F2: the automatic hole-punching rendezvous over the public BitTorrent DHT (party_rdv.h):
+    /// OPT-IN, off by default (it posts the guest's IP on the DHT; user decision 2026-10-14). Both
+    /// host and guest need it on. ini party_rendezvous; env BB_PARTY_RENDEZVOUS (the launcher's
+    /// Party tab) overrides at start. Read when the party starts (System > Party rules).
+    std::atomic<bool> party_rendezvous{false};
 
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
     int startup_preset = NativeAA;

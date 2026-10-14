@@ -1369,6 +1369,19 @@ void PartyTab() {
              "Видеть и слышать разговоры спутников с NPC рядом с вами: субтитры, голос NPC, их выбор и "
              "подарки. Дальность: Система > Правила группы > Дальность диалогов NPC."),
            on);
+    Toggle("party_rendezvous", T("Find each other via the public DHT", "Поиск друг друга через публичный DHT"),
+           s.party_rendezvous,
+           T("When a direct connection fails, your address is posted on the public BitTorrent DHT under a "
+             "key only your party can compute, so the host finds you and punches through both routers. DHT "
+             "nodes can see your IP, as with any torrent client. Both host and guest need it on. Off: send "
+             "the host your guest code (Add a guest code), or use port forwarding / a VPN. From the next "
+             "party start; the launcher's Party tab sets it at launch.",
+             "Если прямое соединение не удалось, ваш адрес публикуется в публичном DHT BitTorrent под ключом, "
+             "который может вычислить только ваша группа, и хост находит вас и пробивает оба роутера. Узлы "
+             "DHT видят ваш IP, как у любого торрент-клиента. Нужно включить и хосту, и гостю. Выкл.: "
+             "отправьте хосту гостевой код или используйте проброс порта / VPN. Со следующего запуска группы; "
+             "при запуске значение берётся из вкладки Party лаунчера."),
+           on);
     Toggle("party_guest_lamps", T("Guests use lamps", "Фонари гостям"), s.party_guest_lamps,
            T("Guests may use lamps and the Dream's headstones; the host leads and the whole party "
              "travels. After a restart.",
