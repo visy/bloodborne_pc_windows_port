@@ -511,6 +511,7 @@ def settings_env(s: dict) -> dict:
     env["BB_FPS"] = s.get("fps", "uncap")
     env["BB_MODS_ENABLED"] = "1" if on("mods") else "0"
     env["BB_DREAM_MIRROR"] = None if on("dream_mirror") else "0"
+    env["BB_LAMP_TRAVEL"] = None if on("lamp_travel") else "0"
     env["BB_UPSCALER"] = None if on("feat_upscaler") else "off"
     env["BB_OBJECT_MOTION"] = None if on("feat_object_motion") else "0"
     env["BB_OVERLAY"] = None if on("feat_overlay") else "0"
@@ -1209,6 +1210,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_fps_patch = tk.BooleanVar(value=self.settings.get("feat_fps_patch", True))
         self.feat_mods = tk.BooleanVar(value=self.settings.get("mods", True))
         self.feat_dream_mirror = tk.BooleanVar(value=self.settings.get("dream_mirror", True))
+        self.feat_lamp_travel = tk.BooleanVar(value=self.settings.get("lamp_travel", True))
         self.feat_res_scaling = tk.BooleanVar(value=self.settings.get("feat_res_scaling", True))
         # Off by default since 0.6.1 (playtest 1: a guest on the old default "on" got 20 MB logs and
         # false hang dumps); settings saved before that ("tracing_rev" missing) are switched off once.
@@ -1471,6 +1473,11 @@ class BloodborneLauncher(tk.Tk):
                     "unfinished 'Put on Disguise', restored as in bbhost). Each party member edits their own "
                     "hunter; every player in a party needs the same setting (party mod check). "
                     "Default: on (BB_DREAM_MIRROR).")
+        self._check(sec, "Direct lamp travel", self.feat_lamp_travel,
+                    "A lamp offers travel to the Hunter's Dream or straight to any other lamp you have lit "
+                    "(the headstones' list, in the game's own travel menu): one loading screen instead of two. "
+                    "In a party it is a normal party travel. Off: lamps only return to the Hunter's Dream, as "
+                    "in the original game. Default: on (BB_LAMP_TRAVEL).")
         patches_btn = ttk.Button(sec, text="⚙  All XML Patches...", style="Secondary.TButton",
                                  command=self.open_patches_dialog)
         patches_btn.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(6, 2))
@@ -2693,6 +2700,7 @@ class BloodborneLauncher(tk.Tk):
             "timeout": self.timeout_var.get().split()[0],
             "mods": self.feat_mods.get(),
             "dream_mirror": self.feat_dream_mirror.get(),
+            "lamp_travel": self.feat_lamp_travel.get(),
             "hide_vk": self.hide_vk_var.get(),
             "feat_upscaler": self.feat_upscaler.get(),
             "feat_object_motion": self.feat_object_motion.get(),

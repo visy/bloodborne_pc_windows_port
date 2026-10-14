@@ -29,6 +29,7 @@
 #include "party_npc_test.h"
 #include "party_guestsvc.h"
 #include "party_split.h"
+#include "lamp_travel.h"
 #include "party_phantom.h"
 #include "party_start.h"
 #include "party_runtime.h"
@@ -3439,6 +3440,7 @@ void CoopTick() {
     chalice::Tick(PartyDirector::Get().Role() == PartyRole::Host); // the local dungeon, the party's chalices
     z.Next(Zone::Travel);
     TravelTick(); // B1 guest replay (party_travel.h)
+    lamptravel::Tick(); // direct lamp travel's warp menu choice (lamp_travel.h)
     z.Next(Zone::Story);
     StoryTick(); // C4 cutscenes / endings (party_story.h)
     z.Next(Zone::Items);
