@@ -24,6 +24,10 @@ void Run(std::function<void()> job);
 /// caller; past kMaxQueuedLines waiting lines new ones are dropped and counted (reported with the
 /// next line that fits).
 void Print(std::string text);
+/// Party logging (party_log.h, BB_PARTY_LOG=verbose): rewrites each Print's text on the caller's
+/// thread (the correlation tag), before it is queued. nullptr = none (the default).
+using LineTagger = std::string (*)(const std::string& text);
+void SetLineTagger(LineTagger fn);
 constexpr std::size_t kMaxQueuedLines = 20000;
 
 /// Waits until the queue is empty (tests, shutdown); false on timeout.

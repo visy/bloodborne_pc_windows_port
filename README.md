@@ -255,6 +255,16 @@ sends it to the host, who presses *Add a guest code*: the game then connects thr
 (hole punching). This fails behind symmetric / carrier-grade NAT (some mobile and ISP
 connections); there, let another player host or use a VPN such as Tailscale. Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
 
+### Reporting a co-op bug
+
+| Step | How |
+|---|---|
+| Before playing | Launcher → *Advanced / Debug* → *Party logging*: **Verbose** on every PC |
+| When it happens | Press **F9** (or *Party tab → Mark an issue*): every player's log gets `=== USER MARK n ===` |
+| After playing | *Advanced / Debug* → **Save support bundle** on every PC and send the zips (passwords, codes and addresses are removed). A crash writes one by itself to `logs\` |
+
+Details: [docs/party/logging.md](docs/party/logging.md).
+
 Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 [docs/party/ERSC_PARITY.md](docs/party/ERSC_PARITY.md)
 

@@ -22,6 +22,7 @@
 #include "party_travel.h"
 #include "party_worldact.h"
 #include "party_droproll.h"
+#include "party_log_game.h"
 #include "coop_hooks.h"
 #include "game_state.h"
 #include "upnp_win.h"
@@ -934,6 +935,16 @@ LinkCallbacks make_callbacks(bool host) {
             if (bbnet::party_trace()) plog("event %s id %llu", name.c_str(), static_cast<unsigned long long>(id));
         };
     }
+    // Party logging (party_log.h): every event either way (BB_PARTY_LOG=verbose / trace) and the
+    // log's own events (run ids, user marks), which no other handler sees.
+    cb.on_event = [inner = std::move(cb.on_event)](int slot, std::uint64_t cursor, const std::string& name,
+                                                   const std::string& body) {
+        if (coop::plog::OnEventReceived(slot, name, body)) return;
+        if (inner) inner(slot, cursor, name, body);
+    };
+    cb.on_event_sent = [](int slot, const std::string& name, const std::string& body) {
+        coop::plog::OnEventSent(slot, name, body);
+    };
     return cb;
 }
 
