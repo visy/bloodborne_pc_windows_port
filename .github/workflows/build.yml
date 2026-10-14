@@ -1,0 +1,117 @@
+name: Build Bloodborne PC Port
+
+on:
+  push:
+    branches: [ "fix-vram-leak", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Windows x86_64
+    runs-on: windows-latest
+    steps:
+      - name: Enable Long Paths
+        run: git config --system core.longpaths true
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          cache: true
+
+      - name: Install MSYS2 dependencies
+        shell: msys2 {0}
+        run: |
+          for attempt in 1 2 3; do
+            echo "Attempt $attempt installing packages..."
+            pacman -S --noconfirm --needed \
+              git curl \
+              mingw-w64-x86_64-gcc \
+              mingw-w64-x86_64-cmake \
+              mingw-w64-x86_64-ninja \
+              mingw-w64-x86_64-pkgconf \
+              mingw-w64-x86_64-vulkan-headers \
+              mingw-w64-x86_64-vulkan-loader \
+              mingw-w64-x86_64-glslang \
+              mingw-w64-x86_64-boost \
+              mingw-w64-x86_64-fmt \
+              mingw-w64-x86_64-robin-map \
+              mingw-w64-x86_64-vulkan-memory-allocator \
+              mingw-w64-x86_64-xxhash \
+              mingw-w64-x86_64-sdl3 \
+              mingw-w64-x86_64-ffmpeg \
+              mingw-w64-x86_64-zydis && break
+            echo "Failed attempt $attempt, waiting before retry..."
+            sleep 10
+          done
+          mkdir -p /mingw64/include/magic_enum
+          curl -sSL -o /mingw64/include/magic_enum/magic_enum.hpp https://raw.githubusercontent.com/Neargye/magic_enum/master/include/magic_enum/magic_enum.hpp
+          
+          # Fix VMA header location
+          if [ -f /mingw64/include/vma/vk_mem_alloc.h ]; then
+            cp -f /mingw64/include/vma/vk_mem_alloc.h /mingw64/include/vk_mem_alloc.h
+          fi
+
+          # Build and install miniz via CMake
+          git clone --depth 1 https://github.com/richgel999/miniz /tmp/miniz_repo
+          cmake -S /tmp/miniz_repo -B /tmp/miniz_build -G Ninja -DCMAKE_INSTALL_PREFIX=/mingw64 -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=OFF
+          cmake --build /tmp/miniz_build --target install
+          cp -f /mingw64/include/miniz/*.h /mingw64/include/ || true
+          echo "Miniz successfully built and installed to /mingw64"
+
+          # Install xbyak headers
+          git clone --depth 1 https://github.com/herumi/xbyak /tmp/xbyak
+          cp -r /tmp/xbyak/xbyak /mingw64/include/
+          echo "Xbyak headers installed to /mingw64/include/xbyak"
+
+      - name: Compile Bloodborne PC Port
+        shell: msys2 {0}
+        run: |
+          set -e
+          mkdir -p out/atrac9 out/gpu
+          
+          echo "=== 1. Building LibAtrac9 ==="
+          gcc -std=c99 -O2 -g -w -c third_party/LibAtrac9/C/src/*.c
+          mv *.o out/atrac9/
+          ar rcs out/libatrac9.a out/atrac9/*.o
+          echo "Built out/libatrac9.a"
+
+          echo "=== 2. Applying FSR-Vulkan Patch ==="
+          if [ -f patches/fsr_vulkan_mingw.patch ]; then
+            git -C gpu/third_party/fsr-vulkan apply ../../../patches/fsr_vulkan_mingw.patch || true
+          fi
+
+          echo "=== 3. Configuring CMake ==="
+          cmake -S gpu -B out/gpu -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_PREFIX_PATH="/mingw64" \
+            -DBB_LTO=OFF \
+            -DCMAKE_C_FLAGS="-D_WIN32_WINNT=0x0A00 -Wno-implicit-function-declaration" \
+            -DCMAKE_CXX_FLAGS="-D_WIN32_WINNT=0x0A00"
+
+          echo "=== 4. Building bbgpu and bbport ==="
+          cmake --build out/gpu --target bbgpu bbport bb-gpu-capabilities -j $(nproc)
+
+          echo "=== 5. Finalizing binaries ==="
+          cp -f out/bbport.exe out/bb-probe.exe
+
+          echo "=== 6. Staging DLLs ==="
+          python scripts/stage_dlls.py || true
+          
+          ls -la out/bbport.exe
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bbport-vram-fix
+          path: |
+            out/bbport.exe
+            out/bb-probe.exe
+            out/*.dll

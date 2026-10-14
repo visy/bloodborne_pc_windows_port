@@ -1113,11 +1113,23 @@ void TextureCache::GarbageCollectImages() {
         auto& image = slot_images[image_id];
         const bool download = image.SafeToDownload();
         const bool tiled = image.info.IsTiled();
+        const bool is_depth = image.info.props.is_depth;
+        // Depth/stencil targets and shadow maps are GPU-only and never read back by CPU.
+        // Reclaim them directly without requiring download to recover VRAM.
+        if (is_depth) {
+            --num_deletions;
+            ++gc_evictions;
+            BbStats::gc_freed_images.fetch_add(1, std::memory_order_relaxed);
+            FreeImage(image_id);
+            return false;
+        }
+
         // bbport: images that cannot go now (GPU-written: their contents exist only here, and
         // tiled ones cannot be written back at all) neither use up the deletions nor stay first
         // in line. The oldest ten being such render targets stopped the collector for good, and
         // VRAM grew with every area visited up to the pressure mark (~10 GB on 16 GB).
-        if ((tiled && download) || (download && !pressured)) {
+        // Under memory pressure, stale tiled images are reclaimed rather than permanently kept.
+        if ((tiled && download && !pressured) || (download && !pressured)) {
             lru_cache.Touch(image.lru_id, gc_tick);
             BbStats::gc_kept_images.fetch_add(1, std::memory_order_relaxed);
             return false;
