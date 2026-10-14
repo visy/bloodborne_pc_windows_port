@@ -231,8 +231,10 @@ bool ChoiceTracker::OnCommand(std::uint32_t cmd, std::uint32_t npc, std::int32_t
                               std::int32_t result, std::uint32_t* msg, std::uint32_t* npc_out) {
     bool chosen = false;
     const bool was_shown = shown_;
-    if (shown_ && cmd != kAdd && npc == npc_) {
-        // The first command after the menu: the ESD's branch on the result runs it.
+    if (shown_ && cmd != kAdd && npc == npc_ && (result != shown_result_ || cmd == kClear)) {
+        // The menu's row was decided: the result changed since the menu showed (live: the ESD runs
+        // a wait command every frame while the menu is up, the result stays until the choice), or
+        // the next menu is being built (the same row chosen again: the result did not change).
         shown_ = false;
         armed_ = false;
         const auto it = rows_.find(result);
@@ -256,6 +258,7 @@ bool ChoiceTracker::OnCommand(std::uint32_t cmd, std::uint32_t npc, std::int32_t
     } else if (!was_shown && armed_ && npc == npc_) {
         // The first other command of that NPC after its rows: the one that shows the menu.
         shown_ = true;
+        shown_result_ = result;
     }
     return chosen;
 }
@@ -347,12 +350,29 @@ std::atomic<double> g_conv_at{0};
 std::mutex g_cap_mu;
 Caption g_cap;
 
+// The talker's choice / gift ("Hunter chose: ..."): kept under the header for kNoteMs even when the
+// NPC's answer line follows at once (live: the answer came 0.1 s after the choice and replaced it).
+constexpr std::int64_t kNoteMs = 6000;
+std::string g_note;
+std::int64_t g_note_until_ms = 0;
+
 void SetCaption(const std::string& header, const std::string& line, double secs) {
     std::lock_guard<std::mutex> lk(g_cap_mu);
+    const std::int64_t now = NowMs();
     g_cap.header = header;
-    g_cap.line = line;
-    g_cap.until_ms = NowMs() + std::int64_t(secs * 1000.0);
+    g_cap.line = line.empty() && now < g_note_until_ms ? g_note : line;
+    g_cap.until_ms = std::max(now + std::int64_t(secs * 1000.0), line.empty() ? g_note_until_ms : 0);
     ++g_cap.seq;
+}
+
+/// A choice / gift line: shown now and kept for kNoteMs under the next lines' header.
+void SetNote(const std::string& header, const std::string& line) {
+    {
+        std::lock_guard<std::mutex> lk(g_cap_mu);
+        g_note = line;
+        g_note_until_ms = NowMs() + kNoteMs;
+    }
+    SetCaption(header, line, double(kNoteMs) / 1000.0);
 }
 
 std::string Utf8(const char16_t* s) {
@@ -422,6 +442,14 @@ u64 MessageUi() {
     return SafeGet(Guest(kMessageUi), &ui) ? ui : 0;
 }
 
+/// A game dialog is up (MessageUI +0x78: the dialog kind, 0 none; e.g. "Travel with the party?"):
+/// no shared subtitle or caption over it (live: both were drawn across the dialog's text).
+std::atomic<bool> g_dialog_up{false};
+bool DialogUp(u64 ui) {
+    std::int32_t kind = 0;
+    return ui && SafeGet(ui + 0x78, &kind) && kind != 0;
+}
+
 bool LocalTalkPlaying() {
     u64 wtm = 0;
     std::uint8_t on = 0;
@@ -450,8 +478,10 @@ std::int32_t Arg(u64 call, u64 vtbl, int i) {
     std::int32_t type = 0, iv = 0;
     float fv = 0;
     if (!p || !SafeGet(p + 8, &type)) return -1;
-    if (type == 1 && SafeGet(p, &iv)) return iv;
-    if (type == 2 && SafeGet(p, &fv) && std::isfinite(fv)) return std::int32_t(fv);
+    // Type 1 holds a float, type 2 an int (0x203FFD0 case 0x44 copies a type 1 value into a float
+    // and converts a type 2 one; live: AddTalkListData's message ids are type 2).
+    if (type == 2 && SafeGet(p, &iv)) return iv;
+    if (type == 1 && SafeGet(p, &fv) && std::isfinite(fv) && std::fabs(fv) < 2e9f) return std::int32_t(fv);
     return -1;
 }
 
@@ -476,7 +506,13 @@ BB_COOP_SYSV void CommandEntry(u64 env, u64 call, u64 a2, u64 a3, u64 a4, u64 a5
     const u64 ui = MessageUi();
     if (ui) SafeGet(ui + 0xec0, &result);
     if (g_cmd_trace.load(std::memory_order_relaxed) && npc > 0) {
-        Log("trace: talk command %u npc %d (rows %zu, result %d)", cmd, npc, g_choices.Rows(), result);
+        std::int32_t req = -1, dlg = -1;
+        if (ui) {
+            SafeGet(ui + 0x58, &req);
+            SafeGet(ui + 0x78, &dlg);
+        }
+        Log("trace: talk command %u npc %d (args %d %d, rows %zu, result %d, MessageUI +0x58 %d +0x78 %d)", cmd, npc,
+            a1, a2v, g_choices.Rows(), result, req, dlg);
     }
     std::uint32_t msg = 0, who = 0;
     if (g_choices.OnCommand(cmd, std::uint32_t(npc), a1, a2v, result, &msg, &who)) {
@@ -642,8 +678,14 @@ void EndRemote(const char* why) {
     }
     {
         std::lock_guard<std::mutex> lk(g_cap_mu);
-        g_cap.line.clear();
-        g_cap.until_ms = std::min<std::int64_t>(g_cap.until_ms, NowMs() + 2500);
+        const std::int64_t now = NowMs();
+        if (now < g_note_until_ms) {
+            g_cap.line = g_note; // the choice stays its own time
+            g_cap.until_ms = std::min<std::int64_t>(g_cap.until_ms, std::max(now + 2500, g_note_until_ms));
+        } else {
+            g_cap.line.clear();
+            g_cap.until_ms = std::min<std::int64_t>(g_cap.until_ms, now + 2500);
+        }
     }
     Log("shared conversation line over (%s)", why);
 }
@@ -658,6 +700,15 @@ void DriveSubtitle(double now) {
     if (!g_remote.native || !g_remote.msg) return;
     if (LocalTalkPlaying()) return; // the local game's own talk wins
     const u64 ui = MessageUi();
+    if (DialogUp(ui)) {
+        if (g_remote.wrote) {
+            const std::uint32_t zero = 0;
+            SafeWrite(ui + 0x280, &zero, 4);
+            g_remote.wrote = false;
+            Log("game subtitle held: a game dialog is up");
+        }
+        return;
+    }
     std::int32_t req = 0;
     if (!ui || !SafeGet(ui + 0x58, &req) || (req != 0 && req != 4)) return; // a menu / dialog is up
     const std::int32_t msg = std::int32_t(g_remote.msg), four = 4, one = 1;
@@ -729,7 +780,7 @@ void Handle(const TalkEvent& e, const GameSnapshot& s, PartyRole role, PartyLink
     case Kind::Choice: {
         const std::string text = MenuRowText(e.msg);
         const std::string line = e.who + " chose: " + (text.empty() ? "#" + std::to_string(e.msg) : text);
-        SetCaption(CaptionFor(e.who, e.talk ? e.talk : e.msg), line, 6.0);
+        SetNote(CaptionFor(e.who, e.talk ? e.talk : e.msg), line);
         Log("choice shown: %s", line.c_str());
         break;
     }
@@ -737,7 +788,7 @@ void Handle(const TalkEvent& e, const GameSnapshot& s, PartyRole role, PartyLink
         const std::string item = ItemName(e.item_cat, e.item_id);
         const std::string line = e.who + " received " + (item.empty() ? "a gift" : item) +
                                  (npc_name ? std::string(" from ") + npc_name : std::string());
-        SetCaption(CaptionFor(e.who, e.talk), line, 6.0);
+        SetNote(CaptionFor(e.who, e.talk), line);
         Log("gift shown: %s (lot %d, item %u:%d)", line.c_str(), e.lot, e.item_cat, e.item_id);
         break;
     }
@@ -910,10 +961,12 @@ void Tick(const GameSnapshot& s, PartyLink* link) {
         if (world) Handle(e, s, role, link, now);
     }
     if (!world && g_remote.active) EndRemote("loading");
+    g_dialog_up.store(world && DialogUp(MessageUi()));
     DriveSubtitle(now);
 }
 
 Caption CurrentCaption() {
+    if (g_dialog_up.load()) return {}; // hidden under a game dialog
     std::lock_guard<std::mutex> lk(g_cap_mu);
     return g_cap;
 }
