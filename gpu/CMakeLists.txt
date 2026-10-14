@@ -515,6 +515,13 @@ add_executable(party-watchdog-test EXCLUDE_FROM_ALL ../tests/test_party_watchdog
 target_compile_options(party-watchdog-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-watchdog-test PRIVATE shim)
 set_target_properties(party-watchdog-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Party logging levels, areas, tags, rate limits, marks (shim/party/party_log.cpp; in bbgpu through
+# SHIM_SOURCES). ninja -C out/gpu party-log-test
+add_executable(party-log-test EXCLUDE_FROM_ALL ../tests/test_party_log.cpp shim/party/party_log.cpp
+    shim/party/party_async_io.cpp)
+target_compile_options(party-log-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-log-test PRIVATE shim)
+set_target_properties(party-log-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # The shared BB_PARTY on/off rule (party_env.h). ninja -C out/gpu party-env-test
 add_executable(party-env-test EXCLUDE_FROM_ALL ../tests/test_party_env.cpp)
 target_compile_options(party-env-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

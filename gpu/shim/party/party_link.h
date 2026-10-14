@@ -280,6 +280,9 @@ struct LinkCallbacks {
     std::function<void(const std::vector<RosterEntry>& roster)> on_roster;
     std::function<void(LinkState state, const std::string& detail)> on_state;
     std::function<void(const std::string& line)> on_log;
+    // Party logging (party_log.h): an EVENT this side sends (send_event / post_event), called on the
+    // caller's thread before the link's lock is taken. Optional.
+    std::function<void(int to_slot, const std::string& name, const std::string& json)> on_event_sent;
 };
 
 class PartyLink {
@@ -308,6 +311,7 @@ public:
     std::vector<RosterEntry> roster() const;
     std::int64_t host_clock_ms() const;  // host: its own; guest: estimated from PONGs
     std::uint32_t rtt_ms() const;        // guest: last RTT to the host
+    std::uint64_t udp_resends() const;   // RUDP segments resent on this link's UDP connections (loss)
     std::string observed_address() const;  // guest: "ip:port" the host saw us at
     // Host: the IPv4 (network byte order) member `slot` is connected from; 0 when not connected.
     std::uint32_t member_ip(int slot) const;

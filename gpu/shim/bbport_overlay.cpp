@@ -22,6 +22,7 @@
 #include "party/party_hud.h"
 #include "party/party_balance_rules.h"
 #include "party/party_status.h"
+#include "party/party_log.h"
 #include "bbport_camera.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -1122,6 +1123,14 @@ const char* PartyStateText(party::status::State st, party::status::Role role) {
     return "";
 }
 
+/// A user mark (F9 / the Party tab): the log line, the peers' marks, a toast with its number.
+void MarkIssue(const char* origin) {
+    const int n = coop::plog::UserMark(origin);
+    char text[96];
+    std::snprintf(text, sizeof(text), T("Issue mark %d written to the logs", "Метка %d записана в логи"), n);
+    party::status::SetLastEvent(text);
+}
+
 struct PartyUiState {
     double copied_until = 0.0;       ///< "Copied" shown in the code row until then (ImGui time)
     double lan_copied_until = 0.0;   ///< the same for the host's LAN code row
@@ -1172,10 +1181,10 @@ void PartyTab() {
                             : T("Party code: copy", "Код группы: копировать"),
                   code_value,
                   b.role == ps::Role::Host
-                      ? T("The code friends paste into the launcher to join you: your address, port and "
-                          "the party's secret. Share it only with them.",
-                          "Код, который друзья вставляют в лаунчер, чтобы присоединиться: ваш адрес, "
-                          "порт и секрет группы. Давайте его только им.")
+                      ? T("The code friends paste into the launcher or the title screen's Party page to join "
+                          "you: your address, port and the party's secret. Share it only with them.",
+                          "Код, который друзья вставляют в лаунчер или на странице Party титульного экрана, "
+                          "чтобы присоединиться: ваш адрес, порт и секрет группы. Давайте его только им.")
                       : T("The code of the party you joined. Copies it to the clipboard.",
                           "Код группы, к которой вы присоединились. Копирует его в буфер обмена."),
                   on && !b.code.empty())) {
@@ -1276,6 +1285,15 @@ void PartyTab() {
         } else {
             party_ui.leave_confirm_until = now + 3.0;
         }
+    }
+    // Party logging (party_log.h): a marked line in this log and the peers' logs (also F9).
+    if (ActionRow("party_mark", T("Mark an issue in the logs (F9)", "Отметить проблему в логах (F9)"), nullptr,
+                  T("Writes \"=== USER MARK n ===\" into this game's log and asks the other players' games to do the "
+                    "same, so a bug report can point at the moment it happened.",
+                    "Записывает \"=== USER MARK n ===\" в лог этой игры и просит игры других игроков сделать то же, "
+                    "чтобы в отчёте об ошибке был виден момент, когда она случилась."),
+                  true)) {
+        MarkIssue("Party tab");
     }
     if (b.role == ps::Role::Host) {
         for (const ps::Member& m : b.members) {
@@ -2462,6 +2480,13 @@ bool HandleEvent(const SDL_Event& event) {
         // F11: the performance HUD (Mrsuss60/bloodborne_pc_windows_port). Their Shift+Tab is
         // not taken: Shift and Tab are game keys here (Circle + touchpad; in mouse & keyboard
         // mode the attack modifier + touchpad). F11 is bound to nothing in either layout.
+        // F9: a user mark in the logs (party_log.h; works without a party too).
+        if (event.key.key == SDLK_F9) {
+            if (down && !event.key.repeat) {
+                Ui::MarkIssue("F9");
+            }
+            return true;
+        }
         if (event.key.key == SDLK_F11) {
             if (down && !event.key.repeat) {
                 auto& s = BbSettings::Get();

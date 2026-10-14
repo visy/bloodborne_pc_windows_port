@@ -28,7 +28,7 @@ Verdict lines on stdout: "PASS <script>: ..." or "FAIL <script>: <reason>" (exit
 step lines "  ok   <step>: ..." / "  FAIL <step>: ...". A JSON log of every step, RPC, event and
 verdict goes to --json-log (default simguest-<name>.json; "-" = none).
 
-Connect with a party code ("BBP2-XXXX-...", carries host, port and secret) or --host/--port
+Connect with a party code ("BBP3-XXXX-...", carries host, port and secret) or --host/--port
 (plain host:port parties: password only). The host checks the game version (PartyLink v2: eboot,
 gameplay patches, gameplay mods): pass --game-dir DIR (DIR/eboot.bin sha256 and DIR/out/
 party_patch_hash.txt, party_mods.txt as party_runtime.cpp reads them) or --eboot-sha256 /
@@ -44,10 +44,10 @@ The key is derived once per process (crash-rejoin and soak reuse it). --key-hex 
 derivation (the hex the first run prints with -v).
 
 Examples:
-  python tools/party/simguest.py --code BBP2-.... --password pw --script join
+  python tools/party/simguest.py --code BBP3-.... --password pw --script join
   python tools/party/simguest.py --host 127.0.0.1 --port 9317 --secret 0011223344556677 \
       --script crash-rejoin --name Sim1
-  python tools/party/simguest.py --code BBP2-.... --script soak 10 --hold 5
+  python tools/party/simguest.py --code BBP3-.... --script soak 10 --hold 5
 """
 from __future__ import annotations
 
@@ -490,6 +490,43 @@ def _decode_v2(vals: list) -> dict:
             "flags": wire & ~8, "plain": False}
 
 
+_CRC_BITS_POLY = {8: 0x07, 9: 0x119, 10: 0x233, 11: 0x385, 12: 0x80F}
+
+
+def _decode_v3(vals: list) -> dict:
+    """BBP3 (party_code.h): bits flags(4) | ipv4 32 (LAN: 8) | port 16 (none with flag 8) |
+    secret 48 (32 with flag 2) | a CRC filling the last symbol (8..12 bits, init all ones)."""
+    if not vals:
+        raise ValueError("party code too short")
+    wire = vals[0] >> 1
+    payload = 4 + (8 if wire & 1 else 32) + (0 if wire & 8 else 16) + (32 if wire & 2 else 48)
+    want = (payload + 12) // 5
+    if len(vals) != want:
+        raise ValueError(f"party code has {len(vals)} symbols, expected {want}")
+    bits = [(v >> i) & 1 for v in vals for i in range(4, -1, -1)]
+    k = len(bits) - payload
+    reg, mask = (1 << k) - 1, (1 << k) - 1
+    for b in bits[:payload]:
+        top = ((reg >> (k - 1)) & 1) ^ b
+        reg = (reg << 1) & mask
+        if top:
+            reg ^= _CRC_BITS_POLY[k]
+    pos = [4]
+
+    def take(n):
+        v = int("".join(map(str, bits[pos[0]:pos[0] + n])), 2)
+        pos[0] += n
+        return v
+
+    if int("".join(map(str, bits[payload:])), 2) != reg:
+        raise ValueError("party code checksum mismatch (typo?)")
+    ip = _local_prefix() + [take(8)] if wire & 1 else [take(8) for _ in range(4)]
+    port = DEFAULT_PORT if wire & 8 else take(16)
+    secret = bytes(take(8) for _ in range(4 if wire & 2 else 6))
+    return {"host": ".".join(str(b) for b in ip), "port": port, "secret": secret.ljust(8, b"\0"),
+            "flags": wire & ~8, "plain": False}
+
+
 def decode_party_code(text: str) -> dict:
     """{'host', 'port', 'secret', 'flags', 'plain'}; raises ValueError."""
     t = text.strip()
@@ -500,9 +537,9 @@ def decode_party_code(text: str) -> dict:
         if not host:
             host, port = t, str(DEFAULT_PORT)
         return {"host": host, "port": int(port), "secret": b"\0" * 8, "flags": 0, "plain": True}
-    if t[3:4].upper() not in ("1", "I", "L", "2"):
+    if t[3:4].upper() not in ("1", "I", "L", "2", "3"):
         raise ValueError("unknown party code version")
-    v2 = t[3] == "2"
+    v2, v3 = t[3] == "2", t[3] == "3"
     body = t[4:]
     vals = []
     for c in body:
@@ -513,6 +550,8 @@ def decode_party_code(text: str) -> dict:
         if c not in ALPHABET:
             raise ValueError(f"bad character {c!r} in the party code")
         vals.append(ALPHABET.index(c))
+    if v3:
+        return _decode_v3(vals)
     if v2:
         return _decode_v2(vals)
     if len(vals) != 29:
@@ -1758,7 +1797,7 @@ def read_party_identity(path: str) -> dict:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Headless simulated party guest (see the module docstring).",
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--code", help="party code BBP2-... (or host:port)")
+    ap.add_argument("--code", help="party code BBP3-... (or host:port)")
     ap.add_argument("--host", help="host address (instead of --code)")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT, help="host party port (TCP; UDP the same)")
     ap.add_argument("--udp-port-host", type=int, default=0, help="host party UDP port if not the TCP port")

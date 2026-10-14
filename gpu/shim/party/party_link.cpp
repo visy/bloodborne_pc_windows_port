@@ -2358,6 +2358,14 @@ std::uint32_t PartyLink::rtt_ms() const {
     return impl_->rtt;
 }
 
+std::uint64_t PartyLink::udp_resends() const {
+    std::lock_guard<std::mutex> lk(impl_->mu);
+    std::uint64_t n = 0;
+    for (const auto& c : impl_->conns)
+        if (c && c->us) n += c->us->resends();
+    return n;
+}
+
 std::string PartyLink::observed_address() const {
     std::lock_guard<std::mutex> lk(impl_->mu);
     return impl_->observed;
@@ -2432,6 +2440,7 @@ std::uint32_t PartyLink::rpc_call_async(const std::string& kind, const std::stri
 
 std::uint64_t PartyLink::send_event(int slot, const std::string& name, const std::string& json) {
     Impl& I = *impl_;
+    if (I.cb.on_event_sent) I.cb.on_event_sent(slot, name, json);
     std::lock_guard<std::mutex> lk(I.mu);
     I.drain_posted();  // posts made earlier go first
     return I.send_event_locked(slot, name, json);
@@ -2439,6 +2448,7 @@ std::uint64_t PartyLink::send_event(int slot, const std::string& name, const std
 
 void PartyLink::post_event(int slot, const std::string& name, const std::string& json) {
     Impl& I = *impl_;
+    if (I.cb.on_event_sent) I.cb.on_event_sent(slot, name, json);
     {
         std::unique_lock<std::mutex> lk(I.mu, std::try_to_lock);
         if (lk.owns_lock()) {
