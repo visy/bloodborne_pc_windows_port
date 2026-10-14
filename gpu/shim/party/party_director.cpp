@@ -45,6 +45,7 @@
 #include "party_worldact.h"
 #include "party_npctalk.h"
 #include "party_ping.h"
+#include "party_pvp.h"
 #include "../bbport_game_menu.h"
 
 #include "../net/bbnet_internal.h"
@@ -2893,6 +2894,8 @@ void PartyDirector::Tick() {
     }
     // C4 rot, D7 enemy scaling, E2 extras: the host's rules for the party (party_balance.h).
     if (role != PartyRole::None) balance::Tick(s, link, role == PartyRole::Host);
+    // I1 friendly fire / PvP (party_pvp.h): the party rule on this game's team tables.
+    if (role != PartyRole::None) pvp::Tick(s, role == PartyRole::Host);
     // B1: the host's warps go to every guest (reliable: replayed to a member who reconnects).
     if (link && role == PartyRole::Guest) {
         StoryIntent up;

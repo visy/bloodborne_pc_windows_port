@@ -1360,6 +1360,8 @@ class BloodborneLauncher(tk.Tk):
         # Pings (I2): game settings (bbport.ini party_pings on, party_through_walls off by default).
         self.party_pings = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_pings"))
         self.party_through_walls = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_through_walls", False))
+        # I1 friendly fire / PvP: a host rule (bbport.ini party_friendly_fire, off by default).
+        self.party_friendly_fire = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_friendly_fire", False))
         self.party_separate_save = tk.BooleanVar(value=self.settings.get("party_separate_save", True))
         self.party_port_var = tk.StringVar(value=str(self.settings.get("party_port", PARTY_DEFAULT_PORT)))
         self.party_upnp = tk.BooleanVar(value=self.settings.get("party_upnp", True))
@@ -1894,6 +1896,13 @@ class BloodborneLauncher(tk.Tk):
                                "walls and trees in the companion's colour. Also in the game: System > Pings. "
                                "Default: off (bbport.ini party_through_walls).",
                                command=self.save_party_through_walls)
+        ff_cb = self._check(sec, "Friendly fire / PvP (host)", self.party_friendly_fire,
+                            "Host only: party members can hurt each other, both ways, like invaders (ERSC's "
+                            "Judicator's Rulebook). A party kill is a normal party death; the killer gets no "
+                            "Echoes or Insight. Your setting is the party's rule: guests see it and get a notice "
+                            "when you switch it. Also in the game: System > Friendly fire (live). Default: off "
+                            "(bbport.ini party_friendly_fire).",
+                            command=self.save_party_friendly_fire)
         self.party_separate_save.set(True)
         save_cb = self._check(sec, "Separate party saves (always)", self.party_separate_save,
                               "Party play always uses its own save folder (user\\savedata_party), so your "
@@ -2009,7 +2018,7 @@ class BloodborneLauncher(tk.Tk):
                                  dsummon_cb, hud_cb, tags_cb, npc_talk_cb, pings_cb, walls_cb, save_cb,
                                  port_lbl, self.party_port_entry, upnp_cb, rdv_cb, stun_lbl, self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
-        self.party_widgets_host = [public_lbl, self.party_public_entry,
+        self.party_widgets_host = [ff_cb, public_lbl, self.party_public_entry,
                                    host_lbl, self.party_host_code_entry, copy_btn,
                                    lan_lbl, self.party_lan_code_entry, lan_copy_btn]
         self.party_widgets_join = [code_lbl, self.party_code_entry, paste_btn]
@@ -2061,6 +2070,14 @@ class BloodborneLauncher(tk.Tk):
             update_ini(bbport_ini_path(), {"party_npc_talk": "1" if self.party_npc_talk.get() else "0"})
         except OSError as ex:
             self.log(f"[PARTY] Could not save the Share NPC dialogue setting to bbport.ini: {ex}")
+
+    def save_party_friendly_fire(self):
+        """The Friendly fire / PvP checkbox (host): bbport.ini party_friendly_fire (in game: System >
+        Friendly fire)."""
+        try:
+            update_ini(bbport_ini_path(), {"party_friendly_fire": "1" if self.party_friendly_fire.get() else "0"})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save the Friendly fire setting to bbport.ini: {ex}")
 
     def save_party_pings(self):
         """The Pings checkbox: bbport.ini party_pings (in game: System > Pings)."""
