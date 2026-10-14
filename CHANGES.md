@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.6.1 (Windows port 0.6.1, party co-op)
 
+- **Performance HUD in the bottom right by default** (was top left); a saved position in `bbport.ini` is kept. The shader indicator and the party panel move to the bottom left while the HUD has that corner.
 - **A guest in the host's world is never "in its prologue"**: while standing in another player's world the game's event flags are that world's, and a guest past its prologue was read as still in its opening in the host's Central Yharnam: its deaths gave no rot, story, item and progress syncs were held, and its saved prologue state was set (which would also have skipped its next title join). In the host's world a player now counts as ready and past its prologue, and its saved prologue state is left alone.
 - **Party panel stays for YES / NO boxes, checked live**: the lamp's "Return to the Hunter's Dream?" box opens through the same menu machinery as the inventory, which hid the party panel and held notices; now only the name tags step aside for such a box, while the warp menu, top menu, inventory and its full item description still hide the party text (checked live).
 - **The rot belongs to the character**: a new game (a save in its own prologue) drops rot stacks left by another character, and test runs with `--fresh-saves` start without the last run's rot and prologue state.
