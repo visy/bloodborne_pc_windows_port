@@ -8,7 +8,8 @@
 //   input    hold the touchpad (keyboard Tab) and press R3 (keyboard Q / C), or the V key. The
 //            touchpad press is held back from the game until it is released (then the game gets
 //            a normal touchpad click: the Gestures menu opens on release) or R3 comes (a ping: the
-//            game sees neither). src/runtime_pad.c, only in a party with pings on.
+//            game sees neither). On pads without a touch surface (Xbox): hold Back and press R3.
+//            src/runtime_pad.c, only in a party with pings on.
 //   aim      the scene depth along the screen's centre column, read back from the GPU once per
 //            ping (vk_camera_motion.cpp depth probe, bbport_camera.h Probe): from the screen centre
 //            upwards, the first surface that is not the player itself (PickAim). Sky, no depth or

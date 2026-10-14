@@ -298,7 +298,34 @@ static void GameMenuRule() {
     assert(!hud::GameDialog());
 }
 
+// 0.6.2: the performance HUD (bottom right) lifts above the game's area-name banner for a while
+// after each arrival (a new local PlayerIns once the loading screen is gone) and map block change.
+static void AreaBanner() {
+    hud::AreaBannerWatch w;
+    assert(!w.Update(false, 0, 0xffffffffu, 0.0));          // loading / title
+    assert(w.Update(true, 0x1000, 0x18010000, 1.0));         // arrival: Central Yharnam
+    assert(w.Update(true, 0x1000, 0x18010000, 10.9));
+    assert(!w.Update(true, 0x1000, 0x18010000, 11.1));       // banner gone
+    assert(w.Update(true, 0x1000, 0x18000000, 30.0));        // walked into Cathedral Ward (m24_00)
+    assert(!w.Update(true, 0x1000, 0x18000000, 40.5));
+    assert(!w.Update(true, 0x1000, 0xffffffffu, 41.0));      // unknown map: no new banner
+    assert(!w.Update(true, 0x1000, 0x18000000, 41.1));       // ... nor when it reads again
+    assert(!w.Update(false, 0x1000, 0x18000000, 50.0));      // a loading screen (lamp warp)
+    assert(w.Update(true, 0x1000, 0x18000000, 60.0));        // back in the world: same map, same chr - an arrival
+    assert(!w.Update(true, 0x1000, 0x18000000, 70.5));
+    assert(w.Update(true, 0x2000, 0x18000000, 80.0));        // a re-created PlayerIns (join)
+    assert(!w.Update(true, 0, 0x18000000, 81.0));            // no player: nothing
+    // The HUD's bottom edge: the corner normally; at most 80 % of the height while the banner may
+    // be up (the banner spans ~82 .. 91 %).
+    assert(Near(hud::PerfHudBottom(1068.0f, 1080.0f, false), 1068.0f));
+    assert(Near(hud::PerfHudBottom(1068.0f, 1080.0f, true), 864.0f));
+    assert(Near(hud::PerfHudBottom(500.0f, 1080.0f, true), 500.0f));  // already above it
+    assert(Near(hud::PerfHudBottom(2148.0f, 2160.0f, true), 1728.0f));
+    assert(hud::PerfHudBottom(1068.0f, 1080.0f, true) < 0.82f * 1080.0f);
+}
+
 int main() {
+    AreaBanner();
     GameMenuRule();
     StaleChr();
     Tags();

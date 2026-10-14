@@ -3209,6 +3209,29 @@ class BloodborneLauncher(tk.Tk):
             self.log(f"[PRE-LAUNCH ERROR] {err_msg.splitlines()[0]}")
             messagebox.showerror("Pre-Launch Verification Failed", err_msg)
 
+    def warn_unclean_eboot(self, game_dir):
+        """With the game check bypassed (BB_SKIP_GAME_CHECK=1), a modified eboot.bin starts but the
+        port cannot patch it: a warning, the launch goes on (from Supermedo/bloodborne_pc 155a270b,
+        where it was only in the log)."""
+        if os.environ.get("BB_SKIP_GAME_CHECK") != "1":
+            return  # verify_prelaunch already refused it
+        try:
+            scripts_dir = str(APP_DIR / "scripts")
+            if scripts_dir not in sys.path:
+                sys.path.insert(0, scripts_dir)
+            import game_check
+            clean = game_check.eboot_clean(str(game_dir))
+        except Exception as ex:
+            self.log(f"[PRE-LAUNCH] eboot.bin check skipped: {ex}")
+            return
+        if clean is not False:
+            return
+        text = ("Your eboot.bin is not the clean 1.09 one (modified, or from another dump). "
+                + game_check.UNCLEAN_EBOOT_EFFECTS[0].upper() + game_check.UNCLEAN_EBOOT_EFFECTS[1:]
+                + ".\n\nReplace eboot.bin with the one from an unmodified 1.09 update.")
+        self.log(f"[PRE-LAUNCH WARNING] {text.splitlines()[0]}")
+        messagebox.showwarning("Bloodborne", text)
+
     def blocked_by_running_instance(self) -> bool:
         """True while another bbport.exe is alive: a second copy exhausts RAM and VRAM.
 
@@ -3271,6 +3294,7 @@ class BloodborneLauncher(tk.Tk):
         self.log("[PRE-LAUNCH] Pre-flight verification passed:")
         for line in details:
             self.log(f"  {line}")
+        self.warn_unclean_eboot(game_dir)
 
         env = os.environ.copy()
         env["BB_FROM_LAUNCHER"] = "1"  # run.bat: do not reload launcher_settings.json
