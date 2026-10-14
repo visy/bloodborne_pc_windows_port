@@ -1107,7 +1107,10 @@ class BloodborneLauncher(tk.Tk):
         self.feat_mods = tk.BooleanVar(value=self.settings.get("mods", True))
         self.feat_dream_mirror = tk.BooleanVar(value=self.settings.get("dream_mirror", True))
         self.feat_res_scaling = tk.BooleanVar(value=self.settings.get("feat_res_scaling", True))
-        self.feat_tracing = tk.BooleanVar(value=self.settings.get("feat_tracing", True))
+        # Off by default since 0.6.1 (playtest 1: a guest on the old default "on" got 20 MB logs and
+        # false hang dumps); settings saved before that ("tracing_rev" missing) are switched off once.
+        self.feat_tracing = tk.BooleanVar(value=self.settings.get("tracing_rev", 0) >= 1
+                                          and self.settings.get("feat_tracing", False))
         self.feat_watchdog = tk.BooleanVar(value=self.settings.get("feat_watchdog", True))
         self.feat_draw_prep = tk.BooleanVar(value=self.settings.get("feat_draw_prep", True))
         self.feat_fullscreen = tk.BooleanVar(  # "fullscreen": key of the upstream launcher toggle (PR #39)
@@ -1185,7 +1188,7 @@ class BloodborneLauncher(tk.Tk):
                              "shaders, GPL, performance HUD, mouse & keyboard controls, party mode), sets "
                              "30 FPS, anisotropic filtering Off and disables all XML patches. Saved "
                              "immediately.")
-        Tooltip(everything_btn, "Preset: turns the features back on (including async shaders and GPL), sets "
+        Tooltip(everything_btn, "Preset: turns the features back on (including async shaders and GPL; not Debug tracing), sets "
                                 "Uncap FPS and 16x anisotropic filtering, and enables the recommended patches "
                                 "(Skip Intro, Performance Patch, Disable Motion Blur). The performance HUD, "
                                 "mouse & keyboard controls and the Party tab are preferences and stay as "
@@ -1402,7 +1405,7 @@ class BloodborneLauncher(tk.Tk):
         sec = self._section(tab, 0, "Diagnostics")
         self._check(sec, "Debug tracing (heartbeat/hang dump)", self.feat_tracing,
                     "Extra diagnostic tracing: writes heartbeat logs and hang dumps to out\\ for bug reports. "
-                    "Slightly slower. Default: on (BB_TRACE).")
+                    "Slower, and logs get very large: turn it on only to record a bug. Default: off (BB_TRACE).")
         self._check(sec, "Save frame stats to logs\\", self.feat_save_log,
                     "Writes frame and readback statistics to logs\\<time>.frames.csv / .readbacks.csv for "
                     "performance analysis. Default: off (BB_SAVE_LOG).")
@@ -2147,7 +2150,6 @@ class BloodborneLauncher(tk.Tk):
         self.feat_fps_patch.set(True)
         self.feat_mods.set(True)
         self.feat_res_scaling.set(True)
-        self.feat_tracing.set(True)
         self.feat_watchdog.set(True)
         self.feat_draw_prep.set(True)
         self.feat_game_menu.set(True)
@@ -2534,6 +2536,7 @@ class BloodborneLauncher(tk.Tk):
             "feat_fps_patch": self.feat_fps_patch.get(),
             "feat_res_scaling": self.feat_res_scaling.get(),
             "feat_tracing": self.feat_tracing.get(),
+            "tracing_rev": 1,
             "feat_watchdog": self.feat_watchdog.get(),
             "feat_draw_prep": self.feat_draw_prep.get(),
             "feat_fullscreen": self.window_mode_var.get() == "Fullscreen",

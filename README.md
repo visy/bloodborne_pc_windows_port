@@ -78,8 +78,11 @@ Mouse and keyboard, free camera, debug menu: [docs/SETTINGS.md](docs/SETTINGS.md
 
 Play the whole game with friends in one session, from the first lamp to the end credits.
 Modelled on Elden Ring Seamless Co-op, adapted to Bloodborne. **In development:** tested on one
-PC (several game copies, simulated internet lag) and **between two PCs on a LAN** (summon, combat,
-shared kills and doors, per-player pickups); internet play between two PCs is not tested yet. A scripted two-player
+PC (several game copies, simulated internet lag), **between two PCs on a LAN** (summon, combat,
+shared kills and doors, per-player pickups) and **over the Internet**: a 2.5 h session between two
+PCs in different homes (two campaigns, prologue to Old Yharnam, several hosts and joins, one crash with
+a working rejoin). The bugs reported from it are fixed in 0.6.1
+([docs/party/playtest1_triage.md](docs/party/playtest1_triage.md)). A scripted two-player
 run from two new characters to the end credits passed, and a three-player travel run
 ([docs/party/campaign_soak.md](docs/party/campaign_soak.md)).
 

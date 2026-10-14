@@ -602,7 +602,7 @@ int Row(const char* id, const char* label, const char* value, const char* hint, 
         }
     }
     const ImU32 label_color = !enabled ? Dim() : focused ? Bright() : Plain();
-    ImGui::PushFont(game_font, ImGui::GetFontSize());  // labels in the game's Baskerville, values as before
+    ImGui::PushFont(game_font, 0.0f);  // labels in the game's Baskerville at the current size (GetFontSize() would scale twice)
     const ImVec2 label_size = ImGui::CalcTextSize(label);
     draw->AddText(ImVec2(at.x + S(28.0f), mid_y - label_size.y * 0.5f), label_color, label);
     ImGui::PopFont();
@@ -1070,7 +1070,7 @@ void Info(const char* label, const char* value, ImU32 value_color) {
     ImGui::Dummy(ImVec2(width, height));
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const float mid_y = at.y + height * 0.5f;
-    ImGui::PushFont(game_font, ImGui::GetFontSize());
+    ImGui::PushFont(game_font, 0.0f);
     const ImVec2 label_size = ImGui::CalcTextSize(label);
     draw->AddText(ImVec2(at.x + S(28.0f), mid_y - label_size.y * 0.5f), Plain(0.8f), label);
     ImGui::PopFont();
