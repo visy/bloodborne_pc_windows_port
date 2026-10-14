@@ -183,6 +183,9 @@ private:
         return num_new_pipelines > 0;
     }
 
+    std::string GetDriverCacheKey() const;
+    void SaveDriverPipelineCache();
+
 private:
     const Instance& instance;
     Scheduler& scheduler;

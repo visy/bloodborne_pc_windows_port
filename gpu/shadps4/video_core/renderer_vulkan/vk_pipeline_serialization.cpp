@@ -418,7 +418,31 @@ void PipelineCache::WarmUp() {
     Storage::DataBase::Instance().FinishPreload();
 }
 
+std::string PipelineCache::GetDriverCacheKey() const {
+    const auto props = instance.GetPhysicalDevice().getProperties();
+    // Unique key per vendor, device ID, and driver version to avoid invalid binary loads across updates
+    return fmt::format("vk_pipe_cache_{:04x}_{:04x}_{:08x}",
+                       props.vendorID, props.deviceID, props.driverVersion);
+}
+
+void PipelineCache::SaveDriverPipelineCache() {
+    if (!pipeline_cache || !Storage::DataBase::Instance().IsOpened()) {
+        return;
+    }
+    try {
+        auto [res, data] = instance.GetDevice().getPipelineCacheData(*pipeline_cache);
+        if (res == vk::Result::eSuccess && !data.empty()) {
+            LOG_INFO(Render, "Saving native Vulkan driver pipeline cache ({} bytes)", data.size());
+            Storage::DataBase::Instance().Save(Storage::BlobType::PipelineBinary,
+                                               GetDriverCacheKey(), std::move(data));
+        }
+    } catch (const std::exception& e) {
+        LOG_WARNING(Render, "Failed to retrieve native Vulkan driver pipeline cache: {}", e.what());
+    }
+}
+
 void PipelineCache::Sync() {
+    SaveDriverPipelineCache();
     Storage::DataBase::Instance().Close();
 }
 

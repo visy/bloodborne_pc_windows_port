@@ -347,12 +347,33 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         .needs_clip_distance_emulation = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
         .supports_shader_stencil_export = instance_.IsShaderStencilExportSupported(),
     };
-    WarmUp();
+    std::vector<u8> driver_cache_data{};
+    if (EmulatorSettings.IsPipelineCacheEnabled()) {
+        Storage::DataBase::Instance().Open();
+        Storage::DataBase::Instance().Load(Storage::BlobType::PipelineBinary,
+                                           GetDriverCacheKey(), driver_cache_data);
+        if (!driver_cache_data.empty()) {
+            LOG_INFO(Render, "Loading native Vulkan driver pipeline cache ({} bytes)",
+                     driver_cache_data.size());
+        }
+    }
 
-    auto [cache_result, cache] = instance.GetDevice().createPipelineCacheUnique({});
-    ASSERT_MSG(cache_result == vk::Result::eSuccess, "Failed to create pipeline cache: {}",
-               vk::to_string(cache_result));
+    const vk::PipelineCacheCreateInfo cache_ci{
+        .initialDataSize = driver_cache_data.size(),
+        .pInitialData = driver_cache_data.empty() ? nullptr : driver_cache_data.data(),
+    };
+    auto [cache_result, cache] = instance.GetDevice().createPipelineCacheUnique(cache_ci);
+    if (cache_result != vk::Result::eSuccess) {
+        LOG_WARNING(Render, "Failed to create pipeline cache from stored driver data ({}): recreating empty",
+                    vk::to_string(cache_result));
+        auto [empty_res, empty_cache] = instance.GetDevice().createPipelineCacheUnique({});
+        ASSERT_MSG(empty_res == vk::Result::eSuccess, "Failed to create empty pipeline cache: {}",
+                   vk::to_string(empty_res));
+        cache = std::move(empty_cache);
+    }
     pipeline_cache = std::move(cache);
+
+    WarmUp();
 }
 
 class PipelineCompiler {
