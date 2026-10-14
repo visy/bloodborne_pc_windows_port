@@ -1653,7 +1653,20 @@ void StoryTick() {
             st.sex_variant ? 1 : 0, st.tod_value);
     }
     std::optional<StoryAction> a;
-    {
+    static bool prologue_held = false;
+    const char* prologue_why = nullptr;
+    if (PartyPrologueHold(&prologue_why)) {
+        // Playtest 1 #19: no cutscene / story replay into a prologue world (G2:21127 replayed the
+        // host's first Dream scene in the guest's world); the queue waits.
+        if (!prologue_held) {
+            prologue_held = true;
+            Log("story replays held: %s (#19: no sync into a prologue world)", prologue_why);
+        }
+    } else {
+        if (prologue_held) {
+            prologue_held = false;
+            Log("story replays: prologue over; the queue goes on");
+        }
         std::lock_guard<std::mutex> lk(g_guest_mu);
         a = g_guest.Step(st, now);
     }
@@ -1707,6 +1720,14 @@ bool HostStoryFromGuest(int slot, const std::string& body, std::string* why) {
     if (s.kind != StoryKind::Cutscene || !(s.instr == 1 || s.instr == 3 || s.instr == 7) || !StoryRemoKnown(s.id)) {
         if (why) {
             *why = "not a plain cutscene play";
+        }
+        return false;
+    }
+    if (LocalPrologueHold()) {
+        Log("host: story_up %u (event %u) from slot %d refused: the host is in its prologue (#19)", s.id, s.event_id,
+            slot);
+        if (why) {
+            *why = "the host is in its prologue";
         }
         return false;
     }

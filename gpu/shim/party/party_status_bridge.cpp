@@ -288,6 +288,14 @@ Mapped MapState(const Facts& f) {
                                 ", solo until ready";
         return {host ? State::Hosting : State::WaitingForWorld, host ? count + ", " + why : why};
     }
+    // #19: nobody is summoned while another member is still in its prologue (whoever finished
+    // first waits; the Party page says for whom).
+    if (!f.others_prologue.empty() && f.session_role == kRoleIdle) {
+        const std::string why = "Waiting: " + f.others_prologue + (f.others_prologue.find(" and ") != std::string::npos
+                                                                         ? " are in the prologue"
+                                                                         : " is in the prologue");
+        return {host ? State::Hosting : State::WaitingForWorld, host ? count + ", " + why : why};
+    }
     if (host) {
         const std::string busy = f.host_busy.empty() ? std::string() : ", " + f.host_busy;  // A11
         if (f.session_role == kRoleHost && f.cooperators > 0)
@@ -434,6 +442,24 @@ void OnRoster(const std::vector<RosterEntry>& roster, int max_players) {
         PublishLocked(b);
     }
     status::SetMembers(MapMembers(roster, name, host));
+}
+
+void OnOthersPrologue(const std::string& names) {
+    bool changed = false;
+    {
+        Bridge& b = B();
+        std::lock_guard<std::mutex> lk(b.mu);
+        changed = b.f.others_prologue != names;
+        b.f.others_prologue = names;
+        // A title join refused for the host's prologue left "Waiting: the host is in its prologue":
+        // gone once nobody is in the prologue any more (live: shown after both were ready).
+        if (names.empty() && b.f.host_busy.find("prologue") != std::string::npos) {
+            b.f.host_busy.clear();
+            changed = true;
+        }
+        if (changed) PublishLocked(b);
+    }
+    if (changed && !names.empty()) status::SetLastEvent(names + " is in the prologue");
 }
 
 void OnMemberJoined(const std::string& name, bool rejoined) {

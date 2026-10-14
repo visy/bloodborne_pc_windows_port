@@ -59,6 +59,7 @@
 #include <cstring>
 #include <ctime>
 #include <map>
+#include <set>
 #include <vector>
 #include <mutex>
 #include <string>
@@ -285,6 +286,10 @@ struct State {
     StartFlags cs{};
     bool start_ready = false, start_logged = false;
     StartStep start_step = StartStep::NoWorld;
+    // #19: a prologue step (opening / clinic / first Dream) by the flags - unlike !start_ready
+    // not set by a scripted cutscene (9180) of a ready player, and kept over loading screens.
+    bool start_prologue = false;
+    bool left_first_dream = false; // seen out of the Dream with both weapons (party_start.h)
     bool granted = false; // bells granted (or found owned) in this world
     Clock::time_point last_hosting{}; // host: when its session role last was host (3): travel audience
     // Title "Continue" (AutoContinue).
@@ -308,6 +313,12 @@ State& S() {
 
 std::atomic<bool> g_local_start_ready{false};  // LocalStartReady (any thread)
 std::atomic<int> g_local_start_step{0};        // LocalStartInPrologue (any thread): StartStep
+// #19 (any thread): this player is in its prologue (kept over loads, cleared at the title), and
+// a guest's view of the host in its prologue (the roster).
+std::atomic<bool> g_local_prologue{false};
+std::atomic<bool> g_host_prologue{false};
+std::mutex g_prologue_names_mu;
+std::string g_prologue_names;  // other connected members in their prologue (under g_prologue_names_mu)
 
 std::atomic<bool> g_tick_installed{false};
 
@@ -417,7 +428,7 @@ void InstallBellTrace(std::integer_sequence<int, I...>) {
      ...);
 }
 
-party::MemberState LocalState(const GameSnapshot& s, bool start_ready) {
+party::MemberState LocalState(const GameSnapshot& s, bool in_prologue) {
     if (s.loading) {
         return party::MemberState::Loading;
     }
@@ -430,11 +441,93 @@ party::MemberState LocalState(const GameSnapshot& s, bool start_ready) {
     if (s.session_role == RoleTryingToJoin) {
         return party::MemberState::Joining;
     }
-    return OwnWorldState(start_ready);
+    return OwnWorldState(!in_prologue);
 }
 
 bool InWorld(const GameSnapshot& s) {
     return s.world_up && !s.loading;
+}
+
+/// #19: the last prologue state seen in the world, kept in BB_GPU_USER_DIR/party_prologue.txt, so
+/// a guest at its title (no flags to read yet) knows whether the save it continues is still in its
+/// prologue: then no title join (it would load that save straight into the host's world).
+std::atomic<int> g_saved_prologue{-1};  // -1 not read yet, 0 / 1
+std::string SavedProloguePath() {
+    const char* dir = std::getenv("BB_GPU_USER_DIR");
+    return dir && dir[0] ? std::string(dir) + "/party_prologue.txt" : std::string();
+}
+int LoadSavedPrologue() {
+    int v = g_saved_prologue.load();
+    if (v >= 0) return v;
+    v = 0;
+    const std::string path = SavedProloguePath();
+    if (!path.empty()) {
+        if (FILE* f = std::fopen(path.c_str(), "rb")) {
+            v = std::fgetc(f) == '1' ? 1 : 0;
+            std::fclose(f);
+        }
+    }
+    int expected = -1;
+    g_saved_prologue.compare_exchange_strong(expected, v);
+    return g_saved_prologue.load();
+}
+void NoteSavedPrologue(bool prologue) {
+    const int v = prologue ? 1 : 0;
+    if (LoadSavedPrologue() == v) return;
+    g_saved_prologue.store(v);
+    const std::string path = SavedProloguePath();
+    if (!path.empty()) coop::asyncio::Replace(path, prologue ? "1\n" : "0\n");
+}
+
+/// Live test of #19 (one PC, saves past the prologue): BB_PARTY_TEST_PROLOGUE=FLAG:0[+FLAG:0...]
+/// writes those start flags at the first in-world tick, before the readiness is read (e.g.
+/// 12100105:0 in the Hunter's Dream = the first Dream visit with the weapons taken; 12101021:0 =
+/// one weapon not taken), so the save is in its prologue before anything could ring. Then
+/// BB_PARTY_TEST_PROLOGUE_END=S[:LAMP] after S s in the world either restores them (no LAMP) or
+/// lamp-warps to LAMP (2412950 = the sickroom lamp, the headstone's vanilla target): the end of
+/// this player's prologue.
+void TestPrologueTick(const GameSnapshot& s) {
+    static const char* spec = std::getenv("BB_PARTY_TEST_PROLOGUE");
+    if (!spec || !spec[0]) return;
+    static bool written = false, ended = false;
+    static Clock::time_point at{};
+    static std::vector<std::pair<std::uint32_t, bool>> flags;
+    if (!written) {
+        written = true;
+        at = Clock::now();
+        for (const char* p = spec; *p;) {
+            char* end = nullptr;
+            const auto id = static_cast<std::uint32_t>(std::strtoul(p, &end, 10));
+            const bool on = !(end && end[0] == ':' && end[1] == '0');
+            if (id) flags.emplace_back(id, on);
+            p = end && end != p ? end : p + 1;
+            while (*p && *p != '+') ++p;
+            if (*p == '+') ++p;
+        }
+        for (const auto& [id, on] : flags) {
+            bool before = false, after = false;
+            ReadEventFlag(id, &before);
+            const bool ok = WriteEventFlag(id, on);
+            ReadEventFlag(id, &after);
+            Log("test: prologue: flag %u: %d -> %d (%s; %s)", id, int(before), int(after), ok ? "written" : "NOT written",
+                MapName(s.map_id).c_str());
+        }
+        return;
+    }
+    const char* e = std::getenv("BB_PARTY_TEST_PROLOGUE_END");
+    if (ended || !e || !e[0] || Seconds(at, Clock::now()) < std::atof(e)) return;
+    ended = true;
+    const char* colon = std::strchr(e, ':');
+    const std::uint32_t lamp = colon ? static_cast<std::uint32_t>(std::strtoul(colon + 1, nullptr, 10)) : 0;
+    if (lamp) {
+        Log("test: prologue end: lamp warp to %u (the headstone's target) from %s", lamp, MapName(s.map_id).c_str());
+        LampWarp(lamp);
+        return;
+    }
+    for (const auto& [id, on] : flags) {
+        const bool ok = WriteEventFlag(id, !on);
+        Log("test: prologue end: flag %u back to %d (%s)", id, int(!on), ok ? "written" : "NOT written");
+    }
 }
 
 /// The start flags (full ticks): logs step and readiness changes.
@@ -444,13 +537,34 @@ void UpdateStart(State& st, const GameSnapshot& s, StartMode mode) {
     }
     const bool in_world = InWorld(s);
     if (in_world) {
+        TestPrologueTick(s);
         st.cs = ReadStartFlags();
     } else if (!s.world_up) {
         st.cs = StartFlags{};
         st.granted = false;
+        if (!s.loading) {
+            st.left_first_dream = false;  // the title: another save may come next
+            st.start_prologue = false;
+        }
     }
+    // #19: the first Dream visit lasts until the headstone takes the player out of the Dream.
+    st.cs.map_id = in_world ? s.map_id : 0xffffffffu;
+    if (in_world && st.cs.flags_ok && st.cs.weapon_right && st.cs.weapon_left && st.cs.first_dream &&
+        !st.left_first_dream && s.map_id != 0 && s.map_id != 0xffffffffu && !InHuntersDream(s.map_id)) {
+        st.left_first_dream = true;
+        Log("start: out of the first Hunter's Dream visit (%s): the prologue is over for this player",
+            MapName(s.map_id).c_str());
+    }
+    st.cs.left_first_dream = st.left_first_dream;
     const StartStep step = ClassifyStart(st.cs, in_world);
     const bool ready = StartReady(mode, st.cs, in_world);
+    if (in_world && st.cs.flags_ok) {
+        st.start_prologue = mode == StartMode::Immediate
+                                ? !st.cs.opening_done
+                                : (step == StartStep::Opening || step == StartStep::Clinic || step == StartStep::FirstDream);
+    }
+    g_local_prologue.store(st.start_prologue);
+    if (in_world && st.cs.flags_ok) NoteSavedPrologue(st.start_prologue);
     if (!st.start_logged || step != st.start_step || ready != st.start_ready) {
         if (in_world || st.start_logged) {
             Log("start (%s): %s -> %s", StartModeName(mode), DescribeStart(st.cs, in_world).c_str(),
@@ -493,6 +607,8 @@ void GrantBells(State& st, const GameSnapshot& s) {
             kFlagResonantShop, flag ? "set" : "not set");
     }
     st.cs = ReadStartFlags();
+    st.cs.map_id = s.map_id;
+    st.cs.left_first_dream = st.left_first_dream;
     Log("bells: after: %s", DescribeStart(st.cs, true).c_str());
 }
 
@@ -2662,7 +2778,7 @@ void PartyDirector::Tick() {
     zone.Next(perf::Zone::DirSend);
     // The roster entry.
     if (link) {
-        const party::MemberState ms = LocalState(s, st.start_ready);
+        const party::MemberState ms = LocalState(s, st.start_prologue);
         const std::uint32_t map = s.world_up ? s.map_id : 0;
         if (!st.sent_any || ms != st.sent_state || map != st.sent_map) {
             st.sent_any = true;
@@ -2672,13 +2788,50 @@ void PartyDirector::Tick() {
         }
     }
     // The party HUD: our vitals out, the companions' board for the overlay (party_hud.h).
-    if (role != PartyRole::None) PartyHudTick(s, link, LocalState(s, st.start_ready));
+    if (role != PartyRole::None) PartyHudTick(s, link, LocalState(s, st.start_prologue));
+    // #19: who in the party is still in its prologue (the holds below and in the sync modules;
+    // the Party page's "Waiting: X is in the prologue"; the host's sign board).
+    if (link && role != PartyRole::None) {
+        const std::vector<party::RosterEntry> roster = link->roster();
+        std::string self;
+        for (const party::RosterEntry& e : roster) {
+            if (e.slot == link->local_slot()) self = e.name;
+        }
+        g_host_prologue.store(role == PartyRole::Guest && HostInPrologue(roster));
+        std::string names = MembersInPrologue(roster, self);
+        bool changed;
+        {
+            std::lock_guard<std::mutex> lk(g_prologue_names_mu);
+            changed = names != g_prologue_names;
+            if (changed) g_prologue_names = names;
+        }
+        if (changed) {
+            Log("prologue: %s", names.empty() ? "nobody else in the party is in its prologue"
+                                              : (names + " still in the prologue: no summons, gathers or party syncs "
+                                                         "touch a prologue world until everybody is ready").c_str());
+            party::bridge::OnOthersPrologue(names);
+        }
+        if (role == PartyRole::Host) {
+            std::set<std::string> ids;
+            for (const party::RosterEntry& e : roster) {
+                if (e.connected && e.state == party::MemberState::Prologue) ids.insert(e.name);
+            }
+            bbnet::party::FromApi::instance().set_prologue_members(ids);
+        }
+    } else {
+        g_host_prologue.store(false);
+    }
     // C4 rot, D7 enemy scaling, E2 extras: the host's rules for the party (party_balance.h).
     if (role != PartyRole::None) balance::Tick(s, link, role == PartyRole::Host);
     // B1: the host's warps go to every guest (reliable: replayed to a member who reconnects).
     if (link && role == PartyRole::Guest) {
         StoryIntent up;
         while (PopGuestStoryUp(&up)) {  // D10: the guest's own cutscene, for the host to share
+            if (st.start_prologue || g_host_prologue.load()) {
+                Log("story: own cutscene %u not sent to the host: %s is in its prologue (#19)", up.id,
+                    st.start_prologue ? "this guest" : "the host");
+                continue;
+            }
             link->send_event(0, kStoryUpEventName, StoryToJsonText(up));
             Log("story: own cutscene %u sent to the host (D10)", up.id);
         }
@@ -2710,6 +2863,13 @@ void PartyDirector::Tick() {
         // C4: the host's cutscenes, endings and time of day (party_story.h).
         StoryIntent si;
         while (PopHostStory(&si)) {
+            if (st.start_prologue) {
+                // #19: the host's own prologue scenes are its own (a guest replayed the host's first
+                // Dream cutscene in its world, playtest 1 G2:21127).
+                Log("story #%llu (%s %u) not sent: the host is in its prologue", static_cast<unsigned long long>(si.seq),
+                    StoryKindName(si.kind), si.id);
+                continue;
+            }
             link->post_event(party::kBroadcast, kStoryEventName, StoryToJsonText(si));
             Log("story #%llu (%s %u) sent to the party", static_cast<unsigned long long>(si.seq),
                 StoryKindName(si.kind), si.id);
@@ -2955,7 +3115,18 @@ void PartyDirector::Tick() {
         if (StoryBusy()) {
             return; // C4: a cutscene / ending replay first, then the rejoin
         }
-        if (GuestMayRing(st.start_ready, link->state() == party::LinkState::Connected)) {
+        const bool party_ready = !AnyMemberInPrologue(link->roster());
+        if (st.start_ready && !party_ready && !OthersInPrologue().empty()) {
+            // #19: no bell and no gather while the host (or another member) is in its prologue:
+            // the gather's lamp warp took a guest out of its own first Dream into the clinic.
+            static Clock::time_point said{};
+            if (Seconds(said, now) >= 30.0) {
+                said = now;
+                Log("bell: waiting: %s in the prologue (summons start once everybody is ready)",
+                    OthersInPrologue().c_str());
+            }
+        }
+        if (GuestMayRing(st.start_ready, link->state() == party::LinkState::Connected, party_ready)) {
             // Not before the host's map is known (it is still loading): the gather below needs it,
             // and a guest that rang meanwhile was summoned at its own world's spot (the Hunter's
             // Dream) into a host standing in Central Yharnam (hostdeath spec1 / spec2).
@@ -3030,7 +3201,7 @@ void PartyDirector::Tick() {
             st.bell_hold_logged = false;
             Ring(st, kHostBell, "host ready, a ready party member waits", now);
         } else if (link->state() == party::LinkState::Hosting && st.start_ready && b2::TitleJoinPending() &&
-                   s.cooperators + 1 < max_players) {
+                   s.cooperators + 1 < max_players && !AnyMemberInPrologue(link->roster())) {
             // A guest at its title asks for this room (title join): the room comes with the bell.
             Ring(st, kHostBell, "host ready, a guest joins from its title", now);
         }
@@ -3182,6 +3353,32 @@ bool LocalStartReady() {
 bool LocalStartInPrologue() {
     const StartStep step = static_cast<StartStep>(g_local_start_step.load());
     return step == StartStep::Opening || step == StartStep::Clinic || step == StartStep::FirstDream;
+}
+
+bool LocalPrologueHold() {
+    return g_local_prologue.load();
+}
+
+bool SavedPrologue() {
+    return LoadSavedPrologue() == 1;
+}
+
+bool PartyPrologueHold(const char** why) {
+    if (g_local_prologue.load()) {
+        if (why) *why = "this player is in its prologue";
+        return true;
+    }
+    if (g_host_prologue.load()) {
+        if (why) *why = "the host is in its prologue";
+        return true;
+    }
+    if (why) *why = "";
+    return false;
+}
+
+std::string OthersInPrologue() {
+    std::lock_guard<std::mutex> lk(g_prologue_names_mu);
+    return g_prologue_names;
 }
 
 bool MemberRoster(int slot, int* state, std::uint32_t* map) {

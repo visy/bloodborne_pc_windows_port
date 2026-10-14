@@ -5239,7 +5239,8 @@ void TitleJoinHostTick(const GameSnapshot& s) {
             return;
         }
         const dsummon::Busy busy = dsummon::TitleJoinBusy(Role() == RoleHost && BossBarShown(),
-                                                          Role() == RoleHost && CutscenePlaying(), ready);
+                                                          Role() == RoleHost && CutscenePlaying(), ready,
+                                                          !coop::OthersInPrologue().empty());
         if (busy != dsummon::Busy::None) {
             for (int slot : req) {
                 Send(slot, std::string("{\"op\":\"title_room\",\"room\":\"\",\"wait\":\"") + dsummon::BusyWord(busy) + "\"}");
@@ -5490,6 +5491,7 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         int guest_state = -1;
         coop::MemberRoster(slot, &guest_state, &v.guest_map);
         v.guest_in_prologue = guest_state == int(party::MemberState::Prologue);
+        v.member_in_prologue = !coop::OthersInPrologue().empty();  // #19: everybody ready first
         v.host_map = s.map_id;
         v.carry = dsummon::CarriesAcrossMaps(s.map_id, gather_dsum);
         v.cooperators = s.cooperators < 0 ? 0 : s.cooperators;
@@ -6194,6 +6196,17 @@ bool TitleJoinHold(const GameSnapshot& s) {
     }
     switch (phase) {
     case TitlePhase::Idle: {
+        if (coop::SavedPrologue()) {
+            // Playtest 1 #19: this save was still in its prologue: a title join would load it
+            // straight into the host's world. Plain Continue into its own world; the bell summons
+            // it once everybody is ready.
+            static bool said = false;
+            if (!said) {
+                said = true;
+                Log("title join: skipped: the save being continued is still in its prologue (#19); plain Continue");
+            }
+            return false;
+        }
         Send(0, "{\"op\":\"title_req\"}");
         std::lock_guard<std::mutex> lk(t.mu);
         t.phase = TitlePhase::Requested;

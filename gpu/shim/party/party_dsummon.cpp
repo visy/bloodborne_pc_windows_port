@@ -28,9 +28,9 @@ Busy HostBusy(bool boss_bar_up, bool cutscene_playing) {
     return boss_bar_up ? Busy::Boss : cutscene_playing ? Busy::Cutscene : Busy::None;
 }
 
-Busy TitleJoinBusy(bool boss_bar_up, bool cutscene_playing, bool host_ready) {
+Busy TitleJoinBusy(bool boss_bar_up, bool cutscene_playing, bool host_ready, bool member_in_prologue) {
     const Busy b = HostBusy(boss_bar_up, cutscene_playing);
-    return b != Busy::None ? b : host_ready ? Busy::None : Busy::Prologue;
+    return b != Busy::None ? b : !host_ready ? Busy::Prologue : member_in_prologue ? Busy::MemberPrologue : Busy::None;
 }
 
 const char* BusyWord(Busy b) {
@@ -39,6 +39,7 @@ const char* BusyWord(Busy b) {
     case Busy::Cutscene: return "cutscene";
     case Busy::Prologue: return "prologue";
     case Busy::OtherMap: return "map";
+    case Busy::MemberPrologue: return "member_prologue";
     default: return "none";
     }
 }
@@ -49,6 +50,8 @@ std::string BusyText(Busy b, bool host) {
     case Busy::Cutscene: return host ? "Joiners wait: a cutscene is playing" : "Waiting: the host is watching a cutscene";
     case Busy::Prologue: return host ? "Joiners wait: finish your prologue first" : "Waiting: the host is in its prologue";
     case Busy::OtherMap: return host ? "A joiner travels to your area first" : "Travelling to the host's area first";
+    case Busy::MemberPrologue:
+        return host ? "Joiners wait: a party member is in the prologue" : "Waiting: a party member is in the prologue";
     default: return {};
     }
 }
@@ -58,6 +61,7 @@ Busy WaitOf(const std::string& body) {
     if (body.find("\"wait\":\"cutscene\"") != std::string::npos) return Busy::Cutscene;
     if (body.find("\"wait\":\"prologue\"") != std::string::npos) return Busy::Prologue;
     if (body.find("\"wait\":\"map\"") != std::string::npos) return Busy::OtherMap;
+    if (body.find("\"wait\":\"member_prologue\"") != std::string::npos) return Busy::MemberPrologue;
     return Busy::None;
 }
 
@@ -176,6 +180,7 @@ const char* HostRefusal(const HostView& v) {
     if (v.travel_pending) return "the host is about to travel (its loading screen is next): the guest joins it there";
     if (!v.host_ready) return "the host is still in its prologue: joiners wait until it is done";
     if (v.guest_in_prologue) return "the guest is still in its own prologue";
+    if (v.member_in_prologue) return "another party member is still in its prologue: summons start once everybody is ready";
     if (v.busy == Busy::Boss) return "the host is in a boss fight: joiners wait outside";
     if (v.busy == Busy::Cutscene) return "the host is watching a cutscene: joiners wait";
     if (OtherMap(v)) return "the guest is in another map: it gathers to the host's lamp first (loading screen)";
@@ -189,6 +194,7 @@ Busy RefusalWait(const HostView& v) {
     if (!v.world_up || v.loading || v.travel_pending) return Busy::None;  // the sign path follows the host
     if (!v.host_ready) return Busy::Prologue;
     if (v.guest_in_prologue) return Busy::None;
+    if (v.member_in_prologue) return Busy::MemberPrologue;
     if (v.busy != Busy::None) return v.busy;
     if (OtherMap(v)) return Busy::OtherMap;
     return Busy::None;
