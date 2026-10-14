@@ -526,12 +526,14 @@ void PipelineCache::WaitJob(const std::shared_ptr<GraphicsJob>& job) {
 
 namespace {
 /// BB_ASYNC_SHADERS_POLICY: safe (default) skips draws only into render targets used in each
-/// of the last 8 frames (upstream 0.5-pre4's BB_ASYNC_PIPELINES rule); balanced (the 0.3.x
-/// default): targets used in 2 of the 3 previous frames; aggressive: as balanced, and
-/// screen-space passes may be skipped too.
+/// of the last `streak` frames (BB_ASYNC_PIPELINE_STREAK, 2 by default after Mrsuss60 9ddeb5c;
+/// 8 was upstream 0.5-pre4's BB_ASYNC_PIPELINES rule); balanced (the 0.3.x default): targets
+/// used in 2 of the 3 previous frames; aggressive: as balanced, and screen-space passes may be
+/// skipped too.
 struct AsyncPolicy {
     bool aggressive = false;
     bool balanced = false;
+    u32 streak_mask = 0x3; ///< the last `streak` frames
     u32 max_skip_frames = 8;
     u32 queue = 256;
 };
@@ -541,6 +543,10 @@ const AsyncPolicy& GetAsyncPolicy() {
         if (const char* env = std::getenv("BB_ASYNC_SHADERS_POLICY")) {
             p.aggressive = std::strcmp(env, "aggressive") == 0;
             p.balanced = p.aggressive || std::strcmp(env, "balanced") == 0;
+        }
+        if (const char* env = std::getenv("BB_ASYNC_PIPELINE_STREAK"); env && *env) {
+            const u32 streak = u32(std::clamp(std::atoi(env), 1, 32));
+            p.streak_mask = streak >= 32 ? ~0u : (1u << streak) - 1u;
         }
         if (const char* env = std::getenv("BB_ASYNC_SHADERS_MAX_SKIP_FRAMES")) {
             p.max_skip_frames = u32(std::max(0, std::atoi(env)));
@@ -592,10 +598,12 @@ void PipelineCache::TrackTargets() {
     last_target_sig = sig;
     last_target_frame = async_frame;
 
-    // Every target of the draw was a target in each of the last 8 frames (safe, upstream
-    // 0.5-pre4's rule), or in 2 of the 3 previous frames (balanced / aggressive): not a one-off
-    // render-to-texture (a face baked for a character, a texture made once: never skipped).
+    // Every target of the draw was a target in each of the last `streak` frames (safe; 2 by
+    // default, BB_ASYNC_PIPELINE_STREAK), or in 2 of the 3 previous frames (balanced /
+    // aggressive): not a one-off render-to-texture (a face baked for a character, a texture
+    // made once: never skipped).
     const bool balanced = GetAsyncPolicy().balanced;
+    const u32 streak_mask = GetAsyncPolicy().streak_mask;
     constexpr size_t TableSize = 8192;
     if (target_table.empty()) {
         target_table.resize(TableSize);
@@ -629,7 +637,7 @@ void PipelineCache::TrackTargets() {
         }
         found->mask |= 1;
         stable &= balanced ? std::popcount(found->mask & 0xEu) >= 2
-                           : (found->mask & 0xFFu) == 0xFFu;
+                           : (found->mask & streak_mask) == streak_mask;
     }
     targets_stable = stable;
 }
