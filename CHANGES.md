@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.6.1 (Windows port 0.6.1, party co-op)
 
+- **System menu texts follow their values at once**: on the port's System pages the bottom help line (the enemy scaling values, "press again to confirm") now changes the moment a value changes, instead of only when the cursor moved; a setting changed elsewhere (the overlay menu) while a page is open moves that page's toggles, sliders and lists to the new value.
 - **CPUs without FSGSBASE start**: `wrfsbase`/`rdfsbase` are used only where CPUID reports them (checked once, cached); elsewhere the guest thread pointer stays in the Windows TLS slot and the crash handler answers the game's `fs:` reads from it. Nothing changes on CPUs with FSGSBASE (from Mrsuss60/bloodborne_pc_windows_port 336bacc by Mrsuss60).
 - **Less VRAM growth from old depth buffers**: depth/stencil targets and shadow maps unused for a while are now freed by the texture collector (they are never read back), where before they were kept as GPU-written render targets and VRAM grew with every area visited (from Mrsuss60/bloodborne_pc_windows_port PR #89 by ALuaNegra).
 - **One loading screen when a guest rests its way back to the host, checked live**: a guest resting at a lamp (travelling alone) back into the host's area used to see two loading screens (its own travel, then the host's reset load). Now the host's reset load runs first and the guest comes in after it with one loading screen, into the reset world.

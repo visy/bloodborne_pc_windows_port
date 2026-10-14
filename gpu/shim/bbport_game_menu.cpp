@@ -377,7 +377,7 @@ void RedrawChangedValues() {
     }
     in_redraw = false;
     static int logs = 0;
-    if (logs < 40 && Trace() && (shown || moved || redrawn)) {
+    if (logs < 40 && Trace() && (shown || redrawn || help)) {
         ++logs;
         std::printf("Game menu: live rows: %zu value column(s) redrawn, %zu widget(s) moved to their value%s\n",
                     redrawn, shown, help ? ", help line set" : "");
