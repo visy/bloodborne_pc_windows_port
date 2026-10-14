@@ -2,6 +2,8 @@
 // Network simulator (netsim.h): a delay line in front of sendto.
 #include "netsim.h"
 
+#include <cctype>
+
 #if defined(_WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -73,6 +75,18 @@ bool parse(const char* spec, Config* out, std::string* error) {
             return false;
         }
         const std::string key = item.substr(0, eq), value = item.substr(eq + 1);
+        if (key == "nat" && !value.empty() && !std::isdigit(static_cast<unsigned char>(value[0]))) {
+            if (value == "port" || value == "portrestricted") out->nat_kind = NatKind::PortRestricted;
+            else if (value == "full" || value == "fullcone") out->nat_kind = NatKind::FullCone;
+            else if (value == "addr" || value == "restricted") out->nat_kind = NatKind::AddrRestricted;
+            else if (value == "sym" || value == "symmetric") out->nat_kind = NatKind::Symmetric;
+            else {
+                if (error) *error = "netsim: nat is 0, 1, port, full, addr or sym, not '" + value + "'";
+                return false;
+            }
+            out->nat = true;
+            continue;
+        }
         char* rest = nullptr;
         const double v = std::strtod(value.c_str(), &rest);
         if (value.empty() || (rest && *rest) || v < 0) {
@@ -114,7 +128,7 @@ std::string describe(const Config& c) {
         s += buf;
     }
     if (c.any_addr) s += ",any=1";
-    if (c.nat) s += ",nat=1";
+    if (c.nat) s += c.nat_kind == NatKind::PortRestricted ? std::string(",nat=1") : std::string(",nat=") + nat_kind_name(c.nat_kind);
     return s;
 }
 
@@ -366,9 +380,36 @@ void nat_note_out(std::uint32_t addr, std::uint16_t port) {
     g_nat_out.insert(static_cast<std::uint64_t>(addr) << 16 | port);
 }
 
-bool nat_allow_in(std::uint32_t addr, std::uint16_t port) {
+const char* nat_kind_name(NatKind k) {
+    switch (k) {
+    case NatKind::PortRestricted: return "port";
+    case NatKind::FullCone: return "full";
+    case NatKind::AddrRestricted: return "addr";
+    case NatKind::Symmetric: return "sym";
+    }
+    return "?";
+}
+
+bool nat_allow_in_kind(NatKind kind, std::uint32_t addr, std::uint16_t port) {
+    if (kind == NatKind::FullCone) return true;
     std::lock_guard<std::mutex> lk(g_nat_mu);
+    if (kind == NatKind::AddrRestricted) {
+        const std::uint64_t lo = static_cast<std::uint64_t>(addr) << 16;
+        auto it = g_nat_out.lower_bound(lo);
+        return it != g_nat_out.end() && (*it >> 16) == addr;
+    }
     return g_nat_out.count(static_cast<std::uint64_t>(addr) << 16 | port) != 0;
+}
+
+bool nat_allow_in(std::uint32_t addr, std::uint16_t port) { return nat_allow_in_kind(config().nat_kind, addr, port); }
+
+std::uint16_t nat_advertised_port(std::uint16_t port_nbo, int server) {
+    const Config c = config();
+    if (!c.enabled || !c.nat || c.nat_kind != NatKind::Symmetric) return port_nbo;
+    // Another external port per destination: 1000 + 1000 * server above the local one.
+    const std::uint16_t host = static_cast<std::uint16_t>((port_nbo >> 8) | (port_nbo << 8));
+    const std::uint16_t moved = static_cast<std::uint16_t>(host + 1000 + 1000 * server);
+    return static_cast<std::uint16_t>((moved >> 8) | (moved << 8));
 }
 
 bool blackout_at(Clock::time_point now, Clock::time_point* end) {
@@ -391,17 +432,51 @@ void outage_now(double ms_len) {
     std::printf("Net: simulated outage for %.0f ms%s\n", ms_len, s.queue ? "" : " (simulator off: no effect)");
 }
 
+// Test aid BB_NET_SIM_OUTAGE_FILE=<path>: an outage_now(MS) whenever that file's text ("MS", or
+// "MS tag" to fire again) changes - one file shared by every instance of a local run gives a
+// symmetric total outage on all of them at the same moment (a real outage silences both ends; the
+// director's host_outage / guest_outage steps run on one instance's clock each).
+void outage_file_watch(std::string path) {
+    std::thread([path] {
+        std::string last;
+        bool first = true;
+        for (;;) {
+            std::string text;
+            if (std::FILE* f = std::fopen(path.c_str(), "rb")) {
+                char buf[64] = {};
+                const std::size_t n = std::fread(buf, 1, sizeof buf - 1, f);
+                std::fclose(f);
+                text.assign(buf, n);
+            }
+            // A file already there at the start is old: only a change fires.
+            if (!first && !text.empty() && text != last) {
+                const double ms = std::atof(text.c_str());
+                if (ms > 0 && ms <= 600000) {
+                    std::printf("Net: outage file %s: %s\n", path.c_str(), text.c_str());
+                    outage_now(ms);
+                }
+            }
+            last = text;
+            first = false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }).detach();
+}
+
 void configure(const Config& c) {
-    Sim& s = sim();
-    std::lock_guard<std::mutex> lk(s.mu);
-    if (s.queue) return;  // once per process
-    if (!c.enabled) return;
-    s.queue = new Queue(c);
-    s.cfg = c;
-    s.epoch = Clock::now();
-    s.queue->set_epoch(s.epoch);
-    std::printf("Net: network simulator on (%s)%s\n", describe(c).c_str(),
-                c.any_addr ? "" : " (loopback peers only)");
+    {
+        Sim& s = sim();
+        std::lock_guard<std::mutex> lk(s.mu);
+        if (s.queue) return;  // once per process
+        if (!c.enabled) return;
+        s.queue = new Queue(c);
+        s.cfg = c;
+        s.epoch = Clock::now();
+        s.queue->set_epoch(s.epoch);
+        std::printf("Net: network simulator on (%s)%s\n", describe(c).c_str(),
+                    c.any_addr ? "" : " (loopback peers only)");
+    }
+    if (const char* f = std::getenv("BB_NET_SIM_OUTAGE_FILE"); f && f[0]) outage_file_watch(f);
 }
 
 void reconfigure_for_tests(const Config& c) {

@@ -77,6 +77,10 @@ public:
     // --- time (tests) ---
     void set_clock(std::function<std::int64_t()> now_ms);
     void set_heartbeat_timeout_ms(int ms);
+    // F5: our game dropped this member during a network outage (its session's own silence
+    // timeout): its room membership ends now ("timeout"), not at the heartbeat timeout after the
+    // network is back, so our game is done with that session before the member is summoned again.
+    bool member_timed_out(const std::string& online_id);
     // Applies timeouts now (the service's own reaper thread calls this every second).
     void tick();
     // Starts the reaper thread (idempotent); tests drive tick() themselves instead.

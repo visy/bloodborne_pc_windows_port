@@ -40,7 +40,8 @@ struct Companion {
     int stamina = 0, max_stamina = 0;
     std::uint32_t map_id = 0;  // its map (VITALS, else the roster); 0 unknown
     bool have_pos = false;
-    bool same_map = false;     // both on one map with positions: distance / direction mean something
+    bool same_map = false;     // in this world, both on one map with positions: distance / direction mean
+                               // something (never across worlds: own worlds on one map are not "0.0 m")
     float pos[3] = {0, 0, 0};
     std::uint32_t age_ms = 0;  // VITALS age (0 for a local read)
     bool local_dead = false;   // its chr here reads HP 0 (a corpse left behind, a held death)
@@ -92,6 +93,13 @@ struct ComposeIn {
 /// Whether a member is in this player's world: summoned guests share the host's world; a guest
 /// at home (or loading, at the title, in its prologue) shares nobody's.
 bool SameWorld(int local_slot, MemberState local_state, int other_slot, MemberState other_state);
+
+/// Playtest 1 ("stale remote chr?" 32 times): a remote chr that no member's report is near
+/// (`far`, > 8 m) is reported as stale only when it is built (`max_hp` > 0: a chr the game is
+/// still creating sits at (0, 0, 0) with HP 0/0) and has stayed far for kStaleChrHoldS: a warp or
+/// a re-creation moves the chr and the report within a second or two (every playtest line was one).
+constexpr double kStaleChrHoldS = 5.0;
+bool StaleChrDue(bool far, int max_hp, double far_for_s);
 /// The companions (by slot, this player left out) from the roster, the VITALS and the local reads.
 void Compose(const ComposeIn& in, Board* out);
 

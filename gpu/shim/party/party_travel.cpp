@@ -847,8 +847,28 @@ void CaptureHost(u64 site, TravelKind kind) {
 }
 
 // Replaces 0x13CDF30 (void(u32 id)): the key for the host's capture, and the interceptor.
+thread_local u64 t_lamp_callers[6];
+
 __attribute__((noinline)) BB_COOP_SYSV void LampWarpHook(u64 id) {
     perf::Scope z(perf::Zone::HookLampWarp);
+    {
+        // Entered by a jmp: our return address is the game's call site, the saved rbp the
+        // caller's frame (the game's functions keep rbp frames).
+        const u64 base = Guest(0);
+        const auto rel = [base](u64 a) { return a >= base && a - base < (1ull << 32) ? a - base : 0; };
+        t_lamp_callers[0] = rel(reinterpret_cast<u64>(__builtin_return_address(0)));
+        u64 fp = 0;
+        SafeGet(reinterpret_cast<u64>(__builtin_frame_address(0)), &fp);
+        for (int i = 1; i < 6; ++i) {
+            u64 ret = 0, next = 0;
+            if (!fp || !SafeGet(fp + 8, &ret) || !SafeGet(fp, &next)) {
+                t_lamp_callers[i] = 0;
+                continue;
+            }
+            t_lamp_callers[i] = rel(ret);
+            fp = next;
+        }
+    }
     if (!g_in_replay.load()) {
         if (LampUseObserver obs = g_lamp_observer.load(); obs && !g_hold_release.load()) obs(static_cast<u32>(id));
         if (LampWarpInterceptor fn = g_lamp_intercept.load(); fn && !g_lamp_decided.load() && fn(static_cast<u32>(id))) {
@@ -983,6 +1003,16 @@ bool RetargetSendHome(u64 site) {
         }
         Log("send-home at +0x%llx: the guest's Leave, home as usual", ull(site));
         return false;
+    }
+    // Playtest 1 (H4:1855, H4:2591): a member left the host's room with an error and the host's
+    // own game ran OnLeave_Limit, the phantom's irregular-leave path. A host is in its own world:
+    // its "home" load had no return data and fell back to the title (40.5 s and 59.9 s back into
+    // the world). The host stays; the session handler closes the room for the member that left.
+    if (g_travel_on.load() && Role() == PartyRole::Host && site == 0x138a51c) {
+        Log("send-home at +0x%llx (OnLeave_Limit) on the host dropped: the host is in its own world (it went "
+            "to the title in playtest 1); session role %d, cooperators %d", ull(site),
+            ReadGameState(false).session_role, ReadGameState(false).cooperators);
+        return true;
     }
     if (!g_travel_on.load() || g_in_replay.load() || Role() != PartyRole::Guest) {
         return false;
@@ -1551,6 +1581,12 @@ std::uint32_t GuestDeathRedirectLamp() {
 
 void SetLampUseObserver(LampUseObserver fn) {
     g_lamp_observer = fn;
+}
+
+void LampWarpCallers(std::uint64_t out[6]) {
+    for (int i = 0; i < 6; ++i) {
+        out[i] = t_lamp_callers[i];
+    }
 }
 
 void SetLampWarpInterceptor(LampWarpInterceptor fn) {

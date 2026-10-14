@@ -41,6 +41,7 @@ struct RuntimeStatus {
     std::string host_address;          // guest: the host we connect to
     std::string guest_code;            // guest: BBG1-... (its public UDP endpoint, for a host behind a NAT)
     std::string upnp;                  // host: UPnP outcome
+    std::string network;               // F2: NAT type advice (party_nat.h)
     std::vector<RosterEntry> roster;
     std::string last_error;            // the latest failure / rejection, empty when none
 };
@@ -84,5 +85,8 @@ PartyLink* runtime_link();
 // This player's roster entry (passthrough to PartyLink::set_local_state; kept until the link
 // exists).
 void set_local_state(MemberState state, std::uint32_t map_id);
+/// Host, the director twice a second: the game's cooperator count (-1 unknown). F5: a drop while
+/// members' links are silent (an outage) ends those members' room memberships at once.
+void runtime_host_cooperators(int cooperators);
 
 }  // namespace party

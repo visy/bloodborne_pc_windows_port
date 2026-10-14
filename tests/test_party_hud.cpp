@@ -131,6 +131,16 @@ static void ComposeBoard() {
     in.me_have_pos = false;
     hud::Compose(in, &b);
     assert(!b.c[0].same_map);
+    in.me_have_pos = true;
+    // Not across worlds either (live: "Hunter0 0.0 m" while both stood at the same lamp of one map,
+    // each in its own world): this guest at home, the host on the same map at the same spot.
+    in.local_state = MemberState::Home;
+    std::memcpy(v[0].pos, in.me_pos, sizeof in.me_pos);
+    hud::Compose(in, &b);
+    assert(!b.c[0].same_world && b.c[0].map_id == map && b.c[0].have_pos && !b.c[0].same_map);
+    in.local_state = MemberState::InHostWorld;
+    hud::Compose(in, &b);
+    assert(b.c[0].same_world && b.c[0].same_map);
 }
 
 static void Geometry() {
@@ -244,7 +254,15 @@ static void Handover() {
     assert(!hud::Shown());
 }
 
+static void StaleChr() {
+    assert(!hud::StaleChrDue(false, 600, 100));             // near a report
+    assert(!hud::StaleChrDue(true, 0, 100));                // still being built: (0, 0, 0) HP 0/0
+    assert(!hud::StaleChrDue(true, 600, 1.0));              // a warp / re-creation settles within ~1 s
+    assert(hud::StaleChrDue(true, 600, hud::kStaleChrHoldS));  // really left behind
+}
+
 int main() {
+    StaleChr();
     Tags();
     GamePlate();
     SameWorldRules();

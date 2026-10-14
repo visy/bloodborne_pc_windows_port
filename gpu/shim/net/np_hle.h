@@ -17,6 +17,10 @@ std::string matching2_status();
 // game the way a host leaving ends it: DEAD per member, then ROOM_DESTROYED (0x1104, cause
 // LEAVE) - the game returns to its own world. False when there was no such room.
 bool party_host_lost(const std::string& why);
+// Guest: our game holds a room as a guest (summoned into, or joining, a host's world).
+bool party_guest_in_room();
+// ms since a member left (or was dropped from) the room we are in; a large value when none did.
+std::int64_t ms_since_member_left();
 
 // NpSignaling, told by NpMatching2 about room members:
 // a member whose address is now in the peer table: connections to it can announce;

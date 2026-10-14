@@ -91,6 +91,8 @@ std::string SnapshotLine(const status::Board& b);
 void OnRuntimeStart(bool host, const std::string& name);
 void OnCode(const std::string& code);
 void OnGuestCode(const std::string& code);
+/// F2: the NAT / network path line (what the NAT means, which path the link took).
+void OnNetwork(const std::string& text);
 /// Host: the LAN code beside the Internet code (empty: only one code).
 void OnLanCode(const std::string& code);
 void OnRuntimeError(const std::string& error);

@@ -1517,8 +1517,10 @@ class BloodborneLauncher(tk.Tk):
         tab = self._tab("Advanced / Debug")
         sec = self._section(tab, 0, "Diagnostics")
         self._check(sec, "Debug tracing (heartbeat/hang dump)", self.feat_tracing,
-                    "Extra diagnostic tracing: writes heartbeat logs and hang dumps to out\\ for bug reports. "
-                    "Slower, and logs get very large: turn it on only to record a bug. Default: off (BB_TRACE).")
+                    "Diagnostic tracing for bug reports: a once-a-second heartbeat (frames and GPU submits per "
+                    "second) and hang dumps with thread states and main-thread samples in out\\. Cheap: no "
+                    "measurable fps cost. Default: off (BB_TRACE). The slow full import log is separate: "
+                    "BB_TRACE_IMPORTS=1.")
         self._check(sec, "Save frame stats to logs\\", self.feat_save_log,
                     "Writes frame and readback statistics to logs\\<time>.frames.csv / .readbacks.csv for "
                     "performance analysis. Default: off (BB_SAVE_LOG).")

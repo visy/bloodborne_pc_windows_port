@@ -172,6 +172,9 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_ONLINE_WATCH` | `0`: no `Net: online:` lines (the game's FROM-client / FrpgNetMan / network-flow online state, logged on every change) | on | `gpu/shim/net/online_watch.cpp` |
 | `BB_NET_TRACE` | `1`: logs every datagram (default: the first 400) | capped | `gpu/shim/net/net_socket.cpp` |
 | `BB_NET_SIM` | Network simulator on the game's UDP and the party link's TCP: `lat=80,jit=20,loss=2,dup=0.5,reorder=1,seed=7` (one-way ms / %), `outage=MS,every=MS` or `outage=MS,at=MS` (one-shot after start), `any=1` also for non-loopback peers (default: loopback only), or a preset `lan`, `wifi`, `dsl`, `mobile`, `bad`; director steps `host_outage=MS@S` / `guest_outage=MS@S`; docs/party/network_robustness.md | off | `gpu/shim/net/netsim.h`, `gpu/shim/net/bbnet_glue.cpp` |
+| `BB_NET_SIM_OUTAGE_FILE` | Test aid: `outage_now(MS)` whenever that file's text (`MS` or `MS tag`) changes; one file shared by all local instances = a symmetric total outage at one moment (needs `BB_NET_SIM`) |
+| `BB_PARTY_OUTAGE_HOLD_MS` | Guest: how long a silent party link (an outage) keeps the host's world before going home (default 45000; 0 = the old 2 s grace) |
+| `BB_PARTY_OUTAGE_KEEPALIVE` | `0`: no replay of a silent peer's last keepalive to the game during an outage (default on; F5, network_robustness.md 7) |
 | `BB_PARTY_STATUS_LOG` | `1`: a `Party: status ...` line every 10 s and on each change | off | `gpu/shim/party/party_status_bridge.cpp` |
 | `BB_PARTY_HUD_LOG` | `1`: a `Party HUD: ...` line every 5 s (own / remote PlayerIns reads, camera, the board) | off | `gpu/shim/party/party_hud_game.cpp` |
 | `BB_PARTY_HUD_TAGS` | `0`: no name tags above companions (the panel stays) | on | `gpu/shim/bbport_overlay.cpp` |
@@ -206,3 +209,12 @@ Not a party switch despite the name: `BB_SAVE_LOG` (frame / readback statistics,
 Advanced tab; `run.bat`). Related non-party switches the party code reads: `BB_MODS_ENABLED`
 (mods off = no gameplay mods in the version check), `BB_SKIP_NETWORK_CHOICE` (the launcher sets
 `online` in party mode; `scripts/patches.py`).
+
+Not party switches either, for any bug report: `BB_TRACE=1` (launcher Advanced / Debug: Debug
+tracing) prints a once-a-second heartbeat (flips/s, GPU submits/s), `[BLOCKED >3s]` lines while
+frames stall and hang dumps (`out/hang_dump*.log`, with thread states and the main thread's
+once-a-second RIP samples) at no measurable fps cost, since imports keep their direct calls.
+`BB_TRACE_IMPORTS=1` (or `bbport.exe --trace`) adds the full per-call import trace
+(`out/imports_<time>.log`, `[IMPORT CALL]` lines, the main thread's recent imports in hang
+dumps): every import then goes through a logging thunk, about 70% slower (102 -> 31 fps), so use
+it only to find which import a hang or crash is in. `src/probe.c`.

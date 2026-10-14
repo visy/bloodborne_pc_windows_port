@@ -120,6 +120,14 @@ void SetLanCode(const std::string& code) {
     }
 }
 
+void SetNetwork(const std::string& text) {
+    std::scoped_lock lock{mutex};
+    if (board.network != text) {
+        board.network = text;
+        ++board.version;
+    }
+}
+
 void SetGuestCode(const std::string& code) {
     std::scoped_lock lock{mutex};
     if (board.guest_code != code) {

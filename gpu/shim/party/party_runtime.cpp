@@ -19,6 +19,7 @@
 #include "party_phantom.h"
 #include "party_fourp.h"
 #include "party_progress.h"
+#include "party_split.h"
 #include "party_desync.h"
 #include "party_travel.h"
 #include "party_worldact.h"
@@ -30,6 +31,7 @@
 #include "upnp_win.h"
 #include "party_rudp.h"
 #include "party_lan.h"
+#include "party_traversal.h"
 
 #include "../net/bbnet_internal.h"
 #include "../net/np_hle.h"
@@ -414,6 +416,8 @@ struct Runtime {
     bool was_connected = false;
     std::uint64_t loss_gen = 0;  // bumps on every link state change (host-lost grace check)
     Clock::time_point lost_at{};
+    bool outage = false;  // guest: the link went silent ("no traffic"): the outage hold runs
+    std::uint64_t loss_epoch = 0;  // guest: +1 per loss of a connected link (its host-lost timer's)
 };
 
 std::mutex g_marker_mu;  // serializes marker writes (startup thread, link callback thread)
@@ -570,7 +574,92 @@ int host_lost_grace_ms() {
     return v ? std::max(0, std::atoi(v)) : 2000;
 }
 
+// "no traffic for 10 s": the link went silent (a network outage, a frozen game), not a reset / BYE.
+bool silent_loss(const std::string& why) {
+    return why.rfind("no traffic", 0) == 0;
+}
+
+// F5: how long a guest keeps the host's world while its link is silent (a network outage, not a
+// reset / BYE / refusal): the game session may outlive a short outage, and the host keeps the
+// slot 60 s. BB_PARTY_OUTAGE_HOLD_MS (0 = the old 2 s grace).
+int outage_hold_ms() {
+    const char* v = env("BB_PARTY_OUTAGE_HOLD_MS");
+    return v ? std::max(0, std::atoi(v)) : 45000;
+}
+
+void host_lost(const std::string& why);
+
+// F5: the game's session would end after 25 s of silence (its own timeout, live: both games at
+// 25.0 s into a 30 s outage); while the link says the peer is only temporarily lost, the game hears
+// that peer's last keepalive again (bbnet::p2p_outage_keepalive). BB_PARTY_OUTAGE_KEEPALIVE=0: off.
+bool outage_keepalive_on() {
+    const char* v = env("BB_PARTY_OUTAGE_KEEPALIVE");
+    return !(v && v[0] == '0');
+}
+
+// F5, guest: during the outage hold. If our game ends the host's session anyway (its own silence
+// timeout), it would stand on in the host's world without a session until the game's room-gone
+// path sends it home ~15 s later (live): home at once instead (one loading screen, while the
+// network is still down), and the bell / direct summon brings it back once the link is.
+void outage_watch(std::uint64_t epoch) {
+    std::thread([epoch] {
+        const bool was_in = bbnet::np::party_guest_in_room();
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            {
+                std::lock_guard<std::mutex> lk(R().mu);
+                if (R().loss_epoch != epoch || R().st.state == LinkState::Connected) return;
+            }
+            if (was_in && !bbnet::np::party_guest_in_room()) {
+                bbnet::p2p_outage_keepalive(false);
+                plog("outage: our game ended the host's session itself (its silence timeout): home now; the bell / "
+                     "direct summon brings us back once the network is back");
+                coop::RequestGuestSendHome("the game ended the session during the outage");
+                return;
+            }
+        }
+    }).detach();
+}
+
+// F5, guest: the link is back after an outage. Our game is either still in the host's session
+// (the host's game traffic flows again within a second: it survived), out of it (it ended the
+// session itself: the bell / direct summon brings us back), or half in (our game still holds the
+// room but no host traffic comes: the host's game dropped us) - that one goes home cleanly now
+// (correct over seamless) instead of a phantom in a world that does not know it.
+void outage_resume_check() {
+    std::thread([] {
+        const auto t0 = Clock::now();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        for (;;) {
+            {
+                std::lock_guard<std::mutex> lk(R().mu);
+                if (R().st.state != LinkState::Connected) return;  // lost again: the hold logic runs anew
+            }
+            const double s = std::chrono::duration<double>(Clock::now() - t0).count();
+            if (!bbnet::np::party_guest_in_room()) {
+                plog("outage over: our game is not in the host's session (it ended it itself during the outage); "
+                     "the bell / direct summon brings us back");
+                return;
+            }
+            const std::int64_t age = bbnet::p2p_game_rx_age_ms();
+            if (age >= 0 && age < 1500) {
+                plog("outage over: the game session survived (the host's game traffic is back %.1f s after the link)", s);
+                return;
+            }
+            if (s >= 12.0) {
+                plog("outage over: still in the host's room but no game traffic from it (last %.1f s ago): the "
+                     "host's game dropped us",
+                     double(age) / 1000.0);
+                host_lost("the game session did not survive the outage");
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
+    }).detach();
+}
+
 void host_lost(const std::string& why) {
+    bbnet::p2p_outage_keepalive(false);
     coop::RequestGuestSendHome(why);  // home at once, not the game's room-gone notice 10 s later
     if (bbnet::np::party_host_lost(why)) plog("host lost (%s): the game leaves the host's world", why.c_str());
     else plog("host lost (%s): not in the host's world", why.c_str());
@@ -607,21 +696,38 @@ void on_state(LinkState s, const std::string& detail) {
     bridge::OnLinkState(s, detail, link->reject_code(), reason);
     if (!host && (s == LinkState::Reconnecting || s == LinkState::Rejected)) {
         bool first = false;
+        std::uint64_t epoch = 0;
         {
             std::lock_guard<std::mutex> lk(r.mu);
             if (r.was_connected) {
                 first = true;
                 r.was_connected = false;
                 r.lost_at = Clock::now();
+                epoch = ++r.loss_epoch;
             }
         }
         if (first) {
-            const int grace = s == LinkState::Rejected ? 0 : host_lost_grace_ms();
-            std::thread([gen, grace, detail] {
+            // F5: a silent link (an outage) keeps the host's world for the outage hold: the link
+            // resumes by itself (the host keeps our slot 60 s) and the game session may have
+            // survived (outage_resume_check). A reset, BYE or refusal: home after the short grace.
+            const bool silent = s == LinkState::Reconnecting && silent_loss(detail) && outage_hold_ms() > 0;
+            const int grace = s == LinkState::Rejected ? 0 : silent ? outage_hold_ms() : host_lost_grace_ms();
+            if (silent) {
+                {
+                    std::lock_guard<std::mutex> lk(r.mu);
+                    r.outage = true;
+                }
+                plog("link silent (%s): we stay in the host's world up to %d s for the network to come back",
+                     detail.c_str(), grace / 1000);
+                if (outage_keepalive_on()) bbnet::p2p_outage_keepalive(true);
+                outage_watch(epoch);
+            }
+            std::thread([gen, grace, detail, epoch] {
                 std::this_thread::sleep_for(std::chrono::milliseconds(grace));
                 {
                     std::lock_guard<std::mutex> lk(R().mu);
                     if (R().loss_gen != gen && R().st.state == LinkState::Connected) return;  // back already
+                    if (R().loss_epoch != epoch) return;  // back and lost again since: that loss's own timer
                 }
                 host_lost("party link down: " + detail);
             }).detach();
@@ -638,7 +744,7 @@ void on_state(LinkState s, const std::string& detail) {
         plog("connected to the host as slot %d (we are seen at %s)%s%s", slot, link->observed_address().c_str(),
              detail.empty() ? "" : ": ", detail.c_str());
         const bool resumed = link->last_welcome_resumed();
-        bool again, fresh;
+        bool again, fresh, outage;
         Clock::time_point lost_at;
         {
             std::lock_guard<std::mutex> lk(r.mu);
@@ -647,6 +753,8 @@ void on_state(LinkState s, const std::string& detail) {
             r.fresh_link = false;
             lost_at = r.lost_at;
             r.was_connected = true;
+            outage = r.outage;
+            r.outage = false;
         }
         if (again) {
             plog("back in the party after %.1f s%s", std::chrono::duration<double>(Clock::now() - lost_at).count(),
@@ -656,6 +764,9 @@ void on_state(LinkState s, const std::string& detail) {
                 // It no longer knows our NP context or relay registration either.
                 bbnet::session::host_session_reset();
                 host_lost("the host does not know our session any more");
+            } else if (outage) {
+                bbnet::p2p_outage_keepalive(false);
+                outage_resume_check();
             }
         }
         bbnet::party::RemoteGuest* rg = bbnet::party::remote_guest();
@@ -718,6 +829,15 @@ void on_state(LinkState s, const std::string& detail) {
     }
 }
 
+// Split travel (playtest 1 bug 20): a member asks "Travel with the party?" (EVENT split_choosing).
+void on_split_choosing(int slot, const std::string& body) {
+    std::string who;
+    if (PartyLink* link = R().link)
+        for (const RosterEntry& e : link->roster())
+            if (e.slot == slot) who = e.name;
+    coop::split::OnChoosingEvent(slot, who, body);
+}
+
 void on_roster(const std::vector<RosterEntry>& roster) {
     Runtime& r = R();
     const std::string sig = roster_text(roster, false);
@@ -742,6 +862,21 @@ void on_roster(const std::vector<RosterEntry>& roster) {
     bridge::OnRoster(roster, link ? link->max_players() : 0);
 }
 
+// F5, host: why each member's link went last (on_member_left), for its return.
+std::mutex g_lost_mu;
+std::map<std::string, std::string> g_lost_why;  // g_lost_mu
+
+// F5, host: the game hears silent members' last keepalive while any member's link is lost by
+// silence with its slot kept (an outage), so its session's 25 s timeout does not drop them.
+void host_outage_keepalive_update() {
+    bool any = false;
+    {
+        std::lock_guard<std::mutex> lk(g_lost_mu);
+        for (const auto& [name, why] : g_lost_why) any = any || silent_loss(why);
+    }
+    bbnet::p2p_outage_keepalive(any && outage_keepalive_on());
+}
+
 LinkCallbacks make_callbacks(bool host) {
     LinkCallbacks cb;
     cb.on_state = on_state;
@@ -750,6 +885,22 @@ LinkCallbacks make_callbacks(bool host) {
     if (host) {
         cb.on_member_joined = [](const RosterEntry& m, bool rejoined) {
             plog("%s %s (slot %d)", m.name.c_str(), rejoined ? "is back" : "joined", m.slot);
+            std::string why;
+            {
+                std::lock_guard<std::mutex> lk(g_lost_mu);
+                auto it = g_lost_why.find(m.name);
+                if (it != g_lost_why.end()) {
+                    why = it->second;
+                    g_lost_why.erase(it);
+                }
+            }
+            host_outage_keepalive_update();
+            // F5: back after a network outage while its sign hold runs: if its game left our session
+            // meanwhile, our game's connection to it is released now, and the hold ends either way,
+            // so its first direct summon is not refused (party_b2 NrDropAfterOutage).
+            if (rejoined && silent_loss(why) && bbnet::party::FromApi::instance().hold_left_ms() > 0 &&
+                !(env("BB_PARTY_NR_DROP") && env("BB_PARTY_NR_DROP")[0] == '0'))
+                coop::b2::NrDropAfterOutage(m.name);
             bridge::OnMemberJoined(m.name, rejoined);
             pump_start(m);
             write_marker();
@@ -758,6 +909,12 @@ LinkCallbacks make_callbacks(bool host) {
         };
         cb.on_member_left = [](const RosterEntry& m, bool slot_kept) {
             bridge::OnMemberLeft(m.name, slot_kept);
+            {
+                std::lock_guard<std::mutex> lk(g_lost_mu);
+                if (slot_kept) g_lost_why[m.name] = m.lost_why;
+                else g_lost_why.erase(m.name);
+            }
+            host_outage_keepalive_update();
             // Its signs go too (a crashed game cannot answer a summon; with 2-3 guests the host's
             // game would otherwise pick a dead sign while the others wait). The restart puts up a new one.
             bbnet::party::FromApi::instance().drop_signs(m.name);
@@ -791,6 +948,10 @@ LinkCallbacks make_callbacks(bool host) {
             bbnet::party::PartyHostService::instance().context_gone(m.name);
         };
         cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
+            if (name == coop::split::kChoosingEventName) {  // a guest asks "Travel with the party?"
+                on_split_choosing(slot, body);
+                return;
+            }
             if (name == coop::b2::kEventName && body.find("\"dsum_") != std::string::npos) {
                 if (PartyLink* link = R().link)
                     for (const RosterEntry& e : link->roster())
@@ -875,6 +1036,10 @@ LinkCallbacks make_callbacks(bool host) {
         };
     } else {
         cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
+            if (name == coop::split::kChoosingEventName) {  // the host asks "Travel with the party?"
+                on_split_choosing(slot, body);
+                return;
+            }
             if (name == coop::kTravelEventName) {  // B1: follow the host's warp
                 coop::TravelIntent t;
                 std::string err;
@@ -1246,13 +1411,24 @@ void start_host(LinkConfig cfg) {
     svc.set_loading_query([](const std::string& id) {
         PartyLink* l = R().link;
         if (!l) return false;
-        for (const RosterEntry& e : l->roster())
-            if (e.name == id) return e.state == MemberState::Loading || !e.connected;
+        for (const RosterEntry& e : l->roster()) {
+            if (e.name != id) continue;
+            if (e.state == MemberState::Loading || !e.connected) return true;
+            // F5: its link has gone silent (no VITALS for kVitalsStaleMs: an outage before the link's
+            // 10 s lost timeout): the room's 15 s heartbeat timeout must not end its membership
+            // first (our game would drop it while the link still keeps its slot).
+            MemberVitals v[kMaxVitals];
+            const int n = l->vitals(v, kMaxVitals);
+            for (int i = 0; i < n; ++i)
+                if (v[i].slot == e.slot) return false;
+            return true;
+        }
         return false;
     });
     bbnet::party::transport();  // LocalHost over the service
 
     std::string upnp_ip, upnp_msg;
+    bool upnp_ok = false;
     if (lb) {
         upnp_msg = "off (loopback test)";
     } else if (!UpnpMapper::enabled_by_env()) {
@@ -1262,6 +1438,7 @@ void start_host(LinkConfig cfg) {
         m->start(port);
         const UpnpResult u = m->wait(3000);
         upnp_ip = u.external_ip;
+        upnp_ok = u.ok;
         upnp_msg = u.done ? u.message : "still trying: " + u.message;
         std::lock_guard<std::mutex> lk(r.mu);
         r.upnp = std::move(m);
@@ -1272,9 +1449,15 @@ void start_host(LinkConfig cfg) {
     std::array<std::uint8_t, 4> pub{};
     std::uint16_t pub_port = port;
     std::string source;
+    // F2: the NAT type (a second STUN server) for the advice line and the traversal chain.
+    nat::Type host_nat = nat::Type::Unknown;
+    const auto stun_fn = [](const std::string& h, std::uint16_t p, std::uint32_t* a, std::uint16_t* mp) {
+        return bbnet::p2p_stun(h.c_str(), p, 2000, a, mp);
+    };
     if (lb) {
         pub = {127, 0, 0, 1};
         source = "loopback";
+        host_nat = traversal::detect(stun_fn, {}, 0, port, true);
     } else if (const char* ov = env("BB_PARTY_PUBLIC_ADDR"); ov && resolve_ipv4(ov, port, &pub, &pub_port)) {
         source = "override";
     } else {
@@ -1299,6 +1482,7 @@ void start_host(LinkConfig cfg) {
                 pub_port = mp;
                 source = "stun " + server;
                 if (mp != port) plog("note: the NAT maps UDP %u to %u: guests may need the host relay", port, mp);
+                host_nat = traversal::detect(stun_fn, {true, ma, mp}, bbnet::local_ipv4(), port, false);
             } else {
                 plog("STUN %s: no answer", server.c_str());
             }
@@ -1338,6 +1522,28 @@ void start_host(LinkConfig cfg) {
         bbnet::session::set_mapped_override(ep_addr, pub_port);
     }
 
+    {
+        // F2 traversal chain: TCP to an open port -> UDP straight in (full cone) -> hole punch
+        // (the guest's endpoint from the DHT rendezvous or a guest code) -> relay / VPN advice.
+        const bool port_open = upnp_ok || source == "override" || host_nat == nat::Type::Open;
+        const bool rdv_on = !port_open && !internet.empty() && traversal::rendezvous_enabled(lb);
+        const std::string adv = nat::advice(host_nat, true, port_open, rdv_on, port);
+        plog("NAT: %s (%s); %s", nat::type_name(host_nat), port_open ? "port open" : "no open port", adv.c_str());
+        {
+            std::lock_guard<std::mutex> lk(r.mu);
+            r.st.network = adv;
+        }
+        bridge::OnNetwork(adv);
+        if (rdv_on) {
+            const crypto::Key key = crypto::derive_party_key(cfg.password, cfg.secret.data());
+            traversal::start_host(
+                key.data(), lb,
+                [](std::uint32_t a, std::uint16_t p) {
+                    if (PartyLink* l = runtime_link()) l->punch_guest(a, p);
+                },
+                [](const std::string& m) { plog("%s", m.c_str()); });
+        }
+    }
     std::string text = "internet=" + internet + "\nlan=" + lan + "\n";
     write_text_file(fs::path(user_dir()) / "party_code.txt", text);
     if (const char* cf = env("BB_PARTY_CODE_FILE")) write_text_file(cf, text);
@@ -1358,18 +1564,26 @@ void attach_udp_path(PartyLink* link) {
 
 // Guest: its own public UDP endpoint as a guest code (BBG1-...), for a host behind a NAT without a
 // port forward: the host enters it (or BB_PARTY_GUEST_CODES) and punches towards it.
-void publish_guest_code() {
+// Returns the mapped port (host order; 0: none) and the NAT type in *type.
+std::uint16_t publish_guest_code(nat::Type* type) {
     std::uint32_t ma = 0;
     std::uint16_t mp = 0;
     std::string source;
+    *type = nat::Type::Unknown;
+    const auto stun_fn = [](const std::string& h, std::uint16_t p, std::uint32_t* a, std::uint16_t* m) {
+        return bbnet::p2p_stun(h.c_str(), p, 2000, a, m);
+    };
     if (loopback_mode()) {
         ma = 0x0100007fu;  // 127.0.0.1, network order
-        mp = static_cast<std::uint16_t>((bbnet::settings().party_port >> 8) | (bbnet::settings().party_port << 8));
+        // A simulated symmetric NAT (BB_NET_SIM nat=sym) reports another port, as STUN would.
+        const std::uint16_t sp = traversal::simulated_mapped_port(bbnet::settings().party_port);
+        mp = static_cast<std::uint16_t>((sp >> 8) | (sp << 8));
         source = "loopback";
+        *type = traversal::detect(stun_fn, {}, 0, bbnet::settings().party_port, true);
     } else {
         const char* stun_env = env("BB_PARTY_STUN");
         const std::string server = stun_env ? stun_env : "stun.l.google.com:19302";
-        if (server == "off" || server == "0") return;
+        if (server == "off" || server == "0") return 0;
         std::string host_part = server;
         std::uint16_t sport = 19302;
         if (const auto c = server.rfind(':'); c != std::string::npos) {
@@ -1381,9 +1595,11 @@ void publish_guest_code() {
         if (!ok) {
             plog("guest code: STUN %s did not answer (no guest code; a host behind a NAT then needs a port forward)",
                  server.c_str());
-            return;
+            return 0;
         }
         source = "stun " + server;
+        *type = traversal::detect(stun_fn, {true, ma, static_cast<std::uint16_t>((mp >> 8) | (mp << 8))},
+                                  bbnet::local_ipv4(), bbnet::settings().party_port, false);
     }
     const std::string code = rudp::encode_guest_code(ma, mp);
     {
@@ -1396,6 +1612,56 @@ void publish_guest_code() {
     const auto* ip = reinterpret_cast<const std::uint8_t*>(&ma);
     plog("guest code %s (UDP %u.%u.%u.%u:%u, %s): give it to the host if it cannot open a port", code.c_str(), ip[0], ip[1],
          ip[2], ip[3], static_cast<unsigned>(static_cast<std::uint16_t>((mp >> 8) | (mp << 8))), source.c_str());
+    return static_cast<std::uint16_t>((mp >> 8) | (mp << 8));
+}
+
+// Guest (F2): the NAT advice, the DHT announce while the link is not up (a host without an open
+// port then finds and punches us: no guest code to pass on), and the path the link took.
+void guest_traversal(const LinkConfig& cfg, const PartyCode& code, bool lan_code) {
+    const bool lb = loopback_mode();
+    nat::Type t = nat::Type::Unknown;
+    const std::uint16_t mport = publish_guest_code(&t);
+    const bool rdv_on = mport != 0 && !code.plain && !lan_code && traversal::rendezvous_enabled(lb);
+    const std::string adv = nat::advice(t, false, false, rdv_on, bbnet::settings().party_port);
+    plog("NAT: %s; %s", nat::type_name(t), adv.c_str());
+    {
+        std::lock_guard<std::mutex> lk(R().mu);
+        R().st.network = adv;
+    }
+    bridge::OnNetwork(adv);
+    if (rdv_on) {
+        const crypto::Key key = crypto::derive_party_key(cfg.password, code.secret.data());
+        auto since = std::make_shared<Clock::time_point>(Clock::now());
+        traversal::start_guest(
+            key.data(), lb, mport,
+            [since] {
+                PartyLink* l = runtime_link();
+                if (stopping() || !l) return false;
+                if (l->state() == LinkState::Connected) {
+                    *since = Clock::now();
+                    return false;
+                }
+                return Clock::now() - *since > std::chrono::seconds(3);  // TCP had its chance
+            },
+            [](const std::string& m) { plog("%s", m.c_str()); });
+    }
+    // The path, once per connection (logged and on the Party page).
+    std::thread([adv] {
+        bool was = false;
+        while (!stopping()) {
+            PartyLink* l = runtime_link();
+            const bool up = l && l->state() == LinkState::Connected;
+            if (up && !was) {
+                const bool udp = l->connected_over_udp();
+                const std::string path =
+                    udp ? "UDP (the host's NAT let us in or punched towards us)" : "TCP (the host's port is open)";
+                plog("network path: party link over %s", path.c_str());
+                bridge::OnNetwork("Connected over " + path + ". " + adv);
+            }
+            was = up;
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
+    }).detach();
 }
 
 // Host: guest codes from BB_PARTY_GUEST_CODES (comma list), BB_PARTY_GUEST_CODE_FILE (polled) and
@@ -1922,7 +2188,7 @@ void start_guest(LinkConfig cfg) {
         return;
     }
     coop::PartyDirector::Get().SetLink(link);
-    publish_guest_code();
+    guest_traversal(cfg, code, (code.flags & kCodeFlagLan) != 0);
 }
 
 void startup_main() {
@@ -2042,6 +2308,7 @@ void do_shutdown() {
         coop::PartyDirector::Get().SetLink(nullptr);
         link->stop(true);  // BYE; the object stays (never deleted)
     }
+    traversal::stop();
     if (upnp) upnp->stop(2000);
 }
 
@@ -2313,6 +2580,35 @@ void set_local_state(MemberState state, std::uint32_t map_id) {
         link = r.link;
     }
     if (link) link->set_local_state(state, map_id);
+}
+
+void runtime_host_cooperators(int cooperators) {
+    // F5: our game dropped a cooperator while members' links are silent (an outage): those
+    // memberships end now (PartyHostService::member_timed_out), so our game finishes with that
+    // session (it leaves it ~5 s after the member left, live) while the network is still down and
+    // the returning member's first direct summon gets a fresh room.
+    static int prev = -1;
+    if (cooperators < 0) return;
+    const int before = prev;
+    prev = cooperators;
+    if (before < 0 || cooperators >= before) return;
+    {
+        std::lock_guard<std::mutex> lk(R().mu);
+        if (R().st.role != RuntimeRole::Host) return;
+    }
+    std::vector<std::string> silent;
+    {
+        std::lock_guard<std::mutex> lk(g_lost_mu);
+        for (const auto& [name, why] : g_lost_why)
+            if (silent_loss(why)) silent.push_back(name);
+    }
+    int left = before - cooperators;
+    for (const std::string& name : silent) {
+        if (left-- <= 0) break;
+        if (bbnet::party::PartyHostService::instance().member_timed_out(name))
+            plog("%s: our game dropped it during the outage (cooperators %d -> %d): its room membership ended",
+                 name.c_str(), before, cooperators);
+    }
 }
 
 }  // namespace party

@@ -39,6 +39,10 @@ bool InAWorld(MemberState s) {
 
 }  // namespace
 
+bool StaleChrDue(bool far, int max_hp, double far_for_s) {
+    return far && max_hp > 0 && far_for_s >= kStaleChrHoldS;
+}
+
 bool SameWorld(int local_slot, MemberState local_state, int other_slot, MemberState other_state) {
     if (local_slot < 0 || other_slot < 0 || local_slot == other_slot) return false;
     if (!InAWorld(local_state) || !InAWorld(other_state)) return false;
@@ -117,7 +121,10 @@ void Compose(const ComposeIn& in, Board* out) {
                 c.map_id = in.local_map;  // it stands in our world, on our map
             }
         if (!c.connected) c.have_pos = false;  // a lost member's last position means nothing
-        c.same_map = c.have_pos && in.me_have_pos && KnownMap(c.map_id) && c.map_id == in.local_map;
+        // Distance / direction only within one world: two players in their own worlds on the same
+        // map (e.g. both resting at the same lamp) are not "0.0 m" apart (playtest: "Hunter0 0.0 m"
+        // while apart); the panel shows where it is instead (StateText).
+        c.same_map = c.same_world && c.have_pos && in.me_have_pos && KnownMap(c.map_id) && c.map_id == in.local_map;
     }
     *out = b;
 }
