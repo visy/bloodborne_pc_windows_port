@@ -58,7 +58,15 @@ static int stop_on_unbound;
 static FILE *g_import_file = NULL;
 static volatile uint64_t g_total_import_calls = 0;
 static volatile uint64_t g_import_file_lines = 0;
+/* BB_TRACE=1: heartbeat, hang snapshots, BLOCKED lines and the run summary, all from the
+ * once-a-second watchdog; imports keep their direct relocations, so it costs next to nothing.
+ * BB_TRACE_IMPORTS=1 (or --trace): also routes every import through the thunk and logs the calls
+ * (imports_<time>.log, [IMPORT CALL] lines) — much slower (102 -> 31 fps measured). */
 static int g_bb_trace = 0;
+static int g_trace_imports = 0;
+/* By import index, filled once at setup: the hooks look nothing up per call. */
+static const char **import_syms;
+static uint8_t *import_noisy;
 
 typedef struct {
     uint32_t index;
@@ -202,14 +210,7 @@ static void protect(void *p, size_t size, unsigned flags) {
     if (mprotect(p, size, mode)) fail("mprotect failed");
 #endif
 }
-static volatile uint64_t g_last_progress_tick = 0;
 static volatile int g_watchdog_running = 1;
-
-void runtime_notify_progress(void) {
-#ifdef _WIN32
-    g_last_progress_tick = GetTickCount64();
-#endif
-}
 
 __attribute__((used)) ABI void restore_guest_fs(void) {
 #ifdef _WIN32
@@ -249,15 +250,15 @@ static __attribute__((noreturn)) void unresolved_stop(uint32_t id, uint64_t argu
 }
 
 __attribute__((used)) ABI void *pre_import_hook(uint32_t index, uint64_t *args, void *caller) {
-    runtime_notify_progress();
     if (index >= import_count) return NULL;
-    uint64_t total = ++g_total_import_calls;
-    uint64_t count = ++import_call_counts[index];
+    /* Relaxed: counts for the log, no ordering needed (the old ++ on a shared volatile lost counts). */
+    uint64_t total = __atomic_add_fetch(&g_total_import_calls, 1, __ATOMIC_RELAXED);
+    uint64_t count = __atomic_add_fetch(&import_call_counts[index], 1, __ATOMIC_RELAXED);
     const char *name = names[index];
-    const char *sym = runtime_import_name(name);
+    const char *sym = import_syms[index];
     uintptr_t caller_off = (uintptr_t)caller >= (uintptr_t)image && (uintptr_t)caller < (uintptr_t)image + 0x20000000
                            ? (uintptr_t)caller - (uintptr_t)image : (uintptr_t)caller;
-    int is_noisy = check_noisy_import(sym);
+    int is_noisy = import_noisy[index];
 
     GuestThread *cur = runtime_thread_current();
     if (cur) {
@@ -298,7 +299,7 @@ __attribute__((used)) ABI void *pre_import_hook(uint32_t index, uint64_t *args, 
         return NULL;
     }
 
-    if (g_bb_trace && ((is_noisy && count == 1) || (!is_noisy && count <= 5))) {
+    if (g_trace_imports && ((is_noisy && count == 1) || (!is_noisy && count <= 5))) {
         printf("[IMPORT CALL #%" PRIu64 "] %s (%s) from 0x%" PRIxPTR "\n"
                "  args: (0x%" PRIx64 ", 0x%" PRIx64 ", 0x%" PRIx64 ", 0x%" PRIx64 ", 0x%" PRIx64 ", 0x%" PRIx64 ")\n",
                count, name, sym ? sym : "unknown", caller_off,
@@ -309,11 +310,11 @@ __attribute__((used)) ABI void *pre_import_hook(uint32_t index, uint64_t *args, 
 }
 
 __attribute__((used)) ABI void post_import_hook(uint32_t index, uint64_t ret_val) {
-    if (index >= import_count) return;
-    uint64_t count = import_call_counts[index];
+    if (index >= import_count || !g_trace_imports) return;
+    uint64_t count = __atomic_load_n(&import_call_counts[index], __ATOMIC_RELAXED);
     const char *name = names[index];
-    const char *sym = runtime_import_name(name);
-    int is_noisy = check_noisy_import(sym);
+    const char *sym = import_syms[index];
+    int is_noisy = import_noisy[index];
 
     if (g_import_file && g_import_file_lines < 100000) {
         if (!is_noisy || count <= 5) {
@@ -434,9 +435,83 @@ static void print_code_loc(const char *prefix, uintptr_t addr) {
     }
 }
 
+/* Where the game's main thread was, sampled once a second by the watchdog under BB_TRACE (like
+ * BB_SAMPLE_THREAD, but 1 Hz): the hang dumps' history of the main thread when imports are not
+ * traced (BB_TRACE_IMPORTS=0, so the recent-import ring stays empty). Watchdog thread only. */
+typedef struct { uint64_t second, rip, caller; } MainSample;
+#define MAIN_SAMPLE_CAP 32
+static MainSample main_samples[MAIN_SAMPLE_CAP];
+static uint32_t main_sample_count;
+
+static int in_image(uintptr_t a) {
+    return a >= (uintptr_t)image && a < (uintptr_t)image + (image_size ? image_size : 0x20000000);
+}
+
+#ifdef _WIN32
+static void sample_main_thread(uint64_t second) {
+    static HANDLE main_handle;
+    if (!main_handle) {
+        DWORD tid = 0;
+        pthread_mutex_t *tlock = (pthread_mutex_t *)runtime_thread_get_lock();
+        if (tlock) pthread_mutex_lock(tlock);
+        for (GuestThread *t = runtime_thread_get_all(); t; t = t->next)
+            if (!t->finished && !strncmp(t->name, "MOMainThread", 12)) { tid = t->win32_tid; break; }
+        if (tlock) pthread_mutex_unlock(tlock);
+        if (!tid) return;
+        main_handle = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, tid);
+        if (!main_handle) return;
+    }
+    /* Nothing that may take a lock while the thread is suspended (it may hold it). */
+    if (SuspendThread(main_handle) == (DWORD)-1) return;
+    CONTEXT ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.ContextFlags = CONTEXT_CONTROL;
+    uintptr_t stack[64];
+    SIZE_T got = 0;
+    BOOL ok = GetThreadContext(main_handle, &ctx);
+    if (ok && !in_image((uintptr_t)ctx.Rip) &&
+        !ReadProcessMemory(GetCurrentProcess(), (const void *)(uintptr_t)ctx.Rsp, stack, sizeof(stack), &got)) got = 0;
+    ResumeThread(main_handle);
+    if (!ok) return;
+    /* Host code (an HLE import): keyed with the first return address into the game. */
+    uintptr_t caller = 0;
+    for (size_t i = 0; i < got / 8; ++i) if (in_image(stack[i])) { caller = stack[i]; break; }
+    main_samples[main_sample_count++ % MAIN_SAMPLE_CAP] = (MainSample){second, ctx.Rip, caller};
+}
+#endif
+
+static void loc_text(uintptr_t addr, char *out, size_t size) {
+    if (!in_image(addr)) { snprintf(out, size, "host 0x%" PRIxPTR, addr); return; }
+    uintptr_t off = addr - (uintptr_t)image;
+    for (uint64_t m = 0; m < module_count; ++m)
+        if (off >= modules[m].base && off < modules[m].base + modules[m].size) {
+            snprintf(out, size, "module %" PRIu64 " (%s) +0x%" PRIxPTR, m, m == 0 ? "libc.prx" : "system module", off - modules[m].base);
+            return;
+        }
+    snprintf(out, size, "guest eboot.bin +0x%" PRIxPTR, off);
+}
+
+static void print_main_samples(FILE *f) {
+    uint32_t n = main_sample_count < MAIN_SAMPLE_CAP ? main_sample_count : MAIN_SAMPLE_CAP;
+    fprintf(f, "=== MOMAINTHREAD RIP SAMPLES (1/s, last %u) ===\n", n);
+    for (uint32_t i = main_sample_count - n; i != main_sample_count; ++i) {
+        const MainSample *s = &main_samples[i % MAIN_SAMPLE_CAP];
+        char where[128], from[160] = "";
+        loc_text((uintptr_t)s->rip, where, sizeof(where));
+        if (s->caller) {
+            char c[128];
+            loc_text((uintptr_t)s->caller, c, sizeof(c));
+            snprintf(from, sizeof(from), " called from %s", c);
+        }
+        fprintf(f, "  %5llus: %s%s\n", (unsigned long long)s->second, where, from);
+    }
+    if (!n) fprintf(f, "  (no samples yet)\n");
+    fprintf(f, "\n");
+}
+
 static void dump_watchdog(void) {
     printf("\n================================================================================\n");
-    printf(">>> WATCHDOG: NO PROGRESS FOR 5 SECONDS! THREAD & IMPORT DUMP <<<\n");
+    printf(">>> WATCHDOG: NO FRAMES FOR 10 SECONDS! THREAD & IMPORT DUMP <<<\n");
     printf("================================================================================\n");
 
     pthread_mutex_t *tlock = (pthread_mutex_t *)runtime_thread_get_lock();
@@ -539,6 +614,14 @@ static void dump_watchdog(void) {
     }
     if (!any_unbound) printf("  (None called)\n");
 
+    if (!g_trace_imports) {
+        printf("\n");
+        print_main_samples(stdout);
+        printf("(host import counts: only with BB_TRACE_IMPORTS=1)\n");
+        printf("================================================================================\n\n");
+        fflush(stdout);
+        return;
+    }
     printf("\n--- TOP HOST IMPORTS CALLED ---\n");
     stat_count = 0;
     for (uint64_t i = 0; i < import_count && stat_count < 1024; ++i) {
@@ -660,6 +743,14 @@ static void dump_hang_snapshot(const char *path, uint64_t elapsed_s, uint64_t cu
         bbgpu_dump_breadcrumbs(f);
     }
 
+    print_main_samples(f);
+    if (!g_trace_imports) {
+        fprintf(f, "(recent imports: only with BB_TRACE_IMPORTS=1)\n\n=== END SNAPSHOT ===\n");
+        fclose(f);
+        printf("\n[WATCHDOG] Flips stalled for 5s: snapshot written to %s\n\n", path);
+        fflush(stdout);
+        return;
+    }
     fprintf(f, "=== MOMAINTHREAD RECENT IMPORTS (Total Calls: %llu) ===\n", (unsigned long long)mo_total_import_count);
     uint32_t n_calls = mo_recent_count < MO_RING_CAP ? mo_recent_count : MO_RING_CAP;
     uint32_t start_idx = mo_recent_count > MO_RING_CAP ? (mo_recent_count - MO_RING_CAP) : 0;
@@ -721,6 +812,7 @@ static DWORD WINAPI watchdog_worker(LPVOID param) {
     uint64_t last_imports = 0;
     uint64_t start_tick = GetTickCount64();
     uint64_t last_dump_tick = 0;
+    uint64_t last_flip_tick = start_tick; /* progress = presented frames, not import calls */
     uint64_t zero_flip_seconds = 0;
     int hang_dump_written = 0;
 
@@ -739,6 +831,8 @@ static DWORD WINAPI watchdog_worker(LPVOID param) {
         uint64_t cur_flips = gpu_enabled ? bbgpu_get_flip_count() : 0;
         uint64_t cur_submits = gpu_enabled ? bbgpu_get_submit_count() : 0;
         uint64_t cur_imports = g_total_import_calls;
+        if (g_bb_trace) sample_main_thread(elapsed_s);
+        if (cur_flips != last_flips) last_flip_tick = now;
 
         uint64_t flip_delta = cur_flips >= last_flips ? cur_flips - last_flips : 0;
         uint64_t submit_delta = cur_submits >= last_submits ? cur_submits - last_submits : 0;
@@ -781,29 +875,18 @@ static DWORD WINAPI watchdog_worker(LPVOID param) {
                 if (!t->finished) active_threads++;
             }
 
-            printf("[HEARTBEAT %llus] flips: %llu (+%llu/s) | gpu_submits: %llu (+%llu/s) | imports/s: %llu | threads: %u\n",
-                   (unsigned long long)elapsed_s,
-                   (unsigned long long)cur_flips, (unsigned long long)flip_delta,
-                   (unsigned long long)cur_submits, (unsigned long long)submit_delta,
-                   (unsigned long long)import_delta,
-                   active_threads);
-
-            if (f_heartbeat) {
-                fprintf(f_heartbeat, "[HEARTBEAT %llus] flips: %llu (+%llu/s) | gpu_submits: %llu (+%llu/s) | imports/s: %llu | threads: %u\n",
-                        (unsigned long long)elapsed_s,
-                        (unsigned long long)cur_flips, (unsigned long long)flip_delta,
-                        (unsigned long long)cur_submits, (unsigned long long)submit_delta,
-                        (unsigned long long)import_delta,
-                        active_threads);
-            }
-            if (f_heartbeat_ts) {
-                fprintf(f_heartbeat_ts, "[HEARTBEAT %llus] flips: %llu (+%llu/s) | gpu_submits: %llu (+%llu/s) | imports/s: %llu | threads: %u\n",
-                        (unsigned long long)elapsed_s,
-                        (unsigned long long)cur_flips, (unsigned long long)flip_delta,
-                        (unsigned long long)cur_submits, (unsigned long long)submit_delta,
-                        (unsigned long long)import_delta,
-                        active_threads);
-            }
+            /* imports/s counts traced calls only (BB_TRACE_IMPORTS=1); otherwise just the
+             * unsupported ones, which still go through the thunk. */
+            char hb[256];
+            snprintf(hb, sizeof(hb), "[HEARTBEAT %llus] flips: %llu (+%llu/s) | gpu_submits: %llu (+%llu/s) | imports/s: %s%llu | threads: %u\n",
+                     (unsigned long long)elapsed_s,
+                     (unsigned long long)cur_flips, (unsigned long long)flip_delta,
+                     (unsigned long long)cur_submits, (unsigned long long)submit_delta,
+                     g_trace_imports ? "" : "untraced ", (unsigned long long)import_delta,
+                     active_threads);
+            fputs(hb, stdout);
+            if (f_heartbeat) fputs(hb, f_heartbeat);
+            if (f_heartbeat_ts) fputs(hb, f_heartbeat_ts);
 
             /* Blocked threads only while frames stall: idle workers wait for seconds in normal play
              * (playtest 1: 57k [BLOCKED >3s] lines from a guest running at 40-60 flips/s). */
@@ -830,10 +913,9 @@ static DWORD WINAPI watchdog_worker(LPVOID param) {
             if (f_heartbeat_ts) fflush(f_heartbeat_ts);
             if (g_import_file) fflush(g_import_file);
 
-            /* g_last_progress_tick only moves on traced import calls, which a running game can go
-             * without for long: dump only when the flips stalled too (playtest 1: 198 false dumps
-             * while main ran at 40-60 flips/s). */
-            if (g_last_progress_tick != 0 && (now - g_last_progress_tick >= 10000) && zero_flip_seconds >= 5) {
+            /* Progress = presented frames (the old import-call tick needed every import traced, and
+             * fired 198 false dumps in playtest 1 before it also checked the flips). */
+            if (now - last_flip_tick >= 10000) {
                 if (now - last_dump_tick >= 10000) {
                     last_dump_tick = now;
                     dump_watchdog();
@@ -874,7 +956,6 @@ static void start_watchdog(void) {
         printf("[WATCHDOG] Watchdog thread disabled (BB_WATCHDOG=0).\n");
         return;
     }
-    g_last_progress_tick = GetTickCount64();
     CreateThread(NULL, 0, watchdog_worker, NULL, 0, NULL);
 }
 
@@ -1509,6 +1590,10 @@ int main(int argc, char **argv) {
     if (env_trace && (!strcmp(env_trace, "1") || !strcmp(env_trace, "true") || !strcmp(env_trace, "yes"))) {
         g_bb_trace = 1;
     }
+    const char *env_trace_imports = getenv("BB_TRACE_IMPORTS");
+    if (env_trace_imports && (!strcmp(env_trace_imports, "1") || !strcmp(env_trace_imports, "true") || !strcmp(env_trace_imports, "yes"))) {
+        g_bb_trace = g_trace_imports = 1;
+    }
 
     if (argc == 2 && !strcmp(argv[1], "--vulkan-only")) return vulkan_smoke();
     check_cpu();
@@ -1517,7 +1602,7 @@ int main(int argc, char **argv) {
     const char *content_profile=NULL, *app0=NULL, *user_dir=NULL, *patch_file=NULL;
     for (int i = 2; i < argc; ++i) {
         if (!strcmp(argv[i], "--cpu-only")) cpu_only = 1;
-        else if (!strcmp(argv[i], "--trace")) g_bb_trace = 1;
+        else if (!strcmp(argv[i], "--trace")) g_bb_trace = g_trace_imports = 1; /* the full trace, as before */
         else if (!strcmp(argv[i], "--strict-imports")) strict_imports = 1;
         else if (!strcmp(argv[i], "--content-profile") && i+1<argc) content_profile=argv[++i];
         else if (!strcmp(argv[i], "--app0") && i+1<argc) app0=argv[++i];
@@ -1535,14 +1620,16 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (g_bb_trace) {
+    if (g_trace_imports) {
         char imp_ts_path[128];
         snprintf(imp_ts_path, sizeof(imp_ts_path), "out/imports_%s.log", g_run_timestamp);
         g_import_file = fopen(imp_ts_path, "w");
         if (!g_import_file) g_import_file = fopen("out/imports.log", "w");
         if (!g_import_file) g_import_file = fopen("imports.log", "w");
         if (g_import_file) setvbuf(g_import_file, NULL, _IOFBF, 64 * 1024);
-        printf("[BB_TRACE] Tracing enabled: per-second heartbeat, hang snapshots, and import logging active.\n");
+        printf("[BB_TRACE] Tracing enabled: per-second heartbeat, hang snapshots, and import logging active (BB_TRACE_IMPORTS: every import through the thunk, slow).\n");
+    } else if (g_bb_trace) {
+        printf("[BB_TRACE] Tracing enabled: per-second heartbeat, hang snapshots and main-thread samples; direct import dispatch active (BB_TRACE_IMPORTS=1 logs every import call).\n");
     } else {
         printf("[FAST PATH] Tracing disabled (BB_TRACE=0): direct import dispatch active.\n");
     }
@@ -1723,8 +1810,14 @@ int main(int argc, char **argv) {
     resolved_targets = calloc(import_count + 1, sizeof(void *));
     import_call_counts = calloc(import_count + 1, sizeof(uint64_t));
     is_unbound = calloc(import_count + 1, sizeof(uint8_t));
-    if (g_bb_trace) {
+    if (g_trace_imports) {
         mo_call_counts = calloc(import_count + 1, sizeof(uint64_t));
+    }
+    import_syms = calloc(import_count + 1, sizeof(*import_syms));
+    import_noisy = calloc(import_count + 1, 1);
+    for (uint64_t i = 0; i < import_count; ++i) {
+        import_syms[i] = runtime_import_name(names[i]);
+        import_noisy[i] = (uint8_t)check_noisy_import(import_syms[i]);
     }
     for (uint64_t i = 0; i < import_count; ++i) {
         uintptr_t resolved = runtime_resolve(names[i], 0);
@@ -1764,7 +1857,7 @@ int main(int argc, char **argv) {
             uint64_t imp_idx = relocs[i].value;
             uintptr_t resolved = runtime_resolve(names[imp_idx], 0);
             if (resolved) {
-                if (g_bb_trace) {
+                if (g_trace_imports) {
                     value = (uintptr_t)(thunks + 32 * imp_idx);
                 } else {
                     value = resolved + relocs[i].addend;

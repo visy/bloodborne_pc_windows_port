@@ -181,7 +181,6 @@ GuestThread *runtime_thread_current(void);
 void *runtime_thread_get_lock(void);
 void runtime_thread_set_blocked(const char *what, uint64_t resource);
 void runtime_thread_clear_blocked(void);
-void runtime_notify_progress(void);
 uint64_t runtime_audio_get_underruns(void);
 #endif
 
