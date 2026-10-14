@@ -58,9 +58,14 @@ PARTY_MAX_CHOICES = ["2", "3", "4"]
 PARTY_DEFAULT_PORT = 9307
 PARTY_DEFAULT_STUN = "stun.l.google.com:19302"
 PARTY_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,16}$")
-# BBP2- (or the older BBP1-) + Crockford base32 groups (I/L/O accepted as aliases of 1/1/0, U is never used)
-PARTY_CODE_RE = re.compile(r"^BBP[12IL](-[0-9A-HJ-NP-TV-Z]+)+$", re.IGNORECASE)
-PARTY_CODE_PREFIXES = ("BBP1", "BBPI", "BBPL", "BBP2")
+# BBP3- (or the older BBP2- / BBP1-) + Crockford base32 groups (I/L/O accepted as aliases of 1/1/0,
+# U is never used). party_code.h has the layouts.
+PARTY_CODE_RE = re.compile(r"^BBP[123IL](-[0-9A-HJ-NP-TV-Z]+)+$", re.IGNORECASE)
+PARTY_CODE_PREFIXES = ("BBP1", "BBPI", "BBPL", "BBP2", "BBP3")
+# Shown wherever a code is asked for or shown (party_code.h PARTY_CODE_EXAMPLE): an Internet code
+# with a password; without one it is 3 characters longer, a LAN code 5 shorter.
+PARTY_CODE_EXAMPLE = "BBP3-NJR0-E43N-WWN9-2C2P"
+PARTY_LAN_CODE_EXAMPLE = "BBP3-PAJY-EAMH-7TD"
 PARTY_HOSTPORT_RE = re.compile(r"^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+):(\d{1,5})$")
 MP_INSTANCES = APP_DIR / "tools" / "mp" / "instances.py"
 PARTY_GUIDE = APP_DIR / "docs" / "PARTY.md"
@@ -70,22 +75,29 @@ PARTY_INSIGHT_CHOICES = [("Same as the host (default)", "parity"), ("Full bonus"
                          ("Game's own (+1 only)", "0")]
 PARTY_BACKUP_MINUTES_CHOICES = ["5", "10", "15", "30", "60", "0"]  # 0 = only at the start
 PARTY_BACKUP_KEEP_CHOICES = ["5", "10", "20", "50", "100"]
+# Party logging (docs/party/logging.md): BB_PARTY_LOG level and BB_PARTY_LOG_AREAS.
+PARTY_LOG_LEVELS = [("Normal", ""), ("Verbose", "verbose"), ("Trace", "trace")]
+PARTY_LOG_AREAS = [("net", "Network / link"), ("summon", "Summons / joins"), ("travel", "Travel / loads"),
+                   ("death", "Deaths / bloodstains"), ("items", "Items / drops"),
+                   ("flags", "Flags / NPCs / events"), ("dialog", "Dialogs / prompts")]
 # On/off party options: (settings key, environment variable, default = the game's default).
 # Every one is written as 1 / 0 while party mode is on and unset while it is off.
 PARTY_HELP_SHORT = ("How to play together: the host picks Host a party and starts the game, then sends the "
-                    "code shown under Your code to the friends. Each friend picks Join a party, pastes "
-                    "the code and starts the game. Everyone needs the same game version (1.09), the same "
+                    f"code shown under Internet code (like {PARTY_CODE_EXAMPLE}) to the friends. Each friend "
+                    "picks Join a party, pastes the code and starts the game. Everyone needs the same game version (1.09), the same "
                     "gameplay patches and mods and the same Max players. Click for the full steps.")
-PARTY_HELP = """Party co-op lets 2 to 4 players play the campaign together. It is still in development: its parts have been tested on one PC, but it has not been tested between two PCs yet - expect bugs.
+PARTY_HELP = f"""Party co-op lets 2 to 4 players play the campaign together. It is still in development: it has been tested on one PC, between two PCs on a LAN and over the Internet between two PCs (one 2.5-hour session so far) - expect bugs.
+
+You can also start a party without the launcher: in the game's title screen, Party (New / Join / Continue party game). That is the recommended way; this tab does the same.
 
 HOST
-1. Party tab: Mode = Host a party, enter your name. Max players: 3 is the game's normal limit.
-2. Launch the game. Once it is running, your party code (BBP2-...) appears under Your code. Click Copy code and send it to your friends.
+1. Party tab: Mode = Host a party, enter your name. Max players: 3 is the game's normal limit. Optional: a Password (every player enters the same one; it also makes the code shorter).
+2. Launch the game and allow the Windows Firewall prompt once. When the game is hosting, your codes appear under Internet code (friends elsewhere), like {PARTY_CODE_EXAMPLE}, and LAN code (players on your own network, same router), like {PARTY_LAN_CODE_EXAMPLE}. Click Copy next to one and send it to your friends.
 3. Leave UPnP on. If friends cannot connect, forward the port (default 9307, UDP and TCP) to this PC in your router, or use a VPN such as Tailscale and give them your VPN address as host:port.
 
 JOIN
-1. Party tab: Mode = Join a party, enter your name, paste the host's code (Paste button).
-2. Pick the same Max players as the host.
+1. Party tab: Mode = Join a party, enter your name, click Paste next to Party code (the host's code, like {PARTY_CODE_EXAMPLE}). At the host's home, use its LAN code.
+2. Enter the host's Password, if it set one, and pick the same Max players as the host.
 3. Launch the game after the host's game is running.
 
 IN THE GAME
@@ -121,6 +133,11 @@ try:
     import bb_guard
 except Exception:
     bb_guard = None
+# Support bundle (scripts/support_bundle.py): logs + crash logs + settings, secrets removed.
+try:
+    import support_bundle
+except Exception:
+    support_bundle = None
 
 _instance_mutex = []
 
@@ -205,19 +222,19 @@ def party_port(value, default: int = PARTY_DEFAULT_PORT):
 
 
 def party_code_problem(code: str) -> str:
-    """'' when `code` is a party code (BBP2-... / BBP1-...) or host:port, else what is wrong with it."""
+    """'' when `code` is a party code (BBP3- / BBP2- / BBP1-...) or host:port, else what is wrong with it."""
     code = (code or "").strip()
     if not code:
-        return "enter the party code the host gave you (BBP2-...) or host:port"
+        return f"enter the party code the host gave you (like {PARTY_CODE_EXAMPLE}) or host:port"
     if code.upper().startswith(PARTY_CODE_PREFIXES):
         if not PARTY_CODE_RE.match(code):
-            return "a party code is BBP2- followed by groups of 0-9 / A-Z (no U), separated by -"
+            return f"a party code looks like {PARTY_CODE_EXAMPLE} (0-9 and A-Z without U, in groups)"
         return "" if party_code_flags(code) is not None else "this party code has a typo (checksum mismatch)"
     m = PARTY_HOSTPORT_RE.match(code)
     if m:
         port = int(m.group(2))
         return "" if 1 <= port <= 65535 else "the port after : must be 1-65535"
-    return "not a party code (BBP2-...) or host:port"
+    return f"not a party code (like {PARTY_CODE_EXAMPLE}) or host:port"
 
 
 PARTY_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -243,6 +260,53 @@ def _crc16_ccitt(data: bytes) -> int:
     return crc
 
 
+# BBP3 check widths 8..12 -> CRC polynomial (party_code.cpp crc_bits)
+_CRC_BITS_POLY = {8: 0x07, 9: 0x119, 10: 0x233, 11: 0x385, 12: 0x80F}
+
+
+def _crc_bits(bits, k: int) -> int:
+    """party_code.cpp crc_bits: a k-bit CRC over a bit list, MSB first, init all ones."""
+    poly, mask = _CRC_BITS_POLY[k], (1 << k) - 1
+    reg = mask
+    for b in bits:
+        top = ((reg >> (k - 1)) & 1) ^ b
+        reg = (reg << 1) & mask
+        if top:
+            reg ^= poly
+    return reg
+
+
+def _v3_payload_bits(wire: int) -> int:
+    """flags(4) | ipv4 32 (LAN: 8) | port 16 (none with flag 8) | secret 48 (password: 32)."""
+    return 4 + (8 if wire & PARTY_FLAG_LAN else 32) + (0 if wire & 8 else 16) + (32 if wire & PARTY_FLAG_PASSWORD else 48)
+
+
+def _v3_symbols(wire: int) -> int:
+    return (_v3_payload_bits(wire) + 8 + 4) // 5
+
+
+def encode_party_code_v3(flags: int, ip, port: int, secret: bytes) -> str:
+    """A BBP3 code (party_code.h) - the game writes these; here for tests and examples."""
+    wire = (flags & 7) | (8 if port == PARTY_DEFAULT_PORT else 0)
+    bits = []
+
+    def put(v, n):
+        bits.extend((v >> i) & 1 for i in range(n - 1, -1, -1))
+
+    put(wire, 4)
+    for b in (ip[3:] if wire & PARTY_FLAG_LAN else ip):
+        put(b, 8)
+    if not wire & 8:
+        put(port, 16)
+    for b in secret[:4 if wire & PARTY_FLAG_PASSWORD else 6]:
+        put(b, 8)
+    symbols = _v3_symbols(wire)
+    k = symbols * 5 - len(bits)
+    put(_crc_bits(bits, k), k)
+    sym = "".join(PARTY_CODE_ALPHABET[int("".join(map(str, bits[i:i + 5])), 2)] for i in range(0, len(bits), 5))
+    return "BBP3" + "".join("-" + sym[i:i + 4] for i in range(0, len(sym), 4))
+
+
 def _symbols_to_bytes(vals, n):
     """Crockford symbols -> n bytes (zero padding bits), else None."""
     if len(vals) != (n * 8 + 4) // 5:
@@ -261,8 +325,8 @@ def _symbols_to_bytes(vals, n):
 
 
 def party_code_flags(code: str):
-    """The flags byte of a valid BBP2 / BBP1 code (checksum checked, as the game decodes it), else
-    None (host:port, a typo, empty)."""
+    """The flags byte of a valid BBP3 / BBP2 / BBP1 code (checksum checked, as the game decodes it),
+    else None (host:port, a typo, empty)."""
     t = (code or "").strip().upper()
     if not t.startswith(PARTY_CODE_PREFIXES):
         return None
@@ -274,6 +338,21 @@ def party_code_flags(code: str):
         if c not in PARTY_CODE_ALPHABET:
             return None
         vals.append(PARTY_CODE_ALPHABET.index(c))
+    if t[3] == "3":
+        # flags(4) | ipv4 | port | secret | check (party_code.h), bit packed
+        if not vals:
+            return None
+        wire = vals[0] >> 1
+        if len(vals) != _v3_symbols(wire):
+            return None
+        bits = [(v >> i) & 1 for v in vals for i in range(4, -1, -1)]
+        payload = _v3_payload_bits(wire)
+        k = len(bits) - payload
+        check = int("".join(map(str, bits[payload:])), 2)
+        if check != _crc_bits(bits[:payload], k):
+            return None
+        port_ok = wire & 8 or int("".join(map(str, bits[4 + (8 if wire & PARTY_FLAG_LAN else 32):][:16])), 2) != 0
+        return wire & 7 if port_ok else None
     if t[3] == "2":
         # flags | ipv4[4] (LAN: last octet) | port[2] (absent with flag 8) | secret[6] | crc8
         if len(vals) < 2:
@@ -403,6 +482,19 @@ def party_env(s: dict) -> dict:
     return env
 
 
+def party_log_env(s: dict) -> dict:
+    """BB_PARTY_LOG / BB_PARTY_LOG_AREAS from the Advanced tab (None = unset: Normal, every area)."""
+    level = str(s.get("party_log_level", "") or "").lower()
+    env = {"BB_PARTY_LOG": level if level in ("verbose", "trace") else None, "BB_PARTY_LOG_AREAS": None}
+    areas = s.get("party_log_areas")
+    known = [key for key, _ in PARTY_LOG_AREAS]
+    if env["BB_PARTY_LOG"] and isinstance(areas, list):
+        picked = [a for a in known if a in areas]
+        if len(picked) < len(known):
+            env["BB_PARTY_LOG_AREAS"] = ",".join(picked) if picked else "none"
+    return env
+
+
 def settings_env(s: dict) -> dict:
     """BB_* environment for run.bat from launcher settings (None = unset the variable).
 
@@ -490,6 +582,7 @@ def settings_env(s: dict) -> dict:
 
     # Party co-op (BB_PARTY=host|join; off = every BB_PARTY_* unset)
     env.update(party_env(s))
+    env.update(party_log_env(s))  # without a party too: user marks (F9) work in solo games
     if env["BB_PARTY"]:
         # The party needs the game's ONLINE title path: scripts/patches.py applies the skip
         # patch's online variant ("Party: Skip Online/Offline Choice (Online)").
@@ -675,7 +768,7 @@ def import_shader_cache(zip_path: Path, root: Path = None) -> dict:
     return stats
 
 
-LOG_HISTORY = 5
+LOG_HISTORY = 20  # playtest 1: a guest's restarts pushed the session's logs out
 
 
 def rotate_launcher_log(keep: int = LOG_HISTORY):
@@ -695,6 +788,16 @@ def rotate_launcher_log(keep: int = LOG_HISTORY):
             f.unlink()
     except OSError:
         pass
+
+
+def new_crash_logs(since) -> bool:
+    """A crash log (out\\crash_*.log) was written after `since` (a timestamp; None = never)."""
+    if since is None:
+        return False
+    try:
+        return any(p.stat().st_mtime >= since - 1 for p in (APP_DIR / "out").glob("crash_*.log"))
+    except OSError:
+        return False
 
 
 def descendant_pids(root_pid: int) -> list:
@@ -1122,6 +1225,13 @@ class BloodborneLauncher(tk.Tk):
         self.feat_game_menu = tk.BooleanVar(value=self.settings.get("feat_game_menu", True))
         self.feat_skip_network_choice = tk.BooleanVar(value=self.settings.get("feat_skip_network_choice", True))
         self.feat_save_log = tk.BooleanVar(value=self.settings.get("feat_save_log", False))
+        _lvl = str(self.settings.get("party_log_level", "") or "")
+        self.party_log_level_var = tk.StringVar(
+            value=next((label for label, v in PARTY_LOG_LEVELS if v == _lvl), PARTY_LOG_LEVELS[0][0]))
+        _areas = self.settings.get("party_log_areas")
+        self.party_log_area_vars = {key: tk.BooleanVar(value=not isinstance(_areas, list) or key in _areas)
+                                    for key, _ in PARTY_LOG_AREAS}
+        self.auto_support_bundle = tk.BooleanVar(value=self.settings.get("auto_support_bundle", True))
         self.feat_mute_unfocused = tk.BooleanVar(value=self.settings.get("feat_mute_unfocused", True))
         self.feat_async_shaders = tk.BooleanVar(value=self.settings.get("feat_async_pipelines", True))
         self.feat_gpl = tk.BooleanVar(value=self.settings.get("feat_gpl", False))
@@ -1216,7 +1326,8 @@ class BloodborneLauncher(tk.Tk):
             width=18, indent=True)
         self._combo(sec, "Window mode:", self.window_mode_var, WINDOW_MODE_CHOICES,
                     "Windowed (default): a normal window with title bar. Borderless: a frameless window "
-                    "covering the monitor. Fullscreen: exclusive-style fullscreen. Alt+Enter toggles "
+                    "covering the monitor (quick Alt+Tab). Fullscreen: exclusive fullscreen at the desktop's "
+                    "display mode (the driver may present with less latency). Alt+Enter toggles "
                     "fullscreen in game (BB_WINDOW_MODE).", width=12)
         self._combo(sec, "Monitor:", self.display_var, [c[0] for c in self.display_choices],
                     "Which monitor the game opens on. The list comes from bb-gpu-capabilities; "
@@ -1420,6 +1531,36 @@ class BloodborneLauncher(tk.Tk):
                     "Ends the game automatically after this many seconds (for testing). "
                     "0 = no limit, the default (BB_TIMEOUT).", width=12, indent=True)
 
+        # Party logging (docs/party/logging.md): BB_PARTY_LOG / BB_PARTY_LOG_AREAS
+        sec = self._section(tab, 0, "Party logging", row=1)
+        self._combo(sec, "Level:", self.party_log_level_var, [label for label, _ in PARTY_LOG_LEVELS],
+                    "Normal: the usual party log (no extra cost). Verbose: every party line gets a tag that "
+                    "lines up the host's and the guests' logs (run id, slot, seconds since start, the shared "
+                    "party clock, local time), a state snapshot every 10 s and events for loads, deaths, "
+                    "dialogs, prompts, item boxes and every message between the games. Trace: verbose plus "
+                    "message contents. Use the same level on every PC (BB_PARTY_LOG).", width=12)
+        for key, label in PARTY_LOG_AREAS:
+            self._check(sec, label, self.party_log_area_vars[key],
+                        f"Verbose / Trace: log the '{key}' area (BB_PARTY_LOG_AREAS). All on = everything.")
+
+        sec = self._section(tab, 1, "Support", row=1)
+        self._check(sec, "Save a support bundle after a crash", self.auto_support_bundle,
+                    "When the game ends with an error, the launcher writes logs\\support_<time>.zip "
+                    "(the same as the button below). Default: on.")
+        btn = ttk.Button(sec, text="Save support bundle...", style="Secondary.TButton",
+                         command=self.save_support_bundle)
+        btn.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(6, 2))
+        sec.next_row += 1
+        Tooltip(btn, "One zip to send with a bug report: this launcher's logs (the last sessions), crash and "
+                     "hang logs, summary.log, bbport.ini, the launcher settings and info.txt (version, build, "
+                     "CPU, GPU). Passwords, party codes, tokens, IP addresses and your Windows user name are "
+                     "removed; saves, game files and shader caches are never included.")
+        ttk.Label(sec, text="In game: F9 (or Party tab > Mark an issue) writes\n"
+                            "=== USER MARK n === into every player's log.",
+                  style="Card.TLabel", justify="left").grid(row=sec.next_row, column=0, columnspan=2,
+                                                            sticky="w", pady=(4, 0))
+        sec.next_row += 1
+
         self.update_res_scaling_state()
         self.update_party_state()
         self.notebook.bind("<<NotebookTabChanged>>", lambda e: self.refresh_party_code(), add="+")
@@ -1487,9 +1628,10 @@ class BloodborneLauncher(tk.Tk):
         self.notebook.add(tab, text=title)
         return tab
 
-    def _section(self, tab, column: int, title: str) -> ttk.Frame:
+    def _section(self, tab, column: int, title: str, row: int = 0) -> ttk.Frame:
         sec = ttk.Frame(tab, style="Card.TFrame")
-        sec.grid(row=0, column=column, sticky="nw", padx=(0, 16) if column == 0 else 0)
+        sec.grid(row=row, column=column, sticky="nw", padx=(0, 16) if column == 0 else 0,
+                 pady=(12 if row else 0, 0))
         ttk.Label(sec, text=title.upper(), style="Section.TLabel").grid(
             row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
         sec.next_row = 1
@@ -1665,22 +1807,26 @@ class BloodborneLauncher(tk.Tk):
         pw_lbl, self.party_password_entry, _, _ = self._entry(
             sec, "Password:", self.party_password_var,
             "Optional extra password: the host and every member must enter the same one. The party code "
-            "already contains a secret; a password also keeps out people who get hold of the code. "
+            "already contains a secret; a password also keeps out people who get hold of the code, and "
+            f"makes the code 3 characters shorter (like {PARTY_CODE_EXAMPLE}). Pick one that "
+            "is not easy to guess: it then carries the party's protection. "
             "Stored in launcher_settings.json. Default: none (BB_PARTY_PASSWORD).", show="*")
-        code_tip = ("The code the host gave you: BBP2- followed by letter/digit groups (letters are not "
-                    "case-sensitive), or the host's address as host:port (LAN, VPN, port forwarding). "
-                    "(BB_PARTY_CODE)")
+        code_tip = (f"The code the host gave you, like {PARTY_CODE_EXAMPLE} (letters are not "
+                    "case-sensitive; I, L and O count as 1, 1 and 0), or the host's address as host:port "
+                    "(LAN, VPN, port forwarding). Older BBP2- / BBP1- codes work too. (BB_PARTY_CODE)")
         code_lbl, self.party_code_entry, paste_btn, _ = self._entry(
             sec, "Party code:", self.party_code_var, code_tip, width=20,
             button=("Paste", self.paste_party_code, "Pastes the party code from the clipboard."))
-        host_tip = ("Your party code for friends elsewhere (they paste it with Join a party). It "
-                    "appears after the game starts hosting (user\\party_code.txt). Players on your own "
-                    "network can use it too: the game then finds you on the LAN.")
+        host_tip = (f"Your party code for friends elsewhere, like {PARTY_CODE_EXAMPLE} (3 characters "
+                    "longer without a password); they paste it with Join a party. It appears after the "
+                    "game starts hosting (user\\party_code.txt). Players on your own network can use it "
+                    "too: the game then finds you on the LAN.")
         host_lbl, self.party_host_code_entry, copy_btn, _ = self._entry(
             sec, "Internet code\n(friends elsewhere):", self.party_host_code_var, host_tip, width=20,
             button=("Copy", self.copy_party_code, "Copies the Internet code to the clipboard."))
         self.party_host_code_entry.state(["readonly"])
-        lan_tip = ("Your party code for players on the same network (same router). Use it when the "
+        lan_tip = (f"Your party code for players on the same network (same router), like "
+                   f"{PARTY_LAN_CODE_EXAMPLE}. Use it when the "
                    "Internet code does not work at home: most routers cannot reach their own public "
                    "address.")
         lan_lbl, self.party_lan_code_entry, lan_copy_btn, _ = self._entry(
@@ -1789,7 +1935,7 @@ class BloodborneLauncher(tk.Tk):
             text = ("Give a code to your friends: Internet code for friends elsewhere, LAN code "
                     "for players on your network."
                     if self.party_host_code_var.get() or self.party_lan_code_var.get() else
-                    "The codes appear here after the game starts hosting.")
+                    f"The codes (like {PARTY_CODE_EXAMPLE}) appear here after the game starts hosting.")
         else:
             text = "✓ Party code OK. Start the game after the host's game is running."
         warning = party_tracing_warning(mode, self.feat_tracing.get())
@@ -2592,6 +2738,9 @@ class BloodborneLauncher(tk.Tk):
                                                                    PARTY_INSIGHT_CHOICES[0][1]),
             "party_backup_minutes": self.party_backup_minutes_var.get(),
             "party_backup_keep": self.party_backup_keep_var.get(),
+            "party_log_level": dict(PARTY_LOG_LEVELS).get(self.party_log_level_var.get(), ""),
+            "party_log_areas": [key for key, var in self.party_log_area_vars.items() if var.get()],
+            "auto_support_bundle": self.auto_support_bundle.get(),
             **{key: var.get() for key, var in self.party_switch_vars.items()},
         }
 
@@ -3014,6 +3163,8 @@ class BloodborneLauncher(tk.Tk):
         active_patches = sorted(list(self.enabled_patches))
 
         rotate_launcher_log()
+        self.launch_time = datetime.now().timestamp()
+        self._stop_requested = False
         try:
             self.log_fh = open(LOG_FILE, "w", encoding="utf-8")
         except OSError:
@@ -3100,6 +3251,7 @@ class BloodborneLauncher(tk.Tk):
         proc = self.proc
         if proc is not None and proc.poll() is None and not getattr(self, "_stopping", False):
             self._stopping = True
+            self._stop_requested = True  # a stopped game is no crash: no automatic support bundle
             self.stop_btn.config(state="disabled")
 
             def run():
@@ -3117,10 +3269,44 @@ class BloodborneLauncher(tk.Tk):
         for instance in running_instances():
             self.log(f"[WARNING] bbport.exe is still running after the game ended "
                      f"({bb_guard.describe(instance)}); the next launch will ask to terminate it.")
+        crashed = rc != 0 or new_crash_logs(getattr(self, "launch_time", None))
         self.proc = None
         self.close_log_file()
+        if crashed and self.auto_support_bundle.get() and not getattr(self, "_stop_requested", False):
+            self.write_support_bundle(None, note=f"automatic: the game ended with code {code}")
         self.launch_btn.config(state="normal")
         self.stop_btn.config(state="disabled")
+
+    def save_support_bundle(self):
+        """Advanced tab button: asks where, then writes the bundle in the background."""
+        if support_bundle is None:
+            messagebox.showerror("Support bundle", "scripts\\support_bundle.py is missing next to the launcher.")
+            return
+        default = support_bundle.default_zip_path(APP_DIR)
+        path = filedialog.asksaveasfilename(title="Save support bundle", initialdir=str(default.parent),
+                                            initialfile=default.name, defaultextension=".zip",
+                                            filetypes=[("Zip files", "*.zip")])
+        if path:
+            self.write_support_bundle(Path(path), note="saved from the launcher")
+
+    def write_support_bundle(self, path, note=""):
+        """Writes the bundle on a thread (the GPU query and zipping take a few seconds); logs the result."""
+        if support_bundle is None:
+            self.log("[SUPPORT] scripts\\support_bundle.py is missing; no support bundle.")
+            return
+        target = Path(path) if path else support_bundle.default_zip_path(APP_DIR)
+        settings = self.current_settings()
+        self.log(f"[SUPPORT] Writing the support bundle {target} ...")
+
+        def run():
+            try:
+                names = support_bundle.make_bundle(APP_DIR, target, settings=settings, note=note,
+                                                   version=PORT_VERSION)
+                self.log_queue.put(f"[SUPPORT] Support bundle saved: {target} ({len(names)} files). Send this "
+                                   f"zip with your bug report; passwords, party codes and addresses are removed.")
+            except Exception as ex:
+                self.log_queue.put(f"[SUPPORT] Support bundle failed: {ex}")
+        threading.Thread(target=run, daemon=True).start()
 
     def close_log_file(self):
         if self.log_fh:

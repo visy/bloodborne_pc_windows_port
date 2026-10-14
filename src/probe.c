@@ -77,6 +77,7 @@ static volatile uint64_t g_stat_longest_freeze_s = 0;
 static volatile uint64_t g_stat_current_freeze_s = 0;
 
 static void print_exit_summary(void) {
+    if (gpu_enabled) bbgpu_save_caches(); /* driver pipeline binaries: no destructor runs */
     bbnet_shutdown(); /* party: BYE + UPnP unmap (no-op without BB_PARTY) */
     static int summary_printed = 0;
     if (summary_printed) return;

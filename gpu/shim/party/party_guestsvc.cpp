@@ -10,6 +10,7 @@
 //   0x203BA7D e9 4d 34 00 00   jmp 0x203EECF   ([r12+8] = 2 int, [r12] = eax)
 #include "party_guestsvc.h"
 #include "party_npctalk.h"
+#include "party_log_game.h"
 
 #include "net/json.h"
 
@@ -533,6 +534,7 @@ void LogEnv(std::uint64_t env) {
 // Split travel asks first (alone / with the party) and consumes the warp; its answer "with the
 // party" comes back through GuestLampRequestNow.
 bool GuestLampIntercept(std::uint32_t id) {
+    plog::NoteLoadReason("lamp / headstone warp " + std::to_string(id));  // party logging (party_log_game.h)
     if (split::OnLampWarp(id)) {
         g_lamp_requests_made.fetch_add(1);  // the lamppress test stops here too
         return true;

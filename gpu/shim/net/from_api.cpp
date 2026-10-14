@@ -414,13 +414,21 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
         channels_.note_member_channel(caller.online_id, static_cast<std::uint64_t>(my_channel));
         dungeon_unknown = my_channel <= 0 || !channels_.known(static_cast<std::uint64_t>(my_channel));
     }
-    int held = 0;
+    int held = 0, prologue_held = 0;
     std::string list = "[";
     int n = 0;
     std::vector<Sign> board;
+    bool caller_prologue = false;
     {
         std::lock_guard<std::mutex> lk(mu_);
         board = signs_;
+        // Playtest 1 #19: no summon into or out of a prologue world (whoever finishes first waits).
+        caller_prologue = prologue_.count(caller.online_id) != 0;
+        const std::size_t before = board.size();
+        board.erase(std::remove_if(board.begin(), board.end(),
+                                   [&](const Sign& s) { return caller_prologue || prologue_.count(s.online_id) != 0; }),
+                    board.end());
+        prologue_held = static_cast<int>(before - board.size());
         const std::int64_t now = steady_now_ms();
         holds_.erase(std::remove_if(holds_.begin(), holds_.end(), [&](const auto& h) { return h.second <= now; }),
                      holds_.end());
@@ -467,6 +475,9 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
         key += "] of " + std::to_string(board.size()) + " on the board";
         if (in_chalice) key += ", in chalice dungeon " + std::to_string(my_channel);
         if (held) key += " (" + std::to_string(held) + " held back: that dungeon is not on the channel board)";
+        if (prologue_held)
+            key += " (" + std::to_string(prologue_held) +
+                   (caller_prologue ? " held back: this member is in its prologue)" : " held back: its owner is in the prologue)");
         if (last[caller.online_id] != key) {
             last[caller.online_id] = key;
             log("from api: %s asks for signs: %s", caller.online_id.c_str(), key.c_str());
@@ -486,6 +497,15 @@ std::int64_t FromApi::hold_left_ms() {
     std::int64_t left = 0;
     for (const auto& h : holds_) left = std::max(left, h.second - now);
     return left;
+}
+
+void FromApi::set_prologue_members(const std::set<std::string>& ids) {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (ids == prologue_) return;
+    prologue_ = ids;
+    std::string names;
+    for (const std::string& id : ids) names += (names.empty() ? "" : ", ") + id;
+    log("from api: members in their prologue (no signs shown to or from them): %s", names.empty() ? "none" : names.c_str());
 }
 
 void FromApi::hold_signs(const std::string& online_id, int ms) {

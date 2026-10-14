@@ -136,12 +136,26 @@ when that sits in the bottom left; join / leave notices appear above the panel.
 
 ## The party code
 
-A code looks like `BBP2-XXXX-XXXX-XXXX-XXXX-XXXX` (Internet) or `BBP2-XXXX-XXXX-XXXX-XXX` (LAN). It
-holds the host's address, the port (only when it is not 9307) and a secret; the secret is what lets
-a guest in, so share the code only with the people you play with. Letters are not case-sensitive,
-I/L count as 1 and O as 0, and a checksum catches a mistyped character. The LAN code carries only
-the last number of the host's address: the guest takes the first three from its own address (same
-home network), or searches the LAN when it has none. Older `BBP1-...` codes still work. The host has two codes (`user\party_code.txt`, the launcher, *System → Party*
+A code looks like `BBP3-NJR0-E43N-WWN9-2C2P` (Internet code of a host with a password) or `BBP3-PAJY-EAMH-7TD` (LAN
+code). It holds the host's address, the port (only when it is not 9307) and a secret; the secret is
+what lets a guest in, so share the code only with the people you play with. Letters are not
+case-sensitive, I/L count as 1 and O as 0, and a checksum catches a mistyped character. The LAN
+code carries only the last number of the host's address: the guest takes the first three from its
+own address (same home network), or searches the LAN when it has none.
+
+| Code (port 9307) | With a password | Without |
+|---|---|---|
+| Internet | 16 characters after `BBP3-`, e.g. `BBP3-NJR0-E43N-WWN9-2C2P` | 19, e.g. `BBP3-HJR0-E43N-WWN9-2F28-VCA` |
+| LAN | 11, e.g. `BBP3-PAJY-EAMH-7TD` | 14 |
+
+Another port adds 3 characters. Older `BBP2-...` and `BBP1-...` codes still work.
+
+**Why a password makes the code shorter.** Without a password the code's secret (48 bits) is the
+only thing that keeps strangers out, so it stays that long: guessing it would take about 2^48
+tries. With a password the password does that job (a guest who knows the password and the host's
+address gets in even without the code), so the code carries only a 32-bit secret. The party is
+then exactly as safe as its password: pick one that is not easy to guess. The host's code changes
+once when a password is set or removed. Details: `gpu/shim/party/party_code.h`. The host has two codes (`user\party_code.txt`, the launcher, *System → Party*
 and the overlay's Party tab):
 
 | Code | Holds | Use it for |
@@ -157,7 +171,7 @@ host at ...`). This adds about 2 s. The probe carries only a hash made from the 
 the secret; the host answers only probes for its own party, at most 5 a second.
 `BB_PARTY_LAN_DISCOVERY=0` turns it off. With `host:port` it works only when a password is set.
 
-The code's secret (48 bits) is new for each hosting session, except when the game restarts after a crash or
+The code's secret is new for each hosting session, except when the game restarts after a crash or
 the party is started again from the title screen's *Party* page. A guest using a code without a
 password ignores a password saved in its launcher or *Party* page (log: `code needs no password;
 saved password ignored`).

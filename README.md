@@ -20,12 +20,12 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | **Overall** | `█████████████████░░░` | 84% |
 | Session & joining | `██████████████████░░` | 89% |
 | World & travel | `██████████████████░░` | 88% |
-| Death & respawn | `██████████████████░░` | 88% |
+| Death & respawn | `██████████████████░░` | 89% |
 | Progress (anyone can progress) | `█████████████████░░░` | 87% |
 | Services & UI | `██████████████████░░` | 90% |
-| Network & robustness | `████████████████░░░░` | 80% |
+| Network & robustness | `█████████████████░░░` | 84% |
 | Bloodborne-specific (chalice, Insight) | `████████████████░░░░` | 81% |
-| Feels like single player in a party | `█████████████████░░░` | 84% |
+| Feels like single player in a party | `█████████████████░░░` | 86% |
 
 ---
 
@@ -86,23 +86,47 @@ a working rejoin). The bugs reported from it are fixed in 0.6.1
 run from two new characters to the end credits passed, and a three-player travel run
 ([docs/party/campaign_soak.md](docs/party/campaign_soak.md)).
 
-### Start playing
+The host shares a **party code** such as `BBP3-NJR0-E43N-WWN9-2C2P`: it holds the host's address and a secret,
+so share it only with the people you play with. With a password the code is shorter (19
+characters without one); players on the host's own network can use the shorter **LAN code**
+(e.g. `BBP3-PAJY-EAMH-7TD`). Everyone needs the same bbport version and game files. Party play uses its
+own save; your single-player save is never touched.
+
+### Start from the title screen (recommended)
+
+Nothing to set up outside the game, and later sessions are a single press.
 
 | | Host | Guest |
 |---|---|---|
-| 1 | Title screen → **Party** → set a **Password** | Title screen → **Party** → **Host address** (e.g. `192.168.1.20:9307`) → **Password** |
-| 2 | **New party game** (first time: new character) or **Continue party game** | **Join party game** (first time) or **Continue party game** |
-| 3 | Allow the Windows Firewall prompt once | The game restarts into party mode and puts you beside the host |
+| 1 | Title screen → **Party** → set a **Password** (optional, gives a shorter code) | Title screen → **Party** → **Host address**: paste the host's party code (**Ctrl+V**, e.g. `BBP3-NJR0-E43N-WWN9-2C2P`) → **Password** (the host's, if it set one) |
+| 2 | **New party game** (first time: new character) or **Continue party game** | **Join party game** (first time) or **Continue party game**, once the host's game is running |
+| 3 | Allow the Windows Firewall prompt once; copy your code (*System → Party → Copy Internet code*) and send it | The game restarts into party mode and puts you beside the host |
 
-Everyone needs the same bbport version and game files. Address and password are remembered, so
-later sessions are just *Continue party game* for everyone. Party play uses its own save; your
-single-player save is never touched. Settings: *System → Party* pages in the game's menu.
+Code and password are remembered, so later sessions are just *Continue party game* for everyone.
+Settings: *System → Party* pages in the game's menu.
+
+### Start from the launcher
+
+The same party, set up in `launch_gui.bat` → **Party** tab (handy to see and copy the code
+before anyone is in the game):
+
+- **Host:** *Mode* = **Host a party**, enter **Your name**, optionally a **Password**, click
+  **Launch Bloodborne**. Once the game is hosting, the codes appear under **Internet code** (friends elsewhere)
+  and **LAN code** (same router); click **Copy** next to one and send it. Allow the Windows Firewall
+  prompt once.
+- **Guest:** *Mode* = **Join a party**, enter **Your name**, click **Paste** next to **Party code**
+  (e.g. `BBP3-NJR0-E43N-WWN9-2C2P`), enter the same **Password** as the host, and click **Launch Bloodborne** after the
+  host's game is running. A ✓ / ✗ line under the code says whether it is valid.
+- At home (same router) use the **LAN code**: most routers cannot reach their own public address.
+- Friends cannot connect? Leave **UPnP** on, or forward the port (default 9307, UDP and TCP) to the
+  host PC in the router, or use a VPN such as Tailscale and give the VPN address as `host:port`
+  (see *Connecting over the internet* below).
 
 ### How it plays
 
-- **No PSN, no server.** One player hosts, the others join with the host's address and a password.
+- **No PSN, no server.** One player hosts, the others join with the host's party code.
 - **Start from the title screen:** *Party* → *New / Join / Continue party game* (press Cross; the
-  ones that restart the game ask for a second press). The address and password are remembered, so
+  ones that restart the game ask for a second press). The code and password are remembered, so
   later sessions are one press. *Continue party game* shows whenever the party saves hold a
   character, also if you started party games from the launcher.
 - **Fast join.** The bell, beckoner and summon-sign waits are gone: a guest is in the host's world
@@ -168,6 +192,9 @@ single-player save is never touched. Settings: *System → Party* pages in the g
 - **Blood Echoes for every kill.** Whoever kills an enemy, every party member gets its full
   Blood Echoes.
 - **Treasure for each player.** Items lying in the world can be picked up by every player, each into their own game.
+  Keys and workshop tools found lying around (Hunter Chief Emblem, Upper Cathedral Key, Iron Door Key,
+  Lecture Theatre Key, Rune and Blood Gem Workshop Tools, ...) and the Eye of a Blood-drunk Hunter go to
+  the whole party as soon as the host has them, so nobody is locked out of a door.
 - **Cutscenes for everyone.** A story scene a guest triggers in the host's world plays for the
   whole party too.
 - **Up to 4 players** (host + 3), all in the host's world. With 3 guests, a guest does not yet see
@@ -178,7 +205,9 @@ single-player save is never touched. Settings: *System → Party* pages in the g
   loot (for each player) and the lift work for the whole party. Any player can perform the ritual:
   the host's altar then offers *Enter the party's dungeon* (no glyph typing), and chalices are
   shared between all players.
-- **Crashes recover.** A crashed game restarts and rejoins by itself (back in the host's world about 12 s after the restart), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue.
+- **Crashes recover.** A crashed game restarts and rejoins by itself (back in the host's world about 12 s after the restart), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue. If the host's game crashes, the guests go home at once and come back by themselves as soon as the host is back in the world; items a guest got in the host's world stay in its own save.
+- **Network drops recover.** A short drop (seconds) goes unnoticed; after a longer one (30 s) a guest goes home with a loading screen and is summoned back beside the host by itself once the network is back. The party also checks every 15 s that everyone sees the same world and progress and quietly re-sends whatever differs.
+- **Wrong passwords are locked out.** A few typos are fine; after 5 wrong passwords in a minute the host refuses that address for a while.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
 - **Death has a cost.** Each death stacks "rot" (−10% max HP or stamina, picked at random, up to
   5); using a lamp clears it.
@@ -222,8 +251,8 @@ The host gets two party codes (launcher, *System → Party*):
 
 | Code | For |
 |---|---|
-| **Internet code** | Friends elsewhere |
-| **LAN code** | Players on the host's network (same router) |
+| **Internet code** (e.g. `BBP3-NJR0-E43N-WWN9-2C2P`) | Friends elsewhere |
+| **LAN code** (e.g. `BBP3-PAJY-EAMH-7TD`) | Players on the host's network (same router) |
 
 A guest on the host's network with the Internet code finds the host on the LAN by itself (~2 s).
 
@@ -231,6 +260,16 @@ No UPnP and no port forward? Each guest copies its **guest code** (`BBG1-...`, *
 sends it to the host, who presses *Add a guest code*: the game then connects through both routers
 (hole punching). This fails behind symmetric / carrier-grade NAT (some mobile and ISP
 connections); there, let another player host or use a VPN such as Tailscale. Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
+
+### Reporting a co-op bug
+
+| Step | How |
+|---|---|
+| Before playing | Launcher → *Advanced / Debug* → *Party logging*: **Verbose** on every PC |
+| When it happens | Press **F9** (or *Party tab → Mark an issue*): every player's log gets `=== USER MARK n ===` |
+| After playing | *Advanced / Debug* → **Save support bundle** on every PC and send the zips (passwords, codes and addresses are removed). A crash writes one by itself to `logs\` |
+
+Details: [docs/party/logging.md](docs/party/logging.md).
 
 Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 [docs/party/ERSC_PARITY.md](docs/party/ERSC_PARITY.md)
@@ -268,12 +307,12 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | Who | What |
 |---|---|
 | deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors |
-| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD; audio pop fix, paths with parentheses in `run.bat`, parallel `build.bat`; CPUs without FSGSBASE (Windows TLS fallback) |
+| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD; audio pop fix, paths with parentheses in `run.bat`, parallel `build.bat`; CPUs without FSGSBASE (Windows TLS fallback), driver pipeline binaries kept between sessions, more background shader compile threads |
 | shadPS4 team | Vulkan video core and shader recompiler (GPL-2.0+), sirit |
 | droogie and the bbhost team | Long-session stability fixes; menu button rows and the menu cursor's offsets; direct summon delivery; the Hunter's Dream mirror (appearance editor) ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |
 | FireBurn | FSR-Vulkan (MIT); AMD FidelityFX SDK (MIT) |
 | Supermedo, IFreemz | DLSS bridge and Windows loader |
-| Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, FPS-preset physics step (found by FIocker), frame limiter pacing, texture-cache, pipeline-cache and shader-walker fixes, skipped draws for failed pipelines, keyboard stick movement, allocating past a full VRAM budget, object motion off on AMD before RDNA3, the memory log line once a minute; imedved (direct mouse camera, ported by mcrib884); andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows) |
+| Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, FPS-preset physics step (found by FIocker), frame limiter pacing, texture-cache, pipeline-cache and shader-walker fixes, skipped draws for failed pipelines, keyboard stick movement, allocating past a full VRAM budget, object motion off on AMD before RDNA3, the memory log line once a minute; imedved (direct mouse camera, ported by mcrib884); andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows); parsifal295 (game check passes over locked files), RafaelHGOliveira (exclusive fullscreen), fliperama86 (HDR desktop black level), emurphy04 (ultrawide output, video queue fix) |
 | ALuaNegra (via Mrsuss60's port) | Idle depth targets freed (VRAM growth) |
 | Vorshim92 | Pipeline cache kept between starts, stale `bbport.exe` guard, crash reaper, `run.bat` resolution fix, Reset shader cache button |
 | Thealexbarney | LibAtrac9 audio (MIT) |

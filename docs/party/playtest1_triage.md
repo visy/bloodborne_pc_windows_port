@@ -40,6 +40,7 @@ loading-screen path is the proposed fix. A seamless (no-load) variant comes back
 | 16 | Oedon Tomb Key (and other key items) not on the guest | major | **fixed** (pt1items: logged decisions, boss-reward re-give when not held) | the host sent lot 31000 (H5:8051-8062, again at H5:11875); the guest side is not logged. Suspects: #15 frozen box, or ledger seeding from a synced boss flag | 3 |
 | 17 | "Red guy" in Oedon Chapel is a ghost for the guest | major | **fixed (pt1npc)**: 42 talk-NPC NpcParam rows written live (Alfred, Dweller, Eileen ...) | the same ghost bit on almost every talk-NPC row (Alfred 6151/6155/6154, Chapel Dweller 113010, Eileen, Arianna...) | 4 |
 | 18 | Guest echoes not takeable when both died | major | **fixed (batch 1, unit)**: recount every frame + early down notice; wipe live (pt1follow, pt1verify); a guest after a B2 load / title join left the party on death (chr type 0): fixed (pt1verify, live) | wipe race: the host counted "0 down" just before the guest's death arrived (H5:10184 vs 10210), so it revived alone instead of a wipe; plus the #6 state | 1 |
+| 19 | Guest's own prologue: a loading screen right after taking the sidearm, woke in the clinic with Iosefka instead of the Notebook + headstone to the sickroom (not in bb_bugs.txt; players' report afterwards) | major | **fixed (prolog)**: ready only after the first Dream visit; no summon / gather / sync while anybody is in its prologue | the guest counted as "ready" as soon as both weapons were taken (still in its first Dream), and the guest's gather lamp-warped it to the host's lamp 2412959 in m24_01 although the host was itself still in its prologue (G2:14543-14574) | prologue |
 | crash | Host crash 20:38:10, eboot +0x2199310 null+8 | major | **yes** (batch 5: guard at +0x2199303, frame allocator 1 MiB) | per-frame arena allocator +0xe45560 returned NULL. FUN_02198fd0 checks the 1st alloc, not the 2nd (+0x21992fb); `BB_ARENA_GUARD` covers only the +0x21d5b35 caller | 5 |
 
 Top extra problems (details below): G4's direct summon failed 8 of 10 times with nothing logging why; the guest
@@ -327,6 +328,76 @@ not kneel (screenshot both); then `BB_PARTY_GUESTSVC_TEST=lampwalk;lamppress` on
 expect no `the host warps to 2102950` on the host and an unchanged host position in `status:` lines.
 **Files.** party_flags.inc (rows only), party_guestsvc.cpp (same-map lamp request), party_split.cpp
 (skip the question for a same-map lamp).
+
+### Bug 19: the guest's prologue broken by a gather load right after the sidearm (Dream -> clinic with Iosefka)
+
+Reported by the players after the session (not in bb_bugs.txt): in the guest's own new game (G2, its own
+prologue from G2:7351), right after taking the sidearm from the messengers in the first Hunter's Dream visit
+a loading screen came, and the guest woke in Iosefka's clinic with Iosefka present, instead of reading the
+Notebook and using the headstone to the clinic's other room (the 1st Floor Sickroom lamp 2412950).
+
+**Evidence (G2 = guest `..._185717`, H3 = host `..._192054`).**
+- G2:11899 `start (prologue_solo): step first-dream: ... 12101020 0, 12101021 0 -> not ready` (the guest's
+  first Dream, after its own first death and cutscene 21000000 at G2:11707-11884).
+- G2:14543 `step ready: ... 9401 1, 12101020 1, 12101021 1, 12100105 0 ... -> READY for party summons`: the
+  second weapon is taken - the guest is still in the Dream (map m21_00, Doll asleep, Insight 0).
+- G2:14544-14548 the bell grant runs at once (`Beckoning Bell (lot 10010): awarded`, `Small Resonant Bell ...
+  given`) - the item banners on top of the messengers' scene.
+- G2:14549 `gather: own world m21_00_00_00, host in m24_01_00_00; to the host's lamp 2412959 before ringing`
+  and G2:14550 `travel: replay now #0 lamp ... lamp 2412959 ... via lamp warp 0x13CDF30` -> G2:14571
+  `loading screen up` -> G2:15780 `map - -> m24_01_00_00` at `(-195.60, -40.53, 220.33)` (G2:15784). 2412959
+  is the opening's respawn record (campaign_start.md 1.4: 12410000 sets it), i.e. the clinic's ground floor
+  where the fresh character wakes, not the sickroom lamp 2412950 the headstone leads to.
+- The host was itself in its prologue the whole time: the guest's roster shows `visy(slot 0, prologue, map
+  402718720 ...)` before and after (G2:13288, G2:14551), the host's own log has `step clinic` (H3:930) and
+  reaches `step ready` only at H3:1137. So the guest's bell was refused anyway (G2:15765/15783 `direct summon:
+  ... refused by the host`) - the gather load was for nothing.
+- Same pattern again later: G2:24874 `gather: own world m24_01_00_00, host in m21_00_00_00; to the host's lamp
+  2102961` while the host's roster entry still said `prologue` (host ready only at G2:26348 `visy(slot 0,
+  home ...)`), plus other party actions into the prologue worlds: the host's first-Dream cutscene replayed in
+  the guest's world (G2:21127 `guest #...544 cutscene 21000000 ... taken`, H3:1070 the host's own 9401 scene),
+  host flags of its prologue sent to the party (H3:995-1015 `host flag 9400 = 1 (key_event)` ...), rot for a
+  prologue death (G2:9066 `death 1; rot on`), the host's sign shown to a prologue member's game (H3:992).
+
+**Cause.** Bug, two parts.
+1. `ClassifyStart` (party_start.cpp) called a player ready once 12410000, 9401 and both starting-weapon flags
+   were on. The weapons are taken in the FIRST Dream visit, but the vanilla prologue continues there (Notebook
+   messenger, then the headstone to the sickroom lamp 2412950). From "ready" on the party treated the player as
+   done: bell grant, gather, bell.
+2. `GuestMayRing` (and so the gather, `GatherGuest` in party_director.cpp) only checked the guest's own
+   readiness, never the host's roster state: a ready guest lamp-warped to the host's lamp while the host was in
+   its own prologue. Several other paths (story replays, flag / item syncs, catch-up, rot, the sign board) had
+   no prologue check either.
+
+**Fix (prolog, 2026-10-14).** Rule: no party action touches a world that is in its prologue, and summons start
+only once every connected member is ready, whoever finishes first.
+- `party_start`: the first Dream visit lasts until the player is out of the Dream with both weapons (the
+  headstone; latched for the session) or the Doll is awake; an unknown map counts as not ready. The roster
+  state Prologue follows the prologue steps (not a ready player's scripted cutscene, the old "host shows
+  prologue" glitch).
+- Summons: `HostMayRing` / `GuestMayRing` require nobody connected in Prologue; the direct summon and the
+  title join refuse while another member is in its prologue (new wait word `member_prologue`, "Waiting: a
+  party member is in the prologue"); the host's sign board shows no sign to or from a prologue member; a guest
+  whose save was in its prologue when last seen does not title-join (plain Continue into its own world).
+- No gather or bell while anybody is in its prologue (the guest logs `bell: waiting: X in the prologue`).
+- Syncs held (queued, applied once both are ready): host flag changes, item grants, story replays; the host's
+  own prologue cutscenes are not broadcast, a guest's are not sent up, the host refuses story_up in its prologue;
+  no rot for prologue deaths; the late-joiner catch-up (opening skip, start flags, warp) is opt-in
+  (`BB_PARTY_CATCHUP=1`) since it rewrote a prologue world; its time-of-day write waits too.
+- Party page: "Waiting: X is in the prologue" (host: "2/3, Waiting: X is in the prologue") while the own
+  prologue is over and another member's is not.
+- Unit: party-start-test (#19 Dream rule, both finishing orders), party-dsummon-test, party-status-bridge-test.
+  Live (2026-10-14, one PC, two test saves past the prologue put back into it with `BB_PARTY_TEST_PROLOGUE`,
+  one run per order, screenshots every 10 s): **guest first** - the host in its prologue (12101021 off): the
+  guest's title join refused ("Waiting: the host is in its prologue"), the guest Continued into its own Dream,
+  was ready and waited 56 s (`bell: waiting: Hunter0 in the prologue`, Party page "Waiting: Hunter0 is in the
+  prologue"), no gather, no load; host ready -> guest rang 0.8 s later, in the host's world 4 s later.
+  **Host first** - both in their prologue, the host done after 60 s: Party page "2/3, Waiting: Hunter1 is in
+  the prologue" for 65 s, no bell, no summon; the guest done -> it rang at once and was in the host's world 3.9 s
+  later. Screenshots: both alone in their own Dreams while waiting, no load, no glitch; the guest beside the
+  host after the join. **Not live:** the Dream rule itself (weapons taken, still in the first Dream visit) -
+  the test save's Doll flag 12100105 is set back by the game at once (Insight), so that state could not be
+  forced; a fresh prologue cannot be driven (BB_TEST_NEWGAME stops at the contract screen). Unit-tested.
 
 ### Extra problems seen in these logs (section A scope)
 

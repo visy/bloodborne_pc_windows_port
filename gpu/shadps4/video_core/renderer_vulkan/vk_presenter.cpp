@@ -561,6 +561,10 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     // the post process pass still sRGB encoded and has to be decoded there instead.
     pp_settings.srgb_input =
         attribute.attrib.pixel_format == Libraries::VideoOut::PixelFormat::A2R10G10B10Srgb;
+    // bbport: Bloodborne is an SDR game, so with HDR on in Windows the desktop decodes the
+    // swapchain as sRGB; the pass corrects that to gamma 2.2 (BB_HDR_GAMMA=0 turns it off; from
+    // Supermedo/bloodborne_pc PR #71 by fliperama86).
+    pp_settings.sdr_on_hdr = window.IsOnHdrDisplay() && EmulatorSettings.IsHdrGammaEnabled();
 
     // Numbered here, in command order; marked where the commands are recorded.
     const u32 stream = draw_scheduler.CrumbStream();
