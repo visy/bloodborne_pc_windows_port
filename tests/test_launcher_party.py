@@ -113,6 +113,59 @@ class PartyCodes(unittest.TestCase):
         typo = needs[:-1] + ("0" if needs[-1] != "0" else "1")
         self.assertIn("typo", self.L.party_code_problem(typo))
 
+    SECRET = bytes([0x5E, 0x72, 0xA9, 0x13, 0xC4, 0x8D])
+
+    def test_bbp3_examples(self):
+        """The examples every tooltip shows are real codes, the same as party_code.h's."""
+        L = self.L
+        self.assertEqual(L.encode_party_code_v3(2, (203, 0, 113, 7), 9307, self.SECRET), L.PARTY_CODE_EXAMPLE)
+        self.assertEqual(L.encode_party_code_v3(3, (192, 168, 1, 42), 9307, self.SECRET), L.PARTY_LAN_CODE_EXAMPLE)
+        header = (ROOT / "gpu" / "shim" / "party" / "party_code.h").read_text(encoding="utf-8")
+        self.assertIn(f'#define PARTY_CODE_EXAMPLE "{L.PARTY_CODE_EXAMPLE}"', header)
+        self.assertIn(f'#define PARTY_LAN_CODE_EXAMPLE "{L.PARTY_LAN_CODE_EXAMPLE}"', header)
+        for text in (L.party_code_problem(""), L.party_code_problem("BBP3-!!"), L.party_code_problem("what?"),
+                     L.PARTY_HELP, L.PARTY_HELP_SHORT):
+            self.assertIn(L.PARTY_CODE_EXAMPLE, text)
+        self.assertNotIn("not been tested between two PCs", L.PARTY_HELP)
+
+    def test_bbp3_shapes(self):
+        L = self.L
+        # (flags, ip, port, symbols after BBP3-)
+        shapes = [(2, (203, 0, 113, 7), 9307, 16), (0, (203, 0, 113, 7), 9307, 19),
+                  (3, (192, 168, 1, 42), 9307, 11), (1, (192, 168, 1, 42), 9307, 14),
+                  (2, (203, 0, 113, 7), 48000, 19), (4, (203, 0, 113, 7), 48000, 22),
+                  (7, (192, 168, 1, 42), 47001, 14), (1, (192, 168, 1, 42), 47001, 17)]
+        for flags, ip, port, symbols in shapes:
+            code = L.encode_party_code_v3(flags, ip, port, self.SECRET)
+            self.assertEqual(len(code.replace("-", "")) - 4, symbols, code)
+            self.assertEqual(L.party_code_problem(code), "", code)
+            self.assertEqual(L.party_code_flags(code), flags, code)
+            # case, blanks, I/L for 1 and O for 0
+            sloppy = " " + code.lower().replace("1", "l").replace("0", "O").replace("-", " ") + " "
+            self.assertEqual(L.party_code_flags(sloppy), flags, sloppy)
+            body = [i for i, c in enumerate(code) if i >= 5 and c != "-"]
+            for i in body:
+                for r in L.PARTY_CODE_ALPHABET:
+                    if r != code[i]:
+                        typo = code[:i] + r + code[i + 1:]
+                        self.assertIsNone(L.party_code_flags(typo), typo)
+            for a, b in zip(body, body[1:]):
+                if code[a] != code[b]:
+                    swapped = list(code)
+                    swapped[a], swapped[b] = swapped[b], swapped[a]
+                    self.assertIsNone(L.party_code_flags("".join(swapped)), "".join(swapped))
+            self.assertIn("typo", L.party_code_problem(code[:-1] + ("0" if code[-1] != "0" else "1")))
+            self.assertIsNone(L.party_code_flags(code[:-1]))
+        self.assertEqual(L.party_password_problem(L.PARTY_CODE_EXAMPLE, ""), "This party needs a password")
+        self.assertEqual(L.party_password_problem(L.encode_party_code_v3(0, (1, 2, 3, 4), 9307, self.SECRET), ""), "")
+
+    def test_old_codes_still_valid(self):
+        # Texts written by the BBP2 / BBP1 encoders (also in test_party_link.cpp).
+        self.assertEqual(self.L.party_code_flags("BBP2-1B5G-0W87-0410-6105-0SBG"), 2)
+        self.assertEqual(self.L.party_code_flags("bbp2-1cn0-20g3-og2g-cwo"), 3)
+        self.assertEqual(self.L.party_code_flags("BBP1-041C-P03H-0WJ5-P082-0C20-A1G7-138R-W"), 2)
+        self.assertEqual(self.L.party_code_flags("BBPL-041C-P03H-0WJ5-P082-0C20-A1G7-138R-W"), 2)
+
     def test_bare_line(self):
         self.assertEqual(self.L.parse_party_codes("BBP1-ZZZZ\n"), ("BBP1-ZZZZ", ""))
         self.assertEqual(self.L.parse_party_codes(""), ("", ""))
