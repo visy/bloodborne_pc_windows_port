@@ -122,10 +122,12 @@ int main() {
     for (std::uint32_t f : {72410201u, 72410000u, 12410202u, 72100200u, 9401u, 1001u, 72411101u, 82410101u}) {
         CHECK(!LampTriggerFlag(f));
     }
-    CHECK(PlanLampOrigin(-1, -1) == LampOrigin::Own);       // no flag seen (test steps): ask
+    CHECK(PlanLampOrigin(-1, -1) == LampOrigin::Other);     // no own flag: another game's warp event
+    CHECK(PlanLampOrigin(-1, -1, false) == LampOrigin::Own); // no flag hook: ask as before
+    CHECK(PlanLampOrigin(12, -1) == LampOrigin::Other);     // a stale own flag
     CHECK(PlanLampOrigin(3.5, -1) == LampOrigin::Own);      // this player's lamp
     CHECK(PlanLampOrigin(-1, 3.2) == LampOrigin::Other);    // the other player's lamp
-    CHECK(PlanLampOrigin(-1, 12) == LampOrigin::Own);       // a stale peer flag
+    CHECK(PlanLampOrigin(3.5, 12) == LampOrigin::Own);      // a stale peer flag
     CHECK(PlanLampOrigin(3.5, 8) == LampOrigin::Own);       // own use after the peer's
     CHECK(PlanLampOrigin(8, 3.4) == LampOrigin::Other);     // the peer's after an old own one
 

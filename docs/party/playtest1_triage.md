@@ -40,6 +40,7 @@ loading-screen path is the proposed fix. A seamless (no-load) variant comes back
 | 16 | Oedon Tomb Key (and other key items) not on the guest | major | **fixed** (pt1items: logged decisions, boss-reward re-give when not held) | the host sent lot 31000 (H5:8051-8062, again at H5:11875); the guest side is not logged. Suspects: #15 frozen box, or ledger seeding from a synced boss flag | 3 |
 | 17 | "Red guy" in Oedon Chapel is a ghost for the guest | major | **fixed (pt1npc)**: 42 talk-NPC NpcParam rows written live (Alfred, Dweller, Eileen ...) | the same ghost bit on almost every talk-NPC row (Alfred 6151/6155/6154, Chapel Dweller 113010, Eileen, Arianna...) | 4 |
 | 18 | Guest echoes not takeable when both died | major | **fixed (batch 1, unit)**: recount every frame + early down notice; wipe live (pt1follow, pt1verify); a guest after a B2 load / title join left the party on death (chr type 0): fixed (pt1verify, live) | wipe race: the host counted "0 down" just before the guest's death arrived (H5:10184 vs 10210), so it revived alone instead of a wipe; plus the #6 state | 1 |
+| 20 | "Travel with the party?" asked on BOTH players for one lamp / headstone use | major | **fixed (splitq, live)**: only the player whose own game set the lamp / headstone flag is asked; the other logs "host/guest X is choosing travel" (toast) | the same warp event (headstone 12107000, world lamp 7200) also runs on the other player's game and reaches the lamp warp 0x13CDF30, which the split interceptor took for that player's own use | split |
 | crash | Host crash 20:38:10, eboot +0x2199310 null+8 | major | **yes** (batch 5: guard at +0x2199303, frame allocator 1 MiB) | per-frame arena allocator +0xe45560 returned NULL. FUN_02198fd0 checks the 1st alloc, not the 2nd (+0x21992fb); `BB_ARENA_GUARD` covers only the +0x21d5b35 caller | 5 |
 
 Top extra problems (details below): G4's direct summon failed 8 of 10 times with nothing logging why; the guest
@@ -185,8 +186,9 @@ Beckoning Bell (host ready, a ready party member waits): SpEffect 9000 applied`.
 `ringing the Small Resonant Bell (guest ...): SpEffect 9005 applied` (G1:4134, G2:15768/18356/24992,
 G3:4531, G4 and G5 every ask). SpEffect 9000 is the bell's ringing state on the host's own hunter (the
 resonance effect and sound), so the host sees "its" bell ring although only the guest asked. No other
-prompt on the host correlates with guest actions: the split "Travel with the party?" dialog is only ever
-asked on the player who used the lamp (`Party split: lamp N (host|guest): held for the choice`).
+prompt on the host correlates with guest actions. (This triage first claimed the split "Travel with the
+party?" dialog is only ever asked on the player who used the lamp. That was wrong: it was asked on both
+players for one lamp / headstone use; see bug #20.)
 A second, smaller cause: the bell grant at the end of the prologue (`Party: bells: Beckoning Bell (lot
 10010): awarded`, `Small Resonant Bell (goods 205): given`, H1:1166-1170, H3:1138-1142, G2:14544-14548)
 pops the game's item-received banner on whoever finishes the prologue; it is not mirrored to the other
@@ -1171,3 +1173,48 @@ one re-run of session 1 with the fixes.
 | 0-echo death: no stain | **FAIL, fixed, PASS** | Session 1: the death's record hook removed the stain (`its bloodstain removed`), but "Acquire Blood Echoes" stood at the lamp after the respawn load (shots 130/140 s). Cause: the respawn load calls 0x13D2910 again with record 0; that path skips the record but still sets GameDataMan +0x28 = 1 and builds the stain from the old 0-echo record (decompile: `LAB_013d2cf8`). The hook now checks every call (`deathrules::SkipEmptyStainRecord(party, flag after, record echoes)`). Re-run: `bloodstain record (record 0) with 0 Blood Echoes: its bloodstain removed` at 113.3 s / 178.5 s; no prompt at the lamp after either wipe (shots 130/135/200 s) |
 | Host "beckoned" after a wipe | **FAIL, fixed, PASS** | Session 1: "The bell's resonance has beckoned Hunter1." on the host at 135 s, no `banner` log: the join banner (102001 = menu FMG 30 "...beckoned <?joinName?>.") is built inline by the join handler fragment 0x196BAE9 (pending byte 0x55813D8 = 1, id from 0x553D784 + type * 0x80), not via ShowSummonMessage. Now its call 0x196BE0D -> 0x196F360 is hooked and a hidden id clears the pending byte. Re-run: `join banner 102001 shown` at the first summon (64 s), `banner 102001 hidden (a re-join...)` after both wipe re-joins (128.4 / 193.6 s); shots 130-140 s and 195-205 s: no banner |
 | Direct summon into the host's prologue | **PASS** | Session 3: host `test: cleared ... 12101021:1->0`, `step first-dream ... not ready`; guest gathered to m24_01, rang; host `direct summon: slot 1 (Hunter1) refused (the host is still in its prologue ...; wait prologue)` 4 times (every 30 s), guest `the host's answer: refused by the host - Waiting: the host is in its prologue`; shot 65 s: the guest alone in its own world with "Waiting: the host is in its prologue" on screen, the host alone. `BB_TEST_NEWGAME`'s contract-screen failure not diagnosed (the flag clear made the prologue state instead) |
+
+## Bug 20: "Travel with the party?" shown on both players (splitq, 2026-10-14)
+
+**Players' report (0.6.0):** the question appeared on both players. Expected: only the player who used the
+lamp / headstone / Hunter's Mark is asked; the others get the outcome (the party travel with a loading
+screen, or nothing).
+
+**Evidence (playtest logs).** Each held lamp has a twin on the other side with the same lamp id:
+- H3:2822 host `lamp 2412951 (host): held for the choice` (Dream headstone) and G3:41867 guest `lamp 2412951
+  (guest): held for the choice`; the guest stood 4.5 m from the headstone (G3:41863 status `pos (-8.2, -6.0,
+  -14.3)`, the host at the headstone `(-5.5, -6.1, -17.8)`), its question opened before the host's travel
+  arrived (G3:41892 `host travels (#...333 lamp 2412951)`). The same at H3:2095 / G3:5267 (lamp 2412951 /
+  2412950, both players at the headstone) and the reverse direction: the guest's own world lamp (G3:40116
+  `local flag change(s) kept local: 72410101`, G3:40201 `lamp 2102950 (guest): held`) gave the host, who was
+  fighting 20 m away, `lamp 2102950 (host): held` (H3:3221) and a question nobody answered (H3:3429 `no answer in
+  120 s`). H5 / G5 repeat the pattern (H5:8151 / G5:75197 and others), sometimes with two party travels.
+- Not the follow travel: every twin question opened before the host's TRAVEL event (replays also pass
+  `g_in_replay`), and not a stale dialog (bug 12 closes those after 30 s now).
+
+**Cause (live, splitq runs, two loopback instances).** A lamp's / headstone's talk script sets its "used" flag
+(world lamp 7AAB01xx for common event 7200, headstone 72102xxx / 72103xxx for m21 event 12107000) on the
+user's own game: `lamp flag 72102410 set by this game` 4 s before the user's warp. The warp is run by the
+event's `2003[49]` on EVERY game in that map: the other player's game called the lamp warp 0x13CDF30 from the
+same EMEVD site 0.05 s later (`warp called from +17c1cf5 < +17b948b` on both) although it set no flag, got no
+0x0e / 0x0f packet and no mirror bit for it (one run also showed the world mirror carrying 72102410 to the
+guest). The split interceptor treated every non-replay 0x13CDF30 on a party member as that player's own use,
+so both were asked; each "YES" could start its own party travel.
+
+**Fix.** `deathrules::PlanLampOrigin`: a lamp warp is this player's only when its own game set a lamp /
+headstone flag in the last 10 s (the progress SetEventFlag / CompleteEvent hooks, `LampTriggerFlag`), or a test
+step used the lamp, and no peer's lamp flag / event (packet 0x0f / 0x0e) came after it. Otherwise the warp is
+dropped: `lamp N (guest): not this player's use (...): ... that member chooses`. The asking player sends EVENT
+`split_choosing`; the others log `host Hunter0 is choosing travel (...)` and show the toast "X is choosing
+travel". The world mirror no longer carries the lamp / headstone trigger flags (per-player triggers). The
+Hunter's Mark (item use) is unchanged. If the SetEventFlag hook is missing, every warp asks as before.
+
+**Live (splitq run 5, one session):** host headstone: host `lamp flag 72102410 set by this game`, `lamp 2412950
+(host): held for the choice`; guest `lamp 2412950 (guest): not this player's use` + `host Hunter0 is choosing
+travel` (guest window: the loading screen, no dialog). Guest headstone (guestheadstone): guest `lamp flag
+72102410 set by this game`, `lamp 2412950 (guest): held for the choice`; host `lamp 2412950 (host): not this
+player's use` + `guest Hunter1 is choosing travel`; screenshots: the question only in the guest's window, the
+host's window shows the toast "Hunter1 is choosing travel". Before the fix (runs 1-4) the same host headstone
+gave both `held for the choice` lines 0.04 s apart. Not run live: a world lamp press (the lamppress fixture did
+not get the lamp prompt in this save), a 3-player party.
+

@@ -43,6 +43,9 @@ void Init();
 /// Game thread: a lamp / headstone warp the player started (not a replay). True = consumed
 /// (the choice decides what runs).
 bool OnLampWarp(std::uint32_t id);
+/// Test steps that call the lamp warp "as the player" (no talk script, so no lamp flag): the
+/// next warp is this player's own use.
+void NoteLocalUse(std::uint32_t id);
 /// Main thread, once a frame (the director); `link` sends EVENT split_choosing.
 void Tick(const GameSnapshot& s, party::PartyLink* link);
 

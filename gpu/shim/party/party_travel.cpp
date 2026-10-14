@@ -847,8 +847,28 @@ void CaptureHost(u64 site, TravelKind kind) {
 }
 
 // Replaces 0x13CDF30 (void(u32 id)): the key for the host's capture, and the interceptor.
+thread_local u64 t_lamp_callers[6];
+
 __attribute__((noinline)) BB_COOP_SYSV void LampWarpHook(u64 id) {
     perf::Scope z(perf::Zone::HookLampWarp);
+    {
+        // Entered by a jmp: our return address is the game's call site, the saved rbp the
+        // caller's frame (the game's functions keep rbp frames).
+        const u64 base = Guest(0);
+        const auto rel = [base](u64 a) { return a >= base && a - base < (1ull << 32) ? a - base : 0; };
+        t_lamp_callers[0] = rel(reinterpret_cast<u64>(__builtin_return_address(0)));
+        u64 fp = 0;
+        SafeGet(reinterpret_cast<u64>(__builtin_frame_address(0)), &fp);
+        for (int i = 1; i < 6; ++i) {
+            u64 ret = 0, next = 0;
+            if (!fp || !SafeGet(fp + 8, &ret) || !SafeGet(fp, &next)) {
+                t_lamp_callers[i] = 0;
+                continue;
+            }
+            t_lamp_callers[i] = rel(ret);
+            fp = next;
+        }
+    }
     if (!g_in_replay.load()) {
         if (LampUseObserver obs = g_lamp_observer.load(); obs && !g_hold_release.load()) obs(static_cast<u32>(id));
         if (LampWarpInterceptor fn = g_lamp_intercept.load(); fn && !g_lamp_decided.load() && fn(static_cast<u32>(id))) {
@@ -1551,6 +1571,12 @@ std::uint32_t GuestDeathRedirectLamp() {
 
 void SetLampUseObserver(LampUseObserver fn) {
     g_lamp_observer = fn;
+}
+
+void LampWarpCallers(std::uint64_t out[6]) {
+    for (int i = 0; i < 6; ++i) {
+        out[i] = t_lamp_callers[i];
+    }
 }
 
 void SetLampWarpInterceptor(LampWarpInterceptor fn) {

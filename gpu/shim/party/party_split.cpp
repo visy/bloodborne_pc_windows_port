@@ -301,6 +301,11 @@ void Init() {
         ModeName(CurrentMode()));
 }
 
+void NoteLocalUse(std::uint32_t id) {
+    g_local_id = id;
+    g_local_at = Now();
+}
+
 bool OnLampWarp(std::uint32_t id) {
     return Hold(id, false);
 }
@@ -318,18 +323,30 @@ bool Hold(std::uint32_t id, bool mark) {
         return false;  // nobody to travel with: the plain warp
     }
     if (!mark) {
+        u64 c[6];
+        LampWarpCallers(c);
+        Log("lamp %u (%s): warp called from +%llx < +%llx < +%llx < +%llx < +%llx < +%llx", id, host ? "host" : "guest",
+            (unsigned long long)c[0], (unsigned long long)c[1], (unsigned long long)c[2], (unsigned long long)c[3],
+            (unsigned long long)c[4], (unsigned long long)c[5]);
+    }
+    if (!mark) {
         // Bug 20: another member's lamp / headstone flag (packet 0x0f) runs the same warp event
         // here. Only the member who used it is asked; here the warp is dropped (its outcome comes
         // as the party travel, or nothing).
         const double now = Now(), own = Age(g_local_at, now), peer = Age(g_remote_at, now);
-        if (deathrules::PlanLampOrigin(own, peer) == deathrules::LampOrigin::Other) {
-            char mine[48] = "";
-            if (own >= 0) {
-                std::snprintf(mine, sizeof mine, ", own flag %u %.1f s ago", g_local_id.load(), own);
+        if (deathrules::PlanLampOrigin(own, peer, progress::LocalFlagSetHooked()) == deathrules::LampOrigin::Other) {
+            char why[96];
+            if (own >= 0 && own <= deathrules::kLampOriginWindow) {
+                std::snprintf(why, sizeof why, "a member's lamp flag / event %u came %.1f s after this game's own %u",
+                              g_remote_id.load(), own - peer, g_local_id.load());
+            } else {
+                std::snprintf(why, sizeof why, "this game set no lamp / headstone flag in the last %.0f s%s",
+                              deathrules::kLampOriginWindow, peer >= 0 && peer <= deathrules::kLampOriginWindow
+                                                                 ? "; a member's came just before" : "");
             }
-            Log("lamp %u (%s): not this player's use - a party member's lamp / headstone (flag or event %u) came %.1f s ago%s; "
+            Log("lamp %u (%s): not this player's use (%s): the same warp event of another member's lamp / headstone; "
                 "no question here, the warp is dropped (that member chooses)",
-                id, host ? "host" : "guest", g_remote_id.load(), peer, mine);
+                id, host ? "host" : "guest", why);
             party::status::SetLastEvent("A party member is choosing travel");
             return true;
         }

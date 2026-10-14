@@ -503,6 +503,8 @@ void SetItemFlagObserver(ItemFlagObserver fn);
 /// split travel tells its own lamp use from another member's. Keep it cheap. nullptr unregisters.
 using LocalFlagSetObserver = void (*)(u32 id);
 void SetLocalFlagSetObserver(LocalFlagSetObserver fn);
+/// Whether the SetEventFlag hook that feeds it is installed.
+bool LocalFlagSetHooked();
 /// Called on the main thread at each steady load (load mode 0 or 1) right before any host flag
 /// is applied there (C3's ledger seeding). nullptr unregisters.
 using BeforeApplyHook = void (*)();
