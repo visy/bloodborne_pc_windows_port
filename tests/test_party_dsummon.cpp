@@ -113,6 +113,31 @@ int main() {
     CHECK(TitleJoinBusy(false, false, true, true) == Busy::MemberPrologue &&
           TitleJoinBusy(false, false, false, true) == Busy::Prologue);
     v.member_in_prologue = false;
+    // F5: a member left this host's room moments ago and its game is ending that session: the
+    // guest asks again (Settle) instead of falling back to the bell sign
+    {
+        HostView w; w.world_up = true; w.host_ready = true; w.settling = true;
+        w.max_cooperators = 3; w.ms_since_sign_summon = 1000000;
+        CHECK(HostRefusal(w) && std::strstr(HostRefusal(w), "ending that session") && RefusalWait(w) == Busy::Settle);
+        CHECK(WaitOf(EncodeRefuse(Busy::Settle)) == Busy::Settle && BusyText(Busy::Settle, false).empty());
+        w.busy = Busy::Boss; CHECK(RefusalWait(w) == Busy::Boss);  // an earlier reason wins
+        Guest g;
+        OnAsked(g, 10.0);
+        OnRoom(g, 10.2, true, Busy::Settle);
+        CHECK(g.phase == Phase::Asked && Step(g, 11.0, false, false) == Action::None);
+        CHECK(Step(g, 11.8, false, false) == Action::Reask && g.reasks == 1 && g.phase == Phase::Asked);
+        CHECK(Step(g, 14.0, false, false) == Action::None && g.phase == Phase::Asked);  // waits for the answer again
+        OnRoom(g, 14.1, false);
+        CHECK(g.phase == Phase::HaveRoom);
+        Guest h;
+        OnAsked(h, 0.0);
+        for (int i = 0; i < kMaxReasks; ++i) {
+            OnRoom(h, 1.0 + i * 2.0, true, Busy::Settle);
+            CHECK(Step(h, 1.0 + i * 2.0 + kReaskWait, false, false) == Action::Reask);
+        }
+        OnRoom(h, 30.0, true, Busy::Settle);  // too often: the sign path
+        CHECK(h.phase == Phase::Failed);
+    }
     // Playtest 1 #9: the guest in another map gathers first (refused with "wait":"map")
     CHECK(MapKnown(0x15000000) && !MapKnown(0) && !MapKnown(0xffffffffu));
     CHECK(SameMap(0x18010000, 0x18010000) && SameMap(0x18010000, 0x18010001) && !SameMap(0x18010000, 0x18000000));

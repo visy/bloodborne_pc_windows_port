@@ -40,6 +40,7 @@ const char* BusyWord(Busy b) {
     case Busy::Prologue: return "prologue";
     case Busy::OtherMap: return "map";
     case Busy::MemberPrologue: return "member_prologue";
+    case Busy::Settle: return "settle";
     default: return "none";
     }
 }
@@ -62,6 +63,7 @@ Busy WaitOf(const std::string& body) {
     if (body.find("\"wait\":\"prologue\"") != std::string::npos) return Busy::Prologue;
     if (body.find("\"wait\":\"map\"") != std::string::npos) return Busy::OtherMap;
     if (body.find("\"wait\":\"member_prologue\"") != std::string::npos) return Busy::MemberPrologue;
+    if (body.find("\"wait\":\"settle\"") != std::string::npos) return Busy::Settle;
     return Busy::None;
 }
 
@@ -186,6 +188,7 @@ const char* HostRefusal(const HostView& v) {
     if (OtherMap(v)) return "the guest is in another map: it gathers to the host's lamp first (loading screen)";
     if (v.cooperators >= v.max_cooperators) return "the host's world is full";
     if (v.ms_since_sign_summon < 20000) return "the host's game is summoning a sign";
+    if (v.settling) return "a member just left this host's room and its game is still ending that session (a fresh room follows)";
     if (v.other_hold_ms > 0) return "a crashed member's connection is still held";
     return nullptr;
 }
@@ -197,6 +200,7 @@ Busy RefusalWait(const HostView& v) {
     if (v.member_in_prologue) return Busy::MemberPrologue;
     if (v.busy != Busy::None) return v.busy;
     if (OtherMap(v)) return Busy::OtherMap;
+    if (v.cooperators < v.max_cooperators && v.ms_since_sign_summon >= 20000 && v.settling) return Busy::Settle;
     return Busy::None;
 }
 
@@ -243,10 +247,17 @@ void OnAsked(Guest& g, double now) {
     g.deliver_tries = 0;
     g.fail_why = "";
     g.gather = false;
+    g.reask_at = 0;
+    g.reasks = 0;
 }
 
 void OnRoom(Guest& g, double now, bool refused, Busy wait) {
     if (g.phase != Phase::Asked) return;  // late or unasked: ignored
+    if (refused && wait == Busy::Settle && g.reasks < kMaxReasks) {
+        g.reask_at = now + kReaskWait;  // the host's game is ending a session: ask again soon
+        g.since = now;
+        return;
+    }
     g.phase = refused ? Phase::Failed : Phase::HaveRoom;
     g.since = now;
     if (refused) {
@@ -279,6 +290,13 @@ bool GatherFirst(bool direct_on, Phase last) { return !direct_on || last == Phas
 Action Step(Guest& g, double now, bool entry_waiting, bool joined) {
     switch (g.phase) {
     case Phase::Asked:
+        if (g.reask_at > 0 && now >= g.reask_at) {
+            g.reask_at = 0;
+            ++g.reasks;
+            g.since = now;
+            return Action::Reask;
+        }
+        if (g.reask_at > 0) return Action::None;
         if (now - g.since > kAnswerWait) {
             g.phase = Phase::Failed;
             g.fail_why = "no answer from the host";

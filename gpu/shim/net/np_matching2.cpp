@@ -25,6 +25,7 @@
 #include "party_util.h"
 
 #include <atomic>
+#include <chrono>
 #include "../../party_env.h"
 
 #include <cstddef>
@@ -228,6 +229,12 @@ struct M2 {
     bool heartbeat_started = false;
 };
 M2 g;
+// F5: when a member last left our room (steady ms; 0 = never).
+std::atomic<std::int64_t> g_member_left_ms{0};
+std::int64_t steady_ms_now() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
 
 bool trace() { return party_trace(); }
 
@@ -645,6 +652,7 @@ void on_server_event(const json::Value& ev) {
                                    : (reason == "leave_room" || reason.empty()) ? kCauseLeave
                                                                                 : kCauseMemberDisappeared;
         log("np: member %u (%s) left (%s)", mid, peer.online_id.c_str(), reason.c_str());
+        g_member_left_ms = steady_ms_now();
         // DEAD for that member, then MEMBER_LEFT; the room stays ours (no auto-leave: with three
         // in a room one leaving must not take the third out with it - bbhost 2026-10-05).
         schedule_dead({mid}, kErrTerminatedByPeer, g.room_id, 0);
@@ -1123,6 +1131,11 @@ bool party_host_lost(const std::string& why) {
     if (!g.in_room || g.is_host) return false;
     room_gone_locked(kEvRoomDestroyed, kCauseLeave, nullptr, 0, "the party host is gone: " + why);
     return true;
+}
+
+std::int64_t ms_since_member_left() {
+    const std::int64_t at = g_member_left_ms.load();
+    return at ? steady_ms_now() - at : (std::int64_t(1) << 40);
 }
 
 bool party_guest_in_room() {

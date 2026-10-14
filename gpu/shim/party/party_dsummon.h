@@ -46,7 +46,9 @@ Kind KindOf(const std::string& body);
 /// word of a refusal (never broadcast as dsum_busy).
 /// MemberPrologue (#19): another party member is still in its prologue - summons start once
 /// everybody is ready.
-enum class Busy { None, Boss, Cutscene, Prologue, OtherMap, MemberPrologue };
+enum class Busy { None, Boss, Cutscene, Prologue, OtherMap, MemberPrologue, Settle };
+/// Settle (F5): the host's game is still ending the session a member left (after a network
+/// outage it leaves its room ~5 s after the member did): the guest asks again in kReaskWait.
 /// The boss bar wins over a cutscene (a boss intro cutscene ends in the fight).
 Busy HostBusy(bool boss_bar_up, bool cutscene_playing);
 /// Why the host refuses a guest's title join (the restarted / launching guest asks at its title):
@@ -99,6 +101,8 @@ struct HostView {
     long long ms_since_sign_summon = 1 << 30;  // the host's game asked to summon a sign this long ago
     long long other_hold_ms = 0;               // a crash hold running (C6)
     Busy busy = Busy::None;                    // A11: a boss fight / cutscene: joiners wait
+    bool settling = false;                     // F5: a member left our room moments ago and our game
+                                               // (host, no cooperators) is about to end that session
 };
 const char* HostRefusal(const HostView& v);
 /// The "wait" word a refusal of `v` carries (the guest's Party page / its gather): Prologue,
@@ -114,8 +118,12 @@ struct Guest {
     int deliver_tries = 0;
     const char* fail_why = "";  // why the last attempt failed (logged with "FAILED")
     bool gather = false;        // the last attempt failed for another map: gather first (OtherMap)
+    double reask_at = 0;        // F5: a Settle refusal: ask again at this time (0 = not)
+    int reasks = 0;
 };
-enum class Action { None, Deliver, ReportOk, ReportFail };
+enum class Action { None, Deliver, ReportOk, ReportFail, Reask };
+constexpr double kReaskWait = 1.5;  // F5: a Settle refusal: the guest asks again this much later
+constexpr int kMaxReasks = 8;       // ... at most this often (~12 s), then the bell sign path
 constexpr double kAnswerWait = 4.0;   // no dsum_room within this: the host does not take part
 constexpr double kEntryWait = 8.0;    // the bell's own entry (sign sender, ~2 s) not up within this
 constexpr double kJoinWait = 8.0;     // delivered, but no session (client) within this

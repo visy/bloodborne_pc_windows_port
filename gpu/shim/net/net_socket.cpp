@@ -346,6 +346,10 @@ struct SockQueue {
     // When each source (as the game sees it, source_key) last reached this socket: C6 finds a
     // crashed member's connection by its silence.
     std::map<std::uint64_t, Clock::time_point> heard;
+    // F5: each source's last small datagram (its keepalive / ack traffic), replayed to the game
+    // during a network outage the party link knows about (p2p_outage_keepalive).
+    std::map<std::uint64_t, Datagram> last_small;
+    std::uint64_t replayed = 0;
 };
 // The party UDP port, shared by every game socket that binds a vport on it (the game binds
 // 40 at boot and 30 for a session, both on 3658). A reader thread drains it into the queues.
@@ -377,6 +381,7 @@ struct P2pPort {
 // socket's inbox nor the heard table may grow with what strangers send.
 constexpr std::size_t kMaxInbox = 1024;     // datagrams queued for one game socket
 constexpr std::size_t kMaxHeard = 4096;     // sources remembered
+constexpr std::size_t kSmallDgram = 96;     // F5: a keepalive-sized datagram (replayed in an outage)
 void note_heard_locked(P2pPort& port, std::uint64_t key) {
     const auto now = Clock::now();
     if (port.heard.size() >= kMaxHeard && !port.heard.count(key)) {
@@ -690,6 +695,9 @@ void p2p_reader(std::shared_ptr<P2pPort> port) {
             q->in_bytes += dg.data.size();
             if (q->heard.size() < kMaxHeard || q->heard.count(source_key(dg.addr, dg.port)))
                 q->heard[source_key(dg.addr, dg.port)] = Clock::now();
+            if (dg.data.size() <= kSmallDgram &&
+                (q->last_small.size() < kMaxHeard || q->last_small.count(source_key(dg.addr, dg.port))))
+                q->last_small[source_key(dg.addr, dg.port)] = dg;
             if (forwarded) ++q->forwarded;
             if (q->q.size() >= kMaxInbox) {  // the game is not reading (or a flood): oldest go
                 q->q.pop_front();
@@ -2072,6 +2080,57 @@ std::string p2p_status() {
 
 void set_packet_trace(PacketTraceFn fn) { g_packet_trace.store(fn); }
 void set_p2p_recv_hook(P2pRecvHookFn fn) { g_p2p_recv_hook.store(fn); }
+// F5: while the party link says a peer is only temporarily lost (a network outage, its slot
+// kept), the game hears that peer's last small datagram again every 2 s, so its session's 25 s
+// silence timeout does not end the session before the network is back. Sources silent for 2.5 s
+// to 120 s only (a live peer is never replayed); the heard times stay real (C6 / the resume check).
+std::atomic<bool> g_outage_keepalive{false};
+std::atomic<bool> g_outage_keepalive_thread{false};
+void outage_keepalive_main() {
+    std::uint64_t logged_on = 0;
+    for (;;) {
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        if (!g_outage_keepalive.load()) {
+            logged_on = 0;
+            continue;
+        }
+        std::vector<std::shared_ptr<SockQueue>> qs;
+        {
+            std::lock_guard<std::mutex> lock(g_net_mu);
+            for (const auto& [id, ns] : g_net_socks)
+                if (ns.p2p && ns.queue) qs.push_back(ns.queue);
+        }
+        const auto now = Clock::now();
+        std::uint64_t n = 0;
+        for (const auto& q : qs) {
+            {
+                std::lock_guard<std::mutex> lk(q->mu);
+                for (const auto& [key, t] : q->heard) {
+                    const auto age = now - t;
+                    if (age < std::chrono::milliseconds(2500) || age > std::chrono::seconds(120)) continue;
+                    auto it = q->last_small.find(key);
+                    if (it == q->last_small.end() || q->q.size() >= kMaxInbox) continue;
+                    q->q.push_back(it->second);
+                    ++q->replayed;
+                    ++n;
+                }
+            }
+            q->cv.notify_all();
+        }
+        if (n) {
+            net_wake();
+            if (logged_on++ % 5 == 0) log("outage keepalive: %llu datagram(s) replayed to the game (pass %llu)",
+                                          static_cast<unsigned long long>(n), static_cast<unsigned long long>(logged_on));
+        }
+    }
+}
+
+void p2p_outage_keepalive(bool on) {
+    if (g_outage_keepalive.exchange(on) == on) return;
+    log("outage keepalive %s", on ? "on: the game hears silent peers' last keepalive every 2 s" : "off");
+    if (on && !g_outage_keepalive_thread.exchange(true)) std::thread(outage_keepalive_main).detach();
+}
+
 std::int64_t p2p_game_rx_age_ms() {
     std::vector<std::shared_ptr<SockQueue>> qs;
     {

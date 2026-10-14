@@ -22,6 +22,7 @@
 #include "../../party_env.h"
 #include "../net/from_api.h"
 #include "../net/bbnet_internal.h"
+#include "../net/np_hle.h"
 #include "party_nr_drop.h"
 #include "party_dsummon.h"
 #include "party_status_bridge.h"
@@ -5498,6 +5499,10 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         v.ms_since_sign_summon = bbnet::party::FromApi::instance().ms_since_request();
         v.other_hold_ms = bbnet::party::FromApi::instance().hold_left_ms();
         v.busy = dsummon::HostBusy(BossBarShown(), CutscenePlaying());  // A11: joiners wait outside
+        // F5 (live): a member's game left our room in a network outage; ~5 s after its leave reached
+        // us our game ended that session itself, and a room served in between was gone before the
+        // guest got in. Until our game is out of it (a fresh room is created then), the guest waits.
+        v.settling = Role() == RoleHost && s.cooperators <= 0 && bbnet::np::ms_since_member_left() < 8000;
         const std::string name = names.count(slot) ? names[slot] : std::string();
         // F5: a member back from a network outage: its sign hold ends once the scan for its old
         // game connection ran (NrDropAfterOutage, ~1.5 s after it was back); the answer waits for
@@ -5612,7 +5617,10 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         host_name = DS().names.count(0) ? DS().names[0] : std::string();
         asked_at = DS().asked_at;
     }
-    if (a == dsummon::Action::Deliver) {
+    if (a == dsummon::Action::Reask) {
+        Send(0, dsummon::EncodeReq());
+        Log("direct summon: asked the host again (its game was ending the session we left)");
+    } else if (a == dsummon::Action::Deliver) {
         const bool ok = DeliverSummon(room, host_name);
         std::lock_guard<std::mutex> lk(DS().mu);
         dsummon::OnDelivered(DS().g, now, ok);

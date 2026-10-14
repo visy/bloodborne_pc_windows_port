@@ -2693,6 +2693,7 @@ void PartyDirector::Tick() {
     }
     st.last = s;
     st.have_last = true;
+    if (full) party::runtime_host_cooperators(s.cooperators);  // F5: an outage's dropped cooperator
     zone.Next(perf::Zone::DirNpcTest);
     NpcTestTick(s); // BB_PARTY_TEST_NPC fixture (party_npc_test.h)
     b2::Tick(s);    // B2 seamless prototype (party_b2.h; BB_PARTY_B2=1)

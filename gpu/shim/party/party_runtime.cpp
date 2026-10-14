@@ -586,6 +586,38 @@ int outage_hold_ms() {
 
 void host_lost(const std::string& why);
 
+// F5: the game's session would end after 25 s of silence (its own timeout, live: both games at
+// 25.0 s into a 30 s outage); while the link says the peer is only temporarily lost, the game hears
+// that peer's last keepalive again (bbnet::p2p_outage_keepalive). BB_PARTY_OUTAGE_KEEPALIVE=0: off.
+bool outage_keepalive_on() {
+    const char* v = env("BB_PARTY_OUTAGE_KEEPALIVE");
+    return !(v && v[0] == '0');
+}
+
+// F5, guest: during the outage hold. If our game ends the host's session anyway (its own silence
+// timeout), it would stand on in the host's world without a session until the game's room-gone
+// path sends it home ~15 s later (live): home at once instead (one loading screen, while the
+// network is still down), and the bell / direct summon brings it back once the link is.
+void outage_watch(std::uint64_t epoch) {
+    std::thread([epoch] {
+        const bool was_in = bbnet::np::party_guest_in_room();
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            {
+                std::lock_guard<std::mutex> lk(R().mu);
+                if (R().loss_epoch != epoch || R().st.state == LinkState::Connected) return;
+            }
+            if (was_in && !bbnet::np::party_guest_in_room()) {
+                bbnet::p2p_outage_keepalive(false);
+                plog("outage: our game ended the host's session itself (its silence timeout): home now; the bell / "
+                     "direct summon brings us back once the network is back");
+                coop::RequestGuestSendHome("the game ended the session during the outage");
+                return;
+            }
+        }
+    }).detach();
+}
+
 // F5, guest: the link is back after an outage. Our game is either still in the host's session
 // (the host's game traffic flows again within a second: it survived), out of it (it ended the
 // session itself: the bell / direct summon brings us back), or half in (our game still holds the
@@ -624,6 +656,7 @@ void outage_resume_check() {
 }
 
 void host_lost(const std::string& why) {
+    bbnet::p2p_outage_keepalive(false);
     coop::RequestGuestSendHome(why);  // home at once, not the game's room-gone notice 10 s later
     if (bbnet::np::party_host_lost(why)) plog("host lost (%s): the game leaves the host's world", why.c_str());
     else plog("host lost (%s): not in the host's world", why.c_str());
@@ -683,6 +716,8 @@ void on_state(LinkState s, const std::string& detail) {
                 }
                 plog("link silent (%s): we stay in the host's world up to %d s for the network to come back",
                      detail.c_str(), grace / 1000);
+                if (outage_keepalive_on()) bbnet::p2p_outage_keepalive(true);
+                outage_watch(epoch);
             }
             std::thread([gen, grace, detail, epoch] {
                 std::this_thread::sleep_for(std::chrono::milliseconds(grace));
@@ -727,6 +762,7 @@ void on_state(LinkState s, const std::string& detail) {
                 bbnet::session::host_session_reset();
                 host_lost("the host does not know our session any more");
             } else if (outage) {
+                bbnet::p2p_outage_keepalive(false);
                 outage_resume_check();
             }
         }
@@ -818,6 +854,17 @@ void on_roster(const std::vector<RosterEntry>& roster) {
 std::mutex g_lost_mu;
 std::map<std::string, std::string> g_lost_why;  // g_lost_mu
 
+// F5, host: the game hears silent members' last keepalive while any member's link is lost by
+// silence with its slot kept (an outage), so its session's 25 s timeout does not drop them.
+void host_outage_keepalive_update() {
+    bool any = false;
+    {
+        std::lock_guard<std::mutex> lk(g_lost_mu);
+        for (const auto& [name, why] : g_lost_why) any = any || silent_loss(why);
+    }
+    bbnet::p2p_outage_keepalive(any && outage_keepalive_on());
+}
+
 LinkCallbacks make_callbacks(bool host) {
     LinkCallbacks cb;
     cb.on_state = on_state;
@@ -835,6 +882,7 @@ LinkCallbacks make_callbacks(bool host) {
                     g_lost_why.erase(it);
                 }
             }
+            host_outage_keepalive_update();
             // F5: back after a network outage while its sign hold runs: if its game left our session
             // meanwhile, our game's connection to it is released now, and the hold ends either way,
             // so its first direct summon is not refused (party_b2 NrDropAfterOutage).
@@ -854,6 +902,7 @@ LinkCallbacks make_callbacks(bool host) {
                 if (slot_kept) g_lost_why[m.name] = m.lost_why;
                 else g_lost_why.erase(m.name);
             }
+            host_outage_keepalive_update();
             // Its signs go too (a crashed game cannot answer a summon; with 2-3 guests the host's
             // game would otherwise pick a dead sign while the others wait). The restart puts up a new one.
             bbnet::party::FromApi::instance().drop_signs(m.name);
@@ -2411,6 +2460,35 @@ void set_local_state(MemberState state, std::uint32_t map_id) {
         link = r.link;
     }
     if (link) link->set_local_state(state, map_id);
+}
+
+void runtime_host_cooperators(int cooperators) {
+    // F5: our game dropped a cooperator while members' links are silent (an outage): those
+    // memberships end now (PartyHostService::member_timed_out), so our game finishes with that
+    // session (it leaves it ~5 s after the member left, live) while the network is still down and
+    // the returning member's first direct summon gets a fresh room.
+    static int prev = -1;
+    if (cooperators < 0) return;
+    const int before = prev;
+    prev = cooperators;
+    if (before < 0 || cooperators >= before) return;
+    {
+        std::lock_guard<std::mutex> lk(R().mu);
+        if (R().st.role != RuntimeRole::Host) return;
+    }
+    std::vector<std::string> silent;
+    {
+        std::lock_guard<std::mutex> lk(g_lost_mu);
+        for (const auto& [name, why] : g_lost_why)
+            if (silent_loss(why)) silent.push_back(name);
+    }
+    int left = before - cooperators;
+    for (const std::string& name : silent) {
+        if (left-- <= 0) break;
+        if (bbnet::party::PartyHostService::instance().member_timed_out(name))
+            plog("%s: our game dropped it during the outage (cooperators %d -> %d): its room membership ended",
+                 name.c_str(), before, cooperators);
+    }
 }
 
 }  // namespace party
