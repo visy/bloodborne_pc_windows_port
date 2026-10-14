@@ -432,17 +432,51 @@ void outage_now(double ms_len) {
     std::printf("Net: simulated outage for %.0f ms%s\n", ms_len, s.queue ? "" : " (simulator off: no effect)");
 }
 
+// Test aid BB_NET_SIM_OUTAGE_FILE=<path>: an outage_now(MS) whenever that file's text ("MS", or
+// "MS tag" to fire again) changes - one file shared by every instance of a local run gives a
+// symmetric total outage on all of them at the same moment (a real outage silences both ends; the
+// director's host_outage / guest_outage steps run on one instance's clock each).
+void outage_file_watch(std::string path) {
+    std::thread([path] {
+        std::string last;
+        bool first = true;
+        for (;;) {
+            std::string text;
+            if (std::FILE* f = std::fopen(path.c_str(), "rb")) {
+                char buf[64] = {};
+                const std::size_t n = std::fread(buf, 1, sizeof buf - 1, f);
+                std::fclose(f);
+                text.assign(buf, n);
+            }
+            // A file already there at the start is old: only a change fires.
+            if (!first && !text.empty() && text != last) {
+                const double ms = std::atof(text.c_str());
+                if (ms > 0 && ms <= 600000) {
+                    std::printf("Net: outage file %s: %s\n", path.c_str(), text.c_str());
+                    outage_now(ms);
+                }
+            }
+            last = text;
+            first = false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }).detach();
+}
+
 void configure(const Config& c) {
-    Sim& s = sim();
-    std::lock_guard<std::mutex> lk(s.mu);
-    if (s.queue) return;  // once per process
-    if (!c.enabled) return;
-    s.queue = new Queue(c);
-    s.cfg = c;
-    s.epoch = Clock::now();
-    s.queue->set_epoch(s.epoch);
-    std::printf("Net: network simulator on (%s)%s\n", describe(c).c_str(),
-                c.any_addr ? "" : " (loopback peers only)");
+    {
+        Sim& s = sim();
+        std::lock_guard<std::mutex> lk(s.mu);
+        if (s.queue) return;  // once per process
+        if (!c.enabled) return;
+        s.queue = new Queue(c);
+        s.cfg = c;
+        s.epoch = Clock::now();
+        s.queue->set_epoch(s.epoch);
+        std::printf("Net: network simulator on (%s)%s\n", describe(c).c_str(),
+                    c.any_addr ? "" : " (loopback peers only)");
+    }
+    if (const char* f = std::getenv("BB_NET_SIM_OUTAGE_FILE"); f && f[0]) outage_file_watch(f);
 }
 
 void reconfigure_for_tests(const Config& c) {

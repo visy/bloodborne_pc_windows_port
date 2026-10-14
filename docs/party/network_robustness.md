@@ -34,6 +34,11 @@ game's UDP session and our loopback-tuned timers survive real latency, loss and 
   - `outage=MS,at=MS` runs one outage that long after process start.
   - The director test steps `host_outage=MS@S` / `guest_outage=MS@S` (`netsim::outage_now`) start a
     total outage on that instance at a scripted point. They need the simulator on (`lat=0` will do).
+  - `BB_NET_SIM_OUTAGE_FILE=<path>` (test aid, 2026-10-14): `outage_now(MS)` whenever that file's
+    text (`MS` or `MS tag`) changes. One file shared by every instance of a local run gives a
+    **symmetric** total outage on all of them at the same moment. A `host_outage` step alone holds
+    only the host's received link bytes: the host then closes the silent link after 10 s and the
+    guest sees that close, which a real outage would swallow.
 - **Loopback only**: only 127.0.0.0/8 destinations or peers are simulated, unless `any=1`. A
   stray test setting never slows a real internet session.
 - **Tests**:
@@ -311,9 +316,54 @@ host `host_outage=30000@50`):** the first digest matched 15 s after the join; th
 desync (mirror group 0 flipped, one host flag forgotten) was found by the next digest ("world
 buckets 0, flag buckets 19"), the host sent 36 groups and a snapshot, and the following digest
 said "resolved". The 30 s total outage: the host's link called the guest lost after 10 s (slot
-kept); the guest's game left the session ~12 s in (its own timeout) and went home to its last lamp
+kept); the guest's game left the session ~12 s in (not the game's timeout: our host-lost grace, see the follow-up below) and went home to its last lamp
 (a 3.4 s loading screen); the link resumed as the network came back (20.2 s after it was lost);
 the first direct summon was refused (the host's game still held the dead connection) and the bell
 summon brought the guest back 2.4 m from the host, 41.3 s after the outage began (two loading
 screens: correct, not seamless). 21 digests matched afterwards. Screenshots showed both players
 together before and after and the HUD's "Connection lost" during.
+
+**F5 follow-up: what ended the session, and a one-load recovery (2026-10-14, par_f5b).** The ~12 s
+drop above was ours, not the game's: the guest's link calls the host lost after 10 s of silence
+and its 2 s host-lost grace then sent the guest home (`host lost ... home now`). Fixed:
+- A **silent** link (`no traffic for 10 s`: an outage, not a reset / BYE / refusal) keeps the
+  host's world up to `BB_PARTY_OUTAGE_HOLD_MS` (45 s; the host keeps the slot 60 s). The host holds
+  the room's 15 s heartbeat timeout while a member sends no VITALS (before its link's own 10 s).
+- What then ends the session is **the game's own silence timeout: 25.0 s** (live, both games:
+  `notify_multi_play_error`, then LeaveRoom; the transport config's 25000 ms). While the link
+  says a peer is only temporarily lost, the game hears that peer's last small datagram again every
+  2 s (`bbnet::p2p_outage_keepalive`, `BB_PARTY_OUTAGE_KEEPALIVE=0` off). Live this kept the
+  **host's** game from dropping its silent guest (run 1 without it: dropped at 26.6 s), but the
+  **guest's** game still ended the session at 25.0 s. A 30 s outage therefore still costs the guest
+  a reload; outages under ~25 s keep the session (5 s: section 3).
+- When the guest's game ends the session during the outage it goes home **at once** (OnLeave_Limit,
+  one loading screen while the network is still down) instead of standing in the host's world
+  without a session until the game's room-gone path (~15 s later, live run 1). Its LeaveRoom, lost
+  in the outage, is retried until the host is reached.
+- The host, on the member's return: one scan 1.5 s later releases a game connection to it that has
+  been silent since (C6's release) and ends its sign hold either way; a direct summon asked
+  meanwhile waits for that scan instead of being refused. If the host's game dropped the member
+  during the outage, its room membership ends at once (`member_timed_out`), and a direct summon
+  while the host's game is still ending that session is answered `"wait":"settle"` (the guest asks
+  again every 1.5 s, unit-tested; not needed live).
+- After a resumed link the guest checks the session: host traffic back = survived; out of the room
+  = summoned back; still in the room without host traffic for 12 s = home cleanly (no half-dead
+  phantom).
+
+Live, 2 clients, `BB_NET_SIM=lat=30`, a symmetric 30 s outage 25 s after the join (outage file),
+guest title join off (bell + direct summon), screenshots every 3 s:
+
+| | before (par_f) | run 1 (hold, no keepalive) | run 2 (all of the above) |
+|---|---|---|---|
+| guest's game ends the session | ~12 s (our grace) | 25.0 s (its own timeout) | 25.1 s (its own timeout) |
+| host's game drops the guest | - | 26.6 s | not until the guest left (keepalive) |
+| guest home (loading screen) | 12 s | ~40 s (15 s without a session first) | **25.3 s, 3.3 s load, during the outage** |
+| link back / direct summon | first summon refused (hold) | served, failed (the host's game left the room 4 s later), next bell 20 s later | **asked 0.8 s after the link, old connection released, room served at once, joined 3.2 s later** |
+| guest back beside the host | 41.3 s after the outage began | 67.5 s | **36.4 s (6.3 s after the network returned), 1.6 m from the host** |
+
+Run 2's screenshots: both together before; during the outage each sees the other frozen
+("Connection lost" on the host's panel); the guest's loading screen home at ~25 s; the host's
+"Co-operator Hunter1 returned to their own world" as the guest came back; both together again
+(1.6 m) to the end of the run. Two loading screens for the guest (home, then the summon), as the
+game's own 25 s session timeout cannot be outlasted yet. Next: find what the guest's game counts
+as traffic for that timeout (the replayed datagram did not reset it on the guest's side).
