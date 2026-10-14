@@ -4,8 +4,11 @@
 // (party_rdv.h) that replaces the guest code when the host has no open port. No server of ours.
 //
 // Env: BB_PARTY_STUN2 (second STUN server, default stun.cloudflare.com:3478; "off" skips the
-// type check), BB_PARTY_RENDEZVOUS=0 (no DHT), BB_PARTY_DHT_BOOTSTRAP (comma list host:port; the
-// only way to turn the DHT on in loopback tests, against a fake node: tools/mp/fake_dht.py).
+// type check), BB_PARTY_RENDEZVOUS=1 (the DHT rendezvous: OPT-IN, off unless set to 1 / on / yes /
+// true; it posts the guest's address on the public DHT, so the player decides: launcher Party tab,
+// System > Party rules, bbport.ini party_rendezvous; the env wins over the ini),
+// BB_PARTY_DHT_BOOTSTRAP (comma list host:port; loopback tests only use the DHT with it, against
+// a fake node: tools/mp/fake_dht.py).
 #pragma once
 
 #include <cstdint>
@@ -34,6 +37,18 @@ nat::Type detect(const Stun& stun, const nat::StunSample& first, std::uint32_t l
 // STUN server would report for the party port (host order in and out).
 std::uint16_t simulated_mapped_port(std::uint16_t party_port);
 
+// BB_PARTY_RENDEZVOUS's value: 1 / on / yes / true -> true, 0 / off / no / false -> false,
+// unset / empty / anything else -> `fallback` (the bbport.ini setting, default off).
+inline bool rendezvous_switch(const char* v, bool fallback) {
+    if (!v || !*v) return fallback;
+    std::string s = v;
+    for (char& c : s) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+    if (s == "1" || s == "on" || s == "yes" || s == "true") return true;
+    if (s == "0" || s == "off" || s == "no" || s == "false") return false;
+    return fallback;
+}
+// The player's opt-in (BbSettings party_rendezvous, which Load() set from bbport.ini and
+// BB_PARTY_RENDEZVOUS) and, in loopback, a fake DHT node (BB_PARTY_DHT_BOOTSTRAP).
 bool rendezvous_enabled(bool loopback);
 
 // Host: look the party up in the DHT every 5 s and call `punch` for each guest endpoint found

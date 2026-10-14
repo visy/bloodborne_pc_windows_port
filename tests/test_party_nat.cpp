@@ -81,10 +81,17 @@ static void test_classify() {
           parse_type("addr") == Type::Restricted && parse_type("port") == Type::PortRestricted &&
           parse_type("bogus") == Type::Unknown);
     // Advice names the remedy.
-    CHECK(advice(Type::Symmetric, false, false, true, 9307).find("VPN") != std::string::npos);
-    CHECK(advice(Type::Symmetric, true, false, true, 9307).find("Forward UDP+TCP 9307") != std::string::npos);
-    CHECK(advice(Type::Cone, true, false, true, 9307).find("automatically") != std::string::npos);
-    CHECK(advice(Type::Cone, true, true, true, 9307).find("open") != std::string::npos);
+    const Rendezvous on = Rendezvous::On, off = Rendezvous::Off, na = Rendezvous::NotApplicable;
+    CHECK(advice(Type::Symmetric, false, false, on, 9307).find("VPN") != std::string::npos);
+    CHECK(advice(Type::Symmetric, true, false, on, 9307).find("Forward UDP+TCP 9307") != std::string::npos);
+    CHECK(advice(Type::Cone, true, false, on, 9307).find("automatically") != std::string::npos);
+    CHECK(advice(Type::Cone, true, true, on, 9307).find("open") != std::string::npos);
+    // The DHT rendezvous is opt-in: off, the host's and the guest's lines say to turn it on on both PCs.
+    CHECK(advice(Type::Cone, true, false, off, 9307).find("DHT option on both PCs") != std::string::npos);
+    CHECK(advice(Type::Cone, true, false, off, 9307).find("automatically") == std::string::npos);
+    CHECK(advice(Type::Restricted, false, false, off, 9307).find(kRendezvousOffHint) != std::string::npos);
+    CHECK(advice(Type::Restricted, false, false, na, 9307).find("DHT") == std::string::npos);
+    CHECK(advice(Type::Restricted, false, false, on, 9307).find("automatically") != std::string::npos);
 }
 
 // One guest connection attempt through two simulated NATs, with the real rudp streams: the host

@@ -264,6 +264,30 @@ class DirectSummonSetting(unittest.TestCase):
         self.assertEqual(self.L.party_env(dict(base, party_direct_summon=False))["BB_PARTY_DIRECT_SUMMON"], "0")
 
 
+class RendezvousSetting(unittest.TestCase):
+    """The launcher's DHT checkbox: BB_PARTY_RENDEZVOUS, opt-in (off unless turned on), unset solo."""
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.L = load_launcher()
+        except Exception as ex:  # no tkinter here
+            raise unittest.SkipTest(f"launcher.py not importable here: {ex}")
+
+    def test_default_off_and_on(self):
+        for mode in ("host", "join"):
+            base = {"party_mode": mode, "party_name": "A"}
+            self.assertEqual(self.L.party_env(base)["BB_PARTY_RENDEZVOUS"], "0")
+            self.assertEqual(self.L.party_env(dict(base, party_rendezvous=True))["BB_PARTY_RENDEZVOUS"], "1")
+            self.assertEqual(self.L.party_env(dict(base, party_rendezvous=False))["BB_PARTY_RENDEZVOUS"], "0")
+        self.assertIn("BB_PARTY_RENDEZVOUS", self.L.party_env({}))
+        self.assertIsNone(self.L.party_env({"party_rendezvous": True})["BB_PARTY_RENDEZVOUS"])  # no party
+
+    def test_tooltip_says_what_it_shares(self):
+        tip = self.L.PARTY_RENDEZVOUS_TIP
+        for words in ("public BitTorrent DHT", "IP", "guest code", "Both", "Default: off"):
+            self.assertIn(words, tip)
+
+
 class LampTravelSetting(unittest.TestCase):
     """The launcher's Direct lamp travel checkbox: BB_LAMP_TRAVEL, on (unset) unless turned off; solo too."""
     @classmethod

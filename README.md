@@ -261,10 +261,12 @@ The host gets two party codes (launcher, *System → Party*):
 
 A guest on the host's network with the Internet code finds the host on the LAN by itself (~2 s).
 
-No UPnP and no port forward? The game now finds the way through both routers by itself (hole
-punching; the guest's address is exchanged through the public BitTorrent DHT under a hash only the
-party knows, `BB_PARTY_RENDEZVOUS=0` turns that off). If that does not work, each guest copies its
-**guest code** (`BBG1-...`, *Party* page) and sends it to the host, who presses *Add a guest code*.
+No UPnP and no port forward? Each guest copies its **guest code** (`BBG1-...`, *Party* page) and
+sends it to the host, who presses *Add a guest code*: the game then punches through both routers.
+To skip the code, turn on *Find each other through the public DHT* (launcher *Party* tab or
+*System > Party rules*) on **both** PCs: the guest's address is then exchanged through the public
+BitTorrent DHT under a hash only the party knows. It is off by default because DHT nodes see your
+IP address, as with any torrent client.
 The *Party* page's *Network* line says which NAT you have and what to do about it. This fails behind symmetric / carrier-grade NAT (some mobile and ISP
 connections); there, let another player host or use a VPN such as Tailscale. Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
 
