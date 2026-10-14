@@ -204,10 +204,35 @@ bool WindowSDL::PollEvents() {
         if (BbOverlay::HandleEvent(event)) {
             continue;
         }
+
+        const bool mk_active = BbSettings::Get().mk_enabled.load();
+
+        // Mouse look: click inside the game window takes the mouse (that initial click is consumed
+        // to prevent accidental attacks/rolls upon gaining capture).
+        if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && !relative_mouse_active &&
+            mk_active && !BbOverlay::CapturesInput() && !text_active) {
+            CaptureMouse(true);
+            continue;
+        }
+
+        // F1 toggles mouse release so the user can freely interact with desktop/second monitor
+        if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F1 &&
+            relative_mouse_active) {
+            CaptureMouse(false);
+            continue;
+        }
+
+        // Focus loss immediately releases capture and frees the clipped cursor
+        if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+            CaptureMouse(false);
+        }
+
         if (event.type == SDL_EVENT_MOUSE_MOTION) {
-            std::scoped_lock lock{mouse_delta_mutex};
-            accumulated_mouse_dx += event.motion.xrel;
-            accumulated_mouse_dy += event.motion.yrel;
+            if (relative_mouse_active) {
+                std::scoped_lock lock{mouse_delta_mutex};
+                accumulated_mouse_dx += event.motion.xrel;
+                accumulated_mouse_dy += event.motion.yrel;
+            }
         }
         switch (event.type) {
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
@@ -216,6 +241,9 @@ bool WindowSDL::PollEvents() {
             SDL_GetWindowSizeInPixels(window, &w, &h);
             width = w;
             height = h;
+            if (relative_mouse_active) {
+                UpdateClipCursor(true);
+            }
             break;
         }
         case SDL_EVENT_QUIT:
@@ -242,18 +270,10 @@ bool WindowSDL::PollEvents() {
 
     const bool overlay_capturing = BbOverlay::CapturesInput() || text_active;
     const bool mk_active = BbSettings::Get().mk_enabled.load();
-    const bool want_relative = mk_active && !overlay_capturing;
 
-    if (want_relative != relative_mouse_active) {
-        relative_mouse_active = want_relative;
-        SDL_SetWindowRelativeMouseMode(window, want_relative);
-        if (want_relative) {
-            SDL_HideCursor();
-            mouse_cursor_hidden = true;
-        } else {
-            SDL_ShowCursor();
-            mouse_cursor_hidden = false;
-        }
+    // The overlay menu, typing dialog, or disabling M&K in settings releases mouse capture
+    if (relative_mouse_active && (overlay_capturing || !mk_active)) {
+        CaptureMouse(false);
     }
 
     if (!relative_mouse_active) {
@@ -271,6 +291,47 @@ bool WindowSDL::PollEvents() {
     }
 
     return is_open;
+}
+
+void WindowSDL::UpdateClipCursor(bool clip) {
+#if defined(_WIN32)
+    if (!clip) {
+        ClipCursor(nullptr);
+        return;
+    }
+    const SDL_PropertiesID wp = SDL_GetWindowProperties(window);
+    HWND hwnd = static_cast<HWND>(SDL_GetPointerProperty(wp, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+    if (hwnd) {
+        RECT rc;
+        if (GetClientRect(hwnd, &rc)) {
+            POINT pt_tl = { rc.left, rc.top };
+            POINT pt_br = { rc.right, rc.bottom };
+            ClientToScreen(hwnd, &pt_tl);
+            ClientToScreen(hwnd, &pt_br);
+            RECT clip_rc = { pt_tl.x, pt_tl.y, pt_br.x, pt_br.y };
+            ClipCursor(&clip_rc);
+        }
+    }
+#endif
+}
+
+void WindowSDL::CaptureMouse(bool capture) {
+    if (capture == relative_mouse_active) {
+        return;
+    }
+    relative_mouse_active = capture;
+    SDL_SetWindowRelativeMouseMode(window, capture);
+    UpdateClipCursor(capture);
+    if (capture) {
+        SDL_HideCursor();
+        mouse_cursor_hidden = true;
+        std::scoped_lock lock{mouse_delta_mutex};
+        accumulated_mouse_dx = 0.0f;
+        accumulated_mouse_dy = 0.0f;
+    } else {
+        SDL_ShowCursor();
+        mouse_cursor_hidden = false;
+    }
 }
 
 void WindowSDL::ConsumeMouseDelta(float* dx, float* dy) {

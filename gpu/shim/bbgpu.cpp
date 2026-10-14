@@ -417,6 +417,16 @@ extern "C" void bbgpu_consume_mouse_delta(float* dx, float* dy) {
     }
 }
 
+extern "C" int bbgpu_mouse_captured(void) {
+    return (g_window && g_window->IsMouseCaptured()) ? 1 : 0;
+}
+
+extern "C" void bbgpu_set_mouse_capture(int capture) {
+    if (g_window) {
+        g_window->CaptureMouse(capture != 0);
+    }
+}
+
 extern "C" int bbgpu_get_mk_config(float* sens_x, float* sens_y, int* invert_x, int* invert_y, float* deadzone, float* smoothing) {
     const auto& s = BbSettings::Get();
     if (sens_x) *sens_x = s.mk_sens_x.load();
@@ -427,4 +437,24 @@ extern "C" int bbgpu_get_mk_config(float* sens_x, float* sens_y, int* invert_x, 
     if (smoothing) *smoothing = s.mk_smoothing.load();
     return s.mk_enabled.load() ? 1 : 0;
 }
+
+extern "C" int bbgpu_get_action_binding(int action) {
+    if (action < 0 || action >= BB_ACTION_COUNT) return 0;
+    return BbSettings::Get().keybinds[action].load();
+}
+
+extern "C" void bbgpu_get_all_action_bindings(int* out_bindings, int count) {
+    if (!out_bindings || count <= 0) return;
+    const int n = count < BB_ACTION_COUNT ? count : BB_ACTION_COUNT;
+    auto& s = BbSettings::Get();
+    for (int i = 0; i < n; ++i) {
+        out_bindings[i] = s.keybinds[i].load();
+    }
+}
+
+extern "C" void bbgpu_set_action_binding(int action, int code) {
+    if (action < 0 || action >= BB_ACTION_COUNT) return;
+    BbSettings::Get().keybinds[action] = code;
+}
+
 

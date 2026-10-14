@@ -44,8 +44,52 @@ void bbgpu_get_frametime_percentiles(double *avg_fps, double *p95_ms, double *p9
 void bbgpu_dump_breadcrumbs(void *file_handle);
 /* Consumes accumulated mouse motion delta (pixels) since last call. */
 void bbgpu_consume_mouse_delta(float *dx, float *dy);
+/* Returns 1 if mouse look is actively capturing the cursor in relative mode. */
+int bbgpu_mouse_captured(void);
+/* Explicitly requests or releases mouse capture. */
+void bbgpu_set_mouse_capture(int capture);
 /* Returns 1 if M&K is enabled, and retrieves sensitivity and invert flags. */
 int bbgpu_get_mk_config(float *sens_x, float *sens_y, int *invert_x, int *invert_y, float *deadzone, float *smoothing);
+
+enum BbCustomKey {
+    BB_KEY_NONE = 0,
+    BB_KEY_MOUSE_LEFT = 601,
+    BB_KEY_MOUSE_RIGHT = 602,
+    BB_KEY_MOUSE_MIDDLE = 603,
+    BB_KEY_MOUSE_X1 = 604,
+    BB_KEY_MOUSE_X2 = 605,
+    BB_KEY_CHORD_SHIFT_LMB = 606,
+    BB_KEY_CHORD_SHIFT_RMB = 607,
+};
+
+enum BbAction {
+    BB_ACTION_ATTACK = 0,         /* R1 (Light Attack) */
+    BB_ACTION_HEAVY_ATTACK,       /* R2 (Heavy / Charged Attack) */
+    BB_ACTION_FIREARM,            /* L2 (Gun / Secondary) */
+    BB_ACTION_TRANSFORM,          /* L1 (Trick Weapon Transform) */
+    BB_ACTION_LOCK_ON,            /* R3 (Lock Target) */
+    BB_ACTION_MOVE_FORWARD,       /* Left Stick Up */
+    BB_ACTION_MOVE_BACKWARD,      /* Left Stick Down */
+    BB_ACTION_MOVE_LEFT,          /* Left Stick Left */
+    BB_ACTION_MOVE_RIGHT,         /* Left Stick Right */
+    BB_ACTION_DODGE,              /* Circle (Roll / Sprint / Jump while sprinting) */
+    BB_ACTION_INTERACT,           /* Cross (Interact / Pick Up / Talk) */
+    BB_ACTION_USE_ITEM,           /* Square (Use Quick Item) */
+    BB_ACTION_HEAL,               /* Triangle (Heal / Blood Vial) */
+    BB_ACTION_DPAD_UP,            /* D-Pad Up (Blood Bullets) */
+    BB_ACTION_DPAD_DOWN,          /* D-Pad Down (Switch Item) */
+    BB_ACTION_DPAD_LEFT,          /* D-Pad Left (Switch Left Weapon) */
+    BB_ACTION_DPAD_RIGHT,         /* D-Pad Right (Switch Right Weapon) */
+    BB_ACTION_GESTURES,           /* Touchpad Left (Gestures Menu) */
+    BB_ACTION_PERSONAL_EFFECTS,   /* Touchpad Right (Personal Effects) */
+    BB_ACTION_MENU,               /* Options (System Menu) */
+    BB_ACTION_COUNT
+};
+
+/* Action keybinding queries */
+int bbgpu_get_action_binding(int action);
+void bbgpu_get_all_action_bindings(int *out_bindings, int count);
+void bbgpu_set_action_binding(int action, int code);
 #ifdef __cplusplus
 }
 #endif

@@ -7,8 +7,81 @@
 #include <cstring>
 #include <string>
 #include <string_view>
+#include <SDL3/SDL.h>
 
 namespace BbSettings {
+
+static const ActionInfo s_action_infos[BB_ACTION_COUNT] = {
+    {BB_ACTION_ATTACK, "key.attack", "Light Attack (R1)", "Обычная атака (R1)", BB_KEY_MOUSE_LEFT},
+    {BB_ACTION_HEAVY_ATTACK, "key.heavy_attack", "Heavy Attack (R2)", "Сильная атака (R2)", BB_KEY_CHORD_SHIFT_LMB},
+    {BB_ACTION_FIREARM, "key.firearm", "Firearm / Gun (L2)", "Выстрел / оружие (L2)", BB_KEY_MOUSE_RIGHT},
+    {BB_ACTION_TRANSFORM, "key.transform", "Weapon Transform (L1)", "Трансформация оружия (L1)", SDL_SCANCODE_TAB},
+    {BB_ACTION_LOCK_ON, "key.lock_on", "Lock-On / Camera Reset (R3)", "Захват цели (R3)", BB_KEY_MOUSE_MIDDLE},
+    {BB_ACTION_MOVE_FORWARD, "key.move_forward", "Move Forward", "Движение вперёд", SDL_SCANCODE_W},
+    {BB_ACTION_MOVE_BACKWARD, "key.move_backward", "Move Backward", "Движение назад", SDL_SCANCODE_S},
+    {BB_ACTION_MOVE_LEFT, "key.move_left", "Move Left", "Движение влево", SDL_SCANCODE_A},
+    {BB_ACTION_MOVE_RIGHT, "key.move_right", "Move Right", "Движение вправо", SDL_SCANCODE_D},
+    {BB_ACTION_DODGE, "key.dodge", "Dodge / Roll / Sprint (Circle)", "Уворот / рывок / прыжок (Circle)", SDL_SCANCODE_SPACE},
+    {BB_ACTION_INTERACT, "key.interact", "Interact / Talk (Cross)", "Взаимодействие (Cross)", SDL_SCANCODE_E},
+    {BB_ACTION_USE_ITEM, "key.use_item", "Use Item (Square)", "Использовать предмет (Square)", SDL_SCANCODE_R},
+    {BB_ACTION_HEAL, "key.heal", "Heal / Blood Vial (Triangle)", "Лечение (Triangle)", SDL_SCANCODE_F},
+    {BB_ACTION_DPAD_UP, "key.dpad_up", "Blood Bullets (Up)", "Кровавые пули (Вверх)", SDL_SCANCODE_1},
+    {BB_ACTION_DPAD_DOWN, "key.dpad_down", "Switch Item (Down)", "Сменить предмет (Вниз)", SDL_SCANCODE_2},
+    {BB_ACTION_DPAD_LEFT, "key.dpad_left", "Switch Left Weapon (Left)", "Сменить левое оружие (Влево)", SDL_SCANCODE_3},
+    {BB_ACTION_DPAD_RIGHT, "key.dpad_right", "Switch Right Weapon (Right)", "Сменить правое оружие (Вправо)", SDL_SCANCODE_4},
+    {BB_ACTION_GESTURES, "key.gestures", "Gestures Menu (Touchpad L)", "Меню жестов (Touchpad L)", SDL_SCANCODE_G},
+    {BB_ACTION_PERSONAL_EFFECTS, "key.personal_effects", "Personal Effects (Touchpad R)", "Личные вещи (Touchpad R)", SDL_SCANCODE_BACKSPACE},
+    {BB_ACTION_MENU, "key.menu", "System Menu (Options)", "Меню игры (Options)", SDL_SCANCODE_ESCAPE},
+};
+
+const ActionInfo* GetActionInfos() {
+    return s_action_infos;
+}
+
+const char* KeyCodeToString(int code) {
+    if (code <= 0) return "None";
+    if (code == BB_KEY_MOUSE_LEFT) return "Mouse Left";
+    if (code == BB_KEY_MOUSE_RIGHT) return "Mouse Right";
+    if (code == BB_KEY_MOUSE_MIDDLE) return "Mouse Middle";
+    if (code == BB_KEY_MOUSE_X1) return "Mouse X1";
+    if (code == BB_KEY_MOUSE_X2) return "Mouse X2";
+    if (code == BB_KEY_CHORD_SHIFT_LMB) return "Shift + Mouse Left";
+    if (code == BB_KEY_CHORD_SHIFT_RMB) return "Shift + Mouse Right";
+    if (code < SDL_SCANCODE_COUNT) {
+        const char* name = SDL_GetScancodeName((SDL_Scancode)code);
+        if (name && name[0]) return name;
+    }
+    return "Unknown";
+}
+
+int StringToKeyCode(const char* name) {
+    if (!name || !name[0] || !SDL_strcasecmp(name, "None") || !SDL_strcasecmp(name, "Unknown")) return BB_KEY_NONE;
+    if (!SDL_strcasecmp(name, "Mouse Left") || !SDL_strcasecmp(name, "LMB")) return BB_KEY_MOUSE_LEFT;
+    if (!SDL_strcasecmp(name, "Mouse Right") || !SDL_strcasecmp(name, "RMB")) return BB_KEY_MOUSE_RIGHT;
+    if (!SDL_strcasecmp(name, "Mouse Middle") || !SDL_strcasecmp(name, "MMB")) return BB_KEY_MOUSE_MIDDLE;
+    if (!SDL_strcasecmp(name, "Mouse X1") || !SDL_strcasecmp(name, "Mouse 4")) return BB_KEY_MOUSE_X1;
+    if (!SDL_strcasecmp(name, "Mouse X2") || !SDL_strcasecmp(name, "Mouse 5")) return BB_KEY_MOUSE_X2;
+    if (!SDL_strcasecmp(name, "Shift + Mouse Left") || !SDL_strcasecmp(name, "Shift + LMB")) return BB_KEY_CHORD_SHIFT_LMB;
+    if (!SDL_strcasecmp(name, "Shift + Mouse Right") || !SDL_strcasecmp(name, "Shift + RMB")) return BB_KEY_CHORD_SHIFT_RMB;
+
+    SDL_Scancode sc = SDL_GetScancodeFromName(name);
+    if (sc != SDL_SCANCODE_UNKNOWN) return (int)sc;
+    return BB_KEY_NONE;
+}
+
+Values::Values() {
+    for (int i = 0; i < BB_ACTION_COUNT; ++i) {
+        keybinds[i] = s_action_infos[i].default_code;
+    }
+}
+
+void ResetKeybindsToDefaults() {
+    auto& v = Get();
+    for (int i = 0; i < BB_ACTION_COUNT; ++i) {
+        v.keybinds[i] = s_action_infos[i].default_code;
+    }
+    Save();
+}
 
 namespace {
 
@@ -81,9 +154,16 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     } else if (key == "mk_invert_y") {
         v.mk_invert_y = i != 0;
     } else if (key == "mk_deadzone") {
-        v.mk_deadzone = Clamp(f, 0.0f, 0.5f);
+        v.mk_deadzone = Clamp(f, 0.0f, 0.35f);
     } else if (key == "mk_smoothing") {
-        v.mk_smoothing = Clamp(f, 0.0f, 1.0f);
+        v.mk_smoothing = Clamp(f, 0.0f, 0.80f);
+    } else if (key.rfind("key.", 0) == 0) {
+        for (int a = 0; a < BB_ACTION_COUNT; ++a) {
+            if (key == s_action_infos[a].ini_key) {
+                v.keybinds[a] = StringToKeyCode(value.c_str());
+                break;
+            }
+        }
     } else if (key == "output_res") {
         for (int r = 0; r < OutputCount; ++r) {
             if (value == std::to_string(OutputWidths[r]) + "x" + std::to_string(OutputHeights[r])) {
@@ -243,6 +323,10 @@ void Save() {
     std::fprintf(file, "live_resolution=%s\n", v.live_resolution < 0 ? "auto"
                                                   : v.live_resolution ? "1" : "0");
     std::fprintf(file, "language=%s\n", v.language == LangRu ? "ru" : "en");
+    // Action keybindings
+    for (int a = 0; a < BB_ACTION_COUNT; ++a) {
+        std::fprintf(file, "%s=%s\n", s_action_infos[a].ini_key, KeyCodeToString(v.keybinds[a].load()));
+    }
     std::fclose(file);
 }
 

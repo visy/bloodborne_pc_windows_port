@@ -102,6 +102,27 @@ static SDL_Gamepad *current_gamepad(void) {
     }
     return gamepad;
 }
+static inline uint8_t calc_look_axis(float val, uint8_t stick_curr, int hw_deadzone) {
+    if (val > -0.5f && val < 0.5f) return stick_curr;
+    const float mag = val < 0.0f ? -val : val;
+    const float out = (float)hw_deadzone + mag * (127.0f - (float)hw_deadzone) / 127.0f;
+    const int v = 128 + (int)(val < 0.0f ? -out : out);
+    return (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v);
+}
+
+static inline bool is_action_down(int code, const bool *k, bool lmb, bool rmb, bool mmb, bool x1, bool x2, bool lshift) {
+    if (code <= 0) return false;
+    if (code == BB_KEY_MOUSE_LEFT) return lmb;
+    if (code == BB_KEY_MOUSE_RIGHT) return rmb;
+    if (code == BB_KEY_MOUSE_MIDDLE) return mmb;
+    if (code == BB_KEY_MOUSE_X1) return x1;
+    if (code == BB_KEY_MOUSE_X2) return x2;
+    if (code == BB_KEY_CHORD_SHIFT_LMB) return lshift && lmb;
+    if (code == BB_KEY_CHORD_SHIFT_RMB) return lshift && rmb;
+    if (code < SDL_SCANCODE_COUNT && k) return k[code];
+    return false;
+}
+
 static void sample_host(PadData *d) {
     memset(d,0,sizeof(*d));
     d->left_x=d->left_y=d->right_x=d->right_y=128;
@@ -152,128 +173,88 @@ static void sample_host(PadData *d) {
     int inv_x = 0, inv_y = 0;
     const int mk_enabled = bbgpu_get_mk_config(&sens_x, &sens_y, &inv_x, &inv_y, &deadzone, &smoothing);
 
-    // Mouse Buttons
+    // Mouse Buttons (only active while mouse is captured in relative mode)
+    const int mouse_is_captured = bbgpu_mouse_captured();
     float mouse_x_pos = 0.0f, mouse_y_pos = 0.0f;
-    const SDL_MouseButtonFlags mouse_buttons = SDL_GetMouseState(&mouse_x_pos, &mouse_y_pos);
+    const SDL_MouseButtonFlags mouse_buttons = mouse_is_captured ? SDL_GetMouseState(&mouse_x_pos, &mouse_y_pos) : 0;
     const bool lmb = (mouse_buttons & SDL_BUTTON_LMASK) != 0;
     const bool rmb = (mouse_buttons & SDL_BUTTON_RMASK) != 0;
     const bool mmb = (mouse_buttons & SDL_BUTTON_MMASK) != 0;
+    const bool x1 = (mouse_buttons & SDL_BUTTON_X1MASK) != 0;
+    const bool x2 = (mouse_buttons & SDL_BUTTON_X2MASK) != 0;
 
-    const bool lshift = k[SDL_SCANCODE_LSHIFT] || k[SDL_SCANCODE_RSHIFT];
+    const bool lshift = k && (k[SDL_SCANCODE_LSHIFT] || k[SDL_SCANCODE_RSHIFT]);
+
+    int binds[BB_ACTION_COUNT];
+    bbgpu_get_all_action_bindings(binds, BB_ACTION_COUNT);
 
     if (mk_enabled) {
-        // Combat bindings (Authentic Bloodborne layout adapted for PC):
-        // LMB: Right Hand Light Attack / Trick Weapon Normal (R1)
-        // Shift + LMB: Heavy / Charged Attack (R2)
-        if (lshift && lmb) {
-            d->buttons |= BTN_R2;
-        } else if (lmb) {
-            d->buttons |= BTN_R1;
-        }
+        // Combat actions
+        if (is_action_down(binds[BB_ACTION_ATTACK], k, lmb, rmb, mmb, x1, x2, lshift)) d->buttons |= BTN_R1;
+        if (is_action_down(binds[BB_ACTION_HEAVY_ATTACK], k, lmb, rmb, mmb, x1, x2, lshift)) d->buttons |= BTN_R2;
+        if (is_action_down(binds[BB_ACTION_FIREARM], k, lmb, rmb, mmb, x1, x2, lshift)) d->buttons |= BTN_L2;
+        if (is_action_down(binds[BB_ACTION_TRANSFORM], k, lmb, rmb, mmb, x1, x2, lshift)) d->buttons |= BTN_L1;
+        if (is_action_down(binds[BB_ACTION_LOCK_ON], k, lmb, rmb, mmb, x1, x2, lshift)) d->buttons |= BTN_R3;
 
-        // RMB: Left Hand Weapon / Fire Firearm (L2)
-        // Shift + RMB or Tab: Trick Weapon Transform (L1)
-        if (lshift && rmb) {
-            d->buttons |= BTN_L1;
-        } else if (rmb) {
-            d->buttons |= BTN_L2;
-        }
-        if (k[SDL_SCANCODE_TAB]) {
-            d->buttons |= BTN_L1;
-        }
+        // Interaction & quick item actions
+        if (is_action_down(binds[BB_ACTION_DODGE], k, lmb, rmb, mmb, x1, x2, lshift)) d->buttons |= BTN_CIRCLE;
+        if (is_action_down(binds[BB_ACTION_INTERACT], k, lmb, rmb, mmb, x1, x2, lshift) ||
+            (k && (k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER]))) d->buttons |= BTN_CROSS;
+        if (is_action_down(binds[BB_ACTION_USE_ITEM], k, lmb, rmb, mmb, x1, x2, lshift)) d->buttons |= BTN_SQUARE;
+        if (is_action_down(binds[BB_ACTION_HEAL], k, lmb, rmb, mmb, x1, x2, lshift)) d->buttons |= BTN_TRIANGLE;
+        if (is_action_down(binds[BB_ACTION_GESTURES], k, lmb, rmb, mmb, x1, x2, lshift)) touch_click(d, 0);
+        if (is_action_down(binds[BB_ACTION_PERSONAL_EFFECTS], k, lmb, rmb, mmb, x1, x2, lshift)) touch_click(d, 1);
+        if (is_action_down(binds[BB_ACTION_MENU], k, lmb, rmb, mmb, x1, x2, lshift)) d->buttons |= BTN_OPTIONS;
 
-        // Middle Mouse Button or Q: Lock-On Target / Reset Camera (R3)
-        if (mmb || k[SDL_SCANCODE_Q]) {
-            d->buttons |= BTN_R3;
-        }
+        // D-Pad Quick Selection (with arrow keys fallback)
+        if (is_action_down(binds[BB_ACTION_DPAD_UP], k, lmb, rmb, mmb, x1, x2, lshift) || (k && k[SDL_SCANCODE_UP])) d->buttons |= BTN_UP;
+        if (is_action_down(binds[BB_ACTION_DPAD_DOWN], k, lmb, rmb, mmb, x1, x2, lshift) || (k && k[SDL_SCANCODE_DOWN])) d->buttons |= BTN_DOWN;
+        if (is_action_down(binds[BB_ACTION_DPAD_LEFT], k, lmb, rmb, mmb, x1, x2, lshift) || (k && k[SDL_SCANCODE_LEFT])) d->buttons |= BTN_LEFT;
+        if (is_action_down(binds[BB_ACTION_DPAD_RIGHT], k, lmb, rmb, mmb, x1, x2, lshift) || (k && k[SDL_SCANCODE_RIGHT])) d->buttons |= BTN_RIGHT;
 
-        // Keyboard Actions:
-        // Space: Dodge / Roll / Quickstep / Sprint (Circle)
-        if (k[SDL_SCANCODE_SPACE]) d->buttons |= BTN_CIRCLE;
-        // E: Interact / Action / Pick Up / Talk (Cross)
-        if (k[SDL_SCANCODE_E] || k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER]) d->buttons |= BTN_CROSS;
-        // R: Use Quick Consumable Item (Square)
-        if (k[SDL_SCANCODE_R]) d->buttons |= BTN_SQUARE;
-        // F or V: Use Blood Vial / Heal (Triangle)
-        if (k[SDL_SCANCODE_F] || k[SDL_SCANCODE_V]) d->buttons |= BTN_TRIANGLE;
-        // C or Z: Jump / Gestures / Left Stick Click (L3) - Bloodborne has no crouch
-        if (k[SDL_SCANCODE_C] || k[SDL_SCANCODE_Z]) d->buttons |= BTN_L3;
-        // G: Gestures Menu (Touchpad Left)
-        if (k[SDL_SCANCODE_G]) touch_click(d, 0);
-        // Backspace: Personal Effects / Inventory (Touchpad Right)
-        if (k[SDL_SCANCODE_BACKSPACE]) touch_click(d, 1);
-        // Esc: Game Menu / System Options (Options)
-        if (k[SDL_SCANCODE_ESCAPE]) d->buttons |= BTN_OPTIONS;
+        // Movement (Left Stick)
+        if (is_action_down(binds[BB_ACTION_MOVE_LEFT], k, lmb, rmb, mmb, x1, x2, lshift)) d->left_x = 0;
+        else if (is_action_down(binds[BB_ACTION_MOVE_RIGHT], k, lmb, rmb, mmb, x1, x2, lshift)) d->left_x = 255;
+        if (is_action_down(binds[BB_ACTION_MOVE_FORWARD], k, lmb, rmb, mmb, x1, x2, lshift)) d->left_y = 0;
+        else if (is_action_down(binds[BB_ACTION_MOVE_BACKWARD], k, lmb, rmb, mmb, x1, x2, lshift)) d->left_y = 255;
 
-        // D-Pad Quick Selection (Arrow keys or 1,2,3,4):
-        // 1 / Up: Blood Bullets (+5 bullets for HP)
-        // 2 / Down: Cycle Equipped Consumable Item
-        // 3 / Left: Switch Left Hand Weapon (Firearm)
-        // 4 / Right: Switch Right Hand Trick Weapon
-        if (k[SDL_SCANCODE_UP] || k[SDL_SCANCODE_1]) d->buttons |= BTN_UP;
-        if (k[SDL_SCANCODE_DOWN] || k[SDL_SCANCODE_2]) d->buttons |= BTN_DOWN;
-        if (k[SDL_SCANCODE_LEFT] || k[SDL_SCANCODE_3]) d->buttons |= BTN_LEFT;
-        if (k[SDL_SCANCODE_RIGHT] || k[SDL_SCANCODE_4]) d->buttons |= BTN_RIGHT;
+        // Camera Look: impulse & exponential decay model (LOOK_TAU_US = 60ms)
+        // Deflection follows mouse speed over LOOK_TAU_US smoothly without per-frame stutter.
+        // A moving mouse starts past the game's internal deadzone (16/127) for crisp micro-aiming.
+        #define LOOK_TAU_US 60000.0f
+        static float look_x = 0.0f, look_y = 0.0f;
+        static float smooth_dx = 0.0f, smooth_dy = 0.0f;
+        static uint64_t look_last_us = 0;
+        const int captured = bbgpu_mouse_captured();
 
-        // Movement (WASD -> Left Stick)
-        if (k[SDL_SCANCODE_A]) d->left_x = 0;
-        else if (k[SDL_SCANCODE_D]) d->left_x = 255;
-        if (k[SDL_SCANCODE_W]) d->left_y = 0;
-        else if (k[SDL_SCANCODE_S]) d->left_y = 255;
+        float dt = (look_last_us && d->timestamp > look_last_us) ? (float)(d->timestamp - look_last_us) : 0.0f;
+        look_last_us = d->timestamp;
 
-        // Camera Look (Mouse Delta -> Right Stick with progressive acceleration)
-        static float filtered_dx = 0.0f;
-        static float filtered_dy = 0.0f;
-        filtered_dx = filtered_dx * smoothing + mouse_dx * (1.0f - smoothing);
-        filtered_dy = filtered_dy * smoothing + mouse_dy * (1.0f - smoothing);
+        if (!captured) {
+            look_x = look_y = 0.0f;
+            smooth_dx = smooth_dy = 0.0f;
+        } else {
+            if (dt > LOOK_TAU_US) dt = LOOK_TAU_US;
+            const float decay = 1.0f - dt / LOOK_TAU_US;
+            const float base_gain = 127.0f / (1000.0f * LOOK_TAU_US / 1e6f);
+            const float gain_x = base_gain * sens_x;
+            const float gain_y = base_gain * sens_y;
 
-        float aim_x = filtered_dx * sens_x;
-        float aim_y = filtered_dy * sens_y;
+            // Mouse smoothing (EMA filter): 0.0 = raw 1:1, higher = smoothed
+            const float s_factor = (smoothing < 0.0f) ? 0.0f : (smoothing > 0.95f ? 0.95f : smoothing);
+            smooth_dx = smooth_dx * s_factor + mouse_dx * (1.0f - s_factor);
+            smooth_dy = smooth_dy * s_factor + mouse_dy * (1.0f - s_factor);
 
-        if (inv_x) aim_x = -aim_x;
-        if (inv_y) aim_y = -aim_y;
+            look_x = look_x * decay + smooth_dx * (inv_x ? -gain_x : gain_x);
+            look_y = look_y * decay + smooth_dy * (inv_y ? -gain_y : gain_y);
 
-        // Compute polar magnitude for radial acceleration curve
-        float mag = sqrtf(aim_x * aim_x + aim_y * aim_y);
-        float stick_dx = 0.0f;
-        float stick_dy = 0.0f;
+            if (look_x < -127.0f) look_x = -127.0f; else if (look_x > 127.0f) look_x = 127.0f;
+            if (look_y < -127.0f) look_y = -127.0f; else if (look_y > 127.0f) look_y = 127.0f;
 
-        if (mag > 0.0001f) {
-            float norm_x = aim_x / mag;
-            float norm_y = aim_y / mag;
-
-            // Apply deadzone in normalized units
-            float eff_mag = mag;
-            if (eff_mag <= deadzone * 20.0f) {
-                eff_mag = 0.0f;
-            } else {
-                eff_mag = eff_mag - (deadzone * 20.0f);
-            }
-
-            if (eff_mag > 0.0f) {
-                // Progressive power acceleration curve:
-                // Small inputs (eff_mag < 1.0): dampened for fine aiming precision
-                // Large inputs (eff_mag > 1.0): accelerated for quick camera swipes
-                float accel_factor = 1.0f + 0.18f * eff_mag;
-                if (accel_factor > 3.2f) accel_factor = 3.2f;
-
-                float scaled_output = eff_mag * 7.5f * accel_factor;
-                if (scaled_output > 127.0f) scaled_output = 127.0f;
-
-                stick_dx = norm_x * scaled_output;
-                stick_dy = norm_y * scaled_output;
-            }
-        }
-
-        int stick_rx = 128 + (int)roundf(stick_dx);
-        int stick_ry = 128 + (int)roundf(stick_dy);
-        if (stick_rx < 0) stick_rx = 0; else if (stick_rx > 255) stick_rx = 255;
-        if (stick_ry < 0) stick_ry = 0; else if (stick_ry > 255) stick_ry = 255;
-
-        // Only override right stick if mouse delta was observed, allowing IJKL / arrow fallback
-        if (mouse_dx != 0.0f || mouse_dy != 0.0f || fabsf(filtered_dx) > 0.05f || fabsf(filtered_dy) > 0.05f) {
-            d->right_x = (uint8_t)stick_rx;
-            d->right_y = (uint8_t)stick_ry;
+            // Bloodborne engine deadzone jump: Compensate for the engine's ~16/127 stick deadzone
+            const int hw_deadzone = (int)(deadzone * 127.0f + 0.5f);
+            d->right_x = calc_look_axis(look_x, d->right_x, hw_deadzone);
+            d->right_y = calc_look_axis(look_y, d->right_y, hw_deadzone);
         }
     } else {
         // Fallback layout when M&K mode is disabled
@@ -295,12 +276,12 @@ static void sample_host(PadData *d) {
         else if (k[SDL_SCANCODE_D]) d->left_x = 255;
         if (k[SDL_SCANCODE_W]) d->left_y = 0;
         else if (k[SDL_SCANCODE_S]) d->left_y = 255;
-    }
 
-    if (k[SDL_SCANCODE_I]) d->right_y = 0;
-    else if (k[SDL_SCANCODE_K]) d->right_y = 255;
-    if (k[SDL_SCANCODE_J]) d->right_x = 0;
-    else if (k[SDL_SCANCODE_L]) d->right_x = 255;
+        if (k[SDL_SCANCODE_I]) d->right_y = 0;
+        else if (k[SDL_SCANCODE_K]) d->right_y = 255;
+        if (k[SDL_SCANCODE_J]) d->right_x = 0;
+        else if (k[SDL_SCANCODE_L]) d->right_x = 255;
+    }
 
     if (d->buttons & BTN_L2) if (d->l2 < 255) d->l2=255;
     if (d->buttons & BTN_R2) if (d->r2 < 255) d->r2=255;

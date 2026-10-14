@@ -16,6 +16,7 @@ static inline int setenv(const char *name, const char *value, int overwrite) {
 static int capture;
 int bbgpu_overlay_captures_input(void) { return capture; }
 int bbgpu_text_input_is_active(void) { return 0; }
+int bbgpu_mouse_captured(void) { return 1; }
 void bbgpu_consume_mouse_delta(float *dx, float *dy) { if (dx) *dx = 0.0f; if (dy) *dy = 0.0f; }
 int bbgpu_get_mk_config(float *sens_x, float *sens_y, int *invert_x, int *invert_y, float *deadzone, float *smoothing) {
     if (sens_x) { *sens_x = 1.0f; }
@@ -26,6 +27,11 @@ int bbgpu_get_mk_config(float *sens_x, float *sens_y, int *invert_x, int *invert
     if (smoothing) { *smoothing = 0.2f; }
     return 1;
 }
+int bbgpu_get_action_binding(int action) { (void)action; return 0; }
+void bbgpu_get_all_action_bindings(int *out_bindings, int count) {
+    if (out_bindings) memset(out_bindings, 0, sizeof(int) * count);
+}
+void bbgpu_set_action_binding(int action, int code) { (void)action; (void)code; }
 uint64_t host_monotonic_ns(void) {
     LARGE_INTEGER freq, counter;
     QueryPerformanceFrequency(&freq);

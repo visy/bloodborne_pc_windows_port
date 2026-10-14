@@ -6,8 +6,23 @@
 #pragma once
 
 #include <atomic>
+#include <string>
+#include "../bbgpu.h"
 
 namespace BbSettings {
+
+struct ActionInfo {
+    int action;
+    const char* ini_key;
+    const char* label_en;
+    const char* label_ru;
+    int default_code;
+};
+
+const ActionInfo* GetActionInfos();
+const char* KeyCodeToString(int code);
+int StringToKeyCode(const char* name);
+void ResetKeybindsToDefaults();
 
 enum Upscaler : int { UpscalerOff = 0, UpscalerFsr3 = 1, UpscalerFsr4 = 2, UpscalerFsr411 = 3,
                       UpscalerTaa = 4, UpscalerCount };
@@ -71,12 +86,14 @@ struct Values {
     std::atomic<int> active_render_width{1920}, active_render_height{1080};
     /// Mouse & Keyboard controls settings
     std::atomic<bool> mk_enabled{true};
-    std::atomic<float> mk_sens_x{1.0f};
-    std::atomic<float> mk_sens_y{1.0f};
+    std::atomic<float> mk_sens_x{1.5f};
+    std::atomic<float> mk_sens_y{1.5f};
     std::atomic<bool> mk_invert_x{false};
     std::atomic<bool> mk_invert_y{false};
-    std::atomic<float> mk_deadzone{0.05f};
-    std::atomic<float> mk_smoothing{0.2f};
+    std::atomic<float> mk_deadzone{0.13f};
+    std::atomic<float> mk_smoothing{0.0f};
+    std::atomic<int> keybinds[BB_ACTION_COUNT];
+    Values();
     /// Applied at start (patches.py); the menu shows when a restart is needed.
     std::atomic<bool> effects[EffectCount]{};
     std::atomic<int> model_lod{0}; ///< -2 highest .. 2 lowest, 0 the game's

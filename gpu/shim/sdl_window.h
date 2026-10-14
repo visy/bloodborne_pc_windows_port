@@ -38,6 +38,8 @@ public:
     std::string GetTextInputPrompt();
     std::string GetTextInputValue();
     void ConsumeMouseDelta(float* dx, float* dy);
+    void CaptureMouse(bool capture);
+    bool IsMouseCaptured() const { return relative_mouse_active; }
 
 private:
     std::atomic<s32> width, height;
@@ -55,6 +57,7 @@ private:
     WindowSystemInfo window_info{};
     uint64_t last_mouse_motion_ms = 0;
     bool mouse_cursor_hidden = false;
+    void UpdateClipCursor(bool clip);
 };
 
 } // namespace Frontend

@@ -68,6 +68,8 @@ std::atomic<bool> menu_open{false};
 bool l3_down = false, r3_down = false;
 bool dirty = false; // settings changed while open: saved on close
 float base_scale = 1.0f;
+int rebinding_action = -1;
+std::string rebinding_swap_msg;
 
 // Present rate for the FPS counter and HUD telemetry.
 std::chrono::steady_clock::time_point last_present{};
@@ -257,11 +259,13 @@ void SetOpen(bool value) {
     if (menu_open.load() == value) {
         return;
     }
-    // Save before the menu is marked closed: the window thread re-reads bbport.ini only while
-    // the menu is closed (window.cpp), so it can never read the file before this write.
-    if (!value && dirty) {
-        dirty = false;
-        BbSettings::Save();
+    if (!value) {
+        rebinding_action = -1;
+        rebinding_swap_msg.clear();
+        if (dirty) {
+            dirty = false;
+            BbSettings::Save();
+        }
     }
     menu_open = value;
     ImGui::GetIO().MouseDrawCursor = value;
@@ -683,12 +687,83 @@ void Menu() {
             "Tab - weapon transform (L1)",
             "Схема управления в стиле Souls PC: обзор мышью (захват курсора), ЛКМ - обычная атака (R1), Shift+ЛКМ - сильная (R2), ПКМ - выстрел/левая рука (L2), СКМ - захват цели (R3), Tab - трансформация оружия (L1)"));
     if (s.mk_enabled) {
-        Slider(Tr("Horizontal sensitivity (X)", "Чувствительность по горизонтали (X)"), s.mk_sens_x, 0.1f, 5.0f);
-        Slider(Tr("Vertical sensitivity (Y)", "Чувствительность по вертикали (Y)"), s.mk_sens_y, 0.1f, 5.0f);
+        Slider(Tr("Horizontal sensitivity (X)", "Чувствительность по горизонтали (X)"), s.mk_sens_x, 0.1f, 10.0f);
+        Slider(Tr("Vertical sensitivity (Y)", "Чувствительность по вертикали (Y)"), s.mk_sens_y, 0.1f, 10.0f);
         Checkbox(Tr("Invert horizontal look (X)", "Инвертировать обзор по горизонтали (X)"), s.mk_invert_x);
         Checkbox(Tr("Invert vertical look (Y)", "Инвертировать обзор по вертикали (Y)"), s.mk_invert_y);
-        Slider(Tr("Mouse dead zone", "Мёртвая зона мыши"), s.mk_deadzone, 0.0f, 0.2f);
-        Slider(Tr("Mouse smoothing", "Сглаживание движений мыши"), s.mk_smoothing, 0.0f, 0.8f);
+        Slider(Tr("Mouse dead zone", "Мёртвая зона мыши"), s.mk_deadzone, 0.0f, 0.35f);
+        Slider(Tr("Mouse smoothing", "Сглаживание движений мыши"), s.mk_smoothing, 0.0f, 0.80f);
+
+        ImGui::Spacing();
+        ImGui::SeparatorText(Tr("Keybindings", "Назначение клавиш"));
+
+        if (!rebinding_swap_msg.empty()) {
+            ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.2f, 1.0f), "%s", rebinding_swap_msg.c_str());
+        }
+
+        if (ImGui::Button(Tr("Reset All Keybinds to Defaults", "Сбросить клавиши по умолчанию"))) {
+            BbSettings::ResetKeybindsToDefaults();
+            rebinding_swap_msg.clear();
+            rebinding_action = -1;
+            dirty = true;
+        }
+
+        ImGui::TextDisabled("%s", Tr("Click a button, then press any key or mouse button. ESC to cancel, DEL to clear.",
+                                     "Нажмите кнопку, затем любую клавишу или кнопку мыши. ESC для отмены, DEL для очистки."));
+
+        const auto* action_infos = BbSettings::GetActionInfos();
+        const bool child_open = ImGui::BeginChild("KeybindsChild", ImVec2(0.0f, 260.0f * base_scale), true);
+        if (child_open) {
+            if (ImGui::BeginTable("KeybindingsTable", 3, ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn(Tr("Action", "Действие"), ImGuiTableColumnFlags_WidthStretch, 0.52f);
+                ImGui::TableSetupColumn(Tr("Key / Button", "Клавиша / Кнопка"), ImGuiTableColumnFlags_WidthStretch, 0.36f);
+                ImGui::TableSetupColumn("##clear", ImGuiTableColumnFlags_WidthFixed, 55.0f * base_scale);
+                ImGui::TableHeadersRow();
+
+                for (int a = 0; a < BB_ACTION_COUNT; ++a) {
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    const char* label = (s.language.load() == BbSettings::LangRu) ? action_infos[a].label_ru : action_infos[a].label_en;
+                    ImGui::TextUnformatted(label);
+
+                    ImGui::TableSetColumnIndex(1);
+                    const int cur_code = s.keybinds[a].load();
+                    char btn_id[64];
+                    if (rebinding_action == a) {
+                        snprintf(btn_id, sizeof(btn_id), "%s###act_%d", Tr("< Press Key / Click >", "< Нажмите клавишу >"), a);
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.65f, 0.15f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.75f, 0.25f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+                    } else {
+                        snprintf(btn_id, sizeof(btn_id), "%s###act_%d", BbSettings::KeyCodeToString(cur_code), a);
+                    }
+
+                    if (ImGui::Button(btn_id, ImVec2(-FLT_MIN, 0.0f))) {
+                        if (rebinding_action == a) {
+                            rebinding_action = -1;
+                        } else {
+                            rebinding_action = a;
+                            rebinding_swap_msg.clear();
+                        }
+                    }
+
+                    if (rebinding_action == a) {
+                        ImGui::PopStyleColor(3);
+                    }
+
+                    ImGui::TableSetColumnIndex(2);
+                    char clr_id[32];
+                    snprintf(clr_id, sizeof(clr_id), "%s###clr_%d", Tr("Clear", "Сброс"), a);
+                    if (ImGui::Button(clr_id, ImVec2(-FLT_MIN, 0.0f))) {
+                        s.keybinds[a] = BB_KEY_NONE;
+                        dirty = true;
+                        if (rebinding_action == a) rebinding_action = -1;
+                    }
+                }
+                ImGui::EndTable();
+            }
+        }
+        ImGui::EndChild();
     }
 
     ImGui::Spacing();
@@ -952,6 +1027,44 @@ bool HandleEvent(const SDL_Event& event) {
         if (!is_open) {
             return false;
         }
+        if (down && rebinding_action >= 0) {
+            if (event.key.key == SDLK_ESCAPE) {
+                rebinding_action = -1;
+                rebinding_swap_msg.clear();
+                return true;
+            }
+            if (event.key.key == SDLK_DELETE) {
+                BbSettings::Get().keybinds[rebinding_action] = BB_KEY_NONE;
+                rebinding_action = -1;
+                rebinding_swap_msg.clear();
+                dirty = true;
+                return true;
+            }
+            const int code = (int)event.key.scancode;
+            if (code > 0 && code < SDL_SCANCODE_COUNT) {
+                auto& s = BbSettings::Get();
+                const int old_code = s.keybinds[rebinding_action].load();
+                int swapped = -1;
+                for (int a = 0; a < BB_ACTION_COUNT; ++a) {
+                    if (a != rebinding_action && s.keybinds[a].load() == code) {
+                        s.keybinds[a] = old_code;
+                        swapped = a;
+                        break;
+                    }
+                }
+                s.keybinds[rebinding_action] = code;
+                if (swapped >= 0) {
+                    const auto* info = BbSettings::GetActionInfos();
+                    rebinding_swap_msg = std::string(Tr("Swapped with: ", "Переназначено с: ")) +
+                                         (s.language.load() == BbSettings::LangRu ? info[swapped].label_ru : info[swapped].label_en);
+                } else {
+                    rebinding_swap_msg.clear();
+                }
+                rebinding_action = -1;
+                dirty = true;
+                return true;
+            }
+        }
         io.AddKeyEvent(ImGuiMod_Ctrl, (event.key.mod & SDL_KMOD_CTRL) != 0);
         io.AddKeyEvent(ImGuiMod_Shift, (event.key.mod & SDL_KMOD_SHIFT) != 0);
         io.AddKeyEvent(ImGuiMod_Alt, (event.key.mod & SDL_KMOD_ALT) != 0);
@@ -1002,6 +1115,39 @@ bool HandleEvent(const SDL_Event& event) {
     case SDL_EVENT_MOUSE_BUTTON_UP: {
         if (!is_open) {
             return false;
+        }
+        if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && rebinding_action >= 0) {
+            int code = BB_KEY_NONE;
+            const bool shift = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
+            if (event.button.button == SDL_BUTTON_LEFT) code = shift ? BB_KEY_CHORD_SHIFT_LMB : BB_KEY_MOUSE_LEFT;
+            else if (event.button.button == SDL_BUTTON_RIGHT) code = shift ? BB_KEY_CHORD_SHIFT_RMB : BB_KEY_MOUSE_RIGHT;
+            else if (event.button.button == SDL_BUTTON_MIDDLE) code = BB_KEY_MOUSE_MIDDLE;
+            else if (event.button.button == SDL_BUTTON_X1) code = BB_KEY_MOUSE_X1;
+            else if (event.button.button == SDL_BUTTON_X2) code = BB_KEY_MOUSE_X2;
+
+            if (code != BB_KEY_NONE) {
+                auto& s = BbSettings::Get();
+                const int old_code = s.keybinds[rebinding_action].load();
+                int swapped = -1;
+                for (int a = 0; a < BB_ACTION_COUNT; ++a) {
+                    if (a != rebinding_action && s.keybinds[a].load() == code) {
+                        s.keybinds[a] = old_code;
+                        swapped = a;
+                        break;
+                    }
+                }
+                s.keybinds[rebinding_action] = code;
+                if (swapped >= 0) {
+                    const auto* info = BbSettings::GetActionInfos();
+                    rebinding_swap_msg = std::string(Tr("Swapped with: ", "Переназначено с: ")) +
+                                         (s.language.load() == BbSettings::LangRu ? info[swapped].label_ru : info[swapped].label_en);
+                } else {
+                    rebinding_swap_msg.clear();
+                }
+                rebinding_action = -1;
+                dirty = true;
+                return true;
+            }
         }
         const int button = event.button.button == SDL_BUTTON_LEFT    ? 0
                            : event.button.button == SDL_BUTTON_RIGHT  ? 1
