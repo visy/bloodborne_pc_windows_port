@@ -249,6 +249,29 @@ class ShareNpcDialogueSetting(unittest.TestCase):
             self.assertTrue(self.L.ini_flag(ini, "party_npc_talk"))
 
 
+class PingsSettings(unittest.TestCase):
+    """The launcher's Pings (on by default) and Show party through walls (off) checkboxes."""
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.L = load_launcher()
+        except Exception as ex:  # no tkinter here
+            raise unittest.SkipTest(f"launcher.py not importable here: {ex}")
+
+    def test_defaults_and_round_trip(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            ini = Path(d) / "bbport.ini"
+            self.assertTrue(self.L.ini_flag(ini, "party_pings"))
+            self.assertFalse(self.L.ini_flag(ini, "party_through_walls", False))
+            self.L.update_ini(ini, {"party_pings": "0", "party_through_walls": "1"})
+            self.assertFalse(self.L.ini_flag(ini, "party_pings"))
+            self.assertTrue(self.L.ini_flag(ini, "party_through_walls", False))
+        src = (Path(self.L.__file__).read_text(encoding="utf-8"))
+        self.assertIn("System > Pings", src)
+
+
 class DirectSummonSetting(unittest.TestCase):
     """The launcher's Direct summon checkbox: BB_PARTY_DIRECT_SUMMON, on unless turned off."""
     @classmethod

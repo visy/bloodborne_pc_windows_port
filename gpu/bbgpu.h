@@ -36,6 +36,10 @@ int bbgpu_text_input_is_active(void);
 int bbgpu_text_input_test_type(const char *keys);
 /* 1 while the in-game settings menu is open: the game's pad input is held neutral. */
 int bbgpu_overlay_captures_input(void);
+/* I2 pings (gpu/shim/party/party_ping.h): 1 while the pad's ping combo (hold the touchpad, press
+ * R3) belongs to the party (a party runs, pings on); the pad reader calls request on the combo. */
+int bbgpu_ping_combo_enabled(void);
+void bbgpu_ping_request(void);
 /* NVIDIA Reflex (from Supermedo/bloodborne_pc PR #69 by FIocker; vk_reflex.h): before the
  * simulation samples pad input (driver frame pacing) and right after. No-ops unless Reflex runs. */
 void bbgpu_reflex_pre_input_sample(void);

@@ -172,6 +172,13 @@ struct Values {
     /// D8: a party member's NPC conversation (subtitles, voice, choices, gifts) is shared with the
     /// members near it (ini party_npc_talk; env BB_PARTY_NPC_TALK overrides). Live, local.
     std::atomic<bool> party_npc_talk{true};
+    /// I2: pings - hold the touchpad and press R3 (or V) to mark the spot looked at for the party;
+    /// everyone sees it through walls with its distance for 10 s (ini party_pings; env
+    /// BB_PARTY_PINGS overrides). Live, local: off = no combo, no sending, others' pings not drawn.
+    std::atomic<bool> party_pings{true};
+    /// I2: every party member on this map drawn through walls as a small marker with its distance
+    /// in its colour (ini party_through_walls; off by default: busy next to the name plates). Live.
+    std::atomic<bool> party_through_walls{false};
     /// ... within this many metres of the NPC (0 = anywhere on the same map; ini
     /// party_npc_talk_range; env BB_PARTY_NPC_TALK_RANGE overrides). Live, local.
     std::atomic<int> party_npc_talk_range{25};

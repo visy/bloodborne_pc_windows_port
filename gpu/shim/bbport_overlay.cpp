@@ -22,6 +22,7 @@
 #include "party/party_hud.h"
 #include "party/party_balance_rules.h"
 #include "party/party_npctalk.h"
+#include "party/party_ping.h"
 #include "party/party_status.h"
 #include "party/party_log.h"
 #include "bbport_camera.h"
@@ -170,6 +171,19 @@ bool PartyTagsWanted() {
     return party_tags_on && party::status::Enabled() && BbSettings::Get().party_name_tags &&
            BbSettings::Get().party_overhead.load() != 0 &&
            party::hud::Shown() && !party::hud::GameDialog();  // not over the game's dimmed dialog box
+}
+
+/// I2: "Show party through walls" (bbport.ini party_through_walls; env BB_PARTY_THROUGH_WALLS=0/1
+/// over it, for tests).
+bool PartyThroughWalls() {
+    static const char* const env = std::getenv("BB_PARTY_THROUGH_WALLS");
+    return env && *env ? env[0] != '0' : BbSettings::Get().party_through_walls.load();
+}
+
+/// I2 pings and the party through walls (party_ping.h): a party with a companion, nothing hiding it.
+bool PartyPingsWanted() {
+    return party::status::Enabled() && (coop::ping::Enabled() || PartyThroughWalls()) &&
+           party::hud::Shown() && !party::hud::GameDialog();
 }
 
 // Party alert (party_status SetAlert: the host refused us): a message box in the middle of the
@@ -1417,6 +1431,18 @@ void PartyTab() {
              "Видеть и слышать разговоры спутников с NPC рядом с вами: субтитры, голос NPC, их выбор и "
              "подарки. Дальность: Система > Правила группы > Дальность диалогов NPC."),
            on);
+    Toggle("party_pings", T("Pings", "Метки"), s.party_pings,
+           T("Hold the touchpad (Tab) and press R3 (Q), or press V: a marker where you look. Every party "
+             "member sees it through walls with its distance, in your colour, for 10 seconds.",
+             "Зажмите тачпад (Tab) и нажмите R3 (Q) или нажмите V: метка там, куда вы смотрите. Вся "
+             "группа видит её сквозь стены с расстоянием, вашим цветом, 10 секунд."),
+           on);
+    Toggle("party_through_walls", T("Show party through walls", "Группа сквозь стены"), s.party_through_walls,
+           T("A small diamond with the distance on every companion on your map, drawn over walls and "
+             "trees, in the companion's colour.",
+             "Маленький ромб с расстоянием на каждом спутнике на вашей карте, поверх стен и деревьев, "
+             "цветом спутника."),
+           on);
     Toggle("party_rendezvous", T("Find each other via the public DHT", "Поиск друг друга через публичный DHT"),
            s.party_rendezvous,
            T("When a direct connection fails, your address is posted on the public BitTorrent DHT under a "
@@ -2265,6 +2291,137 @@ void PartyHud() {
     }
 }
 
+/// I2 (party_ping.h): every live ping of a member in this player's world on this map, through
+/// walls, in the pinger's colour with its name and distance (clamped to the screen edge with an
+/// arrow when off screen), and with "Show party through walls" every companion on this map as a
+/// small diamond with its distance. Under the game's menus, dialogs, cutscenes and loading screens
+/// nothing is drawn (PartyPingsWanted, the caller's GameMenu check). No allocation.
+void PartyPings() {
+    using namespace PartyHudDraw;
+    if (!PartyPingsWanted() || BbFrameState::IsMenuOrLoading()) {
+        return;
+    }
+    party::hud::Board& b = hud_board;
+    party::hud::Read(&b);
+    if (!b.active || !b.me_have_pos || party::hud::NowMs() - b.published_ms > 1000) {
+        return;
+    }
+    const BbCamera::State cam = BbCamera::Latest();
+    if (!DirectionAxes(b, cam).camera) {
+        return;  // no game camera in the player's space (a cutscene camera, a load)
+    }
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const ImVec2 display = viewport->Size;
+    const float s = base_scale;
+    ImDrawList* bg = ImGui::GetBackgroundDrawList();
+    char text[64];
+    const auto outlined = [&](ImVec2 at, ImU32 colour, float alpha, const char* str) {
+        const ImU32 dark = Rgba(0.02f, 0.02f, 0.02f, 0.75f * alpha);
+        for (const ImVec2 d : {ImVec2(-1, 0), ImVec2(1, 0), ImVec2(0, -1), ImVec2(0, 1), ImVec2(1, 1)}) {
+            bg->AddText(ImVec2(at.x + d.x * s, at.y + d.y * s), dark, str);
+        }
+        bg->AddText(at, colour, str);
+    };
+    const party::hud::Companion* member_of[party::ping::kMaxSlots] = {};
+    for (int i = 0; i < b.count; ++i) {
+        if (b.c[i].slot >= 0 && b.c[i].slot < party::ping::kMaxSlots) member_of[b.c[i].slot] = &b.c[i];
+    }
+
+    // Companions through walls: a diamond at the chest with the distance under it.
+    if (PartyThroughWalls()) {
+        ImGui::PushFont(game_font, 14.0f);  // FontScaleMain scales it
+        for (int i = 0; i < b.count; ++i) {
+            const party::hud::Companion& c = b.c[i];
+            const char* why = "";
+            if (!party::hud::TagVisible(c, party::hud::NowMs() - b.published_ms, &why)) continue;
+            float pos[3] = {c.pos[0], c.pos[1], c.pos[2]};
+            coop::PartyHudChrPos(c.chr, c.pos, pos);
+            const float d = party::hud::Distance(b.me_pos, pos);
+            if (d < 2.0f || d > 400.0f) continue;
+            const float chest[3] = {pos[0], pos[1] + 1.0f, pos[2]};
+            const party::hud::ScreenPoint sp =
+                party::hud::WorldToScreen(cam.view.data(), cam.proj.data(), chest, display.x, display.y, 0.02f);
+            if (!sp.visible) continue;
+            float rgb[3];
+            party::hud::MemberColour(c.slot, rgb);
+            const float a = 0.85f, r = 6.0f * s;
+            const ImVec2 c0(sp.x, sp.y);
+            const ImVec2 q[4] = {ImVec2(c0.x, c0.y - r), ImVec2(c0.x + r, c0.y), ImVec2(c0.x, c0.y + r),
+                                 ImVec2(c0.x - r, c0.y)};
+            bg->AddQuadFilled(q[0], q[1], q[2], q[3], Rgba(rgb[0], rgb[1], rgb[2], 0.35f * a));
+            bg->AddQuad(q[0], q[1], q[2], q[3], Rgba(0.02f, 0.02f, 0.02f, 0.8f * a), 3.0f * s);
+            bg->AddQuad(q[0], q[1], q[2], q[3], Rgba(rgb[0], rgb[1], rgb[2], a), 1.5f * s);
+            party::ping::FormatDistance(d, text, sizeof text);
+            const ImVec2 ts = ImGui::CalcTextSize(text);
+            outlined(ImVec2(std::round(c0.x - ts.x * 0.5f), std::round(c0.y + r + 2.0f * s)),
+                     Rgba(rgb[0], rgb[1], rgb[2], a), a, text);
+        }
+        ImGui::PopFont();
+    }
+
+    if (!coop::ping::Enabled()) {
+        return;
+    }
+    party::ping::Marker marks[party::ping::kMaxSlots];
+    const std::int64_t now = party::hud::NowMs();
+    const int n = party::ping::Read(marks, now);
+    for (int k = 0; k < n; ++k) {
+        const party::ping::Marker& m = marks[k];
+        if (m.map != b.me_map) continue;  // another map (or our own ping before a load)
+        if (!m.mine) {
+            const party::hud::Companion* c = member_of[m.slot];
+            if (!c || !c->connected || !c->same_world) continue;  // not in this player's world
+        }
+        float rgb[3];
+        party::hud::MemberColour(m.slot, rgb);
+        const std::int64_t left = m.until_ms - now, age = party::ping::kLifeMs - left;
+        const float a = party::ping::Alpha(left);
+        const ImU32 col = Rgba(rgb[0], rgb[1], rgb[2], a), dark = Rgba(0.02f, 0.02f, 0.02f, 0.8f * a);
+        const float inset = 28.0f * s;
+        const party::ping::EdgePoint e =
+            party::ping::ToScreenOrEdge(cam.view.data(), cam.proj.data(), m.pos, display.x, display.y, inset);
+        const float d = party::hud::Distance(b.me_pos, m.pos);
+        party::ping::FormatDistance(d, text, sizeof text);
+        char label[64];
+        std::snprintf(label, sizeof label, "%s  %s", m.name, text);
+        ImGui::PushFont(game_font, 16.0f);
+        const ImVec2 ts = ImGui::CalcTextSize(label);
+        if (e.on_screen) {
+            // A pin: a ring with a dot on the spot, a stem up to the label (name, distance).
+            const float r = 8.0f * s;
+            const ImVec2 at(e.x, e.y);
+            if (age < 1200) {  // an attention pulse for the first second
+                const float t = float(age) / 1200.0f;
+                bg->AddCircle(at, r * (1.0f + 2.5f * t), Rgba(rgb[0], rgb[1], rgb[2], 0.8f * (1.0f - t) * a), 32,
+                              2.0f * s);
+            }
+            bg->AddCircle(at, r, dark, 32, 4.0f * s);
+            bg->AddCircle(at, r, col, 32, 2.0f * s);
+            bg->AddCircleFilled(at, 2.5f * s, col, 12);
+            const float stem = 22.0f * s;
+            bg->AddLine(ImVec2(at.x, at.y - r), ImVec2(at.x, at.y - r - stem), dark, 3.0f * s);
+            bg->AddLine(ImVec2(at.x, at.y - r), ImVec2(at.x, at.y - r - stem), col, 1.5f * s);
+            outlined(ImVec2(std::round(at.x - ts.x * 0.5f), std::round(at.y - r - stem - ts.y - 2.0f * s)), col, a,
+                     label);
+        } else {
+            // Off screen: an arrow on the edge pointing at it, the name and distance beside it.
+            const float r = 11.0f * s, ca = std::cos(e.angle), sa = std::sin(e.angle);
+            const ImVec2 tip(e.x + ca * r, e.y + sa * r);
+            const ImVec2 left_pt(e.x - ca * r * 0.6f - sa * r * 0.8f, e.y - sa * r * 0.6f + ca * r * 0.8f);
+            const ImVec2 right_pt(e.x - ca * r * 0.6f + sa * r * 0.8f, e.y - sa * r * 0.6f - ca * r * 0.8f);
+            bg->AddTriangleFilled(tip, left_pt, right_pt, col);
+            bg->AddTriangle(tip, left_pt, right_pt, dark, 1.5f * s);
+            // The label on the screen side of the arrow.
+            float lx = e.x - ca * (r + 6.0f * s) - ts.x * 0.5f - ca * ts.x * 0.5f;
+            float ly = e.y - sa * (r + 6.0f * s) - ts.y * 0.5f - sa * ts.y * 0.5f;
+            lx = std::clamp(lx, 4.0f * s, display.x - ts.x - 4.0f * s);
+            ly = std::clamp(ly, 4.0f * s, display.y - ts.y - 4.0f * s);
+            outlined(ImVec2(std::round(lx), std::round(ly)), col, a, label);
+        }
+        ImGui::PopFont();
+    }
+}
+
 /// Party notices (join / leave / travel): the latest party_status event for ToastMs in a bottom
 /// corner, clear of the game's HUD (bottom left; bottom right while the performance HUD has the
 /// bottom left), fading out. Not
@@ -2690,6 +2847,11 @@ bool HandleEvent(const SDL_Event& event) {
             }
             return true;
         }
+        // V: a ping (I2, party_ping.h). Not taken from the game: a key.* binding of V still works.
+        if (!is_open && down && !event.key.repeat && event.key.key == SDLK_V && coop::ping::Enabled()) {
+            coop::ping::Request("V key");
+            return false;
+        }
         if (!is_open) {
             return false;
         }
@@ -2771,7 +2933,8 @@ bool HandleEvent(const SDL_Event& event) {
 bool Visible() {
     return initialized &&
            (menu_open || prompt_active || BbSettings::Get().show_fps || BbSettings::Get().show_hud ||
-            CompileIndicatorShown() || ToastWanted() || AlertWanted() || NpcCaptionWanted() || PartyHudWanted() || PartyTagsWanted());
+            CompileIndicatorShown() || ToastWanted() || AlertWanted() || NpcCaptionWanted() || PartyHudWanted() || PartyTagsWanted() ||
+            PartyPingsWanted());
 }
 
 bool MenuOpen() {
@@ -2934,6 +3097,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
         CompileIndicator();
         if (!party::hud::GameMenu()) {  // the game's full-screen menu: none of these over it
             PartyHud(); // before the toast: it stacks above the panel
+            PartyPings();
             PartyToast();
             PartyAlert();
             PartyNpcCaption();
