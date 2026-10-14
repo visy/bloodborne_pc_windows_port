@@ -164,7 +164,13 @@ int main() {
     CHECK(PlanRestLoad(r) == RestLoad::NotReady);
     r.loading = false;
     r.boss_fight = true;
-    CHECK(PlanRestLoad(r) == RestLoad::BossFight);
+    CHECK(PlanRestLoad(r) == RestLoad::BossFight);  // C7: a load out of the boss room
+    r.travel_pending = true;
+    CHECK(PlanRestLoad(r) == RestLoad::Busy);  // a travel / death under way first
+    r.travel_pending = false;
+    r.in_dream = true;
+    CHECK(PlanRestLoad(r) == RestLoad::BossFight);  // Gehrman's fight in the Dream: out too
+    r.in_dream = false;
     r.boss_fight = false;
     r.in_dream = true;
     CHECK(PlanRestLoad(r) == RestLoad::InDream);

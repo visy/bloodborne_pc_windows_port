@@ -3883,7 +3883,12 @@ void HostRestLoadTick(const GameSnapshot& s, double now) {
     }
     g_rest_req_slot = 0;
     const bool carried = g_rest_req_carry.exchange(false);
-    if (r != deathrules::RestLoad::Run) {
+    // C7 (ERSC: resting removes the others from the boss room): during a boss fight the rest load
+    // goes to the host's last lamp, so the fight resets and everyone in this world is taken out of
+    // the boss room (BB_PARTY_REST_BOSS_KICK=0: the old "no rest load in a boss fight").
+    static const bool boss_kick = !(std::getenv("BB_PARTY_REST_BOSS_KICK") && std::getenv("BB_PARTY_REST_BOSS_KICK")[0] == '0');
+    const bool out_of_boss = r == deathrules::RestLoad::BossFight && boss_kick;
+    if (r != deathrules::RestLoad::Run && !out_of_boss) {
         g_rest_carry_at = 0;  // its re-join is served now
         Log("host: slot %d rested at lamp %u: no rest load here (%s)", req - 1, g_rest_req_lamp.load(),
             deathrules::RestLoadName(r));
@@ -3894,6 +3899,28 @@ void HostRestLoadTick(const GameSnapshot& s, double now) {
         Log("host: slot %d rested: the host's position cannot be read; no rest load", req - 1);
         g_rest_carry_at = 0;
         return;
+    }
+    u32 dest_map = s.map_id;
+    if (out_of_boss) {
+        const u32 lamp = Field<u32>(Slot(kSlotGsm), 0x1528);
+        float rs[4];
+        if (lamp == 0 || lamp == kTravelNone || !ids::ReturnSpot(lamp, rs)) {
+            g_rest_carry_at = 0;
+            Log("host: slot %d rested at lamp %u during a boss fight: the host's last lamp %u has no known spot; no "
+                "rest load", req - 1, g_rest_req_lamp.load(), lamp);
+            return;
+        }
+        if ((ids::EntityMap(lamp) >> 16) != (s.map_id >> 16)) {
+            dest_map = ids::EntityMap(lamp);  // its last lamp is in another map: the party goes there
+        }
+        std::string boss;
+        BossFightActive(&boss);
+        pos[0] = rs[0], pos[1] = rs[1], pos[2] = rs[2], pos[3] = 1.0f;
+        rot[0] = 0, rot[1] = rs[3] * 3.14159265f / 180.0f, rot[2] = 0, rot[3] = 0;
+        Log("host: slot %d rested at lamp %u during a boss fight (%s): the party is taken out of the boss room - a "
+            "rest load to the host's last lamp %u in %s (%.1f, %.1f, %.1f); the fight resets",
+            req - 1, g_rest_req_lamp.load(), boss.c_str(), lamp, MapName(dest_map).c_str(), double(pos[0]),
+            double(pos[1]), double(pos[2]));
     }
     g_rest_load_last = now;
     // Who follows this load: the resting guest went alone (batch 6: the host waited 60 s for its
@@ -3925,7 +3952,7 @@ void HostRestLoadTick(const GameSnapshot& s, double now) {
         g_host_alone_next = true;
         g_host_alone_at = now;
     }
-    if (!HostTravelTransformNow(s.map_id, pos, rot, "a guest's rest")) {
+    if (!HostTravelTransformNow(dest_map, pos, rot, out_of_boss ? "a guest's rest in a boss fight" : "a guest's rest")) {
         g_host_alone_next = false;
         g_rest_carry_at = 0;
         Log("host: the rest load could not start (travel off or a stage request pending)");
