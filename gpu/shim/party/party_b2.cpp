@@ -5477,7 +5477,7 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
     }
     static double first = 0;
     static const bool gather_dsum = EnvOn("BB_PARTY_GATHER_DSUM");  // A5 experiment: carry across maps
-    std::vector<int> keep;
+    std::vector<int> keep, defer;
     for (int slot : req) {
         dsummon::HostView v;
         v.world_up = s.world_up;
@@ -5499,6 +5499,19 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         v.other_hold_ms = bbnet::party::FromApi::instance().hold_left_ms();
         v.busy = dsummon::HostBusy(BossBarShown(), CutscenePlaying());  // A11: joiners wait outside
         const std::string name = names.count(slot) ? names[slot] : std::string();
+        // F5: a member back from a network outage: its sign hold ends once the scan for its old
+        // game connection ran (NrDropAfterOutage, ~1.5 s after it was back); the answer waits for
+        // that (the guest waits 4 s for it) instead of refusing the first direct summon.
+        static std::map<int, double> deferred_at;
+        if (v.other_hold_ms > 0 && NrDropPending()) {
+            auto [it, fresh] = deferred_at.emplace(slot, now);
+            if (fresh) Log("direct summon: slot %d (%s) waits for the old connection check (back after an outage)", slot, name.c_str());
+            if (now - it->second < 3.0) {
+                defer.push_back(slot);
+                continue;
+            }
+        }
+        deferred_at.erase(slot);
         if (const char* why = dsummon::HostRefusal(v)) {
             const dsummon::Busy wait = dsummon::RefusalWait(v);
             Send(slot, dsummon::EncodeRefuse(wait));
@@ -5568,6 +5581,7 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
     {
         std::lock_guard<std::mutex> lk(DS().mu);
         DS().requests.insert(DS().requests.end(), keep.begin(), keep.end());
+        DS().requests.insert(DS().requests.end(), defer.begin(), defer.end());
     }
     // Guest: deliver and report.
     dsummon::Action a;
@@ -6075,6 +6089,7 @@ std::atomic<std::int64_t> g_nrd_at{0};  // steady ms from which to look (0 = not
 std::mutex g_nrd_mu;
 std::string g_nrd_name;  // g_nrd_mu
 std::atomic<bool> g_nrd_busy{false};
+std::atomic<bool> g_nrd_outage{false};  // F5: the member is back after an outage (one scan)
 bool g_nrd_listed = false;  // under g_nrd_busy
 
 std::int64_t SteadyMs() {
@@ -6090,7 +6105,9 @@ void NrRecvHook(int sock, int where) {
     if (now < at) return;
     static const char* const kWhere[] = {"receive", "epoll wait", "send"};
     static std::atomic<int> logged[3];
-    if (logged[where].fetch_add(1) == 0) Log("C6: first %s (socket %d) since the crash", kWhere[where], sock);
+    const bool outage = g_nrd_outage.load();
+    if (logged[where].fetch_add(1) == 0)
+        Log("C6: first %s (socket %d) since the %s", kWhere[where], sock, outage ? "outage" : "crash");
     if (where == 2) return;  // inside the transport's own update: not a safe place to release
     bool expect = false;
     if (!g_nrd_busy.compare_exchange_strong(expect, true)) return;
@@ -6105,7 +6122,7 @@ void NrRecvHook(int sock, int where) {
         g_nrd_busy.store(false);
         return;
     }
-    int dropped = 0, seen = 0;
+    int dropped = 0, seen = 0, transports = 0;
     std::size_t silent_n = 0;
     for (const NrTransport& t : NrTransports()) {
         u64 vt = 0, arr = 0;
@@ -6116,7 +6133,11 @@ void NrRecvHook(int sock, int where) {
         if (!SafeRead(t.transport + 0xd0, &arr, 8) || !SafeRead(t.transport + 0x6c, &cnt, 4) || !arr || cnt > 64) continue;
         u64 release = 0;
         if (!SafeRead(vt + 0x28, &release, 8) || !release) continue;
-        const std::vector<nrdrop::Source> silent = nrdrop::SilentSources(bbnet::p2p_heard(fd), now, 1500, 60000);
+        ++transports;
+        // After an outage the member's last datagram is as old as the outage (up to the 60 s slot
+        // keep plus the reconnect), so the window is wider.
+        const std::vector<nrdrop::Source> silent =
+            nrdrop::SilentSources(bbnet::p2p_heard(fd), now, 1500, outage ? 180000 : 60000);
         silent_n += silent.size();
         for (std::uint32_t k = 0; k < cnt; ++k) {
             const u64 el = arr + k * 0xc0ull;
@@ -6128,7 +6149,7 @@ void NrRecvHook(int sock, int where) {
             std::memcpy(&port, key + 0x18, 2);
             const bool match = nrdrop::KeyMatchesAny(key, silent);
             if (match || !g_nrd_listed) Log("C6: socket %d connection %u to %u.%u.%u.%u:%u%s (at %s)", fd, k, key[0x13], key[0x12], key[0x11], key[0x10],
-                static_cast<unsigned>(port), match ? ": silent since the crash, released" : "",
+                static_cast<unsigned>(port), match ? (outage ? ": silent since the outage, released" : ": silent since the crash, released") : "",
                 kWhere[where]);
             if (!match) continue;
             using Fn = void(BB_COOP_SYSV*)(u64, u64);
@@ -6139,10 +6160,22 @@ void NrRecvHook(int sock, int where) {
     g_nrd_listed = true;
     if (dropped) {
         g_nrd_at.store(0);
-        Log("C6: %s crashed: %d game connection(s) released (%zu silent source(s), %d in use)", name.c_str(), dropped,
-            silent_n, seen);
+        Log("%s: %s %s: %d game connection(s) released (%zu silent source(s), %d in use)", outage ? "F5" : "C6",
+            name.c_str(), outage ? "left our game's session during the outage" : "crashed", dropped, silent_n, seen);
         // Its restarted game can be summoned now: the sign hold ends in 1 s.
-        bbnet::party::FromApi::instance().hold_signs(name, 1000);
+        bbnet::party::FromApi::instance().hold_signs(name, outage ? 1 : 1000);
+    } else if (outage) {
+        // One scan: an alive member sends again as soon as the network is back (not silent), a
+        // member whose game left has no connection here any more; nothing to wait for either way.
+        g_nrd_at.store(0);
+        if (transports > 0) {
+            bbnet::party::FromApi::instance().hold_signs(name, 1);
+            Log("F5: %s is back after the outage: no silent game connection of it here (%d in use, %zu silent "
+                "source(s)): its sign hold ends",
+                name.c_str(), seen, silent_n);
+        } else {
+            Log("F5: %s is back after the outage: no game transport seen; its sign hold runs out by itself", name.c_str());
+        }
     }
     g_nrd_busy.store(false);
 }
@@ -6153,6 +6186,7 @@ void NrDropSilentPeers(const std::string& name) {
         std::lock_guard<std::mutex> lk(g_nrd_mu);
         g_nrd_name = name;
     }
+    g_nrd_outage = false;
     g_nrd_listed = false;
     bbnet::set_p2p_recv_hook(&NrRecvHook);
     Log("C6: %s crashed: looking for its game connection in 1.5 s (%zu transport(s) seen)", name.c_str(),
@@ -6160,6 +6194,26 @@ void NrDropSilentPeers(const std::string& name) {
     // The other members keep sending; the crashed one has been silent since the crash (the link
     // reset comes ~0.6 s after it). Its restarted game (same address) takes >3 s to send again.
     g_nrd_at.store(SteadyMs() + 1500);
+}
+
+void NrDropAfterOutage(const std::string& name) {
+    {
+        std::lock_guard<std::mutex> lk(g_nrd_mu);
+        g_nrd_name = name;
+    }
+    g_nrd_listed = false;
+    g_nrd_outage = true;
+    bbnet::set_p2p_recv_hook(&NrRecvHook);
+    Log("F5: %s is back after an outage while its sign hold runs: looking for a silent game connection of it in "
+        "1.5 s (%zu transport(s) seen)",
+        name.c_str(), NrTransports().size());
+    // The network came back for the game's UDP too (with the link or before it): a member still in
+    // our session sends again within a fraction of a second; one that left stays silent.
+    g_nrd_at.store(SteadyMs() + 1500);
+}
+
+bool NrDropPending() {
+    return g_nrd_at.load(std::memory_order_relaxed) != 0;
 }
 
 void SetTitleContinuing(bool on) {

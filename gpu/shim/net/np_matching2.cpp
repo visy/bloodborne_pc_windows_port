@@ -416,20 +416,34 @@ void forget_room_locked() {
     signaling_reset();
 }
 
+// Tells the host's service we left its room. F5: a leave the link could not carry (our game ended
+// the session during a network outage) is retried until the link is back (every 2 s, up to 2 min):
+// otherwise the host's room keeps us until its heartbeat timeout, and its game our old connection.
+void leave_room_retry(const std::string& sid, int mid, int attempt) {
+    session::dispatch_after(attempt ? 2000 : 0, session::Prio::Request, [sid, mid, attempt] {
+        json::Value body = json::Value::make_object();
+        body.set("SessionId", sid);
+        body.set("MemberId", mid);
+        json::Value reply;
+        std::string err;
+        // rpc() false: the host was not reached (the link is down); any answer ends it.
+        if (session::transport().rpc(party::call::kLeaveRoom, body, reply, err, 4000)) {
+            if (attempt) log("np: leave_room delivered after %d retries (the link is back)", attempt);
+            else if (int_of(reply, "ResKind", 0) != 0) log("np: leave_room: %s", json::dump(reply, 0).c_str());
+            return;
+        }
+        if (attempt == 0) log("np: leave_room: %s (retried until the host is reached)", err.c_str());
+        if (attempt < 60) leave_room_retry(sid, mid, attempt + 1);
+        else log("np: leave_room: the host was not reached in 2 min; its heartbeat timeout ends our membership");
+    });
+}
+
 // Our LeaveRoom (or the context going away): out of the host's room, DEAD for every member,
 // then 0x103 at +300 ms.
 void end_session_locked(const char* why) {
     if (!g.in_room && !g.leave_pending) return;
     log("np: session over (%s): room %llu", why, static_cast<unsigned long long>(g.room_id));
-    if (!g.session_id.empty()) {
-        const std::string sid = g.session_id;
-        const int mid = g.member_id;
-        session::dispatch_after(0, session::Prio::Request, [sid, mid] {
-            json::Value reply;
-            std::string err;
-            if (!session::server_leave_room(sid, mid, reply, err)) log("np: leave_room: %s", err.c_str());
-        });
-    }
+    if (!g.session_id.empty()) leave_room_retry(g.session_id, g.member_id, 0);
     std::vector<std::uint16_t> ids;
     for (const session::Peer& peer : room_peers()) ids.push_back(peer.member_id);
     schedule_dead(ids, kErrTerminatedByMyself, g.room_id, 0);
@@ -1109,6 +1123,11 @@ bool party_host_lost(const std::string& why) {
     if (!g.in_room || g.is_host) return false;
     room_gone_locked(kEvRoomDestroyed, kCauseLeave, nullptr, 0, "the party host is gone: " + why);
     return true;
+}
+
+bool party_guest_in_room() {
+    std::lock_guard<std::mutex> lk(g.mu);
+    return g.in_room && !g.is_host;
 }
 
 bool matching2_context_started() {

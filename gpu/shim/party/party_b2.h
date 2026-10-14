@@ -191,6 +191,14 @@ std::vector<NrTransport> NrTransports();
 /// then are released through the transport's own release (vtable +0x28), and the sign hold for
 /// `name` ends 1 s after that (party_nr_drop.h). BB_PARTY_NR_DROP=0 turns it off.
 void NrDropSilentPeers(const std::string& name);
+/// F5 (host): `name` is back after a network outage (its link went silent and resumed; slot kept)
+/// while its sign hold runs. 1.5 s later (one scan, on the game's own thread) a game connection
+/// to a source silent since then is released as above: that member's game left our session during
+/// the outage (an alive one sends again as soon as the network is back). Either way the hold ends
+/// then (none found: nothing is held), so the first direct summon is not refused.
+void NrDropAfterOutage(const std::string& name);
+/// A drop (crash or outage) is waiting for its scan: the direct summon answer waits (<= 3 s).
+bool NrDropPending();
 /// RE: offsets in [base, base+span) holding the transport config's timing values.
 std::string NrFindTimeouts(std::uint64_t base, std::size_t span);
 

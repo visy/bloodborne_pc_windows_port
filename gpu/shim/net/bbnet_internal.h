@@ -202,5 +202,8 @@ void set_p2p_recv_hook(P2pRecvHookFn fn);
 // When the P2P game socket `sock` last heard each source, as the game sees it (key: addr |
 // port << 32, both network order; value: steady-clock ms). Empty for other sockets.
 std::map<std::uint64_t, std::int64_t> p2p_heard(int sock);
+// ms since a datagram last reached any of the game's P2P sockets (-1: none yet). F5: a guest whose
+// link came back after an outage tells a surviving game session (host traffic again) from a dead one.
+std::int64_t p2p_game_rx_age_ms();
 
 }  // namespace bbnet

@@ -40,7 +40,8 @@ struct Companion {
     int stamina = 0, max_stamina = 0;
     std::uint32_t map_id = 0;  // its map (VITALS, else the roster); 0 unknown
     bool have_pos = false;
-    bool same_map = false;     // both on one map with positions: distance / direction mean something
+    bool same_map = false;     // in this world, both on one map with positions: distance / direction mean
+                               // something (never across worlds: own worlds on one map are not "0.0 m")
     float pos[3] = {0, 0, 0};
     std::uint32_t age_ms = 0;  // VITALS age (0 for a local read)
     bool local_dead = false;   // its chr here reads HP 0 (a corpse left behind, a held death)

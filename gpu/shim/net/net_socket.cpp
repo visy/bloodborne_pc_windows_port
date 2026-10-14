@@ -2072,6 +2072,25 @@ std::string p2p_status() {
 
 void set_packet_trace(PacketTraceFn fn) { g_packet_trace.store(fn); }
 void set_p2p_recv_hook(P2pRecvHookFn fn) { g_p2p_recv_hook.store(fn); }
+std::int64_t p2p_game_rx_age_ms() {
+    std::vector<std::shared_ptr<SockQueue>> qs;
+    {
+        std::lock_guard<std::mutex> lock(g_net_mu);
+        for (const auto& [id, ns] : g_net_socks)
+            if (ns.p2p && ns.queue) qs.push_back(ns.queue);
+    }
+    bool any = false;
+    Clock::time_point last{};
+    for (const auto& q : qs) {
+        std::lock_guard<std::mutex> lk(q->mu);
+        for (const auto& [k, t] : q->heard) {
+            if (!any || t > last) last = t;
+            any = true;
+        }
+    }
+    if (!any) return -1;
+    return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - last).count();
+}
 std::map<std::uint64_t, std::int64_t> p2p_heard(int sock) {
     std::map<std::uint64_t, std::int64_t> out;
     NetSock ns;
