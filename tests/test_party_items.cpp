@@ -802,6 +802,16 @@ static void test_messenger_own() {
     GuestItems q;
     CHECK(q.Offer({own}) == 1);
     CHECK(q.Offer({own}) == 0);
+    // A re-give (done flag set, the bell not held) plans with the row flags ignored: its own row
+    // flag is the done flag, which would otherwise make the plan give nothing (live run 2).
+    LotRowData bell;
+    bell.lot = 10050;
+    bell.flag = own.flag;
+    Slot(&bell, 0, 4, 4312, 1, 100);
+    const LotPlan skipped = PlanSummonedLot({bell}, {}, [](std::int32_t) { return true; });
+    CHECK(skipped.result == LotPlanResult::Give && skipped.items.empty());
+    const LotPlan regive = PlanSummonedLot({bell}, {}, [](std::int32_t) { return false; });
+    CHECK(regive.result == LotPlanResult::Give && regive.items.size() == 1 && regive.items[0].id == 4312);
 }
 
 int main() {

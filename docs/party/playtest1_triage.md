@@ -33,7 +33,7 @@ loading-screen path is the proposed fix. A seamless (no-load) variant comes back
 | 9 | Rejoined guest lands in the Dream, not in Central Yharnam | **blocker** | partly | the guest rings before its own map is known, so no gather; cross-map direct summon never loads the host's map (aeeb408 only keeps the gather as default) | 2 |
 | 10 | Doll level-up plays on the host + position jumps back | major | no | Doll flags 72100100-102/113, 12100112-114 synced as npc_quest; a same-map lamp warp became a host-led party move | 1 (move) + 4 (flags) |
 | 11 | Gehrman is a ghost for the guest | minor | no | NpcParam 804000 has isChangeWanderGhost; only the Doll's 803000 is patched | 4 |
-| 12 | Item prompt stuck on the guest at host death | major | **fixed (prompt part)** (pt1items: item-get watchdog clears a box left over a load / death) | `ShowItemGet` is gated only on `Calm()`, plus the half-done death state of #6 | 3 (gate) + 1 (death) |
+| 12 | Item prompt stuck on the guest at host death | major | **fixed (prompt part)** (pt1items: item-get watchdog clears a box left over a load / death; unit-tested, the host-death run step did not fire live) | `ShowItemGet` is gated only on `Calm()`, plus the half-done death state of #6 | 3 (gate) + 1 (death) |
 | 13 | Host's dropped echoes not shown, could not recover | minor | no | not proven: 2 of 6 host bloodstains never picked up; the revive-in-place warp is a suspect; no pickup log | 1 |
 | 14 | Gascoigne cutscene played twice | minor (on head) | **yes** | the guest's own intro event replayed on the host; fixed by story dedupe default on (025b0a9) + live check (a5033c3). Residual: the host does not refuse a replay mid-fight | 4 |
 | 15 | Boss loot prompt frozen on the guest, key items missing? | major | **fixed** (pt1items: popup gate alive / cutscene / boss banner + watchdog) | badge pushed via `ShowItemGet` in the same second as the boss defeat banner; no alive/cutscene/banner/load gate | 3 |
@@ -472,6 +472,8 @@ a world reset and correct occlusion. Update ERSC_PARITY C2/H4 and the README par
 
 ### Bug 12: item prompt on guest stuck on screen at host death
 
+**Prompt part fixed (pt1items, 2026-10-14):** `ItemGetWatch` (party_items) clears the item-get list the way its confirm does once it is left over a load, the player is dead for 3 s, or its confirm check is held for 20 s (`item-get dialog cleared (...)`, `BB_PARTY_ITEMGET_WATCH=0` off). Unit-tested (party-items-test `test_itemget_watch`); live, both runs ended before the `host_die` step fired (it needs a fresh (re)join count, `host_die@S#N`), so the clear after a host death is not yet seen live. The split-question part stays with batch 1.
+
 **Evidence**
 - G5: the guest's last pickup prompt was at G5:70514 (`map item pickup on this game (role 6): item handle 0x2`), between the host's death (G5:70428) and the
   revive (G5:70625). Then the send-home was dropped (G5:70630) and there was no load until G5:76376.
@@ -637,7 +639,7 @@ Repeat with `host_die` at +21 s on the host for bug 12.
 
 ### Bug 16: Oedon Tomb Key not synced to the guest; "same with other key items except from chest"
 
-**Fixed (pt1items, 2026-10-14).** Every give / skip is logged; a boss-reward ledger lot (done flag boss_defeated) or a per-player gift whose done flag is set but whose unique goods are not held is given anyway (`LedgerSkipSuspicious`). Old Hunter Bell: a summoned guest's refused hostOnly Messenger lot (10000/10010/10050) is given to itself (`ItemSource::Own`).
+**Fixed (pt1items, 2026-10-14).** Every give / skip is logged; a boss-reward ledger lot (done flag boss_defeated) or a per-player gift whose done flag is set but whose unique goods are not held is given anyway (`LedgerSkipSuspicious`). Old Hunter Bell: a summoned guest's refused hostOnly Messenger lot (10000/10010/10050) is given to itself (`ItemSource::Own`); live run 2 (`BB_PARTY_GIFT_TEST=10050`, `..._HOSTONLY=1`): `own gift lot 10050 ... given to the guest itself`, flag 6670 set but bell not held -> re-give chosen, but the plan skipped the row (its flag is the done flag): fixed after the run (row flags ignored on a re-give, unit-tested), not re-run live. Live run 2 also re-gave the Sword Hunter Badge (ledger bit set, badge not held: `giving it after all` -> `held 0 -> 1`).
 
 **Evidence.**
 - Host H5:8051-8062: lot 31000 (goods 4000 Oedon Tomb Key, ledger 25 = flag 60009025) awarded and sent to the party while the guest was summoned. After the host crash and the rejoin it is in the full list again: H5:11875 `full item list for slot 1: 21 lots` (it was 20 at 4097 before Gascoigne). On the host side the sync worked both times.
