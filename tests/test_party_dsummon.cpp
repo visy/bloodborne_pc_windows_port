@@ -223,8 +223,13 @@ int main() {
     h = HostTravelHoldView{};
     h.since_title = 3;
     CHECK(HostTravelHeld(h));                                      // room sent to a title joiner: wait
-    h.joiner_in_world = true;
+    h.joiner_in_world = true; h.joiner_loading = true;
+    CHECK(HostTravelHeld(h));                                      // its chr is here but its loading screen is up: wait
+    h.joiner_loading = false;
     CHECK(!HostTravelHeld(h));                                     // its chr is here: travel (it follows)
+    h.joiner_loading = true; h.since_title = kHostTravelHoldMax;
+    CHECK(!HostTravelHeld(h));                                     // waited long enough, even if still loading
+    h.joiner_loading = false;
     h.joiner_in_world = false; h.since_title = kHostTravelHoldMax;
     CHECK(!HostTravelHeld(h));                                     // waited long enough
     std::printf("party-dsummon-test: %d checks, %d failures\n", g_checks, g_failures);

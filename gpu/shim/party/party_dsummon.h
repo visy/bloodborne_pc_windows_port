@@ -181,6 +181,7 @@ struct HostTravelHoldView {
     bool done_ok = false;       // ... and said the guest joined
     bool joiner_in_world = false;  // every joining member's chr is in the host's world
     double since_title = 1e9;   // the host last sent its room to a title joiner this long ago
+    bool joiner_loading = false;   // a member's roster state is still joining / loading (its loading screen is up)
 };
 constexpr double kHostTravelHoldMax = 30.0;
 /// True: the host's lamp travel waits now.

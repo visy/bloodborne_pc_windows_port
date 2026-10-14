@@ -7641,12 +7641,20 @@ bool HostTravelHeldForJoin(std::string* who) {
         }
     }
     v.joiner_in_world = members > 0 && missing == 0;
+    if (party::PartyLink* link = party::runtime_link()) {
+        for (const party::RosterEntry& r : link->roster()) {
+            if (r.slot != party::kHostSlot && r.connected &&
+                (r.state == party::MemberState::Joining || r.state == party::MemberState::Loading)) {
+                v.joiner_loading = true;
+            }
+        }
+    }
     const bool held = dsummon::HostTravelHeld(v);
     if (held && who) {
         char b[160];
         if (v.since_title < v.since_served) {
-            std::snprintf(b, sizeof b, "a member is joining from its title (room sent %.1f s ago, %d of %d member chr(s) missing)",
-                          v.since_title, missing, members);
+            std::snprintf(b, sizeof b, "a member is joining from its title (room sent %.1f s ago, %d of %d member chr(s) missing%s)",
+                          v.since_title, missing, members, v.joiner_loading ? ", its loading screen is up" : "");
         } else {
             std::snprintf(b, sizeof b, "a member is joining (room sent %.1f s ago, %s, %d of %d member chr(s) missing)",
                           v.since_served, v.since_done <= v.since_served ? (v.done_ok ? "joined" : "failed") : "no answer yet",

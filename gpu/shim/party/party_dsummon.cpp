@@ -221,7 +221,11 @@ bool HostTravelHeld(const HostTravelHoldView& v) {
     // par_c6 (live): a title joiner gets the room without a dsum_done; a lamp travel 4 s after the
     // room was sent left it loading into the map the host had left (B1 fallback, re-summon 50 s
     // later). Held until its chr is in the host's world (or the hold runs out).
-    if (v.since_title < kHostTravelHoldMax && !v.joiner_in_world) return true;
+    // Regression run 0.6.1 (live, "FALLBACK to B1" on the first follow): the title joiner's chr is
+    // made on the host ~4 s before the joiner's own loading screen ends; a travel released then
+    // reached the guest mid title join, its load left it outside the session and the re-join took
+    // ~50 s. Held until the joiner says it is in the world (roster no longer joining / loading).
+    if (v.since_title < kHostTravelHoldMax && (!v.joiner_in_world || v.joiner_loading)) return true;
     if (!v.direct_on || v.since_served >= kHostTravelHoldMax) return false;  // nothing served lately / waited enough
     const bool done_for_this = v.since_done <= v.since_served;
     if (done_for_this && !v.done_ok) return false;                // the join failed: travel now
