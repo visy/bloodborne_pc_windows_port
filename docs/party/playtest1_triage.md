@@ -1,7 +1,7 @@
 # Playtest 1 triage (2026-10-13 Internet session, build 0.6.0 8143fda)
 
-Input: `E:\games\bbport\logs_playtest1\` (bb_bugs.txt with 18 notes; host visy = 5 runs + 1 crash dump; guest
-the guest = 5 runs). It was one ~2.5 h session, about 17:08 to 20:40 Finnish time. Head checked for "already fixed" is
+Input: `E:\games\bbport\logs_playtest1\` (bb_bugs.txt with 18 notes; host = 5 runs + 1 crash dump; guest
+= 5 runs). It was one ~2.5 h session, about 17:08 to 20:40 local time. Head checked for "already fixed" is
 `windows-upstream-0.5` at aeeb408 (git log 8143fda..HEAD, CHANGES.md "## 0.6.1 (unreleased)", and the code).
 This is read-only triage: nothing was changed, built or run. Batch 1 (deaths, rests, world reset) landed 2026-10-14 (agent/pt1deaths; b2_seamless.md "2026-10-14 (pt1deaths)"); its rows are marked in the summary.
 
@@ -950,7 +950,7 @@ No flag-apply failures (`failed N>0`: 0 in all logs), no other arena NULLs, no V
 Times come from each run's start line and file name (end time); events inside a run are in log order
 (no per-line timestamps). "join" = the guest in the host's world; "travel" = host lamp travel sent to the party.
 
-| When | Host (visy) | Guest (the guest) |
+| When | Host | Guest |
 |---|---|---|
 | 17:08:04 | **H1 starts** (game 1, new game, save slot 1). Solo prologue: host death in the clinic -> Dream (`H1:1072`, cutscenes 24010005 / 21000000 `H1:1006, 1126`), `step ready` `H1:1165`, bells granted `H1:1168-1170`, lamp travel to m24_01 `H1:1176`. | (guest runs before 18:41 are NOT in the folder) |
 | H1 | `H1:1700 the guest joined (slot 1)` (guest at title), host rings `H1:1710`; guest leaves/rejoins the link `H1:1898-1914`. | |
