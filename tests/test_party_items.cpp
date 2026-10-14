@@ -955,6 +955,24 @@ static void test_repeat_gift() {
     CHECK(q.Offer({*a}) == 1);
     CHECK(q.Offer({*a}) == 0);
     CHECK(q.Offer({*b}) == 1);
+    // While summoned: a consumable unique (Blood of Arianna: maxNum 1, goodsType 0) may be given;
+    // a key item (Queenly Flesh: goodsType 1) waits for the own world.
+    LotSlotState blood;
+    blood.category = 4;
+    blood.id = 701;
+    blood.max_num = 1;
+    blood.max_storage = 0;
+    blood.goods_type = 0;
+    LotSlotState flesh = blood;
+    flesh.id = 4305;
+    flesh.goods_type = 1;
+    CHECK(!SummonedGiveAllowed({blood}) && RepeatSummonedGiveAllowed({blood}));
+    CHECK(!RepeatSummonedGiveAllowed({flesh}) && !RepeatSummonedGiveAllowed({blood, flesh}));
+    LotSlotState elixir = blood;
+    elixir.id = 1120;
+    elixir.max_num = 10;
+    elixir.max_storage = 600;
+    CHECK(SummonedGiveAllowed({elixir}) && RepeatSummonedGiveAllowed({elixir}));
     // A peer row without a flag or ledger index (what a repeat grant would be) is refused.
     std::vector<ItemGrant> out;
     std::string err;

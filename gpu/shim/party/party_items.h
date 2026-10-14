@@ -402,6 +402,11 @@ bool LotHasKeyGoods(const std::vector<LotSlotState>& slots);
 /// May a summoned guest give these items now? Never when one is KeyGoods: the grant waits for the
 /// own world (Apply / the key-item catch-up), which reads the real held count first.
 bool SummonedGiveAllowed(const std::vector<LotSlotState>& slots);
+/// P2: a repeatable NPC gift (ItemSource::Repeat) may also be given while summoned when its unique
+/// goods are consumables (goodsType 0: Blood of Arianna / Adella, Iosefka's Blood Vial, maxNum 1):
+/// a summoned guest's consumables read their real count (it uses its vials there), unlike key items
+/// (goodsType 1, e.g. Queenly Flesh), which wait for the own world. One held already: Owned (skip).
+bool RepeatSummonedGiveAllowed(const std::vector<LotSlotState>& slots);
 /// May the own world give one more of this goods slot now? Not a KeyGoods item already held
 /// (`held` > 0), and never with an unknown count (-1) for KeyGoods.
 bool KeyGiveAllowedHeld(const LotSlotState& s, int held);
