@@ -2020,11 +2020,16 @@ void PartyHud() {
         if (!show) {
             continue;
         }
-        const float d = party::hud::Distance(b.me_pos, c.pos);
+        // The chr's position now (its physics position, read this frame), not the board's: the
+        // game tick publishes every 100 ms, so a tag placed from the board stepped at 10 Hz
+        // behind a moving companion (user report 2026-10-14). The board's is the fallback.
+        float pos[3] = {c.pos[0], c.pos[1], c.pos[2]};
+        const bool live = coop::PartyHudChrPos(c.chr, c.pos, pos);
+        const float d = party::hud::Distance(b.me_pos, pos);
         if (d > 80.0f) {
             continue;
         }
-        const float head[3] = {c.pos[0], c.pos[1] + party::hud::kTagBarHeightM, c.pos[2]};
+        const float head[3] = {pos[0], pos[1] + party::hud::kTagBarHeightM, pos[2]};
         // The reusable world-space marker projection (party_hud.h WorldToScreen; I2 pings reuse it).
         const party::hud::ScreenPoint sp =
             party::hud::WorldToScreen(cam.view.data(), cam.proj.data(), head, display.x, display.y, 0.02f);
@@ -2037,13 +2042,18 @@ void PartyHud() {
             continue;
         }
         {   // Test aids: BB_PARTY_HUD_TAGLOG=1 logs the tag's distance / camera depth / anchor once a
-            // second (plate measurements); BB_PARTY_HUD_TAG_HIDE=1 draws no tag (the game's plate alone).
-            static const bool taglog = std::getenv("BB_PARTY_HUD_TAGLOG") != nullptr;
+            // second (plate measurements), BB_PARTY_HUD_TAGLOG=frame every frame with the chr position
+            // used and the camera's age; BB_PARTY_HUD_TAG_HIDE=1 draws no tag (the game's plate alone).
+            static const char* const taglog_env = std::getenv("BB_PARTY_HUD_TAGLOG");
+            static const bool taglog = taglog_env != nullptr, every_frame = taglog && taglog_env[0] == 'f';
             static std::int64_t last_log = 0;
-            if (taglog && party::hud::NowMs() - last_log >= 1000) {
+            if (taglog && (every_frame || party::hud::NowMs() - last_log >= 1000)) {
                 last_log = party::hud::NowMs();
-                std::printf("Party HUD: tagdiag %s d=%.2f depth=%.2f x=%.1f y=%.1f display=%.0fx%.0f\n", c.name, d,
-                            sp.depth, sp.x, sp.y, display.x, display.y);
+                std::printf("Party HUD: tagdiag %s d=%.2f depth=%.2f x=%.1f y=%.1f display=%.0fx%.0f t=%lld "
+                            "chr=(%.3f %.3f %.3f) %s board=(%.3f %.3f %.3f) cam_age=%lld\n",
+                            c.name, d, sp.depth, sp.x, sp.y, display.x, display.y,
+                            static_cast<long long>(last_log), pos[0], pos[1], pos[2], live ? "live" : "board",
+                            c.pos[0], c.pos[1], c.pos[2], static_cast<long long>(BbCamera::NowMs() - cam.at_ms));
             }
             static const bool hide = std::getenv("BB_PARTY_HUD_TAG_HIDE") != nullptr;
             if (hide) {
