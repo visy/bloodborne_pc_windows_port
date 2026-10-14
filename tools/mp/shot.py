@@ -72,6 +72,8 @@ def grab(hwnd):
     r = wt.RECT()
     user32.GetClientRect(hwnd, ctypes.byref(r))
     w, h = r.right, r.bottom
+    if w <= 0 or h <= 0:  # window closing / minimized: PIL "tile cannot extend outside image"
+        return None
     hdc = user32.GetDC(hwnd)
     mdc = gdi32.CreateCompatibleDC(hdc)
     bmp = gdi32.CreateCompatibleBitmap(hdc, w, h)
@@ -101,7 +103,14 @@ def shoot(root, out, tag):
     names = []
     for inst, hwnd in windows(root):
         p = out / f"{tag}_inst{inst}.png"
-        grab(hwnd).save(p)
+        try:
+            img = grab(hwnd)
+        except Exception as e:  # one bad capture must not end the series
+            print(f"shot {tag} inst{inst}: capture failed ({e})", flush=True)
+            continue
+        if img is None:
+            continue
+        img.save(p)
         names.append(p.name)
     print("shot", tag, names, flush=True)
 
