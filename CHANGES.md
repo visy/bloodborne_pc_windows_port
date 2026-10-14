@@ -5,6 +5,10 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.6.1 (Windows port 0.6.1, party co-op)
 
+- **Keys found lying around reach the whole party**: when the host picks up the Hunter Chief Emblem, the Upper Cathedral Key, an Iron Door Key, the Lecture Theatre Key, the Underground Cell Key or the Rune / Blood Gem Workshop Tool, every party member gets it too (before, each player had to walk to the corpse, and a guest without it was locked out of the door or the Memory Altar in its own world). Other treasure stays per player.
+- **The Eye of a Blood-drunk Hunter (DLC entry) reaches guests**: its Messenger never hands it to a guest standing in the host's Dream, so the host's Eye is now passed on like other key items.
+- **A Snatcher kidnapping the host no longer follows the guest home**: the kidnap trigger was copied into the guest's own save, which would have sent the guest's next solo death to the Hypogean Gaol in Yahar'gul.
+- Docs: `docs/party/quest_audit.md`, a co-op audit of the whole campaign (key items, doors, lifts, fog walls, NPC steps, scripted warps) with a checklist for the next session.
 - **CPUs without FSGSBASE start**: `wrfsbase`/`rdfsbase` are used only where CPUID reports them (checked once, cached); elsewhere the guest thread pointer stays in the Windows TLS slot and the crash handler answers the game's `fs:` reads from it. Nothing changes on CPUs with FSGSBASE (from Mrsuss60/bloodborne_pc_windows_port 336bacc by Mrsuss60).
 - **Less VRAM growth from old depth buffers**: depth/stencil targets and shadow maps unused for a while are now freed by the texture collector (they are never read back), where before they were kept as GPU-written render targets and VRAM grew with every area visited (from Mrsuss60/bloodborne_pc_windows_port PR #89 by ALuaNegra).
 - **One loading screen when a guest rests its way back to the host, checked live**: a guest resting at a lamp (travelling alone) back into the host's area used to see two loading screens (its own travel, then the host's reset load). Now the host's reset load runs first and the guest comes in after it with one loading screen, into the reset world.
