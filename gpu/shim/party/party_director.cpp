@@ -2928,6 +2928,13 @@ void PartyDirector::Tick() {
             Log("story: own cutscene %u sent to the host (D10)", up.id);
         }
     }
+    // F5 fallback: the host's game ended the session by itself (b2::TakeHostIrregularLeave): it is
+    // over for every member, but the host's game takes ~30 s to leave the room (live), and meanwhile
+    // a guest would stand in a dead session (0.6.1 regression run). The guests hear it at once.
+    if (link && role == PartyRole::Host && b2::TakeHostIrregularLeave()) {
+        link->post_event(party::kBroadcast, kHostSessionEndEvent, "{\"why\":\"irregular_leave\"}");
+        Log("F5: our game ended the session irregularly (OnIrregularLeaveSession): the members go home now");
+    }
     if (link && role == PartyRole::Host) {
         TravelIntent t;
         if (s.session_role == RoleHost) {

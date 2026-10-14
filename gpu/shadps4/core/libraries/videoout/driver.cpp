@@ -316,6 +316,7 @@ void RecordFlipFrameTime() {
         double ms = std::chrono::duration<double, std::milli>(now - s_last_flip_pt).count();
         size_t idx = s_ft_count.fetch_add(1, std::memory_order_relaxed);
         s_ft_history[idx % FT_HISTORY_CAP] = ms;
+        BbCompileProgress::RecordFlipMs(ms); // bbport: the world warper's hitch counts
     }
     s_last_flip_pt = now;
 }

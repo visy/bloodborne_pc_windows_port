@@ -4,6 +4,7 @@
 #include "bbport_stability.h"
 #include "party/party_director.h"
 #include "party/lamp_travel.h"
+#include "party/world_warper.h"
 #include "party/coop_hooks.h"
 // bbport: glue between the C loader and the vendored shadPS4 video core.
 #include "bbport_overlay.h"
@@ -35,6 +36,7 @@
 #include "common/logging/log.h"
 #include "common/rdtsc.h"
 #include "video_core/renderer_vulkan/vk_breadcrumbs.h"
+#include "video_core/cache_storage.h"
 #include "core/libraries/kernel/orbis_error.h"
 #include "core/libraries/libs.h"
 #include "core/emulator_settings.h"
@@ -285,6 +287,8 @@ extern "C" void bbgpu_save_caches(void) {
         if (auto* cache = Vulkan::PipelineCache::driver_cache_owner.load()) {
             cache->SaveDriverPipelineCache(true);
         }
+        // The shader cache's queued writes (keys and sources of this session's new pipelines).
+        Storage::DataBase::Instance().Flush();
         done->store(true);
     }).detach();
     for (int i = 0; i < 500 && !done->load(); ++i) {
@@ -395,6 +399,7 @@ extern "C" void bbgpu_patch_image(unsigned char* image, uint64_t size) {
     bbnet_set_image(image, size);  // the party library's view of game data (gpu/shim/net)
     coop::HooksInit(image, size);  // the image for game-state reads (the performance HUD's menu / banner check, solo too)
     coop::lamptravel::Install(image, size);  // direct lamp travel (solo and party; BB_LAMP_TRAVEL=0 off)
+    coop::warper::Install(image, size);  // the world warper (BB_WORLD_WARPER, solo shader-cache builder)
     if (coop::PartyRequested()) {
         coop::PartyInit(image, size);  // party co-op: main-thread tick, Lua events, director
     }

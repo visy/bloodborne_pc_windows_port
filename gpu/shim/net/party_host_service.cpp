@@ -177,6 +177,9 @@ struct PartyHostService::Impl {
     std::map<std::uint64_t, Room> rooms;
     std::map<std::string, Queue> queues;
     std::set<std::string> loading;
+    // Members whose heartbeat timeout was held by the loading query (an outage, a load): when the
+    // hold ends their clock starts over (they could not beat meanwhile).
+    std::set<std::string> held_late;
     std::function<bool(const std::string&)> loading_query;
     std::function<std::int64_t()> clock = steady_ms;
     int heartbeat_timeout_ms = 15000;
@@ -746,7 +749,15 @@ void PartyHostService::tick() {
         auto mit = rit->second.members.find(late[i].member);
         if (mit == rit->second.members.end() || now - mit->second.last_heartbeat_ms <= d_->heartbeat_timeout_ms) continue;
         if (held[i] || d_->loading.count(late[i].online_id)) {
-            if (party_trace()) log("party host: %s is loading; its heartbeat timeout is held", late[i].online_id.c_str());
+            if (d_->held_late.insert(late[i].online_id).second || party_trace())
+                log("party host: %s is loading or silent; its heartbeat timeout is held", late[i].online_id.c_str());
+            continue;
+        }
+        if (d_->held_late.erase(late[i].online_id)) {
+            // F5: back from an outage (or a load) that held its timeout: 0.6.1 removed it here, 0.6 s
+            // after the link resumed, before its next heartbeat could arrive.
+            log("party host: %s is back from a held heartbeat timeout; its clock starts over", late[i].online_id.c_str());
+            mit->second.last_heartbeat_ms = now;
             continue;
         }
         d_->remove_member_locked(late[i].room, late[i].member, "timeout", nullptr);
