@@ -116,6 +116,35 @@ which is reliable (TCP or the reliable UDP stream), so a lost datagram costs a r
 request; the 4 s answer wait (`kAnswerWait`) had 3.6 s to spare at 0.4 s, the 8 s entry/join
 waits 6 s. No retry or timeout change was needed.
 
+### 3d. No guest code: the DHT rendezvous under the NAT sim (2026-10-14, 0.6.1)
+
+`BB_NET_SIM=dsl,nat=1` on both (no TCP listener on the host, unsolicited UDP dropped), **no
+`BB_PARTY_GUEST_CODE_FILE`**, `BB_PARTY_DHT_BOOTSTRAP=127.0.0.1:46881` pointing at
+`tools/mp/fake_dht.py` (one DHT node on loopback standing in for the public DHT). Title join with
+existing characters, one clock for both logs:
+
+| Time | Host | Guest |
+|---|---|---|
+| +17.4 | `NAT: cone (no open port)`, `rendezvous: looking for guests in the DHT every 5 s` | |
+| +21.1 | | `NAT: cone; ... hole punching works (endpoint exchanged automatically)` |
+| +22.6 | | `no TCP answer from the host; connecting over UDP` |
+| +24.2 | | `rendezvous: announce done: ... stored at 1` |
+| +27.5 | `a guest's endpoint 127.0.0.1:47601 found in the DHT`, `punching towards a guest` | |
+| +27.7 | | the first UDP attempt (started before the punch) times out, retried |
+| +30.2 / +30.5 | `Hunter1 rejoined (slot 1)` | `connected over UDP`, `network path: party link over UDP` |
+| +32.1 | | title join: `client (6)` |
+| +39.1 / +40.8 | `cooperators 0 -> 1` | `arrived 0.5 m from the host` |
+
+Screenshots every 15 s: both hunters side by side in the host's world from 45 s to the end
+(130 s), no glitch; the guest has the shared key items box open (nobody pressed OK). A first run
+with the host polling every 10 s connected too (link over UDP 2.3 s after the announce), but the
+guest's title screen showed *Failed to acquire Bloodborne server information* once at 20 s, while
+its game waited for the link. The run then stopped at 28 s on its end markers, so the outcome of
+that box was not seen. The host now polls every 5 s; in the second run the link was up 6 s after
+the announce and no such box showed.
+Not covered: the real DHT (public bootstrap nodes) and a real router. Both test instances stay
+on 127.0.0.1.
+
 ## 4. NAT: what a host must do
 
 - **Guests**: nothing. They connect out (TCP to the host, UDP to the host's port). Their own NAT
@@ -170,7 +199,7 @@ waits 6 s. No retry or timeout change was needed.
      to the 8 closest nodes (the node records the guest's public IP). Repeated every 45 s while
      the link is down; read-only node (BEP 43), so nobody routes through us.
   3. Host, only without an open port (no UPnP mapping, no override, not on a public IP): a
-     `get_peers` lookup every 10 s (the first from the bootstrap nodes, later ones seeded with the
+     `get_peers` lookup every 5 s (the first from the bootstrap nodes, later ones seeded with the
      closest nodes found: one hop). Every endpoint found is punched exactly like a pasted guest
      code (at most once per 50 s per endpoint). The guest's UDP SYNs then get in (§ above).
   4. Bootstrap: `router.bittorrent.com`, `dht.transmissionbt.com`, `router.utorrent.com`,

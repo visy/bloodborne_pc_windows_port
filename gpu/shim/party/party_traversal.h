@@ -36,7 +36,7 @@ std::uint16_t simulated_mapped_port(std::uint16_t party_port);
 
 bool rendezvous_enabled(bool loopback);
 
-// Host: look the party up in the DHT every 10 s and call `punch` for each guest endpoint found
+// Host: look the party up in the DHT every 5 s and call `punch` for each guest endpoint found
 // (an endpoint at most once per 50 s). `key`: the party key (32 bytes).
 void start_host(const std::uint8_t* key, bool loopback,
                 std::function<void(std::uint32_t addr_nbo, std::uint16_t port_nbo)> punch, Log log);

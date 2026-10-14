@@ -10,7 +10,7 @@
 //           first, for their tokens). The DHT node records the request's source address, which is
 //           the guest's public IP; the port is the party port's mapping. Repeated every 45 s
 //           while the link is not up.
-//   host  = without an open port, a get_peers lookup for info_hash every 10 s (seeded with the
+//   host  = without an open port, a get_peers lookup for info_hash every 5 s (seeded with the
 //           closest nodes of the previous lookup, so one hop after the first): every endpoint
 //           found is punched exactly like a pasted guest code (party_link punch_guest).
 //

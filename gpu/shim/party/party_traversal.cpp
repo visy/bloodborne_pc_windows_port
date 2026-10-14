@@ -98,12 +98,12 @@ void start_host(const std::uint8_t* key, bool loopback,
             (*last)[k] = now;
             punch(e.addr, e.port);
         },
-        10000);
+        5000);
     if (!ok) {
         if (log) log("rendezvous: no UDP socket for the DHT");
         return;
     }
-    if (log) log("rendezvous: looking for guests in the DHT every 10 s (no open port; BB_PARTY_RENDEZVOUS=0 turns it off)");
+    if (log) log("rendezvous: looking for guests in the DHT every 5 s (no open port; BB_PARTY_RENDEZVOUS=0 turns it off)");
     std::lock_guard<std::mutex> lk(g_mu);
     g_host = std::move(r);
 }
