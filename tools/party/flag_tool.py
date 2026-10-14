@@ -634,6 +634,14 @@ OVERRIDE_ROWS = (
         (12100002, 12100002, "never_sync", "ending event (m21); C4 replay only"),
         (12100180, 12100180, "never_sync", "A ending event (m21); C4 replay only"),
         (72100130, 72100131, "never_sync", "Gehrman's offer submit/refuse -> A ending / fight; C4 replay only"),
+        # Playtest 1 bug 10: each player levels up at its own Doll (ERSC_PARITY H5). The Doll's
+        # level-up handshake and its animations (m21 events 12100112-12100118, network-synced on
+        # the player who talks) set in the host's world made the HOST kneel / the Doll gesture.
+        (12100112, 12100118, "never_sync", "per-player: Doll level-up kneel / gesture / SFX / bow / reactions (m21 events 12100112-118)"),
+        (72100100, 72100102, "never_sync", "per-player: Doll talk t210304 level-up handshake (72100100 -> 72100101 + 72100102)"),
+        (72100105, 72100108, "never_sync", "per-player: Doll idle talk / bow / surprise triggers (m21 events 12100111, 12100115, 12100116)"),
+        (72100110, 72100110, "never_sync", "per-player: Doll talk t210304 state (set as the talk opens)"),
+        (72100113, 72100113, "never_sync", "per-player: Doll talk t210304 state after a level-up"),
     ])
 
 # per map, per type / zone default (zone = 4th digit from the right of TAABZnnn)

@@ -1701,9 +1701,15 @@ void LogLampTalks() {
         return;
     }
     last = Now();
-    // Counted silently (the scripts ask 30 times a second while near); logged in tests only.
-    if (const std::uint32_t m = g_world_talk_overrides.exchange(0, std::memory_order_relaxed); m && !g.test.empty()) {
-        Log("guest NPC talk in the host's world asked IsClientPlayer %u times (answered 0)", m);
+    // Counted silently (the scripts ask 30 times a second while near); logged every second in
+    // tests, else at most once a minute (playtest 1 bug 5: the logs could not show the override).
+    static double world_talk_logged = -1e9;
+    static std::uint32_t world_talk_sum = 0;
+    world_talk_sum += g_world_talk_overrides.exchange(0, std::memory_order_relaxed);
+    if (world_talk_sum && (!g.test.empty() || Now() - world_talk_logged >= 60.0)) {
+        Log("guest NPC talk in the host's world asked IsClientPlayer %u times (answered 0)", world_talk_sum);
+        world_talk_sum = 0;
+        world_talk_logged = Now();
     }
     if (const std::uint32_t m = g_lamp_talk_overrides.exchange(0, std::memory_order_relaxed); m && !g.test.empty()) {
         Log("guest lamp talk asked IsClientPlayer %u times (answered 0)", m);
@@ -1713,8 +1719,11 @@ void LogLampTalks() {
         const std::uint32_t t = g_client_talks[i].load(std::memory_order_relaxed);
         if (t && client_logged[i] != t) {
             client_logged[i] = t;
+            const bool world_talk = g_world_talk.load(std::memory_order_relaxed) && worldact::WorldTalkAllowed(t);
             Log("talk t%06u asks IsClientPlayer (%s)", t,
-                LampTalk(t) && !HeadstoneTalk(t) ? "world lamp: answered 0 with BB_PARTY_GUEST_LAMPS=1" : "as before");
+                LampTalk(t) && !HeadstoneTalk(t) ? "world lamp: answered 0 with BB_PARTY_GUEST_LAMPS=1"
+                : world_talk                     ? "NPC talk in the host's world: answered 0 (D8)"
+                                                 : "as before");
         }
     }
     static std::uint32_t multi_logged[16] = {};

@@ -2,6 +2,7 @@
 // Guest world actions (gpu/shim/party/party_worldact.h): the whitelist, the request JSON and its
 // validation, the host's rate limit, the NPC talk allowance.
 // cmake --build out/gpu --target party-worldact-test && out/gpu/party-worldact-test
+#include "party/party_npcghost.h"
 #include "party/party_progress.h"
 #include "party/party_worldact.h"
 
@@ -151,6 +152,59 @@ int main() {
         assert(!RequestFromJson("{\"v\":1,\"map\":0,\"set\":[],\"clr\":[],\"fog\":[12414701,12414701]}", &back, &why));
         assert(!RequestFromJson("{\"v\":1,\"map\":0,\"set\":[],\"clr\":[],\"fog\":[12414701,12414801,12204801]}", &back, &why));
         assert(!RequestFromJson("{\"v\":1,\"map\":0,\"set\":[],\"clr\":[],\"fog\":7}", &back, &why));
+    }
+    // Playtest 1 bug 8: a FIRST fight still starts with the host (intro condition stays); the
+    // guest at that fog gets a notice instead of a dead fog.
+    {
+        const BossGate& gas = *BossGateByEvent(12414811);
+        assert(gas.intro_flag == 12411802 && gas.fog_entity == 2411810);
+        assert(BossGateWaitsForHost(gas, false, false, false));
+        assert(!BossGateWaitsForHost(gas, true, false, false));  // the host had its first fight: fog-first works
+        assert(!BossGateWaitsForHost(gas, false, true, false));  // the host is in: the fog opens anyway
+        assert(!BossGateWaitsForHost(gas, false, false, true));  // boss dead
+        assert(!BossGateWaitsForHost(*BossGateByEvent(12424711), false, false, false));  // no intro condition
+        assert(BossGateInBlock(gas, m2401) && !BossGateInBlock(gas, m2400) && !BossGateInBlock(gas, 0xffffffffu));
+        for (const BossGate& g : BossGates()) {
+            // The fog object and the intro flag belong to the gate's own map block.
+            assert(std::uint32_t(g.fog_entity) / 100000 == g.host_flag / 100000 % 100 &&
+                   std::uint32_t(g.fog_entity) / 10000 % 10 == g.host_flag / 10000 % 10);
+            assert(g.intro_flag == 0 || (g.intro_flag / 10000 == g.boss_flag / 10000 && g.intro_flag != g.boss_flag));
+            assert(g.intro_flag == 0 || pg::CategoryOf(g.intro_flag) != pg::Category::never_sync);  // the guest sees the host's value
+        }
+    }
+    // Playtest 1 bug 10: the Doll's level-up handshake and animations stay with the player who
+    // levels up (the host knelt and its Doll gestured for the guest's level-up).
+    for (std::uint32_t id : {72100100u, 72100101u, 72100102u, 72100105u, 72100108u, 72100110u, 72100113u, 12100112u,
+                             12100113u, 12100114u, 12100118u}) {
+        assert(pg::CategoryOf(id) == pg::Category::never_sync);
+        assert(!WorldActionAllowed(id, false, dream) && !WorldActionAllowed(id, true, dream));
+    }
+    assert(pg::CategoryOf(72100114u) == pg::Category::npc_quest);  // the Doll's key-item gift: unchanged
+    assert(pg::CategoryOf(12100110u) == pg::Category::npc_quest);  // the Doll's stand spot: unchanged
+    // Playtest 1 bugs 11 / 17: talk NPCs stay solid for guests (NpcParam isChangeWanderGhost).
+    {
+        namespace ng = coop::npcghost;
+        for (std::uint32_t row : {803000u, 804000u, 6060u, 6070u, 6151u, 6155u, 6160u, 113010u, 6113u, 8125u}) {
+            assert(ng::FindTalkNpcRow(row));
+        }
+        for (std::uint32_t row : {109100u, 111010u, 402080u, 504020u, 513000u, 901000u}) {  // enemies, no-bit rows
+            assert(!ng::FindTalkNpcRow(row));
+        }
+        std::uint8_t out = 0;
+        const ng::GhostRow& doll = *ng::FindTalkNpcRow(803000);
+        assert(ng::Decide(doll, 0x80, &out) == ng::Verdict::write && out == 0x00);
+        assert(ng::Decide(doll, 0x00, &out) == ng::Verdict::holds);
+        assert(ng::Decide(doll, 0x81, &out) == ng::Verdict::refuse);  // another data version: left alone
+        const ng::GhostRow& dweller = *ng::FindTalkNpcRow(113010);
+        assert(ng::Decide(dweller, 0xc0, &out) == ng::Verdict::write && out == 0x40);  // isUnduration kept
+        assert(ng::Decide(dweller, 0x40, &out) == ng::Verdict::holds);
+        assert(ng::Decide(dweller, 0x80, &out) == ng::Verdict::refuse);
+        for (std::size_t i = 0; i < ng::kTalkNpcRowCount; ++i) {
+            assert(ng::kTalkNpcRows[i].byte & ng::kBit);
+            for (std::size_t j = i + 1; j < ng::kTalkNpcRowCount; ++j) {
+                assert(ng::kTalkNpcRows[i].row < ng::kTalkNpcRows[j].row);  // sorted, unique
+            }
+        }
     }
     std::printf("party-worldact-test: ok\n");
     return 0;
