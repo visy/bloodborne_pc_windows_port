@@ -52,6 +52,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -199,6 +200,9 @@ public:
     /// The item running now is a summoned replay (mode-2 play, own-pool writes).
     bool RunningSummoned() const { return running_ && running_summoned_; }
     bool Seen(std::uint32_t remo_id) const;
+    /// The guest watched this scene in its own world (its own event played it): a later catch-up
+    /// replay of the host's copy skips the scene and keeps only its flags / time of day.
+    void NoteSeen(std::uint32_t remo_id);
     std::size_t QueueSize() const { return queue_.size(); }
     bool MirrorPending() const { return mirror_.has_value(); }
     bool Running() const { return running_; }
@@ -253,6 +257,21 @@ inline bool StoryDedupeSkip(bool enabled, int bank, int id, int event_id, bool c
 }
 /// BB_PARTY_STORY_DEDUPE: unset / anything but "0" = on.
 inline bool StoryDedupeEnabled(const char* env) { return !(env && env[0] == '0' && env[1] == 0); }
+
+/// D10 belt and braces (playtest 1 bug 14): the host plays a guest's story_up cutscene for the
+/// whole party unless the host played that scene in the last kRecent s (its own event, or an
+/// earlier guest's) or the host is in a boss fight (the guest's copy of a first-fight intro
+/// arriving after the host's own intro already started the fight). Not thread-safe (callers lock).
+class HostStoryUpGuard {
+public:
+    static constexpr double kRecent = 600.0;
+    void NotePlayed(std::uint32_t remo_id, double now);
+    /// nullptr: play it; else why not.
+    const char* Refuse(std::uint32_t remo_id, bool boss_fight, double now) const;
+
+private:
+    std::map<std::uint32_t, double> played_;  // base remo id -> last play
+};
 
 #ifndef BB_PARTY_STORY_NO_GAME
 /// bbgpu_patch_image, once, after coop::HooksInit (party mode only): the bank-2002 capture hook.

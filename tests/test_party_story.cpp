@@ -550,6 +550,39 @@ static void test_dedupe_skip() {
     CHECK(!StoryDedupeSkip(true, 2002, 3, 0, true, true));
 }
 
+// Playtest 1 extra problem: a guest who watched its own first Dream (21000000) got the host's
+// copy as a catch-up replay later. NoteSeen skips the scene, the flags still come.
+static void test_own_world_scene_not_replayed() {
+    GuestStory g;
+    double t = 0;
+    g.NoteSeen(28001040);  // the sex variant counts as its base scene
+    CHECK(g.Seen(28000040));
+    CHECK(g.TakeDirty());
+    g.NoteSeen(28000040);
+    CHECK(!g.TakeDirty());  // nothing new
+    StoryIntent s;
+    s.seq = 3;
+    s.kind = StoryKind::Cutscene;
+    s.id = 28000040;
+    CHECK(g.Offer(s, false, t));
+    auto a = Until(g, OwnWorld(), t);
+    CHECK(a && a->kind == StoryAction::SetFlags && a->flags == std::vector<std::uint32_t>{12800434});
+}
+
+// Playtest 1 bug 14: the host replayed Gascoigne's intro (a guest's story_up) mid-fight.
+static void test_host_story_up_guard() {
+    HostStoryUpGuard h;
+    CHECK(h.Refuse(24010010, false, 0) == nullptr);
+    CHECK(h.Refuse(24010010, true, 0) != nullptr);  // boss fight: never
+    h.NotePlayed(24010010, 100);
+    CHECK(h.Refuse(24010010, false, 100 + 47) != nullptr);
+    CHECK(h.Refuse(24010010, false, 100 + HostStoryUpGuard::kRecent - 1) != nullptr);
+    CHECK(h.Refuse(24010010, false, 100 + HostStoryUpGuard::kRecent + 1) == nullptr);
+    CHECK(h.Refuse(24000020, false, 150) == nullptr);  // another scene
+    h.NotePlayed(28001040, 200);                        // sex variant: same scene
+    CHECK(h.Refuse(28000040, false, 210) != nullptr);
+}
+
 int main() {
     test_tables();
     test_json();
@@ -564,6 +597,8 @@ int main() {
     test_endings();
     test_persistence();
     test_dedupe_skip();
+    test_own_world_scene_not_replayed();
+    test_host_story_up_guard();
     std::printf("party-story-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

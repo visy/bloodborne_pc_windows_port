@@ -107,6 +107,10 @@ const std::vector<GateRule>& GateRules();
 /// an event argument.
 struct BossGate {
     std::uint32_t guest_event, host_flag, guest_flag, boss_flag;
+    /// The guest-entry event's other ON condition: the host's first-fight entry (usually an intro
+    /// cutscene) has run. It stays a condition, so a FIRST fight still starts with the host; 0 none.
+    std::uint32_t intro_flag = 0;
+    std::int32_t fog_entity = 0;  ///< the fog's map object (the event's action-button target)
 };
 const std::vector<BossGate>& BossGates();
 const BossGate* BossGateByEvent(std::int32_t guest_event);
@@ -118,6 +122,15 @@ bool BossGateSkipCondition(std::int32_t event_id, int bank, int id, std::uint32_
 /// lives, a guest is in, the host's own flag is not yet set and the host stands in the boss's area
 /// block (map 0xAABBCCDD).
 bool BossGateHostOpens(const BossGate& g, bool guest_in, bool host_in, bool boss_dead, std::uint32_t host_map);
+/// Guest at a boss fog (playtest 1 bug 8): the fog has no prompt because the host has not had its
+/// first fight here yet (intro_flag off). The guest is told to wait for the host.
+bool BossGateWaitsForHost(const BossGate& g, bool intro_done, bool host_in, bool boss_dead);
+/// The map 0xAABBCCDD is the gate's area block.
+bool BossGateInBlock(const BossGate& g, std::uint32_t map);
+/// The guest's notice at such a fog.
+constexpr const char* kBossFogWaitNotice = "Boss fog: the host goes in first (first fight here)";
+/// Within this many metres of the fog object the notice shows.
+constexpr float kBossFogNoticeRange = 5.0f;
 
 // ---- game side ----
 void Init();

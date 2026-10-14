@@ -150,7 +150,8 @@ single-player save is never touched. Settings: *System → Party* pages in the g
   guest's own save).
 - **Guests can talk to NPCs** in the host's world (Gilbert, Iosefka, Eileen ...); quest choices
   are shared by the whole party: a quest step the host makes also moves the NPC in every guest's
-  own save (no stale NPC state left behind).
+  own save (no stale NPC state left behind). NPCs look solid for guests (no see-through
+  "ghosts"), and a level-up at the Doll stays in the levelling player's own game.
 - **NPC gifts are shared**: an item an NPC gives a guest in the host's world goes to the host and
   every other party member too (the NPC has moved on for everyone, so nobody misses it).
 - **Enemy drops for each player.** Every player gets their own roll of each enemy's drop.
