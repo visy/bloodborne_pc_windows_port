@@ -22,7 +22,10 @@
 // Test aid BB_LAMP_TRAVEL_TEST (scripted, in-process pad only): "continue" (solo: Cross on the
 // title until the world is up), "members" (party host: wait for a cooperator), "lamp=ID" (stand
 // at that lamp; default the nearest lit lamp of the map), "to=ID|other" (the entry to choose;
-// other = the first lamp of another map).
+// other = the first lamp of another map), "start=ID" (first a plain lamp warp there when the save is in
+// another map; "startany": also in the same map), "titleany" (title presses also in a party process
+// whose host never answers: Right = CANCEL on the server error, Cross), "dream" (Cross / Left / Cross at
+// the lamp - the vanilla Dream box - done once a load starts).
 #pragma once
 
 #include <cstdint>
