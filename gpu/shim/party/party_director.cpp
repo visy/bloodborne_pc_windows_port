@@ -2540,6 +2540,10 @@ void PartyDirector::ConfigureFromEnv() {
                 if (const std::size_t hash = item.find('#'); hash != std::string::npos) {
                     step.min_join = std::atoi(item.c_str() + hash + 1);
                 }
+                // "%MAP#N" / "%MAP!": the map name ends at the next option (a '#2' in it never matched).
+                if (const std::size_t cut = step.map.find_first_of("#!@"); cut != std::string::npos) {
+                    step.map.erase(cut);
+                }
                 st.test.steps.push_back(step);
             } else if (item.rfind("host_mark", 0) == 0 || item.rfind("guest_mark", 0) == 0 ||
                        item.rfind("host_stage=", 0) == 0 || item.rfind("host_walk=", 0) == 0 ||
@@ -2577,6 +2581,10 @@ void PartyDirector::ConfigureFromEnv() {
                 }
                 if (const std::size_t hash = item.find('#'); hash != std::string::npos) {
                     step.min_join = std::atoi(item.c_str() + hash + 1);
+                }
+                // "%MAP#N" / "%MAP!": the map name ends at the next option (a '#2' in it never matched).
+                if (const std::size_t cut = step.map.find_first_of("#!@"); cut != std::string::npos) {
+                    step.map.erase(cut);
                 }
                 st.test.steps.push_back(step);
             } else if (!item.empty()) {

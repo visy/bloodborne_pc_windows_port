@@ -51,6 +51,13 @@ constexpr double kRateWindow = 10.0;
 /// standing in map `host_map` (0xAABBCCDD; areas must match for map flags)?
 bool WorldActionAllowed(std::uint32_t id, bool clear, std::uint32_t host_map);
 
+/// An NPC gift trigger: the flag a talk script sets to hand over its gift, which common event 9040
+/// (slots 2-37) waits for to award the gift's item lot (9042, 9045-9052, 9054-9064, 9066, 9067, 9069,
+/// 9071-9077; quest_audit.md P1). 9040 ends at once on a client, so a guest's talk awards nothing
+/// in its own game: the guest sends the trigger to the host (set only), whose 9040 awards the lot
+/// and C3 hands it to every member. 9043 is a repeatable 9100 slot, not one of these.
+bool NpcGiftTrigger(std::uint32_t id);
+
 constexpr std::size_t kMaxKicks = 4, kMaxFog = 2;
 struct Request {
     std::uint32_t map = 0;  ///< the guest's map when it sent this (logged; not trusted)
