@@ -6,6 +6,7 @@
 #include "game_state.h"
 #include "lamp_travel_rules.h"
 #include "party_async_io.h"
+#include "party_balance.h"
 #include "party_director.h"
 #include "party_ids.h"
 #include "party_split.h"
@@ -237,6 +238,7 @@ bool TryOpen(u64 orig_ctx, u64 a2, u64 a3, u64 a4, u64 a5) {
     // handle, and the command records the lamp as the last lamp (its chr id + 1000, a rest here).
     run(MakeCall(kCmdOpenWarpMenu, {}));
     g_inside = false;
+    balance::NoteLampMenuOpened();  // the lamp's menu opened: a rest for the rot (#21), as the Dream question
     // The script's next test reads the generic dialog's result: none (-1), so it takes its CANCEL
     // path instead of a stale YES that would start the Dream trip.
     if (const u64 dlg = Field<u64>(mm, 0xd08)) SafeWrite(dlg + 0x18, &minus, 4);
