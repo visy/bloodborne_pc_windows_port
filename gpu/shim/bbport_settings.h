@@ -192,6 +192,30 @@ struct Values {
     /// Party tab) overrides at start. Read when the party starts (System > Party rules).
     std::atomic<bool> party_rendezvous{false};
 
+    /// Native HDR output (bbport_hdr.h, docs/party/ERSC_PARITY.md I4): an HDR10 swapchain with the
+    /// SDR picture expanded by an inverse tone curve. Off by default (ini hdr, BB_HDR). On restart.
+    std::atomic<bool> hdr{false};
+    /// Peak brightness in cd/m2; 0 = the display's reported maximum, else 1000 (ini
+    /// hdr_peak_nits, BB_HDR_PEAK). Live.
+    std::atomic<int> hdr_peak_nits{0};
+    /// Paper white: where the SDR picture's mid-tones and the port's overlay sit, cd/m2 (ini
+    /// hdr_paper_white, BB_HDR_PAPER_WHITE). Live.
+    std::atomic<int> hdr_paper_white{200};
+    /// Highlight strength: 0 = the SDR picture at paper white, 1 = SDR white reaches the peak,
+    /// up to 1.5 (more highlights at the peak); saturation 0.5 .. 1.5, 1 = the game's (ini
+    /// hdr_strength / hdr_saturation, BB_HDR_STRENGTH / BB_HDR_SATURATION). Live.
+    std::atomic<float> hdr_strength{1.0f};
+    std::atomic<float> hdr_saturation{1.0f};
+    /// The calibration pattern over the top of the picture (System > HDR; BB_HDR_PATTERN=1;
+    /// never saved). Live.
+    std::atomic<bool> hdr_calibration{false};
+    /// Set by the renderer: the swapchain's encoding this session (BbHdr::Encoding: 0 SDR, 1
+    /// HDR10 PQ, 2 scRGB), the peak the display reports (cd/m2, 0 unknown), and why HDR was asked
+    /// for but does not run (null otherwise).
+    std::atomic<int> hdr_active{0};
+    std::atomic<float> hdr_display_peak{0.0f};
+    std::atomic<const char*> hdr_problem{nullptr};
+
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
     int startup_preset = NativeAA;
     int startup_upscaler = UpscalerFsr3;
@@ -204,6 +228,7 @@ struct Values {
     int startup_frame_generation = 0;
     int startup_fg_backend = FgDlss;
     int startup_reflex = ReflexOff;
+    bool startup_hdr = false;
 };
 
 Values& Get();
@@ -241,6 +266,9 @@ void Save();
 /// written (the launcher's mouse & keyboard dialog while the game runs), re-reads the mouse
 /// tuning keys (mk_sens_*, mk_invert_*, mk_deadzone, mk_smoothing, mk_wheel) only.
 void ReloadMouseTuning();
+
+/// The peak brightness the HDR curve uses now (setting, else the display's, else 1000).
+float HdrPeakNits();
 
 /// Render resolution divisor of a preset (1.0 native, 1.5 quality, ...).
 float PresetScale(int preset);

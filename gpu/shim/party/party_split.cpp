@@ -86,8 +86,19 @@ struct Pending {
     u64 dialog = 0;
     int test_step = 0;
     double test_at = 0;
+    bool after_scene = false;  // a story warp: ask once its cutscene is over (kAskAfterSceneDelay)
 };
 std::mutex g_mu;
+std::atomic<double> g_story_at{-1};  // NoteStoryWarp
+double g_remo_seen_at = -1;          // main thread: last tick a cutscene (remo) was playing
+
+/// SprjRemo player +0x168 bit 0 (party_catchup's RemoPlaying).
+bool SceneRunning() {
+    u64 remo = 0, player = 0;
+    std::uint8_t bits = 0;
+    return SafeGet(Guest(0x5540058), &remo) && remo && SafeGet(remo + 8, &player) && player &&
+           SafeGet(player + 0x168, &bits) && (bits & 1);
+}
 int g_asked = 0;  // questions opened (BB_PARTY_SPLIT_TEST answers them in order)
 Pending g_p;  // under g_mu (OnLampWarp: game thread; Tick: main thread - the same thread in practice)
 
@@ -306,6 +317,11 @@ void NoteLocalUse(std::uint32_t id) {
     g_local_at = Now();
 }
 
+void NoteStoryWarp(std::uint32_t id) {
+    NoteLocalUse(id);
+    g_story_at = Now();
+}
+
 bool OnLampWarp(std::uint32_t id) {
     return Hold(id, false);
 }
@@ -389,6 +405,7 @@ bool Hold(std::uint32_t id, bool mark) {
     g_p.host = host;
     g_p.mark = mark;
     g_p.since = Now();
+    g_p.after_scene = !mark && Age(g_story_at, g_p.since) >= 0 && Age(g_story_at, g_p.since) <= 2.0;
     Log("%s %u (%s): held for the choice (mode %s)", mark ? "Hunter's Mark to lamp" : "lamp", id, host ? "host" : "guest",
         ModeName(CurrentMode()));
     return true;
@@ -503,6 +520,20 @@ void Tick(const GameSnapshot& s, party::PartyLink* link) {
     if (CurrentMode() == Mode::Alone) {
         finish();
         Carry(p, true, "BB_PARTY_TRAVEL_CHOICE=alone");
+        return;
+    }
+    if (SceneRunning()) {
+        g_remo_seen_at = now;
+    }
+    if (p.state == Ask::Queued && p.after_scene &&
+        (now - p.since < deathrules::kAskAfterSceneDelay ||
+         (g_remo_seen_at >= 0 && now - g_remo_seen_at < deathrules::kAskAfterSceneDelay))) {
+        static double logged = -1;
+        if (logged != p.since) {
+            logged = p.since;
+            Log("lamp %u: a story warp; the question waits until its scene is over (+%.1f s)", p.id,
+                deathrules::kAskAfterSceneDelay);
+        }
         return;
     }
     if (p.state == Ask::Queued) {

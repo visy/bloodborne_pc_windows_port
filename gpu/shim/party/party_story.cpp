@@ -560,7 +560,11 @@ std::optional<StoryAction> GuestStory::RunOps(const StoryState& st, double now) 
             return std::nullopt;
         case Op::WaitRemoEnd:
             if (!st.remo_playing || now - op_since_ > kRemoTimeout) {
-                if (cur_.kind == StoryKind::Cutscene) {
+                const bool cut = running_mirror_ && !st.remo_playing && now - op_since_ < kMirrorMinSeen;
+                if (cut) {
+                    mirror_cut_ = BaseRemo(cur_.id);
+                }
+                if (cur_.kind == StoryKind::Cutscene && !cut) {
                     seen_.insert(BaseRemo(cur_.id));
                     dirty_ = true;
                 }
@@ -1669,6 +1673,10 @@ void StoryTick() {
         }
         std::lock_guard<std::mutex> lk(g_guest_mu);
         a = g_guest.Step(st, now);
+        if (const u32 cut = g_guest.TakeMirrorCut()) {
+            Log("live mirror of remo %u stopped after less than %.0f s (a load or travel cut it): not seen; the "
+                "queued replay plays it once this game is steady", cut, GuestStory::kMirrorMinSeen);
+        }
     }
     if (a) {
         Run(*a);

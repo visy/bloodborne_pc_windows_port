@@ -45,6 +45,13 @@ class SceneTargets;
 void DumpFinalFrameIfDue(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
                          vk::Image image, u32 width, u32 height, vk::Format format);
 
+/// bbport BB_HDR_DUMP_TRIGGER (HDR output, I4): when the trigger file exists (consumed), the SDR
+/// frame (A2B10G10R10) and the HDR swapchain image as drawn (both in General) are saved as
+/// hdr_frame_* / hdr_out_* in BB_DUMP_DIR, for tools/windows/hdr_check.py.
+void DumpHdrIfDue(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
+                  vk::Image frame, u32 frame_width, u32 frame_height, vk::Image output,
+                  u32 output_width, u32 output_height, const char* output_format);
+
 class TemporalUpscaler {
 public:
     TemporalUpscaler(const Instance& instance, Scheduler& scheduler,
