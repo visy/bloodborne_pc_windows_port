@@ -226,3 +226,15 @@ per 10 s. Logs: `Party progress: desync: ...` on both sides.
   the director's new-member path re-sends the full flag snapshot and world image, which covers C2.
 - A host whose event callback stalls for 4 lost timeouts (a paused / alt-tabbed / loading host)
   keeps its member: the link thread answers pings; the 30 events sent meanwhile arrive in order.
+
+**Live (2026-10-14, 2 clients, `BB_NET_SIM=lat=30`, `BB_PARTY_DESYNC_S=5`, guest `BB_PARTY_DESYNC_TEST=3`,
+host `host_outage=30000@50`):** the first digest matched 15 s after the join; the injected
+desync (mirror group 0 flipped, one host flag forgotten) was found by the next digest ("world
+buckets 0, flag buckets 19"), the host sent 36 groups and a snapshot, and the following digest
+said "resolved". The 30 s total outage: the host's link called the guest lost after 10 s (slot
+kept); the guest's game left the session ~12 s in (its own timeout) and went home to its last lamp
+(a 3.4 s loading screen); the link resumed as the network came back (20.2 s after it was lost);
+the first direct summon was refused (the host's game still held the dead connection) and the bell
+summon brought the guest back 2.4 m from the host, 41.3 s after the outage began (two loading
+screens: correct, not seamless). 21 digests matched afterwards. Screenshots showed both players
+together before and after and the HUD's "Connection lost" during.
