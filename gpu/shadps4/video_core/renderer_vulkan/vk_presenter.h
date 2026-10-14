@@ -161,6 +161,7 @@ private:
     /// frames (the SDR picture: the swapchain's format, or 10-bit UNORM under HDR output).
     HostPasses::HdrComposePass hdr_pass;
     vk::Format frame_format{};
+    float hdr_scene_scale = 1.0f; ///< the highlights' fade while the game's menus are up
     std::mutex passes_mutex; ///< bbport: the passes are recorded on the recording threads
     AmdGpu::Liverpool* liverpool;
     Scheduler draw_scheduler;

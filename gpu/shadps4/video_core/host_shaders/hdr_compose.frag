@@ -20,7 +20,7 @@ layout (push_constant) uniform Compose {
     int encoding;      // 1 PQ, 2 scRGB
     int flags;         // 1 frame, 2 overlay, 4 pattern
     float background;  // encoded SDR level outside the frame (or without one)
-    float pad;
+    float scene_scale; // the game's picture: strength x this (0 while the game's menus are up)
 } pc;
 
 const float Knee = 0.5;
@@ -41,22 +41,22 @@ vec3 pq_encode(vec3 nits) {
     return pow((c1 + c2 * y) / (1.0 + c3 * y), vec3(m2));
 }
 
-float white_target() {
+float white_target(float strength) {
     float ratio = max(pc.peak, pc.paper_white) / pc.paper_white;
-    return 1.0 + max(pc.strength, 0.0) * (ratio - 1.0);
+    return 1.0 + max(strength, 0.0) * (ratio - 1.0);
 }
 
-float expand(float y) {
+float expand(float y, float strength) {
     if (y <= Knee) return y;
     float t = (min(y, 1.0) - Knee) / (1.0 - Knee);
-    return y + (white_target() - 1.0) * t * t;
+    return y + (white_target(strength) - 1.0) * t * t;
 }
 
 // Linear Rec.709 relative to paper white.
-vec3 expand_color(vec3 encoded) {
+vec3 expand_color(vec3 encoded, float strength) {
     vec3 c = pow(clamp(encoded, 0.0, 1.0), vec3(SdrGamma));
     float y = dot(c, Luma709);
-    if (y > Knee) c *= expand(y) / y;
+    if (y > Knee) c *= expand(y, strength) / y;
     float y2 = dot(c, Luma709);
     return y2 + (c - y2) * pc.saturation;
 }
@@ -125,13 +125,13 @@ void main() {
             encoded = texture(frame_tex, f).rgb;
         }
     }
-    vec3 rel = expand_color(encoded);
+    vec3 rel = expand_color(encoded, pc.strength * pc.scene_scale);
     if ((pc.flags & 4) != 0) {
         bool sdr_level;
         float level;
         float nits = pattern_nits(p, sdr_level, level);
         if (sdr_level) {
-            rel = expand_color(vec3(level));
+            rel = expand_color(vec3(level), pc.strength); // the curve as set
         } else if (nits >= 0.0) {
             // Exact luminance, past the peak limit (the peak check needs 10000 nits).
             vec3 out_nits = vec3(nits);

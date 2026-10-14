@@ -28,6 +28,7 @@
 #include "video_core/texture_cache/image.h"
 #include "bbport_settings.h"
 #include "bbport_hdr.h"
+#include "party/party_hud.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
 #include "video_core/renderer_vulkan/vk_fg_images.h"
 #include "video_core/renderer_vulkan/vk_reflex.h"
@@ -416,13 +417,34 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, Frame* frame, vk::Ima
     constants.flags =
         settings.hdr_calibration && !precompile ? HostPasses::HdrComposePass::FlagPattern : 0;
     constants.background = background;
+    // The game's full-screen menus (pause, System, inventory, stats, the lamp's travel list) are
+    // white text on a dimmed world: shown at paper white like any HDR game's UI, the highlights
+    // fading out and back in over ~0.25 s (BB_HDR_MENU_SDR=0 keeps them expanded).
+    static const bool menu_sdr = [] {
+        const char* value = std::getenv("BB_HDR_MENU_SDR");
+        return !value || value[0] != '0';
+    }();
+    if (real && menu_sdr) {
+        bool game_menu = false, banner = false;
+        coop::PerfHudGameState(&game_menu, &banner);
+        const auto now = std::chrono::steady_clock::now();
+        static auto last = now;
+        const float dt = std::clamp(std::chrono::duration<float>(now - last).count(), 0.0f, 0.1f);
+        last = now;
+        const float target = game_menu ? 0.0f : 1.0f;
+        hdr_scene_scale += std::clamp(target - hdr_scene_scale, -dt * 4.0f, dt * 4.0f);
+    }
+    constants.scene_scale = menu_sdr ? hdr_scene_scale : 1.0f;
     swapchain.SetHdrMetadata(constants.peak, constants.paper_white);
     hdr_pass.Render(cmdbuf, frame ? view : vk::ImageView{}, overlay, swapchain.ImageView(), extent,
                     constants);
 
     // BB_HDR_DUMP_TRIGGER: the SDR frame and the encoded output, for tools/windows/hdr_check.py.
-    static const bool dump = std::getenv("BB_HDR_DUMP_TRIGGER") != nullptr;
-    const bool dump_now = dump && real && frame;
+    static const char* dump_trigger = std::getenv("BB_HDR_DUMP_TRIGGER");
+    static u32 dump_polls = 0;
+    std::error_code dump_error;
+    const bool dump_now = dump_trigger && real && frame && ++dump_polls % 15 == 0 &&
+                          std::filesystem::exists(dump_trigger, dump_error);
     vk::ImageMemoryBarrier2 done{
         .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
         .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
@@ -441,16 +463,12 @@ void Presenter::RecordHdrPresent(vk::CommandBuffer cmdbuf, Frame* frame, vk::Ima
                            : format == vk::Format::eA2R10G10B10UnormPack32 ? "a2r10g10b10"
                            : format == vk::Format::eR16G16B16A16Unorm      ? "rgba16"
                                                                            : "rgba16f";
-        static int logged = 0;
-        if (logged++ < 8) {
-            std::printf("HDR dump params: encoding=%d peak=%.1f paper_white=%.1f strength=%.3f "
-                        "saturation=%.3f fit=%.0f,%.0f,%.0f,%.0f pattern=%d overlay=%d\n",
-                        constants.encoding, constants.peak, constants.paper_white,
-                        constants.strength, constants.saturation, constants.fit[0],
-                        constants.fit[1], constants.fit[2], constants.fit[3],
-                        constants.flags & HostPasses::HdrComposePass::FlagPattern ? 1 : 0,
-                        overlay ? 1 : 0);
-        }
+        std::printf("HDR dump params: encoding=%d peak=%.1f paper_white=%.1f strength=%.3f "
+                    "saturation=%.3f fit=%.0f,%.0f,%.0f,%.0f pattern=%d overlay=%d scene=%.3f\n",
+                    constants.encoding, constants.peak, constants.paper_white, constants.strength,
+                    constants.saturation, constants.fit[0], constants.fit[1], constants.fit[2],
+                    constants.fit[3], constants.flags & HostPasses::HdrComposePass::FlagPattern ? 1 : 0,
+                    overlay ? 1 : 0, constants.scene_scale);
         DumpHdrIfDue(instance, present_scheduler, cmdbuf, frame->image, frame->width,
                      frame->height, swapchain_image, extent.width, extent.height, name);
         done.srcStageMask = vk::PipelineStageFlagBits2::eTransfer;

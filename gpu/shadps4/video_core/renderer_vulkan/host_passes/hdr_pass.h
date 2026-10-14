@@ -28,7 +28,7 @@ public:
         s32 encoding = 1;        ///< BbHdr::Pq or BbHdr::ScRgb
         s32 flags = 0;           ///< FlagFrame | FlagOverlay | FlagPattern
         float background = 0.0f; ///< encoded SDR level where no frame is drawn
-        float pad = 0.0f;
+        float scene_scale = 1.0f; ///< the game picture's strength factor (0: the game's menus)
     };
     static constexpr s32 FlagFrame = 1, FlagOverlay = 2, FlagPattern = 4;
     /// The overlay's target format (ImGui's pipeline is made for it).

@@ -75,14 +75,28 @@ def load(path):
     return np.frombuffer(raw, dtype="<f2").reshape(h, w, 4)[..., :3].astype(np.float64), fmt
 
 
+def fit_image(fw, fh, sw, sh):
+    """vk_presenter.cpp FitImage: the frame letterboxed into the swapchain."""
+    fa, sa = fw / fh, sw / sh
+    dw, dh = sw, sh
+    if fa > sa:
+        dh = int(sw / fa)
+    else:
+        dw = int(sh * fa)
+    return ((sw - dw) // 2, (sh - dh) // 2, dw, dh)
+
+
 def params_from_log(log):
     text = Path(log).read_text(encoding="utf-8", errors="replace") if log else ""
     found = re.findall(r"HDR dump params: encoding=(\d+) peak=([\d.]+) paper_white=([\d.]+) strength=([\d.]+) "
-                       r"saturation=([\d.]+) fit=([\d.]+),([\d.]+),([\d.]+),([\d.]+) pattern=(\d)", text)
+                       r"saturation=([\d.]+) fit=([\d.]+),([\d.]+),([\d.]+),([\d.]+) pattern=(\d)"
+                       r"(?: overlay=\d)?(?: scene=([\d.]+))?", text)
     if not found:
         return None
-    e, peak, paper, strength, sat, x, y, w, h, pattern = found[-1]
-    return dict(encoding=int(e), peak=float(peak), paper=float(paper), strength=float(strength),
+    e, peak, paper, strength, sat, x, y, w, h, pattern, scene = found[-1]
+    # The game's menus fade the highlights of the game picture (scene=0 while one is up).
+    return dict(encoding=int(e), peak=float(peak), paper=float(paper),
+                strength=float(strength) * (float(scene) if scene else 1.0),
                 saturation=float(sat), fit=(int(float(x)), int(float(y)), int(float(w)), int(float(h))),
                 pattern=int(pattern))
 
@@ -93,6 +107,9 @@ def main():
     ap.add_argument("--log", help="the game's log (the 'HDR dump params' line); else defaults")
     ap.add_argument("--png", help="write an SDR preview of the HDR output here")
     ap.add_argument("--max-code-error", type=float, default=2.0)
+    for name in ("peak", "paper", "strength", "saturation"):
+        ap.add_argument("--" + name, type=float, help="override the logged value")
+    ap.add_argument("--pattern", type=int, help="override: 1 = the calibration band is on")
     a = ap.parse_args()
     d = Path(a.dump_dir)
     frames = sorted(d.glob("f*_hdr_frame_*.raw"))
@@ -103,7 +120,11 @@ def main():
     frame, _ = load(frames[-1])
     out, fmt = load(outs[-1])
     p = params_from_log(a.log) or dict(encoding=1, peak=1000.0, paper=200.0, strength=1.0, saturation=1.0,
-                                        fit=(0, 0, out.shape[1], out.shape[0]), pattern=0)
+                                        fit=fit_image(frame.shape[1], frame.shape[0], out.shape[1], out.shape[0]),
+                                        pattern=0)
+    for name in ("peak", "paper", "strength", "saturation", "pattern"):
+        if getattr(a, name) is not None:
+            p[name] = getattr(a, name)
     print(f"dump: frame {frame.shape[1]}x{frame.shape[0]}, output {out.shape[1]}x{out.shape[0]} {fmt}; "
           f"peak {p['peak']:.0f} paper white {p['paper']:.0f} strength {p['strength']:.2f} "
           f"saturation {p['saturation']:.2f} fit {p['fit']}")
@@ -115,7 +136,20 @@ def main():
     x, y, w, h = p["fit"]
     region = out[y:y + h, x:x + w]
     ok = True
-    if (w, h) == (frame.shape[1], frame.shape[0]) and p["encoding"] == 1:
+    scaled = (w, h) != (frame.shape[1], frame.shape[0])
+    if scaled and abs(w - frame.shape[1]) <= 2 and abs(h - frame.shape[0]) <= 2:
+        # A pixel's difference from the rounding of the fitted size: sample the frame as the
+        # shader does (bilinear at the output pixel centres) and compare the same way.
+        fy = np.clip((np.arange(h) + 0.5) * frame.shape[0] / h - 0.5, 0, frame.shape[0] - 1)
+        fx = np.clip((np.arange(w) + 0.5) * frame.shape[1] / w - 0.5, 0, frame.shape[1] - 1)
+        y0, x0 = np.floor(fy).astype(int), np.floor(fx).astype(int)
+        y1, x1 = np.minimum(y0 + 1, frame.shape[0] - 1), np.minimum(x0 + 1, frame.shape[1] - 1)
+        wy, wx = (fy - y0)[:, None, None], (fx - x0)[None, :, None]
+        frame = ((frame[y0][:, x0] * (1 - wx) + frame[y0][:, x1] * wx) * (1 - wy) +
+                 (frame[y1][:, x0] * (1 - wx) + frame[y1][:, x1] * wx) * wy)
+        print(f"frame resampled to the fitted {w}x{h} (bilinear, as the compose pass samples it)")
+        scaled = False
+    if not scaled and p["encoding"] == 1:
         want, _ = expected_pq(frame, p["peak"], p["paper"], p["strength"], p["saturation"])
         err = np.abs(region - want).max(axis=-1) * 1023.0
         mask = np.ones(err.shape, bool)
