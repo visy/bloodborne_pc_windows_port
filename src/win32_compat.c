@@ -15,6 +15,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <cpuid.h>
 #include "win32_compat.h"
 
 int runtime_win_mkdir(const char *path, int mode) { (void)mode; return _mkdir(path); }
@@ -153,6 +154,29 @@ uint32_t runtime_win_tls_slot(void) {
 }
 
 void runtime_win_set_tcb(void *tcb) { TlsSetValue(runtime_win_tls_slot(), tcb); }
+
+/* FSGSBASE (CPUID leaf 7, EBX bit 0): wrfsbase/rdfsbase. Where the CPU lacks it the guest TCB
+ * stays in the TLS slot only and the VEH answers fs: reads from there (from
+ * Mrsuss60/bloodborne_pc_windows_port 336bacc). Cached: asked on every guest stack switch. */
+int runtime_win_has_fsgsbase(void) {
+    static volatile int has_fsgsbase = -1;
+    int v = has_fsgsbase;
+    if (v < 0) {
+        unsigned a = 0, b = 0, c = 0, d = 0;
+        v = __get_cpuid_count(7, 0, &a, &b, &c, &d) && (b & 1) ? 1 : 0;
+        has_fsgsbase = v;
+    }
+    return v;
+}
+
+void *runtime_win_read_fsbase(void) {
+    if (runtime_win_has_fsgsbase()) {
+        void *base = NULL;
+        __asm__ __volatile__("rdfsbase %0" : "=r"(base));
+        return base;
+    }
+    return TlsGetValue(runtime_win_tls_slot()); /* the guest TCB: what FS would hold */
+}
 
 void runtime_win_set_thread_name(const char *name) {
     wchar_t wide[64];
