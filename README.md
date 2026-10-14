@@ -257,12 +257,12 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | Who | What |
 |---|---|
 | deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors |
-| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD |
+| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD; audio pop fix, paths with parentheses in `run.bat`, parallel `build.bat` |
 | shadPS4 team | Vulkan video core and shader recompiler (GPL-2.0+), sirit |
 | droogie and the bbhost team | Long-session stability fixes; menu button rows and the menu cursor's offsets; direct summon delivery; the Hunter's Dream mirror (appearance editor) ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |
 | FireBurn | FSR-Vulkan (MIT); AMD FidelityFX SDK (MIT) |
 | Supermedo, IFreemz | DLSS bridge and Windows loader |
-| Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, FPS-preset physics step (found by FIocker), frame limiter pacing, texture-cache, pipeline-cache and shader-walker fixes, skipped draws for failed pipelines, keyboard stick movement; imedved (direct mouse camera, ported by mcrib884); andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows) |
+| Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, FPS-preset physics step (found by FIocker), frame limiter pacing, texture-cache, pipeline-cache and shader-walker fixes, skipped draws for failed pipelines, keyboard stick movement, allocating past a full VRAM budget, object motion off on AMD before RDNA3, the memory log line once a minute; imedved (direct mouse camera, ported by mcrib884); andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows) |
 | Vorshim92 | Pipeline cache kept between starts, stale `bbport.exe` guard, crash reaper, `run.bat` resolution fix, Reset shader cache button |
 | Thealexbarney | LibAtrac9 audio (MIT) |
 | ocornut | Dear ImGui (MIT) |

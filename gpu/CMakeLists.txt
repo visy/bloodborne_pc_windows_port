@@ -492,6 +492,11 @@ add_executable(party-start-test EXCLUDE_FROM_ALL ../tests/test_party_start.cpp s
 target_compile_options(party-start-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-start-test PRIVATE shim)
 set_target_properties(party-start-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Stability fixes' pure decisions (shim/bbport_stability_logic.h). ninja -C out/gpu stability-logic-test
+add_executable(stability-logic-test EXCLUDE_FROM_ALL ../tests/test_stability_logic.cpp)
+target_compile_options(stability-logic-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(stability-logic-test PRIVATE shim)
+set_target_properties(stability-logic-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Direct summon delivery (shim/party/party_dsummon.cpp): wire format, type-1 payload, decisions.
 add_executable(party-dsummon-test EXCLUDE_FROM_ALL ../tests/test_party_dsummon.cpp shim/party/party_dsummon.cpp)
 target_compile_options(party-dsummon-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
