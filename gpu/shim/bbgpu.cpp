@@ -3,6 +3,7 @@
 #include "bbport_gnm_hooks.h"
 #include "bbport_stability.h"
 #include "party/party_director.h"
+#include "party/lamp_travel.h"
 // bbport: glue between the C loader and the vendored shadPS4 video core.
 #include "bbport_overlay.h"
 #include "bbport_settings.h"
@@ -390,6 +391,7 @@ extern "C" void bbgpu_patch_image(unsigned char* image, uint64_t size) {
     BbGameMenu::PatchImage(image, size);
     BbStability::PatchImage(image, size);
     bbnet_set_image(image, size);  // the party library's view of game data (gpu/shim/net)
+    coop::lamptravel::Install(image, size);  // direct lamp travel (solo and party; BB_LAMP_TRAVEL=0 off)
     if (coop::PartyRequested()) {
         coop::PartyInit(image, size);  // party co-op: main-thread tick, Lua events, director
     }

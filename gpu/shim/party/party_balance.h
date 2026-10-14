@@ -52,6 +52,9 @@ void Init();
 /// The director's tick (main thread, party mode only). `host`: this game hosts (or plays without
 /// a link): its own settings are the party's.
 void Tick(const GameSnapshot& s, party::PartyLink* link, bool host);
+/// Any thread: a lamp's travel menu opened (direct lamp travel's warp menu, which is no generic
+/// dialog): counts as the lamp's menu (#21, a rest for the rot) on the next tick.
+void NoteLampMenuOpened();
 /// Guest: the host's EVENT "balance" (any thread). False (and *error) when malformed.
 bool OnHostRules(const std::string& json, std::string* error = nullptr);
 /// The rules in force now.

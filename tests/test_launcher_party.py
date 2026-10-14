@@ -264,6 +264,21 @@ class DirectSummonSetting(unittest.TestCase):
         self.assertEqual(self.L.party_env(dict(base, party_direct_summon=False))["BB_PARTY_DIRECT_SUMMON"], "0")
 
 
+class LampTravelSetting(unittest.TestCase):
+    """The launcher's Direct lamp travel checkbox: BB_LAMP_TRAVEL, on (unset) unless turned off; solo too."""
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.L = load_launcher()
+        except Exception as ex:  # no tkinter here
+            raise unittest.SkipTest(f"launcher.py not importable here: {ex}")
+
+    def test_default_on_and_off(self):
+        self.assertIsNone(self.L.settings_env({})["BB_LAMP_TRAVEL"])
+        self.assertEqual(self.L.settings_env({"lamp_travel": False})["BB_LAMP_TRAVEL"], "0")
+        self.assertIsNone(self.L.settings_env({"party_mode": "host", "lamp_travel": True})["BB_LAMP_TRAVEL"])
+
+
 class TracingWarning(unittest.TestCase):
     """Debug tracing in a party game gets a warning (playtest 1: huge logs, false hang dumps)."""
     @classmethod
