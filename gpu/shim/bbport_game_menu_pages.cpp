@@ -931,8 +931,10 @@ void DefineAll() {
 
     // The split-travel question (party_split.cpp): a game dialog with YES / NO after a lamp,
     // headstone or Hunter's Mark in a party (docs/party/split_travel.md).
-    split_text[0] = AddText("Travel with the party?\nYES: everyone travels together.  NO: you travel alone.",
-                            "Путешествовать всей группой?\nДА: вся группа вместе.  НЕТ: только вы.");
+    split_text[0] = AddText("Travel with the party?\nYES: everyone travels together.  NO: you travel alone.\n"
+                            "A rest at a lamp resets the world for the party.",
+                            "Путешествовать всей группой?\nДА: вся группа вместе.  НЕТ: только вы.\n"
+                            "Отдых у лампы сбрасывает мир для всей группы.");
 
     // ---- Party rules (party_balance.h): the death debuff and the overhead display. ----
     AddPage("Party rules", "Правила группы", "Death debuff, what shows above companions (bbport)",

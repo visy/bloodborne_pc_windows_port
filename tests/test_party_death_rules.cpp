@@ -1,0 +1,164 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Deaths, rests and same-map lamps in a party (gpu/shim/party/party_death_rules.h; playtest 1
+// batch 1). Build and run: ninja -C out/gpu party-death-rules-test && out/gpu/party-death-rules-test.exe
+#include "party/party_death_rules.h"
+
+#include <cstdio>
+
+using namespace coop::deathrules;
+
+static int g_failures = 0;
+#define CHECK(cond)                                                              \
+    do {                                                                         \
+        if (!(cond)) {                                                           \
+            ++g_failures;                                                        \
+            std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
+        }                                                                        \
+    } while (0)
+
+int main() {
+    // Opt-in switches: on only for "1...".
+    CHECK(!OptIn(nullptr));
+    CHECK(!OptIn(""));
+    CHECK(!OptIn("0"));
+    CHECK(!OptIn("on"));
+    CHECK(OptIn("1"));
+
+    // Down counts.
+    CHECK(PartyDown(0, 3, 3) == 0);
+    CHECK(PartyDown(2, 1, 0) == 1);
+    CHECK(PartyDown(2, 0, 1) == 1);
+    CHECK(PartyDown(2, 5, 0) == 2);
+    CHECK(!Wiped(0, 0, 0));
+    CHECK(!Wiped(2, 1, 1));
+    CHECK(Wiped(1, 0, 1));  // the early notice counts (bug 18: the report came 0.3 s late)
+    CHECK(Wiped(1, 1, 0));
+
+    // The host's death: a party load by default (bugs 6, 7).
+    HostDeathView v;
+    v.members = 1;
+    v.lamp_here = true;
+    CHECK(PlanHostDeath(v) == HostDeathPlan::PartyLoad);
+    CHECK(!PlanTakesFunnel(PlanHostDeath(v)));
+    v.party_on = false;
+    CHECK(PlanHostDeath(v) == HostDeathPlan::Stock);
+    v.party_on = true;
+    v.members = 0;
+    CHECK(PlanHostDeath(v) == HostDeathPlan::Stock);  // nobody in the world: the game's own death
+    v.solo_fixture = true;
+    CHECK(PlanHostDeath(v) == HostDeathPlan::PartyLoad);
+    v.revive_opt_in = true;
+    CHECK(PlanHostDeath(v) == HostDeathPlan::ReviveInPlace);
+    v.solo_fixture = false;
+    v.members = 1;
+    CHECK(PlanHostDeath(v) == HostDeathPlan::ReviveInPlace);  // opt-in: the seamless revive
+    CHECK(PlanTakesFunnel(PlanHostDeath(v)));
+    v.lamp_here = false;
+    CHECK(PlanHostDeath(v) == HostDeathPlan::AloneLoad);
+    v.alone_opt = false;
+    CHECK(PlanHostDeath(v) == HostDeathPlan::PartyLoad);
+    v.revive_opt_in = false;
+    v.boss_fight = true;
+    CHECK(PlanHostDeath(v) == HostDeathPlan::BossLimbo);  // both modes keep the boss limbo
+    CHECK(PlanTakesFunnel(PlanHostDeath(v)));
+    v.down_seen = 1;
+    CHECK(PlanHostDeath(v) == HostDeathPlan::Wipe);       // the guest is down too: a wipe
+    v.boss_fight = false;
+    v.down_seen = 0;
+    v.down_reported = 1;
+    CHECK(PlanHostDeath(v) == HostDeathPlan::Wipe);
+    v.members = 2;
+    CHECK(PlanHostDeath(v) == HostDeathPlan::PartyLoad);  // one of two guests down: not a wipe
+
+    // While the host is down: recount at every frame (bug 18).
+    DownView d;
+    d.members = 1;
+    d.down_for = 0.2;
+    CHECK(PlanDownTick(d) == DownTick::Wait);
+    d.down_seen = 1;
+    CHECK(PlanDownTick(d) == DownTick::Wipe);  // the guest's death arrives during the delay
+    d.down_seen = 0;
+    d.down_for = 1.5;
+    CHECK(PlanDownTick(d) == DownTick::PartyLoad);  // default: the respawn load (only the limbo gets here)
+    d.revive_opt_in = true;
+    CHECK(PlanDownTick(d) == DownTick::AloneLoad);
+    d.lamp_here = true;
+    CHECK(PlanDownTick(d) == DownTick::Revive);
+    d.down_reported = 1;
+    CHECK(PlanDownTick(d) == DownTick::Wipe);  // recounted at the revive tick itself
+    d.down_reported = 0;
+    d.limbo = true;
+    d.boss_active = true;
+    d.down_for = 60;
+    CHECK(PlanDownTick(d) == DownTick::Wait);
+    d.down_seen = 1;
+    CHECK(PlanDownTick(d) == DownTick::Wipe);  // a wipe ends the limbo
+    d.down_seen = 0;
+    d.boss_active = false;
+    d.revive_opt_in = false;
+    CHECK(PlanDownTick(d) == DownTick::PartyLoad);  // boss gone: one respawn load for everyone
+
+    // The split question closes on a load, a death or after 30 s (bug 12).
+    CHECK(PlanAskClose(true, false, false, 5) == AskClose::Keep);
+    CHECK(PlanAskClose(false, false, false, 100) == AskClose::Keep);  // queued: waits to open
+    CHECK(PlanAskClose(true, true, false, 1) == AskClose::Load);
+    CHECK(PlanAskClose(false, true, false, 1) == AskClose::Load);
+    CHECK(PlanAskClose(true, false, true, 1) == AskClose::Dead);
+    CHECK(PlanAskClose(true, false, false, 30.5) == AskClose::Timeout);
+    CHECK(PlanAskClose(true, false, false, 29) == AskClose::Keep);
+
+    // A guest's lamp (bug 10, bug 3).
+    CHECK(PlanGuestLamp(false, false, true, false) == GuestLamp::Plain);
+    CHECK(PlanGuestLamp(true, true, true, false) == GuestLamp::Plain);    // standing at it
+    CHECK(PlanGuestLamp(true, false, true, false) == GuestLamp::SoloLoad); // same map: own load
+    CHECK(PlanGuestLamp(true, true, true, true) == GuestLamp::SoloLoad);   // a Mark to the lamp here
+    CHECK(PlanGuestLamp(true, false, false, false) == GuestLamp::Ask);
+    CHECK(PlanGuestLamp(true, false, false, true) == GuestLamp::Ask);
+    CHECK(GuestAloneRestsHostWorld(true, false));
+    CHECK(!GuestAloneRestsHostWorld(false, false));  // YES: the party travel is the rest
+    CHECK(!GuestAloneRestsHostWorld(true, true));
+
+    // The host's rest load for a guest's rest (bug 3).
+    RestView r;
+    CHECK(PlanRestLoad(r) == RestLoad::NotReady);
+    r.world_up = true;
+    CHECK(PlanRestLoad(r) == RestLoad::Dead);
+    r.alive = true;
+    CHECK(PlanRestLoad(r) == RestLoad::Run);
+    r.loading = true;
+    CHECK(PlanRestLoad(r) == RestLoad::NotReady);
+    r.loading = false;
+    r.boss_fight = true;
+    CHECK(PlanRestLoad(r) == RestLoad::BossFight);
+    r.boss_fight = false;
+    r.in_dream = true;
+    CHECK(PlanRestLoad(r) == RestLoad::InDream);
+    r.in_dream = false;
+    r.travel_pending = true;
+    CHECK(PlanRestLoad(r) == RestLoad::Busy);
+    r.travel_pending = false;
+    r.since_last = 5;
+    CHECK(PlanRestLoad(r) == RestLoad::TooSoon);
+    r.since_last = 25;
+    CHECK(PlanRestLoad(r) == RestLoad::Run);
+
+    // Own bloodstain record changes (bug 13 logging).
+    CHECK(PlanStainChange(0, -1, 1, 4843) == StainChange::Recorded);
+    CHECK(PlanStainChange(1, 4843, 1, -1) == StainChange::Taken);
+    CHECK(PlanStainChange(1, 4843, 0, 4843) == StainChange::Taken);
+    CHECK(PlanStainChange(1, 4843, 1, 2341) == StainChange::Replaced);  // a second death overwrote it
+    CHECK(PlanStainChange(1, 4843, 1, 4843) == StainChange::None);
+    CHECK(PlanStainChange(0, -1, 0, -1) == StainChange::None);
+
+    for (int i = 0; i < 6; ++i) {
+        CHECK(HostDeathPlanName(HostDeathPlan(i))[0] != '?');
+    }
+    CHECK(DownTickName(DownTick::Wipe)[0] != '?');
+    CHECK(RestLoadName(RestLoad::TooSoon)[0] != '?');
+    if (g_failures) {
+        std::fprintf(stderr, "%d failure(s)\n", g_failures);
+        return 1;
+    }
+    std::printf("party-death-rules-test: ok\n");
+    return 0;
+}

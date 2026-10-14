@@ -277,15 +277,16 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
         }
 
         if (p->stream) {
-            /* Steer the SDL queue against hardware device rate */
+            /* Steer the SDL queue against hardware device rate. Prefill silence only when the
+             * stream has fully drained: zeros put after samples that are still queued splice a
+             * gap into the waveform and pop (from Mrsuss60/bloodborne_pc_windows_port 367480b). */
             int low=2*(int)bytes;
             int queued=SDL_GetAudioStreamQueued(p->stream);
-            if (queued<(int)bytes) {
+            if (queued==0) {
                 if (buffers_out>0) ++g_audio_underruns;
                 static const unsigned char silence[2048*8*4];
-                int fill=low-queued<(int)bytes ? low-queued : (int)bytes;
-                if (fill>0 && fill<=(int)sizeof(silence)) {
-                    SDL_PutAudioStreamData(p->stream,silence,fill);
+                if ((int)bytes<=(int)sizeof(silence)) {
+                    SDL_PutAudioStreamData(p->stream,silence,(int)bytes);
                 }
                 queued=low;
             }

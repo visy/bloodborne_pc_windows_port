@@ -1380,6 +1380,37 @@ bool TravelPlaceForTest(std::uint32_t map, const float pos[3], float yaw) {
     return Replay(t, {ReplayMethod::Transform, kTravelNone});
 }
 
+bool HostTravelTransformNow(std::uint32_t map, const float pos[4], const float rot[4], const char* why) {
+    if (!g_travel_on.load() || Role() != PartyRole::Host || !TravelMapKnown(map)) {
+        return false;
+    }
+    const u64 wts = Wts();
+    if (!wts || WtsField<u8>(wts, kWtsOwnWorld, 0) == 0 || WtsField<u8>(wts, kWtsRequested, 0) != 0) {
+        return false;  // not in its own world, or a stage request is armed already
+    }
+    TravelIntent t;
+    t.seq = NextSeq();
+    t.kind = TravelKind::Transform;
+    t.packed_map = map;
+    t.last_lamp = WtsField<u64>(wts, kWtsLastLamp, ~0ull);
+    t.has_pos = true;
+    t.pos_map = map;
+    for (int i = 0; i < 4; ++i) {
+        t.pos[i] = pos[i];
+        t.rot[i] = rot[i];
+    }
+    t.pos[3] = 1.0f;
+    {
+        std::lock_guard<std::mutex> lk(g_host_mu);
+        g_host_queue.Push(t);
+    }
+    g_host_left_at = Now();
+    g_last_capture = Now();
+    Log("host travel %s -> forced transform (%s: a load where the host stands; the party follows)",
+        DescribeTravel(t).c_str(), why);
+    return Replay(t, {ReplayMethod::Transform, kTravelNone});
+}
+
 void SetGuestDeathHold(GuestDeathHoldFn fn) {
     g_guest_death_hold = fn;
 }
