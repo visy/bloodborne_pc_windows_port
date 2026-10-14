@@ -3143,13 +3143,24 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
         }
         return false;
     }
-    if (ever && Seconds(last, now) < 90.0) {
+    // par_c6 (live): the guest gathered to the restarted host's Dream lamp while the host moved on
+    // to Central Yharnam; arrived at the gather's map, it then waited out the rest of the 90 s
+    // (83 s apart). Once the gather has loaded its target map (and the world is steady again), the
+    // host having moved is a new gather after 10 s.
+    static std::uint32_t target_map = 0xffffffffu;
+    const bool arrived = target_map != 0xffffffffu && (s.map_id >> 16) == (target_map >> 16);
+    if (ever && Seconds(last, now) < (arrived ? 10.0 : 90.0)) {
         // Still in another map than the host's while the gather's warp has not loaded yet: no
         // ring here (it would summon this guest at its own world's spot into the host's map).
         return true;
     }
+    if (ever && arrived) {
+        Log("gather: arrived at the last gather's map %s, the host has moved on to %s: gathering again",
+            MapName(target_map).c_str(), MapName(host_map).c_str());
+    }
     ever = true;
     last = now;
+    target_map = ids::EntityMap(lamp);
     TravelIntent t;
     t.kind = TravelKind::Lamp;
     t.lamp_id = lamp;
