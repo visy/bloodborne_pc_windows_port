@@ -200,6 +200,22 @@ inline bool StoryWarpEvent(std::int32_t event, bool host) {
 /// presses did nothing).
 constexpr double kAskAfterSceneDelay = 2.0;
 
+// ---- P4 (quest_audit.md): one question for a scripted warp that runs on two games ----
+/// This game's question for warp `mine` (pending: queued or open) closes when a member with a
+/// lower party slot asks for the same warp (the host first). Slots < 0 / id 0: unknown, keep it.
+inline bool DropSameWarpQuestion(bool pending, std::uint32_t mine, int my_slot, std::uint32_t theirs,
+                                 int their_slot) {
+    return pending && mine != 0 && mine == theirs && my_slot >= 0 && their_slot >= 0 && their_slot < my_slot;
+}
+
+// ---- B5: the host dies while a guest is apart ----
+/// A living, idle guest in another area than the host (split up) does not follow the host's
+/// death load: it plays on where it is (ERSC: each respawns at their own grace). Areas 0 =
+/// unknown: follow as before. A dead guest (a wipe) follows.
+inline bool StayApartAtHostDeath(bool guest_dead, bool guest_idle, std::uint32_t host_area, std::uint32_t own_area) {
+    return !guest_dead && guest_idle && host_area != 0 && own_area != 0 && host_area != own_area;
+}
+
 // ---- Playtest 1 bug 22: nobody to travel with = single player ----
 /// The party's own lamp / headstone / Hunter's Mark handling (the in-world lamp move without a
 /// load, "already standing at it", the guest's Mark to the host's lamp) applies only when there

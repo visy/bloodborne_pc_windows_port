@@ -269,6 +269,21 @@ int main() {
     CHECK(!GuestInHostWorld(-1, -1));                                // no world / no store
     CHECK(!GuestInHostWorld(3, 0));                                  // hosting in its own world
 
+    // P4: the same scripted warp asks on the lower slot only.
+    CHECK(DropSameWarpQuestion(true, 3202958, 1, 3202958, 0));   // guest: the host asks the same
+    CHECK(!DropSameWarpQuestion(true, 3202958, 0, 3202958, 1));  // host keeps its question
+    CHECK(!DropSameWarpQuestion(true, 3202958, 1, 3202959, 0));  // another warp
+    CHECK(!DropSameWarpQuestion(false, 3202958, 1, 3202958, 0)); // nothing pending here
+    CHECK(DropSameWarpQuestion(true, 2502959, 2, 2502959, 1));   // guest 2 vs guest 1
+    CHECK(!DropSameWarpQuestion(true, 2502959, -1, 2502959, 0)); // own slot unknown
+    CHECK(!DropSameWarpQuestion(true, 0, 1, 0, 0));
+    // B5: a living guest apart stays at the host's death; in its area / dead / busy it follows.
+    CHECK(StayApartAtHostDeath(false, true, 24, 21));
+    CHECK(!StayApartAtHostDeath(false, true, 24, 24));
+    CHECK(!StayApartAtHostDeath(true, true, 24, 21));
+    CHECK(!StayApartAtHostDeath(false, false, 24, 21));
+    CHECK(!StayApartAtHostDeath(false, true, 0, 21));
+
     for (int i = 0; i < 6; ++i) {
         CHECK(HostDeathPlanName(HostDeathPlan(i))[0] != '?');
     }

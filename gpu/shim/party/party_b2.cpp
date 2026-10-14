@@ -118,6 +118,10 @@ bool EnvOn(const char* name) {
     const char* v = std::getenv(name);
     return v && v[0] && !(v[0] == '0' && !v[1]);
 }
+bool EnvOff(const char* name) {
+    const char* v = std::getenv(name);
+    return v && v[0] == '0' && !v[1];
+}
 
 double Now() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -4277,6 +4281,81 @@ void JoinBesideTick(const GameSnapshot& s, double now) {
     }
 }
 
+/// A5 (one-load cross-map join, BB_PARTY_GATHER_DSUM, default on): the direct summon of a guest
+/// in another map than the host's joins the host's room without loading the host's map (live a5,
+/// 2026-10-13: a client still in its own m21_00). Set when that join is reported; the arrival
+/// tick below then runs the B2 re-join into the host's map (TravelAlone, AloneWhy::Join): the one
+/// loading screen of the join, instead of the gather's lamp load plus the summon's load.
+std::atomic<double> g_carry_join_at{-1};
+
+/// The lamp of the host's map nearest to where the host stands (its vitals position); without a
+/// position the host's last lamp when it lies in that map (GatherLampFor). 0: none.
+u32 LampNearHost(u32 host_map) {
+    u32 lamp = GatherLampFor(GuestDeathRedirectLamp(), host_map);
+    const Where* w = WhereOf(0);
+    if (w && w->has_pos) {
+        float best = 1e18f;
+        for (const std::uint32_t id : ids::kPartyReturnPoints) {
+            float sp[4];
+            if (ids::EntityMap(id) >> 16 != host_map >> 16 || id / 100000 == 29 || !ids::ReturnSpot(id, sp)) {
+                continue;
+            }
+            const float dx = sp[0] - w->pos[0], dy = sp[1] - w->pos[1], dz = sp[2] - w->pos[2];
+            const float d = dx * dx + dy * dy + dz * dz;
+            if (d < best) {
+                best = d;
+                lamp = id;
+            }
+        }
+    }
+    return lamp == kTravelNone ? 0u : lamp;
+}
+
+void CarryArrivalTick(const GameSnapshot& s, double now) {
+    const double at = g_carry_join_at.load();
+    if (at < 0) {
+        return;
+    }
+    if (now - at > 60.0) {
+        g_carry_join_at = -1;
+        Log("A5: cross-map join: no arrival load within 60 s (role %d, %s); the gather path stays", Role(),
+            MapName(s.map_id).c_str());
+        return;
+    }
+    if (Role() != RoleClient || !s.world_up || s.loading || !s.player || g_rejoin.load()) {
+        return;
+    }
+    const u32 host = HostMap();
+    if (host == 0 || host == 0xffffffffu || s.map_id == 0 || s.map_id == 0xffffffffu) {
+        return;
+    }
+    if ((host >> 16) == (s.map_id >> 16)) {
+        g_carry_join_at = -1;
+        Log("A5: cross-map join: this guest is in the host's map %s (%.1f s after the join)", MapName(host).c_str(),
+            now - at);
+        return;
+    }
+    // The game's own summon load starts within ~1 s of the client role (join_timing.md); none
+    // came for a joiner in another map (a5 run 2): ours.
+    static double tried = -100;
+    if (now - at < 1.0 || now - tried < 5.0) {
+        return;
+    }
+    tried = now;
+    const u32 lamp = LampNearHost(host);
+    TravelIntent t;
+    if (lamp == 0 || !LampIntent(lamp, &t)) {
+        Log("A5: cross-map join: no lamp of the host's map %s known; waiting", MapName(host).c_str());
+        return;
+    }
+    if (TravelAlone(t, AloneWhy::Join)) {
+        g_carry_join_at = -1;
+        Log("A5: cross-map join: client in %s, the host in %s: one load into the host's map (lamp %u, then beside "
+            "the host) %.1f s after the join",
+            MapName(s.map_id).c_str(), MapName(host).c_str(), lamp, now - at);
+    }
+}
+
 void HostRevivedTick(const GameSnapshot& s) {
     static double watch_until = 0, next_watch = 0;
     const double now = Now();
@@ -4990,14 +5069,17 @@ void HostTick(const GameSnapshot& s, double now) {
                 return;
             }
         }
-        // Done once every member task has its chr again (each guest's "arrived" rewinds it).
-        bool all = true;
+        // Done once every member task has its chr again (each guest's "arrived" rewinds it). A
+        // member apart in another area (B5: it stayed there at the host's death) has none by design.
+        int missing = 0;
         for (const TaskInfo& t : Tasks(false)) {
             if (t.mode == 1 && !PlayerForPeer(t.task + kTaskPeer)) {
-                all = false;
+                ++missing;
             }
         }
-        if (all && (arrived || st.rejoined_logged)) {
+        const bool all = missing <= g_apart.load();
+        const bool only_apart = missing > 0 && g_apart.load() > 0 && now - st.hsince > 3.0;  // nobody to wait for
+        if (all && (arrived || st.rejoined_logged || only_apart)) {
             st.hphase = HostPhase::Idle;
             g_rejoin = false;
             Log("host: re-join done after %.1f s; tasks:%s; enterleave%s", now - st.hsince, DescribeTasks().c_str(),
@@ -5491,7 +5573,7 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         names = DS().names;
     }
     static double first = 0;
-    static const bool gather_dsum = EnvOn("BB_PARTY_GATHER_DSUM");  // A5 experiment: carry across maps
+    static const bool gather_dsum = !EnvOff("BB_PARTY_GATHER_DSUM");  // A5: carry across maps (default on)
     std::vector<int> keep, defer;
     for (int slot : req) {
         dsummon::HostView v;
@@ -5668,6 +5750,11 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         Send(0, dsummon::EncodeDone(ok));
         if (ok) {
             Log("direct summon: joined the host's room (%.1f s after the request)", now - asked_at);
+            if (!dsummon::SameMap(room.area, s.map_id) && ((room.area >> 24) & 0xff) != 29) {
+                g_carry_join_at = Now();  // A5: the arrival load into the host's map (CarryArrivalTick)
+                Log("A5: joined from another map (own %s, the host's room in %s): the arrival load follows",
+                    MapName(s.map_id).c_str(), MapName(room.area).c_str());
+            }
         } else {
             Log("direct summon: FAILED (%s; %.1f s after the request): %s", fail_why, now - asked_at,
                 gather ? "the bell goes down; gather to the host's area first (loading screen), then ring again"
@@ -6776,6 +6863,7 @@ void Tick(const GameSnapshot& s) {
     HostDownTick(s, now);
     HostRevivedTick(s);
     JoinBesideTick(s, Now());
+    CarryArrivalTick(s, Now());
     SpectatorRemoveTick(s);
     SpectateTick(s, Now());
     OwnStainLogTick(s);
@@ -6893,6 +6981,27 @@ bool OnHostTravel(const TravelIntent& t) {
         NoteAway(0);
         Log("guest: the host travels alone (%s); staying here (no load)", DescribeTravel(t).c_str());
         return true;
+    }
+    if (t.kind == TravelKind::HostDeath && !g_dead_follow.load()) {
+        // B5: the host died in another area than this guest's (split up): its respawn load is
+        // the host's own; this guest plays on where it is (ERSC: each respawns at their own grace,
+        // the others play on). The two meet again when they share an area. In the host's area the
+        // vanilla respawn load for everyone stays (C2: HostDead state, world reset).
+        const GameSnapshot g = ReadGameState(false);
+        const u32 host = HostMap();
+        const bool idle = [] {
+            std::lock_guard<std::mutex> lk(S().mu);
+            return S().gphase == GuestPhase::Idle;
+        }();
+        if (g.world_up && !g.loading && deathrules::StayApartAtHostDeath(false, idle, AreaOf(host), AreaOf(g.map_id)) &&
+            !deathrules::OptIn(std::getenv("BB_PARTY_SPLIT_FOLLOW_DEATH"))) {
+            g_host_left = true;
+            g_host_alone_seen = Now();
+            NoteAway(0);
+            Log("guest: the host died in %s, this guest is apart in %s: it respawns alone; staying here (no load)",
+                MapName(host).c_str(), MapName(g.map_id).c_str());
+            return true;
+        }
     }
     {
         // The host's destination is the block this guest stands in (a host death or a stage warp
@@ -7314,6 +7423,7 @@ const char* AloneWhyName(AloneWhy w) {
     case AloneWhy::Headstone: return "headstone";
     case AloneWhy::HuntersMark: return "hunters_mark";
     case AloneWhy::Death: return "death";
+    case AloneWhy::Join: return "join";
     }
     return "?";
 }
