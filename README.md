@@ -117,11 +117,13 @@ single-player save is never touched. Settings: *System → Party* pages in the g
   fight starts for everyone, and the others follow through the fog. A boss's first fight with an
   intro cutscene still starts with the host.
 - **Travel together or alone.** Lamps, headstones and the Hunter's Mark ask "Travel with the party?".
-  Yes moves the whole party with one loading screen; No moves only you, and the others don't load.
+  Yes moves the whole party with one loading screen; No moves only you (when a guest rests that way,
+  the host gets a short rest load so its world resets). The question closes by itself after 30 s.
   A guest's own save keeps its own spot: playing it solo later starts where it was, not at the
   lamp it travelled to with the party.
-- **No loading screen inside the same map.** A lamp or Hunter's Mark to a spot in the map you are
-  already in is an instant warp, for the whole party too; at the lamp you already stand at, nothing
+- **No loading screen inside the same map for the host.** The host's lamp or Hunter's Mark to a spot
+  in the map it is already in is an instant warp, for the whole party too; a guest's gets its own
+  short loading screen and the host stays where it is; at the lamp you already stand at, nothing
   moves at all.
 - **Guests can use the Hunter's Mark** (on by default; launcher switch "Guests can use Hunter's
   Mark"): alone it takes you to your own last lamp, with the party to the host's.
@@ -130,7 +132,8 @@ single-player save is never touched. Settings: *System → Party* pages in the g
 - **Everyone can use lamps.** Vanilla disables lamps during co-op; here they work for everyone.
   A lamp lit by anyone is lit for the party.
 - **Resting resets the world for the party.** Enemies respawn; everyone's HP, vials and bullets
-  refill.
+  refill. A guest who rests and travels alone gives the host a short loading screen where it
+  stands, so the host's world resets too.
 - **Guests are full players.** The Doll (level up), shops, the workbench, storage, the Memory
   Altar (runes, covenants), lamps and headstones all work for guests.
 - **Change your appearance at the Dream's mirror.** The mirror in the Hunter's Dream workshop opens
@@ -182,11 +185,11 @@ single-player save is never touched. Settings: *System → Party* pages in the g
 | Who dies | What happens |
 |---|---|
 | A guest | Gets up again at its own lamp with no loading screen when that lamp is in the loaded area (else at the host's lamp); its Blood Echoes wait in a bloodstain at that spot in its own world (pick them up there); the others keep playing |
-| The host | Gets up again at its own lamp with no loading screen for anyone; its echoes stay in a bloodstain where it fell. If that lamp is in another area, only the host loads; the guests stay where they are |
+| The host | Everyone gets one respawn loading screen at the host's lamp, as in the original game, and the world resets; the host's echoes stay in a bloodstain where it fell |
 | Anyone, during a boss fight | Watches a living party member fight (press Cross to watch the next one) until the boss dies (then gets up at the host's lamp, with no loading screen when it is in the area), everyone dies, or someone travels |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |
 
-A single death (guest or host) brings no enemies back: only a rest at a lamp or a party wipe resets them.
+A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's) or a party wipe resets them.
 
 ### Coming next
 
@@ -255,12 +258,12 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | Who | What |
 |---|---|
 | deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors |
-| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD |
+| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD; audio pop fix, paths with parentheses in `run.bat`, parallel `build.bat` |
 | shadPS4 team | Vulkan video core and shader recompiler (GPL-2.0+), sirit |
 | droogie and the bbhost team | Long-session stability fixes; menu button rows and the menu cursor's offsets; direct summon delivery; the Hunter's Dream mirror (appearance editor) ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |
 | FireBurn | FSR-Vulkan (MIT); AMD FidelityFX SDK (MIT) |
 | Supermedo, IFreemz | DLSS bridge and Windows loader |
-| Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, FPS-preset physics step (found by FIocker), frame limiter pacing, texture-cache, pipeline-cache and shader-walker fixes, skipped draws for failed pipelines, keyboard stick movement; imedved (direct mouse camera, ported by mcrib884); andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows) |
+| Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, FPS-preset physics step (found by FIocker), frame limiter pacing, texture-cache, pipeline-cache and shader-walker fixes, skipped draws for failed pipelines, keyboard stick movement, allocating past a full VRAM budget, object motion off on AMD before RDNA3, the memory log line once a minute; imedved (direct mouse camera, ported by mcrib884); andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows) |
 | Vorshim92 | Pipeline cache kept between starts, stale `bbport.exe` guard, crash reaper, `run.bat` resolution fix, Reset shader cache button |
 | Thealexbarney | LibAtrac9 audio (MIT) |
 | ocornut | Dear ImGui (MIT) |

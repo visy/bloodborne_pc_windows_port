@@ -148,6 +148,9 @@ std::string LampRequestToJsonText(const LampRequest& r) {
     json::Value v = json::Value::make_object();
     v.set("id", r.id);
     v.set("seq", json::hex(r.seq));
+    if (r.rest) {
+        v.set("rest", true);
+    }
     return json::dump(v, 0);
 }
 
@@ -167,6 +170,9 @@ bool LampRequestFromJsonText(const std::string& text, LampRequest* out, std::str
         LampRequest r;
         r.id = json::u32(v, "id");
         r.seq = json::u64(v, "seq");
+        if (const json::Value* rest = v.find("rest")) {
+            r.rest = rest->type == json::Value::Type::Bool && rest->boolean;
+        }
         *out = r;
         return true;
     } catch (const std::exception& e) {
@@ -185,6 +191,13 @@ bool SanitizePeerLampRequest(const LampRequest& r, std::string* why) {
         return false;
     }
     return true;
+}
+
+LampRequestAction ChooseLampRequestAction(const LampRequest& r, bool lamp_in_loaded_map) {
+    if (r.rest) {
+        return LampRequestAction::RestLoad;
+    }
+    return lamp_in_loaded_map ? LampRequestAction::IgnoreSameMap : LampRequestAction::PartyTravel;
 }
 
 bool LampRequestGate::Accept(bool host_ready, double now, std::string* why) {
@@ -546,6 +559,24 @@ bool GuestLampRequestNow(std::uint32_t id) {
     }
     Log("lamp: the guest's warp to %u becomes a request to the host (the party travels together)", id);
     g_lamp_requests_made.fetch_add(1);
+    return true;
+}
+
+bool GuestRestRequestNow(std::uint32_t id) {
+    if (PartyDirector::Get().Role() != PartyRole::Guest) {
+        return false;
+    }
+    LampRequest r;
+    {
+        std::lock_guard<std::mutex> lk(g_lamp_mu);
+        r.id = id;
+        r.seq = ++g_lamp_seq;
+        r.rest = true;
+        if (g_lamp_out.size() < 8) {
+            g_lamp_out.push_back(r);
+        }
+    }
+    Log("lamp: the guest rested at %u and travels alone: the host's world gets a rest load", id);
     return true;
 }
 
@@ -1701,15 +1732,21 @@ void LogLampTalks() {
         return;
     }
     last = Now();
-    // Counted silently (the scripts ask 30 times a second while near); logged every second in
-    // tests, else at most once a minute (playtest 1 bug 5: the logs could not show the override).
-    static double world_talk_logged = -1e9;
-    static std::uint32_t world_talk_sum = 0;
-    world_talk_sum += g_world_talk_overrides.exchange(0, std::memory_order_relaxed);
-    if (world_talk_sum && (!g.test.empty() || Now() - world_talk_logged >= 60.0)) {
-        Log("guest NPC talk in the host's world asked IsClientPlayer %u times (answered 0)", world_talk_sum);
-        world_talk_sum = 0;
-        world_talk_logged = Now();
+    // Counted silently (the scripts ask 30 times a second while near); logged in tests only.
+    if (const std::uint32_t m = g_world_talk_overrides.exchange(0, std::memory_order_relaxed); m && !g.test.empty()) {
+        Log("guest NPC talk in the host's world asked IsClientPlayer %u times (answered 0)", m);
+    } else if (m) {
+        // Outside tests: at most one line a minute (playtest 1 bug 5: the logs never told whether
+        // a guest's knock / talk reached the override at all).
+        static std::uint32_t pending = 0;
+        static double last_normal = -1e9;
+        pending += m;
+        if (Now() - last_normal >= 60.0) {
+            last_normal = Now();
+            Log("guest NPC talk in the host's world: %u IsClientPlayer answer(s) overridden (answered 0) since the last line",
+                pending);
+            pending = 0;
+        }
     }
     if (const std::uint32_t m = g_lamp_talk_overrides.exchange(0, std::memory_order_relaxed); m && !g.test.empty()) {
         Log("guest lamp talk asked IsClientPlayer %u times (answered 0)", m);
@@ -1848,16 +1885,26 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
     }
     for (const auto& [slot, r] : in) {
         std::string why;
+        const LampRequestAction act = ChooseLampRequestAction(r, b2::LampInLoadedMap(r.id));
+        if (act == LampRequestAction::RestLoad) {
+            // Its own gate (party_death_rules PlanRestLoad), run by the B2 tick.
+            b2::HostRestRequest(slot, r.id);
+            continue;
+        }
+        if (act == LampRequestAction::IgnoreSameMap) {
+            // Playtest 1 bug 10: the host was yanked across the Dream for a guest's lamp in the
+            // map both stood in. That guest loads alone (its own loading screen).
+            Log("lamp: slot %d asked for lamp %u in this loaded map: the host does not move (the guest loads alone)", slot,
+                r.id);
+            continue;
+        }
         if (!g_lamp_gate.Accept(s.world_up && !s.loading, Now(), &why)) {
             Log("lamp: request %u from slot %d not run: %s", r.id, slot, why.c_str());
             continue;
         }
         Log("lamp: slot %d used a lamp / headstone: the host warps to %u, the party follows", slot, r.id);
-        // Inside the loaded map: the party moves in-world (no load); else the decided party warp
-        // (the split question is the guest's, already answered).
-        if (!b2::HostPartyWarpNoLoad(r.id)) {
-            RunLampWarpDecided(r.id, false);
-        }
+        // Another map (the split question is the guest's, already answered): the party travel.
+        RunLampWarpDecided(r.id, false);
     }
 }
 

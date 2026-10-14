@@ -804,7 +804,9 @@ static DWORD WINAPI watchdog_worker(LPVOID param) {
                         active_threads);
             }
 
-            for (GuestThread *t = runtime_thread_get_all(); t; t = t->next) {
+            /* Blocked threads only while frames stall: idle workers wait for seconds in normal play
+             * (playtest 1: 57k [BLOCKED >3s] lines from a guest running at 40-60 flips/s). */
+            for (GuestThread *t = runtime_thread_get_all(); zero_flip_seconds >= 3 && t; t = t->next) {
                 if (!t->finished && t->blocked_on && t->blocked_tick && (now - t->blocked_tick >= 3000)) {
                     double wait_s = (double)(now - t->blocked_tick) / 1000.0;
                     printf("  [BLOCKED >3s] Thread '%s' (TID %lu) waiting on %s (res 0x%" PRIx64 ") for %.1fs\n",
@@ -827,7 +829,10 @@ static DWORD WINAPI watchdog_worker(LPVOID param) {
             if (f_heartbeat_ts) fflush(f_heartbeat_ts);
             if (g_import_file) fflush(g_import_file);
 
-            if (g_last_progress_tick != 0 && (now - g_last_progress_tick >= 10000)) {
+            /* g_last_progress_tick only moves on traced import calls, which a running game can go
+             * without for long: dump only when the flips stalled too (playtest 1: 198 false dumps
+             * while main ran at 40-60 flips/s). */
+            if (g_last_progress_tick != 0 && (now - g_last_progress_tick >= 10000) && zero_flip_seconds >= 5) {
                 if (now - last_dump_tick >= 10000) {
                     last_dump_tick = now;
                     dump_watchdog();

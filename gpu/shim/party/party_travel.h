@@ -287,6 +287,11 @@ void GuestDeathRedirectNow();
 bool TravelEnabled();
 /// The director's party start readiness (party_start.h StartReady), for GuestFollowsHostTravel.
 void SetLocalStartReady(bool ready);
+/// Host, main thread: a load of its own world at an exact transform (map, position, rotation:
+/// where it stands), broadcast as a Transform travel so the guests in this world follow with one
+/// load (a guest's rest resets the host's world, playtest 1 bug 3). False: not the host in its own
+/// world, a stage request already armed, or travel off.
+bool HostTravelTransformNow(std::uint32_t map, const float pos[4], const float rot[4], const char* why);
 /// Test fixtures (BB_PARTY_DIRECTOR_TEST place=...): warps the local player to an exact transform
 /// through the forced-placement sequence (main thread, world up). False when the map is unknown.
 bool TravelPlaceForTest(std::uint32_t map, const float pos[3], float yaw);

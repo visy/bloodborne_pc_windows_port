@@ -143,7 +143,8 @@ image + 0x400000 and the file uses guest offsets (image + 0), e.g. bbhost 0x2aaa
 | GX resource-table reclaim wait (GPU catch-up wait) | `BB_GX_RECLAIM_WAIT=0`, bound `BB_GX_RECLAIM_WAIT_MS` (default 100) | GX table block reclaim |
 | Frame-pool borrow fix | `BB_FRAME_POOL_FIX=0` | +0x1067F60 |
 | Red-zone-free effect ribbon writers | `BB_RIBBON_FIX=0` | +0x28CE7B0, +0x28CEEC0 |
-| NULL guard on the frame arena allocator (drops the render command) | `BB_ARENA_GUARD=0`, log `BB_ARENA_PROBE=0` | allocator +0xE45560, check +0x21D5B35 |
+| NULL guards on the frame arena allocator (drop the render command) | `BB_ARENA_GUARD=0`, log `BB_ARENA_PROBE=0` | allocator +0xE45560, checks +0x21D5B35 and +0x2199303 |
+| Frame command allocator 256 KiB -> 1 MiB (what the frame arenas draw from) | `BB_FRAME_ARENA_KIB=N` (0: the game's 256) | +0x2195C09, +0x2195C46 |
 | Blend-state write mask not cleared | `BB_BLEND_MASK_FIX=0` | +0x2A51640 |
 
 The credits also list a 6 GiB direct memory change from bbhost; its site is not in the stability header.

@@ -3,7 +3,7 @@
 Input: `E:\games\bbport\logs_playtest1\` (bb_bugs.txt with 18 notes; host visy = 5 runs + 1 crash dump; guest
 the guest = 5 runs). It was one ~2.5 h session, about 17:08 to 20:40 Finnish time. Head checked for "already fixed" is
 `windows-upstream-0.5` at aeeb408 (git log 8143fda..HEAD, CHANGES.md "## 0.6.1 (unreleased)", and the code).
-This is read-only triage: nothing was changed, built or run.
+This is read-only triage: nothing was changed, built or run. Batch 1 (deaths, rests, world reset) landed 2026-10-14 (agent/pt1deaths; b2_seamless.md "2026-10-14 (pt1deaths)"); its rows are marked in the summary.
 
 Log names give each run's END time. H1..H5 = `visy_host/launcher_20261013_183856 / _184410 / _192054 / _193023 /
 _193033_last`, G1..G5 = `guest/launcher_20261013_184415 / _185717 / _192049 / _193046 / _194949`.
@@ -24,23 +24,23 @@ loading-screen path is the proposed fix. A seamless (no-load) variant comes back
 |---|---|---|---|---|---|
 | 1 | Direct summon while the host is in its prologue | major | no | `dsummon::HostRefusal` has no start-ready check; the host makes a room on demand (H2:919-992) | 2 |
 | 2 | Guest's bell prompt also shown on the host | minor | no | inferred: the host director auto-rings the Beckoning Bell (SpEffect 9000) whenever a guest waits or rings | 2 |
-| 3 | Only a host rest resets the world | major | no | a guest's rest at a lamp asks "Travel with the party?"; NO sends it to the Dream alone with no reset (design gap) | 1 |
+| 3 | Only a host rest resets the world | major | **fixed (batch 1, live)**: a guest's alone rest gives the host a rest load | a guest's rest at a lamp asks "Travel with the party?"; NO sends it to the Dream alone with no reset (design gap) | 1 |
 | 4 | Enemy loot from the guest not shared | minor | no (by design) | ERSC_PARITY D4: per-player drop rolls. A design decision to revisit, not a bug | decision |
 | 5 | Guests cannot knock on doors / see plot dialogue | major | **partly (pt1npc)**: Iosefka / fake doctor doors live OK; window residents still no prompt (fixture stood at the chr, not the window dummy); talk logs now outside tests | unconfirmed: ghost NpcParam rows (Iosefka 6060) and/or a client-only talk gate; the logs do not print the override counter | 4 |
-| 6 | Host death blocks guest loot | major | no | host revive-in-place leaves the guest's death and send-home state half-done until its next load | 1 |
-| 7 | Host death warp breaks world / occlusion | major | no | host death = revive in place (moved up to ~190 m, no load, no world reset) | 1 |
+| 6 | Host death blocks guest loot | major | **fixed (batch 1)**: host death = party respawn load; the guest's send-home is followed by the load (live) | host revive-in-place leaves the guest's death and send-home state half-done until its next load | 1 |
+| 7 | Host death warp breaks world / occlusion | major | **fixed (batch 1, live)**: host death = party respawn load for everyone | host death = revive in place (moved up to ~190 m, no load, no world reset) | 1 |
 | 8 | Fog wall for the guest until the host goes in | minor (on head) | **notice (pt1npc)**: first-fight fogs show "the host goes in first"; not seen firing live, per-gate diagnostics logged | B2 guest fog-first (1f981e9) covers plain fogs; first fights with an intro (Gascoigne) still start with the host | 4 |
 | 9 | Rejoined guest lands in the Dream, not in Central Yharnam | **blocker** | partly | the guest rings before its own map is known, so no gather; cross-map direct summon never loads the host's map (aeeb408 only keeps the gather as default) | 2 |
-| 10 | Doll level-up plays on the host + position jumps back | major | **flags fixed (pt1npc)**: never_sync Doll rows; the position jump is batch 1 | Doll flags 72100100-102/113, 12100112-114 synced as npc_quest; a same-map lamp warp became a host-led party move | 1 (move) + 4 (flags) |
+| 10 | Doll level-up plays on the host + position jumps back | major | move part **fixed (batch 1)**: same-map guest lamp = own load, the host never moves; flags: batch 4; flags **fixed (pt1npc)**: never_sync Doll rows | Doll flags 72100100-102/113, 12100112-114 synced as npc_quest; a same-map lamp warp became a host-led party move | 1 (move) + 4 (flags) |
 | 11 | Gehrman is a ghost for the guest | minor | **fixed (pt1npc)**: 804000 in the talk-NPC table, written live | NpcParam 804000 has isChangeWanderGhost; only the Doll's 803000 is patched | 4 |
-| 12 | Item prompt stuck on the guest at host death | major | no | `ShowItemGet` is gated only on `Calm()`, plus the half-done death state of #6 | 3 (gate) + 1 (death) |
-| 13 | Host's dropped echoes not shown, could not recover | minor | no | not proven: 2 of 6 host bloodstains never picked up; the revive-in-place warp is a suspect; no pickup log | 1 |
+| 12 | Item prompt stuck on the guest at host death | major | death part **fixed (batch 1)**: a load follows a host death; the question closes on load / death / 30 s (live) | `ShowItemGet` is gated only on `Calm()`, plus the half-done death state of #6 | 3 (gate) + 1 (death) |
+| 13 | Host's dropped echoes not shown, could not recover | minor | **logged (batch 1)**: stain changes logged; a host death is a load again | not proven: 2 of 6 host bloodstains never picked up; the revive-in-place warp is a suspect; no pickup log | 1 |
 | 14 | Gascoigne cutscene played twice | minor (on head) | **yes** + host guard (pt1npc): story_up refused if played < 10 min or boss fight | the guest's own intro event replayed on the host; fixed by story dedupe default on (025b0a9) + live check (a5033c3). Residual: the host does not refuse a replay mid-fight | 4 |
 | 15 | Boss loot prompt frozen on the guest, key items missing? | major | no | badge pushed via `ShowItemGet` in the same second as the boss defeat banner; no alive/cutscene/banner/load gate | 3 |
 | 16 | Oedon Tomb Key (and other key items) not on the guest | major | no | the host sent lot 31000 (H5:8051-8062, again at H5:11875); the guest side is not logged. Suspects: #15 frozen box, or ledger seeding from a synced boss flag | 3 |
 | 17 | "Red guy" in Oedon Chapel is a ghost for the guest | major | **fixed (pt1npc)**: 42 talk-NPC NpcParam rows written live (Alfred, Dweller, Eileen ...) | the same ghost bit on almost every talk-NPC row (Alfred 6151/6155/6154, Chapel Dweller 113010, Eileen, Arianna...) | 4 |
-| 18 | Guest echoes not takeable when both died | major | no | wipe race: the host counted "0 down" just before the guest's death arrived (H5:10184 vs 10210), so it revived alone instead of a wipe; plus the #6 state | 1 |
-| crash | Host crash 20:38:10, eboot +0x2199310 null+8 | major | no | per-frame arena allocator +0xe45560 returned NULL. FUN_02198fd0 checks the 1st alloc, not the 2nd (+0x21992fb); `BB_ARENA_GUARD` covers only the +0x21d5b35 caller | 5 |
+| 18 | Guest echoes not takeable when both died | major | **fixed (batch 1, unit)**: recount every frame + early down notice; not reached live | wipe race: the host counted "0 down" just before the guest's death arrived (H5:10184 vs 10210), so it revived alone instead of a wipe; plus the #6 state | 1 |
+| crash | Host crash 20:38:10, eboot +0x2199310 null+8 | major | **yes** (batch 5: guard at +0x2199303, frame allocator 1 MiB) | per-frame arena allocator +0xe45560 returned NULL. FUN_02198fd0 checks the 1st alloc, not the 2nd (+0x21992fb); `BB_ARENA_GUARD` covers only the +0x21d5b35 caller | 5 |
 
 Top extra problems (details below): G4's direct summon failed 8 of 10 times with nothing logging why; the guest
 left the session on its own 92.7 s after joining (G4:10655); the party watchdog stopped "stuck" summons when the
@@ -868,6 +868,31 @@ FUN_02198fd0 (called from FUN_01d976e0 +0x1d97853) takes two blocks from the fra
 The first alloc (0x2199266, 0x20 bytes) has a NULL test (`test r12,r12; je`), the second (0x21992fb, 0x10 bytes) has none. The arena's backing allocator (vtable +0x52e6fd0, alloc +0xe453b0, the per-frame allocator, not CSGraphicsPrivateAllocator, so our probe printed no heap numbers) ran dry; our `BB_ARENA_GUARD` covers only the +0x21d5b35 caller (1 of 45 call sites of +0xe45560 in calls.tsv). Root of the exhaustion is not proven: candidates are the GPU stall seen in the breadcrumbs (frame contexts not recycled while the GPU is stuck) and long-session VRAM over-budget on the 8 GiB host (constant eviction for 45 min). It is a generic long-session render/memory crash, not a party-protocol bug; the party only adds load (2 players, re-created chrs).
 
 **Fixed on head?** No. `git log 8143fda..aeeb408` touches nothing in `gpu/shim/bbport_stability.cpp` or the GPU path.
+
+**FIXED (batch 5, 2026-10-14)** in `gpu/shim/bbport_stability.cpp`:
+- Why it ran dry (disassembly): the arena's backing allocator (vtable +0x52e6fd0, alloc +0xe453b0 ->
+  +0x2085120) is a plain linear (bump) allocator of **256 KiB**, one per frame context (renderer +0x370 /
+  +0x378, made in FUN_02194580 by `mov edx, 0x40000` at +0x2195c09 / +0x2195c46 -> +0xe45200) and reset
+  at every frame flip in FUN_02198fd0 (vtbl+0x78 at +0x2199134 / +0x2199587 / +0x21999a3; the frame's
+  arenas +0x48 and +0x78 restart with 2 KiB chunks via +0xe45530). The failing arena held only 2 chunks,
+  so the other consumers of that frame's 256 KiB had used it up: a per-frame budget overflow on a busy
+  frame (two players, re-created chr, effects), not a leak across frames (the flip resets it) and not
+  the texture cache. Not measured on the playtest's frame, so "busy frame" stays the likeliest reading;
+  the GPU stall in the breadcrumbs came after the NULLs.
+- The allocator is now 1 MiB per frame context (`BB_FRAME_ARENA_KIB`, 0 = the game's 256 KiB; +1.5 MiB
+  from the renderer's heap at boot). A probe at the three flip sites logs `Stability: frame allocator:
+  the fullest frame so far used N of M KiB` (from 64 KiB, each +25 %), and `ArenaNull` prints the
+  allocator's used/capacity/blocks, so the next report shows how close a frame came.
+- Second guard at +0x2199303 (bytes checked +0x21992ed..+0x219934e): a NULL runs the unlock and skips
+  the fill and the submission (+0x21b4b00) to +0x2199346; log `render command 0 dropped ... (guest
+  +0x21992fb)`. Test aid `BB_ARENA_FAIL_TEST=N` drops every N-th pass. Live (one single-player
+  Continue into the Dream, `BB_ARENA_FAIL_TEST=300`): `arena-guard on (fail test 1/300); frame-arena
+  1024KiB; frame-arena-probe on`, two drops from +0x21992fb, no fault.
+- Still open: the audit of the other ~43 call sites of +0xe45560 (FUN_0224f120, FUN_022a0a30 first);
+  with 4x the budget they should no longer see a NULL.
+- Watchdog noise (additional problem 1): `src/probe.c` dumps `WATCHDOG: NO PROGRESS` only when flips
+  stalled 5 s too, and prints `[BLOCKED >3s]` only while flips stall 3 s; the launcher warns (Party tab
+  hint and the launcher log) when Debug tracing is on in a party.
 
 **Severity:** major (one crash in ~2.5 h; the auto-restart + rejoin recovered it, see below). Would be a blocker if it recurs per hour.
 
