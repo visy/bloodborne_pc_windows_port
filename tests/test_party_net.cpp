@@ -6,6 +6,7 @@
 #include "bbnet_internal.h"
 #include "net_stun.h"
 #include "netsim.h"
+#include "nr_outage.h"
 #include "party_udp.h"
 #include "party_util.h"
 #include "json.h"
@@ -762,6 +763,94 @@ static void test_local_address() {
     std::printf("local address: ok\n");
 }
 
+// F5: the session transport's records (shapes from a live capture, 2026-10-14) and the outage
+// keepalive / resume replay built from them.
+static void test_nr_outage() {
+    using namespace bbnet::nr;
+    using std::chrono::milliseconds;
+    // A data record (seq 0xb5d1, type 3) and a bare ack (ack 0xb5ce, type 0x30) in one datagram,
+    // then an unreliable record.
+    const std::vector<std::uint8_t> d = {0x01, 0x00, 0x08, 0xb5, 0xd1, 0x00, 0x00, 0x03, 0xff, 0xaa, 0xbb,
+                                         0x01, 0x00, 0x06, 0x00, 0x00, 0xb5, 0xce, 0x30, 0xff,
+                                         0x00, 0x00, 0x02, 0x11, 0x22};
+    int n = 0, data = 0;
+    CHECK(for_each_record(d.data(), d.size(), [&](const Record& r) { ++n; data += is_data(r); }));
+    CHECK(n == 3 && data == 1);
+    const std::uint8_t bad[] = {0x01, 0x00, 0x40, 0x00};
+    CHECK(!for_each_record(bad, sizeof bad, [](const Record&) {}));
+    // Keepalive: the data record alone; a piggy-backed ack (0x33) loses its ack flag and number.
+    std::vector<std::uint8_t> ka = keepalive_from(d.data(), d.size());
+    CHECK(ka == (std::vector<std::uint8_t>{0x01, 0x00, 0x08, 0xb5, 0xd1, 0x00, 0x00, 0x03, 0xff, 0xaa, 0xbb}));
+    const std::uint8_t pig[] = {0x01, 0x00, 0x06, 0x12, 0x34, 0xb5, 0xce, 0x33, 0xf0};
+    ka = keepalive_from(pig, sizeof pig);
+    CHECK(ka.size() == 9 && ka[5] == 0 && ka[6] == 0 && ka[7] == 0x03 && ka[8] == 0xf0);
+    const std::uint8_t only_ack[] = {0x01, 0x00, 0x06, 0x00, 0x00, 0xb5, 0xce, 0x30, 0xff};
+    CHECK(keepalive_from(only_ack, sizeof only_ack).empty());
+
+    // Dup-ack reports held back after a resume: the type-2 record goes, the others stay.
+    const std::uint8_t mix[] = {0x01, 0x00, 0x0a, 0x00, 0x00, 0x7f, 0xf2, 0x02, 0xfe, 0x00, 0x00, 0x00, 0x27,
+                                0x01, 0x00, 0x06, 0x00, 0x00, 0x7f, 0xf2, 0x30, 0xfd, 0x00, 0x00, 0x01, 0x05};
+    std::vector<std::uint8_t> kept;
+    CHECK(strip_dup_acks(mix, sizeof mix, &kept) == 1);
+    CHECK(kept == (std::vector<std::uint8_t>{0x01, 0x00, 0x06, 0x00, 0x00, 0x7f, 0xf2, 0x30, 0xfd, 0x00, 0x00, 0x01, 0x05}));
+    CHECK(strip_dup_acks(mix, 13, &kept) == 1 && kept.empty());
+    CHECK(strip_dup_acks(bad, sizeof bad, &kept) == 0 && kept.size() == sizeof bad);
+
+    // An oversized datagram leaves in MTU-sized parts at record boundaries.
+    std::vector<std::uint8_t> big;
+    for (int i = 0; i < 50; ++i) {
+        const std::uint8_t r[] = {0x01, 0x00, 0x27};
+        big.insert(big.end(), r, r + 3);
+        big.insert(big.end(), 0x27, static_cast<std::uint8_t>(i));
+    }
+    std::vector<std::vector<std::uint8_t>> parts;
+    CHECK(big.size() == 2100 && split_records(big.data(), big.size(), kGameMtu, &parts) && parts.size() == 2);
+    std::size_t sum = 0;
+    for (const auto& pt : parts) {
+        CHECK(pt.size() <= kGameMtu && pt[0] == 0x01 && pt[2] == 0x27);
+        sum += pt.size();
+    }
+    CHECK(sum == big.size());
+    CHECK(!split_records(bad, sizeof bad, kGameMtu, &parts));
+
+    // Resume replay: the peer heard until t=10 s, silent to t=30 s.
+    PeerReplay rp;
+    const Clock::time_point t0 = Clock::now();
+    auto at = [&](int ms) { return t0 + milliseconds(ms); };
+    auto rec = [](std::uint16_t seq) {
+        return std::vector<std::uint8_t>{0x01, 0x00, 0x06, static_cast<std::uint8_t>(seq >> 8),
+                                         static_cast<std::uint8_t>(seq), 0x00, 0x00, 0x03, 0xff};
+    };
+    std::uint16_t seq = 100;
+    for (int ms = 0; ms < 30000; ms += 100) {
+        const Clock::time_point heard = at(std::min(ms, 10000));
+        auto r = rec(seq++);
+        rp.on_send(at(ms), heard, r.data(), r.size());
+        if (ms == 20000) {  // a retransmission of an outage segment: sent once in the replay
+            auto again = rec(static_cast<std::uint16_t>(seq - 50));
+            rp.on_send(at(ms), heard, again.data(), again.size());
+        }
+    }
+    // Kept: from 3 s before the silence (7 s) to its end (30 s), 10/s, plus the retransmission.
+    CHECK(rp.kept() >= 228 && rp.kept() <= 233);
+    std::size_t records = 0;
+    CHECK(rp.on_heard(at(30000), at(29500), &records).empty());  // no silence: nothing
+    auto out = rp.on_heard(at(30050), at(10000), &records);
+    CHECK(records >= 227 && records <= 232 && !out.empty() && rp.kept() == 0);
+    std::uint16_t prev = 0;
+    bool ordered = true;
+    std::size_t total = 0;
+    for (const auto& g : out) {
+        CHECK(g.size() <= 1100);
+        for_each_record(g.data(), g.size(), [&](const Record& r) {
+            if (prev && seq_of(r) != static_cast<std::uint16_t>(prev + 1)) ordered = false;
+            prev = seq_of(r);
+            ++total;
+        });
+    }
+    CHECK(ordered && total == records && prev == static_cast<std::uint16_t>(seq - 1));
+}
+
 int main() {
     // Loopback-only sockets: no Windows Firewall prompt for a test program (party_sock.h).
     if (!std::getenv("BB_PARTY_LOOPBACK")) {
@@ -783,6 +872,7 @@ int main() {
     set_env("BB_PARTY_LOOPBACK", "1");  // back to loopback-only sockets for the tests below
     test_stun();
     test_netsim();
+    test_nr_outage();
     test_peer_paths();
     test_aliases();
     test_routing();
