@@ -133,6 +133,17 @@ std::int32_t ItemLedgerLot(std::int32_t idx);
 /// bits to set - one per ledger lot whose done flag is set and whose bit is not - or nothing when
 /// the save already carries the kItemLedgerSeeded marker.
 std::vector<std::uint32_t> LedgerBitsToSeed(const std::function<bool(std::uint32_t)>& is_set);
+/// Key-item catch-up (playtest 1 save audit, docs/party/playtest1_save_audit.md): the ledger lots
+/// this save says were given (ledger bit set) for a boss this save has beaten (done flag set,
+/// `boss_flag(done)` true), in table order without duplicates. The playtest guest's save had the
+/// ledger bits of the Oedon Tomb Key (31000) and the Sword Hunter Badge (50000010) and both boss
+/// flags, but neither item: 0.6.0 gave them while summoned, and a summoned guest's key items are
+/// not what its save keeps. Then every SharedKeyTreasureLot whose treasure flag this save has
+/// (the guest's save had 52411000, the Blood Gem Workshop Tool's flag, and no tool). The caller
+/// gives each one whose slots are all missing unique goods with a key item (KeyCatchupNeeded) in
+/// the own world, from the save alone (no host needed).
+std::vector<std::int32_t> KeyCatchupLots(const std::function<bool(std::uint32_t)>& own_flag,
+                                         const std::function<bool(std::uint32_t)>& boss_flag);
 std::size_t ItemLotFlagCount();
 std::size_t ItemLedgerCount();
 
@@ -362,10 +373,20 @@ bool LotHasKeyItem(const std::vector<LotSlotState>& slots);
 /// summon load or a restart. verify_c6 (live) found the cause: key items (goodsType 1) never show
 /// in a summoned guest's inventory (LotHasKeyItem); the save written while summoned does keep the
 /// gives (Sword Hunter Badge on disk with no own-world visit; Oedon Tomb Key held at home after
-/// three crashes). Kept as a safety net: each give is remembered (on disk) with
+/// three crashes). Playtest 1 save audit: that evidence came from a base save that already held
+/// both keys; the playtest guest's real save (0.6.0) did NOT keep a key item given while summoned
+/// (4114 "held 0 -> 1" at G5:40207, ledger bit 60009036 in the save, no 4114 in its key-item list
+/// an hour of play later). So this is the fix, not just a safety net: each give is remembered (on disk) with
 /// the held count right after it (`expect`); in the next own world the missing part is given
 /// again, min(count, expect - now) (0 when nothing is missing or a count is unknown), and saved.
 int SummonedRegiveCount(int expect, int now, int count);
+/// A lot to catch up in the own world: every slot unique goods not held (LedgerSkipSuspicious)
+/// and at least one key item (LotHasKeyItem). Own-world reads only: summoned, keys read 0.
+bool KeyCatchupNeeded(const std::vector<LotSlotState>& slots);
+/// party_summoned_gives.txt is one file per user folder, shared by every character in the save
+/// slots: an entry given to the character in save slot `entry_slot` is re-given only to that one
+/// (-1 on either side = unknown: an older file or an unreadable slot; given as before).
+bool SummonedGiveForSlot(int entry_slot, int current_slot);
 
 class GuestItems {
 public:

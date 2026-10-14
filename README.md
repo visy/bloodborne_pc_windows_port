@@ -174,6 +174,8 @@ before anyone is in the game):
   "Hunter's Dream mirror", on by default; everyone in a party needs the same setting.
 - **Progress counts for everyone.** Bosses, items, doors, shortcuts, lamps, story and endings go
   into every player's own save. A guest who is behind catches up, including the Blood Moon.
+  Key items a guest earned in the host's world (Oedon Tomb Key, badges, workshop tools) are checked
+  each time its own world loads and given again if its save lacks them.
 - **Story cutscenes and endings play for everyone.** The Blood Moon, Amelia's skull (evening to
   night), Mergo's Wet Nurse's arena, Gehrman's scenes and the ending with the end credits
   play for every party member.
