@@ -66,6 +66,11 @@ jobs:
           cp -f /mingw64/include/miniz/*.h /mingw64/include/ || true
           echo "Miniz successfully built and installed to /mingw64"
 
+          # Install xbyak headers
+          git clone --depth 1 https://github.com/herumi/xbyak /tmp/xbyak
+          cp -r /tmp/xbyak/xbyak /mingw64/include/
+          echo "Xbyak headers installed to /mingw64/include/xbyak"
+
       - name: Compile Bloodborne PC Port
         shell: msys2 {0}
         run: |
