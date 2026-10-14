@@ -806,6 +806,20 @@ static void test_ledger_suspicious() {
     CHECK(!LedgerSkipSuspicious({weapon}));
     CHECK(!LedgerSkipSuspicious({key, held}));
     CHECK(!LedgerSkipSuspicious({}));
+    // verify_c6: key items (goodsType 1) read 0 in a summoned guest's inventory: checked at home.
+    LotSlotState door_key = key;
+    door_key.goods_type = 1;
+    CHECK(LotHasKeyItem({door_key}));
+    LotSlotState badge = key;
+    badge.id = 4001;
+    badge.goods_type = 0;
+    CHECK(!LotHasKeyItem({badge}));
+    CHECK(LotHasKeyItem({badge, door_key}));
+    CHECK(!LotHasKeyItem({key}));  // goodsType unknown
+    LotSlotState weapon_type1 = weapon;
+    weapon_type1.goods_type = 1;
+    CHECK(!LotHasKeyItem({weapon_type1}));  // goods only
+    CHECK(!LotHasKeyItem({}));
 }
 
 // The Old Hunter Bell and the other Messenger gifts: per player (never replayed), and a guest's
