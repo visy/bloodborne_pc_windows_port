@@ -347,6 +347,10 @@ using LampUseObserver = void (*)(std::uint32_t id);
 void SetLampUseObserver(LampUseObserver fn);
 /// The native lamp warp 0x13CDF30(id) (main thread; the host's travel hooks see it as usual).
 void RunLampWarp(std::uint32_t id);
+/// The same for a warp that is no lamp use of the player (a title-joined guest going home at the
+/// session's end, the fall recovery): the LampUseObserver does not see it (no rest, playtest 1 #21).
+/// `why` (a string literal) is logged.
+void RunLampWarpNotRest(std::uint32_t id, const char* why);
 /// The same, decided already (split travel: the player chose alone / with the party): the lamp
 /// interceptor is not asked again. On the host `alone` marks the captured travel
 /// (TravelIntent::alone: the guests stay).

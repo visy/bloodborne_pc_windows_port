@@ -358,10 +358,13 @@ inline StainChange PlanStainChange(int flag_was, int echoes_was, int flag_now, i
 /// dispatch OnEvent_4000 0x13813D0 then takes SoloPlayDeath, which leaves the session at 0x13CDEF6
 /// instead of PartyGhostDeath_2 (the B2 funnel at 0x1382663): in a wipe the guest left the party and
 /// rejoined 50 s later instead of following the one load. Due: a client in the host's world, alive,
-/// flow 4, type 0 for `steady_s` >= 2 s (the summon load sets 1 itself within that time).
-constexpr double kGuestChrTypeSettle = 2.0;
+/// flow 4, type 0 for `steady_s` >= kGuestChrTypeSettle, or at once when the chr is down (HP 0):
+/// playtest 1, a title-joined guest died ~1 s after its arrival, inside the old 2 s settle, so its
+/// death left the session (to the title screen, a re-join 50 s later). Writing 1 where the summon
+/// load would set 1 itself changes nothing, so the settle is only a few frames.
+constexpr double kGuestChrTypeSettle = 0.25;
 inline bool GuestChrTypeFixDue(bool client_in_world, int chr_type, int hp, int flow, double steady_s) {
-    return client_in_world && chr_type == 0 && hp > 0 && flow == 4 && steady_s >= kGuestChrTypeSettle;
+    return client_in_world && chr_type == 0 && hp >= 0 && flow == 4 && (hp == 0 || steady_s >= kGuestChrTypeSettle);
 }
 
 inline const char* HostDeathPlanName(HostDeathPlan p) {
