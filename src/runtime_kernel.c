@@ -109,17 +109,10 @@ static ABI int32_t posix_clock_getres(uint32_t id,GuestTimespec *ts) {
 static ABI uint64_t process_time(void) { return (host_monotonic_ns()-process_start)/1000; }
 static ABI uint64_t process_time_counter(void) { return host_monotonic_ns()-process_start; }
 static ABI uint64_t process_time_frequency(void) { return 1000000000; }
-static ABI uint64_t read_tsc(void) { return __rdtsc(); }
-static uint64_t tsc_hz;
-static ABI uint64_t tsc_frequency(void) {
-    if (!tsc_hz) {
-        uint64_t a=host_monotonic_ns(), t0=__rdtsc();
-        host_sleep_ns(20000000);
-        uint64_t ns=host_monotonic_ns()-a, t1=__rdtsc();
-        tsc_hz=(t1-t0)*1000000000/(ns ? ns : 1);
-    }
-    return tsc_hz;
-}
+/* The guest's TSC is the process clock in nanoseconds. Raw __rdtsc differs per core on some
+ * hosts (e.g. multi-CCD or hybrid P/E cores), so thread migration caused timing jumps. */
+static ABI uint64_t read_tsc(void) { return process_time_counter(); }
+static ABI uint64_t tsc_frequency(void) { return 1000000000; }
 uint64_t runtime_process_time_us(void) { return process_time(); }
 uint64_t runtime_process_time_counter(void) { return process_time_counter(); }
 uint64_t runtime_tsc_frequency(void) { return tsc_frequency(); }
