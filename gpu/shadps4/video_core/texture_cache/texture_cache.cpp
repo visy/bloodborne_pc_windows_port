@@ -1313,10 +1313,20 @@ void TextureCache::GarbageCollectImages() {
         visited = 0;
     };
     const auto clean_up = [&](ImageId image_id) {
-        if (num_deletions == 0 || ++visited > 256) {
+        // 512 (was 256): images that cannot go now (bound, GPU-written tiled) are skipped
+        // without using up the deletions but still count here (from
+        // Mrsuss60/bloodborne_pc_windows_port 89f05218 by Mrsuss60).
+        if (num_deletions == 0 || ++visited > 512) {
             return true;
         }
         auto& image = slot_images[image_id];
+        // Bound to the draw being recorded, a render/depth target of it, or a presented
+        // surface: never evicted, whatever the pressure (from Mrsuss60/bloodborne_pc_windows_port
+        // 89f05218 by Mrsuss60). Not marked as used (lru_touched_tick): only real use counts.
+        if (image.binding.is_bound || image.binding.is_target || image.usage.vo_surface) {
+            lru_cache.Touch(image.lru_id, gc_tick);
+            return false;
+        }
         const bool download = image.SafeToDownload();
         const bool tiled = image.info.IsTiled();
         // Depth/stencil targets and shadow maps are GPU-only and never read back by the CPU:
