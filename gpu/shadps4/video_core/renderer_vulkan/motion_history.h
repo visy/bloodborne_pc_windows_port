@@ -229,7 +229,14 @@ public:
     };
     struct Stats {
         uint64_t draws{}, stored{}, loaded{}, unmatched{}, exhausted{}, invalid{}, still{};
+        uint64_t dropped_instanced{};
     } stats;
+
+    /// bbport (from Supermedo/bloodborne_pc PR #69 by FIocker): instanced batches get no history
+    /// (camera motion only). Culling can reorder them between frames, and matching by draw order
+    /// then pairs unrelated objects; frame generation interpolates with those vectors, so it
+    /// turns this on (ObjectMotion). Off: the upscalers keep their per-instance history.
+    bool drop_instanced = false;
 
     // A small skeleton (weapon, prop; most are static world pieces) only needs history
     // while its bone palette changes: with last frame's bones its motion is the camera's.
@@ -269,6 +276,11 @@ public:
         if (!count || uint64_t(draw.vertices.first) + draw.vertices.count - 1 > INT32_MAX ||
             uint64_t(draw.first_instance) + draw.instances > UINT32_MAX) {
             ++stats.invalid;
+            return {};
+        }
+        if (drop_instanced && draw.instances > 1) {
+            --occurrences[key]; // as if this draw were not seen: the others keep their order
+            ++stats.dropped_instanced;
             return {};
         }
         const auto* prev = previous.find(key);

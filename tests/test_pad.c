@@ -10,6 +10,8 @@
 static int capture;
 int bbgpu_overlay_captures_input(void) { return capture; }
 int bbgpu_text_input_is_active(void) { return 0; }
+void bbgpu_reflex_pre_input_sample(void) {}
+void bbgpu_reflex_on_input_sampled(void) {}
 /* Mouse & keyboard mode (after Mrsuss60/bloodborne_pc_windows_port's test stubs). */
 static int mk_mode;
 static float mk_dx;

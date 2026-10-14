@@ -21,6 +21,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace coop {
@@ -176,5 +177,22 @@ private:
     bool load_seen_ = false, applied_ = false;
 };
 const char* CatchupPhaseName(Catchup::Phase p);
+
+/// #19 / playtest 1 save audit S5: party_prologue.txt, whether each character (save slot) was in
+/// its prologue when last seen in its own world: "last V" (the last character seen; 0 / 1) and one
+/// "slot S V" line per slot. A guest at its title asks for the slot it continues; without an entry
+/// for it (or with the slot unknown) the last character's value counts. A file from before the
+/// slot key ("1" / "0") is read as that "last" value: the same answer as before, which holds a
+/// title join rather than risk loading a prologue save into the host's world.
+struct SavedPrologueFile {
+    int last = 0;                               ///< 0 / 1
+    std::vector<std::pair<int, int>> slots;     ///< (save slot, 0 / 1)
+};
+SavedPrologueFile ParseSavedPrologue(const std::string& text);
+std::string FormatSavedPrologue(const SavedPrologueFile& f);
+bool SavedPrologueFor(const SavedPrologueFile& f, int slot);
+/// The character in `slot` (-1 unknown: only "last") seen in its own world: true when the file
+/// changed.
+bool NoteSavedPrologueFor(SavedPrologueFile& f, int slot, bool prologue);
 
 } // namespace coop

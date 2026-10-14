@@ -16,6 +16,7 @@
 #include "bbport_settings.h"
 #include "bbport_toggles.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
+#include "video_core/renderer_vulkan/vk_reflex.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 
@@ -223,6 +224,9 @@ Instance::Instance(const Frontend::WindowSystemInfo& window_info, s32 physical_d
 }
 
 Instance::~Instance() {
+    if (reflex_supported) {
+        Reflex::Shutdown();
+    }
     ImGui::Core::Shutdown(GetDevice());
     vmaDestroyAllocator(allocator);
 }
@@ -485,10 +489,19 @@ bool Instance::CreateDevice() {
         return false;
     }
 
-    static constexpr std::array queue_priorities = {1.0f};
+    // bbport: FSR frame generation presents on a second queue of the graphics family, so its
+    // paced copies do not wait behind the next frame's draws (from Supermedo/bloodborne_pc PR #69
+    // by FIocker; BB_FSR_PRESENT_QUEUE=0: the shared queue). Same family: no ownership transfers.
+    const char* fsr_present_queue = std::getenv("BB_FSR_PRESENT_QUEUE");
+    const bool separate_present = BbSettings::FrameGenerationStarted() &&
+                                  BbSettings::Get().startup_fg_backend == BbSettings::FgFsr &&
+                                  IsFsrGenerationSupported() &&
+                                  (!fsr_present_queue || fsr_present_queue[0] != '0') &&
+                                  family_properties[queue_family_index].queueCount >= 2;
+    static constexpr std::array queue_priorities = {1.0f, 1.0f};
     const vk::DeviceQueueCreateInfo queue_info = {
         .queueFamilyIndex = queue_family_index,
-        .queueCount = static_cast<u32>(queue_priorities.size()),
+        .queueCount = separate_present ? 2u : 1u,
         .pQueuePriorities = queue_priorities.data(),
     };
     // bbport: a queue of a compute and transfer family without graphics, for reading back GPU
@@ -527,6 +540,31 @@ bool Instance::CreateDevice() {
                 enabled_extensions.size() < enabled_extensions.capacity()) {
                 enabled_extensions.push_back(name);
             }
+        }
+    }
+    // bbport: NVIDIA Reflex (VK_NV_low_latency2 rev 3 + VK_KHR_present_id; from
+    // Supermedo/bloodborne_pc PR #69 by FIocker), only when chosen for this start.
+    reflex_supported = false;
+    if (BbSettings::Get().startup_reflex != BbSettings::ReflexOff) {
+        std::vector<const char*> reflex_extensions;
+        vk::PhysicalDeviceVulkan12Features reflex_vk12{};
+        vk::PhysicalDevicePresentIdFeaturesKHR reflex_present_id{};
+        reflex_supported = Reflex::ConfigureDevice(physical_device, reflex_extensions, reflex_vk12,
+                                                   reflex_present_id) &&
+                           vk12_features.timelineSemaphore;
+        for (const char* name : reflex_supported ? reflex_extensions : std::vector<const char*>{}) {
+            if (std::none_of(enabled_extensions.begin(), enabled_extensions.end(),
+                             [&](const char* e) { return std::string_view{e} == name; })) {
+                if (enabled_extensions.size() >= enabled_extensions.capacity()) {
+                    reflex_supported = false;
+                    break;
+                }
+                enabled_extensions.push_back(name);
+            }
+        }
+        if (!reflex_supported) {
+            std::printf("Reflex: not supported by this GPU or driver (VK_NV_low_latency2 rev 3, "
+                        "VK_KHR_present_id); off\n");
         }
     }
     vk::StructureChain device_chain = {
@@ -697,7 +735,13 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT{
             .graphicsPipelineLibrary = true,
         },
+        vk::PhysicalDevicePresentIdFeaturesKHR{
+            .presentId = true,
+        },
     };
+    if (!reflex_supported) {
+        device_chain.unlink<vk::PhysicalDevicePresentIdFeaturesKHR>();
+    }
 
     if (!custom_border_color) {
         device_chain.unlink<vk::PhysicalDeviceCustomBorderColorFeaturesEXT>();
@@ -780,7 +824,37 @@ bool Instance::CreateDevice() {
     bb_boot_mark("DLSS init done");
 
     graphics_queue = device->getQueue(queue_family_index, 0);
-    present_queue = device->getQueue(queue_family_index, 0);
+    present_queue = device->getQueue(queue_family_index, separate_present ? 1 : 0);
+    // bbport: frame generation runs this session only when its provider is here (decided before
+    // the renderer exists, so nothing of it is set up otherwise: camera constants, object motion,
+    // the output-size UI path).
+    if (BbSettings::FrameGenerationStarted()) {
+        auto& settings = BbSettings::Get();
+        static std::string problem;
+        const bool fsr = settings.startup_fg_backend == BbSettings::FgFsr;
+        const Dlss* dlss = Dlss::Get();
+        const bool ok = fsr ? IsFsrGenerationSupported()
+                            : dlss && dlss->FgAvailable() && dlss->FgMaxGenerated() > 0;
+        if (!ok) {
+            problem = fsr ? "FSR frame generation needs VK_KHR_compute_shader_derivatives (linear "
+                            "groups), which this GPU or driver lacks"
+                          : dlss ? dlss->FgProblem()
+                                 : "the DLSS bridge (bbport_dlss.dll) and NVIDIA's libraries are "
+                                   "not installed";
+            settings.fg_problem = problem.c_str();
+            std::printf("Frame generation: %s unavailable (%s); presenting normally\n",
+                        fsr ? "FSR" : "DLSS", problem.c_str());
+        }
+        settings.fg_active = ok;
+    }
+    if (BbSettings::Get().startup_reflex != BbSettings::ReflexOff) {
+        Reflex::Initialize(*instance, physical_device, *device, reflex_supported);
+        reflex_supported = Reflex::Tracking();
+        BbSettings::Get().reflex_active = reflex_supported;
+        if (reflex_supported && present_queue != graphics_queue) {
+            Reflex::OnPresentQueueCreated(present_queue);
+        }
+    }
     if (readback_family_index != NoFamily) {
         readback_queue = device->getQueue(readback_family_index, 0);
         LOG_INFO(Render_Vulkan, "Readback queue: family {}", readback_family_index);

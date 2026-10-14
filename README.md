@@ -38,6 +38,7 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | **Settings in the game's menu** | Every port setting is a page in the game's own *System* menu, with gamepad navigation. |
 | **High frame rates** | 30 / 60 / 90 / uncapped, with correct game speed (community patches). |
 | **Upscaling** | FSR 3.1, FSR 4, FSR 4.1.1 and DLSS, with motion vectors added for this game. |
+| **Frame generation** | Optional, off by default: DLSS FG (2x-4x, RTX 40/50) or FSR FG (2x), paced, HUD kept sharp; NVIDIA Reflex. [More](docs/FG_REFLEX.md) |
 | **No shader stutter** | Known shaders are built before the intro. New ones compile in the background. |
 | **Shareable shader cache** | Export / import one `.zip`, works across GPUs. |
 | **Save safety** | Crash-safe saving, save checks at start, automatic backups in party play. |
@@ -221,7 +222,7 @@ before anyone is in the game):
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
 - **Death has a cost.** Each death stacks "rot" (−10% max HP or stamina, picked at random, up to
   5); using a lamp (even just opening its travel menu and cancelling) or levelling up clears it.
-  It belongs to your character (a new game starts without it). On by default; the host can turn it off on the *Party rules* page.
+  It belongs to your character: each save slot keeps its own, and a new game starts without it. On by default; the host can turn it off on the *Party rules* page.
 - **Enemies scale with the party, harder than vanilla.** Bosses get more health (and a little more
   damage) per extra hunter than the game gives them, normal enemies get tougher too; all six values
   (boss / enemy health, damage, poise) are on the *Enemy scaling* page, the host's count.
@@ -294,6 +295,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 |---|---|
 | Building from source, DLSS, FSR 4 assets | [docs/BUILDING.md](docs/BUILDING.md) |
 | Settings, launcher, controls, environment variables | [docs/SETTINGS.md](docs/SETTINGS.md) |
+| Frame generation (DLSS FG, FSR FG) and NVIDIA Reflex | [docs/FG_REFLEX.md](docs/FG_REFLEX.md) |
 | Shader compilation and sharing the cache | [docs/SHADERS.md](docs/SHADERS.md) |
 | Saves, backups, restoring, game file check | [docs/SAVES.md](docs/SAVES.md) |
 | Mods, XML patches, DLC | [docs/MODS.md](docs/MODS.md) |
@@ -326,6 +328,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | droogie and the bbhost team | Long-session stability fixes; menu button rows and the menu cursor's offsets; direct summon delivery; the Hunter's Dream mirror (appearance editor) ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |
 | FireBurn | FSR-Vulkan (MIT); AMD FidelityFX SDK (MIT) |
 | Supermedo, IFreemz | DLSS bridge and Windows loader |
+| FIocker (Supermedo/bloodborne_pc PR #69) | Frame generation (DLSS FG, FSR FG) with paced presentation, NVIDIA Reflex, conservative object motion for frame generation, DLSS bridge ABI 2, FG diagnostics tools |
 | Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, FPS-preset physics step (found by FIocker), frame limiter pacing, texture-cache, pipeline-cache and shader-walker fixes, skipped draws for failed pipelines, keyboard stick movement, allocating past a full VRAM budget, object motion off on AMD before RDNA3, the memory log line once a minute; imedved (direct mouse camera, ported by mcrib884); andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows); parsifal295 (game check passes over locked files), RafaelHGOliveira (exclusive fullscreen), fliperama86 (HDR desktop black level), emurphy04 (ultrawide output, video queue fix) |
 | ALuaNegra (via Mrsuss60's port) | Idle depth targets freed (VRAM growth) |
 | Vorshim92 | Pipeline cache kept between starts, stale `bbport.exe` guard, crash reaper, `run.bat` resolution fix, Reset shader cache button |
@@ -335,5 +338,5 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | zackcage6 | Testing and bug reports |
 
 Also used: half, DejaVu fonts, Libre Baskerville (SIL OFL 1.1), dxil-spirv (MIT). AMD's FSR 4 files and NVIDIA's DLSS SDK are not
-included here. Release packages include NVIDIA's `nvngx_dlss.dll` under its license
+included here. Release packages include NVIDIA's `nvngx_dlss.dll` and `nvngx_dlssg.dll` under its license
 (`out/NVIDIA_DLSS_LICENSE.txt`).

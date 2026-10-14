@@ -177,6 +177,9 @@ copy /Y "out\dlss-bridge\Release\bbport_dlss.dll" "out\" >nul
 if errorlevel 1 goto dlss_failed
 copy /Y "%DLSS_SDK_ROOT%\lib\Windows_x86_64\rel\nvngx_dlss.dll" "out\" >nul
 if errorlevel 1 goto dlss_failed
+rem DLSS frame generation's runtime (same SDK, same license; 310.x ships it): without it frame
+rem generation is listed as unavailable and DLSS Super Resolution is unchanged.
+if exist "%DLSS_SDK_ROOT%\lib\Windows_x86_64\rel\nvngx_dlssg.dll" copy /Y "%DLSS_SDK_ROOT%\lib\Windows_x86_64\rel\nvngx_dlssg.dll" "out\" >nul
 if exist "%DLSS_SDK_ROOT%\LICENSE.txt" copy /Y "%DLSS_SDK_ROOT%\LICENSE.txt" "out\NVIDIA-DLSS-LICENSE.txt" >nul
 echo DLSS bridge: out\bbport_dlss.dll
 goto dlss_done

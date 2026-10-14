@@ -109,8 +109,9 @@ bool PartyPrologueHold(const char** why = nullptr);
 bool LocalPrologueHold();
 /// The other connected members in their prologue ("Hunter1", "Hunter1 and Hunter2"; "" none).
 std::string OthersInPrologue();
-/// Any thread (#19): the save this game played last was still in its prologue when last seen in
-/// the world (BB_GPU_USER_DIR/party_prologue.txt): a guest's title join is skipped for it.
+/// Any thread (#19): the save being continued (party::flow::CurrentSaveSlot(); unknown: the one
+/// played last) was still in its prologue when last seen in the world
+/// (BB_GPU_USER_DIR/party_prologue.txt, per save slot): a guest's title join is skipped for it.
 bool SavedPrologue();
 /// Any thread: the roster entry of link slot `slot` (state: party::MemberState as int; map: the
 /// roster's map id). False when the slot is not on the roster (state -1, map 0).

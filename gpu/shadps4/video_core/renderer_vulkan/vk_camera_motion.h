@@ -6,12 +6,14 @@
 #pragma once
 
 #include <array>
+#include <memory>
 #include <vector>
 
 #include "common/types.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/texture_cache/image.h"
+#include "../../../dlss_bridge/bbport_dlss_bridge.h"
 
 namespace VideoCore {
 class TextureCache;
@@ -71,6 +73,16 @@ public:
     /// layout) into `motion_view` (RG16F storage, General), pixels, previous minus current.
     void RecordMotion(vk::ImageView depth_view, vk::ImageView motion_view, u32 width, u32 height);
 
+    /// Frame generation (from Supermedo/bloodborne_pc PR #69 by FIocker): the current camera as
+    /// DLSS-G / FSR frame generation take it (row-major matrices, previous <-> current clip
+    /// reprojection); invalid without both cameras or across a camera cut. Commits the frame's
+    /// camera first (as the motion pass does).
+    struct FrameCamera {
+        BbDlssCamera camera{};
+        bool valid = false;
+    };
+    [[nodiscard]] FrameCamera FrameGenerationCamera();
+
     /// A bound constant buffer of 864 bytes: checks the scene constant signature.
     void OnConstants(const float* data);
 
@@ -90,6 +102,8 @@ private:
         std::array<float, 12> inv_view{}; ///< view to world, 3x4 rows
         std::array<float, 4> proj{};      ///< x scale, y scale, z scale, z offset
         bool valid = false;
+        /// The scene constants (216 floats), kept only while frame generation runs.
+        std::shared_ptr<std::array<float, 216>> constants;
     };
 
     void Overlay(VideoCore::ImageId frame);
@@ -100,6 +114,7 @@ private:
     Runtime& runtime;
     bool debug_overlay = false;
     bool for_upscaler = false;
+    bool for_frame_generation = false; ///< keeps Camera::constants (FrameGenerationCamera)
     vk::UniqueDescriptorSetLayout motion_desc_layout;
     vk::UniquePipelineLayout motion_pipeline_layout;
     vk::UniquePipeline motion_pipeline;

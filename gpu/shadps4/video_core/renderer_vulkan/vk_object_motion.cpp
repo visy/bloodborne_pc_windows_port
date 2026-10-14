@@ -53,8 +53,20 @@ ObjectMotion::ObjectMotion(const Instance& instance_, Scheduler& scheduler_)
     : instance{instance_}, scheduler{scheduler_} {
     // Pipeline selection limits the extra attachment and vertex stores to likely
     // animated draws. A setting or environment override can still disable the path.
+    // Instanced batches without history while frame generation runs (motion_history.h;
+    // BB_OBJECT_MOTION_UNSAFE_INSTANCES=1 keeps it, BB_OBJECT_MOTION_SAFE_INSTANCES=1 drops it
+    // for the upscalers too).
+    {
+        const char* unsafe = std::getenv("BB_OBJECT_MOTION_UNSAFE_INSTANCES");
+        const char* safe = std::getenv("BB_OBJECT_MOTION_SAFE_INSTANCES");
+        history.drop_instanced = BbSettings::Get().fg_active.load()
+                                     ? !(unsafe && unsafe[0] == '1')
+                                     : (safe && safe[0] == '1');
+    }
+    // Frame generation (chosen for this start) uses the vectors with the upscaler off too.
     if (!BbSettings::Get().object_motion ||
-        BbSettings::Get().upscaler == BbSettings::UpscalerOff) {
+        (BbSettings::Get().upscaler == BbSettings::UpscalerOff &&
+         !BbSettings::Get().fg_active.load())) {
         std::puts("Object motion: off (enable in menu or BB_OBJECT_MOTION=1)");
         return;
     }
@@ -110,12 +122,12 @@ void ObjectMotion::OnFrameStart() {
     if (BbStats::enabled && (frame % 600) == 0 && history.stats.draws) {
         const auto& s = history.stats;
         std::printf("Object motion: %llu draws, %llu stored, %llu with history, %llu unmatched, "
-                    "%llu capacity skips, %llu invalid, %llu still (600 frames); last frame %u/%u vertices; "
+                    "%llu capacity skips, %llu invalid, %llu dropped instanced, %llu still (600 frames); last frame %u/%u vertices; "
                     "index ranges %llu reused, %llu scanned (%llu found changed), %zu cached\n",
                     (unsigned long long)s.draws, (unsigned long long)s.stored,
                     (unsigned long long)s.loaded, (unsigned long long)s.unmatched,
                     (unsigned long long)s.exhausted, (unsigned long long)s.invalid,
-                    (unsigned long long)s.still,
+                    (unsigned long long)s.dropped_instanced, (unsigned long long)s.still,
                     history.Used(), PositionsPerFrame, (unsigned long long)index_ranges.stats.hits,
                     (unsigned long long)index_ranges.stats.scans,
                     (unsigned long long)index_ranges.stats.stale, index_ranges.Size());

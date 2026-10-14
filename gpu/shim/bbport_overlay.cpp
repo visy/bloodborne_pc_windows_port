@@ -930,6 +930,53 @@ void UpscalerTab() {
         std::snprintf(line, sizeof(line), T("FSR 4 unavailable: %s", "FSR 4 недоступен: %s"), problem);
         Note(line, ImGui::GetColorU32(ImVec4(1.0f, 0.55f, 0.35f, 1.0f)));
     }
+    // Frame generation (from Supermedo/bloodborne_pc PR #69 by FIocker): one choice for the
+    // provider and the factor; applies after a restart.
+    static const char* fg_modes[] = {"Off", "DLSS 2x", "DLSS 3x", "DLSS 4x", "FSR 2x"};
+    const int fg_current = BbSettings::FrameGenerationChoice(s.frame_generation, s.fg_backend);
+    Choice("frame_generation", T("Frame generation", "Генерация кадров"), fg_current,
+           BbSettings::FrameGenerationChoices, [](int i) { return i == 0 ? T("Off", "Выкл") : fg_modes[i]; },
+           [](int) { return true; },
+           T("Generated frames between rendered ones: smoother motion on a high refresh display, "
+             "slightly more input lag. DLSS needs an RTX 40/50 GPU and nvngx_dlssg.dll; FSR runs "
+             "on most GPUs (2x). The HUD is copied from the rendered frame. Applies after "
+             "restarting the game.",
+             "Сгенерированные кадры между отрисованными: плавнее на мониторе с высокой частотой, "
+             "чуть больше задержка ввода. DLSS нужна видеокарта RTX 40/50 и nvngx_dlssg.dll; FSR "
+             "работает на большинстве видеокарт (2x). Интерфейс берётся из отрисованного кадра. "
+             "Применяется после перезапуска игры."),
+           true, [&](int i) {
+               int factor = 0, backend = 0;
+               BbSettings::FrameGenerationFromChoice(i, factor, backend);
+               s.fg_backend = backend;
+               Store(s.frame_generation, factor, true);
+           });
+    // NVIDIA Reflex (from Supermedo/bloodborne_pc PR #69 by FIocker): after a restart.
+    static const char* reflex_modes[] = {"Off", "On", "On + Boost"};
+    Choice("reflex", T("NVIDIA Reflex", "NVIDIA Reflex"), s.reflex, BbSettings::ReflexModeCount,
+           [](int i) { return i == 0 ? T("Off", "Выкл") : reflex_modes[i]; }, [](int) { return true; },
+           T("NVIDIA's low-latency mode (VK_NV_low_latency2): the driver paces the game so frames "
+             "queue less. Boost also keeps GPU clocks up. NVIDIA GPUs with a current driver; "
+             "elsewhere it stays off. Applies after restarting the game.",
+             "Режим низкой задержки NVIDIA (VK_NV_low_latency2): драйвер выравнивает темп игры, "
+             "кадры меньше копятся в очереди. Boost также держит частоты видеокарты. Видеокарты "
+             "NVIDIA со свежим драйвером; на других не включается. Применяется после перезапуска игры."),
+           true, [&](int i) { Store(s.reflex, i, true); });
+    if (s.startup_reflex != BbSettings::ReflexOff && !s.reflex_active) {
+        Note(T("NVIDIA Reflex: not supported by this GPU or driver (off)",
+               "NVIDIA Reflex: не поддерживается видеокартой или драйвером (выкл)"),
+             ImGui::GetColorU32(ImVec4(1.0f, 0.55f, 0.35f, 1.0f)));
+    }
+    if (const char* problem = s.fg_problem.load(); problem && BbSettings::FrameGenerationStarted()) {
+        std::snprintf(line, sizeof(line), T("Frame generation unavailable: %s",
+                                            "Генерация кадров недоступна: %s"), problem);
+        Note(line, ImGui::GetColorU32(ImVec4(1.0f, 0.55f, 0.35f, 1.0f)));
+    } else if (s.fg_active) {
+        std::snprintf(line, sizeof(line), T("Frame generation: %.0f presented / %.0f rendered per second",
+                                            "Генерация кадров: %.0f показано / %.0f отрисовано в секунду"),
+                      s.display_fps.load(), s.source_fps.load());
+        Note(line, Dim());
+    }
 }
 
 void EffectsTab() {
@@ -1734,6 +1781,11 @@ void FpsCounter() {
                 : s.upscaler == BbSettings::UpscalerTaa    ? "TAA"
                 : s.upscaler == BbSettings::UpscalerDlss   ? "DLSS"
                                                            : "");
+    if (s.fg_active) {
+        // Frame generation: presented and rendered (source) frames per second.
+        ImGui::Text(BbSettings::MenuText("FG %.0f / %.0f rendered", "FG %.0f / %.0f отрисовано"),
+                    s.display_fps.load(), s.source_fps.load());
+    }
     ImGui::End();
 }
 
@@ -1772,6 +1824,12 @@ void PerformanceHud() {
     ImGui::SameLine();
     ImGui::TextColored(ImVec4(0.75f, 0.85f, 1.0f, 1.0f), BbSettings::MenuText("%.1f ms  %s", "%.1f мс  %s"),
                        frame_ms_avg, UpscalerLabel());
+    if (s.fg_active) {
+        ImGui::TextColored(ImVec4(0.75f, 0.85f, 1.0f, 1.0f),
+                           BbSettings::MenuText("Frame generation: %.0f shown, %.0f rendered",
+                                                "Генерация кадров: %.0f показано, %.0f отрисовано"),
+                           s.display_fps.load(), s.source_fps.load());
+    }
     if (s.hud_graph) {
         float peak = 0.0f;
         for (const float ms : frame_history) {

@@ -11,6 +11,7 @@
 #include "core/libraries/videoout/video_out.h"
 #include "core/libraries/videoout/videoout_error.h"
 #include "core/platform.h"
+#include "video_core/renderer_vulkan/vk_reflex.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
 
 extern std::unique_ptr<Vulkan::Presenter> presenter;
@@ -176,10 +177,14 @@ s32 PS4_SYSV_ABI sceVideoOutSubmitFlip(s32 handle, s32 bufferIndex, s32 flipMode
     LOG_DEBUG(Lib_VideoOut, "bufferIndex = {}, flipMode = {}, flipArg = {}", bufferIndex, flipMode,
               flipArg);
 
-    if (!driver->SubmitFlip(port, bufferIndex, flipArg)) {
+    // bbport: NVIDIA Reflex (from Supermedo/bloodborne_pc PR #69 by FIocker): an accepted flip
+    // ends the simulation frame (no-ops without Reflex).
+    if (!driver->SubmitFlip(port, bufferIndex, flipArg, false,
+                            Vulkan::Reflex::CurrentSimFrameId())) {
         LOG_ERROR(Lib_VideoOut, "Flip queue is full");
         return ORBIS_VIDEO_OUT_ERROR_FLIP_QUEUE_FULL;
     }
+    Vulkan::Reflex::OnSimulationEnd();
 
     return ORBIS_OK;
 }
@@ -348,11 +353,13 @@ s32 sceVideoOutSubmitEopFlip(s32 handle, u32 buf_id, u32 mode, s64 flip_arg, voi
         return ORBIS_VIDEO_OUT_ERROR_INVALID_HANDLE;
     }
 
+    const u64 content_frame_id = Vulkan::Reflex::CurrentSimFrameId();
+    Vulkan::Reflex::OnSimulationEnd();
     Platform::IrqC::Instance()->RegisterOnce(
         Platform::InterruptId::GfxFlip, [=](Platform::InterruptId irq) {
             ASSERT_MSG(irq == Platform::InterruptId::GfxFlip, "An unexpected IRQ occured");
             ASSERT_MSG(port->buffer_labels[buf_id] == 1, "Out of order flip IRQ");
-            const auto result = driver->SubmitFlip(port, buf_id, flip_arg, true);
+            const auto result = driver->SubmitFlip(port, buf_id, flip_arg, true, content_frame_id);
             ASSERT_MSG(result, "EOP flip submission failed");
         });
 

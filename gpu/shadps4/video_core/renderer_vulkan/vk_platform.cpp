@@ -23,6 +23,7 @@
 #include "sdl_window.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
+#include "bbport_settings.h"
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -288,7 +289,10 @@ vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool e
 
     const auto layers = GetInstanceLayers(enable_validation, enable_crash_diagnostic);
     auto extensions = GetLayerExtensions(GetInstanceExtensions(window_type, true), layers);
-    // bbport: DLSS (optional bridge library) needs its own instance extensions.
+    // bbport: DLSS (optional bridge library) needs its own instance extensions; DLSS frame
+    // generation's only when the player chose it for this start.
+    Dlss::WantFrameGeneration(BbSettings::FrameGenerationStarted() &&
+                              BbSettings::Get().startup_fg_backend == BbSettings::FgDlss);
     if (Dlss* dlss = Dlss::Get()) {
         dlss->AppendInstanceExtensions(extensions);
     }
