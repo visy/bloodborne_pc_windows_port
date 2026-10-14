@@ -21,7 +21,7 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | Session & joining | `██████████████████░░` | 89% |
 | World & travel | `██████████████████░░` | 88% |
 | Death & respawn | `██████████████████░░` | 88% |
-| Progress (anyone can progress) | `█████████████████░░░` | 86% |
+| Progress (anyone can progress) | `█████████████████░░░` | 87% |
 | Services & UI | `██████████████████░░` | 90% |
 | Network & robustness | `████████████████░░░░` | 80% |
 | Bloodborne-specific (chalice, Insight) | `████████████████░░░░` | 81% |
@@ -154,7 +154,8 @@ single-player save is never touched. Settings: *System → Party* pages in the g
   "ghosts"), and a level-up at the Doll stays in the levelling player's own game.
 - **NPC gifts are shared**: an item an NPC gives a guest in the host's world goes to the host and
   every other party member too (the NPC has moved on for everyone, so nobody misses it).
-- **Enemy drops for each player.** Every player gets their own roll of each enemy's drop.
+- **Enemy drops for each player, one roll.** Every player gets their own copy of each enemy's drop,
+  and it is the same item for everyone (one shared roll per kill).
 - **Blood Echoes for every kill.** Whoever kills an enemy, every party member gets its full
   Blood Echoes.
 - **Treasure for each player.** Items lying in the world can be picked up by every player, each into their own game.
@@ -195,7 +196,7 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 
 | Change | Status |
 |---|---|
-| Item pickups and enemy drops per player: everyone gets their own | Done |
+| Item pickups and enemy drops per player: everyone gets their own (enemy drops: the same item for everyone) | Done |
 | Every cutscene for the whole party (story cutscenes, endings and guest-triggered scenes already work) | In progress |
 | Joining during a boss fight or cutscene waits outside until it ends | Works for boss fights with every join path (bell, title join, direct summon; verified live), the Party status says why you wait; cutscenes not yet tested live |
 | With 3 guests, every guest sees every other guest | In progress |

@@ -25,7 +25,7 @@ loading-screen path is the proposed fix. A seamless (no-load) variant comes back
 | 1 | Direct summon while the host is in its prologue | major | **fixed (pt1join)** | `dsummon::HostRefusal` has no start-ready check; the host makes a room on demand (H2:919-992) | 2 |
 | 2 | Guest's bell prompt also shown on the host | minor | **fixed (pt1join)** | inferred: the host director auto-rings the Beckoning Bell (SpEffect 9000) whenever a guest waits or rings | 2 |
 | 3 | Only a host rest resets the world | major | **fixed (batch 1, live)**: a guest's alone rest gives the host a rest load | a guest's rest at a lamp asks "Travel with the party?"; NO sends it to the Dream alone with no reset (design gap) | 1 |
-| 4 | Enemy loot from the guest not shared | minor | no (by design) | ERSC_PARITY D4: per-player drop rolls. A design decision to revisit, not a bug | decision |
+| 4 | Enemy loot from the guest not shared | minor | **fixed** (pt1items: one shared roll per kill, `BB_PARTY_SHARED_DROP_ROLL`) | ERSC_PARITY D4: per-player drop rolls. A design decision to revisit, not a bug | decision |
 | 5 | Guests cannot knock on doors / see plot dialogue | major | **partly (pt1npc)**: Iosefka / fake doctor doors live OK; window residents still no prompt (fixture stood at the chr, not the window dummy); talk logs now outside tests | unconfirmed: ghost NpcParam rows (Iosefka 6060) and/or a client-only talk gate; the logs do not print the override counter | 4 |
 | 6 | Host death blocks guest loot | major | **fixed (batch 1)**: host death = party respawn load; the guest's send-home is followed by the load (live) | host revive-in-place leaves the guest's death and send-home state half-done until its next load | 1 |
 | 7 | Host death warp breaks world / occlusion | major | **fixed (batch 1, live)**: host death = party respawn load for everyone | host death = revive in place (moved up to ~190 m, no load, no world reset) | 1 |
@@ -33,11 +33,11 @@ loading-screen path is the proposed fix. A seamless (no-load) variant comes back
 | 9 | Rejoined guest lands in the Dream, not in Central Yharnam | **blocker** | **fixed (pt1join, live)** | the guest rings before its own map is known, so no gather; cross-map direct summon never loads the host's map (aeeb408 only keeps the gather as default) | 2 |
 | 10 | Doll level-up plays on the host + position jumps back | major | move part **fixed (batch 1)**: same-map guest lamp = own load, the host never moves; flags: batch 4; flags **fixed (pt1npc)**: never_sync Doll rows | Doll flags 72100100-102/113, 12100112-114 synced as npc_quest; a same-map lamp warp became a host-led party move | 1 (move) + 4 (flags) |
 | 11 | Gehrman is a ghost for the guest | minor | **fixed (pt1npc)**: 804000 in the talk-NPC table, written live | NpcParam 804000 has isChangeWanderGhost; only the Doll's 803000 is patched | 4 |
-| 12 | Item prompt stuck on the guest at host death | major | death part **fixed (batch 1)**: a load follows a host death; the question closes on load / death / 30 s (live) | `ShowItemGet` is gated only on `Calm()`, plus the half-done death state of #6 | 3 (gate) + 1 (death) |
+| 12 | Item prompt stuck on the guest at host death | major | death part **fixed (batch 1)**: a load follows a host death; the question closes on load / death / 30 s (live); prompt part **fixed (pt1items)**: item-get watchdog clears a box left over a load / death (unit-tested; host-death clear not seen live) | `ShowItemGet` is gated only on `Calm()`, plus the half-done death state of #6 | 3 (gate) + 1 (death) |
 | 13 | Host's dropped echoes not shown, could not recover | minor | **logged (batch 1)**: stain changes logged; a host death is a load again | not proven: 2 of 6 host bloodstains never picked up; the revive-in-place warp is a suspect; no pickup log | 1 |
 | 14 | Gascoigne cutscene played twice | minor (on head) | **yes** + host guard (pt1npc): story_up refused if played < 10 min or boss fight | the guest's own intro event replayed on the host; fixed by story dedupe default on (025b0a9) + live check (a5033c3). Residual: the host does not refuse a replay mid-fight | 4 |
-| 15 | Boss loot prompt frozen on the guest, key items missing? | major | no | badge pushed via `ShowItemGet` in the same second as the boss defeat banner; no alive/cutscene/banner/load gate | 3 |
-| 16 | Oedon Tomb Key (and other key items) not on the guest | major | no | the host sent lot 31000 (H5:8051-8062, again at H5:11875); the guest side is not logged. Suspects: #15 frozen box, or ledger seeding from a synced boss flag | 3 |
+| 15 | Boss loot prompt frozen on the guest, key items missing? | major | **fixed** (pt1items: popup gate alive / cutscene / boss banner + watchdog) | badge pushed via `ShowItemGet` in the same second as the boss defeat banner; no alive/cutscene/banner/load gate | 3 |
+| 16 | Oedon Tomb Key (and other key items) not on the guest | major | **fixed** (pt1items: logged decisions, boss-reward re-give when not held) | the host sent lot 31000 (H5:8051-8062, again at H5:11875); the guest side is not logged. Suspects: #15 frozen box, or ledger seeding from a synced boss flag | 3 |
 | 17 | "Red guy" in Oedon Chapel is a ghost for the guest | major | **fixed (pt1npc)**: 42 talk-NPC NpcParam rows written live (Alfred, Dweller, Eileen ...) | the same ghost bit on almost every talk-NPC row (Alfred 6151/6155/6154, Chapel Dweller 113010, Eileen, Arianna...) | 4 |
 | 18 | Guest echoes not takeable when both died | major | **fixed (batch 1, unit)**: recount every frame + early down notice; not reached live | wipe race: the host counted "0 down" just before the guest's death arrived (H5:10184 vs 10210), so it revived alone instead of a wipe; plus the #6 state | 1 |
 | crash | Host crash 20:38:10, eboot +0x2199310 null+8 | major | **yes** (batch 5: guard at +0x2199303, frame allocator 1 MiB) | per-frame arena allocator +0xe45560 returned NULL. FUN_02198fd0 checks the 1st alloc, not the 2nd (+0x21992fb); `BB_ARENA_GUARD` covers only the +0x21d5b35 caller | 5 |
@@ -472,6 +472,8 @@ a world reset and correct occlusion. Update ERSC_PARITY C2/H4 and the README par
 
 ### Bug 12: item prompt on guest stuck on screen at host death
 
+**Prompt part fixed (pt1items, 2026-10-14):** `ItemGetWatch` (party_items) clears the item-get list the way its confirm does once it is left over a load, the player is dead for 3 s, or its confirm check is held for 20 s (`item-get dialog cleared (...)`, `BB_PARTY_ITEMGET_WATCH=0` off). Unit-tested (party-items-test `test_itemget_watch`); live, both runs ended before the `host_die` step fired (it needs a fresh (re)join count, `host_die@S#N`), so the clear after a host death is not yet seen live. The split-question part stays with batch 1.
+
 **Evidence**
 - G5: the guest's last pickup prompt was at G5:70514 (`map item pickup on this game (role 6): item handle 0x2`), between the host's death (G5:70428) and the
   revive (G5:70625). Then the send-home was dropped (G5:70630) and there was no load until G5:76376.
@@ -594,12 +596,16 @@ Expected: `host death: every member is down too` (a wipe), a load for both, then
 
 **Severity.** Minor (a feature request against a deliberate design). Decide this before writing any code.
 
+**Fixed (pt1items, 2026-10-14, user decision: one shared roll).** `party_droproll.cpp`: the 0x17DD0B0 roll runs with the game MT19937 (GSM+0xA78) saved, seeded from (host salt, host world generation from EVENT `drop_seed`, map, entity +0x1F0, lot) and restored; the guest's request uses the host's item discovery. Live: 4 host kills logged the same seed and the same result on both games (`goods 1000 x2` for entity 2410202). `BB_PARTY_SHARED_DROP_ROLL=0` = old own rolls.
+
 **Smallest fix (if accepted).** Make the roll deterministic per enemy rather than synced: in the existing drop-roll entry hook (0x17DD0B0, `EnemyDropEntry`), save the game RNG state, seed it from `hash(map entity id of the dying chr, host world epoch: rest counter / NG cycle)`, let the roll run, then restore the RNG in a matching exit hook. No message is needed because every game sees the same entity id and the same epoch. Keep the per-player pickup (each player takes its own copy). Gate it with `BB_PARTY_SHARED_DROP_ROLL` (default to be decided). Update ERSC_PARITY D4 and items.md.
 Files: `party_worldact.cpp` (hook plus RNG save/restore), `party_items.h/.cpp` if the epoch helper lives there, docs.
 
 **Verify on one PC.** `tools/mp/instances.py run --count 2 --party --ienv 0:BB_PARTY_DIRECTOR_TEST=host_kill=0@40,host_kill=0@50,...` (host kills nearby census enemies). Compare the logged roll results per chr handle on both instances (add a log line `roll result lot/items` in the hook) and expect identical item lists for each entity. Then repeat after a rest: the items should differ from the first pass but still match between the two games.
 
 ### Bug 15: boss loot prompt frozen on the guest's screen, cannot dismiss; "didn't get the key items?"
+
+**Fixed (pt1items, 2026-10-14).** `ItemApplyState` gained alive / cutscene / boss_quiet (10 s after the boss bar goes); `GuestItems::Step` holds popups with a logged reason (`item popup held (boss defeat banner)`), and `ItemGetWatch` clears the native list (the 0x16D86E0 confirm path, `ClearItemGet`) when it is left over a load, the player is dead 3 s or the confirm check is held 20 s. Live: the guest's grant held through the Cleric Beast banner, given after; key items 31000 / 50000010 given while summoned.
 
 **Evidence.**
 - Cleric Beast (G5 `guest/launcher_20261013_194949.log`). Host: H5:2873 boss HP 0 -> 2886 `award lot 50000010 (hostOnly 1, flag -1) in the own world`, 2889 `host award #0 lot 50000010 ... queued for the party; items [4:4114x1]`, 2893 `items: 1 lots sent to the party`. Guest: 40203 `guest got 1 grants from the host`, 40207 `gave #1791909040364 lot 50000010 ... while summoned: goods 4114 x1 (held 0 -> 1, item-get dialog)`, 40209 `boss health bar: off (a boss defeat...)`, then 41537/41539 `send-home ... dropped (B2: the party stays after the boss)`. The Sword Hunter Badge **was given**. Our push of the native item-get dialog happened in the same second as the boss defeat (before the "Prey Slaughtered" sequence ended).
@@ -632,6 +638,8 @@ When the entry lands while that input gate is closed, the box shows but confirm 
 Repeat with `host_die` at +21 s on the host for bug 12.
 
 ### Bug 16: Oedon Tomb Key not synced to the guest; "same with other key items except from chest"
+
+**Fixed (pt1items, 2026-10-14).** Every give / skip is logged; a boss-reward ledger lot (done flag boss_defeated) or a per-player gift whose done flag is set but whose unique goods are not held is given anyway (`LedgerSkipSuspicious`). Old Hunter Bell: a summoned guest's refused hostOnly Messenger lot (10000/10010/10050) is given to itself (`ItemSource::Own`); live run 2 (`BB_PARTY_GIFT_TEST=10050`, `..._HOSTONLY=1`): `own gift lot 10050 ... given to the guest itself`, flag 6670 set but bell not held -> re-give chosen, but the plan skipped the row (its flag is the done flag): fixed after the run (row flags ignored on a re-give, unit-tested), not re-run live. Live run 2 also re-gave the Sword Hunter Badge (ledger bit set, badge not held: `giving it after all` -> `held 0 -> 1`).
 
 **Evidence.**
 - Host H5:8051-8062: lot 31000 (goods 4000 Oedon Tomb Key, ledger 25 = flag 60009025) awarded and sent to the party while the guest was summoned. After the host crash and the rejoin it is in the full list again: H5:11875 `full item list for slot 1: 21 lots` (it was 20 at 4097 before Gascoigne). On the host side the sync worked both times.

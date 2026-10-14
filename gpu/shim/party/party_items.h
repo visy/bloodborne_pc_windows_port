@@ -58,6 +58,7 @@ enum class ItemSource : std::uint8_t {
     Full,   ///< host's full state for a (re)join
     Mark,   ///< guest-local: received while summoned, set the flag only
     Test,   ///< BB_PARTY_ITEMS_TEST
+    Own,    ///< guest-local: a per-player Messenger gift its game refused in the host's world
 };
 const char* ItemSourceName(ItemSource s);
 ItemSource ItemSourceFromName(const std::string& name);
@@ -137,6 +138,11 @@ std::size_t ItemLedgerCount();
 
 /// Per-player or repeatable lots that are never replayed (docs/party/items.md 6.1 item 3).
 bool ItemLotDenied(std::int32_t lot, std::int32_t flag);
+/// The Doll / Messenger gifts every player gets once in the own Hunter's Dream (Beckoning Bell
+/// 10010, Small Resonant Bell 10000, Old Hunter Bell 10050). Their talk awards them hostOnly, which
+/// a summoned guest's game refuses (items.md 3): the guest gives the lot to itself instead
+/// (ItemSource::Own), with its own flag (playtest 1: the Old Hunter Bell was lost).
+bool MessengerGiftLot(std::int32_t lot);
 
 /// Host hook: the grant for an award of `lot` (no seq yet), or nothing (client lots, denied,
 /// flagless lots outside the ledger).
@@ -222,7 +228,40 @@ struct ItemApplyState {
     int session_role = -1;    ///< SprjSessionManager +0x124
     bool game_data = false;   ///< GameDataMan +8 and the MapItemMan exist
     bool calm = true;         ///< the player lost no HP lately (not in a fight): a popup may open
+    bool alive = true;        ///< the local player's HP > 0
+    bool cutscene = false;    ///< a remo (cutscene) plays
+    bool boss_quiet = true;   ///< no boss health bar and the boss-defeat banner had time to end
 };
+/// Why the item-get dialog may not open now (playtest 1 #15 / #12: a box pushed while the player
+/// was dead, in a cutscene or under the boss-defeat banner stayed on screen and could not be
+/// dismissed), or nullptr when it may: "in a fight", "dead", "cutscene", "boss defeat banner".
+const char* ItemPopupHold(const ItemApplyState& s);
+/// Seconds after a boss health bar went away before an item popup may open (the "Prey
+/// Slaughtered" banner and its sound run ~6 s).
+constexpr double kBossBannerQuiet = 10.0;
+
+/// The native item-get dialog's watchdog (#15 / #12): the box is modal and only the player's
+/// confirm clears it; a box left over a load or a death, or one whose confirm check stays held,
+/// can stay on screen for good. Clear it (the items are in the inventory already: the dialog is
+/// only the notice) when entries stay up
+///  - after a load that started while they were up (the world they belonged to is gone),
+///  - while the player is dead for kDeadFor s,
+///  - or with the confirm check held (player busy / no action-button manager) for kHeldFor s.
+class ItemGetWatch {
+public:
+    static constexpr double kDeadFor = 3.0;
+    static constexpr double kHeldFor = 20.0;
+    /// Once a frame. `entries` in the dialog list, `armed` = the confirm check can fire. True =
+    /// clear the list now; `why` names the reason.
+    bool Step(double now, int entries, bool armed, bool alive, bool loading, const char** why);
+    double UpSince() const { return up_since_; }
+
+private:
+    bool up_ = false, crossed_load_ = false;
+    double up_since_ = 0, dead_since_ = -1, held_since_ = -1;
+};
+
+
 /// In the own world with the flag store in mode 0, no loading screen, not joining/leaving/client.
 bool ItemApplyAllowedNow(const ItemApplyState& s);
 /// Summoned into the host's world (session role 6, flag store mode 1 = the host's overlay, own
@@ -299,6 +338,11 @@ const char* LotFitName(LotFit f);
 /// Owned / Full when any goods slot would be refused (the whole lot is then skipped: one refused
 /// item opens the blocking dialog); `why` names the slot. Unknown counts (-1) never refuse.
 LotFit ClassifyLotFit(const std::vector<LotSlotState>& slots, std::string* why = nullptr);
+/// A ledger skip that looks wrong (#16): the ledger says the lot was given, yet the player holds
+/// none of its items and they are unique goods (maxNum 1, no storage: keys, badges), which the game
+/// never takes away. The guest then gets it after all (a duplicate unique key is harmless; a
+/// missing Oedon Tomb Key blocks the game).
+bool LedgerSkipSuspicious(const std::vector<LotSlotState>& slots);
 
 class GuestItems {
 public:
@@ -317,6 +361,8 @@ public:
     void Defer(const ItemGrant& g);
     /// The mode of the grant Step returned last.
     ItemApplyMode LastMode() const { return last_mode_; }
+    /// Why the last Step held a grant that was due (ItemPopupHold), else nullptr.
+    const char* LastHold() const { return last_hold_; }
     std::size_t HomeOnly() const { return home_only_.size(); }
     /// The grant Step returned was really awarded (a popup opened): the next waits kSpacing.
     /// Skips (flag already set, item held) take no time, so a long catch-up list goes fast.
@@ -330,6 +376,7 @@ private:
     std::set<std::int32_t> adhoc_lots_;  // lots outside the tables, taken once each
     std::set<std::int64_t> home_only_;   // deferred while summoned
     ItemApplyMode stable_mode_ = ItemApplyMode::None, last_mode_ = ItemApplyMode::None;
+    const char* last_hold_ = nullptr;
     int stable_ = 0;
     double last_apply_ = -1e9;
 };
