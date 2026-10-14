@@ -46,7 +46,10 @@ u32 PipelineCompiler::GameplayWorkers() {
     if (const char* env = std::getenv("BB_ASYNC_PIPELINE_THREADS"); env && *env) {
         return u32(std::clamp(std::atoi(env), 1, 64));
     }
-    return std::max(1u, BbThreads::Available() / 4);
+    // Half the threads, 2 to 8 (Mrsuss60 9ddeb5c; was a quarter): new passes come in sooner.
+    // The workers run below normal priority, so the game's own threads still go first.
+    const u32 available = BbThreads::Available();
+    return available > 2 ? std::clamp(available / 2, 2u, 8u) : 1u;
 }
 
 u32 PipelineCompiler::StartupWorkers() {

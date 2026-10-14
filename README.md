@@ -20,12 +20,12 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | **Overall** | `█████████████████░░░` | 84% |
 | Session & joining | `██████████████████░░` | 89% |
 | World & travel | `██████████████████░░` | 88% |
-| Death & respawn | `██████████████████░░` | 88% |
+| Death & respawn | `██████████████████░░` | 89% |
 | Progress (anyone can progress) | `█████████████████░░░` | 87% |
 | Services & UI | `██████████████████░░` | 90% |
-| Network & robustness | `████████████████░░░░` | 80% |
+| Network & robustness | `█████████████████░░░` | 84% |
 | Bloodborne-specific (chalice, Insight) | `████████████████░░░░` | 81% |
-| Feels like single player in a party | `█████████████████░░░` | 84% |
+| Feels like single player in a party | `█████████████████░░░` | 86% |
 
 ---
 
@@ -181,6 +181,10 @@ before anyone is in the game):
   are shared by the whole party: a quest step the host makes also moves the NPC in every guest's
   own save (no stale NPC state left behind). NPCs look solid for guests (no see-through
   "ghosts"), and a level-up at the Doll stays in the levelling player's own game.
+- **Hear each other's NPC talks.** When a companion near you talks to an NPC you see the game's
+  subtitles and hear the NPC too, with a small "[Hunter talking to Iosefka]" caption and the
+  choices they pick; nothing opens on your screen. Range in *System → Party rules → NPC dialogue
+  range* (default 25 m), off with *Share NPC dialogue*.
 - **NPC gifts are shared**: an item an NPC gives a guest in the host's world goes to the host and
   every other party member too (the NPC has moved on for everyone, so nobody misses it).
 - **Enemy drops for each player, one roll.** Every player gets their own copy of each enemy's drop,
@@ -201,7 +205,9 @@ before anyone is in the game):
   loot (for each player) and the lift work for the whole party. Any player can perform the ritual:
   the host's altar then offers *Enter the party's dungeon* (no glyph typing), and chalices are
   shared between all players.
-- **Crashes recover.** A crashed game restarts and rejoins by itself (back in the host's world about 12 s after the restart), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue.
+- **Crashes recover.** A crashed game restarts and rejoins by itself (back in the host's world about 12 s after the restart), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue. If the host's game crashes, the guests go home at once and come back by themselves as soon as the host is back in the world; items a guest got in the host's world stay in its own save.
+- **Network drops recover.** A short drop (seconds) goes unnoticed; after a longer one (30 s) a guest goes home with a loading screen and is summoned back beside the host by itself once the network is back. The party also checks every 15 s that everyone sees the same world and progress and quietly re-sends whatever differs.
+- **Wrong passwords are locked out.** A few typos are fine; after 5 wrong passwords in a minute the host refuses that address for a while.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
 - **Death has a cost.** Each death stacks "rot" (−10% max HP or stamina, picked at random, up to
   5); using a lamp clears it.
@@ -301,12 +307,12 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | Who | What |
 |---|---|
 | deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors |
-| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD; audio pop fix, paths with parentheses in `run.bat`, parallel `build.bat`; CPUs without FSGSBASE (Windows TLS fallback) |
+| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD; audio pop fix, paths with parentheses in `run.bat`, parallel `build.bat`; CPUs without FSGSBASE (Windows TLS fallback), driver pipeline binaries kept between sessions, more background shader compile threads |
 | shadPS4 team | Vulkan video core and shader recompiler (GPL-2.0+), sirit |
 | droogie and the bbhost team | Long-session stability fixes; menu button rows and the menu cursor's offsets; direct summon delivery; the Hunter's Dream mirror (appearance editor) ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |
 | FireBurn | FSR-Vulkan (MIT); AMD FidelityFX SDK (MIT) |
 | Supermedo, IFreemz | DLSS bridge and Windows loader |
-| Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, FPS-preset physics step (found by FIocker), frame limiter pacing, texture-cache, pipeline-cache and shader-walker fixes, skipped draws for failed pipelines, keyboard stick movement, allocating past a full VRAM budget, object motion off on AMD before RDNA3, the memory log line once a minute; imedved (direct mouse camera, ported by mcrib884); andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows) |
+| Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, FPS-preset physics step (found by FIocker), frame limiter pacing, texture-cache, pipeline-cache and shader-walker fixes, skipped draws for failed pipelines, keyboard stick movement, allocating past a full VRAM budget, object motion off on AMD before RDNA3, the memory log line once a minute; imedved (direct mouse camera, ported by mcrib884); andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows); parsifal295 (game check passes over locked files), RafaelHGOliveira (exclusive fullscreen), fliperama86 (HDR desktop black level), emurphy04 (ultrawide output, video queue fix) |
 | ALuaNegra (via Mrsuss60's port) | Idle depth targets freed (VRAM growth) |
 | Vorshim92 | Pipeline cache kept between starts, stale `bbport.exe` guard, crash reaper, `run.bat` resolution fix, Reset shader cache button |
 | Thealexbarney | LibAtrac9 audio (MIT) |

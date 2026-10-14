@@ -271,8 +271,27 @@ static void StartProfileWriter() {
 }
 #endif
 
+extern "C" void bbgpu_save_caches(void) {
+    static std::atomic<bool> saved{false};
+    if (saved.exchange(true)) {
+        return;
+    }
+    // On a helper thread with a time limit: a GPU hang at exit must not keep the process alive.
+    auto done = std::make_shared<std::atomic<bool>>(false);
+    std::thread([done] {
+        if (auto* cache = Vulkan::PipelineCache::driver_cache_owner.load()) {
+            cache->SaveDriverPipelineCache(true);
+        }
+        done->store(true);
+    }).detach();
+    for (int i = 0; i < 500 && !done->load(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
 /// Ends the process without unloading DLLs (see the window close path); stdio is flushed first.
 [[noreturn]] void BbHardExit(int code) {
+    bbgpu_save_caches();
     bbnet_shutdown();  // party: BYE + UPnP unmap (no-op without BB_PARTY)
     std::fflush(stdout);
     std::fflush(stderr);
@@ -311,6 +330,7 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
             SDL_Delay(2);
         }
         LOG_INFO(Frontend, "Window closed by user");
+        bbgpu_save_caches();
         bbnet_shutdown();  // party: BYE + UPnP unmap
         std::fflush(stdout);
         std::fflush(stderr);

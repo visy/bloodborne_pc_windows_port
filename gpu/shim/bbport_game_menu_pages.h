@@ -63,8 +63,12 @@ const char16_t* Text(u32 id, bool russian);
 std::size_t TextCount();
 /// For the test: whether `id` is made at run time.
 bool IsDynamic(u32 id);
-/// Counts the run-time text changes (a value column to redraw while its page is open).
+/// Counts the run-time text changes (a value column or the help line to redraw while its page
+/// is open).
 std::uint64_t DynamicChanges();
+/// Counts the times Poll took row values from the settings (changed elsewhere while a page may be
+/// open): the glue moves the open page's widgets to Byte / Value.
+std::uint64_t ValueChanges();
 
 /// What the game's rows bind (stable addresses for the run).
 int* Value(int field);

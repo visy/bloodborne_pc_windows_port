@@ -31,6 +31,7 @@ static StartFlags Flags(bool opening, bool dream, bool right, bool left, bool cu
     f.cutscene = cutscene;
     f.beckoning_count = 0;
     f.resonant_count = 0;
+    f.map_id = 0x18010000u;  // Central Yharnam (m24_01): out of the first Dream
     return f;
 }
 
@@ -57,6 +58,32 @@ static void test_steps() {
     CHECK(ClassifyStart(Flags(true, true, true, false), true) == StartStep::FirstDream);
     CHECK(ClassifyStart(Flags(true, true, false, true), true) == StartStep::FirstDream);
     CHECK(ClassifyStart(Flags(true, true, true, true), true) == StartStep::Ready);
+    // Playtest 1 #19: both weapons taken but still in the FIRST Hunter's Dream visit (Notebook,
+    // headstone to the sickroom next): not ready; ready once out of the Dream (latched), or with
+    // the Doll awake (Insight, well past the prologue). An unknown map (first ticks) is not ready.
+    {
+        StartFlags f = Flags(true, true, true, true);
+        f.map_id = 0x15000000u;  // m21_00 Hunter's Dream
+        CHECK(ClassifyStart(f, true) == StartStep::FirstDream);
+        CHECK(!StartReady(StartMode::PrologueSolo, f, true));
+        CHECK(DescribeStart(f, true).find("headstone") != std::string::npos);
+        f.map_id = 0xffffffffu;
+        CHECK(ClassifyStart(f, true) == StartStep::FirstDream);
+        f.map_id = 0;
+        CHECK(ClassifyStart(f, true) == StartStep::FirstDream);
+        f.map_id = 0x15000000u;
+        f.left_first_dream = true;  // back in the Dream after the headstone
+        CHECK(ClassifyStart(f, true) == StartStep::Ready);
+        f.left_first_dream = false;
+        f.doll_awake = true;
+        CHECK(ClassifyStart(f, true) == StartStep::Ready);
+        f.doll_awake = false;
+        f.map_id = 0x15010000u;  // m21_01 (Abandoned Old Workshop) is not the Dream proper
+        CHECK(ClassifyStart(f, true) == StartStep::Ready);
+        f.map_id = 0x18010000u;  // the sickroom lamp in Central Yharnam
+        CHECK(StartReady(StartMode::PrologueSolo, f, true));
+        CHECK(InHuntersDream(0x15000000u) && !InHuntersDream(0x18010000u) && !InHuntersDream(0xffffffffu));
+    }
     CHECK(std::string(StartStepName(StartStep::Clinic)) == "clinic");
 }
 
@@ -137,7 +164,7 @@ static void test_lobby() {
     CHECK(!HostMayRing(true, 0, 3, guest_prologue));
     CHECK(!HostMayRing(true, -1, 3, guest_ready)); // cooperator count unknown
     CHECK(!HostMayRing(true, 2, 3, guest_ready));  // full
-    CHECK(HostMayRing(true, 1, 4, mixed));
+    CHECK(!HostMayRing(true, 1, 4, mixed));  // #19: member 2 still in its prologue: nobody is summoned yet
 
     // Session roles: the host rings idle or already hosting (2nd / 3rd cooperator), a guest idle only.
     CHECK(SessionMayRing(true, 0));
@@ -159,11 +186,24 @@ static void test_lobby() {
     CHECK(HostMayRing(true, 2, 4, four));
     CHECK(!HostMayRing(true, 3, 4, four));
     CHECK(!HostMayRing(true, 1, 2, mixed));
+    std::vector<party::RosterEntry> mixed_ready = mixed;
+    mixed_ready[2].state = MS::Home;
+    CHECK(HostMayRing(true, 1, 4, mixed_ready));
+    mixed_ready[2].state = MS::Prologue;
+    mixed_ready[2].connected = false;  // a lost member does not hold the party
+    CHECK(HostMayRing(true, 1, 4, mixed_ready));
+    CHECK(AnyMemberInPrologue(mixed) && !AnyMemberInPrologue(guest_ready));
+    CHECK(MembersInPrologue(mixed) == "m2");
+    CHECK(MembersInPrologue(mixed, "m2").empty());
+    const std::vector<party::RosterEntry> host_prologue = {Member(0, MS::Prologue), Member(1, MS::Home)};
+    CHECK(HostInPrologue(host_prologue) && !HostInPrologue(guest_prologue));
+    CHECK(MembersInPrologue(host_prologue, "m1") == "m0");
 
     // Guest: ready and connected.
     CHECK(GuestMayRing(true, true));
     CHECK(!GuestMayRing(false, true));
     CHECK(!GuestMayRing(true, false));
+    CHECK(!GuestMayRing(true, true, false));  // #19: the host (or another member) in its prologue
 
     // Two members finishing the prologue at different times: the host rings once both are ready.
     StartFlags host = Flags(true, true, true, true), guest = Flags(true, false, false, false);
@@ -175,7 +215,35 @@ static void test_lobby() {
     guest = Flags(true, true, true, true);
     roster[1].state = OwnWorldState(StartReady(solo, guest, true));
     CHECK(HostMayRing(StartReady(solo, host, true), 0, 2, roster));
-    CHECK(GuestMayRing(StartReady(solo, guest, true), true));
+    CHECK(GuestMayRing(StartReady(solo, guest, true), true, !AnyMemberInPrologue(roster)));
+
+    // #19, both orders. Guest first: the guest is ready (out of the Dream), the host still in its
+    // clinic: the guest neither rings nor gathers, the host does not ring; then the host finishes.
+    for (int order = 0; order < 2; ++order) {
+        StartFlags h = Flags(true, false, false, false), g = Flags(true, false, false, false);
+        StartFlags& first = order == 0 ? g : h;
+        StartFlags& second = order == 0 ? h : g;
+        first = Flags(true, true, true, true);
+        std::vector<party::RosterEntry> r = {Member(0, OwnWorldState(StartReady(solo, h, true))),
+                                             Member(1, OwnWorldState(StartReady(solo, g, true)))};
+        CHECK(!HostMayRing(StartReady(solo, h, true), 0, 2, r));
+        CHECK(!GuestMayRing(StartReady(solo, g, true), true, !AnyMemberInPrologue(r)));
+        // The second one takes its weapons in the Dream: still the prologue (the #19 case).
+        second = Flags(true, true, true, true);
+        second.map_id = 0x15000000u;
+        r[0].state = OwnWorldState(StartReady(solo, h, true));
+        r[1].state = OwnWorldState(StartReady(solo, g, true));
+        CHECK(AnyMemberInPrologue(r));
+        CHECK(!HostMayRing(StartReady(solo, h, true), 0, 2, r));
+        CHECK(!GuestMayRing(StartReady(solo, g, true), true, !AnyMemberInPrologue(r)));
+        // The headstone: out of the Dream. Now both ring.
+        second.map_id = 0x18010000u;
+        r[0].state = OwnWorldState(StartReady(solo, h, true));
+        r[1].state = OwnWorldState(StartReady(solo, g, true));
+        CHECK(!AnyMemberInPrologue(r));
+        CHECK(HostMayRing(StartReady(solo, h, true), 0, 2, r));
+        CHECK(GuestMayRing(StartReady(solo, g, true), true, !AnyMemberInPrologue(r)));
+    }
 }
 
 static StartFlags Fresh() {
@@ -222,6 +290,7 @@ static void test_catchup() {
     in.guest = in.host_known = in.host_ready = in.in_world = in.own_idle = true;
     in.flags = Fresh();
     in.flags.first_dream = in.flags.weapon_left = in.flags.weapon_right = true;
+    in.flags.map_id = 0x18010000u;  // out of the first Dream (#19)
     in.t = 1;
     CHECK(r.Step(in).kind == CatchupAction::Finished && !r.Applied());
 

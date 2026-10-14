@@ -369,6 +369,9 @@ public:
     /// (flag id, the overlay's value). At most `max` entries.
     std::vector<std::pair<u32, bool>> LocalChanges(const std::map<u32, u64>& overlay, const MemOps& ops,
                                                    std::size_t max) const;
+    /// F5 test aid (BB_PARTY_DESYNC_TEST, party_desync.h): flips one byte of the image (not the
+    /// overlay) so the next digest differs. Returns the key, -1 without an image.
+    int TestCorrupt();
 
 private:
     bool have_ = false;

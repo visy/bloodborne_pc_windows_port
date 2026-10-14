@@ -44,14 +44,16 @@ Kind KindOf(const std::string& body);
 
 /// A11: why the host holds every join now. Prologue / OtherMap: playtest 1, only as the "wait"
 /// word of a refusal (never broadcast as dsum_busy).
-enum class Busy { None, Boss, Cutscene, Prologue, OtherMap };
+/// MemberPrologue (#19): another party member is still in its prologue - summons start once
+/// everybody is ready.
+enum class Busy { None, Boss, Cutscene, Prologue, OtherMap, MemberPrologue };
 /// The boss bar wins over a cutscene (a boss intro cutscene ends in the fight).
 Busy HostBusy(bool boss_bar_up, bool cutscene_playing);
 /// Why the host refuses a guest's title join (the restarted / launching guest asks at its title):
 /// HostBusy, else Prologue while the host has not finished its own start (the director's
 /// LocalStartReady). Playtest 1 #1 verification: the title-join path created and served a room
 /// while the host was still in its prologue (only the direct summon checked host_ready).
-Busy TitleJoinBusy(bool boss_bar_up, bool cutscene_playing, bool host_ready);
+Busy TitleJoinBusy(bool boss_bar_up, bool cutscene_playing, bool host_ready, bool member_in_prologue = false);
 /// "boss" / "cutscene" / "prologue" / "map" / "none" (the wire word).
 const char* BusyWord(Busy b);
 /// The player-facing wait line: the guest's ("Waiting: the host is in a boss fight") or the
@@ -90,6 +92,7 @@ struct HostView {
     bool travel_pending = false;               // batch 6: the host's own stage request is armed (its load is next)
     bool host_ready = true;                    // the host finished its start (C1, party_start.h)
     bool guest_in_prologue = false;            // the guest's roster state is Prologue
+    bool member_in_prologue = false;           // #19: another connected member is in its prologue
     std::uint32_t host_map = 0, guest_map = 0; // 0 / 0xffffffff: not known (no map check)
     bool carry = false;                        // CarriesAcrossMaps: no map check
     int cooperators = 0, max_cooperators = 3;
@@ -162,6 +165,7 @@ struct HostTravelHoldView {
     double since_done = 1e9;    // the last dsum_done arrived this long ago
     bool done_ok = false;       // ... and said the guest joined
     bool joiner_in_world = false;  // every joining member's chr is in the host's world
+    double since_title = 1e9;   // the host last sent its room to a title joiner this long ago
 };
 constexpr double kHostTravelHoldMax = 30.0;
 /// True: the host's lamp travel waits now.
