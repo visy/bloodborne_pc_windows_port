@@ -4,6 +4,7 @@
 
 #include <cctype>
 #include <cstdio>
+#include <sstream>
 
 namespace coop {
 
@@ -291,6 +292,62 @@ CatchupAction Catchup::Step(const CatchupInput& in) {
         return a;
     }
     return a;
+}
+
+SavedPrologueFile ParseSavedPrologue(const std::string& text) {
+    SavedPrologueFile f;
+    std::istringstream in(text);
+    std::string line;
+    while (std::getline(in, line)) {
+        std::istringstream l(line);
+        std::string key;
+        if (!(l >> key)) continue;
+        int slot = -1, v = 0;
+        if (key == "0" || key == "1") {
+            f.last = key == "1" ? 1 : 0;  // the old unkeyed file
+        } else if (key == "last" && (l >> v)) {
+            f.last = v == 1 ? 1 : 0;
+        } else if (key == "slot" && (l >> slot >> v) && slot >= 0 && slot <= 9) {
+            const int last = f.last;
+            NoteSavedPrologueFor(f, slot, v == 1);
+            f.last = last;  // the "last" line says which character was seen last
+        }
+    }
+    return f;
+}
+
+std::string FormatSavedPrologue(const SavedPrologueFile& f) {
+    std::string out = "last " + std::to_string(f.last) + "\n";
+    for (const auto& [slot, v] : f.slots) out += "slot " + std::to_string(slot) + " " + std::to_string(v) + "\n";
+    return out;
+}
+
+bool SavedPrologueFor(const SavedPrologueFile& f, int slot) {
+    if (slot >= 0) {
+        for (const auto& [s, v] : f.slots)
+            if (s == slot) return v == 1;
+    }
+    return f.last == 1;
+}
+
+bool NoteSavedPrologueFor(SavedPrologueFile& f, int slot, bool prologue) {
+    const int v = prologue ? 1 : 0;
+    bool changed = f.last != v;
+    f.last = v;
+    if (slot >= 0) {
+        bool found = false;
+        for (auto& [s, old] : f.slots) {
+            if (s != slot) continue;
+            found = true;
+            changed = changed || old != v;
+            old = v;
+        }
+        if (!found) {
+            f.slots.emplace_back(slot, v);
+            changed = true;
+        }
+    }
+    return changed;
 }
 
 } // namespace coop
