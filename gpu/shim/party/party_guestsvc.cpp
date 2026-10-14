@@ -1652,6 +1652,7 @@ bool WalkToLamp(const GameSnapshot& s) {
 struct LampPress {
     double next = 0, release = 0;
     int presses = 0;
+    int base = -1;  // requests made before the fixture started (a Dream headstone before it)
     bool done = false;
     bool walked = false;
 } g_lamp_press;
@@ -1663,10 +1664,17 @@ void LampPressTick(const GameSnapshot& s, double now) {
         P.release = 0;
     }
     if (P.done || g.test.find("lamppress") == std::string::npos || !s.world_up || s.loading ||
-        s.session_role != kSessionRoleClient || IsDreamMap(s.map_id) || now < P.next) {
+        s.session_role != kSessionRoleClient || IsDreamMap(s.map_id) || s.map_id == 0xffffffffu) {
+        P.base = -1;  // the baseline is taken once the guest stands in a world map
         return;
     }
-    if (g_lamp_requests_made.load() > 0) {
+    if (now < P.next) {
+        return;
+    }
+    if (P.base < 0) {
+        P.base = g_lamp_requests_made.load();
+    }
+    if (g_lamp_requests_made.load() > P.base) {
         P.done = true;
         Log("test: lamppress: the guest's lamp use became a request after %d press(es)", P.presses);
         return;
@@ -1911,6 +1919,12 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
     }
 }
 
+/// "hsdelay=S" (hostheadstone / guestheadstone): s after the first steady Dream (default 20).
+double HeadstoneTestDelay() {
+    const std::size_t k = g.test.find("hsdelay=");
+    return k == std::string::npos ? 20.0 : std::strtod(g.test.c_str() + k + 8, nullptr);
+}
+
 void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
     LampTick(s, link);
     // Live test "hostheadstone[;keys=...]": the HOST uses a Dream headstone (t210000) with a guest
@@ -1927,7 +1941,7 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
             IsDreamMap(s.map_id) && s.world_up && !s.loading && (role != 3 || s.cooperators >= 1)) {
             if (coop_at == 0) {
                 coop_at = Now();
-            } else if (Now() - coop_at >= 20.0 && FindChr(210000)) {
+            } else if (Now() - coop_at >= HeadstoneTestDelay() && FindChr(210000)) {
                 started = true;
                 g_lvl = LevelUpScript{};
                 g_lvl.open = true;

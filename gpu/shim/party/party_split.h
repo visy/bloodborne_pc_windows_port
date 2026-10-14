@@ -14,12 +14,22 @@
 // Env: BB_PARTY_TRAVEL_CHOICE = ask (default) | party (always the party move, no question) |
 //      alone (always alone, no question); BB_PARTY_SPLIT_TEST = yes | no (tests: answer the
 //      dialog with the in-process pad: YES = Cross, NO = Right then Cross).
+//
+// Only the player who used the lamp / headstone is asked (playtest 1 bug 20): its "used" flag
+// reaches every peer (packet 0x0f) and runs the same warp event on their games too. A warp is
+// another member's when this game got a lamp flag from a peer and did not set one itself
+// (party_death_rules PlanLampOrigin): it is dropped with a log line, the member who used it
+// chooses, and its EVENT split_choosing names that member in the others' logs.
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace coop {
 struct GameSnapshot;
+}
+namespace party {
+class PartyLink;
 }
 
 namespace coop::split {
@@ -33,7 +43,15 @@ void Init();
 /// Game thread: a lamp / headstone warp the player started (not a replay). True = consumed
 /// (the choice decides what runs).
 bool OnLampWarp(std::uint32_t id);
-/// Main thread, once a frame (the director).
-void Tick(const GameSnapshot& s);
+/// Test steps that call the lamp warp "as the player" (no talk script, so no lamp flag): the
+/// next warp is this player's own use.
+void NoteLocalUse(std::uint32_t id);
+/// Main thread, once a frame (the director); `link` sends EVENT split_choosing.
+void Tick(const GameSnapshot& s, party::PartyLink* link);
+
+/// EVENT split_choosing {"lamp": id}: a member opened the question on its game.
+constexpr const char* kChoosingEventName = "split_choosing";
+/// Party callback thread: that event from `slot` (roster name `who`).
+void OnChoosingEvent(int slot, const std::string& who, const std::string& body);
 
 } // namespace coop::split

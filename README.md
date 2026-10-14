@@ -23,9 +23,9 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | Death & respawn | `██████████████████░░` | 89% |
 | Progress (anyone can progress) | `█████████████████░░░` | 87% |
 | Services & UI | `██████████████████░░` | 90% |
-| Network & robustness | `█████████████████░░░` | 84% |
+| Network & robustness | `█████████████████░░░` | 86% |
 | Bloodborne-specific (chalice, Insight) | `████████████████░░░░` | 81% |
-| Feels like single player in a party | `█████████████████░░░` | 86% |
+| Feels like single player in a party | `█████████████████░░░` | 87% |
 
 ---
 
@@ -206,6 +206,7 @@ before anyone is in the game):
   the host's altar then offers *Enter the party's dungeon* (no glyph typing), and chalices are
   shared between all players.
 - **Crashes recover.** A crashed game restarts and rejoins by itself (back in the host's world about 12 s after the restart), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue. If the host's game crashes, the guests go home at once and come back by themselves as soon as the host is back in the world; items a guest got in the host's world stay in its own save.
+- **Connection drops recover.** A short network outage (under ~25 s) keeps the session. In a longer one a guest goes home once (one loading screen) and is summoned back beside the host a few seconds after the network returns.
 - **Network drops recover.** A short drop (seconds) goes unnoticed; after a longer one (30 s) a guest goes home with a loading screen and is summoned back beside the host by itself once the network is back. The party also checks every 15 s that everyone sees the same world and progress and quietly re-sends whatever differs.
 - **Wrong passwords are locked out.** A few typos are fine; after 5 wrong passwords in a minute the host refuses that address for a while.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
@@ -256,9 +257,11 @@ The host gets two party codes (launcher, *System → Party*):
 
 A guest on the host's network with the Internet code finds the host on the LAN by itself (~2 s).
 
-No UPnP and no port forward? Each guest copies its **guest code** (`BBG1-...`, *Party* page) and
-sends it to the host, who presses *Add a guest code*: the game then connects through both routers
-(hole punching). This fails behind symmetric / carrier-grade NAT (some mobile and ISP
+No UPnP and no port forward? The game now finds the way through both routers by itself (hole
+punching; the guest's address is exchanged through the public BitTorrent DHT under a hash only the
+party knows, `BB_PARTY_RENDEZVOUS=0` turns that off). If that does not work, each guest copies its
+**guest code** (`BBG1-...`, *Party* page) and sends it to the host, who presses *Add a guest code*.
+The *Party* page's *Network* line says which NAT you have and what to do about it. This fails behind symmetric / carrier-grade NAT (some mobile and ISP
 connections); there, let another player host or use a VPN such as Tailscale. Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
 
 ### Reporting a co-op bug

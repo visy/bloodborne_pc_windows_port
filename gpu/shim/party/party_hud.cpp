@@ -121,7 +121,10 @@ void Compose(const ComposeIn& in, Board* out) {
                 c.map_id = in.local_map;  // it stands in our world, on our map
             }
         if (!c.connected) c.have_pos = false;  // a lost member's last position means nothing
-        c.same_map = c.have_pos && in.me_have_pos && KnownMap(c.map_id) && c.map_id == in.local_map;
+        // Distance / direction only within one world: two players in their own worlds on the same
+        // map (e.g. both resting at the same lamp) are not "0.0 m" apart (playtest: "Hunter0 0.0 m"
+        // while apart); the panel shows where it is instead (StateText).
+        c.same_map = c.same_world && c.have_pos && in.me_have_pos && KnownMap(c.map_id) && c.map_id == in.local_map;
     }
     *out = b;
 }

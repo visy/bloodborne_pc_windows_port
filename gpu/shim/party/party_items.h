@@ -334,6 +334,7 @@ struct LotSlotState {
     int owned = -1;                       ///< goods: how many the player holds; -1 unknown
     int max_num = -1;                     ///< goods: EquipParamGoods maxNum; -1 unknown
     int max_storage = -1;                 ///< goods: EquipParamGoods maxRepositoryNum; -1 unknown
+    int goods_type = -1;                  ///< goods: EquipParamGoods goodsType (1 key item); -1 unknown
 };
 enum class LotFit : std::uint8_t {
     Give,  ///< nothing in the way: award it
@@ -350,9 +351,18 @@ LotFit ClassifyLotFit(const std::vector<LotSlotState>& slots, std::string* why =
 /// never takes away. The guest then gets it after all (a duplicate unique key is harmless; a
 /// missing Oedon Tomb Key blocks the game).
 bool LedgerSkipSuspicious(const std::vector<LotSlotState>& slots);
-/// H3 (par_c6, live): goods given while summoned (GiveItemDirect, load mode 1) never reached the
-/// guest's save file (a save requested while summoned does not write them), so a restart or the
-/// next summon load lost them while their flags stayed set. Each give is remembered (on disk) with
+/// verify_c6 (live): a summoned guest's inventory never shows its key items (EquipParamGoods
+/// goodsType 1: Oedon Tomb Key 4000, 4114, Old Hunter Bell 4312, ...): the game leaves them out of
+/// the summoned view at every host-world load (held 1 -> 0 across a party travel, while the
+/// Sword Hunter Badge, goodsType 0, stayed), and the own save keeps them (held 1 again at home,
+/// on disk). While summoned, a key item reading 0 is no sign of a lost item: such a lot is checked
+/// in the own world instead of re-given at every join (an item-get box each time).
+bool LotHasKeyItem(const std::vector<LotSlotState>& slots);
+/// H3 (par_c6): goods given while summoned (GiveItemDirect, load mode 1) looked lost after the next
+/// summon load or a restart. verify_c6 (live) found the cause: key items (goodsType 1) never show
+/// in a summoned guest's inventory (LotHasKeyItem); the save written while summoned does keep the
+/// gives (Sword Hunter Badge on disk with no own-world visit; Oedon Tomb Key held at home after
+/// three crashes). Kept as a safety net: each give is remembered (on disk) with
 /// the held count right after it (`expect`); in the next own world the missing part is given
 /// again, min(count, expect - now) (0 when nothing is missing or a count is unknown), and saved.
 int SummonedRegiveCount(int expect, int now, int count);

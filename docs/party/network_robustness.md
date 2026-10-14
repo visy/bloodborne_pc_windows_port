@@ -34,6 +34,11 @@ game's UDP session and our loopback-tuned timers survive real latency, loss and 
   - `outage=MS,at=MS` runs one outage that long after process start.
   - The director test steps `host_outage=MS@S` / `guest_outage=MS@S` (`netsim::outage_now`) start a
     total outage on that instance at a scripted point. They need the simulator on (`lat=0` will do).
+  - `BB_NET_SIM_OUTAGE_FILE=<path>` (test aid, 2026-10-14): `outage_now(MS)` whenever that file's
+    text (`MS` or `MS tag`) changes. One file shared by every instance of a local run gives a
+    **symmetric** total outage on all of them at the same moment. A `host_outage` step alone holds
+    only the host's received link bytes: the host then closes the silent link after 10 s and the
+    guest sees that close, which a real outage would swallow.
 - **Loopback only**: only 127.0.0.0/8 destinations or peers are simulated, unless `any=1`. A
   stray test setting never slows a real internet session.
 - **Tests**:
@@ -116,6 +121,35 @@ which is reliable (TCP or the reliable UDP stream), so a lost datagram costs a r
 request; the 4 s answer wait (`kAnswerWait`) had 3.6 s to spare at 0.4 s, the 8 s entry/join
 waits 6 s. No retry or timeout change was needed.
 
+### 3d. No guest code: the DHT rendezvous under the NAT sim (2026-10-14, 0.6.1)
+
+`BB_NET_SIM=dsl,nat=1` on both (no TCP listener on the host, unsolicited UDP dropped), **no
+`BB_PARTY_GUEST_CODE_FILE`**, `BB_PARTY_DHT_BOOTSTRAP=127.0.0.1:46881` pointing at
+`tools/mp/fake_dht.py` (one DHT node on loopback standing in for the public DHT). Title join with
+existing characters, one clock for both logs:
+
+| Time | Host | Guest |
+|---|---|---|
+| +17.4 | `NAT: cone (no open port)`, `rendezvous: looking for guests in the DHT every 5 s` | |
+| +21.1 | | `NAT: cone; ... hole punching works (endpoint exchanged automatically)` |
+| +22.6 | | `no TCP answer from the host; connecting over UDP` |
+| +24.2 | | `rendezvous: announce done: ... stored at 1` |
+| +27.5 | `a guest's endpoint 127.0.0.1:47601 found in the DHT`, `punching towards a guest` | |
+| +27.7 | | the first UDP attempt (started before the punch) times out, retried |
+| +30.2 / +30.5 | `Hunter1 rejoined (slot 1)` | `connected over UDP`, `network path: party link over UDP` |
+| +32.1 | | title join: `client (6)` |
+| +39.1 / +40.8 | `cooperators 0 -> 1` | `arrived 0.5 m from the host` |
+
+Screenshots every 15 s: both hunters side by side in the host's world from 45 s to the end
+(130 s), no glitch; the guest has the shared key items box open (nobody pressed OK). A first run
+with the host polling every 10 s connected too (link over UDP 2.3 s after the announce), but the
+guest's title screen showed *Failed to acquire Bloodborne server information* once at 20 s, while
+its game waited for the link. The run then stopped at 28 s on its end markers, so the outcome of
+that box was not seen. The host now polls every 5 s; in the second run the link was up 6 s after
+the announce and no such box showed.
+Not covered: the real DHT (public bootstrap nodes) and a real router. Both test instances stay
+on 127.0.0.1.
+
 ## 4. NAT: what a host must do
 
 - **Guests**: nothing. They connect out (TCP to the host, UDP to the host's port). Their own NAT
@@ -160,6 +194,56 @@ waits 6 s. No retry or timeout change was needed.
     does not). The simulator has a NAT mode (`BB_NET_SIM=...,nat=1`): inbound UDP is dropped
     unless we sent to that address:port first, and the host's TCP listener is off. Live run: see
     §3b (link over UDP 0.6 s after the punch started, bell join and B2 travel as usual).
+- **No guest code needed: the automatic rendezvous (DHT)** (2026-10-14, 0.6.1, `party_rdv.h`,
+  `party_traversal.h`). Without any server of ours, the guest's public UDP endpoint now reaches
+  the host through the public BitTorrent DHT (BEP 5 "mainline", as any torrent client uses):
+  1. The DHT key is `BLAKE2b("bbport rendezvous v1" || party key)` cut to 20 bytes. Only someone
+     with the code (and the password) can compute it; DHT nodes see an opaque hash.
+  2. Guest: when its party link has not come up 3 s after the start (TCP failed), it does an
+     iterative `get_peers` lookup for the hash and `announce_peer`s the party port's STUN mapping
+     to the 8 closest nodes (the node records the guest's public IP). Repeated every 45 s while
+     the link is down; read-only node (BEP 43), so nobody routes through us.
+  3. Host, only without an open port (no UPnP mapping, no override, not on a public IP): a
+     `get_peers` lookup every 5 s (the first from the bootstrap nodes, later ones seeded with the
+     closest nodes found: one hop). Every endpoint found is punched exactly like a pasted guest
+     code (at most once per 50 s per endpoint). The guest's UDP SYNs then get in (§ above).
+  4. Bootstrap: `router.bittorrent.com`, `dht.transmissionbt.com`, `router.utorrent.com`,
+     `dht.libtorrent.org` (`BB_PARTY_DHT_BOOTSTRAP=host:port,...` replaces them).
+     `BB_PARTY_RENDEZVOUS=0` turns it off; the guest code still works as before.
+  - Exposure: the guest's public IP and the host's lookups appear on public DHT nodes under that
+    hash, only when needed. A forged entry can only make the host send a few punch datagrams; the
+    link still needs the party key.
+  - Tests (`party-nat-test`): bencode / KRPC; a simulated 300-node Kademlia DHT with 5 % loss (the
+    announce lands on the 8 closest nodes, the host's lookup finds the endpoint, a seeded re-poll
+    takes 8 queries); the socket driver against fake nodes on loopback; and the whole path: a
+    guest behind the simulated NAT, **no guest code**, connects over UDP ~0.8 s after the
+    rendezvous starts (the host found it and punched once). Live: see §3d.
+  - Not tested against the real DHT or a real router (test machines stay on 127.0.0.1).
+- **NAT type and advice** (2026-10-14): host and guest ask a second STUN server
+  (`BB_PARTY_STUN2`, default `stun.cloudflare.com:3478`) from the same party port. The same
+  external port from both: a cone (punching works); another port per server: **symmetric**
+  (punching cannot work). The log line `NAT: <type>; <advice>` and the overlay *Party* page
+  (*Network:*) say what that means and what to do (forward UDP+TCP 9307, let a friend host, or a
+  VPN such as Tailscale / ZeroTier). Once connected the guest logs `network path: party link over
+  TCP|UDP` and the *Network* line shows it.
+- **The fallback chain, verified for every pair of NAT types** (`party-nat-test`, a simulated NAT
+  per RFC 4787 on each side carrying the real reliable-UDP streams, compared with the model in
+  `party_nat.h`, 25 / 25 pairs agree):
+
+  | Host NAT \ guest NAT | none | full cone | restricted | port-restricted | symmetric |
+  |---|---|---|---|---|---|
+  | none / open port (UPnP, forward) | TCP | TCP | TCP | TCP | TCP |
+  | full cone | UDP direct | UDP direct | UDP direct | UDP direct | UDP direct |
+  | restricted cone | punch | punch | punch | punch | punch |
+  | port-restricted cone (most routers) | punch | punch | punch | punch | **no** |
+  | symmetric | **no** | **no** | **no** | **no** | **no** |
+
+  "punch" needs the guest's endpoint at the host: now automatic (rendezvous) or the guest code.
+  "no": port forward on the host, another host, or a VPN. Guest-to-guest game traffic punches the
+  same way and falls back to the host relay (`PeerPaths`).
+  The network simulator has the same kinds: `BB_NET_SIM=...,nat=full|addr|port|sym` (`nat=1` =
+  port); `sym` also makes the guest code / NAT check report another port per STUN server, so a
+  live run detects a simulated symmetric NAT.
 - **What CGNAT / hard NAT still cannot do** (no server anywhere, by design):
   - **Symmetric (endpoint-dependent) NAT** on either side - many mobile carriers and some
     carrier-grade NATs - gives the punch a different external port than STUN saw, so the guest
@@ -232,9 +316,54 @@ host `host_outage=30000@50`):** the first digest matched 15 s after the join; th
 desync (mirror group 0 flipped, one host flag forgotten) was found by the next digest ("world
 buckets 0, flag buckets 19"), the host sent 36 groups and a snapshot, and the following digest
 said "resolved". The 30 s total outage: the host's link called the guest lost after 10 s (slot
-kept); the guest's game left the session ~12 s in (its own timeout) and went home to its last lamp
+kept); the guest's game left the session ~12 s in (not the game's timeout: our host-lost grace, see the follow-up below) and went home to its last lamp
 (a 3.4 s loading screen); the link resumed as the network came back (20.2 s after it was lost);
 the first direct summon was refused (the host's game still held the dead connection) and the bell
 summon brought the guest back 2.4 m from the host, 41.3 s after the outage began (two loading
 screens: correct, not seamless). 21 digests matched afterwards. Screenshots showed both players
 together before and after and the HUD's "Connection lost" during.
+
+**F5 follow-up: what ended the session, and a one-load recovery (2026-10-14, par_f5b).** The ~12 s
+drop above was ours, not the game's: the guest's link calls the host lost after 10 s of silence
+and its 2 s host-lost grace then sent the guest home (`host lost ... home now`). Fixed:
+- A **silent** link (`no traffic for 10 s`: an outage, not a reset / BYE / refusal) keeps the
+  host's world up to `BB_PARTY_OUTAGE_HOLD_MS` (45 s; the host keeps the slot 60 s). The host holds
+  the room's 15 s heartbeat timeout while a member sends no VITALS (before its link's own 10 s).
+- What then ends the session is **the game's own silence timeout: 25.0 s** (live, both games:
+  `notify_multi_play_error`, then LeaveRoom; the transport config's 25000 ms). While the link
+  says a peer is only temporarily lost, the game hears that peer's last small datagram again every
+  2 s (`bbnet::p2p_outage_keepalive`, `BB_PARTY_OUTAGE_KEEPALIVE=0` off). Live this kept the
+  **host's** game from dropping its silent guest (run 1 without it: dropped at 26.6 s), but the
+  **guest's** game still ended the session at 25.0 s. A 30 s outage therefore still costs the guest
+  a reload; outages under ~25 s keep the session (5 s: section 3).
+- When the guest's game ends the session during the outage it goes home **at once** (OnLeave_Limit,
+  one loading screen while the network is still down) instead of standing in the host's world
+  without a session until the game's room-gone path (~15 s later, live run 1). Its LeaveRoom, lost
+  in the outage, is retried until the host is reached.
+- The host, on the member's return: one scan 1.5 s later releases a game connection to it that has
+  been silent since (C6's release) and ends its sign hold either way; a direct summon asked
+  meanwhile waits for that scan instead of being refused. If the host's game dropped the member
+  during the outage, its room membership ends at once (`member_timed_out`), and a direct summon
+  while the host's game is still ending that session is answered `"wait":"settle"` (the guest asks
+  again every 1.5 s, unit-tested; not needed live).
+- After a resumed link the guest checks the session: host traffic back = survived; out of the room
+  = summoned back; still in the room without host traffic for 12 s = home cleanly (no half-dead
+  phantom).
+
+Live, 2 clients, `BB_NET_SIM=lat=30`, a symmetric 30 s outage 25 s after the join (outage file),
+guest title join off (bell + direct summon), screenshots every 3 s:
+
+| | before (par_f) | run 1 (hold, no keepalive) | run 2 (all of the above) |
+|---|---|---|---|
+| guest's game ends the session | ~12 s (our grace) | 25.0 s (its own timeout) | 25.1 s (its own timeout) |
+| host's game drops the guest | - | 26.6 s | not until the guest left (keepalive) |
+| guest home (loading screen) | 12 s | ~40 s (15 s without a session first) | **25.3 s, 3.3 s load, during the outage** |
+| link back / direct summon | first summon refused (hold) | served, failed (the host's game left the room 4 s later), next bell 20 s later | **asked 0.8 s after the link, old connection released, room served at once, joined 3.2 s later** |
+| guest back beside the host | 41.3 s after the outage began | 67.5 s | **36.4 s (6.3 s after the network returned), 1.6 m from the host** |
+
+Run 2's screenshots: both together before; during the outage each sees the other frozen
+("Connection lost" on the host's panel); the guest's loading screen home at ~25 s; the host's
+"Co-operator Hunter1 returned to their own world" as the guest came back; both together again
+(1.6 m) to the end of the run. Two loading screens for the guest (home, then the summon), as the
+game's own 25 s session timeout cannot be outlasted yet. Next: find what the guest's game counts
+as traffic for that timeout (the replayed datagram did not reset it on the guest's side).
