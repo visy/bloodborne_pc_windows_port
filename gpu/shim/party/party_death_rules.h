@@ -344,6 +344,14 @@ inline bool SkipEmptyStainRecord(bool party_on, int flag_after, int record_echoe
 /// A step waits (pt1polish, replay S1/S4): one that moves / acts with the local chr while that
 /// chr is dead, and any step while a B2 re-join or load is in flight (a die step landed inside the
 /// previous wipe's load and made no second wipe).
+/// The guest's dead-without-a-death-state watchdog (party_b2 DeadAfterClearTick) redirects a guest
+/// that stayed at HP 0 for `limit_s` with no death hold. Never while it follows the host's travel:
+/// that load revives it (regression run 0.6.1: a wipe whose host travel came 10 s after the guest's
+/// death; the redirect 4.5 s into the follow ended the session, ~50 s re-join).
+inline bool DeadWatchdogFires(double dead_s, double limit_s, bool death_held, bool following_host_travel) {
+    return !following_host_travel && !death_held && dead_s >= limit_s;
+}
+
 inline bool TestStepWaits(bool acts_with_own_chr, bool own_alive, bool world_up, bool rejoin_running) {
     if (!world_up || rejoin_running) {
         return true;

@@ -2698,6 +2698,18 @@ void DeadAfterClearTick(const GameSnapshot& s, double now) {
         fired = false;
         return;
     }
+    // Regression run 0.6.1 (live wipe): the guest died 10 s before the host's respawn travel came;
+    // this watchdog fired 4.5 s into the follow (still before its load), ended the session and the
+    // guest re-joined ~50 s later. A guest following the host's travel is revived by that load.
+    bool following = false;
+    {
+        std::lock_guard<std::mutex> lk(S().mu);
+        following = S().gphase != GuestPhase::Idle;
+    }
+    if (!deathrules::DeadWatchdogFires(1e9, 0, false, following)) {
+        dead_since = 0;
+        return;
+    }
     if (dead_since <= 0) dead_since = now;
     // 12 s after a K10 on this load (the normal path fires ~8.6 s after the death), 15 s otherwise
     // (live: a death in the Cleric Beast's arena during the fight was not processed either).
@@ -2705,8 +2717,9 @@ void DeadAfterClearTick(const GameSnapshot& s, double now) {
     // The game's death state did run when B2 held the death (HoldGuestDeath) - also once the hold
     // was consumed by a lone respawn or a dead follow that is still loading (hostdeath hd22: this
     // watchdog redirected a guest 8 s into its lone respawn, which ended the session).
-    if (fired || now - dead_since < limit || g_death_held_at.load() >= dead_since ||
-        g_last_hold_at.load() >= dead_since || g_dead_follow.load() || g_solo_respawn.load()) {
+    const bool held = g_death_held_at.load() >= dead_since || g_last_hold_at.load() >= dead_since ||
+                      g_dead_follow.load() || g_solo_respawn.load();
+    if (fired || !deathrules::DeadWatchdogFires(now - dead_since, limit, held, false)) {
         return;
     }
     fired = true;

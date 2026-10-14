@@ -228,6 +228,10 @@ int main() {
     CHECK(!SkipEmptyStainRecord(true, 0, 0));                        // no stain set
     CHECK(!SkipEmptyStainRecord(false, 1, 0));                       // solo: vanilla
     // pt1polish: test steps.
+    CHECK(DeadWatchdogFires(15.0, 15.0, false, false));              // dead 15 s, no death state: redirect
+    CHECK(!DeadWatchdogFires(14.0, 15.0, false, false));
+    CHECK(!DeadWatchdogFires(20.0, 15.0, true, false));              // the game's death state ran (held)
+    CHECK(!DeadWatchdogFires(20.0, 15.0, false, true));              // following the host's respawn travel (wipe)
     CHECK(TestStepWaits(true, false, true, false));                  // guest_obj while dead
     CHECK(!TestStepWaits(true, true, true, false));
     CHECK(!TestStepWaits(false, false, true, false));                // a press may run while dead
