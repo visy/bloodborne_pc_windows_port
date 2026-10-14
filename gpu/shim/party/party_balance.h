@@ -61,6 +61,9 @@ bool OnHostRules(const std::string& json, std::string* error = nullptr);
 Rules InForce();
 /// The local settings as rules.
 Rules FromSettings();
+/// Guest: the host's rules once received (EVENT "balance"); false before (a guest's own settings
+/// never count for the party rules such as I1 friendly fire).
+bool HostRules(Rules* out);
 /// For the party HUD's VITALS.
 int LocalDeaths();
 int LocalRotStacks();

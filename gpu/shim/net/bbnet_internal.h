@@ -206,7 +206,9 @@ std::map<std::uint64_t, std::int64_t> p2p_heard(int sock);
 // link came back after an outage tells a surviving game session (host traffic again) from a dead one.
 std::int64_t p2p_game_rx_age_ms();
 // F5: while on, every game P2P socket hears each source silent for 2.5..120 s replay its last
-// small datagram every 2 s (a network outage the party link knows to be temporary).
+// reliable data record every 2 s (nr_outage.h: it restarts the transport's 25 s idle deadline; the
+// last small datagram for a source that never sent one) - a network outage the party link knows
+// to be temporary.
 void p2p_outage_keepalive(bool on);
 
 }  // namespace bbnet

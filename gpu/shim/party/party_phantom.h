@@ -22,7 +22,11 @@
 //      runs on a guest. The host's EMEVD filter sees a boss-defeat instruction (2003[12]/[15]/[53])
 //      and then `2000[0] InitializeEvent(slot, 9350, N)` in the same event, and sends EVENT
 //      "phantom" {kind "insight", n}; the guest applies SpEffect 4680 (PlayerIns vfunc +0x3F0,
-//      BlockClear2's own call) one at a time, 15 frames apart.
+//      BlockClear2's own call) one at a time, 15 frames apart. A 9350 start without a defeat
+//      (first encounter, story) is sent with boss = false (all N). Insight the host's events give
+//      with `2004[8] SetSpEffect(10000, 4680)` outside 9350 (the first kidnap's waking scene, the
+//      Chalice Dungeon boss encounter / kill events) is counted per event (DirectInsight) and sent
+//      the same way; a chalice layer boss's +2 counts as a boss kill (the native +1 is part of it).
 //   5. Hunter's Mark for guests: the EquipParamGoods enable_white / enable_multi bits of goods 100
 //      and 1400 (seamless_rules param rules; off by default).
 //
@@ -100,15 +104,6 @@ const char* InsightModeName(InsightMode m);
 /// SpEffect 4680 applications for the guest when the host's boss kill granted `host_n`.
 int GuestInsightGrant(int host_n, InsightMode mode);
 
-/// 0.6.2 (quest_audit Hypogean Gaol): Insight a host-only event gives with EMEVD 2004[8]
-/// SetSpEffect(10000 = the player, 4680 = +1 Insight) instead of a 9350 start: common 9422 (the
-/// Snatcher kidnap's waking scene, `End if Client`, so a guest never runs it). The Insight a guest
-/// present should get too (as story Insight, PhantomEvent::boss false), else nothing.
-constexpr std::int32_t kKidnapWakeEvent = 9422;
-constexpr std::int32_t kInsightSpEffectId = 4680;
-std::optional<int> HostOnlySpEffectInsight(std::int32_t event, std::int32_t bank, std::int32_t id,
-                                           std::int32_t entity, std::int32_t speffect);
-
 /// Host: pairs a boss-defeat instruction with the 9350 start of the same event.
 class BossInsightTracker {
 public:
@@ -119,9 +114,44 @@ public:
     /// `2000[0]` started `target` with first argument `n` from `event`: N when this is a boss
     /// kill's Insight (once per defeat), else nothing.
     std::optional<int> OnInitializeEvent(std::int32_t event, std::int32_t target, std::int32_t n, double now);
+    /// A defeat marker ran in `event` within the window (not consumed; DirectInsight's boss test).
+    bool DefeatedRecently(std::int32_t event, double now) const;
 
 private:
     std::unordered_map<std::int32_t, double> defeats_;
+};
+
+/// Host (G2): Insight the host's EMEVD grants with SpEffect 4680 on the player directly, outside
+/// common event 9350 (whose starts BossInsightTracker reads): the first kidnap's waking scene
+/// (common 9422) and the Chalice Dungeon boss events of m29 (12901588/589/591: +2 at a layer boss
+/// kill; 12901708/712: the kill reward table; 12901718/722: the first-encounter table). Every one
+/// of them ends on a client (`1003[6]` multiplayer state 1) or waits for chr type 0, so a guest
+/// never gets it. Each `2004[8] (10000, 4680)` of an allowed event counts +1; an event's count is
+/// handed out once it has been quiet for kQuiet seconds (its 4680s come 10 frames apart).
+class DirectInsight {
+public:
+    static constexpr std::int32_t kPlayer = 10000;
+    static constexpr std::int32_t kSpEffect = 4680;
+    static constexpr double kQuiet = 1.0;
+    static constexpr int kMaxPerEvent = 20;
+    /// The events above (9350 itself and the summon refund 9183 are not: 9350 goes through
+    /// BossInsightTracker, 9183 gives back Insight the player's own NPC summon took).
+    static bool Allowed(std::int32_t event);
+    /// `2004[8]` ran in `event` with these arguments; true when it was counted.
+    bool OnSetSpEffect(std::int32_t event, std::int32_t entity, std::int32_t speffect, double now);
+    struct Grant {
+        std::int32_t event;
+        int n;
+    };
+    /// The events that have been quiet for kQuiet seconds, with their count (then forgotten).
+    std::vector<Grant> Due(double now);
+
+private:
+    struct Pending {
+        int n = 0;
+        double last = 0;
+    };
+    std::unordered_map<std::int32_t, Pending> pending_;
 };
 
 /// Guest: spaces SpEffect applications (the game's 9350 waits 10 frames between them).
@@ -199,7 +229,7 @@ void PhantomInit();
 bool PhantomWantsEmevd();
 /// Built-in EMEVD skip rules (the confinement walls unless BB_PARTY_OPEN_WORLD=0).
 std::vector<EmevdSkipRule> PhantomSkipRules();
-/// From the EMEVD filter (game thread), for 2003[12/15/53], 2000[0] and 9422's 2004[8] only.
+/// From the EMEVD filter (game thread), for 2003[12/15/53], 2000[0] and 2004[8] (DirectInsight) only.
 void PhantomEmevdInstruction(std::int32_t event, std::int32_t bank, std::int32_t id, const std::uint8_t* args,
                              std::size_t size);
 /// Director (host), for every travel it sends.

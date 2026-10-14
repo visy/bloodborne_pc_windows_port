@@ -178,6 +178,17 @@ static void test_service() {
     s.tick();
     CHECK(s.room(static_cast<std::uint64_t>(room), &rv) && rv.members.size() == 3);
     c_loading = false;
+    s.tick();  // the hold ends: its clock starts over (F5: not removed before its next heartbeat)
+    CHECK(s.room(static_cast<std::uint64_t>(room), &rv) && rv.members.size() == 3);
+    CHECK(events(s, "Host").empty());
+    now += 14000;
+    call(s, "Host", "heartbeat", obj({{"SessionId", sid}, {"MemberId", 1}}));
+    call(s, "GuestB", "heartbeat", obj({{"SessionId", sid}, {"MemberId", 2}}));
+    s.tick();
+    CHECK(s.room(static_cast<std::uint64_t>(room), &rv) && rv.members.size() == 3);
+    now += 2000;  // 16 s after the hold ended without a heartbeat: a timeout
+    call(s, "Host", "heartbeat", obj({{"SessionId", sid}, {"MemberId", 1}}));
+    call(s, "GuestB", "heartbeat", obj({{"SessionId", sid}, {"MemberId", 2}}));
     s.tick();
     CHECK(s.room(static_cast<std::uint64_t>(room), &rv) && rv.members.size() == 2);
     auto left = events(s, "Host");

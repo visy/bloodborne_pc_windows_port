@@ -17,14 +17,14 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 
 | Area | Progress | |
 |---|---|--:|
-| **Overall** | `█████████████████░░░` | 84% |
+| **Overall** | `██████████████████░░` | 88% |
 | Session & joining | `██████████████████░░` | 89% |
 | World & travel | `██████████████████░░` | 88% |
 | Death & respawn | `██████████████████░░` | 89% |
 | Progress (anyone can progress) | `█████████████████░░░` | 87% |
 | Services & UI | `██████████████████░░` | 90% |
-| Network & robustness | `█████████████████░░░` | 86% |
-| Bloodborne-specific (chalice, Insight) | `████████████████░░░░` | 81% |
+| Network & robustness | `██████████████████░░` | 88% |
+| Bloodborne-specific (chalice, Insight) | `█████████████████░░░` | 87% |
 | Feels like single player in a party | `█████████████████░░░` | 87% |
 
 ---
@@ -39,8 +39,10 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | **High frame rates** | 30 / 60 / 90 / uncapped, with correct game speed (community patches). |
 | **Upscaling** | FSR 3.1, FSR 4, FSR 4.1.1 and DLSS, with motion vectors added for this game. |
 | **Frame generation** | Optional, off by default: DLSS FG (2x-4x, RTX 40/50) or FSR FG (2x), paced, HUD kept sharp; NVIDIA Reflex. [More](docs/FG_REFLEX.md) |
+| **HDR output** | Optional, off by default: HDR10 (PQ, Rec.2020) on an HDR display, the game's highlights expanded up to your display's peak while mid-tones and menus stay at paper white; peak, paper white, highlights, saturation and a calibration pattern in *System > HDR*. [More](docs/SETTINGS.md#hdr-output) |
 | **No shader stutter** | Known shaders are built before the intro. New ones compile in the background. |
 | **Shareable shader cache** | Export / import one `.zip`, works across GPUs. |
+| **Shader cache builder** | *Advanced > Build shader cache (world warper)*: the game travels through every lamp and area by itself (looks round, walks, fights), on a copy of your save, then exports the cache `.zip`. About an hour; Stop and resume. [More](docs/SETTINGS.md#shader-cache-builder-world-warper) |
 | **Save safety** | Crash-safe saving, save checks at start, automatic backups in party play. |
 | **The Old Hunters** | DLC enabled automatically (its data ships with patch 1.09). |
 | **Mods and patches** | Loose-file mods and shadPS4-format XML patches, with load order. |
@@ -181,7 +183,12 @@ before anyone is in the game):
   hold is never handed out twice (no "inventory or storage max" box).
 - **Story cutscenes and endings play for everyone.** The Blood Moon, Amelia's skull (evening to
   night), Mergo's Wet Nurse's arena, Gehrman's scenes and the ending with the end credits
-  play for every party member.
+  play for every party member; a guest still loading in when a scene starts sees it once it has
+  arrived. After the Blood Moon the host is asked "Travel with the party?" and everyone goes to
+  Yahar'gul together.
+- **Insight for everyone.** Whatever Insight the host gets (a boss's first sight and kill, story
+  moments, the kidnap's waking, Chalice Dungeon bosses) every guest present gets too. What Insight
+  shows (Amygdalas, whispers) is up to each player's own Insight, as in the original game.
 - **The host's world is shared live, both ways.** A door or shortcut opened by the host is open
   for the guests too, and a lever or door a guest uses opens in the host's world (and in the
   guest's own save).
@@ -197,7 +204,8 @@ before anyone is in the game):
   Hunter's Marks) goes to the guest, the host and every other party member, once (the NPC has moved
   on for everyone, so nobody misses it).
 - **Kidnapped by a Snatcher?** If the host is grabbed, the whole party wakes up together in the
-  Hypogean Gaol (Yahar'gul) after one loading screen. Guests cannot be kidnapped in the host's world.
+  Hypogean Gaol (Yahar'gul) after one loading screen, and the guests get the host's Insight for
+  it too. Guests cannot be kidnapped in the host's world.
 - **Enemy drops for each player, one roll.** Every player gets their own copy of each enemy's drop,
   and it is the same item for everyone (one shared roll per kill).
 - **Blood Echoes for every kill.** Whoever kills an enemy, every party member gets its full
@@ -217,8 +225,7 @@ before anyone is in the game):
   the host's altar then offers *Enter the party's dungeon* (no glyph typing), and chalices are
   shared between all players.
 - **Crashes recover.** A crashed game restarts and rejoins by itself (back in the host's world about 12 s after the restart), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue. If the host's game crashes, the guests go home at once and come back by themselves as soon as the host is back in the world; items a guest got in the host's world stay in its own save.
-- **Connection drops recover.** A short network outage (under ~25 s) keeps the session. In a longer one a guest goes home once (one loading screen) and is summoned back beside the host a few seconds after the network returns.
-- **Network drops recover.** A short drop (seconds) goes unnoticed; after a longer one (30 s) a guest goes home with a loading screen and is summoned back beside the host by itself once the network is back. The party also checks every 15 s that everyone sees the same world and progress and quietly re-sends whatever differs.
+- **Network drops recover.** A network outage of up to 30 s keeps the session: no loading screen, everyone carries on where they stood once the network is back (the others freeze in place meanwhile). If a longer outage loses the session, a guest goes home at once with one loading screen and is summoned back beside the host by itself once the network is back. The party also checks every 15 s that everyone sees the same world and progress and quietly re-sends whatever differs.
 - **Wrong passwords are locked out.** A few typos are fine; after 5 wrong passwords in a minute the host refuses that address for a while.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
 - **Death has a cost.** Each death stacks "rot" (−10% max HP or stamina, picked at random, up to
@@ -235,6 +242,11 @@ before anyone is in the game):
   (when you let go). Optional: *Show party through walls* puts a small marker with the distance on
   every companion on your map. Both on the game's *System -> Pings* page and the launcher's Party tab;
   hidden under the game's menus like the other party text.
+- **Friendly fire / PvP (host's switch, off by default).** The host can let party members hurt
+  each other, both ways, like invaders: the game's *System -> Friendly fire* page, the Insert menu's
+  Party tab or the launcher's Party tab (host). Everyone gets a notice when it changes; guests see
+  the host's setting on their page but cannot change it. A party kill is a normal party death (the
+  rot applies as for any death); the killer gets no Echoes or Insight from it.
 - **Party HUD.** Party members and events are shown in a small HUD; all party settings are on the
   *Party* pages of the game's *System* menu.
 
@@ -258,8 +270,8 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 | Joining during a boss fight or cutscene waits outside until it ends | Works for boss fights with every join path (bell, title join, direct summon; verified live), the Party status says why you wait; cutscenes not yet tested live |
 | With 3 guests, every guest sees every other guest | In progress |
 | Chalice dungeons: deeper layers checked in a party; entering the party's dungeon in one press (the altar still asks a few prompts) | In progress |
-| PvP / friendly fire the host can switch on and off | Later |
-| Pings: party members and marked spots visible through walls, with distance and player colours | Later |
+| PvP / friendly fire the host can switch on and off | Done (0.6.2) |
+| Pings: party members and marked spots visible through walls, with distance and player colours | Done (0.6.2) |
 
 ### Connecting over the internet
 

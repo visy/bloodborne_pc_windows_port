@@ -180,6 +180,16 @@ std::uint64_t EventSeq() {
     return event_seq.load(std::memory_order_acquire);
 }
 
+namespace {
+std::atomic<bool> g_friendly_fire{false};
+}  // namespace
+void SetFriendlyFire(bool on) {
+    g_friendly_fire.store(on);
+}
+bool FriendlyFire() {
+    return g_friendly_fire.load();
+}
+
 std::uint64_t AlertSeq() {
     return alert_seq.load(std::memory_order_acquire);
 }

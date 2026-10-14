@@ -165,6 +165,11 @@ public:
         return buffer_marker;
     }
 
+    /// bbport: VK_EXT_device_fault (what the GPU faulted on, asked at device lost).
+    bool IsDeviceFaultSupported() const {
+        return device_fault;
+    }
+
     /// bbport: VK_EXT_graphics_pipeline_library enabled (BB_GPL, with fast linking).
     bool IsGraphicsPipelineLibrarySupported() const {
         return graphics_pipeline_library;
@@ -534,6 +539,11 @@ public:
     }
 
     /// Returns whether the device can report memory usage.
+    /// bbport: VK_EXT_hdr_metadata (the HDR output's mastering metadata).
+    bool IsHdrMetadataSupported() const {
+        return hdr_metadata;
+    }
+
     bool CanReportMemoryUsage() const {
         return supports_memory_budget;
     }
@@ -633,6 +643,7 @@ private:
     bool maintenance_5{};
     bool maintenance_8{};
     bool buffer_marker{};
+    bool device_fault{};
     bool attachment_feedback_loop{};
     bool graphics_pipeline_library{};
     bool gpl_fast_linking{};
@@ -645,6 +656,7 @@ private:
     bool cooperative_matrix{};      // bbport: VK_KHR_cooperative_matrix (FSR 4.1.1 FP8 variant)
     bool shader_float8{};           // bbport: VK_EXT_shader_float8 with FP8 matrices (RDNA4)
     bool supports_memory_budget{};
+    bool hdr_metadata{};
     bool supports_block_texel_view{};
     u64 total_memory_budget{};
     u64 total_local_memory{};

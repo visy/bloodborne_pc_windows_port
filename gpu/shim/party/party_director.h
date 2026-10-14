@@ -91,6 +91,10 @@ bool ApplyGuestBellEffect();
 /// Any thread: the host ended the party / is gone: a guest still in the host's world goes home at
 /// once (OnLeave_Limit on the next main-thread tick).
 void RequestGuestSendHome(const std::string& why);
+// F5: host -> guests: the host's game ended the co-op session by itself (OnIrregularLeaveSession);
+// a guest still in the host's world goes home now (one loading screen) instead of standing in a
+// dead session until the host's game leaves the room.
+constexpr const char* kHostSessionEndEvent = "host_session_end";
 
 /// Any thread: this player finished its campaign start (C1, party_start.h StartReady) - the host
 /// refuses direct summons until then (playtest 1 #1).

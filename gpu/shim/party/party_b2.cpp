@@ -591,15 +591,18 @@ BB_COOP_SYSV void ChrPreStepHook(u64 chr, u64, u64, u64, u64, u64) {  // rdi = t
 // BeginLeaveSession entry (ReplacePrologue: jumped to, so the return address is the caller's):
 // logs which call site ends a B2 session; the call itself is unchanged.
 void* g_leave_orig = nullptr;
+std::atomic<bool> g_host_irregular_leave{false};
 __attribute__((noinline)) BB_COOP_SYSV u64 LeaveEntryHook(u64 session) {
     const u64 ret = reinterpret_cast<u64>(__builtin_return_address(0));
     const int role = Role();
     if (g_on.load() && (role == RoleClient || role == RoleHost)) {
         const u64 base = Guest(0);
         if (ret > base + 5 && ret - base < 0x6000000) {
+            const u64 site = ret - base - 5;
+            if (role == RoleHost && (site == 0x178980d || site == 0x1789cb4)) g_host_irregular_leave.store(true);
             Log("leave: BeginLeaveSession called from +0x%llx (role %d); session event handler state: flow +0x84 %d, "
                 "GSM +0x1592 %u, flow +0xF4 %.1f",
-                ull(ret - base - 5), role, Field<int>(Slot(kSlotFlow), 0x84, -1), unsigned(Field<u8>(Slot(kSlotGsm), 0x1592)),
+                ull(site), role, Field<int>(Slot(kSlotFlow), 0x84, -1), unsigned(Field<u8>(Slot(kSlotGsm), 0x1592)),
                 double(Field<float>(Slot(kSlotFlow), 0xf4)));
         } else {
             Log("leave: BeginLeaveSession called through a party hook (role %d)", role);
@@ -6427,6 +6430,8 @@ bool TitleJoinHold(const GameSnapshot& s) {
         return false;
     }
 }
+
+bool TakeHostIrregularLeave() { return g_host_irregular_leave.exchange(false); }
 
 bool Requested() {
     // Default in party mode (BB_PARTY set): B2, with B1 as the automatic fallback. BB_PARTY_B2=0: B1

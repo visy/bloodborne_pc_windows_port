@@ -18,6 +18,7 @@
 #include <SDL3/SDL.h>
 #include "bbport_compile_progress.h"
 #include "bbport_frame_state.h"
+#include "bbport_hdr.h"
 #include "bbport_settings.h"
 #include "party/party_hud.h"
 #include "party/party_balance_rules.h"
@@ -25,6 +26,7 @@
 #include "party/party_ping.h"
 #include "party/party_status.h"
 #include "party/party_log.h"
+#include "party/world_warper.h"
 #include "bbport_camera.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -846,6 +848,83 @@ void DisplayTab() {
            });
 }
 
+/// Native HDR output (bbport_hdr.h, I4): on/off after a restart, the curve live.
+void HdrRows() {
+    auto& s = BbSettings::Get();
+    char line[256];
+    Toggle("hdr", T("HDR output (HDR10)", "Вывод HDR (HDR10)"), s.hdr,
+           T("An HDR10 picture (PQ, Rec.2020) for an HDR display: the game's SDR picture keeps its "
+             "mid-tones at paper white and only its highlights are expanded towards the peak. Needs "
+             "HDR on in Windows. Applies after restarting the game.",
+             "Картинка HDR10 (PQ, Rec.2020) для HDR-дисплея: средние тона SDR-картинки игры остаются "
+             "на уровне белого листа, к пику расширяются только блики. Нужен HDR в Windows. "
+             "Применяется после перезапуска игры."));
+    static const int peaks[] = {0, 400, 600, 800, 1000, 1200, 1500, 2000, 2500, 3000, 4000};
+    static const int papers[] = {80, 100, 120, 150, 180, 200, 250, 300, 350, 400, 500};
+    const auto index_of = [](const int* table, int value) {
+        int best = 0;
+        for (int i = 1; i < 11; ++i) {
+            if (std::abs(table[i] - value) < std::abs(table[best] - value)) best = i;
+        }
+        return best;
+    };
+    static char peak_names[11][32];
+    const int display = int(s.hdr_display_peak.load() + 0.5f);
+    for (int i = 0; i < 11; ++i) {
+        if (i == 0) {
+            std::snprintf(peak_names[i], sizeof(peak_names[i]), display > 0 ? T("Auto (%d nits)", "Авто (%d нит)")
+                                                                             : T("Auto (1000 nits)", "Авто (1000 нит)"),
+                          display);
+        } else {
+            std::snprintf(peak_names[i], sizeof(peak_names[i]), T("%d nits", "%d нит"), peaks[i]);
+        }
+    }
+    Choice("hdr_peak", T("HDR peak brightness", "HDR: пиковая яркость"), index_of(peaks, s.hdr_peak_nits), 11,
+           [](int i) { return peak_names[i]; }, [](int) { return true; },
+           T("The brightest the picture gets. Auto: what the display reports to Windows. Use the "
+             "calibration pattern: raise it until the inner square just disappears.",
+             "Самое яркое, что будет на экране. Авто: что дисплей сообщает Windows. По калибровочной "
+             "таблице: поднимайте, пока внутренний квадрат не исчезнет."),
+           true, [&](int i) { Store(s.hdr_peak_nits, peaks[i], true); });
+    static char paper_names[11][32];
+    for (int i = 0; i < 11; ++i) {
+        std::snprintf(paper_names[i], sizeof(paper_names[i]), T("%d nits", "%d нит"), papers[i]);
+    }
+    Choice("hdr_paper", T("HDR paper white", "HDR: белый лист"), index_of(papers, s.hdr_paper_white), 11,
+           [](int i) { return paper_names[i]; }, [](int) { return true; },
+           T("Brightness of the picture's mid-tones and of these menus. 200 nits by default; "
+             "lower in a dark room.",
+             "Яркость средних тонов картинки и этих меню. 200 нит по умолчанию; в тёмной комнате "
+             "меньше."),
+           true, [&](int i) { Store(s.hdr_paper_white, papers[i], true); });
+    SliderRow("hdr_strength", T("HDR highlights", "HDR: блики"), s.hdr_strength, 0.0f, 1.5f, 0.1f,
+              T("0: the SDR picture at paper white; 1: the game's white reaches the peak (default); "
+                "above 1 more highlights reach the peak.",
+                "0: SDR-картинка на уровне белого листа; 1: белый игры достигает пика (по умолчанию); "
+                "больше 1: больше бликов на пике."));
+    SliderRow("hdr_saturation", T("HDR saturation", "HDR: насыщенность"), s.hdr_saturation, 0.5f, 1.5f, 0.05f,
+              T("1: the game's colours; above 1 uses the wider Rec.2020 gamut.",
+                "1: цвета игры; больше 1 использует более широкий охват Rec.2020."));
+    Toggle("hdr_calibration", T("HDR calibration pattern", "HDR: калибровочная таблица"), s.hdr_calibration,
+           T("Patches at the top of the screen: a 10000-nit field with a square at the peak setting "
+             "(raise the peak until the square just disappears), paper white, a 0..peak ramp and the "
+             "game's grey levels through the curve.",
+             "Поля сверху экрана: поле 10000 нит с квадратом на уровне пика (поднимайте пик, пока "
+             "квадрат не исчезнет), белый лист, шкала 0..пик и уровни серого игры после кривой."));
+    if (s.hdr != s.startup_hdr) {
+        Note(T("HDR output: applies after restarting the game", "Вывод HDR: после перезапуска игры"), Dim());
+    } else if (s.hdr_active) {
+        std::snprintf(line, sizeof(line), T("HDR output: %s, peak %.0f nits, paper white %d nits",
+                                            "Вывод HDR: %s, пик %.0f нит, белый лист %d нит"),
+                      s.hdr_active == 1 ? "HDR10 (PQ, Rec.2020)" : "scRGB", BbSettings::HdrPeakNits(),
+                      s.hdr_paper_white.load());
+        Note(line, Dim());
+    } else if (const char* problem = s.hdr_problem.load(); problem && s.startup_hdr) {
+        std::snprintf(line, sizeof(line), T("HDR output not used: %s", "Вывод HDR не используется: %s"), problem);
+        Note(line, ImGui::GetColorU32(ImVec4(1.0f, 0.55f, 0.35f, 1.0f)));
+    }
+}
+
 void UpscalerTab() {
     auto& s = BbSettings::Get();
     const char* upscalers[] = {T("Off", "Выкл"), "FSR 3.1", "FSR 4 (INT8)", "FSR 4.1.1",
@@ -992,6 +1071,7 @@ void UpscalerTab() {
                       s.display_fps.load(), s.source_fps.load());
         Note(line, Dim());
     }
+    HdrRows();
 }
 
 void EffectsTab() {
@@ -1469,6 +1549,23 @@ void PartyTab() {
            T("Each death lowers max HP by 10 % (up to 5 times); resting at a lamp cleanses it.",
              "Каждая смерть снижает здоровье на 10 % (до 5 раз); отдых у фонаря снимает."),
            on);
+    // I1 friendly fire / PvP (party_pvp.h): the host's switch; a guest sees the host's rule.
+    if (b.role == ps::Role::Guest) {
+        Note(ps::FriendlyFire() ? T("Friendly fire / PvP: ON (the host's rule) - party members can hurt each other",
+                                    "Огонь по своим / PvP: ВКЛ (правило хоста) - члены группы могут ранить друг друга")
+                                : T("Friendly fire / PvP: off (the host decides)",
+                                    "Огонь по своим / PvP: выкл. (решает хост)"),
+             Dim());
+    } else {
+        Toggle("party_friendly_fire", T("Friendly fire / PvP", "Огонь по своим / PvP"), s.party_friendly_fire,
+               T("Party members can hurt each other, both ways, like invaders (ERSC's Judicator's Rulebook). "
+                 "A party kill is a normal party death; no Echoes or Insight for the killer. The host's "
+                 "setting counts and every member gets a notice when it changes. Default: off.",
+                 "Члены группы могут ранить друг друга, как захватчики. Убийство в группе - обычная смерть; "
+                 "убийца не получает отголосков и озарения. Действует настройка хоста, все получают "
+                 "уведомление при изменении. По умолчанию: выкл."),
+               on);
+    }
     static const char* overhead_en[] = {"Nothing", "Name", "Name and level", "Name and health", "Name and deaths"};
     static const char* overhead_ru[] = {"Ничего", "Имя", "Имя и уровень", "Имя и здоровье", "Имя и смерти"};
     Choice("party_overhead", T("Above companions", "Над спутниками"), std::clamp(s.party_overhead.load(), 0, 4), 5,
@@ -2476,6 +2573,44 @@ void PartyToast() {
     ImGui::PopStyleVar(2);
 }
 
+/// The world warper's progress (world_warper.h): a small panel at the top middle, the warper's
+/// own lines (phase and count, the area, what it does and the new pipelines). Not interactive.
+void WarperPanel() {
+    if (!coop::warper::Active()) {
+        return;
+    }
+    const std::string text = coop::warper::StatusText();
+    if (text.empty()) {
+        return;
+    }
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                                   viewport->WorkPos.y + 10.0f * base_scale),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.6f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f * base_scale, 6.0f * base_scale));
+    ImGui::PushFont(game_font, 17.0f);
+    ImGui::Begin("##world_warper", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings);
+    std::size_t at = 0;
+    bool first = true;
+    while (at <= text.size()) {
+        std::size_t end = text.find('\n', at);
+        if (end == std::string::npos) end = text.size();
+        const std::string line = text.substr(at, end - at);
+        at = end + 1;
+        if (line.empty()) continue;
+        ImGui::TextColored(first ? ImVec4(0.96f, 0.88f, 0.70f, 1.0f) : ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "%s",
+                           line.c_str());
+        first = false;
+    }
+    ImGui::End();
+    ImGui::PopFont();
+    ImGui::PopStyleVar(2);
+}
+
 /// The party alert: a bordered box in the upper middle (clear of the game's own dialogs), its
 /// first line as the title, then the text; fades out over its last second.
 void PartyAlert() {
@@ -2930,10 +3065,48 @@ bool HandleEvent(const SDL_Event& event) {
     }
 }
 
+/// The HDR calibration pattern's labels (the pattern itself: hdr_compose.frag).
+bool HdrPatternShown() {
+    const auto& s = BbSettings::Get();
+    return s.hdr_calibration && s.hdr_active != 0;
+}
+
+void HdrPatternLabels() {
+    const auto& s = BbSettings::Get();
+    const ImVec2 size = ImGui::GetIO().DisplaySize;
+    const float left = BbHdr::PatternLeft * size.x, top = BbHdr::PatternTop * size.y;
+    const float width = (BbHdr::PatternRight - BbHdr::PatternLeft) * size.x;
+    const float height = (BbHdr::PatternBottom - BbHdr::PatternTop) * size.y;
+    const float boxes = height * BbHdr::PatternSplitY;
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    const auto label = [&](float x0, float x1, float y, const char* text) {
+        const ImVec2 extent = ImGui::CalcTextSize(text);
+        const ImVec2 at{left + (x0 + x1) * 0.5f * width - extent.x * 0.5f, y};
+        draw->AddRectFilled({at.x - 6, at.y - 3}, {at.x + extent.x + 6, at.y + extent.y + 3},
+                            IM_COL32(0, 0, 0, 200), 4.0f);
+        draw->AddText(at, IM_COL32(235, 235, 235, 255), text);
+    };
+    char text[128];
+    const float y = top + boxes + 4.0f;
+    std::snprintf(text, sizeof(text), BbSettings::MenuText("Square: peak %.0f nits (should vanish)",
+                                                           "Квадрат: пик %.0f нит (должен исчезнуть)"),
+                  BbSettings::HdrPeakNits());
+    label(BbHdr::PeakBoxLeft, BbHdr::PeakBoxRight, y, text);
+    std::snprintf(text, sizeof(text), BbSettings::MenuText("Paper white %d nits", "Белый лист %d нит"),
+                  s.hdr_paper_white.load());
+    label(BbHdr::PaperBoxLeft, BbHdr::PaperBoxRight, y, text);
+    std::snprintf(text, sizeof(text), BbSettings::MenuText("0 .. %.0f nits", "0 .. %.0f нит"),
+                  BbSettings::HdrPeakNits());
+    label(BbHdr::RampLeft, BbHdr::RampRight, y, text);
+    label(0.0f, 1.0f, top + height + 4.0f,
+          BbSettings::MenuText("The game's levels 0 .. 1 through the HDR curve",
+                               "Уровни игры 0 .. 1 после кривой HDR"));
+}
+
 bool Visible() {
     return initialized &&
-           (menu_open || prompt_active || BbSettings::Get().show_fps || BbSettings::Get().show_hud ||
-            CompileIndicatorShown() || ToastWanted() || AlertWanted() || NpcCaptionWanted() || PartyHudWanted() || PartyTagsWanted() ||
+           (menu_open || prompt_active || BbSettings::Get().show_fps || BbSettings::Get().show_hud || HdrPatternShown() ||
+            CompileIndicatorShown() || coop::warper::Active() || ToastWanted() || AlertWanted() || NpcCaptionWanted() || PartyHudWanted() || PartyTagsWanted() ||
             PartyPingsWanted());
 }
 
@@ -3039,7 +3212,7 @@ void RenderPrecompile(vk::CommandBuffer cmdbuf, vk::Extent2D extent) {
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmdbuf);
 }
 
-void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
+bool Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, bool clear) {
 
     // Present interval for the FPS readout (measured also while nothing is drawn).
     const auto now = std::chrono::steady_clock::now();
@@ -3059,7 +3232,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
         PartyHudDiag();
     }
     if (!Visible()) {
-        return;
+        return false;
     }
     std::scoped_lock lock{imgui_mutex};
     ImGuiIO& io = ImGui::GetIO();
@@ -3095,6 +3268,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     HoldPartyNoticesInGameMenu();
     if (!menu_open) {
         CompileIndicator();
+        WarperPanel();
         if (!party::hud::GameMenu()) {  // the game's full-screen menu: none of these over it
             PartyHud(); // before the toast: it stacks above the panel
             PartyPings();
@@ -3106,13 +3280,17 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     if (prompt_active && !menu_open) {
         TextPrompt();
     }
+    if (HdrPatternShown()) {
+        HdrPatternLabels();
+    }
     ImGui::Render();
 
     const vk::RenderingAttachmentInfo attachment{
         .imageView = view,
         .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-        .loadOp = vk::AttachmentLoadOp::eLoad,
+        .loadOp = clear ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad,
         .storeOp = vk::AttachmentStoreOp::eStore,
+        .clearValue = vk::ClearValue{vk::ClearColorValue{std::array{0.0f, 0.0f, 0.0f, 0.0f}}},
     };
     cmdbuf.beginRendering(vk::RenderingInfo{
         .renderArea = {{0, 0}, extent},
@@ -3126,6 +3304,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmdbuf);
     }
     cmdbuf.endRendering();
+    return true;
 }
 
 } // namespace BbOverlay
