@@ -131,6 +131,14 @@ bool BossGateInBlock(const BossGate& g, std::uint32_t map);
 constexpr const char* kBossFogWaitNotice = "Boss fog: the host goes in first (first fight here)";
 /// Within this many metres of the fog object the notice shows.
 constexpr float kBossFogNoticeRange = 5.0f;
+/// The notice is due: the gate's flags were read, the gate waits for the host and the guest
+/// stands within kBossFogNoticeRange of the fog (dist_m < 0: unknown, no notice).
+bool BossFogNoticeDue(const BossGate& g, bool read, bool intro_done, bool host_in, bool boss_dead, float dist_m);
+/// The local player's position for distance checks (playtest 1 bug 8, live 2026-10-14): the
+/// physics position (ChrIns +0x58 -> +8 -> +0x3B0 -> +0x68: +0x1E0) when readable, else the chr's
+/// +0xC0. On a guest in the host's world +0xC0 stays at its arrival spot (it read 19 m from the
+/// fog while the guest stood 3 m from it), so the fog notice never fired. Null: neither readable.
+const float* PickPlayerPos(bool physics_ok, const float* physics, bool drawn_ok, const float* drawn);
 
 // ---- game side ----
 void Init();

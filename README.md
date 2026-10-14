@@ -115,7 +115,7 @@ single-player save is never touched. Settings: *System → Party* pages in the g
   and stays in the party.
 - **Anyone can go through a boss fog first.** A guest's fog no longer waits for the host: the
   fight starts for everyone, and the others follow through the fog. A boss's first fight with an
-  intro cutscene still starts with the host.
+  intro cutscene still starts with the host; a guest at that fog is told so on screen.
 - **Travel together or alone.** Lamps, headstones and the Hunter's Mark ask "Travel with the party?".
   Yes moves the whole party with one loading screen; No moves only you (when a guest rests that way,
   the host gets a short rest load so its world resets). The question closes by itself after 30 s.

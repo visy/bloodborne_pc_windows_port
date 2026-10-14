@@ -26,14 +26,14 @@ loading-screen path is the proposed fix. A seamless (no-load) variant comes back
 | 2 | Guest's bell prompt also shown on the host | minor | **fixed (pt1join)** | inferred: the host director auto-rings the Beckoning Bell (SpEffect 9000) whenever a guest waits or rings | 2 |
 | 3 | Only a host rest resets the world | major | **fixed (batch 1, live)**: a guest's alone rest gives the host a rest load | a guest's rest at a lamp asks "Travel with the party?"; NO sends it to the Dream alone with no reset (design gap) | 1 |
 | 4 | Enemy loot from the guest not shared | minor | **fixed** (pt1items: one shared roll per kill, `BB_PARTY_SHARED_DROP_ROLL`) | ERSC_PARITY D4: per-player drop rolls. A design decision to revisit, not a bug | decision |
-| 5 | Guests cannot knock on doors / see plot dialogue | major | **partly (pt1npc)**: Iosefka / fake doctor doors live OK; window residents still no prompt (fixture stood at the chr, not the window dummy); talk logs now outside tests | unconfirmed: ghost NpcParam rows (Iosefka 6060) and/or a client-only talk gate; the logs do not print the override counter | 4 |
+| 5 | Guests cannot knock on doors / see plot dialogue | major | **yes (live, pt1follow2)**: Iosefka / fake doctor doors (pt1npc) and the window residents' door dummies 2410870/71 (prompt, dialogue on the guest); a knock sets only a local knock-sound trigger, nothing for the host; Gilbert's hit chr 2410782 not reproduced in this save state | unconfirmed: ghost NpcParam rows (Iosefka 6060) and/or a client-only talk gate; the logs do not print the override counter | 4 |
 | 6 | Host death blocks guest loot | major | **fixed (batch 1)**: host death = party respawn load; the guest's send-home is followed by the load (live) | host revive-in-place leaves the guest's death and send-home state half-done until its next load | 1 |
 | 7 | Host death warp breaks world / occlusion | major | **fixed (batch 1, live)**: host death = party respawn load for everyone | host death = revive in place (moved up to ~190 m, no load, no world reset) | 1 |
-| 8 | Fog wall for the guest until the host goes in | minor (on head) | **notice (pt1npc)**: first-fight fogs show "the host goes in first"; not seen firing live, per-gate diagnostics logged | B2 guest fog-first (1f981e9) covers plain fogs; first fights with an intro (Gascoigne) still start with the host | 4 |
+| 8 | Fog wall for the guest until the host goes in | minor (on head) | **fixed (pt1follow2)**: cause found live: the guest's position (+0xC0) stays at its arrival spot in the host's world, so the 5 m check never passed; physics position now (unit; notice after the fix not yet seen live) | B2 guest fog-first (1f981e9) covers plain fogs; first fights with an intro (Gascoigne) still start with the host | 4 |
 | 9 | Rejoined guest lands in the Dream, not in Central Yharnam | **blocker** | **fixed (pt1join, live)** | the guest rings before its own map is known, so no gather; cross-map direct summon never loads the host's map (aeeb408 only keeps the gather as default) | 2 |
-| 10 | Doll level-up plays on the host + position jumps back | major | move part **fixed (batch 1)**: same-map guest lamp = own load, the host never moves; flags: batch 4; flags **fixed (pt1npc)**: never_sync Doll rows | Doll flags 72100100-102/113, 12100112-114 synced as npc_quest; a same-map lamp warp became a host-led party move | 1 (move) + 4 (flags) |
+| 10 | Doll level-up plays on the host + position jumps back | major | move part **fixed (batch 1)**: same-map guest lamp = own load, the host never moves; flags: batch 4; flags **fixed (pt1npc)**: never_sync Doll rows; **live (pt1follow2)**: guest level-up, no world action, host never moved | Doll flags 72100100-102/113, 12100112-114 synced as npc_quest; a same-map lamp warp became a host-led party move | 1 (move) + 4 (flags) |
 | 11 | Gehrman is a ghost for the guest | minor | **fixed (pt1npc)**: 804000 in the talk-NPC table, written live | NpcParam 804000 has isChangeWanderGhost; only the Doll's 803000 is patched | 4 |
-| 12 | Item prompt stuck on the guest at host death | major | death part **fixed (batch 1)**: a load follows a host death; the question closes on load / death / 30 s (live); prompt part **fixed (pt1items)**: item-get watchdog clears a box left over a load / death (unit-tested; host-death clear not seen live) | `ShowItemGet` is gated only on `Calm()`, plus the half-done death state of #6 | 3 (gate) + 1 (death) |
+| 12 | Item prompt stuck on the guest at host death | major | death part **fixed (batch 1)**: a load follows a host death; the question closes on load / death / 30 s (live); prompt part **fixed (pt1items)**: item-get watchdog clears a box left over a load / death (unit-tested); **live (pt1follow2)**: the guest's open box is gone after the host-death load (screenshots) | `ShowItemGet` is gated only on `Calm()`, plus the half-done death state of #6 | 3 (gate) + 1 (death) |
 | 13 | Host's dropped echoes not shown, could not recover | minor | **logged (batch 1)**: stain changes logged; a host death is a load again | not proven: 2 of 6 host bloodstains never picked up; the revive-in-place warp is a suspect; no pickup log | 1 |
 | 14 | Gascoigne cutscene played twice | minor (on head) | **yes** + host guard (pt1npc): story_up refused if played < 10 min or boss fight | the guest's own intro event replayed on the host; fixed by story dedupe default on (025b0a9) + live check (a5033c3). Residual: the host does not refuse a replay mid-fight | 4 |
 | 15 | Boss loot prompt frozen on the guest, key items missing? | major | **fixed** (pt1items: popup gate alive / cutscene / boss banner + watchdog) | badge pushed via `ShowItemGet` in the same second as the boss defeat banner; no alive/cutscene/banner/load gate | 3 |
@@ -1022,3 +1022,38 @@ re-join after a host travel 1.5-12.9 s on the host (longest into Old Yharnam and
 - **G4 8-of-10 failures:** their cause was the cross-map chase (#9); with the room/map checks they now end in one
   gather instead of repeated failed summons. Not touched (other files): host-travel-while-joining watchdog stop,
   holding host lamp travel ~10 s after serving a room, the premature "no arrival within 180 s".
+
+## Batch 7 result (pt1follow2, 2026-10-14)
+
+Two live runs (2 instances, loopback, save_backup/savedata_20261010; run 1 lost its Central Yharnam part to a
+held split question on the test start lamp and ended at the 240 s lease; run 2 used `host_warp` instead).
+Screenshots: `agents/pt1follow2/shots1`, `shots2` (removed with the env; findings below).
+
+- **#8 cause found (live) and fixed.** Guest 3 m from Gascoigne's fog (2411810), host's Gascoigne flags cleared:
+  `boss fogs of this block: [12414811: read 1 intro 0 host 0 dead 0 fog within 20 m]`. The flags were right; the
+  distance was not: `MyPos` read ChrIns +0xC0, which on a guest in the host's world stays at its arrival spot (the
+  B2 status line shows `pos (-52.3, -40.8, 68.7) drawn (-36.8, -40.8, 84.3)` for the whole run, 19 m from the fog).
+  `MyPos` now reads the physics position (+0x58 -> +8 -> +0x3B0 -> +0x68: +0x1E0, `PickPlayerPos`), and the notice
+  condition is `BossFogNoticeDue` (unit-tested). First fights with an intro still start with the host (the notice).
+  The notice firing after the fix is not yet seen live.
+- **#5 window residents (live).** The knock goes through the door dummy objects: 2410870 and 2410871 each gave
+  prompt 10010220 within 4-6 fixture spots, Cross opened the resident's dialogue on the guest ("...Oh, a hunter of
+  beasts, are you?"). The knock event 12410850 sets only the per-door knock-sound trigger 70000050 / 70000051
+  (never_sync type-7 global, a transient sound cue): there is no world state for the host, so nothing is sent; quest
+  talks (Iosefka) already reach the host. The earlier fixture used 2410780 (Gilbert's model chr); his talk chr is
+  the hit chr 2410782 (`会話用_重病人(ヒット判定用`), which showed no prompt at 16 spots in this save state (it
+  worked live 2026-10-11), nor did the girl 2410760. No code change.
+- **#10 Doll level-up (live).** Guest `level 37 -> 38, echoes 20000 -> 11366` in the host's Dream; no world action
+  from the guest, no `slot 1 changed the host's world` on the host, the host's position unchanged in every status
+  line (-10.6, -7.0, -21.2); host screenshot: no kneel.
+- **Item box at host death (live).** `host_die@S` without `%MAP` only runs as the first step after a (re)join
+  (batch 4's runs had a step before it); `host_die@40%m24_01` runs on the steady-world clock. The guest's box
+  (Sword Hunter Badge + Old Hunter Bell) was on screen at the host's death and gone after the death load
+  (screenshots); the load closed it, so the watchdog had nothing to clear (no `item-get dialog cleared` line).
+- **Old Hunter Bell (live, both runs).** `guest's own gift lot 10050 ... given to the guest itself` -> `gave #0 lot
+  10050 ... goods 4312 x1 (held 0 -> 1, item-get dialog)`; the box shows "Old Hunter Bell".
+- **Gehrman screenshot: inconclusive.** The guest stood 2.5 m from 2100600 facing him; the frame shows the workshop
+  but Gehrman is not visible (he may be hidden by the item box and the player model). Not settled.
+- Test-aid note: a host test start lamp (`BB_PARTY_TEST_START_LAMP`) that fires as the guest joins is held by the
+  split question; use `host_warp=ID@S%MAP` (a party move without the question) or `BB_PARTY_SPLIT_TEST=yes`.
+

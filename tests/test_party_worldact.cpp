@@ -164,6 +164,18 @@ int main() {
         assert(!BossGateWaitsForHost(gas, false, false, true));  // boss dead
         assert(!BossGateWaitsForHost(*BossGateByEvent(12424711), false, false, false));  // no intro condition
         assert(BossGateInBlock(gas, m2401) && !BossGateInBlock(gas, m2400) && !BossGateInBlock(gas, 0xffffffffu));
+        // The notice: flags read, the gate waits, within kBossFogNoticeRange (live 2026-10-14: 3 m).
+        assert(BossFogNoticeDue(gas, true, false, false, false, 3.0f));
+        assert(BossFogNoticeDue(gas, true, false, false, false, kBossFogNoticeRange));
+        assert(!BossFogNoticeDue(gas, true, false, false, false, 19.0f));  // the stale +0xC0 distance of the live run
+        assert(!BossFogNoticeDue(gas, true, false, false, false, -1.0f));  // position unknown
+        assert(!BossFogNoticeDue(gas, false, false, false, false, 3.0f));  // flags not read
+        assert(!BossFogNoticeDue(gas, true, true, false, false, 3.0f));    // intro seen: the guest goes first
+        // The player's position: physics first, +0xC0 only as the fallback.
+        const float phys[3] = {-52.3f, -40.8f, 68.7f}, drawn[3] = {-36.8f, -40.8f, 84.3f};
+        assert(PickPlayerPos(true, phys, true, drawn) == phys);
+        assert(PickPlayerPos(false, phys, true, drawn) == drawn);
+        assert(PickPlayerPos(false, phys, false, drawn) == nullptr);
         for (const BossGate& g : BossGates()) {
             // The fog object and the intro flag belong to the gate's own map block.
             assert(std::uint32_t(g.fog_entity) / 100000 == g.host_flag / 100000 % 100 &&
