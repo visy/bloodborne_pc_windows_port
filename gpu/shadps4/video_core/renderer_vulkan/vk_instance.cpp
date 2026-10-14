@@ -16,6 +16,7 @@
 #include "bbport_settings.h"
 #include "bbport_toggles.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
+#include "video_core/renderer_vulkan/vk_reflex.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 
@@ -223,6 +224,9 @@ Instance::Instance(const Frontend::WindowSystemInfo& window_info, s32 physical_d
 }
 
 Instance::~Instance() {
+    if (reflex_supported) {
+        Reflex::Shutdown();
+    }
     ImGui::Core::Shutdown(GetDevice());
     vmaDestroyAllocator(allocator);
 }
@@ -537,6 +541,31 @@ bool Instance::CreateDevice() {
             }
         }
     }
+    // bbport: NVIDIA Reflex (VK_NV_low_latency2 rev 3 + VK_KHR_present_id; from
+    // Supermedo/bloodborne_pc PR #69 by FIocker), only when chosen for this start.
+    reflex_supported = false;
+    if (BbSettings::Get().startup_reflex != BbSettings::ReflexOff) {
+        std::vector<const char*> reflex_extensions;
+        vk::PhysicalDeviceVulkan12Features reflex_vk12{};
+        vk::PhysicalDevicePresentIdFeaturesKHR reflex_present_id{};
+        reflex_supported = Reflex::ConfigureDevice(physical_device, reflex_extensions, reflex_vk12,
+                                                   reflex_present_id) &&
+                           vk12_features.timelineSemaphore;
+        for (const char* name : reflex_supported ? reflex_extensions : std::vector<const char*>{}) {
+            if (std::none_of(enabled_extensions.begin(), enabled_extensions.end(),
+                             [&](const char* e) { return std::string_view{e} == name; })) {
+                if (enabled_extensions.size() >= enabled_extensions.capacity()) {
+                    reflex_supported = false;
+                    break;
+                }
+                enabled_extensions.push_back(name);
+            }
+        }
+        if (!reflex_supported) {
+            std::printf("Reflex: not supported by this GPU or driver (VK_NV_low_latency2 rev 3, "
+                        "VK_KHR_present_id); off\n");
+        }
+    }
     vk::StructureChain device_chain = {
         vk::DeviceCreateInfo{
             .queueCreateInfoCount = queue_info_count,
@@ -705,7 +734,13 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT{
             .graphicsPipelineLibrary = true,
         },
+        vk::PhysicalDevicePresentIdFeaturesKHR{
+            .presentId = true,
+        },
     };
+    if (!reflex_supported) {
+        device_chain.unlink<vk::PhysicalDevicePresentIdFeaturesKHR>();
+    }
 
     if (!custom_border_color) {
         device_chain.unlink<vk::PhysicalDeviceCustomBorderColorFeaturesEXT>();
@@ -789,6 +824,14 @@ bool Instance::CreateDevice() {
 
     graphics_queue = device->getQueue(queue_family_index, 0);
     present_queue = device->getQueue(queue_family_index, separate_present ? 1 : 0);
+    if (BbSettings::Get().startup_reflex != BbSettings::ReflexOff) {
+        Reflex::Initialize(*instance, physical_device, *device, reflex_supported);
+        reflex_supported = Reflex::Tracking();
+        BbSettings::Get().reflex_active = reflex_supported;
+        if (reflex_supported && present_queue != graphics_queue) {
+            Reflex::OnPresentQueueCreated(present_queue);
+        }
+    }
     if (readback_family_index != NoFamily) {
         readback_queue = device->getQueue(readback_family_index, 0);
         LOG_INFO(Render_Vulkan, "Readback queue: family {}", readback_family_index);

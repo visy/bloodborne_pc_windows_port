@@ -10,8 +10,25 @@
 #include "sdl_window.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
+#include "video_core/renderer_vulkan/vk_reflex.h"
+
+#include <mutex>
 
 namespace Vulkan {
+
+namespace {
+// bbport: NVIDIA Reflex (from Supermedo/bloodborne_pc PR #69 by FIocker): its driver sleep,
+// markers and swapchain lifetime are serialized with acquire / present / recreation. Without
+// Reflex this session nothing is locked.
+struct ReflexWsiLock {
+    std::unique_lock<std::mutex> sleep, wsi;
+    ReflexWsiLock(bool reflex, bool lifetime) {
+        if (!reflex) return;
+        if (lifetime) sleep = std::unique_lock{Reflex::SleepMutex()};
+        wsi = std::unique_lock{Reflex::WsiMutex()};
+    }
+};
+} // namespace
 
 static constexpr vk::SurfaceFormatKHR SURFACE_FORMAT_HDR = {
     .format = vk::Format::eA2B10G10R10UnormPack32,
@@ -28,11 +45,15 @@ Swapchain::Swapchain(const Instance& instance_, const Frontend::WindowSDL& windo
 }
 
 Swapchain::~Swapchain() {
-    Destroy();
+    {
+        ReflexWsiLock lock{instance.IsReflexSupported(), true};
+        Destroy();
+    }
     instance.GetInstance().destroySurfaceKHR(surface);
 }
 
 void Swapchain::Create(u32 width_, u32 height_) {
+    ReflexWsiLock lock{instance.IsReflexSupported(), true};
     width = width_;
     height = height_;
     needs_recreation = false;
@@ -64,7 +85,7 @@ void Swapchain::Create(u32 width_, u32 height_) {
     const vk::SharingMode sharing_mode =
         exclusive ? vk::SharingMode::eExclusive : vk::SharingMode::eConcurrent;
     const auto format = needs_hdr ? SURFACE_FORMAT_HDR : surface_format;
-    const vk::SwapchainCreateInfoKHR swapchain_info = {
+    vk::SwapchainCreateInfoKHR swapchain_info = {
         .surface = surface,
         .minImageCount = image_count,
         .imageFormat = format.format,
@@ -82,14 +103,20 @@ void Swapchain::Create(u32 width_, u32 height_) {
         .clipped = true,
         .oldSwapchain = old_swapchain,
     };
+    VkSwapchainLatencyCreateInfoNV latency_info{};
+    if (instance.IsReflexSupported()) {
+        Reflex::PrepareSwapchainCreateInfo(swapchain_info, latency_info);
+    }
 
     auto [swapchain_result, chain] = instance.GetDevice().createSwapchainKHR(swapchain_info);
     ASSERT_MSG(swapchain_result == vk::Result::eSuccess, "Failed to create swapchain: {}",
                vk::to_string(swapchain_result));
     swapchain = chain;
     if (old_swapchain) {
+        if (instance.IsReflexSupported()) Reflex::OnSwapchainDestroying(old_swapchain);
         instance.GetDevice().destroySwapchainKHR(old_swapchain);
     }
+    if (instance.IsReflexSupported()) Reflex::OnSwapchainCreated(swapchain);
 
     SetupImages();
     RefreshSemaphores();
@@ -119,6 +146,7 @@ void Swapchain::SetHDR(bool hdr) {
 }
 
 bool Swapchain::AcquireNextImage() {
+    ReflexWsiLock lock{instance.IsReflexSupported(), false};
     vk::Device device = instance.GetDevice();
     vk::Result result =
         device.acquireNextImageKHR(swapchain, std::numeric_limits<u64>::max(),
@@ -144,6 +172,7 @@ bool Swapchain::AcquireNextImage() {
 }
 
 bool Swapchain::Present() {
+    ReflexWsiLock lock{instance.IsReflexSupported(), false};
     const vk::PresentInfoKHR present_info = {
         .waitSemaphoreCount = 1,
         .pWaitSemaphores = &present_ready[image_index],
@@ -296,6 +325,7 @@ void Swapchain::Destroy() {
     images_view.clear();
 
     if (swapchain) {
+        if (instance.IsReflexSupported()) Reflex::OnSwapchainDestroying(swapchain);
         device.destroySwapchainKHR(swapchain);
     }
 

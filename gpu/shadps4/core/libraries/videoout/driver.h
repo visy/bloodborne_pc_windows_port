@@ -93,7 +93,9 @@ public:
     int ChangeBufferAttribute(VideoOutPort* port, s32 bufferIndex,
                               const BufferAttribute* attribute);
 
-    bool SubmitFlip(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop = false);
+    /// `content_frame_id`: NVIDIA Reflex's simulation frame of this flip (0 without Reflex).
+    bool SubmitFlip(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop = false,
+                    u64 content_frame_id = 0);
 
 private:
     struct Request {
@@ -111,7 +113,8 @@ private:
     void Flip(const Request& req);
     void DrawBlankFrame(); // Video port out not open
     void DrawLastFrame();  // Used when there is no flip request
-    void SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop = false);
+    void SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop = false,
+                            u64 content_frame_id = 0);
     void PresentThread(std::stop_token token);
     /// bbport: runs presenter work (acquire, blit, vkQueuePresent) off the vblank thread, in
     /// order. Acquire and present block while the GPU is the bottleneck (much longer on NVIDIA);

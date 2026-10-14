@@ -87,6 +87,24 @@ int main() {
     assert(!RestartNeeded());
 
     assert(ParseFrameGen("bad") == 0 && ParseFrameGen("4") == 4 && ParseFgBackend("x") == FgDlss);
+
+    // NVIDIA Reflex: off by default, on / boost round trip, a restart on a change.
+    WriteIni(path, "# empty\n");
+    Load();
+    assert(s.reflex == ReflexOff && s.startup_reflex == ReflexOff);
+    for (const char* mode : {"on", "boost", "off"}) {
+        char text[64];
+        std::snprintf(text, sizeof(text), "reflex=%s\n", mode);
+        WriteIni(path, text);
+        Load();
+        assert(s.reflex == ParseReflex(mode) && std::strcmp(ReflexModeName(s.reflex), mode) == 0);
+        Save();
+        assert(Read(path).find(std::string("reflex=") + mode) != std::string::npos);
+    }
+    s.reflex = ReflexOn;
+    assert(RestartNeeded());
+    s.reflex = ReflexOff;
+    assert(ParseReflex("2") == ReflexBoost && ParseReflex("x") == ReflexOff);
     std::remove(path);
     std::puts("PASS: frame generation settings");
 }

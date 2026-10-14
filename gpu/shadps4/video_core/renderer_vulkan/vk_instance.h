@@ -174,6 +174,11 @@ public:
     }
 
     /// Returns true if VK_EXT_attachment_feedback_loop_layout is supported
+    /// bbport: NVIDIA Reflex runs this session (chosen at start and supported; vk_reflex.h).
+    bool IsReflexSupported() const {
+        return reflex_supported;
+    }
+
     bool IsAttachmentFeedbackLoopLayoutSupported() const {
         return attachment_feedback_loop;
     }
@@ -636,6 +641,7 @@ private:
     bool shader_clock{};
     bool compute_shader_derivatives{};
     bool mixed_float_dot_product{}; // bbport: VK_VALVE_shader_mixed_float_dot_product (FSR 4.1.1)
+    bool reflex_supported{};        // bbport: NVIDIA Reflex this session
     bool cooperative_matrix{};      // bbport: VK_KHR_cooperative_matrix (FSR 4.1.1 FP8 variant)
     bool shader_float8{};           // bbport: VK_EXT_shader_float8 with FP8 matrices (RDNA4)
     bool supports_memory_budget{};

@@ -29,6 +29,7 @@
 #include "bbport_settings.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
 #include "video_core/renderer_vulkan/vk_fg_images.h"
+#include "video_core/renderer_vulkan/vk_reflex.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 #include "video_core/host_shaders/fg_hud_comp.h"
 
@@ -202,6 +203,10 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
     fsr_pass.Create(device, instance.GetAllocator(), num_images);
     pp_pass.Create(device, swapchain.GetSurfaceFormat().format);
     BbOverlay::Init(instance, swapchain.GetSurfaceFormat().format, num_images);
+
+    // bbport: NVIDIA Reflex: presentation's submissions are out of band (no-op without it).
+    present_scheduler.SetOutOfBand(true);
+    flip_scheduler.SetOutOfBand(true);
 
     // bbport: frame generation (from Supermedo/bloodborne_pc PR #69 by FIocker), when chosen
     // for this start and its provider runs here; otherwise nothing of it exists.
@@ -579,6 +584,10 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
 
     Frame* frame = GetRenderFrame();
     frame->guest_address = cpu_address;
+    if (instance.IsReflexSupported()) {
+        frame->reflex_frame_id = Reflex::RecordingFrameId();
+        if (!frame->reflex_frame_id) frame->reflex_frame_id = Reflex::CurrentSimFrameId();
+    }
     if (frame->generation) {
         frame->generation->count = 0;
         frame->generation->serial = 0;
@@ -990,7 +999,7 @@ void Presenter::PrepareGeneration(Frame* frame, vk::Image display_image, u32 sw,
         .frame_ms = guides.frame_ms,
         .reset = guides.reset || generation_history.needs_reset(guides.serial),
         .render_frame_index = guides.serial,
-        .reflex_frame_id = 0};
+        .reflex_frame_id = u32(frame->reflex_frame_id)};
     resources.count = generation->Record(cmd, input, std::span(outputs.data(), count), count + 1);
     generation_history.submitted(guides.serial);
     if (!hud_pipeline && resources.count) {
@@ -1106,6 +1115,7 @@ Frame* Presenter::PrepareBlankFrame(bool present_thread) {
         frame->generation->count = 0;
         frame->generation->serial = 0;
     }
+    frame->reflex_frame_id = instance.IsReflexSupported() ? Reflex::CurrentSimFrameId() : 0;
 
     auto& scheduler = present_thread ? present_scheduler : draw_scheduler;
     scheduler.EndRendering();
@@ -1332,6 +1342,11 @@ bool Presenter::PresentOne(Frame* frame, vk::Image source_image, bool real, std:
     // bbport: the game frame is blitted (letterboxed) straight into the swapchain image.
     const vk::Image swapchain_image = swapchain.Image();
     auto& scheduler = present_scheduler;
+    const bool reflex = instance.IsReflexSupported();
+    if (reflex) {
+        Reflex::SetRecordingFrameId(frame->reflex_frame_id);
+        scheduler.SetFrameId(frame->reflex_frame_id);
+    }
     const auto cmdbuf = scheduler.CommandBuffer();
     if (real) {
         DumpFinalFrameIfDue(instance, scheduler, cmdbuf, frame->image, frame->width, frame->height,
@@ -1470,10 +1485,31 @@ bool Presenter::PresentOne(Frame* frame, vk::Image source_image, bool real, std:
     }
 
     // Present to swapchain.
+    if (reflex) {
+        if (real) Reflex::TraceCpuPresent(frame->content_frame_id);
+        Reflex::OnPresentBegin(frame->reflex_frame_id, real);
+    }
     {
         std::scoped_lock submit_lock{Scheduler::submit_mutex};
         if (!swapchain.Present()) {
             swapchain.Recreate(window.GetWidth(), window.GetHeight());
+        }
+    }
+    if (reflex) {
+        Reflex::OnPresentEnd(frame->reflex_frame_id, real);
+        // BB_REFLEX_TIMING=1: the driver's latency report of the newest finished frame.
+        static const bool timing = std::getenv("BB_REFLEX_TIMING") != nullptr;
+        Reflex::LatencyReport r{};
+        if (real && timing && Reflex::QueryLatencyTimings(&r) && r.present_id > last_reflex_report) {
+            last_reflex_report = r.present_id;
+            std::printf("reflex timing: id=%llu input=%llu sim=%llu..%llu render=%llu..%llu "
+                        "present=%llu..%llu gpu=%llu..%llu\n",
+                        (unsigned long long)r.present_id, (unsigned long long)r.input_sample_us,
+                        (unsigned long long)r.sim_start_us, (unsigned long long)r.sim_end_us,
+                        (unsigned long long)r.render_submit_start_us,
+                        (unsigned long long)r.render_submit_end_us,
+                        (unsigned long long)r.present_start_us, (unsigned long long)r.present_end_us,
+                        (unsigned long long)r.gpu_render_start_us, (unsigned long long)r.gpu_render_end_us);
         }
     }
     CountPresentation(real);

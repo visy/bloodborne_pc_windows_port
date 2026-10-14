@@ -751,6 +751,13 @@ void DefineAll() {
            {off, AddText("DLSS 2x", "DLSS 2x"), AddText("DLSS 3x", "DLSS 3x"), AddText("DLSS 4x", "DLSS 4x"),
             AddText("FSR 2x", "FSR 2x")},
            Kind::List);
+    AddRow(Setting(
+               Kind::List, [](const Values& v) { return v.reflex.load(); },
+               [](int i) { BbSettings::Get().reflex = std::clamp(i, 0, BbSettings::ReflexModeCount - 1); }),
+           "NVIDIA Reflex", "NVIDIA Reflex",
+           "After a restart. Lower latency on NVIDIA GPUs; Boost keeps clocks up",
+           "После перезапуска. Меньше задержка на NVIDIA; Boost держит частоты",
+           {off, on, AddText("On + Boost", "Вкл + Boost")}, Kind::List);
 
     // ---- Performance HUD. ----
     AddPage("Performance HUD", "Оверлей FPS", "Frame rate, frame time and load in a corner (F11) (bbport)",

@@ -951,6 +951,22 @@ void UpscalerTab() {
                s.fg_backend = backend;
                Store(s.frame_generation, factor, true);
            });
+    // NVIDIA Reflex (from Supermedo/bloodborne_pc PR #69 by FIocker): after a restart.
+    static const char* reflex_modes[] = {"Off", "On", "On + Boost"};
+    Choice("reflex", T("NVIDIA Reflex", "NVIDIA Reflex"), s.reflex, BbSettings::ReflexModeCount,
+           [](int i) { return i == 0 ? T("Off", "Выкл") : reflex_modes[i]; }, [](int) { return true; },
+           T("NVIDIA's low-latency mode (VK_NV_low_latency2): the driver paces the game so frames "
+             "queue less. Boost also keeps GPU clocks up. NVIDIA GPUs with a current driver; "
+             "elsewhere it stays off. Applies after restarting the game.",
+             "Режим низкой задержки NVIDIA (VK_NV_low_latency2): драйвер выравнивает темп игры, "
+             "кадры меньше копятся в очереди. Boost также держит частоты видеокарты. Видеокарты "
+             "NVIDIA со свежим драйвером; на других не включается. Применяется после перезапуска игры."),
+           true, [&](int i) { Store(s.reflex, i, true); });
+    if (s.startup_reflex != BbSettings::ReflexOff && !s.reflex_active) {
+        Note(T("NVIDIA Reflex: not supported by this GPU or driver (off)",
+               "NVIDIA Reflex: не поддерживается видеокартой или драйвером (выкл)"),
+             ImGui::GetColorU32(ImVec4(1.0f, 0.55f, 0.35f, 1.0f)));
+    }
     if (const char* problem = s.fg_problem.load(); problem && BbSettings::FrameGenerationStarted()) {
         std::snprintf(line, sizeof(line), T("Frame generation unavailable: %s",
                                             "Генерация кадров недоступна: %s"), problem);

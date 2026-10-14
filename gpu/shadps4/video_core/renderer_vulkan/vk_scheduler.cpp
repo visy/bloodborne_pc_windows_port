@@ -28,6 +28,7 @@
 #include "imgui/renderer/texture_manager.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/vk_reflex.h"
 #include "bbport_threads.h"
 
 namespace Vulkan {
@@ -935,6 +936,12 @@ SubmissionBatch* Scheduler::AcquireBatch() {
 }
 
 void Scheduler::AllocateWorkerCommandBuffers() {
+    // bbport: NVIDIA Reflex (from Supermedo/bloodborne_pc PR #69 by FIocker): the simulation
+    // frame this batch's recording belongs to, for its submission's latency attribution.
+    if (instance.IsReflexSupported()) {
+        recording_frame_id = Reflex::CurrentSimFrameId();
+        Reflex::SetRecordingFrameId(recording_frame_id);
+    }
     if (async_submit) {
         // BB_ASYNC_SUBMIT: the earlier submissions may still be recorded (and their pools
         // used) on the recording threads: segment 0 is begun there too, on its first chunk,
@@ -1042,7 +1049,7 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
         .pSignalSemaphoreValues = info.signal_ticks.data(),
     };
 
-    const vk::SubmitInfo submit_info = {
+    vk::SubmitInfo submit_info = {
         .pNext = &timeline_si,
         .waitSemaphoreCount = info.num_wait_semas,
         .pWaitSemaphores = info.wait_semas.data(),
@@ -1057,8 +1064,20 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
         operation();
     }
     ImGui::Core::TextureManager::Submit();
-    auto submit_result = (use_present_queue ? instance.GetPresentQueue() : instance.GetGraphicsQueue())
-                             .submit(submit_info, info.fence);
+    const auto queue = use_present_queue ? instance.GetPresentQueue() : instance.GetGraphicsQueue();
+    // Reflex: game rendering carries its simulation frame; presentation copies are out of band.
+    VkLatencySubmissionPresentIdNV attribution{};
+    u64 reflex_id = 0;
+    if (recording_frame_id && instance.IsReflexSupported()) {
+        reflex_id = is_out_of_band ? recording_frame_id
+                                   : Reflex::PrepareSubmit(queue, recording_frame_id, submit_info,
+                                                           attribution);
+        is_out_of_band ? Reflex::OnForeignSubmitBegin(reflex_id) : Reflex::OnRenderSubmitBegin(reflex_id);
+    }
+    auto submit_result = queue.submit(submit_info, info.fence);
+    if (reflex_id) {
+        is_out_of_band ? Reflex::OnForeignSubmitEnd(reflex_id) : Reflex::OnRenderSubmitEnd(reflex_id);
+    }
     if (submit_result == vk::Result::eErrorDeviceLost) {
         Breadcrumbs::ReportDeviceLost("submit");
     }
@@ -1101,7 +1120,8 @@ void Scheduler::SubmitAsync(SubmitInfo& info) {
     info.AddSignal(work_semaphore.Handle(), signal_value);
     // Goes out once the commands handed over before it are recorded (an ordered task: in order
     // with the other submissions and after the copies and signals queued before it).
-    RecordOrdered([this, submitted = batch, info = std::move(info), signal_value]() mutable {
+    const u64 reflex_frame = instance.IsReflexSupported() ? recording_frame_id : 0;
+    RecordOrdered([this, submitted = batch, info = std::move(info), signal_value, reflex_frame]() mutable {
         BbCopy::WaitAsync();
         std::array<vk::CommandBuffer, MaxSegments> cmdbufs;
         u32 num_cmdbufs = 0;
@@ -1124,7 +1144,7 @@ void Scheduler::SubmitAsync(SubmitInfo& info) {
             .signalSemaphoreValueCount = info.num_signal_semas,
             .pSignalSemaphoreValues = info.signal_ticks.data(),
         };
-        const vk::SubmitInfo submit_info = {
+        vk::SubmitInfo submit_info = {
             .pNext = &timeline_si,
             .waitSemaphoreCount = info.num_wait_semas,
             .pWaitSemaphores = info.wait_semas.data(),
@@ -1139,7 +1159,17 @@ void Scheduler::SubmitAsync(SubmitInfo& info) {
             for (auto& operation : info.before_submit) {
                 operation();
             }
+            VkLatencySubmissionPresentIdNV attribution{};
+            u64 reflex_id = 0;
+            if (reflex_frame) {
+                reflex_id = Reflex::PrepareSubmit(instance.GetGraphicsQueue(), reflex_frame,
+                                                  submit_info, attribution);
+                Reflex::OnRenderSubmitBegin(reflex_id);
+            }
             const auto result = instance.GetGraphicsQueue().submit(submit_info, info.fence);
+            if (reflex_id) {
+                Reflex::OnRenderSubmitEnd(reflex_id);
+            }
             if (result == vk::Result::eErrorDeviceLost) {
                 Breadcrumbs::ReportDeviceLost("submit");
             }

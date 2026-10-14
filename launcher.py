@@ -652,6 +652,16 @@ FRAME_GENERATION_CHOICES = [
 ]
 
 
+# NVIDIA Reflex (same PR): bbport.ini reflex, Off by default. (label, value)
+REFLEX_CHOICES = [("Off", "off"), ("On", "on"), ("On + Boost", "boost")]
+
+
+def reflex_label(ini: dict) -> str:
+    value = str(ini.get("reflex", "off")).lower()
+    value = {"1": "on", "2": "boost"}.get(value, value)
+    return next((label for label, v in REFLEX_CHOICES if v == value), REFLEX_CHOICES[0][0])
+
+
 def frame_generation_label(ini: dict) -> str:
     """The launcher's choice for bbport.ini's frame_generation / fg_backend (Off when unset)."""
     factor = str(ini.get("frame_generation", "off")).lower().rstrip("x")
@@ -1285,6 +1295,7 @@ class BloodborneLauncher(tk.Tk):
         # Party HUD: a game setting (bbport.ini party_hud, also in the game's menus), not a launch
         # option: read from and written to bbport.ini directly.
         self.frame_generation_var = tk.StringVar(value=frame_generation_label(read_ini(bbport_ini_path())))
+        self.reflex_var = tk.StringVar(value=reflex_label(read_ini(bbport_ini_path())))
         self.party_hud = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_hud"))
         self.party_name_tags = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_name_tags"))
         # Shared NPC dialogue: a game setting (bbport.ini party_npc_talk, also in the game's menus).
@@ -1432,6 +1443,13 @@ class BloodborneLauncher(tk.Tk):
         fg_combo = self._combo(sec, "Frame generation:", self.frame_generation_var,
                                [c[0] for c in FRAME_GENERATION_CHOICES], fg_tip, width=14)
         fg_combo.bind("<<ComboboxSelected>>", lambda e: self.save_frame_generation())
+        reflex_tip = ("NVIDIA's low-latency mode (VK_NV_low_latency2): the driver paces the game so "
+                      "frames queue less; Boost also keeps the GPU clocks up. NVIDIA GPUs with a "
+                      "current driver; elsewhere it stays off. A game setting (bbport.ini reflex, also "
+                      "in the in-game menu), used at the next start. Default: Off.")
+        reflex_combo = self._combo(sec, "NVIDIA Reflex:", self.reflex_var, [c[0] for c in REFLEX_CHOICES],
+                                   reflex_tip, width=14)
+        reflex_combo.bind("<<ComboboxSelected>>", lambda e: self.save_frame_generation())
 
         sec = self._section(tab, 1, "Streaming & effects")
         self._combo(sec, "VRAM pre-upload:", self.preupload_var, [c[0] for c in PREUPLOAD_CHOICES],
@@ -1911,7 +1929,9 @@ class BloodborneLauncher(tk.Tk):
     def save_frame_generation(self):
         """The Frame generation choice: bbport.ini frame_generation / fg_backend (next start)."""
         try:
-            update_ini(bbport_ini_path(), frame_generation_ini(self.frame_generation_var.get()))
+            values = frame_generation_ini(self.frame_generation_var.get())
+            values["reflex"] = dict(REFLEX_CHOICES).get(self.reflex_var.get(), "off")
+            update_ini(bbport_ini_path(), values)
         except OSError as ex:
             self.log(f"[GRAPHICS] Could not save the frame generation setting to bbport.ini: {ex}")
 

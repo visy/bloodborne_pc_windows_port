@@ -739,6 +739,14 @@ public:
     void SetPresentQueue(bool use_present) {
         use_present_queue = use_present;
     }
+    /// bbport: NVIDIA Reflex: the simulation frame of what this scheduler records next (the
+    /// presenter's), and whether its submissions are out of band (presentation copies).
+    void SetFrameId(u64 frame_id) {
+        recording_frame_id = frame_id;
+    }
+    void SetOutOfBand(bool out_of_band) {
+        is_out_of_band = out_of_band;
+    }
 
     void SetSubmitCallback(SubmitFunc&& on_submit) {
         this->on_submit = std::move(on_submit);
@@ -1135,6 +1143,8 @@ private:
     DynamicState dynamic_state;
     SubmitFunc on_submit{};
     bool use_present_queue = false;
+    u64 recording_frame_id = 0;
+    bool is_out_of_band = false;
     vk::CommandBuffer current_cmdbuf;
     std::condition_variable_any event_cv;
     struct PendingOp {

@@ -22,6 +22,10 @@ const char* FgBackendName(int backend);
 const char* FrameGenName(int factor);
 int ParseFrameGen(const char* value);
 int ParseFgBackend(const char* value);
+/// NVIDIA Reflex (VK_NV_low_latency2; from Supermedo/bloodborne_pc PR #69 by FIocker). On restart.
+enum ReflexMode : int { ReflexOff = 0, ReflexOn = 1, ReflexBoost = 2, ReflexModeCount };
+const char* ReflexModeName(int mode);
+int ParseReflex(const char* value);
 enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerformance, PresetCount };
 enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugMotion = 2, DebugViewCount };
 enum class MenuLanguage { English, Russian };
@@ -75,6 +79,10 @@ struct Values {
     std::atomic<int> fg_backend{FgDlss};
     /// Measured while frame generation runs: rendered (source) and presented frames per second.
     std::atomic<float> source_fps{0.0f}, display_fps{0.0f};
+    /// NVIDIA Reflex: off (default), on, on + boost (bbport.ini reflex, BB_REFLEX). On restart.
+    std::atomic<int> reflex{ReflexOff};
+    /// Reflex runs this session (chosen at start and the driver supports it; set by the renderer).
+    std::atomic<bool> reflex_active{false};
     /// Frame generation runs this session: chosen at start and its provider available (set by
     /// the presenter before the first frame).
     std::atomic<bool> fg_active{false};
@@ -179,6 +187,7 @@ struct Values {
     bool startup_gpl = false;
     int startup_frame_generation = 0;
     int startup_fg_backend = FgDlss;
+    int startup_reflex = ReflexOff;
 };
 
 Values& Get();
