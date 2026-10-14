@@ -41,6 +41,7 @@ struct RuntimeStatus {
     std::string host_address;          // guest: the host we connect to
     std::string guest_code;            // guest: BBG1-... (its public UDP endpoint, for a host behind a NAT)
     std::string upnp;                  // host: UPnP outcome
+    std::string network;               // F2: NAT type advice (party_nat.h)
     std::vector<RosterEntry> roster;
     std::string last_error;            // the latest failure / rejection, empty when none
 };

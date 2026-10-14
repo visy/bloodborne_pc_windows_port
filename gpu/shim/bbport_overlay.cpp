@@ -1197,6 +1197,12 @@ void PartyTab() {
         }
     }
 
+    // F2: what the NAT means here and which path the link took (English only: built in party_nat).
+    if (on && !b.network.empty()) {
+        std::snprintf(line, sizeof(line), "%s: %s", T("Network", "Сеть"), b.network.c_str());
+        Note(line, Dim());
+    }
+
     // NAT path (party_rudp.h): a guest's own code for a host that cannot open its port, and the
     // host's way to add one (the clipboard: no text input needed).
     if (b.role == ps::Role::Guest && !b.guest_code.empty()) {

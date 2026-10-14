@@ -363,6 +363,7 @@ void OnRuntimeStart(bool host, const std::string& name) {
 
 void OnCode(const std::string& code) { status::SetCode(code); }
 void OnGuestCode(const std::string& code) { status::SetGuestCode(code); }
+void OnNetwork(const std::string& text) { status::SetNetwork(text); }
 void OnLanCode(const std::string& code) { status::SetLanCode(code); }
 
 void OnRuntimeError(const std::string& error) {

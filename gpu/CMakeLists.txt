@@ -480,6 +480,17 @@ set_target_properties(party-link-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OF
 if (WIN32)
     target_link_libraries(party-link-test PRIVATE ws2_32 iphlpapi ole32 oleaut32)
 endif()
+# NAT traversal (F2): the NAT model against simulated NATs, the netsim NAT kinds and the DHT
+# rendezvous (fake DHT nodes on loopback only). ninja -C out/gpu party-nat-test
+add_executable(party-nat-test EXCLUDE_FROM_ALL ../tests/test_party_nat.cpp ${PARTY_LINK_SOURCES}
+    shim/party/party_nat.cpp shim/party/party_rdv.cpp shim/net/net_stun.cpp shim/net/netsim.cpp
+    third_party/monocypher/monocypher.c)
+target_compile_options(party-nat-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-nat-test PRIVATE shim)
+set_target_properties(party-nat-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+if (WIN32)
+    target_link_libraries(party-nat-test PRIVATE ws2_32 iphlpapi ole32 oleaut32)
+endif()
 # The in-game party flow's pure parts (shim/party/party_flow.cpp: party.json with the DPAPI-protected
 # password, the action planner, the relaunch file). ninja -C out/gpu party-flow-test
 add_executable(party-flow-test EXCLUDE_FROM_ALL ../tests/test_party_flow.cpp shim/party/party_flow.cpp shim/net/json.cpp)

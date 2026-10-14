@@ -54,6 +54,7 @@ struct Board {
     std::string code;      // the party code to share (host) / joined (guest)
     std::string lan_code;  // host: the LAN code (same network), when `code` is the Internet one
     std::string guest_code;  // guest: BBG1-... (its public UDP endpoint, for a host behind a NAT)
+    std::string network;     // F2: NAT advice / the link's path ("Connected over UDP ...")
     std::vector<Member> members;
     std::string last_event;
     std::uint64_t event_seq = 0;  // +1 per SetLastEvent
@@ -67,6 +68,8 @@ struct Board {
 void SetRole(Role role);
 void SetCode(const std::string& code);
 void SetGuestCode(const std::string& code);
+/// F2: the network line (NAT type advice / the path the party link took).
+void SetNetwork(const std::string& text);
 void SetLanCode(const std::string& code);
 void SetState(State state, const std::string& detail = {});
 void SetMembers(const std::vector<Member>& members);

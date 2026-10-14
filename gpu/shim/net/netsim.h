@@ -34,6 +34,14 @@ namespace bbnet::netsim {
 
 using Clock = std::chrono::steady_clock;
 
+// Simulated NAT kinds (RFC 4787 terms). full: endpoint-independent filtering (anything gets in
+// once a mapping exists); addr: address-dependent (in from an address we sent to, any port);
+// port: address-and-port-dependent (the default of nat=1); sym: port filtering plus an
+// endpoint-dependent mapping (each destination sees another external port, so the port a STUN
+// server reports is not the one a peer would have to use).
+enum class NatKind : std::uint8_t { PortRestricted, FullCone, AddrRestricted, Symmetric };
+const char* nat_kind_name(NatKind k);
+
 struct Config {
     bool enabled = false;
     double lat_ms = 0, jitter_ms = 0, loss_pct = 0, dup_pct = 0, reorder_pct = 0;
@@ -41,6 +49,9 @@ struct Config {
     double outage_at_ms = 0;  // one-shot outage this long after the epoch (configure())
     bool any_addr = false;    // also non-loopback addresses
     bool nat = false;         // simulated NAT: unsolicited inbound UDP dropped, inbound TCP refused
+    // The NAT's kind (nat=1 / port, full, addr, sym): what passes inbound and what a STUN server
+    // would report (nat_advertised_port). Only meaningful with `nat`.
+    NatKind nat_kind = NatKind::PortRestricted;
     std::uint64_t seed = 1;
 };
 
@@ -150,8 +161,15 @@ private:
 // Simulated NAT (nat=1): an inbound datagram from addr:port (network order) passes only after
 // this process sent one to that endpoint (an address-and-port restricted cone NAT; the hole a
 // guest or a host punches). Process-wide.
+// The kind (nat=full / addr / sym) changes the rule as its comment says; nat_allow_in follows the
+// process-wide config. nat_allow_in_kind: the same rule for an explicit kind (tests).
 void nat_note_out(std::uint32_t addr, std::uint16_t port);
 bool nat_allow_in(std::uint32_t addr, std::uint16_t port);
+bool nat_allow_in_kind(NatKind kind, std::uint32_t addr, std::uint16_t port);
+// The external port (network order) a STUN server number `server` (0, 1: two servers) would
+// report for our local port `port_nbo`: the same port for every kind but sym, where each server
+// sees another one (an endpoint-dependent mapping). Without a simulated NAT: port_nbo.
+std::uint16_t nat_advertised_port(std::uint16_t port_nbo, int server = 0);
 
 // A total outage from now for `ms` (tests: director steps host_outage / guest_outage): every UDP
 // datagram this process sends is dropped and every party-link byte it receives is held until it
