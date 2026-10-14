@@ -40,6 +40,7 @@
 #include "party_perf.h"
 #include "party_watchdog.h"
 #include "party_worldact.h"
+#include "party_npctalk.h"
 #include "../bbport_game_menu.h"
 
 #include "../net/bbnet_internal.h"
@@ -2811,6 +2812,7 @@ void PartyDirector::Tick() {
     GuestServicesTick(s, link);
     // A guest's levers / doors / NPC talk change the host's world (party_worldact.h).
     worldact::Tick(s, link);
+    npctalk::Tick(s, link);  // shared NPC dialogue (party_npctalk.h)
     split::Tick(s);  // split travel: the lamp choice dialog (party_split.h)
     if (role == PartyRole::Host) {
         AltarAutopilotTick(s);  // "Enter the party's dungeon" in one press
@@ -3247,6 +3249,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     InstallStoryHooks();    // C4: bank-2002 capture, guest mirror / replay (byte-verified)
     InstallItemsPatches();  // C3: award hook, parity patches (byte-verified)
     PhantomInit();          // guest respawn at the host's lamp, refill, boss Insight
+    npctalk::Init();        // shared NPC dialogue: talk line / menu observers (party_npctalk.h)
     worldact::Init();       // guest world actions, instanced treasure pickups (byte-verified)
     GuestServicesInit();    // guest Doll / shops / workshop in the host's Dream (byte-verified)
     balance::Init();        // C4 rot hook, D7 scaling (party_balance.h)

@@ -21,6 +21,7 @@
 #include "party_progress.h"
 #include "party_travel.h"
 #include "party_worldact.h"
+#include "party_npctalk.h"
 #include "party_droproll.h"
 #include "coop_hooks.h"
 #include "game_state.h"
@@ -825,6 +826,10 @@ LinkCallbacks make_callbacks(bool host) {
                 if (!coop::OnHostGiftUp(slot, body, &err)) plog("gift_up from slot %d refused: %s", slot, err.c_str());
                 return;
             }
+            if (name == coop::npctalk::kEventName) {  // a guest's NPC conversation (D8, party_npctalk.h)
+                coop::npctalk::OnEvent(slot, body);
+                return;
+            }
             if (name == coop::worldact::kEventName) {  // a guest's lever / door / NPC talk (D3, D8)
                 std::string err;
                 if (!coop::worldact::OnHostEvent(slot, body, &err)) plog("world_action from slot %d refused: %s", slot, err.c_str());
@@ -923,6 +928,10 @@ LinkCallbacks make_callbacks(bool host) {
             if (name == coop::droproll::kEventName) {  // D4b: the host's shared enemy drop roll seed
                 std::string err;
                 if (!coop::droproll::OnEvent(body, &err)) plog("drop_seed event refused: %s", err.c_str());
+                return;
+            }
+            if (name == coop::npctalk::kEventName) {  // a member's NPC conversation (D8, party_npctalk.h)
+                coop::npctalk::OnEvent(slot, body);
                 return;
             }
             if (name == coop::kPhantomEventName) {  // host lamp / rested / boss Insight

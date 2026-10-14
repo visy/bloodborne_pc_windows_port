@@ -157,6 +157,10 @@ single-player save is never touched. Settings: *System → Party* pages in the g
   are shared by the whole party: a quest step the host makes also moves the NPC in every guest's
   own save (no stale NPC state left behind). NPCs look solid for guests (no see-through
   "ghosts"), and a level-up at the Doll stays in the levelling player's own game.
+- **Hear each other's NPC talks.** When a companion near you talks to an NPC you see the game's
+  subtitles and hear the NPC too, with a small "[Hunter talking to Iosefka]" caption and the
+  choices they pick; nothing opens on your screen. Range in *System → Party rules → NPC dialogue
+  range* (default 25 m), off with *Share NPC dialogue*.
 - **NPC gifts are shared**: an item an NPC gives a guest in the host's world goes to the host and
   every other party member too (the NPC has moved on for everyone, so nobody misses it).
 - **Enemy drops for each player, one roll.** Every player gets their own copy of each enemy's drop,

@@ -136,6 +136,12 @@ struct Values {
     /// (which hides behind any occluder); off = the game's own plate as in vanilla, ours not drawn
     /// (ini party_name_tags; env BB_PARTY_HUD_GAME_PLATE=1 keeps the game's plate for tests). Live.
     std::atomic<bool> party_name_tags{true};
+    /// D8: a party member's NPC conversation (subtitles, voice, choices, gifts) is shared with the
+    /// members near it (ini party_npc_talk; env BB_PARTY_NPC_TALK overrides). Live, local.
+    std::atomic<bool> party_npc_talk{true};
+    /// ... within this many metres of the NPC (0 = anywhere on the same map; ini
+    /// party_npc_talk_range; env BB_PARTY_NPC_TALK_RANGE overrides). Live, local.
+    std::atomic<int> party_npc_talk_range{25};
 
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
     int startup_preset = NativeAA;

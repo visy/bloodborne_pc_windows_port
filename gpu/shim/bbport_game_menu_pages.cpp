@@ -13,6 +13,7 @@
 #include "bbport_settings.h"
 #include "party/party_balance_rules.h"
 #include "party/party_link.h"  // kMaxPartyPlayers
+#include "party/party_npctalk.h"
 #include "party/party_status.h"
 
 namespace BbGameMenu::Pages {
@@ -239,6 +240,7 @@ struct MemberTexts {
 struct BalanceTexts {
     u32 rot_help = 0;
     u32 scale_help[6]{};
+    u32 npc_range_help = 0;
 } balance;
 std::string member_names[MaxMembers]; // the member row k stands for (kick)
 bool member_kickable[MaxMembers]{};
@@ -937,8 +939,8 @@ void DefineAll() {
                             "Отдых у лампы сбрасывает мир для всей группы.");
 
     // ---- Party rules (party_balance.h): the death debuff and the overhead display. ----
-    AddPage("Party rules", "Правила группы", "Death debuff, what shows above companions (bbport)",
-            "Штраф за смерть, что видно над спутниками (bbport)");
+    AddPage("Party rules", "Правила группы", "Death debuff, shared NPC dialogue, what shows above companions (bbport)",
+            "Штраф за смерть, общие диалоги NPC, что видно над спутниками (bbport)");
     balance.rot_help = AddDynamic(MaxHelpLength);
     AddRow(Flag(&Values::party_rot), AddText("Rot on death", "Гниль при смерти"), balance.rot_help, toggle,
            Kind::Toggle);
@@ -947,6 +949,17 @@ void DefineAll() {
            AddText("On: our name plates above companions (never hidden by walls). Off: the game's own",
                    "Вкл.: наши таблички над спутниками (не прячутся за стенами). Выкл.: игровые"),
            toggle, Kind::Toggle);
+    // Shared NPC dialogue (party_npctalk.h): a companion's NPC conversation near you, and how near.
+    AddRow(Flag(&Values::party_npc_talk), AddText("Share NPC dialogue", "Общие диалоги NPC"),
+           AddText("See and hear the NPC conversations of companions near you (subtitles, choices, gifts)",
+                   "Видеть и слышать разговоры спутников с NPC рядом с вами (субтитры, выбор, подарки)"),
+           toggle, Kind::Toggle);
+    balance.npc_range_help = AddDynamic(MaxHelpLength);
+    AddRow(Setting(
+               Kind::Slider,
+               [](const Values& v) { return coop::npctalk::RangePosition(v.party_npc_talk_range.load()); },
+               [](int i) { BbSettings::Get().party_npc_talk_range = coop::npctalk::RangeAtPosition(i); }),
+           AddText("NPC dialogue range", "Дальность диалогов NPC"), balance.npc_range_help, {}, Kind::Slider);
     AddRow(Setting(
                Kind::List, [](const Values& v) { return std::clamp(v.party_overhead.load(), 0, 4); },
                [](int i) { BbSettings::Get().party_overhead = std::clamp(i, 0, 4); }),
@@ -986,6 +999,12 @@ void RefreshBalance() {
     const std::string g_en = guest ? " (host decides)" : "", g_ru = guest ? " (решает хост)" : "";
     SetDynamic(balance.rot_help, "Each death: max HP -10 % (up to 5), a lamp rest cleanses it" + g_en,
                "Каждая смерть: -10 % здоровья (до 5 раз), отдых у фонаря снимает" + g_ru);
+    if (balance.npc_range_help) {
+        const int r = coop::npctalk::RangeAtPosition(coop::npctalk::RangePosition(v.party_npc_talk_range.load()));
+        SetDynamic(balance.npc_range_help, "Companions' NPC dialogue reaches you " + coop::npctalk::DescribeRange(r),
+                   r > 0 ? "Диалоги спутников с NPC: в пределах " + std::to_string(r) + " м от NPC"
+                         : std::string("Диалоги спутников с NPC: на всей карте"));
+    }
     using namespace coop::balance;
     const int values[6] = {v.party_boss_hp, v.party_boss_damage, v.party_boss_poise,
                            v.party_enemy_hp, v.party_enemy_damage, v.party_enemy_poise};

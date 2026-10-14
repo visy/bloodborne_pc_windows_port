@@ -9,6 +9,7 @@
 //   0x203BA78 41 0f b6 47 25   movzx eax, byte [r15+0x25]
 //   0x203BA7D e9 4d 34 00 00   jmp 0x203EECF   ([r12+8] = 2 int, [r12] = eax)
 #include "party_guestsvc.h"
+#include "party_npctalk.h"
 
 #include "net/json.h"
 
@@ -1290,9 +1291,9 @@ void GuestServicesInit() {
         HookPrologue(0x1BB7F60, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x53, 0x48, 0x83, 0xec, 0x48},
                      &LevelUpMenuFactoryEntry, "level-up menu factory (log)");
         // push rbp; mov rbp, rsp; push r15..r12, rbx; sub rsp, 0x3c8 (20 bytes; then mov rbx, rsi).
-        HookPrologue(0x203FFD0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x81,
-                                 0xec, 0xc8, 0x03, 0x00, 0x00},
-                     &TalkCommandEntry, "talk command switch (log)");
+        // The talk command switch 0x203FFD0 is hooked by shared NPC dialogue (party_npctalk), which
+        // calls this trace first.
+        npctalk::SetCommandTrace([](u64 env, u64 call) { TalkCommandEntry(env, call, 0, 0, 0, 0); });
         // push rbp; mov rbp, rsp; push r15, r14, r13, r12, rbx; sub rsp, 0x48 (17 bytes; then mov rbx, rdx).
         HookPrologue(0x1C4A520, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83,
                                  0xec, 0x48},
