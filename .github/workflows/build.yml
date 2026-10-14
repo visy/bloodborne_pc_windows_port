@@ -53,14 +53,17 @@ jobs:
           done
           mkdir -p /mingw64/include/magic_enum
           curl -sSL -o /mingw64/include/magic_enum/magic_enum.hpp https://raw.githubusercontent.com/Neargye/magic_enum/master/include/magic_enum/magic_enum.hpp
+          echo "MSYS2 MINGW64 path verification:"
+          ls -la /mingw64/include/vulkan/vulkan.h
+          ls -la /mingw64/lib/libvulkan*
 
       - name: Build with build.bat
         shell: cmd
         env:
-          MINGW_DIR: C:\mingw64
-          VULKAN_SDK: C:\mingw64
-          SDL3_DIR: C:\mingw64
-          CMAKE_PREFIX_PATH: C:\mingw64
+          MINGW_DIR: C:\msys64\mingw64
+          VULKAN_SDK: C:\msys64\mingw64
+          SDL3_DIR: C:\msys64\mingw64
+          CMAKE_PREFIX_PATH: C:\msys64\mingw64
         run: |
           call build.bat
 
