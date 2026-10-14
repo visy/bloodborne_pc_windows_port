@@ -53,6 +53,11 @@ jobs:
           done
           mkdir -p /mingw64/include/magic_enum
           curl -sSL -o /mingw64/include/magic_enum/magic_enum.hpp https://raw.githubusercontent.com/Neargye/magic_enum/master/include/magic_enum/magic_enum.hpp
+          
+          # Fix VMA header location (pacman puts it in /mingw64/include/vma/)
+          if [ -f /mingw64/include/vma/vk_mem_alloc.h ]; then
+            cp -f /mingw64/include/vma/vk_mem_alloc.h /mingw64/include/vk_mem_alloc.h
+          fi
 
       - name: Compile Bloodborne PC Port
         shell: msys2 {0}
