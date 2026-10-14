@@ -59,13 +59,11 @@ jobs:
             cp -f /mingw64/include/vma/vk_mem_alloc.h /mingw64/include/vk_mem_alloc.h
           fi
 
-          # Install and build miniz
-          echo '#define MINIZ_EXPORT' > /mingw64/include/miniz_export.h
-          curl -sSL -o /mingw64/include/miniz.h https://raw.githubusercontent.com/richgel999/miniz/master/miniz.h
-          curl -sSL -o /tmp/miniz.c https://raw.githubusercontent.com/richgel999/miniz/master/miniz.c
-          gcc -O3 -c /tmp/miniz.c -o /tmp/miniz.o -I/mingw64/include
-          ar rcs /mingw64/lib/libminiz.a /tmp/miniz.o
-          echo "Installed miniz.h and libminiz.a"
+          # Build and install miniz via CMake
+          git clone --depth 1 https://github.com/richgel999/miniz /tmp/miniz_repo
+          cmake -S /tmp/miniz_repo -B /tmp/miniz_build -G Ninja -DCMAKE_INSTALL_PREFIX=/mingw64 -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=OFF
+          cmake --build /tmp/miniz_build --target install
+          echo "Miniz successfully built and installed to /mingw64"
 
       - name: Compile Bloodborne PC Port
         shell: msys2 {0}
