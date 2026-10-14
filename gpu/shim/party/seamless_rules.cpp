@@ -17,6 +17,7 @@
 #include "coop_hooks.h"
 #include "game_state.h"
 #include "party_guestsvc.h"
+#include "party_npcghost.h"
 #include "party_phantom.h"
 #include "party_travel.h"
 #include "party_worldact.h"
@@ -307,7 +308,7 @@ struct ParamRule {
     std::uint64_t writes = 0;
 };
 
-ParamRule g_param_rules[] = {
+const ParamRule kFixedParamRules[] = {
     {"full HP for cooperators (SpEffect 9006 maxHpRate)", "SpEffectParam", "SP_EFFECT_PARAM_ST", 0x210, 9006, 0x10, 4,
      0.7f, 1.0f, "BB_PARTY_FULL_HP"},
     {"full HP for invader phantoms (SpEffect 9026 maxHpRate)", "SpEffectParam", "SP_EFFECT_PARAM_ST", 0x210, 9026,
@@ -322,13 +323,29 @@ ParamRule g_param_rules[] = {
      "EQUIP_PARAM_GOODS_ST", 0x6c, 100, 0x44, 1, 67.0f, 87.0f, "BB_PARTY_GUEST_MARK"},
     {"Bold Hunter's Mark for phantoms (EquipParamGoods 1400 enable_white / enable_multi)", "EquipParamGoods",
      "EQUIP_PARAM_GOODS_ST", 0x6c, 1400, 0x44, 1, 195.0f, 215.0f, "BB_PARTY_GUEST_MARK"},
-    // Guest services (guest_services.md 2.4): on a client, chr creation 0x18E4F94..0x18E4FDC turns an
-    // NPC whose NpcParam has isChangeWanderGhost (byte 0x145 bit 7) into a wandering ghost (chr type
-    // 4: translucent, no collision, no talk). The Doll (NpcParam 803000, 1.09 byte 0x80) stays a
-    // normal NPC, so a guest in the host's Dream can talk to her. Only clients read the bit.
-    {"the Doll stays solid for guests (NpcParam 803000 isChangeWanderGhost)", "NpcParam", "NPC_PARAM_ST", 0x184,
-     803000, 0x145, 1, 128.0f, 0.0f, "BB_PARTY_GUEST_SERVICES"},
 };
+
+// Guest services (guest_services.md 2.4, playtest 1 bugs 11 / 17): on a client, chr creation
+// 0x18E4F94..0x18E4FDC turns an NPC whose NpcParam has isChangeWanderGhost (byte 0x145 bit 7)
+// into a wandering ghost (chr type 4: translucent, no collision, no talk). Every talk NPC's row
+// (party_npcghost.h: the Doll, Gehrman, Iosefka, Alfred, Eileen, the Chapel Dweller ...) loses
+// the bit, so a guest in the host's world sees them solid and can talk to them. Only clients read
+// the bit. BB_PARTY_GUEST_SERVICES=0 leaves them vanilla.
+std::vector<ParamRule> BuildParamRules() {
+    std::vector<ParamRule> v(std::begin(kFixedParamRules), std::end(kFixedParamRules));
+    static std::vector<std::string> names;  // ParamRule::what points into it
+    names.reserve(npcghost::kTalkNpcRowCount);
+    for (const npcghost::GhostRow& r : npcghost::kTalkNpcRows) {
+        std::uint8_t want = 0;
+        npcghost::Decide(r, r.byte, &want);
+        names.push_back(std::string(r.who) + " stays solid for guests (NpcParam " + std::to_string(r.row) +
+                        " isChangeWanderGhost)");
+        v.push_back({names.back().c_str(), "NpcParam", "NPC_PARAM_ST", 0x184, r.row, npcghost::kField, 1,
+                     float(r.byte), float(want), "BB_PARTY_GUEST_SERVICES"});
+    }
+    return v;
+}
+std::vector<ParamRule> g_param_rules = BuildParamRules();
 
 bool ReadField(u64 at, std::size_t width, float* v) {
     if (width == 1) {
@@ -353,12 +370,21 @@ bool WriteField(u64 at, std::size_t width, float v) {
 /// True once every enabled rule holds (written or found written).
 bool ApplyParamRules() {
     bool all = true;
+    const char* last_param = nullptr;
+    const char* last_type = nullptr;
+    bool last_found = false;
+    ParamTable t;
     for (ParamRule& r : g_param_rules) {
         if (!r.enabled || r.state == 2) {
             continue;
         }
-        ParamTable t;
-        if (!FindParam(r.param, r.type, &t)) {
+        // Consecutive rules of one table (the talk-NPC rows) share one repository walk.
+        if (r.param != last_param || r.type != last_type) {
+            last_param = r.param;
+            last_type = r.type;
+            last_found = FindParam(r.param, r.type, &t);
+        }
+        if (!last_found) {
             all = false;
             continue;
         }

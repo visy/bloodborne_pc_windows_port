@@ -1756,8 +1756,11 @@ void LogLampTalks() {
         const std::uint32_t t = g_client_talks[i].load(std::memory_order_relaxed);
         if (t && client_logged[i] != t) {
             client_logged[i] = t;
+            const bool world_talk = g_world_talk.load(std::memory_order_relaxed) && worldact::WorldTalkAllowed(t);
             Log("talk t%06u asks IsClientPlayer (%s)", t,
-                LampTalk(t) && !HeadstoneTalk(t) ? "world lamp: answered 0 with BB_PARTY_GUEST_LAMPS=1" : "as before");
+                LampTalk(t) && !HeadstoneTalk(t) ? "world lamp: answered 0 with BB_PARTY_GUEST_LAMPS=1"
+                : world_talk                     ? "NPC talk in the host's world: answered 0 (D8)"
+                                                 : "as before");
         }
     }
     static std::uint32_t multi_logged[16] = {};

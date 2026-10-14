@@ -21,6 +21,7 @@
 #include "party_progress.h"
 #include "party_travel.h"
 #include "party_worldact.h"
+#include "party_droproll.h"
 #include "coop_hooks.h"
 #include "game_state.h"
 #include "upnp_win.h"
@@ -917,6 +918,11 @@ LinkCallbacks make_callbacks(bool host) {
                 std::string err;
                 if (coop::chalice::GoodsFromJsonText(body, &ids, &err)) coop::chalice::RequestGuestGoods(ids);
                 else plog("%s event: %s", name.c_str(), err.c_str());
+                return;
+            }
+            if (name == coop::droproll::kEventName) {  // D4b: the host's shared enemy drop roll seed
+                std::string err;
+                if (!coop::droproll::OnEvent(body, &err)) plog("drop_seed event refused: %s", err.c_str());
                 return;
             }
             if (name == coop::kPhantomEventName) {  // host lamp / rested / boss Insight

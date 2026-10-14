@@ -154,6 +154,14 @@ row **803000** has it (1.09 byte `0x80`; 804000 too). Fix: a seamless param rule
 `BB_PARTY_GUEST_SERVICES=0` keeps vanilla). Live after the fix: chr type 5 on the guest, solid,
 her talk menu opens.
 
+Playtest 1 (bugs 11 / 17, 2026-10-14): the same bit is on almost every talk NPC's row, so Gehrman,
+Iosefka, Alfred, Eileen, the Oedon Chapel Dweller and others were wandering ghosts for a guest. The
+rule is now a table (`party_npcghost.h`, 42 rows from the 1.09 NpcParam: 6040-6990, 8120-8125,
+113010, 803000, 804000), each checked against its 1.09 byte (`0x80`, the Dweller `0xC0`: only
+bit 7 goes) and refused on any other value. Enemy rows with the bit (109100, 111010-111012, 402xxx,
+504020 the beast beggar, ...) stay vanilla. Startup log: one `... stays solid for guests (NpcParam N
+isChangeWanderGhost): 128 -> 0` line per row.
+
 ### 2.6 The Doll's level-up handshake [C, R]
 
 `t210304` StateMachine x7: State_3 "レベルアップ" -> State_22 -> State_10 sets 72100100 and waits for
@@ -168,6 +176,13 @@ rewriter (second slot, `SetEmevdRewriter2`) sets those `4[3]` chr-type bytes (ar
 player's type on a client while they execute and back to 0 on a non-client (the EVD data is
 shared) for events 12100112-12100114. The command path itself has no role test (the shop
 command uses the same menu request and works, 5.).
+
+Playtest 1 (bug 10): the handshake flags went to the host as npc_quest world actions (72100100-102
+and 12100112-114 fell into the m21 NPC ranges), so the HOST knelt and its Doll gestured for the
+guest's level-up. party_flags.inc now has never_sync override rows (flag_tool.py OVERRIDE_ROWS):
+12100112-12100118 (kneel, gesture, SFX, bow, surprise, gesture reaction), 72100100-72100102,
+72100105-72100108 (idle talk / bow / surprise triggers), 72100110 and 72100113 (talk state). Each
+player levels up at its own Doll; the key-item gift (72100112 / 72100114) is unchanged.
 
 ## 3. Lamps and headstones (implemented, opt-in `BB_PARTY_GUEST_LAMPS=1` until run live)
 

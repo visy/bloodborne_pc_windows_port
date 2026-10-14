@@ -21,7 +21,7 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | Session & joining | `██████████████████░░` | 89% |
 | World & travel | `██████████████████░░` | 88% |
 | Death & respawn | `██████████████████░░` | 88% |
-| Progress (anyone can progress) | `█████████████████░░░` | 86% |
+| Progress (anyone can progress) | `█████████████████░░░` | 87% |
 | Services & UI | `██████████████████░░` | 90% |
 | Network & robustness | `████████████████░░░░` | 80% |
 | Bloodborne-specific (chalice, Insight) | `████████████████░░░░` | 81% |
@@ -116,7 +116,7 @@ single-player save is never touched. Settings: *System → Party* pages in the g
   and stays in the party.
 - **Anyone can go through a boss fog first.** A guest's fog no longer waits for the host: the
   fight starts for everyone, and the others follow through the fog. A boss's first fight with an
-  intro cutscene still starts with the host.
+  intro cutscene still starts with the host; a guest at that fog is told so on screen.
 - **Travel together or alone.** Lamps, headstones and the Hunter's Mark ask "Travel with the party?".
   Yes moves the whole party with one loading screen; No moves only you (when a guest rests that way,
   the host gets a short rest load so its world resets). The question closes by itself after 30 s.
@@ -151,10 +151,12 @@ single-player save is never touched. Settings: *System → Party* pages in the g
   guest's own save).
 - **Guests can talk to NPCs** in the host's world (Gilbert, Iosefka, Eileen ...); quest choices
   are shared by the whole party: a quest step the host makes also moves the NPC in every guest's
-  own save (no stale NPC state left behind).
+  own save (no stale NPC state left behind). NPCs look solid for guests (no see-through
+  "ghosts"), and a level-up at the Doll stays in the levelling player's own game.
 - **NPC gifts are shared**: an item an NPC gives a guest in the host's world goes to the host and
   every other party member too (the NPC has moved on for everyone, so nobody misses it).
-- **Enemy drops for each player.** Every player gets their own roll of each enemy's drop.
+- **Enemy drops for each player, one roll.** Every player gets their own copy of each enemy's drop,
+  and it is the same item for everyone (one shared roll per kill).
 - **Blood Echoes for every kill.** Whoever kills an enemy, every party member gets its full
   Blood Echoes.
 - **Treasure for each player.** Items lying in the world can be picked up by every player, each into their own game.
@@ -195,7 +197,7 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 
 | Change | Status |
 |---|---|
-| Item pickups and enemy drops per player: everyone gets their own | Done |
+| Item pickups and enemy drops per player: everyone gets their own (enemy drops: the same item for everyone) | Done |
 | Every cutscene for the whole party (story cutscenes, endings and guest-triggered scenes already work) | In progress |
 | Joining during a boss fight or cutscene waits outside until it ends | Works for boss fights with every join path (bell, title join, direct summon; verified live), the Party status says why you wait; cutscenes not yet tested live |
 | With 3 guests, every guest sees every other guest | In progress |

@@ -22,6 +22,7 @@
 #include "party_progress.h"
 #include "party_runtime.h"
 #include "party_travel.h"
+#include "seamless_rules.h"
 
 #include <atomic>
 #include <chrono>
@@ -392,6 +393,27 @@ bool GuestStory::Busy() const {
 
 bool GuestStory::Seen(std::uint32_t remo_id) const {
     return seen_.count(BaseRemo(remo_id)) != 0;
+}
+
+void GuestStory::NoteSeen(std::uint32_t remo_id) {
+    if (seen_.insert(BaseRemo(remo_id)).second) {
+        dirty_ = true;
+    }
+}
+
+void HostStoryUpGuard::NotePlayed(std::uint32_t remo_id, double now) {
+    played_[BaseRemo(remo_id)] = now;
+}
+
+const char* HostStoryUpGuard::Refuse(std::uint32_t remo_id, bool boss_fight, double now) const {
+    const auto it = played_.find(BaseRemo(remo_id));
+    if (it != played_.end() && now - it->second < kRecent) {
+        return "the host played this cutscene in the last 10 minutes";
+    }
+    if (boss_fight) {
+        return "the host is in a boss fight";
+    }
+    return nullptr;
 }
 
 bool GuestStory::TakeDirty() {
@@ -912,10 +934,18 @@ PartyRole Role() {
     return PartyDirector::Get().Role();
 }
 
+// Host: the scenes it played (its own events and guests' story_up), against replays (bug 14).
+std::mutex g_up_guard_mu;
+HostStoryUpGuard g_up_guard;
+
 void PushHost(const StoryIntent& s) {
     {
         std::lock_guard<std::mutex> lk(g_host_mu);
         g_host_queue.Push(s);
+    }
+    if (s.kind == StoryKind::Cutscene) {
+        std::lock_guard<std::mutex> lk(g_up_guard_mu);
+        g_up_guard.NotePlayed(s.id, Now());
     }
     Log("host %s", DescribeStory(s).c_str());
 }
@@ -939,6 +969,15 @@ BB_COOP_SYSV void RemoHandlerEntry(u64, u64 event, u64, u64, u64, u64) {
             SafeGet(event + 0x28, &gev);
             SafeGet(event + 0x68, &gmap);
             Log("guest: EMEVD 2002[%d] (remo) from event %u, map %08x, own world %d", gid, gev, gmap, int(OwnWorld()));
+            // A scene of the guest's own world (e.g. its own first Dream): a later catch-up replay
+            // of the host's copy keeps the flags but does not play it again.
+            u64 own_args = 0;
+            u32 own_remo = 0;
+            if (OwnWorld() && gid >= 1 && gid <= 7 && gid != 5 && SafeGet(event + 0xb8, &own_args) && own_args &&
+                SafeGet(own_args, &own_remo) && StoryRemoKnown(own_remo)) {
+                std::lock_guard<std::mutex> lk(g_guest_mu);
+                g_guest.NoteSeen(own_remo);
+            }
             // D10: a plain play (1, 3, 7: no warp) of the guest's own event in the host's world
             // goes up to the host, who plays it for everyone.
             u64 args = 0;
@@ -1671,6 +1710,16 @@ bool HostStoryFromGuest(int slot, const std::string& body, std::string* why) {
         }
         return false;
     }
+    {
+        std::lock_guard<std::mutex> lk(g_up_guard_mu);
+        if (const char* no = g_up_guard.Refuse(s.id, BossBarShown(), Now())) {
+            Log("host: story_up %u (event %u) from slot %d refused: %s", s.id, s.event_id, slot, no);
+            if (why) {
+                *why = no;
+            }
+            return false;
+        }
+    }
     std::lock_guard<std::mutex> lk(g_up_mu);
     for (const auto& [sl, q] : g_from_guests) {
         if (q.id == s.id) {
@@ -1698,6 +1747,13 @@ void HostPlayGuestStory(const GameSnapshot& g, const StoryState& st) {
         g_from_guests.pop_front();
     }
     StoryIntent s = item.second;
+    {
+        std::lock_guard<std::mutex> lk(g_up_guard_mu);
+        if (const char* no = g_up_guard.Refuse(s.id, BossBarShown(), Now())) {
+            Log("host: slot %d's cutscene %u (event %u) dropped: %s", item.first, s.id, s.event_id, no);
+            return;
+        }
+    }
     s.instr = 1;
     s.tod = -1;
     s.flags = StoryFlagsForRemo(s.id);

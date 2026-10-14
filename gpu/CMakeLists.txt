@@ -691,6 +691,14 @@ target_compile_definitions(party-worldact-test PRIVATE BB_PARTY_WORLDACT_NO_GAME
 target_compile_options(party-worldact-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-worldact-test PRIVATE shim)
 set_target_properties(party-worldact-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Shared enemy drop roll (shim/party/party_droproll.cpp; in bbgpu through SHIM_SOURCES): seed,
+# MT19937 seeding, EVENT drop_seed (BB_PARTY_DROPROLL_NO_GAME). cmake --build out/gpu --target party-droproll-test
+add_executable(party-droproll-test EXCLUDE_FROM_ALL ../tests/test_party_droproll.cpp shim/party/party_droproll.cpp
+    shim/net/json.cpp)
+target_compile_definitions(party-droproll-test PRIVATE BB_PARTY_DROPROLL_NO_GAME)
+target_compile_options(party-droproll-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-droproll-test PRIVATE shim)
+set_target_properties(party-droproll-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Four-player rules (shim/party/party_fourp.cpp; in bbgpu through SHIM_SOURCES): the pure parts
 # (BB_PARTY_FOURP_NO_GAME). ninja -C out/gpu party-fourp-test
 add_executable(party-fourp-test EXCLUDE_FROM_ALL ../tests/test_party_fourp.cpp shim/party/party_fourp.cpp)
