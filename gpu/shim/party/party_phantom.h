@@ -100,6 +100,15 @@ const char* InsightModeName(InsightMode m);
 /// SpEffect 4680 applications for the guest when the host's boss kill granted `host_n`.
 int GuestInsightGrant(int host_n, InsightMode mode);
 
+/// 0.6.2 (quest_audit Hypogean Gaol): Insight a host-only event gives with EMEVD 2004[8]
+/// SetSpEffect(10000 = the player, 4680 = +1 Insight) instead of a 9350 start: common 9422 (the
+/// Snatcher kidnap's waking scene, `End if Client`, so a guest never runs it). The Insight a guest
+/// present should get too (as story Insight, PhantomEvent::boss false), else nothing.
+constexpr std::int32_t kKidnapWakeEvent = 9422;
+constexpr std::int32_t kInsightSpEffectId = 4680;
+std::optional<int> HostOnlySpEffectInsight(std::int32_t event, std::int32_t bank, std::int32_t id,
+                                           std::int32_t entity, std::int32_t speffect);
+
 /// Host: pairs a boss-defeat instruction with the 9350 start of the same event.
 class BossInsightTracker {
 public:
@@ -190,7 +199,7 @@ void PhantomInit();
 bool PhantomWantsEmevd();
 /// Built-in EMEVD skip rules (the confinement walls unless BB_PARTY_OPEN_WORLD=0).
 std::vector<EmevdSkipRule> PhantomSkipRules();
-/// From the EMEVD filter (game thread), for 2003[12/15/53] and 2000[0] only.
+/// From the EMEVD filter (game thread), for 2003[12/15/53], 2000[0] and 9422's 2004[8] only.
 void PhantomEmevdInstruction(std::int32_t event, std::int32_t bank, std::int32_t id, const std::uint8_t* args,
                              std::size_t size);
 /// Director (host), for every travel it sends.
