@@ -149,7 +149,7 @@ static std::optional<StoryAction> Until(GuestStory& g, const StoryState& st, dou
 
 static void PlayToEnd(GuestStory& g, StoryState st, double& t) {
     st.remo_playing = true;
-    for (int i = 0; i < 10; ++i) {
+    for (int i = 0; i < 240; ++i) { // 4 s: longer than GuestStory::kMirrorMinSeen
         t += 1.0 / 60;
         CHECK(!g.Step(st, t));
     }
@@ -196,6 +196,40 @@ static void test_mirror_then_replay() {
     CHECK(a && a->kind == StoryAction::SetFlags && a->on && a->flags == std::vector<std::uint32_t>{70002802});
     CHECK(!Until(g, ph, t, 60));
     CHECK(!g.Busy());
+}
+
+// parg (live): a live mirror the guest's own load cut after 1.4 s is not "seen"; the queued
+// replay plays the scene again (phantom path) once the guest is steady, then the time of day.
+static void test_cut_mirror_replayed() {
+    GuestStory g;
+    double t = 100;
+    StoryIntent s;
+    s.seq = 1;
+    s.kind = StoryKind::Cutscene;
+    s.id = 32000000;
+    s.instr = 7;
+    s.tod = 3;
+    s.flags = {70002802};
+    CHECK(g.Offer(s, true, t));
+    StoryState ph = Phantom();
+    auto a = Until(g, ph, t, 100);
+    CHECK(a && a->kind == StoryAction::PlayRemo && a->mirror);
+    ph.remo_playing = true;
+    for (int i = 0; i < 84; ++i) { // 1.4 s
+        t += 1.0 / 60;
+        CHECK(!g.Step(ph, t));
+    }
+    ph.remo_playing = false;
+    t += 1.0 / 60;
+    CHECK(!g.Step(ph, t));
+    CHECK(!g.Seen(32000000) && g.TakeMirrorCut() == 32000000 && g.TakeMirrorCut() == 0);
+    ph.tod_value = 6;
+    a = Until(g, ph, t);
+    CHECK(a && a->kind == StoryAction::PlayRemo && a->id == 32000000 && a->mode == 2 && !a->mirror);
+    PlayToEnd(g, ph, t);
+    a = Until(g, ph, t);
+    CHECK(a && a->kind == StoryAction::ApplyTod && a->tod == 3);
+    CHECK(g.Seen(32000000));
 }
 
 // BB_PARTY_STORY_SUMMONED=0: the queue waits for the own world, as before seamless play.
@@ -588,6 +622,7 @@ int main() {
     test_json();
     test_host_queue();
     test_mirror_then_replay();
+    test_cut_mirror_replayed();
     test_replay_waits_home_when_summoned_off();
     test_missed_scene_replayed_while_summoned();
     test_summoned_ending();
