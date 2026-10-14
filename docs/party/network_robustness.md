@@ -375,4 +375,92 @@ Run 2's screenshots: both together before; during the outage each sees the other
 "Co-operator Hunter1 returned to their own world" as the guest came back; both together again
 (1.6 m) to the end of the run. Two loading screens for the guest (home, then the summon), as the
 game's own 25 s session timeout cannot be outlasted yet. Next: find what the guest's game counts
-as traffic for that timeout (the replayed datagram did not reset it on the guest's side).
+as traffic for that timeout (the replayed datagram did not reset it on the guest's side). Done in
+0.6.2: section 7b (outages up to 30 s keep the session, no loading screen).
+
+### 7b. Outages up to 30 s keep the session (2026-10-15, 0.6.2, agent/outage062)
+
+The 0.6.1 regression run still dropped a 15 s outage: the host room's heartbeat timeout removed
+the member 0.6 s after its link came back ("left room 1001 (timeout)"). Restarting the heartbeat
+clock there made the outage survive, but ~36 s later the host's game left the session by itself
+(OnIrregularLeaveSession) and the guest stood in a dead session for 30 s. What the games count,
+found by RE (`deps/ghidra-export`, decompiles below) and a hex trace of the game's P2P datagrams
+(`BB_NET_HEX=N`, the first N bytes of each, both ways):
+
+- **The game's transport** packs records into each datagram: `[channel u8][length u16 BE][body]`.
+  Channel 1 is a reliable, ordered stream with TCP-like congestion control; its body starts
+  `[seq u16][ack u16][type u8][window u8]` (type 3 / 7 data, +0x30 = the ack field is valid,
+  0x30 a bare ack, 2 a duplicate-ack report carrying the size it saw, 1 the handshake; the window
+  byte is the receiver's free buffer in 1/255). Channel 0 is unreliable state (positions etc.).
+  Record handler 0x271deb0, ack / window update 0x271f650 (state +0x64: 0 slow start, 1 avoidance,
+  2 fast recovery with the recovery point +0x13c; window +0x114 / +0x11c / +0x118).
+- **The 25 s idle timeout** is a per-connection deadline that every channel-1 record restarts
+  (0x271b900 at the top of the record handler: now + the manager's +0x24, 25000 ms). Channel-0
+  datagrams do not. 0.6.1 replayed each peer's last *small* datagram during an outage: on the host
+  that was the guest's bare ack (channel 1: it worked), on the guest the host's last small datagram
+  was an unreliable state record (channel 0: it never counted, so the guest's game still ended the
+  session at 25 s).
+- **What ended the host's session after a resume**: 0x17894e0 (the session manager's send) queues a
+  message the transport cannot take yet in a per-peer list (SSM +0x188); once all those lists hold
+  more than 1000 messages (`cmp 0x3e9`) it raises OnIrregularLeaveSession and leaves
+  (BeginLeaveSession from +0x178980d). After an outage the transport had: lost everything in
+  flight, collapsed its window, and - on the guest's first datagrams after the outage, which
+  reported the gap as duplicate-ack records - entered fast recovery with the whole backlog
+  (~400-770 segments) as its recovery point. In fast recovery a partial ack releases one segment:
+  live 10 segments/s against the game's ~30 messages/s, so the queue reached 1000 about 30 s
+  later. The other irregular leave, 0x1789b60's check of SSM +0x2e0 against +0x2f0 (received
+  messages left unprocessed for too long), never fired in these runs.
+
+What the port does now (`gpu/shim/net/nr_outage.h`, used by `net_socket.cpp`; all of it off with
+`BB_PARTY_OUTAGE_REPLAY=0`):
+1. **Keepalive record**: while the party link says a peer is only temporarily lost, the game hears
+   that peer's last reliable *data* record again every 2 s (its ack flag cleared). It is an old
+   sequence number, so the transport drops it (and acks it into the outage), but its idle deadline
+   starts over. Both games now keep the session through 30 s.
+2. **Resume replay**: every reliable data record the game sends to a peer is kept from 3 s before
+   that peer went silent (a silence of 4 s or more counts) until it is heard again; then they are
+   sent once more, in order, each sequence number once, packed into datagrams of at most 1100
+   bytes (live: 600-770 records in 24-30 datagrams from the host, 7-25 from the guest). The
+   receiver gets the outage's segments as if they had only been late and acks the whole backlog
+   with one cumulative ack.
+3. **Duplicate-ack reports held back** for 3 s after a resume: the peer's reports of the gap the
+   outage left (live: 8-113 of them) would put the sender into fast recovery before the replay
+   has filled the gap.
+4. **Oversized datagrams split**: catching up, the transport packs datagrams past its own MTU
+   (0x4d0 = 1232; live up to 9178 bytes); the peer's game reads at most its MTU and the records
+   past it were lost, which left a new gap and stalled the stream again. A datagram over 1232
+   bytes now leaves as several, split at record boundaries.
+5. **Host room heartbeat**: when the hold on a silent (or loading) member's 15 s heartbeat timeout
+   ends, its clock starts over instead of the member being removed before its next heartbeat
+   (`PartyHostService::tick`, party-host-test).
+6. **Link error after silent game traffic**: a guest whose link ends with an error (reset, send
+   failed) after the host's game traffic had already stopped for 5 s takes the outage hold too
+   (live on the loopback simulator the host's link timed out first and its close reached the guest
+   as "send failed"; a crashed host resets the link while its game traffic still flows).
+7. **Fallback, never a dead session**: if the host's game ends the session by itself anyway
+   (BeginLeaveSession from +0x178980d or +0x1789cb4, the two OnIrregularLeaveSession sites), the
+   host tells every member at once (`host_session_end` event) and a guest in its world goes home
+   with one loading screen, instead of standing in a session that is over until the host's game
+   leaves the room (~30 s later, live).
+
+**Live, one session** (2 clients, loopback, `BB_NET_SIM=lat=30`, symmetric outages through
+`BB_NET_SIM_OUTAGE_FILE`, guest title-joined into the host's Hunter's Dream, screenshots every 3 s,
+45 s between outages):
+
+| Outage | Link | Game session | Loading screens | Host records replayed | Afterwards |
+|---|---|---|---|---|---|
+| 10 s | lost at 9.4 s, resumed 0.4 s after the network | survived ("outage over: the game session survived") | 0 | 767 in 30 datagrams | 45 s normal traffic, no drop |
+| 20 s | lost at 9.7 s, resumed 0.1 s after | survived | 0 | 768 in 30 | 45 s normal, no drop |
+| 30 s | lost at 9.4 s, resumed 0.1 s after | survived | 0 | 749 in 30 | 37 s to the end of the run, no drop; P2P traffic at its pre-outage rate |
+
+Screenshots: both players side by side before; during the 30 s outage each sees the other frozen
+in place and the host's panel says "Connection lost"; afterwards both together again (0.9 m), the
+guest's game still a phantom in the host's world (type 1/7), no loading screen on either. The
+first run of the sweep lost the 20 s outage to point 6 (fixed, then the re-run above); single runs
+of a 20 s outage before point 4 / point 3 showed the stall described above (host leave 29-30 s
+after the resume).
+
+Not covered: a real network (the simulator drops UDP in both directions and holds the TCP link;
+the loopback TCP close is real), 3-4 players, outages over 30 s (the guest keeps the host's world
+45 s, the host its slot 60 s; the keepalive runs as long as the link calls the peer lost).
+

@@ -173,10 +173,12 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_TRACE_SSINFO` | `1`: logs the game's ss.info parse result | off | `gpu/shim/party/party_director.cpp` |
 | `BB_PARTY_ONLINE_WATCH` | `0`: no `Net: online:` lines (the game's FROM-client / FrpgNetMan / network-flow online state, logged on every change) | on | `gpu/shim/net/online_watch.cpp` |
 | `BB_NET_TRACE` | `1`: logs every datagram (default: the first 400) | capped | `gpu/shim/net/net_socket.cpp` |
+| `BB_NET_HEX` | `N` (1-64): RE aid: logs the first N bytes of every game P2P datagram both ways (`hex in` / `hex out`) | off | `gpu/shim/net/net_socket.cpp` |
 | `BB_NET_SIM` | Network simulator on the game's UDP and the party link's TCP: `lat=80,jit=20,loss=2,dup=0.5,reorder=1,seed=7` (one-way ms / %), `outage=MS,every=MS` or `outage=MS,at=MS` (one-shot after start), `any=1` also for non-loopback peers (default: loopback only), or a preset `lan`, `wifi`, `dsl`, `mobile`, `bad`; director steps `host_outage=MS@S` / `guest_outage=MS@S`; docs/party/network_robustness.md | off | `gpu/shim/net/netsim.h`, `gpu/shim/net/bbnet_glue.cpp` |
 | `BB_NET_SIM_OUTAGE_FILE` | Test aid: `outage_now(MS)` whenever that file's text (`MS` or `MS tag`) changes; one file shared by all local instances = a symmetric total outage at one moment (needs `BB_NET_SIM`) |
 | `BB_PARTY_OUTAGE_HOLD_MS` | Guest: how long a silent party link (an outage) keeps the host's world before going home (default 45000; 0 = the old 2 s grace) |
-| `BB_PARTY_OUTAGE_KEEPALIVE` | `0`: no replay of a silent peer's last keepalive to the game during an outage (default on; F5, network_robustness.md 7) |
+| `BB_PARTY_OUTAGE_KEEPALIVE` | `0`: no replay of a silent peer's last reliable data record (its keepalive) to the game during an outage (default on; F5, network_robustness.md 7 / 7b) |
+| `BB_PARTY_OUTAGE_REPLAY` | `0`: off: the resume replay of what was sent to a silent peer, the 3 s hold on its duplicate-ack reports, the split of oversized game datagrams, and the reliable-record keepalive (the last small datagram is replayed instead) (default on; network_robustness.md 7b) | on | `gpu/shim/net/net_socket.cpp`, `nr_outage.h` |
 | `BB_PARTY_STATUS_LOG` | `1`: a `Party: status ...` line every 10 s and on each change | off | `gpu/shim/party/party_status_bridge.cpp` |
 | `BB_PARTY_HUD_LOG` | `1`: a `Party HUD: ...` line every 5 s (own / remote PlayerIns reads, camera, the board) | off | `gpu/shim/party/party_hud_game.cpp` |
 | `BB_PARTY_HUD_TAGS` | `0`: no name tags above companions (the panel stays) | on | `gpu/shim/bbport_overlay.cpp` |
