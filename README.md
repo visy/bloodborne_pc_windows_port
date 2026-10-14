@@ -327,5 +327,5 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | zackcage6 | Testing and bug reports |
 
 Also used: half, DejaVu fonts, Libre Baskerville (SIL OFL 1.1), dxil-spirv (MIT). AMD's FSR 4 files and NVIDIA's DLSS SDK are not
-included here. Release packages include NVIDIA's `nvngx_dlss.dll` under its license
+included here. Release packages include NVIDIA's `nvngx_dlss.dll` and `nvngx_dlssg.dll` under its license
 (`out/NVIDIA_DLSS_LICENSE.txt`).

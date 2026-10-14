@@ -25,6 +25,8 @@
 
 namespace Vulkan {
 
+bool Dlss::fg_wanted = false;
+
 int Dlss::QualityForScale(float scale) {
     // DLAA only for equal sizes: any real upscale needs at least the Quality mode.
     return scale >= 2.9f ? 4 : scale >= 1.95f ? 3 : scale >= 1.65f ? 2 : scale > 1.01f ? 1 : 0;
@@ -158,9 +160,11 @@ struct Dlss::Impl {
     Module module{};
     const BbDlssApi* api{};
     std::vector<std::string> instance_extensions, device_extensions;
+    std::vector<std::string> fg_instance_extensions, fg_device_extensions;
     std::optional<FeatureDesc> feature;
     std::string problem;
     bool eligible{true}, instance_ready{}, device_ready{}, initialized{}, available{};
+    bool fg_extensions_ready{};
 
     void Disable(std::string_view reason) {
         eligible = available = false;
@@ -196,7 +200,8 @@ Dlss::Dlss() : impl{std::make_unique<Impl>()} {
         impl->module ? reinterpret_cast<BbDlssGetApiFn>(FindSymbol(impl->module, "BbDlssGetApi"))
                      : nullptr;
     impl->api = get_api ? get_api() : nullptr;
-    if (!impl->api || impl->api->abi != BBPORT_DLSS_BRIDGE_ABI) {
+    // ABI 1 bridges (Super Resolution only) keep working; frame generation needs ABI 2.
+    if (!impl->api || (impl->api->abi != 1 && impl->api->abi != BBPORT_DLSS_BRIDGE_ABI)) {
         impl->Disable("the DLSS bridge library is missing or from another version");
         return;
     }
@@ -233,6 +238,20 @@ void Dlss::AppendInstanceExtensions(std::vector<const char*>& enabled) {
         !CollectExtensions(required, count, extensions, impl->instance_extensions, enabled)) {
         return impl->Disable("required Vulkan instance extensions are missing");
     }
+
+    // Frame generation's instance extensions (ABI 2), only when it is wanted at this start: an
+    // FG query that fails or lacks extensions leaves Super Resolution as it is.
+    if (fg_wanted && impl->api->abi >= 2 && impl->api->FgExtensions) {
+        u32 fg_count{};
+        const VkExtensionProperties* fg_required{};
+        if (impl->api->FgExtensions(VK_NULL_HANDLE, VK_NULL_HANDLE, &fg_count, &fg_required) && fg_count) {
+            std::vector<std::string> fg_ext_storage;
+            if (CollectExtensions(fg_required, fg_count, extensions, fg_ext_storage, enabled)) {
+                impl->fg_instance_extensions = std::move(fg_ext_storage);
+            }
+        }
+    }
+
     impl->instance_ready = true;
 }
 
@@ -255,6 +274,21 @@ void Dlss::AppendDeviceExtensions(vk::Instance instance, vk::PhysicalDevice phys
         !CollectExtensions(required, count, extensions, impl->device_extensions, enabled)) {
         return impl->Disable("required Vulkan device extensions are missing");
     }
+
+    // Frame generation's device extensions: as above, never a reason to disable DLSS.
+    if (fg_wanted && impl->api->abi >= 2 && impl->api->FgExtensions) {
+        u32 fg_count{};
+        const VkExtensionProperties* fg_required{};
+        if (impl->api->FgExtensions(instance, physical, &fg_count, &fg_required)) {
+            std::vector<std::string> fg_ext_storage;
+            if (!fg_count ||
+                CollectExtensions(fg_required, fg_count, extensions, fg_ext_storage, enabled)) {
+                impl->fg_device_extensions = std::move(fg_ext_storage);
+                impl->fg_extensions_ready = true;
+            }
+        }
+    }
+
     impl->device_ready = true;
 }
 
@@ -325,9 +359,66 @@ void Dlss::ReleaseFeature() {
     }
 }
 
+bool Dlss::FgAvailable() const {
+    if (!fg_wanted || !impl->available || !impl->api || impl->api->abi < 2 ||
+        !impl->api->FgAvailable || !impl->fg_extensions_ready)
+        return false;
+    return impl->api->FgAvailable() != 0;
+}
+
+std::string Dlss::FgProblem() const {
+    if (!impl->available) {
+        return impl->problem.empty() ? "DLSS is unavailable" : impl->problem;
+    }
+    if (!impl->api || impl->api->abi < 2 || !impl->api->FgAvailable) {
+        return "bbport_dlss.dll is an older build without frame generation";
+    }
+    if (!impl->fg_extensions_ready) {
+        return "the GPU driver lacks the Vulkan extensions DLSS frame generation needs";
+    }
+    if (impl->api->FgAvailable() != 0) {
+        return {};
+    }
+#ifdef _WIN32
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(ExecutableDirectory() / L"nvngx_dlssg.dll", error) &&
+        !std::filesystem::is_regular_file(UserDlssDirectory() / L"nvngx_dlssg.dll", error)) {
+        return "nvngx_dlssg.dll is missing (next to bbport.exe or in user\dlss)";
+    }
+#endif
+    return "NVIDIA reports DLSS frame generation unavailable (it needs an RTX 40 or 50 series GPU "
+           "and a current driver)";
+}
+
+u32 Dlss::FgMaxGenerated() const {
+    if (!FgAvailable() || !impl->api->FgMaxGenerated)
+        return 0;
+    return impl->api->FgMaxGenerated();
+}
+
+bool Dlss::CreateFgFeature(vk::CommandBuffer command, u32 width, u32 height, vk::Format format) {
+    if (!FgAvailable() || !impl->api->CreateFgFeature)
+        return false;
+    return impl->api->CreateFgFeature(command, width, height, static_cast<VkFormat>(format)) != 0;
+}
+
+bool Dlss::EvaluateFg(vk::CommandBuffer command, const BbDlssFgEvaluate& evaluate,
+                      u32 multi_frame_count, u32 multi_frame_index, u64 render_frame) {
+    if (!FgAvailable() || !impl->api->EvaluateFg)
+        return false;
+    return impl->api->EvaluateFg(command, &evaluate, multi_frame_count, multi_frame_index, render_frame) != 0;
+}
+
+void Dlss::ReleaseFgFeature() {
+    if (impl->api && impl->api->abi >= 2 && impl->api->ReleaseFgFeature) {
+        impl->api->ReleaseFgFeature();
+    }
+}
+
 void Dlss::Shutdown() {
     impl->available = false;
     impl->feature.reset();
+    ReleaseFgFeature();
     if (impl->api && impl->initialized) {
         impl->api->Shutdown();
         impl->initialized = false;
@@ -362,6 +453,22 @@ bool Dlss::Evaluate(vk::CommandBuffer, const Frame&) {
     return false;
 }
 void Dlss::ReleaseFeature() {}
+bool Dlss::FgAvailable() const {
+    return false;
+}
+std::string Dlss::FgProblem() const {
+    return "DLSS is not built for this platform";
+}
+u32 Dlss::FgMaxGenerated() const {
+    return 0;
+}
+bool Dlss::CreateFgFeature(vk::CommandBuffer, u32, u32, vk::Format) {
+    return false;
+}
+bool Dlss::EvaluateFg(vk::CommandBuffer, const BbDlssFgEvaluate&, u32, u32, u64) {
+    return false;
+}
+void Dlss::ReleaseFgFeature() {}
 
 #endif
 
