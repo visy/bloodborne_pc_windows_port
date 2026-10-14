@@ -153,6 +153,23 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     window = SDL_CreateWindowWithProperties(props);
     SDL_DestroyProperties(props);
     ASSERT_MSG(window, "Failed to create window: {}", SDL_GetError());
+    // BB_WINDOW_MODE=fullscreen is exclusive: a window in SDL's fullscreen state is borderless
+    // desktop fullscreen until it is given a display mode, here the desktop's (from
+    // Supermedo/bloodborne_pc PR #68 by RafaelHGOliveira). BB_FULLSCREEN=1 alone stays desktop
+    // fullscreen, and test runs (BB_WINDOW_BACKGROUND=1) never switch modes.
+    if (is_fullscreen && win_mode && !SDL_strcasecmp(win_mode, "fullscreen")) {
+        const char* bg = std::getenv("BB_WINDOW_BACKGROUND");
+        const SDL_DisplayMode* desktop = SDL_GetDesktopDisplayMode(SDL_GetDisplayForWindow(window));
+        if (bg && bg[0] == '1') {
+            std::printf("Window: exclusive fullscreen skipped (BB_WINDOW_BACKGROUND=1)\n");
+        } else if (!desktop || !SDL_SetWindowFullscreenMode(window, desktop)) {
+            std::printf("Window: exclusive fullscreen unavailable, desktop fullscreen (%s)\n",
+                        SDL_GetError());
+        } else {
+            std::printf("Window: exclusive fullscreen %dx%d@%.0f Hz\n", desktop->w, desktop->h,
+                        desktop->refresh_rate);
+        }
+    }
 
     const char* driver = SDL_GetCurrentVideoDriver();
     const SDL_PropertiesID wp = SDL_GetWindowProperties(window);

@@ -1324,7 +1324,8 @@ class BloodborneLauncher(tk.Tk):
             width=18, indent=True)
         self._combo(sec, "Window mode:", self.window_mode_var, WINDOW_MODE_CHOICES,
                     "Windowed (default): a normal window with title bar. Borderless: a frameless window "
-                    "covering the monitor. Fullscreen: exclusive-style fullscreen. Alt+Enter toggles "
+                    "covering the monitor (quick Alt+Tab). Fullscreen: exclusive fullscreen at the desktop's "
+                    "display mode (the driver may present with less latency). Alt+Enter toggles "
                     "fullscreen in game (BB_WINDOW_MODE).", width=12)
         self._combo(sec, "Monitor:", self.display_var, [c[0] for c in self.display_choices],
                     "Which monitor the game opens on. The list comes from bb-gpu-capabilities; "
