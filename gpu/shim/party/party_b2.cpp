@@ -5581,7 +5581,7 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
             // Playtest 1 G4: say once per request what keeps a room from being handed over.
             static double blocked_logged = -1;
             if (DS().g.phase == dsummon::Phase::HaveRoom && !entry && Role() != RoleClient &&
-                now - DS().g.since > 1.0 && blocked_logged != DS().asked_at) {
+                now - DS().g.since > dsummon::kRearmAfter - 0.5 && blocked_logged != DS().asked_at) {
                 blocked_logged = DS().asked_at;
                 Log("direct summon: the room waits: %s (world %s, loading %s, summon manager %s, bell 9005 %s)",
                     !s.world_up ? "no world" : s.loading ? "a load runs" : "the bell has no waiting summon entry",
