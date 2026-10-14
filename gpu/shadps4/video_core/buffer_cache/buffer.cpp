@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdio>
+#include <cstdlib>
 #include <numeric>
+#include <string_view>
 
 #include "common/alignment.h"
 #include "common/assert.h"
@@ -32,12 +35,36 @@ std::string_view BufferTypeName(MemoryType type) {
     }
 }
 
+/// bbport (from Mrsuss60/bloodborne_pc_windows_port 25f95440): where the stream buffer lives
+/// (BB_STREAM_MEMORY). Every draw copies its small read-only buffers from guest memory into it on
+/// the Vulkan recording thread. "device" (default, shadPS4's choice) is VRAM written through the
+/// PCIe BAR; "cached" is cached host memory the GPU reads over PCIe; "host" is uncached host
+/// memory. Both host placements were slower on an RTX 3070 (75-78 against 83-93 FPS in the world).
+enum class StreamPlacement { Device, Host, Cached };
+static StreamPlacement StreamMemory() {
+    static const StreamPlacement placement = [] {
+        const char* env = std::getenv("BB_STREAM_MEMORY");
+        const std::string_view value = env && env[0] ? env : "device";
+        if (value == "cached") {
+            return StreamPlacement::Cached;
+        }
+        return value == "host" ? StreamPlacement::Host : StreamPlacement::Device;
+    }();
+    return placement;
+}
+
 [[nodiscard]] VkMemoryPropertyFlags MemoryUsagePreferredVmaFlags(MemoryType type) {
+    if (type == MemoryType::Stream && StreamMemory() == StreamPlacement::Cached) {
+        return VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+    }
     return type != MemoryType::DeviceLocal ? VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
                                            : VkMemoryPropertyFlagBits{};
 }
 
 [[nodiscard]] VmaAllocationCreateFlags MemoryUsageVmaFlags(MemoryType type) {
+    if (type == MemoryType::Stream && StreamMemory() == StreamPlacement::Cached) {
+        return VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
+    }
     switch (type) {
     case MemoryType::HostUncached:
     case MemoryType::Stream:
@@ -52,6 +79,9 @@ std::string_view BufferTypeName(MemoryType type) {
 }
 
 [[nodiscard]] VmaMemoryUsage MemoryUsageVma(MemoryType type) {
+    if (type == MemoryType::Stream && StreamMemory() != StreamPlacement::Device) {
+        return VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
+    }
     switch (type) {
     case MemoryType::DeviceLocal:
     case MemoryType::Stream:
@@ -239,6 +269,17 @@ Buffer::Buffer(const Vulkan::Instance& instance, VAddr cpu_addr_, u64 size_bytes
             mapped_data = std::span<u8>{std::bit_cast<u8*>(alloc_info.pMappedData), size_bytes};
         }
         is_coherent = property_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        if (mem_type == MemoryType::Stream) {
+            std::printf("Stream memory: %s for %.*s (%s%s%s)\n",
+                        StreamMemory() == StreamPlacement::Device ? "device"
+                        : StreamMemory() == StreamPlacement::Host ? "host"
+                                                                  : "cached",
+                        debug_name.empty() ? 13 : int(debug_name.size()),
+                        debug_name.empty() ? "stream buffer" : debug_name.data(),
+                        property_flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT ? "VRAM" : "RAM",
+                        property_flags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT ? ", cached" : "",
+                        is_coherent ? "" : ", non-coherent");
+        }
     }
 }
 
