@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.6.1 (unreleased)
 
+- **Object motion off on AMD GPUs before RDNA3**: the RX 6600, 6650 XT, 6700 XT and 6900 XT lost the device at the first frame of the world with object motion on. It is now off on AMD RX 6000 and older (and AMD integrated GPUs); the upscalers use camera motion only there. `BB_OBJECT_MOTION=1` turns it on to test (from Supermedo/bloodborne_pc 4f30202).
 - **No crash when video memory runs full**: on 6 GB cards at high resolutions an image or buffer the driver's VRAM budget refused stopped the game. It is now made past the budget (the driver may keep it in system memory: slower, but the game goes on; logged once), and past the critical mark old GPU-written render targets unused for a minute are freed (from Supermedo/bloodborne_pc 44e7644).
 - **Game and launcher folders with parentheses work**: a path such as `C:\Games (x86)\Bloodborne` broke `run.bat` (cmd ended a block at the `)`) when the game folder was missing its `eboot.bin`, the Old Hunters folder was created, or a party restart message was shown. The launcher also hands `run.bat` the Python it runs on (from Mrsuss60/bloodborne_pc_windows_port 1af887a).
 - **No more pops on loud hits**: when the sound queue ran low but was not empty, silence was put between the queued sound and the next block, a short gap that popped on strong hits and boss effects. Silence now goes in only when the queue has run dry (from Mrsuss60/bloodborne_pc_windows_port 367480b; its smoother limiter was already in).
