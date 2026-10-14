@@ -86,6 +86,12 @@ bool TitleJoinPending();
 /// Guest (A5, BB_PARTY_GATHER_DSUM experiment): the direct summon is on and its last attempt did
 /// not fail (dsummon::GatherFirst).
 bool DirectSummonCarries();
+/// Guest (playtest 1 #9): the last direct summon failed because this guest is in another map than
+/// the host's room: true once (the director drops the bell and gathers with a loading screen).
+bool DirectSummonTakeGather();
+/// Host (playtest 1 #2): the Beckoning Bell stays down now (dsummon::HostBellHeld): a member has
+/// waited `waiting_s`; a room is on its way, a guest just joined, or its own ring comes first.
+bool DirectSummonHoldsHostBell(double waiting_s);
 /// Host: its AutoContinue is on the way into the world (a waiting title-join guest keeps waiting).
 void SetTitleContinuing(bool on);
 

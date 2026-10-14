@@ -32,6 +32,8 @@ const char* BusyWord(Busy b) {
     switch (b) {
     case Busy::Boss: return "boss";
     case Busy::Cutscene: return "cutscene";
+    case Busy::Prologue: return "prologue";
+    case Busy::OtherMap: return "map";
     default: return "none";
     }
 }
@@ -40,6 +42,8 @@ std::string BusyText(Busy b, bool host) {
     switch (b) {
     case Busy::Boss: return host ? "Joiners wait: you are in a boss fight" : "Waiting: the host is in a boss fight";
     case Busy::Cutscene: return host ? "Joiners wait: a cutscene is playing" : "Waiting: the host is watching a cutscene";
+    case Busy::Prologue: return host ? "Joiners wait: finish your prologue first" : "Waiting: the host is in its prologue";
+    case Busy::OtherMap: return host ? "A joiner travels to your area first" : "Travelling to the host's area first";
     default: return {};
     }
 }
@@ -47,6 +51,8 @@ std::string BusyText(Busy b, bool host) {
 Busy WaitOf(const std::string& body) {
     if (body.find("\"wait\":\"boss\"") != std::string::npos) return Busy::Boss;
     if (body.find("\"wait\":\"cutscene\"") != std::string::npos) return Busy::Cutscene;
+    if (body.find("\"wait\":\"prologue\"") != std::string::npos) return Busy::Prologue;
+    if (body.find("\"wait\":\"map\"") != std::string::npos) return Busy::OtherMap;
     return Busy::None;
 }
 
@@ -148,14 +154,47 @@ std::vector<std::uint8_t> BuildPayload(const std::uint8_t entry_id[8], const Roo
     return p;
 }
 
+bool MapKnown(std::uint32_t m) { return m != 0 && m != 0xffffffffu; }
+bool SameMap(std::uint32_t a, std::uint32_t b) { return MapKnown(a) && MapKnown(b) && (a >> 16) == (b >> 16); }
+bool CarriesAcrossMaps(std::uint32_t host_map, bool experiment) {
+    return experiment || (MapKnown(host_map) && ((host_map >> 24) & 0xff) == 29);
+}
+
+namespace {
+bool OtherMap(const HostView& v) {
+    return !v.carry && MapKnown(v.host_map) && MapKnown(v.guest_map) && !SameMap(v.host_map, v.guest_map);
+}
+}  // namespace
+
 const char* HostRefusal(const HostView& v) {
     if (!v.world_up || v.loading) return "the host is not in its world";
+    if (!v.host_ready) return "the host is still in its prologue: joiners wait until it is done";
+    if (v.guest_in_prologue) return "the guest is still in its own prologue";
     if (v.busy == Busy::Boss) return "the host is in a boss fight: joiners wait outside";
     if (v.busy == Busy::Cutscene) return "the host is watching a cutscene: joiners wait";
+    if (OtherMap(v)) return "the guest is in another map: it gathers to the host's lamp first (loading screen)";
     if (v.cooperators >= v.max_cooperators) return "the host's world is full";
     if (v.ms_since_sign_summon < 20000) return "the host's game is summoning a sign";
     if (v.other_hold_ms > 0) return "a crashed member's connection is still held";
     return nullptr;
+}
+
+Busy RefusalWait(const HostView& v) {
+    if (!v.world_up || v.loading) return Busy::None;
+    if (!v.host_ready) return Busy::Prologue;
+    if (v.guest_in_prologue) return Busy::None;
+    if (v.busy != Busy::None) return v.busy;
+    if (OtherMap(v)) return Busy::OtherMap;
+    return Busy::None;
+}
+
+bool HostBellHeld(const HostBellView& v) {
+    if (!v.direct_on) return false;
+    if (v.since_done < v.since_served && v.since_done < kHostBellHold) return v.done_ok;  // joined: no bell; failed: ring now
+    if (v.since_served < kHostBellHold) return true;  // a room is on its way to the guest
+    if (v.since_req < kHostBellHold) return v.refused_wait;  // refused: the sign path is the fallback,
+                                                             // unless the guest must wait / gather
+    return v.waiting_s < kHostBellGrace;               // the guest's own ring (and its request) comes first
 }
 
 const char* PhaseName(Phase p) {
@@ -174,12 +213,28 @@ void OnAsked(Guest& g, double now) {
     g.phase = Phase::Asked;
     g.since = now;
     g.deliver_tries = 0;
+    g.fail_why = "";
+    g.gather = false;
 }
 
-void OnRoom(Guest& g, double now, bool refused) {
+void OnRoom(Guest& g, double now, bool refused, Busy wait) {
     if (g.phase != Phase::Asked) return;  // late or unasked: ignored
     g.phase = refused ? Phase::Failed : Phase::HaveRoom;
     g.since = now;
+    if (refused) {
+        g.fail_why = "refused by the host";
+        g.gather = wait == Busy::OtherMap;
+    }
+}
+
+bool RoomElsewhere(Guest& g, double now, std::uint32_t room_area, std::uint32_t own_map, bool carry) {
+    if (g.phase != Phase::HaveRoom || carry || SameMap(room_area, own_map)) return false;
+    g.phase = Phase::Failed;
+    g.since = now;
+    g.fail_why = MapKnown(own_map) ? "the host's room is in another map (gather first)"
+                                   : "this guest's own map is not known yet";
+    g.gather = MapKnown(own_map);
+    return true;
 }
 
 void OnDelivered(Guest& g, double now, bool ok) {
@@ -198,6 +253,7 @@ Action Step(Guest& g, double now, bool entry_waiting, bool joined) {
     case Phase::Asked:
         if (now - g.since > kAnswerWait) {
             g.phase = Phase::Failed;
+            g.fail_why = "no answer from the host";
             return Action::None;  // the host never answered: it holds nothing
         }
         return Action::None;
@@ -208,6 +264,8 @@ Action Step(Guest& g, double now, bool entry_waiting, bool joined) {
         }
         if (now - g.since > kEntryWait || g.deliver_tries >= 3) {
             g.phase = Phase::Failed;
+            g.fail_why = g.deliver_tries >= 3 ? "the game refused the summon message 3 times"
+                                              : "the bell's own summon entry did not come up within 8 s";
             return Action::ReportFail;
         }
         return entry_waiting ? Action::Deliver : Action::None;
@@ -218,6 +276,7 @@ Action Step(Guest& g, double now, bool entry_waiting, bool joined) {
         }
         if (now - g.since > kJoinWait) {
             g.phase = Phase::Failed;
+            g.fail_why = "delivered, but the game did not join the host's room within 8 s";
             return Action::ReportFail;
         }
         return Action::None;

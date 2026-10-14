@@ -18,7 +18,7 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | Area | Progress | |
 |---|---|--:|
 | **Overall** | `█████████████████░░░` | 84% |
-| Session & joining | `██████████████████░░` | 88% |
+| Session & joining | `██████████████████░░` | 89% |
 | World & travel | `██████████████████░░` | 88% |
 | Death & respawn | `██████████████████░░` | 88% |
 | Progress (anyone can progress) | `█████████████████░░░` | 86% |
@@ -164,7 +164,7 @@ single-player save is never touched. Settings: *System → Party* pages in the g
   loot (for each player) and the lift work for the whole party. Any player can perform the ritual:
   the host's altar then offers *Enter the party's dungeon* (no glyph typing), and chalices are
   shared between all players.
-- **Crashes recover.** A crashed game restarts and rejoins by itself (back in the host's world about 12 s after the restart).
+- **Crashes recover.** A crashed game restarts and rejoins by itself (back in the host's world about 12 s after the restart), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
 - **Death has a cost.** Each death stacks "rot" (−10% max HP or stamina, picked at random, up to
   5); using a lamp clears it.

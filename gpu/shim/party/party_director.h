@@ -87,6 +87,13 @@ bool LeaveGameSession();
 /// once (OnLeave_Limit on the next main-thread tick).
 void RequestGuestSendHome(const std::string& why);
 
+/// Any thread: this player finished its campaign start (C1, party_start.h StartReady) - the host
+/// refuses direct summons until then (playtest 1 #1).
+bool LocalStartReady();
+/// Any thread: the roster entry of link slot `slot` (state: party::MemberState as int; map: the
+/// roster's map id). False when the slot is not on the roster (state -1, map 0).
+bool MemberRoster(int slot, int* state, std::uint32_t* map);
+
 /// BB_PARTY or BB_PARTY_DIRECTOR_TEST is set (non-empty).
 bool PartyRequested();
 /// "[hh:mm:ss.mmm] " (local wall clock) when BB_PARTY_LOG_TIME=1 or BB_PARTY_DIRECTOR_TEST is

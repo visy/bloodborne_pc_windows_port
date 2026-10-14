@@ -22,15 +22,15 @@ loading-screen path is the proposed fix. A seamless (no-load) variant comes back
 
 | # | Bug (players' words, shortened) | Severity | Fixed on head? | Most likely cause (short) | Batch |
 |---|---|---|---|---|---|
-| 1 | Direct summon while the host is in its prologue | major | no | `dsummon::HostRefusal` has no start-ready check; the host makes a room on demand (H2:919-992) | 2 |
-| 2 | Guest's bell prompt also shown on the host | minor | no | inferred: the host director auto-rings the Beckoning Bell (SpEffect 9000) whenever a guest waits or rings | 2 |
+| 1 | Direct summon while the host is in its prologue | major | **fixed (pt1join)** | `dsummon::HostRefusal` has no start-ready check; the host makes a room on demand (H2:919-992) | 2 |
+| 2 | Guest's bell prompt also shown on the host | minor | **fixed (pt1join)** | inferred: the host director auto-rings the Beckoning Bell (SpEffect 9000) whenever a guest waits or rings | 2 |
 | 3 | Only a host rest resets the world | major | no | a guest's rest at a lamp asks "Travel with the party?"; NO sends it to the Dream alone with no reset (design gap) | 1 |
 | 4 | Enemy loot from the guest not shared | minor | no (by design) | ERSC_PARITY D4: per-player drop rolls. A design decision to revisit, not a bug | decision |
 | 5 | Guests cannot knock on doors / see plot dialogue | major | no | unconfirmed: ghost NpcParam rows (Iosefka 6060) and/or a client-only talk gate; the logs do not print the override counter | 4 |
 | 6 | Host death blocks guest loot | major | no | host revive-in-place leaves the guest's death and send-home state half-done until its next load | 1 |
 | 7 | Host death warp breaks world / occlusion | major | no | host death = revive in place (moved up to ~190 m, no load, no world reset) | 1 |
 | 8 | Fog wall for the guest until the host goes in | minor (on head) | partly | B2 guest fog-first (1f981e9) covers plain fogs; first fights with an intro (Gascoigne) still start with the host | 4 |
-| 9 | Rejoined guest lands in the Dream, not in Central Yharnam | **blocker** | partly | the guest rings before its own map is known, so no gather; cross-map direct summon never loads the host's map (aeeb408 only keeps the gather as default) | 2 |
+| 9 | Rejoined guest lands in the Dream, not in Central Yharnam | **blocker** | **fixed (pt1join, live)** | the guest rings before its own map is known, so no gather; cross-map direct summon never loads the host's map (aeeb408 only keeps the gather as default) | 2 |
 | 10 | Doll level-up plays on the host + position jumps back | major | no | Doll flags 72100100-102/113, 12100112-114 synced as npc_quest; a same-map lamp warp became a host-led party move | 1 (move) + 4 (flags) |
 | 11 | Gehrman is a ghost for the guest | minor | no | NpcParam 804000 has isChangeWanderGhost; only the Doll's 803000 is patched | 4 |
 | 12 | Item prompt stuck on the guest at host death | major | no | `ShowItemGet` is gated only on `Calm()`, plus the half-done death state of #6 | 3 (gate) + 1 (death) |
@@ -64,7 +64,7 @@ of H5.
      `party_guestsvc.cpp`, `docs/party/DEBUG_SWITCHES.md`, `b2_seamless.md`, `ERSC_PARITY.md`.
    - **Verify:** instances.py host + guest with `BB_PARTY_TEST_START_LAMP`, `host_kill`/death aids,
      `BB_PARTY_ENEMY_CENSUS=1`; screenshot both instances after each death and rest.
-2. **Batch 2: joins, rejoin spawn and summons** (#9, #1, #2, G4 summon failures, refusal logging, held connection
+2. **Batch 2: joins, rejoin spawn and summons** - DONE 2026-10-14 (pt1join, see "Batch 2 result" below) (#9, #1, #2, G4 summon failures, refusal logging, held connection
    after a guest restart, watchdog stop during a host travel).
    - The guest waits for its own map before ringing.
    - A guest from another area refuses the room and gathers first (a lamp warp with a loading screen).
@@ -935,3 +935,38 @@ Counts per run: party watchdog stops (stuck summon) H1 1, H2 1; 5-s engine watch
 G4 23 / G5 55, hosts 0; loading screens H1 5, H2 1, H3 7, H4 13, H5 18, G1 3, G2 8, G3 7, G4 3, G5 6; direct
 summon outcomes: served-and-joined H1 3, H2 1, H4 2 (both cross-map), refused/failed G2 3, G3 1, G4 8, G5 1;
 re-join after a host travel 1.5-12.9 s on the host (longest into Old Yharnam and m24_00), 0.0 s on the guest.
+
+## Batch 2 result (pt1join, 2026-10-14)
+
+- **#9 fixed (live).** The guest's ring waits for its OWN map (`bell: waiting for this guest's own map before ringing`), so
+  `GatherGuest` always sees both maps and gathers with a vanilla lamp warp (loading screen). Safety nets: the guest
+  never hands its game a room of another map (`dsummon::RoomElsewhere` -> `FAILED (the host's room is in another
+  map ...)`), and the host refuses a request whose roster map is another area (`"wait":"map"`); either way the
+  guest's bell (SpEffect 9005, its sign) goes down and the gather runs at once. Chalice dungeons (area 29) and the
+  `BB_PARTY_GATHER_DSUM` experiment keep the cross-map carry.
+  Live (one run + one re-run, loopback, `BB_NET_SIM=dsl`, save_backup/savedata_20261010, host
+  `BB_PARTY_TEST_START_LAMP=2412951`): re-run with title join off on the guest (the playtest's in-world ring path):
+  `gather: own world m21_00_00_00, host in m24_01_00_00; to the host's lamp 2412951` 0.2 s after the own map came up,
+  one load, then `direct summon: joined the host's room (3.4 s after the request)`, host cooperators 0 -> 1.
+  Guest killed (`--crash-when` once beside the host) and restarted: Continue in m24_01, `joined (2.9 s after the
+  request)`, `join: arrived 1.0 m from the host`; `status: where ... apart 0` and screenshots of both games side by
+  side. First run (title join on): the restart title-joined straight beside the host (0.9 m, screenshot).
+- **#1 fixed (unit).** `HostView.host_ready` (the director's `LocalStartReady`) and `guest_in_prologue` (roster):
+  refused with `"wait":"prologue"` ("Waiting: the host is in its prologue") before any room is created. The guest
+  side was already gated (`GuestMayRing` needs start ready). Not exercised live (no run budget left for a new-game
+  save): covered by party-dsummon-test.
+- **#2 fixed (live).** The host's Beckoning Bell is the direct summon's fallback only (`dsummon::HostBellHeld`): held
+  for 15 s after a member starts waiting in the host's map (its own ring comes first), while a served room is on its
+  way, 20 s after a join, and after a refusal that says wait; rings at once after a reported failure or a plain
+  refusal (sign path). Live: `no Beckoning Bell while the direct summon handles it` on the rejoin. (The first join of
+  the re-run still rang once because the grace counted the guest's time in the Dream; fixed after the run: a member
+  in another map restarts the grace. Not re-run.)
+- **Refusal logging.** Every host refusal logs slot, name, reason, both maps and the wait word, including the
+  previously silent `BB_PARTY_DIRECT_SUMMON=0` path (the likely source of H3/H5's unlogged refusals); every guest
+  `FAILED` says why (no answer / entry not up / game refused 3x / no join within 8 s / other map).
+- **Held connection after a guest restart.** Once the host's game has cleared the restarted member's stale peer, its
+  sign / direct summon hold ends (`<name>: its sign hold ended`), so the new run is not refused for "a crashed
+  member's connection is still held". Live rejoin: no refusal.
+- **G4 8-of-10 failures:** their cause was the cross-map chase (#9); with the room/map checks they now end in one
+  gather instead of repeated failed summons. Not touched (other files): host-travel-while-joining watchdog stop,
+  holding host lamp travel ~10 s after serving a room, the premature "no arrival within 180 s".

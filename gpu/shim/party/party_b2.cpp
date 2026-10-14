@@ -26,6 +26,7 @@
 #include "party_dsummon.h"
 #include "party_status_bridge.h"
 #include "party_spectate.h"
+#include "party_director.h"
 
 #include <algorithm>
 #include <atomic>
@@ -4984,6 +4985,9 @@ struct DirectSummon {
     dsummon::Guest g;                   // guest
     dsummon::Room room;
     double asked_at = 0;
+    // Host: the last request / served room / outcome (the bell fallback, HostBellHeld).
+    double req_at = -1e9, served_at = -1e9, done_at = -1e9;
+    bool done_ok = false, refused_wait = false;
 };
 DirectSummon& DS() {
     static DirectSummon d;
@@ -5059,19 +5063,35 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         names = DS().names;
     }
     static double first = 0;
+    static const bool gather_dsum = EnvOn("BB_PARTY_GATHER_DSUM");  // A5 experiment: carry across maps
     std::vector<int> keep;
     for (int slot : req) {
         dsummon::HostView v;
         v.world_up = s.world_up;
         v.loading = s.loading;
+        // Playtest 1 #1 / #9: no summon into the host's prologue, none of a guest in its own prologue,
+        // and none across maps (the guest gathers with a loading screen first).
+        v.host_ready = coop::LocalStartReady();
+        int guest_state = -1;
+        coop::MemberRoster(slot, &guest_state, &v.guest_map);
+        v.guest_in_prologue = guest_state == int(party::MemberState::Prologue);
+        v.host_map = s.map_id;
+        v.carry = dsummon::CarriesAcrossMaps(s.map_id, gather_dsum);
         v.cooperators = s.cooperators < 0 ? 0 : s.cooperators;
         v.ms_since_sign_summon = bbnet::party::FromApi::instance().ms_since_request();
         v.other_hold_ms = bbnet::party::FromApi::instance().hold_left_ms();
         v.busy = dsummon::HostBusy(BossBarShown(), CutscenePlaying());  // A11: joiners wait outside
         const std::string name = names.count(slot) ? names[slot] : std::string();
         if (const char* why = dsummon::HostRefusal(v)) {
-            Send(slot, dsummon::EncodeRefuse(v.busy));
-            Log("direct summon: slot %d refused (%s): the bell sign path goes on", slot, why);
+            const dsummon::Busy wait = dsummon::RefusalWait(v);
+            Send(slot, dsummon::EncodeRefuse(wait));
+            {
+                std::lock_guard<std::mutex> lk(DS().mu);
+                DS().refused_wait = wait != dsummon::Busy::None;
+            }
+            Log("direct summon: slot %d (%s) refused (%s; host %s, guest %s, wait %s)%s", slot, name.c_str(), why,
+                MapName(v.host_map).c_str(), MapName(v.guest_map).c_str(), dsummon::BusyWord(wait),
+                wait == dsummon::Busy::None ? ": the bell sign path goes on" : "");
             continue;
         }
         if (Role() != RoleHost) {
@@ -5108,6 +5128,11 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         SafeRead(net + 0xaac, room.pos, 12);
         if (!name.empty()) bbnet::party::FromApi::instance().hold_signs(name, 20000);
         Send(slot, dsummon::EncodeRoom(room));
+        {
+            std::lock_guard<std::mutex> lk(DS().mu);
+            DS().served_at = now;
+            DS().refused_wait = false;
+        }
         Log("direct summon: slot %d (%s) gets this host's room (%zu bytes, area %#x, level %u); its signs are held", slot,
             name.c_str(), room.data.size(), room.area, room.level);
     }
@@ -5121,13 +5146,26 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
     dsummon::Room room;
     std::string host_name;
     double asked_at = 0;
+    const char* fail_why = "";
+    bool gather = false;
     {
         std::lock_guard<std::mutex> lk(DS().mu);
         const dsummon::Phase before = DS().g.phase;
-        a = dsummon::Step(DS().g, now, s.world_up && !s.loading && WaitingGuestEntry() != 0, Role() == RoleClient);
+        // Playtest 1 #9: a room of another map is never handed to the game (it would join without
+        // loading the host's map and sit in its own world as a client): fail, gather, ring again.
+        if (dsummon::RoomElsewhere(DS().g, now, DS().room.area, s.map_id,
+                                   dsummon::CarriesAcrossMaps(DS().room.area, gather_dsum))) {
+            a = dsummon::Action::ReportFail;
+            Log("direct summon: the host's room is in %s, this guest in %s: not delivered",
+                MapName(DS().room.area).c_str(), MapName(s.map_id).c_str());
+        } else {
+            a = dsummon::Step(DS().g, now, s.world_up && !s.loading && WaitingGuestEntry() != 0, Role() == RoleClient);
+        }
         if (before == dsummon::Phase::Asked && DS().g.phase == dsummon::Phase::Failed) {
             Log("direct summon: no answer from the host within %.0f s: the bell sign path", dsummon::kAnswerWait);
         }
+        fail_why = DS().g.fail_why;
+        gather = DS().g.gather;
         room = DS().room;
         host_name = DS().names.count(0) ? DS().names[0] : std::string();
         asked_at = DS().asked_at;
@@ -5139,8 +5177,13 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
     } else if (a == dsummon::Action::ReportOk || a == dsummon::Action::ReportFail) {
         const bool ok = a == dsummon::Action::ReportOk;
         Send(0, dsummon::EncodeDone(ok));
-        Log("direct summon: %s (%.1f s after the request)", ok ? "joined the host's room" : "FAILED: the bell sign path takes over",
-            now - asked_at);
+        if (ok) {
+            Log("direct summon: joined the host's room (%.1f s after the request)", now - asked_at);
+        } else {
+            Log("direct summon: FAILED (%s; %.1f s after the request): %s", fail_why, now - asked_at,
+                gather ? "the bell goes down; gather to the host's area first (loading screen), then ring again"
+                       : "the bell sign path takes over");
+        }
     }
 }
 
@@ -5156,9 +5199,12 @@ void DirectSummonEvent(int from_slot, const std::string& body) {
     case dsummon::Kind::Req: {
         if (!DirectSummonOn()) {
             Send(from_slot, dsummon::EncodeRefuse());
+            Log("direct summon: slot %d refused (direct summon is off on this host, BB_PARTY_DIRECT_SUMMON=0): "
+                "the bell sign path goes on", from_slot);
             return;
         }
         std::lock_guard<std::mutex> lk(DS().mu);
+        DS().req_at = Now();
         if (std::find(DS().requests.begin(), DS().requests.end(), from_slot) == DS().requests.end())
             DS().requests.push_back(from_slot);
         return;
@@ -5170,9 +5216,10 @@ void DirectSummonEvent(int from_slot, const std::string& body) {
         const bool ok = dsummon::DecodeRoom(body, &r, &refused, &err);
         std::lock_guard<std::mutex> lk(DS().mu);
         if (ok) DS().room = r;
-        dsummon::OnRoom(DS().g, Now(), !ok);
         const dsummon::Busy busy = refused ? dsummon::WaitOf(body) : dsummon::Busy::None;
+        dsummon::OnRoom(DS().g, Now(), !ok, busy);
         if (busy != dsummon::Busy::None) party::bridge::OnHostBusy(dsummon::BusyText(busy, false));  // A11
+        else if (ok) party::bridge::OnHostBusy(std::string());  // a wait (prologue / map) is over
         Log("direct summon: the host's answer: %s%s%s", ok ? "its room" : err.c_str(),
             busy != dsummon::Busy::None ? " - " : "", dsummon::BusyText(busy, false).c_str());
         return;
@@ -5184,6 +5231,11 @@ void DirectSummonEvent(int from_slot, const std::string& body) {
         {
             std::lock_guard<std::mutex> lk(DS().mu);
             if (DS().names.count(from_slot)) name = DS().names[from_slot];
+        }
+        {
+            std::lock_guard<std::mutex> lk(DS().mu);
+            DS().done_at = Now();
+            DS().done_ok = ok;
         }
         if (!name.empty()) {
             bbnet::party::FromApi::instance().hold_signs(name, ok ? 3000 : 1);
@@ -6912,6 +6964,25 @@ void DirectSummonRing() {
     DS().asked_at = Now();
     Send(0, dsummon::EncodeReq());
     Log("direct summon: asked the host for its room (rang the bell)");
+}
+bool DirectSummonTakeGather() {
+    std::lock_guard<std::mutex> lk(DS().mu);
+    if (DS().g.phase != dsummon::Phase::Failed || !DS().g.gather) return false;
+    DS().g.gather = false;
+    return true;
+}
+bool DirectSummonHoldsHostBell(double waiting_s) {
+    std::lock_guard<std::mutex> lk(DS().mu);
+    dsummon::HostBellView v;
+    v.direct_on = DirectSummonOn() && g_on.load();
+    v.waiting_s = waiting_s;
+    const double now = Now();
+    v.since_req = now - DS().req_at;
+    v.since_served = now - DS().served_at;
+    v.since_done = now - DS().done_at;
+    v.done_ok = DS().done_ok;
+    v.refused_wait = DS().refused_wait;
+    return dsummon::HostBellHeld(v);
 }
 bool DirectSummonCarries() {
     std::lock_guard<std::mutex> lk(DS().mu);
