@@ -60,9 +60,10 @@ jobs:
           fi
 
           # Install and build miniz
+          echo '#define MINIZ_EXPORT' > /mingw64/include/miniz_export.h
           curl -sSL -o /mingw64/include/miniz.h https://raw.githubusercontent.com/richgel999/miniz/master/miniz.h
           curl -sSL -o /tmp/miniz.c https://raw.githubusercontent.com/richgel999/miniz/master/miniz.c
-          gcc -O3 -c /tmp/miniz.c -o /tmp/miniz.o
+          gcc -O3 -c /tmp/miniz.c -o /tmp/miniz.o -I/mingw64/include
           ar rcs /mingw64/lib/libminiz.a /tmp/miniz.o
           echo "Installed miniz.h and libminiz.a"
 
