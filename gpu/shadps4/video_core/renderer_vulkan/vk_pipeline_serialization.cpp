@@ -4,7 +4,9 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <thread>
 #include <array>
@@ -889,6 +891,14 @@ void PipelineCache::WarmUp(bool parallel) {
 
     auto& db = Storage::DataBase::Instance();
     db.Open();
+    // bbport: the driver's binaries of every preloaded pipeline are on disk right after the
+    // warm-up, so a session that is killed later still starts warm next time.
+    struct SaveDriverCache {
+        PipelineCache& cache;
+        ~SaveDriverCache() {
+            cache.SaveDriverPipelineCache(false);
+        }
+    } save_driver_cache{*this};
 
     const auto save_profile = [&] {
         std::vector<u8> data(sizeof(Shader::Profile) + sizeof(CacheVersions));
@@ -1190,10 +1200,98 @@ void PipelineCache::WarmUp(bool parallel) {
                 parallel ? " (parallel precompile)" : "");
 }
 
+std::atomic<PipelineCache*> PipelineCache::driver_cache_owner{nullptr};
+
+namespace {
+bool DriverPipelineCacheEnabled() {
+    // BB_DRIVER_PIPELINE_CACHE=0: the driver's pipeline binaries are neither loaded nor saved.
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_DRIVER_PIPELINE_CACHE");
+        return !(env && env[0] == '0');
+    }();
+    return enabled && EmulatorSettings.IsPipelineCacheEnabled();
+}
+} // namespace
+
+std::string PipelineCache::GetDriverCacheKey() const {
+    const auto props = instance.GetPhysicalDevice().getProperties();
+    // One file per vendor, device and driver version: a driver update starts a new one.
+    return fmt::format("vk_pipe_cache_{:04x}_{:04x}_{:08x}", props.vendorID, props.deviceID,
+                       props.driverVersion);
+}
+
+std::vector<u8> PipelineCache::LoadDriverPipelineCache() {
+    std::vector<u8> data;
+    if (!DriverPipelineCacheEnabled()) {
+        return data;
+    }
+    auto& db = Storage::DataBase::Instance();
+    db.Open();
+    if (!db.SupportsFiles() || db.Exists(Storage::BlobType::PipelineBinary, GetDriverCacheKey())) {
+        db.Load(Storage::BlobType::PipelineBinary, GetDriverCacheKey(), data);
+    }
+    if (data.empty()) {
+        std::printf("Pipeline cache: no driver pipeline binaries yet (built this session)\n");
+        return data;
+    }
+    // VkPipelineCacheHeaderVersionOne: the driver checks it too, but a blob of another device or
+    // cache UUID must never reach a driver that does not.
+    const auto props = instance.GetPhysicalDevice().getProperties();
+    struct Header {
+        u32 size;
+        u32 version;
+        u32 vendor_id;
+        u32 device_id;
+        u8 uuid[VK_UUID_SIZE];
+    } header{};
+    bool valid = data.size() >= sizeof(header);
+    if (valid) {
+        std::memcpy(&header, data.data(), sizeof(header));
+        valid = header.size >= sizeof(header) && header.version == 1 &&
+                header.vendor_id == props.vendorID && header.device_id == props.deviceID &&
+                std::memcmp(header.uuid, props.pipelineCacheUUID.data(), VK_UUID_SIZE) == 0;
+    }
+    if (!valid) {
+        std::printf("Pipeline cache: driver pipeline binaries of another driver: not loaded\n");
+        data.clear();
+        return data;
+    }
+    driver_cache_saved_hash = XXH3_64bits(data.data(), data.size());
+    std::printf("Pipeline cache: driver pipeline binaries loaded (%zu KB)\n", data.size() / 1024);
+    return data;
+}
+
+void PipelineCache::SaveDriverPipelineCache(bool wait) {
+    if (!pipeline_cache || !DriverPipelineCacheEnabled()) {
+        return;
+    }
+    std::scoped_lock lock{driver_cache_mutex};
+    auto& db = Storage::DataBase::Instance();
+    if (!db.IsOpened()) {
+        return;
+    }
+    auto [result, data] = instance.GetDevice().getPipelineCacheData(*pipeline_cache);
+    if (result != vk::Result::eSuccess || data.empty()) {
+        LOG_WARNING(Render, "Driver pipeline cache not readable: {}", vk::to_string(result));
+        return;
+    }
+    const u64 hash = XXH3_64bits(data.data(), data.size());
+    if (hash == driver_cache_saved_hash) {
+        return;
+    }
+    driver_cache_saved_hash = hash;
+    std::printf("Pipeline cache: driver pipeline binaries saved (%zu KB)\n", data.size() / 1024);
+    db.Save(Storage::BlobType::PipelineBinary, GetDriverCacheKey(), std::move(data));
+    if (wait) {
+        db.Flush();
+    }
+}
+
 void PipelineCache::Sync() {
     // bbport: no job may write to the storage after it is closed (results are published on
     // the GPU thread; queued jobs are dropped, running ones finish first).
     compiler.Stop();
+    SaveDriverPipelineCache(true);
     Storage::DataBase::Instance().Close();
 }
 

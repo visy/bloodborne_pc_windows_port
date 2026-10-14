@@ -83,6 +83,11 @@ private:
 /// Main thread: the game's own leave (0x13CDDA0: BeginLeaveSession + drop the presentation
 /// members, as the host watchdog uses it), byte-checked; false when the code is not 1.09's.
 bool LeaveGameSession();
+/// Main thread: the Small Resonant Bell's SpEffect 9005 on the local player (the bell as the item
+/// rings it): is it on, drop it (the game's RemoveSpEffect), apply it again (a new ring).
+bool GuestBellEffectOn();
+bool DropGuestBellEffect();
+bool ApplyGuestBellEffect();
 /// Any thread: the host ended the party / is gone: a guest still in the host's world goes home at
 /// once (OnLeave_Limit on the next main-thread tick).
 void RequestGuestSendHome(const std::string& why);

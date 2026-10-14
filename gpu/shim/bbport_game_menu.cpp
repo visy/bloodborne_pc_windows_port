@@ -535,6 +535,9 @@ const std::array<void*, MaxPages> factories = MakeFactories(std::make_index_sequ
 using LookupFn = const char16_t*(BB_SYSV*)(void*, u32, u32, u32);
 using AddFn = void*(BB_SYSV*)(void*, void*, void*, void*);
 LookupFn lookup_original = nullptr;
+// The repository / table of the game's own lookups (GameText looks other messages up with them).
+std::atomic<void*> last_repository{nullptr};
+std::atomic<u32> last_table{0};
 AddFn add_original = nullptr;
 AddFn command_original = nullptr;
 std::atomic<const void*> screen_sound_text{nullptr};
@@ -647,6 +650,8 @@ BB_SYSV const char16_t* LookupHook(void* repository, u32 table, u32 category, u3
     if (title_override && category == TextName && id == ControlsTitle) {
         return title_override;
     }
+    last_table.store(table, std::memory_order_relaxed);
+    last_repository.store(repository, std::memory_order_release);
     const char16_t* text = lookup_original(repository, table, category, id);
     if (const TextOverrideFn fn = text_override.load(std::memory_order_acquire)) {
         if (const char16_t* other = fn(category, id, text)) text = other;
@@ -975,6 +980,15 @@ void SetImePreset(ImePresetFn fn) {
 const char* ImePreset(std::uint32_t max_length) {
     const ImePresetFn fn = ime_preset.load(std::memory_order_acquire);
     return fn ? fn(max_length) : nullptr;
+}
+
+const char16_t* GameText(std::uint32_t category, std::uint32_t id) {
+    void* repo = last_repository.load(std::memory_order_acquire);
+    if (!repo || !lookup_original) {
+        return nullptr;
+    }
+    const char16_t* text = lookup_original(repo, last_table.load(std::memory_order_relaxed), category, id);
+    return text && text[0] ? text : nullptr;
 }
 
 std::int64_t LastLookupMs(std::uint32_t id) {

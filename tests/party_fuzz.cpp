@@ -9,6 +9,9 @@
 //   story      StoryFromJsonText + SanitizePeerStory + GuestStory
 //   items      ItemsFromJsonText + FilterPeerItems + GuestItems
 //   phantom    PhantomEventFromJsonText
+//   peerev     the other peer events: chalice_goods (GoodsFromJsonText), drop_seed (DropSeedFromJson),
+//              the B2 direct summon bodies (dsummon DecodeRoom / DecodeDone / WaitOf), gift_up
+//              (GiftUpFromJsonText) and sync_digest / sync_resync (party_desync.h)
 //   balance    balance::FromJson (the host's party rules, guest side): values within the menu's ranges
 //   lamp       LampRequestFromJsonText + SanitizePeerLampRequest (a guest's lamp request, host side),
 //              LampLitFromJsonText, worldact::RequestFromJson (EVENT world_action: levers, doors, NPC talk)
@@ -42,6 +45,10 @@
 #include "party_util.h"
 #include "party_sign_blob.h"
 #include "party/party_balance_rules.h"
+#include "party/party_chalice.h"
+#include "party/party_droproll.h"
+#include "party/party_dsummon.h"
+#include "party/party_desync.h"
 #include "party/party_code.h"
 #include "party/party_ids.h"
 #include "party/party_crypto.h"
@@ -54,6 +61,7 @@
 #include "party/party_story.h"
 #include "party/party_travel.h"
 #include "party/party_worldact.h"
+#include "party/party_npctalk.h"
 
 #include <algorithm>
 #include <array>
@@ -463,6 +471,23 @@ Corpus json_corpus() {
         wa.kick = {2410000, 2410001};
         c.add(coop::worldact::RequestToJson(wa));
     }
+    {
+        coop::npctalk::TalkEvent te;  // EVENT npc_talk (shared NPC dialogue)
+        te.npc = 2410782;
+        te.talk = te.msg = 1900002;
+        te.voice = 1900002;
+        te.map = 0x18010000;
+        te.has_pos = true;
+        te.pos[0] = -12.5f;
+        te.who = "Hunter1";
+        te.slot = 1;
+        c.add(coop::npctalk::ToJsonText(te));
+        te.kind = coop::npctalk::Kind::Gift;
+        te.lot = 10050;
+        te.item_cat = 4;
+        te.item_id = 4312;
+        c.add(coop::npctalk::ToJsonText(te));
+    }
     std::vector<coop::progress::FlagChange> ch(2);
     ch[0] = {12401800, true, coop::progress::CategoryOf(12401800), 5};
     ch[1] = {70002802, false, coop::progress::CategoryOf(70002802), 6};
@@ -490,6 +515,42 @@ Corpus json_corpus() {
           R"({"MessageId":"SummonDataGetListRequest","AreaId":402718720,"GetMaxCount":20,"SummonTypeList":[{"SummonType":0,"GetLimitCount":5}]})",
           R"({"MessageId":"SummonDataSummonRequest","TargetUserId":1002,"SummonDataId":1})"})
         c.add(std::string(s));
+    // The other peer events (target peerev).
+    c.add(coop::chalice::GoodsToJsonText({6100, 6109, 6539}));
+    {
+        coop::droproll::DropSeed ds;
+        ds.salt = 0x1234567890abcdefull;
+        ds.gen = 3;
+        ds.discovery = 120;
+        c.add(coop::droproll::DropSeedToJson(ds));
+    }
+    {
+        coop::dsummon::Room room;
+        room.data.assign(40, 0x5a);
+        room.area = 0x18000000;
+        room.pos[0] = 1.5f;
+        room.level = 30;
+        c.add(coop::dsummon::EncodeRoom(room));
+        c.add(coop::dsummon::EncodeRefuse(coop::dsummon::Busy::Boss));
+        c.add(coop::dsummon::EncodeDone(true));
+        c.add(coop::dsummon::EncodeBusy(coop::dsummon::Busy::Cutscene));
+        c.add(coop::dsummon::EncodeReq());
+    }
+    c.add(coop::GiftUpToJsonText(2000, 50000060));
+    {
+        coop::desync::Digest d;
+        d.epoch = 77;
+        d.seq = 9;
+        d.has_world = d.has_flags = true;
+        d.world[3] = 0xdeadbeef;
+        c.add(coop::desync::DigestToJson(d));
+        coop::desync::Resync rs;
+        rs.epoch = 77;
+        rs.world = {1, 30};
+        rs.flags = {4};
+        rs.gap = true;
+        c.add(coop::desync::ResyncToJson(rs));
+    }
     const std::string blob = bbnet::party::b64_encode(party_test::sign_blob("fz0"));
     c.add(R"({"MessageId":"SummonDataCreateRequest","CharaId":1,"AreaId":402718720,"AreaRegionId":1,"SummonType":0,"SummonData":")" +
           blob + R"(","SummonDataVersion":3})");
@@ -698,6 +759,52 @@ void run_phantom(Rng& r, const Corpus& c) {
         INVARIANT(e.lamp == coop::kTravelNone || coop::TravelLampKnown(e.lamp));
 }
 
+// The peer events not covered above: each decoder's own validation is the postcondition.
+void run_peerev(Rng& r, const Corpus& c) {
+    const std::string s = text_of(next_input(r, c, true));
+    set_input("peerev", s);
+    std::string err;
+    std::vector<std::uint32_t> goods;
+    if (coop::chalice::GoodsFromJsonText(s, &goods, &err)) {
+        INVARIANT(goods.size() <= 64);
+        for (std::uint32_t g : goods) INVARIANT(coop::chalice::IsChaliceGoods(g));
+    }
+    coop::droproll::DropSeed ds;
+    if (coop::droproll::DropSeedFromJson(s, &ds, &err)) {
+        INVARIANT(ds.salt != 0);
+        INVARIANT(ds.discovery == 0.0f || (ds.discovery >= 1.0f && ds.discovery <= 1000.0f));
+    }
+    coop::dsummon::Room room;
+    bool refused = false;
+    if (coop::dsummon::DecodeRoom(s, &room, &refused, &err)) {
+        INVARIANT(!refused && room.data.size() > 8 && room.data.size() <= coop::dsummon::kMaxRoomData);
+        for (float p : room.pos) INVARIANT(std::isfinite(p) && std::fabs(p) < 1e5f);
+        INVARIANT(room.level <= 544);
+        const u8 id[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+        const std::vector<u8> pay = coop::dsummon::BuildPayload(id, room);
+        INVARIANT(pay.size() == coop::dsummon::kHeadSize + room.data.size());
+    }
+    bool ok = false;
+    (void)coop::dsummon::DecodeDone(s, &ok);
+    (void)coop::dsummon::WaitOf(s);
+    std::int32_t lot = 0, flag = 0;
+    if (coop::GiftUpFromJsonText(s, &lot, &flag, &err)) INVARIANT(coop::GuestGiftShareable(lot, flag));
+    coop::desync::Digest dg;  // F5: sync_digest (guest side) / sync_resync (host side)
+    if (coop::desync::DigestFromJson(s, &dg, &err)) {
+        coop::desync::Digest back;
+        INVARIANT(coop::desync::DigestFromJson(coop::desync::DigestToJson(dg), &back, &err));
+        INVARIANT(back.epoch == dg.epoch && back.seq == dg.seq && back.has_world == dg.has_world);
+    }
+    coop::desync::Resync rs;
+    if (coop::desync::ResyncFromJson(s, &rs, &err)) {
+        INVARIANT(rs.world.size() <= coop::desync::kBuckets && rs.flags.size() <= coop::desync::kBuckets);
+        for (int b : rs.world) INVARIANT(b >= 0 && b < coop::desync::kBuckets);
+        for (int b : rs.flags) INVARIANT(b >= 0 && b < coop::desync::kBuckets);
+        const coop::progress::WorldImage part = coop::desync::WorldBuckets(coop::progress::WorldImage{}, rs.world);
+        INVARIANT(part.groups.size() <= coop::progress::kPoolBlocks);
+    }
+}
+
 void run_lamp(Rng& r, const Corpus& c) {
     const std::string s = text_of(next_input(r, c, true));
     set_input("lamp", s);
@@ -707,6 +814,15 @@ void run_lamp(Rng& r, const Corpus& c) {
     if (coop::LampLitFromJsonText(s, &lit, &err)) {  // EVENT lamp_lit (a guest lit a lamp)
         INVARIANT(lit.size() <= coop::kMaxLampLitIds);
         for (std::uint32_t id : lit) INVARIANT(coop::LampLitFlagAllowed(id));
+    }
+    coop::npctalk::TalkEvent te;  // EVENT npc_talk (both sides)
+    if (coop::npctalk::FromJsonText(s, &te, &err)) {
+        INVARIANT(te.who.size() <= 16 && te.item_cat <= 15 && te.voice <= 999999999u);
+        for (float f : te.pos) INVARIANT(std::isfinite(f) && std::fabs(f) <= 1e6f);
+        coop::npctalk::TalkEvent back;
+        std::string again;
+        INVARIANT(coop::npctalk::FromJsonText(coop::npctalk::ToJsonText(te), &back, &again) && back.kind == te.kind &&
+                  back.npc == te.npc && back.talk == te.talk && back.msg == te.msg && back.who == te.who);
     }
     coop::worldact::Request wa;  // EVENT world_action (a guest's lever / door / NPC talk, host side)
     if (coop::worldact::RequestFromJson(s, &wa, &err)) {
@@ -983,6 +1099,7 @@ party::LinkConfig fuzz_cfg(const std::string& name) {
     cfg.backoff_jitter_pct = 0;
     cfg.connect_timeout_ms = 1500;
     cfg.roster_refresh_ms = 200;
+    cfg.auth_throttle = false;  // random handshakes share 127.0.0.1 with the real members
     return cfg;
 }
 
@@ -1816,6 +1933,128 @@ void regress_link() {
     }
 }
 
+// One handshake with `key` as the party key: 'W' WELCOME, 'R' REJECT (*reason), '?' otherwise.
+char try_handshake(std::uint16_t port, const party::crypto::Key& key, const std::string& name, std::string* reason) {
+    Socket s = tcp_connect(port);
+    if (s == party::sock::kInvalid) return '?';
+    DWORD to = 2000;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&to), sizeof to);
+    const Bytes hello = plain_frame(kHello, hello_body(name));
+    send_all(s, hello.data(), hello.size());
+    u8 type = 0;
+    Bytes body;
+    char out = '?';
+    auto reject_reason = [&] {
+        if (body.size() >= 3) {
+            const std::size_t n = std::min<std::size_t>(body[1] | body[2] << 8, body.size() - 3);
+            *reason = std::string(body.begin() + 3, body.begin() + 3 + static_cast<std::ptrdiff_t>(n));
+        }
+        return 'R';
+    };
+    if (read_frame(s, nullptr, &type, &body)) {
+        if (type == kReject) {
+            out = reject_reason();
+        } else if (type == kChallenge && body.size() == 24) {
+            party::crypto::Nonce hn{}, gn{};
+            std::memcpy(hn.data(), body.data(), 24);
+            party::crypto::random_bytes(gn.data(), gn.size());
+            const party::crypto::Key proof = party::crypto::auth_proof(key, hn, gn);
+            W a;
+            a.raw(gn.data(), 24).raw(proof.data(), 32);
+            const Bytes auth = plain_frame(kAuth, a.b);
+            send_all(s, auth.data(), auth.size());
+            party::crypto::Aead rx;
+            rx.init(party::crypto::session_key(key, "bbp-h2g", hn, gn));
+            if (read_frame(s, &rx, &type, &body)) out = type == kReject ? reject_reason() : type == kWelcome ? 'W' : '?';
+        }
+    }
+    party::sock::close(s);
+    return out;
+}
+
+// F3: online password guessing (party_link.h AuthThrottle).
+void regress_auth_throttle() {
+    using party::AuthThrottle;
+    {  // the pure rule
+        AuthThrottle t;
+        const std::uint32_t a = 0x0100007f, b = 0x0200007f;
+        std::int64_t now = 1000, left = 0;
+        for (int i = 0; i < party::kAuthFailFree; ++i) CHECK(!t.Fail(a, now + i));
+        CHECK(!t.Locked(a, now + 10));
+        CHECK(t.Fail(a, now + 10));  // the 6th wrong proof in a minute
+        CHECK(t.Locked(a, now + 11, &left) && left > party::kAuthLockoutMs - 100 && left <= party::kAuthLockoutMs);
+        CHECK(!t.Locked(b, now + 11));  // per address
+        now += 10 + party::kAuthLockoutMs;
+        CHECK(!t.Locked(a, now));
+        CHECK(t.Fail(a, now));  // after a lockout one wrong proof locks again, twice as long
+        CHECK(t.Locked(a, now + 2 * party::kAuthLockoutMs - 1) && !t.Locked(a, now + 2 * party::kAuthLockoutMs));
+        for (int k = 0; k < 20; ++k) {  // the doubling stops at the cap
+            now += party::kAuthLockoutMaxMs;
+            t.Fail(a, now);
+        }
+        CHECK(t.Locked(a, now + party::kAuthLockoutMaxMs - 1, &left) && left <= party::kAuthLockoutMaxMs);
+        CHECK(!t.Locked(a, now + party::kAuthLockoutMaxMs));
+        now += party::kAuthLockoutMaxMs + party::kAuthForgetMs + 1;  // forgotten: free tries again
+        for (int i = 0; i < party::kAuthFailFree; ++i) CHECK(!t.Fail(a, now));
+        // Slow guessing (5 a minute) never locks; a good proof resets the free count.
+        AuthThrottle slow;
+        for (int i = 0; i < 50; ++i) CHECK(!slow.Fail(b, 1000 + i * (party::kAuthFailWindowMs / 4)));
+        AuthThrottle ok;
+        for (int i = 0; i < party::kAuthFailFree; ++i) ok.Fail(b, 5);
+        ok.Success(b);
+        CHECK(!ok.Fail(b, 6));
+        // A stranger spraying addresses: the table stays bounded and a locked address stays tracked.
+        AuthThrottle many;
+        for (int i = 0; i <= party::kAuthFailFree; ++i) many.Fail(a, 10);
+        for (std::uint32_t ip = 1; ip < party::kAuthTrackedAddrs + 500; ++ip) many.Fail(0x0a000000 + ip, 20 + ip);
+        CHECK(many.Tracked() <= party::kAuthTrackedAddrs);
+        CHECK(many.Locked(a, 30));
+    }
+    {  // a real host over loopback
+        party::LinkCallbacks cb;
+        cb.on_event = [](int, std::uint64_t, const std::string&, const std::string&) {};
+        cb.on_party_cmd = [](int, const std::string&, const std::string&) {};
+        cb.on_progress = [](int, const std::vector<u8>&) {};
+        cb.on_rpc = [](int, const std::string&, const std::string&) { return std::string("{}"); };
+        party::LinkConfig cfg = fuzz_cfg("Host");
+        cfg.auth_throttle = true;
+        party::PartyLink host(cfg, cb);
+        std::string err;
+        CHECK(host.start_host(&err));
+        const std::uint16_t port = host.bound_port();
+        const std::array<u8, 8> secret{};
+        const party::crypto::Key wrong = party::crypto::derive_party_key("not-the-password", secret.data());
+        std::string why;
+        int rejected = 0;
+        for (int i = 0; i < party::kAuthFailFree + 1; ++i) rejected += try_handshake(port, wrong, "guess", &why) == 'R';
+        CHECK(rejected == party::kAuthFailFree + 1);
+        // Locked out: refused at HELLO, the right password included, with a reason the guest shows.
+        why.clear();
+        CHECK(try_handshake(port, party_key(), "friend", &why) == 'R');
+        CHECK(why.find("too many wrong passwords") != std::string::npos);
+        std::printf("  auth throttle: %d wrong proofs -> \"%s\"\n", rejected, why.c_str());
+        host.stop(false);
+    }
+    {  // the default host lets a few typos through, then the right password in
+        party::LinkCallbacks cb;
+        cb.on_event = [](int, std::uint64_t, const std::string&, const std::string&) {};
+        cb.on_party_cmd = [](int, const std::string&, const std::string&) {};
+        cb.on_progress = [](int, const std::vector<u8>&) {};
+        cb.on_rpc = [](int, const std::string&, const std::string&) { return std::string("{}"); };
+        party::LinkConfig cfg = fuzz_cfg("Host");
+        cfg.auth_throttle = true;
+        party::PartyLink host(cfg, cb);
+        std::string err;
+        CHECK(host.start_host(&err));
+        const std::array<u8, 8> secret{};
+        const party::crypto::Key wrong = party::crypto::derive_party_key("typo", secret.data());
+        std::string why;
+        for (int i = 0; i < 3; ++i) CHECK(try_handshake(host.bound_port(), wrong, "friend", &why) == 'R');
+        CHECK(try_handshake(host.bound_port(), party_key(), "friend", &why) == 'W');
+        host.stop(false);
+    }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1852,6 +2091,7 @@ int main(int argc, char** argv) {
         regress_decoders();
         regress_hostsvc();
         regress_link();
+        regress_auth_throttle();
         std::printf("  %d checks, %d failures\n", g_checks, g_fail);
     }
     const Corpus jc = json_corpus();
@@ -1888,7 +2128,7 @@ int main(int argc, char** argv) {
     std::vector<Named> targets = {
         {"json", run_json, &jc, 1},       {"code", run_code, &bin, 0.5},     {"stun", run_stun, &bin, 0.5},
         {"udp", run_udp, &bin, 0.7},      {"travel", run_travel, &jc, 1},    {"story", run_story, &jc, 1},
-        {"items", run_items, &jc, 1},     {"phantom", run_phantom, &jc, 0.5}, {"lamp", run_lamp, &jc, 0.3}, {"balance", run_balance, &jc, 0.2}, {"progress", run_progress, &jc, 1},
+        {"items", run_items, &jc, 1},     {"phantom", run_phantom, &jc, 0.5}, {"lamp", run_lamp, &jc, 0.3}, {"peerev", run_peerev, &jc, 0.5}, {"balance", run_balance, &jc, 0.2}, {"progress", run_progress, &jc, 1},
         {"hostsvc", run_hostsvc, &jc, 1.5}, {"linkhost", run_linkhost, &jc, 2}, {"linkguest", run_linkguest, &jc, 2},
     };
     double total_share = 0;

@@ -354,7 +354,9 @@ bool TemporalUpscaler::OnFrameStart() {
     const bool jitter_on = active && settings.jitter && !BbToggle::Disabled(1u << 25);
     const int upscaler = settings.upscaler.load();
     const int output = settings.output_res.load();
-    const bool output_changed = !scaled_session && applied_output != output;
+    // Ultrawide outputs apply after a restart (startup patch), not live.
+    const bool output_changed = !scaled_session && applied_output != output &&
+                                !BbSettings::Ultrawide(output);
     if (output_changed) {
         target_width = BbSettings::OutputWidths[output];
         target_height = BbSettings::OutputHeights[output];
@@ -1682,16 +1684,22 @@ void TemporalUpscaler::RunUiOnly(VideoCore::ImageId color_id, VideoCore::ImageId
                         vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
         runtime.FlushBarriers();
     }
+    // Ultrawide (from Supermedo/bloodborne_pc PR #70 by emurphy04): menus without a scene draw
+    // their backdrop over the 1920-wide stage only and leave the game's grey clear color beside
+    // it. Those columns are black instead.
+    const float side = 0.5f * (1.0f - 1920.0f / float(UiComposition::Canvas()[0]));
+    const s32 src_side = s32(std::lround(source_width * side));
+    const s32 dst_side = s32(std::lround(ui_width * side));
     const vk::ImageBlit region{
         .srcSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-        .srcOffsets = std::array{vk::Offset3D{0, 0, 0},
-            vk::Offset3D{s32(source_width), s32(source_height), 1}},
+        .srcOffsets = std::array{vk::Offset3D{src_side, 0, 0},
+            vk::Offset3D{s32(source_width) - src_side, s32(source_height), 1}},
         .dstSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-        .dstOffsets = std::array{vk::Offset3D{0, 0, 0},
-            vk::Offset3D{s32(ui_width), s32(ui_height), 1}},
+        .dstOffsets = std::array{vk::Offset3D{dst_side, 0, 0},
+            vk::Offset3D{s32(ui_width) - dst_side, s32(ui_height), 1}},
     };
-    scheduler.Record([source, source_layout, ui = vk::Image(ui_image),
-                      region](vk::CommandBuffer cmd) {
+    scheduler.Record([source, source_layout, ui = vk::Image(ui_image), region,
+                      dst_side](vk::CommandBuffer cmd) {
         vk::ImageMemoryBarrier2 barrier{
             .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
             .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
@@ -1703,6 +1711,16 @@ void TemporalUpscaler::RunUiOnly(VideoCore::ImageId color_id, VideoCore::ImageId
             .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
         };
         cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier});
+        if (dst_side > 0) {
+            cmd.clearColorImage(ui, vk::ImageLayout::eTransferDstOptimal,
+                                vk::ClearColorValue{std::array{0.0f, 0.0f, 0.0f, 1.0f}},
+                                vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
+            const vk::MemoryBarrier2 cleared{.srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                                             .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+                                             .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                                             .dstAccessMask = vk::AccessFlagBits2::eTransferWrite};
+            cmd.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &cleared});
+        }
         cmd.blitImage(source, source_layout, ui, vk::ImageLayout::eTransferDstOptimal, region,
                       vk::Filter::eLinear);
         barrier.srcStageMask = vk::PipelineStageFlagBits2::eTransfer;

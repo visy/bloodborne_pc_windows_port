@@ -148,6 +148,8 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_LOG_MARK_AT` | Test aid: one user mark (as F9) S s after the world first came up with the party link up (verbose only) | off | `gpu/shim/party/party_log_game.cpp` |
 | `BB_PARTY_LOG_TIME` | `1`: wall-clock stamps on the Party / Party travel / Party phantom log lines | off | `gpu/shim/party/party_director.cpp` |
 | `BB_PARTY_DIRECTOR_TEST_DELAY` | Delay of the director test actions in s (after the world is up) | 10 | `gpu/shim/party/party_director.cpp` |
+| `BB_PARTY_DESYNC_S` | Host: seconds between desync digests (party_desync.h: the world mirror and the host's candidate flags, checked by every guest, which asks a resync of the buckets that differ); `0` off | 15 | `gpu/shim/party/party_desync.cpp` |
+| `BB_PARTY_DESYNC_TEST` | `N`, guest: after the N-th matching digest, corrupt one mirror group and forget one host flag of the guest's model, so the next digest must find, resync and resolve both (live check) | off | `gpu/shim/party/party_desync.cpp` |
 | `BB_PARTY_GUEST_SERVICES` | `0`: guests cannot use the Doll, shops or workshop in the host's Dream (vanilla client gates) | on in party mode | `gpu/shim/party/party_guestsvc.cpp` |
 | `BB_PARTY_GUEST_SERVICES_TALK` | `all` or a comma list of more talk script ids the guest may use (diagnostics) | built-in list | `gpu/shim/party/party_guestsvc.cpp` |
 | `BB_PARTY_GUEST_LAMPS` | `0`: guests cannot use world lamps / headstones (vanilla client gates); `1` forces them on. Otherwise the ini / menu switch `party_guest_lamps` (Party members page, "Guests use lamps"). On: a guest's lamp / headstone use becomes a request and the whole party moves (host-led); a lamp a guest lights is lit in the host's world (EVENT `lamp_lit`) | on in party mode | `gpu/shim/party/party_guestsvc.cpp` |
@@ -204,3 +206,12 @@ Not a party switch despite the name: `BB_SAVE_LOG` (frame / readback statistics,
 Advanced tab; `run.bat`). Related non-party switches the party code reads: `BB_MODS_ENABLED`
 (mods off = no gameplay mods in the version check), `BB_SKIP_NETWORK_CHOICE` (the launcher sets
 `online` in party mode; `scripts/patches.py`).
+
+Not party switches either, for any bug report: `BB_TRACE=1` (launcher Advanced / Debug: Debug
+tracing) prints a once-a-second heartbeat (flips/s, GPU submits/s), `[BLOCKED >3s]` lines while
+frames stall and hang dumps (`out/hang_dump*.log`, with thread states and the main thread's
+once-a-second RIP samples) at no measurable fps cost, since imports keep their direct calls.
+`BB_TRACE_IMPORTS=1` (or `bbport.exe --trace`) adds the full per-call import trace
+(`out/imports_<time>.log`, `[IMPORT CALL]` lines, the main thread's recent imports in hang
+dumps): every import then goes through a logging thunk, about 70% slower (102 -> 31 fps), so use
+it only to find which import a hang or crash is in. `src/probe.c`.

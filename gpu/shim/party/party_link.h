@@ -41,6 +41,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -76,6 +77,43 @@ constexpr std::size_t kMaxRosterEntries = 8;
 constexpr double kMemberFrameRate = 200, kMemberFrameBurst = 2000;
 constexpr double kMemberByteRate = 4u << 20, kMemberByteBurst = 48u << 20;
 constexpr std::uint32_t kFloodDisconnect = 20000;
+
+// Host: online password guessing (bbport security pass, F3). The party key is Argon2-derived, so
+// an offline guess is slow; online, each wrong AUTH proof from an address counts. kAuthFailFree
+// wrong proofs within kAuthFailWindowMs are free (a typo, an old code); the next one locks the
+// address out for kAuthLockoutMs, doubling with every further lockout up to kAuthLockoutMaxMs
+// (reset after kAuthForgetMs without a failure). A locked-out address gets REJECT Auth ("too many
+// wrong passwords ...") at HELLO, before any proof is checked, the right password included. At
+// most kAuthTrackedAddrs addresses are tracked (the stalest is forgotten first).
+constexpr int kAuthFailFree = 5;
+constexpr std::int64_t kAuthFailWindowMs = 60'000;
+constexpr std::int64_t kAuthLockoutMs = 30'000;
+constexpr std::int64_t kAuthLockoutMaxMs = 15 * 60'000;
+constexpr std::int64_t kAuthForgetMs = 60 * 60'000;
+constexpr std::size_t kAuthTrackedAddrs = 4096;
+
+class AuthThrottle {
+public:
+    /// The address may not try now; *remaining_ms (optional): how long it still waits.
+    bool Locked(std::uint32_t ip, std::int64_t now_ms, std::int64_t* remaining_ms = nullptr) const;
+    /// A wrong proof from `ip`; true when it started a lockout.
+    bool Fail(std::uint32_t ip, std::int64_t now_ms);
+    /// A good proof: the address's free failures start over (its lockout history stays).
+    void Success(std::uint32_t ip);
+    std::size_t Tracked() const { return addrs_.size(); }
+    std::uint64_t lockouts() const { return lockouts_; }
+
+private:
+    struct Addr {
+        int fails = 0;              // in the current window
+        std::int64_t window = 0;    // window start
+        int lockouts = 0;
+        std::int64_t until = 0;     // locked out until
+        std::int64_t last = 0;      // last failure
+    };
+    std::map<std::uint32_t, Addr> addrs_;
+    std::uint64_t lockouts_ = 0;
+};
 constexpr int kHostSlot = 0;
 
 // Prologue: in its own world, still playing the campaign start (party_start.h); not summoned yet.
@@ -192,6 +230,9 @@ struct LinkConfig {
     // (set_udp_transport) the link uses its own UDP socket on the same port number.
     bool udp_link = true;
     int tcp_fallback_ms = 1500;
+    // Host: lock out an address after repeated wrong passwords (AuthThrottle). Only the fuzzer
+    // turns it off (its random handshakes come from 127.0.0.1 like its real members).
+    bool auth_throttle = true;
 };
 
 // What differs between the host's and a guest's game (bbport build, eboot.bin, game params,
@@ -203,6 +244,12 @@ std::string identity_mismatch(const LinkConfig& host, const LinkConfig& guest);
 // usual cause is a wrong one; without, a party code from another hosting session (or a guest
 // that sent a password the host does not use).
 std::string auth_reject_reason(bool host_has_password);
+// Guest, the host does not answer (no TCP / UDP answer): within kHostBackWaitS of the host ending
+// the party or its link dropping (`since_host_gone_s` >= 0) the host is most likely restarting,
+// so the text says to wait for it, not the NAT advice (playtest 1: "behind a NAT: it needs your
+// guest code" while the host was only relaunching). `since_host_gone_s` < 0: never connected.
+constexpr double kHostBackWaitS = 60.0;
+std::string host_no_answer_hint(double since_host_gone_s);
 // A9: is an installed hook's name a diagnostic (log / probe / trace / test), not a gameplay patch?
 bool diagnostic_hook_name(const std::string& name);
 // A9: the party hook set's hash: BLAKE2b-256 over the sorted, de-duplicated names (diagnostics

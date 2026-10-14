@@ -41,6 +41,7 @@
 #include "party_perf.h"
 #include "party_watchdog.h"
 #include "party_worldact.h"
+#include "party_npctalk.h"
 #include "../bbport_game_menu.h"
 
 #include "../net/bbnet_internal.h"
@@ -135,7 +136,8 @@ struct TravelStep {
         HostOutage, GuestOutage, // a simulated total network outage of `buttons` ms (BB_NET_SIM on)
         HostObj, GuestObj, HostChr, GuestChr, // stand at a map object / character: ENTITY[:DIST[:ANGLE]]
         HostUse, GuestUse, // use goods ID as the item does (test aid): its behaviour's SpEffect on the own chr
-        GuestStick // walk by the left stick (the approach driver) to X:Z[:R[:STEPS]]: a real walk, no warp
+        GuestStick, // walk by the left stick (the approach driver) to X:Z[:R[:STEPS]]: a real walk, no warp
+        GuestHome   // the guest's own leave (LeaveGameSession: home, the link stays; its bell rings again)
     } kind = HostWarp;
     std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30; HostKill: the entity id
     float pos[3] = {};    // HostMove / GuestMove: the chr warp target (map coordinates)
@@ -1060,6 +1062,7 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::GuestStick: return "guest_stick";
     case TravelStep::HostUse: return "host_use";
     case TravelStep::GuestUse: return "guest_use";
+    case TravelStep::GuestHome: return "guest_home";
     }
     return "?";
 }
@@ -1435,7 +1438,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                 step.kind == TravelStep::GuestPress || step.kind == TravelStep::GuestMark ||
                 step.kind == TravelStep::GuestLamp || step.kind == TravelStep::GuestSkipRemo || step.kind == TravelStep::GuestOutage || step.kind == TravelStep::GuestKill ||
                 step.kind == TravelStep::GuestObj || step.kind == TravelStep::GuestChr ||
-                step.kind == TravelStep::GuestStick || step.kind == TravelStep::GuestUse) == (role == PartyRole::Guest);
+                step.kind == TravelStep::GuestStick || step.kind == TravelStep::GuestUse ||
+                step.kind == TravelStep::GuestHome) == (role == PartyRole::Guest);
     };
     if (t.script_on) {
         RunTravelScript(st, s, now);
@@ -1595,6 +1599,11 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         t.pressing = true;
         t.release_at = now + std::chrono::milliseconds(150);
         Log("test: %s 0x%x", TravelStepName(step.kind), step.buttons);
+    } else if (step.kind == TravelStep::GuestHome) {
+        // Playtest 1 G4 (direct summon re-rings): the guest goes home on its own; the director's
+        // bell then rings again from its own world.
+        const bool left = LeaveGameSession();
+        Log("test: guest_home: the game's own leave %s (%s)", left ? "run" : "NOT available", Describe(s).c_str());
     } else if (step.kind == TravelStep::HostUse || step.kind == TravelStep::GuestUse) {
         UseGoodsForTest(TravelStepName(step.kind), static_cast<std::uint32_t>(std::strtoul(step.args.c_str(), nullptr, 10)));
     } else if (step.kind == TravelStep::HostMark || step.kind == TravelStep::GuestMark) {
@@ -1808,6 +1817,10 @@ void RequestGuestSendHome(const std::string& why) {
     }
     g_send_home_request = true;
 }
+
+bool GuestBellEffectOn() { return HasSpEffect(LocalPlayer(), kGuestBellEffect); }
+bool DropGuestBellEffect() { return RemoveSpEffect(kGuestBellEffect); }
+bool ApplyGuestBellEffect() { return ApplySpEffect(kGuestBellEffect); }
 
 bool LeaveGameSession() {
     // A guest (a phantom in the host's world): the game's own voluntary leave - OnLeave_Limit
@@ -2423,7 +2436,8 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("host_press=", 0) == 0 || item.rfind("guest_press=", 0) == 0 ||
                        item.rfind("host_lastlamp=", 0) == 0 || item.rfind("host_lamp=", 0) == 0 ||
                        item.rfind("guest_lamp=", 0) == 0 || item.rfind("host_alone=", 0) == 0 || item.rfind("guest_kill=", 0) == 0 ||
-                       item.rfind("host_outage=", 0) == 0 || item.rfind("guest_outage=", 0) == 0) {
+                       item.rfind("host_outage=", 0) == 0 || item.rfind("guest_outage=", 0) == 0 ||
+                       item.rfind("guest_home", 0) == 0) {
                 TravelStep step;
                 step.kind = item.rfind("guest_outage", 0) == 0  ? TravelStep::GuestOutage
                             : item.rfind("host_outage", 0) == 0   ? TravelStep::HostOutage
@@ -2435,6 +2449,7 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("guest_lamp=", 0) == 0  ? TravelStep::GuestLamp
                             : item.rfind("host_alone=", 0) == 0  ? TravelStep::HostAlone
                             : item.rfind("guest_kill=", 0) == 0  ? TravelStep::GuestKill
+                            : item.rfind("guest_home", 0) == 0   ? TravelStep::GuestHome
                             : item[0] == 'g'                     ? TravelStep::GuestDie
                             : item.rfind("host_die", 0) == 0     ? TravelStep::HostDie
                             : item.rfind("host_kill", 0) == 0    ? TravelStep::HostKill
@@ -2972,6 +2987,7 @@ void PartyDirector::Tick() {
     GuestServicesTick(s, link);
     // A guest's levers / doors / NPC talk change the host's world (party_worldact.h).
     worldact::Tick(s, link);
+    npctalk::Tick(s, link);  // shared NPC dialogue (party_npctalk.h)
     split::Tick(s);  // split travel: the lamp choice dialog (party_split.h)
     if (role == PartyRole::Host) {
         AltarAutopilotTick(s);  // "Enter the party's dungeon" in one press
@@ -3458,6 +3474,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     InstallStoryHooks();    // C4: bank-2002 capture, guest mirror / replay (byte-verified)
     InstallItemsPatches();  // C3: award hook, parity patches (byte-verified)
     PhantomInit();          // guest respawn at the host's lamp, refill, boss Insight
+    npctalk::Init();        // shared NPC dialogue: talk line / menu observers (party_npctalk.h)
     worldact::Init();       // guest world actions, instanced treasure pickups (byte-verified)
     GuestServicesInit();    // guest Doll / shops / workshop in the host's Dream (byte-verified)
     balance::Init();        // C4 rot hook, D7 scaling (party_balance.h)

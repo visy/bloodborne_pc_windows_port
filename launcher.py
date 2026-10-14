@@ -1254,6 +1254,8 @@ class BloodborneLauncher(tk.Tk):
         # option: read from and written to bbport.ini directly.
         self.party_hud = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_hud"))
         self.party_name_tags = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_name_tags"))
+        # Shared NPC dialogue: a game setting (bbport.ini party_npc_talk, also in the game's menus).
+        self.party_npc_talk = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_npc_talk"))
         self.party_separate_save = tk.BooleanVar(value=self.settings.get("party_separate_save", True))
         self.party_port_var = tk.StringVar(value=str(self.settings.get("party_port", PARTY_DEFAULT_PORT)))
         self.party_upnp = tk.BooleanVar(value=self.settings.get("party_upnp", True))
@@ -1324,7 +1326,8 @@ class BloodborneLauncher(tk.Tk):
             width=18, indent=True)
         self._combo(sec, "Window mode:", self.window_mode_var, WINDOW_MODE_CHOICES,
                     "Windowed (default): a normal window with title bar. Borderless: a frameless window "
-                    "covering the monitor. Fullscreen: exclusive-style fullscreen. Alt+Enter toggles "
+                    "covering the monitor (quick Alt+Tab). Fullscreen: exclusive fullscreen at the desktop's "
+                    "display mode (the driver may present with less latency). Alt+Enter toggles "
                     "fullscreen in game (BB_WINDOW_MODE).", width=12)
         self._combo(sec, "Monitor:", self.display_var, [c[0] for c in self.display_choices],
                     "Which monitor the game opens on. The list comes from bb-gpu-capabilities; "
@@ -1514,8 +1517,10 @@ class BloodborneLauncher(tk.Tk):
         tab = self._tab("Advanced / Debug")
         sec = self._section(tab, 0, "Diagnostics")
         self._check(sec, "Debug tracing (heartbeat/hang dump)", self.feat_tracing,
-                    "Extra diagnostic tracing: writes heartbeat logs and hang dumps to out\\ for bug reports. "
-                    "Slower, and logs get very large: turn it on only to record a bug. Default: off (BB_TRACE).")
+                    "Diagnostic tracing for bug reports: a once-a-second heartbeat (frames and GPU submits per "
+                    "second) and hang dumps with thread states and main-thread samples in out\\. Cheap: no "
+                    "measurable fps cost. Default: off (BB_TRACE). The slow full import log is separate: "
+                    "BB_TRACE_IMPORTS=1.")
         self._check(sec, "Save frame stats to logs\\", self.feat_save_log,
                     "Writes frame and readback statistics to logs\\<time>.frames.csv / .readbacks.csv for "
                     "performance analysis. Default: off (BB_SAVE_LOG).")
@@ -1724,6 +1729,12 @@ class BloodborneLauncher(tk.Tk):
                               "the game: System > Party rules > Party name tags. Default: on (bbport.ini "
                               "party_name_tags).",
                               command=self.save_party_name_tags)
+        npc_talk_cb = self._check(sec, "Share NPC dialogue", self.party_npc_talk,
+                                  "When a companion near you talks to an NPC you get the conversation too: "
+                                  "the game's subtitles, the NPC's voice, their choices and gifts (passive, "
+                                  "no menu opens). Range: in the game, System > Party rules > NPC dialogue "
+                                  "range (default 25 m). Default: on (bbport.ini party_npc_talk).",
+                                  command=self.save_party_npc_talk)
         self.party_separate_save.set(True)
         save_cb = self._check(sec, "Separate party saves (always)", self.party_separate_save,
                               "Party play always uses its own save folder (user\\savedata_party), so your "
@@ -1834,7 +1845,7 @@ class BloodborneLauncher(tk.Tk):
 
         # Fields enabled in each mode: on (host or join), host only, join only
         self.party_widgets_on = [name_lbl, self.party_name_entry, self.party_max_combo, auto_cb, seamless_cb,
-                                 dsummon_cb, hud_cb, tags_cb, save_cb,
+                                 dsummon_cb, hud_cb, tags_cb, npc_talk_cb, save_cb,
                                  port_lbl, self.party_port_entry, upnp_cb, stun_lbl, self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
         self.party_widgets_host = [public_lbl, self.party_public_entry,
@@ -1864,6 +1875,14 @@ class BloodborneLauncher(tk.Tk):
             update_ini(bbport_ini_path(), {"party_name_tags": "1" if self.party_name_tags.get() else "0"})
         except OSError as ex:
             self.log(f"[PARTY] Could not save the Party name tags setting to bbport.ini: {ex}")
+
+    def save_party_npc_talk(self):
+        """The Share NPC dialogue checkbox: bbport.ini party_npc_talk (a running game picks it up on its
+        next start; in game: System > Party rules)."""
+        try:
+            update_ini(bbport_ini_path(), {"party_npc_talk": "1" if self.party_npc_talk.get() else "0"})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save the Share NPC dialogue setting to bbport.ini: {ex}")
 
     def on_party_change(self):
         self.update_party_state()

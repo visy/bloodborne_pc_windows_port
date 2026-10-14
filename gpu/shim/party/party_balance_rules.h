@@ -73,6 +73,21 @@ bool EnemyScalingActive(const Rules& r);
 /// C4: the max HP factor for `stacks` rot stacks (clamped 0..kRotMaxStacks).
 float RotHpFactor(int stacks);
 
+/// C4 rot, what cleanses it (ERSC: resting at a grace). A lamp warp is the death's respawn (no
+/// rest) only while the player is still down from that death: dead at the warp, or the warp came
+/// within kRespawnWarpS of the death before the player was up again. Playtest 1 (H5:6072/10228):
+/// a host revived in place used a lamp 19 s after its death and the old 20 s rule called it the
+/// respawn.
+constexpr double kRespawnWarpS = 20.0;
+bool LampWarpIsRespawn(bool alive_at_warp, double since_death_s, bool up_since_death);
+/// Playtest 1 #21 ("rot wasn't removed on lamp rest, just triggering the lamp"): a dialog that
+/// opens with the player alive beside a lamp (its revive spot within kLampMenuRadiusM, height
+/// within kLampMenuHeightM) is the lamp's own menu ("Return to the Hunter's Dream?") or the
+/// party's travel question: a rest, whatever is answered.
+constexpr float kLampMenuRadiusM = 4.0f;
+constexpr float kLampMenuHeightM = 3.0f;
+bool LampMenuRest(bool dialog_opened, bool alive, float lamp_dx, float lamp_dy, float lamp_dz);
+
 /// Short value texts for the menu (help line): "150 % (+75 % HP per extra hunter)".
 std::string DescribeHp(int percent, bool russian);
 std::string DescribeDamage(int percent, bool russian);
