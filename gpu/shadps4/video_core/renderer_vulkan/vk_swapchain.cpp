@@ -2,10 +2,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <limits>
+#include <string>
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "core/emulator_settings.h"
+#include "bbport_hdr.h"
+#include "bbport_settings.h"
 #include "imgui/renderer/imgui_core.h"
 #include "sdl_window.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -120,6 +126,35 @@ void Swapchain::Create(u32 width_, u32 height_) {
 
     SetupImages();
     RefreshSemaphores();
+    if (hdr_output) {
+        // A new swapchain has no metadata yet.
+        const float peak = metadata_peak, paper = metadata_paper;
+        metadata_peak = metadata_paper = 0.0f;
+        if (peak > 0.0f) SetHdrMetadata(peak, paper);
+    }
+}
+
+void Swapchain::SetHdrMetadata(float peak_nits, float paper_white_nits) {
+    if (!hdr_output || !swapchain || !instance.IsHdrMetadataSupported() ||
+        (peak_nits == metadata_peak && paper_white_nits == metadata_paper)) {
+        return;
+    }
+    metadata_peak = peak_nits;
+    metadata_paper = paper_white_nits;
+    // The content: Rec.2020 primaries, D65 white; its light level is what the curve can reach.
+    const vk::HdrMetadataEXT metadata{
+        .displayPrimaryRed = {0.708f, 0.292f},
+        .displayPrimaryGreen = {0.170f, 0.797f},
+        .displayPrimaryBlue = {0.131f, 0.046f},
+        .whitePoint = {0.3127f, 0.3290f},
+        .maxLuminance = peak_nits,
+        .minLuminance = 0.0f,
+        .maxContentLightLevel = peak_nits,
+        .maxFrameAverageLightLevel = std::min(peak_nits, paper_white_nits),
+    };
+    instance.GetDevice().setHdrMetadataEXT(swapchain, metadata);
+    std::printf("HDR: metadata peak %.0f nits, frame average %.0f nits\n", peak_nits,
+                std::min(peak_nits, paper_white_nits));
 }
 
 void Swapchain::Recreate(u32 width_, u32 height_) {
@@ -209,6 +244,61 @@ void Swapchain::FindPresentFormat() {
         }) != formats.end();
     // Also make sure that user allowed us to use HDR
     supports_hdr &= EmulatorSettings.IsHdrAllowed();
+
+    // bbport: what the display offers (with VK_EXT_swapchain_colorspace, HDR colour spaces too).
+    {
+        std::string offered;
+        for (const auto& f : formats) {
+            offered += " " + vk::to_string(f.format) + "/" + vk::to_string(f.colorSpace);
+        }
+        std::printf("Swapchain: formats offered:%s\n", offered.c_str());
+    }
+    // bbport: native HDR output (bbport_hdr.h): chosen in the settings, HDR on in Windows (or
+    // BB_HDR_FORCE=1 for tests: Windows then maps the HDR picture down), and an HDR10 or scRGB
+    // format offered. Otherwise the SDR path below, with the reason in the log and the menu.
+    auto& settings = BbSettings::Get();
+    if (settings.startup_hdr) {
+        const char* force = std::getenv("BB_HDR_FORCE");
+        const char* want = std::getenv("BB_HDR_FORMAT");
+        const bool scrgb_first = want && !std::strcmp(want, "scrgb");
+        const auto find = [&](vk::Format format, vk::ColorSpaceKHR space) {
+            return std::ranges::find(formats, vk::SurfaceFormatKHR{format, space});
+        };
+        const std::array pq_formats{vk::Format::eA2B10G10R10UnormPack32,
+                                    vk::Format::eA2R10G10B10UnormPack32,
+                                    vk::Format::eR16G16B16A16Sfloat, vk::Format::eR16G16B16A16Unorm};
+        auto chosen = formats.end();
+        int encoding = BbHdr::Sdr;
+        const auto try_scrgb = [&] {
+            if (chosen != formats.end()) return;
+            chosen = find(vk::Format::eR16G16B16A16Sfloat, vk::ColorSpaceKHR::eExtendedSrgbLinearEXT);
+            if (chosen != formats.end()) encoding = BbHdr::ScRgb;
+        };
+        if (scrgb_first) try_scrgb();
+        for (const vk::Format format : pq_formats) {
+            if (chosen != formats.end()) break;
+            chosen = find(format, vk::ColorSpaceKHR::eHdr10St2084EXT);
+            if (chosen != formats.end()) encoding = BbHdr::Pq;
+        }
+        try_scrgb();
+        const bool display_hdr = window.IsOnHdrDisplay() || (force && force[0] == '1');
+        if (!display_hdr) {
+            settings.hdr_problem = "HDR is off in Windows for this display (Settings > Display > Use HDR)";
+        } else if (chosen == formats.end()) {
+            settings.hdr_problem = "the driver offers no HDR10 or scRGB swapchain for this display";
+        } else {
+            surface_format = *chosen;
+            hdr_output = encoding;
+            settings.hdr_active = encoding;
+            settings.hdr_problem = nullptr;
+            std::printf("HDR: output on, %s %s%s\n", vk::to_string(chosen->format).c_str(),
+                        vk::to_string(chosen->colorSpace).c_str(),
+                        window.IsOnHdrDisplay() ? "" : " (forced: HDR is off in Windows)");
+            return;
+        }
+        std::printf("HDR: output asked for but not used: %s; presenting SDR\n",
+                    settings.hdr_problem.load());
+    }
 
     // If there is a single undefined surface format, the device doesn't care, so we'll just use
     // RGBA sRGB.

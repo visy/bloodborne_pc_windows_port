@@ -172,6 +172,20 @@ void DumpFinalFrameIfDue(const Instance& instance, Scheduler& scheduler, vk::Com
                {{image, width, height, 4, "final", bgra ? "bgra" : "rgba"}});
 }
 
+void DumpHdrIfDue(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
+                  vk::Image frame, u32 frame_width, u32 frame_height, vk::Image output,
+                  u32 output_width, u32 output_height, const char* output_format) {
+    static const char* trigger = std::getenv("BB_HDR_DUMP_TRIGGER");
+    static int index = 0;
+    if (!trigger || std::remove(trigger) != 0) {
+        return;
+    }
+    DumpImages(instance, scheduler, cmdbuf, index++,
+               {{frame, frame_width, frame_height, 4, "hdr_frame", "a2b10g10r10"},
+                {output, output_width, output_height, output_format[0] == 'r' ? 8u : 4u, "hdr_out",
+                 output_format}});
+}
+
 TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& scheduler_,
                                    VideoCore::TextureCache& texture_cache_, Runtime& runtime_,
                                    CameraMotion& camera_motion_, SceneTargets& scene_targets_)

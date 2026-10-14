@@ -30,8 +30,9 @@ void UpdateTextInput(SDL_Window* window);
 /// Whether anything is drawn this frame (menu open or FPS counter on).
 bool Visible();
 
-/// Present thread: draws into `view` (layout ColorAttachmentOptimal).
-void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent);
+/// Present thread: draws into `view` (layout ColorAttachmentOptimal); `clear`: the target is
+/// cleared to transparent first (the HDR output's overlay image). Returns whether it drew.
+bool Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, bool clear = false);
 
 /// bbport: the startup shader precompile screen (progress of BbCompileProgress), recorded into
 /// an active rendering of the swapchain image (cleared by the caller). Present thread.

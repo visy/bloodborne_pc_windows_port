@@ -672,6 +672,48 @@ def reflex_label(ini: dict) -> str:
     return next((label for label, v in REFLEX_CHOICES if v == value), REFLEX_CHOICES[0][0])
 
 
+# Native HDR output (docs/party/ERSC_PARITY.md I4): game settings in bbport.ini (hdr,
+# hdr_peak_nits, hdr_paper_white; also System > HDR in the game), off by default; on/off applies
+# at the next start, the curve live. (label, value)
+HDR_PEAK_CHOICES = [("Auto (display)", "auto"), ("400 nits", "400"), ("600 nits", "600"),
+                    ("800 nits", "800"), ("1000 nits", "1000"), ("1500 nits", "1500"),
+                    ("2000 nits", "2000"), ("4000 nits", "4000")]
+HDR_PAPER_WHITE_CHOICES = [("80 nits", "80"), ("100 nits", "100"), ("150 nits", "150"),
+                           ("200 nits (default)", "200"), ("250 nits", "250"), ("300 nits", "300"),
+                           ("400 nits", "400")]
+
+
+def hdr_peak_label(ini: dict) -> str:
+    value = str(ini.get("hdr_peak_nits", "auto")).strip().lower()
+    if value in ("", "0"):
+        value = "auto"
+    for label, v in HDR_PEAK_CHOICES:
+        if v == value:
+            return label
+    return f"{value} nits" if value.isdigit() else HDR_PEAK_CHOICES[0][0]
+
+
+def hdr_paper_white_label(ini: dict) -> str:
+    value = str(ini.get("hdr_paper_white", "200")).strip()
+    for label, v in HDR_PAPER_WHITE_CHOICES:
+        if v == value:
+            return label
+    return f"{value} nits" if value.isdigit() else "200 nits (default)"
+
+
+def hdr_ini(enabled: bool, peak_label: str, paper_label: str) -> dict:
+    """bbport.ini keys of the launcher's HDR options (a custom value from the game menu is kept)."""
+    def value_of(label, choices, fallback):
+        for name, v in choices:
+            if name == label:
+                return v
+        digits = label.split(" ")[0]
+        return digits if digits.isdigit() else fallback
+    return {"hdr": "1" if enabled else "0",
+            "hdr_peak_nits": value_of(peak_label, HDR_PEAK_CHOICES, "auto"),
+            "hdr_paper_white": value_of(paper_label, HDR_PAPER_WHITE_CHOICES, "200")}
+
+
 def frame_generation_label(ini: dict) -> str:
     """The launcher's choice for bbport.ini's frame_generation / fg_backend (Off when unset)."""
     factor = str(ini.get("frame_generation", "off")).lower().rstrip("x")
@@ -1306,6 +1348,11 @@ class BloodborneLauncher(tk.Tk):
         # option: read from and written to bbport.ini directly.
         self.frame_generation_var = tk.StringVar(value=frame_generation_label(read_ini(bbport_ini_path())))
         self.reflex_var = tk.StringVar(value=reflex_label(read_ini(bbport_ini_path())))
+        # HDR output: game settings too (bbport.ini hdr / hdr_peak_nits / hdr_paper_white).
+        _ini = read_ini(bbport_ini_path())
+        self.hdr_var = tk.BooleanVar(value=str(_ini.get("hdr", "0")).strip() not in ("", "0"))
+        self.hdr_peak_var = tk.StringVar(value=hdr_peak_label(_ini))
+        self.hdr_paper_var = tk.StringVar(value=hdr_paper_white_label(_ini))
         self.party_hud = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_hud"))
         self.party_name_tags = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_name_tags"))
         # Shared NPC dialogue: a game setting (bbport.ini party_npc_talk, also in the game's menus).
@@ -1464,6 +1511,27 @@ class BloodborneLauncher(tk.Tk):
         reflex_combo = self._combo(sec, "NVIDIA Reflex:", self.reflex_var, [c[0] for c in REFLEX_CHOICES],
                                    reflex_tip, width=14)
         reflex_combo.bind("<<ComboboxSelected>>", lambda e: self.save_frame_generation())
+        self._check(sec, "HDR output (HDR10)", self.hdr_var,
+                    "An HDR10 picture (PQ, Rec.2020) for an HDR display: the game's SDR picture keeps its "
+                    "mid-tones at paper white and only its highlights are expanded towards the peak. Needs "
+                    "HDR on in Windows (Settings > Display > Use HDR); without it the game stays SDR. "
+                    "Works with every upscaler and frame generation. Peak, paper white, highlights, "
+                    "saturation and a calibration pattern are in the game's System > HDR. A game setting "
+                    "(bbport.ini hdr, BB_HDR), used at the next start. Default: off.",
+                    command=self.save_hdr)
+        hdr_peak = self._combo(sec, "HDR peak brightness:", self.hdr_peak_var,
+                               [c[0] for c in HDR_PEAK_CHOICES],
+                               "The brightest the HDR picture gets. Auto: what the display reports to "
+                               "Windows (1000 nits when it reports nothing). Fine-tune it with the "
+                               "calibration pattern in System > HDR (bbport.ini hdr_peak_nits, "
+                               "BB_HDR_PEAK).", width=18, indent=True)
+        hdr_peak.bind("<<ComboboxSelected>>", lambda e: self.save_hdr())
+        hdr_paper = self._combo(sec, "HDR paper white:", self.hdr_paper_var,
+                                [c[0] for c in HDR_PAPER_WHITE_CHOICES],
+                                "Brightness of the picture's mid-tones and of the port's menus and HUD "
+                                "under HDR. 200 nits by default; lower in a dark room (bbport.ini "
+                                "hdr_paper_white, BB_HDR_PAPER_WHITE).", width=18, indent=True)
+        hdr_paper.bind("<<ComboboxSelected>>", lambda e: self.save_hdr())
 
         sec = self._section(tab, 1, "Streaming & effects")
         self._combo(sec, "VRAM pre-upload:", self.preupload_var, [c[0] for c in PREUPLOAD_CHOICES],
@@ -1961,6 +2029,14 @@ class BloodborneLauncher(tk.Tk):
             update_ini(bbport_ini_path(), values)
         except OSError as ex:
             self.log(f"[GRAPHICS] Could not save the frame generation setting to bbport.ini: {ex}")
+
+    def save_hdr(self):
+        """The HDR options: bbport.ini hdr / hdr_peak_nits / hdr_paper_white (next start)."""
+        try:
+            update_ini(bbport_ini_path(), hdr_ini(self.hdr_var.get(), self.hdr_peak_var.get(),
+                                                  self.hdr_paper_var.get()))
+        except OSError as ex:
+            self.log(f"[GRAPHICS] Could not save the HDR setting to bbport.ini: {ex}")
 
     def save_party_hud(self):
         """The Party HUD checkbox: bbport.ini party_hud (a running game picks it up on its next start;

@@ -18,6 +18,7 @@
 #include <SDL3/SDL.h>
 #include "bbport_compile_progress.h"
 #include "bbport_frame_state.h"
+#include "bbport_hdr.h"
 #include "bbport_settings.h"
 #include "party/party_hud.h"
 #include "party/party_balance_rules.h"
@@ -846,6 +847,83 @@ void DisplayTab() {
            });
 }
 
+/// Native HDR output (bbport_hdr.h, I4): on/off after a restart, the curve live.
+void HdrRows() {
+    auto& s = BbSettings::Get();
+    char line[256];
+    Toggle("hdr", T("HDR output (HDR10)", "Вывод HDR (HDR10)"), s.hdr,
+           T("An HDR10 picture (PQ, Rec.2020) for an HDR display: the game's SDR picture keeps its "
+             "mid-tones at paper white and only its highlights are expanded towards the peak. Needs "
+             "HDR on in Windows. Applies after restarting the game.",
+             "Картинка HDR10 (PQ, Rec.2020) для HDR-дисплея: средние тона SDR-картинки игры остаются "
+             "на уровне белого листа, к пику расширяются только блики. Нужен HDR в Windows. "
+             "Применяется после перезапуска игры."));
+    static const int peaks[] = {0, 400, 600, 800, 1000, 1200, 1500, 2000, 2500, 3000, 4000};
+    static const int papers[] = {80, 100, 120, 150, 180, 200, 250, 300, 350, 400, 500};
+    const auto index_of = [](const int* table, int value) {
+        int best = 0;
+        for (int i = 1; i < 11; ++i) {
+            if (std::abs(table[i] - value) < std::abs(table[best] - value)) best = i;
+        }
+        return best;
+    };
+    static char peak_names[11][32];
+    const int display = int(s.hdr_display_peak.load() + 0.5f);
+    for (int i = 0; i < 11; ++i) {
+        if (i == 0) {
+            std::snprintf(peak_names[i], sizeof(peak_names[i]), display > 0 ? T("Auto (%d nits)", "Авто (%d нит)")
+                                                                             : T("Auto (1000 nits)", "Авто (1000 нит)"),
+                          display);
+        } else {
+            std::snprintf(peak_names[i], sizeof(peak_names[i]), T("%d nits", "%d нит"), peaks[i]);
+        }
+    }
+    Choice("hdr_peak", T("HDR peak brightness", "HDR: пиковая яркость"), index_of(peaks, s.hdr_peak_nits), 11,
+           [](int i) { return peak_names[i]; }, [](int) { return true; },
+           T("The brightest the picture gets. Auto: what the display reports to Windows. Use the "
+             "calibration pattern: raise it until the inner square just disappears.",
+             "Самое яркое, что будет на экране. Авто: что дисплей сообщает Windows. По калибровочной "
+             "таблице: поднимайте, пока внутренний квадрат не исчезнет."),
+           true, [&](int i) { Store(s.hdr_peak_nits, peaks[i], true); });
+    static char paper_names[11][32];
+    for (int i = 0; i < 11; ++i) {
+        std::snprintf(paper_names[i], sizeof(paper_names[i]), T("%d nits", "%d нит"), papers[i]);
+    }
+    Choice("hdr_paper", T("HDR paper white", "HDR: белый лист"), index_of(papers, s.hdr_paper_white), 11,
+           [](int i) { return paper_names[i]; }, [](int) { return true; },
+           T("Brightness of the picture's mid-tones and of these menus. 200 nits by default; "
+             "lower in a dark room.",
+             "Яркость средних тонов картинки и этих меню. 200 нит по умолчанию; в тёмной комнате "
+             "меньше."),
+           true, [&](int i) { Store(s.hdr_paper_white, papers[i], true); });
+    SliderRow("hdr_strength", T("HDR highlights", "HDR: блики"), s.hdr_strength, 0.0f, 1.5f, 0.1f,
+              T("0: the SDR picture at paper white; 1: the game's white reaches the peak (default); "
+                "above 1 more highlights reach the peak.",
+                "0: SDR-картинка на уровне белого листа; 1: белый игры достигает пика (по умолчанию); "
+                "больше 1: больше бликов на пике."));
+    SliderRow("hdr_saturation", T("HDR saturation", "HDR: насыщенность"), s.hdr_saturation, 0.5f, 1.5f, 0.05f,
+              T("1: the game's colours; above 1 uses the wider Rec.2020 gamut.",
+                "1: цвета игры; больше 1 использует более широкий охват Rec.2020."));
+    Toggle("hdr_calibration", T("HDR calibration pattern", "HDR: калибровочная таблица"), s.hdr_calibration,
+           T("Patches at the top of the screen: a 10000-nit field with a square at the peak setting "
+             "(raise the peak until the square just disappears), paper white, a 0..peak ramp and the "
+             "game's grey levels through the curve.",
+             "Поля сверху экрана: поле 10000 нит с квадратом на уровне пика (поднимайте пик, пока "
+             "квадрат не исчезнет), белый лист, шкала 0..пик и уровни серого игры после кривой."));
+    if (s.hdr != s.startup_hdr) {
+        Note(T("HDR output: applies after restarting the game", "Вывод HDR: после перезапуска игры"), Dim());
+    } else if (s.hdr_active) {
+        std::snprintf(line, sizeof(line), T("HDR output: %s, peak %.0f nits, paper white %d nits",
+                                            "Вывод HDR: %s, пик %.0f нит, белый лист %d нит"),
+                      s.hdr_active == 1 ? "HDR10 (PQ, Rec.2020)" : "scRGB", BbSettings::HdrPeakNits(),
+                      s.hdr_paper_white.load());
+        Note(line, Dim());
+    } else if (const char* problem = s.hdr_problem.load(); problem && s.startup_hdr) {
+        std::snprintf(line, sizeof(line), T("HDR output not used: %s", "Вывод HDR не используется: %s"), problem);
+        Note(line, ImGui::GetColorU32(ImVec4(1.0f, 0.55f, 0.35f, 1.0f)));
+    }
+}
+
 void UpscalerTab() {
     auto& s = BbSettings::Get();
     const char* upscalers[] = {T("Off", "Выкл"), "FSR 3.1", "FSR 4 (INT8)", "FSR 4.1.1",
@@ -992,6 +1070,7 @@ void UpscalerTab() {
                       s.display_fps.load(), s.source_fps.load());
         Note(line, Dim());
     }
+    HdrRows();
 }
 
 void EffectsTab() {
@@ -2930,9 +3009,47 @@ bool HandleEvent(const SDL_Event& event) {
     }
 }
 
+/// The HDR calibration pattern's labels (the pattern itself: hdr_compose.frag).
+bool HdrPatternShown() {
+    const auto& s = BbSettings::Get();
+    return s.hdr_calibration && s.hdr_active != 0;
+}
+
+void HdrPatternLabels() {
+    const auto& s = BbSettings::Get();
+    const ImVec2 size = ImGui::GetIO().DisplaySize;
+    const float left = BbHdr::PatternLeft * size.x, top = BbHdr::PatternTop * size.y;
+    const float width = (BbHdr::PatternRight - BbHdr::PatternLeft) * size.x;
+    const float height = (BbHdr::PatternBottom - BbHdr::PatternTop) * size.y;
+    const float boxes = height * BbHdr::PatternSplitY;
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    const auto label = [&](float x0, float x1, float y, const char* text) {
+        const ImVec2 extent = ImGui::CalcTextSize(text);
+        const ImVec2 at{left + (x0 + x1) * 0.5f * width - extent.x * 0.5f, y};
+        draw->AddRectFilled({at.x - 6, at.y - 3}, {at.x + extent.x + 6, at.y + extent.y + 3},
+                            IM_COL32(0, 0, 0, 200), 4.0f);
+        draw->AddText(at, IM_COL32(235, 235, 235, 255), text);
+    };
+    char text[128];
+    const float y = top + boxes + 4.0f;
+    std::snprintf(text, sizeof(text), BbSettings::MenuText("Square: peak %.0f nits (should vanish)",
+                                                           "Квадрат: пик %.0f нит (должен исчезнуть)"),
+                  BbSettings::HdrPeakNits());
+    label(BbHdr::PeakBoxLeft, BbHdr::PeakBoxRight, y, text);
+    std::snprintf(text, sizeof(text), BbSettings::MenuText("Paper white %d nits", "Белый лист %d нит"),
+                  s.hdr_paper_white.load());
+    label(BbHdr::PaperBoxLeft, BbHdr::PaperBoxRight, y, text);
+    std::snprintf(text, sizeof(text), BbSettings::MenuText("0 .. %.0f nits", "0 .. %.0f нит"),
+                  BbSettings::HdrPeakNits());
+    label(BbHdr::RampLeft, BbHdr::RampRight, y, text);
+    label(0.0f, 1.0f, top + height + 4.0f,
+          BbSettings::MenuText("The game's levels 0 .. 1 through the HDR curve",
+                               "Уровни игры 0 .. 1 после кривой HDR"));
+}
+
 bool Visible() {
     return initialized &&
-           (menu_open || prompt_active || BbSettings::Get().show_fps || BbSettings::Get().show_hud ||
+           (menu_open || prompt_active || BbSettings::Get().show_fps || BbSettings::Get().show_hud || HdrPatternShown() ||
             CompileIndicatorShown() || ToastWanted() || AlertWanted() || NpcCaptionWanted() || PartyHudWanted() || PartyTagsWanted() ||
             PartyPingsWanted());
 }
@@ -3039,7 +3156,7 @@ void RenderPrecompile(vk::CommandBuffer cmdbuf, vk::Extent2D extent) {
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmdbuf);
 }
 
-void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
+bool Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, bool clear) {
 
     // Present interval for the FPS readout (measured also while nothing is drawn).
     const auto now = std::chrono::steady_clock::now();
@@ -3059,7 +3176,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
         PartyHudDiag();
     }
     if (!Visible()) {
-        return;
+        return false;
     }
     std::scoped_lock lock{imgui_mutex};
     ImGuiIO& io = ImGui::GetIO();
@@ -3106,13 +3223,17 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     if (prompt_active && !menu_open) {
         TextPrompt();
     }
+    if (HdrPatternShown()) {
+        HdrPatternLabels();
+    }
     ImGui::Render();
 
     const vk::RenderingAttachmentInfo attachment{
         .imageView = view,
         .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-        .loadOp = vk::AttachmentLoadOp::eLoad,
+        .loadOp = clear ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad,
         .storeOp = vk::AttachmentStoreOp::eStore,
+        .clearValue = vk::ClearValue{vk::ClearColorValue{std::array{0.0f, 0.0f, 0.0f, 0.0f}}},
     };
     cmdbuf.beginRendering(vk::RenderingInfo{
         .renderArea = {{0, 0}, extent},
@@ -3126,6 +3247,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmdbuf);
     }
     cmdbuf.endRendering();
+    return true;
 }
 
 } // namespace BbOverlay
