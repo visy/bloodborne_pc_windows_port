@@ -111,6 +111,21 @@ bool Shown();
 /// A cutscene (remo) plays on this game: the panel and the name tags hide (party_story's tick).
 void SetCutscene(bool playing);
 
+/// The game's own full-screen menu (inventory, equipment, level up, shops, the system menu's
+/// pages...) is up: the game's IsFullscreenMenu (FUN_0176bb70, the debug line
+/// "IsFullscreenMenu:%d"): any of MenuMan (*0x5562878) +0x3c, +0x40, +0x80, +0x88, +0x98, +0x9c,
+/// +0x120, +0x138, +0x13c non-zero, overridden by the debug byte *0x553d6b8 +8 (-1: none, 1: open,
+/// 0: closed, anything else: as the fields say). Pure; `fields` in that order.
+constexpr int kFullscreenMenuFields = 9;
+constexpr unsigned kFullscreenMenuOffsets[kFullscreenMenuFields] = {0x3c, 0x40, 0x88, 0x80, 0x120,
+                                                                    0x13c, 0x98, 0x138, 0x9c};
+bool FullscreenMenuOpen(const int fields[kFullscreenMenuFields], signed char force);
+/// Set by party_hud_game's tick (game thread), read by the overlay: while the game's full-screen
+/// menu is up the party panel and the name tags hide and the party notices / NPC captions are held
+/// (not drawn, their time stopped) so they never draw crisply over the game's own menu.
+void SetGameMenu(bool open);
+bool GameMenu();
+
 // ---- geometry (overlay; pure) ----
 /// The distance (3D, metres) from `a` to `b`.
 float Distance(const float a[3], const float b[3]);

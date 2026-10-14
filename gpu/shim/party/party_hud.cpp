@@ -20,6 +20,7 @@ std::mutex g_mu;
 Board g_board;  // g_mu
 std::atomic<bool> g_shown{false};
 std::atomic<bool> g_cutscene{false};  // a remo plays: the panel and tags stay hidden
+std::atomic<bool> g_game_menu{false};  // the game's full-screen menu is up (party_hud_game's tick)
 
 void CopyName(char (&dst)[kNameBytes], const std::string& src) {
     const std::size_t n = std::min<std::size_t>(src.size(), kNameBytes - 1);
@@ -257,6 +258,22 @@ bool Shown() {
 
 void SetCutscene(bool playing) {
     g_cutscene.store(playing, std::memory_order_relaxed);
+}
+
+bool FullscreenMenuOpen(const int fields[kFullscreenMenuFields], signed char force) {
+    bool any = false;
+    for (int i = 0; i < kFullscreenMenuFields; ++i) any = any || fields[i] != 0;
+    if (force == -1) return any;
+    if (force == 1) return true;
+    return force != 0 && any;
+}
+
+void SetGameMenu(bool open) {
+    g_game_menu.store(open, std::memory_order_relaxed);
+}
+
+bool GameMenu() {
+    return g_game_menu.load(std::memory_order_relaxed);
 }
 
 float Distance(const float a[3], const float b[3]) {

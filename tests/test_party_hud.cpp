@@ -261,7 +261,24 @@ static void StaleChr() {
     assert(hud::StaleChrDue(true, 600, hud::kStaleChrHoldS));  // really left behind
 }
 
+static void GameMenuRule() {
+    int f[hud::kFullscreenMenuFields] = {};
+    assert(!hud::FullscreenMenuOpen(f, -1));
+    assert(hud::FullscreenMenuOpen(f, 1));  // debug force on
+    f[4] = 3;                               // +0x120 (e.g. the inventory)
+    assert(hud::FullscreenMenuOpen(f, -1));
+    assert(!hud::FullscreenMenuOpen(f, 0));  // debug force off
+    assert(hud::FullscreenMenuOpen(f, 2));   // another value: as the fields say
+    f[4] = 0;
+    assert(!hud::FullscreenMenuOpen(f, 2));
+    hud::SetGameMenu(true);
+    assert(hud::GameMenu());
+    hud::SetGameMenu(false);
+    assert(!hud::GameMenu());
+}
+
 int main() {
+    GameMenuRule();
     StaleChr();
     Tags();
     GamePlate();

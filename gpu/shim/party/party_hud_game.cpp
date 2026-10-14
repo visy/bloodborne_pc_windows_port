@@ -43,6 +43,8 @@ using u32 = std::uint32_t;
 using u16 = std::uint16_t;
 using u8 = std::uint8_t;
 constexpr u64 kSlotWorldChrMan = 0x553e878;
+constexpr u64 kSlotMenuMan = 0x5562878;    // MenuMan* (party_balance kSlotMenuManBal)
+constexpr u64 kSlotMenuForce = 0x553d6b8;  // debug "force full-screen menu" block: +8 a signed byte (-1 none)
 
 void Log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 void Log(const char* fmt, ...) {
@@ -216,8 +218,35 @@ bool PartyHudChrPos(std::uint64_t chr, const float near[3], float out[3]) {
     return true;
 }
 
+/// The game's full-screen menu (party_hud.h FullscreenMenuOpen), every frame: the overlay hides
+/// the party panel / tags and holds its notices while it is up. Each change is logged with the
+/// fields (and MenuMan +0x78 dialog, +0x2e4 pad state, +0x2e8 visible state for comparison).
+static void GameMenuTick(bool in_party) {
+    static int last = -1;
+    bool open = false;
+    int f[party::hud::kFullscreenMenuFields] = {};
+    signed char force = -1;
+    const u64 mm = in_party ? Slot(kSlotMenuMan) : 0;
+    if (mm) {
+        for (int i = 0; i < party::hud::kFullscreenMenuFields; ++i) {
+            f[i] = Field<int>(mm, party::hud::kFullscreenMenuOffsets[i], 0);
+        }
+        if (const u64 dbg = Slot(kSlotMenuForce)) force = Field<signed char>(dbg, 8, -1);
+        open = party::hud::FullscreenMenuOpen(f, force);
+    }
+    party::hud::SetGameMenu(open);
+    if (int(open) != last && (mm || last == 1)) {
+        last = int(open);
+        Log("game full-screen menu %s (+3c %d +40 %d +88 %d +80 %d +120 %d +13c %d +98 %d +9c %d +138 %d, force %d; "
+            "dialog %d, pad %d, visible %d)",
+            open ? "open: party panel / tags hidden, notices held" : "closed", f[0], f[1], f[2], f[3], f[4], f[5],
+            f[6], f[8], f[7], int(force), Field<int>(mm, 0x78, 0), Field<int>(mm, 0x2e4, 0), Field<int>(mm, 0x2e8, 0));
+    }
+}
+
 void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberState local_state) {
     HudState& st = S();
+    GameMenuTick(link != nullptr && s.world_up);
     GamePlateOff(link != nullptr && BbSettings::Get().party_name_tags);  // off: the game's plate, vanilla
     if (!st.log_init) {
         st.log_init = true;

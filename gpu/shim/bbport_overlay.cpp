@@ -184,8 +184,18 @@ bool AlertWanted() {
 }
 
 // Shared NPC dialogue (party_npctalk.h): the caption under a companion's conversation.
+// The game's full-screen menu (party::hud::GameMenu): the notices and the caption are held - not
+// drawn and their time stopped - so they come back for their remaining time once it closes.
+// caption_hold: the caption's until_ms it holds for and the ms added to it (present thread).
+std::atomic<std::int64_t> caption_hold_key{0}, caption_hold_ms{0};
+std::int64_t menu_hold_last_ms = 0;  // present thread: the previous frame's time while held
+
+std::int64_t CaptionUntilMs(std::int64_t until_ms) {
+    return until_ms + (caption_hold_key.load() == until_ms ? caption_hold_ms.load() : 0);
+}
+
 bool NpcCaptionWanted() {
-    return party::status::Enabled() && coop::npctalk::CurrentCaption().until_ms > SteadyMs();
+    return party::status::Enabled() && CaptionUntilMs(coop::npctalk::CurrentCaption().until_ms) > SteadyMs();
 }
 
 bool ToastWanted() {
@@ -2283,6 +2293,41 @@ void PartyAlert() {
     ImGui::PopStyleVar(2);
 }
 
+/// While the game's full-screen menu is up the shown notice, alert and caption keep their remaining
+/// time: their end moves on by each held frame (a notice that arrives under the menu waits too).
+void HoldPartyNoticesInGameMenu() {
+    const std::int64_t now = SteadyMs();
+    if (!party::hud::GameMenu()) {
+        menu_hold_last_ms = 0;
+        return;
+    }
+    const std::int64_t dt = menu_hold_last_ms ? std::clamp<std::int64_t>(now - menu_hold_last_ms, 0, 1000) : 0;
+    menu_hold_last_ms = now;
+    // A notice / alert that came in under the menu starts its time when the menu closes.
+    if (party::status::EventSeq() != toast_seen.load()) {
+        const party::status::Board b = party::status::Snapshot();
+        toast_seen = b.event_seq;
+        toast_text = b.last_event;
+        toast_until_ms = toast_text.empty() ? 0 : now + ToastMs;
+    } else if (toast_until_ms.load() > now) {
+        toast_until_ms += dt;
+    }
+    if (party::status::AlertSeq() != alert_seen.load()) {
+        const party::status::Board b = party::status::Snapshot();
+        alert_seen = b.alert_seq;
+        alert_text = b.alert;
+        alert_until_ms = alert_text.empty() ? 0 : now + AlertMs;
+    } else if (alert_until_ms.load() > now) {
+        alert_until_ms += dt;
+    }
+    const std::int64_t cu = coop::npctalk::CurrentCaption().until_ms;
+    if (caption_hold_key.load() != cu) {
+        caption_hold_key = cu;
+        caption_hold_ms = 0;
+    }
+    if (CaptionUntilMs(cu) > now) caption_hold_ms += dt;
+}
+
 /// A companion's NPC conversation (party_npctalk.h): "Hunter talking to Gilbert" and the talker's
 /// choice / gift (or the line itself when the game's own subtitle could not be used) in the game's
 /// Baskerville, centred above the game's subtitles; fades out over its last second. No input.
@@ -2291,7 +2336,7 @@ void PartyNpcCaption() {
         return;
     }
     const coop::npctalk::Caption c = coop::npctalk::CurrentCaption();
-    const std::int64_t left = c.until_ms - SteadyMs();
+    const std::int64_t left = CaptionUntilMs(c.until_ms) - SteadyMs();
     if (left <= 0 || (c.header.empty() && c.line.empty())) {
         return;
     }
@@ -2801,12 +2846,15 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     } else if (BbSettings::Get().show_fps && !menu_open) {
         FpsCounter();
     }
+    HoldPartyNoticesInGameMenu();
     if (!menu_open) {
         CompileIndicator();
-        PartyHud(); // before the toast: it stacks above the panel
-        PartyToast();
-        PartyAlert();
-        PartyNpcCaption();
+        if (!party::hud::GameMenu()) {  // the game's full-screen menu: none of these over it
+            PartyHud(); // before the toast: it stacks above the panel
+            PartyToast();
+            PartyAlert();
+            PartyNpcCaption();
+        }
     }
     if (prompt_active && !menu_open) {
         TextPrompt();
