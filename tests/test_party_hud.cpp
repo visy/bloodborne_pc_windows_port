@@ -271,10 +271,16 @@ static void GameMenuRule() {
     assert(hud::FullscreenMenuOpen(f, 2));   // another value: as the fields say
     f[4] = 0;
     assert(!hud::FullscreenMenuOpen(f, 2));
+    assert(hud::GameMenuUp(true, f, -1));    // the menu flow's open menu (inventory, warp menu)
+    assert(!hud::GameMenuUp(false, f, -1));
     hud::SetGameMenu(true);
     assert(hud::GameMenu());
     hud::SetGameMenu(false);
     assert(!hud::GameMenu());
+    hud::SetGameDialog(true);
+    assert(hud::GameDialog() && !hud::GameMenu());
+    hud::SetGameDialog(false);
+    assert(!hud::GameDialog());
 }
 
 int main() {

@@ -120,11 +120,23 @@ constexpr int kFullscreenMenuFields = 9;
 constexpr unsigned kFullscreenMenuOffsets[kFullscreenMenuFields] = {0x3c, 0x40, 0x88, 0x80, 0x120,
                                                                     0x13c, 0x98, 0x138, 0x9c};
 bool FullscreenMenuOpen(const int fields[kFullscreenMenuFields], signed char force);
+/// The in-game menus (the top menu, inventory, equipment, stats, the lamp's warp menu...) are the
+/// menu flow's (*0x5562870, used while the "MenuMan.NewSystem" byte 0x5562882 is set): its +0xa88
+/// is the open menu (0 = none: its update then polls the buttons that open one, FUN_01baf8c0 ->
+/// "MenuMan.IngameTop"; bbhost menu_pointer.cpp kFlowMenu). The game's own menu-bits function
+/// 0x176b7e0 reports it as 0x800008 (live: 0 at the lamp before, 0x800008 once the warp menu was
+/// up, with every IsFullscreenMenu field 0; the inventory left those 0 too). Pure: either counts.
+bool GameMenuUp(bool flow_menu_open, const int fields[kFullscreenMenuFields], signed char force);
 /// Set by party_hud_game's tick (game thread), read by the overlay: while the game's full-screen
 /// menu is up the party panel and the name tags hide and the party notices / NPC captions are held
 /// (not drawn, their time stopped) so they never draw crisply over the game's own menu.
 void SetGameMenu(bool open);
 bool GameMenu();
+/// The game's generic dialog box (MenuMan +0x78, e.g. "Return to the Hunter's Dream? YES / NO",
+/// which dims the screen) is up: only the name tags hide (the panel and the notices stay: the
+/// party's travel question is such a box).
+void SetGameDialog(bool open);
+bool GameDialog();
 
 // ---- geometry (overlay; pure) ----
 /// The distance (3D, metres) from `a` to `b`.

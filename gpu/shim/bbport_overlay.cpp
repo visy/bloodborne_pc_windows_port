@@ -168,7 +168,7 @@ bool PartyHudWanted() {
 bool PartyTagsWanted() {
     return party_tags_on && party::status::Enabled() && BbSettings::Get().party_name_tags &&
            BbSettings::Get().party_overhead.load() != 0 &&
-           party::hud::Shown();
+           party::hud::Shown() && !party::hud::GameDialog();  // not over the game's dimmed dialog box
 }
 
 // Party alert (party_status SetAlert: the host refused us): a message box in the middle of the
