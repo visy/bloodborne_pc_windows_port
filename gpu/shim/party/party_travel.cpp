@@ -8,6 +8,8 @@
 #include "party_async_io.h"
 #include "party_perf.h"
 #include "party_ids.h"
+#include "party_death_rules.h"
+#include "party_progress.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1057,6 +1059,14 @@ bool RetargetSendHome(u64 site) {
 /// PartyGhostDeath_2 also GameDataMan+0x70 (full recover after the next load), which stays.
 bool RedirectGuest(u64 site, TravelKind kind) {
     if (!g_travel_on.load() || !g_death_redirect_on.load() || g_in_replay.load() || Role() != PartyRole::Guest) {
+        return false;
+    }
+    // #22: in its own world (no host connected, or between sessions) a guest's Hunter's Mark /
+    // death is its own, as in single player: never to the host's lamp or a stale party travel.
+    if (const int sr = ReadGameState(false).session_role, lm = progress::FlagLoadMode();
+        !deathrules::GuestInHostWorld(sr, lm)) {
+        Log("%s at +0x%llx in the guest's own world (session role %d, load mode %d): its own, as in single player",
+            TravelKindName(kind), ull(site), sr, lm);
         return false;
     }
     bool have_dest;

@@ -41,7 +41,7 @@ constexpr u32 kMenuMask = 0xeffffb33u;
 constexpr u64 kLampWarp = 0x13cdf30;      // void (u32 ReturnPointParam id): lamp / headstone warp
 constexpr u64 kFlipperUpdate = 0x2034770; // main-thread tick (as party_director)
 constexpr u64 kMapObject = 0x13c9af0;     // (entity, u32* index) -> map object record (+0x240 3x4 rows)
-constexpr u32 kPadCross = 0x4000, kPadDown = 0x40;
+constexpr u32 kPadCross = 0x4000, kPadDown = 0x40, kPadRight = 0x20, kPadLeft = 0x80;
 
 
 void Log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -341,6 +341,11 @@ BB_COOP_SYSV void OwnTickEntry(u64, u64, u64, u64, u64, u64) {
 
 struct TestState {
     bool on = false, cont = false, members = false;
+    bool any_title = false;
+    bool dream = false;
+    u32 walked = 0;        // the lamp walked to
+    int rewalks = 0;
+    bool start_any = false;  // startany: the start= warp also when the save is in that map  // dream: Cross, Left (YES), Cross at the lamp; done when a load starts (#22)  // titleany: also in a party process whose host never answers (#22)
     u32 lamp = 0;          // lamp=ID (0: the nearest lit one)
     u32 to = 0;            // to=ID (0: "other": the first lamp of another map)
     u32 start = 0;         // start=ID: first a plain lamp warp there when the save is in another map
@@ -367,6 +372,9 @@ void TestParse() {
         const std::string item = s.substr(at, end - at);
         at = end + 1;
         if (item == "continue") g_t.cont = true;
+        else if (item == "titleany") g_t.cont = g_t.any_title = true;
+        else if (item == "dream") g_t.dream = true;
+        else if (item == "startany") g_t.start_any = true;
         else if (item == "members") g_t.members = true;
         else if (item.rfind("lamp=", 0) == 0) g_t.lamp = static_cast<u32>(std::strtoul(item.c_str() + 5, nullptr, 10));
         else if (item.rfind("start=", 0) == 0) g_t.start = static_cast<u32>(std::strtoul(item.c_str() + 6, nullptr, 10));
@@ -419,10 +427,13 @@ void TestTick(const GameSnapshot& s, double now) {
             Log("test: in the world (%s)", MapName(s.map_id).c_str());
             return;
         }
-        if (g_t.cont && !PartyRequested() && now - g_t.at >= 2.5) {
+        if (g_t.cont && (!PartyRequested() || g_t.any_title) && now - g_t.at >= (g_t.any_title ? 1.2 : 2.5)) {
+            // titleany: a Join-a-party guest with no host stays on "Failed to acquire server
+            // information" (auto-continue waits for the link): Right (CANCEL), Cross, alternately.
             g_t.at = now;
-            Press(kPadCross, now);
-            if (++g_t.presses <= 30) Log("test: title Cross #%d", g_t.presses);
+            const bool right = g_t.any_title && g_t.presses % 2 == 0;
+            Press(right ? kPadRight : kPadCross, now);
+            if (++g_t.presses <= 40) Log("test: title %s #%d", right ? "Right" : "Cross", g_t.presses);
         }
         return;
     case TestState::Settle:
@@ -431,7 +442,7 @@ void TestTick(const GameSnapshot& s, double now) {
             return;
         }
         if (now - g_t.steady_since < 3.0) return;
-        if (g_t.start && !g_t.started && MapOf(g_t.start) != (s.map_id & 0xffff0000u)) {
+        if (g_t.start && !g_t.started && (g_t.start_any || MapOf(g_t.start) != (s.map_id & 0xffff0000u))) {
             g_t.started = true;
             Log("test: setup: the save is in %s; lamp warp to %u first", MapName(s.map_id).c_str(), g_t.start);
             split::NoteLocalUse(g_t.start);
@@ -469,6 +480,7 @@ void TestTick(const GameSnapshot& s, double now) {
                 if (d < best) best = d, lamp = rp;
             }
         }
+        g_t.walked = lamp;
         if (!lamp || !WalkTo(s, lamp)) {
             Log("test: FAILED: no lit lamp to stand at in %s", MapName(s.map_id).c_str());
             g_t.stage = TestState::Done;
@@ -480,7 +492,45 @@ void TestTick(const GameSnapshot& s, double now) {
         return;
     }
     case TestState::Press: {
+        if (g_t.dream && g_t.presses > 0 && (s.loading || !s.world_up)) {
+            Log("test: done: the lamp's travel loads after %d press(es)", g_t.presses);
+            g_t.stage = TestState::Done;
+            return;
+        }
         if (now < g_t.at) return;
+        if (g_t.dream) {
+            // The vanilla lamp: "Return to the Hunter's Dream" (Cross), the box starts on NO (Left
+            // = YES), Cross; or the travel list's first entry (the Dream) with the same keys.
+            float me[3] = {};
+            if (PlayerPos(s.player, me)) {
+                u32 idx = 0xffffffffu;
+                float m[12] = {};
+                const u64 rec = reinterpret_cast<u64(BB_COOP_SYSV*)(i32, u32*)>(Guest(kMapObject))(
+                    static_cast<i32>(g_t.walked - 1000), &idx);
+                float d = -1.0f;
+                if (rec && SafeRead(rec + 0x240, m, sizeof m)) {
+                    d = std::sqrt((m[3] - me[0]) * (m[3] - me[0]) + (m[11] - me[2]) * (m[11] - me[2]));
+                }
+                Log("test: at (%.1f, %.1f, %.1f) in %s, %.1f m from lamp %u", me[0], me[1], me[2],
+                    MapName(s.map_id).c_str(), d, g_t.walked);
+                if (d > 3.0f && g_t.rewalks < 4 && g_t.presses == 0) {
+                    ++g_t.rewalks;
+                    WalkTo(s, g_t.walked);  // the first walk did not take (the world still settling)
+                    g_t.at = now + 1.5;
+                    return;
+                }
+            }
+            if (++g_t.presses > 9) {
+                Log("test: FAILED: no load after 9 presses at the lamp");
+                g_t.stage = TestState::Done;
+                return;
+            }
+            const bool left = g_t.presses % 3 == 2;
+            Log("test: %s at the lamp #%d", left ? "Left" : "Cross", g_t.presses);
+            Press(left ? kPadLeft : kPadCross, now);
+            g_t.at = now + 2.0;
+            return;
+        }
         bool open = false;
         std::vector<Entry> list;
         {

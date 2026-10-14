@@ -155,7 +155,8 @@ before anyone is in the game):
 - **No loading screen inside the same map for the host.** The host's lamp or Hunter's Mark to a spot
   in the map it is already in is an instant warp, for the whole party too; a guest's gets its own
   short loading screen and the host stays where it is; at the lamp you already stand at, nothing
-  moves at all.
+  moves at all. With nobody to travel with (a host alone, or "Join a party" while the host is not
+  there) lamps, headstones and the Hunter's Mark work exactly as in single player.
 - **Guests can use the Hunter's Mark** (on by default; launcher switch "Guests can use Hunter's
   Mark"): alone it takes you to your own last lamp, with the party to the host's.
 - **Apart and back together.** While players are in different maps each sees only the others in

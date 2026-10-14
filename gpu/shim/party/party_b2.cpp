@@ -7179,6 +7179,16 @@ bool SameMapLampWarp(std::uint32_t id, bool alone) {
     if (!g_on.load() || g_force_load_warp.load() || !LampInLoadedBlock(id, spot)) {
         return false;
     }
+    // #22: nobody to travel with (a guest in its own world, its host never answered, or a host
+    // alone): the lamp works as in single player - its own loading screen, the world resets.
+    const int role = Role();
+    if (!deathrules::PartyTravelActive(role == RoleClient, role == RoleHost, role == RoleClient, HostHasMembers())) {
+        static std::atomic<std::uint32_t> logged{0};
+        if (logged.exchange(id) != id) {
+            Log("lamp %u in the loaded map: no party here (session role %d): the vanilla lamp warp", id, role);
+        }
+        return false;
+    }
     const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
     if (!player || Field<int>(Field<u64>(Field<u64>(player, 0x3b0), 0x20), 0x128, 0) <= 0) {
         return false;
