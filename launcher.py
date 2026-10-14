@@ -298,6 +298,15 @@ def party_password_problem(code: str, password: str) -> str:
     return ""
 
 
+def party_tracing_warning(mode: str, tracing: bool) -> str:
+    """The warning for Debug tracing in a party game, or "" (playtest 1: a guest with tracing on
+    logged 20 MB per run, hundreds of hang dumps and ran slower)."""
+    if not mode or not tracing:
+        return ""
+    return ("Debug tracing is on (Advanced / Debug): party games run slower with it and write very "
+            "large logs. Turn it off unless a developer asked for it.")
+
+
 def party_user_dir() -> Path:
     """The game's user folder as run.bat finds it: BB_USER_DIR, else <BB_DATA_DIR or launcher dir>\\user."""
     user = os.environ.get("BB_USER_DIR")
@@ -1684,7 +1693,8 @@ class BloodborneLauncher(tk.Tk):
                                    host_lbl, self.party_host_code_entry, copy_btn,
                                    lan_lbl, self.party_lan_code_entry, lan_copy_btn]
         self.party_widgets_join = [code_lbl, self.party_code_entry, paste_btn]
-        for var in (self.party_name_var, self.party_port_var, self.party_code_var, self.party_password_var):
+        for var in (self.party_name_var, self.party_port_var, self.party_code_var, self.party_password_var,
+                    self.feat_tracing):
             var.trace_add("write", lambda *a: self.update_party_hints())
         self.after(2000, self.party_code_tick)
 
@@ -1763,6 +1773,9 @@ class BloodborneLauncher(tk.Tk):
                     "The codes appear here after the game starts hosting.")
         else:
             text = "✓ Party code OK. Start the game after the host's game is running."
+        warning = party_tracing_warning(mode, self.feat_tracing.get())
+        if warning and not problems:
+            text += "\n⚠ " + warning
         self.party_status_var.set(text)
         self.party_status_lbl.config(foreground="#d06060" if problems else "#888888")
 
@@ -3018,6 +3031,9 @@ class BloodborneLauncher(tk.Tk):
                      + (f" | Code: {env['BB_PARTY_CODE']}" if env.get("BB_PARTY_CODE") else ""))
         else:
             self.log("Party: off")
+        tracing_warning = party_tracing_warning(env.get("BB_PARTY") or "", self.feat_tracing.get())
+        if tracing_warning:
+            self.log(f"[WARNING] {tracing_warning}")
         self.log("=" * 50)
 
         cmd = ["cmd.exe", "/d", "/c", RUN_BAT.name] if os.name == "nt" else [str(RUN_BAT)]

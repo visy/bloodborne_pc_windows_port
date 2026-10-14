@@ -40,7 +40,7 @@ loading-screen path is the proposed fix. A seamless (no-load) variant comes back
 | 16 | Oedon Tomb Key (and other key items) not on the guest | major | no | the host sent lot 31000 (H5:8051-8062, again at H5:11875); the guest side is not logged. Suspects: #15 frozen box, or ledger seeding from a synced boss flag | 3 |
 | 17 | "Red guy" in Oedon Chapel is a ghost for the guest | major | no | the same ghost bit on almost every talk-NPC row (Alfred 6151/6155/6154, Chapel Dweller 113010, Eileen, Arianna...) | 4 |
 | 18 | Guest echoes not takeable when both died | major | no | wipe race: the host counted "0 down" just before the guest's death arrived (H5:10184 vs 10210), so it revived alone instead of a wipe; plus the #6 state | 1 |
-| crash | Host crash 20:38:10, eboot +0x2199310 null+8 | major | no | per-frame arena allocator +0xe45560 returned NULL. FUN_02198fd0 checks the 1st alloc, not the 2nd (+0x21992fb); `BB_ARENA_GUARD` covers only the +0x21d5b35 caller | 5 |
+| crash | Host crash 20:38:10, eboot +0x2199310 null+8 | major | **yes** (batch 5: guard at +0x2199303, frame allocator 1 MiB) | per-frame arena allocator +0xe45560 returned NULL. FUN_02198fd0 checks the 1st alloc, not the 2nd (+0x21992fb); `BB_ARENA_GUARD` covers only the +0x21d5b35 caller | 5 |
 
 Top extra problems (details below): G4's direct summon failed 8 of 10 times with nothing logging why; the guest
 left the session on its own 92.7 s after joining (G4:10655); the party watchdog stopped "stuck" summons when the
@@ -849,6 +849,31 @@ FUN_02198fd0 (called from FUN_01d976e0 +0x1d97853) takes two blocks from the fra
 The first alloc (0x2199266, 0x20 bytes) has a NULL test (`test r12,r12; je`), the second (0x21992fb, 0x10 bytes) has none. The arena's backing allocator (vtable +0x52e6fd0, alloc +0xe453b0, the per-frame allocator, not CSGraphicsPrivateAllocator, so our probe printed no heap numbers) ran dry; our `BB_ARENA_GUARD` covers only the +0x21d5b35 caller (1 of 45 call sites of +0xe45560 in calls.tsv). Root of the exhaustion is not proven: candidates are the GPU stall seen in the breadcrumbs (frame contexts not recycled while the GPU is stuck) and long-session VRAM over-budget on the 8 GiB host (constant eviction for 45 min). It is a generic long-session render/memory crash, not a party-protocol bug; the party only adds load (2 players, re-created chrs).
 
 **Fixed on head?** No. `git log 8143fda..aeeb408` touches nothing in `gpu/shim/bbport_stability.cpp` or the GPU path.
+
+**FIXED (batch 5, 2026-10-14)** in `gpu/shim/bbport_stability.cpp`:
+- Why it ran dry (disassembly): the arena's backing allocator (vtable +0x52e6fd0, alloc +0xe453b0 ->
+  +0x2085120) is a plain linear (bump) allocator of **256 KiB**, one per frame context (renderer +0x370 /
+  +0x378, made in FUN_02194580 by `mov edx, 0x40000` at +0x2195c09 / +0x2195c46 -> +0xe45200) and reset
+  at every frame flip in FUN_02198fd0 (vtbl+0x78 at +0x2199134 / +0x2199587 / +0x21999a3; the frame's
+  arenas +0x48 and +0x78 restart with 2 KiB chunks via +0xe45530). The failing arena held only 2 chunks,
+  so the other consumers of that frame's 256 KiB had used it up: a per-frame budget overflow on a busy
+  frame (two players, re-created chr, effects), not a leak across frames (the flip resets it) and not
+  the texture cache. Not measured on the playtest's frame, so "busy frame" stays the likeliest reading;
+  the GPU stall in the breadcrumbs came after the NULLs.
+- The allocator is now 1 MiB per frame context (`BB_FRAME_ARENA_KIB`, 0 = the game's 256 KiB; +1.5 MiB
+  from the renderer's heap at boot). A probe at the three flip sites logs `Stability: frame allocator:
+  the fullest frame so far used N of M KiB` (from 64 KiB, each +25 %), and `ArenaNull` prints the
+  allocator's used/capacity/blocks, so the next report shows how close a frame came.
+- Second guard at +0x2199303 (bytes checked +0x21992ed..+0x219934e): a NULL runs the unlock and skips
+  the fill and the submission (+0x21b4b00) to +0x2199346; log `render command 0 dropped ... (guest
+  +0x21992fb)`. Test aid `BB_ARENA_FAIL_TEST=N` drops every N-th pass. Live (one single-player
+  Continue into the Dream, `BB_ARENA_FAIL_TEST=300`): `arena-guard on (fail test 1/300); frame-arena
+  1024KiB; frame-arena-probe on`, two drops from +0x21992fb, no fault.
+- Still open: the audit of the other ~43 call sites of +0xe45560 (FUN_0224f120, FUN_022a0a30 first);
+  with 4x the budget they should no longer see a NULL.
+- Watchdog noise (additional problem 1): `src/probe.c` dumps `WATCHDOG: NO PROGRESS` only when flips
+  stalled 5 s too, and prints `[BLOCKED >3s]` only while flips stall 3 s; the launcher warns (Party tab
+  hint and the launcher log) when Debug tracing is on in a party.
 
 **Severity:** major (one crash in ~2.5 h; the auto-restart + rejoin recovered it, see below). Would be a blocker if it recurs per hour.
 

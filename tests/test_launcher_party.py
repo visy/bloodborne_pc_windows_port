@@ -187,5 +187,22 @@ class DirectSummonSetting(unittest.TestCase):
         self.assertEqual(self.L.party_env(dict(base, party_direct_summon=False))["BB_PARTY_DIRECT_SUMMON"], "0")
 
 
+class TracingWarning(unittest.TestCase):
+    """Debug tracing in a party game gets a warning (playtest 1: huge logs, false hang dumps)."""
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.L = load_launcher()
+        except Exception as ex:  # no tkinter here
+            raise unittest.SkipTest(f"launcher.py not importable here: {ex}")
+
+    def test_only_party_with_tracing(self):
+        self.assertIn("Debug tracing", self.L.party_tracing_warning("host", True))
+        self.assertIn("Debug tracing", self.L.party_tracing_warning("join", True))
+        self.assertEqual(self.L.party_tracing_warning("join", False), "")
+        self.assertEqual(self.L.party_tracing_warning("", True), "")
+        self.assertEqual(self.L.party_tracing_warning(None, True), "")
+
+
 if __name__ == "__main__":
     unittest.main()
