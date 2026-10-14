@@ -59,6 +59,7 @@ enum class ItemSource : std::uint8_t {
     Mark,   ///< guest-local: received while summoned, set the flag only
     Test,   ///< BB_PARTY_ITEMS_TEST
     Own,    ///< guest-local: a per-player Messenger gift its game refused in the host's world
+    Repeat, ///< guest-local: a repeatable NPC gift (common 9100) its talk asked for in the host's world
 };
 const char* ItemSourceName(ItemSource s);
 ItemSource ItemSourceFromName(const std::string& name);
@@ -110,10 +111,13 @@ struct ItemGrant {
     /// for a random lot; empty = resolve from ItemLotParam (deterministic lots).
     std::vector<GrantItem> items = {};
 
+    /// ItemSource::Repeat: this grant's own key (no flag: every talk gives it again).
+    std::int64_t repeat_key = -1;
+
     /// The "already given" flag a guest checks: the lot flag, or the ledger bit.
     std::int64_t DoneFlag() const;
-    /// De-duplication key (one grant per flag / ledger bit).
-    std::int64_t Key() const { return DoneFlag(); }
+    /// De-duplication key (one grant per flag / ledger bit; a repeatable gift: its own key).
+    std::int64_t Key() const { return source == ItemSource::Repeat ? repeat_key : DoneFlag(); }
 };
 std::string DescribeItem(const ItemGrant& g);
 
@@ -154,6 +158,14 @@ bool ItemLotDenied(std::int32_t lot, std::int32_t flag);
 /// a summoned guest's game refuses (items.md 3): the guest gives the lot to itself instead
 /// (ItemSource::Own), with its own flag (playtest 1: the Old Hunter Bell was lost).
 bool MessengerGiftLot(std::int32_t lot);
+/// P2: the repeatable NPC gifts of common 9100 (Blood of Arianna 28000, Blood of Adella 32020,
+/// Iosefka's Blood Vial 23000, Blue Elixir 24060, Queenly Flesh 17010).
+bool RepeatGiftLotId(std::int32_t lot);
+/// Keys of repeatable gifts: kRepeatKeyBase + n, far above every flag and ledger bit.
+constexpr std::int64_t kRepeatKeyBase = std::int64_t(1) << 40;
+/// The guest's own grant of repeatable gift `lot`, the `n`th this session (no flag, no ledger bit:
+/// it is given every time). Nothing for a lot that is not one of them.
+std::optional<ItemGrant> MakeRepeatGrant(std::int32_t lot, std::uint64_t n);
 
 /// Host hook: the grant for an award of `lot` (no seq yet), or nothing (client lots, denied,
 /// flagless lots outside the ledger).
@@ -465,6 +477,10 @@ bool TakeHostFullItems(int* slot, std::vector<ItemGrant>* out);
 void RequestGuestItems(const std::vector<ItemGrant>& items);
 /// Main thread, once a frame (the coop tick): the guest replay.
 void ItemsTick();
+/// Guest (main thread): a repeatable NPC gift (RepeatGiftLotId) its talk asked for in the host's
+/// world: queued as its own grant (given while summoned like any grant). False: not such a lot or
+/// items off.
+bool OfferRepeatGift(std::int32_t lot);
 /// Guest: the next NPC gift to report to the host (any thread; the director posts it).
 bool PopGuestGift(std::string* body);
 /// Host: EVENT gift_up from `slot` (link thread): validated, rate limited, queued for the tick.

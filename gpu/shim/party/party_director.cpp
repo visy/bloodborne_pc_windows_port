@@ -131,7 +131,7 @@ struct TravelStep {
     // 1.2 m in front, Cross), wait for its menu, Down N times, Cross (args id:N).
     enum Kind {
         HostWarp, HostDie, GuestDie, HostKill, HostMove, GuestMove,
-        HostPress, GuestPress, HostMark, GuestMark, HostStage, HostWalk, HostHeadstone, HostFlag, HostSkipRemo, GuestSkipRemo, HostLastLamp,
+        HostPress, GuestPress, HostMark, GuestMark, HostStage, HostWalk, HostHeadstone, HostFlag, GuestFlag, HostSkipRemo, GuestSkipRemo, HostLastLamp,
         // Split travel (docs/party/split_travel.md): host_lamp=ID / guest_lamp=ID use lamp ID as the
         // player would (0x13CDF30 through the interceptor: the "Travel with the party?" question);
         // host_alone=ID: the host travels to ID alone, decided (no question).
@@ -1087,6 +1087,7 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::HostWalk: return "host_walk";
     case TravelStep::HostHeadstone: return "host_headstone";
     case TravelStep::HostFlag: return "host_flag";
+    case TravelStep::GuestFlag: return "guest_flag";
     case TravelStep::HostObj: return "host_obj";
     case TravelStep::GuestObj: return "guest_obj";
     case TravelStep::HostChr: return "host_chr";
@@ -1476,7 +1477,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                 step.kind == TravelStep::GuestLamp || step.kind == TravelStep::GuestSkipRemo || step.kind == TravelStep::GuestOutage || step.kind == TravelStep::GuestKill ||
                 step.kind == TravelStep::GuestObj || step.kind == TravelStep::GuestChr ||
                 step.kind == TravelStep::GuestStick || step.kind == TravelStep::GuestUse ||
-                step.kind == TravelStep::GuestHome) == (role == PartyRole::Guest);
+                step.kind == TravelStep::GuestHome || step.kind == TravelStep::GuestFlag) == (role == PartyRole::Guest);
     };
     if (t.script_on) {
         RunTravelScript(st, s, now);
@@ -1532,7 +1533,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         // step's delay then counts from the end of the wait.
         const TravelStep::Kind k = t.steps[t.next_step].kind;
         const bool own_chr = !(k == TravelStep::HostPress || k == TravelStep::GuestPress || k == TravelStep::HostOutage ||
-                               k == TravelStep::GuestOutage || k == TravelStep::HostFlag ||
+                               k == TravelStep::GuestOutage || k == TravelStep::HostFlag || k == TravelStep::GuestFlag ||
                                k == TravelStep::HostSkipRemo || k == TravelStep::GuestSkipRemo ||
                                k == TravelStep::HostLastLamp || k == TravelStep::HostKill || k == TravelStep::GuestKill) ||
                              t.steps[t.next_step].alive;
@@ -1713,7 +1714,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         const bool ok = RequestRemoSkip(&skippable);
         Log("test: %s: skip request %s (skippable bit %d)", TravelStepName(step.kind), ok ? "sent" : "NOT possible",
             skippable ? 1 : 0);
-    } else if (step.kind == TravelStep::HostFlag) {
+    } else if (step.kind == TravelStep::HostFlag || step.kind == TravelStep::GuestFlag) {
         // A story choice the game makes in a talk menu (e.g. 72100131 = refuse Gehrman): SetEventFlag.
         // "ID:0" clears it (a test save put back into its prologue: host_flag=12101021:0).
         char* end = nullptr;
@@ -1723,7 +1724,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         ReadEventFlag(id, &before);
         const bool ok = WriteEventFlag(id, value);
         ReadEventFlag(id, &after);
-        Log("test: host_flag %u: %d -> %d (%s)", id, int(before), int(after), ok ? "written" : "NOT written");
+        Log("test: %s %u: %d -> %d (%s)", TravelStepName(step.kind), id, int(before), int(after),
+            ok ? "written" : "NOT written");
     } else if (step.kind == TravelStep::HostStage) {
         unsigned a = 0, b = 0, r = 0, i = 0;
         int wp = -1;
@@ -2562,6 +2564,7 @@ void PartyDirector::ConfigureFromEnv() {
             } else if (item.rfind("host_mark", 0) == 0 || item.rfind("guest_mark", 0) == 0 ||
                        item.rfind("host_stage=", 0) == 0 || item.rfind("host_walk=", 0) == 0 ||
                        item.rfind("host_headstone=", 0) == 0 || item.rfind("host_flag=", 0) == 0 ||
+                       item.rfind("guest_flag=", 0) == 0 ||
                        item.rfind("host_obj=", 0) == 0 || item.rfind("guest_obj=", 0) == 0 ||
                        item.rfind("host_chr=", 0) == 0 || item.rfind("guest_chr=", 0) == 0 ||
                        item.rfind("host_skipremo", 0) == 0 || item.rfind("guest_skipremo", 0) == 0 ||
@@ -2577,6 +2580,7 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("host_stage=", 0) == 0 ? TravelStep::HostStage
                             : item.rfind("host_walk=", 0) == 0  ? TravelStep::HostWalk
                             : item.rfind("host_flag=", 0) == 0  ? TravelStep::HostFlag
+                            : item.rfind("guest_flag=", 0) == 0 ? TravelStep::GuestFlag
                             : item.rfind("host_skipremo", 0) == 0  ? TravelStep::HostSkipRemo
                             : item.rfind("guest_skipremo", 0) == 0 ? TravelStep::GuestSkipRemo
                             : item.rfind("guest_stick=", 0) == 0   ? TravelStep::GuestStick

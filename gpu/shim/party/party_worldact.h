@@ -58,6 +58,16 @@ bool WorldActionAllowed(std::uint32_t id, bool clear, std::uint32_t host_map);
 /// and C3 hands it to every member. 9043 is a repeatable 9100 slot, not one of these.
 bool NpcGiftTrigger(std::uint32_t id);
 
+/// P2 (quest_audit.md): the repeatable NPC gifts of common event 9100 (`NPCアイテム入手_何度でも`):
+/// the trigger flag a talk script sets -> the item lot 9100 awards (then it clears the trigger):
+/// 72400489 -> 28000 Blood of Arianna, 72400398 -> 32020 Blood of Adella (Oedon Chapel), 72410310
+/// -> 23000 Iosefka's Blood Vial, 72410359 -> 24060 Blue Elixir x3 (Iosefka's clinic), 9043 ->
+/// 17010 Queenly Flesh (Annalise). 9100 ends at once on a client, so a guest's talk awarded
+/// nothing, and as a world action the trigger made the HOST's 9100 award the guest's gift to the
+/// host. Now the trigger stays local, the guest gives the lot to itself (items OfferRepeatGift) and
+/// clears the trigger as 9100 would. -1: not such a trigger.
+std::int32_t RepeatGiftLot(std::uint32_t trigger);
+
 constexpr std::size_t kMaxKicks = 4, kMaxFog = 2;
 struct Request {
     std::uint32_t map = 0;  ///< the guest's map when it sent this (logged; not trusted)
@@ -134,6 +144,35 @@ bool BossGateHostOpens(const BossGate& g, bool guest_in, bool host_in, bool boss
 bool BossGateWaitsForHost(const BossGate& g, bool intro_done, bool host_in, bool boss_dead);
 /// The map 0xAABBCCDD is the gate's area block.
 bool BossGateInBlock(const BossGate& g, std::uint32_t map);
+/// P5 / D10 (a guest starts a first fight): the gates whose host first-fight event (intro_flag,
+/// which is that event's own id) waits only on the host's position - a 3[2] region or a 3[3]
+/// distance condition next to its flag and chr-type checks (EMEVD data, quest_audit.md P5). A
+/// guest may go through such a fog before the host's first fight; the host's game then runs the
+/// first-fight event as if the host had walked in, so its intro scene plays for the whole party
+/// (live mirror) and the boss starts. Ebrietas (her first fight starts on a hit), Rom (a hit, no
+/// guest gate) and the DLC bosses (scene with a player warp, extra conditions) stay host-first.
+bool BossGateGuestStarts(const BossGate& g);
+/// Guest: the intro (first-fight-done) condition of a BossGateGuestStarts gate's guest-entry
+/// event (3[0] on intro_flag): skipped, so the fog has its prompt before the host's first fight.
+bool BossGateSkipFirstFight(std::int32_t event_id, int bank, int id, std::uint32_t flag);
+/// The gate whose host first-fight event is `event_id`, else null.
+const BossGate* BossGateByIntroEvent(std::int32_t event_id);
+/// Host: a condition of an armed first-fight event that stands for the host's position (3[2]
+/// region, 3[3] distance); skipping it lets the event go on wherever the host stands.
+bool FirstFightPositionCondition(int bank, int id);
+/// What the host does with a guest's fog report.
+enum class FogAction {
+    none,        ///< boss dead, the host already in, or nothing to do
+    open,        ///< the host's first fight was had: set host_flag (the boss starts)
+    start_first, ///< first fight, guest-startable: run the host's first-fight event (intro for all)
+    wait_host,   ///< first fight, but the host stands in another block: start it once it is there
+};
+FogAction HostFogAction(const BossGate& g, bool guest_starts_on, bool intro_done, bool host_in, bool boss_dead,
+                        std::uint32_t host_map);
+/// Seconds the host's first-fight event stays armed (a position condition skipped) after a start.
+constexpr double kFirstFightArmSeconds = 20.0;
+/// Seconds a guest's first-fight start waits for the host to reach the boss's block.
+constexpr double kFirstFightWaitSeconds = 600.0;
 /// The guest's notice at such a fog.
 constexpr const char* kBossFogWaitNotice = "Boss fog: the host goes in first (first fight here)";
 /// Within this many metres of the fog object the notice shows.
@@ -154,6 +193,12 @@ bool Enabled();
 bool OnHostEvent(int slot, const std::string& body, std::string* why);
 /// Main thread, once a frame (director tick).
 void Tick(const GameSnapshot& s, party::PartyLink* link);
+/// Game thread (EMEVD dispatch, host): skip this instruction of an armed first-fight event?
+/// (HostFogAction start_first; a position condition of the armed event, until it ran or expired.)
+bool HostFirstFightSkip(std::int32_t event_id, int bank, int id);
+/// BB_PARTY_GUEST_FIRST_FIGHT (default on; 0 = the host always has the first fight).
+bool GuestFirstFightEnabled();
+
 /// Test fixture: stand the local chr `dist` m from map object `entity`, on the side `angle_deg`
 /// from its facing (0 = in front), facing it. False when the object is not loaded.
 bool StandAtObject(std::int32_t entity, float dist, float angle_deg, std::string* what);
