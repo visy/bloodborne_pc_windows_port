@@ -146,6 +146,25 @@ static void test_insight() {
     CHECK(GuestInsightGrant(3, InsightMode::Off) == 0);
     CHECK(GuestInsightGrant(0, InsightMode::Full) == 0);
     CHECK(GuestInsightGrant(-2, InsightMode::Full) == 0);
+    // 0.6.2: the Snatcher kidnap's waking scene (common 9422, host only) gives the host +1 Insight
+    // with SetSpEffect(10000, 4680): guests present get it as story Insight.
+    CHECK(HostOnlySpEffectInsight(9422, 2004, 8, 10000, 4680) == std::optional<int>(1));
+    CHECK(!HostOnlySpEffectInsight(9422, 2004, 8, 10000, 7500));  // another SpEffect
+    CHECK(!HostOnlySpEffectInsight(9350, 2004, 8, 10000, 4680));  // 9350 goes through its 2000[0] start
+    CHECK(!HostOnlySpEffectInsight(12411800, 2004, 8, 10000, 4680));
+    CHECK(!HostOnlySpEffectInsight(9422, 2004, 9, 10000, 4680));  // not SetSpEffect
+    CHECK(!HostOnlySpEffectInsight(9422, 2003, 8, 10000, 4680));
+    {
+        PhantomEvent e;
+        e.kind = PhantomEventKind::Insight;
+        e.seq = 7;
+        e.insight = 1;
+        e.source_event = 9422;
+        e.boss = false;
+        PhantomEvent back;
+        CHECK(PhantomEventFromJsonText(PhantomEventToJsonText(e), &back));
+        CHECK(back.kind == PhantomEventKind::Insight && back.insight == 1 && !back.boss && back.source_event == 9422);
+    }
 
     BossInsightTracker tr;
     // First encounter (no defeat marker in that event): nothing.

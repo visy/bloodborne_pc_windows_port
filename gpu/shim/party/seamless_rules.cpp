@@ -596,7 +596,8 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
         }
     }
     if (g_emevd_observe && instr && !skip &&
-        ((bank == 2003 && (id == 12 || id == 15 || id == 53)) || (bank == 2000 && id == 0))) {
+        ((bank == 2003 && (id == 12 || id == 15 || id == 53)) || (bank == 2000 && id == 0) ||
+         (bank == 2004 && id == 8 && event_id == kKidnapWakeEvent))) {
         u8 args[12] = {};
         u32 arg_size = 0;
         const u64 at = EmevdInstructionArgs(event, instr, &arg_size);

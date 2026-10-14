@@ -279,6 +279,18 @@ int GuestInsightGrant(int host_n, InsightMode mode) {
     return 0;
 }
 
+std::optional<int> HostOnlySpEffectInsight(std::int32_t event, std::int32_t bank, std::int32_t id,
+                                           std::int32_t entity, std::int32_t speffect) {
+    (void)entity;  // 10000 in 9422; the SpEffect alone means +1 Insight to whoever it is set on
+    if (bank != 2004 || id != 8 || speffect != kInsightSpEffectId) {
+        return std::nullopt;
+    }
+    if (event != kKidnapWakeEvent) {
+        return std::nullopt; // other events may run on the guest too: its game gives it then
+    }
+    return 1;
+}
+
 void BossInsightTracker::OnBossDefeat(std::int32_t event, double now) {
     defeats_[event] = now;
     // Keep it small: drop stale entries.
@@ -750,6 +762,29 @@ void PhantomEmevdInstruction(std::int32_t event, std::int32_t bank, std::int32_t
     if (bank == 2003 && (id == 12 || id == 15 || id == 53)) {
         std::lock_guard<std::mutex> lk(g_host_mu);
         g_tracker.OnBossDefeat(event, now);
+        return;
+    }
+    if (bank == 2004 && id == 8) {
+        // SetSpEffect(entity, speffect) in a host-only event (9422, the kidnap's waking scene).
+        std::int32_t entity = 0, speffect = 0;
+        if (!args || size < 8) {
+            return;
+        }
+        std::memcpy(&entity, args, 4);
+        std::memcpy(&speffect, args + 4, 4);
+        const std::optional<int> got = HostOnlySpEffectInsight(event, bank, id, entity, speffect);
+        if (!got) {
+            return;
+        }
+        PhantomEvent e;
+        e.kind = PhantomEventKind::Insight;
+        e.seq = NextSeq();
+        e.insight = *got;
+        e.source_event = static_cast<u32>(event);
+        e.boss = false;
+        Queue(e);
+        Log("host story Insight: event %d applies SpEffect %d to the player (+%d Insight, host only); telling the guests",
+            event, speffect, *got);
         return;
     }
     if (bank != 2000 || id != 0 || !args || size < 12) {
