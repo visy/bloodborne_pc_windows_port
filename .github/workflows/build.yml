@@ -92,6 +92,7 @@ jobs:
           cmake -S gpu -B out/gpu -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_PREFIX_PATH="/mingw64" \
+            -DBB_LTO=OFF \
             -DCMAKE_C_FLAGS="-D_WIN32_WINNT=0x0A00 -Wno-implicit-function-declaration" \
             -DCMAKE_CXX_FLAGS="-D_WIN32_WINNT=0x0A00"
 
