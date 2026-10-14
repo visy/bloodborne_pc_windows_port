@@ -70,7 +70,7 @@ Saves and the shader cache are stored in `user\`. Settings are stored in `bbport
 |---|---|---|
 | Port settings | *System* in the game's menu | *System* in the game's menu |
 | Overlay menu (fallback) | `L3 + R3` (enable in launcher) | `Insert` |
-| Gestures / key items | Touchpad left / right half | `Tab` / `Backspace` |
+| Gestures / key items | Touchpad left / right half (Xbox pads: `Back` + d-pad left / right; `Back` alone the left half) | `Tab` / `Backspace` |
 | Fullscreen | — | `Alt + Enter` |
 
 Mouse and keyboard, free camera, debug menu: [docs/SETTINGS.md](docs/SETTINGS.md).

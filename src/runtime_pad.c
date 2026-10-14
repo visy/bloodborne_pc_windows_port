@@ -482,11 +482,48 @@ static int key_down(const bool *k, int input) {
     }
     return 0;
 }
+/* Xbox pads: Back + d-pad left/right clicks the touchpad halves (after Supermedo/bloodborne_pc
+ * a04e1e95; the idea and timing are parsifal295's, its PR #39). Pads without a touch surface
+ * had only Back, a click on the left half (gestures): the right half (key items, the right choice
+ * of some prompts) could not be reached. While Back is bound to nothing but the touchpad (the
+ * default pad.touchpad), Back + d-pad left or right clicks that half as long as the d-pad is
+ * held, and Back alone clicks the left half for 150 ms when it is released, so Back + right does
+ * not open the gestures first. Back and, while Back is held, d-pad left/right then reach no other
+ * binding. Pads with a touch surface, and a Back moved by pad.<input>= lines, keep the old rule. */
+static int back_combo_masked; /* pad_value: 1 Back reads released, 2 also d-pad left/right */
+static int back_combo_wanted(SDL_Gamepad *g) {
+    if (!g || SDL_GetNumGamepadTouchpads(g)>0) return 0;
+    int on_touchpad=0;
+    for (int input=IN_CROSS;input<=IN_RIGHT;++input)
+        for (int i=0;i<bindings[input].pad_count;++i)
+            if (bindings[input].pad[i]==SDL_GAMEPAD_BUTTON_BACK) {
+                if (input!=IN_TOUCHPAD) return 0;
+                on_touchpad=1;
+            }
+    return on_touchpad;
+}
+/* One sample of the combo: the touchpad half to click (0 left, 1 right) or -1. */
+static int back_combo_step(int back, int left, int right, uint64_t now) {
+    static int was_down, combo;
+    static uint64_t click_until;
+    int side=-1;
+    if (back) {
+        if (!was_down) { combo=0; click_until=0; }
+        if (left || right) { side=right ? 1 : 0; combo=1; }
+    } else if (was_down && !combo) {
+        click_until=now+150000;
+    }
+    was_down=back;
+    if (side<0 && now<click_until) side=0;
+    return side;
+}
 /* The bound gamepad buttons' state; triggers as their analog value. */
 static int pad_value(SDL_Gamepad *g, int input) {
     int value=0;
     for (int i=0;i<bindings[input].pad_count;++i) {
         const int b=bindings[input].pad[i];
+        if (back_combo_masked && (b==SDL_GAMEPAD_BUTTON_BACK || (back_combo_masked==2 &&
+            (b==SDL_GAMEPAD_BUTTON_DPAD_LEFT || b==SDL_GAMEPAD_BUTTON_DPAD_RIGHT)))) continue;
         const int v=b==PAD_LEFT_TRIGGER ? trigger(SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_LEFT_TRIGGER))
                   : b==PAD_RIGHT_TRIGGER ? trigger(SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_RIGHT_TRIGGER))
                   : SDL_GetGamepadButton(g,(SDL_GamepadButton)b) ? 255 : 0;
@@ -630,6 +667,9 @@ static void sample_host(PadData *d) {
     else mouse_wheel_reset();
     if (g) {
         int touch_right=0;
+        const int back_combo=back_combo_wanted(g);
+        const int back_down=back_combo && SDL_GetGamepadButton(g,SDL_GAMEPAD_BUTTON_BACK);
+        back_combo_masked=back_combo ? (back_down ? 2 : 1) : 0;
         for (int i=IN_CROSS;i<=IN_RIGHT;++i) {
             const int v=pad_value(g,i);
             if (i==IN_L2) d->l2=(uint8_t)v;
@@ -658,6 +698,13 @@ static void sample_host(PadData *d) {
             }
         }
         // Back/Select on pads without a touch surface is a left-side click.
+        back_combo_masked=0;
+        if (back_combo) {
+            const int side=back_combo_step(back_down,
+                back_down && SDL_GetGamepadButton(g,SDL_GAMEPAD_BUTTON_DPAD_LEFT),
+                back_down && SDL_GetGamepadButton(g,SDL_GAMEPAD_BUTTON_DPAD_RIGHT),d->timestamp);
+            if (side>=0 && !d->touch_count) touch_click(d,side);
+        }
         if ((d->buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d,0);
         if (touch_right) touch_click(d,1);
     }
