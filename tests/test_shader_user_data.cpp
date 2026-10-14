@@ -33,6 +33,12 @@ int main() {
     // Pointer metadata is masked before deciding whether the table is null.
     set_pointer(0xabcd000000000000ULL);
     assert(read() == AmdGpu::Buffer{});
+    assert(info.UdPointerNull(pointer_reg));
+    // A near-null table (low page, never mapped) reads as unbound as well.
+    set_pointer(0x8);
+    assert(read() == AmdGpu::Buffer{});
+    assert(info.UdPointerNull(pointer_reg));
+    assert(!info.UdPointerNull(Shader::IR::NumScalarRegs));
 
     // The vertex consumer must still see an empty descriptor with load overrides applied.
     Shader::Gcn::VertexAttribute attribute{};
@@ -45,6 +51,7 @@ int main() {
     // Valid tables, masked pointer metadata and instruction offsets retain their behavior.
     set_pointer(reinterpret_cast<u64>(table.data()) | 0xabcd000000000000ULL);
     assert(read() == expected);
+    assert(!info.UdPointerNull(pointer_reg));
     const auto vertex = attribute.GetSharp(info);
     assert(vertex.num_records == expected.num_records);
     assert(vertex.base_address == expected.base_address + attribute.inst_offset);
