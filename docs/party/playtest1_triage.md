@@ -1296,6 +1296,23 @@ guest `BB_PARTY_ROT_KIND=0`, steps `guest_die@3%m24_01,guest_obj=2411951:1.2:0@8
 
 Seen: the guest's `death 1 in the prologue: no rot (#19)` after a join in Central Yharnam (its test save), and `2 stack(s) kept from the last game` despite `--fresh-saves` (the rot file is not part of the reset).
 
+**Follow-up (menuhide2, 2026-10-14, 2 live runs, `--fresh-saves`, shots every 2 s).**
+- Prologue misread, **fixed, live**: in another player's world the event flags are that world's (the guest's
+  `start` line read `step opening: 12410000 0, 9401 0 ...` while summoned into the host's Dream / Central Yharnam);
+  it held story / item / progress syncs, gave no rot and wrote `party_prologue.txt` = 1. `UpdateStart` now treats
+  a player in another world (session client or WorldTransitionState +0x1592 == 0) as ready and past its prologue,
+  without reading or saving the flags: `start (prologue_solo): in the host's world (m24_01_00_00): not in its own
+  prologue, ready`; the guest's death there: `death 1; rot on, 1 stack(s) (this one: health)`, max HP 719 -> 647.
+- Rot kept across fresh saves, **fixed, live**: `--fresh-saves` also removes `party_rot.txt` and
+  `party_prologue.txt` (a seeded `stacks 2` file, then the last run's `stacks 1`: both runs `0 stack(s) kept`), and
+  stacks seen while the own save is 3 s in its prologue (a new game) are dropped (unit `party-balance-test`).
+- Overlay under the menus, **live**: hidden over the lamp's warp menu "Awaken Above Ground", the top menu, the
+  inventory and its full item description (Square), back after Circle; MenuMan's IsFullscreenMenu fields stayed 0
+  throughout, the flow menu +0xa88 carried it. The lamp's YES/NO box also opens through the flow menu (+0x78 follows
+  ~35 ms later), which hid the panel too; a flow menu joined by the box within 0.25 s is now that box
+  (`game dialog box via the menu flow ...`): live, the panel stays and only the name tag hides. Not seen: the Doll's
+  level-up screen (the guest's Cross went to an item box, then Circle broke off the Doll's greeting).
+
 ## Bug 20: "Travel with the party?" shown on both players (splitq, 2026-10-14)
 
 **Players' report (0.6.0):** the question appeared on both players. Expected: only the player who used the

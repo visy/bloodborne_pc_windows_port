@@ -241,14 +241,29 @@ static void GameMenuTick(bool in_party) {
         const u64 at = Guest(kMenuNewSystem);
         if (at && SafeGet(at, &new_system) && new_system) flow_menu = Field<u64>(Slot(kSlotMenuFlow), 0xa88);
     }
-    if (mm || flow_menu) open = party::hud::GameMenuUp(flow_menu != 0, f, force);
+    // The YES/NO box opens through the menu flow too: only the name tags step aside for it.
+    static party::hud::FlowMenuKind kind;
+    static const auto t0 = std::chrono::steady_clock::now();
+    const bool dialog = mm && Field<int>(mm, 0x78, 0) != 0;
+    const bool flow_full =
+        kind.Update(flow_menu != 0, dialog,
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+    if (mm || flow_menu) open = party::hud::GameMenuUp(flow_full, f, force);
     party::hud::SetGameMenu(open);
-    party::hud::SetGameDialog(mm && Field<int>(mm, 0x78, 0) != 0);
+    party::hud::SetGameDialog(dialog || (flow_menu != 0 && !flow_full));
+    static bool box_logged = false;
+    if (kind.box() != box_logged) {
+        box_logged = kind.box();
+        if (box_logged)
+            Log("game dialog box via the menu flow (flow menu 0x%llx, vtable 0x%llx): name tags hidden, panel and notices "
+                "stay", (unsigned long long)flow_menu, (unsigned long long)Field<u64>(flow_menu, 0));
+    }
     if (int(open) != last && (mm || last == 1)) {
         last = int(open);
-        Log("game full-screen menu %s (flow menu 0x%llx; MenuMan +3c %d +40 %d +88 %d +80 %d +120 %d +13c %d +98 %d +9c %d +138 %d, force %d; "
+        Log("game full-screen menu %s (flow menu 0x%llx vtable 0x%llx; MenuMan +3c %d +40 %d +88 %d +80 %d +120 %d +13c %d +98 %d +9c %d +138 %d, force %d; "
             "dialog %d, pad %d, visible %d)",
-            open ? "open: party panel / tags hidden, notices held" : "closed", (unsigned long long)flow_menu, f[0], f[1], f[2], f[3], f[4], f[5],
+            open ? "open: party panel / tags hidden, notices held" : "closed", (unsigned long long)flow_menu,
+            (unsigned long long)(flow_menu ? Field<u64>(flow_menu, 0) : 0), f[0], f[1], f[2], f[3], f[4], f[5],
             f[6], f[8], f[7], int(force), Field<int>(mm, 0x78, 0), Field<int>(mm, 0x2e4, 0), Field<int>(mm, 0x2e8, 0));
     }
 }

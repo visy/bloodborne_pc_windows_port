@@ -70,6 +70,11 @@ int main() {
     assert(!LampWarpIsRespawn(true, 60.0, false));       // long after
     assert(!LampWarpIsRespawn(true, -1.0, false));       // no death yet
     // #21: the lamp menu opened beside a lamp is a rest.
+    // Rot belongs to the character: stacks in a prologue save are another character's.
+    assert(RotFromAnotherCharacter(2, true, kStaleRotPrologueS));
+    assert(!RotFromAnotherCharacter(2, true, 1.0));   // a moment's reading, not yet
+    assert(!RotFromAnotherCharacter(2, false, 60.0)); // past the prologue: its own
+    assert(!RotFromAnotherCharacter(0, true, 60.0));  // nothing to drop
     assert(LampMenuRest(true, true, 1.5f, 0.2f, -1.0f));
     assert(!LampMenuRest(false, true, 1.5f, 0.2f, -1.0f));  // no dialog
     assert(!LampMenuRest(true, false, 1.5f, 0.2f, -1.0f));  // dead

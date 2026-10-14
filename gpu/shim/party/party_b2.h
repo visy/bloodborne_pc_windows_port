@@ -53,6 +53,9 @@ bool Requested();
 /// PartyInit, after InstallTravelPatches (bbgpu_patch_image, game not running yet).
 void Init();
 bool Enabled();
+/// The local player stands in another player's world (WorldTransitionState +0x1592 == 0: summoned,
+/// or a guest's alone loads in the host's world). Its event flags are then that world's, not its save's.
+bool InOtherWorld();
 /// Host: a member task (mode 1) exists - a guest is still in the session (main thread).
 bool HostHasMemberTasks();
 /// Guest, own world, before ringing (main thread): steps aside from the host's spot so the join

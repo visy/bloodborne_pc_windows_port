@@ -540,6 +540,26 @@ void UpdateStart(State& st, const GameSnapshot& s, StartMode mode) {
         return; // a loading screen keeps the last reading (the flags do not go back)
     }
     const bool in_world = InWorld(s);
+    // In another player's world the event flags are that world's (the host snapshot / world mirror;
+    // during the swap the opening flags read 0), not this save's: a guest past its prologue was
+    // read as "opening" in the host's Central Yharnam (no rot, syncs held, party_prologue.txt = 1).
+    // Nobody standing in the host's world is in its own prologue (a prologue save is never summoned
+    // nor title-joined): ready, flags not read, party_prologue.txt untouched.
+    const bool other_world = in_world && (s.session_role == RoleClient || b2::InOtherWorld());
+    if (other_world) {
+        if (st.start_prologue || !st.start_ready || st.start_step != StartStep::Ready)
+            Log("start (%s): in the host's world (%s): not in its own prologue, ready (its flags are that "
+                "world's)", StartModeName(mode), MapName(s.map_id).c_str());
+        st.start_prologue = false;
+        st.start_step = StartStep::Ready;
+        st.start_ready = true;
+        st.start_logged = true;
+        g_local_prologue.store(false);
+        SetLocalStartReady(true);
+        g_local_start_ready.store(true);
+        g_local_start_step.store(int(StartStep::Ready));
+        return;
+    }
     if (in_world) {
         TestPrologueTick(s);
         st.cs = ReadStartFlags();
@@ -585,7 +605,8 @@ void UpdateStart(State& st, const GameSnapshot& s, StartMode mode) {
 
 /// The bells a ready player lacks (§4.3), once per world, in its own world only.
 void GrantBells(State& st, const GameSnapshot& s) {
-    if (st.granted || !st.start_ready || !InWorld(s) || s.session_role != RoleIdle || st.cs.cutscene) {
+    if (st.granted || !st.start_ready || !InWorld(s) || s.session_role != RoleIdle || st.cs.cutscene ||
+        b2::InOtherWorld()) {
         return;
     }
     const BellGrant g = PlanBellGrant(st.cs);

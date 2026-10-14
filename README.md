@@ -215,11 +215,11 @@ before anyone is in the game):
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
 - **Death has a cost.** Each death stacks "rot" (−10% max HP or stamina, picked at random, up to
   5); using a lamp (even just opening its travel menu and cancelling) or levelling up clears it.
-  On by default; the host can turn it off on the *Party rules* page.
+  It belongs to your character (a new game starts without it). On by default; the host can turn it off on the *Party rules* page.
 - **Enemies scale with the party, harder than vanilla.** Bosses get more health (and a little more
   damage) per extra hunter than the game gives them, normal enemies get tougher too; all six values
   (boss / enemy health, damage, poise) are on the *Enemy scaling* page, the host's count.
-- **Names over party members**, in the game's own style (replacing its plate, which hid behind walls), at any distance, bigger when near, with level, health or deaths (your choice); the *Party name tags* setting (launcher or *Party rules*) turns them off for the game's own plate. Names, the party panel and party notices step aside while the game's own menus (inventory, level up, travel) are open.
+- **Names over party members**, in the game's own style (replacing its plate, which hid behind walls), at any distance, bigger when near, with level, health or deaths (your choice); the *Party name tags* setting (launcher or *Party rules*) turns them off for the game's own plate. Names, the party panel and party notices step aside while the game's own menus (inventory, item descriptions, level up, travel) are open; for a YES / NO box only the names do.
 - **Party HUD.** Party members and events are shown in a small HUD; all party settings are on the
   *Party* pages of the game's *System* menu.
 

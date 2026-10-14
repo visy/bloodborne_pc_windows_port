@@ -273,6 +273,22 @@ bool GameMenuUp(bool flow_menu_open, const int fields[kFullscreenMenuFields], si
     return flow_menu_open || FullscreenMenuOpen(fields, force);
 }
 
+bool FlowMenuKind::Update(bool flow_open, bool dialog, double t) {
+    if (!flow_open) {
+        state_ = State::Closed;
+        return false;
+    }
+    if (state_ == State::Closed || (state_ == State::Box && !dialog)) {
+        state_ = State::Pending;
+        since_ = t;
+    }
+    if (state_ == State::Pending) {
+        if (dialog) state_ = State::Box;
+        else if (t - since_ >= kBoxGraceS) state_ = State::Full;
+    }
+    return state_ == State::Full;
+}
+
 void SetGameMenu(bool open) {
     g_game_menu.store(open, std::memory_order_relaxed);
 }

@@ -143,6 +143,10 @@ bool LampMenuRest(bool dialog_opened, bool alive, float lamp_dx, float lamp_dy, 
            std::fabs(lamp_dy) <= kLampMenuHeightM;
 }
 
+bool RotFromAnotherCharacter(int stacks, bool own_prologue, double prologue_s) {
+    return stacks > 0 && own_prologue && prologue_s >= kStaleRotPrologueS;
+}
+
 std::string DescribeHp(int percent, bool russian) {
     char b[96];
     const int per = static_cast<int>(std::lround(percent * kVanillaHpStep));
