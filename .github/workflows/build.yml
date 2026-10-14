@@ -114,3 +114,4 @@ jobs:
           path: |
             out/bbport.exe
             out/bb-probe.exe
+            out/*.dll
