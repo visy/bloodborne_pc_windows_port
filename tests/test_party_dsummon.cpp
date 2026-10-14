@@ -40,6 +40,9 @@ int main() {
     HostView v; v.world_up = true;
     CHECK(HostRefusal(v) == nullptr);
     v.loading = true; CHECK(HostRefusal(v)); v.loading = false;
+    // Batch 6: the host's warp is armed: refused without a wait word (the sign path follows the host).
+    v.travel_pending = true; CHECK(HostRefusal(v)); CHECK(RefusalWait(v) == Busy::None);
+    v.host_ready = false; CHECK(RefusalWait(v) == Busy::None); v.host_ready = true; v.travel_pending = false;
     v.cooperators = 3; CHECK(HostRefusal(v)); v.cooperators = 1;
     v.ms_since_sign_summon = 5000; CHECK(HostRefusal(v)); v.ms_since_sign_summon = 30000;
     v.other_hold_ms = 100; CHECK(HostRefusal(v)); v.other_hold_ms = 0; CHECK(!HostRefusal(v));
@@ -141,11 +144,32 @@ int main() {
     b.since_done = 0.1; b.done_ok = true; CHECK(HostBellHeld(b));     // it joined
     b.done_ok = false; CHECK(!HostBellHeld(b));                       // it failed: the fallback rings now
     b = HostBellView{}; b.direct_on = true; b.waiting_s = 100; b.since_req = 1;
+    CHECK(HostBellHeld(b));                                    // batch 6: the request is not answered yet (live: rang 0.03 s after it)
+    b.since_refused = 0.9;
     CHECK(!HostBellHeld(b));                                   // refused (hold / sign summon): sign path
-    b.refused_wait = true; CHECK(HostBellHeld(b));             // refused to wait / gather: no bell
+    b.since_refused = 30;
+    CHECK(HostBellHeld(b));                                    // an old refusal does not answer a new request
+    b.since_refused = 0.9; b.refused_wait = true; CHECK(HostBellHeld(b));             // refused to wait / gather: no bell
     b.since_req = kHostBellHold + 1; CHECK(!HostBellHeld(b));  // long ago
     b = HostBellView{}; b.direct_on = true; b.waiting_s = 100; b.since_served = kHostBellHold + 5; b.since_done = kHostBellHold + 1;
     b.done_ok = true; CHECK(!HostBellHeld(b));                 // an old join does not hold a new wait
+    // Batch 6: the host's lamp travel waits for a member it just served a room (H1:3630).
+    HostTravelHoldView h;
+    CHECK(!HostTravelHeld(h));                                     // off / nothing served
+    h.direct_on = true;
+    CHECK(!HostTravelHeld(h));                                     // nothing served lately
+    h.since_served = 2;
+    CHECK(HostTravelHeld(h));                                      // room on its way: wait
+    h.since_done = 1; h.done_ok = true;
+    CHECK(HostTravelHeld(h));                                      // joined, chr not in the world yet: wait
+    h.joiner_in_world = true;
+    CHECK(!HostTravelHeld(h));                                     // in the world: travel (it follows)
+    h.joiner_in_world = false; h.done_ok = false;
+    CHECK(!HostTravelHeld(h));                                     // the join failed: travel now
+    h.since_done = 5; h.done_ok = false;
+    CHECK(HostTravelHeld(h));                                      // an older failure does not release a new room
+    h.since_served = kHostTravelHoldMax;
+    CHECK(!HostTravelHeld(h));                                     // waited long enough
     std::printf("party-dsummon-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

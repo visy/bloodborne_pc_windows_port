@@ -22,6 +22,8 @@
 #include "party_b2.h"
 #include "party_chalice.h"
 #include "party_director.h"
+#include "party_dsummon.h"
+#include "party_status.h"
 
 #include <atomic>
 #include <chrono>
@@ -409,6 +411,19 @@ const char* TravelFollowName(TravelFollow f) {
     return "?";
 }
 
+EmptyRoomStep PlanEmptyRoom(const EmptyRoomView& v) {
+    if (v.since_travel < 0) {
+        return EmptyRoomStep::None;
+    }
+    if (v.b2_holds) {
+        return v.load_seen && v.in_world && !v.b2_rejoin ? EmptyRoomStep::Drop : EmptyRoomStep::None;
+    }
+    if (v.since_travel > kEmptyRoomTimeout) {
+        return EmptyRoomStep::Timeout;
+    }
+    return v.load_seen && v.in_world ? EmptyRoomStep::Check : EmptyRoomStep::None;
+}
+
 TravelFollow GuestFollowsHostTravel(const FollowState& s) {
     constexpr int kJoining = 4, kClient = 6; // RoleTryingToJoin, RoleClient (game_state.h)
     if (s.session_role == kClient || s.session_role == kJoining) {
@@ -634,6 +649,11 @@ void* g_block_clear3_orig = nullptr;
 void* g_lamp_warp_orig = nullptr;
 std::atomic<LampWarpInterceptor> g_lamp_intercept{nullptr};
 std::atomic<bool> g_lamp_decided{false};  // RunLampWarpDecided: the interceptor stands aside
+// Batch 6: the host's lamp warp held while a member it just served a room loads in.
+std::atomic<u32> g_held_lamp{kTravelNone};
+std::atomic<bool> g_held_alone{false};
+std::atomic<double> g_held_at{0};
+std::atomic<bool> g_hold_release{false};  // HostHeldLampTick runs the held warp: no observer, no hold
 std::atomic<MarkInterceptor> g_mark_intercept{nullptr};
 std::atomic<SameMapWarpFn> g_same_map{nullptr};
 std::atomic<SameMapStageFn> g_same_map_stage{nullptr};
@@ -684,14 +704,29 @@ void HostCloseEmptyRoom() {
     const double now = Now();
     const GameSnapshot g = ReadGameState(false);
     g_host_load_seen = g_host_load_seen || g.loading || !g.world_up;
-    if (now - at > 180.0) {
+    // B2 keeps the room while a member's task exists; once the guest fell back to B1 (task
+    // gone) the empty room is closed as in B1.
+    EmptyRoomView v;
+    v.since_travel = now - at;
+    v.load_seen = g_host_load_seen;
+    v.in_world = g.world_up && !g.loading;
+    v.b2_holds = b2::Enabled() && b2::HostHasMemberTasks();
+    v.b2_rejoin = b2::HostRejoinRunning();
+    switch (PlanEmptyRoom(v)) {
+    case EmptyRoomStep::None:
+        return;
+    case EmptyRoomStep::Drop:
         g_host_left_at = 0;
         g_host_load_seen = false;
-        Log("host travel: no arrival within 180 s; room left as it is");
+        Log("host travel: arrived %.1f s after the warp; the B2 re-join kept the room", now - at);
         return;
-    }
-    if (!g_host_load_seen || !g.world_up || g.loading) {
+    case EmptyRoomStep::Timeout:
+        g_host_left_at = 0;
+        g_host_load_seen = false;
+        Log("host travel: no arrival within %.0f s; room left as it is", kEmptyRoomTimeout);
         return;
+    case EmptyRoomStep::Check:
+        break;
     }
     if (g.session_role != 3 /* host */ && g.session_role != 1 /* creating */) {
         g_host_left_at = 0;
@@ -804,9 +839,26 @@ void CaptureHost(u64 site, TravelKind kind) {
 __attribute__((noinline)) BB_COOP_SYSV void LampWarpHook(u64 id) {
     perf::Scope z(perf::Zone::HookLampWarp);
     if (!g_in_replay.load()) {
-        if (LampUseObserver obs = g_lamp_observer.load()) obs(static_cast<u32>(id));
+        if (LampUseObserver obs = g_lamp_observer.load(); obs && !g_hold_release.load()) obs(static_cast<u32>(id));
         if (LampWarpInterceptor fn = g_lamp_intercept.load(); fn && !g_lamp_decided.load() && fn(static_cast<u32>(id))) {
             return;
+        }
+        // Batch 6: a member the host just served a room is still loading in: the travel waits
+        // (HostHeldLampTick runs it), or that guest arrives in an empty map and its join stalls.
+        if (Role() == PartyRole::Host && !g_hold_release.load()) {
+            std::string why;
+            if (b2::HostTravelHeldForJoin(&why)) {
+                const u32 was = g_held_lamp.exchange(static_cast<u32>(id));
+                g_held_alone = g_next_alone.exchange(false);
+                if (was == kTravelNone) {
+                    g_held_at = Now();
+                }
+                Log("host lamp warp to %u held: %s; it runs once the member is in (at most %.0f s)%s",
+                    static_cast<u32>(id), why.c_str(), dsummon::kHostTravelHoldMax,
+                    was != kTravelNone ? " (replaces the held warp)" : "");
+                party::status::SetLastEvent("Travel waits: a member is joining");
+                return;
+            }
         }
         // A lamp of the loaded map: no load at all (party_b2 InWorldLampWarp; every caller: the
         // lamp menu, a headstone, a test step, a request run by the host).
@@ -817,6 +869,32 @@ __attribute__((noinline)) BB_COOP_SYSV void LampWarpHook(u64 id) {
         g_lamp_key = static_cast<u32>(id);
     }
     reinterpret_cast<LampWarpFn>(g_lamp_warp_orig)(static_cast<u32>(id));
+}
+
+/// Host, main thread (TravelTick): runs a lamp warp held for a joining member once the join is
+/// through (in the world, failed) or the hold ran out; dropped when a load came first.
+void HostHeldLampTick() {
+    const u32 id = g_held_lamp.load();
+    if (id == kTravelNone) {
+        return;
+    }
+    const GameSnapshot g = ReadGameState(false);
+    if (Role() != PartyRole::Host || g.loading || !g.world_up) {
+        g_held_lamp = kTravelNone;
+        Log("host lamp warp to %u held: dropped (%s)", id, Role() != PartyRole::Host ? "no longer the host" : "a load came first");
+        return;
+    }
+    const double held = Now() - g_held_at.load();
+    std::string why;
+    if (held < dsummon::kHostTravelHoldMax + 5.0 && b2::HostTravelHeldForJoin(&why)) {
+        return;
+    }
+    g_held_lamp = kTravelNone;
+    Log("host lamp warp to %u released after %.1f s (%s)", id, held,
+        held >= dsummon::kHostTravelHoldMax + 5.0 ? "hold ran out" : "the joining member is in or its join ended");
+    g_hold_release = true;
+    RunLampWarpDecided(id, g_held_alone.load());
+    g_hold_release = false;
 }
 
 BB_COOP_SYSV void ReviveMagicEntry(u64, u64, u64, u64, u64, u64) {
@@ -1274,11 +1352,8 @@ void TravelTick() {
                 ull(WtsField<u64>(wts, kWtsRespawn, 0)), ull(WtsField<u64>(wts, kWtsLastLamp, 0)));
         }
         was_loading = loading;
-        // B2 keeps the room while a member's task exists; once the guest fell back to B1 (task
-        // gone) the empty room is closed as in B1.
-        if (!b2::Enabled() || !b2::HostHasMemberTasks()) {
-            HostCloseEmptyRoom();
-        }
+        HostCloseEmptyRoom();
+        HostHeldLampTick();
         return;
     }
     const GameSnapshot g = ReadGameState(false);

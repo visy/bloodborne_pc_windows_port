@@ -995,3 +995,45 @@ re-join after a host travel 1.5-12.9 s on the host (longest into Old Yharnam and
 - **G4 8-of-10 failures:** their cause was the cross-map chase (#9); with the room/map checks they now end in one
   gather instead of repeated failed summons. Not touched (other files): host-travel-while-joining watchdog stop,
   holding host lamp travel ~10 s after serving a room, the premature "no arrival within 180 s".
+
+## Batch 6 result (pt1follow, 2026-10-14): follow-ups of batches 1 and 2
+
+- **A guest's alone rest no longer leaves the host waiting 60 s.** `HostRestLoadTick` counts who follows the rest load
+  (`deathrules::RestLoadExpected`): the resting guest only when its lamp is in the host's area, other members only in
+  the host's area (or still loading). Nobody: the host's load is an alone load (no snapshot re-send, no wait). Live
+  (one run + one re-run, loopback, Central Yharnam): guest NO at the Dream lamp -> `0 member(s) here follow (an alone
+  load ...)`, `host: arrived alone` 6.4 s after the warp (was: `60 s without arrival`); guest NO back to lamp 2412951 (the
+  host's area) -> `1 member(s) here follow`, the guest followed the load, `re-join done after 6.5 s`. The first run had
+  counted that second case as alone: the guest waited for a snapshot that never came and fell back to B1 after 45 s
+  (fixed before the re-run).
+- **No watchdog stop through a host travel (H1:3694).** The cooperator count reads -1 while loading, and that frame
+  kept the watchdog's clocks running through the load, so a join stalled before the travel was "stuck for 72 s" the
+  moment the host arrived. Now a loading screen or a running B2 re-join (`b2::HostRejoinRunning`, new
+  `HostWatchdogInput.host_travel`) restarts the clocks. Unit: party-watchdog-test `test_host_travel`. No stop in any run.
+- **The host's lamp travel waits for a member it just let in (H1:3630).** `dsummon::HostTravelHeld`: a host lamp warp
+  within 30 s of serving a room waits until the joiner's chr is in its world (or the join failed / the hold ran out),
+  then runs (`HostHeldLampTick`). Live (test aid `BB_PARTY_TEST_TRAVEL_ON_SERVE`): `host lamp warp to 2102950 held: a
+  member is joining`, released 3.8 s later after `reports it joined`, then one party travel (both loading screens).
+  The live runs also showed the opposite race: a room served while the host's own warp was already armed (the stage
+  request) joined the guest into the map the host was leaving (it arrived in an empty Dream, as in H1). The host now
+  refuses that request (`the host is about to travel (its loading screen is next)`, no wait word); the guest's
+  next ring (30 s later) joined it by direct summon in the host's new map (live, twice).
+- **"no arrival within 180 s" right after a guest restart (H1:4389, H3:2654).** The travel mark stayed set while B2
+  kept the room (the empty-room check is skipped then), so the first frame without a member task timed out at once.
+  `PlanEmptyRoom`: while B2 holds the room the mark is dropped once the host is in its world and the re-join is over
+  (`the B2 re-join kept the room`); the 180 s count runs only while nobody holds the room. Live: guest killed and
+  restarted after a load: `Hunter1 restarted its game`, rejoined by direct summon, no "no arrival" line. Unit:
+  party-travel-test `test_empty_room`.
+- **Host bell (batch 2 #2 follow-up), live:** the bell rang 0.03 s after a guest's request (the request arrives one
+  tick before the room is served, and `HostBellHeld` read "request answered with no wait word"). An unanswered
+  request now holds the bell (`since_refused`). Re-run: `no Beckoning Bell while the direct summon handles it` on each
+  join; the host rang only after the plain "about to travel" refusal (its sign path, as designed).
+- **Wipe (5a), live once:** guest `guest_die`, the host died 1 s after the guest's down notice (test aid
+  `BB_PARTY_TEST_DIE_ON_DOWN`, no `host_kill`): `host death: every member is down too (1 of 1): a wipe; the party
+  respawns together (one load)`; guest `held death goes with the host's travel; no redirect, no leave`; both at the lamp
+  afterwards (screenshot). That guest then fell back to B1 because of the rest-load bug above (fixed); the re-run's die
+  step landed inside a load (the load undid it), so the clean wipe follow is not re-checked live.
+- **Not done live: a direct summon refused while the HOST is in its prologue (5b).** First try: the harness copied a
+  character save into the "empty" host (its default `--saves`), so the host was past its prologue (the join worked).
+  Re-run with an empty save: the new-game driver (`BB_TEST_NEWGAME=1`) gave up at the contract screen ("the name box
+  never opened"). Still covered by party-dsummon-test only.

@@ -5,6 +5,11 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.6.1 (unreleased)
 
+- **No more waiting after a guest rests alone, checked live**: when a guest rests at a lamp and travels on alone, the host's short reset load no longer waits a minute for that guest to arrive; a guest that rests its way back into the host's area loads along with the host and both carry on together.
+- **A host travelling while you join no longer leaves you in an empty map, checked live**: the host's lamp travel waits (up to 30 s) until a guest it just let in has arrived, then everyone travels together; and a guest who asks to join just as the host's own warp starts is joined in the host's new map instead of the one the host is leaving.
+- **No "summon stuck" restart because of the host's travel**: the host's session watchdog now waits out the host's loading screen and the re-join after it, instead of ending a join that was only waiting for the load (playtest 1).
+- **No false "no arrival within 180 s"**: a guest restarting its game no longer makes the host report an arrival timeout at once (checked live).
+- **The host's bell stays quiet while a guest's join is answered**: it rang for a moment just as a guest asked to join; now it rings only when the guest's own summon fails.
 - **A rejoining guest lands next to the host, not in the Hunter's Dream** (playtest 1): a guest that rang before its own map was known joined the host's room from the Dream without loading the host's area and sat there. The guest now waits for its own map, travels to the host's lamp with a normal loading screen first when it is in another area, and never takes a room from another map (the host refuses one too, and the guest's bell goes down while it travels). Live, over a simulated DSL line: guest save in the Dream, host in Central Yharnam: one load to the host's lamp, joined 3.4 s after the bell; guest game killed and restarted: back beside the host (1 m) 2.9 s after its bell.
 - **No summons into a prologue**: the host refuses a direct summon while it (or the guest) has not finished its prologue; the guest's Party status says "Waiting: the host is in its prologue".
 - **The bell rings only on the player who rang it**: the host's Beckoning Bell no longer rings along with every guest's bell; it rings only as the fallback when the guest's direct summon fails.

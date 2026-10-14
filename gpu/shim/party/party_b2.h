@@ -158,6 +158,15 @@ void HostTravelAloneNext();
 /// Members in another area than this player's (host: guests elsewhere; guest: the host and other
 /// guests elsewhere). The host watchdog counts them as present.
 int MembersApart();
+/// Host: a B2 re-join after its own load is running (the session watchdog stands aside).
+bool HostRejoinRunning();
+/// Host: when (Now() clock, s) the last member_down notice came; 0 never (test aid).
+double LastMemberDownAt();
+/// The clock of LastMemberDownAt.
+double NowSeconds();
+/// Host, main thread (batch 6): hold its lamp travel while a member it just served a room joins.
+/// `who` gets a short reason when held.
+bool HostTravelHeldForJoin(std::string* who);
 /// A lamp / headstone id as a travel intent (ReturnPointParam row; main thread). False: no row.
 bool LampTravelIntent(std::uint32_t id, TravelIntent* t);
 /// Host in a session with at least one member task (someone to travel with or without).

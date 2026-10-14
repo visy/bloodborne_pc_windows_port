@@ -218,6 +218,28 @@ struct FollowState {
 constexpr double kFollowClientWindow = 60.0; ///< s after leaving the host's world that still follow
 TravelFollow GuestFollowsHostTravel(const FollowState& s);
 
+// ---- The host's empty-room check after its travel (HostCloseEmptyRoom) ----
+/// Playtest 1 (H1:4389, H3:2654): "no arrival within 180 s" came at once when a guest restarted,
+/// because the travel mark stayed set while B2 kept the room (the check is skipped then) and the
+/// 180 s had long passed. While B2 holds the room its re-join owns that travel: the mark is
+/// dropped once the host is back in its world and the re-join is over; the 180 s count only runs
+/// while nobody holds the room.
+enum class EmptyRoomStep : std::uint8_t {
+    None,     ///< nothing to do now
+    Drop,     ///< forget the travel (B2's re-join took the room through it)
+    Timeout,  ///< 180 s without an arrival: leave the room as it is
+    Check,    ///< in the new world: close the room if it is empty
+};
+struct EmptyRoomView {
+    double since_travel = -1;   ///< s since the host's last broadcast travel; < 0 none
+    bool load_seen = false;     ///< its loading screen came
+    bool in_world = false;      ///< world up, no loading screen
+    bool b2_holds = false;      ///< B2 keeps the room (a member's task exists)
+    bool b2_rejoin = false;     ///< B2's re-join after the load still runs
+};
+constexpr double kEmptyRoomTimeout = 180.0;
+EmptyRoomStep PlanEmptyRoom(const EmptyRoomView& v);
+
 class GuestTravel {
 public:
     static constexpr int kStableTicks = 30;          ///< frames the gate must hold before a replay

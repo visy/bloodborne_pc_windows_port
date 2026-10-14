@@ -58,6 +58,9 @@ struct HostWatchdogInput {
     int cooperators = -1;     ///< -1: unknown (then nothing changes)
     /// Members in another area (split travel, docs/party/split_travel.md): present, not stuck.
     int members_apart = 0;
+    /// The host is mid-travel: its own load, or the B2 re-join after it (playtest 1 H1:3694: a join
+    /// counted as stuck through a host travel). The clocks restart once it is over.
+    bool host_travel = false;
     std::vector<party::RosterEntry> roster;
 };
 

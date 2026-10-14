@@ -1232,6 +1232,54 @@ void UseGoodsForTest(const char* what, std::uint32_t goods) {
     if (ok) RequestGameSave("item use test");
 }
 
+/// The die test step (host_die / guest_die, BB_PARTY_TEST_DIE_ON_DOWN): this player dies now.
+void DieForTest() {
+    // ForceDead's own gates (0x18BF9A0): GSM +0x176F set = HP left alone; chr +0x18 -> +0x30 ->
+    // +0x18 bit 0 = no death call. Logged: a die step that "did nothing" names its gate.
+    std::uint64_t gsm = 0, player = LocalPlayer(), a18 = 0, a30 = 0;
+    std::uint8_t no_hp = 0xff, no_die = 0xff;
+    if (SafeGet(Guest(0x5556678), &gsm) && gsm) SafeGet(gsm + 0x176f, &no_hp);
+    if (player && SafeGet(player + 0x18, &a18) && a18 && SafeGet(a18 + 0x30, &a30) && a30) SafeGet(a30 + 0x18, &no_die);
+    std::uint8_t f1e0[8] = {};
+    if (player) SafeRead(player + 0x1e0, f1e0, sizeof f1e0);
+    Log("test: ForceDead gates: GSM +0x176F %u, chr +0x18/+0x30/+0x18 %u (bit 0 blocks the death); chr +0x1e0: "
+        "%02x %02x %02x %02x %02x %02x %02x %02x (+0x1e1 bit 6 = EnableInvincible)", no_hp, no_die, f1e0[0], f1e0[1],
+        f1e0[2], f1e0[3], f1e0[4], f1e0[5], f1e0[6], f1e0[7]);
+    auto hp_of = [] {
+        std::uint64_t pl = LocalPlayer(), ins = 0, dm = 0;
+        int hp = -1;
+        if (pl && SafeGet(pl + 0x3b0, &ins) && ins && SafeGet(ins + 0x20, &dm) && dm) SafeGet(dm + 0xf8, &hp);
+        return hp;
+    };
+    const int hp0 = hp_of();
+    // Lua ForceDead (0x13320C0) finds the chr by entity id (0x13C97A0) and does nothing when that
+    // finds none: entity 10000 is not always the local player (after a boss clear on a guest it
+    // was not). Then the death path 0x18BF9A0 runs on our own chr directly.
+    std::uint64_t by_id = 0;
+    if (std::uint64_t lua_on = 0; SafeGet(Guest(0x553b0c8), &lua_on) && lua_on)
+        by_id = reinterpret_cast<std::uint64_t(BB_COOP_SYSV*)(std::uint32_t, std::uint32_t, std::uint32_t)>(
+            Guest(0x13c97a0))(10000, 10000, 0);
+    if (by_id && by_id == player) {
+        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, 10000);
+    } else if (player) {
+        std::uint8_t b3 = 0;
+        if (SafeGet(player + 0x1e3, &b3)) {
+            b3 &= 0xdf;
+            SafeWrite(player + 0x1e3, &b3, 1);
+        }
+        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t)>(Guest(0x18bf9a0))(player);
+    }
+    Log("test: die: entity 10000 -> %#llx, local player %#llx (%s); HP %d -> %d right after",
+        static_cast<unsigned long long>(by_id), static_cast<unsigned long long>(player),
+        by_id == player ? "ForceDead" : "the death path on our chr", hp0, hp_of());
+    std::thread([hp_of] {
+        for (int i = 1; i <= 4; ++i) {
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            Log("test: die: HP %d (+%d s)", hp_of(), 2 * i);
+        }
+    }).detach();
+}
+
 /// The live travel test chain (TravelStep): joins are tracked in any state; a step runs in the
 /// world, with no loading screen and no stage request pending.
 void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::time_point now) {
@@ -1510,50 +1558,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         // host_kill=0: the nearest living regular enemy within 500 m (echoes for everyone).
         KillLoadedEnemyForTest("host_kill", step.id, true, step.args == "hp");
     } else {
-        // ForceDead's own gates (0x18BF9A0): GSM +0x176F set = HP left alone; chr +0x18 -> +0x30 ->
-        // +0x18 bit 0 = no death call. Logged: a die step that "did nothing" names its gate.
-        std::uint64_t gsm = 0, player = LocalPlayer(), a18 = 0, a30 = 0;
-        std::uint8_t no_hp = 0xff, no_die = 0xff;
-        if (SafeGet(Guest(0x5556678), &gsm) && gsm) SafeGet(gsm + 0x176f, &no_hp);
-        if (player && SafeGet(player + 0x18, &a18) && a18 && SafeGet(a18 + 0x30, &a30) && a30) SafeGet(a30 + 0x18, &no_die);
-        std::uint8_t f1e0[8] = {};
-        if (player) SafeRead(player + 0x1e0, f1e0, sizeof f1e0);
-        Log("test: ForceDead gates: GSM +0x176F %u, chr +0x18/+0x30/+0x18 %u (bit 0 blocks the death); chr +0x1e0: "
-            "%02x %02x %02x %02x %02x %02x %02x %02x (+0x1e1 bit 6 = EnableInvincible)", no_hp, no_die, f1e0[0], f1e0[1],
-            f1e0[2], f1e0[3], f1e0[4], f1e0[5], f1e0[6], f1e0[7]);
-        auto hp_of = [] {
-            std::uint64_t pl = LocalPlayer(), ins = 0, dm = 0;
-            int hp = -1;
-            if (pl && SafeGet(pl + 0x3b0, &ins) && ins && SafeGet(ins + 0x20, &dm) && dm) SafeGet(dm + 0xf8, &hp);
-            return hp;
-        };
-        const int hp0 = hp_of();
-        // Lua ForceDead (0x13320C0) finds the chr by entity id (0x13C97A0) and does nothing when that
-        // finds none: entity 10000 is not always the local player (after a boss clear on a guest it
-        // was not). Then the death path 0x18BF9A0 runs on our own chr directly.
-        std::uint64_t by_id = 0;
-        if (std::uint64_t lua_on = 0; SafeGet(Guest(0x553b0c8), &lua_on) && lua_on)
-            by_id = reinterpret_cast<std::uint64_t(BB_COOP_SYSV*)(std::uint32_t, std::uint32_t, std::uint32_t)>(
-                Guest(0x13c97a0))(10000, 10000, 0);
-        if (by_id && by_id == player) {
-            reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, 10000);
-        } else if (player) {
-            std::uint8_t b3 = 0;
-            if (SafeGet(player + 0x1e3, &b3)) {
-                b3 &= 0xdf;
-                SafeWrite(player + 0x1e3, &b3, 1);
-            }
-            reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t)>(Guest(0x18bf9a0))(player);
-        }
-        Log("test: die: entity 10000 -> %#llx, local player %#llx (%s); HP %d -> %d right after",
-            static_cast<unsigned long long>(by_id), static_cast<unsigned long long>(player),
-            by_id == player ? "ForceDead" : "the death path on our chr", hp0, hp_of());
-        std::thread([hp_of] {
-            for (int i = 1; i <= 4; ++i) {
-                std::this_thread::sleep_for(std::chrono::seconds(2));
-                Log("test: die: HP %d (+%d s)", hp_of(), 2 * i);
-            }
-        }).detach();
+        DieForTest();
     }
     std::uint8_t after = 0;
     SafeGet(wts + 8, &after);
@@ -1688,6 +1693,7 @@ void HostWatchdogTick(State& st, const GameSnapshot& s, party::PartyLink* link, 
     in.session_role = s.session_role;
     in.cooperators = s.cooperators;
     in.members_apart = b2::MembersApart();
+    in.host_travel = b2::HostRejoinRunning();
     if (link) {
         in.roster = link->roster();
     }
@@ -1737,6 +1743,21 @@ void HostWatchdogTick(State& st, const GameSnapshot& s, party::PartyLink* link, 
 
 void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
     Test& t = st.test;
+    // Test aid (batch 6, BB_PARTY_TEST_DIE_ON_DOWN=S): the host dies S s after a guest's down notice
+    // (a wipe within the death grace, as in playtest 1 bug 18), without a ForceDead on an enemy
+    // (host_kill raised the guest's boss-clear state in batch 1).
+    {
+        static const char* e = std::getenv("BB_PARTY_TEST_DIE_ON_DOWN");
+        static const double delay = e ? std::atof(e) : -1;
+        static double handled = 0;
+        const double down = b2::LastMemberDownAt();
+        if (delay >= 0 && down > handled && PartyDirector::Get().Role() == PartyRole::Host && b2::NowSeconds() - down >= delay &&
+            s.world_up && !s.loading) {
+            handled = down;
+            Log("test: die on down: the host dies %.1f s after a member's down notice", b2::NowSeconds() - down);
+            DieForTest();
+        }
+    }
     if (t.a11_lamp_done && st.world_at != t.a11_lamp_world_at) {
         t.a11_reloaded = true;  // the lamp warp's load: a11_move after the next steady world
     }

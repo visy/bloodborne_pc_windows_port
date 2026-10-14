@@ -3821,6 +3821,7 @@ void OwnStainWatchTick(const GameSnapshot& s) {
 std::atomic<int> g_rest_req_slot{0};
 std::atomic<u32> g_rest_req_lamp{0};
 std::atomic<double> g_rest_req_at{0};
+std::atomic<double> g_last_down_at{0};  // host: the last member_down (test aid BB_PARTY_TEST_DIE_ON_DOWN)
 double g_rest_load_last = -1e9;  // main thread
 
 /// Host, main thread: a guest's rest request runs as a rest load where the host stands
@@ -3865,10 +3866,33 @@ void HostRestLoadTick(const GameSnapshot& s, double now) {
         return;
     }
     g_rest_load_last = now;
+    // Who follows this load: the resting guest went alone (batch 6: the host waited 60 s for its
+    // arrival); members in another area stay. Nobody here: an alone load (no re-sync, no wait).
+    std::vector<deathrules::RestMember> ms;
+    for (const Where& w : g_where) {
+        if (w.slot == g_local_slot.load()) {
+            continue;
+        }
+        deathrules::RestMember m;
+        m.slot = w.slot;
+        m.connected = w.connected;
+        m.area = w.age_ms < 5000 ? AreaOf(w.map) : 0u;
+        ms.push_back(m);
+    }
+    TravelIntent rest_t;
+    const u32 rest_area = LampIntent(g_rest_req_lamp.load(), &rest_t) ? AreaOf(DestMapOf(rest_t)) : 0u;
+    const int expected = deathrules::RestLoadExpected(ms.data(), static_cast<int>(ms.size()), req - 1,
+                                                      AreaOf(s.map_id), rest_area);
     Log("host: slot %d rested at lamp %u and travels alone: a rest load for this world where the host stands "
-        "(%.1f, %.1f, %.1f) in %s (loading screen; the enemies come back)",
-        req - 1, g_rest_req_lamp.load(), double(pos[0]), double(pos[1]), double(pos[2]), MapName(s.map_id).c_str());
+        "(%.1f, %.1f, %.1f) in %s (loading screen; the enemies come back); %d member(s) here follow%s",
+        req - 1, g_rest_req_lamp.load(), double(pos[0]), double(pos[1]), double(pos[2]), MapName(s.map_id).c_str(),
+        expected, expected == 0 ? " (an alone load: no arrival to wait for)" : "");
+    if (expected == 0) {
+        g_host_alone_next = true;
+        g_host_alone_at = now;
+    }
     if (!HostTravelTransformNow(s.map_id, pos, rot, "a guest's rest")) {
+        g_host_alone_next = false;
         Log("host: the rest load could not start (travel off or a stage request pending)");
     }
 }
@@ -5134,6 +5158,7 @@ struct DirectSummon {
     // Host: the last request / served room / outcome (the bell fallback, HostBellHeld).
     double req_at = -1e9, served_at = -1e9, done_at = -1e9;
     bool done_ok = false, refused_wait = false;
+    double refused_at = -1e9;  // host: the last refusal (HostBellHeld: an unanswered request holds the bell)
 };
 DirectSummon& DS() {
     static DirectSummon d;
@@ -5215,6 +5240,9 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         dsummon::HostView v;
         v.world_up = s.world_up;
         v.loading = s.loading;
+        // Batch 6 (live): a room served while the host's own warp was armed took the guest into the
+        // map the host was leaving (it arrived in an empty Dream). The sign path follows the host.
+        v.travel_pending = Field<u8>(Slot(kSlotGsm), 8) != 0;
         // Playtest 1 #1 / #9: no summon into the host's prologue, none of a guest in its own prologue,
         // and none across maps (the guest gathers with a loading screen first).
         v.host_ready = coop::LocalStartReady();
@@ -5234,6 +5262,7 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
             {
                 std::lock_guard<std::mutex> lk(DS().mu);
                 DS().refused_wait = wait != dsummon::Busy::None;
+                DS().refused_at = Now();
             }
             Log("direct summon: slot %d (%s) refused (%s; host %s, guest %s, wait %s)%s", slot, name.c_str(), why,
                 MapName(v.host_map).c_str(), MapName(v.guest_map).c_str(), dsummon::BusyWord(wait),
@@ -5257,6 +5286,11 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
             } else {
                 Send(slot, dsummon::EncodeRefuse());
                 Log("direct summon: slot %d refused (no room here within 4 s)", slot);
+                {
+                    std::lock_guard<std::mutex> lk(DS().mu);
+                    DS().refused_at = Now();
+                    DS().refused_wait = false;
+                }
             }
             continue;
         }
@@ -5266,6 +5300,11 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         if (!SerializeRoom(h0, h1, &room.data)) {
             Send(slot, dsummon::EncodeRefuse());
             Log("direct summon: slot %d refused (the room did not serialize)", slot);
+            {
+                std::lock_guard<std::mutex> lk(DS().mu);
+                DS().refused_at = Now();
+                DS().refused_wait = false;
+            }
             continue;
         }
         const u64 net = Field<u64>(Guest(kNetMan), 0, 0);
@@ -6259,6 +6298,24 @@ void Tick(const GameSnapshot& s) {
         return;
     }
     const double now = Now();
+    // Test aid (batch 6, BB_PARTY_TEST_TRAVEL_ON_SERVE=<lamp>): the host warps to that lamp 1.5 s
+    // after it first served a room (a host travel while a member loads in, playtest 1 H1:3630).
+    {
+        static const u32 lamp = std::getenv("BB_PARTY_TEST_TRAVEL_ON_SERVE")
+                                    ? static_cast<u32>(std::strtoul(std::getenv("BB_PARTY_TEST_TRAVEL_ON_SERVE"), nullptr, 10))
+                                    : 0u;
+        static bool done = false;
+        double served = -1e9;
+        if (lamp && !done && Role() == RoleHost && s.world_up && !s.loading) {
+            std::lock_guard<std::mutex> lk(DS().mu);
+            served = DS().served_at;
+        }
+        if (lamp && !done && served > 0 && now - served >= 1.5) {
+            done = true;
+            Log("test: travel on serve: the host warps to lamp %u %.1f s after it served its room", lamp, now - served);
+            RunLampWarp(lamp);
+        }
+    }
     static double last_status = 0;
     if ((Role() == RoleHost || Role() == RoleClient) && s.world_up && !s.loading && now - last_status >= 10.0) {
         last_status = now;
@@ -6697,6 +6754,7 @@ void OnLinkEvent(int from_slot, const std::string& body) {
         if (from_slot > 0 && from_slot < 16) {
             g_dead_members[from_slot] = Now();
         }
+        g_last_down_at = Now();
         Log("host: slot %d is down (%zu member(s) down)", from_slot, g_dead_members.size());
         return;
     }
@@ -7158,7 +7216,46 @@ bool DirectSummonHoldsHostBell(double waiting_s) {
     v.since_done = now - DS().done_at;
     v.done_ok = DS().done_ok;
     v.refused_wait = DS().refused_wait;
+    v.since_refused = now - DS().refused_at;
     return dsummon::HostBellHeld(v);
+}
+double NowSeconds() {
+    return Now();
+}
+double LastMemberDownAt() {
+    return g_last_down_at.load();
+}
+bool HostRejoinRunning() {
+    return g_on.load() && Role() == RoleHost && g_rejoin.load();
+}
+bool HostTravelHeldForJoin(std::string* who) {
+    if (!g_on.load() || Role() != RoleHost) return false;
+    dsummon::HostTravelHoldView v;
+    v.direct_on = DirectSummonOn();
+    const double now = Now();
+    {
+        std::lock_guard<std::mutex> lk(DS().mu);
+        v.since_served = now - DS().served_at;
+        v.since_done = now - DS().done_at;
+        v.done_ok = DS().done_ok;
+    }
+    int members = 0, missing = 0;
+    for (const TaskInfo& t : Tasks(false)) {
+        if (t.mode == 1) {
+            ++members;
+            missing += PlayerForPeer(t.task + kTaskPeer) ? 0 : 1;
+        }
+    }
+    v.joiner_in_world = members > 0 && missing == 0;
+    const bool held = dsummon::HostTravelHeld(v);
+    if (held && who) {
+        char b[160];
+        std::snprintf(b, sizeof b, "a member is joining (room sent %.1f s ago, %s, %d of %d member chr(s) missing)",
+                      v.since_served, v.since_done <= v.since_served ? (v.done_ok ? "joined" : "failed") : "no answer yet",
+                      missing, members);
+        *who = b;
+    }
+    return held;
 }
 bool DirectSummonCarries() {
     std::lock_guard<std::mutex> lk(DS().mu);

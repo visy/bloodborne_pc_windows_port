@@ -46,10 +46,18 @@ bool HostWatchdog::Update(const HostWatchdogInput& in) {
     if (!cfg_.on) {
         return false;
     }
+    if (!in.in_world || in.host_travel) {
+        // A loading screen or a host travel (the cooperator count reads -1 while loading, which
+        // used to keep the clocks running through the load: playtest 1 H1:3694, a stop right
+        // after the host's travel).
+        armed_ = false;
+        incoming_since_ = -1;
+        return false;
+    }
     if (in.cooperators < 0) {
         return false; // unknown this frame: keep the clocks as they are
     }
-    if (!in.in_world || in.session_role != kRoleHost || in.cooperators > 0 || in.members_apart > 0) {
+    if (in.session_role != kRoleHost || in.cooperators > 0 || in.members_apart > 0) {
         armed_ = false;
         incoming_since_ = -1;
         return false;

@@ -215,7 +215,40 @@ static void test_members_apart() {
     CHECK(RunUntilStop(w, 900, 2000, 3, 0, Roster(MemberState::InHostWorld)) > 900);
 }
 
+/// Playtest 1 H1:3694 (batch 6): a joining member counted as stuck through the host's travel. The
+/// load (world down, cooperators -1) and the B2 re-join after it (host_travel) restart the clocks.
+static void test_host_travel() {
+    HostWatchdog w;
+    const auto joining = Roster(MemberState::InHostWorld);
+    // 50 s stuck before the travel.
+    CHECK(RunUntilStop(w, 0, 50, 3, 0, joining) < 0);
+    // The host's load: world down and the cooperator count unknown (-1) for 20 s.
+    bool stopped = false;
+    for (double t = 50.5; t <= 70; t += 0.5) {
+        stopped = stopped || w.Update(In(t, 3, -1, joining, false));
+    }
+    CHECK(!stopped);
+    // Back in the world, the B2 re-join runs for 40 s: no stop.
+    for (double t = 70.5; t <= 110; t += 0.5) {
+        HostWatchdogInput in = In(t, 3, 0, joining);
+        in.host_travel = true;
+        stopped = stopped || w.Update(in);
+    }
+    CHECK(!stopped);
+    // The re-join is over: the stall clock starts again from here (60 s).
+    const double stop = RunUntilStop(w, 110.5, 300, 3, 0, joining);
+    CHECK(stop >= 170 && stop <= 172);
+    // Before the fix: the -1 frames kept the clocks of the pre-travel stall running.
+    HostWatchdog w2;
+    CHECK(RunUntilStop(w2, 0, 50, 3, 0, joining) < 0);
+    for (double t = 50.5; t <= 60; t += 0.5) {
+        CHECK(!w2.Update(In(t, 3, -1, joining, true)));  // in the world, count unknown: clocks kept
+    }
+    CHECK(RunUntilStop(w2, 60.5, 80, 3, 0, joining) > 0);  // ...so the 60 s stall still ends it
+}
+
 int main() {
+    test_host_travel();
     test_not_host();
     test_members_apart();
     test_guest_gone();

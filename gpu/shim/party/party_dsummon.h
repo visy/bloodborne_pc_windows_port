@@ -82,6 +82,7 @@ bool CarriesAcrossMaps(std::uint32_t host_map, bool gather_dsum_experiment);
 /// Host: why a guest's request is refused now (nullptr: serve it).
 struct HostView {
     bool world_up = false, loading = false;
+    bool travel_pending = false;               // batch 6: the host's own stage request is armed (its load is next)
     bool host_ready = true;                    // the host finished its start (C1, party_start.h)
     bool guest_in_prologue = false;            // the guest's roster state is Prologue
     std::uint32_t host_map = 0, guest_map = 0; // 0 / 0xffffffff: not known (no map check)
@@ -139,10 +140,26 @@ struct HostBellView {
     double since_done = 1e9;    // the last dsum_done arrived this long ago
     bool done_ok = false;       // ... and said the guest joined
     bool refused_wait = false;  // the last request was refused with a wait word (prologue, map, ...)
+    double since_refused = 1e9; // the host last refused a request this long ago
 };
 constexpr double kHostBellGrace = 15.0;  // no request yet: the guest's own ring comes first
 constexpr double kHostBellHold = 20.0;   // a served room / a join: no bell for this long
 /// True: the host does not ring now.
 bool HostBellHeld(const HostBellView& v);
+
+/// Host lamp travel (playtest 1 batch 6, H1:3630): a host that warps while a member it just
+/// served a room is still loading in leaves that guest to arrive in an empty map (and the join
+/// stalls). The host's lamp warp waits until the joiner is in its world, the guest reports a
+/// failure, or kHostTravelHoldMax after the room was sent - whichever comes first.
+struct HostTravelHoldView {
+    bool direct_on = false;
+    double since_served = 1e9;  // the host last sent its room this long ago
+    double since_done = 1e9;    // the last dsum_done arrived this long ago
+    bool done_ok = false;       // ... and said the guest joined
+    bool joiner_in_world = false;  // every joining member's chr is in the host's world
+};
+constexpr double kHostTravelHoldMax = 30.0;
+/// True: the host's lamp travel waits now.
+bool HostTravelHeld(const HostTravelHoldView& v);
 
 }  // namespace coop::dsummon

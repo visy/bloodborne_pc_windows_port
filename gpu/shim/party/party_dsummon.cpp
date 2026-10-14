@@ -168,6 +168,7 @@ bool OtherMap(const HostView& v) {
 
 const char* HostRefusal(const HostView& v) {
     if (!v.world_up || v.loading) return "the host is not in its world";
+    if (v.travel_pending) return "the host is about to travel (its loading screen is next): the guest joins it there";
     if (!v.host_ready) return "the host is still in its prologue: joiners wait until it is done";
     if (v.guest_in_prologue) return "the guest is still in its own prologue";
     if (v.busy == Busy::Boss) return "the host is in a boss fight: joiners wait outside";
@@ -180,7 +181,7 @@ const char* HostRefusal(const HostView& v) {
 }
 
 Busy RefusalWait(const HostView& v) {
-    if (!v.world_up || v.loading) return Busy::None;
+    if (!v.world_up || v.loading || v.travel_pending) return Busy::None;  // the sign path follows the host
     if (!v.host_ready) return Busy::Prologue;
     if (v.guest_in_prologue) return Busy::None;
     if (v.busy != Busy::None) return v.busy;
@@ -192,9 +193,21 @@ bool HostBellHeld(const HostBellView& v) {
     if (!v.direct_on) return false;
     if (v.since_done < v.since_served && v.since_done < kHostBellHold) return v.done_ok;  // joined: no bell; failed: ring now
     if (v.since_served < kHostBellHold) return true;  // a room is on its way to the guest
-    if (v.since_req < kHostBellHold) return v.refused_wait;  // refused: the sign path is the fallback,
-                                                             // unless the guest must wait / gather
+    if (v.since_req < kHostBellHold) {
+        // Batch 6 (live): a request that arrived this frame is not answered yet (the room is
+        // served on the next tick): the bell rang 0.03 s after the guest's request.
+        if (v.since_refused > v.since_req) return true;
+        return v.refused_wait;  // refused: the sign path is the fallback, unless the guest must wait / gather
+    }
     return v.waiting_s < kHostBellGrace;               // the guest's own ring (and its request) comes first
+}
+
+bool HostTravelHeld(const HostTravelHoldView& v) {
+    if (!v.direct_on || v.since_served >= kHostTravelHoldMax) return false;  // nothing served lately / waited enough
+    const bool done_for_this = v.since_done <= v.since_served;
+    if (done_for_this && !v.done_ok) return false;                // the join failed: travel now
+    if (done_for_this && v.joiner_in_world) return false;          // joined and in the world: it follows
+    return true;
 }
 
 const char* PhaseName(Phase p) {

@@ -390,7 +390,41 @@ static void test_follow() {
     CHECK(std::strcmp(TravelFollowName(TravelFollow::IgnorePrologue), "in own world (prologue)") == 0);
 }
 
+// Batch 6 (H1:4389, H3:2654): the empty-room check after a host travel.
+static void test_empty_room() {
+    EmptyRoomView v;
+    CHECK(PlanEmptyRoom(v) == EmptyRoomStep::None);  // no travel
+    v.since_travel = 5;
+    CHECK(PlanEmptyRoom(v) == EmptyRoomStep::None);  // loading screen not seen yet
+    v.load_seen = true;
+    v.in_world = true;
+    CHECK(PlanEmptyRoom(v) == EmptyRoomStep::Check);  // B1: arrived, close the room if empty
+    v.since_travel = kEmptyRoomTimeout + 1;
+    CHECK(PlanEmptyRoom(v) == EmptyRoomStep::Timeout);
+    // B2 holds the room: no timeout ever, the mark is dropped once the re-join is over.
+    v.b2_holds = true;
+    v.b2_rejoin = true;
+    CHECK(PlanEmptyRoom(v) == EmptyRoomStep::None);
+    v.b2_rejoin = false;
+    CHECK(PlanEmptyRoom(v) == EmptyRoomStep::Drop);
+    v.in_world = false;
+    CHECK(PlanEmptyRoom(v) == EmptyRoomStep::None);
+    // The playtest case: B2 held through the travel (mark dropped at arrival), later the guest
+    // restarts (tasks gone): nothing left to time out. Before the fix the mark was kept and the
+    // first frame without B2 said "no arrival within 180 s".
+    EmptyRoomView after;
+    after.since_travel = -1;
+    CHECK(PlanEmptyRoom(after) == EmptyRoomStep::None);
+    // A guest that fell back to B1 during the load (tasks gone): the B1 close as before.
+    EmptyRoomView b1;
+    b1.since_travel = 12;
+    b1.load_seen = true;
+    b1.in_world = true;
+    CHECK(PlanEmptyRoom(b1) == EmptyRoomStep::Check);
+}
+
 int main() {
+    test_empty_room();
     test_follow();
     test_call_sites();
     test_json();

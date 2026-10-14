@@ -9,6 +9,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 
 namespace coop::deathrules {
@@ -196,6 +197,35 @@ inline RestLoad PlanRestLoad(const RestView& v) {
         return RestLoad::TooSoon;
     }
     return RestLoad::Run;
+}
+
+/// How many members a guest's rest load waits for (playtest 1 batch 6): the guest that rested
+/// travels alone - to another area it never arrives here; to a lamp of the host's area
+/// (`rest_dest_area` == `host_area`) it is in the host's world again and follows the load (its
+/// world resets too). Members known in another area stay there; a member in the host's area or
+/// still loading (area 0, unknown) follows the load. 0 = nobody follows: the host's load is an
+/// alone load (no re-sync, no 60 s wait for an arrival that never comes).
+struct RestMember {
+    int slot = -1;
+    bool connected = false;
+    std::uint32_t area = 0;  ///< 0: unknown (loading)
+};
+inline int RestLoadExpected(const RestMember* m, int n, int rest_slot, std::uint32_t host_area,
+                            std::uint32_t rest_dest_area) {
+    int expected = 0;
+    for (int i = 0; i < n; ++i) {
+        if (!m[i].connected) {
+            continue;
+        }
+        if (m[i].slot == rest_slot) {
+            expected += rest_dest_area != 0 && rest_dest_area == host_area ? 1 : 0;
+            continue;
+        }
+        if (m[i].area == 0 || m[i].area == host_area) {
+            ++expected;
+        }
+    }
+    return expected;
 }
 
 // ---- Own bloodstain record (GameDataMan +0x28 flag, +0x30 record +0x38 echoes) ----

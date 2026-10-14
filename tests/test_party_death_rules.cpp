@@ -142,6 +142,23 @@ int main() {
     r.since_last = 25;
     CHECK(PlanRestLoad(r) == RestLoad::Run);
 
+    // Batch 6: who a guest's rest load waits for (the resting guest went alone: nobody, 2 players).
+    {
+        const std::uint32_t yh = 0x18;  // area of m24_01 (the host's)
+        RestMember two[] = {{1, true, 0x15}};  // the resting guest, already in the Dream
+        CHECK(RestLoadExpected(two, 1, 1, yh, 0x15) == 0);  // rested to the Dream: never arrives here
+        RestMember loading[] = {{1, true, 0}};  // still loading alone: it is the rest slot anyway
+        CHECK(RestLoadExpected(loading, 1, 1, yh, 0x15) == 0);
+        CHECK(RestLoadExpected(loading, 1, 1, yh, yh) == 1);  // rested at a lamp of the host's area: in its world again, follows
+        CHECK(RestLoadExpected(loading, 1, 1, yh, 0) == 0);   // lamp unknown: not waited for
+        RestMember three[] = {{1, true, 0x15}, {2, true, yh}};  // a second guest beside the host follows
+        CHECK(RestLoadExpected(three, 2, 1, yh, 0x15) == 1);
+        RestMember apart[] = {{1, true, 0x15}, {2, true, 0x17}, {3, false, yh}};  // elsewhere / lost: no
+        CHECK(RestLoadExpected(apart, 3, 1, yh, 0x15) == 0);
+        RestMember unknown[] = {{1, true, 0x15}, {2, true, 0}};  // area unknown (loading): may follow
+        CHECK(RestLoadExpected(unknown, 2, 1, yh, 0x15) == 1);
+    }
+
     // Own bloodstain record changes (bug 13 logging).
     CHECK(PlanStainChange(0, -1, 1, 4843) == StainChange::Recorded);
     CHECK(PlanStainChange(1, 4843, 1, -1) == StainChange::Taken);

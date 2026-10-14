@@ -104,7 +104,8 @@ single-player save is never touched. Settings: *System → Party* pages in the g
   character, also if you started party games from the launcher.
 - **Fast join.** The bell, beckoner and summon-sign waits are gone: a guest is in the host's world
   within seconds. *Continue party game* takes a guest straight into the host's world with a single
-  loading screen.
+  loading screen. If the host travels while you are joining, its travel waits until you are in and
+  you travel together.
 - **Leave any time.** *System → Party → Leave the party* takes a guest home at once; the host's
   *Leave* ends the party and every guest goes home. *System → Party mode → Join party* brings a
   guest back; *Host party* and *Single player* are there too.
