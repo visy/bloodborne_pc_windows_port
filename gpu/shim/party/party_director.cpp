@@ -1314,6 +1314,14 @@ void KillLoadedEnemyForTest(const char* what, std::uint32_t want, bool by_id, bo
     int alive = 0;
     for (const auto& e : list) alive += e.alive ? 1 : 0;
     const int k = have_me || want ? PickEnemyKillTarget(list, want, me, 500.0f) : -1;
+    if (k < 0 && want && by_id && EnemyIsBossEntity(want)) {
+        // A boss chr is not in the census list (pard S5a: Blood-starved Beast 2300800 in its fight):
+        // Lua ForceDead by id still runs its defeat path, as the campaign soak's kills did.
+        reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t)>(Guest(kForceDead))(0, want);
+        Log("test: %s: boss entity %u not in the census list (%zu loaded enemies): ForceDead by id (its defeat path)",
+            what, want, list.size());
+        return;
+    }
     if (k < 0) {
         Log("test: %s: no target (%s %u): %zu loaded enemies, %d alive; host at (%.1f, %.1f, %.1f)", what,
             want ? "entity" : "nearest of", want, list.size(), alive, me[0], me[1], me[2]);
