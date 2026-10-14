@@ -76,7 +76,7 @@ struct Values {
     /// Performance HUD (F11, menu, BB_HUD; from Mrsuss60/bloodborne_pc_windows_port): FPS and
     /// frame time always, the other metrics each switchable. Replaces the FPS counter while on.
     std::atomic<bool> show_hud{false};
-    std::atomic<int> hud_position{HudTopLeft};
+    std::atomic<int> hud_position{HudBottomRight};
     std::atomic<float> hud_opacity{0.75f};
     std::atomic<float> hud_scale{1.0f};
     std::atomic<bool> hud_graph{true}, hud_vram{true}, hud_gpu{true}, hud_cpu{true}, hud_ram{true};
