@@ -84,6 +84,26 @@ def _complete(folder: Path, sizes: dict):
     return all(_stat(folder / n) and _stat(folder / n)[0] == sizes.get(n) for n in OUTPUTS)
 
 
+def patiently(operation, *args, seconds=10.0):
+    """operation(*args), retried while Windows refuses it (WinError 5/32): an antivirus or the
+    search indexer scanning a fresh file holds it for a moment."""
+    deadline = time.monotonic() + seconds
+    delay = 0.05
+    while True:
+        try:
+            return operation(*args)
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.5)
+
+
+def _unlink(path: Path):
+    with contextlib.suppress(FileNotFoundError):
+        patiently(path.unlink)
+
+
 def _link(src: Path, dst: Path):
     tmp = dst.with_name(dst.name + '.linking')
     with contextlib.suppress(OSError):
@@ -92,7 +112,7 @@ def _link(src: Path, dst: Path):
         os.link(src, tmp)
     except OSError:
         shutil.copy2(src, tmp)
-    os.replace(tmp, dst)
+    patiently(os.replace, tmp, dst)
 
 
 def _read_stamp(path: Path):
@@ -110,8 +130,7 @@ def build(game: Path, out: Path):
     out.mkdir(parents=True, exist_ok=True)
     # Never write through a hard link into the shared store: remove the old outputs first.
     for n in OUTPUTS:
-        with contextlib.suppress(OSError):
-            (out / n).unlink()
+        _unlink(out / n)
     buf = io.StringIO()
 
     class Tee(io.TextIOBase):
