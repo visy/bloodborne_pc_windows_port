@@ -6425,6 +6425,11 @@ bool HostHasMemberTasks() {
     return false;
 }
 
+bool InOtherWorld() {
+    const u64 gsm = Slot(kSlotGsm);
+    return gsm && Field<u8>(gsm, 0x1592) == 0;
+}
+
 bool Enabled() {
     return g_on.load();
 }

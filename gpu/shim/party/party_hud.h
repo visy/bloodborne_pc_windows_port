@@ -127,6 +127,23 @@ bool FullscreenMenuOpen(const int fields[kFullscreenMenuFields], signed char for
 /// 0x176b7e0 reports it as 0x800008 (live: 0 at the lamp before, 0x800008 once the warp menu was
 /// up, with every IsFullscreenMenu field 0; the inventory left those 0 too). Pure: either counts.
 bool GameMenuUp(bool flow_menu_open, const int fields[kFullscreenMenuFields], signed char force);
+/// The generic YES/NO box (MenuMan +0x78, e.g. the lamp's "Return to the Hunter's Dream?") opens
+/// through the menu flow too (live 2026-10-14: +0xa88 set, +0x78 1 about 35 ms later), and only the
+/// name tags should step aside for it. A flow menu that a box joins within kBoxGraceS of opening is
+/// that box (not full-screen; a new look once the box closes and the flow menu stays); one without a
+/// box by then is a full-screen menu for as long as it stays open (a box inside the inventory keeps
+/// it full-screen). Pure; `t` in seconds, any monotonic clock.
+class FlowMenuKind {
+public:
+    static constexpr double kBoxGraceS = 0.25;
+    /// True while the open flow menu counts as a full-screen menu.
+    bool Update(bool flow_open, bool dialog, double t);
+    bool box() const { return state_ == State::Box; }
+private:
+    enum class State { Closed, Pending, Box, Full };
+    State state_ = State::Closed;
+    double since_ = 0.0;
+};
 /// Set by party_hud_game's tick (game thread), read by the overlay: while the game's full-screen
 /// menu is up the party panel and the name tags hide and the party notices / NPC captions are held
 /// (not drawn, their time stopped) so they never draw crisply over the game's own menu.

@@ -273,6 +273,21 @@ static void GameMenuRule() {
     assert(!hud::FullscreenMenuOpen(f, 2));
     assert(hud::GameMenuUp(true, f, -1));    // the menu flow's open menu (inventory, warp menu)
     assert(!hud::GameMenuUp(false, f, -1));
+    {
+        hud::FlowMenuKind k;  // the inventory / warp menu: full-screen after the grace, a box inside keeps it
+        assert(!k.Update(true, false, 10.0));
+        assert(k.Update(true, false, 10.3));
+        assert(k.Update(true, true, 11.0));
+        assert(!k.Update(false, false, 12.0));
+        // the lamp's YES/NO box: the flow menu first, the box 35 ms later: never full-screen
+        assert(!k.Update(true, false, 20.0));
+        assert(!k.Update(true, true, 20.035));
+        assert(k.box() && !k.Update(true, true, 21.0));
+        // the box closes, the flow menu stays (a menu opened from it): looked at again
+        assert(!k.Update(true, false, 22.0));
+        assert(k.Update(true, false, 22.3));
+        assert(!k.Update(false, false, 23.0));
+    }
     hud::SetGameMenu(true);
     assert(hud::GameMenu());
     hud::SetGameMenu(false);

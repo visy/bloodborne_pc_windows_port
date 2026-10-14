@@ -88,6 +88,13 @@ constexpr float kLampMenuRadiusM = 4.0f;
 constexpr float kLampMenuHeightM = 3.0f;
 bool LampMenuRest(bool dialog_opened, bool alive, float lamp_dx, float lamp_dy, float lamp_dz);
 
+/// The rot belongs to the character (party_rot.txt keeps it across restarts). A save in its own
+/// prologue cannot have earned any (prologue deaths give none, #19), so stacks seen while this
+/// player stands kStaleRotPrologueS in its own prologue are another character's (a new game in the
+/// same user folder): they go. A guest in the host's world is never in its prologue.
+constexpr double kStaleRotPrologueS = 3.0;
+bool RotFromAnotherCharacter(int stacks, bool own_prologue, double prologue_s);
+
 /// Short value texts for the menu (help line): "150 % (+75 % HP per extra hunter)".
 std::string DescribeHp(int percent, bool russian);
 std::string DescribeDamage(int percent, bool russian);
