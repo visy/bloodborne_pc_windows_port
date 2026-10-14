@@ -58,6 +58,8 @@ int runtime_random(void *buffer, size_t size);
 uint32_t runtime_win_tls_slot(void);
 void runtime_win_set_tcb(void *tcb);
 void runtime_win_set_thread_name(const char *name);
+int runtime_win_has_fsgsbase(void);
+void *runtime_win_read_fsbase(void);
 
 /* Networking helpers without winsock headers. */
 int runtime_win_inet_pton4(const char *src, void *dst);

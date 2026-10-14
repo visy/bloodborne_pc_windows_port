@@ -15,6 +15,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <cpuid.h>
 #include "win32_compat.h"
 
 int runtime_win_mkdir(const char *path, int mode) { (void)mode; return _mkdir(path); }
@@ -147,5 +148,25 @@ void runtime_win_set_thread_name(const char *name) {
 int runtime_win_inet_pton4(const char *src, void *dst) { return inet_pton(AF_INET, src, dst); }
 const char *runtime_win_inet_ntop4(const void *src, char *dst, uint32_t size) {
     return inet_ntop(AF_INET, src, dst, size);
+}
+
+int runtime_win_has_fsgsbase(void) {
+    static int has_fsgsbase = -1;
+    if (has_fsgsbase < 0) {
+        int cpuinfo[4] = {0};
+        __cpuid_count(7, 0, cpuinfo[0], cpuinfo[1], cpuinfo[2], cpuinfo[3]);
+        has_fsgsbase = (cpuinfo[1] & 1) ? 1 : 0;
+    }
+    return has_fsgsbase;
+}
+
+void *runtime_win_read_fsbase(void) {
+    if (runtime_win_has_fsgsbase()) {
+        void *base = NULL;
+        __asm__ __volatile__("rdfsbase %0" : "=r"(base));
+        return base;
+    }
+    /* Fallback on non-FSGSBASE CPUs: retrieve TCB from Windows TLS */
+    return TlsGetValue(runtime_win_tls_slot());
 }
 #endif

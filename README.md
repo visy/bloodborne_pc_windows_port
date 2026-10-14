@@ -49,9 +49,7 @@ This repository adapts the original Linux codebase specifically for Windows syst
 - **Graphics Card**: A Vulkan 1.3 capable GPU with current vendor drivers:
   - NVIDIA GeForce GTX 10-series or newer.
   - AMD Radeon RX 400-series or newer.
-  - Intel Arc A-series or newer.
-- **Processor**: x86-64 processor with AVX2 support.
-- **Python**: Python 3.10 or newer (needed for the patch compiler and launcher).
+- **Processor**: x86-64 processor supporting AVX, SSE4.2, and BMI1 (Intel 4th Gen Haswell or newer, AMD Ryzen / Excavator or newer). Non-FSGSBASE CPUs gracefully fall back to Windows TLS.
 - **Game Files**: Decrypted `CUSA03173` directory containing `eboot.bin` (version 1.09).
 
 ### Build Dependencies (Only if compiling from source)

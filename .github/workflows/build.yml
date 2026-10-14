@@ -2,7 +2,7 @@ name: Build Bloodborne PC Port
 
 on:
   push:
-    branches: [ "fix-vram-leak", "master" ]
+    branches: [ "master" ]
   workflow_dispatch:
 
 jobs:
@@ -110,7 +110,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bbport-vram-fix
+          name: bbport-windows-x86_64
           path: |
             out/bbport.exe
             out/bb-probe.exe

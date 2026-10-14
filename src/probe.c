@@ -13,6 +13,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <mmsystem.h>
+#include "win32_compat.h"
 #include "win32_exception.h"
 #if defined(__GNUC__) || defined(__clang__)
 #include <cpuid.h>
@@ -166,7 +167,7 @@ void runtime_notify_progress(void) {
 ABI void restore_guest_fs(void) {
 #ifdef _WIN32
     void *tcb = runtime_thread_get_tcb();
-    if (tcb) {
+    if (tcb && runtime_win_has_fsgsbase()) {
         __asm__ __volatile__("wrfsbase %0" : : "r"(tcb));
     }
 #endif
@@ -857,8 +858,12 @@ __asm__(
 "   mov %r9, %gs:0x10\n"
 "   sub $0x20, %rsp\n"
 "   mov %r11, 0x18(%rsp)\n" /* preserve arg1 across call */
+"   call runtime_win_has_fsgsbase\n"
+"   test %eax, %eax\n"
+"   jz 1f\n"
 "   call runtime_thread_get_tcb\n"
 "   wrfsbase %rax\n"
+"1:\n"
 "   mov %r14, %r11\n"
 "   mov %r15, %rdi\n"
 "   mov 0x18(%rsp), %rsi\n"
@@ -961,8 +966,7 @@ static void write_crash_dump(EXCEPTION_POINTERS *ep, void *fault_addr, uintptr_t
             (unsigned long long)c->R8,  (unsigned long long)c->R9,  (unsigned long long)c->R10, (unsigned long long)c->R11);
     fprintf(f, "R12=%016llx R13=%016llx R14=%016llx R15=%016llx\n",
             (unsigned long long)c->R12, (unsigned long long)c->R13, (unsigned long long)c->R14, (unsigned long long)c->R15);
-    void *cur_fs = NULL;
-    __asm__ __volatile__("rdfsbase %0" : "=r"(cur_fs));
+    void *cur_fs = runtime_win_read_fsbase();
     fprintf(f, "RIP=%016llx EFLAGS=%08lx FS_BASE=%p GS_SELECTOR=0x%x\n\n",
             (unsigned long long)c->Rip, (unsigned long)c->EFlags, cur_fs, (unsigned int)c->SegGs);
 
@@ -1058,7 +1062,9 @@ static LONG WINAPI win_veh_handler(EXCEPTION_POINTERS *ep) {
         if (rip >= 0x10000 && !IsBadReadPtr((const void *)rip, 1) && ip[0] == 0x64) {
             void *tcb = runtime_thread_get_tcb();
             if (tcb) {
-                __asm__ __volatile__("wrfsbase %0" : : "r"(tcb));
+                if (runtime_win_has_fsgsbase()) {
+                    __asm__ __volatile__("wrfsbase %0" : : "r"(tcb));
+                }
                 if (ip[1] == 0x48 && ip[2] == 0x8b && ip[3] == 0x04 && ip[4] == 0x25 &&
                     ip[5] == 0x00 && ip[6] == 0x00 && ip[7] == 0x00 && ip[8] == 0x00) {
                     ep->ContextRecord->Rax = *(DWORD64 *)tcb;
@@ -1114,8 +1120,7 @@ static LONG WINAPI win_veh_handler(EXCEPTION_POINTERS *ep) {
                  (void *)ep->ContextRecord->Rsi, (void *)ep->ContextRecord->Rdi,
                  (void *)ep->ContextRecord->Rbp, (void *)ep->ContextRecord->Rsp);
         veh_write(line);
-        void *cur_fs = NULL;
-        __asm__ __volatile__("rdfsbase %0" : "=r"(cur_fs));
+        void *cur_fs = runtime_win_read_fsbase();
         snprintf(line, sizeof(line), "FS_BASE=%p GS_SELECTOR=0x%x\n", cur_fs, (unsigned int)ep->ContextRecord->SegGs);
         veh_write(line);
         if (gpu_enabled) bbgpu_dump_guest_writes(ep);
@@ -1416,10 +1421,8 @@ int main(int argc, char **argv) {
     bbgpu_register_kernel();
 #ifdef _WIN32
     timeBeginPeriod(1);
-    int cpuinfo[4] = {0};
-    __cpuid_count(7, 0, cpuinfo[0], cpuinfo[1], cpuinfo[2], cpuinfo[3]);
-    if (!(cpuinfo[1] & 1)) {
-        fprintf(stderr, "Warning: CPU does not support FSGSBASE instructions (wrfsbase/rdfsbase).\n");
+    if (!runtime_win_has_fsgsbase()) {
+        fprintf(stderr, "Info: Host CPU lacks FSGSBASE instructions (wrfsbase/rdfsbase); using Windows TLS fallback.\n");
     }
     SYSTEM_INFO system_info; GetSystemInfo(&system_info); page_size = system_info.dwPageSize;
     AddVectoredExceptionHandler(1, win_veh_handler);

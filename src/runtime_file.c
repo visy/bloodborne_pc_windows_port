@@ -39,53 +39,7 @@
 #ifndef realpath
 #define realpath(N, R) _fullpath(R, N, MAX_PATH)
 #endif
-static ssize_t win_pread(int fd, void *buf, size_t count, int64_t offset) {
-    HANDLE h = (HANDLE)_get_osfhandle(fd);
-    if (h == INVALID_HANDLE_VALUE) {
-        DWORD err = GetLastError();
-        fprintf(stderr, "Runtime ERROR: win_pread _get_osfhandle(fd=%d) failed: Win32 error %lu\n", fd, (unsigned long)err);
-        return -1;
-    }
-    OVERLAPPED ov = {0};
-    ov.Offset = (DWORD)(offset & 0xFFFFFFFF);
-    ov.OffsetHigh = (DWORD)((offset >> 32) & 0xFFFFFFFF);
-    DWORD read_bytes = 0;
-    DWORD to_read = (DWORD)(count > 0xFFFFFFFFULL ? 0xFFFFFFFFULL : count);
-    if (!ReadFile(h, buf, to_read, &read_bytes, &ov)) {
-        DWORD err = GetLastError();
-        if (err == ERROR_HANDLE_EOF) return 0;
-        fprintf(stderr, "Runtime ERROR: ReadFile(fd=%d, offset=%" PRId64 ", count=%zu) failed: Win32 error %lu\n",
-                fd, offset, count, (unsigned long)err);
-        return -1;
-    }
-    return (ssize_t)read_bytes;
-}
-static ssize_t win_pwrite(int fd, const void *buf, size_t count, int64_t offset) {
-    HANDLE h = (HANDLE)_get_osfhandle(fd);
-    if (h == INVALID_HANDLE_VALUE) {
-        DWORD err = GetLastError();
-        fprintf(stderr, "Runtime ERROR: win_pwrite _get_osfhandle(fd=%d) failed: Win32 error %lu\n", fd, (unsigned long)err);
-        return -1;
-    }
-    OVERLAPPED ov = {0};
-    ov.Offset = (DWORD)(offset & 0xFFFFFFFF);
-    ov.OffsetHigh = (DWORD)((offset >> 32) & 0xFFFFFFFF);
-    DWORD written_bytes = 0;
-    DWORD to_write = (DWORD)(count > 0xFFFFFFFFULL ? 0xFFFFFFFFULL : count);
-    if (!WriteFile(h, buf, to_write, &written_bytes, &ov)) {
-        DWORD err = GetLastError();
-        fprintf(stderr, "Runtime ERROR: WriteFile(fd=%d, offset=%" PRId64 ", count=%zu) failed: Win32 error %lu\n",
-                fd, offset, count, (unsigned long)err);
-        return -1;
-    }
-    return (ssize_t)written_bytes;
-}
-#ifndef pread
-#define pread win_pread
-#endif
-#ifndef pwrite
-#define pwrite win_pwrite
-#endif
+#include "win32_compat.h"
 #else
 #include <dirent.h>
 #include <errno.h>

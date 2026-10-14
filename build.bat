@@ -203,7 +203,7 @@ if exist "out\test_runtime.exe" (
     if errorlevel 1 exit /b 1
 )
 
-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -Isrc tests/test_file_mods.c -o out/file-mods-test.exe
+gcc -std=c11 -O2 -g -Wall -Wextra -Werror -Isrc tests/test_file_mods.c src/win32_compat.c -lws2_32 -o out/file-mods-test.exe
 if errorlevel 1 exit /b 1
 out\file-mods-test.exe
 if errorlevel 1 exit /b 1
