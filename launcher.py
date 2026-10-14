@@ -672,6 +672,48 @@ def reflex_label(ini: dict) -> str:
     return next((label for label, v in REFLEX_CHOICES if v == value), REFLEX_CHOICES[0][0])
 
 
+# Native HDR output (docs/party/ERSC_PARITY.md I4): game settings in bbport.ini (hdr,
+# hdr_peak_nits, hdr_paper_white; also System > HDR in the game), off by default; on/off applies
+# at the next start, the curve live. (label, value)
+HDR_PEAK_CHOICES = [("Auto (display)", "auto"), ("400 nits", "400"), ("600 nits", "600"),
+                    ("800 nits", "800"), ("1000 nits", "1000"), ("1500 nits", "1500"),
+                    ("2000 nits", "2000"), ("4000 nits", "4000")]
+HDR_PAPER_WHITE_CHOICES = [("80 nits", "80"), ("100 nits", "100"), ("150 nits", "150"),
+                           ("200 nits (default)", "200"), ("250 nits", "250"), ("300 nits", "300"),
+                           ("400 nits", "400")]
+
+
+def hdr_peak_label(ini: dict) -> str:
+    value = str(ini.get("hdr_peak_nits", "auto")).strip().lower()
+    if value in ("", "0"):
+        value = "auto"
+    for label, v in HDR_PEAK_CHOICES:
+        if v == value:
+            return label
+    return f"{value} nits" if value.isdigit() else HDR_PEAK_CHOICES[0][0]
+
+
+def hdr_paper_white_label(ini: dict) -> str:
+    value = str(ini.get("hdr_paper_white", "200")).strip()
+    for label, v in HDR_PAPER_WHITE_CHOICES:
+        if v == value:
+            return label
+    return f"{value} nits" if value.isdigit() else "200 nits (default)"
+
+
+def hdr_ini(enabled: bool, peak_label: str, paper_label: str) -> dict:
+    """bbport.ini keys of the launcher's HDR options (a custom value from the game menu is kept)."""
+    def value_of(label, choices, fallback):
+        for name, v in choices:
+            if name == label:
+                return v
+        digits = label.split(" ")[0]
+        return digits if digits.isdigit() else fallback
+    return {"hdr": "1" if enabled else "0",
+            "hdr_peak_nits": value_of(peak_label, HDR_PEAK_CHOICES, "auto"),
+            "hdr_paper_white": value_of(paper_label, HDR_PAPER_WHITE_CHOICES, "200")}
+
+
 def frame_generation_label(ini: dict) -> str:
     """The launcher's choice for bbport.ini's frame_generation / fg_backend (Off when unset)."""
     factor = str(ini.get("frame_generation", "off")).lower().rstrip("x")
@@ -1306,10 +1348,20 @@ class BloodborneLauncher(tk.Tk):
         # option: read from and written to bbport.ini directly.
         self.frame_generation_var = tk.StringVar(value=frame_generation_label(read_ini(bbport_ini_path())))
         self.reflex_var = tk.StringVar(value=reflex_label(read_ini(bbport_ini_path())))
+        # HDR output: game settings too (bbport.ini hdr / hdr_peak_nits / hdr_paper_white).
+        _ini = read_ini(bbport_ini_path())
+        self.hdr_var = tk.BooleanVar(value=str(_ini.get("hdr", "0")).strip() not in ("", "0"))
+        self.hdr_peak_var = tk.StringVar(value=hdr_peak_label(_ini))
+        self.hdr_paper_var = tk.StringVar(value=hdr_paper_white_label(_ini))
         self.party_hud = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_hud"))
         self.party_name_tags = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_name_tags"))
         # Shared NPC dialogue: a game setting (bbport.ini party_npc_talk, also in the game's menus).
         self.party_npc_talk = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_npc_talk"))
+        # Pings (I2): game settings (bbport.ini party_pings on, party_through_walls off by default).
+        self.party_pings = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_pings"))
+        self.party_through_walls = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_through_walls", False))
+        # I1 friendly fire / PvP: a host rule (bbport.ini party_friendly_fire, off by default).
+        self.party_friendly_fire = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_friendly_fire", False))
         self.party_separate_save = tk.BooleanVar(value=self.settings.get("party_separate_save", True))
         self.party_port_var = tk.StringVar(value=str(self.settings.get("party_port", PARTY_DEFAULT_PORT)))
         self.party_upnp = tk.BooleanVar(value=self.settings.get("party_upnp", True))
@@ -1461,6 +1513,27 @@ class BloodborneLauncher(tk.Tk):
         reflex_combo = self._combo(sec, "NVIDIA Reflex:", self.reflex_var, [c[0] for c in REFLEX_CHOICES],
                                    reflex_tip, width=14)
         reflex_combo.bind("<<ComboboxSelected>>", lambda e: self.save_frame_generation())
+        self._check(sec, "HDR output (HDR10)", self.hdr_var,
+                    "An HDR10 picture (PQ, Rec.2020) for an HDR display: the game's SDR picture keeps its "
+                    "mid-tones at paper white and only its highlights are expanded towards the peak. Needs "
+                    "HDR on in Windows (Settings > Display > Use HDR); without it the game stays SDR. "
+                    "Works with every upscaler and frame generation. Peak, paper white, highlights, "
+                    "saturation and a calibration pattern are in the game's System > HDR. A game setting "
+                    "(bbport.ini hdr, BB_HDR), used at the next start. Default: off.",
+                    command=self.save_hdr)
+        hdr_peak = self._combo(sec, "HDR peak brightness:", self.hdr_peak_var,
+                               [c[0] for c in HDR_PEAK_CHOICES],
+                               "The brightest the HDR picture gets. Auto: what the display reports to "
+                               "Windows (1000 nits when it reports nothing). Fine-tune it with the "
+                               "calibration pattern in System > HDR (bbport.ini hdr_peak_nits, "
+                               "BB_HDR_PEAK).", width=18, indent=True)
+        hdr_peak.bind("<<ComboboxSelected>>", lambda e: self.save_hdr())
+        hdr_paper = self._combo(sec, "HDR paper white:", self.hdr_paper_var,
+                                [c[0] for c in HDR_PAPER_WHITE_CHOICES],
+                                "Brightness of the picture's mid-tones and of the port's menus and HUD "
+                                "under HDR. 200 nits by default; lower in a dark room (bbport.ini "
+                                "hdr_paper_white, BB_HDR_PAPER_WHITE).", width=18, indent=True)
+        hdr_paper.bind("<<ComboboxSelected>>", lambda e: self.save_hdr())
 
         sec = self._section(tab, 1, "Streaming & effects")
         self._combo(sec, "VRAM pre-upload:", self.preupload_var, [c[0] for c in PREUPLOAD_CHOICES],
@@ -1812,6 +1885,24 @@ class BloodborneLauncher(tk.Tk):
                                   "no menu opens). Range: in the game, System > Party rules > NPC dialogue "
                                   "range (default 25 m). Default: on (bbport.ini party_npc_talk).",
                                   command=self.save_party_npc_talk)
+        pings_cb = self._check(sec, "Pings", self.party_pings,
+                               "Hold the touchpad (keyboard Tab) and press R3 (Q), or press V: a marker on the "
+                               "spot you look at. Every party member sees it through walls with its distance "
+                               "in metres, in your colour, for 10 seconds. Also in the game: System > Pings. "
+                               "Default: on (bbport.ini party_pings).",
+                               command=self.save_party_pings)
+        walls_cb = self._check(sec, "Show party through walls", self.party_through_walls,
+                               "A small diamond with the distance on every companion on your map, drawn over "
+                               "walls and trees in the companion's colour. Also in the game: System > Pings. "
+                               "Default: off (bbport.ini party_through_walls).",
+                               command=self.save_party_through_walls)
+        ff_cb = self._check(sec, "Friendly fire / PvP (host)", self.party_friendly_fire,
+                            "Host only: party members can hurt each other, both ways, like invaders (ERSC's "
+                            "Judicator's Rulebook). A party kill is a normal party death; the killer gets no "
+                            "Echoes or Insight. Your setting is the party's rule: guests see it and get a notice "
+                            "when you switch it. Also in the game: System > Friendly fire (live). Default: off "
+                            "(bbport.ini party_friendly_fire).",
+                            command=self.save_party_friendly_fire)
         self.party_separate_save.set(True)
         save_cb = self._check(sec, "Separate party saves (always)", self.party_separate_save,
                               "Party play always uses its own save folder (user\\savedata_party), so your "
@@ -1924,10 +2015,10 @@ class BloodborneLauncher(tk.Tk):
 
         # Fields enabled in each mode: on (host or join), host only, join only
         self.party_widgets_on = [name_lbl, self.party_name_entry, self.party_max_combo, auto_cb, seamless_cb,
-                                 dsummon_cb, hud_cb, tags_cb, npc_talk_cb, save_cb,
+                                 dsummon_cb, hud_cb, tags_cb, npc_talk_cb, pings_cb, walls_cb, save_cb,
                                  port_lbl, self.party_port_entry, upnp_cb, rdv_cb, stun_lbl, self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
-        self.party_widgets_host = [public_lbl, self.party_public_entry,
+        self.party_widgets_host = [ff_cb, public_lbl, self.party_public_entry,
                                    host_lbl, self.party_host_code_entry, copy_btn,
                                    lan_lbl, self.party_lan_code_entry, lan_copy_btn]
         self.party_widgets_join = [code_lbl, self.party_code_entry, paste_btn]
@@ -1947,6 +2038,14 @@ class BloodborneLauncher(tk.Tk):
             update_ini(bbport_ini_path(), values)
         except OSError as ex:
             self.log(f"[GRAPHICS] Could not save the frame generation setting to bbport.ini: {ex}")
+
+    def save_hdr(self):
+        """The HDR options: bbport.ini hdr / hdr_peak_nits / hdr_paper_white (next start)."""
+        try:
+            update_ini(bbport_ini_path(), hdr_ini(self.hdr_var.get(), self.hdr_peak_var.get(),
+                                                  self.hdr_paper_var.get()))
+        except OSError as ex:
+            self.log(f"[GRAPHICS] Could not save the HDR setting to bbport.ini: {ex}")
 
     def save_party_hud(self):
         """The Party HUD checkbox: bbport.ini party_hud (a running game picks it up on its next start;
@@ -1971,6 +2070,28 @@ class BloodborneLauncher(tk.Tk):
             update_ini(bbport_ini_path(), {"party_npc_talk": "1" if self.party_npc_talk.get() else "0"})
         except OSError as ex:
             self.log(f"[PARTY] Could not save the Share NPC dialogue setting to bbport.ini: {ex}")
+
+    def save_party_friendly_fire(self):
+        """The Friendly fire / PvP checkbox (host): bbport.ini party_friendly_fire (in game: System >
+        Friendly fire)."""
+        try:
+            update_ini(bbport_ini_path(), {"party_friendly_fire": "1" if self.party_friendly_fire.get() else "0"})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save the Friendly fire setting to bbport.ini: {ex}")
+
+    def save_party_pings(self):
+        """The Pings checkbox: bbport.ini party_pings (in game: System > Pings)."""
+        try:
+            update_ini(bbport_ini_path(), {"party_pings": "1" if self.party_pings.get() else "0"})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save the Pings setting to bbport.ini: {ex}")
+
+    def save_party_through_walls(self):
+        """The Show party through walls checkbox: bbport.ini party_through_walls (in game: System > Pings)."""
+        try:
+            update_ini(bbport_ini_path(), {"party_through_walls": "1" if self.party_through_walls.get() else "0"})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save the Show party through walls setting to bbport.ini: {ex}")
 
     def on_party_change(self):
         self.update_party_state()
@@ -3181,6 +3302,29 @@ class BloodborneLauncher(tk.Tk):
             self.log(f"[PRE-LAUNCH ERROR] {err_msg.splitlines()[0]}")
             messagebox.showerror("Pre-Launch Verification Failed", err_msg)
 
+    def warn_unclean_eboot(self, game_dir):
+        """With the game check bypassed (BB_SKIP_GAME_CHECK=1), a modified eboot.bin starts but the
+        port cannot patch it: a warning, the launch goes on (from Supermedo/bloodborne_pc 155a270b,
+        where it was only in the log)."""
+        if os.environ.get("BB_SKIP_GAME_CHECK") != "1":
+            return  # verify_prelaunch already refused it
+        try:
+            scripts_dir = str(APP_DIR / "scripts")
+            if scripts_dir not in sys.path:
+                sys.path.insert(0, scripts_dir)
+            import game_check
+            clean = game_check.eboot_clean(str(game_dir))
+        except Exception as ex:
+            self.log(f"[PRE-LAUNCH] eboot.bin check skipped: {ex}")
+            return
+        if clean is not False:
+            return
+        text = ("Your eboot.bin is not the clean 1.09 one (modified, or from another dump). "
+                + game_check.UNCLEAN_EBOOT_EFFECTS[0].upper() + game_check.UNCLEAN_EBOOT_EFFECTS[1:]
+                + ".\n\nReplace eboot.bin with the one from an unmodified 1.09 update.")
+        self.log(f"[PRE-LAUNCH WARNING] {text.splitlines()[0]}")
+        messagebox.showwarning("Bloodborne", text)
+
     def blocked_by_running_instance(self) -> bool:
         """True while another bbport.exe is alive: a second copy exhausts RAM and VRAM.
 
@@ -3243,6 +3387,7 @@ class BloodborneLauncher(tk.Tk):
         self.log("[PRE-LAUNCH] Pre-flight verification passed:")
         for line in details:
             self.log(f"  {line}")
+        self.warn_unclean_eboot(game_dir)
 
         env = os.environ.copy()
         env["BB_FROM_LAUNCHER"] = "1"  # run.bat: do not reload launcher_settings.json

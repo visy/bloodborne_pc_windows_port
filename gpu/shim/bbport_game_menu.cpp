@@ -522,9 +522,10 @@ template <int N>
 BB_SYSV void* PageFactory(void* out, void* arg) {
     return Factory(out, arg, reinterpret_cast<void*>(&Content<N>), TextOf(P::All()[N].name));
 }
-// Our own cap (one factory per page), not the game's: the System list scrolls (Screen/Sound, our
-// pages, Brightness, Network, Exit Game). 13 pages live-checked 2026-10-11 (agent/balance).
-constexpr std::size_t MaxPages = 16;
+// Our own cap (one factory per page; P::MaxPages), not the game's: the System list scrolls
+// (Screen/Sound, our pages, Brightness, Network, Exit Game). 13 pages live-checked 2026-10-11
+// (agent/balance), 17+ in 0.6.2.
+using P::MaxPages;
 template <std::size_t... I>
 std::array<void*, sizeof...(I)> MakeFactories(std::index_sequence<I...>) {
     return {reinterpret_cast<void*>(&PageFactory<int(I)>)...};

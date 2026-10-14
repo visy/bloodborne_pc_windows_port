@@ -146,6 +146,17 @@ static void test_insight() {
     CHECK(GuestInsightGrant(3, InsightMode::Off) == 0);
     CHECK(GuestInsightGrant(0, InsightMode::Full) == 0);
     CHECK(GuestInsightGrant(-2, InsightMode::Full) == 0);
+    {
+        PhantomEvent e;
+        e.kind = PhantomEventKind::Insight;
+        e.seq = 7;
+        e.insight = 1;
+        e.source_event = 9422;
+        e.boss = false;
+        PhantomEvent back;
+        CHECK(PhantomEventFromJsonText(PhantomEventToJsonText(e), &back));
+        CHECK(back.kind == PhantomEventKind::Insight && back.insight == 1 && !back.boss && back.source_event == 9422);
+    }
 
     BossInsightTracker tr;
     // First encounter (no defeat marker in that event): nothing.
@@ -164,6 +175,45 @@ static void test_insight() {
     // Bad N.
     tr.OnBossDefeat(1, 300.0);
     CHECK(!tr.OnInitializeEvent(1, 9350, 0, 300.0));
+
+    // G2: Insight given by SpEffect 4680 outside 9350 (kidnap, chalice boss events).
+    CHECK(DirectInsight::Allowed(9422));
+    CHECK(DirectInsight::Allowed(12901588));
+    CHECK(DirectInsight::Allowed(12901708));
+    CHECK(DirectInsight::Allowed(12901718));
+    CHECK(!DirectInsight::Allowed(9350));     // through BossInsightTracker
+    CHECK(!DirectInsight::Allowed(9183));     // NPC summon refund: the player's own Insight back
+    CHECK(!DirectInsight::Allowed(12404410)); // NPC summon cost (4682)
+    DirectInsight di;
+    CHECK(!di.OnSetSpEffect(9183, 10000, 4680, 10.0));
+    CHECK(!di.OnSetSpEffect(9422, 10000, 4682, 10.0));     // another SpEffect
+    CHECK(!di.OnSetSpEffect(9422, 2800100, 4680, 10.0));   // not the player
+    CHECK(di.OnSetSpEffect(9422, 10000, 4680, 10.0));
+    CHECK(di.Due(10.5).empty());                           // not quiet yet
+    CHECK(di.Due(9.9).empty());                            // a tick clock read before the count
+    // Chalice encounter table: 3 x 4680, 10 frames apart.
+    CHECK(di.OnSetSpEffect(12901718, 10000, 4680, 10.6));
+    CHECK(di.OnSetSpEffect(12901718, 10000, 4680, 10.77));
+    CHECK(di.OnSetSpEffect(12901718, 10000, 4680, 10.94));
+    std::vector<DirectInsight::Grant> due = di.Due(11.2);
+    CHECK(due.size() == 1 && due[0].event == 9422 && due[0].n == 1);
+    CHECK(di.Due(11.5).empty());
+    due = di.Due(12.0);
+    CHECK(due.size() == 1 && due[0].event == 12901718 && due[0].n == 3);
+    CHECK(di.Due(30.0).empty()); // handed out once
+    for (int i = 0; i < 50; ++i) {
+        di.OnSetSpEffect(12901708, 10000, 4680, 40.0);
+    }
+    due = di.Due(41.0);
+    CHECK(due.size() == 1 && due[0].n == DirectInsight::kMaxPerEvent);
+    // A chalice layer boss: +2 then 2003[12] in the same event -> a boss kill at the flush.
+    BossInsightTracker tr2;
+    CHECK(!tr2.DefeatedRecently(12901588, 50.0));
+    tr2.OnBossDefeat(12901588, 50.0);
+    CHECK(tr2.DefeatedRecently(12901588, 51.0));
+    CHECK(tr2.DefeatedRecently(12901588, 51.0)); // not consumed
+    CHECK(!tr2.DefeatedRecently(12901708, 51.0));
+    CHECK(!tr2.DefeatedRecently(12901588, 50.0 + BossInsightTracker::kWindow + 1));
 
     InsightDripper d;
     CHECK(!d.Step(true));

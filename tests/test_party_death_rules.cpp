@@ -127,6 +127,15 @@ int main() {
     CHECK(PlanLampOrigin(-1, -1) == LampOrigin::Other);     // no own flag: another game's warp event
     CHECK(PlanLampOrigin(-1, -1, false) == LampOrigin::Own); // no flag hook: ask as before
     CHECK(PlanLampOrigin(12, -1) == LampOrigin::Other);     // a stale own flag
+    // parg: story warps are the triggering player's own use; lamp / warp-object events are not.
+    CHECK(StoryWarpEvent(13201803, true));   // Blood Moon -> Yahar'gul, on the host
+    CHECK(!StoryWarpEvent(13201803, false)); // a guest's stray copy stays dropped
+    CHECK(StoryWarpEvent(12200131, false));  // Hemwick carriage: any player
+    CHECK(StoryWarpEvent(12800431, false));  // Amygdala grab with the own Tonsil Stone
+    CHECK(!StoryWarpEvent(12800430, false)); // End if Client
+    CHECK(!StoryWarpEvent(7200, true));      // world lamp -> Dream
+    CHECK(!StoryWarpEvent(12107000, true));  // Dream headstone
+    CHECK(!StoryWarpEvent(12907020, true));  // chalice warp object
     CHECK(PlanLampOrigin(3.5, -1) == LampOrigin::Own);      // this player's lamp
     CHECK(PlanLampOrigin(-1, 3.2) == LampOrigin::Other);    // the other player's lamp
     CHECK(PlanLampOrigin(3.5, 12) == LampOrigin::Own);      // a stale peer flag

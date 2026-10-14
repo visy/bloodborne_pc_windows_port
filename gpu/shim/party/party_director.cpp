@@ -44,6 +44,8 @@
 #include "party_watchdog.h"
 #include "party_worldact.h"
 #include "party_npctalk.h"
+#include "party_ping.h"
+#include "party_pvp.h"
 #include "../bbport_game_menu.h"
 
 #include "../net/bbnet_internal.h"
@@ -2856,6 +2858,8 @@ void PartyDirector::Tick() {
     }
     // The party HUD: our vitals out, the companions' board for the overlay (party_hud.h).
     if (role != PartyRole::None) PartyHudTick(s, link, LocalState(s, st.start_prologue));
+    // Pings (I2, party_ping.h): the button -> the spot looked at -> the party; theirs -> the board.
+    ping::Tick(s, role != PartyRole::None ? link : nullptr, s.world_up && !s.loading && s.player);
     // #19: who in the party is still in its prologue (the holds below and in the sync modules;
     // the Party page's "Waiting: X is in the prologue"; the host's sign board).
     if (link && role != PartyRole::None) {
@@ -2890,6 +2894,8 @@ void PartyDirector::Tick() {
     }
     // C4 rot, D7 enemy scaling, E2 extras: the host's rules for the party (party_balance.h).
     if (role != PartyRole::None) balance::Tick(s, link, role == PartyRole::Host);
+    // I1 friendly fire / PvP (party_pvp.h): the party rule on this game's team tables.
+    if (role != PartyRole::None) pvp::Tick(s, role == PartyRole::Host);
     // B1: the host's warps go to every guest (reliable: replayed to a member who reconnects).
     if (link && role == PartyRole::Guest) {
         StoryIntent up;

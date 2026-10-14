@@ -140,6 +140,22 @@ def _problem(game, image_hash=None):
     return 'wrong_eboot', title, version
 
 
+# What an unclean eboot.bin costs (from Supermedo/bloodborne_pc 155a270b): the port's patches
+# check the 1.09 bytes they replace and leave themselves out, and some scenes freeze.
+UNCLEAN_EBOOT_EFFECTS = ('the port cannot patch it: the game runs at 30 FPS, the Game & effects '
+                         'options do nothing, and some scenes (like the cutscene after Rom) can '
+                         'freeze')
+
+
+def eboot_clean(game):
+    """True when eboot.bin is the clean 1.09 executable, False when it is another one, None when
+    it cannot be read. Ignores BB_SKIP_GAME_CHECK: the launcher warns with it set."""
+    try:
+        return image_sha256(game) == SUPPORTED_IMAGE
+    except (OSError, ValueError, IndexError, StopIteration, KeyError):
+        return None
+
+
 def explain(kind, title, version):
     """What is wrong and what to do, for the log (English)."""
     found = f'Found {title} version {version} (sce_sys/param.sfo).'
@@ -147,8 +163,10 @@ def explain(kind, title, version):
         'missing_update': f'{found} bbport needs the 1.09 update merged into the game folder: copy '
                           'everything from the dumped 1.09 update (e.g. CUSA03173-patch) into the '
                           'game folder, replacing files (eboot.bin and sce_sys too).',
-        'wrong_eboot': f'{found} param.sfo is from 1.09 but eboot.bin is not: copy eboot.bin from '
-                       'the dumped 1.09 update into the game folder, replacing the old one.',
+        'wrong_eboot': f'{found} param.sfo is from 1.09 but eboot.bin is not the clean 1.09 one '
+                       f'(modified, or from another dump; {UNCLEAN_EBOOT_EFFECTS}): copy eboot.bin '
+                       'from an unmodified dump of the 1.09 update into the game folder, replacing '
+                       'the old one.',
         'patched_eboot': f'{found} This eboot.bin has the 60 fps patch by Lance McDonald applied '
                          'to it, which crashes the game when the gestures menu opens (bbport has its '
                          'own 60 fps): copy eboot.bin from a clean dump of the 1.09 update into the '

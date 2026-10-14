@@ -321,6 +321,18 @@ static void test_fit() {
     CHECK(ClassifyLotFit({weapon, vials}) == LotFit::Full);
     CHECK(ClassifyLotFit({vials, key}) == LotFit::Owned);
     CHECK(ClassifyLotFit({}) == LotFit::Give);
+    // 0.6.2: a held key item (goodsType 1) is refused whatever its storage max says (the 0.6.1
+    // test aid gave lot 31000 with the Oedon Tomb Key held: blocking box).
+    LotSlotState tomb = badge;
+    tomb.id = 4000;
+    tomb.owned = 1;
+    tomb.goods_type = 1;
+    tomb.max_storage = 1;
+    CHECK(ClassifyLotFit({tomb}) == LotFit::Owned);
+    tomb.max_num = -1;  // unreadable limits: still held
+    CHECK(ClassifyLotFit({tomb}) == LotFit::Owned);
+    tomb.owned = 0;
+    CHECK(ClassifyLotFit({tomb}) == LotFit::Give);
     // A fight holds every popup back; marks still go.
     GuestItems q;
     CHECK(q.Offer({{1, 31000, kItemNone, 25, ItemSource::Full}}) == 1);
@@ -821,6 +833,28 @@ static void test_ledger_suspicious() {
     weapon_type1.goods_type = 1;
     CHECK(!LotHasKeyItem({weapon_type1}));  // goods only
     CHECK(!LotHasKeyItem({}));
+    // 0.6.2 (regression run 0.6.1): never a key item / unique goods while summoned - lot 50000001
+    // (goods 4001, goodsType 0, maxNum 1) read 0 summoned, was given, the game showed its box.
+    CHECK(KeyGoods(door_key));
+    CHECK(KeyGoods(badge));       // unique goods, goodsType 0
+    CHECK(KeyGoods(key));         // unique goods, goodsType unknown
+    CHECK(!KeyGoods(vial));       // stackable with storage
+    CHECK(!KeyGoods(weapon));
+    CHECK(!KeyGoods(weapon_type1));
+    LotSlotState stack_key = vial;
+    stack_key.goods_type = 1;     // a goodsType 1 item with a count (still a key item)
+    CHECK(KeyGoods(stack_key));
+    CHECK(!SummonedGiveAllowed({badge}));
+    CHECK(!SummonedGiveAllowed({vial, door_key}));
+    CHECK(SummonedGiveAllowed({vial}));
+    CHECK(SummonedGiveAllowed({weapon}));
+    CHECK(SummonedGiveAllowed({}));
+    // Own world: a key item is given only when it reads 0 (held or unknown: never).
+    CHECK(KeyGiveAllowedHeld(door_key, 0));
+    CHECK(!KeyGiveAllowedHeld(door_key, 1));
+    CHECK(!KeyGiveAllowedHeld(door_key, -1));
+    CHECK(KeyGiveAllowedHeld(vial, 5));
+    CHECK(KeyGiveAllowedHeld(weapon, 1));
 }
 
 // Playtest 1 save audit: the guest's save (slot 1) held the ledger bits of the Oedon Tomb Key
@@ -871,9 +905,19 @@ static void test_key_catchup() {
     LotSlotState unknown = key;
     unknown.owned = -1;
     CHECK(!KeyCatchupNeeded({unknown}));
+    // 0.6.2: unique goods with goodsType 0 (Amelia's 4001, badges) are caught up too: a summoned
+    // guest no longer gives them (their held count reads 0 there).
     LotSlotState pendant = key;
+    pendant.id = 4001;
     pendant.goods_type = 0;
+    CHECK(KeyCatchupNeeded({pendant}));
+    pendant.owned = 1;
     CHECK(!KeyCatchupNeeded({pendant}));
+    LotSlotState vial_slot = key;
+    vial_slot.goods_type = 0;
+    vial_slot.max_num = 20;
+    vial_slot.max_storage = 600;
+    CHECK(!KeyCatchupNeeded({vial_slot}));
     CHECK(!KeyCatchupNeeded({}));
     // party_summoned_gives.txt entries belong to the character (save slot) they were given to.
     CHECK(SummonedGiveForSlot(1, 1));

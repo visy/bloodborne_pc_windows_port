@@ -176,6 +176,7 @@ add_host_shader(fs_tri.vert fs_tri_vert)
 add_host_shader(fsr.comp fsr_easu_comp SAMPLE_EASU=1)
 add_host_shader(fsr.comp fsr_rcas_comp SAMPLE_RCAS=1)
 add_host_shader(post_process.frag post_process_frag)
+add_host_shader(hdr_compose.frag hdr_compose_frag)
 add_host_shader(camera_motion.comp camera_motion_comp)
 add_host_shader(upscale_merge.comp upscale_merge_comp)
 add_host_shader(upscale_reactive.comp upscale_reactive_comp)
@@ -329,6 +330,10 @@ target_link_libraries(reflex-cpu-test PRIVATE Vulkan::Headers fmt::fmt)
 if (WIN32)
     target_compile_definitions(reflex-cpu-test PRIVATE VK_USE_PLATFORM_WIN32_KHR)
 endif()
+# Native HDR output (shim/bbport_hdr.h, I4): PQ, Rec.2020, the inverse tone curve, settings.
+add_executable(hdr-test EXCLUDE_FROM_ALL ../tests/test_hdr.cpp shim/bbport_settings.cpp)
+target_compile_options(hdr-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(hdr-test PRIVATE .. shim)
 add_executable(settings-test EXCLUDE_FROM_ALL ../tests/test_settings.cpp shim/bbport_settings.cpp)
 target_compile_options(settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(settings-test PRIVATE .. shim)
@@ -650,7 +655,7 @@ set(PARTY_FUZZ_SOURCES ../tests/party_fuzz.cpp ${PARTY_NET_SOURCES} ${PARTY_LINK
     shim/party/party_items.cpp shim/party/party_phantom.cpp shim/party/party_progress.cpp
     shim/party/party_guestsvc.cpp shim/party/party_worldact.cpp shim/party/party_balance_rules.cpp
     shim/party/party_chalice.cpp shim/party/party_droproll.cpp shim/party/party_dsummon.cpp
-    shim/party/party_desync.cpp shim/party/party_npctalk.cpp)
+    shim/party/party_desync.cpp shim/party/party_npctalk.cpp shim/party/party_ping.cpp)
 foreach(fuzz_target party-fuzz party-security-test party-fuzz-ubsan)
     add_executable(${fuzz_target} EXCLUDE_FROM_ALL ${PARTY_FUZZ_SOURCES})
     target_compile_definitions(${fuzz_target} PRIVATE BB_PARTY_TRAVEL_NO_GAME BB_PARTY_STORY_NO_GAME
@@ -674,6 +679,14 @@ add_executable(party-balance-test EXCLUDE_FROM_ALL ../tests/test_party_balance.c
 target_compile_options(party-balance-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-balance-test PRIVATE shim)
 set_target_properties(party-balance-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Friendly fire / PvP (I1, shim/party/party_pvp_rules.h; the game side party_pvp.cpp is in bbgpu
+# through SHIM_SOURCES): session gate, the guest's rule, team pairs, test steps.
+# cmake --build out/gpu --target party-pvp-test
+add_executable(party-pvp-test EXCLUDE_FROM_ALL ../tests/test_party_pvp.cpp shim/party/party_balance_rules.cpp
+    shim/net/json.cpp)
+target_compile_options(party-pvp-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-pvp-test PRIVATE shim)
+set_target_properties(party-pvp-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Party HUD board (shim/party/party_hud.cpp; in bbgpu through SHIM_SOURCES): same-world rules,
 # composition from roster / VITALS / local reads, geometry. cmake --build out/gpu --target party-hud-test
 add_executable(party-hud-test EXCLUDE_FROM_ALL ../tests/test_party_hud.cpp shim/party/party_hud.cpp
@@ -756,6 +769,13 @@ target_compile_definitions(party-npctalk-test PRIVATE BB_PARTY_NPCTALK_NO_GAME)
 target_compile_options(party-npctalk-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-npctalk-test PRIVATE shim)
 set_target_properties(party-npctalk-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Pings (I2, shim/party/party_ping.cpp; in bbgpu through SHIM_SOURCES): EVENT map_ping JSON, the
+# relay rate, the marker board, the aim pick and the screen-edge clamp. cmake --build out/gpu --target party-ping-test
+add_executable(party-ping-test EXCLUDE_FROM_ALL ../tests/test_party_ping.cpp shim/party/party_ping.cpp
+    shim/net/json.cpp)
+target_compile_options(party-ping-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-ping-test PRIVATE shim)
+set_target_properties(party-ping-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Shared enemy drop roll (shim/party/party_droproll.cpp; in bbgpu through SHIM_SOURCES): seed,
 # MT19937 seeding, EVENT drop_seed (BB_PARTY_DROPROLL_NO_GAME). cmake --build out/gpu --target party-droproll-test
 add_executable(party-droproll-test EXCLUDE_FROM_ALL ../tests/test_party_droproll.cpp shim/party/party_droproll.cpp

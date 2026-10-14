@@ -304,6 +304,52 @@ std::optional<int> BossInsightTracker::OnInitializeEvent(std::int32_t event, std
     return n;
 }
 
+bool BossInsightTracker::DefeatedRecently(std::int32_t event, double now) const {
+    const auto it = defeats_.find(event);
+    return it != defeats_.end() && now - it->second <= kWindow && now >= it->second;
+}
+
+bool DirectInsight::Allowed(std::int32_t event) {
+    switch (event) {
+    case 9422:     // common: the first kidnap's waking scene (Hypogean Gaol)
+    case 12901588: // m29: layer boss defeat (+2)
+    case 12901589: // m29: two-boss defeat
+    case 12901591: // m29: three-boss defeat
+    case 12901708: // m29: boss reward, kill Insight table
+    case 12901712: // m29: boss reward, kill Insight table (pre-boss)
+    case 12901718: // m29: boss reward, first-encounter Insight table
+    case 12901722: // m29: boss reward, first-encounter Insight table (pre-boss)
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool DirectInsight::OnSetSpEffect(std::int32_t event, std::int32_t entity, std::int32_t speffect, double now) {
+    if (entity != kPlayer || speffect != kSpEffect || !Allowed(event)) {
+        return false;
+    }
+    Pending& p = pending_[event];
+    if (p.n < kMaxPerEvent) {
+        ++p.n;
+    }
+    p.last = now;
+    return true;
+}
+
+std::vector<DirectInsight::Grant> DirectInsight::Due(double now) {
+    std::vector<Grant> out;
+    for (auto it = pending_.begin(); it != pending_.end();) {
+        if (now - it->second.last >= kQuiet) { // never early: a tick's `now` may predate the count
+            out.push_back({it->first, it->second.n});
+            it = pending_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    return out;
+}
+
 void InsightDripper::Add(int n) {
     if (n <= 0) {
         return;
@@ -454,6 +500,7 @@ struct Config {
     InsightMode insight = InsightMode::Parity;
     bool probe_insight = false, probe_refill = false;
     bool probe_host9350 = false; // live G2 check: synthetic host encounter + boss Insight starts
+    bool probe_host4680 = false; // live G2 check: synthetic direct SpEffect 4680 (chalice events)
 };
 Config g_cfg;
 
@@ -472,6 +519,7 @@ u64 NextSeq() {
 // Host.
 std::mutex g_host_mu;
 BossInsightTracker g_tracker;       // under g_host_mu
+DirectInsight g_direct;             // under g_host_mu
 std::deque<PhantomEvent> g_outbox;  // under g_host_mu
 LampAnnouncer g_lamp_announcer;     // main thread
 double g_last_lamp_read = 0;        // main thread
@@ -625,7 +673,80 @@ void Host9350ProbeTick(double now) {
     }
 }
 
+// BB_PARTY_PHANTOM_PROBE=host4680 (live G2 / G1 check, host): 6 s after a cooperator is in the
+// world, feed the observer what the host's m29 Chalice Dungeon events run (DirectInsight): the
+// first-encounter table 12901718 (3 x 2004[8] 4680), 4 s later the layer boss kill 12901588 (2 x
+// 4680 then 2003[12]) and the kill table 12901708 (3 x 4680); also two that must not count (the
+// summon refund 9183, SpEffect 4682 of an NPC summon). A guest must get +3, +1 (+ the native +1 of
+// a real kill, absent here) and +3.
+void Host4680ProbeTick(double now) {
+    static double coop_at = -1.0;
+    static int step = 0;
+    if (step >= 2) {
+        return;
+    }
+    if (coop_at < 0.0) {
+        const GameSnapshot g = ReadGameState(true);
+        if (g.cooperators > 0 && g.world_up && !g.loading) {
+            coop_at = now;
+            Log("probe host4680: a cooperator is in the world; synthetic SpEffect 4680 starts in 6 s");
+        }
+        return;
+    }
+    auto sp = [](std::int32_t event, std::int32_t entity, std::int32_t id) {
+        std::uint8_t args[12] = {};
+        std::memcpy(args, &entity, 4);
+        std::memcpy(args + 4, &id, 4);
+        PhantomEmevdInstruction(event, 2004, 8, args, sizeof(args));
+    };
+    if (step == 0 && now - coop_at >= 6.0) {
+        step = 1;
+        Log("probe host4680: chalice encounter 12901718 -> 3 x 4680; refund 9183 and NPC summon 12404410 (not counted)");
+        for (int i = 0; i < 3; ++i) {
+            sp(12901718, DirectInsight::kPlayer, DirectInsight::kSpEffect);
+        }
+        sp(9183, DirectInsight::kPlayer, DirectInsight::kSpEffect);
+        sp(12404410, DirectInsight::kPlayer, 4682);
+    } else if (step == 1 && now - coop_at >= 10.0) {
+        step = 2;
+        Log("probe host4680: chalice layer boss kill 12901588 -> 2 x 4680, 2003[12]; kill table 12901708 -> 3 x 4680");
+        sp(12901588, DirectInsight::kPlayer, DirectInsight::kSpEffect);
+        sp(12901588, DirectInsight::kPlayer, DirectInsight::kSpEffect);
+        PhantomEmevdInstruction(12901588, 2003, 12, nullptr, 0);
+        for (int i = 0; i < 3; ++i) {
+            sp(12901708, DirectInsight::kPlayer, DirectInsight::kSpEffect);
+        }
+    }
+}
+
+void FlushDirectInsight(double now) {
+    std::vector<DirectInsight::Grant> due;
+    std::vector<bool> boss;
+    {
+        std::lock_guard<std::mutex> lk(g_host_mu);
+        due = g_direct.Due(now);
+        for (const DirectInsight::Grant& d : due) {
+            boss.push_back(g_tracker.DefeatedRecently(d.event, now));
+        }
+    }
+    for (std::size_t i = 0; i < due.size(); ++i) {
+        if (due[i].n <= 0) {
+            continue;
+        }
+        PhantomEvent e;
+        e.kind = PhantomEventKind::Insight;
+        e.seq = NextSeq();
+        e.insight = due[i].n;
+        e.source_event = static_cast<u32>(due[i].event);
+        e.boss = boss[i];
+        Queue(e);
+        Log("host %s: event %d gave the host %d Insight by SpEffect 4680; telling the guests",
+            boss[i] ? "boss kill" : "encounter / story Insight", due[i].event, due[i].n);
+    }
+}
+
 void HostTick(party::PartyLink* link, double now) {
+    FlushDirectInsight(now);
     if (g_cfg.respawn && link && now - g_last_lamp_read >= 1.0) {
         g_last_lamp_read = now;
         const u32 lamp = OwnLastLamp();
@@ -721,6 +842,7 @@ void PhantomInit() {
         g_cfg.probe_insight = std::strstr(p, "insight") != nullptr;
         g_cfg.probe_refill = std::strstr(p, "refill") != nullptr;
         g_cfg.probe_host9350 = std::strstr(p, "host9350") != nullptr;
+        g_cfg.probe_host4680 = std::strstr(p, "host4680") != nullptr;
     }
     SetGuestDeathRedirectEnabled(g_cfg.respawn);
     SetGuestRedirectCallback(&OnGuestRedirect);
@@ -750,6 +872,18 @@ void PhantomEmevdInstruction(std::int32_t event, std::int32_t bank, std::int32_t
     if (bank == 2003 && (id == 12 || id == 15 || id == 53)) {
         std::lock_guard<std::mutex> lk(g_host_mu);
         g_tracker.OnBossDefeat(event, now);
+        return;
+    }
+    if (bank == 2004 && id == 8) {
+        // SetSpEffect(entity, id, ...): Insight given straight to the player (DirectInsight).
+        if (!DirectInsight::Allowed(event) || !args || size < 8) {
+            return;
+        }
+        std::int32_t entity = 0, sp = 0;
+        std::memcpy(&entity, args, 4);
+        std::memcpy(&sp, args + 4, 4);
+        std::lock_guard<std::mutex> lk(g_host_mu);
+        g_direct.OnSetSpEffect(event, entity, sp, now);
         return;
     }
     if (bank != 2000 || id != 0 || !args || size < 12) {
@@ -804,6 +938,9 @@ void PhantomTick(party::PartyLink* link) {
     if (role == PartyRole::Host) {
         if (g_cfg.probe_host9350) {
             Host9350ProbeTick(now);
+        }
+        if (g_cfg.probe_host4680) {
+            Host4680ProbeTick(now);
         }
         HostTick(link, now);
     } else if (role == PartyRole::Guest) {

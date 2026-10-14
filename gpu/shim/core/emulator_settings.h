@@ -57,7 +57,9 @@ public:
     bool IsDirectMemoryAccessEnabled() { static const auto value = Flag("BB_DIRECT_MEMORY_ACCESS", false); return value; }
     bool IsDumpShaders() { static const auto value = Flag("BB_DUMP_SHADERS", false); return value; }
     bool IsFsrEnabled() { static const auto value = Flag("BB_FSR1", false); return value; }
-    bool IsHdrAllowed() { static const auto value = Flag("BB_HDR", false); return value; }
+    // shadPS4's HDR passthrough for PS4 games that output PQ themselves (Bloodborne does not).
+    // bbport's own HDR output is BbSettings hdr (BB_HDR, bbport_hdr.h).
+    bool IsHdrAllowed() { static const auto value = Flag("BB_GAME_HDR", false); return value; }
     // bbport: gamma 2.2 for the SDR picture when Windows runs the display in HDR (post_process.frag).
     bool IsHdrGammaEnabled() { static const auto value = Flag("BB_HDR_GAMMA", true); return value; }
     bool IsNullGPU() { static const auto value = Flag("BB_NULL_GPU", false); return value; }

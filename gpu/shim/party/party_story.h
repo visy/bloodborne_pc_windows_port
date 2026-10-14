@@ -176,6 +176,10 @@ public:
     static constexpr int kStableTicks = 30;
     static constexpr double kMirrorTimeout = 60.0;   ///< s a mirror may wait for its gate
     static constexpr double kRemoStartTimeout = 5.0; ///< s for the playing bit to rise
+    /// A live mirror shorter than this was cut (the guest's own load or travel stopped it: live parg,
+    /// the Blood Moon mirror ran 1.4 s on a guest that was still loading the host's map): not
+    /// counted as seen, so the queued replay plays the scene again once the guest is steady.
+    static constexpr double kMirrorMinSeen = 3.0;
     static constexpr double kRemoTimeout = 600.0;    ///< s for it to fall
     static constexpr double kTravelTimeout = 180.0;  ///< s for the Dream warp to arrive
     static constexpr double kEndingWait = 8.0;       ///< s after 21/22/23 before ForceEnding
@@ -213,6 +217,12 @@ public:
     bool FromJson(const json::Value& v, std::string* error = nullptr);
     /// The queue / seen set changed since the last call (then false until the next change).
     bool TakeDirty();
+    /// The remo of a live mirror that stopped before kMirrorMinSeen (0 = none), once.
+    std::uint32_t TakeMirrorCut() {
+        const std::uint32_t r = mirror_cut_;
+        mirror_cut_ = 0;
+        return r;
+    }
 
 private:
     struct Op {
@@ -236,6 +246,7 @@ private:
     double mirror_since_ = 0;
     std::deque<StoryIntent> queue_;
     std::set<std::uint32_t> seen_;
+    std::uint32_t mirror_cut_ = 0; ///< a live mirror stopped early (kMirrorMinSeen); TakeMirrorCut
     std::uint64_t last_seq_ = 0;
     int stable_mirror_ = 0, stable_own_ = 0;
     bool dirty_ = false;

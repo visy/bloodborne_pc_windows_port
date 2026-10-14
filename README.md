@@ -17,14 +17,14 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 
 | Area | Progress | |
 |---|---|--:|
-| **Overall** | `█████████████████░░░` | 84% |
+| **Overall** | `██████████████████░░` | 88% |
 | Session & joining | `██████████████████░░` | 89% |
 | World & travel | `██████████████████░░` | 88% |
 | Death & respawn | `██████████████████░░` | 89% |
 | Progress (anyone can progress) | `█████████████████░░░` | 87% |
 | Services & UI | `██████████████████░░` | 90% |
 | Network & robustness | `██████████████████░░` | 88% |
-| Bloodborne-specific (chalice, Insight) | `████████████████░░░░` | 81% |
+| Bloodborne-specific (chalice, Insight) | `█████████████████░░░` | 87% |
 | Feels like single player in a party | `█████████████████░░░` | 87% |
 
 ---
@@ -39,6 +39,7 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | **High frame rates** | 30 / 60 / 90 / uncapped, with correct game speed (community patches). |
 | **Upscaling** | FSR 3.1, FSR 4, FSR 4.1.1 and DLSS, with motion vectors added for this game. |
 | **Frame generation** | Optional, off by default: DLSS FG (2x-4x, RTX 40/50) or FSR FG (2x), paced, HUD kept sharp; NVIDIA Reflex. [More](docs/FG_REFLEX.md) |
+| **HDR output** | Optional, off by default: HDR10 (PQ, Rec.2020) on an HDR display, the game's highlights expanded up to your display's peak while mid-tones and menus stay at paper white; peak, paper white, highlights, saturation and a calibration pattern in *System > HDR*. [More](docs/SETTINGS.md#hdr-output) |
 | **No shader stutter** | Known shaders are built before the intro. New ones compile in the background. |
 | **Shareable shader cache** | Export / import one `.zip`, works across GPUs. |
 | **Save safety** | Crash-safe saving, save checks at start, automatic backups in party play. |
@@ -70,7 +71,7 @@ Saves and the shader cache are stored in `user\`. Settings are stored in `bbport
 |---|---|---|
 | Port settings | *System* in the game's menu | *System* in the game's menu |
 | Overlay menu (fallback) | `L3 + R3` (enable in launcher) | `Insert` |
-| Gestures / key items | Touchpad left / right half | `Tab` / `Backspace` |
+| Gestures / key items | Touchpad left / right half (Xbox pads: `Back` + d-pad left / right; `Back` alone the left half) | `Tab` / `Backspace` |
 | Fullscreen | — | `Alt + Enter` |
 
 Mouse and keyboard, free camera, debug menu: [docs/SETTINGS.md](docs/SETTINGS.md).
@@ -177,10 +178,16 @@ before anyone is in the game):
 - **Progress counts for everyone.** Bosses, items, doors, shortcuts, lamps, story and endings go
   into every player's own save. A guest who is behind catches up, including the Blood Moon.
   Key items a guest earned in the host's world (Oedon Tomb Key, badges, workshop tools) are checked
-  each time its own world loads and given again if its save lacks them.
+  each time its own world loads and given again if its save lacks them; a key item you already
+  hold is never handed out twice (no "inventory or storage max" box).
 - **Story cutscenes and endings play for everyone.** The Blood Moon, Amelia's skull (evening to
   night), Mergo's Wet Nurse's arena, Gehrman's scenes and the ending with the end credits
-  play for every party member.
+  play for every party member; a guest still loading in when a scene starts sees it once it has
+  arrived. After the Blood Moon the host is asked "Travel with the party?" and everyone goes to
+  Yahar'gul together.
+- **Insight for everyone.** Whatever Insight the host gets (a boss's first sight and kill, story
+  moments, the kidnap's waking, Chalice Dungeon bosses) every guest present gets too. What Insight
+  shows (Amygdalas, whispers) is up to each player's own Insight, as in the original game.
 - **The host's world is shared live, both ways.** A door or shortcut opened by the host is open
   for the guests too, and a lever or door a guest uses opens in the host's world (and in the
   guest's own save).
@@ -196,7 +203,8 @@ before anyone is in the game):
   Hunter's Marks) goes to the guest, the host and every other party member, once (the NPC has moved
   on for everyone, so nobody misses it).
 - **Kidnapped by a Snatcher?** If the host is grabbed, the whole party wakes up together in the
-  Hypogean Gaol (Yahar'gul) after one loading screen. Guests cannot be kidnapped in the host's world.
+  Hypogean Gaol (Yahar'gul) after one loading screen, and the guests get the host's Insight for
+  it too. Guests cannot be kidnapped in the host's world.
 - **Enemy drops for each player, one roll.** Every player gets their own copy of each enemy's drop,
   and it is the same item for everyone (one shared roll per kill).
 - **Blood Echoes for every kill.** Whoever kills an enemy, every party member gets its full
@@ -226,6 +234,18 @@ before anyone is in the game):
   damage) per extra hunter than the game gives them, normal enemies get tougher too; all six values
   (boss / enemy health, damage, poise) are on the *Enemy scaling* page, the host's count.
 - **Names over party members**, in the game's own style (replacing its plate, which hid behind walls), at any distance, bigger when near, with level, health or deaths (your choice); the *Party name tags* setting (launcher or *Party rules*) turns them off for the game's own plate. Names, the party panel and party notices step aside while the game's own menus (inventory, item descriptions, level up, travel) are open; for a YES / NO box only the names do.
+- **Pings.** Hold the touchpad and press R3 (Xbox pads: hold Back, press R3; keyboard: Tab + Q, or
+  just V) to mark the spot you are looking at: every party member in your world sees the marker
+  through walls for 10 seconds, in your colour, with your name and its distance in metres (at the
+  screen edge with an arrow when it is out of view). The touchpad alone still opens the gestures
+  (when you let go). Optional: *Show party through walls* puts a small marker with the distance on
+  every companion on your map. Both on the game's *System -> Pings* page and the launcher's Party tab;
+  hidden under the game's menus like the other party text.
+- **Friendly fire / PvP (host's switch, off by default).** The host can let party members hurt
+  each other, both ways, like invaders: the game's *System -> Friendly fire* page, the Insert menu's
+  Party tab or the launcher's Party tab (host). Everyone gets a notice when it changes; guests see
+  the host's setting on their page but cannot change it. A party kill is a normal party death (the
+  rot applies as for any death); the killer gets no Echoes or Insight from it.
 - **Party HUD.** Party members and events are shown in a small HUD; all party settings are on the
   *Party* pages of the game's *System* menu.
 
@@ -249,8 +269,8 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 | Joining during a boss fight or cutscene waits outside until it ends | Works for boss fights with every join path (bell, title join, direct summon; verified live), the Party status says why you wait; cutscenes not yet tested live |
 | With 3 guests, every guest sees every other guest | In progress |
 | Chalice dungeons: deeper layers checked in a party; entering the party's dungeon in one press (the altar still asks a few prompts) | In progress |
-| PvP / friendly fire the host can switch on and off | Later |
-| Pings: party members and marked spots visible through walls, with distance and player colours | Later |
+| PvP / friendly fire the host can switch on and off | Done (0.6.2) |
+| Pings: party members and marked spots visible through walls, with distance and player colours | Done (0.6.2) |
 
 ### Connecting over the internet
 
@@ -328,7 +348,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | FireBurn | FSR-Vulkan (MIT); AMD FidelityFX SDK (MIT) |
 | Supermedo, IFreemz | DLSS bridge and Windows loader |
 | FIocker (Supermedo/bloodborne_pc PR #69) | Frame generation (DLSS FG, FSR FG) with paced presentation, NVIDIA Reflex, conservative object motion for frame generation, DLSS bridge ABI 2, FG diagnostics tools |
-| Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, FPS-preset physics step (found by FIocker), frame limiter pacing, texture-cache, pipeline-cache and shader-walker fixes, skipped draws for failed pipelines, keyboard stick movement, allocating past a full VRAM budget, object motion off on AMD before RDNA3, the memory log line once a minute; imedved (direct mouse camera, ported by mcrib884); andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows); parsifal295 (game check passes over locked files), RafaelHGOliveira (exclusive fullscreen), fliperama86 (HDR desktop black level), emurphy04 (ultrawide output, video queue fix) |
+| Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, FPS-preset physics step (found by FIocker), frame limiter pacing, texture-cache, pipeline-cache and shader-walker fixes, skipped draws for failed pipelines, keyboard stick movement, allocating past a full VRAM budget, object motion off on AMD before RDNA3, the memory log line once a minute, Back + d-pad touchpad halves on Xbox pads (idea by parsifal295), skipped draws with a null vertex buffer table, retried boot-file swaps, the unclean-eboot.bin warning; imedved (direct mouse camera, ported by mcrib884); andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows); parsifal295 (game check passes over locked files), RafaelHGOliveira (exclusive fullscreen), fliperama86 (HDR desktop black level), emurphy04 (ultrawide output, video queue fix) |
 | ALuaNegra (via Mrsuss60's port) | Idle depth targets freed (VRAM growth) |
 | Vorshim92 | Pipeline cache kept between starts, stale `bbport.exe` guard, crash reaper, `run.bat` resolution fix, Reset shader cache button |
 | Thealexbarney | LibAtrac9 audio (MIT) |
