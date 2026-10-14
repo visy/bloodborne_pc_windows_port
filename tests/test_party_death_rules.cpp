@@ -204,11 +204,11 @@ int main() {
     CHECK(!ClearEmptyStain(true, 1, 48));
     CHECK(!ClearEmptyStain(true, 0, 0));
     CHECK(!ClearEmptyStain(false, 1, 0));
-    CHECK(SkipEmptyStainRecord(true, true, 0));
-    CHECK(!SkipEmptyStainRecord(true, true, 1670));                  // echoes to recover: the stain as usual
-    CHECK(!SkipEmptyStainRecord(true, true, -1));                    // unknown: the game decides
-    CHECK(!SkipEmptyStainRecord(true, false, 0));                    // not a record call
-    CHECK(!SkipEmptyStainRecord(false, true, 0));                    // solo: vanilla
+    CHECK(SkipEmptyStainRecord(true, 1, 0));
+    CHECK(!SkipEmptyStainRecord(true, 1, 1670));                     // echoes to recover: the stain as usual
+    CHECK(!SkipEmptyStainRecord(true, 1, -1));                       // unknown: the game decides
+    CHECK(!SkipEmptyStainRecord(true, 0, 0));                        // no stain set
+    CHECK(!SkipEmptyStainRecord(false, 1, 0));                       // solo: vanilla
     // pt1polish: test steps.
     CHECK(TestStepWaits(true, false, true, false));                  // guest_obj while dead
     CHECK(!TestStepWaits(true, true, true, false));

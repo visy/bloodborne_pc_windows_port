@@ -284,11 +284,14 @@ inline bool HidePartyBanner(int id, bool b2_on, bool guest, double since_rejoin)
 inline bool ClearEmptyStain(bool party_on, int flag, int echoes) {
     return party_on && flag != 0 && echoes == 0;
 }
-/// The death's stain record itself (0x13D2910, `record` its third argument): with 0 echoes its
-/// stain is removed right after it (it builds a live stain with nothing in it at once). Unknown
-/// echoes (-1): left as is.
-inline bool SkipEmptyStainRecord(bool party_on, bool record, int echoes) {
-    return party_on && record && echoes == 0;
+/// After any call of the stain record 0x13D2910 (`flag_after` GameDataMan +0x28, `record_echoes`
+/// the record's +0x38 after the call): a stain with 0 echoes is removed at once (the function
+/// builds the live stain itself). Not only the death's record call (third argument 1): with 0 it
+/// skips the record but still sets the flag and builds the stain from the old record - the
+/// respawn load's call put the 0-echo stain back (pt1last live: "Acquire Blood Echoes" at the
+/// lamp after a wipe although the death's call had removed it). Unknown echoes (-1): left as is.
+inline bool SkipEmptyStainRecord(bool party_on, int flag_after, int record_echoes) {
+    return party_on && flag_after != 0 && record_echoes == 0;
 }
 
 // ---- Test steps (BB_PARTY_DIRECTOR_TEST) ----

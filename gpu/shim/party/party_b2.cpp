@@ -3950,11 +3950,30 @@ BB_COOP_SYSV void ShowMsgCall(u32 id, u32 arg) {
     }
     reinterpret_cast<ShowMsgFn>(Guest(kShowSummonMessage))(id, arg);
 }
+/// The join banner ("The bell's resonance has beckoned <?joinName?>." 102001, "Entered the world
+/// of ..." 102100 / 102200) does not go through ShowSummonMessage: the join handler (fragment
+/// 0x196BAE9) builds the text itself (id from the per-type table 0x553D784 + type * 0x80) and sets
+/// the pending-banner byte 0x55813D8 = 1, then calls 0x196F360(member). pt1last live: the host's
+/// "beckoned" after a wipe re-join was shown with no hook hit. That call is replaced: after it,
+/// a hidden id clears the pending byte (the banner consumer 0x1BFF910 shows it only while it is 1).
+constexpr u64 kJoinBannerTail = 0x196be0d;
+BB_COOP_SYSV void JoinBannerTail(u64 member) {
+    reinterpret_cast<void(BB_COOP_SYSV*)(u64)>(Guest(0x196f360))(member);
+    const int type = member ? int(Field<signed char>(member, 0xfc, -1)) : -1;
+    const u32 id = type >= 0 && type < 0x22 ? Field<u32>(Guest(0x553d784) + u64(type) * 0x80, 0) : 0;
+    if (id && HideBanner(id)) {
+        const u8 zero = 0;
+        SafeWrite(Guest(0x55813d8), &zero, 1);
+    } else if (g_on.load()) {
+        Log("join banner %u shown (member type %d)", id, type);
+    }
+}
 void InstallBannerFilter() {
     if (!BannersOn()) {
         Log("party banners: as the game shows them (BB_PARTY_BANNERS=0)");
         return;
     }
+    InstallCall(kJoinBannerTail, 0x196f360, reinterpret_cast<const void*>(&JoinBannerTail), "party join banner filter");
     if (ReplacePrologue(kShowSummonMessage, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57},
                         reinterpret_cast<const void*>(&ShowMsgEntry), &g_show_msg_orig,
                         "party banner filter (0x1BFFE80)")) {
@@ -3994,6 +4013,8 @@ void BannerRejoinTick() {
 /// in a party, after such a record (the rest of the death runs as the game does) the flag is
 /// cleared and 0x1868A50(.., 0) removes the live stain (it destroys the object first, builds one
 /// only for flag && show); the old stain is gone as in vanilla (deathrules::SkipEmptyStainRecord).
+/// pt1last (live): the same function called with record 0 (a respawn load) skips the record but
+/// sets the flag and builds the stain from the old 0-echo record again, so every call is checked.
 /// BB_PARTY_EMPTY_STAIN=1: as the game does.
 bool EmptyStainKept() {
     static const bool keep = deathrules::OptIn(std::getenv("BB_PARTY_EMPTY_STAIN"));
@@ -4001,26 +4022,27 @@ bool EmptyStainKept() {
 }
 using StainRecordFn = void(BB_COOP_SYSV*)(u64, u64, u32);
 BB_COOP_SYSV void StainRecordHook(u64 events, u64 chr, u32 on) {
-    const u64 gdm = Slot(kSlotGameData);
-    const int own = Field<int>(Field<u64>(gdm, 8), 0x94, -1);
-    const int pool = Field<int>(Field<u64>(Slot(0x553b108), 8), 0x28, 0);
-    const int echoes = own < 0 ? -1 : own + pool;
     reinterpret_cast<StainRecordFn>(Guest(0x13d2910))(events, chr, on);
+    const u64 gdm = Slot(kSlotGameData);
+    const u64 rec = gdm ? Field<u64>(gdm, 0x30) : 0;
+    const int flag = gdm ? int(Field<u8>(gdm, 0x28)) : 0;
+    const int echoes = rec ? Field<int>(rec, 0x38, -1) : -1;
     if (EmptyStainKept() ||
-        !deathrules::SkipEmptyStainRecord(g_on.load() && (Role() == RoleHost || Role() == RoleClient), (on & 0xff) != 0,
-                                          echoes)) {
+        !deathrules::SkipEmptyStainRecord(g_on.load() && (Role() == RoleHost || Role() == RoleClient), flag, echoes)) {
+        if (g_on.load()) {
+            Log("bloodstain record (record %u): flag %d, %d echoes: as the game does", on & 0xff, flag, echoes);
+        }
         return;
     }
     const u8 zero = 0;
     const u64 stains = Field<u64>(events, 8);
-    if (gdm) {
-        SafeWrite(gdm + 0x28, &zero, 1);
-    }
+    SafeWrite(gdm + 0x28, &zero, 1);
     if (stains) {
         reinterpret_cast<void(BB_COOP_SYSV*)(u64, u32)>(Guest(0x1868a50))(stains, 0);
     }
-    Log("death with 0 Blood Echoes: its bloodstain removed (flag 0%s; no \"Acquire Blood Echoes\" for nothing)",
-        stains ? ", live stain destroyed" : "");
+    Log("bloodstain record (record %u) with 0 Blood Echoes: its bloodstain removed (flag 0%s; no \"Acquire Blood "
+        "Echoes\" for nothing)",
+        on & 0xff, stains ? ", live stain destroyed" : "");
 }
 void InstallEmptyStainSkip() {
     if (EmptyStainKept()) {
