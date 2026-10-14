@@ -15,6 +15,8 @@
 #include <mutex>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <fmt/format.h>
+#include "video_core/cache_storage.h"
 #include "video_core/renderer_vulkan/vk_breadcrumbs.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 
@@ -239,13 +241,41 @@ void DumpPrograms(const Stream& stream, u64 id) {
                         (unsigned long long)entry.crumb.hash[i], size,
                         (unsigned long long)program, path);
         }
+        // And what the recompiler made of it (the shader cache's SPIR-V of each permutation),
+        // so a report names the recompiler output too (spirv-dis / spirv-cross).
+        auto& db = Storage::DataBase::Instance();
+        if (!db.IsOpened()) {
+            continue;
+        }
+        for (u32 perm = 0; perm < 4; ++perm) {
+            std::vector<u32> spv;
+            db.Load(Storage::BlobType::ShaderBinary,
+                    fmt::format("{:#018x}_{}", entry.crumb.hash[i], perm), spv);
+            if (spv.empty()) {
+                continue;
+            }
+            std::snprintf(path, sizeof(path), "%shang_shader_%016llx_%u.spv", dir,
+                          (unsigned long long)entry.crumb.hash[i], perm);
+            if (FILE* file = std::fopen(path, "wb")) {
+                std::fwrite(spv.data(), sizeof(u32), spv.size(), file);
+                std::fclose(file);
+                Out("    shader %016llx permutation %u SPIR-V (%zu bytes) saved to %s\n",
+                    (unsigned long long)entry.crumb.hash[i], perm, spv.size() * sizeof(u32), path);
+            }
+        }
     }
 }
 
+void StartReportTest();
 } // Anonymous namespace
 
 u32 NewStream(const Instance& instance, const char* name) {
-    std::call_once(init_once, [&] { Init(instance); });
+    std::call_once(init_once, [&] {
+        Init(instance);
+        std::printf("GPU breadcrumbs: %s; device fault info (VK_EXT_device_fault): %s\n",
+                    enabled ? "on" : "off", instance.IsDeviceFaultSupported() ? "on" : "off");
+        StartReportTest();
+    });
     const u32 index = num_streams.fetch_add(1, std::memory_order_relaxed);
     if (index >= MaxStreams) {
         return MaxStreams;
@@ -409,6 +439,51 @@ void ReportMemory() {
     }
     Out("\n");
 }
+
+/// The device-lost report: fault info, memory, breadcrumbs (and the stuck shaders' code).
+void WriteDeviceLostReport(const char* prefix, const char* title, const char* where) {
+    OpenReportFile(prefix);
+    Out("%s (%s)\n", title, where);
+    ReportFault();
+    ReportMemory();
+    if (enabled) {
+        Report("at device lost", where);
+    } else {
+        Out("GPU breadcrumbs: off, the stuck command is unknown\n");
+    }
+    CloseReportFile();
+}
+
+/// Test aid BB_DEVICE_LOST_REPORT_TEST=S: S s after the first command stream, the device-lost
+/// report of a healthy GPU (out/device_lost_test_*.log), to check the report path end to end
+/// (VK_EXT_device_fault answers with no fault, the streams finished all or nearly all).
+void StartReportTest() {
+    const char* env = std::getenv("BB_DEVICE_LOST_REPORT_TEST");
+    if (!env || !env[0]) {
+        return;
+    }
+    const int seconds = std::atoi(env);
+    std::thread([seconds] {
+        std::this_thread::sleep_for(std::chrono::seconds(seconds > 0 ? seconds : 60));
+        WriteDeviceLostReport("device_lost_test", "GPU device lost report test, the device is fine",
+                              "BB_DEVICE_LOST_REPORT_TEST");
+        // The shader dump of a stuck command, here for the newest dispatch noted.
+        const u32 count = std::min(num_streams.load(), MaxStreams);
+        for (u32 s = 0; s < count; ++s) {
+            const Stream& stream = streams[s];
+            for (u64 id = stream.next.load() - 1, n = 0; id > 0 && n < 4096; --id, ++n) {
+                const Entry& entry = stream.ring[id & (RingSize - 1)];
+                if (entry.id == id && entry.crumb.kind == Kind::Dispatch && entry.crumb.program[0]) {
+                    OpenReportFile("device_lost_test_dump");
+                    PrintEntry(stream, id, "test dump");
+                    DumpPrograms(stream, id);
+                    CloseReportFile();
+                    return;
+                }
+            }
+        }
+    }).detach();
+}
 } // Anonymous namespace
 
 void ReportDeviceLost(const char* where) {
@@ -422,16 +497,7 @@ void ReportDeviceLost(const char* where) {
         }
         return;
     }
-    OpenReportFile("device_lost");
-    Out("GPU device lost (%s)\n", where);
-    ReportFault();
-    ReportMemory();
-    if (enabled) {
-        Report("at device lost", where);
-    } else {
-        Out("GPU breadcrumbs: off, the stuck command is unknown\n");
-    }
-    CloseReportFile();
+    WriteDeviceLostReport("device_lost", "GPU device lost", where);
     written = true;
 }
 

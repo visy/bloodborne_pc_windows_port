@@ -8,8 +8,9 @@ Library (launcher.py "Save support bundle" and the automatic bundle after a cras
   redact_text(text, secrets=()) -> text without passwords, party codes, addresses, tokens, user name
 
 Taken: launcher.log, the newest logs\\launcher_*.log, out\\crash_*.log, out\\hang_dump*.log,
-out\\device_lost_*.log and out\\gpu_stuck_*.log (GPU reports) with out\\hang_shader_*.bin (the stuck
-command's guest shader code, binary as written), out\\heartbeat*.log, out\\summary.log, bbport.ini and launcher_settings.json (both redacted) and
+out\\device_lost_*.log and out\\gpu_stuck_*.log (GPU reports) with out\\hang_shader_*.bin / *.spv (the
+stuck command's guest shader code and its SPIR-V, binary as written), out\\heartbeat*.log,
+out\\summary.log, bbport.ini and launcher_settings.json (both redacted) and
 info.txt (version, build, OS, CPU, GPU). Never taken: saves (user\\), eboot / game data, shader or
 pipeline caches (only the stuck shaders above), the party password or code.
 """
@@ -149,7 +150,7 @@ def collect_files(app_dir: Path, max_logs=10):
     for pattern in ("device_lost_*.log", "gpu_stuck_*.log"):
         for p in _newest(out_dir.glob(pattern), 3):
             picks.append((p, f"out/{p.name}"))
-    for p in _newest(out_dir.glob("hang_shader_*.bin"), 4):
+    for p in _newest(list(out_dir.glob("hang_shader_*.bin")) + list(out_dir.glob("hang_shader_*.spv")), 8):
         picks.append((p, f"out/{p.name}"))
     for p in _newest(out_dir.glob("heartbeat*.log"), 3):
         picks.append((p, f"out/{p.name}"))
@@ -255,8 +256,8 @@ def make_bundle(app_dir, zip_path, max_logs=10, settings=None, note="", version=
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for path, name in collect_files(app_dir, max_logs):
             try:
-                if name.endswith(".bin"):  # shader code: binary, nothing to redact, 64 KiB at most
-                    z.writestr(name, path.read_bytes()[:64 * 1024])
+                if name.endswith((".bin", ".spv")):  # shader code: binary, nothing to redact
+                    z.writestr(name, path.read_bytes()[:(64 if name.endswith(".bin") else 1024) * 1024])
                     names.append(name)
                     continue
                 z.writestr(name, red.text(_read_tail(path)))
