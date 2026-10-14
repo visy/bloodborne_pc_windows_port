@@ -453,7 +453,7 @@ void OnTravel(const std::string& what) {
         b.f.travelling = true;
         PublishLocked(b);
     }
-    status::SetLastEvent("Travelling: " + what);
+    status::SetLastEvent(what);  // plain text (coop::TravelKindLabel)
 }
 
 void OnRing() {

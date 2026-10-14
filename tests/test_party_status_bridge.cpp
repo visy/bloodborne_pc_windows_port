@@ -185,8 +185,9 @@ static int test_board_and_commands() {
     CHECK(status::Snapshot().state == State::Joined);
 
     // Travel: until a loading screen came and went.
-    bridge::OnTravel("lamp");
-    CHECK(status::Snapshot().state == State::Travelling && status::Snapshot().last_event == "Travelling: lamp");
+    bridge::OnTravel("Respawning with the party");  // plain text (coop::TravelKindLabel), shown as is
+    CHECK(status::Snapshot().state == State::Travelling &&
+          status::Snapshot().last_event == "Respawning with the party");
     in.loading = true;
     bridge::Tick(in);
     CHECK(status::Snapshot().state == State::Travelling);

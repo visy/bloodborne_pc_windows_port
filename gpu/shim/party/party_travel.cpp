@@ -114,6 +114,17 @@ const char* TravelKindName(TravelKind k) {
     return "unknown";
 }
 
+const char* TravelKindLabel(TravelKind k) {
+    switch (k) {
+    case TravelKind::HostDeath: return "Respawning with the party";
+    case TravelKind::HuntersMark: return "Hunter's Mark: back to the lamp with the party";
+    case TravelKind::Lamp:
+    case TravelKind::LuaBonfireWarp: return "Travelling to a lamp with the party";
+    case TravelKind::GuestDied: return "Respawning with the party";
+    default: return "Travelling with the party";
+    }
+}
+
 TravelKind TravelKindFromName(const std::string& name) {
     for (const KindName& n : kKindNames) {
         if (name == n.name) {

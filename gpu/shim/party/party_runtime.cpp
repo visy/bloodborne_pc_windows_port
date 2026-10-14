@@ -867,7 +867,7 @@ LinkCallbacks make_callbacks(bool host) {
                 coop::TravelIntent t;
                 std::string err;
                 if (coop::TravelFromJsonText(body, &t, &err) && coop::SanitizePeerTravel(&t, &err)) {
-                    bridge::OnTravel(coop::TravelKindName(t.kind));
+                    bridge::OnTravel(coop::TravelKindLabel(t.kind));
                     if (!coop::b2::OnHostTravel(t)) coop::RequestGuestTravel(t);  // B2 keeps the room
                 } else {
                     plog("travel event: %s", err.c_str());

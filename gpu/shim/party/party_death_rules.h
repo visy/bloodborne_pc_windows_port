@@ -210,15 +210,17 @@ struct RestMember {
     bool connected = false;
     std::uint32_t area = 0;  ///< 0: unknown (loading)
 };
+/// `rest_rides_rejoin`: the resting guest comes back by its own re-join, served after this load
+/// (RestRidesRejoin): it does not follow the load, it arrives into the reset world.
 inline int RestLoadExpected(const RestMember* m, int n, int rest_slot, std::uint32_t host_area,
-                            std::uint32_t rest_dest_area) {
+                            std::uint32_t rest_dest_area, bool rest_rides_rejoin = false) {
     int expected = 0;
     for (int i = 0; i < n; ++i) {
         if (!m[i].connected) {
             continue;
         }
         if (m[i].slot == rest_slot) {
-            expected += rest_dest_area != 0 && rest_dest_area == host_area ? 1 : 0;
+            expected += !rest_rides_rejoin && rest_dest_area != 0 && rest_dest_area == host_area ? 1 : 0;
             continue;
         }
         if (m[i].area == 0 || m[i].area == host_area) {
@@ -226,6 +228,78 @@ inline int RestLoadExpected(const RestMember* m, int n, int rest_slot, std::uint
         }
     }
     return expected;
+}
+
+// ---- A guest rests and travels alone back into the host's area (one load, pt1polish) ----
+/// The playtest replay (S2): a guest at the Dream lamp chose NO to a lamp of the host's area. It
+/// travelled alone (its re-join load), then the host ran the queued rest load and the guest
+/// followed it: two loading screens (~15 s). Now the rest rides on the re-join request: the host
+/// runs its rest load first and serves the re-join after it, so the guest sees one loading screen
+/// (raised while it waits for the snapshot) and arrives into the reset world. Only for a rest
+/// (not a Hunter's Mark) into the area the host stands in.
+inline bool RestRidesRejoin(bool rest, std::uint32_t dest_area, std::uint32_t host_area) {
+    return rest && dest_area != 0 && dest_area == host_area;
+}
+/// Host: how long a re-join that carries a rest waits for the rest load to start. Past it the
+/// re-join is served (the rest load, if it still runs, is a second load as before).
+constexpr double kRestCarryHoldS = 8.0;
+inline bool RestCarryHeld(double now, double carry_at, bool rest_load_started) {
+    return carry_at > 0 && !rest_load_started && now - carry_at < kRestCarryHoldS;
+}
+/// Host: a pending re-join request (a guest's respawn / alone travel into this world) is served
+/// now: in the world, not inside an own load's settle (its re-sync covers the request), and not
+/// held for a rest load that is about to start.
+inline bool HostServesRejoin(bool loading, bool own_load_settling, bool rest_carry_held) {
+    return !loading && !own_load_settling && !rest_carry_held;
+}
+
+// ---- Game banners in a party (the SummonMessage dialog, EventText ids; pt1polish) ----
+/// "The bell's resonance has beckoned <name>." (102001) and the arrival / "Entered the world"
+/// banners (102002..102700) belong to the first summon. After a B2 re-join (a wipe or death
+/// respawn load, a rest follow, an alone travel back) the member is the same one: no banner.
+inline bool IsJoinBanner(int id) {
+    return id >= 102001 && id <= 102799;
+}
+/// "You died. Returning to your world." (103100, 103200..103500) and "Your beckoner has died.
+/// Returning to own world." (103101): with B2 a guest's death is held and it stays with the party.
+inline bool IsReturnHomeBanner(int id) {
+    return id == 103100 || id == 103101 || id == 103200 || id == 103300 || id == 103400 || id == 103500;
+}
+constexpr double kRejoinBannerWindowS = 15.0;
+/// `since_rejoin`: s since a B2 re-join was last running on this game (negative: never).
+inline bool HidePartyBanner(int id, bool b2_on, bool guest, double since_rejoin) {
+    if (!b2_on) {
+        return false;
+    }
+    if (IsReturnHomeBanner(id)) {
+        return guest;
+    }
+    return IsJoinBanner(id) && since_rejoin >= 0 && since_rejoin < kRejoinBannerWindowS;
+}
+
+// ---- An empty bloodstain (pt1polish) ----
+/// A death with 0 Blood Echoes still records a stain (flag +0x28 set, record echoes 0): the game
+/// then shows "Acquire Blood Echoes" for nothing. In a party it is not placed (the flag cleared
+/// before the respawn load builds it). A stain with echoes, or none, is left alone.
+inline bool ClearEmptyStain(bool party_on, int flag, int echoes) {
+    return party_on && flag != 0 && echoes == 0;
+}
+/// The death's stain record itself (0x13D2910, `record` its third argument): with 0 echoes its
+/// stain is removed right after it (it builds a live stain with nothing in it at once). Unknown
+/// echoes (-1): left as is.
+inline bool SkipEmptyStainRecord(bool party_on, bool record, int echoes) {
+    return party_on && record && echoes == 0;
+}
+
+// ---- Test steps (BB_PARTY_DIRECTOR_TEST) ----
+/// A step waits (pt1polish, replay S1/S4): one that moves / acts with the local chr while that
+/// chr is dead, and any step while a B2 re-join or load is in flight (a die step landed inside the
+/// previous wipe's load and made no second wipe).
+inline bool TestStepWaits(bool acts_with_own_chr, bool own_alive, bool world_up, bool rejoin_running) {
+    if (!world_up || rejoin_running) {
+        return true;
+    }
+    return acts_with_own_chr && !own_alive;
 }
 
 // ---- Own bloodstain record (GameDataMan +0x28 flag, +0x30 record +0x38 echoes) ----

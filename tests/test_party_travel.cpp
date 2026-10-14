@@ -65,6 +65,13 @@ static void test_call_sites() {
         CHECK(TravelKindFromName(TravelKindName(kind)) == kind);
     }
     CHECK(TravelKindFromName("nonsense") == TravelKind::Unknown);
+    // Player-facing labels (pt1polish: the loading screen said "Travelling: host_death").
+    CHECK(std::string(TravelKindLabel(TravelKind::HostDeath)) == "Respawning with the party");
+    CHECK(std::string(TravelKindLabel(TravelKind::Transform)) == "Travelling with the party");
+    for (int k = 0; k <= static_cast<int>(TravelKind::TitleOrDebug); ++k) {
+        const std::string label = TravelKindLabel(static_cast<TravelKind>(k));
+        CHECK(!label.empty() && label.find('_') == std::string::npos);  // never an internal name
+    }
 }
 
 static TravelIntent lamp_intent(std::uint64_t seq) {

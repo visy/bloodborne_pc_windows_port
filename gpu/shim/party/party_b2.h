@@ -115,7 +115,10 @@ const char* AloneWhyName(AloneWhy w);
 /// load for this guest only) at the destination itself; elsewhere: an alone load in host-world
 /// mode (no snapshot; flags from the mirror). False: not possible now (no session, a re-join
 /// running, no destination) - the caller keeps the old behaviour.
-bool TravelAlone(const TravelIntent& t, AloneWhy why);
+/// `rest_lamp` (a rest at a lamp, pt1polish): into the host's area the rest rides on the re-join
+/// (the host's rest load first, then this guest's one load); *rest_carried says it did - otherwise
+/// the caller sends its rest request the usual way.
+bool TravelAlone(const TravelIntent& t, AloneWhy why, std::uint32_t rest_lamp = 0, bool* rest_carried = nullptr);
 /// Guest, main thread, dead: respawns at its OWN last lamp (GSM +0x1528) as an alone travel
 /// (TravelAlone with AloneWhy::Death): in the host's area a re-join, elsewhere an alone load.
 bool RespawnAloneAtOwnLamp();
@@ -160,6 +163,10 @@ void HostTravelAloneNext();
 int MembersApart();
 /// Host: a B2 re-join after its own load is running (the session watchdog stands aside).
 bool HostRejoinRunning();
+/// Any role: a B2 re-join (a host load's re-sync, a guest's follow / alone travel back) is running.
+bool RejoinRunning();
+/// The local player's HP (-1: no chr).
+int LocalHp();
 /// Host: when (Now() clock, s) the last member_down notice came; 0 never (test aid).
 double LastMemberDownAt();
 /// The clock of LastMemberDownAt.

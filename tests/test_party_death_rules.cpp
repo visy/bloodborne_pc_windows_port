@@ -167,6 +167,55 @@ int main() {
         CHECK(RestLoadExpected(unknown, 2, 1, yh, 0x15) == 1);
     }
 
+    // pt1polish: a guest's rest back into the host's area rides on its re-join (one load).
+    {
+        const std::uint32_t yh = 0x18;
+        CHECK(RestRidesRejoin(true, yh, yh));
+        CHECK(!RestRidesRejoin(false, yh, yh));      // a Hunter's Mark: no rest
+        CHECK(!RestRidesRejoin(true, 0x15, yh));     // to another area: the host's rest load stays separate
+        CHECK(!RestRidesRejoin(true, 0, yh));        // destination unknown
+        RestMember loading[] = {{1, true, 0}};
+        CHECK(RestLoadExpected(loading, 1, 1, yh, yh, true) == 0);   // it arrives by its own re-join
+        RestMember two[] = {{1, true, 0x15}, {2, true, yh}};
+        CHECK(RestLoadExpected(two, 2, 1, yh, yh, true) == 1);       // the guest beside the host still follows
+        CHECK(RestCarryHeld(10.0, 9.0, false));
+        CHECK(!RestCarryHeld(10.0, 9.0, true));                      // the load started: the hold ends with it
+        CHECK(!RestCarryHeld(20.0, 9.0, false));                     // 8 s without a load: served anyway
+        CHECK(!RestCarryHeld(10.0, 0.0, false));                     // no carried rest
+        CHECK(HostServesRejoin(false, false, false));
+        CHECK(!HostServesRejoin(true, false, false));                // loading
+        CHECK(!HostServesRejoin(false, true, false));                // the own load's re-sync covers it
+        CHECK(!HostServesRejoin(false, false, true));                // the rest load goes first
+    }
+    // pt1polish: banners.
+    CHECK(HidePartyBanner(103100, true, true, -1));                  // guest death: it stays
+    CHECK(HidePartyBanner(103300, true, true, 100));
+    CHECK(HidePartyBanner(103101, true, true, -1));                  // the beckoner died: it stays too
+    CHECK(!HidePartyBanner(103100, false, true, -1));                // B2 off: vanilla, it goes home
+    CHECK(!HidePartyBanner(103100, true, false, -1));                // the host never sees it anyway
+    CHECK(HidePartyBanner(102001, true, false, 3.0));                // host after a wipe re-join
+    CHECK(HidePartyBanner(102100, true, true, 3.0));                 // guest "Entered the world" again
+    CHECK(!HidePartyBanner(102001, true, false, -1));                // the first summon: shown
+    CHECK(!HidePartyBanner(102001, true, false, 60.0));              // a later new join: shown
+    CHECK(!HidePartyBanner(103001, true, false, 3.0));               // "Cooperator ... has died": shown
+    CHECK(!HidePartyBanner(105200, true, true, 3.0));                // boss-fight banners untouched
+    // pt1polish: an empty stain is not placed.
+    CHECK(ClearEmptyStain(true, 1, 0));
+    CHECK(!ClearEmptyStain(true, 1, 48));
+    CHECK(!ClearEmptyStain(true, 0, 0));
+    CHECK(!ClearEmptyStain(false, 1, 0));
+    CHECK(SkipEmptyStainRecord(true, true, 0));
+    CHECK(!SkipEmptyStainRecord(true, true, 1670));                  // echoes to recover: the stain as usual
+    CHECK(!SkipEmptyStainRecord(true, true, -1));                    // unknown: the game decides
+    CHECK(!SkipEmptyStainRecord(true, false, 0));                    // not a record call
+    CHECK(!SkipEmptyStainRecord(false, true, 0));                    // solo: vanilla
+    // pt1polish: test steps.
+    CHECK(TestStepWaits(true, false, true, false));                  // guest_obj while dead
+    CHECK(!TestStepWaits(true, true, true, false));
+    CHECK(!TestStepWaits(false, false, true, false));                // a press may run while dead
+    CHECK(TestStepWaits(false, true, true, true));                   // inside the last wipe's re-join
+    CHECK(TestStepWaits(false, true, false, false));                 // not in the world
+
     // Own bloodstain record changes (bug 13 logging).
     CHECK(PlanStainChange(0, -1, 1, 4843) == StainChange::Recorded);
     CHECK(PlanStainChange(1, 4843, 1, -1) == StainChange::Taken);

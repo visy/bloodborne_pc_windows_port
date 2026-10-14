@@ -15,6 +15,7 @@
 #include "game_state.h"
 #include "lua_events.h"
 #include "party_b2.h"
+#include "party_death_rules.h"
 #include "party_dsummon.h"
 #include "../net/from_api.h"
 #include "party_fourp.h"
@@ -232,6 +233,7 @@ struct Test {
     bool script_on = false;
     Clock::time_point release_at{};  // a press step's buttons are released then
     bool pressing = false;
+    bool step_waiting = false;  // the next step waits (dead chr / a re-join running), logged once
 };
 
 struct State {
@@ -1365,6 +1367,32 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     } else if (t.next_step >= t.steps.size() || !t.armed || !joined || !s.world_up || s.loading ||
                t.joins < t.steps[t.next_step].min_join || Seconds(t.joined_at, now) < t.steps[t.next_step].delay) {
         return;
+    }
+    {
+        // pt1polish (replay S1 / S4): a step that moves or acts with the own chr waits while it is
+        // dead, and every step waits while a B2 re-join (a wipe's load and its re-sync) runs; the
+        // step's delay then counts from the end of the wait.
+        const TravelStep::Kind k = t.steps[t.next_step].kind;
+        const bool own_chr = !(k == TravelStep::HostPress || k == TravelStep::GuestPress || k == TravelStep::HostOutage ||
+                               k == TravelStep::GuestOutage || k == TravelStep::HostFlag ||
+                               k == TravelStep::HostSkipRemo || k == TravelStep::GuestSkipRemo ||
+                               k == TravelStep::HostLastLamp || k == TravelStep::HostKill || k == TravelStep::GuestKill);
+        if (deathrules::TestStepWaits(own_chr, b2::LocalHp() > 0, s.world_up && !s.loading, b2::RejoinRunning())) {
+            if (!t.step_waiting) {
+                Log("test: travel step %zu (%s) waits: %s", t.next_step + 1, TravelStepName(k),
+                    b2::RejoinRunning() ? "a re-join is running" : "the own chr is dead");
+            }
+            t.step_waiting = true;
+            if (t.ran) {
+                t.step_at = now;
+            }
+            return;
+        }
+        if (t.step_waiting) {
+            t.step_waiting = false;
+            Log("test: travel step %zu (%s) no longer waits; its delay counts from now", t.next_step + 1, TravelStepName(k));
+            return;
+        }
     }
     std::uint64_t wts = 0;
     std::uint8_t requested = 1;
@@ -2674,7 +2702,7 @@ void PartyDirector::Tick() {
                 t.chalice_channel = chalice::Read().channel;
             }
             link->post_event(party::kBroadcast, kTravelEventName, TravelToJsonText(t));
-            party::bridge::OnTravel(TravelKindName(t.kind));
+            party::bridge::OnTravel(TravelKindLabel(t.kind));
             Log("travel #%llu (%s) sent to the party", static_cast<unsigned long long>(t.seq), TravelKindName(t.kind));
             PhantomNoteHostTravel(t); // a rest (Dream, death, Mark): guests refill too
         }

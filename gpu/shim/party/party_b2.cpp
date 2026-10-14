@@ -3821,6 +3821,10 @@ void OwnStainWatchTick(const GameSnapshot& s) {
 std::atomic<int> g_rest_req_slot{0};
 std::atomic<u32> g_rest_req_lamp{0};
 std::atomic<double> g_rest_req_at{0};
+// Host (pt1polish): the queued rest came with the guest's re-join into this area ("rejoin" + "rest"):
+// that re-join waits for the rest load (deathrules::RestCarryHeld); 0 = none / the load started.
+std::atomic<bool> g_rest_req_carry{false};
+std::atomic<double> g_rest_carry_at{0};
 std::atomic<double> g_last_down_at{0};  // host: the last member_down (test aid BB_PARTY_TEST_DIE_ON_DOWN)
 double g_rest_load_last = -1e9;  // main thread
 
@@ -3834,6 +3838,7 @@ void HostRestLoadTick(const GameSnapshot& s, double now) {
     }
     if (!g_on.load() || Role() != RoleHost) {
         g_rest_req_slot = 0;
+        g_rest_carry_at = 0;
         return;
     }
     deathrules::RestView v;
@@ -3849,13 +3854,16 @@ void HostRestLoadTick(const GameSnapshot& s, double now) {
     if (r == deathrules::RestLoad::NotReady || r == deathrules::RestLoad::Busy) {
         if (waited > 30.0) {
             g_rest_req_slot = 0;
+            g_rest_carry_at = 0;
             Log("host: slot %d's rest at lamp %u: no rest load (%s for 30 s)", req - 1, g_rest_req_lamp.load(),
                 deathrules::RestLoadName(r));
         }
         return;
     }
     g_rest_req_slot = 0;
+    const bool carried = g_rest_req_carry.exchange(false);
     if (r != deathrules::RestLoad::Run) {
+        g_rest_carry_at = 0;  // its re-join is served now
         Log("host: slot %d rested at lamp %u: no rest load here (%s)", req - 1, g_rest_req_lamp.load(),
             deathrules::RestLoadName(r));
         return;
@@ -3863,6 +3871,7 @@ void HostRestLoadTick(const GameSnapshot& s, double now) {
     float pos[4] = {}, rot[4] = {};
     if (!ChrTransform(s.player, pos, rot)) {
         Log("host: slot %d rested: the host's position cannot be read; no rest load", req - 1);
+        g_rest_carry_at = 0;
         return;
     }
     g_rest_load_last = now;
@@ -3882,19 +3891,161 @@ void HostRestLoadTick(const GameSnapshot& s, double now) {
     TravelIntent rest_t;
     const u32 rest_area = LampIntent(g_rest_req_lamp.load(), &rest_t) ? AreaOf(DestMapOf(rest_t)) : 0u;
     const int expected = deathrules::RestLoadExpected(ms.data(), static_cast<int>(ms.size()), req - 1,
-                                                      AreaOf(s.map_id), rest_area);
+                                                      AreaOf(s.map_id), rest_area, carried);
     Log("host: slot %d rested at lamp %u and travels alone: a rest load for this world where the host stands "
         "(%.1f, %.1f, %.1f) in %s (loading screen; the enemies come back); %d member(s) here follow%s",
         req - 1, g_rest_req_lamp.load(), double(pos[0]), double(pos[1]), double(pos[2]), MapName(s.map_id).c_str(),
         expected, expected == 0 ? " (an alone load: no arrival to wait for)" : "");
+    if (carried) {
+        Log("host: slot %d comes back into this area by its own re-join: served after this load (one loading screen "
+            "for it, into the reset world)", req - 1);
+    }
     if (expected == 0) {
         g_host_alone_next = true;
         g_host_alone_at = now;
     }
     if (!HostTravelTransformNow(s.map_id, pos, rot, "a guest's rest")) {
         g_host_alone_next = false;
+        g_rest_carry_at = 0;
         Log("host: the rest load could not start (travel off or a stage request pending)");
     }
+}
+
+// ---- Party banners and an empty bloodstain (pt1polish, playtest 1 verification replay) ----
+// The SummonMessage banner (ShowSummonMessage 0x1BFFE80(EventText id, 0), docs/party/join_timing.md):
+// after a wipe load the host saw "The bell's resonance has beckoned Hunter1" (102001) again, and a
+// guest whose death B2 holds saw "You died. Returning to your world." (103100..103500) while it
+// stays. deathrules::HidePartyBanner decides; BB_PARTY_BANNERS=0: every banner as the game shows it.
+constexpr u64 kShowSummonMessage = 0x1bffe80;
+void InstallCall(u64 off, u64 target, const void* handler, const char* name);
+std::atomic<double> g_rejoin_banner_at{0};  // Now() of the last B2 re-join after the session's start
+using ShowMsgFn = void(BB_COOP_SYSV*)(u32, u32);
+void* g_show_msg_orig = nullptr;
+bool BannersOn() {
+    static const bool on = !(std::getenv("BB_PARTY_BANNERS") && std::getenv("BB_PARTY_BANNERS")[0] == '0');
+    return on;
+}
+bool HideBanner(u32 id) {
+    if (!BannersOn()) {
+        return false;
+    }
+    const double at = g_rejoin_banner_at.load();
+    const double since = at > 0 ? Now() - at : -1.0;
+    if (!deathrules::HidePartyBanner(int(id), g_on.load(), Role() == RoleClient, since)) {
+        return false;
+    }
+    Log("banner %u hidden (%s)", id,
+        deathrules::IsReturnHomeBanner(int(id)) ? "the guest stays with the party" : "a re-join, not a new summon");
+    return true;
+}
+BB_COOP_SYSV void ShowMsgEntry(u32 id, u32 arg) {
+    if (HideBanner(id)) {
+        return;
+    }
+    reinterpret_cast<ShowMsgFn>(g_show_msg_orig)(id, arg);
+}
+BB_COOP_SYSV void ShowMsgCall(u32 id, u32 arg) {
+    if (HideBanner(id)) {
+        return;
+    }
+    reinterpret_cast<ShowMsgFn>(Guest(kShowSummonMessage))(id, arg);
+}
+void InstallBannerFilter() {
+    if (!BannersOn()) {
+        Log("party banners: as the game shows them (BB_PARTY_BANNERS=0)");
+        return;
+    }
+    if (ReplacePrologue(kShowSummonMessage, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57},
+                        reinterpret_cast<const void*>(&ShowMsgEntry), &g_show_msg_orig,
+                        "party banner filter (0x1BFFE80)")) {
+        return;
+    }
+    g_show_msg_orig = nullptr;
+    // Its prologue differs: the callers that show join / death banners (calls.tsv).
+    static const u64 sites[] = {0x1386a68, 0x1386c60, 0x138a20b, 0x145a63d, 0x196b4c9, 0x196b9f4, 0x138ccfb,
+                                0x138ce30, 0x138d060, 0x138d1d0, 0x138d340, 0x138d3d7, 0x138b296};
+    for (u64 site : sites) {
+        InstallCall(site, kShowSummonMessage, reinterpret_cast<const void*>(&ShowMsgCall), "party banner filter (call)");
+    }
+}
+/// Every frame: when a re-join runs in a session that started more than 20 s ago (not the first
+/// summon's own load), the join banners of the next 15 s are a re-join's.
+void BannerRejoinTick() {
+    static double session_at = -1;
+    const int role = Role();
+    const bool in = g_on.load() && (role == RoleHost || role == RoleClient);
+    const double now = Now();
+    if (!in) {
+        session_at = -1;
+        return;
+    }
+    if (session_at < 0) {
+        session_at = now;
+    }
+    if (g_rejoin.load() && now - session_at > 20.0) {
+        g_rejoin_banner_at = now;
+    }
+}
+/// The death's stain record 0x13D2910(SprjEventMan +0x80, chr, 1) (SoloPlayDeath_2 0x1381F5E and
+/// the other death paths) moves PlayerGameData +0x94 (+ SprjEventMan[+8] +0x28) into the record,
+/// sets GameDataMan +0x28 and builds the live stain at once through 0x1868A50(events[+8], echoes
+/// >= 0): a death with 0 echoes left an "Acquire Blood Echoes" stain for nothing (live pt1polish
+/// r2: clearing the flag afterwards was too late, the stain stood after the respawn load). Now,
+/// in a party, after such a record (the rest of the death runs as the game does) the flag is
+/// cleared and 0x1868A50(.., 0) removes the live stain (it destroys the object first, builds one
+/// only for flag && show); the old stain is gone as in vanilla (deathrules::SkipEmptyStainRecord).
+/// BB_PARTY_EMPTY_STAIN=1: as the game does.
+bool EmptyStainKept() {
+    static const bool keep = deathrules::OptIn(std::getenv("BB_PARTY_EMPTY_STAIN"));
+    return keep;
+}
+using StainRecordFn = void(BB_COOP_SYSV*)(u64, u64, u32);
+BB_COOP_SYSV void StainRecordHook(u64 events, u64 chr, u32 on) {
+    const u64 gdm = Slot(kSlotGameData);
+    const int own = Field<int>(Field<u64>(gdm, 8), 0x94, -1);
+    const int pool = Field<int>(Field<u64>(Slot(0x553b108), 8), 0x28, 0);
+    const int echoes = own < 0 ? -1 : own + pool;
+    reinterpret_cast<StainRecordFn>(Guest(0x13d2910))(events, chr, on);
+    if (EmptyStainKept() ||
+        !deathrules::SkipEmptyStainRecord(g_on.load() && (Role() == RoleHost || Role() == RoleClient), (on & 0xff) != 0,
+                                          echoes)) {
+        return;
+    }
+    const u8 zero = 0;
+    const u64 stains = Field<u64>(events, 8);
+    if (gdm) {
+        SafeWrite(gdm + 0x28, &zero, 1);
+    }
+    if (stains) {
+        reinterpret_cast<void(BB_COOP_SYSV*)(u64, u32)>(Guest(0x1868a50))(stains, 0);
+    }
+    Log("death with 0 Blood Echoes: its bloodstain removed (flag 0%s; no \"Acquire Blood Echoes\" for nothing)",
+        stains ? ", live stain destroyed" : "");
+}
+void InstallEmptyStainSkip() {
+    if (EmptyStainKept()) {
+        return;
+    }
+    for (u64 site : {0x1381f5eull, 0x13825deull, 0x133090cull, 0x1334250ull}) {
+        InstallCall(site, 0x13d2910, reinterpret_cast<const void*>(&StainRecordHook), "party empty bloodstain skip");
+    }
+}
+/// Any role, every frame: a 0-echo stain record left over (a path not hooked above) is not placed
+/// again by the next load (deathrules::ClearEmptyStain).
+void EmptyStainTick() {
+    const bool keep = EmptyStainKept();
+    const u64 gdm = Slot(kSlotGameData);
+    const u64 rec = gdm ? Field<u64>(gdm, 0x30) : 0;
+    if (keep || !gdm || !rec) {
+        return;
+    }
+    const int flag = Field<u8>(gdm, 0x28), echoes = Field<int>(rec, 0x38, -1);
+    if (!deathrules::ClearEmptyStain(g_on.load() && (Role() == RoleHost || Role() == RoleClient), flag, echoes)) {
+        return;
+    }
+    const u8 zero = 0;
+    SafeWrite(gdm + 0x28, &zero, 1);
+    Log("own bloodstain with 0 echoes: not placed (flag %d -> 0; no \"Acquire Blood Echoes\" for nothing)", flag);
 }
 
 /// Guest in the host's world: its own chr at HP 0 tells the host at once ("member_down"), so a
@@ -4598,15 +4749,29 @@ void HostTick(const GameSnapshot& s, double now) {
     }
     bool respawn = false, away = false, away_have = false, live = false;
     float apos[3] = {};
+    if (loading && g_rest_carry_at.load() > 0) {
+        g_rest_carry_at = 0;  // the carried rest load started: the re-join waits for its end anyway
+    }
+    const bool carry_held = deathrules::RestCarryHeld(now, g_rest_carry_at.load(), false);
     {
         std::lock_guard<std::mutex> lk(st.mu);
         std::swap(away, st.away_request);
         away_have = st.away_have_pos;
         std::memcpy(apos, st.away_pos, sizeof apos);
-        if (!loading) {
+        // A guest travelling alone into this world during the host's own load: the load's own
+        // re-sync covers it (pt1polish; a dead member's respawn keeps the old preemption).
+        const bool settling = st.hphase == HostPhase::Loading && st.respawn_live;
+        if (deathrules::HostServesRejoin(loading, settling, carry_held)) {
             std::swap(respawn, st.respawn_request);
             live = st.respawn_live;
         }
+    }
+    {
+        static bool held_logged = false;
+        if (carry_held && !held_logged) {
+            Log("host: the guest's re-join waits for the rest load it carries");
+        }
+        held_logged = carry_held;
     }
     if (away) {
         // A guest travels alone into another area (split travel): its chr here goes now (it would
@@ -4744,6 +4909,10 @@ void HostTick(const GameSnapshot& s, double now) {
             st.rejoined_logged = false;
             std::lock_guard<std::mutex> lk(st.mu);
             st.arrived = false;
+            if (st.respawn_request && st.respawn_live) {
+                st.respawn_request = false;  // this re-sync is its snapshot too
+                Log("host: the re-sync after this load also serves the guest travelling into this area");
+            }
         }
         return;
     case HostPhase::Resynced: {
@@ -6178,6 +6347,8 @@ void Init() {
         g_leave_orig = nullptr;
     }
     InstallCall(0x17851ce, 0x13beca0, reinterpret_cast<const void*>(&FlagApplyHook), "B2 K11 flag snapshot apply");
+    InstallBannerFilter();
+    InstallEmptyStainSkip();
     SetEmevdSkipPredicate(&ClientIntroSkip);
     SetSameMapWarp(&SameMapLampWarp);
     SetSameMapStage(&SameMapStageWarp);
@@ -6447,6 +6618,8 @@ void Tick(const GameSnapshot& s) {
     ArrivalWatchTick(s, now);
     MemberSessionTypeTick(s);
     GuestChrTypeTick(s);
+    BannerRejoinTick();
+    EmptyStainTick();
     HostMemberWatchTick(s, now);
     FallbackCleanupTick(s);
     FallRecoveryTick(s, now);
@@ -6746,13 +6919,24 @@ void OnLinkEvent(int from_slot, const std::string& body) {
         const char* pp = std::strstr(body.c_str(), "\"pos\":[");
         const bool have = pp && std::sscanf(pp, "\"pos\":[%f,%f,%f]", &p[0], &p[1], &p[2]) == 3 &&
                           std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]);
+        unsigned rest = 0;
+        const char* pr = std::strstr(body.c_str(), "\"rest\":");
+        if (live && pr && std::sscanf(pr, "\"rest\":%u", &rest) == 1 && rest != 0 && rest != kTravelNone) {
+            // pt1polish: its rest rides on the re-join - the rest load runs first, this re-join after.
+            g_rest_req_carry = true;
+            g_rest_carry_at = Now();
+            HostRestRequest(from_slot, rest);
+        } else {
+            rest = 0;
+        }
         std::lock_guard<std::mutex> lk(S().mu);
         S().respawn_request = true;
         S().respawn_live = live;
         S().respawn_have_pos = have;
         std::memcpy(S().respawn_pos, p, sizeof p);
-        Log("host: slot %d %s; re-sending the snapshot", from_slot,
-            live ? "travels alone into this area" : "died alone and respawns in this world");
+        Log("host: slot %d %s; re-sending the snapshot%s", from_slot,
+            live ? "travels alone into this area" : "died alone and respawns in this world",
+            rest ? " after the rest load it carries" : "");
         return;
     }
     if (body.find("\"spectating\"") != std::string::npos) {
@@ -6998,7 +7182,10 @@ std::uint32_t DestMapOf(const TravelIntent& t) {
     return ((id / 100000) << 24) | (((id / 10000) % 10) << 16);
 }
 
-bool TravelAlone(const TravelIntent& t, AloneWhy why) {
+bool TravelAlone(const TravelIntent& t, AloneWhy why, std::uint32_t rest_lamp, bool* rest_carried) {
+    if (rest_carried) {
+        *rest_carried = false;
+    }
     if (!g_on.load() || Role() != RoleClient) {
         return false;
     }
@@ -7030,9 +7217,20 @@ bool TravelAlone(const TravelIntent& t, AloneWhy why) {
             g_dead_follow = false;
             return false;
         }
-        Send(0, std::string("{\"op\":\"rejoin\",") + pos + "}");
-        Log("guest: travels alone (%s) to %s, the host's area (%s): a re-join with the host's snapshot",
-            AloneWhyName(why), MapName(dest).c_str(), MapName(host).c_str());
+        // pt1polish: a rest rides on the re-join (deathrules::RestRidesRejoin): the host runs its
+        // rest load first, then sends the snapshot - one loading screen here, into the reset world.
+        const bool carry = deathrules::RestRidesRejoin(rest_lamp != 0, AreaOf(dest), AreaOf(host));
+        char rest[32] = "";
+        if (carry) {
+            std::snprintf(rest, sizeof rest, ",\"rest\":%u", rest_lamp);
+            if (rest_carried) {
+                *rest_carried = true;
+            }
+        }
+        Send(0, std::string("{\"op\":\"rejoin\",") + pos + rest + "}");
+        Log("guest: travels alone (%s) to %s, the host's area (%s): a re-join with the host's snapshot%s",
+            AloneWhyName(why), MapName(dest).c_str(), MapName(host).c_str(),
+            carry ? " after the host's rest load (one loading screen)" : "");
         return true;
     }
     // Elsewhere: the alone load, host-world mode, no snapshot. The destination as an exact
@@ -7270,6 +7468,13 @@ double LastMemberDownAt() {
 }
 bool HostRejoinRunning() {
     return g_on.load() && Role() == RoleHost && g_rejoin.load();
+}
+bool RejoinRunning() {
+    return g_on.load() && g_rejoin.load();
+}
+int LocalHp() {
+    const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+    return player ? ChrHp(player) : -1;
 }
 bool HostTravelHeldForJoin(std::string* who) {
     if (!g_on.load() || Role() != RoleHost) return false;

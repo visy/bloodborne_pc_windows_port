@@ -160,9 +160,12 @@ void Carry(const Pending& p, bool alone, const char* how) {
         TravelIntent t;
         const b2::AloneWhy why = p.mark ? b2::AloneWhy::HuntersMark
                                  : p.id == 2102950 ? b2::AloneWhy::Lamp : b2::AloneWhy::Headstone;
-        if (b2::LampTravelIntent(p.id, &t) && b2::TravelAlone(t, why)) {
-            // A rest at a lamp resets the world the guest leaves (the host's) for everyone there.
-            if (deathrules::GuestAloneRestsHostWorld(!p.mark, false)) {
+        // A rest at a lamp resets the world the guest leaves (the host's) for everyone there.
+        const bool rest = deathrules::GuestAloneRestsHostWorld(!p.mark, false);
+        bool carried = false;
+        if (b2::LampTravelIntent(p.id, &t) && b2::TravelAlone(t, why, rest ? p.id : 0, &carried)) {
+            // Back into the host's area the rest rode on the re-join (one load); else the request.
+            if (rest && !carried) {
                 GuestRestRequestNow(p.id);
             }
             return;

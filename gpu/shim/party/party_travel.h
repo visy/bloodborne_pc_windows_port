@@ -60,6 +60,9 @@ enum class TravelKind : std::uint8_t {
     TitleOrDebug,  ///< 0x132E0C0 (map 0x01000000), 0x1317550 debug presets
 };
 const char* TravelKindName(TravelKind k);
+/// Plain text for the player (the travel toast / last event), never the internal name:
+/// "Respawning with the party" for a host death, "Travelling with the party" by default.
+const char* TravelKindLabel(TravelKind k);
 /// The name back; Unknown for anything else.
 TravelKind TravelKindFromName(const std::string& name);
 /// The kind of a direct `call 0x13CDE30` from its call address (return address - 5), table 1.6.

@@ -134,7 +134,8 @@ single-player save is never touched. Settings: *System → Party* pages in the g
   A lamp lit by anyone is lit for the party.
 - **Resting resets the world for the party.** Enemies respawn; everyone's HP, vials and bullets
   refill. A guest who rests and travels alone gives the host a short loading screen where it
-  stands, so the host's world resets too.
+  stands, so the host's world resets too; a guest resting its way back into the host's area
+  arrives after that reset with a single loading screen.
 - **Guests are full players.** The Doll (level up), shops, the workbench, storage, the Memory
   Altar (runes, covenants), lamps and headstones all work for guests.
 - **Change your appearance at the Dream's mirror.** The mirror in the Hunter's Dream workshop opens
