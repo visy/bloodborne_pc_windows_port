@@ -460,6 +460,14 @@ first run of the sweep lost the 20 s outage to point 6 (fixed, then the re-run a
 of a 20 s outage before point 4 / point 3 showed the stall described above (host leave 29-30 s
 after the resume).
 
+**Fallback, live** (same setup, one 20 s outage with `BB_PARTY_OUTAGE_REPLAY=0`, i.e. the 0.6.1
+behaviour plus points 5-7): the session survived the outage itself, then the host's game left it
+31.6 s after the network came back (BeginLeaveSession from +0x178980d, its send queue full). The
+host sent `host_session_end` at once; the guest went home 0.06 s later (one loading screen, 3.4 s)
+instead of ~25 s in a dead session; the host's game was hosting again 25.9 s later and the
+guest's direct summon (asked 1.7 s after its load) joined 1.4 s after that (second loading
+screen, 3.3 s), host `cooperators 0 -> 1`.
+
 Not covered: a real network (the simulator drops UDP in both directions and holds the TCP link;
 the loopback TCP close is real), 3-4 players, outages over 30 s (the guest keeps the host's world
 45 s, the host its slot 60 s; the keepalive runs as long as the link calls the peer lost).
