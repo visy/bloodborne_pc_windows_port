@@ -424,6 +424,9 @@ struct CompileTimer {
                                    std::chrono::steady_clock::now() - start)
                                    .count());
         ++g_bb_compiles;
+        BbCompileProgress::gpu_thread_compile_us +=
+            u64(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start)
+                    .count());
     }
 };
 } // namespace
@@ -472,6 +475,7 @@ const GraphicsPipeline* PipelineCache::PublishGraphics(GraphicsJob& job) {
     if (job.register_data) {
         RegisterPipelineData(job.key, std::hash<GraphicsPipelineKey>{}(job.key), job.sdata);
         ++num_new_pipelines;
+        ++BbCompileProgress::created_total;
         ++BbCompileProgress::async_done;
         if (EmulatorSettings.IsShaderCollect()) {
             for (u32 stage = 0; stage < MaxShaderStages; ++stage) {
@@ -514,6 +518,7 @@ void PipelineCache::PublishCompleted() {
 void PipelineCache::WaitJob(const std::shared_ptr<GraphicsJob>& job) {
     const u64 us = compiler.Wait(job);
     ++BbCompileProgress::sync_waits;
+    ++BbCompileProgress::waits_total;
     static const bool stats = [] {
         const char* env = std::getenv("BB_FRAME_STATS");
         return env && env[0] == '1';
@@ -772,6 +777,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
                 }
                 if (skip) {
                     ++BbCompileProgress::skipped_draws;
+                    ++BbCompileProgress::skipped_total;
                     sel.fetch_shader.reset();
                     return nullptr;
                 }
@@ -813,6 +819,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
                     ++BbCompileProgress::async_pending;
                     BbCompileProgress::Add(BbCompileProgress::Phase::Runtime);
                     ++BbCompileProgress::skipped_draws;
+                    ++BbCompileProgress::skipped_total;
                     sel.fetch_shader.reset();
                     return nullptr;
                 }
@@ -840,6 +847,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
 
         RegisterPipelineData(sel.graphics_key, pipeline_hash, sdata);
         ++num_new_pipelines;
+        ++BbCompileProgress::created_total;
         if (gpl && it.value()->IsFastLinked()) {
             QueueOptimize(it.value().get());
         }
@@ -878,6 +886,7 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
         }
         RegisterPipelineData(compute_key, sdata);
         ++num_new_pipelines;
+        ++BbCompileProgress::created_total;
 
         if (EmulatorSettings.IsShaderCollect()) {
             auto& m = sel.modules[0];

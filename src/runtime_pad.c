@@ -739,6 +739,12 @@ static struct { uint32_t buttons; int stick[4]; int touch_side; } injected={0,{-
  * OS input); OR-ed into every sample like the pad file's. */
 static volatile uint32_t director_buttons;
 void runtime_pad_director_press(uint32_t buttons) { director_buttons=buttons; }
+/* runtime_pad_director_sticks: the sticks the director holds (0..255; -1 leaves that axis to the
+ * player): the world warper's camera sweeps and walk loops (gpu/shim/party/world_warper.h). */
+static volatile int director_stick[4]={-1,-1,-1,-1};
+void runtime_pad_director_sticks(int lx, int ly, int rx, int ry) {
+    director_stick[0]=lx; director_stick[1]=ly; director_stick[2]=rx; director_stick[3]=ry;
+}
 /* runtime_pad_last_buttons: the buttons of the last sample the game read (test aids' logs). */
 static volatile uint32_t last_sample_buttons;
 uint32_t runtime_pad_last_buttons(void) { return last_sample_buttons; }
@@ -964,6 +970,9 @@ static void sample(PadData *d) {
     if (injected.buttons & BTN_R2) d->r2=255;
     uint8_t *axes[4]={&d->left_x,&d->left_y,&d->right_x,&d->right_y};
     for (int i=0;i<4;++i) if (injected.stick[i]>=0) *axes[i]=(uint8_t)injected.stick[i];
+    if (director_buttons & BTN_L2) d->l2=255;
+    if (director_buttons & BTN_R2) d->r2=255;
+    for (int i=0;i<4;++i) { const int v=director_stick[i]; if (v>=0) *axes[i]=(uint8_t)(v>255 ? 255 : v); }
     touch_ids(d);
 }
 

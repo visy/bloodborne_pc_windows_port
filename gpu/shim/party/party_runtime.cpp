@@ -733,15 +733,22 @@ void on_state(LinkState s, const std::string& detail) {
             // F5: a silent link (an outage) keeps the host's world for the outage hold: the link
             // resumes by itself (the host keeps our slot 60 s) and the game session may have
             // survived (outage_resume_check). A reset, BYE or refusal: home after the short grace.
-            const bool silent = s == LinkState::Reconnecting && silent_loss(detail) && outage_hold_ms() > 0;
+            // An error (reset, send failed) after the host's game traffic had already stopped for 5 s
+            // is the host giving up on a silent link while the network is still out (a real crash
+            // resets the link while game traffic still flows): an outage too. Live (loopback sim):
+            // the host's link timed out first and its close reached us as "send failed".
+            const std::int64_t game_quiet = bbnet::p2p_game_rx_age_ms();
+            const bool silent = s == LinkState::Reconnecting && (silent_loss(detail) || game_quiet >= 5000) &&
+                                outage_hold_ms() > 0;
             const int grace = s == LinkState::Rejected ? 0 : silent ? outage_hold_ms() : host_lost_grace_ms();
             if (silent) {
                 {
                     std::lock_guard<std::mutex> lk(r.mu);
                     r.outage = true;
                 }
-                plog("link silent (%s): we stay in the host's world up to %d s for the network to come back",
-                     detail.c_str(), grace / 1000);
+                plog("link silent (%s; host game traffic %.1f s ago): we stay in the host's world up to %d s for the "
+                     "network to come back",
+                     detail.c_str(), double(game_quiet) / 1000.0, grace / 1000);
                 if (outage_keepalive_on()) bbnet::p2p_outage_keepalive(true);
                 outage_watch(epoch);
             }
@@ -1065,6 +1072,11 @@ LinkCallbacks make_callbacks(bool host) {
         cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
             if (name == coop::split::kChoosingEventName) {  // the host asks "Travel with the party?"
                 on_split_choosing(slot, body);
+                return;
+            }
+            if (name == coop::kHostSessionEndEvent) {  // F5: the host's game ended the session itself
+                if (bbnet::np::party_guest_in_room()) host_lost("the host's game ended the session");
+                else plog("host_session_end: not in the host's world");
                 return;
             }
             if (name == coop::kTravelEventName) {  // B1: follow the host's warp

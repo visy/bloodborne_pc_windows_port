@@ -50,6 +50,10 @@ namespace coop::b2 {
 constexpr const char* kEventName = "b2";
 
 bool Requested();
+/// F5: true once after the host's game ended the co-op session by itself (BeginLeaveSession from the
+/// OnIrregularLeaveSession sites: its send queue past 1000 messages 0x178980d, the receive stall
+/// 0x1789cb4).
+bool TakeHostIrregularLeave();
 /// PartyInit, after InstallTravelPatches (bbgpu_patch_image, game not running yet).
 void Init();
 bool Enabled();

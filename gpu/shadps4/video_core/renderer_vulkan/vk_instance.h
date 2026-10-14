@@ -165,6 +165,11 @@ public:
         return buffer_marker;
     }
 
+    /// bbport: VK_EXT_device_fault (what the GPU faulted on, asked at device lost).
+    bool IsDeviceFaultSupported() const {
+        return device_fault;
+    }
+
     /// bbport: VK_EXT_graphics_pipeline_library enabled (BB_GPL, with fast linking).
     bool IsGraphicsPipelineLibrarySupported() const {
         return graphics_pipeline_library;
@@ -638,6 +643,7 @@ private:
     bool maintenance_5{};
     bool maintenance_8{};
     bool buffer_marker{};
+    bool device_fault{};
     bool attachment_feedback_loop{};
     bool graphics_pipeline_library{};
     bool gpl_fast_linking{};

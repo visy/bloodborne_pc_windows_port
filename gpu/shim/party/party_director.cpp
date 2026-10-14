@@ -132,7 +132,7 @@ struct TravelStep {
     // 1.2 m in front, Cross), wait for its menu, Down N times, Cross (args id:N).
     enum Kind {
         HostWarp, HostDie, GuestDie, HostKill, HostMove, GuestMove,
-        HostPress, GuestPress, HostMark, GuestMark, HostStage, HostWalk, HostHeadstone, HostFlag, HostSkipRemo, GuestSkipRemo, HostLastLamp,
+        HostPress, GuestPress, HostMark, GuestMark, HostStage, HostWalk, HostHeadstone, HostFlag, HostSkipRemo, GuestSkipRemo, HostLastLamp, GuestLastLamp,
         // Split travel (docs/party/split_travel.md): host_lamp=ID / guest_lamp=ID use lamp ID as the
         // player would (0x13CDF30 through the interceptor: the "Travel with the party?" question);
         // host_alone=ID: the host travels to ID alone, decided (no question).
@@ -1084,6 +1084,7 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::GuestMark: return "guest_mark";
     case TravelStep::HostStage: return "host_stage";
     case TravelStep::HostLastLamp: return "host_lastlamp";
+    case TravelStep::GuestLastLamp: return "guest_lastlamp";
     case TravelStep::HostLamp: return "host_lamp";
     case TravelStep::HostWalk: return "host_walk";
     case TravelStep::HostHeadstone: return "host_headstone";
@@ -1477,7 +1478,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                 step.kind == TravelStep::GuestLamp || step.kind == TravelStep::GuestSkipRemo || step.kind == TravelStep::GuestOutage || step.kind == TravelStep::GuestKill ||
                 step.kind == TravelStep::GuestObj || step.kind == TravelStep::GuestChr ||
                 step.kind == TravelStep::GuestStick || step.kind == TravelStep::GuestUse ||
-                step.kind == TravelStep::GuestHome) == (role == PartyRole::Guest);
+                step.kind == TravelStep::GuestHome || step.kind == TravelStep::GuestLastLamp) == (role == PartyRole::Guest);
     };
     if (t.script_on) {
         RunTravelScript(st, s, now);
@@ -1507,7 +1508,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         (next_kind == TravelStep::HostKill || next_kind == TravelStep::HostMove || next_kind == TravelStep::GuestMove ||
          next_kind == TravelStep::HostPress || next_kind == TravelStep::GuestPress || next_kind == TravelStep::HostWalk ||
          next_kind == TravelStep::HostOutage || next_kind == TravelStep::GuestOutage ||
-         next_kind == TravelStep::HostLastLamp || next_kind == TravelStep::HostLamp || next_kind == TravelStep::HostObj ||
+         next_kind == TravelStep::HostLastLamp || next_kind == TravelStep::GuestLastLamp || next_kind == TravelStep::HostLamp || next_kind == TravelStep::HostObj ||
          next_kind == TravelStep::GuestObj || next_kind == TravelStep::HostChr || next_kind == TravelStep::GuestChr ||
          next_kind == TravelStep::GuestStick ||
          next_kind == TravelStep::HostMark || next_kind == TravelStep::GuestMark || !t.steps[t.next_step].map.empty())) {
@@ -1535,7 +1536,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         const bool own_chr = !(k == TravelStep::HostPress || k == TravelStep::GuestPress || k == TravelStep::HostOutage ||
                                k == TravelStep::GuestOutage || k == TravelStep::HostFlag ||
                                k == TravelStep::HostSkipRemo || k == TravelStep::GuestSkipRemo ||
-                               k == TravelStep::HostLastLamp || k == TravelStep::HostKill || k == TravelStep::GuestKill) ||
+                               k == TravelStep::HostLastLamp || k == TravelStep::GuestLastLamp || k == TravelStep::HostKill || k == TravelStep::GuestKill) ||
                              t.steps[t.next_step].alive;
         if (deathrules::TestStepWaits(own_chr, b2::LocalHp() > 0, s.world_up && !s.loading, b2::RejoinRunning())) {
             if (!t.step_waiting) {
@@ -1628,14 +1629,14 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         // a re-join, which a B2 host never sees): e.g. a Chalice Dungeon lamp's "back to the Dream".
         split::NoteLocalUse(step.id);
         reinterpret_cast<void(BB_COOP_SYSV*)(std::uint32_t)>(Guest(kLampWarp))(step.id);
-    } else if (step.kind == TravelStep::HostLastLamp) {
+    } else if (step.kind == TravelStep::HostLastLamp || step.kind == TravelStep::GuestLastLamp) {
         // Test fixture: the host's last-lamp record (WorldTransitionState +0x1528 {id, aux}) names
         // a lamp of another map - the state after walking into the next area without resting.
         std::uint64_t w = 0, rec = 0;
         if (SafeGet(Guest(0x5556678), &w) && w && SafeGet(w + 0x1528, &rec)) {
             const std::uint64_t now_rec = (rec & 0xffffffff00000000ull) | step.id;
             SafeWrite(w + 0x1528, &now_rec, 8);
-            Log("test: host_lastlamp %#llx -> %#llx", static_cast<unsigned long long>(rec),
+            Log("test: %s %#llx -> %#llx", TravelStepName(step.kind), static_cast<unsigned long long>(rec),
                 static_cast<unsigned long long>(now_rec));
         }
     } else if (step.kind == TravelStep::HostOutage || step.kind == TravelStep::GuestOutage) {
@@ -1676,6 +1677,23 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         std::sscanf(step.args.c_str(), "%d:%f:%f", &entity, &dist, &angle);
         std::string what;
         const bool obj = step.kind == TravelStep::HostObj || step.kind == TravelStep::GuestObj;
+        if (!obj && entity == 0) {
+            // host_chr=0: the nearest living regular enemy of the census (a real weapon fight: stand
+            // at it, then host_press attacks; H3 kill echoes by the game's own kill).
+            auto list = balance::LoadedEnemies();
+            // Only enemies with a map entity id (StandAtChr finds the chr by it).
+            list.erase(std::remove_if(list.begin(), list.end(),
+                                      [](const auto& e) { return e.entity == 0 || e.entity == 0xffffffffu; }),
+                       list.end());
+            float me[3] = {};
+            const std::uint64_t player = LocalPlayer();
+            const int k = player && balance::ChrPosition(player, me) ? PickEnemyKillTarget(list, 0, me, 100.0f) : -1;
+            if (k >= 0) {
+                entity = static_cast<int>(list[size_t(k)].entity);
+                Log("test: %s 0: the nearest living enemy is entity %d (HP %d)", TravelStepName(step.kind), entity,
+                    balance::EnemyHp(list[size_t(k)].chr));
+            }
+        }
         const bool ok = obj ? worldact::StandAtObject(entity, dist, angle, &what)
                             : worldact::StandAtChr(entity, dist, angle, &what);
         Log("test: %s %d (%.1f m, %.0f deg): %s", TravelStepName(step.kind), entity, double(dist), double(angle),
@@ -2483,7 +2501,7 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("guest_die", 0) == 0 || item.rfind("host_kill=", 0) == 0 ||
                        item.rfind("host_move=", 0) == 0 || item.rfind("guest_move=", 0) == 0 ||
                        item.rfind("host_press=", 0) == 0 || item.rfind("guest_press=", 0) == 0 ||
-                       item.rfind("host_lastlamp=", 0) == 0 || item.rfind("host_lamp=", 0) == 0 ||
+                       item.rfind("host_lastlamp=", 0) == 0 || item.rfind("guest_lastlamp=", 0) == 0 || item.rfind("host_lamp=", 0) == 0 ||
                        item.rfind("guest_lamp=", 0) == 0 || item.rfind("host_alone=", 0) == 0 || item.rfind("guest_kill=", 0) == 0 ||
                        item.rfind("host_outage=", 0) == 0 || item.rfind("guest_outage=", 0) == 0 ||
                        item.rfind("guest_home", 0) == 0) {
@@ -2494,6 +2512,7 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("guest_press", 0) == 0  ? TravelStep::GuestPress
                             : item.rfind("host_press", 0) == 0   ? TravelStep::HostPress
                             : item.rfind("host_lastlamp", 0) == 0 ? TravelStep::HostLastLamp
+                            : item.rfind("guest_lastlamp", 0) == 0 ? TravelStep::GuestLastLamp
                             : item.rfind("host_lamp=", 0) == 0   ? TravelStep::HostLamp
                             : item.rfind("guest_lamp=", 0) == 0  ? TravelStep::GuestLamp
                             : item.rfind("host_alone=", 0) == 0  ? TravelStep::HostAlone
@@ -2513,8 +2532,8 @@ void PartyDirector::ConfigureFromEnv() {
                 if (step.kind == TravelStep::HostLamp) {
                     step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 10, nullptr, 10));
                 }
-                if (step.kind == TravelStep::HostLastLamp) {
-                    step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 14, nullptr, 10));
+                if (step.kind == TravelStep::HostLastLamp || step.kind == TravelStep::GuestLastLamp) {
+                    step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + item.find('=') + 1, nullptr, 10));
                 }
                 if (step.kind == TravelStep::HostLamp || step.kind == TravelStep::GuestLamp ||
                     step.kind == TravelStep::HostAlone || step.kind == TravelStep::GuestKill) {
@@ -2920,6 +2939,13 @@ void PartyDirector::Tick() {
             link->send_event(0, kStoryUpEventName, StoryToJsonText(up));
             Log("story: own cutscene %u sent to the host (D10)", up.id);
         }
+    }
+    // F5 fallback: the host's game ended the session by itself (b2::TakeHostIrregularLeave): it is
+    // over for every member, but the host's game takes ~30 s to leave the room (live), and meanwhile
+    // a guest would stand in a dead session (0.6.1 regression run). The guests hear it at once.
+    if (link && role == PartyRole::Host && b2::TakeHostIrregularLeave()) {
+        link->post_event(party::kBroadcast, kHostSessionEndEvent, "{\"why\":\"irregular_leave\"}");
+        Log("F5: our game ended the session irregularly (OnIrregularLeaveSession): the members go home now");
     }
     if (link && role == PartyRole::Host) {
         TravelIntent t;

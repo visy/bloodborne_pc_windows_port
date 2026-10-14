@@ -37,5 +37,8 @@ namespace coop::lamptravel {
 void Install(unsigned char* image, std::uint64_t size);
 /// Main thread, once a frame (CoopTick in a party; its own tick otherwise).
 void Tick();
+/// Lamp travel hooked its own main-thread tick (solo with BB_LAMP_TRAVEL on): Tick() runs every
+/// frame without a party (the world warper's tick rides on it).
+bool OwnsTick();
 
 } // namespace coop::lamptravel

@@ -11,6 +11,7 @@
 #include "party_ids.h"
 #include "party_split.h"
 #include "seamless_rules.h"
+#include "world_warper.h"
 
 #include <algorithm>
 #include <atomic>
@@ -112,6 +113,7 @@ FakeCall MakeCall(u32 id, std::initializer_list<i32> args) {
 using CmdFn = u64(BB_COOP_SYSV*)(u64, u64, u64, u64, u64, u64);
 void* g_cmd_orig = nullptr;
 std::atomic<bool> g_on{false};
+bool g_own_tick = false;  // our own main-thread tick hook is in (solo)
 std::atomic<bool> g_inside{false};
 std::atomic<u32> g_cmd_counts[96];  // talk commands seen per id (the test's log)
 std::atomic<bool> g_t_on{false};     // BB_LAMP_TRAVEL_TEST set
@@ -646,7 +648,7 @@ void Install(unsigned char* image, std::uint64_t size) {
     g_on = ok && code_ok;
     if (g_on && !PartyRequested()) {
         // No party: no CoopTick; our own main-thread tick (the director's hook site).
-        HookPrologue(kFlipperUpdate,
+        g_own_tick = HookPrologue(kFlipperUpdate,
                      {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83, 0xec,
                       0x38},
                      &OwnTickEntry, "lamp travel main-thread tick (observer)");
@@ -655,7 +657,12 @@ void Install(unsigned char* image, std::uint64_t size) {
         g_on ? "on" : "NOT installed", g_on ? "" : " - the code differs from 1.09");
 }
 
+bool OwnsTick() {
+    return g_own_tick;
+}
+
 void Tick() {
+    warper::Tick();  // the world warper (solo; nothing while it is off)
     if (!g_on.load(std::memory_order_relaxed)) return;
     const double now = Now();
     const GameSnapshot s = ReadGameState(false);

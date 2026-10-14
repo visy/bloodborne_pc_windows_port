@@ -276,6 +276,7 @@ bool GuestServicesEnabledFromEnv(const char* v) {
 #include <cstdarg>
 #include <deque>
 #include <mutex>
+#include <vector>
 
 extern "C" void runtime_pad_director_press(std::uint32_t buttons); // src/runtime_pad.c
 
@@ -357,8 +358,10 @@ struct State {
     // and the first warp 15 s after the gate opened (the summoned reload is over by then), each
     // further warp 8 s later.
     std::string test;
+    std::vector<std::string> test_chain;  // "fixture|fixture|...": the next ones, run one after another
     bool test_done = false;
     int test_step = 0;
+    int opens = 0;  // how often the gate opened (BB_PARTY_GUESTSVC_TEST "gate=N": start at the N-th)
     double test_next = 0;
     double open_at = 0;
     double changed_at = 0; // the last record change (0: none pending)
@@ -1119,6 +1122,22 @@ bool RunTestFixture(const GameSnapshot& s, int step) {
         Log("test: Blood Stone Shards %d -> %d, Twin Blood Stone Shards %d -> %d%s", b0, GoodsCount(3000), b1,
             GoodsCount(3010), ok ? "" : " (give failed)");
     }
+    // "goods=ID:N" (e.g. the Rune Workshop Tool 4104 for the Memory Altar) and "rune=ID" (a Caryll
+    // rune, EquipParamAccessory 100..150) for the altar check.
+    if (const std::size_t gd = g.test.find("goods="); step == 0 && gd != std::string::npos) {
+        unsigned id = 0;
+        int n = 1;
+        std::sscanf(g.test.c_str() + gd + 6, "%u:%d", &id, &n);
+        const int b = GoodsCount(id);
+        const bool ok = id && GiveGoods(id, n);
+        Log("test: goods %u: %d -> %d%s", id, b, GoodsCount(id), ok ? "" : " (give failed)");
+    }
+    if (const std::size_t rn = g.test.find("rune="); step == 0 && rn != std::string::npos) {
+        const unsigned id = unsigned(std::strtoul(g.test.c_str() + rn + 5, nullptr, 10));
+        const int b = ItemCount(kItemAccessory, id);
+        const bool ok = id && GiveItem(kItemAccessory, id, 1);
+        Log("test: rune (accessory) %u: %d -> %d%s", id, b, ItemCount(kItemAccessory, id), ok ? "" : " (give failed)");
+    }
     const std::size_t w = g.test.find("warp=");
     if (w == std::string::npos) {
         return step == 0;
@@ -1226,7 +1245,21 @@ void GuestServicesInit() {
         return;
     }
     if (const char* t = std::getenv("BB_PARTY_GUESTSVC_TEST")) {
-        g.test = t;
+        // "a|b|c": fixtures run one after another in one session (each starts once the previous
+        // one's warps and menu script are done).
+        std::string all = t;
+        std::size_t at = 0;
+        g.test_chain.clear();
+        while (true) {
+            const std::size_t bar = all.find('|', at);
+            g.test_chain.push_back(all.substr(at, bar == std::string::npos ? std::string::npos : bar - at));
+            if (bar == std::string::npos) {
+                break;
+            }
+            at = bar + 1;
+        }
+        g.test = g.test_chain.front();
+        g.test_chain.erase(g.test_chain.begin());
     }
     if (const char* e = std::getenv("BB_PARTY_GUEST_SERVICES_TALK")) {
         g.extra = e;
@@ -2034,6 +2067,7 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
         g.open = open;
         g_gate.store(open, std::memory_order_relaxed);
         if (open) {
+            ++g.opens;
             g.open_at = Now();
             g.rec = RecordOf(s);
             Log("open: guest in the host's %s; level %d, echoes %d, Insight %d", MapName(s.map_id).c_str(), g.rec.level,
@@ -2057,7 +2091,12 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
         const std::uint64_t chr = FindChr(target);
         doll_ready = chr && SafeRead(chr + 0xc0, d, sizeof d) && (d[0] != 0.0f || d[2] != 0.0f);
     }
-    if (g.open && !g.test.empty() && !g.test_done && doll_ready && now - g.open_at >= 5.0 && now >= g.test_next) {
+    int gate_n = 1;
+    if (const std::size_t gn = g.test.find("gate="); gn != std::string::npos) {
+        gate_n = std::atoi(g.test.c_str() + gn + 5);
+    }
+    if (g.open && !g.test.empty() && !g.test_done && doll_ready && g.opens >= gate_n && now - g.open_at >= 5.0 &&
+        now >= g.test_next) {
         if (!RunTestFixture(s, g.test_step)) {
             g.test_done = true;
             Log("test: fixture done");
@@ -2090,6 +2129,16 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
     }
     if (g.open) {
         LevelUpTick(s, now);
+    }
+    if (g.test_done && !g.test_chain.empty() &&
+        (g_lvl.stage == LevelUpScript::Off || g_lvl.stage == LevelUpScript::Done)) {
+        g.test = g.test_chain.front();
+        g.test_chain.erase(g.test_chain.begin());
+        g.test_done = false;
+        g.test_step = 0;
+        g.test_next = now + 3.0;
+        g_lvl = LevelUpScript{};
+        Log("test: chain: next fixture '%s' (%zu more after it)", g.test.c_str(), g.test_chain.size());
     }
     if (!g.open || now - g.last_check < 1.0) {
         return;
