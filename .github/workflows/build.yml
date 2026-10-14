@@ -1,0 +1,57 @@
+name: Build Bloodborne PC Port
+
+on:
+  push:
+    branches: [ "fix-vram-leak", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Windows x86_64
+    runs-on: windows-latest
+    steps:
+      - name: Enable Long Paths
+        run: git config --system core.longpaths true
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-vulkan-headers
+            mingw-w64-x86_64-vulkan-loader
+            mingw-w64-x86_64-glslang
+            mingw-w64-x86_64-boost
+            mingw-w64-x86_64-fmt
+            mingw-w64-x86_64-magic_enum
+            mingw-w64-x86_64-robin-map
+            mingw-w64-x86_64-vulkan-memory-allocator
+            mingw-w64-x86_64-xxhash
+            mingw-w64-x86_64-sdl3
+            mingw-w64-x86_64-ffmpeg
+            mingw-w64-x86_64-zydis
+
+      - name: Build with build.bat
+        shell: cmd
+        run: |
+          call build.bat
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bbport-vram-fix
+          path: |
+            out/bbport.exe
+            out/bb-probe.exe
