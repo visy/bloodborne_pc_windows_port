@@ -1552,6 +1552,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         b2::HostTravelAloneNext();
         RunLampWarpDecided(step.id, true);
     } else if (step.kind == TravelStep::HostLamp || step.kind == TravelStep::GuestLamp) {
+        split::NoteLocalUse(step.id);  // this player's own use (no talk script sets a lamp flag)
         reinterpret_cast<void(BB_COOP_SYSV*)(std::uint32_t)>(Guest(kLampWarp))(step.id);  // as the player
     } else if (step.kind == TravelStep::HostMove || step.kind == TravelStep::GuestMove) {
         // The local chr to a spot (the chr warp vfunc +0x5F8 = 0x18CD600(chr, pos, rot, 1), as the
@@ -1578,6 +1579,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     } else if (step.kind == TravelStep::HostLamp) {
         // host_lamp=ID@S: the lamp warp 0x13CDF30(ID) on the steady-world clock (host_warp waits for
         // a re-join, which a B2 host never sees): e.g. a Chalice Dungeon lamp's "back to the Dream".
+        split::NoteLocalUse(step.id);
         reinterpret_cast<void(BB_COOP_SYSV*)(std::uint32_t)>(Guest(kLampWarp))(step.id);
     } else if (step.kind == TravelStep::HostLastLamp) {
         // Test fixture: the host's last-lamp record (WorldTransitionState +0x1528 {id, aux}) names
@@ -2742,6 +2744,7 @@ void PartyDirector::Tick() {
             done = true;
             const std::uint32_t id = static_cast<std::uint32_t>(std::strtoul(sl, nullptr, 10));
             Log("test: start lamp %u (from %s)", id, MapName(s.map_id).c_str());
+            split::NoteLocalUse(id);
             reinterpret_cast<void(BB_COOP_SYSV*)(std::uint32_t)>(Guest(kLampWarp))(id);
         }
     }
@@ -2988,7 +2991,7 @@ void PartyDirector::Tick() {
     // A guest's levers / doors / NPC talk change the host's world (party_worldact.h).
     worldact::Tick(s, link);
     npctalk::Tick(s, link);  // shared NPC dialogue (party_npctalk.h)
-    split::Tick(s);  // split travel: the lamp choice dialog (party_split.h)
+    split::Tick(s, link);  // split travel: the lamp choice dialog (party_split.h)
     if (role == PartyRole::Host) {
         AltarAutopilotTick(s);  // "Enter the party's dungeon" in one press
     }
