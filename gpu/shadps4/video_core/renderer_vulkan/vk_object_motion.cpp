@@ -59,14 +59,14 @@ ObjectMotion::ObjectMotion(const Instance& instance_, Scheduler& scheduler_)
     {
         const char* unsafe = std::getenv("BB_OBJECT_MOTION_UNSAFE_INSTANCES");
         const char* safe = std::getenv("BB_OBJECT_MOTION_SAFE_INSTANCES");
-        history.drop_instanced = BbSettings::FrameGenerationStarted()
+        history.drop_instanced = BbSettings::Get().fg_active.load()
                                      ? !(unsafe && unsafe[0] == '1')
                                      : (safe && safe[0] == '1');
     }
     // Frame generation (chosen for this start) uses the vectors with the upscaler off too.
     if (!BbSettings::Get().object_motion ||
         (BbSettings::Get().upscaler == BbSettings::UpscalerOff &&
-         !BbSettings::FrameGenerationStarted())) {
+         !BbSettings::Get().fg_active.load())) {
         std::puts("Object motion: off (enable in menu or BB_OBJECT_MOTION=1)");
         return;
     }

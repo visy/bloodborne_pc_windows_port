@@ -83,7 +83,7 @@ CameraMotion::CameraMotion(const Instance& instance_, Scheduler& scheduler_,
     // unless BB_UPSCALER=none.
     for_upscaler = !(upscaler && std::strcmp(upscaler, "none") == 0);
     // Frame generation (chosen for this start) needs the camera even with BB_UPSCALER=none.
-    for_frame_generation = BbSettings::FrameGenerationStarted();
+    for_frame_generation = BbSettings::Get().fg_active.load();
     for_upscaler = for_upscaler || for_frame_generation;
     const auto device = instance.GetDevice();
     if (for_upscaler) {

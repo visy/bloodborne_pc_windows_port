@@ -211,7 +211,7 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
     // bbport: frame generation (from Supermedo/bloodborne_pc PR #69 by FIocker), when chosen
     // for this start and its provider runs here; otherwise nothing of it exists.
     auto& settings = BbSettings::Get();
-    if (BbSettings::FrameGenerationStarted()) {
+    if (settings.fg_active) { // the provider is available (Instance::CreateDevice)
         generation_factor = settings.startup_frame_generation;
         generation_backend = settings.startup_fg_backend;
         if (generation_backend == BbSettings::FgFsr) generation_factor = 2;
@@ -226,7 +226,6 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
                 generation_factor = int(max_generated) + 1;
             }
             generation = std::move(candidate);
-            settings.fg_active = true;
             settings.fg_problem = nullptr;
             std::printf("Frame generation: %s %dx on (presented frames per rendered frame; "
                         "presentation queue %s)\n",
@@ -247,6 +246,7 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
                                              "libraries are not installed");
             }
             settings.fg_problem = problem.c_str();
+            settings.fg_active = false;
             std::printf("Frame generation: %s unavailable (%s); presenting normally\n", name,
                         problem.c_str());
         }

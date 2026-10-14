@@ -191,7 +191,7 @@ TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& schedul
     // Available unless BB_UPSCALER=none; on/off and the parameters are the menu's settings.
     const char* env = std::getenv("BB_UPSCALER");
     // Frame generation chosen for this start needs the output-size UI path even then.
-    enabled = !(env && std::strcmp(env, "none") == 0) || BbSettings::FrameGenerationStarted();
+    enabled = !(env && std::strcmp(env, "none") == 0) || BbSettings::Get().fg_active.load();
     if (const char* hash = std::getenv("BB_UPSCALE_BEFORE_CS")) {
         trigger_hash = std::strtoull(hash, nullptr, 16);
     }
