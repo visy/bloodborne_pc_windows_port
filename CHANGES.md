@@ -3,7 +3,7 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
-## 0.6.1 (unreleased)
+## 0.6.1 (Windows port 0.6.1, party co-op)
 
 - **One loading screen when a guest rests its way back to the host, checked live**: a guest resting at a lamp (travelling alone) back into the host's area used to see two loading screens (its own travel, then the host's reset load). Now the host's reset load runs first and the guest comes in after it with one loading screen, into the reset world.
 - **Plain loading-screen texts in a party, checked live**: the party notice on a loading screen reads "Respawning with the party" / "Travelling with the party" instead of an internal name ("Travelling: host_death"); a guest's death screen no longer says "Returning to your world" while it stays with the party, and the host no longer sees "The bell's resonance has beckoned ..." again after a wipe's respawn (`BB_PARTY_BANNERS=0` shows every banner as the game does).
