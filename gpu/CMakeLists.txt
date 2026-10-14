@@ -524,6 +524,11 @@ add_executable(party-spectate-test EXCLUDE_FROM_ALL ../tests/test_party_spectate
 target_compile_options(party-spectate-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-spectate-test PRIVATE shim)
 set_target_properties(party-spectate-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Deaths, rests and same-map lamps (party_death_rules.h). ninja -C out/gpu party-death-rules-test
+add_executable(party-death-rules-test EXCLUDE_FROM_ALL ../tests/test_party_death_rules.cpp)
+target_compile_options(party-death-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-death-rules-test PRIVATE shim)
+set_target_properties(party-death-rules-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # H4 enemy census (party_enemy_census.h). ninja -C out/gpu party-enemy-census-test
 add_executable(party-enemy-census-test EXCLUDE_FROM_ALL ../tests/test_party_enemy_census.cpp)
 target_compile_options(party-enemy-census-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

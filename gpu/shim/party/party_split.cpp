@@ -6,6 +6,7 @@
 #include "game_state.h"
 #include "party_async_io.h"
 #include "party_b2.h"
+#include "party_death_rules.h"
 #include "party_director.h"
 #include "party_guestsvc.h"
 #include "party_travel.h"
@@ -34,7 +35,7 @@ constexpr u64 kSlotMenuMan = 0x5562878;    // +0x78 dialog kind up (0 none), +0x
 constexpr u64 kMenuBusyByte = 0x553b1ba;    // ShowGenDialog 0x1335110 opens nothing while set
 constexpr u64 kOpenDialog = 0x16bebf0;      // (dialog struct, kind)
 constexpr int kRoleHost = 3, kRoleClient = 6;
-constexpr u32 kPadCross = 0x4000, kPadRight = 0x20;
+constexpr u32 kPadCross = 0x4000, kPadRight = 0x20, kPadCircle = 0x2000;
 
 void Log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 void Log(const char* fmt, ...) {
@@ -77,6 +78,7 @@ struct Pending {
     u32 id = 0;
     bool host = false;
     bool mark = false;  // a Hunter's Mark (id = the player's own last lamp)
+    bool solo_load = false;  // a guest's lamp in the loaded map: its own load, no question (bug 10)
     double since = 0;
     u64 dialog = 0;
     int test_step = 0;
@@ -141,14 +143,28 @@ void Carry(const Pending& p, bool alone, const char* how) {
         RunLampWarpDecided(p.id, alone);
         return;
     }
-    if (alone && b2::WarpToLampNoLoad(p.id, false)) {
-        return;  // a guest's own move inside the host's loaded map: no load
+    // BB_PARTY_GUEST_LAMP_INWORLD=1 (opt-in since playtest 1): a guest's own move inside the
+    // host's loaded map is a chr warp with no load. Default: its own loading screen.
+    static const bool inworld = deathrules::OptIn(std::getenv("BB_PARTY_GUEST_LAMP_INWORLD"));
+    if (alone && inworld && b2::WarpToLampNoLoad(p.id, false)) {
+        return;
+    }
+    if (alone && p.solo_load) {
+        if (b2::GuestSoloLampLoad(p.id, p.mark)) {
+            return;
+        }
+        Log("lamp %u: the guest's own load is not possible now; nothing runs", p.id);
+        return;
     }
     if (alone) {
         TravelIntent t;
         const b2::AloneWhy why = p.mark ? b2::AloneWhy::HuntersMark
                                  : p.id == 2102950 ? b2::AloneWhy::Lamp : b2::AloneWhy::Headstone;
         if (b2::LampTravelIntent(p.id, &t) && b2::TravelAlone(t, why)) {
+            // A rest at a lamp resets the world the guest leaves (the host's) for everyone there.
+            if (deathrules::GuestAloneRestsHostWorld(!p.mark, false)) {
+                GuestRestRequestNow(p.id);
+            }
             return;
         }
         Log("lamp %u: travelling alone is not possible now; the party travels together", p.id);
@@ -215,6 +231,24 @@ bool Hold(std::uint32_t id, bool mark) {
     if (!mark && b2::AtLampSpot(id)) {
         return false;  // standing at it already: no question, no move (the same-map hook: last lamp only)
     }
+    const deathrules::GuestLamp gl =
+        guest ? deathrules::PlanGuestLamp(true, b2::AtLampSpot(id), b2::LampInLoadedMap(id), mark) : deathrules::GuestLamp::Plain;
+    if (gl == deathrules::GuestLamp::SoloLoad) {
+        std::lock_guard<std::mutex> lk(g_mu);
+        if (g_p.state != Ask::None) {
+            Log("lamp %u: a choice is already pending (lamp %u); this warp is dropped", id, g_p.id);
+            return true;
+        }
+        g_p = Pending{};
+        g_p.state = Ask::Answered;
+        g_p.id = id;
+        g_p.mark = mark;
+        g_p.solo_load = true;
+        g_p.since = Now();
+        Log("%s %u (guest): in the loaded map: no question, the guest's own loading screen (the host stays)",
+            mark ? "Hunter's Mark to lamp" : "lamp", id);
+        return true;
+    }
     if (CurrentMode() == Mode::Party && host) {
         return false;  // the host's warp is the party move (the funnel capture)
     }
@@ -265,15 +299,38 @@ void Tick(const GameSnapshot& s) {
         RunLampWarpDecided(p.id, false);
         return;
     }
+    if (p.solo_load) {
+        if (!s.world_up || s.loading) {
+            return;
+        }
+        finish();
+        Carry(p, true, "a lamp of the loaded map");
+        return;
+    }
+    {
+        // Playtest 1 bug 12: a question stayed open 120 s across the host's travel load and its
+        // death. Closed now on a load, the player's death, or 30 s without an answer.
+        const bool dead = s.player && Field<int>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0xf8, 1) <= 0;
+        const deathrules::AskClose c =
+            deathrules::PlanAskClose(p.state == Ask::Open, s.loading || !s.world_up, dead, now - p.since);
+        if (c != deathrules::AskClose::Keep) {
+            finish();
+            const bool up = p.state == Ask::Open && Field<int>(Slot(kSlotMenuMan), 0x78, 0) != 0;
+            if (up && c != deathrules::AskClose::Load) {
+                runtime_pad_director_press(kPadCircle);  // the dialog's own cancel: it closes
+                release_at = now + 0.25;
+            }
+            Log("lamp %u: the question is closed (%s)%s; nothing runs", p.id, deathrules::AskCloseName(c),
+                up && c != deathrules::AskClose::Load ? ", dialog cancelled" : "");
+            return;
+        }
+    }
     if (CurrentMode() == Mode::Alone) {
         finish();
         Carry(p, true, "BB_PARTY_TRAVEL_CHOICE=alone");
         return;
     }
     if (p.state == Ask::Queued) {
-        if (!s.world_up || s.loading) {
-            return;
-        }
         const u64 dlg = OpenQuestion();
         if (!dlg) {
             if (now - p.since > 5.0) {
@@ -332,11 +389,7 @@ void Tick(const GameSnapshot& s) {
             g_p.test_at = now;
         }
         if (r == -1) {
-            if (now - p.since > 120.0) {
-                finish();
-                Log("lamp %u: no answer in 120 s; nothing runs", p.id);
-            }
-            return;
+            return;  // the 30 s timeout: above
         }
         Log("lamp %u: dialog result %d (menu +0x78 %d, +0x16c %d, +0x170 %d)", p.id, r,
             Field<int>(Slot(kSlotMenuMan), 0x78, -1), Field<int>(Slot(kSlotMenuMan), 0x16c, -1),

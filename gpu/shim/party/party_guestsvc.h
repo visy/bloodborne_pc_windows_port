@@ -98,12 +98,20 @@ bool LampLitFromJsonText(const std::string& text, std::vector<std::uint32_t>* id
 struct LampRequest {
     std::uint32_t id = kTravelNone; ///< the ReturnPointParam id the guest's lamp / headstone warp asked for
     std::uint64_t seq = 0;          ///< guest counter (diagnostics)
+    /// The guest rested at lamp `id` and travels ALONE (split travel NO): the host does not move,
+    /// it runs a rest load where it stands (the world resets for the party; playtest 1 bug 3).
+    bool rest = false;
 };
 std::string LampRequestToJsonText(const LampRequest& r);
 bool LampRequestFromJsonText(const std::string& text, LampRequest* out, std::string* error = nullptr);
 /// A guest's request before the host acts on it: the id must be a ReturnPointParam row.
 bool SanitizePeerLampRequest(const LampRequest& r, std::string* why = nullptr);
 
+/// Host: what a guest's lamp request does (pure; unit-tested). A rest: the host's rest load. A
+/// lamp of the loaded map: nothing (the guest loads alone; the host never moves for it, bug 10).
+/// Otherwise the party travels there with the host.
+enum class LampRequestAction { RestLoad, IgnoreSameMap, PartyTravel };
+LampRequestAction ChooseLampRequestAction(const LampRequest& r, bool lamp_in_loaded_map);
 /// Host: at most one accepted request per kMinInterval s, and only with the host ready (in the
 /// world, not loading).
 class LampRequestGate {
@@ -174,6 +182,8 @@ bool GuestServicesOnLampRequest(int slot, const std::string& body, std::string* 
 /// Guest: a lamp / headstone warp `id` becomes a request to the host (the party travels together;
 /// split travel's "with the party"). False: lamps off or not a guest.
 bool GuestLampRequestNow(std::uint32_t id);
+/// Guest: it rested at lamp `id` and travels alone: asks the host for a rest load of its world.
+bool GuestRestRequestNow(std::uint32_t id);
 /// A guest lit a lamp in the host's world (EVENT lamp_lit, host side): queued for the host's tick.
 bool GuestServicesOnLampLit(int slot, const std::string& body, std::string* why);
 /// Open right now (diagnostics, the Party tab).

@@ -3,7 +3,7 @@
 Input: `E:\games\bbport\logs_playtest1\` (bb_bugs.txt with 18 notes; host visy = 5 runs + 1 crash dump; guest
 the guest = 5 runs). It was one ~2.5 h session, about 17:08 to 20:40 Finnish time. Head checked for "already fixed" is
 `windows-upstream-0.5` at aeeb408 (git log 8143fda..HEAD, CHANGES.md "## 0.6.1 (unreleased)", and the code).
-This is read-only triage: nothing was changed, built or run.
+This is read-only triage: nothing was changed, built or run. Batch 1 (deaths, rests, world reset) landed 2026-10-14 (agent/pt1deaths; b2_seamless.md "2026-10-14 (pt1deaths)"); its rows are marked in the summary.
 
 Log names give each run's END time. H1..H5 = `visy_host/launcher_20261013_183856 / _184410 / _192054 / _193023 /
 _193033_last`, G1..G5 = `guest/launcher_20261013_184415 / _185717 / _192049 / _193046 / _194949`.
@@ -24,22 +24,22 @@ loading-screen path is the proposed fix. A seamless (no-load) variant comes back
 |---|---|---|---|---|---|
 | 1 | Direct summon while the host is in its prologue | major | no | `dsummon::HostRefusal` has no start-ready check; the host makes a room on demand (H2:919-992) | 2 |
 | 2 | Guest's bell prompt also shown on the host | minor | no | inferred: the host director auto-rings the Beckoning Bell (SpEffect 9000) whenever a guest waits or rings | 2 |
-| 3 | Only a host rest resets the world | major | no | a guest's rest at a lamp asks "Travel with the party?"; NO sends it to the Dream alone with no reset (design gap) | 1 |
+| 3 | Only a host rest resets the world | major | **fixed (batch 1, live)**: a guest's alone rest gives the host a rest load | a guest's rest at a lamp asks "Travel with the party?"; NO sends it to the Dream alone with no reset (design gap) | 1 |
 | 4 | Enemy loot from the guest not shared | minor | no (by design) | ERSC_PARITY D4: per-player drop rolls. A design decision to revisit, not a bug | decision |
 | 5 | Guests cannot knock on doors / see plot dialogue | major | no | unconfirmed: ghost NpcParam rows (Iosefka 6060) and/or a client-only talk gate; the logs do not print the override counter | 4 |
-| 6 | Host death blocks guest loot | major | no | host revive-in-place leaves the guest's death and send-home state half-done until its next load | 1 |
-| 7 | Host death warp breaks world / occlusion | major | no | host death = revive in place (moved up to ~190 m, no load, no world reset) | 1 |
+| 6 | Host death blocks guest loot | major | **fixed (batch 1)**: host death = party respawn load; the guest's send-home is followed by the load (live) | host revive-in-place leaves the guest's death and send-home state half-done until its next load | 1 |
+| 7 | Host death warp breaks world / occlusion | major | **fixed (batch 1, live)**: host death = party respawn load for everyone | host death = revive in place (moved up to ~190 m, no load, no world reset) | 1 |
 | 8 | Fog wall for the guest until the host goes in | minor (on head) | partly | B2 guest fog-first (1f981e9) covers plain fogs; first fights with an intro (Gascoigne) still start with the host | 4 |
 | 9 | Rejoined guest lands in the Dream, not in Central Yharnam | **blocker** | partly | the guest rings before its own map is known, so no gather; cross-map direct summon never loads the host's map (aeeb408 only keeps the gather as default) | 2 |
-| 10 | Doll level-up plays on the host + position jumps back | major | no | Doll flags 72100100-102/113, 12100112-114 synced as npc_quest; a same-map lamp warp became a host-led party move | 1 (move) + 4 (flags) |
+| 10 | Doll level-up plays on the host + position jumps back | major | move part **fixed (batch 1)**: same-map guest lamp = own load, the host never moves; flags: batch 4 | Doll flags 72100100-102/113, 12100112-114 synced as npc_quest; a same-map lamp warp became a host-led party move | 1 (move) + 4 (flags) |
 | 11 | Gehrman is a ghost for the guest | minor | no | NpcParam 804000 has isChangeWanderGhost; only the Doll's 803000 is patched | 4 |
-| 12 | Item prompt stuck on the guest at host death | major | no | `ShowItemGet` is gated only on `Calm()`, plus the half-done death state of #6 | 3 (gate) + 1 (death) |
-| 13 | Host's dropped echoes not shown, could not recover | minor | no | not proven: 2 of 6 host bloodstains never picked up; the revive-in-place warp is a suspect; no pickup log | 1 |
+| 12 | Item prompt stuck on the guest at host death | major | death part **fixed (batch 1)**: a load follows a host death; the question closes on load / death / 30 s (live) | `ShowItemGet` is gated only on `Calm()`, plus the half-done death state of #6 | 3 (gate) + 1 (death) |
+| 13 | Host's dropped echoes not shown, could not recover | minor | **logged (batch 1)**: stain changes logged; a host death is a load again | not proven: 2 of 6 host bloodstains never picked up; the revive-in-place warp is a suspect; no pickup log | 1 |
 | 14 | Gascoigne cutscene played twice | minor (on head) | **yes** | the guest's own intro event replayed on the host; fixed by story dedupe default on (025b0a9) + live check (a5033c3). Residual: the host does not refuse a replay mid-fight | 4 |
 | 15 | Boss loot prompt frozen on the guest, key items missing? | major | no | badge pushed via `ShowItemGet` in the same second as the boss defeat banner; no alive/cutscene/banner/load gate | 3 |
 | 16 | Oedon Tomb Key (and other key items) not on the guest | major | no | the host sent lot 31000 (H5:8051-8062, again at H5:11875); the guest side is not logged. Suspects: #15 frozen box, or ledger seeding from a synced boss flag | 3 |
 | 17 | "Red guy" in Oedon Chapel is a ghost for the guest | major | no | the same ghost bit on almost every talk-NPC row (Alfred 6151/6155/6154, Chapel Dweller 113010, Eileen, Arianna...) | 4 |
-| 18 | Guest echoes not takeable when both died | major | no | wipe race: the host counted "0 down" just before the guest's death arrived (H5:10184 vs 10210), so it revived alone instead of a wipe; plus the #6 state | 1 |
+| 18 | Guest echoes not takeable when both died | major | **fixed (batch 1, unit)**: recount every frame + early down notice; not reached live | wipe race: the host counted "0 down" just before the guest's death arrived (H5:10184 vs 10210), so it revived alone instead of a wipe; plus the #6 state | 1 |
 | crash | Host crash 20:38:10, eboot +0x2199310 null+8 | major | no | per-frame arena allocator +0xe45560 returned NULL. FUN_02198fd0 checks the 1st alloc, not the 2nd (+0x21992fb); `BB_ARENA_GUARD` covers only the +0x21d5b35 caller | 5 |
 
 Top extra problems (details below): G4's direct summon failed 8 of 10 times with nothing logging why; the guest

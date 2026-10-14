@@ -96,7 +96,23 @@ int main() {
         LampRequest back;
         std::string err;
         assert(LampRequestFromJsonText(LampRequestToJsonText(r), &back, &err));
-        assert(back.id == r.id && back.seq == 7);
+        assert(back.id == r.id && back.seq == 7 && !back.rest);
+        assert(LampRequestToJsonText(r).find("rest") == std::string::npos);  // old hosts see the same text
+        // Playtest 1: a guest's lamp in the loaded map never moves the host (bug 10); a guest's
+        // alone rest asks for a rest load (bug 3).
+        assert(ChooseLampRequestAction(back, false) == LampRequestAction::PartyTravel);
+        assert(ChooseLampRequestAction(back, true) == LampRequestAction::IgnoreSameMap);
+        {
+            LampRequest rest = r;
+            rest.rest = true;
+            LampRequest rb;
+            assert(LampRequestFromJsonText(LampRequestToJsonText(rest), &rb, &err) && rb.rest && rb.id == r.id);
+            assert(ChooseLampRequestAction(rb, false) == LampRequestAction::RestLoad);
+            assert(ChooseLampRequestAction(rb, true) == LampRequestAction::RestLoad);
+            std::string t = LampRequestToJsonText(rest);
+            t.replace(t.find("true"), 4, "1");  // only a JSON true is a rest
+            assert(LampRequestFromJsonText(t, &rb, &err) && !rb.rest);
+        }
         assert(SanitizePeerLampRequest(back, &err));
         back.id = 12345;
         assert(!SanitizePeerLampRequest(back, &err) && !err.empty());
