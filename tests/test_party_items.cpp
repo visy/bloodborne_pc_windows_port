@@ -651,6 +651,159 @@ static void test_gift_up() {
     CHECK(!r.Take(-1, 0.0) && !r.Take(8, 0.0));
 }
 
+
+// Playtest 1 #15 / #12: the item-get popup waits while the player is dead, a cutscene plays or
+// the boss-defeat banner runs; marks (no popup) still go.
+static void test_popup_hold() {
+    ItemApplyState s = Summoned();
+    CHECK(ItemPopupHold(s) == nullptr);
+    ItemApplyState dead = s;
+    dead.alive = false;
+    CHECK(std::string(ItemPopupHold(dead)) == "dead");
+    ItemApplyState remo = s;
+    remo.cutscene = true;
+    CHECK(std::string(ItemPopupHold(remo)) == "cutscene");
+    ItemApplyState boss = s;
+    boss.boss_quiet = false;
+    CHECK(std::string(ItemPopupHold(boss)) == "boss defeat banner");
+    ItemApplyState fight = s;
+    fight.calm = false;
+    CHECK(std::string(ItemPopupHold(fight)) == "in a fight");
+
+    GuestItems q;
+    // The boss reward (Sword Hunter Badge) arrives in the same second as the boss defeat.
+    CHECK(q.Offer({{1, 50000010, kItemNone, 36, ItemSource::Award}}) == 1);
+    double t = 100;
+    std::optional<ItemGrant> g;
+    for (int i = 0; i < GuestItems::kStableTicks + 5; ++i, t += 0.016) {
+        g = q.Step(boss, t);
+        CHECK(!g);
+    }
+    CHECK(q.LastHold() && std::string(q.LastHold()) == "boss defeat banner");
+    for (int i = 0; i < 10; ++i, t += 0.016) {
+        CHECK(!q.Step(dead, t)); // the player died meanwhile: still held
+    }
+    CHECK(std::string(q.LastHold()) == "dead");
+    for (int i = 0; i < 10; ++i, t += 0.016) {
+        CHECK(!q.Step(remo, t));
+    }
+    // A load in between resets the settle; the grant keeps its place and comes once all is quiet.
+    g = q.Step(s, t);
+    CHECK(g && g->lot == 50000010);
+    CHECK(q.LastHold() == nullptr);
+    // A mark goes even while dead (no popup).
+    GuestItems m;
+    ItemGrant mk;
+    mk.lot = 2400450;
+    mk.flag = 52400450;
+    mk.source = ItemSource::Mark;
+    CHECK(m.Offer({mk}) == 1);
+    std::optional<ItemGrant> got;
+    for (int i = 0; i < GuestItems::kStableTicks + 2 && !got; ++i, t += 0.016) {
+        got = m.Step(dead, t);
+    }
+    CHECK(got && got->source == ItemSource::Mark);
+}
+
+// The item-get box watchdog: left over a load, a dead player, a confirm check that stays held.
+static void test_itemget_watch() {
+    const char* why = nullptr;
+    // Normal: the box is up, the player confirms (entries 0) - nothing to clear, however long.
+    {
+        ItemGetWatch w;
+        for (double t = 0; t < 60; t += 0.5) {
+            CHECK(!w.Step(t, 1, true, true, false, &why));
+        }
+        CHECK(!w.Step(60, 0, true, true, false, &why));
+    }
+    // A load while the box is up: cleared right after the load (not during it).
+    {
+        ItemGetWatch w;
+        CHECK(!w.Step(0, 1, true, true, false, &why));
+        CHECK(!w.Step(1, 1, false, true, true, &why));
+        CHECK(!w.Step(5, 1, false, true, true, &why));
+        CHECK(w.Step(6, 1, true, true, false, &why));
+        CHECK(std::string(why) == "left over from before a load");
+        // State reset: a new box after that starts fresh.
+        CHECK(!w.Step(7, 1, true, true, false, &why));
+    }
+    // The host died while a box was up on the guest (#12): the guest dies too / gets sent home.
+    {
+        ItemGetWatch w;
+        CHECK(!w.Step(0, 2, true, true, false, &why));
+        CHECK(!w.Step(1, 2, true, false, false, &why));
+        CHECK(!w.Step(1 + ItemGetWatch::kDeadFor - 0.1, 2, true, false, false, &why));
+        CHECK(w.Step(1 + ItemGetWatch::kDeadFor, 2, true, false, false, &why));
+        CHECK(std::string(why) == "the player is dead");
+    }
+    // A short death (revived in place) does not clear.
+    {
+        ItemGetWatch w;
+        CHECK(!w.Step(0, 1, true, false, false, &why));
+        CHECK(!w.Step(1, 1, true, true, false, &why));
+        CHECK(!w.Step(10, 1, true, true, false, &why));
+    }
+    // The confirm check held (the frozen badge box, #15): cleared after kHeldFor s; a moment of
+    // "armed" restarts the count.
+    {
+        ItemGetWatch w;
+        CHECK(!w.Step(0, 1, false, true, false, &why));
+        CHECK(!w.Step(10, 1, false, true, false, &why));
+        CHECK(!w.Step(11, 1, true, true, false, &why));
+        CHECK(!w.Step(12, 1, false, true, false, &why));
+        CHECK(!w.Step(12 + ItemGetWatch::kHeldFor - 1, 1, false, true, false, &why));
+        CHECK(w.Step(12 + ItemGetWatch::kHeldFor, 1, false, true, false, &why));
+        CHECK(std::string(why) == "its confirm check stays held");
+    }
+}
+
+// #16: a set ledger bit with none of the lot's unique items held is a wrong skip.
+static void test_ledger_suspicious() {
+    LotSlotState key;
+    key.category = 4;
+    key.id = 4000; // Oedon Tomb Key
+    key.num = 1;
+    key.owned = 0;
+    key.max_num = 1;
+    key.max_storage = 0;
+    CHECK(LedgerSkipSuspicious({key}));
+    LotSlotState held = key;
+    held.owned = 1;
+    CHECK(!LedgerSkipSuspicious({held}));
+    LotSlotState unknown = key;
+    unknown.owned = -1;
+    CHECK(!LedgerSkipSuspicious({unknown}));
+    LotSlotState vial = key;
+    vial.max_num = 20;
+    vial.max_storage = 600;
+    CHECK(!LedgerSkipSuspicious({vial}));
+    LotSlotState weapon = key;
+    weapon.category = 0;
+    CHECK(!LedgerSkipSuspicious({weapon}));
+    CHECK(!LedgerSkipSuspicious({key, held}));
+    CHECK(!LedgerSkipSuspicious({}));
+}
+
+// The Old Hunter Bell and the other Messenger gifts: per player (never replayed), and a guest's
+// own grant of one is never accepted from a peer.
+static void test_messenger_own() {
+    CHECK(MessengerGiftLot(10050) && MessengerGiftLot(10010) && MessengerGiftLot(10000));
+    CHECK(!MessengerGiftLot(10011) && !MessengerGiftLot(31000));
+    CHECK(ItemLotDenied(10050, ItemLotFlag(10050)));
+    CHECK(std::string(ItemSourceName(ItemSource::Own)) == "own");
+    CHECK(ItemSourceFromName("own") == ItemSource::Own);
+    ItemGrant own;
+    own.lot = 10050;
+    own.flag = ItemLotFlag(10050);
+    own.source = ItemSource::Own;
+    CHECK(own.flag > 0);
+    CHECK(!ItemGrantFromPeerAllowed(own));
+    // The guest's queue takes it like any grant (popup gate, spacing).
+    GuestItems q;
+    CHECK(q.Offer({own}) == 1);
+    CHECK(q.Offer({own}) == 0);
+}
+
 int main() {
     test_tables();
     test_fit();
@@ -667,6 +820,10 @@ int main() {
     test_gems();
     test_guest_summoned();
     test_gift_up();
+    test_popup_hold();
+    test_itemget_watch();
+    test_ledger_suspicious();
+    test_messenger_own();
     std::printf("party-items-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

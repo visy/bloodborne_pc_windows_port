@@ -400,6 +400,61 @@ bool ShowItemGet(std::uint32_t type_bits, std::uint32_t id, int count) {
     return true;
 }
 
+int ItemGetEntries() {
+    const std::uint64_t list = Slot(kItemGetList);
+    if (!list) {
+        return -1;
+    }
+    int n = 0;
+    std::uint64_t node = Field<std::uint64_t>(list, 8, 0);
+    while (node && n < 64) {
+        ++n;
+        node = Field<std::uint64_t>(node, 0, 0);
+    }
+    return n;
+}
+
+bool ItemGetConfirmArmed() {
+    // 0x16D86E0: the confirm check runs unless the player chr's flag +0x41 bit 7 is set, and only
+    // with the action-button manager *0x5540050.
+    const std::uint64_t c = Field<std::uint64_t>(
+        Field<std::uint64_t>(Field<std::uint64_t>(Slot(kWorldChrMan), 0x60, 0), 0x58, 0), 0x38, 0);
+    const bool busy = c && (Field<std::uint8_t>(c, 0x41, 0) & 0x80) != 0;
+    return !busy && Slot(0x5540050) != 0;
+}
+
+int ClearItemGet() {
+    constexpr std::uint64_t kRelease = 0x1a8bc00; // void (u32* gaitem handle): reference -1
+    constexpr std::uint64_t kMenuState = 0x5562878; // +0x130: the dialog is up
+    static int st = 0;
+    const std::uint64_t list = Slot(kItemGetList);
+    if (!list || !CodeOk(kRelease, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x56, 0x53, 0x48, 0x89, 0xfb, 0x8b, 0x33},
+                         "gaitem release", &st)) {
+        return -1;
+    }
+    // The confirm path of 0x16D86E0: every live node's handle released, the node back on the free
+    // list (+0x10), the live list (+8) emptied, then the "dialog up" word cleared.
+    using Fn = void(BB_COOP_SYSV*)(std::uint64_t);
+    int n = 0;
+    std::uint64_t node = Field<std::uint64_t>(list, 8, 0);
+    while (node && n < 64) {
+        const std::uint64_t next = Field<std::uint64_t>(node, 0, 0);
+        reinterpret_cast<Fn>(Guest(kRelease))(node + 8);
+        const std::uint64_t free_head = Field<std::uint64_t>(list, 0x10, 0);
+        SafeWrite(node, &free_head, sizeof free_head);
+        SafeWrite(list + 0x10, &node, sizeof node);
+        node = next;
+        ++n;
+    }
+    const std::uint64_t zero = 0;
+    SafeWrite(list + 8, &zero, sizeof zero);
+    if (const std::uint64_t menu = Slot(kMenuState)) {
+        const std::uint32_t down = 0;
+        SafeWrite(menu + 0x130, &down, sizeof down);
+    }
+    return n;
+}
+
 StartFlags ReadStartFlags() {
     StartFlags f;
     struct Want {

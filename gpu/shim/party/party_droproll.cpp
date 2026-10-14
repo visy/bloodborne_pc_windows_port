@@ -1,0 +1,392 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// D4b: one shared enemy drop roll for the party (see party_droproll.h).
+#include "party_droproll.h"
+
+#include "net/json.h"
+
+#include <cmath>
+#include <cstring>
+#include <stdexcept>
+
+namespace coop::droproll {
+
+namespace {
+
+std::uint64_t Mix(std::uint64_t h, std::uint64_t v) {
+    // splitmix64 over the running hash and the next field.
+    std::uint64_t z = h ^ (v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2));
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
+    return z ^ (z >> 31);
+}
+
+} // namespace
+
+std::uint32_t DropRollSeed(std::uint64_t salt, std::uint32_t gen, const DropKey& k) {
+    std::uint64_t h = Mix(0x6472'6f70'726f'6c6cull /* "droproll" */, salt);
+    h = Mix(h, gen);
+    h = Mix(h, k.map);
+    h = Mix(h, static_cast<std::uint32_t>(k.entity));
+    // The chr table slot only for an enemy without a map entity id (its MSB order is the same on
+    // every game; the handle of an enemy with an id is not needed and may differ). The census key
+    // (+0x3B8) is never used: it differs between games.
+    h = Mix(h, k.entity > 0 ? 0u : (k.handle & 0x3fffffu));
+    h = Mix(h, static_cast<std::uint32_t>(k.lot));
+    return static_cast<std::uint32_t>(h ^ (h >> 32));
+}
+
+void SeedMt19937(std::uint32_t (&state)[624], std::uint32_t seed) {
+    state[0] = seed;
+    for (std::uint32_t i = 1; i < 624; ++i) {
+        state[i] = 1812433253u * (state[i - 1] ^ (state[i - 1] >> 30)) + i;
+    }
+}
+
+std::uint32_t Mt19937First(std::uint32_t seed) {
+    std::uint32_t mt[624];
+    SeedMt19937(mt, seed);
+    // One refill (0x181E5C0 does the same for all 624 words); only word 0 is needed here.
+    const std::uint32_t y0 = (mt[0] & 0x80000000u) | (mt[1] & 0x7fffffffu);
+    std::uint32_t y = mt[397] ^ (y0 >> 1) ^ ((mt[1] & 1u) ? 0x9908b0dfu : 0u);
+    y ^= y >> 11;
+    y ^= (y << 7) & 0x9d2c5680u;
+    y ^= (y << 15) & 0xefc60000u;
+    y ^= y >> 18;
+    return y;
+}
+
+bool SharedRollFromEnv(const char* v) {
+    return !(v && v[0] == '0');
+}
+
+std::string DropSeedToJson(const DropSeed& s) {
+    json::Value v = json::Value::make_object();
+    v.set("v", 1);
+    v.set("salt", json::hex(s.salt));
+    v.set("gen", s.gen);
+    v.set("disc", json::f32(s.discovery));
+    return json::dump(v, 0);
+}
+
+bool DropSeedFromJson(const std::string& text, DropSeed* out, std::string* error) {
+    json::Value v;
+    std::string err;
+    if (!json::parse(text, v, err)) {
+        if (error) *error = "drop_seed: " + err;
+        return false;
+    }
+    try {
+        DropSeed s;
+        s.salt = json::u64(v, "salt");
+        const std::uint64_t gen = json::u64(v, "gen");
+        s.discovery = json::read_f32(v, "disc");
+        if (s.salt == 0 || gen > 0xffffffffull) {
+            throw std::runtime_error("salt 0 or generation out of range");
+        }
+        if (!std::isfinite(s.discovery) || (s.discovery != 0.0f && (s.discovery < 1.0f || s.discovery > 1000.0f))) {
+            throw std::runtime_error("item discovery out of range");
+        }
+        s.gen = static_cast<std::uint32_t>(gen);
+        *out = s;
+        return true;
+    } catch (const std::exception& e) {
+        if (error) *error = std::string("drop_seed: ") + e.what();
+        return false;
+    }
+}
+
+} // namespace coop::droproll
+
+#ifndef BB_PARTY_DROPROLL_NO_GAME
+
+#include "coop_hooks.h"
+#include "game_state.h"
+#include "party_link.h"
+
+#include <atomic>
+#include <chrono>
+#include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
+#include <mutex>
+
+namespace coop::droproll {
+namespace {
+
+using u32 = std::uint32_t;
+using i32 = std::int32_t;
+
+constexpr u64 kDropRoll = 0x17DD0B0;     // (MapItemMan*, u32 chr handle, NpcParam row ref*)
+constexpr u64 kLotRoll = 0x1A8B080;      // (request*): +0 lot, +4 float item discovery; rolls 0x17CEAF0
+constexpr u64 kDropInsert = 0x17D5320;   // (MapItemMan*, drop record*): one dropped item bundle
+constexpr u64 kDiscovery = 0x1581830;    // float (float stat, SpEffect list): item discovery
+constexpr u64 kGsm = 0x5556678;          // GameStateMan slot; +0xA78 the game RNG (MT19937)
+constexpr u64 kRngOff = 0xA78;
+constexpr std::size_t kRngSize = 0x10 + 624 * 4;
+constexpr u64 kWorldChrMan = 0x553E878;
+constexpr u64 kGameDataMan = 0x553B130;
+
+void Log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+void Log(const char* fmt, ...) {
+    char line[640];
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(line, sizeof line, fmt, ap);
+    va_end(ap);
+    std::printf("Party: drops: %s\n", line);
+    std::fflush(stdout);
+}
+
+double Now() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+u64 Ptr(u64 slot) {
+    u64 p = 0;
+    return SafeGet(Guest(slot), &p) ? p : 0;
+}
+
+using RollFn = void(BB_COOP_SYSV*)(u64, u64, u64);
+using DiscoveryFn = float(BB_COOP_SYSV*)(float, u64);
+RollFn g_roll_original = nullptr;
+bool g_on = false, g_log_rolls = false, g_shared = true;
+std::atomic<int> g_mode{0};  // 0 none, 1 host, 2 guest (worldact::Tick)
+std::mutex g_mu;
+DropSeed g_seed;             // host: its own; guest: the host's (salt 0 = none yet)
+bool g_in_drop = false;      // main thread: inside our roll wrapper
+float g_disc_override = 0;   // guest: the host's discovery for the request
+std::string g_result;        // the items the wrapped roll dropped
+int g_result_n = 0;
+
+/// The chr of handle `h`, as 0x17DD0B0 resolves it (WorldChrMan +0x850 tables).
+u64 ChrOfHandle(u32 h) {
+    const u64 wcm = Ptr(kWorldChrMan);
+    u64 inner = 0;
+    i32 sets = 0;
+    if (!wcm || h == 0xffffffffu || !SafeGet(wcm + 8, &inner) || !inner || !SafeGet(inner + 0x18, &sets)) {
+        return 0;
+    }
+    const u32 set = (h >> 14) & 0x3f, idx = h & 0x3fff;
+    u64 tab = 0, entries = 0, chr = 0;
+    i32 n = 0;
+    if (i32(set) >= sets + 2 || !SafeGet(wcm + 0x850 + u64(set) * 8, &tab) || !tab || !SafeGet(tab, &n) ||
+        i32(idx) >= n || !SafeGet(tab + 8, &entries) || !entries || !SafeGet(entries + u64(idx) * 0x38, &chr)) {
+        return 0;
+    }
+    return chr;
+}
+
+const char* Category(u32 bits) {
+    switch (bits >> 28) {
+    case 0: return "weapon";
+    case 1: return "armor";
+    case 2: return "rune";
+    case 4: return "goods";
+    case 8: return "gem";
+    }
+    return "item";
+}
+
+void NoteInsert(u64 rec) {
+    if (!g_in_drop || !rec) {
+        return;
+    }
+    i32 n = 0;
+    if (!SafeGet(rec + 0x34, &n) || n < 0 || n > 4) {
+        return;
+    }
+    for (i32 i = 0; i < n; ++i) {
+        u32 e[4] = {};
+        if (!SafeRead(rec + 0x38 + 16ull * u64(i), e, sizeof e)) {
+            continue;
+        }
+        char b[64];
+        std::snprintf(b, sizeof b, "%s %u x%u", Category(e[1]), e[1] & 0x0fffffffu, e[2]);
+        g_result += (g_result.empty() ? "" : ", ") + std::string(b);
+        ++g_result_n;
+    }
+}
+
+BB_COOP_SYSV void DropInsertEntry(u64, u64 rec, u64, u64, u64, u64) {
+    NoteInsert(rec);
+}
+
+BB_COOP_SYSV void LotRollEntry(u64 req, u64, u64, u64, u64, u64) {
+    if (g_in_drop && req && g_disc_override > 0.0f) {
+        float mine = 0;
+        if (SafeGet(req + 4, &mine) && mine != g_disc_override) {
+            SafeWrite(req + 4, &g_disc_override, sizeof g_disc_override);
+        }
+    }
+}
+
+BB_COOP_SYSV void DropRollReplace(u64 mim, u64 handle_arg, u64 npc) {
+    const u32 handle = u32(handle_arg);
+    const int mode = g_mode.load();
+    DropKey k;
+    k.handle = handle;
+    u64 row = 0;
+    if (npc && SafeGet(npc + 8, &row) && row) {
+        SafeGet(row + 0x2c, &k.lot);
+    }
+    DropSeed seed;
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        seed = g_seed;
+    }
+    const u64 gsm = Ptr(kGsm);
+    const bool guest_ok = mode == 2 && LocalSessionRole() == 6;
+    const bool shared = g_on && g_shared && gsm && seed.salt != 0 && k.lot > 0 && (mode == 1 || guest_ok);
+    if (!shared) {
+        if (g_log_rolls) {
+            Log("enemy drop roll on this game (role %d): chr handle %#x, lot %d, own roll%s", LocalSessionRole(),
+                handle, k.lot, g_shared ? (seed.salt ? "" : " (no host seed yet)") : " (shared roll off)");
+        }
+        g_roll_original(mim, handle_arg, npc);
+        return;
+    }
+    if (const u64 chr = ChrOfHandle(handle)) {
+        SafeGet(chr + 0x1f0, &k.entity);
+        SafeGet(chr + 0x3b8, &k.entity2);
+    }
+    k.map = ReadGameState(false).map_id;
+    const u32 s = DropRollSeed(seed.salt, seed.gen, k);
+    // The game RNG: saved, seeded for this enemy, restored after the roll.
+    static unsigned char saved[kRngSize];
+    const u64 rng = gsm + kRngOff;
+    if (!SafeRead(rng, saved, kRngSize)) {
+        g_roll_original(mim, handle_arg, npc);
+        return;
+    }
+    u32 state[624];
+    SeedMt19937(state, s);
+    const u32 left = 1;  // the next draw refills from `state` (0x181E5C0) and reads word 0
+    SafeWrite(rng + 0x10, state, sizeof state);
+    SafeWrite(rng + 4, &left, sizeof left);
+    g_in_drop = true;
+    g_disc_override = mode == 2 ? seed.discovery : 0.0f;
+    g_result.clear();
+    g_result_n = 0;
+    g_roll_original(mim, handle_arg, npc);
+    g_in_drop = false;
+    SafeWrite(rng, saved, kRngSize);
+    Log("shared drop roll (role %d): map %s entity %d (key %d) lot %d gen %u -> seed %08x%s: %s", LocalSessionRole(),
+        MapName(k.map).c_str(), k.entity, k.entity2, k.lot, seed.gen, s,
+        g_disc_override > 0 ? " (host's item discovery)" : "", g_result_n ? g_result.c_str() : "nothing dropped");
+}
+
+float HostDiscovery() {
+    const u64 gdm = Ptr(kGameDataMan);
+    u64 pgd = 0, list = 0;
+    i32 stat = 0;
+    if (!gdm || !SafeGet(gdm + 8, &pgd) || !pgd || !SafeGet(pgd + 0x70, &stat) || !SafeGet(pgd + 0x670, &list)) {
+        return 0.0f;
+    }
+    const float d = reinterpret_cast<DiscoveryFn>(Guest(kDiscovery))(float(stat), list);
+    return std::isfinite(d) && d >= 1.0f && d <= 1000.0f ? d : 0.0f;
+}
+
+} // namespace
+
+void Init(bool log_rolls) {
+    g_log_rolls = log_rolls;
+    g_shared = SharedRollFromEnv(std::getenv("BB_PARTY_SHARED_DROP_ROLL"));
+    const std::initializer_list<u8> pro = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53};
+    if (!g_shared && !log_rolls) {
+        Log("shared enemy drop roll off (BB_PARTY_SHARED_DROP_ROLL=0): every player rolls its own");
+        return;
+    }
+    void* orig = nullptr;
+    if (!ReplacePrologue(kDropRoll, pro, reinterpret_cast<const void*>(&DropRollReplace), &orig, "enemy drop roll")) {
+        Log("enemy drop roll hook NOT installed: every player rolls its own");
+        return;
+    }
+    g_roll_original = reinterpret_cast<RollFn>(orig);
+    if (g_shared) {
+        HookPrologue(kLotRoll, pro, &LotRollEntry, "lot roll request (shared drop discovery)");
+        if (!std::getenv("BB_PARTY_WORLDACT_TEST")) {  // the fixture hooks the insert itself
+            HookPrologue(kDropInsert, pro, &DropInsertEntry, "drop insert (shared drop log)");
+        }
+    }
+    g_on = true;
+    Log("shared enemy drop roll %s (one roll per enemy kill for the whole party; BB_PARTY_SHARED_DROP_ROLL=0: "
+        "own roll per player)", g_shared ? "on" : "off");
+}
+
+bool Enabled() {
+    return g_on && g_shared;
+}
+
+void Tick(const GameSnapshot& s, party::PartyLink* link, bool host) {
+    g_mode = host ? 1 : (s.session_role == 6 || LocalSessionRole() == 6) ? 2 : 0;
+    if (!g_on || !g_shared || !host) {
+        return;
+    }
+    static u64 salt = 0;
+    static u32 gen = 0;
+    static bool was_steady = false;
+    static int last_coop = -1;
+    static double last_disc = 0, last_sent = 0;
+    static float disc = 0;
+    static DropSeed sent;
+    if (!salt) {
+        salt = static_cast<u64>(std::chrono::steady_clock::now().time_since_epoch().count()) ^
+               (reinterpret_cast<std::uintptr_t>(&salt) << 16) ^ 0x5bd1e995ull;
+        salt = salt ? salt : 1;
+    }
+    const bool steady = s.world_up && !s.loading;
+    if (steady && !was_steady) {
+        ++gen;  // a load ended: the world's enemies respawned
+    }
+    was_steady = steady;
+    const double now = Now();
+    if (steady && now - last_disc >= 2.0) {
+        last_disc = now;
+        disc = HostDiscovery();
+    }
+    DropSeed cur;
+    cur.salt = salt;
+    cur.gen = gen;
+    cur.discovery = disc;
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        g_seed = cur;
+    }
+    const bool joined = s.cooperators > last_coop && s.cooperators > 0;
+    if (s.cooperators >= 0) {
+        last_coop = s.cooperators;
+    }
+    if (!link || gen == 0) {
+        return;
+    }
+    if (!(cur == sent) || joined || now - last_sent >= 60.0) {
+        const bool news = cur.gen != sent.gen || cur.salt != sent.salt || joined;
+        sent = cur;
+        last_sent = now;
+        link->post_event(party::kBroadcast, kEventName, DropSeedToJson(cur));
+        if (news) {
+            Log("seed sent: generation %u, item discovery %.1f", cur.gen, double(cur.discovery));
+        }
+    }
+}
+
+bool OnEvent(const std::string& body, std::string* why) {
+    DropSeed s;
+    if (!DropSeedFromJson(body, &s, why)) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lk(g_mu);
+    if (s.salt != g_seed.salt || s.gen != g_seed.gen) {
+        Log("host seed: generation %u, item discovery %.1f", s.gen, double(s.discovery));
+    }
+    g_seed = s;
+    return true;
+}
+
+void FixtureInsert(u64 rec) {
+    NoteInsert(rec);
+}
+
+} // namespace coop::droproll
+
+#endif // BB_PARTY_DROPROLL_NO_GAME

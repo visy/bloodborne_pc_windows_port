@@ -110,6 +110,16 @@ bool GiveItem(std::uint32_t type_bits, std::uint32_t id, int count);
 /// (+0), so call it after the item is held. False (nothing queued) when the code differs, there
 /// is no list / free node or the item is not in the inventory.
 bool ShowItemGet(std::uint32_t type_bits, std::uint32_t id, int count);
+/// Entries in the item-get dialog's live list (*0x553B1C0 +8); -1 without the list.
+int ItemGetEntries();
+/// The dialog's confirm check can fire (0x16D86E0: player chr flag +0x41 bit 7 clear and the
+/// action-button manager *0x5540050 present).
+bool ItemGetConfirmArmed();
+/// Clears the item-get dialog the way its confirm does (0x16D86E0: each node's gaitem handle
+/// released 0x1A8BC00, the node back to the free list, the list emptied, menu +0x130 = 0). The
+/// items stay in the inventory: the dialog is only their notice. Main thread. Entries cleared,
+/// -1 when the code differs or there is no list.
+int ClearItemGet();
 /// The lamp / ReturnPoint warp 0x13CDF30(id) (EMEVD 2003[49], the lamp menu); main thread, own
 /// world. False when the code differs from 1.09 or there is no player.
 bool LampWarp(std::uint32_t return_point);

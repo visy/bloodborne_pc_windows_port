@@ -150,7 +150,8 @@ single-player save is never touched. Settings: *System → Party* pages in the g
   own save (no stale NPC state left behind).
 - **NPC gifts are shared**: an item an NPC gives a guest in the host's world goes to the host and
   every other party member too (the NPC has moved on for everyone, so nobody misses it).
-- **Enemy drops for each player.** Every player gets their own roll of each enemy's drop.
+- **Enemy drops for each player, one roll.** Every player gets their own copy of each enemy's drop,
+  and it is the same item for everyone (one shared roll per kill).
 - **Blood Echoes for every kill.** Whoever kills an enemy, every party member gets its full
   Blood Echoes.
 - **Treasure for each player.** Items lying in the world can be picked up by every player, each into their own game.
@@ -191,7 +192,7 @@ A single death (guest or host) brings no enemies back: only a rest at a lamp or 
 
 | Change | Status |
 |---|---|
-| Item pickups and enemy drops per player: everyone gets their own | Done |
+| Item pickups and enemy drops per player: everyone gets their own (enemy drops: the same item for everyone) | Done |
 | Every cutscene for the whole party (story cutscenes, endings and guest-triggered scenes already work) | In progress |
 | Joining during a boss fight or cutscene waits outside until it ends | Works for boss fights with every join path (bell, title join, direct summon; verified live), the Party status says why you wait; cutscenes not yet tested live |
 | With 3 guests, every guest sees every other guest | In progress |
