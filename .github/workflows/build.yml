@@ -63,6 +63,7 @@ jobs:
           git clone --depth 1 https://github.com/richgel999/miniz /tmp/miniz_repo
           cmake -S /tmp/miniz_repo -B /tmp/miniz_build -G Ninja -DCMAKE_INSTALL_PREFIX=/mingw64 -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=OFF
           cmake --build /tmp/miniz_build --target install
+          cp -f /mingw64/include/miniz/*.h /mingw64/include/ || true
           echo "Miniz successfully built and installed to /mingw64"
 
       - name: Compile Bloodborne PC Port
