@@ -142,6 +142,9 @@ std::string RuntimeHostSecret();
 void StoreHostSecret(const std::string& hex);
 /// The director: a party character reached the world in this party session (party.json).
 void NoteCharacterInWorld();
+/// The save slot (0-9) of the character the game loaded last (GameDataMan +0x50 -> +2000), -1
+/// when unknown. Per-character party files (party_summoned_gives.txt entries) carry it.
+int CurrentSaveSlot();
 
 /// BB_PARTY_FLOW_TEST=<action>[@seconds]: runs that action once at the title (tests).
 void TestTick(bool at_title, bool world_up);
