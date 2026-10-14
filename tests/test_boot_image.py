@@ -79,6 +79,32 @@ class BootImageTests(unittest.TestCase):
                 boot_image.image(SimpleNamespace(game=self.game, out=self.root / 'out1', cache_dir=cache))
         self.assertEqual((stored / 'boot-linked.bin').read_bytes(), before)
 
+    def test_a_refused_swap_is_retried(self):
+        # Upstream report: an antivirus scanning the fresh file refused the swap (WinError 32).
+        calls = []
+        real = os.replace
+
+        def flaky(src, dst):
+            calls.append(dst)
+            if len(calls) < 3:
+                raise PermissionError(32, 'The process cannot access the file')
+            real(src, dst)
+
+        src = self.root / 'a'
+        src.write_bytes(b'new')
+        dst = self.root / 'b'
+        with mock.patch.object(boot_image.time, 'sleep'):
+            boot_image.patiently(flaky, src, dst)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(dst.read_bytes(), b'new')
+
+    def test_a_refusal_that_lasts_is_raised(self):
+        def refused():
+            raise PermissionError(5, 'Access is denied')
+        with mock.patch.object(boot_image.time, 'sleep'),                 mock.patch.object(boot_image.time, 'monotonic', side_effect=[0.0, 5.0, 11.0]):
+            with self.assertRaises(PermissionError):
+                boot_image.patiently(refused)
+
 
 if __name__ == '__main__':
     unittest.main()

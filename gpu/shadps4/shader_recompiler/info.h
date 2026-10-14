@@ -210,6 +210,17 @@ struct Info : InfoPersistent {
         return *reinterpret_cast<const T*>(&FlatUserData()[sharp_idx]);
     }
 
+    /// bbport: the table pointer in user data register ptr_index is null or in the never-mapped
+    /// low page (see ReadUdReg).
+    bool UdPointerNull(u32 ptr_index) const noexcept {
+        if (ptr_index == IR::NumScalarRegs) {
+            return false;
+        }
+        u64 pointer;
+        std::memcpy(&pointer, &UserData()[ptr_index], sizeof(pointer));
+        return (pointer & 0xFFFFFFFFFFFFULL) < 0x10000;
+    }
+
     template <typename T>
     T ReadUdReg(u32 ptr_index, u32 dword_offset) const noexcept {
         T data;
@@ -219,8 +230,10 @@ struct Info : InfoPersistent {
             std::memcpy(&base, &ud[ptr_index], sizeof(base));
             base = reinterpret_cast<const u32*>(VAddr(base) & 0xFFFFFFFFFFFFULL);
         }
-        // bbport: an unbound descriptor table must reach the existing empty-sharp handling.
-        if (!base) {
+        // bbport: an unbound descriptor table must reach the existing empty-sharp handling. Some
+        // draws leave a near-null pointer (the SRT walker meets loads at 0x0..0xc): the low page
+        // is never mapped, so it reads as an unbound table too.
+        if (ptr_index != IR::NumScalarRegs && VAddr(base) < 0x10000) {
             return T{};
         }
         // bbport: guest memory, recorded for the shader cache rebuild (guest_read_log.h).

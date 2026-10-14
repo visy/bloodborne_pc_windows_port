@@ -153,6 +153,7 @@ std::int64_t SteadyMs() {
 // Party HUD (party_hud.h): companions' names and health in the bottom left corner, stacked above
 // the performance HUD when it has that corner; the toast goes above the panel. Present thread.
 party::hud::Board hud_board;          // the overlay's copy (Read each frame: fixed size, no allocation)
+bool perf_hud_banner = false;         // this frame: the game's area-name banner may be up
 bool perf_hud_bottom_left = false;    // this frame: the performance HUD's window ...
 float perf_hud_top = 0.0f;            // ... and its top edge
 float party_hud_top = -1.0f;          // this frame: the panel's top edge (-1: not drawn)
@@ -1889,8 +1890,13 @@ void PerformanceHud() {
     const int position = std::clamp(s.hud_position.load(), 0, BbSettings::HudPositionCount - 1);
     const bool right = position == BbSettings::HudTopRight || position == BbSettings::HudBottomRight;
     const bool bottom = position == BbSettings::HudBottomLeft || position == BbSettings::HudBottomRight;
+    // 0.6.2: bottom right, it lifts above the game's area-name banner while that may be up.
+    float y = bottom ? viewport->WorkSize.y - pad : pad;
+    if (bottom && right) {
+        y = party::hud::PerfHudBottom(y, viewport->WorkSize.y, perf_hud_banner);
+    }
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + (right ? viewport->WorkSize.x - pad : pad),
-                                   viewport->WorkPos.y + (bottom ? viewport->WorkSize.y - pad : pad)),
+                                   viewport->WorkPos.y + y),
                             ImGuiCond_Always, ImVec2(right ? 1.0f : 0.0f, bottom ? 1.0f : 0.0f));
     ImGui::SetNextWindowBgAlpha(std::clamp(s.hud_opacity.load(), 0.1f, 1.0f));
     ImGui::PushFont(sans_font, 16.0f * hud_scale);
@@ -3029,9 +3035,15 @@ bool Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, b
     if (menu_open) {
         Menu();
     }
-    if (BbSettings::Get().show_hud && !menu_open) {
+    bool game_menu = false;
+    if (BbSettings::Get().show_hud || BbSettings::Get().show_fps) {
+        coop::PerfHudGameState(&game_menu, &perf_hud_banner);
+    }
+    // Under the game's full-screen menus (inventory, equipment, level up...) neither is drawn,
+    // as the party HUD (0.6.2).
+    if (BbSettings::Get().show_hud && !menu_open && !game_menu) {
         PerformanceHud(); // includes the frame rate: the FPS counter is not drawn too
-    } else if (BbSettings::Get().show_fps && !menu_open) {
+    } else if (BbSettings::Get().show_fps && !menu_open && !game_menu) {
         FpsCounter();
     }
     HoldPartyNoticesInGameMenu();

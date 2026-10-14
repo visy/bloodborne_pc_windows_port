@@ -63,10 +63,32 @@ static void test_keyboard_sticks(void) {
     k[SDL_SCANCODE_W]=k[SDL_SCANCODE_D]=false;
 }
 
+/* Xbox pads: Back + d-pad left/right clicks the touchpad halves (after Supermedo/bloodborne_pc
+ * a04e1e95, parsifal295's PR #39); Back alone clicks the left half for 150 ms on release. */
+static void test_back_combo(void) {
+    uint64_t t=1000000;
+    assert(back_combo_step(0,0,0,t)==-1);
+    assert(back_combo_step(1,0,0,t+=10000)==-1);       /* Back held alone: nothing yet */
+    assert(back_combo_step(0,0,0,t+=10000)==0);        /* released: a left-half click */
+    assert(back_combo_step(0,0,0,t+=100000)==0);       /* ... for 150 ms */
+    assert(back_combo_step(0,0,0,t+=60000)==-1);
+    assert(back_combo_step(1,0,0,t+=10000)==-1);
+    assert(back_combo_step(1,0,1,t+=10000)==1);        /* Back + right: the right half */
+    assert(back_combo_step(1,0,1,t+=10000)==1);        /* while the d-pad is held */
+    assert(back_combo_step(1,0,0,t+=10000)==-1);
+    assert(back_combo_step(0,0,0,t+=10000)==-1);       /* no left click after a combo */
+    assert(back_combo_step(1,1,0,t+=10000)==0);        /* Back + left: the left half */
+    assert(back_combo_step(0,0,0,t+=10000)==-1);
+    /* The masking: Back reads released, and while it is held, d-pad left/right too. Without a
+     * gamepad pad_value reads nothing, so only the binding rule is checked here. */
+    assert(back_combo_wanted(NULL)==0);
+}
+
 int main(void) {
     char path[512];
     load_bindings(0);
     test_keyboard_sticks();
+    test_back_combo();
     const int created=bb_test_temp_file(path,sizeof(path),"bbport-pad-test-");
     assert(created==0);
     bb_test_setenv("BB_PAD_FILE",path);

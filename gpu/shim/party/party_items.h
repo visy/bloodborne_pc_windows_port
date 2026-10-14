@@ -380,8 +380,22 @@ bool LotHasKeyItem(const std::vector<LotSlotState>& slots);
 /// the held count right after it (`expect`); in the next own world the missing part is given
 /// again, min(count, expect - now) (0 when nothing is missing or a count is unknown), and saved.
 int SummonedRegiveCount(int expect, int now, int count);
-/// A lot to catch up in the own world: every slot unique goods not held (LedgerSkipSuspicious)
-/// and at least one key item (LotHasKeyItem). Own-world reads only: summoned, keys read 0.
+/// 0.6.2: goods whose held count a summoned guest cannot trust: a key item (goodsType 1) or any
+/// unique goods (maxNum 1, no storage). Regression run 0.6.1: Amelia's reward 4001 (unique,
+/// goodsType 0) read 0 summoned and 1 at home; the summoned give then opened the game's blocking
+/// "Unable to acquire ... due to inventory or storage max" box. The game refuses a second copy.
+bool KeyGoods(const LotSlotState& s);
+/// Any KeyGoods slot in `slots`.
+bool LotHasKeyGoods(const std::vector<LotSlotState>& slots);
+/// May a summoned guest give these items now? Never when one is KeyGoods: the grant waits for the
+/// own world (Apply / the key-item catch-up), which reads the real held count first.
+bool SummonedGiveAllowed(const std::vector<LotSlotState>& slots);
+/// May the own world give one more of this goods slot now? Not a KeyGoods item already held
+/// (`held` > 0), and never with an unknown count (-1) for KeyGoods.
+bool KeyGiveAllowedHeld(const LotSlotState& s, int held);
+/// A lot to catch up in the own world: every slot unique goods not held (LedgerSkipSuspicious),
+/// all of them KeyGoods by definition (0.6.2: badges and goodsType 0 unique rewards too, since a
+/// summoned guest no longer gives them). Own-world reads only: summoned, keys read 0.
 bool KeyCatchupNeeded(const std::vector<LotSlotState>& slots);
 /// party_summoned_gives.txt is one file per user folder, shared by every character in the save
 /// slots: an entry given to the character in save slot `entry_slot` is re-given only to that one

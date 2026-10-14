@@ -33,6 +33,10 @@ using u32 = std::uint32_t;
 
 constexpr u32 IdBase = 0x7f0000;     ///< the port's text ids (the game's own are far below)
 constexpr std::size_t RowsPerPage = 6;
+/// The port's pages in the System menu at most (bbport_game_menu.cpp: one compiled page factory
+/// each; pages past it are dropped with a log line). Our own cap, not the game's: the System list
+/// scrolls. 0.6.2: 16 -> 32 (the list had reached 16 and a new page would have been dropped).
+constexpr std::size_t MaxPages = 32;
 /// Text limits in UTF-16 units (the game draws longer texts over the next column or clips them).
 constexpr std::size_t MaxNameLength = 24, MaxValueLength = 26, MaxHelpLength = 110;
 constexpr std::size_t DynamicCapacity = 160; ///< a run-time text's buffer (UTF-16 units)

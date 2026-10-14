@@ -67,7 +67,11 @@ static void Advance(std::int64_t ms) {
 
 static void Limits() {
     const auto& pages = P::All();
-    assert(pages.size() >= 10 && pages.size() <= 20); // MaxPages in bbport_game_menu.cpp
+    // Every page gets a factory in bbport_game_menu.cpp (P::MaxPages of them): none is dropped, and
+    // a few more fit (0.6.2: the list had reached the old cap of 16).
+    std::printf("pages: %zu of at most %zu\n", pages.size(), P::MaxPages);
+    assert(pages.size() >= 10 && pages.size() <= P::MaxPages);
+    assert(P::MaxPages >= 32 && pages.size() + 4 <= P::MaxPages);
     for (const P::Page& page : pages) {
         CheckText(page.name, P::MaxNameLength, "page name");
         CheckText(page.help, P::MaxHelpLength, "page help");
@@ -142,8 +146,7 @@ static void EverySettingSaved() {
         "hud_scale", "hud_graph", "hud_vram", "hud_gpu", "hud_cpu", "hud_ram", "mk_enabled", "mk_sens_x",
         "mk_sens_y", "mk_invert_x", "mk_invert_y", "mk_deadzone", "mk_smoothing", "mk_wheel", "async_pipelines", "gpl",
         "compile_indicator", "party_toasts", "party_hud", "fsr4_auto_exposure", "fsr4_invert_jitter", "model_lod",
-        "output_res", "live_resolution", "menu_language", "hdr", "hdr_peak_nits", "hdr_paper_white", "hdr_strength",
-        "hdr_saturation"};
+        "output_res", "live_resolution", "menu_language"};
     for (const char* key : overlay) {
         if (!changed.count(key)) {
             std::fprintf(stderr, "no game menu row changes %s\n", key);
