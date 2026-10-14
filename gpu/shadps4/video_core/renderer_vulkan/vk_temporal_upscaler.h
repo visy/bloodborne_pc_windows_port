@@ -22,7 +22,9 @@
 #include "video_core/renderer_vulkan/vk_common.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
 #include "video_core/renderer_vulkan/vk_fsr4.h"
+#include "video_core/renderer_vulkan/vk_fg_images.h"
 #include "video_core/texture_cache/image.h"
+#include "../../../dlss_bridge/bbport_dlss_bridge.h"
 
 struct FfxVkPortableUpscaleContext;
 
@@ -126,6 +128,21 @@ public:
         u32 width, height;
     };
     bool DisplayOverride(VAddr address, Display& display);
+
+    /// Frame generation (from Supermedo/bloodborne_pc PR #69 by FIocker): the guides of the
+    /// scene shown in a display buffer, copied when its display pass ran: the HUD-less scene and
+    /// the scene with the UI (output size, before the game's display shader), depth and motion
+    /// (render size), the camera. Read by the presenter on the GPU command thread.
+    struct GenerationGuides {
+        vk::Image color{}, depth{}, motion{}, ui{};
+        vk::ImageView color_view{}, depth_view{}, motion_view{}, ui_view{};
+        u32 output_width{}, output_height{}, render_width{}, render_height{};
+        BbDlssCamera camera{};
+        u64 serial{};
+        float frame_ms{16.6667f};
+        bool valid{}, reset{};
+    };
+    GenerationGuides FrameGenerationGuides(VAddr address);
     /// BB_PRESENT_DUMP_TRIGGER: whether this presented frame is to be saved (consumes the trigger).
     bool PresentDumpDue();
     /// Saves `image` (General layout, 4 bytes a pixel) as present_<w>x<h> in BB_DUMP_DIR.
@@ -150,6 +167,9 @@ private:
     void Run();
     void RunScaled();
     void RunUiOnly(VideoCore::ImageId color, VideoCore::ImageId depth);
+    /// Frame generation: snapshots this frame's scene (ui_image before the UI), depth and motion.
+    void CaptureGenerationGuides(vk::ImageView depth, u32 w, u32 h, float frame_ms,
+                                 bool existing_motion);
     void EnsureUiResources(u32 width, u32 height, vk::Format color, vk::Format depth);
     void PrepareUiDepth(VideoCore::ImageId depth);
     /// Render size below the scaled-preset output size (the resolution patch is on).
@@ -255,6 +275,8 @@ private:
         vk::Format format{};
         u32 width = 0, height = 0;
         bool valid = false;
+        FgImage fg_color, fg_depth, fg_motion, fg_ui; ///< frame generation guides of this buffer
+        GenerationGuides guides{};
     };
     std::mutex display_mutex;
     int present_dump_remaining = 0, present_dump_index = 0;
@@ -316,6 +338,16 @@ private:
     vk::UniqueImageView extra_sharpen_view;
     u32 extra_sharpen_width = 0, extra_sharpen_height = 0;
     vk::UniqueImageView ui_storage_view;
+    // Frame generation (this session's choice; BbSettings::FrameGenerationStarted and a provider
+    // available, BbSettings::Values::fg_active): the guides of the frame being drawn (pending),
+    // of the last finished one (completed, copied by its display pass), the depth copy pass.
+    bool frame_generation = false;
+    FgImage fg_color, fg_depth, fg_motion, fg_ui;
+    GenerationGuides fg_pending{}, fg_completed{};
+    u64 fg_render_serial{1};
+    vk::UniqueDescriptorSetLayout fg_depth_desc;
+    vk::UniquePipelineLayout fg_depth_layout;
+    vk::UniquePipeline fg_depth_pipeline;
 };
 
 } // namespace Vulkan

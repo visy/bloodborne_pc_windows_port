@@ -650,6 +650,46 @@ MK_BINDINGS = [
 ]
 
 
+# Frame generation (from Supermedo/bloodborne_pc PR #69 by FIocker): a game setting in bbport.ini
+# (frame_generation / fg_backend, also in the in-game menus), applied at the next start. Off by
+# default. (label, frame_generation, fg_backend)
+FRAME_GENERATION_CHOICES = [
+    ("Off", "off", "dlss"),
+    ("DLSS FG 2x", "2x", "dlss"),
+    ("DLSS FG 3x", "3x", "dlss"),
+    ("DLSS FG 4x", "4x", "dlss"),
+    ("FSR FG 2x", "2x", "fsr"),
+]
+
+
+# NVIDIA Reflex (same PR): bbport.ini reflex, Off by default. (label, value)
+REFLEX_CHOICES = [("Off", "off"), ("On", "on"), ("On + Boost", "boost")]
+
+
+def reflex_label(ini: dict) -> str:
+    value = str(ini.get("reflex", "off")).lower()
+    value = {"1": "on", "2": "boost"}.get(value, value)
+    return next((label for label, v in REFLEX_CHOICES if v == value), REFLEX_CHOICES[0][0])
+
+
+def frame_generation_label(ini: dict) -> str:
+    """The launcher's choice for bbport.ini's frame_generation / fg_backend (Off when unset)."""
+    factor = str(ini.get("frame_generation", "off")).lower().rstrip("x")
+    backend = "fsr" if str(ini.get("fg_backend", "dlss")).lower() in ("fsr", "1") else "dlss"
+    if factor not in ("2", "3", "4"):
+        return FRAME_GENERATION_CHOICES[0][0]
+    if backend == "fsr":
+        return "FSR FG 2x"
+    return f"DLSS FG {factor}x"
+
+
+def frame_generation_ini(label: str) -> dict:
+    for name, factor, backend in FRAME_GENERATION_CHOICES:
+        if name == label:
+            return {"frame_generation": factor, "fg_backend": backend}
+    return {"frame_generation": "off", "fg_backend": "dlss"}
+
+
 def bbport_ini_path() -> Path:
     """bbport.ini as run.bat finds it: BB_CONFIG, else BB_DATA_DIR (default: the launcher's folder)."""
     if os.environ.get("BB_CONFIG"):
@@ -1264,6 +1304,8 @@ class BloodborneLauncher(tk.Tk):
         self.party_direct_summon = tk.BooleanVar(value=self.settings.get("party_direct_summon", True))
         # Party HUD: a game setting (bbport.ini party_hud, also in the game's menus), not a launch
         # option: read from and written to bbport.ini directly.
+        self.frame_generation_var = tk.StringVar(value=frame_generation_label(read_ini(bbport_ini_path())))
+        self.reflex_var = tk.StringVar(value=reflex_label(read_ini(bbport_ini_path())))
         self.party_hud = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_hud"))
         self.party_name_tags = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_name_tags"))
         # Shared NPC dialogue: a game setting (bbport.ini party_npc_talk, also in the game's menus).
@@ -1402,6 +1444,23 @@ class BloodborneLauncher(tk.Tk):
         remove.pack(side="left")
         for widget in (lbl, status, choose, remove):
             Tooltip(widget, dlss_tip)
+        fg_tip = ("Generated frames between the rendered ones: smoother motion on a high refresh "
+                  "display, slightly more input lag. DLSS FG needs an RTX 40 or 50 series GPU and "
+                  "NVIDIA's nvngx_dlssg.dll (bundled; or chosen above); FSR FG (2x) runs on most GPUs. "
+                  "The HUD is taken from the rendered frame. Without support the game presents "
+                  "normally and says why in its menu and log. A game setting (bbport.ini "
+                  "frame_generation / fg_backend, also in the in-game menu), used at the next start. "
+                  "Default: Off.")
+        fg_combo = self._combo(sec, "Frame generation:", self.frame_generation_var,
+                               [c[0] for c in FRAME_GENERATION_CHOICES], fg_tip, width=14)
+        fg_combo.bind("<<ComboboxSelected>>", lambda e: self.save_frame_generation())
+        reflex_tip = ("NVIDIA's low-latency mode (VK_NV_low_latency2): the driver paces the game so "
+                      "frames queue less; Boost also keeps the GPU clocks up. NVIDIA GPUs with a "
+                      "current driver; elsewhere it stays off. A game setting (bbport.ini reflex, also "
+                      "in the in-game menu), used at the next start. Default: Off.")
+        reflex_combo = self._combo(sec, "NVIDIA Reflex:", self.reflex_var, [c[0] for c in REFLEX_CHOICES],
+                                   reflex_tip, width=14)
+        reflex_combo.bind("<<ComboboxSelected>>", lambda e: self.save_frame_generation())
 
         sec = self._section(tab, 1, "Streaming & effects")
         self._combo(sec, "VRAM pre-upload:", self.preupload_var, [c[0] for c in PREUPLOAD_CHOICES],
@@ -1879,6 +1938,15 @@ class BloodborneLauncher(tk.Tk):
 
     def party_mode(self) -> str:
         return dict(PARTY_MODES).get(self.party_mode_var.get(), "")
+
+    def save_frame_generation(self):
+        """The Frame generation choice: bbport.ini frame_generation / fg_backend (next start)."""
+        try:
+            values = frame_generation_ini(self.frame_generation_var.get())
+            values["reflex"] = dict(REFLEX_CHOICES).get(self.reflex_var.get(), "off")
+            update_ini(bbport_ini_path(), values)
+        except OSError as ex:
+            self.log(f"[GRAPHICS] Could not save the frame generation setting to bbport.ini: {ex}")
 
     def save_party_hud(self):
         """The Party HUD checkbox: bbport.ini party_hud (a running game picks it up on its next start;
@@ -2904,18 +2972,27 @@ class BloodborneLauncher(tk.Tk):
         return party_user_dir() / "dlss" / "nvngx_dlss.dll"
 
     def dlss_status(self) -> str:
+        def found(name):
+            return ((party_user_dir() / "dlss" / name).is_file() or (APP_DIR / "out" / name).is_file()
+                    or (APP_DIR / name).is_file())
+        frame_generation = "; frame generation runtime found" if found("nvngx_dlssg.dll") else ""
         if self.dlss_user_dll().is_file():
-            return "your own (user\\dlss)"
+            return "your own (user\\dlss)" + frame_generation
         if (APP_DIR / "out" / "nvngx_dlss.dll").is_file() or (APP_DIR / "nvngx_dlss.dll").is_file():
-            return "bundled"
+            return "bundled" + frame_generation
         return "none (DLSS falls back to FSR)"
 
     def choose_dlss_dll(self):
-        chosen = filedialog.askopenfilename(title="Select NVIDIA's nvngx_dlss.dll",
-                                            filetypes=[("NVIDIA DLSS", "nvngx_dlss.dll"), ("DLL", "*.dll")])
+        # nvngx_dlss.dll (Super Resolution) or nvngx_dlssg.dll (frame generation), kept under its
+        # own name in user\dlss.
+        chosen = filedialog.askopenfilename(title="Select NVIDIA's nvngx_dlss.dll or nvngx_dlssg.dll",
+                                            filetypes=[("NVIDIA DLSS", "nvngx_dlss.dll nvngx_dlssg.dll"),
+                                                       ("DLL", "*.dll")])
         if not chosen:
             return
         target = self.dlss_user_dll()
+        if Path(chosen).name.lower() == "nvngx_dlssg.dll":
+            target = target.with_name("nvngx_dlssg.dll")
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             import shutil
@@ -2928,6 +3005,7 @@ class BloodborneLauncher(tk.Tk):
     def remove_dlss_dll(self):
         try:
             self.dlss_user_dll().unlink(missing_ok=True)
+            self.dlss_user_dll().with_name("nvngx_dlssg.dll").unlink(missing_ok=True)
             self.log("[DLSS] Your own DLSS library removed; the bundled one is used")
         except OSError as e:
             self.log(f"[ERROR] Could not remove the DLSS library: {e}")

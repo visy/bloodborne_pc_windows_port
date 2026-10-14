@@ -36,6 +36,10 @@ int bbgpu_text_input_is_active(void);
 int bbgpu_text_input_test_type(const char *keys);
 /* 1 while the in-game settings menu is open: the game's pad input is held neutral. */
 int bbgpu_overlay_captures_input(void);
+/* NVIDIA Reflex (from Supermedo/bloodborne_pc PR #69 by FIocker; vk_reflex.h): before the
+ * simulation samples pad input (driver frame pacing) and right after. No-ops unless Reflex runs. */
+void bbgpu_reflex_pre_input_sample(void);
+void bbgpu_reflex_on_input_sampled(void);
 /* Mouse & keyboard controls (scheme from Mrsuss60/bloodborne_pc_windows_port): the mouse state
  * gathered by the window thread and the menu's look tuning. Mouse motion (pixels, relative mode)
  * accumulates until a call with consume_motion set takes it. buttons: bit 0 left, 1 right,

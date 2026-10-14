@@ -15,6 +15,17 @@ enum Upscaler : int { UpscalerOff = 0, UpscalerFsr3 = 1, UpscalerFsr4 = 2, Upsca
 inline bool IsFsr4(int upscaler) {
     return upscaler == UpscalerFsr4 || upscaler == UpscalerFsr411;
 }
+/// Frame generation (from Supermedo/bloodborne_pc PR #69 by FIocker): the provider, and the
+/// factor (0 off, 2..4: presented frames per rendered one; FSR: 2x only). On restart.
+enum FgBackend : int { FgDlss = 0, FgFsr = 1, FgBackendCount };
+const char* FgBackendName(int backend);
+const char* FrameGenName(int factor);
+int ParseFrameGen(const char* value);
+int ParseFgBackend(const char* value);
+/// NVIDIA Reflex (VK_NV_low_latency2; from Supermedo/bloodborne_pc PR #69 by FIocker). On restart.
+enum ReflexMode : int { ReflexOff = 0, ReflexOn = 1, ReflexBoost = 2, ReflexModeCount };
+const char* ReflexModeName(int mode);
+int ParseReflex(const char* value);
 enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerformance, PresetCount };
 enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugMotion = 2, DebugViewCount };
 enum class MenuLanguage { English, Russian };
@@ -62,6 +73,21 @@ struct Values {
     /// (menu_language=ru in bbport.ini or BB_MENU_LANGUAGE=ru).
     std::atomic<MenuLanguage> menu_language{MenuLanguage::English};
     std::atomic<int> upscaler{UpscalerOff};
+    /// Frame generation: 0 off (default), 2/3/4x; the provider FgDlss / FgFsr (bbport.ini
+    /// frame_generation / fg_backend, BB_FRAME_GENERATION / BB_FG_BACKEND). On restart.
+    std::atomic<int> frame_generation{0};
+    std::atomic<int> fg_backend{FgDlss};
+    /// Measured while frame generation runs: rendered (source) and presented frames per second.
+    std::atomic<float> source_fps{0.0f}, display_fps{0.0f};
+    /// NVIDIA Reflex: off (default), on, on + boost (bbport.ini reflex, BB_REFLEX). On restart.
+    std::atomic<int> reflex{ReflexOff};
+    /// Reflex runs this session (chosen at start and the driver supports it; set by the renderer).
+    std::atomic<bool> reflex_active{false};
+    /// Frame generation runs this session: chosen at start and its provider available (set by
+    /// the presenter before the first frame).
+    std::atomic<bool> fg_active{false};
+    /// Why the chosen frame generation does not run (null while it runs or is off).
+    std::atomic<const char*> fg_problem{nullptr};
     std::atomic<int> preset{NativeAA};
     std::atomic<bool> sharpen{true};
     std::atomic<float> sharpness{0.3f};
@@ -164,6 +190,9 @@ struct Values {
     int startup_output_res = OutputDefault;
     int startup_live_resolution = 0;
     bool startup_gpl = false;
+    int startup_frame_generation = 0;
+    int startup_fg_backend = FgDlss;
+    int startup_reflex = ReflexOff;
 };
 
 Values& Get();
@@ -180,6 +209,18 @@ void ConfigureDlssSupport(bool available, const char* problem);
 bool FixedRenderSession();
 int RenderPreset();
 bool ResolutionNeedsRestart();
+/// Frame generation runs this session (chosen at start; the provider may still be unavailable).
+inline bool FrameGenerationStarted() { return Get().startup_frame_generation >= 2; }
+/// The menus' single frame generation choice: 0 off, 1-3 DLSS 2x-4x, 4 FSR 2x.
+inline constexpr int FrameGenerationChoices = 5;
+inline int FrameGenerationChoice(int factor, int backend) {
+    if (factor < 2) return 0;
+    return backend == FgFsr ? 4 : (factor > 4 ? 4 : factor) - 1;
+}
+inline void FrameGenerationFromChoice(int choice, int& factor, int& backend) {
+    backend = choice == 4 ? FgFsr : FgDlss;
+    factor = choice == 4 ? 2 : choice >= 1 && choice <= 3 ? choice + 1 : 0;
+}
 /// A setting applied only at start (game patches, model detail, motion vectors, live resolution,
 /// GPL, the startup render size) differs from what this run started with.
 bool RestartNeeded();

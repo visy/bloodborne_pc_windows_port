@@ -22,6 +22,27 @@ BELOW_NORMAL = 0x00004000
 BBPORT = Path(r"E:\games\bbport")  # every checkout and worktree lives under it
 
 
+def apply_fsr_patches(env):
+    """gpu/patches/fsr-vulkan/*.patch onto the FSR-Vulkan submodule when not applied yet (as
+    build.bat / build.sh do; agent worktrees hold a plain copy of the submodule, without .git).
+    GIT_CEILING_DIRECTORIES keeps git from taking the superproject for the patch's repository."""
+    sub = REPO / "gpu" / "third_party" / "fsr-vulkan"
+    patches = sorted((REPO / "gpu" / "patches" / "fsr-vulkan").glob("*.patch"))
+    if not (sub / "CMakeLists.txt").is_file():
+        return
+    genv = dict(env, GIT_CEILING_DIRECTORIES=str(sub.parent))
+    for patch in patches:
+        def git_apply(*args):
+            return subprocess.run(["git", "apply", *args, str(patch)], cwd=sub, env=genv,
+                                  capture_output=True).returncode == 0
+        if git_apply("--reverse", "--check"):
+            continue  # applied already
+        if git_apply("--check") and git_apply():
+            print(f"FSR-Vulkan: applied {patch.name}", flush=True)
+        else:
+            print(f"FSR-Vulkan: {patch.name} does not apply (local changes?)", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("build_dir", nargs="?", default=str(REPO / "out" / "gpu"))
@@ -39,6 +60,7 @@ def main():
     env.setdefault("CCACHE_DIR", str(BBPORT / "ccache"))
     env.setdefault("CCACHE_MAXSIZE", "40G")
     env.setdefault("CCACHE_NOHASHDIR", "1")
+    apply_fsr_patches(env)
     cmd = ["cmake", "--build", a.build_dir, "-j", str(a.j)]
     for t in a.target:
         cmd += ["--target", t]

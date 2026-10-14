@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "bbport_camera.h"
+#include "bbport_settings.h"
 #include "bbport_toggles.h"
 
 #include "video_core/host_shaders/camera_motion_comp.h"
@@ -81,6 +82,9 @@ CameraMotion::CameraMotion(const Instance& instance_, Scheduler& scheduler_,
     // The upscaler can be switched on from the menu at any time: the camera is always tracked
     // unless BB_UPSCALER=none.
     for_upscaler = !(upscaler && std::strcmp(upscaler, "none") == 0);
+    // Frame generation (chosen for this start) needs the camera even with BB_UPSCALER=none.
+    for_frame_generation = BbSettings::Get().fg_active.load();
+    for_upscaler = for_upscaler || for_frame_generation;
     const auto device = instance.GetDevice();
     if (for_upscaler) {
         const std::array<vk::DescriptorSetLayoutBinding, 3> motion_bindings = {{
@@ -277,6 +281,11 @@ void CameraMotion::OnConstants(const float* data) {
         return;
     }
     std::memcpy(pass_camera.view.data(), data + 8, 12 * sizeof(float));
+    if (for_frame_generation) {
+        auto constants = std::make_shared<std::array<float, 216>>();
+        std::memcpy(constants->data(), data, constants->size() * sizeof(float));
+        pass_camera.constants = std::move(constants);
+    }
     std::memcpy(pass_camera.inv_view.data(), data + 180, 12 * sizeof(float));
     // bbport: BB_CAMERA_INVERSE=own: the inverse of the view matrix itself instead of the one the
     // game stores beside it (A/B; they agree to float precision). BB_CAMERA_LOG prints the gap.
@@ -350,6 +359,155 @@ void CameraMotion::OnConstants(const float* data) {
             -(v[1] * v[3] + v[5] * v[7] + v[9] * v[11]),
             -(v[2] * v[3] + v[6] * v[7] + v[10] * v[11])};
     }
+}
+
+// ---- Frame generation camera (from Supermedo/bloodborne_pc PR #69 by FIocker) ----
+namespace {
+using Mat4 = double[4][4];
+void MatMul(const Mat4 a, const Mat4 b, Mat4 out) {
+    Mat4 t;
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            double v = 0;
+            for (int k = 0; k < 4; ++k) v += a[i][k] * b[k][j];
+            t[i][j] = v;
+        }
+    }
+    std::memcpy(out, t, sizeof(t));
+}
+
+bool MatInverse(const Mat4 m, Mat4 out) {
+    double a[4][8];
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 8; ++j) a[i][j] = j < 4 ? m[i][j] : (j - 4 == i ? 1.0 : 0.0);
+    }
+    for (int c = 0; c < 4; ++c) {
+        int p = c;
+        for (int r = c + 1; r < 4; ++r) {
+            if (std::fabs(a[r][c]) > std::fabs(a[p][c])) p = r;
+        }
+        if (std::fabs(a[p][c]) < 1e-12) return false;
+        if (p != c) {
+            for (int j = 0; j < 8; ++j) std::swap(a[p][j], a[c][j]);
+        }
+        const double d = a[c][c];
+        for (int j = 0; j < 8; ++j) a[c][j] /= d;
+        for (int r = 0; r < 4; ++r) {
+            if (r == c) continue;
+            const double k = a[r][c];
+            for (int j = 0; j < 8; ++j) a[r][j] -= k * a[c][j];
+        }
+    }
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) out[i][j] = a[i][j + 4];
+    }
+    return true;
+}
+
+/// The view-projection matrix (floats 200..215) and the camera position (inverse view's
+/// translation, floats 183/187/191) of the scene constants.
+void CameraViewProjection(const float* f, Mat4 out) {
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) out[i][j] = f[200 + 4 * i + j];
+    }
+}
+
+/// Current clip -> previous clip (column-major out); `cut` on a jump or a sharp turn.
+bool Reprojection(const float* cur, const float* prev, float out[16], bool* cut) {
+    *cut = false;
+    Mat4 m{};
+    for (int i = 0; i < 4; ++i) m[i][i] = 1.0;
+    Mat4 vp_cur, vp_prev, inv, move{};
+    CameraViewProjection(cur, vp_cur);
+    CameraViewProjection(prev, vp_prev);
+    const double d[3] = {cur[183] - double(prev[183]), cur[187] - double(prev[187]),
+                         cur[191] - double(prev[191])};
+    const double turn = vp_cur[3][0] * vp_prev[3][0] + vp_cur[3][1] * vp_prev[3][1] +
+                        vp_cur[3][2] * vp_prev[3][2];
+    if (std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) > 4.0 || turn < 0.9) *cut = true;
+    if (!MatInverse(vp_cur, inv)) return false;
+    for (int i = 0; i < 4; ++i) move[i][i] = 1.0;
+    for (int i = 0; i < 3; ++i) move[i][3] = d[i];
+    MatMul(vp_prev, move, m);
+    MatMul(m, inv, m);
+    for (int c = 0; c < 4; ++c) {
+        for (int r = 0; r < 4; ++r) out[c * 4 + r] = static_cast<float>(m[r][c]);
+    }
+    return true;
+}
+} // namespace
+
+CameraMotion::FrameCamera CameraMotion::FrameGenerationCamera() {
+    CommitFrameCamera();
+    FrameCamera out{};
+    if (!current.valid || !current.constants) {
+        return out;
+    }
+    const float* f = current.constants->data();
+    auto& camera = out.camera;
+    out.valid = true;
+
+    Mat4 projection{}, inverse{};
+    for (int row = 0; row < 4; ++row) {
+        for (int col = 0; col < 4; ++col) {
+            projection[row][col] = f[52 + row * 4 + col];
+        }
+    }
+    if (!MatInverse(projection, inverse)) {
+        out.valid = false;
+    }
+    for (int row = 0; row < 4; ++row) {
+        for (int col = 0; col < 4; ++col) {
+            camera.view_to_clip[row * 4 + col] = static_cast<float>(projection[col][row]);
+            camera.clip_to_view[row * 4 + col] = static_cast<float>(inverse[col][row]);
+        }
+    }
+    float reproject[16]{};
+    bool cut = false;
+    if (previous.valid && previous.constants &&
+        Reprojection(f, previous.constants->data(), reproject, &cut)) {
+        if (cut) {
+            out.valid = false;
+        }
+        for (int row = 0; row < 4; ++row) {
+            for (int col = 0; col < 4; ++col) {
+                projection[row][col] = reproject[row * 4 + col];
+            }
+        }
+        std::memcpy(camera.clip_to_previous, reproject, sizeof(camera.clip_to_previous));
+        if (!MatInverse(projection, inverse)) {
+            out.valid = false;
+        }
+        for (int row = 0; row < 4; ++row) {
+            for (int col = 0; col < 4; ++col) {
+                camera.previous_to_clip[row * 4 + col] = static_cast<float>(inverse[row][col]);
+            }
+        }
+    } else {
+        for (int i = 0; i < 4; ++i) {
+            camera.clip_to_previous[i * 5] = 1.0f;
+            camera.previous_to_clip[i * 5] = 1.0f;
+        }
+    }
+    for (int i = 0; i < 3; ++i) {
+        camera.position[i] = f[183 + i * 4];
+        camera.right[i] = f[180 + i * 4];
+        camera.up[i] = f[181 + i * 4];
+        camera.forward[i] = f[182 + i * 4];
+    }
+    camera.jitter[0] = jitter[0];
+    camera.jitter[1] = jitter[1];
+    camera.near_plane = -f[63] / f[62];
+    const float far_plane = std::fabs(f[63] / (1.0f - f[62]));
+    camera.far_plane =
+        std::isfinite(far_plane) && far_plane > camera.near_plane ? far_plane : 3000.0f;
+    camera.vertical_fov = 2.0f * std::atan(1.0f / f[57]);
+    std::array<float, sizeof(BbDlssCamera) / sizeof(float)> scalars{};
+    std::memcpy(scalars.data(), &camera, sizeof(camera));
+    for (float scalar : scalars) {
+        if (!std::isfinite(scalar)) out.valid = false;
+    }
+    return out;
 }
 
 void CameraMotion::OnGBufferPass(VideoCore::ImageId depth, float x_sign, float y_sign) {

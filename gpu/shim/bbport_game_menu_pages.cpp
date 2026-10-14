@@ -732,6 +732,35 @@ void DefineAll() {
            "Векторы движения: красный/зелёный — движение, синий — точный вектор объекта",
            {off, AddText("Reactive mask", "Маска"), AddText("Motion vectors", "Векторы движения")}, Kind::List);
 
+    // ---- Frame generation (from Supermedo/bloodborne_pc PR #69 by FIocker; after a restart). ----
+    AddPage("Frame generation", "Генерация кадров", "Generated frames between rendered ones (bbport; after a restart)",
+            "Кадры между отрисованными (bbport; после перезапуска)");
+    // Steps (a pop-up list must be a page's last row: Reflex's is).
+    AddRow(Setting(
+               Kind::Steps,
+               [](const Values& v) { return BbSettings::FrameGenerationChoice(v.frame_generation, v.fg_backend); },
+               [](int i) {
+                   int factor = 0, backend = 0;
+                   BbSettings::FrameGenerationFromChoice(std::clamp(i, 0, BbSettings::FrameGenerationChoices - 1),
+                                                         factor, backend);
+                   BbSettings::Get().fg_backend = backend;
+                   BbSettings::Get().frame_generation = factor;
+               },
+               BbSettings::FrameGenerationChoices),
+           "Frame generation", "Генерация кадров",
+           "After a restart. DLSS: RTX 40/50 GPUs; FSR 2x: most GPUs. More motion, a little more lag",
+           "После перезапуска. DLSS: RTX 40/50; FSR 2x: большинство видеокарт. Плавнее, чуть больше задержка",
+           {off, AddText("DLSS 2x", "DLSS 2x"), AddText("DLSS 3x", "DLSS 3x"), AddText("DLSS 4x", "DLSS 4x"),
+            AddText("FSR 2x", "FSR 2x")},
+           Kind::Steps);
+    AddRow(Setting(
+               Kind::List, [](const Values& v) { return v.reflex.load(); },
+               [](int i) { BbSettings::Get().reflex = std::clamp(i, 0, BbSettings::ReflexModeCount - 1); }),
+           "NVIDIA Reflex", "NVIDIA Reflex",
+           "After a restart. Lower latency on NVIDIA GPUs; Boost keeps clocks up",
+           "После перезапуска. Меньше задержка на NVIDIA; Boost держит частоты",
+           {off, on, AddText("On + Boost", "Вкл + Boost")}, Kind::List);
+
     // ---- Performance HUD. ----
     AddPage("Performance HUD", "Оверлей FPS", "Frame rate, frame time and load in a corner (F11) (bbport)",
             "Частота кадров, время кадра и загрузка в углу экрана (F11) (bbport)");

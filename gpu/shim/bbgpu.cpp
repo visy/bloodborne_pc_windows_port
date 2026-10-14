@@ -28,6 +28,7 @@
 #include <vector>
 #include <SDL3/SDL.h>
 #include "../bbgpu.h"
+#include "video_core/renderer_vulkan/vk_reflex.h"
 #include "../bbnet.h"
 #include "common/elf_info.h"
 #include "common/logging/log.h"
@@ -506,6 +507,14 @@ u32 ConsumeGameOnlyScreenshotRequests() { return 0; }
 u32 ConsumeWithOverlaysScreenshotRequests() { return 0; }
 ScreenshotRequests ConsumeScreenshotRequests() { return {}; }
 } // namespace VideoCore
+
+extern "C" void bbgpu_reflex_pre_input_sample(void) {
+    Vulkan::Reflex::PreInputSample();
+}
+
+extern "C" void bbgpu_reflex_on_input_sampled(void) {
+    Vulkan::Reflex::OnInputSampled();
+}
 
 extern "C" int bbgpu_overlay_captures_input(void) {
     return BbOverlay::CapturesInput() ? 1 : 0;

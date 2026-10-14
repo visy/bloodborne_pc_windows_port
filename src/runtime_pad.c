@@ -848,6 +848,7 @@ static void sample(PadData *d) {
     /* Read first: the file's key= steps also drive the open settings menu (live tests). */
     read_inject();
     sample_host(d);
+    bbgpu_reflex_on_input_sampled(); /* NVIDIA Reflex input marker (no-op without Reflex) */
     if (bbgpu_overlay_captures_input() || bbgpu_text_input_is_active()) { hold_after_capture=1; return; }
     if (hold_after_capture) {
         if (d->buttons || d->l2>30 || d->r2>30) { d->buttons=0; d->l2=d->r2=0; touch_ids(d); return; }
@@ -889,6 +890,7 @@ static ABI int32_t pad_close(int32_t handle) {
 static ABI int32_t pad_read_state(int32_t handle, PadData *data) {
     if (handle!=PAD_HANDLE || !opened) return ERR_INVALID_HANDLE;
     if (!data) return ERR_INVALID_ARG;
+    bbgpu_reflex_pre_input_sample(); /* NVIDIA Reflex: driver pacing before the simulation reads input */
     host_lock(&lock);
     sample(data); ++reads;
     host_unlock(&lock);

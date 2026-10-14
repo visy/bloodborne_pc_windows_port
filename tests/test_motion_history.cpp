@@ -104,6 +104,25 @@ int main() {
     ranges.Trim(IndexRangeCache::Revalidate + IndexRangeCache::Unused + 1);
     assert(ranges.Size() == 0);
 
+    // Instanced batches without history while frame generation runs (drop_instanced; from
+    // Supermedo/bloodborne_pc PR #69 by FIocker): no store, no load, single meshes unchanged and
+    // not shifted in their occurrence order by the dropped batch.
+    History instanced(64);
+    instanced.drop_instanced = true;
+    Draw single{.shader = 1, .geometry = 2, .indices = 3, .topology = 4, .index_count = 5,
+                .instances = 1, .first_instance = 0, .vertices = {100, 8}};
+    Draw batch = single;
+    batch.instances = 3;
+    instanced.NextFrame();
+    const auto kept = instanced.Prepare(single);
+    const auto dropped = instanced.Prepare(batch);
+    assert(kept.store && !dropped.store && !dropped.load);
+    assert(instanced.stats.dropped_instanced == 1 && instanced.Used() == 8);
+    instanced.NextFrame();
+    assert(!instanced.Prepare(batch).store);
+    assert(instanced.Prepare(single).load == kept.store);
+    assert(instanced.stats.dropped_instanced == 2);
+
     assert(JitterPhases(1920, 1920) == 8);
     assert(JitterPhases(1280, 1920) == 18);
     assert(JitterPhases(960, 1920) == 32);

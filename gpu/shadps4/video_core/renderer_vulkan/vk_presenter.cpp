@@ -26,6 +26,12 @@
 #include "video_core/renderer_vulkan/vk_presenter.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 #include "video_core/texture_cache/image.h"
+#include "bbport_settings.h"
+#include "video_core/renderer_vulkan/vk_dlss.h"
+#include "video_core/renderer_vulkan/vk_fg_images.h"
+#include "video_core/renderer_vulkan/vk_reflex.h"
+#include "video_core/renderer_vulkan/vk_shader_util.h"
+#include "video_core/host_shaders/fg_hud_comp.h"
 
 #include <algorithm>
 #include <array>
@@ -50,6 +56,39 @@
 [[noreturn]] void BbHardExit(int code); // gpu/shim/bbgpu.cpp
 
 namespace Vulkan {
+
+// bbport: frame generation's per-frame images (from Supermedo/bloodborne_pc PR #69 by FIocker):
+// the guides copied for this frame, the generated frames (output size) and the same fitted to
+// the frame size as the swapchain blit takes it. Reused only after the frame's presents finish.
+struct FgFrameResources {
+    FgImage color, full, depth, motion, ui;
+    std::array<FgImage, 3> outputs, presented;
+    std::array<vk::ImageView, 3> srgb_views{};
+    vk::Device device{};
+    vk::QueryPool timestamps{};
+    u64 serial{};
+    u32 count{};
+    float frame_ms{16.6667f};
+    bool timestamp_valid{};
+    vk::Format sample_format{};
+    ~FgFrameResources() {
+        for (auto view : srgb_views) {
+            if (view) device.destroyImageView(view);
+        }
+        if (timestamps) device.destroyQueryPool(timestamps);
+    }
+};
+
+static FrameGeneration::Resource FgResource(const FgImage& image) {
+    return {image.image, image.view, image.format, vk::ImageAspectFlagBits::eColor, image.width,
+            image.height};
+}
+
+static std::int64_t FgNow() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
 
 bool CanBlitToSwapchain(const vk::PhysicalDevice physical_device, vk::Format format) {
     const vk::FormatProperties props{physical_device.getFormatProperties(format)};
@@ -164,6 +203,54 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
     fsr_pass.Create(device, instance.GetAllocator(), num_images);
     pp_pass.Create(device, swapchain.GetSurfaceFormat().format);
     BbOverlay::Init(instance, swapchain.GetSurfaceFormat().format, num_images);
+
+    // bbport: NVIDIA Reflex: presentation's submissions are out of band (no-op without it).
+    present_scheduler.SetOutOfBand(true);
+    flip_scheduler.SetOutOfBand(true);
+
+    // bbport: frame generation (from Supermedo/bloodborne_pc PR #69 by FIocker), when chosen
+    // for this start and its provider runs here; otherwise nothing of it exists.
+    auto& settings = BbSettings::Get();
+    if (settings.fg_active) { // the provider is available (Instance::CreateDevice)
+        generation_factor = settings.startup_frame_generation;
+        generation_backend = settings.startup_fg_backend;
+        if (generation_backend == BbSettings::FgFsr) generation_factor = 2;
+        auto candidate = std::make_unique<FrameGeneration>(instance, draw_scheduler);
+        const char* name = generation_backend == BbSettings::FgFsr ? "FSR" : "DLSS";
+        if (candidate->Available(generation_backend) &&
+            candidate->MaxGenerated(generation_backend) > 0) {
+            const u32 max_generated = candidate->MaxGenerated(generation_backend);
+            if (u32(generation_factor - 1) > max_generated) {
+                std::printf("Frame generation: %s %dx requested, the runtime allows %ux\n", name,
+                            generation_factor, max_generated + 1);
+                generation_factor = int(max_generated) + 1;
+            }
+            generation = std::move(candidate);
+            settings.fg_problem = nullptr;
+            std::printf("Frame generation: %s %dx on (presented frames per rendered frame; "
+                        "presentation queue %s)\n",
+                        name, generation_factor,
+                        instance.GetPresentQueue() != instance.GetGraphicsQueue() ? "independent"
+                                                                                  : "shared");
+            present_scheduler.SetPresentQueue(instance.GetPresentQueue() !=
+                                              instance.GetGraphicsQueue());
+        } else {
+            static std::string problem;
+            if (generation_backend == BbSettings::FgFsr) {
+                problem = "FSR frame generation needs VK_KHR_compute_shader_derivatives (linear "
+                          "groups), which this GPU or driver lacks";
+            } else {
+                const Dlss* dlss = Dlss::Get();
+                problem = dlss ? dlss->FgProblem()
+                               : std::string("the DLSS bridge (bbport_dlss.dll) and NVIDIA's "
+                                             "libraries are not installed");
+            }
+            settings.fg_problem = problem.c_str();
+            settings.fg_active = false;
+            std::printf("Frame generation: %s unavailable (%s); presenting normally\n", name,
+                        problem.c_str());
+        }
+    }
 
     // bbport: the pipeline cache is compiled before the game starts (BB_SHADER_PRECOMPILE=0:
     // as before, inside the PipelineCache constructor, without a screen).
@@ -301,6 +388,10 @@ Presenter::~Presenter() {
     draw_scheduler.Finish();
     present_scheduler.Finish();
     flip_scheduler.Finish();
+    for (auto& frame : present_frames) {
+        frame.generation.reset();
+    }
+    generation.reset();
     if (rasterizer) {
         rasterizer->GetPipelineCache().Sync();
     }
@@ -492,6 +583,16 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     }
 
     Frame* frame = GetRenderFrame();
+    frame->guest_address = cpu_address;
+    if (instance.IsReflexSupported()) {
+        frame->reflex_frame_id = Reflex::RecordingFrameId();
+        if (!frame->reflex_frame_id) frame->reflex_frame_id = Reflex::CurrentSimFrameId();
+    }
+    if (frame->generation) {
+        frame->generation->count = 0;
+        frame->generation->serial = 0;
+        frame->generation->timestamp_valid = false;
+    }
 
     const auto frame_subresources = vk::ImageSubresourceRange{
         .aspectMask = vk::ImageAspectFlagBits::eColor,
@@ -605,6 +706,11 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
             Breadcrumbs::Mark(cmdbuf, stream, pp_crumb, true);
         }
     });
+    // bbport: frame generation from the output-size display buffer and its guides.
+    if (generation && upscaled && !frame->is_hdr) {
+        PrepareGeneration(frame, display.image, display.width, display.height, view_info.format,
+                          display.format);
+    }
 
     // Flush frame creation commands.
     BbStats::frame_number.fetch_add(1, std::memory_order_relaxed); // bbport: game frames shown
@@ -637,9 +743,379 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     return frame;
 }
 
+// bbport: BB_FG_CAPTURE_DIR=<folder>: one generated frame's guides and outputs as raw files once
+// its rendered serial reaches BB_FG_CAPTURE_FRAME (default 120), for
+// tools/windows/analyze_fg_guides.py (from Supermedo/bloodborne_pc PR #69 by FIocker). Written
+// after the draw timeline completes; keep it off for pacing measurements.
+static void CaptureFg(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmd,
+                      const FgFrameResources& resources, const BbDlssCamera& camera, bool reset,
+                      const Frame& frame) {
+    static const char* directory = std::getenv("BB_FG_CAPTURE_DIR");
+    static const u64 first = [] {
+        const char* value = std::getenv("BB_FG_CAPTURE_FRAME");
+        return value ? std::max<u64>(1, std::strtoull(value, nullptr, 10)) : 120;
+    }();
+    static bool captured = false;
+    if (!directory || !*directory || captured || resources.serial < first || !resources.count) {
+        return;
+    }
+    struct Readback {
+        VkBuffer buffer{};
+        VmaAllocation allocation{};
+        VmaAllocationInfo info{};
+        VkDeviceSize bytes{};
+        vk::Image image{};
+        u32 width{}, height{};
+        std::string name;
+    };
+    struct Capture {
+        VmaAllocator allocator{};
+        std::vector<Readback> buffers;
+        ~Capture() {
+            for (const auto& b : buffers) {
+                if (b.buffer) vmaDestroyBuffer(allocator, b.buffer, b.allocation);
+            }
+        }
+    };
+    const auto capture = std::make_shared<Capture>();
+    capture->allocator = instance.GetAllocator();
+    const auto add_raw = [&](vk::Image image, u32 width, u32 height, const std::string& name) {
+        Readback b{.bytes = VkDeviceSize(width) * height * 4,
+                   .image = image,
+                   .width = width,
+                   .height = height,
+                   .name = name};
+        const VkBufferCreateInfo ci{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                                    .size = b.bytes,
+                                    .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+        const VmaAllocationCreateInfo allocation{
+            .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
+                     VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT,
+            .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST};
+        if (vmaCreateBuffer(capture->allocator, &ci, &allocation, &b.buffer, &b.allocation,
+                            &b.info) != VK_SUCCESS) {
+            return false;
+        }
+        capture->buffers.push_back(std::move(b));
+        return true;
+    };
+    const auto add = [&](const FgImage& image, const std::string& name) {
+        return add_raw(image.image, image.width, image.height, name);
+    };
+    if (!add(resources.depth, "depth.bin") || !add(resources.motion, "motion.bin") ||
+        !add(resources.color, "color_rgba8.raw") || !add(resources.full, "full_rgba8.raw") ||
+        !add(resources.ui, "ui_rgba8.raw")) {
+        return;
+    }
+    for (u32 i = 0; i < resources.count; ++i) {
+        if (!add(resources.outputs[i], "generated_" + std::to_string(i + 1) + "_rgba8.raw") ||
+            !add(resources.presented[i], "presented_" + std::to_string(i + 1) + ".raw")) {
+            return;
+        }
+    }
+    if (!add_raw(frame.image, frame.width, frame.height, "presented_real.raw")) return;
+    const auto path = std::filesystem::path(directory) / ("frame_" + std::to_string(resources.serial));
+    std::error_code ec;
+    std::filesystem::create_directories(path, ec);
+    if (ec) return;
+    for (const auto& b : capture->buffers) {
+        const vk::ImageMemoryBarrier2 barrier{
+            .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+            .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+            .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+            .oldLayout = vk::ImageLayout::eGeneral,
+            .newLayout = vk::ImageLayout::eGeneral,
+            .image = b.image,
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+        cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier});
+        cmd.copyImageToBuffer(b.image, vk::ImageLayout::eGeneral, b.buffer,
+                              vk::BufferImageCopy{.imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                                                  .imageExtent = {b.width, b.height, 1}});
+    }
+    std::ostringstream manifest;
+    manifest << std::setprecision(9) << "{\n\"width\":" << resources.depth.width
+             << ",\"height\":" << resources.depth.height
+             << ",\"output_width\":" << resources.color.width
+             << ",\"output_height\":" << resources.color.height
+             << ",\"sample_format\":" << u32(resources.sample_format)
+             << ",\"presentation_width\":" << frame.width
+             << ",\"presentation_height\":" << frame.height
+             << ",\"presentation_format\":" << u32(resources.presented[0].format)
+             << ",\"depth_format\":100,\"motion_format\":83,\"render_frame_index\":" << resources.serial
+             << ",\"frame_index\":" << resources.serial << ",\"reflex_frame_id\":0"
+             << ",\"frame_ms\":" << resources.frame_ms << ",\"reset\":" << (reset ? "true" : "false")
+             << ",\"generated_count\":" << resources.count << ",\"jitter\":[" << camera.jitter[0]
+             << ',' << camera.jitter[1] << "],\"camera\":{\"near_plane\":" << camera.near_plane
+             << ",\"far_plane\":" << camera.far_plane << ",\"vertical_fov\":" << camera.vertical_fov
+             << "}}\n";
+    scheduler.DeferOperation([capture, path, text = manifest.str()] {
+        bool complete = true;
+        for (const auto& b : capture->buffers) {
+            if (vmaInvalidateAllocation(capture->allocator, b.allocation, 0, VK_WHOLE_SIZE) != VK_SUCCESS) {
+                complete = false;
+                continue;
+            }
+            std::ofstream file(path / b.name, std::ios::binary);
+            file.write(static_cast<const char*>(b.info.pMappedData), std::streamsize(b.bytes));
+            complete &= bool(file);
+        }
+        // The manifest only after every raw file was written.
+        if (complete) std::ofstream(path / "guides_manifest.json") << text;
+    });
+    captured = true;
+    std::printf("Frame generation: captured frame %llu into %s\n",
+                (unsigned long long)resources.serial, path.string().c_str());
+}
+
+void Presenter::PrepareGeneration(Frame* frame, vk::Image display_image, u32 sw, u32 sh,
+                                  vk::Format sample_format, vk::Format source_format) {
+    const bool srgb = sample_format == vk::Format::eR8G8B8A8Srgb ||
+                      sample_format == vk::Format::eB8G8R8A8Srgb;
+    if (source_format != vk::Format::eR8G8B8A8Srgb && source_format != vk::Format::eR8G8B8A8Unorm) {
+        generation_history.clear();
+        return;
+    }
+    const auto guides = rasterizer->GetUpscaler().FrameGenerationGuides(frame->guest_address);
+    if (!guides.valid || !guides.serial || !guides.ui || guides.output_width != sw ||
+        guides.output_height != sh) {
+        generation_history.clear();
+        return;
+    }
+    std::scoped_lock provider_lock{generation_mutex};
+    if (!generation->Configure(sw, sh, vk::Format::eR8G8B8A8Unorm, generation_factor,
+                               generation_backend)) {
+        generation_history.clear();
+        return;
+    }
+    if (!frame->generation) frame->generation = std::make_shared<FgFrameResources>();
+    auto& resources = *frame->generation;
+    resources.count = 0;
+    resources.serial = guides.serial;
+    resources.frame_ms = guides.frame_ms;
+    resources.device = instance.GetDevice();
+    resources.timestamp_valid = false;
+    if (!resources.color.Ensure(instance, sw, sh, vk::Format::eR8G8B8A8Unorm) ||
+        !resources.full.Ensure(instance, sw, sh, vk::Format::eR8G8B8A8Unorm) ||
+        !resources.ui.Ensure(instance, sw, sh, vk::Format::eR8G8B8A8Unorm) ||
+        !resources.depth.Ensure(instance, guides.render_width, guides.render_height, vk::Format::eR32Sfloat) ||
+        !resources.motion.Ensure(instance, guides.render_width, guides.render_height, vk::Format::eR16G16Sfloat)) {
+        return;
+    }
+    const u32 count = std::min<u32>(u32(generation_factor - 1), generation->MaxGenerated(generation_backend));
+    if (!count) return;
+    for (u32 i = 0; i < count; ++i) {
+        if (resources.outputs[i].width != sw || resources.outputs[i].height != sh ||
+            resources.sample_format != sample_format) {
+            if (resources.srgb_views[i]) resources.device.destroyImageView(resources.srgb_views[i]);
+            resources.srgb_views[i] = nullptr;
+        }
+        if (!resources.outputs[i].Ensure(instance, sw, sh, vk::Format::eR8G8B8A8Unorm) ||
+            !resources.presented[i].Ensure(instance, frame->width, frame->height,
+                                           swapchain.GetSurfaceFormat().format, false)) {
+            return;
+        }
+        if (srgb && !resources.srgb_views[i]) {
+            const vk::ImageViewUsageCreateInfo sampled_usage{.usage = vk::ImageUsageFlagBits::eSampled};
+            resources.srgb_views[i] = Check(resources.device.createImageView({
+                .pNext = &sampled_usage,
+                .image = resources.outputs[i].image,
+                .viewType = vk::ImageViewType::e2D,
+                // As the ordinary display view, channel order included.
+                .format = sample_format,
+                .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}}));
+        }
+    }
+    resources.sample_format = sample_format;
+    // Direct recording on this thread (after the frame's post-process pass recorded above).
+    const auto cmd = draw_scheduler.CommandBuffer();
+    const auto families = instance.GetPhysicalDevice().getQueueFamilyProperties();
+    if (families[instance.GetGraphicsQueueFamilyIndex()].timestampValidBits) {
+        if (!resources.timestamps) {
+            resources.timestamps = Check(resources.device.createQueryPool({
+                .queryType = vk::QueryType::eTimestamp, .queryCount = 2}));
+        }
+        cmd.resetQueryPool(resources.timestamps, 0, 2);
+        cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, resources.timestamps, 0);
+        resources.timestamp_valid = true;
+    }
+    const auto readable = [&](vk::Image image) {
+        const vk::ImageMemoryBarrier2 b{.srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+            .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+            .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+            .oldLayout = vk::ImageLayout::eGeneral, .newLayout = vk::ImageLayout::eGeneral,
+            .image = image, .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+        cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &b});
+    };
+    readable(guides.color);
+    readable(guides.depth);
+    readable(guides.motion);
+    readable(guides.ui);
+    FgCopy(cmd, guides.color, vk::ImageLayout::eGeneral, sw, sh, resources.color);
+    FgCopy(cmd, guides.depth, vk::ImageLayout::eGeneral, guides.render_width, guides.render_height,
+           resources.depth);
+    FgCopy(cmd, guides.motion, vk::ImageLayout::eGeneral, guides.render_width, guides.render_height,
+           resources.motion);
+    FgCopy(cmd, guides.ui, vk::ImageLayout::eGeneral, sw, sh, resources.ui);
+    // The display buffer as it is (encoded bytes kept: an sRGB-to-UNORM blit would decode it
+    // while the HUD-less scene stays encoded, and the HUD mask would take the whole frame).
+    const vk::ImageMemoryBarrier2 to_copy{
+        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+        .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+        .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+        .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+        .oldLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+        .newLayout = vk::ImageLayout::eTransferSrcOptimal,
+        .image = display_image,
+        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+    cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_copy});
+    resources.full.General(cmd, vk::AccessFlagBits2::eTransferWrite);
+    const vk::ImageCopy full_copy{.srcSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                                  .dstSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                                  .extent = {sw, sh, 1}};
+    cmd.copyImage(display_image, vk::ImageLayout::eTransferSrcOptimal, resources.full.image,
+                  vk::ImageLayout::eGeneral, full_copy);
+    resources.full.General(cmd);
+    auto restore = to_copy;
+    restore.srcStageMask = vk::PipelineStageFlagBits2::eTransfer;
+    restore.srcAccessMask = vk::AccessFlagBits2::eTransferRead;
+    restore.dstStageMask = vk::PipelineStageFlagBits2::eAllCommands;
+    restore.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
+    restore.oldLayout = vk::ImageLayout::eTransferSrcOptimal;
+    restore.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &restore});
+
+    std::array<FrameGeneration::Output, 3> outputs{};
+    for (u32 i = 0; i < count; ++i) {
+        resources.outputs[i].General(cmd);
+        outputs[i].target = FgResource(resources.outputs[i]);
+    }
+    const FrameGeneration::Input input{
+        .color = FgResource(resources.color),
+        .depth = FgResource(resources.depth),
+        .motion = FgResource(resources.motion),
+        .camera = guides.camera,
+        .frame_ms = guides.frame_ms,
+        .reset = guides.reset || generation_history.needs_reset(guides.serial),
+        .render_frame_index = guides.serial,
+        .reflex_frame_id = u32(frame->reflex_frame_id)};
+    resources.count = generation->Record(cmd, input, std::span(outputs.data(), count), count + 1);
+    generation_history.submitted(guides.serial);
+    if (!hud_pipeline && resources.count) {
+        const auto device = instance.GetDevice();
+        const std::array bindings{
+            vk::DescriptorSetLayoutBinding{.binding = 0, .descriptorType = vk::DescriptorType::eSampledImage,
+                                           .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
+            vk::DescriptorSetLayoutBinding{.binding = 1, .descriptorType = vk::DescriptorType::eSampledImage,
+                                           .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
+            vk::DescriptorSetLayoutBinding{.binding = 2, .descriptorType = vk::DescriptorType::eStorageImage,
+                                           .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
+            vk::DescriptorSetLayoutBinding{.binding = 3, .descriptorType = vk::DescriptorType::eSampledImage,
+                                           .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute}};
+        hud_desc = Check(device.createDescriptorSetLayoutUnique({
+            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
+            .bindingCount = u32(bindings.size()),
+            .pBindings = bindings.data()}));
+        hud_layout = Check(device.createPipelineLayoutUnique({.setLayoutCount = 1, .pSetLayouts = &*hud_desc}));
+        const auto module = CompileSPV(FG_HUD_COMP, device);
+        hud_pipeline = Check(device.createComputePipelineUnique({}, vk::ComputePipelineCreateInfo{
+            .stage = {.stage = vk::ShaderStageFlagBits::eCompute, .module = module, .pName = "main"},
+            .layout = *hud_layout}));
+        device.destroyShaderModule(module);
+    }
+    for (u32 i = 0; i < resources.count; ++i) {
+        // The real frame's HUD over the generated scene (fg_hud.comp), then the same post
+        // process as the real frame, at its fitted size.
+        auto& output = resources.outputs[i];
+        output.General(cmd);
+        const std::array infos{
+            vk::DescriptorImageInfo{.imageView = resources.full.view, .imageLayout = vk::ImageLayout::eGeneral},
+            vk::DescriptorImageInfo{.imageView = resources.color.view, .imageLayout = vk::ImageLayout::eGeneral},
+            vk::DescriptorImageInfo{.imageView = output.view, .imageLayout = vk::ImageLayout::eGeneral},
+            vk::DescriptorImageInfo{.imageView = resources.ui.view, .imageLayout = vk::ImageLayout::eGeneral}};
+        const std::array writes{
+            vk::WriteDescriptorSet{.dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eSampledImage, .pImageInfo = &infos[0]},
+            vk::WriteDescriptorSet{.dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eSampledImage, .pImageInfo = &infos[1]},
+            vk::WriteDescriptorSet{.dstBinding = 2, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &infos[2]},
+            vk::WriteDescriptorSet{.dstBinding = 3, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eSampledImage, .pImageInfo = &infos[3]}};
+        cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *hud_pipeline);
+        cmd.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *hud_layout, 0, writes);
+        cmd.dispatch((sw + 7) / 8, (sh + 7) / 8, 1);
+        auto& fitted = resources.presented[i];
+        fitted.General(cmd);
+        const std::array barriers{
+            vk::ImageMemoryBarrier2{.srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+                .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
+                .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+                .oldLayout = vk::ImageLayout::eGeneral, .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                .image = output.image, .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}},
+            vk::ImageMemoryBarrier2{.srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+                .dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                .dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+                .oldLayout = vk::ImageLayout::eGeneral, .newLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                .image = fitted.image, .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}}};
+        cmd.pipelineBarrier2({.imageMemoryBarrierCount = u32(barriers.size()), .pImageMemoryBarriers = barriers.data()});
+        Frame target{};
+        target.width = frame->width;
+        target.height = frame->height;
+        target.image = fitted.image;
+        target.image_view = fitted.view;
+        target.is_hdr = false;
+        {
+            std::scoped_lock lock{passes_mutex};
+            pp_pass.Render(cmd, srgb ? resources.srgb_views[i] : output.view, {sw, sh}, target,
+                           pp_settings);
+        }
+        auto back = barriers[0];
+        back.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+        back.srcAccessMask = vk::AccessFlagBits2::eShaderRead;
+        back.dstStageMask = vk::PipelineStageFlagBits2::eAllCommands;
+        back.dstAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite;
+        back.oldLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        back.newLayout = vk::ImageLayout::eGeneral;
+        cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &back});
+    }
+    if (resources.timestamp_valid) {
+        cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, resources.timestamps, 1);
+    }
+    CaptureFg(instance, draw_scheduler, cmd, resources, guides.camera, input.reset, *frame);
+}
+
+void Presenter::CountPresentation(bool real) {
+    if (!generation) return;
+    ++presentation_count;
+    if (real) {
+        ++source_count;
+    } else {
+        ++generated_count;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    const float seconds = std::chrono::duration<float>(now - counter_start).count();
+    if (seconds >= 1.0f) {
+        BbSettings::Get().source_fps = float(source_count) / seconds;
+        BbSettings::Get().display_fps = float(presentation_count) / seconds;
+        static const bool timing = std::getenv("BB_FG_TIMING") != nullptr;
+        if (timing) {
+            std::printf("FG pacing: source %.2f presented %.2f generated %llu skipped %llu\n",
+                        float(source_count) / seconds, float(presentation_count) / seconds,
+                        (unsigned long long)generated_count, (unsigned long long)skipped_count);
+        }
+        presentation_count = source_count = generated_count = skipped_count = 0;
+        counter_start = now;
+    }
+}
+
 Frame* Presenter::PrepareBlankFrame(bool present_thread) {
     // Request a free presentation frame.
     Frame* frame = GetRenderFrame();
+    if (frame->generation) {
+        frame->generation->count = 0;
+        frame->generation->serial = 0;
+    }
+    frame->reflex_frame_id = instance.IsReflexSupported() ? Reflex::CurrentSimFrameId() : 0;
 
     auto& scheduler = present_thread ? present_scheduler : draw_scheduler;
     scheduler.EndRendering();
@@ -725,29 +1201,138 @@ void Presenter::WaitRendered(const Frame* frame) {
 }
 
 void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame) {
-    // Free the frame for reuse
-    const auto free_frame = [&] {
-        if (!is_reusing_frame) {
-            last_submit_frame = frame;
-            std::scoped_lock fl{free_mutex};
-            free_queue.push(frame);
-            free_cv.notify_one();
+    // bbport: frame generation (from Supermedo/bloodborne_pc PR #69 by FIocker): the generated
+    // frames of this one go first, each at its slot between the previous real frame and this
+    // one; expired slots are skipped, never presented in a burst. FSR presents after its copy
+    // completed (paced on the GPU's completion); DLSS sleeps to the slot.
+    std::int64_t real_deadline = 0;
+    static const bool gpu_pacing = [] {
+        const char* value = std::getenv("BB_FSR_GPU_PACING");
+        return !value || value[0] != '0';
+    }();
+    const bool pace_after_copy = generation && generation_backend == BbSettings::FgFsr && gpu_pacing;
+    if (generation && frame->generation && frame->generation->serial && !is_reusing_frame &&
+        !BbHeadless::On() && window.GetWidth() && window.GetHeight()) {
+        auto& resources = *frame->generation;
+        // Completes the evaluation (also of a failed / reset one) before its flag and
+        // resources are read.
+        draw_scheduler.Wait(frame->ready_tick);
+        const auto now = FgNow();
+        u32 count = 0;
+        {
+            std::scoped_lock lock{generation_mutex};
+            generation->Retire(resources.serial);
+            if (!generation->IsInterpolationDisabled(resources.serial)) count = resources.count;
         }
-    };
+        if (count) {
+            std::array<u64, 2> ticks{};
+            u64 source_ns = 0, ready_ns = 0;
+            if (resources.timestamp_valid &&
+                instance.GetDevice().getQueryPoolResults(resources.timestamps, 0, 2, sizeof(ticks),
+                                                         ticks.data(), sizeof(u64),
+                                                         vk::QueryResultFlagBits::e64) ==
+                    vk::Result::eSuccess) {
+                const double period = instance.GetPhysicalDevice().getProperties().limits.timestampPeriod;
+                source_ns = u64(double(ticks[0]) * period);
+                ready_ns = u64(double(ticks[1]) * period);
+            }
+            float frame_ms = resources.frame_ms;
+            if (!source_ns && last_ready_ns && resources.serial > last_ready_serial) {
+                frame_ms = float(now - last_ready_ns) / float(resources.serial - last_ready_serial) / 1e6f;
+            }
+            int cap = int(EmulatorSettings.GetFrameLimit());
+            if (!cap) {
+                if (const char* setting = std::getenv("BB_FPS")) cap = std::atoi(setting);
+            }
+            generation_schedule.observe(source_ns, ready_ns, resources.serial, now, frame_ms, cap);
+            static const bool trace = std::getenv("BB_FG_TRACE") != nullptr;
+            static const bool timing = std::getenv("BB_FG_TIMING") != nullptr;
+            if (trace) {
+                std::printf("FG ready: serial=%llu host_ns=%lld source_ns=%llu ready_ns=%llu period_ns=%lld first_ns=%lld real_ns=%lld count=%u\n",
+                            (unsigned long long)resources.serial, (long long)now,
+                            (unsigned long long)source_ns, (unsigned long long)ready_ns,
+                            (long long)generation_schedule.period(),
+                            (long long)generation_schedule.deadline(1, count + 1),
+                            (long long)generation_schedule.deadline(count + 1, count + 1), count);
+            }
+            if (timing && resources.serial % 30 == 0) {
+                std::printf("FG phase: serial=%llu period_ms=%.3f evaluation_ms=%.3f first_lag_ms=%.3f real_lag_ms=%.3f\n",
+                            (unsigned long long)resources.serial, generation_schedule.period() / 1e6,
+                            ready_ns >= source_ns ? (ready_ns - source_ns) / 1e6 : 0.0,
+                            (now - generation_schedule.deadline(1, count + 1)) / 1e6,
+                            (now - generation_schedule.deadline(count + 1, count + 1)) / 1e6);
+            }
+            last_ready_ns = now;
+            last_ready_serial = resources.serial;
+            // bbport: never hold a present more than 100 ms (a bad clock mapping or a stall
+            // would otherwise freeze the picture): such a frame is shown at once, the schedule
+            // starts again.
+            if (generation_schedule.deadline(count + 1, count + 1) - now > 100'000'000) {
+                static int logged = 0;
+                if (logged++ < 4) {
+                    std::printf("FG pacing: slot %.1f ms ahead, presenting at once (schedule reset)\n",
+                                (generation_schedule.deadline(count + 1, count + 1) - now) / 1e6);
+                }
+                generation_schedule = FgSchedule{true, true};
+                generation_history.clear();
+                count = 0;
+            }
+            unsigned position = 1;
+            while (position <= count) {
+                const auto fresh = generation_schedule.next_position(position, count + 1, FgNow());
+                skipped_count += fresh - position;
+                position = fresh;
+                if (position > count) break;
+                const auto deadline = generation_schedule.deadline(position, count + 1);
+                const auto delay = deadline - FgNow();
+                if (!pace_after_copy && delay > 0) {
+                    std::this_thread::sleep_for(std::chrono::nanoseconds(delay));
+                }
+                // One fence covers every present of this frame: the previous one must be done
+                // before it is reset for the next.
+                Check(instance.GetDevice().waitForFences(frame->present_done, true,
+                                                         std::numeric_limits<u64>::max()));
+                if (!PresentOne(frame, resources.presented[position - 1].image, false,
+                                pace_after_copy ? deadline : 0)) {
+                    break;
+                }
+                ++position;
+            }
+            real_deadline = count ? generation_schedule.deadline(count + 1, count + 1) : 0;
+            const auto delay = real_deadline - FgNow();
+            if (!pace_after_copy && delay > 0) {
+                std::this_thread::sleep_for(std::chrono::nanoseconds(delay));
+            }
+            Check(instance.GetDevice().waitForFences(frame->present_done, true,
+                                                     std::numeric_limits<u64>::max()));
+        }
+    }
+    // Ordinary frames, loading screens, unavailable or failed generation and expired slots all
+    // keep this real frame and the game's flip.
+    PresentOne(frame, frame->image, true, pace_after_copy ? real_deadline : 0);
+    if (!is_reusing_frame) {
+        last_submit_frame = frame;
+        std::scoped_lock fl{free_mutex};
+        free_queue.push(frame);
+        free_cv.notify_one();
+    }
+    if (!is_reusing_frame && is_game_frame) {
+        DebugState.IncFlipFrameNum();
+    }
+}
 
+bool Presenter::PresentOne(Frame* frame, vk::Image source_image, bool real, std::int64_t deadline) {
     // bbport: nothing to present to while the window is minimised (a 0x0 surface, issue #31), or in
     // the headless-lite test mode (bbport_headless.h).
     if (BbHeadless::On() || window.GetWidth() == 0 || window.GetHeight() == 0) {
-        free_frame();
-        return;
+        return false;
     }
     // Recreate the swapchain if the window was resized (or was minimised at the last try).
     if (window.GetWidth() != swapchain.GetWidth() || window.GetHeight() != swapchain.GetHeight() ||
         !swapchain.IsPresentable()) {
         swapchain.Recreate(window.GetWidth(), window.GetHeight());
         if (!swapchain.IsPresentable()) {
-            free_frame();
-            return;
+            return false;
         }
     }
 
@@ -756,8 +1341,7 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         if (!swapchain.AcquireNextImage()) {
             // User resizes the window too fast and GPU can't keep up. Skip this frame.
             LOG_WARNING(Render_Vulkan, "Skipping frame!");
-            free_frame();
-            return;
+            return false;
         }
     }
 
@@ -771,9 +1355,16 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     // bbport: the game frame is blitted (letterboxed) straight into the swapchain image.
     const vk::Image swapchain_image = swapchain.Image();
     auto& scheduler = present_scheduler;
+    const bool reflex = instance.IsReflexSupported();
+    if (reflex) {
+        Reflex::SetRecordingFrameId(frame->reflex_frame_id);
+        scheduler.SetFrameId(frame->reflex_frame_id);
+    }
     const auto cmdbuf = scheduler.CommandBuffer();
-    DumpFinalFrameIfDue(instance, scheduler, cmdbuf, frame->image, frame->width, frame->height,
-                        swapchain.GetSurfaceFormat().format);
+    if (real) {
+        DumpFinalFrameIfDue(instance, scheduler, cmdbuf, frame->image, frame->width, frame->height,
+                            swapchain.GetSurfaceFormat().format);
+    }
 
     if (EmulatorSettings.IsVkHostMarkersEnabled()) {
         cmdbuf.beginDebugUtilsLabelEXT(vk::DebugUtilsLabelEXT{
@@ -809,7 +1400,7 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
                 .newLayout = vk::ImageLayout::eTransferSrcOptimal,
                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .image = frame->image,
+                .image = source_image,
                 .subresourceRange = color_range,
             },
         };
@@ -824,13 +1415,15 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         };
         cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eTransfer,
                                vk::DependencyFlagBits::eByRegion, clear_done, {}, {});
-        cmdbuf.blitImage(frame->image, vk::ImageLayout::eTransferSrcOptimal, swapchain_image,
+        cmdbuf.blitImage(source_image, vk::ImageLayout::eTransferSrcOptimal, swapchain_image,
                          vk::ImageLayout::eTransferDstOptimal,
                          MakeImageBlitFit(frame->width, frame->height, extent.width, extent.height),
                          vk::Filter::eLinear);
         // bbport: the settings menu / FPS counter over the frame, at display resolution.
-        BbGameMenu::Poll(); // the port's pages in the game's System menu
-        BbFrameState::OnPresent(); // menu/loading detection (compile indicator)
+        if (real) {
+            BbGameMenu::Poll(); // the port's pages in the game's System menu
+            BbFrameState::OnPresent(); // menu/loading detection (compile indicator)
+        }
         const bool overlay = BbOverlay::Visible();
         const std::array post_barriers{
             vk::ImageMemoryBarrier{
@@ -853,7 +1446,7 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
                 .newLayout = vk::ImageLayout::eGeneral,
                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .image = frame->image,
+                .image = source_image,
                 .subresourceRange = color_range,
             },
         };
@@ -895,18 +1488,45 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     info.AddSignal(frame->present_done);
     scheduler.Flush(info);
 
+    // bbport: FSR frame generation's paced present: its composition copy completes before the
+    // deadline (a copy queued behind the next frame's work would reach the display late).
+    if (deadline) {
+        Check(instance.GetDevice().waitForFences(frame->present_done, true,
+                                                 std::numeric_limits<u64>::max()));
+        Common::PreciseSleepUntil(
+            std::chrono::steady_clock::time_point(std::chrono::nanoseconds(deadline)));
+    }
+
     // Present to swapchain.
+    if (reflex) {
+        if (real) Reflex::TraceCpuPresent(frame->content_frame_id);
+        Reflex::OnPresentBegin(frame->reflex_frame_id, real);
+    }
     {
         std::scoped_lock submit_lock{Scheduler::submit_mutex};
         if (!swapchain.Present()) {
             swapchain.Recreate(window.GetWidth(), window.GetHeight());
         }
     }
-
-    free_frame();
-    if (!is_reusing_frame && is_game_frame) {
-        DebugState.IncFlipFrameNum();
+    if (reflex) {
+        Reflex::OnPresentEnd(frame->reflex_frame_id, real);
+        // BB_REFLEX_TIMING=1: the driver's latency report of the newest finished frame.
+        static const bool timing = std::getenv("BB_REFLEX_TIMING") != nullptr;
+        Reflex::LatencyReport r{};
+        if (real && timing && Reflex::QueryLatencyTimings(&r) && r.present_id > last_reflex_report) {
+            last_reflex_report = r.present_id;
+            std::printf("reflex timing: id=%llu input=%llu sim=%llu..%llu render=%llu..%llu "
+                        "present=%llu..%llu gpu=%llu..%llu\n",
+                        (unsigned long long)r.present_id, (unsigned long long)r.input_sample_us,
+                        (unsigned long long)r.sim_start_us, (unsigned long long)r.sim_end_us,
+                        (unsigned long long)r.render_submit_start_us,
+                        (unsigned long long)r.render_submit_end_us,
+                        (unsigned long long)r.present_start_us, (unsigned long long)r.present_end_us,
+                        (unsigned long long)r.gpu_render_start_us, (unsigned long long)r.gpu_render_end_us);
+        }
     }
+    CountPresentation(real);
+    return true;
 }
 
 Frame* Presenter::GetRenderFrame() {
