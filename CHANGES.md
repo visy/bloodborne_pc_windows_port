@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.6.1 (unreleased)
 
+- **No more pops on loud hits**: when the sound queue ran low but was not empty, silence was put between the queued sound and the next block, a short gap that popped on strong hits and boss effects. Silence now goes in only when the queue has run dry (from Mrsuss60/bloodborne_pc_windows_port 367480b; its smoother limiter was already in).
 - **Blood Echoes for every kill in a party**: while a guest was in the host's world, killing an enemy paid nobody its Blood Echoes (the host got them only once the guest left, the guest never). Now each player gets the enemy's full echoes a few seconds after it dies, the host and every guest. Live: two host kills, the guest +48 echoes each, the host +48. `BB_PARTY_KILL_ECHOES=0` turns it off.
 - **Madman's Knowledge for guests, checked live**: its Insight goes to a guest's own hunter in the host's world and stays in its save (guest game killed and Continued: Insight kept). Test aid: `guest_use=1500` / `host_use=ID`.
 - **Deaths no longer bring enemies back, checked live**: when a guest or the host dies outside a boss fight and gets up at its lamp, dead enemies stay dead and nobody else reloads; only a rest or a party wipe resets the enemies. Live (Central Yharnam): a guest death and a host death, no enemy came back on either game. Test aid: `BB_PARTY_ENEMY_CENSUS=1` logs the loaded map's enemies each second and any that come back alive without a load.
