@@ -573,8 +573,9 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
     if (skippable) {
         if (!compiler) {
             const char* env = std::getenv("BB_ASYNC_PIPELINE_THREADS");
-            const u32 threads = env && *env ? u32(std::strtoul(env, nullptr, 10))
-                                            : std::clamp(std::thread::hardware_concurrency() / 4, 1u, 4u);
+            const u32 concurrency = std::thread::hardware_concurrency();
+            const u32 default_threads = concurrency > 2 ? std::clamp(concurrency / 2, 2u, 8u) : 1u;
+            const u32 threads = env && *env ? u32(std::strtoul(env, nullptr, 10)) : default_threads;
             compiler = std::make_unique<PipelineCompiler>(std::max(threads, 1u));
             std::printf("GPU: new pipelines of passes drawn every frame compile on %u threads "
                         "(BB_ASYNC_PIPELINES=0: on the GPU thread, the game waits)\n",
@@ -687,14 +688,17 @@ bool PipelineCache::AsyncSkippable(const PipelineSelection& selection, bool indi
     if (indirect || selection.regs->num_indices <= FullScreenIndices) {
         return false;
     }
-    // A pass drawn every frame: its render target drawn to in each of the last 8 frames (the
+    // A pass drawn every frame: its render target drawn to in each of the last 2 frames (the
     // scene, the output, shadow maps, half-size and depth-only passes alike). A one-time render
     // (a face baked for a character, a texture made once) goes to a target new or used now and
-    // then: compiled at once, as before.
-    constexpr u32 PerFrameStreak = 8;
+    // then: compiled at once, as before. Lowering from 8 to 2 queues new passes to workers immediately.
+    static const u32 per_frame_streak = [] {
+        const char* env = std::getenv("BB_ASYNC_PIPELINE_STREAK");
+        return env && *env ? u32(std::strtoul(env, nullptr, 10)) : 2u;
+    }();
     const u64 target = DrawTarget(*selection.regs);
     const auto streak = target_streaks.find(target);
-    return target != 0 && streak != target_streaks.end() && streak->second.frames >= PerFrameStreak;
+    return target != 0 && streak != target_streaks.end() && streak->second.frames >= per_frame_streak;
 }
 
 const ComputePipeline* PipelineCache::GetComputePipeline() {
