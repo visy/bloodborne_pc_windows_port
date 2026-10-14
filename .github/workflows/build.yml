@@ -54,10 +54,17 @@ jobs:
           mkdir -p /mingw64/include/magic_enum
           curl -sSL -o /mingw64/include/magic_enum/magic_enum.hpp https://raw.githubusercontent.com/Neargye/magic_enum/master/include/magic_enum/magic_enum.hpp
           
-          # Fix VMA header location (pacman puts it in /mingw64/include/vma/)
+          # Fix VMA header location
           if [ -f /mingw64/include/vma/vk_mem_alloc.h ]; then
             cp -f /mingw64/include/vma/vk_mem_alloc.h /mingw64/include/vk_mem_alloc.h
           fi
+
+          # Install and build miniz
+          curl -sSL -o /mingw64/include/miniz.h https://raw.githubusercontent.com/richgel999/miniz/master/miniz.h
+          curl -sSL -o /tmp/miniz.c https://raw.githubusercontent.com/richgel999/miniz/master/miniz.c
+          gcc -O3 -c /tmp/miniz.c -o /tmp/miniz.o
+          ar rcs /mingw64/lib/libminiz.a /tmp/miniz.o
+          echo "Installed miniz.h and libminiz.a"
 
       - name: Compile Bloodborne PC Port
         shell: msys2 {0}
