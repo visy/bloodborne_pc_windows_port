@@ -361,6 +361,7 @@ struct State {
     std::vector<std::string> test_chain;  // "fixture|fixture|...": the next ones, run one after another
     bool test_done = false;
     int test_step = 0;
+    int opens = 0;  // how often the gate opened (BB_PARTY_GUESTSVC_TEST "gate=N": start at the N-th)
     double test_next = 0;
     double open_at = 0;
     double changed_at = 0; // the last record change (0: none pending)
@@ -2058,6 +2059,7 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
         g.open = open;
         g_gate.store(open, std::memory_order_relaxed);
         if (open) {
+            ++g.opens;
             g.open_at = Now();
             g.rec = RecordOf(s);
             Log("open: guest in the host's %s; level %d, echoes %d, Insight %d", MapName(s.map_id).c_str(), g.rec.level,
@@ -2081,7 +2083,12 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
         const std::uint64_t chr = FindChr(target);
         doll_ready = chr && SafeRead(chr + 0xc0, d, sizeof d) && (d[0] != 0.0f || d[2] != 0.0f);
     }
-    if (g.open && !g.test.empty() && !g.test_done && doll_ready && now - g.open_at >= 5.0 && now >= g.test_next) {
+    int gate_n = 1;
+    if (const std::size_t gn = g.test.find("gate="); gn != std::string::npos) {
+        gate_n = std::atoi(g.test.c_str() + gn + 5);
+    }
+    if (g.open && !g.test.empty() && !g.test_done && doll_ready && g.opens >= gate_n && now - g.open_at >= 5.0 &&
+        now >= g.test_next) {
         if (!RunTestFixture(s, g.test_step)) {
             g.test_done = true;
             Log("test: fixture done");
