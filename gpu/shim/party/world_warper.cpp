@@ -573,6 +573,12 @@ void TickImpl(double now) {
             UpdateStatus("arrived");
         }
         if (now - g.steady_since < 2.5) return;
+        if (g.interrupted) {
+            // Back after a load in the middle of the routine (a death, a fall, an event warp): the
+            // row is done; running it again from the respawn could repeat the same fall.
+            FinishRow(s, now, " (interrupted by a load)");
+            return;
+        }
         StartSteps(RoutineSteps(s), now);
         g.stage = Stage::Routine;
         g.routine_at = now;

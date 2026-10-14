@@ -42,6 +42,7 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | **HDR output** | Optional, off by default: HDR10 (PQ, Rec.2020) on an HDR display, the game's highlights expanded up to your display's peak while mid-tones and menus stay at paper white; peak, paper white, highlights, saturation and a calibration pattern in *System > HDR*. [More](docs/SETTINGS.md#hdr-output) |
 | **No shader stutter** | Known shaders are built before the intro. New ones compile in the background. |
 | **Shareable shader cache** | Export / import one `.zip`, works across GPUs. |
+| **Shader cache builder** | *Advanced > Build shader cache (world warper)*: the game travels through every lamp and area by itself (looks round, walks, fights), on a copy of your save, then exports the cache `.zip`. About an hour; Stop and resume. [More](docs/SETTINGS.md#shader-cache-builder-world-warper) |
 | **Save safety** | Crash-safe saving, save checks at start, automatic backups in party play. |
 | **The Old Hunters** | DLC enabled automatically (its data ships with patch 1.09). |
 | **Mods and patches** | Loose-file mods and shadPS4-format XML patches, with load order. |
