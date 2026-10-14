@@ -2858,7 +2858,7 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
             if (GuestReviveInPlace(s, own, "its own last lamp")) {
                 return;
             }
-            // BB_PARTY_GUEST_DEATH_ALONE=1 (not verified live yet: off): split travel refuses a dead
+            // BB_PARTY_GUEST_DEATH_ALONE (default on since 2026-10-15; =0 off): split travel refuses a dead
             // traveller's alone load, so the guest is first revived where it lies (no warp) and
             // then travels alone to its own lamp like a living player (one load, this guest only).
             if (GuestDeathAloneToOwnLamp(s, own)) {
@@ -3437,7 +3437,8 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
 }
 
 bool GuestDeathAloneToOwnLamp(const GameSnapshot& s, u32 own) {
-    static const bool on = std::getenv("BB_PARTY_GUEST_DEATH_ALONE") && std::getenv("BB_PARTY_GUEST_DEATH_ALONE")[0] == '1';
+    // On by default since 2026-10-15 (live: Cathedral Ward re-join, Hemwick alone load); "0" off.
+    static const bool on = !(std::getenv("BB_PARTY_GUEST_DEATH_ALONE") && std::getenv("BB_PARTY_GUEST_DEATH_ALONE")[0] == '0');
     TravelIntent lt;
     if (!on || own == 0 || own == kTravelNone || !LampIntent(own, &lt)) {
         return false;
