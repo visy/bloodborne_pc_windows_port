@@ -3,6 +3,13 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## 0.6.2 (Windows port 0.6.2, party co-op)
+
+- **Fixed: "Unable to acquire Oedon Tomb Key due to inventory or storage max"** (0.6.1 regression run): a guest standing in the host's world cannot see its own key items and unique rewards (they read as missing there), so the party code handed them out again and the game refused the second copy with its blocking box. Key items and unique goods are no longer given while a guest is in someone else's world; they wait for its own world, where the real inventory is checked first. A key item a player already holds is never given again by any party path (boss rewards, shared keys, NPC gifts, the key-item catch-up at home, test aids). Checked live: a guest join with its keys held - deferred, no box.
+- **Performance HUD out of the way**: it hides under the game's full-screen menus (inventory, equipment, level up...), as the party panel does, also in single player, and in the bottom-right corner it moves up for a few seconds after you arrive somewhere so the game's area name ("Iosefka's Clinic") stays readable. Checked live (screenshots).
+- **The Snatcher kidnap's +1 Insight reaches the guests**: the host's waking scene in the Hypogean Gaol gives the host 1 Insight; a guest present now gets it too (unit-tested, not yet seen live).
+- More room in the game's System menu for the port's pages (the cap of 16 was reached; now 32).
+
 ## 0.6.1 (Windows port 0.6.1, party co-op)
 
 - **A party link drop at the title no longer sends the guest home later**: a guest whose link to the host dropped while it was still at its title kept a "go home" request that fired the moment its next title join reached the host's world (0.6.1 regression run); only a guest in the host's room goes home now.
