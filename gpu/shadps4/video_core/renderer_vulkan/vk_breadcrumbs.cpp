@@ -3,8 +3,13 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
+#include <ctime>
+#include <thread>
+#include <vector>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -54,8 +59,29 @@ struct ArgsNote {
     u64 hash;
 };
 std::array<ArgsNote, ArgSlots> args_notes{};
+const Instance* the_instance = nullptr;
+/// While a report is written: its copy in out/ (support bundles take it with the hang shaders).
+FILE* report_file = nullptr;
+
+/// printf to stdout (the launcher log) and to the report file.
+void Out(const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    std::vprintf(fmt, ap);
+    va_end(ap);
+    if (report_file) {
+        va_start(ap, fmt);
+        std::vfprintf(report_file, fmt, ap);
+        va_end(ap);
+    }
+}
+
+const char* OutDir() {
+    return access("out", W_OK) == 0 ? "out/" : "";
+}
 
 void Init(const Instance& instance) {
+    the_instance = &instance;
     const char* env = std::getenv("BB_BREADCRUMBS");
     if (env && env[0] == '0') {
         return;
@@ -127,56 +153,56 @@ const char* KindName(Kind kind) {
 void PrintEntry(const Stream& stream, u64 id, const char* label) {
     const Entry& entry = stream.ring[id & (RingSize - 1)];
     if (entry.id != id) {
-        std::printf("    #%llu %s: no longer kept\n", (unsigned long long)id, label);
+        Out("    #%llu %s: no longer kept\n", (unsigned long long)id, label);
         return;
     }
     const Crumb& c = entry.crumb;
-    std::printf("    #%llu %s: %s", (unsigned long long)id, label, KindName(c.kind));
+    Out("    #%llu %s: %s", (unsigned long long)id, label, KindName(c.kind));
     switch (c.kind) {
     case Kind::Pass:
-        std::printf(" %s", c.name ? c.name : "?");
+        Out(" %s", c.name ? c.name : "?");
         break;
     case Kind::Draw:
     case Kind::DrawIndexed:
-        std::printf(" vs %016llx ps %016llx, %u %s x %u instances", (unsigned long long)c.hash[0],
+        Out(" vs %016llx ps %016llx, %u %s x %u instances", (unsigned long long)c.hash[0],
                     (unsigned long long)c.hash[1], c.count[0],
                     c.kind == Kind::Draw ? "vertices" : "indices", c.count[1]);
         break;
     case Kind::DrawIndirect: {
-        std::printf(" vs %016llx ps %016llx, up to %u draws, stride %u, arguments at %#llx",
+        Out(" vs %016llx ps %016llx, up to %u draws, stride %u, arguments at %#llx",
                     (unsigned long long)c.hash[0], (unsigned long long)c.hash[1], c.count[0],
                     c.count[1], (unsigned long long)c.address);
         u32 now[5]{};
         if (ReadGuest(c.address, now, sizeof(now)) == sizeof(now)) {
-            std::printf(" (guest memory now %u %u %u %u %u)", now[0], now[1], now[2], now[3], now[4]);
+            Out(" (guest memory now %u %u %u %u %u)", now[0], now[1], now[2], now[3], now[4]);
         }
         break;
     }
     case Kind::Dispatch:
-        std::printf(" cs %016llx, %ux%ux%u groups", (unsigned long long)c.hash[0], c.count[0],
+        Out(" cs %016llx, %ux%ux%u groups", (unsigned long long)c.hash[0], c.count[0],
                     c.count[1], c.count[2]);
         break;
     case Kind::DispatchIndirect: {
-        std::printf(" cs %016llx, arguments at %#llx", (unsigned long long)c.hash[0],
+        Out(" cs %016llx, arguments at %#llx", (unsigned long long)c.hash[0],
                     (unsigned long long)c.address);
         if (c.args_slot < ArgSlots) {
             const volatile u32* read = args + c.args_slot * 4;
-            std::printf(" (the GPU read %ux%ux%u groups)", read[0], read[1], read[2]);
+            Out(" (the GPU read %ux%ux%u groups)", read[0], read[1], read[2]);
         }
-        std::printf(c.count[0] ? ", in place" : ", a copy");
+        Out(c.count[0] ? ", in place" : ", a copy");
         u32 now[3]{};
         if (ReadGuest(c.address, now, sizeof(now)) == sizeof(now)) {
-            std::printf(" (guest memory now %ux%ux%u)", now[0], now[1], now[2]);
+            Out(" (guest memory now %ux%ux%u)", now[0], now[1], now[2]);
         }
         break;
     }
     }
     for (u32 i = 0; i < 2; ++i) {
         if (c.program[i]) {
-            std::printf(", code %#llx", (unsigned long long)c.program[i]);
+            Out(", code %#llx", (unsigned long long)c.program[i]);
         }
     }
-    std::printf("\n");
+    Out("\n");
 }
 
 /// The guest code of the shaders of the stuck command, for disassembly (up to 64 KiB each:
@@ -186,7 +212,7 @@ void DumpPrograms(const Stream& stream, u64 id) {
     if (entry.id != id) {
         return;
     }
-    const char* dir = access("out", W_OK) == 0 ? "out/" : "";
+    const char* dir = OutDir();
     for (u32 i = 0; i < 2; ++i) {
         const u64 program = entry.crumb.program[i];
         if (!program) {
@@ -209,7 +235,7 @@ void DumpPrograms(const Stream& stream, u64 id) {
         if (FILE* file = std::fopen(path, "wb")) {
             std::fwrite(code.data(), 1, size, file);
             std::fclose(file);
-            std::printf("    shader %016llx code (%zu bytes from %#llx) saved to %s\n",
+            Out("    shader %016llx code (%zu bytes from %#llx) saved to %s\n",
                         (unsigned long long)entry.crumb.hash[i], size,
                         (unsigned long long)program, path);
         }
@@ -270,38 +296,171 @@ void CopyArgs(vk::CommandBuffer cmdbuf, vk::Buffer source, u64 offset, u32 slot)
 
 namespace {
 void Report(const char* title, const char* where);
+
+/// Opens out/<prefix>_<time>.log for the report's copy.
+void OpenReportFile(const char* prefix) {
+    const std::time_t now = std::time(nullptr);
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &now);
+#else
+    localtime_r(&now, &tm);
+#endif
+    char path[256];
+    std::snprintf(path, sizeof(path), "%s%s_%04d%02d%02d_%02d%02d%02d.log", OutDir(), prefix,
+                  tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+    report_file = std::fopen(path, "w");
+    if (report_file) {
+        std::printf("GPU report saved to %s\n", path);
+    }
 }
+
+void CloseReportFile() {
+    if (report_file) {
+        std::fclose(report_file);
+        report_file = nullptr;
+    }
+    std::fflush(stdout);
+}
+
+const char* FaultAddressTypeName(VkDeviceFaultAddressTypeEXT type) {
+    switch (type) {
+    case VK_DEVICE_FAULT_ADDRESS_TYPE_NONE_EXT:
+        return "none";
+    case VK_DEVICE_FAULT_ADDRESS_TYPE_READ_INVALID_EXT:
+        return "invalid read";
+    case VK_DEVICE_FAULT_ADDRESS_TYPE_WRITE_INVALID_EXT:
+        return "invalid write";
+    case VK_DEVICE_FAULT_ADDRESS_TYPE_EXECUTE_INVALID_EXT:
+        return "invalid execute";
+    case VK_DEVICE_FAULT_ADDRESS_TYPE_INSTRUCTION_POINTER_UNKNOWN_EXT:
+        return "instruction pointer (unknown)";
+    case VK_DEVICE_FAULT_ADDRESS_TYPE_INSTRUCTION_POINTER_INVALID_EXT:
+        return "instruction pointer (invalid)";
+    case VK_DEVICE_FAULT_ADDRESS_TYPE_INSTRUCTION_POINTER_FAULT_EXT:
+        return "instruction pointer (fault)";
+    default:
+        return "?";
+    }
+}
+
+/// VK_EXT_device_fault: what the driver says the GPU faulted on (a page fault names the address:
+/// an out-of-bounds or freed buffer; none and a timeout: a shader or a command that ran too long).
+void ReportFault() {
+    if (!the_instance || !the_instance->IsDeviceFaultSupported() ||
+        !VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceFaultInfoEXT) {
+        Out("GPU fault info: VK_EXT_device_fault unavailable\n");
+        return;
+    }
+    const VkDevice device = the_instance->GetDevice();
+    VkDeviceFaultCountsEXT counts{.sType = VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT};
+    VkResult r = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceFaultInfoEXT(device, &counts, nullptr);
+    if (r != VK_SUCCESS && r != VK_INCOMPLETE) {
+        Out("GPU fault info: unavailable (%d)\n", int(r));
+        return;
+    }
+    std::vector<VkDeviceFaultAddressInfoEXT> addresses(counts.addressInfoCount);
+    std::vector<VkDeviceFaultVendorInfoEXT> vendor(counts.vendorInfoCount);
+    VkDeviceFaultInfoEXT info{.sType = VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT};
+    info.pAddressInfos = addresses.empty() ? nullptr : addresses.data();
+    info.pVendorInfos = vendor.empty() ? nullptr : vendor.data();
+    counts.vendorBinarySize = 0; // no vendor crash dump
+    r = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceFaultInfoEXT(device, &counts, &info);
+    if (r != VK_SUCCESS && r != VK_INCOMPLETE) {
+        Out("GPU fault info: unavailable (%d)\n", int(r));
+        return;
+    }
+    Out("GPU fault info: \"%s\", %u address(es), %u vendor record(s)\n", info.description,
+        counts.addressInfoCount, counts.vendorInfoCount);
+    for (u32 i = 0; i < counts.addressInfoCount; ++i) {
+        const auto& a = addresses[i];
+        const u64 mask = a.addressPrecision ? ~(u64(a.addressPrecision) - 1) : ~0ull;
+        Out("    %s at %#llx (within %#llx..%#llx)\n", FaultAddressTypeName(a.addressType),
+            (unsigned long long)a.reportedAddress, (unsigned long long)(a.reportedAddress & mask),
+            (unsigned long long)((a.reportedAddress & mask) + (a.addressPrecision ? a.addressPrecision - 1 : 0)));
+    }
+    for (u32 i = 0; i < counts.vendorInfoCount; ++i) {
+        Out("    vendor: \"%s\" code %#llx data %#llx\n", vendor[i].description,
+            (unsigned long long)vendor[i].vendorFaultCode,
+            (unsigned long long)vendor[i].vendorFaultData);
+    }
+}
+
+/// Video memory in use against the budget (an overcommitted heap pages on every submit, and a
+/// long enough page-in is a TDR).
+void ReportMemory() {
+    if (!the_instance || !the_instance->GetAllocator()) {
+        return;
+    }
+    std::array<VmaBudget, VK_MAX_MEMORY_HEAPS> budgets{};
+    vmaGetHeapBudgets(the_instance->GetAllocator(), budgets.data());
+    const VkPhysicalDeviceMemoryProperties* props = nullptr;
+    vmaGetMemoryProperties(the_instance->GetAllocator(), &props);
+    if (!props) {
+        return;
+    }
+    Out("GPU memory at the report:");
+    for (u32 h = 0; h < props->memoryHeapCount; ++h) {
+        Out(" heap %u%s %llu of %llu MiB budget (%llu MiB allocated by us);", h,
+            (props->memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) ? " (VRAM)" : "",
+            (unsigned long long)(budgets[h].usage >> 20),
+            (unsigned long long)(budgets[h].budget >> 20),
+            (unsigned long long)(budgets[h].statistics.allocationBytes >> 20));
+    }
+    Out("\n");
+}
+} // Anonymous namespace
 
 void ReportDeviceLost(const char* where) {
     static std::atomic_flag reported = ATOMIC_FLAG_INIT;
-    if (enabled && !reported.test_and_set()) {
-        Report("at device lost", where);
+    static std::atomic<bool> written{false};
+    if (reported.test_and_set()) {
+        // Another thread writes the report: the caller asserts next, which would end the process
+        // with the report half written. Wait for it (bounded).
+        for (int i = 0; i < 500 && !written.load(); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return;
     }
+    OpenReportFile("device_lost");
+    Out("GPU device lost (%s)\n", where);
+    ReportFault();
+    ReportMemory();
+    if (enabled) {
+        Report("at device lost", where);
+    } else {
+        Out("GPU breadcrumbs: off, the stuck command is unknown\n");
+    }
+    CloseReportFile();
+    written = true;
 }
 
 void ReportStuck(const char* where) {
     static std::atomic_flag reported = ATOMIC_FLAG_INIT;
     if (enabled && !reported.test_and_set()) {
+        OpenReportFile("gpu_stuck");
+        ReportMemory();
         Report("while the GPU makes no progress", where);
+        CloseReportFile();
     }
 }
 
 namespace {
 void Report(const char* title, const char* where) {
-    std::printf("GPU breadcrumbs %s (%s): what each command stream finished\n", title, where);
+    Out("GPU breadcrumbs %s (%s): what each command stream finished\n", title, where);
     const u32 count = std::min(num_streams.load(), MaxStreams);
     for (u32 s = 0; s < count; ++s) {
         const Stream& stream = streams[s];
         const u64 last = stream.next.load() - 1;
         const u32 marker = markers[s * StreamStride / sizeof(u32)];
-        std::printf("  stream %u (%s): %llu commands noted", s, stream.name,
+        Out("  stream %u (%s): %llu commands noted", s, stream.name,
                     (unsigned long long)last);
         if (last == 0) {
-            std::printf("\n");
+            Out("\n");
             continue;
         }
         if (marker == 0) {
-            std::printf(", the GPU finished none\n");
+            Out(", the GPU finished none\n");
             continue;
         }
         // The marker holds the low 32 bits of 2 * id + after.
@@ -310,16 +469,16 @@ void Report(const char* title, const char* where) {
         const u64 id = value / 2;
         if (value & 1) {
             if (id == last) {
-                std::printf(", the GPU finished all\n");
+                Out(", the GPU finished all\n");
                 continue;
             }
-            std::printf(", the GPU finished #%llu but did not start #%llu: stuck in the work "
+            Out(", the GPU finished #%llu but did not start #%llu: stuck in the work "
                         "recorded between them (copies, clears, barriers) or before it\n",
                         (unsigned long long)id, (unsigned long long)(id + 1));
             PrintEntry(stream, id, "finished");
             PrintEntry(stream, id + 1, "next");
         } else {
-            std::printf(", the GPU started #%llu and did not finish it (%llu noted after it)\n",
+            Out(", the GPU started #%llu and did not finish it (%llu noted after it)\n",
                         (unsigned long long)id, (unsigned long long)(last - id));
             if (id > 1) {
                 PrintEntry(stream, id - 1, "finished");

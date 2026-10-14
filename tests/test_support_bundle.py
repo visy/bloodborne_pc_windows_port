@@ -122,6 +122,26 @@ class Bundle(unittest.TestCase):
                 st = json.loads(z.read("launcher_settings.json").decode("utf-8"))
                 self.assertEqual(st["party_password"], "<redacted>")
 
+    def test_gpu_device_lost_report(self):
+        # A device lost leaves out\device_lost_*.log and the stuck shaders' code (vk_breadcrumbs.cpp):
+        # both go into the bundle, the code byte for byte.
+        with tempfile.TemporaryDirectory() as d:
+            app = Path(d)
+            (app / "out").mkdir()
+            (app / "out" / "device_lost_20261014_120000.log").write_text(
+                "GPU device lost (submit)\n    #12 STUCK: dispatch cs 00000000deadbeef\n", encoding="utf-8")
+            code = bytes(range(256)) * 300  # 75 KiB: kept to 64 KiB
+            (app / "out" / "hang_shader_00000000deadbeef.bin").write_bytes(code)
+            (app / "out" / "shader_cache.bin").write_bytes(b"x")
+            out = app / "support.zip"
+            sb.make_bundle(app, out)
+            with zipfile.ZipFile(out) as z:
+                listed = set(z.namelist())
+                self.assertIn("out/device_lost_20261014_120000.log", listed)
+                self.assertEqual(z.read("out/hang_shader_00000000deadbeef.bin"), code[:64 * 1024])
+                self.assertNotIn("out/shader_cache.bin", listed)
+                self.assertIn("STUCK", z.read("out/device_lost_20261014_120000.log").decode("utf-8"))
+
 
 def load_launcher():
     spec = importlib.util.spec_from_file_location("bb_launcher_log", ROOT / "launcher.py")
