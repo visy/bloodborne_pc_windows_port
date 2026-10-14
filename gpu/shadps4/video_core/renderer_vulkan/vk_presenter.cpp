@@ -1264,6 +1264,19 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
             }
             last_ready_ns = now;
             last_ready_serial = resources.serial;
+            // bbport: never hold a present more than 100 ms (a bad clock mapping or a stall
+            // would otherwise freeze the picture): such a frame is shown at once, the schedule
+            // starts again.
+            if (generation_schedule.deadline(count + 1, count + 1) - now > 100'000'000) {
+                static int logged = 0;
+                if (logged++ < 4) {
+                    std::printf("FG pacing: slot %.1f ms ahead, presenting at once (schedule reset)\n",
+                                (generation_schedule.deadline(count + 1, count + 1) - now) / 1e6);
+                }
+                generation_schedule = FgSchedule{true, true};
+                generation_history.clear();
+                count = 0;
+            }
             unsigned position = 1;
             while (position <= count) {
                 const auto fresh = generation_schedule.next_position(position, count + 1, FgNow());
@@ -1285,7 +1298,7 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
                 }
                 ++position;
             }
-            real_deadline = generation_schedule.deadline(count + 1, count + 1);
+            real_deadline = count ? generation_schedule.deadline(count + 1, count + 1) : 0;
             const auto delay = real_deadline - FgNow();
             if (!pace_after_copy && delay > 0) {
                 std::this_thread::sleep_for(std::chrono::nanoseconds(delay));

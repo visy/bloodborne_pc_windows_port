@@ -50,7 +50,11 @@ public:
             const auto offset = host_ready - static_cast<std::int64_t>(ready);
             if (!clock_valid_ || offset < offset_) offset_ = offset;
             clock_valid_ = true;
-            const auto evaluation = static_cast<std::int64_t>(ready - source);
+            // bbport: a stall (first dispatch, pipeline creation, a loading screen's last
+            // frame) is not an evaluation budget: held for hundreds of frames it would delay every
+            // later present by as much. Bounded to two source periods.
+            const auto evaluation = std::min(static_cast<std::int64_t>(ready - source),
+                                             2 * this->period());
             // A slowly decaying evaluation budget absorbs ordinary NGX/FSR cost
             // variation. It does not make a fast/slow pair alternate its phase.
             evaluation_ = smooth_ && continuous ?
