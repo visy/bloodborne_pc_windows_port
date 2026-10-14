@@ -93,6 +93,13 @@ struct ComposeIn {
 /// Whether a member is in this player's world: summoned guests share the host's world; a guest
 /// at home (or loading, at the title, in its prologue) shares nobody's.
 bool SameWorld(int local_slot, MemberState local_state, int other_slot, MemberState other_state);
+
+/// Playtest 1 ("stale remote chr?" 32 times): a remote chr that no member's report is near
+/// (`far`, > 8 m) is reported as stale only when it is built (`max_hp` > 0: a chr the game is
+/// still creating sits at (0, 0, 0) with HP 0/0) and has stayed far for kStaleChrHoldS: a warp or
+/// a re-creation moves the chr and the report within a second or two (every playtest line was one).
+constexpr double kStaleChrHoldS = 5.0;
+bool StaleChrDue(bool far, int max_hp, double far_for_s);
 /// The companions (by slot, this player left out) from the roster, the VITALS and the local reads.
 void Compose(const ComposeIn& in, Board* out);
 

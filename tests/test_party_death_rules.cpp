@@ -115,6 +115,22 @@ int main() {
     CHECK(PlanAskClose(true, false, false, 30.5) == AskClose::Timeout);
     CHECK(PlanAskClose(true, false, false, 29) == AskClose::Keep);
 
+    // Whose lamp warp (bug 20): the lamp flags of events 7200 / 12107000 (EMEVD data).
+    for (std::uint32_t f : {72110100u, 72200100u, 72410101u, 72410103u, 73600102u, 72102110u, 72102411u, 72103602u}) {
+        CHECK(LampTriggerFlag(f));
+    }
+    for (std::uint32_t f : {72410201u, 72410000u, 12410202u, 72100200u, 9401u, 1001u, 72411101u, 82410101u}) {
+        CHECK(!LampTriggerFlag(f));
+    }
+    CHECK(PlanLampOrigin(-1, -1) == LampOrigin::Other);     // no own flag: another game's warp event
+    CHECK(PlanLampOrigin(-1, -1, false) == LampOrigin::Own); // no flag hook: ask as before
+    CHECK(PlanLampOrigin(12, -1) == LampOrigin::Other);     // a stale own flag
+    CHECK(PlanLampOrigin(3.5, -1) == LampOrigin::Own);      // this player's lamp
+    CHECK(PlanLampOrigin(-1, 3.2) == LampOrigin::Other);    // the other player's lamp
+    CHECK(PlanLampOrigin(3.5, 12) == LampOrigin::Own);      // a stale peer flag
+    CHECK(PlanLampOrigin(3.5, 8) == LampOrigin::Own);       // own use after the peer's
+    CHECK(PlanLampOrigin(8, 3.4) == LampOrigin::Other);     // the peer's after an old own one
+
     // A guest's lamp (bug 10, bug 3).
     CHECK(PlanGuestLamp(false, false, true, false) == GuestLamp::Plain);
     CHECK(PlanGuestLamp(true, true, true, false) == GuestLamp::Plain);    // standing at it

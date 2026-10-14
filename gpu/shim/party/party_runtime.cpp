@@ -19,9 +19,11 @@
 #include "party_phantom.h"
 #include "party_fourp.h"
 #include "party_progress.h"
+#include "party_split.h"
 #include "party_desync.h"
 #include "party_travel.h"
 #include "party_worldact.h"
+#include "party_npctalk.h"
 #include "party_droproll.h"
 #include "party_log_game.h"
 #include "coop_hooks.h"
@@ -29,6 +31,7 @@
 #include "upnp_win.h"
 #include "party_rudp.h"
 #include "party_lan.h"
+#include "party_traversal.h"
 
 #include "../net/bbnet_internal.h"
 #include "../net/np_hle.h"
@@ -826,6 +829,15 @@ void on_state(LinkState s, const std::string& detail) {
     }
 }
 
+// Split travel (playtest 1 bug 20): a member asks "Travel with the party?" (EVENT split_choosing).
+void on_split_choosing(int slot, const std::string& body) {
+    std::string who;
+    if (PartyLink* link = R().link)
+        for (const RosterEntry& e : link->roster())
+            if (e.slot == slot) who = e.name;
+    coop::split::OnChoosingEvent(slot, who, body);
+}
+
 void on_roster(const std::vector<RosterEntry>& roster) {
     Runtime& r = R();
     const std::string sig = roster_text(roster, false);
@@ -936,6 +948,10 @@ LinkCallbacks make_callbacks(bool host) {
             bbnet::party::PartyHostService::instance().context_gone(m.name);
         };
         cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
+            if (name == coop::split::kChoosingEventName) {  // a guest asks "Travel with the party?"
+                on_split_choosing(slot, body);
+                return;
+            }
             if (name == coop::b2::kEventName && body.find("\"dsum_") != std::string::npos) {
                 if (PartyLink* link = R().link)
                     for (const RosterEntry& e : link->roster())
@@ -978,6 +994,10 @@ LinkCallbacks make_callbacks(bool host) {
                 if (!coop::OnHostGiftUp(slot, body, &err)) plog("gift_up from slot %d refused: %s", slot, err.c_str());
                 return;
             }
+            if (name == coop::npctalk::kEventName) {  // a guest's NPC conversation (D8, party_npctalk.h)
+                coop::npctalk::OnEvent(slot, body);
+                return;
+            }
             if (name == coop::worldact::kEventName) {  // a guest's lever / door / NPC talk (D3, D8)
                 std::string err;
                 if (!coop::worldact::OnHostEvent(slot, body, &err)) plog("world_action from slot %d refused: %s", slot, err.c_str());
@@ -1016,6 +1036,10 @@ LinkCallbacks make_callbacks(bool host) {
         };
     } else {
         cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
+            if (name == coop::split::kChoosingEventName) {  // the host asks "Travel with the party?"
+                on_split_choosing(slot, body);
+                return;
+            }
             if (name == coop::kTravelEventName) {  // B1: follow the host's warp
                 coop::TravelIntent t;
                 std::string err;
@@ -1076,6 +1100,10 @@ LinkCallbacks make_callbacks(bool host) {
             if (name == coop::droproll::kEventName) {  // D4b: the host's shared enemy drop roll seed
                 std::string err;
                 if (!coop::droproll::OnEvent(body, &err)) plog("drop_seed event refused: %s", err.c_str());
+                return;
+            }
+            if (name == coop::npctalk::kEventName) {  // a member's NPC conversation (D8, party_npctalk.h)
+                coop::npctalk::OnEvent(slot, body);
                 return;
             }
             if (name == coop::kPhantomEventName) {  // host lamp / rested / boss Insight
@@ -1400,6 +1428,7 @@ void start_host(LinkConfig cfg) {
     bbnet::party::transport();  // LocalHost over the service
 
     std::string upnp_ip, upnp_msg;
+    bool upnp_ok = false;
     if (lb) {
         upnp_msg = "off (loopback test)";
     } else if (!UpnpMapper::enabled_by_env()) {
@@ -1409,6 +1438,7 @@ void start_host(LinkConfig cfg) {
         m->start(port);
         const UpnpResult u = m->wait(3000);
         upnp_ip = u.external_ip;
+        upnp_ok = u.ok;
         upnp_msg = u.done ? u.message : "still trying: " + u.message;
         std::lock_guard<std::mutex> lk(r.mu);
         r.upnp = std::move(m);
@@ -1419,9 +1449,15 @@ void start_host(LinkConfig cfg) {
     std::array<std::uint8_t, 4> pub{};
     std::uint16_t pub_port = port;
     std::string source;
+    // F2: the NAT type (a second STUN server) for the advice line and the traversal chain.
+    nat::Type host_nat = nat::Type::Unknown;
+    const auto stun_fn = [](const std::string& h, std::uint16_t p, std::uint32_t* a, std::uint16_t* mp) {
+        return bbnet::p2p_stun(h.c_str(), p, 2000, a, mp);
+    };
     if (lb) {
         pub = {127, 0, 0, 1};
         source = "loopback";
+        host_nat = traversal::detect(stun_fn, {}, 0, port, true);
     } else if (const char* ov = env("BB_PARTY_PUBLIC_ADDR"); ov && resolve_ipv4(ov, port, &pub, &pub_port)) {
         source = "override";
     } else {
@@ -1446,6 +1482,7 @@ void start_host(LinkConfig cfg) {
                 pub_port = mp;
                 source = "stun " + server;
                 if (mp != port) plog("note: the NAT maps UDP %u to %u: guests may need the host relay", port, mp);
+                host_nat = traversal::detect(stun_fn, {true, ma, mp}, bbnet::local_ipv4(), port, false);
             } else {
                 plog("STUN %s: no answer", server.c_str());
             }
@@ -1485,6 +1522,28 @@ void start_host(LinkConfig cfg) {
         bbnet::session::set_mapped_override(ep_addr, pub_port);
     }
 
+    {
+        // F2 traversal chain: TCP to an open port -> UDP straight in (full cone) -> hole punch
+        // (the guest's endpoint from the DHT rendezvous or a guest code) -> relay / VPN advice.
+        const bool port_open = upnp_ok || source == "override" || host_nat == nat::Type::Open;
+        const bool rdv_on = !port_open && !internet.empty() && traversal::rendezvous_enabled(lb);
+        const std::string adv = nat::advice(host_nat, true, port_open, rdv_on, port);
+        plog("NAT: %s (%s); %s", nat::type_name(host_nat), port_open ? "port open" : "no open port", adv.c_str());
+        {
+            std::lock_guard<std::mutex> lk(r.mu);
+            r.st.network = adv;
+        }
+        bridge::OnNetwork(adv);
+        if (rdv_on) {
+            const crypto::Key key = crypto::derive_party_key(cfg.password, cfg.secret.data());
+            traversal::start_host(
+                key.data(), lb,
+                [](std::uint32_t a, std::uint16_t p) {
+                    if (PartyLink* l = runtime_link()) l->punch_guest(a, p);
+                },
+                [](const std::string& m) { plog("%s", m.c_str()); });
+        }
+    }
     std::string text = "internet=" + internet + "\nlan=" + lan + "\n";
     write_text_file(fs::path(user_dir()) / "party_code.txt", text);
     if (const char* cf = env("BB_PARTY_CODE_FILE")) write_text_file(cf, text);
@@ -1505,18 +1564,26 @@ void attach_udp_path(PartyLink* link) {
 
 // Guest: its own public UDP endpoint as a guest code (BBG1-...), for a host behind a NAT without a
 // port forward: the host enters it (or BB_PARTY_GUEST_CODES) and punches towards it.
-void publish_guest_code() {
+// Returns the mapped port (host order; 0: none) and the NAT type in *type.
+std::uint16_t publish_guest_code(nat::Type* type) {
     std::uint32_t ma = 0;
     std::uint16_t mp = 0;
     std::string source;
+    *type = nat::Type::Unknown;
+    const auto stun_fn = [](const std::string& h, std::uint16_t p, std::uint32_t* a, std::uint16_t* m) {
+        return bbnet::p2p_stun(h.c_str(), p, 2000, a, m);
+    };
     if (loopback_mode()) {
         ma = 0x0100007fu;  // 127.0.0.1, network order
-        mp = static_cast<std::uint16_t>((bbnet::settings().party_port >> 8) | (bbnet::settings().party_port << 8));
+        // A simulated symmetric NAT (BB_NET_SIM nat=sym) reports another port, as STUN would.
+        const std::uint16_t sp = traversal::simulated_mapped_port(bbnet::settings().party_port);
+        mp = static_cast<std::uint16_t>((sp >> 8) | (sp << 8));
         source = "loopback";
+        *type = traversal::detect(stun_fn, {}, 0, bbnet::settings().party_port, true);
     } else {
         const char* stun_env = env("BB_PARTY_STUN");
         const std::string server = stun_env ? stun_env : "stun.l.google.com:19302";
-        if (server == "off" || server == "0") return;
+        if (server == "off" || server == "0") return 0;
         std::string host_part = server;
         std::uint16_t sport = 19302;
         if (const auto c = server.rfind(':'); c != std::string::npos) {
@@ -1528,9 +1595,11 @@ void publish_guest_code() {
         if (!ok) {
             plog("guest code: STUN %s did not answer (no guest code; a host behind a NAT then needs a port forward)",
                  server.c_str());
-            return;
+            return 0;
         }
         source = "stun " + server;
+        *type = traversal::detect(stun_fn, {true, ma, static_cast<std::uint16_t>((mp >> 8) | (mp << 8))},
+                                  bbnet::local_ipv4(), bbnet::settings().party_port, false);
     }
     const std::string code = rudp::encode_guest_code(ma, mp);
     {
@@ -1543,6 +1612,56 @@ void publish_guest_code() {
     const auto* ip = reinterpret_cast<const std::uint8_t*>(&ma);
     plog("guest code %s (UDP %u.%u.%u.%u:%u, %s): give it to the host if it cannot open a port", code.c_str(), ip[0], ip[1],
          ip[2], ip[3], static_cast<unsigned>(static_cast<std::uint16_t>((mp >> 8) | (mp << 8))), source.c_str());
+    return static_cast<std::uint16_t>((mp >> 8) | (mp << 8));
+}
+
+// Guest (F2): the NAT advice, the DHT announce while the link is not up (a host without an open
+// port then finds and punches us: no guest code to pass on), and the path the link took.
+void guest_traversal(const LinkConfig& cfg, const PartyCode& code, bool lan_code) {
+    const bool lb = loopback_mode();
+    nat::Type t = nat::Type::Unknown;
+    const std::uint16_t mport = publish_guest_code(&t);
+    const bool rdv_on = mport != 0 && !code.plain && !lan_code && traversal::rendezvous_enabled(lb);
+    const std::string adv = nat::advice(t, false, false, rdv_on, bbnet::settings().party_port);
+    plog("NAT: %s; %s", nat::type_name(t), adv.c_str());
+    {
+        std::lock_guard<std::mutex> lk(R().mu);
+        R().st.network = adv;
+    }
+    bridge::OnNetwork(adv);
+    if (rdv_on) {
+        const crypto::Key key = crypto::derive_party_key(cfg.password, code.secret.data());
+        auto since = std::make_shared<Clock::time_point>(Clock::now());
+        traversal::start_guest(
+            key.data(), lb, mport,
+            [since] {
+                PartyLink* l = runtime_link();
+                if (stopping() || !l) return false;
+                if (l->state() == LinkState::Connected) {
+                    *since = Clock::now();
+                    return false;
+                }
+                return Clock::now() - *since > std::chrono::seconds(3);  // TCP had its chance
+            },
+            [](const std::string& m) { plog("%s", m.c_str()); });
+    }
+    // The path, once per connection (logged and on the Party page).
+    std::thread([adv] {
+        bool was = false;
+        while (!stopping()) {
+            PartyLink* l = runtime_link();
+            const bool up = l && l->state() == LinkState::Connected;
+            if (up && !was) {
+                const bool udp = l->connected_over_udp();
+                const std::string path =
+                    udp ? "UDP (the host's NAT let us in or punched towards us)" : "TCP (the host's port is open)";
+                plog("network path: party link over %s", path.c_str());
+                bridge::OnNetwork("Connected over " + path + ". " + adv);
+            }
+            was = up;
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
+    }).detach();
 }
 
 // Host: guest codes from BB_PARTY_GUEST_CODES (comma list), BB_PARTY_GUEST_CODE_FILE (polled) and
@@ -2069,7 +2188,7 @@ void start_guest(LinkConfig cfg) {
         return;
     }
     coop::PartyDirector::Get().SetLink(link);
-    publish_guest_code();
+    guest_traversal(cfg, code, (code.flags & kCodeFlagLan) != 0);
 }
 
 void startup_main() {
@@ -2189,6 +2308,7 @@ void do_shutdown() {
         coop::PartyDirector::Get().SetLink(nullptr);
         link->stop(true);  // BYE; the object stays (never deleted)
     }
+    traversal::stop();
     if (upnp) upnp->stop(2000);
 }
 

@@ -26,6 +26,10 @@ void RecentTexts(std::int64_t since_ms, void (*fn)(const char16_t* text, std::in
 /// The steady-clock ms of the last lookup of message `id` (any category), 0 when never; shown
 /// texts are looked up every frame, so "within the last ~300 ms" = on screen (test aids).
 std::int64_t LastLookupMs(std::uint32_t id);
+/// The game's own message `id` of FMG `category` (1 talk lines, 10 goods names, 11 weapon names,
+/// 12 armor names) in the game's language, through its message lookup (with the repository and
+/// table of its last own lookup); null before the game looked anything up or when there is none.
+const char16_t* GameText(std::uint32_t category, std::uint32_t id);
 /// Message ids looked up within the last `within_ms` (up to `max` of them into `out`); the count.
 int RecentLookups(std::int64_t within_ms, std::uint32_t* out, int max);
 

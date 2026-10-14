@@ -201,6 +201,12 @@ Instead of a code, a guest can also enter the host's address directly as `host:p
   towards that guest, and the party link switches to UDP when TCP gets no answer. Works with most
   home routers; not with symmetric NAT (see next point). Details:
   [party/network_robustness.md](party/network_robustness.md) §4.
+  Since 0.6.1 this usually happens **by itself**: a guest that cannot reach the host leaves its
+  address in the public BitTorrent DHT under a hash only the party can compute, and the host finds
+  it there and opens the way (no guest code to pass on). `BB_PARTY_RENDEZVOUS=0` turns that off.
+- **Which NAT do I have?** The *Party* page's *Network* line (and the log's `NAT:` line) says it:
+  a *cone* NAT can be punched; a *symmetric* NAT (some mobile / carrier connections) cannot, and
+  the line tells you what to do instead.
 - **Carrier-grade NAT / no port forwarding possible**: use a VPN that puts all players in one
   virtual network, such as Tailscale or ZeroTier. The host shares its VPN address as
   `address:9307` (or sets it as *Public address*, so the code contains it).

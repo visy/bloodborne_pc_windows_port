@@ -133,6 +133,16 @@ float RotHpFactor(int stacks) {
     return 1.0f - static_cast<float>(s * kRotHpPercentPerStack) / 100.0f;
 }
 
+bool LampWarpIsRespawn(bool alive_at_warp, double since_death_s, bool up_since_death) {
+    if (!alive_at_warp) return true;
+    return since_death_s >= 0 && since_death_s < kRespawnWarpS && !up_since_death;
+}
+
+bool LampMenuRest(bool dialog_opened, bool alive, float lamp_dx, float lamp_dy, float lamp_dz) {
+    return dialog_opened && alive && lamp_dx * lamp_dx + lamp_dz * lamp_dz <= kLampMenuRadiusM * kLampMenuRadiusM &&
+           std::fabs(lamp_dy) <= kLampMenuHeightM;
+}
+
 std::string DescribeHp(int percent, bool russian) {
     char b[96];
     const int per = static_cast<int>(std::lround(percent * kVanillaHpStep));

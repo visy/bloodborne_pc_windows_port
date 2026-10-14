@@ -9,6 +9,7 @@
 //   0x203BA78 41 0f b6 47 25   movzx eax, byte [r15+0x25]
 //   0x203BA7D e9 4d 34 00 00   jmp 0x203EECF   ([r12+8] = 2 int, [r12] = eax)
 #include "party_guestsvc.h"
+#include "party_npctalk.h"
 #include "party_log_game.h"
 
 #include "net/json.h"
@@ -1292,9 +1293,9 @@ void GuestServicesInit() {
         HookPrologue(0x1BB7F60, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x53, 0x48, 0x83, 0xec, 0x48},
                      &LevelUpMenuFactoryEntry, "level-up menu factory (log)");
         // push rbp; mov rbp, rsp; push r15..r12, rbx; sub rsp, 0x3c8 (20 bytes; then mov rbx, rsi).
-        HookPrologue(0x203FFD0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x81,
-                                 0xec, 0xc8, 0x03, 0x00, 0x00},
-                     &TalkCommandEntry, "talk command switch (log)");
+        // The talk command switch 0x203FFD0 is hooked by shared NPC dialogue (party_npctalk), which
+        // calls this trace first.
+        npctalk::SetCommandTrace([](u64 env, u64 call) { TalkCommandEntry(env, call, 0, 0, 0, 0); });
         // push rbp; mov rbp, rsp; push r15, r14, r13, r12, rbx; sub rsp, 0x48 (17 bytes; then mov rbx, rdx).
         HookPrologue(0x1C4A520, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83,
                                  0xec, 0x48},
@@ -1651,6 +1652,7 @@ bool WalkToLamp(const GameSnapshot& s) {
 struct LampPress {
     double next = 0, release = 0;
     int presses = 0;
+    int base = -1;  // requests made before the fixture started (a Dream headstone before it)
     bool done = false;
     bool walked = false;
 } g_lamp_press;
@@ -1662,10 +1664,17 @@ void LampPressTick(const GameSnapshot& s, double now) {
         P.release = 0;
     }
     if (P.done || g.test.find("lamppress") == std::string::npos || !s.world_up || s.loading ||
-        s.session_role != kSessionRoleClient || IsDreamMap(s.map_id) || now < P.next) {
+        s.session_role != kSessionRoleClient || IsDreamMap(s.map_id) || s.map_id == 0xffffffffu) {
+        P.base = -1;  // the baseline is taken once the guest stands in a world map
         return;
     }
-    if (g_lamp_requests_made.load() > 0) {
+    if (now < P.next) {
+        return;
+    }
+    if (P.base < 0) {
+        P.base = g_lamp_requests_made.load();
+    }
+    if (g_lamp_requests_made.load() > P.base) {
         P.done = true;
         Log("test: lamppress: the guest's lamp use became a request after %d press(es)", P.presses);
         return;
@@ -1910,6 +1919,12 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
     }
 }
 
+/// "hsdelay=S" (hostheadstone / guestheadstone): s after the first steady Dream (default 20).
+double HeadstoneTestDelay() {
+    const std::size_t k = g.test.find("hsdelay=");
+    return k == std::string::npos ? 20.0 : std::strtod(g.test.c_str() + k + 8, nullptr);
+}
+
 void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
     LampTick(s, link);
     // Live test "hostheadstone[;keys=...]": the HOST uses a Dream headstone (t210000) with a guest
@@ -1926,7 +1941,7 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
             IsDreamMap(s.map_id) && s.world_up && !s.loading && (role != 3 || s.cooperators >= 1)) {
             if (coop_at == 0) {
                 coop_at = Now();
-            } else if (Now() - coop_at >= 20.0 && FindChr(210000)) {
+            } else if (Now() - coop_at >= HeadstoneTestDelay() && FindChr(210000)) {
                 started = true;
                 g_lvl = LevelUpScript{};
                 g_lvl.open = true;

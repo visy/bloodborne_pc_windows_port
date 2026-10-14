@@ -120,13 +120,20 @@ struct Guest {
     bool gather = false;        // the last attempt failed for another map: gather first (OtherMap)
     double reask_at = 0;        // F5: a Settle refusal: ask again at this time (0 = not)
     int reasks = 0;
+    bool rearmed = false;       // the bell was re-rung once for this request (Action::Rearm)
 };
-enum class Action { None, Deliver, ReportOk, ReportFail, Reask };
+/// Rearm (playtest 1 G4, 8 of 10 failed): the host's room is here but the bell's waiting summon
+/// entry is not: the bell's SpEffect 9005 was "already on" from an attempt whose entry the game had
+/// used up, so ringing again made no new entry. Drop the bell's effect and ring it again (once per
+/// request); the entry wait starts again from the re-ring.
+/// Reask (F5): a Settle refusal: ask the host again.
+enum class Action { None, Deliver, ReportOk, ReportFail, Rearm, Reask };
 constexpr double kReaskWait = 1.5;  // F5: a Settle refusal: the guest asks again this much later
 constexpr int kMaxReasks = 8;       // ... at most this often (~12 s), then the bell sign path
 constexpr double kAnswerWait = 4.0;   // no dsum_room within this: the host does not take part
 constexpr double kEntryWait = 8.0;    // the bell's own entry (sign sender, ~2 s) not up within this
 constexpr double kJoinWait = 8.0;     // delivered, but no session (client) within this
+constexpr double kRearmAfter = 2.5;   // the room is here, no entry yet: re-ring the bell (normal: ~2 s)
 /// One tick. `entry_waiting`: the game has a passive guest entry not yet answered;
 /// `joined`: the guest's session is a client of the host's room.
 Action Step(Guest& g, double now, bool entry_waiting, bool joined);

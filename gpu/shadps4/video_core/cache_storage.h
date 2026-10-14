@@ -23,6 +23,9 @@ enum class BlobType : u32 {
     /// bbport: inputs of one shader compilation, to translate it again for another GPU
     /// (vk_pipeline_serialization.cpp). Kept when the cache is rebuilt.
     ShaderSource,
+    /// The driver's own pipeline binaries (VkPipelineCache data) of one GPU and driver version
+    /// (Mrsuss60). Local only: never exported or shared.
+    PipelineBinary,
 };
 
 class DataBase {

@@ -254,7 +254,15 @@ static void Handover() {
     assert(!hud::Shown());
 }
 
+static void StaleChr() {
+    assert(!hud::StaleChrDue(false, 600, 100));             // near a report
+    assert(!hud::StaleChrDue(true, 0, 100));                // still being built: (0, 0, 0) HP 0/0
+    assert(!hud::StaleChrDue(true, 600, 1.0));              // a warp / re-creation settles within ~1 s
+    assert(hud::StaleChrDue(true, 600, hud::kStaleChrHoldS));  // really left behind
+}
+
 int main() {
+    StaleChr();
     Tags();
     GamePlate();
     SameWorldRules();

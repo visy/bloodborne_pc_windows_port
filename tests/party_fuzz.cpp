@@ -61,6 +61,7 @@
 #include "party/party_story.h"
 #include "party/party_travel.h"
 #include "party/party_worldact.h"
+#include "party/party_npctalk.h"
 
 #include <algorithm>
 #include <array>
@@ -470,6 +471,23 @@ Corpus json_corpus() {
         wa.kick = {2410000, 2410001};
         c.add(coop::worldact::RequestToJson(wa));
     }
+    {
+        coop::npctalk::TalkEvent te;  // EVENT npc_talk (shared NPC dialogue)
+        te.npc = 2410782;
+        te.talk = te.msg = 1900002;
+        te.voice = 1900002;
+        te.map = 0x18010000;
+        te.has_pos = true;
+        te.pos[0] = -12.5f;
+        te.who = "Hunter1";
+        te.slot = 1;
+        c.add(coop::npctalk::ToJsonText(te));
+        te.kind = coop::npctalk::Kind::Gift;
+        te.lot = 10050;
+        te.item_cat = 4;
+        te.item_id = 4312;
+        c.add(coop::npctalk::ToJsonText(te));
+    }
     std::vector<coop::progress::FlagChange> ch(2);
     ch[0] = {12401800, true, coop::progress::CategoryOf(12401800), 5};
     ch[1] = {70002802, false, coop::progress::CategoryOf(70002802), 6};
@@ -796,6 +814,15 @@ void run_lamp(Rng& r, const Corpus& c) {
     if (coop::LampLitFromJsonText(s, &lit, &err)) {  // EVENT lamp_lit (a guest lit a lamp)
         INVARIANT(lit.size() <= coop::kMaxLampLitIds);
         for (std::uint32_t id : lit) INVARIANT(coop::LampLitFlagAllowed(id));
+    }
+    coop::npctalk::TalkEvent te;  // EVENT npc_talk (both sides)
+    if (coop::npctalk::FromJsonText(s, &te, &err)) {
+        INVARIANT(te.who.size() <= 16 && te.item_cat <= 15 && te.voice <= 999999999u);
+        for (float f : te.pos) INVARIANT(std::isfinite(f) && std::fabs(f) <= 1e6f);
+        coop::npctalk::TalkEvent back;
+        std::string again;
+        INVARIANT(coop::npctalk::FromJsonText(coop::npctalk::ToJsonText(te), &back, &again) && back.kind == te.kind &&
+                  back.npc == te.npc && back.talk == te.talk && back.msg == te.msg && back.who == te.who);
     }
     coop::worldact::Request wa;  // EVENT world_action (a guest's lever / door / NPC talk, host side)
     if (coop::worldact::RequestFromJson(s, &wa, &err)) {

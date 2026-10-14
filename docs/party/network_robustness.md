@@ -121,6 +121,35 @@ which is reliable (TCP or the reliable UDP stream), so a lost datagram costs a r
 request; the 4 s answer wait (`kAnswerWait`) had 3.6 s to spare at 0.4 s, the 8 s entry/join
 waits 6 s. No retry or timeout change was needed.
 
+### 3d. No guest code: the DHT rendezvous under the NAT sim (2026-10-14, 0.6.1)
+
+`BB_NET_SIM=dsl,nat=1` on both (no TCP listener on the host, unsolicited UDP dropped), **no
+`BB_PARTY_GUEST_CODE_FILE`**, `BB_PARTY_DHT_BOOTSTRAP=127.0.0.1:46881` pointing at
+`tools/mp/fake_dht.py` (one DHT node on loopback standing in for the public DHT). Title join with
+existing characters, one clock for both logs:
+
+| Time | Host | Guest |
+|---|---|---|
+| +17.4 | `NAT: cone (no open port)`, `rendezvous: looking for guests in the DHT every 5 s` | |
+| +21.1 | | `NAT: cone; ... hole punching works (endpoint exchanged automatically)` |
+| +22.6 | | `no TCP answer from the host; connecting over UDP` |
+| +24.2 | | `rendezvous: announce done: ... stored at 1` |
+| +27.5 | `a guest's endpoint 127.0.0.1:47601 found in the DHT`, `punching towards a guest` | |
+| +27.7 | | the first UDP attempt (started before the punch) times out, retried |
+| +30.2 / +30.5 | `Hunter1 rejoined (slot 1)` | `connected over UDP`, `network path: party link over UDP` |
+| +32.1 | | title join: `client (6)` |
+| +39.1 / +40.8 | `cooperators 0 -> 1` | `arrived 0.5 m from the host` |
+
+Screenshots every 15 s: both hunters side by side in the host's world from 45 s to the end
+(130 s), no glitch; the guest has the shared key items box open (nobody pressed OK). A first run
+with the host polling every 10 s connected too (link over UDP 2.3 s after the announce), but the
+guest's title screen showed *Failed to acquire Bloodborne server information* once at 20 s, while
+its game waited for the link. The run then stopped at 28 s on its end markers, so the outcome of
+that box was not seen. The host now polls every 5 s; in the second run the link was up 6 s after
+the announce and no such box showed.
+Not covered: the real DHT (public bootstrap nodes) and a real router. Both test instances stay
+on 127.0.0.1.
+
 ## 4. NAT: what a host must do
 
 - **Guests**: nothing. They connect out (TCP to the host, UDP to the host's port). Their own NAT
@@ -165,6 +194,56 @@ waits 6 s. No retry or timeout change was needed.
     does not). The simulator has a NAT mode (`BB_NET_SIM=...,nat=1`): inbound UDP is dropped
     unless we sent to that address:port first, and the host's TCP listener is off. Live run: see
     §3b (link over UDP 0.6 s after the punch started, bell join and B2 travel as usual).
+- **No guest code needed: the automatic rendezvous (DHT)** (2026-10-14, 0.6.1, `party_rdv.h`,
+  `party_traversal.h`). Without any server of ours, the guest's public UDP endpoint now reaches
+  the host through the public BitTorrent DHT (BEP 5 "mainline", as any torrent client uses):
+  1. The DHT key is `BLAKE2b("bbport rendezvous v1" || party key)` cut to 20 bytes. Only someone
+     with the code (and the password) can compute it; DHT nodes see an opaque hash.
+  2. Guest: when its party link has not come up 3 s after the start (TCP failed), it does an
+     iterative `get_peers` lookup for the hash and `announce_peer`s the party port's STUN mapping
+     to the 8 closest nodes (the node records the guest's public IP). Repeated every 45 s while
+     the link is down; read-only node (BEP 43), so nobody routes through us.
+  3. Host, only without an open port (no UPnP mapping, no override, not on a public IP): a
+     `get_peers` lookup every 5 s (the first from the bootstrap nodes, later ones seeded with the
+     closest nodes found: one hop). Every endpoint found is punched exactly like a pasted guest
+     code (at most once per 50 s per endpoint). The guest's UDP SYNs then get in (§ above).
+  4. Bootstrap: `router.bittorrent.com`, `dht.transmissionbt.com`, `router.utorrent.com`,
+     `dht.libtorrent.org` (`BB_PARTY_DHT_BOOTSTRAP=host:port,...` replaces them).
+     `BB_PARTY_RENDEZVOUS=0` turns it off; the guest code still works as before.
+  - Exposure: the guest's public IP and the host's lookups appear on public DHT nodes under that
+    hash, only when needed. A forged entry can only make the host send a few punch datagrams; the
+    link still needs the party key.
+  - Tests (`party-nat-test`): bencode / KRPC; a simulated 300-node Kademlia DHT with 5 % loss (the
+    announce lands on the 8 closest nodes, the host's lookup finds the endpoint, a seeded re-poll
+    takes 8 queries); the socket driver against fake nodes on loopback; and the whole path: a
+    guest behind the simulated NAT, **no guest code**, connects over UDP ~0.8 s after the
+    rendezvous starts (the host found it and punched once). Live: see §3d.
+  - Not tested against the real DHT or a real router (test machines stay on 127.0.0.1).
+- **NAT type and advice** (2026-10-14): host and guest ask a second STUN server
+  (`BB_PARTY_STUN2`, default `stun.cloudflare.com:3478`) from the same party port. The same
+  external port from both: a cone (punching works); another port per server: **symmetric**
+  (punching cannot work). The log line `NAT: <type>; <advice>` and the overlay *Party* page
+  (*Network:*) say what that means and what to do (forward UDP+TCP 9307, let a friend host, or a
+  VPN such as Tailscale / ZeroTier). Once connected the guest logs `network path: party link over
+  TCP|UDP` and the *Network* line shows it.
+- **The fallback chain, verified for every pair of NAT types** (`party-nat-test`, a simulated NAT
+  per RFC 4787 on each side carrying the real reliable-UDP streams, compared with the model in
+  `party_nat.h`, 25 / 25 pairs agree):
+
+  | Host NAT \ guest NAT | none | full cone | restricted | port-restricted | symmetric |
+  |---|---|---|---|---|---|
+  | none / open port (UPnP, forward) | TCP | TCP | TCP | TCP | TCP |
+  | full cone | UDP direct | UDP direct | UDP direct | UDP direct | UDP direct |
+  | restricted cone | punch | punch | punch | punch | punch |
+  | port-restricted cone (most routers) | punch | punch | punch | punch | **no** |
+  | symmetric | **no** | **no** | **no** | **no** | **no** |
+
+  "punch" needs the guest's endpoint at the host: now automatic (rendezvous) or the guest code.
+  "no": port forward on the host, another host, or a VPN. Guest-to-guest game traffic punches the
+  same way and falls back to the host relay (`PeerPaths`).
+  The network simulator has the same kinds: `BB_NET_SIM=...,nat=full|addr|port|sym` (`nat=1` =
+  port); `sym` also makes the guest code / NAT check report another port per STUN server, so a
+  live run detects a simulated symmetric NAT.
 - **What CGNAT / hard NAT still cannot do** (no server anywhere, by design):
   - **Symmetric (endpoint-dependent) NAT** on either side - many mobile carriers and some
     carrier-grade NATs - gives the punch a different external port than STUN saw, so the guest

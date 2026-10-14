@@ -23,9 +23,9 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | Death & respawn | `██████████████████░░` | 89% |
 | Progress (anyone can progress) | `█████████████████░░░` | 87% |
 | Services & UI | `██████████████████░░` | 90% |
-| Network & robustness | `█████████████████░░░` | 85% |
+| Network & robustness | `█████████████████░░░` | 86% |
 | Bloodborne-specific (chalice, Insight) | `████████████████░░░░` | 81% |
-| Feels like single player in a party | `█████████████████░░░` | 86% |
+| Feels like single player in a party | `█████████████████░░░` | 87% |
 
 ---
 
@@ -181,6 +181,10 @@ before anyone is in the game):
   are shared by the whole party: a quest step the host makes also moves the NPC in every guest's
   own save (no stale NPC state left behind). NPCs look solid for guests (no see-through
   "ghosts"), and a level-up at the Doll stays in the levelling player's own game.
+- **Hear each other's NPC talks.** When a companion near you talks to an NPC you see the game's
+  subtitles and hear the NPC too, with a small "[Hunter talking to Iosefka]" caption and the
+  choices they pick; nothing opens on your screen. Range in *System → Party rules → NPC dialogue
+  range* (default 25 m), off with *Share NPC dialogue*.
 - **NPC gifts are shared**: an item an NPC gives a guest in the host's world goes to the host and
   every other party member too (the NPC has moved on for everyone, so nobody misses it).
 - **Enemy drops for each player, one roll.** Every player gets their own copy of each enemy's drop,
@@ -207,7 +211,7 @@ before anyone is in the game):
 - **Wrong passwords are locked out.** A few typos are fine; after 5 wrong passwords in a minute the host refuses that address for a while.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
 - **Death has a cost.** Each death stacks "rot" (−10% max HP or stamina, picked at random, up to
-  5); using a lamp clears it.
+  5); using a lamp (even just opening its box) or levelling up clears it.
   On by default; the host can turn it off on the *Party rules* page.
 - **Enemies scale with the party, harder than vanilla.** Bosses get more health (and a little more
   damage) per extra hunter than the game gives them, normal enemies get tougher too; all six values
@@ -253,9 +257,11 @@ The host gets two party codes (launcher, *System → Party*):
 
 A guest on the host's network with the Internet code finds the host on the LAN by itself (~2 s).
 
-No UPnP and no port forward? Each guest copies its **guest code** (`BBG1-...`, *Party* page) and
-sends it to the host, who presses *Add a guest code*: the game then connects through both routers
-(hole punching). This fails behind symmetric / carrier-grade NAT (some mobile and ISP
+No UPnP and no port forward? The game now finds the way through both routers by itself (hole
+punching; the guest's address is exchanged through the public BitTorrent DHT under a hash only the
+party knows, `BB_PARTY_RENDEZVOUS=0` turns that off). If that does not work, each guest copies its
+**guest code** (`BBG1-...`, *Party* page) and sends it to the host, who presses *Add a guest code*.
+The *Party* page's *Network* line says which NAT you have and what to do about it. This fails behind symmetric / carrier-grade NAT (some mobile and ISP
 connections); there, let another player host or use a VPN such as Tailscale. Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
 
 ### Reporting a co-op bug
@@ -304,12 +310,12 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | Who | What |
 |---|---|
 | deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors |
-| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD; audio pop fix, paths with parentheses in `run.bat`, parallel `build.bat`; CPUs without FSGSBASE (Windows TLS fallback) |
+| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD; audio pop fix, paths with parentheses in `run.bat`, parallel `build.bat`; CPUs without FSGSBASE (Windows TLS fallback), driver pipeline binaries kept between sessions, more background shader compile threads |
 | shadPS4 team | Vulkan video core and shader recompiler (GPL-2.0+), sirit |
 | droogie and the bbhost team | Long-session stability fixes; menu button rows and the menu cursor's offsets; direct summon delivery; the Hunter's Dream mirror (appearance editor) ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |
 | FireBurn | FSR-Vulkan (MIT); AMD FidelityFX SDK (MIT) |
 | Supermedo, IFreemz | DLSS bridge and Windows loader |
-| Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, FPS-preset physics step (found by FIocker), frame limiter pacing, texture-cache, pipeline-cache and shader-walker fixes, skipped draws for failed pipelines, keyboard stick movement, allocating past a full VRAM budget, object motion off on AMD before RDNA3, the memory log line once a minute; imedved (direct mouse camera, ported by mcrib884); andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows) |
+| Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, FPS-preset physics step (found by FIocker), frame limiter pacing, texture-cache, pipeline-cache and shader-walker fixes, skipped draws for failed pipelines, keyboard stick movement, allocating past a full VRAM budget, object motion off on AMD before RDNA3, the memory log line once a minute; imedved (direct mouse camera, ported by mcrib884); andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows); parsifal295 (game check passes over locked files), RafaelHGOliveira (exclusive fullscreen), fliperama86 (HDR desktop black level), emurphy04 (ultrawide output, video queue fix) |
 | ALuaNegra (via Mrsuss60's port) | Idle depth targets freed (VRAM growth) |
 | Vorshim92 | Pipeline cache kept between starts, stale `bbport.exe` guard, crash reaper, `run.bat` resolution fix, Reset shader cache button |
 | Thealexbarney | LibAtrac9 audio (MIT) |

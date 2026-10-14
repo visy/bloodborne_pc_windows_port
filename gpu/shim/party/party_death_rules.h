@@ -139,6 +139,35 @@ inline AskClose PlanAskClose(bool open, bool loading, bool local_dead, double op
     return AskClose::Keep;
 }
 
+// ---- Whose lamp / headstone use started a lamp warp (playtest 1 bug 20) ----
+/// The "used" flags the lamp warp events wait for: a world lamp -> the Dream (common event 7200,
+/// one instance per lamp, flag 7AAB01xx: 72410101 Central Yharnam ...), a Dream headstone -> its
+/// lamp (m21 event 12107000 / common 7300, flags 72102xxx / 72103xxx). The lamp's or the
+/// headstone's talk script sets it on the user's own game (SetEventFlag). The same warp event
+/// also runs on every other game in that map (live splitq: the guest's 12107000 reached its warp
+/// 2003[49] 0.05 s after the host's, with no flag set there), so both players were asked.
+inline bool LampTriggerFlag(std::uint32_t id) {
+    if (id / 1000 == 72102 || id / 1000 == 72103) {
+        return true;
+    }
+    return id >= 70000000u && id < 80000000u && id / 1000 % 10 == 0 && id % 1000 / 100 == 1;
+}
+constexpr double kLampOriginWindow = 10.0;  ///< s from a lamp's flag to its warp (the event waits ~3-4 s)
+enum class LampOrigin { Own, Other };
+/// A lamp warp on this game: this player's own use, or another member's (`local_age` / `remote_age`:
+/// s since this game set a lamp flag itself / got one from a peer (packet 0x0e / 0x0f), < 0
+/// never). This player's only when its own game set the flag (or a test step used the lamp) and
+/// no peer's came after it; `flag_hooks` false (the SetEventFlag hook is missing): always this
+/// player's, the old behaviour.
+inline LampOrigin PlanLampOrigin(double local_age, double remote_age, bool flag_hooks = true) {
+    const bool remote = remote_age >= 0 && remote_age <= kLampOriginWindow;
+    const bool local = local_age >= 0 && local_age <= kLampOriginWindow;
+    if (!flag_hooks) {
+        return LampOrigin::Own;
+    }
+    return local && !(remote && remote_age < local_age) ? LampOrigin::Own : LampOrigin::Other;
+}
+
 // ---- A guest uses a lamp / headstone / Hunter's Mark in the host's world ----
 enum class GuestLamp {
     Plain,     ///< nothing to decide here (not a guest in the host's world, or standing at it)

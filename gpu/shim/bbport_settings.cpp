@@ -158,6 +158,10 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_enemy_poise = std::clamp(i, -100, 300);
     } else if (key == "party_name_tags") {
         v.party_name_tags = i != 0;
+    } else if (key == "party_npc_talk") {
+        v.party_npc_talk = i != 0;
+    } else if (key == "party_npc_talk_range") {
+        v.party_npc_talk_range = std::clamp(i, 0, 500);
     } else if (key == "party_overhead") {
         v.party_overhead = std::clamp(i, 0, 4);
     } else if (key == "menu_pos") {
@@ -320,7 +324,9 @@ int RenderPreset() {
 
 bool ResolutionNeedsRestart() {
     const auto& v = Get();
-    // TAA needs the live path (native guest targets): run.sh selects it on restart.
+    // TAA needs the live path (native guest targets): run.sh selects it on restart. Ultrawide
+    // outputs patch the camera and HUD at startup.
+    if (Ultrawide(v.output_res) != Ultrawide(v.startup_output_res)) return true;
     return FixedRenderSession() &&
         (v.preset != v.startup_preset || v.output_res != v.startup_output_res ||
          (v.upscaler == UpscalerOff) != (v.startup_upscaler == UpscalerOff) ||
@@ -391,6 +397,8 @@ void Save() {
     put("party_toasts", flag(v.party_toasts));
     put("party_hud", flag(v.party_hud));
     put("party_name_tags", flag(v.party_name_tags));
+    put("party_npc_talk", flag(v.party_npc_talk));
+    put("party_npc_talk_range", std::to_string(v.party_npc_talk_range.load()));
     put("party_guest_lamps", flag(v.party_guest_lamps));
     put("party_rot", flag(v.party_rot));
     put("party_boss_hp", std::to_string(v.party_boss_hp.load()));

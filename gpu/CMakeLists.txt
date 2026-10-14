@@ -312,15 +312,17 @@ add_executable(settings-test EXCLUDE_FROM_ALL ../tests/test_settings.cpp shim/bb
 target_compile_options(settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(settings-test PRIVATE .. shim)
 # The port's pages in the game's System menu (shim/bbport_game_menu_pages.cpp): limits, settings, party buttons.
-add_executable(game-menu-pages-test EXCLUDE_FROM_ALL ../tests/test_game_menu_pages.cpp shim/bbport_game_menu_pages.cpp
+add_executable(game-menu-pages-test EXCLUDE_FROM_ALL ../tests/test_game_menu_pages.cpp shim/bbport_game_menu_pages.cpp shim/party/party_npctalk.cpp
     shim/bbport_settings.cpp shim/party/party_status.cpp shim/party/party_balance_rules.cpp shim/net/json.cpp)
+target_compile_definitions(game-menu-pages-test PRIVATE BB_PARTY_NPCTALK_NO_GAME)
 target_compile_options(game-menu-pages-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(game-menu-pages-test PRIVATE .. shim)
 set_target_properties(game-menu-pages-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # The same pages with the party flow's rows: no page shows more rows than its slots in any party state.
-add_executable(game-menu-rows-test EXCLUDE_FROM_ALL ../tests/test_game_menu_rows.cpp shim/bbport_game_menu_pages.cpp
+add_executable(game-menu-rows-test EXCLUDE_FROM_ALL ../tests/test_game_menu_rows.cpp shim/bbport_game_menu_pages.cpp shim/party/party_npctalk.cpp
     shim/party/party_flow_rows.cpp shim/bbport_settings.cpp shim/party/party_status.cpp shim/party/party_balance_rules.cpp
     shim/net/json.cpp)
+target_compile_definitions(game-menu-rows-test PRIVATE BB_PARTY_NPCTALK_NO_GAME)
 target_compile_options(game-menu-rows-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(game-menu-rows-test PRIVATE .. shim)
 set_target_properties(game-menu-rows-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
@@ -480,6 +482,17 @@ set_target_properties(party-link-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OF
 if (WIN32)
     target_link_libraries(party-link-test PRIVATE ws2_32 iphlpapi ole32 oleaut32)
 endif()
+# NAT traversal (F2): the NAT model against simulated NATs, the netsim NAT kinds and the DHT
+# rendezvous (fake DHT nodes on loopback only). ninja -C out/gpu party-nat-test
+add_executable(party-nat-test EXCLUDE_FROM_ALL ../tests/test_party_nat.cpp ${PARTY_LINK_SOURCES}
+    shim/party/party_nat.cpp shim/party/party_rdv.cpp shim/net/net_stun.cpp shim/net/netsim.cpp
+    third_party/monocypher/monocypher.c)
+target_compile_options(party-nat-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-nat-test PRIVATE shim)
+set_target_properties(party-nat-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+if (WIN32)
+    target_link_libraries(party-nat-test PRIVATE ws2_32 iphlpapi ole32 oleaut32)
+endif()
 # The in-game party flow's pure parts (shim/party/party_flow.cpp: party.json with the DPAPI-protected
 # password, the action planner, the relaunch file). ninja -C out/gpu party-flow-test
 add_executable(party-flow-test EXCLUDE_FROM_ALL ../tests/test_party_flow.cpp shim/party/party_flow.cpp shim/net/json.cpp)
@@ -611,12 +624,12 @@ set(PARTY_FUZZ_SOURCES ../tests/party_fuzz.cpp ${PARTY_NET_SOURCES} ${PARTY_LINK
     shim/party/party_items.cpp shim/party/party_phantom.cpp shim/party/party_progress.cpp
     shim/party/party_guestsvc.cpp shim/party/party_worldact.cpp shim/party/party_balance_rules.cpp
     shim/party/party_chalice.cpp shim/party/party_droproll.cpp shim/party/party_dsummon.cpp
-    shim/party/party_desync.cpp)
+    shim/party/party_desync.cpp shim/party/party_npctalk.cpp)
 foreach(fuzz_target party-fuzz party-security-test party-fuzz-ubsan)
     add_executable(${fuzz_target} EXCLUDE_FROM_ALL ${PARTY_FUZZ_SOURCES})
     target_compile_definitions(${fuzz_target} PRIVATE BB_PARTY_TRAVEL_NO_GAME BB_PARTY_STORY_NO_GAME
         BB_PARTY_ITEMS_NO_GAME BB_PARTY_PHANTOM_NO_GAME BB_PARTY_PROGRESS_NO_GAME BB_PARTY_GUESTSVC_NO_GAME
-        BB_PARTY_WORLDACT_NO_GAME BB_PARTY_CHALICE_NO_GAME BB_PARTY_DROPROLL_NO_GAME)
+        BB_PARTY_WORLDACT_NO_GAME BB_PARTY_CHALICE_NO_GAME BB_PARTY_DROPROLL_NO_GAME BB_PARTY_NPCTALK_NO_GAME)
     target_compile_options(${fuzz_target} PRIVATE -UNDEBUG -Wall -Wextra)
     target_include_directories(${fuzz_target} PRIVATE shim shim/net ..)
     set_target_properties(${fuzz_target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
@@ -708,6 +721,15 @@ target_compile_definitions(party-worldact-test PRIVATE BB_PARTY_WORLDACT_NO_GAME
 target_compile_options(party-worldact-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-worldact-test PRIVATE shim)
 set_target_properties(party-worldact-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Shared NPC dialogue (shim/party/party_npctalk.cpp; in bbgpu through SHIM_SOURCES): event JSON,
+# speaker names, range decision, dedupe, talk menu choice tracking (BB_PARTY_NPCTALK_NO_GAME).
+# cmake --build out/gpu --target party-npctalk-test
+add_executable(party-npctalk-test EXCLUDE_FROM_ALL ../tests/test_party_npctalk.cpp shim/party/party_npctalk.cpp
+    shim/net/json.cpp)
+target_compile_definitions(party-npctalk-test PRIVATE BB_PARTY_NPCTALK_NO_GAME)
+target_compile_options(party-npctalk-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-npctalk-test PRIVATE shim)
+set_target_properties(party-npctalk-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Shared enemy drop roll (shim/party/party_droproll.cpp; in bbgpu through SHIM_SOURCES): seed,
 # MT19937 seeding, EVENT drop_seed (BB_PARTY_DROPROLL_NO_GAME). cmake --build out/gpu --target party-droproll-test
 add_executable(party-droproll-test EXCLUDE_FROM_ALL ../tests/test_party_droproll.cpp shim/party/party_droproll.cpp
