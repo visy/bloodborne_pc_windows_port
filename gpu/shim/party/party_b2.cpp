@@ -2400,8 +2400,7 @@ void FallRecoveryTick(const GameSnapshot& s, double now) {
                 return;  // the lamp is in this map: no load
             }
             if (lamp && lamp != 0xffffffffu) {
-                using Fn = void(BB_COOP_SYSV*)(u32);
-                reinterpret_cast<Fn>(Guest(0x13cdf30))(lamp);
+                RunLampWarpNotRest(lamp, "fall recovery");
             }
         }
     } else {
@@ -4103,13 +4102,15 @@ void GuestChrTypeTick(const GameSnapshot& s) {
     if (since < 0) {
         since = now;
     }
-    if (!deathrules::GuestChrTypeFixDue(true, type, ChrHp(s.player), Field<int>(Slot(kSlotFlow), 0x84, -1), now - since)) {
+    const int hp = ChrHp(s.player);
+    if (!deathrules::GuestChrTypeFixDue(true, type, hp, Field<int>(Slot(kSlotFlow), 0x84, -1), now - since)) {
         return;
     }
     const int one = 1;
     SafeWrite(s.player + 0x78, &one, sizeof one);
-    Log("guest: own chr type 0 -> %d (a white phantom again after a B2 load / title join: its death takes the "
-        "party path, not a session leave)", Field<int>(s.player, 0x78, -1));
+    Log("guest: own chr type 0 -> %d%s, %.2f s in the world (a white phantom again after a B2 load / title join: "
+        "its death takes the party path, not a session leave)", Field<int>(s.player, 0x78, -1),
+        hp == 0 ? " at its death (HP 0)" : "", now - since);
     since = -1;
 }
 
@@ -5856,9 +5857,8 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
             // there (live run 21). Own world from here on.
             const u8 one = 1;
             SafeWrite(Slot(kSlotGsm) + 0x1592, &one, 1);
-            using Warp = void(BB_COOP_SYSV*)(u32);
             g_force_load_warp = true;  // the loaded world is the host's copy: a real load home
-            reinterpret_cast<Warp>(Guest(0x13cdf30))(own);
+            RunLampWarpNotRest(own, "title join: going home");  // leaving the party is no rest
             g_force_load_warp = false;
         } else {
             Log("title join: the session ended (role %d); no own last lamp (%u) to go home to", Role(), own);
