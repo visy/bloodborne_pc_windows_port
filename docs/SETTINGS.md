@@ -8,6 +8,8 @@ Back to the [README](../README.md).
 - **In-Game Overlay**: Press `Insert` (or `L3 + R3` on your controller, when enabled in the launcher) to open the overlay menu, styled like the game's dialogs: the same settings with longer descriptions, with gamepad, keyboard and mouse. It is a fallback (and a debugging aid); normal settings are all in the game's own menu.
 - **Mouse & keyboard mode** (opt-in: launcher, `BB_MOUSE_KEYBOARD=1`, `mk_enabled=1`, or the menu): the mouse turns the camera and attacks, the wheel steps the quick items and tools (d-pad up / down, one press per notch; `mk_wheel=0` turns it off). `mkkey.<input>=` lines in `bbport.ini` rebind this layout; mouse buttons and the wheel are names there too (`Mouse Left`, `Mouse Right`, `Mouse Middle`, `Mouse X1`, `Mouse X2`, `Wheel Up`, `Wheel Down`), and a mouse button bound this way leaves the built-in mouse scheme (e.g. `mkkey.square=R, Mouse X1`). From upstream 0.51 (#51, #52); see [UPSTREAM_0.51_INTEGRATION.md](UPSTREAM_0.51_INTEGRATION.md).
 
+Output resolution (in-game Display page and System menu) also offers ultrawide sizes, 21:9 (2560x1080, 3440x1440, 3840x1600, 5120x2160) and 32:9 (3840x1080, 5120x1440); they apply after a restart (startup patch, never live) and need an upscaler other than TAA.
+
 ## Launcher
 
 Double-click `launch_gui.bat` or run:

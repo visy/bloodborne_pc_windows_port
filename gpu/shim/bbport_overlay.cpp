@@ -727,7 +727,11 @@ bool RestartNeeded() {
 
 void DisplayTab() {
     auto& s = BbSettings::Get();
-    static const char* outputs[] = {"1280 x 720", "1920 x 1080", "2560 x 1440", "3840 x 2160"};
+    static const char* outputs[] = {"1280 x 720", "1920 x 1080", "2560 x 1440", "3840 x 2160",
+                                    "2560 x 1080 (21:9)", "3440 x 1440 (21:9)",
+                                    "3840 x 1600 (21:9)", "5120 x 2160 (21:9)",
+                                    "3840 x 1080 (32:9)", "5120 x 1440 (32:9)"};
+    static_assert(sizeof(outputs) / sizeof(*outputs) == BbSettings::OutputCount);
     Choice("output", T("Output resolution", "Разрешение вывода"), s.output_res, BbSettings::OutputCount,
            [](int i) { return outputs[i]; }, [](int) { return true; },
            BbSettings::FixedRenderSession()

@@ -581,10 +581,16 @@ void DefineAll() {
         f.get = [](const Values& v) { return v.output_res.load(); };
         f.set = [](int i) { BbSettings::Get().output_res = std::clamp(i, 0, BbSettings::OutputCount - 1); };
         AddRow(AddField(std::move(f)), "Output resolution", "Разрешение вывода",
-               "Final frame: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160",
-               "Готовый кадр: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160",
+               "Final frame size; 21:9 and 32:9 (right end) after a restart",
+               "Размер кадра; 21:9 и 32:9 (справа) после перезапуска",
                {AddText("1280 x 720", "1280 x 720"), AddText("1920 x 1080", "1920 x 1080"),
-                AddText("2560 x 1440", "2560 x 1440"), AddText("3840 x 2160", "3840 x 2160")},
+                AddText("2560 x 1440", "2560 x 1440"), AddText("3840 x 2160", "3840 x 2160"),
+                AddText("2560 x 1080 (21:9)", "2560 x 1080 (21:9)"),
+                AddText("3440 x 1440 (21:9)", "3440 x 1440 (21:9)"),
+                AddText("3840 x 1600 (21:9)", "3840 x 1600 (21:9)"),
+                AddText("5120 x 2160 (21:9)", "5120 x 2160 (21:9)"),
+                AddText("3840 x 1080 (32:9)", "3840 x 1080 (32:9)"),
+                AddText("5120 x 1440 (32:9)", "5120 x 1440 (32:9)")},
                Kind::Steps);
     }
     AddRow(Flag(&Values::show_fps), "FPS counter", "Счётчик FPS", "Frame rate in the top right corner",
