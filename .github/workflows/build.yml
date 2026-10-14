@@ -56,6 +56,11 @@ jobs:
 
       - name: Build with build.bat
         shell: cmd
+        env:
+          MINGW_DIR: C:\mingw64
+          VULKAN_SDK: C:\mingw64
+          SDL3_DIR: C:\mingw64
+          CMAKE_PREFIX_PATH: C:\mingw64
         run: |
           call build.bat
 
