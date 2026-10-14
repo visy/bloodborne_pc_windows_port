@@ -149,6 +149,16 @@ class GameCheckTests(unittest.TestCase):
         os.environ['BB_SKIP_GAME_CHECK'] = '1'
         self.assertIsNone(game_check.problem(self.game('CUSA03173', '01.00')))
 
+    def test_eboot_clean_ignores_the_skip_switch(self):
+        # The launcher warns about an unclean eboot.bin even with the check bypassed.
+        os.environ['BB_SKIP_GAME_CHECK'] = '1'
+        game = self.game('CUSA03173', '01.09')
+        self.assertFalse(game_check.eboot_clean(game))
+        with mock.patch.object(game_check, 'SUPPORTED_IMAGE', game_check.image_sha256(game)):
+            self.assertTrue(game_check.eboot_clean(game))
+        self.assertIsNone(game_check.eboot_clean(self.game('CUSA03173', '01.09', b'junk')))
+        os.environ.pop('BB_SKIP_GAME_CHECK', None)
+
     def test_every_problem_is_explained(self):
         for kind in ('missing_update', 'wrong_eboot', 'patched_eboot', 'other_title',
                      'unreadable', 'damaged_files'):
