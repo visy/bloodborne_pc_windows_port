@@ -29,6 +29,8 @@
 #include "party_spectate.h"
 #include "party_director.h"
 #include "party_death_rules.h"
+#include "party_hud.h"
+#include "party_status.h"
 
 #include <algorithm>
 #include <atomic>
@@ -4232,8 +4234,20 @@ void SpectateTick(const GameSnapshot& s, double now) {
     }
     const int pick = SpectateTarget(living, n, target, advance);
     if (pick != target || advance) {
-        Log("spectating: following slot %d (%d living member%s%s)", pick, n, n == 1 ? "" : "s",
-            advance ? ", Cross: next member" : "");
+        // C5: whose view this is, on screen (the party notice line): the member's name from the
+        // HUD's chr -> member match, and the Cross hint when there is another one to switch to.
+        std::string name;
+        for (int i = 0; i < n; ++i) {
+            if (living[i] == pick) {
+                name = PartyHudChrName(chrs[i]);
+            }
+        }
+        const std::string notice = deathrules::SpectateNotice(name, n);
+        if (!notice.empty()) {
+            party::status::SetLastEvent(notice);
+        }
+        Log("spectating: following slot %d (%d living member%s%s)%s%s", pick, n, n == 1 ? "" : "s",
+            advance ? ", Cross: next member" : "", notice.empty() ? "" : "; notice: ", notice.c_str());
     }
     target = pick;
     for (int i = 0; i < n; ++i) {

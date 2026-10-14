@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <string>
 
 namespace coop::deathrules {
 
@@ -215,6 +216,20 @@ inline bool PartyTravelActive(bool guest, bool host, bool guest_in_host_world, b
 /// funnel runs). Its own world: load mode 0 and no client role.
 inline bool GuestInHostWorld(int session_role, int flag_load_mode) {
     return session_role == 6 || flag_load_mode == 1;
+}
+
+// ---- C5: the spectator's on-screen notice ----
+/// "Spectating Hunter0" (+ "  -  Cross: next hunter" when another living member can be chosen);
+/// empty when there is nobody to follow. `name` empty: the member is not matched yet.
+inline std::string SpectateNotice(const std::string& name, int living) {
+    if (living <= 0) {
+        return {};
+    }
+    std::string t = "Spectating " + (name.empty() ? std::string("a party member") : name);
+    if (living > 1) {
+        t += "  -  Cross: next hunter";
+    }
+    return t;
 }
 
 // ---- A guest uses a lamp / headstone / Hunter's Mark in the host's world ----

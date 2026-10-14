@@ -17,6 +17,11 @@ static int g_failures = 0;
     } while (0)
 
 int main() {
+    // C5: the spectator's notice.
+    CHECK(SpectateNotice("Hunter0", 1) == "Spectating Hunter0");
+    CHECK(SpectateNotice("Hunter2", 2) == "Spectating Hunter2  -  Cross: next hunter");
+    CHECK(SpectateNotice("", 1) == "Spectating a party member");
+    CHECK(SpectateNotice("Hunter0", 0).empty());
     // Opt-in switches: on only for "1...".
     CHECK(!OptIn(nullptr));
     CHECK(!OptIn(""));
