@@ -99,6 +99,19 @@ bool LocalStartReady();
 /// known reason. False while the step is unknown (no world, a load just ended, flags unreadable)
 /// or ready.
 bool LocalStartInPrologue();
+/// Any thread (playtest 1 #19): the party must not touch this player's world now - it is in its
+/// prologue itself (opening, clinic, first Dream visit until the headstone; kept over loading
+/// screens), or (a guest) the host is. Gathers, catch-up, flag / item / cutscene syncs and rot
+/// wait; `why` gets a short reason. The rule: no party action into a prologue world, and summons
+/// start only once everybody is ready.
+bool PartyPrologueHold(const char** why = nullptr);
+/// This player alone is in its prologue (the part of PartyPrologueHold that is about itself).
+bool LocalPrologueHold();
+/// The other connected members in their prologue ("Hunter1", "Hunter1 and Hunter2"; "" none).
+std::string OthersInPrologue();
+/// Any thread (#19): the save this game played last was still in its prologue when last seen in
+/// the world (BB_GPU_USER_DIR/party_prologue.txt): a guest's title join is skipped for it.
+bool SavedPrologue();
 /// Any thread: the roster entry of link slot `slot` (state: party::MemberState as int; map: the
 /// roster's map id). False when the slot is not on the roster (state -1, map 0).
 bool MemberRoster(int slot, int* state, std::uint32_t* map);

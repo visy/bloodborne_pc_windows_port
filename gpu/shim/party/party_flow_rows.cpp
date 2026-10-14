@@ -14,6 +14,7 @@
 // Every row is a button (one value, no arrows; Cross runs it); the ones that restart the game ask
 // for a second press (the help line says so).
 #include "party_flow.h"
+#include "party_code.h"
 
 #include "../bbport_game_menu_pages.h"
 
@@ -142,8 +143,9 @@ void RegisterMenuRows() {
         return s.host_address.empty() ? T("Not set", "Не задан") : Texts{Short(s.host_address), Short(s.host_address)};
     };
     addr.help = [](const Board&) {
-        return WithMessage(T("Press to type the party code or host:port from the host (Ctrl+V pastes)",
-                             "Нажмите, чтобы ввести код группы или хост:порт (Ctrl+V вставляет)"));
+        return WithMessage(T("Press to type the host's party code, like " PARTY_CODE_EXAMPLE ", or host:port (Ctrl+V pastes)",
+                             "Нажмите, чтобы ввести код группы от хоста, например " PARTY_CODE_EXAMPLE
+                             ", или хост:порт (Ctrl+V вставляет)"));
     };
     addr.visible = [](const Board&) { return SoloTitle(); };
     addr.press = Row::Press::Once;

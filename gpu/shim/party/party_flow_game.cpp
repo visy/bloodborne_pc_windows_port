@@ -259,7 +259,7 @@ bool Editing() { return g_edit.load() >= 0; }
 bool BeginEdit(Field f) {
     if (Editing() || bbgpu_text_input_is_active()) return false;
     const Saved s = Current();
-    const char* prompt = f == Field::Address ? "Host address or party code (Ctrl+V pastes)"
+    const char* prompt = f == Field::Address ? "Party code from the host, like " PARTY_CODE_EXAMPLE ", or host:port (Ctrl+V pastes)"
                          : f == Field::Password ? "Party password (empty = none; stored protected)"
                                                 : "Party name (1-16 of A-Z a-z 0-9 _ -)";
     const std::string initial = f == Field::Address ? s.host_address : f == Field::Name ? s.name : std::string();

@@ -330,3 +330,53 @@ run, no player moves in the D4 runs, wait lines with fixed text and hard timeout
   `WorldActionAllowed`) and sent with the same EVENT.
 * Own-save writes are the sender's job (the guest writes its own pool; the host never writes a
   guest's save).
+
+## 12. Shared NPC dialogue
+
+When a party member talks to an NPC, the members near that NPC get the conversation too
+(`gpu/shim/party/party_npctalk.cpp`, EVENT `npc_talk`). Passive: nothing opens a menu or takes
+input on a listener.
+
+**RE (eboot 1.09, our offsets).**
+
+* `0x2049170(state, voiceId)` plays every talk line: the talk command `TalkToPlayer` (case 1 of the
+  talk command switch `0x203FFD0`, `0x2045870` -> `0x20478A0`) and each next row of the chain in the
+  talk update `0x2047CB0`. `state+4` = the NPC's entity id, `+8` the base TalkParam id, `+0xC` the
+  row index (TalkParam row = base + index: `{msgId, voiceId, ...}`), `+0x31` playing, `+0x34` the
+  shown msgId. The voice: the name `v%09d` (voiceId), `0x27D3A80(handle out, name, pos, -1, 0, 1, 0)`
+  at the NPC's position (`0x18C3BF0` dummy poly, else the chr's physics position), then
+  `0x27E2C50` / `0x27E2380` on the handle (`0x27E23F0` stops it); `0x553D6F0 != 0`: no sound.
+* The subtitle: while a line plays the talk update writes MessageUI (`*0x5562878`) `+0x80C` =
+  msgId, `+0x810` = 0, `+0x58` = 4 (talk request), `+0x280` = 1; the talk stop `0x2048E60` writes
+  `+0x280` = 0.
+* Talk menu: command `0x13` AddTalkListData(index, msgId, ..) pushes `{msgId, index}` into
+  MessageUI `+0xEB0`, `0x14` ClearTalkListData; the chosen row index is MessageUI `+0xEC0` (test
+  `0x17` GetTalkListEntryResult).
+* Talk text: FMG category 1 (`会話`, 2835 lines; per speaker in blocks of 10000: 190xxxx Gilbert,
+  130xxxx Iosefka, 40xxxx the Doll, 50xxxx Gehrman ...). Item names: 10 goods, 11 weapons, 12 armor.
+
+**Talker.** Two observer hooks (they only read): the line `0x2049170` and the command switch
+`0x203FFD0` (menu rows, the choice). Each line goes out as `{k:"line", npc, talk, msg, voice, map,
+pos}`; the talk's stop (`state+0x31` = 0 or `+0x34` = -1, from `0x2048E60`) as `end` (a listener also
+ends a line after its speaking time, ~0.07 s a character, 2.5-10 s: live, `+0x31` can stay set
+long after the subtitle is gone, and `+0x38` / MessageUI `+0x280` drop while a line still shows); the chosen row as `choice`; an item lot the game
+awards within 30 s of a line (party_items' award hook) as `gift`. A guest sends to the host; the
+host names the talker from its roster (`who`, `slot`, never trusted from a guest), relays it to the
+other members and broadcasts its own. 24 events per 10 s per member at most.
+
+**Listener.** Same world (both in the host's world) and same map, then the distance from the local
+player to the NPC (the local NPC chr, else the talker's position) against the range (Party rules
+"NPC dialogue range", default 25 m, 0 = the whole map; `BB_PARTY_NPC_TALK_RANGE`):
+
+* within range: the game's own subtitle (MessageUI writes above, every frame while no menu is up and
+  the local game plays no talk of its own), the voice at the NPC (attenuated by the game's 3D sound
+  like the game's own lines), the caption "[Hunter talking to Gilbert]" above the subtitles, the
+  talker's choice ("Hunter chose: ...") and gift ("Hunter received ... from Gilbert");
+* further away: a quiet party notice "Hunter is talking to Gilbert" (once a minute per NPC);
+* a line the listener's own game played for the same NPC in the last 20 s is not doubled.
+
+Logged as `Party: npc_talk: ...` (every local line with its talk id, every shared line with the
+distance decision). Switches: Party rules "Share NPC dialogue" (bbport.ini `party_npc_talk`,
+launcher Party > Share NPC dialogue, `BB_PARTY_NPC_TALK=0`), `BB_PARTY_NPC_TALK_VOICE=0`,
+`BB_PARTY_NPC_TALK_SUBTITLE=0` (our caption line instead of the game's subtitle),
+`BB_PARTY_NPC_TALK_TRACE=1` (every talk command id).

@@ -69,7 +69,10 @@ static void test_tables() {
 static void test_deny() {
     CHECK(ItemLotDenied(0, kItemNone));
     CHECK(ItemLotDenied(10010, 6622));       // Messenger: Beckoning Bell (per player)
-    CHECK(ItemLotDenied(10040, 50000100));   // Messenger, flag outside the personal block
+    // The Eye of a Blood-drunk Hunter (DLC entry): its Messenger event never runs on a summoned
+    // guest (chr type 0 only), so the host's copy is replayed (quest_audit.md).
+    CHECK(!ItemLotDenied(10040, 50000100));
+    CHECK(ClassifyAward(10040, true) && ClassifyAward(10040, true)->flag == 50000100);
     CHECK(ItemLotDenied(10050, 6670));
     CHECK(ItemLotDenied(43120, 6676));       // DLC NPC gift with a personal flag
     CHECK(!ItemLotDenied(3401800, 6674));    // Ludwig's reward: exception
@@ -111,6 +114,19 @@ static void test_classify() {
     CHECK(!InstancedTreasureFlag(52410140, true, true));
     CHECK(!InstancedTreasureFlag(50001700, true, false));
     CHECK(!InstancedTreasureFlag(12410000, true, false));
+    // Progression keys and workshop tools found as map treasure go to everyone (quest_audit.md).
+    for (const std::int32_t lot : {2400450, 2800290, 2600550, 2600610, 3200720, 3500800, 2200360, 2411000}) {
+        CHECK(SharedKeyTreasureLot(lot));
+        CHECK(ItemLotFlag(lot) == 50000000 + lot);
+        CHECK(!InstancedTreasureFlag(50000000 + lot, true, false));
+        CHECK(!ItemLotDenied(lot, 50000000 + lot));
+        const auto k = ClassifyFlag(50000000 + lot, captured);
+        CHECK(k && k->lot == lot);
+        CHECK(GuestGiftShareable(lot, 50000000 + lot));
+    }
+    CHECK(!SharedKeyTreasureLot(2410290));            // Saw Hunter Badge: a shop unlock, per player
+    CHECK(InstancedTreasureFlag(52410290, true, false));
+    CHECK(!SharedKeyTreasureLot(31000));              // Oedon Tomb Key: a boss award (ledger), not treasure
     captured[50001700] = 33010; // the hook saw the NG variant
     f = ClassifyFlag(50001700, captured);
     CHECK(f && f->lot == 33010);
@@ -625,8 +641,9 @@ static void test_gift_up() {
     CHECK(!GuestGiftShareable(17000, kItemNone));      // flagless: the host could not dedupe
     CHECK(!GuestGiftShareable(31000, kItemNone));      // ledger lot (host-only award)
     CHECK(!GuestGiftShareable(10010, 6622));           // Messenger gift: per player
-    CHECK(!GuestGiftShareable(10040, 50000100));       // Messenger, denied
-    CHECK(!GuestGiftShareable(2400450, 52400450));     // map treasure: instanced per player (D4)
+    CHECK(GuestGiftShareable(10040, 50000100));        // the Eye: replayed to everyone (quest_audit.md)
+    CHECK(!GuestGiftShareable(2410290, 52410290));     // map treasure: instanced per player (D4)
+    CHECK(GuestGiftShareable(2400450, 52400450));      // ... except a progression key (Hunter Chief Emblem)
     CHECK(!GuestGiftShareable(2300090, 52300090));
     CHECK(!GuestGiftShareable(123456789, 50000200));   // unknown lot
 
@@ -634,7 +651,7 @@ static void test_gift_up() {
     std::int32_t lot = 0, flag = 0;
     std::string err;
     CHECK(GiftUpFromJsonText(body, &lot, &flag, &err) && lot == 17000 && flag == 50000200);
-    CHECK(!GiftUpFromJsonText(GiftUpToJsonText(2400450, 52400450), &lot, &flag, &err));
+    CHECK(!GiftUpFromJsonText(GiftUpToJsonText(2410290, 52410290), &lot, &flag, &err));
     CHECK(!GiftUpFromJsonText("{\"lot\":17000}", &lot, &flag, &err));
     CHECK(!GiftUpFromJsonText("{\"lot\":17000.5,\"flag\":50000200}", &lot, &flag, &err));
     CHECK(!GiftUpFromJsonText("{\"lot\":1e300,\"flag\":50000200}", &lot, &flag, &err));
@@ -773,6 +790,13 @@ static void test_ledger_suspicious() {
     LotSlotState unknown = key;
     unknown.owned = -1;
     CHECK(!LedgerSkipSuspicious({unknown}));
+    // par_c6: goods given while summoned, given again in the own world when missing.
+    CHECK(SummonedRegiveCount(1, 0, 1) == 1);   // the key never reached the save
+    CHECK(SummonedRegiveCount(1, 1, 1) == 0);   // kept
+    CHECK(SummonedRegiveCount(8, 3, 8) == 5);   // 5 of 8 missing
+    CHECK(SummonedRegiveCount(8, 0, 3) == 3);   // never more than was given
+    CHECK(SummonedRegiveCount(-1, 0, 1) == 0);  // unknown counts: nothing
+    CHECK(SummonedRegiveCount(1, -1, 1) == 0);
     LotSlotState vial = key;
     vial.max_num = 20;
     vial.max_storage = 600;

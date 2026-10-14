@@ -44,11 +44,18 @@ inline constexpr Effect Effects[] = {
     {"debug_menu", "Debug menu (requires font files)", "Debug menu (нужны файлы шрифтов)", false},
 };
 inline constexpr int EffectCount = int(sizeof(Effects) / sizeof(Effects[0]));
-/// Live output resolutions: the upscaler's output and the UI host targets.
-inline constexpr int OutputWidths[] = {1280, 1920, 2560, 3840};
-inline constexpr int OutputHeights[] = {720, 1080, 1440, 2160};
-inline constexpr int OutputCount = 4;
+/// Output resolutions: the upscaler's output and the UI host targets. The 16:9 ones change
+/// live; the ultrawide ones (21:9, 32:9; from Supermedo/bloodborne_pc PR #70) need the startup
+/// patch (patches.py ultrawide_writes, run.bat) and a restart.
+inline constexpr int OutputWidths[] = {1280, 1920, 2560, 3840, 2560, 3440, 3840, 5120, 3840, 5120};
+inline constexpr int OutputHeights[] = {720, 1080, 1440, 2160, 1080, 1440, 1600, 2160, 1080, 1440};
+inline constexpr int OutputCount = 10;
 inline constexpr int OutputDefault = 1; ///< 1920x1080, the game's own size
+/// Wider than 16:9: camera and HUD patched at startup.
+inline bool Ultrawide(int output) {
+    return output >= 0 && output < OutputCount &&
+           OutputWidths[output] * 9 > OutputHeights[output] * 16;
+}
 
 struct Values {
     /// bbport (Windows fork): the menu defaults to English; Russian only when chosen
@@ -136,6 +143,12 @@ struct Values {
     /// (which hides behind any occluder); off = the game's own plate as in vanilla, ours not drawn
     /// (ini party_name_tags; env BB_PARTY_HUD_GAME_PLATE=1 keeps the game's plate for tests). Live.
     std::atomic<bool> party_name_tags{true};
+    /// D8: a party member's NPC conversation (subtitles, voice, choices, gifts) is shared with the
+    /// members near it (ini party_npc_talk; env BB_PARTY_NPC_TALK overrides). Live, local.
+    std::atomic<bool> party_npc_talk{true};
+    /// ... within this many metres of the NPC (0 = anywhere on the same map; ini
+    /// party_npc_talk_range; env BB_PARTY_NPC_TALK_RANGE overrides). Live, local.
+    std::atomic<int> party_npc_talk_range{25};
 
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
     int startup_preset = NativeAA;

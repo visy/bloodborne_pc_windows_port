@@ -19,9 +19,12 @@
 #include "party_phantom.h"
 #include "party_fourp.h"
 #include "party_progress.h"
+#include "party_desync.h"
 #include "party_travel.h"
 #include "party_worldact.h"
+#include "party_npctalk.h"
 #include "party_droproll.h"
+#include "party_log_game.h"
 #include "coop_hooks.h"
 #include "game_state.h"
 #include "upnp_win.h"
@@ -810,6 +813,11 @@ LinkCallbacks make_callbacks(bool host) {
                 else plog("%s event from slot %d: %s", name.c_str(), slot, err.c_str());
                 return;
             }
+            if (name == coop::desync::kResyncEvent) {  // F5: a guest's state differs from the host's digest
+                std::string err;
+                if (!coop::desync::HostQueueResync(slot, body, &err)) plog("sync_resync from slot %d refused: %s", slot, err.c_str());
+                return;
+            }
             if (name == coop::kLampLitEventName) {  // a guest lit a lamp of the host's world
                 std::string err;
                 if (!coop::GuestServicesOnLampLit(slot, body, &err)) plog("lamp_lit from slot %d refused: %s", slot, err.c_str());
@@ -823,6 +831,10 @@ LinkCallbacks make_callbacks(bool host) {
             if (name == coop::kGiftUpEventName) {  // D5: an NPC's gift to a guest; the host takes it too
                 std::string err;
                 if (!coop::OnHostGiftUp(slot, body, &err)) plog("gift_up from slot %d refused: %s", slot, err.c_str());
+                return;
+            }
+            if (name == coop::npctalk::kEventName) {  // a guest's NPC conversation (D8, party_npctalk.h)
+                coop::npctalk::OnEvent(slot, body);
                 return;
             }
             if (name == coop::worldact::kEventName) {  // a guest's lever / door / NPC talk (D3, D8)
@@ -895,7 +907,7 @@ LinkCallbacks make_callbacks(bool host) {
                 return;
             }
             if (name == coop::progress::kEventFlags || name == coop::progress::kEventFlagSnapshot ||
-                name == coop::progress::kEventWorldGroups) {
+                name == coop::progress::kEventWorldGroups || name == coop::desync::kDigestEvent) {
                 std::string err;  // C2: the host's flags, applied by the main-thread tick
                 if (!coop::progress::OnLinkEvent(name, body, &err)) plog("%s event: %s", name.c_str(), err.c_str());
                 return;
@@ -925,6 +937,10 @@ LinkCallbacks make_callbacks(bool host) {
                 if (!coop::droproll::OnEvent(body, &err)) plog("drop_seed event refused: %s", err.c_str());
                 return;
             }
+            if (name == coop::npctalk::kEventName) {  // a member's NPC conversation (D8, party_npctalk.h)
+                coop::npctalk::OnEvent(slot, body);
+                return;
+            }
             if (name == coop::kPhantomEventName) {  // host lamp / rested / boss Insight
                 coop::PhantomOnEvent(body);
                 return;
@@ -934,6 +950,16 @@ LinkCallbacks make_callbacks(bool host) {
             if (bbnet::party_trace()) plog("event %s id %llu", name.c_str(), static_cast<unsigned long long>(id));
         };
     }
+    // Party logging (party_log.h): every event either way (BB_PARTY_LOG=verbose / trace) and the
+    // log's own events (run ids, user marks), which no other handler sees.
+    cb.on_event = [inner = std::move(cb.on_event)](int slot, std::uint64_t cursor, const std::string& name,
+                                                   const std::string& body) {
+        if (coop::plog::OnEventReceived(slot, name, body)) return;
+        if (inner) inner(slot, cursor, name, body);
+    };
+    cb.on_event_sent = [](int slot, const std::string& name, const std::string& body) {
+        coop::plog::OnEventSent(slot, name, body);
+    };
     return cb;
 }
 
@@ -1110,6 +1136,32 @@ void lan_on_datagram(std::uint32_t a, std::uint16_t p, const std::uint8_t* d, st
     }
 }
 
+// The host's secret as the BBP3 code carries it (party_code.h): 4 bytes while a password is set
+// (the password keeps strangers out), 6 without (the secret alone does). A stored secret of the
+// other size is shortened / lengthened, a missing one made: the party key changes with it, so
+// friends need the new code once.
+void fit_secret_to_code(std::array<std::uint8_t, 8>* secret, bool password) {
+    auto& s = *secret;
+    const bool empty = std::all_of(s.begin(), s.end(), [](std::uint8_t b) { return b == 0; });
+    if (empty) {
+        crypto::random_bytes(s.data(), password ? kSecretBytesWithPassword : kSecretBytes);
+        return;
+    }
+    if (s[6] || s[7] || (password && (s[4] || s[5]))) {
+        // An 8-byte secret from before BBP2, or a 6-byte one now that a password is set.
+        for (std::size_t i = password ? kSecretBytesWithPassword : kSecretBytes; i < s.size(); ++i) s[i] = 0;
+        plog("party secret shortened to %u bits for the shorter party code: send your friends the new code",
+             static_cast<unsigned>(8 * (password ? kSecretBytesWithPassword : kSecretBytes)));
+    } else if (!password && !s[4] && !s[5]) {
+        // A 4-byte secret from a party with a password: without one the code is all that keeps
+        // strangers out, so it gets its 48 bits back.
+        do {
+            crypto::random_bytes(s.data() + 4, 2);
+        } while (!s[4] && !s[5]);
+        plog("party secret lengthened to 48 bits (no password): send your friends the new code");
+    }
+}
+
 void start_host(LinkConfig cfg) {
     Runtime& r = R();
     const bool lb = loopback_mode();
@@ -1123,14 +1175,8 @@ void start_host(LinkConfig cfg) {
         plog("party game from the menu: the party code of the last session (secret from party.json)");
     } else {
         cfg.secret = {};
-        crypto::random_bytes(cfg.secret.data(), 6);  // BBP2 codes carry 48 bits (party_code.h)
     }
-    if (cfg.secret[6] || cfg.secret[7]) {
-        // An 8-byte secret from before BBP2: shortened so the code is a short BBP2 one. The party
-        // key changes with it, so friends need the new code once.
-        cfg.secret[6] = cfg.secret[7] = 0;
-        plog("party secret shortened to 48 bits for the shorter BBP2 code: send your friends the new code");
-    }
+    fit_secret_to_code(&cfg.secret, !cfg.password.empty());
     flow::StoreHostSecret(hex_of(cfg.secret.data(), cfg.secret.size()));
     // <user>/party_secret.txt: the restart's second source after the crash marker.
     write_text_file(fs::path(user_dir()) / "party_secret.txt", hex_of(cfg.secret.data(), cfg.secret.size()) + "\n");

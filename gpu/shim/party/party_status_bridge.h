@@ -54,6 +54,9 @@ struct Facts {
     // A11: joins wait while the host fights a boss / watches a cutscene (party_dsummon BusyText):
     // the host's own line or the guest's "Waiting: the host is in a boss fight"; empty = none.
     std::string host_busy;
+    // Playtest 1 #19: other connected members still in their prologue ("Hunter1"): summons start
+    // once everybody is ready, so the page says who it waits for.
+    std::string others_prologue;
 };
 
 struct Mapped {
@@ -94,6 +97,8 @@ void OnRuntimeError(const std::string& error);
 void OnHostAddress(const std::string& address);
 void OnLinkState(LinkState state, const std::string& detail, RejectCode reject, const std::string& reason);
 void OnRoster(const std::vector<RosterEntry>& roster, int max_players);
+/// #19: the other connected members in their prologue ("" none; the director, on a change).
+void OnOthersPrologue(const std::string& names);
 void OnMemberJoined(const std::string& name, bool rejoined);
 void OnMemberLeft(const std::string& name, bool slot_kept);
 void OnTravel(const std::string& what);

@@ -264,6 +264,12 @@ static void TestPolicy() {
     CHECK(ModeFor(p, 2000) == SyncMode::Off);          // session runtime
     CHECK(ModeFor(p, 9021) == SyncMode::Off);          // chalice slot
     CHECK(ModeFor(p, 9180) == SyncMode::Off);          // cleared every load
+    // Snatcher kidnap trigger: transient (common 9421 moves the respawn point to the Gaol and
+    // clears it); in a guest's own save it would send its next solo death to Yahar'gul.
+    CHECK(CategoryOf(9420) == Category::never_sync);
+    CHECK(ModeFor(p, 9420) == SyncMode::Off);
+    CHECK(CategoryOf(9423) == Category::key_event);    // first-sacrifice scene seen: still shared
+    CHECK(ModeFor(p, 9423) == SyncMode::SetOnly);
     CHECK(ModeFor(p, 12100505) == SyncMode::Off);      // Doll position (random)
     CHECK(!HostCandidate(2000) && HostCandidate(5000) && HostCandidate(1005) && HostCandidate(12101800));
     p.mode[int(Category::item_lot_picked)] = SyncMode::SetOnly;

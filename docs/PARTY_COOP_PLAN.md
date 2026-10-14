@@ -78,7 +78,7 @@ Bell events (main thread only, through LuaEvent_DispatchByName): host `OnEvent_C
   which names only one side has) / CHALLENGE / AUTH (keyed BLAKE2b) / WELCOME / REJECT, then XChaCha20-Poly1305
   (key = Argon2i(password ‖ code secret), monocypher). PING/PONG 1 Hz, ROSTER, RPC_REQ/RESP,
   EVENT/ACK, PARTY_CMD, PROGRESS, BYE.
-- Party code: `BBP2-` + Crockford base32 {flags, ipv4 (LAN: last octet), port (omitted when 9307), secret[6], crc8} (BBP1 {ver, flags, ipv4, port, secret[8], crc16} still decoded); Internet
+- Party code: `BBP3-` + Crockford base32 of a bit string {flags 4, ipv4 32 (LAN: last octet), port 16 (omitted when 9307), secret 48 (32 with a password), CRC 8-12 bits filling the last symbol}: Internet 16 symbols with a password / 19 without, LAN 11 / 14 (party_code.h, with the security trade-off). BBP2 {flags, ipv4, port, secret[6], crc8} and BBP1 {ver, flags, ipv4, port, secret[8], crc16} still decoded; Internet
   (STUN public address / UPnP via IUPnPNAT) and LAN codes; plain host:port also accepted.
 - Game P2P traffic: real Winsock UDP with bbhost's vport framing `[0xff][flags][src][dst]`,
   probe `fe 'bbhp'`, relay framing `[0xfb]['R'|'r']`; port remapped to `BB_PARTY_PORT`.

@@ -59,10 +59,21 @@ StartStep ClassifyStart(const StartFlags& f, bool in_world) {
     if (!f.first_dream) {
         return StartStep::Clinic;
     }
-    if (!f.weapon_right || !f.weapon_left) {
+    if (!f.weapon_right || !f.weapon_left || !LeftFirstDream(f)) {
         return StartStep::FirstDream;
     }
     return StartStep::Ready;
+}
+
+bool InHuntersDream(std::uint32_t map_id) {
+    return map_id != 0 && map_id != 0xffffffffu && (map_id >> 16) == 0x1500u;
+}
+
+bool LeftFirstDream(const StartFlags& f) {
+    if (f.left_first_dream || f.doll_awake) {
+        return true;
+    }
+    return f.map_id != 0 && f.map_id != 0xffffffffu && !InHuntersDream(f.map_id);
 }
 
 bool StartReady(StartMode mode, const StartFlags& f, bool in_world) {
@@ -76,17 +87,21 @@ bool StartReady(StartMode mode, const StartFlags& f, bool in_world) {
 }
 
 std::string DescribeStart(const StartFlags& f, bool in_world) {
-    char text[320];
+    char text[400];
     if (!f.flags_ok) {
         std::snprintf(text, sizeof text, "step %s (flags unreadable)", StartStepName(ClassifyStart(f, in_world)));
         return text;
     }
     std::snprintf(text, sizeof text,
                   "step %s: 12410000 %d, 9180 %d, 9402 %d, 9401 %d, 12101020 %d, 12101021 %d, 12100105 %d, "
-                  "6622 %d, 6610 %d, goods 200 x%d, 205 x%d",
+                  "6622 %d, 6610 %d, goods 200 x%d, 205 x%d%s",
                   StartStepName(ClassifyStart(f, in_world)), f.opening_done, f.cutscene, f.first_death, f.first_dream,
                   f.weapon_right, f.weapon_left, f.doll_awake, f.beckoning_lot, f.resonant_shop, f.beckoning_count,
-                  f.resonant_count);
+                  f.resonant_count,
+                  f.weapon_right && f.weapon_left && !LeftFirstDream(f)
+                      ? (f.map_id == 0 || f.map_id == 0xffffffffu ? "; map not known yet"
+                                                                  : "; first Dream visit: the headstone to Yharnam ends the prologue")
+                      : "");
     return text;
 }
 
@@ -108,10 +123,6 @@ party::MemberState OwnWorldState(bool ready) {
     return ready ? party::MemberState::Home : party::MemberState::Prologue;
 }
 
-party::MemberState OwnWorldStateKnown(bool ready, bool in_prologue) {
-    return ready ? party::MemberState::Home : in_prologue ? party::MemberState::Prologue : party::MemberState::Loading;
-}
-
 bool MemberWaits(const std::vector<party::RosterEntry>& roster) {
     for (const party::RosterEntry& e : roster) {
         if (e.slot != party::kHostSlot && e.connected &&
@@ -123,11 +134,44 @@ bool MemberWaits(const std::vector<party::RosterEntry>& roster) {
 }
 
 bool HostMayRing(bool host_ready, int cooperators, int max_players, const std::vector<party::RosterEntry>& roster) {
-    return host_ready && cooperators >= 0 && cooperators < max_players - 1 && MemberWaits(roster);
+    return host_ready && cooperators >= 0 && cooperators < max_players - 1 && MemberWaits(roster) &&
+           !AnyMemberInPrologue(roster);
 }
 
-bool GuestMayRing(bool guest_ready, bool connected) {
-    return guest_ready && connected;
+bool GuestMayRing(bool guest_ready, bool connected, bool party_ready) {
+    return guest_ready && connected && party_ready;
+}
+
+bool AnyMemberInPrologue(const std::vector<party::RosterEntry>& roster) {
+    for (const party::RosterEntry& e : roster) {
+        if (e.connected && e.state == party::MemberState::Prologue) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string MembersInPrologue(const std::vector<party::RosterEntry>& roster, const std::string& except_name) {
+    std::vector<std::string> names;
+    for (const party::RosterEntry& e : roster) {
+        if (e.connected && e.state == party::MemberState::Prologue && (except_name.empty() || e.name != except_name)) {
+            names.push_back(e.name.empty() ? "slot " + std::to_string(e.slot) : e.name);
+        }
+    }
+    std::string out;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        out += (i == 0 ? "" : i + 1 == names.size() ? " and " : ", ") + names[i];
+    }
+    return out;
+}
+
+bool HostInPrologue(const std::vector<party::RosterEntry>& roster) {
+    for (const party::RosterEntry& e : roster) {
+        if (e.slot == party::kHostSlot) {
+            return e.state == party::MemberState::Prologue;
+        }
+    }
+    return false;
 }
 
 bool HostTravelHasAudience(bool hosting_recently, const std::vector<party::RosterEntry>& roster) {
