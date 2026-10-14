@@ -31,6 +31,17 @@ int main() {
     assert(!WorldActionAllowed(2000, false, m2401));     // session
     assert(!WorldActionAllowed(9020, false, m2401));     // chalice slot
     assert(!WorldActionAllowed(9420, false, m2401));     // Snatcher kidnap trigger: transient, never_sync
+    // P1 NPC gift triggers (common event 9040 slots): set only, from any map; not the 9100 slot 9043
+    // or the ids between the slots.
+    assert(NpcGiftTrigger(9042) && NpcGiftTrigger(9045) && NpcGiftTrigger(9074) && NpcGiftTrigger(9077));
+    assert(!NpcGiftTrigger(9041) && !NpcGiftTrigger(9043) && !NpcGiftTrigger(9044) && !NpcGiftTrigger(9053) &&
+           !NpcGiftTrigger(9065) && !NpcGiftTrigger(9068) && !NpcGiftTrigger(9070) && !NpcGiftTrigger(9078));
+    assert(WorldActionAllowed(9074, false, m2400) && WorldActionAllowed(9045, false, dream));
+    assert(!WorldActionAllowed(9074, true, m2400));       // never cleared by a guest
+    assert(!WorldActionAllowed(9043, false, m2400));      // repeatable 9100 gift (Blood of Arianna ...)
+    for (std::uint32_t id = 9042; id <= 9077; ++id) {
+        assert(WorldActionAllowed(id, false, m2401) == NpcGiftTrigger(id));
+    }
     assert(!WorldActionAllowed(21, false, m2401));       // ending
     assert(!WorldActionAllowed(6600, false, m2401));     // own pool (personal)
     assert(!WorldActionAllowed(0, false, m2401));
@@ -48,7 +59,8 @@ int main() {
             WorldActionAllowed(id, true, (id / 100000 % 100) << 24)) {
             const auto c = pg::CategoryOf(id);
             assert(c == pg::Category::shortcut_door || c == pg::Category::world_state ||
-                   c == pg::Category::key_event || c == pg::Category::npc_quest || c == pg::Category::cutscene_seen);
+                   c == pg::Category::key_event || c == pg::Category::npc_quest || c == pg::Category::cutscene_seen ||
+                   (c == pg::Category::item_lot_picked && NpcGiftTrigger(id)));
             assert(!pg::NeverWritable(id));
             assert(pg::WorldMirrorKey(pg::PoolKeyOfId(id)));
         }

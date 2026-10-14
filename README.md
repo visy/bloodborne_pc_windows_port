@@ -192,8 +192,11 @@ before anyone is in the game):
   subtitles and hear the NPC too, with a small "[Hunter talking to Iosefka]" caption and the
   choices they pick; nothing opens on your screen. Range in *System → Party rules → NPC dialogue
   range* (default 25 m), off with *Share NPC dialogue*.
-- **NPC gifts are shared**: an item an NPC gives a guest in the host's world goes to the host and
-  every other party member too (the NPC has moved on for everyone, so nobody misses it).
+- **NPC gifts are shared**: an item an NPC gives a guest in the host's world (e.g. Eileen's Bold
+  Hunter's Marks) goes to the guest, the host and every other party member, once (the NPC has moved
+  on for everyone, so nobody misses it).
+- **Kidnapped by a Snatcher?** If the host is grabbed, the whole party wakes up together in the
+  Hypogean Gaol (Yahar'gul) after one loading screen. Guests cannot be kidnapped in the host's world.
 - **Enemy drops for each player, one roll.** Every player gets their own copy of each enemy's drop,
   and it is the same item for everyone (one shared roll per kill).
 - **Blood Echoes for every kill.** Whoever kills an enemy, every party member gets its full

@@ -835,7 +835,8 @@ void run_lamp(Rng& r, const Corpus& c) {
             INVARIANT(coop::worldact::WorldActionAllowed(id, false, area << 24));
             INVARIANT(!coop::progress::NeverWritable(id));
             const auto cat = coop::progress::CategoryOf(id);
-            INVARIANT(cat != coop::progress::Category::boss_defeated && cat != coop::progress::Category::item_lot_picked &&
+            INVARIANT(cat != coop::progress::Category::boss_defeated &&
+                      (cat != coop::progress::Category::item_lot_picked || coop::worldact::NpcGiftTrigger(id)) &&
                       cat != coop::progress::Category::session_runtime && cat != coop::progress::Category::never_sync);
         }
         for (std::uint32_t id : wa.clr) {
