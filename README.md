@@ -23,7 +23,7 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | Death & respawn | `██████████████████░░` | 89% |
 | Progress (anyone can progress) | `█████████████████░░░` | 87% |
 | Services & UI | `██████████████████░░` | 90% |
-| Network & robustness | `█████████████████░░░` | 84% |
+| Network & robustness | `█████████████████░░░` | 86% |
 | Bloodborne-specific (chalice, Insight) | `████████████████░░░░` | 81% |
 | Feels like single player in a party | `█████████████████░░░` | 86% |
 
@@ -256,9 +256,11 @@ The host gets two party codes (launcher, *System → Party*):
 
 A guest on the host's network with the Internet code finds the host on the LAN by itself (~2 s).
 
-No UPnP and no port forward? Each guest copies its **guest code** (`BBG1-...`, *Party* page) and
-sends it to the host, who presses *Add a guest code*: the game then connects through both routers
-(hole punching). This fails behind symmetric / carrier-grade NAT (some mobile and ISP
+No UPnP and no port forward? The game now finds the way through both routers by itself (hole
+punching; the guest's address is exchanged through the public BitTorrent DHT under a hash only the
+party knows, `BB_PARTY_RENDEZVOUS=0` turns that off). If that does not work, each guest copies its
+**guest code** (`BBG1-...`, *Party* page) and sends it to the host, who presses *Add a guest code*.
+The *Party* page's *Network* line says which NAT you have and what to do about it. This fails behind symmetric / carrier-grade NAT (some mobile and ISP
 connections); there, let another player host or use a VPN such as Tailscale. Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
 
 ### Reporting a co-op bug
