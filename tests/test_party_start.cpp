@@ -113,6 +113,9 @@ static void test_lobby() {
     using MS = party::MemberState;
     CHECK(OwnWorldState(true) == MS::Home);
     CHECK(OwnWorldState(false) == MS::Prologue);
+    CHECK(OwnWorldStateKnown(true, false) == MS::Home);
+    CHECK(OwnWorldStateKnown(false, true) == MS::Prologue);
+    CHECK(OwnWorldStateKnown(false, false) == MS::Loading);  // start flags not read again after a load yet
 
     const std::vector<party::RosterEntry> host_only = {Member(0, MS::Home)};
     const std::vector<party::RosterEntry> guest_prologue = {Member(0, MS::Home), Member(1, MS::Prologue)};

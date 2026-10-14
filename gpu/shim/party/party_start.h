@@ -85,6 +85,10 @@ BellGrant PlanBellGrant(const StartFlags& f);
 
 /// The roster state of a player idle in its own world: Home once ready, else Prologue.
 party::MemberState OwnWorldState(bool ready);
+/// The roster state in the own world when the start step may not be known yet (playtest 1
+/// G4:21464: a READY host showed "prologue" for a moment after each of its loads, while its start
+/// flags were not read again): ready -> Home, a known prologue step -> Prologue, else Loading.
+party::MemberState OwnWorldStateKnown(bool ready, bool in_prologue);
 /// A party member (not the host) waits for the host's bell: connected and Home or Joining
 /// (a member still in its Prologue does not count).
 bool MemberWaits(const std::vector<party::RosterEntry>& roster);

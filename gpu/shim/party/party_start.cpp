@@ -108,6 +108,10 @@ party::MemberState OwnWorldState(bool ready) {
     return ready ? party::MemberState::Home : party::MemberState::Prologue;
 }
 
+party::MemberState OwnWorldStateKnown(bool ready, bool in_prologue) {
+    return ready ? party::MemberState::Home : in_prologue ? party::MemberState::Prologue : party::MemberState::Loading;
+}
+
 bool MemberWaits(const std::vector<party::RosterEntry>& roster) {
     for (const party::RosterEntry& e : roster) {
         if (e.slot != party::kHostSlot && e.connected &&
