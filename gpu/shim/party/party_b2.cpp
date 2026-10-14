@@ -5577,7 +5577,18 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
             Log("direct summon: the host's room is in %s, this guest in %s: not delivered",
                 MapName(DS().room.area).c_str(), MapName(s.map_id).c_str());
         } else {
-            a = dsummon::Step(DS().g, now, s.world_up && !s.loading && WaitingGuestEntry() != 0, Role() == RoleClient);
+            const bool entry = s.world_up && !s.loading && WaitingGuestEntry() != 0;
+            // Playtest 1 G4: say once per request what keeps a room from being handed over.
+            static double blocked_logged = -1;
+            if (DS().g.phase == dsummon::Phase::HaveRoom && !entry && Role() != RoleClient &&
+                now - DS().g.since > 1.0 && blocked_logged != DS().asked_at) {
+                blocked_logged = DS().asked_at;
+                Log("direct summon: the room waits: %s (world %s, loading %s, summon manager %s, bell 9005 %s)",
+                    !s.world_up ? "no world" : s.loading ? "a load runs" : "the bell has no waiting summon entry",
+                    s.world_up ? "up" : "down", s.loading ? "yes" : "no", SummonStepManager() ? "ok" : "none",
+                    GuestBellEffectOn() ? "on" : "off");
+            }
+            a = dsummon::Step(DS().g, now, entry, Role() == RoleClient);
         }
         if (before == dsummon::Phase::Asked && DS().g.phase == dsummon::Phase::Failed) {
             Log("direct summon: no answer from the host within %.0f s: the bell sign path", dsummon::kAnswerWait);
@@ -5587,6 +5598,20 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         room = DS().room;
         host_name = DS().names.count(0) ? DS().names[0] : std::string();
         asked_at = DS().asked_at;
+    }
+    // Rearm: the bell's effect down now, up again a moment later (a new ring makes a new entry).
+    static double rearm_at = -1;
+    if (a == dsummon::Action::Rearm) {
+        const bool was_on = GuestBellEffectOn();
+        const bool dropped = DropGuestBellEffect();
+        rearm_at = now + 0.5;
+        Log("direct summon: no waiting summon entry %.1f s after the room came: re-ringing the bell (SpEffect 9005 "
+            "%s, %s)", dsummon::kRearmAfter, was_on ? "was on" : "was off", dropped ? "dropped" : "not on the list");
+    } else if (rearm_at > 0 && now >= rearm_at) {
+        rearm_at = -1;
+        const bool ok = s.world_up && !s.loading && Role() != RoleClient && ApplyGuestBellEffect();
+        Log("direct summon: bell re-rung: SpEffect 9005 %s", ok ? (GuestBellEffectOn() ? "on" : "applied, not listed")
+                                                               : "NOT applied (no world / joined)");
     }
     if (a == dsummon::Action::Deliver) {
         const bool ok = DeliverSummon(room, host_name);

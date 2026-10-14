@@ -233,6 +233,7 @@ void OnAsked(Guest& g, double now) {
     g.deliver_tries = 0;
     g.fail_why = "";
     g.gather = false;
+    g.rearmed = false;
 }
 
 void OnRoom(Guest& g, double now, bool refused, Busy wait) {
@@ -280,9 +281,15 @@ Action Step(Guest& g, double now, bool entry_waiting, bool joined) {
             g.phase = Phase::Done;
             return Action::ReportOk;
         }
+        if (!entry_waiting && !g.rearmed && g.deliver_tries == 0 && now - g.since > kRearmAfter) {
+            g.rearmed = true;
+            g.since = now;  // the entry wait counts from the re-ring
+            return Action::Rearm;
+        }
         if (now - g.since > kEntryWait || g.deliver_tries >= 3) {
             g.phase = Phase::Failed;
             g.fail_why = g.deliver_tries >= 3 ? "the game refused the summon message 3 times"
+                         : g.rearmed          ? "the bell's own summon entry did not come up, not even after a re-ring"
                                               : "the bell's own summon entry did not come up within 8 s";
             return Action::ReportFail;
         }
