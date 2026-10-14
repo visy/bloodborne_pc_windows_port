@@ -157,8 +157,10 @@ void runtime_win_set_tcb(void *tcb) { TlsSetValue(runtime_win_tls_slot(), tcb); 
 
 /* FSGSBASE (CPUID leaf 7, EBX bit 0): wrfsbase/rdfsbase. Where the CPU lacks it the guest TCB
  * stays in the TLS slot only and the VEH answers fs: reads from there (from
- * Mrsuss60/bloodborne_pc_windows_port 336bacc). Cached: asked on every guest stack switch. */
-int runtime_win_has_fsgsbase(void) {
+ * Mrsuss60/bloodborne_pc_windows_port 336bacc). Cached: asked on every guest stack switch.
+ * `used`: probe.c also calls it from inline asm, which LTO does not see (GCC 16 discarded it:
+ * "defined in discarded section" when linking the release build). */
+__attribute__((used)) int runtime_win_has_fsgsbase(void) {
     static volatile int has_fsgsbase = -1;
     int v = has_fsgsbase;
     if (v < 0) {
