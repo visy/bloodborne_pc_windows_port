@@ -2976,6 +2976,12 @@ class BloodborneLauncher(tk.Tk):
 
         env = os.environ.copy()
         env["BB_FROM_LAUNCHER"] = "1"  # run.bat: do not reload launcher_settings.json
+        # run.bat uses the Python running the launcher (3.10+ already), not its own search
+        # (from Mrsuss60/bloodborne_pc_windows_port 1af887a). pythonw has no console output.
+        py = Path(sys.executable)
+        if py.name.lower() == "pythonw.exe" and (py.parent / "python.exe").exists():
+            py = py.parent / "python.exe"
+        env.setdefault("PYTHON", str(py))
         for key, value in settings_env(self.current_settings()).items():
             if value is None:
                 env.pop(key, None)

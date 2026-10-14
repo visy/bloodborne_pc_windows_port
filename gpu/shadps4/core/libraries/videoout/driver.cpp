@@ -438,6 +438,18 @@ void VideoOutDriver::Flip(const Request& req) {
 
     // bbport: BB_FRAME_STATS=1 prints flip rate and frame time spread every 5 seconds.
     static const bool frame_stats = EmulatorSettingsImpl::Flag("BB_FRAME_STATS", false);
+    if (!frame_stats) {
+        // bbport: without frame statistics the memory line once a minute (not at the first flip),
+        // so a log that ends in a crash after an hour of play shows what was growing (after
+        // Supermedo/bloodborne_pc 5dc1f11).
+        static auto memory_due = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= memory_due) {
+            memory_due = now + std::chrono::seconds(60);
+            PrintMemory();
+            std::fflush(stdout);
+        }
+    }
     if (frame_stats) {
         using Clock = std::chrono::steady_clock;
         static Clock::time_point window_start = Clock::now(), last = window_start;

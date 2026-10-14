@@ -106,10 +106,11 @@ if "%BB_GAME_DIR%"=="" set "BB_GAME_DIR=..\CUSA03173"
 set "game=%BB_GAME_DIR%"
 REM Strip trailing backslash if present
 if "%game:~-1%"=="\" set "game=%game:~0,-1%"
-if not exist "%game%\eboot.bin" (
-    echo No eboot.bin in %game% ^(set BB_GAME_DIR or pass path to run.bat^). >&2
-    exit /b 1
-)
+REM No ( ) block around a path: an unquoted ')' in it (Program Files (x86)) ends the block early.
+if exist "%game%\eboot.bin" goto found_eboot
+echo No eboot.bin in "%game%" ^(set BB_GAME_DIR or pass path to run.bat^). >&2
+exit /b 1
+:found_eboot
 
 set "mods_dir=%BB_MODS_DIR%"
 if "%mods_dir%"=="" set "mods_dir=%BB_DATA_DIR%\mods"
@@ -264,7 +265,7 @@ REM reported as installed. A fresh install gets the entitlement folder automatic
 REM DLC maps are present and no add-on folder exists yet. BB_AUTO_DLC=0 skips this.
 if not "%BB_AUTO_DLC%"=="0" if exist "%game%\dvdroot_ps4\map\m34" if not exist "%user_dir%\addcont" (
     mkdir "%user_dir%\addcont\CUSA03173\SPEXPANSIONDLC03" >nul 2>nul
-    echo The Old Hunters: add-on enabled ^(%user_dir%\addcont^)
+    echo The Old Hunters: add-on enabled ^("%user_dir%\addcont"^)
 )
 set "timeout=%BB_TIMEOUT%"
 if "%timeout%"=="" set "timeout=0"
@@ -284,7 +285,7 @@ if "%BB_PARTY_RESTART_MAX%"=="" set "BB_PARTY_RESTART_MAX=5"
 REM A build relinking the exe leaves it empty for a while: never start that (Windows would show a
 REM dialog), and never restart into it.
 for %%F in ("%probe%") do if %%~zF LSS 1048576 (
-    echo [ERROR] %probe% is incomplete ^(%%~zF bytes; a build writing it?^); not starting. >&2
+    echo [ERROR] "%probe%" is incomplete ^(%%~zF bytes; a build writing it?^); not starting. >&2
     exit /b 1
 )
 echo Boot: launching at %TIME%
@@ -331,7 +332,7 @@ if exist "%user_dir%\party_relaunch.bat" (
     call "%user_dir%\party_relaunch.bat"
     del "%user_dir%\party_relaunch.bat" >nul 2>nul
 ) else (
-    echo Party: exit code 75 without %user_dir%\party_relaunch.bat; starting again as before
+    echo Party: exit code 75 without "%user_dir%\party_relaunch.bat"; starting again as before
 )
 if "%BB_PARTY%"=="" (echo Party: starting the single-player game) else (echo Party: starting the party game ^(%BB_PARTY%^))
 goto prepare_patches

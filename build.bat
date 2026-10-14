@@ -97,51 +97,62 @@ if exist "patches\fsr_vulkan_mingw.patch" if exist "gpu\third_party\fsr-vulkan\.
     )
 )
 
-if not exist "out\gpu\build.ninja" (
-    echo Configuring CMake (Ninja)
-    set "CMAKE_OPTS=-S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo"
-    where ninja.exe >nul 2>nul
-    if errorlevel 1 (
-        if defined W64DEVKIT_DIR if exist "%W64DEVKIT_DIR%\bin\ninja.exe" (
-            set "CMAKE_OPTS=%CMAKE_OPTS% -DCMAKE_MAKE_PROGRAM=%W64DEVKIT_DIR%/bin/ninja.exe"
-        )
-    )
-    set "PREFIX_PATHS="
-    if defined SDL3_DIR set "PREFIX_PATHS=%SDL3_DIR%"
-    if defined VULKAN_SDK (
-        if defined PREFIX_PATHS (
-            set "PREFIX_PATHS=%PREFIX_PATHS%;%VULKAN_SDK%"
-        ) else (
-            set "PREFIX_PATHS=%VULKAN_SDK%"
-        )
-    )
-    if exist "C:\msys64\mingw64" (
-        if defined PREFIX_PATHS (
-            set "PREFIX_PATHS=%PREFIX_PATHS%;C:/msys64/mingw64"
-        ) else (
-            set "PREFIX_PATHS=C:/msys64/mingw64"
-        )
-    )
-    if defined CMAKE_PREFIX_PATH (
-        if defined PREFIX_PATHS (
-            set "PREFIX_PATHS=%PREFIX_PATHS%;%CMAKE_PREFIX_PATH%"
-        ) else (
-            set "PREFIX_PATHS=%CMAKE_PREFIX_PATH%"
-        )
-    )
-    cmake %CMAKE_OPTS% -DCMAKE_PREFIX_PATH="%PREFIX_PATHS%"
-    if errorlevel 1 (
-        echo CMake configuration failed.
-        exit /b 1
+rem Configure once. Statements at the top level, not in one ( ) block: inside a block %CMAKE_OPTS%
+rem and %PREFIX_PATHS% keep the values from before it, so a fresh clone configured without them
+rem (from Mrsuss60/bloodborne_pc_windows_port b1f71e6).
+if exist "out\gpu\build.ninja" goto cmake_configured
+echo Configuring CMake (Ninja)
+set "CMAKE_OPTS=-S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo"
+where ninja.exe >nul 2>nul
+if errorlevel 1 (
+    if defined W64DEVKIT_DIR if exist "%W64DEVKIT_DIR%\bin\ninja.exe" (
+        set "CMAKE_OPTS=%CMAKE_OPTS% -DCMAKE_MAKE_PROGRAM=%W64DEVKIT_DIR%/bin/ninja.exe"
     )
 )
+set "PREFIX_PATHS="
+if defined SDL3_DIR set "PREFIX_PATHS=%SDL3_DIR%"
+if defined VULKAN_SDK (
+    if defined PREFIX_PATHS (
+        set "PREFIX_PATHS=%PREFIX_PATHS%;%VULKAN_SDK%"
+    ) else (
+        set "PREFIX_PATHS=%VULKAN_SDK%"
+    )
+)
+if exist "C:\msys64\mingw64" (
+    if defined PREFIX_PATHS (
+        set "PREFIX_PATHS=%PREFIX_PATHS%;C:/msys64/mingw64"
+    ) else (
+        set "PREFIX_PATHS=C:/msys64/mingw64"
+    )
+)
+if defined CMAKE_PREFIX_PATH (
+    if defined PREFIX_PATHS (
+        set "PREFIX_PATHS=%PREFIX_PATHS%;%CMAKE_PREFIX_PATH%"
+    ) else (
+        set "PREFIX_PATHS=%CMAKE_PREFIX_PATH%"
+    )
+)
+cmake %CMAKE_OPTS% -DCMAKE_PREFIX_PATH="%PREFIX_PATHS%"
+if errorlevel 1 (
+    echo CMake configuration failed.
+    exit /b 1
+)
+:cmake_configured
 
-echo Building bbgpu, bbport, and bb-gpu-capabilities
+rem All logical CPUs by default (BB_BUILD_JOBS overrides); a failed parallel build is retried with
+rem -j 1, which also shows the first error on its own (from Mrsuss60/bloodborne_pc_windows_port b1f71e6).
+if not defined BB_BUILD_JOBS set "BB_BUILD_JOBS=%NUMBER_OF_PROCESSORS%"
+if not defined BB_BUILD_JOBS set "BB_BUILD_JOBS=4"
+echo Building bbgpu, bbport, and bb-gpu-capabilities (-j %BB_BUILD_JOBS%)
+cmake --build out/gpu --target bbgpu bbport bb-gpu-capabilities -- -j %BB_BUILD_JOBS%
+if not errorlevel 1 goto build_ok
+echo Parallel build failed; retrying with -j 1
 cmake --build out/gpu --target bbgpu bbport bb-gpu-capabilities -- -j 1
 if errorlevel 1 (
     echo Build failed.
     exit /b 1
 )
+:build_ok
 
 if exist "out\bbport.exe" (
     copy /Y "out\bbport.exe" "out\bb-probe.exe" >nul
