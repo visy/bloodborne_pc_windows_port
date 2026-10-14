@@ -674,6 +674,14 @@ add_executable(party-balance-test EXCLUDE_FROM_ALL ../tests/test_party_balance.c
 target_compile_options(party-balance-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-balance-test PRIVATE shim)
 set_target_properties(party-balance-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Friendly fire / PvP (I1, shim/party/party_pvp_rules.h; the game side party_pvp.cpp is in bbgpu
+# through SHIM_SOURCES): session gate, the guest's rule, team pairs, test steps.
+# cmake --build out/gpu --target party-pvp-test
+add_executable(party-pvp-test EXCLUDE_FROM_ALL ../tests/test_party_pvp.cpp shim/party/party_balance_rules.cpp
+    shim/net/json.cpp)
+target_compile_options(party-pvp-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-pvp-test PRIVATE shim)
+set_target_properties(party-pvp-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Party HUD board (shim/party/party_hud.cpp; in bbgpu through SHIM_SOURCES): same-world rules,
 # composition from roster / VITALS / local reads, geometry. cmake --build out/gpu --target party-hud-test
 add_executable(party-hud-test EXCLUDE_FROM_ALL ../tests/test_party_hud.cpp shim/party/party_hud.cpp

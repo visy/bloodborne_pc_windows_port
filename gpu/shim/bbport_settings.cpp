@@ -173,6 +173,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_pings = i != 0;
     } else if (key == "party_through_walls") {
         v.party_through_walls = i != 0;
+    } else if (key == "party_friendly_fire") {
+        v.party_friendly_fire = i != 0;
     } else if (key == "party_rendezvous") {
         v.party_rendezvous = party::traversal::rendezvous_switch(value.c_str(), false);
     } else if (key == "party_npc_talk_range") {
@@ -288,6 +290,9 @@ void Load() {
     }
     // The DHT rendezvous opt-in: the launcher's Party tab (BB_PARTY_RENDEZVOUS) wins over the ini.
     v.party_rendezvous = party::traversal::rendezvous_switch(std::getenv("BB_PARTY_RENDEZVOUS"), v.party_rendezvous);
+    // I1 friendly fire (tests, scripted hosts): BB_PARTY_FRIENDLY_FIRE=0/1 wins over the ini.
+    if (const char* ff = std::getenv("BB_PARTY_FRIENDLY_FIRE"); ff && (ff[0] == '0' || ff[0] == '1'))
+        v.party_friendly_fire = ff[0] == '1';
     // Async pipelines: BB_ASYNC_SHADERS (this port) wins over BB_ASYNC_PIPELINES (upstream's name).
     if (const char* value = std::getenv("BB_ASYNC_SHADERS"); value && value[0]) {
         Set(v, "async_pipelines", value);
@@ -460,6 +465,7 @@ void Save() {
     put("party_npc_talk", flag(v.party_npc_talk));
     put("party_pings", flag(v.party_pings));
     put("party_through_walls", flag(v.party_through_walls));
+    put("party_friendly_fire", flag(v.party_friendly_fire));
     put("party_rendezvous", flag(v.party_rendezvous));
     put("party_npc_talk_range", std::to_string(v.party_npc_talk_range.load()));
     put("party_guest_lamps", flag(v.party_guest_lamps));

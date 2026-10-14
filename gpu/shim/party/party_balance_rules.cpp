@@ -18,7 +18,8 @@ const int kPoiseTable[11] = {-100, -75, -50, -25, 0, 25, 50, 100, 150, 200, 300}
 
 bool Rules::operator==(const Rules& o) const {
     return rot == o.rot && boss_hp == o.boss_hp && boss_damage == o.boss_damage && boss_poise == o.boss_poise &&
-           enemy_hp == o.enemy_hp && enemy_damage == o.enemy_damage && enemy_poise == o.enemy_poise;
+           enemy_hp == o.enemy_hp && enemy_damage == o.enemy_damage && enemy_poise == o.enemy_poise &&
+           friendly_fire == o.friendly_fire;
 }
 
 bool Doping::operator==(const Doping& o) const {
@@ -70,6 +71,7 @@ std::string ToJson(const Rules& r) {
     v.set("enemy_hp", r.enemy_hp);
     v.set("enemy_damage", r.enemy_damage);
     v.set("enemy_poise", r.enemy_poise);
+    v.set("friendly_fire", r.friendly_fire);
     return json::dump(v, 0);
 }
 
@@ -82,6 +84,8 @@ bool FromJson(const std::string& text, Rules* out, std::string* error) {
     }
     Rules r;
     if (const json::Value* m = v.find("rot"); m && m->type == json::Value::Type::Bool) r.rot = m->boolean;
+    if (const json::Value* m = v.find("friendly_fire"); m && m->type == json::Value::Type::Bool)
+        r.friendly_fire = m->boolean;
     const auto num = [&](const char* key, int* to) {
         const json::Value* m = v.find(key);
         if (m && m->type == json::Value::Type::Number && std::isfinite(m->number) && std::fabs(m->number) < 1e6) {

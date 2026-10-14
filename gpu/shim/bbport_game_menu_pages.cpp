@@ -244,6 +244,7 @@ struct BalanceTexts {
     u32 rot_help = 0;
     u32 scale_help[6]{};
     u32 npc_range_help = 0;
+    u32 ff_help = 0, ff_value = 0, ff_guest_help = 0;
 } balance;
 std::string member_names[MaxMembers]; // the member row k stands for (kick)
 bool member_kickable[MaxMembers]{};
@@ -1026,6 +1027,18 @@ void DefineAll() {
                    "Маленькая метка с расстоянием на каждом спутнике на вашей карте, и за стенами"),
            toggle, Kind::Toggle);
 
+    // ---- Friendly fire / PvP (I1, party_pvp.h): a party rule only the host sets (ERSC's
+    // Judicator's Rulebook). The host gets the toggle; a guest sees the host's rule, read-only. ----
+    AddPage("Friendly fire", "Огонь по своим", "Let party members hurt each other (PvP); the host decides (bbport)",
+            "Члены группы могут ранить друг друга (PvP); решает хост (bbport)");
+    balance.ff_help = AddDynamic(MaxHelpLength);
+    AddRow(Flag(&Values::party_friendly_fire), AddText("Friendly fire / PvP", "Огонь по своим / PvP"), balance.ff_help,
+           toggle, Kind::Toggle, [] { return party::status::Snapshot().role != party::status::Role::Guest; });
+    balance.ff_value = AddDynamic(MaxValueLength);
+    balance.ff_guest_help = AddDynamic(MaxHelpLength);
+    AddRow(Info(), AddText("Friendly fire / PvP", "Огонь по своим / PvP"), balance.ff_guest_help, {balance.ff_value},
+           Kind::Button, [] { return party::status::Snapshot().role == party::status::Role::Guest; });
+
     // ---- Enemy scaling (party_balance.h): per extra hunter, the host's values count. ----
     AddPage("Enemy scaling", "Сила врагов", "Boss and enemy health, damage and poise per extra hunter (bbport)",
             "Здоровье, урон и стойкость боссов и врагов за каждого охотника (bbport)");
@@ -1060,6 +1073,17 @@ void RefreshBalance() {
         SetDynamic(balance.npc_range_help, "Companions' NPC dialogue reaches you " + coop::npctalk::DescribeRange(r),
                    r > 0 ? "Диалоги спутников с NPC: в пределах " + std::to_string(r) + " м от NPC"
                          : std::string("Диалоги спутников с NPC: на всей карте"));
+    }
+    if (balance.ff_help) {
+        SetDynamic(balance.ff_help,
+                   "Party members can hurt each other (both ways); a party kill is a normal death. Party rule",
+                   "Члены группы могут ранить друг друга; убийство в группе - обычная смерть. Правило группы");
+        const bool ff = party::status::FriendlyFire();
+        SetDynamic(balance.ff_value, ff ? "On" : "Off", ff ? "Вкл" : "Выкл");
+        SetDynamic(balance.ff_guest_help, ff ? "The host turned friendly fire on: party members can hurt each other"
+                                             : "The host decides; off: party members cannot hurt each other",
+                   ff ? "Хост включил огонь по своим: члены группы могут ранить друг друга"
+                      : "Решает хост; выкл.: члены группы не могут ранить друг друга");
     }
     using namespace coop::balance;
     const int values[6] = {v.party_boss_hp, v.party_boss_damage, v.party_boss_poise,

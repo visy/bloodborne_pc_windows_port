@@ -85,6 +85,10 @@ Board Snapshot();
 std::uint64_t EventSeq();
 /// Cheap (atomic): changes whenever SetAlert is called.
 std::uint64_t AlertSeq();
+/// I1: friendly fire in force on this player (party_pvp.h; the host's rule on a guest), for the
+/// menus. Cheap (atomic); set by the party tick.
+void SetFriendlyFire(bool on);
+bool FriendlyFire();
 /// BB_PARTY turns party mode on for this run (party_env.h: unset, empty, 0, off, false, no = off) (read once, or forced by tests via ResetForTest).
 bool Enabled();
 

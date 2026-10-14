@@ -39,6 +39,9 @@ struct Rules {
     int enemy_hp = 50;     ///< normal enemies: % of the boss HP step (vanilla: 0)
     int enemy_damage = 0;  ///< + % damage per extra hunter
     int enemy_poise = 0;   ///< % of the poise step; negative = easier to stagger (ERSC 3-4 players)
+    /// I1: friendly fire / PvP (ERSC Judicator's Rulebook): party members can hurt each other.
+    /// Off by default; only the host's value counts (party_pvp.h).
+    bool friendly_fire = false;
     bool operator==(const Rules& o) const;
     bool operator!=(const Rules& o) const { return !(*this == o); }
 };
