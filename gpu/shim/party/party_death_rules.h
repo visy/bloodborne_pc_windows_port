@@ -139,6 +139,31 @@ inline AskClose PlanAskClose(bool open, bool loading, bool local_dead, double op
     return AskClose::Keep;
 }
 
+// ---- Whose lamp / headstone use started a lamp warp (playtest 1 bug 20) ----
+/// The "used" flags the lamp warp events wait for: a world lamp -> the Dream (common event 7200,
+/// one instance per lamp, flag 7AAB01xx: 72410101 Central Yharnam ...), a Dream headstone -> its
+/// lamp (m21 event 12107000 / common 7300, flags 72102xxx / 72103xxx). The lamp or the headstone
+/// menu sets it on the player's own game, and the game sends it to every session peer (packet
+/// 0x0f, docs/party/event_flags.md 4.2): every game in that map then runs the warp. Without this
+/// check both players were asked "Travel with the party?" for one player's lamp.
+inline bool LampTriggerFlag(std::uint32_t id) {
+    if (id / 1000 == 72102 || id / 1000 == 72103) {
+        return true;
+    }
+    return id >= 70000000u && id < 80000000u && id / 1000 % 10 == 0 && id % 1000 / 100 == 1;
+}
+constexpr double kLampOriginWindow = 10.0;  ///< s from a lamp's flag to its warp (the event waits ~3-4 s)
+enum class LampOrigin { Own, Other };
+/// A lamp warp on this game: this player's own use, or another member's (`local_age` / `remote_age`:
+/// s since this game set a lamp flag itself / got one from a peer, < 0 never). Another member's
+/// only on evidence (a peer's flag, newer than any own one); else this player's (the old behaviour:
+/// test steps and any path without a flag ask as before).
+inline LampOrigin PlanLampOrigin(double local_age, double remote_age) {
+    const bool remote = remote_age >= 0 && remote_age <= kLampOriginWindow;
+    const bool local = local_age >= 0 && local_age <= kLampOriginWindow;
+    return remote && (!local || remote_age < local_age) ? LampOrigin::Other : LampOrigin::Own;
+}
+
 // ---- A guest uses a lamp / headstone / Hunter's Mark in the host's world ----
 enum class GuestLamp {
     Plain,     ///< nothing to decide here (not a guest in the host's world, or standing at it)

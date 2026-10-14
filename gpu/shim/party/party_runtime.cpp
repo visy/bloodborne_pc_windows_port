@@ -19,6 +19,7 @@
 #include "party_phantom.h"
 #include "party_fourp.h"
 #include "party_progress.h"
+#include "party_split.h"
 #include "party_travel.h"
 #include "party_worldact.h"
 #include "party_droproll.h"
@@ -716,6 +717,15 @@ void on_state(LinkState s, const std::string& detail) {
     }
 }
 
+// Split travel (playtest 1 bug 20): a member asks "Travel with the party?" (EVENT split_choosing).
+void on_split_choosing(int slot, const std::string& body) {
+    std::string who;
+    if (PartyLink* link = R().link)
+        for (const RosterEntry& e : link->roster())
+            if (e.slot == slot) who = e.name;
+    coop::split::OnChoosingEvent(slot, who, body);
+}
+
 void on_roster(const std::vector<RosterEntry>& roster) {
     Runtime& r = R();
     const std::string sig = roster_text(roster, false);
@@ -789,6 +799,10 @@ LinkCallbacks make_callbacks(bool host) {
             bbnet::party::PartyHostService::instance().context_gone(m.name);
         };
         cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
+            if (name == coop::split::kChoosingEventName) {  // a guest asks "Travel with the party?"
+                on_split_choosing(slot, body);
+                return;
+            }
             if (name == coop::b2::kEventName && body.find("\"dsum_") != std::string::npos) {
                 if (PartyLink* link = R().link)
                     for (const RosterEntry& e : link->roster())
@@ -864,6 +878,10 @@ LinkCallbacks make_callbacks(bool host) {
         };
     } else {
         cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
+            if (name == coop::split::kChoosingEventName) {  // the host asks "Travel with the party?"
+                on_split_choosing(slot, body);
+                return;
+            }
             if (name == coop::kTravelEventName) {  // B1: follow the host's warp
                 coop::TravelIntent t;
                 std::string err;

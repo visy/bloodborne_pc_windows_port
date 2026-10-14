@@ -2812,7 +2812,7 @@ void PartyDirector::Tick() {
     GuestServicesTick(s, link);
     // A guest's levers / doors / NPC talk change the host's world (party_worldact.h).
     worldact::Tick(s, link);
-    split::Tick(s);  // split travel: the lamp choice dialog (party_split.h)
+    split::Tick(s, link);  // split travel: the lamp choice dialog (party_split.h)
     if (role == PartyRole::Host) {
         AltarAutopilotTick(s);  // "Enter the party's dungeon" in one press
     }

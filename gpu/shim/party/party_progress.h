@@ -498,6 +498,11 @@ void DirectorTick(const GameSnapshot& s, party::PartyLink* link);
 /// coop::OnHostFlagSet once party_items lands; either side can be merged first.
 using ItemFlagObserver = void (*)(u32 id);
 void SetItemFlagObserver(ItemFlagObserver fn);
+/// Called on the game thread for every flag THIS game sets to 1 itself (SetEventFlag 0x13CFCC0,
+/// Lua CompleteEvent 0x132AAD0; not our own writes, not a peer's packet 0x0f, not the mirror):
+/// split travel tells its own lamp use from another member's. Keep it cheap. nullptr unregisters.
+using LocalFlagSetObserver = void (*)(u32 id);
+void SetLocalFlagSetObserver(LocalFlagSetObserver fn);
 /// Called on the main thread at each steady load (load mode 0 or 1) right before any host flag
 /// is applied there (C3's ledger seeding). nullptr unregisters.
 using BeforeApplyHook = void (*)();

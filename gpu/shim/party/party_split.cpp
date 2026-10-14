@@ -9,6 +9,9 @@
 #include "party_death_rules.h"
 #include "party_director.h"
 #include "party_guestsvc.h"
+#include "party_link.h"
+#include "party_progress.h"
+#include "party_status.h"
 #include "party_travel.h"
 #include "../bbport_game_menu_pages.h"
 
@@ -87,6 +90,81 @@ struct Pending {
 std::mutex g_mu;
 int g_asked = 0;  // questions opened (BB_PARTY_SPLIT_TEST answers them in order)
 Pending g_p;  // under g_mu (OnLampWarp: game thread; Tick: main thread - the same thread in practice)
+
+// ---- Whose lamp (playtest 1 bug 20) ----
+// The lamp / headstone "used" flags (deathrules::LampTriggerFlag) this game set itself (game
+// thread: the progress SetEventFlag / CompleteEvent hooks) and the ones a peer sent (packet 0x0f,
+// drained by 0x1339B50 on the main thread: the read call sites below).
+std::atomic<double> g_local_at{-1}, g_remote_at{-1};
+std::atomic<u32> g_local_id{0}, g_remote_id{0};
+constexpr u64 kPacketRead = 0x1789200;  // int (net man, peer, packet type, buffer, size)
+// 0x1339B50 (SprjLuaEventMan update) drains packet 0x0e (network-synced EMEVD event state, 0x14
+// bytes) at 0x1339C02 / 0x1339D0E and packet 0x0f (a peer's CompleteEvent flag, 4 bytes) at
+// 0x1339D8E / 0x1339F2E.
+constexpr u64 kPacketSites[] = {0x1339c02, 0x1339d0e, 0x1339d8e, 0x1339f2e};
+// The lamp warp events (deathrules::LampTriggerFlag): world lamp 7200, Dream headstone 12107000,
+// common 7300 (the Dream side of a headstone warp).
+bool LampWarpEvent(u32 id) {
+    return id == 7200 || id == 7300 || id == 12107000;
+}
+std::atomic<u32> g_ev_packets{0}, g_ev_any{0}, g_ev_last[5];  // 0x0e packets: of the lamp events, any; the last one
+std::atomic<bool> g_ev_dump{false};
+
+void OnLocalFlagSet(u32 id) {
+    if (deathrules::LampTriggerFlag(id)) {
+        g_local_id = id;
+        g_local_at = Now();
+    }
+}
+
+BB_COOP_SYSV u64 FlagPacketRead(u64 man, u64 peer, u64 type, u64 buf, u64 size) {
+    using Fn = u64(BB_COOP_SYSV*)(u64, u64, u64, u64, u64);
+    const u64 r = reinterpret_cast<Fn>(Guest(kPacketRead))(man, peer, type, buf, size);
+    if (!u32(r) || !buf) {
+        return r;
+    }
+    u32 v[5] = {};
+    if (u32(type) == 0xf && u32(size) == 4 && SafeGet(buf, &v[0]) && deathrules::LampTriggerFlag(v[0])) {
+        g_remote_id = v[0];
+        g_remote_at = Now();
+    } else if (u32(type) == 0xe && u32(size) == 0x14 && SafeRead(buf, v, sizeof v)) {
+        // A peer's lamp warp event ran (its state replicated here): the same warp follows on
+        // this game a moment later (playtest 1 bug 20, live splitq run 1: the guest asked 0.04 s
+        // after the host's headstone, no 0x0f flag).
+        u32 ev = 0;
+        for (u32 x : v) {
+            ev = ev ? ev : LampWarpEvent(x) ? x : 0;
+        }
+        const u32 n = g_ev_any.fetch_add(1);
+        if (n < 12 || ev) {
+            for (int i = 0; i < 5; ++i) {
+                g_ev_last[i] = v[i];
+            }
+            g_ev_dump = true;
+        }
+        if (ev) {
+            g_ev_packets.fetch_add(1);
+            g_remote_id = ev;
+            g_remote_at = Now();
+        }
+    }
+    return r;
+}
+
+double Age(const std::atomic<double>& at, double now) {
+    const double t = at.load();
+    return t < 0 ? -1 : now - t;
+}
+
+// Outgoing / incoming EVENT split_choosing (main thread / callback thread).
+std::atomic<u32> g_notify_lamp{0};
+std::mutex g_note_mu;
+struct Choosing {
+    std::string who;
+    u32 lamp = 0;
+    bool fresh = false;
+};
+Choosing g_choosing;  // under g_note_mu
 
 /// Opens the game's YES / NO dialog with our question; the dialog struct, 0 when it cannot open.
 u64 OpenQuestion() {
@@ -211,6 +289,14 @@ void Init() {
         return;
     }
     SetMarkInterceptor(&OnMark);
+    progress::SetLocalFlagSetObserver(&OnLocalFlagSet);
+    int sites = 0;
+    for (u64 at : kPacketSites) {
+        sites += HookCallSite(at, kPacketRead, reinterpret_cast<const void*>(&FlagPacketRead),
+                              "split: peer event / flag packet 0x0e / 0x0f (whose lamp)") ? 1 : 0;
+    }
+    Log("whose lamp: own lamp flags from the SetEventFlag / CompleteEvent hooks, a peer's from %d of 4 packet "
+        "0x0e / 0x0f reads; a warp started by another member's lamp asks nothing here", sites);
     Log("on: a lamp, headstone or Hunter's Mark in a party asks \"Travel with the party?\" (mode %s)",
         ModeName(CurrentMode()));
 }
@@ -230,6 +316,23 @@ bool Hold(std::uint32_t id, bool mark) {
     const bool host = role == PartyRole::Host && sr == kRoleHost && b2::HostHasMembers();
     if (!guest && !host) {
         return false;  // nobody to travel with: the plain warp
+    }
+    if (!mark) {
+        // Bug 20: another member's lamp / headstone flag (packet 0x0f) runs the same warp event
+        // here. Only the member who used it is asked; here the warp is dropped (its outcome comes
+        // as the party travel, or nothing).
+        const double now = Now(), own = Age(g_local_at, now), peer = Age(g_remote_at, now);
+        if (deathrules::PlanLampOrigin(own, peer) == deathrules::LampOrigin::Other) {
+            char mine[48] = "";
+            if (own >= 0) {
+                std::snprintf(mine, sizeof mine, ", own flag %u %.1f s ago", g_local_id.load(), own);
+            }
+            Log("lamp %u (%s): not this player's use - a party member's lamp / headstone (flag or event %u) came %.1f s ago%s; "
+                "no question here, the warp is dropped (that member chooses)",
+                id, host ? "host" : "guest", g_remote_id.load(), peer, mine);
+            party::status::SetLastEvent("A party member is choosing travel");
+            return true;
+        }
     }
     if (!mark && b2::AtLampSpot(id)) {
         return false;  // standing at it already: no question, no move (the same-map hook: last lamp only)
@@ -275,7 +378,59 @@ bool Hold(std::uint32_t id, bool mark) {
 }
 } // namespace
 
-void Tick(const GameSnapshot& s) {
+void OnChoosingEvent(int slot, const std::string& who, const std::string& body) {
+    u32 lamp = 0;
+    if (const std::size_t k = body.find("\"lamp\":"); k != std::string::npos) {
+        lamp = static_cast<u32>(std::strtoul(body.c_str() + k + 7, nullptr, 10));
+    }
+    std::lock_guard<std::mutex> lk(g_note_mu);
+    g_choosing.who = who.empty() ? (slot == 0 ? "the host" : "slot " + std::to_string(slot)) : who;
+    g_choosing.lamp = lamp;
+    g_choosing.fresh = true;
+}
+
+void Tick(const GameSnapshot& s, party::PartyLink* link) {
+    {
+        // Diagnostics (bug 20): every lamp flag, own or a peer's, once.
+        static double local_seen = -1, remote_seen = -1;
+        const double l = g_local_at.load(), r = g_remote_at.load();
+        if (l != local_seen) {
+            local_seen = l;
+            Log("lamp flag %u set by this game (this player's lamp / headstone use)", g_local_id.load());
+        }
+        if (g_ev_dump.exchange(false)) {
+            Log("packet 0x0e #%u (lamp events %u): %u %u %u %u %u", g_ev_any.load(), g_ev_packets.load(),
+                g_ev_last[0].load(), g_ev_last[1].load(), g_ev_last[2].load(), g_ev_last[3].load(), g_ev_last[4].load());
+        }
+        if (r != remote_seen) {
+            remote_seen = r;
+            if (LampWarpEvent(g_remote_id.load())) {
+                Log("lamp warp event %u from a party member (packet 0x0e #%u: %u %u %u %u %u): their lamp / headstone use",
+                    g_remote_id.load(), g_ev_packets.load(), g_ev_last[0].load(), g_ev_last[1].load(),
+                    g_ev_last[2].load(), g_ev_last[3].load(), g_ev_last[4].load());
+            } else {
+                Log("lamp flag %u from a party member (packet 0x0f): their lamp / headstone use", g_remote_id.load());
+            }
+        }
+        Choosing c;
+        {
+            std::lock_guard<std::mutex> lk(g_note_mu);
+            c = g_choosing;
+            g_choosing.fresh = false;
+        }
+        if (c.fresh) {
+            const char* role = PartyDirector::Get().Role() == PartyRole::Host ? "guest" : "host";
+            Log("%s %s is choosing travel (\"Travel with the party?\" for lamp %u on their screen)", role,
+                c.who.c_str(), c.lamp);
+            party::status::SetLastEvent(c.who + " is choosing travel");
+        }
+        if (const u32 lamp = g_notify_lamp.exchange(0); lamp && link) {
+            char body[48];
+            std::snprintf(body, sizeof body, "{\"lamp\":%u}", lamp);
+            link->post_event(PartyDirector::Get().Role() == PartyRole::Host ? party::kBroadcast : 0, kChoosingEventName,
+                             body);
+        }
+    }
     static double release_at = 0;
     if (release_at > 0 && Now() >= release_at) {
         runtime_pad_director_press(0);  // the test press is a tap
@@ -348,6 +503,7 @@ void Tick(const GameSnapshot& s) {
         g_p.dialog = dlg;
         g_p.since = now;
         Log("lamp %u: asking \"Travel with the party?\" (dialog %#llx)", p.id, static_cast<unsigned long long>(dlg));
+        g_notify_lamp = p.id;  // the others log who is choosing (EVENT split_choosing)
         return;
     }
     if (p.state == Ask::Open) {
