@@ -75,6 +75,42 @@ int main() {
     assert(!RotFromAnotherCharacter(2, true, 1.0));   // a moment's reading, not yet
     assert(!RotFromAnotherCharacter(2, false, 60.0)); // past the prologue: its own
     assert(!RotFromAnotherCharacter(0, true, 60.0));  // nothing to drop
+    // Save audit S4: party_rot.txt per save slot.
+    {
+        // The old unkeyed file: dropped (whose it was is unknown), the count kept for the log.
+        const RotFile old = ParseRotFile("stacks 2\nkind0 1\nkind1 1\nkind2 0\nkind3 0\nkind4 0\n");
+        assert(old.legacy_stacks == 2 && old.slots.empty());
+        assert(old.Get(0).Stacks() == 0 && old.Get(1).Stacks() == 0);
+        assert(ParseRotFile("stacks 9\n").legacy_stacks == kRotMaxStacks);
+        assert(FormatRotFile(old).empty());
+        // Two characters, each its own.
+        RotFile f;
+        SlotRot a;
+        a.slot = 1;
+        a.kind[0] = 1;
+        a.kind[3] = 1;
+        f.Set(a);
+        SlotRot b;
+        b.slot = 0;
+        b.kind[2] = 3;
+        f.Set(b);
+        assert(f.Get(1).Stacks() == 2 && f.Get(0).Stacks() == 3 && f.Get(4).Stacks() == 0 && f.Get(4).slot == 4);
+        const RotFile g = ParseRotFile(FormatRotFile(f));
+        assert(g.legacy_stacks == 0 && g.slots.size() == 2);
+        assert(g.Get(1).kind[0] == 1 && g.Get(1).kind[3] == 1 && g.Get(0).kind[2] == 3);
+        // A cleansed character's entry goes.
+        SlotRot clean;
+        clean.slot = 1;
+        f.Set(clean);
+        assert(f.slots.size() == 1 && f.Get(1).Stacks() == 0);
+        assert(FormatRotFile(f) == "slot 0 kinds 0 0 3 0 0\n");
+        // Clamped to kRotMaxStacks in all; junk and out-of-range slots ignored.
+        const RotFile c = ParseRotFile("slot 2 kinds 4 4 4 0 0\nslot 11 kinds 1 0 0 0 0\nslot x\n");
+        assert(c.slots.size() == 1 && c.Get(2).Stacks() == kRotMaxStacks && c.Get(2).kind[1] == 1);
+        // The active slot switches only to a known, different one.
+        assert(RotSlotChanged(-1, 0) && RotSlotChanged(0, 1));
+        assert(!RotSlotChanged(1, 1) && !RotSlotChanged(1, -1) && !RotSlotChanged(-1, -1));
+    }
     assert(LampMenuRest(true, true, 1.5f, 0.2f, -1.0f));
     assert(!LampMenuRest(false, true, 1.5f, 0.2f, -1.0f));  // no dialog
     assert(!LampMenuRest(true, false, 1.5f, 0.2f, -1.0f));  // dead

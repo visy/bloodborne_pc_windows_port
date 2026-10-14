@@ -975,7 +975,7 @@ void DefineAll() {
                             "Отдых у лампы сбрасывает мир для всей группы.");
 
     // ---- Party rules (party_balance.h): the death debuff and the overhead display. ----
-    AddPage("Party rules", "Правила группы", "Death debuff, shared NPC dialogue, what shows above companions (bbport)",
+    AddPage("Party rules", "Правила группы", "Death debuff, shared NPC dialogue, what shows above companions, DHT (bbport)",
             "Штраф за смерть, общие диалоги NPC, что видно над спутниками (bbport)");
     balance.rot_help = AddDynamic(MaxHelpLength);
     AddRow(Flag(&Values::party_rot), AddText("Rot on death", "Гниль при смерти"), balance.rot_help, toggle,
@@ -996,6 +996,12 @@ void DefineAll() {
                [](const Values& v) { return coop::npctalk::RangePosition(v.party_npc_talk_range.load()); },
                [](int i) { BbSettings::Get().party_npc_talk_range = coop::npctalk::RangeAtPosition(i); }),
            AddText("NPC dialogue range", "Дальность диалогов NPC"), balance.npc_range_help, {}, Kind::Slider);
+    // F2: the DHT rendezvous (party_rdv.h), opt-in: it posts this PC's IP on the public BitTorrent DHT.
+    AddRow(Flag(&Values::party_rendezvous), AddText("Find via public DHT", "Поиск через DHT"),
+           AddText("Auto hole punching via the public BitTorrent DHT (shares your IP). Both PCs; next party start",
+                   "Пробивка NAT через публичный DHT BitTorrent (виден ваш IP). На обоих ПК; со следующей группы"),
+           toggle, Kind::Toggle);
+    // A list opens a pop-up over the rows below it: last on the page.
     AddRow(Setting(
                Kind::List, [](const Values& v) { return std::clamp(v.party_overhead.load(), 0, 4); },
                [](int i) { BbSettings::Get().party_overhead = std::clamp(i, 0, 4); }),

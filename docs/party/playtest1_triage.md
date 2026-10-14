@@ -43,6 +43,7 @@ loading-screen path is the proposed fix. A seamless (no-load) variant comes back
 | 19 | Guest's own prologue: a loading screen right after taking the sidearm, woke in the clinic with Iosefka instead of the Notebook + headstone to the sickroom (not in bb_bugs.txt; players' report afterwards) | major | **fixed (prolog)**: ready only after the first Dream visit; no summon / gather / sync while anybody is in its prologue | the guest counted as "ready" as soon as both weapons were taken (still in its first Dream), and the guest's gather lamp-warped it to the host's lamp 2412959 in m24_01 although the host was itself still in its prologue (G2:14543-14574) | prologue |
 | 20 | "Travel with the party?" asked on BOTH players for one lamp / headstone use | major | **fixed (splitq, live)**: only the player whose own game set the lamp / headstone flag is asked; the other logs "host/guest X is choosing travel" (toast) | the same warp event (headstone 12107000, world lamp 7200) also runs on the other player's game and reaches the lamp warp 0x13CDF30, which the split interceptor took for that player's own use | split |
 | 21 | Rot not removed on a lamp "rest" (just triggering the lamp, not travelling) | minor | **fixed (pt1extra, unit) + rotfix**: a dialog opening beside a lamp (4 m from its revive spot or from the lamp object, ReturnPoint id - 1000 / - 2000) is a rest, a level up too; a lamp warp is the respawn only while the player is still down; a title-joined guest's home warp is no rest (**live**). The lamp box opened live (rotfix run 2, screenshot) but 5.7 m from the revive spot, so the 4 m rule missed it: now also measured to the lamp. **Cleanse live (menuhide)**: the direct-lamp-travel warp menu and the old box (`BB_LAMP_TRAVEL=0`) both count | rot was cleansed only by the lamp warp 0x13CDF30 (the travel), so opening the lamp's box and answering NO kept it; the 20 s "after a death" rule also called a real lamp use the respawn (H5:6072/10228) | pt1extra |
+| 22 | Lamps did nothing for a player in Join-a-party mode with no host connected (reported after the playtest: "no lamps worked in single player"; not in bb_bugs.txt) | major | **fixed (lampsave, live)**: with nobody to travel with (a guest in its own world, a host alone) lamps, headstones and the Hunter's Mark are vanilla; the save was fine (no repair) | the guest still had the launcher on "Join a party" with no host running, so every party hook was on in its own world: the same-map lamp warp was a party in-world move (or swallowed beside the lamp), a guest's Mark could go to a stale host lamp. The 0.6.0 log shows no lamp warp attempt at all (see below) | lampsave |
 | crash | Host crash 20:38:10, eboot +0x2199310 null+8 | major | **yes** (batch 5: guard at +0x2199303, frame allocator 1 MiB) | per-frame arena allocator +0xe45560 returned NULL. FUN_02198fd0 checks the 1st alloc, not the 2nd (+0x21992fb); `BB_ARENA_GUARD` covers only the +0x21d5b35 caller | 5 |
 
 Top extra problems (details below): G4's direct summon failed 8 of 10 times with nothing logging why; the guest
@@ -1357,3 +1358,54 @@ host's window shows the toast "Hunter1 is choosing travel". Before the fix (runs
 gave both `held for the choice` lines 0.04 s apart. Not run live: a world lamp press (the lamppress fixture did
 not get the lamp prompt in this save), a 3-player party.
 
+## Bug 22: lamps in "Join a party" mode with no host (lampsave, 2026-10-14)
+
+**Report (0.6.0, after the playtest):** the guest played "single player" (tracing off, uncapped FPS ~124/s) and
+found that no lamp worked. It was not single player: the launcher was still on "Join a party" and no host was
+running, so the game ran as a party guest in its own world (role guest, `Party split: on`, the lamp warp
+0x13CDF30 replaced, the lamp gate +0x49 patched, guest lamps on), with the party save (user\savedata_party,
+his only save folder).
+
+**Evidence.** The guest's log of that session (G6, 18:16): the link never came up (no TCP / UDP answer, the
+title's "Failed to acquire server information"); he continued slot 0 (the party character, level 10), used a
+Dream headstone to lamp 2412950 (it worked: `lamp rest`, a load into m24_01), then spent ~8 min in m24_01
+(items, a hit, menus) and restarted. Every lamp warp passes the lamp-use observer first (`Party balance: lamp
+rest`), so no lamp's warp ever ran in m24_01 and nothing of ours held one (no `held for the choice`, no
+request). Whatever he pressed at the lamp is not in the log; the second process quit at the title.
+
+**The save is fine.** `savedata_party.zip` (each slot file's header holds the event-flag block's offset at +0x34 and its size at +0x38: size 150001 = the 1200 x 125-byte pool + 1): no lamp / headstone trigger flag
+(7AAB01xx for common event 7200, 72102xxx / 72103xxx for event 12107000) is set in any slot or backup. The
+EMEVD completion flags 7215 / 12107015 (event id + slot, written by every ended event, 0x12ED100) are set,
+as in ordinary saves (the test save has 7205, 7210, 7211, 7216-7218): they do not stop the lamp (live: slot 0
+with 7215 set, its lamp 2412950's 7200 ran and warped). Slot 0 has only the Sickroom lamp lit (1AAB7810+20n):
+the lamps lit during the party were lit in the host's world. No repair tool or load-time repair is needed.
+
+**Live (head, two instances, copies of his save, 127.0.0.1, no host on the code's port):** solo and "Join a
+party, no host" side by side, the same scripted lamp use (lamp_travel test aid `titleany;dream;startany;
+start=2412950;lamp=2412950`): both got the lamp's "Return to the Hunter's Dream?" box (talk command 0x11) and
+travelled to the Dream with a loading screen. So head already works for the reported case; the 0.6.0
+failure itself was not reproduced (0.6.0 has no scripted lamp aid; its code path for this case is the same).
+
+**What was still wrong for a guest with no host (and a host alone):** `SameMapLampWarp` (B2) turned a lamp
+warp to a lamp of the loaded map into a party in-world move without a load (no world reset, no rest), and
+swallowed it when standing at that lamp ("already standing at it: no warp, no load"); live before the fix:
+`in-world warp (own move, lamp 2412950) ... no load` on the unconnected guest. A guest's Hunter's Mark /
+death redirect (`RedirectGuest`) checked only the party role, so in its own world it could follow a stale
+host lamp or travel from an earlier session.
+
+**Fix.** `deathrules::PartyTravelActive` / `GuestInHostWorld` (unit `party-death-rules-test`): the party's
+lamp handling applies only with somebody to travel with - a guest in the host's world (session client, or
+the flag store still on the host-world overlay, load mode 1: a phantom's Mark leaves the session before the
+funnel) or a host with members. Otherwise: `lamp N in the loaded map: no party here (session role R): the
+vanilla lamp warp`, and `... in the guest's own world (...): its own, as in single player`. The split
+question, the guest's lamp request and the IsClientPlayer lift were already gated on the client role; the
+lamp gate +0x49 and the IsMultiplayerInProgress lift only lower values that are already 0 without a session.
+
+**Live after the fix (one instance, "Join a party" with no host, test save, direct lamp travel):** lamp
+2412950 -> the travel list -> lamp 2412952 of the same map: `no party here (session role 0): the vanilla lamp
+warp`, a loading screen, `arrived: lamp 2412952, map m24_01_00_00, 0.1 m from its spot`; screenshot: the
+player at the Central Yharnam lamp with the area banner.
+
+**For the guest:** nothing to repair. With 0.6.1, lamps work in "Join a party" mode even when the host is
+not there. For single player, set the launcher's party mode to "Off": that plays user\savedata (his own
+characters; the party character lives only in user\savedata_party and is not touched by solo play).

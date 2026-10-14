@@ -5,6 +5,7 @@
 // Build and run: ninja -C out/gpu party-items-test && out/gpu/party-items-test.exe
 #include "party/party_items.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <map>
 #include <set>
@@ -822,6 +823,65 @@ static void test_ledger_suspicious() {
     CHECK(!LotHasKeyItem({}));
 }
 
+// Playtest 1 save audit: the guest's save (slot 1) held the ledger bits of the Oedon Tomb Key
+// (31000, ledger 25) and the Sword Hunter Badge (50000010, ledger 36) and both boss flags, but
+// neither item. The own-world catch-up picks exactly those from the save alone.
+static void test_key_catchup() {
+    const std::set<std::uint32_t> boss = {12411700, 12411800, 12401800, 12101800};
+    auto is_boss = [&boss](std::uint32_t id) { return boss.count(id) != 0; };
+    std::set<std::uint32_t> save = {kItemLedgerBase + 25, kItemLedgerBase + 36, 12411700, 12411800, 9067,
+                                    kItemLedgerBase + 24, kItemLedgerSeeded};
+    auto own = [&save](std::uint32_t id) { return save.count(id) != 0; };
+    CHECK(ItemLedgerLot(25) == 31000 && ItemLedgerLot(36) == 50000010);
+    std::vector<std::int32_t> lots = KeyCatchupLots(own, is_boss);
+    CHECK(lots.size() == 2);
+    CHECK(lots.size() == 2 && lots[0] == 31000 && lots[1] == 50000010);
+    // Tiny Music Box (ledger 24, common ev 9040 slot 27, done 9067): not a boss reward, never caught up.
+    CHECK(std::find(lots.begin(), lots.end(), 30000) == lots.end());
+    // A ledger bit without the boss flag in this save, or the boss flag without the bit (a boss
+    // C2 synced, its reward never given): nothing (the join's full list handles the latter).
+    save.erase(12411800);
+    lots = KeyCatchupLots(own, is_boss);
+    CHECK(lots.size() == 1 && lots[0] == 50000010);
+    save.insert(12411800);
+    save.erase(kItemLedgerBase + 36);
+    lots = KeyCatchupLots(own, is_boss);
+    CHECK(lots.size() == 1 && lots[0] == 31000);
+    CHECK(KeyCatchupLots([](std::uint32_t) { return false; }, is_boss).empty());
+    // A shared key treasure whose flag this save has (Blood Gem Workshop Tool, 52411000): after the
+    // boss rewards; an unshared treasure flag (52410120) is never caught up.
+    CHECK(SharedKeyTreasureLot(2411000) && ItemLotFlag(2411000) == 52411000);
+    save.insert(52411000);
+    save.insert(52410120);
+    lots = KeyCatchupLots(own, is_boss);
+    CHECK(lots.size() == 2 && lots[0] == 31000 && lots[1] == 2411000);
+    // A lot is given only when every slot is a missing unique good and one of them is a key item.
+    LotSlotState key;
+    key.category = 4;
+    key.id = 4000;
+    key.num = 1;
+    key.owned = 0;
+    key.max_num = 1;
+    key.max_storage = 0;
+    key.goods_type = 1;
+    CHECK(KeyCatchupNeeded({key}));
+    LotSlotState held = key;
+    held.owned = 1;
+    CHECK(!KeyCatchupNeeded({held}));
+    LotSlotState unknown = key;
+    unknown.owned = -1;
+    CHECK(!KeyCatchupNeeded({unknown}));
+    LotSlotState pendant = key;
+    pendant.goods_type = 0;
+    CHECK(!KeyCatchupNeeded({pendant}));
+    CHECK(!KeyCatchupNeeded({}));
+    // party_summoned_gives.txt entries belong to the character (save slot) they were given to.
+    CHECK(SummonedGiveForSlot(1, 1));
+    CHECK(!SummonedGiveForSlot(1, 0));
+    CHECK(SummonedGiveForSlot(-1, 0));  // an older entry without a slot
+    CHECK(SummonedGiveForSlot(1, -1));  // the slot cannot be read: as before
+}
+
 // The Old Hunter Bell and the other Messenger gifts: per player (never replayed), and a guest's
 // own grant of one is never accepted from a peer.
 static void test_messenger_own() {
@@ -872,6 +932,7 @@ int main() {
     test_itemget_watch();
     test_ledger_suspicious();
     test_messenger_own();
+    test_key_catchup();
     std::printf("party-items-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

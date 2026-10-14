@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "bbport_settings.h"
+#include "party/party_traversal.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -168,6 +169,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_name_tags = i != 0;
     } else if (key == "party_npc_talk") {
         v.party_npc_talk = i != 0;
+    } else if (key == "party_rendezvous") {
+        v.party_rendezvous = party::traversal::rendezvous_switch(value.c_str(), false);
     } else if (key == "party_npc_talk_range") {
         v.party_npc_talk_range = std::clamp(i, 0, 500);
     } else if (key == "party_overhead") {
@@ -279,6 +282,8 @@ void Load() {
             Set(v, key, value);
         }
     }
+    // The DHT rendezvous opt-in: the launcher's Party tab (BB_PARTY_RENDEZVOUS) wins over the ini.
+    v.party_rendezvous = party::traversal::rendezvous_switch(std::getenv("BB_PARTY_RENDEZVOUS"), v.party_rendezvous);
     // Async pipelines: BB_ASYNC_SHADERS (this port) wins over BB_ASYNC_PIPELINES (upstream's name).
     if (const char* value = std::getenv("BB_ASYNC_SHADERS"); value && value[0]) {
         Set(v, "async_pipelines", value);
@@ -449,6 +454,7 @@ void Save() {
     put("party_hud", flag(v.party_hud));
     put("party_name_tags", flag(v.party_name_tags));
     put("party_npc_talk", flag(v.party_npc_talk));
+    put("party_rendezvous", flag(v.party_rendezvous));
     put("party_npc_talk_range", std::to_string(v.party_npc_talk_range.load()));
     put("party_guest_lamps", flag(v.party_guest_lamps));
     put("party_rot", flag(v.party_rot));

@@ -328,6 +328,8 @@ void StoreHostSecret(const std::string& hex) {
     StoreLocked(s);
 }
 
+int CurrentSaveSlot() { return LastSlot(); }
+
 void NoteCharacterInWorld() {
     const char* dir = runtime_savepolicy_dir();
     if (!bbnet::settings().party || !dir || std::strcmp(dir, "savedata_party") != 0) return;

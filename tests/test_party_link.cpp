@@ -970,6 +970,12 @@ static void test_host_no_answer_hint() {
     CHECK(host_no_answer_hint(5).find("come back") != std::string::npos);  // the host just left: restarting
     CHECK(host_no_answer_hint(5).find("NAT") == std::string::npos);
     CHECK(host_no_answer_hint(kHostBackWaitS + 1).find("NAT") != std::string::npos);
+    // The DHT rendezvous is opt-in: off says how to get through (guest code / the option on both PCs).
+    CHECK(host_no_answer_hint(-1).find("automatic punching is off") != std::string::npos);
+    CHECK(host_no_answer_hint(-1).find("guest code") != std::string::npos);
+    CHECK(host_no_answer_hint(-1, true).find("automatic punching is off") == std::string::npos);
+    CHECK(host_no_answer_hint(-1, true).find("DHT option on too") != std::string::npos);
+    CHECK(LinkConfig{}.auto_punch == false);
 }
 
 static void test_kick() {

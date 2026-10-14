@@ -360,7 +360,37 @@ static void test_travel_audience() {
     CHECK(HostTravelHasAudience(false, {Member(0, MS::Home), Member(1, MS::Prologue), Member(2, MS::InHostWorld)}));
 }
 
+// Playtest 1 save audit S5: party_prologue.txt per save slot.
+static void test_saved_prologue() {
+    // An old unkeyed file: its value is the "last" one, for every slot (as before).
+    SavedPrologueFile old = ParseSavedPrologue("1\n");
+    CHECK(old.last == 1 && old.slots.empty());
+    CHECK(SavedPrologueFor(old, 0) && SavedPrologueFor(old, -1));
+    CHECK(!SavedPrologueFor(ParseSavedPrologue("0\n"), 3));
+    CHECK(!SavedPrologueFor(ParseSavedPrologue(""), 0));  // no file: not in the prologue
+    // Slot 1 in its prologue, then slot 0 past it: each keeps its own.
+    SavedPrologueFile f;
+    CHECK(NoteSavedPrologueFor(f, 1, true));
+    CHECK(!NoteSavedPrologueFor(f, 1, true));  // unchanged: no write
+    CHECK(NoteSavedPrologueFor(f, 0, false));
+    CHECK(SavedPrologueFor(f, 1) && !SavedPrologueFor(f, 0));
+    CHECK(!SavedPrologueFor(f, -1));          // unknown slot: the last seen (slot 0)
+    CHECK(!SavedPrologueFor(f, 5));           // never seen: the last seen
+    // Round trip keeps "last" even when a slot line says otherwise.
+    const SavedPrologueFile g = ParseSavedPrologue(FormatSavedPrologue(f));
+    CHECK(g.last == 0 && g.slots.size() == 2 && SavedPrologueFor(g, 1) && !SavedPrologueFor(g, 0));
+    // The audit's case: slot 1 still marked, slot 0 continued: no title join hold.
+    CHECK(!SavedPrologueFor(ParseSavedPrologue("last 1\nslot 1 1\nslot 0 0\n"), 0));
+    // Junk lines and out-of-range slots are ignored.
+    const SavedPrologueFile j = ParseSavedPrologue("slot 12 1\nfoo\nslot -3 1\nlast 0\n");
+    CHECK(j.slots.empty() && j.last == 0);
+    // An unknown slot only moves "last".
+    SavedPrologueFile u;
+    CHECK(NoteSavedPrologueFor(u, -1, true) && u.slots.empty() && u.last == 1);
+}
+
 int main() {
+    test_saved_prologue();
     test_travel_audience();
     test_mode();
     test_steps();

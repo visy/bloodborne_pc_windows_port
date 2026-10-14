@@ -32,6 +32,7 @@
 #include "lamp_travel.h"
 #include "party_phantom.h"
 #include "party_start.h"
+#include "party_flow.h"
 #include "party_runtime.h"
 #include "party_progress.h"
 #include "party_travel.h"
@@ -454,33 +455,45 @@ bool InWorld(const GameSnapshot& s) {
 
 /// #19: the last prologue state seen in the world, kept in BB_GPU_USER_DIR/party_prologue.txt, so
 /// a guest at its title (no flags to read yet) knows whether the save it continues is still in its
-/// prologue: then no title join (it would load that save straight into the host's world).
-std::atomic<int> g_saved_prologue{-1};  // -1 not read yet, 0 / 1
+/// prologue: then no title join (it would load that save straight into the host's world). Playtest
+/// 1 save audit S5: kept per save slot (SavedPrologueFile), so one character's prologue never holds
+/// another's title join; an old unkeyed file is read as the last character's state (as before).
+std::mutex g_saved_prologue_mu;
+SavedPrologueFile g_saved_prologue;  // under g_saved_prologue_mu
+bool g_saved_prologue_loaded = false;
 std::string SavedProloguePath() {
     const char* dir = std::getenv("BB_GPU_USER_DIR");
     return dir && dir[0] ? std::string(dir) + "/party_prologue.txt" : std::string();
 }
-int LoadSavedPrologue() {
-    int v = g_saved_prologue.load();
-    if (v >= 0) return v;
-    v = 0;
+/// Caller holds g_saved_prologue_mu.
+SavedPrologueFile& SavedPrologueLocked() {
+    if (g_saved_prologue_loaded) return g_saved_prologue;
+    g_saved_prologue_loaded = true;
     const std::string path = SavedProloguePath();
+    std::string text;
     if (!path.empty()) {
         if (FILE* f = std::fopen(path.c_str(), "rb")) {
-            v = std::fgetc(f) == '1' ? 1 : 0;
+            char buf[512];
+            const std::size_t n = std::fread(buf, 1, sizeof buf, f);
+            text.assign(buf, n);
             std::fclose(f);
         }
     }
-    int expected = -1;
-    g_saved_prologue.compare_exchange_strong(expected, v);
-    return g_saved_prologue.load();
+    g_saved_prologue = ParseSavedPrologue(text);
+    return g_saved_prologue;
+}
+bool LoadSavedPrologue() {
+    const int slot = party::flow::CurrentSaveSlot();
+    std::lock_guard<std::mutex> lk(g_saved_prologue_mu);
+    return SavedPrologueFor(SavedPrologueLocked(), slot);
 }
 void NoteSavedPrologue(bool prologue) {
-    const int v = prologue ? 1 : 0;
-    if (LoadSavedPrologue() == v) return;
-    g_saved_prologue.store(v);
+    const int slot = party::flow::CurrentSaveSlot();
+    std::lock_guard<std::mutex> lk(g_saved_prologue_mu);
+    SavedPrologueFile& f = SavedPrologueLocked();
+    if (!NoteSavedPrologueFor(f, slot, prologue)) return;
     const std::string path = SavedProloguePath();
-    if (!path.empty()) coop::asyncio::Replace(path, prologue ? "1\n" : "0\n");
+    if (!path.empty()) coop::asyncio::Replace(path, FormatSavedPrologue(f));
 }
 
 /// Live test of #19 (one PC, saves past the prologue): BB_PARTY_TEST_PROLOGUE=FLAG:0[+FLAG:0...]
@@ -3407,7 +3420,7 @@ bool LocalPrologueHold() {
 }
 
 bool SavedPrologue() {
-    return LoadSavedPrologue() == 1;
+    return LoadSavedPrologue();
 }
 
 bool PartyPrologueHold(const char** why) {

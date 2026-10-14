@@ -156,7 +156,8 @@ before anyone is in the game):
 - **No loading screen inside the same map for the host.** The host's lamp or Hunter's Mark to a spot
   in the map it is already in is an instant warp, for the whole party too; a guest's gets its own
   short loading screen and the host stays where it is; at the lamp you already stand at, nothing
-  moves at all.
+  moves at all. With nobody to travel with (a host alone, or "Join a party" while the host is not
+  there) lamps, headstones and the Hunter's Mark work exactly as in single player.
 - **Guests can use the Hunter's Mark** (on by default; launcher switch "Guests can use Hunter's
   Mark"): alone it takes you to your own last lamp, with the party to the host's.
 - **Apart and back together.** While players are in different maps each sees only the others in
@@ -175,6 +176,8 @@ before anyone is in the game):
   "Hunter's Dream mirror", on by default; everyone in a party needs the same setting.
 - **Progress counts for everyone.** Bosses, items, doors, shortcuts, lamps, story and endings go
   into every player's own save. A guest who is behind catches up, including the Blood Moon.
+  Key items a guest earned in the host's world (Oedon Tomb Key, badges, workshop tools) are checked
+  each time its own world loads and given again if its save lacks them.
 - **Story cutscenes and endings play for everyone.** The Blood Moon, Amelia's skull (evening to
   night), Mergo's Wet Nurse's arena, Gehrman's scenes and the ending with the end credits
   play for every party member.
@@ -216,7 +219,7 @@ before anyone is in the game):
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
 - **Death has a cost.** Each death stacks "rot" (−10% max HP or stamina, picked at random, up to
   5); using a lamp (even just opening its travel menu and cancelling) or levelling up clears it.
-  It belongs to your character (a new game starts without it). On by default; the host can turn it off on the *Party rules* page.
+  It belongs to your character: each save slot keeps its own, and a new game starts without it. On by default; the host can turn it off on the *Party rules* page.
 - **Enemies scale with the party, harder than vanilla.** Bosses get more health (and a little more
   damage) per extra hunter than the game gives them, normal enemies get tougher too; all six values
   (boss / enemy health, damage, poise) are on the *Enemy scaling* page, the host's count.
@@ -261,10 +264,12 @@ The host gets two party codes (launcher, *System → Party*):
 
 A guest on the host's network with the Internet code finds the host on the LAN by itself (~2 s).
 
-No UPnP and no port forward? The game now finds the way through both routers by itself (hole
-punching; the guest's address is exchanged through the public BitTorrent DHT under a hash only the
-party knows, `BB_PARTY_RENDEZVOUS=0` turns that off). If that does not work, each guest copies its
-**guest code** (`BBG1-...`, *Party* page) and sends it to the host, who presses *Add a guest code*.
+No UPnP and no port forward? Each guest copies its **guest code** (`BBG1-...`, *Party* page) and
+sends it to the host, who presses *Add a guest code*: the game then punches through both routers.
+To skip the code, turn on *Find each other through the public DHT* (launcher *Party* tab or
+*System > Party rules*) on **both** PCs: the guest's address is then exchanged through the public
+BitTorrent DHT under a hash only the party knows. It is off by default because DHT nodes see your
+IP address, as with any torrent client.
 The *Party* page's *Network* line says which NAT you have and what to do about it. This fails behind symmetric / carrier-grade NAT (some mobile and ISP
 connections); there, let another player host or use a VPN such as Tailscale. Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
 
@@ -315,7 +320,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | Who | What |
 |---|---|
 | deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors |
-| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD; audio pop fix, paths with parentheses in `run.bat`, parallel `build.bat`; CPUs without FSGSBASE (Windows TLS fallback), driver pipeline binaries kept between sessions, more background shader compile threads; SnormNz crash fix (packed formats such as 11_11_10), texture collector never evicting bound targets or presented surfaces |
+| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD; audio pop fix, paths with parentheses in `run.bat`, parallel `build.bat`; CPUs without FSGSBASE (Windows TLS fallback), driver pipeline binaries kept between sessions, more background shader compile threads; SnormNz crash fix (packed formats such as 11_11_10), texture collector never evicting bound targets or presented surfaces; stream buffer placement switch (`BB_STREAM_MEMORY`), no draw-queue wait at `SET_PREDICATION` |
 | shadPS4 team | Vulkan video core and shader recompiler (GPL-2.0+), sirit |
 | droogie and the bbhost team | Long-session stability fixes; menu button rows and the menu cursor's offsets; direct summon delivery; the Hunter's Dream mirror (appearance editor) ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |
 | FireBurn | FSR-Vulkan (MIT); AMD FidelityFX SDK (MIT) |
