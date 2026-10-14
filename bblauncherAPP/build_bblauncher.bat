@@ -21,6 +21,15 @@ for %%F in (bblauncher_app.py bblauncher_UI.py bblauncher_Utils.py) do (
     )
 )
 echo   [OK]      bblauncher_app.py, bblauncher_UI.py, bblauncher_Utils.py
+
+set "ICON_ARGS="
+if exist "icon.ico" (
+    echo   [OK]      icon.ico found - will embed into executable
+    set "ICON_ARGS=--icon "icon.ico" --add-data "icon.ico;.""
+) else (
+    echo   [INFO]    icon.ico not found - building with default icon
+)
+
 if not exist "..\scripts\bb_guard.py" echo   [WARN]    ..\scripts\bb_guard.py not found - the exe will build without it
 if not exist "..\scripts\game_check.py" echo   [WARN]    ..\scripts\game_check.py not found - the exe will build without it
 echo.
@@ -82,6 +91,7 @@ echo.
 
 %PY% -m PyInstaller --noconfirm --onefile --windowed ^
     --name "BloodborneLauncher" ^
+    %ICON_ARGS% ^
     --distpath ".." ^
     --paths "." ^
     --paths "..\scripts" ^

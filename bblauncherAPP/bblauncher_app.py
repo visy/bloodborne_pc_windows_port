@@ -17,7 +17,7 @@ if len(sys.argv) > 1 and any(arg.lower().endswith(".py") for arg in sys.argv[1:]
 import json
 from datetime import datetime
 from PySide6.QtCore import QEvent, QTimer
-from PySide6.QtGui import QTextCursor
+from PySide6.QtGui import QIcon, QTextCursor
 from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox
 
 from bblauncher_UI import STYLE_SHEET, LauncherUI, apply_dwm_styling, install_dialog_styling
@@ -48,6 +48,12 @@ class BloodborneLauncher(LauncherUI, QMainWindow):
         self.setWindowTitle("Bloodborne PC Launcher")
         self.setFixedSize(1000, 720)
         self.setStyleSheet(STYLE_SHEET)
+        
+        icon_file = APP_DIR / "icon.ico"
+        if not icon_file.is_file():
+            icon_file = Path(__file__).resolve().parent / "icon.ico"
+        if icon_file.is_file():
+            self.setWindowIcon(QIcon(str(icon_file)))
 
         self.worker = None
         self.log_fh = None
