@@ -76,7 +76,7 @@ Path predict(const Side& host, const Side& guest, bool guest_endpoint_known) {
     return host.type == Type::Restricted ? Path::UdpPunched : Path::None;
 }
 
-std::string advice(Type self, bool host, bool port_open, bool rendezvous, std::uint16_t port) {
+std::string advice(Type self, bool host, bool port_open, Rendezvous rendezvous, std::uint16_t port) {
     const std::string p = std::to_string(port);
     if (host) {
         if (port_open) return "port " + p + " open: guests connect directly";
@@ -90,7 +90,11 @@ std::string advice(Type self, bool host, bool port_open, bool rendezvous, std::u
                    " or use a VPN (Tailscale, ZeroTier)";
         default:
             return std::string("no open port (") + type_name(self) + " NAT): guests join by UDP hole punching" +
-                   (rendezvous ? ", found automatically (or with their guest code)" : ", with their guest code") +
+                   (rendezvous == Rendezvous::On ? ", found automatically (or with their guest code)"
+                    : rendezvous == Rendezvous::Off
+                        ? ", with their guest code (Add a guest code; automatic punching is off: turn on the "
+                          "DHT option on both PCs to skip the code)"
+                        : ", with their guest code") +
                    "; a guest behind a symmetric NAT needs UDP+TCP " + p + " forwarded";
         }
     }
@@ -103,7 +107,9 @@ std::string advice(Type self, bool host, bool port_open, bool rendezvous, std::u
     case Type::Unknown: return "no STUN answer: UDP to the internet may be blocked; a host with an open port still works";
     default:
         return std::string(type_name(self)) + " NAT: hole punching works" +
-               (rendezvous ? " (endpoint exchanged automatically)" : " (give the host your guest code)");
+               (rendezvous == Rendezvous::On  ? " (endpoint exchanged automatically when the host has the DHT option on too)"
+                : rendezvous == Rendezvous::Off ? std::string(" (") + kRendezvousOffHint + ")"
+                                                : std::string(" (give the host your guest code)"));
     }
 }
 

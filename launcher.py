@@ -433,12 +433,20 @@ def party_saves_module():
     return party_saves
 
 
+PARTY_RENDEZVOUS_TIP = (
+    "When a direct connection fails, your address is posted on the public BitTorrent DHT under a key only "
+    "your party can compute, so the host finds you and punches through both routers without a guest code. "
+    "DHT nodes can see your IP, like with any torrent client. Both the host and the guest must turn it on. "
+    "Off: the guest sends the host its guest code (the host uses Add a guest code), or use port forwarding "
+    "or a VPN. Also in the game: System > Party rules. Default: off (BB_PARTY_RENDEZVOUS=1/0).")
+
+
 def party_env(s: dict) -> dict:
     """BB_PARTY_* environment from launcher settings; party off unsets every variable."""
     keys = ["BB_PARTY", "BB_PARTY_NAME", "BB_PARTY_PORT", "BB_PARTY_CODE", "BB_PARTY_PASSWORD",
             "BB_PARTY_UPNP", "BB_PARTY_STUN", "BB_PARTY_PUBLIC_ADDR", "BB_PARTY_MAX",
             "BB_PARTY_SEAMLESS", "BB_PARTY_DIRECT_SUMMON", "BB_PARTY_AUTO", "BB_PARTY_SAVE", "BB_PARTY_START",
-            "BB_PARTY_GUEST_INSIGHT", "BB_SAVE_BACKUP_MINUTES", "BB_SAVE_BACKUP_KEEP"]
+            "BB_PARTY_GUEST_INSIGHT", "BB_SAVE_BACKUP_MINUTES", "BB_SAVE_BACKUP_KEEP", "BB_PARTY_RENDEZVOUS"]
     keys += [env_name for _, env_name, _ in PARTY_SWITCHES]
     env = dict.fromkeys(keys)
     mode = str(s.get("party_mode", "") or "")
@@ -458,6 +466,8 @@ def party_env(s: dict) -> dict:
         env["BB_PARTY_CODE"] = (code.upper() if code.upper().startswith(PARTY_CODE_PREFIXES) else code) or None
     env["BB_PARTY_PASSWORD"] = password or None
     env["BB_PARTY_UPNP"] = "1" if s.get("party_upnp", True) else "0"
+    # Hole punching through the public BitTorrent DHT: opt-in (it shares the IP with DHT nodes).
+    env["BB_PARTY_RENDEZVOUS"] = "1" if s.get("party_rendezvous", False) else "0"
     env["BB_PARTY_STUN"] = stun or None  # game default: stun.l.google.com:19302; "off" disables
     env["BB_PARTY_PUBLIC_ADDR"] = (public or None) if mode == "host" else None
     env["BB_PARTY_MAX"] = max_players if max_players in PARTY_MAX_CHOICES else "3"
@@ -1261,6 +1271,7 @@ class BloodborneLauncher(tk.Tk):
         self.party_separate_save = tk.BooleanVar(value=self.settings.get("party_separate_save", True))
         self.party_port_var = tk.StringVar(value=str(self.settings.get("party_port", PARTY_DEFAULT_PORT)))
         self.party_upnp = tk.BooleanVar(value=self.settings.get("party_upnp", True))
+        self.party_rendezvous = tk.BooleanVar(value=bool(self.settings.get("party_rendezvous", False)))
         self.party_public_var = tk.StringVar(value=str(self.settings.get("party_public_addr", "") or ""))
         self.party_stun_var = tk.StringVar(value=str(self.settings.get("party_stun", PARTY_DEFAULT_STUN) or ""))
         self.party_password_var = tk.StringVar(value=str(self.settings.get("party_password", "") or ""))
@@ -1803,6 +1814,8 @@ class BloodborneLauncher(tk.Tk):
         Tooltip(upnp_cb, "Asks your router (UPnP) to open the party port while the game runs, so friends "
                          "can connect without manual port forwarding. Harmless when the router does not "
                          "support it. Default: on (BB_PARTY_UPNP=1/0).")
+        rdv_cb = self._check(sec, "Find each other through the public DHT (shares your IP)", self.party_rendezvous,
+                             PARTY_RENDEZVOUS_TIP, command=self.save_settings)
         public_lbl, self.party_public_entry, _, _ = self._entry(
             sec, "Public address:", self.party_public_var,
             "Host only: the address put into the party code. Empty (recommended) = found automatically "
@@ -1853,7 +1866,7 @@ class BloodborneLauncher(tk.Tk):
         # Fields enabled in each mode: on (host or join), host only, join only
         self.party_widgets_on = [name_lbl, self.party_name_entry, self.party_max_combo, auto_cb, seamless_cb,
                                  dsummon_cb, hud_cb, tags_cb, npc_talk_cb, save_cb,
-                                 port_lbl, self.party_port_entry, upnp_cb, stun_lbl, self.party_stun_entry,
+                                 port_lbl, self.party_port_entry, upnp_cb, rdv_cb, stun_lbl, self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
         self.party_widgets_host = [public_lbl, self.party_public_entry,
                                    host_lbl, self.party_host_code_entry, copy_btn,
@@ -2739,6 +2752,7 @@ class BloodborneLauncher(tk.Tk):
             "party_separate_save": self.party_separate_save.get(),
             "party_port": self.party_port_var.get().strip(),
             "party_upnp": self.party_upnp.get(),
+            "party_rendezvous": self.party_rendezvous.get(),
             "party_public_addr": self.party_public_var.get().strip(),
             "party_stun": self.party_stun_var.get().strip(),
             "party_password": self.party_password_var.get(),

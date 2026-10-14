@@ -230,6 +230,9 @@ struct LinkConfig {
     // (set_udp_transport) the link uses its own UDP socket on the same port number.
     bool udp_link = true;
     int tcp_fallback_ms = 1500;
+    // Guest: the DHT rendezvous (party_rdv.h, opt-in) announces us, so a host without an open port
+    // can find us; only changes the failure hint (host_no_answer_hint).
+    bool auto_punch = false;
     // Host: lock out an address after repeated wrong passwords (AuthThrottle). Only the fuzzer
     // turns it off (its random handshakes come from 127.0.0.1 like its real members).
     bool auth_throttle = true;
@@ -249,7 +252,8 @@ std::string auth_reject_reason(bool host_has_password);
 // so the text says to wait for it, not the NAT advice (playtest 1: "behind a NAT: it needs your
 // guest code" while the host was only relaunching). `since_host_gone_s` < 0: never connected.
 constexpr double kHostBackWaitS = 60.0;
-std::string host_no_answer_hint(double since_host_gone_s);
+// `auto_punch`: the guest's DHT rendezvous is on (else: send the guest code or turn it on on both PCs).
+std::string host_no_answer_hint(double since_host_gone_s, bool auto_punch = false);
 // A9: is an installed hook's name a diagnostic (log / probe / trace / test), not a gameplay patch?
 bool diagnostic_hook_name(const std::string& name);
 // A9: the party hook set's hash: BLAKE2b-256 over the sorted, de-duplicated names (diagnostics

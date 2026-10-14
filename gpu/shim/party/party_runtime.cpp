@@ -1526,8 +1526,12 @@ void start_host(LinkConfig cfg) {
         // F2 traversal chain: TCP to an open port -> UDP straight in (full cone) -> hole punch
         // (the guest's endpoint from the DHT rendezvous or a guest code) -> relay / VPN advice.
         const bool port_open = upnp_ok || source == "override" || host_nat == nat::Type::Open;
+        // The DHT rendezvous is opt-in (launcher Party tab / System > Party rules; both PCs).
         const bool rdv_on = !port_open && !internet.empty() && traversal::rendezvous_enabled(lb);
-        const std::string adv = nat::advice(host_nat, true, port_open, rdv_on, port);
+        const nat::Rendezvous rdv = internet.empty()                     ? nat::Rendezvous::NotApplicable
+                                    : traversal::rendezvous_enabled(lb) ? nat::Rendezvous::On
+                                                                        : nat::Rendezvous::Off;
+        const std::string adv = nat::advice(host_nat, true, port_open, rdv, port);
         plog("NAT: %s (%s); %s", nat::type_name(host_nat), port_open ? "port open" : "no open port", adv.c_str());
         {
             std::lock_guard<std::mutex> lk(r.mu);
@@ -1621,8 +1625,12 @@ void guest_traversal(const LinkConfig& cfg, const PartyCode& code, bool lan_code
     const bool lb = loopback_mode();
     nat::Type t = nat::Type::Unknown;
     const std::uint16_t mport = publish_guest_code(&t);
-    const bool rdv_on = mport != 0 && !code.plain && !lan_code && traversal::rendezvous_enabled(lb);
-    const std::string adv = nat::advice(t, false, false, rdv_on, bbnet::settings().party_port);
+    const bool applies = mport != 0 && !code.plain && !lan_code;
+    const bool rdv_on = applies && traversal::rendezvous_enabled(lb);
+    const nat::Rendezvous rdv = !applies ? nat::Rendezvous::NotApplicable
+                                : rdv_on ? nat::Rendezvous::On
+                                         : nat::Rendezvous::Off;  // opt-in, off: the guest code or turn it on
+    const std::string adv = nat::advice(t, false, false, rdv, bbnet::settings().party_port);
     plog("NAT: %s; %s", nat::type_name(t), adv.c_str());
     {
         std::lock_guard<std::mutex> lk(R().mu);
@@ -2162,6 +2170,8 @@ void start_guest(LinkConfig cfg) {
     }
     std::uint32_t nbo = 0;
     std::memcpy(&nbo, ip.data(), 4);
+    // The failure hint: with the DHT rendezvous off (opt-in), only a guest code or the option on both PCs helps.
+    cfg.auto_punch = !code.plain && !(code.flags & kCodeFlagLan) && traversal::rendezvous_enabled(loopback_mode());
     auto* link = new PartyLink(cfg, make_callbacks(false));
     attach_udp_path(link);
     {
