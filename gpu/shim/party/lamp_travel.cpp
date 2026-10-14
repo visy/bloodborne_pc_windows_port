@@ -8,6 +8,7 @@
 #include "party_async_io.h"
 #include "party_director.h"
 #include "party_ids.h"
+#include "party_split.h"
 #include "seamless_rules.h"
 
 #include <algorithm>
@@ -322,6 +323,9 @@ void Act(u32 here, u32 id) {
         }
     } else {
         Log("chose lamp %u (%s): lamp warp 0x13CDF30(%u) from lamp %u", id, MapName(MapOf(id)).c_str(), id, here);
+        // In a party: this player's own lamp use (no lamp flag is set for it), so the split
+        // question asks here and nowhere else (party_split PlanLampOrigin).
+        split::NoteLocalUse(id);
         reinterpret_cast<void(BB_COOP_SYSV*)(u32)>(Guest(kLampWarp))(id);
     }
     g_arrival = Arrival{id, Now(), false};
@@ -428,6 +432,7 @@ void TestTick(const GameSnapshot& s, double now) {
         if (g_t.start && !g_t.started && MapOf(g_t.start) != (s.map_id & 0xffff0000u)) {
             g_t.started = true;
             Log("test: setup: the save is in %s; lamp warp to %u first", MapName(s.map_id).c_str(), g_t.start);
+            split::NoteLocalUse(g_t.start);
             reinterpret_cast<void(BB_COOP_SYSV*)(u32)>(Guest(kLampWarp))(g_t.start);
             g_t.stage = TestState::Title;
             g_t.at = now + 4.0;  // the load starts first
