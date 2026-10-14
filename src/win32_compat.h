@@ -58,6 +58,8 @@ int runtime_random(void *buffer, size_t size);
 /* Threads: guest TCB in a TEB TLS slot. */
 uint32_t runtime_win_tls_slot(void);
 void runtime_win_set_tcb(void *tcb);
+int runtime_win_has_fsgsbase(void);
+void *runtime_win_read_fsbase(void);
 void runtime_win_set_thread_name(const char *name);
 int runtime_win_thread_name(uint32_t thread_id, char *out, size_t size);
 

@@ -1319,6 +1319,17 @@ void TextureCache::GarbageCollectImages() {
         auto& image = slot_images[image_id];
         const bool download = image.SafeToDownload();
         const bool tiled = image.info.IsTiled();
+        // Depth/stencil targets and shadow maps are GPU-only and never read back by the CPU:
+        // once unused for the age above they go without a write-back, where before they were
+        // kept as GPU-written tiled images and VRAM grew (from Mrsuss60/bloodborne_pc_windows_port
+        // PR #89 by ALuaNegra).
+        if (image.info.props.is_depth) {
+            --num_deletions;
+            ++gc_evictions;
+            BbStats::gc_freed_images.fetch_add(1, std::memory_order_relaxed);
+            FreeImage(image_id);
+            return false;
+        }
         // bbport: images that cannot go now (GPU-written: their contents exist only here, and
         // tiled ones cannot be written back at all) neither use up the deletions nor stay first
         // in line. The oldest ten being such render targets stopped the collector for good, and

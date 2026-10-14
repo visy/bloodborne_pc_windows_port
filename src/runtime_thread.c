@@ -57,7 +57,9 @@ static uint64_t tls_offset(void) { return (tls_memsz+tls_align-1)&~(tls_align-1)
 static void set_tls_base(void *base) {
 #ifdef _WIN32
     runtime_win_set_tcb(base);
-    __asm__ __volatile__("wrfsbase %0" : : "r"(base));
+    if (runtime_win_has_fsgsbase()) {
+        __asm__ __volatile__("wrfsbase %0" : : "r"(base));
+    }
 #else
     if (syscall(SYS_arch_prctl,ARCH_SET_GS,(unsigned long)base)) { perror("STOP: arch_prctl(ARCH_SET_GS)"); exit(21); }
 #endif
