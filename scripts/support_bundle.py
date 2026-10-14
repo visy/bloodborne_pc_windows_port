@@ -27,8 +27,8 @@ from pathlib import Path
 REDACTED = "<redacted>"
 MAX_FILE_BYTES = 40 * 1024 * 1024  # a longer log keeps its last 40 MB
 
-# Party codes: BBP1 / BBP2 / BBPI / BBPL followed by letter-digit groups (launcher.py PARTY_CODE_RE).
-_CODE_RE = re.compile(r"\bBBP[12IL](?:-[0-9A-Za-z]+)+\b", re.IGNORECASE)
+# Party codes: BBP1 / BBP2 / BBP3 / BBPI / BBPL (and later versions) followed by letter-digit groups (launcher.py PARTY_CODE_RE).
+_CODE_RE = re.compile(r"\bBB[PG][0-9A-Z](?:-[0-9A-Za-z]+)+\b", re.IGNORECASE)
 # key = value / key: value / "key": "value" for secret keys (ini, env dumps, JSON, log lines).
 _SECRET_WORDS = r"password|passwd|pwd|passphrase|token|secret|party_code|guest_code|lan_code|public_addr"
 _KV_RE = re.compile(r"(?P<key>\"?(?<![A-Za-z0-9])[A-Za-z0-9_.]*(?:" + _SECRET_WORDS + r")[A-Za-z0-9_]*\"?\s*[=:]\s*)"

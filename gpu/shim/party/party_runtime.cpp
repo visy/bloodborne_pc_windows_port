@@ -1121,6 +1121,32 @@ void lan_on_datagram(std::uint32_t a, std::uint16_t p, const std::uint8_t* d, st
     }
 }
 
+// The host's secret as the BBP3 code carries it (party_code.h): 4 bytes while a password is set
+// (the password keeps strangers out), 6 without (the secret alone does). A stored secret of the
+// other size is shortened / lengthened, a missing one made: the party key changes with it, so
+// friends need the new code once.
+void fit_secret_to_code(std::array<std::uint8_t, 8>* secret, bool password) {
+    auto& s = *secret;
+    const bool empty = std::all_of(s.begin(), s.end(), [](std::uint8_t b) { return b == 0; });
+    if (empty) {
+        crypto::random_bytes(s.data(), password ? kSecretBytesWithPassword : kSecretBytes);
+        return;
+    }
+    if (s[6] || s[7] || (password && (s[4] || s[5]))) {
+        // An 8-byte secret from before BBP2, or a 6-byte one now that a password is set.
+        for (std::size_t i = password ? kSecretBytesWithPassword : kSecretBytes; i < s.size(); ++i) s[i] = 0;
+        plog("party secret shortened to %u bits for the shorter party code: send your friends the new code",
+             static_cast<unsigned>(8 * (password ? kSecretBytesWithPassword : kSecretBytes)));
+    } else if (!password && !s[4] && !s[5]) {
+        // A 4-byte secret from a party with a password: without one the code is all that keeps
+        // strangers out, so it gets its 48 bits back.
+        do {
+            crypto::random_bytes(s.data() + 4, 2);
+        } while (!s[4] && !s[5]);
+        plog("party secret lengthened to 48 bits (no password): send your friends the new code");
+    }
+}
+
 void start_host(LinkConfig cfg) {
     Runtime& r = R();
     const bool lb = loopback_mode();
@@ -1134,14 +1160,8 @@ void start_host(LinkConfig cfg) {
         plog("party game from the menu: the party code of the last session (secret from party.json)");
     } else {
         cfg.secret = {};
-        crypto::random_bytes(cfg.secret.data(), 6);  // BBP2 codes carry 48 bits (party_code.h)
     }
-    if (cfg.secret[6] || cfg.secret[7]) {
-        // An 8-byte secret from before BBP2: shortened so the code is a short BBP2 one. The party
-        // key changes with it, so friends need the new code once.
-        cfg.secret[6] = cfg.secret[7] = 0;
-        plog("party secret shortened to 48 bits for the shorter BBP2 code: send your friends the new code");
-    }
+    fit_secret_to_code(&cfg.secret, !cfg.password.empty());
     flow::StoreHostSecret(hex_of(cfg.secret.data(), cfg.secret.size()));
     // <user>/party_secret.txt: the restart's second source after the crash marker.
     write_text_file(fs::path(user_dir()) / "party_secret.txt", hex_of(cfg.secret.data(), cfg.secret.size()) + "\n");

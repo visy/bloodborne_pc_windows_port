@@ -58,9 +58,14 @@ PARTY_MAX_CHOICES = ["2", "3", "4"]
 PARTY_DEFAULT_PORT = 9307
 PARTY_DEFAULT_STUN = "stun.l.google.com:19302"
 PARTY_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,16}$")
-# BBP2- (or the older BBP1-) + Crockford base32 groups (I/L/O accepted as aliases of 1/1/0, U is never used)
-PARTY_CODE_RE = re.compile(r"^BBP[12IL](-[0-9A-HJ-NP-TV-Z]+)+$", re.IGNORECASE)
-PARTY_CODE_PREFIXES = ("BBP1", "BBPI", "BBPL", "BBP2")
+# BBP3- (or the older BBP2- / BBP1-) + Crockford base32 groups (I/L/O accepted as aliases of 1/1/0,
+# U is never used). party_code.h has the layouts.
+PARTY_CODE_RE = re.compile(r"^BBP[123IL](-[0-9A-HJ-NP-TV-Z]+)+$", re.IGNORECASE)
+PARTY_CODE_PREFIXES = ("BBP1", "BBPI", "BBPL", "BBP2", "BBP3")
+# Shown wherever a code is asked for or shown (party_code.h PARTY_CODE_EXAMPLE): an Internet code
+# with a password; without one it is 3 characters longer, a LAN code 5 shorter.
+PARTY_CODE_EXAMPLE = "BBP3-NJR0-E43N-WWN9-2C2P"
+PARTY_LAN_CODE_EXAMPLE = "BBP3-PAJY-EAMH-7TD"
 PARTY_HOSTPORT_RE = re.compile(r"^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+):(\d{1,5})$")
 MP_INSTANCES = APP_DIR / "tools" / "mp" / "instances.py"
 PARTY_GUIDE = APP_DIR / "docs" / "PARTY.md"
@@ -78,19 +83,21 @@ PARTY_LOG_AREAS = [("net", "Network / link"), ("summon", "Summons / joins"), ("t
 # On/off party options: (settings key, environment variable, default = the game's default).
 # Every one is written as 1 / 0 while party mode is on and unset while it is off.
 PARTY_HELP_SHORT = ("How to play together: the host picks Host a party and starts the game, then sends the "
-                    "code shown under Your code to the friends. Each friend picks Join a party, pastes "
-                    "the code and starts the game. Everyone needs the same game version (1.09), the same "
+                    f"code shown under Internet code (like {PARTY_CODE_EXAMPLE}) to the friends. Each friend "
+                    "picks Join a party, pastes the code and starts the game. Everyone needs the same game version (1.09), the same "
                     "gameplay patches and mods and the same Max players. Click for the full steps.")
-PARTY_HELP = """Party co-op lets 2 to 4 players play the campaign together. It is still in development: its parts have been tested on one PC, but it has not been tested between two PCs yet - expect bugs.
+PARTY_HELP = f"""Party co-op lets 2 to 4 players play the campaign together. It is still in development: it has been tested on one PC, between two PCs on a LAN and over the Internet between two PCs (one 2.5-hour session so far) - expect bugs.
+
+You can also start a party without the launcher: in the game's title screen, Party (New / Join / Continue party game). That is the recommended way; this tab does the same.
 
 HOST
-1. Party tab: Mode = Host a party, enter your name. Max players: 3 is the game's normal limit.
-2. Launch the game. Once it is running, your party code (BBP2-...) appears under Your code. Click Copy code and send it to your friends.
+1. Party tab: Mode = Host a party, enter your name. Max players: 3 is the game's normal limit. Optional: a Password (every player enters the same one; it also makes the code shorter).
+2. Launch the game and allow the Windows Firewall prompt once. When the game is hosting, your codes appear under Internet code (friends elsewhere), like {PARTY_CODE_EXAMPLE}, and LAN code (players on your own network, same router), like {PARTY_LAN_CODE_EXAMPLE}. Click Copy next to one and send it to your friends.
 3. Leave UPnP on. If friends cannot connect, forward the port (default 9307, UDP and TCP) to this PC in your router, or use a VPN such as Tailscale and give them your VPN address as host:port.
 
 JOIN
-1. Party tab: Mode = Join a party, enter your name, paste the host's code (Paste button).
-2. Pick the same Max players as the host.
+1. Party tab: Mode = Join a party, enter your name, click Paste next to Party code (the host's code, like {PARTY_CODE_EXAMPLE}). At the host's home, use its LAN code.
+2. Enter the host's Password, if it set one, and pick the same Max players as the host.
 3. Launch the game after the host's game is running.
 
 IN THE GAME
@@ -215,19 +222,19 @@ def party_port(value, default: int = PARTY_DEFAULT_PORT):
 
 
 def party_code_problem(code: str) -> str:
-    """'' when `code` is a party code (BBP2-... / BBP1-...) or host:port, else what is wrong with it."""
+    """'' when `code` is a party code (BBP3- / BBP2- / BBP1-...) or host:port, else what is wrong with it."""
     code = (code or "").strip()
     if not code:
-        return "enter the party code the host gave you (BBP2-...) or host:port"
+        return f"enter the party code the host gave you (like {PARTY_CODE_EXAMPLE}) or host:port"
     if code.upper().startswith(PARTY_CODE_PREFIXES):
         if not PARTY_CODE_RE.match(code):
-            return "a party code is BBP2- followed by groups of 0-9 / A-Z (no U), separated by -"
+            return f"a party code looks like {PARTY_CODE_EXAMPLE} (0-9 and A-Z without U, in groups)"
         return "" if party_code_flags(code) is not None else "this party code has a typo (checksum mismatch)"
     m = PARTY_HOSTPORT_RE.match(code)
     if m:
         port = int(m.group(2))
         return "" if 1 <= port <= 65535 else "the port after : must be 1-65535"
-    return "not a party code (BBP2-...) or host:port"
+    return f"not a party code (like {PARTY_CODE_EXAMPLE}) or host:port"
 
 
 PARTY_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -253,6 +260,53 @@ def _crc16_ccitt(data: bytes) -> int:
     return crc
 
 
+# BBP3 check widths 8..12 -> CRC polynomial (party_code.cpp crc_bits)
+_CRC_BITS_POLY = {8: 0x07, 9: 0x119, 10: 0x233, 11: 0x385, 12: 0x80F}
+
+
+def _crc_bits(bits, k: int) -> int:
+    """party_code.cpp crc_bits: a k-bit CRC over a bit list, MSB first, init all ones."""
+    poly, mask = _CRC_BITS_POLY[k], (1 << k) - 1
+    reg = mask
+    for b in bits:
+        top = ((reg >> (k - 1)) & 1) ^ b
+        reg = (reg << 1) & mask
+        if top:
+            reg ^= poly
+    return reg
+
+
+def _v3_payload_bits(wire: int) -> int:
+    """flags(4) | ipv4 32 (LAN: 8) | port 16 (none with flag 8) | secret 48 (password: 32)."""
+    return 4 + (8 if wire & PARTY_FLAG_LAN else 32) + (0 if wire & 8 else 16) + (32 if wire & PARTY_FLAG_PASSWORD else 48)
+
+
+def _v3_symbols(wire: int) -> int:
+    return (_v3_payload_bits(wire) + 8 + 4) // 5
+
+
+def encode_party_code_v3(flags: int, ip, port: int, secret: bytes) -> str:
+    """A BBP3 code (party_code.h) - the game writes these; here for tests and examples."""
+    wire = (flags & 7) | (8 if port == PARTY_DEFAULT_PORT else 0)
+    bits = []
+
+    def put(v, n):
+        bits.extend((v >> i) & 1 for i in range(n - 1, -1, -1))
+
+    put(wire, 4)
+    for b in (ip[3:] if wire & PARTY_FLAG_LAN else ip):
+        put(b, 8)
+    if not wire & 8:
+        put(port, 16)
+    for b in secret[:4 if wire & PARTY_FLAG_PASSWORD else 6]:
+        put(b, 8)
+    symbols = _v3_symbols(wire)
+    k = symbols * 5 - len(bits)
+    put(_crc_bits(bits, k), k)
+    sym = "".join(PARTY_CODE_ALPHABET[int("".join(map(str, bits[i:i + 5])), 2)] for i in range(0, len(bits), 5))
+    return "BBP3" + "".join("-" + sym[i:i + 4] for i in range(0, len(sym), 4))
+
+
 def _symbols_to_bytes(vals, n):
     """Crockford symbols -> n bytes (zero padding bits), else None."""
     if len(vals) != (n * 8 + 4) // 5:
@@ -271,8 +325,8 @@ def _symbols_to_bytes(vals, n):
 
 
 def party_code_flags(code: str):
-    """The flags byte of a valid BBP2 / BBP1 code (checksum checked, as the game decodes it), else
-    None (host:port, a typo, empty)."""
+    """The flags byte of a valid BBP3 / BBP2 / BBP1 code (checksum checked, as the game decodes it),
+    else None (host:port, a typo, empty)."""
     t = (code or "").strip().upper()
     if not t.startswith(PARTY_CODE_PREFIXES):
         return None
@@ -284,6 +338,21 @@ def party_code_flags(code: str):
         if c not in PARTY_CODE_ALPHABET:
             return None
         vals.append(PARTY_CODE_ALPHABET.index(c))
+    if t[3] == "3":
+        # flags(4) | ipv4 | port | secret | check (party_code.h), bit packed
+        if not vals:
+            return None
+        wire = vals[0] >> 1
+        if len(vals) != _v3_symbols(wire):
+            return None
+        bits = [(v >> i) & 1 for v in vals for i in range(4, -1, -1)]
+        payload = _v3_payload_bits(wire)
+        k = len(bits) - payload
+        check = int("".join(map(str, bits[payload:])), 2)
+        if check != _crc_bits(bits[:payload], k):
+            return None
+        port_ok = wire & 8 or int("".join(map(str, bits[4 + (8 if wire & PARTY_FLAG_LAN else 32):][:16])), 2) != 0
+        return wire & 7 if port_ok else None
     if t[3] == "2":
         # flags | ipv4[4] (LAN: last octet) | port[2] (absent with flag 8) | secret[6] | crc8
         if len(vals) < 2:
@@ -1729,22 +1798,26 @@ class BloodborneLauncher(tk.Tk):
         pw_lbl, self.party_password_entry, _, _ = self._entry(
             sec, "Password:", self.party_password_var,
             "Optional extra password: the host and every member must enter the same one. The party code "
-            "already contains a secret; a password also keeps out people who get hold of the code. "
+            "already contains a secret; a password also keeps out people who get hold of the code, and "
+            f"makes the code 3 characters shorter (like {PARTY_CODE_EXAMPLE}). Pick one that "
+            "is not easy to guess: it then carries the party's protection. "
             "Stored in launcher_settings.json. Default: none (BB_PARTY_PASSWORD).", show="*")
-        code_tip = ("The code the host gave you: BBP2- followed by letter/digit groups (letters are not "
-                    "case-sensitive), or the host's address as host:port (LAN, VPN, port forwarding). "
-                    "(BB_PARTY_CODE)")
+        code_tip = (f"The code the host gave you, like {PARTY_CODE_EXAMPLE} (letters are not "
+                    "case-sensitive; I, L and O count as 1, 1 and 0), or the host's address as host:port "
+                    "(LAN, VPN, port forwarding). Older BBP2- / BBP1- codes work too. (BB_PARTY_CODE)")
         code_lbl, self.party_code_entry, paste_btn, _ = self._entry(
             sec, "Party code:", self.party_code_var, code_tip, width=20,
             button=("Paste", self.paste_party_code, "Pastes the party code from the clipboard."))
-        host_tip = ("Your party code for friends elsewhere (they paste it with Join a party). It "
-                    "appears after the game starts hosting (user\\party_code.txt). Players on your own "
-                    "network can use it too: the game then finds you on the LAN.")
+        host_tip = (f"Your party code for friends elsewhere, like {PARTY_CODE_EXAMPLE} (3 characters "
+                    "longer without a password); they paste it with Join a party. It appears after the "
+                    "game starts hosting (user\\party_code.txt). Players on your own network can use it "
+                    "too: the game then finds you on the LAN.")
         host_lbl, self.party_host_code_entry, copy_btn, _ = self._entry(
             sec, "Internet code\n(friends elsewhere):", self.party_host_code_var, host_tip, width=20,
             button=("Copy", self.copy_party_code, "Copies the Internet code to the clipboard."))
         self.party_host_code_entry.state(["readonly"])
-        lan_tip = ("Your party code for players on the same network (same router). Use it when the "
+        lan_tip = (f"Your party code for players on the same network (same router), like "
+                   f"{PARTY_LAN_CODE_EXAMPLE}. Use it when the "
                    "Internet code does not work at home: most routers cannot reach their own public "
                    "address.")
         lan_lbl, self.party_lan_code_entry, lan_copy_btn, _ = self._entry(
@@ -1845,7 +1918,7 @@ class BloodborneLauncher(tk.Tk):
             text = ("Give a code to your friends: Internet code for friends elsewhere, LAN code "
                     "for players on your network."
                     if self.party_host_code_var.get() or self.party_lan_code_var.get() else
-                    "The codes appear here after the game starts hosting.")
+                    f"The codes (like {PARTY_CODE_EXAMPLE}) appear here after the game starts hosting.")
         else:
             text = "✓ Party code OK. Start the game after the host's game is running."
         warning = party_tracing_warning(mode, self.feat_tracing.get())

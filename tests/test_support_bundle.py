@@ -19,6 +19,9 @@ class Redaction(unittest.TestCase):
         self.assertNotIn("ABCD", t)
         self.assertNotIn("zz9", t)
         self.assertEqual(t.count("<party code>"), 2)
+        t = sb.redact_text("code BBP3-NJR0-E43N-WWN9-2C2P, guest code BBG1-0ZR0-000V-KWFP")
+        self.assertNotIn("NJR0", t)
+        self.assertNotIn("0ZR0", t)
 
     def test_passwords_and_tokens(self):
         for text, secret in (("password=hunter2", "hunter2"), ("party_password = s3cret!", "s3cret!"),

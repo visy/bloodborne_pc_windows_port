@@ -1181,10 +1181,10 @@ void PartyTab() {
                             : T("Party code: copy", "Код группы: копировать"),
                   code_value,
                   b.role == ps::Role::Host
-                      ? T("The code friends paste into the launcher to join you: your address, port and "
-                          "the party's secret. Share it only with them.",
-                          "Код, который друзья вставляют в лаунчер, чтобы присоединиться: ваш адрес, "
-                          "порт и секрет группы. Давайте его только им.")
+                      ? T("The code friends paste into the launcher or the title screen's Party page to join "
+                          "you: your address, port and the party's secret. Share it only with them.",
+                          "Код, который друзья вставляют в лаунчер или на странице Party титульного экрана, "
+                          "чтобы присоединиться: ваш адрес, порт и секрет группы. Давайте его только им.")
                       : T("The code of the party you joined. Copies it to the clipboard.",
                           "Код группы, к которой вы присоединились. Копирует его в буфер обмена."),
                   on && !b.code.empty())) {
