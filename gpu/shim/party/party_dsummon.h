@@ -47,6 +47,11 @@ Kind KindOf(const std::string& body);
 enum class Busy { None, Boss, Cutscene, Prologue, OtherMap };
 /// The boss bar wins over a cutscene (a boss intro cutscene ends in the fight).
 Busy HostBusy(bool boss_bar_up, bool cutscene_playing);
+/// Why the host refuses a guest's title join (the restarted / launching guest asks at its title):
+/// HostBusy, else Prologue while the host has not finished its own start (the director's
+/// LocalStartReady). Playtest 1 #1 verification: the title-join path created and served a room
+/// while the host was still in its prologue (only the direct summon checked host_ready).
+Busy TitleJoinBusy(bool boss_bar_up, bool cutscene_playing, bool host_ready);
 /// "boss" / "cutscene" / "prologue" / "map" / "none" (the wire word).
 const char* BusyWord(Busy b);
 /// The player-facing wait line: the guest's ("Waiting: the host is in a boss fight") or the

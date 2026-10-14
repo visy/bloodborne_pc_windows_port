@@ -28,6 +28,11 @@ Busy HostBusy(bool boss_bar_up, bool cutscene_playing) {
     return boss_bar_up ? Busy::Boss : cutscene_playing ? Busy::Cutscene : Busy::None;
 }
 
+Busy TitleJoinBusy(bool boss_bar_up, bool cutscene_playing, bool host_ready) {
+    const Busy b = HostBusy(boss_bar_up, cutscene_playing);
+    return b != Busy::None ? b : host_ready ? Busy::None : Busy::Prologue;
+}
+
 const char* BusyWord(Busy b) {
     switch (b) {
     case Busy::Boss: return "boss";

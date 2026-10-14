@@ -90,6 +90,10 @@ void RequestGuestSendHome(const std::string& why);
 /// Any thread: this player finished its campaign start (C1, party_start.h StartReady) - the host
 /// refuses direct summons until then (playtest 1 #1).
 bool LocalStartReady();
+/// The director's start step is a prologue step (opening, clinic, first Dream): not ready for a
+/// known reason. False while the step is unknown (no world, a load just ended, flags unreadable)
+/// or ready.
+bool LocalStartInPrologue();
 /// Any thread: the roster entry of link slot `slot` (state: party::MemberState as int; map: the
 /// roster's map id). False when the slot is not on the roster (state -1, map 0).
 bool MemberRoster(int slot, int* state, std::uint32_t* map);

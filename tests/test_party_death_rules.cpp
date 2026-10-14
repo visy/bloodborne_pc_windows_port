@@ -22,6 +22,14 @@ int main() {
     CHECK(!OptIn(""));
     CHECK(!OptIn("0"));
     CHECK(!OptIn("on"));
+    // Guest chr type (verification replay): 0 after a B2 load / title join -> 1 again.
+    CHECK(GuestChrTypeFixDue(true, 0, 500, 4, 2.5));
+    CHECK(!GuestChrTypeFixDue(true, 1, 500, 4, 9.0));   // already a phantom
+    CHECK(!GuestChrTypeFixDue(true, 8, 500, 4, 9.0));   // grey own body: not ours to touch
+    CHECK(!GuestChrTypeFixDue(true, 0, 0, 4, 9.0));     // dead: its death is already dispatched
+    CHECK(!GuestChrTypeFixDue(true, 0, 500, 1, 9.0));   // not in flow 4 (still loading in)
+    CHECK(!GuestChrTypeFixDue(true, 0, 500, 4, 1.0));   // the summon load may still set it
+    CHECK(!GuestChrTypeFixDue(false, 0, 500, 4, 9.0));  // own world / host
     CHECK(OptIn("1"));
 
     // Down counts.

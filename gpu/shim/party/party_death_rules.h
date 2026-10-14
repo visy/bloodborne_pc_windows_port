@@ -246,6 +246,18 @@ inline StainChange PlanStainChange(int flag_was, int echoes_was, int flag_now, i
     return StainChange::None;
 }
 
+/// Verification replay (playtest 1, 2026-10-14): a guest's own body comes out of a B2 host-world
+/// load (host death / wipe respawn, rest follow) and of a title join with PlayerIns +0x78 (chr type)
+/// 0, an own-world body, instead of 1 (white phantom, what a direct summon leaves). The death
+/// dispatch OnEvent_4000 0x13813D0 then takes SoloPlayDeath, which leaves the session at 0x13CDEF6
+/// instead of PartyGhostDeath_2 (the B2 funnel at 0x1382663): in a wipe the guest left the party and
+/// rejoined 50 s later instead of following the one load. Due: a client in the host's world, alive,
+/// flow 4, type 0 for `steady_s` >= 2 s (the summon load sets 1 itself within that time).
+constexpr double kGuestChrTypeSettle = 2.0;
+inline bool GuestChrTypeFixDue(bool client_in_world, int chr_type, int hp, int flow, double steady_s) {
+    return client_in_world && chr_type == 0 && hp > 0 && flow == 4 && steady_s >= kGuestChrTypeSettle;
+}
+
 inline const char* HostDeathPlanName(HostDeathPlan p) {
     switch (p) {
     case HostDeathPlan::Stock: return "stock";

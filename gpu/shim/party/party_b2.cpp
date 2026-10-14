@@ -3900,6 +3900,37 @@ void HostRestLoadTick(const GameSnapshot& s, double now) {
 /// Guest in the host's world: its own chr at HP 0 tells the host at once ("member_down"), so a
 /// host death a moment later counts it (playtest 1 bug 18: the game's death state reports the
 /// death seconds later, after the host had decided "0 down" and revived alone).
+/// A guest's own body back to a white phantom (PlayerIns +0x78 = 1) after a B2 host-world load or
+/// a title join left it an own-world body (0): its death then takes PartyGhostDeath (the B2 funnel:
+/// held death, the party's respawn load) instead of SoloPlayDeath (leave the session). Verification
+/// replay of playtest 1 (party_death_rules.h GuestChrTypeFixDue). BB_PARTY_GUEST_CHR_TYPE=0: off.
+void GuestChrTypeTick(const GameSnapshot& s) {
+    static const bool on = [] {
+        const char* v = std::getenv("BB_PARTY_GUEST_CHR_TYPE");
+        return !(v && v[0] == '0');
+    }();
+    static double since = -1;
+    const bool client = on && g_on.load() && Role() == RoleClient && s.world_up && !s.loading && s.player &&
+                        !g_rejoin.load();
+    const int type = client ? Field<int>(s.player, 0x78, -1) : -1;
+    if (!client || type != 0) {
+        since = -1;
+        return;
+    }
+    const double now = Now();
+    if (since < 0) {
+        since = now;
+    }
+    if (!deathrules::GuestChrTypeFixDue(true, type, ChrHp(s.player), Field<int>(Slot(kSlotFlow), 0x84, -1), now - since)) {
+        return;
+    }
+    const int one = 1;
+    SafeWrite(s.player + 0x78, &one, sizeof one);
+    Log("guest: own chr type 0 -> %d (a white phantom again after a B2 load / title join: its death takes the "
+        "party path, not a session leave)", Field<int>(s.player, 0x78, -1));
+    since = -1;
+}
+
 void GuestDownNoticeTick(const GameSnapshot& s) {
     static bool sent = false;
     if (!g_on.load() || Role() != RoleClient || !s.world_up || s.loading || !s.player) {
@@ -4996,13 +5027,24 @@ void TitleJoinHostTick(const GameSnapshot& s) {
     // A11 (ERSC_PARITY.md, user decision): no title join into a boss fight / cutscene (live: the
     // guest's Continue put it beside the host in the Cleric Beast's arena mid-fight). Refused with
     // the reason: the guest continues into its own world and waits; the host's bell after the end
-    // summons it (party_director A11).
-    if (!req.empty() && Role() == RoleHost && s.world_up && !s.loading) {
-        const dsummon::Busy busy = dsummon::HostBusy(BossBarShown(), CutscenePlaying());
+    // summons it (party_director A11). Playtest 1 #1: none into the host's prologue either (the
+    // room below was made on demand while the host was not start-ready); the host's bell rings for
+    // the guest once it is ready.
+    if (!req.empty() && s.world_up && !s.loading) {
+        const bool ready = coop::LocalStartReady();
+        if (!ready && !coop::LocalStartInPrologue()) {
+            // Not ready for no known reason yet (a load just ended, the start flags are read next
+            // tick): asked again next frame, neither refused nor served.
+            std::lock_guard<std::mutex> lk(TJ().mu);
+            TJ().requests.insert(TJ().requests.end(), req.begin(), req.end());
+            return;
+        }
+        const dsummon::Busy busy = dsummon::TitleJoinBusy(Role() == RoleHost && BossBarShown(),
+                                                          Role() == RoleHost && CutscenePlaying(), ready);
         if (busy != dsummon::Busy::None) {
             for (int slot : req) {
                 Send(slot, std::string("{\"op\":\"title_room\",\"room\":\"\",\"wait\":\"") + dsummon::BusyWord(busy) + "\"}");
-                Log("title join: slot %d refused: %s (A11: it waits in its own world; the bell after the end summons it)",
+                Log("title join: slot %d refused: %s (it waits in its own world; the bell summons it once that is over)",
                     slot, dsummon::BusyText(busy, false).c_str());
             }
             return;
@@ -6404,6 +6446,7 @@ void Tick(const GameSnapshot& s) {
     TestBossTick(s, now);
     ArrivalWatchTick(s, now);
     MemberSessionTypeTick(s);
+    GuestChrTypeTick(s);
     HostMemberWatchTick(s, now);
     FallbackCleanupTick(s);
     FallRecoveryTick(s, now);

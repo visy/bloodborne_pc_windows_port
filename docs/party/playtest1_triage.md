@@ -22,7 +22,7 @@ loading-screen path is the proposed fix. A seamless (no-load) variant comes back
 
 | # | Bug (players' words, shortened) | Severity | Fixed on head? | Most likely cause (short) | Batch |
 |---|---|---|---|---|---|
-| 1 | Direct summon while the host is in its prologue | major | **fixed (pt1join)** | `dsummon::HostRefusal` has no start-ready check; the host makes a room on demand (H2:919-992) | 2 |
+| 1 | Direct summon while the host is in its prologue | major | **fixed (pt1join)**; the title-join path too (pt1verify, live refusal) | `dsummon::HostRefusal` has no start-ready check; the host makes a room on demand (H2:919-992) | 2 |
 | 2 | Guest's bell prompt also shown on the host | minor | **fixed (pt1join)** | inferred: the host director auto-rings the Beckoning Bell (SpEffect 9000) whenever a guest waits or rings | 2 |
 | 3 | Only a host rest resets the world | major | **fixed (batch 1, live)**: a guest's alone rest gives the host a rest load | a guest's rest at a lamp asks "Travel with the party?"; NO sends it to the Dream alone with no reset (design gap) | 1 |
 | 4 | Enemy loot from the guest not shared | minor | **fixed** (pt1items: one shared roll per kill, `BB_PARTY_SHARED_DROP_ROLL`) | ERSC_PARITY D4: per-player drop rolls. A design decision to revisit, not a bug | decision |
@@ -39,7 +39,7 @@ loading-screen path is the proposed fix. A seamless (no-load) variant comes back
 | 15 | Boss loot prompt frozen on the guest, key items missing? | major | **fixed** (pt1items: popup gate alive / cutscene / boss banner + watchdog) | badge pushed via `ShowItemGet` in the same second as the boss defeat banner; no alive/cutscene/banner/load gate | 3 |
 | 16 | Oedon Tomb Key (and other key items) not on the guest | major | **fixed** (pt1items: logged decisions, boss-reward re-give when not held) | the host sent lot 31000 (H5:8051-8062, again at H5:11875); the guest side is not logged. Suspects: #15 frozen box, or ledger seeding from a synced boss flag | 3 |
 | 17 | "Red guy" in Oedon Chapel is a ghost for the guest | major | **fixed (pt1npc)**: 42 talk-NPC NpcParam rows written live (Alfred, Dweller, Eileen ...) | the same ghost bit on almost every talk-NPC row (Alfred 6151/6155/6154, Chapel Dweller 113010, Eileen, Arianna...) | 4 |
-| 18 | Guest echoes not takeable when both died | major | **fixed (batch 1, unit)**: recount every frame + early down notice; not reached live | wipe race: the host counted "0 down" just before the guest's death arrived (H5:10184 vs 10210), so it revived alone instead of a wipe; plus the #6 state | 1 |
+| 18 | Guest echoes not takeable when both died | major | **fixed (batch 1, unit)**: recount every frame + early down notice; wipe live (pt1follow, pt1verify); a guest after a B2 load / title join left the party on death (chr type 0): fixed (pt1verify, live) | wipe race: the host counted "0 down" just before the guest's death arrived (H5:10184 vs 10210), so it revived alone instead of a wipe; plus the #6 state | 1 |
 | crash | Host crash 20:38:10, eboot +0x2199310 null+8 | major | **yes** (batch 5: guard at +0x2199303, frame allocator 1 MiB) | per-frame arena allocator +0xe45560 returned NULL. FUN_02198fd0 checks the 1st alloc, not the 2nd (+0x21992fb); `BB_ARENA_GUARD` covers only the +0x21d5b35 caller | 5 |
 
 Top extra problems (details below): G4's direct summon failed 8 of 10 times with nothing logging why; the guest
@@ -1098,3 +1098,49 @@ Screenshots: `agents/pt1follow2/shots1`, `shots2` (removed with the env; finding
 - Test-aid note: a host test start lamp (`BB_PARTY_TEST_START_LAMP`) that fires as the guest joins is held by the
   split question; use `host_warp=ID@S%MAP` (a party move without the question) or `BB_PARTY_SPLIT_TEST=yes`.
 
+
+## Verification replay (pt1verify, 2026-10-14, head a59f836 + fixes below)
+
+Four live runs (2 loopback instances, `BB_NET_SIM=dsl`, test saves E:\games\bbport\test_saves, `--fresh-saves`;
+S1/S2 the replay, S3 the re-run, S4 the check of the two fixes; one S1 start was aborted after 50 s for a wrong
+`%MAP` filter: lamp 2412953 and Gascoigne's fog 2411810 are in **m24_01**, not m24_00 as the map list above says).
+Screenshots every 5 s of both windows (desktop not locked), looked at for each check.
+
+| # | Check | Result | Evidence |
+|---|---|---|---|
+| 1 | Join from the Dream to a host in Central Yharnam | **PASS** | S1 guest (title join off): `gather: own world m21_00_00_00, host in m24_01_00_00; to the host's lamp 2412953 before ringing` -> one load -> `direct summon: joined the host's room (2.8 s after the request)` -> `join: arrived 0.5 m from the host`; host `no Beckoning Bell while the direct summon handles it` (no host bell). Shot 55 s: side by side, "Entered the world of Hunter0" only on the guest |
+| 2 | Gascoigne fog, guest first; intro once; fight | **PASS** | S1 guest 1.2 m from 2411810: `boss fogs ... [12414811: read 1 intro 0 host 0 dead 0 fog near]`, `at boss fog 2411810 ... first fight here - the host goes in first ... notice shown` (on screen: "Boss fog: the host goes in first (first fight here)"). Host `host_move` into 2412815: host `cutscene 24010010` once + `sent to the party`; guest `live mirror` once, `event 12411802's 2002[3] skipped: its cutscene already played as the live mirror`; both `remo ended after 47.x s` and `boss health bar shown (event 12414802)` within 0.05 s; guest `the host's hold: boss`. Shots 300/340 s: same scene on both |
+| 3 | Host death with the guest present | **PASS** (loot: see open items) | S1 `host death: the respawn load for the whole party at lamp 2412953 (vanilla loading screen, the world resets)`; guest `send-home ... dropped (B2: the host's respawn travel follows)`, one load each, `re-join done`; host census before 242 alive / 2 dead + the host_kill victim 2400125 dead, after the load `244 alive, 0 dead`; no `RESPAWN without a load`, no stale chrs except at test teleports. Shots 80-105 s: YOU DIED, both loading screens, both back at the lamp, the guest's open item box gone. After it the guest killed an enemy and got its echoes (258); the drop pickup was not shown (the fixture's target stood on a roof, the guest fell to its death there) |
+| 4 | Guest crash-restart mid-session | **PASS** | S2 (title join on): crash at the first `join: arrived`; host `Hunter1 restarted its game: its old peer is cleared`; restart `title join: in the world after 14.1 s` -> `join: arrived 0.5 m from the host`; no `no arrival` line, no held-connection refusal. S3/S4 the same (0.5 m) |
+| 5 | Guest rest alone (NO) | **PASS** | S2 guest lamp 2102950 + NO: host `slot 1 rested at lamp 2102950 ... a rest load ... 0 member(s) here follow`, `host: arrived alone` 6.4 s after; host_kill victim 2410015 alive again (`327 alive, 3 dead` = the first baseline). No 60 s wait |
+| 6 | Wipe -> one respawn for both | **PASS after a fix** | S2/S3 (guest from a direct summon): host `every member is down too (1 of 1): a wipe; the party respawns together (one load)`, guest `held death goes with the host's travel; no redirect, no leave`, both back at the lamp (S3 shot 110 s). **FAIL** in S3 for a guest that had title-joined: its death left the session (`BeginLeaveSession called from +0x13cdef6`), it loaded its own world and rejoined 52 s later by direct summon (one failure first). Cause and fix below; S4 (fixed): the same title-joined guest `own chr type 0 -> 1`, then the wipe: `funnel: guest_died from +0x1382663` -> `held death goes with the host's travel` |
+| 7 | Prologue refusal | **PASS (title join, live) / unit (direct summon)** | A gap found by reading: the title-join path made and served a room while the host was not start-ready (only the direct summon had the batch 2 check). Fixed; S3 shows the refusal end to end (host `title join: slot 1 refused: Waiting: the host is in its prologue`, guest `title join: the host's room: 0 bytes ... (refused) - Waiting: the host is in its prologue` -> Continue in its own world) - but that refusal came 0.1 s after the host's own lamp load, before its start flags were read again (a false "prologue"), so unknown-start requests now wait a frame instead (S4: `waiting for a room here` -> served 2.5 s later). A real prologue state was reached (`host_flag=12101021:0` -> `step first-dream ... not ready`, S3/S4) but no join was tried in it (run order). `BB_TEST_NEWGAME` not run (its contract-screen failure in batch 6 is not diagnosed) |
+
+**Fixes made (unit-tested, live-checked in S4):**
+- **Guest chr type after a B2 load / title join** (`party_b2.cpp` `GuestChrTypeTick`, `party_death_rules.h`
+  `GuestChrTypeFixDue`, switch `BB_PARTY_GUEST_CHR_TYPE=0` to turn off). The B2 status line showed it in every run:
+  `type 1/7` after a direct summon, `type 0/7` after a host-death / wipe re-join (S1 98 s, S3 104.9 s) and after a title
+  join (S2 77 s). PlayerIns +0x78 = 0 is an own-world body; the death dispatch `OnEvent_4000 0x13813D0` then takes
+  SoloPlayDeath, which leaves the session at 0x13CDEF6 instead of PartyGhostDeath_2 (the B2 funnel at 0x1382663). It
+  also explains S1's lone guest death (after the host-death load) leaving the session instead of "died alone: revived
+  at its own last lamp", and type 0 makes host-only EMEVD branches (chr type 0) fire on the guest. Now set back to 1
+  once the guest is alive in flow 4 for 2 s. S4: `own chr type 0 -> 1` after the wipe re-join and after the title join;
+  no visible change on either screen (shots 100/195 s).
+- **Title join refused in the host's prologue** (`party_dsummon` `TitleJoinBusy`, `TitleJoinHostTick`,
+  `coop::LocalStartInPrologue`).
+- Test aid: `host_flag=ID:0` clears a flag (DEBUG_SWITCHES).
+
+**Open items (evidence above; not fixed here):**
+- A guest that rests back into the host's area (NO at the Dream lamp to 2412951) gets two loading screens: its own
+  alone travel (S2 132.9-139.0 s), then the host's queued rest load it follows (147.4-153.7 s); the host queues the rest
+  load at 132.1 s but runs it only after the guest's re-join. Correct, but ~15 s of loads; one load would need the
+  guest to follow the host's rest load instead of travelling first.
+- Guest loot after a host death not shown directly: S1's pickup fixture chose a rooftop enemy (the guest fell to its
+  death), S3's guest had no echoes to drop. Kill echoes after the death load were paid (258).
+- Cosmetic: the loading screens show "Travelling: host_death" (an internal name) on both games; after a wipe load the
+  host sees "The bell's resonance has beckoned Hunter1"; the host has an "Acquire Blood Echoes" prompt for a 0-echo
+  stain; the guest's death screen says "You died. Returning to your world." while it stays.
+- Test aids: a `guest_obj` / move step runs even when the guest is dead (S1); a die step S s after another die step can
+  land inside the first wipe's load (S4 step 2: no second wipe). Use `#N` (join count) on the host side.
+- The direct-summon prologue refusal (`HostRefusal` with `host_ready`) can see the same "not ready right after a
+  load" moment; it only makes the guest wait for its next ring (30 s), so it was left as is.

@@ -49,6 +49,11 @@ int main() {
     // A11: a boss fight / cutscene holds every join (direct summon included), with the reason
     CHECK(HostBusy(false, false) == Busy::None && HostBusy(true, false) == Busy::Boss &&
           HostBusy(false, true) == Busy::Cutscene && HostBusy(true, true) == Busy::Boss);
+    // Title join (verification replay): the host's prologue refuses it too, with the wait word.
+    CHECK(TitleJoinBusy(false, false, true) == Busy::None && TitleJoinBusy(false, false, false) == Busy::Prologue &&
+          TitleJoinBusy(true, false, false) == Busy::Boss && TitleJoinBusy(false, true, true) == Busy::Cutscene);
+    CHECK(WaitOf(std::string("{\"op\":\"title_room\",\"room\":\"\",\"wait\":\"") + BusyWord(Busy::Prologue) + "\"}") ==
+          Busy::Prologue);
     v.busy = Busy::Boss; CHECK(HostRefusal(v) && std::strstr(HostRefusal(v), "boss"));
     v.busy = Busy::Cutscene; CHECK(HostRefusal(v) && std::strstr(HostRefusal(v), "cutscene"));
     v.busy = Busy::None; CHECK(!HostRefusal(v));

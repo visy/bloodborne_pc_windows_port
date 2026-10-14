@@ -304,6 +304,7 @@ State& S() {
 }
 
 std::atomic<bool> g_local_start_ready{false};  // LocalStartReady (any thread)
+std::atomic<int> g_local_start_step{0};        // LocalStartInPrologue (any thread): StartStep
 
 std::atomic<bool> g_tick_installed{false};
 
@@ -458,6 +459,7 @@ void UpdateStart(State& st, const GameSnapshot& s, StartMode mode) {
     st.start_ready = ready;
     SetLocalStartReady(ready);
     g_local_start_ready.store(ready);
+    g_local_start_step.store(int(step));
 }
 
 /// The bells a ready player lacks (§4.3), once per world, in its own world only.
@@ -1519,10 +1521,13 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             skippable ? 1 : 0);
     } else if (step.kind == TravelStep::HostFlag) {
         // A story choice the game makes in a talk menu (e.g. 72100131 = refuse Gehrman): SetEventFlag.
-        const std::uint32_t id = static_cast<std::uint32_t>(std::strtoul(step.args.c_str(), nullptr, 10));
+        // "ID:0" clears it (a test save put back into its prologue: host_flag=12101021:0).
+        char* end = nullptr;
+        const std::uint32_t id = static_cast<std::uint32_t>(std::strtoul(step.args.c_str(), &end, 10));
+        const bool value = !(end && end[0] == ':' && end[1] == '0');
         bool before = false, after = false;
         ReadEventFlag(id, &before);
-        const bool ok = WriteEventFlag(id, true);
+        const bool ok = WriteEventFlag(id, value);
         ReadEventFlag(id, &after);
         Log("test: host_flag %u: %d -> %d (%s)", id, int(before), int(after), ok ? "written" : "NOT written");
     } else if (step.kind == TravelStep::HostStage) {
@@ -3132,6 +3137,11 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
 
 bool LocalStartReady() {
     return g_local_start_ready.load();
+}
+
+bool LocalStartInPrologue() {
+    const StartStep step = static_cast<StartStep>(g_local_start_step.load());
+    return step == StartStep::Opening || step == StartStep::Clinic || step == StartStep::FirstDream;
 }
 
 bool MemberRoster(int slot, int* state, std::uint32_t* map) {
