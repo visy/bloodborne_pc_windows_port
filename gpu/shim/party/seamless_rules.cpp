@@ -556,13 +556,7 @@ bool FogFirstSkip(u64 event, u64 instr, i32 event_id, i32 bank, i32 id) {
     }
     return true;
 }
-// P5 / D10, host: a position condition of the first-fight event a guest started.
-bool FirstFightHostSkip(i32 event_id, i32 bank, i32 id) {
-    if (bank != 3 || LocalSessionRole() == 6) {
-        return false;
-    }
-    return worldact::HostFirstFightSkip(event_id, bank, id);
-}
+
 // A11: the boss health bar (EMEVD 2003[11] DisplayBossHealthBar: first argument 1 on, 0 off).
 std::atomic<bool> g_boss_bar{false};
 
@@ -590,9 +584,6 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
     }
     if (!skip && instr && g_fog_first) {
         skip = FogFirstSkip(event, instr, event_id, bank, id);
-    }
-    if (!skip && instr && g_fog_first) {
-        skip = FirstFightHostSkip(event_id, bank, id);
     }
     if (!skip && instr) {
         if (const EmevdSkipPredicate pred = g_skip_pred.load(std::memory_order_relaxed)) {

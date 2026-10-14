@@ -157,9 +157,22 @@ bool BossGateGuestStarts(const BossGate& g);
 bool BossGateSkipFirstFight(std::int32_t event_id, int bank, int id, std::uint32_t flag);
 /// The gate whose host first-fight event is `event_id`, else null.
 const BossGate* BossGateByIntroEvent(std::int32_t event_id);
-/// Host: a condition of an armed first-fight event that stands for the host's position (3[2]
-/// region, 3[3] distance); skipping it lets the event go on wherever the host stands.
-bool FirstFightPositionCondition(int bank, int id);
+/// Host: where the host's chr must stand for one moment so its first-fight event's position
+/// condition holds (MSB data): the 3[2] region's origin raised 0.5 m (inside the box), or 2 m from
+/// the 3[3] distance target. EMEVD conditions are registered once when the event reaches them (the
+/// dispatcher counts ~12k instructions a minute), so a later skip cannot pass a condition that is
+/// already waiting: the host's chr visits the spot instead and is put back as soon as the event
+/// went on (pard live S1b, 2026-10-15).
+struct FirstFightSpot {
+    std::uint32_t intro_event;
+    float pos[3];
+};
+const FirstFightSpot* FirstFightSpotFor(std::uint32_t intro_event);
+/// The visit is over (put the host back): the event went on (the boss-started flag, the intro's
+/// boss-area flag 9180 or a cutscene) or it timed out.
+bool FirstFightVisitDone(bool host_flag_on, bool flag9180_on, bool cutscene, double visit_s);
+constexpr double kFirstFightVisitSeconds = 2.0;
+constexpr int kFirstFightVisitTries = 3;
 /// What the host does with a guest's fog report.
 enum class FogAction {
     none,        ///< boss dead, the host already in, or nothing to do
@@ -169,8 +182,6 @@ enum class FogAction {
 };
 FogAction HostFogAction(const BossGate& g, bool guest_starts_on, bool intro_done, bool host_in, bool boss_dead,
                         std::uint32_t host_map);
-/// Seconds the host's first-fight event stays armed (a position condition skipped) after a start.
-constexpr double kFirstFightArmSeconds = 20.0;
 /// Seconds a guest's first-fight start waits for the host to reach the boss's block.
 constexpr double kFirstFightWaitSeconds = 600.0;
 /// The guest's notice at such a fog.
@@ -193,9 +204,6 @@ bool Enabled();
 bool OnHostEvent(int slot, const std::string& body, std::string* why);
 /// Main thread, once a frame (director tick).
 void Tick(const GameSnapshot& s, party::PartyLink* link);
-/// Game thread (EMEVD dispatch, host): skip this instruction of an armed first-fight event?
-/// (HostFogAction start_first; a position condition of the armed event, until it ran or expired.)
-bool HostFirstFightSkip(std::int32_t event_id, int bank, int id);
 /// BB_PARTY_GUEST_FIRST_FIGHT (default on; 0 = the host always has the first fight).
 bool GuestFirstFightEnabled();
 

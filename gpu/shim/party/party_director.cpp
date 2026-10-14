@@ -2798,8 +2798,15 @@ void PartyDirector::Tick() {
             done = true;
             const std::uint32_t id = static_cast<std::uint32_t>(std::strtoul(sl, nullptr, 10));
             Log("test: start lamp %u (from %s)", id, MapName(s.map_id).c_str());
-            split::NoteLocalUse(id);
-            reinterpret_cast<void(BB_COOP_SYSV*)(std::uint32_t)>(Guest(kLampWarp))(id);
+            if (role == PartyRole::Host) {
+                // Decided (no "Travel with the party?" question): a guest connected to the link but
+                // not yet in the world made the player's-own-use path ask, and the unanswered
+                // question held the warp for the whole run (pard S1, 2026-10-15).
+                RunLampWarpDecided(id, false);
+            } else {
+                split::NoteLocalUse(id);
+                reinterpret_cast<void(BB_COOP_SYSV*)(std::uint32_t)>(Guest(kLampWarp))(id);
+            }
         }
     }
     // Late joiner catch-up (party_catchup.h): a guest behind the host is brought up to it and

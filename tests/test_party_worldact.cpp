@@ -198,8 +198,12 @@ int main() {
         assert(!BossGateSkipFirstFight(12404841, 1003, 2, 12401802));
         assert(BossGateByIntroEvent(12401802) == &amelia && BossGateByIntroEvent(12411802) == &gas);
         assert(!BossGateByIntroEvent(12401800) && !BossGateByIntroEvent(0));
-        assert(FirstFightPositionCondition(3, 2) && FirstFightPositionCondition(3, 3));
-        assert(!FirstFightPositionCondition(3, 0) && !FirstFightPositionCondition(4, 3) && !FirstFightPositionCondition(3, 24));
+        // The host's visit: a spot for every guest-startable gate; it ends when the event went on.
+        assert(FirstFightSpotFor(12401802) && FirstFightSpotFor(12401802)->pos[2] > 322.0f);
+        assert(!FirstFightSpotFor(12421802) && !FirstFightSpotFor(0));
+        assert(!FirstFightVisitDone(false, false, false, 0.5) && FirstFightVisitDone(true, false, false, 0.1));
+        assert(FirstFightVisitDone(false, true, false, 0.1) && FirstFightVisitDone(false, false, true, 0.1));
+        assert(FirstFightVisitDone(false, false, false, kFirstFightVisitSeconds));
         // The host's answer to a guest's fog report.
         assert(HostFogAction(amelia, true, false, false, false, m2400) == FogAction::start_first);
         assert(HostFogAction(amelia, true, false, false, false, m2401) == FogAction::wait_host);  // host elsewhere
@@ -214,6 +218,7 @@ int main() {
         for (const BossGate& g : BossGates()) {
             if (BossGateGuestStarts(g)) {
                 assert(g.intro_flag != 0 && BossGateByIntroEvent(static_cast<std::int32_t>(g.intro_flag)) == &g);
+                assert(FirstFightSpotFor(g.intro_flag));
             }
         }
         // The player's position: physics first, +0xC0 only as the fallback.
