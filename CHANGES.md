@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.6.2 (Windows port 0.6.2, party co-op)
 
+- **Checked live: Insight items from a guest's inventory**: a guest using Madman's Knowledge from its own inventory in the host's world gets its +1 Insight (the host's stays as it was).
 - **Added: the "rally" rot, checked live**: a death can now also cut the HP you win back by hitting right after being hit (rally) by 15 % a stack (live: two stacks took back 13 of 44 HP regained). Only gains within 6 s of damage count, Blood Vials never. Four of ERSC's five rot kinds are now in force (health, stamina, stamina cost, rally).
 - **Checked live: watching the next hunter while dead in a boss fight**: with three players, a dead player's Cross now switched back and forth between the two living ones in a real fight (the screen says whose view it is), every press.
 - **Checked live: a rest takes everyone out of the boss room, a third player too**: when a guest rests at a lamp and travels alone while the host and another guest fight a boss, the other guest is brought out of the room with the host (one loading screen, the fight resets).
