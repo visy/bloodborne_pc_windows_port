@@ -53,10 +53,13 @@ WHAT HELPS ON WHICH PC
     another driver version it is ignored (harmless) and rebuilt as you play.
 
 BUILD / VERSION
-  The cache formats are versioned (shader binary 9, meta 7, pipeline key 6, source 1): a port
-  build with the same formats uses every file; a build with newer formats rebuilds the
-  translated part from the sources by itself. The NVIDIA driver also keeps its own cache in
-  %LOCALAPPDATA%\\NVIDIA\\DXCache / GLCache; that one is per PC and is not in this .zip.
+  The cache files are versioned (pipeline key 6, shader source 1 with the Windows build's layout,
+  shader binary 9 / meta 7): a port build with the same formats uses every file; a build that
+  changed the translated formats rebuilds them from the sources by itself, and one that changed
+  the key or source format skips those files (nothing breaks, it builds its own as you play).
+  The cache_import folder needs a launcher from this build on; an older launcher's "Import
+  shader cache..." takes only the GPU-independent part. The NVIDIA driver also keeps its own
+  cache in %LOCALAPPDATA%\\NVIDIA\\DXCache / GLCache; that one is per PC and is not in this .zip.
 
 Private test data: do not upload it to GitHub or attach it to a release.
 """
