@@ -22,6 +22,7 @@
 #include "party_phantom.h"
 #include "party_split.h"
 #include "party_travel.h"
+#include "party_story.h"
 #include "party_worldact.h"
 #include "../net/from_api.h"
 
@@ -442,6 +443,7 @@ DispatchFn g_dispatch_original = nullptr;
 bool g_emevd_trace = false;
 std::atomic<EmevdRewriter> g_rewriter{nullptr};
 std::atomic<EmevdRewriter> g_rewriter2{nullptr};
+std::atomic<EmevdRewriter> g_rewriter3{nullptr};
 
 // Rules "event:bank:id[@index]" (party_phantom.h). Built in: the confinement walls of common
 // event 7600 (index 6 / 7, only while B1 travel is on; BB_PARTY_OPEN_WORLD=0 drops them). The A6
@@ -562,6 +564,12 @@ bool FogFirstSkip(u64 event, u64 instr, i32 event_id, i32 bank, i32 id) {
 
 // A11: the boss health bar (EMEVD 2003[11] DisplayBossHealthBar: first argument 1 on, 0 off).
 std::atomic<bool> g_boss_bar{false};
+// The last text banner (2007[2], e.g. PREY SLAUGHTERED) or boss defeat (2003[12/15/53]) this game
+// ran, steady-clock seconds: an item notice opened under the banner had no OK row (live pard3 O1).
+std::atomic<double> g_banner_at{-1e9};
+double SteadyNow() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
     perf::Scope z(perf::Zone::HookEmevd);
@@ -593,6 +601,9 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
             skip = pred(event_id, bank, id);
         }
     }
+    if (instr && !skip && ((bank == 2007 && id == 2) || (bank == 2003 && (id == 12 || id == 15 || id == 53)))) {
+        g_banner_at.store(SteadyNow(), std::memory_order_relaxed);
+    }
     if (instr && !skip && bank == 2003 && (id == 12 || id == 15 || id == 53) && g_boss_bar.exchange(false)) {
         Log("boss health bar: off (a boss defeat, event %d 2003[%d])", event_id, id);
     }
@@ -606,6 +617,19 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
             if (g_boss_bar.exchange(on) != on) {
                 Log("boss health bar %s (event %d, entity %d)", on ? "shown: a boss fight" : "hidden", event_id,
                     n >= 8 ? *reinterpret_cast<const i32*>(args + 4) : -1);
+            }
+        }
+    }
+    if (instr && !skip && bank == 2007 && id == 1 && LocalSessionRole() != 6) {
+        // D10: a story notice only the host's event shows (party_story StoryNoticeMessage).
+        u8 args[4] = {};
+        u32 arg_size = 0;
+        const u64 at = EmevdInstructionArgs(event, instr, &arg_size);
+        u32 msg = 0;
+        if (at && arg_size >= 4 && SafeRead(at, args, 4)) {
+            std::memcpy(&msg, args, 4);
+            if (StoryNoticeMessage(msg)) {
+                NoteHostStoryNotice(msg, static_cast<u32>(event_id));
             }
         }
     }
@@ -645,6 +669,9 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
             rw(event_id, bank, id, event, instr);
         }
         if (const EmevdRewriter rw = g_rewriter2.load(std::memory_order_relaxed)) {
+            rw(event_id, bank, id, event, instr);
+        }
+        if (const EmevdRewriter rw = g_rewriter3.load(std::memory_order_relaxed)) {
             rw(event_id, bank, id, event, instr);
         }
     }
@@ -772,6 +799,14 @@ void SetEmevdRewriter2(EmevdRewriter fn) {
     g_rewriter2.store(fn);
 }
 
+void SetEmevdRewriter3(EmevdRewriter fn) {
+    g_rewriter3.store(fn);
+}
+
+double BannerAgeSeconds() {
+    return SteadyNow() - g_banner_at.load(std::memory_order_relaxed);
+}
+
 bool BossBarShown() {
     return g_boss_bar.load(std::memory_order_relaxed);
 }
@@ -855,6 +890,23 @@ void SeamlessRulesTick() {
 std::uint64_t GameParamRow(const char* name, const char* type, std::uint32_t id) {
     ParamTable t;
     return FindParam(name, type, &t) ? Row(t, id) : 0;
+}
+
+std::vector<std::pair<std::uint32_t, std::uint64_t>> GameParamRows(const char* name, const char* type) {
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> out;
+    ParamTable t;
+    if (!FindParam(name, type, &t)) {
+        return out;
+    }
+    out.reserve(t.rows);
+    for (u32 i = 0; i < t.rows; ++i) {
+        u32 id = 0;
+        u64 data = 0;
+        if (Record(t, i, &id, &data)) {
+            out.emplace_back(id, data);
+        }
+    }
+    return out;
 }
 
 } // namespace coop

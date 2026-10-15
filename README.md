@@ -17,15 +17,15 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 
 | Area | Progress | |
 |---|---|--:|
-| **Overall** | `███████████████████░` | 97% |
+| **Overall** | `████████████████████` | 98% |
 | Session & joining | `████████████████████` | 100% |
-| World & travel | `████████████████████` | 99% |
-| Death & respawn | `████████████████████` | 98% |
-| Progress (anyone can progress) | `██████████████████░░` | 92% |
+| World & travel | `████████████████████` | 100% |
+| Death & respawn | `████████████████████` | 99% |
+| Progress (anyone can progress) | `███████████████████░` | 94% |
 | Services & UI | `████████████████████` | 100% |
 | Network & robustness | `██████████████████░░` | 92% |
-| Bloodborne-specific (chalice, Insight) | `███████████████████░` | 94% |
-| Feels like single player in a party | `███████████████████░` | 96% |
+| Bloodborne-specific (chalice, Insight) | `████████████████████` | 98% |
+| Feels like single player in a party | `████████████████████` | 99% |
 
 ---
 
@@ -41,8 +41,8 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | **Frame generation** | Optional, off by default: DLSS FG (2x-4x, RTX 40/50) or FSR FG (2x), paced, HUD kept sharp; NVIDIA Reflex. [More](docs/FG_REFLEX.md) |
 | **HDR output** | Optional, off by default: HDR10 (PQ, Rec.2020) on an HDR display, the game's highlights expanded up to your display's peak while mid-tones and menus stay at paper white; peak, paper white, highlights, saturation and a calibration pattern in *System > HDR*. [More](docs/SETTINGS.md#hdr-output) |
 | **No shader stutter** | Known shaders are built before the intro. New ones compile in the background. |
-| **Shareable shader cache** | Export / import one `.zip`, works across GPUs. |
-| **Shader cache builder** | *Advanced > Build shader cache (world warper)*: the game travels through every lamp and area by itself (looks round, walks, fights), on a copy of your save, then exports the cache `.zip`. About an hour; Stop and resume. [More](docs/SETTINGS.md#shader-cache-builder-world-warper) |
+| **Shareable shader cache** | Export / import one `.zip`, works across GPUs; drop a shared one into `user\cache_import\`. |
+| **Shader cache builder** | *Advanced > Build shader cache (world warper)*: the game travels through every lamp and area by itself (looks round, walks, changes armor and weapons, fights every kind of enemy, plays the cutscenes, day / evening / Blood Moon), on a copy of your save, then exports the cache `.zip`. Two to three hours; Stop and resume. [More](docs/SETTINGS.md#shader-cache-builder-world-warper) |
 | **Save safety** | Crash-safe saving, save checks at start, automatic backups in party play. |
 | **The Old Hunters** | DLC enabled automatically (its data ships with patch 1.09). |
 | **Mods and patches** | Loose-file mods and shadPS4-format XML patches, with load order. |
@@ -139,7 +139,7 @@ before anyone is in the game):
   you travel together.
 - **Joining while the host fights a boss or watches a cutscene** waits in your own world until it is over (the Party status says why), then puts you beside the host with one loading screen.
 - **Leave any time.** *System → Party → Leave the party* takes a guest home at once; the host's
-  *Leave* ends the party and every guest goes home. After leaving, a guest keeps playing online alone in its own world. *System → Party mode → Join party* brings a
+  *Leave* ends the party and every guest goes home at once (one loading screen, no "Session lost"). A guest who left can rejoin at any time, also right after a boss kill. After leaving, a guest keeps playing online alone in its own world. *System → Party mode → Join party* brings a
   guest back; *Host party* and *Single player* are there too.
 - **The session never ends by itself.** Boss kills, area clears, deaths and travel don't send
   anyone home.
@@ -209,7 +209,15 @@ before anyone is in the game):
   play for every party member; a guest still loading in when a scene starts sees it once it has
   arrived. A guest who opens the Cathedral Ward door first turns the day into evening for the whole
   party (the scene plays for everyone). After the Blood Moon the host is asked "Travel with the party?" and everyone goes to
-  Yahar'gul together.
+  Yahar'gul together. A guest can start the Blood Moon too, by walking up to Yharnam at Moonside
+  Lake, and the story messages only the host's game shows (Yahar'gul's "Ritual secret broken")
+  appear on every guest's screen with an OK.
+- **Your ending, your choice.** When the host reaches an ending, every guest is asked first:
+  *Yes* plays that ending in your own save (end credits, then New Game+), *No* takes you home to
+  your own Hunter's Dream and your save stays as it was, to reach the ending later. A guest who
+  used three Umbilical Cords gets Childhood's Beginning when the host refused Gehrman.
+- **Guests open gates with their own keys.** The Cathedral Ward main gate opens for a guest
+  carrying the Hunter Chief Emblem, for the whole party.
 - **Insight for everyone.** Whatever Insight the host gets (a boss's first sight and kill, story
   moments, the kidnap's waking, Chalice Dungeon bosses) every guest present gets too; a boss's
   first-sight Insight comes once per player, whoever walks in first. What Insight
@@ -250,7 +258,7 @@ before anyone is in the game):
 - **Same version for everyone.** A player whose bbport build, game files, patches, mods or party
   options differ is refused on joining; the message says what differs and what to do.
 - **Chalice dungeons together.** Guests join the host's dungeon; levers, doors, the layer boss, its
-  loot (for each player) and the lift work for the whole party. Any player can perform the ritual:
+  loot (for each player) and the lift with its call levers at the top and the bottom work for the whole party, layer after layer; a guest can also join from its title straight into the host's dungeon. Any player can perform the ritual:
   the host's altar then offers *Enter the party's dungeon*, also with guests standing in its Dream,
   and one press does the rest (the guests follow in with one loading screen). Chalices are shared
   between all players, and a boss reward the game keeps for the host goes to every guest in the
@@ -297,7 +305,7 @@ before anyone is in the game):
 |---|---|
 | A guest | Gets up again at its own lamp: with no loading screen when that lamp is in the loaded area, else with its own loading screen at that lamp (also in another area; the host stays where it is); its Blood Echoes wait in a bloodstain where it fell, marked on screen in the host's world (walk onto it to get them back; it also stays in its own world); the others keep playing |
 | The host | Everyone gets one respawn loading screen at the host's lamp, as in the original game, and the world resets; the host's echoes stay in a bloodstain where it fell |
-| Anyone, during a boss fight | Watches a living party member fight (the screen says whose; press Cross to watch the next one) until the boss dies (then gets up at the host's lamp, with no loading screen when it is in the area), everyone dies, or someone travels |
+| Anyone, during a boss fight | Watches a living party member fight from behind them (the screen says whose; press Cross to watch the next one) until the boss dies (then gets up at the host's lamp, with no loading screen when it is in the area), everyone dies, or someone travels |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |
 
 A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's) or a party wipe resets them.
@@ -310,7 +318,7 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 | Every cutscene for the whole party (story cutscenes, endings and guest-triggered scenes already work) | In progress |
 | Joining during a boss fight or cutscene waits outside until it ends | Done: boss fights and cutscenes with every join path (bell, title join, direct summon; verified live), the Party status says why you wait |
 | With 3 guests, every guest sees every other guest | Done: all four join and see each other; any player can leave and rejoin while the others play on (verified live with 3 and 4 players) |
-| Chalice dungeons: deeper layers and the bottom lift lever checked in a party | In progress |
+| Chalice dungeons: deeper layers and the bottom lift lever checked in a party | Done: layer 2 and its boss, both lift levers (verified live); dungeons with floor bosses still to check |
 | PvP / friendly fire the host can switch on and off | Done (0.6.2) |
 | Pings: party members and marked spots visible through walls, with distance and player colours | Done (0.6.2) |
 
@@ -390,7 +398,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | FireBurn | FSR-Vulkan (MIT); AMD FidelityFX SDK (MIT) |
 | Supermedo, IFreemz | DLSS bridge and Windows loader |
 | FIocker (Supermedo/bloodborne_pc PR #69) | Frame generation (DLSS FG, FSR FG) with paced presentation, NVIDIA Reflex, conservative object motion for frame generation, DLSS bridge ABI 2, FG diagnostics tools |
-| Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, FPS-preset physics step (found by FIocker), frame limiter pacing, texture-cache, pipeline-cache and shader-walker fixes, skipped draws for failed pipelines, keyboard stick movement, allocating past a full VRAM budget, object motion off on AMD before RDNA3, the memory log line once a minute, Back + d-pad touchpad halves on Xbox pads (idea by parsifal295), skipped draws with a null vertex buffer table, retried boot-file swaps, the unclean-eboot.bin warning, a bad PM4 header dropping its buffer instead of stopping the game and the GPU line flushed at start (c07f0ffa, from parsifal295's PRs #57 and #61); imedved (direct mouse camera, ported by mcrib884); andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows); parsifal295 (game check passes over locked files), RafaelHGOliveira (exclusive fullscreen), fliperama86 (HDR desktop black level), emurphy04 (ultrawide output, video queue fix) |
+| Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, FPS-preset physics step (found by FIocker), frame limiter pacing, texture-cache, pipeline-cache and shader-walker fixes, skipped draws for failed pipelines, keyboard stick movement, allocating past a full VRAM budget, object motion off on AMD before RDNA3, the memory log line once a minute, Back + d-pad touchpad halves on Xbox pads (idea by parsifal295), skipped draws with a null vertex buffer table, retried boot-file swaps, the unclean-eboot.bin warning, a bad PM4 header dropping its buffer instead of stopping the game and the GPU line flushed at start (c07f0ffa, from parsifal295's PRs #57 and #61); checked against Supermedo's five PR fixes (3e3b760f): parsifal295's stale texture format (#55), title-menu flicker above 1080p (#56), bmy's loading-screen item picture (#62) and DLSS device fallback (#58, its reason now names the Vulkan result), dGstone18's build path with spaces (#72), all already here; imedved (direct mouse camera, ported by mcrib884); andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows); parsifal295 (game check passes over locked files), RafaelHGOliveira (exclusive fullscreen), fliperama86 (HDR desktop black level), emurphy04 (ultrawide output, video queue fix) |
 | ALuaNegra (via Mrsuss60's port) | Idle depth targets freed (VRAM growth) |
 | Vorshim92 | Pipeline cache kept between starts, stale `bbport.exe` guard, crash reaper, `run.bat` resolution fix, Reset shader cache button |
 | Thealexbarney | LibAtrac9 audio (MIT) |

@@ -25,6 +25,8 @@
 #pragma once
 
 #include <cstdint>
+#include <utility>
+#include <vector>
 
 namespace coop {
 
@@ -47,12 +49,17 @@ void SetEmevdSkipPredicate(EmevdSkipPredicate fn);
 void SetEmevdRewriter(EmevdRewriter fn);
 /// A second, independent rewriter slot (party_guestsvc), run after the first.
 void SetEmevdRewriter2(EmevdRewriter fn);
+/// A third slot (party_worldact: key-item gates a guest opens with its own key, D6).
+void SetEmevdRewriter3(EmevdRewriter fn);
 /// Installs the EMEVD dispatch filter (0x17b93a0) now if SeamlessRulesInit did not (idempotent,
 /// whether or not the seamless rules are on). True once installed.
 bool EnsureEmevdFilter();
 /// A11: a boss health bar is up (EMEVD 2003[11] seen with "on" and not yet "off"; a load resets
 /// it): the host is in a boss fight.
 bool BossBarShown();
+/// Seconds since this game's last text banner (EMEVD 2007[2], e.g. PREY SLAUGHTERED) or boss
+/// defeat instruction (2003[12/15/53]); large when none ran.
+double BannerAgeSeconds();
 void BossBarReset();
 /// The argument bytes of instruction record `instr` of `event` (the copied arguments at
 /// event+0xb8, else the EVD data); 0 when unknown. *size receives the argument size.
@@ -61,5 +68,7 @@ std::uint64_t EmevdInstructionArgs(std::uint64_t event, std::uint64_t instr, std
 /// "ITEM_LOT_PARAM_ST"), or 0 when the params are not loaded or the row does not exist. The
 /// address stays valid until the params are reloaded (main thread).
 std::uint64_t GameParamRow(const char* name, const char* type, std::uint32_t id);
+/// Every row of a game param table as (id, row data address), in id order; empty without it.
+std::vector<std::pair<std::uint32_t, std::uint64_t>> GameParamRows(const char* name, const char* type);
 
 } // namespace coop

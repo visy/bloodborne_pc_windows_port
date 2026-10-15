@@ -1184,6 +1184,9 @@ LinkCallbacks make_callbacks(bool host) {
             return json::dump(reply, 0);
         };
     } else {
+        // A6: the host's Leave closes its game's room before its link stops (BYE ~0.4 s later):
+        // the room's end sends us home at once, not the game's "Session lost" 15-19 s later.
+        bbnet::np::set_host_closed_room_hook(&host_lost);
         cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
             if (name == coop::split::kChoosingEventName) {  // the host asks "Travel with the party?"
                 on_split_choosing(slot, body);
@@ -1216,6 +1219,13 @@ LinkCallbacks make_callbacks(bool host) {
             if (name == coop::balance::kEventName) {  // the host's party rules (party_balance.h)
                 std::string err;
                 if (!coop::balance::OnHostRules(body, &err)) plog("balance event refused: %s", err.c_str());
+                return;
+            }
+            if (name == coop::kStoryNoticeEventName) {  // D10: the host's story notice
+                coop::StoryNotice n;
+                std::string err;
+                if (coop::StoryNoticeFromJsonText(body, &n, &err)) coop::RequestGuestStoryNotice(n);
+                else plog("story notice refused: %s", err.c_str());
                 return;
             }
             if (name == coop::kStoryEventName) {  // C4: the host's cutscene / ending

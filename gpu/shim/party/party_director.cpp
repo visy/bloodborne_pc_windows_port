@@ -1351,7 +1351,7 @@ void KillLoadedEnemyForTest(const char* what, std::uint32_t want, bool by_id, bo
     int alive = 0;
     for (const auto& e : list) alive += e.alive ? 1 : 0;
     const int k = have_me || want ? PickEnemyKillTarget(list, want, me, 500.0f) : -1;
-    if (k < 0 && want && by_id && EnemyIsBossEntity(want) && hp_only) {
+    if (k < 0 && want && EnemyIsBossEntity(want) && hp_only) {
         // ':hp' on a boss outside the census: its chr by entity id (0x13C97A0, as the boss clear
         // bonus 0x1335400 finds it) and HP 0 only: the game's own death and defeat path (a "real
         // kill" without ForceDead; statsaudit finding 4).
@@ -1934,7 +1934,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     } else if (step.kind == TravelStep::GuestKill) {
         // guest_kill=ENTITY@S%MAP (0: the nearest living enemy within 500 m): a kill on the guest's
         // own copy (split travel: an enemy killed while the players are apart).
-        KillLoadedEnemyForTest("guest_kill", step.id, false);
+        // guest_kill=ENTITY:hp on a boss: its HP 0 on the guest's game (a lone guest's boss kill).
+        KillLoadedEnemyForTest("guest_kill", step.id, false, step.args == "hp");
     } else if (step.kind == TravelStep::HostKill) {
         // A boss (or any enemy) killed as the game's own death path: ForceDead on its entity id; the
         // boss-defeat EMEVD (4[00] death state -> 2003[12]) and the Lua boss clear follow.
@@ -2885,7 +2886,7 @@ void PartyDirector::ConfigureFromEnv() {
                 if (step.kind == TravelStep::HostWarp || step.kind == TravelStep::HostKill) {
                     step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 10, nullptr, 10));
                 }
-                if (step.kind == TravelStep::HostKill && item.find(":hp") != std::string::npos) {
+                if ((step.kind == TravelStep::HostKill || step.kind == TravelStep::GuestKill) && item.find(":hp") != std::string::npos) {
                     step.args = "hp";  // host_kill=ID:hp@S: HP 0 only (the game's own death path)
                 }
                 if (step.kind == TravelStep::HostLamp) {
@@ -3358,6 +3359,12 @@ void PartyDirector::Tick() {
             link->post_event(party::kBroadcast, kStoryEventName, StoryToJsonText(si));
             Log("story #%llu (%s %u) sent to the party", static_cast<unsigned long long>(si.seq),
                 StoryKindName(si.kind), si.id);
+        }
+        // D10: story notices only the host's event shows (party_story StoryNoticeMessage).
+        StoryNotice sn;
+        while (PopHostStoryNotice(&sn)) {
+            link->post_event(party::kBroadcast, kStoryNoticeEventName, StoryNoticeToJsonText(sn));
+            Log("story notice %u (event %u) sent to the party", sn.message, sn.event_id);
         }
         // C3: the host's item lots to every guest; the full list to a member that (re)joined.
         std::vector<ItemGrant> items;
