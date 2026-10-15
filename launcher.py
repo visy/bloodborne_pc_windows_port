@@ -111,7 +111,7 @@ IF JOINING FAILS
 - "wrong password or party code": copy the code again; check the Password field on both sides.
 - Nothing happens: the host's port is not reachable. See step 3 for the host.
 
-Saves: with Separate party saves on, the party plays from user\\savedata_party and backs it up to user\\save_backups. README.txt there explains restoring a backup.
+Saves: the party plays from user\\savedata_party and backs it up to user\\save_backups (README.txt there explains restoring a backup). Right before every party session the game also copies both save folders to user\\save_backups\\party_sessions: "Undo last party session" on this tab puts them back (it shows what it replaces first and keeps your current saves, so the undo can be undone). After a session the launcher checks the party save and offers the undo if something looks wrong.
 
 The full guide is docs\\PARTY.md."""
 PARTY_SWITCHES = [

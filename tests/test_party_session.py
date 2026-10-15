@@ -88,7 +88,7 @@ class PartySessionTests(unittest.TestCase):
         after = tree(self.user / "savedata_party")
         lines = ps.describe(self.user)
         self.assertTrue(any("savedata_party: 3 files differ" in ln for ln in lines), lines)
-        self.assertTrue(any("slot 1: now Hunter level 45, 2.0 h played -> back to Hunter level 40, 1.0 h" in ln
+        self.assertTrue(any("slot 1: now Hunter level 45, 2 h 00 min played -> back to Hunter level 40, 1 h 00 min" in ln
                             for ln in lines), lines)
         self.assertTrue(any("slot 2: now Second" in ln and "back to empty" in ln for ln in lines), lines)
         self.assertIn("savedata: unchanged since then", lines)
@@ -105,6 +105,11 @@ class PartySessionTests(unittest.TestCase):
         self.assertIsNone(ps.needs_check(self.user))
         ps.undo(self.user)
         self.assertEqual(tree(self.user / "savedata_party"), after)
+
+    def test_launcher_snapshots_are_pruned(self):
+        for _ in range(ps.KEEP + 3):
+            ps.snapshot_now(self.user, kind="before-undo")
+        self.assertEqual(len(ps.sessions(self.user)), ps.KEEP)
 
     def test_undo_without_snapshot(self):
         with self.assertRaises(FileNotFoundError):

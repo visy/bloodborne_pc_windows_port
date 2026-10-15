@@ -57,6 +57,10 @@ static int test_map_state() {
     f.host_wait_s = 12;
     CHECK(MapState(f).state == State::Reconnecting &&
           MapState(f).detail == "Waiting for the host to come back (12 s)...");
+    f.link = LinkState::Connected;  // the restarted host's game answers; its world is not up yet
+    CHECK(MapState(f).state == State::Reconnecting &&
+          MapState(f).detail == "Waiting for the host to come back (12 s)...");
+    f.link = LinkState::Reconnecting;
     f.host_wait_s = -1;
     CHECK(bridge::HostWaitText(-3) == "Waiting for the host to come back (0 s)...");
     CHECK(bridge::HostGoneNotice(180).rfind("Party: the host did not come back within 3 min\n", 0) == 0);

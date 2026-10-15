@@ -275,6 +275,10 @@ Mapped MapState(const Facts& f) {
         if (!f.error.empty()) return {State::Error, f.error};
         return {State::Starting, {}};
     }
+    // Host crash recovery: a guest waiting for its lost host (link down, or up while the host's
+    // restarted game loads its world).
+    if (!host && f.host_wait_s >= 0 && f.link != LinkState::Rejected && f.link != LinkState::Stopped)
+        return {State::Reconnecting, HostWaitText(f.host_wait_s)};
     const std::string count = std::to_string(f.members_connected) + "/" + std::to_string(f.max_players);
     switch (f.link) {
     case LinkState::Idle: return f.error.empty() ? Mapped{State::Starting, {}} : Mapped{State::Error, f.error};
@@ -282,8 +286,7 @@ Mapped MapState(const Facts& f) {
         return {f.reject == RejectCode::Shutdown ? State::Off : State::Error, RejectText(f.reject, f.reject_reason)};
     case LinkState::Stopped: return {State::Off, "party stopped"};
     case LinkState::Connecting: return {State::Connecting, f.host_address};
-    case LinkState::Reconnecting:
-        return {State::Reconnecting, f.host_wait_s >= 0 ? HostWaitText(f.host_wait_s) : f.link_detail};
+    case LinkState::Reconnecting: return {State::Reconnecting, f.link_detail};
     case LinkState::Hosting:
     case LinkState::Connected: break;
     }

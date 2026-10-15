@@ -249,6 +249,16 @@ before anyone is in the game):
 - **Network drops recover.** A network outage of up to 30 s keeps the session: no loading screen, everyone carries on where they stood once the network is back (the others freeze in place meanwhile). If a longer outage loses the session, a guest goes home at once with one loading screen and is summoned back beside the host by itself once the network is back. The party also checks every 15 s that everyone sees the same world and progress and quietly re-sends whatever differs.
 - **Wrong passwords are locked out.** A few typos are fine; after 5 wrong passwords in a minute the host refuses that address for a while.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
+- **Undo a party session.** Right before every party session (host or guest) the game copies both
+  save folders aside. The launcher's *Party* tab has **Undo last party session**: it shows what it
+  will replace, keeps your current saves aside the same way (so the undo can be undone) and puts
+  the saves back byte for byte. After a party session the launcher also checks the party save
+  (every character loads, the NG cycle only changes with an ending, no boss kill or lamp from
+  before the session is lost, level and play time never go down) and offers the undo if something
+  looks wrong.
+- **New version out?** The launcher says so ("Version X is out - every PC in the party needs the
+  same version", with the download link; at most one check every 6 hours, off in *Advanced /
+  Debug*). A join refused for a version mismatch names the host's version and yours.
 - **Death has a cost.** Each death stacks "rot" (−10% max HP, −10% max stamina, +10% stamina
   use or −15% HP won back by hitting after a hit (rally), picked at random, up to 5); using a lamp (even just opening its travel menu and cancelling) or levelling up clears it.
   It belongs to your character: each save slot keeps its own, and a new game starts without it. On by default; the host can turn it off on the *Party rules* page.
