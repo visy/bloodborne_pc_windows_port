@@ -19,6 +19,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <memory>
@@ -450,6 +451,33 @@ BBNET_ABI int http_delete_request(int id) {
 }
 
 // sceHttpSendRequest(reqId, const void* postData, size_t size)
+// C6 RE aid (BB_HTTP_TRACE_CALLERS=1): the guest call chain of each request (frame pointers:
+// the game's functions keep rbp), as image offsets, to find what paces the title's sign-in.
+__attribute__((noinline)) void trace_callers(const std::string& url, void* frame) {
+    static const bool on = [] {
+        const char* e = std::getenv("BB_HTTP_TRACE_CALLERS");
+        return e && e[0] == '1';
+    }();
+    if (!on) return;
+    const std::uintptr_t base = guest_image_base();
+    const std::uint64_t size = guest_image_size();
+    std::uintptr_t fp = 0;
+    std::string chain;
+    if (frame) guest_read(reinterpret_cast<std::uintptr_t>(frame), &fp, sizeof fp);  // the caller's rbp
+    for (int i = 0; i < 12 && fp; ++i) {
+        std::uintptr_t ret = 0, next = 0;
+        if (!guest_read(fp + 8, &ret, sizeof ret) || !guest_read(fp, &next, sizeof next)) break;
+        char b[24];
+        if (base && ret >= base && ret < base + size) {
+            std::snprintf(b, sizeof b, " %llx", static_cast<unsigned long long>(ret - base));
+            chain += b;
+        }
+        if (next <= fp) break;
+        fp = next;
+    }
+    log("http trace: %s from%s", url.c_str(), chain.empty() ? " ?" : chain.c_str());
+}
+
 BBNET_ABI int http_send(int id, const void* post, std::uint64_t size) {
     BBNET_GUEST_RETURN();
     std::string url;
@@ -466,6 +494,13 @@ BBNET_ABI int http_send(int id, const void* post, std::uint64_t size) {
         method = r->method;
         eff = effective_locked(id);
         resp = r->resp;
+    }
+    {
+        char b[24];
+        std::snprintf(b, sizeof b, " ret %llx",
+                      static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)) -
+                                                      guest_image_base()));
+        trace_callers(url + b, __builtin_frame_address(0));
     }
     std::string body;
     if (post && size) body.assign(static_cast<const char*>(post), static_cast<std::size_t>(size));

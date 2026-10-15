@@ -86,6 +86,26 @@ static void check_typos(const std::string& code) {
     std::printf("  %s: %d/%d typos, %d/%d swaps rejected\n", code.c_str(), caught, total, swaps_caught, swaps);
 }
 
+// F5: the slot keep outlives a 2 min outage by default; BB_PARTY_SLOT_KEEP_MS overrides it (clamped).
+static void test_slot_keep_env() {
+    auto put = [](const char* kv) {
+#if defined(_WIN32)
+        _putenv(kv);
+#else
+        putenv(const_cast<char*>(kv));
+#endif
+    };
+    LinkConfig c;
+    CHECK(c.slot_keep_ms == 130000);
+    put("BB_PARTY_SLOT_KEEP_MS=90000");
+    apply_link_env(c);
+    CHECK(c.slot_keep_ms == 90000);
+    put("BB_PARTY_SLOT_KEEP_MS=5");
+    apply_link_env(c);
+    CHECK(c.slot_keep_ms == 1000);
+    put("BB_PARTY_SLOT_KEEP_MS=");
+}
+
 static void test_codes() {
     std::array<std::uint8_t, 8> secret = {0xde, 0xad, 0xbe, 0xef, 0x01, 0x23, 0, 0};  // 48 bits, padded
     const std::array<std::uint8_t, 8> secret4 = {0xde, 0xad, 0xbe, 0xef, 0, 0, 0, 0};  // with a password

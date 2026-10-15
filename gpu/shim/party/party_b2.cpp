@@ -7226,7 +7226,7 @@ void NrRecvHook(int sock, int where) {
         u64 release = 0;
         if (!SafeRead(vt + 0x28, &release, 8) || !release) continue;
         ++transports;
-        // After an outage the member's last datagram is as old as the outage (up to the 60 s slot
+        // After an outage the member's last datagram is as old as the outage (up to the 130 s slot
         // keep plus the reconnect), so the window is wider.
         const std::vector<nrdrop::Source> silent =
             nrdrop::SilentSources(bbnet::p2p_heard(fd), now, 1500, outage ? 180000 : 60000);
