@@ -464,6 +464,22 @@ void ParseSkips() {
         g_skips.push_back(r);
         Log("EMEVD rule (built in, guest services): skip %s", DescribeSkipRule(r).c_str());
     }
+    // D5 / D10 (pard4): host-only action buttons a guest may press (party_story.h
+    // GuestPressedHostOnlyEvent): Amelia's skull 12401803 ends a client's copy ([6] 1003[6]) and
+    // waits for chr type 0 ([7] 4[3]) next to its 3[24] button. A guest's copy skips both, so the
+    // guest's press runs its 2002[6] (scene + evening -> night) and the host plays it as its own.
+    // BB_PARTY_GUEST_HOST_ACTIONS=0: off (the host presses it, as before).
+    if (const char* party = std::getenv("BB_PARTY"); party && party[0] && !EnvOff("BB_PARTY_GUEST_HOST_ACTIONS")) {
+        EmevdSkipRule end_client, host_chr;
+        end_client.event = 12401803, end_client.bank = 1003, end_client.id = 6, end_client.index = 6;
+        host_chr.event = 12401803, host_chr.bank = 4, host_chr.id = 3, host_chr.index = 7;
+        end_client.client_only = host_chr.client_only = true;
+        for (const EmevdSkipRule& r : {end_client, host_chr}) {
+            g_skips.push_back(r);
+            Log("EMEVD rule (built in, host-only action a guest may press): skip %s (guests only)",
+                DescribeSkipRule(r).c_str());
+        }
+    }
     const char* e = std::getenv("BB_PARTY_EMEVD_SKIP");
     if (!e) {
         return;
@@ -544,6 +560,10 @@ bool FogFirstSkip(u64 event, u64 instr, i32 event_id, i32 bank, i32 id) {
     std::memcpy(&flag, args + 4, 4);
     const bool first = worldact::GuestFirstFightEnabled() && worldact::BossGateSkipFirstFight(event_id, bank, id, flag);
     if (!first && !worldact::BossGateSkipCondition(event_id, bank, id, flag)) {
+        return false;
+    }
+    // D3 (pard4): not while the host is in another area (a lone guest's fight has no start / defeat).
+    if (!worldact::GuestFogSkipAllowed(event_id)) {
         return false;
     }
     static std::atomic<std::uint32_t> first_logged{0};

@@ -511,6 +511,11 @@ bool OfferRepeatGift(std::int32_t lot);
 /// guest's award in the host's world is not reported up as an NPC gift (D5), so the host does not
 /// receive it too (BB_PARTY_GUESTSVC_TEST `lot=N`).
 bool AwardLotGuestOnly(std::uint32_t lot);
+/// D4 (pard4), guest: it picked up map treasure flag `flag` in the host's world. A shared
+/// progression key / workshop tool (SharedKeyTreasureLot) is reported up like an NPC gift
+/// (gift_up): the host's world awards it and C3 gives it to every member (party progress is shared
+/// both ways). False: not such a treasure (instanced: own save only) or items off.
+bool ReportGuestKeyTreasure(std::int32_t flag);
 /// Guest: the next NPC gift to report to the host (any thread; the director posts it).
 bool PopGuestGift(std::string* body);
 /// Host: EVENT gift_up from `slot` (link thread): validated, rate limited, queued for the tick.

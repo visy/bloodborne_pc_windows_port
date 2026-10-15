@@ -274,6 +274,24 @@ constexpr double kFirstFightWaitSeconds = 600.0;
 constexpr const char* kBossFogWaitNotice = "Boss fog: the host goes in first (first fight here)";
 /// Within this many metres of the fog object the notice shows.
 constexpr float kBossFogNoticeRange = 5.0f;
+/// D3 (pard4): a guest alone in another area than the host (split travel) is still a client of
+/// the host's world there, and the host's game does not have that area loaded: a boss fight's
+/// start and defeat events are host-only copies, so they ran nowhere (live LB2: the guest went
+/// through the Blood-starved Beast's fog, the boss stayed idle, its HP 0 ran no defeat). Correct
+/// over seamless: while the host's area is another one the fog keeps the vanilla phantom rule (no
+/// prompt until the host has gone in), a notice says why, and a guest that got through anyway (its
+/// fog had opened while the host was still there) is put back outside. host_map 0 / 0xffffffff:
+/// the host's place is unknown (no decision: open as before).
+bool GuestFogOpenWhileHostAt(const BossGate& g, std::uint32_t host_map);
+/// The guest's notice at a fog while the host is in another area.
+constexpr const char* kBossFogApartNotice =
+    "Boss fight: the host is in another area. Travel together to fight this boss";
+/// Seconds after a guest went through a fog while the host is elsewhere before it is put back
+/// outside (the walk through the fog ends first).
+constexpr double kFogApartPutBackAfter = 2.5;
+/// Game side, any thread (the EMEVD dispatch): may this guest's guest-entry event `guest_event`
+/// skip its host-entered / first-fight condition now? False while the host is in another area.
+bool GuestFogSkipAllowed(std::int32_t guest_event);
 /// The notice is due: the gate's flags were read, the gate waits for the host and the guest
 /// stands within kBossFogNoticeRange of the fog (dist_m < 0: unknown, no notice).
 bool BossFogNoticeDue(const BossGate& g, bool read, bool intro_done, bool host_in, bool boss_dead, float dist_m);
