@@ -11,6 +11,7 @@
 #include "party_director.h"
 #include "party_enemy_census.h"
 #include "party_ids.h"
+#include "seamless_rules.h"
 #include "world_warper_rules.h"
 
 #include <algorithm>
@@ -24,6 +25,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -46,6 +48,12 @@ constexpr u64 kFlipperUpdate = 0x2034770; // main-thread tick (as party_director
 constexpr u64 kForceDead = 0x13320c0;     // Lua ForceDead(ctx unused, entity id)
 constexpr u64 kChrDeath = 0x18bf9a0;      // the death path on a chr (what ForceDead calls)
 constexpr u32 kPadCross = 0x4000;
+constexpr u64 kGameDataMan = 0x553b130;   // *slot +8: the local player's PlayerGameData record
+constexpr u64 kEventFlagMan = 0x553b100;  // singleton slot
+constexpr u64 kGetFlagValue = 0x13cfd80;  // (man, first, bits) -> value
+constexpr u64 kSetFlagValue = 0x13d0060;  // (man, first, bits, value)
+constexpr u64 kTodWorld = 0x553b148;      // *(slot) +0x81 = 1: re-evaluate the time of day (party_story)
+constexpr u64 kPlayRemo = 0x131a9f0;      // (unused, remo id, mode, -1, -1, player entity) -> al
 
 void Log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 void Log(const char* fmt, ...) {
@@ -100,10 +108,14 @@ struct Counters {
     }
 };
 
-enum class Phase : std::uint8_t { ReplayBefore, Tour, ReplayAfter };
+enum class Phase : std::uint8_t { ReplayBefore, Tour, Tod, ReplayAfter };
 const char* PhaseName(Phase p) {
-    return p == Phase::Tour ? "tour" : p == Phase::ReplayBefore ? "replay (before)" : "replay (after)";
+    return p == Phase::Tour ? "tour" : p == Phase::Tod ? "time of day" : p == Phase::ReplayBefore ? "replay (before)"
+                                                                                                   : "replay (after)";
 }
+
+/// What the area's routine does after its scripted steps.
+enum class Sub : std::uint8_t { Steps, Effects, Remo, Enemies, Done };
 
 enum class Stage : std::uint8_t { Title, Settle, Next, WaitLoad, Arrive, Routine, Finish, Done };
 
@@ -142,11 +154,28 @@ struct State {
     std::vector<u32> enemies_used;
     EnemyTarget target;
     double enemy_kill_at = 0, enemy_next_at = 0;
-    bool enemy_pending = false;
+    bool enemy_pending = false, target_boss = false;
+    u32 target_kind = 0;
+    std::map<u64, u32> npc_ids;   // NpcParam row data -> row id (enemy kinds)
+    Sub sub = Sub::Steps;
+    // item effects (once per run)
+    std::vector<int> effects;
+    std::size_t effect_i = 0;
+    double effect_at = 0;
+    // cutscenes of the area
+    std::vector<u32> remos;
+    std::size_t remo_i = 0;
+    int remo_stage = 0;           // 0 next, 1 asked (waiting for it to start), 2 playing
+    double remo_at = 0;
+    // time of day
+    std::vector<int> tod_of_row;  // the Tod phase: each route row's value
+    int tod_now = -1;
+    double curve_at = 0;
     // replay results: row -> counters
     std::map<u32, Counters> replay_before, replay_after;
     std::size_t done_rows = 0, skipped_rows = 0;
     u64 tour_created = 0;
+    std::size_t kills = 0, bosses = 0, remos_played = 0, effects_applied = 0, tod_rows = 0;
 } g;
 
 std::mutex g_status_mu;
@@ -256,6 +285,85 @@ std::vector<u32> AllRows() {
     return std::vector<u32>(std::begin(ids::kPartyReturnPoints), std::end(ids::kPartyReturnPoints));
 }
 
+/// `dump`: the player record's words (equipment research), 8 to a line, zero lines left out.
+void DumpRecord() {
+    u64 gdm = 0;
+    if (!SafeGet(Guest(kGameDataMan), &gdm) || !gdm) return;
+    const u64 rec = Field<u64>(gdm, 8);
+    if (!rec) return;
+    Log("dump: player record %#llx", static_cast<unsigned long long>(rec));
+    for (u64 off = 0; off < 0x1000; off += 32) {
+        u32 w[8] = {};
+        if (!SafeRead(rec + off, w, sizeof w)) break;
+        bool any = false;
+        for (u32 v : w) any = any || v;
+        if (!any) continue;
+        Log("dump +%03llx: %08x %08x %08x %08x %08x %08x %08x %08x", static_cast<unsigned long long>(off), w[0], w[1],
+            w[2], w[3], w[4], w[5], w[6], w[7]);
+    }
+}
+
+int TodValue() {
+    u64 man = 0;
+    if (!SafeGet(Guest(kEventFlagMan), &man) || !man) return -1;
+    return static_cast<int>(reinterpret_cast<u32(BB_COOP_SYSV*)(u64, u32, u32)>(Guest(kGetFlagValue))(man, 9800, 3));
+}
+
+/// Day / evening / night / Blood Moon now (the flags and the world's re-evaluation, as party_story).
+bool SetTod(int v) {
+    u64 man = 0, w = 0;
+    if (v < 0 || !SafeGet(Guest(kEventFlagMan), &man) || !man) return false;
+    reinterpret_cast<void(BB_COOP_SYSV*)(u64, u32, u32, u32)>(Guest(kSetFlagValue))(man, 9800, 3, static_cast<u32>(v));
+    if (SafeGet(Guest(kTodWorld), &w) && w) {
+        const std::uint8_t one = 1;
+        SafeWrite(w + 0x81, &one, 1);
+    }
+    const int now = TodValue();
+    Log("time of day -> %s (9800..9802 = %d)", TodName(v), now);
+    g.tod_now = now;
+    return now == v;
+}
+
+bool ApplyEffect(u64 player, int id) {
+    u64 vt = 0, fn = 0;
+    if (!player || !SafeGet(player, &vt) || !vt || !SafeGet(vt + 0x3f0, &fn) || !fn) return false;
+    using AddSpEffectFn = void(BB_COOP_SYSV*)(u64, u64, u64, u64, u64, u64, u64, float, float, float, float, float);
+    reinterpret_cast<AddSpEffectFn>(fn)(player, static_cast<u64>(id), player, 0, 1, 0, 0, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f);
+    return true;
+}
+
+/// The item effects to show once per run: the SpEffect of every usable goods (EquipParamGoods
+/// refId with an SpEffectParam row), less the ones that warp, summon or end the run.
+std::vector<int> ItemEffects() {
+    std::set<int> out;
+    for (const auto& [id, row] : GameParamRows("EquipParamGoods", "EQUIP_PARAM_GOODS_ST")) {
+        std::int32_t ref = -1;
+        if (!SafeGet(row + 0x0, &ref) || ref <= 0 || !ItemEffectAllowed(id, static_cast<u32>(ref))) continue;
+        if (GameParamRow("SpEffectParam", "SP_EFFECT_PARAM_ST", static_cast<u32>(ref))) out.insert(ref);
+    }
+    return std::vector<int>(out.begin(), out.end());
+}
+
+/// The NpcParam row id of an enemy chr (ChrIns +0x3C8 -> +8: its row data), 0 unknown.
+u32 NpcParamId(u64 chr) {
+    const u64 row = Field<u64>(Field<u64>(chr, 0x3c8), 8);
+    if (!row) return 0;
+    if (g.npc_ids.empty()) {
+        for (const auto& [id, data] : GameParamRows("NpcParam", "NPC_PARAM_ST")) g.npc_ids[data] = id;
+    }
+    const auto it = g.npc_ids.find(row);
+    return it == g.npc_ids.end() ? 0 : it->second;
+}
+
+/// Lines of the coverage summary (the log and the progress file's last lines).
+std::string Coverage() {
+    char b[400];
+    std::snprintf(b, sizeof b, "%zu areas, %zu maps, %zu enemy kinds (%zu kills, %zu bosses fought), %zu cutscenes, "
+                  "%zu item effects, %zu time-of-day rows", g.progress.done.size(), g.maps_seen.size(),
+                  g.progress.kinds.size(), g.kills, g.bosses, g.progress.remos.size(), g.effects_applied, g.tod_rows);
+    return b;
+}
+
 void BeginPhase(double now) {
     const Phase ph = g.phases[g.phase_i];
     g.idx = 0;
@@ -277,6 +385,23 @@ void BeginPhase(double now) {
                 if (std::strcmp(why, "done") != 0) Log("tour: row %u not visited again (%s)", rp, why);
             }
         }
+        if (g.progress.tod_orig < 0) {
+            g.progress.tod_orig = TodValue();
+            AppendState("todorig " + std::to_string(g.progress.tod_orig));
+        }
+        g.effects = g.opt.items && g.opt.act && !g.progress.effects_done ? ItemEffects() : std::vector<int>{};
+    } else if (ph == Phase::Tod) {
+        const std::vector<u32> rows = TodRoute(BuildRoute(AllRows(), spot, g.opt));
+        g.route.clear();
+        g.tod_of_row.clear();
+        for (int v : TodPasses(g.progress.tod_orig)) {
+            for (u32 rp : rows) {
+                g.route.push_back(rp);
+                g.tod_of_row.push_back(v);
+            }
+        }
+        Log("time of day: %zu rows (%zu maps x %zu values; the save's own is %s)", g.route.size(), rows.size(),
+            TodPasses(g.progress.tod_orig).size(), TodName(g.progress.tod_orig));
     } else {
         Options ro;
         ro.lamps = g.opt.replay.empty() ? std::vector<u32>(std::begin(kDefaultReplay), std::end(kDefaultReplay))
@@ -319,29 +444,114 @@ bool RunSteps(double now) {
     return false;
 }
 
-/// The next enemy near the row's spot: alive, not a boss, within 60 m, not used yet.
-bool PickEnemy(u32 rp, EnemyTarget* out, float* dist) {
+constexpr u64 kInventoryFind = 0x14d9e80;  // (inventory list, type bits, id) -> index or -1
+constexpr u64 kRecInventory = 0x328;
+
+/// Puts item `id` (type bits) into equipment slot `slot` of the player record (index, handle, id;
+/// world_warper_rules.h EquipSlot), giving one first if none is held. The chr is rebuilt from the
+/// record by the next load (the row's warp).
+bool EquipItem(int slot, u32 type_bits, u32 id) {
+    if (ItemCount(type_bits, id) <= 0) GiveItem(type_bits, id, 1);
+    u64 gdm = 0;
+    if (!SafeGet(Guest(kGameDataMan), &gdm) || !gdm) return false;
+    const u64 rec = Field<u64>(gdm, 8);
+    if (!rec) return false;
+    const u64 list = rec + kRecInventory;
+    if (!Field<u64>(list, 0x68) || !Field<u64>(list, 0x78)) return false;
+    const i32 index = reinterpret_cast<i32(BB_COOP_SYSV*)(u64, u32, u32)>(Guest(kInventoryFind))(list, type_bits, id);
+    const i32 last = Field<i32>(list, 0x88, -1);
+    if (index < 0 || index > last) return false;
+    const u32 split = Field<u32>(list, 0x24);
+    const u64 entry = static_cast<u32>(index) < split ? Field<u64>(list, 0x58) + 16ull * static_cast<u32>(index)
+                                                      : Field<u64>(list, 0x48) + 16ull * (static_cast<u32>(index) - split);
+    u32 handle = 0, held = 0;
+    if (!SafeGet(entry, &handle) || !SafeGet(entry + 4, &held) || !handle) return false;
+    held &= 0x0fffffffu;  // the record keeps the id without the type bits
+    const u64 k = static_cast<u64>(slot) * 4;
+    return SafeWrite(rec + kRecEquipIndex + k, &index, 4) && SafeWrite(rec + kRecEquipHandle + k, &handle, 4) &&
+           SafeWrite(rec + kRecEquipId + k, &held, 4);
+}
+
+u32 EquippedId(int slot) {
+    u64 gdm = 0;
+    if (!SafeGet(Guest(kGameDataMan), &gdm) || !gdm) return 0;
+    return Field<u32>(Field<u64>(gdm, 8), kRecEquipId + static_cast<u64>(slot) * 4);
+}
+
+/// The tour row's gear (GearFor): before its warp, so the load builds the chr with it.
+void PutOnGear(std::size_t n) {
+    const Gear gear = GearFor(n);
+    int ok = 0, all = 0;
+    for (int k = 0; k < 3; ++k) {
+        ok += EquipItem(kSlotRight1 + 2 * k, kItemWeapon, gear.right[k]) ? 1 : 0;
+        ok += EquipItem(kSlotLeft1 + 2 * k, kItemWeapon, gear.left[k]) ? 1 : 0;
+        all += 2;
+    }
+    for (int k = 0; k < 4; ++k) {
+        const u32 piece = gear.armor + 1000u * static_cast<u32>(k);
+        if (!GameParamRow("EquipParamProtector", "EQUIP_PARAM_PROTECTOR_ST", piece)) continue;
+        ++all;
+        ok += EquipItem(kSlotHead + k, kItemProtector, piece) ? 1 : 0;
+    }
+    Log("gear %zu: armor set %u, right %u %u %u, left %u %u %u: %d of %d slots set", n, gear.armor, gear.right[0],
+        gear.right[1], gear.right[2], gear.left[0], gear.left[1], gear.left[2], ok, all);
+}
+
+/// The next enemy to fight: a living one of a kind (model) not seen in the run yet, nearest the
+/// row's spot first (bosses only when `bosses`); when the area has no new kind, the nearest
+/// regular enemy within 60 m once (its death in this area's light).
+bool PickEnemy(u32 rp, EnemyTarget* out, float* dist, bool* boss, u32* kind) {
     float sp[4];
     if (!ids::ReturnSpot(rp, sp)) return false;
     const auto list = balance::LoadedEnemies();
-    float best = 60.0f * 60.0f;
+    float best = 1e12f, near_best = 60.0f * 60.0f;
     const EnemyKillCandidate* pick = nullptr;
+    const EnemyKillCandidate* near = nullptr;
+    u32 pick_kind = 0;
+    std::set<u32> kinds_here;
     for (const auto& e : list) {
-        if (!e.alive || !e.have_pos || !e.chr || EnemyIsBossEntity(e.entity)) continue;
+        if (!e.alive || !e.have_pos || !e.chr) continue;
         if (std::find(g.enemies_used.begin(), g.enemies_used.end(), e.id) != g.enemies_used.end()) continue;
+        const bool is_boss = EnemyIsBossEntity(e.entity);
+        if (is_boss && !g.opt.bosses) continue;
         const float dx = e.pos[0] - sp[0], dy = e.pos[1] - sp[1], dz = e.pos[2] - sp[2];
         const float d = dx * dx + dy * dy + dz * dz;
-        if (d < best) {
+        const u32 npc = NpcParamId(e.chr);
+        const u32 k = npc ? EnemyKind(npc) : 0;
+        if (k && !g.progress.kinds.count(k) && !kinds_here.count(k) && d < best) {
             best = d;
             pick = &e;
+            pick_kind = k;
         }
+        if (k) kinds_here.insert(k);
+        if (!is_boss && d < near_best) {
+            near_best = d;
+            near = &e;
+        }
+    }
+    if (!pick && g.enemy_round == 0 && near) {
+        pick = near;
+        best = near_best;
+        const u32 npc = NpcParamId(near->chr);
+        pick_kind = npc ? EnemyKind(npc) : 0;
     }
     if (!pick) return false;
     g.enemies_used.push_back(pick->id);
     out->entity = pick->entity;
     out->chr = pick->chr;
     *dist = std::sqrt(best);
+    *boss = EnemyIsBossEntity(pick->entity);
+    *kind = pick_kind;
     return true;
+}
+
+/// The cutscenes of the map the player is in that the run has not played yet.
+std::vector<u32> RemosFor(u32 map_id) {
+    std::vector<u32> v;
+    for (u32 id : ids::kPartyRemos) {
+        if (RemoMap(id) == (map_id & 0xffff0000u) && !g.progress.remos.count(id)) v.push_back(id);
+    }
+    return v;
 }
 
 /// Stands the player 2.5 m from the enemy, facing it.
@@ -409,6 +619,14 @@ void FinishRow(const GameSnapshot& s, double now, const char* note) {
             ActionList(g.action_new).c_str(), static_cast<unsigned long long>(here.hitches),
             static_cast<unsigned long long>(here.shader_hitches), worst, now - g.arrive_at,
             static_cast<unsigned long long>(cp::created_total.load() - g.c_session0.created));
+    } else if (ph == Phase::Tod) {
+        const int v = g.tod_of_row[g.idx - 1];
+        AppendState("tod " + std::to_string(v) + " " + std::to_string(g.rp) + " " + std::to_string(all.created));
+        g.progress.tod_done.insert(std::uint64_t(static_cast<u32>(v)) << 32 | g.rp);
+        ++g.tod_rows;
+        Log("time of day %s %zu/%zu %s: +%llu new pipelines; %llu new this session", TodName(v), g.visited,
+            g.route.size(), RowName(g.rp).c_str(), static_cast<unsigned long long>(all.created),
+            static_cast<unsigned long long>(cp::created_total.load() - g.c_session0.created));
     } else {
         (ph == Phase::ReplayBefore ? g.replay_before : g.replay_after)[g.rp] = here;
         Log("%s %zu/%zu %s: %s; worst frame %.0f ms%s", PhaseName(ph), g.visited, g.route.size(),
@@ -422,6 +640,7 @@ void FinishRow(const GameSnapshot& s, double now, const char* note) {
 std::vector<PadStep> RoutineSteps(const GameSnapshot& s) {
     const Phase ph = g.phases[g.phase_i];
     std::vector<PadStep> v = LookSteps();
+    if (ph == Phase::Tod) return v;
     const auto walk = WalkSteps();
     v.insert(v.end(), walk.begin(), walk.end());
     if (ph != Phase::Tour || !g.opt.act) return v;
@@ -437,6 +656,10 @@ std::vector<PadStep> RoutineSteps(const GameSnapshot& s) {
         const auto lo = LoadoutSteps();
         v.insert(v.end(), lo.begin(), lo.end());
     }
+    if (g.opt.gear) {
+        const auto gs = GearSteps();
+        v.insert(v.end(), gs.begin(), gs.end());
+    }
     return v;
 }
 
@@ -445,6 +668,7 @@ void Finish(double now) {
     const Counters total = Counters::Now() - g.c_session0;
     Log("done: %zu areas visited, %zu skipped this session; %s; %.1f min", g.done_rows, g.skipped_rows,
         Counts(total).c_str(), (now - g.start_at) / 60.0);
+    Log("coverage (the run, all sessions): %s", Coverage().c_str());
     if (!g.tour_action_new.empty()) Log("new pipelines per action (tour): %s", ActionList(g.tour_action_new).c_str());
     if (!g.replay_before.empty() && !g.replay_after.empty()) {
         Counters b, a;
@@ -462,6 +686,13 @@ void Finish(double now) {
 
 void TickImpl(double now) {
     const GameSnapshot s = ReadGameState(false);
+    if (g.stage > Stage::Settle && g.stage < Stage::Done && now - g.curve_at >= 60.0) {
+        // The pipeline curve: new pipelines over time (the plateau check).
+        g.curve_at = now;
+        Log("curve: %.0f s, %llu new pipelines this session, %zu areas done, %zu enemy kinds", now - g.start_at,
+            static_cast<unsigned long long>(cp::created_total.load() - g.c_session0.created), g.progress.done.size(),
+            g.progress.kinds.size());
+    }
     if (s.player && Steady(s) && g.stage >= Stage::Next && g.stage <= Stage::Routine) KeepAlive(s.player);
     switch (g.stage) {
     case Stage::Title:
@@ -497,6 +728,7 @@ void TickImpl(double now) {
             return;
         }
         if (now - g.steady_since < 4.0) return;
+        if (g.opt.dump) DumpRecord();
         BeginPhase(now);
         return;
     case Stage::Next: {
@@ -504,8 +736,15 @@ void TickImpl(double now) {
         if (!Steady(s)) return;  // a load (a death) first
         const Phase ph = g.phases[g.phase_i];
         g.idx = ph == Phase::Tour ? NextIndex(g.route, g.progress, g.idx) : g.idx;
+        while (ph == Phase::Tod && g.idx < g.route.size() &&
+               g.progress.tod_done.count(std::uint64_t(static_cast<u32>(g.tod_of_row[g.idx])) << 32 | g.route[g.idx])) {
+            ++g.idx;
+        }
         if (g.idx >= g.route.size()) {
             Log("%s finished: %s", PhaseName(ph), Counts(Counters::Now() - g.c_phase).c_str());
+            if (ph == Phase::Tod && g.progress.tod_orig >= 0 && TodValue() != g.progress.tod_orig) {
+                SetTod(g.progress.tod_orig);  // the save's own time of day back
+            }
             if (++g.phase_i < g.phases.size()) {
                 BeginPhase(now);
             } else {
@@ -517,6 +756,10 @@ void TickImpl(double now) {
         if (ph == Phase::Tour) {
             AppendState("start " + std::to_string(g.rp));
             ++g.progress.starts[g.rp];
+            if (g.opt.gear && g.opt.act) PutOnGear(g.idx - 1);
+        } else if (ph == Phase::Tod) {
+            const int v = g.tod_of_row[g.idx - 1];
+            if (TodValue() != v) SetTod(v);
         }
         g.c_warp = Counters::Now();
         g.warp_at = now;
@@ -580,6 +823,7 @@ void TickImpl(double now) {
             return;
         }
         StartSteps(RoutineSteps(s), now);
+        g.sub = Sub::Steps;
         g.stage = Stage::Routine;
         g.routine_at = now;
         g.enemy_pending = false;
@@ -611,42 +855,143 @@ void TickImpl(double now) {
             }
             return;
         }
-        // Enemies (the tour only): the nearest two, fought briefly, then killed.
         const Phase ph = g.phases[g.phase_i];
-        if (ph == Phase::Tour && g.opt.enemies && g.enemy_round < 2) {
+        if (g.sub == Sub::Steps) g.sub = Sub::Effects;
+        if (g.sub == Sub::Effects) {
+            // Once per run (the first row): every item's effect on the player, 1.2 s apart.
+            if (ph == Phase::Tour && g.effect_i < g.effects.size()) {
+                if (now < g.effect_at) return;
+                if (g.effect_i == 0) {
+                    g.c_step = Counters::Now();
+                    Log("item effects: %zu SpEffects of the goods", g.effects.size());
+                }
+                if (ApplyEffect(s.player, g.effects[g.effect_i])) ++g.effects_applied;
+                ++g.effect_i;
+                g.effect_at = now + 1.2;
+                UpdateStatus("item effects");
+                if (g.effect_i == g.effects.size()) {
+                    const Counters c = Counters::Now();
+                    g.action_new["item effects"] += c.created - g.c_step.created;
+                    g.c_step = c;
+                    AppendState("effects");
+                    g.progress.effects_done = true;
+                    Log("item effects: %zu applied, +%llu new pipelines", g.effects_applied,
+                        static_cast<unsigned long long>(g.action_new["item effects"]));
+                }
+                return;
+            }
+            g.sub = Sub::Remo;
+            g.remos = ph == Phase::Tour && g.opt.remo ? RemosFor(s.map_id) : std::vector<u32>{};
+            g.remo_i = 0;
+            g.remo_stage = 0;
+            g.remo_at = now;
+        }
+        if (g.sub == Sub::Remo) {
+            // The map's cutscenes (each once per run; marked before it plays, so a crash in one
+            // does not repeat it).
+            if (g.remo_i < g.remos.size()) {
+                const u32 id = g.remos[g.remo_i];
+                const bool playing = CutscenePlaying();
+                if (g.remo_stage == 0) {
+                    if (now - g.remo_at < 1.0) return;
+                    AppendState("remo " + std::to_string(id));
+                    g.progress.remos.insert(id);
+                    g.c_step = Counters::Now();
+                    const u64 ok = reinterpret_cast<u64(BB_COOP_SYSV*)(u64, u64, u64, u64, u64, u64)>(Guest(kPlayRemo))(
+                        0, id, 0, 0xffffffffu, 0xffffffffu, 10000);
+                    Log("row %u: cutscene %u %s", g.rp, id, (ok & 0xff) ? "queued" : "NOT queued");
+                    UpdateStatus("cutscene");
+                    g.remo_stage = (ok & 0xff) ? 1 : 3;
+                    g.remo_at = now;
+                    return;
+                }
+                if (g.remo_stage == 1) {  // waiting for it to start
+                    if (playing) {
+                        g.remo_stage = 2;
+                        g.remo_at = now;
+                        ++g.remos_played;
+                        return;
+                    }
+                    if (now - g.remo_at < 8.0) return;
+                    Log("row %u: cutscene %u did not start", g.rp, id);
+                } else if (g.remo_stage == 2) {  // playing: to its end (a skip after 150 s)
+                    if (playing && now - g.remo_at < 150.0) return;
+                    if (playing && now - g.remo_at < 170.0) {
+                        RequestRemoSkip();
+                        return;
+                    }
+                    Log("row %u: cutscene %u played (%.0f s)", g.rp, id, now - g.remo_at);
+                }
+                const Counters c = Counters::Now();
+                g.action_new["cutscene"] += c.created - g.c_step.created;
+                g.c_step = c;
+                ++g.remo_i;
+                g.remo_stage = 0;
+                g.remo_at = now;
+                return;
+            }
+            g.sub = Sub::Enemies;
+            g.c_step = Counters::Now();
+        }
+        // Enemies (the tour only): every kind not seen yet in the run (a boss is fought but left
+        // alive), else the nearest regular one; each fought briefly, then killed.
+        if (ph == Phase::Tour && g.opt.enemies && g.enemy_round < std::max(1, g.opt.enemies_per_row)) {
             if (!g.enemy_pending) {
                 float d = 0;
                 EnemyTarget t;
-                if (!PickEnemy(g.rp, &t, &d)) {
-                    if (g.enemy_round == 0) Log("row %u: no living enemy within 60 m", g.rp);
-                    g.enemy_round = 2;
+                bool boss = false;
+                u32 kind = 0;
+                if (!PickEnemy(g.rp, &t, &d, &boss, &kind)) {
+                    if (g.enemy_round == 0) Log("row %u: no living enemy here", g.rp);
+                    g.enemy_round = 1 << 20;
                 } else {
                     g.target = t;
+                    g.target_boss = boss;
+                    g.target_kind = kind;
                     g.enemy_pending = true;
                     ++g.enemy_round;
                     GoToEnemy(s.player, t);
-                    Log("row %u: enemy %u, %.0f m from the spot (HP %d)", g.rp, t.entity, d, balance::EnemyHp(t.chr));
-                    UpdateStatus("fighting");
+                    if (kind && !g.progress.kinds.count(kind)) {
+                        g.progress.kinds.insert(kind);
+                        AppendState("kind " + std::to_string(kind));
+                    }
+                    Log("row %u: %s %u (kind %u), %.0f m from the spot (HP %d); %zu kinds in the run", g.rp,
+                        boss ? "boss" : "enemy", t.entity, kind, d, balance::EnemyHp(t.chr), g.progress.kinds.size());
+                    UpdateStatus(boss ? "fighting a boss" : "fighting");
                     std::vector<PadStep> fight = {
                         {0.6f, 0, -1, -1, -1, -1, "enemy"},     {0.15f, kR1, -1, -1, -1, -1, "enemy"},
                         {0.9f, 0, -1, -1, -1, -1, "enemy"},     {0.15f, kR1, -1, -1, -1, -1, "enemy"},
                         {1.2f, 0, -1, -1, -1, -1, "enemy"},     {0.15f, kL2, -1, -1, -1, -1, "enemy"},
                         {1.0f, 0, -1, -1, -1, -1, "enemy"},
                     };
+                    if (boss) {  // its attacks and effects: 10 s more, dodging
+                        for (int i = 0; i < 5; ++i) {
+                            fight.push_back({0.15f, kR1, -1, -1, -1, -1, "boss"});
+                            fight.push_back({1.0f, 0, -1, -1, -1, -1, "boss"});
+                            fight.push_back({0.2f, kCircle, 128, 255, -1, -1, "boss"});
+                            fight.push_back({0.7f, 0, -1, -1, -1, -1, "boss"});
+                        }
+                    }
                     StartSteps(fight, now);
                     g.enemy_kill_at = 0;
                 }
                 return;
             }
+            if (!RunSteps(now)) return;
             if (g.enemy_kill_at == 0) {
-                if (g.opt.kill) KillEnemy(g.target);
+                if (g.target_boss) {
+                    ++g.bosses;  // left alive: its defeat flags and scenes stay the game's
+                } else {
+                    if (g.opt.kill) KillEnemy(g.target);
+                    ++g.kills;
+                }
                 g.enemy_kill_at = now;
-                UpdateStatus("enemy killed");
+                UpdateStatus(g.target_boss ? "boss fought" : "enemy killed");
                 return;
             }
-            if (now - g.enemy_kill_at < 3.0) return;  // the death animation and its effects
+            if (now - g.enemy_kill_at < (g.target_boss ? 0.5 : 3.0)) return;  // the death animation
             const Counters c = Counters::Now();
-            g.action_new["enemy"] += c.created - g.c_step.created;
+            g.action_new[g.target_boss ? "boss" : "enemy"] += c.created - g.c_step.created;
             g.c_step = c;
             g.enemy_pending = false;
             return;
@@ -694,7 +1039,10 @@ void Install(unsigned char* image, std::uint64_t size) {
     switch (g.opt.mode) {
     case Mode::Replay: g.phases = {Phase::ReplayBefore}; break;
     case Mode::Measure: g.phases = {Phase::ReplayBefore, Phase::Tour, Phase::ReplayAfter}; break;
-    default: g.phases = {Phase::Tour}; break;
+    default:
+        g.phases = {Phase::Tour};
+        if (g.opt.tod) g.phases.push_back(Phase::Tod);
+        break;
     }
     if (!lamptravel::OwnsTick()) {
         HookPrologue(kFlipperUpdate,
@@ -705,8 +1053,10 @@ void Install(unsigned char* image, std::uint64_t size) {
     g.on = true;
     g_active = true;
     SetStatus("World warper\nStarting...\n");
-    std::printf("World warper: on (%s; actions %s, enemies %s; progress file %s)\n", env,
-                g.opt.act ? "on" : "off", g.opt.enemies ? "on" : "off",
+    std::printf("World warper: on (%s; actions %s, enemies %s, gear %s, cutscenes %s, time of day %s, chalice %s; "
+                "progress file %s)\n", env, g.opt.act ? "on" : "off", g.opt.enemies ? "on" : "off",
+                g.opt.gear ? "on" : "off", g.opt.remo ? "on" : "off", g.opt.tod ? "on" : "off",
+                g.opt.chalice ? "on" : "off",
                 g.state_path.empty() ? "(none)" : g.state_path.c_str());
 }
 

@@ -818,38 +818,63 @@ def export_shader_cache(zip_path: Path, root: Path = None) -> int:
     return count
 
 
+CACHE_DRIVER = ".vkp"   # the driver's own pipeline binaries (VkPipelineCache), one GPU + driver
+CACHE_IMPORT_DIR = "cache_import"  # user\cache_import\*.zip: merged at the next launch
+
+
+def _cache_entries(zf) -> dict:
+    """{title: [(entry, file name, gpu label or "")]} of a cache .zip. Two layouts: the launcher's
+    export (`<title>/<file>`) and a shared bundle, which keeps the GPU-built part of each GPU in
+    its own folder (`gpu/<label>/<title>/<file>`; README and other files at the top are ignored)."""
+    entries = {}
+    for n in zf.namelist():
+        parts = n.split("/")
+        if len(parts) == 2:
+            title, fname, label = parts[0], parts[1], ""
+        elif len(parts) == 4 and parts[0] == "gpu" and _cache_name_ok(parts[1]):
+            label, title, fname = parts[1], parts[2], parts[3]
+        else:
+            continue
+        if _cache_name_ok(title) and _cache_name_ok(fname):
+            entries.setdefault(title, []).append((n, fname, label))
+    return entries
+
+
 def import_shader_cache(zip_path: Path, root: Path = None) -> dict:
     """Merges a cache .zip into the local cache without overwriting anything. Keys and sources
-    are always taken; GPU-built .meta/.spv only when the .zip was made for the same GPU profile
-    (otherwise the game rebuilds them from the sources before the intro)."""
+    are always taken; GPU-built .meta/.spv (and the driver's .vkp) only from the part made for
+    the same GPU profile (otherwise the game rebuilds them from the sources before the intro).
+    With no local cache yet the first GPU part is taken: the game checks its profile itself and
+    rebuilds what does not fit, and loads a .vkp only when its header names this GPU and driver."""
     import zipfile
     root = root or shader_cache_root()
-    stats = {"added": 0, "existing": 0, "gpu_skipped": 0, "titles": []}
+    stats = {"added": 0, "existing": 0, "gpu_skipped": 0, "titles": [], "gpu_used": []}
     with zipfile.ZipFile(zip_path) as zf:
-        entries = {}
-        for n in zf.namelist():
-            title, _, fname = n.partition("/")
-            if _cache_name_ok(title) and _cache_name_ok(fname):
-                entries.setdefault(title, []).append((n, fname))
-        for title, files in sorted(entries.items()):
+        for title, files in sorted(_cache_entries(zf).items()):
             dest = root / title
             local_profile = dest / CACHE_PROFILE
-            zip_profile = next((zf.read(n) for n, f in files if f == CACHE_PROFILE), None)
-            if local_profile.is_file():
-                same_gpu = zip_profile is not None and local_profile.read_bytes() == zip_profile
-            else:
-                same_gpu = zip_profile is not None  # empty cache: the game checks the profile itself
+            local = local_profile.read_bytes() if local_profile.is_file() else None
+            labels = sorted({label for _, _, label in files})
+            profiles = {label: next((zf.read(n) for n, f, lb in files if f == CACHE_PROFILE and lb == label), None)
+                        for label in labels}
+            if local is not None:
+                usable = [lb for lb in labels if profiles[lb] is not None and profiles[lb] == local]
+            else:  # empty cache: the game checks the profile itself
+                usable = [lb for lb in labels if profiles[lb] is not None]
+            use = usable[0] if usable else None
+            if use:
+                stats["gpu_used"].append(use)
             dest.mkdir(parents=True, exist_ok=True)
             stats["titles"].append(title)
-            for n, fname in files:
+            for n, fname, label in files:
                 suffix = Path(fname).suffix
                 if fname == CACHE_PROFILE:
-                    if not local_profile.is_file() and same_gpu:
+                    if local is None and label == use:
                         local_profile.write_bytes(zf.read(n))
                     continue
-                if suffix not in CACHE_GPU_INDEPENDENT | CACHE_GPU_SPECIFIC:
+                if suffix not in CACHE_GPU_INDEPENDENT | CACHE_GPU_SPECIFIC | {CACHE_DRIVER}:
                     continue
-                if suffix in CACHE_GPU_SPECIFIC and not same_gpu:
+                if suffix in CACHE_GPU_SPECIFIC | {CACHE_DRIVER} and label != use:
                     stats["gpu_skipped"] += 1
                     continue
                 target = dest / fname
@@ -859,6 +884,94 @@ def import_shader_cache(zip_path: Path, root: Path = None) -> dict:
                 target.write_bytes(zf.read(n))
                 stats["added"] += 1
     return stats
+
+
+VENDOR_NAMES = {0x10de: "NVIDIA", 0x1002: "AMD", 0x8086: "Intel"}
+
+
+def driver_version_text(vendor: int, version: int) -> str:
+    """The driver version as the vendor writes it (VkPhysicalDeviceProperties.driverVersion)."""
+    if vendor == 0x10de:  # NVIDIA: 10.8.8.6 bits
+        return f"{version >> 22}.{(version >> 14) & 0xff:02d}"
+    if vendor == 0x8086 and os.name == "nt":  # Intel on Windows: 18.14
+        return f"{version >> 14}.{version & 0x3fff}"
+    return f"{version >> 22}.{(version >> 12) & 0x3ff}.{version & 0xfff}"  # Vulkan's own packing
+
+
+def gpu_label_from_vkp(name: str) -> str:
+    """'vk_pipe_cache_10de_2684_04d4a800.vkp' -> 'NVIDIA_10de-2684_driver_617.42' ('' if not one)."""
+    m = re.fullmatch(r"vk_pipe_cache_([0-9a-f]{4})_([0-9a-f]{4})_([0-9a-f]{8})\.vkp", name)
+    if not m:
+        return ""
+    vendor, device, version = (int(g, 16) for g in m.groups())
+    return (f"{VENDOR_NAMES.get(vendor, f'vendor{vendor:04x}')}_{vendor:04x}-{device:04x}"
+            f"_driver_{driver_version_text(vendor, version)}")
+
+
+def export_shader_cache_bundle(zip_path: Path, root: Path = None, readme: str = "", label: str = "") -> dict:
+    """A cache to share with other PCs: the GPU-independent part (.key, .src) at `<title>/`, this
+    GPU's part (.meta, .spv, profile.bin and the driver's .vkp) at `gpu/<label>/<title>/`, and a
+    README.txt. import_shader_cache (and the user/cache_import drop folder) reads it. `label`
+    defaults to the vendor / device / driver of the .vkp. Returns {"portable", "gpu", "label"}."""
+    import zipfile
+    root = root or shader_cache_root()
+    titles = sorted(p for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
+    if not label:
+        for title in titles:
+            label = next((gpu_label_from_vkp(f.name) for f in sorted(title.glob("*" + CACHE_DRIVER))
+                          if gpu_label_from_vkp(f.name)), "")
+            if label:
+                break
+    label = label or "this_gpu"
+    out = {"portable": 0, "gpu": 0, "label": label}
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+        if readme:
+            zf.writestr("README.txt", readme)
+        for title in titles:
+            for f in sorted(title.iterdir()):
+                if not f.is_file():
+                    continue
+                if f.suffix in CACHE_GPU_INDEPENDENT:
+                    zf.write(f, f"{title.name}/{f.name}")
+                    out["portable"] += 1
+                elif f.suffix in CACHE_GPU_SPECIFIC | {CACHE_DRIVER} or f.name == CACHE_PROFILE:
+                    zf.write(f, f"gpu/{label}/{title.name}/{f.name}")
+                    out["gpu"] += 1
+    return out
+
+
+def cache_import_dir(root: Path = None) -> Path:
+    """The drop folder for shared caches: user/cache_import (next to user/cache)."""
+    return (root or shader_cache_root()).parent / CACHE_IMPORT_DIR
+
+
+def import_dropped_caches(root: Path = None, drop: Path = None) -> list:
+    """Merges every .zip in the drop folder (cache_import_dir) into the cache and renames it to
+    .zip.imported (.zip.bad when it is not a readable cache archive), so each is merged once.
+    Returns [(file name, stats or None)]."""
+    import zipfile
+    root = root or shader_cache_root()
+    drop = drop or cache_import_dir(root)
+    done = []
+    if not drop.is_dir():
+        return done
+    for z in sorted(drop.glob("*.zip")):
+        try:
+            stats = import_shader_cache(z, root)
+            suffix = ".imported"
+        except (OSError, zipfile.BadZipFile):
+            stats, suffix = None, ".bad"
+        target = z.with_name(z.name + suffix)
+        n = 1
+        while target.exists():
+            target = z.with_name(f"{z.name}{suffix}.{n}")
+            n += 1
+        try:
+            z.rename(target)
+        except OSError:
+            pass
+        done.append((z.name, stats))
+    return done
 
 
 # World warper (gpu/shim/party/world_warper.h): a solo run that warps through every lamp and area
@@ -3495,6 +3608,13 @@ class BloodborneLauncher(tk.Tk):
         for line in details:
             self.log(f"  {line}")
         self.warn_unclean_eboot(game_dir)
+        for name, stats in import_dropped_caches():
+            if stats is None:
+                self.log(f"Shader cache {name} in {cache_import_dir()}: not a cache archive (renamed .bad)")
+            else:
+                self.log(f"Shader cache {name} from {cache_import_dir()} merged: {stats['added']} new files, "
+                         f"{stats['existing']} already present, {stats['gpu_skipped']} made for another GPU"
+                         + (f" (GPU part used: {', '.join(stats['gpu_used'])})" if stats["gpu_used"] else ""))
 
         env = os.environ.copy()
         env["BB_FROM_LAUNCHER"] = "1"  # run.bat: do not reload launcher_settings.json
