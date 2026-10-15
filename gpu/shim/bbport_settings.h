@@ -6,6 +6,10 @@
 #pragma once
 
 #include <atomic>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace BbSettings {
 
@@ -262,6 +266,12 @@ inline void FrameGenerationFromChoice(int choice, int& factor, int& backend) {
 bool RestartNeeded();
 /// Writes the file (menu changes).
 void Save();
+/// The file's lines whose key starts with `prefix` (key, value), in file order.
+std::vector<std::pair<std::string, std::string>> ReadLines(const std::string& prefix);
+/// The in-game menu's key binding rows: sets (a value) or removes (none) key.* / mkkey.* lines,
+/// keeping the rest of the file, and bumps BindingsGeneration so runtime_pad.c reads them again.
+void WriteBindingLines(const std::vector<std::pair<std::string, std::optional<std::string>>>& lines);
+int BindingsGeneration();
 /// Window thread, about once a second: when the file changed on disk since it was last read or
 /// written (the launcher's mouse & keyboard dialog while the game runs), re-reads the mouse
 /// tuning keys (mk_sens_*, mk_invert_*, mk_deadzone, mk_smoothing, mk_wheel) only.

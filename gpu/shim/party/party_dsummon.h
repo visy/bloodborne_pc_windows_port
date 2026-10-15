@@ -191,4 +191,11 @@ constexpr double kHostTravelHoldMax = 30.0;
 /// True: the host's lamp travel waits now.
 bool HostTravelHeld(const HostTravelHoldView& v);
 
+/// A11 (pard S4, 2026-10-15): a guest that arrives while the host watches a cutscene (its title
+/// join was granted just before the scene began) must not be put beside the host yet: during a
+/// remo the host's chr reads at the map origin (0, 0, 0), and the arrival warp put the guest inside
+/// the Hunter's Dream workshop wall for the rest of the session. The beside-the-host warp waits
+/// while the host says it is busy (boss fight / cutscene) or its chr stands at the origin.
+bool JoinBesideWaits(Busy host_busy, const float host_pos[3]);
+
 }  // namespace coop::dsummon

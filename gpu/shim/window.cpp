@@ -292,6 +292,11 @@ void WindowSDL::UpdateTextTitle() {
     BbOverlay::SetTextPrompt(text_active, text_prompt, shown);
 }
 
+namespace {
+/// A mouse press this soon after the window got the focus is the focusing click (window.cpp).
+constexpr u64 kCaptureClickMs = 250;
+} // namespace
+
 bool WindowSDL::PollEvents() {
     {
         std::scoped_lock lock{text_mutex};
@@ -373,7 +378,13 @@ bool WindowSDL::PollEvents() {
             if (event.type == SDL_EVENT_MOUSE_MOTION && (!cam.IsEnabled() || cam.IsLockedOn())) {
                 mouse_dx += event.motion.xrel;
                 mouse_dy += event.motion.yrel;
-            } else {
+            } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+                       (!relative_mouse || SDL_GetTicks() - focus_gained_ms < kCaptureClickMs)) {
+                // Capture-click discard (from Mrsuss60/bloodborne_pc_windows_port 90008b39 by
+                // Mrsuss60, after deadinside28/bloodborne_pc 3c57da4): the click that focuses the
+                // window or takes the mouse back (it is not captured yet) only takes the mouse; it
+                // is no attack or dodge. Its release clears nothing that was set.
+            } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
                 mouse_buttons |= MouseButtonBit(event.button.button);
             }
         }
@@ -391,6 +402,9 @@ bool WindowSDL::PollEvents() {
         case SDL_EVENT_WINDOW_FOCUS_GAINED:
             if (mute_unfocused) {
                 audible = event.type == SDL_EVENT_WINDOW_FOCUS_GAINED;
+            }
+            if (event.type == SDL_EVENT_WINDOW_FOCUS_GAINED) {
+                focus_gained_ms = SDL_GetTicks();
             }
             if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
                 std::scoped_lock lock{mouse_mutex};
@@ -436,6 +450,26 @@ bool WindowSDL::PollEvents() {
 // code is not found it logs once and stays on the mouse-to-stick look.
 void WindowSDL::UpdateMouseCamera() {
     Core::BloodborneCam& cam = Core::BloodborneCam::Instance();
+    // BB_CAM_PROBE=1 (measurement aid: camera turn per mouse count, tests): the camera's angles
+    // in the log every 100 ms; the stick keeps turning it (no direct mode in such a run).
+    static const bool probe = [] {
+        const char* v = std::getenv("BB_CAM_PROBE");
+        return v && v[0] == '1';
+    }();
+    if (probe) {
+        static u64 next_try_ms = 10000, next_log_ms;
+        const u64 now = SDL_GetTicks();
+        if (now >= next_try_ms && !cam.StartProbe()) {
+            next_try_ms = now + 5000;
+        }
+        float yaw = 0.0f, pitch = 0.0f;
+        if (now >= next_log_ms && cam.ReadAngles(yaw, pitch)) {
+            next_log_ms = now + 100;
+            std::printf("Camera probe: t=%llu yaw %.5f pitch %.5f\n",
+                        static_cast<unsigned long long>(now), yaw, pitch);
+        }
+        return;
+    }
     const auto& s = BbSettings::Get();
     const bool wanted = s.mk_enabled.load() && s.mk_direct_camera.load();
     cam.Configure(wanted, 1.0f);

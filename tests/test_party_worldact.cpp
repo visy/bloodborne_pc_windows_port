@@ -184,6 +184,43 @@ int main() {
         assert(!BossFogNoticeDue(gas, true, false, false, false, -1.0f));  // position unknown
         assert(!BossFogNoticeDue(gas, false, false, false, false, 3.0f));  // flags not read
         assert(!BossFogNoticeDue(gas, true, true, false, false, 3.0f));    // intro seen: the guest goes first
+        // P5 / D10: a guest may start a first fight whose host event waits only on the host's position.
+        const std::uint32_t m2300 = 0x17000000u;
+        const BossGate& amelia = *BossGateByEvent(12404841);
+        assert(BossGateGuestStarts(amelia) && BossGateGuestStarts(gas) && BossGateGuestStarts(*BossGateByEvent(12304811)));
+        assert(!BossGateGuestStarts(*BossGateByEvent(12424811)));  // Ebrietas: a hit starts her first fight
+        assert(!BossGateGuestStarts(*BossGateByEvent(12424711)));  // Celestial Emissary: no first-fight event
+        assert(!BossGateGuestStarts(*BossGateByEvent(13404801)));  // DLC: host first
+        assert(BossGateSkipFirstFight(12404841, 3, 0, 12401802));   // Amelia's intro-done condition
+        assert(!BossGateSkipFirstFight(12404841, 3, 0, 12404800));  // not the host-entered one (the other rule)
+        assert(!BossGateSkipFirstFight(12404841, 3, 0, 12401800));  // boss alive stays
+        assert(!BossGateSkipFirstFight(12424811, 3, 0, 12421802));  // Ebrietas stays
+        assert(!BossGateSkipFirstFight(12404841, 1003, 2, 12401802));
+        assert(BossGateByIntroEvent(12401802) == &amelia && BossGateByIntroEvent(12411802) == &gas);
+        assert(!BossGateByIntroEvent(12401800) && !BossGateByIntroEvent(0));
+        // The host's visit: a spot for every guest-startable gate; it ends when the event went on.
+        assert(FirstFightSpotFor(12401802) && FirstFightSpotFor(12401802)->pos[2] > 322.0f);
+        assert(!FirstFightSpotFor(12421802) && !FirstFightSpotFor(0));
+        assert(!FirstFightVisitDone(false, false, false, 0.5) && FirstFightVisitDone(true, false, false, 0.1));
+        assert(FirstFightVisitDone(false, true, false, 0.1) && FirstFightVisitDone(false, false, true, 0.1));
+        assert(FirstFightVisitDone(false, false, false, kFirstFightVisitSeconds));
+        // The host's answer to a guest's fog report.
+        assert(HostFogAction(amelia, true, false, false, false, m2400) == FogAction::start_first);
+        assert(HostFogAction(amelia, true, false, false, false, m2401) == FogAction::wait_host);  // host elsewhere
+        assert(HostFogAction(amelia, false, false, false, false, m2400) == FogAction::none);     // switched off
+        assert(HostFogAction(amelia, true, true, false, false, m2400) == FogAction::open);       // first fight was had
+        assert(HostFogAction(amelia, true, true, false, false, m2401) == FogAction::none);
+        assert(HostFogAction(amelia, true, false, true, false, m2400) == FogAction::none);       // host already in
+        assert(HostFogAction(amelia, true, false, false, true, m2400) == FogAction::none);       // boss dead
+        assert(HostFogAction(*BossGateByEvent(12424811), true, false, false, false, 0x18020000u) == FogAction::none);
+        assert(HostFogAction(*BossGateByEvent(12424711), true, false, false, false, 0x18020000u) == FogAction::open);
+        assert(HostFogAction(*BossGateByEvent(12304811), true, false, false, false, m2300) == FogAction::start_first);
+        for (const BossGate& g : BossGates()) {
+            if (BossGateGuestStarts(g)) {
+                assert(g.intro_flag != 0 && BossGateByIntroEvent(static_cast<std::int32_t>(g.intro_flag)) == &g);
+                assert(FirstFightSpotFor(g.intro_flag));
+            }
+        }
         // The player's position: physics first, +0xC0 only as the fallback.
         const float phys[3] = {-52.3f, -40.8f, 68.7f}, drawn[3] = {-36.8f, -40.8f, 84.3f};
         assert(PickPlayerPos(true, phys, true, drawn) == phys);
@@ -212,8 +249,20 @@ int main() {
         for (std::uint32_t row : {803000u, 804000u, 6060u, 6070u, 6151u, 6155u, 6160u, 113010u, 6113u, 8125u}) {
             assert(ng::FindTalkNpcRow(row));
         }
-        for (std::uint32_t row : {109100u, 111010u, 402080u, 504020u, 513000u, 901000u}) {  // enemies, no-bit rows
+        // P3: enemy-family rows used only by talk NPCs (every MSB checked): the beggar, Willem, the
+        // DLC's talking patients / heads, Adeline, the Fishing Hamlet priest, Ludwig's head.
+        for (std::uint32_t row : {504020u, 504030u, 513000u, 402080u, 402090u, 402280u, 402281u, 402290u, 402300u,
+                                  405100u, 409000u, 451100u}) {
+            assert(ng::FindTalkNpcRow(row));
+        }
+        for (std::uint32_t row : {109100u, 111010u, 402040u, 252100u, 901000u}) {  // enemies, no-bit rows
             assert(!ng::FindTalkNpcRow(row));
+        }
+        {
+            std::uint8_t b = 0;
+            const ng::GhostRow& beggar = *ng::FindTalkNpcRow(504020);
+            assert(ng::Decide(beggar, 0xc8, &b) == ng::Verdict::write && b == 0x48);  // other bits kept
+            assert(ng::Decide(*ng::FindTalkNpcRow(513000), 0x80, &b) == ng::Verdict::write && b == 0x00);
         }
         std::uint8_t out = 0;
         const ng::GhostRow& doll = *ng::FindTalkNpcRow(803000);
@@ -231,6 +280,17 @@ int main() {
             }
         }
     }
+    // P2: the repeatable gifts' triggers (common 9100) are the guest's own: never a world action
+    // (the host's 9100 would award the guest's Blood of Arianna to the host).
+    assert(RepeatGiftLot(72400489) == 28000 && RepeatGiftLot(72400398) == 32020 && RepeatGiftLot(72410310) == 23000);
+    assert(RepeatGiftLot(72410359) == 24060 && RepeatGiftLot(9043) == 17010);
+    assert(RepeatGiftLot(9042) < 0 && RepeatGiftLot(72400488) < 0 && RepeatGiftLot(0) < 0);
+    for (std::uint32_t id : {72400489u, 72400398u, 72410310u, 72410359u, 9043u}) {
+        assert(!WorldActionAllowed(id, false, m2400) && !WorldActionAllowed(id, true, m2400));
+        assert(!WorldActionAllowed(id, false, m2401) && !WorldActionAllowed(id, true, m2401));
+    }
+    assert(!NpcGiftTrigger(9043));
+    assert(pg::CategoryOf(72400489u) == pg::Category::npc_quest);  // what made it a world action before
     std::printf("party-worldact-test: ok\n");
     return 0;
 }

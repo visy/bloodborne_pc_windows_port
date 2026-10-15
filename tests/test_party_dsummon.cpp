@@ -245,6 +245,15 @@ int main() {
     h.joiner_loading = false;
     h.joiner_in_world = false; h.since_title = kHostTravelHoldMax;
     CHECK(!HostTravelHeld(h));                                     // waited long enough
+    // A11: no beside-the-host warp while the host watches a cutscene or its chr reads at the origin.
+    {
+        const float origin[3] = {0.0f, 0.0f, 0.0f}, lamp[3] = {-10.8f, -7.0f, -21.0f};
+        CHECK(JoinBesideWaits(Busy::Cutscene, lamp));
+        CHECK(JoinBesideWaits(Busy::Boss, lamp));
+        CHECK(JoinBesideWaits(Busy::None, origin));
+        CHECK(!JoinBesideWaits(Busy::None, lamp));
+        CHECK(!JoinBesideWaits(Busy::OtherMap, lamp));
+    }
     std::printf("party-dsummon-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

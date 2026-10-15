@@ -71,6 +71,22 @@ int main() {
     assert(bb_test_setenv("BB_PARTY_RENDEZVOUS", "0") == 0);
     BbSettings::Load();
     assert(!s.party_rendezvous);  // the launcher's off wins
+
+    // The in-game menu's key rows (after Mrsuss60 90008b39): set, change and remove binding
+    // lines, keep the rest of the file, bump the generation runtime_pad.c watches.
+    const int generation = BbSettings::BindingsGeneration();
+    BbSettings::WriteBindingLines({{"mkkey.cross", std::string("Q")}, {"mkkey.r3", std::string("")}});
+    assert(BbSettings::BindingsGeneration() == generation + 1);
+    auto lines = BbSettings::ReadLines("mkkey.");
+    assert(lines.size() == 2 && lines[0].first == "mkkey.cross" && lines[0].second == "Q" &&
+           lines[1].first == "mkkey.r3" && lines[1].second.empty());
+    BbSettings::WriteBindingLines({{"mkkey.cross", std::string("Mouse X1,E")}});
+    lines = BbSettings::ReadLines("mkkey.");
+    assert(lines.size() == 2 && lines[0].second == "Mouse X1,E");
+    BbSettings::WriteBindingLines({{"mkkey.cross", std::nullopt}, {"mkkey.r3", std::nullopt},
+                                   {"mkkey.square", std::nullopt}});  // Default keys
+    assert(BbSettings::ReadLines("mkkey.").empty());
+    assert(Read(path).find("party_rendezvous=") != std::string::npos);  // the rest is kept
     std::remove(path);
-    std::puts("PASS: settings save keeps other keys, menu position, DHT rendezvous opt-in");
+    std::puts("PASS: settings save keeps other keys, menu position, DHT rendezvous opt-in, key binding lines");
 }

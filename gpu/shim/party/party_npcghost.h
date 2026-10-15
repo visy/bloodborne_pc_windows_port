@@ -9,8 +9,17 @@
 // leaves them vanilla); only clients read the bit, so the host and solo play see no change.
 //
 // Rows (Bloodborne 1.09 gameparam NpcParam, tools/party/flag_tool.py load_params): every row with
-// the bit that a talk NPC uses. Enemies with the bit (109100, 111010-111012, 252100, 402xxx,
-// 405100, 409xxx, 451100, 504020/504030 the beast beggar, 513000, the chalice rows ...) keep it.
+// the bit that a talk NPC uses. Enemies with the bit (109100, 111010-111012, 252100, the other
+// 402xxx / 409xxx rows, the chalice rows ...) keep it.
+// P3 (quest_audit.md, 2026-10-14): the enemy-family rows a talk NPC uses were checked against every
+// MSB part (all maps, chalice layouts included): 504020 (the suspicious beggar, Cathedral Ward
+// m24_00, talk 240217), 504030 (the same beggar transformed, Forbidden Woods m27, talk 270217),
+// 513000 (Willem, m32, talk 320310; the two m32 cutscene dummies with entity -1), 402080 / 402090
+// (the Research Hall's talking patients, m35), 402280 / 402281 (the brain-fluid heads), 402290 /
+// 402300 (Adeline, head and body), 405100 (the Fishing Hamlet priest, m36), 409000 (the corpse in
+// Ludwig's arena, talk 340540) and 451100 (Ludwig's head): no part uses them except these talk NPCs,
+// so clearing the bit changes nothing else. A hostile one (the beggar once he turns) is then a
+// solid enemy on the guest's screen, as every other enemy is, instead of an untouchable ghost.
 #pragma once
 
 #include <cstddef>
@@ -68,6 +77,18 @@ inline constexpr GhostRow kTalkNpcRows[] = {
     {8123, 0x80, "talk NPC 8123"},
     {8125, 0x80, "talk NPC 8125"},
     {113010, 0xc0, "the Oedon Chapel Dweller"},
+    {402080, 0x80, "a Research Hall patient (talks)"},
+    {402090, 0x80, "a Research Hall patient (talks, 2)"},
+    {402280, 0xc0, "a brain-fluid head (siblings)"},
+    {402281, 0xc0, "a brain-fluid head (beam walkway)"},
+    {402290, 0xc0, "Adeline (head)"},
+    {402300, 0xc0, "Adeline"},
+    {405100, 0x80, "the Fishing Hamlet priest"},
+    {409000, 0xc0, "the corpse in Ludwig's arena"},
+    {451100, 0xc0, "Ludwig's head"},
+    {504020, 0xc8, "the suspicious beggar"},
+    {504030, 0xc8, "the suspicious beggar (Forbidden Woods)"},
+    {513000, 0x80, "Willem"},
     {803000, 0x80, "the Doll"},
     {804000, 0x80, "Gehrman"},
 };
