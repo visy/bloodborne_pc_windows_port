@@ -1218,6 +1218,13 @@ LinkCallbacks make_callbacks(bool host) {
                 if (!coop::balance::OnHostRules(body, &err)) plog("balance event refused: %s", err.c_str());
                 return;
             }
+            if (name == coop::kStoryNoticeEventName) {  // D10: the host's story notice
+                coop::StoryNotice n;
+                std::string err;
+                if (coop::StoryNoticeFromJsonText(body, &n, &err)) coop::RequestGuestStoryNotice(n);
+                else plog("story notice refused: %s", err.c_str());
+                return;
+            }
             if (name == coop::kStoryEventName) {  // C4: the host's cutscene / ending
                 coop::StoryIntent s;
                 std::string err;

@@ -47,12 +47,17 @@ void SetEmevdSkipPredicate(EmevdSkipPredicate fn);
 void SetEmevdRewriter(EmevdRewriter fn);
 /// A second, independent rewriter slot (party_guestsvc), run after the first.
 void SetEmevdRewriter2(EmevdRewriter fn);
+/// A third slot (party_worldact: key-item gates a guest opens with its own key, D6).
+void SetEmevdRewriter3(EmevdRewriter fn);
 /// Installs the EMEVD dispatch filter (0x17b93a0) now if SeamlessRulesInit did not (idempotent,
 /// whether or not the seamless rules are on). True once installed.
 bool EnsureEmevdFilter();
 /// A11: a boss health bar is up (EMEVD 2003[11] seen with "on" and not yet "off"; a load resets
 /// it): the host is in a boss fight.
 bool BossBarShown();
+/// Seconds since this game's last text banner (EMEVD 2007[2], e.g. PREY SLAUGHTERED) or boss
+/// defeat instruction (2003[12/15/53]); large when none ran.
+double BannerAgeSeconds();
 void BossBarReset();
 /// The argument bytes of instruction record `instr` of `event` (the copied arguments at
 /// event+0xb8, else the EVD data); 0 when unknown. *size receives the argument size.

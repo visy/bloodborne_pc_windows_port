@@ -198,5 +198,10 @@ int main() {
     test_discovery_per_player();
     test_discovery_switch();
     std::printf("party-droproll-test: %d checks, %d failures\n", g_checks, g_failures);
+    // pard3: a kill before the guest's world is up rolls nothing on the guest.
+    CHECK(coop::droproll::DropRollBeforeArrival(false, false, 0x18000000u));
+    CHECK(coop::droproll::DropRollBeforeArrival(true, true, 0x18000000u));
+    CHECK(coop::droproll::DropRollBeforeArrival(true, false, 0xffffffffu));
+    CHECK(!coop::droproll::DropRollBeforeArrival(true, false, 0x18000000u));
     return g_failures ? 1 : 0;
 }

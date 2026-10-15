@@ -75,7 +75,10 @@ int main() {
     std::string err;
     assert(RequestFromJson(RequestToJson(r), &back, &err) && back == r);
     Request bad = r;
-    bad.set.push_back(12411800);  // a boss kill
+    bad.set.push_back(12411800);  // a boss kill: shape-valid (a lone guest's, pard3); the host re-checks apart
+    assert(RequestFromJson(RequestToJson(bad), &back, &err));
+    bad = r;
+    bad.clr.push_back(12411800);  // a boss flag cleared: never
     assert(!RequestFromJson(RequestToJson(bad), &back, &err));
     bad = r;
     bad.set.push_back(12410200);  // duplicate
@@ -194,6 +197,51 @@ int main() {
         assert(BossGateGuestStarts(*BossGateByEvent(13404801)) && BossGateGuestStarts(*BossGateByEvent(13404851)));
         assert(BossGateGuestStarts(*BossGateByEvent(13504851)) && BossGateGuestStarts(*BossGateByEvent(13604801)));
         assert(!BossGateGuestStarts(*BossGateByEvent(13504801)));  // Lady Maria: examined in her chair first
+        // Rule "progress shared by everyone" (pard3): a lone guest's boss kill reaches the host.
+        {
+            const std::uint32_t m23 = 0x17000000u, m24 = 0x18000000u;
+            assert(pg::CategoryOf(12301800u) == pg::Category::boss_defeated);
+            assert(BossKillActionAllowed(12301800u, false, m23, true));
+            assert(!BossKillActionAllowed(12301800u, false, m23, false));  // in the host's world: the host's own kill
+            assert(!BossKillActionAllowed(12301800u, true, m23, true));    // never cleared
+            assert(!BossKillActionAllowed(12301800u, false, m24, true));   // another area
+            assert(!BossKillActionAllowed(12400160u, false, m24, true));   // not a boss flag
+            assert(!WorldActionAllowed(12301800u, false, m23));            // the plain rule stays as it was
+        }
+        // D10 (pard3): the Blood Moon trigger (13201803) a guest reports for the host's chr.
+        {
+            const StoryTrigger* t = StoryTriggerByEvent(13201803u);
+            assert(t && !StoryTriggerByEvent(13201800u) && t->needs_flag == 13201800u && t->done_flag == 70002802u);
+            const std::uint32_t m32 = 0x20000000u, m24 = 0x18000000u;
+            const float near[3] = {-505.0f, -271.2f, 372.0f}, far[3] = {-472.4f, -185.3f, 594.9f};
+            const float lamp[3] = {-508.98f, -271.24f, 371.03f};
+            assert(StoryTriggerInBlock(*t, m32) && !StoryTriggerInBlock(*t, m24) && !StoryTriggerInBlock(*t, 0xffffffffu));
+            assert(StoryTriggerDue(*t, m32, true, false, false, near) && StoryTriggerDue(*t, m32, true, false, false, lamp));
+            assert(StoryTriggerDue(*t, m32, true, false, false, t->spot));  // the host's visit spot is inside the radius
+            assert(!StoryTriggerDue(*t, m32, true, false, false, far));     // the Lecture Building
+            assert(!StoryTriggerDue(*t, m32, false, false, false, near));   // Rom alive
+            assert(!StoryTriggerDue(*t, m32, true, true, false, near) && !StoryTriggerDue(*t, m32, true, false, true, near));
+            assert(!StoryTriggerDue(*t, m24, true, false, false, near) && !StoryTriggerDue(*t, m32, true, false, false, nullptr));
+            Request rq;
+            rq.map = m32;
+            rq.story = {13201803u};
+            Request back;
+            std::string err;
+            assert(RequestFromJson(RequestToJson(rq), &back, &err) && back == rq);
+            assert(!RequestFromJson("{\"v\":1,\"map\":0,\"set\":[],\"clr\":[],\"story\":[12401803]}", &back, &err));
+            assert(!RequestFromJson("{\"v\":1,\"map\":0,\"set\":[],\"clr\":[],\"story\":[13201803,13201803]}", &back, &err));
+        }
+        // D6 (pard3): the plaza gate's emblem checks, inverted for a summoned guest with the emblem.
+        {
+            const KeyItemGate* kg = KeyItemGateFor(12400760);
+            assert(kg && kg->goods == 4011 && kg->open_flag == 12400160u && kg->far_kick == 12400170);
+            assert(!KeyItemGateFor(12400761) && KeyItemGateByOpenFlag(12400160u) == kg && !KeyItemGateByOpenFlag(12400161u));
+            assert(KeyItemGateHeldState(*kg, 1, false) == 0 && KeyItemGateHeldState(*kg, 2, false) == 1);  // the data
+            assert(KeyItemGateHeldState(*kg, 1, true) == 1 && KeyItemGateHeldState(*kg, 2, true) == 0);   // guest: 0 opens
+            assert(KeyItemGateInvert(true, true, false) && KeyItemGateInvert(true, false, true));
+            assert(!KeyItemGateInvert(true, false, false));  // no emblem anywhere: "need the emblem", as in vanilla
+            assert(!KeyItemGateInvert(false, true, true));   // the host / a guest at home reads its real inventory
+        }
         assert(FirstFightSpotFor(13401801)->chained && !FirstFightSpotFor(13501851)->chained);
         assert(!FirstFightSpotFor(12401802)->chained);
         assert(BossGateSkipFirstFight(12404841, 3, 0, 12401802));   // Amelia's intro-done condition

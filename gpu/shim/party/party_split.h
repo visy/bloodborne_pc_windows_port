@@ -68,4 +68,13 @@ constexpr const char* kChoosingEventName = "split_choosing";
 /// Party callback thread: that event from `slot` (roster name `who`).
 void OnChoosingEvent(int slot, const std::string& who, const std::string& body);
 
+/// Main thread: the game's one-button message box (OK) with port text `text` (BbGameMenu::Pages
+/// AddText); false while another dialog or menu is up (try again later). D10 story notices.
+bool ShowMessage(std::uint32_t text);
+/// Main thread: the game's YES / NO question with port text `text` (cursor on YES); the dialog
+/// (0: another dialog / menu is up, try later). QuestionResult: -1 open, 1 YES, 2 NO, else closed.
+std::uint64_t AskYesNo(std::uint32_t text);
+int QuestionResult(std::uint64_t dialog);
+/// A game dialog is up (menu +0x78).
+bool DialogUp();
 } // namespace coop::split
