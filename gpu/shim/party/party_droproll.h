@@ -82,6 +82,9 @@ void SeedMt19937(std::uint32_t (&state)[624], std::uint32_t seed);
 /// The first tempered output of a generator seeded with `seed` (the reference value for tests:
 /// seed 5489 gives 3499211612).
 std::uint32_t Mt19937First(std::uint32_t seed);
+/// Guest: a drop roll while its world is not up yet (loading in, map unknown) is a kill of the
+/// host's from before this player arrived: no roll, no drop on this game (dropdisc / pard3).
+bool DropRollBeforeArrival(bool world_up, bool loading, std::uint32_t map);
 
 /// Is the shared roll on (BB_PARTY_SHARED_DROP_ROLL, default on)? `v` = the variable's value.
 bool SharedRollFromEnv(const char* v);
