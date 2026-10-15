@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <cstdio>
 #include <boost/container/static_vector.hpp>
 #include <fmt/format.h>
@@ -538,6 +539,7 @@ bool Instance::CreateDevice() {
     vk13_features = feature_chain.get<vk::PhysicalDeviceVulkan13Features>();
     // bbport: DLSS (optional bridge library) needs its own device extensions on NVIDIA GPUs.
     std::vector<const char*> dlss_extensions;
+    std::vector<const char*> dlss_added; // the ones only DLSS asked for (dropped on a retry)
     bb_boot_mark("DLSS probe");
     if (Dlss* dlss = Dlss::Get()) {
         dlss->AppendDeviceExtensions(*instance, physical_device, dlss_extensions);
@@ -546,6 +548,7 @@ bool Instance::CreateDevice() {
                              [&](const char* e) { return std::string_view{e} == name; }) &&
                 enabled_extensions.size() < enabled_extensions.capacity()) {
                 enabled_extensions.push_back(name);
+                dlss_added.push_back(name);
             }
         }
     }
@@ -824,6 +827,30 @@ bool Instance::CreateDevice() {
     bb_boot_mark("vkCreateDevice");
     auto [device_result, dev] = physical_device.createDeviceUnique(device_chain.get());
     bb_boot_mark("vkCreateDevice done");
+    if (device_result != vk::Result::eSuccess && !dlss_added.empty()) {
+        // The driver lists NGX's extensions but cannot start them (a broken or partial driver
+        // install): ErrorInitializationFailed. DLSS is optional, so again without them (from
+        // deadinside's Supermedo/bloodborne_pc 72e5c8ce, issues #135 #147 #152).
+        LOG_WARNING(Render_Vulkan, "Device creation with the DLSS extensions failed ({}): "
+                    "again without them", vk::to_string(device_result));
+        if (Dlss* dlss = Dlss::Get()) {
+            dlss->Disable("the Vulkan device does not start with NGX's extensions (update or "
+                          "reinstall the NVIDIA driver)");
+        }
+        enabled_extensions.erase(
+            std::remove_if(enabled_extensions.begin(), enabled_extensions.end(),
+                           [&](const char* e) {
+                               return std::find(dlss_added.begin(), dlss_added.end(), e) !=
+                                      dlss_added.end();
+                           }),
+            enabled_extensions.end());
+        auto& create_info = device_chain.get<vk::DeviceCreateInfo>();
+        create_info.enabledExtensionCount = static_cast<u32>(enabled_extensions.size());
+        create_info.ppEnabledExtensionNames = enabled_extensions.data();
+        auto [retry_result, retry_dev] = physical_device.createDeviceUnique(device_chain.get());
+        device_result = retry_result;
+        dev = std::move(retry_dev);
+    }
     if (device_result != vk::Result::eSuccess) {
         LOG_CRITICAL(Render_Vulkan, "Failed to create device: {}", vk::to_string(device_result));
         return false;
@@ -831,6 +858,31 @@ bool Instance::CreateDevice() {
     device = std::move(dev);
 
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*device);
+    // An extension the driver lists and enables but whose commands it does not resolve counts as
+    // missing: calling them jumped to address 0 (RIP=0; NVIDIA 595, Intel ANV). From deadinside's
+    // Supermedo/bloodborne_pc 72e5c8ce (issues #161 #177 #181).
+    {
+        const auto& dispatch = VULKAN_HPP_DEFAULT_DISPATCHER;
+        const auto require = [](bool& flag, const void* command, const char* name) {
+            if (flag && !command) {
+                LOG_WARNING(Render_Vulkan, "{} is enabled but its commands are not resolved: off",
+                            name);
+                flag = false;
+            }
+        };
+        require(buffer_marker, reinterpret_cast<const void*>(dispatch.vkCmdWriteBufferMarkerAMD),
+                VK_AMD_BUFFER_MARKER_EXTENSION_NAME);
+        require(vertex_input_dynamic_state,
+                reinterpret_cast<const void*>(dispatch.vkCmdSetVertexInputEXT),
+                VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME);
+        require(dynamic_state_3, reinterpret_cast<const void*>(dispatch.vkCmdSetColorWriteMaskEXT),
+                VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME);
+        require(host_memory_import,
+                reinterpret_cast<const void*>(dispatch.vkGetMemoryHostPointerPropertiesEXT),
+                VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
+        ASSERT_MSG(dispatch.vkCmdPushDescriptorSetKHR,
+                   "the driver does not resolve vkCmdPushDescriptorSetKHR (VK_KHR_push_descriptor)");
+    }
     if (Dlss* dlss = Dlss::Get()) {
         dlss->Initialize(*instance, physical_device, *device);
     }
