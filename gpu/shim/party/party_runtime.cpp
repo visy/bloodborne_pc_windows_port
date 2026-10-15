@@ -995,6 +995,38 @@ void on_roster(const std::vector<RosterEntry>& roster) {
             if (e.slot == kHostSlot) rg->set_host_online_id(e.name);
     }
     PartyLink* link = runtime_link();
+    // C6 on the OTHER guests (confid 2026-10-16, repeat_party c6 --players 3: 2 of 3 crash rejoins
+    // failed): a member whose game crashed comes back at its title from the same address and port.
+    // The host releases its game connection to the dead game (NrDropSilentPeers from on_member_left),
+    // but every other guest's game still held one, and its F5 outage replay sent the dead session's
+    // reliable records into the restarted game ("outage resume: ... heard again after 7.9 s: 18
+    // reliable record(s) sent again"). The restarted game's title join then got no world data
+    // ("title join: FAILED (no snapshot within 12 s)") and ~38 s later the host's game dropped the
+    // other guest as a stale member (KickoutRoomMember 0xFF000020). A guest now does what the host
+    // does as soon as the roster shows that member back at its title after it was in the world.
+    if (link && !link->is_host() && !(env("BB_PARTY_NR_DROP") && env("BB_PARTY_NR_DROP")[0] == '0')) {
+        static std::mutex mu;
+        static std::map<std::string, MemberState> last;
+        std::vector<std::string> crashed;
+        {
+            std::lock_guard<std::mutex> lk(mu);
+            for (const RosterEntry& e : roster) {
+                if (e.slot == kHostSlot || e.slot == link->local_slot()) continue;
+                const auto it = last.find(e.name);
+                const bool was_in = it != last.end() && (it->second == MemberState::InHostWorld ||
+                                                         it->second == MemberState::Joining ||
+                                                         it->second == MemberState::Loading ||
+                                                         it->second == MemberState::Dead);
+                if (was_in && e.state == MemberState::Title) crashed.push_back(e.name);
+                last[e.name] = e.state;
+            }
+        }
+        for (const std::string& name : crashed) {
+            plog("C6 (guest): %s is back at its title after being in the world (a restart): releasing our "
+                 "game's connection to its old game", name.c_str());
+            coop::b2::NrDropSilentPeers(name, 0);
+        }
+    }
     bridge::OnRoster(roster, link ? link->max_players() : 0);
 }
 
