@@ -209,6 +209,7 @@ RollFn g_roll_original = nullptr;
 bool g_on = false, g_log_rolls = false, g_shared = true;
 bool g_host_disc = false;    // BB_PARTY_DROP_DISCOVERY=host: guests roll with the host's discovery
 float g_test_disc = 0;       // BB_PARTY_DROP_DISCOVERY_TEST: test aid, this game's discovery forced
+i32 g_test_lot = 0;          // BB_PARTY_DROP_LOT_TEST: test aid, every enemy rolls this lot
 std::atomic<int> g_mode{0};  // 0 none, 1 host, 2 guest (worldact::Tick)
 std::mutex g_mu;
 DropSeed g_seed;             // host: its own; guest: the host's (salt 0 = none yet)
@@ -278,6 +279,9 @@ BB_COOP_SYSV void LotRollEntry(u64 req, u64, u64, u64, u64, u64) {
     float mine = 0;
     if (!SafeGet(req + 4, &mine)) {
         return;
+    }
+    if (g_test_lot > 0) {
+        SafeWrite(req, &g_test_lot, sizeof g_test_lot);
     }
     if (g_disc_override > 0.0f && mine != g_disc_override) {
         SafeWrite(req + 4, &g_disc_override, sizeof g_disc_override);
@@ -362,7 +366,7 @@ BB_COOP_SYSV void DropRollReplace(u64 mim, u64 handle_arg, u64 npc) {
     const u32 draw = Mt19937First(s);
     char pick[160] = "";
     LotSlot lot_row[8];
-    if (g_disc_used > 0.0f && ReadLotRow(k.lot, lot_row)) {
+    if (g_disc_used > 0.0f && ReadLotRow(g_test_lot > 0 ? g_test_lot : k.lot, lot_row)) {
         const int own = LotRowPick(lot_row, 0.0f, g_disc_used, draw);
         if (seed.discovery > 0.0f && seed.discovery != g_disc_used) {
             std::snprintf(pick, sizeof pick, "; row 1 slot %d (at the host's %.2f: slot %d)", own + 1,
@@ -372,10 +376,10 @@ BB_COOP_SYSV void DropRollReplace(u64 mim, u64 handle_arg, u64 npc) {
         }
     }
     Log("shared drop roll (role %d): map %s entity %d (key %d) lot %d gen %u -> seed %08x, draw %.4f, item "
-        "discovery %.2f (%s)%s: %s",
+        "discovery %.2f (%s)%s%s: %s",
         LocalSessionRole(), MapName(k.map).c_str(), k.entity, k.entity2, k.lot, seed.gen, s,
         double(draw >> 9) / 8388608.0, double(g_disc_used),
-        host_disc ? "host's" : g_test_disc > 0.0f ? "test aid" : "own", pick,
+        host_disc ? "host's" : g_test_disc > 0.0f ? "test aid" : "own", g_test_lot > 0 ? " (test lot)" : "", pick,
         g_result_n ? g_result.c_str() : "nothing dropped");
 }
 
@@ -399,6 +403,9 @@ void Init(bool log_rolls) {
     if (const char* t = std::getenv("BB_PARTY_DROP_DISCOVERY_TEST")) {
         const float v = std::strtof(t, nullptr);
         g_test_disc = std::isfinite(v) && v > 0.0f && v <= 100.0f ? v : 0.0f;
+    }
+    if (const char* t = std::getenv("BB_PARTY_DROP_LOT_TEST")) {
+        g_test_lot = std::atoi(t);
     }
     const std::initializer_list<u8> pro = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53};
     if (!g_shared && !log_rolls) {

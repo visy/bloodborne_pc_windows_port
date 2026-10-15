@@ -225,8 +225,10 @@ before anyone is in the game):
 - **Kidnapped by a Snatcher?** If the host is grabbed, the whole party wakes up together in the
   Hypogean Gaol (Yahar'gul) after one loading screen, and the guests get the host's Insight for
   it too. Guests cannot be kidnapped in the host's world.
-- **Enemy drops for each player, one roll.** Every player gets their own copy of each enemy's drop,
-  and it is the same item for everyone (one shared roll per kill).
+- **Enemy drops for each player, one roll.** Every player gets their own copy of each enemy's drop
+  from one shared roll per kill (the same dice for everyone), and each player's own Item Discovery
+  counts: a player with more Discovery gets a rare drop whenever one with less does, and sometimes
+  when they do not.
 - **Blood Echoes for every kill.** Whoever kills an enemy, every party member gets its full
   Blood Echoes.
 - **Treasure for each player.** Items lying in the world can be picked up by every player, each into their own game.
@@ -284,7 +286,7 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 
 | Change | Status |
 |---|---|
-| Item pickups and enemy drops per player: everyone gets their own (enemy drops: the same item for everyone) | Done |
+| Item pickups and enemy drops per player: everyone gets their own (enemy drops: one shared roll, each player's own Item Discovery) | Done |
 | Every cutscene for the whole party (story cutscenes, endings and guest-triggered scenes already work) | In progress |
 | Joining during a boss fight or cutscene waits outside until it ends | Done: boss fights and cutscenes with every join path (bell, title join, direct summon; verified live), the Party status says why you wait |
 | With 3 guests, every guest sees every other guest | In progress (all four join and see each other; a 4th player rejoining can still crash the others) |
