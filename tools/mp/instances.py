@@ -403,8 +403,10 @@ def run(a):
     t_slot = time.time()
     # A rebuild since the last setup: copy it first, or the run would test the old exe.
     built = Path(a.build) / "out" / "bbport.exe"
-    inst0 = Path(a.root) / "inst0" / "out" / "bbport.exe"
-    if built.exists() and (not inst0.exists() or built.stat().st_mtime > inst0.stat().st_mtime + 1):
+    # Every instance of this run (parx 2026-10-15: a 3-player run after 2-player runs had a stale
+    # inst2 exe from an older build; the host refused it as another bbport build).
+    exes = [Path(a.root) / f"inst{i}" / "out" / "bbport.exe" for i in range(a.count)]
+    if built.exists() and any(not e.exists() or built.stat().st_mtime > e.stat().st_mtime + 1 for e in exes):
         print("the build is newer than the instances' exe: running setup first", flush=True)
         setup(a)
     port0 = base_port(a.root)
