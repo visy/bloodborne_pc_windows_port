@@ -906,6 +906,9 @@ void TickImpl(double now) {
             }
             g.sub = Sub::Remo;
             g.remos = ph == Phase::Tour && g.opt.remo ? RemosFor(s.map_id) : std::vector<u32>{};
+            // One cutscene a row: a second one asked for right after the first ended the game
+            // (live 2026-10-15, twice, exit 1); the map's next one waits for its next row.
+            if (g.remos.size() > 1) g.remos.resize(1);
             g.remo_i = 0;
             g.remo_stage = 0;
             g.remo_at = now;
@@ -954,6 +957,7 @@ void TickImpl(double now) {
                 g.remo_at = now;
                 return;
             }
+            if (g.remo_i > 0 && now - g.remo_at < 4.0) return;  // the scene's fade back
             g.sub = Sub::Enemies;
             g.c_step = Counters::Now();
         }
