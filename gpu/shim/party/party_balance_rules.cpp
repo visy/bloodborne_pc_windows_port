@@ -158,6 +158,10 @@ int RotRallyTakeBack(int prev, int now, int prev_max, int now_max, float factor,
     return whole < 0 ? 0 : whole;
 }
 
+bool RotRallyGainInWindow(double since_damage_s) {
+    return since_damage_s >= 0.0 && since_damage_s <= kRotRallyWindowS;
+}
+
 float RotHpFactor(int stacks) {
     const int s = std::clamp(stacks, 0, kRotMaxStacks);
     return 1.0f - static_cast<float>(s * kRotHpPercentPerStack) / 100.0f;
