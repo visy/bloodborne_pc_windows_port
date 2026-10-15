@@ -539,15 +539,26 @@ bool FogFirstSkip(u64 event, u64 instr, i32 event_id, i32 bank, i32 id) {
     }
     u32 flag = 0;
     std::memcpy(&flag, args + 4, 4);
-    if (!worldact::BossGateSkipCondition(event_id, bank, id, flag)) {
+    const bool first = worldact::GuestFirstFightEnabled() && worldact::BossGateSkipFirstFight(event_id, bank, id, flag);
+    if (!first && !worldact::BossGateSkipCondition(event_id, bank, id, flag)) {
         return false;
     }
-    if (g_fog_first_logged.exchange(u32(event_id)) != u32(event_id)) {
-        Log("boss fog: guest-entry event %d does not wait for the host (host-entered flag %u condition passed; "
-            "args %02x %02x %02x)", event_id, flag, args[0], args[1], args[2]);
+    static std::atomic<std::uint32_t> first_logged{0};
+    if (first ? first_logged.exchange(u32(event_id)) != u32(event_id)
+              : g_fog_first_logged.exchange(u32(event_id)) != u32(event_id)) {
+        if (first) {
+            // P5 / D10: the fog has its prompt before the host's first fight; going through starts
+            // the host's first-fight event (party_worldact HostFogAction start_first).
+            Log("boss fog: guest-entry event %d does not wait for the host's first fight (first-fight flag %u "
+                "condition passed): this guest may start it", event_id, flag);
+        } else {
+            Log("boss fog: guest-entry event %d does not wait for the host (host-entered flag %u condition passed; "
+                "args %02x %02x %02x)", event_id, flag, args[0], args[1], args[2]);
+        }
     }
     return true;
 }
+
 // A11: the boss health bar (EMEVD 2003[11] DisplayBossHealthBar: first argument 1 on, 0 off).
 std::atomic<bool> g_boss_bar{false};
 

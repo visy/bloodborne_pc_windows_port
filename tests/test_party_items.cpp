@@ -928,6 +928,57 @@ static void test_key_catchup() {
 
 // The Old Hunter Bell and the other Messenger gifts: per player (never replayed), and a guest's
 // own grant of one is never accepted from a peer.
+// P2 (quest_audit.md): the repeatable NPC gifts of common 9100 are the guest's own grants.
+static void test_repeat_gift() {
+    for (std::int32_t lot : {28000, 32020, 24060, 17010}) {
+        CHECK(RepeatGiftLotId(lot));
+        CHECK(ItemLotDenied(lot, ItemLotFlag(lot)));  // never replayed from the host
+        CHECK(ItemLotFlag(lot) < 0 && ItemLedgerIndex(lot) < 0);
+    }
+    // Iosefka's Blood Vial is also her once-only first gift (common 9040 slot 6, ledger 5); the
+    // repeatable grant has its own key, so a ledger bit set for the first gift does not stop it.
+    CHECK(RepeatGiftLotId(23000) && ItemLedgerIndex(23000) == 5);
+    {
+        const std::optional<ItemGrant> v = MakeRepeatGrant(23000, 7);
+        CHECK(v && v->ledger == kItemNone && v->DoneFlag() < 0 && v->Key() == kRepeatKeyBase + 7);
+    }
+    CHECK(!RepeatGiftLotId(10050) && !RepeatGiftLotId(31000) && !RepeatGiftLotId(17000));
+    CHECK(!MakeRepeatGrant(31000, 1));
+    CHECK(std::string(ItemSourceName(ItemSource::Repeat)) == "repeat");
+    CHECK(ItemSourceFromName("repeat") == ItemSource::Repeat);
+    const std::optional<ItemGrant> a = MakeRepeatGrant(28000, 1), b = MakeRepeatGrant(28000, 2);
+    CHECK(a && b && a->source == ItemSource::Repeat && a->lot == 28000 && a->DoneFlag() < 0);
+    CHECK(a->Key() == kRepeatKeyBase + 1 && b->Key() == kRepeatKeyBase + 2);
+    CHECK(!ItemGrantFromPeerAllowed(*a));  // never taken from a peer
+    // Each talk gives it again: two grants of the same lot are two queue entries.
+    GuestItems q;
+    CHECK(q.Offer({*a}) == 1);
+    CHECK(q.Offer({*a}) == 0);
+    CHECK(q.Offer({*b}) == 1);
+    // While summoned: a consumable unique (Blood of Arianna: maxNum 1, goodsType 0) may be given;
+    // a key item (Queenly Flesh: goodsType 1) waits for the own world.
+    LotSlotState blood;
+    blood.category = 4;
+    blood.id = 701;
+    blood.max_num = 1;
+    blood.max_storage = 0;
+    blood.goods_type = 0;
+    LotSlotState flesh = blood;
+    flesh.id = 4305;
+    flesh.goods_type = 1;
+    CHECK(!SummonedGiveAllowed({blood}) && RepeatSummonedGiveAllowed({blood}));
+    CHECK(!RepeatSummonedGiveAllowed({flesh}) && !RepeatSummonedGiveAllowed({blood, flesh}));
+    LotSlotState elixir = blood;
+    elixir.id = 1120;
+    elixir.max_num = 10;
+    elixir.max_storage = 600;
+    CHECK(SummonedGiveAllowed({elixir}) && RepeatSummonedGiveAllowed({elixir}));
+    // A peer row without a flag or ledger index (what a repeat grant would be) is refused.
+    std::vector<ItemGrant> out;
+    std::string err;
+    CHECK(!ItemsFromJsonText(R"({"items":[[1,28000,-1,-1,"repeat"]]})", &out, &err));
+}
+
 static void test_messenger_own() {
     CHECK(MessengerGiftLot(10050) && MessengerGiftLot(10010) && MessengerGiftLot(10000));
     CHECK(!MessengerGiftLot(10011) && !MessengerGiftLot(31000));
@@ -976,6 +1027,7 @@ int main() {
     test_itemget_watch();
     test_ledger_suspicious();
     test_messenger_own();
+    test_repeat_gift();
     test_key_catchup();
     std::printf("party-items-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

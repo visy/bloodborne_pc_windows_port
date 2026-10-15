@@ -4337,6 +4337,9 @@ void SpectateTick(const GameSnapshot& s, double now) {
 /// world, a guest more than 4 m away (the summon placed it at its sign spot: an own-world gather
 /// that did not reach the host's lamp put it ~150 m off, join4) is put beside the host with the
 /// chr warp, as a B2 arrival is. BB_PARTY_JOIN_BESIDE=0: off.
+// Guest: the host's last A11 hold (dsummon::Busy as int; DirectSummonEvent).
+std::atomic<int> g_host_busy{0};
+
 void JoinBesideTick(const GameSnapshot& s, double now) {
     static const bool on = !(std::getenv("BB_PARTY_JOIN_BESIDE") && std::getenv("BB_PARTY_JOIN_BESIDE")[0] == '0');
     static int prev_role = -1;
@@ -4361,6 +4364,19 @@ void JoinBesideTick(const GameSnapshot& s, double now) {
         alignas(16) float hp[4], hr[4], me[4], mr[4];
         if (!host || !ChrTransform(host, hp, hr) || !ChrTransform(s.player, me, mr)) {
             continue;
+        }
+        if (dsummon::JoinBesideWaits(static_cast<dsummon::Busy>(g_host_busy.load()), hp)) {
+            // A11 (pard S4): during the host's cutscene its chr reads at the map origin; the warp
+            // waits (and its 60 s window restarts) until the scene is over.
+            static double logged = 0;
+            if (now - logged > 10.0) {
+                logged = now;
+                Log("join: arrived; the host is busy (%s) or its chr reads (%.1f, %.1f, %.1f): beside-the-host warp "
+                    "waits", dsummon::BusyWord(static_cast<dsummon::Busy>(g_host_busy.load())), double(hp[0]),
+                    double(hp[1]), double(hp[2]));
+            }
+            pending_since = now;
+            return;
         }
         pending_since = 0;
         const float dx = hp[0] - me[0], dz = hp[2] - me[2];
@@ -5793,6 +5809,7 @@ void DirectSummonEvent(int from_slot, const std::string& body) {
     case dsummon::Kind::Busy: {  // guest: A11, the host's boss fight / cutscene started or ended
         if (Role() == RoleHost) return;
         const dsummon::Busy b = dsummon::WaitOf(body);
+        g_host_busy.store(static_cast<int>(b));
         party::bridge::OnHostBusy(dsummon::BusyText(b, false));
         Log("A11: the host's hold: %s%s", dsummon::BusyWord(b), b == dsummon::Busy::None ? " (its bell rings again)" : "");
         return;
