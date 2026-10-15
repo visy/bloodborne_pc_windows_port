@@ -231,6 +231,7 @@ struct M2 {
 M2 g;
 // F5: when a member last left our room (steady ms; 0 = never).
 std::atomic<std::int64_t> g_member_left_ms{0};
+std::atomic<HostClosedRoomHook> g_host_closed_room_hook{nullptr};
 std::int64_t steady_ms_now() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
         .count();
@@ -679,10 +680,18 @@ void on_server_event(const json::Value& ev) {
         return;
     }
     if (name == "room_closed") {
-        std::lock_guard<std::mutex> lk(g.mu);
+        std::unique_lock<std::mutex> lk(g.mu);
         const auto room = static_cast<std::uint64_t>(int_of(ev, "RoomId", 0));
         if (room && room != g.room_id) return;
         const std::string reason = str_of(ev, "Reason");
+        const HostClosedRoomHook hook = g_host_closed_room_hook.load();
+        if (reason == "host_left" && hook && g.in_room && !g.is_host) {
+            log("np: room %llu closed by its host (it left): the party sends this guest home",
+                static_cast<unsigned long long>(g.room_id));
+            lk.unlock();
+            hook("the host left its room");
+            return;
+        }
         room_gone_locked(kEvRoomDestroyed, reason == "host_left" ? kCauseLeave : kCauseServerOperation, nullptr, 0,
                          "room closed: " + reason);
         return;
@@ -1137,6 +1146,8 @@ std::int64_t ms_since_member_left() {
     const std::int64_t at = g_member_left_ms.load();
     return at ? steady_ms_now() - at : (std::int64_t(1) << 40);
 }
+
+void set_host_closed_room_hook(HostClosedRoomHook hook) { g_host_closed_room_hook = hook; }
 
 bool party_guest_in_room() {
     std::lock_guard<std::mutex> lk(g.mu);

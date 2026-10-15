@@ -1184,6 +1184,9 @@ LinkCallbacks make_callbacks(bool host) {
             return json::dump(reply, 0);
         };
     } else {
+        // A6: the host's Leave closes its game's room before its link stops (BYE ~0.4 s later):
+        // the room's end sends us home at once, not the game's "Session lost" 15-19 s later.
+        bbnet::np::set_host_closed_room_hook(&host_lost);
         cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
             if (name == coop::split::kChoosingEventName) {  // the host asks "Travel with the party?"
                 on_split_choosing(slot, body);
