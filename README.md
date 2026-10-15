@@ -18,8 +18,8 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | Area | Progress | |
 |---|---|--:|
 | **Overall** | `███████████████████░` | 95% |
-| Session & joining | `███████████████████░` | 97% |
-| World & travel | `████████████████████` | 98% |
+| Session & joining | `████████████████████` | 99% |
+| World & travel | `████████████████████` | 99% |
 | Death & respawn | `███████████████████░` | 96% |
 | Progress (anyone can progress) | `██████████████████░░` | 92% |
 | Services & UI | `███████████████████░` | 97% |
@@ -303,7 +303,7 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 | Item pickups and enemy drops per player: everyone gets their own (enemy drops: one shared roll, each player's own Item Discovery) | Done |
 | Every cutscene for the whole party (story cutscenes, endings and guest-triggered scenes already work) | In progress |
 | Joining during a boss fight or cutscene waits outside until it ends | Done: boss fights and cutscenes with every join path (bell, title join, direct summon; verified live), the Party status says why you wait |
-| With 3 guests, every guest sees every other guest | In progress (all four join and see each other; a 4th player rejoining can still crash the others) |
+| With 3 guests, every guest sees every other guest | Done: all four join and see each other; any player can leave and rejoin while the others play on (verified live with 3 and 4 players) |
 | Chalice dungeons: deeper layers checked in a party; entering the party's dungeon in one press (the altar still asks a few prompts) | In progress |
 | PvP / friendly fire the host can switch on and off | Done (0.6.2) |
 | Pings: party members and marked spots visible through walls, with distance and player colours | Done (0.6.2) |

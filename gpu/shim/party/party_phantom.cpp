@@ -1093,6 +1093,26 @@ void PhantomEmevdInstruction(std::int32_t event, std::int32_t bank, std::int32_t
         if (target != BossInsightTracker::kInsightEvent || n <= 0 || n > 99) {
             return;
         }
+        // The game runs an (event, slot) only once at a time: a second InitializeEvent(9350, slot)
+        // while the first still gives its Insight (n x 10 frames) is ignored on the host. Live
+        // 2026-10-15 (parab4 b6b): the Hunter's Nightmare arrival starts 9350 slot 0 from 13401000
+        // and 13400100 in the same frame; the host got +2, the guest +4.
+        std::int32_t slot = 0;
+        std::memcpy(&slot, args, 4);
+        {
+            static std::mutex mu;
+            static std::int32_t last_slot = -1;
+            static double last_until = -1;
+            std::lock_guard<std::mutex> lk(mu);
+            if (slot == last_slot && now < last_until) {
+                Log("host encounter / story Insight: event %d starts 9350 slot %d again while it runs: ignored by the "
+                    "game, not sent",
+                    event, slot);
+                return;
+            }
+            last_slot = slot;
+            last_until = now + n * 10.0 / 30.0 + 0.5;
+        }
         grant = n;
         boss = false;
     }
