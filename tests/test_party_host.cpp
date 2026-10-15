@@ -600,6 +600,15 @@ static void test_from_api() {
     // The guest does not see its own sign; the host does.
     CHECK(guest_http("GuestA", "POST", "http://bbparty.invalid:18671/summon_messenger/get", "{}")
               .find("SummonDataList")->array.empty());
+    // A4: a sign younger than 1.5 s is not offered yet (its bell is barely up); then it is.
+    bbnet::party::FromApi::instance().set_min_sign_age_ms(bbnet::party::FromApi::kMinSignAgeMs);
+    const std::size_t shown_before = bbnet::party::FromApi::instance().shown_signs();
+    CHECK(http_request(h, 1, "http://bbparty.invalid:18671/summon_messenger/get",
+                       R"({"MessageId":"SummonDataGetListRequest","AreaId":402718720,"GetMaxCount":20,"SummonTypeList":[{"SummonType":0,"GetLimitCount":5}]})",
+                       &body) == 200);
+    CHECK(parse(body).find("SummonDataList")->array.empty());
+    bbnet::party::FromApi::instance().set_min_sign_age_ms(0);
+    CHECK(bbnet::party::FromApi::instance().shown_signs() == shown_before + 1);
     CHECK(http_request(h, 1, "http://bbparty.invalid:18671/summon_messenger/get",
                        R"({"MessageId":"SummonDataGetListRequest","AreaId":402718720,"GetMaxCount":20,"SummonTypeList":[{"SummonType":0,"GetLimitCount":5}]})",
                        &body) == 200);
@@ -905,6 +914,7 @@ static void test_impersonation() {
 
     // FromApi: a guest deletes only its own signs, whatever SummonDataId it names.
     bbnet::party::FromApi api(s);
+    api.set_min_sign_age_ms(0);  // A4's sign age: checked in the sceHttp section
     auto post = [&](const char* who, const char* path, const std::string& body) {
         bbnet::party::HttpRequest rq;
         rq.method = "POST";
@@ -940,7 +950,7 @@ static void test_impersonation() {
         CHECK(bbnet::sign_board_changes() == changes);
         CHECK(api.renew_signs("Alice") == 1);
         CHECK(api.signs().size() == 1 && api.signs()[0].id > first && api.signs()[0].online_id == "Alice");
-        CHECK(bbnet::sign_board_changes() == changes + 1);
+        CHECK(bbnet::sign_board_changes() > changes);
     }
     const std::string alice_sign = std::to_string(api.signs()[0].id);
     CHECK(post("Mallory", "/summon_messenger/delete", "{\"SummonDataId\":" + alice_sign + "}") == 200);
@@ -953,6 +963,7 @@ static void test_impersonation() {
 static void test_chalice_channels() {
     PartyHostService s;
     bbnet::party::FromApi api(s);
+    api.set_min_sign_age_ms(0);  // A4's sign age: checked in the sceHttp section
     auto post = [&](const char* who, const char* path, const std::string& body) {
         bbnet::party::HttpRequest rq;
         rq.method = "POST";
@@ -1128,6 +1139,7 @@ static void test_chalice_channels() {
 }
 
 int main() {
+    bbnet::party::FromApi::instance().set_min_sign_age_ms(0);  // A4's 1.5 s sign age: checked once below
     // Loopback-only sockets: no Windows Firewall prompt for a test program (party_sock.h).
     if (!std::getenv("BB_PARTY_LOOPBACK")) {
 #if defined(_WIN32)

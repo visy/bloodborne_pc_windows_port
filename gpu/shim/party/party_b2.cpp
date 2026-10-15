@@ -7926,6 +7926,9 @@ bool DirectSummonHoldsHostBell(double waiting_s) {
 double NowSeconds() {
     return Now();
 }
+double TitleRoomServedAt() {
+    return g_title_served_at.load();
+}
 double LastMemberDownAt() {
     return g_last_down_at.load();
 }

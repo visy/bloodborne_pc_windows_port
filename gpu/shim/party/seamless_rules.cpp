@@ -669,6 +669,47 @@ double Seconds(Clock::time_point a, Clock::time_point b) {
     return std::chrono::duration<double>(b - a).count();
 }
 
+// A4: the bell sign sender's first-sign timer. The XML patch "Party: Fast bell sign" writes 2.0 s
+// (5.0 in 1.09). With the direct summon the guest's game needs its bell's own passive summon entry,
+// which comes up only when that timer fires, so the timer is most of the join after the room is
+// there. BB_PARTY_SIGN_DELAY=S rewrites the patched float (0.1 .. 5.0 s); the default is 0.5 s
+// with the direct summon on (2.0 kept with BB_PARTY_DIRECT_SUMMON=0). 0.5 s on the sign path alone
+// once let a host summon a guest whose bell was barely up (join_timing.md): the host's sign board
+// (from_api sign_get) therefore shows a sign only once it is kMinSignAgeMs old, so the sign path
+// keeps its proven 2 s from the ring.
+void ApplySignDelay() {
+    const char* env = std::getenv("BB_PARTY_SIGN_DELAY");
+    const char* ds = std::getenv("BB_PARTY_DIRECT_SUMMON");
+    const bool direct_on = !(ds && ((ds[0] == '0' && !ds[1]) || std::strcmp(ds, "off") == 0));
+    float secs = direct_on ? 0.5f : 2.0f;
+    if (env && env[0]) {
+        secs = std::strtof(env, nullptr);
+    }
+    if (!(secs >= 0.1f && secs <= 5.0f)) {
+        Log("bell sign timer: BB_PARTY_SIGN_DELAY='%s' is not 0.1 .. 5.0; left as patched", env ? env : "");
+        return;
+    }
+    if (secs == 2.0f) {
+        Log("bell sign timer: 2.0 s (the XML patch)");
+        return;
+    }
+    u8 want[4];
+    std::memcpy(want, &secs, 4);
+    int done = 0, sites = 0;
+    for (const Site& s : kSites) {
+        if (std::strcmp(s.patch, "Party: Fast bell sign") != 0) {
+            continue;
+        }
+        ++sites;
+        // c7 4? 28 <imm32>: the float is the last 4 bytes; only over the patch's own 2.0 s.
+        if (PatchBytes(s.off + 3, {0x00, 0x00, 0x00, 0x40}, {want[0], want[1], want[2], want[3]}, "Party: bell sign timer")) {
+            ++done;
+        }
+    }
+    Log("bell sign timer: %.2f s at %d of %d sites (%s)", double(secs), done, sites,
+        env && env[0] ? "BB_PARTY_SIGN_DELAY" : "direct summon default");
+}
+
 } // namespace
 
 bool SeamlessRequested() {
@@ -692,6 +733,7 @@ void SeamlessRulesInit() {
     st.init = true;
     st.start = Clock::now();
     ReportSites();
+    ApplySignDelay();
     for (ParamRule& r : g_param_rules) {
         r.enabled = r.opt_in ? EnvOn(r.env_off) : !EnvOff(r.env_off);
         if (!r.enabled) {

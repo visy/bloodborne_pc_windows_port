@@ -18,6 +18,7 @@
 #ifndef BB_PARTY_STORY_NO_GAME
 #include "coop_hooks.h"
 #include "game_state.h"
+#include "party_b2.h"
 #include "party_director.h"
 #include "party_progress.h"
 #include "party_runtime.h"
@@ -873,6 +874,7 @@ struct Tick {
     // test
     bool test_on = false, test_done = false, test_mirror = false;
     bool test_host = false;     // host:<remo>: the host plays it and sends it like a captured 2002 play
+    bool test_serve = false;    // serve:<remo>: as host:, the delay after the host sent a title joiner its room (A11 race)
     bool test_leave = false;    // leave_after_mirror: a guest leaves the party once a live mirror ended
     int test_ending = 0;        // ending:<1|2|3>: queue that ending as if the host had sent it
     bool test_summoned = false; // ...only once this game is a phantom (session role 6)
@@ -1347,6 +1349,16 @@ void ParseTest() {
         }
         Log("test: host plays remo %u and sends it to the party %.0f s after a cooperator is in the world",
             g_tick.test_remo, g_tick.test_delay);
+    } else if (s.rfind("serve:", 0) == 0) {
+        // A11 (pard S4 / parab a11c): a title joiner admitted just before a cutscene begins.
+        g_tick.test_on = g_tick.test_host = g_tick.test_serve = true;
+        g_tick.test_remo = static_cast<u32>(std::strtoul(s.c_str() + 6, nullptr, 0));
+        g_tick.test_delay = 1.5;
+        if (const char* d = std::getenv("BB_PARTY_STORY_TEST_DELAY"); d && d[0]) {
+            g_tick.test_delay = std::atof(d);
+        }
+        Log("test: host plays remo %u and sends it to the party %.1f s after it sent a title joiner its room",
+            g_tick.test_remo, g_tick.test_delay);
     } else if (s.rfind("up:", 0) == 0) {
         g_tick.test_on = g_tick.test_up = true;
         g_tick.test_remo = static_cast<u32>(std::strtoul(s.c_str() + 3, nullptr, 0));
@@ -1575,7 +1587,15 @@ void StoryTick() {
     // once a cooperator has been in the world for the delay; the host plays it too.
     if (g_tick.test_host && !g_tick.test_done && role == PartyRole::Host && g.world_up && !g.loading && OwnWorld() &&
         !st.remo_playing) {
-        if (!g_tick.test_coop_since && now - g_tick.test_coop_poll >= 1.0) {
+        if (g_tick.test_serve) {
+            // serve:<remo>: the clock starts when a title joiner got the room (it is loading in).
+            const double served = b2::TitleRoomServedAt();
+            if (!g_tick.test_coop_since && served > 0 && now - served < 600.0) {
+                g_tick.test_coop_since = now - (b2::NowSeconds() - served);
+                Log("test: a title joiner got the room %.2f s ago; host remo in %.1f s", b2::NowSeconds() - served,
+                    g_tick.test_delay);
+            }
+        } else if (!g_tick.test_coop_since && now - g_tick.test_coop_poll >= 1.0) {
             g_tick.test_coop_poll = now;
             const GameSnapshot full = ReadGameState(true);
             if (full.cooperators > 0) {

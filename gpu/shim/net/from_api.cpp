@@ -376,6 +376,7 @@ std::string FromApi::sign_create(const Caller& caller, const json::Value& body) 
     s.version = version;
     s.channel = int_of(body, "ChannelId", 0);
     s.request = body;
+    s.posted_ms = steady_now_ms();
     if (ChaliceArea(area)) channels_.note_member_channel(caller.online_id, static_cast<std::uint64_t>(s.channel));
     std::lock_guard<std::mutex> lk(mu_);
     // One sign per member and type: a new one replaces the old.
@@ -414,7 +415,7 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
         channels_.note_member_channel(caller.online_id, static_cast<std::uint64_t>(my_channel));
         dungeon_unknown = my_channel <= 0 || !channels_.known(static_cast<std::uint64_t>(my_channel));
     }
-    int held = 0, prologue_held = 0;
+    int held = 0, prologue_held = 0, young_held = 0;
     std::string list = "[";
     int n = 0;
     std::vector<Sign> board;
@@ -439,6 +440,12 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
                                        return false;
                                    }),
                     board.end());
+        // A4: a sign younger than kMinSignAgeMs is not offered yet (its bell is barely up).
+        const std::size_t before_young = board.size();
+        board.erase(std::remove_if(board.begin(), board.end(),
+                                   [&](const Sign& s) { return now - s.posted_ms < min_sign_age_ms_; }),
+                    board.end());
+        young_held = static_cast<int>(before_young - board.size());
     }
     // Party-only by construction; every other member's signs, wherever they stand (the party
     // plays together - the game's own area check still applies on its side). Oldest first: the
@@ -475,6 +482,7 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
         key += "] of " + std::to_string(board.size()) + " on the board";
         if (in_chalice) key += ", in chalice dungeon " + std::to_string(my_channel);
         if (held) key += " (" + std::to_string(held) + " held back: that dungeon is not on the channel board)";
+        if (young_held) key += " (" + std::to_string(young_held) + " too new: shown 1.5 s after it went up)";
         if (prologue_held)
             key += " (" + std::to_string(prologue_held) +
                    (caller_prologue ? " held back: this member is in its prologue)" : " held back: its owner is in the prologue)");
@@ -484,6 +492,19 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
         }
     }
     return list;
+}
+
+void FromApi::set_min_sign_age_ms(std::int64_t ms) {
+    std::lock_guard<std::mutex> lk(mu_);
+    min_sign_age_ms_ = ms;
+}
+
+std::size_t FromApi::shown_signs() {
+    std::lock_guard<std::mutex> lk(mu_);
+    const std::int64_t now = steady_now_ms();
+    std::size_t n = 0;
+    for (const Sign& s : signs_) n += now - s.posted_ms >= min_sign_age_ms_ ? 1 : 0;
+    return n;
 }
 
 std::int64_t FromApi::ms_since_request() {
@@ -619,6 +640,10 @@ std::string FromApi::sign_request(const Caller& caller, const json::Value& body)
 }  // namespace bbnet::party
 
 namespace bbnet {
-std::uint64_t sign_board_changes() { return party::g_sign_changes.load(std::memory_order_relaxed); }
+// Changes of the board, or of how many signs on it are old enough to be shown (A4): either lets the
+// host's game poll at once.
+std::uint64_t sign_board_changes() {
+    return party::g_sign_changes.load(std::memory_order_relaxed) * 64 + party::FromApi::instance().shown_signs();
+}
 std::uint64_t summon_requests() { return party::g_summons.load(std::memory_order_relaxed); }
 }  // namespace bbnet
