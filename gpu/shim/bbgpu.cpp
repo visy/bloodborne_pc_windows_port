@@ -609,6 +609,7 @@ extern "C" int bbgpu_mouse_keyboard(BbMouseState* state, int consume_motion) {
         state->smoothing = s.mk_smoothing.load();
         state->invert_x = s.mk_invert_x.load() ? 1 : 0;
         state->invert_y = s.mk_invert_y.load() ? 1 : 0;
+        state->bindings_generation = BbSettings::BindingsGeneration();
     }
     return on ? 1 : 0;
 }

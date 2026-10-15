@@ -393,7 +393,7 @@ bool BloodborneCam::SetEnabled(bool enabled) {
     RestoreProtect(m_addrCamMain, CAM_MAIN_LEN, old_protect);
     Flush(m_addrCamMain, CAM_MAIN_LEN);
 
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 4 && !m_probe; ++i) {
         if (SetRW(m_addrCamNop[i], CAM_NOP_LEN, &old_protect)) {
             std::memcpy(reinterpret_cast<void*>(m_addrCamNop[i]), NOP9, CAM_NOP_LEN);
             RestoreProtect(m_addrCamNop[i], CAM_NOP_LEN, old_protect);
@@ -402,6 +402,11 @@ bool BloodborneCam::SetEnabled(bool enabled) {
     }
 
     m_lockedOn.store(false, std::memory_order_relaxed);
+    if (m_probe) {
+        m_probeHooked = true;
+        LOG_INFO(Core, "Mouse camera: probe on (the stick turns the camera)");
+        return false;
+    }
     m_enabled.store(true, std::memory_order_release);
     LOG_INFO(Core, "Mouse camera: direct mode on");
     return true;
@@ -409,6 +414,38 @@ bool BloodborneCam::SetEnabled(bool enabled) {
     (void)enabled;
     return false;
 #endif
+}
+
+bool BloodborneCam::StartProbe() {
+    if (m_probeHooked) {
+        return true;
+    }
+    if (m_enabled.load(std::memory_order_relaxed)) {
+        return false;
+    }
+    m_probe = true;
+    SetEnabled(true);
+    return m_probeHooked;
+}
+
+bool BloodborneCam::ReadAngles(float& yaw, float& pitch) const {
+    if (!m_probeHooked || !m_trampoline) {
+        return false;
+    }
+    const u8* t = static_cast<const u8*>(m_trampoline);
+    const uintptr_t cam = static_cast<uintptr_t>(*reinterpret_cast<const volatile uint64_t*>(&t[0x38]));
+#ifdef _WIN32
+    if (!cam || !CanAccess(cam + 0x130, 0x144, false)) {
+        return false;
+    }
+#else
+    if (!cam) {
+        return false;
+    }
+#endif
+    pitch = ReadMemFast<float>(cam + 0x140);
+    yaw = ReadMemFast<float>(cam + 0x144);
+    return true;
 }
 
 void BloodborneCam::OnMouseMotion(float xrel, float yrel) {

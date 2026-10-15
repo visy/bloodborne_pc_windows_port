@@ -17,11 +17,11 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 
 | Area | Progress | |
 |---|---|--:|
-| **Overall** | `██████████████████░░` | 90% |
-| Session & joining | `██████████████████░░` | 89% |
-| World & travel | `██████████████████░░` | 88% |
+| **Overall** | `██████████████████░░` | 92% |
+| Session & joining | `███████████████████░` | 94% |
+| World & travel | `██████████████████░░` | 92% |
 | Death & respawn | `███████████████████░` | 94% |
-| Progress (anyone can progress) | `█████████████████░░░` | 87% |
+| Progress (anyone can progress) | `██████████████████░░` | 89% |
 | Services & UI | `███████████████████░` | 97% |
 | Network & robustness | `██████████████████░░` | 91% |
 | Bloodborne-specific (chalice, Insight) | `█████████████████░░░` | 87% |
@@ -134,8 +134,9 @@ before anyone is in the game):
   character, also if you started party games from the launcher.
 - **Fast join.** The bell, beckoner and summon-sign waits are gone: a guest is in the host's world
   within seconds. *Continue party game* takes a guest straight into the host's world with a single
-  loading screen. If the host travels while you are joining, its travel waits until you are in and
+  loading screen. A guest whose own world is in another map (the Hunter's Dream, say) also joins with a single loading screen, beside the host. If the host travels while you are joining, its travel waits until you are in and
   you travel together.
+- **Joining while the host fights a boss or watches a cutscene** waits in your own world until it is over (the Party status says why), then puts you beside the host with one loading screen.
 - **Leave any time.** *System → Party → Leave the party* takes a guest home at once; the host's
   *Leave* ends the party and every guest goes home. *System → Party mode → Join party* brings a
   guest back; *Host party* and *Single player* are there too.
@@ -144,9 +145,11 @@ before anyone is in the game):
 - **No multiplayer walls.** The fog walls that keep phantoms near the host are gone; the party can
   split up and explore. There is no leash: a guest can walk far from the host (checked at 140 m)
   and stays in the party.
-- **Anyone can go through a boss fog first.** A guest's fog no longer waits for the host: the
-  fight starts for everyone, and the others follow through the fog. A boss's first fight with an
-  intro cutscene still starts with the host; a guest at that fog is told so on screen.
+- **Anyone can go through a boss fog first**, a boss's first fight included: the fight starts for
+  everyone and the others follow through the fog. When a guest starts a first fight, the host's
+  character steps to the arena entrance for a moment and back, and the intro cutscene plays on
+  every screen. Ebrietas, Rom and the DLC bosses still start with the host (a guest at that fog is
+  told so on screen).
 - **Travel from any lamp to any lamp.** A lamp offers the headstones' list (the Hunter's Dream and every lit
   lamp) and takes you straight there with one loading screen, solo or with the party (launcher: "Direct lamp
   travel", on by default).
@@ -163,7 +166,9 @@ before anyone is in the game):
 - **Guests can use the Hunter's Mark** (on by default; launcher switch "Guests can use Hunter's
   Mark"): alone it takes you to your own last lamp, with the party to the host's.
 - **Apart and back together.** While players are in different maps each sees only the others in
-  its own map; meeting again shows them at once, without a loading screen.
+  its own map; meeting again shows them at once, without a loading screen. If the host dies while
+  you are in another area you play on where you are (no loading screen for you); if you die there
+  you get up at your own lamp.
 - **Everyone can use lamps.** Vanilla disables lamps during co-op; here they work for everyone.
   A lamp lit by anyone is lit for the party.
 - **Resting resets the world for the party.** Enemies respawn; everyone's HP, vials and bullets
@@ -199,14 +204,16 @@ before anyone is in the game):
 - **Guests can talk to NPCs** in the host's world (Gilbert, Iosefka, Eileen ...); quest choices
   are shared by the whole party: a quest step the host makes also moves the NPC in every guest's
   own save (no stale NPC state left behind). NPCs look solid for guests (no see-through
-  "ghosts"), and a level-up at the Doll stays in the levelling player's own game.
+  "ghosts", the suspicious beggar, Willem and the DLC's talking NPCs included), and a level-up at
+  the Doll stays in the levelling player's own game.
 - **Hear each other's NPC talks.** When a companion near you talks to an NPC you see the game's
   subtitles and hear the NPC too, with a small "[Hunter talking to Iosefka]" caption and the
   choices they pick; nothing opens on your screen. Range in *System → Party rules → NPC dialogue
   range* (default 25 m), off with *Share NPC dialogue*.
 - **NPC gifts are shared**: an item an NPC gives a guest in the host's world (e.g. Eileen's Bold
   Hunter's Marks) goes to the guest, the host and every other party member, once (the NPC has moved
-  on for everyone, so nobody misses it).
+  on for everyone, so nobody misses it). Gifts an NPC hands out again and again (Blood of Arianna,
+  Blood of Adella, Iosefka's Blood Vial, Blue Elixirs, Queenly Flesh) go to whoever asked.
 - **Kidnapped by a Snatcher?** If the host is grabbed, the whole party wakes up together in the
   Hypogean Gaol (Yahar'gul) after one loading screen, and the guests get the host's Insight for
   it too. Guests cannot be kidnapped in the host's world.
@@ -219,7 +226,7 @@ before anyone is in the game):
   Lecture Theatre Key, Rune and Blood Gem Workshop Tools, ...) and the Eye of a Blood-drunk Hunter go to
   the whole party as soon as the host has them, so nobody is locked out of a door.
 - **Cutscenes for everyone.** A story scene a guest triggers in the host's world plays for the
-  whole party too.
+  whole party too, a boss intro a guest starts included.
 - **Up to 4 players** (host + 3), all in the host's world. With 3 guests, a guest does not yet see
   the guests who joined after it.
 - **Same version for everyone.** A player whose bbport build, game files, patches, mods or party
@@ -271,7 +278,7 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 |---|---|
 | Item pickups and enemy drops per player: everyone gets their own (enemy drops: the same item for everyone) | Done |
 | Every cutscene for the whole party (story cutscenes, endings and guest-triggered scenes already work) | In progress |
-| Joining during a boss fight or cutscene waits outside until it ends | Works for boss fights with every join path (bell, title join, direct summon; verified live), the Party status says why you wait; cutscenes not yet tested live |
+| Joining during a boss fight or cutscene waits outside until it ends | Done: boss fights and cutscenes with every join path (bell, title join, direct summon; verified live), the Party status says why you wait |
 | With 3 guests, every guest sees every other guest | In progress |
 | Chalice dungeons: deeper layers checked in a party; entering the party's dungeon in one press (the altar still asks a few prompts) | In progress |
 | PvP / friendly fire the host can switch on and off | Done (0.6.2) |
@@ -346,8 +353,8 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 
 | Who | What |
 |---|---|
-| deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors |
-| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD; audio pop fix, paths with parentheses in `run.bat`, parallel `build.bat`; CPUs without FSGSBASE (Windows TLS fallback), driver pipeline binaries kept between sessions, more background shader compile threads; SnormNz crash fix (packed formats such as 11_11_10), texture collector never evicting bound targets or presented surfaces; stream buffer placement switch (`BB_STREAM_MEMORY`), no draw-queue wait at `SET_PREDICATION` |
+| deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors; Linux mouse look capture (via Mrsuss60) |
+| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD; audio pop fix, paths with parentheses in `run.bat`, parallel `build.bat`; CPUs without FSGSBASE (Windows TLS fallback), driver pipeline binaries kept between sessions, more background shader compile threads; SnormNz crash fix (packed formats such as 11_11_10), texture collector never evicting bound targets or presented surfaces; stream buffer placement switch (`BB_STREAM_MEMORY`), no draw-queue wait at `SET_PREDICATION`; mouse sensitivity fix (stick dead zone compensation), in-game key rebinding, focus click not a game press |
 | shadPS4 team | Vulkan video core and shader recompiler (GPL-2.0+), sirit |
 | droogie and the bbhost team | Long-session stability fixes; menu button rows and the menu cursor's offsets; direct summon delivery; the Hunter's Dream mirror (appearance editor) ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |
 | FireBurn | FSR-Vulkan (MIT); AMD FidelityFX SDK (MIT) |

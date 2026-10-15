@@ -1987,10 +1987,18 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
                 r.id);
             continue;
         }
+        if (split::OwnChoiceFor(r.id, 20.0)) {
+            // P4 (quest_audit.md): the same scripted warp ran on this game too (Lecture Building
+            // doors, a Tonsil Stone grab): the host's own question / answer moves the party.
+            Log("lamp: request %u from slot %d dropped: the host has its own question for the same warp (P4)", r.id,
+                slot);
+            continue;
+        }
         if (!g_lamp_gate.Accept(s.world_up && !s.loading, Now(), &why)) {
             Log("lamp: request %u from slot %d not run: %s", r.id, slot, why.c_str());
             continue;
         }
+        split::NoteMemberRequestRun(r.id);
         Log("lamp: slot %d used a lamp / headstone: the host warps to %u, the party follows", slot, r.id);
         // Another map (the split question is the guest's, already answered): the party travel.
         RunLampWarpDecided(r.id, false);

@@ -85,6 +85,7 @@ struct Pending {
     double since = 0;
     u64 dialog = 0;
     int test_step = 0;
+    int reopens = 0;  // the dialog did not show (menu +0x78 0): opened again
     double test_at = 0;
     bool after_scene = false;  // a story warp: ask once its cutscene is over (kAskAfterSceneDelay)
 };
@@ -172,9 +173,13 @@ std::atomic<u32> g_notify_lamp{0};
 std::mutex g_note_mu;
 struct Choosing {
     std::string who;
+    int slot = -1;
     u32 lamp = 0;
     bool fresh = false;
 };
+// P4: this game's last answered question (main thread) and the last member request the host ran.
+std::atomic<u32> g_decided_id{0}, g_member_run_id{0};
+std::atomic<double> g_decided_at{-1}, g_member_run_at{-1};
 Choosing g_choosing;  // under g_note_mu
 
 /// Opens the game's YES / NO dialog with our question; the dialog struct, 0 when it cannot open.
@@ -220,6 +225,8 @@ u64 OpenQuestion() {
 
 /// Runs the warp the chosen way (main thread).
 void Carry(const Pending& p, bool alone, const char* how) {
+    g_decided_id = p.id;
+    g_decided_at = Now();
     Log("lamp %u (%s): %s -> %s", p.id, p.host ? "host" : "guest", how, alone ? "travel alone" : "travel with the party");
     if (p.host) {
         // Inside the loaded map: no load for anyone (the chr warp; guests of this map beside).
@@ -326,6 +333,25 @@ bool OnLampWarp(std::uint32_t id) {
     return Hold(id, false);
 }
 
+bool OwnChoiceFor(std::uint32_t id, double within_s) {
+    if (id == 0) {
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        if (g_p.state != Ask::None && g_p.id == id && !g_p.mark) {
+            return true;
+        }
+    }
+    const double a = Age(g_decided_at, Now());
+    return g_decided_id.load() == id && a >= 0 && a <= within_s;
+}
+
+void NoteMemberRequestRun(std::uint32_t id) {
+    g_member_run_id = id;
+    g_member_run_at = Now();
+}
+
 namespace {
 bool Hold(std::uint32_t id, bool mark) {
     if (!b2::Enabled()) {
@@ -366,6 +392,14 @@ bool Hold(std::uint32_t id, bool mark) {
             party::status::SetLastEvent("A party member is choosing travel");
             return true;
         }
+    }
+    if (!mark && host && g_member_run_id.load() == id && Age(g_member_run_at, Now()) >= 0 &&
+        Age(g_member_run_at, Now()) <= 15.0) {
+        // P4: a guest's scripted warp (its question answered there) that also runs here: the
+        // party travel for it is already running; no second question.
+        Log("lamp %u (host): a member's request for this warp already moves the party (%.1f s ago); no second "
+            "question", id, Age(g_member_run_at, Now()));
+        return true;
     }
     if (!mark && b2::AtLampSpot(id)) {
         return false;  // standing at it already: no question, no move (the same-map hook: last lamp only)
@@ -419,11 +453,13 @@ void OnChoosingEvent(int slot, const std::string& who, const std::string& body) 
     }
     std::lock_guard<std::mutex> lk(g_note_mu);
     g_choosing.who = who.empty() ? (slot == 0 ? "the host" : "slot " + std::to_string(slot)) : who;
+    g_choosing.slot = slot;
     g_choosing.lamp = lamp;
     g_choosing.fresh = true;
 }
 
 void Tick(const GameSnapshot& s, party::PartyLink* link) {
+    static double release_at = 0;  // a test / cancel press is a tap
     {
         // Diagnostics (bug 20): every lamp flag, own or a peer's, once.
         static double local_seen = -1, remote_seen = -1;
@@ -457,6 +493,28 @@ void Tick(const GameSnapshot& s, party::PartyLink* link) {
             Log("%s %s is choosing travel (\"Travel with the party?\" for lamp %u on their screen)", role,
                 c.who.c_str(), c.lamp);
             party::status::SetLastEvent(c.who + " is choosing travel");
+            // P4: the same scripted warp asks on two games: the lower party slot (the host first)
+            // keeps its question, this one closes.
+            const int mine = link ? link->local_slot() : -1;
+            Pending q;
+            {
+                std::lock_guard<std::mutex> lk(g_mu);
+                q = g_p;
+            }
+            if (!q.mark && deathrules::DropSameWarpQuestion(q.state == Ask::Queued || q.state == Ask::Open, q.id, mine,
+                                                            c.lamp, c.slot)) {
+                const bool up = q.state == Ask::Open && Field<int>(Slot(kSlotMenuMan), 0x78, 0) != 0;
+                {
+                    std::lock_guard<std::mutex> lk(g_mu);
+                    g_p = Pending{};
+                }
+                if (up) {
+                    runtime_pad_director_press(kPadCircle);
+                    release_at = Now() + 0.25;
+                }
+                Log("lamp %u: %s asks the same question (slot %d < %d): this one is dropped%s (P4)", c.lamp,
+                    c.who.c_str(), c.slot, mine, up ? ", dialog cancelled" : "");
+            }
         }
         if (const u32 lamp = g_notify_lamp.exchange(0); lamp && link) {
             char body[48];
@@ -465,7 +523,6 @@ void Tick(const GameSnapshot& s, party::PartyLink* link) {
                              body);
         }
     }
-    static double release_at = 0;
     if (release_at > 0 && Now() >= release_at) {
         runtime_pad_director_press(0);  // the test press is a tap
         release_at = 0;
@@ -556,6 +613,24 @@ void Tick(const GameSnapshot& s, party::PartyLink* link) {
     }
     if (p.state == Ask::Open) {
         const int r = Field<int>(p.dialog, 0x18, -1);
+        {
+            // b6a (live): a question opened in the frames the area name of a new map was shown
+            // ("Forsaken Cainhurst Castle", right after a story scene) never appeared: menu +0x78
+            // stayed 0, three Cross presses did nothing and it closed after 30 s with no travel.
+            // Not up 2.5 s after opening: open it again (3 times at most).
+            const int up = Field<int>(Slot(kSlotMenuMan), 0x78, -1);
+            if (r == -1 && up == 0 && now - p.since > 2.5 && p.reopens < 3) {
+                std::lock_guard<std::mutex> lk(g_mu);
+                g_p.state = Ask::Queued;
+                g_p.reopens = p.reopens + 1;
+                g_p.test_step = 0;
+                g_p.since = now;
+                --g_asked;  // the same question (BB_PARTY_SPLIT_TEST counts questions)
+                Log("lamp %u: the question did not show (menu +0x78 0 after %.1f s); opening it again (%d)", p.id,
+                    now - p.since, p.reopens + 1);
+                return;
+            }
+        }
         // Test answer (BB_PARTY_SPLIT_TEST=yes|no): YES = Cross; NO = Right, then Cross.
         // BB_PARTY_SPLIT_TEST=no,yes,...: one answer per question in order (the last repeats).
         static const char* test = std::getenv("BB_PARTY_SPLIT_TEST");

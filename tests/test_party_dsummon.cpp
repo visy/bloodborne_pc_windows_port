@@ -105,6 +105,19 @@ int main() {
     CHECK(!GatherFirst(true, Phase::Idle));
     CHECK(!GatherFirst(true, Phase::Done));
     CHECK(GatherFirst(true, Phase::Failed));
+    CHECK(!GatherFirst(true, Phase::Failed, true));   // A11: a wait refusal still carries
+    CHECK(GatherFirst(true, Phase::Failed, false));
+    CHECK(GatherFirst(false, Phase::Failed, true));
+    {
+        Guest g;
+        OnAsked(g, 0);
+        OnRoom(g, 1, true, Busy::Cutscene);
+        CHECK(g.phase == Phase::Failed && g.waited && !g.gather);
+        OnAsked(g, 2);
+        CHECK(!g.waited);
+        OnRoom(g, 3, true, Busy::OtherMap);
+        CHECK(g.gather && !g.waited);
+    }
     // Playtest 1 #1: no direct summon into the host's prologue (the reason reaches the guest)
     v = HostView{}; v.world_up = true;
     v.host_ready = false;
@@ -232,6 +245,15 @@ int main() {
     h.joiner_loading = false;
     h.joiner_in_world = false; h.since_title = kHostTravelHoldMax;
     CHECK(!HostTravelHeld(h));                                     // waited long enough
+    // A11: no beside-the-host warp while the host watches a cutscene or its chr reads at the origin.
+    {
+        const float origin[3] = {0.0f, 0.0f, 0.0f}, lamp[3] = {-10.8f, -7.0f, -21.0f};
+        CHECK(JoinBesideWaits(Busy::Cutscene, lamp));
+        CHECK(JoinBesideWaits(Busy::Boss, lamp));
+        CHECK(JoinBesideWaits(Busy::None, origin));
+        CHECK(!JoinBesideWaits(Busy::None, lamp));
+        CHECK(!JoinBesideWaits(Busy::OtherMap, lamp));
+    }
     std::printf("party-dsummon-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

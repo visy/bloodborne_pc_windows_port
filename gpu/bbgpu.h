@@ -49,13 +49,16 @@ void bbgpu_reflex_on_input_sampled(void);
  * accumulates until a call with consume_motion set takes it. buttons: bit 0 left, 1 right,
  * 2 middle, 3 X1, 4 X2. Nothing is gathered while the menu or the name box is open.
  * wheel_up / wheel_down: wheel notches since the last consuming call (upstream 0.51, #52);
- * wheel: 1 when the wheel drives the d-pad (bbport.ini mk_wheel). */
+ * wheel: 1 when the wheel drives the d-pad (bbport.ini mk_wheel).
+ * bindings_generation: changes when the in-game menu rewrote key bindings (key.* / mkkey.* lines
+ * of bbport.ini, src/pad_bindings.h): runtime_pad.c reads them again. Filled in either layout. */
 typedef struct {
     float dx, dy;
     uint32_t buttons;
     float sens_x, sens_y, deadzone, smoothing;
     int invert_x, invert_y;
     int wheel_up, wheel_down, wheel;
+    int bindings_generation;
 } BbMouseState;
 /* 1 when mouse & keyboard mode is on (bbport.ini mk_enabled, BB_MOUSE_KEYBOARD, the menu). */
 int bbgpu_mouse_keyboard(BbMouseState *state, int consume_motion);
