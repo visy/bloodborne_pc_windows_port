@@ -32,6 +32,8 @@
 #include "party_hud.h"
 #include "party_status.h"
 #include "party_guestvals_rules.h"
+#include "party_ping.h"
+#include "party_flow.h"
 
 #include <algorithm>
 #include <atomic>
@@ -2626,6 +2628,143 @@ double DeathGrace() {
     return g;
 }
 
+// ---- Finding 1 (statsaudit): a guest's bloodstain recoverable in the host's world ----
+// The game's stain record (GameDataMan +0x28 flag, +0x30 record: position +0x00 / +0x18, echoes
+// +0x38, map +0x3C, Chalice index +0x40) builds a stain object only in the world that owns it, so a
+// guest that died while summoned found nothing in the host's world, and its next death replaced the
+// record: the echoes were gone. The party stain keeps the same record (map, spot, echoes, and the
+// raw record bytes) on the guest's side, marks it in the overlay while the guest is in the host's
+// world on that map, and pays it (AddSoul, PlayerIns vfunc +0x3D0) when the guest walks onto it;
+// the own record is then cleared too. At home the game's own stain does the work; when a summoned
+// load dropped the own record's flag (pard2 c10: `own bloodstain taken ... own echoes` unchanged)
+// the record is put back. One stain per character (save slot), user\party_stain.txt.
+// BB_PARTY_GUEST_STAIN=0: off (the own world's stain only).
+struct PartyStain {
+    gueststain::Stain s;
+    u8 raw[0x48] = {};
+    bool have_raw = false;
+    bool armed = false;
+    double made_at = 0;
+};
+std::mutex g_pstain_mu;
+PartyStain g_pstain;  // under g_pstain_mu
+int g_pstain_slot = -2;  // the save slot the file was read for
+
+bool PartyStainOn() {
+    static const bool on = !EnvOff("BB_PARTY_GUEST_STAIN") && !EnvOff("BB_PARTY_GUEST_BLOODSTAIN");
+    return on;
+}
+
+std::string StainFilePath() {
+    std::string dir = bbnet::settings().user_dir;
+    if (dir.empty()) {
+        const char* u = std::getenv("BB_GPU_USER_DIR");
+        if (!u) u = std::getenv("BB_USER_DIR");
+        dir = u ? u : std::string(std::getenv("BB_DATA_DIR") ? std::getenv("BB_DATA_DIR") : ".") + "/user";
+    }
+    return dir + "/party_stain.txt";
+}
+
+std::vector<std::string> ReadStainLines() {
+    std::vector<std::string> out;
+    if (FILE* f = std::fopen(StainFilePath().c_str(), "rb")) {
+        char line[512];
+        while (std::fgets(line, sizeof line, f)) {
+            out.emplace_back(line);
+        }
+        std::fclose(f);
+    }
+    return out;
+}
+
+/// Caller holds g_pstain_mu: the file's line for slot `slot` becomes `g_pstain` (or goes).
+void WriteStainLocked(int slot) {
+    std::vector<std::string> keep;
+    for (const std::string& l : ReadStainLines()) {
+        gueststain::Stain o;
+        if (gueststain::Parse(l, &o) && o.slot != slot) {
+            keep.push_back(l);
+        }
+    }
+    if (g_pstain.s.live && g_pstain.s.slot == slot) {
+        std::string line = gueststain::Format(g_pstain.s);
+        if (g_pstain.have_raw) {
+            line += ' ';
+            static const char* hex = "0123456789abcdef";
+            for (u8 b : g_pstain.raw) {
+                line += hex[b >> 4];
+                line += hex[b & 15];
+            }
+        }
+        keep.push_back(line + "\n");
+    }
+    const std::string path = StainFilePath(), tmp = path + ".tmp";
+    if (FILE* f = std::fopen(tmp.c_str(), "wb")) {
+        for (const std::string& l : keep) {
+            std::fputs(l.c_str(), f);
+        }
+        std::fclose(f);
+        std::remove(path.c_str());
+        std::rename(tmp.c_str(), path.c_str());
+    }
+}
+
+/// Caller holds g_pstain_mu: this character's stain from the file.
+void LoadStainLocked(int slot) {
+    g_pstain = PartyStain{};
+    for (const std::string& l : ReadStainLines()) {
+        gueststain::Stain o;
+        std::string rest;
+        if (gueststain::Parse(l, &o, &rest) && o.slot == slot) {
+            g_pstain.s = o;
+            g_pstain.made_at = Now();
+            if (rest.size() == 2 * sizeof g_pstain.raw) {
+                auto nib = [](char c) { return c >= 'a' ? c - 'a' + 10 : c - '0'; };
+                for (std::size_t i = 0; i < sizeof g_pstain.raw; ++i) {
+                    g_pstain.raw[i] = u8(nib(rest[2 * i]) << 4 | nib(rest[2 * i + 1]));
+                }
+                g_pstain.have_raw = true;
+            }
+            Log("party stain: %d Blood Echoes at (%.1f, %.1f, %.1f) map %#x (save slot %d, from party_stain.txt)",
+                o.echoes, double(o.pos[0]), double(o.pos[1]), double(o.pos[2]), o.map, slot);
+        }
+    }
+}
+
+/// Caller holds g_pstain_mu: the party stain becomes the game's own record (a guest's death, or the
+/// own stain found at the first summoned moment).
+void StainFromRecordLocked(int slot, const char* why) {
+    const u64 gdm = Slot(kSlotGameData);
+    const u64 rec = Field<u64>(gdm, 0x30);
+    if (!rec) {
+        return;
+    }
+    PartyStain p;
+    p.s.live = true;
+    p.s.slot = slot;
+    p.s.map = Field<u32>(rec, 0x3c);
+    p.s.echoes = Field<int>(rec, 0x38);
+    SafeRead(rec + 0x18, p.s.pos, 12);
+    p.have_raw = SafeRead(rec, p.raw, sizeof p.raw);
+    p.made_at = Now();
+    if (p.s.echoes <= 0) {
+        return;
+    }
+    const bool same = g_pstain.s.live && g_pstain.s.echoes == p.s.echoes && g_pstain.s.map == p.s.map &&
+                      gueststain::Horizontal(g_pstain.s.pos, p.s.pos) < 0.05f;
+    if (same) {
+        return;
+    }
+    if (g_pstain.s.live) {
+        Log("party stain: the old one (%d Blood Echoes at (%.1f, %.1f, %.1f)) is replaced: its echoes are lost",
+            g_pstain.s.echoes, double(g_pstain.s.pos[0]), double(g_pstain.s.pos[1]), double(g_pstain.s.pos[2]));
+    }
+    g_pstain = p;
+    Log("party stain (%s): %d Blood Echoes at (%.1f, %.1f, %.1f) map %#x (save slot %d)", why, p.s.echoes,
+        double(p.s.pos[0]), double(p.s.pos[1]), double(p.s.pos[2]), p.s.map, slot);
+    WriteStainLocked(slot);
+}
+
 /// ERSC / single-player rule (design decision 3): a guest dying in the host's world drops its echoes
 /// into a bloodstain, as the host does. The game's own record 0x13D2910(SprjEventMan +0x80, chr, 1)
 /// (what SoloPlayDeath_2 calls) is used; in host-world mode (GSM +0x1592 == 0) it would place the
@@ -2656,6 +2795,17 @@ void GuestBloodstain() {
     Log("guest: bloodstain recorded: echoes %d -> %d, stain %d echoes at (%.1f, %.1f, %.1f) map %#x (gate was %u)", echoes,
         Field<int>(pgd, 0x94, -1), Field<int>(rec, 0x38, -1), double(pos[0]), double(pos[1]), double(pos[2]),
         Field<u32>(rec, 0x3c), unsigned(gate));
+    if (PartyStainOn()) {
+        const int slot = party::flow::CurrentSaveSlot();
+        if (slot >= 0) {
+            std::lock_guard<std::mutex> lk(g_pstain_mu);
+            if (g_pstain_slot != slot) {
+                LoadStainLocked(slot);
+                g_pstain_slot = slot;
+            }
+            StainFromRecordLocked(slot, "death in the host's world");
+        }
+    }
 }
 
 bool HoldGuestDeath() {
@@ -4007,6 +4157,166 @@ void OwnStainWatchTick(const GameSnapshot& s) {
     flag_was = flag;
     echoes_was = echoes;
     std::memcpy(pos_was, p, sizeof pos_was);
+}
+
+/// Finding 1: the party stain (see PartyStain), every frame.
+void GuestStainTick(const GameSnapshot& s) {
+    static double test_at = -1;
+    static int own_flag_was = -1, own_echoes_was = -1;
+    static double own_seen_at = 0;
+    if (!g_on.load() || !PartyStainOn() || !s.world_up || s.loading || !s.player) {
+        party::ping::SetStain({});
+        own_flag_was = -1;
+        return;
+    }
+    const int slot = party::flow::CurrentSaveSlot();
+    if (slot < 0) {
+        return;
+    }
+    const u64 gsm = Slot(kSlotGsm), gdm = Slot(kSlotGameData);
+    const u64 rec = Field<u64>(gdm, 0x30);
+    const bool client = s.session_role == RoleClient;
+    const bool own_world = !client && Field<u8>(gsm, 0x1592) == 1;
+    const int own_flag = Field<u8>(gdm, 0x28), own_echoes = Field<int>(rec, 0x38, -1);
+    std::lock_guard<std::mutex> lk(g_pstain_mu);
+    if (g_pstain_slot != slot) {
+        LoadStainLocked(slot);
+        g_pstain_slot = slot;
+    }
+    PartyStain& p = g_pstain;
+    if (client) {
+        // The own stain from before the session counts too (and is kept if a load drops its flag).
+        if (!p.s.live && own_flag == 1 && own_echoes > 0) {
+            StainFromRecordLocked(slot, "the own stain, now in a party");
+        }
+        own_flag_was = -1;
+    }
+    if (own_world) {
+        party::ping::SetStain({});
+        // The game's own stain shows it here. Taken by the player (flag 1 -> 0, the echoes came
+        // back): the party stain goes too. A new own death replaces it (the record changed).
+        static double drop_at = -1;
+        static int echoes_at_drop = 0;
+        if (own_flag_was == 1 && own_flag == 0) {
+            drop_at = Now();
+            echoes_at_drop = own_echoes_was;
+        }
+        const bool came_back = drop_at > 0 && s.echoes - echoes_at_drop >= p.s.echoes / 2;
+        if (p.s.live && own_flag == 0 && came_back) {
+            Log("party stain: taken in the own world (echoes %d -> %d)", echoes_at_drop, s.echoes);
+            p = PartyStain{};
+            WriteStainLocked(slot);
+            drop_at = -1;
+        } else if (own_flag == 1 && own_echoes > 0 && p.s.live) {
+            StainFromRecordLocked(slot, "own world record");
+        } else if (own_flag == 0 && p.s.live && p.have_raw && own_echoes == p.s.echoes && Now() - own_seen_at > 3.0 &&
+                   own_flag_was == 0 &&
+                   (drop_at < 0 || Now() - drop_at > 5.0)) {
+            // A load dropped the own record's flag while the stain was not taken: put it back
+            // (the game builds the stain from the record: 0x1868A50(SprjEventMan +0x80 [+8], 1)).
+            if (rec && SafeWrite(rec, p.raw, sizeof p.raw)) {
+                const u8 one = 1;
+                SafeWrite(gdm + 0x28, &one, 1);
+                const u64 events = Field<u64>(Slot(0x553b108), 0x80);
+                const u64 stains = Field<u64>(events, 8);
+                if (stains) {
+                    reinterpret_cast<void(BB_COOP_SYSV*)(u64, u32)>(Guest(0x1868a50))(stains, 1);
+                }
+                Log("party stain: the own world's bloodstain flag was dropped by a load; put back (%d Blood Echoes at "
+                    "(%.1f, %.1f, %.1f), live stain %s)",
+                    p.s.echoes, double(p.s.pos[0]), double(p.s.pos[1]), double(p.s.pos[2]), stains ? "built" : "next load");
+            }
+        }
+        if (own_flag_was < 0) {
+            own_seen_at = Now();
+        }
+        own_flag_was = own_flag;
+        own_echoes_was = s.echoes;
+        return;
+    }
+    if (!client || Field<u8>(gsm, 0x1592) != 0 || !gueststain::InMap(p.s, s.map_id)) {
+        party::ping::SetStain({});
+        return;
+    }
+    party::ping::StainMark m;
+    m.live = true;
+    m.map = p.s.map;
+    std::memcpy(m.pos, p.s.pos, sizeof m.pos);
+    m.echoes = p.s.echoes;
+    party::ping::SetStain(m);
+    float me[3] = {};
+    if (ChrHp(s.player) <= 0 || !ChrPos(s.player, me)) {
+        return;
+    }
+    static double shown_at = -1;
+    if (shown_at < 0 || p.made_at > shown_at) {
+        shown_at = Now();
+        Log("party stain: shown in the host's world, %d Blood Echoes at (%.1f, %.1f, %.1f), %.1f m away", p.s.echoes,
+            double(p.s.pos[0]), double(p.s.pos[1]), double(p.s.pos[2]), double(gueststain::Horizontal(me, p.s.pos)));
+    }
+    // Picked up by walking back onto it: armed once the living guest stood kArmDistance away (a
+    // revive at a lamp right beside it does not pay at once; live ngB).
+    if (!p.armed && gueststain::Arms(me, p.s.pos)) {
+        p.armed = true;
+        test_at = Now();
+        Log("party stain: armed (%.1f m away): walking onto it recovers the echoes", double(gueststain::Horizontal(me, p.s.pos)));
+    }
+    // Test aid: BB_PARTY_STAIN_TEST=S: 6 s after the stain is shown the guest's chr is put 4 m from
+    // it (towards where it stands; arms it), S s later onto it.
+    static const double test_s = std::getenv("BB_PARTY_STAIN_TEST") ? std::atof(std::getenv("BB_PARTY_STAIN_TEST")) : -1.0;
+    static double test_away_for = -1;
+    if (test_s >= 0 && !p.armed && test_away_for != p.made_at && Now() - shown_at >= 6.0) {
+        test_away_for = p.made_at;
+        float dx = me[0] - p.s.pos[0], dz = me[2] - p.s.pos[2];
+        const float d = std::sqrt(dx * dx + dz * dz);
+        dx = d > 0.1f ? dx / d : 0.0f;
+        dz = d > 0.1f ? dz / d : 1.0f;
+        const float to[3] = {p.s.pos[0] + 4.0f * dx, me[1] + 0.3f, p.s.pos[2] + 4.0f * dz};
+        WarpLocal(to, 0.0f, "stain test: 4 m from the party stain");
+        return;
+    }
+    if (p.armed && test_s >= 0 && test_at > 0 && Now() - test_at >= test_s) {
+        test_at = -1;
+        const float to[3] = {p.s.pos[0], p.s.pos[1] + 0.3f, p.s.pos[2]};
+        WarpLocal(to, 0.0f, "stain test: onto the party stain");
+        return;
+    }
+    if (!p.armed || !gueststain::Touching(me, p.s.pos)) {
+        return;
+    }
+    const u64 pgd = Field<u64>(gdm, 8);
+    const int before = Field<int>(pgd, 0x94, -1);
+    const u64 add = Field<u64>(Field<u64>(s.player, 0), 0x3d0);
+    if (!add || before < 0) {
+        return;
+    }
+    reinterpret_cast<void(BB_COOP_SYSV*)(u64, int, int, int)>(add)(s.player, p.s.echoes, 0, 1);
+    const int after = Field<int>(pgd, 0x94, -1);
+    // The own record is this stain: taken (no second payment at home).
+    bool own_cleared = false;
+    if (own_echoes == p.s.echoes) {
+        // The record's echoes too: a later load re-flags the old record (0x13D2910 with record 0
+        // builds the stain again; live ngB paid it twice before this), and a 0-echo record is
+        // dropped (EmptyStainTick).
+        const u8 zero = 0;
+        const int none = 0;
+        SafeWrite(gdm + 0x28, &zero, 1);
+        SafeWrite(rec + 0x38, &none, 4);
+        const u64 stains = Field<u64>(Field<u64>(Slot(0x553b108), 0x80), 8);
+        if (stains) {
+            reinterpret_cast<void(BB_COOP_SYSV*)(u64, u32)>(Guest(0x1868a50))(stains, 0);
+        }
+        own_cleared = true;
+    }
+    Log("party stain: recovered %d Blood Echoes in the host's world at (%.1f, %.1f, %.1f): echoes %d -> %d%s", p.s.echoes,
+        double(me[0]), double(me[1]), double(me[2]), before, after, own_cleared ? "; the own record taken too" : "");
+    char toast[96];
+    std::snprintf(toast, sizeof toast, "Blood Echoes recovered: %d", p.s.echoes);
+    party::status::SetLastEvent(toast);
+    p = PartyStain{};
+    WriteStainLocked(slot);
+    party::ping::SetStain({});
+    RequestGameSave("guest bloodstain recovered");
 }
 
 // ---- Finding 3 (statsaudit): the guest's own NG cycle ----
@@ -7355,6 +7665,7 @@ void Tick(const GameSnapshot& s) {
     OwnStainLogTick(s);
     OwnStainWatchTick(s);
     NgGuardTick(s);
+    GuestStainTick(s);
     GuestDownNoticeTick(s);
     HostRestLoadTick(s, now);
     PinOwnSpotTick(s);
