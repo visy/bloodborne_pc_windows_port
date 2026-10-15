@@ -280,10 +280,13 @@ inline GuestLamp PlanGuestLamp(bool guest_in_host_world, bool at_lamp_spot, bool
     return GuestLamp::Ask;
 }
 /// A guest that travels alone from a lamp (NO) has rested: the host's world (where the guest
-/// was) resets with a rest load for everyone there. Not for a guest's death (no rest) and not for
-/// a solo same-map load (nothing was rested).
+/// was) resets with a rest load for everyone there. Not for a guest's death (no rest). D9 (pard4,
+/// live E2): a guest's lamp of the map the party stands in (its own loading screen, `same_map_solo`)
+/// is a rest too - before, its reload brought the host's kills back to life on the guest's screen
+/// only (guest census 327 alive, host 325) while the host's world kept them dead.
 inline bool GuestAloneRestsHostWorld(bool alone, bool same_map_solo) {
-    return alone && !same_map_solo;
+    (void)same_map_solo;
+    return alone;
 }
 
 // ---- The host runs a rest load for a guest's rest ----

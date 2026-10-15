@@ -8449,13 +8449,15 @@ bool LampInLoadedMap(std::uint32_t id) {
     return g_on.load() && id != 0 && id != kTravelNone && LampInLoadedBlock(id, spot);
 }
 
-bool GuestSoloLampLoad(std::uint32_t id, bool mark) {
+bool GuestSoloLampLoad(std::uint32_t id, bool mark, bool rest, bool* rest_carried) {
     TravelIntent t;
     if (!g_on.load() || Role() != RoleClient || !LampIntent(id, &t)) {
         return false;
     }
-    Log("guest: lamp %u is in the loaded map: this guest's own loading screen (the host does not move)", id);
-    return TravelAlone(t, mark ? AloneWhy::HuntersMark : id == 2102950 ? AloneWhy::Lamp : AloneWhy::Headstone);
+    Log("guest: lamp %u is in the loaded map: this guest's own loading screen (the host does not move)%s", id,
+        rest ? "; a rest: the host's world gets a rest load first" : "");
+    return TravelAlone(t, mark ? AloneWhy::HuntersMark : id == 2102950 ? AloneWhy::Lamp : AloneWhy::Headstone,
+                       rest ? id : 0, rest_carried);
 }
 
 void HostRestRequest(int slot, std::uint32_t lamp) {
@@ -8734,6 +8736,23 @@ bool RespawnAloneAtOwnLamp() {
         return false;
     }
     return TravelAlone(t, AloneWhy::Death);
+}
+
+bool ReloadAtHostLamp(const char* why) {
+    // The host's last lamp (into the host's area: a re-join beside the party, one loading screen);
+    // its own last lamp when the host's is not known. Live A5 (pard4): a reload at the own lamp in
+    // the boss's area restarted the fight there from the mirrored host-entered flag - a loop.
+    const u32 host = GuestDeathRedirectLamp();
+    const u32 own = Field<u32>(Slot(kSlotGsm), 0x1528);
+    const u32 lamp = host != 0 && host != kTravelNone ? host : own;
+    TravelIntent t;
+    if (!g_on.load() || lamp == 0 || lamp == kTravelNone || !LampIntent(lamp, &t)) {
+        Log("guest: %s: no alone load (host's last lamp %u, own %u)", why, host, own);
+        return false;
+    }
+    Log("guest: %s: an alone load to %s lamp %u (a loading screen)", why, lamp == host ? "the host's last" : "its own last",
+        lamp);
+    return TravelAlone(t, AloneWhy::Lamp);
 }
 
 std::uint32_t MemberMap(int slot) {

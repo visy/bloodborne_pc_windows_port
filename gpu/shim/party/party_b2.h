@@ -134,6 +134,10 @@ bool TravelAlone(const TravelIntent& t, AloneWhy why, std::uint32_t rest_lamp = 
 /// Guest, main thread, dead: respawns at its OWN last lamp (GSM +0x1528) as an alone travel
 /// (TravelAlone with AloneWhy::Death): in the host's area a re-join, elsewhere an alone load.
 bool RespawnAloneAtOwnLamp();
+/// Guest, main thread, alive (D3, pard4): an alone travel to the HOST's last lamp (its own when the
+/// host's is not known; AloneWhy::Lamp, no rest): a vanilla loading screen out of a boss fight that
+/// cannot run here (the host is in another area) to where the party is. `why` goes to the log.
+bool ReloadAtHostLamp(const char* why);
 /// An intent's destination map (packed; the lamp / last-lamp record's map for lamp kinds), 0 unknown.
 std::uint32_t DestMapOf(const TravelIntent& t);
 /// Main thread: lamp / return point `id` lies in the block the local player stands in (and its
@@ -152,7 +156,9 @@ bool HostPartyWarpNoLoad(std::uint32_t id);
 bool LampInLoadedMap(std::uint32_t id);
 /// Guest, main thread: a lamp of the loaded map as this guest's own load (a B2 re-join into the
 /// host's area: one loading screen for this guest only, the host does not move). False: not possible.
-bool GuestSoloLampLoad(std::uint32_t id, bool mark);
+/// `rest` (D9): the lamp use is a rest - the host's rest load rides on the re-join (the host's world
+/// resets for everyone there first); *rest_carried says it did.
+bool GuestSoloLampLoad(std::uint32_t id, bool mark, bool rest = false, bool* rest_carried = nullptr);
 /// Host, any thread: a guest (party slot `slot`) rested at a lamp and travels alone: the host's
 /// world resets with a rest load where the host stands (a vanilla loading screen; the guests in
 /// this world follow it). Queued; run by the B2 tick when the host is ready (party_death_rules

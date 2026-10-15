@@ -210,8 +210,28 @@ bool SanitizePeerStory(StoryIntent* s, std::string* why) {
     return true;
 }
 
+bool GuestPressedHostOnlyEvent(std::uint32_t event_id, std::uint32_t remo_id) {
+    // D5 / D10 (pard4): events whose action button only the host's chr had (1003[6] ends a
+    // client's copy, 4[3] chr type 0 next to the 3[24] button) and that change the world's time
+    // of day without a warp (2002[6] point -1). A guest's own copy now runs them (built-in client
+    // skip rules); the host plays its 2002[6] as its own and sets the event's flag.
+    struct Row {
+        std::uint32_t event, remo;
+    };
+    static constexpr Row rows[] = {
+        {12401803, 24000030},  // m24_00 Amelia's skull (Willem's memory): evening -> night
+    };
+    for (const Row& r : rows) {
+        if (r.event == event_id && r.remo == BaseRemo(remo_id)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool GuestPhaseChangeOk(const StoryIntent& s, int host_tod_value, std::uint32_t host_map, std::string* why) {
     const char* no = nullptr;
+    const bool no_warp = s.warp_point == kStoryNone && GuestPressedHostOnlyEvent(s.event_id, s.id);
     if (s.kind != StoryKind::Cutscene || s.instr != 6) {
         no = "not a 2002[6] play";
     } else if (!StoryRemoKnown(s.id)) {
@@ -220,7 +240,7 @@ bool GuestPhaseChangeOk(const StoryIntent& s, int host_tod_value, std::uint32_t 
         no = "no time of day";
     } else if (s.tod <= TodFromFlagValue(host_tod_value < 0 ? 0 : host_tod_value)) {
         no = "the host's time of day is there already";
-    } else if (s.warp_point == kStoryNone || s.warp_point == 0 || s.warp_map == kStoryNone ||
+    } else if ((s.warp_point == kStoryNone && !no_warp) || s.warp_point == 0 || s.warp_map == kStoryNone ||
                (s.warp_map & 0xffff0000u) != (host_map & 0xffff0000u)) {
         no = "its warp is not in the host's map";
     }
@@ -2186,6 +2206,14 @@ void HostPlayGuestStory(const GameSnapshot& g, const StoryState& st) {
         Log("host: slot %d changed the world's time of day: the host's own event did not come; remo %u with warp %u "
             "@%08x and tod %d played here (as 2002[6]) -> %s",
             item.first, remo, s.warp_point, s.warp_map, s.tod, (ok & 0xff) ? "queued" : "NOT queued (no remo player)");
+        if ((ok & 0xff) && GuestPressedHostOnlyEvent(s.event_id, s.id)) {
+            // D5 / D10 (pard4): the host's own copy still waits for the host's press (Amelia's
+            // skull): its flag ends it at the next load and goes into every save (C2).
+            SetFlags({s.event_id}, true);
+            Log("host: slot %d pressed host-only event %u (its own copy ran): the scene and the time of day here, "
+                "event flag %u set in the host's world (%d)", item.first, s.event_id, s.event_id,
+                FlagValue(s.event_id, 1));
+        }
         s.flags = StoryFlagsForRemo(s.id);
         s.seq = NextSeq();
         PushHost(s);

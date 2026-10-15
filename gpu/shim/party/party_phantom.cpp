@@ -283,6 +283,14 @@ const char* InsightModeName(InsightMode m) {
     return "?";
 }
 
+int InsightTopUp(int grant, int want, int native_gain) {
+    if (grant <= 0) {
+        return 0;
+    }
+    const int missing = want - (native_gain > 0 ? native_gain : 0);
+    return missing <= 0 ? 0 : (missing < grant ? missing : grant);
+}
+
 int GuestInsightGrant(int host_n, InsightMode mode) {
     if (host_n <= 0) {
         return 0;
@@ -557,6 +565,22 @@ struct BossWait {
     u32 event = 0;
 };
 BossWait g_boss_wait;           // under g_guest_mu
+// pard4: relayed Insight grants settled against the native gain (InsightTopUp); main thread only.
+struct InsightSettle {
+    int grant = 0, want = 0;
+    double at = 0;
+    u32 event = 0;
+    std::string what;
+};
+std::vector<InsightSettle> g_settle;     // under g_guest_mu
+struct InsightSample {
+    double t;
+    int insight;
+    long long drips;
+};
+std::deque<InsightSample> g_ins_hist;    // main thread (GuestTick)
+std::atomic<long long> g_drips_applied{0};
+constexpr double kSettleAfter = 5.0, kSettleBase = 2.0;  // live B3: a native first-encounter +1 came 2.7 s after the relay
 // Finding 9: a first-encounter event's 9350 start on this guest's own game (its copy of the
 // event, which 9350's End-if-client stops), granted by GuestTick (main thread).
 struct FirstEncounter {
@@ -706,10 +730,11 @@ bool GrantFirstEncounter(u32 event, int n, const char* why) {
     }
     {
         std::lock_guard<std::mutex> lk(g_guest_mu);
-        g_drip.Add(n);
+        g_settle.push_back({n, n, Now(), event, "first encounter"});
     }
     const bool wrote = progress::WriteFlagOwnSave(guard, true);
-    Log("first encounter (event %u, %d Insight, %s): +%d here, own guard %u %s", event, n, why, n, guard,
+    Log("first encounter (event %u, %d Insight, %s): +%d here (settled against the native gain), own guard %u %s",
+        event, n, why, n, guard,
         wrote ? "set in the own save" : "NOT written");
     RequestGameSave("first-encounter Insight");
     return true;
@@ -961,8 +986,51 @@ void GuestTick(const GameSnapshot& g, double now) {
     }
     BossFallbackTick(g, now);
     FirstEncounterTick();
+    // pard4: Insight history (value and our own drips) and the settling of relayed grants.
+    if (g.insight >= 0) {
+        g_ins_hist.push_back({now, g.insight, g_drips_applied.load()});
+        while (g_ins_hist.size() > 2 && g_ins_hist.front().t < now - 15.0) {
+            g_ins_hist.pop_front();
+        }
+    }
+    {
+        std::vector<InsightSettle> due;
+        {
+            std::lock_guard<std::mutex> lk(g_guest_mu);
+            for (auto it = g_settle.begin(); it != g_settle.end();) {
+                if (now - it->at >= kSettleAfter) {
+                    due.push_back(*it);
+                    it = g_settle.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        for (const InsightSettle& p : due) {
+            const InsightSample* base = nullptr;
+            for (const InsightSample& h : g_ins_hist) {
+                if (h.t <= p.at - kSettleBase) {
+                    base = &h;
+                }
+            }
+            if (!base && !g_ins_hist.empty()) {
+                base = &g_ins_hist.front();
+            }
+            const int gain = base && g.insight >= 0
+                                 ? int(g.insight - base->insight - (g_drips_applied.load() - base->drips))
+                                 : 0;
+            const int give = InsightTopUp(p.grant, p.want, gain);
+            if (give > 0) {
+                std::lock_guard<std::mutex> lk(g_guest_mu);
+                g_drip.Add(give);
+            }
+            Log("%s (event %u): this game paid +%d Insight on its own since just before it; the relay adds %d of its %d "
+                "(this player gets %d from the moment)", p.what.c_str(), p.event, gain, give, p.grant, p.want);
+        }
+    }
     if (insight_now) {
         const int before = g.insight;
+        g_drips_applied.fetch_add(1);
         const bool ok = ApplyInsightSpEffect();
         Log("boss Insight: SpEffect %u %s (Insight was %d)", kInsightSpEffect, ok ? "applied" : "NOT applied (no player)",
             before);
@@ -1238,7 +1306,11 @@ void PhantomOnEvent(const std::string& body) {
                 e.insight, InsightBudget::kMaxPerWindow, InsightBudget::kWindow);
             break;
         }
-        g_drip.Add(give);
+        if (e.boss) {
+            g_settle.push_back({give, give + 1, now, e.source_event, "host boss kill"});
+        } else {
+            g_drip.Add(give);
+        }
         Log("%s (event %u, %d Insight): +%d here%s (mode %s)", what, e.source_event, e.insight, give,
             e.boss ? " plus the native cooperator +1" : "", InsightModeName(g_cfg.insight));
         break;

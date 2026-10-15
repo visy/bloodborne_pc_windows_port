@@ -156,6 +156,17 @@ int main() {
     assert(!BossGateHostOpens(cb, true, false, false, dream));
     assert(!BossGateHostOpens(cb, true, false, false, 0xffffffffu));
     assert(BossGateByGuestFlag(12414701) == &cb && !BossGateByGuestFlag(12414700));
+    // D3 (pard4): a lone guest's fog keeps the phantom rule while the host is in another area.
+    assert(GuestFogOpenWhileHostAt(cb, m2401));    // the host in the boss's block
+    assert(GuestFogOpenWhileHostAt(cb, m2400));    // same area, another block (the host's game has it)
+    assert(!GuestFogOpenWhileHostAt(cb, dream));   // the host in the Dream: closed
+    assert(GuestFogOpenWhileHostAt(cb, 0));        // unknown: as before
+    assert(GuestFogOpenWhileHostAt(cb, 0xffffffffu));
+    {
+        const BossGate& bsb = *BossGateByEvent(12304811);  // Blood-starved Beast (m23_00, LB2)
+        assert(!GuestFogOpenWhileHostAt(bsb, 0x15000000u));  // host in the Dream
+        assert(GuestFogOpenWhileHostAt(bsb, 0x17000000u));
+    }
     {
         Request fr;
         fr.map = m2401;

@@ -156,7 +156,7 @@ int main() {
     CHECK(PlanGuestLamp(true, false, false, true) == GuestLamp::Ask);
     CHECK(GuestAloneRestsHostWorld(true, false));
     CHECK(!GuestAloneRestsHostWorld(false, false));  // YES: the party travel is the rest
-    CHECK(!GuestAloneRestsHostWorld(true, true));
+    CHECK(GuestAloneRestsHostWorld(true, true));  // D9 (pard4): a lamp of the loaded map rests too
 
     // The host's rest load for a guest's rest (bug 3).
     RestView r;

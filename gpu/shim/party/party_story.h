@@ -122,6 +122,10 @@ bool SanitizePeerStory(StoryIntent* s, std::string* why = nullptr);
 /// tod 1..3 later than the host's (`host_tod_value`: its 9800..9802 3-bit value) and a warp in the
 /// host's map block (`host_map`). False (with `why`): the host plays only the scene (D10).
 bool GuestPhaseChangeOk(const StoryIntent& s, int host_tod_value, std::uint32_t host_map, std::string* why = nullptr);
+/// D5 / D10 (pard4): `event_id` is a host-only action-button event a guest may now press (Amelia's
+/// skull 12401803 with its scene `remo_id` 24000030): its 2002[6] has no warp (point -1), which
+/// GuestPhaseChangeOk accepts for these, and the host sets the event's own flag after playing it.
+bool GuestPressedHostOnlyEvent(std::uint32_t event_id, std::uint32_t remo_id);
 /// 9800..9802 as a 3-bit value (9800 = bit 2) for a tod (0..3): {0, 4, 6, 7}; -1 out of range.
 int TodFlagValue(int tod);
 /// The tod a 3-bit 9800..9802 value stands for (the highest table entry it reaches), 0..3.

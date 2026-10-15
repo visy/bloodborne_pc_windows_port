@@ -52,6 +52,23 @@ static void test_guest_phase_change() {
     t.tod = 3;
     CHECK(GuestPhaseChangeOk(t, 6, m24_00, &why));   // night -> Blood Moon
     CHECK(!GuestPhaseChangeOk(t, 7, m24_00, &why));  // Blood Moon already
+    // D5 / D10 (pard4): Amelia's skull pressed by a guest: 2002[6] with no warp (point -1).
+    StoryIntent k;
+    k.kind = StoryKind::Cutscene;
+    k.instr = 6;
+    k.id = 24000030;
+    k.tod = 2;
+    k.event_id = 12401803;
+    k.warp_point = kStoryNone;
+    k.warp_map = 0x18000000;
+    CHECK(GuestPressedHostOnlyEvent(12401803, 24000030));
+    CHECK(!GuestPressedHostOnlyEvent(12401803, 24000020));
+    CHECK(!GuestPressedHostOnlyEvent(12400750, 24000020));
+    CHECK(GuestPhaseChangeOk(k, 4, m24_00, &why));    // evening -> night
+    CHECK(!GuestPhaseChangeOk(k, 6, m24_00, &why));   // night already
+    CHECK(!GuestPhaseChangeOk(k, 4, m24_01, &why));   // the host in another block
+    k.event_id = 12345;
+    CHECK(!GuestPhaseChangeOk(k, 4, m24_00, &why));   // no warp only for the known events
 }
 
 static void test_tables() {

@@ -152,6 +152,14 @@ static void test_insight() {
     CHECK(InsightModeFromString("off") == InsightMode::Off);
     CHECK(InsightModeFromString("full") == InsightMode::Full);
     CHECK(InsightModeFromString("parity") == InsightMode::Parity);
+    // pard4: the relay settles against what the guest's own game paid (live B2: Logarius).
+    CHECK(InsightTopUp(2, 3, 1) == 2);   // only the native cooperator +1: the relay's 2
+    CHECK(InsightTopUp(2, 3, 4) == 0);   // its own defeat paid the boss's 3 and the +1: nothing
+    CHECK(InsightTopUp(2, 3, 2) == 1);
+    CHECK(InsightTopUp(2, 3, 0) == 2);   // nothing native yet (the fallback adds the +1 later)
+    CHECK(InsightTopUp(1, 1, 1) == 0);   // first encounter paid natively
+    CHECK(InsightTopUp(1, 1, -2) == 1);  // Insight spent meanwhile: counts as no gain
+    CHECK(InsightTopUp(0, 1, 0) == 0);
     CHECK(GuestInsightGrant(3, InsightMode::Parity) == 2);
     CHECK(GuestInsightGrant(1, InsightMode::Parity) == 0);
     CHECK(GuestInsightGrant(3, InsightMode::Full) == 3);
