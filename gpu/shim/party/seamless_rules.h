@@ -25,6 +25,8 @@
 #pragma once
 
 #include <cstdint>
+#include <utility>
+#include <vector>
 
 namespace coop {
 
@@ -66,5 +68,7 @@ std::uint64_t EmevdInstructionArgs(std::uint64_t event, std::uint64_t instr, std
 /// "ITEM_LOT_PARAM_ST"), or 0 when the params are not loaded or the row does not exist. The
 /// address stays valid until the params are reloaded (main thread).
 std::uint64_t GameParamRow(const char* name, const char* type, std::uint32_t id);
+/// Every row of a game param table as (id, row data address), in id order; empty without it.
+std::vector<std::pair<std::uint32_t, std::uint64_t>> GameParamRows(const char* name, const char* type);
 
 } // namespace coop

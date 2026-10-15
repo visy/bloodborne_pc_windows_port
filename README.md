@@ -17,15 +17,15 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 
 | Area | Progress | |
 |---|---|--:|
-| **Overall** | `███████████████████░` | 97% |
+| **Overall** | `████████████████████` | 98% |
 | Session & joining | `████████████████████` | 100% |
 | World & travel | `████████████████████` | 100% |
-| Death & respawn | `████████████████████` | 98% |
+| Death & respawn | `████████████████████` | 99% |
 | Progress (anyone can progress) | `███████████████████░` | 94% |
 | Services & UI | `████████████████████` | 100% |
 | Network & robustness | `██████████████████░░` | 92% |
-| Bloodborne-specific (chalice, Insight) | `███████████████████░` | 94% |
-| Feels like single player in a party | `███████████████████░` | 96% |
+| Bloodborne-specific (chalice, Insight) | `████████████████████` | 98% |
+| Feels like single player in a party | `████████████████████` | 99% |
 
 ---
 
@@ -41,8 +41,8 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | **Frame generation** | Optional, off by default: DLSS FG (2x-4x, RTX 40/50) or FSR FG (2x), paced, HUD kept sharp; NVIDIA Reflex. [More](docs/FG_REFLEX.md) |
 | **HDR output** | Optional, off by default: HDR10 (PQ, Rec.2020) on an HDR display, the game's highlights expanded up to your display's peak while mid-tones and menus stay at paper white; peak, paper white, highlights, saturation and a calibration pattern in *System > HDR*. [More](docs/SETTINGS.md#hdr-output) |
 | **No shader stutter** | Known shaders are built before the intro. New ones compile in the background. |
-| **Shareable shader cache** | Export / import one `.zip`, works across GPUs. |
-| **Shader cache builder** | *Advanced > Build shader cache (world warper)*: the game travels through every lamp and area by itself (looks round, walks, fights), on a copy of your save, then exports the cache `.zip`. About an hour; Stop and resume. [More](docs/SETTINGS.md#shader-cache-builder-world-warper) |
+| **Shareable shader cache** | Export / import one `.zip`, works across GPUs; drop a shared one into `user\cache_import\`. |
+| **Shader cache builder** | *Advanced > Build shader cache (world warper)*: the game travels through every lamp and area by itself (looks round, walks, changes armor and weapons, fights every kind of enemy, plays the cutscenes, day / evening / Blood Moon), on a copy of your save, then exports the cache `.zip`. Two to three hours; Stop and resume. [More](docs/SETTINGS.md#shader-cache-builder-world-warper) |
 | **Save safety** | Crash-safe saving, save checks at start, automatic backups in party play. |
 | **The Old Hunters** | DLC enabled automatically (its data ships with patch 1.09). |
 | **Mods and patches** | Loose-file mods and shadPS4-format XML patches, with load order. |
@@ -139,7 +139,7 @@ before anyone is in the game):
   you travel together.
 - **Joining while the host fights a boss or watches a cutscene** waits in your own world until it is over (the Party status says why), then puts you beside the host with one loading screen.
 - **Leave any time.** *System → Party → Leave the party* takes a guest home at once; the host's
-  *Leave* ends the party and every guest goes home. After leaving, a guest keeps playing online alone in its own world. *System → Party mode → Join party* brings a
+  *Leave* ends the party and every guest goes home at once (one loading screen, no "Session lost"). A guest who left can rejoin at any time, also right after a boss kill. After leaving, a guest keeps playing online alone in its own world. *System → Party mode → Join party* brings a
   guest back; *Host party* and *Single player* are there too.
 - **The session never ends by itself.** Boss kills, area clears, deaths and travel don't send
   anyone home.
@@ -258,12 +258,12 @@ before anyone is in the game):
 - **Same version for everyone.** A player whose bbport build, game files, patches, mods or party
   options differ is refused on joining; the message says what differs and what to do.
 - **Chalice dungeons together.** Guests join the host's dungeon; levers, doors, the layer boss, its
-  loot (for each player) and the lift work for the whole party. Any player can perform the ritual:
+  loot (for each player) and the lift with its call levers at the top and the bottom work for the whole party, layer after layer; a guest can also join from its title straight into the host's dungeon. Any player can perform the ritual:
   the host's altar then offers *Enter the party's dungeon*, also with guests standing in its Dream,
   and one press does the rest (the guests follow in with one loading screen). Chalices are shared
   between all players, and a boss reward the game keeps for the host goes to every guest in the
   dungeon too.
-- **Crashes recover.** A crashed game restarts and rejoins by itself (back in the host's world about 12 s after the restart), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue. If the host's game crashes, the guests go to their own world and wait ("Waiting for the host to come back (N s)...") until the host's game has restarted, then are summoned back beside it by themselves (about 20 s after the crash on one PC; after 3 minutes without the host a guest plays on alone); items a guest got in the host's world stay in its own save.
+- **Crashes recover.** A crashed game restarts and rejoins by itself (on one PC: in the host's party about 17 s after the crash, standing beside the host about 27 s after it, most of that the game's own start and loading screen), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue. If the host's game crashes, the guests go to their own world and wait ("Waiting for the host to come back (N s)...") until the host's game has restarted, then are summoned back beside it by themselves (about 20 s after the crash on one PC; after 3 minutes without the host a guest plays on alone); items a guest got in the host's world stay in its own save.
 - **Network drops recover.** A network outage of up to 50 s keeps the session (checked with three players): no loading screen, everyone carries on where they stood once the network is back (the others freeze in place meanwhile). If a longer outage loses the session, a guest goes home at once with one loading screen and is summoned back beside the host by itself once the network is back. The party also checks every 15 s that everyone sees the same world and progress and quietly re-sends whatever differs.
 - **Wrong passwords are locked out.** A few typos are fine; after 5 wrong passwords in a minute the host refuses that address for a while.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
@@ -305,7 +305,7 @@ before anyone is in the game):
 |---|---|
 | A guest | Gets up again at its own lamp: with no loading screen when that lamp is in the loaded area, else with its own loading screen at that lamp (also in another area; the host stays where it is); its Blood Echoes wait in a bloodstain where it fell, marked on screen in the host's world (walk onto it to get them back; it also stays in its own world); the others keep playing |
 | The host | Everyone gets one respawn loading screen at the host's lamp, as in the original game, and the world resets; the host's echoes stay in a bloodstain where it fell |
-| Anyone, during a boss fight | Watches a living party member fight (the screen says whose; press Cross to watch the next one) until the boss dies (then gets up at the host's lamp, with no loading screen when it is in the area), everyone dies, or someone travels |
+| Anyone, during a boss fight | Watches a living party member fight from behind them (the screen says whose; press Cross to watch the next one) until the boss dies (then gets up at the host's lamp, with no loading screen when it is in the area), everyone dies, or someone travels |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |
 
 A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's) or a party wipe resets them.
@@ -318,7 +318,7 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 | Every cutscene for the whole party (story cutscenes, endings and guest-triggered scenes already work) | In progress |
 | Joining during a boss fight or cutscene waits outside until it ends | Done: boss fights and cutscenes with every join path (bell, title join, direct summon; verified live), the Party status says why you wait |
 | With 3 guests, every guest sees every other guest | Done: all four join and see each other; any player can leave and rejoin while the others play on (verified live with 3 and 4 players) |
-| Chalice dungeons: deeper layers and the bottom lift lever checked in a party | In progress |
+| Chalice dungeons: deeper layers and the bottom lift lever checked in a party | Done: layer 2 and its boss, both lift levers (verified live); dungeons with floor bosses still to check |
 | PvP / friendly fire the host can switch on and off | Done (0.6.2) |
 | Pings: party members and marked spots visible through walls, with distance and player colours | Done (0.6.2) |
 

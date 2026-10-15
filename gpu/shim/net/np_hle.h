@@ -19,6 +19,14 @@ std::string matching2_status();
 bool party_host_lost(const std::string& why);
 // Guest: our game holds a room as a guest (summoned into, or joining, a host's world).
 bool party_guest_in_room();
+// Guest: called (without the np lock) when the host's game closes the room we are in as a guest
+// because it left it (room_closed "host_left": the host pressed Leave / ended the party). The host
+// leaves its game's room first and stops the party link ~0.4 s later, so this event comes first;
+// the hook sends the guest home at once (party host_lost) instead of the game's own "Session
+// lost" dialog and its send-home ~15-19 s later (parx2 2026-10-15). Without a hook the room just
+// ends for the game. The hook ends the room itself (party_host_lost).
+using HostClosedRoomHook = void (*)(const std::string& why);
+void set_host_closed_room_hook(HostClosedRoomHook hook);
 // ms since a member left (or was dropped from) the room we are in; a large value when none did.
 std::int64_t ms_since_member_left();
 

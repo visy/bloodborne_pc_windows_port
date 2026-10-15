@@ -473,6 +473,26 @@ BB_COOP_SYSV u64 BossClearLeaveHook(u64 session) {
     return reinterpret_cast<Fn>(Guest(kBeginLeave))(session);
 }
 
+// K10b: BlockClear2 also locks the session (LockSession 0x178D7B0 via 0x1384B89: SprjSessionManager
+// +0x118 = 1). With K10 the session outlives the clear, so the lock stays until the session ends,
+// and the host's session update 0x1ED0B20 (event 0xE, member joined) kicks every later joiner
+// with reason 0xFF000019 (the guest's OnJoinClearedRoom / OnBeKickOut): a guest that left after a
+// boss and pressed Rejoin was kicked 0.9 s after each join (parx2 smoke3, live). The party lets
+// its members join a cleared area, so that call (0x1ED14FB -> 0xC8EE30) is skipped while the party
+// is on; other kicks (invaders, the party's own Kick) use other paths.
+constexpr u64 kLockKickCall = 0x1ed14fb;
+constexpr u64 kSessionKick = 0xc8ee30;  // (SprjSessionManager +0x18, npid): KickoutRoomMember 0xFF000019
+BB_COOP_SYSV u64 LockKickHook(u64 matching, u64 npid) {
+    if (g_on.load() && Role() == RoleHost) {
+        (void)npid;
+        Log("K10b: the session lock after a boss clear would kick a joining member (0xFF000019): skipped, the "
+            "party joins it");
+        return 0;
+    }
+    using Fn = u64(BB_COOP_SYSV*)(u64, u64);
+    return reinterpret_cast<Fn>(Guest(kSessionKick))(matching, npid);
+}
+
 // After K10 the party stays. In case the boss-clear states left the players invincible for the
 // clear animation (Lua EnableInvincible 0x1332EF0: chr +0x1E1 bit 14) with no leave to end it,
 // the local player's flag is cleared 10 s after K10 (live runs: it was never still on).
@@ -5027,6 +5047,7 @@ void SpectateTick(const GameSnapshot& s, double now) {
         Log("spectating: following slot %d (%d living member%s%s)%s%s", pick, n, n == 1 ? "" : "s",
             advance ? ", Cross: next member" : "", notice.empty() ? "" : "; notice: ", notice.c_str());
     }
+    const bool new_target = pick != target || advance;
     target = pick;
     for (int i = 0; i < n; ++i) {
         alignas(16) float pos[4], rot[4];
@@ -5040,6 +5061,19 @@ void SpectateTick(const GameSnapshot& s, double now) {
         pos[3] = 1.0f;
         if (const u64 fn = Field<u64>(Field<u64>(s.player, 0), 0x5f8)) {
             reinterpret_cast<void(BB_COOP_SYSV*)(u64, const float*, const float*, u32)>(fn)(s.player, pos, rot, 1);
+        }
+        // The camera keeps its own direction when the dead chr is carried (parx2 smoke2: the host's
+        // view showed a wall for 106 s, the two living members 3-5 m away off screen): the Lua
+        // CamReset (as WarpLocal) puts it behind the carried chr, which faces the way the followed
+        // member faces - at a new target and when the member has turned by more than ~35 degrees.
+        static float reset_yaw = 0.0f;
+        float turn = std::fabs(yaw - reset_yaw);
+        if (turn > 3.14159265f) turn = 6.2831853f - std::fmod(turn, 6.2831853f);
+        if (new_target || turn > 0.6f) {
+            reset_yaw = yaw;
+            using CamReset = u64(BB_COOP_SYSV*)(u64, u32, u32);
+            reinterpret_cast<CamReset>(Guest(0x132f5a0))(0, 10000, 1);
+            if (new_target) Log("spectating: camera put behind the followed member (yaw %.2f)", double(yaw));
         }
         return;
     }
@@ -6241,7 +6275,22 @@ void TitleJoinHostTick(const GameSnapshot& s) {
             return;
         }
     }
-    if (!req.empty() && (Role() != RoleHost || !s.world_up || s.loading)) {
+    // A stage request already armed (GSM +8: the host's lamp warp / death load starts in a frame or
+    // two): the room would carry the map the host is leaving (parx2 a6s, live: a title join asked
+    // 0.16 s after the host's lamp warp loaded the guest into the host's old map, the Dream, alone,
+    // apart for 225 s). Served once the host stands in its new world.
+    const bool stage_pending = Field<u8>(Slot(kSlotGsm), 8) != 0;
+    if (!req.empty() && stage_pending && Role() == RoleHost) {
+        static double logged = 0;
+        if (Now() - logged > 5.0) {
+            logged = Now();
+            Log("title join: slot %d waits: this host's load is about to start (a stage request is armed)", req[0]);
+        }
+        std::lock_guard<std::mutex> lk(TJ().mu);
+        TJ().requests.insert(TJ().requests.end(), req.begin(), req.end());
+        return;
+    }
+    if (!req.empty() && (Role() != RoleHost || !s.world_up || s.loading || stage_pending)) {
         // No room yet (the host rings its bell once it is in the world): asked again next frame.
         const double now = Now();
         if (first_wait == 0) {
@@ -6252,7 +6301,7 @@ void TitleJoinHostTick(const GameSnapshot& s) {
         // The host's room comes with a summon only (the bell alone opens none): create it as the
         // flow's event 0x1E does (0x178E400: 0x1ECFCD0(float [0x49271C8], SessionMan, flow +0xC)).
         static double last_create = -100.0;
-        if (s.world_up && !s.loading && Role() == 0 && now - last_create > 15.0) {
+        if (s.world_up && !s.loading && !stage_pending && Role() == 0 && now - last_create > 15.0) {
             last_create = now;
             float arg = 0;
             SafeGet(u64(Guest(0x49271c8)), &arg);
@@ -7198,6 +7247,17 @@ void NrRecvHook(int sock, int where) {
             using Fn = void(BB_COOP_SYSV*)(u64, u64);
             reinterpret_cast<Fn>(release)(t.transport, el);
             ++dropped;
+            if (!outage) {
+                // C6 (parfin3): the restarted game comes back from this address and port; the F5
+                // outage replay must not send it the dead session's records (title join refused).
+                for (const nrdrop::Source& s : silent) {
+                    if (!nrdrop::KeyMatchesAny(key, {s})) continue;
+                    const std::size_t n = bbnet::p2p_forget_source(
+                        std::uint64_t(s.addr) | (std::uint64_t(s.port_nbo) << 32));
+                    Log("C6: its outage-replay state forgotten (%zu entr%s): no replay into its restarted game", n,
+                        n == 1 ? "y" : "ies");
+                }
+            }
         }
     }
     g_nrd_listed = true;
@@ -7395,8 +7455,10 @@ bool TitleJoinHold(const GameSnapshot& s) {
             TitleJoinFail("the join ended");
             return false;
         }
-        if (now - t.since > 20.0) {
-            TitleJoinFail("no snapshot within 20 s");
+        // A snapshot comes ~1 s after the join (h5); 12 s leaves room for a slow link and costs 8 s
+        // less when the join failed (the guest Continues into its own world and is summoned).
+        if (now - t.since > 12.0) {
+            TitleJoinFail("no snapshot within 12 s");
             return false;
         }
         return true;
@@ -7478,6 +7540,7 @@ void Init() {
     InstallCall(0x13858f5, kBeginLeave, reinterpret_cast<const void*>(&BossClearLeaveHook), "B2 K10 boss-clear leave (a)");
     InstallCall(kNrCreateCall, kNrCreate, reinterpret_cast<const void*>(&NrCreateHook), "C6 NR transport create");
     InstallCall(0x1385a95, kBeginLeave, reinterpret_cast<const void*>(&BossClearLeaveHook), "B2 K10 boss-clear leave (b)");
+    InstallCall(kLockKickCall, kSessionKick, reinterpret_cast<const void*>(&LockKickHook), "B2 K10b cleared-session join kick");
     // Not B2-specific (B1 bell joins stream too): installed whenever B2 is.
     if (!HookPrologue(0x18cb0e0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x81,
                                   0xec, 0xf8, 0x07, 0x00, 0x00},

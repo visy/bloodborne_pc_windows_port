@@ -912,4 +912,21 @@ std::uint64_t GameParamRow(const char* name, const char* type, std::uint32_t id)
     return FindParam(name, type, &t) ? Row(t, id) : 0;
 }
 
+std::vector<std::pair<std::uint32_t, std::uint64_t>> GameParamRows(const char* name, const char* type) {
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> out;
+    ParamTable t;
+    if (!FindParam(name, type, &t)) {
+        return out;
+    }
+    out.reserve(t.rows);
+    for (u32 i = 0; i < t.rows; ++i) {
+        u32 id = 0;
+        u64 data = 0;
+        if (Record(t, i, &id, &data)) {
+            out.emplace_back(id, data);
+        }
+    }
+    return out;
+}
+
 } // namespace coop
