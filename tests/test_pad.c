@@ -20,8 +20,10 @@ static int mk_mode;
 static float mk_dx;
 static uint32_t mk_buttons;
 static int mk_wheel_down;
+static int bind_generation; /* the in-game menu rewrote key lines (BbMouseState.bindings_generation) */
 int bbgpu_mouse_keyboard(BbMouseState *state, int consume_motion) {
     memset(state,0,sizeof(*state));
+    state->bindings_generation=bind_generation;
     state->dx=mk_dx; state->buttons=mk_buttons;
     state->sens_x=state->sens_y=1.0f; state->deadzone=0.05f; state->smoothing=0.0f;
     state->wheel=1;
@@ -188,6 +190,19 @@ int main(void) {
     usleep(20000);
     mk_dx=100.0f; /* 5000 px/s: full deflection */
     assert(pad_read_state(1,&data)==0 && data.right_x==255);
+    /* The measured camera curve (deadzone compensation, after 90008b39 by Mrsuss60): the
+     * slowest motion past the mouse dead zone already turns (past the game's 46.7), the turn
+     * grows with the motion, stays below the game's fast turn (from ~122) until full speed. */
+    assert(look_deflection(0.0f)==0.0f && look_deflection(0.01f)>46.7f && look_deflection(0.01f)<48.0f);
+    assert(look_deflection(0.5f)<look_deflection(0.6f) && look_deflection(0.999f)<=120.0f &&
+           look_deflection(1.0f)==127.0f);
+    {
+        float ox=0.0f, oy=0.0f;
+        look_stick(4.0f,0.0f,6.35f,&ox,&oy);     /* below the mouse dead zone */
+        assert(ox==0.0f && oy==0.0f);
+        look_stick(30.0f,-30.0f,6.35f,&ox,&oy);  /* round: the direction kept */
+        assert(ox>33.0f && oy<-33.0f && fabsf(ox+oy)<0.01f);
+    }
     /* Upstream 0.51 #52: mouse names in bindings; a bound side button leaves the built-in scheme
      * (X1 is Square here, not L1); the wheel a short d-pad press per notch; pad-file mouse tokens. */
     assert(key_from_name("Mouse Left")==MOUSE_KEY+SDL_BUTTON_LEFT && key_from_name("wheel down")==MOUSE_WHEEL_DOWN);
@@ -218,6 +233,23 @@ int main(void) {
     inject(path,"");
     for (int i=0;i<30;++i) { usleep(5000); pad_read_state(1,&data); }
     assert(!(data.buttons & BTN_L2) && data.right_x==128);
+    /* The in-game menu's key rows (90008b39 by Mrsuss60): new lines are read again as soon as
+     * the generation changes, without a layout switch; a mouse button named there leaves the
+     * built-in scheme (left now Cross, not R1). */
+    const char rebound[]="upscaler=fsr3\nkey.cross=X, Space\nmkkey.triangle=Y\nmkkey.cross=Mouse Left\n";
+    assert(bb_test_write_file(config,rebound,sizeof(rebound)-1)==0);
+    assert(pad_read_state(1,&data)==0 && bindings[IN_TRIANGLE].keys[0]==SDL_SCANCODE_T);
+    ++bind_generation;
+    mk_buttons=1;
+    assert(pad_read_state(1,&data)==0 && bindings[IN_TRIANGLE].keys[0]==SDL_SCANCODE_Y);
+    assert((data.buttons & BTN_CROSS) && !(data.buttons & BTN_R1));
+    mk_buttons=0;
+    assert(bb_test_write_file(config,controls,sizeof(controls)-1)==0);
+    ++bind_generation;
+    assert(pad_read_state(1,&data)==0 && bindings[IN_TRIANGLE].keys[0]==SDL_SCANCODE_T);
+    /* src/pad_bindings.h names: a binding line's name for each code. */
+    assert(!strcmp(key_name(MOUSE_KEY+SDL_BUTTON_X2),"Mouse X2") && !strcmp(key_name(SDL_SCANCODE_Q),"Q") &&
+           key_from_name(key_name(MOUSE_WHEEL_UP))==MOUSE_WHEEL_UP && !*key_name(0));
     mk_mode=0; mk_buttons=0;
     assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_R1) && data.right_x==128 &&
            bindings[IN_CROSS].keys[0]==SDL_SCANCODE_X);

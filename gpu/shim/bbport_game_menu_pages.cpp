@@ -1044,13 +1044,14 @@ void DefineAll() {
            toggle, Kind::Toggle);
     // A list opens a pop-up over the rows below it: last on the page.
     AddRow(Setting(
-               Kind::List, [](const Values& v) { return std::clamp(v.party_overhead.load(), 0, 4); },
-               [](int i) { BbSettings::Get().party_overhead = std::clamp(i, 0, 4); }),
+               Kind::List, [](const Values& v) { return std::clamp(v.party_overhead.load(), 0, 5); },
+               [](int i) { BbSettings::Get().party_overhead = std::clamp(i, 0, 5); }),
            AddText("Above companions", "Над спутниками"),
            AddText("What shows above party members in view (only you see it)",
                    "Что показывать над спутниками в поле зрения (только у вас)"),
            {AddText("Nothing", "Ничего"), AddText("Name", "Имя"), AddText("Name and level", "Имя и уровень"),
-            AddText("Name and health", "Имя и здоровье"), AddText("Name and deaths", "Имя и смерти")},
+            AddText("Name and health", "Имя и здоровье"), AddText("Name and deaths", "Имя и смерти"),
+            AddText("Name and ping", "Имя и пинг")},
            Kind::List);
 
     // ---- Pings (I2, party_ping.h): Party rules holds six rows already, so a page of its own. ----

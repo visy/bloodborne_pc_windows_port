@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -180,7 +181,7 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     } else if (key == "party_npc_talk_range") {
         v.party_npc_talk_range = std::clamp(i, 0, 500);
     } else if (key == "party_overhead") {
-        v.party_overhead = std::clamp(i, 0, 4);
+        v.party_overhead = std::clamp(i, 0, 5);
     } else if (key == "hdr") {
         v.hdr = i != 0 || value == "on" || value == "true";
     } else if (key == "hdr_peak_nits") {
@@ -294,7 +295,7 @@ void Load() {
         {"BB_MOUSE_KEYBOARD", "mk_enabled"},
         {"BB_HDR", "hdr"},                          {"BB_HDR_PEAK", "hdr_peak_nits"},
         {"BB_HDR_PAPER_WHITE", "hdr_paper_white"},  {"BB_HDR_STRENGTH", "hdr_strength"},
-        {"BB_HDR_SATURATION", "hdr_saturation"},
+        {"BB_HDR_SATURATION", "hdr_saturation"},   {"BB_PARTY_OVERHEAD", "party_overhead"},
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env)) {
@@ -428,14 +429,75 @@ bool RestartNeeded() {
     return restart;
 }
 
+namespace {
+/// Rewrites the file with `keys` set (a value) or removed (none), in the order given for new
+/// ones; every other line stays as it is. Callers hold save_mutex.
+void WriteMergedLocked(const std::vector<std::pair<std::string, std::optional<std::string>>>& keys) {
+    std::string out;
+    bool had_lines = false;
+    std::vector<bool> written(keys.size());
+    if (FILE* file = std::fopen(Path(), "r")) {
+        char line[512];
+        while (std::fgets(line, sizeof(line), file)) {
+            had_lines = true;
+            std::string text{line};
+            text.erase(text.find_last_not_of("\r\n") + 1);
+            const auto eq = text.find('=');
+            if (!text.empty() && text[0] != '#' && eq != std::string::npos) {
+                std::string key = text.substr(0, eq);
+                key.erase(key.find_last_not_of(" \t") + 1);
+                key.erase(0, key.find_first_not_of(" \t"));
+                const auto it = std::find_if(keys.begin(), keys.end(),
+                                             [&](const auto& k) { return k.first == key; });
+                if (it != keys.end()) {
+                    if (it->second) {
+                        out += it->first + "=" + *it->second + "\n";
+                    }
+                    written[size_t(it - keys.begin())] = true;
+                    continue;
+                }
+            }
+            out += text + "\n";
+        }
+        std::fclose(file);
+    }
+    if (!had_lines) {
+        out = "# bbport settings (in-game menu: Insert; L3+R3 with BB_OVERLAY_PAD=1)\n";
+    }
+    for (size_t k = 0; k < keys.size(); ++k) {
+        if (!written[k] && keys[k].second) {
+            out += keys[k].first + "=" + *keys[k].second + "\n";
+        }
+    }
+    // Replaced whole: a crash while writing leaves the old file.
+    const std::string temporary = std::string(Path()) + ".tmp";
+    FILE* file = std::fopen(temporary.c_str(), "w");
+    bool ok = file && std::fwrite(out.data(), 1, out.size(), file) == out.size();
+    ok = file && std::fclose(file) == 0 && ok;
+#ifdef _WIN32
+    // std::rename does not replace an existing file on Windows: every save after the first failed
+    // and the menu's choices (upscaler, preset, resolution...) were lost at the next start.
+    ok = ok && MoveFileExA(temporary.c_str(), Path(),
+                           MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+    ok = ok && std::rename(temporary.c_str(), Path()) == 0;
+#endif
+    if (!ok) {
+        std::printf("Settings: cannot write %s\n", Path());
+    }
+    NoteFileTime();
+}
+
+std::mutex save_mutex; // the menu (present or window thread) and F11 (window thread) both save
+std::atomic<int> bindings_generation{0};
+} // namespace
+
 void Save() {
-    // The menu (present or window thread) and F11 (window thread) both save.
-    static std::mutex save_mutex;
     std::scoped_lock save_lock{save_mutex};
     const auto& v = Get();
     // The keys the menu writes, in this order; the rest of the file stays as it is: the
     // launcher's controls (key.* / pad.*) and its other keys, comments.
-    std::vector<std::pair<std::string, std::string>> keys;
+    std::vector<std::pair<std::string, std::optional<std::string>>> keys;
     const auto put = [&](const char* key, std::string value) { keys.emplace_back(key, std::move(value)); };
     const auto fixed = [](float value, int digits) {
         char text[32];
@@ -519,57 +581,42 @@ void Save() {
         put("menu_pos", fixed(v.menu_x, 4) + "," + fixed(v.menu_y, 4));
     }
 
-    std::string out;
-    bool had_lines = false;
-    std::vector<bool> written(keys.size());
+    WriteMergedLocked(keys);
+}
+
+std::vector<std::pair<std::string, std::string>> ReadLines(const std::string& prefix) {
+    std::vector<std::pair<std::string, std::string>> lines;
     if (FILE* file = std::fopen(Path(), "r")) {
         char line[512];
         while (std::fgets(line, sizeof(line), file)) {
-            had_lines = true;
             std::string text{line};
-            text.erase(text.find_last_not_of("\r\n") + 1);
+            text.erase(text.find_last_not_of(" \t\r\n") + 1);
             const auto eq = text.find('=');
-            if (!text.empty() && text[0] != '#' && eq != std::string::npos) {
-                std::string key = text.substr(0, eq);
-                key.erase(key.find_last_not_of(" \t") + 1);
-                key.erase(0, key.find_first_not_of(" \t"));
-                const auto it = std::find_if(keys.begin(), keys.end(),
-                                             [&](const auto& k) { return k.first == key; });
-                if (it != keys.end()) {
-                    out += it->first + "=" + it->second + "\n";
-                    written[size_t(it - keys.begin())] = true;
-                    continue;
-                }
+            if (text.empty() || text[0] == '#' || eq == std::string::npos) {
+                continue;
             }
-            out += text + "\n";
+            std::string key = text.substr(0, eq);
+            key.erase(key.find_last_not_of(" \t") + 1);
+            key.erase(0, key.find_first_not_of(" \t"));
+            if (key.compare(0, prefix.size(), prefix) == 0) {
+                lines.emplace_back(key, text.substr(eq + 1));
+            }
         }
         std::fclose(file);
     }
-    if (!had_lines) {
-        out = "# bbport settings (in-game menu: Insert; L3+R3 with BB_OVERLAY_PAD=1)\n";
+    return lines;
+}
+
+void WriteBindingLines(const std::vector<std::pair<std::string, std::optional<std::string>>>& lines) {
+    {
+        std::scoped_lock save_lock{save_mutex};
+        WriteMergedLocked(lines);
     }
-    for (size_t k = 0; k < keys.size(); ++k) {
-        if (!written[k]) {
-            out += keys[k].first + "=" + keys[k].second + "\n";
-        }
-    }
-    // Replaced whole: a crash while writing leaves the old file.
-    const std::string temporary = std::string(Path()) + ".tmp";
-    FILE* file = std::fopen(temporary.c_str(), "w");
-    bool ok = file && std::fwrite(out.data(), 1, out.size(), file) == out.size();
-    ok = file && std::fclose(file) == 0 && ok;
-#ifdef _WIN32
-    // std::rename does not replace an existing file on Windows: every save after the first failed
-    // and the menu's choices (upscaler, preset, resolution...) were lost at the next start.
-    ok = ok && MoveFileExA(temporary.c_str(), Path(),
-                           MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
-#else
-    ok = ok && std::rename(temporary.c_str(), Path()) == 0;
-#endif
-    if (!ok) {
-        std::printf("Settings: cannot write %s\n", Path());
-    }
-    NoteFileTime();
+    bindings_generation.fetch_add(1);
+}
+
+int BindingsGeneration() {
+    return bindings_generation.load();
 }
 
 void ReloadMouseTuning() {

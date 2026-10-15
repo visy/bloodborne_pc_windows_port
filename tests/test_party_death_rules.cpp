@@ -17,6 +17,11 @@ static int g_failures = 0;
     } while (0)
 
 int main() {
+    // C5: the spectator's notice.
+    CHECK(SpectateNotice("Hunter0", 1) == "Spectating Hunter0");
+    CHECK(SpectateNotice("Hunter2", 2) == "Spectating Hunter2  -  Cross: next hunter");
+    CHECK(SpectateNotice("", 1) == "Spectating a party member");
+    CHECK(SpectateNotice("Hunter0", 0).empty());
     // Opt-in switches: on only for "1...".
     CHECK(!OptIn(nullptr));
     CHECK(!OptIn(""));
@@ -164,7 +169,13 @@ int main() {
     CHECK(PlanRestLoad(r) == RestLoad::NotReady);
     r.loading = false;
     r.boss_fight = true;
-    CHECK(PlanRestLoad(r) == RestLoad::BossFight);
+    CHECK(PlanRestLoad(r) == RestLoad::BossFight);  // C7: a load out of the boss room
+    r.travel_pending = true;
+    CHECK(PlanRestLoad(r) == RestLoad::Busy);  // a travel / death under way first
+    r.travel_pending = false;
+    r.in_dream = true;
+    CHECK(PlanRestLoad(r) == RestLoad::BossFight);  // Gehrman's fight in the Dream: out too
+    r.in_dream = false;
     r.boss_fight = false;
     r.in_dream = true;
     CHECK(PlanRestLoad(r) == RestLoad::InDream);

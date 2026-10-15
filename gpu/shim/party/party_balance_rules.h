@@ -28,7 +28,7 @@ constexpr float kVanillaHpStep = 0.5f;     ///< SpEffect 7500 - 1.0
 constexpr int kVanillaPoiseStep = 30;      ///< SpEffect 7500 changeSuperArmorPoint
 
 /// What is shown above party members (ERSC overhead_player_display).
-enum class Overhead : int { Off = 0, Name = 1, Level = 2, Health = 3, Deaths = 4, Count = 5 };
+enum class Overhead : int { Off = 0, Name = 1, Level = 2, Health = 3, Deaths = 4, Ping = 5, Count = 6 };
 
 /// The party's rules: the host's settings, sent to every guest (event "balance").
 struct Rules {
