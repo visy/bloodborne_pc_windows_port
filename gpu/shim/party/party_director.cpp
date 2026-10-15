@@ -175,7 +175,7 @@ struct Test {
     int echoes = -1; // echoes=N: writes the player's Blood Echoes once (test saves)
     // approach=X:Z:R[:BUTTON]: walk (pad file sticks, camera-relative, closed loop on the position)
     // until within R m of (X, Z), facing it; then BUTTON (cross / triangle / square / circle) once.
-    bool approach = false, approach_done = false;
+    bool approach = false, approach_done = false, ap_faced = false;
     float ap_x = 0, ap_z = 0, ap_r = 1.0f;
     std::uint32_t ap_button = 0;
     int ap_steps = 0, ap_phase = 0; // 0 idle, 1 moving, 2 settling, 3 arrived, 4 pressing
@@ -2217,7 +2217,13 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
                     const std::int64_t ms = BbGameMenu::TextSeenMs(text.c_str());
                     return ms > 0 ? double(ms) / 1000.0 : -1.0;
                 });
-            runtime_pad_director_press(held);
+            // Only on a change: a wait step must not hold the pad at 0 every frame (live g1g: the
+            // altar autopilot's Cross on "Search using Chalice Glyph" was released at once).
+            static std::uint32_t seq_held = 0;
+            if (held || seq_held) {
+                runtime_pad_director_press(held);
+            }
+            seq_held = held;
             // The raw pad state the game read while a press is held (once per press).
             static std::uint32_t logged_held = 0;
             if (held && held != logged_held) {
@@ -2297,6 +2303,27 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
                     const double secs = std::clamp(dist / 3.0, 0.12, 0.45);
                     t.ap_at = now + std::chrono::milliseconds(static_cast<int>(secs * 1000));
                 }
+            } else if (t.ap_phase == 3 && !t.ap_button && t.st_seq.size() && !t.stand && !t.ap_faced) {
+                // A menu walk follows (an action prompt needs the player to face it; live g1f: the
+                // walk stopped facing away, and a PlayerIns warp does not turn the player in the
+                // Dream): one short stick tap toward the target turns it there (~0.1 m).
+                t.ap_faced = true;
+                const double mx = pos[0] - t.ap_from[0], mz = pos[2] - t.ap_from[1];
+                if (std::sqrt(mx * mx + mz * mz) > 0.05) {
+                    t.ap_angle = wrap(t.ap_angle + wrap(want - std::atan2(mx, mz)));
+                }
+                const int lx = 128 + static_cast<int>(std::lround(127 * std::sin(t.ap_angle)));
+                const int ly = 128 - static_cast<int>(std::lround(127 * std::cos(t.ap_angle)));
+                char tok[48];
+                std::snprintf(tok, sizeof tok, "lx=%d ly=%d", std::clamp(lx, 0, 255), std::clamp(ly, 0, 255));
+                WritePadFile(tok);
+                t.ap_phase = 6;
+                t.ap_at = now + std::chrono::milliseconds(120);
+                Log("test: approach: a short step toward the target to face it (stick %.0f deg)", t.ap_angle * 180 / M_PI);
+            } else if (t.ap_phase == 6) {
+                WritePadFile("");
+                t.ap_phase = 3;
+                t.ap_at = now + std::chrono::milliseconds(600);
             } else if (t.ap_phase == 3) { // arrived: the button
                 if (t.ap_button) {
                     runtime_pad_director_press(t.ap_button);
@@ -2318,7 +2345,27 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         t.st_seq_on = true;
         t.stand = true;
         t.st_phase = 3;
-        Log("test: approach done: the menu walk (seq) starts");
+        // Face the target where the walk stopped (an action prompt needs the player to face it;
+        // live g1c: arrived at 1.25 m facing past the altar, no prompt). The PlayerIns warp at the
+        // own spot only turns the player.
+        float at[3] = {};
+        std::uint64_t vtbl = 0, fn = 0;
+        if (s.player && SafeRead(s.player + 0xc0, at, sizeof at) && SafeGet(s.player, &vtbl) &&
+            SafeGet(vtbl + 0x5f8, &fn) && fn) {
+            std::uint32_t area = 0;
+            float pos[3] = {};
+            if (ReadPlayerPos(&area, pos)) {
+                at[0] = pos[0], at[1] = pos[1], at[2] = pos[2];
+            }
+            alignas(16) float p4[4] = {at[0], at[1], at[2], 1.0f};
+            alignas(16) float rot[4] = {0, static_cast<float>(std::atan2(-(t.ap_x - at[0]), -(t.ap_z - at[2]))), 0, 0};
+            using WarpFn = void(BB_COOP_SYSV*)(std::uint64_t, const float*, const float*, std::uint64_t);
+            reinterpret_cast<WarpFn>(fn)(s.player, p4, rot, 0);
+            Log("test: approach done: turned to face (%.2f, %.2f), yaw %.2f; the menu walk (seq) starts", t.ap_x,
+                t.ap_z, rot[1]);
+        } else {
+            Log("test: approach done: the menu walk (seq) starts");
+        }
     }
     if (t.place && !t.place_done && Seconds(st.world_at, now) >= t.place_at && s.world_up && !s.loading) {
         t.place_done = true;
@@ -2768,8 +2815,9 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
 /// took the party dungeon's glyph, the remaining prompts are answered on the game's own pad path:
 /// OK on "Search using Chalice Glyph", the search result, YES on "Join the selected Chalice
 /// Dungeon?", the altar again and its first awaken point. Text-gated and strict: a prompt that
-/// does not come in 10 s stops the walk (no blind presses). Off by default until verified live
-/// (0.5.2): BB_PARTY_ALTAR_AUTO=1 turns it on.
+/// does not come in 10 s stops the walk (no blind presses). The awaken menu's first Cross is often
+/// swallowed (live g1h: the menu stayed open), so it is pressed up to three times; the load that
+/// starts ends the walk. Off by default until verified live (0.5.2): BB_PARTY_ALTAR_AUTO=1 turns it on.
 void AltarAutopilotTick(const GameSnapshot& s) {
     static const bool off = [] {
         const char* e = std::getenv("BB_PARTY_ALTAR_AUTO");
@@ -2784,7 +2832,7 @@ void AltarAutopilotTick(const GameSnapshot& s) {
         script = MenuScript{};
         std::string bad;
         on = script.Parse("!cross@Search using Chalice Glyph/!cross@Search Results/!left@Join the selected Chalice Dungeon/"
-                          "cross/wait/cross/!cross@Select location to awaken in/wait/cross",
+                          "cross/wait/cross/!cross@Select location to awaken in/wait/cross/wait/cross/wait/cross",
                           &bad);
         Log("altar: entering the party's dungeon (%s)", on ? "prompts answered for the player" : bad.c_str());
     }

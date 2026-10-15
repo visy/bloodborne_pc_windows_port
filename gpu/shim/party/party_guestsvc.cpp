@@ -462,7 +462,12 @@ std::uint64_t BB_COOP_SYSV MultiFilter(std::uint64_t env, std::uint64_t value) {
         const char* a = std::getenv("BB_PARTY_GUEST_ALTARS");
         return a && a[0] == '1';
     }();
-    const bool altar = altars && talk >= 210050 && talk <= 210110 && talk % 10 == 0;
+    // G1 (0.6.2): the HOST's chalice altars too (live g1d: with a guest summoned into the host's
+    // Dream the altar t210100 parked in its empty machine, no prompt, so the host could not enter
+    // the party's dungeon); BB_PARTY_HOST_ALTARS=0 keeps them blocked while a guest is present.
+    static const bool host_altars = !(std::getenv("BB_PARTY_HOST_ALTARS") && std::getenv("BB_PARTY_HOST_ALTARS")[0] == '0');
+    const bool altar = (altars || (host_altars && LocalSessionRole() != kSessionRoleClient)) && talk >= 210050 &&
+                       talk <= 210110 && talk % 10 == 0;
     if (!HeadstoneTalk(talk) && !LampTalk(talk) && !altar) {
         return value;
     }
