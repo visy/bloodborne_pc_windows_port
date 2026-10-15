@@ -1045,8 +1045,10 @@ BBNET_ABI int m2_kickout(unsigned ctx, const KickoutRequest* rq, const RequestOp
     if (req_out) *req_out = req;
     const RequestOptParam o = opt_or_default(opt);
     const KickoutRequest r = *rq;
-    log("sceNpMatching2KickoutRoomMember req %u room %llu member %u (%llu-byte reason)", req,
-        static_cast<unsigned long long>(r.roomId), r.memberId, static_cast<unsigned long long>(r.optDataLen));
+    std::uint32_t why = 0;  // 0xFF000019: the session lock after a boss clear (party_b2 K10b)
+    if (r.optDataLen >= 4) std::memcpy(&why, r.optData, 4);
+    log("sceNpMatching2KickoutRoomMember req %u room %llu member %u (%llu-byte reason 0x%08x)", req,
+        static_cast<unsigned long long>(r.roomId), r.memberId, static_cast<unsigned long long>(r.optDataLen), why);
     const std::string sid = g.session_id;
     const int me = g.member_id;
     session::dispatch_after(0, session::Prio::Request, [o, req, r, sid, me] {
