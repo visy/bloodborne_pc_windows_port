@@ -342,6 +342,7 @@ bool MenuScript::Parse(const std::string& text, std::string* bad) {
         p.buttons = tok == "cross" ? kPadCross : tok == "circle" ? kPadCircle : tok == "square" ? 0x8000u
                   : tok == "triangle" ? 0x1000u : tok == "up" ? kPadUp : tok == "down" ? kPadDown
                   : tok == "left" ? kPadLeft : tok == "right" ? kPadRight : tok == "options" ? kPadOptions
+                  : tok == "l1" ? 0x400u : tok == "r1" ? 0x800u
                   : tok == "wait" || tok.rfind("mark=", 0) == 0 ? kWait : 0u;
         if (!p.buttons) {
             if (bad) *bad = p.name;

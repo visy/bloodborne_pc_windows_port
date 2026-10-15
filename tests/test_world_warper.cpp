@@ -222,6 +222,11 @@ int main() {
         CHECK(!BossSpotOk(boss, settled, stuck));   // inside a wall: no move
         CHECK(!BossSpotOk(boss, fell, fell));       // fell through
         CHECK(!BossSpotOk(boss, far, far2));        // pushed out of the arena
+        float a[3];
+        CHECK(BossArenaSpot(2300800, a) && std::fabs(a[0] + 88.3f) < 1e-3f && !BossArenaSpot(2300801, a));
+        const float spot[3] = {0, 10, 0}, s1[3] = {0, 10.2f, 0}, w1[3] = {0.5f, 10.2f, 0}, w0[3] = {0.1f, 10.2f, 0};
+        const float down[3] = {0, 3, 0};
+        CHECK(ArenaSpotOk(spot, s1, w1) && !ArenaSpotOk(spot, s1, w0) && !ArenaSpotOk(spot, down, down));
     }
     // Gestures and hunter tools: once per run, resumed from the progress file.
     {

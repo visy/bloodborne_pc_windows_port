@@ -161,7 +161,7 @@ struct State {
     int boss_try = -1;            // -1 none, else the candidate being checked
     int boss_check = 0;           // 0 placed, 1 settled (walking toward it), 2 checked
     double boss_check_at = 0;
-    float boss_pos[3] = {}, boss_check_pos[3] = {};
+    float boss_pos[3] = {}, boss_check_pos[3] = {}, boss_spot[3] = {};
     std::size_t bosses_safe = 0, bosses_unsafe = 0;
     u32 target_kind = 0;
     std::map<u64, u32> npc_ids;   // NpcParam row data -> row id (enemy kinds)
@@ -576,16 +576,20 @@ bool ChrYaw(u64 chr, float* yaw) {
     return true;
 }
 
-/// Stands the player at boss candidate spot `i` (BossSpot: in front of the boss first, where an
-/// idle boss looks into its arena), facing the boss.
-bool PlaceAtBoss(u64 player, const EnemyTarget& t, int i, float boss_pos[3]) {
+/// Stands the player at boss candidate spot `i` (0: the arena's entry floor, kBossArenas; 1..4:
+/// BossSpot round the boss, in front first, where an idle boss looks into its arena), facing the
+/// boss. `spot`: where it was put. False: no such spot (no arena entry known for spot 0).
+bool PlaceAtBoss(u64 player, const EnemyTarget& t, int i, float boss_pos[3], float spot[3]) {
     float b[3], yaw = 0;
     if (!balance::ChrPosition(t.chr, b)) return false;
     if (!ChrYaw(t.chr, &yaw)) yaw = 0;
-    float pos[3];
-    BossSpot(b, yaw, i, pos);
+    if (i == 0) {
+        if (!BossArenaSpot(t.entity, spot)) return false;
+    } else {
+        BossSpot(b, yaw, i - 1, spot);
+    }
     boss_pos[0] = b[0], boss_pos[1] = b[1], boss_pos[2] = b[2];
-    return PlacePlayer(player, pos, FaceYaw(pos, b));
+    return PlacePlayer(player, spot, FaceYaw(spot, b));
 }
 
 /// The kill of the director's host_kill test step: ForceDead by id, the chr's death path, HP 0.
@@ -1102,7 +1106,9 @@ void TickImpl(double now) {
                         g.boss_try = 0;
                         g.boss_check = 0;
                         g.boss_check_at = now + 1.5;
-                        PlaceAtBoss(s.player, t, 0, g.boss_pos);
+                        while (g.boss_try < kBossSpots &&
+                               !PlaceAtBoss(s.player, t, g.boss_try, g.boss_pos, g.boss_spot))
+                            ++g.boss_try;
                     } else {
                         GoToEnemy(s.player, t);
                     }
@@ -1119,8 +1125,8 @@ void TickImpl(double now) {
                         {1.2f, 0, -1, -1, -1, -1, "enemy"},     {0.15f, kL2, -1, -1, -1, -1, "enemy"},
                         {1.0f, 0, -1, -1, -1, -1, "enemy"},
                     };
-                    if (boss) {  // its attacks and effects: 10 s more, dodging
-                        for (int i = 0; i < 5; ++i) {
+                    if (boss) {  // its attacks and effects: 20 s more, dodging (it comes to the arena entry)
+                        for (int i = 0; i < 10; ++i) {
                             fight.push_back({0.15f, kR1, -1, -1, -1, -1, "boss"});
                             fight.push_back({1.0f, 0, -1, -1, -1, -1, "boss"});
                             fight.push_back({0.2f, kCircle, 128, 255, -1, -1, "boss"});
@@ -1145,10 +1151,12 @@ void TickImpl(double now) {
                     return;
                 }
                 Release();
-                if (BossSpotOk(g.boss_pos, g.boss_check_pos, me)) {
+                const bool spot_ok = g.boss_try == 0 ? ArenaSpotOk(g.boss_spot, g.boss_check_pos, me)
+                                                     : BossSpotOk(g.boss_pos, g.boss_check_pos, me);
+                if (spot_ok) {
                     ++g.bosses_safe;
-                    Log("row %u: boss %u: spot %d is safe (%.1f m from it, height %+.1f m); fighting", g.rp,
-                        g.target.entity, g.boss_try,
+                    Log("row %u: boss %u: spot %d (%s) is safe (%.1f m from it, height %+.1f m); fighting", g.rp,
+                        g.target.entity, g.boss_try, g.boss_try == 0 ? "the arena's entry" : "round the boss",
                         std::sqrt((me[0] - g.boss_pos[0]) * (me[0] - g.boss_pos[0]) +
                                   (me[2] - g.boss_pos[2]) * (me[2] - g.boss_pos[2])),
                         me[1] - g.boss_pos[1]);
@@ -1158,7 +1166,8 @@ void TickImpl(double now) {
                 Log("row %u: boss %u: spot %d not usable (settled %.1f/%.1f/%.1f, walked %.1f/%.1f/%.1f, boss "
                     "%.1f/%.1f/%.1f)", g.rp, g.target.entity, g.boss_try, g.boss_check_pos[0], g.boss_check_pos[1],
                     g.boss_check_pos[2], me[0], me[1], me[2], g.boss_pos[0], g.boss_pos[1], g.boss_pos[2]);
-                if (++g.boss_try < kBossSpots && PlaceAtBoss(s.player, g.target, g.boss_try, g.boss_pos)) {
+                while (++g.boss_try < kBossSpots) {
+                    if (!PlaceAtBoss(s.player, g.target, g.boss_try, g.boss_pos, g.boss_spot)) continue;
                     g.boss_check = 0;
                     g.boss_check_at = now + 1.5;
                     return;
