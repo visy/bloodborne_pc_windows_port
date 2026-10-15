@@ -1827,12 +1827,37 @@ void HostPlayGuestStory(const GameSnapshot& g, const StoryState& st) {
         g_from_guests.pop_front();
     }
     StoryIntent s = item.second;
+    static std::map<std::uint64_t, double> phase_held;  // G3: guest seq -> when the host got it
     {
         std::lock_guard<std::mutex> lk(g_up_guard_mu);
         if (const char* no = g_up_guard.Refuse(s.id, BossBarShown(), Now())) {
-            Log("host: slot %d's cutscene %u (event %u) dropped: %s", item.first, s.id, s.event_id, no);
+            if (s.instr == 6 && phase_held.erase(s.seq)) {
+                Log("host: slot %d's world phase change %u (event %u): the host's own copy of the event played it "
+                    "(the game sends the guest's action to the host's event)",
+                    item.first, s.id, s.event_id);
+            } else {
+                Log("host: slot %d's cutscene %u (event %u) dropped: %s", item.first, s.id, s.event_id, no);
+            }
             return;
         }
+    }
+    if (s.instr == 6) {
+        // G3: the game itself sends a guest's action-button press to the host's copy of the event
+        // (live g3b: the host's own 12400750 ran its 2002[6], scene + warp + time of day). Wait for
+        // it; play the guest's copy here only when the host's own event does not come.
+        constexpr double kPhaseWait = 6.0;
+        auto it = phase_held.find(s.seq);
+        if (it == phase_held.end()) {
+            it = phase_held.emplace(s.seq, Now()).first;
+            Log("host: slot %d's world phase change %u (event %u): waiting %.0f s for the host's own event", item.first,
+                s.id, s.event_id, kPhaseWait);
+        }
+        if (Now() - it->second < kPhaseWait) {
+            std::lock_guard<std::mutex> lk(g_up_mu);
+            g_from_guests.push_front(item);
+            return;
+        }
+        phase_held.erase(it);
     }
     std::string phase_no;
     static const bool phase_on = !EnvOff("BB_PARTY_STORY_PHASE");
@@ -1846,8 +1871,8 @@ void HostPlayGuestStory(const GameSnapshot& g, const StoryState& st) {
         const u64 ok = reinterpret_cast<PlayRemoWarpTodFn>(Guest(kPlayRemoWarpTod))(
             0, remo, 0, reinterpret_cast<u64>(&packed), s.warp_point, 0, 0, static_cast<u32>(g_player_arg),
             static_cast<u32>(s.tod));
-        Log("host: slot %d changed the world's time of day: remo %u with warp %u @%08x and tod %d played here "
-            "(as 2002[6]) -> %s",
+        Log("host: slot %d changed the world's time of day: the host's own event did not come; remo %u with warp %u "
+            "@%08x and tod %d played here (as 2002[6]) -> %s",
             item.first, remo, s.warp_point, s.warp_map, s.tod, (ok & 0xff) ? "queued" : "NOT queued (no remo player)");
         s.flags = StoryFlagsForRemo(s.id);
         s.seq = NextSeq();

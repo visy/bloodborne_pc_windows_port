@@ -60,6 +60,8 @@ enum class ItemSource : std::uint8_t {
     Test,   ///< BB_PARTY_ITEMS_TEST
     Own,    ///< guest-local: a per-player Messenger gift its game refused in the host's world
     Repeat, ///< guest-local: a repeatable NPC gift (common 9100) its talk asked for in the host's world
+    Chalice, ///< host: a Chalice Dungeon award (boss rewards, area 29): no flag, once per kill, for the
+             ///< guests summoned in the dungeon at that moment (G1; docs/party/chalice.md 5)
 };
 const char* ItemSourceName(ItemSource s);
 ItemSource ItemSourceFromName(const std::string& name);
@@ -117,7 +119,9 @@ struct ItemGrant {
     /// The "already given" flag a guest checks: the lot flag, or the ledger bit.
     std::int64_t DoneFlag() const;
     /// De-duplication key (one grant per flag / ledger bit; a repeatable gift: its own key).
-    std::int64_t Key() const { return source == ItemSource::Repeat ? repeat_key : DoneFlag(); }
+    std::int64_t Key() const {
+        return source == ItemSource::Repeat || source == ItemSource::Chalice ? repeat_key : DoneFlag();
+    }
 };
 std::string DescribeItem(const ItemGrant& g);
 
@@ -166,6 +170,18 @@ constexpr std::int64_t kRepeatKeyBase = std::int64_t(1) << 40;
 /// The guest's own grant of repeatable gift `lot`, the `n`th this session (no flag, no ledger bit:
 /// it is given every time). Nothing for a lot that is not one of them.
 std::optional<ItemGrant> MakeRepeatGrant(std::int32_t lot, std::uint64_t n);
+/// Keys of Chalice Dungeon awards (one per kill): kChaliceKeyBase + n, above the repeat keys.
+constexpr std::int64_t kChaliceKeyBase = std::int64_t(1) << 41;
+/// A Chalice Dungeon lot (1100xxxxx / 2001xxxxx and every lot >= 100,000,000, area 29 lots): C3
+/// never replays it by flag (dungeon flags are the slot's own); the host's award goes to the guests
+/// present instead (ItemSource::Chalice).
+bool ChaliceAwardLot(std::int32_t lot);
+/// The host's Chalice award `n` of this session: what its roll gave (`items`, required: a guest
+/// never rolls a dungeon lot itself), no flag, no ledger bit. nullopt for anything else.
+std::optional<ItemGrant> MakeChaliceGrant(std::int32_t lot, const std::vector<GrantItem>& items, std::uint64_t n);
+/// Guest: take a Chalice award only while it is a summoned phantom (load mode 1) in a Chalice
+/// Dungeon (map area 29): the guests at the kill. At home / elsewhere it is not this player's.
+bool ChaliceGrantAccepted(bool summoned, std::uint32_t map_id);
 
 /// Host hook: the grant for an award of `lot` (no seq yet), or nothing (client lots, denied,
 /// flagless lots outside the ledger).
