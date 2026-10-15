@@ -44,6 +44,12 @@ public:
     /// Mouse sampler thread: applies relative motion to the camera.
     void OnMouseMotion(float xrel, float yrel);
 
+    /// BB_CAM_PROBE=1 (measurement aid, window thread): hooks only the camera-object capture, so
+    /// the game still turns the camera from the stick, and reads its angles for the log. Direct
+    /// mode is not used in such a run. ReadAngles is false until the camera has run once.
+    bool StartProbe();
+    bool ReadAngles(float& yaw, float& pitch) const;
+
 private:
     BloodborneCam() = default;
     ~BloodborneCam();
@@ -57,6 +63,8 @@ private:
     std::atomic<bool> m_configured{false};
     std::atomic<float> m_scale{1.0f};
     std::atomic<bool> m_lockedOn{false};
+    bool m_probe = false;
+    bool m_probeHooked = false;
     bool m_addressesResolved = false;
     bool m_addressSearchFailed = false;
 

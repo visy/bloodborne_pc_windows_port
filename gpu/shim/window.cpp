@@ -436,6 +436,26 @@ bool WindowSDL::PollEvents() {
 // code is not found it logs once and stays on the mouse-to-stick look.
 void WindowSDL::UpdateMouseCamera() {
     Core::BloodborneCam& cam = Core::BloodborneCam::Instance();
+    // BB_CAM_PROBE=1 (measurement aid: camera turn per mouse count, tests): the camera's angles
+    // in the log every 100 ms; the stick keeps turning it (no direct mode in such a run).
+    static const bool probe = [] {
+        const char* v = std::getenv("BB_CAM_PROBE");
+        return v && v[0] == '1';
+    }();
+    if (probe) {
+        static u64 next_try_ms = 10000, next_log_ms;
+        const u64 now = SDL_GetTicks();
+        if (now >= next_try_ms && !cam.StartProbe()) {
+            next_try_ms = now + 5000;
+        }
+        float yaw = 0.0f, pitch = 0.0f;
+        if (now >= next_log_ms && cam.ReadAngles(yaw, pitch)) {
+            next_log_ms = now + 100;
+            std::printf("Camera probe: t=%llu yaw %.5f pitch %.5f\n",
+                        static_cast<unsigned long long>(now), yaw, pitch);
+        }
+        return;
+    }
     const auto& s = BbSettings::Get();
     const bool wanted = s.mk_enabled.load() && s.mk_direct_camera.load();
     cam.Configure(wanted, 1.0f);
