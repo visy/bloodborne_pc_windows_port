@@ -259,6 +259,11 @@ static void TestPolicy() {
     CHECK(ModeFor(p, 12100180) == SyncMode::Off);      // ending event
     CHECK(ModeFor(p, 12400150) == SyncMode::State);    // elevator
     CHECK(ModeFor(p, 12400147) == SyncMode::State);
+    // P9 (quest_audit): the one-way doors that close again follow the host both ways (open AND
+    // shut), so the guest's own save is not left with a door the host's world has closed.
+    CHECK(ModeFor(p, 12400157) == SyncMode::State);
+    CHECK(ModeFor(p, 12400177) == SyncMode::State);
+    CHECK(ModeFor(p, 12700173) == SyncMode::State);
     CHECK(ModeFor(p, 5000) == SyncMode::Off);          // item lot: C3
     CHECK(ModeFor(p, 1005) == SyncMode::Off);          // npc quest
     CHECK(ModeFor(p, 2000) == SyncMode::Off);          // session runtime

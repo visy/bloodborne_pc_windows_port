@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "bbport_headless.h"
+#include "bbport_present_hold.h"
 #include "common/debug.h"
 #include "common/elf_info.h"
 #include "common/io_file.h"
@@ -1503,6 +1504,35 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
             }
             Check(instance.GetDevice().waitForFences(frame->present_done, true,
                                                      std::numeric_limits<u64>::max()));
+        }
+    }
+    // bbport: present hold (bbport_present_hold.h, the host's first-fight visit): the first game
+    // frame of a hold is shown and kept out of the free queue; the next ones go back unseen while
+    // that one is shown again (as DrawLastFrame shows the last frame); the held one is freed when
+    // the hold is over. Not with frame generation (its own pacing owns the presents).
+    if (!is_reusing_frame && is_game_frame && !generation) {
+        if (BbPresentHold::Active()) {
+            if (held_frame == nullptr) {
+                PresentOne(frame, frame->image, frame->image_view, true, 0);
+                held_frame = frame;
+                last_submit_frame = frame;
+            } else {
+                last_submit_frame = held_frame;
+                if (Frame* again = PrepareLastFrame()) {
+                    PresentOne(again, again->image, again->image_view, true, 0);
+                }
+                std::scoped_lock fl{free_mutex};
+                free_queue.push(frame);
+                free_cv.notify_one();
+            }
+            DebugState.IncFlipFrameNum();
+            return;
+        }
+        if (held_frame != nullptr) {
+            std::scoped_lock fl{free_mutex};
+            free_queue.push(held_frame);
+            free_cv.notify_one();
+            held_frame = nullptr;
         }
     }
     // Ordinary frames, loading screens, unavailable or failed generation and expired slots all

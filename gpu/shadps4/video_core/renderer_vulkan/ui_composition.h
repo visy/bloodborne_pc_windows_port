@@ -33,6 +33,19 @@ inline std::array<uint32_t, 2> Canvas() {
     return canvas;
 }
 
+// Ultrawide (from Supermedo/bloodborne_pc PR #70 by emurphy04): the fraction of the width on each
+// side of the 1920-wide stage that a UI background copy leaves black. Menus without a scene draw
+// their backdrop over the stage only, beside it the game's grey clear color. A frame with a scene
+// (G-buffer depth this frame: the world with the upscaler off, or a menu over the world) fills the
+// whole width: cut, the world was not drawn beside the stage (fix from Supermedo/bloodborne_pc
+// 25e5651d by emurphy04).
+inline float StageSide(bool scene, uint32_t canvas_width) {
+    if (scene || canvas_width <= 1920) {
+        return 0.0f;
+    }
+    return 0.5f * (1.0f - 1920.0f / float(canvas_width));
+}
+
 inline bool NativeViewport(float width, float height) {
     return std::abs(std::abs(width) - float(Canvas()[0])) < 0.5f &&
            std::abs(std::abs(height) - float(Canvas()[1])) < 0.5f;
