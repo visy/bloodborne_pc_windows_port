@@ -75,19 +75,22 @@ def phase_s2():
         "host_kill=2410800@12%m24_01",                            # the boss kill (its defeat path)
     ])
     g1 = ",".join([
+        "award_lot=10002420",               # an item box on the summoned guest (its OK row, closed by Cross)
+        "guest_press=0x4000@16",
         "guest_move=%s@50%%m24_01" % CLERIC_SPOT_GUEST,
         "guest_leave@30%m24_01",            # Leave right after the kill (no load between), then Rejoin
         "guest_rejoin@8",
     ])
     return dict(
-        name="s2", seconds=540,
+        name="s2", seconds=560,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + CLERIC_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1,
               # crash-restarted games: no second run of the chain; the restarted host Leaves last
-              "0:BB_PARTY_DIRECTOR_TEST_RESTART=host_leave@60", "1:BB_PARTY_DIRECTOR_TEST_RESTART=none",
+              "0:BB_PARTY_DIRECTOR_TEST_RESTART=host_leave@45", "1:BB_PARTY_DIRECTOR_TEST_RESTART=none",
               "2:BB_PARTY_DIRECTOR_TEST_RESTART=none"],
-        # guest 1 crashes 20 s after its rejoin press; the host crashes 40 s after guest 1 is back.
-        crash=[r"1:guest_rejoin: Party > Rejoin pressed@25", r"1/0:cooperators 1 -> 2@40"],
+        # guest 1 crashes 25 s after its Rejoin press (after the boss kill: a title join into a cleared
+        # area); the host crashes 40 s after guest 1 is back in its room.
+        crash=[r"1:guest_rejoin: Party > Rejoin pressed@25", r"0:cooperators [01] -> 2@40"],
     )
 
 
@@ -200,8 +203,14 @@ def check_common(v, L, tag):
     none_of(v, L, tag + ": no 'Session lost'", r"Session lost")
 
 
+def harness_crashes(d: Path):
+    p = d / "harness.log"
+    text = p.read_text(errors="replace") if p.exists() else ""
+    return [(float(t), int(i)) for t, i in re.findall(r"\[harness \+([\d.]+) s\] crash \d+ of \d+: instance (\d+)", text)]
+
+
 def check_s1(v, L):
-    j = need(v, L, "s1 join: 3 players (host cooperators -> 2)", 0, r"cooperators [01] -> 2")
+    need(v, L, "s1 join: 3 players (host cooperators -> 2)", 0, r"cooperators [01] -> 2")
     lv = need(v, L, "s1 Leave (guest 1, Party page)", 1, r"guest_leave: Party > Leave pressed")
     if lv is not None:
         need(v, L, "s1 Leave: host sees it (2 -> 1)", 0, r"cooperators 2 -> 1", lv)
@@ -212,40 +221,65 @@ def check_s1(v, L):
                 v.step("s1 Rejoin time (press -> host room)", back - rj < 30, "%.1f s (limit 30)" % (back - rj))
     d = need(v, L, "s1 guest death (scripted)", 1, r"travel step \d+/\d+: guest_die", lv or 0)
     if d is not None:
-        need(v, L, "s1 bloodstain recorded", 1, r"bloodstain", d)
+        need(v, L, "s1 bloodstain recorded (5000 echoes)", 1, r"guest: bloodstain recorded", d)
+        need(v, L, "s1 guest revived at the lamp", 1, r"guest: died alone: revived|revived at", d)
     tr = need(v, L, "s1 party lamp travel (host)", 0, r"travel step \d+/\d+: host_warp to lamp 2412953")
     if tr is not None:
         for i in (1, 2):
             need(v, L, "s1 travel: guest %d in m24_01" % i, i, r"map .*-> m24_01", tr)
-    gm = need(v, L, "s1 guest-started boss: guest in the trigger", 1, r"travel step \d+/\d+: guest_move", tr or 0)
+    gm = need(v, L, "s1 guest at Gascoigne's fog", 1, r"travel step \d+/\d+: guest_obj", tr or 0)
     if gm is not None:
-        need(v, L, "s1 boss intro / fight on the host", 0, r"(?i)boss (health )?bar|cutscene|remo", gm)
+        need(v, L, "s1 guest-started intro on the host", 0, r"(?i)cutscene 24010010|remo 24010010|24010010", gm)
+        need(v, L, "s1 guest-started intro on guest 1 (live mirror)", 1, r"(?i)live mirror|24010010", gm)
     hd = need(v, L, "s1 host death in the fight", 0, r"travel step \d+/\d+: host_die", gm or 0)
     if hd is not None:
-        need(v, L, "s1 limbo / spectate (host)", 0, r"(?i)spectat|limbo", hd)
-    need(v, L, "s1 wipe: the party respawns together", 0, r"(?i)wipe|every member is down", hd or 0)
+        need(v, L, "s1 host limbo + spectate", 0, r"spectating: following", hd)
+    need(v, L, "s1 wipe: the party respawns together", 0, r"a wipe; the party respawns together", hd or 0)
     check_common(v, L, "s1")
 
 
-def check_s2(v, L):
+def check_s2(v, L, d: Path):
     need(v, L, "s2 join: 3 players", 0, r"cooperators [01] -> 2")
+    ib = need(v, L, "s2 item box on the summoned guest", 1, r"item notice up on a summoned guest")
+    if ib is not None:
+        need(v, L, "s2 item box OK row closes it (Cross)", 1, r"item notice closed", ib)
     tr = need(v, L, "s2 party lamp travel to the Cleric Beast", 0, r"travel step \d+/\d+: host_warp to lamp 2412952")
-    k = need(v, L, "s2 boss kill (host)", 0, r"travel step \d+/\d+: host_kill", tr or 0)
+    k = need(v, L, "s2 boss kill (host)", 0, r"host boss kill", tr or 0)
     if k is not None:
-        for i in (0, 1, 2):
-            need(v, L, "s2 boss kill counted on inst%d" % i, i, r"(?i)boss kill|K10|defeat", k)
-        need(v, L, "s2 item box OK row (guest 1)", 1, r"(?i)item box", k)
+        need(v, L, "s2 boss kill reached guest 1", 1, r"host boss kill", k)
+        need(v, L, "s2 boss kill reached guest 2", 2, r"host boss kill", k)
+        need(v, L, "s2 the party stays after the boss (K10)", 0, r"K10: boss-clear leave suppressed", k)
     lv = need(v, L, "s2 Leave after the boss kill", 1, r"guest_leave: Party > Leave pressed", k or 0)
-    if lv is not None:
-        rj = need(v, L, "s2 Rejoin pressed", 1, r"guest_rejoin: Party > Rejoin pressed", lv)
-        if rj is not None:
-            back = need(v, L, "s2 Rejoin after the kill: back in", 0, r"cooperators 1 -> 2", rj)
-            none_of(v, L, "s2 no kick after the rejoin", r"KickoutRoomMember|kicked", rj, (back or rj) + 30, (0,))
-    c1 = need(v, L, "s2 guest crash (harness)", 1, r"Party: .*crash|restart", (lv or 0) + 10)
+    rj = need(v, L, "s2 Rejoin pressed", 1, r"guest_rejoin: Party > Rejoin pressed", lv or 0) if lv else None
+    if rj is not None:
+        back = need(v, L, "s2 Rejoin after the kill: back in", 0, r"cooperators 1 -> 2", rj)
+        none_of(v, L, "s2 no kick after the rejoin", r"KickoutRoomMember req", rj, (back or rj) + 30, (0,))
+    crashes = harness_crashes(d)
+    g = [t for t, i in crashes if i == 1]
+    h = [t for t, i in crashes if i == 0]
+    v.step("s2 guest crash (harness kill)", bool(g), "+%.1f s" % g[0] if g else "the crash plan did not fire")
+    if g:
+        end = h[0] if h else 1e9
+        back = need(v, L, "s2 guest crash: back in the host's room", 0, r"cooperators 1 -> 2", g[0], end)
+        if back is not None:
+            v.step("s2 guest crash rejoin time (kill -> room)", back - g[0] < 45, "%.1f s (limit 45)" % (back - g[0]))
+        none_of(v, L, "s2 guest crash: no failed title join", r"title join: FAILED", g[0], end, (1,))
+        none_of(v, L, "s2 guest crash: nobody kicked", r"KickoutRoomMember req", g[0], end, (0,))
+    v.step("s2 host crash (harness kill)", bool(h), "+%.1f s" % h[0] if h else "the crash plan did not fire")
+    if h:
+        need(v, L, "s2 host crash: guest 1 goes home / waits", 1, r"host lost|Waiting for the host", h[0])
+        need(v, L, "s2 host crash: the host restarts", 0, r"crash restart: the director test chain", h[0])
+        back = need(v, L, "s2 host crash: the party back together", 0, r"cooperators 0 -> [12]", h[0])
+        if back is not None:
+            v.step("s2 host crash recovery time (kill -> first guest back)", back - h[0] < 90, "%.1f s (limit 90)" % (back - h[0]))
+        hl = need(v, L, "s2 host Leave (restarted host)", 0, r"host_leave: Party > Leave pressed", h[0])
+        if hl is not None:
+            for i in (1, 2):
+                t = need(v, L, "s2 host Leave: guest %d out" % i, i, r"the host ended the party", hl, hl + 15)
     check_common(v, L, "s2")
 
 
-CHECKS = {"s1": check_s1, "s2": check_s2}
+CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2}
 
 
 def main():
@@ -267,7 +301,7 @@ def main():
         if not a.check_only:
             run_phase(a, ph, out / name)
         print("[smoke] verdict %s" % name, flush=True)
-        CHECKS[name](v, Logs(out / name))
+        CHECKS[name](v, Logs(out / name), out / name)
     fails = [r for r in v.rows if not r[1]]
     text = "\n".join("%s  %s  %s" % ("PASS" if ok else "FAIL", n, d) for n, ok, d in v.rows)
     text += "\n\n%d steps, %d failed\n" % (len(v.rows), len(fails))
