@@ -1639,21 +1639,48 @@ void GuestNoticeTick(const GameSnapshot& g, double now) {
             return;
         }
     }
+    // Opened: is it on screen (menu +0x78)? A box opened in the frames a load ends never shows
+    // (live R1: "shown" under the loading screen, gone with it): open it again, 3 times at most.
+    static std::uint64_t open_seq = 0;
+    static double open_at = 0;
+    static int opens = 0;
+    if (open_seq == n.seq) {
+        if (split::DialogUp()) {
+            std::lock_guard<std::mutex> lk(g_notice_mu);
+            if (!g_notice_guest.empty() && g_notice_guest.front().first.seq == n.seq) {
+                g_notice_guest.pop_front();
+            }
+            Log("guest: story notice %u on screen (game message, OK) %.1f s after the host's", n.message, now - since);
+            open_seq = 0;
+            return;
+        }
+        if (now - open_at < 2.5) {
+            return;
+        }
+        if (opens >= 3) {
+            std::lock_guard<std::mutex> lk(g_notice_mu);
+            if (!g_notice_guest.empty() && g_notice_guest.front().first.seq == n.seq) {
+                g_notice_guest.pop_front();
+            }
+            Log("guest: story notice %u did not show after %d tries: dropped", n.message, opens);
+            open_seq = 0;
+            return;
+        }
+        Log("guest: story notice %u not on screen 2.5 s after opening: again", n.message);
+    }
     const bool cut = g.world_up && RemoPlaying();
-    if (!StoryNoticeShowNow(g.world_up, g.loading, cut, false, Calm(now))) {
+    const bool settled = g_tick.world_was_up && now - g_tick.world_since >= 3.0;
+    if (!settled || !StoryNoticeShowNow(g.world_up, g.loading, cut, false, Calm(now))) {
         return;
     }
     const u32 text = BbGameMenu::Pages::StoryNoticeText(n.message);
     if (!text || !split::ShowMessage(text)) {
         return;  // another dialog / menu is up: next frame
     }
-    {
-        std::lock_guard<std::mutex> lk(g_notice_mu);
-        if (!g_notice_guest.empty() && g_notice_guest.front().first.seq == n.seq) {
-            g_notice_guest.pop_front();
-        }
-    }
-    Log("guest: story notice %u shown (game message, OK) %.1f s after the host's", n.message, now - since);
+    opens = open_seq == n.seq ? opens + 1 : 1;
+    open_seq = n.seq;
+    open_at = now;
+    Log("guest: story notice %u opened (try %d)", n.message, opens);
 }
 
 bool PopHostStory(StoryIntent* out) {
