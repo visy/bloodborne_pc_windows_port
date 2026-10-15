@@ -611,8 +611,16 @@ void DefineAll() {
                 AddText("5120 x 1440 (32:9)", "5120 x 1440 (32:9)")},
                Kind::Steps);
     }
-    AddRow(Flag(&Values::show_fps), "FPS counter", "Счётчик FPS", "Frame rate in the top right corner",
-           "Частота кадров в правом верхнем углу", toggle, Kind::Toggle);
+    // Volumetric effects resolution (idea from a playtester; volumetric_resolution.h). Live.
+    AddRow(Setting(
+               Kind::Steps, [](const Values& v) { return std::clamp(v.volumetric_res.load(), 0, 2); },
+               [](int i) { BbSettings::Get().volumetric_res = std::clamp(i, 0, 2); }, 3),
+           "Volumetric effects", "Объёмные эффекты",
+           "Smoke, mist and fog effects' buffer: 0-2 game (half), 3-7 2x pixels, 8-10 full resolution",
+           "Буфер дыма, тумана и дымки: 0-2 как в игре (половина), 3-7 2x пикселей, 8-10 полное",
+           {AddText("Game default", "Как в игре"), AddText("2x pixels", "2x пикселей"),
+            AddText("Full resolution", "Полное разрешение")},
+           Kind::Steps);
     AddRow(Setting(
                Kind::Steps,
                [](const Values& v) {
@@ -839,9 +847,11 @@ void DefineAll() {
             AddText("Bottom left", "Снизу слева"), AddText("Bottom right", "Снизу справа")},
            Kind::List);
 
-    // ---- HUD details: what the performance HUD shows. ----
-    AddPage("HUD details", "Данные оверлея", "What the performance HUD shows (bbport)",
-            "Что показывает оверлей FPS (bbport)");
+    // ---- HUD details: what the performance HUD shows (and the plain FPS counter). ----
+    AddPage("HUD details", "Данные оверлея", "What the performance HUD shows, FPS counter (bbport)",
+            "Что показывает оверлей FPS, счётчик FPS (bbport)");
+    AddRow(Flag(&Values::show_fps), "FPS counter", "Счётчик FPS", "Frame rate in the top right corner",
+           "Частота кадров в правом верхнем углу", toggle, Kind::Toggle);
     AddRow(Flag(&Values::hud_graph), "Frame-time graph", "График кадров",
            "The last 120 frame times; spikes are stutters", "Время последних 120 кадров; пики — подтормаживания",
            toggle, Kind::Toggle);

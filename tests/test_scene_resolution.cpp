@@ -9,14 +9,66 @@
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_scene_resolution.h"
+#include "video_core/renderer_vulkan/volumetric_resolution.h"
 #include "video_core/texture_cache/blit_helper.h"
 #include <vk_mem_alloc.h>
 // bbgpu's headers above are seen with its NDEBUG (gpu/CMakeLists.txt); the checks use assert().
 #undef NDEBUG
 #include <cassert>
 
+// Volumetric effects resolution: the pure rules (no device).
+static void VolumetricRules() {
+    using namespace Vulkan;
+    namespace V = VolumetricResolution;
+    using S = SceneResolution::Size;
+    // Levels: game, 7/5 (1.96x the pixels), 2 (the scene's size); clamped.
+    assert((V::Scaled({960, 540}, V::Game) == S{960, 540}));
+    assert((V::Scaled({960, 540}, V::Double) == S{1344, 756}));
+    assert((V::Scaled({960, 540}, V::Full) == S{1920, 1080}));
+    assert((V::Scaled({1280, 720}, 7) == S{2560, 1440}));
+    assert(V::ClampLevel(-1) == 0 && V::ClampLevel(9) == 2);
+    // FragCoord: 1920 / width must equal guest / proxy (here 1/2 and 5/7).
+    assert(SceneResolution::Unpack(V::PackFragScale({1920, 1080}, {960, 540})) == (S{3840, 2160}));
+    assert(SceneResolution::Unpack(V::PackFragScale({1344, 756}, {960, 540})) == (S{2688, 1512}));
+    // Startup-patched 1440p scene: half 1280x720, full proxy 2560x1440 -> the same factor 2.
+    assert(SceneResolution::Unpack(V::PackFragScale({2560, 1440}, {1280, 720})) == (S{3840, 2160}));
+    float scale[2];
+    V::TargetScale({1920, 1080}, {960, 540}, scale);
+    assert(scale[0] == 2.0f && scale[1] == 2.0f);
+    // Rule 1: a depth+stencil half the G-buffer depth's size (odd sizes rounded up); not without
+    // stencil (shadow maps), not before the G-buffer depth is known, not a quarter size.
+    V::PassFacts f{.scene_depth = {1920, 1080}, .has_depth = true, .depth_has_stencil = true,
+                   .depth_size = {960, 540}};
+    assert(V::DepthIsVolumetric(f));
+    f.depth_size = {480, 270};
+    assert(!V::DepthIsVolumetric(f));
+    f.depth_size = {1720, 720};
+    f.scene_depth = {3440, 1440};
+    assert(V::DepthIsVolumetric(f));
+    f.scene_depth = {1281, 721};
+    f.depth_size = {641, 361};
+    assert(V::DepthIsVolumetric(f));
+    f.depth_has_stencil = false;
+    assert(!V::DepthIsVolumetric(f));
+    f = {.scene_depth = {0, 0}, .has_depth = true, .depth_has_stencil = true, .depth_size = {960, 540}};
+    assert(!V::DepthIsVolumetric(f));
+    f.depth_volumetric = true; // classified before: stays
+    assert(V::DepthIsVolumetric(f));
+    // Rule 2: colors of the depth's size only.
+    f = {.scene_depth = {1920, 1080}, .has_depth = true, .depth_has_stencil = true, .depth_size = {960, 540}};
+    assert(V::ColorWithVolumetricDepth(f, {960, 540}));
+    assert(!V::ColorWithVolumetricDepth(f, {1920, 1080}));
+    // Rule 3: half-size passes without depth (blur, upsample); not the full-size composite.
+    assert(V::ColorFromVolumetricSample(false, {960, 540}, {960, 540}));
+    assert(!V::ColorFromVolumetricSample(false, {1920, 1080}, {960, 540}));
+    assert(!V::ColorFromVolumetricSample(true, {960, 540}, {960, 540}));
+    assert(!V::ColorFromVolumetricSample(false, {960, 540}, {0, 0}));
+    std::puts("Volumetric rules: ok");
+}
+
 int main() {
     using namespace Vulkan;
+    VolumetricRules();
     Instance instance(0, false);
     // Calls emitted by this executable use a local dispatcher. libbbgpu.so initializes
     // its own default dispatcher while constructing Instance.

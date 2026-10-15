@@ -794,7 +794,18 @@ void DisplayTab() {
              "в размере пресета, смена — через перезапуск. Авто включает её на мощных дискретных "
              "видеокартах. Применяется после перезапуска игры."),
            true, [&](int i) { Store(s.live_resolution, i - 1, true); });
-    Toggle("fps", T("FPS counter", "Счётчик FPS"), s.show_fps,
+    const char* volumetric_levels[] = {T("Game default (half)", "Как в игре (половина)"),
+                                       T("2x pixels", "2x пикселей"),
+                                       T("Full resolution", "Полное разрешение")};
+    Choice("volumetric", T("Volumetric effects resolution", "Разрешение объёмных эффектов"),
+           std::clamp(s.volumetric_res.load(), 0, 2), 3, [&](int i) { return volumetric_levels[i]; },
+           [](int) { return true; },
+           T("Smoke, mist and fog effects are drawn into a half-resolution buffer by the game; "
+             "2x pixels or full resolution make them less blocky at a GPU cost. Live.",
+             "Дым, туман и дымка рисуются игрой в буфер половинного разрешения; 2x пикселей или "
+             "полное разрешение делают их менее блочными ценой нагрузки на видеокарту. Сразу."),
+           true, [&](int i) { Store(s.volumetric_res, i, true); });
+    Toggle("fps",T("FPS counter", "Счётчик FPS"), s.show_fps,
            s.show_hud ? T("The performance HUD is on and shows the frame rate itself.",
                           "Включён оверлей производительности: частота кадров показана в нём.")
                       : T("Frames per second and frame time in the top right corner. The "

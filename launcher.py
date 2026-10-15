@@ -42,6 +42,16 @@ ANISO_CHOICES = [
     ("2x", "2", "2x anisotropic filtering"),
     ("Off", "0", "Game's default anisotropic filtering (no override)"),
 ]
+
+# Volumetric effects resolution (idea from a playtester): the game's half-resolution buffer of
+# smoke, mist and fog effects. "In-game setting" leaves bbport.ini's volumetric_res (the Display
+# page) alone; the others set BB_VOLUMETRIC_RES, which wins over it.
+VOLUMETRIC_CHOICES = [
+    ("In-game setting", ""),
+    ("Game default (half)", "0"),
+    ("2x pixels", "1"),
+    ("Full resolution", "2"),
+]
 # (label, BB_PREUPLOAD value); "" keeps run.bat's default (1)
 PREUPLOAD_CHOICES = [("Normal", ""), ("Full (~3 GB more VRAM, 12 GB+ GPU)", "2"), ("Off", "0")]
 # (label, BB_FRAMES_AHEAD value): guest frames the GPU thread may run ahead of the display
@@ -596,6 +606,11 @@ def settings_env(s: dict) -> dict:
     # Anisotropic filtering (0 = game default, 2/4/8/16 = forced)
     aniso_mapping = {c[0]: c[1] for c in ANISO_CHOICES}
     env["BB_ANISO"] = aniso_mapping.get(s.get("aniso", "16x"), "16")
+
+    # Volumetric effects resolution: only when chosen here (else the in-game setting counts)
+    volumetric = dict(VOLUMETRIC_CHOICES).get(s.get("volumetric_res", VOLUMETRIC_CHOICES[0][0]), "")
+    if volumetric:
+        env["BB_VOLUMETRIC_RES"] = volumetric
 
     # Bloodborne.xml Patches
     active_patches = sorted(s.get("enabled_patches", ["Skip Intro"]))
@@ -1485,6 +1500,9 @@ class BloodborneLauncher(tk.Tk):
         self.res_var = tk.StringVar(value=res if res in RES_CHOICES else RES_CHOICES[0])
         self.timeout_var = tk.StringVar(value=matching_choice)
         self.aniso_var = tk.StringVar(value=aniso)
+        volumetric = self.settings.get("volumetric_res", VOLUMETRIC_CHOICES[0][0])
+        self.volumetric_var = tk.StringVar(
+            value=volumetric if volumetric in dict(VOLUMETRIC_CHOICES) else VOLUMETRIC_CHOICES[0][0])
         self.aniso_desc_var = tk.StringVar()
 
         # Monitor (BB_DISPLAY) and controller (BB_GAMEPAD), listed by bb-gpu-capabilities.exe
@@ -1695,6 +1713,10 @@ class BloodborneLauncher(tk.Tk):
         self.aniso_desc_lbl.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(0, 2))
         sec.next_row += 1
         self.update_aniso_desc()
+        self._combo(sec, "Volumetric effects:", self.volumetric_var, [c[0] for c in VOLUMETRIC_CHOICES],
+                    "Resolution of the game's smoke, mist and fog effects buffer (half resolution in the "
+                    "game). 2x pixels / Full resolution: less blocky, some GPU cost. In-game setting: the "
+                    "System > Display page decides (BB_VOLUMETRIC_RES).", width=18)
         # Upstream 0.51: NVIDIA's DLSS library chosen by the player (vk_dlss.cpp looks in
         # <user>/dlss first, then next to bbport.exe; the bridge bbport_dlss.dll stays next to it).
         dlss_row = ttk.Frame(sec, style="Card.TFrame")
@@ -3261,6 +3283,7 @@ class BloodborneLauncher(tk.Tk):
             "fps": self.fps_var.get(),
             "res": self.res_var.get(),
             "aniso": self.aniso_var.get(),
+            "volumetric_res": self.volumetric_var.get(),
             "timeout": self.timeout_var.get().split()[0],
             "mods": self.feat_mods.get(),
             "dream_mirror": self.feat_dream_mirror.get(),

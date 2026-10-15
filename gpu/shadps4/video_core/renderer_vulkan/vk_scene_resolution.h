@@ -65,6 +65,42 @@ public:
     }
     void ResolveAll();
     bool debug = false; ///< BB_SCENE_DEBUG frame: print resolves and fills
+
+    // ---- Volumetric effects resolution (volumetric_resolution.h) ----
+    /// The level (VolumetricResolution::Level) from the next frame on; a change resolves and
+    /// drops every proxy (like SetSize). Returns whether it changed.
+    bool SetVolumetricLevel(int level);
+    [[nodiscard]] int VolumetricLevel() const noexcept {
+        return volumetric_level;
+    }
+    [[nodiscard]] bool VolumetricActive() const noexcept {
+        return volumetric_level != 0;
+    }
+    /// The G-buffer pass's depth size (rule 1's reference).
+    void NoteSceneDepth(SceneResolution::Size size) {
+        scene_depth = size;
+    }
+    [[nodiscard]] SceneResolution::Size SceneDepth() const noexcept {
+        return scene_depth;
+    }
+    /// The volumetric depth's size (rule 3's reference; 0x0 until seen).
+    [[nodiscard]] SceneResolution::Size VolumetricHalf() const noexcept {
+        return volumetric_half;
+    }
+    /// Queues `id` as volumetric from the next frame on (a pass keeps one size within a frame).
+    void QueueVolumetric(VideoCore::ImageId id, const VideoCore::Image& image);
+    /// Frame start: applies the queued classifications. Returns whether any image changed.
+    bool CommitVolumetric();
+    /// Changes when the volumetric classification or level changes (render state memo key).
+    [[nodiscard]] u64 VolumetricGeneration() const noexcept {
+        return volumetric_generation;
+    }
+    /// The volumetric images classified so far (diagnostics, the log line).
+    [[nodiscard]] std::size_t VolumetricCount() const noexcept {
+        return volumetric_count;
+    }
+    /// The size `image` would have without the volumetric scale (its proxy's base).
+    SceneResolution::Size BaseSize(const VideoCore::Image&, u32 level = 0) const;
 private:
     struct Entry {
         VideoCore::ImageId source{};
@@ -102,6 +138,12 @@ private:
     bool copying = false;
     bool force_stencil_bits = false; ///< test the portable resampler on any driver
     u64 generation = 0;
+    int volumetric_level = 0;
+    u64 volumetric_generation = 0;
+    std::size_t volumetric_count = 0;
+    SceneResolution::Size scene_depth{0, 0};
+    SceneResolution::Size volumetric_half{0, 0};
+    std::vector<std::pair<VideoCore::ImageId, u64>> volumetric_queue;
     mutable std::unordered_map<vk::Format, vk::FormatFeatureFlags> format_features;
     mutable std::array<vk::FormatFeatureFlags, 256> format_table{};
     mutable std::array<bool, 256> format_known{};

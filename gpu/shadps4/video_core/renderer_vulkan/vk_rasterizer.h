@@ -288,6 +288,13 @@ private:
     void PrepareRenderState(const GraphicsPipeline* pipeline);
     RenderState BeginRendering(const GraphicsPipeline* pipeline);
     RenderState BeginRenderingFull(const GraphicsPipeline* pipeline);
+    /// bbport: volumetric effects resolution (volumetric_resolution.h). At the display pass:
+    /// the menu's level and the images classified during the last frame.
+    void VolumetricFrameStart();
+    /// At a pass's start: rules 1 and 2 (the half-size depth and the colors drawn with it).
+    void VolumetricClassifyPass(const GraphicsPipelineKey& key, u32 num_attachments);
+    /// At a draw: rule 3 (half-size passes without depth that sample a volumetric color).
+    void VolumetricDrawSampled(const GraphicsPipeline* pipeline);
     /// bbport: a draw continuing the open render pass with the same inputs gets the same render
     /// state (RenderStateMemo); nothing can have broken the pass in between (barriers, copies and
     /// dispatches end it).
@@ -302,6 +309,7 @@ private:
         bool raster_scaling = false;
         u64 upscaler_state = 0;
         u64 generation = 0;
+        u64 volumetric_generation = 0;
         u32 depth_control = 0;
         bool depth_valid = false;
         bool stencil_valid = false;
