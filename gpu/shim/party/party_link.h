@@ -20,7 +20,7 @@
 // Runtime: PING/PONG (1 Hz both ways, RTT), ROSTER, RPC_REQ/RPC_RESP, EVENT/EVENT_ACK (cursor;
 // unacked events are replayed after a reconnect and de-duplicated by cursor), PARTY_CMD,
 // PROGRESS, VITALS (party HUD: HP, map, position; ~4 Hz, see MemberVitals), BYE. No frame for lost_timeout (10 s) = connection lost; the host keeps a lost
-// member's slot (and its event queue) for slot_keep (60 s); the guest reconnects with
+// member's slot (and its event queue) for slot_keep (130 s); the guest reconnects with
 // exponential backoff 1, 2, 4, 8 s (then every 8 s, each wait +-20 % so guests that lost the
 // host together do not retry in lockstep) and gets the same slot back (resume token). A restarted
 // host restores its member table (slot, name, token: kept_members / restore_members, from the
@@ -235,7 +235,7 @@ struct LinkConfig {
     // Timing (tests shrink these).
     int ping_interval_ms = 1000;
     int lost_timeout_ms = 10000;
-    int slot_keep_ms = 60000;
+    int slot_keep_ms = 130000;  // F5: a silent member's slot outlives a 2 min outage (BB_PARTY_SLOT_KEEP_MS)
     int backoff_initial_ms = 1000;
     int backoff_max_ms = 2000;     // a crashed host is back within ~2 s of its restart (rejoin timing, docs/party/join_timing.md)
     int backoff_jitter_pct = 20;   // each wait randomized +-20 %

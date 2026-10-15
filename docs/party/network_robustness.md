@@ -486,6 +486,38 @@ Not covered: a real network (the simulator drops UDP in both directions and hold
 the loopback TCP close is real), 3-4 players, outages over 30 s (the guest keeps the host's world
 45 s, the host its slot 60 s; the keepalive runs as long as the link calls the peer lost).
 
+### 7c. Outages of 60, 90 and 120 s keep the session (2026-10-15, 0.6.2, agent parlast)
+
+After the send-queue patch (parx: the session manager's limit of 1001 unsent messages, ~30 s of a
+stalled link, raised to 30000) nothing in the game ended the session within 50 s; what set the
+bound were our own holds: the guest kept the host's world 45 s after its link called the host lost
+(10 s into the silence, so ~55 s of outage) and the host kept the slot 60 s. Measured with those
+two raised (`BB_PARTY_OUTAGE_HOLD_MS=125000`, `BB_PARTY_SLOT_KEEP_MS=130000`), one session, 2
+instances, loopback, `BB_NET_SIM=lat=30`, symmetric total outages through
+`BB_NET_SIM_OUTAGE_FILE` 45 s apart, test save `cathedral_day` (the guest title-joined beside the
+host in Cathedral Ward), screenshots every 3 s (run `combo`):
+
+| Outage | Link | Game session | Loading screens | Host records replayed | Afterwards |
+|---|---|---|---|---|---|
+| 60 s | lost after 10 s, `back in the party after 50.4 s (session resumed)` | survived (`outage over: the game session survived`, the host's game traffic back 1.5 s after the link) | 0 | 743 in 29 datagrams | 45 s normal play |
+| 90 s | lost after 10 s, back after 80.7 s | survived | 0 | 739 in 29 | 45 s normal play |
+| 120 s | lost after 10 s, back after 110.8 s | survived | 0 | 590 in 23 | then two guest crashes and rejoins (C6) |
+
+Screenshots: both players side by side before; during the 120 s outage the host's party panel
+says "Connection lost" while each game shows the other frozen in place; afterwards both together
+again, 0.8 m apart, no loading screen on either. **The new limit is ours, not the game's**, so the
+defaults are now the tested values: the guest waits 125 s (an outage of up to ~135 s) and the
+host keeps a silent member's slot 130 s (unit: party-link-test `slot keep env`). A real crash is
+not affected: a killed game's link is reset at once (C6 / section 8), only a silent link waits.
+
+What a real 2-PC test still has to show (playtest2_checklist.md): a cable pull / Wi-Fi off on one
+PC (the simulator drops both directions at the same instant; a real outage may be one-sided and
+the OS may report the TCP link down earlier than our 10 s), a NAT whose mapping expires during a
+long outage (the host's UDP hole may close after 30-120 s: the link then comes back over a new
+mapping, which the resume by token covers, but the game's P2P transport would need its peer's
+new port), router DHCP or address changes (a new address is a new peer for the game: the session
+would not resume), and 3-4 players.
+
 ## 8. Host crash: the guests wait for the host (0.6.2, agent robust1)
 
 Before: when the host's game crashed, each guest went home at once (one loading screen) and was
@@ -583,4 +615,38 @@ Host crash with `BB_PARTY_RESTART=0` and the guest's `BB_PARTY_HOST_WAIT_S=30`: 
 "Waiting for the host to come back (N s)..." (screenshots at 7 s and 28 s), then `host wait: the
 host did not come back within 30 s: leaving the party` 32 s after the crash, the guest on in its
 own world.
+
+### 8b. The FROM sign-in before Continue (C6, 0.6.2, agent parlast)
+
+What the restarted game waits for between its title and Continue, traced live (runs `g3w`, `combo`,
+`g3b`; `BB_HTTP_TRACE_CALLERS=1`, `BB_PARTY_TRACE_FROM_UPDATE=N`):
+
+* **Our side is instant.** Every HTTP answer (ss.info from the in-process FromApi on the host, the
+  rest over the party link) takes 0-1 ms; NP auth (`sceNpAuthGetAuthorizationCode`,
+  `sceNpAuthPollAsync`) answers at once. Capping the game's `sceHttpWaitRequest` timeout to 25 ms
+  (tried) changed nothing: the waits are not the pacing.
+* **The FROM client runs every frame.** SprjNetworkClientMan's update 0x1E7DF20 (its timers, then
+  the HTTP client update 0xFD10D0, which sends whatever is queued, then the completions
+  0x1E7F240) runs once per frame (dt 0.033 s, intervals 0.020-0.048 s). All requests of the title
+  and the world go out from it (call chain fd2ac9 <- fd14ec <- 1e7e2f5 <- 103d438 ...).
+* **The title's own sign-in chain sets the pace.** The title flow built by 0x1C37B30 is a chain of
+  menu-step futures (0x1C1A070 = then; step class vtable 0x53474E0, created by 0x1C3C810 with a 60 s
+  limit); its network stages are function objects: 0x1C48F80 (CSPlatformNetworkMan 0x1E75D10, NP
+  auth "psn:s2s"), **0x1C492C0 ss.info** (0x1E8AA40), **0x1C48AA0 login** (0x1E8B040; its answer
+  0x1C48CA0 marks the step done, state 4 at +0x1C), 0x1C43EE0 sync_chara_id (0x1E8BE50), 0x1C485D0
+  the notice (0x1EA3CD0). Each stage starts when the previous step's future is resumed by the menu
+  framework, not when the answer arrives: ~1 s per stage (ss.info -> login 1.03 s, login ->
+  notice 0.90 s, live).
+
+Live (g3b, the guest killed in the world, run.bat restart after 1 s): boot +2.4 s after the kill,
+link +4.6 s, the title takes its first press +7.0 s, the ss.info stage starts +10.1 s, the sign-in
+is over +11.9 s (1.8 s for three requests), Continue's loading screen +14.1 s, host `cooperators 0
+-> 1` ~15 s (combo: 14 s and 15 s for two crashes), in the world beside the host (0.5 m) ~19.6 s
+after the title join started.
+
+Not shortened, on purpose: Continue while the sign-in runs leaves the game offline (that is why
+AutoContinue holds it, docs/STARTUP.md), and the ~3 s from the first press to the ss.info stage and
+the ~1 s per stage are the title menu's own step chain. Patching FROM's menu framework (a shared
+future scheduler used by every title and in-game menu) for ~3 s on a crash rejoin is not worth the
+risk; the hold itself already ends the frame the notice answer is in.
 

@@ -20,11 +20,11 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | **Overall** | `████████████████████` | 99% |
 | Session & joining | `████████████████████` | 100% |
 | World & travel | `████████████████████` | 100% |
-| Death & respawn | `████████████████████` | 99% |
+| Death & respawn | `████████████████████` | 100% |
 | Progress (anyone can progress) | `████████████████████` | 99% |
 | Services & UI | `████████████████████` | 100% |
-| Network & robustness | `██████████████████░░` | 92% |
-| Bloodborne-specific (chalice, Insight) | `████████████████████` | 98% |
+| Network & robustness | `███████████████████░` | 93% |
+| Bloodborne-specific (chalice, Insight) | `████████████████████` | 100% |
 | Feels like single player in a party | `████████████████████` | 100% |
 
 ---
@@ -269,8 +269,8 @@ before anyone is in the game):
   and one press does the rest (the guests follow in with one loading screen). Chalices are shared
   between all players, and a boss reward the game keeps for the host goes to every guest in the
   dungeon too.
-- **Crashes recover.** A crashed game restarts and rejoins by itself (on one PC: in the host's party about 17 s after the crash, standing beside the host about 27 s after it, most of that the game's own start and loading screen), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue. If the host's game crashes, the guests go to their own world and wait ("Waiting for the host to come back (N s)...") until the host's game has restarted, then are summoned back beside it by themselves (about 20 s after the crash on one PC; after 3 minutes without the host a guest plays on alone); items a guest got in the host's world stay in its own save.
-- **Network drops recover.** A network outage of up to 50 s keeps the session (checked with three players): no loading screen, everyone carries on where they stood once the network is back (the others freeze in place meanwhile). If a longer outage loses the session, a guest goes home at once with one loading screen and is summoned back beside the host by itself once the network is back. The party also checks every 15 s that everyone sees the same world and progress and quietly re-sends whatever differs.
+- **Crashes recover.** A crashed game restarts and rejoins by itself (on one PC: in the host's party about 15 s after the crash, standing beside the host about 20-27 s after it, nearly all of that the game's own start, its online sign-in at the title and its loading screen), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue. If the host's game crashes, the guests go to their own world and wait ("Waiting for the host to come back (N s)...") until the host's game has restarted, then are summoned back beside it by themselves (about 20 s after the crash on one PC; after 3 minutes without the host a guest plays on alone); items a guest got in the host's world stay in its own save.
+- **Network drops recover.** A network outage of up to about 2 minutes keeps the session (checked on one PC with 60, 90 and 120 s outages; 50 s with three players): no loading screen, everyone carries on where they stood once the network is back (the others freeze in place meanwhile). If a longer outage loses the session, a guest goes home at once with one loading screen and is summoned back beside the host by itself once the network is back. The party also checks every 15 s that everyone sees the same world and progress and quietly re-sends whatever differs.
 - **Wrong passwords are locked out.** A few typos are fine; after 5 wrong passwords in a minute the host refuses that address for a while.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
 - **Undo a party session.** Right before every party session (host or guest) the game copies both
