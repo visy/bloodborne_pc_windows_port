@@ -1019,7 +1019,7 @@ void DefineAll() {
 
     // D10 story notices a guest's own game never shows (party_story StoryNoticeMessage): the
     // game's EventText 10012014, as its English / Russian text.
-    notice_text[0] = AddText("Ritual secret broken. Seek the nightmare newborn.",
+    notice_text[0] = AddText("Ritual secret broken.\nSeek the nightmare newborn.",
                              "Тайна ритуала раскрыта. Ищите новорождённого кошмара.");
 
     // The host's ending (party_story GuestStory::AnswerEnding): each guest is asked first.
