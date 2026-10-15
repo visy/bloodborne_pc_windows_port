@@ -580,7 +580,7 @@ struct InsightSample {
 };
 std::deque<InsightSample> g_ins_hist;    // main thread (GuestTick)
 std::atomic<long long> g_drips_applied{0};
-constexpr double kSettleAfter = 2.5, kSettleBase = 2.0;
+constexpr double kSettleAfter = 5.0, kSettleBase = 2.0;  // live B3: a native first-encounter +1 came 2.7 s after the relay
 // Finding 9: a first-encounter event's 9350 start on this guest's own game (its copy of the
 // event, which 9350's End-if-client stops), granted by GuestTick (main thread).
 struct FirstEncounter {
