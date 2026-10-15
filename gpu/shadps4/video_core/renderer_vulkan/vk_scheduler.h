@@ -634,6 +634,16 @@ public:
         return storage + offset;
     }
 
+    /// bbport (ngfix): storage for command data larger than the chunk holds (a copy with thousands
+    /// of regions, a barrier with thousands of images): kept beside the chunk and freed with it once
+    /// its commands ran. It used to be an assertion (vk_scheduler.h ReserveRecordData, a host crash
+    /// in a party). Never null.
+    void* AllocateLarge(size_t bytes, size_t align) {
+        auto& block = large.emplace_back(new std::byte[bytes + align]);
+        const auto at = reinterpret_cast<uintptr_t>(block.get());
+        return reinterpret_cast<void*>((at + align - 1) & ~uintptr_t(align - 1));
+    }
+
     void Execute(vk::CommandBuffer cmdbuf) {
         for (CommandBase* command = first; command;) {
             CommandBase* const next = command->next;
@@ -643,6 +653,7 @@ public:
         }
         first = last = nullptr;
         used = 0;
+        large.clear();
     }
 
     [[nodiscard]] bool Empty() const noexcept {
@@ -689,6 +700,7 @@ private:
     size_t used = 0;
     CommandBase* first{};
     CommandBase* last{};
+    std::vector<std::unique_ptr<std::byte[]>> large; ///< AllocateLarge blocks (rare)
 };
 
 class Scheduler {
@@ -834,6 +846,7 @@ public:
             const bool pushed = CurrentChunk().Push(std::forward<Func>(func));
             ASSERT(pushed);
         }
+        record_reserved = false;
     }
 
     /// bbport: Record() for a draw, dispatch or pass that runs shaders, between GPU breadcrumbs
@@ -877,14 +890,18 @@ public:
 
     /// Makes room for `bytes` of RecordData() plus the command that uses them in the current
     /// chunk: data and command must share a chunk, which is recycled once executed.
+    /// bbport (ngfix): more than a chunk holds no longer asserts (a host crash 11 s into a party
+    /// beside a boss): only the command's room is reserved and RecordData puts what does not fit
+    /// beside the chunk (RecordChunk::AllocateLarge), without retiring it until the command is in.
     void ReserveRecordData(size_t bytes) {
         if (!IsRecordingDeferred()) {
             return;
         }
-        ASSERT(bytes + 1024 <= RecordChunk::Capacity);
-        if (RecordChunk::Capacity - CurrentChunk().Size() < bytes + 1024) {
+        const bool fits = bytes + 1024 <= RecordChunk::Capacity;
+        if (RecordChunk::Capacity - CurrentChunk().Size() < (fits ? bytes + 1024 : 1024)) {
             RetireChunk();
         }
+        record_reserved = !fits;
     }
 
     /// Copies `data` into recording storage that lives until the command that uses it has
@@ -895,13 +912,31 @@ public:
         if (!IsRecordingDeferred() || data.empty()) {
             return data;
         }
-        // Room for the data and the command that follows it, so both stay in one chunk.
+        // Room for the data and the command that follows it, so both stay in one chunk. What
+        // does not fit (or would leave no room for the command after a larger reservation) goes
+        // beside the chunk and lives as long as it.
         const size_t bytes = data.size_bytes();
-        ReserveRecordData(bytes + alignof(T));
-        auto* dst = static_cast<T*>(CurrentChunk().Allocate(bytes, alignof(T)));
+        T* dst = nullptr;
+        if (bytes + alignof(T) + 1024 <= RecordChunk::Capacity) {
+            if (!record_reserved) {
+                ReserveRecordData(bytes + alignof(T));
+            }
+            if (RecordChunk::Capacity - CurrentChunk().Size() >= bytes + alignof(T) + 1024) {
+                dst = static_cast<T*>(CurrentChunk().Allocate(bytes, alignof(T)));
+            }
+        }
+        if (!dst) {
+            dst = static_cast<T*>(CurrentChunk().AllocateLarge(bytes, alignof(T)));
+            NoteLargeRecordData(bytes, sizeof(T));
+        }
         std::memcpy(dst, data.data(), bytes);
         return {dst, data.size()};
     }
+
+    /// bbport (ngfix): logs data recorded beside a chunk (the first few, then every 1000th).
+    static void NoteLargeRecordData(size_t bytes, size_t element);
+    /// bbport (ngfix): test aid BB_RECORD_LARGE_TEST=1 (vk_scheduler.cpp).
+    void RecordLargeTest();
 
     /// Hands recorded commands to the recording threads. Called at points where no caller holds
     /// the raw command buffer; small batches are kept. Without `force` (the end of a draw or
@@ -1138,6 +1173,8 @@ private:
 private:
     const Instance& instance;
     u32 crumb_stream = 0; ///< bbport: GPU breadcrumbs (vk_breadcrumbs.h)
+    /// bbport (ngfix): a reservation larger than a chunk is open (its spans may not retire the chunk)
+    bool record_reserved = false;
     Semaphore work_semaphore;
     CommandPool command_pool;
     DynamicState dynamic_state;

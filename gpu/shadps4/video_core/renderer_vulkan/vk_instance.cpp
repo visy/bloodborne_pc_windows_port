@@ -1048,6 +1048,8 @@ void Instance::CollectDeviceParameters() {
                 IsIntegrated() ? " (integrated)" : "",
                 static_cast<unsigned long long>(device_local >> 20), vendor_name.c_str(),
                 driver_version.c_str(), driver.driverInfo.data(), api_version.c_str());
+    // Flushed, so it is there even if the device is lost right after (as in Supermedo c07f0ffa).
+    std::fflush(stdout);
     LOG_INFO(Render_Vulkan, "GPU_Vendor: {}", vendor_name);
     LOG_INFO(Render_Vulkan, "GPU_Model: {}", model_name);
     LOG_INFO(Render_Vulkan, "GPU_Integrated: {}", IsIntegrated() ? "Yes" : "No");
