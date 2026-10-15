@@ -20,8 +20,10 @@ static int mk_mode;
 static float mk_dx;
 static uint32_t mk_buttons;
 static int mk_wheel_down;
+static int bind_generation; /* the in-game menu rewrote key lines (BbMouseState.bindings_generation) */
 int bbgpu_mouse_keyboard(BbMouseState *state, int consume_motion) {
     memset(state,0,sizeof(*state));
+    state->bindings_generation=bind_generation;
     state->dx=mk_dx; state->buttons=mk_buttons;
     state->sens_x=state->sens_y=1.0f; state->deadzone=0.05f; state->smoothing=0.0f;
     state->wheel=1;
@@ -218,6 +220,23 @@ int main(void) {
     inject(path,"");
     for (int i=0;i<30;++i) { usleep(5000); pad_read_state(1,&data); }
     assert(!(data.buttons & BTN_L2) && data.right_x==128);
+    /* The in-game menu's key rows (90008b39 by Mrsuss60): new lines are read again as soon as
+     * the generation changes, without a layout switch; a mouse button named there leaves the
+     * built-in scheme (left now Cross, not R1). */
+    const char rebound[]="upscaler=fsr3\nkey.cross=X, Space\nmkkey.triangle=Y\nmkkey.cross=Mouse Left\n";
+    assert(bb_test_write_file(config,rebound,sizeof(rebound)-1)==0);
+    assert(pad_read_state(1,&data)==0 && bindings[IN_TRIANGLE].keys[0]==SDL_SCANCODE_T);
+    ++bind_generation;
+    mk_buttons=1;
+    assert(pad_read_state(1,&data)==0 && bindings[IN_TRIANGLE].keys[0]==SDL_SCANCODE_Y);
+    assert((data.buttons & BTN_CROSS) && !(data.buttons & BTN_R1));
+    mk_buttons=0;
+    assert(bb_test_write_file(config,controls,sizeof(controls)-1)==0);
+    ++bind_generation;
+    assert(pad_read_state(1,&data)==0 && bindings[IN_TRIANGLE].keys[0]==SDL_SCANCODE_T);
+    /* src/pad_bindings.h names: a binding line's name for each code. */
+    assert(!strcmp(key_name(MOUSE_KEY+SDL_BUTTON_X2),"Mouse X2") && !strcmp(key_name(SDL_SCANCODE_Q),"Q") &&
+           key_from_name(key_name(MOUSE_WHEEL_UP))==MOUSE_WHEEL_UP && !*key_name(0));
     mk_mode=0; mk_buttons=0;
     assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_R1) && data.right_x==128 &&
            bindings[IN_CROSS].keys[0]==SDL_SCANCODE_X);

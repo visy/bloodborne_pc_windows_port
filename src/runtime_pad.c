@@ -43,9 +43,11 @@
 #define _GNU_SOURCE
 #include "runtime.h"
 #include "gpu/bbgpu.h"
+#include "pad_bindings.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <pthread.h>
 #include <time.h>
 #include <SDL3/SDL.h>
@@ -304,30 +306,12 @@ static void report_guest_heap(void) {
  * rightshoulder dpup dpdown dpleft dpright touchpad misc1 paddle1-4, plus lefttrigger and
  * righttrigger. The keyboard works next to a gamepad (the Steam Deck always has one): its buttons
  * add to the gamepad's, a held move/look key moves the stick all the way. */
-enum {
-    IN_CROSS, IN_CIRCLE, IN_SQUARE, IN_TRIANGLE, IN_L1, IN_R1, IN_L2, IN_R2, IN_L3, IN_R3,
-    IN_OPTIONS, IN_TOUCHPAD, IN_TOUCHPAD_RIGHT, IN_UP, IN_DOWN, IN_LEFT, IN_RIGHT,
-    IN_MOVE_UP, IN_MOVE_DOWN, IN_MOVE_LEFT, IN_MOVE_RIGHT, IN_LOOK_UP, IN_LOOK_DOWN, IN_LOOK_LEFT,
-    IN_LOOK_RIGHT, IN_COUNT
-};
-static const char *const input_names[IN_COUNT]={
-    "cross","circle","square","triangle","l1","r1","l2","r2","l3","r3","options","touchpad",
-    "touchpad_right","up","down","left","right","move_up","move_down","move_left","move_right",
-    "look_up","look_down","look_left","look_right",
-};
 static const uint32_t input_buttons[IN_COUNT]={
     BTN_CROSS,BTN_CIRCLE,BTN_SQUARE,BTN_TRIANGLE,BTN_L1,BTN_R1,BTN_L2,BTN_R2,BTN_L3,BTN_R3,
     BTN_OPTIONS,BTN_TOUCHPAD,0,BTN_UP,BTN_DOWN,BTN_LEFT,BTN_RIGHT,
 };
 #define MAX_BIND 4
 enum { PAD_LEFT_TRIGGER=SDL_GAMEPAD_BUTTON_COUNT, PAD_RIGHT_TRIGGER }; /* triggers as buttons */
-/* Mouse buttons and the wheel as keys (upstream 0.51 #52): codes past SDL's scancodes. */
-enum { MOUSE_KEY=SDL_SCANCODE_COUNT, MOUSE_WHEEL_UP=MOUSE_KEY+SDL_BUTTON_X2+1, MOUSE_WHEEL_DOWN };
-static const struct { const char *name; int code; } mouse_keys[]={
-    {"Mouse Left",MOUSE_KEY+SDL_BUTTON_LEFT}, {"Mouse Right",MOUSE_KEY+SDL_BUTTON_RIGHT},
-    {"Mouse Middle",MOUSE_KEY+SDL_BUTTON_MIDDLE}, {"Mouse X1",MOUSE_KEY+SDL_BUTTON_X1},
-    {"Mouse X2",MOUSE_KEY+SDL_BUTTON_X2}, {"Wheel Up",MOUSE_WHEEL_UP}, {"Wheel Down",MOUSE_WHEEL_DOWN},
-};
 typedef struct { int key_count, pad_count; int keys[MAX_BIND]; int pad[MAX_BIND]; } Binding;
 static Binding bindings[IN_COUNT];
 static int bindings_mode=-1; /* the layout loaded: 0 classic, 1 mouse & keyboard, -1 none yet */
@@ -345,36 +329,7 @@ static uint32_t mouse_bit(int sdl_button) {
 /* The mouse buttons some binding names: they leave the built-in mouse scheme (sample_mouse). */
 static uint32_t mouse_bound_mask;
 
-typedef struct { int input; int key; } KeyDefault;
-/* Mouse & keyboard mode's keys (Mrsuss60/bloodborne_pc_windows_port's scheme); the attacks and
- * L1/L2/R2 are on the mouse (sample_mouse). */
-static const KeyDefault mk_keys[]={
-    {IN_CROSS,SDL_SCANCODE_E}, {IN_CROSS,SDL_SCANCODE_RETURN}, {IN_CROSS,SDL_SCANCODE_KP_ENTER},
-    {IN_CIRCLE,SDL_SCANCODE_SPACE}, {IN_SQUARE,SDL_SCANCODE_R}, {IN_TRIANGLE,SDL_SCANCODE_X}, {IN_TRIANGLE,SDL_SCANCODE_F}, {IN_TRIANGLE,SDL_SCANCODE_V},
-    {IN_L3,SDL_SCANCODE_C}, {IN_L3,SDL_SCANCODE_Z}, {IN_R3,SDL_SCANCODE_Q},
-    {IN_OPTIONS,SDL_SCANCODE_ESCAPE}, {IN_OPTIONS,SDL_SCANCODE_F1},
-    {IN_TOUCHPAD,SDL_SCANCODE_TAB}, {IN_TOUCHPAD,SDL_SCANCODE_G}, {IN_TOUCHPAD_RIGHT,SDL_SCANCODE_BACKSPACE},
-    {IN_UP,SDL_SCANCODE_UP}, {IN_UP,SDL_SCANCODE_1}, {IN_DOWN,SDL_SCANCODE_DOWN}, {IN_DOWN,SDL_SCANCODE_2},
-    {IN_LEFT,SDL_SCANCODE_LEFT}, {IN_LEFT,SDL_SCANCODE_3}, {IN_RIGHT,SDL_SCANCODE_RIGHT}, {IN_RIGHT,SDL_SCANCODE_4},
-    {IN_MOVE_UP,SDL_SCANCODE_W}, {IN_MOVE_DOWN,SDL_SCANCODE_S}, {IN_MOVE_LEFT,SDL_SCANCODE_A},
-    {IN_MOVE_RIGHT,SDL_SCANCODE_D}, {IN_LOOK_UP,SDL_SCANCODE_I}, {IN_LOOK_DOWN,SDL_SCANCODE_K},
-    {IN_LOOK_LEFT,SDL_SCANCODE_J}, {IN_LOOK_RIGHT,SDL_SCANCODE_L},
-    {IN_UP,MOUSE_WHEEL_UP}, {IN_DOWN,MOUSE_WHEEL_DOWN}, /* quick items (mk_wheel) */
-};
-
 static void bind_defaults(int mk) {
-    static const KeyDefault keys[]={
-        {IN_CROSS,SDL_SCANCODE_SPACE}, {IN_CROSS,SDL_SCANCODE_RETURN}, {IN_CROSS,SDL_SCANCODE_KP_ENTER},
-        {IN_CIRCLE,SDL_SCANCODE_LSHIFT}, {IN_CIRCLE,SDL_SCANCODE_ESCAPE}, {IN_SQUARE,SDL_SCANCODE_E},
-        {IN_TRIANGLE,SDL_SCANCODE_Q}, {IN_L1,SDL_SCANCODE_1}, {IN_R1,SDL_SCANCODE_3},
-        {IN_L2,SDL_SCANCODE_R}, {IN_R2,SDL_SCANCODE_F}, {IN_L3,SDL_SCANCODE_Z}, {IN_R3,SDL_SCANCODE_C},
-        {IN_OPTIONS,SDL_SCANCODE_F1}, {IN_OPTIONS,SDL_SCANCODE_O}, {IN_TOUCHPAD,SDL_SCANCODE_TAB},
-        {IN_TOUCHPAD_RIGHT,SDL_SCANCODE_BACKSPACE},
-        {IN_UP,SDL_SCANCODE_UP}, {IN_DOWN,SDL_SCANCODE_DOWN}, {IN_LEFT,SDL_SCANCODE_LEFT}, {IN_RIGHT,SDL_SCANCODE_RIGHT},
-        {IN_MOVE_UP,SDL_SCANCODE_W}, {IN_MOVE_DOWN,SDL_SCANCODE_S}, {IN_MOVE_LEFT,SDL_SCANCODE_A},
-        {IN_MOVE_RIGHT,SDL_SCANCODE_D}, {IN_LOOK_UP,SDL_SCANCODE_I}, {IN_LOOK_DOWN,SDL_SCANCODE_K},
-        {IN_LOOK_LEFT,SDL_SCANCODE_J}, {IN_LOOK_RIGHT,SDL_SCANCODE_L},
-    };
     static const struct { int input, button; } pads[]={
         {IN_CROSS,SDL_GAMEPAD_BUTTON_SOUTH}, {IN_CIRCLE,SDL_GAMEPAD_BUTTON_EAST},
         {IN_SQUARE,SDL_GAMEPAD_BUTTON_WEST}, {IN_TRIANGLE,SDL_GAMEPAD_BUTTON_NORTH},
@@ -387,8 +342,8 @@ static void bind_defaults(int mk) {
         {IN_LEFT,SDL_GAMEPAD_BUTTON_DPAD_LEFT}, {IN_RIGHT,SDL_GAMEPAD_BUTTON_DPAD_RIGHT},
     };
     memset(bindings,0,sizeof bindings);
-    const KeyDefault *key_list=mk ? mk_keys : keys;
-    const size_t key_count=mk ? sizeof(mk_keys)/sizeof(*mk_keys) : sizeof(keys)/sizeof(*keys);
+    const KeyDefault *key_list=mk ? mk_keys : classic_keys;
+    const size_t key_count=mk ? MK_KEY_COUNT : CLASSIC_KEY_COUNT;
     for (size_t i=0;i<key_count;++i) {
         Binding *b=&bindings[key_list[i].input]; b->keys[b->key_count++]=key_list[i].key;
     }
@@ -401,12 +356,6 @@ static int pad_button_from_name(const char *name) {
     if (!SDL_strcasecmp(name,"righttrigger")) return PAD_RIGHT_TRIGGER;
     const SDL_GamepadButton b=SDL_GetGamepadButtonFromString(name);
     return b==SDL_GAMEPAD_BUTTON_INVALID ? -1 : (int)b;
-}
-static int key_from_name(const char *name) {
-    for (size_t i=0;i<sizeof(mouse_keys)/sizeof(*mouse_keys);++i)
-        if (!SDL_strcasecmp(name,mouse_keys[i].name)) return mouse_keys[i].code;
-    const SDL_Scancode s=SDL_GetScancodeFromName(name);
-    return s==SDL_SCANCODE_UNKNOWN ? -1 : (int)s;
 }
 /* key.<input>= (classic layout) / mkkey.<input>= (mouse & keyboard mode) / pad.<input>= lines of
  * the settings file. */
@@ -652,10 +601,14 @@ static void sample_host(PadData *d) {
     const int mk=bbgpu_mouse_keyboard(&mouse,consume);
     if (!mk) { look_x=look_y=0.0f; look_last=0; }
     else if (consume) look_last=now;
-    if (bindings_mode!=mk) {
+    static int bindings_generation;
+    if (bindings_mode!=mk || mouse.bindings_generation!=bindings_generation) {
+        bindings_generation=mouse.bindings_generation;
         load_bindings(mk);
         note_mouse_bindings();
-        if (bindings_mode>=0) printf("Runtime: controls: %s layout\n",mk ? "mouse & keyboard" : "classic keyboard");
+        if (bindings_mode>=0 && bindings_mode!=mk)
+            printf("Runtime: controls: %s layout\n",mk ? "mouse & keyboard" : "classic keyboard");
+        else if (bindings_mode>=0) printf("Runtime: controls: key bindings read again (in-game menu)\n");
         bindings_mode=mk;
     }
     if (bbgpu_overlay_captures_input() || bbgpu_text_input_is_active()) { /* settings menu open or typing: neutral input */
