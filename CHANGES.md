@@ -5,6 +5,10 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.6.3 (unreleased)
 
+- **Changed: the co-op progress now shows two numbers**: "plan done" (how much of the plan is built and seen working, ~99%) and "ERSC parity, evidence-weighted" (~95%): every row is capped at 95% until it has been checked on two real PCs over the Internet, and so are the rows where the port chose to differ from Elden Ring Seamless Co-op (the whole party respawns with the host, 4 players instead of 6, one shared drop roll). Each row now says what its evidence is.
+- **Found: a guest whose game crashes right after a boss kill, with three players, does not rejoin cleanly**: it comes back by itself, but only after about 80 s instead of about 15 s, and the third player is dropped and summoned back on the way. Being worked on; the crash rejoin row is back to 90%.
+- **Added (for testers): a fixed 15-20 minute party smoke test that runs after every change** (`tools/mp/smoke_party.py`: joins, leave and rejoin, deaths, a bloodstain, party travel, a boss started by a guest, a wipe, a boss kill, crashes of a guest and the host, the host leaving), a repeat tester for the race-prone cases (`tools/mp/repeat_party.py`) and a pad-only long-session soak with memory / VRAM / handle / frame-time logging (`tools/mp/soak_party.py`).
+
 ## 0.6.2 (Windows port 0.6.2, party co-op)
 
 - **Added: Volumetric effects resolution (idea from a playtester)**: smoke, mist, fog sprites and other soft particle effects, which the game draws into a half-resolution buffer and which look blocky at high resolutions, can be drawn at 2x the pixels or at full scene resolution (System > Display > *Volumetric effects*, the overlay, the launcher, `bbport.ini` `volumetric_res`, `BB_VOLUMETRIC_RES`). Off (the game's own look) by default, changes live; in a test at 1080p it cost about 0.6 ms (2x pixels) and 1.2 ms (full) per frame on an RTX 3070. Light shafts, glare and SSAO keep their own sizes. The *FPS counter* row moved from the Display page to *HUD details* to make room.
