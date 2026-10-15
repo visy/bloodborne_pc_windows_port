@@ -53,6 +53,19 @@ static int test_map_state() {
     f.link = LinkState::Reconnecting;
     f.link_detail = "timeout; retrying in 2000 ms";
     CHECK(MapState(f).state == State::Reconnecting && MapState(f).detail == f.link_detail);
+    // Host crash recovery: while the guest waits for a lost host, the line counts the seconds.
+    f.host_wait_s = 12;
+    CHECK(MapState(f).state == State::Reconnecting &&
+          MapState(f).detail == "Waiting for the host to come back (12 s)...");
+    f.link = LinkState::Connected;  // the restarted host's game answers; its world is not up yet
+    CHECK(MapState(f).state == State::Reconnecting &&
+          MapState(f).detail == "Waiting for the host to come back (12 s)...");
+    f.link = LinkState::Reconnecting;
+    f.host_wait_s = -1;
+    CHECK(bridge::HostWaitText(-3) == "Waiting for the host to come back (0 s)...");
+    CHECK(bridge::HostGoneNotice(180).rfind("Party: the host did not come back within 3 min\n", 0) == 0);
+    CHECK(bridge::HostGoneNotice(90).find("within 90 s") != std::string::npos);
+    CHECK(bridge::HostGoneNotice(180).find("Rejoin the host") != std::string::npos);
     f.link = LinkState::Rejected;
     f.reject = RejectCode::Kicked;
     f.reject_reason = "whatever";
@@ -233,6 +246,14 @@ static int test_board_and_commands() {
     CHECK(status::Snapshot().last_event == "Joined the party");
     bridge::OnLinkState(LinkState::Reconnecting, "lost", RejectCode::None, "");
     CHECK(status::Snapshot().state == State::Reconnecting && status::Snapshot().last_event == "Connection to the host lost");
+    bridge::OnHostWait(5);  // the host crashed: the guest waits for its restart
+    CHECK(status::Snapshot().detail == "Waiting for the host to come back (5 s)..." &&
+          status::Snapshot().last_event == "Waiting for the host to come back (5 s)...");
+    const std::uint64_t seq = status::EventSeq();
+    bridge::OnHostWait(5);  // the same second: no new notice
+    CHECK(status::EventSeq() == seq);
+    bridge::OnHostWait(-1);
+    CHECK(status::Snapshot().detail == "lost");
     bridge::OnLinkState(LinkState::Connected, "", RejectCode::None, "");
     CHECK(status::Snapshot().last_event == "Rejoined the party");
     bridge::OnLinkState(LinkState::Rejected, "kicked by the host", RejectCode::Kicked, "kicked by the host");

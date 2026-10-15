@@ -75,7 +75,9 @@ std::vector<EmevdSkipRule> ConfinementWallRules();
 
 // ---- EVENT "phantom" (host -> guests) ----
 constexpr const char* kPhantomEventName = "phantom";
-enum class PhantomEventKind : std::uint8_t { Unknown = 0, Lamp, Rested, Insight };
+/// BossBonus (statsaudit finding 4): the host's boss clear bonus (BlockClear2's 0x1335400 result,
+/// PlayerGameData +0xF8): a guest whose own defeat did not run is paid the same.
+enum class PhantomEventKind : std::uint8_t { Unknown = 0, Lamp, Rested, Insight, BossBonus };
 const char* PhantomEventKindName(PhantomEventKind k);
 struct PhantomEvent {
     PhantomEventKind kind = PhantomEventKind::Unknown;
@@ -85,6 +87,7 @@ struct PhantomEvent {
     std::uint32_t source_event = 0; ///< Insight: the host's EMEVD event (diagnostics)
     bool boss = true;             ///< Insight: a boss kill (the guest's game adds +1 natively); false =
                                   ///< a first encounter / story Insight (G2): the guest gets all N
+    std::int32_t bonus = 0;       ///< BossBonus: the host's boss clear bonus in Blood Echoes
 };
 std::string PhantomEventToJsonText(const PhantomEvent& e);
 bool PhantomEventFromJsonText(const std::string& text, PhantomEvent* out, std::string* error = nullptr);

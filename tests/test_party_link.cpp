@@ -925,6 +925,7 @@ static void test_identity() {
         CHECK(w.find("bbport build differs (host 0.5 (v0.5-42-gabcdef1234), yours 0.5 (v0.5-40-g0123456789))") !=
               std::string::npos);
         CHECK(w.find("install the same bbport release as the host") != std::string::npos);
+        CHECK(w.find("version mismatch with the host: bbport build differs") == 0);  // named once
         CHECK(w.find("params") == std::string::npos && w.find("party patches") == std::string::npos);
         hb.check_build = false;  // BB_PARTY_CHECK_BUILD=0 on the host
         CHECK(identity_mismatch(hb, gb).empty());
@@ -935,6 +936,9 @@ static void test_identity() {
         gb.params_sha256[7] ^= 0x40;
         w = identity_mismatch(hb, gb);
         CHECK(w.find("game params differ (gameparam.parambnd.dcx") != std::string::npos);
+        // Same build, something else differs: the message still names both versions.
+        CHECK(w.find("version mismatch with the host (host bbport 0.5 (v0.5-42-gabcdef1234), yours 0.5 "
+                     "(v0.5-42-gabcdef1234)): ") == 0);
         CHECK(w.find("use the same game dump (1.09) as the host") != std::string::npos);
         gb.params_sha256 = hb.params_sha256;
         gb.hook_names = {"4p H1 cooperator slots (SessionSlotSummary) @+0x186fe40",

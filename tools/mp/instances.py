@@ -42,7 +42,10 @@ def base_port(root) -> int:
     if os.environ.get("BB_MP_BASE_PORT"):
         return int(os.environ["BB_MP_BASE_PORT"])
     r = Path(root).resolve()
-    if r == Path(DEFAULT_ROOT).resolve():
+    # Only the main checkout's default root keeps 47600. An agent worktree's default root
+    # (agents/NAME/mptest) is its own folder, but every agent got 47600 too (2026-10-15: two
+    # agents' hosts on one port; the second host's guests never found its party code).
+    if r == Path(DEFAULT_ROOT).resolve() and REPO.parent.parent.name != "agents":
         return BASE_PORT
     import zlib
     return 47700 + 10 * (zlib.crc32(str(r).lower().encode()) % 150)
@@ -222,7 +225,7 @@ def party_saves_from(user: Path, fresh: bool = False):
             shutil.rmtree(user / "savedata_party")
         # the last run's crash marker, story state, rot stacks and prologue reading: they belong to
         # the characters of the save copied again here
-        for state in ("party_state.json", "party_story.json", "party_rot.txt", "party_prologue.txt"):
+        for state in ("party_state.json", "party_story.json", "party_rot.txt", "party_prologue.txt", "party_stain.txt"):
             (user / state).unlink(missing_ok=True)
     if (user / "savedata").is_dir() and not (user / "savedata_party").exists():
         shutil.copytree(user / "savedata", user / "savedata_party")

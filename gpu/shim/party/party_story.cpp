@@ -949,6 +949,7 @@ double Now() {
 }
 
 std::atomic<bool> g_story_on{false};
+std::atomic<double> g_last_ending_at{0};
 std::atomic<u64> g_seq{0};
 u64 NextSeq() {
     u64 cur = g_seq.load();
@@ -1724,6 +1725,10 @@ bool StoryMirroredEvent(std::uint32_t event_id) {
     return it != g_mirrored.end() && Now() - it->second < kMirrorDedupeSeconds;
 }
 
+double StoryLastEndingAt() {
+    return g_last_ending_at.load();
+}
+
 bool StoryBusy() {
     if (!g_story_on.load()) {
         return false;
@@ -1992,6 +1997,7 @@ void StoryTick() {
             a->kind == StoryAction::ForceEnding) {
             g_tick.ending_at = now;
             g_tick.ending_log = now;
+            g_last_ending_at = now;
         }
     }
     // After our ending: the ending step (staff roll movie) has no world; a progress line every

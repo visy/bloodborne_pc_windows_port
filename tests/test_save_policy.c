@@ -177,6 +177,37 @@ int main(void) {
     assert(count(base,".partial",1)==0 && count(base,"suspect",0)==3);
     puts("PASS: busy saves skipped, unfinished copies removed");
 
+    /* Party session snapshots: both folders, byte-identical, labelled with the role; newest N kept;
+     * made at a party start, not at a crash restart (the same session). */
+    {
+        char sess[800], made2[900], a[1200], b[1200];
+        snprintf(sess,sizeof(sess),"%s/save_backups/party_sessions",user);
+        put("savedata/1/CUSA03173/SPRJ0005/userdata0000",SLOT,5);
+        assert(runtime_savepolicy_session_snapshot(user,"host",2,made2,sizeof(made2))==1);
+        assert(strstr(made2,"-host"));
+        snprintf(a,sizeof(a),"%s/savedata_party",made2); snprintf(b,sizeof(b),"%s/savedata_party",user);
+        SavePolicyCheck x, y;
+        runtime_savepolicy_check(a,NULL,0,&x); runtime_savepolicy_check(b,NULL,0,&y);
+        assert(x.hash==y.hash && x.files==y.files);
+        snprintf(a,sizeof(a),"%s/savedata",made2); snprintf(b,sizeof(b),"%s/savedata",user);
+        runtime_savepolicy_check(a,NULL,0,&x); runtime_savepolicy_check(b,NULL,0,&y);
+        assert(x.hash==y.hash && x.files==1);
+        snprintf(a,sizeof(a),"%s/SESSION.txt",made2);
+        FILE *f=fopen(a,"rb"); assert(f); char txt[1024]={0}; fread(txt,1,sizeof(txt)-1,f); fclose(f);
+        assert(strstr(txt,"role=host") && strstr(txt,"savedata_party_files=5") && strstr(txt,"savedata_files=1"));
+        assert(runtime_savepolicy_session_snapshot(user,"guest",2,NULL,0)==1);
+        assert(runtime_savepolicy_session_snapshot(user,"guest",2,NULL,0)==1);
+        assert(count(sess,"-",1)==2 && count(sess,"-host",1)==0); /* the oldest went */
+        set_env("BB_SAVE_BACKUP_MINUTES","0"); set_env("BB_SAVE_SESSION_KEEP","9");
+        set_env("BB_PARTY","join"); set_env("BB_PARTY_RESTARTED","1"); runtime_savepolicy_reset();
+        runtime_savepolicy_start();
+        assert(count(sess,"-",1)==2); /* crash restart: no new snapshot */
+        set_env("BB_PARTY_RESTARTED",NULL); runtime_savepolicy_reset();
+        runtime_savepolicy_start();
+        assert(count(sess,"-",1)==3 && count(sess,".partial",1)==0);
+        puts("PASS: party session snapshots");
+    }
+
     /* Nothing to back up. */
     assert(runtime_savepolicy_backup(user,"savedata_none","start",3,NULL,0)==0);
     remove_tree(user);

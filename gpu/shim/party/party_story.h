@@ -356,6 +356,8 @@ void StoryMemberJoined();
 bool StoryBusy();
 /// BB_PARTY_STORY_TEST is set (single instance test; the party layer must start for it).
 bool StoryTestRequested();
+/// steady_clock seconds of the last ending this game ran (21/22/23, 72100130, the ending step); 0 none.
+double StoryLastEndingAt();
 #endif
 
 } // namespace coop

@@ -122,6 +122,19 @@ bool RelayRate::Take(int slot, double now_s) {
     return true;
 }
 
+StainMark g_stain;  // under g_mu
+
+void SetStain(const StainMark& m) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    g_stain = m;
+}
+
+bool GetStain(StainMark* out) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    *out = g_stain;
+    return g_stain.live;
+}
+
 void Place(const Marker& m) {
     if (m.slot < 0 || m.slot >= kMaxSlots) return;
     std::lock_guard<std::mutex> lk(g_mu);

@@ -1338,6 +1338,22 @@ void KillLoadedEnemyForTest(const char* what, std::uint32_t want, bool by_id, bo
     int alive = 0;
     for (const auto& e : list) alive += e.alive ? 1 : 0;
     const int k = have_me || want ? PickEnemyKillTarget(list, want, me, 500.0f) : -1;
+    if (k < 0 && want && by_id && EnemyIsBossEntity(want) && hp_only) {
+        // ':hp' on a boss outside the census: its chr by entity id (0x13C97A0, as the boss clear
+        // bonus 0x1335400 finds it) and HP 0 only: the game's own death and defeat path (a "real
+        // kill" without ForceDead; statsaudit finding 4).
+        const std::uint64_t chr =
+            reinterpret_cast<std::uint64_t(BB_COOP_SYSV*)(std::int32_t, std::uint64_t, std::uint64_t)>(Guest(0x13c97a0))(
+                std::int32_t(want), 0, 0);
+        std::uint64_t ins = 0, d = 0;
+        const int hp0 = chr ? balance::EnemyHp(chr) : -1;
+        const int zero = 0;
+        if (chr && SafeGet(chr + 0x3b0, &ins) && ins && SafeGet(ins + 0x20, &d) && d) SafeWrite(d + 0xf8, &zero, 4);
+        Log("test: %s: boss entity %u (chr %#llx, not in the census list): HP %d -> %d (HP 0 only: the game's own death "
+            "follows)",
+            what, want, static_cast<unsigned long long>(chr), hp0, chr ? balance::EnemyHp(chr) : -1);
+        return;
+    }
     if (k < 0 && want && by_id && EnemyIsBossEntity(want)) {
         // A boss chr is not in the census list (pard S5a: Blood-starved Beast 2300800 in its fight):
         // Lua ForceDead by id still runs its defeat path, as the campaign soak's kills did.

@@ -256,6 +256,7 @@ struct BalanceTexts {
     u32 scale_help[6]{};
     u32 npc_range_help = 0;
     u32 ff_help = 0, ff_value = 0, ff_guest_help = 0;
+    u32 lamps_help = 0, lamps_value = 0, lamps_guest_help = 0;
 } balance;
 std::string member_names[MaxMembers]; // the member row k stands for (kick)
 bool member_kickable[MaxMembers]{};
@@ -1081,14 +1082,23 @@ void DefineAll() {
 
     // ---- Friendly fire / PvP (I1, party_pvp.h): a party rule only the host sets (ERSC's
     // Judicator's Rulebook). The host gets the toggle; a guest sees the host's rule, read-only. ----
-    AddPage("Friendly fire", "Огонь по своим", "Let party members hurt each other (PvP); the host decides (bbport)",
-            "Члены группы могут ранить друг друга (PvP); решает хост (bbport)");
+    AddPage("Friendly fire", "Огонь по своим", "PvP and shared lamps: rules the host decides (bbport)",
+            "PvP и общие фонари: правила, которые решает хост (bbport)");
     balance.ff_help = AddDynamic(MaxHelpLength);
     AddRow(Flag(&Values::party_friendly_fire), AddText("Friendly fire / PvP", "Огонь по своим / PvP"), balance.ff_help,
            toggle, Kind::Toggle, [] { return party::status::Snapshot().role != party::status::Role::Guest; });
     balance.ff_value = AddDynamic(MaxValueLength);
     balance.ff_guest_help = AddDynamic(MaxHelpLength);
     AddRow(Info(), AddText("Friendly fire / PvP", "Огонь по своим / PvP"), balance.ff_guest_help, {balance.ff_value},
+           Kind::Button, [] { return party::status::Snapshot().role == party::status::Role::Guest; });
+
+    // Shared lamps (statsaudit finding 5): a party rule only the host sets, on by default.
+    balance.lamps_help = AddDynamic(MaxHelpLength);
+    AddRow(Flag(&Values::party_share_lamps), AddText("Shared lamps", "Общие фонари"), balance.lamps_help, toggle,
+           Kind::Toggle, [] { return party::status::Snapshot().role != party::status::Role::Guest; });
+    balance.lamps_value = AddDynamic(MaxValueLength);
+    balance.lamps_guest_help = AddDynamic(MaxHelpLength);
+    AddRow(Info(), AddText("Shared lamps", "Общие фонари"), balance.lamps_guest_help, {balance.lamps_value},
            Kind::Button, [] { return party::status::Snapshot().role == party::status::Role::Guest; });
 
     // ---- Enemy scaling (party_balance.h): per extra hunter, the host's values count. ----
@@ -1136,6 +1146,16 @@ void RefreshBalance() {
                                              : "The host decides; off: party members cannot hurt each other",
                    ff ? "Хост включил огонь по своим: члены группы могут ранить друг друга"
                       : "Решает хост; выкл.: члены группы не могут ранить друг друга");
+    }
+    if (balance.lamps_help) {
+        SetDynamic(balance.lamps_help, "A lamp any party member lights is lit for everyone, in each save. Party rule",
+                   "Фонарь, зажжённый любым членом группы, горит у всех, в каждом сохранении. Правило группы");
+        const bool on = party::status::ShareLamps();
+        SetDynamic(balance.lamps_value, on ? "On" : "Off", on ? "Вкл" : "Выкл");
+        SetDynamic(balance.lamps_guest_help, on ? "The host shares lamps: every lamp lit in the party is lit for you too"
+                                                : "The host turned shared lamps off: your own lamps stay yours",
+                   on ? "Хост делит фонари: каждый фонарь группы горит и у вас"
+                      : "Хост выключил общие фонари: ваши фонари остаются вашими");
     }
     using namespace coop::balance;
     const int values[6] = {v.party_boss_hp, v.party_boss_damage, v.party_boss_poise,

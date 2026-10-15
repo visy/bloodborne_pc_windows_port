@@ -491,7 +491,10 @@ struct Sampler {
         case AnisoRatio::Sixteen:
             return 16.0f;
         default:
-            UNREACHABLE();
+            // 3 bits, 0..4 valid: a stale S# read ahead (draw preparation) may hold 5..7;
+            // clamped like the hardware's 16x cap instead of ending the session (from
+            // deadinside's Supermedo/bloodborne_pc 72e5c8ce).
+            return 16.0f;
         }
     }
 };

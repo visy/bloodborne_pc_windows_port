@@ -85,6 +85,11 @@ int main() {
         assert(!LampLitFromJsonText("{\"ids\":[1,2", &ids, &err));
         std::vector<std::uint32_t> many(17, 72410201);
         assert(!LampLitFromJsonText(LampLitToJsonText(many), &ids, &err));
+        // Statsaudit finding 5: a guest's own-save lamps carry "own" (the host's shared-lamps rule).
+        bool own = true;
+        assert(LampLitFromJsonText(LampLitToJsonText({12417830}), &ids, &err, &own) && !own);
+        assert(LampLitFromJsonText(LampLitToJsonText({12417830}, true), &ids, &err, &own) && own && ids.size() == 1);
+        assert(!LampLitFromJsonText(LampLitToJsonText({12411800}, true), &ids, &err, &own));
     }
     assert(!LampTalk(241004) && !LampTalk(241190) && !LampTalk(210304) && !LampTalk(243000) && !LampTalk(100000));
 
