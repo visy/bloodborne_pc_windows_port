@@ -205,6 +205,10 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.fsr4_auto_exposure = i != 0;
     } else if (key == "fsr4_invert_jitter") {
         v.fsr4_invert_jitter = i != 0;
+    } else if (key == "volumetric_res") {
+        // 0 game (half resolution), 1 = 2x the pixels, 2 = the scene's resolution; also by name.
+        v.volumetric_res = value == "full" ? 2 : value == "2x" || value == "double" ? 1
+                         : value == "game" || value == "off" ? 0 : std::clamp(i, 0, 2);
     } else if (key == "model_lod") {
         v.model_lod = std::clamp(i, -2, 2);
     } else if (key == "live_resolution") {
@@ -298,6 +302,7 @@ void Load() {
         {"BB_HDR", "hdr"},                          {"BB_HDR_PEAK", "hdr_peak_nits"},
         {"BB_HDR_PAPER_WHITE", "hdr_paper_white"},  {"BB_HDR_STRENGTH", "hdr_strength"},
         {"BB_HDR_SATURATION", "hdr_saturation"},   {"BB_PARTY_OVERHEAD", "party_overhead"},
+        {"BB_VOLUMETRIC_RES", "volumetric_res"},
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env)) {
@@ -578,6 +583,7 @@ void Save() {
         put(Effects[e].key, flag(v.effects[e]));
     }
     put("model_lod", std::to_string(v.model_lod.load()));
+    put("volumetric_res", std::to_string(v.volumetric_res.load()));
     put("output_res", std::to_string(OutputWidths[v.output_res]) + "x" +
                           std::to_string(OutputHeights[v.output_res]));
     // Read by run.sh at start.

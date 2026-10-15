@@ -17,6 +17,8 @@
 #include "bbport_free_check.h"
 #include "bbport_guest_memory.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
+#include "video_core/renderer_vulkan/volumetric_resolution.h"
+#include "bbport_settings.h"
 #include "common/hash.h"
 #include "common/debug.h"
 #include "core/debug_state.h"
@@ -1615,6 +1617,11 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         buffer_cache.Preupload(budget);
     }
     const auto& regs = Regs();
+    // bbport: volumetric effects resolution: its level and newly classified images apply at
+    // the display pass, between frames (a pass keeps one size within a frame).
+    if (regs.color_buffers[0] && FrameCapture::IsDisplayBuffer(regs.color_buffers[0].Address())) {
+        VolumetricFrameStart();
+    }
     // bbport: the pass copying a finished frame to a display buffer; the previous draw's
     // target is that frame.
     if (camera_motion->Enabled() && regs.color_buffers[0] &&
@@ -3273,7 +3280,8 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
     // image (normalized sampling only; see Shader::ImageResource::needs_native).
     boost::container::small_vector<bool, 16> binding_proxy_ok;
     const bool sample_proxies = !BbToggle::Disabled(BbToggle::SampleSceneProxies) &&
-                                !on_helper && scene_targets->Reduced();
+                                !on_helper &&
+                                (scene_targets->Reduced() || scene_targets->VolumetricActive());
 
     for (u32 image_index = 0; image_index < stage.images.size(); ++image_index) {
         const auto& image_desc = stage.images[image_index];
@@ -3611,6 +3619,7 @@ Rasterizer::BeginSignature Rasterizer::MakeBeginSignature(const GraphicsPipeline
     sig.raster_scaling = upscaler->RasterScaling();
     sig.upscaler_state = upscaler->RedirectState();
     sig.generation = texture_cache.RegistryGeneration();
+    sig.volumetric_generation = scene_targets->VolumetricGeneration();
     std::memcpy(&sig.depth_control, &regs.depth_control, sizeof(u32));
     sig.depth_valid = regs.depth_buffer.DepthValid();
     sig.stencil_valid = regs.depth_buffer.StencilValid();
@@ -3705,6 +3714,9 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
 
 RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
     BB_SECTION(BeginRendering);
+    if (scene_targets->VolumetricActive()) {
+        VolumetricDrawSampled(pipeline);
+    }
     // bbport: RenderStateMemo (see BeginMemo).
     const bool memo_on = !BbToggle::Disabled(BbToggle::RenderStateMemo) && !FrameCapture::Active();
     if (BbStats::enabled && ((begin_memo_hits + begin_memo_misses) & 0x3FFFF) == 0x3FFFF) {
@@ -3795,11 +3807,35 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
     const u32 num_attachments = BbToggle::Disabled(BbToggle::SceneAttachmentsOnly)
                                     ? u32(cb_descs.size())
                                     : u32(std::bit_width(key.mrt_mask));
+    // bbport: volumetric effects resolution (volumetric_resolution.h): a pass whose attachments
+    // are all classified volumetric draws into their proxies, whatever the scene path.
+    bool volumetric_pass = false;
+    if (scene_targets->VolumetricActive()) {
+        VolumetricClassifyPass(key, num_attachments);
+        bool any = false, all = true;
+        for (u32 cb = 0; cb < num_attachments; ++cb) {
+            if (const auto id = cb_descs[cb].first) {
+                any = true;
+                all = all && texture_cache.GetImage(id).volumetric;
+            }
+        }
+        if (db_desc.first) {
+            any = true;
+            all = all && texture_cache.GetImage(db_desc.first).volumetric;
+        }
+        volumetric_pass = any && all && key.num_samples == 1;
+        if (volumetric_pass) reduced = true;
+    }
     // All attachments of a reduced pass share one proxy size (scene or half resolution).
     std::optional<SceneResolution::Size> pass_size;
+    SceneResolution::Size pass_guest{};
     const auto same_size = [&](const VideoCore::Image& image, u32 level) {
         const auto proxy = scene_targets->ProxySize(image, level);
-        if (!pass_size) pass_size = proxy;
+        if (!pass_size) {
+            pass_size = proxy;
+            pass_guest = {std::max(1u, image.info.size.width >> level),
+                          std::max(1u, image.info.size.height >> level)};
+        }
         return *pass_size == proxy;
     };
     for (u32 cb = 0; cb < num_attachments; ++cb) {
@@ -3834,6 +3870,9 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         std::printf("Scene pass: reduced %d %s\n", reduced, why.c_str());
     }
     push_data.scene_size = reduced ? SceneResolution::Pack(scene_targets->Size()) : 0;
+    if (reduced && volumetric_pass && pass_size) {
+        push_data.scene_size = VolumetricResolution::PackFragScale(*pass_size, pass_guest);
+    }
     if (BbStats::enabled) {
         BbStats::reduced_draws.fetch_add(reduced, std::memory_order_relaxed);
         BbStats::scene_draws.fetch_add(scene_started, std::memory_order_relaxed);
@@ -4060,6 +4099,10 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         state.width = proxy.width;
         state.height = proxy.height;
         target_scale = {float(size.width) / 1920.0f, float(size.height) / 1080.0f};
+        if (volumetric_pass && pass_size) {
+            // proxy / the game's size: 2 at full resolution, 1.4 at 2x the pixels.
+            VolumetricResolution::TargetScale(*pass_size, pass_guest, target_scale.data());
+        }
     }
     if (FrameCapture::Active()) {
         std::array<const VideoCore::ImageInfo*, AmdGpu::NUM_COLOR_BUFFERS> colors{};
@@ -4077,6 +4120,125 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         object_motion->Attach(state, state.width, state.height);
     }
     return state;
+}
+
+void Rasterizer::VolumetricFrameStart() {
+    // Test aid BB_VOLUMETRIC_RES_FILE=<file>: its first character (0/1/2), polled about once a
+    // second, sets the level (a sweep within one session); each level's mean frame time is
+    // logged when it changes.
+    static const char* sweep_file = std::getenv("BB_VOLUMETRIC_RES_FILE");
+    static u64 frames = 0, level_frames = 0;
+    static auto level_start = std::chrono::steady_clock::now();
+    static auto last_call = std::chrono::steady_clock::now();
+    {
+        // Once per frame: the display pass may have several draws.
+        const auto t = std::chrono::steady_clock::now();
+        const bool same_frame = t - last_call < std::chrono::milliseconds(1);
+        last_call = t;
+        if (same_frame) return;
+    }
+    ++frames;
+    if (sweep_file && frames % 60 == 0) {
+        if (FILE* f = std::fopen(sweep_file, "r")) {
+            const int c = std::fgetc(f);
+            std::fclose(f);
+            if (c >= '0' && c <= '2') BbSettings::Get().volumetric_res = c - '0';
+        }
+    }
+    ++level_frames;
+    const int level = BbSettings::Get().volumetric_res.load(std::memory_order_relaxed);
+    if (sweep_file && VolumetricResolution::ClampLevel(level) != scene_targets->VolumetricLevel()) {
+        const auto now = std::chrono::steady_clock::now();
+        const double ms = std::chrono::duration<double, std::milli>(now - level_start).count();
+        std::printf("Volumetric sweep: level %d: %llu frames, %.2f ms per frame\n",
+                    scene_targets->VolumetricLevel(), (unsigned long long)level_frames,
+                    level_frames ? ms / double(level_frames) : 0.0);
+        level_frames = 0;
+        level_start = now;
+    }
+    if (scene_targets->SetVolumetricLevel(level)) {
+        begin_memo.valid = false;
+    }
+    if (scene_targets->VolumetricActive() && scene_targets->CommitVolumetric()) {
+        begin_memo.valid = false;
+    }
+}
+
+void Rasterizer::VolumetricClassifyPass(const GraphicsPipelineKey& key, u32 num_attachments) {
+    using namespace VolumetricResolution;
+    if (!db_desc.first) {
+        return;
+    }
+    const auto& depth = texture_cache.GetImage(db_desc.first);
+    const SceneResolution::Size depth_size{depth.info.size.width, depth.info.size.height};
+    // The G-buffer pass (5+ color targets) holds the scene depth: rule 1's reference.
+    if (std::popcount(key.mrt_mask & 0x7fu) >= 5) {
+        scene_targets->NoteSceneDepth(depth_size);
+        return;
+    }
+    const PassFacts facts{
+        .scene_depth = scene_targets->SceneDepth(),
+        .has_depth = true,
+        .depth_has_stencil = depth.info.props.is_depth && depth.info.props.has_stencil,
+        .depth_volumetric = depth.volumetric,
+        .depth_size = depth_size,
+    };
+    if (!DepthIsVolumetric(facts)) {
+        return;
+    }
+    if (!depth.volumetric) {
+        scene_targets->QueueVolumetric(db_desc.first, depth);
+    }
+    for (u32 cb = 0; cb < num_attachments; ++cb) {
+        if (const auto id = cb_descs[cb].first) {
+            const auto& color = texture_cache.GetImage(id);
+            if (!color.volumetric &&
+                ColorWithVolumetricDepth(facts, {color.info.size.width, color.info.size.height})) {
+                scene_targets->QueueVolumetric(id, color);
+            }
+        }
+    }
+}
+
+void Rasterizer::VolumetricDrawSampled(const GraphicsPipeline* pipeline) {
+    using namespace VolumetricResolution;
+    const auto half = scene_targets->VolumetricHalf();
+    const auto& key = pipeline->GetGraphicsKey();
+    if (half.width == 0 || db_desc.first || !key.mrt_mask || !cb_descs[0].first) {
+        return;
+    }
+    // Only passes whose targets all have the volumetric size and are not classified yet.
+    const u32 num_color = std::bit_width(key.mrt_mask);
+    bool pending = false;
+    for (u32 cb = 0; cb < num_color; ++cb) {
+        if (const auto id = cb_descs[cb].first) {
+            const auto& color = texture_cache.GetImage(id);
+            if (!ColorFromVolumetricSample(false, {color.info.size.width, color.info.size.height},
+                                           half)) {
+                return;
+            }
+            pending = pending || !color.volumetric;
+        }
+    }
+    if (!pending) {
+        return;
+    }
+    bool samples_volumetric = false;
+    for (const auto id : bound_images) {
+        const auto& image = texture_cache.GetImage(id);
+        if (image.volumetric && !image.info.props.is_depth && !image.binding.is_target) {
+            samples_volumetric = true;
+            break;
+        }
+    }
+    if (!samples_volumetric) {
+        return;
+    }
+    for (u32 cb = 0; cb < num_color; ++cb) {
+        if (const auto id = cb_descs[cb].first) {
+            scene_targets->QueueVolumetric(id, texture_cache.GetImage(id));
+        }
+    }
 }
 
 void Rasterizer::Resolve() {

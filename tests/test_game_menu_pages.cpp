@@ -146,7 +146,7 @@ static void EverySettingSaved() {
         "hud_scale", "hud_graph", "hud_vram", "hud_gpu", "hud_cpu", "hud_ram", "mk_enabled", "mk_sens_x",
         "mk_sens_y", "mk_invert_x", "mk_invert_y", "mk_deadzone", "mk_smoothing", "mk_wheel", "async_pipelines", "gpl",
         "compile_indicator", "party_toasts", "party_hud", "fsr4_auto_exposure", "fsr4_invert_jitter", "model_lod",
-        "output_res", "live_resolution", "menu_language"};
+        "output_res", "live_resolution", "menu_language", "volumetric_res"};
     for (const char* key : overlay) {
         if (!changed.count(key)) {
             std::fprintf(stderr, "no game menu row changes %s\n", key);

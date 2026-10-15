@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_vulkan/vk_scene_resolution.h"
+#include "video_core/renderer_vulkan/volumetric_resolution.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -81,7 +82,9 @@ static u32 SizeDivisor(const VideoCore::ImageInfo& i, SceneResolution::Size scen
 bool SceneTargets::Eligible(const VideoCore::Image& image) const {
     const auto& i = image.info;
     const u32 div = SizeDivisor(i, size);
-    if (!div || i.size.depth != 1 || i.resources.layers != 1 || i.num_samples != 1 ||
+    // Volumetric images: any size (the startup-patched scene sizes too), single level.
+    const bool volumetric = image.volumetric && volumetric_level != 0;
+    if ((!div && !volumetric) || (volumetric && i.resources.levels != 1) || i.size.depth != 1 || i.resources.layers != 1 || i.num_samples != 1 ||
         i.props.is_block || !image.backing || image.backing->num_samples != 1) {
         return false;
     }
@@ -95,9 +98,76 @@ bool SceneTargets::Eligible(const VideoCore::Image& image) const {
 bool SceneTargets::EligibleScene(const VideoCore::Image& image) const {
     return image.info.size.width == 1920 && image.info.size.height == 1080 && Eligible(image);
 }
-SceneResolution::Size SceneTargets::ProxySize(const VideoCore::Image& image, u32 level) const {
-    const u32 div = std::max(1u, SizeDivisor(image.info, size));
+SceneResolution::Size SceneTargets::BaseSize(const VideoCore::Image& image, u32 level) const {
+    const u32 div = SizeDivisor(image.info, size);
+    if (!div) {
+        // Only volumetric images get here: their proxy's base is the game's own size.
+        return {std::max(1u, image.info.size.width >> level),
+                std::max(1u, image.info.size.height >> level)};
+    }
     return {std::max(1u, size.width / div >> level), std::max(1u, size.height / div >> level)};
+}
+SceneResolution::Size SceneTargets::ProxySize(const VideoCore::Image& image, u32 level) const {
+    const auto base = BaseSize(image, level);
+    if (image.volumetric && volumetric_level != 0) {
+        return VolumetricResolution::Scaled(base, volumetric_level);
+    }
+    return base;
+}
+bool SceneTargets::SetVolumetricLevel(int level) {
+    level = VolumetricResolution::ClampLevel(level);
+    if (level == volumetric_level) return false;
+    // As SetSize: the proxies of the old size go (their content resolved to the game's images).
+    ResolveAll();
+    scheduler.Finish();
+    entries.clear();
+    tracked.clear();
+    ++generation;
+    ++volumetric_generation;
+    recent = {};
+    volumetric_level = level;
+    std::printf("Volumetric effects resolution: %s\n",
+                level == VolumetricResolution::Full     ? "full scene resolution"
+                : level == VolumetricResolution::Double ? "2x the game's pixels"
+                                                        : "game default (half resolution)");
+    return true;
+}
+void SceneTargets::QueueVolumetric(VideoCore::ImageId id, const VideoCore::Image& image) {
+    if (image.volumetric) return;
+    for (const auto& [queued, uid] : volumetric_queue) {
+        if (uid == image.image_uid) return;
+    }
+    if (image.info.props.is_depth) {
+        volumetric_half = {image.info.size.width, image.info.size.height};
+    }
+    volumetric_queue.emplace_back(id, image.image_uid);
+}
+bool SceneTargets::CommitVolumetric() {
+    bool changed = false;
+    for (const auto& [id, uid] : volumetric_queue) {
+        auto* image = lookup(id, uid);
+        if (!image || image->volumetric) continue;
+        // Its native content is current: no proxy of the old (base) size may stay behind.
+        if (image->scene_proxy && tracked.contains(uid)) {
+            NativeAccess(*image, vk::AccessFlagBits2::eMemoryWrite);
+            scheduler.Finish(); // command buffers may still use the old proxies (rare: once)
+            for (u32 level = 0; level < 16; ++level) entries.erase(Key(uid, level));
+            tracked.erase(uid);
+            recent = {};
+        }
+        image->volumetric = true;
+        ++volumetric_count;
+        changed = true;
+        std::printf("Volumetric effects: %s %ux%u (%zu images)\n",
+                    vk::to_string(image->info.pixel_format).c_str(), image->info.size.width,
+                    image->info.size.height, volumetric_count);
+    }
+    volumetric_queue.clear();
+    if (changed) {
+        ++volumetric_generation;
+        ++generation; // texture sets may hold views of dropped proxies
+    }
+    return changed;
 }
 bool SceneTargets::SetSize(SceneResolution::Size next) {
     if (next == size) return false;
