@@ -1057,6 +1057,7 @@ std::atomic<bool> g_fell_back{false};  // a B1 fallback ran: clean the network f
 // Where every member is, from the party link's vitals (the director, every tick): map (0xAABBCCDD)
 // and position as that member's own game reads them.
 std::vector<Where> g_where;  // main thread
+std::atomic<bool> g_keep_join_snapshot{false};  // A5: BeginRejoin keeps the queued join snapshot once
 std::atomic<int> g_apart{0};  // members whose area differs from ours (K5, the host watchdog)
 std::atomic<bool> g_host_alone_next{false};  // host: the next own load is an alone travel
 std::atomic<double> g_host_alone_at{0};
@@ -4476,7 +4477,10 @@ void CarryArrivalTick(const GameSnapshot& s, double now) {
         Log("A5: cross-map join: no lamp of the host's map %s known; waiting", MapName(host).c_str());
         return;
     }
-    if (TravelAlone(t, AloneWhy::Join)) {
+    g_keep_join_snapshot = true;
+    const bool started = TravelAlone(t, AloneWhy::Join);
+    g_keep_join_snapshot = false;
+    if (started) {
         g_carry_join_at = -1;
         Log("A5: cross-map join: client in %s, the host in %s: one load into the host's map (lamp %u, then beside "
             "the host) %.1f s after the join",
@@ -7084,7 +7088,14 @@ bool BeginRejoin(const TravelIntent& t, bool main_thread, bool solo) {
     if (main_thread) {
         // Back to "joined, awaiting the host's snapshot" (event 8/9 state); the host's 0x11 / 0x10
         // are read by 0x1783160 only in state 1 (it also clears the 60 s state timer).
-        DrainSnapshotQueue(solo ? "own travel" : "follow");
+        if (g_keep_join_snapshot.exchange(false)) {
+            // A5 (live a11f): the arrival right after a cross-map join: the join's own snapshot
+            // (0x19 with the host's map, 0x11, 0x10) is still queued and is the current one;
+            // dropping it left the load without the host's map (it built the Dream again).
+            Log("guest: the join's own snapshot packets are kept for the arrival load");
+        } else {
+            DrainSnapshotQueue(solo ? "own travel" : "follow");
+        }
         const u64 flow = Slot(kSlotFlow);
         const int one = 1;
         const float zero = 0.0f;
