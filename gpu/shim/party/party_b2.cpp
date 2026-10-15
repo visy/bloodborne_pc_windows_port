@@ -1156,6 +1156,7 @@ struct PendingRemoval {
     u64 chr = 0, entry = 0;
     double since = 0;
     std::string why;
+    bool member_gone = false;  // A7: the member left the session (no task holds the chr any more)
 };
 std::vector<PendingRemoval> g_removals;
 
@@ -1185,6 +1186,15 @@ void FinishRemoval(const PendingRemoval& r, const char* how) {
     for (const TaskInfo& t : Tasks(false)) {
         still = still || ((t.mode == 1 || t.mode == 2) && PlayerForPeer(t.task + kTaskPeer) == r.chr);
     }
+    if (r.member_gone) {
+        // No task holds it: still there if the ChrSet still lists it.
+        const u64 wcm = Slot(kSlotWorldChrMan);
+        const int n = Field<int>(wcm, 0x30, 0);
+        const u64 entries = Field<u64>(wcm, 0x38);
+        for (int i = 0; entries && i < n && i <= 8; ++i) {
+            still = still || Field<u64>(entries + u64(i) * 0x38, 0) == r.chr;
+        }
+    }
     if (!still) {
         Log("split: remote chr %#llx already gone (%s)", ull(r.chr), r.why.c_str());
         return;
@@ -1194,17 +1204,17 @@ void FinishRemoval(const PendingRemoval& r, const char* how) {
     reinterpret_cast<Release>(Guest(0x15bc080))(Field<u64>(Slot(kSlotGsm), 0x16f8), Field<u32>(r.chr, 8));
     reinterpret_cast<Remove>(Guest(0x19186e0))(Slot(kSlotWorldChrMan), r.chr);
     g_split_change_at = Now();
-    Log("split: remote chr %#llx at (%.1f, %.1f, %.1f) removed (%s; leave %s); its task is kept", ull(r.chr), p[0], p[1],
-        p[2], r.why.c_str(), how);
+    Log("split: remote chr %#llx at (%.1f, %.1f, %.1f) removed (%s; leave %s); %s", ull(r.chr), p[0], p[1], p[2],
+        r.why.c_str(), how, r.member_gone ? "the member left the session" : "its task is kept");
 }
 
-void RemoveRemoteChr(u64 chr, const char* why) {
+void RemoveRemoteChr(u64 chr, const char* why, bool member_gone = false) {
     for (const PendingRemoval& r : g_removals) {
         if (r.chr == chr) {
             return;  // already leaving
         }
     }
-    u8 pslot = 0;
+    u8 pslot = member_gone ? 7 : 0;  // a remote member's presentation slot (live: 7 on every guest's task)
     for (const TaskInfo& t : Tasks(false)) {
         if ((t.mode == 1 || t.mode == 2) && PlayerForPeer(t.task + kTaskPeer) == chr) {
             pslot = t.slot;
@@ -1214,6 +1224,7 @@ void RemoveRemoteChr(u64 chr, const char* why) {
     r.chr = chr;
     r.since = Now();
     r.why = why;
+    r.member_gone = member_gone;
     const u64 director = Slot(0x553e8b0);
     if (director) {
         using Leave = u64(BB_COOP_SYSV*)(u64, u32, u64);
@@ -1246,6 +1257,65 @@ void RemovalTick(double now) {
         }
         ++i;
     }
+}
+
+/// A7 (parab4 a7b, live, 3 players): when a guest leaves the session, the other guests' games end
+/// its remote player task but keep its PlayerIns in the ChrSet (cooperators stay 2, the presence
+/// entry stays). When it rejoins, the kept PlayerIns comes back (its PlayerId matches the member
+/// again) next to the new one: two chrs read the member's type-6 packet queue from two chr threads
+/// (the 4-player crash), the cooperator count is one too high, and a 3rd rejoin crashed a task step
+/// (0x1E50090). A guest now removes, the way the host's game does, a player chr whose member has no
+/// peer entry any more (SprjNetMan +0x28, 0x1789380) and that no task holds, 2 s after it saw it.
+/// Main thread, client role, steady world.
+struct StaleChr {
+    u64 chr = 0;
+    double since = 0;
+};
+std::vector<StaleChr> g_stale_chrs;
+double g_stale_scan_at = 0;
+void StaleMemberChrTick(double now) {
+    if (Role() != RoleClient || now - g_stale_scan_at < 0.5) {
+        return;
+    }
+    g_stale_scan_at = now;
+    using EntryFn = u64(BB_COOP_SYSV*)(u64, u64);
+    const u64 netman = Slot(0x553d6d0);  // SprjNetMan: +0x28 the peer entries
+    const u64 head = Field<u64>(netman, 0x28);
+    if (!netman || !head || Field<u64>(head, 0) == head) {
+        g_stale_chrs.clear();  // no peer at all (a load, a leave): nothing to judge
+        return;
+    }
+    const u64 wcm = Slot(kSlotWorldChrMan);
+    const int n = Field<int>(wcm, 0x30, 0);
+    const u64 entries = Field<u64>(wcm, 0x38);
+    const u64 local = Field<u64>(wcm, 0x60);
+    std::vector<StaleChr> seen;
+    const std::vector<TaskInfo> tasks = Tasks(false);
+    for (int i = 0; entries && i < n && i <= 8; ++i) {
+        const u64 chr = Field<u64>(entries + u64(i) * 0x38, 0);
+        if (!chr || chr == local || !Field<u64>(chr, 0x3d8)) {
+            continue;
+        }
+        if (reinterpret_cast<EntryFn>(Guest(0x1789380))(netman, chr + 0x3d8)) {
+            continue;  // its member is still a peer
+        }
+        bool held = false;
+        for (const TaskInfo& t : tasks) {
+            held = held || ((t.mode == 1 || t.mode == 2) && PlayerForPeer(t.task + kTaskPeer) == chr);
+        }
+        if (held) {
+            continue;
+        }
+        double since = now;
+        for (const StaleChr& o : g_stale_chrs) {
+            if (o.chr == chr) since = o.since;
+        }
+        seen.push_back({chr, since});
+        if (now - since >= 2.0) {
+            RemoveRemoteChr(chr, "A7: its member left the session; no task holds it", true);
+        }
+    }
+    g_stale_chrs = std::move(seen);
 }
 
 /// The member slot whose reported position is nearest to `p` (within `max_m`), -1 none.
@@ -7265,6 +7335,9 @@ void Tick(const GameSnapshot& s) {
                 RemoteVisibleTick(now);
             }
             RemovalTick(now);
+            if (SessionUp()) {
+                StaleMemberChrTick(now);
+            }
             if (g_arrived_at > 0 && now >= g_arrived_at) {
                 g_arrived_at = 0;
                 Send(0, "{\"op\":\"arrived\"}");
