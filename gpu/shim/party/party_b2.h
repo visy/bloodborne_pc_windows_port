@@ -115,7 +115,9 @@ struct Where {
 /// Main thread (the director, every tick, before Tick).
 void SetWhere(const std::vector<Where>& members);
 /// Why a member travels alone (logs; Death keeps the player's own respawn records).
-enum class AloneWhy { Lamp, Headstone, HuntersMark, Death };
+/// Join (A5): a cross-map direct summon joined the host's room from another map; the one load
+/// into the host's map (its lamp nearest the host; the own last lamp is not changed).
+enum class AloneWhy { Lamp, Headstone, HuntersMark, Death, Join };
 const char* AloneWhyName(AloneWhy w);
 /// Guest, main thread: loads t's destination ALONE and stays in the session; the other members
 /// do not load. Destination in the host's area: a B2 re-join (the host re-sends its snapshot; one

@@ -52,6 +52,17 @@ void NoteStoryWarp(std::uint32_t id);
 /// Main thread, once a frame (the director); `link` sends EVENT split_choosing.
 void Tick(const GameSnapshot& s, party::PartyLink* link);
 
+/// P4 (quest_audit.md, double travel questions): a scripted warp that runs on two games (the
+/// Lecture Building doors through the replicated ObjAct, a Tonsil Stone grab on a guest holding the
+/// stone) asks once. Host: true while its own question for lamp `id` is pending or was answered in
+/// the last `within_s` s - a guest's lamp request for the same id is dropped (the host's answer
+/// moves the party). Any role: a member with a lower party slot asking for the same id closes this
+/// game's question (EVENT split_choosing).
+bool OwnChoiceFor(std::uint32_t id, double within_s);
+/// Host: a guest's lamp request for `id` was run as the party travel (its warp event here, a copy
+/// of the guest's, is then dropped instead of asking again).
+void NoteMemberRequestRun(std::uint32_t id);
+
 /// EVENT split_choosing {"lamp": id}: a member opened the question on its game.
 constexpr const char* kChoosingEventName = "split_choosing";
 /// Party callback thread: that event from `slot` (roster name `who`).
