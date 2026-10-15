@@ -1121,6 +1121,11 @@ LinkCallbacks make_callbacks(bool host) {
                 else plog("%s event from slot %d: %s", name.c_str(), slot, err.c_str());
                 return;
             }
+            if (name == coop::desync::kCensusAskEvent) {  // a guest's enemy census differs from the digest
+                std::string err;
+                if (!coop::desync::HostQueueCensusAsk(slot, body, &err)) plog("census_ask from slot %d refused: %s", slot, err.c_str());
+                return;
+            }
             if (name == coop::desync::kResyncEvent) {  // F5: a guest's state differs from the host's digest
                 std::string err;
                 if (!coop::desync::HostQueueResync(slot, body, &err)) plog("sync_resync from slot %d refused: %s", slot, err.c_str());
@@ -1235,6 +1240,11 @@ LinkCallbacks make_callbacks(bool host) {
                 std::string err;
                 if (coop::StoryFromJsonText(body, &s, &err) && coop::SanitizePeerStory(&s, &err)) coop::RequestGuestStory(s);
                 else plog("story event refused: %s", err.c_str());
+                return;
+            }
+            if (name == coop::desync::kCensusListEvent) {  // the host's census entries asked for
+                std::string err;
+                if (!coop::desync::GuestOnCensusList(body, &err)) plog("census_list event: %s", err.c_str());
                 return;
             }
             if (name == coop::progress::kEventFlags || name == coop::progress::kEventFlagSnapshot ||

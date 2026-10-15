@@ -93,13 +93,81 @@ private:
     std::map<u32, std::vector<u32>> blocks_;  // block -> set bits (ascending)
 };
 
+// ---- Enemy census (seamless research #3): the loaded map's enemies on every game ----
+// The host's digest also carries a census digest of its loaded map: every regular enemy (team 23,
+// HP read: party_balance LoadedEnemyList) keyed by its map entity id (chr +0x1F0, the same on every
+// game; the census key +0x3B8 is not), hashed into kCensusBuckets buckets by entity, plus the alive /
+// dead counts of the enemies without an entity id (no key that is the same on every game). A guest
+// in the same map compares it with its own census; a difference that is still there 3 s later (a
+// kill in flight reaches the other game within a second) asks the host for those buckets' entries
+// ("census_ask") and logs exactly which enemies differ ("census_list"). Report only: the game's own
+// enemy sync owns the enemies; nothing is changed. Wire, inside sync_digest:
+//   "e": {"m": map, "a": alive, "d": dead, "ua": unnamed alive, "ud": unnamed dead, "b": [8 u32]}
+//   guest -> host "census_ask"  {"v":1,"m":map,"b":[bucket...]}
+//   host -> guest "census_list" {"v":1,"m":map,"b":[bucket...],"e":[[entity,alive]...],"ua":n,"ud":n}
+constexpr int kCensusBuckets = 8;
+constexpr const char* kCensusAskEvent = "census_ask";
+constexpr const char* kCensusListEvent = "census_list";
+constexpr double kCensusConfirmS = 3.0;  // a difference must still be there this much later
+constexpr int kCensusMaxEntries = 4096;
+using CensusBuckets = std::array<u32, kCensusBuckets>;
+
+struct CensusEntry {
+    u32 entity = 0;  ///< map entity id (chr +0x1F0); 0 = none
+    bool alive = false;
+    bool operator==(const CensusEntry& o) const { return entity == o.entity && alive == o.alive; }
+};
+struct CensusDigest {
+    bool has = false;
+    u32 map = 0;  ///< the loaded map (0xAABBCCDD)
+    int alive = 0, dead = 0, unnamed_alive = 0, unnamed_dead = 0;
+    CensusBuckets b{};
+    bool operator==(const CensusDigest& o) const {
+        return has == o.has && map == o.map && alive == o.alive && dead == o.dead && unnamed_alive == o.unnamed_alive &&
+               unnamed_dead == o.unnamed_dead && b == o.b;
+    }
+};
+int CensusBucket(u32 entity);
+CensusDigest MakeCensusDigest(u32 map, const std::vector<CensusEntry>& list);
+/// The buckets that differ; *unnamed: the counts of the enemies without an entity id differ.
+std::vector<int> CensusDiffBuckets(const CensusDigest& host, const CensusDigest& mine, bool* unnamed);
+
+struct CensusList {
+    u32 map = 0;
+    std::vector<int> buckets;          // ascending
+    std::vector<CensusEntry> entries;  // the named entries of those buckets, by entity
+    int unnamed_alive = 0, unnamed_dead = 0;
+};
+CensusList CensusListOf(u32 map, const std::vector<CensusEntry>& all, const std::vector<int>& buckets);
+struct CensusReport {
+    std::vector<u32> dead_on_host;   ///< dead on the host, alive here
+    std::vector<u32> alive_on_host;  ///< alive on the host, dead here
+    std::vector<u32> only_host;      ///< loaded on the host, not here
+    std::vector<u32> only_here;      ///< loaded here, not on the host
+    int unnamed_alive_delta = 0;     ///< here minus host
+    int unnamed_dead_delta = 0;
+    bool empty() const {
+        return dead_on_host.empty() && alive_on_host.empty() && only_host.empty() && only_here.empty() &&
+               !unnamed_alive_delta && !unnamed_dead_delta;
+    }
+};
+/// The host's entries of `host.buckets` against this game's census (the same buckets).
+CensusReport CompareCensusList(const CensusList& host, const std::vector<CensusEntry>& mine);
+std::string DescribeCensusReport(const CensusReport& r);
+
+std::string CensusAskToJson(u32 map, const std::vector<int>& buckets);
+bool CensusAskFromJson(const std::string& text, u32* map, std::vector<int>* buckets, std::string* error = nullptr);
+std::string CensusListToJson(const CensusList& l);
+bool CensusListFromJson(const std::string& text, CensusList* out, std::string* error = nullptr);
+
 struct Digest {
     u64 epoch = 0, seq = 0;
     bool has_world = false, has_flags = false;
     Buckets world{}, flags{};
+    CensusDigest census;  ///< the host's loaded map's enemies (absent: an older host or no world)
     bool operator==(const Digest& o) const {
         return epoch == o.epoch && seq == o.seq && has_world == o.has_world && has_flags == o.has_flags &&
-               world == o.world && flags == o.flags;
+               world == o.world && flags == o.flags && census == o.census;
     }
 };
 std::string DigestToJson(const Digest& d);
@@ -182,6 +250,19 @@ bool GuestOnDigest(const std::string& body, bool has_world, const Buckets& world
 bool GuestPopResync(std::string* body);
 /// Guest: a new host / session: the model and the checker start over.
 void GuestReset();
+
+/// Guest, the link's callback thread: the census part of the last digest (taken by the main thread).
+bool GuestPopCensusDigest(CensusDigest* out);
+/// Guest, the link's callback thread: EVENT census_list (validated, kept for the main thread).
+bool GuestOnCensusList(const std::string& body, std::string* error = nullptr);
+bool GuestPopCensusList(CensusList* out);
+/// Host, the link's callback thread: EVENT census_ask from `slot` (validated, queued; one per member).
+bool HostQueueCensusAsk(int slot, const std::string& body, std::string* error = nullptr);
+std::vector<std::pair<int, std::pair<u32, std::vector<int>>>> HostPopCensusAsks();
+/// BB_PARTY_CENSUS_TEST (guest, 0 = off): after the N-th matching census, this game's census
+/// reports one living named enemy as dead (a fake kill on one side) until the census list has
+/// named it, so the next digest must find it and the list must name it (live check of the path).
+int CensusTestAfterFromEnv();
 
 /// Host, the link's callback thread: EVENT sync_resync from `slot` (validated, queued).
 bool HostQueueResync(int slot, const std::string& body, std::string* error = nullptr);

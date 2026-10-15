@@ -357,6 +357,110 @@ void TestGameQueues() {
 
 }  // namespace
 
+// Seamless research #3: the enemy census in the digest.
+void TestCensus() {
+    // A Central Yharnam-like census: named enemies (map entity ids) and some without an id.
+    std::vector<CensusEntry> host;
+    for (u32 i = 0; i < 60; ++i) host.push_back({2410000u + i * 7u, i % 9 != 0});
+    for (int i = 0; i < 5; ++i) host.push_back({0, i != 0});
+    std::vector<CensusEntry> guest(host.rbegin(), host.rend());  // another chr order
+    const CensusDigest hd = MakeCensusDigest(0x18010000u, host);
+    const CensusDigest gd = MakeCensusDigest(0x18010000u, guest);
+    CHECK(hd.has && hd == gd);  // order does not matter
+    CHECK(hd.alive + hd.dead == 65 && hd.unnamed_alive == 4 && hd.unnamed_dead == 1);
+    bool unnamed = true;
+    CHECK(CensusDiffBuckets(hd, gd, &unnamed).empty() && !unnamed);
+    // A kill on one side changes exactly the bucket of that entity.
+    std::vector<CensusEntry> killed = guest;
+    u32 victim = 0;
+    for (CensusEntry& e : killed)
+        if (e.entity && e.alive) {
+            e.alive = false;
+            victim = e.entity;
+            break;
+        }
+    const CensusDigest kd = MakeCensusDigest(0x18010000u, killed);
+    const std::vector<int> diff = CensusDiffBuckets(hd, kd, &unnamed);
+    CHECK(diff.size() == 1 && diff[0] == CensusBucket(victim) && !unnamed);
+    // The host's list of that bucket names it: alive on the host, dead here.
+    const CensusList list = CensusListOf(0x18010000u, host, diff);
+    CHECK(!list.entries.empty() && list.unnamed_alive == 4 && list.unnamed_dead == 1);
+    for (const CensusEntry& e : list.entries) CHECK(CensusBucket(e.entity) == diff[0]);
+    CensusReport r = CompareCensusList(list, killed);
+    CHECK(r.alive_on_host.size() == 1 && r.alive_on_host[0] == victim && r.dead_on_host.empty() && r.only_host.empty() &&
+          r.only_here.empty() && !r.unnamed_alive_delta);
+    CHECK(DescribeCensusReport(r).find(std::to_string(victim)) != std::string::npos);
+    CHECK(CompareCensusList(list, guest).empty());  // the kill reached this game: no difference
+    CHECK(DescribeCensusReport(CompareCensusList(list, guest)) == "no difference");
+    // An enemy without an id killed on one side: only the counts tell.
+    std::vector<CensusEntry> u = guest;
+    for (CensusEntry& e : u)
+        if (!e.entity && e.alive) {
+            e.alive = false;
+            break;
+        }
+    CHECK(CensusDiffBuckets(hd, MakeCensusDigest(0x18010000u, u), &unnamed).empty() && unnamed);
+    const CensusReport ur = CompareCensusList(CensusListOf(0x18010000u, host, {}), u);
+    CHECK(ur.unnamed_alive_delta == -1 && ur.unnamed_dead_delta == 1 && !ur.empty());
+    // Loaded on one side only.
+    std::vector<CensusEntry> extra = guest;
+    extra.push_back({2419999u, true});
+    const std::vector<int> d2 = CensusDiffBuckets(hd, MakeCensusDigest(0x18010000u, extra), nullptr);
+    CHECK(d2.size() == 1);
+    CHECK(CompareCensusList(CensusListOf(0x18010000u, host, d2), extra).only_here.size() == 1);
+
+    // JSON: the digest with a census round-trips; an older digest without "e" still parses.
+    Digest d;
+    d.epoch = 7;
+    d.seq = 9;
+    d.has_flags = true;
+    d.flags.fill(3);
+    d.census = hd;
+    Digest back;
+    std::string err;
+    CHECK(DigestFromJson(DigestToJson(d), &back, &err) && back == d);
+    Digest old = d;
+    old.census = CensusDigest{};
+    CHECK(DigestFromJson(DigestToJson(old), &back, &err) && back == old && !back.census.has);
+    CHECK(!DigestFromJson(R"({"v":1,"epoch":"1","seq":"1","e":{"m":1,"a":1,"d":0,"ua":0,"ud":0,"b":[1,2]}})", &back, &err));
+    CHECK(!DigestFromJson(R"({"v":1,"epoch":"1","seq":"1","e":{"m":1,"a":-1,"d":0,"ua":0,"ud":0,"b":[1,2,3,4,5,6,7,8]}})",
+                          &back, &err));
+    // The ask and the list.
+    u32 m = 0;
+    std::vector<int> b;
+    CHECK(CensusAskFromJson(CensusAskToJson(0x18010000u, {3, 1, 3}), &m, &b, &err) && m == 0x18010000u &&
+          b == std::vector<int>({1, 3}));
+    CHECK(!CensusAskFromJson(R"({"v":1,"m":1,"b":[8]})", &m, &b, &err));
+    CensusList lb;
+    CHECK(CensusListFromJson(CensusListToJson(list), &lb, &err) && lb.map == list.map && lb.buckets == list.buckets &&
+          lb.entries == list.entries && lb.unnamed_alive == 4 && lb.unnamed_dead == 1);
+    // A list entry outside the asked buckets, an id 0 or an alive value other than 0/1 is refused.
+    const int other = (diff[0] + 1) % kCensusBuckets;
+    u32 outside = 1;
+    while (CensusBucket(outside) != other) ++outside;
+    CHECK(!CensusListFromJson(R"({"v":1,"m":1,"b":[)" + std::to_string(diff[0]) + R"(],"e":[[)" +
+                                  std::to_string(outside) + R"(,1]],"ua":0,"ud":0})",
+                              &lb, &err));
+    CHECK(!CensusListFromJson(R"({"v":1,"m":1,"b":[0],"e":[[0,1]],"ua":0,"ud":0})", &lb, &err));
+    CHECK(!CensusListFromJson(R"({"v":1,"m":1,"b":[0],"e":[],"ua":-2,"ud":0})", &lb, &err));
+
+    // The game-side queues.
+    CHECK(GuestOnCensusList(CensusListToJson(list), &err));
+    CensusList popped;
+    CHECK(GuestPopCensusList(&popped) && popped.entries == list.entries && !GuestPopCensusList(&popped));
+    CHECK(HostQueueCensusAsk(1, CensusAskToJson(5, {2}), &err) && HostQueueCensusAsk(1, CensusAskToJson(6, {4}), &err));
+    const auto asks = HostPopCensusAsks();
+    CHECK(asks.size() == 1 && asks[0].first == 1 && asks[0].second.first == 6u && asks[0].second.second == std::vector<int>({4}));
+    CHECK(!HostQueueCensusAsk(2, "{}", &err));
+    std::string body = DigestToJson(d);
+    Checker::Result res;
+    bool corrupt = false;
+    Buckets w{};
+    CHECK(GuestOnDigest(body, false, w, &res, &corrupt, &err));
+    CensusDigest cd;
+    CHECK(GuestPopCensusDigest(&cd) && cd == hd && !GuestPopCensusDigest(&cd));
+}
+
 int main() {
     TestBuckets();
     TestFlagModel();
@@ -364,6 +468,7 @@ int main() {
     TestCheckerLimits();
     TestJson();
     TestGameQueues();
+    TestCensus();
     std::printf("party-desync-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }
