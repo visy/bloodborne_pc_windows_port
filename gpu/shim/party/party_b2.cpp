@@ -419,6 +419,20 @@ std::atomic<bool> g_title_joined{false};  // this guest came in by a title join 
 std::atomic<bool> g_title_home_now{false};
 
 bool SendHomeVeto(u64 site) {
+    const bool own_leave = SendHomeVetoForOwnLeave();
+    // Split travel: OnLeave_Limit (0x138A51C: the room-gone / irregular-leave path) sent a guest
+    // home 5 s after the host travelled alone (live split4) although the room and the party link
+    // were up. While the host is apart (or just left alone) and its link is fresh, it is dropped -
+    // also for a title-joined guest (B5, live parab2 b5e: it left the host's world 6 s after the
+    // host's alone travel and loaded its own map). The player's own Leave is never dropped here.
+    if (g_on.load() && Role() == RoleClient && site == 0x138a51c && !own_leave && SplitHostReachable()) {
+        Log("guest: send-home at +0x138a51c (OnLeave_Limit) dropped: split travel, the host is in another area and "
+            "connected (session %d, flow %d, flow +0xF4 %.1f, session +0x2E0 %.1f +0x2F0 %.1f%s)",
+            Role(), Field<int>(Slot(kSlotFlow), 0x84, -1), double(Field<float>(Slot(kSlotFlow), 0xf4)),
+            double(Field<float>(Slot(kSlotSession), 0x2e0)), double(Field<float>(Slot(kSlotSession), 0x2f0)),
+            g_title_joined.load() ? "; a title-joined guest" : "");
+        return true;
+    }
     // A title-joined guest has no own-world return data (no snapshot: its own world was never
     // loaded): the game's return load fell back to the title (live run 18 / 19). Leave the session
     // here; TitleJoinGuestTick takes it home with a lamp warp to its own last lamp.
@@ -427,16 +441,6 @@ bool SendHomeVeto(u64 site) {
         reinterpret_cast<Fn>(Guest(kBeginLeave))(Slot(kSlotSession));
         g_title_home_now = true;
         Log("title join: send-home at +0x138a51c replaced: session left, home by a lamp warp next");
-        return true;
-    }
-    // Split travel: OnLeave_Limit (0x138A51C: the room-gone / irregular-leave path) sent a guest
-    // home 5 s after the host travelled alone (live split4) although the room and the party link
-    // were up. While the host is apart (or just left alone) and its link is fresh, it is dropped.
-    if (g_on.load() && Role() == RoleClient && site == 0x138a51c && SplitHostReachable()) {
-        Log("guest: send-home at +0x138a51c (OnLeave_Limit) dropped: split travel, the host is in another area and "
-            "connected (session %d, flow %d, flow +0xF4 %.1f, session +0x2E0 %.1f +0x2F0 %.1f)",
-            Role(), Field<int>(Slot(kSlotFlow), 0x84, -1), double(Field<float>(Slot(kSlotFlow), 0xf4)),
-            double(Field<float>(Slot(kSlotSession), 0x2e0)), double(Field<float>(Slot(kSlotSession), 0x2f0)));
         return true;
     }
     if (g_on.load() && Role() == RoleClient &&

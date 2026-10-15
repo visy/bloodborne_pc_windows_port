@@ -144,7 +144,9 @@ before anyone is in the game):
   anyone home.
 - **No multiplayer walls.** The fog walls that keep phantoms near the host are gone; the party can
   split up and explore. There is no leash: a guest can walk far from the host (checked at 140 m)
-  and stays in the party.
+  and stays in the party, and host and guest can each walk on into another part of the city (the
+  Cathedral Ward and Central Yharnam are streamed separately), fight, use items and die there for
+  minutes while the other plays elsewhere: nobody is pulled back.
 - **Anyone can go through a boss fog first**, a boss's first fight included: the fight starts for
   everyone and the others follow through the fog. When a guest starts a first fight, the host's
   character steps to the arena entrance for a moment and back, and the intro cutscene plays on
