@@ -4418,6 +4418,38 @@ void JoinBesideTick(const GameSnapshot& s, double now) {
 /// tick below then runs the B2 re-join into the host's map (TravelAlone, AloneWhy::Join): the one
 /// loading screen of the join, instead of the gather's lamp load plus the summon's load.
 std::atomic<double> g_carry_join_at{-1};
+std::atomic<double> g_carry_gd_at{-1};  // A5: the arrival started; its GameData follows in the host's map
+
+/// A5 (live a5c / a11h: the host counted 0 cooperators and its watchdog ended the session 60 s
+/// later): a guest that joined from its own world never got the summoned placement, so its own
+/// GameData kept the own-world values (+0x5D8 0: chr type 1/0, not a cooperator). Once it stands
+/// in the host's map after the arrival: the summoned guest's values, as the title join writes them,
+/// and its player record again so the host counts it.
+void CarryGameDataTick(const GameSnapshot& s, double now) {
+    const double at = g_carry_gd_at.load();
+    if (at < 0) {
+        return;
+    }
+    if (now - at > 60.0 || Role() != RoleClient) {
+        g_carry_gd_at = -1;
+        return;
+    }
+    const u32 host = HostMap();
+    if (!s.world_up || s.loading || !s.player || Field<int>(Slot(kSlotFlow), 0x84, -1) != 4 || host == 0 ||
+        s.map_id == 0xffffffffu || (host >> 16) != (s.map_id >> 16)) {
+        return;
+    }
+    g_carry_gd_at = -1;
+    if (const u64 gd = Field<u64>(Slot(kSlotGameData), 8)) {
+        const int was = Field<int>(gd, 0x5d8, -1);
+        const int two = 2, one = 1, seven = 7;
+        SafeWrite(gd + 0x10, &two, 4);
+        SafeWrite(gd + 0xa4, &one, 4);
+        SafeWrite(gd + 0x5d8, &seven, 4);
+        RebroadcastOwnRecord("A5 arrival: a summoned guest's session type");
+        Log("A5: arrived in the host's map: own GameData as a summoned guest's (+0x10 2, +0xA4 1, +0x5D8 %d -> 7)", was);
+    }
+}
 
 /// The lamp of the host's map nearest to where the host stands (its vitals position); without a
 /// position the host's last lamp when it lies in that map (GatherLampFor). 0: none.
@@ -4485,6 +4517,7 @@ void CarryArrivalTick(const GameSnapshot& s, double now) {
     const bool started = TravelAlone(t, AloneWhy::Join);
     g_carry_hold = false;
     if (started) {
+        g_carry_gd_at = now;
         g_carry_join_at = -1;
         Log("A5: cross-map join: client in %s, the host in %s: one load into the host's map (lamp %u, then beside "
             "the host) %.1f s after the join",
@@ -7008,6 +7041,7 @@ void Tick(const GameSnapshot& s) {
     HostRevivedTick(s);
     JoinBesideTick(s, Now());
     CarryArrivalTick(s, Now());
+    CarryGameDataTick(s, Now());
     SpectatorRemoveTick(s);
     SpectateTick(s, Now());
     OwnStainLogTick(s);
