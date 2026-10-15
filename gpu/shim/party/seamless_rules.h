@@ -47,6 +47,8 @@ void SetEmevdSkipPredicate(EmevdSkipPredicate fn);
 void SetEmevdRewriter(EmevdRewriter fn);
 /// A second, independent rewriter slot (party_guestsvc), run after the first.
 void SetEmevdRewriter2(EmevdRewriter fn);
+/// A third slot (party_worldact: key-item gates a guest opens with its own key, D6).
+void SetEmevdRewriter3(EmevdRewriter fn);
 /// Installs the EMEVD dispatch filter (0x17b93a0) now if SeamlessRulesInit did not (idempotent,
 /// whether or not the seamless rules are on). True once installed.
 bool EnsureEmevdFilter();

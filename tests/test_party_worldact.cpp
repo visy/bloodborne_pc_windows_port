@@ -194,6 +194,17 @@ int main() {
         assert(BossGateGuestStarts(*BossGateByEvent(13404801)) && BossGateGuestStarts(*BossGateByEvent(13404851)));
         assert(BossGateGuestStarts(*BossGateByEvent(13504851)) && BossGateGuestStarts(*BossGateByEvent(13604801)));
         assert(!BossGateGuestStarts(*BossGateByEvent(13504801)));  // Lady Maria: examined in her chair first
+        // D6 (pard3): the plaza gate's emblem checks, inverted for a summoned guest with the emblem.
+        {
+            const KeyItemGate* kg = KeyItemGateFor(12400760);
+            assert(kg && kg->goods == 4011 && kg->open_flag == 12400160u && kg->far_kick == 12400170);
+            assert(!KeyItemGateFor(12400761) && KeyItemGateByOpenFlag(12400160u) == kg && !KeyItemGateByOpenFlag(12400161u));
+            assert(KeyItemGateHeldState(*kg, 1, false) == 0 && KeyItemGateHeldState(*kg, 2, false) == 1);  // the data
+            assert(KeyItemGateHeldState(*kg, 1, true) == 1 && KeyItemGateHeldState(*kg, 2, true) == 0);   // guest: 0 opens
+            assert(KeyItemGateInvert(true, true, false) && KeyItemGateInvert(true, false, true));
+            assert(!KeyItemGateInvert(true, false, false));  // no emblem anywhere: "need the emblem", as in vanilla
+            assert(!KeyItemGateInvert(false, true, true));   // the host / a guest at home reads its real inventory
+        }
         assert(FirstFightSpotFor(13401801)->chained && !FirstFightSpotFor(13501851)->chained);
         assert(!FirstFightSpotFor(12401802)->chained);
         assert(BossGateSkipFirstFight(12404841, 3, 0, 12401802));   // Amelia's intro-done condition

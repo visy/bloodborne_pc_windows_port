@@ -180,6 +180,33 @@ struct FirstFightSpot {
     bool scene = false;
 };
 const FirstFightSpot* FirstFightSpotFor(std::uint32_t intro_event);
+
+/// D6 (pard3): a gate that asks for a key item with EMEVD 3[4] (IfItemHeld) and an action button
+/// in the same event. Cathedral Ward's plaza gate (m24_00 event 12400760, `円形広場の門の開閉`):
+/// group 1 = Hunter Chief Emblem (goods 4011) NOT held + the button at object 2401220 -> the
+/// "need the emblem" dialog; group 2 = held + the button -> the gate opens (12400160). A summoned
+/// guest's key items read 0 in the host's world (verify_c6), so its copy always took group 1 even
+/// with the emblem in its own save: in vanilla only the host could open the gate. With the emblem
+/// in the guest's progress (its own pickup flag, or the host world's: the emblem is a shared key
+/// treasure, F2), the guest's copy has both checks inverted (the 0 it reads opens the gate). The
+/// host's world then gets 12400160 as a world action and the gate's far-side lever ObjAct
+/// (far_kick) is kicked there, so the host's copy of the event opens the gate with its animation.
+struct KeyItemGate {
+    std::int32_t event;      ///< the gate's event
+    std::int32_t goods;      ///< the 3[4] item (equip type 3, goods)
+    std::uint32_t own_flag;  ///< the item's pickup flag (ItemLotParam getItemFlagId)
+    std::int32_t held_group; ///< the condition group whose 3[4] checks "held" in the data
+    std::uint32_t open_flag; ///< the flag the event sets once the gate is open
+    std::int32_t far_kick;   ///< the ObjAct event id that opens it in the same event (no player anim)
+};
+const KeyItemGate* KeyItemGateFor(std::int32_t event_id);
+const KeyItemGate* KeyItemGateByOpenFlag(std::uint32_t open_flag);
+/// The 3[4] "held state" (its last argument) this game's copy of the gate should check for
+/// condition `group`: the data's own (held_group: 1, the other: 0), both flipped when `invert`.
+std::uint8_t KeyItemGateHeldState(const KeyItemGate& g, int group, bool invert);
+/// Guest: invert the gate's checks? Only a summoned guest (role 6, the host-world overlay) whose
+/// own save or the host's world has the item's pickup flag.
+bool KeyItemGateInvert(bool summoned_guest, bool own_flag, bool host_world_flag);
 /// The visit is over (put the host back): the event went on (the boss-started flag, the intro's
 /// boss-area flag 9180 - not for a chained spot - or a cutscene) or it timed out.
 bool FirstFightVisitDone(bool host_flag_on, bool flag9180_on, bool cutscene, double visit_s, bool chained = false,
