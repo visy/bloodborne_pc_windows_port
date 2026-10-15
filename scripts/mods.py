@@ -369,6 +369,29 @@ def build_overlay(game, out, mods):
         raise
 
 
+def link_unsupported(error):
+    """[WinError 1] "Incorrect function": a directory junction on a drive without them."""
+    return os.name == 'nt' and getattr(error, 'winerror', None) == 1
+
+
+def build_view(game, out, layers, fallback=None):
+    """build_overlay in `out`; when `out` is on an exFAT or FAT32 drive (a USB or external drive),
+    where a folder cannot become a junction without symlink rights ([WinError 1] "Incorrect
+    function"), the overlay is made in the system drive's temporary folder instead, which is
+    NTFS: its folders link to the game, its files are copies when hard links cannot reach.
+    Before, the game started without its mods there. (Supermedo/bloodborne_pc bf0878bf.)"""
+    try:
+        return build_overlay(game, out, layers)
+    except OSError as error:
+        if not link_unsupported(error):
+            raise
+        fallback = Path(fallback or Path(tempfile.gettempdir()) / 'bbport-game-view')
+        fallback.mkdir(parents=True, exist_ok=True)
+        print(f'Mods: links are not supported on the drive of {out}; the game view is made in '
+              f'{fallback}', file=sys.stderr)
+        return build_overlay(game, fallback, layers)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('game', type=Path)
@@ -399,7 +422,7 @@ def main():
         mirror = dream_mirror.ensure_layer(args.game, args.out)
         if mirror:
             layers.insert(0, (dream_mirror.LAYER_NAME, mirror))
-    game = build_overlay(args.game, args.out, layers)
+    game = build_view(args.game, args.out, layers)
     digest, items = write_party_mods_file(args.out, layers)
     if items:
         print(f'Mods: party version check: {", ".join(items)} ({digest[:12]})', file=sys.stderr)
