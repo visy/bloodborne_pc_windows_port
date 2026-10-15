@@ -179,7 +179,7 @@ int main() {
     CHECK(!ItemEffectAllowed(100, 2100) && !ItemEffectAllowed(200, 9000) && !ItemEffectAllowed(1, 1));
     CHECK(ItemEffectAllowed(1500, 2160) && !ItemEffectAllowed(5, 9025));
     CHECK(!ItemEffectAllowed(1220, 150) && !ItemEffectAllowed(1101, 230) && !ItemEffectAllowed(1601, 3401));
-    CHECK(ItemEffectAllowed(1600, 3400));
+    CHECK(!ItemEffectAllowed(1600, 3400) && !ItemEffectAllowed(4320, 4685) && ItemEffectAllowed(1300, 2200));
     CHECK(Seconds(GearSteps()) < 45.0f);
 
     if (g_failures) {
