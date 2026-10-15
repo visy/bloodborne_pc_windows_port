@@ -62,7 +62,7 @@ def run(a, sc, out: Path):
     starts = {}
     for i in range(2):
         p = root / f"inst{i}" / "run.log"
-        starts[i] = p.stat().st_size if p.exists() else 0
+        starts[i] = 0  # instances.py starts a fresh run.log per run (the old one: run.prev.log)
     cmd = [sys.executable, str(HERE / "instances.py"), "run", "--count", "2", "--party", "--fresh-saves", "--timestamps",
            "--idle", "0", "--seconds", str(sc["seconds"]), "--root", str(root), "--build", str(a.build),
            "--game", str(a.game), "--label", "repeat %s x%d" % (a.scenario, a.cycles)]

@@ -49,15 +49,17 @@ CLERIC_SPOT_GUEST = "-134.6:-26.6:54.7"
 def phase_s1():
     host = ",".join([
         "host_warp=2412953@150",            # party lamp travel: the Tomb of Oedon (after the leave/rejoin and death)
-        "host_die@105%m24_01",              # in the Gascoigne fight (the guest-started intro is ~47 s)
+        "host_die@118%m24_01",              # in the Gascoigne fight (the guest's fog at ~45 s, the intro ~47 s)
     ])
     g1 = ",".join([
+        "echoes=5000",                        # Blood Echoes to drop (the bloodstain)
         "guest_leave@25", "guest_rejoin@10",  # Party > Leave, Rejoin
         "guest_die@25",                       # a death outside a fight: bloodstain, respawn at the host's lamp
-        "guest_move=%s@45%%m24_01" % GASCOIGNE_TRIGGER,  # the guest starts the Gascoigne fight
-        "guest_die@75%m24_01",                # after the host's death: part of the wipe
+        "guest_obj=2411810@45%m24_01",        # at Gascoigne's fog, facing it
+        "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!",  # Cross: the guest goes in first
+        "guest_die@80%m24_01",                # after the host's death in the fight: the wipe
     ])
-    g2 = "guest_die@185%m24_01"               # the headless guest: last one down (the wipe)
+    g2 = "guest_die@150%m24_01"               # the headless guest: down too (everyone down: a wipe)
     return dict(
         name="s1", seconds=480,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1"],
@@ -100,7 +102,7 @@ def run_phase(a, ph, out: Path):
     starts = {}
     for i in range(3):
         p = root / f"inst{i}" / "run.log"
-        starts[i] = p.stat().st_size if p.exists() else 0
+        starts[i] = 0  # instances.py starts a fresh run.log per run (the old one: run.prev.log)
     cmd = [sys.executable, str(HERE / "instances.py"), "run", "--count", "3", "--headless", "1", "--party",
            "--fresh-saves", "--timestamps", "--idle", "0", "--seconds", str(ph["seconds"]),
            "--root", str(root), "--build", str(a.build), "--game", str(a.game),
