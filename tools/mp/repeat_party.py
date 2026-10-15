@@ -34,24 +34,24 @@ DEFAULT_ROOT = (AGENT_ROOT / "mptest") if AGENT_ROOT.parent.name == "agents" els
 TS = re.compile(r"^\[\+ *([\d.]+)\] ")
 
 
-def scenario(name, n):
+def scenario(name, n, players=2):
+    full = players - 1  # cooperators on the host with everyone in
     if name == "a5":
         g = ",".join(["guest_leave@8", "guest_rejoin@5"] * n)
         return dict(seconds=60 + 45 * n, env=[], ienv=["0:BB_PARTY_TEST_START_LAMP=2412951", "1:BB_PARTY_DIRECTOR_TEST=" + g],
                     crash=[])
     if name == "c6":
-        return dict(seconds=60 + 50 * n, env=["BB_PARTY_RESTART_MAX=%d" % (n + 5), "BB_PARTY_DIRECTOR_TEST_RESTART=none",
-                                              "BB_PARTY_TEST_START_LAMP=2412951"],
-                    ienv=[], crash=[r"1/0:cooperators 0 -> 1@15"] * n)
+        return dict(seconds=60 + 50 * n, env=["BB_PARTY_RESTART_MAX=%d" % (n + 5), "BB_PARTY_DIRECTOR_TEST_RESTART=none"],
+                    ienv=["0:BB_PARTY_TEST_START_LAMP=2412951"], crash=[r"1/0:cooperators %d -> %d@15" % (full - 1, full)] * n)
     if name == "c3":
         g = ",".join(["guest_die@20%m24_01"] * n)
-        return dict(seconds=60 + 75 * n, env=["BB_PARTY_TEST_START_LAMP=2412951"],
-                    ienv=["0:BB_PARTY_TEST_DIE_ON_DOWN=3", "1:BB_PARTY_DIRECTOR_TEST=" + g], crash=[])
+        return dict(seconds=60 + 75 * n, env=[],
+                    ienv=["0:BB_PARTY_TEST_START_LAMP=2412951", "0:BB_PARTY_TEST_DIE_ON_DOWN=3", "1:BB_PARTY_DIRECTOR_TEST=" + g], crash=[])
     if name == "a6":
         h = ",".join(["host_leave@12", "host_rejoin@5"] * n)
         g = ",".join(["guest_rejoin@8"] * n)
-        return dict(seconds=60 + 50 * n, env=["BB_PARTY_TEST_START_LAMP=2412951"],
-                    ienv=["0:BB_PARTY_DIRECTOR_TEST=" + h, "1:BB_PARTY_DIRECTOR_TEST=" + g], crash=[])
+        return dict(seconds=60 + 50 * n, env=[],
+                    ienv=["0:BB_PARTY_TEST_START_LAMP=2412951", "0:BB_PARTY_DIRECTOR_TEST=" + h, "1:BB_PARTY_DIRECTOR_TEST=" + g], crash=[])
     sys.exit("unknown scenario " + name)
 
 
@@ -60,14 +60,16 @@ def run(a, sc, out: Path):
     root.mkdir(parents=True, exist_ok=True)
     (root / "noreap").write_text(str(sc["seconds"] + 120))
     starts = {}
-    for i in range(2):
+    for i in range(a.players):
         p = root / f"inst{i}" / "run.log"
         # instances.py moves the old run.log to run.prev.log, unless something holds it open (then
         # it appends): remember the file id and size, and copy from there when it is the same file.
         starts[i] = (p.stat().st_ino, p.stat().st_size) if p.exists() else (None, 0)
-    cmd = [sys.executable, str(HERE / "instances.py"), "run", "--count", "2", "--party", "--fresh-saves", "--timestamps",
+    cmd = [sys.executable, str(HERE / "instances.py"), "run", "--count", str(a.players), "--party", "--fresh-saves", "--timestamps",
            "--idle", "0", "--seconds", str(sc["seconds"]), "--root", str(root), "--build", str(a.build),
            "--game", str(a.game), "--label", "repeat %s x%d" % (a.scenario, a.cycles)]
+    if a.players > 2:
+        cmd += ["--headless", str(a.players - 2)]
     for e in sc["env"]:
         cmd += ["--env", e]
     for e in sc["ienv"]:
@@ -86,7 +88,7 @@ def run(a, sc, out: Path):
         subprocess.run(cmd, env=env, stdout=open(out / "harness.log", "w"), stderr=subprocess.STDOUT)
     finally:
         shooter.terminate()
-    for i in range(2):
+    for i in range(a.players):
         with open(root / f"inst{i}" / "run.log", "rb") as f:
             f.seek(starts[i][1] if os.fstat(f.fileno()).st_ino == starts[i][0] else 0)
             (out / f"inst{i}.log").write_bytes(f.read())
@@ -154,7 +156,7 @@ def check(a, out: Path):
         boots = [t for t, l in g if "Boot: run.bat started" in l or "restart" in l and "to rejoin the party" in l]
         for k, t in enumerate(crashes):
             nxt = crashes[k + 1] if k + 1 < len(crashes) else 1e9
-            back = first(h, r"cooperators 0 -> 1", t, nxt)
+            back = first(h, r"cooperators %d -> %d" % (a.players - 2, a.players - 1), t, nxt)
             tj = first(g, r"title join: in the world after ([\d.]+) s", t, nxt)
             start = first(g, r"Boot: run.bat started|state at the first tick", t, nxt)
             ok = bool(back)
@@ -163,9 +165,14 @@ def check(a, out: Path):
                 times.append(back[0] - t)
                 if start:
                     times2.append(back[0] - start[0])
-            rows.append("cycle %2d %s: kill +%.1f; host room %s; restarted game's first tick -> host room %s; %s" % (
+            kicked = first(h, r"KickoutRoomMember req", t, nxt)
+            failed = first(g, r"title join: FAILED", t, nxt)
+            ok = ok and not kicked
+            ok_n -= (bool(back) and bool(kicked))
+            rows.append("cycle %2d %s: kill +%.1f; host room %s; restarted game's first tick -> host room %s; %s%s%s" % (
                 k + 1, "PASS" if ok else "FAIL", t, "%.1f s after the kill" % (back[0] - t) if back else "NO",
-                "%.1f s" % (back[0] - start[0]) if back and start else "-", tj[1][-40:] if tj else "no title-join line"))
+                "%.1f s" % (back[0] - start[0]) if back and start else "-", tj[1][-40:] if tj else "no title-join line",
+                "; TITLE JOIN FAILED" if failed else "", "; KICK: " + kicked[1][-60:] if kicked else ""))
         summary = "C6 kill -> host room: %s; A4 cold start (first tick) -> host room: %s" % (stats(times), stats(times2))
     elif a.scenario == "c3":
         deaths = [t for t, l in g if re.search(r"travel step \d+/\d+: guest_die", l)]
@@ -196,6 +203,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("scenario", choices=["a5", "c6", "c3", "a6"])
     ap.add_argument("--cycles", type=int, default=22)
+    ap.add_argument("--players", type=int, default=2, help="2, or 3-4 with the extra guests headless-lite")
     ap.add_argument("--root", default=str(DEFAULT_ROOT))
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
@@ -206,7 +214,7 @@ def main():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
     out = Path(a.out or (AGENT_ROOT / "repeat" / ("%s_%s" % (a.scenario, time.strftime("%Y%m%d_%H%M")))))
     if not a.check_only:
-        run(a, scenario(a.scenario, a.cycles), out)
+        run(a, scenario(a.scenario, a.cycles, a.players), out)
     sys.exit(0 if check(a, out) else 1)
 
 
