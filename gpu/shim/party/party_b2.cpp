@@ -4540,7 +4540,10 @@ void NgGuardTick(const GameSnapshot& s) {
     v.ending_since = StoryLastEndingAt() > learned_at;
     v.alone_pending = g_ng_alone_pending.load();
     if (client && !host_world && v.live >= 0 && v.live <= 7) {
-        host = v.live;  // the host's 0x19 state is not there (an alone load cleared it): the live value
+        // Not in host-world mode (an alone load, a join starting from the own world): the host's
+        // cycle from its link event, else the live value.
+        const int link = g_link_host_ng.load();
+        host = link >= 0 && link <= 7 ? link : v.live;
     }
     if (client && host >= 0) {
         if (host != logged_host && own >= 0) {
