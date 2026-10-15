@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // D4b shared enemy drop roll (gpu/shim/party/party_droproll), the parts without the game: the
-// per-enemy seed, the MT19937 seeding the game RNG gets, the EVENT "drop_seed" JSON and the switch.
+// per-enemy seed, the MT19937 seeding the game RNG gets, the EVENT "drop_seed" JSON, the switches and
+// the game's lot row pick with each player's own item discovery.
 // Build and run: cmake --build out/gpu --target party-droproll-test && out/gpu/party-droproll-test.exe
 #include "party/party_droproll.h"
 
@@ -100,6 +101,86 @@ static void test_json() {
     CHECK(!DropSeedFromJson("not json", &back, &err));
 }
 
+// Item discovery per player: the same seed (the same draw) for two players, each with its own
+// discovery. Row shapes from 1.09 ItemLotParam enemy lots.
+static LotSlot Slot(std::uint16_t base, bool luck) {
+    LotSlot s;
+    s.base = base;
+    s.luck = luck;
+    return s;
+}
+
+static void test_discovery_per_player() {
+    // "Nothing" 950 (no luck) then one rare item 50 (luck): the common enemy drop shape.
+    const LotSlot rare[8] = {Slot(950, false), Slot(50, true)};
+    // Blood Vial 90 (no luck) or Quicksilver Bullet 10 (luck): lot 9906550.
+    const LotSlot vial_or_bullet[8] = {Slot(90, false), Slot(10, true)};
+    // Nothing, then two luck items: the boundary between the two moves with discovery.
+    const LotSlot two_luck[8] = {Slot(800, false), Slot(150, true), Slot(50, true)};
+    // Nothing between two luck items: the one-luck-slot rule still holds for each.
+    const LotSlot split[8] = {Slot(40, true), Slot(900, false), Slot(60, false)};
+
+    // Weights: the luck slot x discovery (x100 points), the others not.
+    std::uint32_t w[8];
+    CHECK(LotRowWeights(rare, 0.0f, 1.0f, w) == 100000 && w[0] == 95000 && w[1] == 5000);
+    CHECK(LotRowWeights(rare, 0.0f, 2.1f, w) == 95000 + 10500 && w[1] == 10500);
+    LotSlot taken[8] = {Slot(950, false), Slot(50, true)};
+    taken[1].taken = true;
+    CHECK(LotRowWeights(taken, 0.0f, 2.1f, w) == 95000 && w[1] == 0);
+    const LotSlot empty[8] = {};
+    CHECK(LotRowPick(empty, 0.0f, 1.0f, 12345) == -1);
+
+    // One shared roll per kill: the same seed gives both games the same draw.
+    const std::uint64_t salt = 0x1234567890abcdefull;
+    int low_items = 0, high_items = 0, high_only = 0, rare_lost = 0, nothing_instead = 0, other_luck = 0;
+    int vial_to_bullet = 0, bullet_lost = 0;
+    for (std::int32_t e = 2410000; e < 2410000 + 20000; ++e) {
+        const std::uint32_t draw = Mt19937First(DropRollSeed(salt, 1, Enemy(e)));
+        CHECK(draw == Mt19937First(DropRollSeed(salt, 1, Enemy(e))));
+        // Arcane < 8 (1.0) vs Arcane 50 (2.1), 1.7 vs 2.1 + an Eye-rune-like bonus, and equal.
+        const float pairs[][2] = {{1.0f, 2.1f}, {1.7f, 2.4f}, {1.0f, 1.0f}};
+        for (const auto& p : pairs) {
+            const int lo = LotRowPick(rare, 0.0f, p[0], draw), hi = LotRowPick(rare, 0.0f, p[1], draw);
+            if (p[0] == p[1]) {
+                CHECK(lo == hi);  // equal discovery: equal result (the 0.6.1 behaviour)
+                continue;
+            }
+            low_items += lo == 1;
+            high_items += hi == 1;
+            high_only += lo == 0 && hi == 1;
+            rare_lost += lo == 1 && hi != 1;
+            const int vlo = LotRowPick(vial_or_bullet, 0.0f, p[0], draw);
+            const int vhi = LotRowPick(vial_or_bullet, 0.0f, p[1], draw);
+            bullet_lost += vlo == 1 && vhi != 1;
+            vial_to_bullet += vlo == 0 && vhi == 1;
+            const int tlo = LotRowPick(two_luck, 0.0f, p[0], draw), thi = LotRowPick(two_luck, 0.0f, p[1], draw);
+            nothing_instead += tlo > 0 && thi == 0;
+            other_luck += tlo > 0 && thi > 0 && tlo != thi;
+            const int slo = LotRowPick(split, 0.0f, p[0], draw), shi = LotRowPick(split, 0.0f, p[1], draw);
+            rare_lost += slo == 0 && shi != 0;
+        }
+    }
+    // Higher discovery: the rare item whenever the lower one got it, plus sometimes when not.
+    CHECK(rare_lost == 0);
+    CHECK(high_only > 0 && high_items == low_items + high_only);
+    CHECK(high_items > low_items);
+    // Rough rates: 5% at 1.0, ~10% at 2.1 (20000 kills x 2 pairs).
+    CHECK(low_items > 2400 && low_items < 3600 && high_items > 4000 && high_items < 5600);
+    // Discovery trades the common item for the rare one, never the other way round.
+    CHECK(bullet_lost == 0 && vial_to_bullet > 0);
+    // Two luck items: never "nothing" instead of an item, but the same draw can give the
+    // higher-discovery player the other luck item (the boundary between them moves).
+    CHECK(nothing_instead == 0);
+    CHECK(other_luck > 0);
+}
+
+static void test_discovery_switch() {
+    CHECK(!HostDiscoveryFromEnv(nullptr));
+    CHECK(!HostDiscoveryFromEnv(""));
+    CHECK(!HostDiscoveryFromEnv("own"));
+    CHECK(HostDiscoveryFromEnv("host"));
+}
+
 // BB_PARTY_SHARED_DROP_ROLL: on by default, 0 = the old own roll per player.
 static void test_switch() {
     CHECK(SharedRollFromEnv(nullptr));
@@ -114,6 +195,8 @@ int main() {
     test_mt();
     test_json();
     test_switch();
+    test_discovery_per_player();
+    test_discovery_switch();
     std::printf("party-droproll-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }
