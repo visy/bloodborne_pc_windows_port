@@ -17,15 +17,15 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 
 | Area | Progress | |
 |---|---|--:|
-| **Overall** | `████████████████████` | 98% |
+| **Overall** | `████████████████████` | 99% |
 | Session & joining | `████████████████████` | 100% |
 | World & travel | `████████████████████` | 100% |
 | Death & respawn | `████████████████████` | 99% |
-| Progress (anyone can progress) | `███████████████████░` | 94% |
+| Progress (anyone can progress) | `████████████████████` | 99% |
 | Services & UI | `████████████████████` | 100% |
 | Network & robustness | `██████████████████░░` | 92% |
 | Bloodborne-specific (chalice, Insight) | `████████████████████` | 98% |
-| Feels like single player in a party | `████████████████████` | 99% |
+| Feels like single player in a party | `████████████████████` | 100% |
 
 ---
 
@@ -183,7 +183,8 @@ before anyone is in the game):
 - **Resting resets the world for the party.** Enemies respawn; everyone's HP, vials and bullets
   refill. A guest who rests and travels alone gives the host a short loading screen where it
   stands, so the host's world resets too; a guest resting its way back into the host's area
-  arrives after that reset with a single loading screen. Resting while the host is in a boss fight
+  arrives after that reset with a single loading screen (also when a guest uses a lamp of the area
+  the party is in). Resting while the host is in a boss fight
   takes everyone out of the boss room (the host's world loads at its last lamp, the fight resets).
 - **One NG cycle per world.** In the host's world everyone plays at the host's NG cycle (enemy
   health, damage and Blood Echoes are the same on every game, as in the original game); your own
@@ -232,8 +233,9 @@ before anyone is in the game):
   the Doll stays in the levelling player's own game.
 - **Hear each other's NPC talks.** When a companion near you talks to an NPC you see the game's
   subtitles and hear the NPC too, with a small "[Hunter talking to Iosefka]" caption and the
-  choices they pick; nothing opens on your screen. Range in *System → Party rules → NPC dialogue
-  range* (default 25 m), off with *Share NPC dialogue*.
+  choices they pick and the items the NPC gives them; nothing opens on your screen and nothing is
+  drawn over your own menus. Further away you get a quiet "Hunter is talking to the Doll". Range in
+  *System → Party rules → NPC dialogue range* (default 25 m), off with *Share NPC dialogue*.
 - **NPC gifts are shared**: an item an NPC gives a guest in the host's world (e.g. Eileen's Bold
   Hunter's Marks) goes to the guest, the host and every other party member, once (the NPC has moved
   on for everyone, so nobody misses it). Gifts an NPC hands out again and again (Blood of Arianna,
@@ -250,9 +252,13 @@ before anyone is in the game):
 - **Treasure for each player.** Items lying in the world can be picked up by every player, each into their own game.
   Keys and workshop tools found lying around (Hunter Chief Emblem, Upper Cathedral Key, Iron Door Key,
   Lecture Theatre Key, Rune and Blood Gem Workshop Tools, ...) and the Eye of a Blood-drunk Hunter go to
-  the whole party as soon as the host has them, so nobody is locked out of a door.
+  the whole party as soon as the host has them (or a guest picks one up), so nobody is locked out of a door.
 - **Cutscenes for everyone.** A story scene a guest triggers in the host's world plays for the
-  whole party too, a boss intro a guest starts included.
+  whole party too, a boss intro a guest starts included; a guest can also examine Vicar Amelia's
+  skull (the night comes for everyone).
+- **Boss fights need the host's area.** A guest who travelled alone cannot start a boss fight
+  where the host is not (the fog stays closed, with a message); if the host leaves during a fight,
+  the guest is taken to the host with one loading screen.
 - **Up to 4 players** (host + 3), all in the host's world. With 3 guests, a guest does not yet see
   the guests who joined after it.
 - **Same version for everyone.** A player whose bbport build, game files, patches, mods or party
