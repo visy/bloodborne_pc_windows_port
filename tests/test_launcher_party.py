@@ -297,6 +297,29 @@ class FriendlyFireSetting(unittest.TestCase):
         self.assertIn("self.party_widgets_host = [ff_cb", src)
 
 
+class ShareLampsSetting(unittest.TestCase):
+    """Statsaudit finding 5: the host's Shared lamps checkbox: bbport.ini party_share_lamps, on by default."""
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.L = load_launcher()
+        except Exception as ex:  # no tkinter here
+            raise unittest.SkipTest(f"launcher.py not importable here: {ex}")
+
+    def test_default_on_and_round_trip(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            ini = Path(d) / "bbport.ini"
+            self.assertTrue(self.L.ini_flag(ini, "party_share_lamps", True))
+            self.L.update_ini(ini, {"party_share_lamps": "0"})
+            self.assertFalse(self.L.ini_flag(ini, "party_share_lamps", True))
+            self.L.update_ini(ini, {"party_share_lamps": "1"})
+            self.assertTrue(self.L.ini_flag(ini, "party_share_lamps", True))
+        src = Path(self.L.__file__).read_text(encoding="utf-8")
+        self.assertIn("self.party_widgets_host = [ff_cb, lamps_cb", src)
+
+
 class DirectSummonSetting(unittest.TestCase):
     """The launcher's Direct summon checkbox: BB_PARTY_DIRECT_SUMMON, on unless turned off."""
     @classmethod

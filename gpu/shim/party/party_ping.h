@@ -123,6 +123,17 @@ EdgePoint ToScreenOrEdge(const float view[12], const float proj[4], const float 
 /// "12 m" / "3.4 m" (one decimal under 10 m).
 void FormatDistance(float metres, char* out, std::size_t n);
 
+/// Statsaudit finding 1: this guest's own bloodstain in the host's world (a party-side stain the
+/// overlay marks; paid when the guest walks onto it, party_b2.cpp GuestStainTick). One per game.
+struct StainMark {
+    bool live = false;
+    std::uint32_t map = 0;  // 0xAABBCCDD
+    float pos[3] = {0, 0, 0};
+    int echoes = 0;
+};
+void SetStain(const StainMark& m);
+bool GetStain(StainMark* out);  // false: none to draw
+
 /// Tests: back to the start.
 void ResetForTest();
 

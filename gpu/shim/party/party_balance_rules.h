@@ -42,6 +42,9 @@ struct Rules {
     /// I1: friendly fire / PvP (ERSC Judicator's Rulebook): party members can hurt each other.
     /// Off by default; only the host's value counts (party_pvp.h).
     bool friendly_fire = false;
+    /// Statsaudit finding 5 (user decision 2026-10-15): lamps are shared by the whole party - a lamp
+    /// any member lit is lit for everyone (each member's own save too). On by default; the host's.
+    bool share_lamps = true;
     bool operator==(const Rules& o) const;
     bool operator!=(const Rules& o) const { return !(*this == o); }
 };
