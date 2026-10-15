@@ -40,6 +40,7 @@ What they do for a player: [docs/PARTY.md](../PARTY.md).
 | `BB_PARTY_STORY_MIRROR` | Play them live with the host | 1 |
 | `BB_SAVE_BACKUP_MINUTES` | Back up every (min) | 10 (0 = only at start) |
 | `BB_SAVE_BACKUP_KEEP` | Backups to keep | 10 |
+| `BB_SAVE_SESSION_KEEP` | Party session snapshots kept (both save folders, taken right before each party session for the launcher's *Undo last party session*; `0` = none) | 5 |
 | `BB_PARTY_RESTART` | Restart the game after a crash | 1 (`run.bat`) |
 | `BB_PARTY_LOG` | Advanced / Debug: Party logging level (set without a party too) | unset = normal (`verbose`, `trace`); [logging.md](logging.md) |
 | `BB_PARTY_LOG_AREAS` | Advanced / Debug: the area checkboxes | unset = all (`net,summon,travel,death,items,flags,dialog`, `none`) |
@@ -67,6 +68,7 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_HEADLESS` | `1`: headless-lite test game: the window starts minimised, nothing is presented and no draw call is recorded (compute, copies, the PM4 stream, fences and labels run as usual: game logic and party code unchanged); `tools/mp/instances.py --headless N` sets it (and the upscaler off, `BB_DLSS=0`) for the last N instances. Measured (2026-10-12, 2 instances in the Hunter's Dream): rendering 2.55 cores CPU / 23 % GPU, headless 2.07 cores / 8.5 % GPU | off | `gpu/shim/bbport_headless.h` |
 | `BB_PARTY_CHECK_BUILD` | `0` on the host: the bbport build id is not compared in the version check (A9, docs/party/version_check.md) | compared | `gpu/shim/party/party_runtime.cpp` |
 | `BB_PARTY_HOST_LOST_MS` | Guest: ms after the host's link drops before the game leaves the host's world | 2000 | `gpu/shim/party/party_runtime.cpp` |
+| `BB_PARTY_HOST_WAIT_S` | Guest: how long it waits for a lost host to come back (its crash restart) before it leaves the party with a notice; `0` = no limit ([network_robustness.md](network_robustness.md) section 8) | 180 | `gpu/shim/party/party_runtime.cpp` |
 | `BB_PARTY_RESTARTED` | Set to `1` by `run.bat` on a crash restart: rejoin path, `restart` backup | unset | `run.bat`, `gpu/shim/party/party_runtime.cpp`, `src/runtime_savepolicy.c` |
 | `BB_PARTY_RESTART_MAX` | Most crash restarts in 10 minutes | 5 | `run.bat` |
 | `BB_PARTY_AUTOCONTINUE` | `0`: the director does not press Continue on the title (it still does after a crash restart); `1`: always | on in party mode | `gpu/shim/party/party_director.cpp` |
