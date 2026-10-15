@@ -830,12 +830,14 @@ bool Instance::CreateDevice() {
     if (device_result != vk::Result::eSuccess && !dlss_added.empty()) {
         // The driver lists NGX's extensions but cannot start them (a broken or partial driver
         // install): ErrorInitializationFailed. DLSS is optional, so again without them (from
-        // deadinside's Supermedo/bloodborne_pc 72e5c8ce, issues #135 #147 #152).
+        // deadinside's Supermedo/bloodborne_pc 72e5c8ce, issues #135 #147 #152; the same
+        // fallback by parsifal295, PR #58 there / 3e3b760f, whose reason names the result).
         LOG_WARNING(Render_Vulkan, "Device creation with the DLSS extensions failed ({}): "
                     "again without them", vk::to_string(device_result));
         if (Dlss* dlss = Dlss::Get()) {
-            dlss->Disable("the Vulkan device does not start with NGX's extensions (update or "
-                          "reinstall the NVIDIA driver)");
+            dlss->Disable(fmt::format("the Vulkan device does not start with NGX's extensions: "
+                                      "{} (update or reinstall the NVIDIA driver)",
+                                      vk::to_string(device_result)));
         }
         enabled_extensions.erase(
             std::remove_if(enabled_extensions.begin(), enabled_extensions.end(),

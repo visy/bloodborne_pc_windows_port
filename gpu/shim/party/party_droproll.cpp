@@ -151,6 +151,10 @@ bool DropSeedFromJson(const std::string& text, DropSeed* out, std::string* error
     }
 }
 
+bool DropRollBeforeArrival(bool world_up, bool loading, std::uint32_t map) {
+    return !world_up || loading || map == 0xffffffffu || map == 0;
+}
+
 } // namespace coop::droproll
 
 #ifndef BB_PARTY_DROPROLL_NO_GAME
@@ -344,6 +348,18 @@ BB_COOP_SYSV void DropRollReplace(u64 mim, u64 handle_arg, u64 npc) {
     }
     const u64 gsm = Ptr(kGsm);
     const bool guest_ok = mode == 2 && LocalSessionRole() == 6;
+    if (guest_ok && g_on && g_shared) {
+        // dropdisc (live): an enemy the host killed while this guest was still loading in (title
+        // join) dies again on the guest's game as its world is built; that roll read map "-" and
+        // so another seed than the host's. The kill was before this player was there: no drop on
+        // this game (a joiner in vanilla gets nothing from enemies already dead).
+        const GameSnapshot gs = ReadGameState(false);
+        if (DropRollBeforeArrival(gs.world_up, gs.loading, gs.map_id)) {
+            Log("enemy drop roll on this game (role 6): chr handle %#x, lot %d: killed before this guest's world "
+                "was up (map %s): no drop here", handle, k.lot, MapName(gs.map_id).c_str());
+            return;
+        }
+    }
     const bool shared = g_on && g_shared && gsm && seed.salt != 0 && k.lot > 0 && (mode == 1 || guest_ok);
     if (!shared) {
         g_disc_used = 0;

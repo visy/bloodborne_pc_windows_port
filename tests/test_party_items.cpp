@@ -979,6 +979,39 @@ static void test_repeat_gift() {
     CHECK(!ItemsFromJsonText(R"({"items":[[1,28000,-1,-1,"repeat"]]})", &out, &err));
 }
 
+// G1: the host's Chalice Dungeon awards (boss ritual materials) for the guests in the dungeon.
+static void test_chalice_award() {
+    CHECK(ChaliceAwardLot(110001000) && ChaliceAwardLot(131302160) && ChaliceAwardLot(2900010));
+    CHECK(!ChaliceAwardLot(31000) && !ChaliceAwardLot(2410000) && !ChaliceAwardLot(0));
+    GrantItem blood;  // Ritual Blood (2) x2
+    blood.category = 4;
+    blood.id = 7001;
+    blood.count = 2;
+    CHECK(!MakeChaliceGrant(110001000, {}, 1));       // the host's items are required
+    CHECK(!MakeChaliceGrant(31000, {blood}, 1));      // not a dungeon lot
+    const std::optional<ItemGrant> a = MakeChaliceGrant(110001000, {blood}, 1), b = MakeChaliceGrant(110001000, {blood}, 2);
+    CHECK(a && b && a->source == ItemSource::Chalice && a->DoneFlag() < 0 && a->flag == kItemNone);
+    CHECK(a->Key() == kChaliceKeyBase + 1 && b->Key() == kChaliceKeyBase + 2 && a->Key() > kRepeatKeyBase);
+    // Two kills of the same layer boss (repeatable per dungeon): two host grants.
+    HostItems h;
+    CHECK(h.Offer(*a) && h.Offer(*b) && !h.Offer(*a));
+    // The wire: the row carries the items, no flag; a peer row without items or with a flag is refused.
+    std::vector<ItemGrant> out;
+    std::string err;
+    CHECK(ItemsFromJsonText(ItemsToJsonText({*a}), &out, &err) && out.size() == 1 &&
+          out[0].source == ItemSource::Chalice && out[0].items.size() == 1 && out[0].items[0].id == 7001);
+    CHECK(ItemGrantFromPeerAllowed(out[0]));
+    CHECK(out[0].Key() < 0);  // the guest gives it its own key (RequestGuestItems)
+    CHECK(!ItemsFromJsonText(R"({"items":[[1,110001000,-1,-1,"chalice"]]})", &out, &err));
+    CHECK(!ItemsFromJsonText(R"({"items":[[1,110001000,52900100,-1,"chalice",[[4,7001,2]]]]})", &out, &err));
+    CHECK(!ItemsFromJsonText(R"({"items":[[1,31000,-1,-1,"chalice",[[4,7001,2]]]]})", &out, &err));
+    // Only a summoned guest in a Chalice Dungeon takes it.
+    CHECK(ChaliceGrantAccepted(true, 0x1d0a5a00));
+    CHECK(!ChaliceGrantAccepted(false, 0x1d0a5a00));  // at home (its own dungeon or the Dream)
+    CHECK(!ChaliceGrantAccepted(true, 0x15000000));   // summoned elsewhere
+    CHECK(std::string(ItemSourceName(ItemSource::Chalice)) == "chalice");
+}
+
 static void test_messenger_own() {
     CHECK(MessengerGiftLot(10050) && MessengerGiftLot(10010) && MessengerGiftLot(10000));
     CHECK(!MessengerGiftLot(10011) && !MessengerGiftLot(31000));
@@ -1028,6 +1061,7 @@ int main() {
     test_ledger_suspicious();
     test_messenger_own();
     test_repeat_gift();
+    test_chalice_award();
     test_key_catchup();
     std::printf("party-items-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

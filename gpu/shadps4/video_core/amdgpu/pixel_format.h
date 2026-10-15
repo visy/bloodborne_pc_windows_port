@@ -356,6 +356,10 @@ constexpr NumberConversion MapNumberConversion(const NumberFormat num_fmt,
         case DataFormat::Format16_16_16_16:
             return NumberConversion::Sint16ToSnormNz;
         default:
+            // bbport: no real descriptor has this combination (seen: SnormNz with
+            // Format11_11_10). Draw preparation reads sharps from game memory the game may be
+            // rewriting, so a stale one must not stop the game (Mrsuss60's fallback; the same
+            // fix by parsifal295, Supermedo/bloodborne_pc PR #55 / 3e3b760f).
             return NumberConversion::None;
         }
     }

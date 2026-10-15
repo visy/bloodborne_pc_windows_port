@@ -17,14 +17,14 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 
 | Area | Progress | |
 |---|---|--:|
-| **Overall** | `███████████████████░` | 96% |
+| **Overall** | `███████████████████░` | 97% |
 | Session & joining | `████████████████████` | 100% |
-| World & travel | `████████████████████` | 99% |
-| Death & respawn | `███████████████████░` | 97% |
-| Progress (anyone can progress) | `██████████████████░░` | 92% |
+| World & travel | `████████████████████` | 100% |
+| Death & respawn | `████████████████████` | 98% |
+| Progress (anyone can progress) | `███████████████████░` | 94% |
 | Services & UI | `████████████████████` | 100% |
-| Network & robustness | `██████████████████░░` | 91% |
-| Bloodborne-specific (chalice, Insight) | `██████████████████░░` | 90% |
+| Network & robustness | `██████████████████░░` | 92% |
+| Bloodborne-specific (chalice, Insight) | `███████████████████░` | 94% |
 | Feels like single player in a party | `███████████████████░` | 96% |
 
 ---
@@ -207,8 +207,17 @@ before anyone is in the game):
 - **Story cutscenes and endings play for everyone.** The Blood Moon, Amelia's skull (evening to
   night), Mergo's Wet Nurse's arena, Gehrman's scenes and the ending with the end credits
   play for every party member; a guest still loading in when a scene starts sees it once it has
-  arrived. After the Blood Moon the host is asked "Travel with the party?" and everyone goes to
-  Yahar'gul together.
+  arrived. A guest who opens the Cathedral Ward door first turns the day into evening for the whole
+  party (the scene plays for everyone). After the Blood Moon the host is asked "Travel with the party?" and everyone goes to
+  Yahar'gul together. A guest can start the Blood Moon too, by walking up to Yharnam at Moonside
+  Lake, and the story messages only the host's game shows (Yahar'gul's "Ritual secret broken")
+  appear on every guest's screen with an OK.
+- **Your ending, your choice.** When the host reaches an ending, every guest is asked first:
+  *Yes* plays that ending in your own save (end credits, then New Game+), *No* takes you home to
+  your own Hunter's Dream and your save stays as it was, to reach the ending later. A guest who
+  used three Umbilical Cords gets Childhood's Beginning when the host refused Gehrman.
+- **Guests open gates with their own keys.** The Cathedral Ward main gate opens for a guest
+  carrying the Hunter Chief Emblem, for the whole party.
 - **Insight for everyone.** Whatever Insight the host gets (a boss's first sight and kill, story
   moments, the kidnap's waking, Chalice Dungeon bosses) every guest present gets too; a boss's
   first-sight Insight comes once per player, whoever walks in first. What Insight
@@ -250,8 +259,10 @@ before anyone is in the game):
   options differ is refused on joining; the message says what differs and what to do.
 - **Chalice dungeons together.** Guests join the host's dungeon; levers, doors, the layer boss, its
   loot (for each player) and the lift work for the whole party. Any player can perform the ritual:
-  the host's altar then offers *Enter the party's dungeon* (no glyph typing), and chalices are
-  shared between all players.
+  the host's altar then offers *Enter the party's dungeon*, also with guests standing in its Dream,
+  and one press does the rest (the guests follow in with one loading screen). Chalices are shared
+  between all players, and a boss reward the game keeps for the host goes to every guest in the
+  dungeon too.
 - **Crashes recover.** A crashed game restarts and rejoins by itself (back in the host's world about 12 s after the restart), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue. If the host's game crashes, the guests go to their own world and wait ("Waiting for the host to come back (N s)...") until the host's game has restarted, then are summoned back beside it by themselves (about 20 s after the crash on one PC; after 3 minutes without the host a guest plays on alone); items a guest got in the host's world stay in its own save.
 - **Network drops recover.** A network outage of up to 50 s keeps the session (checked with three players): no loading screen, everyone carries on where they stood once the network is back (the others freeze in place meanwhile). If a longer outage loses the session, a guest goes home at once with one loading screen and is summoned back beside the host by itself once the network is back. The party also checks every 15 s that everyone sees the same world and progress and quietly re-sends whatever differs.
 - **Wrong passwords are locked out.** A few typos are fine; after 5 wrong passwords in a minute the host refuses that address for a while.
@@ -307,7 +318,7 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 | Every cutscene for the whole party (story cutscenes, endings and guest-triggered scenes already work) | In progress |
 | Joining during a boss fight or cutscene waits outside until it ends | Done: boss fights and cutscenes with every join path (bell, title join, direct summon; verified live), the Party status says why you wait |
 | With 3 guests, every guest sees every other guest | Done: all four join and see each other; any player can leave and rejoin while the others play on (verified live with 3 and 4 players) |
-| Chalice dungeons: deeper layers checked in a party; entering the party's dungeon in one press (the altar still asks a few prompts) | In progress |
+| Chalice dungeons: deeper layers and the bottom lift lever checked in a party | In progress |
 | PvP / friendly fire the host can switch on and off | Done (0.6.2) |
 | Pings: party members and marked spots visible through walls, with distance and player colours | Done (0.6.2) |
 
@@ -387,7 +398,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | FireBurn | FSR-Vulkan (MIT); AMD FidelityFX SDK (MIT) |
 | Supermedo, IFreemz | DLSS bridge and Windows loader |
 | FIocker (Supermedo/bloodborne_pc PR #69) | Frame generation (DLSS FG, FSR FG) with paced presentation, NVIDIA Reflex, conservative object motion for frame generation, DLSS bridge ABI 2, FG diagnostics tools |
-| Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, FPS-preset physics step (found by FIocker), frame limiter pacing, texture-cache, pipeline-cache and shader-walker fixes, skipped draws for failed pipelines, keyboard stick movement, allocating past a full VRAM budget, object motion off on AMD before RDNA3, the memory log line once a minute, Back + d-pad touchpad halves on Xbox pads (idea by parsifal295), skipped draws with a null vertex buffer table, retried boot-file swaps, the unclean-eboot.bin warning, a bad PM4 header dropping its buffer instead of stopping the game and the GPU line flushed at start (c07f0ffa, from parsifal295's PRs #57 and #61); imedved (direct mouse camera, ported by mcrib884); andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows); parsifal295 (game check passes over locked files), RafaelHGOliveira (exclusive fullscreen), fliperama86 (HDR desktop black level), emurphy04 (ultrawide output, video queue fix) |
+| Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, FPS-preset physics step (found by FIocker), frame limiter pacing, texture-cache, pipeline-cache and shader-walker fixes, skipped draws for failed pipelines, keyboard stick movement, allocating past a full VRAM budget, object motion off on AMD before RDNA3, the memory log line once a minute, Back + d-pad touchpad halves on Xbox pads (idea by parsifal295), skipped draws with a null vertex buffer table, retried boot-file swaps, the unclean-eboot.bin warning, a bad PM4 header dropping its buffer instead of stopping the game and the GPU line flushed at start (c07f0ffa, from parsifal295's PRs #57 and #61); checked against Supermedo's five PR fixes (3e3b760f): parsifal295's stale texture format (#55), title-menu flicker above 1080p (#56), bmy's loading-screen item picture (#62) and DLSS device fallback (#58, its reason now names the Vulkan result), dGstone18's build path with spaces (#72), all already here; imedved (direct mouse camera, ported by mcrib884); andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows); parsifal295 (game check passes over locked files), RafaelHGOliveira (exclusive fullscreen), fliperama86 (HDR desktop black level), emurphy04 (ultrawide output, video queue fix) |
 | ALuaNegra (via Mrsuss60's port) | Idle depth targets freed (VRAM growth) |
 | Vorshim92 | Pipeline cache kept between starts, stale `bbport.exe` guard, crash reaper, `run.bat` resolution fix, Reset shader cache button |
 | Thealexbarney | LibAtrac9 audio (MIT) |

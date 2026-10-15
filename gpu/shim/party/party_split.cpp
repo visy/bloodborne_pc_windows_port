@@ -183,14 +183,14 @@ std::atomic<double> g_decided_at{-1}, g_member_run_at{-1};
 Choosing g_choosing;  // under g_note_mu
 
 /// Opens the game's YES / NO dialog with our question; the dialog struct, 0 when it cannot open.
-u64 OpenQuestion() {
+u64 OpenQuestion(u32 text_override = 0) {
     const u64 mm = Slot(kSlotMenuMan);
     u8 busy = 0;
     if (!mm || Field<int>(mm, 0x78, -1) != 0 || !SafeGet(Guest(kMenuBusyByte), &busy) || busy) {
         return 0;
     }
     const u64 dlg = Field<u64>(mm, 0xd08);
-    const u32 text = BbGameMenu::Pages::SplitTravelText(0);
+    const u32 text = text_override ? text_override : BbGameMenu::Pages::SplitTravelText(0);
     if (!dlg || !text) {
         return 0;
     }
@@ -218,6 +218,35 @@ u64 OpenQuestion() {
     SafeWrite(mm + 0x254, &zero, 4);
     using Open = void(BB_COOP_SYSV*)(u64, u32);
     reinterpret_cast<Open>(Guest(kOpenDialog))(dlg, kind);
+    SafeWrite(mm + 0x16c, &minus, 4);
+    SafeWrite(mm + 0x170, &minus, 4);
+    return dlg;
+}
+
+/// Opens the game's one-button message box (kind 7, button 1: "OK") with port text `text`; false
+/// while another dialog / menu is up.
+u64 OpenMessage(u32 text) {
+    const u64 mm = Slot(kSlotMenuMan);
+    u8 busy = 0;
+    if (!text || !mm || Field<int>(mm, 0x78, -1) != 0 || !SafeGet(Guest(kMenuBusyByte), &busy) || busy) {
+        return 0;
+    }
+    const u64 dlg = Field<u64>(mm, 0xd08);
+    if (!dlg) {
+        return 0;
+    }
+    const u32 zero = 0, minus = 0xffffffffu, one = 1, two = 2;
+    const u8 b1 = 1;
+    SafeWrite(dlg + 0x00, &text, 4);
+    SafeWrite(dlg + 0x04, &one, 4);
+    SafeWrite(dlg + 0x08, &two, 4);
+    SafeWrite(dlg + 0x14, &zero, 4);
+    SafeWrite(dlg + 0x10, &b1, 1);
+    SafeWrite(dlg + 0x18, &minus, 4);
+    SafeWrite(dlg + 0x1c, &zero, 4);
+    SafeWrite(mm + 0x254, &zero, 4);
+    using Open = void(BB_COOP_SYSV*)(u64, u32);
+    reinterpret_cast<Open>(Guest(kOpenDialog))(dlg, 7);
     SafeWrite(mm + 0x16c, &minus, 4);
     SafeWrite(mm + 0x170, &minus, 4);
     return dlg;
@@ -370,6 +399,14 @@ bool Hold(std::uint32_t id, bool mark) {
         Log("lamp %u (%s): warp called from +%llx < +%llx < +%llx < +%llx < +%llx < +%llx", id, host ? "host" : "guest",
             (unsigned long long)c[0], (unsigned long long)c[1], (unsigned long long)c[2], (unsigned long long)c[3],
             (unsigned long long)c[4], (unsigned long long)c[5]);
+    }
+    if (host && id / 100000 == 29) {
+        // G1: the host enters a Chalice Dungeon from its altar (the awaken point's warp 29xxxxx runs
+        // from the altar's EMEVD, no lamp flag of the host's: live g1l dropped it as "another
+        // member's lamp"). No question: the guests cannot follow into a dungeon by travel, they are
+        // summoned into it (chalice.md 4).
+        Log("lamp %u (host): a Chalice Dungeon awaken point: the host enters alone, the party is summoned there", id);
+        return false;
     }
     if (!mark) {
         // Bug 20: another member's lamp / headstone flag (packet 0x0f) runs the same warp event
@@ -686,6 +723,22 @@ void Tick(const GameSnapshot& s, party::PartyLink* link) {
             Log("lamp %u: the question was closed (result %d); no travel", p.id, r);
         }
     }
+}
+
+std::uint64_t AskYesNo(std::uint32_t text) {
+    return text ? OpenQuestion(text) : 0;
+}
+
+int QuestionResult(std::uint64_t dialog) {
+    return dialog ? Field<int>(dialog, 0x18, -1) : -1;
+}
+
+bool DialogUp() {
+    return Field<int>(Slot(kSlotMenuMan), 0x78, -1) != 0;
+}
+
+bool ShowMessage(std::uint32_t text) {
+    return OpenMessage(text) != 0;
 }
 
 } // namespace coop::split

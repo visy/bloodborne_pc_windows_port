@@ -86,7 +86,7 @@ The filter allows by talk script id; the entity column is where the script is pl
 | 2100800 | t210306 | (Gehrman / Doll death branch) | no |
 | 2100950.. | t210000-3 | headstones (travel) | no (lamp phase) |
 | 2100230, 2100231 | t210720, t210721 | Dream lamp / warp menus | no (lamp phase) |
-| 2100954, 2100959, 2100960 | t210050, t210100, t210110 | chalice altars | no |
+| 2100954, 2100959, 2100960 | t210050, t210100, t210110 | chalice altars (all of t210050..t210110) | no; the host's since 0.6.2 (G1: IsMultiplayerInProgress answered 0 for the host, `BB_PARTY_HOST_ALTARS`) |
 
 t210140 / t210141 / t210200 / t2107xx (other `OpenSoul` scripts) are not placed in the m21 MSB;
 they are assigned elsewhere (NPC param / other maps) [I].

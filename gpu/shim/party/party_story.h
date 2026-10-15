@@ -116,6 +116,12 @@ bool StoryRemoKnown(std::uint32_t remo_id);
 /// the game does not have; otherwise its flags are cut to the ones the guest's own table gives
 /// for that remo (the host only ever sends those) - a host cannot set arbitrary event flags.
 bool SanitizePeerStory(StoryIntent* s, std::string* why = nullptr);
+/// G3: a guest's own 2002[6] play in the host's world (a scene + a time of day + a warp inside the
+/// map it plays in: the Cathedral Ward door 12400750, day -> evening) that the host plays as its own
+/// (the scene, the warp to the same point, the time of day) and sends to the party: a known remo, a
+/// tod 1..3 later than the host's (`host_tod_value`: its 9800..9802 3-bit value) and a warp in the
+/// host's map block (`host_map`). False (with `why`): the host plays only the scene (D10).
+bool GuestPhaseChangeOk(const StoryIntent& s, int host_tod_value, std::uint32_t host_map, std::string* why = nullptr);
 /// 9800..9802 as a 3-bit value (9800 = bit 2) for a tod (0..3): {0, 4, 6, 7}; -1 out of range.
 int TodFlagValue(int tod);
 /// The tod a 3-bit 9800..9802 value stands for (the highest table entry it reaches), 0..3.
@@ -158,6 +164,7 @@ struct StoryAction {
         NgCycle,       ///< GameDataMan+0x68 = min(+1, 7)  (2003[21])
         TravelDream,   ///< 0x13CDF30(2102961)
         ForceEnding,   ///< GameDataMan+0x6C = ending; GSM+0x1550 = 1 (RequestEnding body)
+        AskEnding,     ///< the guest is asked "play this ending now?" (GuestStory::AnswerEnding)
     };
     Kind kind = None;
     std::uint32_t id = 0;   ///< remo id
@@ -211,6 +218,15 @@ public:
     bool MirrorPending() const { return mirror_.has_value(); }
     bool Running() const { return running_; }
     std::uint64_t LastSeq() const { return last_seq_; }
+    /// User decision (2026-10-15): the host's ending asks each guest first. YES: `ending` (see
+    /// GuestEndingType) replays in the own Dream (staff roll, NG+ in the own save) as before;
+    /// NO ("not now"): the guest only goes home to its own Dream, its save keeps its cycle and
+    /// state, and it can reach the ending later. No answer in kEndingAskTimeout s counts as NO.
+    void AnswerEnding(bool yes, int ending);
+    /// The running item waits for the guest's answer.
+    bool EndingAskPending() const { return !ops_.empty() && ops_.front().kind == Op::AskEnding; }
+    /// BB_PARTY_ENDING_ASK=0: the old way, no question (the ending replays at once).
+    void SetAskEnding(bool on) { ask_ending_ = on; }
 
     /// Sidecar persistence: queue, seen remo ids, last seq.
     json::Value ToJson() const;
@@ -228,7 +244,7 @@ private:
     struct Op {
         enum Kind : std::uint8_t {
             Play, WaitRemoStart, WaitRemoEnd, Flags, Tod, NgCycle, TravelDream, WaitArrive,
-            EndingCheck,
+            EndingCheck, AskEnding,
         };
         Op(Kind k, std::uint32_t i = 0, std::uint32_t m = 0) : kind(k), id(i), mode(m) {}
         Kind kind;
@@ -236,7 +252,9 @@ private:
         std::vector<std::uint32_t> flags;
         bool on = true;
         int tod = -1, ending = 0;
+        bool asked = false;
     };
+    void PushEndingBody(int ending);
     void Build(const StoryIntent& s, bool mirror, bool summoned = false);
     std::optional<StoryAction> RunOps(const StoryState& st, double now);
     std::optional<StoryAction> Run(const StoryState& st, double now);
@@ -257,7 +275,14 @@ private:
     double op_since_ = 0;
     bool op_started_ = false;
     bool load_seen_ = false;
+    bool ask_ending_ = true;
 };
+
+constexpr double kEndingAskTimeout = 120.0;
+/// The ending a guest who answered YES gets: A (1, Yharnam Sunrise) when the host submitted;
+/// after a refusal (host B or C) the guest's own cords decide as the game's would for its save:
+/// three Umbilical Cords used (its own flag 9900) -> C (3, Childhood's Beginning), else B (2).
+int GuestEndingType(int host_ending, bool own_three_cords);
 
 /// D10: a client's own copy of a host-world event runs that event's 2002 remo right after the
 /// live mirror played the same scene (campaign soak run 5f: Mergo 26000010, Gehrman 21000040), so
@@ -284,7 +309,34 @@ private:
     std::map<std::uint32_t, double> played_;  // base remo id -> last play
 };
 
+// ---- Story notices (D10, pard3) ----
+/// A game dialog (EMEVD 2007[1]) that tells the story and that only the host's event shows (its
+/// client copy ends on 1003[6]): Yahar'gul's "Ritual secret broken. Seek the nightmare newborn."
+/// (m28_00 12800140, message 10012014, after the Blood Moon warp). The host relays it, every guest
+/// shows it as a one-button (OK) game message once it is calm. The other 2007[1] messages are a
+/// player's own interaction (a locked door, "Only a special emblem opens the main gate."): each
+/// player's game shows its own, never relayed.
+bool StoryNoticeMessage(std::uint32_t message_id);
+constexpr const char* kStoryNoticeEventName = "story_notice";
+struct StoryNotice {
+    std::uint64_t seq = 0;
+    std::uint32_t message = 0;
+    std::uint32_t event_id = 0;
+};
+std::string StoryNoticeToJsonText(const StoryNotice& n);
+bool StoryNoticeFromJsonText(const std::string& text, StoryNotice* out, std::string* error = nullptr);
+/// Guest: a queued notice is shown now? World up, no load, no cutscene, no other game dialog or
+/// menu, not hit in the last few seconds. Dropped after kStoryNoticeMaxWait.
+bool StoryNoticeShowNow(bool world_up, bool loading, bool cutscene, bool dialog_up, bool calm);
+constexpr double kStoryNoticeMaxWait = 300.0;
+
 #ifndef BB_PARTY_STORY_NO_GAME
+/// Host (the EMEVD dispatch hook): this game's event shows a story notice: relay it.
+void NoteHostStoryNotice(std::uint32_t message_id, std::uint32_t event_id);
+/// Host: the next notice to broadcast (any thread).
+bool PopHostStoryNotice(StoryNotice* out);
+/// Guest: the host's notice (the link thread); shown by StoryTick.
+void RequestGuestStoryNotice(const StoryNotice& n);
 /// bbgpu_patch_image, once, after coop::HooksInit (party mode only): the bank-2002 capture hook.
 void InstallStoryHooks();
 /// Host: the next story intent to broadcast (any thread).

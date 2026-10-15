@@ -183,11 +183,16 @@ struct Test {
     int echoes = -1; // echoes=N: writes the player's Blood Echoes once (test saves)
     // approach=X:Z:R[:BUTTON]: walk (pad file sticks, camera-relative, closed loop on the position)
     // until within R m of (X, Z), facing it; then BUTTON (cross / triangle / square / circle) once.
-    bool approach = false, approach_done = false;
+    bool approach = false, approach_done = false, ap_faced = false;
+    int ap_taps = 0;               // face taps made (prompt=: until its text shows, 45 deg apart)
+    std::string ap_prompt;         // prompt=TEXT: the action prompt the face taps look for
+    std::int64_t ap_tap_ms = 0;
     float ap_x = 0, ap_z = 0, ap_r = 1.0f;
+    bool ap_face = false;  // face=X:Z: the point the arrival tap turns toward (default: the walk's target)
+    float ap_fx = 0, ap_fz = 0;
     std::uint32_t ap_button = 0;
     int ap_steps = 0, ap_phase = 0; // 0 idle, 1 moving, 2 settling, 3 arrived, 4 pressing
-    int ap_max = 40;                // steps before it gives up (guest_stick: its STEPS)
+    int ap_max = 80;                // steps before it gives up (guest_stick: its STEPS)
     // host_route / guest_route: the waypoints {x, z, r}; the approach target is route[route_i].
     std::vector<std::array<float, 3>> route;
     std::size_t route_i = 0;
@@ -204,7 +209,11 @@ struct Test {
     Clock::time_point ap_at{};
     // stand=X:Y:Z:YAW[:BUTTON]: puts the player there in place (PlayerIns vfunc +0x5F8, no map
     // reload; yaw t faces (-sin t, -cos t), agent/guestsvc's Doll fixture), then BUTTON once 1.5 s on.
+    // stand=obj:ENTITY:DIST:ANGLE[:BUTTON]: the same at a map object (worldact::StandAtObject: DIST m
+    // from it at ANGLE degrees from its front, facing it), e.g. a Ritual Altar for the seq= below.
     bool stand = false, stand_done = false;
+    int st_obj = 0;
+    float st_obj_dist = 1.2f, st_obj_angle = 0;
     float st_pos[3] = {0, 0, 0}, st_yaw = 0;
     std::uint32_t st_button = 0;
     int st_phase = 0;
@@ -1338,7 +1347,7 @@ void KillLoadedEnemyForTest(const char* what, std::uint32_t want, bool by_id, bo
     int alive = 0;
     for (const auto& e : list) alive += e.alive ? 1 : 0;
     const int k = have_me || want ? PickEnemyKillTarget(list, want, me, 500.0f) : -1;
-    if (k < 0 && want && by_id && EnemyIsBossEntity(want) && hp_only) {
+    if (k < 0 && want && EnemyIsBossEntity(want) && hp_only) {
         // ':hp' on a boss outside the census: its chr by entity id (0x13C97A0, as the boss clear
         // bonus 0x1335400 finds it) and HP 0 only: the game's own death and defeat path (a "real
         // kill" without ForceDead; statsaudit finding 4).
@@ -1907,7 +1916,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     } else if (step.kind == TravelStep::GuestKill) {
         // guest_kill=ENTITY@S%MAP (0: the nearest living enemy within 500 m): a kill on the guest's
         // own copy (split travel: an enemy killed while the players are apart).
-        KillLoadedEnemyForTest("guest_kill", step.id, false);
+        // guest_kill=ENTITY:hp on a boss: its HP 0 on the guest's game (a lone guest's boss kill).
+        KillLoadedEnemyForTest("guest_kill", step.id, false, step.args == "hp");
     } else if (step.kind == TravelStep::HostKill) {
         // A boss (or any enemy) killed as the game's own death path: ForceDead on its entity id; the
         // boss-defeat EMEVD (4[00] death state -> 2003[12]) and the Lua boss clear follow.
@@ -2239,7 +2249,21 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         !t.place || (t.place_done && (s.map_id & 0xffff0000u) == (t.place_map & 0xffff0000u));
     if (t.stand && !t.stand_done && stand_map_ok && s.world_up && !s.loading && s.player &&
         Seconds(st.world_at, now) >= 10.0 && Seconds(t.st_at, now) >= 0.0) {
-        if (t.st_phase == 0) {
+        if (t.st_phase == 0 && t.st_obj) {
+            std::string what;
+            const bool ok = worldact::StandAtObject(t.st_obj, t.st_obj_dist, t.st_obj_angle, &what);
+            Log("test: stand at object %d (%.1f m, %.0f deg): %s", t.st_obj, double(t.st_obj_dist),
+                double(t.st_obj_angle), ok ? what.c_str() : "not loaded");
+            if (ok) {
+                worldact::ObjectPoint(t.st_obj, t.st_obj_dist, t.st_obj_angle, t.st_pos);  // phase 1 checks it
+                t.st_phase = 1;
+                t.st_at = now + std::chrono::milliseconds(1500);
+            } else if (++t.st_retries < 10) {
+                t.st_at = now + std::chrono::milliseconds(2000);
+            } else {
+                t.stand_done = true;
+            }
+        } else if (t.st_phase == 0) {
             alignas(16) float pos[4] = {t.st_pos[0], t.st_pos[1], t.st_pos[2], 1.0f};
             alignas(16) float rot[4] = {0, t.st_yaw, 0, 0};
             std::uint64_t vtbl = 0, fn = 0;
@@ -2292,7 +2316,13 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
                     const std::int64_t ms = BbGameMenu::TextSeenMs(text.c_str());
                     return ms > 0 ? double(ms) / 1000.0 : -1.0;
                 });
-            runtime_pad_director_press(held);
+            // Only on a change: a wait step must not hold the pad at 0 every frame (live g1g: the
+            // altar autopilot's Cross on "Search using Chalice Glyph" was released at once).
+            static std::uint32_t seq_held = 0;
+            if (held || seq_held) {
+                runtime_pad_director_press(held);
+            }
+            seq_held = held;
             // The raw pad state the game read while a press is held (once per press).
             static std::uint32_t logged_held = 0;
             if (held && held != logged_held) {
@@ -2407,7 +2437,7 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
                 }
                 Log("test: approach: (%.2f, %.2f) -> (%.2f, %.2f): %.2f m, stick %.0f deg (step %d)", pos[0], pos[2],
                     t.ap_x, t.ap_z, dist, t.ap_angle * 180 / M_PI, t.ap_steps);
-                const bool blocked = on_route ? (t.ap_still >= 3 && t.ap_slides_here >= 6) : t.ap_still >= 8;
+                const bool blocked = on_route ? (t.ap_still >= 3 && t.ap_slides_here >= 6) : t.ap_still >= 20;
                 if (dist <= t.ap_r || t.ap_steps >= t.ap_max || blocked) {
                     t.ap_phase = 3;
                     t.ap_at = now + std::chrono::milliseconds(1200);
@@ -2443,6 +2473,49 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
                 }
                 }
                 }
+            } else if (t.ap_phase == 3 && !t.ap_button && t.st_seq.size() && !t.stand && !t.ap_faced &&
+                       [&] {
+                           if (t.ap_prompt.empty()) {
+                               return t.ap_taps == 0;
+                           }
+                           const std::int64_t seen = BbGameMenu::TextSeenMs(t.ap_prompt.c_str());
+                           if (t.ap_taps > 0 && seen > t.ap_tap_ms) {
+                               Log("test: approach: '%s' shows after %d tap(s)", t.ap_prompt.c_str(), t.ap_taps);
+                               return false;
+                           }
+                           return t.ap_taps < 8;
+                       }()) {
+                // A menu walk follows (an action prompt needs the player to face it; live g1f: the
+                // walk stopped facing away, and a PlayerIns warp does not turn the player in the
+                // Dream): a short stick tap toward the target turns it there (~0.1 m); with
+                // prompt=TEXT more taps, 45 deg apart, until that prompt shows (live g1k: the first
+                // tap did not face the altar).
+                const int tap = t.ap_taps++;
+                t.ap_tap_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
+                const double mx = pos[0] - t.ap_from[0], mz = pos[2] - t.ap_from[1];
+                if (std::sqrt(mx * mx + mz * mz) > 0.05) {
+                    t.ap_angle = wrap(t.ap_angle + wrap(want - std::atan2(mx, mz)));
+                }
+                // The stick angle is camera-relative: ap_angle walks toward `want`; the face point
+                // is `want` turned by the difference of the two world directions.
+                double stick = t.ap_angle + tap * (M_PI / 4);
+                if (t.ap_face) {
+                    const double fwant = std::atan2(double(t.ap_fx) - pos[0], double(t.ap_fz) - pos[2]);
+                    stick = wrap(t.ap_angle + wrap(fwant - want) + tap * (M_PI / 4));
+                }
+                const int lx = 128 + static_cast<int>(std::lround(127 * std::sin(stick)));
+                const int ly = 128 - static_cast<int>(std::lround(127 * std::cos(stick)));
+                char tok[48];
+                std::snprintf(tok, sizeof tok, "lx=%d ly=%d", std::clamp(lx, 0, 255), std::clamp(ly, 0, 255));
+                WritePadFile(tok);
+                t.ap_phase = 6;
+                t.ap_at = now + std::chrono::milliseconds(120);
+                Log("test: approach: a short step to face %s (stick %.0f deg)", t.ap_face ? "the face= point" : "the target",
+                    stick * 180 / M_PI);
+            } else if (t.ap_phase == 6) {
+                WritePadFile("");
+                t.ap_phase = 3;
+                t.ap_at = now + std::chrono::milliseconds(600);
             } else if (t.ap_phase == 3) { // arrived: the button
                 if (t.ap_button) {
                     runtime_pad_director_press(t.ap_button);
@@ -2456,6 +2529,34 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
                 runtime_pad_director_press(0);
                 t.approach_done = true;
             }
+        }
+    }
+    // approach=... with seq=... and no stand=: the menu walk starts once the walk arrived (a spot a
+    // warp cannot put the player on, e.g. the Dream's ritual gravestones).
+    if (t.approach_done && !t.stand && t.st_seq.size() && !t.st_seq_on) {
+        t.st_seq_on = true;
+        t.stand = true;
+        t.st_phase = 3;
+        // Face the target where the walk stopped (an action prompt needs the player to face it;
+        // live g1c: arrived at 1.25 m facing past the altar, no prompt). The PlayerIns warp at the
+        // own spot only turns the player.
+        float at[3] = {};
+        std::uint64_t vtbl = 0, fn = 0;
+        if (s.player && SafeRead(s.player + 0xc0, at, sizeof at) && SafeGet(s.player, &vtbl) &&
+            SafeGet(vtbl + 0x5f8, &fn) && fn) {
+            std::uint32_t area = 0;
+            float pos[3] = {};
+            if (ReadPlayerPos(&area, pos)) {
+                at[0] = pos[0], at[1] = pos[1], at[2] = pos[2];
+            }
+            alignas(16) float p4[4] = {at[0], at[1], at[2], 1.0f};
+            alignas(16) float rot[4] = {0, static_cast<float>(std::atan2(-(t.ap_x - at[0]), -(t.ap_z - at[2]))), 0, 0};
+            using WarpFn = void(BB_COOP_SYSV*)(std::uint64_t, const float*, const float*, std::uint64_t);
+            reinterpret_cast<WarpFn>(fn)(s.player, p4, rot, 0);
+            Log("test: approach done: turned to face (%.2f, %.2f), yaw %.2f; the menu walk (seq) starts", t.ap_x,
+                t.ap_z, rot[1]);
+        } else {
+            Log("test: approach done: the menu walk (seq) starts");
         }
     }
     if (t.place && !t.place_done && Seconds(st.world_at, now) >= t.place_at && s.world_up && !s.loading) {
@@ -2638,6 +2739,20 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.ring = kHostBell;
             } else if (item == "ring_guest") {
                 st.test.ring = kGuestBell;
+            } else if (item.rfind("stand=obj:", 0) == 0) {
+                int entity = 0;
+                float dist = 1.2f, angle = 0;
+                char button[16] = {0};
+                const int n = std::sscanf(item.c_str() + 10, "%d:%f:%f:%15s", &entity, &dist, &angle, button);
+                if (n >= 1 && entity > 0) {
+                    st.test.stand = true;
+                    st.test.st_obj = entity;
+                    st.test.st_obj_dist = n >= 2 ? dist : 1.2f;
+                    st.test.st_obj_angle = n >= 3 ? angle : 0.0f;
+                    const std::string b = button;
+                    st.test.st_button = b == "cross" ? 0x4000u : b == "triangle" ? 0x1000u : b == "square" ? 0x8000u
+                                      : b == "circle" ? 0x2000u : 0u;
+                }
             } else if (item.rfind("stand=", 0) == 0) {
                 float x = 0, y = 0, z = 0, yaw = 0;
                 char button[16] = {0};
@@ -2657,6 +2772,15 @@ void PartyDirector::ConfigureFromEnv() {
                 if (!st.test.st_seq.Parse(item.substr(4), &bad)) {
                     Log("BB_PARTY_DIRECTOR_TEST: seq token '%s' unknown; seq ignored", bad.c_str());
                     st.test.st_seq = MenuScript{};
+                }
+            } else if (item.rfind("prompt=", 0) == 0) {
+                st.test.ap_prompt = item.substr(7);
+            } else if (item.rfind("face=", 0) == 0) {
+                float x = 0, z = 0;
+                if (std::sscanf(item.c_str() + 5, "%f:%f", &x, &z) == 2) {
+                    st.test.ap_face = true;
+                    st.test.ap_fx = x;
+                    st.test.ap_fz = z;
                 }
             } else if (item.rfind("approach=", 0) == 0) {
                 float x = 0, z = 0, r = 1.0f;
@@ -2739,7 +2863,7 @@ void PartyDirector::ConfigureFromEnv() {
                 if (step.kind == TravelStep::HostWarp || step.kind == TravelStep::HostKill) {
                     step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 10, nullptr, 10));
                 }
-                if (step.kind == TravelStep::HostKill && item.find(":hp") != std::string::npos) {
+                if ((step.kind == TravelStep::HostKill || step.kind == TravelStep::GuestKill) && item.find(":hp") != std::string::npos) {
                     step.args = "hp";  // host_kill=ID:hp@S: HP 0 only (the game's own death path)
                 }
                 if (step.kind == TravelStep::HostLamp) {
@@ -2899,8 +3023,9 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
 /// took the party dungeon's glyph, the remaining prompts are answered on the game's own pad path:
 /// OK on "Search using Chalice Glyph", the search result, YES on "Join the selected Chalice
 /// Dungeon?", the altar again and its first awaken point. Text-gated and strict: a prompt that
-/// does not come in 10 s stops the walk (no blind presses). Off by default until verified live
-/// (0.5.2): BB_PARTY_ALTAR_AUTO=1 turns it on.
+/// does not come in 10 s stops the walk (no blind presses). The awaken menu's first Cross is often
+/// swallowed (live g1h: the menu stayed open), so it is pressed up to three times; the load that
+/// starts ends the walk. Off by default until verified live (0.5.2): BB_PARTY_ALTAR_AUTO=1 turns it on.
 void AltarAutopilotTick(const GameSnapshot& s) {
     static const bool off = [] {
         const char* e = std::getenv("BB_PARTY_ALTAR_AUTO");
@@ -2915,7 +3040,7 @@ void AltarAutopilotTick(const GameSnapshot& s) {
         script = MenuScript{};
         std::string bad;
         on = script.Parse("!cross@Search using Chalice Glyph/!cross@Search Results/!left@Join the selected Chalice Dungeon/"
-                          "cross/wait/cross/!cross@Select location to awaken in/wait/cross",
+                          "cross/wait/cross/!cross@Select location to awaken in/wait/cross/wait/cross/wait/cross",
                           &bad);
         Log("altar: entering the party's dungeon (%s)", on ? "prompts answered for the player" : bad.c_str());
     }
@@ -3211,6 +3336,12 @@ void PartyDirector::Tick() {
             link->post_event(party::kBroadcast, kStoryEventName, StoryToJsonText(si));
             Log("story #%llu (%s %u) sent to the party", static_cast<unsigned long long>(si.seq),
                 StoryKindName(si.kind), si.id);
+        }
+        // D10: story notices only the host's event shows (party_story StoryNoticeMessage).
+        StoryNotice sn;
+        while (PopHostStoryNotice(&sn)) {
+            link->post_event(party::kBroadcast, kStoryNoticeEventName, StoryNoticeToJsonText(sn));
+            Log("story notice %u (event %u) sent to the party", sn.message, sn.event_id);
         }
         // C3: the host's item lots to every guest; the full list to a member that (re)joined.
         std::vector<ItemGrant> items;
