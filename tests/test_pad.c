@@ -190,6 +190,19 @@ int main(void) {
     usleep(20000);
     mk_dx=100.0f; /* 5000 px/s: full deflection */
     assert(pad_read_state(1,&data)==0 && data.right_x==255);
+    /* The measured camera curve (deadzone compensation, after 90008b39 by Mrsuss60): the
+     * slowest motion past the mouse dead zone already turns (past the game's 46.7), the turn
+     * grows with the motion, stays below the game's fast turn (from ~122) until full speed. */
+    assert(look_deflection(0.0f)==0.0f && look_deflection(0.01f)>46.7f && look_deflection(0.01f)<48.0f);
+    assert(look_deflection(0.5f)<look_deflection(0.6f) && look_deflection(0.999f)<=120.0f &&
+           look_deflection(1.0f)==127.0f);
+    {
+        float ox=0.0f, oy=0.0f;
+        look_stick(4.0f,0.0f,6.35f,&ox,&oy);     /* below the mouse dead zone */
+        assert(ox==0.0f && oy==0.0f);
+        look_stick(30.0f,-30.0f,6.35f,&ox,&oy);  /* round: the direction kept */
+        assert(ox>33.0f && oy<-33.0f && fabsf(ox+oy)<0.01f);
+    }
     /* Upstream 0.51 #52: mouse names in bindings; a bound side button leaves the built-in scheme
      * (X1 is Square here, not L1); the wheel a short d-pad press per notch; pad-file mouse tokens. */
     assert(key_from_name("Mouse Left")==MOUSE_KEY+SDL_BUTTON_LEFT && key_from_name("wheel down")==MOUSE_WHEEL_DOWN);

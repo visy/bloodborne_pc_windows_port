@@ -530,6 +530,53 @@ static void apply_keyboard(PadData *d, const bool *k) {
  * per 60 Hz frame, their 8 stick units per pixel) is full deflection at sensitivity 1. */
 static float look_x, look_y;
 static uint64_t look_last;
+/* The game's camera speed for a right stick deflection (stick units past neutral, deg/s of yaw;
+ * measured in game with BB_CAM_PROBE=1, 2026-10-15): nothing up to 46 (a round dead zone: 40,40
+ * turns), then a straight line of about 1.13 deg/s per unit up to 120 (83 deg/s); from about 122
+ * the yaw jumps to the game's fast turn (181 deg/s). Pitch follows the same line (85 deg/s at
+ * 127, no fast turn). With the look value sent to the stick as it was, the camera did not turn
+ * below ~360 px/s of mouse speed at sensitivity 1 and turned at full speed from ~1000 px/s, so
+ * the sensitivity sliders only moved that narrow band (Mrsuss60/bloodborne_pc_windows_port
+ * 90008b39 by Mrsuss60 found the sliders ineffective too and adds a fixed jump past an assumed
+ * 16/127 dead zone). Here the look value (the share of the line's top speed the mouse asks for)
+ * goes through the inverse of the measured line, so the camera turns in proportion to the mouse:
+ * measured 92-100 mdeg per count at sensitivity 1 from 60 to 700 px/s, half at 0.5, double at
+ * 2. A mouse at full speed (the share reaching 1) gets full deflection, the fast turn.
+ * BB_MOUSE_LOOK_CURVE=0: the old straight mapping. */
+static const struct { float v, rate; } look_curve[]={
+    {46.7f,0.0f}, {48.0f,1.50f}, {50.0f,3.75f}, {52.0f,6.01f}, {56.0f,10.49f}, {60.0f,14.99f},
+    {64.0f,19.54f}, {72.0f,28.55f}, {80.0f,37.76f}, {88.0f,46.71f}, {96.0f,56.0f},
+    {104.0f,64.63f}, {112.0f,73.56f}, {116.0f,78.56f}, {120.0f,82.78f},
+};
+#define LOOK_CURVE_COUNT (sizeof(look_curve)/sizeof(*look_curve))
+static float look_deflection(float share) {
+    if (share<=0.0f) return 0.0f;
+    if (share>=1.0f) return 127.0f; /* the mouse's top speed: the game's fast turn */
+    const float target=share*look_curve[LOOK_CURVE_COUNT-1].rate;
+    for (size_t i=1;i<LOOK_CURVE_COUNT;++i)
+        if (target<=look_curve[i].rate) {
+            const float r0=look_curve[i-1].rate, r1=look_curve[i].rate;
+            return look_curve[i-1].v+(look_curve[i].v-look_curve[i-1].v)*(target-r0)/(r1-r0);
+        }
+    return look_curve[LOOK_CURVE_COUNT-1].v;
+}
+/* The look value (stick units, -127..127 per axis) to the stick's deflection: below the mouse dead
+ * zone nothing, else the curve above on the length, the direction kept. */
+static void look_stick(float lx, float ly, float dead, float *ox, float *oy) {
+    static int curve=-1;
+    if (curve<0) { const char *v=getenv("BB_MOUSE_LOOK_CURVE"); curve=!(v && v[0]=='0'); }
+    *ox=*oy=0.0f;
+    if (!curve) {
+        *ox=lx>dead || lx<-dead ? lx : 0.0f;
+        *oy=ly>dead || ly<-dead ? ly : 0.0f;
+        return;
+    }
+    const float len=sqrtf(lx*lx+ly*ly);
+    if (len<=dead || len<=0.0f) return;
+    const float out=look_deflection(len/127.0f);
+    *ox=lx/len*out;
+    *oy=ly/len*out;
+}
 static void sample_mouse(PadData *d, const BbMouseState *m, int consumed, float dt, const bool *k) {
     if (consumed) {
         if (dt>0.0f) {
@@ -544,9 +591,8 @@ static void sample_mouse(PadData *d, const BbMouseState *m, int consumed, float 
             if (look_y>127.0f) look_y=127.0f; else if (look_y<-127.0f) look_y=-127.0f;
         }
     }
-    const float dead=m->deadzone*127.0f;
-    const float ox=look_x>dead || look_x<-dead ? look_x : 0.0f;
-    const float oy=look_y>dead || look_y<-dead ? look_y : 0.0f;
+    float ox=0.0f, oy=0.0f;
+    look_stick(look_x,look_y,m->deadzone*127.0f,&ox,&oy);
     /* Only while the mouse moves: the gamepad's right stick works otherwise (IJKL win over both). */
     if (ox!=0.0f || oy!=0.0f) {
         d->right_x=(uint8_t)(128+(int)(ox>=0.0f ? ox+0.5f : ox-0.5f));
