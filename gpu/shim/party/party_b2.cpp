@@ -4371,11 +4371,16 @@ void JoinBesideTick(const GameSnapshot& s, double now) {
             // cutscene): it stands at the origin here; a warp beside it fell into the void.
             const Where* w = WhereOf(0);
             const bool vit = w && w->has_pos && w->age_ms < 2000;
-            if (!deathrules::HostChrPlaced(hp, vit, vit ? w->pos : hp)) {
+            // Not in the host's map (live a11e: a summon load that built the guest's own Dream as
+            // the host's world): the host's coordinates mean nothing here; the A5 arrival load
+            // brings it over (CarryArrivalTick).
+            const bool other_map = vit && w->map != 0 && s.map_id != 0xffffffffu && (w->map >> 16) != (s.map_id >> 16);
+            if (other_map || !deathrules::HostChrPlaced(hp, vit, vit ? w->pos : hp)) {
                 static double said = -100;
                 if (now - said > 10.0) {
                     said = now;
-                    Log("join: the host's chr is not placed yet here (%.1f, %.1f, %.1f%s); no move beside it yet",
+                    Log("join: %s (%.1f, %.1f, %.1f%s); no move beside it yet",
+                        other_map ? "this guest is not in the host's map" : "the host's chr is not placed yet here",
                         double(hp[0]), double(hp[1]), double(hp[2]), vit ? ", not where the host reports itself" : "");
                 }
                 return;
@@ -4457,10 +4462,11 @@ void CarryArrivalTick(const GameSnapshot& s, double now) {
             now - at);
         return;
     }
-    // The game's own summon load starts within ~1 s of the client role (join_timing.md); none
-    // came for a joiner in another map (a5 run 2): ours.
+    // At once (live a11e): the game's own summon load started 0.8 s after the client role and
+    // loaded the guest's OWN map as the host's world (the Dream, in host-world mode); our re-join
+    // set in the same frame makes K6 hold that start and drives the load into the host's map.
     static double tried = -100;
-    if (now - at < 1.0 || now - tried < 5.0) {
+    if (now - tried < 5.0) {
         return;
     }
     tried = now;
@@ -5881,6 +5887,7 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
                 g_carry_join_at = Now();  // A5: the arrival load into the host's map (CarryArrivalTick)
                 Log("A5: joined from another map (own %s, the host's room in %s): the arrival load follows",
                     MapName(s.map_id).c_str(), MapName(room.area).c_str());
+                CarryArrivalTick(s, Now());  // this frame: before the game's own summon load starts
             }
         } else {
             Log("direct summon: FAILED (%s; %.1f s after the request): %s", fail_why, now - asked_at,
