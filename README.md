@@ -139,7 +139,7 @@ before anyone is in the game):
   you travel together.
 - **Joining while the host fights a boss or watches a cutscene** waits in your own world until it is over (the Party status says why), then puts you beside the host with one loading screen.
 - **Leave any time.** *System → Party → Leave the party* takes a guest home at once; the host's
-  *Leave* ends the party and every guest goes home. After leaving, a guest keeps playing online alone in its own world. *System → Party mode → Join party* brings a
+  *Leave* ends the party and every guest goes home at once (one loading screen, no "Session lost"). A guest who left can rejoin at any time, also right after a boss kill. After leaving, a guest keeps playing online alone in its own world. *System → Party mode → Join party* brings a
   guest back; *Host party* and *Single player* are there too.
 - **The session never ends by itself.** Boss kills, area clears, deaths and travel don't send
   anyone home.
@@ -305,7 +305,7 @@ before anyone is in the game):
 |---|---|
 | A guest | Gets up again at its own lamp: with no loading screen when that lamp is in the loaded area, else with its own loading screen at that lamp (also in another area; the host stays where it is); its Blood Echoes wait in a bloodstain where it fell, marked on screen in the host's world (walk onto it to get them back; it also stays in its own world); the others keep playing |
 | The host | Everyone gets one respawn loading screen at the host's lamp, as in the original game, and the world resets; the host's echoes stay in a bloodstain where it fell |
-| Anyone, during a boss fight | Watches a living party member fight (the screen says whose; press Cross to watch the next one) until the boss dies (then gets up at the host's lamp, with no loading screen when it is in the area), everyone dies, or someone travels |
+| Anyone, during a boss fight | Watches a living party member fight from behind them (the screen says whose; press Cross to watch the next one) until the boss dies (then gets up at the host's lamp, with no loading screen when it is in the area), everyone dies, or someone travels |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |
 
 A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's) or a party wipe resets them.
