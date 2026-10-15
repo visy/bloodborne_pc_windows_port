@@ -800,8 +800,18 @@ void ShowLikeInGameStart(u64 c, const char* why) {
         unsigned(v), unsigned(w));
 }
 
+std::atomic<double> g_rejoin_banner_at{0};  // Now() of the last B2 re-join (or a member chr rebuilt by a rewind)
+
 int RewindRemoteTasks(const char* why) {
     int n = 0;
+    // A member's chr rebuilt here (a revive in place, a new look, the host's revive): its task's
+    // STEP_Create shows the join banner ("The bell's resonance has beckoned ...") again although
+    // nobody joined (live parx s0b: on the host after a guest's revive at its lamp). The banner
+    // filter treats the next seconds like a re-join's.
+    struct BannerMark {
+        ~BannerMark() { if (n_ref > 0) g_rejoin_banner_at = Now(); }
+        int& n_ref;
+    } mark{n};
     for (const TaskInfo& t : Tasks(false)) {
         if ((t.mode != 1 && t.mode != 2) || t.step < kStepCreate || (t.flags & 2)) {
             continue; // not remote, not created yet (the join itself is still running), or leaving
@@ -4630,7 +4640,6 @@ void HostRestLoadTick(const GameSnapshot& s, double now) {
 // stays. deathrules::HidePartyBanner decides; BB_PARTY_BANNERS=0: every banner as the game shows it.
 constexpr u64 kShowSummonMessage = 0x1bffe80;
 void InstallCall(u64 off, u64 target, const void* handler, const char* name);
-std::atomic<double> g_rejoin_banner_at{0};  // Now() of the last B2 re-join after the session's start
 using ShowMsgFn = void(BB_COOP_SYSV*)(u32, u32);
 void* g_show_msg_orig = nullptr;
 bool BannersOn() {
