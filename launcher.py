@@ -2946,7 +2946,8 @@ class BloodborneLauncher(tk.Tk):
             ttk.Label(binds, text=action, style="Card.TLabel", font=("Segoe UI", 8),
                       foreground="#cccccc").grid(row=r, column=c + 1, sticky="w", padx=(0, 18), pady=1)
         ttk.Label(main, text="The mouse is captured while you play and released while the in-game menu "
-                             "(Insert) or the name box is open. Rebind keys with mkkey.<input>= lines in "
+                             "(Insert) or the name box is open. Rebind keys in the in-game menu (Insert > "
+                             "Controls: select a row, press a key or mouse button), or with mkkey.<input>= lines in "
                              "bbport.ini (key.<input>= lines are the classic layout's); mouse buttons and "
                              "the wheel are names there too (Mouse Left, Mouse X1, Wheel Down ...). Off: the classic "
                              "layout (WASD / IJKL / Space / Shift ...) is used and the mouse does nothing.",

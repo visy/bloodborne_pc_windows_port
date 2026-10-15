@@ -45,3 +45,27 @@ Build OK; pytest 128 passed / 20 skipped; no `*-test` executables are built in t
 (150 s) connected and joined with no crash; a solo borderless run of 60 s exited cleanly; screenshot via tools/mp/shot.py
 (world rendering, shots in agents/mrsuss/shots). The requested 196ba93 stutter/VRAM A/B was not run: its pieces do not
 apply on top of our tree (15-file conflicts) and the equivalents already exist, so there was no second variant to measure.
+
+## 0.6.2 review: 2b6d6dab..c851c08d (6 commits)
+
+- 90008b39 input (mouse look, sliders, rebinding): ADAPTED in three parts.
+  - Sensitivity sliders: their finding (the sliders did not work) confirmed by measurement with the new
+    `BB_CAM_PROBE=1` aid: the game's stick dead zone is 46.7/127 (round), not the assumed 16/127, the curve
+    is linear above it up to 120 and full deflection is a fast turn. Our velocity mapping now goes through the
+    inverse of the measured curve (src/runtime_pad.c `look_curve`); measured before 0 deg/s below ~360 px/s at
+    sensitivity 1, after ~0.1 deg per count from 60 to 700 px/s, linear in the slider. Their impulse/decay
+    look model and the larger slider ranges were not taken (ours is frame-rate independent already).
+  - Relative capture: the capture-click discard is taken (a click arriving before the mouse is captured, or
+    within 250 ms of the focus, is no game press). Release on focus loss and while the overlay or the name box
+    is open was already here; ClipCursor is not needed (SDL's relative mode keeps the cursor in the window);
+    capture-on-click and F1-release are not taken (we capture on focus, F1 is a game key).
+  - Rebinding: click-to-assign rows with exchange and mouse buttons in the Insert menu's Controls tab, on our
+    existing `mkkey.*` / `key.*` lines (src/pad_bindings.h shared with runtime_pad.c, reread at once). Their
+    fixed 20-action table, Shift + click chord codes and the removal of the classic layout's fallbacks were not
+    taken (our two layouts, pad.* lines, pings and Back combos stay as they are).
+- 2b6d6dab PySide6 launcher rewrite (launcher.py deleted): SKIPPED; our Tk launcher.py carries the party,
+  graphics, HDR and world-warper features, and we ship no Python runtime / PySide6.
+- 8c3f4a19 launcher logo and title, db30ede3 launcher icon: SKIPPED (their PySide6 launcher's branding; the icon
+  is their project's artwork, not a generic asset).
+- 9048ed55 delete launch_gui.bat: SKIPPED (we keep launch_gui.bat for our Tk launcher).
+- c851c08d run.bat prefers a bundled embedded Python: SKIPPED (we do not bundle Python).
