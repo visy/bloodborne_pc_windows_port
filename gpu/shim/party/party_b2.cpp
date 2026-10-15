@@ -31,6 +31,7 @@
 #include "party_death_rules.h"
 #include "party_hud.h"
 #include "party_status.h"
+#include "party_guestvals_rules.h"
 
 #include <algorithm>
 #include <atomic>
@@ -4008,6 +4009,118 @@ void OwnStainWatchTick(const GameSnapshot& s) {
     std::memcpy(pos_was, p, sizeof pos_was);
 }
 
+// ---- Finding 3 (statsaudit): the guest's own NG cycle ----
+// While summoned, GameDataMan +0x68 holds the host's cycle (packet 0x19 -> GSM +0x1594, the
+// summoned load's step 0x1937570). That step first saves the current +0x68 into GSM +0x159C with
+// +0x1598 = 1, and the next own-world load (descriptor 0x1943F10) restores +0x68 from +0x159C
+// while +0x1598 is set. Vanilla has one summoned load per session; B2 makes many, and each one
+// re-saved "the current +0x68" - already the host's after the first - so the own cycle was lost
+// (mixed NG cycles: the guest's own world went to the host's NG). The guard learns the own cycle
+// (at home, or from the first summoned load's saved value for a title join), keeps +0x159C = own
+// and +0x1598 = 1 while a client (an alone load's own setup excepted), and at the first own world
+// after a session puts the own cycle back if the host's is there. BB_PARTY_NG_GUARD=0: off.
+std::atomic<bool> g_ng_alone_pending{false};
+std::atomic<double> g_ng_alone_at{0};
+
+void NgGuardTick(const GameSnapshot& s) {
+    static const bool on = !EnvOff("BB_PARTY_NG_GUARD");
+    static int own = -1, host = -1, steady = 0, logged_host = -1;
+    static bool was_client = false, saw_load = false;
+    static double learned_at = 0;
+    if (!g_on.load()) {
+        return;
+    }
+    const u64 gsm = Slot(kSlotGsm), gdm = Slot(kSlotGameData);
+    if (s.loading || !s.world_up || !gsm || !gdm) {
+        steady = 0;
+        if (g_ng_alone_pending.load() && s.loading) {
+            saw_load = true;
+        }
+        return;
+    }
+    if (g_ng_alone_pending.load() && (saw_load || Now() - g_ng_alone_at.load() > 40.0)) {
+        g_ng_alone_pending = false;
+        saw_load = false;
+    }
+    if (++steady < 60) {  // ~2 s of steady world
+        return;
+    }
+    const bool client = s.session_role == RoleClient;
+    {
+        // Test aid (fixtures only): BB_PARTY_TEST_NG=N writes the own world's NG cycle once and
+        // saves (a mixed-NG test-save pair without playing an ending).
+        static bool test_done = false;
+        static const char* test_ng = std::getenv("BB_PARTY_TEST_NG");
+        if (test_ng && *test_ng && !test_done && !client && Field<u8>(gsm, 0x1592) == 1) {
+            test_done = true;
+            const u32 n = u32(std::atoi(test_ng)) > 7 ? 7 : u32(std::atoi(test_ng));
+            const u32 was = Field<u32>(gdm, 0x68);
+            SafeWrite(gdm + 0x68, &n, 4);
+            Log("test: own NG cycle %u -> %u (BB_PARTY_TEST_NG), save requested", was, n);
+            RequestGameSave("test NG cycle");
+        }
+    }
+    if (!on) {
+        return;
+    }
+    ngguard::View v;
+    v.steady = true;
+    v.client = client;
+    v.own_world = !client && Field<u8>(gsm, 0x1592) == 1;
+    v.live = int(Field<u32>(gdm, 0x68, 0xffffffffu));
+    v.restore_flag = Field<u8>(gsm, 0x1598);
+    v.restore_value = int(Field<u32>(gsm, 0x159c, 0xffffffffu));
+    v.own = own;
+    v.host = host;
+    v.after_session = was_client;
+    v.ending_since = StoryLastEndingAt() > learned_at;
+    v.alone_pending = g_ng_alone_pending.load();
+    if (client && v.live >= 0 && v.live <= 7) {
+        host = v.live;
+        if (host != logged_host && own >= 0) {
+            logged_host = host;
+            Log("NG guard: summoned into NG cycle %d (own %d%s)", host, own,
+                host != own ? ": mixed NG cycles, the own save keeps its own" : "");
+        }
+    }
+    const ngguard::Act act = ngguard::Plan(v);
+    const u8 one = 1;
+    const u32 own_u = u32(own);
+    switch (act) {
+    case ngguard::Act::None:
+        break;
+    case ngguard::Act::Learn:
+        own = client ? v.restore_value : v.live;
+        learned_at = Now();
+        Log("NG guard: own NG cycle %d (%s)", own,
+            client ? "the first summoned load's saved value GSM +0x159C" : "own world");
+        break;
+    case ngguard::Act::KeepRestore:
+        SafeWrite(gsm + 0x159c, &own_u, 4);
+        SafeWrite(gsm + 0x1598, &one, 1);
+        Log("NG guard: kept the own NG cycle for the own world: GSM +0x1598 %d -> 1, +0x159C %d -> %d (live %d = the "
+            "host's)",
+            v.restore_flag, v.restore_value, own, v.live);
+        break;
+    case ngguard::Act::RestoreHome:
+        SafeWrite(gdm + 0x68, &own_u, 4);
+        Log("NG guard: own world after the session had the host's NG cycle %d: put back to the own %d", v.live, own);
+        RequestGameSave("own NG cycle put back");
+        break;
+    case ngguard::Act::AcceptChange:
+        Log("NG guard: own NG cycle %d -> %d (%s)", own, v.live,
+            v.ending_since ? "an ending" : (was_client ? "not the host's value" : "own world"));
+        own = v.live;
+        learned_at = Now();
+        break;
+    }
+    if (client) {
+        was_client = true;
+    } else if (v.own_world) {
+        was_client = false;
+    }
+}
+
 // Host: a guest's rest (playtest 1 bug 3): the slot + 1 that asked (0 none), its lamp, and when.
 std::atomic<int> g_rest_req_slot{0};
 std::atomic<u32> g_rest_req_lamp{0};
@@ -7241,6 +7354,7 @@ void Tick(const GameSnapshot& s) {
     SpectateTick(s, Now());
     OwnStainLogTick(s);
     OwnStainWatchTick(s);
+    NgGuardTick(s);
     GuestDownNoticeTick(s);
     HostRestLoadTick(s, now);
     PinOwnSpotTick(s);
@@ -7934,9 +8048,14 @@ bool TravelAlone(const TravelIntent& t, AloneWhy why, std::uint32_t rest_lamp, b
         SafeWrite(gsm + 0x1521, &zero, 1);
     }
     {
-        // The host's packet-0x19 value sticks in GSM +0x1598 / +0x159C and goes into every later
-        // host-world load's descriptor (+0x8C -> GameDataMan +0x68); for a map the host is not in
-        // it is the wrong one (live split5: an alone load to the Dream built no map, a grey screen).
+        // GSM +0x1593 / +0x1594 are the host's packet-0x19 state (a summoned load's descriptor
+        // takes the host's NG cycle +0x1594 while +0x1593 is set); +0x1598 / +0x159C are the own
+        // cycle the summoned load saved for the next own-world load (0x1937570, 0x1943F10). An
+        // alone load to a map the host is not in with them set built no map (live split5: a grey
+        // screen in the Dream), so both are cleared for it; the NG guard (finding 3) puts the own
+        // restore value back once this load is done (g_ng_alone_pending).
+        g_ng_alone_pending = true;
+        g_ng_alone_at = Now();
         Log("guest: alone load: GSM +0x1593 %u +0x1594 %#x +0x1598 %u +0x159c %#x, GameDataMan +0x68 %#x",
             unsigned(Field<u8>(gsm, 0x1593)), Field<u32>(gsm, 0x1594), unsigned(Field<u8>(gsm, 0x1598)),
             Field<u32>(gsm, 0x159c), Field<u32>(Slot(kSlotGameData), 0x68));

@@ -580,6 +580,11 @@ add_executable(party-death-rules-test EXCLUDE_FROM_ALL ../tests/test_party_death
 target_compile_options(party-death-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-death-rules-test PRIVATE shim)
 set_target_properties(party-death-rules-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# A party member's own values (party_guestvals_rules.h). ninja -C out/gpu party-guestvals-test
+add_executable(party-guestvals-test EXCLUDE_FROM_ALL ../tests/test_party_guestvals.cpp)
+target_compile_options(party-guestvals-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-guestvals-test PRIVATE shim)
+set_target_properties(party-guestvals-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Direct lamp travel (lamp_travel_rules.h). ninja -C out/gpu lamp-travel-test
 add_executable(lamp-travel-test EXCLUDE_FROM_ALL ../tests/test_lamp_travel.cpp)
 target_compile_options(lamp-travel-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
