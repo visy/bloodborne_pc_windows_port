@@ -1397,7 +1397,24 @@ void UseGoodsForTest(const char* what, std::uint32_t goods) {
 }
 
 /// The die test step (host_die / guest_die, BB_PARTY_TEST_DIE_ON_DOWN): this player dies now.
+/// BB_PARTY_TEST_INVINCIBLE=1 (tests): host_move / guest_move make the local chr invincible
+/// (EnableInvincible, chr +0x1E1 bit 14, as the A11 fixture does) so a boss fight lasts while the
+/// test steps run; a die step clears it first.
+void SetTestInvincible(bool on) {
+    const std::uint64_t player = LocalPlayer();
+    std::uint32_t f = 0;
+    if (player && SafeRead(player + 0x1e1, &f, 4)) {
+        f = on ? (f | (1u << 14)) : (f & ~(1u << 14));
+        SafeWrite(player + 0x1e1, &f, 4);
+    }
+}
+bool TestInvincibleRequested() {
+    static const bool on = std::getenv("BB_PARTY_TEST_INVINCIBLE") && std::getenv("BB_PARTY_TEST_INVINCIBLE")[0] == '1';
+    return on;
+}
+
 void DieForTest() {
+    if (TestInvincibleRequested()) SetTestInvincible(false);
     // ForceDead's own gates (0x18BF9A0): GSM +0x176F set = HP left alone; chr +0x18 -> +0x30 ->
     // +0x18 bit 0 = no death call. Logged: a die step that "did nothing" names its gate.
     std::uint64_t gsm = 0, player = LocalPlayer(), a18 = 0, a30 = 0;
@@ -1612,8 +1629,9 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             }
             reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, const float*, const float*, std::uint32_t)>(fn)(
                 player, pos, rot, 1);
-            Log("test: %s to (%.2f, %.2f, %.2f) rot y %.3f", TravelStepName(step.kind), double(pos[0]),
-                double(pos[1]), double(pos[2]), double(rot[1]));
+            if (TestInvincibleRequested()) SetTestInvincible(true);
+            Log("test: %s to (%.2f, %.2f, %.2f) rot y %.3f%s", TravelStepName(step.kind), double(pos[0]),
+                double(pos[1]), double(pos[2]), double(rot[1]), TestInvincibleRequested() ? ", invincible" : "");
         } else {
             Log("test: %s: no player / transform", TravelStepName(step.kind));
         }
