@@ -484,9 +484,9 @@ constexpr u64 kLockKickCall = 0x1ed14fb;
 constexpr u64 kSessionKick = 0xc8ee30;  // (SprjSessionManager +0x18, npid): KickoutRoomMember 0xFF000019
 BB_COOP_SYSV u64 LockKickHook(u64 matching, u64 npid) {
     if (g_on.load() && Role() == RoleHost) {
-        char id[17] = {};
-        if (npid) std::memcpy(id, reinterpret_cast<const void*>(npid), 16);
-        Log("K10b: the session lock after a boss clear would kick %s (0xFF000019): skipped, the party joins it", id);
+        (void)npid;
+        Log("K10b: the session lock after a boss clear would kick a joining member (0xFF000019): skipped, the "
+            "party joins it");
         return 0;
     }
     using Fn = u64(BB_COOP_SYSV*)(u64, u64);
