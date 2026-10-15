@@ -216,6 +216,7 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_TEST_DROP_PACKET` | Test aid: `TYPE[:COUNT]`: the next COUNT (1) received packets of TYPE are thrown away; logs the first packets of every type | off | `gpu/shim/party/party_fourp.cpp` |
 | `BB_HTTP_TRACE_CALLERS` | `1`: logs each HTTP request with the game's call chain (image offsets; C6 RE) | off | `gpu/shim/net/http_hle.cpp` |
 | `BB_PARTY_TRACE_FROM_UPDATE` | `N`: logs the first N calls of the FROM client's update 0x1E7DF20 (dt, interval) and the title's sign-in stages (ss.info 0x1C492C0, login 0x1C48AA0 and their answers; C6 RE) | off | `gpu/shim/party/party_fourp.cpp` |
+| `BB_PARTY_BOSS_FAREWELL` | `1`: a summoned guest gets the game's boss-clear farewell message again ("The final battle has ended...", Lua event 0xFF9); default: skipped, the party stays (K10c, parlast) | off | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_SEND_QUEUE_LIMIT` | `0`: the game's own limit of 1001 unsent messages before the session manager's send (0x17894E0) leaves the session (OnIrregularLeaveSession); default: 30000 (cmp at 0x17897AE patched; a 50 s outage keeps the session, live 2026-10-15) | on | `gpu/shim/party/party_b2.cpp` |
 | `BB_PARTY_STATUS_LOG` | `1`: a `Party: status ...` line every 10 s and on each change | off | `gpu/shim/party/party_status_bridge.cpp` |
 | `BB_PARTY_HUD_LOG` | `1`: a `Party HUD: ...` line every 5 s (own / remote PlayerIns reads, camera, the board) | off | `gpu/shim/party/party_hud_game.cpp` |

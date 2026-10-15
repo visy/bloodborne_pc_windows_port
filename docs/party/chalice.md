@@ -381,7 +381,7 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
     the three layers are loaded at once (one map, m29_00_00_00).
   - **Layer 2's boss** (g1d, HP 0: the game's own death and defeat): boss clear on both games (2612 Echoes
     each), the kill table 12901708 (+2, relayed) and 12901693's lots: the host's `2003[4]` lot 80109010 (hostOnly
-    1, flag 5001: Pthumeru Root Chalice 6209) went to the guest as an owed key item for its own world (and to the
+    1, flag 5001: the Central Pthumeru Chalice 6209; corrected by parlast) went to the guest as an owed key item for its own world (and to the
     chalice share), the `2003[36]` lots gave each player its own roll (host 150100000 / 110001010, guest 150102000 /
     110001010). Both layer bosses pay through 12901693; 12901596 / 12901598 did not run in this dungeon.
   - **The host-only area-29 path** (g1e): `BB_PARTY_ITEMS_HOST_TEST=131300160` inside the dungeon (the game's
@@ -391,3 +391,29 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
   - The test walk to the First Ritual Altar: once `prompt=` showed after a facing tap, the approach no longer
     turns the player again (that turn lost the prompt in g1a / g1b / g1b2; the altar opened at the first Cross in
     g1b3).
+
+* **0.6.2 live, the walked lift route, the natural host-only lot and the floor-boss events (parlast g1w-g1z,
+  2026-10-15)**.
+  - **12901596 / 12901598 are not in the retail game.** A byte scan of every EMEVD finds them (and their family
+    12901594 / 595 / 597 / 730) called only from the debug / prototype scripts m29_01_*, m29_02_00_*, m29_03_20_*,
+    m29_05_00_* and m29_05_10_*, with empty placeholder lots (30401000, 30401300, 30401600, 75001000, 75001500:
+    category -1). Each chalice's `HolygrailExParam.mapBaseId` picks its script folder (109 -> m29_10_90_00 for the
+    Pthumeru Chalice: the live dungeon's lots match it), and every reachable script pays its bosses through
+    **12901693** (boss flag, A..F): both roles get `2003[36]` A/B (host) or C/D (client, D under the Curse flag
+    92905370) and the depth consolation lot 1100x1000 / 1100x1010; the host-only `2003[4]` E / F depend on the
+    region the host stands in at the kill (12907210+N = the host in 290296N; case 92905378: 2902961 -> E,
+    2902962 -> F; case 92905385: 2902962 -> E, 2902963 -> F; the two case flags look engine-set,
+    92905300 + DungeonFeatureParam.eventflagId). For the Pthumeru Chalice E = 80109000 (Pthumeru Root Chalice
+    6100, flag 5020), F = 80109010 (Central Pthumeru Chalice 6209, flag 5001: the lot g1d saw; earlier notes
+    called it the Root Chalice). No retail boss pays a flagless host-only lot: the `ItemSource::Chalice` path
+    keeps its test-aid evidence (g1e).
+  - **The E lot live** (g1x, g1z): the boss trio of 12901801 (2900101 / 2900103 at (-134, 17.3, -21) / (-125, 17.3,
+    -16.5), 2900105 at (-130, 17.3, -27.5), event 12901707) killed with the host at (-127, 17.6, -28): `award lot
+    80109000 (hostOnly 1, flag 5020)`, the Pthumeru Root Chalice in the host's item box, the guest `lot 80109000
+    ... key item / unique goods 6100: not given while summoned; waits for the own world`.
+  - **Walked down the post-boss lift together** (g1x): from the layer 1 boss room both walked (route 0 hops, then a
+    stick walk onto the car at (-65, 31.6, -91)), the car took both down (31.5 -> 10.5), cooperators 1 throughout.
+    A member who arrives after the car left walks into the open shaft and falls (g1y: the guest died; vanilla).
+  - **K10c**: the guest's boss-clear Lua state scheduled the farewell message ("The final battle has ended. It is
+    time to bid farewell.", event 0xFF9 `RecallMenuEvent_MisssionClear_forNormalCoop`, call 0x13855DB) although
+    the party stays; it is skipped while the party is on (`BB_PARTY_BOSS_FAREWELL=1`: vanilla). g1z: no box.
