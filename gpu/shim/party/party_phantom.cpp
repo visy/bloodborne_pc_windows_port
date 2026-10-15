@@ -30,6 +30,7 @@
 #include "party_director.h"
 #include "party_link.h"
 #include "party_guestvals_rules.h"
+#include "party_progress.h"
 
 #include <atomic>
 #include <chrono>
@@ -556,6 +557,16 @@ struct BossWait {
     u32 event = 0;
 };
 BossWait g_boss_wait;           // under g_guest_mu
+// Finding 9: a first-encounter event's 9350 start on this guest's own game (its copy of the
+// event, which 9350's End-if-client stops), granted by GuestTick (main thread).
+struct FirstEncounter {
+    u32 event = 0;
+    int n = 0;
+};
+std::deque<FirstEncounter> g_first_enc;  // under g_guest_mu
+int g_host_bonus = 0;           // under g_guest_mu
+double g_host_bonus_at = -1e9;  // under g_guest_mu
+
 // Probe (main thread).
 bool g_world_seen = false;
 double g_world_at = 0;
@@ -680,6 +691,39 @@ bool AddOwnEchoes(int n) {
     }
     reinterpret_cast<void(BB_COOP_SYSV*)(u64, int, int, int)>(fn)(player, n, 0, 1);
     return true;
+}
+
+/// Finding 9: a first-encounter Insight for this guest, once per its own guard flag (own save):
+/// `why` names the source (its own event, or the host's mirror). False: already had it.
+bool GrantFirstEncounter(u32 event, int n, const char* why) {
+    const u32 guard = firstenc::Guard(event);
+    bool own = false;
+    const bool known = progress::ReadFlagOwnSave(guard, &own);
+    if (!firstenc::Grant(guard, known && own)) {
+        Log("first encounter (event %u, %d Insight, %s): this player had it already (own guard %u set): nothing", event, n,
+            why, guard);
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_guest_mu);
+        g_drip.Add(n);
+    }
+    const bool wrote = progress::WriteFlagOwnSave(guard, true);
+    Log("first encounter (event %u, %d Insight, %s): +%d here, own guard %u %s", event, n, why, n, guard,
+        wrote ? "set in the own save" : "NOT written");
+    RequestGameSave("first-encounter Insight");
+    return true;
+}
+
+void FirstEncounterTick() {
+    std::deque<FirstEncounter> due;
+    {
+        std::lock_guard<std::mutex> lk(g_guest_mu);
+        due.swap(g_first_enc);
+    }
+    for (const FirstEncounter& f : due) {
+        GrantFirstEncounter(f.event, f.n, "this guest's own event");
+    }
 }
 
 /// Guest: a host boss kill whose defeat did not run here within bossfall::kWaitS still pays the
@@ -916,6 +960,7 @@ void GuestTick(const GameSnapshot& g, double now) {
         Refill(why);
     }
     BossFallbackTick(g, now);
+    FirstEncounterTick();
     if (insight_now) {
         const int before = g.insight;
         const bool ok = ApplyInsightSpEffect();
@@ -989,7 +1034,27 @@ std::vector<EmevdSkipRule> PhantomSkipRules() {
 
 void PhantomEmevdInstruction(std::int32_t event, std::int32_t bank, std::int32_t id, const std::uint8_t* args,
                              std::size_t size) {
-    if (PartyDirector::Get().Role() != PartyRole::Host || g_cfg.insight == InsightMode::Off) {
+    if (g_cfg.insight == InsightMode::Off) {
+        return;
+    }
+    if (PartyDirector::Get().Role() == PartyRole::Guest) {
+        // Finding 9: the guest's own copy of a boss's first-encounter event starts 9350 (which
+        // ends at once on a client): the guest's own first-encounter Insight, once (GuestTick).
+        if (bank == 2000 && id == 0 && args && size >= 12 && LocalSessionRole() == RoleClient &&
+            firstenc::Guard(u32(event)) != 0) {
+            std::int32_t target = 0, n = 0;
+            std::memcpy(&target, args + 4, 4);
+            std::memcpy(&n, args + 8, 4);
+            if (target == BossInsightTracker::kInsightEvent && n > 0 && n <= 99) {
+                std::lock_guard<std::mutex> lk(g_guest_mu);
+                if (g_first_enc.size() < 8) {
+                    g_first_enc.push_back({u32(event), n});
+                }
+            }
+        }
+        return;
+    }
+    if (PartyDirector::Get().Role() != PartyRole::Host) {
         return;
     }
     const double now = Now();
@@ -1110,6 +1175,17 @@ void PhantomOnEvent(const std::string& body) {
     }
     case PhantomEventKind::Insight: {
         const bool present = now - g_last_client.load() <= kParticipation;
+        if (!e.boss && firstenc::Guard(e.source_event) != 0 && present && g_cfg.insight != InsightMode::Off) {
+            {
+                std::lock_guard<std::mutex> lk(g_guest_mu);
+                if (e.seq <= g_last_insight) {
+                    break;
+                }
+                g_last_insight = e.seq;
+            }
+            GrantFirstEncounter(e.source_event, e.insight, "the host's first encounter");
+            break;
+        }
         const int grant = e.boss ? GuestInsightGrant(e.insight, g_cfg.insight)
                                  : (g_cfg.insight == InsightMode::Off ? 0 : e.insight);
         std::lock_guard<std::mutex> lk(g_guest_mu);
