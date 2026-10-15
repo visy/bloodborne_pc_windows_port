@@ -106,6 +106,15 @@ InsightMode InsightModeFromString(const char* s); ///< nullptr / "" -> Parity
 const char* InsightModeName(InsightMode m);
 /// SpEffect 4680 applications for the guest when the host's boss kill granted `host_n`.
 int GuestInsightGrant(int host_n, InsightMode mode);
+/// pard4 (the guest's Insight was doubled, live B2 2026-10-15: Logarius killed with the guest in
+/// the fight: host +3, each guest +6 - its own copy of the defeat event ran and paid the boss's
+/// Insight natively, and the relay added its +2 on top; a guest-started first encounter +2): a
+/// relayed grant is settled about 2 s after it arrives against what this guest's own game paid
+/// meanwhile. `want` is the Insight this guest should end up with from the moment (the relay's
+/// grant plus the native cooperator +1 it assumes for a boss kill), `native_gain` the Insight its
+/// game gave on its own since just before the moment; the result (0..grant) is what the relay
+/// still adds.
+int InsightTopUp(int grant, int want, int native_gain);
 
 /// Host: pairs a boss-defeat instruction with the 9350 start of the same event.
 class BossInsightTracker {
