@@ -31,7 +31,7 @@ SAVES = Path(r"E:\games\bbport\test_saves\cleric_beast_lamp\savedata")
 
 # Positions in m24_01 (x, z): the Great Bridge lamp 2412952 and the Cleric Beast's first-fight trigger
 # region 2412805 (12 x 4 m box at (-136.5, 52.8)); see docs/party/b2_seamless.md 6.7.
-LAMP = (-121.0, 60.0)      # filled from the fixture run's log_pos (see soak_party docstring)
+LAMP = (-124.8, 64.3)      # where the game puts the player at the lamp (fixture run log_pos)
 ARENA_HOST = (-136.5, 52.8)
 ARENA_GUEST = (-134.6, 54.7)
 R1, R3, CROSS, CIRCLE = 0x800, 0x4, 0x4000, 0x2000
