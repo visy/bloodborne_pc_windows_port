@@ -800,8 +800,18 @@ void ShowLikeInGameStart(u64 c, const char* why) {
         unsigned(v), unsigned(w));
 }
 
+std::atomic<double> g_rejoin_banner_at{0};  // Now() of the last B2 re-join (or a member chr rebuilt by a rewind)
+
 int RewindRemoteTasks(const char* why) {
     int n = 0;
+    // A member's chr rebuilt here (a revive in place, a new look, the host's revive): its task's
+    // STEP_Create shows the join banner ("The bell's resonance has beckoned ...") again although
+    // nobody joined (live parx s0b: on the host after a guest's revive at its lamp). The banner
+    // filter treats the next seconds like a re-join's.
+    struct BannerMark {
+        ~BannerMark() { if (n_ref > 0) g_rejoin_banner_at = Now(); }
+        int& n_ref;
+    } mark{n};
     for (const TaskInfo& t : Tasks(false)) {
         if ((t.mode != 1 && t.mode != 2) || t.step < kStepCreate || (t.flags & 2)) {
             continue; // not remote, not created yet (the join itself is still running), or leaving
@@ -3076,6 +3086,7 @@ void DeadAfterClearTick(const GameSnapshot& s, double now) {
 }
 
 bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why);
+int ChrHp(u64 chr);
 void SpectateBegin(const char* who);
 void SpectateEnd();
 bool GuestDeathAloneToOwnLamp(const GameSnapshot& s, u32 own);
@@ -3106,6 +3117,23 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         return;
     }
     static double limbo_logged = 0;
+    {
+        // C3: the host is down too: its death load (a wipe: one load for the whole party) takes
+        // this guest along. Live parx deaths (3 players): the guest died 11 s before the host and
+        // was revived in place while the host lay dead, 4 s before the party's respawn load.
+        static double host_down_logged = 0;
+        for (const TaskInfo& t : Tasks(false)) {
+            const u64 c = t.mode == 2 ? PlayerForPeer(t.task + kTaskPeer) : 0;
+            // At most 30 s (a stale host chr must not hold the respawn for good).
+            if (c && ChrHp(c) == 0 && now - at < 30.0) {
+                if (host_down_logged != at) {
+                    host_down_logged = at;
+                    Log("guest: dead while the host is down too: no revive; the host's death load takes it along");
+                }
+                return;
+            }
+        }
+    }
     {
         // ERSC: a death in a boss fight waits (limbo) until the boss is gone, the party wipes (the
         // host's death travel takes the guest along, above) or someone rests (a travel, same).
@@ -4719,7 +4747,6 @@ void HostRestLoadTick(const GameSnapshot& s, double now) {
 // stays. deathrules::HidePartyBanner decides; BB_PARTY_BANNERS=0: every banner as the game shows it.
 constexpr u64 kShowSummonMessage = 0x1bffe80;
 void InstallCall(u64 off, u64 target, const void* handler, const char* name);
-std::atomic<double> g_rejoin_banner_at{0};  // Now() of the last B2 re-join after the session's start
 using ShowMsgFn = void(BB_COOP_SYSV*)(u32, u32);
 void* g_show_msg_orig = nullptr;
 bool BannersOn() {
@@ -7468,6 +7495,15 @@ void Init() {
     }
     InstallCall(0x17851ce, 0x13beca0, reinterpret_cast<const void*>(&FlagApplyHook), "B2 K11 flag snapshot apply");
     InstallBannerFilter();
+    // F5: the session manager's send 0x17894E0 queues what the transport cannot take yet and raises
+    // OnIrregularLeaveSession once the queues hold more than 1000 messages (cmp 0x3E9 at 0x17897AE;
+    // network_robustness.md 7b): ~30 s of a stalled link. The limit is 30000 (a 50 s+ outage keeps
+    // the session). Idea from deadinside's BBSC notes (docs/upstream/deadinside_0.6-pre1.md).
+    // BB_PARTY_SEND_QUEUE_LIMIT=0: the game's 1001.
+    if (!(std::getenv("BB_PARTY_SEND_QUEUE_LIMIT") && std::getenv("BB_PARTY_SEND_QUEUE_LIMIT")[0] == '0')) {
+        PatchBytes(0x17897ae, {0xe9, 0x03, 0x00, 0x00}, {0x30, 0x75, 0x00, 0x00},
+                   "F5 send queue limit 1001 -> 30000 (irregular leave)");
+    }
     InstallEmptyStainSkip();
     SetEmevdSkipPredicate(&ClientIntroSkip);
     SetSameMapWarp(&SameMapLampWarp);

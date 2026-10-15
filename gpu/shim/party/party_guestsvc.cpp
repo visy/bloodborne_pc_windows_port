@@ -791,6 +791,26 @@ void ProbeDoll() {
         draw[7], pos[0], pos[1], pos[2], flags.c_str());
 }
 
+// H5 evidence: the covenant is the oath rune's SpEffect on the player (EMEVD 4[5] checks 6142 for
+// the League, 6100 for the Vilebloods): 6100 Corruption, 6110 Radiance, 6120 Hunter, 6142
+// Impurity. The SpEffect list: ChrIns +0x1C8, first node +8, id +0x40, next +0x58.
+std::string OathEffects(u64 player) {
+    static const std::pair<int, const char*> kOath[] = {
+        {6100, "Vilebloods"}, {6110, "Executioners"}, {6120, "Hunter of Hunters"}, {6142, "League"}};
+    std::string out;
+    u64 list = 0, node = 0;
+    if (player && SafeGet(player + 0x1c8, &list) && list && SafeGet(list + 8, &node)) {
+        for (int guard = 0; node && guard < 512; ++guard) {
+            std::int32_t id = 0;
+            if (!SafeGet(node + 0x40, &id)) break;
+            for (const auto& [e, name] : kOath)
+                if (id == e) out += (out.empty() ? "" : ", ") + std::string(name) + " (" + std::to_string(e) + ")";
+            if (!SafeGet(node + 0x58, &node)) break;
+        }
+    }
+    return out.empty() ? "none" : out;
+}
+
 // Live test (BB_PARTY_GUESTSVC_TEST "levelup"): the Doll's level up on the guest, event-driven
 // through the game's own pad path (runtime_pad_director_press, no OS input). Each stage waits for
 // what the game shows: message lookups (BbGameMenu::LastLookupMs / TextActivity: a text on screen
@@ -1076,8 +1096,10 @@ void LevelUpTick(const GameSnapshot& s, double now) {
     case LevelUpScript::Keys:
         if (since >= 1.5) {
             if (L.key_at >= L.keys.size()) {
-                Log("test: levelup: keys done: level %d -> %d, echoes %d -> %d, Insight %d -> %d, Blood Stone Shards now %d, Twin %d",
-                    L.level0, s.level, L.echoes0, s.echoes, L.insight0, s.insight, GoodsCount(3000), GoodsCount(3010));
+                Log("test: levelup: keys done: level %d -> %d, echoes %d -> %d, Insight %d -> %d, Blood Stone Shards now %d, Twin %d; "
+                    "covenant (oath rune SpEffects on the player): %s",
+                    L.level0, s.level, L.echoes0, s.echoes, L.insight0, s.insight, GoodsCount(3000), GoodsCount(3010),
+                    OathEffects(s.player).c_str());
                 go(LevelUpScript::BackOut, "backing out (Circle)");
                 break;
             }
