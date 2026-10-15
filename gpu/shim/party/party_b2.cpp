@@ -7329,7 +7329,7 @@ void NrRecvHook(int sock, int where) {
 }
 }  // namespace
 
-void NrDropSilentPeers(const std::string& name) {
+void NrDropSilentPeers(const std::string& name, int delay_ms) {
     {
         std::lock_guard<std::mutex> lk(g_nrd_mu);
         g_nrd_name = name;
@@ -7337,11 +7337,12 @@ void NrDropSilentPeers(const std::string& name) {
     g_nrd_outage = false;
     g_nrd_listed = false;
     bbnet::set_p2p_recv_hook(&NrRecvHook);
-    Log("C6: %s crashed: looking for its game connection in 1.5 s (%zu transport(s) seen)", name.c_str(),
-        NrTransports().size());
+    Log("C6: %s crashed: looking for its game connection in %.1f s (%zu transport(s) seen)", name.c_str(),
+        delay_ms / 1000.0, NrTransports().size());
     // The other members keep sending; the crashed one has been silent since the crash (the link
-    // reset comes ~0.6 s after it). Its restarted game (same address) takes >3 s to send again.
-    g_nrd_at.store(SteadyMs() + 1500);
+    // reset comes ~0.6 s after it). Its restarted game (same address) takes >3 s to send again. A
+    // guest calls this once the restarted game is at its title (long silent already): delay 0.
+    g_nrd_at.store(SteadyMs() + delay_ms);
 }
 
 void NrDropAfterOutage(const std::string& name) {
