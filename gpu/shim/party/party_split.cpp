@@ -275,7 +275,13 @@ void Carry(const Pending& p, bool alone, const char* how) {
         return;
     }
     if (alone && p.solo_load) {
-        if (b2::GuestSoloLampLoad(p.id, p.mark)) {
+        // D9 (pard4): a lamp use in the loaded map is a rest too (not a Hunter's Mark).
+        const bool rest = deathrules::GuestAloneRestsHostWorld(!p.mark, true);
+        bool carried = false;
+        if (b2::GuestSoloLampLoad(p.id, p.mark, rest, &carried)) {
+            if (rest && !carried) {
+                GuestRestRequestNow(p.id);
+            }
             return;
         }
         Log("lamp %u: the guest's own load is not possible now; nothing runs", p.id);

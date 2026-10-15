@@ -156,7 +156,9 @@ bool HostPartyWarpNoLoad(std::uint32_t id);
 bool LampInLoadedMap(std::uint32_t id);
 /// Guest, main thread: a lamp of the loaded map as this guest's own load (a B2 re-join into the
 /// host's area: one loading screen for this guest only, the host does not move). False: not possible.
-bool GuestSoloLampLoad(std::uint32_t id, bool mark);
+/// `rest` (D9): the lamp use is a rest - the host's rest load rides on the re-join (the host's world
+/// resets for everyone there first); *rest_carried says it did.
+bool GuestSoloLampLoad(std::uint32_t id, bool mark, bool rest = false, bool* rest_carried = nullptr);
 /// Host, any thread: a guest (party slot `slot`) rested at a lamp and travels alone: the host's
 /// world resets with a rest load where the host stands (a vanilla loading screen; the guests in
 /// this world follow it). Queued; run by the B2 tick when the host is ready (party_death_rules

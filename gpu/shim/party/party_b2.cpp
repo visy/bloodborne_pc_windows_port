@@ -8429,13 +8429,15 @@ bool LampInLoadedMap(std::uint32_t id) {
     return g_on.load() && id != 0 && id != kTravelNone && LampInLoadedBlock(id, spot);
 }
 
-bool GuestSoloLampLoad(std::uint32_t id, bool mark) {
+bool GuestSoloLampLoad(std::uint32_t id, bool mark, bool rest, bool* rest_carried) {
     TravelIntent t;
     if (!g_on.load() || Role() != RoleClient || !LampIntent(id, &t)) {
         return false;
     }
-    Log("guest: lamp %u is in the loaded map: this guest's own loading screen (the host does not move)", id);
-    return TravelAlone(t, mark ? AloneWhy::HuntersMark : id == 2102950 ? AloneWhy::Lamp : AloneWhy::Headstone);
+    Log("guest: lamp %u is in the loaded map: this guest's own loading screen (the host does not move)%s", id,
+        rest ? "; a rest: the host's world gets a rest load first" : "");
+    return TravelAlone(t, mark ? AloneWhy::HuntersMark : id == 2102950 ? AloneWhy::Lamp : AloneWhy::Headstone,
+                       rest ? id : 0, rest_carried);
 }
 
 void HostRestRequest(int slot, std::uint32_t lamp) {
