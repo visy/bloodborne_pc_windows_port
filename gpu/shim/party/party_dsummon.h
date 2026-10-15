@@ -118,6 +118,7 @@ struct Guest {
     int deliver_tries = 0;
     const char* fail_why = "";  // why the last attempt failed (logged with "FAILED")
     bool gather = false;        // the last attempt failed for another map: gather first (OtherMap)
+    bool waited = false;        // the last attempt was refused with a wait (boss, cutscene, prologue...)
     double reask_at = 0;        // F5: a Settle refusal: ask again at this time (0 = not)
     int reasks = 0;
     bool rearmed = false;       // the bell was re-rung once for this request (Action::Rearm)
@@ -151,6 +152,9 @@ void OnDelivered(Guest& g, double now, bool ok);
 /// last attempt failed (refused: boss fight / cutscene / full, or no answer). Used only by the
 /// BB_PARTY_GATHER_DSUM experiment: live the joined guest's game did not load the host's map.
 bool GatherFirst(bool direct_on, Phase last);
+/// A11 + A5 (live a11d): a refusal that only said "wait" (the host's cutscene / boss fight) is no
+/// reason to gather with a loading screen: the next direct summon after it still carries.
+bool GatherFirst(bool direct_on, Phase last, bool last_waited);
 
 /// Host bell (playtest 1 #2): the host's Beckoning Bell rings for waiting members only as the
 /// fallback of the direct summon, so the bell (SpEffect 9000 and its effect) does not show on the

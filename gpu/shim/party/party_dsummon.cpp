@@ -251,6 +251,7 @@ void OnAsked(Guest& g, double now) {
     g.deliver_tries = 0;
     g.fail_why = "";
     g.gather = false;
+    g.waited = false;
     g.reask_at = 0;
     g.reasks = 0;
     g.rearmed = false;
@@ -268,6 +269,7 @@ void OnRoom(Guest& g, double now, bool refused, Busy wait) {
     if (refused) {
         g.fail_why = "refused by the host";
         g.gather = wait == Busy::OtherMap;
+        g.waited = wait != Busy::None && wait != Busy::OtherMap;
     }
 }
 
@@ -291,6 +293,9 @@ void OnDelivered(Guest& g, double now, bool ok) {
 }
 
 bool GatherFirst(bool direct_on, Phase last) { return !direct_on || last == Phase::Failed; }
+bool GatherFirst(bool direct_on, Phase last, bool last_waited) {
+    return !direct_on || (last == Phase::Failed && !last_waited);
+}
 
 Action Step(Guest& g, double now, bool entry_waiting, bool joined) {
     switch (g.phase) {
