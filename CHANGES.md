@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.6.2 (Windows port 0.6.2, party co-op)
 
+- **Checked live: Chalice Dungeons deeper with the party**: the lift's call lever at the bottom works (the game only offers it while the car is up, as in the original), layer 2 and its boss with a guest (each player's own loot, the boss's host-only Root Chalice kept for the guest's own world), and a guest can join from its title straight into the host's dungeon.
 - **Fixed: a guest whose game crashed is back in the party much faster, checked live**: the restarted game is in the host's room about 17 s after the crash and standing beside the host about 27 s after it (was about 35 s to the room). The host used to send the crashed game's old session data to the restarted one (it comes back from the same address), which could make its join fail, so it loaded its own world and was summoned again 35-50 s later; that data is now dropped when the crash is noticed. A join that still fails gives up after 12 s instead of 20 s, and a crashed party game restarts after 1 s instead of 3 s.
 - **Checked live: guests waiting for a crashed host give up after the time limit**: with the host's game gone for good, the guest's corner counts "Waiting for the host to come back (N s)...", then it tells the player and plays on alone in its own world.
 - **Fixed: name tags and the bloodstain marker could show on top of a loading screen** for a moment at the end of a rejoin's load; the party overlay now stays hidden while the game loads and 1.5 s after.
