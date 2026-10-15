@@ -16,7 +16,12 @@
 // Vanilla 30 FPS (BB_FPS=30 or BB_FPS_PATCH=0) is never touched: the game steps a fixed 1/30 s per
 // frame there, so its timers (the network flow's, the loading screen's) would run faster.
 //
-// BB_FAST_LOADING: 1 (default) on, 0 off, `ab` / `ab:N` measurement mode: off for N loads, then on
+// Opt-in (seam1 measurement 2026-10-16, 60 FPS preset, one session, A/B per load): loads were only
+// 3-8 % shorter (host death 11.4 s vs 12.3 s, lamp travel 2.0-4.8 s vs 2.2-4.9 s; they are I/O and
+// loader-thread bound here, not frame bound) and the game drew no frames while unpaced (its frame
+// skip): the loading screen's animation stood still. Not worth a visible change by default.
+//
+// BB_FAST_LOADING: 1 on, 0 / unset off, `ab` / `ab:N` measurement mode: off for N loads, then on
 // for N loads, and so on (N = 2 by default), so loads of the same kinds are compared in one session.
 // Every load logs one line: `Fast loading: load N (on|off|n/a): S s, F frames (R per s)`.
 #pragma once
@@ -56,14 +61,14 @@ inline bool MeasuredSteps(const char* bb_fps, const char* bb_fps_patch) {
 
 /// BB_FAST_LOADING parsed: mode 0 off, 1 on, 2 A/B with `period` loads per phase.
 struct Mode {
-    int mode = 1;
+    int mode = 0;
     int period = 2;
 };
 inline Mode ParseMode(const char* value) {
     Mode m;
     if (!value || !*value) return m;
-    if (value[0] == '0' || !std::strcmp(value, "off")) {
-        m.mode = 0;
+    if (value[0] == '1' || !std::strcmp(value, "on")) {
+        m.mode = 1;
     } else if (!std::strncmp(value, "ab", 2)) {
         m.mode = 2;
         if (value[2] == ':') {

@@ -70,7 +70,7 @@ bool Tick() {
                     : mode.mode == 0 ? "off"
                     : mode.mode == 2 ? "A/B measurement"
                                      : "on",
-                    std::getenv("BB_FAST_LOADING") ? std::getenv("BB_FAST_LOADING") : "(default 1)",
+                    std::getenv("BB_FAST_LOADING") ? std::getenv("BB_FAST_LOADING") : "(unset: off)",
                     std::getenv("BB_FPS") ? std::getenv("BB_FPS") : "(unset)");
         std::fflush(stdout);
     }

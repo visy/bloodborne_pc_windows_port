@@ -19,7 +19,8 @@ int main() {
     assert(!MeasuredSteps("60", "off"));
 
     // BB_FAST_LOADING.
-    assert(ParseMode(nullptr).mode == 1);
+    assert(ParseMode(nullptr).mode == 0);  // opt-in
+    assert(ParseMode("on").mode == 1);
     assert(ParseMode("1").mode == 1);
     assert(ParseMode("0").mode == 0);
     assert(ParseMode("off").mode == 0);
