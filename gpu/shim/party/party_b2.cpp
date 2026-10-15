@@ -485,12 +485,39 @@ constexpr u64 kSessionKick = 0xc8ee30;  // (SprjSessionManager +0x18, npid): Kic
 BB_COOP_SYSV u64 LockKickHook(u64 matching, u64 npid) {
     if (g_on.load() && Role() == RoleHost) {
         (void)npid;
+        // The lock also skips the joiner's registration in that update (0x1ED1245: the member
+        // tables +0x170 / +0x178), so the joiner never gets the world data (K10d). A lock taken
+        // anyway (another path than 0x1384B89) is lifted here for the next join.
+        u64 sm = 0;
+        if (SafeGet(Guest(kSlotSession), &sm) && sm) {
+            const u8 zero = 0;
+            SafeWrite(sm + 0x118, &zero, 1);
+        }
         Log("K10b: the session lock after a boss clear would kick a joining member (0xFF000019): skipped, the "
             "party joins it");
         return 0;
     }
     using Fn = u64(BB_COOP_SYSV*)(u64, u64);
     return reinterpret_cast<Fn>(Guest(kSessionKick))(matching, npid);
+}
+
+// K10d (confid, post-merge smoke 2026-10-15): BlockClear2's LockSession (0x178D7B0, called from
+// 0x1384B89) sets SprjSessionManager +0x118 = 1 and kicks members still joining. While the session
+// is locked, the host's session update 0x1ED0B20 not only kicks a new joiner (K10b) but also skips
+// its registration (0x1ED121E jne -> 0x1ED14F1 jumps past 0x1ECC970 / 0x1ECC130): a guest that
+// title-joined after a boss kill (a crash rejoin) got no world data ("title join: FAILED (no snapshot
+// within 12 s)", twice in smoke s2) and the host's game later kicked ANOTHER member with 0xFF000020
+// (its stale-member timeout, 0xC99FA2), ~40 s after each crash. The party lets members join a
+// cleared area, so the lock is not taken while the party is on (both roles; vanilla otherwise).
+constexpr u64 kLockSessionCall = 0x1384b89;
+constexpr u64 kLockSession = 0x178d7b0;  // (obj): SprjSessionManager +0x118 = 1, kicks pending joiners
+BB_COOP_SYSV void LockSessionHook(u64 obj) {
+    if (g_on.load() && (Role() == RoleHost || Role() == RoleClient)) {
+        Log("K10d: boss-clear session lock skipped (%s; members may still join)", Role() == RoleHost ? "host" : "guest");
+        return;
+    }
+    using Fn = void(BB_COOP_SYSV*)(u64);
+    reinterpret_cast<Fn>(Guest(kLockSession))(obj);
 }
 
 // K10c: the boss-clear Lua state 0x1385470 schedules, for a summoned cooperator (local chr type 1),
@@ -7559,6 +7586,7 @@ void Init() {
     InstallCall(kNrCreateCall, kNrCreate, reinterpret_cast<const void*>(&NrCreateHook), "C6 NR transport create");
     InstallCall(0x1385a95, kBeginLeave, reinterpret_cast<const void*>(&BossClearLeaveHook), "B2 K10 boss-clear leave (b)");
     InstallCall(kLockKickCall, kSessionKick, reinterpret_cast<const void*>(&LockKickHook), "B2 K10b cleared-session join kick");
+    InstallCall(kLockSessionCall, kLockSession, reinterpret_cast<const void*>(&LockSessionHook), "B2 K10d boss-clear session lock");
     InstallCall(kFarewellCall, kLuaEventSchedule, reinterpret_cast<const void*>(&BossFarewellHook),
                 "B2 K10c boss-clear farewell message (guest)");
     // Not B2-specific (B1 bell joins stream too): installed whenever B2 is.

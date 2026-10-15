@@ -145,7 +145,12 @@ struct TravelStep {
         GuestStick, // walk by the left stick (the approach driver) to X:Z[:R[:STEPS]]: a real walk, no warp
         HostStick,  // the same on the host
         HostRoute, GuestRoute, // a stick walk along waypoints X:Z[:R]/...: a real path through the level (B1)
-        GuestHome   // the guest's own leave (LeaveGameSession: home, the link stays; its bell rings again)
+        GuestHome,  // the guest's own leave (LeaveGameSession: home, the link stays; its bell rings again)
+        // The Party page's Leave / Rejoin as the player presses them (System > Party; party_status
+        // RequestLeave / RequestRejoin): host_leave / guest_leave wait for the join like any step;
+        // host_rejoin / guest_rejoin run S s after this player went out of the party (or after the
+        // previous step, the later), while it is out (repeat cycles: tools/mp/smoke_party.py).
+        HostLeave, GuestLeave, HostRejoin, GuestRejoin
     } kind = HostWarp;
     std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30; HostKill: the entity id
     float pos[3] = {};    // HostMove / GuestMove: the chr warp target (map coordinates)
@@ -275,6 +280,7 @@ struct Test {
     bool pressing = false;
     std::uint32_t chr_target = 0;  // the last host_chr / guest_chr entity (press logs its HP)
     bool step_waiting = false;  // the next step waits (dead chr / a re-join running), logged once
+    Clock::time_point left_at{};  // the last time this player went out of the party (host_rejoin / guest_rejoin)
 };
 
 struct State {
@@ -1139,6 +1145,10 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::HostUse: return "host_use";
     case TravelStep::GuestUse: return "guest_use";
     case TravelStep::GuestHome: return "guest_home";
+    case TravelStep::HostLeave: return "host_leave";
+    case TravelStep::GuestLeave: return "guest_leave";
+    case TravelStep::HostRejoin: return "host_rejoin";
+    case TravelStep::GuestRejoin: return "guest_rejoin";
     }
     return "?";
 }
@@ -1560,6 +1570,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                 Log("test: travel steps: joined #%d", t.joins);
             }
         } else {
+            t.left_at = now;
             Log("test: travel steps: out of the party (%s)", Describe(s).c_str());
         }
     }
@@ -1572,7 +1583,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                 step.kind == TravelStep::GuestStick || step.kind == TravelStep::GuestUse ||
                 step.kind == TravelStep::GuestRoute ||
                 step.kind == TravelStep::GuestHome || step.kind == TravelStep::GuestFlag ||
-                step.kind == TravelStep::GuestLastLamp) == (role == PartyRole::Guest);
+                step.kind == TravelStep::GuestLastLamp || step.kind == TravelStep::GuestLeave ||
+                step.kind == TravelStep::GuestRejoin) == (role == PartyRole::Guest);
     };
     if (t.script_on) {
         RunTravelScript(st, s, now);
@@ -1597,6 +1609,40 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         return;
     }
     const TravelStep::Kind next_kind = t.next_step < t.steps.size() ? t.steps[t.next_step].kind : TravelStep::HostWarp;
+    if (next_kind == TravelStep::HostRejoin || next_kind == TravelStep::GuestRejoin) {
+        // Rejoin (the Party page's button): waits until this player is out of the party (its own
+        // Leave, the host's Leave, a kick), then presses S s after it went out (or after the
+        // previous step, the later). Back in by itself before that: the step is done without a press.
+        const TravelStep& step = t.steps[t.next_step];
+        const bool went_out = t.left_at != Clock::time_point{} && (!t.ran || t.left_at > t.step_at);
+        if (joined) {
+            if (!went_out) {
+                return;
+            }
+            ++t.next_step;
+            t.step_at = now;
+            t.ran = true;
+            t.last_kind = step.kind;
+            Log("test: travel step %zu/%zu: %s: back in the party without a press", t.next_step, t.steps.size(),
+                TravelStepName(step.kind));
+            return;
+        }
+        if (!went_out) {
+            return;  // not in the party yet (never joined): nothing to rejoin
+        }
+        const Clock::time_point from = t.ran && t.step_at > t.left_at ? t.step_at : t.left_at;
+        if (Seconds(from, now) < step.delay) {
+            return;
+        }
+        ++t.next_step;
+        t.step_at = now;
+        t.ran = true;
+        t.last_kind = step.kind;
+        ::party::status::RequestRejoin();
+        Log("test: travel step %zu/%zu: %s: Party > Rejoin pressed (%s)", t.next_step, t.steps.size(),
+            TravelStepName(step.kind), Describe(s).c_str());
+        return;
+    }
     if (t.pressing && now >= t.release_at) {
         t.pressing = false;
         runtime_pad_director_press(0);
@@ -1765,6 +1811,9 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             }
         }
         Log("test: %s 0x%x%s", TravelStepName(step.kind), step.buttons, target.c_str());
+    } else if (step.kind == TravelStep::HostLeave || step.kind == TravelStep::GuestLeave) {
+        ::party::status::RequestLeave();
+        Log("test: %s: Party > Leave pressed (%s)", TravelStepName(step.kind), Describe(s).c_str());
     } else if (step.kind == TravelStep::GuestHome) {
         // Playtest 1 G4 (direct summon re-rings): the guest goes home on its own; the director's
         // bell then rings again from its own world.
@@ -2704,6 +2753,17 @@ void PartyDirector::ConfigureFromEnv() {
     if (const char* c = std::getenv("BB_PARTY_AUTOCONTINUE"); c && c[0]) {
         st.auto_continue = c[0] == '0' ? 0 : 1;
     }
+    // A crash-restarted game (run.bat's BB_PARTY_RESTARTED=1) takes BB_PARTY_DIRECTOR_TEST_RESTART
+    // as its test chain when that is set ("none": no steps), so a scripted run's chain is not run a
+    // second time from its start after a --crash-plan kill (tools/mp/smoke_party.py).
+    if (const char* rs = std::getenv("BB_PARTY_RESTARTED"); rs && rs[0] == '1') {
+        if (const char* rt = std::getenv("BB_PARTY_DIRECTOR_TEST_RESTART"); rt) {
+            const std::string chain = std::strcmp(rt, "none") == 0 ? std::string() : std::string(rt);
+            Log("test: crash restart: the director test chain is BB_PARTY_DIRECTOR_TEST_RESTART (%s)",
+                chain.empty() ? "none" : chain.c_str());
+            _putenv_s("BB_PARTY_DIRECTOR_TEST", chain.c_str());
+        }
+    }
     if (const char* t = std::getenv("BB_PARTY_DIRECTOR_TEST"); t && t[0]) {
         st.test.on = true;
         std::string list = t;
@@ -2864,7 +2924,9 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("host_lastlamp=", 0) == 0 || item.rfind("guest_lastlamp=", 0) == 0 || item.rfind("host_lamp=", 0) == 0 ||
                        item.rfind("guest_lamp=", 0) == 0 || item.rfind("host_alone=", 0) == 0 || item.rfind("guest_kill=", 0) == 0 ||
                        item.rfind("host_outage=", 0) == 0 || item.rfind("guest_outage=", 0) == 0 ||
-                       item.rfind("guest_home", 0) == 0) {
+                       item.rfind("guest_home", 0) == 0 || item.rfind("host_leave", 0) == 0 ||
+                       item.rfind("guest_leave", 0) == 0 || item.rfind("host_rejoin", 0) == 0 ||
+                       item.rfind("guest_rejoin", 0) == 0) {
                 TravelStep step;
                 step.kind = item.rfind("guest_outage", 0) == 0  ? TravelStep::GuestOutage
                             : item.rfind("host_outage", 0) == 0   ? TravelStep::HostOutage
@@ -2878,6 +2940,10 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("host_alone=", 0) == 0  ? TravelStep::HostAlone
                             : item.rfind("guest_kill=", 0) == 0  ? TravelStep::GuestKill
                             : item.rfind("guest_home", 0) == 0   ? TravelStep::GuestHome
+                            : item.rfind("host_leave", 0) == 0   ? TravelStep::HostLeave
+                            : item.rfind("guest_leave", 0) == 0  ? TravelStep::GuestLeave
+                            : item.rfind("host_rejoin", 0) == 0  ? TravelStep::HostRejoin
+                            : item.rfind("guest_rejoin", 0) == 0 ? TravelStep::GuestRejoin
                             : item[0] == 'g'                     ? TravelStep::GuestDie
                             : item.rfind("host_die", 0) == 0     ? TravelStep::HostDie
                             : item.rfind("host_kill", 0) == 0    ? TravelStep::HostKill

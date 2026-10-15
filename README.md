@@ -14,18 +14,22 @@ Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28
 ### Seamless co-op progress
 
 Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](docs/party/ERSC_PARITY.md).
+Two numbers: **plan done** is how much of the plan is built and seen working at least once;
+**ERSC parity (evidence-weighted)** caps every row at 95% until it has been checked on two real PCs over
+the Internet (all checks so far ran on one PC), and caps rows where we chose to differ from ERSC (the
+whole party respawns with the host, 4 players instead of 6, one shared drop roll) at 95% too.
 
-| Area | Progress | |
-|---|---|--:|
-| **Overall** | `████████████████████` | 99% |
-| Session & joining | `████████████████████` | 100% |
-| World & travel | `████████████████████` | 100% |
-| Death & respawn | `████████████████████` | 100% |
-| Progress (anyone can progress) | `████████████████████` | 99% |
-| Services & UI | `████████████████████` | 100% |
-| Network & robustness | `███████████████████░` | 93% |
-| Bloodborne-specific (chalice, Insight) | `████████████████████` | 100% |
-| Feels like single player in a party | `████████████████████` | 100% |
+| Area | Plan done | | ERSC parity (evidence-weighted) | |
+|---|---|--:|---|--:|
+| **Overall** | `████████████████████` | 99% | `███████████████████░` | 95% |
+| Session & joining | `████████████████████` | 100% | `███████████████████░` | 95% |
+| World & travel | `████████████████████` | 100% | `███████████████████░` | 95% |
+| Death & respawn | `████████████████████` | 99% | `███████████████████░` | 94% |
+| Progress (anyone can progress) | `████████████████████` | 99% | `███████████████████░` | 95% |
+| Services & UI | `████████████████████` | 100% | `███████████████████░` | 95% |
+| Network & robustness | `██████████████████░░` | 93% | `██████████████████░░` | 92% |
+| Bloodborne-specific (chalice, Insight) | `████████████████████` | 100% | `███████████████████░` | 95% |
+| Feels like single player in a party | `████████████████████` | 100% | `███████████████████░` | 95% |
 
 ---
 
