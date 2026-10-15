@@ -1465,6 +1465,8 @@ class BloodborneLauncher(tk.Tk):
         self.party_through_walls = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_through_walls", False))
         # I1 friendly fire / PvP: a host rule (bbport.ini party_friendly_fire, off by default).
         self.party_friendly_fire = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_friendly_fire", False))
+        # Shared lamps (statsaudit finding 5): a host rule (bbport.ini party_share_lamps, on by default).
+        self.party_share_lamps = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_share_lamps", True))
         self.party_separate_save = tk.BooleanVar(value=self.settings.get("party_separate_save", True))
         self.party_port_var = tk.StringVar(value=str(self.settings.get("party_port", PARTY_DEFAULT_PORT)))
         self.party_upnp = tk.BooleanVar(value=self.settings.get("party_upnp", True))
@@ -2029,6 +2031,12 @@ class BloodborneLauncher(tk.Tk):
                             "when you switch it. Also in the game: System > Friendly fire (live). Default: off "
                             "(bbport.ini party_friendly_fire).",
                             command=self.save_party_friendly_fire)
+        lamps_cb = self._check(sec, "Shared lamps (host)", self.party_share_lamps,
+                               "Host only: a lamp any party member lights is lit for everyone, in each member's "
+                               "own save too (a guest's lamps light up in your world when it joins; yours reach "
+                               "its save). Your setting is the party's rule. Also in the game: System > Friendly "
+                               "fire page (Shared lamps). Default: on (bbport.ini party_share_lamps).",
+                               command=self.save_party_share_lamps)
         self.party_separate_save.set(True)
         save_cb = self._check(sec, "Separate party saves (always)", self.party_separate_save,
                               "Party play always uses its own save folder (user\\savedata_party), so your "
@@ -2153,7 +2161,7 @@ class BloodborneLauncher(tk.Tk):
                                  dsummon_cb, hud_cb, tags_cb, npc_talk_cb, pings_cb, walls_cb, save_cb,
                                  port_lbl, self.party_port_entry, upnp_cb, rdv_cb, stun_lbl, self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
-        self.party_widgets_host = [ff_cb, public_lbl, self.party_public_entry,
+        self.party_widgets_host = [ff_cb, lamps_cb, public_lbl, self.party_public_entry,
                                    host_lbl, self.party_host_code_entry, copy_btn,
                                    lan_lbl, self.party_lan_code_entry, lan_copy_btn]
         self.party_widgets_join = [code_lbl, self.party_code_entry, paste_btn]
@@ -2213,6 +2221,14 @@ class BloodborneLauncher(tk.Tk):
             update_ini(bbport_ini_path(), {"party_friendly_fire": "1" if self.party_friendly_fire.get() else "0"})
         except OSError as ex:
             self.log(f"[PARTY] Could not save the Friendly fire setting to bbport.ini: {ex}")
+
+    def save_party_share_lamps(self):
+        """The Shared lamps checkbox (host): bbport.ini party_share_lamps (in game: System > Friendly
+        fire page)."""
+        try:
+            update_ini(bbport_ini_path(), {"party_share_lamps": "1" if self.party_share_lamps.get() else "0"})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save the Shared lamps setting to bbport.ini: {ex}")
 
     def save_party_pings(self):
         """The Pings checkbox: bbport.ini party_pings (in game: System > Pings)."""

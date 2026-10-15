@@ -1834,6 +1834,23 @@ void PartyTab() {
                  "уведомление при изменении. По умолчанию: выкл."),
                on);
     }
+    // Statsaudit finding 5: shared lamps, the host's rule; a guest sees it.
+    if (b.role == ps::Role::Guest) {
+        Note(ps::ShareLamps() ? T("Shared lamps: on (the host's rule) - every lamp lit in the party is lit for you too",
+                                  "Общие фонари: вкл. (правило хоста) - каждый фонарь группы горит и у вас")
+                              : T("Shared lamps: off (the host decides) - your own lamps stay yours",
+                                  "Общие фонари: выкл. (решает хост) - ваши фонари остаются вашими"),
+             Dim());
+    } else {
+        Toggle("party_share_lamps", T("Shared lamps", "Общие фонари"), s.party_share_lamps,
+               T("A lamp any party member lights is lit for everyone, in each member's own save too: a guest's "
+                 "lamps light up in your world when it joins, and yours reach its save. The host's setting "
+                 "counts. Default: on.",
+                 "Фонарь, зажжённый любым членом группы, горит у всех и в каждом сохранении: фонари гостя "
+                 "загораются в вашем мире при входе, ваши попадают в его сохранение. Действует настройка "
+                 "хоста. По умолчанию: вкл."),
+               on);
+    }
     static const char* overhead_en[] = {"Nothing", "Name", "Name and level", "Name and health", "Name and deaths", "Name and ping"};
     static const char* overhead_ru[] = {"Ничего", "Имя", "Имя и уровень", "Имя и здоровье", "Имя и смерти", "Имя и пинг"};
     Choice("party_overhead", T("Above companions", "Над спутниками"), std::clamp(s.party_overhead.load(), 0, 5), 6,
