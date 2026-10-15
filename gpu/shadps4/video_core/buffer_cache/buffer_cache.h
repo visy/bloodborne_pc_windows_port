@@ -344,7 +344,8 @@ private:
     void QueuePromotions(u64 submitted);
     void ReportInPlaceBlocks(); ///< bbport BB_RESIDENCY_REPORT (diagnostics)
     /// Arena residency memory from the 64 MiB blocks: the memory and the byte offset in it.
-    std::pair<vk::DeviceMemory, u64> AllocateResidency(u64 bytes);
+    /// may_fail: VRAM full returns no memory instead of stopping (the caller makes room).
+    std::pair<vk::DeviceMemory, u64> AllocateResidency(u64 bytes, bool may_fail = false);
     /// bbport: BbStats::residency_unused_bytes after the free list or the current block changed.
     void NoteResidencyUnused();
     /// bbport: idle VRAM blocks (see group_use).
@@ -352,6 +353,11 @@ private:
     /// bbport BB_RESIDENCY_MIX=1 (diagnostics): bindings over blocks in VRAM and in place at once.
     void NoteResidencyMix(u64 first_block, u64 last_block, u64 size, bool is_written);
     void ProcessIdleBlocks();
+    /// The copies model: VRAM copies unused for `idle_seconds` without GPU-written data leave
+    /// VRAM (at most `limit`); a later use uploads them again. Returns how many.
+    u64 EvictIdleCopies(u32 idle_seconds, u64 limit);
+    /// Residency chunks empty for 5 s go back to the driver.
+    void FreeEmptyChunks(u32 now);
     /// A VRAM slot of a block that left it: reused by the next move to VRAM.
     void ReleaseResidencySlot(vk::DeviceMemory memory, u64 offset);
     /// Unbinds a VRAM block of memory the game unmapped (uploaded again if mapped and used).

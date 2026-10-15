@@ -1528,26 +1528,42 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
         // bbport: the slots of blocks that left VRAM first, block by block. A request of several
         // blocks only ever took new space, and the free slots piled up while new 64 MiB chunks
         // were allocated.
-        IntervalList rest_ranges;
-        for (const auto& range : bind_ranges) {
-            u64 block = range.start;
-            for (; block < range.end && free_slot_count != 0; ++block) {
-                const auto [memory, memory_offset] = AllocateResidency(block_size);
-                auto* last = binds.empty() ? nullptr : &binds.back();
-                if (last && last->end == block && last->memory == memory &&
-                    last->offset + ((block - last->start) << block_shift) == memory_offset) {
-                    last->end = block + 1;
-                } else {
-                    binds.push_back({block, block + 1, memory, memory_offset});
+        const auto into_slots = [&](const auto& ranges) {
+            std::remove_cvref_t<decltype(ranges)> rest;
+            for (const auto& range : ranges) {
+                u64 block = range.start;
+                for (; block < range.end && free_slot_count != 0; ++block) {
+                    const auto [memory, memory_offset] = AllocateResidency(block_size);
+                    auto* last = binds.empty() ? nullptr : &binds.back();
+                    if (last && last->end == block && last->memory == memory &&
+                        last->offset + ((block - last->start) << block_shift) == memory_offset) {
+                        last->end = block + 1;
+                    } else {
+                        binds.push_back({block, block + 1, memory, memory_offset});
+                    }
+                    --vram_blocks;
                 }
-                --vram_blocks;
+                if (block < range.end) {
+                    rest.Add({block, range.end});
+                }
             }
-            if (block < range.end) {
-                rest_ranges.Add({block, range.end});
-            }
-        }
+            return rest;
+        };
+        auto rest_ranges = into_slots(bind_ranges);
         if (vram_blocks != 0) {
-            auto [memory, memory_offset] = AllocateResidency(vram_blocks << block_shift);
+            auto [memory, memory_offset] =
+                AllocateResidency(vram_blocks << block_shift, !GuestInPlace());
+            if (!memory) {
+                // bbport: VRAM full and no other memory the arena takes (the copies model on
+                // NVIDIA stopped the game, upstream #142): copies unused for a second make room,
+                // the blocks go into their slots; only what is left after that needs new memory.
+                // From deadinside's Supermedo/bloodborne_pc 72e5c8ce.
+                EvictIdleCopies(1, vram_blocks);
+                rest_ranges = into_slots(rest_ranges);
+                if (vram_blocks != 0) {
+                    std::tie(memory, memory_offset) = AllocateResidency(vram_blocks << block_shift);
+                }
+            }
             for (const auto& range : rest_ranges) {
                 binds.push_back({range.start, range.end, memory, memory_offset});
                 memory_offset += (range.end - range.start) << block_shift;
@@ -1591,7 +1607,7 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
     runtime.CopyBuffer(staging.buffer, bda_pagetable_buffer.get(), copies);
 }
 
-std::pair<vk::DeviceMemory, u64> BufferCache::AllocateResidency(u64 bytes) {
+std::pair<vk::DeviceMemory, u64> BufferCache::AllocateResidency(u64 bytes, bool may_fail) {
     if (bytes == block_size && free_slot_count != 0) {
         // bbport: a slot of the fullest chunk: the emptier ones drain and go back to the driver.
         auto best = residency_chunks.end();
@@ -1695,6 +1711,9 @@ std::pair<vk::DeviceMemory, u64> BufferCache::AllocateResidency(u64 bytes) {
                     BbStats::residency_alloc_bytes.fetch_add(size, std::memory_order_relaxed);
                 }
             }
+        }
+        if (!memory && may_fail) {
+            return {vk::DeviceMemory{}, 0}; // the caller makes room (EnsureResident)
         }
         ASSERT_MSG(memory, "Failed to allocate {} MiB for guest memory copies: VRAM is full", size >> 20);
         residency_memory = memory;
@@ -1860,12 +1879,61 @@ void BufferCache::EvictVramBlock(u64 block) {
     BbStats::vram_unmapped_bytes.fetch_add(block_size, std::memory_order_relaxed);
 }
 
+u64 BufferCache::EvictIdleCopies(u32 idle_seconds, u64 limit) {
+    const u32 now = BbStats::coarse_second.load(std::memory_order_relaxed);
+    std::vector<u64> idle;
+    for (const auto& range : resident_ranges) {
+        if (!residency_chunks.contains(static_cast<VkDeviceMemory>(range.memory))) {
+            continue;
+        }
+        for (u64 block = range.start; block < range.end && idle.size() < limit; ++block) {
+            if (now - group_use[(block << block_shift) >> USE_GROUP_BITS] >= idle_seconds &&
+                !IsRegionGpuModified(block << block_shift, block_size)) {
+                idle.push_back(block);
+            }
+        }
+        if (idle.size() >= limit) {
+            break;
+        }
+    }
+    for (const u64 block : idle) {
+        EvictVramBlock(block);
+    }
+    if (!idle.empty()) {
+        BbStats::vram_idle_bytes.fetch_add(idle.size() * block_size, std::memory_order_relaxed);
+        static std::atomic<u32> told{0};
+        if (told.fetch_add(1, std::memory_order_relaxed) < 4) {
+            std::printf("Guest memory: %zu idle VRAM copies (%llu MiB) released\n", idle.size(),
+                        (unsigned long long)((idle.size() * block_size) >> 20));
+        }
+    }
+    return idle.size();
+}
+
 void BufferCache::ProcessIdleBlocks() {
     const u32 now = BbStats::coarse_second.load(std::memory_order_relaxed);
-    if (now == idle_scan_second || !GuestInPlace() || VramIdleSeconds() == 0) {
+    if (now == idle_scan_second || VramIdleSeconds() == 0) {
         return;
     }
     idle_scan_second = now;
+    if (!GuestInPlace()) {
+        // bbport: the copies model (the 0.3 model, our default) kept every block it ever copied
+        // to VRAM: on 4 GB cards VRAM filled up area by area and the game stopped after an hour
+        // or two ("Failed to allocate .. for guest memory copies", upstream #142). On cards up
+        // to 8 GB copies unused for a minute leave VRAM (their slots take the next ones; a later
+        // use uploads them again), on any card for 5 s while VRAM is short; chunks emptied so
+        // go back to the driver. Larger cards keep them. BB_VRAM_IDLE_SECONDS set: on any card.
+        // From deadinside's Supermedo/bloodborne_pc 72e5c8ce.
+        static const bool small_vram =
+            instance.GetTotalMemoryBudget() <= (8ull << 30) || std::getenv("BB_VRAM_IDLE_SECONDS");
+        if (TextureCache::VramShort()) {
+            EvictIdleCopies(5, ~u64{0});
+        } else if (small_vram) {
+            EvictIdleCopies(VramIdleSeconds(), ~u64{0});
+        }
+        FreeEmptyChunks(now);
+        return;
+    }
     if (LayerMode()) {
         LayerMaintain();
         LayerProcessIdle();
@@ -1919,6 +1987,10 @@ void BufferCache::ProcessIdleBlocks() {
             }
         }
     }
+    FreeEmptyChunks(now);
+}
+
+void BufferCache::FreeEmptyChunks(u32 now) {
     // Chunks without blocks for 5 s, the rebinds away from them long done: back to the driver.
     for (auto it = residency_chunks.begin(); it != residency_chunks.end();) {
         const ResidencyChunk& chunk = it->second;
