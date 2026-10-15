@@ -565,3 +565,34 @@ title join off (`--ienv 1:BB_PARTY_TITLE_JOIN=0`), guest started 50 s after the 
 * Next: after such a cross-map client join, start the B2 arrival load into the host's map (the
   split travel's follow path) so the joiner has one load; or keep the title join (already one load)
   as the way to join from another map. Screens black (desktop locked): verified by logs.
+
+## 2026-10-15 (parab): one-load cross-map join (A5), default on
+
+Guest save in the Dream (title join off), host in Central Yharnam (`BB_PARTY_TEST_START_LAMP=2412951`).
+The direct summon joins the host's room from the guest's own map (`BB_PARTY_GATHER_DSUM`, now on),
+then the B2 re-join loads it into the host's map (`AloneWhy::Join`, the host's lamp nearest the
+host, then the join-beside warp):
+
+| Step | a5b | a5c |
+|---|---|---|
+| guest world steady -> bell / `dsum_req` | 0.3 s | 0.7 s |
+| request -> client (6) | 3.0 s | 3.1 s |
+| client -> arrival re-join | 1.0 s | 1.0 s |
+| the one loading screen | 6.2 s | 6.1 s |
+| world steady -> beside the host (0.5 m) | **12.3 s** | **12.8 s** |
+
+Pitfalls found live and fixed the same day:
+
+* The game's own summon load (Lua OnBeJoinStart, K6) can start 0.8 s after the client role when
+  the host answers fast (a11e, 1.1 s): it builds the guest's OWN map as the host's world (the
+  Dream in host-world mode). It is held by K6 from the join until the arrival re-join starts.
+* Starting the arrival in the join's own frame (a5d, a11f, a11g) loaded the Dream too, with the
+  join's queued snapshot packets dropped or kept: the arrival waits 1.0 s (the game takes the
+  join's snapshot first), as in a5b / a5c.
+* A guest that joined from its own world never got the summoned placement, so its GameData kept
+  +0x5D8 0 (chr type 1/0): the host counted 0 cooperators and its watchdog ended the session 60 s
+  later (a5c, a5e, a11h). After the arrival the guest writes the summoned guest's values
+  (+0x10 2, +0xA4 1, +0x5D8 7) and re-broadcasts its record: a11i `cooperators 0 -> 1` 0.1 s
+  after the arrival.
+* A direct summon refused only to wait (A11: boss, cutscene) no longer makes the next attempt
+  gather with a loading screen first.

@@ -17,9 +17,9 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 
 | Area | Progress | |
 |---|---|--:|
-| **Overall** | `██████████████████░░` | 90% |
-| Session & joining | `██████████████████░░` | 89% |
-| World & travel | `██████████████████░░` | 88% |
+| **Overall** | `██████████████████░░` | 91% |
+| Session & joining | `███████████████████░` | 94% |
+| World & travel | `██████████████████░░` | 91% |
 | Death & respawn | `███████████████████░` | 93% |
 | Progress (anyone can progress) | `█████████████████░░░` | 87% |
 | Services & UI | `███████████████████░` | 95% |
@@ -134,8 +134,9 @@ before anyone is in the game):
   character, also if you started party games from the launcher.
 - **Fast join.** The bell, beckoner and summon-sign waits are gone: a guest is in the host's world
   within seconds. *Continue party game* takes a guest straight into the host's world with a single
-  loading screen. If the host travels while you are joining, its travel waits until you are in and
+  loading screen. A guest whose own world is in another map (the Hunter's Dream, say) also joins with a single loading screen, beside the host. If the host travels while you are joining, its travel waits until you are in and
   you travel together.
+- **Joining while the host fights a boss or watches a cutscene** waits in your own world until it is over (the Party status says why), then puts you beside the host with one loading screen.
 - **Leave any time.** *System → Party → Leave the party* takes a guest home at once; the host's
   *Leave* ends the party and every guest goes home. *System → Party mode → Join party* brings a
   guest back; *Host party* and *Single player* are there too.
@@ -163,7 +164,9 @@ before anyone is in the game):
 - **Guests can use the Hunter's Mark** (on by default; launcher switch "Guests can use Hunter's
   Mark"): alone it takes you to your own last lamp, with the party to the host's.
 - **Apart and back together.** While players are in different maps each sees only the others in
-  its own map; meeting again shows them at once, without a loading screen.
+  its own map; meeting again shows them at once, without a loading screen. If the host dies while
+  you are in another area you play on where you are (no loading screen for you); if you die there
+  you get up at your own lamp.
 - **Everyone can use lamps.** Vanilla disables lamps during co-op; here they work for everyone.
   A lamp lit by anyone is lit for the party.
 - **Resting resets the world for the party.** Enemies respawn; everyone's HP, vials and bullets
@@ -269,7 +272,6 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 |---|---|
 | Item pickups and enemy drops per player: everyone gets their own (enemy drops: the same item for everyone) | Done |
 | Every cutscene for the whole party (story cutscenes, endings and guest-triggered scenes already work) | In progress |
-| Joining during a boss fight or cutscene waits outside until it ends | Works for boss fights with every join path (bell, title join, direct summon; verified live), the Party status says why you wait; cutscenes not yet tested live |
 | With 3 guests, every guest sees every other guest | In progress |
 | Chalice dungeons: deeper layers checked in a party; entering the party's dungeon in one press (the altar still asks a few prompts) | In progress |
 | PvP / friendly fire the host can switch on and off | Done (0.6.2) |
