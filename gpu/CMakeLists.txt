@@ -600,6 +600,11 @@ add_executable(party-enemy-census-test EXCLUDE_FROM_ALL ../tests/test_party_enem
 target_compile_options(party-enemy-census-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-enemy-census-test PRIVATE shim)
 set_target_properties(party-enemy-census-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Fast loading (shim/bbport_fast_loading.h): the pure rules. ninja -C out/gpu fast-loading-test
+add_executable(fast-loading-test EXCLUDE_FROM_ALL ../tests/test_fast_loading.cpp)
+target_compile_options(fast-loading-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(fast-loading-test PRIVATE shim)
+set_target_properties(fast-loading-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # C6 crash rejoin: the crashed member's connections (party_nr_drop.h). ninja -C out/gpu party-nr-drop-test
 add_executable(party-nr-drop-test EXCLUDE_FROM_ALL ../tests/test_party_nr_drop.cpp)
 target_compile_options(party-nr-drop-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

@@ -18,6 +18,7 @@
 #include <cstring>
 #include "common/assert.h"
 #include "bbport_toggles.h"
+#include "bbport_fast_loading.h"
 #include "bbport_compile_progress.h"
 #include "bbport_heap_sites.h"
 #include "bbport_wait_trace.h"
@@ -962,9 +963,16 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
     // next vblank tick.
     const bool immediate_flips = frame_limit != 0 || EmulatorSettings.IsUncappedVblank();
 
+    // bbport: fast loading (bbport_fast_loading.h; idea from droogie/bbhost): while a loading screen
+    // is up, flips are made at once and vblank ticks come every 2 ms, so the loaders step as fast
+    // as the machine allows.
+    const std::chrono::nanoseconds fast_period(2000000);
+
     while (!token.stop_requested()) {
         timer.Start();
-        const auto tick_deadline = std::chrono::steady_clock::now() + vblank_period;
+        const bool fast = bbport::fastload::Tick();
+        const auto tick_deadline =
+            std::chrono::steady_clock::now() + (fast ? std::min(fast_period, vblank_period) : vblank_period);
 
         if (DebugState.IsGuestThreadsPaused()) {
             DrawLastFrame();
@@ -975,7 +983,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
         // Check if it's time to take a request.
         auto& vblank_status = main_port.vblank_status;
         const auto now = std::chrono::steady_clock::now();
-        const bool flip_slot = !frame_limit || now >= next_flip;
+        const bool flip_slot = !frame_limit || fast || now >= next_flip;
         if (flip_slot && vblank_status.count % (main_port.flip_rate + 1) == 0) {
             const auto request = receive_request();
             if (request && frame_limit) {
@@ -991,6 +999,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
                 }
             } else {
                 Flip(request);
+                bbport::fastload::NoteFlip();
                 FRAME_END;
             }
         }
@@ -1019,7 +1028,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
             main_port.vblank_cv.notify_all();
         }
 
-        if (!immediate_flips || main_port.flip_rate != 0) {
+        if ((!immediate_flips && !fast) || main_port.flip_rate != 0) {
             timer.End();
             continue;
         }
@@ -1031,7 +1040,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
                     break; // next vblank
                 }
             }
-            if (std::chrono::steady_clock::now() < next_flip) {
+            if (!fast && std::chrono::steady_clock::now() < next_flip) {
                 if (next_flip >= tick_deadline) {
                     break;
                 }
@@ -1041,6 +1050,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
             if (request) {
                 next_flip = next_slot(next_flip);
                 Flip(request);
+                bbport::fastload::NoteFlip();
                 FRAME_END;
             }
         }

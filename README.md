@@ -167,7 +167,8 @@ before anyone is in the game):
   A guest's own save keeps its own spot: playing it solo later starts where it was, not at the
   lamp it travelled to with the party.
 - **No loading screen inside the same map for the host.** The host's lamp or Hunter's Mark to a spot
-  in the map it is already in is an instant warp, for the whole party too; a guest's gets its own
+  in the map it is already in is an instant warp (the game's own move, as after its cutscenes, so the
+  camera and the area look as after a loading screen), for the whole party too; a guest's gets its own
   short loading screen and the host stays where it is; at the lamp you already stand at, nothing
   moves at all. With nobody to travel with (a host alone, or "Join a party" while the host is not
   there) lamps, headstones and the Hunter's Mark work exactly as in single player.
