@@ -1857,8 +1857,10 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     } else if (step.kind == TravelStep::HostObj || step.kind == TravelStep::GuestObj ||
                step.kind == TravelStep::HostChr || step.kind == TravelStep::GuestChr) {
         int entity = 0;
-        float dist = 1.2f, angle = 0;
-        std::sscanf(step.args.c_str(), "%d:%f:%f", &entity, &dist, &angle);
+        float dist = 1.2f, angle = 0, dy = 0;
+        // host_obj=ENTITY[:DIST[:ANGLE[:DY]]]: DY m above the object's origin (dlast: a raised
+        // ladder's top landing, its model's dummy 192).
+        std::sscanf(step.args.c_str(), "%d:%f:%f:%f", &entity, &dist, &angle, &dy);
         std::string what;
         const bool obj = step.kind == TravelStep::HostObj || step.kind == TravelStep::GuestObj;
         if (!obj && entity == 0) {
@@ -1878,7 +1880,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                     balance::EnemyHp(list[size_t(k)].chr));
             }
         }
-        const bool ok = obj ? worldact::StandAtObject(entity, dist, angle, &what)
+        const bool ok = obj ? worldact::StandAtObject(entity, dist, angle, &what, dy)
                             : worldact::StandAtChr(entity, dist, angle, &what);
         if (!obj) t.chr_target = ok ? std::uint32_t(entity) : 0u;
         Log("test: %s %d (%.1f m, %.0f deg): %s", TravelStepName(step.kind), entity, double(dist), double(angle),
