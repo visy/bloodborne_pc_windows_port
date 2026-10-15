@@ -1887,7 +1887,12 @@ void StoryTick() {
             } else if (test && test[0] && g_tick.ask_test_step > 0 && now - g_tick.ask_test_at > 0.25) {
                 runtime_pad_director_press(0);
             }
-            if (r != -1) {
+            if (r != -1 && r != 1 && r != 2) {
+                // Closed without an answer (a load, the host's ending session drop): ask again.
+                Log("ending %d: the question was closed without an answer (result %d): asking again",
+                    g_tick.ask_ending, r);
+                g_tick.ask_dialog = 0;
+            } else if (r != -1) {
                 const bool yes = r == 1;
                 bool cords = false;
                 progress::ReadFlagOwnSave(9900, &cords);
