@@ -181,6 +181,8 @@ double NowSeconds();
 /// Host, main thread (batch 6): hold its lamp travel while a member it just served a room joins.
 /// `who` gets a short reason when held.
 bool HostTravelHeldForJoin(std::string* who);
+/// Host: Now() of the last title-join room this host sent (< 0: none yet). Test aid clock.
+double TitleServedAt();
 /// A lamp / headstone id as a travel intent (ReturnPointParam row; main thread). False: no row.
 bool LampTravelIntent(std::uint32_t id, TravelIntent* t);
 /// Host in a session with at least one member task (someone to travel with or without).

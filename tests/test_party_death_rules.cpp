@@ -136,6 +136,18 @@ int main() {
     CHECK(StoryWarpEvent(13201803, true));   // Blood Moon -> Yahar'gul, on the host
     CHECK(!StoryWarpEvent(13201803, false)); // a guest's stray copy stays dropped
     CHECK(StoryWarpEvent(12200131, false));  // Hemwick carriage: any player
+    // P4: one question per scripted warp that runs on several games (the host's).
+    CHECK(GuestDropsSameWarp(3202958, 3202958, 0.0));
+    CHECK(GuestDropsSameWarp(3202958, 3202958, kSameWarpWindow));
+    CHECK(!GuestDropsSameWarp(3202958, 3202958, kSameWarpWindow + 1.0));  // an old question
+    CHECK(!GuestDropsSameWarp(3202958, 3202959, 1.0));                    // another warp
+    CHECK(!GuestDropsSameWarp(3202958, 3202958, -1.0));                   // the host never asked
+    CHECK(!GuestDropsSameWarp(0, 0, 1.0));
+    CHECK(HostDropsGuestRequest(3202958, 3202958, 0, -1.0));        // the host's question is open
+    CHECK(HostDropsGuestRequest(2802958, 0, 2802958, 5.0));         // the host's own story warp just went
+    CHECK(!HostDropsGuestRequest(2802958, 0, 2802958, 60.0));       // long ago
+    CHECK(!HostDropsGuestRequest(2412951, 3202958, 2802958, 1.0));  // a different lamp: the guest's travel
+    CHECK(!HostDropsGuestRequest(0, 0, 0, 1.0));
     CHECK(StoryWarpEvent(12800431, false));  // Amygdala grab with the own Tonsil Stone
     CHECK(!StoryWarpEvent(12800430, false)); // End if Client
     CHECK(!StoryWarpEvent(7200, true));      // world lamp -> Dream

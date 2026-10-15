@@ -99,6 +99,7 @@ bool SceneRunning() {
     return SafeGet(Guest(0x5540058), &remo) && remo && SafeGet(remo + 8, &player) && player &&
            SafeGet(player + 0x168, &bits) && (bits & 1);
 }
+double g_release_at = 0;  // main thread: release the test / cancel press then
 int g_asked = 0;  // questions opened (BB_PARTY_SPLIT_TEST answers them in order)
 Pending g_p;  // under g_mu (OnLampWarp: game thread; Tick: main thread - the same thread in practice)
 
@@ -174,6 +175,7 @@ struct Choosing {
     std::string who;
     u32 lamp = 0;
     bool fresh = false;
+    double at = -1;  // Now() of the event
 };
 Choosing g_choosing;  // under g_note_mu
 
@@ -394,6 +396,19 @@ bool Hold(std::uint32_t id, bool mark) {
     if (CurrentMode() == Mode::Party && guest) {
         return false;  // the guest's request (party_guestsvc), as before
     }
+    if (guest && !mark) {
+        Choosing c;
+        {
+            std::lock_guard<std::mutex> lk(g_note_mu);
+            c = g_choosing;
+        }
+        if (deathrules::GuestDropsSameWarp(id, c.lamp, c.at < 0 ? -1.0 : Now() - c.at)) {
+            Log("lamp %u (guest): the host is choosing travel for the same warp (%.1f s ago): no second question "
+                "here, the warp is dropped (P4)", id, Now() - c.at);
+            party::status::SetLastEvent("The host is choosing travel");
+            return true;
+        }
+    }
     std::lock_guard<std::mutex> lk(g_mu);
     if (g_p.state != Ask::None) {
         Log("lamp %u: a choice is already pending (lamp %u); this warp is dropped", id, g_p.id);
@@ -421,6 +436,24 @@ void OnChoosingEvent(int slot, const std::string& who, const std::string& body) 
     g_choosing.who = who.empty() ? (slot == 0 ? "the host" : "slot " + std::to_string(slot)) : who;
     g_choosing.lamp = lamp;
     g_choosing.fresh = true;
+    g_choosing.at = Now();
+}
+
+bool HostOwnWarpFor(std::uint32_t id) {
+    u32 pending = 0;
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        if (g_p.host && (g_p.state == Ask::Queued || g_p.state == Ask::Open)) {
+            pending = g_p.id;
+        }
+    }
+    const double story_age = Age(g_story_at, Now());
+    const bool drop = deathrules::HostDropsGuestRequest(id, pending, g_local_id.load(), story_age);
+    if (drop) {
+        Log("lamp %u: a guest's request for the warp the host %s: dropped (one question per warp, P4)", id,
+            pending == id ? "is asking about" : "took itself just now");
+    }
+    return drop;
 }
 
 void Tick(const GameSnapshot& s, party::PartyLink* link) {
@@ -457,6 +490,28 @@ void Tick(const GameSnapshot& s, party::PartyLink* link) {
             Log("%s %s is choosing travel (\"Travel with the party?\" for lamp %u on their screen)", role,
                 c.who.c_str(), c.lamp);
             party::status::SetLastEvent(c.who + " is choosing travel");
+            if (PartyDirector::Get().Role() == PartyRole::Guest) {
+                Pending own;
+                {
+                    std::lock_guard<std::mutex> lk(g_mu);
+                    own = g_p;
+                    if (!own.host && !own.mark && (own.state == Ask::Queued || own.state == Ask::Open) &&
+                        deathrules::GuestDropsSameWarp(own.id, c.lamp, 0.0)) {
+                        g_p = Pending{};
+                    } else {
+                        own.state = Ask::None;
+                    }
+                }
+                if (own.state != Ask::None) {
+                    const bool up = own.state == Ask::Open && Field<int>(Slot(kSlotMenuMan), 0x78, 0) != 0;
+                    if (up) {
+                        runtime_pad_director_press(kPadCircle);  // the dialog's own cancel
+                        g_release_at = Now() + 0.25;
+                    }
+                    Log("lamp %u (guest): the host asks about the same warp: this game's question is dropped%s (P4)",
+                        own.id, up ? ", dialog cancelled" : "");
+                }
+            }
         }
         if (const u32 lamp = g_notify_lamp.exchange(0); lamp && link) {
             char body[48];
@@ -465,7 +520,7 @@ void Tick(const GameSnapshot& s, party::PartyLink* link) {
                              body);
         }
     }
-    static double release_at = 0;
+    double& release_at = g_release_at;
     if (release_at > 0 && Now() >= release_at) {
         runtime_pad_director_press(0);  // the test press is a tap
         release_at = 0;

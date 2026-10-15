@@ -200,6 +200,24 @@ inline bool StoryWarpEvent(std::int32_t event, bool host) {
 /// parg re-run: opened in the frame the Blood Moon scene ended, the box never showed and six Cross
 /// presses did nothing).
 constexpr double kAskAfterSceneDelay = 2.0;
+/// P4 (quest_audit): a scripted warp that runs on more than one game (the Lecture Building doors
+/// through the replicated ObjAct, the Tonsil Stone grab of every player holding the stone) asks
+/// ONE question: the host's. A guest drops its own question (or its YES's request) for a lamp the
+/// host is choosing for, or chose within kSameWarpWindow s; the host drops a guest's party request
+/// for the lamp its own question is open for or its own story warp went to that recently (its
+/// own travel takes the guests along).
+constexpr double kSameWarpWindow = 20.0;
+inline bool GuestDropsSameWarp(std::uint32_t own_lamp, std::uint32_t host_lamp, double host_age) {
+    return own_lamp != 0 && own_lamp == host_lamp && host_age >= 0 && host_age <= kSameWarpWindow;
+}
+inline bool HostDropsGuestRequest(std::uint32_t requested, std::uint32_t own_pending, std::uint32_t own_story_lamp,
+                                  double own_story_age) {
+    if (requested == 0) {
+        return false;
+    }
+    return requested == own_pending ||
+           (requested == own_story_lamp && own_story_age >= 0 && own_story_age <= kSameWarpWindow);
+}
 
 // ---- Playtest 1 bug 22: nobody to travel with = single player ----
 /// The party's own lamp / headstone / Hunter's Mark handling (the in-world lamp move without a

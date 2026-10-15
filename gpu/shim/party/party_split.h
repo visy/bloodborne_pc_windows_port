@@ -49,6 +49,9 @@ void NoteLocalUse(std::uint32_t id);
 /// Game thread: a story warp of this player's game (deathrules::StoryWarpEvent) is about to run:
 /// this player's own use, and its question waits until the scene before it is over.
 void NoteStoryWarp(std::uint32_t id);
+/// P4, host: a guest's party request for `id` is dropped (deathrules::HostDropsGuestRequest): the
+/// host's own question for that warp is open, or its own story warp went there just now.
+bool HostOwnWarpFor(std::uint32_t id);
 /// Main thread, once a frame (the director); `link` sends EVENT split_choosing.
 void Tick(const GameSnapshot& s, party::PartyLink* link);
 

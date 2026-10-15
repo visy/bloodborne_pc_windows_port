@@ -190,7 +190,12 @@ int main() {
         assert(BossGateGuestStarts(amelia) && BossGateGuestStarts(gas) && BossGateGuestStarts(*BossGateByEvent(12304811)));
         assert(!BossGateGuestStarts(*BossGateByEvent(12424811)));  // Ebrietas: a hit starts her first fight
         assert(!BossGateGuestStarts(*BossGateByEvent(12424711)));  // Celestial Emissary: no first-fight event
-        assert(!BossGateGuestStarts(*BossGateByEvent(13404801)));  // DLC: host first
+        // DLC (pard2): Ludwig, Laurence, Living Failures, the Orphan; Lady Maria stays host-first.
+        assert(BossGateGuestStarts(*BossGateByEvent(13404801)) && BossGateGuestStarts(*BossGateByEvent(13404851)));
+        assert(BossGateGuestStarts(*BossGateByEvent(13504851)) && BossGateGuestStarts(*BossGateByEvent(13604801)));
+        assert(!BossGateGuestStarts(*BossGateByEvent(13504801)));  // Lady Maria: examined in her chair first
+        assert(FirstFightSpotFor(13401801)->chained && !FirstFightSpotFor(13501851)->chained);
+        assert(!FirstFightSpotFor(12401802)->chained);
         assert(BossGateSkipFirstFight(12404841, 3, 0, 12401802));   // Amelia's intro-done condition
         assert(!BossGateSkipFirstFight(12404841, 3, 0, 12404800));  // not the host-entered one (the other rule)
         assert(!BossGateSkipFirstFight(12404841, 3, 0, 12401800));  // boss alive stays
@@ -204,6 +209,26 @@ int main() {
         assert(!FirstFightVisitDone(false, false, false, 0.5) && FirstFightVisitDone(true, false, false, 0.1));
         assert(FirstFightVisitDone(false, true, false, 0.1) && FirstFightVisitDone(false, false, true, 0.1));
         assert(FirstFightVisitDone(false, false, false, kFirstFightVisitSeconds));
+        // A chained (two-part) first fight: 9180 comes from the first part, the visit goes on.
+        assert(!FirstFightVisitDone(false, true, false, 0.1, true) && FirstFightVisitDone(false, false, true, 0.1, true));
+        assert(FirstFightVisitDone(true, true, false, 0.1, true));
+        // A gate with an intro scene: 9180 comes one frame before the scene; the visit waits for the scene.
+        assert(FirstFightSpotFor(12401802)->scene && FirstFightSpotFor(13601801)->scene);
+        assert(!FirstFightSpotFor(12301802)->scene && !FirstFightSpotFor(13501851)->scene);
+        assert(!FirstFightVisitDone(false, true, false, 0.1, false, true));
+        assert(FirstFightVisitDone(false, true, true, 0.1, false, true));
+        assert(FirstFightVisitDone(false, true, false, 0.1, false, false));  // no scene: 9180 ends it
+        // The host makes the visit only alive, outside another boss fight and outside a scene.
+        assert(FirstFightHostReady(500, false, false));
+        assert(!FirstFightHostReady(0, false, false) && !FirstFightHostReady(-1, false, false));
+        assert(!FirstFightHostReady(500, true, false) && !FirstFightHostReady(500, false, true));
+        // After the scene: the host left by the arena goes back (live pard2: Amelia's arena, 9 m from the spot).
+        const float back[3] = {17.67f, -9.51f, 102.82f}, amelia_spot[3] = {57.70f, 35.21f, 322.60f};
+        const float in_arena[3] = {53.4f, 36.2f, 314.8f}, at_back[3] = {17.9f, -9.5f, 103.0f};
+        assert(FirstFightPutBackAfterScene(in_arena, back, amelia_spot));
+        assert(!FirstFightPutBackAfterScene(at_back, back, amelia_spot));  // the scene did not move it
+        const float walked[3] = {-60.0f, -9.5f, 120.0f};
+        assert(!FirstFightPutBackAfterScene(walked, back, amelia_spot));   // moved on its own, far from the arena
         // The host's answer to a guest's fog report.
         assert(HostFogAction(amelia, true, false, false, false, m2400) == FogAction::start_first);
         assert(HostFogAction(amelia, true, false, false, false, m2401) == FogAction::wait_host);  // host elsewhere

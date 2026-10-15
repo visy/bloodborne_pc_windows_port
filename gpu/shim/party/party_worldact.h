@@ -149,8 +149,13 @@ bool BossGateInBlock(const BossGate& g, std::uint32_t map);
 /// distance condition next to its flag and chr-type checks (EMEVD data, quest_audit.md P5). A
 /// guest may go through such a fog before the host's first fight; the host's game then runs the
 /// first-fight event as if the host had walked in, so its intro scene plays for the whole party
-/// (live mirror) and the boss starts. Ebrietas (her first fight starts on a hit), Rom (a hit, no
-/// guest gate) and the DLC bosses (scene with a player warp, extra conditions) stay host-first.
+/// (live mirror) and the boss starts. DLC (pard2): Ludwig, Laurence and the Orphan of Kos (a
+/// two-part first fight: a first event waits for the host in the region, the scene event for that
+/// event AND the host still in the region) and the Living Failures (one region) too. Host-first:
+/// Ebrietas (her first-fight event waits for the HOST's own hit on her, 3[23] attacker 10000),
+/// Lady Maria (her first fight follows the host's examining her in her chair, 13500948), the
+/// Celestial Emissary (no first-fight event); Rom has no fog gate (anyone's hit starts her fight,
+/// 3[23] attacker -1, so a guest may start it already).
 bool BossGateGuestStarts(const BossGate& g);
 /// Guest: the intro (first-fight-done) condition of a BossGateGuestStarts gate's guest-entry
 /// event (3[0] on intro_flag): skipped, so the fog has its prompt before the host's first fight.
@@ -166,13 +171,32 @@ const BossGate* BossGateByIntroEvent(std::int32_t event_id);
 struct FirstFightSpot {
     std::uint32_t intro_event;
     float pos[3];
+    /// Two-part first fight (the DLC's 前半 / 後半 events): the first part sets 9180 before the
+    /// scene event has seen the host in the region, so 9180 does not end the visit.
+    bool chained = false;
+    /// The first-fight event plays an intro scene (2002): the host stays at the spot until the
+    /// scene starts and through it (the scene ends with the player at the arena's entrance; a
+    /// host elsewhere was killed there, live pard2), then goes back.
+    bool scene = false;
 };
 const FirstFightSpot* FirstFightSpotFor(std::uint32_t intro_event);
 /// The visit is over (put the host back): the event went on (the boss-started flag, the intro's
-/// boss-area flag 9180 or a cutscene) or it timed out.
-bool FirstFightVisitDone(bool host_flag_on, bool flag9180_on, bool cutscene, double visit_s);
+/// boss-area flag 9180 - not for a chained spot - or a cutscene) or it timed out.
+bool FirstFightVisitDone(bool host_flag_on, bool flag9180_on, bool cutscene, double visit_s, bool chained = false,
+                         bool scene = false);
+/// The host may make the visit now (besides a steady world in the boss's block): alive, not in
+/// another boss fight (its bar up) and no cutscene. A dead host's visit waits for its respawn.
+bool FirstFightHostReady(int host_hp, bool boss_bar_up, bool cutscene);
+/// After the first-fight event (its scene) the host stands by the arena (`here` within
+/// kFirstFightSceneRadius of the spot) and away from where it was put back: the scene placed it
+/// there (Amelia's intro leaves the player at her arena's entrance), so it goes back again.
+bool FirstFightPutBackAfterScene(const float here[3], const float back[3], const float spot[3]);
+constexpr float kFirstFightBackSlack = 3.0f;
+constexpr float kFirstFightSceneRadius = 40.0f;
 constexpr double kFirstFightVisitSeconds = 2.0;
 constexpr int kFirstFightVisitTries = 3;
+/// The host's screen holds its last picture this long after the put-back (the camera settles).
+constexpr double kFirstFightHoldAfter = 0.2;
 /// What the host does with a guest's fog report.
 enum class FogAction {
     none,        ///< boss dead, the host already in, or nothing to do

@@ -7765,6 +7765,10 @@ int LocalHp() {
     const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
     return player ? ChrHp(player) : -1;
 }
+double TitleServedAt() {
+    const double t = g_title_served_at.load();
+    return t < -1e8 ? -1.0 : t;
+}
 bool HostTravelHeldForJoin(std::string* who) {
     if (!g_on.load() || Role() != RoleHost) return false;
     dsummon::HostTravelHoldView v;
