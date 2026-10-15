@@ -51,21 +51,57 @@ static void inject(const char *path, const char *tokens) {
     usleep(25000);
 }
 
-/* Keyboard sticks (after Supermedo/bloodborne_pc a147eb8, 576514c): last-wins opposite keys and
- * a round gate for diagonals. Classic layout: W/A/S/D move. */
+/* Keyboard sticks (after Supermedo/bloodborne_pc a147eb8, 576514c, 4b930b10): last-wins opposite
+ * keys, a square gate (the larger axis all the way: a run at every angle), turns in steps of at
+ * most 30 degrees and a released direction held 60 ms (cassioKenji's measurements, PR #74 there).
+ * Classic layout: W/A/S/D move. */
+static double stick_deg(int x, int y) { return atan2((double)y,(double)x)*180.0/3.14159265358979323846; }
 static void test_keyboard_sticks(void) {
     static bool k[SDL_SCANCODE_COUNT];
     PadData d;
+    memset(&key_move_stick,0,sizeof(key_move_stick));
     memset(&d,0,sizeof(d)); d.left_x=d.left_y=d.right_x=d.right_y=128;
-    k[SDL_SCANCODE_A]=true; apply_keyboard(&d,k); assert(d.left_x==0);
-    k[SDL_SCANCODE_D]=true; apply_keyboard(&d,k); assert(d.left_x==255); /* D pressed last */
-    k[SDL_SCANCODE_A]=false; apply_keyboard(&d,k); k[SDL_SCANCODE_A]=true; apply_keyboard(&d,k);
-    assert(d.left_x==0); /* A pressed again last */
+    k[SDL_SCANCODE_A]=true; apply_keyboard(&d,k); assert(d.left_x==0 && d.left_y==128);
+    k[SDL_SCANCODE_D]=true; apply_keyboard(&d,k);
+    assert(d.left_x!=128 || d.left_y!=128); /* D pressed last: never a neutral stick on the way */
     k[SDL_SCANCODE_A]=k[SDL_SCANCODE_D]=false;
+    memset(&key_move_stick,0,sizeof(key_move_stick));
     memset(&d,0,sizeof(d)); d.left_x=d.left_y=d.right_x=d.right_y=128;
     k[SDL_SCANCODE_W]=k[SDL_SCANCODE_D]=true; apply_keyboard(&d,k);
-    assert(d.left_x==218 && d.left_y==38); /* full deflection on the circle, not the corner */
+    assert(d.left_x==255 && d.left_y==0); /* the square's corner: the larger axis all the way */
     k[SDL_SCANCODE_W]=k[SDL_SCANCODE_D]=false;
+    memset(&key_move_stick,0,sizeof(key_move_stick));
+
+    /* Timed: a 60 Hz read; A then D turns through forward, at most 30 degrees a read, the larger
+     * axis always 127, and arrives. */
+    KeyStickState s; memset(&s,0,sizeof(s));
+    uint64_t t=1000000; int x, y, reads=0;
+    assert(key_stick_step(&s,-1,0,t,&x,&y) && x==-127 && y==0);
+    double prev=stick_deg(x,y);
+    do {
+        t+=16667;
+        assert(key_stick_step(&s,1,0,t,&x,&y));
+        const double now=stick_deg(x,y);
+        double turn=fabs(fmod(now-prev+540.0,360.0)-180.0);
+        assert(turn<=30.5);
+        assert((abs(x)==127 || abs(y)==127));
+        if (y) assert(y<0); /* the half turn goes through forward (W), not back */
+        prev=now; ++reads;
+    } while ((x!=127 || y!=0) && reads<40);
+    assert(x==127 && y==0 && reads>=6 && reads<=20);
+    /* A long gap between reads still turns at most 30 degrees. */
+    t+=200000;
+    assert(key_stick_step(&s,0,-1,t,&x,&y));
+    assert(fabs(fmod(stick_deg(x,y)+540.0,360.0)-180.0)<=30.5+0.0); /* from 0 deg by 30 */
+    /* Released: the last direction is held 60 ms, then neutral. */
+    int hx=x, hy=y;
+    assert(key_stick_step(&s,0,0,t+=1000,&x,&y) && x==hx && y==hy);
+    assert(key_stick_step(&s,0,0,t+=40000,&x,&y) && x==hx && y==hy);
+    assert(!key_stick_step(&s,0,0,t+=30000,&x,&y));
+    /* Pressed again after neutral: the new direction at once. */
+    assert(key_stick_step(&s,0,1,t+=16667,&x,&y) && x==0 && y==127);
+    /* A sideways half turn (W <-> S ... here S -> W) goes through the right. */
+    t+=16667; assert(key_stick_step(&s,0,-1,t,&x,&y) && x>0);
 }
 
 /* Xbox pads: Back + d-pad left/right clicks the touchpad halves (after Supermedo/bloodborne_pc
