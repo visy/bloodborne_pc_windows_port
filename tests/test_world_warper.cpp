@@ -131,12 +131,12 @@ int main() {
     // Content seen in earlier sessions.
     {
         const Progress p = ParseProgress("todorig 6\nkind 2100\nkind 2100\nremo 21000010\ntod 4 2402950 12\n"
-                                         "tod 7 2102950\neffects\nkind x\n");
+                                         "tod 7 2102950\neffects\nkind x\nfx 2160\n");
         CHECK(p.tod_orig == 6);
         CHECK(p.kinds.size() == 1 && p.kinds.count(2100));
         CHECK(p.remos.count(21000010));
         CHECK(p.tod_done.count(std::uint64_t(4) << 32 | 2402950) && p.tod_done.count(std::uint64_t(7) << 32 | 2102950));
-        CHECK(p.effects_done);
+        CHECK(p.effects_done && p.fx.count(2160));
         CHECK(p.done.empty() && p.starts.empty());
         CHECK(ParseProgress("").tod_orig == -1);
     }
@@ -164,18 +164,22 @@ int main() {
         for (std::size_t n = 0; n < route.size(); ++n) {
             const Gear g = GearFor(n);
             armor.insert(g.armor);
-            for (int k = 0; k < 3; ++k) right.insert(g.right[k]), left.insert(g.left[k]);
+            right.insert(g.right), left.insert(g.left);
         }
         CHECK(armor.size() == std::size(kWarperArmorSets));
         CHECK(right.size() == std::size(kWarperRightWeapons));
         CHECK(left.size() == std::size(kWarperLeftWeapons));
-        CHECK(GearFor(0).right[0] == kWarperRightWeapons[0] && GearFor(1).right[0] == kWarperRightWeapons[3]);
+        CHECK(GearFor(0).right == kWarperRightWeapons[0] && GearFor(1).right == kWarperRightWeapons[1]);
+        CHECK(Seconds(LoadoutSteps(false)) < Seconds(LoadoutSteps(true)));
+        for (const auto& st : GearSteps()) CHECK(st.buttons != kRight && st.buttons != kLeft);
         std::printf("gear: %zu armor sets, %zu right-hand and %zu left-hand weapons\n", armor.size(), right.size(),
                     left.size());
     }
     CHECK(kSlotRight1 == 1 && kSlotHead == 8 && kRecEquipId - kRecEquipHandle == 0x40);
     CHECK(!ItemEffectAllowed(100, 2100) && !ItemEffectAllowed(200, 9000) && !ItemEffectAllowed(1, 1));
     CHECK(ItemEffectAllowed(1500, 2160) && !ItemEffectAllowed(5, 9025));
+    CHECK(!ItemEffectAllowed(1220, 150) && !ItemEffectAllowed(1101, 230) && !ItemEffectAllowed(1601, 3401));
+    CHECK(ItemEffectAllowed(1600, 3400));
     CHECK(Seconds(GearSteps()) < 45.0f);
 
     if (g_failures) {

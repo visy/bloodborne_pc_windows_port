@@ -339,6 +339,7 @@ std::vector<int> ItemEffects() {
     for (const auto& [id, row] : GameParamRows("EquipParamGoods", "EQUIP_PARAM_GOODS_ST")) {
         std::int32_t ref = -1;
         if (!SafeGet(row + 0x0, &ref) || ref <= 0 || !ItemEffectAllowed(id, static_cast<u32>(ref))) continue;
+        if (g.progress.fx.count(static_cast<u32>(ref))) continue;  // shown (or crashed in) before
         if (GameParamRow("SpEffectParam", "SP_EFFECT_PARAM_ST", static_cast<u32>(ref))) out.insert(ref);
     }
     return std::vector<int>(out.begin(), out.end());
@@ -360,7 +361,7 @@ std::string Coverage() {
     char b[400];
     std::snprintf(b, sizeof b, "%zu areas, %zu maps, %zu enemy kinds (%zu kills, %zu bosses fought), %zu cutscenes, "
                   "%zu item effects, %zu time-of-day rows", g.progress.done.size(), g.maps_seen.size(),
-                  g.progress.kinds.size(), g.kills, g.bosses, g.progress.remos.size(), g.effects_applied, g.tod_rows);
+                  g.progress.kinds.size(), g.kills, g.bosses, g.progress.remos.size(), g.progress.fx.size(), g.tod_rows);
     return b;
 }
 
@@ -482,19 +483,17 @@ u32 EquippedId(int slot) {
 void PutOnGear(std::size_t n) {
     const Gear gear = GearFor(n);
     int ok = 0, all = 0;
-    for (int k = 0; k < 3; ++k) {
-        ok += EquipItem(kSlotRight1 + 2 * k, kItemWeapon, gear.right[k]) ? 1 : 0;
-        ok += EquipItem(kSlotLeft1 + 2 * k, kItemWeapon, gear.left[k]) ? 1 : 0;
-        all += 2;
-    }
+    ok += EquipItem(kSlotRight1, kItemWeapon, gear.right) ? 1 : 0;
+    ok += EquipItem(kSlotLeft1, kItemWeapon, gear.left) ? 1 : 0;
+    all += 2;
     for (int k = 0; k < 4; ++k) {
         const u32 piece = gear.armor + 1000u * static_cast<u32>(k);
         if (!GameParamRow("EquipParamProtector", "EQUIP_PARAM_PROTECTOR_ST", piece)) continue;
         ++all;
         ok += EquipItem(kSlotHead + k, kItemProtector, piece) ? 1 : 0;
     }
-    Log("gear %zu: armor set %u, right %u %u %u, left %u %u %u: %d of %d slots set", n, gear.armor, gear.right[0],
-        gear.right[1], gear.right[2], gear.left[0], gear.left[1], gear.left[2], ok, all);
+    Log("gear %zu: armor set %u, right %u, left %u: %d of %d slots set", n, gear.armor, gear.right, gear.left, ok,
+        all);
 }
 
 /// The next enemy to fight: a living one of a kind (model) not seen in the run yet, nearest the
@@ -653,7 +652,7 @@ std::vector<PadStep> RoutineSteps(const GameSnapshot& s) {
     }
     if (!g.loadout_done) {
         g.loadout_done = true;
-        const auto lo = LoadoutSteps();
+        const auto lo = LoadoutSteps(!g.opt.gear);  // no switch into a changed slot (Gear)
         v.insert(v.end(), lo.begin(), lo.end());
     }
     if (g.opt.gear) {
@@ -863,9 +862,13 @@ void TickImpl(double now) {
                 if (now < g.effect_at) return;
                 if (g.effect_i == 0) {
                     g.c_step = Counters::Now();
-                    Log("item effects: %zu SpEffects of the goods", g.effects.size());
+                    Log("item effects: %zu SpEffects of the goods (%zu shown in earlier sessions)", g.effects.size(),
+                        g.progress.fx.size());
                 }
-                if (ApplyEffect(s.player, g.effects[g.effect_i])) ++g.effects_applied;
+                const int fx = g.effects[g.effect_i];
+                AppendState("fx " + std::to_string(fx));  // first: a crash in it is not repeated
+                g.progress.fx.insert(static_cast<u32>(fx));
+                if (ApplyEffect(s.player, fx)) ++g.effects_applied;
                 ++g.effect_i;
                 g.effect_at = now + 1.2;
                 UpdateStatus("item effects");

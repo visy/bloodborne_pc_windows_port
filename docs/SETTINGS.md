@@ -51,16 +51,31 @@ launch_gui.bat
 
 *Advanced / Debug > Shader cache builder > Build shader cache (world warper)...* fills the shader cache by playing the game for you, so later play stutters less in places you have not been yet:
 
-- **What it does**: the game starts in a test mode (`BB_WORLD_WARPER=tour`), continues your save on the title screen and then travels through every ReturnPointParam row with a spot - the Hunter's Dream, all 44 lamps and 23 boss-arena / event respawn points (68 places in all; the Chalice Dungeons are left out) - with the game's own lamp warp and one normal loading screen each. In each place it turns the camera all the way round, walks a loop, fights and kills the two nearest enemies (within 60 m), and in the first place of each area uses the weapon in both forms (R1, R2, charged R2, firearm, transform, dodge); once per run it switches through the other weapons and quick items. Your HP is kept full meanwhile.
+- **What it does**: the game starts in a test mode (`BB_WORLD_WARPER=tour`), continues your save on the title screen and then travels through every ReturnPointParam row with a spot - the Hunter's Dream, all 44 lamps and 23 boss-arena / event respawn points (68 places in all, the Old Hunters DLC included; the Chalice Dungeons only with the `chalice` option and a save that has a dungeon) - with the game's own lamp warp and one normal loading screen each. Before each warp it puts on the next armor set and three right-hand and three left-hand weapons (every set and every weapon model comes round once in a tour), and in each place it turns the camera all the way round, walks a loop, uses those weapons (both forms, the firearms, switching through all six), plays the place's cutscenes once, fights every kind of enemy loaded there that the run has not met yet (regular ones are killed, bosses are fought for a while and left alive), and in the first place shows every item's effect (the Blood Vial, papers, pellets... on your character). Then it visits each Yharnam map again at the other times of day (day, evening, night, Blood Moon) and puts the save copy's own time back. Your HP is kept full meanwhile.
 - **Your saves are never changed**: it plays on a **copy** of your save folder (`user\world_warper\savedata`, made when you start; the warper moves the copy's character, uses its items and changes its last lamp). The shader cache it fills is your own (`user\cache`).
 - **Progress**: a panel at the top of the game window (place n / 68, the area, what it does, the pipelines new to the cache here and in all) and a line per place in the launcher log (`World warper: [12/68] Old Yharnam, row 2302950 (m23_00_00_00): +N new pipelines (in the world: enemy ..., look ...)`).
 - **Stop and resume**: *Stop* ends it; pressing the button again asks whether to continue where it stopped (`user\world_warper\world_warper_state.txt`) or start over. If the game crashes the launcher starts it again and it continues; a place it crashed in twice is skipped.
 - **The result**: at the end the game closes and the launcher exports the shader cache as one `.zip` (the *Export shader cache* format) where you chose when starting. It is made from the game's shaders: use it yourself or share it only with people who own the game. The project never publishes such caches.
-- It takes about an hour (measured: 56 places in 50 minutes on a test PC, plus the loading screens). Leave the window alone meanwhile; mouse, keyboard and pad input would mix with the warper's own.
+- It takes two to three hours (a full run on the test PC: see below). Leave the window alone meanwhile; mouse, keyboard and pad input would mix with the warper's own.
 
 Measured (test PC, 30 FPS test settings, an empty cache): the tour made 425 pipelines new to the cache in 56 places (most from enemies, 154, and the camera sweeps, 114; the rest on the loading screens and while walking and attacking). A replay of the same walk through two places before and after the tour in one session: 61 -> 1 new pipelines, 53 -> 1 draws skipped for a pipeline still compiling, 342 -> 2 ms of compiling on the GPU thread. Long frames right after a loading screen (texture and map streaming) are not shader stutter and stay; the log counts both (`hitches over 50 ms`, and those with a pipeline made in the frame).
 
-Test aids: `BB_WORLD_WARPER=tour|replay|measure` with `,lamps=A+B`, `,replay=A+B`, `,max=N`, `,noact`, `,noenemy`, `,nokill`; `BB_WORLD_WARPER_STATE=<file>` (see [party/DEBUG_SWITCHES.md](party/DEBUG_SWITCHES.md)). `measure` runs the replay, the tour, and the replay again in one session and logs `stutter check: replay before / after the tour`.
+Test aids: `BB_WORLD_WARPER=tour|replay|measure` with `,lamps=A+B`, `,replay=A+B`, `,max=N`, `,noact`, `,noenemy`, `,nokill`, `,enemies=N`, `,chalice`, `,notod`, `,nogear`, `,noremo`, `,nobosses`, `,noitems`, `,dump`; `BB_WORLD_WARPER_STATE=<file>` (see [party/DEBUG_SWITCHES.md](party/DEBUG_SWITCHES.md)). `measure` runs the replay, the tour, and the replay again in one session and logs `stutter check: replay before / after the tour`.
+
+### Shader caches: what they are and what can be shared
+
+The port keeps its shader cache in `user\cache\CUSA03173\` (`BB_USER_DIR` / `BB_GPU_USER_DIR` move it):
+
+| Files | What | Works on |
+|---|---|---|
+| `*.key` | the pipelines the game asked for (shaders + render state) | every GPU |
+| `*.src` | the game's own shader code, as the port saw it | every GPU |
+| `*.meta`, `*.spv`, `profile.bin` | the shaders translated for this GPU's features (`profile.bin`) | the same GPU profile only; elsewhere the game translates them again from the `.src` files before the intro |
+| `vk_pipe_cache_VVVV_DDDD_XXXXXXXX.vkp` | the driver's own compiled pipelines (VkPipelineCache), named by vendor, device and driver version | the same GPU, device and driver only (its header is checked; another one is ignored) |
+
+The GPU driver keeps a cache of its own as well (NVIDIA: `%LOCALAPPDATA%\NVIDIA\DXCache` / `GLCache`); that one is per PC and cannot be shared.
+
+**Sharing**: *Export shader cache* writes `.key`, `.src`, `.meta`, `.spv` and `profile.bin`. `python tools/cache_bundle.py <cache root> out.zip` makes a bundle for other PCs: the GPU-independent part at the top, this GPU's part (with the `.vkp`) in `gpu\<vendor>_<vendor id>-<device id>_driver_<version>\`, and a README. To use a shared `.zip`: drop it into `user\cache_import\` (the launcher merges it at the next launch and renames it `.zip.imported`) or use *Import shader cache...*. Nothing already there is overwritten; the GPU part is taken only when its `profile.bin` matches yours (or you have no cache yet: the game then checks it itself). Shader caches are made from the game's own shaders: share them only privately; the project never commits or publishes them.
 
 ### Command line
 Run `run.bat` pointing to your game directory:
