@@ -284,6 +284,7 @@ bool EventRate::Take(int slot, double now) {
 #include "game_state.h"
 #include "party_director.h"
 #include "party_guestsvc.h"
+#include "party_hud.h"
 #include "party_link.h"
 #include "party_status.h"
 #include "seamless_rules.h"
@@ -700,12 +701,15 @@ void DriveSubtitle(double now) {
     if (!g_remote.native || !g_remote.msg) return;
     if (LocalTalkPlaying()) return; // the local game's own talk wins
     const u64 ui = MessageUi();
-    if (DialogUp(ui)) {
+    // D8 (pard4): also under the listener's own full-screen menu (the Doll's level-up screen, the
+    // inventory: party_hud GameMenu, the menu flow +0xa88), as under a dialog.
+    const bool menu = party::hud::GameMenu();
+    if (DialogUp(ui) || menu) {
         if (g_remote.wrote) {
             const std::uint32_t zero = 0;
             SafeWrite(ui + 0x280, &zero, 4);
             g_remote.wrote = false;
-            Log("game subtitle held: a game dialog is up");
+            Log("game subtitle held: %s is up", menu ? "the listener's full-screen menu" : "a game dialog");
         }
         return;
     }
@@ -967,6 +971,14 @@ void Tick(const GameSnapshot& s, PartyLink* link) {
 
 Caption CurrentCaption() {
     if (g_dialog_up.load()) return {}; // hidden under a game dialog
+    if (party::hud::GameMenu()) {      // D8 (pard4): and under the listener's own full-screen menu
+        static std::atomic<std::int64_t> logged_until{0};
+        std::lock_guard<std::mutex> lk(g_cap_mu);
+        if (g_cap.until_ms > NowMs() && logged_until.exchange(g_cap.until_ms) != g_cap.until_ms) {
+            Log("caption held: the listener's full-screen menu is up (level-up screen, inventory ...)");
+        }
+        return {};
+    }
     std::lock_guard<std::mutex> lk(g_cap_mu);
     return g_cap;
 }
