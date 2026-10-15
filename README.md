@@ -17,9 +17,9 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 
 | Area | Progress | |
 |---|---|--:|
-| **Overall** | `██████████████████░░` | 92% |
+| **Overall** | `███████████████████░` | 93% |
 | Session & joining | `███████████████████░` | 94% |
-| World & travel | `██████████████████░░` | 92% |
+| World & travel | `███████████████████░` | 95% |
 | Death & respawn | `███████████████████░` | 95% |
 | Progress (anyone can progress) | `██████████████████░░` | 89% |
 | Services & UI | `███████████████████░` | 97% |
@@ -144,7 +144,9 @@ before anyone is in the game):
   anyone home.
 - **No multiplayer walls.** The fog walls that keep phantoms near the host are gone; the party can
   split up and explore. There is no leash: a guest can walk far from the host (checked at 140 m)
-  and stays in the party.
+  and stays in the party, and host and guest can each walk on into another part of the city (the
+  Cathedral Ward and Central Yharnam are streamed separately), fight, use items and die there for
+  minutes while the other plays elsewhere: nobody is pulled back.
 - **Anyone can go through a boss fog first**, a boss's first fight included: the fight starts for
   everyone and the others follow through the fog. When a guest starts a first fight, the host's
   character steps to the arena entrance for a moment and back, and the intro cutscene plays on
@@ -168,7 +170,9 @@ before anyone is in the game):
 - **Apart and back together.** While players are in different maps each sees only the others in
   its own map; meeting again shows them at once, without a loading screen. If the host dies while
   you are in another area you play on where you are (no loading screen for you); if you die there
-  you get up at your own lamp.
+  you get up at your own lamp. A guest who joined from the title stays put too when the host travels
+  alone; enemies it killed while the host was away are back once the host returns (the host's world
+  counts, as after a reload).
 - **Everyone can use lamps.** Vanilla disables lamps during co-op; here they work for everyone.
   A lamp lit by anyone is lit for the party.
 - **Resting resets the world for the party.** Enemies respawn; everyone's HP, vials and bullets

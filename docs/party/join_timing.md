@@ -596,3 +596,24 @@ Pitfalls found live and fixed the same day:
   after the arrival.
 * A direct summon refused only to wait (A11: boss, cutscene) no longer makes the next attempt
   gather with a loading screen first.
+
+## 2026-10-15 (parab2): the bell sign timer below 2 s, live (A4)
+
+The direct summon hands the guest's game the host's room as soon as it is there (0.25 s after the
+ring), but the game takes it only into its bell's own passive summon entry, which the sign sender
+creates when its first-sign timer fires (2.0 s, `Party: Fast bell sign`). So the timer, not the
+transport, is most of request -> client (3.0 s). Test switch `BB_PARTY_SIGN_DELAY=S` rewrites the
+patched float at the 12 sites; below 2.0 s the host's sign board (`from_api` sign_get) holds a sign
+back until 2.0 s after the ring, so the sign path keeps the timing it was proven with.
+
+| Run (one session each, guest_home x7: leave, ring, join again; same map) | Joins | Ring -> client (6) |
+|---|---|---|
+| a4ds: direct summon, timer 0.5 s | 4 of 5 in 1.5-1.6 s (`joined the host's room (1.5 s after the request)`); the 5th stalled after client (6): no host-world load for 6 s (the test's next leave hit it in that state, the guest then sat in flow 2 for 55 s) | 1.5 s (was 3.0 s) |
+| a4ds2: the same with 12 s between joins (the host's game long out of the last session) | 1 of 2: the 2nd stalled again after client (6) (flow 1 -> 2, no load for 12 s), then three attempts failed (`the bell's own summon entry did not come up, not even after a re-ring`) | 1.9-2.4 s |
+| a4sp: sign path only (`BB_PARTY_DIRECT_SUMMON=0`), timer 0.5 s + the board hold | 7 of 7 (`1 too new: shown 1500 ms after it went up`, then `summons Hunter1 into room 100N` 1.9 s later) | 3.7-4.3 s (as with the 2 s timer) |
+
+The stall is the symptom of 2026-10-11's 0.5 s sign-path runs ("the guest stopped after client
+(6)"), now without the host's sign polling in the loop: a join that reaches the guest's game well
+before ~2 s after its ring can stall; delivered >= 2 s after it, every live join so far went
+through. The race is on the guest's side (its bell is "barely up"), not the sign board's. The
+default stays 2.0 s; the switch and the board hold stay for the RE of the guest's flow state 1.

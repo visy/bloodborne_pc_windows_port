@@ -183,6 +183,9 @@ int LocalHp();
 double LastMemberDownAt();
 /// The clock of LastMemberDownAt.
 double NowSeconds();
+/// Host: when it last sent its room to a title joiner (NowSeconds clock; -1e9: never). Test aid
+/// BB_PARTY_STORY_TEST=serve:<remo> (A11's admitted-just-before-a-cutscene race).
+double TitleRoomServedAt();
 /// Host, main thread (batch 6): hold its lamp travel while a member it just served a room joins.
 /// `who` gets a short reason when held.
 bool HostTravelHeldForJoin(std::string* who);

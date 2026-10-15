@@ -23,6 +23,7 @@
 #include "party_split.h"
 #include "party_travel.h"
 #include "party_worldact.h"
+#include "../net/from_api.h"
 
 #include <atomic>
 #include <chrono>
@@ -669,6 +670,48 @@ double Seconds(Clock::time_point a, Clock::time_point b) {
     return std::chrono::duration<double>(b - a).count();
 }
 
+// A4: the bell sign sender's first-sign timer. The XML patch "Party: Fast bell sign" writes 2.0 s
+// (5.0 in 1.09). With the direct summon the guest's game needs its bell's own passive summon entry,
+// which comes up only when that timer fires, so the timer paces every join after the room is there.
+// BB_PARTY_SIGN_DELAY=S (0.1 .. 5.0 s) rewrites the patched float; the default stays 2.0 s: live
+// (parab2 a4ds, 2026-10-15) 0.5 s cut the direct summon's request -> client from 3.0 to 1.5 s in 4
+// of 5 joins, but the 5th stalled after client (6) (no host-world load for 6 s) - the symptom of the
+// 0.5 s sign-path runs of 2026-10-11, so the race is in the guest's join right after its ring, not in
+// the host's sign polling. Below 2.0 s the host's sign board holds a sign back until it is (2.0 - S) s
+// old (from_api sign_get), so the sign path keeps its proven 2 s from the ring.
+void ApplySignDelay() {
+    const char* env = std::getenv("BB_PARTY_SIGN_DELAY");
+    if (!env || !env[0]) {
+        return;  // 2.0 s, the XML patch
+    }
+    const float secs = std::strtof(env, nullptr);
+    if (!(secs >= 0.1f && secs <= 5.0f)) {
+        Log("bell sign timer: BB_PARTY_SIGN_DELAY='%s' is not 0.1 .. 5.0; left as patched", env);
+        return;
+    }
+    if (secs == 2.0f) {
+        Log("bell sign timer: 2.0 s (the XML patch)");
+        return;
+    }
+    u8 want[4];
+    std::memcpy(want, &secs, 4);
+    int done = 0, sites = 0;
+    for (const Site& s : kSites) {
+        if (std::strcmp(s.patch, "Party: Fast bell sign") != 0) {
+            continue;
+        }
+        ++sites;
+        // c7 4? 28 <imm32>: the float is the last 4 bytes; only over the patch's own 2.0 s.
+        if (PatchBytes(s.off + 3, {0x00, 0x00, 0x00, 0x40}, {want[0], want[1], want[2], want[3]}, "Party: bell sign timer")) {
+            ++done;
+        }
+    }
+    const long long hold_ms = secs < 2.0f ? static_cast<long long>((2.0f - secs) * 1000.0f + 0.5f) : 0;
+    bbnet::party::FromApi::instance().set_min_sign_age_ms(hold_ms);
+    Log("bell sign timer: %.2f s at %d of %d sites (BB_PARTY_SIGN_DELAY); the host shows a sign %lld ms after it went up",
+        double(secs), done, sites, hold_ms);
+}
+
 } // namespace
 
 bool SeamlessRequested() {
@@ -692,6 +735,7 @@ void SeamlessRulesInit() {
     st.init = true;
     st.start = Clock::now();
     ReportSites();
+    ApplySignDelay();
     for (ParamRule& r : g_param_rules) {
         r.enabled = r.opt_in ? EnvOn(r.env_off) : !EnvOff(r.env_off);
         if (!r.enabled) {

@@ -141,6 +141,8 @@ struct TravelStep {
         HostObj, GuestObj, HostChr, GuestChr, // stand at a map object / character: ENTITY[:DIST[:ANGLE]]
         HostUse, GuestUse, // use goods ID as the item does (test aid): its behaviour's SpEffect on the own chr
         GuestStick, // walk by the left stick (the approach driver) to X:Z[:R[:STEPS]]: a real walk, no warp
+        HostStick,  // the same on the host
+        HostRoute, GuestRoute, // a stick walk along waypoints X:Z[:R]/...: a real path through the level (B1)
         GuestHome   // the guest's own leave (LeaveGameSession: home, the link stays; its bell rings again)
     } kind = HostWarp;
     std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30; HostKill: the entity id
@@ -154,6 +156,12 @@ struct TravelStep {
     int min_join = 0;     // "#N": not before this player's Nth join
     bool alive = false;   // "!" on a press step: waits as a step with the own chr (alive, world up)
 };
+
+// host_route / guest_route (B1): a waypoint counts as reached within this many m; still blocked after
+// this many side-step slides, the walker hops (chr warp) onto the waypoint when it is this close.
+constexpr float kRouteReach = 2.0f;
+constexpr int kRouteSlidesBeforeHop = 2;
+constexpr double kRouteHopMax = 6.0;
 
 struct Test {
     bool on = false;
@@ -180,6 +188,16 @@ struct Test {
     std::uint32_t ap_button = 0;
     int ap_steps = 0, ap_phase = 0; // 0 idle, 1 moving, 2 settling, 3 arrived, 4 pressing
     int ap_max = 40;                // steps before it gives up (guest_stick: its STEPS)
+    // host_route / guest_route: the waypoints {x, z, r}; the approach target is route[route_i].
+    std::vector<std::array<float, 3>> route;
+    std::size_t route_i = 0;
+    int route_slides = 0;           // side steps taken to get off a wall
+    int route_hops = 0;             // short chr warps onto the next waypoint (blocked after the side steps)
+    int ap_slide = 0;               // side steps left in the current slide (sign = side)
+    int ap_slides_here = 0;         // slides tried for the current waypoint
+    std::uint32_t route_block = 0;  // the own chr's stage record (+0x3F8) last logged
+    Clock::time_point route_started{};
+    bool route_god = false;         // the route made the chr invincible (cleared at its end)
     int ap_still = 0;               // steps in a row without moving (blocked: gives up after 8)
     double ap_angle = 0;
     float ap_from[2] = {0, 0};
@@ -195,6 +213,7 @@ struct Test {
     bool st_seq_on = false;
     std::string st_last_texts;
     Clock::time_point st_at{};
+    bool god = false;     // god: the own chr kept invincible (test aid)
     bool log_pos = false; // log_pos: the player's area and position (FrpgNetMan +0xa7c / +0xaac) every 3 s
     Clock::time_point pos_at{};
     const char* ring = nullptr; // the event to raise once
@@ -1101,6 +1120,9 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::HostSkipRemo: return "host_skipremo";
     case TravelStep::GuestSkipRemo: return "guest_skipremo";
     case TravelStep::GuestStick: return "guest_stick";
+    case TravelStep::HostStick: return "host_stick";
+    case TravelStep::HostRoute: return "host_route";
+    case TravelStep::GuestRoute: return "guest_route";
     case TravelStep::HostUse: return "host_use";
     case TravelStep::GuestUse: return "guest_use";
     case TravelStep::GuestHome: return "guest_home";
@@ -1505,6 +1527,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                 step.kind == TravelStep::GuestLamp || step.kind == TravelStep::GuestSkipRemo || step.kind == TravelStep::GuestOutage || step.kind == TravelStep::GuestKill ||
                 step.kind == TravelStep::GuestObj || step.kind == TravelStep::GuestChr ||
                 step.kind == TravelStep::GuestStick || step.kind == TravelStep::GuestUse ||
+                step.kind == TravelStep::GuestRoute ||
                 step.kind == TravelStep::GuestHome || step.kind == TravelStep::GuestFlag ||
                 step.kind == TravelStep::GuestLastLamp) == (role == PartyRole::Guest);
     };
@@ -1523,7 +1546,10 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         t.steady_at = now;
     }
     // A guest_stick walk holds the chain: the next step's delay counts from the end of the walk.
-    if (t.ran && t.last_kind == TravelStep::GuestStick && t.approach && !t.approach_done) {
+    if (t.ran &&
+        (t.last_kind == TravelStep::GuestStick || t.last_kind == TravelStep::HostStick ||
+         t.last_kind == TravelStep::HostRoute || t.last_kind == TravelStep::GuestRoute) &&
+        t.approach && !t.approach_done) {
         t.step_at = now;
         return;
     }
@@ -1538,7 +1564,9 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
          next_kind == TravelStep::HostOutage || next_kind == TravelStep::GuestOutage ||
          next_kind == TravelStep::HostLastLamp || next_kind == TravelStep::GuestLastLamp || next_kind == TravelStep::HostLamp || next_kind == TravelStep::HostObj ||
          next_kind == TravelStep::GuestObj || next_kind == TravelStep::HostChr || next_kind == TravelStep::GuestChr ||
-         next_kind == TravelStep::GuestStick ||
+         next_kind == TravelStep::HostUse || next_kind == TravelStep::GuestUse ||
+         next_kind == TravelStep::GuestStick || next_kind == TravelStep::HostStick ||
+         next_kind == TravelStep::HostRoute || next_kind == TravelStep::GuestRoute ||
          next_kind == TravelStep::HostMark || next_kind == TravelStep::GuestMark || !t.steps[t.next_step].map.empty())) {
         if (!steady || (!t.ran && !t.armed) || t.joins < t.steps[t.next_step].min_join) {
             return; // as the first step of a chain it still waits for the join
@@ -1744,7 +1772,43 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         if (!obj) t.chr_target = ok ? std::uint32_t(entity) : 0u;
         Log("test: %s %d (%.1f m, %.0f deg): %s", TravelStepName(step.kind), entity, double(dist), double(angle),
             ok ? what.c_str() : "FAILED: not loaded");
-    } else if (step.kind == TravelStep::GuestStick) {
+    } else if (step.kind == TravelStep::HostRoute || step.kind == TravelStep::GuestRoute) {
+        std::vector<std::array<float, 3>> route;
+        if (ParseRouteArgs(step.args, &route)) {
+            Test& tt = t;
+            tt.route = route;
+            tt.route_i = 0;
+            tt.route_slides = 0;
+            tt.route_block = 0;
+            tt.route_started = now;
+            tt.approach = true;
+            tt.approach_done = false;
+            tt.ap_x = route[0][0];
+            tt.ap_z = route[0][2];
+            tt.ap_r = kRouteReach;
+            tt.route_hops = 0;
+            tt.ap_max = 60;
+            tt.ap_button = 0;
+            tt.ap_steps = 0;
+            tt.ap_still = 0;
+            tt.ap_slide = 0;
+            tt.ap_slides_here = 0;
+            tt.ap_phase = 0;
+            tt.ap_at = now;
+            // Invincible while it walks (EnableInvincible, chr +0x1E1 bit 14, as a11_move): enemies on the
+            // way must not end the walk; fights and deaths are the steps after it.
+            std::uint32_t f = 0;
+            if (s.player && SafeRead(s.player + 0x1e1, &f, 4)) {
+                tt.route_god = !(f & (1u << 14));
+                f |= 1u << 14;
+                SafeWrite(s.player + 0x1e1, &f, 4);
+            }
+            Log("test: %s: %zu waypoint(s), first (%.2f, %.2f) (%s)", TravelStepName(step.kind), route.size(),
+                double(route[0][0]), double(route[0][2]), DescribeHere(s).c_str());
+        } else {
+            Log("test: %s: not X:Z[:R]/X:Z[:R]/...", TravelStepName(step.kind));
+        }
+    } else if (step.kind == TravelStep::GuestStick || step.kind == TravelStep::HostStick) {
         float x = 0, z = 0, r = 1.0f;
         int steps = 40;
         int entity = 0;
@@ -1756,12 +1820,13 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             float p[3] = {};
             ok = worldact::ObjectPoint(entity, odist, oangle, p);
             x = p[0], z = p[2];
-            Log("test: guest_stick: object %d %s", entity, ok ? "found" : "NOT loaded");
+            Log("test: %s: object %d %s", TravelStepName(step.kind), entity, ok ? "found" : "NOT loaded");
         } else {
             ok = ParseStickArgs(step.args, &x, &z, &r, &steps);
         }
         if (ok) {
             Test& tt = t;
+            tt.route.clear();
             tt.approach = true;
             tt.approach_done = false;
             tt.ap_x = x;
@@ -1771,13 +1836,15 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             tt.ap_button = 0;
             tt.ap_steps = 0;
             tt.ap_still = 0;
+            tt.ap_slide = 0;
+            tt.ap_slides_here = 0;
             tt.ap_phase = 0;
             tt.ap_at = now;
-            Log("test: guest_stick: walk to (%.2f, %.2f) within %.1f m, at most %d steps (%s)", double(x), double(z),
-                double(r), steps, DescribeHere(s).c_str());
+            Log("test: %s: walk to (%.2f, %.2f) within %.1f m, at most %d steps (%s)", TravelStepName(step.kind),
+                double(x), double(z), double(r), steps, DescribeHere(s).c_str());
         } else {
-            Log("test: guest_stick '%s': not X:Z[:R[:STEPS]] / obj:ENTITY:DIST:ANGLE[:R[:STEPS]], or not loaded",
-                step.args.c_str());
+            Log("test: %s '%s': not X:Z[:R[:STEPS]] / obj:ENTITY:DIST:ANGLE[:R[:STEPS]], or not loaded",
+                TravelStepName(step.kind), step.args.c_str());
         }
     } else if (step.kind == TravelStep::HostSkipRemo || step.kind == TravelStep::GuestSkipRemo) {
         // The game's own cutscene skip request (what the skip input does; in a session it is this
@@ -2109,6 +2176,16 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         const bool ok = WritePlayerInsight(t.insight);
         Log("test: Insight %d -> %d %s", before, t.insight, ok ? "written" : "NOT written (no player record)");
     }
+    // god: this player's chr stays invincible (chr +0x1E1 bit 14, as a11_move), e.g. a scripted
+    // event walk through an area full of enemies (B6 live triggers).
+    if (t.god && s.world_up && !s.loading && s.player) {
+        std::uint32_t f = 0;
+        if (SafeRead(s.player + 0x1e1, &f, 4) && !(f & (1u << 14))) {
+            f |= 1u << 14;
+            SafeWrite(s.player + 0x1e1, &f, 4);
+            Log("test: god: invincible (chr +0x1E1 bit 14)");
+        }
+    }
     if (t.log_pos && s.world_up && !s.loading && Seconds(t.pos_at, now) >= 1.0) {
         // Every second: the physics position (as DescribeHere; the map man's +0xAAC is the last
         // grounded / area position and goes stale after a re-created PlayerIns) and the area id.
@@ -2246,38 +2323,109 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             const double dist = std::sqrt(dx * dx + dz * dz);
             const double want = std::atan2(dx, dz);
             auto wrap = [](double a) { while (a > M_PI) a -= 2 * M_PI; while (a < -M_PI) a += 2 * M_PI; return a; };
+            const bool on_route = !t.route.empty();
+            if (on_route && s.player) {
+                // The stage record the K3 hook reacts to on a host: log every block change of the walk.
+                std::uint32_t blk = 0;
+                if (SafeRead(s.player + 0x3f8, &blk, sizeof blk) && blk != t.route_block) {
+                    Log("test: route: stage record %#x -> %#x at (%.1f, %.1f, %.1f), waypoint %zu/%zu, map 0x%08x",
+                        t.route_block, blk, double(pos[0]), double(pos[1]), double(pos[2]), t.route_i + 1, t.route.size(),
+                        area);
+                    t.route_block = blk;
+                }
+            }
             if (t.ap_phase == 1) { // a step ends: release, let it settle
                 WritePadFile("");
                 t.ap_phase = 2;
-                t.ap_at = now + std::chrono::milliseconds(300);
+                t.ap_at = now + std::chrono::milliseconds(on_route ? 150 : 300);
             } else if (t.ap_phase == 0 || t.ap_phase == 2) {
                 if (t.ap_phase == 2) {
                     const double mx = pos[0] - t.ap_from[0], mz = pos[2] - t.ap_from[1];
                     const bool moved = std::sqrt(mx * mx + mz * mz) > 0.05;
                     t.ap_still = moved ? 0 : t.ap_still + 1;
-                    if (moved) {
+                    if (moved && t.ap_slide == 0) {
                         // Camera-relative stick: correct the stick angle by how far the walk missed.
                         t.ap_angle = wrap(t.ap_angle + wrap(want - std::atan2(mx, mz)));
                     }
                 }
+                if (on_route && dist <= t.ap_r && t.route_i + 1 < t.route.size()) {
+                    // A waypoint reached: on to the next one, no stop.
+                    ++t.route_i;
+                    t.ap_x = t.route[t.route_i][0];
+                    t.ap_z = t.route[t.route_i][2];
+                    t.ap_r = kRouteReach;
+                    t.ap_steps = 0;
+                    t.ap_still = 0;
+                    t.ap_slide = 0;
+                    t.ap_slides_here = 0;
+                    t.ap_phase = 0;
+                    t.ap_at = now;
+                    if (t.route_i % 5 == 0) {
+                        Log("test: route: waypoint %zu/%zu, at (%.1f, %.1f, %.1f), %.0f s, %d side step(s), %d hop(s)",
+                            t.route_i, t.route.size(), double(pos[0]), double(pos[1]), double(pos[2]),
+                            Seconds(t.route_started, now), t.route_slides, t.route_hops);
+                    }
+                } else {
+                const std::array<float, 3>& wp = on_route ? t.route[t.route_i] : std::array<float, 3>{};
+                if (on_route && t.ap_still >= 3 && t.ap_slides_here >= kRouteSlidesBeforeHop && !std::isnan(wp[1]) &&
+                    dist <= kRouteHopMax && t.ap_slide == 0) {
+                    // Still blocked after the side steps (an enemy's body, a cart, a railing the
+                    // navmesh walks around): one short chr warp onto this waypoint (a navmesh face
+                    // of the route), counted and logged; then the stick walk goes on.
+                    const float to[3] = {wp[0], wp[1] + 0.3f, wp[2]};
+                    const bool ok = PutChr(s, to, static_cast<float>(want));
+                    ++t.route_hops;
+                    Log("test: route: HOP %d (%.1f m) to waypoint %zu/%zu (%.1f, %.1f, %.1f)%s", t.route_hops, dist,
+                        t.route_i + 1, t.route.size(), double(to[0]), double(to[1]), double(to[2]), ok ? "" : " FAILED");
+                    t.ap_still = 0;
+                    t.ap_slides_here = 0;
+                    t.ap_at = now + std::chrono::milliseconds(400);
+                    t.ap_phase = 0;
+                } else {
+                if (on_route && t.ap_still >= 3 && t.ap_slide == 0 && t.ap_slides_here < 6 && dist > t.ap_r) {
+                    // Against a wall: side steps (alternating sides) to slide along it, then on.
+                    t.ap_slide = (t.ap_slides_here % 2 == 0) ? 3 : -3;
+                    ++t.ap_slides_here;
+                    ++t.route_slides;
+                    t.ap_still = 0;
+                }
                 Log("test: approach: (%.2f, %.2f) -> (%.2f, %.2f): %.2f m, stick %.0f deg (step %d)", pos[0], pos[2],
                     t.ap_x, t.ap_z, dist, t.ap_angle * 180 / M_PI, t.ap_steps);
-                if (dist <= t.ap_r || t.ap_steps >= t.ap_max || t.ap_still >= 8) {
+                const bool blocked = on_route ? (t.ap_still >= 3 && t.ap_slides_here >= 6) : t.ap_still >= 8;
+                if (dist <= t.ap_r || t.ap_steps >= t.ap_max || blocked) {
                     t.ap_phase = 3;
                     t.ap_at = now + std::chrono::milliseconds(1200);
-                    Log("test: approach: %s at %.2f m", dist <= t.ap_r ? "arrived" : t.ap_still >= 8 ? "BLOCKED (8 steps without moving)" : "GAVE UP", dist);
+                    Log("test: approach: %s at %.2f m", dist <= t.ap_r ? "arrived" : blocked ? "BLOCKED (no way past)" : "GAVE UP", dist);
+                    if (on_route) {
+                        std::uint32_t f = 0;
+                        if (t.route_god && s.player && SafeRead(s.player + 0x1e1, &f, 4)) {
+                            f &= ~(1u << 14);
+                            SafeWrite(s.player + 0x1e1, &f, 4);
+                        }
+                        t.route_god = false;
+                        Log("test: route: %s at waypoint %zu/%zu (%.1f, %.1f, %.1f) after %.0f s, %d side step(s), %d hop(s)",
+                            dist <= t.ap_r ? "DONE" : "STOPPED", t.route_i + 1, t.route.size(), double(pos[0]),
+                            double(pos[1]), double(pos[2]), Seconds(t.route_started, now), t.route_slides, t.route_hops);
+                    }
                 } else {
                     ++t.ap_steps;
                     t.ap_from[0] = pos[0];
                     t.ap_from[1] = pos[2];
-                    const int lx = 128 + static_cast<int>(std::lround(127 * std::sin(t.ap_angle)));
-                    const int ly = 128 - static_cast<int>(std::lround(127 * std::cos(t.ap_angle)));
+                    double angle = t.ap_angle;
+                    if (t.ap_slide != 0) {
+                        angle += (t.ap_slide > 0 ? 1 : -1) * M_PI / 2;
+                        t.ap_slide += t.ap_slide > 0 ? -1 : 1;
+                    }
+                    const int lx = 128 + static_cast<int>(std::lround(127 * std::sin(angle)));
+                    const int ly = 128 - static_cast<int>(std::lround(127 * std::cos(angle)));
                     char tok[48];
                     std::snprintf(tok, sizeof tok, "lx=%d ly=%d", std::clamp(lx, 0, 255), std::clamp(ly, 0, 255));
                     WritePadFile(tok);
                     t.ap_phase = 1;
-                    const double secs = std::clamp(dist / 3.0, 0.12, 0.45);
+                    const double secs = on_route ? std::clamp(dist / 4.0, 0.12, 0.7) : std::clamp(dist / 3.0, 0.12, 0.45);
                     t.ap_at = now + std::chrono::milliseconds(static_cast<int>(secs * 1000));
+                }
+                }
                 }
             } else if (t.ap_phase == 3) { // arrived: the button
                 if (t.ap_button) {
@@ -2528,6 +2676,8 @@ void PartyDirector::ConfigureFromEnv() {
                     st.test.a11_entity = id;
                     st.test.a11_kill_after = after;
                 }
+            } else if (item == "god") {
+                st.test.god = true;
             } else if (item == "log_pos") {
                 st.test.log_pos = true;
             } else if (item.rfind("echoes=", 0) == 0) {
@@ -2646,6 +2796,8 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("host_chr=", 0) == 0 || item.rfind("guest_chr=", 0) == 0 ||
                        item.rfind("host_skipremo", 0) == 0 || item.rfind("guest_skipremo", 0) == 0 ||
                        item.rfind("guest_stick=", 0) == 0 || item.rfind("host_use=", 0) == 0 ||
+                       item.rfind("host_stick=", 0) == 0 || item.rfind("host_route=", 0) == 0 ||
+                       item.rfind("guest_route=", 0) == 0 ||
                        item.rfind("guest_use=", 0) == 0) {
                 TravelStep step;
                 step.kind = item.rfind("host_obj=", 0) == 0     ? TravelStep::HostObj
@@ -2661,6 +2813,9 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("host_skipremo", 0) == 0  ? TravelStep::HostSkipRemo
                             : item.rfind("guest_skipremo", 0) == 0 ? TravelStep::GuestSkipRemo
                             : item.rfind("guest_stick=", 0) == 0   ? TravelStep::GuestStick
+                            : item.rfind("host_stick=", 0) == 0    ? TravelStep::HostStick
+                            : item.rfind("host_route=", 0) == 0    ? TravelStep::HostRoute
+                            : item.rfind("guest_route=", 0) == 0   ? TravelStep::GuestRoute
                             : item.rfind("host_use=", 0) == 0      ? TravelStep::HostUse
                             : item.rfind("guest_use=", 0) == 0     ? TravelStep::GuestUse
                                                                 : TravelStep::HostHeadstone;
