@@ -265,7 +265,15 @@ void GuestCensus(party::PartyLink* link) {
         }
         ApplyCensusFake(&list);
         const desync::CensusReport r = desync::CompareCensusList(hl, list);
-        if (r.empty()) {
+        if (r.dead_on_host.empty() && r.alive_on_host.empty() && !r.empty()) {
+            // Only which enemies are loaded differs (the two players stand far apart: each game
+            // streams the chr sets near its own player), or the enemies without an entity id,
+            // whose count follows the same streaming: no enemy is alive on one game and dead on
+            // the other.
+            ++c.transient;
+            BLog("enemy census: loaded differently on the two games (players apart), no alive / dead difference: %s",
+                 desync::DescribeCensusReport(r).c_str());
+        } else if (r.empty()) {
             ++c.transient;
             BLog("enemy census: the same as the host's again (%zu entries checked; a change in flight)", hl.entries.size());
         } else {
