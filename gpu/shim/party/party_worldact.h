@@ -197,6 +197,8 @@ constexpr double kFirstFightVisitSeconds = 2.0;
 constexpr int kFirstFightVisitTries = 3;
 /// The host's screen holds its last picture this long after the put-back (the camera settles).
 constexpr double kFirstFightHoldAfter = 0.2;
+/// After the intro scene the host stays at the spot this long before it is put back.
+constexpr double kFirstFightAfterScene = 1.0;
 /// What the host does with a guest's fog report.
 enum class FogAction {
     none,        ///< boss dead, the host already in, or nothing to do
