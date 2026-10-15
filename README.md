@@ -21,7 +21,7 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | Session & joining | `███████████████████░` | 94% |
 | World & travel | `███████████████████░` | 95% |
 | Death & respawn | `███████████████████░` | 95% |
-| Progress (anyone can progress) | `██████████████████░░` | 89% |
+| Progress (anyone can progress) | `██████████████████░░` | 92% |
 | Services & UI | `███████████████████░` | 97% |
 | Network & robustness | `██████████████████░░` | 91% |
 | Bloodborne-specific (chalice, Insight) | `██████████████████░░` | 88% |
@@ -148,10 +148,11 @@ before anyone is in the game):
   Cathedral Ward and Central Yharnam are streamed separately), fight, use items and die there for
   minutes while the other plays elsewhere: nobody is pulled back.
 - **Anyone can go through a boss fog first**, a boss's first fight included: the fight starts for
-  everyone and the others follow through the fog. When a guest starts a first fight, the host's
-  character steps to the arena entrance for a moment and back, and the intro cutscene plays on
-  every screen. Ebrietas, Rom and the DLC bosses still start with the host (a guest at that fog is
-  told so on screen).
+  everyone and the others follow through the fog. When a guest starts a first fight, the intro
+  cutscene plays on every screen; the host's own picture does not jump (its character visits the
+  arena entrance unseen, stays there through the intro and is put back where it stood). The DLC
+  bosses work the same way; Ebrietas and Lady Maria still start with the host (a guest at that fog
+  is told so on screen), and Rom starts with anyone's hit.
 - **Travel from any lamp to any lamp.** A lamp offers the headstones' list (the Hunter's Dream and every lit
   lamp) and takes you straight there with one loading screen, solo or with the party (launcher: "Direct lamp
   travel", on by default).
@@ -192,8 +193,10 @@ before anyone is in the game):
 - **Progress counts for everyone.** Bosses, items, doors, shortcuts, lamps, story and endings go
   into every player's own save. A guest who is behind catches up, including the Blood Moon.
   Key items a guest earned in the host's world (Oedon Tomb Key, badges, workshop tools) are checked
-  each time its own world loads and given again if its save lacks them; a key item you already
-  hold is never handed out twice (no "inventory or storage max" box).
+  each time its own world loads and given again if its save lacks them, and boss key items (the
+  chalices, the umbilical cords) a guest could not take in the host's world are kept for it until
+  its own world loads, even if it always joins from the title; a key item you already hold is never
+  handed out twice (no "inventory or storage max" box).
 - **Story cutscenes and endings play for everyone.** The Blood Moon, Amelia's skull (evening to
   night), Mergo's Wet Nurse's arena, Gehrman's scenes and the ending with the end credits
   play for every party member; a guest still loading in when a scene starts sees it once it has
