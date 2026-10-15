@@ -8653,6 +8653,17 @@ bool RespawnAloneAtOwnLamp() {
     return TravelAlone(t, AloneWhy::Death);
 }
 
+bool ReloadAtOwnLamp(const char* why) {
+    const u32 own = Field<u32>(Slot(kSlotGsm), 0x1528);
+    TravelIntent t;
+    if (!g_on.load() || own == 0 || own == kTravelNone || !LampIntent(own, &t)) {
+        Log("guest: %s: no alone load (own last lamp %u)", why, own);
+        return false;
+    }
+    Log("guest: %s: an alone load at its own last lamp %u (a loading screen)", why, own);
+    return TravelAlone(t, AloneWhy::Lamp);
+}
+
 std::uint32_t MemberMap(int slot) {
     const Where* w = WhereOf(slot);
     return w && w->age_ms < 5000 ? w->map : 0u;

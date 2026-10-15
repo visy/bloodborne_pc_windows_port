@@ -134,6 +134,10 @@ bool TravelAlone(const TravelIntent& t, AloneWhy why, std::uint32_t rest_lamp = 
 /// Guest, main thread, dead: respawns at its OWN last lamp (GSM +0x1528) as an alone travel
 /// (TravelAlone with AloneWhy::Death): in the host's area a re-join, elsewhere an alone load.
 bool RespawnAloneAtOwnLamp();
+/// Guest, main thread, alive (D3, pard4): the same alone travel to its OWN last lamp (AloneWhy::
+/// Lamp, no rest): a vanilla loading screen out of a boss fight that cannot run here (the host is
+/// in another area). `why` goes to the log.
+bool ReloadAtOwnLamp(const char* why);
 /// An intent's destination map (packed; the lamp / last-lamp record's map for lamp kinds), 0 unknown.
 std::uint32_t DestMapOf(const TravelIntent& t);
 /// Main thread: lamp / return point `id` lies in the block the local player stands in (and its

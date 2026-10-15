@@ -249,6 +249,21 @@ would be refused. The interface split travel provides and expects:
   defeated in its world (no rewards for the host; the guest got its own; D1's K10 / Insight are the
   guest's game's). Until that lands, a lone guest's boss kill lives in its own save only (C2) and
   the boss is alive again in the host's world.
+* **2026-10-15 (pard4, D3): a lone guest cannot start a boss fight.** Live LB2 showed why the
+  routing above never fires: a lone guest is still a client of the host's world, the host's game
+  does not have that area loaded, and a boss's first-fight / start and defeat events are host-only
+  copies, so the boss stayed idle and its HP 0 ran no defeat on the guest. Making the guest's game
+  run those events as a host is not reliable (enemy ownership, chr-type and client checks across
+  every boss event), so correct over seamless: while the host's area is another one the guest's
+  fog keeps the vanilla phantom rule (`GuestFogSkipAllowed`: the host-entered / first-fight
+  conditions are not skipped, no prompt), a notice at the fog says "Boss fight: the host is in
+  another area. Travel together to fight this boss", and a guest that is in a boss room while the
+  host is in another area (its prompt had opened while the host was there, or the host travelled
+  alone during the fight) is put back outside the fog 2.5 s later (`FogPutBackTick`, its "guest in"
+  flag cleared so another walk-in is seen). Live A2: the guest alone in Old Yharnam, the host in
+  the Dream: `boss fog (guest-entry event 12304811) keeps the vanilla phantom rule`, two presses at
+  the fog, no entry, the notice on screen. The boss stays for the party (travel together, or the
+  host comes: the fog opens for the guest after the host's own entry, vanilla).
 * Items: instanced per player (decision "World item pickups"); nothing to send.
 * Enemies: section 5 / the `dead` op (union of kills at a meet without a load); ordinary enemies
   respawn on every load as in single-player.
