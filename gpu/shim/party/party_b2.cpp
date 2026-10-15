@@ -8718,14 +8718,20 @@ bool RespawnAloneAtOwnLamp() {
     return TravelAlone(t, AloneWhy::Death);
 }
 
-bool ReloadAtOwnLamp(const char* why) {
+bool ReloadAtHostLamp(const char* why) {
+    // The host's last lamp (into the host's area: a re-join beside the party, one loading screen);
+    // its own last lamp when the host's is not known. Live A5 (pard4): a reload at the own lamp in
+    // the boss's area restarted the fight there from the mirrored host-entered flag - a loop.
+    const u32 host = GuestDeathRedirectLamp();
     const u32 own = Field<u32>(Slot(kSlotGsm), 0x1528);
+    const u32 lamp = host != 0 && host != kTravelNone ? host : own;
     TravelIntent t;
-    if (!g_on.load() || own == 0 || own == kTravelNone || !LampIntent(own, &t)) {
-        Log("guest: %s: no alone load (own last lamp %u)", why, own);
+    if (!g_on.load() || lamp == 0 || lamp == kTravelNone || !LampIntent(lamp, &t)) {
+        Log("guest: %s: no alone load (host's last lamp %u, own %u)", why, host, own);
         return false;
     }
-    Log("guest: %s: an alone load at its own last lamp %u (a loading screen)", why, own);
+    Log("guest: %s: an alone load to %s lamp %u (a loading screen)", why, lamp == host ? "the host's last" : "its own last",
+        lamp);
     return TravelAlone(t, AloneWhy::Lamp);
 }
 
