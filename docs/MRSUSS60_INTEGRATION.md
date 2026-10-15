@@ -53,7 +53,8 @@ apply on top of our tree (15-file conflicts) and the equivalents already exist, 
     `BB_CAM_PROBE=1` aid: the game's stick dead zone is 46.7/127 (round), not the assumed 16/127, the curve
     is linear above it up to 120 and full deflection is a fast turn. Our velocity mapping now goes through the
     inverse of the measured curve (src/runtime_pad.c `look_curve`); measured before 0 deg/s below ~360 px/s at
-    sensitivity 1, after ~0.1 deg per count from 60 to 700 px/s, linear in the slider. Their impulse/decay
+    sensitivity 1, after 83-87 mdeg per count from 100 to 800 px/s (final curve; 46-49 at 0.5, 176-200 at 2 with the
+    first table), linear in the slider. Their impulse/decay
     look model and the larger slider ranges were not taken (ours is frame-rate independent already).
   - Relative capture: the capture-click discard is taken (a click arriving before the mouse is captured, or
     within 250 ms of the focus, is no game press). Release on focus loss and while the overlay or the name box

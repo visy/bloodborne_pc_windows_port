@@ -540,8 +540,7 @@ static uint64_t look_last;
  * 90008b39 by Mrsuss60 found the sliders ineffective too and adds a fixed jump past an assumed
  * 16/127 dead zone). Here the look value (the share of the line's top speed the mouse asks for)
  * goes through the inverse of the measured line, so the camera turns in proportion to the mouse:
- * measured 92-100 mdeg per count at sensitivity 1 from 60 to 700 px/s, half at 0.5, double at
- * 2. A mouse at full speed (the share reaching 1) gets full deflection, the fast turn.
+ * measured 83-87 mdeg per count at sensitivity 1 from 100 to 800 px/s, half at 0.5, double at 2. A mouse at full speed (the share reaching 1) gets full deflection, the fast turn.
  * BB_MOUSE_LOOK_CURVE=0: the old straight mapping. */
 static const struct { float v, rate; } look_curve[]={
     {46.7f,0.0f}, {48.0f,1.50f}, {50.0f,3.75f}, {52.0f,6.01f}, {56.0f,10.49f}, {60.0f,14.99f},
