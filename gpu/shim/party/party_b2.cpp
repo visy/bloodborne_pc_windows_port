@@ -4401,6 +4401,10 @@ void GuestStainTick(const GameSnapshot& s) {
 // after a session puts the own cycle back if the host's is there. BB_PARTY_NG_GUARD=0: off.
 std::atomic<bool> g_ng_alone_pending{false};
 std::atomic<double> g_ng_alone_at{0};
+// Guest (ngfix): the host's NG cycle from its "hostng" event (-1 unknown). The game's own copy (the
+// packet-0x19 state GSM +0x1594 with +0x1593) is not there yet at a guest's first load into the
+// host's world (live ngfix run1: +0x1593 0 at the Dream arrival), so the host sends it on the link.
+std::atomic<int> g_link_host_ng{-1};
 
 void NgGuardTick(const GameSnapshot& s) {
     static const bool on = !EnvOff("BB_PARTY_NG_GUARD");
@@ -4411,15 +4415,59 @@ void NgGuardTick(const GameSnapshot& s) {
         return;
     }
     const u64 gsm = Slot(kSlotGsm), gdm = Slot(kSlotGameData);
+    if (Role() == RoleHost) {
+        // The host's cycle to the guests (every 5 s and at a change): they run its world at it.
+        static double sent_at = 0;
+        static int sent = -1;
+        const int live = gdm ? int(Field<u32>(gdm, 0x68, 0xffffffffu)) : -1;
+        if (live >= 0 && live <= 7 && (live != sent || Now() - sent_at > 5.0)) {
+            if (live != sent) {
+                Log("NG guard: the host's NG cycle %d sent to the party", live);
+            }
+            sent = live;
+            sent_at = Now();
+            Send(-1, "{\"op\":\"hostng\",\"ng\":" + std::to_string(live) + "}");
+        }
+    }
     // In the host's world (also during a load, once the MoveMapStep ctor switched to host-world
     // mode and before the map's characters are made) the live cycle is the host's (ngfix: a B2
     // load's descriptor took the own one from +0x159C, so the guest ran the host's world at its own
     // NG - other enemy HP, damage and echoes than on the host's game).
-    const bool host_world = gsm && gdm && Field<u8>(gsm, 0x1592, 1) == 0 && Field<u8>(gsm, 0x1593) == 1;
+    // A guest in the host's world: host-world mode (GSM +0x1592 == 0, set by the MoveMapStep ctor)
+    // with the host's 0x19 state, a client session, or the flow loading into the host's world (3).
+    const int role_now = Role();
+    const bool host_world = gsm && gdm && role_now != RoleHost && Field<u8>(gsm, 0x1592, 1) == 0 &&
+                            (Field<u8>(gsm, 0x1593) == 1 || role_now == RoleClient ||
+                             Field<int>(Slot(kSlotFlow), 0x84, -1) == 3);
     if (host_world) {
-        const u32 h = Field<u32>(gsm, 0x1594, 0xffffffffu);
-        if (h <= 7) {
+        const u32 h = Field<u8>(gsm, 0x1593) == 1 ? Field<u32>(gsm, 0x1594, 0xffffffffu) : 0xffffffffu;
+        const int link = g_link_host_ng.load();
+        if (link >= 0 && link <= 7) {
+            host = link;
+        } else if (h <= 7) {
             host = int(h);
+        }
+    }
+    if (on && own < 0 && !host_world && role_now != RoleClient && s.world_up && !s.loading && gsm && gdm &&
+        Field<u8>(gsm, 0x1592, 0) == 1) {
+        // The own world is up: its cycle at once (a fast join may come before ~2 s of steady world).
+        const u32 v = Field<u32>(gdm, 0x68, 0xffffffffu);
+        if (v <= 7) {
+            own = int(v);
+            learned_at = Now();
+            Log("NG guard: own NG cycle %d (own world)", own);
+        }
+    }
+    if (on && host_world && own < 0 && !g_ng_alone_pending.load() && (s.loading || s.world_up)) {
+        // The own cycle before anything put the host's in: the restore value a summoned load
+        // saved (+0x1598 set), else the live one (no host-world load has changed it yet).
+        const bool saved = Field<u8>(gsm, 0x1598) == 1;
+        const u32 v = saved ? Field<u32>(gsm, 0x159c, 0xffffffffu) : Field<u32>(gdm, 0x68, 0xffffffffu);
+        if (v <= 7) {
+            own = int(v);
+            learned_at = Now();
+            Log("NG guard: own NG cycle %d (%s, %s)", own, saved ? "the summoned load's saved value GSM +0x159C" : "live, before the host's",
+                s.loading ? "during the load" : "in the host's world");
         }
     }
     if (on && host_world) {
@@ -7943,6 +7991,16 @@ bool OnHostTravel(const TravelIntent& t) {
 
 void OnLinkEvent(int from_slot, const std::string& body) {
     if (!g_on.load()) {
+        return;
+    }
+    if (body.find("\"hostng\"") != std::string::npos) {
+        int ng = -1;
+        const char* p = std::strstr(body.c_str(), "\"ng\":");
+        if (Role() != RoleHost && p && std::sscanf(p, "\"ng\":%d", &ng) == 1 && ng >= 0 && ng <= 7) {
+            if (g_link_host_ng.exchange(ng) != ng) {
+                Log("NG guard: the host's NG cycle is %d", ng);
+            }
+        }
         return;
     }
     if (dsummon::KindOf(body) != dsummon::Kind::None) {
