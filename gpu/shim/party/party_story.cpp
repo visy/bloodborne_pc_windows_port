@@ -24,6 +24,8 @@
 #include "party_runtime.h"
 #include "party_travel.h"
 #include "seamless_rules.h"
+#include "party_split.h"
+#include "../bbport_game_menu_pages.h"
 
 #include <atomic>
 #include <chrono>
@@ -795,6 +797,52 @@ bool GuestStory::FromJson(const json::Value& v, std::string* error) {
 // ---------------------------------------------------------------------------------------------
 // Game part
 // ---------------------------------------------------------------------------------------------
+bool StoryNoticeMessage(std::uint32_t message_id) {
+    return message_id == 10012014u;  // m28_00 12800140 (host only): "Ritual secret broken. ..."
+}
+
+std::string StoryNoticeToJsonText(const StoryNotice& n) {
+    json::Value v = json::Value::make_object();
+    v.set("seq", json::hex(n.seq));
+    v.set("message", static_cast<unsigned>(n.message));
+    v.set("event", static_cast<unsigned>(n.event_id));
+    return json::dump(v, 0);
+}
+
+bool StoryNoticeFromJsonText(const std::string& text, StoryNotice* out, std::string* error) {
+    json::Value v;
+    std::string err;
+    if (text.size() > 512 || !json::parse(text, v, err)) {
+        if (error) {
+            *error = err.empty() ? "too long" : err;
+        }
+        return false;
+    }
+    try {
+        if (v.type != json::Value::Type::Object) {
+            throw std::runtime_error("not an object");
+        }
+        StoryNotice n;
+        n.seq = json::u64(v, "seq");
+        n.message = json::u32(v, "message");
+        n.event_id = json::u32(v, "event");
+        if (n.seq == 0 || !StoryNoticeMessage(n.message)) {
+            throw std::runtime_error("not a story notice");
+        }
+        *out = n;
+        return true;
+    } catch (const std::exception& e) {
+        if (error) {
+            *error = e.what();
+        }
+        return false;
+    }
+}
+
+bool StoryNoticeShowNow(bool world_up, bool loading, bool cutscene, bool dialog_up, bool calm) {
+    return world_up && !loading && !cutscene && !dialog_up && calm;
+}
+
 #ifndef BB_PARTY_STORY_NO_GAME
 
 namespace {
@@ -1452,6 +1500,82 @@ constexpr double kMirrorDedupeSeconds = 600.0;
 std::mutex g_mirrored_mu;
 std::map<std::uint32_t, double> g_mirrored;
 
+namespace {
+std::mutex g_notice_mu;
+std::deque<StoryNotice> g_notice_host;                      // host: to broadcast
+std::deque<std::pair<StoryNotice, double>> g_notice_guest;  // guest: to show (since)
+std::uint64_t g_notice_last_seq = 0;
+}  // namespace
+
+void NoteHostStoryNotice(std::uint32_t message_id, std::uint32_t event_id) {
+    if (!g_story_on.load() || Role() != PartyRole::Host || !StoryNoticeMessage(message_id)) {
+        return;
+    }
+    StoryNotice n;
+    n.seq = NextSeq();
+    n.message = message_id;
+    n.event_id = event_id;
+    std::lock_guard<std::mutex> lk(g_notice_mu);
+    if (g_notice_host.size() < 8) {
+        g_notice_host.push_back(n);
+    }
+    Log("host: story notice %u (event %u) shown here: relayed to the party", message_id, event_id);
+}
+
+bool PopHostStoryNotice(StoryNotice* out) {
+    std::lock_guard<std::mutex> lk(g_notice_mu);
+    if (g_notice_host.empty()) {
+        return false;
+    }
+    *out = g_notice_host.front();
+    g_notice_host.pop_front();
+    return true;
+}
+
+void RequestGuestStoryNotice(const StoryNotice& n) {
+    std::lock_guard<std::mutex> lk(g_notice_mu);
+    if (n.seq <= g_notice_last_seq || g_notice_guest.size() >= 8) {
+        return;
+    }
+    g_notice_last_seq = n.seq;
+    g_notice_guest.emplace_back(n, Now());
+    Log("guest: the host's story notice %u (event %u) queued", n.message, n.event_id);
+}
+
+// Guest, main thread: one queued notice as the game's one-button message once calm.
+void GuestNoticeTick(const GameSnapshot& g, double now) {
+    StoryNotice n;
+    double since = 0;
+    {
+        std::lock_guard<std::mutex> lk(g_notice_mu);
+        if (g_notice_guest.empty()) {
+            return;
+        }
+        n = g_notice_guest.front().first;
+        since = g_notice_guest.front().second;
+        if (now - since > kStoryNoticeMaxWait) {
+            g_notice_guest.pop_front();
+            Log("guest: story notice %u dropped (not shown in %.0f s)", n.message, kStoryNoticeMaxWait);
+            return;
+        }
+    }
+    const bool cut = g.world_up && RemoPlaying();
+    if (!StoryNoticeShowNow(g.world_up, g.loading, cut, false, Calm(now))) {
+        return;
+    }
+    const u32 text = BbGameMenu::Pages::StoryNoticeText(n.message);
+    if (!text || !split::ShowMessage(text)) {
+        return;  // another dialog / menu is up: next frame
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_notice_mu);
+        if (!g_notice_guest.empty() && g_notice_guest.front().first.seq == n.seq) {
+            g_notice_guest.pop_front();
+        }
+    }
+    Log("guest: story notice %u shown (game message, OK) %.1f s after the host's", n.message, now - since);
+}
+
 bool PopHostStory(StoryIntent* out) {
     std::lock_guard<std::mutex> lk(g_host_mu);
     return g_host_queue.Pop(out);
@@ -1520,6 +1644,8 @@ void StoryTick() {
     const PartyRole role = Role();
     if (role == PartyRole::Host) {
         HostPoll(g);
+    } else if (role == PartyRole::Guest) {
+        GuestNoticeTick(g, now);
     }
     StoryState st;
     st.world_up = g.world_up;

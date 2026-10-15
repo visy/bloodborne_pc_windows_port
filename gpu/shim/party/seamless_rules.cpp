@@ -22,6 +22,7 @@
 #include "party_phantom.h"
 #include "party_split.h"
 #include "party_travel.h"
+#include "party_story.h"
 #include "party_worldact.h"
 #include "../net/from_api.h"
 
@@ -607,6 +608,19 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
             if (g_boss_bar.exchange(on) != on) {
                 Log("boss health bar %s (event %d, entity %d)", on ? "shown: a boss fight" : "hidden", event_id,
                     n >= 8 ? *reinterpret_cast<const i32*>(args + 4) : -1);
+            }
+        }
+    }
+    if (instr && !skip && bank == 2007 && id == 1 && LocalSessionRole() != 6) {
+        // D10: a story notice only the host's event shows (party_story StoryNoticeMessage).
+        u8 args[4] = {};
+        u32 arg_size = 0;
+        const u64 at = EmevdInstructionArgs(event, instr, &arg_size);
+        u32 msg = 0;
+        if (at && arg_size >= 4 && SafeRead(at, args, 4)) {
+            std::memcpy(&msg, args, 4);
+            if (StoryNoticeMessage(msg)) {
+                NoteHostStoryNotice(msg, static_cast<u32>(event_id));
             }
         }
     }

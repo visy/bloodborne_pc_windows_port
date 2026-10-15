@@ -115,7 +115,7 @@ unsigned AreaOfEvent(const std::string& name) {
     if (name == "items" || name == "items_full" || name == "gift_up" || name == "drop_seed" || name == "chalice_goods")
         return kItems;
     if (name == "flags" || name == "flag_snapshot" || name == "world_groups" || name == "story" ||
-        name == "story_up" || name == "world_action")
+        name == "story_up" || name == "story_notice" || name == "world_action")
         return kFlags;
     return kNet;
 }

@@ -3196,6 +3196,12 @@ void PartyDirector::Tick() {
             Log("story #%llu (%s %u) sent to the party", static_cast<unsigned long long>(si.seq),
                 StoryKindName(si.kind), si.id);
         }
+        // D10: story notices only the host's event shows (party_story StoryNoticeMessage).
+        StoryNotice sn;
+        while (PopHostStoryNotice(&sn)) {
+            link->post_event(party::kBroadcast, kStoryNoticeEventName, StoryNoticeToJsonText(sn));
+            Log("story notice %u (event %u) sent to the party", sn.message, sn.event_id);
+        }
         // C3: the host's item lots to every guest; the full list to a member that (re)joined.
         std::vector<ItemGrant> items;
         ItemGrant g;

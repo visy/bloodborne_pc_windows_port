@@ -284,7 +284,34 @@ private:
     std::map<std::uint32_t, double> played_;  // base remo id -> last play
 };
 
+// ---- Story notices (D10, pard3) ----
+/// A game dialog (EMEVD 2007[1]) that tells the story and that only the host's event shows (its
+/// client copy ends on 1003[6]): Yahar'gul's "Ritual secret broken. Seek the nightmare newborn."
+/// (m28_00 12800140, message 10012014, after the Blood Moon warp). The host relays it, every guest
+/// shows it as a one-button (OK) game message once it is calm. The other 2007[1] messages are a
+/// player's own interaction (a locked door, "Only a special emblem opens the main gate."): each
+/// player's game shows its own, never relayed.
+bool StoryNoticeMessage(std::uint32_t message_id);
+constexpr const char* kStoryNoticeEventName = "story_notice";
+struct StoryNotice {
+    std::uint64_t seq = 0;
+    std::uint32_t message = 0;
+    std::uint32_t event_id = 0;
+};
+std::string StoryNoticeToJsonText(const StoryNotice& n);
+bool StoryNoticeFromJsonText(const std::string& text, StoryNotice* out, std::string* error = nullptr);
+/// Guest: a queued notice is shown now? World up, no load, no cutscene, no other game dialog or
+/// menu, not hit in the last few seconds. Dropped after kStoryNoticeMaxWait.
+bool StoryNoticeShowNow(bool world_up, bool loading, bool cutscene, bool dialog_up, bool calm);
+constexpr double kStoryNoticeMaxWait = 300.0;
+
 #ifndef BB_PARTY_STORY_NO_GAME
+/// Host (the EMEVD dispatch hook): this game's event shows a story notice: relay it.
+void NoteHostStoryNotice(std::uint32_t message_id, std::uint32_t event_id);
+/// Host: the next notice to broadcast (any thread).
+bool PopHostStoryNotice(StoryNotice* out);
+/// Guest: the host's notice (the link thread); shown by StoryTick.
+void RequestGuestStoryNotice(const StoryNotice& n);
 /// bbgpu_patch_image, once, after coop::HooksInit (party mode only): the bank-2002 capture hook.
 void InstallStoryHooks();
 /// Host: the next story intent to broadcast (any thread).

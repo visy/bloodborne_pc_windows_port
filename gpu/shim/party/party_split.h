@@ -68,4 +68,7 @@ constexpr const char* kChoosingEventName = "split_choosing";
 /// Party callback thread: that event from `slot` (roster name `who`).
 void OnChoosingEvent(int slot, const std::string& who, const std::string& body);
 
+/// Main thread: the game's one-button message box (OK) with port text `text` (BbGameMenu::Pages
+/// AddText); false while another dialog or menu is up (try again later). D10 story notices.
+bool ShowMessage(std::uint32_t text);
 } // namespace coop::split

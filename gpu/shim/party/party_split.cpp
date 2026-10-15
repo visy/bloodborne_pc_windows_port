@@ -223,6 +223,35 @@ u64 OpenQuestion() {
     return dlg;
 }
 
+/// Opens the game's one-button message box (kind 7, button 1: "OK") with port text `text`; false
+/// while another dialog / menu is up.
+u64 OpenMessage(u32 text) {
+    const u64 mm = Slot(kSlotMenuMan);
+    u8 busy = 0;
+    if (!text || !mm || Field<int>(mm, 0x78, -1) != 0 || !SafeGet(Guest(kMenuBusyByte), &busy) || busy) {
+        return 0;
+    }
+    const u64 dlg = Field<u64>(mm, 0xd08);
+    if (!dlg) {
+        return 0;
+    }
+    const u32 zero = 0, minus = 0xffffffffu, one = 1, two = 2;
+    const u8 b1 = 1;
+    SafeWrite(dlg + 0x00, &text, 4);
+    SafeWrite(dlg + 0x04, &one, 4);
+    SafeWrite(dlg + 0x08, &two, 4);
+    SafeWrite(dlg + 0x14, &zero, 4);
+    SafeWrite(dlg + 0x10, &b1, 1);
+    SafeWrite(dlg + 0x18, &minus, 4);
+    SafeWrite(dlg + 0x1c, &zero, 4);
+    SafeWrite(mm + 0x254, &zero, 4);
+    using Open = void(BB_COOP_SYSV*)(u64, u32);
+    reinterpret_cast<Open>(Guest(kOpenDialog))(dlg, 7);
+    SafeWrite(mm + 0x16c, &minus, 4);
+    SafeWrite(mm + 0x170, &minus, 4);
+    return dlg;
+}
+
 /// Runs the warp the chosen way (main thread).
 void Carry(const Pending& p, bool alone, const char* how) {
     g_decided_id = p.id;
@@ -686,6 +715,10 @@ void Tick(const GameSnapshot& s, party::PartyLink* link) {
             Log("lamp %u: the question was closed (result %d); no travel", p.id, r);
         }
     }
+}
+
+bool ShowMessage(std::uint32_t text) {
+    return OpenMessage(text) != 0;
 }
 
 } // namespace coop::split
