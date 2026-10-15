@@ -116,6 +116,12 @@ bool StoryRemoKnown(std::uint32_t remo_id);
 /// the game does not have; otherwise its flags are cut to the ones the guest's own table gives
 /// for that remo (the host only ever sends those) - a host cannot set arbitrary event flags.
 bool SanitizePeerStory(StoryIntent* s, std::string* why = nullptr);
+/// G3: a guest's own 2002[6] play in the host's world (a scene + a time of day + a warp inside the
+/// map it plays in: the Cathedral Ward door 12400750, day -> evening) that the host plays as its own
+/// (the scene, the warp to the same point, the time of day) and sends to the party: a known remo, a
+/// tod 1..3 later than the host's (`host_tod_value`: its 9800..9802 3-bit value) and a warp in the
+/// host's map block (`host_map`). False (with `why`): the host plays only the scene (D10).
+bool GuestPhaseChangeOk(const StoryIntent& s, int host_tod_value, std::uint32_t host_map, std::string* why = nullptr);
 /// 9800..9802 as a 3-bit value (9800 = bit 2) for a tod (0..3): {0, 4, 6, 7}; -1 out of range.
 int TodFlagValue(int tod);
 /// The tod a 3-bit 9800..9802 value stands for (the highest table entry it reaches), 0..3.

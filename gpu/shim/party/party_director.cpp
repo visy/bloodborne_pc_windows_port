@@ -186,7 +186,11 @@ struct Test {
     Clock::time_point ap_at{};
     // stand=X:Y:Z:YAW[:BUTTON]: puts the player there in place (PlayerIns vfunc +0x5F8, no map
     // reload; yaw t faces (-sin t, -cos t), agent/guestsvc's Doll fixture), then BUTTON once 1.5 s on.
+    // stand=obj:ENTITY:DIST:ANGLE[:BUTTON]: the same at a map object (worldact::StandAtObject: DIST m
+    // from it at ANGLE degrees from its front, facing it), e.g. a Ritual Altar for the seq= below.
     bool stand = false, stand_done = false;
+    int st_obj = 0;
+    float st_obj_dist = 1.2f, st_obj_angle = 0;
     float st_pos[3] = {0, 0, 0}, st_yaw = 0;
     std::uint32_t st_button = 0;
     int st_phase = 0;
@@ -2146,7 +2150,21 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         !t.place || (t.place_done && (s.map_id & 0xffff0000u) == (t.place_map & 0xffff0000u));
     if (t.stand && !t.stand_done && stand_map_ok && s.world_up && !s.loading && s.player &&
         Seconds(st.world_at, now) >= 10.0 && Seconds(t.st_at, now) >= 0.0) {
-        if (t.st_phase == 0) {
+        if (t.st_phase == 0 && t.st_obj) {
+            std::string what;
+            const bool ok = worldact::StandAtObject(t.st_obj, t.st_obj_dist, t.st_obj_angle, &what);
+            Log("test: stand at object %d (%.1f m, %.0f deg): %s", t.st_obj, double(t.st_obj_dist),
+                double(t.st_obj_angle), ok ? what.c_str() : "not loaded");
+            if (ok) {
+                worldact::ObjectPoint(t.st_obj, t.st_obj_dist, t.st_obj_angle, t.st_pos);  // phase 1 checks it
+                t.st_phase = 1;
+                t.st_at = now + std::chrono::milliseconds(1500);
+            } else if (++t.st_retries < 10) {
+                t.st_at = now + std::chrono::milliseconds(2000);
+            } else {
+                t.stand_done = true;
+            }
+        } else if (t.st_phase == 0) {
             alignas(16) float pos[4] = {t.st_pos[0], t.st_pos[1], t.st_pos[2], 1.0f};
             alignas(16) float rot[4] = {0, t.st_yaw, 0, 0};
             std::uint64_t vtbl = 0, fn = 0;
@@ -2293,6 +2311,14 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
                 t.approach_done = true;
             }
         }
+    }
+    // approach=... with seq=... and no stand=: the menu walk starts once the walk arrived (a spot a
+    // warp cannot put the player on, e.g. the Dream's ritual gravestones).
+    if (t.approach_done && !t.stand && t.st_seq.size() && !t.st_seq_on) {
+        t.st_seq_on = true;
+        t.stand = true;
+        t.st_phase = 3;
+        Log("test: approach done: the menu walk (seq) starts");
     }
     if (t.place && !t.place_done && Seconds(st.world_at, now) >= t.place_at && s.world_up && !s.loading) {
         t.place_done = true;
@@ -2474,6 +2500,20 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.ring = kHostBell;
             } else if (item == "ring_guest") {
                 st.test.ring = kGuestBell;
+            } else if (item.rfind("stand=obj:", 0) == 0) {
+                int entity = 0;
+                float dist = 1.2f, angle = 0;
+                char button[16] = {0};
+                const int n = std::sscanf(item.c_str() + 10, "%d:%f:%f:%15s", &entity, &dist, &angle, button);
+                if (n >= 1 && entity > 0) {
+                    st.test.stand = true;
+                    st.test.st_obj = entity;
+                    st.test.st_obj_dist = n >= 2 ? dist : 1.2f;
+                    st.test.st_obj_angle = n >= 3 ? angle : 0.0f;
+                    const std::string b = button;
+                    st.test.st_button = b == "cross" ? 0x4000u : b == "triangle" ? 0x1000u : b == "square" ? 0x8000u
+                                      : b == "circle" ? 0x2000u : 0u;
+                }
             } else if (item.rfind("stand=", 0) == 0) {
                 float x = 0, y = 0, z = 0, yaw = 0;
                 char button[16] = {0};

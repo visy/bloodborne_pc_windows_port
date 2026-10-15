@@ -207,6 +207,26 @@ bool SanitizePeerStory(StoryIntent* s, std::string* why) {
     return true;
 }
 
+bool GuestPhaseChangeOk(const StoryIntent& s, int host_tod_value, std::uint32_t host_map, std::string* why) {
+    const char* no = nullptr;
+    if (s.kind != StoryKind::Cutscene || s.instr != 6) {
+        no = "not a 2002[6] play";
+    } else if (!StoryRemoKnown(s.id)) {
+        no = "not a game remo";
+    } else if (s.tod < 1 || s.tod > 3) {
+        no = "no time of day";
+    } else if (s.tod <= TodFromFlagValue(host_tod_value < 0 ? 0 : host_tod_value)) {
+        no = "the host's time of day is there already";
+    } else if (s.warp_point == kStoryNone || s.warp_point == 0 || s.warp_map == kStoryNone ||
+               (s.warp_map & 0xffff0000u) != (host_map & 0xffff0000u)) {
+        no = "its warp is not in the host's map";
+    }
+    if (no && why) {
+        *why = no;
+    }
+    return !no;
+}
+
 int TodFlagValue(int tod) {
     return tod >= 0 && tod < 4 ? kTodTable[tod] : -1;
 }
@@ -808,6 +828,8 @@ using Clock = std::chrono::steady_clock;
 
 constexpr u64 kRemoHandler = 0x17c53b0;  // bank-2002 EMEVD handler (this, SprjEmkEventIns*)
 constexpr u64 kPlayRemo = 0x131a9f0;     // (unused, remo id, mode, a4, a5, player) -> al
+// 2002[6]'s call (0x17C5853): (unused, remo id, mode, &packed map, point, 0, [0, player, tod]) -> al
+constexpr u64 kPlayRemoWarpTod = 0x131bc10;
 constexpr u64 kSprjRemo = 0x5540058;     // singleton slot; *(+8) = remo player; +0x168 bit 0 playing
 constexpr u64 kEventFlagMan = 0x553b100; // singleton slot
 constexpr u64 kSetEventFlag = 0x13cfcc0; // (man, id, on)
@@ -819,6 +841,8 @@ constexpr u64 kWts = 0x5556678;          // +0x08 transition requested, +0x1550 
 constexpr u64 kWorldChrMan = 0x553e878;  // +0x60 local PlayerIns (vtable +0x1C8 -> chr data, +0xCA sex)
 
 using PlayRemoFn = u64(BB_COOP_SYSV*)(u64, u64, u64, u64, u64, u64);
+using PlayRemoWarpTodFn = u64(BB_COOP_SYSV*)(u64, u64, u64, u64, u64, u64, u64, u64, u64);
+bool g_warp_tod_ok = false;  // 0x131BC10 has the 1.09 bytes
 using SetFlagFn = void(BB_COOP_SYSV*)(u64, u32, u32);
 using GetFlagValueFn = u32(BB_COOP_SYSV*)(u64, u32, u32);
 using SetFlagValueFn = void(BB_COOP_SYSV*)(u64, u32, u32, u32);
@@ -987,6 +1011,30 @@ BB_COOP_SYSV void RemoHandlerEntry(u64, u64 event, u64, u64, u64, u64) {
             u64 args = 0;
             u32 remo = 0, mode = 0;
             SafeGet(event + 0xb8, &args);
+            // G3: a world phase change (2002[6]: scene + time of day + a warp in this map) goes up
+            // too; the host plays it as its own if it fits (GuestPhaseChangeOk), else as a scene.
+            u8 raw6[0x18] = {};
+            if (!OwnWorld() && gid == 6 && args && SafeRead(args, raw6, sizeof raw6)) {
+                StoryIntent up;
+                up.kind = StoryKind::Cutscene;
+                up.instr = 6;
+                std::memcpy(&up.id, raw6, 4);
+                std::memcpy(&up.mode, raw6 + 4, 4);
+                std::memcpy(&up.warp_point, raw6 + 8, 4);
+                up.warp_map = u32(raw6[0xc]) << 24 | u32(raw6[0xd]) << 16;
+                up.tod = raw6[0x14] < 4 ? raw6[0x14] : -1;
+                up.event_id = gev;
+                up.map = gmap;
+                if (StoryRemoKnown(up.id) && up.tod >= 1) {
+                    up.seq = NextSeq();
+                    Log("guest: its own world phase change %s goes to the host", DescribeStory(up).c_str());
+                    std::lock_guard<std::mutex> lk(g_up_mu);
+                    if (g_up.size() < 8) {
+                        g_up.push_back(up);
+                    }
+                    g_self_played.emplace_back(up.id, Now());
+                }
+            }
             if (!OwnWorld() && (gid == 1 || gid == 3 || gid == 7) && args && SafeGet(args, &remo) &&
                 SafeGet(args + 4, &mode) && StoryRemoKnown(remo)) {
                 StoryIntent up;
@@ -1415,6 +1463,8 @@ void InstallStoryHooks() {
     const bool play_ok = Matches(kPlayRemo, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54});
     const bool tod_ok =
         Matches(0x1ceceb0, {0x55, 0x48, 0x89, 0xe5, 0x48, 0x89, 0xf8, 0x83, 0x78, 0x0c, 0x01, 0x75, 0x41});
+    g_warp_tod_ok = Matches(kPlayRemoWarpTod, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54,
+                                                0x53, 0x48, 0x81, 0xec, 0x28, 0x03, 0x00, 0x00});
     if (!play_ok || !tod_ok) {
         Log("0x131A9F0 / 0x1CECEB0 are not the 1.09 bytes (%s / %s); story off", play_ok ? "ok" : "MISMATCH",
             tod_ok ? "ok" : "MISMATCH");
@@ -1725,7 +1775,8 @@ bool HostStoryFromGuest(int slot, const std::string& body, std::string* why) {
     if (!StoryFromJsonText(body, &s, why) || !SanitizePeerStory(&s, why)) {
         return false;
     }
-    if (s.kind != StoryKind::Cutscene || !(s.instr == 1 || s.instr == 3 || s.instr == 7) || !StoryRemoKnown(s.id)) {
+    if (s.kind != StoryKind::Cutscene || !(s.instr == 1 || s.instr == 3 || s.instr == 6 || s.instr == 7) ||
+        !StoryRemoKnown(s.id)) {
         if (why) {
             *why = "not a plain cutscene play";
         }
@@ -1783,8 +1834,34 @@ void HostPlayGuestStory(const GameSnapshot& g, const StoryState& st) {
             return;
         }
     }
+    std::string phase_no;
+    static const bool phase_on = !EnvOff("BB_PARTY_STORY_PHASE");
+    if (s.instr == 6 && phase_on && g_warp_tod_ok && GuestPhaseChangeOk(s, FlagValue(9800, 3), g.map_id, &phase_no)) {
+        // G3: the host's own copy of the guest's event, as 0x17C53B0 runs 2002[6]: the scene, the
+        // warp to the same point of this map, the time of day at its end. The host's tod poll then
+        // sends the time of day; the scene goes to the other guests below.
+        static u32 packed = 0;
+        packed = s.warp_map;
+        const u32 remo = RemoForSex(s.id, SexVariant());
+        const u64 ok = reinterpret_cast<PlayRemoWarpTodFn>(Guest(kPlayRemoWarpTod))(
+            0, remo, 0, reinterpret_cast<u64>(&packed), s.warp_point, 0, 0, static_cast<u32>(g_player_arg),
+            static_cast<u32>(s.tod));
+        Log("host: slot %d changed the world's time of day: remo %u with warp %u @%08x and tod %d played here "
+            "(as 2002[6]) -> %s",
+            item.first, remo, s.warp_point, s.warp_map, s.tod, (ok & 0xff) ? "queued" : "NOT queued (no remo player)");
+        s.flags = StoryFlagsForRemo(s.id);
+        s.seq = NextSeq();
+        PushHost(s);
+        return;
+    }
+    if (s.instr == 6) {
+        Log("host: slot %d's 2002[6] %u (event %u): %s; the scene only", item.first, s.id, s.event_id,
+            g_warp_tod_ok ? phase_no.c_str() : "0x131BC10 is not the 1.09 bytes");
+    }
     s.instr = 1;
     s.tod = -1;
+    s.warp_point = kStoryNone;
+    s.warp_map = kStoryNone;
     s.flags = StoryFlagsForRemo(s.id);
     s.seq = NextSeq();
     StoryAction a;
