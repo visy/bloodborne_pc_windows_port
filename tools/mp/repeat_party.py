@@ -42,7 +42,7 @@ def scenario(name, n, players=2):
                     crash=[])
     if name == "c6":
         return dict(seconds=60 + 50 * n, env=["BB_PARTY_RESTART_MAX=%d" % (n + 5), "BB_PARTY_DIRECTOR_TEST_RESTART=none"],
-                    ienv=["0:BB_PARTY_TEST_START_LAMP=2412951"], crash=[r"1/0:cooperators d -> %d@15" % full] * n)
+                    ienv=["0:BB_PARTY_TEST_START_LAMP=2412951"], crash=[r"1/0:cooperators \d -> %d@15" % full] * n)
     if name == "c3":
         g = ",".join(["guest_die@20%m24_01"] * n)
         return dict(seconds=60 + 75 * n, env=[],
