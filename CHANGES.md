@@ -3,6 +3,8 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## 0.6.3 (unreleased)
+
 ## 0.6.2 (Windows port 0.6.2, party co-op)
 
 - **Added: Volumetric effects resolution (idea from a playtester)**: smoke, mist, fog sprites and other soft particle effects, which the game draws into a half-resolution buffer and which look blocky at high resolutions, can be drawn at 2x the pixels or at full scene resolution (System > Display > *Volumetric effects*, the overlay, the launcher, `bbport.ini` `volumetric_res`, `BB_VOLUMETRIC_RES`). Off (the game's own look) by default, changes live; in a test at 1080p it cost about 0.6 ms (2x pixels) and 1.2 ms (full) per frame on an RTX 3070. Light shafts, glare and SSAO keep their own sizes. The *FPS counter* row moved from the Display page to *HUD details* to make room.
