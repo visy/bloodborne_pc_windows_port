@@ -101,7 +101,7 @@ public:
         json::Value request;  // the create body as sent
         std::int64_t posted_ms = 0;  // steady clock when it was put up (A4: young signs are not shown)
     };
-    // A4 (join_timing.md): with a bell sign timer below 2.0 s (BB_PARTY_SIGN_DELAY, a test switch) a
+    // A4 (join_timing.md): with a bell sign timer below 2.0 s (0.5 s by default since 0.6.2; BB_PARTY_SIGN_DELAY) a
     // sign is shown to a host's poll only once it is (2.0 - timer) s old, so the sign path keeps its
     // proven ~2 s from the ring (0.5 s there let a host summon a guest whose bell was barely up).
     // 0 (the default): shown at once.

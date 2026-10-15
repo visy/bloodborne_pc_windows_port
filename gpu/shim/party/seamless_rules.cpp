@@ -700,16 +700,17 @@ double Seconds(Clock::time_point a, Clock::time_point b) {
 // A4: the bell sign sender's first-sign timer. The XML patch "Party: Fast bell sign" writes 2.0 s
 // (5.0 in 1.09). With the direct summon the guest's game needs its bell's own passive summon entry,
 // which comes up only when that timer fires, so the timer paces every join after the room is there.
-// BB_PARTY_SIGN_DELAY=S (0.1 .. 5.0 s) rewrites the patched float; the default stays 2.0 s: live
-// (parab2 a4ds, 2026-10-15) 0.5 s cut the direct summon's request -> client from 3.0 to 1.5 s in 4
-// of 5 joins, but the 5th stalled after client (6) (no host-world load for 6 s) - the symptom of the
-// 0.5 s sign-path runs of 2026-10-11, so the race is in the guest's join right after its ring, not in
-// the host's sign polling. Below 2.0 s the host's sign board holds a sign back until it is (2.0 - S) s
-// old (from_api sign_get), so the sign path keeps its proven 2 s from the ring.
+// Default 0.5 s since 0.6.2 (parab3, live: 23 of 24 direct-summon joins in 1.5-1.6 s instead of
+// 3.0 s; the one miss was the host's empty-room timeout, fixed in party_b2). The stall parab2 saw at
+// 0.5 s (client (6), flow 2, no load) is the game's SummonReloadStart clearing the summon type; the
+// guest's flow-2 watchdog (party_b2 Tick) restarts that join start (live with
+// BB_PARTY_TEST_JOIN_STALL). Below 2.0 s the host's sign board holds a sign back until it is
+// (2.0 - S) s old (from_api sign_get), so the bell sign path keeps its proven 2 s from the ring.
+// BB_PARTY_SIGN_DELAY=S (0.1 .. 5.0 s) overrides; 2 keeps the XML patch's 2.0 s.
 void ApplySignDelay() {
     const char* env = std::getenv("BB_PARTY_SIGN_DELAY");
     if (!env || !env[0]) {
-        return;  // 2.0 s, the XML patch
+        env = "0.5";
     }
     const float secs = std::strtof(env, nullptr);
     if (!(secs >= 0.1f && secs <= 5.0f)) {
@@ -733,7 +734,7 @@ void ApplySignDelay() {
             ++done;
         }
     }
-    const long long hold_ms = secs < 2.0f ? static_cast<long long>((2.0f - secs) * 1000.0f + 0.5f) : 0;
+    const long long hold_ms = secs < 2.0f && done > 0 ? static_cast<long long>((2.0f - secs) * 1000.0f + 0.5f) : 0;
     bbnet::party::FromApi::instance().set_min_sign_age_ms(hold_ms);
     Log("bell sign timer: %.2f s at %d of %d sites (BB_PARTY_SIGN_DELAY); the host shows a sign %lld ms after it went up",
         double(secs), done, sites, hold_ms);
