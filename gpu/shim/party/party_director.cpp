@@ -242,6 +242,7 @@ struct Test {
     bool script_on = false;
     Clock::time_point release_at{};  // a press step's buttons are released then
     bool pressing = false;
+    std::uint32_t chr_target = 0;  // the last host_chr / guest_chr entity (press logs its HP)
     bool step_waiting = false;  // the next step waits (dead chr / a re-join running), logged once
 };
 
@@ -1640,7 +1641,23 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         runtime_pad_director_press(step.buttons);
         t.pressing = true;
         t.release_at = now + std::chrono::milliseconds(150);
-        Log("test: %s 0x%x", TravelStepName(step.kind), step.buttons);
+        std::string target;
+        if (t.chr_target) {
+            // A weapon fight (host_chr / guest_chr then R1 taps): the target's HP and distance.
+            float me[3] = {}, at[3] = {};
+            const std::uint64_t player = LocalPlayer();
+            for (const auto& e : balance::LoadedEnemies()) {
+                if (e.entity != t.chr_target) continue;
+                char b[160];
+                const bool d = player && balance::ChrPosition(player, me) && balance::ChrPosition(e.chr, at);
+                std::snprintf(b, sizeof b, "; target %u HP %d, %.1f m", e.entity, balance::EnemyHp(e.chr),
+                              d ? double(std::sqrt((me[0] - at[0]) * (me[0] - at[0]) + (me[1] - at[1]) * (me[1] - at[1]) +
+                                                   (me[2] - at[2]) * (me[2] - at[2])))
+                                : -1.0);
+                target = b;
+            }
+        }
+        Log("test: %s 0x%x%s", TravelStepName(step.kind), step.buttons, target.c_str());
     } else if (step.kind == TravelStep::GuestHome) {
         // Playtest 1 G4 (direct summon re-rings): the guest goes home on its own; the director's
         // bell then rings again from its own world.
@@ -1688,6 +1705,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         }
         const bool ok = obj ? worldact::StandAtObject(entity, dist, angle, &what)
                             : worldact::StandAtChr(entity, dist, angle, &what);
+        if (!obj) t.chr_target = ok ? std::uint32_t(entity) : 0u;
         Log("test: %s %d (%.1f m, %.0f deg): %s", TravelStepName(step.kind), entity, double(dist), double(angle),
             ok ? what.c_str() : "FAILED: not loaded");
     } else if (step.kind == TravelStep::GuestStick) {

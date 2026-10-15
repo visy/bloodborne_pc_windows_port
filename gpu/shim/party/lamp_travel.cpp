@@ -5,6 +5,7 @@
 #include "coop_hooks.h"
 #include "game_state.h"
 #include "lamp_travel_rules.h"
+#include "mirror_frame.h"
 #include "party_async_io.h"
 #include "party_balance.h"
 #include "party_director.h"
@@ -663,6 +664,7 @@ bool OwnsTick() {
 
 void Tick() {
     warper::Tick();  // the world warper (solo; nothing while it is off)
+    mirror::Tick();  // the Dream mirror's editor frame (solo and party)
     if (!g_on.load(std::memory_order_relaxed)) return;
     const double now = Now();
     const GameSnapshot s = ReadGameState(false);

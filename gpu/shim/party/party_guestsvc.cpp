@@ -1138,6 +1138,12 @@ bool RunTestFixture(const GameSnapshot& s, int step) {
         const bool ok = id && GiveItem(kItemAccessory, id, 1);
         Log("test: rune (accessory) %u: %d -> %d%s", id, b, ItemCount(kItemAccessory, id), ok ? "" : " (give failed)");
     }
+    if (const std::size_t lt = g.test.find("lot="); step == 0 && lt != std::string::npos) {
+        // "lot=N": the game's own item-lot award on the guest (e.g. 3401700: a Caryll Rune, a
+        // generated gem, 90230, with its 1000 lot points: always), for the Memory Altar check.
+        const unsigned id = unsigned(std::strtoul(g.test.c_str() + lt + 4, nullptr, 10));
+        Log("test: item lot %u %s", id, id && AwardItemLot(id) ? "awarded (the game's award path)" : "NOT awarded");
+    }
     const std::size_t w = g.test.find("warp=");
     if (w == std::string::npos) {
         return step == 0;
