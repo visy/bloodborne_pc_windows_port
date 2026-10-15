@@ -475,3 +475,29 @@ remote chrs (guest 1: host + guest 2 from 43.5 s), host `cooperators 1 -> 2` at 
 guest 2's `in the world` at 40.2 s - the late-joiner bug above stays fixed and the ~48 s first-sync
 lag is gone. The host's screenshots (shot.py PrintWindow) came out all black in both runs, so this
 check is log-only; 4 players were not re-run.
+
+## 9. A 4th player's rejoin crashes the headless guests (parab3 a7t1, 2026-10-15) - open
+
+Run: `instances.py run --count 4 --headless 2 --join-sequential --stagger 10 --fresh-saves --party
+--env BB_PARTY_MAX=4 --env BB_PARTY_TEST_START_LAMP=2412951` (title join and direct summon on, the
+current defaults); the rendered guest (inst1) `BB_PARTY_STATUS_TEST=guest:leave@105,guest:rejoin@120`.
+
+* Title joins: all three on the first try, host `cooperators 0 -> 1 -> 2 -> 3` at 28.4 / 55.4 /
+  82.5 s; every guest logs 3 remote chrs.
+* inst1 Leave at 121.7 s (`client -> leaving -> idle` 0.4 s, its own world), Rejoin at 136.7 s
+  (`starting a fresh link`, direct summon joined 1.5 s after the request, `cooperators 3 -> 4` on
+  inst2 / inst3 at 144.1 / 144.3 s; on inst2 the rejoined chr fades in at its old address).
+* 146.3 s inst2 and 151.5 s inst3 crash (both headless-lite), in the game's chr threads
+  (CSChrThread2 / CSChrThread1), reading a peer's type-6 packet queue: 0x1A6D390 (a remote chr's
+  update, `0x1789200(flow, peer, 6, buf, 0x63F8)`) -> 0x17910F0 (pop the peer's packet: memcpy, then
+  free). inst2: null memcpy source (fault address 0, host RIP in the CRT); inst3: the free's heap
+  lookup failed ("Heap not found", 0x20B55B0 from 0x17911A6). The entry's buffer was freed or
+  replaced while the chr thread read it.
+* After their restarts both title joins failed (`no snapshot within 20 s`) and the host's game kicked
+  the rejoined inst1 at 190.5 s (`sceNpMatching2KickoutRoomMember`).
+
+Not seen on the rendered host or the rendered rejoiner. Suspects: two chr threads popping the same
+peer's queue (two remote chrs keyed to one peer id after the rejoin: the old entry's peer match,
+`FUN_00CA1C70`), or the per-peer queue freed by the member's leave while a chr still pointed at it.
+Next: the same run with all guests rendering-lite off (2 windows + 1 headless) to tell headless from
+4-player, and a log of the flow's per-peer list (+0x28) at the rejoin.
