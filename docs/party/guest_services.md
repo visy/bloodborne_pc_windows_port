@@ -366,3 +366,32 @@ into the host's Dream), guest log `Party guest services:` [R]:
   level up?" (cursor on NO: Left to YES, Cross): `LEVEL UP on the guest: level 37 -> 38, echoes
   20000 -> 11366`. After the session the guest's party save holds level 38 / echoes 11366; the
   host's save keeps level 37 / echoes 0. Screenshots: `agents/guestsvc/evidence/doll_level_up`.
+
+## 2026-10-15 (parceh2): Caryll Rune, the editor's frame, the host's view of a new look (H5)
+
+Live, guest in the host's Dream, the guest driven by its in-process pad file (`BB_PAD_FILE`), host
+placed by `host_chr`, screenshots of both games after each step.
+
+* **Rune memorized as a guest.** The Caryll Runes are generated gems (lot category 8, GemGen ids
+  100xxx), not EquipParamAccessory rows (the fixture's old `rune=100` gave an accessory the altar
+  never lists). Fixture `lot=20000;goods=4104:1`: the Rune Workshop Tool, then the game's own award
+  of lot 20000 ("Eye"; the C3 gift path also hands it to the host, a test-aid side effect). Without
+  the tool the altar says "The workshop tool required for this task is missing." With it: "Memorise
+  a Caryll Rune to acquire its eldritch strength." -> "Select Caryll Rune to remember" lists Eye ->
+  Cross: Eye is marked memorized, the stats panel shows it in slot 1 and its effect icon appears in
+  the guest's HUD.
+* **The editor's frame.** `mirror_frame.cpp` (ported from bbhost's change_appearance.cpp /
+  menu_steps.cpp): the menu step constructor 0x1C1CCE0 is watched for "ChrMakeCommandList" (type 7);
+  in the world the tick opens ChrMake_BG (0x1AD8150, descriptor as character creation fills it),
+  runs its controller's update every frame and closes it (0x1AD8E60) when our reference on the
+  list's step is the last. Live: the Appearance list sits in the book with the hunter's live preview
+  (Gender, Age, Voice, Build, Scale Adjustment, skin colours, Face Details, favourites, Default),
+  no game HUD over it; Gender -> Male (the "Changing gender will reset certain changes" box, YES)
+  changed the preview.
+* **The host sees the new look.** When the list closes the guest re-broadcasts its player record
+  (0x1781AC0, what InGameStart runs after every load) and sends `{"op":"appearance"}`; 1.5 s later
+  every other game removes that member's chr and rewinds its task to STEP_Create, which builds it
+  from the new record (`remote chr ... shown as InGameStart does`). Host screenshots 1-4 s after the
+  close: the guest male (no long hair down the back), no load; after the next party travel still
+  male. The one-time "Wear clothing to change appearance." flag 72100202 is per player now
+  (never_sync; it went to the host's world as a world action before).

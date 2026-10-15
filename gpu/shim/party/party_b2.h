@@ -69,6 +69,9 @@ bool GuestPreRing(const GameSnapshot& s, std::uint32_t host_map);
 void SetLocalSlot(int slot);
 /// Main thread, once a frame (the director tick).
 void Tick(const GameSnapshot& s);
+/// H5: the local player's appearance changed (the Dream mirror's editor closed; main thread): its
+/// record goes to the members again and they rebuild its chr (no load).
+void NoteOwnAppearanceChanged();
 /// Guest: the host's travel event. True when B2 takes it (B1's replay must not run it).
 bool OnHostTravel(const TravelIntent& t);
 /// A PartyLink EVENT "b2" from `from_slot` (any thread).
@@ -180,11 +183,12 @@ int LocalHp();
 double LastMemberDownAt();
 /// The clock of LastMemberDownAt.
 double NowSeconds();
+/// Host: when it last sent its room to a title joiner (NowSeconds clock; -1e9: never). Test aid
+/// BB_PARTY_STORY_TEST=serve:<remo> (A11's admitted-just-before-a-cutscene race).
+double TitleRoomServedAt();
 /// Host, main thread (batch 6): hold its lamp travel while a member it just served a room joins.
 /// `who` gets a short reason when held.
 bool HostTravelHeldForJoin(std::string* who);
-/// Host: Now() of the last title-join room this host sent (< 0: none yet). Test aid clock.
-double TitleServedAt();
 /// A lamp / headstone id as a travel intent (ReturnPointParam row; main thread). False: no row.
 bool LampTravelIntent(std::uint32_t id, TravelIntent* t);
 /// Host in a session with at least one member task (someone to travel with or without).

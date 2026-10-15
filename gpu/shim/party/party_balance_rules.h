@@ -77,6 +77,25 @@ bool EnemyScalingActive(const Rules& r);
 /// C4: the max HP factor for `stacks` rot stacks (clamped 0..kRotMaxStacks).
 float RotHpFactor(int stacks);
 
+/// C4 "stamina cost" rot (0.6.2): the game never asks the SpEffect consumeStaminaRate for a roll or
+/// a swing (live: 0 calls), so the rot charges the extra itself. One tick's stamina drop (prev ->
+/// now, the max unchanged) times (factor - 1), with the fraction carried to the next drop: the
+/// whole points to take now (0 when nothing was spent, the max changed or the factor is 1).
+int RotExtraStaminaDrain(int prev, int now, int prev_max, int now_max, float factor, float* carry);
+
+/// C4 "rally" rot (0.6.2): the SpEffect regainRate getter is never asked either (live: 0 calls while
+/// a guest fought), so the rot takes back part of each HP gain itself: one tick's gain (prev ->
+/// now, the max unchanged, alive before) that is not a Blood Vial's (`vial` false) times
+/// (1 - factor), the fraction carried. The whole points to take back now (0: nothing to take).
+int RotRallyTakeBack(int prev, int now, int prev_max, int now_max, float factor, bool vial, float* carry);
+/// The "rally" rot counts an HP gain only this long after the player last took damage (the game's
+/// rally window: a hit back regains part of what was just lost); later gains (a regeneration
+/// effect, a healing item other than a Blood Vial) are not a rally and are kept whole.
+constexpr double kRotRallyWindowS = 6.0;
+/// True when an HP gain `since_damage_s` seconds after the last damage (negative: no damage
+/// seen since the rot came into force) falls inside the rally window.
+bool RotRallyGainInWindow(double since_damage_s);
+
 /// C4 rot, what cleanses it (ERSC: resting at a grace). A lamp warp is the death's respawn (no
 /// rest) only while the player is still down from that death: dead at the warp, or the warp came
 /// within kRespawnWarpS of the death before the player was up again. Playtest 1 (H5:6072/10228):

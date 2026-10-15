@@ -117,6 +117,43 @@ int main() {
     assert(!LampMenuRest(true, true, 6.0f, 0.0f, 0.0f));    // an item box elsewhere
     assert(!LampMenuRest(true, true, 1.0f, 5.0f, 0.0f));    // a floor above
 
+    // C4 stamina cost: +10 % a stack, charged on each drop, fraction carried.
+    {
+        float carry = 0;
+        assert(RotExtraStaminaDrain(100, 90, 100, 100, 1.1f, &carry) == 1 && carry < 0.01f);  // roll 10 -> +1
+        carry = 0;
+        assert(RotExtraStaminaDrain(100, 95, 100, 100, 1.1f, &carry) == 0 && carry > 0.49f);  // 0.5 carried
+        assert(RotExtraStaminaDrain(95, 90, 100, 100, 1.1f, &carry) == 1 && carry < 0.01f);
+        carry = 0;
+        assert(RotExtraStaminaDrain(100, 70, 100, 100, 1.2f, &carry) == 6);   // 2 stacks: 30 -> +6
+        assert(RotExtraStaminaDrain(90, 95, 100, 100, 1.1f, &carry) == 0);    // regen
+        assert(RotExtraStaminaDrain(100, 90, 100, 90, 1.1f, &carry) == 0);    // max changed (stamina rot)
+        assert(RotExtraStaminaDrain(100, 90, 100, 100, 1.0f, &carry) == 0);   // no stack
+        assert(RotExtraStaminaDrain(-1, 90, 100, 100, 1.5f, &carry) == 0);    // unknown
+        carry = 0;
+        assert(RotExtraStaminaDrain(10, 1, 100, 100, 2.0f, &carry) == 1);     // never below 0
+    }
+
+    // C4 rally: -15 % a stack of each non-vial HP gain, fraction carried.
+    {
+        float carry = 0;
+        assert(RotRallyTakeBack(400, 500, 719, 719, 0.85f, false, &carry) == 15);   // +100 -> keep 85
+        assert(RotRallyTakeBack(400, 500, 719, 719, 0.85f, true, &carry) == 0);     // a Blood Vial
+        assert(RotRallyTakeBack(0, 500, 719, 719, 0.85f, false, &carry) == 0);      // a revive
+        assert(RotRallyTakeBack(400, 500, 647, 719, 0.85f, false, &carry) == 0);    // the max changed
+        assert(RotRallyTakeBack(500, 400, 719, 719, 0.85f, false, &carry) == 0);    // damage
+        assert(RotRallyTakeBack(400, 500, 719, 719, 1.0f, false, &carry) == 0);     // no stack
+        carry = 0;
+        assert(RotRallyTakeBack(400, 410, 719, 719, 0.85f, false, &carry) == 1 && carry > 0.49f);  // 1.5
+        assert(RotRallyTakeBack(410, 420, 719, 719, 0.85f, false, &carry) == 2);   // 1.5 + 0.5
+        carry = 0;
+        assert(RotRallyTakeBack(400, 500, 719, 719, -1.0f, false, &carry) == 100);  // clamped
+        assert(RotRallyGainInWindow(0.5));     // a hit back right after damage
+        assert(RotRallyGainInWindow(kRotRallyWindowS));
+        assert(!RotRallyGainInWindow(kRotRallyWindowS + 0.1));  // a regeneration tick later
+        assert(!RotRallyGainInWindow(-1.0));   // no damage seen
+    }
+
     // Menu texts.
     assert(DescribeHp(150, false).find("+75 %") != std::string::npos);
     assert(DescribePoise(-100, false).find("-30") != std::string::npos);

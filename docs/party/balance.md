@@ -117,20 +117,24 @@ cooperator the game's data intended). The boss log line shows the engine's sum (
 ## 3. C4: death debuff ("rot")
 
 ERSC: optional rot, 5 kinds, one random per death, stacking, removed only at a grace. Ours
-(Bloodborne-themed, five kinds; 0.5.2 ships two: health and stamina, live-verified. The other
-three are behind `BB_PARTY_ROT_ALL_KINDS=1`, default off, until a live run shows their effect):
+(Bloodborne-themed): three kinds in force since 0.6.2, all live-verified: health, stamina and
+stamina cost. Rally and item discovery are not offered (see the table).
 
 - Each death of the local player (HP > 0 -> 0 in the world, any role) adds a stack, at most 5, of
-  a kind picked at random among the five; a toast after the respawn names it ("Rot 2/5: rally
-  -15 % until you rest at a lamp"). `BB_PARTY_ROT_KIND=N[,N...]` forces the kinds (tests).
+  a kind picked at random among the kinds in force; a toast after the respawn names it ("Rot 2/5:
+  stamina costs +10 % until you rest at a lamp"). `BB_PARTY_ROT_KIND=N[,N...]` forces the kinds (tests).
 
   | Kind | Per stack | Rate function (1.09, prologue replaced) | SpEffect field it multiplies |
   |---|---|---|---|
   | health | max HP -10 % | 0x17e46e0 `55 48 89 e5 53 50` | maxHpRate +0x10 (HP update 0x1a0d7d0) |
   | stamina | max stamina -10 % | 0x17e4a20 `55 48 89 e5 48 83 ec 10` | maxStaminaRate +0x18 (0x1a572e0) |
-  | stamina cost | stamina use +10 % | 0x17e4c50 `55 48 89 e5 41 56 53` | consumeStaminaRate +0x1b8 |
-  | rally | rally (regain) -15 % | 0x17e5590 `55 48 89 e5 41 56 53` | regainRate +0x1f4 |
-  | discovery | item discovery -10 | 0x17e8010 `48 8b 47 08 c5 f8 57 c0` (a sum) | itemDropRate +0x1fc (points) |
+  | stamina cost | stamina use +10 % | none: the tick (0.6.2) | each stamina drop of the player times (factor - 1) taken from the bar (`RotExtraStaminaDrain`); the getter 0x17e4c50 (consumeStaminaRate +0x1b8) is never asked for a roll or a swing |
+  | rally | rally (regain) -15 % | **in force** (0.6.2; `BB_PARTY_ROT_RALLY=0` off) | the getter 0x17e5590 (regainRate +0x1f4) was never asked in live fights, so the tick takes back 15 % a stack of each HP gain that comes within 6 s of damage (`RotRallyGainInWindow`) and is not a Blood Vial's (`RotRallyTakeBack`). Live 2026-10-15 (parfin c4, two stacks): 44 HP regained in 4 gains, 13 taken back |
+  | discovery | item discovery -10 | not offered | the itemDropRate sum 0x17e8010 was never asked over guest kills with drops; no other path known (`BB_PARTY_ROT_ALL_KINDS=1`: the hook, RE only) |
+
+  Live 2026-10-15 (parceh2 s1b): a roll from a full bar cost 10 before the stamina-cost stack and
+  11 after it (`rot stamina cost: 100 -> 89 (+1 for x1.10)`); swings in a fight 20 and 27 extra
+  over 9 and 13 drops.
 
   Each hook changes the result only for the local player's SpEffect list (`PlayerIns+0x1c8`). No
   param row or SpEffect is used (no unused SpEffect rows could be proven unreferenced), so nothing

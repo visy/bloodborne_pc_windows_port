@@ -419,6 +419,20 @@ std::atomic<bool> g_title_joined{false};  // this guest came in by a title join 
 std::atomic<bool> g_title_home_now{false};
 
 bool SendHomeVeto(u64 site) {
+    const bool own_leave = SendHomeVetoForOwnLeave();
+    // Split travel: OnLeave_Limit (0x138A51C: the room-gone / irregular-leave path) sent a guest
+    // home 5 s after the host travelled alone (live split4) although the room and the party link
+    // were up. While the host is apart (or just left alone) and its link is fresh, it is dropped -
+    // also for a title-joined guest (B5, live parab2 b5e: it left the host's world 6 s after the
+    // host's alone travel and loaded its own map). The player's own Leave is never dropped here.
+    if (g_on.load() && Role() == RoleClient && site == 0x138a51c && !own_leave && SplitHostReachable()) {
+        Log("guest: send-home at +0x138a51c (OnLeave_Limit) dropped: split travel, the host is in another area and "
+            "connected (session %d, flow %d, flow +0xF4 %.1f, session +0x2E0 %.1f +0x2F0 %.1f%s)",
+            Role(), Field<int>(Slot(kSlotFlow), 0x84, -1), double(Field<float>(Slot(kSlotFlow), 0xf4)),
+            double(Field<float>(Slot(kSlotSession), 0x2e0)), double(Field<float>(Slot(kSlotSession), 0x2f0)),
+            g_title_joined.load() ? "; a title-joined guest" : "");
+        return true;
+    }
     // A title-joined guest has no own-world return data (no snapshot: its own world was never
     // loaded): the game's return load fell back to the title (live run 18 / 19). Leave the session
     // here; TitleJoinGuestTick takes it home with a lamp warp to its own last lamp.
@@ -427,16 +441,6 @@ bool SendHomeVeto(u64 site) {
         reinterpret_cast<Fn>(Guest(kBeginLeave))(Slot(kSlotSession));
         g_title_home_now = true;
         Log("title join: send-home at +0x138a51c replaced: session left, home by a lamp warp next");
-        return true;
-    }
-    // Split travel: OnLeave_Limit (0x138A51C: the room-gone / irregular-leave path) sent a guest
-    // home 5 s after the host travelled alone (live split4) although the room and the party link
-    // were up. While the host is apart (or just left alone) and its link is fresh, it is dropped.
-    if (g_on.load() && Role() == RoleClient && site == 0x138a51c && SplitHostReachable()) {
-        Log("guest: send-home at +0x138a51c (OnLeave_Limit) dropped: split travel, the host is in another area and "
-            "connected (session %d, flow %d, flow +0xF4 %.1f, session +0x2E0 %.1f +0x2F0 %.1f)",
-            Role(), Field<int>(Slot(kSlotFlow), 0x84, -1), double(Field<float>(Slot(kSlotFlow), 0xf4)),
-            double(Field<float>(Slot(kSlotSession), 0x2e0)), double(Field<float>(Slot(kSlotSession), 0x2f0)));
         return true;
     }
     if (g_on.load() && Role() == RoleClient &&
@@ -2756,6 +2760,12 @@ bool SoloRespawn(double held_for, u32 map_now) {
 // runs PartyGhostDeath. A death in the arena during the fight stayed unprocessed too (17 s until
 // the kill). Watchdog: HP 0 for 12 s (after a K10 on this load) or 15 s, with no death funnel or
 // hold (the normal path fires ~8.6 s after the death) -> the guest death redirect runs from here.
+/// BB_PARTY_B2_DEAD_WATCHDOG=redirect: the old watchdog (a leave and a re-summon).
+bool DeadWatchdogHolds() {
+    static const bool holds = !(std::getenv("BB_PARTY_B2_DEAD_WATCHDOG") &&
+                                std::strcmp(std::getenv("BB_PARTY_B2_DEAD_WATCHDOG"), "redirect") == 0);
+    return holds;
+}
 void DeadAfterClearTick(const GameSnapshot& s, double now) {
     static double dead_since = 0;
     static bool fired = false;
@@ -2787,7 +2797,7 @@ void DeadAfterClearTick(const GameSnapshot& s, double now) {
     if (dead_since <= 0) dead_since = now;
     // 12 s after a K10 on this load (the normal path fires ~8.6 s after the death), 15 s otherwise
     // (live: a death in the Cleric Beast's arena during the fight was not processed either).
-    const double limit = g_k10_this_load.load() ? 12.0 : 15.0;
+    const double limit = g_k10_this_load.load() ? 12.0 : 11.0;
     // The game's death state did run when B2 held the death (HoldGuestDeath) - also once the hold
     // was consumed by a lone respawn or a dead follow that is still loading (hostdeath hd22: this
     // watchdog redirected a guest 8 s into its lone respawn, which ended the session).
@@ -2797,6 +2807,17 @@ void DeadAfterClearTick(const GameSnapshot& s, double now) {
         return;
     }
     fired = true;
+    // 0.6.2 (parceh2 s1, live): a guest revived in place (no load) never reached PartyGhostDeath on
+    // its NEXT death either (the phantom's death state does not run again until a load), so its
+    // second death ended the session here (redirect = leave, re-summon). The death is now held
+    // as if the funnel had run: HeldDeathTick revives it at its own lamp / limbo / the host's lamp
+    // as usual (its grace already spent); the redirect stays the fallback there.
+    if (DeadWatchdogHolds() && HoldGuestDeath()) {
+        g_death_held_at = now - DeathGrace();
+        Log("guest: dead for %.0f s and the game's death state never ran (%s): the death is taken as held (no leave)",
+            now - dead_since, g_k10_this_load.load() ? "after a boss clear: BlockClear state kept by K10" : "no PartyGhostDeath");
+        return;
+    }
     Log("guest: dead for %.0f s and the game's death state never ran (%s): the guest death redirect runs now",
         now - dead_since, g_k10_this_load.load() ? "after a boss clear: BlockClear state kept by K10" : "no PartyGhostDeath");
     GuestDeathRedirectNow();
@@ -3510,6 +3531,39 @@ void SpectatorRemoveTick(const GameSnapshot& s) {
     }
 }
 
+/// Removes the member chr here nearest to `at` (within 6 m) and rewinds its task so it is built
+/// again from the member's GameData row (its record); none near: the chr-less tasks are rewound.
+void RecreateMemberNear(const std::array<float, 3>& at, const char* why) {
+    u64 victim = 0;
+    float best = 36.0f;
+    for (const TaskInfo& t : Tasks(false)) {
+        const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        float p[3];
+        if (c && ChrPos(c, p)) {
+            const float d = (p[0] - at[0]) * (p[0] - at[0]) + (p[1] - at[1]) * (p[1] - at[1]) +
+                            (p[2] - at[2]) * (p[2] - at[2]);
+            if (d < best) {
+                best = d;
+                victim = c;
+            }
+        }
+    }
+    if (!victim) {
+        // Already removed (its limbo: "spectating") or never here: built again by its task.
+        const int n = RewindRemoteTasks(why);
+        Log("%s: no member chr within 6 m of (%.1f, %.1f, %.1f) here; %d task(s) rewound", why, double(at[0]),
+            double(at[1]), double(at[2]), n);
+        return;
+    }
+    using Release = u64(BB_COOP_SYSV*)(u64, u32);
+    using Remove = void(BB_COOP_SYSV*)(u64, u64);
+    reinterpret_cast<Release>(Guest(0x15bc080))(Field<u64>(Slot(kSlotGsm), 0x16f8), Field<u32>(victim, 8));
+    reinterpret_cast<Remove>(Guest(0x19186e0))(Slot(kSlotWorldChrMan), victim);
+    Log("%s: its chr %#llx here removed (%.1f m from (%.1f, %.1f, %.1f)); re-created", why, ull(victim),
+        double(std::sqrt(best)), double(at[0]), double(at[1]), double(at[2]));
+    RewindRemoteTasks(why);
+}
+
 /// Host and guests: a member revived in place: its chr here (dead where it fell) is removed and
 /// built again by its task at the member's new spot.
 void MemberRevivedTick(const GameSnapshot& s) {
@@ -3521,36 +3575,46 @@ void MemberRevivedTick(const GameSnapshot& s) {
         std::lock_guard<std::mutex> lk(g_member_revived_mu);
         todo.swap(g_member_revived);
     }
-    for (const auto& at : todo) {
-        u64 victim = 0;
-        float best = 36.0f;
-        for (const TaskInfo& t : Tasks(false)) {
-            const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
-            float p[3];
-            if (c && ChrPos(c, p)) {
-                const float d = (p[0] - at[0]) * (p[0] - at[0]) + (p[1] - at[1]) * (p[1] - at[1]) +
-                                (p[2] - at[2]) * (p[2] - at[2]);
-                if (d < best) {
-                    best = d;
-                    victim = c;
-                }
+    for (const auto& at : todo) RecreateMemberNear(at, "member revived");
+}
+
+// H5 (0.6.2): a member changed its appearance (the Dream mirror's editor). Its chr on the other
+// games was built from its player record at its join or last load; the member re-broadcasts the
+// record (0x1781AC0, as InGameStart does after every load) and asks the peers to rebuild its chr
+// from it (1.5 s later, once the record has arrived): the new look shows at once, no load.
+std::atomic<bool> g_own_appearance_changed{false};
+std::vector<std::pair<double, std::array<float, 3>>> g_appearance_todo;  // (due, where), under g_member_revived_mu
+
+void AppearanceTick(const GameSnapshot& s) {
+    const bool session = (Role() == RoleHost && s.cooperators > 0) || Role() == RoleClient;
+    if (g_own_appearance_changed.load() && s.world_up && !s.loading) {
+        g_own_appearance_changed = false;
+        float p[3] = {0, 0, 0};
+        if (session && ChrPos(Field<u64>(Slot(kSlotWorldChrMan), 0x60), p)) {
+            RebroadcastOwnRecord("appearance changed");
+            char b[128];
+            std::snprintf(b, sizeof b, "{\"op\":\"appearance\",\"pos\":[%.3f,%.3f,%.3f]}", p[0], p[1], p[2]);
+            Send(-1, b);
+            Log("appearance: changed at the mirror: own record re-broadcast, the peers rebuild this chr");
+        } else {
+            Log("appearance: changed at the mirror (no party session here: nothing to send)");
+        }
+    }
+    if (!s.world_up || s.loading) return;
+    std::vector<std::array<float, 3>> due;
+    {
+        std::lock_guard<std::mutex> lk(g_member_revived_mu);
+        const double now = Now();
+        for (auto it = g_appearance_todo.begin(); it != g_appearance_todo.end();) {
+            if (now >= it->first) {
+                due.push_back(it->second);
+                it = g_appearance_todo.erase(it);
+            } else {
+                ++it;
             }
         }
-        if (!victim) {
-            // Already removed (its limbo: "spectating") or never here: built again by its task.
-            const int n = RewindRemoteTasks("member revived");
-            Log("member revived: no member chr within 6 m of (%.1f, %.1f, %.1f) here; %d task(s) rewound", double(at[0]),
-                double(at[1]), double(at[2]), n);
-            continue;
-        }
-        using Release = u64(BB_COOP_SYSV*)(u64, u32);
-        using Remove = void(BB_COOP_SYSV*)(u64, u64);
-        reinterpret_cast<Release>(Guest(0x15bc080))(Field<u64>(Slot(kSlotGsm), 0x16f8), Field<u32>(victim, 8));
-        reinterpret_cast<Remove>(Guest(0x19186e0))(Slot(kSlotWorldChrMan), victim);
-        Log("member revived in place: its dead chr %#llx here removed (%.1f m from where it died); re-created",
-            ull(victim), double(std::sqrt(best)));
-        RewindRemoteTasks("member revived");
     }
+    for (const auto& at : due) RecreateMemberNear(at, "appearance changed");
 }
 
 /// Main thread, host: the alive snapshot, the taken death's revive (or a wipe's vanilla funnel)
@@ -6935,6 +6999,10 @@ void TestWarpTick(const GameSnapshot& s, double now) {
     reinterpret_cast<Fn>(Guest(0x13cdf30))(id);
 }
 
+void NoteOwnAppearanceChanged() {
+    g_own_appearance_changed = true;
+}
+
 void Tick(const GameSnapshot& s) {
     if (!g_on.load()) {
         return;
@@ -7069,6 +7137,7 @@ void Tick(const GameSnapshot& s) {
     PosScanTick(s, Now());
     RemoteChrRenderWatch(s, Now());
     MemberRevivedTick(s);
+    AppearanceTick(s);
     ReviveRearmTick(s);
     BossClearInvincibleTick(s, now);
     DeadAfterClearTick(s, now);
@@ -7404,6 +7473,17 @@ void OnLinkEvent(int from_slot, const std::string& body) {
             }
         }
         Log("slot %d spectates (boss-fight limbo); its dead copy here is hidden until it respawns", from_slot);
+        return;
+    }
+    if (body.find("\"op\":\"appearance\"") != std::string::npos) {
+        float p[3] = {0, 0, 0};
+        const char* pp = std::strstr(body.c_str(), "\"pos\":[");
+        if (pp && std::sscanf(pp, "\"pos\":[%f,%f,%f]", &p[0], &p[1], &p[2]) == 3 && std::isfinite(p[0]) &&
+            std::isfinite(p[1]) && std::isfinite(p[2])) {
+            std::lock_guard<std::mutex> lk(g_member_revived_mu);
+            if (g_appearance_todo.size() < 8) g_appearance_todo.push_back({Now() + 1.5, {p[0], p[1], p[2]}});
+        }
+        Log("slot %d changed its appearance: its chr here is rebuilt from its new record in 1.5 s", from_slot);
         return;
     }
     if (body.find("\"member_revived\"") != std::string::npos) {
@@ -7926,6 +8006,9 @@ bool DirectSummonHoldsHostBell(double waiting_s) {
 double NowSeconds() {
     return Now();
 }
+double TitleRoomServedAt() {
+    return g_title_served_at.load();
+}
 double LastMemberDownAt() {
     return g_last_down_at.load();
 }
@@ -7938,10 +8021,6 @@ bool RejoinRunning() {
 int LocalHp() {
     const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
     return player ? ChrHp(player) : -1;
-}
-double TitleServedAt() {
-    const double t = g_title_served_at.load();
-    return t < -1e8 ? -1.0 : t;
 }
 bool HostTravelHeldForJoin(std::string* who) {
     if (!g_on.load() || Role() != RoleHost) return false;

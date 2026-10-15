@@ -1003,12 +1003,18 @@ bool Replay(const TravelIntent& t, const ReplayPlan& p) {
 
 /// A stock "send home" warp at `site` on a guest: go to the party's destination instead.
 std::atomic<bool> g_allow_send_home{false};
+std::atomic<bool> g_own_leave_veto{false};
 
 bool RetargetSendHome(u64 site) {
     if (g_allow_send_home.exchange(false)) {
         // B2 may still take the guest's own Leave home its own way (a title-joined guest).
-        if (SendHomeVetoFn veto = g_send_home_veto.load(); veto && veto(site)) {
-            return true;
+        if (SendHomeVetoFn veto = g_send_home_veto.load(); veto) {
+            g_own_leave_veto = true;
+            const bool vetoed = veto(site);
+            g_own_leave_veto = false;
+            if (vetoed) {
+                return true;
+            }
         }
         Log("send-home at +0x%llx: the guest's Leave, home as usual", ull(site));
         return false;
@@ -1574,6 +1580,10 @@ void AllowNextSendHome() {
 
 void SetSendHomeVeto(SendHomeVetoFn fn) {
     g_send_home_veto = fn;
+}
+
+bool SendHomeVetoForOwnLeave() {
+    return g_own_leave_veto.load();
 }
 
 bool ReplayTravelNow(const TravelIntent& t) {

@@ -17,15 +17,15 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 
 | Area | Progress | |
 |---|---|--:|
-| **Overall** | `██████████████████░░` | 92% |
+| **Overall** | `███████████████████░` | 93% |
 | Session & joining | `███████████████████░` | 94% |
-| World & travel | `███████████████████░` | 93% |
-| Death & respawn | `███████████████████░` | 93% |
+| World & travel | `███████████████████░` | 95% |
+| Death & respawn | `███████████████████░` | 95% |
 | Progress (anyone can progress) | `██████████████████░░` | 92% |
-| Services & UI | `███████████████████░` | 95% |
+| Services & UI | `███████████████████░` | 97% |
 | Network & robustness | `██████████████████░░` | 91% |
-| Bloodborne-specific (chalice, Insight) | `█████████████████░░░` | 87% |
-| Feels like single player in a party | `██████████████████░░` | 90% |
+| Bloodborne-specific (chalice, Insight) | `██████████████████░░` | 88% |
+| Feels like single player in a party | `███████████████████░` | 94% |
 
 ---
 
@@ -144,7 +144,9 @@ before anyone is in the game):
   anyone home.
 - **No multiplayer walls.** The fog walls that keep phantoms near the host are gone; the party can
   split up and explore. There is no leash: a guest can walk far from the host (checked at 140 m)
-  and stays in the party.
+  and stays in the party, and host and guest can each walk on into another part of the city (the
+  Cathedral Ward and Central Yharnam are streamed separately), fight, use items and die there for
+  minutes while the other plays elsewhere: nobody is pulled back.
 - **Anyone can go through a boss fog first**, a boss's first fight included: the fight starts for
   everyone and the others follow through the fog. When a guest starts a first fight, the intro
   cutscene plays on every screen; the host's own picture does not jump (its character visits the
@@ -169,7 +171,9 @@ before anyone is in the game):
 - **Apart and back together.** While players are in different maps each sees only the others in
   its own map; meeting again shows them at once, without a loading screen. If the host dies while
   you are in another area you play on where you are (no loading screen for you); if you die there
-  you get up at your own lamp.
+  you get up at your own lamp. A guest who joined from the title stays put too when the host travels
+  alone; enemies it killed while the host was away are back once the host returns (the host's world
+  counts, as after a reload).
 - **Everyone can use lamps.** Vanilla disables lamps during co-op; here they work for everyone.
   A lamp lit by anyone is lit for the party.
 - **Resting resets the world for the party.** Enemies respawn; everyone's HP, vials and bullets
@@ -178,12 +182,14 @@ before anyone is in the game):
   arrives after that reset with a single loading screen. Resting while the host is in a boss fight
   takes everyone out of the boss room (the host's world loads at its last lamp, the fight resets).
 - **Guests are full players.** The Doll (level up), shops, the workbench, storage, the Memory
-  Altar (runes, covenants), lamps and headstones all work for guests. A guest can also rest alone
+  Altar (memorize your own Caryll Runes; covenants), lamps and headstones all work for guests. A guest can also rest alone
   (lamp, "No"), level up and shop in the Dream and come back, while the others play on.
 - **Change your appearance at the Dream's mirror.** The mirror in the Hunter's Dream workshop opens
   the appearance editor ("Put on Disguise", a feature the game left unfinished, restored as in
-  bbhost), in single player and for every party member on their own hunter. Launcher switch
-  "Hunter's Dream mirror", on by default; everyone in a party needs the same setting.
+  bbhost) in character creation's own frame (the book and a live preview of your hunter), in single
+  player and for every party member on their own hunter; the others see your new look as soon as
+  you close it, with no loading screen. Launcher switch "Hunter's Dream mirror", on by default;
+  everyone in a party needs the same setting.
 - **Progress counts for everyone.** Bosses, items, doors, shortcuts, lamps, story and endings go
   into every player's own save. A guest who is behind catches up, including the Blood Moon.
   Key items a guest earned in the host's world (Oedon Tomb Key, badges, workshop tools) are checked
@@ -240,8 +246,8 @@ before anyone is in the game):
 - **Network drops recover.** A network outage of up to 30 s keeps the session: no loading screen, everyone carries on where they stood once the network is back (the others freeze in place meanwhile). If a longer outage loses the session, a guest goes home at once with one loading screen and is summoned back beside the host by itself once the network is back. The party also checks every 15 s that everyone sees the same world and progress and quietly re-sends whatever differs.
 - **Wrong passwords are locked out.** A few typos are fine; after 5 wrong passwords in a minute the host refuses that address for a while.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
-- **Death has a cost.** Each death stacks "rot" (−10% max HP or stamina, picked at random, up to
-  5); using a lamp (even just opening its travel menu and cancelling) or levelling up clears it.
+- **Death has a cost.** Each death stacks "rot" (−10% max HP, −10% max stamina, +10% stamina
+  use or −15% HP won back by hitting after a hit (rally), picked at random, up to 5); using a lamp (even just opening its travel menu and cancelling) or levelling up clears it.
   It belongs to your character: each save slot keeps its own, and a new game starts without it. On by default; the host can turn it off on the *Party rules* page.
 - **Enemies scale with the party, harder than vanilla.** Bosses get more health (and a little more
   damage) per extra hunter than the game gives them, normal enemies get tougher too; all six values

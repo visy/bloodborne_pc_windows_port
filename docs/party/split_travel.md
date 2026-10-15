@@ -393,3 +393,18 @@ Note (splittravel): in the vis2-vis4 runs the host's copy did get position updat
   turning it on would change nothing in play; it stays as a test aid (`host_stage`).
 * Test aid note: `BB_PARTY_SPLIT_TEST=no` missed its Right press once (cont1: the dialog took YES and
   the host travelled); `BB_PARTY_TRAVEL_CHOICE=alone` on the guest is the deterministic choice.
+
+## 2026-10-15 (parab2): title-joined guests stay; enemy reconciliation stays off
+
+* **Host alone, title-joined guest (b5e, live)**: 6 s after the host's alone lamp warp the guest's
+  game ran OnLeave_Limit (`0x138A51C`). The split veto drops that for a summoned guest, but the
+  title-join check ran first (a title-joined guest has no own-world snapshot, so its send-home is
+  replaced by a leave + lamp warp home): the guest loaded its own map and joined the host again
+  later with two more loads. `SendHomeVeto` now checks the split case first (not for the player's
+  own Leave, which `party_travel` marks while the veto runs). b5e2 / b5e3: the guest stayed in the
+  host's world for 190 s / 45 s with no load (`a title-joined guest` in the drop line).
+* **`BB_PARTY_SPLIT_ENEMIES=1` (b5e3, live)**: the guest killed three enemies of the Cathedral Ward
+  while the host was in the Dream (census `1 died` x3); none was recorded as an apart kill and the
+  meet sent 0. Without the reconciliation the host's world wins at the meet: the guest's census
+  logs `RESPAWN without a load: 3 enemies alive again` right after the meet, and both players see
+  the same living enemies. The switch stays off (default decided with this run).

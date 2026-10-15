@@ -3,6 +3,7 @@
 // Build and run: ninja -C out/gpu party-stick-test && out/gpu/party-stick-test.exe
 #include "party/party_stick_args.h"
 
+#include <cmath>
 #include <cstdio>
 
 static int g_failures = 0;
@@ -39,6 +40,17 @@ int main() {
     CHECK(!ParseStickObjArgs("obj:2411998:6", &e, &d, &a, &r, &steps));
     CHECK(!ParseStickObjArgs("10:20", &e, &d, &a, &r, &steps));
     CHECK(!ParseStickObjArgs("obj:0:6:0", &e, &d, &a, &r, &steps));
+    std::vector<std::array<float, 3>> route;
+    CHECK(ParseRouteArgs("-122.6:-27:68.0/-120.1:72/-118.4:-26.8:76.4", &route));
+    CHECK(route.size() == 3 && route[0][0] == -122.6f && route[0][1] == -27.0f && route[0][2] == 68.0f);
+    CHECK(route[1][0] == -120.1f && std::isnan(route[1][1]) && route[1][2] == 72.0f);
+    CHECK(route[2][2] == 76.4f);
+    CHECK(ParseRouteArgs("1:2", &route) && route.size() == 1);
+    CHECK(!ParseRouteArgs("", &route));
+    CHECK(!ParseRouteArgs("1:2/", &route));
+    CHECK(!ParseRouteArgs("1:2//3:4", &route));
+    CHECK(!ParseRouteArgs("1:2/3", &route));
+    CHECK(!ParseRouteArgs("1:2:3:4", &route));
     if (g_failures) {
         std::fprintf(stderr, "%d failure(s)\n", g_failures);
         return 1;

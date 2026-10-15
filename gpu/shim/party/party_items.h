@@ -486,6 +486,10 @@ void ItemsTick();
 /// world: queued as its own grant (given while summoned like any grant). False: not such a lot or
 /// items off.
 bool OfferRepeatGift(std::int32_t lot);
+/// Test aid (main thread): the game's own item-lot award (AwardItemLot) for this player only: a
+/// guest's award in the host's world is not reported up as an NPC gift (D5), so the host does not
+/// receive it too (BB_PARTY_GUESTSVC_TEST `lot=N`).
+bool AwardLotGuestOnly(std::uint32_t lot);
 /// Guest: the next NPC gift to report to the host (any thread; the director posts it).
 bool PopGuestGift(std::string* body);
 /// Host: EVENT gift_up from `slot` (link thread): validated, rate limited, queued for the tick.
