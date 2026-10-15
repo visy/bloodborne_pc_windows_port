@@ -39,6 +39,9 @@ void Mark(vk::CommandBuffer cmdbuf, u32 stream, u32 id, bool after);
 /// report and the statistics show them), ~0u when off. CopyArgs is recorded before the dispatch.
 u32 ArgsSlot();
 void CopyArgs(vk::CommandBuffer cmdbuf, vk::Buffer args, u64 offset, u32 slot);
+/// A command buffer cut short at a dword that is not a packet header (liverpool DropBadBuffer):
+/// counted, and the last one named in the device-lost report.
+void NoteDroppedCommands(const char* queue, u32 dword, u64 offset, u64 submission);
 /// Device lost: prints, per stream, the command the GPU did not finish and what it was.
 void ReportDeviceLost(const char* where);
 /// The same report, once, while the GPU has not finished submitted work for a long time (no

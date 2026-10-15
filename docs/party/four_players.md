@@ -475,3 +475,60 @@ remote chrs (guest 1: host + guest 2 from 43.5 s), host `cooperators 1 -> 2` at 
 guest 2's `in the world` at 40.2 s - the late-joiner bug above stays fixed and the ~48 s first-sync
 lag is gone. The host's screenshots (shot.py PrintWindow) came out all black in both runs, so this
 check is log-only; 4 players were not re-run.
+
+## 9. A 4th player's rejoin crashes the headless guests (parab3 a7t1, 2026-10-15) - fixed (parab4)
+
+Run: `instances.py run --count 4 --headless 2 --join-sequential --stagger 10 --fresh-saves --party
+--env BB_PARTY_MAX=4 --env BB_PARTY_TEST_START_LAMP=2412951` (title join and direct summon on, the
+current defaults); the rendered guest (inst1) `BB_PARTY_STATUS_TEST=guest:leave@105,guest:rejoin@120`.
+
+* Title joins: all three on the first try, host `cooperators 0 -> 1 -> 2 -> 3` at 28.4 / 55.4 /
+  82.5 s; every guest logs 3 remote chrs.
+* inst1 Leave at 121.7 s (`client -> leaving -> idle` 0.4 s, its own world), Rejoin at 136.7 s
+  (`starting a fresh link`, direct summon joined 1.5 s after the request, `cooperators 3 -> 4` on
+  inst2 / inst3 at 144.1 / 144.3 s; on inst2 the rejoined chr fades in at its old address).
+* 146.3 s inst2 and 151.5 s inst3 crash (both headless-lite), in the game's chr threads
+  (CSChrThread2 / CSChrThread1), reading a peer's type-6 packet queue: 0x1A6D390 (a remote chr's
+  update, `0x1789200(flow, peer, 6, buf, 0x63F8)`) -> 0x17910F0 (pop the peer's packet: memcpy, then
+  free). inst2: null memcpy source (fault address 0, host RIP in the CRT); inst3: the free's heap
+  lookup failed ("Heap not found", 0x20B55B0 from 0x17911A6). The entry's buffer was freed or
+  replaced while the chr thread read it.
+* After their restarts both title joins failed (`no snapshot within 20 s`) and the host's game kicked
+  the rejoined inst1 at 190.5 s (`sceNpMatching2KickoutRoomMember`).
+
+Not seen on the rendered host or the rendered rejoiner. Suspects: two chr threads popping the same
+peer's queue (two remote chrs keyed to one peer id after the rejoin: the old entry's peer match,
+`FUN_00CA1C70`), or the per-peer queue freed by the member's leave while a chr still pointed at it.
+Next: the same run with all guests rendering-lite off (2 windows + 1 headless) to tell headless from
+4-player, and a log of the flow's per-peer list (+0x28) at the rejoin.
+
+### 9.1 Root cause and fix (parab4, 2026-10-15)
+
+* The queues: SprjNetMan (`*0x553D6D0`) +0x28 is a list of peer entries {+8 PlayerId, +0x30 one queue
+  per packet type (0x44)}. A received packet is pushed by 0x178D510 -> 0x1790C20, popped by 0x1789200
+  -> 0x17910F0 (memcpy, free, unlink). Neither takes a lock; the remote player chr updates
+  (0x1A6D390, type 6) run on the chr worker threads (a different thread almost every frame), so the
+  game relies on each queue having ONE reader. The entry is found by 0x1789380: the first entry whose
+  PlayerId equals the chr's (0xCA1C70: equal by the member, not by the object).
+* The bug is not 4-player specific and not headless specific: it is the **bystander**. When a guest
+  leaves, the host's game removes its player (cooperators 2 -> 1). The other guests' games end its
+  remote player task and drop its peer entry, but keep its PlayerIns in the ChrSet (status lines:
+  `[2 h 10044002 kind 1 st 3 ... chr ok net 7]` stays, cooperators stay 2, presence entry stays).
+  When it rejoins, the kept PlayerIns matches the member again and reads its queue; the game also
+  makes a new one. Two chrs pop one type-6 queue from two chr threads: the null memcpy source and
+  the "heap not found" free of a7t1. Live with the diagnostics (a7b, 3 players, the headless
+  bystander inst2): `A7: two chrs read peer entry ...` after the first rejoin, 3 readers of one entry
+  after the second, `cooperators 2 -> 3` in a 3-player party, and a crash in a task step
+  (0x1E50090 from the MultiPlay task update 0x1E556F0) on the third.
+* Fix (party_b2 `StaleMemberChrTick`): a guest removes, 2 s after it saw it, a player chr whose
+  PlayerId has no peer entry any more and that no task holds, the way the B2 split removal does it
+  (EnterleaveDirector leave, presentation slot release 0x15BC080, WorldChrMan remove 0x19186E0).
+  Two safety nets stay on (party_fourp): every push and pop of a peer queue runs under one lock, and
+  when two chrs read one peer entry the newer keeps the updates (`BB_PARTY_QUEUE_GUARD=0` turns the
+  lock and the guard off).
+* Live a7e (3 players, host + rendered guest + headless bystander, three leave / rejoin cycles in
+  one session): on the bystander `split: remote chr ... removed (A7: its member left the session ...)`
+  2.5 s after each leave, `cooperators 2 -> 1`, and `1 -> 2` at each rejoin (never 3); no
+  `two chrs read`, no same-queue overlap, no crash; screenshots show the three together after every
+  rejoin. The host's Leave at the end ended the session on both guests in 0.4 s.
+

@@ -25,6 +25,7 @@ LOG_FILE = APP_DIR / "launcher.log"
 LOG_DIR = APP_DIR / "logs"
 LOG_KEEP = 20
 SETTINGS_FILE = APP_DIR / "launcher_settings.json"
+UPDATE_CACHE_FILE = APP_DIR / "launcher_update_check.json"  # scripts/update_check.py, 6 h
 PATCHES_XML = APP_DIR / "patches" / "Bloodborne.xml"
 DEFAULT_GAME = Path(os.environ.get("BB_GAME_DIR", "../CUSA03173"))
 
@@ -106,11 +107,11 @@ IN THE GAME
 - If a game crashes, it restarts by itself and rejoins the party.
 
 IF JOINING FAILS
-- "version mismatch": the bbport build, the game files or params, gameplay patches, gameplay mods, party options or Max players differ from the host's. The message says which and what to do.
+- "version mismatch": the bbport build, the game files or params, gameplay patches, gameplay mods, party options or Max players differ from the host's. The message says which and what to do, and names the host's bbport version and yours. The launcher says when a new version is out.
 - "wrong password or party code": copy the code again; check the Password field on both sides.
 - Nothing happens: the host's port is not reachable. See step 3 for the host.
 
-Saves: with Separate party saves on, the party plays from user\\savedata_party and backs it up to user\\save_backups. README.txt there explains restoring a backup.
+Saves: the party plays from user\\savedata_party and backs it up to user\\save_backups (README.txt there explains restoring a backup). Right before every party session the game also copies both save folders to user\\save_backups\\party_sessions: "Undo last party session" on this tab puts them back (it shows what it replaces first and keeps your current saves, so the undo can be undone). After a session the launcher checks the party save and offers the undo if something looks wrong.
 
 The full guide is docs\\PARTY.md."""
 PARTY_SWITCHES = [
@@ -431,6 +432,15 @@ def party_saves_module():
         sys.path.insert(0, scripts_dir)
     import party_saves
     return party_saves
+
+
+def party_session_module():
+    """scripts\\party_session.py: party session snapshots (Undo last party session, the check after)."""
+    scripts_dir = str(APP_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import party_session
+    return party_session
 
 
 PARTY_RENDEZVOUS_TIP = (
@@ -1221,6 +1231,8 @@ class BloodborneLauncher(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.after(50, self.poll_queue)
         self.log("Ready. Select your eboot.bin and press Launch Bloodborne.")
+        self.after(1200, self.check_last_party_session)
+        self.start_update_check()
 
     # ------------------------------------------------------------------ UI
     def build_style(self):
@@ -1310,6 +1322,10 @@ class BloodborneLauncher(tk.Tk):
         ttk.Label(main, text="BLOODBORNE PC", style="Header.TLabel").pack(anchor="w")
         ttk.Label(main, text="Native Windows Port (bbport) Launcher",
                   style="SubHeader.TLabel").pack(anchor="w", pady=(0, 8))
+        # Update notice (scripts/update_check.py): packed here once a newer release is known.
+        self.update_label = tk.Label(main, text="", fg="#c5a059", bg="#1a1a1a", cursor="hand2",
+                                     font=("Segoe UI", 10, "underline"), anchor="w")
+        self._update_anchor = main.winfo_children()[-2]
 
         # eboot.bin selection
         card = ttk.Frame(main, style="Card.TFrame", padding=12)
@@ -1412,6 +1428,7 @@ class BloodborneLauncher(tk.Tk):
         self.party_log_area_vars = {key: tk.BooleanVar(value=not isinstance(_areas, list) or key in _areas)
                                     for key, _ in PARTY_LOG_AREAS}
         self.auto_support_bundle = tk.BooleanVar(value=self.settings.get("auto_support_bundle", True))
+        self.check_updates = tk.BooleanVar(value=self.settings.get("check_updates", True))
         self.feat_mute_unfocused = tk.BooleanVar(value=self.settings.get("feat_mute_unfocused", True))
         self.feat_async_shaders = tk.BooleanVar(value=self.settings.get("feat_async_pipelines", True))
         self.feat_gpl = tk.BooleanVar(value=self.settings.get("feat_gpl", False))
@@ -1448,6 +1465,8 @@ class BloodborneLauncher(tk.Tk):
         self.party_through_walls = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_through_walls", False))
         # I1 friendly fire / PvP: a host rule (bbport.ini party_friendly_fire, off by default).
         self.party_friendly_fire = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_friendly_fire", False))
+        # Shared lamps (statsaudit finding 5): a host rule (bbport.ini party_share_lamps, on by default).
+        self.party_share_lamps = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_share_lamps", True))
         self.party_separate_save = tk.BooleanVar(value=self.settings.get("party_separate_save", True))
         self.party_port_var = tk.StringVar(value=str(self.settings.get("party_port", PARTY_DEFAULT_PORT)))
         self.party_upnp = tk.BooleanVar(value=self.settings.get("party_upnp", True))
@@ -1785,6 +1804,10 @@ class BloodborneLauncher(tk.Tk):
         self._check(sec, "Save a support bundle after a crash", self.auto_support_bundle,
                     "When the game ends with an error, the launcher writes logs\\support_<time>.zip "
                     "(the same as the button below). Default: on.")
+        self._check(sec, "Tell me when a new version is out", self.check_updates,
+                    "At start, asks GitHub (at most every 6 hours, 3 s timeout, nothing sent about you) "
+                    "whether a newer bbport release exists and shows a line with its link. Every PC in a "
+                    "party needs the same version. Default: on.", command=self.save_settings)
         btn = ttk.Button(sec, text="Save support bundle...", style="Secondary.TButton",
                          command=self.save_support_bundle)
         btn.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(6, 2))
@@ -2008,6 +2031,12 @@ class BloodborneLauncher(tk.Tk):
                             "when you switch it. Also in the game: System > Friendly fire (live). Default: off "
                             "(bbport.ini party_friendly_fire).",
                             command=self.save_party_friendly_fire)
+        lamps_cb = self._check(sec, "Shared lamps (host)", self.party_share_lamps,
+                               "Host only: a lamp any party member lights is lit for everyone, in each member's "
+                               "own save too (a guest's lamps light up in your world when it joins; yours reach "
+                               "its save). Your setting is the party's rule. Also in the game: System > Friendly "
+                               "fire page (Shared lamps). Default: on (bbport.ini party_share_lamps).",
+                               command=self.save_party_share_lamps)
         self.party_separate_save.set(True)
         save_cb = self._check(sec, "Separate party saves (always)", self.party_separate_save,
                               "Party play always uses its own save folder (user\\savedata_party), so your "
@@ -2027,6 +2056,15 @@ class BloodborneLauncher(tk.Tk):
                           "the folder party sessions with separate saves play from. Your single-player "
                           "save is only read. An existing party save is backed up to "
                           "user\\save_backups\\savedata_party first.")
+        undo_btn = ttk.Button(sec, text="Undo last party session", style="Secondary.TButton",
+                              command=self.undo_last_party_session)
+        undo_btn.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(2, 2))
+        sec.next_row += 1
+        Tooltip(undo_btn, "Puts your saves back as they were right before your last party session "
+                          "(host or guest): the game copies user\\savedata and user\\savedata_party to "
+                          "user\\save_backups\\party_sessions at every party start. You see what will be "
+                          "replaced before anything changes, and your current saves are copied there "
+                          "first, so the undo can be undone the same way.")
         # Rules & sync dialog, the party guide and (developer checkout) the local test in one row
         tools_row = ttk.Frame(sec, style="Card.TFrame")
         tools_row.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(6, 2))
@@ -2123,7 +2161,7 @@ class BloodborneLauncher(tk.Tk):
                                  dsummon_cb, hud_cb, tags_cb, npc_talk_cb, pings_cb, walls_cb, save_cb,
                                  port_lbl, self.party_port_entry, upnp_cb, rdv_cb, stun_lbl, self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
-        self.party_widgets_host = [ff_cb, public_lbl, self.party_public_entry,
+        self.party_widgets_host = [ff_cb, lamps_cb, public_lbl, self.party_public_entry,
                                    host_lbl, self.party_host_code_entry, copy_btn,
                                    lan_lbl, self.party_lan_code_entry, lan_copy_btn]
         self.party_widgets_join = [code_lbl, self.party_code_entry, paste_btn]
@@ -2183,6 +2221,14 @@ class BloodborneLauncher(tk.Tk):
             update_ini(bbport_ini_path(), {"party_friendly_fire": "1" if self.party_friendly_fire.get() else "0"})
         except OSError as ex:
             self.log(f"[PARTY] Could not save the Friendly fire setting to bbport.ini: {ex}")
+
+    def save_party_share_lamps(self):
+        """The Shared lamps checkbox (host): bbport.ini party_share_lamps (in game: System > Friendly
+        fire page)."""
+        try:
+            update_ini(bbport_ini_path(), {"party_share_lamps": "1" if self.party_share_lamps.get() else "0"})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save the Shared lamps setting to bbport.ini: {ex}")
 
     def save_party_pings(self):
         """The Pings checkbox: bbport.ini party_pings (in game: System > Pings)."""
@@ -2515,6 +2561,103 @@ class BloodborneLauncher(tk.Tk):
         self.log(f"[PARTY] Copied {user / ps.SOLO} to {user / ps.PARTY}"
                  + (f" (the old party save is in {backup})" if backup else ""))
         return True
+
+    def start_update_check(self):
+        """Background check for a newer release (scripts/update_check.py); never blocks or fails."""
+        if not self.check_updates.get():
+            return
+        self._update_result = []
+
+        def work():
+            try:
+                scripts_dir = str(APP_DIR / "scripts")
+                if scripts_dir not in sys.path:
+                    sys.path.insert(0, scripts_dir)
+                import update_check
+                self._update_result.append(update_check.check(PORT_VERSION, UPDATE_CACHE_FILE))
+            except Exception:
+                self._update_result.append(None)
+        threading.Thread(target=work, daemon=True).start()
+        self.after(500, lambda: self.poll_update_check(20))
+
+    def poll_update_check(self, tries):
+        if not self._update_result:
+            if tries > 0:
+                self.after(500, lambda: self.poll_update_check(tries - 1))
+            return
+        notice = self._update_result[0]
+        if notice is None:
+            return
+        import webbrowser
+        self.update_label.config(text=f"{notice.text} (download: {notice.url})")
+        self.update_label.bind("<Button-1>", lambda _e: webbrowser.open(notice.url))
+        self.update_label.pack(anchor="w", pady=(0, 6), after=self._update_anchor)
+        self.log(f"[UPDATE] {notice.text}: {notice.url}")
+
+    def undo_last_party_session(self):
+        """Restore the newest party session snapshot (scripts/party_session.py) after a confirmation."""
+        if self.proc is not None or running_instances():
+            messagebox.showwarning("Game running", "Close the game before restoring saves.")
+            return False
+        try:
+            pss = party_session_module()
+        except ImportError as ex:
+            messagebox.showerror("Undo last party session", f"scripts\\party_session.py is missing:\n{ex}")
+            return False
+        user = party_user_dir()
+        session = pss.last_session(user)
+        if session is None:
+            messagebox.showinfo("Undo last party session",
+                                "There is nothing to undo yet: the game saves a copy of your saves at the start of "
+                                f"every party session (in {user / pss.SESSIONS}).")
+            return False
+        lines = pss.describe(user, session)
+        if not messagebox.askyesno(
+                "Undo last party session?",
+                f"Put your saves back as they were at {session.label}?\n\nThis replaces:\n"
+                + "\n".join(lines)
+                + "\n\nYour current saves are copied to save_backups\\party_sessions first "
+                  "(\"your saves before an undo\"): pressing Undo last party session again brings them back."):
+            return False
+        try:
+            restored, backup = pss.undo(user, session)
+        except (OSError, ValueError) as ex:
+            messagebox.showerror("Undo last party session", f"The restore failed:\n{ex}")
+            return False
+        self.log(f"[PARTY] Saves restored from {restored.path} (your saves before it: {backup})")
+        messagebox.showinfo("Undo last party session",
+                            f"Your saves are back as they were at {restored.label}.\n\n"
+                            f"Your saves from before the undo are in:\n{backup}")
+        return True
+
+    def check_last_party_session(self):
+        """After a party session (the game closed, or at the next launcher start): do the party saves
+        still load, and did nothing go backwards? On a problem: offer the undo."""
+        if self.proc is not None or running_instances():
+            return
+        try:
+            pss = party_session_module()
+            user = party_user_dir()
+            session = pss.needs_check(user)
+            if session is None:
+                return
+            problems = pss.check(user, session)
+            pss.mark_checked(user, session, problems)
+        except Exception as ex:  # a check must never keep the launcher from working
+            self.log(f"[PARTY] The save check after the party session failed: {ex}")
+            return
+        if not problems:
+            self.log(f"[PARTY] Save check after the party session ({session.label}): OK")
+            return
+        for level, msg in problems:
+            self.log(f"[PARTY] Save check after the party session: {level}: {msg}")
+        if messagebox.askyesno(
+                "Party save check",
+                "Your party save looks wrong after the last party session:\n\n"
+                + "\n".join(f"- {msg}" for _, msg in problems[:8])
+                + f"\n\nUndo the last party session? Your saves go back to {session.label} "
+                  "(you see what is replaced first; the current saves are kept, so this can be undone)."):
+            self.undo_last_party_session()
 
     def offer_party_save_copy(self, env) -> bool:
         """First party session with separate saves: offer the copy. False: do not launch."""
@@ -3060,6 +3203,7 @@ class BloodborneLauncher(tk.Tk):
             "party_log_level": dict(PARTY_LOG_LEVELS).get(self.party_log_level_var.get(), ""),
             "party_log_areas": [key for key, var in self.party_log_area_vars.items() if var.get()],
             "auto_support_bundle": self.auto_support_bundle.get(),
+            "check_updates": self.check_updates.get(),
             **{key: var.get() for key, var in self.party_switch_vars.items()},
         }
 
@@ -3637,6 +3781,7 @@ class BloodborneLauncher(tk.Tk):
         self.launch_btn.config(state="normal")
         self.warper_btn.config(state="normal")
         self.stop_btn.config(state="disabled")
+        self.after(1500, self.check_last_party_session)
         if getattr(self, "_warper_run", False):
             self._warper_run = False
             self.after(500, lambda: self.warper_finished(rc))

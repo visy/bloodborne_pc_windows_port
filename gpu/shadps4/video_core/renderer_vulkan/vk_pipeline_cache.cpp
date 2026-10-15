@@ -1113,7 +1113,15 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
     sel.infos.fill(nullptr);
     sel.modules.fill(nullptr);
 
-    bind_stage(HwStage::Fragment, SwStage::Fragment);
+    if (!bind_stage(HwStage::Fragment, SwStage::Fragment)) {
+        // No pixel shader: the clip distance discard shader may still be needed, decided from
+        // this draw's registers, not from a previous draw's fragment stage (NVIDIA: whether the
+        // pipeline got it depended on the order of draws). From deadinside's
+        // Supermedo/bloodborne_pc 72e5c8ce.
+        auto& fs = sel.runtime_infos[u32(SwStage::Fragment)];
+        fs.Initialize(HwStage::Fragment, SwStage::Fragment);
+        ApplyHostRuntimeInfo(fs, SourceHostFlags(regs, HwStage::Fragment), profile);
+    }
 
     const auto* fs_info = sel.infos[static_cast<u32>(SwStage::Fragment)];
     key.mrt_mask = fs_info ? fs_info->mrt_mask : 0u;

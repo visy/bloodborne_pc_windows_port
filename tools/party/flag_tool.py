@@ -588,7 +588,7 @@ GLOBAL_ROWS = [
     (9180, 9180, "never_sync", "a cutscene is playing (set around every story remo; cutscenes_endings.md)"),
     (9181, 9199, "never_sync", "insight return 9181/9182 (per player)"),
     (9200, 9299, "session_runtime", "insight hallucinations / bell maiden events (restart)"),
-    (9300, 9359, "cutscene_seen", "boss intro seen (host enters boss room, first fight)"),
+    (9300, 9359, "never_sync", "a boss's first-encounter Insight given (per player: read and set by the first-fight events around their 9350)"),
     (9360, 9399, "npc_quest", "kin rune + NPC kill events"),
     (9400, 9419, "key_event", "9400/9401 constructor progress gates, 9402 first death, 9403 ladder top, 9404"),
     (9420, 9439, "key_event", "kidnapper warp to Yahar'gul / first sacrifice"),

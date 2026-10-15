@@ -42,6 +42,9 @@ struct Rules {
     /// I1: friendly fire / PvP (ERSC Judicator's Rulebook): party members can hurt each other.
     /// Off by default; only the host's value counts (party_pvp.h).
     bool friendly_fire = false;
+    /// Statsaudit finding 5 (user decision 2026-10-15): lamps are shared by the whole party - a lamp
+    /// any member lit is lit for everyone (each member's own save too). On by default; the host's.
+    bool share_lamps = true;
     bool operator==(const Rules& o) const;
     bool operator!=(const Rules& o) const { return !(*this == o); }
 };
@@ -95,6 +98,14 @@ constexpr double kRotRallyWindowS = 6.0;
 /// True when an HP gain `since_damage_s` seconds after the last damage (negative: no damage
 /// seen since the rot came into force) falls inside the rally window.
 bool RotRallyGainInWindow(double since_damage_s);
+
+/// C4 "item discovery" rot (0.6.2): the itemDropRate sum is never asked (live: 0 calls), but every
+/// enemy drop roll carries the player's discovery in its request (party_droproll, 1.0 = the stat
+/// screen's 100). Each stack takes 10 points (0.1) off it, never below kRotDiscoveryFloor; a
+/// discovery the roll does not carry (<= 0) is left alone.
+constexpr float kRotDiscoveryPerStack = 0.1f;
+constexpr float kRotDiscoveryFloor = 0.1f;
+float RotItemDiscovery(float own, int stacks);
 
 /// C4 rot, what cleanses it (ERSC: resting at a grace). A lamp warp is the death's respawn (no
 /// rest) only while the player is still down from that death: dead at the warp, or the warp came

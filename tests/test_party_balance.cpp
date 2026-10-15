@@ -152,6 +152,11 @@ int main() {
         assert(RotRallyGainInWindow(kRotRallyWindowS));
         assert(!RotRallyGainInWindow(kRotRallyWindowS + 0.1));  // a regeneration tick later
         assert(!RotRallyGainInWindow(-1.0));   // no damage seen
+        // Item discovery: -10 points (0.1) a stack, floor 0.1, clamped stacks, unknown left alone.
+        assert(Near(RotItemDiscovery(1.0f, 0), 1.0f) && Near(RotItemDiscovery(1.0f, 2), 0.8f));
+        assert(Near(RotItemDiscovery(1.7f, 5), 1.2f) && Near(RotItemDiscovery(1.0f, 9), 0.5f));
+        assert(Near(RotItemDiscovery(0.3f, 5), kRotDiscoveryFloor) && Near(RotItemDiscovery(0.0f, 3), 0.0f));
+        assert(Near(RotItemDiscovery(2.1f, -1), 2.1f));
     }
 
     // Menu texts.

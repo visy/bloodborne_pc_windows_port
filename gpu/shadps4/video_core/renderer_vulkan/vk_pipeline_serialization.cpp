@@ -162,7 +162,12 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
         return false;
     }
 
-    fetch_shader_data = spec.fetch_shader_data;
+    // Only the stage that has one (the vertex stage): the geometry stage, loaded after it, has
+    // none and reset it, so geometry-shader pipelines from the disk cache got an empty fetch
+    // shader. From deadinside's Supermedo/bloodborne_pc 72e5c8ce.
+    if (spec.fetch_shader_data) {
+        fetch_shader_data = spec.fetch_shader_data;
+    }
     return true;
 }
 
@@ -312,6 +317,7 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
         return false;
     }
 
+    sel.fetch_shader.reset(); // set by the vertex stage only (LoadShaderMeta)
     for (int stage_idx = 0; stage_idx < MaxShaderStages; ++stage_idx) {
         const auto& hash = sel.graphics_key.stage_hashes[stage_idx];
         if (!hash) {

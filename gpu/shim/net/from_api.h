@@ -99,7 +99,16 @@ public:
         long long version = 3;  // SummonDataVersion as sent
         long long channel = 0;  // ChannelId as sent (the Chalice Dungeon the sign is in)
         json::Value request;  // the create body as sent
+        std::int64_t posted_ms = 0;  // steady clock when it was put up (A4: young signs are not shown)
     };
+    // A4 (join_timing.md): with a bell sign timer below 2.0 s (0.5 s by default since 0.6.2; BB_PARTY_SIGN_DELAY) a
+    // sign is shown to a host's poll only once it is (2.0 - timer) s old, so the sign path keeps its
+    // proven ~2 s from the ring (0.5 s there let a host summon a guest whose bell was barely up).
+    // 0 (the default): shown at once.
+    static constexpr std::int64_t kMinSignAgeMs = 1500;  // the 0.5 s timer's hold (tests)
+    void set_min_sign_age_ms(std::int64_t ms);  // unit tests (0: shown at once)
+    // Signs on the board that are old enough to be shown (a change lets the host poll at once).
+    std::size_t shown_signs();
     std::vector<Sign> signs() const;
     // A member's link went away (crash, timeout, leave): its signs leave the board, so no host
     // summons a game that is not there (returns how many). A restarted game puts up a new one.
@@ -141,6 +150,7 @@ private:
     PartyHostService& service_;
     ChannelBoard channels_;
     mutable std::mutex mu_;
+    std::int64_t min_sign_age_ms_ = 0;
     std::vector<Sign> signs_;
     std::vector<std::pair<std::string, std::int64_t>> holds_;
     std::set<std::string> prologue_;  // under mu_  // online id -> steady ms until

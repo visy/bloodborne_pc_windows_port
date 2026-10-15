@@ -359,7 +359,12 @@ struct LotPlan {
 LotPlan PlanSummonedLot(const std::vector<LotRowData>& chain, const std::vector<GrantItem>& host_items,
                         const std::function<bool(std::int32_t)>& row_done);
 /// Host: one roll of `chain` (each row: one slot by lotItemBasePoint weight; luck and cumulate
-/// counters ignored) for a random lot, so every guest gets the same items.
+/// counters ignored) for a random lot, so every guest gets the same items. Item discovery (per
+/// player on the shared enemy drop roll, party_droproll.h) cannot change these: of the 1.09 C3
+/// lots only six rows are random (3401731/41/51, 9905300, 22502610, 99052010), and the only ones
+/// with a luck slot (3401731/41/51: a gem) are never rolled here (LotChainHasGem: the guest's own
+/// game rolls them in its own world, with its own discovery). The others have no or only luck
+/// slots, where the game's discovery factor cancels out (dropdisc 2026-10-15).
 std::vector<GrantItem> RollLotChain(const std::vector<LotRowData>& chain, std::uint64_t seed);
 /// Host: does `chain` need a roll (a row with more than one weighted slot)?
 bool LotChainRandom(const std::vector<LotRowData>& chain);

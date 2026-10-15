@@ -10,9 +10,28 @@
 //   DropRollSeed(host salt, host world generation, map, enemy entity ids, item lot)
 // runs the game's own roll, and puts the saved RNG back, so nothing else in the game sees a change.
 // The host's salt (random per host run) and generation (+1 on each of the host's loads: a rest,
-// a death, a travel - enemies respawn exactly then) reach the guests in EVENT "drop_seed". The
-// item-discovery value the roll uses (request +4, 0x1581830 of the player's stat and SpEffects)
-// is the host's on every game, so a guest's own Arcane / runes do not change the result.
+// a death, a travel - enemies respawn exactly then) reach the guests in EVENT "drop_seed".
+//
+// Item discovery is per player (user decision 0.6.2): the dice are shared, but each game applies
+// its OWN player's item discovery (request +4, 0x1581830: 1.0 below Arcane 8, 1.7 at 30, 2.1 at
+// 50, plus the SpEffects of type 0x42 such as the Eye rune). How the game uses it (0x17CEAF0, one
+// draw per ItemLotParam row of the lot's chain): every slot with a weight gets
+//   weight = trunc(basePoint * 100 (cumulate-blended) * (enableLuck ? discovery : 1.0)), min 1
+// and ONE draw r = total * (MT output >> 9) / 2^23 walks the slots in order. So discovery only
+// grows the luck slots (usually the rare item) against the others (usually "nothing" or a
+// common item), renormalised per row. Consequences for the same draw (LotRowPick, unit-tested;
+// tools/party/drop_discovery.py over every enemy lot row of 1.09):
+//  - a row with ONE luck slot: that slot's interval only widens with more discovery (its start
+//    moves down, its end up), so a higher-discovery player gets that item whenever a lower one
+//    does, plus sometimes when the lower one does not. Holds strictly.
+//  - an item never turns into "nothing" for the higher-discovery player in the 1.09 enemy lots.
+//  - a row with TWO or more luck slots (58 of the 628 enemy lot rows): the luck items' total
+//    chance still grows, but the boundaries between them move, so the same draw can give the
+//    higher-discovery player ANOTHER luck item of the row than the lower one got.
+//  - a non-luck item (a Blood Vial in a "Vial or Quicksilver Bullet" row) can become the luck item
+//    for the higher-discovery player: discovery trades common items for rare ones, as in vanilla.
+// BB_PARTY_DROP_DISCOVERY=host: the 0.6.1 behaviour (every game uses the host's discovery, so
+// everyone gets exactly the same items).
 //
 // Env: BB_PARTY_SHARED_DROP_ROLL=0 turns it off (the old behaviour: every player's own roll).
 //
@@ -34,7 +53,7 @@ namespace coop::droproll {
 constexpr const char* kEventName = "drop_seed";
 
 /// What a guest needs to roll like the host: the host run's salt, its world generation and its
-/// item-discovery value (0 = unknown: the guest's own is used).
+/// item-discovery value (used only with BB_PARTY_DROP_DISCOVERY=host; 0 = unknown: own).
 struct DropSeed {
     std::uint64_t salt = 0;
     std::uint32_t gen = 0;
@@ -66,6 +85,25 @@ std::uint32_t Mt19937First(std::uint32_t seed);
 
 /// Is the shared roll on (BB_PARTY_SHARED_DROP_ROLL, default on)? `v` = the variable's value.
 bool SharedRollFromEnv(const char* v);
+
+/// BB_PARTY_DROP_DISCOVERY: "host" = every game rolls with the host's item discovery (0.6.1);
+/// anything else (default) = each game with its own player's.
+bool HostDiscoveryFromEnv(const char* v);
+
+/// One slot of an ItemLotParam row as the roll (0x17CEAF0) sees it.
+struct LotSlot {
+    std::uint16_t base = 0;      ///< lotItemBasePoint (+0x40)
+    std::uint16_t cumulate = 0;  ///< cumulateLotPoint (+0x50)
+    bool luck = false;           ///< enableLuck (+0x92 bit i): weight x item discovery
+    bool taken = false;          ///< its pickup flag is already set: not in the roll
+};
+/// The game's per-row pick: which slot (0..7) the draw `mt_output` (one tempered MT19937 word)
+/// picks with item discovery `discovery`; `cumulate_frac` = the row's drop-counter fraction
+/// (0 for rows without one). -1 = no slot has a weight (no draw is taken then).
+int LotRowPick(const LotSlot (&slots)[8], float cumulate_frac, float discovery, std::uint32_t mt_output);
+/// The slot weights the roll uses (0 = not in the roll); returns their total.
+std::uint32_t LotRowWeights(const LotSlot (&slots)[8], float cumulate_frac, float discovery,
+                            std::uint32_t (&weights)[8]);
 
 #ifndef BB_PARTY_DROPROLL_NO_GAME
 /// Once, from worldact::Init (party mode): the roll hook (replaces the old log-only hook).

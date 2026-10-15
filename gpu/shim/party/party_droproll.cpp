@@ -59,6 +59,62 @@ bool SharedRollFromEnv(const char* v) {
     return !(v && v[0] == '0');
 }
 
+bool HostDiscoveryFromEnv(const char* v) {
+    return v && std::strcmp(v, "host") == 0;
+}
+
+std::uint32_t LotRowWeights(const LotSlot (&slots)[8], float cumulate_frac, float discovery,
+                            std::uint32_t (&weights)[8]) {
+    // 0x17CEAF0, in float like the game: base and cumulate points x100, blended by the drop
+    // counter, x discovery for a luck slot (x1.0 otherwise), truncated, at least 1.
+    std::uint32_t total = 0;
+    for (int i = 0; i < 8; ++i) {
+        weights[i] = 0;
+        const float base = static_cast<float>(static_cast<std::uint32_t>(slots[i].base) * 100u);
+        const float cum = static_cast<float>(static_cast<std::uint32_t>(slots[i].cumulate) * 100u);
+        if (!(base > 0.0f || cum > 0.0f) || slots[i].taken) {
+            continue;
+        }
+        float w = base + cumulate_frac * (cum - base);
+        w = w * (slots[i].luck ? discovery : 1.0f);
+        std::uint32_t u = 0;
+        if (w > 0.0f) {
+            u = static_cast<std::uint32_t>(static_cast<std::int64_t>(w));
+            u = u < 2 ? 1 : u;
+        }
+        weights[i] = u;
+        total += u;
+    }
+    return total;
+}
+
+int LotRowPick(const LotSlot (&slots)[8], float cumulate_frac, float discovery, std::uint32_t mt_output) {
+    std::uint32_t w[8];
+    const std::uint32_t total = LotRowWeights(slots, cumulate_frac, discovery, w);
+    if (static_cast<std::int32_t>(total) <= 0) {
+        return -1;
+    }
+    const float scaled = static_cast<float>(static_cast<std::int32_t>(total)) *
+                         static_cast<float>(mt_output >> 9) * 1.1920928955078125e-07f;  // 2^-23
+    std::int32_t r = static_cast<std::int32_t>(static_cast<std::uint64_t>(scaled));
+    int last = -1;
+    for (int i = 0; i < 8; ++i) {
+        const bool listed = (slots[i].base > 0 || slots[i].cumulate > 0) && !slots[i].taken;
+        if (!listed) {
+            continue;
+        }
+        const std::int32_t wi = static_cast<std::int32_t>(w[i]);
+        if (wi != 0) {
+            last = i;
+        }
+        if (r < wi) {
+            return i;
+        }
+        r -= wi;
+    }
+    return last;  // past the end (float rounding): the last slot with a weight
+}
+
 std::string DropSeedToJson(const DropSeed& s) {
     json::Value v = json::Value::make_object();
     v.set("v", 1);
@@ -101,7 +157,9 @@ bool DropSeedFromJson(const std::string& text, DropSeed* out, std::string* error
 
 #include "coop_hooks.h"
 #include "game_state.h"
+#include "party_balance.h"
 #include "party_link.h"
+#include "seamless_rules.h"
 
 #include <atomic>
 #include <chrono>
@@ -150,11 +208,17 @@ using RollFn = void(BB_COOP_SYSV*)(u64, u64, u64);
 using DiscoveryFn = float(BB_COOP_SYSV*)(float, u64);
 RollFn g_roll_original = nullptr;
 bool g_on = false, g_log_rolls = false, g_shared = true;
+bool g_host_disc = false;    // BB_PARTY_DROP_DISCOVERY=host: guests roll with the host's discovery
+float g_test_disc = 0;       // BB_PARTY_DROP_DISCOVERY_TEST: test aid, this game's discovery forced
+i32 g_test_lot = 0;          // BB_PARTY_DROP_LOT_TEST: test aid, every enemy rolls this lot
 std::atomic<int> g_mode{0};  // 0 none, 1 host, 2 guest (worldact::Tick)
 std::mutex g_mu;
 DropSeed g_seed;             // host: its own; guest: the host's (salt 0 = none yet)
 bool g_in_drop = false;      // main thread: inside our roll wrapper
-float g_disc_override = 0;   // guest: the host's discovery for the request
+bool g_in_own_drop = false;  // main thread: inside an own (unshared) roll (C4 discovery rot only)
+float g_disc_before_rot = 0; // the discovery before the C4 rot took its stacks off (0: no rot)
+float g_disc_override = 0;   // the discovery written into the request (0 = the game's own)
+float g_disc_used = 0;       // the discovery the request rolled with (logged)
 std::string g_result;        // the items the wrapped roll dropped
 int g_result_n = 0;
 
@@ -212,12 +276,56 @@ BB_COOP_SYSV void DropInsertEntry(u64, u64 rec, u64, u64, u64, u64) {
 }
 
 BB_COOP_SYSV void LotRollEntry(u64 req, u64, u64, u64, u64, u64) {
-    if (g_in_drop && req && g_disc_override > 0.0f) {
-        float mine = 0;
-        if (SafeGet(req + 4, &mine) && mine != g_disc_override) {
-            SafeWrite(req + 4, &g_disc_override, sizeof g_disc_override);
-        }
+    if ((!g_in_drop && !g_in_own_drop) || !req) {
+        return;
     }
+    float mine = 0;
+    if (!SafeGet(req + 4, &mine)) {
+        return;
+    }
+    g_disc_before_rot = 0;
+    if (g_in_own_drop) {
+        // C4 item discovery rot on an unshared roll: only the stacks, nothing else changes.
+        const float rot = coop::balance::RotDropDiscovery(mine);
+        if (rot != mine) {
+            g_disc_before_rot = mine;
+            SafeWrite(req + 4, &rot, sizeof rot);
+        }
+        g_disc_used = rot;
+        return;
+    }
+    if (g_test_lot > 0) {
+        SafeWrite(req, &g_test_lot, sizeof g_test_lot);
+    }
+    if (g_disc_override > 0.0f && mine != g_disc_override) {
+        SafeWrite(req + 4, &g_disc_override, sizeof g_disc_override);
+        mine = g_disc_override;
+    }
+    // C4 item discovery rot: this player's stacks come off its own roll (after the test aid / the
+    // host's value, so a forced discovery shows the rot too).
+    if (const float rot = coop::balance::RotDropDiscovery(mine); rot != mine) {
+        g_disc_before_rot = mine;
+        SafeWrite(req + 4, &rot, sizeof rot);
+        mine = rot;
+    }
+    g_disc_used = mine;
+}
+
+/// The first row of `lot` as the roll sees it (flags not checked: logged prediction only).
+bool ReadLotRow(i32 lot, LotSlot (&slots)[8]) {
+    const u64 row = lot > 0 ? GameParamRow("ItemLotParam", "ITEMLOT_PARAM_ST", static_cast<u32>(lot)) : 0;
+    std::uint16_t bits = 0;
+    if (!row || !SafeGet(row + 0x92, &bits)) {
+        return false;
+    }
+    for (int i = 0; i < 8; ++i) {
+        slots[i] = LotSlot{};
+        if (!SafeGet(row + 0x40 + 2u * i, &slots[i].base) || !SafeGet(row + 0x50 + 2u * i, &slots[i].cumulate)) {
+            return false;
+        }
+        slots[i].luck = (bits >> i) & 1u;
+    }
+    return true;
 }
 
 BB_COOP_SYSV void DropRollReplace(u64 mim, u64 handle_arg, u64 npc) {
@@ -238,11 +346,19 @@ BB_COOP_SYSV void DropRollReplace(u64 mim, u64 handle_arg, u64 npc) {
     const bool guest_ok = mode == 2 && LocalSessionRole() == 6;
     const bool shared = g_on && g_shared && gsm && seed.salt != 0 && k.lot > 0 && (mode == 1 || guest_ok);
     if (!shared) {
-        if (g_log_rolls) {
-            Log("enemy drop roll on this game (role %d): chr handle %#x, lot %d, own roll%s", LocalSessionRole(),
-                handle, k.lot, g_shared ? (seed.salt ? "" : " (no host seed yet)") : " (shared roll off)");
-        }
+        g_disc_used = 0;
+        g_in_own_drop = true;
         g_roll_original(mim, handle_arg, npc);
+        g_in_own_drop = false;
+        if (g_log_rolls || g_disc_before_rot > 0.0f) {
+            char rot[96] = "";
+            if (g_disc_before_rot > 0.0f) {
+                std::snprintf(rot, sizeof rot, ", item discovery %.2f (rot: %.2f before)", double(g_disc_used),
+                              double(g_disc_before_rot));
+            }
+            Log("enemy drop roll on this game (role %d): chr handle %#x, lot %d, own roll%s%s", LocalSessionRole(),
+                handle, k.lot, g_shared ? (seed.salt ? "" : " (no host seed yet)") : " (shared roll off)", rot);
+        }
         return;
     }
     if (const u64 chr = ChrOfHandle(handle)) {
@@ -264,15 +380,38 @@ BB_COOP_SYSV void DropRollReplace(u64 mim, u64 handle_arg, u64 npc) {
     SafeWrite(rng + 0x10, state, sizeof state);
     SafeWrite(rng + 4, &left, sizeof left);
     g_in_drop = true;
-    g_disc_override = mode == 2 ? seed.discovery : 0.0f;
+    // Item discovery: each game its own player's (default), the host's with
+    // BB_PARTY_DROP_DISCOVERY=host, or the test aid's.
+    const bool host_disc = g_host_disc && mode == 2 && seed.discovery > 0.0f;
+    g_disc_override = host_disc ? seed.discovery : g_test_disc;
+    g_disc_used = 0;
     g_result.clear();
     g_result_n = 0;
     g_roll_original(mim, handle_arg, npc);
     g_in_drop = false;
     SafeWrite(rng, saved, kRngSize);
-    Log("shared drop roll (role %d): map %s entity %d (key %d) lot %d gen %u -> seed %08x%s: %s", LocalSessionRole(),
-        MapName(k.map).c_str(), k.entity, k.entity2, k.lot, seed.gen, s,
-        g_disc_override > 0 ? " (host's item discovery)" : "", g_result_n ? g_result.c_str() : "nothing dropped");
+    // The first row's pick (the first draw of the seeded RNG), at this game's discovery and at
+    // the host's: the same dice, each player's own discovery.
+    const u32 draw = Mt19937First(s);
+    char pick[160] = "";
+    LotSlot lot_row[8];
+    if (g_disc_used > 0.0f && ReadLotRow(g_test_lot > 0 ? g_test_lot : k.lot, lot_row)) {
+        const int own = LotRowPick(lot_row, 0.0f, g_disc_used, draw);
+        if (seed.discovery > 0.0f && seed.discovery != g_disc_used) {
+            std::snprintf(pick, sizeof pick, "; row 1 slot %d (at the host's %.2f: slot %d)", own + 1,
+                          double(seed.discovery), LotRowPick(lot_row, 0.0f, seed.discovery, draw) + 1);
+        } else {
+            std::snprintf(pick, sizeof pick, "; row 1 slot %d", own + 1);
+        }
+    }
+    Log("shared drop roll (role %d): map %s entity %d (key %d) lot %d gen %u -> seed %08x, draw %.4f, item "
+        "discovery %.2f (%s%s)%s%s: %s",
+        LocalSessionRole(), MapName(k.map).c_str(), k.entity, k.entity2, k.lot, seed.gen, s,
+        double(draw >> 9) / 8388608.0, double(g_disc_used),
+        host_disc ? "host's" : g_test_disc > 0.0f ? "test aid" : "own",
+        g_disc_before_rot > 0.0f ? (std::string(", rot: ") + std::to_string(g_disc_before_rot).substr(0, 4) + " before").c_str() : "",
+        g_test_lot > 0 ? " (test lot)" : "", pick,
+        g_result_n ? g_result.c_str() : "nothing dropped");
 }
 
 float HostDiscovery() {
@@ -291,6 +430,14 @@ float HostDiscovery() {
 void Init(bool log_rolls) {
     g_log_rolls = log_rolls;
     g_shared = SharedRollFromEnv(std::getenv("BB_PARTY_SHARED_DROP_ROLL"));
+    g_host_disc = HostDiscoveryFromEnv(std::getenv("BB_PARTY_DROP_DISCOVERY"));
+    if (const char* t = std::getenv("BB_PARTY_DROP_DISCOVERY_TEST")) {
+        const float v = std::strtof(t, nullptr);
+        g_test_disc = std::isfinite(v) && v > 0.0f && v <= 100.0f ? v : 0.0f;
+    }
+    if (const char* t = std::getenv("BB_PARTY_DROP_LOT_TEST")) {
+        g_test_lot = std::atoi(t);
+    }
     const std::initializer_list<u8> pro = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53};
     if (!g_shared && !log_rolls) {
         Log("shared enemy drop roll off (BB_PARTY_SHARED_DROP_ROLL=0): every player rolls its own");
@@ -310,7 +457,9 @@ void Init(bool log_rolls) {
     }
     g_on = true;
     Log("shared enemy drop roll %s (one roll per enemy kill for the whole party; BB_PARTY_SHARED_DROP_ROLL=0: "
-        "own roll per player)", g_shared ? "on" : "off");
+        "own roll per player), item discovery %s%s", g_shared ? "on" : "off",
+        g_host_disc ? "the host's (BB_PARTY_DROP_DISCOVERY=host)" : "per player",
+        g_test_disc > 0.0f ? " (test aid: this game's forced)" : "");
 }
 
 bool Enabled() {

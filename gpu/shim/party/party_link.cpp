@@ -490,7 +490,12 @@ std::string identity_mismatch(const LinkConfig& host, const LinkConfig& guest) {
                         "; yours " + (guest.rules.empty() ? std::string("none: an older build") : guest.rules) +
                         "): every player needs the same Max players setting (BB_PARTY_MAX) and BB_PARTY_FOURP*");
     if (parts.empty()) return {};
-    std::string s = "version mismatch with the host: ";
+    // Both versions up front (the build clause already names them when the builds differ).
+    std::string s = "version mismatch with the host";
+    if (!(host.check_build && host.build_id != guest.build_id))
+        s += " (host bbport " + (host.build_id.empty() ? std::string("unknown") : host.build_id) + ", yours " +
+             (guest.build_id.empty() ? std::string("unknown: an older build") : guest.build_id) + ")";
+    s += ": ";
     for (std::size_t i = 0; i < parts.size(); ++i) s += (i ? "; " : "") + parts[i];
     return s;
 }

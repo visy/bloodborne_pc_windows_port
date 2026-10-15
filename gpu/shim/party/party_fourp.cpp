@@ -22,7 +22,9 @@ extern "C" __declspec(dllimport) unsigned short __stdcall RtlCaptureStackBackTra
                                                                                     void** frames, unsigned long* hash);
 #endif
 
+#include <algorithm>
 #include <atomic>
+#include <vector>
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>
@@ -268,6 +270,235 @@ void LogSummaryShape(u64 out, const i32 per_kind[5], int coop_now) {
     g_shape_last = b;
     ++g_shape_logs;
     Log("H1 summary: %s", b);
+}
+
+// ---- A7: the per-peer packet queues (four_players.md 9) ----
+// SprjNetMan (*0x553D6D0) +0x28: a std::list of peer entries {+8 PlayerId, +0x30 queue per packet
+// type (0x44): +8 list, +0x10 count}. A received packet is pushed by 0x178D510 -> 0x1790C20 and
+// popped by 0x1789200 -> 0x17910F0 (memcpy, free, unlink); neither takes a lock. The chr threads
+// (CSChrThread1 / 2) pop the remote chrs' type-6 updates (0x1A6D390) while other threads push and
+// pop: a 4-player rejoin crashed two guests there (null memcpy source, "heap not found" on the
+// free). Every push and pop now runs under one lock; the first overlaps it saw are logged.
+constexpr u64 kNetMan = 0x553d6d0;
+constexpr u64 kPushCall = 0x178d5cc, kPushFn = 0x1790c20;  // in 0x178D510: (entry, reliable, data, size)
+constexpr u64 kPopJmp = 0x1789364, kPopFn = 0x17910f0;     // tail jump in 0x1789200: (entry, type, buf, size)
+constexpr u64 kChrReadCall = 0x1a6d449, kPacketRead = 0x1789200;
+std::mutex g_q_mu;
+bool g_q_on = false;
+struct QBusy {
+    std::atomic<u64> entry{0};
+    std::atomic<u32> tid{0};
+    std::atomic<u32> type{0};
+    std::atomic<int> op{0};  // 1 push, 2 pop
+    std::atomic<const char*> name{nullptr};  // the owner's thread_local name
+};
+QBusy g_q_busy[32];
+std::atomic<u64> g_q_pushes{0}, g_q_pops{0}, g_q_overlaps{0}, g_q_chr_reads{0};
+std::atomic<int> g_q_overlap_logs{0};
+thread_local u64 t_chr_peer = 0;  // the PlayerId a chr thread's 0x1A6D390 is reading for
+
+extern "C" int runtime_win_thread_name(std::uint32_t thread_id, char* out, std::size_t size);
+#ifdef _WIN32
+extern "C" __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId();
+#endif
+u32 ThisTid() {
+#ifdef _WIN32
+    return u32(GetCurrentThreadId());
+#else
+    return 0;
+#endif
+}
+/// This thread's name (the runtime's guest thread name; "tid N" if it has none).
+const char* ThisName() {
+    thread_local char name[40] = {};
+    if (!name[0]) {
+        if (runtime_win_thread_name(0, name, sizeof name) != 0 || !name[0]) {
+            std::snprintf(name, sizeof name, "tid %u", ThisTid());
+        }
+    }
+    return name;
+}
+
+/// Marks this thread busy on (entry, type); logs (first 12) another thread busy on the same entry.
+int QEnter(u64 entry, u32 type, int op) {
+    const u32 me = ThisTid();
+    int mine = -1;
+    for (int i = 0; i < 32; ++i) {
+        QBusy& b = g_q_busy[i];
+        const u64 e = b.entry.load(std::memory_order_acquire);
+        if (e == entry && e && b.tid.load() != me) {
+            g_q_overlaps.fetch_add(1);
+            if (g_q_overlap_logs.fetch_add(1) < 12) {
+                Log("A7: packet queue overlap%s: %s %s entry %#llx type %u while %s %s type %u (chr peer %#llx); "
+                    "serialised",
+                    type == b.type.load() || op == 1 || b.op.load() == 1 ? " (same queue)" : "",
+                    ThisName(), op == 1 ? "pushes to" : "pops", ull(entry), type,
+                    b.name.load() ? b.name.load() : "?", b.op.load() == 1 ? "pushes" : "pops", b.type.load(),
+                    ull(t_chr_peer));
+            }
+        }
+    }
+    for (int i = 0; i < 32 && mine < 0; ++i) {
+        u32 z = 0;
+        if (g_q_busy[i].tid.compare_exchange_strong(z, me)) {  // claim the slot, then publish the entry
+            g_q_busy[i].type = type;
+            g_q_busy[i].op = op;
+            g_q_busy[i].name = ThisName();
+            g_q_busy[i].entry.store(entry ? entry : 1, std::memory_order_release);
+            mine = i;
+        }
+    }
+    return mine;
+}
+void QLeave(int i) {
+    if (i >= 0) {
+        g_q_busy[i].entry.store(0, std::memory_order_release);
+        g_q_busy[i].tid.store(0, std::memory_order_release);
+    }
+}
+
+BB_COOP_SYSV u64 QueuePush(u64 entry, u64 reliable, u64 data, u64 size) {
+    using Fn = u64(BB_COOP_SYSV*)(u64, u64, u64, u64);
+    const int slot = QEnter(entry, 0xffffffffu, 1);
+    g_q_pushes.fetch_add(1, std::memory_order_relaxed);
+    u64 r;
+    {
+        std::lock_guard<std::mutex> lk(g_q_mu);
+        r = reinterpret_cast<Fn>(Guest(kPushFn))(entry, reliable, data, size);
+    }
+    QLeave(slot);
+    return r;
+}
+
+BB_COOP_SYSV u64 QueuePop(u64 entry, u64 type, u64 buf, u64 size) {
+    using Fn = u64(BB_COOP_SYSV*)(u64, u64, u64, u64);
+    const int slot = QEnter(entry, u32(type), 2);
+    g_q_pops.fetch_add(1, std::memory_order_relaxed);
+    u64 r;
+    {
+        std::lock_guard<std::mutex> lk(g_q_mu);
+        r = reinterpret_cast<Fn>(Guest(kPopFn))(entry, type, buf, size);
+    }
+    QLeave(slot);
+    return r;
+}
+
+// Which chr reads which peer's type-6 queue. Every remote player chr's update (0x1A6D390, chr
+// threads) pops the type-6 queue of the peer entry its PlayerId matches (0x1789380 walks the list
+// with 0xCA1C70: equal by the member, not by the object). A member that leaves and rejoins while
+// others stay leaves its old player entry on the bystanders (parab3 a7t1: presence count 4 -> 5
+// with 4 players); its old chr and the new one then match the same entry and two chr threads pop
+// one queue at once (the 4-player crash), and each gets half the updates. The newest reader of an
+// entry keeps it; an older one reading the same entry within 1 s gets no packet.
+constexpr u64 kPeerEntryOf = 0x1789380;  // entry (netman, const PlayerId*)
+struct QReader {
+    u64 entry = 0, id = 0;
+    double first = 0, last = 0;
+};
+std::mutex g_q_readers_mu;
+std::vector<QReader> g_q_readers;
+std::atomic<u64> g_q_stale_skips{0};
+std::atomic<int> g_q_stale_logs{0};
+double QNow() {
+    return std::chrono::duration<double>(Clock::now().time_since_epoch()).count();
+}
+
+BB_COOP_SYSV u64 ChrPacketRead(u64 man, u64 peer, u64 type, u64 buf, u64 size) {
+    using Fn = u64(BB_COOP_SYSV*)(u64, u64, u64, u64, u64);
+    using EntryFn = u64(BB_COOP_SYSV*)(u64, u64);
+    u64 obj = 0;
+    SafeGet(peer, &obj);
+    t_chr_peer = obj;
+    g_q_chr_reads.fetch_add(1, std::memory_order_relaxed);
+    const u64 entry = man && obj ? reinterpret_cast<EntryFn>(Guest(kPeerEntryOf))(man, peer) : 0;
+    if (entry) {
+        const double now = QNow();
+        std::lock_guard<std::mutex> lk(g_q_readers_mu);
+        g_q_readers.erase(std::remove_if(g_q_readers.begin(), g_q_readers.end(),
+                                         [&](const QReader& r) { return now - r.last > 3.0; }),
+                          g_q_readers.end());
+        QReader* me = nullptr;
+        for (QReader& r : g_q_readers) {
+            if (r.entry == entry && r.id == peer) me = &r;
+        }
+        if (!me) {
+            int others = 0;
+            for (const QReader& r : g_q_readers) others += r.entry == entry ? 1 : 0;
+            g_q_readers.push_back({entry, peer, now, now});
+            me = &g_q_readers.back();
+            Log("A7: %s: the chr with PlayerId %#llx (peer object %#llx) reads peer entry %#llx (%d other reader(s) of "
+                "it)",
+                ThisName(), ull(peer), ull(obj), ull(entry), others);
+        }
+        me->last = now;
+        const QReader mine = *me;
+        for (const QReader& r : g_q_readers) {
+            if (r.entry == entry && r.id != peer && r.first > mine.first && now - r.last < 1.0) {
+                g_q_stale_skips.fetch_add(1, std::memory_order_relaxed);
+                if (g_q_stale_logs.fetch_add(1) < 6) {
+                    Log("A7: two chrs read peer entry %#llx: the older one (PlayerId %#llx) gets no packet, the newer "
+                        "(PlayerId %#llx) keeps the updates",
+                        ull(entry), ull(peer), ull(r.id));
+                }
+                t_chr_peer = 0;
+                return 0;
+            }
+        }
+    }
+    const u64 r = reinterpret_cast<Fn>(Guest(kPacketRead))(man, peer, type, buf, size);
+    t_chr_peer = 0;
+    return r;
+}
+
+void InstallQueueGuard() {
+    if (const char* v = std::getenv("BB_PARTY_QUEUE_GUARD"); v && v[0] == '0' && !v[1]) {
+        Log("A7: packet queue lock off (BB_PARTY_QUEUE_GUARD=0)");
+        return;
+    }
+    const bool push = HookCallSite(kPushCall, kPushFn, reinterpret_cast<const void*>(&QueuePush),
+                                   "A7 packet queue push lock (0x178D510)");
+    const bool pop = push && HookTailJump(kPopJmp, kPopFn, reinterpret_cast<const void*>(&QueuePop),
+                                          "A7 packet queue pop lock (0x1789200)");
+    HookCallSite(kChrReadCall, kPacketRead, reinterpret_cast<const void*>(&ChrPacketRead),
+                 "A7 remote chr packet read trace (0x1A6D390)");
+    g_q_on = push && pop;
+    Log("A7: packet queue lock %s (push %s, pop %s)", g_q_on ? "on" : "NOT installed", push ? "ok" : "no",
+        pop ? "ok" : "no");
+}
+
+/// The SprjNetMan peer entries (main thread, logged when the list changes).
+std::string g_q_list_last;
+void QueueTick() {
+    if (!g_q_on) {
+        return;
+    }
+    u64 man = 0, head = 0;
+    if (!SafeGet(Guest(kNetMan), &man) || !man || !SafeGet(man + 0x28, &head) || !head) {
+        return;
+    }
+    std::string s;
+    u64 node = 0;
+    SafeGet(head, &node);
+    for (int guard = 0; node && node != head && guard < 12; ++guard) {
+        u64 e = 0, obj = 0;
+        SafeGet(node + 0x10, &e);
+        SafeGet(e + 8, &obj);
+        char b[64];
+        std::snprintf(b, sizeof b, " [%#llx id %#llx]", ull(e), ull(obj));
+        s += b;
+        if (!SafeGet(node, &node)) {
+            break;
+        }
+    }
+    if (s.empty()) {
+        s = " none";
+    }
+    if (s != g_q_list_last) {
+        g_q_list_last = s;
+        Log("A7: peer queues:%s (pushes %llu, pops %llu, chr reads %llu, overlaps %llu, stale chr reads skipped %llu)",
+            s.c_str(), ull(g_q_pushes.load()), ull(g_q_pops.load()), ull(g_q_chr_reads.load()), ull(g_q_overlaps.load()),
+            ull(g_q_stale_skips.load()));
+    }
 }
 
 // H1
@@ -572,6 +803,9 @@ void FourpInit() {
     }
     g_cfg = ConfigFromEnv();
     g_max.store(g_cfg.local_max);
+    if (bb_party_enabled() && Image()) {
+        InstallQueueGuard();
+    }
     if (!g_cfg.on) {
         Log("off (%s); rules tag %s", bb_party_enabled() ? "BB_PARTY_FOURP=0" : "BB_PARTY off", RulesTag(g_cfg).c_str());
         return;
@@ -641,6 +875,7 @@ int FourpEffectiveMax() {
 }
 
 void FourpTick() {
+    QueueTick();
     if (!g_init) {
         return;
     }

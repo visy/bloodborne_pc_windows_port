@@ -117,8 +117,8 @@ cooperator the game's data intended). The boss log line shows the engine's sum (
 ## 3. C4: death debuff ("rot")
 
 ERSC: optional rot, 5 kinds, one random per death, stacking, removed only at a grace. Ours
-(Bloodborne-themed): three kinds in force since 0.6.2, all live-verified: health, stamina and
-stamina cost. Rally and item discovery are not offered (see the table).
+(Bloodborne-themed): all five kinds in force since 0.6.2, all live-verified: health, stamina,
+stamina cost, rally and item discovery (see the table).
 
 - Each death of the local player (HP > 0 -> 0 in the world, any role) adds a stack, at most 5, of
   a kind picked at random among the kinds in force; a toast after the respawn names it ("Rot 2/5:
@@ -130,7 +130,7 @@ stamina cost. Rally and item discovery are not offered (see the table).
   | stamina | max stamina -10 % | 0x17e4a20 `55 48 89 e5 48 83 ec 10` | maxStaminaRate +0x18 (0x1a572e0) |
   | stamina cost | stamina use +10 % | none: the tick (0.6.2) | each stamina drop of the player times (factor - 1) taken from the bar (`RotExtraStaminaDrain`); the getter 0x17e4c50 (consumeStaminaRate +0x1b8) is never asked for a roll or a swing |
   | rally | rally (regain) -15 % | **in force** (0.6.2; `BB_PARTY_ROT_RALLY=0` off) | the getter 0x17e5590 (regainRate +0x1f4) was never asked in live fights, so the tick takes back 15 % a stack of each HP gain that comes within 6 s of damage (`RotRallyGainInWindow`) and is not a Blood Vial's (`RotRallyTakeBack`). Live 2026-10-15 (parfin c4, two stacks): 44 HP regained in 4 gains, 13 taken back |
-  | discovery | item discovery -10 | not offered | the itemDropRate sum 0x17e8010 was never asked over guest kills with drops; no other path known (`BB_PARTY_ROT_ALL_KINDS=1`: the hook, RE only) |
+  | discovery | item discovery -10 | **in force** (0.6.2; `BB_PARTY_ROT_DISCOVERY=0` off) | the itemDropRate sum 0x17e8010 is never asked, but every enemy drop roll's request carries the player's discovery (party_droproll, request +4; 1.0 = the stat screen's 100): each stack takes 0.1 off there, floor 0.1 (`RotItemDiscovery`). Live 2026-10-15 (parx s0b, two stacks): `shared drop roll ... item discovery 0.80 (own, rot: 1.00 before)` on the guest's game for each host kill |
 
   Live 2026-10-15 (parceh2 s1b): a roll from a full bar cost 10 before the stamina-cost stack and
   11 after it (`rot stamina cost: 100 -> 89 (+1 for x1.10)`); swings in a fight 20 and 27 extra
