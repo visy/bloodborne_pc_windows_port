@@ -194,6 +194,29 @@ int main() {
         assert(BossGateGuestStarts(*BossGateByEvent(13404801)) && BossGateGuestStarts(*BossGateByEvent(13404851)));
         assert(BossGateGuestStarts(*BossGateByEvent(13504851)) && BossGateGuestStarts(*BossGateByEvent(13604801)));
         assert(!BossGateGuestStarts(*BossGateByEvent(13504801)));  // Lady Maria: examined in her chair first
+        // D10 (pard3): the Blood Moon trigger (13201803) a guest reports for the host's chr.
+        {
+            const StoryTrigger* t = StoryTriggerByEvent(13201803u);
+            assert(t && !StoryTriggerByEvent(13201800u) && t->needs_flag == 13201800u && t->done_flag == 70002802u);
+            const std::uint32_t m32 = 0x20000000u, m24 = 0x18000000u;
+            const float near[3] = {-505.0f, -271.2f, 372.0f}, far[3] = {-472.4f, -185.3f, 594.9f};
+            const float lamp[3] = {-508.98f, -271.24f, 371.03f};
+            assert(StoryTriggerInBlock(*t, m32) && !StoryTriggerInBlock(*t, m24) && !StoryTriggerInBlock(*t, 0xffffffffu));
+            assert(StoryTriggerDue(*t, m32, true, false, false, near) && StoryTriggerDue(*t, m32, true, false, false, lamp));
+            assert(StoryTriggerDue(*t, m32, true, false, false, t->spot));  // the host's visit spot is inside the radius
+            assert(!StoryTriggerDue(*t, m32, true, false, false, far));     // the Lecture Building
+            assert(!StoryTriggerDue(*t, m32, false, false, false, near));   // Rom alive
+            assert(!StoryTriggerDue(*t, m32, true, true, false, near) && !StoryTriggerDue(*t, m32, true, false, true, near));
+            assert(!StoryTriggerDue(*t, m24, true, false, false, near) && !StoryTriggerDue(*t, m32, true, false, false, nullptr));
+            Request rq;
+            rq.map = m32;
+            rq.story = {13201803u};
+            Request back;
+            std::string err;
+            assert(RequestFromJson(RequestToJson(rq), &back, &err) && back == rq);
+            assert(!RequestFromJson("{\"v\":1,\"map\":0,\"set\":[],\"clr\":[],\"story\":[12401803]}", &back, &err));
+            assert(!RequestFromJson("{\"v\":1,\"map\":0,\"set\":[],\"clr\":[],\"story\":[13201803,13201803]}", &back, &err));
+        }
         // D6 (pard3): the plaza gate's emblem checks, inverted for a summoned guest with the emblem.
         {
             const KeyItemGate* kg = KeyItemGateFor(12400760);
