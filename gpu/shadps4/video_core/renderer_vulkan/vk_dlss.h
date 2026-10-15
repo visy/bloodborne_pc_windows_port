@@ -31,6 +31,8 @@ public:
     void AppendInstanceExtensions(std::vector<const char*>& enabled);
     void AppendDeviceExtensions(vk::Instance instance, vk::PhysicalDevice physical,
                                 std::vector<const char*>& enabled);
+    /// Turns DLSS off for this run (e.g. the device did not start with NGX's extensions).
+    void Disable(std::string_view reason);
     /// After the device exists.
     void Initialize(vk::Instance instance, vk::PhysicalDevice physical, vk::Device device);
     void Shutdown();
