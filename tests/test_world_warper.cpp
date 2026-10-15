@@ -142,6 +142,7 @@ int main() {
         CHECK(ParseProgress("").tod_orig == -1);
     }
     CHECK(EnemyKind(210000010u) == 2100u && EnemyKind(23421u) == 23421u);
+    CHECK(EnemyRowFightable(210000010u) && !EnemyRowFightable(902010u) && !EnemyRowFightable(0));
     CHECK(RemoMap(24010000u) == (24u << 24 | 1u << 16) && RemoMap(21000020u) == (21u << 24));
     // Time of day: the passes skip the save's own value; the route is one row per map of the
     // Yharnam areas only.

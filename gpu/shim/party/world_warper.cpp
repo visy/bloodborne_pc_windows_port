@@ -516,7 +516,8 @@ bool PickEnemy(u32 rp, EnemyTarget* out, float* dist, bool* boss, u32* kind) {
         const float dx = e.pos[0] - sp[0], dy = e.pos[1] - sp[1], dz = e.pos[2] - sp[2];
         const float d = dx * dx + dy * dy + dz * dz;
         const u32 npc = NpcParamId(e.chr);
-        const u32 k = npc ? EnemyKind(npc) : 0;
+        if (!EnemyRowFightable(npc)) continue;  // the Dream's messengers and other set pieces
+        const u32 k = EnemyKind(npc);
         if (k && !g.progress.kinds.count(k) && !kinds_here.count(k) && d < best) {
             best = d;
             pick = &e;
