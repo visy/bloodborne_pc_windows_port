@@ -267,6 +267,7 @@ bool GuestServicesEnabledFromEnv(const char* v) {
 #include "party_worldact.h"
 #include "party_split.h"
 #include "party_b2.h"
+#include "party_items.h"
 #include "bbport_game_menu.h"
 #include "bbport_settings.h"
 
@@ -1142,7 +1143,9 @@ bool RunTestFixture(const GameSnapshot& s, int step) {
         // "lot=N": the game's own item-lot award on the guest (e.g. 3401700: a Caryll Rune, a
         // generated gem, 90230, with its 1000 lot points: always), for the Memory Altar check.
         const unsigned id = unsigned(std::strtoul(g.test.c_str() + lt + 4, nullptr, 10));
-        Log("test: item lot %u %s", id, id && AwardItemLot(id) ? "awarded (the game's award path)" : "NOT awarded");
+        // Guest-only: the award is not reported up as an NPC gift (the host does not get it too).
+        Log("test: item lot %u %s", id,
+            id && AwardLotGuestOnly(id) ? "awarded (the game's award path, guest only)" : "NOT awarded");
     }
     const std::size_t w = g.test.find("warp=");
     if (w == std::string::npos) {
