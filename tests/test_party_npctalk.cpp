@@ -80,6 +80,10 @@ static void TestLineSeconds() {
     assert(LineSeconds(0) == 2.5 && LineSeconds(500) == 10.0);
     const double s = LineSeconds(34); // "Then, if you find any survivors..."
     assert(s > 4.0 && s < 4.5);
+    // dlast D8: a listener keeps the line until the talker's next line / end; the limit only
+    // covers a lost end (the talker's own 30 s line limit + 2 s), never below the estimate.
+    assert(RemoteLineLimit(34) == 32.0 && RemoteLineLimit(0) == 32.0 && RemoteLineLimit(500) == 32.0);
+    assert(RemoteLineLimit(34) > LineSeconds(34) + 1.1);
 }
 
 static void TestDecide() {
