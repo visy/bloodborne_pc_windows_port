@@ -292,6 +292,11 @@ void WindowSDL::UpdateTextTitle() {
     BbOverlay::SetTextPrompt(text_active, text_prompt, shown);
 }
 
+namespace {
+/// A mouse press this soon after the window got the focus is the focusing click (window.cpp).
+constexpr u64 kCaptureClickMs = 250;
+} // namespace
+
 bool WindowSDL::PollEvents() {
     {
         std::scoped_lock lock{text_mutex};
@@ -373,7 +378,13 @@ bool WindowSDL::PollEvents() {
             if (event.type == SDL_EVENT_MOUSE_MOTION && (!cam.IsEnabled() || cam.IsLockedOn())) {
                 mouse_dx += event.motion.xrel;
                 mouse_dy += event.motion.yrel;
-            } else {
+            } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+                       (!relative_mouse || SDL_GetTicks() - focus_gained_ms < kCaptureClickMs)) {
+                // Capture-click discard (from Mrsuss60/bloodborne_pc_windows_port 90008b39 by
+                // Mrsuss60, after deadinside28/bloodborne_pc 3c57da4): the click that focuses the
+                // window or takes the mouse back (it is not captured yet) only takes the mouse; it
+                // is no attack or dodge. Its release clears nothing that was set.
+            } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
                 mouse_buttons |= MouseButtonBit(event.button.button);
             }
         }
@@ -391,6 +402,9 @@ bool WindowSDL::PollEvents() {
         case SDL_EVENT_WINDOW_FOCUS_GAINED:
             if (mute_unfocused) {
                 audible = event.type == SDL_EVENT_WINDOW_FOCUS_GAINED;
+            }
+            if (event.type == SDL_EVENT_WINDOW_FOCUS_GAINED) {
+                focus_gained_ms = SDL_GetTicks();
             }
             if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
                 std::scoped_lock lock{mouse_mutex};
