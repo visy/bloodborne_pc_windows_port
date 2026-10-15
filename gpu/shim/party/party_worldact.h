@@ -50,6 +50,12 @@ constexpr double kRateWindow = 10.0;
 /// May a guest set (clear = false) or clear (clear = true) flag `id` in the host's world, the host
 /// standing in map `host_map` (0xAABBCCDD; areas must match for map flags)?
 bool WorldActionAllowed(std::uint32_t id, bool clear, std::uint32_t host_map);
+/// Rule "party quest progress is shared by everyone" (pard3): a boss a guest killed while it stood
+/// alone in a map the host is not in (split travel) is the host's progress too: its defeat flag
+/// (boss_defeated, set only) of the area the guest stands in goes to the host's save (no rewards
+/// for the host; the guest's game gave its own). Only while apart: in the host's world the
+/// host's own game has the kill.
+bool BossKillActionAllowed(std::uint32_t id, bool clear, std::uint32_t member_map, bool apart);
 
 /// An NPC gift trigger: the flag a talk script sets to hand over its gift, which common event 9040
 /// (slots 2-37) waits for to award the gift's item lot (9042, 9045-9052, 9054-9064, 9066, 9067, 9069,

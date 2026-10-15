@@ -169,6 +169,7 @@ bool Armed(int field, std::int64_t now) {
 std::vector<Page> pages;
 u32 split_text[1] = {0};
 u32 notice_text[1] = {0};
+u32 ending_text[1] = {0};
 
 /// A confirmed button's help line: the row's own help, or "press again to confirm" while armed
 /// (a run-time text of its own wrapping the row's).
@@ -1021,6 +1022,12 @@ void DefineAll() {
     notice_text[0] = AddText("Ritual secret broken. Seek the nightmare newborn.",
                              "Тайна ритуала раскрыта. Ищите новорождённого кошмара.");
 
+    // The host's ending (party_story GuestStory::AnswerEnding): each guest is asked first.
+    ending_text[0] = AddText("The host has reached an ending.\nYES: play this ending now (staff roll, then New Game+ in your save).\n"
+                             "NO: not now - you return to your Hunter's Dream and keep your current journey.",
+                             "Хозяин достиг концовки.\nДА: увидеть эту концовку сейчас (титры, затем Новая игра+ в вашем сохранении).\n"
+                             "НЕТ: не сейчас - вы вернётесь в свой Сон охотника и продолжите своё путешествие.");
+
     // ---- Party rules (party_balance.h): the death debuff and the overhead display. ----
     AddPage("Party rules", "Правила группы", "Death debuff, shared NPC dialogue, what shows above companions, DHT (bbport)",
             "Штраф за смерть, общие диалоги NPC, что видно над спутниками (bbport)");
@@ -1147,6 +1154,11 @@ void RefreshBalance() {
 }
 
 } // namespace
+
+u32 EndingQuestionText() {
+    Define();
+    return ending_text[0];
+}
 
 u32 StoryNoticeText(u32 game_message) {
     Define();

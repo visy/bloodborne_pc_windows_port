@@ -183,14 +183,14 @@ std::atomic<double> g_decided_at{-1}, g_member_run_at{-1};
 Choosing g_choosing;  // under g_note_mu
 
 /// Opens the game's YES / NO dialog with our question; the dialog struct, 0 when it cannot open.
-u64 OpenQuestion() {
+u64 OpenQuestion(u32 text_override = 0) {
     const u64 mm = Slot(kSlotMenuMan);
     u8 busy = 0;
     if (!mm || Field<int>(mm, 0x78, -1) != 0 || !SafeGet(Guest(kMenuBusyByte), &busy) || busy) {
         return 0;
     }
     const u64 dlg = Field<u64>(mm, 0xd08);
-    const u32 text = BbGameMenu::Pages::SplitTravelText(0);
+    const u32 text = text_override ? text_override : BbGameMenu::Pages::SplitTravelText(0);
     if (!dlg || !text) {
         return 0;
     }
@@ -715,6 +715,18 @@ void Tick(const GameSnapshot& s, party::PartyLink* link) {
             Log("lamp %u: the question was closed (result %d); no travel", p.id, r);
         }
     }
+}
+
+std::uint64_t AskYesNo(std::uint32_t text) {
+    return text ? OpenQuestion(text) : 0;
+}
+
+int QuestionResult(std::uint64_t dialog) {
+    return dialog ? Field<int>(dialog, 0x18, -1) : -1;
+}
+
+bool DialogUp() {
+    return Field<int>(Slot(kSlotMenuMan), 0x78, -1) != 0;
 }
 
 bool ShowMessage(std::uint32_t text) {

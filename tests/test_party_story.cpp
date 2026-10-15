@@ -269,6 +269,7 @@ static void test_replay_waits_home_when_summoned_off() {
 // for the own world.
 static void test_missed_scene_replayed_while_summoned() {
     GuestStory g;
+    g.SetAskEnding(false);  // the replay body (the question: below)
     double t = 0;
     StoryIntent end;
     end.seq = 1;
@@ -304,6 +305,7 @@ static void test_summoned_ending() {
     // program waits for the own Dream (load, own world, steady) and goes on there.
     {
         GuestStory g;
+    g.SetAskEnding(false);  // the replay body (the question: below)
         double t = 0;
         StoryIntent e;
         e.seq = 7;
@@ -336,6 +338,7 @@ static void test_summoned_ending() {
     // Not calm: the guest does not leave in a fight.
     {
         GuestStory g;
+    g.SetAskEnding(false);  // the replay body (the question: below)
         double t = 0;
         StoryIntent e;
         e.seq = 1;
@@ -352,6 +355,7 @@ static void test_summoned_ending() {
     // BB_PARTY_STORY_ENDING_SUMMONED=0: the old wait for the own world.
     {
         GuestStory g;
+    g.SetAskEnding(false);  // the replay body (the question: below)
         g.summoned_ending = false;
         double t = 0;
         StoryIntent e;
@@ -368,6 +372,7 @@ static void test_summoned_ending() {
 
 static void test_replay_unseen_with_sex_and_tod_guard() {
     GuestStory g;
+    g.SetAskEnding(false);  // the replay body (the question: below)
     double t = 0;
     StoryIntent s;
     s.seq = 7;
@@ -400,6 +405,7 @@ static void test_replay_unseen_with_sex_and_tod_guard() {
 
 static void test_remo_never_starts() {
     GuestStory g;
+    g.SetAskEnding(false);  // the replay body (the question: below)
     double t = 0;
     StoryIntent s;
     s.seq = 1;
@@ -417,6 +423,7 @@ static void test_remo_never_starts() {
 
 static void test_mirror_dropped_when_sent_home() {
     GuestStory g;
+    g.SetAskEnding(false);  // the replay body (the question: below)
     double t = 0;
     StoryIntent s;
     s.seq = 1;
@@ -438,6 +445,7 @@ static void test_endings() {
     // A: Dream warp, arrival, 72100130; the game's event does the rest (no forced ending).
     {
         GuestStory g;
+    g.SetAskEnding(false);  // the replay body (the question: below)
         double t = 0;
         StoryIntent e;
         e.seq = 3;
@@ -474,6 +482,7 @@ static void test_endings() {
     // ending request when no load follows.
     {
         GuestStory g;
+    g.SetAskEnding(false);  // the replay body (the question: below)
         double t = 0;
         StoryIntent e;
         e.seq = 3;
@@ -505,6 +514,7 @@ static void test_endings() {
     // B: ending check satisfied by the native load -> no forced request.
     {
         GuestStory g;
+    g.SetAskEnding(false);  // the replay body (the question: below)
         double t = 0;
         StoryIntent e;
         e.seq = 3;
@@ -617,6 +627,76 @@ static void test_host_story_up_guard() {
     CHECK(h.Refuse(28000040, false, 210) != nullptr);
 }
 
+// User decision (2026-10-15): the host's ending asks the guest first (pard3).
+static void test_ending_question() {
+    CHECK(GuestEndingType(1, false) == 1 && GuestEndingType(1, true) == 1);  // the host submitted: A
+    CHECK(GuestEndingType(2, false) == 2 && GuestEndingType(2, true) == 3);  // refused: the guest's cords
+    CHECK(GuestEndingType(3, false) == 2 && GuestEndingType(3, true) == 3);
+    auto ending = [](std::uint64_t seq) {
+        StoryIntent e;
+        e.seq = seq;
+        e.kind = StoryKind::Ending;
+        e.id = 2;
+        return e;
+    };
+    {  // YES: the question, then the replay as before
+        GuestStory g;
+        double t = 0;
+        CHECK(g.Offer(ending(5), true, t));
+        StoryState ph = Phantom();
+        auto a = Until(g, ph, t);
+        CHECK(a && a->kind == StoryAction::AskEnding && a->ending == 2);
+        CHECK(g.EndingAskPending() && !Until(g, ph, t, 50));  // waits for the answer
+        g.AnswerEnding(true, 3);  // three cords in the own save
+        a = Until(g, ph, t);
+        CHECK(a && a->kind == StoryAction::TravelDream);
+        StoryState dream = OwnWorld();
+        dream.map_id = 0x15000000;
+        StoryState load = ph;
+        load.loading = true;
+        load.world_up = false;
+        CHECK(!Until(g, load, t, 5));
+        a = Until(g, dream, t);
+        CHECK(a && a->kind == StoryAction::SetFlags &&
+              a->flags == (std::vector<std::uint32_t>{12101800, 12101850, 9180}));  // C, the guest's own
+    }
+    {  // NOT NOW: home to the own Dream only, no flags, no NG cycle
+        GuestStory g;
+        double t = 0;
+        CHECK(g.Offer(ending(6), true, t));
+        StoryState ph = Phantom();
+        auto a = Until(g, ph, t);
+        CHECK(a && a->kind == StoryAction::AskEnding);
+        g.AnswerEnding(false, 2);
+        a = Until(g, ph, t);
+        CHECK(a && a->kind == StoryAction::TravelDream);
+        StoryState load = ph;
+        load.loading = true;
+        load.world_up = false;
+        CHECK(!Until(g, load, t, 5));
+        StoryState dream = OwnWorld();
+        dream.map_id = 0x15000000;
+        for (int i = 0; i < 400; ++i) {
+            t += 0.1;
+            auto b = g.Step(dream, t);
+            CHECK(!b || (b->kind != StoryAction::SetFlags && b->kind != StoryAction::NgCycle &&
+                         b->kind != StoryAction::PlayRemo && b->kind != StoryAction::ForceEnding));
+        }
+        CHECK(!g.Busy());
+    }
+    {  // no answer in kEndingAskTimeout: not now
+        GuestStory g;
+        double t = 0;
+        CHECK(g.Offer(ending(7), true, t));
+        StoryState ph = Phantom();
+        auto a = Until(g, ph, t);
+        CHECK(a && a->kind == StoryAction::AskEnding);
+        t += kEndingAskTimeout + 1;
+        a = Until(g, ph, t);
+        CHECK(a && a->kind == StoryAction::TravelDream && !g.EndingAskPending());
+    }
+}
+
 int main() {
     test_tables();
     test_json();
@@ -626,6 +706,7 @@ int main() {
     test_replay_waits_home_when_summoned_off();
     test_missed_scene_replayed_while_summoned();
     test_summoned_ending();
+    test_ending_question();
     test_replay_unseen_with_sex_and_tod_guard();
     test_remo_never_starts();
     test_mirror_dropped_when_sent_home();

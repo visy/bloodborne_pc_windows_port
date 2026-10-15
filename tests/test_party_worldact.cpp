@@ -75,7 +75,10 @@ int main() {
     std::string err;
     assert(RequestFromJson(RequestToJson(r), &back, &err) && back == r);
     Request bad = r;
-    bad.set.push_back(12411800);  // a boss kill
+    bad.set.push_back(12411800);  // a boss kill: shape-valid (a lone guest's, pard3); the host re-checks apart
+    assert(RequestFromJson(RequestToJson(bad), &back, &err));
+    bad = r;
+    bad.clr.push_back(12411800);  // a boss flag cleared: never
     assert(!RequestFromJson(RequestToJson(bad), &back, &err));
     bad = r;
     bad.set.push_back(12410200);  // duplicate
@@ -194,6 +197,17 @@ int main() {
         assert(BossGateGuestStarts(*BossGateByEvent(13404801)) && BossGateGuestStarts(*BossGateByEvent(13404851)));
         assert(BossGateGuestStarts(*BossGateByEvent(13504851)) && BossGateGuestStarts(*BossGateByEvent(13604801)));
         assert(!BossGateGuestStarts(*BossGateByEvent(13504801)));  // Lady Maria: examined in her chair first
+        // Rule "progress shared by everyone" (pard3): a lone guest's boss kill reaches the host.
+        {
+            const std::uint32_t m23 = 0x17000000u, m24 = 0x18000000u;
+            assert(pg::CategoryOf(12301800u) == pg::Category::boss_defeated);
+            assert(BossKillActionAllowed(12301800u, false, m23, true));
+            assert(!BossKillActionAllowed(12301800u, false, m23, false));  // in the host's world: the host's own kill
+            assert(!BossKillActionAllowed(12301800u, true, m23, true));    // never cleared
+            assert(!BossKillActionAllowed(12301800u, false, m24, true));   // another area
+            assert(!BossKillActionAllowed(12400160u, false, m24, true));   // not a boss flag
+            assert(!WorldActionAllowed(12301800u, false, m23));            // the plain rule stays as it was
+        }
         // D10 (pard3): the Blood Moon trigger (13201803) a guest reports for the host's chr.
         {
             const StoryTrigger* t = StoryTriggerByEvent(13201803u);
