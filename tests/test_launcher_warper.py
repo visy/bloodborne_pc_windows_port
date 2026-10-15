@@ -92,6 +92,105 @@ class WorldWarper(unittest.TestCase):
                 self.assertEqual(sorted(z.namelist()), ["CUSA03173/a.key", "CUSA03173/profile.bin"])
 
 
+class SharedCacheBundle(unittest.TestCase):
+    """A cache shared with another PC: the portable part, each GPU's part in its own folder, the
+    drop folder user/cache_import merged at launch."""
+    VKP = "vk_pipe_cache_10de_2684_9a4a8000.vkp"  # NVIDIA 617.42
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.L = load_launcher()
+        except Exception as ex:  # no tkinter here
+            raise unittest.SkipTest(f"launcher.py not importable here: {ex}")
+
+    def make_cache(self, root: Path, profile: bytes = b"P1") -> Path:
+        t = root / "CUSA03173"
+        t.mkdir(parents=True)
+        for name, data in (("g_0x1.key", b"k"), ("0x2_0.src", b"s"), ("0x2_0.spv", b"v"),
+                           ("0x0000000000000002.meta", b"m"), ("profile.bin", profile), (self.VKP, b"d"),
+                           ("x.key.tmp", b"t")):
+            (t / name).write_bytes(data)
+        return root
+
+    def test_label(self):
+        self.assertEqual(self.L.gpu_label_from_vkp(self.VKP), "NVIDIA_10de-2684_driver_617.42")
+        self.assertEqual(self.L.gpu_label_from_vkp("profile.bin"), "")
+        self.assertEqual(self.L.driver_version_text(0x10de, (617 << 22) | (42 << 14)), "617.42")
+
+    def test_bundle_layout(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = self.make_cache(Path(t) / "cache")
+            out = Path(t) / "b.zip"
+            r = self.L.export_shader_cache_bundle(out, root, readme="hello")
+            self.assertEqual((r["portable"], r["gpu"], r["label"]), (2, 4, "NVIDIA_10de-2684_driver_617.42"))
+            with zipfile.ZipFile(out) as z:
+                names = sorted(z.namelist())
+                self.assertEqual(z.read("README.txt"), b"hello")
+            g = "gpu/NVIDIA_10de-2684_driver_617.42/CUSA03173/"
+            self.assertEqual(names, sorted(["README.txt", "CUSA03173/g_0x1.key", "CUSA03173/0x2_0.src",
+                                            g + "0x2_0.spv", g + "0x0000000000000002.meta", g + "profile.bin",
+                                            g + self.VKP]))
+
+    def test_import_other_gpu_takes_only_the_portable_part(self):
+        with tempfile.TemporaryDirectory() as t:
+            src = self.make_cache(Path(t) / "a")
+            out = Path(t) / "b.zip"
+            self.L.export_shader_cache_bundle(out, src)
+            dst = Path(t) / "other" / "CUSA03173"
+            dst.mkdir(parents=True)
+            (dst / "profile.bin").write_bytes(b"AMD")
+            st = self.L.import_shader_cache(out, dst.parent)
+            self.assertEqual((st["added"], st["gpu_skipped"], st["gpu_used"]), (2, 3, []))
+            self.assertEqual(sorted(p.name for p in dst.iterdir()), ["0x2_0.src", "g_0x1.key", "profile.bin"])
+            self.assertEqual((dst / "profile.bin").read_bytes(), b"AMD")
+
+    def test_import_same_gpu_and_empty_cache_take_everything(self):
+        with tempfile.TemporaryDirectory() as t:
+            src = self.make_cache(Path(t) / "a")
+            out = Path(t) / "b.zip"
+            self.L.export_shader_cache_bundle(out, src)
+            for local in (b"P1", None):
+                dst = Path(t) / ("same" if local else "empty") / "CUSA03173"
+                dst.mkdir(parents=True)
+                if local:
+                    (dst / "profile.bin").write_bytes(local)
+                st = self.L.import_shader_cache(out, dst.parent)
+                self.assertEqual(st["gpu_skipped"], 0)
+                self.assertEqual(st["gpu_used"], ["NVIDIA_10de-2684_driver_617.42"])
+                self.assertTrue((dst / self.VKP).is_file())
+                self.assertEqual((dst / "profile.bin").read_bytes(), b"P1")
+                self.assertFalse((dst / "x.key.tmp").exists())
+
+    def test_old_flat_export_still_imports(self):
+        with tempfile.TemporaryDirectory() as t:
+            src = self.make_cache(Path(t) / "a")
+            out = Path(t) / "flat.zip"
+            self.L.export_shader_cache(out, src)
+            dst = Path(t) / "b"
+            st = self.L.import_shader_cache(out, dst)
+            self.assertEqual(st["added"], 4)  # key, src, spv, meta (+ profile.bin copied)
+            self.assertTrue((dst / "CUSA03173" / "profile.bin").is_file())
+
+    def test_drop_folder(self):
+        with tempfile.TemporaryDirectory() as t:
+            src = self.make_cache(Path(t) / "a")
+            root = Path(t) / "user" / "cache"
+            drop = self.L.cache_import_dir(root)
+            self.assertEqual(drop, Path(t) / "user" / "cache_import")
+            self.assertEqual(self.L.import_dropped_caches(root), [])  # no folder: nothing
+            drop.mkdir(parents=True)
+            self.L.export_shader_cache_bundle(drop / "shared.zip", src)
+            (drop / "broken.zip").write_bytes(b"not a zip")
+            done = dict(self.L.import_dropped_caches(root))
+            self.assertIsNone(done["broken.zip"])
+            self.assertEqual(done["shared.zip"]["added"], 5)  # key, src, spv, meta, vkp (+ profile.bin)
+            self.assertTrue((drop / "shared.zip.imported").is_file())
+            self.assertTrue((drop / "broken.zip.bad").is_file())
+            self.assertEqual(self.L.import_dropped_caches(root), [])  # merged once
+            self.assertTrue((root / "CUSA03173" / self.VKP).is_file())
+
+
 class CachesStayOutOfGit(unittest.TestCase):
     def test_gitignore(self):
         text = (ROOT / ".gitignore").read_text(encoding="utf-8")
