@@ -4,6 +4,7 @@
 #include "bbport_stability.h"
 #include "party/party_director.h"
 #include "party/lamp_travel.h"
+#include "party/mirror_frame.h"
 #include "party/world_warper.h"
 #include "party/coop_hooks.h"
 // bbport: glue between the C loader and the vendored shadPS4 video core.
@@ -399,6 +400,7 @@ extern "C" void bbgpu_patch_image(unsigned char* image, uint64_t size) {
     bbnet_set_image(image, size);  // the party library's view of game data (gpu/shim/net)
     coop::HooksInit(image, size);  // the image for game-state reads (the performance HUD's menu / banner check, solo too)
     coop::lamptravel::Install(image, size);  // direct lamp travel (solo and party; BB_LAMP_TRAVEL=0 off)
+    coop::mirror::Install();  // the Dream mirror's editor in character creation's frame (H5)
     coop::warper::Install(image, size);  // the world warper (BB_WORLD_WARPER, solo shader-cache builder)
     if (coop::PartyRequested()) {
         coop::PartyInit(image, size);  // party co-op: main-thread tick, Lua events, director
