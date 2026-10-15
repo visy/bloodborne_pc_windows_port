@@ -440,12 +440,31 @@ void ReportMemory() {
     Out("\n");
 }
 
+/// Command buffers cut short by a bad packet header (NoteDroppedCommands).
+std::atomic<u64> dropped_buffers{0};
+std::atomic<const char*> dropped_queue{nullptr};
+std::atomic<u32> dropped_dword{0};
+std::atomic<u64> dropped_offset{0}, dropped_submission{0};
+
+void ReportDroppedCommands() {
+    const u64 count = dropped_buffers.load();
+    if (count == 0) {
+        return;
+    }
+    const char* queue = dropped_queue.load();
+    Out("Command buffers cut short at a bad PM4 header: %llu (last: %s, dword %#010x at +%#llx, "
+        "submission %llu)\n",
+        (unsigned long long)count, queue ? queue : "?", dropped_dword.load(),
+        (unsigned long long)dropped_offset.load(), (unsigned long long)dropped_submission.load());
+}
+
 /// The device-lost report: fault info, memory, breadcrumbs (and the stuck shaders' code).
 void WriteDeviceLostReport(const char* prefix, const char* title, const char* where) {
     OpenReportFile(prefix);
     Out("%s (%s)\n", title, where);
     ReportFault();
     ReportMemory();
+    ReportDroppedCommands();
     if (enabled) {
         Report("at device lost", where);
     } else {
@@ -485,6 +504,14 @@ void StartReportTest() {
     }).detach();
 }
 } // Anonymous namespace
+
+void NoteDroppedCommands(const char* queue, u32 dword, u64 offset, u64 submission) {
+    dropped_queue = queue;
+    dropped_dword = dword;
+    dropped_offset = offset;
+    dropped_submission = submission;
+    ++dropped_buffers;
+}
 
 void ReportDeviceLost(const char* where) {
     static std::atomic_flag reported = ATOMIC_FLAG_INIT;
