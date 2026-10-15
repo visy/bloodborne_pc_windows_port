@@ -493,6 +493,24 @@ BB_COOP_SYSV u64 LockKickHook(u64 matching, u64 npid) {
     return reinterpret_cast<Fn>(Guest(kSessionKick))(matching, npid);
 }
 
+// K10c: the boss-clear Lua state 0x1385470 schedules, for a summoned cooperator (local chr type 1),
+// the Lua event 0xFF9 "RecallMenuEvent_MisssionClear_forNormalCoop" (call 0x13855DB -> 0x132B1C0):
+// the message "The final battle has ended. It is time to bid farewell." that precedes the vanilla
+// send-home. With K10 the guest stays in the party (its send-home is dropped), so the message only
+// told it something false (live g1x, parlast: a Chalice layer boss killed by the host 90 m away;
+// the box sat on the guest's screen). Skipped while the party is on (`BB_PARTY_BOSS_FAREWELL=1`:
+// the vanilla message); the next state BlockClear2_2 is scheduled as before.
+constexpr u64 kFarewellCall = 0x13855db, kLuaEventSchedule = 0x132b1c0;
+BB_COOP_SYSV u64 BossFarewellHook(float t, u64 state, u64 id, u64 name, u64 a, u64 b, u64 c) {
+    static const bool vanilla = std::getenv("BB_PARTY_BOSS_FAREWELL") && std::getenv("BB_PARTY_BOSS_FAREWELL")[0] == '1';
+    if (g_on.load() && Role() == RoleClient && !vanilla) {
+        Log("K10c: the boss-clear farewell message for a summoned cooperator skipped (the party stays)");
+        return 0;
+    }
+    using Fn = u64(BB_COOP_SYSV*)(float, u64, u64, u64, u64, u64, u64);
+    return reinterpret_cast<Fn>(Guest(kLuaEventSchedule))(t, state, id, name, a, b, c);
+}
+
 // After K10 the party stays. In case the boss-clear states left the players invincible for the
 // clear animation (Lua EnableInvincible 0x1332EF0: chr +0x1E1 bit 14) with no leave to end it,
 // the local player's flag is cleared 10 s after K10 (live runs: it was never still on).
@@ -7226,7 +7244,7 @@ void NrRecvHook(int sock, int where) {
         u64 release = 0;
         if (!SafeRead(vt + 0x28, &release, 8) || !release) continue;
         ++transports;
-        // After an outage the member's last datagram is as old as the outage (up to the 60 s slot
+        // After an outage the member's last datagram is as old as the outage (up to the 130 s slot
         // keep plus the reconnect), so the window is wider.
         const std::vector<nrdrop::Source> silent =
             nrdrop::SilentSources(bbnet::p2p_heard(fd), now, 1500, outage ? 180000 : 60000);
@@ -7541,6 +7559,8 @@ void Init() {
     InstallCall(kNrCreateCall, kNrCreate, reinterpret_cast<const void*>(&NrCreateHook), "C6 NR transport create");
     InstallCall(0x1385a95, kBeginLeave, reinterpret_cast<const void*>(&BossClearLeaveHook), "B2 K10 boss-clear leave (b)");
     InstallCall(kLockKickCall, kSessionKick, reinterpret_cast<const void*>(&LockKickHook), "B2 K10b cleared-session join kick");
+    InstallCall(kFarewellCall, kLuaEventSchedule, reinterpret_cast<const void*>(&BossFarewellHook),
+                "B2 K10c boss-clear farewell message (guest)");
     // Not B2-specific (B1 bell joins stream too): installed whenever B2 is.
     if (!HookPrologue(0x18cb0e0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x81,
                                   0xec, 0xf8, 0x07, 0x00, 0x00},

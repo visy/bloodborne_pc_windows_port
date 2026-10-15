@@ -605,6 +605,11 @@ void apply_link_env(LinkConfig& cfg) {
         cfg.max_players = static_cast<int>(std::clamp<long>(m, 2, kMaxPartyPlayers));
     }
     if (const char* v = std::getenv("BB_PARTY_PASSWORD"); v && *v) cfg.password = v;
+    // F5: how long a host keeps a silent member's slot (and its events) for a resume.
+    if (const char* v = std::getenv("BB_PARTY_SLOT_KEEP_MS"); v && *v) {
+        long ms = std::strtol(v, nullptr, 10);
+        if (ms > 0) cfg.slot_keep_ms = static_cast<int>(std::clamp<long>(ms, 1000, 600000));
+    }
 }
 
 struct PartyLink::Impl {

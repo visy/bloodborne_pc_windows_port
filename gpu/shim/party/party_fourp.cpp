@@ -370,6 +370,83 @@ BB_COOP_SYSV u64 QueuePush(u64 entry, u64 reliable, u64 data, u64 size) {
     return r;
 }
 
+// G3 test aid (`BB_PARTY_TEST_DROP_PACKET=TYPE[:COUNT]`, test runs only): this game throws away
+// the next COUNT (default 1) received game packets of TYPE, as if the link had lost them; with
+// the aid set, the first packets of every type popped are logged (type, size, first words).
+struct DropPacket {
+    u32 type = 0xffffffffu;
+    int left = 0;
+};
+DropPacket& DropPacketCfg() {
+    static DropPacket d = [] {
+        DropPacket a;
+        if (const char* v = std::getenv("BB_PARTY_TEST_DROP_PACKET"); v && *v) {
+            a.type = u32(std::strtoul(v, nullptr, 0));
+            const char* c = std::strchr(v, ':');
+            a.left = c ? std::atoi(c + 1) : 1;
+        }
+        return a;
+    }();
+    return d;
+}
+std::atomic<int> g_drop_logs[0x44];
+double QNow();
+// A timed window (`BB_PARTY_TEST_DROP_FILE=PATH`): when the file's text ("TYPE[,TYPE...][@VALUE] MS")
+// changes, every packet of those types (carrying the u32 VALUE, if given) popped in the next MS is
+// thrown away. A network-synced event's state goes to the other games as packet 0x31 (24 bytes:
+// 00010000 00000008 EVENT SLOT|... STATE; live: 12400750 = 0x00BD386E from the guest's door press),
+// which is how the host's copy of the Cathedral Ward door event follows a guest's action: on the
+// host `0x31@12400750 8000` loses exactly that action.
+std::atomic<u64> g_drop_win_types{0};  // bit per packet type (< 0x40)
+std::atomic<u32> g_drop_win_type{0xffffffffu};
+std::atomic<u32> g_drop_win_value{0};  // only packets carrying this u32 (0: all)
+std::atomic<double> g_drop_win_until{0};
+std::atomic<int> g_drop_win_count{0};
+void DropFilePoll() {
+    static const char* path = std::getenv("BB_PARTY_TEST_DROP_FILE");
+    if (!path || !*path) return;
+    static double next = 0;
+    static std::string last;
+    const double now = QNow();
+    if (now < next) return;
+    next = now + 0.1;
+    FILE* f = std::fopen(path, "rb");
+    if (!f) return;
+    char b[64] = {};
+    const size_t n = std::fread(b, 1, sizeof b - 1, f);
+    std::fclose(f);
+    const std::string text(b, n);
+    if (text == last) return;
+    last = text;
+    // "TYPE[,TYPE...] MS"
+    char* end = b;
+    u64 types = 0;
+    u32 first = 0xffffffffu;
+    for (;;) {
+        char* e2 = nullptr;
+        const u32 t = u32(std::strtoul(end, &e2, 0));
+        if (e2 == end) break;
+        if (t < 0x40) types |= u64(1) << t;
+        if (first == 0xffffffffu) first = t;
+        end = e2;
+        if (*end != ',') break;
+        ++end;
+    }
+    u32 value = 0;
+    if (*end == '@') value = u32(std::strtoul(end + 1, &end, 0));
+    const double ms = std::strtod(end, nullptr);
+    if (!types || ms <= 0) return;
+    g_drop_win_value = value;
+    const int dropped = g_drop_win_count.exchange(0);
+    for (auto& c : g_drop_logs) c = 0;  // log what comes in this window
+    g_drop_win_types = types;
+    g_drop_win_type = first;
+    g_drop_win_until = now + ms / 1000.0;
+    Log("G3 test: dropping every packet of types mask %#llx%s%u for %.0f ms (BB_PARTY_TEST_DROP_FILE; %d dropped in "
+        "the last window)",
+        ull(types), value ? " carrying " : "", value, ms, dropped);
+}
+
 BB_COOP_SYSV u64 QueuePop(u64 entry, u64 type, u64 buf, u64 size) {
     using Fn = u64(BB_COOP_SYSV*)(u64, u64, u64, u64);
     const int slot = QEnter(entry, u32(type), 2);
@@ -378,6 +455,39 @@ BB_COOP_SYSV u64 QueuePop(u64 entry, u64 type, u64 buf, u64 size) {
     {
         std::lock_guard<std::mutex> lk(g_q_mu);
         r = reinterpret_cast<Fn>(Guest(kPopFn))(entry, type, buf, size);
+        DropPacket& d = DropPacketCfg();
+        const u32 t = u32(type);
+        while ((d.type != 0xffffffffu || g_drop_win_type.load() != 0xffffffffu) && t < 0x44 && u32(r) > 0 && buf) {
+            u32 words[5] = {};
+            const u32 n = std::min<u32>(u32(r), sizeof words) / 4;
+            for (u32 i = 0; i < n; ++i) SafeGet(buf + 4 * i, &words[i]);
+            bool win = t < 0x40 && (g_drop_win_types.load() >> t & 1) && QNow() < g_drop_win_until.load();
+            if (win && g_drop_win_value.load()) {
+                bool carries = false;
+                for (u32 i = 0; i < n; ++i) carries = carries || words[i] == g_drop_win_value.load();
+                win = carries;
+            }
+            const bool drop = win || (t == d.type && d.left > 0);
+            if (win) {
+                const int c = g_drop_win_count.fetch_add(1);
+                if (t != 6 || c < 3) {
+                    Log("G3 test: packet 0x%02X (%u bytes) dropped (window): %08x %08x %08x %08x", t, u32(r), words[0],
+                        words[1], words[2], words[3]);
+                }
+                r = reinterpret_cast<Fn>(Guest(kPopFn))(entry, type, buf, size);
+                continue;
+            }
+            if (drop || g_drop_logs[t].fetch_add(1) < (t == 6 ? 2 : 12)) {
+                Log("G3 test: packet 0x%02X (%u bytes) from peer entry %#llx: %08x %08x %08x %08x %08x%s", t, u32(r),
+                    ull(entry), words[0], words[1], words[2], words[3], words[4],
+                    drop ? " -> DROPPED (BB_PARTY_TEST_DROP_PACKET: as if the link lost it)" : "");
+            }
+            if (!drop) {
+                break;
+            }
+            --d.left;
+            r = reinterpret_cast<Fn>(Guest(kPopFn))(entry, type, buf, size);  // the next one, if any
+        }
     }
     QLeave(slot);
     return r;
@@ -450,7 +560,45 @@ BB_COOP_SYSV u64 ChrPacketRead(u64 man, u64 peer, u64 type, u64 buf, u64 size) {
     return r;
 }
 
+// C6 RE aid (`BB_PARTY_TRACE_FROM_UPDATE=N`): logs the first N calls of SprjNetworkClientMan's update
+// 0x1E7DF20(man, dt*) (its timers, then the HTTP client update 0xFD10D0 that sends queued requests and
+// the completions): how often the FROM client runs decides how fast the title's sign-in steps go.
+std::atomic<int> g_from_upd_left{0};
+BB_COOP_SYSV void FromUpdateEntry(u64 man, u64 dt, u64, u64, u64, u64) {
+    if (g_from_upd_left.fetch_sub(1) <= 0) return;
+    float d = -1;
+    SafeGet(dt + 8, &d);
+    static double last = 0;
+    const double now = QNow();
+    Log("C6 trace: FROM client update (dt %.3f s, %.3f s since the last call) on %s", double(d),
+        last ? now - last : 0.0, ThisName());
+    last = now;
+}
+
+// The title's sign-in stages (lambdas of the title flow built by 0x1C37B30): when each starts and when
+// the login answer is taken, against the HTTP sends (`http trace:`).
+template <int K>
+BB_COOP_SYSV void FromStageEntry(u64, u64, u64, u64, u64, u64) {
+    static const char* const kNames[] = {"ss.info stage starts (0x1C492C0)", "login stage starts (0x1C48AA0)",
+                                         "login answer taken (0x1C48CA0)", "ss.info answer taken (0x1E89850)"};
+    static std::atomic<int> left{6};
+    if (left.fetch_sub(1) > 0) Log("C6 trace: %s on %s", kNames[K], ThisName());
+}
+
 void InstallQueueGuard() {
+    if (const char* v = std::getenv("BB_PARTY_TRACE_FROM_UPDATE"); v && std::atoi(v) > 0) {
+        HookPrologue(0x1C492C0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x54, 0x53}, &FromStageEntry<0>,
+                     "C6 trace: ss.info stage");
+        HookPrologue(0x1C48AA0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53},
+                     &FromStageEntry<1>, "C6 trace: login stage");
+        HookPrologue(0x1C48CA0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53},
+                     &FromStageEntry<2>, "C6 trace: login answer");
+        HookPrologue(0x1E89850, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53},
+                     &FromStageEntry<3>, "C6 trace: ss.info answer");
+        g_from_upd_left = std::atoi(v);
+        HookPrologue(0x1E7DF20, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53},
+                     &FromUpdateEntry, "C6 trace: FROM client update (0x1E7DF20)");
+    }
     if (const char* v = std::getenv("BB_PARTY_QUEUE_GUARD"); v && v[0] == '0' && !v[1]) {
         Log("A7: packet queue lock off (BB_PARTY_QUEUE_GUARD=0)");
         return;
@@ -469,6 +617,7 @@ void InstallQueueGuard() {
 /// The SprjNetMan peer entries (main thread, logged when the list changes).
 std::string g_q_list_last;
 void QueueTick() {
+    DropFilePoll();
     if (!g_q_on) {
         return;
     }

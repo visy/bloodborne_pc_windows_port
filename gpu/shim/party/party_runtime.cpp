@@ -581,11 +581,13 @@ bool silent_loss(const std::string& why) {
 }
 
 // F5: how long a guest keeps the host's world while its link is silent (a network outage, not a
-// reset / BYE / refusal): the game session may outlive a short outage, and the host keeps the
-// slot 60 s. BB_PARTY_OUTAGE_HOLD_MS (0 = the old 2 s grace).
+// reset / BYE / refusal): the game session outlives the outage (live: 60, 90 and 120 s kept the
+// session with no loading screen), and the host keeps the slot 130 s. The link calls the host lost
+// 10 s into the silence, so the guest waits for outages up to ~135 s. BB_PARTY_OUTAGE_HOLD_MS (0 =
+// the old 2 s grace; 0.6.2 before parlast: 45 s).
 int outage_hold_ms() {
     const char* v = env("BB_PARTY_OUTAGE_HOLD_MS");
-    return v ? std::max(0, std::atoi(v)) : 45000;
+    return v ? std::max(0, std::atoi(v)) : 125000;
 }
 
 void host_lost(const std::string& why);
@@ -827,7 +829,7 @@ void on_state(LinkState s, const std::string& detail) {
         }
         if (first) {
             // F5: a silent link (an outage) keeps the host's world for the outage hold: the link
-            // resumes by itself (the host keeps our slot 60 s) and the game session may have
+            // resumes by itself (the host keeps our slot 130 s) and the game session may have
             // survived (outage_resume_check). A reset, BYE or refusal: home after the short grace.
             // An error (reset, send failed) after the host's game traffic had already stopped for 5 s
             // is the host giving up on a silent link while the network is still out (a real crash

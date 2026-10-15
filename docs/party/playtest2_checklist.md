@@ -9,7 +9,7 @@ is left needs **real PCs in different homes, real routers and real internet**:
 | F1 internet play | 250 ms round trip, 2-3 % loss, reordering, 5-30 s outages: joins, travel, deaths, bosses, kills, desync digests (network_robustness.md 3a, 7b) | the same on a real line (real jitter, Wi-Fi, other traffic on the line), for a full evening |
 | F2 NAT | 25 simulated NAT pairs, the DHT rendezvous on a fake DHT, UPnP code paths (network_robustness.md 3b-3d) | UPnP on real routers, a port forward by hand, the guest code (`BBG1-`) hole punch, the public DHT, a symmetric / CGNAT line |
 | F3 security | fuzzed parsers, password lockout over loopback (section 6) | an open port on the internet for a few hours (scanner traffic in the host's log) |
-| F5 outages | 10 / 20 / 30 s simulated outages keep the session | a real cable pull / Wi-Fi off |
+| F5 outages | 10-120 s simulated outages keep the session (loopback) | a real cable pull / Wi-Fi off, a NAT mapping or address change during a long cut |
 | A/B/C/D rows | scripted runs | real players doing unscripted things (the bug list) |
 
 Playtest 1 (2026-10-13, 0.6.0) was such a session: [playtest1_triage.md](playtest1_triage.md). Its
@@ -87,14 +87,16 @@ network says "now" and "back".
 |---|---|---|---|
 | 3a | Guest switches Wi-Fi off (or pulls the cable) for ~10 s | the others freeze in place, "Connection lost" notice; back: everyone carries on, no loading screen | |
 | 3b | The same for ~25 s | the same | |
-| 3c | The same for ~60 s | the guest goes home with one loading screen, then is summoned back beside the host by itself once the network is back | |
+| 3c | The same for ~60 s | as 3a (loopback: 60 / 90 / 120 s kept the session, network_robustness.md 7c) | |
+| 3e | The same for ~2 min 30 s (beyond the 125 s hold) | the guest goes home with one loading screen, then is summoned back beside the host by itself once the network is back | |
+| 3f | Guest's router restarted (new public address) during a cut | note what happens: the game's P2P link may not resume on a new address | |
 | 3d | The **host** cuts for ~10 s | the same as 3a, for every guest | |
 
 ## 4. Crash rejoin (C6, 5 min)
 
 | # | What | Expected | Result |
 |---|---|---|---|
-| 4a | A guest kills its game (Task Manager -> bbport.exe -> End task) and starts it again (*Continue party game*) | back beside the host about 30 s after the kill | |
+| 4a | A guest kills its game (Task Manager -> bbport.exe -> End task) and starts it again (*Continue party game*) | back in the host's room about 15 s and beside the host about 20-30 s after the kill | |
 | 4b | The host does the same | the guests go home at once and come back by themselves once the host is in the world again | |
 
 ## 5. Open port for a while (F3, optional, passive)
