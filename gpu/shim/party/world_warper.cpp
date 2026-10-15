@@ -13,6 +13,7 @@
 #include "party_ids.h"
 #include "seamless_rules.h"
 #include "world_warper_rules.h"
+#include "../bbport_game_menu.h"
 
 #include <algorithm>
 #include <atomic>
@@ -138,6 +139,8 @@ struct State {
     Stage stage = Stage::Title;
     double at = 0, stage_at = 0, steady_since = 0, title_press_at = 0, start_at = 0;
     int title_presses = 0;
+    int first_run_step = 0;       // the first-launch screens (brightness, controls): next press
+    double first_run_at = 0;
     u32 rp = 0;                   // the row being visited
     std::size_t visited = 0;      // rows done in this phase (this session)
     bool load_seen = false;
@@ -737,6 +740,37 @@ void TickImpl(double now) {
         if (g.title_press_at > 0 && now - g.title_press_at >= 0.12) {
             runtime_pad_director_press(0);
             g.title_press_at = 0;
+        }
+        if (!s.world_up) {
+            // The title screens (TitleScreenStep): the first-launch brightness and controls screens
+            // (a save folder without the game's system data) are confirmed with their defaults;
+            // a title without Continue (no character to continue) ends the run - a Cross there
+            // would start a New Game.
+            // Text lookup times (steady clock ms; a screen looks its texts up when it builds).
+            const std::int64_t ms = static_cast<std::int64_t>(now * 1000.0);
+            const TitleScreen screen = ClassifyTitle(BbGameMenu::TextSeenMs("brightness"),
+                                                     BbGameMenu::TextSeenMs("Continue"),
+                                                     BbGameMenu::TextSeenMs("New Game"), ms);
+            if (screen == TitleScreen::FirstLaunch) {
+                if (now - g.first_run_at >= 1.0) {
+                    g.first_run_at = now;
+                    const std::uint32_t b = FirstLaunchPress(g.first_run_step++);
+                    runtime_pad_director_press(b);
+                    g.title_press_at = now;
+                    Log("title: a first-launch screen (brightness / controls): %s with its default",
+                        b == kPadCross ? "Cross" : b == kDown ? "Down" : "Up");
+                    SetStatus("World warper\nFirst-launch screens: confirming the defaults...\n");
+                }
+                return;
+            }
+            if (screen == TitleScreen::NoCharacter) {
+                Log("FAILED: the title has no Continue (no character in this save folder to continue); "
+                    "the warper needs a save with a character");
+                SetStatus("World warper: FAILED\nNo character to continue in this save folder\n");
+                g.stage = Stage::Done;
+                g.at = now + 3.0;
+                return;
+            }
         }
         if (!s.world_up && now - g.at >= 2.5 && now - g.start_at > 4.0) {
             // The title: Cross until the save is continued (as the lamp travel test).

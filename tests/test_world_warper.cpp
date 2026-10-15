@@ -240,6 +240,16 @@ int main() {
         const Options o = ParseOptions("tour,nogestures,notools");
         CHECK(!o.gestures && !o.tools && ParseOptions("tour").gestures && ParseOptions("tour").tools);
     }
+    // The title stage: first-launch screens confirmed (Down, Cross, Up, Cross), no Continue = no run.
+    {
+        CHECK(ClassifyTitle(5000, 0, 0, 6000) == TitleScreen::FirstLaunch);
+        CHECK(ClassifyTitle(5000, 0, 7000, 8000) == TitleScreen::Other);        // the title built since
+        CHECK(ClassifyTitle(5000, 0, 7000, 10500) == TitleScreen::NoCharacter); // ...without Continue
+        CHECK(ClassifyTitle(0, 7000, 7000, 20000) == TitleScreen::Other);       // Continue: go on
+        CHECK(ClassifyTitle(0, 0, 0, 20000) == TitleScreen::Other);
+        CHECK(FirstLaunchPress(0) == kDown && FirstLaunchPress(1) == 0x4000u && FirstLaunchPress(2) == kUp &&
+              FirstLaunchPress(3) == 0x4000u && FirstLaunchPress(4) == kDown);
+    }
     if (g_failures) {
         std::fprintf(stderr, "%d failure(s)\n", g_failures);
         return 1;
