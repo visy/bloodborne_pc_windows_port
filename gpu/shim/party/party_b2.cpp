@@ -4411,6 +4411,42 @@ void NgGuardTick(const GameSnapshot& s) {
         return;
     }
     const u64 gsm = Slot(kSlotGsm), gdm = Slot(kSlotGameData);
+    // In the host's world (also during a load, once the MoveMapStep ctor switched to host-world
+    // mode and before the map's characters are made) the live cycle is the host's (ngfix: a B2
+    // load's descriptor took the own one from +0x159C, so the guest ran the host's world at its own
+    // NG - other enemy HP, damage and echoes than on the host's game).
+    const bool host_world = gsm && gdm && Field<u8>(gsm, 0x1592, 1) == 0 && Field<u8>(gsm, 0x1593) == 1;
+    if (host_world) {
+        const u32 h = Field<u32>(gsm, 0x1594, 0xffffffffu);
+        if (h <= 7) {
+            host = int(h);
+        }
+    }
+    if (on && host_world) {
+        ngguard::View w;
+        w.host_world = true;
+        w.alone_pending = g_ng_alone_pending.load();
+        w.own = own;
+        w.host = host;
+        w.live = int(Field<u32>(gdm, 0x68, 0xffffffffu));
+        w.restore_flag = Field<u8>(gsm, 0x1598);
+        w.restore_value = int(Field<u32>(gsm, 0x159c, 0xffffffffu));
+        const u8 one = 1;
+        const u32 own_u = u32(own);
+        if (ngguard::RestoreWrong(w)) {
+            SafeWrite(gsm + 0x159c, &own_u, 4);
+            SafeWrite(gsm + 0x1598, &one, 1);
+            Log("NG guard: the own NG cycle kept for the own save (%s): GSM +0x1598 %d -> 1, +0x159C %d -> %d",
+                s.loading ? "during a load" : "in the host's world", w.restore_flag, w.restore_value, own);
+        }
+        const int target = ngguard::LiveNg(w);
+        if (target >= 0) {
+            const u32 t = u32(target);
+            SafeWrite(gdm + 0x68, &t, 4);
+            Log("NG guard: the host's NG cycle %d is live in the host's world (was %d, the own %d stays in the save; %s)",
+                target, w.live, own, s.loading ? "during the load" : "steady world");
+        }
+    }
     if (s.loading || !s.world_up || !gsm || !gdm) {
         steady = 0;
         if (g_ng_alone_pending.load() && s.loading) {
@@ -4455,8 +4491,10 @@ void NgGuardTick(const GameSnapshot& s) {
     v.after_session = was_client;
     v.ending_since = StoryLastEndingAt() > learned_at;
     v.alone_pending = g_ng_alone_pending.load();
-    if (client && v.live >= 0 && v.live <= 7) {
-        host = v.live;
+    if (client && !host_world && v.live >= 0 && v.live <= 7) {
+        host = v.live;  // the host's 0x19 state is not there (an alone load cleared it): the live value
+    }
+    if (client && host >= 0) {
         if (host != logged_host && own >= 0) {
             logged_host = host;
             Log("NG guard: summoned into NG cycle %d (own %d%s)", host, own,

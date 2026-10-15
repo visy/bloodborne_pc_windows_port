@@ -75,6 +75,40 @@ static void TestNgGuard() {
     for (int a = 0; a < 5; ++a) {
         CHECK(ActName(Act(a))[0] != '?');
     }
+    // ngfix: in the host's world the live cycle is the host's; the own one stays in +0x159C.
+    View g;
+    g.host_world = true;
+    g.own = 0;
+    g.host = 3;
+    g.live = 0;                    // a B2 load's descriptor took +0x159C (the own cycle)
+    g.restore_flag = 1;
+    g.restore_value = 0;
+    CHECK(LiveNg(g) == 3);
+    CHECK(!RestoreWrong(g));
+    g.restore_value = 3;           // the MoveMapStep ctor re-saved the live value
+    CHECK(RestoreWrong(g));
+    g.live = 3;
+    g.restore_value = 0;
+    CHECK(LiveNg(g) == -1);        // already the host's
+    g.live = 0;
+    g.own = -1;                    // a title join before the own cycle is known: nothing written
+    CHECK(LiveNg(g) == -1);
+    CHECK(!RestoreWrong(g));
+    g.own = 0;
+    g.host = -1;                   // the host's cycle unknown
+    CHECK(LiveNg(g) == -1);
+    g.host = 3;
+    g.alone_pending = true;        // an alone load is being set up
+    CHECK(LiveNg(g) == -1);
+    CHECK(!RestoreWrong(g));
+    g.alone_pending = false;
+    g.host_world = false;          // own world / host: never
+    CHECK(LiveNg(g) == -1);
+    g.restore_flag = 0;
+    CHECK(!RestoreWrong(g));
+    g.host_world = true;
+    g.live = 8;                    // out of range: nothing
+    CHECK(LiveNg(g) == -1);
 }
 
 static void TestStain() {
