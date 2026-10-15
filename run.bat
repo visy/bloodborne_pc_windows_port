@@ -332,9 +332,9 @@ if not "%timeout%"=="0" if %timeout% LSS 10 (
     echo Party: the game exited with %rc%; no time left in BB_TIMEOUT, not restarting.
     exit /b %rc%
 )
-echo Party: the game exited with %rc% ^(a crash^); restart %party_restarts% of %BB_PARTY_RESTART_MAX% in 3 s to rejoin the party
+echo Party: the game exited with %rc% ^(a crash^); restart %party_restarts% of %BB_PARTY_RESTART_MAX% in 1 s to rejoin the party
 set "BB_PARTY_RESTARTED=1"
-"%PYTHON%" -c "import time; time.sleep(3)"
+"%PYTHON%" -c "import time; time.sleep(1)"
 goto launch
 
 :party_relaunch

@@ -362,3 +362,32 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
   cooperator; layer boss 2900100 killed: PREY SLAUGHTERED on both, guest Insight 6 -> 9, each its own loot.
   The bottom lift lever 2901006 showed no prompt from the c26b spots, and the layer 2 boss 2900200 was not
   loaded at (56.3, -59.7, -35.2): both stay open.
+
+* **0.6.2 live, the lift levers, layer 2 and the host-only award (parfin3 g1b3-g1e, 2026-10-15)**. Each run is
+  one short session: the host's party save stays inside the dungeon (fixture `chalice_pthumeru_inside`), and the
+  guest title-joins straight into it (g1c: beside the host, one load).
+  - **The lift levers** (EMEVD trace of 12900347 / 351 / 354 / 357 on both games): the post-boss lift is car
+    2901004 with call levers 2901005 (top, (-58.5, 31.5, -89.3)) and 2901006 (bottom, (-71.5, 10.5, -92.7)), flags
+    12900506 (car down) / 12900507 (moving), regions 2903020 / 2903021, ObjAct events 12900000 / 12900001. The
+    init 12900347 and every ride enable only the lever that can call the car (2005[6] ObjAct 9902 on / off), so
+    the bottom lever shows no "Operate Device" while the car is down: the earlier no-prompt runs (c26b, g1m) had
+    the car at the bottom. With the car up, a Cross at the bottom lever from (-71.5, 10.5, -91.7) ran 12900354
+    (car down) on the host and the same on the guest's copy 0.05 s later; the top lever then ran 12900351 (up),
+    the bottom lever 12900354 again. The other two lifts of this layout: 2901010 (levers 2901011 / 12, flags
+    12900512 / 13) and 2901024 (levers 2901025 / 26, 42 m, 12900353 / 356).
+  - **Layer bosses of this layout** (the generator's ids, not the MSB template's 2900200): 2900100 layer 1 (HP
+    3175, (-39, 30.5, -91)), 2900107 layer 2 (HP 3792, (6.5, -17.6, 52.0)), 2900112 layer 3 (HP 4057, (97.5,
+    -64.5, -97.5)); `host_kill=ID` with an unknown id lists the strongest loaded enemies. All 174 enemies of
+    the three layers are loaded at once (one map, m29_00_00_00).
+  - **Layer 2's boss** (g1d, HP 0: the game's own death and defeat): boss clear on both games (2612 Echoes
+    each), the kill table 12901708 (+2, relayed) and 12901693's lots: the host's `2003[4]` lot 80109010 (hostOnly
+    1, flag 5001: Pthumeru Root Chalice 6209) went to the guest as an owed key item for its own world (and to the
+    chalice share), the `2003[36]` lots gave each player its own roll (host 150100000 / 110001010, guest 150102000 /
+    110001010). Both layer bosses pay through 12901693; 12901596 / 12901598 did not run in this dungeon.
+  - **The host-only area-29 path** (g1e): `BB_PARTY_ITEMS_HOST_TEST=131300160` inside the dungeon (the game's
+    award function with hostOnly 1, a flagless dungeon lot): the host's `chalice` grant, the guest `chalice award
+    lot 131300160 from the host: queued for this guest (in the dungeon at the kill)`, the same Adept Blood
+    Gemstone given in the dungeon (item-get box on both screens).
+  - The test walk to the First Ritual Altar: once `prompt=` showed after a facing tap, the approach no longer
+    turns the player again (that turn lost the prompt in g1a / g1b / g1b2; the altar opened at the first Cross in
+    g1b3).

@@ -546,3 +546,41 @@ Why not without the home load: the crashed host's room is gone with its process;
 opens a new room, and the game has no path from a phantom in one room into another without loading
 the own world first (B2 re-entry, b2_seamless.md, keeps the room; it cannot switch rooms). Waiting
 as a phantom in the dead world would be two loads too (home, then the summon) and later.
+
+### 8a. Guest crash: no outage replay into the restarted game (0.6.2, agent parfin3)
+
+The F5 outage replay (section 7, `nr_outage.h`, `net_socket.cpp`) is keyed by the peer's source
+address and port. A crashed guest's restarted game comes back from the same address and port, so
+once it had been silent for over 4 s the host's socket replayed the dead session's reliable records
+into the new game (4-player runs a7b / a7t1: `outage resume: ... heard again after 7.6 s: 14
+reliable record(s) sent again` right after the restarted guest joined the room) and held back its
+duplicate-ack reports; the restarted guest's title join then got no snapshot
+(`title join: FAILED (no snapshot within 20 s)`), Continued into its own world and was summoned
+again 35-50 s after the crash.
+
+Now the C6 release of a crashed member's game connection (`party_b2.cpp`, "silent since the
+crash") also forgets that source's replay, keepalive, last-small, dup-ack hold and last-heard
+state on every game socket (`bbnet::p2p_forget_source`; `C6: its outage-replay state forgotten
+(N entries): no replay into its restarted game`). An outage (F5) keeps all of it, as before. A
+title join that still gets no snapshot gives up after 12 s (was 20 s), and run.bat restarts a
+crashed party game after 1 s (was 3 s; the host has released the old connection 1.5 s after the
+crash and holds a title joiner's room request until then).
+
+Live (s3b, 2 instances, one session, two guest crashes then a host crash without a restart):
+
+| | crash 1 | crash 2 |
+|---|---|---|
+| kill -> host `lost Hunter1 ... connection reset` | 1.8 s | 2.2 s |
+| C6 release + replay state forgotten | 3.4 s | 3.7 s |
+| restarted game asks the host for its room | 5.9 s | 6.3 s |
+| host's room, JoinSession, snapshot applied | 7.8 s (snapshot 1.1 s after the join) | 8.1 s (1.0 s) |
+| FROM sign-in over, Continue | 12.6 s | |
+| host `cooperators 0 -> 1` | **16.6 s** | **16.9 s** |
+| guest in the world beside the host (0.7-0.8 m, screenshots) | 26.6 s | 27.0 s |
+
+The rest is the game's own boot, the FROM sign-in (~5 s, the open C6 item) and its ~12 s load.
+Host crash with `BB_PARTY_RESTART=0` and the guest's `BB_PARTY_HOST_WAIT_S=30`: the corner counter
+"Waiting for the host to come back (N s)..." (screenshots at 7 s and 28 s), then `host wait: the
+host did not come back within 30 s: leaving the party` 32 s after the crash, the guest on in its
+own world.
+

@@ -17,15 +17,15 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 
 | Area | Progress | |
 |---|---|--:|
-| **Overall** | `███████████████████░` | 97% |
+| **Overall** | `████████████████████` | 98% |
 | Session & joining | `████████████████████` | 100% |
 | World & travel | `████████████████████` | 100% |
-| Death & respawn | `████████████████████` | 98% |
+| Death & respawn | `████████████████████` | 99% |
 | Progress (anyone can progress) | `███████████████████░` | 94% |
 | Services & UI | `████████████████████` | 100% |
 | Network & robustness | `██████████████████░░` | 92% |
-| Bloodborne-specific (chalice, Insight) | `███████████████████░` | 94% |
-| Feels like single player in a party | `███████████████████░` | 96% |
+| Bloodborne-specific (chalice, Insight) | `████████████████████` | 98% |
+| Feels like single player in a party | `████████████████████` | 99% |
 
 ---
 
@@ -258,12 +258,12 @@ before anyone is in the game):
 - **Same version for everyone.** A player whose bbport build, game files, patches, mods or party
   options differ is refused on joining; the message says what differs and what to do.
 - **Chalice dungeons together.** Guests join the host's dungeon; levers, doors, the layer boss, its
-  loot (for each player) and the lift work for the whole party. Any player can perform the ritual:
+  loot (for each player) and the lift with its call levers at the top and the bottom work for the whole party, layer after layer; a guest can also join from its title straight into the host's dungeon. Any player can perform the ritual:
   the host's altar then offers *Enter the party's dungeon*, also with guests standing in its Dream,
   and one press does the rest (the guests follow in with one loading screen). Chalices are shared
   between all players, and a boss reward the game keeps for the host goes to every guest in the
   dungeon too.
-- **Crashes recover.** A crashed game restarts and rejoins by itself (back in the host's world about 12 s after the restart), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue. If the host's game crashes, the guests go to their own world and wait ("Waiting for the host to come back (N s)...") until the host's game has restarted, then are summoned back beside it by themselves (about 20 s after the crash on one PC; after 3 minutes without the host a guest plays on alone); items a guest got in the host's world stay in its own save.
+- **Crashes recover.** A crashed game restarts and rejoins by itself (on one PC: in the host's party about 17 s after the crash, standing beside the host about 27 s after it, most of that the game's own start and loading screen), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue. If the host's game crashes, the guests go to their own world and wait ("Waiting for the host to come back (N s)...") until the host's game has restarted, then are summoned back beside it by themselves (about 20 s after the crash on one PC; after 3 minutes without the host a guest plays on alone); items a guest got in the host's world stay in its own save.
 - **Network drops recover.** A network outage of up to 50 s keeps the session (checked with three players): no loading screen, everyone carries on where they stood once the network is back (the others freeze in place meanwhile). If a longer outage loses the session, a guest goes home at once with one loading screen and is summoned back beside the host by itself once the network is back. The party also checks every 15 s that everyone sees the same world and progress and quietly re-sends whatever differs.
 - **Wrong passwords are locked out.** A few typos are fine; after 5 wrong passwords in a minute the host refuses that address for a while.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
@@ -318,7 +318,7 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 | Every cutscene for the whole party (story cutscenes, endings and guest-triggered scenes already work) | In progress |
 | Joining during a boss fight or cutscene waits outside until it ends | Done: boss fights and cutscenes with every join path (bell, title join, direct summon; verified live), the Party status says why you wait |
 | With 3 guests, every guest sees every other guest | Done: all four join and see each other; any player can leave and rejoin while the others play on (verified live with 3 and 4 players) |
-| Chalice dungeons: deeper layers and the bottom lift lever checked in a party | In progress |
+| Chalice dungeons: deeper layers and the bottom lift lever checked in a party | Done: layer 2 and its boss, both lift levers (verified live); dungeons with floor bosses still to check |
 | PvP / friendly fire the host can switch on and off | Done (0.6.2) |
 | Pings: party members and marked spots visible through walls, with distance and player colours | Done (0.6.2) |
 
