@@ -360,9 +360,9 @@ u32 NpcParamId(u64 chr) {
 /// Lines of the coverage summary (the log and the progress file's last lines).
 std::string Coverage() {
     char b[400];
-    std::snprintf(b, sizeof b, "%zu areas, %zu maps, %zu enemy kinds (%zu kills, %zu bosses fought), %zu cutscenes, "
-                  "%zu item effects, %zu time-of-day rows", g.progress.done.size(), g.maps_seen.size(),
-                  g.progress.kinds.size(), g.kills, g.bosses, g.progress.remos.size(), g.progress.fx.size(), g.tod_rows);
+    std::snprintf(b, sizeof b, "%zu places, %zu enemy kinds, %zu cutscenes, %zu item effects, %zu time-of-day rows "
+                  "(this session: %zu kills, %zu bosses fought)", g.progress.done.size(), g.progress.kinds.size(),
+                  g.progress.remos.size(), g.progress.fx.size(), g.progress.tod_done.size(), g.kills, g.bosses);
     return b;
 }
 
