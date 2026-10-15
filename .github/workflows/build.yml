@@ -3,6 +3,16 @@ name: Build Bloodborne PC Port
 on:
   push:
     branches: [ "master" ]
+    paths:
+      - 'src/**'
+      - 'gpu/**'
+      - 'audio/**'
+      - 'include/**'
+      - 'third_party/**'
+      - 'patches/**'
+      - 'scripts/stage_dlls.py'
+      - 'CMakeLists.txt'
+      - 'build.bat'
   workflow_dispatch:
 
 jobs:
