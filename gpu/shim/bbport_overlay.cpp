@@ -11,6 +11,7 @@
 #include <cwchar>
 #include <mutex>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -20,6 +21,7 @@
 #include "bbport_frame_state.h"
 #include "bbport_hdr.h"
 #include "bbport_settings.h"
+#include "../../src/pad_bindings.h"
 #include "party/party_hud.h"
 #include "party/party_balance_rules.h"
 #include "party/party_npctalk.h"
@@ -1107,6 +1109,271 @@ void EffectsTab() {
     }
 }
 
+// Key binding rows (from Mrsuss60/bloodborne_pc_windows_port 90008b39 by Mrsuss60: select a row,
+// then press a key or a mouse button; a key another input had moves here in exchange). They
+// write the layout's bbport.ini lines (mkkey.<input>= in mouse & keyboard mode, key.<input>= in
+// the classic one; src/pad_bindings.h) and runtime_pad.c reads them again at once. In mouse &
+// keyboard mode the mouse buttons' built-in roles are listed too: a mouse button named in a line
+// leaves the built-in scheme (Shift + that click no longer gives R2 / L1).
+struct KeyRows {
+    int layout = -1;     ///< 1 mouse & keyboard (mkkey.*), 0 classic (key.*); -1 not read
+    int generation = -1; ///< BbSettings::BindingsGeneration of the read
+    std::vector<int> keys[IN_COUNT]; ///< the lines' keys (or the defaults)
+    int capturing = -1;  ///< the input waiting for a key or mouse button
+    std::string message; ///< the last exchange ("X taken from ...")
+};
+KeyRows key_rows;
+
+const char* KeyPrefix(int layout) {
+    return layout ? "mkkey." : "key.";
+}
+
+void ReadKeyRows(int layout) {
+    key_rows.layout = layout;
+    key_rows.generation = BbSettings::BindingsGeneration();
+    for (auto& k : key_rows.keys) {
+        k.clear();
+    }
+    const KeyDefault* list = layout ? mk_keys : classic_keys;
+    const size_t count = layout ? MK_KEY_COUNT : CLASSIC_KEY_COUNT;
+    for (size_t i = 0; i < count; ++i) {
+        key_rows.keys[list[i].input].push_back(list[i].key);
+    }
+    const std::string prefix = KeyPrefix(layout);
+    for (const auto& [key, value] : BbSettings::ReadLines(prefix)) {
+        const std::string name = key.substr(prefix.size());
+        for (int input = 0; input < IN_COUNT; ++input) {
+            if (name != input_names[input]) {
+                continue;
+            }
+            auto& keys = key_rows.keys[input];
+            keys.clear();
+            size_t at = 0;
+            while (at <= value.size()) {
+                size_t end = value.find(',', at);
+                if (end == std::string::npos) {
+                    end = value.size();
+                }
+                std::string part = value.substr(at, end - at);
+                part.erase(part.find_last_not_of(' ') + 1);
+                part.erase(0, part.find_first_not_of(' '));
+                const int code = part.empty() ? -1 : key_from_name(part.c_str());
+                if (code >= 0 && keys.size() < 4) {
+                    keys.push_back(code);
+                }
+                at = end + 1;
+            }
+        }
+    }
+}
+
+/// Mouse & keyboard mode: the mouse buttons' built-in roles (runtime_pad.c sample_mouse) while no
+/// line names that button.
+std::vector<int> BuiltInMouse(int input) {
+    std::vector<int> out;
+    if (key_rows.layout != 1) {
+        return out;
+    }
+    static constexpr struct {
+        int input, button;
+    } roles[] = {{IN_R1, SDL_BUTTON_LEFT}, {IN_L2, SDL_BUTTON_RIGHT}, {IN_R3, SDL_BUTTON_MIDDLE},
+                 {IN_L1, SDL_BUTTON_X1}, {IN_R2, SDL_BUTTON_X2}};
+    for (const auto& role : roles) {
+        if (role.input != input) {
+            continue;
+        }
+        const int code = MOUSE_KEY + role.button;
+        bool named = false;
+        for (const auto& keys : key_rows.keys) {
+            named |= std::find(keys.begin(), keys.end(), code) != keys.end();
+        }
+        if (!named) {
+            out.push_back(code);
+        }
+    }
+    return out;
+}
+
+std::string KeyList(int input) {
+    std::string text;
+    for (const int code : key_rows.keys[input]) {
+        text += (text.empty() ? "" : " / ") + std::string(key_name(code));
+    }
+    for (const int code : BuiltInMouse(input)) {
+        text += (text.empty() ? "" : " / ") + std::string(key_name(code));
+    }
+    return text.empty() ? T("(none)", "(нет)") : text;
+}
+
+const char* InputLabel(int input) {
+    return T(input_labels[input][0], input_labels[input][1]);
+}
+
+/// Binds `code` alone to the capturing input (code < 0: unbinds it). An input that had the code
+/// gets the capturing input's first key instead when nothing else is left on it.
+void AssignKey(int code) {
+    const int input = key_rows.capturing;
+    key_rows.capturing = -1;
+    if (input < 0 || key_rows.layout < 0) {
+        return;
+    }
+    std::vector<int> old = key_rows.keys[input];
+    for (const int builtin : BuiltInMouse(input)) {
+        old.push_back(builtin);
+    }
+    std::vector<int> changed{input};
+    key_rows.message.clear();
+    if (code >= 0) {
+        for (int other = 0; other < IN_COUNT; ++other) {
+            if (other == input) {
+                continue;
+            }
+            auto& keys = key_rows.keys[other];
+            const std::vector<int> builtin = BuiltInMouse(other);
+            const bool listed = std::find(keys.begin(), keys.end(), code) != keys.end();
+            if (!listed && std::find(builtin.begin(), builtin.end(), code) == builtin.end()) {
+                continue;
+            }
+            keys.erase(std::remove(keys.begin(), keys.end(), code), keys.end());
+            bool other_mouse_left = false;
+            for (const int b : builtin) {
+                other_mouse_left |= b != code;
+            }
+            if (keys.empty() && !other_mouse_left && !old.empty() && old[0] != code) {
+                keys.push_back(old[0]);
+                key_rows.message = std::string(key_name(code)) + T(" taken from ", " взята у: ") +
+                                   InputLabel(other) + T("; it gets ", "; ей назначена ") +
+                                   key_name(old[0]);
+            } else {
+                key_rows.message =
+                    std::string(key_name(code)) + T(" taken from ", " взята у: ") + InputLabel(other);
+            }
+            changed.push_back(other);
+        }
+    }
+    key_rows.keys[input].clear();
+    if (code >= 0) {
+        key_rows.keys[input].push_back(code);
+    }
+    std::vector<std::pair<std::string, std::optional<std::string>>> lines;
+    for (const int i : changed) {
+        std::string value;
+        for (const int k : key_rows.keys[i]) {
+            value += (value.empty() ? "" : ",") + std::string(key_name(k));
+        }
+        lines.emplace_back(KeyPrefix(key_rows.layout) + std::string(input_names[i]), value);
+    }
+    BbSettings::WriteBindingLines(lines);
+    key_rows.generation = BbSettings::BindingsGeneration();
+    std::printf("Overlay: %s%s = %s%s%s\n", KeyPrefix(key_rows.layout), input_names[input],
+                code >= 0 ? key_name(code) : "(none)", key_rows.message.empty() ? "" : "; ",
+                key_rows.message.c_str());
+}
+
+/// Back to the layout's defaults: its lines are removed.
+void ResetKeys() {
+    std::vector<std::pair<std::string, std::optional<std::string>>> lines;
+    for (int i = 0; i < IN_COUNT; ++i) {
+        lines.emplace_back(KeyPrefix(key_rows.layout) + std::string(input_names[i]), std::nullopt);
+    }
+    BbSettings::WriteBindingLines(lines);
+    key_rows.capturing = -1;
+    key_rows.message.clear();
+    ReadKeyRows(key_rows.layout);
+    std::printf("Overlay: %s* lines removed (default keys)\n", KeyPrefix(key_rows.layout));
+}
+
+/// Window thread (HandleEvent, imgui_mutex held): a key or button for the row waiting for one.
+/// Esc (gamepad Circle) cancels, Delete unbinds; Insert, F9 and F11 stay the menu's.
+bool KeyCaptureEvent(const SDL_Event& event) {
+    if (key_rows.capturing < 0) {
+        return false;
+    }
+    switch (event.type) {
+    case SDL_EVENT_KEY_DOWN:
+        if (event.key.repeat) {
+            return true;
+        }
+        if (event.key.key == SDLK_ESCAPE || event.key.key == SDLK_INSERT || event.key.key == SDLK_F9 ||
+            event.key.key == SDLK_F11) {
+            key_rows.capturing = -1;
+        } else if (event.key.key == SDLK_DELETE) {
+            AssignKey(-1);
+        } else if (event.key.scancode > SDL_SCANCODE_UNKNOWN && event.key.scancode < SDL_SCANCODE_COUNT) {
+            AssignKey(int(event.key.scancode));
+        }
+        return true;
+    case SDL_EVENT_KEY_UP:
+        return true;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        if (key_rows.layout == 1 && event.button.button >= SDL_BUTTON_LEFT &&
+            event.button.button <= SDL_BUTTON_X2) {
+            AssignKey(MOUSE_KEY + event.button.button);
+            return true;
+        }
+        return false;
+    case SDL_EVENT_MOUSE_WHEEL:
+        if (key_rows.layout == 1 && event.wheel.y != 0.0f) {
+            const float y = event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -event.wheel.y : event.wheel.y;
+            AssignKey(y > 0.0f ? MOUSE_WHEEL_UP : MOUSE_WHEEL_DOWN);
+            return true;
+        }
+        return false;
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+        if (event.gbutton.button == SDL_GAMEPAD_BUTTON_EAST) {
+            key_rows.capturing = -1;
+            return true;
+        }
+        return false;
+    default:
+        return false;
+    }
+}
+
+void KeyBindingRows(bool mk) {
+    const int layout = mk ? 1 : 0;
+    if (key_rows.layout != layout || key_rows.generation != BbSettings::BindingsGeneration()) {
+        key_rows.capturing = -1;
+        ReadKeyRows(layout);
+    }
+    ImGui::Spacing();
+    Note(mk ? T("Key bindings (mouse & keyboard): select a row, then press a key or a mouse button. "
+                "Esc cancels, Delete unbinds.",
+                "Клавиши (мышь и клавиатура): выберите строку и нажмите клавишу или кнопку мыши. "
+                "Esc - отмена, Delete - снять назначение.")
+            : T("Key bindings (classic layout): select a row, then press a key. Esc cancels, Delete "
+                "unbinds.",
+                "Клавиши (классическая раскладка): выберите строку и нажмите клавишу. Esc - отмена, "
+                "Delete - снять назначение."),
+         Gold(0.9f));
+    if (!key_rows.message.empty()) {
+        Note(key_rows.message.c_str(), Bright());
+    }
+    for (int input = 0; input < IN_COUNT; ++input) {
+        char id[32];
+        std::snprintf(id, sizeof(id), "bind_%s", input_names[input]);
+        const std::string keys = key_rows.capturing == input
+                                     ? std::string(T("< press a key >", "< нажмите клавишу >"))
+                                     : KeyList(input);
+        if (Row(id, InputLabel(input), keys.c_str(),
+                T("Select, then press the new key or mouse button: it replaces this input's keys. A "
+                  "key another input had moves here; that input gets this one's first key.",
+                  "Выберите и нажмите новую клавишу или кнопку мыши: она заменит клавиши этого "
+                  "действия. Клавиша другого действия переходит сюда, а оно получает первую "
+                  "клавишу этого."),
+                true) != 0) {
+            key_rows.capturing = key_rows.capturing == input ? -1 : input;
+        }
+    }
+    if (Row("bind_reset", T("Default keys", "Клавиши по умолчанию"), T("Reset", "Сбросить"),
+            T("Removes this layout's key lines from bbport.ini: every input gets its default keys.",
+              "Удаляет строки клавиш этой раскладки из bbport.ini: все действия получают клавиши по "
+              "умолчанию."),
+            true) != 0) {
+        ResetKeys();
+    }
+}
+
 // Mouse & keyboard controls (scheme from Mrsuss60/bloodborne_pc_windows_port; runtime_pad.c).
 void ControlsTab() {
     auto& s = BbSettings::Get();
@@ -1150,24 +1417,25 @@ void ControlsTab() {
              "кривой). Камера мыши imedved; при захвате цели работает стик."),
            mk);
     ImGui::Spacing();
-    Note(mk ? T("Mouse: move = camera, left = R1, Shift + left = R2, right = L2, Shift + right = L1, "
+    Note(mk ? T("Default mouse: move = camera, left = R1, Shift + left = R2, right = L2, Shift + right = L1, "
                 "middle = R3 (lock-on), side buttons = L1 / R2, wheel = d-pad up / down.  Keys: WASD move, Space = Circle "
                 "(dodge), E / Enter = Cross, R = Square, X = Triangle, Q = R3, C / Z = L3, Esc / F1 = "
                 "Options, Tab / G = touchpad, Backspace = right touchpad, arrows or 1 2 3 4 = d-pad, "
                 "IJKL = camera.",
-                "Мышь: движение — камера, левая — R1, Shift + левая — R2, правая — L2, Shift + правая "
+                "Мышь по умолчанию: движение — камера, левая — R1, Shift + левая — R2, правая — L2, Shift + правая "
                 "— L1, средняя — R3 (захват цели), боковые — L1 / R2, колесо — крестовина вверх / вниз.  Клавиши: WASD — движение, "
                 "Пробел — Круг (уклонение), E / Enter — Крест, R — Квадрат, X — Треугольник, Q — R3, "
                 "C / Z — L3, Esc / F1 — Options, Tab / G — тачпад, Backspace — правая сторона тачпада, "
                 "стрелки или 1 2 3 4 — крестовина, IJKL — камера.")
-            : T("Classic layout: WASD move, IJKL camera, Space / Enter = Cross, Left Shift / Esc = "
+            : T("Classic layout (default keys): WASD move, IJKL camera, Space / Enter = Cross, Left Shift / Esc = "
                 "Circle, E = Square, Q = Triangle, 1 / 3 = L1 / R1, R / F = L2 / R2, Z / C = L3 / R3, "
                 "F1 / O = Options, Tab / Backspace = touchpad, arrows = d-pad.",
-                "Классическая раскладка: WASD — движение, IJKL — камера, Пробел / Enter — Крест, "
+                "Классическая раскладка (по умолчанию): WASD — движение, IJKL — камера, Пробел / Enter — Крест, "
                 "Левый Shift / Esc — Круг, E — Квадрат, Q — Треугольник, 1 / 3 — L1 / R1, R / F — "
                 "L2 / R2, Z / C — L3 / R3, F1 / O — Options, Tab / Backspace — тачпад, стрелки — "
                 "крестовина."),
          Dim());
+    KeyBindingRows(mk);
 }
 
 void AdvancedTab() {
@@ -2957,6 +3225,11 @@ bool HandleEvent(const SDL_Event& event) {
     }
     ImGuiIO& io = ImGui::GetIO();
     const bool is_open = menu_open;
+    if (!is_open) {
+        Ui::key_rows.capturing = -1; // a row waiting for a key when the menu closed
+    } else if (Ui::KeyCaptureEvent(event)) {
+        return true;
+    }
     switch (event.type) {
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP: {

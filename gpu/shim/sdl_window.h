@@ -81,6 +81,9 @@ private:
     u32 mouse_buttons{};
     int wheel_up{}, wheel_down{};
     bool relative_mouse{};
+    /// SDL_GetTicks when the window last got the focus: the click that brought it to the front
+    /// is not a game press (capture-click discard, Mrsuss60/bloodborne_pc_windows_port 90008b39).
+    u64 focus_gained_ms{};
     u64 last_tuning_check_ms{};
     SDL_Window* window{};
     WindowSystemInfo window_info{};
