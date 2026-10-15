@@ -165,6 +165,12 @@ bool RotRallyGainInWindow(double since_damage_s) {
     return since_damage_s >= 0.0 && since_damage_s <= kRotRallyWindowS;
 }
 
+float RotItemDiscovery(float own, int stacks) {
+    const int s = std::clamp(stacks, 0, kRotMaxStacks);
+    if (!(own > 0.0f) || s == 0) return own;
+    return std::max(kRotDiscoveryFloor, own - kRotDiscoveryPerStack * static_cast<float>(s));
+}
+
 float RotHpFactor(int stacks) {
     const int s = std::clamp(stacks, 0, kRotMaxStacks);
     return 1.0f - static_cast<float>(s * kRotHpPercentPerStack) / 100.0f;
