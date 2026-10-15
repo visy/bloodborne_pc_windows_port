@@ -17,11 +17,11 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 
 | Area | Progress | |
 |---|---|--:|
-| **Overall** | `███████████████████░` | 95% |
+| **Overall** | `███████████████████░` | 96% |
 | Session & joining | `████████████████████` | 99% |
 | World & travel | `████████████████████` | 99% |
 | Death & respawn | `███████████████████░` | 96% |
-| Progress (anyone can progress) | `██████████████████░░` | 92% |
+| Progress (anyone can progress) | `███████████████████░` | 94% |
 | Services & UI | `███████████████████░` | 97% |
 | Network & robustness | `██████████████████░░` | 91% |
 | Bloodborne-specific (chalice, Insight) | `██████████████████░░` | 90% |
@@ -208,7 +208,15 @@ before anyone is in the game):
   night), Mergo's Wet Nurse's arena, Gehrman's scenes and the ending with the end credits
   play for every party member; a guest still loading in when a scene starts sees it once it has
   arrived. After the Blood Moon the host is asked "Travel with the party?" and everyone goes to
-  Yahar'gul together.
+  Yahar'gul together. A guest can start the Blood Moon too, by walking up to Yharnam at Moonside
+  Lake, and the story messages only the host's game shows (Yahar'gul's "Ritual secret broken")
+  appear on every guest's screen with an OK.
+- **Your ending, your choice.** When the host reaches an ending, every guest is asked first:
+  *Yes* plays that ending in your own save (end credits, then New Game+), *No* takes you home to
+  your own Hunter's Dream and your save stays as it was, to reach the ending later. A guest who
+  used three Umbilical Cords gets Childhood's Beginning when the host refused Gehrman.
+- **Guests open gates with their own keys.** The Cathedral Ward main gate opens for a guest
+  carrying the Hunter Chief Emblem, for the whole party.
 - **Insight for everyone.** Whatever Insight the host gets (a boss's first sight and kill, story
   moments, the kidnap's waking, Chalice Dungeon bosses) every guest present gets too; a boss's
   first-sight Insight comes once per player, whoever walks in first. What Insight
