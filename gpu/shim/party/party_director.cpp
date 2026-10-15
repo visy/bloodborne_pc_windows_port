@@ -1602,7 +1602,15 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         b2::HostTravelAloneNext();
         RunLampWarpDecided(step.id, true);
     } else if (step.kind == TravelStep::HostLamp || step.kind == TravelStep::GuestLamp) {
-        split::NoteLocalUse(step.id);  // this player's own use (no talk script sets a lamp flag)
+        if (step.args == "story") {
+            // host_lamp=ID:story / guest_lamp=ID:story (B6): the warp as a story event's 2003[49]
+            // runs it (seamless_rules: StoryWarpEvent -> NoteStoryWarp), e.g. the carriage to
+            // Cainhurst 2502959 or the Lecture Building 3202958: the question after the scene.
+            split::NoteStoryWarp(step.id);
+            Log("test: %s %u as a story warp (2003[49])", TravelStepName(step.kind), step.id);
+        } else {
+            split::NoteLocalUse(step.id);  // this player's own use (no talk script sets a lamp flag)
+        }
         reinterpret_cast<void(BB_COOP_SYSV*)(std::uint32_t)>(Guest(kLampWarp))(step.id);  // as the player
     } else if (step.kind == TravelStep::HostMove || step.kind == TravelStep::GuestMove) {
         // The local chr to a spot (the chr warp vfunc +0x5F8 = 0x18CD600(chr, pos, rot, 1), as the
@@ -2542,6 +2550,10 @@ void PartyDirector::ConfigureFromEnv() {
                     step.kind == TravelStep::HostAlone || step.kind == TravelStep::GuestKill) {
                     step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + item.find('=') + 1, nullptr, 10));
                 }
+                if ((step.kind == TravelStep::HostLamp || step.kind == TravelStep::GuestLamp) &&
+                    item.find(":story") != std::string::npos) {
+                    step.args = "story";
+                }
                 if ((step.kind == TravelStep::HostDie || step.kind == TravelStep::GuestDie) && item.find('%') != std::string::npos) {
                     // host_die@S%MAP: S s after the last load / previous step, in that map (no re-join)
                     step.map = item.substr(item.find('%') + 1);
@@ -3419,12 +3431,12 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
         }
         return false;
     }
-    // A5 experiment (BB_PARTY_GATHER_DSUM=1, off): ring from the own map and let the direct
-    // summon carry this guest into the host's. Live 2026-10-13 (a5, Dream -> m24_01): the guest
-    // joined the host's room as a client in 3.1 s but its game did NOT load the host's map (still
-    // m21_00 12 s later, "apart 1"): the summon's load needs the same area. So the gather stays the
-    // default; the experiment is kept for the follow-up (a B2 arrival load after the join).
-    static const bool carry = std::getenv("BB_PARTY_GATHER_DSUM") && std::getenv("BB_PARTY_GATHER_DSUM")[0] == '1';
+    // A5 (BB_PARTY_GATHER_DSUM, default on since 0.6.2; =0 the old gather): ring from the own map
+    // and let the direct summon join the host's room from here. Its game does not load the host's
+    // map (live a5 2026-10-13: still m21_00, "apart 1"); party_b2's CarryArrivalTick then runs the
+    // B2 re-join into the host's map: one loading screen for the join instead of the gather's lamp
+    // load plus the summon's. A failed direct summon (DirectSummonCarries false) gathers as before.
+    static const bool carry = !(std::getenv("BB_PARTY_GATHER_DSUM") && std::getenv("BB_PARTY_GATHER_DSUM")[0] == '0');
     if (carry && b2::DirectSummonCarries() && !(ever && Seconds(last, now) < 90.0)) {
         static Clock::time_point said{};
         if (Seconds(said, now) >= 30.0) {

@@ -700,6 +700,23 @@ void on_state(LinkState s, const std::string& detail) {
         }
     }
     bridge::OnLinkState(s, detail, link->reject_code(), reason);
+    if (!host && s == LinkState::Rejected && link->reject_code() == RejectCode::Auth) {
+        // A1 live test aid: BB_PARTY_TEST_REJOIN_PASSWORD=<password>: 20 s after a wrong-password
+        // refusal, the player "types" this password in System > Party and chooses Rejoin the host.
+        static std::atomic<bool> used{false};
+        const char* pw = std::getenv("BB_PARTY_TEST_REJOIN_PASSWORD");
+        if (pw && pw[0] && !used.exchange(true)) {
+            const std::string fixed = pw;
+            std::thread([fixed] {
+                std::this_thread::sleep_for(std::chrono::seconds(20));
+                {
+                    std::lock_guard<std::mutex> lk(R().mu);
+                    R().cfg.password = fixed;
+                }
+                plog("test: the right password set (as typed in System > Party); Rejoin the host -> %d", runtime_rejoin());
+            }).detach();
+        }
+    }
     if (!host && (s == LinkState::Reconnecting || s == LinkState::Rejected)) {
         bool first = false;
         std::uint64_t epoch = 0;
