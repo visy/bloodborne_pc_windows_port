@@ -65,6 +65,12 @@ public:
     void Suspend(bool inside_render_pass) override;
     void Resume(bool inside_render_pass) override;
 
+    /// The render pass about to begin, as an area relative to the game's target (the rasterizer's
+    /// target_scale.x * .y: a reduced scene 1/4 or 1/9, the output-size UI 4): the samples counted
+    /// in it are scaled to the game's resolution, as the PS4 would have counted them (from
+    /// deadinside's Supermedo/bloodborne_pc 72e5c8ce).
+    void SetPassScale(float area_scale);
+
 private:
     static constexpr u32 NumSlots = 4096;
     static constexpr u32 ResetBatch = 512;
@@ -98,6 +104,8 @@ private:
     Scheduler& scheduler;
     VideoCore::BufferCache& buffer_cache;
     std::recursive_mutex mutex;
+    u32 pass_scale = 256;                   ///< the current pass's sample factor, 8.8 fixed point
+    std::array<u32, NumSlots> slot_scale{}; ///< per query slot: its pass's factor
     vk::UniqueQueryPool pool;
     std::unique_ptr<VideoCore::Buffer> results; ///< segment results copied for the resolve
     std::unique_ptr<VideoCore::Buffer> total;   ///< the running sample count (64-bit)

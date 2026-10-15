@@ -292,6 +292,10 @@ void Dlss::AppendDeviceExtensions(vk::Instance instance, vk::PhysicalDevice phys
     impl->device_ready = true;
 }
 
+void Dlss::Disable(std::string_view reason) {
+    impl->Disable(reason);
+}
+
 void Dlss::Initialize(vk::Instance instance, vk::PhysicalDevice physical, vk::Device device) {
     if (!impl->eligible || !impl->device_ready || impl->initialized) {
         return;
