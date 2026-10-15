@@ -88,6 +88,13 @@ int RotExtraStaminaDrain(int prev, int now, int prev_max, int now_max, float fac
 /// now, the max unchanged, alive before) that is not a Blood Vial's (`vial` false) times
 /// (1 - factor), the fraction carried. The whole points to take back now (0: nothing to take).
 int RotRallyTakeBack(int prev, int now, int prev_max, int now_max, float factor, bool vial, float* carry);
+/// The "rally" rot counts an HP gain only this long after the player last took damage (the game's
+/// rally window: a hit back regains part of what was just lost); later gains (a regeneration
+/// effect, a healing item other than a Blood Vial) are not a rally and are kept whole.
+constexpr double kRotRallyWindowS = 6.0;
+/// True when an HP gain `since_damage_s` seconds after the last damage (negative: no damage
+/// seen since the rot came into force) falls inside the rally window.
+bool RotRallyGainInWindow(double since_damage_s);
 
 /// C4 rot, what cleanses it (ERSC: resting at a grace). A lamp warp is the death's respawn (no
 /// rest) only while the player is still down from that death: dead at the warp, or the warp came

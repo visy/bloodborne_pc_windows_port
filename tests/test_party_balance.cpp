@@ -148,6 +148,10 @@ int main() {
         assert(RotRallyTakeBack(410, 420, 719, 719, 0.85f, false, &carry) == 2);   // 1.5 + 0.5
         carry = 0;
         assert(RotRallyTakeBack(400, 500, 719, 719, -1.0f, false, &carry) == 100);  // clamped
+        assert(RotRallyGainInWindow(0.5));     // a hit back right after damage
+        assert(RotRallyGainInWindow(kRotRallyWindowS));
+        assert(!RotRallyGainInWindow(kRotRallyWindowS + 0.1));  // a regeneration tick later
+        assert(!RotRallyGainInWindow(-1.0));   // no damage seen
     }
 
     // Menu texts.
