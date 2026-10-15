@@ -1610,17 +1610,25 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     }
     const TravelStep::Kind next_kind = t.next_step < t.steps.size() ? t.steps[t.next_step].kind : TravelStep::HostWarp;
     if (next_kind == TravelStep::HostRejoin || next_kind == TravelStep::GuestRejoin) {
-        // Rejoin (the Party page's button): while out of the party, S s after it went out (or
-        // after the previous step, the later). Already back in: the step is done without a press.
+        // Rejoin (the Party page's button): waits until this player is out of the party (its own
+        // Leave, the host's Leave, a kick), then presses S s after it went out (or after the
+        // previous step, the later). Back in by itself before that: the step is done without a press.
         const TravelStep& step = t.steps[t.next_step];
+        const bool went_out = t.left_at != Clock::time_point{} && (!t.ran || t.left_at > t.step_at);
         if (joined) {
+            if (!went_out) {
+                return;
+            }
             ++t.next_step;
             t.step_at = now;
             t.ran = true;
             t.last_kind = step.kind;
-            Log("test: travel step %zu/%zu: %s: already in the party, no press", t.next_step, t.steps.size(),
+            Log("test: travel step %zu/%zu: %s: back in the party without a press", t.next_step, t.steps.size(),
                 TravelStepName(step.kind));
             return;
+        }
+        if (!went_out) {
+            return;  // not in the party yet (never joined): nothing to rejoin
         }
         const Clock::time_point from = t.ran && t.step_at > t.left_at ? t.step_at : t.left_at;
         if (Seconds(from, now) < step.delay) {

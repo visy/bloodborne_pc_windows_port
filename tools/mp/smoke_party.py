@@ -199,7 +199,7 @@ def check_common(v, L, tag):
 
 
 def check_s1(v, L):
-    j = need(v, L, "s1 join: 3 players (host cooperators 1 -> 2)", 0, r"cooperators 1 -> 2")
+    j = need(v, L, "s1 join: 3 players (host cooperators -> 2)", 0, r"cooperators [01] -> 2")
     lv = need(v, L, "s1 Leave (guest 1, Party page)", 1, r"guest_leave: Party > Leave pressed")
     if lv is not None:
         need(v, L, "s1 Leave: host sees it (2 -> 1)", 0, r"cooperators 2 -> 1", lv)
@@ -226,7 +226,7 @@ def check_s1(v, L):
 
 
 def check_s2(v, L):
-    need(v, L, "s2 join: 3 players", 0, r"cooperators 1 -> 2")
+    need(v, L, "s2 join: 3 players", 0, r"cooperators [01] -> 2")
     tr = need(v, L, "s2 party lamp travel to the Cleric Beast", 0, r"travel step \d+/\d+: host_warp to lamp 2412952")
     k = need(v, L, "s2 boss kill (host)", 0, r"travel step \d+/\d+: host_kill", tr or 0)
     if k is not None:

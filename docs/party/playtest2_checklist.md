@@ -99,6 +99,30 @@ network says "now" and "back".
 | 4a | A guest kills its game (Task Manager -> bbport.exe -> End task) and starts it again (*Continue party game*) | back in the host's room about 15 s and beside the host about 20-30 s after the kill | |
 | 4b | The host does the same | the guests go home at once and come back by themselves once the host is in the world again | |
 
+## 4b. The audit's ten riskiest claims (each one is checked here, not on loopback)
+
+An independent audit of the parity table (agents/scoreaudit_report.md, 2026-10-15) found that every
+row's evidence is single-PC loopback. These ten claims are the most likely to fail on a real line;
+each needs an explicit result in the notes (worked / failed / not reached, with the F9 mark and the
+time). A row's "ERSC parity" number in ERSC_PARITY.md only goes above 95 once its line here passed.
+
+| # | Claim (row) | What to do | Pass when | Result |
+|---|---|---|---|---|
+| R1 | Real internet play holds (F1) | play section 2 for at least 60 min; read the ping over each companion every 15 min | no lost session, no stuck state; pings written down 4+ times | |
+| R2 | Outages up to 50-120 s keep the session (F5) | section 3, rows 3a-3d, with a real cable pull / Wi-Fi off on each PC | no loading screen for 10 / 25 / 60 s cuts; 3e goes home and comes back by itself | |
+| R3 | The campaign works as a party (D6 / H3) | play a stretch for real with no test aids (e.g. Central Yharnam -> Cathedral Ward -> Old Yharnam), every player's progress noted | every boss / lamp / shortcut reached by one is on everyone's save afterwards (support bundles: save_check) | |
+| R4 | No repeated summons (H2) | count every summon / loading screen a guest sees that it did not ask for | zero re-summons that were not after a death, a crash or a Leave | |
+| R5 | Join speed (A4) | 5 title joins (*Continue party game*) and 5 Rejoins from System > Party; note the seconds from the press to standing beside the host | every join works the first time; title join under ~30 s, Rejoin under ~15 s | |
+| R6 | Four players (A7) | if 4 PCs are available: 4 rendered games, each one joins, travels, dies once | everybody sees everybody, nobody crashes | |
+| R7 | Crash rejoin (C6) | section 4, 4a three times (on the slower PC at least once), 4b once | 4a back beside the host in about 30 s each time; 4b the guests back by themselves | |
+| R8 | Decided differences feel right (C2 / H1 / B1) | the host dies alone 3 times while guests are elsewhere; note who sees a loading screen | the whole party loads with the host (the decision); say whether that felt acceptable or should be ERSC's "others play on" | |
+| R9 | Boss kills while apart (B5 / D3) | a guest travels alone (lamp -> "Travel alone") and kills a boss or opens a shortcut there, then the party meets again | the kill / shortcut is on the host's world and save; nobody sees the boss alive again | |
+| R10 | Cross-map join and rejoin (A5) | the guest joins / rejoins while in another map than the host (Dream vs. Central Yharnam) 3 times, once right after the host used a lamp | always ONE loading screen, beside the host, never the wrong map (playtest 1's #9) | |
+
+Also do each of these at least 3 times (the audit's "repetition, not single runs"): rejoin after a Leave,
+rejoin right after a boss kill, rejoin after a guest crash; a death of each player in and out of a boss
+fight; a near-simultaneous death of everyone (wipe); the host's death.
+
 ## 5. Open port for a while (F3, optional, passive)
 
 If the host is happy to keep the port open (UPnP or forward) for an hour or more: nothing to do, the
