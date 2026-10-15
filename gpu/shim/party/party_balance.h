@@ -67,6 +67,10 @@ bool HostRules(Rules* out);
 /// For the party HUD's VITALS.
 int LocalDeaths();
 int LocalRotStacks();
+/// C4 "item discovery" rot: the discovery an enemy drop roll of the local player uses (`own`, the
+/// request's value), with this player's discovery stacks taken off (RotItemDiscovery); unchanged
+/// when the kind is not in force, rot is off or there are no such stacks. Any thread (the roll).
+float RotDropDiscovery(float own);
 /// The loaded map's enemies as the H4 census sees them (team 23, entity id chr +0x3B8, HP +0xF8,
 /// position): the host_kill / guest_kill test steps pick from this list (main thread).
 std::vector<EnemyKillCandidate> LoadedEnemies();

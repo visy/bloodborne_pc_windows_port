@@ -213,19 +213,34 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
   bare SpEffect 4680 that end on a client; the host's are counted and sent to the guests
   (party_phantom DirectInsight; live by the `host4680` probe, not yet with a real boss).
 * What a guest gets as a cooperator: boss kill echoes / Insight (and the C3 parity patches' full
-  rewards), the drops it picks up itself. Boss reward lots in the dungeons (Ritual materials, the
-  chalice drops) are host-only `2003[4]` awards; C3 does not replay them: they are flagless and
-  repeatable per dungeon (no per-player flag or ledger bit to give them exactly once). The chalices
-  among them reach the guests through the chalice share above.
+  rewards), the drops it picks up itself, and (0.6.2) **the host's boss rewards**. Boss reward lots
+  in the dungeons (Ritual materials, the chalice drops) are host-only `2003[4]` awards, flagless and
+  repeatable per dungeon, so C3's flag / ledger replay cannot give them. Instead the host's award hook
+  turns each one into an `ItemSource::Chalice` grant (party_items `MakeChaliceGrant`): exactly the
+  items the host's roll gave, no flag, no ledger bit, its own key per kill; it goes out in the
+  normal `items` event, and a guest takes it only while it is summoned in a Chalice Dungeon (load
+  mode 1, map area 29: `ChaliceGrantAccepted`), i.e. the guests present at the kill. The guest
+  gives it in the dungeon (GiveItemDirect, the native item-get box), writes **no flag** (dungeon
+  flags are the slot's own), leaves key goods out (a chalice reaches everyone through the chalice
+  share above) and never carries it home (a give that cannot happen in the dungeon is dropped).
+  Once per kill: the host's event awards once; the guest's own copy of the event runs its client
+  branch as in vanilla (its `2003[4]` gives nothing on a client; the `2003[36]` "client too" lots of
+  12901596 / 12901693, e.g. 110001000, still give the guest its own consolation roll, as before). `BB_PARTY_CHALICE_AWARDS=0` turns it off. Unit: party-items-test `test_chalice_award`.
 * **Why no flag replay into the guest's slot**: the guest's quick join cleared its slot-0 groups and
   rebuilt the record; writing the host's area-29 flags there would need the guest's slot mapping
   (9020-9026 one-hot, remapped by 0x13b89b0 on every load) and would bypass the game's own slot
   bookkeeping (0x13bdc00). Too risky for a save; not done. Main-world flags are never touched by
   any of this: the chalice groups are separate (event_flags.md 2).
 
-* **Vanilla side effect, unchanged**: the quick join rewrites the summoned game's slot-0 record
-  and clears the current chalice groups (0x1aa8410 -> 0x13bdc00) — a member summoned into a chalice
-  dungeon loses the progress of the dungeon it had in that slot, exactly as in the original game.
+* **Vanilla side effect, kept (decision 2026-10-15, stats audit finding 8)**: the quick join
+  rewrites the summoned game's **slot-0** record and clears the current chalice groups (0x1aa8410 ->
+  0x13bdc00): a member summoned into a chalice dungeon loses the progress of the dungeon it had in
+  slot 0, exactly as in the original game. Slot 0 is the network / joined-dungeon slot; a player's
+  own ritual dungeons live in slots 1.. (the fixture `chalice_pthumeru_ritual` is slot 1), which the
+  join does not touch, so what can be lost is only an earlier *joined* dungeon's layer progress,
+  as in vanilla. Protecting it would mean saving and restoring the slot-0 groups around the join
+  (0x13bdc00's bookkeeping, 9020-9026 one-hot slot mapping): a risk to the save for little gain, so
+  not done; revisit if players report it.
 
 ## 6. The altar objects (for automation later) — C
 
@@ -328,3 +343,22 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
   - test harness: the central reaper (tools/mp/reaper.py) ends runs whose party log lines do not
     change for 10 s; a `<root>/noreap` file with seconds lets the long ritual / altar phases pass.
 
+
+* **0.6.2 live, one-press entry with the guest in the host's Dream (parfin2 g1d-g1m, 2026-10-15)**. Fixtures:
+  the guest `chalice_pthumeru_ritual`, the host the default save (docs/party/test_saves.md). Since seamless
+  joins the guest stands in the host's Dream before the dungeon, which needed four fixes found live:
+  1. the guest title-joins and never stands in its own world, so it never sent its FormData: now it also
+     sends it while summoned from its own ritual slot (1..; slot 0 in load mode 1 is the host's joined dungeon);
+  2. the altars' talk scripts t210050..t210110 park in an empty machine while IsMultiplayerInProgress is 1,
+     for the host too (no "First Ritual Altar" prompt with a guest present): answered 0 for the host
+     (`BB_PARTY_HOST_ALTARS=0`: as vanilla); guests keep the vanilla block;
+  3. the director's test menu walk held the pad at 0 every frame and released the altar autopilot's Cross;
+  4. the awaken point's warp 2902950 runs from the altar's EMEVD without a lamp flag of the host's, so the
+     split rule dropped it as another member's lamp: a host's area-29 awaken point is its own warp now (no
+     "Travel with the party?" question; the guests come by the party travel / summon).
+  g1m: altar item "Enter the party's dungeon" -> the autopilot (glyph box, OK, Search Results, YES, the
+  altar again, "Select location to awaken in", Chamber of the Seal; the awaken menu's first Cross is often
+  swallowed, so it presses up to three) -> one load for the host; the guest followed in one load and stayed a
+  cooperator; layer boss 2900100 killed: PREY SLAUGHTERED on both, guest Insight 6 -> 9, each its own loot.
+  The bottom lift lever 2901006 showed no prompt from the c26b spots, and the layer 2 boss 2900200 was not
+  loaded at (56.3, -59.7, -35.2): both stay open.

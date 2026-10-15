@@ -86,7 +86,7 @@ The filter allows by talk script id; the entity column is where the script is pl
 | 2100800 | t210306 | (Gehrman / Doll death branch) | no |
 | 2100950.. | t210000-3 | headstones (travel) | no (lamp phase) |
 | 2100230, 2100231 | t210720, t210721 | Dream lamp / warp menus | no (lamp phase) |
-| 2100954, 2100959, 2100960 | t210050, t210100, t210110 | chalice altars | no |
+| 2100954, 2100959, 2100960 | t210050, t210100, t210110 | chalice altars (all of t210050..t210110) | no; the host's since 0.6.2 (G1: IsMultiplayerInProgress answered 0 for the host, `BB_PARTY_HOST_ALTARS`) |
 
 t210140 / t210141 / t210200 / t2107xx (other `OpenSoul` scripts) are not placed in the m21 MSB;
 they are assigned elsewhere (NPC param / other maps) [I].
@@ -395,3 +395,19 @@ placed by `host_chr`, screenshots of both games after each step.
   close: the guest male (no long hair down the back), no load; after the next party travel still
   male. The one-time "Wear clothing to change appearance." flag 72100202 is per player now
   (never_sync; it went to the host's world as a world action before).
+
+## 2026-10-15 (parx): a covenant joined as a guest (H5), the Doll three times in a row (E1)
+
+* **The oath runes are ordinary item lots** (the note in the parfin H5 evidence was wrong): GemGen
+  200000 Radiance (lots 34020 / 34040, enemy drops), 200010 Corruption (17000, Annalise's talk sets
+  flag 9042, common 9040 awards it), 200020 Hunter (35010, Eileen's late talk sets 9075),
+  200030 Impurity (43120, Valtr: m27 event 12700906), 200040 Beast's Embrace (3401850, Laurence),
+  200050 Milkweed (43020). Oath runes go into the altar's "Oath Memory" slot (slotTypeRateB 100).
+* Live (parx dream, guest in the host's Dream, one session): fixture `lot=35010;goods=4104:1;
+  warp=talk:210699;open;keys=left,cross,...`: the game's own award of lot 35010 on the guest only
+  (its pickup flag 50001910 into the own save), the Memory Altar, Left to "Oath Memory": the list
+  shows "Hunter" (Type Oath), Cross: the guest's stats panel shows Hunter in the oath slot, i.e.
+  the guest joined the Hunter of Hunters with its own character in the host's world.
+* Same session, before it: `levelup|levelup|levelup`: three level-ups at the Doll in a row as a
+  guest (37 -> 38 -> 39 -> 40), each LevelUp menu built on the second press after her lines.
+

@@ -400,6 +400,14 @@ bool Hold(std::uint32_t id, bool mark) {
             (unsigned long long)c[0], (unsigned long long)c[1], (unsigned long long)c[2], (unsigned long long)c[3],
             (unsigned long long)c[4], (unsigned long long)c[5]);
     }
+    if (host && id / 100000 == 29) {
+        // G1: the host enters a Chalice Dungeon from its altar (the awaken point's warp 29xxxxx runs
+        // from the altar's EMEVD, no lamp flag of the host's: live g1l dropped it as "another
+        // member's lamp"). No question: the guests cannot follow into a dungeon by travel, they are
+        // summoned into it (chalice.md 4).
+        Log("lamp %u (host): a Chalice Dungeon awaken point: the host enters alone, the party is summoned there", id);
+        return false;
+    }
     if (!mark) {
         // Bug 20: another member's lamp / headstone flag (packet 0x0f) runs the same warp event
         // here. Only the member who used it is asked; here the warp is dropped (its outcome comes

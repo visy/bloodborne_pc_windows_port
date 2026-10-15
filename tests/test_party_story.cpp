@@ -22,6 +22,38 @@ static int g_checks = 0;
         }                                                                              \
     } while (0)
 
+// G3: a guest's 2002[6] the host plays as its own (the Cathedral Ward door, day -> evening).
+static void test_guest_phase_change() {
+    StoryIntent s;
+    s.kind = StoryKind::Cutscene;
+    s.instr = 6;
+    s.id = 24000020;
+    s.tod = 1;
+    s.warp_point = 2402200;
+    s.warp_map = 0x18000000;  // m24_00
+    const std::uint32_t m24_00 = 0x18000000, m24_01 = 0x18010000;
+    std::string why;
+    CHECK(GuestPhaseChangeOk(s, 0, m24_00, &why));
+    CHECK(!GuestPhaseChangeOk(s, 4, m24_00, &why) && why.find("already") != std::string::npos);  // host at evening
+    CHECK(!GuestPhaseChangeOk(s, 0, m24_01, &why) && why.find("map") != std::string::npos);  // host elsewhere
+    StoryIntent t = s;
+    t.tod = -1;
+    CHECK(!GuestPhaseChangeOk(t, 0, m24_00, &why));
+    t = s;
+    t.instr = 4;
+    CHECK(!GuestPhaseChangeOk(t, 0, m24_00, &why));
+    t = s;
+    t.id = 12345678;  // not a remo of the game
+    CHECK(!GuestPhaseChangeOk(t, 0, m24_00, &why));
+    t = s;
+    t.warp_point = kStoryNone;
+    CHECK(!GuestPhaseChangeOk(t, 0, m24_00, &why));
+    t = s;
+    t.tod = 3;
+    CHECK(GuestPhaseChangeOk(t, 6, m24_00, &why));   // night -> Blood Moon
+    CHECK(!GuestPhaseChangeOk(t, 7, m24_00, &why));  // Blood Moon already
+}
+
 static void test_tables() {
     CHECK(RemoForSex(21000010, false) == 21000010);
     CHECK(RemoForSex(21000010, true) == 21001010);
@@ -699,6 +731,7 @@ static void test_ending_question() {
 
 int main() {
     test_tables();
+    test_guest_phase_change();
     test_json();
     test_host_queue();
     test_mirror_then_replay();

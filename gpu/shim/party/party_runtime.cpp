@@ -781,7 +781,12 @@ void on_state(LinkState s, const std::string& detail) {
         reason = bridge::AuthRejectText(r.code_coded, r.code_needs_password, r.sent_password);
     }
     if (s == LinkState::Rejected && !host) plog("refused by the host: %s", reason.c_str());
-    if (s == LinkState::Rejected && !host && bridge::RefusalPlaysSolo(link->reject_code())) {
+    // The host ended the party (BYE, Shutdown): no refusal notice, but the game must not keep
+    // asking a host that is gone either: live parx s0a, 17 s after the host's Leave the guest's
+    // game dropped offline ("WanderingGhostGet failed 3 times": "Failed to connect to Bloodborne
+    // server. Returning to title menu"). It plays online alone too, until a Rejoin.
+    if (s == LinkState::Rejected && !host &&
+        (bridge::RefusalPlaysSolo(link->reject_code()) || link->reject_code() == RejectCode::Shutdown)) {
         // The game must not fail its server checks ("Failed to acquire Bloodborne server
         // information" covered our message): it plays online alone in its own world, answered
         // by this process's own host service, until a Rejoin gets a link up.
@@ -1050,8 +1055,19 @@ LinkCallbacks make_callbacks(bool host) {
             // Fast join: the host's game keeps its transport connection to a member that was in (or
             // joining) its world until the transport times out; a restarted game summoned before
             // that never gets the summon data (docs/party/join_timing.md).
-            if (m.state == MemberState::InHostWorld || m.state == MemberState::Joining ||
-                m.state == MemberState::Loading) {
+            // A guest's own Leave (BYE, slot released) while its going-home load runs: its game left
+            // our room itself (the room's member-left came first), so no old connection is held.
+            // Live parx s0a (3 players, 3rd leave/rejoin): that leave took 4.3 s, the BYE arrived
+            // during the load, and the 26 s hold refused the rejoin's direct summon (25 s bell
+            // path instead of 2 s). A kick (still in our world) or a lost link keeps the hold.
+            const bool own_leave_home = !slot_kept && m.lost_why.empty() && m.state == MemberState::Loading &&
+                                        bbnet::np::ms_since_member_left() < 10000;
+            if (own_leave_home) {
+                plog("%s left with its own Leave during its going-home load (left our room %lld ms ago): no sign hold",
+                     m.name.c_str(), static_cast<long long>(bbnet::np::ms_since_member_left()));
+            }
+            if (!own_leave_home && (m.state == MemberState::InHostWorld || m.state == MemberState::Joining ||
+                m.state == MemberState::Loading)) {
                 // A crash (RST): the connection is expired early (nr_fast_expire), so a short hold.
                 const bool crashed = m.lost_why.find("reset") != std::string::npos && env_on("BB_PARTY_NR_FAST_EXPIRE");
                 bbnet::party::FromApi::instance().hold_signs(m.name, 26000);
@@ -2497,6 +2513,14 @@ void leave_main() {
     coop::PartyDirector::Get().SetLink(nullptr);
     if (link) link->stop(true);
     plog("%s", host ? "Leave: the party is over (BYE sent)" : "Leave: left the party (BYE sent; no reconnects)");
+    if (!host) {
+        // The guest plays on alone: its game's server calls go to this process's own service
+        // (as after a refusal), not to a host it left (3 failed calls drop the game offline).
+        if (bbnet::party::RemoteGuest* rg = bbnet::party::remote_guest(); rg && rg->set_solo(true)) {
+            plog("Leave: playing online alone in this world (System > Party > Rejoin the host retries)");
+            bbnet::session::host_session_reset();
+        }
+    }
     bridge::OnLeft(host);
     std::lock_guard<std::mutex> lk(r.mu);
     r.busy = false;

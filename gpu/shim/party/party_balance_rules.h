@@ -99,6 +99,14 @@ constexpr double kRotRallyWindowS = 6.0;
 /// seen since the rot came into force) falls inside the rally window.
 bool RotRallyGainInWindow(double since_damage_s);
 
+/// C4 "item discovery" rot (0.6.2): the itemDropRate sum is never asked (live: 0 calls), but every
+/// enemy drop roll carries the player's discovery in its request (party_droproll, 1.0 = the stat
+/// screen's 100). Each stack takes 10 points (0.1) off it, never below kRotDiscoveryFloor; a
+/// discovery the roll does not carry (<= 0) is left alone.
+constexpr float kRotDiscoveryPerStack = 0.1f;
+constexpr float kRotDiscoveryFloor = 0.1f;
+float RotItemDiscovery(float own, int stacks);
+
 /// C4 rot, what cleanses it (ERSC: resting at a grace). A lamp warp is the death's respawn (no
 /// rest) only while the player is still down from that death: dead at the warp, or the warp came
 /// within kRespawnWarpS of the death before the player was up again. Playtest 1 (H5:6072/10228):

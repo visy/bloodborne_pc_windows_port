@@ -455,9 +455,12 @@ void Tick(bool host) {
             std::fflush(stdout);
         }
     }
-    if (!host && s.load_mode == 0 && s.slot >= 0 && s.channel) {
+    if (!host && s.slot >= 0 && s.channel && (s.load_mode == 0 || s.slot != 0)) {
         // A guest's own ritual dungeon: its FormData for the host's board (a shared fixed dungeon is
         // never uploaded; the host's glyph join and a summon need it). Once per dungeon and minute.
+        // Also while summoned (load mode 1) from its own ritual slot (1..): a guest that title-joined
+        // never stands in its own world (live g1b: no FormData, no party dungeon at the host's
+        // altar); slot 0 in load mode 1 is the host's quick-joined dungeon, not the guest's.
         static std::uint64_t sent_for = 0;
         static double sent_at = -100;
         if (sent_for != s.channel || now - sent_at >= 60.0) {
