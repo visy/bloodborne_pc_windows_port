@@ -176,10 +176,15 @@ struct Test {
     // approach=X:Z:R[:BUTTON]: walk (pad file sticks, camera-relative, closed loop on the position)
     // until within R m of (X, Z), facing it; then BUTTON (cross / triangle / square / circle) once.
     bool approach = false, approach_done = false, ap_faced = false;
+    int ap_taps = 0;               // face taps made (prompt=: until its text shows, 45 deg apart)
+    std::string ap_prompt;         // prompt=TEXT: the action prompt the face taps look for
+    std::int64_t ap_tap_ms = 0;
     float ap_x = 0, ap_z = 0, ap_r = 1.0f;
+    bool ap_face = false;  // face=X:Z: the point the arrival tap turns toward (default: the walk's target)
+    float ap_fx = 0, ap_fz = 0;
     std::uint32_t ap_button = 0;
     int ap_steps = 0, ap_phase = 0; // 0 idle, 1 moving, 2 settling, 3 arrived, 4 pressing
-    int ap_max = 40;                // steps before it gives up (guest_stick: its STEPS)
+    int ap_max = 80;                // steps before it gives up (guest_stick: its STEPS)
     int ap_still = 0;               // steps in a row without moving (blocked: gives up after 8)
     double ap_angle = 0;
     float ap_from[2] = {0, 0};
@@ -2286,10 +2291,10 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
                 }
                 Log("test: approach: (%.2f, %.2f) -> (%.2f, %.2f): %.2f m, stick %.0f deg (step %d)", pos[0], pos[2],
                     t.ap_x, t.ap_z, dist, t.ap_angle * 180 / M_PI, t.ap_steps);
-                if (dist <= t.ap_r || t.ap_steps >= t.ap_max || t.ap_still >= 8) {
+                if (dist <= t.ap_r || t.ap_steps >= t.ap_max || t.ap_still >= 20) {
                     t.ap_phase = 3;
                     t.ap_at = now + std::chrono::milliseconds(1200);
-                    Log("test: approach: %s at %.2f m", dist <= t.ap_r ? "arrived" : t.ap_still >= 8 ? "BLOCKED (8 steps without moving)" : "GAVE UP", dist);
+                    Log("test: approach: %s at %.2f m", dist <= t.ap_r ? "arrived" : t.ap_still >= 20 ? "BLOCKED (20 steps without moving)" : "GAVE UP", dist);
                 } else {
                     ++t.ap_steps;
                     t.ap_from[0] = pos[0];
@@ -2303,23 +2308,45 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
                     const double secs = std::clamp(dist / 3.0, 0.12, 0.45);
                     t.ap_at = now + std::chrono::milliseconds(static_cast<int>(secs * 1000));
                 }
-            } else if (t.ap_phase == 3 && !t.ap_button && t.st_seq.size() && !t.stand && !t.ap_faced) {
+            } else if (t.ap_phase == 3 && !t.ap_button && t.st_seq.size() && !t.stand && !t.ap_faced &&
+                       [&] {
+                           if (t.ap_prompt.empty()) {
+                               return t.ap_taps == 0;
+                           }
+                           const std::int64_t seen = BbGameMenu::TextSeenMs(t.ap_prompt.c_str());
+                           if (t.ap_taps > 0 && seen > t.ap_tap_ms) {
+                               Log("test: approach: '%s' shows after %d tap(s)", t.ap_prompt.c_str(), t.ap_taps);
+                               return false;
+                           }
+                           return t.ap_taps < 8;
+                       }()) {
                 // A menu walk follows (an action prompt needs the player to face it; live g1f: the
                 // walk stopped facing away, and a PlayerIns warp does not turn the player in the
-                // Dream): one short stick tap toward the target turns it there (~0.1 m).
-                t.ap_faced = true;
+                // Dream): a short stick tap toward the target turns it there (~0.1 m); with
+                // prompt=TEXT more taps, 45 deg apart, until that prompt shows (live g1k: the first
+                // tap did not face the altar).
+                const int tap = t.ap_taps++;
+                t.ap_tap_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
                 const double mx = pos[0] - t.ap_from[0], mz = pos[2] - t.ap_from[1];
                 if (std::sqrt(mx * mx + mz * mz) > 0.05) {
                     t.ap_angle = wrap(t.ap_angle + wrap(want - std::atan2(mx, mz)));
                 }
-                const int lx = 128 + static_cast<int>(std::lround(127 * std::sin(t.ap_angle)));
-                const int ly = 128 - static_cast<int>(std::lround(127 * std::cos(t.ap_angle)));
+                // The stick angle is camera-relative: ap_angle walks toward `want`; the face point
+                // is `want` turned by the difference of the two world directions.
+                double stick = t.ap_angle + tap * (M_PI / 4);
+                if (t.ap_face) {
+                    const double fwant = std::atan2(double(t.ap_fx) - pos[0], double(t.ap_fz) - pos[2]);
+                    stick = wrap(t.ap_angle + wrap(fwant - want) + tap * (M_PI / 4));
+                }
+                const int lx = 128 + static_cast<int>(std::lround(127 * std::sin(stick)));
+                const int ly = 128 - static_cast<int>(std::lround(127 * std::cos(stick)));
                 char tok[48];
                 std::snprintf(tok, sizeof tok, "lx=%d ly=%d", std::clamp(lx, 0, 255), std::clamp(ly, 0, 255));
                 WritePadFile(tok);
                 t.ap_phase = 6;
                 t.ap_at = now + std::chrono::milliseconds(120);
-                Log("test: approach: a short step toward the target to face it (stick %.0f deg)", t.ap_angle * 180 / M_PI);
+                Log("test: approach: a short step to face %s (stick %.0f deg)", t.ap_face ? "the face= point" : "the target",
+                    stick * 180 / M_PI);
             } else if (t.ap_phase == 6) {
                 WritePadFile("");
                 t.ap_phase = 3;
@@ -2580,6 +2607,15 @@ void PartyDirector::ConfigureFromEnv() {
                 if (!st.test.st_seq.Parse(item.substr(4), &bad)) {
                     Log("BB_PARTY_DIRECTOR_TEST: seq token '%s' unknown; seq ignored", bad.c_str());
                     st.test.st_seq = MenuScript{};
+                }
+            } else if (item.rfind("prompt=", 0) == 0) {
+                st.test.ap_prompt = item.substr(7);
+            } else if (item.rfind("face=", 0) == 0) {
+                float x = 0, z = 0;
+                if (std::sscanf(item.c_str() + 5, "%f:%f", &x, &z) == 2) {
+                    st.test.ap_face = true;
+                    st.test.ap_fx = x;
+                    st.test.ap_fz = z;
                 }
             } else if (item.rfind("approach=", 0) == 0) {
                 float x = 0, z = 0, r = 1.0f;
