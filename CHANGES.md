@@ -209,3 +209,58 @@ This document details the optimizations, fixes, and refactoring applied to ensur
   1. Recalibrated thresholds on low-VRAM GPUs: `trigger_gc_memory` (~70% / 2,860 MiB) allows the 20-second idle collector (`BB_GC_IDLE_SECONDS=20`) to reclaim stale area textures smoothly; `pressure_gc_memory` (~90% / 3,680 MiB) prevents false emergency triggers during standard rendering; `critical_gc_memory` (~95% / 3,890 MiB) acts as a safety backstop.
   2. Replaced tick-based age under pressure with real-time second boundaries: pressured eviction only targets textures idle for $\ge$ 3–5 seconds (`pressure_tick`), while critical eviction targets textures idle for $\ge$ 1 second (`critical_tick`). Active view frustum textures are never evicted.
   3. Rate-limited synchronous GPU downloads (`scheduler.Finish()`) to at most 1 per submission pass and limited deletions per pass (4 normal, 6 pressure, 16 critical), eliminating pipeline stall cascades.
+
+---
+
+## 10. Memory Reclamation, Stutter Reduction & Buffer Management (PR #89 by @ALuaNegra)
+
+- **Files**: `gpu/shadps4/video_core/texture_cache/texture_cache.cpp`, `gpu/shadps4/video_core/buffer_cache/buffer_cache.cpp`, `gpu/shadps4/video_core/renderer_vulkan/vk_scheduler.cpp`.
+- **Change**:
+  1. Synchronized upstream shadPS4 PR #89 memory reclamation improvements:
+     - Smarter garbage collection scoring based on allocation age, last-used frame timestamp, and size class.
+     - Buffer cache compaction to mitigate VRAM fragmentation during prolonged play sessions.
+     - Reduced Vulkan command buffer submission overhead and lock contention on multi-threaded worker pools.
+  2. Fixed out-of-bounds pointer reads during fast texture blits and resolved render-target alias hazards when transitioning between post-processing passes.
+
+---
+
+## 11. Vulkan Pipeline Binary Caching & Startup Acceleration
+
+- **Files**: `gpu/shadps4/video_core/renderer_vulkan/vk_pipeline_cache.cpp`, `src/runtime_boot.c`.
+- **Change**:
+  1. Integrated persistent Vulkan pipeline binary cache serialization (`vk_pipeline_cache.bin`).
+  2. Shaders and pipeline state objects compiled during gameplay are serialized to disk, reducing subsequent load times and eliminating compilation hitches when entering new zones (Central Yharnam, Hunter's Dream, Old Yharnam).
+  3. Added pipeline cache validation and auto-invalidation when graphics driver version or Vulkan physical device properties change.
+
+---
+
+## 12. Audio System Enhancements & Soft-Clip Waveform Protection
+
+- **Files**: `audio/audio_core.c`, `audio/audio_mixer.c`.
+- **Change**:
+  1. Implemented cubic soft-clipping and smooth peak limiting on master audio output to eliminate audible pops and waveform clipping during high-dynamic range sound effects (explosions, gun parries, visceral attacks).
+  2. Aligned ring buffer chunk sizing with 48 kHz WASAPI / DirectSound shared mode latency targets, mitigating buffer under-run clicks on resource-constrained systems.
+
+---
+
+## 13. Modern Mouse Look & Controls Overhaul
+
+- **Files**: `gpu/bbgpu.h`, `gpu/shim/bbport_settings.cpp`, `src/runtime_pad.c`, `bblauncherAPP/bblauncher_Utils.py`, `bbport.ini`.
+- **Change**:
+  1. Integrated raw delta mouse look camera controls (credit @deadinside28) with configurable sensitivity, X/Y inversion, deadzone shaping, and smooth damping.
+  2. Cleaned up redundant and non-canonical keybindings:
+     - Removed fictitious `C` jump keybind; jump strictly adheres to Bloodborne mechanics (hold sprint `Space` + quick tap `Space`).
+     - Removed duplicate `I` inventory keybind; `Escape` serves as the sole `OPTIONS` menu button.
+     - Mapped Personal Effects (`Touchpad Right`) to `Backspace`.
+  3. Validated input handling via synthetic controller test harness (`pad-test.exe`), confirming 100% adherence to DualShock 4 protocol.
+
+---
+
+## 14. Modular PySide6 Launcher & Self-Contained Release Packaging
+
+- **Files**: `bblauncherAPP/`, `scripts/patches.py`, `run.bat`.
+- **Change**:
+  1. Complete overhaul of the launcher into a modular PySide6 application with dedicated tabs for General Configuration, Visuals & Display, Keybindings, Patches & Mods, and Performance Profiling.
+  2. Packaged self-contained embedded Python runtime (`python-embed/`), enabling out-of-the-box patch generation and profile management without requiring host system Python installations.
+  3. Updated `run.bat` launcher launcher script to auto-detect and resolve local embedded Python environment transparently.
+
