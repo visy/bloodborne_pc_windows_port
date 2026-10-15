@@ -223,6 +223,18 @@ int main() {
         CHECK(!BossSpotOk(boss, fell, fell));       // fell through
         CHECK(!BossSpotOk(boss, far, far2));        // pushed out of the arena
     }
+    // Gestures and hunter tools: once per run, resumed from the progress file.
+    {
+        CHECK(GesturesLeft(Progress{}).size() == 23 && ToolsLeft(Progress{}).size() == std::size(kWarperTools));
+        const Progress p = ParseProgress("gesture 1\ngesture 23\ntool 1200\ntool 2120\n");
+        const auto gl = GesturesLeft(p);
+        CHECK(gl.size() == 21 && gl.front() == 2 && gl.back() == 22);
+        CHECK(ToolsLeft(p).size() == std::size(kWarperTools) - 2);
+        CHECK(std::string(GestureName(1)) == "Point Forward" && std::string(GestureName(23)) == "League Oath");
+        CHECK(std::string(GestureName(0)) == "?" && std::string(GestureName(24)) == "?");
+        const Options o = ParseOptions("tour,nogestures,notools");
+        CHECK(!o.gestures && !o.tools && ParseOptions("tour").gestures && ParseOptions("tour").tools);
+    }
     if (g_failures) {
         std::fprintf(stderr, "%d failure(s)\n", g_failures);
         return 1;

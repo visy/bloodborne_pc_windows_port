@@ -53,7 +53,9 @@ constexpr u64 kEventFlagMan = 0x553b100;  // singleton slot
 constexpr u64 kGetFlagValue = 0x13cfd80;  // (man, first, bits) -> value
 constexpr u64 kSetFlagValue = 0x13d0060;  // (man, first, bits, value)
 constexpr u64 kTodWorld = 0x553b148;      // *(slot) +0x81 = 1: re-evaluate the time of day (party_story)
-constexpr u64 kPlayRemo = 0x131a9f0;      // (unused, remo id, mode, -1, -1, player entity) -> al
+constexpr u64 kPlayRemo = 0x131a9f0;
+constexpr u64 kMenuMan = 0x5562878;       // *slot: MenuMan; +0x2BC = the gesture asked for (param id 1..23)
+constexpr u64 kMenuGesture = 0x2bc;      // (unused, remo id, mode, -1, -1, player entity) -> al
 
 void Log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 void Log(const char* fmt, ...) {
@@ -115,7 +117,7 @@ const char* PhaseName(Phase p) {
 }
 
 /// What the area's routine does after its scripted steps.
-enum class Sub : std::uint8_t { Steps, Effects, Remo, Enemies, Done };
+enum class Sub : std::uint8_t { Steps, Effects, Gestures, Tools, Remo, Enemies, Done };
 
 enum class Stage : std::uint8_t { Title, Settle, Next, WaitLoad, Arrive, Routine, Finish, Done };
 
@@ -173,6 +175,13 @@ struct State {
     std::size_t remo_i = 0;
     int remo_stage = 0;           // 0 next, 1 asked (waiting for it to start), 2 playing
     double remo_at = 0;
+    // gestures / hunter tools (once per run, on the first row outside the Hunter's Dream)
+    std::vector<u32> pass;
+    std::size_t pass_i = 0;
+    int pass_stage = 0;
+    double pass_at = 0;
+    u32 quick0_before = 0;
+    std::size_t gestures_played = 0, tools_used = 0;
     // time of day
     std::vector<int> tod_of_row;  // the Tod phase: each route row's value
     std::vector<u32> remo_of_row; // the Remo phase: each route row's cutscene
@@ -905,6 +914,105 @@ void TickImpl(double now) {
                     g.progress.effects_done = true;
                     Log("item effects: %zu applied, +%llu new pipelines", g.effects_applied,
                         static_cast<unsigned long long>(g.action_new["item effects"]));
+                }
+                return;
+            }
+            g.sub = Sub::Gestures;
+            g.pass = ph == Phase::Tour && g.opt.act && g.opt.gestures && (s.map_id >> 24) != 21 ? GesturesLeft(g.progress)
+                                                                                               : std::vector<u32>{};
+            g.pass_i = 0;
+            g.pass_stage = 0;
+            g.pass_at = now;
+            if (!g.pass.empty()) {
+                g.c_step = Counters::Now();
+                Log("gestures: %zu to play (%zu in earlier sessions)", g.pass.size(), g.progress.gestures.size());
+            }
+        }
+        if (g.sub == Sub::Gestures) {
+            // Each gesture as the gesture menu asks for it (MenuMan +0x2BC = its param id), held
+            // kGestureSeconds, then a dodge ends a looping one (Pray, Sit Down, ...).
+            if (g.pass_i < g.pass.size()) {
+                if (now < g.pass_at) return;
+                const u32 id = g.pass[g.pass_i];
+                if (g.pass_stage == 0) {
+                    AppendState("gesture " + std::to_string(id));
+                    g.progress.gestures.insert(id);
+                    const u64 menu = Field<u64>(Guest(kMenuMan), 0);
+                    const int v = static_cast<int>(id);
+                    const bool ok = menu && SafeWrite(menu + kMenuGesture, &v, 4);
+                    if (ok) ++g.gestures_played;
+                    Log("gesture %u (%s)%s", id, GestureName(id), ok ? "" : ": NOT asked (no menu manager)");
+                    UpdateStatus("gestures");
+                    g.pass_stage = 1;
+                    g.pass_at = now + kGestureSeconds;
+                    return;
+                }
+                if (g.pass_stage == 1) {
+                    runtime_pad_director_press(kCircle);
+                    g.pass_stage = 2;
+                    g.pass_at = now + 0.15;
+                    return;
+                }
+                runtime_pad_director_press(0);
+                g.pass_stage = 0;
+                g.pass_at = now + 1.2;
+                if (++g.pass_i == g.pass.size()) {
+                    const Counters c = Counters::Now();
+                    g.action_new["gestures"] += c.created - g.c_step.created;
+                    g.c_step = c;
+                }
+                return;
+            }
+            g.sub = Sub::Tools;
+            g.pass = ph == Phase::Tour && g.opt.act && g.opt.tools && (s.map_id >> 24) != 21 ? ToolsLeft(g.progress)
+                                                                                            : std::vector<u32>{};
+            g.pass_i = 0;
+            g.pass_stage = 0;
+            g.pass_at = now;
+            if (!g.pass.empty()) {
+                g.c_step = Counters::Now();
+                g.quick0_before = QuickItemId(0);
+                Log("hunter tools: %zu to use (%zu in earlier sessions); quick slot 0 held %u", g.pass.size(),
+                    g.progress.tools.size(), g.quick0_before);
+            }
+        }
+        if (g.sub == Sub::Tools) {
+            // Each tool / throwable from quick slot 0 (selected), Square, kToolSeconds; quicksilver
+            // bullets topped up first (the tools' cost), HP kept full as everywhere.
+            if (g.pass_i < g.pass.size()) {
+                if (now < g.pass_at) return;
+                const u32 id = g.pass[g.pass_i];
+                if (g.pass_stage == 0) {
+                    AppendState("tool " + std::to_string(id));
+                    g.progress.tools.insert(id);
+                    if (ItemCount(kItemGoods, kQuicksilverBullets) < 20) GiveItem(kItemGoods, kQuicksilverBullets, 20);
+                    if (ItemCount(kItemGoods, id) < 2) GiveItem(kItemGoods, id, 3);
+                    const bool ok = SetQuickItem(0, id, true);
+                    bool sel = false;
+                    const u32 now_id = QuickItemId(0, &sel);
+                    Log("tool %u: quick slot 0 = %u%s%s", id, now_id, sel ? " (selected)" : "", ok ? "" : ": NOT set");
+                    UpdateStatus("hunter tools");
+                    g.pass_stage = ok ? 1 : 3;
+                    g.pass_at = now + 0.5;
+                    return;
+                }
+                if (g.pass_stage == 1) {
+                    runtime_pad_director_press(kSquare);
+                    g.pass_stage = 2;
+                    g.pass_at = now + 0.15;
+                    ++g.tools_used;
+                    return;
+                }
+                runtime_pad_director_press(0);
+                g.pass_at = now + (g.pass_stage == 3 ? 0.1 : kToolSeconds);
+                g.pass_stage = 0;
+                if (++g.pass_i == g.pass.size()) {
+                    const Counters c = Counters::Now();
+                    g.action_new["hunter tools"] += c.created - g.c_step.created;
+                    g.c_step = c;
+                    if (g.quick0_before) SetQuickItem(0, g.quick0_before, true);
+                    Log("hunter tools: %zu used, +%llu new pipelines", g.tools_used,
+                        static_cast<unsigned long long>(g.action_new["hunter tools"]));
                 }
                 return;
             }

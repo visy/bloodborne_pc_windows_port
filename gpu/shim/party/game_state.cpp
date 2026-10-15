@@ -541,6 +541,54 @@ std::uint32_t EquippedSlotId(int slot) {
     return slot < 0 || slot > 31 ? 0 : Field<std::uint32_t>(rec, kRecEquipId + static_cast<std::uint64_t>(slot) * 4, 0);
 }
 
+constexpr std::uint64_t kQuickNormalise = 0x14cf920;  // (EquipGameData): the selection made valid
+constexpr std::uint64_t kRecQuickIndex = 0x3ec, kRecQuickSelected = 0x418;
+
+namespace {
+std::int32_t InventoryIndex(std::uint64_t rec, std::uint32_t type_bits, std::uint32_t id) {
+    const std::uint64_t list = rec + kRecInventory;
+    if (!FindOk() || !Field<std::uint64_t>(list, 0x68, 0) || !Field<std::uint64_t>(list, 0x78, 0)) return -1;
+    using FindFn = std::int32_t(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t, std::uint32_t);
+    const std::int32_t index = reinterpret_cast<FindFn>(Guest(kInventoryFind))(list, type_bits, id);
+    return index <= Field<std::int32_t>(list, 0x88, -1) ? index : -1;
+}
+
+/// The item id of inventory entry `index` (the entry's GaItem handle's item, through the list).
+std::uint32_t InventoryItemId(std::uint64_t rec, std::int32_t index) {
+    const std::uint64_t list = rec + kRecInventory;
+    if (index < 0 || index > Field<std::int32_t>(list, 0x88, -1)) return 0;
+    const std::uint32_t split = Field<std::uint32_t>(list, 0x24, 0);
+    const std::uint32_t i = static_cast<std::uint32_t>(index);
+    const std::uint64_t entry = i < split ? Field<std::uint64_t>(list, 0x58, 0) + 16ull * i
+                                          : Field<std::uint64_t>(list, 0x48, 0) + 16ull * (i - split);
+    return Field<std::uint32_t>(entry, 4, 0) & 0x0fffffffu;  // +0 handle, +4 type bits | id
+}
+}  // namespace
+
+bool SetQuickItem(int slot, std::uint32_t id, bool select) {
+    static const bool ok = MatchesOriginal(kQuickNormalise, {0x8b, 0x87, 0x48, 0x02, 0x00, 0x00, 0x83, 0xf8, 0xff});
+    if (!ok || slot < 0 || slot > 5) return false;
+    if (ItemCount(kItemGoods, id) <= 0) GiveItem(kItemGoods, id, 1);
+    const std::uint64_t rec = Field<std::uint64_t>(Slot(kGameDataMan), 8, 0);
+    if (!rec) return false;
+    const std::int32_t index = InventoryIndex(rec, kItemGoods, id);
+    if (index < 0) return false;
+    if (!SafeWrite(rec + kRecQuickIndex + 8ull * static_cast<std::uint32_t>(slot), &index, 4)) return false;
+    if (select) SafeWrite(rec + kRecQuickSelected, &index, 4);
+    reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t)>(Guest(kQuickNormalise))(rec + kRecEquip);
+    return Field<std::int32_t>(rec, kRecQuickIndex + 8ull * static_cast<std::uint32_t>(slot), -1) == index &&
+           (!select || Field<std::int32_t>(rec, kRecQuickSelected, -1) == index);
+}
+
+std::uint32_t QuickItemId(int slot, bool* selected) {
+    if (selected) *selected = false;
+    const std::uint64_t rec = Field<std::uint64_t>(Slot(kGameDataMan), 8, 0);
+    if (!rec || slot < 0 || slot > 5) return 0;
+    const std::int32_t index = Field<std::int32_t>(rec, kRecQuickIndex + 8ull * static_cast<std::uint32_t>(slot), -1);
+    if (selected) *selected = index >= 0 && Field<std::int32_t>(rec, kRecQuickSelected, -1) == index;
+    return InventoryItemId(rec, index);
+}
+
 bool CutscenePlaying() {
     const std::uint64_t player = Field<std::uint64_t>(Slot(kSprjRemo), 8, 0);
     return (Field<std::uint8_t>(player, 0x168, 0) & 1) != 0;

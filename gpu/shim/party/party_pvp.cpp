@@ -231,14 +231,13 @@ void Toast(bool on, bool host) {
 }
 
 // ---- BB_PARTY_PVP_TEST ----
-constexpr int kQuickSlot0 = 12;  // TODO(plusfin): verify
-
-/// Test aid: goods `id` (given if none is held) into the first quick-item slot.
+/// Test aid: goods `id` (given if none is held) into the first quick-item slot, selected.
 bool QuickItemFirst(u32 id, std::string* what) {
-    const bool ok = EquipSlotItem(kQuickSlot0, kItemGoods, id);
+    const bool ok = SetQuickItem(0, id, true);
+    bool sel = false;
+    const u32 now = QuickItemId(0, &sel);
     char b[120];
-    std::snprintf(b, sizeof b, "slot %d now holds %u (held %d)", kQuickSlot0, EquippedSlotId(kQuickSlot0),
-                  ItemCount(kItemGoods, id));
+    std::snprintf(b, sizeof b, "quick slot 0 holds %u%s (held %d)", now, sel ? ", selected" : "", ItemCount(kItemGoods, id));
     *what = b;
     return ok;
 }
