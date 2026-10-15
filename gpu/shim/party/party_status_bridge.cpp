@@ -203,6 +203,17 @@ std::string RejectText(RejectCode code, const std::string& reason) {
     }
 }
 
+std::string HostWaitText(int seconds) {
+    return "Waiting for the host to come back (" + std::to_string(seconds < 0 ? 0 : seconds) + " s)...";
+}
+
+std::string HostGoneNotice(int cap_s) {
+    const std::string limit = cap_s % 60 == 0 ? std::to_string(cap_s / 60) + " min" : std::to_string(cap_s) + " s";
+    return "Party: the host did not come back within " + limit +
+           "\nYou play on alone in your own world. When the host is back, System > Party > Rejoin the host "
+           "joins again.";
+}
+
 std::string AuthRejectText(bool coded, bool code_needs_password, bool sent_password) {
     if (!coded) return "Wrong or missing party password";
     if (code_needs_password)
@@ -271,7 +282,8 @@ Mapped MapState(const Facts& f) {
         return {f.reject == RejectCode::Shutdown ? State::Off : State::Error, RejectText(f.reject, f.reject_reason)};
     case LinkState::Stopped: return {State::Off, "party stopped"};
     case LinkState::Connecting: return {State::Connecting, f.host_address};
-    case LinkState::Reconnecting: return {State::Reconnecting, f.link_detail};
+    case LinkState::Reconnecting:
+        return {State::Reconnecting, f.host_wait_s >= 0 ? HostWaitText(f.host_wait_s) : f.link_detail};
     case LinkState::Hosting:
     case LinkState::Connected: break;
     }
@@ -461,6 +473,18 @@ void OnOthersPrologue(const std::string& names) {
         if (changed) PublishLocked(b);
     }
     if (changed && !names.empty()) status::SetLastEvent(names + " is in the prologue");
+}
+
+void OnHostWait(int seconds) {
+    {
+        Bridge& b = B();
+        std::lock_guard<std::mutex> lk(b.mu);
+        if (b.f.host_wait_s == seconds) return;
+        b.f.host_wait_s = seconds;
+        PublishLocked(b);
+    }
+    // The notice in the corner, refreshed every second while it waits (the toast shows the newest).
+    if (seconds >= 0) status::SetLastEvent(HostWaitText(seconds));
 }
 
 void OnMemberJoined(const std::string& name, bool rejoined) {

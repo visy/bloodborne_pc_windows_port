@@ -659,6 +659,70 @@ void outage_resume_check() {
     }).detach();
 }
 
+// Host crash recovery (0.6.2): a guest whose host is gone (its game crashed: the link dropped and did
+// not come back within the grace or the outage hold) waits for it instead of giving up: it is home in
+// its own world (one loading screen), the link keeps trying every ~2 s, the status / corner notice
+// says "Waiting for the host to come back (N s)...", and the host's crash restart (run.bat,
+// BB_PARTY_RESTARTED) summons it back with one more load. After BB_PARTY_HOST_WAIT_S (180 s; 0 = no
+// limit) it stops waiting: a notice, and the party is left (System > Party > Rejoin the host).
+int host_wait_cap_s() {
+    const char* v = env("BB_PARTY_HOST_WAIT_S");
+    return v && v[0] ? std::max(0, std::atoi(v)) : 180;
+}
+
+void host_wait(std::uint64_t epoch) {
+    std::thread([epoch] {
+        const int cap = host_wait_cap_s();
+        Clock::time_point lost_at;
+        {
+            std::lock_guard<std::mutex> lk(R().mu);
+            lost_at = R().lost_at;
+        }
+        plog("host gone: waiting for it to come back (its crash restart)%s; the link keeps trying",
+             cap ? (" up to " + std::to_string(cap) + " s").c_str() : "");
+        int shown = -1;
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            LinkState state;
+            bool left;
+            {
+                std::lock_guard<std::mutex> lk(R().mu);
+                if (R().loss_epoch != epoch) {  // back and lost again: that loss's own wait
+                    bridge::OnHostWait(-1);
+                    return;
+                }
+                state = R().st.state;
+                left = R().left;
+            }
+            const double s = std::chrono::duration<double>(Clock::now() - lost_at).count();
+            if (state == LinkState::Connected) {
+                plog("host wait: the host is back %.1f s after it was lost; its summon brings us to its world", s);
+                bridge::OnHostWait(-1);
+                return;
+            }
+            if (left || state != LinkState::Reconnecting) {  // Leave pressed, refused, stopped
+                bridge::OnHostWait(-1);
+                return;
+            }
+            if (cap && s >= cap) {
+                plog("host wait: the host did not come back within %d s: leaving the party (System > Party > "
+                     "Rejoin the host joins again)",
+                     cap);
+                bridge::OnHostWait(-1);
+                status::SetAlert(bridge::HostGoneNotice(cap));
+                status::SetLastEvent("The host did not come back");
+                status::RequestLeave();
+                return;
+            }
+            if (static_cast<int>(s) != shown) {
+                shown = static_cast<int>(s);
+                bridge::OnHostWait(shown);
+                if (shown % 30 == 0) plog("host wait: %d s", shown);
+            }
+        }
+    }).detach();
+}
+
 void host_lost(const std::string& why) {
     bbnet::p2p_outage_keepalive(false);
     // Only a guest in the host's room goes home. Regression run 0.6.1 (live): the link dropped while
@@ -760,6 +824,12 @@ void on_state(LinkState s, const std::string& detail) {
                     if (R().loss_epoch != epoch) return;  // back and lost again since: that loss's own timer
                 }
                 host_lost("party link down: " + detail);
+                bool reconnecting;
+                {
+                    std::lock_guard<std::mutex> lk(R().mu);
+                    reconnecting = R().st.state == LinkState::Reconnecting && !R().left;
+                }
+                if (reconnecting) host_wait(epoch);  // a refusal / the host ending the party: no wait
             }).detach();
         }
     }
