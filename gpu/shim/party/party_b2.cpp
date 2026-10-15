@@ -29,6 +29,8 @@
 #include "party_spectate.h"
 #include "party_director.h"
 #include "party_death_rules.h"
+#include "party_hud.h"
+#include "party_status.h"
 
 #include <algorithm>
 #include <atomic>
@@ -775,7 +777,52 @@ int RewindRemoteTasks(const char* why) {
 /// Host: the join-time snapshot again, to one member (after the host's own load).
 void LogIntroFlags(const char* when);
 
-void ResyncMember(u64 id) {
+// F1 (internet profile, 2026-10-15): with 100-150 ms one-way and 2-3 % loss the game's flag /
+// world sends (packets 0x10 / 0x11) can fail right after the host's own load (its reliable
+// channel to the member still busy); the member then never got its snapshot, fell back to B1 45 s
+// later and the host's game ended the session ("first sync never completed"). A failed re-send is
+// retried every 0.5 s for up to 15 s (ResyncRetryTick).
+struct ResyncRetry {
+    u64 id = 0;
+    double next = 0, until = 0;
+    int tries = 0;
+};
+std::vector<ResyncRetry> g_resync_retry;  // main thread
+bool ResyncMember(u64 id);
+void ResyncRetryTick(const GameSnapshot& s, double now) {
+    if (g_resync_retry.empty()) {
+        return;
+    }
+    const std::vector<u64> members = Members();
+    for (auto it = g_resync_retry.begin(); it != g_resync_retry.end();) {
+        const bool here = std::find(members.begin(), members.end(), it->id) != members.end();
+        if (!here || now > it->until || !s.world_up || s.loading) {
+            if (now > it->until || !here) {
+                Log("host: join snapshot re-send %s after %d retr%s", here ? "still FAILING" : "dropped (member gone)",
+                    it->tries, it->tries == 1 ? "y" : "ies");
+                it = g_resync_retry.erase(it);
+                continue;
+            }
+            ++it;
+            continue;
+        }
+        if (now < it->next) {
+            ++it;
+            continue;
+        }
+        ++it->tries;
+        it->next = now + 0.5;
+        if (ResyncMember(it->id)) {
+            Log("host: join snapshot re-sent on retry %d (%.1f s after the first try)", it->tries,
+                now - (it->until - 15.0));
+            it = g_resync_retry.erase(it);
+            continue;
+        }
+        ++it;
+    }
+}
+
+bool ResyncMember(u64 id) {
     LogIntroFlags("host at the re-send");
     const u64 flow = Slot(kSlotFlow);
     using Send = int(BB_COOP_SYSV*)(u64, u64, u32, const void*, u32);
@@ -806,6 +853,22 @@ void ResyncMember(u64 id) {
     reinterpret_cast<Send>(Guest(kSendPacket))(flow, id, 0x42, &pslot, 1);
     Log("host: join snapshot re-sent (0x19, flags %s, world %s, bullets, net sync, NPC, 0x42)",
         flags ? "ok" : "FAILED", world ? "ok" : "FAILED");
+    if (!(flags && world)) {
+        bool queued = false;
+        for (const ResyncRetry& r : g_resync_retry) {
+            queued = queued || r.id == id;
+        }
+        if (!queued) {
+            ResyncRetry r;
+            r.id = id;
+            r.next = Now() + 0.5;
+            r.until = Now() + 15.0;
+            g_resync_retry.push_back(r);
+            Log("host: the snapshot send failed: retrying every 0.5 s for up to 15 s");
+        }
+        return false;
+    }
+    return true;
 }
 
 /// The chr behind a WorldChrMan handle ((set << 14) | index; table +0x850, entries 0x38), as the
@@ -2795,7 +2858,7 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
             if (GuestReviveInPlace(s, own, "its own last lamp")) {
                 return;
             }
-            // BB_PARTY_GUEST_DEATH_ALONE=1 (not verified live yet: off): split travel refuses a dead
+            // BB_PARTY_GUEST_DEATH_ALONE (default on since 2026-10-15; =0 off): split travel refuses a dead
             // traveller's alone load, so the guest is first revived where it lies (no warp) and
             // then travels alone to its own lamp like a living player (one load, this guest only).
             if (GuestDeathAloneToOwnLamp(s, own)) {
@@ -3374,7 +3437,8 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
 }
 
 bool GuestDeathAloneToOwnLamp(const GameSnapshot& s, u32 own) {
-    static const bool on = std::getenv("BB_PARTY_GUEST_DEATH_ALONE") && std::getenv("BB_PARTY_GUEST_DEATH_ALONE")[0] == '1';
+    // On by default since 2026-10-15 (live: Cathedral Ward re-join, Hemwick alone load); "0" off.
+    static const bool on = !(std::getenv("BB_PARTY_GUEST_DEATH_ALONE") && std::getenv("BB_PARTY_GUEST_DEATH_ALONE")[0] == '0');
     TravelIntent lt;
     if (!on || own == 0 || own == kTravelNone || !LampIntent(own, &lt)) {
         return false;
@@ -3886,7 +3950,12 @@ void HostRestLoadTick(const GameSnapshot& s, double now) {
     }
     g_rest_req_slot = 0;
     const bool carried = g_rest_req_carry.exchange(false);
-    if (r != deathrules::RestLoad::Run) {
+    // C7 (ERSC: resting removes the others from the boss room): during a boss fight the rest load
+    // goes to the host's last lamp, so the fight resets and everyone in this world is taken out of
+    // the boss room (BB_PARTY_REST_BOSS_KICK=0: the old "no rest load in a boss fight").
+    static const bool boss_kick = !(std::getenv("BB_PARTY_REST_BOSS_KICK") && std::getenv("BB_PARTY_REST_BOSS_KICK")[0] == '0');
+    const bool out_of_boss = r == deathrules::RestLoad::BossFight && boss_kick;
+    if (r != deathrules::RestLoad::Run && !out_of_boss) {
         g_rest_carry_at = 0;  // its re-join is served now
         Log("host: slot %d rested at lamp %u: no rest load here (%s)", req - 1, g_rest_req_lamp.load(),
             deathrules::RestLoadName(r));
@@ -3897,6 +3966,28 @@ void HostRestLoadTick(const GameSnapshot& s, double now) {
         Log("host: slot %d rested: the host's position cannot be read; no rest load", req - 1);
         g_rest_carry_at = 0;
         return;
+    }
+    u32 dest_map = s.map_id;
+    if (out_of_boss) {
+        const u32 lamp = Field<u32>(Slot(kSlotGsm), 0x1528);
+        float rs[4];
+        if (lamp == 0 || lamp == kTravelNone || !ids::ReturnSpot(lamp, rs)) {
+            g_rest_carry_at = 0;
+            Log("host: slot %d rested at lamp %u during a boss fight: the host's last lamp %u has no known spot; no "
+                "rest load", req - 1, g_rest_req_lamp.load(), lamp);
+            return;
+        }
+        if ((ids::EntityMap(lamp) >> 16) != (s.map_id >> 16)) {
+            dest_map = ids::EntityMap(lamp);  // its last lamp is in another map: the party goes there
+        }
+        std::string boss;
+        BossFightActive(&boss);
+        pos[0] = rs[0], pos[1] = rs[1], pos[2] = rs[2], pos[3] = 1.0f;
+        rot[0] = 0, rot[1] = rs[3] * 3.14159265f / 180.0f, rot[2] = 0, rot[3] = 0;
+        Log("host: slot %d rested at lamp %u during a boss fight (%s): the party is taken out of the boss room - a "
+            "rest load to the host's last lamp %u in %s (%.1f, %.1f, %.1f); the fight resets",
+            req - 1, g_rest_req_lamp.load(), boss.c_str(), lamp, MapName(dest_map).c_str(), double(pos[0]),
+            double(pos[1]), double(pos[2]));
     }
     g_rest_load_last = now;
     // Who follows this load: the resting guest went alone (batch 6: the host waited 60 s for its
@@ -3916,9 +4007,10 @@ void HostRestLoadTick(const GameSnapshot& s, double now) {
     const u32 rest_area = LampIntent(g_rest_req_lamp.load(), &rest_t) ? AreaOf(DestMapOf(rest_t)) : 0u;
     const int expected = deathrules::RestLoadExpected(ms.data(), static_cast<int>(ms.size()), req - 1,
                                                       AreaOf(s.map_id), rest_area, carried);
-    Log("host: slot %d rested at lamp %u and travels alone: a rest load for this world where the host stands "
+    Log("host: slot %d rested at lamp %u and travels alone: a rest load for this world %s "
         "(%.1f, %.1f, %.1f) in %s (loading screen; the enemies come back); %d member(s) here follow%s",
-        req - 1, g_rest_req_lamp.load(), double(pos[0]), double(pos[1]), double(pos[2]), MapName(s.map_id).c_str(),
+        req - 1, g_rest_req_lamp.load(), out_of_boss ? "to the host's last lamp" : "where the host stands",
+        double(pos[0]), double(pos[1]), double(pos[2]), MapName(dest_map).c_str(),
         expected, expected == 0 ? " (an alone load: no arrival to wait for)" : "");
     if (carried) {
         Log("host: slot %d comes back into this area by its own re-join: served after this load (one loading screen "
@@ -3928,7 +4020,7 @@ void HostRestLoadTick(const GameSnapshot& s, double now) {
         g_host_alone_next = true;
         g_host_alone_at = now;
     }
-    if (!HostTravelTransformNow(s.map_id, pos, rot, "a guest's rest")) {
+    if (!HostTravelTransformNow(dest_map, pos, rot, out_of_boss ? "a guest's rest in a boss fight" : "a guest's rest")) {
         g_host_alone_next = false;
         g_rest_carry_at = 0;
         Log("host: the rest load could not start (travel off or a stage request pending)");
@@ -4208,8 +4300,20 @@ void SpectateTick(const GameSnapshot& s, double now) {
     }
     const int pick = SpectateTarget(living, n, target, advance);
     if (pick != target || advance) {
-        Log("spectating: following slot %d (%d living member%s%s)", pick, n, n == 1 ? "" : "s",
-            advance ? ", Cross: next member" : "");
+        // C5: whose view this is, on screen (the party notice line): the member's name from the
+        // HUD's chr -> member match, and the Cross hint when there is another one to switch to.
+        std::string name;
+        for (int i = 0; i < n; ++i) {
+            if (living[i] == pick) {
+                name = PartyHudChrName(chrs[i]);
+            }
+        }
+        const std::string notice = deathrules::SpectateNotice(name, n);
+        if (!notice.empty()) {
+            party::status::SetLastEvent(notice);
+        }
+        Log("spectating: following slot %d (%d living member%s%s)%s%s", pick, n, n == 1 ? "" : "s",
+            advance ? ", Cross: next member" : "", notice.empty() ? "" : "; notice: ", notice.c_str());
     }
     target = pick;
     for (int i = 0; i < n; ++i) {
@@ -4785,6 +4889,11 @@ void SendDest(const GameSnapshot& s) {
 void HostTick(const GameSnapshot& s, double now) {
     State& st = S();
     const bool loading = s.loading || !s.world_up;
+    if (Role() == RoleHost) {
+        ResyncRetryTick(s, now);
+    } else {
+        g_resync_retry.clear();
+    }
     if (Role() != RoleHost) {
         if (st.hphase != HostPhase::Idle && Role() != RoleClient) {
             // The room ended during a re-join (a member's respawn, a travel): nothing of it

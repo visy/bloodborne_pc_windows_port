@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <string>
 
 namespace coop::deathrules {
 
@@ -217,6 +218,20 @@ inline bool GuestInHostWorld(int session_role, int flag_load_mode) {
     return session_role == 6 || flag_load_mode == 1;
 }
 
+// ---- C5: the spectator's on-screen notice ----
+/// "Spectating Hunter0" (+ "  -  Cross: next hunter" when another living member can be chosen);
+/// empty when there is nobody to follow. `name` empty: the member is not matched yet.
+inline std::string SpectateNotice(const std::string& name, int living) {
+    if (living <= 0) {
+        return {};
+    }
+    std::string t = "Spectating " + (name.empty() ? std::string("a party member") : name);
+    if (living > 1) {
+        t += "  -  Cross: next hunter";
+    }
+    return t;
+}
+
 // ---- A guest uses a lamp / headstone / Hunter's Mark in the host's world ----
 enum class GuestLamp {
     Plain,     ///< nothing to decide here (not a guest in the host's world, or standing at it)
@@ -243,6 +258,8 @@ inline bool GuestAloneRestsHostWorld(bool alone, bool same_map_solo) {
 }
 
 // ---- The host runs a rest load for a guest's rest ----
+/// BossFight (C7, ERSC: a rest removes the others from the boss room): a run, but to the host's
+/// last lamp instead of where it stands - the fight resets and everyone here is taken out of it.
 enum class RestLoad { Run, NotReady, Dead, BossFight, InDream, Busy, TooSoon };
 inline const char* RestLoadName(RestLoad r);
 constexpr double kRestLoadMinInterval = 20.0;
@@ -262,17 +279,17 @@ inline RestLoad PlanRestLoad(const RestView& v) {
     if (!v.alive) {
         return RestLoad::Dead;  // its own death load resets the world anyway
     }
-    if (v.boss_fight) {
-        return RestLoad::BossFight;
-    }
-    if (v.in_dream) {
-        return RestLoad::InDream;
-    }
     if (v.travel_pending) {
         return RestLoad::Busy;
     }
     if (v.since_last < kRestLoadMinInterval) {
         return RestLoad::TooSoon;
+    }
+    if (v.boss_fight) {
+        return RestLoad::BossFight;  // out of the boss room: a load at the host's last lamp
+    }
+    if (v.in_dream) {
+        return RestLoad::InDream;
     }
     return RestLoad::Run;
 }
@@ -467,7 +484,7 @@ inline const char* RestLoadName(RestLoad r) {
     case RestLoad::Run: return "run";
     case RestLoad::NotReady: return "the host is not in the world";
     case RestLoad::Dead: return "the host is dead (its death load resets the world)";
-    case RestLoad::BossFight: return "a boss fight is on";
+    case RestLoad::BossFight: return "a boss fight is on: everyone here is taken out of the boss room";
     case RestLoad::InDream: return "the host is in the Hunter's Dream";
     case RestLoad::Busy: return "a travel or death is under way";
     case RestLoad::TooSoon: return "a rest load ran less than 20 s ago";

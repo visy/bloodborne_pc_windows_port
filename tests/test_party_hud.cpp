@@ -115,6 +115,20 @@ static void ComposeBoard() {
     // A lost member: roster only, no position.
     const hud::Companion& l = b.c[2];
     assert(l.slot == 3 && !l.connected && !l.same_world && !l.have_hp && !l.have_pos);
+    // E2 "name and ping": a guest's view of the host shows its own link's round trip (the host's
+    // measure in its roster entry); another member shows the host's measure of that member.
+    {
+        std::vector<RosterEntry> r2 = roster;
+        r2[1].ping_ms = 140;  // Hunter1 = this guest
+        r2[2].ping_ms = 90;   // Hunter2
+        ComposeIn in2 = in;
+        in2.roster = r2.data();
+        in2.roster_n = int(r2.size());
+        Board b2;
+        hud::Compose(in2, &b2);
+        assert(b2.c[0].slot == 0 && b2.c[0].ping_ms == 140);
+        assert(b2.c[1].slot == 2 && b2.c[1].ping_ms == 90);
+    }
 
     // Without VITALS HP, the local read's HP counts.
     v[0].flags = kVitalsHasPos;

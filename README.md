@@ -17,15 +17,15 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 
 | Area | Progress | |
 |---|---|--:|
-| **Overall** | `██████████████████░░` | 88% |
+| **Overall** | `██████████████████░░` | 90% |
 | Session & joining | `██████████████████░░` | 89% |
 | World & travel | `██████████████████░░` | 88% |
-| Death & respawn | `██████████████████░░` | 89% |
+| Death & respawn | `███████████████████░` | 93% |
 | Progress (anyone can progress) | `█████████████████░░░` | 87% |
-| Services & UI | `██████████████████░░` | 90% |
-| Network & robustness | `██████████████████░░` | 88% |
+| Services & UI | `███████████████████░` | 95% |
+| Network & robustness | `██████████████████░░` | 91% |
 | Bloodborne-specific (chalice, Insight) | `█████████████████░░░` | 87% |
-| Feels like single player in a party | `█████████████████░░░` | 87% |
+| Feels like single player in a party | `██████████████████░░` | 90% |
 
 ---
 
@@ -169,9 +169,11 @@ before anyone is in the game):
 - **Resting resets the world for the party.** Enemies respawn; everyone's HP, vials and bullets
   refill. A guest who rests and travels alone gives the host a short loading screen where it
   stands, so the host's world resets too; a guest resting its way back into the host's area
-  arrives after that reset with a single loading screen.
+  arrives after that reset with a single loading screen. Resting while the host is in a boss fight
+  takes everyone out of the boss room (the host's world loads at its last lamp, the fight resets).
 - **Guests are full players.** The Doll (level up), shops, the workbench, storage, the Memory
-  Altar (runes, covenants), lamps and headstones all work for guests.
+  Altar (runes, covenants), lamps and headstones all work for guests. A guest can also rest alone
+  (lamp, "No"), level up and shop in the Dream and come back, while the others play on.
 - **Change your appearance at the Dream's mirror.** The mirror in the Hunter's Dream workshop opens
   the appearance editor ("Put on Disguise", a feature the game left unfinished, restored as in
   bbhost), in single player and for every party member on their own hunter. Launcher switch
@@ -234,7 +236,7 @@ before anyone is in the game):
 - **Enemies scale with the party, harder than vanilla.** Bosses get more health (and a little more
   damage) per extra hunter than the game gives them, normal enemies get tougher too; all six values
   (boss / enemy health, damage, poise) are on the *Enemy scaling* page, the host's count.
-- **Names over party members**, in the game's own style (replacing its plate, which hid behind walls), at any distance, bigger when near, with level, health or deaths (your choice); the *Party name tags* setting (launcher or *Party rules*) turns them off for the game's own plate. Names, the party panel and party notices step aside while the game's own menus (inventory, item descriptions, level up, travel) are open; for a YES / NO box only the names do.
+- **Names over party members**, in the game's own style (replacing its plate, which hid behind walls), at any distance, bigger when near, with level, health, deaths or ping (your choice); the *Party name tags* setting (launcher or *Party rules*) turns them off for the game's own plate. Names, the party panel and party notices step aside while the game's own menus (inventory, item descriptions, level up, travel) are open; for a YES / NO box only the names do.
 - **Pings.** Hold the touchpad and press R3 (Xbox pads: hold Back, press R3; keyboard: Tab + Q, or
   just V) to mark the spot you are looking at: every party member in your world sees the marker
   through walls for 10 seconds, in your colour, with your name and its distance in metres (at the
@@ -254,9 +256,9 @@ before anyone is in the game):
 
 | Who dies | What happens |
 |---|---|
-| A guest | Gets up again at its own lamp with no loading screen when that lamp is in the loaded area (else at the host's lamp); its Blood Echoes wait in a bloodstain at that spot in its own world (pick them up there); the others keep playing |
+| A guest | Gets up again at its own lamp: with no loading screen when that lamp is in the loaded area, else with its own loading screen at that lamp (also in another area; the host stays where it is); its Blood Echoes wait in a bloodstain at that spot in its own world (pick them up there); the others keep playing |
 | The host | Everyone gets one respawn loading screen at the host's lamp, as in the original game, and the world resets; the host's echoes stay in a bloodstain where it fell |
-| Anyone, during a boss fight | Watches a living party member fight (press Cross to watch the next one) until the boss dies (then gets up at the host's lamp, with no loading screen when it is in the area), everyone dies, or someone travels |
+| Anyone, during a boss fight | Watches a living party member fight (the screen says whose; press Cross to watch the next one) until the boss dies (then gets up at the host's lamp, with no loading screen when it is in the area), everyone dies, or someone travels |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |
 
 A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's) or a party wipe resets them.
