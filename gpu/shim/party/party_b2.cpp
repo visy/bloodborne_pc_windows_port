@@ -5027,6 +5027,7 @@ void SpectateTick(const GameSnapshot& s, double now) {
         Log("spectating: following slot %d (%d living member%s%s)%s%s", pick, n, n == 1 ? "" : "s",
             advance ? ", Cross: next member" : "", notice.empty() ? "" : "; notice: ", notice.c_str());
     }
+    const bool new_target = pick != target || advance;
     target = pick;
     for (int i = 0; i < n; ++i) {
         alignas(16) float pos[4], rot[4];
@@ -5040,6 +5041,19 @@ void SpectateTick(const GameSnapshot& s, double now) {
         pos[3] = 1.0f;
         if (const u64 fn = Field<u64>(Field<u64>(s.player, 0), 0x5f8)) {
             reinterpret_cast<void(BB_COOP_SYSV*)(u64, const float*, const float*, u32)>(fn)(s.player, pos, rot, 1);
+        }
+        // The camera keeps its own direction when the dead chr is carried (parx2 smoke2: the host's
+        // view showed a wall for 106 s, the two living members 3-5 m away off screen): the Lua
+        // CamReset (as WarpLocal) puts it behind the carried chr, which faces the way the followed
+        // member faces - at a new target and when the member has turned by more than ~35 degrees.
+        static float reset_yaw = 0.0f;
+        float turn = std::fabs(yaw - reset_yaw);
+        if (turn > 3.14159265f) turn = 6.2831853f - std::fmod(turn, 6.2831853f);
+        if (new_target || turn > 0.6f) {
+            reset_yaw = yaw;
+            using CamReset = u64(BB_COOP_SYSV*)(u64, u32, u32);
+            reinterpret_cast<CamReset>(Guest(0x132f5a0))(0, 10000, 1);
+            if (new_target) Log("spectating: camera put behind the followed member (yaw %.2f)", double(yaw));
         }
         return;
     }
