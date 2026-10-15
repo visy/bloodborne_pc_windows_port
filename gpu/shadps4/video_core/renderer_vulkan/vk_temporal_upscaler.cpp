@@ -1515,7 +1515,8 @@ void TemporalUpscaler::OnDraw(u64 vs_hash, VideoCore::ImageId color,
     // writes off) writes the stencil the UI's next draws test, so it must go into the UI's
     // output-size depth like them. Left in the guest depth, the mask was lost when the next UI
     // draw switched to the UI depth (PrepareUiDepth clears its stencil): masked images (the
-    // loading screen's item picture, cut out of a sheet) vanished.
+    // loading screen's item picture, cut out of a sheet) vanished. Also sent upstream by
+    // parsifal295 (Supermedo/bloodborne_pc PR #62 / 3e3b760f).
     if (ui_phase && !color && depth && depth != ui_depth && ui_color) {
         const auto& depth_image = texture_cache.GetImage(depth);
         const auto& ui_target = texture_cache.GetImage(ui_color);
