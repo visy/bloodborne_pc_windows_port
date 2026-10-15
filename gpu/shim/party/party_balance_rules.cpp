@@ -133,6 +133,31 @@ bool EnemyScalingActive(const Rules& r) {
     return c.enemy_hp != 0 || c.enemy_damage != 0 || c.enemy_poise != 0;
 }
 
+int RotExtraStaminaDrain(int prev, int now, int prev_max, int now_max, float factor, float* carry) {
+    if (prev < 0 || now < 0 || prev_max <= 0 || prev_max != now_max || now >= prev || !(factor > 1.0f)) {
+        return 0;
+    }
+    float extra = static_cast<float>(prev - now) * (factor - 1.0f) + (carry ? *carry : 0.0f);
+    int whole = static_cast<int>(extra);
+    if (whole > now) whole = now;  // never below 0
+    if (carry) *carry = extra - static_cast<float>(static_cast<int>(extra));
+    return whole < 0 ? 0 : whole;
+}
+
+int RotRallyTakeBack(int prev, int now, int prev_max, int now_max, float factor, bool vial, float* carry) {
+    if (vial || prev <= 0 || now <= prev || prev_max <= 0 || prev_max != now_max || !(factor < 1.0f)) {
+        return 0;
+    }
+    const float f = factor < 0.0f ? 0.0f : factor;
+    // (+1e-4: 0.15 is not exact in a float; 100 * (1 - 0.85) must give 15, not 14.99)
+    const float back = static_cast<float>(now - prev) * (1.0f - f) + (carry ? *carry : 0.0f) + 1e-4f;
+    int whole = static_cast<int>(back);
+    if (whole > now - prev) whole = now - prev;
+    if (carry) *carry = back - 1e-4f - static_cast<float>(static_cast<int>(back));
+    if (carry && *carry < 0) *carry = 0;
+    return whole < 0 ? 0 : whole;
+}
+
 float RotHpFactor(int stacks) {
     const int s = std::clamp(stacks, 0, kRotMaxStacks);
     return 1.0f - static_cast<float>(s * kRotHpPercentPerStack) / 100.0f;

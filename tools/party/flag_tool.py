@@ -647,6 +647,7 @@ OVERRIDE_ROWS = (
         (72100105, 72100108, "never_sync", "per-player: Doll idle talk / bow / surprise triggers (m21 events 12100111, 12100115, 12100116)"),
         (72100110, 72100110, "never_sync", "per-player: Doll talk t210304 state (set as the talk opens)"),
         (72100113, 72100113, "never_sync", "per-player: Doll talk t210304 state after a level-up"),
+        (72100202, 72100202, "never_sync", "per-player: the Dream mirror t210696 one-time note ('Wear clothing to change appearance.')"),
     ])
 
 # per map, per type / zone default (zone = 4th digit from the right of TAABZnnn)
