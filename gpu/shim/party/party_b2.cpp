@@ -660,7 +660,38 @@ BB_COOP_SYSV u64 MatchCheckHook(u64 session) {
 // summon load (Lua OnBeJoinStart, K6) is held - it built the guest's own map as the host's world.
 std::atomic<bool> g_carry_hold{false};
 // K6: Lua OnBeJoinStart_* after the flag snapshot.
+// A4: the last Lua join start the game ran (JoinStartHook), for the flow-2 watchdog in Tick.
+std::atomic<u64> g_join_lua{0};
+std::atomic<double> g_join_start_at{-1.0};
+std::atomic<int> g_join_type{0};
 BB_COOP_SYSV void JoinStartHook(u64 lua) {
+    {
+        if (lua) g_join_lua = lua;
+        g_join_start_at = Now();
+        if (const int t = Field<int>(Slot(kSlotGsm), 0x16f0, 0)) g_join_type = t;
+        // A4: what the Lua join start sees (its event comes from GSM +0x16F0, 0 = none; the Lua's
+        // SummonReloadStart 0x1389440 loads only with presentation count (+0x16F8 +0x18) >= 2 and
+        // the own chr alive, otherwise it clears +0x16F0 and the join sits in flow 2 with no load).
+        const u64 gsm = Slot(kSlotGsm);
+        const u64 pres = Field<u64>(gsm, 0x16f8);
+        Log("K6: OnBeJoinStart: type %d, slot %u, presentation count %d used %d, role %d, flow %d%s",
+            Field<int>(gsm, 0x16f0, 0), unsigned(Field<u8>(gsm, 0x16f4)), Field<int>(pres, 0x18, -1),
+            Field<int>(pres, 0x14, -1), Role(), Field<int>(Slot(kSlotFlow), 0x84, -1),
+            g_on.load() && (g_rejoin.load() || g_carry_hold.load()) ? "" : ": the game's own load starts");
+    }
+    // Test aid (BB_PARTY_TEST_JOIN_STALL=N): the N-th game join start of this process ends as the
+    // 0.5 s bell timer stall did - SummonReloadStart cleared the summon type and nothing loads - so
+    // the flow-2 watchdog in Tick is checked live.
+    {
+        static const int stall_at = std::getenv("BB_PARTY_TEST_JOIN_STALL") ? std::atoi(std::getenv("BB_PARTY_TEST_JOIN_STALL")) : 0;
+        static int starts = 0;
+        if (stall_at > 0 && !(g_on.load() && (g_rejoin.load() || g_carry_hold.load())) && ++starts == stall_at) {
+            const int zero = 0;
+            SafeWrite(Slot(kSlotGsm) + 0x16f0, &zero, 4);
+            Log("test: join stall: join start %d swallowed, summon type cleared (BB_PARTY_TEST_JOIN_STALL)", starts);
+            return;
+        }
+    }
     if (g_on.load() && (g_rejoin.load() || g_carry_hold.load())) {
         Log("K6: OnBeJoinStart suppressed (%s)", g_carry_hold.load() ? "A5: the arrival re-join after a cross-map join loads the host's map"
                                                                     : "B2 re-join drives the reload");
@@ -5922,6 +5953,20 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         room.area = Field<u32>(net, 0xa7c, 0);
         room.level = 0;  // bbhost's FrpgNetMan +0xaa8 holds a float on our 1.09 (live: 0x3f49...): not sent
         SafeRead(net + 0xaac, room.pos, 12);
+        // A4 (parab3 a4t2, live): a host left alone counts its room down (flow +0xB8, ~10 s after the
+        // last member left; 0x1789B60 raises OnRoomTimeOut and the game leaves the room at 0). A
+        // room served 27 ms before that ended was gone when the guest's JoinRoom came ("Room not
+        // found"): an 8 s failure and the bell's 30 s fallback. A served room gets 10 s more.
+        if (Role() == RoleHost && s.cooperators <= 0) {
+            const u64 flow = Slot(kSlotFlow);
+            const float left = Field<float>(flow, 0xb8, -1.0f);
+            if (left >= 0.0f && left < 10.0f) {
+                const float more = 10.0f;
+                SafeWrite(flow + 0xb8, &more, 4);
+                Log("direct summon: this host's empty room had %.1f s left before the game closes it: 10 s for the joiner",
+                    double(left));
+            }
+        }
         if (!name.empty()) bbnet::party::FromApi::instance().hold_signs(name, 20000);
         Send(slot, dsummon::EncodeRoom(room));
         {
@@ -7024,6 +7069,71 @@ void Tick(const GameSnapshot& s) {
             done = true;
             Log("test: travel on serve: the host warps to lamp %u %.1f s after it served its room", lamp, now - served);
             RunLampWarp(lamp);
+        }
+    }
+    // A4 watchdog (guest): the game applied the host's snapshot (flow 2) and ran its Lua join start,
+    // but no host-world load began. SummonReloadStart (0x1389440) loads only with presentation count
+    // (GSM +0x16F8 +0x18) >= 2 and the own chr alive; otherwise it clears the summon type (+0x16F0)
+    // and the join sits in flow 2 until the session times out (the 0.5 s bell timer stall,
+    // join_timing.md). 1.5 s after that start, with the count at 2 now: the type back and the same
+    // Lua start once more (twice at most per join). BB_PARTY_JOIN_RESTART=0 off.
+    {
+        static const bool on = !EnvOff("BB_PARTY_JOIN_RESTART");
+        static double handled = -1;
+        static int tries = 0;
+        const double started = g_join_start_at.load();
+        const u64 gsm = Slot(kSlotGsm);
+        const int flow = Field<int>(Slot(kSlotFlow), 0x84, -1);
+        if (on && Role() == RoleClient && flow == 2 && !s.loading && started > 0 && !g_rejoin.load() &&
+            !g_carry_hold.load() && now - started > 1.5) {
+            if (handled != started) {
+                handled = started;
+                tries = 0;
+            }
+            const u64 pres = Field<u64>(gsm, 0x16f8);
+            const int count = Field<int>(pres, 0x18, -1);
+            const u64 lua = g_join_lua.load();
+            const bool alive = s.player && Field<int>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0xf8, 0) > 0;
+            if (tries < 2 && lua && count >= 2 && alive && now - started > 1.5 * (tries + 1)) {
+                ++tries;
+                const int type = Field<int>(gsm, 0x16f0, 0);
+                const int want = g_join_type.load() ? g_join_type.load() : -1;
+                if (type == 0) SafeWrite(gsm + 0x16f0, &want, 4);
+                Log("A4: the join sits in flow 2 with no load %.1f s after the Lua join start (type %d, presentation "
+                    "count %d now): the game's join start again (%d), type %d", now - started, type, count, tries, want);
+                using Fn = void(BB_COOP_SYSV*)(u64);
+                reinterpret_cast<Fn>(Guest(kJoinStartLua))(lua);
+                g_join_start_at = now;
+                handled = now;
+            }
+        }
+    }
+    // A4 join trace (BB_PARTY_JOIN_TRACE=1, guest): every 0.25 s from the client role until the
+    // host-world load starts (at most 12 s): flow, summon type, presentation count, loading.
+    {
+        static const bool trace = EnvOn("BB_PARTY_JOIN_TRACE");
+        static double client_since = -1, last = 0;
+        static std::string last_line;
+        const int role = Role();
+        if (trace && role == RoleClient) {
+            if (client_since < 0) client_since = now;
+            if (now - client_since <= 12.0 && now - last >= 0.25) {
+                last = now;
+                const u64 gsm = Slot(kSlotGsm);
+                const u64 pres = Field<u64>(gsm, 0x16f8);
+                char b[200];
+                std::snprintf(b, sizeof b, "flow %d, type %d, pres count %d used %d, loading %d, world %d, GSM+0x1592 %u",
+                              Field<int>(Slot(kSlotFlow), 0x84, -1), Field<int>(gsm, 0x16f0, 0),
+                              Field<int>(pres, 0x18, -1), Field<int>(pres, 0x14, -1), int(s.loading), int(s.world_up),
+                              unsigned(Field<u8>(gsm, 0x1592)));
+                if (b != last_line) {
+                    last_line = b;
+                    Log("join trace +%.2f s: %s", now - client_since, b);
+                }
+            }
+        } else if (role != RoleClient) {
+            client_since = -1;
+            last_line.clear();
         }
     }
     static double last_status = 0;
