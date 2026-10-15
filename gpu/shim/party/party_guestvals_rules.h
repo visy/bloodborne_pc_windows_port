@@ -4,7 +4,8 @@
 //
 //   ngguard     finding 3: a summoned guest keeps its own NG cycle for its own save (the game's
 //               restore value GSM +0x159C / flag +0x1598, re-asserted while a client; the own cycle
-//               put back at home when the host's leaked into it).
+//               put back at home when the host's leaked into it). In the host's world the live
+//               cycle is the host's (LiveNg: enemy HP / damage / echoes as on the host's game).
 //   gueststain  finding 1: a guest's bloodstain recoverable in the host's world (a party-side
 //               stain: map, spot, echoes; paid when the guest walks onto it).
 //   lampshare   finding 5: lamps are shared by the whole party (a guest's own lit lamps go to the
@@ -43,7 +44,31 @@ struct View {
     bool after_session = false; ///< the first steady own world after being a client in this process
     bool ending_since = false;  ///< an ending ran since the own cycle was learned (NG+ is legitimate)
     bool alone_pending = false; ///< an alone load is being set up (its descriptor uses the game's values)
+    bool host_world = false;    ///< a guest in the host's world: GSM +0x1592 == 0 with the host's 0x19 state (+0x1593)
 };
+
+/// The NG cycle to write into GameDataMan +0x68 now, -1 for none. Vanilla (and ERSC): everyone in a
+/// world runs its host's cycle (enemy HP, damage, kill echoes, boss bonus). A B2 load into the host's
+/// world is built with GSM +0x1521 clear, so its descriptor (0x1943F10) took the restore value +0x159C
+/// - the guest's own cycle - and the MoveMapStep ctor (0x1937570) made it live: the guest ran the
+/// host's world at its own NG. The own cycle stays in +0x159C with +0x1598 set (what the save writer
+/// 0x14EA560 stores). Applies while loading too (before the map's characters are made), once the own
+/// cycle is known (a title join learns it first).
+inline int LiveNg(const View& v) {
+    if (!v.host_world || v.alone_pending || v.own < 0 || v.own > 7 || v.host < 0 || v.host > 7 || v.live < 0 ||
+        v.live > 7 || v.live == v.host) {
+        return -1;
+    }
+    return v.host;
+}
+
+/// While in the host's world: the restore value / flag must hold the own cycle (so the save and the
+/// next own-world load keep it) - checked also during a load, after the MoveMapStep ctor re-saved
+/// the live value.
+inline bool RestoreWrong(const View& v) {
+    return v.host_world && !v.alone_pending && v.own >= 0 && v.own <= 7 &&
+           (v.restore_flag != 1 || v.restore_value != v.own);
+}
 
 inline Act Plan(const View& v) {
     if (!v.steady || v.live < 0 || v.live > 7) {

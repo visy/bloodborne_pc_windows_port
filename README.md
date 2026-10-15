@@ -185,6 +185,9 @@ before anyone is in the game):
   stands, so the host's world resets too; a guest resting its way back into the host's area
   arrives after that reset with a single loading screen. Resting while the host is in a boss fight
   takes everyone out of the boss room (the host's world loads at its last lamp, the fight resets).
+- **One NG cycle per world.** In the host's world everyone plays at the host's NG cycle (enemy
+  health, damage and Blood Echoes are the same on every game, as in the original game); your own
+  save keeps your own cycle, and your own world is back at it when you go home.
 - **Guests are full players.** The Doll (level up), shops, the workbench, storage, the Memory
   Altar (memorize your own Caryll Runes; covenants), lamps and headstones all work for guests. A guest can also rest alone
   (lamp, "No"), level up and shop in the Dream and come back, while the others play on.

@@ -533,6 +533,20 @@ void Scheduler::WaitHostCopies() {
     BbCopy::WaitAsync();
 }
 
+void Scheduler::NoteLargeRecordData(size_t bytes, size_t element) {
+    static std::atomic<u64> count{0}, largest{0};
+    const u64 n = count.fetch_add(1, std::memory_order_relaxed) + 1;
+    u64 seen = largest.load(std::memory_order_relaxed);
+    bool bigger = false;
+    while (bytes > seen && !(bigger = largest.compare_exchange_weak(seen, bytes, std::memory_order_relaxed))) {
+    }
+    if (n <= 8 || bigger || n % 1000 == 0) {
+        LOG_WARNING(Render_Vulkan,
+                    "recorded command data beside the chunk: {} bytes ({} elements of {} bytes), {} time(s) so far",
+                    bytes, bytes / std::max<size_t>(element, 1), element, n);
+    }
+}
+
 void Scheduler::KickRecording(bool force) {
     ProducerScope producer{*this, "KickRecording"};
     if (workers.empty()) {
@@ -979,8 +993,78 @@ void Scheduler::AllocateWorkerCommandBuffers() {
 #endif
 }
 
+// bbport (ngfix) test aid BB_RECORD_LARGE_TEST=1: every 30th submission records command data
+// larger than a chunk (one 200 KiB span; then a 150 KiB reservation filled by three 50 KiB spans;
+// then one 100 KiB span that fits) for a command that checks it on the recording thread: the data
+// must still be there when the command runs (RecordChunk::AllocateLarge). Logged every 100 checks.
+void Scheduler::RecordLargeTest() {
+    static const bool on = [] {
+        const char* v = std::getenv("BB_RECORD_LARGE_TEST");
+        return v && *v == '1';
+    }();
+    static u64 submissions = 0;
+    if (!on || !IsRecordingDeferred() || ++submissions % 30 != 0) {
+        return;
+    }
+    static std::atomic<u64> checked{0}, bad{0};
+    const u32 round = u32(submissions / 30);
+    auto make = [](u32 seed, size_t words) {
+        std::vector<u32> v(words);
+        for (size_t i = 0; i < words; ++i) {
+            v[i] = seed * 2654435761u + u32(i);
+        }
+        return v;
+    };
+    auto check = [](std::span<const u32> d, u32 seed) {
+        for (size_t i = 0; i < d.size(); ++i) {
+            if (d[i] != seed * 2654435761u + u32(i)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    auto done = [](bool ok) {
+        if (!ok) {
+            bad.fetch_add(1, std::memory_order_relaxed);
+        }
+        const u64 n = checked.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (n % 100 == 0 || !ok) {
+            LOG_WARNING(Render_Vulkan, "large record test: {} command(s) checked, {} with damaged data", n,
+                        bad.load(std::memory_order_relaxed));
+        }
+    };
+    switch (round % 3) {
+    case 0: {
+        const auto v = make(round, 50 * 1024);
+        Record([d = RecordData(std::span<const u32>{v}), round, check, done](vk::CommandBuffer) {
+            done(check(d, round));
+        });
+        break;
+    }
+    case 1: {
+        const auto a = make(round, 12800), b = make(round + 1, 12800), c = make(round + 2, 12800);
+        ReserveRecordData(3 * 12800 * sizeof(u32) + 64);
+        const auto da = RecordData(std::span<const u32>{a});
+        const auto db = RecordData(std::span<const u32>{b});
+        const auto dc = RecordData(std::span<const u32>{c});
+        Record([da, db, dc, round, check, done](vk::CommandBuffer) {
+            done(check(da, round) && check(db, round + 1) && check(dc, round + 2));
+        });
+        break;
+    }
+    default: {
+        const auto v = make(round, 25 * 1024);
+        Record([d = RecordData(std::span<const u32>{v}), round, check, done](vk::CommandBuffer) {
+            done(check(d, round));
+        });
+        break;
+    }
+    }
+}
+
 void Scheduler::SubmitExecution(SubmitInfo& info) {
     ProducerScope producer{*this, "SubmitExecution"};
+    RecordLargeTest();
     if (async_submit) {
         SubmitAsync(info);
         return;
