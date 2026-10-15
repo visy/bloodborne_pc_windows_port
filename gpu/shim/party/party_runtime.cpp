@@ -1050,8 +1050,19 @@ LinkCallbacks make_callbacks(bool host) {
             // Fast join: the host's game keeps its transport connection to a member that was in (or
             // joining) its world until the transport times out; a restarted game summoned before
             // that never gets the summon data (docs/party/join_timing.md).
-            if (m.state == MemberState::InHostWorld || m.state == MemberState::Joining ||
-                m.state == MemberState::Loading) {
+            // A guest's own Leave (BYE, slot released) while its going-home load runs: its game left
+            // our room itself (the room's member-left came first), so no old connection is held.
+            // Live parx s0a (3 players, 3rd leave/rejoin): that leave took 4.3 s, the BYE arrived
+            // during the load, and the 26 s hold refused the rejoin's direct summon (25 s bell
+            // path instead of 2 s). A kick (still in our world) or a lost link keeps the hold.
+            const bool own_leave_home = !slot_kept && m.lost_why.empty() && m.state == MemberState::Loading &&
+                                        bbnet::np::ms_since_member_left() < 10000;
+            if (own_leave_home) {
+                plog("%s left with its own Leave during its going-home load (left our room %lld ms ago): no sign hold",
+                     m.name.c_str(), static_cast<long long>(bbnet::np::ms_since_member_left()));
+            }
+            if (!own_leave_home && (m.state == MemberState::InHostWorld || m.state == MemberState::Joining ||
+                m.state == MemberState::Loading)) {
                 // A crash (RST): the connection is expired early (nr_fast_expire), so a short hold.
                 const bool crashed = m.lost_why.find("reset") != std::string::npos && env_on("BB_PARTY_NR_FAST_EXPIRE");
                 bbnet::party::FromApi::instance().hold_signs(m.name, 26000);
