@@ -38,6 +38,11 @@ int runtime_savepolicy_backup(const char *user, const char *dir, const char *rea
                               char *made, size_t made_size);
 /* The newest backup without -suspect of <user>/save_backups/<dir> (0 found, -1 none). */
 int runtime_savepolicy_newest_good(const char *user, const char *dir, char *out, size_t size);
+/* Before a party session: <user>/savedata and <user>/savedata_party copied to
+ * <user>/save_backups/party_sessions/<YYYYMMDD-HHMMSS>-<role>/ with SESSION.txt (role, time, files per
+ * folder); newest `keep` kept. The launcher's "Undo last party session" restores it
+ * (scripts/party_session.py). 1 made, -1 failed. */
+int runtime_savepolicy_session_snapshot(const char *user, const char *role, int keep, char *made, size_t made_size);
 /* Tests: forget the cached environment. */
 void runtime_savepolicy_reset(void);
 

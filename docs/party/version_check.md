@@ -7,6 +7,11 @@ Mismatch REJECT. The reason names what differs and what to do about it. The gues
 shows it: the status board's "host refused: ..." (System > Party, the Party page's status row and
 the last event on Party members) and the overlay.
 
+Since 0.6.2 the refusal always names **both bbport versions**: "version mismatch with the host
+(host bbport 0.6.2 (...), yours 0.6.1 (...)): ..." when something else differs, or the build clause
+itself ("bbport build differs (host ..., yours ...)") when the builds differ. The launcher also says
+when a newer release is out (below), so players can update before they meet.
+
 ## What is compared
 
 | Item | Source (party_runtime.cpp) | Mismatch clause tells the player |
@@ -39,9 +44,24 @@ or secret). `tools/party/simguest.py --identity FILE` sends it, so a simulated m
 game host's check; `--build-id` / `--rules` set single fields (the harness takes `--build-id`,
 `--params-hash`, `--hooks-hash`, `--rules`).
 
+## Launcher update notice (0.6.2)
+
+At start the launcher asks GitHub's public API for the latest release
+(`https://api.github.com/repos/visy/bloodborne_pc_windows_port/releases/latest`, no token, 3 s
+timeout, `scripts/update_check.py`) and, when it is newer than the launcher's own version, shows
+"Version X is out - every PC in the party needs the same version" under the title with a link to
+the release page (and a `[UPDATE]` log line). The answer is cached for 6 hours in
+`launcher_update_check.json` next to the launcher (a failed check for 30 minutes), so starting the
+launcher again does not ask again; offline, a timeout, a rate limit, a draft / pre-release or an
+unexpected answer show nothing. Only a `https://github.com/` link is ever shown. Off: *Advanced /
+Debug > Support > Tell me when a new version is out*. Tests: `tests/test_update_check.py` (mocked
+answers: newer / same / older, pre-release, HTML, offline, timeout, rate limit, foreign link, the
+6 h and 30 min caches, a broken or unwritable cache).
+
 ## Tests
 
-- `party-link-test` "version check": every clause and its advice, the build override, an older
+- `party-link-test` "version check": both versions named when only patches / params differ, the build
+  clause naming them once when the builds differ, every clause and its advice, the build override, an older
   build's empty fields, `hook_set_hash` (order / duplicates / empty set), the diagnostic-name
   classifier over the real hook names; over the wire a guest with another build and one hook fewer
   is refused with both clauses and nothing else.

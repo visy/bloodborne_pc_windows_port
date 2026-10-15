@@ -89,6 +89,9 @@ std::uint64_t AlertSeq();
 /// menus. Cheap (atomic); set by the party tick.
 void SetFriendlyFire(bool on);
 bool FriendlyFire();
+/// Statsaudit finding 5: shared lamps in force (the host's rule on a guest), for the menus.
+void SetShareLamps(bool on);
+bool ShareLamps();
 /// BB_PARTY turns party mode on for this run (party_env.h: unset, empty, 0, off, false, no = off) (read once, or forced by tests via ResetForTest).
 bool Enabled();
 

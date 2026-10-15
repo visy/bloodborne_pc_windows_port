@@ -20,11 +20,11 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | **Overall** | `███████████████████░` | 95% |
 | Session & joining | `████████████████████` | 99% |
 | World & travel | `████████████████████` | 99% |
-| Death & respawn | `███████████████████░` | 95% |
+| Death & respawn | `███████████████████░` | 96% |
 | Progress (anyone can progress) | `██████████████████░░` | 92% |
 | Services & UI | `███████████████████░` | 97% |
 | Network & robustness | `██████████████████░░` | 91% |
-| Bloodborne-specific (chalice, Insight) | `██████████████████░░` | 88% |
+| Bloodborne-specific (chalice, Insight) | `██████████████████░░` | 90% |
 | Feels like single player in a party | `███████████████████░` | 94% |
 
 ---
@@ -176,7 +176,10 @@ before anyone is in the game):
   alone; enemies it killed while the host was away are back once the host returns (the host's world
   counts, as after a reload).
 - **Everyone can use lamps.** Vanilla disables lamps during co-op; here they work for everyone.
-  A lamp lit by anyone is lit for the party.
+- **Lamps are shared.** A lamp anyone in the party lights is lit for everyone, in everyone's own
+  save too: when you join, the lamps you lit on your own light up in the host's world (the party
+  can travel there), and the host's lamps go into your save. A lamp past a boss the host has not
+  beaten yet waits until the host beats it. The host can turn this off (*Shared lamps*).
 - **Resting resets the world for the party.** Enemies respawn; everyone's HP, vials and bullets
   refill. A guest who rests and travels alone gives the host a short loading screen where it
   stands, so the host's world resets too; a guest resting its way back into the host's area
@@ -204,7 +207,8 @@ before anyone is in the game):
   arrived. After the Blood Moon the host is asked "Travel with the party?" and everyone goes to
   Yahar'gul together.
 - **Insight for everyone.** Whatever Insight the host gets (a boss's first sight and kill, story
-  moments, the kidnap's waking, Chalice Dungeon bosses) every guest present gets too. What Insight
+  moments, the kidnap's waking, Chalice Dungeon bosses) every guest present gets too; a boss's
+  first-sight Insight comes once per player, whoever walks in first. What Insight
   shows (Amygdalas, whispers) is up to each player's own Insight, as in the original game.
 - **The host's world is shared live, both ways.** A door or shortcut opened by the host is open
   for the guests too, and a lever or door a guest uses opens in the host's world (and in the
@@ -225,8 +229,10 @@ before anyone is in the game):
 - **Kidnapped by a Snatcher?** If the host is grabbed, the whole party wakes up together in the
   Hypogean Gaol (Yahar'gul) after one loading screen, and the guests get the host's Insight for
   it too. Guests cannot be kidnapped in the host's world.
-- **Enemy drops for each player, one roll.** Every player gets their own copy of each enemy's drop,
-  and it is the same item for everyone (one shared roll per kill).
+- **Enemy drops for each player, one roll.** Every player gets their own copy of each enemy's drop
+  from one shared roll per kill (the same dice for everyone), and each player's own Item Discovery
+  counts: a player with more Discovery gets a rare drop whenever one with less does, and sometimes
+  when they do not.
 - **Blood Echoes for every kill.** Whoever kills an enemy, every party member gets its full
   Blood Echoes.
 - **Treasure for each player.** Items lying in the world can be picked up by every player, each into their own game.
@@ -243,10 +249,20 @@ before anyone is in the game):
   loot (for each player) and the lift work for the whole party. Any player can perform the ritual:
   the host's altar then offers *Enter the party's dungeon* (no glyph typing), and chalices are
   shared between all players.
-- **Crashes recover.** A crashed game restarts and rejoins by itself (back in the host's world about 12 s after the restart), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue. If the host's game crashes, the guests go home at once and come back by themselves as soon as the host is back in the world; items a guest got in the host's world stay in its own save.
+- **Crashes recover.** A crashed game restarts and rejoins by itself (back in the host's world about 12 s after the restart), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue. If the host's game crashes, the guests go to their own world and wait ("Waiting for the host to come back (N s)...") until the host's game has restarted, then are summoned back beside it by themselves (about 20 s after the crash on one PC; after 3 minutes without the host a guest plays on alone); items a guest got in the host's world stay in its own save.
 - **Network drops recover.** A network outage of up to 30 s keeps the session: no loading screen, everyone carries on where they stood once the network is back (the others freeze in place meanwhile). If a longer outage loses the session, a guest goes home at once with one loading screen and is summoned back beside the host by itself once the network is back. The party also checks every 15 s that everyone sees the same world and progress and quietly re-sends whatever differs.
 - **Wrong passwords are locked out.** A few typos are fine; after 5 wrong passwords in a minute the host refuses that address for a while.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
+- **Undo a party session.** Right before every party session (host or guest) the game copies both
+  save folders aside. The launcher's *Party* tab has **Undo last party session**: it shows what it
+  will replace, keeps your current saves aside the same way (so the undo can be undone) and puts
+  the saves back byte for byte. After a party session the launcher also checks the party save
+  (every character loads, the NG cycle only changes with an ending, no boss kill or lamp from
+  before the session is lost, level and play time never go down) and offers the undo if something
+  looks wrong.
+- **New version out?** The launcher says so ("Version X is out - every PC in the party needs the
+  same version", with the download link; at most one check every 6 hours, off in *Advanced /
+  Debug*). A join refused for a version mismatch names the host's version and yours.
 - **Death has a cost.** Each death stacks "rot" (−10% max HP, −10% max stamina, +10% stamina
   use or −15% HP won back by hitting after a hit (rally), picked at random, up to 5); using a lamp (even just opening its travel menu and cancelling) or levelling up clears it.
   It belongs to your character: each save slot keeps its own, and a new game starts without it. On by default; the host can turn it off on the *Party rules* page.
@@ -273,7 +289,7 @@ before anyone is in the game):
 
 | Who dies | What happens |
 |---|---|
-| A guest | Gets up again at its own lamp: with no loading screen when that lamp is in the loaded area, else with its own loading screen at that lamp (also in another area; the host stays where it is); its Blood Echoes wait in a bloodstain at that spot in its own world (pick them up there); the others keep playing |
+| A guest | Gets up again at its own lamp: with no loading screen when that lamp is in the loaded area, else with its own loading screen at that lamp (also in another area; the host stays where it is); its Blood Echoes wait in a bloodstain where it fell, marked on screen in the host's world (walk onto it to get them back; it also stays in its own world); the others keep playing |
 | The host | Everyone gets one respawn loading screen at the host's lamp, as in the original game, and the world resets; the host's echoes stay in a bloodstain where it fell |
 | Anyone, during a boss fight | Watches a living party member fight (the screen says whose; press Cross to watch the next one) until the boss dies (then gets up at the host's lamp, with no loading screen when it is in the area), everyone dies, or someone travels |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |
@@ -284,7 +300,7 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 
 | Change | Status |
 |---|---|
-| Item pickups and enemy drops per player: everyone gets their own (enemy drops: the same item for everyone) | Done |
+| Item pickups and enemy drops per player: everyone gets their own (enemy drops: one shared roll, each player's own Item Discovery) | Done |
 | Every cutscene for the whole party (story cutscenes, endings and guest-triggered scenes already work) | In progress |
 | Joining during a boss fight or cutscene waits outside until it ends | Done: boss fights and cutscenes with every join path (bell, title join, direct summon; verified live), the Party status says why you wait |
 | With 3 guests, every guest sees every other guest | Done: all four join and see each other; any player can leave and rejoin while the others play on (verified live with 3 and 4 players) |

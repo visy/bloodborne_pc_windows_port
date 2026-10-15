@@ -9,6 +9,7 @@ pgo/
 *.log
 launcher.log
 launcher_settings.json
+launcher_update_check.json
 dist/
 packaging/runtime-paths.nix
 fsr4_411/

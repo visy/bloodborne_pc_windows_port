@@ -29,6 +29,8 @@
 #include "game_state.h"
 #include "party_director.h"
 #include "party_link.h"
+#include "party_guestvals_rules.h"
+#include "party_progress.h"
 
 #include <atomic>
 #include <chrono>
@@ -150,6 +152,7 @@ const char* PhantomEventKindName(PhantomEventKind k) {
     case PhantomEventKind::Lamp: return "lamp";
     case PhantomEventKind::Rested: return "rested";
     case PhantomEventKind::Insight: return "insight";
+    case PhantomEventKind::BossBonus: return "boss_bonus";
     case PhantomEventKind::Unknown: break;
     }
     return "unknown";
@@ -169,6 +172,10 @@ std::string PhantomEventToJsonText(const PhantomEvent& e) {
             v.set("boss", false);
         }
     }
+    if (e.kind == PhantomEventKind::BossBonus) {
+        v.set("echoes", e.bonus);
+        v.set("event", e.source_event);
+    }
     return json::dump(v, 0);
 }
 
@@ -187,7 +194,8 @@ bool PhantomEventFromJsonText(const std::string& text, PhantomEvent* out, std::s
         }
         PhantomEvent e;
         const std::string& kind = json::str(v, "kind");
-        for (PhantomEventKind k : {PhantomEventKind::Lamp, PhantomEventKind::Rested, PhantomEventKind::Insight}) {
+        for (PhantomEventKind k : {PhantomEventKind::Lamp, PhantomEventKind::Rested, PhantomEventKind::Insight,
+                                   PhantomEventKind::BossBonus}) {
             if (kind == PhantomEventKindName(k)) {
                 e.kind = k;
             }
@@ -211,6 +219,14 @@ bool PhantomEventFromJsonText(const std::string& text, PhantomEvent* out, std::s
                 throw std::runtime_error("boss not a bool");
             }
             e.boss = !b || b->boolean;
+        }
+        if (e.kind == PhantomEventKind::BossBonus) {
+            const double n = json::num(v, "echoes");
+            if (n < 0 || n > 10000000 || n != static_cast<double>(static_cast<int>(n))) {
+                throw std::runtime_error("echoes out of range");
+            }
+            e.bonus = static_cast<int>(n);
+            e.source_event = json::u32(v, "event");
         }
         *out = e;
         return true;
@@ -532,6 +548,25 @@ u64 g_last_rested = 0, g_last_insight = 0; // under g_guest_mu
 InsightBudget g_insight_budget;            // under g_guest_mu
 std::atomic<double> g_last_client{-1e9};
 
+// Finding 4 (statsaudit): the boss clear on this game (BlockClear2's bonus 0x1335400 at 0x1384B92).
+std::atomic<double> g_native_clear_at{-1e9};
+std::atomic<int> g_native_clear_bonus{0};
+struct BossWait {
+    bool active = false;
+    double at = 0;
+    u32 event = 0;
+};
+BossWait g_boss_wait;           // under g_guest_mu
+// Finding 9: a first-encounter event's 9350 start on this guest's own game (its copy of the
+// event, which 9350's End-if-client stops), granted by GuestTick (main thread).
+struct FirstEncounter {
+    u32 event = 0;
+    int n = 0;
+};
+std::deque<FirstEncounter> g_first_enc;  // under g_guest_mu
+int g_host_bonus = 0;           // under g_guest_mu
+double g_host_bonus_at = -1e9;  // under g_guest_mu
+
 // Probe (main thread).
 bool g_world_seen = false;
 double g_world_at = 0;
@@ -611,6 +646,135 @@ bool ApplyInsightSpEffect() {
     }
     reinterpret_cast<SpEffectFn>(fn)(player, kInsightSpEffect, player, 0, 0, 0, 0, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f);
     return true;
+}
+
+/// BlockClear2 0x13849A0 computes the boss clear bonus at 0x1384B92 (0x1335400(ctx, boss entity)
+/// into PlayerGameData +0xF8, paid by 0x13356C0): this game ran its own boss defeat. The host
+/// tells its guests its bonus (EVENT phantom boss_bonus) for a guest whose defeat does not run.
+BB_COOP_SYSV void BossBonusHook(u64 a0, u64 entity) {
+    reinterpret_cast<void(BB_COOP_SYSV*)(u64, u64)>(Guest(0x1335400))(a0, entity);
+    float v = 0.0f;
+    const u64 pgd = PlayerGameData();
+    if (pgd) {
+        SafeGet(pgd + 0xf8, &v);
+    }
+    static const bool hide = std::getenv("BB_PARTY_TEST_HIDE_CLEAR") && std::getenv("BB_PARTY_TEST_HIDE_CLEAR")[0] == '1';
+    if (hide && PartyDirector::Get().Role() == PartyRole::Guest) {
+        // Test aid (finding 4): this guest's own boss defeat "did not run": no bonus, not seen.
+        const float zero = 0.0f;
+        if (pgd) {
+            SafeWrite(pgd + 0xf8, &zero, 4);
+        }
+        Log("test: boss clear on this game hidden (BB_PARTY_TEST_HIDE_CLEAR): boss %u, its bonus %d dropped", u32(entity),
+            int(v));
+        return;
+    }
+    g_native_clear_at = Now();
+    g_native_clear_bonus = int(v);
+    Log("boss clear on this game (BlockClear2): boss %u, clear bonus %d Blood Echoes", u32(entity), int(v));
+    if (PartyDirector::Get().Role() == PartyRole::Host && v > 0.0f) {
+        PhantomEvent e;
+        e.kind = PhantomEventKind::BossBonus;
+        e.seq = NextSeq();
+        e.bonus = int(v);
+        e.source_event = u32(entity);
+        Queue(e);
+    }
+}
+
+/// AddSoul on the local player (PlayerIns vfunc +0x3D0, as 0x13356C0 pays the bonus).
+bool AddOwnEchoes(int n) {
+    const u64 player = LocalPlayer();
+    u64 vt = 0, fn = 0;
+    if (!player || n <= 0 || !SafeGet(player, &vt) || !vt || !SafeGet(vt + 0x3d0, &fn) || !InImage(fn)) {
+        return false;
+    }
+    reinterpret_cast<void(BB_COOP_SYSV*)(u64, int, int, int)>(fn)(player, n, 0, 1);
+    return true;
+}
+
+/// Finding 9: a first-encounter Insight for this guest, once per its own guard flag (own save):
+/// `why` names the source (its own event, or the host's mirror). False: already had it.
+bool GrantFirstEncounter(u32 event, int n, const char* why) {
+    const u32 guard = firstenc::Guard(event);
+    bool own = false;
+    const bool known = progress::ReadFlagOwnSave(guard, &own);
+    if (!firstenc::Grant(guard, known && own)) {
+        Log("first encounter (event %u, %d Insight, %s): this player had it already (own guard %u set): nothing", event, n,
+            why, guard);
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_guest_mu);
+        g_drip.Add(n);
+    }
+    const bool wrote = progress::WriteFlagOwnSave(guard, true);
+    Log("first encounter (event %u, %d Insight, %s): +%d here, own guard %u %s", event, n, why, n, guard,
+        wrote ? "set in the own save" : "NOT written");
+    RequestGameSave("first-encounter Insight");
+    return true;
+}
+
+void FirstEncounterTick() {
+    std::deque<FirstEncounter> due;
+    {
+        std::lock_guard<std::mutex> lk(g_guest_mu);
+        due.swap(g_first_enc);
+    }
+    for (const FirstEncounter& f : due) {
+        GrantFirstEncounter(f.event, f.n, "this guest's own event");
+    }
+}
+
+/// Guest: a host boss kill whose defeat did not run here within bossfall::kWaitS still pays the
+/// host's boss clear bonus and the native cooperator +1 Insight (once). BB_PARTY_BOSS_FALLBACK=0: off.
+void BossFallbackTick(const GameSnapshot& g, double now) {
+    static const bool on = !EnvOff("BB_PARTY_BOSS_FALLBACK");
+    BossWait w;
+    int bonus = 0;
+    double bonus_at = -1e9;
+    {
+        std::lock_guard<std::mutex> lk(g_guest_mu);
+        if (!g_boss_wait.active) {
+            return;
+        }
+        w = g_boss_wait;
+        bonus = g_host_bonus;
+        bonus_at = g_host_bonus_at;
+    }
+    const bool native = g_native_clear_at.load() >= w.at - 10.0;
+    bossfall::Seen seen;
+    seen.echoes = seen.insight = native;
+    const bossfall::Pay pay = bossfall::Plan(now - w.at, true, seen);
+    if (pay == bossfall::Pay::Wait) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_guest_mu);
+        g_boss_wait.active = false;
+    }
+    if (pay == bossfall::Pay::Nothing) {
+        Log("host boss kill (event %u): the boss defeat ran on this game too (clear bonus %d): nothing to make up",
+            w.event, g_native_clear_bonus.load());
+        return;
+    }
+    if (!on) {
+        Log("host boss kill (event %u): no boss defeat on this game within %.0f s; fallback off (BB_PARTY_BOSS_FALLBACK=0)",
+            w.event, bossfall::kWaitS);
+        return;
+    }
+    const bool have_bonus = bonus_at >= w.at - 10.0 && bonus > 0;
+    const int before = g.echoes;
+    const bool paid = have_bonus && (pay == bossfall::Pay::Both || pay == bossfall::Pay::Echoes) && AddOwnEchoes(bonus);
+    if (pay == bossfall::Pay::Both || pay == bossfall::Pay::Insight) {
+        std::lock_guard<std::mutex> lk(g_guest_mu);
+        g_drip.Add(1);
+    }
+    std::string what = paid ? "the host's clear bonus " + std::to_string(bonus) + " Blood Echoes paid"
+                            : (have_bonus ? "the clear bonus NOT paid (no player)" : "no clear bonus from the host");
+    Log("host boss kill (event %u): no boss defeat on this game within %.0f s: fallback (%s): %s, +1 Insight (the "
+        "native cooperator one); echoes were %d",
+        w.event, bossfall::kWaitS, bossfall::PayName(pay), what.c_str(), before);
 }
 
 void OnGuestRedirect(TravelKind kind, GuestRedirect how, std::uint32_t lamp) {
@@ -795,6 +959,8 @@ void GuestTick(const GameSnapshot& g, double now) {
     if (refill_now) {
         Refill(why);
     }
+    BossFallbackTick(g, now);
+    FirstEncounterTick();
     if (insight_now) {
         const int before = g.insight;
         const bool ok = ApplyInsightSpEffect();
@@ -844,6 +1010,9 @@ void PhantomInit() {
         g_cfg.probe_host9350 = std::strstr(p, "host9350") != nullptr;
         g_cfg.probe_host4680 = std::strstr(p, "host4680") != nullptr;
     }
+    if (PartyMode() && Guest(0x1384b92) && CallsTo(0x1384b92, 0x1335400)) {
+        HookCallSite(0x1384b92, 0x1335400, reinterpret_cast<const void*>(&BossBonusHook), "party boss clear watch");
+    }
     SetGuestDeathRedirectEnabled(g_cfg.respawn);
     SetGuestRedirectCallback(&OnGuestRedirect);
     Log("guest death -> host lamp %s, refill %s, open world %s, boss Insight %s%s%s", g_cfg.respawn ? "on" : "off",
@@ -865,7 +1034,27 @@ std::vector<EmevdSkipRule> PhantomSkipRules() {
 
 void PhantomEmevdInstruction(std::int32_t event, std::int32_t bank, std::int32_t id, const std::uint8_t* args,
                              std::size_t size) {
-    if (PartyDirector::Get().Role() != PartyRole::Host || g_cfg.insight == InsightMode::Off) {
+    if (g_cfg.insight == InsightMode::Off) {
+        return;
+    }
+    if (PartyDirector::Get().Role() == PartyRole::Guest) {
+        // Finding 9: the guest's own copy of a boss's first-encounter event starts 9350 (which
+        // ends at once on a client): the guest's own first-encounter Insight, once (GuestTick).
+        if (bank == 2000 && id == 0 && args && size >= 12 && LocalSessionRole() == RoleClient &&
+            firstenc::Guard(u32(event)) != 0) {
+            std::int32_t target = 0, n = 0;
+            std::memcpy(&target, args + 4, 4);
+            std::memcpy(&n, args + 8, 4);
+            if (target == BossInsightTracker::kInsightEvent && n > 0 && n <= 99) {
+                std::lock_guard<std::mutex> lk(g_guest_mu);
+                if (g_first_enc.size() < 8) {
+                    g_first_enc.push_back({u32(event), n});
+                }
+            }
+        }
+        return;
+    }
+    if (PartyDirector::Get().Role() != PartyRole::Host) {
         return;
     }
     const double now = Now();
@@ -1006,6 +1195,17 @@ void PhantomOnEvent(const std::string& body) {
     }
     case PhantomEventKind::Insight: {
         const bool present = now - g_last_client.load() <= kParticipation;
+        if (!e.boss && firstenc::Guard(e.source_event) != 0 && present && g_cfg.insight != InsightMode::Off) {
+            {
+                std::lock_guard<std::mutex> lk(g_guest_mu);
+                if (e.seq <= g_last_insight) {
+                    break;
+                }
+                g_last_insight = e.seq;
+            }
+            GrantFirstEncounter(e.source_event, e.insight, "the host's first encounter");
+            break;
+        }
         const int grant = e.boss ? GuestInsightGrant(e.insight, g_cfg.insight)
                                  : (g_cfg.insight == InsightMode::Off ? 0 : e.insight);
         std::lock_guard<std::mutex> lk(g_guest_mu);
@@ -1018,6 +1218,12 @@ void PhantomOnEvent(const std::string& body) {
             Log("%s (event %u, %d Insight): this guest was not in the host's world; nothing", what, e.source_event,
                 e.insight);
             break;
+        }
+        if (e.boss) {
+            // Finding 4: did the boss defeat run on this game too? (BossFallbackTick)
+            g_boss_wait.active = true;
+            g_boss_wait.at = now;
+            g_boss_wait.event = e.source_event;
         }
         // A host's stream of Insight events is capped (bbport security pass), by a rolling budget
         // so a first-encounter +1 and the kill a few seconds later both count (G2).
@@ -1035,6 +1241,13 @@ void PhantomOnEvent(const std::string& body) {
         g_drip.Add(give);
         Log("%s (event %u, %d Insight): +%d here%s (mode %s)", what, e.source_event, e.insight, give,
             e.boss ? " plus the native cooperator +1" : "", InsightModeName(g_cfg.insight));
+        break;
+    }
+    case PhantomEventKind::BossBonus: {
+        std::lock_guard<std::mutex> lk(g_guest_mu);
+        g_host_bonus = e.bonus;
+        g_host_bonus_at = now;
+        Log("host boss clear bonus: %d Blood Echoes (boss %u)", e.bonus, e.source_event);
         break;
     }
     case PhantomEventKind::Unknown:

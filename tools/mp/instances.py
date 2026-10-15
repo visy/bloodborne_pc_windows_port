@@ -225,7 +225,7 @@ def party_saves_from(user: Path, fresh: bool = False):
             shutil.rmtree(user / "savedata_party")
         # the last run's crash marker, story state, rot stacks and prologue reading: they belong to
         # the characters of the save copied again here
-        for state in ("party_state.json", "party_story.json", "party_rot.txt", "party_prologue.txt"):
+        for state in ("party_state.json", "party_story.json", "party_rot.txt", "party_prologue.txt", "party_stain.txt"):
             (user / state).unlink(missing_ok=True)
     if (user / "savedata").is_dir() and not (user / "savedata_party").exists():
         shutil.copytree(user / "savedata", user / "savedata_party")

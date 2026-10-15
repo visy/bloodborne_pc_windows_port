@@ -187,6 +187,10 @@ struct Values {
     /// host's value is sent to every guest, a guest's own value never counts. Off by default (ini
     /// party_friendly_fire; env BB_PARTY_FRIENDLY_FIRE=0/1 overrides at start). Live.
     std::atomic<bool> party_friendly_fire{false};
+    /// Statsaudit finding 5: lamps are shared by the whole party (a lamp any member lit is lit for
+    /// everyone, in each member's own save too). A party rule: the host's value counts. On by
+    /// default (ini party_share_lamps; env BB_PARTY_SHARE_LAMPS=0/1 overrides at start).
+    std::atomic<bool> party_share_lamps{true};
     /// ... within this many metres of the NPC (0 = anywhere on the same map; ini
     /// party_npc_talk_range; env BB_PARTY_NPC_TALK_RANGE overrides). Live, local.
     std::atomic<int> party_npc_talk_range{25};

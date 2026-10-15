@@ -93,8 +93,11 @@ constexpr std::size_t kMaxLampLitIds = 16;
 /// its object flag base 1AAB78x0 (T1 zone 7, x800..x899, id % 20 = 10 or 11) and the lamp-lit
 /// flags 7AAB02xx (T7 zone 0, 200..299).
 bool LampLitFlagAllowed(std::uint32_t id);
-std::string LampLitToJsonText(const std::vector<std::uint32_t>& ids);
-bool LampLitFromJsonText(const std::string& text, std::vector<std::uint32_t>* ids, std::string* error);
+/// `own`: lamps lit in the guest's OWN save (statsaudit finding 5, shared lamps: the host applies
+/// them only while its "Shared lamps" rule is on); otherwise a lamp the guest lit in the host's world.
+std::string LampLitToJsonText(const std::vector<std::uint32_t>& ids, bool own = false);
+bool LampLitFromJsonText(const std::string& text, std::vector<std::uint32_t>* ids, std::string* error,
+                         bool* own = nullptr);
 struct LampRequest {
     std::uint32_t id = kTravelNone; ///< the ReturnPointParam id the guest's lamp / headstone warp asked for
     std::uint64_t seq = 0;          ///< guest counter (diagnostics)

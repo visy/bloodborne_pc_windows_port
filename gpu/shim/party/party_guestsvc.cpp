@@ -105,17 +105,20 @@ bool LampLitFlagAllowed(std::uint32_t id) {
     return type == 7 && zone == 0 && n >= 200 && n < 300;  // 7AAB02xx lamp lit
 }
 
-std::string LampLitToJsonText(const std::vector<std::uint32_t>& ids) {
+std::string LampLitToJsonText(const std::vector<std::uint32_t>& ids, bool own) {
     json::Value v = json::Value::make_object();
     json::Value a = json::Value::make_array();
     for (std::uint32_t id : ids) {
         a.push(static_cast<unsigned>(id));
     }
     v.set("ids", std::move(a));
+    if (own) {
+        v.set("own", true);
+    }
     return json::dump(v, 0);
 }
 
-bool LampLitFromJsonText(const std::string& text, std::vector<std::uint32_t>* ids, std::string* error) {
+bool LampLitFromJsonText(const std::string& text, std::vector<std::uint32_t>* ids, std::string* error, bool* own) {
     json::Value v;
     std::string err;
     if (!json::parse(text, v, err)) {
@@ -137,6 +140,10 @@ bool LampLitFromJsonText(const std::string& text, std::vector<std::uint32_t>* id
             out.push_back(std::uint32_t(id));
         }
         *ids = std::move(out);
+        if (own) {
+            const json::Value* o = v.find("own");
+            *own = o && o->type == json::Value::Type::Bool && o->boolean;
+        }
         return true;
     } catch (const std::exception& e) {
         if (error) {
@@ -268,6 +275,9 @@ bool GuestServicesEnabledFromEnv(const char* v) {
 #include "party_split.h"
 #include "party_b2.h"
 #include "party_items.h"
+#include "party_balance.h"
+#include "party_guestvals_rules.h"
+#include "lamp_travel_rules.h"
 #include "bbport_game_menu.h"
 #include "bbport_settings.h"
 
@@ -1379,14 +1389,129 @@ bool GuestServicesOnLampLit(int slot, const std::string& body, std::string* why)
         return false;
     }
     std::vector<std::uint32_t> ids;
-    if (!LampLitFromJsonText(body, &ids, why)) {
+    bool own = false;
+    if (!LampLitFromJsonText(body, &ids, why, &own)) {
+        return false;
+    }
+    if (own && !BbSettings::Get().party_share_lamps.load()) {
+        if (why) {
+            *why = "the guest's own lamps: shared lamps are off on the host";
+        }
         return false;
     }
     std::lock_guard<std::mutex> lk(g_lit_mu);
     if (g_lit_in.size() < 16) {
-        g_lit_in.emplace_back(slot, std::move(ids));
+        g_lit_in.emplace_back(own ? -1 - slot : slot, std::move(ids));
     }
     return true;
+}
+
+/// Statsaudit finding 5 (user decision 2026-10-15: lamps are shared by the whole party). Guest, in
+/// the host's world: the lamps lit in its OWN save that the host's world lacks go to the host
+/// (EVENT lamp_lit with "own"), once per join (again after 20 s, at most 3 times, while the host's
+/// mirror still lacks them). The host lights them in its world (its save), the world mirror shows
+/// them in the guest's travel lists, and C2 brings the host's lamps into every guest's own save.
+/// The host's "Shared lamps" rule off: nothing is sent, and C2 leaves lamps out of the own save.
+std::vector<std::uint32_t> g_lit_own_out;  // under g_lit_mu
+
+void GuestOwnLampsTick(const GameSnapshot& s) {
+    static double joined_at = -1, last_sent = -1;
+    static int tries = 0;
+    static int share_was = -1;
+    balance::Rules hr;
+    const bool known = balance::HostRules(&hr);
+    const int share = known ? int(hr.share_lamps) : -1;
+    if (share >= 0 && share != share_was) {
+        // C2: lamps into the own save only while the host shares them.
+        progress::Policy p = progress::CurrentPolicy();
+        p.mode[static_cast<int>(progress::Category::lamp_unlocked)] =
+            share ? progress::SyncMode::SetOnly : progress::SyncMode::Off;
+        progress::SetPolicy(p);
+        Log("lamps: the host's rule: shared lamps %s (the host's lamps %s the own save)", share ? "on" : "off",
+            share ? "go into" : "stay out of");
+        share_was = share;
+    }
+    if (s.session_role != kSessionRoleClient || !s.world_up || s.loading) {
+        if (s.session_role != kSessionRoleClient) {
+            joined_at = -1;
+            tries = 0;
+        }
+        return;
+    }
+    if (joined_at < 0) {
+        joined_at = Now();
+        last_sent = -1;
+    }
+    if (share != 1 || progress::FlagLoadMode() != 1 || Now() - joined_at < 8.0 ||
+        (last_sent >= 0 && Now() - last_sent < 20.0)) {
+        return;
+    }
+    last_sent = Now();
+    std::vector<std::uint32_t> ids;
+    std::string list, into_own;
+    int written = 0;
+    const auto mine = [](std::uint32_t id) {
+        bool v = false;
+        return progress::ReadFlagOwnSave(id, &v) && v;
+    };
+    const auto theirs = [](std::uint32_t id) {
+        bool v = false;
+        return progress::HostWorldFlag(id, &v) && v;
+    };
+    std::string held;
+    for (const lamptravel::Lamp& l : lamptravel::kLamps) {
+        std::vector<std::uint32_t> add = lampshare::Missing(l.aab, l.n, mine, theirs);
+        const std::uint32_t boss = lampshare::BlockBossFlag(l.aab);
+        if (!add.empty() && lampshare::HeldForBoss(l.n, mine(boss), theirs(boss))) {
+            held += " " + std::to_string(lamptravel::ReturnPoint(l));
+            add.clear();  // sent at a later join, once the host's world has beaten that boss too
+        }
+        if (!add.empty()) {
+            list += " " + std::to_string(lamptravel::ReturnPoint(l));
+        }
+        for (std::uint32_t id : add) {
+            if (LampLitFlagAllowed(id)) {
+                ids.push_back(id);
+            }
+        }
+        // The other way: the host's lamps into the own save. C2 carries the lamp-lit flag 7AAB02xx,
+        // but the lamp object's base+10 / base+11 (the headstone list's flag) are runtime-category
+        // flags it never writes: without them the own save's headstones would not list the lamp.
+        const std::vector<std::uint32_t> take = lampshare::Missing(l.aab, l.n, theirs, mine);
+        bool any = false;
+        for (std::uint32_t id : take) {
+            if (progress::WriteFlagOwnSave(id, true)) {
+                ++written;
+                any = true;
+            }
+        }
+        if (any) {
+            into_own += " " + std::to_string(lamptravel::ReturnPoint(l));
+        }
+    }
+    if (written > 0) {
+        Log("lamps: %d flag(s) of the host's lit lamps written into the own save (shared lamps; lamps%s)", written,
+            into_own.c_str());
+        RequestGameSave("shared lamps from the host's world");
+    }
+    if (!held.empty() && tries < 3) {
+        Log("lamps: held back (their area's boss is alive in the host's world, beaten in the own save): lamps%s",
+            held.c_str());
+    }
+    if (tries >= 3) {
+        return;
+    }
+    ++tries;
+    if (ids.empty()) {
+        tries = 3;  // nothing the host lacks
+        Log("lamps: every lamp of the own save is lit in the host's world too");
+        return;
+    }
+    Log("lamps: %zu flag(s) of lamps lit in the own save and not in the host's world (lamps%s): sent to the host "
+        "(shared lamps, try %d)",
+        ids.size(), list.c_str(), tries);
+    std::lock_guard<std::mutex> lk(g_lit_mu);
+    g_lit_own_out.insert(g_lit_own_out.end(), ids.begin(), ids.end());
 }
 
 /// Guest, in the host's world (load mode 1), once a second: a lamp the guest lit there sets its
@@ -1950,13 +2075,20 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
     }
     if (role == PartyRole::Guest) {
         GuestLampLitTick(s);
-        std::vector<std::uint32_t> lit;
+        GuestOwnLampsTick(s);
+        std::vector<std::uint32_t> lit, own;
         {
             std::lock_guard<std::mutex> lk(g_lit_mu);
             lit.swap(g_lit_out);
+            own.swap(g_lit_own_out);
         }
         if (!lit.empty() && link) {
             link->send_event(0, kLampLitEventName, LampLitToJsonText(lit));
+        }
+        for (std::size_t at = 0; link && at < own.size(); at += kMaxLampLitIds) {
+            const std::vector<std::uint32_t> part(own.begin() + at,
+                                                  own.begin() + std::min(own.size(), at + kMaxLampLitIds));
+            link->send_event(0, kLampLitEventName, LampLitToJsonText(part, true));
         }
     } else if (role == PartyRole::Host) {
         std::deque<std::pair<int, std::vector<std::uint32_t>>> lit;
@@ -1964,15 +2096,26 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
             std::lock_guard<std::mutex> lk(g_lit_mu);
             lit.swap(g_lit_in);
         }
-        for (const auto& [slot, ids] : lit) {
+        bool wrote_own = false;
+        for (const auto& [tagged, ids] : lit) {
+            const bool own = tagged < 0;
+            const int slot = own ? -1 - tagged : tagged;
             std::string list;
             for (std::uint32_t id : ids) {
                 bool before = false;
                 progress::ReadFlag(id, &before);
                 const bool ok = progress::WriteFlagOwnSave(id, true);  // the host's world (load mode 0)
                 list += " " + std::to_string(id) + (before ? "(was set)" : ok ? "" : "(NOT written)");
+                wrote_own = wrote_own || (own && ok && !before);
             }
-            Log("lamp: slot %d lit a lamp in the host's world: set%s", slot, list.c_str());
+            if (own) {
+                Log("lamps: slot %d's own save has lamps this world lacked (shared lamps): set%s", slot, list.c_str());
+            } else {
+                Log("lamp: slot %d lit a lamp in the host's world: set%s", slot, list.c_str());
+            }
+        }
+        if (wrote_own) {
+            RequestGameSave("shared lamps from a guest's save");
         }
     }
     for (const auto& [slot, r] : in) {
