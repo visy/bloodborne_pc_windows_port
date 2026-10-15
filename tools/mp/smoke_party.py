@@ -41,6 +41,9 @@ DEFAULT_ROOT = (AGENT_ROOT / "mptest") if AGENT_ROOT.parent.name == "agents" els
 # Fixture flags (docs/party/b2_seamless.md 6.7, ERSC_PARITY.md D10).
 GASCOIGNE_CLEAR = "12411800,12411802,12411803,12414800,12414801,12414802,12414223,2412,9457,2410"
 CLERIC_CLEAR = "12411700,12411701,12411702,12411703,12414700,12414701,12414223,72410511,2411,9456,2410"
+# + the boss reward's ledger flag (lot 50000010, Sword Hunter Badge): given again at the kill, so the
+# summoned guest gets an item box (its OK row, pard3)
+CLERIC_CLEAR_REWARD = CLERIC_CLEAR + ",60009036"
 GASCOIGNE_TRIGGER = "-48.76:-40.92:72.44"  # region 2412815 (the intro's trigger box)
 CLERIC_TRIGGER_HOST = "-136.5:-26.6:52.8"   # region 2412805 (first fight)
 CLERIC_SPOT_GUEST = "-134.6:-26.6:54.7"
@@ -75,15 +78,14 @@ def phase_s2():
         "host_kill=2410800@12%m24_01",                            # the boss kill (its defeat path)
     ])
     g1 = ",".join([
-        "award_lot=10002420",               # an item box on the summoned guest (its OK row, closed by Cross)
-        "guest_press=0x4000@16",
         "guest_move=%s@50%%m24_01" % CLERIC_SPOT_GUEST,
+        "guest_press=0x4000@16%m24_01", "guest_press=0x4000@4%m24_01",  # Cross: OK on the reward's item box
         "guest_leave@30%m24_01",            # Leave right after the kill (no load between), then Rejoin
         "guest_rejoin@8",
     ])
     return dict(
         name="s2", seconds=560,
-        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + CLERIC_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1"],
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + CLERIC_CLEAR_REWARD, "BB_PARTY_TEST_INVINCIBLE=1"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1,
               # crash-restarted games: no second run of the chain; the restarted host Leaves last
               "0:BB_PARTY_DIRECTOR_TEST_RESTART=host_leave@45", "1:BB_PARTY_DIRECTOR_TEST_RESTART=none",
@@ -242,15 +244,15 @@ def check_s1(v, L):
 
 def check_s2(v, L, d: Path):
     need(v, L, "s2 join: 3 players", 0, r"cooperators [01] -> 2")
-    ib = need(v, L, "s2 item box on the summoned guest", 1, r"item notice up on a summoned guest")
-    if ib is not None:
-        need(v, L, "s2 item box OK row closes it (Cross)", 1, r"item notice closed", ib)
     tr = need(v, L, "s2 party lamp travel to the Cleric Beast", 0, r"travel step \d+/\d+: host_warp to lamp 2412952")
     k = need(v, L, "s2 boss kill (host)", 0, r"host boss kill", tr or 0)
     if k is not None:
         need(v, L, "s2 boss kill reached guest 1", 1, r"host boss kill", k)
         need(v, L, "s2 boss kill reached guest 2", 2, r"host boss kill", k)
         need(v, L, "s2 the party stays after the boss (K10)", 0, r"K10: boss-clear leave suppressed", k)
+        ib = need(v, L, "s2 reward item box on the summoned guest", 1, r"item notice up on a summoned guest", k)
+        if ib is not None:
+            need(v, L, "s2 item box OK row closes it (Cross)", 1, r"item notice closed", ib)
     lv = need(v, L, "s2 Leave after the boss kill", 1, r"guest_leave: Party > Leave pressed", k or 0)
     rj = need(v, L, "s2 Rejoin pressed", 1, r"guest_rejoin: Party > Rejoin pressed", lv or 0) if lv else None
     if rj is not None:
@@ -277,7 +279,7 @@ def check_s2(v, L, d: Path):
         hl = need(v, L, "s2 host Leave (restarted host)", 0, r"host_leave: Party > Leave pressed", h[0])
         if hl is not None:
             for i in (1, 2):
-                t = need(v, L, "s2 host Leave: guest %d out" % i, i, r"the host ended the party", hl, hl + 15)
+                t = need(v, L, "s2 host Leave: guest %d out" % i, i, r"the host ended the party|host lost \(the host left its room\)", hl, hl + 15)
     check_common(v, L, "s2")
 
 
