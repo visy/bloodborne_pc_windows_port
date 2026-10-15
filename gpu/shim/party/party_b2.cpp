@@ -652,10 +652,14 @@ BB_COOP_SYSV u64 MatchCheckHook(u64 session) {
     return reinterpret_cast<Fn>(Guest(kBeginLeave))(session);
 }
 
+// A5: right after a cross-map join, until the arrival re-join starts (1 s): the game's own
+// summon load (Lua OnBeJoinStart, K6) is held - it built the guest's own map as the host's world.
+std::atomic<bool> g_carry_hold{false};
 // K6: Lua OnBeJoinStart_* after the flag snapshot.
 BB_COOP_SYSV void JoinStartHook(u64 lua) {
-    if (g_on.load() && g_rejoin.load()) {
-        Log("K6: OnBeJoinStart suppressed (B2 re-join drives the reload)");
+    if (g_on.load() && (g_rejoin.load() || g_carry_hold.load())) {
+        Log("K6: OnBeJoinStart suppressed (%s)", g_carry_hold.load() ? "A5: the arrival re-join after a cross-map join loads the host's map"
+                                                                    : "B2 re-join drives the reload");
         return;
     }
     using Fn = void(BB_COOP_SYSV*)(u64);
@@ -1057,7 +1061,6 @@ std::atomic<bool> g_fell_back{false};  // a B1 fallback ran: clean the network f
 // Where every member is, from the party link's vitals (the director, every tick): map (0xAABBCCDD)
 // and position as that member's own game reads them.
 std::vector<Where> g_where;  // main thread
-std::atomic<bool> g_keep_join_snapshot{false};  // A5: BeginRejoin keeps the queued join snapshot once
 std::atomic<int> g_apart{0};  // members whose area differs from ours (K5, the host watchdog)
 std::atomic<bool> g_host_alone_next{false};  // host: the next own load is an alone travel
 std::atomic<double> g_host_alone_at{0};
@@ -4446,6 +4449,7 @@ void CarryArrivalTick(const GameSnapshot& s, double now) {
     }
     if (now - at > 60.0) {
         g_carry_join_at = -1;
+        g_carry_hold = false;
         Log("A5: cross-map join: no arrival load within 60 s (role %d, %s); the gather path stays", Role(),
             MapName(s.map_id).c_str());
         return;
@@ -4459,15 +4463,16 @@ void CarryArrivalTick(const GameSnapshot& s, double now) {
     }
     if ((host >> 16) == (s.map_id >> 16)) {
         g_carry_join_at = -1;
+        g_carry_hold = false;
         Log("A5: cross-map join: this guest is in the host's map %s (%.1f s after the join)", MapName(host).c_str(),
             now - at);
         return;
     }
-    // At once (live a11e): the game's own summon load started 0.8 s after the client role and
-    // loaded the guest's OWN map as the host's world (the Dream, in host-world mode); our re-join
-    // set in the same frame makes K6 hold that start and drives the load into the host's map.
+    // 1 s after the join (live): the game first takes the join's own snapshot (started at once,
+    // a5d / a11f / a11g, the load built the guest's own Dream); its own summon load meanwhile
+    // (a11e: 0.8 s after the client role, also into the Dream) is held by K6 (g_carry_hold).
     static double tried = -100;
-    if (now - tried < 5.0) {
+    if (now - at < 1.0 || now - tried < 5.0) {
         return;
     }
     tried = now;
@@ -4477,9 +4482,8 @@ void CarryArrivalTick(const GameSnapshot& s, double now) {
         Log("A5: cross-map join: no lamp of the host's map %s known; waiting", MapName(host).c_str());
         return;
     }
-    g_keep_join_snapshot = true;
     const bool started = TravelAlone(t, AloneWhy::Join);
-    g_keep_join_snapshot = false;
+    g_carry_hold = false;
     if (started) {
         g_carry_join_at = -1;
         Log("A5: cross-map join: client in %s, the host in %s: one load into the host's map (lamp %u, then beside "
@@ -5891,7 +5895,7 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
                 g_carry_join_at = Now();  // A5: the arrival load into the host's map (CarryArrivalTick)
                 Log("A5: joined from another map (own %s, the host's room in %s): the arrival load follows",
                     MapName(s.map_id).c_str(), MapName(room.area).c_str());
-                CarryArrivalTick(s, Now());  // this frame: before the game's own summon load starts
+                g_carry_hold = true;  // K6 holds the game's own summon load until the arrival starts
             }
         } else {
             Log("direct summon: FAILED (%s; %.1f s after the request): %s", fail_why, now - asked_at,
@@ -7088,14 +7092,7 @@ bool BeginRejoin(const TravelIntent& t, bool main_thread, bool solo) {
     if (main_thread) {
         // Back to "joined, awaiting the host's snapshot" (event 8/9 state); the host's 0x11 / 0x10
         // are read by 0x1783160 only in state 1 (it also clears the 60 s state timer).
-        if (g_keep_join_snapshot.exchange(false)) {
-            // A5 (live a11f): the arrival right after a cross-map join: the join's own snapshot
-            // (0x19 with the host's map, 0x11, 0x10) is still queued and is the current one;
-            // dropping it left the load without the host's map (it built the Dream again).
-            Log("guest: the join's own snapshot packets are kept for the arrival load");
-        } else {
-            DrainSnapshotQueue(solo ? "own travel" : "follow");
-        }
+        DrainSnapshotQueue(solo ? "own travel" : "follow");
         const u64 flow = Slot(kSlotFlow);
         const int one = 1;
         const float zero = 0.0f;
