@@ -213,6 +213,7 @@ struct Test {
     bool st_seq_on = false;
     std::string st_last_texts;
     Clock::time_point st_at{};
+    bool god = false;     // god: the own chr kept invincible (test aid)
     bool log_pos = false; // log_pos: the player's area and position (FrpgNetMan +0xa7c / +0xaac) every 3 s
     Clock::time_point pos_at{};
     const char* ring = nullptr; // the event to raise once
@@ -2175,6 +2176,16 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         const bool ok = WritePlayerInsight(t.insight);
         Log("test: Insight %d -> %d %s", before, t.insight, ok ? "written" : "NOT written (no player record)");
     }
+    // god: this player's chr stays invincible (chr +0x1E1 bit 14, as a11_move), e.g. a scripted
+    // event walk through an area full of enemies (B6 live triggers).
+    if (t.god && s.world_up && !s.loading && s.player) {
+        std::uint32_t f = 0;
+        if (SafeRead(s.player + 0x1e1, &f, 4) && !(f & (1u << 14))) {
+            f |= 1u << 14;
+            SafeWrite(s.player + 0x1e1, &f, 4);
+            Log("test: god: invincible (chr +0x1E1 bit 14)");
+        }
+    }
     if (t.log_pos && s.world_up && !s.loading && Seconds(t.pos_at, now) >= 1.0) {
         // Every second: the physics position (as DescribeHere; the map man's +0xAAC is the last
         // grounded / area position and goes stale after a re-created PlayerIns) and the area id.
@@ -2665,6 +2676,8 @@ void PartyDirector::ConfigureFromEnv() {
                     st.test.a11_entity = id;
                     st.test.a11_kill_after = after;
                 }
+            } else if (item == "god") {
+                st.test.god = true;
             } else if (item == "log_pos") {
                 st.test.log_pos = true;
             } else if (item.rfind("echoes=", 0) == 0) {
