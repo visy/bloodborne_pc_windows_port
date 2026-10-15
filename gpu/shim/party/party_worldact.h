@@ -50,6 +50,12 @@ constexpr double kRateWindow = 10.0;
 /// May a guest set (clear = false) or clear (clear = true) flag `id` in the host's world, the host
 /// standing in map `host_map` (0xAABBCCDD; areas must match for map flags)?
 bool WorldActionAllowed(std::uint32_t id, bool clear, std::uint32_t host_map);
+/// Rule "party quest progress is shared by everyone" (pard3): a boss a guest killed while it stood
+/// alone in a map the host is not in (split travel) is the host's progress too: its defeat flag
+/// (boss_defeated, set only) of the area the guest stands in goes to the host's save (no rewards
+/// for the host; the guest's game gave its own). Only while apart: in the host's world the
+/// host's own game has the kill.
+bool BossKillActionAllowed(std::uint32_t id, bool clear, std::uint32_t member_map, bool apart);
 
 /// An NPC gift trigger: the flag a talk script sets to hand over its gift, which common event 9040
 /// (slots 2-37) waits for to award the gift's item lot (9042, 9045-9052, 9054-9064, 9066, 9067, 9069,
@@ -68,7 +74,7 @@ bool NpcGiftTrigger(std::uint32_t id);
 /// clears the trigger as 9100 would. -1: not such a trigger.
 std::int32_t RepeatGiftLot(std::uint32_t trigger);
 
-constexpr std::size_t kMaxKicks = 4, kMaxFog = 2;
+constexpr std::size_t kMaxKicks = 4, kMaxFog = 2, kMaxStory = 2;
 struct Request {
     std::uint32_t map = 0;  ///< the guest's map when it sent this (logged; not trusted)
     std::vector<std::uint32_t> set, clr;
@@ -78,8 +84,11 @@ struct Request {
     /// B2: guest-entered flags of boss fogs (BossGate::guest_flag) the guest just went through:
     /// the host opens that fight (BossGateHostOpens). Never written into anyone's save.
     std::vector<std::uint32_t> fog;
+    /// D10: story events (StoryTrigger::event) whose trigger spot the guest reached: the host's chr
+    /// runs the event (its scene plays for the whole party). Never written into anyone's save.
+    std::vector<std::uint32_t> story;
     bool operator==(const Request& o) const {
-        return map == o.map && set == o.set && clr == o.clr && kick == o.kick && fog == o.fog;
+        return map == o.map && set == o.set && clr == o.clr && kick == o.kick && fog == o.fog && story == o.story;
     }
 };
 std::string RequestToJson(const Request& r);
@@ -180,6 +189,57 @@ struct FirstFightSpot {
     bool scene = false;
 };
 const FirstFightSpot* FirstFightSpotFor(std::uint32_t intro_event);
+
+/// D10 (pard3): a story scene whose event only the host's chr can run (4[3] chr type 0 next to a
+/// distance condition), so a guest standing at the spot started nothing. The Blood Moon (m32_00
+/// 13201803, `ボス撃破後花嫁出現`: Rom dead (13201800) -> the player within 12 m of Yharnam's
+/// phantom 3200801 -> scene 32000000 with the time of day 3, 70002802, story warp 2802958). The
+/// guest reports the spot (world_action "story"); the host's chr visits it like a guest-started
+/// first fight (FirstFightSpot), stays through the scene (live mirror for every guest) and is
+/// put back; the story warp then asks the host "Travel with the party?" (P8).
+struct StoryTrigger {
+    std::uint32_t event;       ///< the host's event; its own flag is on once it ran
+    std::uint32_t needs_flag;  ///< must be on (the event's 1003[101] / 3[0] gate)
+    std::uint32_t done_flag;   ///< on once the scene ran
+    float centre[3];           ///< the distance condition's target (MSB position)
+    float radius;              ///< the condition's distance
+    float spot[3];             ///< where the host's chr stands for it (inside the radius, on ground)
+};
+const std::vector<StoryTrigger>& StoryTriggers();
+const StoryTrigger* StoryTriggerByEvent(std::uint32_t event);
+/// The trigger's map block (0xAABB0000 of the event id) is `map`'s.
+bool StoryTriggerInBlock(const StoryTrigger& t, std::uint32_t map);
+/// Guest: report it now? In its block, the gate flag on, not run yet, within the radius (`me`
+/// null: position unknown, no).
+bool StoryTriggerDue(const StoryTrigger& t, std::uint32_t map, bool needs_on, bool done_on, bool event_done,
+                     const float* me);
+
+/// D6 (pard3): a gate that asks for a key item with EMEVD 3[4] (IfItemHeld) and an action button
+/// in the same event. Cathedral Ward's plaza gate (m24_00 event 12400760, `円形広場の門の開閉`):
+/// group 1 = Hunter Chief Emblem (goods 4011) NOT held + the button at object 2401220 -> the
+/// "need the emblem" dialog; group 2 = held + the button -> the gate opens (12400160). A summoned
+/// guest's key items read 0 in the host's world (verify_c6), so its copy always took group 1 even
+/// with the emblem in its own save: in vanilla only the host could open the gate. With the emblem
+/// in the guest's progress (its own pickup flag, or the host world's: the emblem is a shared key
+/// treasure, F2), the guest's copy has both checks inverted (the 0 it reads opens the gate). The
+/// host's world then gets 12400160 as a world action and the gate's far-side lever ObjAct
+/// (far_kick) is kicked there, so the host's copy of the event opens the gate with its animation.
+struct KeyItemGate {
+    std::int32_t event;      ///< the gate's event
+    std::int32_t goods;      ///< the 3[4] item (equip type 3, goods)
+    std::uint32_t own_flag;  ///< the item's pickup flag (ItemLotParam getItemFlagId)
+    std::int32_t held_group; ///< the condition group whose 3[4] checks "held" in the data
+    std::uint32_t open_flag; ///< the flag the event sets once the gate is open
+    std::int32_t far_kick;   ///< the ObjAct event id that opens it in the same event (no player anim)
+};
+const KeyItemGate* KeyItemGateFor(std::int32_t event_id);
+const KeyItemGate* KeyItemGateByOpenFlag(std::uint32_t open_flag);
+/// The 3[4] "held state" (its last argument) this game's copy of the gate should check for
+/// condition `group`: the data's own (held_group: 1, the other: 0), both flipped when `invert`.
+std::uint8_t KeyItemGateHeldState(const KeyItemGate& g, int group, bool invert);
+/// Guest: invert the gate's checks? Only a summoned guest (role 6, the host-world overlay) whose
+/// own save or the host's world has the item's pickup flag.
+bool KeyItemGateInvert(bool summoned_guest, bool own_flag, bool host_world_flag);
 /// The visit is over (put the host back): the event went on (the boss-started flag, the intro's
 /// boss-area flag 9180 - not for a chained spot - or a cutscene) or it timed out.
 bool FirstFightVisitDone(bool host_flag_on, bool flag9180_on, bool cutscene, double visit_s, bool chained = false,

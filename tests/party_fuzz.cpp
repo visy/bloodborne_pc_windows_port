@@ -2046,6 +2046,30 @@ void regress_auth_throttle() {
         CHECK(many.Tracked() <= party::kAuthTrackedAddrs);
         CHECK(many.Locked(a, 30));
     }
+    {  // the global budget: a guesser spread over many addresses (one try each)
+        AuthThrottle g;
+        const std::uint32_t member = 0x0100007f, stranger = 0x05050505;
+        g.Success(member);  // was in the party before
+        std::int64_t now = 1000, left = 0;
+        bool global = false;
+        bool started = false;
+        for (int i = 0; i < party::kAuthGlobalFree; ++i) started |= g.Fail(0x0a000000 + i, now + i);
+        CHECK(!started && !g.GlobalLocked(now + 100));
+        CHECK(g.Fail(0x0b000000, now + 100));  // one more within the minute: the global lockout
+        CHECK(g.GlobalLocked(now + 101) && g.global_lockouts() == 1);
+        CHECK(g.Locked(stranger, now + 101, &left, &global) && global && left <= party::kAuthGlobalLockoutMs);
+        CHECK(!g.Locked(member, now + 101));  // a member who was in still gets in
+        CHECK(!g.Locked(stranger, now + 100 + party::kAuthGlobalLockoutMs));
+        // spread slowly (30 a minute) it never starts
+        AuthThrottle s;
+        bool any = false;
+        for (int i = 0; i < 300; ++i) any |= s.Fail(0x0c000000 + i, 1000 + i * (party::kAuthFailWindowMs / party::kAuthGlobalFree + 50));
+        CHECK(!any && s.global_lockouts() == 0);
+        // the next global lockout doubles, capped
+        now += 100 + party::kAuthGlobalLockoutMs;
+        for (int i = 0; i <= party::kAuthGlobalFree; ++i) g.Fail(0x0d000000 + i, now + i);
+        CHECK(g.global_lockouts() == 2 && g.Locked(stranger, now + 2 * party::kAuthGlobalLockoutMs - 100));
+    }
     {  // a real host over loopback
         party::LinkCallbacks cb;
         cb.on_event = [](int, std::uint64_t, const std::string&, const std::string&) {};

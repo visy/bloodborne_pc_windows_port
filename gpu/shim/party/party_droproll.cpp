@@ -151,12 +151,17 @@ bool DropSeedFromJson(const std::string& text, DropSeed* out, std::string* error
     }
 }
 
+bool DropRollBeforeArrival(bool world_up, bool loading, std::uint32_t map) {
+    return !world_up || loading || map == 0xffffffffu || map == 0;
+}
+
 } // namespace coop::droproll
 
 #ifndef BB_PARTY_DROPROLL_NO_GAME
 
 #include "coop_hooks.h"
 #include "game_state.h"
+#include "party_balance.h"
 #include "party_link.h"
 #include "seamless_rules.h"
 
@@ -214,6 +219,8 @@ std::atomic<int> g_mode{0};  // 0 none, 1 host, 2 guest (worldact::Tick)
 std::mutex g_mu;
 DropSeed g_seed;             // host: its own; guest: the host's (salt 0 = none yet)
 bool g_in_drop = false;      // main thread: inside our roll wrapper
+bool g_in_own_drop = false;  // main thread: inside an own (unshared) roll (C4 discovery rot only)
+float g_disc_before_rot = 0; // the discovery before the C4 rot took its stacks off (0: no rot)
 float g_disc_override = 0;   // the discovery written into the request (0 = the game's own)
 float g_disc_used = 0;       // the discovery the request rolled with (logged)
 std::string g_result;        // the items the wrapped roll dropped
@@ -273,11 +280,22 @@ BB_COOP_SYSV void DropInsertEntry(u64, u64 rec, u64, u64, u64, u64) {
 }
 
 BB_COOP_SYSV void LotRollEntry(u64 req, u64, u64, u64, u64, u64) {
-    if (!g_in_drop || !req) {
+    if ((!g_in_drop && !g_in_own_drop) || !req) {
         return;
     }
     float mine = 0;
     if (!SafeGet(req + 4, &mine)) {
+        return;
+    }
+    g_disc_before_rot = 0;
+    if (g_in_own_drop) {
+        // C4 item discovery rot on an unshared roll: only the stacks, nothing else changes.
+        const float rot = coop::balance::RotDropDiscovery(mine);
+        if (rot != mine) {
+            g_disc_before_rot = mine;
+            SafeWrite(req + 4, &rot, sizeof rot);
+        }
+        g_disc_used = rot;
         return;
     }
     if (g_test_lot > 0) {
@@ -286,6 +304,13 @@ BB_COOP_SYSV void LotRollEntry(u64 req, u64, u64, u64, u64, u64) {
     if (g_disc_override > 0.0f && mine != g_disc_override) {
         SafeWrite(req + 4, &g_disc_override, sizeof g_disc_override);
         mine = g_disc_override;
+    }
+    // C4 item discovery rot: this player's stacks come off its own roll (after the test aid / the
+    // host's value, so a forced discovery shows the rot too).
+    if (const float rot = coop::balance::RotDropDiscovery(mine); rot != mine) {
+        g_disc_before_rot = mine;
+        SafeWrite(req + 4, &rot, sizeof rot);
+        mine = rot;
     }
     g_disc_used = mine;
 }
@@ -323,13 +348,33 @@ BB_COOP_SYSV void DropRollReplace(u64 mim, u64 handle_arg, u64 npc) {
     }
     const u64 gsm = Ptr(kGsm);
     const bool guest_ok = mode == 2 && LocalSessionRole() == 6;
+    if (guest_ok && g_on && g_shared) {
+        // dropdisc (live): an enemy the host killed while this guest was still loading in (title
+        // join) dies again on the guest's game as its world is built; that roll read map "-" and
+        // so another seed than the host's. The kill was before this player was there: no drop on
+        // this game (a joiner in vanilla gets nothing from enemies already dead).
+        const GameSnapshot gs = ReadGameState(false);
+        if (DropRollBeforeArrival(gs.world_up, gs.loading, gs.map_id)) {
+            Log("enemy drop roll on this game (role 6): chr handle %#x, lot %d: killed before this guest's world "
+                "was up (map %s): no drop here", handle, k.lot, MapName(gs.map_id).c_str());
+            return;
+        }
+    }
     const bool shared = g_on && g_shared && gsm && seed.salt != 0 && k.lot > 0 && (mode == 1 || guest_ok);
     if (!shared) {
-        if (g_log_rolls) {
-            Log("enemy drop roll on this game (role %d): chr handle %#x, lot %d, own roll%s", LocalSessionRole(),
-                handle, k.lot, g_shared ? (seed.salt ? "" : " (no host seed yet)") : " (shared roll off)");
-        }
+        g_disc_used = 0;
+        g_in_own_drop = true;
         g_roll_original(mim, handle_arg, npc);
+        g_in_own_drop = false;
+        if (g_log_rolls || g_disc_before_rot > 0.0f) {
+            char rot[96] = "";
+            if (g_disc_before_rot > 0.0f) {
+                std::snprintf(rot, sizeof rot, ", item discovery %.2f (rot: %.2f before)", double(g_disc_used),
+                              double(g_disc_before_rot));
+            }
+            Log("enemy drop roll on this game (role %d): chr handle %#x, lot %d, own roll%s%s", LocalSessionRole(),
+                handle, k.lot, g_shared ? (seed.salt ? "" : " (no host seed yet)") : " (shared roll off)", rot);
+        }
         return;
     }
     if (const u64 chr = ChrOfHandle(handle)) {
@@ -376,10 +421,12 @@ BB_COOP_SYSV void DropRollReplace(u64 mim, u64 handle_arg, u64 npc) {
         }
     }
     Log("shared drop roll (role %d): map %s entity %d (key %d) lot %d gen %u -> seed %08x, draw %.4f, item "
-        "discovery %.2f (%s)%s%s: %s",
+        "discovery %.2f (%s%s)%s%s: %s",
         LocalSessionRole(), MapName(k.map).c_str(), k.entity, k.entity2, k.lot, seed.gen, s,
         double(draw >> 9) / 8388608.0, double(g_disc_used),
-        host_disc ? "host's" : g_test_disc > 0.0f ? "test aid" : "own", g_test_lot > 0 ? " (test lot)" : "", pick,
+        host_disc ? "host's" : g_test_disc > 0.0f ? "test aid" : "own",
+        g_disc_before_rot > 0.0f ? (std::string(", rot: ") + std::to_string(g_disc_before_rot).substr(0, 4) + " before").c_str() : "",
+        g_test_lot > 0 ? " (test lot)" : "", pick,
         g_result_n ? g_result.c_str() : "nothing dropped");
 }
 

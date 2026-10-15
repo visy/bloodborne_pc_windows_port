@@ -1425,9 +1425,14 @@ bool LayerTrapHandler(void* context, void* fault_address) {
         if (!layer_trap_armed.erase(block)) {
             return false;
         }
+        // Writable before the hit can be seen: LayerProcessTraps sets the trap again for a
+        // watched block (LayerArmTraps, under this lock). Unprotected after the lock, that new
+        // trap was taken away again while the block still counted as armed: the game's next
+        // writes there went unseen and its VRAM copy stayed stale (stretched "exploding"
+        // vertices). From deadinside's Supermedo/bloodborne_pc 72e5c8ce.
+        LayerUnprotect(block); // the write runs again, now through
         layer_trap_hits.emplace_back(block, BbHost::GetFaultRegisters(context).rip);
     }
-    LayerUnprotect(block); // the write runs again, now through
     layer_trap_faults.fetch_add(1, std::memory_order_relaxed);
     layer_trap_pending.store(true, std::memory_order_release);
     return true;

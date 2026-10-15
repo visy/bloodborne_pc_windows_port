@@ -303,7 +303,7 @@ Every byte from a peer is untrusted until the AUTH proof is checked, and still c
 | Threat | Defence | Test |
 |---|---|---|
 | Garbage / oversized frames before the handshake | 64 KiB handshake frame cap, connection dropped; 16 pending handshakes in all, 4 per address; a handshake that never finishes times out | party-security-test `regress_link`, fuzz `linkhost` |
-| Online password guessing | `AuthThrottle` (party_link.h): 5 wrong proofs per address per minute are free (typos, an old code), the 6th locks the address out for 30 s, every later wrong proof doubles it (to 15 min); a locked-out address is refused at HELLO with "too many wrong passwords from your address: try again in N s", the right password included. 4096 addresses tracked at most. Offline guessing of a captured handshake pays Argon2i (8 MiB, 3 passes) per guess | `regress_auth_throttle` (pure rule + a real host over loopback) |
+| Online password guessing | `AuthThrottle` (party_link.h): 5 wrong proofs per address per minute are free (typos, an old code), the 6th locks the address out for 30 s, every later wrong proof doubles it (to 15 min); a locked-out address is refused at HELLO with "too many wrong passwords from your address: try again in N s", the right password included. 4096 addresses tracked at most. **Global budget (0.6.2)**: a guesser spread over many addresses (one try each) is caught by the sum: more than 30 wrong proofs from all addresses together within a minute make the host refuse every address that has not passed AUTH before ("the host got too many wrong passwords (from several addresses) and takes no new players now: try again in N s") for 60 s, doubling to 15 min, forgotten after an hour without a wrong proof; the last 64 addresses that got in (members, a crash re-join) still pass. Offline guessing of a captured handshake pays Argon2i (8 MiB, 3 passes) per guess | `regress_auth_throttle` (pure rule incl. the global budget: a member passes, a stranger waits, 30 a minute never trips it, the second lockout doubles; a real host over loopback) |
 | Replay / forged frames after WELCOME | Every frame is sealed with a per-direction session key and a counter nonce (party_crypto): a replayed, reordered or altered frame fails to open and drops the connection | fuzz `linkhost` (forged frame at the end) |
 | A member flooding the host | Per-member token buckets (200 frames/s, 4 MiB/s, bursts 2000 / 48 MiB); RPCs over the limit get "rate limited"; 20000 drops in a row close the connection | `regress_link` flood |
 | Malformed events | Every event body has a decoder with caps and a sanitizer (travel, story, items, phantom, lamp requests, world actions, flags, snapshots, world groups, balance, chalice goods, drop seed, direct summon bodies, gift_up, sync_digest / sync_resync); each is fuzzed with random and structure-aware inputs under UBSan (party-fuzz-ubsan) | party-fuzz / party-security-test (20 s run in the test) |
@@ -486,3 +486,63 @@ Not covered: a real network (the simulator drops UDP in both directions and hold
 the loopback TCP close is real), 3-4 players, outages over 30 s (the guest keeps the host's world
 45 s, the host its slot 60 s; the keepalive runs as long as the link calls the peer lost).
 
+## 8. Host crash: the guests wait for the host (0.6.2, agent robust1)
+
+Before: when the host's game crashed, each guest went home at once (one loading screen) and was
+summoned back by itself once the restarted host was in its world again (C6, par_c6: 33.5 s after
+the crash), but nothing told the guest what was going on, and nothing ended the wait if the host
+never came back.
+
+Now (`gpu/shim/party/party_runtime.cpp`, `host_wait`): when the host is lost for real - the link
+dropped and did not come back within the 2 s grace (a reset: the host's process is gone), or a
+silent link outlived the 45 s outage hold, or the link came back as a **new session** (the host
+restarted before the grace ran out) - the guest:
+
+1. goes home at once if it was in the host's world (one loading screen, as before; its own world is
+   the safe place to wait: nothing it does there can be lost);
+2. shows **"Waiting for the host to come back (N s)..."** in the corner (refreshed every second)
+   and as the Party page's status (`Reconnecting`), while the link keeps trying every ~2 s;
+3. when the host's restarted game answers (`host wait: the host's game answers again ...`) it keeps
+   waiting until the host's own roster entry says its world is up (or the guest is in its room);
+   then `host wait: the host is back ...`, the corner says "The host is back: joining it", and the
+   direct summon brings the guest beside the host with **one loading screen**;
+4. after `BB_PARTY_HOST_WAIT_S` (180 s; 0 = no limit) without the host: a notice ("the host did not
+   come back within 3 min - you play on alone in your own world; System > Party > Rejoin the host
+   joins again") and the party is left (the guest is not pulled away later while playing alone).
+
+A refusal, the host ending the party (BYE) or the player's own Leave never start the wait. Outages
+that the session survives (F5, up to 30 s, 0 loading screens) do not reach it: the link resumes
+the old session (`back in the party ... (session resumed)`) and the wait only starts for a lost
+or new session. A Rejoin after Leave (the host does not know the old session either) counts its
+time from the Rejoin, not from a loss long ago.
+
+**Live (2026-10-15, two loopback instances, test save in the Hunter's Dream, `instances.py run
+--count 2 --party --crash-plan "0:cooperators 0 -> 1@15"`: the host's `bbport.exe` killed 15 s
+after the guest joined, `run.bat` restarts it with `BB_PARTY_RESTARTED=1`), two runs on this
+build:**
+
+| | run 2 | run 3 |
+|---|---|---|
+| guest leaves the dead session (crash ~0.3 s before) | t 35.6 s, home load | t 34.6 s, home load |
+| `host gone: waiting ... up to 180 s` | at once | at once |
+| the restarted host's game answers (its party link) | 6.0 s after the loss | 6.0 s |
+| the host's world up again, `host wait: the host is back` | 18.0 s | 18.0 s |
+| guest in the host's room (`client`) | 18.7 s after the crash | 18.6 s |
+| loading screens for the guest | 2 (home, summon) | 2 |
+
+The host itself: restart 3 s after the crash, Continue, world up 12 s into its new run, `cooperators
+0 -> 1` 17.2 s into it. Screenshots (`shots3`): the guest in its own Hunter's Dream with "Waiting
+for the host to come back (11 s)..." in the corner while the host's window shows its title screen;
+14 s after "the host is back" both stand together in the host's Dream (2.3 m apart, each sees the
+other's name plate). Run 1 (same build before the wait was extended past the link's return) showed
+why the wait must last until the host's world is up: the link was back 6.1 s after the crash, long
+before the host's world.
+
+Not live: the 3-minute cap (unit: the notice text, `party-status-bridge-test`; the code path is the
+same Leave as the Party page's), a host crash during a boss fight or a travel with the wait (C6's
+earlier runs cover the rejoin itself there), a real network.
+
+Why not without the home load: the crashed host's room is gone with its process; the restarted host
+opens a new room, and the game has no path from a phantom in one room into another without loading
+the own world first (B2 re-entry, b2_seamless.md, keeps the room; it cannot switch rooms). Waiting
+as a phantom in the dead world would be two loads too (home, then the summon) and later.

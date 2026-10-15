@@ -295,6 +295,8 @@ public:
     /// collector evicts by submissions under pressure again, as before 0.5, instead of keeping
     /// textures unused for seconds.
     static void NoteVramShort();
+    /// Within the 30 s after NoteVramShort.
+    static bool VramShort();
 
     template <typename Func>
     void ForEachImageInRegion(VAddr cpu_addr, size_t size, Func&& func) {

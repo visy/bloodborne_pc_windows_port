@@ -490,7 +490,12 @@ std::string identity_mismatch(const LinkConfig& host, const LinkConfig& guest) {
                         "; yours " + (guest.rules.empty() ? std::string("none: an older build") : guest.rules) +
                         "): every player needs the same Max players setting (BB_PARTY_MAX) and BB_PARTY_FOURP*");
     if (parts.empty()) return {};
-    std::string s = "version mismatch with the host: ";
+    // Both versions up front (the build clause already names them when the builds differ).
+    std::string s = "version mismatch with the host";
+    if (!(host.check_build && host.build_id != guest.build_id))
+        s += " (host bbport " + (host.build_id.empty() ? std::string("unknown") : host.build_id) + ", yours " +
+             (guest.build_id.empty() ? std::string("unknown: an older build") : guest.build_id) + ")";
+    s += ": ";
     for (std::size_t i = 0; i < parts.size(); ++i) s += (i ? "; " : "") + parts[i];
     return s;
 }
@@ -1316,11 +1321,14 @@ struct PartyLink::Impl {
                 std::uint32_t ip = 0;
                 std::memcpy(&ip, c->peer_ip.data(), 4);
                 std::int64_t wait_ms = 0;
-                if (cfg.auth_throttle && auth_throttle.Locked(ip, now_ms(), &wait_ms)) {
+                bool global = false;
+                if (cfg.auth_throttle && auth_throttle.Locked(ip, now_ms(), &wait_ms, &global)) {
                     ++locked_refusals;  // logged sparsely: a guesser may hammer the port
                     return reject_conn(c, RejectCode::Auth,
-                                       "too many wrong passwords from your address: try again in " +
-                                           std::to_string((wait_ms + 999) / 1000) + " s",
+                                       std::string(global ? "the host got too many wrong passwords (from several "
+                                                            "addresses) and takes no new players now"
+                                                          : "too many wrong passwords from your address") +
+                                           ": try again in " + std::to_string((wait_ms + 999) / 1000) + " s",
                                        locked_refusals != 1 && locked_refusals % 100 != 0);
                 }
             }
@@ -1368,12 +1376,19 @@ struct PartyLink::Impl {
                 if (cfg.password.empty() || !crypto::equal32(by_password.data(), proof)) {
                     std::uint32_t ip = 0;
                     std::memcpy(&ip, c->peer_ip.data(), 4);
+                    const std::uint64_t global_before = auth_throttle.global_lockouts();
                     if (cfg.auth_throttle && auth_throttle.Fail(ip, now_ms())) {
                         std::int64_t wait_ms = 0;
                         auth_throttle.Locked(ip, now_ms(), &wait_ms);
-                        log("party link: " + format_peer(c) + " gave " + std::to_string(kAuthFailFree) +
-                            "+ wrong passwords: refused for " + std::to_string(wait_ms / 1000) + " s (lockout " +
-                            std::to_string(auth_throttle.lockouts()) + ")");
+                        if (auth_throttle.global_lockouts() != global_before)
+                            log("party link: more than " + std::to_string(kAuthGlobalFree) +
+                                " wrong passwords in a minute from all addresses: new players refused for " +
+                                std::to_string(wait_ms / 1000) + " s (members who were in still get in; global lockout " +
+                                std::to_string(auth_throttle.global_lockouts()) + ")");
+                        else
+                            log("party link: " + format_peer(c) + " gave " + std::to_string(kAuthFailFree) +
+                                "+ wrong passwords: refused for " + std::to_string(wait_ms / 1000) + " s (lockout " +
+                                std::to_string(auth_throttle.lockouts()) + ")");
                     }
                     return reject_conn(c, RejectCode::Auth, auth_reject_reason(!cfg.password.empty()));
                 }
@@ -2689,11 +2704,18 @@ bool PartyLink::kick_name(const std::string& name, const std::string& reason) {
     return slot > 0 && kick(slot, reason);
 }
 
-bool AuthThrottle::Locked(std::uint32_t ip, std::int64_t now_ms, std::int64_t* remaining_ms) const {
+bool AuthThrottle::Locked(std::uint32_t ip, std::int64_t now_ms, std::int64_t* remaining_ms, bool* global) const {
     auto it = addrs_.find(ip);
     const bool locked = it != addrs_.end() && now_ms < it->second.until;
-    if (remaining_ms) *remaining_ms = locked ? it->second.until - now_ms : 0;
-    return locked;
+    std::int64_t left = locked ? it->second.until - now_ms : 0;
+    bool by_global = false;
+    if (now_ms < global_until_ && std::find(trusted_.begin(), trusted_.end(), ip) == trusted_.end()) {
+        by_global = !locked;
+        left = std::max(left, global_until_ - now_ms);
+    }
+    if (remaining_ms) *remaining_ms = left;
+    if (global) *global = by_global;
+    return left > 0;
 }
 
 bool AuthThrottle::Fail(std::uint32_t ip, std::int64_t now_ms) {
@@ -2710,6 +2732,23 @@ bool AuthThrottle::Fail(std::uint32_t ip, std::int64_t now_ms) {
         it = addrs_.emplace(ip, Addr{}).first;
         it->second.window = now_ms;
     }
+    // The global budget: every wrong proof counts, whichever address sent it.
+    bool global_started = false;
+    if (global_last_ && now_ms - global_last_ > kAuthForgetMs) global_level_ = 0;
+    global_last_ = now_ms;
+    if (global_fails_ == 0 || now_ms - global_window_ > kAuthFailWindowMs) {
+        global_fails_ = 0;
+        global_window_ = now_ms;
+    }
+    if (++global_fails_ > kAuthGlobalFree && now_ms >= global_until_) {
+        std::int64_t lock = kAuthGlobalLockoutMs;
+        for (int i = 0; i < global_level_ && lock < kAuthLockoutMaxMs; ++i) lock *= 2;
+        global_until_ = now_ms + std::min(lock, kAuthLockoutMaxMs);
+        ++global_level_;
+        ++global_lockouts_;
+        global_fails_ = 0;
+        global_started = true;
+    }
     Addr& a = it->second;
     if (a.last && now_ms - a.last > kAuthForgetMs) a = Addr{};
     if (a.fails == 0 || now_ms - a.window > kAuthFailWindowMs) {
@@ -2718,7 +2757,7 @@ bool AuthThrottle::Fail(std::uint32_t ip, std::int64_t now_ms) {
     }
     a.last = now_ms;
     // After a lockout (until forgotten) one wrong proof locks again: a typo is long past.
-    if (++a.fails <= (a.lockouts ? 0 : kAuthFailFree)) return false;
+    if (++a.fails <= (a.lockouts ? 0 : kAuthFailFree)) return global_started;
     std::int64_t lock = kAuthLockoutMs;
     for (int i = 0; i < a.lockouts && lock < kAuthLockoutMaxMs; ++i) lock *= 2;
     a.until = now_ms + std::min(lock, kAuthLockoutMaxMs);
@@ -2731,6 +2770,10 @@ bool AuthThrottle::Fail(std::uint32_t ip, std::int64_t now_ms) {
 void AuthThrottle::Success(std::uint32_t ip) {
     auto it = addrs_.find(ip);
     if (it != addrs_.end()) it->second.fails = 0;
+    auto t = std::find(trusted_.begin(), trusted_.end(), ip);
+    if (t != trusted_.end()) trusted_.erase(t);
+    if (trusted_.size() >= kAuthTrustedAddrs) trusted_.erase(trusted_.begin());
+    trusted_.push_back(ip);
 }
 
 bool PartyLink::is_banned(const std::string& name) const {

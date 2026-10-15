@@ -24,6 +24,8 @@
 #include "party_runtime.h"
 #include "party_travel.h"
 #include "seamless_rules.h"
+#include "party_split.h"
+#include "../bbport_game_menu_pages.h"
 
 #include <atomic>
 #include <chrono>
@@ -208,6 +210,26 @@ bool SanitizePeerStory(StoryIntent* s, std::string* why) {
     return true;
 }
 
+bool GuestPhaseChangeOk(const StoryIntent& s, int host_tod_value, std::uint32_t host_map, std::string* why) {
+    const char* no = nullptr;
+    if (s.kind != StoryKind::Cutscene || s.instr != 6) {
+        no = "not a 2002[6] play";
+    } else if (!StoryRemoKnown(s.id)) {
+        no = "not a game remo";
+    } else if (s.tod < 1 || s.tod > 3) {
+        no = "no time of day";
+    } else if (s.tod <= TodFromFlagValue(host_tod_value < 0 ? 0 : host_tod_value)) {
+        no = "the host's time of day is there already";
+    } else if (s.warp_point == kStoryNone || s.warp_point == 0 || s.warp_map == kStoryNone ||
+               (s.warp_map & 0xffff0000u) != (host_map & 0xffff0000u)) {
+        no = "its warp is not in the host's map";
+    }
+    if (no && why) {
+        *why = no;
+    }
+    return !no;
+}
+
 int TodFlagValue(int tod) {
     return tod >= 0 && tod < 4 ? kTodTable[tod] : -1;
 }
@@ -334,6 +356,7 @@ const char* StoryActionName(StoryAction::Kind k) {
     case StoryAction::NgCycle: return "NG cycle +1 (2003[21])";
     case StoryAction::TravelDream: return "Hunter's Dream warp 0x13CDF30(2102961)";
     case StoryAction::ForceEnding: return "ending request (GSM+0x1550)";
+    case StoryAction::AskEnding: return "ending question";
     }
     return "?";
 }
@@ -470,40 +493,75 @@ void GuestStory::Build(const StoryIntent& s, bool mirror, bool summoned) {
         break;
     }
     case StoryKind::Ending: {
-        push({Op::TravelDream});
-        push({Op::WaitArrive});
-        auto flags = [&](std::vector<std::uint32_t> f, bool on) {
-            Op op{Op::Flags};
-            op.flags = std::move(f);
-            op.on = on;
-            push(op);
-        };
-        if (s.id == 1) {
-            // m21 12100180 waits for 72100130 and does NG+1, the remo by sex, 6604, 21, 6600, 6603.
-            flags({72100130}, true);
-            Op e{Op::EndingCheck};
-            e.ending = 1;
-            push(e);
+        if (ask_ending_ && !s.force) {
+            Op a{Op::AskEnding};
+            a.ending = static_cast<int>(s.id);
+            push(a);
             break;
         }
-        const bool c = s.id == 3;
-        flags(c ? std::vector<std::uint32_t>{12101800, 12101850, 9180} : std::vector<std::uint32_t>{12101800, 9180},
-              true);
-        push({Op::Play, c ? 21000030u : 21000020u, 0});
-        push({Op::WaitRemoStart});
-        push({Op::WaitRemoEnd});
-        flags({9180}, false);
-        push({Op::NgCycle});
-        flags({6604, c ? 6602u : 6601u, 6603}, true);
-        flags({c ? 23u : 22u}, true);
-        Op e{Op::EndingCheck};
-        e.ending = static_cast<int>(s.id);
-        push(e);
+        PushEndingBody(static_cast<int>(s.id));
         break;
     }
     default:
         break;
     }
+}
+
+void GuestStory::PushEndingBody(int ending) {
+    auto push = [this](Op op) { ops_.push_back(std::move(op)); };
+    const std::uint32_t id = static_cast<std::uint32_t>(ending);
+    push({Op::TravelDream});
+    push({Op::WaitArrive});
+    auto flags = [&](std::vector<std::uint32_t> f, bool on) {
+        Op op{Op::Flags};
+        op.flags = std::move(f);
+        op.on = on;
+        push(op);
+    };
+    if (id == 1) {
+        // m21 12100180 waits for 72100130 and does NG+1, the remo by sex, 6604, 21, 6600, 6603.
+        flags({72100130}, true);
+        Op e{Op::EndingCheck};
+        e.ending = 1;
+        push(e);
+        return;
+    }
+    const bool c = id == 3;
+    flags(c ? std::vector<std::uint32_t>{12101800, 12101850, 9180} : std::vector<std::uint32_t>{12101800, 9180},
+          true);
+    push({Op::Play, c ? 21000030u : 21000020u, 0});
+    push({Op::WaitRemoStart});
+    push({Op::WaitRemoEnd});
+    flags({9180}, false);
+    push({Op::NgCycle});
+    flags({6604, c ? 6602u : 6601u, 6603}, true);
+    flags({c ? 23u : 22u}, true);
+    Op e{Op::EndingCheck};
+    e.ending = static_cast<int>(id);
+    push(e);
+}
+
+void GuestStory::AnswerEnding(bool yes, int ending) {
+    if (ops_.empty() || ops_.front().kind != Op::AskEnding) {
+        return;
+    }
+    ops_.pop_front();
+    op_started_ = false;
+    if (yes) {
+        cur_.id = static_cast<std::uint32_t>(ending);
+        PushEndingBody(ending);
+    } else {
+        ops_.push_back(Op{Op::TravelDream});  // home to the own Dream; the save keeps its cycle
+        ops_.push_back(Op{Op::WaitArrive});
+    }
+    dirty_ = true;
+}
+
+int GuestEndingType(int host_ending, bool own_three_cords) {
+    if (host_ending == 1) {
+        return 1;
+    }
+    return own_three_cords ? 3 : 2;
 }
 
 void GuestStory::Finish(bool ok) {
@@ -644,6 +702,25 @@ std::optional<StoryAction> GuestStory::RunOps(const StoryState& st, double now) 
                 return std::nullopt;
             }
             return std::nullopt;
+        case Op::AskEnding: {
+            if (!gate || st.remo_playing) {
+                return std::nullopt;
+            }
+            if (!op.asked) {
+                op.asked = true;
+                op_since_ = now;
+                StoryAction a;
+                a.kind = StoryAction::AskEnding;
+                a.ending = op.ending;
+                a.why = "the host's ending";
+                return a;
+            }
+            if (now - op_since_ > kEndingAskTimeout) {
+                AnswerEnding(false, op.ending);  // no answer: not now
+                continue;
+            }
+            return std::nullopt;
+        }
         case Op::EndingCheck:
             // The flag (21/22/23) is set; 0x193AC10 should request the ending step itself (a
             // loading screen follows). Probe C7: if not, request it like RequestEnding.
@@ -795,6 +872,52 @@ bool GuestStory::FromJson(const json::Value& v, std::string* error) {
 // ---------------------------------------------------------------------------------------------
 // Game part
 // ---------------------------------------------------------------------------------------------
+bool StoryNoticeMessage(std::uint32_t message_id) {
+    return message_id == 10012014u;  // m28_00 12800140 (host only): "Ritual secret broken. ..."
+}
+
+std::string StoryNoticeToJsonText(const StoryNotice& n) {
+    json::Value v = json::Value::make_object();
+    v.set("seq", json::hex(n.seq));
+    v.set("message", static_cast<unsigned>(n.message));
+    v.set("event", static_cast<unsigned>(n.event_id));
+    return json::dump(v, 0);
+}
+
+bool StoryNoticeFromJsonText(const std::string& text, StoryNotice* out, std::string* error) {
+    json::Value v;
+    std::string err;
+    if (text.size() > 512 || !json::parse(text, v, err)) {
+        if (error) {
+            *error = err.empty() ? "too long" : err;
+        }
+        return false;
+    }
+    try {
+        if (v.type != json::Value::Type::Object) {
+            throw std::runtime_error("not an object");
+        }
+        StoryNotice n;
+        n.seq = json::u64(v, "seq");
+        n.message = json::u32(v, "message");
+        n.event_id = json::u32(v, "event");
+        if (n.seq == 0 || !StoryNoticeMessage(n.message)) {
+            throw std::runtime_error("not a story notice");
+        }
+        *out = n;
+        return true;
+    } catch (const std::exception& e) {
+        if (error) {
+            *error = e.what();
+        }
+        return false;
+    }
+}
+
+bool StoryNoticeShowNow(bool world_up, bool loading, bool cutscene, bool dialog_up, bool calm) {
+    return world_up && !loading && !cutscene && !dialog_up && calm;
+}
+
 #ifndef BB_PARTY_STORY_NO_GAME
 
 namespace {
@@ -809,6 +932,8 @@ using Clock = std::chrono::steady_clock;
 
 constexpr u64 kRemoHandler = 0x17c53b0;  // bank-2002 EMEVD handler (this, SprjEmkEventIns*)
 constexpr u64 kPlayRemo = 0x131a9f0;     // (unused, remo id, mode, a4, a5, player) -> al
+// 2002[6]'s call (0x17C5853): (unused, remo id, mode, &packed map, point, 0, [0, player, tod]) -> al
+constexpr u64 kPlayRemoWarpTod = 0x131bc10;
 constexpr u64 kSprjRemo = 0x5540058;     // singleton slot; *(+8) = remo player; +0x168 bit 0 playing
 constexpr u64 kEventFlagMan = 0x553b100; // singleton slot
 constexpr u64 kSetEventFlag = 0x13cfcc0; // (man, id, on)
@@ -820,6 +945,8 @@ constexpr u64 kWts = 0x5556678;          // +0x08 transition requested, +0x1550 
 constexpr u64 kWorldChrMan = 0x553e878;  // +0x60 local PlayerIns (vtable +0x1C8 -> chr data, +0xCA sex)
 
 using PlayRemoFn = u64(BB_COOP_SYSV*)(u64, u64, u64, u64, u64, u64);
+using PlayRemoWarpTodFn = u64(BB_COOP_SYSV*)(u64, u64, u64, u64, u64, u64, u64, u64, u64);
+bool g_warp_tod_ok = false;  // 0x131BC10 has the 1.09 bytes
 using SetFlagFn = void(BB_COOP_SYSV*)(u64, u32, u32);
 using GetFlagValueFn = u32(BB_COOP_SYSV*)(u64, u32, u32);
 using SetFlagValueFn = void(BB_COOP_SYSV*)(u64, u32, u32, u32);
@@ -846,6 +973,7 @@ double Now() {
 }
 
 std::atomic<bool> g_story_on{false};
+std::atomic<double> g_last_ending_at{0};
 std::atomic<u64> g_seq{0};
 u64 NextSeq() {
     u64 cur = g_seq.load();
@@ -891,8 +1019,18 @@ struct Tick {
     bool remo_was_playing = false;
     double remo_since = 0;
     std::string sidecar;
+    // The ending question (GuestStory::AnswerEnding): the host's ending type, the open dialog.
+    int ask_ending = 0;         // 0: none pending
+    u64 ask_dialog = 0;
+    double ask_since = 0, ask_test_at = 0;
+    int ask_test_step = 0;
 };
 Tick g_tick;
+}  // namespace
+}  // namespace coop
+extern "C" void runtime_pad_director_press(std::uint32_t buttons); // src/runtime_pad.c
+namespace coop {
+namespace {
 
 u64 Slot(u64 off) {
     u64 p = 0;
@@ -989,6 +1127,30 @@ BB_COOP_SYSV void RemoHandlerEntry(u64, u64 event, u64, u64, u64, u64) {
             u64 args = 0;
             u32 remo = 0, mode = 0;
             SafeGet(event + 0xb8, &args);
+            // G3: a world phase change (2002[6]: scene + time of day + a warp in this map) goes up
+            // too; the host plays it as its own if it fits (GuestPhaseChangeOk), else as a scene.
+            u8 raw6[0x18] = {};
+            if (!OwnWorld() && gid == 6 && args && SafeRead(args, raw6, sizeof raw6)) {
+                StoryIntent up;
+                up.kind = StoryKind::Cutscene;
+                up.instr = 6;
+                std::memcpy(&up.id, raw6, 4);
+                std::memcpy(&up.mode, raw6 + 4, 4);
+                std::memcpy(&up.warp_point, raw6 + 8, 4);
+                up.warp_map = u32(raw6[0xc]) << 24 | u32(raw6[0xd]) << 16;
+                up.tod = raw6[0x14] < 4 ? raw6[0x14] : -1;
+                up.event_id = gev;
+                up.map = gmap;
+                if (StoryRemoKnown(up.id) && up.tod >= 1) {
+                    up.seq = NextSeq();
+                    Log("guest: its own world phase change %s goes to the host", DescribeStory(up).c_str());
+                    std::lock_guard<std::mutex> lk(g_up_mu);
+                    if (g_up.size() < 8) {
+                        g_up.push_back(up);
+                    }
+                    g_self_played.emplace_back(up.id, Now());
+                }
+            }
             if (!OwnWorld() && (gid == 1 || gid == 3 || gid == 7) && args && SafeGet(args, &remo) &&
                 SafeGet(args + 4, &mode) && StoryRemoKnown(remo)) {
                 StoryIntent up;
@@ -1213,6 +1375,13 @@ void Run(const StoryAction& a) {
         RunLampWarpReplay(a.id);
         break;
     }
+    case StoryAction::AskEnding:
+        g_tick.ask_ending = a.ending;
+        g_tick.ask_dialog = 0;
+        g_tick.ask_since = Now();
+        g_tick.ask_test_step = 0;
+        Log("ending %d: the host reached it; asking this player \"play this ending now?\"", a.ending);
+        break;
     case StoryAction::ForceEnding: {
         const u64 gdm = Slot(kGameDataMan), wts = Slot(kWts);
         const u32 type = static_cast<u32>(a.ending);
@@ -1409,6 +1578,14 @@ void InstallStoryHooks() {
     if (done.exchange(true)) {
         return;
     }
+    {
+        const char* ask = std::getenv("BB_PARTY_ENDING_ASK");
+        const bool on = !(ask && ask[0] == '0');
+        std::lock_guard<std::mutex> lk(g_guest_mu);
+        g_guest.SetAskEnding(on);
+        Log("ending question for guests: %s (BB_PARTY_ENDING_ASK=0: the host's ending replays at once)",
+            on ? "on" : "off");
+    }
     if (EnvOff("BB_PARTY_STORY")) {
         Log("BB_PARTY_STORY=0: no cutscene / ending sync");
         return;
@@ -1427,6 +1604,8 @@ void InstallStoryHooks() {
     const bool play_ok = Matches(kPlayRemo, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54});
     const bool tod_ok =
         Matches(0x1ceceb0, {0x55, 0x48, 0x89, 0xe5, 0x48, 0x89, 0xf8, 0x83, 0x78, 0x0c, 0x01, 0x75, 0x41});
+    g_warp_tod_ok = Matches(kPlayRemoWarpTod, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54,
+                                                0x53, 0x48, 0x81, 0xec, 0x28, 0x03, 0x00, 0x00});
     if (!play_ok || !tod_ok) {
         Log("0x131A9F0 / 0x1CECEB0 are not the 1.09 bytes (%s / %s); story off", play_ok ? "ok" : "MISMATCH",
             tod_ok ? "ok" : "MISMATCH");
@@ -1451,6 +1630,109 @@ void InstallStoryHooks() {
 constexpr double kMirrorDedupeSeconds = 600.0;
 std::mutex g_mirrored_mu;
 std::map<std::uint32_t, double> g_mirrored;
+
+namespace {
+std::mutex g_notice_mu;
+std::deque<StoryNotice> g_notice_host;                      // host: to broadcast
+std::deque<std::pair<StoryNotice, double>> g_notice_guest;  // guest: to show (since)
+std::uint64_t g_notice_last_seq = 0;
+}  // namespace
+
+void NoteHostStoryNotice(std::uint32_t message_id, std::uint32_t event_id) {
+    if (!g_story_on.load() || Role() != PartyRole::Host || !StoryNoticeMessage(message_id)) {
+        return;
+    }
+    StoryNotice n;
+    n.seq = NextSeq();
+    n.message = message_id;
+    n.event_id = event_id;
+    std::lock_guard<std::mutex> lk(g_notice_mu);
+    if (g_notice_host.size() < 8) {
+        g_notice_host.push_back(n);
+    }
+    Log("host: story notice %u (event %u) shown here: relayed to the party", message_id, event_id);
+}
+
+bool PopHostStoryNotice(StoryNotice* out) {
+    std::lock_guard<std::mutex> lk(g_notice_mu);
+    if (g_notice_host.empty()) {
+        return false;
+    }
+    *out = g_notice_host.front();
+    g_notice_host.pop_front();
+    return true;
+}
+
+void RequestGuestStoryNotice(const StoryNotice& n) {
+    std::lock_guard<std::mutex> lk(g_notice_mu);
+    if (n.seq <= g_notice_last_seq || g_notice_guest.size() >= 8) {
+        return;
+    }
+    g_notice_last_seq = n.seq;
+    g_notice_guest.emplace_back(n, Now());
+    Log("guest: the host's story notice %u (event %u) queued", n.message, n.event_id);
+}
+
+// Guest, main thread: one queued notice as the game's one-button message once calm.
+void GuestNoticeTick(const GameSnapshot& g, double now) {
+    StoryNotice n;
+    double since = 0;
+    {
+        std::lock_guard<std::mutex> lk(g_notice_mu);
+        if (g_notice_guest.empty()) {
+            return;
+        }
+        n = g_notice_guest.front().first;
+        since = g_notice_guest.front().second;
+        if (now - since > kStoryNoticeMaxWait) {
+            g_notice_guest.pop_front();
+            Log("guest: story notice %u dropped (not shown in %.0f s)", n.message, kStoryNoticeMaxWait);
+            return;
+        }
+    }
+    // Opened: is it on screen (menu +0x78)? A box opened in the frames a load ends never shows
+    // (live R1: "shown" under the loading screen, gone with it): open it again, 3 times at most.
+    static std::uint64_t open_seq = 0;
+    static double open_at = 0;
+    static int opens = 0;
+    if (open_seq == n.seq) {
+        if (split::DialogUp()) {
+            std::lock_guard<std::mutex> lk(g_notice_mu);
+            if (!g_notice_guest.empty() && g_notice_guest.front().first.seq == n.seq) {
+                g_notice_guest.pop_front();
+            }
+            Log("guest: story notice %u on screen (game message, OK) %.1f s after the host's", n.message, now - since);
+            open_seq = 0;
+            return;
+        }
+        if (now - open_at < 2.5) {
+            return;
+        }
+        if (opens >= 3) {
+            std::lock_guard<std::mutex> lk(g_notice_mu);
+            if (!g_notice_guest.empty() && g_notice_guest.front().first.seq == n.seq) {
+                g_notice_guest.pop_front();
+            }
+            Log("guest: story notice %u did not show after %d tries: dropped", n.message, opens);
+            open_seq = 0;
+            return;
+        }
+        Log("guest: story notice %u not on screen 2.5 s after opening: again", n.message);
+    }
+    const bool cut = g.world_up && RemoPlaying();
+    const bool settled = g_tick.world_was_up && now - g_tick.world_since >= 3.0;
+    if (!settled || !StoryNoticeShowNow(g.world_up, g.loading, cut, false, Calm(now))) {
+        return;
+    }
+    const u32 text = BbGameMenu::Pages::StoryNoticeText(n.message);
+    if (!text || !split::ShowMessage(text)) {
+        return;  // another dialog / menu is up: next frame
+    }
+    opens = open_seq == n.seq ? opens + 1 : 1;
+    open_seq = n.seq;
+    open_at = now;
+    Log("guest: story notice %u opened (try %d)", n.message, opens);
+}
 
 bool PopHostStory(StoryIntent* out) {
     std::lock_guard<std::mutex> lk(g_host_mu);
@@ -1493,6 +1775,10 @@ bool StoryMirroredEvent(std::uint32_t event_id) {
     return it != g_mirrored.end() && Now() - it->second < kMirrorDedupeSeconds;
 }
 
+double StoryLastEndingAt() {
+    return g_last_ending_at.load();
+}
+
 bool StoryBusy() {
     if (!g_story_on.load()) {
         return false;
@@ -1520,6 +1806,8 @@ void StoryTick() {
     const PartyRole role = Role();
     if (role == PartyRole::Host) {
         HostPoll(g);
+    } else if (role == PartyRole::Guest) {
+        GuestNoticeTick(g, now);
     }
     StoryState st;
     st.world_up = g.world_up;
@@ -1632,6 +1920,59 @@ void StoryTick() {
             g_tick.ng_logged_for = g_tick.world_since;
         }
     }
+    // The ending question: open it when no other dialog is up, then read its answer.
+    if (g_tick.ask_ending && g.world_up && !g.loading && !st.remo_playing) {
+        if (!g_tick.ask_dialog) {
+            g_tick.ask_dialog = split::AskYesNo(BbGameMenu::Pages::EndingQuestionText());
+            if (g_tick.ask_dialog) {
+                Log("ending %d: question open (dialog %#llx)", g_tick.ask_ending,
+                    static_cast<unsigned long long>(g_tick.ask_dialog));
+            }
+        } else {
+            const int r = split::QuestionResult(g_tick.ask_dialog);
+            // Test answer (BB_PARTY_ENDING_TEST=yes|no): YES = Cross; NO = Right, then Cross.
+            static const char* test = std::getenv("BB_PARTY_ENDING_TEST");
+            if (test && test[0] && r == -1 && now - g_tick.ask_since > 2.0 && now - g_tick.ask_test_at > 1.2 &&
+                g_tick.ask_test_step < 6) {
+                const bool yes = std::strcmp(test, "yes") == 0;
+                runtime_pad_director_press(yes || g_tick.ask_test_step % 2 == 1 ? 0x4000u : 0x20u);
+                g_tick.ask_test_at = now;
+                ++g_tick.ask_test_step;
+                Log("test: ending answer %s (step %d)", test, g_tick.ask_test_step);
+            } else if (test && test[0] && g_tick.ask_test_step > 0 && now - g_tick.ask_test_at > 0.25) {
+                runtime_pad_director_press(0);
+            }
+            if (r != -1 && r != 1 && r != 2) {
+                // Closed without an answer (a load, the host's ending session drop): ask again.
+                Log("ending %d: the question was closed without an answer (result %d): asking again",
+                    g_tick.ask_ending, r);
+                g_tick.ask_dialog = 0;
+            } else if (r != -1) {
+                const bool yes = r == 1;
+                bool cords = false;
+                progress::ReadFlagOwnSave(9900, &cords);
+                const int type = GuestEndingType(g_tick.ask_ending, cords);
+                {
+                    std::lock_guard<std::mutex> lk(g_guest_mu);
+                    g_guest.AnswerEnding(yes, type);
+                }
+                Log("ending %d: answer %s (result %d)%s", g_tick.ask_ending, yes ? "YES: play it now" : "NOT NOW", r,
+                    yes ? (type != g_tick.ask_ending ? " - its own ending (three cords: Childhood's Beginning)"
+                                                     : " - the host's ending")
+                        : ": home to the own Dream, the save keeps its cycle");
+                if (yes) {
+                    Log("ending: this player's ending type %d (host %d, own 9900 %d)", type, g_tick.ask_ending,
+                        cords ? 1 : 0);
+                }
+                g_tick.ask_ending = 0;
+                g_tick.ask_dialog = 0;
+            }
+        }
+    }
+    if (g_tick.ask_ending && now - g_tick.ask_since > kEndingAskTimeout + 5.0) {
+        g_tick.ask_ending = 0;  // the program took NOT NOW itself (no answer)
+        g_tick.ask_dialog = 0;
+    }
     // Test: an ending as if the host had sent it (once summoned, if asked).
     if (g_tick.test_on && g_tick.test_ending && !g_tick.test_done && g_tick.world_was_up &&
         now - g_tick.world_since >= g_tick.test_delay && !st.remo_playing &&
@@ -1706,6 +2047,7 @@ void StoryTick() {
             a->kind == StoryAction::ForceEnding) {
             g_tick.ending_at = now;
             g_tick.ending_log = now;
+            g_last_ending_at = now;
         }
     }
     // After our ending: the ending step (staff roll movie) has no world; a progress line every
@@ -1745,7 +2087,8 @@ bool HostStoryFromGuest(int slot, const std::string& body, std::string* why) {
     if (!StoryFromJsonText(body, &s, why) || !SanitizePeerStory(&s, why)) {
         return false;
     }
-    if (s.kind != StoryKind::Cutscene || !(s.instr == 1 || s.instr == 3 || s.instr == 7) || !StoryRemoKnown(s.id)) {
+    if (s.kind != StoryKind::Cutscene || !(s.instr == 1 || s.instr == 3 || s.instr == 6 || s.instr == 7) ||
+        !StoryRemoKnown(s.id)) {
         if (why) {
             *why = "not a plain cutscene play";
         }
@@ -1796,15 +2139,66 @@ void HostPlayGuestStory(const GameSnapshot& g, const StoryState& st) {
         g_from_guests.pop_front();
     }
     StoryIntent s = item.second;
+    static std::map<std::uint64_t, double> phase_held;  // G3: guest seq -> when the host got it
     {
         std::lock_guard<std::mutex> lk(g_up_guard_mu);
         if (const char* no = g_up_guard.Refuse(s.id, BossBarShown(), Now())) {
-            Log("host: slot %d's cutscene %u (event %u) dropped: %s", item.first, s.id, s.event_id, no);
+            if (s.instr == 6 && phase_held.erase(s.seq)) {
+                Log("host: slot %d's world phase change %u (event %u): the host's own copy of the event played it "
+                    "(the game sends the guest's action to the host's event)",
+                    item.first, s.id, s.event_id);
+            } else {
+                Log("host: slot %d's cutscene %u (event %u) dropped: %s", item.first, s.id, s.event_id, no);
+            }
             return;
         }
     }
+    if (s.instr == 6) {
+        // G3: the game itself sends a guest's action-button press to the host's copy of the event
+        // (live g3b: the host's own 12400750 ran its 2002[6], scene + warp + time of day). Wait for
+        // it; play the guest's copy here only when the host's own event does not come.
+        constexpr double kPhaseWait = 6.0;
+        auto it = phase_held.find(s.seq);
+        if (it == phase_held.end()) {
+            it = phase_held.emplace(s.seq, Now()).first;
+            Log("host: slot %d's world phase change %u (event %u): waiting %.0f s for the host's own event", item.first,
+                s.id, s.event_id, kPhaseWait);
+        }
+        if (Now() - it->second < kPhaseWait) {
+            std::lock_guard<std::mutex> lk(g_up_mu);
+            g_from_guests.push_front(item);
+            return;
+        }
+        phase_held.erase(it);
+    }
+    std::string phase_no;
+    static const bool phase_on = !EnvOff("BB_PARTY_STORY_PHASE");
+    if (s.instr == 6 && phase_on && g_warp_tod_ok && GuestPhaseChangeOk(s, FlagValue(9800, 3), g.map_id, &phase_no)) {
+        // G3: the host's own copy of the guest's event, as 0x17C53B0 runs 2002[6]: the scene, the
+        // warp to the same point of this map, the time of day at its end. The host's tod poll then
+        // sends the time of day; the scene goes to the other guests below.
+        static u32 packed = 0;
+        packed = s.warp_map;
+        const u32 remo = RemoForSex(s.id, SexVariant());
+        const u64 ok = reinterpret_cast<PlayRemoWarpTodFn>(Guest(kPlayRemoWarpTod))(
+            0, remo, 0, reinterpret_cast<u64>(&packed), s.warp_point, 0, 0, static_cast<u32>(g_player_arg),
+            static_cast<u32>(s.tod));
+        Log("host: slot %d changed the world's time of day: the host's own event did not come; remo %u with warp %u "
+            "@%08x and tod %d played here (as 2002[6]) -> %s",
+            item.first, remo, s.warp_point, s.warp_map, s.tod, (ok & 0xff) ? "queued" : "NOT queued (no remo player)");
+        s.flags = StoryFlagsForRemo(s.id);
+        s.seq = NextSeq();
+        PushHost(s);
+        return;
+    }
+    if (s.instr == 6) {
+        Log("host: slot %d's 2002[6] %u (event %u): %s; the scene only", item.first, s.id, s.event_id,
+            g_warp_tod_ok ? phase_no.c_str() : "0x131BC10 is not the 1.09 bytes");
+    }
     s.instr = 1;
     s.tod = -1;
+    s.warp_point = kStoryNone;
+    s.warp_map = kStoryNone;
     s.flags = StoryFlagsForRemo(s.id);
     s.seq = NextSeq();
     StoryAction a;

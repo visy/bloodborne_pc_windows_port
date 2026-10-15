@@ -85,7 +85,15 @@ constexpr std::uint32_t kFloodDisconnect = 20000;
 // (reset after kAuthForgetMs without a failure). A locked-out address gets REJECT Auth ("too many
 // wrong passwords ...") at HELLO, before any proof is checked, the right password included. At
 // most kAuthTrackedAddrs addresses are tracked (the stalest is forgotten first).
+// Global budget (a guesser spread over many addresses): more than kAuthGlobalFree wrong proofs from
+// all addresses together within kAuthFailWindowMs lock the HELLO of every address that has not
+// passed AUTH before (kAuthTrustedAddrs remembered) for kAuthGlobalLockoutMs, doubling up to
+// kAuthLockoutMaxMs (forgotten after kAuthForgetMs without a failure). Members who were in already
+// (a crash, a re-join) still get in; strangers are told the host refuses new joins for a while.
 constexpr int kAuthFailFree = 5;
+constexpr int kAuthGlobalFree = 30;
+constexpr std::int64_t kAuthGlobalLockoutMs = 60'000;
+constexpr std::size_t kAuthTrustedAddrs = 64;
 constexpr std::int64_t kAuthFailWindowMs = 60'000;
 constexpr std::int64_t kAuthLockoutMs = 30'000;
 constexpr std::int64_t kAuthLockoutMaxMs = 15 * 60'000;
@@ -94,14 +102,19 @@ constexpr std::size_t kAuthTrackedAddrs = 4096;
 
 class AuthThrottle {
 public:
-    /// The address may not try now; *remaining_ms (optional): how long it still waits.
-    bool Locked(std::uint32_t ip, std::int64_t now_ms, std::int64_t* remaining_ms = nullptr) const;
-    /// A wrong proof from `ip`; true when it started a lockout.
+    /// The address may not try now; *remaining_ms (optional): how long it still waits;
+    /// *global (optional): true when only the global budget holds it (not its own failures).
+    bool Locked(std::uint32_t ip, std::int64_t now_ms, std::int64_t* remaining_ms = nullptr,
+                bool* global = nullptr) const;
+    /// A wrong proof from `ip`; true when it started a lockout (of that address or the global one).
     bool Fail(std::uint32_t ip, std::int64_t now_ms);
-    /// A good proof: the address's free failures start over (its lockout history stays).
+    /// A good proof: the address's free failures start over (its lockout history stays) and it
+    /// passes a global lockout from now on.
     void Success(std::uint32_t ip);
     std::size_t Tracked() const { return addrs_.size(); }
     std::uint64_t lockouts() const { return lockouts_; }
+    std::uint64_t global_lockouts() const { return global_lockouts_; }
+    bool GlobalLocked(std::int64_t now_ms) const { return now_ms < global_until_; }
 
 private:
     struct Addr {
@@ -113,6 +126,11 @@ private:
     };
     std::map<std::uint32_t, Addr> addrs_;
     std::uint64_t lockouts_ = 0;
+    // the global budget
+    int global_fails_ = 0, global_level_ = 0;
+    std::int64_t global_window_ = 0, global_until_ = 0, global_last_ = 0;
+    std::uint64_t global_lockouts_ = 0;
+    std::vector<std::uint32_t> trusted_;  // addresses that passed AUTH (oldest first)
 };
 constexpr int kHostSlot = 0;
 

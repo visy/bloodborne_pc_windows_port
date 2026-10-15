@@ -58,6 +58,7 @@ constexpr bool MovieShader(uint64_t hash) {
            hash == 0x24042a9b || hash == 0xa400228b ||
            // The title menu while it animates (its highlight): without these its frames were
            // shown at the game's 1080p between output-size ones, a flicker (BB_UI_TRACE=1).
+           // The same five found by parsifal295 (Supermedo/bloodborne_pc PR #56 / 3e3b760f).
            hash == 0xbb4d5f8c || hash == 0xe94b5b06 || hash == 0x9951d199 ||
            hash == 0x44072322 || hash == 0xa334a845;
 }

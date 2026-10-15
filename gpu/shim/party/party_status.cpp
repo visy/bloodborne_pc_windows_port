@@ -189,6 +189,15 @@ void SetFriendlyFire(bool on) {
 bool FriendlyFire() {
     return g_friendly_fire.load();
 }
+namespace {
+std::atomic<bool> g_share_lamps{true};
+}  // namespace
+void SetShareLamps(bool on) {
+    g_share_lamps.store(on);
+}
+bool ShareLamps() {
+    return g_share_lamps.load();
+}
 
 std::uint64_t AlertSeq() {
     return alert_seq.load(std::memory_order_acquire);

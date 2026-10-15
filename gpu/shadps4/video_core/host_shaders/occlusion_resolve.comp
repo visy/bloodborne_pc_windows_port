@@ -24,11 +24,21 @@ struct Event {
 layout(std430, binding = 0) readonly buffer Results { uvec2 results[]; };
 layout(std430, binding = 1) buffer Total { uvec2 total; };
 layout(std430, binding = 2) readonly buffer Events { Event events[]; };
+// Per segment, its render pass's factor (8.8 fixed point): samples counted at another size than
+// the game's target (a reduced scene, the output-size UI) are scaled to the game's resolution.
+// (From deadinside's Supermedo/bloodborne_pc 72e5c8ce.)
+layout(std430, binding = 3) readonly buffer Scales { uint scales[]; };
 
 layout(push_constant) uniform Push {
     uint count;  // segments to add
     uint events; // events to write
 } push;
+
+uvec2 Scaled(uvec2 v, uint scale) {
+    uint high, low;
+    umulExtended(v.x, scale, high, low);
+    return uvec2((low >> 8) | (high << 24), (high >> 8) + v.y * (scale >> 8));
+}
 
 uvec2 Add(uvec2 a, uvec2 b) {
     uint carry;
@@ -42,7 +52,7 @@ void main() {
     for (uint e = 0; e < push.events; ++e) {
         const Event event = events[e];
         for (; segment < event.upto && segment < push.count; ++segment) {
-            sum = Add(sum, results[segment]);
+            sum = Add(sum, Scaled(results[segment], scales[segment]));
         }
         Counters guest = Counters(event.address);
         const uint valid = 0x80000000u;
@@ -52,7 +62,7 @@ void main() {
         }
     }
     for (; segment < push.count; ++segment) {
-        sum = Add(sum, results[segment]);
+        sum = Add(sum, Scaled(results[segment], scales[segment]));
     }
     total = sum;
 }

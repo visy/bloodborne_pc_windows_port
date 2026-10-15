@@ -1834,6 +1834,23 @@ void PartyTab() {
                  "уведомление при изменении. По умолчанию: выкл."),
                on);
     }
+    // Statsaudit finding 5: shared lamps, the host's rule; a guest sees it.
+    if (b.role == ps::Role::Guest) {
+        Note(ps::ShareLamps() ? T("Shared lamps: on (the host's rule) - every lamp lit in the party is lit for you too",
+                                  "Общие фонари: вкл. (правило хоста) - каждый фонарь группы горит и у вас")
+                              : T("Shared lamps: off (the host decides) - your own lamps stay yours",
+                                  "Общие фонари: выкл. (решает хост) - ваши фонари остаются вашими"),
+             Dim());
+    } else {
+        Toggle("party_share_lamps", T("Shared lamps", "Общие фонари"), s.party_share_lamps,
+               T("A lamp any party member lights is lit for everyone, in each member's own save too: a guest's "
+                 "lamps light up in your world when it joins, and yours reach its save. The host's setting "
+                 "counts. Default: on.",
+                 "Фонарь, зажжённый любым членом группы, горит у всех и в каждом сохранении: фонари гостя "
+                 "загораются в вашем мире при входе, ваши попадают в его сохранение. Действует настройка "
+                 "хоста. По умолчанию: вкл."),
+               on);
+    }
     static const char* overhead_en[] = {"Nothing", "Name", "Name and level", "Name and health", "Name and deaths", "Name and ping"};
     static const char* overhead_ru[] = {"Ничего", "Имя", "Имя и уровень", "Имя и здоровье", "Имя и смерти", "Имя и пинг"};
     Choice("party_overhead", T("Above companions", "Над спутниками"), std::clamp(s.party_overhead.load(), 0, 5), 6,
@@ -2658,6 +2675,79 @@ void PartyHud() {
     }
 }
 
+/// Statsaudit finding 1: the guest's own bloodstain in the host's world (party_ping.h StainMark),
+/// a blood-red drop through walls with "Blood Echoes N" and the distance (clamped to the screen
+/// edge when off screen). Hidden under the game's menus, dialogs, cutscenes and loading screens.
+bool PartyStainWanted() {
+    party::ping::StainMark m;
+    return party::status::Enabled() && party::ping::GetStain(&m) && party::hud::Shown() && !party::hud::GameDialog();
+}
+
+void PartyStainMarker() {
+    using namespace PartyHudDraw;
+    if (!PartyStainWanted() || BbFrameState::IsMenuOrLoading()) {
+        return;
+    }
+    party::ping::StainMark m;
+    if (!party::ping::GetStain(&m)) {
+        return;
+    }
+    party::hud::Board& b = hud_board;
+    party::hud::Read(&b);
+    if (!b.me_have_pos || party::hud::NowMs() - b.published_ms > 1000 || (m.map & 0xffff0000u) != (b.me_map & 0xffff0000u)) {
+        return;
+    }
+    const BbCamera::State cam = BbCamera::Latest();
+    if (!DirectionAxes(b, cam).camera) {
+        return;
+    }
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const ImVec2 display = viewport->Size;
+    const float s = base_scale;
+    ImDrawList* bg = ImGui::GetBackgroundDrawList();
+    const float at3[3] = {m.pos[0], m.pos[1] + 0.4f, m.pos[2]};
+    const party::ping::EdgePoint e =
+        party::ping::ToScreenOrEdge(cam.view.data(), cam.proj.data(), at3, display.x, display.y, 28.0f * s);
+    char dist[32], label[96];
+    party::ping::FormatDistance(party::hud::Distance(b.me_pos, m.pos), dist, sizeof dist);
+    std::snprintf(label, sizeof label, "%s %d  %s", BbSettings::MenuText("Blood Echoes", "Отголоски крови"), m.echoes,
+                  dist);
+    const ImU32 col = Rgba(0.78f, 0.10f, 0.10f, 0.95f), dark = Rgba(0.02f, 0.02f, 0.02f, 0.8f),
+                text = Rgba(0.93f, 0.86f, 0.80f, 0.95f);
+    ImGui::PushFont(game_font, 16.0f);
+    const ImVec2 ts = ImGui::CalcTextSize(label);
+    const auto outlined = [&](ImVec2 p, const char* str) {
+        for (const ImVec2 d : {ImVec2(-1, 0), ImVec2(1, 0), ImVec2(0, -1), ImVec2(0, 1), ImVec2(1, 1)}) {
+            bg->AddText(ImVec2(p.x + d.x * s, p.y + d.y * s), dark, str);
+        }
+        bg->AddText(p, text, str);
+    };
+    if (e.on_screen) {
+        // A drop: a circle with a point on top, the label above it.
+        const float r = 7.0f * s;
+        const ImVec2 c(e.x, e.y);
+        const ImVec2 tip(c.x, c.y - r * 2.2f), l(c.x - r * 0.75f, c.y - r * 0.6f), rr(c.x + r * 0.75f, c.y - r * 0.6f);
+        bg->AddCircleFilled(c, r + 1.5f * s, dark, 24);
+        bg->AddTriangleFilled(ImVec2(tip.x, tip.y - 1.5f * s), ImVec2(l.x - 1.5f * s, l.y), ImVec2(rr.x + 1.5f * s, rr.y), dark);
+        bg->AddCircleFilled(c, r, col, 24);
+        bg->AddTriangleFilled(tip, l, rr, col);
+        outlined(ImVec2(std::round(c.x - ts.x * 0.5f), std::round(tip.y - ts.y - 4.0f * s)), label);
+    } else {
+        const float r = 11.0f * s, ca = std::cos(e.angle), sa = std::sin(e.angle);
+        const ImVec2 tip(e.x + ca * r, e.y + sa * r);
+        const ImVec2 lp(e.x - ca * r * 0.6f - sa * r * 0.8f, e.y - sa * r * 0.6f + ca * r * 0.8f);
+        const ImVec2 rp(e.x - ca * r * 0.6f + sa * r * 0.8f, e.y - sa * r * 0.6f - ca * r * 0.8f);
+        bg->AddTriangleFilled(tip, lp, rp, col);
+        bg->AddTriangle(tip, lp, rp, dark, 1.5f * s);
+        float lx = e.x - ca * (r + 6.0f * s) - ts.x * 0.5f - ca * ts.x * 0.5f;
+        float ly = e.y - sa * (r + 6.0f * s) - ts.y * 0.5f - sa * ts.y * 0.5f;
+        lx = std::clamp(lx, 4.0f * s, display.x - ts.x - 4.0f * s);
+        ly = std::clamp(ly, 4.0f * s, display.y - ts.y - 4.0f * s);
+        outlined(ImVec2(std::round(lx), std::round(ly)), label);
+    }
+    ImGui::PopFont();
+}
+
 /// I2 (party_ping.h): every live ping of a member in this player's world on this map, through
 /// walls, in the pinger's colour with its name and distance (clamped to the screen edge with an
 /// arrow when off screen), and with "Show party through walls" every companion on this map as a
@@ -3382,7 +3472,7 @@ bool Visible() {
     return initialized &&
            (menu_open || prompt_active || BbSettings::Get().show_fps || BbSettings::Get().show_hud || HdrPatternShown() ||
             CompileIndicatorShown() || coop::warper::Active() || ToastWanted() || AlertWanted() || NpcCaptionWanted() || PartyHudWanted() || PartyTagsWanted() ||
-            PartyPingsWanted());
+            PartyPingsWanted() || PartyStainWanted());
 }
 
 bool MenuOpen() {
@@ -3547,6 +3637,7 @@ bool Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, b
         if (!party::hud::GameMenu()) {  // the game's full-screen menu: none of these over it
             PartyHud(); // before the toast: it stacks above the panel
             PartyPings();
+            PartyStainMarker();
             PartyToast();
             PartyAlert();
             PartyNpcCaption();

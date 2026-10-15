@@ -324,6 +324,9 @@ static void write_readme(const char *user) {
         "  save_backups\\savedata\\...        backups of user\\savedata (single-player saves)\r\n"
         "  save_backups\\savedata_party\\...  backups of user\\savedata_party (party saves)\r\n\r\n"
         "Each backup folder is named <date>-<time>-<reason> (start, restart, timer, ...).\r\n"
+        "Before every party session, save_backups\\party_sessions\\<date>-<time>-host (or -guest) gets\r\n"
+        "both save folders as they were: the launcher's Party tab \"Undo last party session\" puts\r\n"
+        "the newest one back (it first saves the current state there too, so an undo can be undone).\r\n"
         "A name ending in -suspect means the copy failed the save check (wrong file sizes, a damaged\r\n"
         "game data file): restore from it only if nothing else is left. Suspect backups never push\r\n"
         "good ones out. BACKUP_INFO.txt in each folder lists what the check found.\r\n\r\n"
@@ -413,6 +416,70 @@ int runtime_savepolicy_backup(const char *user,const char *dir,const char *reaso
     return 1;
 }
 
+/* ---- party session snapshots: "Undo last party session" (launcher, scripts/party_session.py) ---- */
+/* Every file of src (relative paths kept) into dst. Files copied, or -1. */
+static int copy_folder(const char *src,const char *dst) {
+    List l=list_files(src);
+    int n=0, failed=make_dirs(dst);
+    for (int i=0;i<l.count && !failed;++i) {
+        char from[1100], to[1400];
+        snprintf(from,sizeof(from),"%s/%s",src,l.items[i].rel);
+        snprintf(to,sizeof(to),"%s/%s",dst,l.items[i].rel);
+        char *slash=strrchr(to,'/'); *slash=0; make_dirs(to); *slash='/';
+        unsigned char *data; size_t size;
+        if (read_all(from,&data,&size)) { printf("Saves: cannot read %s for the session snapshot\n",from); failed=1; break; }
+        failed=write_all(to,data,size)!=0;
+        free(data);
+        ++n;
+    }
+    free(l.items);
+    return failed ? -1 : n;
+}
+int runtime_savepolicy_session_snapshot(const char *user,const char *role,int keep,char *made,size_t made_size) {
+    static const char *const folders[]={"savedata","savedata_party"};
+    char base[700], final[900], partial[940], when[32];
+    snprintf(base,sizeof(base),"%s/save_backups/party_sessions",user);
+    if (make_dirs(base)) { printf("Saves: cannot create %s; no session snapshot\n",base); return -1; }
+    stamp(when,sizeof(when));
+    int number=0; /* after every snapshot of this second: names sort by time, then number */
+    DIR *d=opendir(base);
+    for (struct dirent *e; d && (e=readdir(d));)
+        if (!strncmp(e->d_name,when,15) && same_second_number(e->d_name)>number) number=same_second_number(e->d_name);
+    if (d) closedir(d);
+    if (!number) snprintf(final,sizeof(final),"%s/%s-%s",base,when,role);
+    else snprintf(final,sizeof(final),"%s/%s-%s-%02d",base,when,role,number+1);
+    snprintf(partial,sizeof(partial),"%s.partial",final);
+    remove_tree(partial);
+    char info[1024];
+    int len=snprintf(info,sizeof(info),"kind=session-start\r\nrole=%s\r\ntime=%s\r\n",role,when), failed=make_dirs(partial);
+    for (int i=0;i<2 && !failed;++i) {
+        char src[800], dst[1100];
+        snprintf(src,sizeof(src),"%s/%s",user,folders[i]);
+        snprintf(dst,sizeof(dst),"%s/%s",partial,folders[i]);
+        int files=is_dir(src) ? copy_folder(src,dst) : 0;
+        if (files<0) { failed=1; break; }
+        SavePolicyCheck c={0};
+        if (files) runtime_savepolicy_check(dst,NULL,0,&c);
+        len+=snprintf(info+len,sizeof(info)-(size_t)len,"%s_files=%d\r\n%s_slots=%d\r\n%s_hash=%016llx\r\n",folders[i],files,
+                      folders[i],c.slots_used,folders[i],(unsigned long long)(files ? c.hash : 0));
+    }
+    if (!failed) {
+        char infopath[1000]; snprintf(infopath,sizeof(infopath),"%s/SESSION.txt",partial);
+        failed=write_all(infopath,info,(size_t)len)!=0;
+    }
+    if (failed || rename_dir(partial,final)) {
+        remove_tree(partial);
+        printf("Saves: the party session snapshot %s failed\n",final);
+        fflush(stdout);
+        return -1;
+    }
+    printf("Saves: party session snapshot %s (role %s; the launcher's \"Undo last party session\" restores it)\n",final,role);
+    rotate(base,keep);
+    fflush(stdout);
+    if (made) snprintf(made,made_size,"%s",final);
+    return 1;
+}
+
 /* ---- the game's side ---- */
 static int backup_minutes, backup_keep;
 static void pause_seconds(int s) {
@@ -469,6 +536,13 @@ void runtime_savepolicy_start(void) {
     backup_keep=env_int("BB_SAVE_BACKUP_KEEP",10,1,500);
     backup_minutes=env_int("BB_SAVE_BACKUP_MINUTES",10,0,24*60);
     const char *restarted=getenv("BB_PARTY_RESTARTED");
+    /* Before a party session (not a crash restart: the same session goes on): both save folders,
+     * for the launcher's "Undo last party session". BB_SAVE_SESSION_KEEP (default 5, 0 = none). */
+    int session_keep=env_int("BB_SAVE_SESSION_KEEP",5,0,100);
+    if (party_session() && session_keep && !(restarted && restarted[0]=='1')) {
+        const char *p=getenv("BB_PARTY");
+        runtime_savepolicy_session_snapshot(user,p && !strcmp(p,"host") ? "host" : "guest",session_keep,NULL,0);
+    }
     if (!empty) runtime_savepolicy_backup(user,dir,restarted && restarted[0]=='1' ? "restart" : "start",backup_keep,NULL,0);
     if (backup_minutes) {
         pthread_t t; pthread_attr_t attr;

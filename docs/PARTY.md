@@ -315,6 +315,18 @@ listed in [party/DEBUG_SWITCHES.md](party/DEBUG_SWITCHES.md).
   every 10 minutes. The newest 10 are kept; a copy identical to the last one is skipped. The game
   checks the save at every start (*"Saves: check OK"* in the log); a backup that fails the check
   is named `...-suspect` and never pushes good backups out.
+- **Undo last party session** (0.6.2, launcher *Party* tab): right before every party session
+  (host or guest; not a crash restart, which continues the same session) the game copies
+  `user\savedata` and `user\savedata_party` to
+  `user\save_backups\party_sessions\<date>-<time>-host` (or `-guest`); the newest 5 are kept
+  (`BB_SAVE_SESSION_KEEP`). The button shows what it will replace (per folder, per character: name,
+  level, NG cycle, play time now and then), copies your current saves to a `...-before-undo`
+  snapshot (pressing the button again brings them back) and restores the snapshot byte for byte.
+  After a party session (when the game closes, or at the next launcher start) the launcher checks
+  the party save: every character loads, its NG cycle only changes when an ending was played, no
+  boss kill or lit lamp from before the session is gone, level and play time did not go down, no
+  character vanished. On a problem it says what and offers the undo. Details:
+  [party/save_safety.md](party/save_safety.md).
 - **Restoring a backup**:
   1. Close the game.
   2. Rename the save folder, e.g. `user\savedata_party` to `user\savedata_party.broken` (keep it

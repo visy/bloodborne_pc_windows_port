@@ -14,6 +14,8 @@
 #include <sys/resource.h>
 #endif
 #include <array>
+#include <atomic>
+#include <cstdlib>
 #include <optional>
 #include <utility>
 #include <time.h>
@@ -44,11 +46,17 @@
 #include "video_core/amdgpu/pm4_selftest.h"
 #include "cp_decoder.h"
 #include "video_core/renderdoc.h"
+#include "video_core/renderer_vulkan/vk_breadcrumbs.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 
 extern "C" int runtime_memory_vma_info(uintptr_t address, int* prot, int* type, uintptr_t* end);
 
 namespace AmdGpu {
+
+namespace {
+void DropBadBuffer(const char* queue, uintptr_t base, std::size_t dwords, const u32* at, u64 seq,
+                   int depth);
+} // namespace
 
 
 static const char* dcb_task_name{"DCB_TASK"};
@@ -784,8 +792,10 @@ Liverpool::Task Liverpool::ProcessCeUpdate(std::span<const u32> ccb) {
         const auto* header = reinterpret_cast<const PM4Header*>(ccb.data());
         const u32 type = header->type;
         if (type != 3) {
-            // No other types of packets were spotted so far
-            UNREACHABLE_MSG("Invalid PM4 type {}", type);
+            // bbport: not a packet header: the rest of this buffer is dropped (DropBadBuffer).
+            DropBadBuffer(ccb_task_name, reinterpret_cast<uintptr_t>(ccb.data()), ccb.size(),
+                          ccb.data(), 0, 0);
+            break;
         }
 
         const PM4ItOpcode opcode = header->type3.opcode;
@@ -1323,6 +1333,36 @@ void ReportBadPacket(uintptr_t base, std::size_t dwords, const u32* at, u64 seq,
     BbWriteLog::DumpRange(base, dwords * 4);
     std::fflush(stderr);
 }
+
+/// bbport: a dword that is not a type 2 or 3 packet header (a command buffer the game was already
+/// reusing: "Unimplemented PM4 type 0 ... size: 15810") stopped the whole game. The rest of that
+/// buffer is dropped instead (idea from parsifal295's PR #57, as in Supermedo c07f0ffa). The first
+/// two are reported in full (ReportBadPacket), later ones in one line at the 4th, 8th, 16th...;
+/// the device-lost report names the count and the last one. BB_PM4_STRICT=1: stop as before.
+void DropBadBuffer(const char* queue, uintptr_t base, std::size_t dwords, const u32* at, u64 seq,
+                   int depth) {
+    static const bool strict = [] {
+        const char* env = std::getenv("BB_PM4_STRICT");
+        return env && env[0] == '1';
+    }();
+    static std::atomic<u64> dropped{0};
+    const u64 n = ++dropped;
+    const uintptr_t offset = reinterpret_cast<uintptr_t>(at) - base;
+    Vulkan::Breadcrumbs::NoteDroppedCommands(queue, *at, offset, seq);
+    if (n <= 2 || strict) {
+        ReportBadPacket(base, dwords, at, seq, depth);
+    }
+    if (n <= 2 || (n & (n - 1)) == 0 || strict) {
+        std::printf("GPU: bad PM4 header %#010x on %s at +%#llx (submission %llu): rest of the "
+                    "buffer dropped (%llu so far)\n",
+                    *at, queue, static_cast<unsigned long long>(offset),
+                    static_cast<unsigned long long>(seq), static_cast<unsigned long long>(n));
+        std::fflush(stdout);
+    }
+    if (strict) {
+        UNREACHABLE_MSG("Bad PM4 header {:#x} (BB_PM4_STRICT)", *at);
+    }
+}
 } // namespace
 
 void Liverpool::SyncForCpuRead(VAddr address, u64 size) {
@@ -1451,8 +1491,12 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
         u64 seq;
         int depth;
         void OnBadPacket(std::span<const u32> rest, const char* what, int) override {
-            ReportBadPacket(base, dwords, rest.data(), seq, depth);
-            UNREACHABLE_MSG("PM4: {}", what);
+            // bbport: the cursor ends this buffer; nothing more of it is decoded.
+            if (rest.empty()) {
+                std::printf("GPU: PM4 %s: the buffer is dropped\n", what);
+                return;
+            }
+            DropBadBuffer(dcb_task_name, base, dwords, rest.data(), seq, depth);
         }
     } cp_sink;
     cp_sink.base = base_addr;
@@ -1480,19 +1524,17 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
 
         switch (type) {
         default:
-            ReportBadPacket(base_addr, dcb_dwords, dcb.data(), seq, dcb_depth);
-            UNREACHABLE_MSG("Wrong PM4 type {}", type);
-            break;
         case 0: {
             // Ported from Mrsuss60 196ba93: zero dwords ending a chunk are padding.
-            if (std::ranges::all_of(dcb, [](u32 w) { return w == 0; })) {
+            if (type == 0 && std::ranges::all_of(dcb, [](u32 w) { return w == 0; })) {
                 dcb = {};
                 continue;
             }
-            ReportBadPacket(base_addr, dcb_dwords, dcb.data(), seq, dcb_depth);
-            UNREACHABLE_MSG("Unimplemented PM4 type 0, base reg: {}, size: {}",
-                            header->type0.base.Value(), header->type0.NumWords());
-            break;
+            // bbport: not a packet header: the rest of this buffer is dropped and the loop ends
+            // normally, so the submission's cleanup below still runs (DropBadBuffer).
+            DropBadBuffer(dcb_task_name, base_addr, dcb_dwords, dcb.data(), seq, dcb_depth);
+            dcb = {};
+            continue;
         }
         case 2:
             // Type-2 packet are used for padding purposes
@@ -2413,8 +2455,14 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
                 }
                 break;
             }
-            // No other types of packets were spotted so far
-            UNREACHABLE_MSG("Invalid PM4 type {}", header->type.Value());
+            // bbport: not a packet header: the rest of this buffer is dropped (DropBadBuffer).
+            DropBadBuffer(acb_task_name[vqid], base_addr, acb_size / sizeof(u32), acb.data(), 0,
+                          is_indirect ? 1 : 0);
+            if constexpr (!is_indirect) {
+                *queue.read_addr += acb.size();
+                *queue.read_addr %= queue.ring_size_dw;
+            }
+            break;
         }
 
         const PM4ItOpcode opcode = header->type3.opcode;

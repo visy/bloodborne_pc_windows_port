@@ -59,6 +59,10 @@ struct Page {
 void Define();
 /// Split travel's question text id (0: "Travel with the party?" YES / NO), for a game dialog.
 u32 SplitTravelText(int which);
+/// D10: the port text of a relayed story notice (the game's EventText id), 0 when not one.
+u32 StoryNoticeText(u32 game_message);
+/// The ending question a guest gets when the host reaches an ending.
+u32 EndingQuestionText();
 const std::vector<Page>& All();
 int FieldCount();
 
