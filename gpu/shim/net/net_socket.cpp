@@ -2193,6 +2193,28 @@ std::string p2p_status() {
     return pp.empty() ? std::string(buf) : std::string(buf) + "; peers " + pp;
 }
 
+// C6 (parfin3): a crashed peer's game is gone; its restarted game comes back from the same
+// address and port. Forget what the outage replay (F5) keeps for that source on every game socket,
+// so the new game never gets the dead session's reliable records replayed into it (a7b / a7t1: the
+// replay right after the restarted guest joined the room, then its title join got no snapshot).
+std::size_t p2p_forget_source(std::uint64_t key) {
+    std::shared_ptr<P2pPort> port;
+    {
+        std::lock_guard<std::mutex> lock(g_net_mu);
+        auto it = g_p2p_ports.find(g_bound_port.load());
+        if (it != g_p2p_ports.end()) port = it->second;
+    }
+    if (!port) return 0;
+    std::size_t n = 0;
+    std::lock_guard<std::mutex> lk(port->mu);
+    for (auto& [vp, q] : port->by_vport) {
+        std::lock_guard<std::mutex> ql(q->mu);
+        n += q->replay.erase(key) + q->replay_to.erase(key) + q->keepalive.erase(key) + q->last_small.erase(key) +
+             q->strip_until.erase(key) + q->heard.erase(key);  // no "last heard": no resume replay
+    }
+    return n;
+}
+
 void set_packet_trace(PacketTraceFn fn) { g_packet_trace.store(fn); }
 void set_p2p_recv_hook(P2pRecvHookFn fn) { g_p2p_recv_hook.store(fn); }
 // F5: while the party link says a peer is only temporarily lost (a network outage, its slot

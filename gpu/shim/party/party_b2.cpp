@@ -7198,6 +7198,17 @@ void NrRecvHook(int sock, int where) {
             using Fn = void(BB_COOP_SYSV*)(u64, u64);
             reinterpret_cast<Fn>(release)(t.transport, el);
             ++dropped;
+            if (!outage) {
+                // C6 (parfin3): the restarted game comes back from this address and port; the F5
+                // outage replay must not send it the dead session's records (title join refused).
+                for (const nrdrop::Source& s : silent) {
+                    if (!nrdrop::KeyMatchesAny(key, {s})) continue;
+                    const std::size_t n = bbnet::p2p_forget_source(
+                        std::uint64_t(s.addr) | (std::uint64_t(s.port_nbo) << 32));
+                    Log("C6: its outage-replay state forgotten (%zu entr%s): no replay into its restarted game", n,
+                        n == 1 ? "y" : "ies");
+                }
+            }
         }
     }
     g_nrd_listed = true;
@@ -7395,8 +7406,10 @@ bool TitleJoinHold(const GameSnapshot& s) {
             TitleJoinFail("the join ended");
             return false;
         }
-        if (now - t.since > 20.0) {
-            TitleJoinFail("no snapshot within 20 s");
+        // A snapshot comes ~1 s after the join (h5); 12 s leaves room for a slow link and costs 8 s
+        // less when the join failed (the guest Continues into its own world and is summoned).
+        if (now - t.since > 12.0) {
+            TitleJoinFail("no snapshot within 12 s");
             return false;
         }
         return true;

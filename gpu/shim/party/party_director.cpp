@@ -1374,6 +1374,20 @@ void KillLoadedEnemyForTest(const char* what, std::uint32_t want, bool by_id, bo
     if (k < 0) {
         Log("test: %s: no target (%s %u): %zu loaded enemies, %d alive; host at (%.1f, %.1f, %.1f)", what,
             want ? "entity" : "nearest of", want, list.size(), alive, me[0], me[1], me[2]);
+        if (want) {
+            // G1 (parfin3): a generated Chalice layer has other entity ids than its MSB template;
+            // the strongest loaded enemies name the layer bosses and where they stand.
+            std::vector<std::pair<int, size_t>> by_hp;
+            for (size_t i = 0; i < list.size(); ++i) {
+                if (list[i].alive) by_hp.emplace_back(balance::EnemyHp(list[i].chr), i);
+            }
+            std::sort(by_hp.begin(), by_hp.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+            for (size_t n = 0; n < by_hp.size() && n < 12; ++n) {
+                const auto& e = list[by_hp[n].second];
+                Log("test: %s:   loaded #%zu: entity %u, HP %d, at (%.1f, %.1f, %.1f)", what, n + 1, e.entity,
+                    by_hp[n].first, e.pos[0], e.pos[1], e.pos[2]);
+            }
+        }
         return;
     }
     const auto& t = list[size_t(k)];
