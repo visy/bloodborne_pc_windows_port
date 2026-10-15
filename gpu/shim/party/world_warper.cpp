@@ -517,7 +517,7 @@ bool PickEnemy(u32 rp, EnemyTarget* out, float* dist, bool* boss, u32* kind) {
     float sp[4];
     if (!ids::ReturnSpot(rp, sp)) return false;
     const auto list = balance::LoadedEnemies();
-    float best = 1e12f, near_best = 60.0f * 60.0f;
+    float best = kEnemyRange * kEnemyRange, near_best = kEnemyRange * kEnemyRange;
     const EnemyKillCandidate* pick = nullptr;
     const EnemyKillCandidate* near = nullptr;
     u32 pick_kind = 0;
