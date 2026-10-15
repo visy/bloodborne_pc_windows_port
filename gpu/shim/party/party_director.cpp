@@ -53,6 +53,8 @@
 #include "../../party_env.h"
 
 #include <algorithm>
+
+#include "../bbport_frame_state.h"
 #include <cmath>
 #include <atomic>
 #include <cctype>
@@ -185,6 +187,7 @@ struct Test {
     // until within R m of (X, Z), facing it; then BUTTON (cross / triangle / square / circle) once.
     bool approach = false, approach_done = false, ap_faced = false;
     int ap_taps = 0;               // face taps made (prompt=: until its text shows, 45 deg apart)
+    bool ap_prompt_seen = false;   // prompt= showed after a tap: keep that facing (no turn warp)
     std::string ap_prompt;         // prompt=TEXT: the action prompt the face taps look for
     std::int64_t ap_tap_ms = 0;
     float ap_x = 0, ap_z = 0, ap_r = 1.0f;
@@ -697,6 +700,7 @@ void LogTransitions(State& st, const GameSnapshot& now) {
         }
         if (!now.world_up) BossBarReset();  // A11: a load ends any boss fight
     }
+    BbFrameState::NoteGameLoading(now.loading);
     if (now.loading != was.loading) {
         Log("loading screen %s", now.loading ? "up" : "gone");
         static int load_marks = 0;
@@ -2494,6 +2498,7 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
                            const std::int64_t seen = BbGameMenu::TextSeenMs(t.ap_prompt.c_str());
                            if (t.ap_taps > 0 && seen > t.ap_tap_ms) {
                                Log("test: approach: '%s' shows after %d tap(s)", t.ap_prompt.c_str(), t.ap_taps);
+                               t.ap_prompt_seen = true;
                                return false;
                            }
                            return t.ap_taps < 8;
@@ -2555,7 +2560,11 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         // own spot only turns the player.
         float at[3] = {};
         std::uint64_t vtbl = 0, fn = 0;
-        if (s.player && SafeRead(s.player + 0xc0, at, sizeof at) && SafeGet(s.player, &vtbl) &&
+        if (t.ap_prompt_seen) {
+            // parfin3 g1a / g1b: the turn warp below moved the facing off the prompt the taps had
+            // found (the prompt went 1-2 s later and the menu never opened). Keep it.
+            Log("test: approach done: '%s' shows; facing kept; the menu walk (seq) starts", t.ap_prompt.c_str());
+        } else if (s.player && SafeRead(s.player + 0xc0, at, sizeof at) && SafeGet(s.player, &vtbl) &&
             SafeGet(vtbl + 0x5f8, &fn) && fn) {
             std::uint32_t area = 0;
             float pos[3] = {};
