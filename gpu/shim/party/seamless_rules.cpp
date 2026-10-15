@@ -564,6 +564,12 @@ bool FogFirstSkip(u64 event, u64 instr, i32 event_id, i32 bank, i32 id) {
 
 // A11: the boss health bar (EMEVD 2003[11] DisplayBossHealthBar: first argument 1 on, 0 off).
 std::atomic<bool> g_boss_bar{false};
+// The last text banner (2007[2], e.g. PREY SLAUGHTERED) or boss defeat (2003[12/15/53]) this game
+// ran, steady-clock seconds: an item notice opened under the banner had no OK row (live pard3 O1).
+std::atomic<double> g_banner_at{-1e9};
+double SteadyNow() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
     perf::Scope z(perf::Zone::HookEmevd);
@@ -594,6 +600,9 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
         if (const EmevdSkipPredicate pred = g_skip_pred.load(std::memory_order_relaxed)) {
             skip = pred(event_id, bank, id);
         }
+    }
+    if (instr && !skip && ((bank == 2007 && id == 2) || (bank == 2003 && (id == 12 || id == 15 || id == 53)))) {
+        g_banner_at.store(SteadyNow(), std::memory_order_relaxed);
     }
     if (instr && !skip && bank == 2003 && (id == 12 || id == 15 || id == 53) && g_boss_bar.exchange(false)) {
         Log("boss health bar: off (a boss defeat, event %d 2003[%d])", event_id, id);
@@ -791,6 +800,10 @@ void SetEmevdRewriter2(EmevdRewriter fn) {
 
 void SetEmevdRewriter3(EmevdRewriter fn) {
     g_rewriter3.store(fn);
+}
+
+double BannerAgeSeconds() {
+    return SteadyNow() - g_banner_at.load(std::memory_order_relaxed);
 }
 
 bool BossBarShown() {
