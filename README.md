@@ -17,14 +17,14 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 
 | Area | Progress | |
 |---|---|--:|
-| **Overall** | `███████████████████░` | 94% |
+| **Overall** | `███████████████████░` | 95% |
 | Session & joining | `███████████████████░` | 97% |
 | World & travel | `████████████████████` | 98% |
 | Death & respawn | `███████████████████░` | 96% |
 | Progress (anyone can progress) | `██████████████████░░` | 92% |
 | Services & UI | `███████████████████░` | 97% |
 | Network & robustness | `██████████████████░░` | 91% |
-| Bloodborne-specific (chalice, Insight) | `██████████████████░░` | 88% |
+| Bloodborne-specific (chalice, Insight) | `██████████████████░░` | 90% |
 | Feels like single player in a party | `███████████████████░` | 94% |
 
 ---
@@ -176,7 +176,10 @@ before anyone is in the game):
   alone; enemies it killed while the host was away are back once the host returns (the host's world
   counts, as after a reload).
 - **Everyone can use lamps.** Vanilla disables lamps during co-op; here they work for everyone.
-  A lamp lit by anyone is lit for the party.
+- **Lamps are shared.** A lamp anyone in the party lights is lit for everyone, in everyone's own
+  save too: when you join, the lamps you lit on your own light up in the host's world (the party
+  can travel there), and the host's lamps go into your save. A lamp past a boss the host has not
+  beaten yet waits until the host beats it. The host can turn this off (*Shared lamps*).
 - **Resting resets the world for the party.** Enemies respawn; everyone's HP, vials and bullets
   refill. A guest who rests and travels alone gives the host a short loading screen where it
   stands, so the host's world resets too; a guest resting its way back into the host's area
@@ -204,7 +207,8 @@ before anyone is in the game):
   arrived. After the Blood Moon the host is asked "Travel with the party?" and everyone goes to
   Yahar'gul together.
 - **Insight for everyone.** Whatever Insight the host gets (a boss's first sight and kill, story
-  moments, the kidnap's waking, Chalice Dungeon bosses) every guest present gets too. What Insight
+  moments, the kidnap's waking, Chalice Dungeon bosses) every guest present gets too; a boss's
+  first-sight Insight comes once per player, whoever walks in first. What Insight
   shows (Amygdalas, whispers) is up to each player's own Insight, as in the original game.
 - **The host's world is shared live, both ways.** A door or shortcut opened by the host is open
   for the guests too, and a lever or door a guest uses opens in the host's world (and in the
@@ -285,7 +289,7 @@ before anyone is in the game):
 
 | Who dies | What happens |
 |---|---|
-| A guest | Gets up again at its own lamp: with no loading screen when that lamp is in the loaded area, else with its own loading screen at that lamp (also in another area; the host stays where it is); its Blood Echoes wait in a bloodstain at that spot in its own world (pick them up there); the others keep playing |
+| A guest | Gets up again at its own lamp: with no loading screen when that lamp is in the loaded area, else with its own loading screen at that lamp (also in another area; the host stays where it is); its Blood Echoes wait in a bloodstain where it fell, marked on screen in the host's world (walk onto it to get them back; it also stays in its own world); the others keep playing |
 | The host | Everyone gets one respawn loading screen at the host's lamp, as in the original game, and the world resets; the host's echoes stay in a bloodstain where it fell |
 | Anyone, during a boss fight | Watches a living party member fight (the screen says whose; press Cross to watch the next one) until the boss dies (then gets up at the host's lamp, with no loading screen when it is in the area), everyone dies, or someone travels |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |
