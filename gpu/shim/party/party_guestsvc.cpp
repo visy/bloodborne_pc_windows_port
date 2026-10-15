@@ -1981,9 +1981,6 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
                 r.id);
             continue;
         }
-        if (split::HostOwnWarpFor(r.id)) {
-            continue;  // P4: the host's own question / travel for this warp takes the party
-        }
         if (!g_lamp_gate.Accept(s.world_up && !s.loading, Now(), &why)) {
             Log("lamp: request %u from slot %d not run: %s", r.id, slot, why.c_str());
             continue;
