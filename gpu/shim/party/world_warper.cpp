@@ -108,10 +108,10 @@ struct Counters {
     }
 };
 
-enum class Phase : std::uint8_t { ReplayBefore, Tour, Tod, ReplayAfter };
+enum class Phase : std::uint8_t { ReplayBefore, Tour, Remo, Tod, ReplayAfter };
 const char* PhaseName(Phase p) {
-    return p == Phase::Tour ? "tour" : p == Phase::Tod ? "time of day" : p == Phase::ReplayBefore ? "replay (before)"
-                                                                                                   : "replay (after)";
+    return p == Phase::Tour ? "tour" : p == Phase::Remo ? "cutscenes" : p == Phase::Tod ? "time of day"
+         : p == Phase::ReplayBefore ? "replay (before)" : "replay (after)";
 }
 
 /// What the area's routine does after its scripted steps.
@@ -155,6 +155,12 @@ struct State {
     EnemyTarget target;
     double enemy_kill_at = 0, enemy_next_at = 0;
     bool enemy_pending = false, target_boss = false;
+    // A boss's arena (`bosses`): candidate spots round the boss, each checked before the fight.
+    int boss_try = -1;            // -1 none, else the candidate being checked
+    int boss_check = 0;           // 0 placed, 1 settled (walking toward it), 2 checked
+    double boss_check_at = 0;
+    float boss_pos[3] = {}, boss_check_pos[3] = {};
+    std::size_t bosses_safe = 0, bosses_unsafe = 0;
     u32 target_kind = 0;
     std::map<u64, u32> npc_ids;   // NpcParam row data -> row id (enemy kinds)
     Sub sub = Sub::Steps;
@@ -169,6 +175,7 @@ struct State {
     double remo_at = 0;
     // time of day
     std::vector<int> tod_of_row;  // the Tod phase: each route row's value
+    std::vector<u32> remo_of_row; // the Remo phase: each route row's cutscene
     int tod_now = -1;
     double curve_at = 0;
     double gear_wait = 0;
@@ -360,9 +367,10 @@ u32 NpcParamId(u64 chr) {
 /// Lines of the coverage summary (the log and the progress file's last lines).
 std::string Coverage() {
     char b[400];
-    std::snprintf(b, sizeof b, "%zu places, %zu enemy kinds, %zu cutscenes, %zu item effects, %zu time-of-day rows "
-                  "(this session: %zu kills, %zu bosses fought)", g.progress.done.size(), g.progress.kinds.size(),
-                  g.progress.remos.size(), g.progress.fx.size(), g.progress.tod_done.size(), g.kills, g.bosses);
+    std::snprintf(b, sizeof b, "%zu places, %zu enemy kinds, %zu cutscenes played (%zu tried), %zu item effects, "
+                  "%zu time-of-day rows (this session: %zu kills, %zu bosses fought, %zu without a safe spot)",
+                  g.progress.done.size(), g.progress.kinds.size(), g.progress.remos_ok.size(), g.progress.remos.size(),
+                  g.progress.fx.size(), g.progress.tod_done.size(), g.kills, g.bosses, g.bosses_unsafe);
     return b;
 }
 
@@ -392,6 +400,22 @@ void BeginPhase(double now) {
             AppendState("todorig " + std::to_string(g.progress.tod_orig));
         }
         g.effects = g.opt.items && g.opt.act && !g.progress.effects_done ? ItemEffects() : std::vector<int>{};
+    } else if (ph == Phase::Remo) {
+        if (g.state_path.size()) g.progress = ParseProgress(ReadFile(g.state_path));
+        const std::vector<u32> all = g.opt.remos.empty() ? std::vector<u32>(std::begin(ids::kPartyRemos),
+                                                                            std::end(ids::kPartyRemos))
+                                                         : g.opt.remos;
+        Options ro = g.opt;
+        ro.lamps.clear();
+        ro.max = 0;
+        g.route.clear();
+        g.remo_of_row.clear();
+        for (const auto& [rp, id] : CutsceneRoute(BuildRoute(AllRows(), spot, ro), all, g.progress)) {
+            g.route.push_back(rp);
+            g.remo_of_row.push_back(id);
+        }
+        Log("cutscenes: %zu of %zu not played yet (%zu played in the run), one warp each", g.route.size(), all.size(),
+            g.progress.remos_ok.size());
     } else if (ph == Phase::Tod) {
         const std::vector<u32> rows = TodRoute(BuildRoute(AllRows(), spot, g.opt));
         g.route.clear();
@@ -446,65 +470,18 @@ bool RunSteps(double now) {
     return false;
 }
 
-constexpr u64 kInventoryFind = 0x14d9e80;  // (inventory list, type bits, id) -> index or -1
-constexpr u64 kRecInventory = 0x328;
-
-/// The game's own equip of one slot (EquipGameData = PlayerGameData +0x1D0): (equip, slot, &gaitem
-/// handle, inventory index, force) - the handle by the refcounted assign (0x1A8BD80, never a plain
-/// write: the GaItem counts), the item id
-/// from the handle, the index, the slot's changed flag, and the same into the chr's ChrAsm.
-constexpr u64 kSetEquipSlot = 0x14ccb90;
-constexpr u64 kRecEquip = 0x1d0;
-
-bool SetEquipOk() {
-    static const bool ok = MatchesOriginal(kSetEquipSlot, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55,
-                                                           0x41, 0x54, 0x53, 0x48, 0x83, 0xec, 0x28, 0x89, 0xcb});
-    return ok;
-}
-
-/// Puts item `id` (type bits) into equipment slot `slot` (world_warper_rules.h EquipSlot), giving
-/// one first if none is held. The chr is rebuilt with it by the next load (the row's warp).
-bool EquipItem(int slot, u32 type_bits, u32 id) {
-    if (!SetEquipOk()) return false;
-    if (ItemCount(type_bits, id) <= 0) GiveItem(type_bits, id, 1);
-    u64 gdm = 0;
-    if (!SafeGet(Guest(kGameDataMan), &gdm) || !gdm) return false;
-    const u64 rec = Field<u64>(gdm, 8);
-    if (!rec) return false;
-    const u64 list = rec + kRecInventory;
-    if (!Field<u64>(list, 0x68) || !Field<u64>(list, 0x78)) return false;
-    const i32 index = reinterpret_cast<i32(BB_COOP_SYSV*)(u64, u32, u32)>(Guest(kInventoryFind))(list, type_bits, id);
-    const i32 last = Field<i32>(list, 0x88, -1);
-    if (index < 0 || index > last) return false;
-    const u32 split = Field<u32>(list, 0x24);
-    const u64 entry = static_cast<u32>(index) < split ? Field<u64>(list, 0x58) + 16ull * static_cast<u32>(index)
-                                                      : Field<u64>(list, 0x48) + 16ull * (static_cast<u32>(index) - split);
-    u32 handle = 0;
-    if (!SafeGet(entry, &handle) || !handle) return false;
-    reinterpret_cast<void(BB_COOP_SYSV*)(u64, u32, u32*, u32, u32)>(Guest(kSetEquipSlot))(
-        rec + kRecEquip, static_cast<u32>(slot), &handle, static_cast<u32>(index), 1);
-    const u32 now = Field<u32>(rec, kRecEquipHandle + static_cast<u64>(slot) * 4);
-    return now == handle;
-}
-
-u32 EquippedId(int slot) {
-    u64 gdm = 0;
-    if (!SafeGet(Guest(kGameDataMan), &gdm) || !gdm) return 0;
-    return Field<u32>(Field<u64>(gdm, 8), kRecEquipId + static_cast<u64>(slot) * 4);
-}
-
 /// The tour row's gear (GearFor): before its warp, so the load builds the chr with it.
 void PutOnGear(std::size_t n) {
     const Gear gear = GearFor(n);
     int ok = 0, all = 0;
-    ok += EquipItem(kSlotRight1, kItemWeapon, gear.right) ? 1 : 0;
-    ok += EquipItem(kSlotLeft1, kItemWeapon, gear.left) ? 1 : 0;
+    ok += EquipSlotItem(kSlotRight1, kItemWeapon, gear.right) ? 1 : 0;
+    ok += EquipSlotItem(kSlotLeft1, kItemWeapon, gear.left) ? 1 : 0;
     all += 2;
     for (int k = 0; k < 4; ++k) {
         const u32 piece = gear.armor + 1000u * static_cast<u32>(k);
         if (!GameParamRow("EquipParamProtector", "EQUIP_PARAM_PROTECTOR_ST", piece)) continue;
         ++all;
-        ok += EquipItem(kSlotHead + k, kItemProtector, piece) ? 1 : 0;
+        ok += EquipSlotItem(kSlotHead + k, kItemProtector, piece) ? 1 : 0;
     }
     Log("gear %zu: armor set %u, right %u, left %u: %d of %d slots set", n, gear.armor, gear.right, gear.left, ok,
         all);
@@ -581,6 +558,27 @@ bool GoToEnemy(u64 player, const EnemyTarget& t) {
     return PlacePlayer(player, pos, yaw);
 }
 
+/// The yaw a chr faces (its physics rotation +0x1D0, forward = (-sin, -cos)); false unknown.
+bool ChrYaw(u64 chr, float* yaw) {
+    const u64 phys = Field<u64>(Field<u64>(Field<u64>(Field<u64>(chr, 0x58), 8), 0x3b0), 0x68);
+    float r[4] = {};
+    if (!phys || !SafeRead(phys + 0x1d0, r, sizeof r) || !std::isfinite(r[1])) return false;
+    *yaw = r[1];
+    return true;
+}
+
+/// Stands the player at boss candidate spot `i` (BossSpot: in front of the boss first, where an
+/// idle boss looks into its arena), facing the boss.
+bool PlaceAtBoss(u64 player, const EnemyTarget& t, int i, float boss_pos[3]) {
+    float b[3], yaw = 0;
+    if (!balance::ChrPosition(t.chr, b)) return false;
+    if (!ChrYaw(t.chr, &yaw)) yaw = 0;
+    float pos[3];
+    BossSpot(b, yaw, i, pos);
+    boss_pos[0] = b[0], boss_pos[1] = b[1], boss_pos[2] = b[2];
+    return PlacePlayer(player, pos, FaceYaw(pos, b));
+}
+
 /// The kill of the director's host_kill test step: ForceDead by id, the chr's death path, HP 0.
 void KillEnemy(const EnemyTarget& t) {
     if (balance::EnemyHp(t.chr) <= 0) return;
@@ -633,6 +631,12 @@ void FinishRow(const GameSnapshot& s, double now, const char* note) {
             ActionList(g.action_new).c_str(), static_cast<unsigned long long>(here.hitches),
             static_cast<unsigned long long>(here.shader_hitches), worst, now - g.arrive_at,
             static_cast<unsigned long long>(cp::created_total.load() - g.c_session0.created));
+    } else if (ph == Phase::Remo) {
+        Log("cutscenes %zu/%zu %s: cutscene %u %s; +%llu new pipelines; %llu new this session", g.visited,
+            g.route.size(), RowName(g.rp).c_str(), g.remo_of_row[g.idx - 1],
+            g.progress.remos_ok.count(g.remo_of_row[g.idx - 1]) ? "played" : "NOT played",
+            static_cast<unsigned long long>(all.created),
+            static_cast<unsigned long long>(cp::created_total.load() - g.c_session0.created));
     } else if (ph == Phase::Tod) {
         const int v = g.tod_of_row[g.idx - 1];
         AppendState("tod " + std::to_string(v) + " " + std::to_string(g.rp) + " " + std::to_string(all.created));
@@ -654,7 +658,7 @@ void FinishRow(const GameSnapshot& s, double now, const char* note) {
 std::vector<PadStep> RoutineSteps(const GameSnapshot& s) {
     const Phase ph = g.phases[g.phase_i];
     std::vector<PadStep> v = LookSteps();
-    if (ph == Phase::Tod) return v;
+    if (ph == Phase::Tod || ph == Phase::Remo) return v;
     const auto walk = WalkSteps();
     v.insert(v.end(), walk.begin(), walk.end());
     if (ph != Phase::Tour || !g.opt.act) return v;
@@ -905,7 +909,8 @@ void TickImpl(double now) {
                 return;
             }
             g.sub = Sub::Remo;
-            g.remos = ph == Phase::Tour && g.opt.remo ? RemosFor(s.map_id) : std::vector<u32>{};
+            g.remos = ph == Phase::Tour && g.opt.remo && !g.opt.remo_only ? RemosFor(s.map_id) : std::vector<u32>{};
+            if (ph == Phase::Remo) g.remos = {g.remo_of_row[g.idx - 1]};
             // One cutscene a row: a second one asked for right after the first ended the game
             // (live 2026-10-15, twice, exit 1); the map's next one waits for its next row.
             if (g.remos.size() > 1) g.remos.resize(1);
@@ -923,6 +928,7 @@ void TickImpl(double now) {
                     if (now - g.remo_at < 1.0) return;
                     AppendState("remo " + std::to_string(id));
                     g.progress.remos.insert(id);
+                    ++g.progress.remo_tries[id];
                     g.c_step = Counters::Now();
                     const u64 ok = reinterpret_cast<u64(BB_COOP_SYSV*)(u64, u64, u64, u64, u64, u64)>(Guest(kPlayRemo))(
                         0, id, 0, 0xffffffffu, 0xffffffffu, 10000);
@@ -942,10 +948,14 @@ void TickImpl(double now) {
                     if (now - g.remo_at < 8.0) return;
                     Log("row %u: cutscene %u did not start", g.rp, id);
                 } else if (g.remo_stage == 2) {  // playing: to its end (a skip after 150 s)
-                    if (playing && now - g.remo_at < 150.0) return;
-                    if (playing && now - g.remo_at < 170.0) {
+                    if (playing && now - g.remo_at < g.opt.remo_skip) return;
+                    if (playing && now - g.remo_at < g.opt.remo_skip + 20.0) {
                         RequestRemoSkip();
                         return;
+                    }
+                    if (!g.progress.remos_ok.count(id)) {
+                        AppendState("remook " + std::to_string(id));
+                        g.progress.remos_ok.insert(id);
                     }
                     Log("row %u: cutscene %u played (%.0f s)", g.rp, id, now - g.remo_at);
                 }
@@ -978,7 +988,16 @@ void TickImpl(double now) {
                     g.target_kind = kind;
                     g.enemy_pending = true;
                     ++g.enemy_round;
-                    GoToEnemy(s.player, t);
+                    g.boss_try = -1;
+                    if (boss) {
+                        // Into its arena: candidate spots round it, each checked first (below).
+                        g.boss_try = 0;
+                        g.boss_check = 0;
+                        g.boss_check_at = now + 1.5;
+                        PlaceAtBoss(s.player, t, 0, g.boss_pos);
+                    } else {
+                        GoToEnemy(s.player, t);
+                    }
                     if (kind && !g.progress.kinds.count(kind)) {
                         g.progress.kinds.insert(kind);
                         AppendState("kind " + std::to_string(kind));
@@ -1003,6 +1022,45 @@ void TickImpl(double now) {
                     StartSteps(fight, now);
                     g.enemy_kill_at = 0;
                 }
+                return;
+            }
+            if (g.boss_try >= 0 && g.boss_check < 2) {
+                // The boss spot check: settled on the boss's floor, then a short walk toward it.
+                if (now < g.boss_check_at) return;
+                float me[3];
+                if (!PlayerPos(s.player, me)) return;
+                if (g.boss_check == 0) {
+                    std::copy(me, me + 3, g.boss_check_pos);
+                    runtime_pad_director_sticks(128, 0, -1, -1);  // forward: the camera follows the facing
+                    g.boss_check = 1;
+                    g.boss_check_at = now + 0.8;
+                    return;
+                }
+                Release();
+                if (BossSpotOk(g.boss_pos, g.boss_check_pos, me)) {
+                    ++g.bosses_safe;
+                    Log("row %u: boss %u: spot %d is safe (%.1f m from it, height %+.1f m); fighting", g.rp,
+                        g.target.entity, g.boss_try,
+                        std::sqrt((me[0] - g.boss_pos[0]) * (me[0] - g.boss_pos[0]) +
+                                  (me[2] - g.boss_pos[2]) * (me[2] - g.boss_pos[2])),
+                        me[1] - g.boss_pos[1]);
+                    g.boss_check = 2;
+                    return;
+                }
+                Log("row %u: boss %u: spot %d not usable (settled %.1f/%.1f/%.1f, walked %.1f/%.1f/%.1f, boss "
+                    "%.1f/%.1f/%.1f)", g.rp, g.target.entity, g.boss_try, g.boss_check_pos[0], g.boss_check_pos[1],
+                    g.boss_check_pos[2], me[0], me[1], me[2], g.boss_pos[0], g.boss_pos[1], g.boss_pos[2]);
+                if (++g.boss_try < kBossSpots && PlaceAtBoss(s.player, g.target, g.boss_try, g.boss_pos)) {
+                    g.boss_check = 0;
+                    g.boss_check_at = now + 1.5;
+                    return;
+                }
+                ++g.bosses_unsafe;
+                Log("row %u: boss %u: no safe spot in its arena; left alone", g.rp, g.target.entity);
+                BackToSpot(s.player, g.rp);
+                g.steps.clear();
+                g.boss_try = -1;
+                g.enemy_pending = false;
                 return;
             }
             if (!RunSteps(now)) return;
@@ -1069,7 +1127,9 @@ void Install(unsigned char* image, std::uint64_t size) {
     case Mode::Measure: g.phases = {Phase::ReplayBefore, Phase::Tour, Phase::ReplayAfter}; break;
     default:
         g.phases = {Phase::Tour};
+        if (g.opt.remo) g.phases.push_back(Phase::Remo);  // the cutscenes the tour's rows could not play
         if (g.opt.tod) g.phases.push_back(Phase::Tod);
+        if (g.opt.remo_only) g.phases = {Phase::Remo};
         break;
     }
     if (!lamptravel::OwnsTick()) {

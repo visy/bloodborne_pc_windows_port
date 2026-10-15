@@ -187,6 +187,42 @@ int main() {
     CHECK(!ItemEffectAllowed(1600, 3400) && !ItemEffectAllowed(4320, 4685) && ItemEffectAllowed(1300, 2200));
     CHECK(Seconds(GearSteps()) < 45.0f);
 
+    // The cutscene pass: unplayed cutscenes with a row of their map, rows taking turns, tries capped.
+    {
+        const std::vector<std::uint32_t> tour = {2102950, 2402950, 2402951, 2412950};
+        Progress p = ParseProgress("remo 24000000\nremook 24000000\nremo 24000020\nremo 24000030\nremo 24000030\n");
+        CHECK(p.remos_ok.count(24000000) && p.remo_tries[24000030] == 2 && p.remo_tries[24000020] == 1);
+        const auto r = CutsceneRoute(tour, {24000000, 24000020, 24000030, 24000060, 21000010, 36000000}, p);
+        // 24000000 played, 24000030 tried twice, 36000000 has no row: 24000020, 24000060, 21000010.
+        CHECK(r.size() == 3);
+        CHECK(r[0].second == 24000020 && r[0].first == 2402951);  // tried once: the map's next row
+        CHECK(r[1].second == 24000060 && r[1].first == 2402951);  // the map's 2nd cutscene: 2nd row
+        CHECK(r[2].second == 21000010 && r[2].first == 2102950);
+        const Options o = ParseOptions("tour,remoonly,remos=24000020+21000010,remoskip=20");
+        CHECK(o.remo_only && o.remo && o.remos.size() == 2 && o.remo_skip == 20);
+        CHECK(ParseOptions("tour").remo_skip == 150 && !ParseOptions("tour").remo_only);
+    }
+    // Boss spots: in front of the boss first (forward = (-sin, -cos)), then right, left, back;
+    // usable only on its floor, near it, and when a walk toward it gets closer.
+    {
+        const float boss[3] = {10, 5, 20};
+        float p[3];
+        BossSpot(boss, 0.0f, 0, p);
+        CHECK(std::fabs(p[0] - 10) < 1e-4f && std::fabs(p[2] - 16) < 1e-4f && std::fabs(p[1] - 5.3f) < 1e-4f);
+        BossSpot(boss, 0.0f, 3, p);
+        CHECK(std::fabs(p[2] - 24) < 1e-4f);
+        BossSpot(boss, 0.0f, 1, p);
+        CHECK(std::fabs(std::fabs(p[0] - 10) - 4) < 1e-4f && std::fabs(p[2] - 20) < 1e-4f);
+        const float from[3] = {10, 5, 16};
+        const float yaw = FaceYaw(from, boss);  // looking from the spot to the boss: +z
+        CHECK(std::fabs(-std::sin(yaw)) < 1e-4f && std::fabs(-std::cos(yaw) - 1) < 1e-4f);
+        const float settled[3] = {10, 5.1f, 16}, walked[3] = {10, 5.1f, 17}, stuck[3] = {10, 5.1f, 16.1f};
+        const float fell[3] = {10, -3, 16}, far[3] = {10, 5, 9}, far2[3] = {10, 5, 10};
+        CHECK(BossSpotOk(boss, settled, walked));
+        CHECK(!BossSpotOk(boss, settled, stuck));   // inside a wall: no move
+        CHECK(!BossSpotOk(boss, fell, fell));       // fell through
+        CHECK(!BossSpotOk(boss, far, far2));        // pushed out of the arena
+    }
     if (g_failures) {
         std::fprintf(stderr, "%d failure(s)\n", g_failures);
         return 1;

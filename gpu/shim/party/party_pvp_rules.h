@@ -67,11 +67,15 @@ inline const char* ToastText(bool on) {
 
 /// BB_PARTY_PVP_TEST (live verification): steps run in order, each DELAY s after the previous one
 /// (the first after the party session is steady): "on@S" / "off@S" (host: the setting),
-/// "face@S" (the local chr warped 1.1 m in front of the first other party player, facing it),
-/// "hit=N@S" (N taps of R1, 1.3 s apart), "hp=N@S" (the local chr's HP set to N, a test aid for a
-/// quick kill), "log@S" (teams and table cells).
+/// "face@S" (the local chr warped 1.1 m in front of the first other party player, facing it;
+/// "face=T@S": the first other party player on team T, e.g. 20 for a guest-guest hit),
+/// "hit=N@S" (N taps of R1, 1.3 s apart), "shoot=N@S" (N taps of L2: the firearm's bullets),
+/// "use=N@S" (N taps of Square: the selected quick item, e.g. a thrown knife),
+/// "item=GOODS@S" (test aid: the goods given if none is held and put in the first quick-item slot),
+/// "hp=N@S" (the local chr's HP set to N, a test aid for a quick kill), "log@S" (teams and table
+/// cells).
 struct TestStep {
-    enum class Kind { On, Off, Face, Hit, Hp, Log } kind = Kind::Log;
+    enum class Kind { On, Off, Face, Hit, Shoot, Use, Item, Hp, Log } kind = Kind::Log;
     int arg = 0;
     double delay = 0;
 };
@@ -109,15 +113,20 @@ inline bool ParseTestSteps(const char* text, std::vector<TestStep>* out, std::st
         }
         if (head == "on") st.kind = TestStep::Kind::On;
         else if (head == "off") st.kind = TestStep::Kind::Off;
-        else if (head == "face") st.kind = TestStep::Kind::Face;
+        else if (head == "face") st.kind = TestStep::Kind::Face, st.arg = arg.empty() ? 0 : std::atoi(arg.c_str());
         else if (head == "hit") st.kind = TestStep::Kind::Hit, st.arg = arg.empty() ? 1 : std::atoi(arg.c_str());
+        else if (head == "shoot") st.kind = TestStep::Kind::Shoot, st.arg = arg.empty() ? 1 : std::atoi(arg.c_str());
+        else if (head == "use") st.kind = TestStep::Kind::Use, st.arg = arg.empty() ? 1 : std::atoi(arg.c_str());
+        else if (head == "item" && !arg.empty()) st.kind = TestStep::Kind::Item, st.arg = std::atoi(arg.c_str());
         else if (head == "hp" && !arg.empty()) st.kind = TestStep::Kind::Hp, st.arg = std::atoi(arg.c_str());
         else if (head == "log") st.kind = TestStep::Kind::Log;
         else {
             if (bad) *bad = item;
             return false;
         }
-        if (st.kind == TestStep::Kind::Hit && (st.arg < 1 || st.arg > 50)) {
+        const bool taps = st.kind == TestStep::Kind::Hit || st.kind == TestStep::Kind::Shoot || st.kind == TestStep::Kind::Use;
+        if ((taps && (st.arg < 1 || st.arg > 50)) || (st.kind == TestStep::Kind::Face && (st.arg < 0 || st.arg >= kTeams)) ||
+            (st.kind == TestStep::Kind::Item && st.arg <= 0)) {
             if (bad) *bad = item;
             return false;
         }

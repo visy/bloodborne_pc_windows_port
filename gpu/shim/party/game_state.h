@@ -104,6 +104,13 @@ int ItemCount(std::uint32_t type_bits, std::uint32_t id);
 /// GiveItemDirect 0x131CB70(0, type bits, id, count); false when the code differs or no player.
 /// It shows nothing; ShowItemGet adds the native "item acquired" entry.
 bool GiveItem(std::uint32_t type_bits, std::uint32_t id, int count);
+/// The game's own equip of one equipment slot (EquipGameData = PlayerGameData +0x1D0, setter
+/// 0x14CCB90: refcounted GaItem handle, id, inventory index, the chr's ChrAsm), giving one first if
+/// none is held. Slots: world_warper_rules.h EquipSlot (0..5 weapons, 8..11 armor). False when the
+/// code differs, the item is not in the inventory or the slot did not take it.
+bool EquipSlotItem(int slot, std::uint32_t type_bits, std::uint32_t id);
+/// The item id in equipment slot `slot` (0: empty / unknown).
+std::uint32_t EquippedSlotId(int slot);
 /// The native item-get dialog entry, exactly as the lot award's give list (0x17D89F0 at
 /// 0x17D9348) queues it: 0x16D8850(*0x553B1C0, &gaitem handle, type bits, id, count, 0) - pushes
 /// the entry onto the item-get list and plays sound 300. The handle is the inventory entry's

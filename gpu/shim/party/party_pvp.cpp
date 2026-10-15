@@ -44,6 +44,8 @@ constexpr u64 kEffectTable = 0x4731560;       // rodata: the SpEffect target-ene
 constexpr u64 kChrTeam = 0x88;                // ChrIns team type (u32)
 constexpr u64 kChrType = 0x78;                // ChrIns chr type (0 body, 1 white, 2 black, 8 grey)
 constexpr u32 kPadR1 = 0x800;
+constexpr u32 kPadL2 = 0x100;      // the firearm (left hand)
+constexpr u32 kPadSquare = 0x8000; // the selected quick item
 
 void Log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 void Log(const char* fmt, ...) {
@@ -118,6 +120,7 @@ struct State {
     bool session_steady = false;
     Clock::time_point step_at{};
     int taps_left = 0;
+    u32 tap_button = 0;
     bool pressed = false;
     Clock::time_point tap_at{};
 };
@@ -228,10 +231,28 @@ void Toast(bool on, bool host) {
 }
 
 // ---- BB_PARTY_PVP_TEST ----
-bool FaceOther(u64 wcm, std::string* what) {
+constexpr int kQuickSlot0 = 12;  // TODO(plusfin): verify
+
+/// Test aid: goods `id` (given if none is held) into the first quick-item slot.
+bool QuickItemFirst(u32 id, std::string* what) {
+    const bool ok = EquipSlotItem(kQuickSlot0, kItemGoods, id);
+    char b[120];
+    std::snprintf(b, sizeof b, "slot %d now holds %u (held %d)", kQuickSlot0, EquippedSlotId(kQuickSlot0),
+                  ItemCount(kItemGoods, id));
+    *what = b;
+    return ok;
+}
+
+/// `team`: the first other party player on that team (0: the first other one).
+bool FaceOther(u64 wcm, int team, std::string* what) {
     const std::vector<u64> chrs = PlayerChrs(wcm);
     if (chrs.size() < 2) return false;
-    const u64 me = chrs[0], other = chrs[1];
+    const u64 me = chrs[0];
+    u64 other = 0;
+    for (std::size_t i = 1; i < chrs.size() && !other; ++i) {
+        if (team <= 0 || static_cast<int>(Field<u32>(chrs[i], kChrTeam, 0)) == team) other = chrs[i];
+    }
+    if (!other) return false;
     float t[4] = {}, m[4] = {}, r[4] = {};
     u64 vt = 0, fn = 0;
     // The physics positions (as the party HUD reads them; a remote chr's +0xc0 is not kept up).
@@ -278,7 +299,7 @@ void TestTick(State& st, const GameSnapshot& s, bool session, bool host) {
         st.pressed = false;
     }
     if (st.taps_left > 0 && !st.pressed && now - st.tap_at >= std::chrono::milliseconds(1300)) {
-        runtime_pad_director_press(kPadR1);
+        runtime_pad_director_press(st.tap_button ? st.tap_button : kPadR1);
         st.pressed = true;
         st.tap_at = now;
         --st.taps_left;
@@ -305,15 +326,26 @@ void TestTick(State& st, const GameSnapshot& s, bool session, bool host) {
         break;
     case TestStep::Kind::Face: {
         std::string what;
-        const bool ok = FaceOther(wcm, &what);
+        const bool ok = FaceOther(wcm, step.arg, &what);
         Log("test: step %zu: face: %s", st.next, ok ? what.c_str() : "FAILED (no other party player loaded)");
         break;
     }
     case TestStep::Kind::Hit:
+    case TestStep::Kind::Shoot:
+    case TestStep::Kind::Use: {
+        const bool hit = step.kind == TestStep::Kind::Hit, shoot = step.kind == TestStep::Kind::Shoot;
+        st.tap_button = hit ? kPadR1 : shoot ? kPadL2 : kPadSquare;
         st.taps_left = step.arg;
         st.tap_at = now - std::chrono::seconds(2);
-        Log("test: step %zu: %d x R1", st.next, step.arg);
+        Log("test: step %zu: %d x %s", st.next, step.arg, hit ? "R1" : shoot ? "L2 (firearm)" : "Square (quick item)");
         break;
+    }
+    case TestStep::Kind::Item: {
+        std::string what;
+        const bool ok = QuickItemFirst(static_cast<u32>(step.arg), &what);
+        Log("test: step %zu: item %d in the first quick-item slot: %s", st.next, step.arg, ok ? what.c_str() : what.empty() ? "FAILED" : what.c_str());
+        break;
+    }
     case TestStep::Kind::Hp: {
         const u64 dm = Field<u64>(Field<u64>(s.player, 0x3b0), 0x20);
         const int before = Field<int>(dm, 0xf8, -1);

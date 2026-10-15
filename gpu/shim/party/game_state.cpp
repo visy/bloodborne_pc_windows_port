@@ -505,6 +505,42 @@ bool GiveItem(std::uint32_t type_bits, std::uint32_t id, int count) {
     return true;
 }
 
+// The game's own equip of one slot (EquipGameData = PlayerGameData +0x1D0): (equip, slot, &gaitem
+// handle, inventory index, force) - the handle by the refcounted assign (0x1A8BD80, never a plain
+// write: the GaItem counts), the item id from the handle, the index, the slot's changed flag, and
+// the same into the chr's ChrAsm. Record: handle +0x264 + slot * 4, id +0x2A4 + slot * 4.
+constexpr std::uint64_t kSetEquipSlot = 0x14ccb90;
+constexpr std::uint64_t kRecEquip = 0x1d0, kRecEquipHandle = 0x264, kRecEquipId = 0x2a4;
+
+bool EquipSlotItem(int slot, std::uint32_t type_bits, std::uint32_t id) {
+    static const bool ok = MatchesOriginal(kSetEquipSlot, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55,
+                                                           0x41, 0x54, 0x53, 0x48, 0x83, 0xec, 0x28, 0x89, 0xcb});
+    if (!ok || slot < 0 || slot > 31) return false;
+    if (ItemCount(type_bits, id) <= 0) GiveItem(type_bits, id, 1);
+    const std::uint64_t rec = Field<std::uint64_t>(Slot(kGameDataMan), 8, 0);
+    if (!rec || !FindOk()) return false;
+    const std::uint64_t list = rec + kRecInventory;
+    if (!Field<std::uint64_t>(list, 0x68, 0) || !Field<std::uint64_t>(list, 0x78, 0)) return false;
+    using FindFn = std::int32_t(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t, std::uint32_t);
+    const std::int32_t index = reinterpret_cast<FindFn>(Guest(kInventoryFind))(list, type_bits, id);
+    const std::int32_t last = Field<std::int32_t>(list, 0x88, -1);
+    if (index < 0 || index > last) return false;
+    const std::uint32_t split = Field<std::uint32_t>(list, 0x24, 0);
+    const std::uint32_t i = static_cast<std::uint32_t>(index);
+    const std::uint64_t entry = i < split ? Field<std::uint64_t>(list, 0x58, 0) + 16ull * i
+                                          : Field<std::uint64_t>(list, 0x48, 0) + 16ull * (i - split);
+    std::uint32_t handle = 0;
+    if (!SafeGet(entry, &handle) || !handle) return false;
+    using SetFn = void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t, std::uint32_t*, std::uint32_t, std::uint32_t);
+    reinterpret_cast<SetFn>(Guest(kSetEquipSlot))(rec + kRecEquip, static_cast<std::uint32_t>(slot), &handle, i, 1);
+    return Field<std::uint32_t>(rec, kRecEquipHandle + static_cast<std::uint64_t>(slot) * 4, 0) == handle;
+}
+
+std::uint32_t EquippedSlotId(int slot) {
+    const std::uint64_t rec = Field<std::uint64_t>(Slot(kGameDataMan), 8, 0);
+    return slot < 0 || slot > 31 ? 0 : Field<std::uint32_t>(rec, kRecEquipId + static_cast<std::uint64_t>(slot) * 4, 0);
+}
+
 bool CutscenePlaying() {
     const std::uint64_t player = Field<std::uint64_t>(Slot(kSprjRemo), 8, 0);
     return (Field<std::uint8_t>(player, 0x168, 0) & 1) != 0;

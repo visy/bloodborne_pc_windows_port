@@ -64,6 +64,17 @@ int main() {
         assert(!ParseTestSteps("hit=0@1", &st, &bad));
         assert(!ParseTestSteps("on@x", &st, &bad));
         assert(!ParseTestSteps("hp@1", &st, &bad));
+        // Guest-guest (face a team), bullets, a quick item (thrown knife).
+        assert(ParseTestSteps("face=20@2,shoot=2@1,item=1060@1,use=3@1,face@1", &st, &bad));
+        assert(st.size() == 5);
+        assert(st[0].kind == TestStep::Kind::Face && st[0].arg == 20);
+        assert(st[1].kind == TestStep::Kind::Shoot && st[1].arg == 2);
+        assert(st[2].kind == TestStep::Kind::Item && st[2].arg == 1060);
+        assert(st[3].kind == TestStep::Kind::Use && st[3].arg == 3);
+        assert(st[4].kind == TestStep::Kind::Face && st[4].arg == 0);
+        assert(!ParseTestSteps("shoot=0@1", &st, &bad));
+        assert(!ParseTestSteps("face=40@1", &st, &bad));
+        assert(!ParseTestSteps("item@1", &st, &bad));
     }
 
     // The party rule travels in the "balance" event: off by default, round trip, older hosts
