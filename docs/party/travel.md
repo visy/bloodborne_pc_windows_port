@@ -524,6 +524,35 @@ leave, no K3 (these walls do not change the stage record: no block boundary was 
 that stays open), `where` reports fresh (< 0.8 s). There is no leash (phantom_limits.md §4).
 Screenshots black (desktop locked). The walk driver now stops after 8 steps without moving.
 
+### 7.2 Route walk across a block boundary (2026-10-15, parab2 b1a-b1c)
+
+The straight-line stick walk of 7.1 runs into walls. **Route walker** (party_director test steps
+`host_route=` / `guest_route=X:Y:Z/X:Y:Z/...`, also `host_stick=`): the left stick (pad file, closed
+loop on the position, camera-relative angle corrected after every step) steers to each waypoint in
+turn (reached within 2 m, no stop between waypoints); against a wall it takes 3 side steps to one
+side, then the other; still blocked after two such slides it hops (chr warp) onto the waypoint
+when it is within 6 m, counted and logged (`route: HOP n`). The walker is invincible while it walks
+(chr +0x1E1 bit 14, cleared at the end) so enemies on the way do not end it; fights and deaths are
+the steps after it. Every stage-record (block) change is logged (`route: stage record A -> B`).
+
+**Waypoints from the game's navmesh** (`tools/party/nav_route.py`): each map's
+`mAA_BB_CC_DD.nvmhktbnd.dcx` holds Havok 2014 packfiles with one hkaiNavMesh each (faces, edges,
+vertices in map coordinates); faces are linked inside a file by their opposite face and across files
+and maps by boundary edges lying on each other; a route is A* over face centroids, a waypoint every
+4-5 m and at every map change. `--borders` lists where two maps' navmeshes meet: m24_01 (Central
+Yharnam) and m24_00 (Cathedral Ward) meet at the Great Bridge's gate (-117, -27, 77) and east of the
+Oedon Chapel (31, -9, 95). The navmesh is the enemies' one: closed gates are in it.
+
+| Run | What | Result |
+|---|---|---|
+| b1a | Great Bridge lamp -> Cathedral Ward (host), Great Bridge -> Central Yharnam lamp (guest), straight centroids, R 1.5, no hop | host: the Great Bridge's gate to Cathedral Ward is closed in the test save (screenshot): stopped 2 m before it; guest: pinned between a cart and an enemy after 9 waypoints. Led to the hop fallback, the 2 m reach and the Oedon Chapel route |
+| b1b | Host at the Oedon Chapel lamp 2402950 walks east into m24_01 (10 waypoints, 43 m); guest walks the chapel -> the Cathedral Ward stairs (16 waypoints, 77 m) | host: `stage record 0x18000000 -> 0x18010000` at (32.5, -9.6, 94.7), `K3: stage-record change with a session ... no leave`, DONE 42 s, 0 side steps, 0 hops; guest: DONE 49 s, 0 side steps, 0 hops; the guest's fight with the nearest enemy (entity 2400203, R1 taps) ended in its death: `died alone: revived at its own last lamp 2402950 in the loaded map, no load`; the host's kill in m24_01 (Echoes 96 -> 267). Apart in two blocks from 62 s to the end (239 s, ~3 min, 58-91 m): host role 3 / guest role 6, cooperators 1 throughout, no send-home, no leave, no desync digest difference (digests every 15 s), no stall (screenshots: host in the dark m24_01 corridor east of the chapel, guest on the stairs and fighting, guest revived at the chapel lamp) |
+| b1c | b1b with items and a host death | both routes DONE again with 0 side steps and 0 hops (host 45 s, `stage record 0x18000000 -> 0x18010000`, K3 no leave); host kill in m24_01 (Echoes 267 -> 438), host and guest each used Madman's Knowledge in their own block (Insight 6 -> 7 on each); the guest's fight; the host died in m24_01 while the guest was being killed in m24_00 (both down: `a wipe; the party respawns together (one load)`), both at the chapel lamp, together again; the guest died alone later: revived at its lamp, no load. No digest difference, no stall |
+
+Not shown: a host death in the same map while the guest is alive in another block: by the C2
+decision (the vanilla respawn load for the whole party) it takes the party along; a host death in
+another map leaves the guest where it is (B5).
+
 Open:
 
 * Headstone menu: three Cross presses after the row (row, then the confirmation dialog); the menu

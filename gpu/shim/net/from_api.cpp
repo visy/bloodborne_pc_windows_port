@@ -416,6 +416,7 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
         dungeon_unknown = my_channel <= 0 || !channels_.known(static_cast<std::uint64_t>(my_channel));
     }
     int held = 0, prologue_held = 0, young_held = 0;
+    std::int64_t min_age = 0;
     std::string list = "[";
     int n = 0;
     std::vector<Sign> board;
@@ -441,6 +442,7 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
                                    }),
                     board.end());
         // A4: a sign younger than kMinSignAgeMs is not offered yet (its bell is barely up).
+        min_age = min_sign_age_ms_;
         const std::size_t before_young = board.size();
         board.erase(std::remove_if(board.begin(), board.end(),
                                    [&](const Sign& s) { return now - s.posted_ms < min_sign_age_ms_; }),
@@ -482,7 +484,7 @@ std::string FromApi::sign_get(const Caller& caller, const json::Value& body) {
         key += "] of " + std::to_string(board.size()) + " on the board";
         if (in_chalice) key += ", in chalice dungeon " + std::to_string(my_channel);
         if (held) key += " (" + std::to_string(held) + " held back: that dungeon is not on the channel board)";
-        if (young_held) key += " (" + std::to_string(young_held) + " too new: shown 1.5 s after it went up)";
+        if (young_held) key += " (" + std::to_string(young_held) + " too new: shown " + std::to_string(min_age) + " ms after it went up)";
         if (prologue_held)
             key += " (" + std::to_string(prologue_held) +
                    (caller_prologue ? " held back: this member is in its prologue)" : " held back: its owner is in the prologue)");
