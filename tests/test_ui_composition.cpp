@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <cassert>
+#include <cmath>
 #include <cstdio>
 #include "gpu/shadps4/video_core/renderer_vulkan/ui_composition.h"
 
@@ -25,5 +26,12 @@ int main() {
     assert(ui[0] == 1 && ui[1] == 1); // don't double an already native UI viewport
     const auto larger = Scale(960, 540, 3840, 2160, true);
     assert(larger[0] == 2 && larger[1] == 2);
-    std::puts("UI composition: PASS (menu without camera, HUD, FSR off, viewport scaling)");
+    // Ultrawide stage: black side columns only for a menu without a scene (21:9, 32:9); a frame
+    // with a scene (the world with the upscaler off) keeps its whole width; 16:9 has no sides.
+    assert(StageSide(false, 1920) == 0.0f && StageSide(true, 1920) == 0.0f);
+    assert(StageSide(true, 2560) == 0.0f && StageSide(true, 3840) == 0.0f);
+    assert(std::fabs(StageSide(false, 2560) - 0.125f) < 1e-6f);
+    assert(std::fabs(StageSide(false, 3840) - 0.25f) < 1e-6f);
+    std::puts("UI composition: PASS (menu without camera, HUD, FSR off, viewport scaling, "
+              "ultrawide stage)");
 }
