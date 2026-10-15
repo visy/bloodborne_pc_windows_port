@@ -5,6 +5,11 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.6.3 (unreleased)
 
+- **Fixed: a guest who died again after being revived waited about 11 s longer, checked live**: the game's own death script ran only once until the next loading screen, so the second death was only noticed by the party's 11 s safety check. The revive now arms it again: every death goes the game's usual way (lead from deadinside's notes on BBSC).
+- **Changed: moves inside the loaded area use the game's own warp, checked live**: a revive at the lamp, the host's lamp in the same area with the party and the placement beside the host now move the player the way the game's cutscenes do. Before, a far move (about 130 m) could leave the camera in the sky or inside a wall for a few seconds; now the view is the same as after a loading screen. `BB_PARTY_WARP_REFRESH=0` goes back to the old move.
+- **Added: the party checks that every player sees the same enemies alive and dead**: the host's regular check now includes the enemies of its area; a guest whose game differs logs exactly which enemies (a tool for testing; nothing is changed in play). Checked live: it stayed equal through travels, deaths and kills, and found a test difference at once.
+- **Added (opt-in): fast loading** (`BB_FAST_LOADING=1`, idea from droogie/bbhost): loading screens run without frame pacing at the 60 / 90 / uncapped frame-rate settings. Measured 3-8 % shorter loads, but the loading screen's animation stops, so it is off by default.
+
 ## 0.6.2 (Windows port 0.6.2, party co-op)
 
 - **Added: Volumetric effects resolution (idea from a playtester)**: smoke, mist, fog sprites and other soft particle effects, which the game draws into a half-resolution buffer and which look blocky at high resolutions, can be drawn at 2x the pixels or at full scene resolution (System > Display > *Volumetric effects*, the overlay, the launcher, `bbport.ini` `volumetric_res`, `BB_VOLUMETRIC_RES`). Off (the game's own look) by default, changes live; in a test at 1080p it cost about 0.6 ms (2x pixels) and 1.2 ms (full) per frame on an RTX 3070. Light shafts, glare and SSAO keep their own sizes. The *FPS counter* row moved from the Display page to *HUD details* to make room.
