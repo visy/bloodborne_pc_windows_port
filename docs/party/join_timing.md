@@ -609,6 +609,7 @@ back until 2.0 s after the ring, so the sign path keeps the timing it was proven
 | Run (one session each, guest_home x7: leave, ring, join again; same map) | Joins | Ring -> client (6) |
 |---|---|---|
 | a4ds: direct summon, timer 0.5 s | 4 of 5 in 1.5-1.6 s (`joined the host's room (1.5 s after the request)`); the 5th stalled after client (6): no host-world load for 6 s (the test's next leave hit it in that state, the guest then sat in flow 2 for 55 s) | 1.5 s (was 3.0 s) |
+| a4ds2: the same with 12 s between joins (the host's game long out of the last session) | 1 of 2: the 2nd stalled again after client (6) (flow 1 -> 2, no load for 12 s), then three attempts failed (`the bell's own summon entry did not come up, not even after a re-ring`) | 1.9-2.4 s |
 | a4sp: sign path only (`BB_PARTY_DIRECT_SUMMON=0`), timer 0.5 s + the board hold | 7 of 7 (`1 too new: shown 1500 ms after it went up`, then `summons Hunter1 into room 100N` 1.9 s later) | 3.7-4.3 s (as with the 2 s timer) |
 
 The stall is the symptom of 2026-10-11's 0.5 s sign-path runs ("the guest stopped after client
