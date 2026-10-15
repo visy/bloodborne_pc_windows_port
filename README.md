@@ -20,7 +20,7 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | **Overall** | `███████████████████░` | 94% |
 | Session & joining | `███████████████████░` | 97% |
 | World & travel | `████████████████████` | 98% |
-| Death & respawn | `███████████████████░` | 95% |
+| Death & respawn | `███████████████████░` | 96% |
 | Progress (anyone can progress) | `██████████████████░░` | 92% |
 | Services & UI | `███████████████████░` | 97% |
 | Network & robustness | `██████████████████░░` | 91% |
@@ -245,10 +245,20 @@ before anyone is in the game):
   loot (for each player) and the lift work for the whole party. Any player can perform the ritual:
   the host's altar then offers *Enter the party's dungeon* (no glyph typing), and chalices are
   shared between all players.
-- **Crashes recover.** A crashed game restarts and rejoins by itself (back in the host's world about 12 s after the restart), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue. If the host's game crashes, the guests go home at once and come back by themselves as soon as the host is back in the world; items a guest got in the host's world stay in its own save.
+- **Crashes recover.** A crashed game restarts and rejoins by itself (back in the host's world about 12 s after the restart), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue. If the host's game crashes, the guests go to their own world and wait ("Waiting for the host to come back (N s)...") until the host's game has restarted, then are summoned back beside it by themselves (about 20 s after the crash on one PC; after 3 minutes without the host a guest plays on alone); items a guest got in the host's world stay in its own save.
 - **Network drops recover.** A network outage of up to 30 s keeps the session: no loading screen, everyone carries on where they stood once the network is back (the others freeze in place meanwhile). If a longer outage loses the session, a guest goes home at once with one loading screen and is summoned back beside the host by itself once the network is back. The party also checks every 15 s that everyone sees the same world and progress and quietly re-sends whatever differs.
 - **Wrong passwords are locked out.** A few typos are fine; after 5 wrong passwords in a minute the host refuses that address for a while.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
+- **Undo a party session.** Right before every party session (host or guest) the game copies both
+  save folders aside. The launcher's *Party* tab has **Undo last party session**: it shows what it
+  will replace, keeps your current saves aside the same way (so the undo can be undone) and puts
+  the saves back byte for byte. After a party session the launcher also checks the party save
+  (every character loads, the NG cycle only changes with an ending, no boss kill or lamp from
+  before the session is lost, level and play time never go down) and offers the undo if something
+  looks wrong.
+- **New version out?** The launcher says so ("Version X is out - every PC in the party needs the
+  same version", with the download link; at most one check every 6 hours, off in *Advanced /
+  Debug*). A join refused for a version mismatch names the host's version and yours.
 - **Death has a cost.** Each death stacks "rot" (−10% max HP, −10% max stamina, +10% stamina
   use or −15% HP won back by hitting after a hit (rally), picked at random, up to 5); using a lamp (even just opening its travel menu and cancelling) or levelling up clears it.
   It belongs to your character: each save slot keeps its own, and a new game starts without it. On by default; the host can turn it off on the *Party rules* page.

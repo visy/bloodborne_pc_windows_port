@@ -57,6 +57,9 @@ struct Facts {
     // Playtest 1 #19: other connected members still in their prologue ("Hunter1"): summons start
     // once everybody is ready, so the page says who it waits for.
     std::string others_prologue;
+    // Host crash recovery: seconds this guest has waited for a lost host to come back (its crash
+    // restart), -1 = not waiting.
+    int host_wait_s = -1;
 };
 
 struct Mapped {
@@ -84,6 +87,10 @@ std::string RefusalNotice(RejectCode code, const std::string& reason);
 /// (`flow_at_start` -> `flow_now`), else the one it joined with; none for a code that carries none.
 std::string RejoinPassword(const std::string& joined_with, const std::string& flow_at_start,
                            const std::string& flow_now, bool code_ignores_password);
+/// Host crash recovery: the guest's line while it waits for a lost host ("Waiting for the host to
+/// come back (12 s)...") and the notice once it gives up after `cap_s`.
+std::string HostWaitText(int seconds);
+std::string HostGoneNotice(int cap_s);
 /// One line for BB_PARTY_STATUS_LOG.
 std::string SnapshotLine(const status::Board& b);
 
@@ -107,6 +114,8 @@ void OnTravel(const std::string& what);
 void OnRing();
 /// A11: the host's boss fight / cutscene hold started (`text`, BusyText) or ended (empty).
 void OnHostBusy(const std::string& text);
+/// Host crash recovery: the guest waits `seconds` for the host to come back (-1: not any more).
+void OnHostWait(int seconds);
 /// Leave / Rejoin done by the runtime (any thread).
 void OnLeft(bool host);
 void OnRejoining();
