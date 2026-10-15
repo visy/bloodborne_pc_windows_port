@@ -62,7 +62,9 @@ def run(a, sc, out: Path):
     starts = {}
     for i in range(2):
         p = root / f"inst{i}" / "run.log"
-        starts[i] = 0  # instances.py starts a fresh run.log per run (the old one: run.prev.log)
+        # instances.py moves the old run.log to run.prev.log, unless something holds it open (then
+        # it appends): remember the file id and size, and copy from there when it is the same file.
+        starts[i] = (p.stat().st_ino, p.stat().st_size) if p.exists() else (None, 0)
     cmd = [sys.executable, str(HERE / "instances.py"), "run", "--count", "2", "--party", "--fresh-saves", "--timestamps",
            "--idle", "0", "--seconds", str(sc["seconds"]), "--root", str(root), "--build", str(a.build),
            "--game", str(a.game), "--label", "repeat %s x%d" % (a.scenario, a.cycles)]
@@ -86,7 +88,7 @@ def run(a, sc, out: Path):
         shooter.terminate()
     for i in range(2):
         with open(root / f"inst{i}" / "run.log", "rb") as f:
-            f.seek(starts[i])
+            f.seek(starts[i][1] if os.fstat(f.fileno()).st_ino == starts[i][0] else 0)
             (out / f"inst{i}.log").write_bytes(f.read())
     try:
         (root / "noreap").unlink()

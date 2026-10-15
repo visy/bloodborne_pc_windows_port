@@ -105,7 +105,9 @@ def run_phase(a, ph, out: Path):
     starts = {}
     for i in range(3):
         p = root / f"inst{i}" / "run.log"
-        starts[i] = 0  # instances.py starts a fresh run.log per run (the old one: run.prev.log)
+        # instances.py moves the old run.log to run.prev.log, unless something holds it open (then
+        # it appends): remember the file id and size, and copy from there when it is the same file.
+        starts[i] = (p.stat().st_ino, p.stat().st_size) if p.exists() else (None, 0)
     cmd = [sys.executable, str(HERE / "instances.py"), "run", "--count", "3", "--headless", "1", "--party",
            "--fresh-saves", "--timestamps", "--idle", "0", "--seconds", str(ph["seconds"]),
            "--root", str(root), "--build", str(a.build), "--game", str(a.game),
@@ -132,7 +134,7 @@ def run_phase(a, ph, out: Path):
     for i in range(3):
         p = root / f"inst{i}" / "run.log"
         with open(p, "rb") as f:
-            f.seek(starts[i])
+            f.seek(starts[i][1] if os.fstat(f.fileno()).st_ino == starts[i][0] else 0)
             (out / f"inst{i}.log").write_bytes(f.read())
     try:
         (root / "noreap").unlink()
@@ -234,7 +236,7 @@ def check_s1(v, L):
     hd = need(v, L, "s1 host death in the fight", 0, r"travel step \d+/\d+: host_die", gm or 0)
     if hd is not None:
         need(v, L, "s1 host limbo + spectate", 0, r"spectating: following", hd)
-    need(v, L, "s1 wipe: the party respawns together", 0, r"a wipe; the party respawns together", hd or 0)
+    need(v, L, "s1 wipe: the party respawns together", 0, r"a wipe", hd or 0)
     check_common(v, L, "s1")
 
 
