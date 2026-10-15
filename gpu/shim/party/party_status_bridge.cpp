@@ -427,7 +427,10 @@ void OnLinkState(LinkState state, const std::string& detail, RejectCode reject, 
         }
         PublishLocked(b);
     }
-    if (state == was) return;
+    // A refusal is told every time (parx2 fin, live: a guest that had left, rejoined and then saw the
+    // host end the party kept "You left the party": its rejoined link reported Rejected again,
+    // which equalled the stale state of the first link).
+    if (state == was && state != LinkState::Rejected) return;
     // Out of the party: the old roster is no longer ours.
     if (state == LinkState::Rejected || state == LinkState::Stopped) status::SetMembers({});
     if (state == LinkState::Connected) {
