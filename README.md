@@ -170,7 +170,9 @@ before anyone is in the game):
 - **Apart and back together.** While players are in different maps each sees only the others in
   its own map; meeting again shows them at once, without a loading screen. If the host dies while
   you are in another area you play on where you are (no loading screen for you); if you die there
-  you get up at your own lamp.
+  you get up at your own lamp. A guest who joined from the title stays put too when the host travels
+  alone; enemies it killed while the host was away are back once the host returns (the host's world
+  counts, as after a reload).
 - **Everyone can use lamps.** Vanilla disables lamps during co-op; here they work for everyone.
   A lamp lit by anyone is lit for the party.
 - **Resting resets the world for the party.** Enemies respawn; everyone's HP, vials and bullets
