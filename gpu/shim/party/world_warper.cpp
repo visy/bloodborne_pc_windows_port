@@ -171,6 +171,7 @@ struct State {
     std::vector<int> tod_of_row;  // the Tod phase: each route row's value
     int tod_now = -1;
     double curve_at = 0;
+    double gear_wait = 0;
     // replay results: row -> counters
     std::map<u32, Counters> replay_before, replay_after;
     std::size_t done_rows = 0, skipped_rows = 0;
@@ -769,7 +770,6 @@ void TickImpl(double now) {
         if (ph == Phase::Tour) {
             AppendState("start " + std::to_string(g.rp));
             ++g.progress.starts[g.rp];
-            if (g.opt.gear && g.opt.act) PutOnGear(g.idx - 1);
         } else if (ph == Phase::Tod) {
             const int v = g.tod_of_row[g.idx - 1];
             if (TodValue() != v) SetTod(v);
@@ -827,8 +827,16 @@ void TickImpl(double now) {
             g.arrive_at = now;
             g.c_arrive = Counters::Now();
             UpdateStatus("arrived");
+            // The row's gear, in the world as the equipment menu changes it (the chr loads the new
+            // parts at once); put on before the warp instead, a load built the chr from it and
+            // sometimes ended the game (live 2026-10-15).
+            g.gear_wait = 0;
+            if (!g.interrupted && g.phases[g.phase_i] == Phase::Tour && g.opt.gear && g.opt.act) {
+                PutOnGear(g.idx - 1);
+                g.gear_wait = 4.0;
+            }
         }
-        if (now - g.steady_since < 2.5) return;
+        if (now - g.steady_since < 2.5 + g.gear_wait) return;
         if (g.interrupted) {
             // Back after a load in the middle of the routine (a death, a fall, an event warp): the
             // row is done; running it again from the respawn could repeat the same fall.
