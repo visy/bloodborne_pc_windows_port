@@ -103,6 +103,18 @@ static void test_events() {
     CHECK(!PhantomEventFromJsonText("{\"kind\":\"insight\",\"seq\":\"0x1\",\"n\":2,\"event\":5,\"boss\":1}", &out));
     ins.boss = true;
 
+    // Statsaudit finding 4: the host's boss clear bonus.
+    PhantomEvent bonus;
+    bonus.kind = PhantomEventKind::BossBonus;
+    bonus.seq = 11;
+    bonus.bonus = 128000;
+    bonus.source_event = 2100800;
+    CHECK(PhantomEventFromJsonText(PhantomEventToJsonText(bonus), &out, &err));
+    CHECK(out.kind == PhantomEventKind::BossBonus && out.bonus == 128000 && out.source_event == 2100800u);
+    CHECK(!PhantomEventFromJsonText("{\"kind\":\"boss_bonus\",\"seq\":\"0x1\",\"echoes\":-5,\"event\":1}", &out));
+    CHECK(!PhantomEventFromJsonText("{\"kind\":\"boss_bonus\",\"seq\":\"0x1\",\"echoes\":99999999,\"event\":1}", &out));
+    CHECK(!PhantomEventFromJsonText("{\"kind\":\"boss_bonus\",\"seq\":\"0x1\",\"event\":1}", &out));
+
     PhantomEvent rest;
     rest.kind = PhantomEventKind::Rested;
     rest.seq = 9;
