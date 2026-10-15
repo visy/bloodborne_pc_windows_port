@@ -223,4 +223,11 @@ bool NrDropPending();
 /// RE: offsets in [base, base+span) holding the transport config's timing values.
 std::string NrFindTimeouts(std::uint64_t base, std::size_t span);
 
+/// The game's own in-world warp of the local player (0x154B110, as a cutscene's end warp or a
+/// stage spot warp moves it: block, navmesh, chr reset, camera / draw-group warp record). Main thread.
+bool NativeWarpLocal(std::uint64_t player, const float* pos16, const float* rot16, const char* why);
+/// The local player's in-world warp: NativeWarpLocal unless BB_PARTY_WARP_REFRESH=0, else the chr
+/// warp vfunc +0x5F8. Main thread.
+bool LocalChrWarp(std::uint64_t player, const float* pos16, const float* rot16, const char* why);
+
 } // namespace coop::b2

@@ -151,6 +151,7 @@ struct TravelStep {
     float pos[3] = {};    // HostMove / GuestMove: the chr warp target (map coordinates)
     float yaw = 0;        // HostMove / GuestMove: rotation about Y (radians) when has_yaw
     bool has_yaw = false;
+    int warp = 0;         // HostMove / GuestMove: 0 the bare chr warp +0x5F8, 1 ":native" the game's own player warp
     std::uint32_t buttons = 0;  // HostPress / GuestPress: pad buttons tapped (0.15 s)
     std::string map;      // HostMove / GuestMove "%NAME": only while the current map name contains it
     std::string args;     // HostStage / HostWalk / HostHeadstone
@@ -1716,11 +1717,18 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                 rot[2] = 0;
                 rot[3] = 0;
             }
-            reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, const float*, const float*, std::uint32_t)>(fn)(
-                player, pos, rot, 1);
+            bool native = false;
+            if (step.warp == 1) {
+                native = b2::NativeWarpLocal(player, pos, rot, "test move");
+            }
+            if (!native) {
+                reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, const float*, const float*, std::uint32_t)>(fn)(
+                    player, pos, rot, 1);
+            }
             if (TestInvincibleRequested()) SetTestInvincible(true);
-            Log("test: %s to (%.2f, %.2f, %.2f) rot y %.3f%s", TravelStepName(step.kind), double(pos[0]),
-                double(pos[1]), double(pos[2]), double(rot[1]), TestInvincibleRequested() ? ", invincible" : "");
+            Log("test: %s to (%.2f, %.2f, %.2f) rot y %.3f (%s)%s", TravelStepName(step.kind), double(pos[0]),
+                double(pos[1]), double(pos[2]), double(rot[1]), native ? "the game's own player warp" : "bare chr warp",
+                TestInvincibleRequested() ? ", invincible" : "");
         } else {
             Log("test: %s: no player / transform", TravelStepName(step.kind));
         }
@@ -2932,10 +2940,14 @@ void PartyDirector::ConfigureFromEnv() {
                         step.pos[k] = std::strtof(p, &end);
                         p = (end && *end == ':') ? end + 1 : end;
                     }
-                    if (p && p > item.c_str() && p[-1] == ':') {  // X:Y:Z:YAW
-                        step.yaw = std::strtof(p, nullptr);
+                    if (p && p > item.c_str() && p[-1] == ':' &&
+                        (std::isdigit(static_cast<unsigned char>(*p)) || *p == '-' || *p == '.' || *p == '+')) {
+                        step.yaw = std::strtof(p, nullptr);  // X:Y:Z:YAW
                         step.has_yaw = true;
                     }
+                    // X:Y:Z[:YAW]:native: the game's own in-world player warp (0x154B110) instead
+                    // of the bare chr warp (the bug 7 A/B).
+                    step.warp = item.find(":native") != std::string::npos ? 1 : 0;
                     if (const std::size_t pc = item.find('%'); pc != std::string::npos) {
                         step.map = item.substr(pc + 1);
                     }

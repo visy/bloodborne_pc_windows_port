@@ -1678,20 +1678,84 @@ bool InLoadedBlock(u32 map) {
     return cur != 0xffffffffu && map != 0 && map != 0xffffffffu && (map >> 16) == (cur >> 16);
 }
 
-/// The chr warp vfunc +0x5F8 (0x18CD600(chr, pos, rot, 1), as the NPC summon step and the B2
-/// spacing use it) on the local player: same map, no load. Main thread.
-bool WarpLocal(const float pos[3], float yaw, const char* why) {
-    const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+/// BB_PARTY_WARP_REFRESH (default on; 0 = the raw chr warp): in-world moves of the local player use
+/// the game's own in-world player warp instead of the bare chr warp vfunc +0x5F8.
+bool WarpRefreshOn() {
+    static const bool on = [] {
+        const char* v = std::getenv("BB_PARTY_WARP_REFRESH");
+        return !(v && v[0] == '0');
+    }();
+    return on;
+}
+
+/// The game's own warp of the local player inside the loaded world: 0x154B110(FieldArea
+/// *0x553B148, u32* block, float4* pos, float4* rot). The remo end action of a cutscene warp
+/// (EMEVD 2002[2/4/6/8], 0x1CEC340 / 0x1CEC3D0) and the stage's spot warps (0x1548740,
+/// 0x154CC50, 0x154D5E0, 0x154EA30) move the player with it. Around the same chr warp +0x5F8 it
+/// does what the bare call leaves out: the block change (PlayerIns vfunc +0x428 when the block
+/// differs from chr +0x3F8), the navmesh / ground state (0x18BBA70), the chr reset (0x18BCF30(chr,
+/// 1), +0x1E4 |= 2) and its ChrCtrl refresh (ctrl[3] +0x1334, vfunc +0x40), the warp record the
+/// world, the camera and the map's draw groups follow (FieldArea +0x68 -> +0x18: pos, +0x50 = 1;
+/// FieldArea +0xC8 = 0x202; [FieldArea +0x28] +0x80 = 1), and the network stage record.
+/// Main thread only. False when a pointer is missing or the code differs from 1.09.
+constexpr u64 kFieldArea = 0x553b148;
+constexpr u64 kWorldWarp = 0x154b110;
+bool NativeWarpOk() {
+    static const bool ok = MatchesOriginal(kWorldWarp, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55,
+                                                        0x41, 0x54, 0x53, 0x48, 0x83, 0xec, 0x28});
+    return ok;
+}
+bool NativeWarpLocalImpl(u64 player, const float* p16, const float* r16, const char* why) {
+    const u64 field_area = Slot(kFieldArea);
+    if (!player || !field_area || player != Field<u64>(Slot(kSlotWorldChrMan), 0x60) || !NativeWarpOk()) {
+        return false;
+    }
+    // The block the player stands in (chr +0x3F8, what the function compares): an in-world move
+    // never changes it (InLoadedBlock), so no block change runs.
+    u32 block = Field<u32>(player, 0x3f8, 0xffffffffu);
+    if (block == 0xffffffffu) {
+        return false;
+    }
+    alignas(16) float pos[4] = {p16[0], p16[1], p16[2], 1.0f};
+    alignas(16) float rot[4] = {r16[0], r16[1], r16[2], r16[3]};
+    using Fn = void(BB_COOP_SYSV*)(u64, u32*, float*, float*);
+    reinterpret_cast<Fn>(Guest(kWorldWarp))(field_area, &block, pos, rot);
+    static int logged = 0;
+    if (logged++ < 20) {
+        Log("in-world warp (%s): the game's own player warp 0x154b110 (block %#x)", why, block);
+    }
+    return true;
+}
+
+/// The local player's in-world warp: the game's own (NativeWarpLocal) unless BB_PARTY_WARP_REFRESH=0
+/// or it is unavailable, else the bare chr warp +0x5F8 (0x18CD600(chr, pos, rot, 1)). Main thread.
+bool LocalChrWarpImpl(u64 player, const float* p16, const float* r16, const char* why) {
+    if (WarpRefreshOn() && NativeWarpLocalImpl(player, p16, r16, why)) {
+        return true;
+    }
     const u64 fn = player ? Field<u64>(Field<u64>(player, 0), 0x5f8) : 0;
     if (!fn) {
+        return false;
+    }
+    using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
+    reinterpret_cast<Warp>(fn)(player, p16, r16, 1);
+    return true;
+}
+
+/// The local player to a spot of the loaded block (LocalChrWarp: the game's own in-world warp, or
+/// the chr warp vfunc +0x5F8): same map, no load. Main thread.
+bool WarpLocal(const float pos[3], float yaw, const char* why) {
+    const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+    if (!player) {
         return false;
     }
     alignas(16) float p16[4] = {pos[0], pos[1], pos[2], 1.0f};
     alignas(16) float r16[4] = {0.0f, yaw, 0.0f, 0.0f};
     float before[3] = {};
     ChrPos(player, before);
-    using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
-    reinterpret_cast<Warp>(fn)(player, p16, r16, 1);
+    if (!LocalChrWarpImpl(player, p16, r16, why)) {
+        return false;
+    }
     // The camera stayed where it was and swung through the walls after a long in-world warp
     // (live vis6: the host looked out of the geometry 3 s after a 68 m move): the Lua CamReset
     // 0x132F5A0(ctx, 10000 = the local player, 1) puts it behind the player.
@@ -3740,9 +3804,7 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
                 break;
             }
         }
-        if (const u64 fn = Field<u64>(Field<u64>(p, 0), 0x5f8)) {
-            reinterpret_cast<void(BB_COOP_SYSV*)(u64, const float*, const float*, u32)>(fn)(p, pos, rot, 1);
-        }
+        LocalChrWarpImpl(p, pos, rot, host ? "host revive at the lamp" : "guest revive at the lamp");
     }
     DeathFields after;
     ReadDeathFields(p, &after);
@@ -5712,9 +5774,7 @@ void GuestTick(const GameSnapshot& s, double now) {
                 g_arrival_warp_pending = false;
                 alignas(16) float p16[4] = {g_arrival_pos[0], g_arrival_pos[1], g_arrival_pos[2], 1.0f};
                 alignas(16) float r16[4] = {g_arrival_rot[0], g_arrival_rot[1], g_arrival_rot[2], g_arrival_rot[3]};
-                if (const u64 fn = Field<u64>(Field<u64>(s.player, 0), 0x5f8)) {
-                    reinterpret_cast<void(BB_COOP_SYSV*)(u64, const float*, const float*, u32)>(fn)(s.player, p16, r16, 1);
-                }
+                LocalChrWarpImpl(s.player, p16, r16, "arrival beside the host");
                 const u64 gsm = Slot(kSlotGsm);
                 Log("guest: arrived by the host's own travel; placed beside the host (%.2f, %.2f, %.2f); forced placement "
                     "(own save spot) map %#x (%.1f, %.1f, %.1f)",
@@ -5743,9 +5803,7 @@ void GuestTick(const GameSnapshot& s, double now) {
                 } else if (SummonOffset() > 0.0f && s.player) {
                     BesideHost(pos, rot, g_local_slot.load());
                     alignas(16) float p16[4] = {pos[0], pos[1], pos[2], 1.0f}, r16[4] = {rot[0], rot[1], rot[2], rot[3]};
-                    using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
-                    if (const u64 fn = Field<u64>(Field<u64>(s.player, 0), 0x5f8)) {
-                        reinterpret_cast<Warp>(fn)(s.player, p16, r16, 1);
+                    if (LocalChrWarpImpl(s.player, p16, r16, "beside the host after the death follow")) {
                         Log("guest: placed beside the host after the death follow (%.2f, %.2f, %.2f)", double(pos[0]),
                             double(pos[1]), double(pos[2]));
                     }
@@ -8818,6 +8876,13 @@ bool PopOutgoing(int* slot, std::string* body) {
     *body = std::move(S().out.front().second);
     S().out.pop_front();
     return true;
+}
+
+bool NativeWarpLocal(std::uint64_t player, const float* pos16, const float* rot16, const char* why) {
+    return NativeWarpLocalImpl(player, pos16, rot16, why);
+}
+bool LocalChrWarp(std::uint64_t player, const float* pos16, const float* rot16, const char* why) {
+    return LocalChrWarpImpl(player, pos16, rot16, why);
 }
 
 } // namespace coop::b2
