@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 import shutil
+import stat
 
 # Not a bare 'bash': on Windows CreateProcess finds System32\bash.exe (WSL) before PATH (Git Bash).
 BASH = posix_tool('bash') or 'bash'
@@ -167,6 +168,26 @@ class ModTests(unittest.TestCase):
         config.write_text('{"disabled":"A"}')
         with self.assertRaises(ValueError):
             mods.selected(self.moddir, config)
+
+    def test_read_only_game_files_are_replaced_and_keep_their_attribute(self):
+        # Supermedo/bloodborne_pc ba34a3a2 (emurphy04, PR #77): a hard link shares the read-only
+        # attribute of the game file, and Windows refuses to delete it (WinError 5).
+        a = self.mod('A')
+        self.mod('A', b'new', 'new.dcx')
+        for f in (self.assets / 'a.dcx', self.assets / 'b.dcx', self.game / 'eboot.bin'):
+            f.chmod(stat.S_IREAD)
+            self.addCleanup(f.chmod, stat.S_IREAD | stat.S_IWRITE)
+        result = mods.build_overlay(self.game, self.root / 'out', [('A', a)])
+        self.assertEqual((result / 'dvdroot_ps4/chr/a.dcx').read_bytes(), b'mod')
+        self.assertEqual((result / 'dvdroot_ps4/chr/b.dcx').read_bytes(), b'untouched')
+        self.assertEqual((self.assets / 'a.dcx').read_bytes(), b'original')
+        self.assertFalse(os.stat(self.assets / 'a.dcx').st_mode & stat.S_IWRITE)
+        # A changed mod builds a new overlay; removing the overlay keeps the game files read-only.
+        mods.remove_overlay(result, self.game)
+        self.assertFalse(result.exists())
+        for f in (self.assets / 'a.dcx', self.assets / 'b.dcx', self.game / 'eboot.bin'):
+            self.assertTrue(f.is_file())
+            self.assertFalse(os.stat(f).st_mode & stat.S_IWRITE, f)
 
     def test_run_uses_overlay_propagates_exit_and_cleans_view(self):
         self.mod('A')

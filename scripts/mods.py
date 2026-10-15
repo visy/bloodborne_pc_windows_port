@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import sys
 import tempfile
 
@@ -245,16 +246,55 @@ def expand(directory):
 OVERLAY_DONE = '.done'  # beside the overlay: mod-game-<key>.done
 
 
-def remove_overlay(path):
-    """Deletes an overlay without following its directory links (junctions on Windows)."""
+def unlink_file(path, linked=None):
+    """Windows refuses to delete a read-only file (WinError 5), and a hard link shares the
+    attribute with the file it links: game files copied from a read-only source (a disc copy, a
+    read-only folder) keep it, so replacing one in the overlay or removing the overlay failed with
+    "Access is denied" and the game started without its mods. The attribute is cleared for the
+    deletion and set again on `linked`, the file that stays. (Supermedo/bloodborne_pc ba34a3a2,
+    from emurphy04's PR #77 there.)"""
+    path = Path(path)
+    try:
+        path.unlink()
+        return
+    except PermissionError:
+        mode = path.stat().st_mode
+        if os.name != 'nt' or mode & stat.S_IWRITE:
+            raise
+    os.chmod(path, mode | stat.S_IWRITE)
+    try:
+        path.unlink()
+    finally:
+        rest = path if path.exists() else linked
+        if rest is not None and Path(rest).exists():
+            os.chmod(rest, mode)
+
+
+def game_twin(path, overlay, game):
+    """The game file that `path` (a file inside `overlay`) is a hard link of, or None."""
+    if game is None:
+        return None
+    try:
+        twin = Path(game) / Path(path).relative_to(overlay)
+        return twin if twin.is_file() and os.path.samefile(path, twin) else None
+    except (OSError, ValueError):
+        return None
+
+
+def remove_overlay(path, game=None, top=None):
+    """Deletes an overlay without following its directory links (junctions on Windows).
+    `game`: the game folder it mirrors, so a read-only game file keeps its attribute."""
+    top = Path(path) if top is None else top
     for entry in Path(path).iterdir():
         if is_link(entry) or entry.is_file():
             if is_link(entry) and entry.is_dir() and sys.platform == 'win32':
                 os.rmdir(entry)
-            else:
+            elif is_link(entry):
                 entry.unlink()
+            else:
+                unlink_file(entry, game_twin(entry, top, game))
         else:
-            remove_overlay(entry)
+            remove_overlay(entry, game, top)
     os.rmdir(path)
 
 
@@ -307,7 +347,10 @@ def build_overlay(game, out, mods):
                 raise ValueError(f'File/directory conflict: {relative}')
             elif destination.exists() or destination.is_symlink():
                 replaced += key not in from_mods
-                destination.unlink()
+                if destination.is_symlink():
+                    destination.unlink()
+                else:
+                    unlink_file(destination, game_twin(destination, overlay, game))
             else:
                 added += 1
             make_link(destination, source)
@@ -315,14 +358,14 @@ def build_overlay(game, out, mods):
         print(f'Mods: {replaced} game files replaced, {added} added', file=sys.stderr)
         try:
             if final.exists():
-                remove_overlay(final)
+                remove_overlay(final, game)
             overlay.rename(final)
             done.write_text('ok', encoding='utf-8')
             return final
         except OSError:  # another instance made or holds it: this launch keeps its own copy
             return overlay
     except BaseException:
-        remove_overlay(overlay)
+        remove_overlay(overlay, game)
         raise
 
 
