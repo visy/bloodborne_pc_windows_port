@@ -343,3 +343,22 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
   - test harness: the central reaper (tools/mp/reaper.py) ends runs whose party log lines do not
     change for 10 s; a `<root>/noreap` file with seconds lets the long ritual / altar phases pass.
 
+
+* **0.6.2 live, one-press entry with the guest in the host's Dream (parfin2 g1d-g1m, 2026-10-15)**. Fixtures:
+  the guest `chalice_pthumeru_ritual`, the host the default save (docs/party/test_saves.md). Since seamless
+  joins the guest stands in the host's Dream before the dungeon, which needed four fixes found live:
+  1. the guest title-joins and never stands in its own world, so it never sent its FormData: now it also
+     sends it while summoned from its own ritual slot (1..; slot 0 in load mode 1 is the host's joined dungeon);
+  2. the altars' talk scripts t210050..t210110 park in an empty machine while IsMultiplayerInProgress is 1,
+     for the host too (no "First Ritual Altar" prompt with a guest present): answered 0 for the host
+     (`BB_PARTY_HOST_ALTARS=0`: as vanilla); guests keep the vanilla block;
+  3. the director's test menu walk held the pad at 0 every frame and released the altar autopilot's Cross;
+  4. the awaken point's warp 2902950 runs from the altar's EMEVD without a lamp flag of the host's, so the
+     split rule dropped it as another member's lamp: a host's area-29 awaken point is its own warp now (no
+     "Travel with the party?" question; the guests come by the party travel / summon).
+  g1m: altar item "Enter the party's dungeon" -> the autopilot (glyph box, OK, Search Results, YES, the
+  altar again, "Select location to awaken in", Chamber of the Seal; the awaken menu's first Cross is often
+  swallowed, so it presses up to three) -> one load for the host; the guest followed in one load and stayed a
+  cooperator; layer boss 2900100 killed: PREY SLAUGHTERED on both, guest Insight 6 -> 9, each its own loot.
+  The bottom lift lever 2901006 showed no prompt from the c26b spots, and the layer 2 boss 2900200 was not
+  loaded at (56.3, -59.7, -35.2): both stay open.
