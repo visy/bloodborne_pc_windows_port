@@ -112,7 +112,7 @@ int main() {
     // The full-coverage options (defaults on, word options off; chalice / dump opt-in).
     {
         const Options d = ParseOptions("tour");
-        CHECK(d.tod && !d.gear && !d.remo && !d.bosses && d.items && !d.chalice && !d.dump && d.enemies_per_row == 6);
+        CHECK(d.tod && d.gear && d.remo && !d.bosses && d.items && !d.chalice && !d.dump && d.enemies_per_row == 6);
         const Options o = ParseOptions("chalice,notod,nogear,noremo,nobosses,noitems,dump,enemies=2");
         CHECK(o.mode == Mode::Tour);  // an option first: a tour
         CHECK(o.chalice && !o.tod && !o.gear && !o.remo && !o.bosses && !o.items && o.dump && o.enemies_per_row == 2);

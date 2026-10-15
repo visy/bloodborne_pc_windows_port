@@ -450,8 +450,8 @@ constexpr u64 kInventoryFind = 0x14d9e80;  // (inventory list, type bits, id) ->
 constexpr u64 kRecInventory = 0x328;
 
 /// The game's own equip of one slot (EquipGameData = PlayerGameData +0x1D0): (equip, slot, &gaitem
-/// handle, inventory index, force) - the handle by the refcounted assign (0x1A8BD80; a plain write
-/// of it broke the refcounts and ended the game at the next load, live 2026-10-15), the item id
+/// handle, inventory index, force) - the handle by the refcounted assign (0x1A8BD80, never a plain
+/// write: the GaItem counts), the item id
 /// from the handle, the index, the slot's changed flag, and the same into the chr's ChrAsm.
 constexpr u64 kSetEquipSlot = 0x14ccb90;
 constexpr u64 kRecEquip = 0x1d0;
@@ -828,8 +828,7 @@ void TickImpl(double now) {
             g.c_arrive = Counters::Now();
             UpdateStatus("arrived");
             // The row's gear, in the world as the equipment menu changes it (the chr loads the new
-            // parts at once); put on before the warp instead, a load built the chr from it and
-            // sometimes ended the game (live 2026-10-15).
+            // parts at once and the next load keeps them).
             g.gear_wait = 0;
             if (!g.interrupted && g.phases[g.phase_i] == Phase::Tour && g.opt.gear && g.opt.act) {
                 PutOnGear(g.idx - 1);
