@@ -448,10 +448,23 @@ bool RunSteps(double now) {
 constexpr u64 kInventoryFind = 0x14d9e80;  // (inventory list, type bits, id) -> index or -1
 constexpr u64 kRecInventory = 0x328;
 
-/// Puts item `id` (type bits) into equipment slot `slot` of the player record (index, handle, id;
-/// world_warper_rules.h EquipSlot), giving one first if none is held. The chr is rebuilt from the
-/// record by the next load (the row's warp).
+/// The game's own equip of one slot (EquipGameData = PlayerGameData +0x1D0): (equip, slot, &gaitem
+/// handle, inventory index, force) - the handle by the refcounted assign (0x1A8BD80; a plain write
+/// of it broke the refcounts and ended the game at the next load, live 2026-10-15), the item id
+/// from the handle, the index, the slot's changed flag, and the same into the chr's ChrAsm.
+constexpr u64 kSetEquipSlot = 0x14ccb90;
+constexpr u64 kRecEquip = 0x1d0;
+
+bool SetEquipOk() {
+    static const bool ok = MatchesOriginal(kSetEquipSlot, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55,
+                                                           0x41, 0x54, 0x53, 0x48, 0x83, 0xec, 0x28, 0x89, 0xcb});
+    return ok;
+}
+
+/// Puts item `id` (type bits) into equipment slot `slot` (world_warper_rules.h EquipSlot), giving
+/// one first if none is held. The chr is rebuilt with it by the next load (the row's warp).
 bool EquipItem(int slot, u32 type_bits, u32 id) {
+    if (!SetEquipOk()) return false;
     if (ItemCount(type_bits, id) <= 0) GiveItem(type_bits, id, 1);
     u64 gdm = 0;
     if (!SafeGet(Guest(kGameDataMan), &gdm) || !gdm) return false;
@@ -465,12 +478,12 @@ bool EquipItem(int slot, u32 type_bits, u32 id) {
     const u32 split = Field<u32>(list, 0x24);
     const u64 entry = static_cast<u32>(index) < split ? Field<u64>(list, 0x58) + 16ull * static_cast<u32>(index)
                                                       : Field<u64>(list, 0x48) + 16ull * (static_cast<u32>(index) - split);
-    u32 handle = 0, held = 0;
-    if (!SafeGet(entry, &handle) || !SafeGet(entry + 4, &held) || !handle) return false;
-    held &= 0x0fffffffu;  // the record keeps the id without the type bits
-    const u64 k = static_cast<u64>(slot) * 4;
-    return SafeWrite(rec + kRecEquipIndex + k, &index, 4) && SafeWrite(rec + kRecEquipHandle + k, &handle, 4) &&
-           SafeWrite(rec + kRecEquipId + k, &held, 4);
+    u32 handle = 0;
+    if (!SafeGet(entry, &handle) || !handle) return false;
+    reinterpret_cast<void(BB_COOP_SYSV*)(u64, u32, u32*, u32, u32)>(Guest(kSetEquipSlot))(
+        rec + kRecEquip, static_cast<u32>(slot), &handle, static_cast<u32>(index), 1);
+    const u32 now = Field<u32>(rec, kRecEquipHandle + static_cast<u64>(slot) * 4);
+    return now == handle;
 }
 
 u32 EquippedId(int slot) {
