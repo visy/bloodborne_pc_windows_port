@@ -3503,7 +3503,7 @@ bool RecipeHas(const char* step) {
     // '|' separates the recipes of successive revivals (the last one repeats): one run tries several.
     static const std::vector<std::string> list = [] {
         const char* v = std::getenv("BB_PARTY_B2_REVIVE_RECIPE");
-        std::string all = v && v[0] ? v : "recover,flags,ctrl,fade,reset,idle,warp,gsm";
+        std::string all = v && v[0] ? v : "recover,flags,ctrl,fade,reset,idle,warp,gsm,rearm";
         std::vector<std::string> out;
         for (std::size_t a = 0;;) {
             const std::size_t b = all.find('|', a);
@@ -3667,6 +3667,31 @@ bool HostDeathIntercept() {
     return true;
 }
 
+/// Main thread: after a death kept without a load (a revive in place), the game's death script is
+/// armed again. Its handler 0x13813D0 returns at once while event flag 4000 is set or the death
+/// request [[SprjEventMan 0x553B108] +0x10] +8 is above 0, and sets both (4000 on, request 4) when
+/// it runs; only a load clears them. Left set, the next death of a revived player never reached
+/// PartyGhostDeath (the guest waited for the 11 s dead watchdog). Lead: deadinside's notes on
+/// CLS_AMG's BBSC (docs/upstream/deadinside_0.6-pre1.md); facts only.
+void RearmDeathScript(const char* why) {
+    const u64 em = Slot(0x553b108);
+    const u64 req_obj = Field<u64>(em, 0x10);
+    const int req = Field<int>(req_obj, 8, -1);
+    bool flag = false;
+    const bool flag_ok = ReadEventFlag(4000, &flag);
+    if (req_obj && req > 0) {
+        const int zero = 0;
+        SafeWrite(req_obj + 8, &zero, 4);
+    }
+    if (flag_ok && flag) {
+        WriteEventFlag(4000, false);
+    }
+    bool after = false;
+    ReadEventFlag(4000, &after);
+    Log("%s: the game's death script re-armed (death request %d -> %d, flag 4000 %d -> %d)", why, req,
+        Field<int>(req_obj, 8, -1), flag ? 1 : 0, after ? 1 : 0);
+}
+
 /// Main thread: the taken host death's revive.
 void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host);
 void ReviveHost(const GameSnapshot& s) {
@@ -3805,6 +3830,9 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
             }
         }
         LocalChrWarpImpl(p, pos, rot, host ? "host revive at the lamp" : "guest revive at the lamp");
+    }
+    if (RecipeHas("rearm")) {
+        RearmDeathScript(host ? "host revive" : "guest revive");
     }
     DeathFields after;
     ReadDeathFields(p, &after);
