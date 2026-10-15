@@ -17,9 +17,9 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 
 | Area | Progress | |
 |---|---|--:|
-| **Overall** | `███████████████████░` | 93% |
-| Session & joining | `███████████████████░` | 94% |
-| World & travel | `███████████████████░` | 95% |
+| **Overall** | `███████████████████░` | 94% |
+| Session & joining | `███████████████████░` | 97% |
+| World & travel | `████████████████████` | 98% |
 | Death & respawn | `███████████████████░` | 95% |
 | Progress (anyone can progress) | `██████████████████░░` | 92% |
 | Services & UI | `███████████████████░` | 97% |
@@ -133,7 +133,8 @@ before anyone is in the game):
   later sessions are one press. *Continue party game* shows whenever the party saves hold a
   character, also if you started party games from the launcher.
 - **Fast join.** The bell, beckoner and summon-sign waits are gone: a guest is in the host's world
-  within seconds. *Continue party game* takes a guest straight into the host's world with a single
+  within seconds (in the same area about 5 s from the bell to standing beside the host; a join that
+  stalls is restarted by itself). *Continue party game* takes a guest straight into the host's world with a single
   loading screen. A guest whose own world is in another map (the Hunter's Dream, say) also joins with a single loading screen, beside the host. If the host travels while you are joining, its travel waits until you are in and
   you travel together.
 - **Joining while the host fights a boss or watches a cutscene** waits in your own world until it is over (the Party status says why), then puts you beside the host with one loading screen.
@@ -286,7 +287,7 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 | Item pickups and enemy drops per player: everyone gets their own (enemy drops: the same item for everyone) | Done |
 | Every cutscene for the whole party (story cutscenes, endings and guest-triggered scenes already work) | In progress |
 | Joining during a boss fight or cutscene waits outside until it ends | Done: boss fights and cutscenes with every join path (bell, title join, direct summon; verified live), the Party status says why you wait |
-| With 3 guests, every guest sees every other guest | In progress |
+| With 3 guests, every guest sees every other guest | In progress (all four join and see each other; a 4th player rejoining can still crash the others) |
 | Chalice dungeons: deeper layers checked in a party; entering the party's dungeon in one press (the altar still asks a few prompts) | In progress |
 | PvP / friendly fire the host can switch on and off | Done (0.6.2) |
 | Pings: party members and marked spots visible through walls, with distance and player colours | Done (0.6.2) |

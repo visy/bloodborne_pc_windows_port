@@ -617,3 +617,43 @@ The stall is the symptom of 2026-10-11's 0.5 s sign-path runs ("the guest stoppe
 before ~2 s after its ring can stall; delivered >= 2 s after it, every live join so far went
 through. The race is on the guest's side (its bell is "barely up"), not the sign board's. The
 default stays 2.0 s; the switch and the board hold stay for the RE of the guest's flow state 1.
+
+## 2026-10-15 (parab3): the 0.5 s bell timer by default, the flow-2 watchdog, the empty-room timeout (A4)
+
+**What the guest's game does after client (6)** (Ghidra, `BB_PARTY_JOIN_TRACE=1` live): the
+packet handler 0x1783160 applies the host's snapshot (0x19 stage, 0x11 world, 0x10 flags) in flow
+state 1 and sets flow +0x84 = 2, then calls 0x1317780, which raises the Lua event
+`OnBeJoinStart_<type>` chosen by the summon type at GSM +0x16F0 (-1 White, ..., 0 = no event at
+all; the room head's first u32, written by the summon message 0x1872360). The Lua's
+`SummonReloadStart` (0x1389440 / 0x1389620) loads the host's world (own-world serializer
+0x131E5C0: flow 3, then the MoveMapStep) only when the presentation table (GSM +0x16F8) counts at
+least 2 and the own chr is alive; otherwise it **clears +0x16F0 and returns**: the join sits in
+flow 2, no load, until the session times out - the stall parab2 saw with the 0.5 s timer
+(`client (6)`, flow 1 -> 2, no load). In every traced join the presentation count is 1 at the
+client role and 2 thirty milliseconds later at the Lua start, so a snapshot that arrives before
+the host's presentation entry is the likely trigger (not reproduced naturally in 24 joins).
+
+**Fixes.**
+* Flow-2 watchdog (guest, `party_b2` Tick, `BB_PARTY_JOIN_RESTART=0` off): flow 2, no load, 1.5 s
+  after the game's Lua join start, presentation count >= 2 and the own chr alive: the summon type
+  is put back and the game's own join start 0x1317780 runs again (twice at most per join).
+  Live (a4t3, `BB_PARTY_TEST_JOIN_STALL=2` swallows the 2nd join start and clears the type, as
+  SummonReloadStart does): `join trace +0.27 s: flow 2, type 0`, `A4: the join sits in flow 2 with
+  no load 1.5 s after the Lua join start (type 0, presentation count 2 now): the game's join start
+  again (1), type -1`, then flow 3 at +1.60 s, the load, flow 4 at +3.46 s: the join went through.
+* Host empty-room timeout (a4t2, live): a host left alone counts its room down (flow +0xB8; at 0
+  0x1789B60 raises `OnRoomTimeOut` and the game leaves the room, ~10 s after the last member left).
+  A room served 27 ms before that was gone when the guest's JoinRoom came (`np: join_room failed:
+  Room not found`), an 8 s failure and the bell's 30 s fallback. A served room now gets 10 s more
+  (`direct summon: this host's empty room had N s left ...`; not hit again live).
+* The bell's first-sign timer is 0.5 s by default (`BB_PARTY_SIGN_DELAY=2` restores 2.0 s); the
+  sign board's hold keeps the sign path at 2 s from the ring.
+
+| Run (one session each; same map, title join off; guest_home: leave, home load, ring, join) | Joins | Request -> client (6) | Client -> load / in the world |
+|---|---|---|---|
+| a4t1: timer 0.5 s, guest_home@8 x8 | 8 of 8 | 1.5 s every time | load 0.8 s, flow 4 at +2.1 s, load gone +5.1-5.6 s |
+| a4t2: timer 0.5 s, guest_home@1-20 mixed x8 | 7 of 8 (the miss: the host's empty-room timeout above, not the timer) | 1.5-1.8 s | the same |
+| a4t3: timer 0.5 s, guest_home@4 x8, 2nd join start swallowed | 8 of 8 (the forced stall recovered by the watchdog) | 1.5-1.6 s | load gone +3.7-3.8 s |
+
+So a guest's ring -> beside the host in the same map is now ~5.3 s (1.5 s to the client role,
+~3.8 s to the end of the load), was ~7 s with the 2 s timer.
