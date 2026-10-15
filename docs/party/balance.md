@@ -129,7 +129,7 @@ stamina cost. Rally and item discovery are not offered (see the table).
   | health | max HP -10 % | 0x17e46e0 `55 48 89 e5 53 50` | maxHpRate +0x10 (HP update 0x1a0d7d0) |
   | stamina | max stamina -10 % | 0x17e4a20 `55 48 89 e5 48 83 ec 10` | maxStaminaRate +0x18 (0x1a572e0) |
   | stamina cost | stamina use +10 % | none: the tick (0.6.2) | each stamina drop of the player times (factor - 1) taken from the bar (`RotExtraStaminaDrain`); the getter 0x17e4c50 (consumeStaminaRate +0x1b8) is never asked for a roll or a swing |
-  | rally | rally (regain) -15 % | not offered (`BB_PARTY_ROT_RALLY=1`) | the getter 0x17e5590 (regainRate +0x1f4) was never asked in live fights; the tick can take back part of each non-vial HP gain (`RotRallyTakeBack`), unverified |
+  | rally | rally (regain) -15 % | **in force** (0.6.2; `BB_PARTY_ROT_RALLY=0` off) | the getter 0x17e5590 (regainRate +0x1f4) was never asked in live fights, so the tick takes back 15 % a stack of each HP gain that comes within 6 s of damage (`RotRallyGainInWindow`) and is not a Blood Vial's (`RotRallyTakeBack`). Live 2026-10-15 (parfin c4, two stacks): 44 HP regained in 4 gains, 13 taken back |
   | discovery | item discovery -10 | not offered | the itemDropRate sum 0x17e8010 was never asked over guest kills with drops; no other path known (`BB_PARTY_ROT_ALL_KINDS=1`: the hook, RE only) |
 
   Live 2026-10-15 (parceh2 s1b): a roll from a full bar cost 10 before the stamina-cost stack and

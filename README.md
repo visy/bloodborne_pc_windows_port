@@ -20,11 +20,11 @@ Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](d
 | **Overall** | `██████████████████░░` | 92% |
 | Session & joining | `███████████████████░` | 94% |
 | World & travel | `██████████████████░░` | 92% |
-| Death & respawn | `███████████████████░` | 94% |
+| Death & respawn | `███████████████████░` | 95% |
 | Progress (anyone can progress) | `██████████████████░░` | 89% |
 | Services & UI | `███████████████████░` | 97% |
 | Network & robustness | `██████████████████░░` | 91% |
-| Bloodborne-specific (chalice, Insight) | `█████████████████░░░` | 87% |
+| Bloodborne-specific (chalice, Insight) | `██████████████████░░` | 88% |
 | Feels like single player in a party | `███████████████████░` | 94% |
 
 ---
@@ -239,8 +239,8 @@ before anyone is in the game):
 - **Network drops recover.** A network outage of up to 30 s keeps the session: no loading screen, everyone carries on where they stood once the network is back (the others freeze in place meanwhile). If a longer outage loses the session, a guest goes home at once with one loading screen and is summoned back beside the host by itself once the network is back. The party also checks every 15 s that everyone sees the same world and progress and quietly re-sends whatever differs.
 - **Wrong passwords are locked out.** A few typos are fine; after 5 wrong passwords in a minute the host refuses that address for a while.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
-- **Death has a cost.** Each death stacks "rot" (−10% max HP, −10% max stamina or +10% stamina
-  use, picked at random, up to 5); using a lamp (even just opening its travel menu and cancelling) or levelling up clears it.
+- **Death has a cost.** Each death stacks "rot" (−10% max HP, −10% max stamina, +10% stamina
+  use or −15% HP won back by hitting after a hit (rally), picked at random, up to 5); using a lamp (even just opening its travel menu and cancelling) or levelling up clears it.
   It belongs to your character: each save slot keeps its own, and a new game starts without it. On by default; the host can turn it off on the *Party rules* page.
 - **Enemies scale with the party, harder than vanilla.** Bosses get more health (and a little more
   damage) per extra hunter than the game gives them, normal enemies get tougher too; all six values
