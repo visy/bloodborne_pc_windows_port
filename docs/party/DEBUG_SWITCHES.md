@@ -20,7 +20,7 @@ What they do for a player: [docs/PARTY.md](../PARTY.md).
 | `BB_PARTY_SEAMLESS` | Seamless party rules | 1 |
 | `BB_PARTY_SAVE` | Separate party saves (always on) | `separate`; every party session uses `savedata_party`, `shared` is ignored |
 | `BB_PARTY_PORT` | Port | 9307 |
-| `BB_VOLUMETRIC_RES` | Graphics: Volumetric effects (also System > Display; wins over bbport.ini `volumetric_res`) | unset: the ini's value, `0` game default (half resolution); `1` 2x the pixels, `2` full scene resolution |
+| `BB_VOLUMETRIC_RES` | Graphics: Motion blur resolution (0.6.2: Volumetric effects; also System > Display; wins over bbport.ini `volumetric_res`) | unset: the ini's value, `0` game default (half resolution); `1` 2x the pixels, `2` full scene resolution |
 | `BB_PARTY_UPNP` | UPnP | 1 |
 | `BB_PARTY_PUBLIC_ADDR` | Public address (host) | unset (STUN / UPnP) |
 | `BB_PARTY_STUN` | STUN server | `stun.l.google.com:19302`; `off` disables |
@@ -53,7 +53,8 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 
 | Name | What | Default | Owner file |
 |---|---|---|---|
-| `BB_VOLUMETRIC_RES_FILE` | Test aid: a file whose first character (`0`/`1`/`2`) sets the volumetric effects resolution, polled about once a second; each level's mean frame time is logged (`Volumetric sweep: level L: N frames, X ms per frame`) when it changes (a sweep within one session) | off | `gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp` |
+| `BB_VOLUMETRIC_DUMP_TRIGGER` | Test aid: creating the file writes the motion blur chain's color buffers as the last frame left them (their proxies at 2x / full, else the game's images) to `BB_DUMP_DIR` as `vol<n>_<address>_<w>x<h>_<rgba|rgba16f>.raw` | off | `gpu/shadps4/video_core/renderer_vulkan/vk_scene_resolution.cpp` |
+| `BB_VOLUMETRIC_RES_FILE` | Test aid: a file whose first character (`0`/`1`/`2`) sets the volumetric effects resolution, polled every 4 frames; each level's mean frame time is logged (`Volumetric sweep: level L: N frames, X ms per frame`) when it changes (a sweep within one session) | off | `gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp` |
 | `BB_PARTY_MENU` | `1`: this party run was started by the in-game party flow (docs/party/ingame_flow.md): `user\party.json` supplies the host address, password and host code secret when `BB_PARTY_CODE` / `BB_PARTY_PASSWORD` are unset | unset (launcher runs) | `gpu/shim/party/party_flow_game.cpp` |
 | `BB_PARTY_FLOW` | `0`: no party flow rows on the Party page | on | `gpu/shim/party/party_flow_game.cpp` |
 | `BB_PARTY_TITLE_ENTRY` | `0`: no *Party* item on the title's main menu (System → Party still has the rows) | on | `gpu/shim/bbport_game_menu.cpp` |

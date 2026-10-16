@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// bbport: volumetric effects resolution (idea from a playtester). Bloodborne draws its smoke,
-// mist, fog sprites and other soft particle effects into a half-resolution buffer: a depth/stencil
-// target half the scene depth's size (downsampled from the scene's linear depth by a full-screen
-// pass), a color target drawn with it, two blur passes and a depth-aware upsample pass at the same
-// half size, then composited into the full-size scene. At high output resolutions this buffer is
-// what makes those effects blocky and shimmering. The option renders exactly that chain into
+// bbport: motion blur resolution (shipped in 0.6.2 as "Volumetric effects resolution"; idea from
+// a playtester). The one reduced-resolution chain of Bloodborne's frame turned out to be its
+// motion blur, not smoke or mist (those are drawn blended into the full-size scene): a
+// depth/stencil target half the scene depth's size (downsampled from the scene's linear depth by
+// a full-screen pass), an RGBA8 velocity target drawn with it by the moving characters and
+// objects (RG = screen velocity around 0.5, alpha = covered; 0.6.3 dumps of it), two dilation
+// passes and a pass building a half-size RGBA16F velocity/depth buffer, which two full-size
+// gather passes sample to blur the scene. With "Disable Motion Blur" the chain is not drawn. At
+// high output resolutions its half size makes the blur's edges around moving characters blocky.
+// The option renders exactly that chain into
 // larger proxies (SceneTargets): the game keeps its half-size allocations, the passes draw into
 // proxies of 2x the pixels or of the scene's size, with viewport / scissor scaled and FragCoord
 // converted back to the game's coordinates (push constant scene_size), and the composite passes
@@ -84,7 +88,9 @@ inline bool IsHalfOf(SceneResolution::Size image, SceneResolution::Size scene) {
 
 /// The classification rules, on the facts the rasterizer has at a pass's start and at a draw.
 /// Rule 1: the half-size depth/stencil target (a depth+stencil image of half the G-buffer depth's
-/// size, used as a pass's depth attachment) is volumetric. Rule 2: the color targets drawn with a
+/// size, used as a pass's depth attachment after this frame's G-buffer pass) is volumetric. (The
+/// Forbidden Woods draw a few sky pieces into another half-size depth/color pair before the
+/// G-buffer, whose memory a compute pass clears as a buffer: those stay at the game's size.) Rule 2: the color targets drawn with a
 /// volumetric depth are volumetric (the effect buffer). Rule 3: a pass whose color targets all
 /// have the volumetric depth's size, without a depth attachment, and that samples a volumetric
 /// color image is volumetric too (the blur ping-pong and the depth-aware upsample). The composite
@@ -95,10 +101,11 @@ struct PassFacts {
     bool depth_has_stencil = false;
     bool depth_volumetric = false;
     SceneResolution::Size depth_size{0, 0};
+    bool after_gbuffer = true; ///< this frame's G-buffer pass came before this pass
 };
 inline bool DepthIsVolumetric(const PassFacts& p) {
-    return p.has_depth && (p.depth_volumetric ||
-                           (p.depth_has_stencil && IsHalfOf(p.depth_size, p.scene_depth)));
+    return p.has_depth && (p.depth_volumetric || (p.after_gbuffer && p.depth_has_stencil &&
+                                                  IsHalfOf(p.depth_size, p.scene_depth)));
 }
 /// Rule 2 for one color attachment of such a pass (same size as its depth).
 inline bool ColorWithVolumetricDepth(const PassFacts& p, SceneResolution::Size color) {

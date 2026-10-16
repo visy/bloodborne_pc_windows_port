@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.6.3 (unreleased)
 
+- **Fixed: "Volumetric effects" is now called "Motion blur resolution", which is what it changes**: frame captures and dumps of the buffers showed that the half-resolution chain the 0.6.2 option renders larger is the game's motion blur (velocity of moving characters and objects), not smoke or mist, which the game already draws at full resolution. The option, its `bbport.ini` key and `BB_VOLUMETRIC_RES` stay; it gives the blur around moving characters finer edges (2x pixels: about +0.6 ms, full: about +1.2 ms at 1080p on an RTX 3070) and does nothing with motion blur off. A half-size pass of the Forbidden Woods drawn before the scene, which a compute pass clears as a buffer, is no longer scaled.
 - **Fixed: a boss can no longer get the party's extra health twice**: a boss is meant to get its co-op health boost once per fight; if a second copy arrived (seen once on Vicar Logarius after a forced kill, a guest saw 22704 HP instead of 9081), it is now ignored. Checked live: the Cleric Beast with two cooperators had the same health on all three games before, during and after the fight.
 - **Fixed: a shared NPC line no longer disappears up to a second early on the players listening**: it now stays until the talking player's game moves on to the next line or ends the conversation.
 - **Checked live: a guest riding a lift moves the lift in the host's world** (Central Yharnam's lift, the host far away).

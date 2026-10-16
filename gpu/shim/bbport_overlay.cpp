@@ -797,13 +797,15 @@ void DisplayTab() {
     const char* volumetric_levels[] = {T("Game default (half)", "Как в игре (половина)"),
                                        T("2x pixels", "2x пикселей"),
                                        T("Full resolution", "Полное разрешение")};
-    Choice("volumetric", T("Volumetric effects resolution", "Разрешение объёмных эффектов"),
+    Choice("volumetric", T("Motion blur resolution", "Разрешение размытия в движении"),
            std::clamp(s.volumetric_res.load(), 0, 2), 3, [&](int i) { return volumetric_levels[i]; },
            [](int) { return true; },
-           T("Smoke, mist and fog effects are drawn into a half-resolution buffer by the game; "
-             "2x pixels or full resolution make them less blocky at a GPU cost. Live.",
-             "Дым, туман и дымка рисуются игрой в буфер половинного разрешения; 2x пикселей или "
-             "полное разрешение делают их менее блочными ценой нагрузки на видеокарту. Сразу."),
+           T("The game draws the motion blur of moving characters and objects from "
+             "half-resolution buffers; 2x pixels or full resolution give it finer edges at a GPU "
+             "cost. Smoke and mist are drawn at full resolution already. Live.",
+             "Игра строит размытие в движении персонажей и объектов по буферам половинного "
+             "разрешения; 2x пикселей или полное разрешение дают более точные края ценой нагрузки "
+             "на видеокарту. Дым и туман и так рисуются в полном разрешении. Сразу."),
            true, [&](int i) { Store(s.volumetric_res, i, true); });
     Toggle("fps",T("FPS counter", "Счётчик FPS"), s.show_fps,
            s.show_hud ? T("The performance HUD is on and shows the frame rate itself.",
