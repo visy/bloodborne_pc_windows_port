@@ -187,7 +187,7 @@ struct State {
     u32 quick0_before = 0;
     std::vector<int> anims_before;  // the gesture check: the player's animations before the request
     int tool_held = -1, tool_bullets = -1;  // the tool's count and the quicksilver bullets before its use
-    std::size_t gestures_played = 0, gestures_ok = 0, tools_used = 0;
+    std::size_t gestures_played = 0, gestures_ok = 0, tools_used = 0, pass_ok0 = 0;
     // time of day
     std::vector<int> tod_of_row;  // the Tod phase: each route row's value
     std::vector<u32> remo_of_row; // the Remo phase: each route row's cutscene
@@ -977,6 +977,7 @@ void TickImpl(double now) {
             if (!g.pass.empty()) {
                 g.c_step = Counters::Now();
                 Log("gestures: %zu to play (%zu in earlier sessions)", g.pass.size(), g.progress.gestures.size());
+                g.pass_ok0 = g.gestures_ok;
             }
         }
         if (g.sub == Sub::Gestures) {
@@ -1017,7 +1018,7 @@ void TickImpl(double now) {
                         g.pass_stage = 0;
                         g.pass_at = now + 0.5;
                         if (++g.pass_i == g.pass.size()) {
-                            Log("gestures: %zu of %zu played", g.gestures_ok, g.pass.size());
+                            Log("gestures: %zu of %zu played", g.gestures_ok - g.pass_ok0, g.pass.size());
                         }
                         return;
                     }
@@ -1029,7 +1030,7 @@ void TickImpl(double now) {
                 runtime_pad_director_press(0);
                 g.pass_stage = 0;
                 g.pass_at = now + 1.2;
-                if (g.pass_i + 1 == g.pass.size()) Log("gestures: %zu of %zu played", g.gestures_ok, g.pass.size());
+                if (g.pass_i + 1 == g.pass.size()) Log("gestures: %zu of %zu played", g.gestures_ok - g.pass_ok0, g.pass.size());
                 if (++g.pass_i == g.pass.size()) {
                     const Counters c = Counters::Now();
                     g.action_new["gestures"] += c.created - g.c_step.created;
@@ -1048,6 +1049,7 @@ void TickImpl(double now) {
             if (!g.pass.empty()) {
                 g.c_step = Counters::Now();
                 g.quick0_before = QuickItemId(0);
+                g.pass_ok0 = g.tools_used;
                 Log("hunter tools: %zu to use (%zu in earlier sessions); quick slot 0 held %u", g.pass.size(),
                     g.progress.tools.size(), g.quick0_before);
             }
@@ -1107,7 +1109,7 @@ void TickImpl(double now) {
                     g.action_new["hunter tools"] += c.created - g.c_step.created;
                     g.c_step = c;
                     if (g.quick0_before) SetQuickItem(0, g.quick0_before, true);
-                    Log("hunter tools: %zu of %zu used (verified by their cost), +%llu new pipelines", g.tools_used, g.pass.size(),
+                    Log("hunter tools: %zu of %zu used (verified by their cost), +%llu new pipelines", g.tools_used - g.pass_ok0, g.pass.size(),
                         static_cast<unsigned long long>(g.action_new["hunter tools"]));
                 }
                 return;
