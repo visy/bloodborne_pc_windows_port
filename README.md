@@ -307,7 +307,9 @@ before anyone is in the game):
   each other, both ways, like invaders: the game's *System -> Friendly fire* page, the Insert menu's
   Party tab or the launcher's Party tab (host). Everyone gets a notice when it changes; guests see
   the host's setting on their page but cannot change it. A party kill is a normal party death (the
-  rot applies as for any death); the killer gets no Echoes or Insight from it.
+  rot applies as for any death); the killer gets no Echoes or Insight from it. Checked live with
+  three players: guests can hurt each other too, guns and thrown items hit (Poison Knives poison),
+  and a host killed by a guest goes through the party's normal host-death respawn.
 - **Party HUD.** Party members and events are shown in a small HUD; all party settings are on the
   *Party* pages of the game's *System* menu.
 
