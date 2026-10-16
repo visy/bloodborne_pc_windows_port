@@ -264,8 +264,8 @@ before anyone is in the game):
 - **Boss fights need the host's area.** A guest who travelled alone cannot start a boss fight
   where the host is not (the fog stays closed, with a message); if the host leaves during a fight,
   the guest is taken to the host with one loading screen.
-- **Up to 4 players** (host + 3), all in the host's world. With 3 guests, a guest does not yet see
-  the guests who joined after it.
+- **Up to 4 players** (host + 3), all in the host's world; every guest sees every other guest, and
+  anyone can leave and rejoin while the others play on.
 - **Same version for everyone.** A player whose bbport build, game files, patches, mods or party
   options differ is refused on joining; the message says what differs and what to do.
 - **Chalice dungeons together.** Guests join the host's dungeon; levers, doors, the layer boss, its
