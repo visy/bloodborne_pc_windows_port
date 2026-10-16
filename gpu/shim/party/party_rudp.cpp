@@ -140,6 +140,17 @@ void Stream::send_ack(std::vector<Datagram>& out) {
 void Stream::poll(Clock::time_point now, std::vector<Datagram>& out) {
     if (state_ == State::Failed) return;
     if (fin_due_) {
+        // smokefix (2026-10-16): what was written before close() goes out ahead of the FIN, once
+        // (the stream is done after this poll: no window, no resends). The host's BYE at Party >
+        // Leave never left on the UDP path: a guest linked over UDP (after the host's crash restart)
+        // did not see the host end the party and waited for it to come back.
+        while (!pending_.empty()) {
+            const std::size_t k = std::min(kMss, pending_.size());
+            std::vector<std::uint8_t> pkt = header(kData, next_seq_++);
+            pkt.insert(pkt.end(), pending_.begin(), pending_.begin() + static_cast<std::ptrdiff_t>(k));
+            pending_.erase(pending_.begin(), pending_.begin() + static_cast<std::ptrdiff_t>(k));
+            out.push_back({peer_, std::move(pkt)});
+        }
         out.push_back({peer_, header(kFin, next_seq_)});
         fin_due_ = false;
         return;
@@ -255,6 +266,10 @@ void Mux::punch(Endpoint to, Clock::time_point now, int duration_ms, int interva
     punches_list_.push_back({to, now + ms(duration_ms), now, interval_ms});
 }
 
+void Mux::linger(std::shared_ptr<Stream> s) {
+    if (s) lingering_.push_back(std::move(s));
+}
+
 void Mux::poll(Clock::time_point now, std::vector<Datagram>& out) {
     for (auto it = streams_.begin(); it != streams_.end();) {
         std::shared_ptr<Stream> s = it->second.lock();
@@ -265,6 +280,7 @@ void Mux::poll(Clock::time_point now, std::vector<Datagram>& out) {
         s->poll(now, out);
         ++it;
     }
+    lingering_.clear();  // polled above: their data and FIN are out
     for (auto it = punches_list_.begin(); it != punches_list_.end();) {
         if (now >= it->until) {
             it = punches_list_.erase(it);
