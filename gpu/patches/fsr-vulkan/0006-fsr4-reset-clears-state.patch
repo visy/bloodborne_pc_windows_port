@@ -1,0 +1,48 @@
+--- a/src/ffx_vk_fsr4_v07_provider.c
++++ b/src/ffx_vk_fsr4_v07_provider.c
+@@ -218,7 +218,8 @@
+             c->ri_recurrent[1],
+             c->ri_reprojected,
+             c->ri_rcas_temp,
+-            c->ri_spd_atomic
++            c->ri_spd_atomic,
++            c->ri_spd_mip5
+         };
+         for (size_t i = 0; i < sizeof(clear_targets) / sizeof(clear_targets[0]); ++i) {
+             FfxGpuJobDescription clear_job;
+@@ -527,6 +528,35 @@
+             (FfxUInt32)weights_size, &weightsHandle) != FFX_OK)
+         goto dispatch_error;
+ 
++    /* bbport: a reset starts from the creation state again: every temporal image, the SPD
++     * state and the exposure (1.0) cleared. Before, only the context's creation cleared them, so
++     * a bad value from the frames before a reset (a non-finite pixel, uninitialised memory on a
++     * first start) stayed in the recurrent state for good: a white / grey picture until the
++     * context was made again. Reset frames are rare (loads, menus, camera cuts). */
++    if (d->reset) {
++        const FfxResourceInternal reset_targets[] = {
++            ri_history, c->ri_recurrent[0], c->ri_recurrent[1], ri_reprojected,
++            ri_rcas_temp, ri_spd_atomic, ri_spd_mip5
++        };
++        for (size_t i = 0; i < sizeof(reset_targets) / sizeof(reset_targets[0]); ++i) {
++            FfxGpuJobDescription clear_job;
++            memset(&clear_job, 0, sizeof(clear_job));
++            clear_job.jobType = FFX_GPU_JOB_CLEAR_FLOAT;
++            clear_job.clearJobDescriptor.target = reset_targets[i];
++            if (c->iface.fpScheduleGpuJob(&c->iface, &clear_job) != FFX_OK)
++                goto dispatch_error;
++        }
++        {
++            FfxGpuJobDescription clear_job;
++            memset(&clear_job, 0, sizeof(clear_job));
++            clear_job.jobType = FFX_GPU_JOB_CLEAR_FLOAT;
++            clear_job.clearJobDescriptor.target = ri_exposure;
++            clear_job.clearJobDescriptor.color[0] = 1.0f;
++            if (c->iface.fpScheduleGpuJob(&c->iface, &clear_job) != FFX_OK)
++                goto dispatch_error;
++        }
++    }
++
+     if (d->enableAutoExposure) {
+         struct {
+             uint32_t mips;

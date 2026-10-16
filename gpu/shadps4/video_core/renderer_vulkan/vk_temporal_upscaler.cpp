@@ -14,6 +14,7 @@
 
 #include <vk_mem_alloc.h>
 
+#include "bbport_compile_progress.h"
 #include "bbport_settings.h"
 #include "bbport_toggles.h"
 #include "ffx_vk_portable.h"
@@ -2504,6 +2505,20 @@ bool TemporalUpscaler::RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image 
     // Same jitter convention as FSR 3; the menu (or toggle 1 << 26) flips it for tests.
     const float sign =
         BbToggle::Disabled(1u << 26) != settings.fsr4_invert_jitter.load() ? -1.0f : 1.0f;
+    // A frame with draws skipped for a pipeline still compiling (an empty shader cache, a first
+    // start) is incomplete: FSR 4 starts again from it (a reset clears its temporal state) instead
+    // of keeping it in its history. The first complete frame after them resets too.
+    static u64 last_skipped = 0;
+    static bool skipping = false;
+    const u64 skipped = BbCompileProgress::skipped_total.load(std::memory_order_relaxed);
+    const bool skipped_now = skipped != last_skipped;
+    last_skipped = skipped;
+    const bool skip_reset = skipped_now || skipping;
+    if (skipped_now != skipping) {
+        skipping = skipped_now;
+        std::printf("Upscaler: FSR 4 %s\n", skipping ? "resets while draws are skipped for compiling pipelines"
+                                                      : "history kept again (no draws skipped)");
+    }
     const bool ok = fsr4->Record({
         .cmdbuf = cmdbuf,
         .color = color,
@@ -2520,7 +2535,7 @@ bool TemporalUpscaler::RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image 
         .vertical_fov = camera_motion.VerticalFov(),
         .sharpness = std::min(settings.sharpness.load(), 1.0f),
         .sharpen = settings.sharpen,
-        .reset = reset,
+        .reset = reset || skip_reset,
         .auto_exposure = settings.fsr4_auto_exposure,
     });
     // The menu shows the reason; it outlives this frame (FSR 4 keeps its last message).

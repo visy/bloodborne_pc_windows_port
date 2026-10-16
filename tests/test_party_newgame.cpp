@@ -516,6 +516,7 @@ namespace {
 void TestMenuScriptTextBox() {
     MenuScript ms;
     CHECK(ms.Parse("~down@New Game/cross/options/type=127.0.0.1:47600/mark=typed/enter/esc") && ms.size() == 7);
+    CHECK(MenuScript().Parse("r1@Select chalice/r1/l1/cross"));  // the shoulder buttons (menu tabs)
     auto seen = [](const std::string& n) { return n == "New Game" ? 0.5 : -1.0; };  // looked up once
     std::vector<std::uint32_t> pressed;
     std::vector<std::string> typed;

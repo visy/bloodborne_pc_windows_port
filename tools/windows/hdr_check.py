@@ -129,8 +129,8 @@ def main():
           f"peak {p['peak']:.0f} paper white {p['paper']:.0f} strength {p['strength']:.2f} "
           f"saturation {p['saturation']:.2f} fit {p['fit']}")
     if p["encoding"] != 1:
-        print("scRGB output: only the light levels are reported")
-        nits = np.maximum(out, 0) * 80.0
+        # scRGB: linear Rec.709, 1.0 = 80 nits; back to Rec.2020 nits for the levels and the check.
+        nits = np.maximum(out @ TO2020.T, 0) * 80.0
     else:
         nits = pq_decode(out)
     x, y, w, h = p["fit"]
@@ -149,9 +149,13 @@ def main():
                  (frame[y1][:, x0] * (1 - wx) + frame[y1][:, x1] * wx) * wy)
         print(f"frame resampled to the fitted {w}x{h} (bilinear, as the compose pass samples it)")
         scaled = False
-    if not scaled and p["encoding"] == 1:
-        want, _ = expected_pq(frame, p["peak"], p["paper"], p["strength"], p["saturation"])
-        err = np.abs(region - want).max(axis=-1) * 1023.0
+    if not scaled:
+        want, want_nits = expected_pq(frame, p["peak"], p["paper"], p["strength"], p["saturation"])
+        if p["encoding"] == 1:
+            err = np.abs(region - want).max(axis=-1) * 1023.0
+        else:
+            # scRGB: both sides as PQ codes of their Rec.2020 light (the same tolerance as HDR10).
+            err = np.abs(pq_encode(nits[y:y + h, x:x + w]) - pq_encode(want_nits)).max(axis=-1) * 1023.0
         mask = np.ones(err.shape, bool)
         if p["pattern"]:
             H, W = out.shape[:2]
@@ -160,11 +164,25 @@ def main():
         # The overlay's pixels differ by design; they are few and far off the expected value.
         sel = err[mask]
         within = float((sel <= a.max_code_error).mean()) * 100
-        print(f"PQ codes vs reference: median error {np.median(sel):.2f}, 99th percentile "
+        print(f"{'PQ codes' if p['encoding'] == 1 else 'scRGB as PQ codes'} vs reference: median error {np.median(sel):.2f}, 99th percentile "
               f"{np.percentile(sel, 99):.2f}, within {a.max_code_error:g} codes: {within:.2f} % of {sel.size} pixels")
         ok = within >= 97.0
+        # Tone check, SDR vs HDR: the SDR picture's light (gamma 2.2, white = paper white) against the
+        # HDR output's, pixel by pixel. Below the knee (mid-tones) they must agree (ratio 1); the
+        # highlights may only be brighter.
+        sdr_nits = (np.clip(frame, 0, 1) ** GAMMA) @ LUMA709 * p["paper"]
+        hdr_nits = (nits[y:y + h, x:x + w] @ np.array([0.2627, 0.6780, 0.0593]))
+        y_sdr = (np.clip(frame, 0, 1) ** GAMMA) @ LUMA709
+        mid = mask & (y_sdr > 0.02) & (y_sdr <= KNEE)
+        high = mask & (y_sdr > 0.9)
+        if mid.any():
+            ratio = hdr_nits[mid] / np.maximum(sdr_nits[mid], 1e-6)
+            print(f"tone (SDR vs HDR): mid-tones ({mid.mean() * 100:.1f} % of pixels) HDR / SDR light median "
+                  f"{np.median(ratio):.3f} (5th..95th {np.percentile(ratio, 5):.3f}..{np.percentile(ratio, 95):.3f}); "
+                  + (f"highlights ({high.mean() * 100:.2f} %) median x{np.median(hdr_nits[high] / np.maximum(sdr_nits[high], 1e-6)):.2f}"
+                     if high.any() else "no highlights in the frame"))
     else:
-        print("frame scaled into the swapchain (or not PQ): per-pixel comparison skipped")
+        print("frame scaled into the swapchain: per-pixel comparison skipped")
     lum = nits @ np.array([0.2627, 0.6780, 0.0593])
     print(f"light: max {lum.max():.0f} nits, 99.9th percentile {np.percentile(lum, 99.9):.0f}, "
           f"median {np.median(lum):.1f}; above paper white {float((lum > p['paper'] * 1.01).mean()) * 100:.2f} % "
