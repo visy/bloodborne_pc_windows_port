@@ -326,13 +326,18 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 
 | Change | Status |
 |---|---|
-| Item pickups and enemy drops per player: everyone gets their own (enemy drops: one shared roll, each player's own Item Discovery) | Done |
-| Every cutscene for the whole party, also the ones a guest triggers | Done: every story scene a guest can trigger plays for the whole party (verified live with 3 players) |
-| Joining during a boss fight or cutscene waits outside until it ends | Done: boss fights and cutscenes with every join path (bell, title join, direct summon; verified live), the Party status says why you wait |
-| With 3 guests, every guest sees every other guest | Done: all four join and see each other; any player can leave and rejoin while the others play on (verified live with 3 and 4 players) |
-| Chalice dungeons: deeper layers and the bottom lift lever checked in a party | Done: layer 2 and its boss, both lift levers (verified live); dungeons with floor bosses still to check |
-| PvP / friendly fire the host can switch on and off | Done (0.6.2) |
-| Pings: party members and marked spots visible through walls, with distance and player colours | Done (0.6.2) |
+| FSR 4 white or grey picture fixed | In progress: protective fixes built; the cause (FSR 4 with HDR on in Windows) is being confirmed |
+| Frame rate through game hooks: physics, running and timers correct at 60-144 FPS and uncapped | In progress (port of deadinside's 0.6-pre1 work) |
+| Guests load at the same time as the host on party travel (about 10-15 s less per trip) | Planned (seamless research, opt-in first) |
+| Host death the ERSC way: the host loads alone, guests play on | Planned (opt-in first; today the whole party reloads) |
+| Game-style fades instead of blinks for in-world moves and revives | Planned |
+| A guest crashing right after a boss kill with three players rejoins quickly | In progress |
+| Sharper smoke and fog checked with every upscaler, HDR and 21:9 | In progress |
+| Shader cache builder: bosses, gestures and hunter tools; a fuller shared cache | In progress |
+| Fixes from Supermedo 1.8.2 (keyboard sprint through direction changes, exFAT / FAT32 drives, read-only game files, VRAM fallback on 4-8 GB cards) | In progress |
+| Upstream renderer and memory model: measured evaluation | In progress |
+| A long unattended two-player test before every release; party code cost per frame; a co-op guide page in the launcher | Planned |
+| A real two-PC Internet session on the current build | Needs players: see `docs/party/playtest2_checklist.md` |
 
 ### Known issues
 
