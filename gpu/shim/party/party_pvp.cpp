@@ -233,6 +233,9 @@ void Toast(bool on, bool host) {
 // ---- BB_PARTY_PVP_TEST ----
 /// Test aid: goods `id` (given if none is held) into the first quick-item slot, selected.
 bool QuickItemFirst(u32 id, std::string* what) {
+    // Enough of it for a status effect to build up (a Poison Knife adds 70 poison a hit).
+    const int held = ItemCount(kItemGoods, id);
+    if (held >= 0 && held < 10) GiveItem(kItemGoods, id, 10 - held);
     const bool ok = SetQuickItem(0, id, true);
     bool sel = false;
     const u32 now = QuickItemId(0, &sel);

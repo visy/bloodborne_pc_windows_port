@@ -71,7 +71,7 @@ inline const char* ToastText(bool on) {
 /// "face=T@S": the first other party player on team T, e.g. 20 for a guest-guest hit),
 /// "hit=N@S" (N taps of R1, 1.3 s apart), "shoot=N@S" (N taps of L2: the firearm's bullets),
 /// "use=N@S" (N taps of Square: the selected quick item, e.g. a thrown knife),
-/// "item=GOODS@S" (test aid: the goods given if none is held and put in the first quick-item slot),
+/// "item=GOODS@S" (test aid: the goods topped up to 10 and put in the first quick-item slot, selected),
 /// "hp=N@S" (the local chr's HP set to N, a test aid for a quick kill), "log@S" (teams and table
 /// cells).
 struct TestStep {

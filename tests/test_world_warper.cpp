@@ -237,8 +237,16 @@ int main() {
         CHECK(ToolsLeft(p).size() == std::size(kWarperTools) - 2);
         CHECK(std::string(GestureName(1)) == "Point Forward" && std::string(GestureName(23)) == "League Oath");
         CHECK(std::string(GestureName(0)) == "?" && std::string(GestureName(24)) == "?");
-        const Options o = ParseOptions("tour,nogestures,notools");
-        CHECK(!o.gestures && !o.tools && ParseOptions("tour").gestures && ParseOptions("tour").tools);
+        CHECK(ToolUseSeen(3, 2, 20, 20) && ToolUseSeen(3, 3, 20, 17) && !ToolUseSeen(3, 3, 20, 20));
+        CHECK(!ToolUseSeen(-1, -1, -1, -1) && !ToolUseSeen(0, 0, 0, 0));
+        CHECK(ParseProgress("toolok 1200\ngestureok 3\n").tools_ok.count(1200) &&
+              ParseProgress("gestureok 3\n").gestures_ok.count(3));
+        const Options caps = ParseOptions("tour,gestures=1,tools=2");
+        CHECK(caps.gestures && caps.tools && caps.gestures_max == 1 && caps.tools_max == 2);
+        // Opt-in while unverified live.
+        const Options o = ParseOptions("tour,gestures,tools,remopass");
+        CHECK(o.gestures && o.tools && o.remo_pass);
+        CHECK(!ParseOptions("tour").gestures && !ParseOptions("tour").tools && !ParseOptions("tour").remo_pass);
     }
     // The title stage: first-launch screens confirmed (Down, Cross, Up, Cross), no Continue = no run.
     {

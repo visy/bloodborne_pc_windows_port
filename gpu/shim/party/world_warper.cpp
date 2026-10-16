@@ -185,6 +185,7 @@ struct State {
     int pass_stage = 0;
     double pass_at = 0;
     u32 quick0_before = 0;
+    int tool_held = -1, tool_bullets = -1;  // the tool's count and the quicksilver bullets before its use
     std::size_t gestures_played = 0, tools_used = 0;
     // time of day
     std::vector<int> tod_of_row;  // the Tod phase: each route row's value
@@ -966,6 +967,8 @@ void TickImpl(double now) {
             g.pass_i = 0;
             g.pass_stage = 0;
             g.pass_at = now;
+            if (g.opt.gestures_max > 0 && g.pass.size() > static_cast<std::size_t>(g.opt.gestures_max))
+                g.pass.resize(static_cast<std::size_t>(g.opt.gestures_max));
             if (!g.pass.empty()) {
                 g.c_step = Counters::Now();
                 Log("gestures: %zu to play (%zu in earlier sessions)", g.pass.size(), g.progress.gestures.size());
@@ -984,7 +987,7 @@ void TickImpl(double now) {
                     const int v = static_cast<int>(id);
                     const bool ok = menu && SafeWrite(menu + kMenuGesture, &v, 4);
                     if (ok) ++g.gestures_played;
-                    Log("gesture %u (%s)%s", id, GestureName(id), ok ? "" : ": NOT asked (no menu manager)");
+                    Log("gesture %u (%s): %s", id, GestureName(id), ok ? "asked (not verified: work in progress)" : "NOT asked (no menu manager)");
                     UpdateStatus("gestures");
                     g.pass_stage = 1;
                     g.pass_at = now + kGestureSeconds;
@@ -1012,6 +1015,8 @@ void TickImpl(double now) {
             g.pass_i = 0;
             g.pass_stage = 0;
             g.pass_at = now;
+            if (g.opt.tools_max > 0 && g.pass.size() > static_cast<std::size_t>(g.opt.tools_max))
+                g.pass.resize(static_cast<std::size_t>(g.opt.tools_max));
             if (!g.pass.empty()) {
                 g.c_step = Counters::Now();
                 g.quick0_before = QuickItemId(0);
@@ -1040,21 +1045,41 @@ void TickImpl(double now) {
                     return;
                 }
                 if (g.pass_stage == 1) {
+                    g.tool_held = ItemCount(kItemGoods, id);
+                    g.tool_bullets = ItemCount(kItemGoods, kQuicksilverBullets);
                     runtime_pad_director_press(kSquare);
                     g.pass_stage = 2;
                     g.pass_at = now + 0.15;
-                    ++g.tools_used;
                     return;
                 }
+                if (g.pass_stage == 2) {  // Square released; the use is checked after the action
+                    runtime_pad_director_press(0);
+                    g.pass_stage = 4;
+                    g.pass_at = now + kToolSeconds;
+                    return;
+                }
+                if (g.pass_stage == 4) {
+                    // Verified by what the use costs: one of the item (throwables) or quicksilver
+                    // bullets (tools). Neither changed: not counted, logged as unverified.
+                    const int held = ItemCount(kItemGoods, id), bullets = ItemCount(kItemGoods, kQuicksilverBullets);
+                    const bool used = ToolUseSeen(g.tool_held, held, g.tool_bullets, bullets);
+                    if (used) {
+                        ++g.tools_used;
+                        AppendState("toolok " + std::to_string(id));
+                        g.progress.tools_ok.insert(id);
+                    }
+                    Log("tool %u: %s (held %d -> %d, quicksilver bullets %d -> %d)", id,
+                        used ? "used" : "NOT used (skipped, unverified)", g.tool_held, held, g.tool_bullets, bullets);
+                }
                 runtime_pad_director_press(0);
-                g.pass_at = now + (g.pass_stage == 3 ? 0.1 : kToolSeconds);
+                g.pass_at = now + 0.3;
                 g.pass_stage = 0;
                 if (++g.pass_i == g.pass.size()) {
                     const Counters c = Counters::Now();
                     g.action_new["hunter tools"] += c.created - g.c_step.created;
                     g.c_step = c;
                     if (g.quick0_before) SetQuickItem(0, g.quick0_before, true);
-                    Log("hunter tools: %zu used, +%llu new pipelines", g.tools_used,
+                    Log("hunter tools: %zu of %zu used (verified by their cost), +%llu new pipelines", g.tools_used, g.pass.size(),
                         static_cast<unsigned long long>(g.action_new["hunter tools"]));
                 }
                 return;
@@ -1283,7 +1308,7 @@ void Install(unsigned char* image, std::uint64_t size) {
     case Mode::Measure: g.phases = {Phase::ReplayBefore, Phase::Tour, Phase::ReplayAfter}; break;
     default:
         g.phases = {Phase::Tour};
-        if (g.opt.remo) g.phases.push_back(Phase::Remo);  // the cutscenes the tour's rows could not play
+        if (g.opt.remo && g.opt.remo_pass) g.phases.push_back(Phase::Remo);  // the cutscenes the tour's rows could not play
         if (g.opt.tod) g.phases.push_back(Phase::Tod);
         if (g.opt.remo_only) g.phases = {Phase::Remo};
         break;
