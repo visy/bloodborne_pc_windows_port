@@ -3,6 +3,12 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## Unreleased
+
+- **Fixed: crackling and popping sound on 4-core CPUs** (in the world and the pause menu, the title screen was clean): on CPUs with 4 cores or fewer the game's sound mixer thread ran below every normal game thread, so under load it delivered sound up to 140 ms late and the sound device ran dry. The mixer now runs at the same high priority as the sound output thread, and FMOD's other threads above normal.
+- **Changed: a bigger sound cushion**: the port keeps at least 40 ms of sound queued ahead of the device (two device periods when those are longer, `BB_AUDIO_CUSHION_MS` 10-200 to change it) instead of about 11 ms, fills it at start and after a drain, and drops a single buffer if the queue runs over 200 ms past it. About 30 ms more sound latency.
+- **Fixed (for testers): `BB_AUDIO_STATS` now counts starved buffers**: the queue was read after the new buffer was added, so "starved" was always 0; it now reads before, and the line shows the queue in ms, the cushion and dropped buffers.
+
 ## 0.6.3 (Windows port 0.6.3, party co-op)
 
 - **Fixed: with three players, a guest whose game crashes comes straight back** (also right after a boss kill): the other guest's game now lets go of its connection to the crashed game, so the restarted game is no longer sent the old session's data. Before, its join from the title failed, it came back only after about 80 s, and the host's game dropped the other guest on the way.

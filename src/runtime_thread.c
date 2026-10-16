@@ -280,7 +280,12 @@ static int get_host_cores(void) {
 
 static int ps4_prio_to_win32(int prio, const char *name) {
     int cores = get_host_cores();
-    int is_audio = (name && (strstr(name, "Audio") || strstr(name, "audio") || strstr(name, "Sound") || strstr(name, "sound") || strstr(name, "pad")));
+    /* FMOD's threads (prio 256-265: "FMOD mixer/stream/file/AudioOut thread") match no audio word
+     * but "AudioOut"; on <= 4 cores prio <= 260 fell to BELOW_NORMAL, and the mixer, starved by
+     * the game's NORMAL threads in the world, fed the AudioOut thread 14-140 ms late (crackle on a
+     * 4-core i5-4460, clean title screen). The mixer gets the AudioOut thread's HIGHEST. */
+    if (name && strstr(name, "FMOD") && strstr(name, "mixer")) return THREAD_PRIORITY_HIGHEST;
+    int is_audio = (name && (strstr(name, "Audio") || strstr(name, "audio") || strstr(name, "Sound") || strstr(name, "sound") || strstr(name, "pad") || strstr(name, "FMOD")));
     int is_render = (name && (strstr(name, "Render") || strstr(name, "render") || strstr(name, "Present") || strstr(name, "Flip") || strstr(name, "Display")));
     int is_main = (name && (strstr(name, "Main") || strstr(name, "main") || strstr(name, "host")));
     int is_worker = (name && (strstr(name, "Worker") || strstr(name, "worker") || strstr(name, "Pool") || strstr(name, "pool") || strstr(name, "Work") || strstr(name, "work") || strstr(name, "Havok") || strstr(name, "Cloth") || strstr(name, "Job") || strstr(name, "job")));
