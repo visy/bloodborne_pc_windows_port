@@ -55,6 +55,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <set>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -1007,6 +1008,7 @@ void on_roster(const std::vector<RosterEntry>& roster) {
     if (link && !link->is_host() && !(env("BB_PARTY_NR_DROP") && env("BB_PARTY_NR_DROP")[0] == '0')) {
         static std::mutex mu;
         static std::map<std::string, MemberState> last;
+        static std::set<std::string> lost;  // members whose link dropped while in the world (a crash)
         std::vector<std::string> crashed;
         {
             std::lock_guard<std::mutex> lk(mu);
@@ -1017,7 +1019,17 @@ void on_roster(const std::vector<RosterEntry>& roster) {
                                                          it->second == MemberState::Joining ||
                                                          it->second == MemberState::Loading ||
                                                          it->second == MemberState::Dead);
-                if (was_in && e.state == MemberState::Title) crashed.push_back(e.name);
+                // smokefix (live smoke, 2026-10-16): a guest's own Leave + Rejoin also shows it at
+                // its title for a moment; releasing the connection to its LIVE game then made the
+                // host's game drop this guest 15 s later (KickoutRoomMember 0xFF000020). Only a
+                // member whose link was lost (its game died) is released.
+                if (!e.connected && was_in) lost.insert(e.name);
+                if (e.state == MemberState::Title && lost.count(e.name)) {
+                    crashed.push_back(e.name);
+                    lost.erase(e.name);
+                } else if (e.state == MemberState::InHostWorld) {
+                    lost.erase(e.name);
+                }
                 last[e.name] = e.state;
             }
         }
