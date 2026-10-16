@@ -27,7 +27,7 @@ whole party respawns with the host, 4 players instead of 6, one shared drop roll
 | Death & respawn | `████████████████████` | 99% | `███████████████████░` | 94% |
 | Progress (anyone can progress) | `████████████████████` | 99% | `███████████████████░` | 95% |
 | Services & UI | `████████████████████` | 100% | `███████████████████░` | 95% |
-| Network & robustness | `███████████████████░` | 93% | `██████████████████░░` | 92% |
+| Network & robustness | `██████████████████░░` | 93% | `██████████████████░░` | 92% |
 | Bloodborne-specific (chalice, Insight) | `████████████████████` | 100% | `███████████████████░` | 95% |
 | Feels like single player in a party | `████████████████████` | 100% | `███████████████████░` | 95% |
 
@@ -275,7 +275,7 @@ before anyone is in the game):
   and one press does the rest (the guests follow in with one loading screen). Chalices are shared
   between all players, and a boss reward the game keeps for the host goes to every guest in the
   dungeon too.
-- **Crashes recover.** A crashed game restarts and rejoins by itself (on one PC: in the host's party about 15 s after the crash, standing beside the host about 20-27 s after it, nearly all of that the game's own start, its online sign-in at the title and its loading screen; with three players a guest that crashes right after a boss kill still takes about 80 s, being worked on), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue. If the host's game crashes, the guests go to their own world and wait ("Waiting for the host to come back (N s)...") until the host's game has restarted, then are summoned back beside it by themselves (about 20 s after the crash on one PC; after 3 minutes without the host a guest plays on alone); items a guest got in the host's world stay in its own save.
+- **Crashes recover.** A crashed game restarts and rejoins by itself (on one PC: in the host's party about 15 s after the crash, standing beside the host about 20-27 s after it, nearly all of that the game's own start, its online sign-in at the title and its loading screen), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue. If the host's game crashes, the guests go to their own world and wait ("Waiting for the host to come back (N s)...") until the host's game has restarted, then are summoned back beside it by themselves (about 20 s after the crash on one PC; after 3 minutes without the host a guest plays on alone); items a guest got in the host's world stay in its own save.
 - **Network drops recover.** A network outage of up to about 2 minutes keeps the session (checked on one PC with 60, 90 and 120 s outages; 50 s with three players): no loading screen, everyone carries on where they stood once the network is back (the others freeze in place meanwhile). If a longer outage loses the session, a guest goes home at once with one loading screen and is summoned back beside the host by itself once the network is back. The party also checks every 15 s that everyone sees the same world and progress and quietly re-sends whatever differs.
 - **Wrong passwords are locked out.** A few typos are fine; after 5 wrong passwords in a minute the host refuses that address for a while.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
@@ -333,7 +333,6 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 | Guests load at the same time as the host on party travel (about 10-15 s less per trip) | Planned (seamless research, opt-in first) |
 | Host death the ERSC way: the host loads alone, guests play on | Planned (opt-in first; today the whole party reloads) |
 | Game-style fades instead of blinks for in-world moves and revives | Planned |
-| A guest crashing right after a boss kill with three players rejoins quickly | In progress |
 | Sharper smoke and fog checked with every upscaler, HDR and 21:9 | In progress |
 | Shader cache builder: bosses, gestures and hunter tools; a fuller shared cache | In progress |
 | Fixes from Supermedo 1.8.2 (keyboard sprint through direction changes, exFAT / FAT32 drives, read-only game files, VRAM fallback on 4-8 GB cards) | In progress |
@@ -348,8 +347,6 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 - **Co-op on the current build was tested on one PC** (several game copies, simulated internet lag);
   a real two-PC Internet session on 0.6.2 is still to come. Please send support bundles if something goes
   wrong (see *Reporting a co-op bug*).
-- **With three players, a guest whose game crashes right after a boss kill** comes back by itself, but
-  only after about 80 s, and the other guest is dropped and summoned back on the way. Being worked on.
 
 ### Connecting over the internet
 

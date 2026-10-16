@@ -1027,8 +1027,8 @@ void on_roster(const std::vector<RosterEntry>& roster) {
                 if (e.state == MemberState::Title && lost.count(e.name)) {
                     crashed.push_back(e.name);
                     lost.erase(e.name);
-                } else if (e.state == MemberState::InHostWorld) {
-                    lost.erase(e.name);
+                } else if (e.connected && e.state == MemberState::InHostWorld) {
+                    lost.erase(e.name);  // back in the world without a restart (an outage resumed)
                 }
                 last[e.name] = e.state;
             }

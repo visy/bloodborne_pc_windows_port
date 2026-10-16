@@ -111,6 +111,7 @@ def phase_s1(only):
 def phase_s2(only):
     host_tail = not only or bool({"host_crash", "host_leave"} & only)
     host = ",".join([
+        "goods=4114:0",                                           # the test save holds the badge: the kill's reward would say "storage max"
         "host_warp=2412952@15",                                   # party lamp travel: the Cleric Beast's lamp
         "host_move=%s@15%%m24_01" % CLERIC_TRIGGER_HOST,          # starts the fight
         "host_kill=2410800@12%m24_01",                            # the boss kill (its defeat path)
