@@ -53,6 +53,7 @@ extern "C" void* runtime_low_map(size_t size, int prot); // src/runtime_memory.c
 #define BB_FR_SYSV __attribute__((sysv_abi))
 
 namespace BbFrameRate {
+void StartSweep(); // bbport_frame_sweep.cpp
 namespace {
 using BbGuestCode::Emitter;
 using u64 = std::uint64_t;
@@ -377,7 +378,8 @@ void LogThread(double period) {
 }
 } // namespace
 
-void PatchImage(unsigned char* image, std::uint64_t size) {
+namespace {
+void Install(unsigned char* image, std::uint64_t size) {
     const char* fps = std::getenv("BB_FPS");
     if (!HooksWanted(fps, std::getenv("BB_FPS_PATCH"), std::getenv("BB_FRAME_HOOKS"))) {
         if (fps && std::strcmp(fps, "30") != 0) {
@@ -439,6 +441,13 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
     std::fflush(stdout);
 }
 
+} // namespace
+
+void PatchImage(unsigned char* image, std::uint64_t size) {
+    Install(image, size);
+    StartSweep(); // BB_FRAME_SWEEP (diagnostics, bbport_frame_sweep.cpp; with the patches too)
+}
+
 bool Unlocked() {
     return unlocked.load(std::memory_order_relaxed);
 }
@@ -449,5 +458,17 @@ double GameSeconds() {
 
 std::uint64_t Steps() {
     return steps.load(std::memory_order_relaxed);
+}
+
+bool SetTargetRate(int rate) {
+    if (!Unlocked() || !live) return false;
+    // One aligned float: the pacer stub reads it once a frame.
+    reinterpret_cast<std::atomic<float>*>(&live->shortest)->store(1.0f / float(std::clamp(rate, 30, MaxRate)),
+                                                                 std::memory_order_relaxed);
+    return true;
+}
+
+float LastDt() {
+    return live && Unlocked() ? live->dt : 0.0f;
 }
 } // namespace BbFrameRate

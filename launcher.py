@@ -546,6 +546,7 @@ def settings_env(s: dict) -> dict:
     env["BB_OBJECT_MOTION"] = None if on("feat_object_motion") else "0"
     env["BB_OVERLAY"] = None if on("feat_overlay") else "0"
     env["BB_FPS_PATCH"] = None if on("feat_fps_patch") else "0"
+    env["BB_FRAME_HOOKS"] = None if on("feat_frame_hooks") else "0"
 
     # Resolution scaling
     res_choice = s.get("res", RES_CHOICES[0])
@@ -1533,6 +1534,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_object_motion = tk.BooleanVar(value=self.settings.get("feat_object_motion", True))
         self.feat_overlay = tk.BooleanVar(value=self.settings.get("feat_overlay", True))
         self.feat_fps_patch = tk.BooleanVar(value=self.settings.get("feat_fps_patch", True))
+        self.feat_frame_hooks = tk.BooleanVar(value=self.settings.get("feat_frame_hooks", True))
         self.feat_mods = tk.BooleanVar(value=self.settings.get("mods", True))
         self.feat_dream_mirror = tk.BooleanVar(value=self.settings.get("dream_mirror", True))
         self.feat_lamp_travel = tk.BooleanVar(value=self.settings.get("lamp_travel", True))
@@ -1681,9 +1683,13 @@ class BloodborneLauncher(tk.Tk):
                     "Target frame rate: uncap, 60, 90, or 30 (the game's native rate). Above 30 needs the "
                     "FPS patch. Default: uncap (BB_FPS).", width=10)
         self._check(sec, "FPS patch (Uncap / 60 / 90)", self.feat_fps_patch,
-                    "Applies the community high-framerate patches (FPS++) for the chosen target, with "
-                    "physics and movement speeds kept correct. Off = the game stays at 30 FPS. "
-                    "Default: on (BB_FPS_PATCH).")
+                    "Lets the game run above 30 FPS at the chosen target, with physics and movement "
+                    "speeds kept correct. Off = the game stays at 30 FPS. Default: on (BB_FPS_PATCH).")
+        self._check(sec, "Frame rate by game hooks", self.feat_frame_hooks,
+                    "On: the frame rate is freed by hooks in the game's code (deadinside's 0.6-pre1): every "
+                    "frame-tied timer, damping and speed follows the real frame time (no sprint dropping to "
+                    "a walk above 90 FPS, physics timers at the right speed). Off: the community FPS++ "
+                    "patches as before. Default: on (BB_FRAME_HOOKS).")
         self._combo(sec, "Frames ahead:", self.frames_ahead_var, [c[0] for c in FRAMES_AHEAD_CHOICES],
                     "How many frames the GPU thread may queue ahead of the display. 1 = least input lag, "
                     "2 = smoother frame times (default), 3 = smoothest but more lag (BB_FRAMES_AHEAD).",
@@ -2904,6 +2910,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_object_motion.set(True)
         self.feat_overlay.set(True)
         self.feat_fps_patch.set(True)
+        self.feat_frame_hooks.set(True)
         self.feat_mods.set(True)
         self.feat_res_scaling.set(True)
         self.feat_watchdog.set(True)
@@ -3293,6 +3300,7 @@ class BloodborneLauncher(tk.Tk):
             "feat_object_motion": self.feat_object_motion.get(),
             "feat_overlay": self.feat_overlay.get(),
             "feat_fps_patch": self.feat_fps_patch.get(),
+            "feat_frame_hooks": self.feat_frame_hooks.get(),
             "feat_res_scaling": self.feat_res_scaling.get(),
             "feat_tracing": self.feat_tracing.get(),
             "tracing_rev": 1,
@@ -3818,6 +3826,7 @@ class BloodborneLauncher(tk.Tk):
             f"ObjectMotion={'on' if self.feat_object_motion.get() else 'off'}, "
             f"Overlay={'on' if self.feat_overlay.get() else 'off'}, "
             f"FPSPatch={'on' if self.feat_fps_patch.get() else 'off'}, "
+            f"FrameHooks={'on' if self.feat_frame_hooks.get() else 'off'}, "
             f"Mods={'on' if self.feat_mods.get() else 'off'}, "
             f"ResScaling={'on' if self.feat_res_scaling.get() else 'off'}, "
             f"Tracing={'on' if self.feat_tracing.get() else 'off'}, "

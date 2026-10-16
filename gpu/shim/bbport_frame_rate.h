@@ -22,4 +22,9 @@ bool Unlocked();
 /// Diagnostics (the frame-rate measurement): 0 when the hooks are off.
 double GameSeconds();
 std::uint64_t Steps();
+/// The pacer's frame rate target from now on (30..MaxRate; diagnostics: the frame-rate sweep,
+/// bbport_frame_sweep.cpp). False when the hooks are off.
+bool SetTargetRate(int rate);
+/// The last step's dt (s; 0 when the hooks are off).
+float LastDt();
 } // namespace BbFrameRate
