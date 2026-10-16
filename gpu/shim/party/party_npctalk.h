@@ -96,6 +96,12 @@ std::string DescribeRange(int metres);
 /// How long a listener shows a shared line when the talker's next line / end does not come first
 /// (speech ~0.07 s a character): 2.5 .. 10 s.
 double LineSeconds(std::uint32_t chars);
+/// How long a listener keeps a shared line at most when neither the talker's next line nor its end
+/// arrives: the talker's own conversation ends (and sends End) after 30 s without a line, so the
+/// listener waits for that, plus 2 s; never less than the speaking-time estimate. The estimate alone
+/// ended lines the talker held longer (a voice past ~0.07 s a character) up to 1.1 s early (live
+/// npctalk2 / pard4 D8).
+double RemoteLineLimit(std::uint32_t chars);
 
 enum class Reach : std::uint8_t {
     Share,      ///< subtitle + voice + caption

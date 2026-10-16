@@ -5,6 +5,9 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.6.3 (unreleased)
 
+- **Fixed: a boss can no longer get the party's extra health twice**: a boss is meant to get its co-op health boost once per fight; if a second copy arrived (seen once on Vicar Logarius after a forced kill, a guest saw 22704 HP instead of 9081), it is now ignored. Checked live: the Cleric Beast with two cooperators had the same health on all three games before, during and after the fight.
+- **Fixed: a shared NPC line no longer disappears up to a second early on the players listening**: it now stays until the talking player's game moves on to the next line or ends the conversation.
+- **Checked live: a guest riding a lift moves the lift in the host's world** (Central Yharnam's lift, the host far away).
 - **Fixed: a flip interrupt that arrives before its frame's label no longer stops the game** ("Out of order flip IRQ"): the label is waited for briefly, then the frame is shown (at worst one frame twice). From Supermedo/bloodborne_pc 76f5b5f6 (from Awaken's port).
 - **Changed: keyboard movement keeps a sprint through direction changes**: the keyboard stick stays on the square gate (W+D runs, as W alone), turns in steps of at most 30 degrees instead of jumping (the game ends a sprint on a 45 degree jump), and a released key is held 60 ms. Controller sticks are not touched. From Supermedo/bloodborne_pc 4b930b10 (measured by cassioKenji, PR #74 there).
 - **Fixed: mods work again when the game files are read-only** ("[WinError 5] Access is denied"; the game started without its mods). The read-only attribute is cleared for the deletion and put back on the game file. From Supermedo/bloodborne_pc ba34a3a2 (emurphy04, PR #77 there).

@@ -106,6 +106,20 @@ int DopingSpEffect(int sp_effect, int coop_count) {
     return sp_effect == 7501 && coop_count >= 3 ? 7502 : sp_effect;
 }
 
+bool IsDopingSpEffect(int sp_effect) {
+    return sp_effect >= 7500 && sp_effect <= 7502;
+}
+
+DopingAction DopingApply(int sp_effect, int coop_count, int doping_held, bool dedupe) {
+    if (!IsDopingSpEffect(sp_effect)) {
+        return DopingAction::Keep;
+    }
+    if (dedupe && doping_held > 0) {
+        return DopingAction::Skip;
+    }
+    return DopingSpEffect(sp_effect, coop_count) != sp_effect ? DopingAction::Upgrade : DopingAction::Keep;
+}
+
 void SpotOffset(int spot, float d, float* right, float* forward) {
     // Side by side in a line on the host's right axis (upstream 12490f5: wider offsets or spots
     // behind put guests into walls at narrow lamp spots): 1 right, 2 left, 3 2x right; 4 2x left
@@ -873,24 +887,56 @@ TickState g_tick;
 } // namespace
 } // namespace coop::fourp
 
-// H4: SpEffect 7501 -> 7502 at the entry of 0x18c6db0. Arguments: rdi chr, esi SpEffect id,
-// rdx, rcx, r8, r9, xmm0-4 and a stack argument - all kept; the stub saves the System V
-// caller-saved registers (and xmm0-7) around the check, then jumps to the trampoline.
+// H4 at the entry of 0x18c6db0 (chr ApplySpEffect, vfunc +0x3f0; returns al = applied). Arguments:
+// rdi chr, esi SpEffect id, rdx the source chr, cl, r8b (1: a local-only apply, 0: the game sends it
+// on to the other players after applying, 0x18c7080), r9, xmm0-4 and a stack argument - all kept;
+// the stub saves the System V caller-saved registers (and xmm0-7) around the check (only for the
+// doping rows 7500-7502), then jumps to the trampoline: 7501 -> 7502 with 3 cooperators, or
+// returns 0 (not applied) for a second doping row on a chr that already holds one (D7 dedupe).
 extern "C" {
 __attribute__((used)) void* bb_fourp_spfx_original = nullptr;
-__attribute__((used)) BB_COOP_SYSV int bb_fourp_spfx_upgrade(void) {
+__attribute__((used)) BB_COOP_SYSV int bb_fourp_spfx_upgrade(std::uint64_t chr, int id, std::uint64_t src,
+                                                             std::uint64_t rcx, std::uint64_t r8,
+                                                             std::uint64_t ret) {
     using namespace coop::fourp;
+    using coop::Image;
+    using coop::SafeGet;
     coop::perf::Scope z(coop::perf::Zone::HookFourpSpfx);
+    (void)rcx;
     // No max-players gate: 3 cooperators exist only once H1 let them in, and a guest must scale
     // like its host whatever it was told.
     const int n = CooperatorsNow();
-    if (DopingSpEffect(7501, n) != 7502) {
-        return 0;
+    int held = 0, held_id = 0;
+    std::uint64_t list = 0, node = 0;
+    if (chr && SafeGet(chr + 0x1c8, &list) && list && SafeGet(list + 8, &node)) {
+        for (int guard = 0; node && guard < 256; ++guard) {
+            std::uint32_t nid = 0;
+            if (SafeGet(node + 0x40, &nid) && IsDopingSpEffect(int(nid))) {
+                ++held;
+                held_id = int(nid);
+            }
+            if (!SafeGet(node + 0x58, &node)) break;
+        }
     }
-    if (g_h4_upgrades.fetch_add(1) < 16) {
-        Log("H4: boss/chalice scaling SpEffect 7501 -> 7502 (%d cooperators)", n);
+    static const bool dedupe = !EnvIsZero("BB_PARTY_DOPING_DEDUPE");
+    const DopingAction act = DopingApply(id, n, held, dedupe);
+    if (g_h4_upgrades.fetch_add(1) < 64) {
+        std::uint32_t handle = ~0u;
+        int entity = -1;
+        SafeGet(chr + 8, &handle);
+        SafeGet(chr + 0x1f0, &entity);
+        const std::uint64_t base = reinterpret_cast<std::uint64_t>(Image());
+        Log("H4: doping SpEffect %d on chr %x (entity %d, %d cooperators, source %s, %s, caller +0x%llx): "
+            "%s",
+            id, handle, entity, n, src == chr ? "itself" : src ? "another chr" : "none",
+            (r8 & 0xff) ? "local apply" : "applied and sent on",
+            static_cast<unsigned long long>(base && ret > base ? ret - base : ret),
+            act == DopingAction::Skip      ? (held_id == id ? "SKIPPED: the chr already holds it (dedupe)"
+                                                            : "SKIPPED: the chr already holds another doping row (dedupe)")
+            : act == DopingAction::Upgrade ? "applied as 7502 (3 cooperators)"
+                                           : "applied");
     }
-    return 1;
+    return act == DopingAction::Skip ? 2 : act == DopingAction::Upgrade ? 1 : 0;
 }
 void bb_fourp_spfx_stub(void);
 }
@@ -900,8 +946,10 @@ asm(R"(
     .p2align 4
     .globl bb_fourp_spfx_stub
 bb_fourp_spfx_stub:
-    cmpl $7501, %esi
-    jne 1f
+    cmpl $7500, %esi
+    jb 1f
+    cmpl $7502, %esi
+    ja 1f
     pushq %rdi
     pushq %rsi
     pushq %rdx
@@ -919,6 +967,7 @@ bb_fourp_spfx_stub:
     movdqu %xmm5, 0x50(%rsp)
     movdqu %xmm6, 0x60(%rsp)
     movdqu %xmm7, 0x70(%rsp)
+    movq 0xc8(%rsp), %r9
     call bb_fourp_spfx_upgrade
     movdqu 0x00(%rsp), %xmm0
     movdqu 0x10(%rsp), %xmm1
@@ -937,11 +986,16 @@ bb_fourp_spfx_stub:
     popq %rdx
     popq %rsi
     popq %rdi
+    cmpl $2, %eax
+    je 2f
     testl %eax, %eax
     jz 1f
     movl $7502, %esi
 1:
     jmpq *bb_fourp_spfx_original(%rip)
+2:
+    xorl %eax, %eax
+    ret
 )");
 
 namespace coop::fourp {
@@ -988,7 +1042,7 @@ void FourpInit() {
                           "4p H3 MultiDoping count >= 2");
         void* sp_original = nullptr;
         g_h4 = ReplacePrologue(kApplySpEffect, kPrologue13, reinterpret_cast<const void*>(&bb_fourp_spfx_stub),
-                               &sp_original, "4p H4 SpEffect 7501 -> 7502 (chr ApplySpEffect)");
+                               &sp_original, "4p H4 boss doping (chr ApplySpEffect: 7501 -> 7502, one doping row per chr)");
         if (g_h4) {
             bb_fourp_spfx_original = sp_original;
         }
