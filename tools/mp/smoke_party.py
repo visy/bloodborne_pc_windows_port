@@ -96,9 +96,9 @@ def phase_s1(only):
         "guest_die@12",                       # a death outside a fight: bloodstain, respawn at the host's lamp
         "guest_obj=2411810@20%m24_01",        # at Gascoigne's fog, facing it
         "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!",  # Cross: the guest goes in first
-        "guest_die@74%m24_01",                # after the host's death in the fight: the wipe
+        "guest_die@84%m24_01",                # ~18 s after the host's death in the fight: the wipe
     ])
-    g2 = "guest_die@108%m24_01"                # the headless guest: down too (everyone down: a wipe)
+    g2 = "guest_die@118%m24_01"                # the headless guest: down too (everyone down: a wipe)
     return dict(
         name="s1", seconds=420,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1"],
