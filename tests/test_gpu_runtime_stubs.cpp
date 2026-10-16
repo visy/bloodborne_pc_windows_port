@@ -60,6 +60,11 @@ void runtime_pad_director_press(uint32_t) { std::abort(); }
 void runtime_pad_director_sticks(int, int, int, int) { std::abort(); }
 uint32_t runtime_pad_last_buttons() { return 0; }
 uint32_t runtime_pad_cross_presses() { return 0; }
+// Button prompts (bbport_button_prompts.cpp): nothing sampled, the game's icons.
+unsigned runtime_pad_prompt_generation() { return 0; }
+int runtime_pad_prompt_set() { return -1; }
+int runtime_pad_mouse_look() { return 0; }
+int runtime_pad_prompt(const char*, int, char*, int) { return 0; }
 const char* runtime_symbol(const char*) { return nullptr; }
 void runtime_thread_set_blocked(const char*, uint64_t) {}
 void runtime_thread_clear_blocked() {}

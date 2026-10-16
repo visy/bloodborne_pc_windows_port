@@ -877,6 +877,17 @@ void DefineAll() {
     AddRow(Scaled(&Values::mk_sens_y, SensTable), "Vertical speed", "Скорость по вертикали",
            "Mouse sensitivity: 0 = 0.25, 5 = 1.0 (default), 10 = 5.0",
            "Чувствительность мыши: 0 = 0.25, 5 = 1.0 (по умолчанию), 10 = 5.0", {}, Kind::Slider);
+    // Button prompts (bbport_button_prompts.h, from deadinside28/bloodborne_pc 72e5c8ce): live.
+    AddRow(Setting(
+               Kind::Steps, [](const Values& v) { return v.prompt_style.load(); },
+               [](int i) { BbSettings::Get().prompt_style = std::clamp(i, 0, BbSettings::PromptStyleCount - 1); },
+               BbSettings::PromptStyleCount),
+           "Button prompts", "Подсказки кнопок",
+           "Icons in the game's prompts. Auto: the device used last. Nintendo: letters only, Cross stays bottom",
+           "Значки в подсказках игры. Авто: последнее устройство. Nintendo: только буквы, Крест внизу",
+           {AddText("Auto", "Авто"), AddText("PlayStation", "PlayStation"), AddText("Xbox", "Xbox"),
+            AddText("Nintendo", "Nintendo"), AddText("Keyboard", "Клавиатура")},
+           Kind::Steps);
     AddRow(Setting(
                Kind::List,
                [](const Values& v) { return int(v.mk_invert_x.load()) | int(v.mk_invert_y.load()) << 1; },

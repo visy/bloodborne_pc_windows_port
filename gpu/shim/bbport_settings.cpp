@@ -3,6 +3,7 @@
 #include "party/party_traversal.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -63,6 +64,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         if (v.fg_backend == FgFsr && v.frame_generation > 2) v.frame_generation = 2;
     } else if (key == "reflex") {
         v.reflex = ParseReflex(value.c_str());
+    } else if (key == "prompt_style") {
+        v.prompt_style = ParsePromptStyle(value.c_str());
     } else if (key == "upscaler") {
         for (int u = 0; u < UpscalerCount; ++u) {
             if (value == UpscalerName(u)) {
@@ -291,7 +294,7 @@ void Load() {
     }
     const std::pair<const char*, const char*> env_keys[] = {
         {"BB_FG_BACKEND", "fg_backend"},          {"BB_FRAME_GENERATION", "frame_generation"},
-        {"BB_REFLEX", "reflex"},
+        {"BB_REFLEX", "reflex"},                  {"BB_PROMPT_STYLE", "prompt_style"},
         {"BB_FSR_SHARPNESS", "sharpness"},        {"BB_JITTER", "jitter"},
         {"BB_REACTIVE", "reactive"},              {"BB_REACTIVE_SCALE", "reactive_scale"},
         {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
@@ -348,6 +351,25 @@ float HdrPeakNits() {
 
 const char* ReflexModeName(int mode) {
     return mode == ReflexBoost ? "boost" : mode == ReflexOn ? "on" : "off";
+}
+
+const char* PromptStyleName(int style) {
+    static constexpr const char* names[PromptStyleCount] = {"auto", "playstation", "xbox", "nintendo",
+                                                            "keyboard"};
+    return names[std::clamp(style, 0, PromptStyleCount - 1)];
+}
+
+int ParsePromptStyle(const char* value) {
+    std::string text{value ? value : ""};
+    for (auto& ch : text) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+    for (int s = 0; s < PromptStyleCount; ++s) {
+        if (text == PromptStyleName(s) || text == std::to_string(s)) return s;
+    }
+    if (text == "ps" || text == "ps4" || text == "ps5") return PromptPlayStation;
+    if (text == "switch") return PromptNintendo;
+    if (text == "kbm" || text == "mouse") return PromptKeyboard;
+    if (!text.empty()) std::printf("Settings: unknown prompt_style '%s' (auto, playstation, xbox, nintendo, keyboard)\n", text.c_str());
+    return PromptAuto;
 }
 
 int ParseReflex(const char* value) {
@@ -549,6 +571,7 @@ void Save() {
     put("audio_boost", fixed(v.audio_boost, 2));
     put("mk_wheel", flag(v.mk_wheel));
     put("mk_direct_camera", flag(v.mk_direct_camera));
+    put("prompt_style", PromptStyleName(v.prompt_style));
     put("async_pipelines", flag(v.async_shaders));
     put("gpl", flag(v.gpl));
     put("compile_indicator", flag(v.compile_indicator));
@@ -643,7 +666,7 @@ void ReloadMouseTuning() {
     // the other keys are the menu's (a full re-read would undo its unsaved changes).
     static constexpr const char* tuning[] = {"mk_sens_x", "mk_sens_y", "mk_invert_x", "mk_invert_y",
                                              "mk_deadzone", "mk_smoothing", "mk_wheel",
-                                             "mk_direct_camera"};
+                                             "mk_direct_camera", "prompt_style"};
     auto& v = Get();
     if (FILE* file = std::fopen(Path(), "r")) {
         char line[256];

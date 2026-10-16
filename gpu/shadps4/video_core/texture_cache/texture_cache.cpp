@@ -3,6 +3,8 @@
 
 #include <xxhash.h>
 
+#include <bit>
+#include "bbport_button_prompts.h"
 #include "bbport_toggles.h"
 #include "bbport_free_check.h"
 #include "common/assert.h"
@@ -902,6 +904,19 @@ void TextureCache::RefreshImage(Image& image) {
 
     const u32 num_layers = image.info.resources.layers;
     const u32 num_mips = image.info.resources.levels;
+    // bbport: the game's key guide icons (32x32, one level, known by their bytes) and the HUD's
+    // atlases with icons packed in: the rasterizer may sample the port's for the device in use
+    // (vk_button_prompts.h; from deadinside28/bloodborne_pc 72e5c8ce).
+    if (num_mips == 1 && num_layers == 1 && image.info.props.is_block) {
+        const auto* bytes = std::bit_cast<const u8*>(image.info.guest_address);
+        if (image.info.size.width == 32 && image.info.size.height == 32 && image.info.guest_size >= 1024) {
+            image.prompt_icon = u8(BbPrompts::IconOf(bytes, 1024));
+        }
+        static std::atomic<u32> prompt_uploads{0};
+        image.prompt_atlas = u8(BbPrompts::AtlasOf(bytes, image.info.guest_size, image.info.size.width,
+                                                   image.info.size.height));
+        image.prompt_upload = image.prompt_atlas ? ++prompt_uploads : 0;
+    }
     const bool is_gpu_modified = True(image.flags & ImageFlagBits::GpuModified);
     const bool is_gpu_dirty = True(image.flags & ImageFlagBits::GpuDirty);
     static const bool sync_log = std::getenv("BB_IMAGE_SYNC_LOG") != nullptr;
