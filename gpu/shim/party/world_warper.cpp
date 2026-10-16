@@ -140,6 +140,7 @@ struct State {
     double at = 0, stage_at = 0, steady_since = 0, title_press_at = 0, start_at = 0;
     int title_presses = 0;
     int first_run_step = 0;       // the first-launch screens (brightness, controls): next press
+    TitleScreen first_run_screen = TitleScreen::Other;
     double first_run_at = 0;
     u32 rp = 0;                   // the row being visited
     std::size_t visited = 0;      // rows done in this phase (this session)
@@ -749,15 +750,19 @@ void TickImpl(double now) {
             // Text lookup times (steady clock ms; a screen looks its texts up when it builds).
             const std::int64_t ms = static_cast<std::int64_t>(now * 1000.0);
             const TitleScreen screen = ClassifyTitle(BbGameMenu::TextSeenMs("brightness"),
+                                                     BbGameMenu::TextSeenMs("Camera X-Axis"),
                                                      BbGameMenu::TextSeenMs("Continue"),
                                                      BbGameMenu::TextSeenMs("New Game"), ms);
-            if (screen == TitleScreen::FirstLaunch) {
+            if (screen == TitleScreen::Brightness || screen == TitleScreen::Controls) {
                 if (now - g.first_run_at >= 1.0) {
                     g.first_run_at = now;
-                    const std::uint32_t b = FirstLaunchPress(g.first_run_step++);
+                    if (screen != g.first_run_screen) g.first_run_step = 0;  // a new screen: from its top row
+                    g.first_run_screen = screen;
+                    const std::uint32_t b = FirstLaunchPress(screen, g.first_run_step++);
                     runtime_pad_director_press(b);
                     g.title_press_at = now;
-                    Log("title: a first-launch screen (brightness / controls): %s with its default",
+                    Log("title: first-launch %s screen: %s (its defaults)",
+                        screen == TitleScreen::Controls ? "controls" : "brightness",
                         b == kPadCross ? "Cross" : b == kDown ? "Down" : "Up");
                     SetStatus("World warper\nFirst-launch screens: confirming the defaults...\n");
                 }
