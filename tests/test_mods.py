@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 import shutil
+import stat
 
 # Not a bare 'bash': on Windows CreateProcess finds System32\bash.exe (WSL) before PATH (Git Bash).
 BASH = posix_tool('bash') or 'bash'
@@ -167,6 +168,53 @@ class ModTests(unittest.TestCase):
         config.write_text('{"disabled":"A"}')
         with self.assertRaises(ValueError):
             mods.selected(self.moddir, config)
+
+    def test_read_only_game_files_are_replaced_and_keep_their_attribute(self):
+        # Supermedo/bloodborne_pc ba34a3a2 (emurphy04, PR #77): a hard link shares the read-only
+        # attribute of the game file, and Windows refuses to delete it (WinError 5).
+        a = self.mod('A')
+        self.mod('A', b'new', 'new.dcx')
+        for f in (self.assets / 'a.dcx', self.assets / 'b.dcx', self.game / 'eboot.bin'):
+            f.chmod(stat.S_IREAD)
+            self.addCleanup(f.chmod, stat.S_IREAD | stat.S_IWRITE)
+        result = mods.build_overlay(self.game, self.root / 'out', [('A', a)])
+        self.assertEqual((result / 'dvdroot_ps4/chr/a.dcx').read_bytes(), b'mod')
+        self.assertEqual((result / 'dvdroot_ps4/chr/b.dcx').read_bytes(), b'untouched')
+        self.assertEqual((self.assets / 'a.dcx').read_bytes(), b'original')
+        self.assertFalse(os.stat(self.assets / 'a.dcx').st_mode & stat.S_IWRITE)
+        # A changed mod builds a new overlay; removing the overlay keeps the game files read-only.
+        mods.remove_overlay(result, self.game)
+        self.assertFalse(result.exists())
+        for f in (self.assets / 'a.dcx', self.assets / 'b.dcx', self.game / 'eboot.bin'):
+            self.assertTrue(f.is_file())
+            self.assertFalse(os.stat(f).st_mode & stat.S_IWRITE, f)
+
+    @unittest.skipUnless(os.name == 'nt', 'junctions and WinError 1 are Windows-only')
+    def test_drive_without_junctions_builds_the_view_in_temp(self):
+        # Supermedo/bloodborne_pc bf0878bf: on exFAT / FAT32 a folder cannot become a junction
+        # ([WinError 1] "Incorrect function"); the view is made on another (NTFS) folder.
+        a = self.mod('A')
+        exfat, ntfs = self.root / 'exfat-out', self.root / 'temp-view'
+        real = mods.make_link
+
+        def fat_make_link(link_path, target_path, target_is_directory=False):
+            if target_is_directory and Path(link_path).resolve().is_relative_to(exfat.resolve()):
+                raise OSError(22, 'Incorrect function', str(link_path), 1)
+            return real(link_path, target_path, target_is_directory)
+        mods.make_link = fat_make_link
+        self.addCleanup(setattr, mods, 'make_link', real)
+        with self.assertRaises(OSError):
+            mods.build_overlay(self.game, exfat, [('A', a)])
+        self.assertEqual([p for p in exfat.iterdir() if p.is_dir()], [])  # nothing left behind
+        result = mods.build_view(self.game, exfat, [('A', a)], fallback=ntfs)
+        self.assertTrue(result.resolve().is_relative_to(ntfs.resolve()))
+        self.assertEqual((result / 'dvdroot_ps4/chr/a.dcx').read_bytes(), b'mod')
+        self.assertEqual((result / 'dvdroot_ps4/chr/b.dcx').read_bytes(), b'untouched')
+        self.assertEqual((result / 'eboot.bin').read_bytes(), b'original executable')
+        # Any other error still fails the launch's mods step.
+        mods.make_link = lambda *args, **kw: (_ for _ in ()).throw(OSError(13, 'denied'))
+        with self.assertRaises(OSError):
+            mods.build_view(self.game, self.root / 'other', [('A', a)], fallback=ntfs)
 
     def test_run_uses_overlay_propagates_exit_and_cleans_view(self):
         self.mod('A')

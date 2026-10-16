@@ -501,6 +501,56 @@ static int key_direction(KeyAxisState *s, int negative, int positive) {
         return s->positive_since>s->negative_since ? 1 : -1;
     return positive-negative;
 }
+/* The keyboard's move stick through direction changes (Supermedo/bloodborne_pc 4b930b10, measured
+ * by cassioKenji, PR #74 there): the game picks walk or run by the stick's larger axis (a square
+ * gate), and ends a sprint when the stick's direction moves 45 degrees or more between two reads,
+ * while the same turn in steps keeps it. So the keyboard stick stays on the square (the larger
+ * axis is 127 at every angle: W+D is the corner, a run, where the round gate's 90,90 was not), and
+ * it turns at KEY_STICK_TURN_RATE deg/s but never more than KEY_STICK_MAX_STEP per read, like a
+ * thumb sliding along the gate. A half turn (A <-> D, W <-> S) has no shortest way round: it goes
+ * through forward, or through the right when both ways are sideways. A released direction is held
+ * KEY_STICK_RELEASE_US, so letting go of one key just before pressing the next does not flash a
+ * neutral stick. The angle starts fresh whenever the stick was neutral. The gamepad's sticks are
+ * never touched. Returns 1 with *ox, *oy (-127..127) while the keyboard drives the stick. */
+#define KEY_STICK_TURN_RATE 900.0
+#define KEY_STICK_MAX_STEP (30.0*3.14159265358979323846/180.0)
+#define KEY_STICK_HALF_TURN (170.0*3.14159265358979323846/180.0)
+#define KEY_STICK_RELEASE_US 60000u
+typedef struct { double angle; uint64_t at, released_at; int active, held_x, held_y; } KeyStickState;
+static KeyStickState key_move_stick;
+static int key_stick_step(KeyStickState *s, int dx, int dy, uint64_t now, int *ox, int *oy) {
+    const double pi=3.14159265358979323846;
+    if (!dx && !dy) {
+        if (s->active) { s->active=0; s->released_at=now; }
+        if ((s->held_x || s->held_y) && now-s->released_at<KEY_STICK_RELEASE_US) {
+            *ox=s->held_x; *oy=s->held_y;
+            return 1;
+        }
+        s->held_x=s->held_y=0;
+        return 0;
+    }
+    const double target=atan2((double)dy,(double)dx);
+    if (s->active) {
+        const double diff=fmod(target-s->angle+3.0*pi,2.0*pi)-pi; /* -pi..pi, shortest way round */
+        const double step=fmin(KEY_STICK_TURN_RATE*pi/180.0*(double)(now-s->at)/1e6,KEY_STICK_MAX_STEP);
+        double dir=diff>0 ? 1.0 : -1.0;
+        if (fabs(diff)>KEY_STICK_HALF_TURN) {
+            /* Half way round counter-clockwise is angle+pi/2; forward is y < 0. */
+            const double hy=sin(s->angle+pi/2.0), hx=cos(s->angle+pi/2.0);
+            dir=hy<-1e-9 ? 1.0 : hy>1e-9 ? -1.0 : hx>0 ? 1.0 : -1.0;
+        }
+        if (fabs(diff)<=step) s->angle=target;
+        else s->angle=atan2(sin(s->angle+dir*step),cos(s->angle+dir*step));
+    } else {
+        s->angle=target;
+    }
+    s->active=1; s->at=now;
+    const double c=cos(s->angle), sn=sin(s->angle), k=127.0/fmax(fabs(c),fabs(sn));
+    const int x=(int)lround(c*k), y=(int)lround(sn*k);
+    *ox=s->held_x=x<-127 ? -127 : x>127 ? 127 : x;
+    *oy=s->held_y=y<-127 ? -127 : y>127 ? 127 : y;
+    return 1;
+}
 static void apply_keyboard(PadData *d, const bool *k) {
     for (int i=IN_CROSS;i<=IN_RIGHT;++i)
         if (i!=IN_TOUCHPAD && i!=IN_TOUCHPAD_RIGHT && key_down(k,i)) d->buttons|=input_buttons[i];
@@ -508,14 +558,13 @@ static void apply_keyboard(PadData *d, const bool *k) {
     if (key_down(k,IN_TOUCHPAD_RIGHT)) touch_click(d,1);
     if (key_down(k,IN_L2)) d->l2=255;
     if (key_down(k,IN_R2)) d->r2=255;
-    int lx=key_direction(&key_axes[0],key_down(k,IN_MOVE_LEFT),key_down(k,IN_MOVE_RIGHT));
-    int ly=key_direction(&key_axes[1],key_down(k,IN_MOVE_UP),key_down(k,IN_MOVE_DOWN));
-    if (lx && ly) { /* round gate: a diagonal is full deflection, not the square's corner */
-        d->left_x=(uint8_t)(lx<0 ? 128-90 : 128+90);
-        d->left_y=(uint8_t)(ly<0 ? 128-90 : 128+90);
-    } else {
-        d->left_x=key_axis(d->left_x,lx<0,lx>0);
-        d->left_y=key_axis(d->left_y,ly<0,ly>0);
+    const int lx=key_direction(&key_axes[0],key_down(k,IN_MOVE_LEFT),key_down(k,IN_MOVE_RIGHT));
+    const int ly=key_direction(&key_axes[1],key_down(k,IN_MOVE_UP),key_down(k,IN_MOVE_DOWN));
+    int sx, sy;
+    if (key_stick_step(&key_move_stick,lx,ly,now_us(),&sx,&sy)) {
+        /* All the way is 0 / 255, as key_axis gives the other sticks. */
+        d->left_x=(uint8_t)(sx<=-127 ? 0 : sx>=127 ? 255 : 128+sx);
+        d->left_y=(uint8_t)(sy<=-127 ? 0 : sy>=127 ? 255 : 128+sy);
     }
     const int rx=key_direction(&key_axes[2],key_down(k,IN_LOOK_LEFT),key_down(k,IN_LOOK_RIGHT));
     const int ry=key_direction(&key_axes[3],key_down(k,IN_LOOK_UP),key_down(k,IN_LOOK_DOWN));
