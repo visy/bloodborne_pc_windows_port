@@ -14,6 +14,7 @@
 #include <string.h>
 #include <math.h>
 #include <time.h>
+#include <stdarg.h>
 #include <SDL3/SDL.h>
 #include "gpu/bbgpu.h"
 #ifdef _WIN32
@@ -52,6 +53,12 @@ typedef struct {
     int stats;
     uint64_t stat_start_ns, stat_last_ns, stat_max_gap_ns; /* BB_AUDIO_STATS */
     unsigned stat_starved, stat_dropped, stat_buffers; int stat_min_queued;
+    /* BB_AUDIO_LOG (launcher: Advanced / Debug > Audio log): a summary per MON_SUMMARY_NS and
+     * event lines (late buffer, underrun, repeated buffer), at most one per s, for reports. */
+    int mon;
+    uint64_t mon_in_ns, mon_ret_ns, mon_start_ns, mon_log_ns, mon_hash;
+    uint64_t mon_max_gap_ns, mon_max_guest_ns, mon_max_over_ns;
+    unsigned mon_buffers, mon_late, mon_underruns, mon_repeats, mon_dropped, mon_quiet; int mon_min_queued;
 } Port;
 typedef struct { uint16_t output; uint8_t channel, reserved; int16_t volume; uint16_t reroute; uint64_t flag, reserved64[2]; } PortState;
 _Static_assert(sizeof(PortState)==32,"AudioOut port state layout");
@@ -92,12 +99,29 @@ static int cushion_frames(int buffer_frames, int *fixed) {
     int device_frames=0;
     SDL_AudioSpec spec;
     if (!SDL_GetAudioDeviceFormat(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,&spec,&device_frames)) device_frames=0;
+    static int logged;
+    if (!logged++)
+        printf("Runtime: audio device %d Hz, %d ch, period %d frames (%.1f ms), driver %s\n",
+               spec.freq,spec.channels,device_frames,device_frames*1000.0/(spec.freq>0 ? spec.freq : 48000),SDL_GetCurrentAudioDriver());
     if (frames<2*buffer_frames) frames=2*buffer_frames;
     if (frames<2*device_frames) frames=2*device_frames;
     if (frames>CUSHION_MAX_FRAMES) frames=CUSHION_MAX_FRAMES;
     return (frames+buffer_frames-1)/buffer_frames*buffer_frames; /* whole buffers */
 }
 static void sleep_until(uint64_t deadline) { host_sleep_until_ns(deadline); }
+
+#define MON_SUMMARY_NS 60000000000ull
+/* One monitor event line, at most one per second per port; the skipped ones are counted into the next. */
+static void mon_event(Port *p, uint64_t now, const char *fmt, ...) {
+    if (p->mon_log_ns && now-p->mon_log_ns<1000000000u) { ++p->mon_quiet; return; }
+    va_list ap; va_start(ap,fmt);
+    printf("Runtime: audio port %d ",(int)(p-ports));
+    vprintf(fmt,ap);
+    va_end(ap);
+    if (p->mon_quiet) printf(" (+%u more events in the last second)",p->mon_quiet);
+    printf("\n");
+    p->mon_log_ns=now; p->mon_quiet=0;
+}
 
 static inline float soft_clip(float x) {
     /* Linear to 0.75, then a tanh knee that approaches (never reaches) full scale: continuous,
@@ -224,6 +248,7 @@ static ABI int32_t audio_open(int32_t user, int32_t type, int32_t index, uint32_
         }
     }
     p->stats=getenv("BB_AUDIO_STATS")!=NULL;
+    { const char *log=getenv("BB_AUDIO_LOG"); p->mon=log && *log && strcmp(log,"0"); }
     const char *dump=getenv("BB_AUDIO_DUMP");
     if (dump) {
         char path[4096];
@@ -272,6 +297,21 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
     size_t bytes=(size_t)p->frames*(size_t)p->out_channels*(size_t)p->sample_bytes;
     uint64_t period=(uint64_t)p->frames*1000000000u/48000u;
     if (data) {
+        /* Monitor: time since the last buffer, and how much of it the guest spent between our
+         * return and this call (FMOD late: its thread preempted or waiting on the mixer). */
+        const uint64_t in_ns=now_ns();
+        const uint64_t gap_ns=p->mon_in_ns ? in_ns-p->mon_in_ns : 0, guest_ns=p->mon_ret_ns ? in_ns-p->mon_ret_ns : 0;
+        p->mon_in_ns=in_ns;
+        if (!p->mon_start_ns) { p->mon_start_ns=in_ns; p->mon_min_queued=1<<30; }
+        /* A non-silent buffer equal to the last one is FMOD replaying a stale slot (mixer behind). */
+        uint64_t hash=1469598103934665603ull; int nonzero=0;
+        if (p->mon) for (size_t i=0,n=samples*(size_t)p->sample_bytes;i<n;++i) {
+            const unsigned char b=((const unsigned char *)data)[i];
+            nonzero|=b; hash=(hash^b)*1099511628211ull;
+        }
+        const int repeated=nonzero && hash==p->mon_hash;
+        p->mon_hash=hash;
+        uint64_t over_ns=0;
         /* Apply per-channel volume, channel remap, and soft-knee saturation to prevent harsh clipping */
         unsigned char converted[2048*8*4];
         static const int remap[8]={0,1,2,3,6,7,4,5};
@@ -312,7 +352,7 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
         if (pace) {
             uint64_t now=now_ns();
             if (!p->next_deadline_ns || now>p->next_deadline_ns+8*period) p->next_deadline_ns=now; /* start or stall: restart cadence */
-            else sleep_until(p->next_deadline_ns);
+            else { sleep_until(p->next_deadline_ns); const uint64_t woke=now_ns(); over_ns=woke-p->next_deadline_ns; }
             p->next_deadline_ns+=period;
         }
 
@@ -330,7 +370,7 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
                     const int step=p->low_bytes/2>2*(int)bytes ? p->low_bytes/2 : 2*(int)bytes;
                     p->low_bytes=(p->low_bytes+step+(int)bytes-1)/(int)bytes*(int)bytes;
                     if (p->low_bytes>p->max_bytes) p->low_bytes=p->max_bytes;
-                    printf("Runtime: audio port %d underrun, cushion %.1f ms\n",(int)(p-ports),(double)p->low_bytes/(double)bytes*(double)period/1e6);
+                    printf("Runtime: audio port %d cushion grown to %.1f ms\n",(int)(p-ports),(double)p->low_bytes/(double)bytes*(double)period/1e6);
                 }
                 p->cushion_ns=now;
             } else if (p->adaptive && p->low_bytes>p->base_bytes && now-p->cushion_ns>CUSHION_DECAY_NS) {
@@ -354,8 +394,42 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
             if (muted!=p->muted) { p->muted=muted; SDL_SetAudioStreamGain(p->stream,muted ? 0.0f : 1.0f); }
             /* Far over the floor (device clock slower than ours, or a burst after a stall): drop
              * this one buffer rather than flushing the queue. */
-            if (queued>low+CUSHION_DROP_FRAMES*p->out_channels*p->sample_bytes) ++p->stat_dropped;
+            if (queued>low+CUSHION_DROP_FRAMES*p->out_channels*p->sample_bytes) { ++p->stat_dropped; ++p->mon_dropped; }
             else SDL_PutAudioStreamData(p->stream,converted,(int)bytes);
+        }
+
+        if (p->mon) {
+            const uint64_t now=now_ns();
+            const double ms_per_byte=1.0/(48.0*p->out_channels*p->sample_bytes);
+            const double queue_ms=queued_before>=0 ? queued_before*ms_per_byte : -1.0, cushion_ms=p->low_bytes*ms_per_byte;
+            ++p->mon_buffers;
+            if (pace && gap_ns>p->mon_max_gap_ns) p->mon_max_gap_ns=gap_ns;
+            if (pace && guest_ns>p->mon_max_guest_ns) p->mon_max_guest_ns=guest_ns;
+            if (over_ns>p->mon_max_over_ns) p->mon_max_over_ns=over_ns;
+            if (queued_before>=0 && queued_before<p->mon_min_queued) p->mon_min_queued=queued_before;
+            if (pace && gap_ns>2*period) {
+                ++p->mon_late;
+                mon_event(p,now,"late buffer: %.1f ms since the last (period %.1f ms; guest %.1f ms from our return to its call, our sleep overshoot %.2f ms), queue before %.1f ms, cushion %.1f ms",
+                          gap_ns/1e6,period/1e6,guest_ns/1e6,over_ns/1e6,queue_ms,cushion_ms);
+            }
+            if (queued_before==0 && buffers_out>0) {
+                ++p->mon_underruns;
+                mon_event(p,now,"underrun: the device ran out of sound (%.1f ms since the last buffer, guest %.1f ms), cushion now %.1f ms",
+                          gap_ns/1e6,guest_ns/1e6,cushion_ms);
+            }
+            if (repeated) {
+                ++p->mon_repeats;
+                mon_event(p,now,"repeated buffer: the guest sent the same %d frames twice (FMOD mixer behind?)",p->frames);
+            }
+            if (now-p->mon_start_ns>=MON_SUMMARY_NS) {
+                printf("Runtime: audio port %d last %.0f s: %u buffers (expected %u), %u late (max gap %.1f ms, max guest %.1f ms, max sleep overshoot %.2f ms), "
+                       "%u underruns, %u repeated, %u dropped, min queue %.1f ms, cushion %.1f ms\n",
+                       (int)(p-ports),(now-p->mon_start_ns)/1e9,p->mon_buffers,(unsigned)((now-p->mon_start_ns)/period),p->mon_late,
+                       p->mon_max_gap_ns/1e6,p->mon_max_guest_ns/1e6,p->mon_max_over_ns/1e6,p->mon_underruns,p->mon_repeats,p->mon_dropped,
+                       p->mon_min_queued<(1<<30) ? p->mon_min_queued*ms_per_byte : -1.0,cushion_ms);
+                p->mon_start_ns=now; p->mon_buffers=p->mon_late=p->mon_underruns=p->mon_repeats=p->mon_dropped=0;
+                p->mon_max_gap_ns=p->mon_max_guest_ns=p->mon_max_over_ns=0; p->mon_min_queued=1<<30;
+            }
         }
 
         if (p->stats) {
@@ -377,6 +451,7 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
             }
         }
         ++buffers_out;
+        p->mon_ret_ns=now_ns();
     }
     p->last_output_us=now_ns()/1000;
     host_unlock(&p->lock);

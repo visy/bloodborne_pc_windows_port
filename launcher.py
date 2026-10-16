@@ -579,6 +579,8 @@ def settings_env(s: dict) -> dict:
     env["BB_PREUPLOAD"] = preupload if preupload in ("0", "2") else None
     # Frame and readback statistics into logs\<time>.frames.csv / .readbacks.csv
     env["BB_SAVE_LOG"] = "1" if on("feat_save_log", False) else "0"
+    # Sound timing log for crackle reports: late buffers, underruns, a summary per minute
+    env["BB_AUDIO_LOG"] = "1" if on("feat_audio_log", False) else "0"
     # Mute the game while its window is in the background
     env["BB_MUTE_UNFOCUSED"] = "1" if on("feat_mute_unfocused") else "0"
     # Mouse & keyboard controls (scheme from Mrsuss60/bloodborne_pc_windows_port): opt-in, and the
@@ -1552,6 +1554,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_game_menu = tk.BooleanVar(value=self.settings.get("feat_game_menu", True))
         self.feat_skip_network_choice = tk.BooleanVar(value=self.settings.get("feat_skip_network_choice", True))
         self.feat_save_log = tk.BooleanVar(value=self.settings.get("feat_save_log", False))
+        self.feat_audio_log = tk.BooleanVar(value=self.settings.get("feat_audio_log", False))
         _lvl = str(self.settings.get("party_log_level", "") or "")
         self.party_log_level_var = tk.StringVar(
             value=next((label for label, v in PARTY_LOG_LEVELS if v == _lvl), PARTY_LOG_LEVELS[0][0]))
@@ -1914,6 +1917,9 @@ class BloodborneLauncher(tk.Tk):
         self._check(sec, "Save frame stats to logs\\", self.feat_save_log,
                     "Writes frame and readback statistics to logs\\<time>.frames.csv / .readbacks.csv for "
                     "performance analysis. Default: off (BB_SAVE_LOG).")
+        self._check(sec, "Audio log (crackling sound)", self.feat_audio_log,
+                    "Logs late sound buffers, sound dropouts and a sound timing summary once a minute, "
+                    "for crackling or popping reports. At most one line a second. Default: off (BB_AUDIO_LOG).")
 
         sec = self._section(tab, 1, "Watchdog")
         self._check(sec, "Watchdog", self.feat_watchdog,
@@ -3304,6 +3310,7 @@ class BloodborneLauncher(tk.Tk):
             "feat_game_menu": self.feat_game_menu.get(),
             "feat_skip_network_choice": self.feat_skip_network_choice.get(),
             "feat_save_log": self.feat_save_log.get(),
+            "feat_audio_log": self.feat_audio_log.get(),
             "feat_mute_unfocused": self.feat_mute_unfocused.get(),
             "feat_async_pipelines": self.feat_async_shaders.get(),
             "feat_gpl": self.feat_gpl.get(),

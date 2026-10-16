@@ -5,9 +5,10 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.6.4 (Windows port 0.6.4, audio fix)
 
-- **Fixed: crackling and popping sound on 4-core CPUs** (in the world and the pause menu, the title screen was clean): on CPUs with 4 cores or fewer the game's sound mixer thread ran below every normal game thread, and the sound reached the device up to 140 ms late. The mixer now runs at the same high priority as the sound output thread, and FMOD's other threads above normal.
+- **Fixed: crackling and popping sound on 4-core CPUs** (in the world and the pause menu, the title screen was clean): on CPUs with 4 cores or fewer the game's sound mixer thread ran below every normal game thread, and the sound reached the device up to 140 ms late. The mixer now runs at the same high priority as the sound output thread, and FMOD's other threads above normal. Reported by Mr4xd3mn.
 - **Changed: the sound cushion adapts to the PC**: it starts at two device periods (about 20 ms with Windows audio; it was about 11 ms, less than one period). Each time the device runs dry it grows by half (up to 200 ms), and it shrinks back by 5 ms per 20 s without a dropout, so a fast PC keeps the low latency and only a PC that needs it gets more. The game log says when it grows. `BB_AUDIO_CUSHION_MS` (10-200) fixes it instead. A queue that runs 200 ms over drops one buffer instead of being flushed.
 - **Fixed (for testers): `BB_AUDIO_STATS` now counts starved buffers**: the queue was read after the new buffer was added, so "starved" was always 0; it now reads before, and the line shows the queue in ms, the cushion and dropped buffers. The log also lists each FMOD thread's Windows priority.
+- **Added: an "Audio log (crackling sound)" switch** (launcher, Advanced / Debug, `BB_AUDIO_LOG`): logs each late sound buffer (and whether the game's sound thread or the port's timer was late), each dropout, repeated buffers and a sound timing summary once a minute, at most one line a second. Off by default; turn it on for a crackling report.
 
 ## 0.6.3 (Windows port 0.6.3, party co-op)
 
