@@ -24,6 +24,30 @@ EBOOT_BASE=0x400000
 # half speed (the game's wall detector measured distance per frame, a 30 FPS rule).
 FPS_PRESETS={'30':[],'60':['60 FPS++'],'90':['90 FPS++','Sprint Fix (High FPS)'],
              'uncap':['Uncap FPS++','Sprint Fix (High FPS)']}
+# Above 30 FPS the frame rate is done by hooks in the game's code (gpu/shim/bbport_frame_rate.cpp,
+# deadinside's 0.6-pre1): no FPS++ patches. BB_FRAME_HOOKS=0 keeps the patches (the fallback and
+# comparisons). The default must match HooksDefault in gpu/shim/bbport_frame_rate_logic.h.
+FRAME_HOOKS_DEFAULT=True
+
+
+def frame_hooks(fps, env=os.environ):
+    """Does the GPU library run this frame rate by hooks (bbport_frame_rate_logic.h HooksWanted)?"""
+    off=lambda v: v in ('0','off','false')
+    if not fps or fps=='30' or off(env.get('BB_FPS_PATCH')):
+        return False
+    value=env.get('BB_FRAME_HOOKS','')
+    return not off(value) if value else FRAME_HOOKS_DEFAULT
+
+
+def fps_patches(fps, env=os.environ):
+    """The FPS++ patches for BB_FPS: none with the hooks or with the FPS patch off."""
+    if off_patch(env) or frame_hooks(fps, env):
+        return []
+    return FPS_PRESETS[fps]
+
+
+def off_patch(env):
+    return env.get('BB_FPS_PATCH') in ('0','off','false')
 # Upscaler presets (bbport.ini "preset", the in-game menu): output / render size ratio. The game
 # then renders at 1920x1080 / ratio and the port's temporal upscaler restores the output size.
 OUTPUT_SIZE=(1920,1080)
@@ -559,10 +583,16 @@ def main():
         size=render_size(settings)
         if size: print(f'{size[0]}x{size[1]}')
         return
-    fps_patches = FPS_PRESETS[a.fps]
-    if os.environ.get('BB_FPS_PATCH') in ('0', 'off', 'false'):
-        fps_patches = []
-    raw_names = fps_patches + [n.strip() for n in a.extra.split(';') if n.strip()]
+    if frame_hooks(a.fps):
+        print(f'Patches: frame rate {a.fps} by hooks in the game code (BB_FRAME_HOOKS=0: the FPS++ patches)',file=sys.stderr)
+    raw_names = fps_patches(a.fps) + [n.strip() for n in a.extra.split(';') if n.strip()]
+    if frame_hooks(a.fps):
+        fps_names={n for names in FPS_PRESETS.values() for n in names}
+        dropped=[n for n in raw_names if n in fps_names]
+        if dropped:
+            # Both would change the same pacer and constants: the hooks check the original bytes.
+            print(f'Patches: {", ".join(dropped)} left out: the frame rate is done by hooks (BB_FRAME_HOOKS=0 for the patches)',file=sys.stderr)
+            raw_names=[n for n in raw_names if n not in fps_names]
     raw_names += [n for n in effect_patches(read_settings(a.settings)) if n not in raw_names]
     if intel_tonemap_fix() and INTEL_TONEMAP not in raw_names:
         raw_names.append(INTEL_TONEMAP)

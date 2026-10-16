@@ -342,7 +342,8 @@ class PartyVersionCheckTests(unittest.TestCase):
             struct.pack_into('<HH', elf, 0x36, 0x38, 1)
             struct.pack_into('<IIQQQQQQ', elf, 0x40, 1, 5, 0x100, 0, 0, 0, 0x6000000, 0x1000)
             (out / 'eboot.elf').write_bytes(bytes(elf))
-            env = {**os.environ, 'BB_PARTY': 'host', 'BB_INTEL_TONEMAP_FIX': '0', 'BB_SKIP_NETWORK_CHOICE': '1'}
+            env = {**os.environ, 'BB_PARTY': 'host', 'BB_INTEL_TONEMAP_FIX': '0', 'BB_SKIP_NETWORK_CHOICE': '1',
+                   'BB_FRAME_HOOKS': '0'}  # the FPS++ patches: uncap and 60 differ in the file
 
             def run(fps, extra=''):
                 subprocess.run([sys.executable, str(ROOT / 'scripts/patches.py'), '--out', str(out), '--fps', fps,
@@ -367,3 +368,32 @@ class PartyVersionCheckTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class FrameRateHookTests(unittest.TestCase):
+    """Frame rate by hooks (gpu/shim/bbport_frame_rate.cpp, deadinside's 0.6-pre1)."""
+
+    def test_hooks_take_the_place_of_the_fps_patches(self):
+        for fps in ('uncap', '60', '90'):
+            self.assertTrue(patches.frame_hooks(fps, {}), fps)
+            self.assertEqual(patches.fps_patches(fps, {}), [], fps)
+        self.assertEqual(patches.fps_patches('30', {}), [])
+        self.assertFalse(patches.frame_hooks('30', {}))
+
+    def test_bb_frame_hooks_0_keeps_the_patches(self):
+        env = {'BB_FRAME_HOOKS': '0'}
+        self.assertFalse(patches.frame_hooks('uncap', env))
+        self.assertEqual(patches.fps_patches('uncap', env), ['Uncap FPS++', 'Sprint Fix (High FPS)'])
+        self.assertEqual(patches.fps_patches('60', env), ['60 FPS++'])
+        self.assertEqual(patches.fps_patches('90', env), ['90 FPS++', 'Sprint Fix (High FPS)'])
+
+    def test_fps_patch_off_is_the_games_own_30(self):
+        for hooks in ('0', '1', ''):
+            env = {'BB_FPS_PATCH': '0', 'BB_FRAME_HOOKS': hooks}
+            self.assertFalse(patches.frame_hooks('uncap', env))
+            self.assertEqual(patches.fps_patches('uncap', env), [])
+
+    def test_default_matches_the_gpu_library(self):
+        logic = (ROOT / 'gpu' / 'shim' / 'bbport_frame_rate_logic.h').read_text(encoding='utf-8')
+        expected = 'true' if patches.FRAME_HOOKS_DEFAULT else 'false'
+        self.assertIn(f'constexpr bool HooksDefault = {expected};', logic)

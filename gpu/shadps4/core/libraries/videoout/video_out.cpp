@@ -15,6 +15,7 @@
 #include "core/libraries/videoout/driver.h"
 #include "core/libraries/videoout/video_out.h"
 #include "core/libraries/videoout/videoout_error.h"
+#include "bbport_frame_rate.h"
 #include "core/platform.h"
 #include "video_core/renderer_vulkan/vk_reflex.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
@@ -146,7 +147,9 @@ s32 PS4_SYSV_ABI sceVideoOutRegisterBuffers(s32 handle, s32 startIndex, void* co
 
 s32 PS4_SYSV_ABI sceVideoOutSetFlipRate(s32 handle, s32 rate) {
     LOG_TRACE(Lib_VideoOut, "called");
-    driver->GetPort(handle)->flip_rate = rate;
+    // bbport: with the frame rate free by hooks (bbport_frame_rate, deadinside 0.6-pre1) a frame is
+    // shown as soon as it comes; the game asks for every second vblank (30 FPS).
+    driver->GetPort(handle)->flip_rate = BbFrameRate::Unlocked() ? 0 : rate;
     return ORBIS_OK;
 }
 
