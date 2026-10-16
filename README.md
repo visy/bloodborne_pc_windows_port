@@ -16,7 +16,7 @@ Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28
 Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](docs/party/ERSC_PARITY.md).
 Two numbers: **plan done** is how much of the plan is built and seen working at least once;
 **ERSC parity (evidence-weighted)** caps every row at 95% until it has been checked on two real PCs over
-the Internet (all checks so far ran on one PC), and caps rows where we chose to differ from ERSC (the
+the Internet (every check of the current build ran on one PC; the only Internet session so far was on 0.6.0), and caps rows where we chose to differ from ERSC (the
 whole party respawns with the host, 4 players instead of 6, one shared drop roll) at 95% too.
 
 | Area | Plan done | | ERSC parity (evidence-weighted) | |
@@ -27,7 +27,7 @@ whole party respawns with the host, 4 players instead of 6, one shared drop roll
 | Death & respawn | `████████████████████` | 99% | `███████████████████░` | 94% |
 | Progress (anyone can progress) | `████████████████████` | 99% | `███████████████████░` | 95% |
 | Services & UI | `████████████████████` | 100% | `███████████████████░` | 95% |
-| Network & robustness | `██████████████████░░` | 93% | `██████████████████░░` | 92% |
+| Network & robustness | `███████████████████░` | 93% | `██████████████████░░` | 92% |
 | Bloodborne-specific (chalice, Insight) | `████████████████████` | 100% | `███████████████████░` | 95% |
 | Feels like single player in a party | `████████████████████` | 100% | `███████████████████░` | 95% |
 
@@ -43,10 +43,11 @@ whole party respawns with the host, 4 players instead of 6, one shared drop roll
 | **High frame rates** | 30 / 60 / 90 / uncapped, with correct game speed (community patches). |
 | **Upscaling** | FSR 3.1, FSR 4, FSR 4.1.1 and DLSS, with motion vectors added for this game. |
 | **Frame generation** | Optional, off by default: DLSS FG (2x-4x, RTX 40/50) or FSR FG (2x), paced, HUD kept sharp; NVIDIA Reflex. [More](docs/FG_REFLEX.md) |
+| **Sharper smoke and fog** | Optional, off by default: smoke, mist and other soft effects, which the game draws at half resolution, at 2x the pixels or at full resolution (*System > Display > Volumetric effects*). [More](docs/SETTINGS.md) |
 | **HDR output** | Optional, off by default: HDR10 (PQ, Rec.2020) on an HDR display, the game's highlights expanded up to your display's peak while mid-tones and menus stay at paper white; peak, paper white, highlights, saturation and a calibration pattern in *System > HDR*. [More](docs/SETTINGS.md#hdr-output) |
 | **No shader stutter** | Known shaders are built before the intro. New ones compile in the background. |
 | **Shareable shader cache** | Export / import one `.zip`, works across GPUs; drop a shared one into `user\cache_import\`. |
-| **Shader cache builder** | *Advanced > Build shader cache (world warper)*: the game travels through every lamp and area by itself (looks round, walks, changes armor and weapons, fights every kind of enemy, plays the cutscenes, day / evening / Blood Moon), on a copy of your save, then exports the cache `.zip`. Two to three hours; Stop and resume. [More](docs/SETTINGS.md#shader-cache-builder-world-warper) |
+| **Shader cache builder** | *Advanced / Debug > Shader cache builder > Build shader cache (world warper)*: the game travels through every lamp and area by itself (looks round, walks, changes armor and weapons, fights every kind of enemy, plays the cutscenes, day / evening / Blood Moon), on a copy of your save, then exports the cache `.zip`. Two to three hours; Stop and resume. Opt-in faster loading screens: `BB_FAST_LOADING=1` (3-8 % shorter, but the loading animation stops). [More](docs/SETTINGS.md#shader-cache-builder-world-warper) |
 | **Save safety** | Crash-safe saving, save checks at start, automatic backups in party play. |
 | **The Old Hunters** | DLC enabled automatically (its data ships with patch 1.09). |
 | **Mods and patches** | Loose-file mods and shadPS4-format XML patches, with load order. |
@@ -274,7 +275,7 @@ before anyone is in the game):
   and one press does the rest (the guests follow in with one loading screen). Chalices are shared
   between all players, and a boss reward the game keeps for the host goes to every guest in the
   dungeon too.
-- **Crashes recover.** A crashed game restarts and rejoins by itself (on one PC: in the host's party about 15 s after the crash, standing beside the host about 20-27 s after it, nearly all of that the game's own start, its online sign-in at the title and its loading screen), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue. If the host's game crashes, the guests go to their own world and wait ("Waiting for the host to come back (N s)...") until the host's game has restarted, then are summoned back beside it by themselves (about 20 s after the crash on one PC; after 3 minutes without the host a guest plays on alone); items a guest got in the host's world stay in its own save.
+- **Crashes recover.** A crashed game restarts and rejoins by itself (on one PC: in the host's party about 15 s after the crash, standing beside the host about 20-27 s after it, nearly all of that the game's own start, its online sign-in at the title and its loading screen; with three players a guest that crashes right after a boss kill still takes about 80 s, being worked on), next to the host: a guest whose own save is in another area first travels to the host's lamp with one loading screen. Nobody is summoned into a prologue. If the host's game crashes, the guests go to their own world and wait ("Waiting for the host to come back (N s)...") until the host's game has restarted, then are summoned back beside it by themselves (about 20 s after the crash on one PC; after 3 minutes without the host a guest plays on alone); items a guest got in the host's world stay in its own save.
 - **Network drops recover.** A network outage of up to about 2 minutes keeps the session (checked on one PC with 60, 90 and 120 s outages; 50 s with three players): no loading screen, everyone carries on where they stood once the network is back (the others freeze in place meanwhile). If a longer outage loses the session, a guest goes home at once with one loading screen and is summoned back beside the host by itself once the network is back. The party also checks every 15 s that everyone sees the same world and progress and quietly re-sends whatever differs.
 - **Wrong passwords are locked out.** A few typos are fine; after 5 wrong passwords in a minute the host refuses that address for a while.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
@@ -326,12 +327,22 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 | Change | Status |
 |---|---|
 | Item pickups and enemy drops per player: everyone gets their own (enemy drops: one shared roll, each player's own Item Discovery) | Done |
-| Every cutscene for the whole party (story cutscenes, endings and guest-triggered scenes already work) | In progress |
+| Every cutscene for the whole party, also the ones a guest triggers | Done: every story scene a guest can trigger plays for the whole party (verified live with 3 players) |
 | Joining during a boss fight or cutscene waits outside until it ends | Done: boss fights and cutscenes with every join path (bell, title join, direct summon; verified live), the Party status says why you wait |
 | With 3 guests, every guest sees every other guest | Done: all four join and see each other; any player can leave and rejoin while the others play on (verified live with 3 and 4 players) |
 | Chalice dungeons: deeper layers and the bottom lift lever checked in a party | Done: layer 2 and its boss, both lift levers (verified live); dungeons with floor bosses still to check |
 | PvP / friendly fire the host can switch on and off | Done (0.6.2) |
 | Pings: party members and marked spots visible through walls, with distance and player colours | Done (0.6.2) |
+
+### Known issues
+
+- **FSR 4 can show a white or grey picture** on some PCs. The cause is under investigation (suspected:
+  FSR 4 with HDR turned on in Windows). Meanwhile switch to FSR 3.1, DLSS or no upscaler.
+- **Co-op on the current build was tested on one PC** (several game copies, simulated internet lag);
+  a real two-PC Internet session on 0.6.2 is still to come. Please send support bundles if something goes
+  wrong (see *Reporting a co-op bug*).
+- **With three players, a guest whose game crashes right after a boss kill** comes back by itself, but
+  only after about 80 s, and the other guest is dropped and summoned back on the way. Being worked on.
 
 ### Connecting over the internet
 
