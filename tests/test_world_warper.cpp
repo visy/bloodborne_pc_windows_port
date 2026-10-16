@@ -237,6 +237,8 @@ int main() {
         CHECK(ToolsLeft(p).size() == std::size(kWarperTools) - 2);
         CHECK(std::string(GestureName(1)) == "Point Forward" && std::string(GestureName(23)) == "League Oath");
         CHECK(std::string(GestureName(0)) == "?" && std::string(GestureName(24)) == "?");
+        CHECK(GestureSeen({0, 100, 0}, {104140, 100, 0}) && !GestureSeen({104140}, {104140, 0}));
+        CHECK(!GestureSeen({}, {100000, 0, 3000}));
         CHECK(ToolUseSeen(3, 2, 20, 20) && ToolUseSeen(3, 3, 20, 17) && !ToolUseSeen(3, 3, 20, 20));
         CHECK(!ToolUseSeen(-1, -1, -1, -1) && !ToolUseSeen(0, 0, 0, 0));
         CHECK(ParseProgress("toolok 1200\ngestureok 3\n").tools_ok.count(1200) &&
@@ -252,8 +254,9 @@ int main() {
     {
         CHECK(ClassifyTitle(5000, 0, 0, 0, 6000) == TitleScreen::Brightness);
         CHECK(ClassifyTitle(5000, 6000, 0, 0, 7000) == TitleScreen::Controls);    // after brightness
-        CHECK(ClassifyTitle(5000, 6000, 0, 7000, 8000) == TitleScreen::Other);    // the title built since
-        CHECK(ClassifyTitle(5000, 6000, 0, 7000, 10500) == TitleScreen::NoCharacter); // ...without Continue
+        CHECK(ClassifyTitle(5000, 6000, 0, 7000, 7500) == TitleScreen::Other);    // the title built since
+        CHECK(ClassifyTitle(5000, 6000, 0, 7000, 8500) == TitleScreen::NoCharacter); // ...without Continue
+        CHECK(TitleUndecided(0, 7000) && !TitleUndecided(7000, 7000) && !TitleUndecided(0, 0));
         CHECK(ClassifyTitle(0, 0, 7000, 7000, 20000) == TitleScreen::Other);      // Continue: go on
         CHECK(ClassifyTitle(0, 0, 0, 0, 20000) == TitleScreen::Other);
         CHECK(FirstLaunchPress(TitleScreen::Brightness, 0) == kDown &&

@@ -185,8 +185,9 @@ struct State {
     int pass_stage = 0;
     double pass_at = 0;
     u32 quick0_before = 0;
+    std::vector<int> anims_before;  // the gesture check: the player's animations before the request
     int tool_held = -1, tool_bullets = -1;  // the tool's count and the quicksilver bullets before its use
-    std::size_t gestures_played = 0, tools_used = 0;
+    std::size_t gestures_played = 0, gestures_ok = 0, tools_used = 0;
     // time of day
     std::vector<int> tod_of_row;  // the Tod phase: each route row's value
     std::vector<u32> remo_of_row; // the Remo phase: each route row's cutscene
@@ -572,6 +573,16 @@ bool GoToEnemy(u64 player, const EnemyTarget& t) {
     return PlacePlayer(player, pos, yaw);
 }
 
+/// The animations the local player played last (its TimeAct module [[chr+0x3B0]+0x18]: a ring of
+/// 10 {anim id, start, end, length} at +0x20, the next write index at +0xC0); 0 unknown.
+std::vector<int> RecentAnims(u64 chr) {
+    std::vector<int> v;
+    const u64 ta = Field<u64>(Field<u64>(chr, 0x3b0), 0x18);
+    if (!ta) return v;
+    for (int i = 0; i < 10; ++i) v.push_back(Field<int>(ta, 0x20 + 0x10 * static_cast<u64>(i), 0));
+    return v;
+}
+
 /// The yaw a chr faces (its physics rotation +0x1D0, forward = (-sin, -cos)); false unknown.
 bool ChrYaw(u64 chr, float* yaw) {
     const u64 phys = Field<u64>(Field<u64>(Field<u64>(Field<u64>(chr, 0x58), 8), 0x3b0), 0x68);
@@ -754,22 +765,11 @@ void TickImpl(double now) {
                                                      BbGameMenu::TextSeenMs("Camera X-Axis"),
                                                      BbGameMenu::TextSeenMs("Continue"),
                                                      BbGameMenu::TextSeenMs("New Game"), ms);
-            if (screen == TitleScreen::Brightness || screen == TitleScreen::Controls) {
-                if (now - g.first_run_at >= 1.0) {
-                    g.first_run_at = now;
-                    if (screen != g.first_run_screen) g.first_run_step = 0;  // a new screen: from its top row
-                    g.first_run_screen = screen;
-                    const std::uint32_t b = FirstLaunchPress(screen, g.first_run_step++);
-                    runtime_pad_director_press(b);
-                    g.title_press_at = now;
-                    Log("title: first-launch %s screen: %s (its defaults)",
-                        screen == TitleScreen::Controls ? "controls" : "brightness",
-                        b == kPadCross ? "Cross" : b == kDown ? "Down" : "Up");
-                    SetStatus("World warper\nFirst-launch screens: confirming the defaults...\n");
-                }
-                return;
-            }
-            if (screen == TitleScreen::NoCharacter) {
+            // The brightness and controls screens are the New Game's (live 2026-10-16: a save
+            // folder without a character went title -> brightness -> controls -> the opening):
+            // the warper never plays through them; the run ends as for a title without Continue.
+            if (screen == TitleScreen::Brightness || screen == TitleScreen::Controls ||
+                screen == TitleScreen::NoCharacter) {
                 Log("FAILED: the title has no Continue (no character in this save folder to continue); "
                     "the warper needs a save with a character");
                 SetStatus("World warper: FAILED\nNo character to continue in this save folder\n");
@@ -777,6 +777,11 @@ void TickImpl(double now) {
                 g.at = now + 3.0;
                 return;
             }
+        }
+        // The title menu built with New Game and no Continue yet: no Cross until it is clear
+        // (a Cross there would start a New Game; ClassifyTitle ends the run 1 s later).
+        if (!s.world_up && TitleUndecided(BbGameMenu::TextSeenMs("Continue"), BbGameMenu::TextSeenMs("New Game"))) {
+            return;
         }
         if (!s.world_up && now - g.at >= 2.5 && now - g.start_at > 4.0) {
             // The title: Cross until the save is continued (as the lamp travel test).
@@ -985,16 +990,38 @@ void TickImpl(double now) {
                     g.progress.gestures.insert(id);
                     const u64 menu = Field<u64>(Guest(kMenuMan), 0);
                     const int v = static_cast<int>(id);
+                    g.anims_before = RecentAnims(s.player);
                     const bool ok = menu && SafeWrite(menu + kMenuGesture, &v, 4);
                     if (ok) ++g.gestures_played;
-                    Log("gesture %u (%s): %s", id, GestureName(id), ok ? "asked (not verified: work in progress)" : "NOT asked (no menu manager)");
+                    if (!ok) Log("gesture %u (%s): NOT asked (no menu manager)", id, GestureName(id));
                     UpdateStatus("gestures");
                     g.pass_stage = 1;
                     g.pass_at = now + kGestureSeconds;
                     return;
                 }
                 if (g.pass_stage == 1) {
-                    runtime_pad_director_press(kCircle);
+                    // Verified only when the player's animations show a gesture (a000_104xxx) that
+                    // was not there before the request; else logged as not played (unverified).
+                    const bool seen = GestureSeen(g.anims_before, RecentAnims(s.player));
+                    if (seen) {
+                        ++g.gestures_ok;
+                        AppendState("gestureok " + std::to_string(id));
+                        g.progress.gestures_ok.insert(id);
+                    }
+                    Log("gesture %u (%s): %s", id, GestureName(id),
+                        seen ? "played" : "NOT played (skipped, unverified)");
+                    if (!seen) {  // nothing to end: no dodge; a request left unread is withdrawn
+                        const u64 menu = Field<u64>(Guest(kMenuMan), 0);
+                        const int zero = 0;
+                        if (menu) SafeWrite(menu + kMenuGesture, &zero, 4);
+                        g.pass_stage = 0;
+                        g.pass_at = now + 0.5;
+                        if (++g.pass_i == g.pass.size()) {
+                            Log("gestures: %zu of %zu played", g.gestures_ok, g.pass.size());
+                        }
+                        return;
+                    }
+                    runtime_pad_director_press(kCircle);  // ends a looping gesture
                     g.pass_stage = 2;
                     g.pass_at = now + 0.15;
                     return;
@@ -1002,6 +1029,7 @@ void TickImpl(double now) {
                 runtime_pad_director_press(0);
                 g.pass_stage = 0;
                 g.pass_at = now + 1.2;
+                if (g.pass_i + 1 == g.pass.size()) Log("gestures: %zu of %zu played", g.gestures_ok, g.pass.size());
                 if (++g.pass_i == g.pass.size()) {
                     const Counters c = Counters::Now();
                     g.action_new["gestures"] += c.created - g.c_step.created;
