@@ -3,6 +3,10 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## Unreleased
+
+- **Fixed: the sound cushion's start size on a sound device that does not run at 48 kHz** (44.1 or 192 kHz, often a TV over HDMI): the device period was read as 48 kHz frames, so the cushion started up to 4 times too small or too large. Idea from Supermedo/bloodborne_pc PR #80 (andrecabralgit).
+
 ## 0.6.4 (Windows port 0.6.4, audio fix)
 
 - **Fixed: crackling and popping sound on 4-core CPUs** (in the world and the pause menu, the title screen was clean): on CPUs with 4 cores or fewer the game's sound mixer thread ran below every normal game thread, and the sound reached the device up to 140 ms late. The mixer now runs at the same high priority as the sound output thread, and FMOD's other threads above normal. Reported by Mr4xd3mn.

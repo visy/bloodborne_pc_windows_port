@@ -97,14 +97,17 @@ static int cushion_frames(int buffer_frames, int *fixed) {
     *fixed=0;
     if (env && *env) { const int v=atoi(env); if (v>=10 && v<=200) { frames=v*48; *fixed=1; } }
     int device_frames=0;
-    SDL_AudioSpec spec;
-    if (!SDL_GetAudioDeviceFormat(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,&spec,&device_frames)) device_frames=0;
+    SDL_AudioSpec spec={0};
+    if (!SDL_GetAudioDeviceFormat(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,&spec,&device_frames) || device_frames<0 || device_frames>16384) device_frames=0;
+    /* The period is in the device's frames: at 44.1 or 192 kHz (HDMI often) it is shorter or
+     * longer in our 48 kHz frames (idea from Supermedo/bloodborne_pc PR #80, andrecabralgit). */
+    const int period_48k=spec.freq>0 ? (int)((int64_t)device_frames*48000/spec.freq) : device_frames;
     static int logged;
     if (!logged++)
         printf("Runtime: audio device %d Hz, %d ch, period %d frames (%.1f ms), driver %s\n",
-               spec.freq,spec.channels,device_frames,device_frames*1000.0/(spec.freq>0 ? spec.freq : 48000),SDL_GetCurrentAudioDriver());
+               spec.freq,spec.channels,device_frames,period_48k/48.0,SDL_GetCurrentAudioDriver());
     if (frames<2*buffer_frames) frames=2*buffer_frames;
-    if (frames<2*device_frames) frames=2*device_frames;
+    if (frames<2*period_48k) frames=2*period_48k;
     if (frames>CUSHION_MAX_FRAMES) frames=CUSHION_MAX_FRAMES;
     return (frames+buffer_frames-1)/buffer_frames*buffer_frames; /* whole buffers */
 }
