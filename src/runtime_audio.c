@@ -3,8 +3,9 @@
  * reads 256-frame slots out of its mixer's 512-frame ring, and returning in
  * bursts (whenever the device pulls a quantum) lets it overtake the mixer and
  * play stale halves - a click every 10.7 ms. The lowest SDL queue level of
- * each window is steered to a cushion of >= 40 ms (cushion_frames; silence refill on underrun, ±3%
- * cadence corrections), which also absorbs device clock drift. Without an audio device (headless runs, BB_AUDIO=none)
+ * each window is steered to an adaptive cushion (two device periods, grown on underrun and
+ * shrunk back after a clean stretch; silence refill on underrun, ±3% cadence corrections), which
+ * also absorbs device clock drift. Without an audio device (headless runs, BB_AUDIO=none)
  * ports only follow the clock. */
 #define _GNU_SOURCE
 #include "runtime.h"
@@ -42,7 +43,9 @@ typedef struct {
     int muted; /* gain 0 while the game window is in the background (bbgpu_audio_audible) */
     uint64_t next_deadline_ns; /* next return of sceAudioOutOutput */
     int64_t adjust_ns; int window_min, window_count; /* queue level control */
-    int low_bytes, cap_bytes; /* steered queue floor (cushion) and the level past which a buffer is dropped */
+    /* Steered queue floor (cushion): base..max, grown on underrun, shrunk after CUSHION_DECAY_NS clean. */
+    int low_bytes, base_bytes, max_bytes, adaptive;
+    uint64_t cushion_ns; /* last underrun or change of low_bytes */
     uint64_t last_output_us;
     HostMutex lock;
     FILE *dump;                     /* BB_AUDIO_DUMP: raw converted PCM per port */
@@ -73,20 +76,25 @@ static void put_silence(SDL_AudioStream *stream, int count) {
     }
 }
 
-/* Frames the steered queue floor keeps ahead of the device: two game buffers, two device periods
- * and BB_AUDIO_CUSHION_MS (default 40 ms, 10-200), whichever is most. Two buffers (10.7 ms) sat
- * under one shared-mode WASAPI period (~10 ms), so any late mix left the device empty. */
-static int cushion_frames(int buffer_frames) {
-    int ms=40;
+#define CUSHION_MAX_FRAMES 9600              /* 200 ms */
+#define CUSHION_DROP_FRAMES 9600             /* a buffer is dropped this far over the floor */
+#define CUSHION_DECAY_NS 20000000000ull      /* one buffer off the floor per 20 s without an underrun */
+
+/* Starting frames of the steered queue floor: two game buffers or two device periods, whichever
+ * is more (two buffers alone, 10.7 ms, sat under one ~10 ms shared-mode WASAPI period). It grows
+ * only on a machine that underruns, so others keep the low latency. BB_AUDIO_CUSHION_MS (10-200)
+ * fixes it instead (*fixed = 1). */
+static int cushion_frames(int buffer_frames, int *fixed) {
+    int frames=0;
     const char *env=getenv("BB_AUDIO_CUSHION_MS");
-    if (env && *env) { const int v=atoi(env); if (v>=10 && v<=200) ms=v; }
+    *fixed=0;
+    if (env && *env) { const int v=atoi(env); if (v>=10 && v<=200) { frames=v*48; *fixed=1; } }
     int device_frames=0;
     SDL_AudioSpec spec;
     if (!SDL_GetAudioDeviceFormat(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,&spec,&device_frames)) device_frames=0;
-    int frames=ms*48;
     if (frames<2*buffer_frames) frames=2*buffer_frames;
     if (frames<2*device_frames) frames=2*device_frames;
-    if (frames>9600) frames=9600; /* 200 ms */
+    if (frames>CUSHION_MAX_FRAMES) frames=CUSHION_MAX_FRAMES;
     return (frames+buffer_frames-1)/buffer_frames*buffer_frames; /* whole buffers */
 }
 static void sleep_until(uint64_t deadline) { host_sleep_until_ns(deadline); }
@@ -197,9 +205,11 @@ static ABI int32_t audio_open(int32_t user, int32_t type, int32_t index, uint32_
         p->stream=SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,&spec,NULL,NULL);
         if (p->stream) {
             SDL_ResumeAudioStreamDevice(p->stream);
-            const int frame_bytes=p->out_channels*p->sample_bytes, cushion=cushion_frames(p->frames);
-            p->low_bytes=cushion*frame_bytes;
-            p->cap_bytes=(cushion+9600)*frame_bytes; /* 200 ms over the floor */
+            int fixed;
+            const int frame_bytes=p->out_channels*p->sample_bytes, cushion=cushion_frames(p->frames,&fixed);
+            p->low_bytes=p->base_bytes=cushion*frame_bytes;
+            p->max_bytes=fixed ? p->low_bytes : CUSHION_MAX_FRAMES/p->frames*p->frames*frame_bytes;
+            p->adaptive=!fixed; p->cushion_ns=now_ns();
             /* Prefill the cushion (BB_AUDIO_PREFILL buffers when more, 1-8) so steering starts at its floor. */
             int prefill=p->low_bytes;
             const char *env_prefill=getenv("BB_AUDIO_PREFILL");
@@ -208,7 +218,7 @@ static ABI int32_t audio_open(int32_t user, int32_t type, int32_t index, uint32_
                 if (pf>=1 && pf<=8 && pf*p->frames*frame_bytes>prefill) prefill=pf*p->frames*frame_bytes;
             }
             put_silence(p->stream,prefill);
-            printf("Runtime: audio port %d cushion %d frames (%.1f ms)\n",id,cushion,cushion/48.0);
+            printf("Runtime: audio port %d cushion %d frames (%.1f ms, %s)\n",id,cushion,cushion/48.0,fixed ? "fixed" : "adaptive");
         } else {
             fprintf(stderr,"Runtime: SDL audio stream failed (%s); port %d uses the timer sink\n",SDL_GetError(),id);
         }
@@ -311,14 +321,27 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
             /* Steer the SDL queue against hardware device rate. Refill the cushion with silence
              * only when the stream has fully drained: zeros put after samples that are still queued
              * splice a gap into the waveform and pop (from Mrsuss60/bloodborne_pc_windows_port 367480b). */
-            const int low=p->low_bytes;
+            const uint64_t now=now_ns();
             int queued=SDL_GetAudioStreamQueued(p->stream);
             queued_before=queued;
-            if (queued==0) {
-                if (buffers_out>0) ++g_audio_underruns;
-                put_silence(p->stream,low);
-                queued=low;
+            if (queued==0 && buffers_out>0) {
+                ++g_audio_underruns;
+                if (p->adaptive && p->low_bytes<p->max_bytes) { /* this machine needs more: +50%, at least 2 buffers */
+                    const int step=p->low_bytes/2>2*(int)bytes ? p->low_bytes/2 : 2*(int)bytes;
+                    p->low_bytes=(p->low_bytes+step+(int)bytes-1)/(int)bytes*(int)bytes;
+                    if (p->low_bytes>p->max_bytes) p->low_bytes=p->max_bytes;
+                    printf("Runtime: audio port %d underrun, cushion %.1f ms\n",(int)(p-ports),(double)p->low_bytes/(double)bytes*(double)period/1e6);
+                }
+                p->cushion_ns=now;
+            } else if (p->adaptive && p->low_bytes>p->base_bytes && now-p->cushion_ns>CUSHION_DECAY_NS) {
+                p->low_bytes-=(int)bytes; p->cushion_ns=now; /* steering drains the extra buffer */
+                if (p->low_bytes<=p->base_bytes) {
+                    p->low_bytes=p->base_bytes;
+                    printf("Runtime: audio port %d cushion back to %.1f ms\n",(int)(p-ports),(double)p->low_bytes/(double)bytes*(double)period/1e6);
+                }
             }
+            const int low=p->low_bytes;
+            if (queued==0) { put_silence(p->stream,low); queued=low; }
             if (!p->window_count || queued<p->window_min) p->window_min=queued;
             if (++p->window_count>=32) {
                 p->adjust_ns=p->window_min>low+2*(int)bytes ? (int64_t)(period/32) :
@@ -331,7 +354,7 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
             if (muted!=p->muted) { p->muted=muted; SDL_SetAudioStreamGain(p->stream,muted ? 0.0f : 1.0f); }
             /* Far over the floor (device clock slower than ours, or a burst after a stall): drop
              * this one buffer rather than flushing the queue. */
-            if (queued>p->cap_bytes) ++p->stat_dropped;
+            if (queued>low+CUSHION_DROP_FRAMES*p->out_channels*p->sample_bytes) ++p->stat_dropped;
             else SDL_PutAudioStreamData(p->stream,converted,(int)bytes);
         }
 

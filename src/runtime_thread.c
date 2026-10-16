@@ -325,6 +325,8 @@ static void *host_start(void *p) {
     if (t->attr.prio > 0) {
         SetThreadPriority(GetCurrentThread(), ps4_prio_to_win32(t->attr.prio, t->name));
     }
+    if (!strncmp(t->name, "FMOD", 4)) /* audio reports: which host thread is which, at what priority */
+        printf("Runtime: '%s' is host thread %lu, Windows priority %d\n", t->name, (unsigned long)GetCurrentThreadId(), GetThreadPriority(GetCurrentThread()));
 #endif
     if (!EXIT_SET(t->exit_jump)) t->result=t->entry(t->argument);
     runtime_thread_keys_cleanup();

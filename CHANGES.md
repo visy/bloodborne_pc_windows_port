@@ -5,9 +5,9 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.6.4 (Windows port 0.6.4, audio fix)
 
-- **Fixed: crackling and popping sound on 4-core CPUs** (in the world and the pause menu, the title screen was clean): on CPUs with 4 cores or fewer the game's sound mixer thread ran below every normal game thread, so under load it delivered sound up to 140 ms late and the sound device ran dry. The mixer now runs at the same high priority as the sound output thread, and FMOD's other threads above normal.
-- **Changed: a bigger sound cushion**: the port keeps at least 40 ms of sound queued ahead of the device (two device periods when those are longer, `BB_AUDIO_CUSHION_MS` 10-200 to change it) instead of about 11 ms, fills it at start and after a drain, and drops a single buffer if the queue runs over 200 ms past it. About 30 ms more sound latency.
-- **Fixed (for testers): `BB_AUDIO_STATS` now counts starved buffers**: the queue was read after the new buffer was added, so "starved" was always 0; it now reads before, and the line shows the queue in ms, the cushion and dropped buffers.
+- **Fixed: crackling and popping sound on 4-core CPUs** (in the world and the pause menu, the title screen was clean): on CPUs with 4 cores or fewer the game's sound mixer thread ran below every normal game thread, and the sound reached the device up to 140 ms late. The mixer now runs at the same high priority as the sound output thread, and FMOD's other threads above normal.
+- **Changed: the sound cushion adapts to the PC**: it starts at two device periods (about 20 ms with Windows audio; it was about 11 ms, less than one period). Each time the device runs dry it grows by half (up to 200 ms), and it shrinks back by 5 ms per 20 s without a dropout, so a fast PC keeps the low latency and only a PC that needs it gets more. The game log says when it grows. `BB_AUDIO_CUSHION_MS` (10-200) fixes it instead. A queue that runs 200 ms over drops one buffer instead of being flushed.
+- **Fixed (for testers): `BB_AUDIO_STATS` now counts starved buffers**: the queue was read after the new buffer was added, so "starved" was always 0; it now reads before, and the line shows the queue in ms, the cushion and dropped buffers. The log also lists each FMOD thread's Windows priority.
 
 ## 0.6.3 (Windows port 0.6.3, party co-op)
 
