@@ -1071,6 +1071,14 @@ struct PartyLink::Impl {
             Conn* c = conns[i].get();
             if (c->dead || !c->us) continue;
             const auto st = c->us->state();
+            if (st == rudp::Stream::State::Closed && c->phase != Phase::Connecting && c->us->readable()) {
+                // The peer's last words came with its FIN (a BYE / REJECT): read them first.
+                std::uint8_t buf[16384];
+                for (std::size_t r; !c->input_pending && (r = c->us->read(buf, sizeof buf)) > 0;)
+                    c->in.insert(c->in.end(), buf, buf + r);
+                process_input(c);
+                if (c->dead) continue;
+            }
             if (st == rudp::Stream::State::Failed || st == rudp::Stream::State::Closed) {
                 lose(c, c->phase == Phase::Connecting
                             ? "no UDP answer from the host (" + host_no_answer_hint(host ? -1 : since_host_gone_s(), cfg.auto_punch) + ")"
@@ -1107,7 +1115,8 @@ struct PartyLink::Impl {
             c->s = sock::kInvalid;
         }
         if (c->us) {
-            c->us->close();  // a FIN on the next pump
+            c->us->close();  // what was written, then a FIN, on the next pump
+            umux.linger(std::move(c->us));
             c->us.reset();
         }
         c->tx.reset();

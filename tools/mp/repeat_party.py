@@ -27,6 +27,33 @@ cycle and the totals). Exit 0 when every cycle passed.
 import argparse, os, re, statistics, subprocess, sys, time
 from pathlib import Path
 
+
+class LaterProc:
+    """Starts a helper (shot.py, the sampler) only once the harness has started the games (after the
+    shared game queue's wait), so its run timer and window watch cover the run, not the wait."""
+
+    def __init__(self, harness_log, args, **kw):
+        import threading
+        self.p, self.stop = None, False
+
+        def run():
+            while not self.stop:
+                try:
+                    if "instance 0 started" in Path(harness_log).read_text(errors="replace"):
+                        break
+                except OSError:
+                    pass
+                time.sleep(1)
+            if not self.stop:
+                self.p = subprocess.Popen(args, **kw)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def terminate(self):
+        self.stop = True
+        if self.p:
+            self.p.terminate()
+
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 AGENT_ROOT = REPO.parent
@@ -79,7 +106,8 @@ def run(a, sc, out: Path):
     out.mkdir(parents=True, exist_ok=True)
     shots = out / "shots"
     shots.mkdir(exist_ok=True)
-    shooter = subprocess.Popen([sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out", str(shots),
+    (out / "harness.log").unlink(missing_ok=True)
+    shooter = LaterProc(out / "harness.log", [sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out", str(shots),
                                 "--tag", a.scenario, "--every", "30", "--seconds", str(sc["seconds"] + 600)],
                                stdout=open(out / "shot.log", "w"), stderr=subprocess.STDOUT)
     env = dict(os.environ, BB_MP_LEASE=os.environ.get("BB_MP_LEASE", "1200"))

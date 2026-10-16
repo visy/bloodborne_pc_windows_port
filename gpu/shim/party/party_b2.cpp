@@ -1369,28 +1369,48 @@ void StaleMemberChrTick(double now) {
     const u64 local = Field<u64>(wcm, 0x60);
     std::vector<StaleChr> seen;
     const std::vector<TaskInfo> tasks = Tasks(false);
+    // C6 on a bystander (confid 2026-10-16, repeat_party c6 --players 3): a member whose game
+    // CRASHED and came back keeps its PlayerId, so its old chr still matches a peer entry (the new
+    // one) and the check below never removed it: one more frozen copy of that hunter on the other
+    // guest's screen per crash (its cooperators 2 -> 3 -> 4), two chrs reading one peer queue (the
+    // A7 safety net skipped 3921 stale reads) and, after 16 crashes, that guest's own game crashed.
+    // A chr that no task holds while another chr of the same peer entry is held is removed too.
+    struct Row {
+        u64 chr, entry;
+        bool held;
+    };
+    std::vector<Row> rows;
     for (int i = 0; entries && i < n && i <= 8; ++i) {
         const u64 chr = Field<u64>(entries + u64(i) * 0x38, 0);
         if (!chr || chr == local || !Field<u64>(chr, 0x3d8)) {
             continue;
         }
-        if (reinterpret_cast<EntryFn>(Guest(0x1789380))(netman, chr + 0x3d8)) {
-            continue;  // its member is still a peer
-        }
         bool held = false;
         for (const TaskInfo& t : tasks) {
             held = held || ((t.mode == 1 || t.mode == 2) && PlayerForPeer(t.task + kTaskPeer) == chr);
         }
-        if (held) {
+        rows.push_back({chr, reinterpret_cast<EntryFn>(Guest(0x1789380))(netman, chr + 0x3d8), held});
+    }
+    for (const Row& row : rows) {
+        if (row.held) {
             continue;
+        }
+        const char* why = "A7: its member left the session; no task holds it";
+        if (row.entry) {
+            bool newer = false;
+            for (const Row& o : rows) newer = newer || (o.chr != row.chr && o.entry == row.entry && o.held);
+            if (!newer) {
+                continue;  // its member is still a peer (and this is its only chr)
+            }
+            why = "C6: its member's game restarted; the new chr of that member holds its task";
         }
         double since = now;
         for (const StaleChr& o : g_stale_chrs) {
-            if (o.chr == chr) since = o.since;
+            if (o.chr == row.chr) since = o.since;
         }
-        seen.push_back({chr, since});
+        seen.push_back({row.chr, since});
         if (now - since >= 2.0) {
-            RemoveRemoteChr(chr, "A7: its member left the session; no task holds it", true);
+            RemoveRemoteChr(row.chr, why, true);
         }
     }
     g_stale_chrs = std::move(seen);
@@ -7415,7 +7435,7 @@ void NrRecvHook(int sock, int where) {
 }
 }  // namespace
 
-void NrDropSilentPeers(const std::string& name) {
+void NrDropSilentPeers(const std::string& name, int delay_ms) {
     {
         std::lock_guard<std::mutex> lk(g_nrd_mu);
         g_nrd_name = name;
@@ -7423,11 +7443,12 @@ void NrDropSilentPeers(const std::string& name) {
     g_nrd_outage = false;
     g_nrd_listed = false;
     bbnet::set_p2p_recv_hook(&NrRecvHook);
-    Log("C6: %s crashed: looking for its game connection in 1.5 s (%zu transport(s) seen)", name.c_str(),
-        NrTransports().size());
+    Log("C6: %s crashed: looking for its game connection in %.1f s (%zu transport(s) seen)", name.c_str(),
+        delay_ms / 1000.0, NrTransports().size());
     // The other members keep sending; the crashed one has been silent since the crash (the link
-    // reset comes ~0.6 s after it). Its restarted game (same address) takes >3 s to send again.
-    g_nrd_at.store(SteadyMs() + 1500);
+    // reset comes ~0.6 s after it). Its restarted game (same address) takes >3 s to send again. A
+    // guest calls this once the restarted game is at its title (long silent already): delay 0.
+    g_nrd_at.store(SteadyMs() + delay_ms);
 }
 
 void NrDropAfterOutage(const std::string& name) {
