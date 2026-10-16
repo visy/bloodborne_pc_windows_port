@@ -80,7 +80,9 @@ Saves and the shader cache are stored in `user\`. Settings are stored in `bbport
 | Gestures / key items | Touchpad left / right half (Xbox pads: `Back` + d-pad left / right; `Back` alone the left half) | `Tab` / `Backspace` |
 | Fullscreen | — | `Alt + Enter` |
 
-Mouse and keyboard, free camera, debug menu: [docs/SETTINGS.md](docs/SETTINGS.md).
+Button prompts follow the device you used last: your keys and mouse buttons, Xbox letters or Nintendo letters (PlayStation pads keep the game's icons). Launcher *Input & Audio > Button prompts* (or *System > Mouse & keyboard* in game) picks a set, e.g. *Nintendo* for an 8BitDo pad in X-input mode; button functions never change.
+
+Mouse and keyboard, button prompts, free camera, debug menu: [docs/SETTINGS.md](docs/SETTINGS.md).
 
 ## Party co-op
 
@@ -417,7 +419,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 
 | Who | What |
 |---|---|
-| deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors; Linux mouse look capture (via Mrsuss60); in 0.6.2 fixes from 0.6-pre1 (Supermedo/bloodborne_pc 72e5c8ce): idle VRAM copies released on 4 GB cards, NVIDIA start without DLSS, unresolved Vulkan commands, pipeline cache stages, write-trap race, occlusion pass scale, sampler anisotropy clamp |
+| deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors; Linux mouse look capture (via Mrsuss60); in 0.6.2 fixes from 0.6-pre1 (Supermedo/bloodborne_pc 72e5c8ce): idle VRAM copies released on 4 GB cards, NVIDIA start without DLSS, unresolved Vulkan commands, pipeline cache stages, write-trap race, occlusion pass scale, sampler anisotropy clamp; next release: button prompts for the keyboard, Xbox and Nintendo pads (72e5c8ce) |
 | Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD; audio pop fix, paths with parentheses in `run.bat`, parallel `build.bat`; CPUs without FSGSBASE (Windows TLS fallback), driver pipeline binaries kept between sessions, more background shader compile threads; SnormNz crash fix (packed formats such as 11_11_10), texture collector never evicting bound targets or presented surfaces; stream buffer placement switch (`BB_STREAM_MEMORY`), no draw-queue wait at `SET_PREDICATION`; mouse sensitivity fix (stick dead zone compensation), in-game key rebinding, focus click not a game press |
 | shadPS4 team | Vulkan video core and shader recompiler (GPL-2.0+), sirit |
 | droogie and the bbhost team | Long-session stability fixes; menu button rows and the menu cursor's offsets; direct summon delivery; the Hunter's Dream mirror (appearance editor) ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |

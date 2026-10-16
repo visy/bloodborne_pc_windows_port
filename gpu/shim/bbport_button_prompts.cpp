@@ -401,8 +401,9 @@ void Key(Canvas& c, std::string_view label, float cx, float cy, float hw, float 
     const float radius = std::min(hw, hh) * 0.32f;
     Plate(c, stroke, [&](float x, float y) { return RoundRect(x, y, cx, cy, hw, hh, radius); });
     const std::size_t glyphs = Decode(label).size();
-    // One character fills the cap; longer names get smaller.
-    const float max_h = (hh - stroke) * (glyphs <= 1 ? 1.15f : glyphs <= 3 ? 0.9f : 0.7f);
+    // One character fills the cap (a sign such as the arrows or Shift's is small in the font:
+    // larger here, the game shows the icon at ~16 pixels); longer names get smaller.
+    const float max_h = (hh - stroke) * (glyphs <= 1 ? 1.45f : glyphs <= 3 ? 0.9f : 0.7f);
     Text(c, label, cx, cy, (hw - stroke) * 1.55f, max_h, Ink);
 }
 
@@ -458,11 +459,13 @@ void Mouse(Canvas& c, std::string_view button) {
 
 /// A round button of another gamepad: A B X Y in their colours, else its name (LS, RS) or sign
 /// (Menu, View).
-void Round(Canvas& c, std::string_view label, bool face) {
+void Round(Canvas& c, std::string_view label, bool face, bool colored = true) {
     constexpr float cx = 64, cy = 64, radius = 56, stroke = 5;
     Plate(c, stroke, [&](float x, float y) { return Circle(x, y, cx, cy, radius); });
     if (face) {
-        const Color ink = label == "A"   ? Color{0.40f, 0.76f, 0.30f}
+        // Xbox letters in their colours; a Nintendo pad's are plain.
+        const Color ink = !colored     ? Ink
+                          : label == "A"   ? Color{0.40f, 0.76f, 0.30f}
                           : label == "B" ? Color{0.88f, 0.27f, 0.23f}
                           : label == "X" ? Color{0.27f, 0.55f, 0.92f}
                           : label == "Y" ? Color{0.95f, 0.78f, 0.18f}
@@ -524,7 +527,7 @@ bool Draw(const IconDef& icon, Canvas& c) {
             Mouse(c, labels[0]);
             return true;
         case 'F':
-            Round(c, labels[0], true);
+            Round(c, labels[0], true, set == PROMPT_SET_XBOX);
             return true;
         case 'S':
             Shoulder(c, labels[0]);

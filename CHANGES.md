@@ -5,6 +5,10 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Added: button prompts for the keyboard and mouse, Xbox and Nintendo pads** (ported from deadinside28's 0.6-pre1, bloodborne_pc 72e5c8ce): the game's key guides and prompts ("Talk", "Examine", the menus' Select / OK / Return line, tutorials) show the key or mouse button you bound, or your gamepad's buttons, instead of PlayStation buttons. The device you used last decides; switching between keyboard and pad changes the icons at once, also with a menu open, and a key rebound in the Insert menu shows up right away. PlayStation pads keep the game's own icons; Switch and GameCube style pads get Nintendo letters, every other pad Xbox letters (from SDL's button labels, so a Switch pad's bottom button shows B). The icons are drawn by the port (no game files are shipped), in every game language.
+- **Added: a "Button prompts" setting** (launcher: Input & Audio; in game: System > Mouse & keyboard, and Insert > Controls; `bbport.ini` `prompt_style`, `BB_PROMPT_STYLE`): Auto (default), PlayStation, Xbox, Nintendo or Keyboard. Pick Nintendo for a pad with Nintendo-printed buttons that reports itself as an Xbox pad (for example an 8BitDo pad in X-input mode). Only the letters change: the bottom button still confirms (with Nintendo letters it then shows B). `BB_BUTTON_PROMPTS=0` keeps the game's icons always.
+- **Added: the game log names each gamepad when it connects** (name, USB vendor and product id, SDL's pad type and the prompt icons it gets), for controller reports.
+- **Changed: in-game *Mouse tuning* page**: *Invert look* moved there from *Mouse & keyboard* (a page can end with only one pop-up list; *Mouse & keyboard* now ends with *Button prompts*).
 - **Fixed: the sound cushion's start size on a sound device that does not run at 48 kHz** (44.1 or 192 kHz, often a TV over HDMI): the device period was read as 48 kHz frames, so the cushion started up to 4 times too small or too large. Idea from Supermedo/bloodborne_pc PR #80 (andrecabralgit).
 
 ## 0.6.4 (Windows port 0.6.4, audio fix)

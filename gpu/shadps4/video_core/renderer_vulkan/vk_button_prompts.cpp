@@ -210,6 +210,9 @@ vk::ImageView ButtonPrompts::AtlasView(Runtime& runtime, VideoCore::Image& image
     if (atlas.upload != image.prompt_upload || atlas.generation != generation) {
         atlas.upload = image.prompt_upload;
         atlas.generation = generation;
+        // bbport: once per icon set (live checks: the HUD's "Examine" / "Pick up" prompts).
+        std::printf("Button prompts: HUD atlas %llx redrawn (%zu cells)\n",
+                    static_cast<unsigned long long>(image.info.guest_address), cells.size());
         constexpr u32 Small = BbPrompts::GameIconSize;
         std::vector<vk::BufferImageCopy> copies;
         std::vector<u32> pixels;

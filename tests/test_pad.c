@@ -88,8 +88,8 @@ static void test_prompt_logic(void) {
     assert(prompt_pad_label(PROMPT_SET_PLAYSTATION,SDL_GAMEPAD_TYPE_PS4,SDL_GAMEPAD_BUTTON_SOUTH,l,sizeof l)==0);
     /* Key caps: short names, arrows. */
     static const struct { const char *sdl, *cap; } keys[]={
-        {"Escape","Esc"}, {"Backspace","Bksp"}, {"Return","Enter"}, {"Left Shift","Shift"},
-        {"Up","\xe2\x86\x91"}, {"Left","\xe2\x86\x90"}, {"Keypad 5","Num5"}, {"Space","Space"},
+        {"Escape","Esc"}, {"Backspace","Bksp"}, {"Return","\xe2\x86\xb5"}, {"Left Shift","\xe2\x87\xa7"},
+        {"Up","\xe2\x86\x91"}, {"Left","\xe2\x86\x90"}, {"Keypad 5","Num5"}, {"Space","\xe2\x90\xa3"},
         {"PageDown","PgDn"}, {"E","E"}, {"",""},
     };
     for (size_t i=0;i<sizeof(keys)/sizeof(*keys);++i) {
@@ -429,7 +429,7 @@ int main(void) {
         inject(path,"keyhold=Return");
         assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_CROSS) && runtime_pad_prompt_set()==PROMPT_SET_KEYBOARD);
         assert(runtime_pad_prompt_generation()!=gen);
-        assert(runtime_pad_prompt("cross",1,l,sizeof l)=='K' && !strcmp(l,"Enter"));
+        assert(runtime_pad_prompt("cross",1,l,sizeof l)=='K' && !strcmp(l,"\xe2\x86\xb5"));
         /* Mouse & keyboard mode: the mouse scheme's buttons, a bound mouse button, mouse look. */
         mk_mode=1;
         inject(path,"keyhold=E");

@@ -67,13 +67,14 @@ static inline SDL_GamepadType prompt_label_type(int set, SDL_GamepadType type) {
          : set==PROMPT_SET_PLAYSTATION ? SDL_GAMEPAD_TYPE_PS4 : SDL_GAMEPAD_TYPE_XBOXONE;
 }
 
-/* A key's name on a key cap: short, arrows as arrows (UTF-8). */
+/* A key's name on a key cap (UTF-8): short enough to read on a 32-pixel icon. Space, Enter and
+ * Shift as their signs (open box, return arrow, outline arrow), the arrow keys as arrows. */
 static inline void prompt_key_label(const char *sdl_name, char *out, int size) {
     static const struct { const char *sdl, *label; } names[]={
-        {"Left Shift","Shift"}, {"Right Shift","RShift"}, {"Left Ctrl","Ctrl"}, {"Right Ctrl","RCtrl"},
-        {"Left Alt","Alt"}, {"Right Alt","AltGr"}, {"Return","Enter"}, {"Keypad Enter","Enter"},
+        {"Left Shift","\xe2\x87\xa7"}, {"Right Shift","R\xe2\x87\xa7"}, {"Left Ctrl","Ctrl"}, {"Right Ctrl","RCtrl"},
+        {"Left Alt","Alt"}, {"Right Alt","AltGr"}, {"Return","\xe2\x86\xb5"}, {"Keypad Enter","\xe2\x86\xb5"},
         {"Backspace","Bksp"}, {"Escape","Esc"}, {"CapsLock","Caps"}, {"Delete","Del"},
-        {"Insert","Ins"}, {"PageUp","PgUp"}, {"PageDown","PgDn"}, {"Space","Space"},
+        {"Insert","Ins"}, {"PageUp","PgUp"}, {"PageDown","PgDn"}, {"Space","\xe2\x90\xa3"},
         {"Up","\xe2\x86\x91"}, {"Down","\xe2\x86\x93"}, {"Left","\xe2\x86\x90"}, {"Right","\xe2\x86\x92"},
     };
     if (size<1) return;
