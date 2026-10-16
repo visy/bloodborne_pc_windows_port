@@ -457,6 +457,7 @@ private:
     std::unique_ptr<DrawPreparation> draw_prep;
     std::unique_ptr<CameraMotion> camera_motion; // bbport: motion vectors (docs/upscaler.md)
     std::unique_ptr<SceneTargets> scene_targets;
+    std::unique_ptr<class ButtonPrompts> prompts; ///< bbport: the key guide icons for the device in use
     bool scene_started = false;
     std::unique_ptr<ObjectMotion> object_motion;
     bool motion_draw = false;

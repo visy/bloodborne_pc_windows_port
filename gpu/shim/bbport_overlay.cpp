@@ -1427,6 +1427,20 @@ void ControlsTab() {
              "Мышь поворачивает камеру напрямую, 1:1, а не через правый стик (без мёртвой зоны и "
              "кривой). Камера мыши imedved; при захвате цели работает стик."),
            mk);
+    // Button prompts (bbport_button_prompts.h, from deadinside28/bloodborne_pc 72e5c8ce): live.
+    Choice("prompt_style", T("Button prompts", "Подсказки кнопок"), s.prompt_style, BbSettings::PromptStyleCount,
+           [](int i) {
+               static const char* names[] = {"Auto", "PlayStation", "Xbox", "Nintendo", "Keyboard"};
+               return i == 0 ? T("Auto", "Авто") : i == 4 ? T("Keyboard", "Клавиатура") : names[i];
+           },
+           [](int) { return true; },
+           T("The icons in the game's prompts and key guides. Auto: keys after keyboard or mouse "
+             "input, the gamepad's own buttons after gamepad input. Nintendo shows the letters of a "
+             "Nintendo pad (the bottom button is B); what each button does stays the same.",
+             "Значки в подсказках игры. Авто: клавиши после ввода с клавиатуры или мыши, кнопки "
+             "геймпада после ввода с геймпада. Nintendo показывает буквы геймпада Nintendo (нижняя "
+             "кнопка B); действия кнопок не меняются."),
+           true, [&](int i) { Store(s.prompt_style, i, true); });
     ImGui::Spacing();
     Note(mk ? T("Default mouse: move = camera, left = R1, Shift + left = R2, right = L2, Shift + right = L1, "
                 "middle = R3 (lock-on), side buttons = L1 / R2, wheel = d-pad up / down.  Keys: WASD move, Space = Circle "

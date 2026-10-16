@@ -591,6 +591,10 @@ extern "C" float bbgpu_audio_boost() {
     return env > 0.0f ? env : BbSettings::Get().audio_boost.load();
 }
 
+extern "C" int bbgpu_prompt_style() {
+    return BbSettings::Get().prompt_style.load();
+}
+
 extern "C" int bbgpu_mouse_keyboard(BbMouseState* state, int consume_motion) {
     const auto& s = BbSettings::Get();
     const bool on = s.mk_enabled.load();

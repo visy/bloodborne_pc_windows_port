@@ -31,6 +31,72 @@ int bbgpu_mouse_keyboard(BbMouseState *state, int consume_motion) {
     return mk_mode;
 }
 int bbgpu_test_key(const char *name) { (void)name; return 1; }
+static int prompt_style_setting; /* bbport.ini prompt_style (PROMPT_STYLE_*) */
+int bbgpu_prompt_style(void) { return prompt_style_setting; }
+
+/* Button prompts (src/pad_prompts.h): the pad type's set, the prompt_style override, SDL's letters
+ * (Nintendo: the bottom button is B), short key names. */
+static void test_prompt_logic(void) {
+    char l[32];
+    assert(prompt_set_for_type(SDL_GAMEPAD_TYPE_PS4)==PROMPT_SET_PLAYSTATION &&
+           prompt_set_for_type(SDL_GAMEPAD_TYPE_PS5)==PROMPT_SET_PLAYSTATION &&
+           prompt_set_for_type(SDL_GAMEPAD_TYPE_PS3)==PROMPT_SET_PLAYSTATION);
+    assert(prompt_set_for_type(SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO)==PROMPT_SET_NINTENDO &&
+           prompt_set_for_type(SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR)==PROMPT_SET_NINTENDO &&
+           prompt_set_for_type(SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT)==PROMPT_SET_NINTENDO &&
+           prompt_set_for_type(SDL_GAMEPAD_TYPE_GAMECUBE)==PROMPT_SET_NINTENDO);
+    assert(prompt_set_for_type(SDL_GAMEPAD_TYPE_XBOXONE)==PROMPT_SET_XBOX &&
+           prompt_set_for_type(SDL_GAMEPAD_TYPE_XBOX360)==PROMPT_SET_XBOX &&
+           prompt_set_for_type(SDL_GAMEPAD_TYPE_STANDARD)==PROMPT_SET_XBOX &&
+           prompt_set_for_type(SDL_GAMEPAD_TYPE_UNKNOWN)==PROMPT_SET_XBOX);
+    /* Auto: the last device; an override names the pad's set, Keyboard wins always. */
+    assert(prompt_set_choose(PROMPT_STYLE_AUTO,1,SDL_GAMEPAD_TYPE_PS5)==PROMPT_SET_KEYBOARD);
+    assert(prompt_set_choose(PROMPT_STYLE_AUTO,0,SDL_GAMEPAD_TYPE_PS5)==PROMPT_SET_PLAYSTATION);
+    assert(prompt_set_choose(PROMPT_STYLE_AUTO,0,SDL_GAMEPAD_TYPE_XBOX360)==PROMPT_SET_XBOX);
+    assert(prompt_set_choose(PROMPT_STYLE_NINTENDO,0,SDL_GAMEPAD_TYPE_XBOX360)==PROMPT_SET_NINTENDO);
+    assert(prompt_set_choose(PROMPT_STYLE_NINTENDO,1,SDL_GAMEPAD_TYPE_XBOX360)==PROMPT_SET_KEYBOARD);
+    assert(prompt_set_choose(PROMPT_STYLE_XBOX,0,SDL_GAMEPAD_TYPE_PS4)==PROMPT_SET_XBOX);
+    assert(prompt_set_choose(PROMPT_STYLE_PLAYSTATION,0,SDL_GAMEPAD_TYPE_XBOXONE)==PROMPT_SET_PLAYSTATION);
+    assert(prompt_set_choose(PROMPT_STYLE_KEYBOARD,0,SDL_GAMEPAD_TYPE_XBOXONE)==PROMPT_SET_KEYBOARD);
+    /* Letters by SDL's labels for the set's pad type: Nintendo swaps them, the function stays. */
+    static const struct { int set; SDL_GamepadType type; int button; const char *label; } letters[]={
+        {PROMPT_SET_XBOX,SDL_GAMEPAD_TYPE_XBOXONE,SDL_GAMEPAD_BUTTON_SOUTH,"A"},
+        {PROMPT_SET_XBOX,SDL_GAMEPAD_TYPE_XBOXONE,SDL_GAMEPAD_BUTTON_EAST,"B"},
+        {PROMPT_SET_XBOX,SDL_GAMEPAD_TYPE_XBOXONE,SDL_GAMEPAD_BUTTON_WEST,"X"},
+        {PROMPT_SET_XBOX,SDL_GAMEPAD_TYPE_XBOXONE,SDL_GAMEPAD_BUTTON_NORTH,"Y"},
+        /* the 8BitDo case: an Xbox 360 type pad with Nintendo letters chosen */
+        {PROMPT_SET_NINTENDO,SDL_GAMEPAD_TYPE_XBOX360,SDL_GAMEPAD_BUTTON_SOUTH,"B"},
+        {PROMPT_SET_NINTENDO,SDL_GAMEPAD_TYPE_XBOX360,SDL_GAMEPAD_BUTTON_EAST,"A"},
+        {PROMPT_SET_NINTENDO,SDL_GAMEPAD_TYPE_XBOX360,SDL_GAMEPAD_BUTTON_WEST,"Y"},
+        {PROMPT_SET_NINTENDO,SDL_GAMEPAD_TYPE_XBOX360,SDL_GAMEPAD_BUTTON_NORTH,"X"},
+        {PROMPT_SET_NINTENDO,SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO,SDL_GAMEPAD_BUTTON_SOUTH,"B"},
+        /* Xbox chosen for a Switch pad: Xbox letters */
+        {PROMPT_SET_XBOX,SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO,SDL_GAMEPAD_BUTTON_SOUTH,"A"},
+        {PROMPT_SET_XBOX,SDL_GAMEPAD_TYPE_PS4,SDL_GAMEPAD_BUTTON_NORTH,"Y"},
+    };
+    for (size_t i=0;i<sizeof(letters)/sizeof(*letters);++i) {
+        assert(prompt_pad_label(letters[i].set,letters[i].type,letters[i].button,l,sizeof l)=='F');
+        if (strcmp(l,letters[i].label)) { printf("letter %zu: %s, not %s\n",i,l,letters[i].label); assert(0); }
+    }
+    assert(prompt_pad_label(PROMPT_SET_NINTENDO,SDL_GAMEPAD_TYPE_XBOX360,SDL_GAMEPAD_BUTTON_LEFT_SHOULDER,l,sizeof l)=='S' && !strcmp(l,"L"));
+    assert(prompt_pad_label(PROMPT_SET_NINTENDO,SDL_GAMEPAD_TYPE_XBOX360,PROMPT_PAD_RIGHT_TRIGGER,l,sizeof l)=='S' && !strcmp(l,"ZR"));
+    assert(prompt_pad_label(PROMPT_SET_NINTENDO,SDL_GAMEPAD_TYPE_XBOX360,SDL_GAMEPAD_BUTTON_START,l,sizeof l)=='C' && !strcmp(l,"+"));
+    assert(prompt_pad_label(PROMPT_SET_NINTENDO,SDL_GAMEPAD_TYPE_XBOX360,SDL_GAMEPAD_BUTTON_BACK,l,sizeof l)=='C' && !strcmp(l,"-"));
+    assert(prompt_pad_label(PROMPT_SET_XBOX,SDL_GAMEPAD_TYPE_XBOX360,PROMPT_PAD_LEFT_TRIGGER,l,sizeof l)=='S' && !strcmp(l,"LT"));
+    assert(prompt_pad_label(PROMPT_SET_XBOX,SDL_GAMEPAD_TYPE_XBOX360,SDL_GAMEPAD_BUTTON_START,l,sizeof l)=='C' && !strcmp(l,"Menu"));
+    assert(prompt_pad_label(PROMPT_SET_XBOX,SDL_GAMEPAD_TYPE_XBOX360,SDL_GAMEPAD_BUTTON_DPAD_UP,l,sizeof l)==0); /* the game's d-pad */
+    assert(prompt_pad_label(PROMPT_SET_PLAYSTATION,SDL_GAMEPAD_TYPE_PS4,SDL_GAMEPAD_BUTTON_SOUTH,l,sizeof l)==0);
+    /* Key caps: short names, arrows. */
+    static const struct { const char *sdl, *cap; } keys[]={
+        {"Escape","Esc"}, {"Backspace","Bksp"}, {"Return","\xe2\x86\xb5"}, {"Left Shift","\xe2\x87\xa7"},
+        {"Up","\xe2\x86\x91"}, {"Left","\xe2\x86\x90"}, {"Keypad 5","Num5"}, {"Space","\xe2\x90\xa3"},
+        {"PageDown","PgDn"}, {"E","E"}, {"",""},
+    };
+    for (size_t i=0;i<sizeof(keys)/sizeof(*keys);++i) {
+        prompt_key_label(keys[i].sdl,l,sizeof l);
+        assert(!strcmp(l,*keys[i].sdl ? keys[i].cap : "?"));
+    }
+}
 #ifdef _WIN32
 uint64_t host_monotonic_ns(void) {
     LARGE_INTEGER f, c;
@@ -314,6 +380,73 @@ int main(void) {
     assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_TOUCHPAD) && (data.buttons & BTN_R3) && pings==1);
     inject(path,"");
     pad_read_state(1,&data);
+    /* Button prompts in the runtime: the device used last (a scripted keyboard key, a scripted pad
+     * button), the set (the virtual pad's type, prompt_style), labels from the bindings
+     * (key.cross=X, Space; pad.cross=b; pad.r1=righttrigger), a redraw after a rebinding. */
+    {
+        char l[32];
+        test_prompt_logic();
+        const SDL_GamepadType pad_type=SDL_GetGamepadType(gamepad);
+        const int pad_set=prompt_set_for_type(pad_type);
+        assert(pad_set!=PROMPT_SET_PLAYSTATION);
+        inject(path,"keyhold=Space");
+        assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_CROSS));
+        assert(runtime_pad_prompt_set()==PROMPT_SET_KEYBOARD);
+        unsigned gen=runtime_pad_prompt_generation();
+        assert(gen!=0);
+        assert(runtime_pad_prompt("cross",1,l,sizeof l)=='K' && !strcmp(l,"X"));
+        assert(runtime_pad_prompt("options",1,l,sizeof l)=='K' && !strcmp(l,"F1"));
+        assert(runtime_pad_prompt("up",0,l,sizeof l)=='K' && !strcmp(l,"\xe2\x86\x91"));
+        assert(runtime_pad_prompt("touchpad_right",1,l,sizeof l)=='K' && !strcmp(l,"Bksp"));
+        assert(runtime_pad_prompt("nothing",1,l,sizeof l)==0);
+        inject(path,"cross");
+        assert(pad_read_state(1,&data)==0 && runtime_pad_prompt_set()==pad_set);
+        assert(runtime_pad_prompt_generation()!=gen);
+        gen=runtime_pad_prompt_generation();
+        assert(runtime_pad_prompt("cross",1,l,sizeof l)=='F' && !strcmp(l,pad_set==PROMPT_SET_NINTENDO ? "A" : "B"));
+        assert(runtime_pad_prompt("r1",1,l,sizeof l)=='S' && !strcmp(l,pad_set==PROMPT_SET_NINTENDO ? "ZR" : "RT"));
+        assert(runtime_pad_prompt("move_up",0,l,sizeof l)=='C' && !strcmp(l,"LS"));
+        assert(runtime_pad_prompt("up",0,l,sizeof l)==0); /* the d-pad: the game's icon */
+        assert(pad_read_state(1,&data)==0 && runtime_pad_prompt_generation()==gen); /* no change: no redraw */
+        prompt_style_setting=PROMPT_STYLE_NINTENDO;
+        inject(path,"");
+        assert(pad_read_state(1,&data)==0 && runtime_pad_prompt_set()==PROMPT_SET_NINTENDO);
+        assert(runtime_pad_prompt("cross",1,l,sizeof l)=='F' && !strcmp(l,"A")); /* pad.cross=b: East */
+        assert(runtime_pad_prompt("circle",1,l,sizeof l)=='F' && !strcmp(l,"B")); /* pad.circle=a: South */
+        prompt_style_setting=PROMPT_STYLE_PLAYSTATION;
+        assert(pad_read_state(1,&data)==0 && runtime_pad_prompt_set()==PROMPT_SET_PLAYSTATION &&
+               runtime_pad_prompt("cross",1,l,sizeof l)==0);
+        prompt_style_setting=PROMPT_STYLE_KEYBOARD;
+        inject(path,"cross");
+        assert(pad_read_state(1,&data)==0 && runtime_pad_prompt_set()==PROMPT_SET_KEYBOARD);
+        prompt_style_setting=PROMPT_STYLE_AUTO;
+        assert(pad_read_state(1,&data)==0 && runtime_pad_prompt_set()==pad_set);
+        /* A key rebound (the in-game menu writes the line, bumps the generation): drawn again. */
+        const char rebound2[]="upscaler=fsr3\nkey.cross=Return\nmkkey.r1=Mouse Right\n";
+        assert(bb_test_write_file(config,rebound2,sizeof(rebound2)-1)==0);
+        ++bind_generation;
+        gen=runtime_pad_prompt_generation();
+        inject(path,"keyhold=Return");
+        assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_CROSS) && runtime_pad_prompt_set()==PROMPT_SET_KEYBOARD);
+        assert(runtime_pad_prompt_generation()!=gen);
+        assert(runtime_pad_prompt("cross",1,l,sizeof l)=='K' && !strcmp(l,"\xe2\x86\xb5"));
+        /* Mouse & keyboard mode: the mouse scheme's buttons, a bound mouse button, mouse look. */
+        mk_mode=1;
+        inject(path,"keyhold=E");
+        assert(pad_read_state(1,&data)==0 && runtime_pad_mouse_look());
+        assert(runtime_pad_prompt("r1",1,l,sizeof l)=='M' && !strcmp(l,"Right"));
+        assert(runtime_pad_prompt("r2",1,l,sizeof l)=='M' && !strcmp(l,"\xe2\x87\xa7Left"));
+        assert(runtime_pad_prompt("l2",1,l,sizeof l)==0); /* Mouse Right is R1 now, no L2 key */
+        assert(runtime_pad_prompt("r3",1,l,sizeof l)=='M' && !strcmp(l,"Middle"));
+        assert(runtime_pad_prompt("cross",1,l,sizeof l)=='K' && !strcmp(l,"E"));
+        assert(runtime_pad_prompt("up",0,l,sizeof l)=='K' && !strcmp(l,"\xe2\x86\x91"));
+        mk_mode=0;
+        assert(bb_test_write_file(config,controls,sizeof(controls)-1)==0);
+        ++bind_generation;
+        inject(path,"");
+        pad_read_state(1,&data);
+        assert(!runtime_pad_mouse_look());
+    }
     SDL_CloseJoystick(joystick);
     if (gamepad) SDL_CloseGamepad(gamepad);
     gamepad=NULL;

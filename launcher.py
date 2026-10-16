@@ -693,6 +693,19 @@ FRAME_GENERATION_CHOICES = [
 REFLEX_CHOICES = [("Off", "off"), ("On", "on"), ("On + Boost", "boost")]
 
 
+# Button prompts (from deadinside28/bloodborne_pc 72e5c8ce): bbport.ini prompt_style, a game setting
+# (also in game: Mouse & keyboard page, Insert > Controls), live. (label, value)
+PROMPT_STYLE_CHOICES = [("Auto", "auto"), ("PlayStation", "playstation"), ("Xbox", "xbox"),
+                        ("Nintendo", "nintendo"), ("Keyboard", "keyboard")]
+
+
+def prompt_style_label(ini: dict) -> str:
+    value = str(ini.get("prompt_style", "auto")).strip().lower()
+    if value.isdigit() and int(value) < len(PROMPT_STYLE_CHOICES):
+        value = PROMPT_STYLE_CHOICES[int(value)][1]
+    return next((label for label, v in PROMPT_STYLE_CHOICES if v == value), PROMPT_STYLE_CHOICES[0][0])
+
+
 def reflex_label(ini: dict) -> str:
     value = str(ini.get("reflex", "off")).lower()
     value = {"1": "on", "2": "boost"}.get(value, value)
@@ -1585,6 +1598,7 @@ class BloodborneLauncher(tk.Tk):
         # option: read from and written to bbport.ini directly.
         self.frame_generation_var = tk.StringVar(value=frame_generation_label(read_ini(bbport_ini_path())))
         self.reflex_var = tk.StringVar(value=reflex_label(read_ini(bbport_ini_path())))
+        self.prompt_style_var = tk.StringVar(value=prompt_style_label(read_ini(bbport_ini_path())))
         # HDR output: game settings too (bbport.ini hdr / hdr_peak_nits / hdr_paper_white).
         _ini = read_ini(bbport_ini_path())
         self.hdr_var = tk.BooleanVar(value=str(_ini.get("hdr", "0")).strip() not in ("", "0"))
@@ -1890,6 +1904,16 @@ class BloodborneLauncher(tk.Tk):
                     "dodge, E interact, R item, X Blood Vial... (full list in the settings dialog). "
                     "Replaces the classic keyboard layout while on; a gamepad keeps working. Can be "
                     "switched in game (Insert > Controls). Default: off (BB_MOUSE_KEYBOARD).")
+        prompt_combo = self._combo(
+            sec, "Button prompts:", self.prompt_style_var, [c[0] for c in PROMPT_STYLE_CHOICES],
+            "The icons in the game's button prompts and key guides. Auto (default): keys after "
+            "keyboard or mouse input, the gamepad's own buttons after gamepad input (PlayStation pads "
+            "keep the game's icons; Switch-style pads get Nintendo letters, others Xbox letters). "
+            "Pick Nintendo for a pad with Nintendo-printed buttons that reports as an Xbox pad (e.g. "
+            "an 8BitDo in X-input mode): only the letters change, the bottom button still confirms "
+            "and then shows B. Also in game (Insert > Controls); bbport.ini prompt_style, "
+            "BB_PROMPT_STYLE.", width=14)
+        prompt_combo.bind("<<ComboboxSelected>>", lambda e: self.save_prompt_style())
         mk_btn = ttk.Button(sec, text="Mouse & keyboard settings...", style="Secondary.TButton",
                             command=self.open_mk_dialog)
         mk_btn.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(4, 2))
@@ -2322,6 +2346,15 @@ class BloodborneLauncher(tk.Tk):
             update_ini(bbport_ini_path(), values)
         except OSError as ex:
             self.log(f"[GRAPHICS] Could not save the frame generation setting to bbport.ini: {ex}")
+
+    def save_prompt_style(self):
+        """The Button prompts choice: bbport.ini prompt_style (a running game picks it up within a
+        second)."""
+        try:
+            update_ini(bbport_ini_path(),
+                       {"prompt_style": dict(PROMPT_STYLE_CHOICES).get(self.prompt_style_var.get(), "auto")})
+        except OSError as ex:
+            self.log(f"[INPUT] Could not save the button prompts setting to bbport.ini: {ex}")
 
     def save_hdr(self):
         """The HDR options: bbport.ini hdr / hdr_peak_nits / hdr_paper_white (next start)."""

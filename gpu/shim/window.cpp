@@ -507,9 +507,10 @@ void WindowSDL::UpdateMouseMode() {
         mouse_buttons = 0;
         wheel_up = wheel_down = 0;
     }
-    // The launcher's mouse & keyboard dialog may change the tuning while the game runs.
+    // The launcher's mouse & keyboard dialog may change the tuning while the game runs, and the
+    // launcher's Button prompts choice (prompt_style) in any mode.
     const u64 now = SDL_GetTicks();
-    if (mk && now - last_tuning_check_ms >= 1000 && !BbOverlay::MenuOpen()) {
+    if (now - last_tuning_check_ms >= 1000 && !BbOverlay::MenuOpen()) {
         last_tuning_check_ms = now;
         BbSettings::ReloadMouseTuning();
     }
