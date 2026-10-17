@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Fixed: the game no longer waits 2 minutes and quits when Windows cannot commit all of its memory at once** (a small page file, high resolutions with 9 GiB or more of game memory, several game windows): the game memory is then reserved and each part is committed when the game maps it, which is far less. PCs where it fits keep committing it at start. If a later commit still fails, the log says so and names the page file to enlarge. `BB_GUEST_COMMIT_ON_MAP=1` forces the new path (for tests). Ported from Supermedo/bloodborne_pc 7c9ebcbb.
 - **Changed: `G` opens the gestures in the classic keyboard layout too** (issue #2): the touchpad's left half is now `Tab` or `G` in both layouts (mouse & keyboard mode had both already). `Tab` itself worked before; checked in game, both layouts, keyboard and gamepad touchpad.
 - **Added: short key names in `key.` / `mkkey.` lines**: `rshift`, `lshift`, `shift`, `enter`, `return`, `esc`, `escape`, `ctrl`, `lctrl`, `rctrl`, `alt`, `lalt`, `ralt`, `altgr`, `bksp`, `del`, `ins`, `pgup`, `pgdn`, `pgdown` (any case), next to SDL's names (`Right Shift`, `Return`, ...), which were the only ones before: a line such as `key.touchpad=rshift` was ignored with "unknown key". `BB_PAD_FILE`'s `keyhold=` takes the same names.
 

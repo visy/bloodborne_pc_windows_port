@@ -11,6 +11,9 @@
 int win_mem_space(uintptr_t start, uintptr_t end);
 /* Pagefile-backed section of size bytes (the physical pool) and a host view of all of it. */
 int win_mem_section(uint64_t size, void **backing);
+/* Commits pool bytes [phys,phys+size) when the pool is reserved (commit limit; no-op otherwise);
+ * a lasting refusal ends the process with a message. */
+void win_mem_commit(uint64_t phys, uint64_t size);
 /* Called for each piece of a view that had to be remapped around a removed range. */
 typedef void (*WinMemRestore)(uintptr_t start, uintptr_t end);
 /* Maps section offset phys at [a,b), replacing whatever was there. */
