@@ -1454,10 +1454,10 @@ void ControlsTab() {
                 "стрелки или 1 2 3 4 — крестовина, IJKL — камера.")
             : T("Classic layout (default keys): WASD move, IJKL camera, Space / Enter = Cross, Left Shift / Esc = "
                 "Circle, E = Square, Q = Triangle, 1 / 3 = L1 / R1, R / F = L2 / R2, Z / C = L3 / R3, "
-                "F1 / O = Options, Tab / Backspace = touchpad, arrows = d-pad.",
+                "F1 / O = Options, Tab / G = touchpad, Backspace = right touchpad, arrows = d-pad.",
                 "Классическая раскладка (по умолчанию): WASD — движение, IJKL — камера, Пробел / Enter — Крест, "
                 "Левый Shift / Esc — Круг, E — Квадрат, Q — Треугольник, 1 / 3 — L1 / R1, R / F — "
-                "L2 / R2, Z / C — L3 / R3, F1 / O — Options, Tab / Backspace — тачпад, стрелки — "
+                "L2 / R2, Z / C — L3 / R3, F1 / O — Options, Tab / G — тачпад, Backspace — правая сторона тачпада, стрелки — "
                 "крестовина."),
          Dim());
     KeyBindingRows(mk);

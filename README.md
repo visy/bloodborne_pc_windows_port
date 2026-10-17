@@ -77,7 +77,7 @@ Saves and the shader cache are stored in `user\`. Settings are stored in `bbport
 |---|---|---|
 | Port settings | *System* in the game's menu | *System* in the game's menu |
 | Overlay menu (fallback) | `L3 + R3` (enable in launcher) | `Insert` |
-| Gestures / key items | Touchpad left / right half (Xbox pads: `Back` + d-pad left / right; `Back` alone the left half) | `Tab` / `Backspace` |
+| Gestures / key items | Touchpad left / right half (Xbox pads: `Back` + d-pad left / right; `Back` alone the left half) | `Tab` or `G` / `Backspace` |
 | Fullscreen | — | `Alt + Enter` |
 
 Button prompts follow the device you used last: your keys and mouse buttons, Xbox letters or Nintendo letters (PlayStation pads keep the game's icons). Launcher *Input & Audio > Button prompts* (or *System > Mouse & keyboard* in game) picks a set, e.g. *Nintendo* for an 8BitDo pad in X-input mode; button functions never change.

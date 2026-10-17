@@ -352,6 +352,8 @@ int main(void) {
     /* src/pad_bindings.h names: a binding line's name for each code. */
     assert(!strcmp(key_name(MOUSE_KEY+SDL_BUTTON_X2),"Mouse X2") && !strcmp(key_name(SDL_SCANCODE_Q),"Q") &&
            key_from_name(key_name(MOUSE_WHEEL_UP))==MOUSE_WHEEL_UP && !*key_name(0));
+    assert(key_from_name("rshift")==SDL_SCANCODE_RSHIFT && key_from_name("enter")==SDL_SCANCODE_RETURN &&
+           key_from_name("lshift")==SDL_SCANCODE_LSHIFT && key_from_name("esc")==SDL_SCANCODE_ESCAPE);
     mk_mode=0; mk_buttons=0;
     assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_R1) && data.right_x==128 &&
            bindings[IN_CROSS].keys[0]==SDL_SCANCODE_X);
@@ -446,6 +448,26 @@ int main(void) {
         inject(path,"");
         pad_read_state(1,&data);
         assert(!runtime_pad_mouse_look());
+        /* Remapped touchpad halves from the UI: touchpad (left click / gestures) = rshift,
+         * touchpad_right (right click / personal effects) = enter. Works in classic and M&K. */
+        const char tp_rebind[]="key.touchpad=rshift\nkey.touchpad_right=enter\n"
+                               "mkkey.touchpad=rshift\nmkkey.touchpad_right=enter\n";
+        assert(bb_test_write_file(config,tp_rebind,sizeof(tp_rebind)-1)==0);
+        ++bind_generation;
+        for (int mode=0; mode<=1; ++mode) {
+            mk_mode=mode;
+            inject(path,"keyhold=rshift");
+            assert(pad_read_state(1,&data)==0);
+            assert((data.buttons & BTN_TOUCHPAD) && data.touch_count==1);
+            assert(data.touches[0].x==480 && data.touches[0].y==471 && data.touches[0].id>0);
+            inject(path,"keyhold=enter");
+            assert(pad_read_state(1,&data)==0);
+            assert((data.buttons & BTN_TOUCHPAD) && data.touch_count==1);
+            assert(data.touches[0].x==1440 && data.touches[0].y==471 && data.touches[0].id>0);
+            inject(path,"");
+            assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_TOUCHPAD) && data.touch_count==0);
+        }
+        mk_mode=0;
     }
     SDL_CloseJoystick(joystick);
     if (gamepad) SDL_CloseGamepad(gamepad);

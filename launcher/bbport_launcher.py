@@ -357,7 +357,7 @@ CONTROLS = [
     ("l3", "L3", "Z", "leftstick"),
     ("r3", "R3", "C", "rightstick"),
     ("options", "Options", "Return", "start"),
-    ("touchpad", "Тачпад, левая половина (жесты)", "Tab", "back, touchpad"),
+    ("touchpad", "Тачпад, левая половина (жесты)", "Tab, G", "back, touchpad"),
     ("touchpad_right", "Тачпад, правая половина (личные вещи)", "Backspace", ""),
     ("up", "Крестовина вверх", "I", "dpup"),
     ("down", "Крестовина вниз", "K", "dpdown"),
