@@ -10,6 +10,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 - **Fixed: a host memory leak in the GPU command processor**: every nested command buffer (indirect buffer) left about 600 bytes of host memory behind, many thousands a minute in the world; they are now freed when the buffer is done (from Mrsuss60/bloodborne_pc_windows_port cff50085 by Mrsuss60, after shadps4-emu/shadPS4 12c5978f).
 - **Fixed: zero padding in GPU command buffers no longer drops the rest of the buffer with the new command decoder** (`BB_CP_DECODER=1`): a zero dword between packets is skipped and zeros ending a buffer end it quietly, as the default decoder already did for trailing zeros; other invalid headers still drop the rest (PM4 part of Mrsuss60/bloodborne_pc_windows_port 8f3a88fc by Mrsuss60).
 - **Fixed: a missing GPU barrier when a tiled texture is written back to game memory**: the staging memory it goes through could be reused before the GPU had finished reading it (from Mrsuss60/bloodborne_pc_windows_port cff50085 by Mrsuss60, after shadps4-emu/shadPS4 e6faa2e3).
+- **Changed: early depth test where the game asks for it**: shaders drawn with the GPU's "depth before shader" setting now test depth before running (Vulkan EarlyFragmentTests), so hidden pixels are skipped as on the PS4; not for shaders that write their own depth or stencil, nor with the emulated clip distances. `BB_EARLY_Z=0` turns it off (from Mrsuss60/bloodborne_pc_windows_port cff50085 by Mrsuss60, after shadps4-emu/shadPS4 7d28d279).
 
 ## 0.6.5 (Windows port 0.6.5, button prompts)
 

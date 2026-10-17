@@ -13,6 +13,7 @@
 #include "bbport_compile_progress.h"
 #include "bbport_settings.h"
 #include "bbport_threads.h"
+#include "bbport_toggles.h"
 
 #include "common/hash.h"
 #include "common/io_file.h"
@@ -128,6 +129,17 @@ static u32 SourceHostFlags(const AmdGpu::Regs& regs, HwStage stage) {
     return flags;
 }
 
+/// bbport: DEPTH_BEFORE_SHADER becomes EarlyFragmentTests (emit_spirv.cpp). BB_EARLY_Z=0: never;
+/// experiment bit 32 of BB_TOGGLE_FILE: off while set (A/B in one session; the draws then use
+/// shader variants without it).
+static bool EarlyZEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("BB_EARLY_Z");
+        return !(value && value[0] == '0');
+    }();
+    return enabled && !BbToggle::Experiment(32);
+}
+
 const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& sel, HwStage stage,
                                                              SwStage l_stage) {
     auto& info = sel.runtime_infos[u32(l_stage)];
@@ -210,6 +222,8 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
         info.hw.fs.addr_flags = regs.ps_input_addr;
         info.hw.fs.num_inputs = regs.num_interp;
         info.hw.fs.front_face_all_bits = regs.barycentric_control.front_face_all_bits;
+        info.hw.fs.depth_before_shader =
+            regs.depth_shader_control.depth_before_shader != 0 && EarlyZEnabled();
         info.hw.fs.num_samples =
             regs.ps_input_addr.sample_coverage_ena && regs.ps_input_ena.sample_coverage_ena
                 ? regs.aa_config.NumSamples()
