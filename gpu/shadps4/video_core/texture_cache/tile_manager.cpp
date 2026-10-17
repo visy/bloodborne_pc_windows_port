@@ -334,6 +334,11 @@ void TileManager::TileImage(Image& in_image, std::span<vk::BufferImageCopy> buff
     RecordTilingDispatch(GetTilingPipeline(info, true), tiled_buffer_info, linear_buffer_info,
                          params_buffer_info, dim_x);
 
+    // The staging range goes back to the pool: a later copy or download into it must wait for
+    // this read (as in DetileImage; from Mrsuss60 cff50085, after shadPS4 e6faa2e3).
+    runtime.AccessBuffer(staging.buffer, staging.offset, info.guest_size,
+                         vk::PipelineStageFlagBits2::eComputeShader,
+                         vk::AccessFlagBits2::eShaderRead);
     runtime.AccessBuffer(out_buffer, out_offset, info.guest_size,
                          vk::PipelineStageFlagBits2::eComputeShader,
                          vk::AccessFlagBits2::eShaderWrite);
