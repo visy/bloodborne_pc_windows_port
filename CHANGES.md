@@ -3,6 +3,13 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## Unreleased
+
+- **Fixed: keyboard gestures and key name aliases in custom bindings**:
+  - `G` is now bound to the touchpad (gestures) in the classic keyboard layout alongside `Tab`, matching mouse & keyboard mode.
+  - Common key name aliases (`rshift`, `lshift`, `shift`, `enter`, `return`, `esc`, `escape`, `ctrl`, `lctrl`, `rctrl`, `alt`, `lalt`, `ralt`, `bksp`, `del`, `ins`, `pgup`, `pgdn`) are now resolved by `key_from_name`, allowing user configurations using shorthand names (such as `rshift` or `enter` for touchpad halves) to bind properly.
+  - Remapping `touchpad`, `touchpad_right`, or `options` in the launcher GUI now updates both `key.` and `mkkey.` in `bbport.ini` so bindings apply across both classic and mouse & keyboard modes.
+
 ## 0.6.5 (Windows port 0.6.5, button prompts)
 
 - **Added: button prompts for the keyboard and mouse, Xbox and Nintendo pads** (ported from deadinside28's 0.6-pre1, bloodborne_pc 72e5c8ce): the game's key guides and prompts ("Talk", "Examine", the menus' Select / OK / Return line, tutorials) show the key or mouse button you bound, or your gamepad's buttons, instead of PlayStation buttons. The device you used last decides; switching between keyboard and pad changes the icons at once, also with a menu open, and a key rebound in the Insert menu shows up right away. PlayStation pads keep the game's own icons; Switch and GameCube style pads get Nintendo letters, every other pad Xbox letters (from SDL's button labels, so a Switch pad's bottom button shows B). The icons are drawn by the port (no game files are shipped), in every game language.
