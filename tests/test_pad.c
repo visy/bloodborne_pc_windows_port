@@ -170,6 +170,40 @@ static void test_keyboard_sticks(void) {
     t+=16667; assert(key_stick_step(&s,0,-1,t,&x,&y) && x>0);
 }
 
+/* The walk key (after Mrsuss60/bloodborne_pc_windows_port 5e029181 by HatsyRei): Left Alt in both
+ * layouts keeps the keyboard's move stick at KEY_STICK_WALK on its larger axis, same angle, sets
+ * no button, leaves the right stick and a gamepad's stick alone, and alone moves nothing. */
+static void test_walk_key(void) {
+    static bool k[SDL_SCANCODE_COUNT];
+    PadData d;
+    for (int mk=0;mk<2;++mk) {
+        load_bindings(mk);
+        assert(bindings[IN_WALK].key_count==1 && bindings[IN_WALK].keys[0]==SDL_SCANCODE_LALT);
+        assert(input_buttons[IN_WALK]==0 && !strcmp(input_names[IN_WALK],"walk"));
+        memset(&key_move_stick,0,sizeof(key_move_stick));
+        memset(k,0,sizeof(k));
+        memset(&d,0,sizeof(d)); d.left_x=d.left_y=d.right_x=d.right_y=128;
+        k[SDL_SCANCODE_LALT]=true; apply_keyboard(&d,k); /* Alt alone: neutral */
+        assert(d.buttons==0 && d.left_x==128 && d.left_y==128 && d.right_x==128 && d.right_y==128);
+        k[SDL_SCANCODE_W]=true; apply_keyboard(&d,k);
+        assert(d.buttons==0 && d.left_x==128 && d.left_y==128-KEY_STICK_WALK);
+        assert(KEY_STICK_WALK>47 && KEY_STICK_WALK<100); /* past the dead zone (40 stands), under a run (127) */
+        k[SDL_SCANCODE_W]=false;
+        memset(&key_move_stick,0,sizeof(key_move_stick));
+        k[SDL_SCANCODE_S]=k[SDL_SCANCODE_D]=true; d.left_x=d.left_y=128; apply_keyboard(&d,k);
+        assert(d.left_x==128+KEY_STICK_WALK && d.left_y==128+KEY_STICK_WALK); /* the corner */
+        k[SDL_SCANCODE_LALT]=false; apply_keyboard(&d,k); /* let go: a run again */
+        assert(d.left_x==255 && d.left_y==255);
+        k[SDL_SCANCODE_S]=k[SDL_SCANCODE_D]=false;
+        memset(&key_move_stick,0,sizeof(key_move_stick));
+        /* No move key: a gamepad's stick passes through under a held walk key. */
+        k[SDL_SCANCODE_LALT]=true; d.left_x=200; d.left_y=30; apply_keyboard(&d,k);
+        assert(d.left_x==200 && d.left_y==30 && d.buttons==0);
+        k[SDL_SCANCODE_LALT]=false;
+    }
+    load_bindings(0);
+}
+
 /* Xbox pads: Back + d-pad left/right clicks the touchpad halves (after Supermedo/bloodborne_pc
  * a04e1e95, parsifal295's PR #39); Back alone clicks the left half for 150 ms on release. */
 static void test_back_combo(void) {
@@ -197,6 +231,7 @@ int main(void) {
     char path[512];
     load_bindings(0);
     test_keyboard_sticks();
+    test_walk_key();
     test_back_combo();
     const int created=bb_test_temp_file(path,sizeof(path),"bbport-pad-test-");
     assert(created==0);
