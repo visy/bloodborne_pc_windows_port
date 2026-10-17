@@ -958,9 +958,9 @@ static void read_inject(void) {
         if (!strncmp(token,"keyhold=",8)) {
             char name[64]; snprintf(name,sizeof name,"%s",token+8);
             for (char *c=name;*c;++c) if (*c=='_') *c=' ';
-            const SDL_Scancode sc=SDL_GetScancodeFromName(name);
-            if (sc==SDL_SCANCODE_UNKNOWN) printf("Runtime: pad file: unknown key %s\n",name);
-            else if (key_inject_count<KEY_INJECT_MAX) key_inject[key_inject_count++]=(int)sc;
+            const int sc=key_from_name(name);
+            if (sc<0 || sc>=SDL_SCANCODE_COUNT) printf("Runtime: pad file: unknown key %s\n",name);
+            else if (key_inject_count<KEY_INJECT_MAX) key_inject[key_inject_count++]=sc;
         }
         /* key=NAME: a key press queued into the game window (the overlay menu: key=Insert). */
         if (!strncmp(token,"key=",4) && !bbgpu_test_key(token+4)) printf("Runtime: pad file: unknown key %s\n",token+4);
