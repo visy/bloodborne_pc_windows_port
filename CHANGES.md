@@ -5,6 +5,8 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Changed: more mod folder layouts load** (from Supermedo/bloodborne_pc dd2314ee): notes without a suffix (`README`), previews (`.webp`, `.gif`, `.pdf`) and `.url` links beside the wrapper folder, up to three wrapper folders (`Mod/Mod v2/dvdroot_ps4`), and the game's folders (`chr`, `parts`, ...) next to other folders such as `Screenshots` or `Optional`, which stay out of the game like the notes beside them.
+- **Added: folders in `mods\` that are not mods are named with the reason** (from Supermedo/bloodborne_pc dd2314ee): the start log (and so the launcher's log) shows `Mods: not a mod: <folder>: <reason>` (still an archive, several mods in one folder, no game files, empty) instead of leaving the folder out without a word; the Linux launcher lists them under its mods.
 - **Changed: `G` opens the gestures in the classic keyboard layout too** (issue #2): the touchpad's left half is now `Tab` or `G` in both layouts (mouse & keyboard mode had both already). `Tab` itself worked before; checked in game, both layouts, keyboard and gamepad touchpad.
 - **Added: short key names in `key.` / `mkkey.` lines**: `rshift`, `lshift`, `shift`, `enter`, `return`, `esc`, `escape`, `ctrl`, `lctrl`, `rctrl`, `alt`, `lalt`, `ralt`, `altgr`, `bksp`, `del`, `ins`, `pgup`, `pgdn`, `pgdown` (any case), next to SDL's names (`Right Shift`, `Return`, ...), which were the only ones before: a line such as `key.touchpad=rshift` was ignored with "unknown key". `BB_PAD_FILE`'s `keyhold=` takes the same names.
 
