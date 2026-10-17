@@ -372,7 +372,7 @@ static void report_guest_heap(void) {
  * key.<input>=<SDL key names> and pad.<input>=<SDL gamepad button names>, comma-separated,
  * replace an input's binding (empty: unbound). Inputs: the buttons (cross ... right, touchpad =
  * a left-side click, touchpad_right), and on the keyboard the sticks: move_* (left), look_*
- * (right). Gamepad names as SDL's: a b x y back start leftstick rightstick leftshoulder
+ * (right), and walk (held: the move stick at a walk). Gamepad names as SDL's: a b x y back start leftstick rightstick leftshoulder
  * rightshoulder dpup dpdown dpleft dpright touchpad misc1 paddle1-4, plus lefttrigger and
  * righttrigger. The keyboard works next to a gamepad (the Steam Deck always has one): its buttons
  * add to the gamepad's, a held move/look key moves the stick all the way. */
@@ -621,6 +621,14 @@ static int key_stick_step(KeyStickState *s, int dx, int dy, uint64_t now, int *o
     *oy=s->held_y=y<-127 ? -127 : y>127 ? 127 : y;
     return 1;
 }
+/* The walk key (IN_WALK, key.walk=, Left Alt by default; after Mrsuss60/bloodborne_pc_windows_port
+ * 5e029181 by HatsyRei, who used 48): while it is held the keyboard's move stick keeps its angle
+ * but its larger axis is KEY_STICK_WALK instead of 127, so the hunter walks. Measured in game
+ * (2026-10-17, Hunter's Dream, one session, the left stick forward/back for 10 s each): 40 does not
+ * move (the dead zone), 48 to 115 all walk at about 1.5 m/s, 127 runs at 3.2-3.6 m/s. 64 is well
+ * clear of both ends. No PS4 button. */
+#define KEY_STICK_WALK 64
+static int key_stick_walk(int v) { return (int)lround((double)v*KEY_STICK_WALK/127.0); }
 static void apply_keyboard(PadData *d, const bool *k) {
     for (int i=IN_CROSS;i<=IN_RIGHT;++i)
         if (i!=IN_TOUCHPAD && i!=IN_TOUCHPAD_RIGHT && key_down(k,i)) d->buttons|=input_buttons[i];
@@ -632,6 +640,7 @@ static void apply_keyboard(PadData *d, const bool *k) {
     const int ly=key_direction(&key_axes[1],key_down(k,IN_MOVE_UP),key_down(k,IN_MOVE_DOWN));
     int sx, sy;
     if (key_stick_step(&key_move_stick,lx,ly,now_us(),&sx,&sy)) {
+        if (key_down(k,IN_WALK)) { sx=key_stick_walk(sx); sy=key_stick_walk(sy); }
         /* All the way is 0 / 255, as key_axis gives the other sticks. */
         d->left_x=(uint8_t)(sx<=-127 ? 0 : sx>=127 ? 255 : 128+sx);
         d->left_y=(uint8_t)(sy<=-127 ? 0 : sy>=127 ? 255 : 128+sy);
@@ -858,7 +867,8 @@ static void sample_host(PadData *d) {
         for (int i=0;i<4;++i) pad_active|=injected.stick[i]>=0 && stick_moved((uint8_t)injected.stick[i]);
         int keyboard_active=mk && (mouse.buttons || mouse.wheel_up || mouse.wheel_down ||
                                    mouse.dx*mouse.dx+mouse.dy*mouse.dy>4.0f);
-        for (int i=0;i<IN_COUNT && !keyboard_active;++i) keyboard_active=key_down(k,i);
+        /* The walk key alone (Alt, as in Alt+Tab) moves nothing: the prompts stay. */
+        for (int i=0;i<IN_COUNT && !keyboard_active;++i) keyboard_active=i!=IN_WALK && key_down(k,i);
         prompt_note(g,pad_active,keyboard_active,bindings_changed);
     }
     if (mk) sample_mouse(d,&mouse,consume,dt,k);
@@ -1149,6 +1159,7 @@ int runtime_pad_prompt(const char *name, int single, char *label, int size) {
     host_unlock(&lock);
     if (!loaded || set<0 || set==PROMPT_SET_PLAYSTATION) return 0;
     if (set!=PROMPT_SET_KEYBOARD) {
+        if (input==IN_WALK) return 0; /* a keyboard-only input */
         if (input>=IN_MOVE_UP) { snprintf(label,(size_t)size,"%s",input<IN_LOOK_UP ? "LS" : "RS"); return 'C'; }
         if (b.pad_count==0) return 0;
         return prompt_pad_label(set,type,b.pad[0],label,size);

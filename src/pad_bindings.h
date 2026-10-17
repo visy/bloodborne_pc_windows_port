@@ -2,7 +2,8 @@
  * menu's key binding rows (gpu/shim/bbport_overlay.cpp, which writes them): the PS4 inputs, the
  * two layouts' default keys and the names a binding line uses. bbport.ini lines
  * key.<input>=<names> (classic layout) and mkkey.<input>=<names> (mouse & keyboard mode) replace
- * an input's default keys; names are SDL key names, the short names in key_from_name and the
+ * an input's default keys; IN_WALK (key.walk=, after the sticks' keys) is no PS4 input: held, it
+ * keeps the keyboard's move stick at a walk (runtime_pad.c KEY_STICK_WALK); names are SDL key names, the short names in key_from_name and the
  * mouse names below. */
 #pragma once
 
@@ -16,12 +17,12 @@ enum {
     IN_CROSS, IN_CIRCLE, IN_SQUARE, IN_TRIANGLE, IN_L1, IN_R1, IN_L2, IN_R2, IN_L3, IN_R3,
     IN_OPTIONS, IN_TOUCHPAD, IN_TOUCHPAD_RIGHT, IN_UP, IN_DOWN, IN_LEFT, IN_RIGHT,
     IN_MOVE_UP, IN_MOVE_DOWN, IN_MOVE_LEFT, IN_MOVE_RIGHT, IN_LOOK_UP, IN_LOOK_DOWN, IN_LOOK_LEFT,
-    IN_LOOK_RIGHT, IN_COUNT
+    IN_LOOK_RIGHT, IN_WALK, IN_COUNT
 };
 static const char *const input_names[IN_COUNT]={
     "cross","circle","square","triangle","l1","r1","l2","r2","l3","r3","options","touchpad",
     "touchpad_right","up","down","left","right","move_up","move_down","move_left","move_right",
-    "look_up","look_down","look_left","look_right",
+    "look_up","look_down","look_left","look_right","walk",
 };
 /* The menu's row labels: English, Russian. */
 static const char *const input_labels[IN_COUNT][2]={
@@ -38,6 +39,7 @@ static const char *const input_labels[IN_COUNT][2]={
     {"Move forward","Вперёд"}, {"Move back","Назад"}, {"Move left","Влево"}, {"Move right","Вправо"},
     {"Camera up","Камера вверх"}, {"Camera down","Камера вниз"}, {"Camera left","Камера влево"},
     {"Camera right","Камера вправо"},
+    {"Walk (hold while moving)","Шаг (удерживать при движении)"},
 };
 
 /* Mouse buttons and the wheel as keys (upstream 0.51 #52): codes past SDL's scancodes. */
@@ -64,6 +66,7 @@ static const KeyDefault mk_keys[]={
     {IN_MOVE_UP,SDL_SCANCODE_W}, {IN_MOVE_DOWN,SDL_SCANCODE_S}, {IN_MOVE_LEFT,SDL_SCANCODE_A},
     {IN_MOVE_RIGHT,SDL_SCANCODE_D}, {IN_LOOK_UP,SDL_SCANCODE_I}, {IN_LOOK_DOWN,SDL_SCANCODE_K},
     {IN_LOOK_LEFT,SDL_SCANCODE_J}, {IN_LOOK_RIGHT,SDL_SCANCODE_L},
+    {IN_WALK,SDL_SCANCODE_LALT},
     {IN_UP,MOUSE_WHEEL_UP}, {IN_DOWN,MOUSE_WHEEL_DOWN}, /* quick items (mk_wheel) */
 };
 /* The classic layout's keys. */
@@ -78,7 +81,7 @@ static const KeyDefault classic_keys[]={
     {IN_UP,SDL_SCANCODE_UP}, {IN_DOWN,SDL_SCANCODE_DOWN}, {IN_LEFT,SDL_SCANCODE_LEFT}, {IN_RIGHT,SDL_SCANCODE_RIGHT},
     {IN_MOVE_UP,SDL_SCANCODE_W}, {IN_MOVE_DOWN,SDL_SCANCODE_S}, {IN_MOVE_LEFT,SDL_SCANCODE_A},
     {IN_MOVE_RIGHT,SDL_SCANCODE_D}, {IN_LOOK_UP,SDL_SCANCODE_I}, {IN_LOOK_DOWN,SDL_SCANCODE_K},
-    {IN_LOOK_LEFT,SDL_SCANCODE_J}, {IN_LOOK_RIGHT,SDL_SCANCODE_L},
+    {IN_LOOK_LEFT,SDL_SCANCODE_J}, {IN_LOOK_RIGHT,SDL_SCANCODE_L}, {IN_WALK,SDL_SCANCODE_LALT},
 };
 #define MK_KEY_COUNT (sizeof(mk_keys)/sizeof(*mk_keys))
 #define CLASSIC_KEY_COUNT (sizeof(classic_keys)/sizeof(*classic_keys))
