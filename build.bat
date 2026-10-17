@@ -57,28 +57,37 @@ if not exist "gpu\third_party\fsr-vulkan\CMakeLists.txt" (
     )
 )
 
-if not exist "out\libatrac9.a" (
-    echo Building LibAtrac9
-    if not exist "out\atrac9" mkdir out\atrac9
-    for %%f in (third_party\LibAtrac9\C\src\*.c) do (
-        gcc -std=c99 -O2 -g -w -c "%%f" -o "out\atrac9\%%~nf.o"
-        if errorlevel 1 (
-            echo Failed to compile LibAtrac9 source: %%f
-            exit /b 1
-        )
-    )
-    pushd out\atrac9
-    del /f /q ..\libatrac9.a 2>nul
-    set "OBJS="
-    for %%o in (*.o) do call set "OBJS=%%OBJS%% %%o"
-    ar rcs ..\libatrac9.a %OBJS%
-    popd
+rem LibAtrac9 static archive: built when missing, rebuilt when it lacks the decoder (an earlier
+rem build.bat wrote an empty archive: OBJS was expanded when the whole if block was parsed).
+rem Plain gotos, no block: %AT9_OBJS% below must be expanded after the loop has filled it.
+if not exist "out\libatrac9.a" goto atrac9_build
+nm out\libatrac9.a 2>nul | findstr /c:"Atrac9Decode" >nul
+if not errorlevel 1 goto atrac9_done
+echo out\libatrac9.a is empty or stale; rebuilding it
+del /f /q out\libatrac9.a 2>nul
+:atrac9_build
+echo Building LibAtrac9
+if not exist "out\atrac9" mkdir out\atrac9
+set "AT9_OBJS="
+for %%f in (third_party\LibAtrac9\C\src\*.c) do (
+    gcc -std=c99 -O2 -g -w -c "%%f" -o "out\atrac9\%%~nf.o"
     if errorlevel 1 (
-        echo Failed to create out\libatrac9.a
+        echo Failed to compile LibAtrac9 source: %%f
         exit /b 1
     )
-    echo Built out\libatrac9.a
+    call set "AT9_OBJS=%%AT9_OBJS%% out\atrac9\%%~nf.o"
 )
+if not defined AT9_OBJS (
+    echo No LibAtrac9 sources in third_party\LibAtrac9\C\src. Run: git submodule update --init --recursive
+    exit /b 1
+)
+ar rcs out\libatrac9.a %AT9_OBJS%
+if errorlevel 1 (
+    echo Failed to create out\libatrac9.a
+    exit /b 1
+)
+echo Built out\libatrac9.a
+:atrac9_done
 
 rem Upstream FSR-Vulkan patches first (as build.sh), then the MinGW compatibility patch
 if exist "gpu\third_party\fsr-vulkan\.git" for %%p in (gpu\patches\fsr-vulkan\*.patch) do (
