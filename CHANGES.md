@@ -7,6 +7,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 - **Changed: `G` opens the gestures in the classic keyboard layout too** (issue #2): the touchpad's left half is now `Tab` or `G` in both layouts (mouse & keyboard mode had both already). `Tab` itself worked before; checked in game, both layouts, keyboard and gamepad touchpad.
 - **Added: short key names in `key.` / `mkkey.` lines**: `rshift`, `lshift`, `shift`, `enter`, `return`, `esc`, `escape`, `ctrl`, `lctrl`, `rctrl`, `alt`, `lalt`, `ralt`, `altgr`, `bksp`, `del`, `ins`, `pgup`, `pgdn`, `pgdown` (any case), next to SDL's names (`Right Shift`, `Return`, ...), which were the only ones before: a line such as `key.touchpad=rshift` was ignored with "unknown key". `BB_PAD_FILE`'s `keyhold=` takes the same names.
+- **Fixed: a host memory leak in the GPU command processor**: every nested command buffer (indirect buffer) left about 600 bytes of host memory behind, many thousands a minute in the world; they are now freed when the buffer is done (from Mrsuss60/bloodborne_pc_windows_port cff50085 by Mrsuss60, after shadps4-emu/shadPS4 12c5978f).
 
 ## 0.6.5 (Windows port 0.6.5, button prompts)
 
