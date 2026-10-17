@@ -352,6 +352,8 @@ int main(void) {
     /* src/pad_bindings.h names: a binding line's name for each code. */
     assert(!strcmp(key_name(MOUSE_KEY+SDL_BUTTON_X2),"Mouse X2") && !strcmp(key_name(SDL_SCANCODE_Q),"Q") &&
            key_from_name(key_name(MOUSE_WHEEL_UP))==MOUSE_WHEEL_UP && !*key_name(0));
+    assert(key_from_name("rshift")==SDL_SCANCODE_RSHIFT && key_from_name("enter")==SDL_SCANCODE_RETURN &&
+           key_from_name("lshift")==SDL_SCANCODE_LSHIFT && key_from_name("esc")==SDL_SCANCODE_ESCAPE);
     mk_mode=0; mk_buttons=0;
     assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_R1) && data.right_x==128 &&
            bindings[IN_CROSS].keys[0]==SDL_SCANCODE_X);
