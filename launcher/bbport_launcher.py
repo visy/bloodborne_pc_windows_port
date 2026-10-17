@@ -861,8 +861,6 @@ class LauncherWindow(Adw.ApplicationWindow):
     def set_control(self, kind, name, value):
         """value: the binding, or None for the default."""
         self.ini[f"{kind}.{name}"] = value
-        if kind == "key" and name in ("touchpad", "touchpad_right", "options"):
-            self.ini[f"mkkey.{name}"] = value
         self.show_control(kind, name)
         self.store()
 

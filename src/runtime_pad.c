@@ -953,8 +953,8 @@ static void read_inject(void) {
         }
         if (!strcmp(token,"wheel_up")) ++mouse_inject.wheel_up;
         if (!strcmp(token,"wheel_down")) ++mouse_inject.wheel_down;
-        /* keyhold=NAME: an SDL key name (Space; Left_Shift for Left Shift) held on the keyboard
-         * while listed, through the bindings like a real key (prompt tests). */
+        /* keyhold=NAME: a binding line's key name (Space; Left_Shift for Left Shift; rshift) held
+         * on the keyboard while listed, through the bindings like a real key (prompt tests). */
         if (!strncmp(token,"keyhold=",8)) {
             char name[64]; snprintf(name,sizeof name,"%s",token+8);
             for (char *c=name;*c;++c) if (*c=='_') *c=' ';

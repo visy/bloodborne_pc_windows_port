@@ -2,7 +2,8 @@
  * menu's key binding rows (gpu/shim/bbport_overlay.cpp, which writes them): the PS4 inputs, the
  * two layouts' default keys and the names a binding line uses. bbport.ini lines
  * key.<input>=<names> (classic layout) and mkkey.<input>=<names> (mouse & keyboard mode) replace
- * an input's default keys; names are SDL key names plus the mouse names below. */
+ * an input's default keys; names are SDL key names, the short names in key_from_name and the
+ * mouse names below. */
 #pragma once
 
 #include <SDL3/SDL.h>
@@ -86,30 +87,18 @@ static const KeyDefault classic_keys[]={
 static inline int key_from_name(const char *name) {
     for (size_t i=0;i<MOUSE_KEY_COUNT;++i)
         if (!SDL_strcasecmp(name,mouse_keys[i].name)) return mouse_keys[i].code;
-    static const struct { const char *alias; SDL_Scancode scancode; } aliases[] = {
-        {"rshift", SDL_SCANCODE_RSHIFT},
-        {"lshift", SDL_SCANCODE_LSHIFT},
-        {"shift", SDL_SCANCODE_LSHIFT},
-        {"enter", SDL_SCANCODE_RETURN},
-        {"return", SDL_SCANCODE_RETURN},
-        {"esc", SDL_SCANCODE_ESCAPE},
-        {"escape", SDL_SCANCODE_ESCAPE},
-        {"ctrl", SDL_SCANCODE_LCTRL},
-        {"lctrl", SDL_SCANCODE_LCTRL},
-        {"rctrl", SDL_SCANCODE_RCTRL},
-        {"alt", SDL_SCANCODE_LALT},
-        {"lalt", SDL_SCANCODE_LALT},
-        {"ralt", SDL_SCANCODE_RALT},
-        {"altgr", SDL_SCANCODE_RALT},
-        {"bksp", SDL_SCANCODE_BACKSPACE},
-        {"del", SDL_SCANCODE_DELETE},
-        {"ins", SDL_SCANCODE_INSERT},
-        {"pgup", SDL_SCANCODE_PAGEUP},
-        {"pgdn", SDL_SCANCODE_PAGEDOWN},
-        {"pgdown", SDL_SCANCODE_PAGEDOWN},
+    /* Short names SDL does not know (its own: Right Shift, Return, Escape); issue #2's rshift / enter. */
+    static const struct { const char *name; SDL_Scancode code; } aliases[]={
+        {"rshift",SDL_SCANCODE_RSHIFT}, {"lshift",SDL_SCANCODE_LSHIFT}, {"shift",SDL_SCANCODE_LSHIFT},
+        {"enter",SDL_SCANCODE_RETURN}, {"return",SDL_SCANCODE_RETURN}, {"esc",SDL_SCANCODE_ESCAPE},
+        {"escape",SDL_SCANCODE_ESCAPE}, {"ctrl",SDL_SCANCODE_LCTRL}, {"lctrl",SDL_SCANCODE_LCTRL},
+        {"rctrl",SDL_SCANCODE_RCTRL}, {"alt",SDL_SCANCODE_LALT}, {"lalt",SDL_SCANCODE_LALT},
+        {"ralt",SDL_SCANCODE_RALT}, {"altgr",SDL_SCANCODE_RALT}, {"bksp",SDL_SCANCODE_BACKSPACE},
+        {"del",SDL_SCANCODE_DELETE}, {"ins",SDL_SCANCODE_INSERT}, {"pgup",SDL_SCANCODE_PAGEUP},
+        {"pgdn",SDL_SCANCODE_PAGEDOWN}, {"pgdown",SDL_SCANCODE_PAGEDOWN},
     };
-    for (size_t i = 0; i < sizeof(aliases) / sizeof(*aliases); ++i)
-        if (!SDL_strcasecmp(name, aliases[i].alias)) return (int)aliases[i].scancode;
+    for (size_t i=0;i<sizeof(aliases)/sizeof(*aliases);++i)
+        if (!SDL_strcasecmp(name,aliases[i].name)) return (int)aliases[i].code;
     const SDL_Scancode s=SDL_GetScancodeFromName(name);
     return s==SDL_SCANCODE_UNKNOWN ? -1 : (int)s;
 }
