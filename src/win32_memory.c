@@ -104,6 +104,8 @@ static unsigned long long commit_free_mib(void) {
 /* SEC_RESERVE pool: ranges are committed when the game maps them (win_mem_commit). */
 static int commit_on_map;
 static unsigned long long commit_wait_s;
+static uint8_t *committed_pages; /* one bit per 4 KiB page: the log's running total */
+static uint64_t committed_bytes, committed_logged;
 
 /* Creates the pool section, committed at once (SEC_COMMIT) when Windows' commit limit allows it.
  * When it refuses, the section is reserved (SEC_RESERVE) and each range is committed when the game
@@ -126,6 +128,7 @@ int win_mem_section(uint64_t size, void **backing) {
                                      (DWORD)(size >> 32), (DWORD)size, NULL);
         if (!section) { report("creating the reserved memory pool section", 0, size); return -1; }
         commit_on_map = 1;
+        committed_pages = calloc((size >> 15) + 1, 1);
         printf("Runtime: the %llu MiB guest memory pool %s (error %lu, %llu MiB of commit left): "
                "committed as the game maps it\n", (unsigned long long)(size >> 20),
                forced && forced[0] == '1' ? "is reserved (BB_GUEST_COMMIT_ON_MAP=1)"
@@ -152,6 +155,14 @@ void win_mem_commit(uint64_t phys, uint64_t size) {
         if (VirtualAlloc((void *)lo, hi - lo, MEM_COMMIT, PAGE_READWRITE)) {
             if (attempt) fprintf(stderr, "Runtime: guest memory committed after %llu s of waiting\n",
                                  (unsigned long long)((GetTickCount64() - t0) / 1000));
+            if (committed_pages) {
+                for (uint64_t pg = (lo - (uintptr_t)section_backing) >> 12, end = (hi - (uintptr_t)section_backing) >> 12; pg < end; ++pg)
+                    if (!(committed_pages[pg >> 3] & (1u << (pg & 7)))) { committed_pages[pg >> 3] |= (uint8_t)(1u << (pg & 7)); committed_bytes += 4096; }
+                if (committed_bytes >= committed_logged + (UINT64_C(512) << 20)) {
+                    committed_logged = committed_bytes & ~((UINT64_C(512) << 20) - 1);
+                    printf("Runtime: guest memory committed on map: %llu MiB\n", (unsigned long long)(committed_bytes >> 20));
+                }
+            }
             return;
         }
         const DWORD error = GetLastError();

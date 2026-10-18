@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Changed: crash reports name the host module**: a crash in the port's own code shows `module.dll+offset` for the faulting address and the stack frames instead of a bare address, the access type (read, write, DEP execute) and a table of the loaded modules (crash dump part of Mrsuss60/bloodborne_pc_windows_port f57c375a by Mrsuss60).
 - **Fixed: `build.bat` built an empty `out\libatrac9.a`** (the object list was read before the loop filled it), so linking failed with missing Atrac9 symbols; an empty or stale archive left by an earlier build is now rebuilt. From Mrsuss60/bloodborne_pc_windows_port a666b715.
 - **Fixed: the game no longer waits 2 minutes and quits when Windows cannot commit all of its memory at once** (a small page file, high resolutions with 9 GiB or more of game memory, several game windows): the game memory is then reserved and each part is committed when the game maps it, which is far less. PCs where it fits keep committing it at start. If a later commit still fails, the log says so and names the page file to enlarge. `BB_GUEST_COMMIT_ON_MAP=1` forces the new path (for tests). Ported from Supermedo/bloodborne_pc 7c9ebcbb.
 - **Changed: `G` opens the gestures in the classic keyboard layout too** (issue #2): the touchpad's left half is now `Tab` or `G` in both layouts (mouse & keyboard mode had both already). `Tab` itself worked before; checked in game, both layouts, keyboard and gamepad touchpad.
