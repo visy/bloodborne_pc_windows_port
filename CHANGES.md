@@ -3,6 +3,12 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## 0.6.7 (Windows port 0.6.7, crash fixes)
+
+### Added
+
+- **Added: Python comes with the release**: a trimmed Python 3.12 with Tk (the `python\` folder, about 47 MB) runs the launcher and the patch scripts, so installing Python is no longer needed. `launch_gui.bat` and `run.bat` use it first and fall back to an installed Python 3.10+ when the folder is missing; it never writes into its own folder. Made by `tools/release/make_python_bundle.py` (see docs/BUILDING.md).
+
 ## 0.6.6 (Windows port 0.6.6, frame rate by game hooks, party FPS fix)
 
 - **Fixed: "Volumetric effects" is now called "Motion blur resolution", which is what it changes**: frame captures and dumps of the buffers showed that the half-resolution chain the 0.6.2 option renders larger is the game's motion blur (velocity of moving characters and objects), not smoke or mist, which the game already draws at full resolution. The option, its `bbport.ini` key and `BB_VOLUMETRIC_RES` stay; it gives the blur around moving characters finer edges (2x pixels: about +0.6 ms, full: about +1.2 ms at 1080p on an RTX 3070) and does nothing with motion blur off. A half-size pass of the Forbidden Woods drawn before the scene, which a compute pass clears as a buffer, is no longer scaled.
