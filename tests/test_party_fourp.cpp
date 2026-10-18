@@ -108,6 +108,17 @@ static void test_scaling() {
     CHECK(DopingSpEffect(7501, -1) == 7501);
     CHECK(DopingSpEffect(7500, 3) == 7500);
     CHECK(DopingSpEffect(9006, 3) == 9006);
+    CHECK(IsDopingSpEffect(7500) && IsDopingSpEffect(7502) && !IsDopingSpEffect(7503) && !IsDopingSpEffect(7499));
+    // H4 dedupe: a boss is doped once; a second doping row (another game's copy) is skipped.
+    CHECK(DopingApply(7501, 2, 0) == DopingAction::Keep);
+    CHECK(DopingApply(7501, 3, 0) == DopingAction::Upgrade);
+    CHECK(DopingApply(7500, 1, 0) == DopingAction::Keep);
+    CHECK(DopingApply(7501, 2, 1) == DopingAction::Skip);
+    CHECK(DopingApply(7501, 3, 1) == DopingAction::Skip);
+    CHECK(DopingApply(7500, 2, 1) == DopingAction::Skip);
+    CHECK(DopingApply(7501, 2, 1, false) == DopingAction::Keep);
+    CHECK(DopingApply(7501, 3, 1, false) == DopingAction::Upgrade);
+    CHECK(DopingApply(9006, 2, 1) == DopingAction::Keep);
 }
 
 static void test_npc_signs() {

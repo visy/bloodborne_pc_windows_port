@@ -199,6 +199,10 @@ double LineSeconds(std::uint32_t chars) {
     return std::clamp(2.0 + 0.07 * double(chars), 2.5, 10.0);
 }
 
+double RemoteLineLimit(std::uint32_t chars) {
+    return std::max(LineSeconds(chars), 32.0);
+}
+
 const char* ReachName(Reach r) {
     switch (r) {
     case Reach::Share: return "share";
@@ -644,8 +648,9 @@ void ShowLine(const TalkEvent& e, float dist, double now) {
     g_remote.msg = e.msg;
     g_remote.npc = e.npc;
     g_remote.talk = e.talk;
-    // Until the talker's next line or end, at most as long as the line takes to speak.
-    g_remote.until = now + LineSeconds(std::uint32_t(TalkText(e.msg).size()));
+    // Until the talker's next line or end (dlast D8: not the speaking-time estimate, which ended
+    // lines the talker still showed up to 1.1 s early); the limit only covers a lost end.
+    g_remote.until = now + RemoteLineLimit(std::uint32_t(TalkText(e.msg).size()));
     g_remote.native = native;
     g_remote.header = header;
     const std::string text = TalkText(e.msg);
@@ -865,6 +870,9 @@ void Tick(const GameSnapshot& s, PartyLink* link) {
     const bool world = s.world_up && !s.loading;
     const bool share = enabled && link && world && InHostWorld(role) &&
                        (role == PartyRole::Host || role == PartyRole::Guest);
+    // A conversation's end also goes out after the talker's world went down (a load, Leave): the
+    // listeners keep a line until the talker's end now (dlast D8), so it must not be lost.
+    const bool send_end = enabled && link && (role == PartyRole::Host || role == PartyRole::Guest);
     // ---- talker: the local game's lines ----
     for (const LocalLine& l : lines) {
         std::uint32_t msg = l.talk;
@@ -917,8 +925,8 @@ void Tick(const GameSnapshot& s, PartyLink* link) {
             e.msg = g_conv.msg;
             e.map = s.map_id;
             Log("local line t%u over (%s)%s", g_conv.talk, over ? "the talk stopped" : "30 s without a line",
-                share ? " -> party" : "");
-            if (share) Send(link, role, e);
+                send_end ? " -> party" : "");
+            if (send_end) Send(link, role, e);
         }
     }
     for (TalkEvent& e : out) {

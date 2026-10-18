@@ -13,6 +13,8 @@
 #include "bbport_toggles.h"
 #include <cstdio>
 #include <cstdlib>
+#include <string>
+#include <vk_mem_alloc.h>
 
 namespace Vulkan {
 SceneTargets::SceneTargets(const Instance& i, Scheduler& s, Runtime& r,
@@ -126,7 +128,7 @@ bool SceneTargets::SetVolumetricLevel(int level) {
     ++volumetric_generation;
     recent = {};
     volumetric_level = level;
-    std::printf("Volumetric effects resolution: %s\n",
+    std::printf("Motion blur resolution (volumetric_res): %s\n",
                 level == VolumetricResolution::Full     ? "full scene resolution"
                 : level == VolumetricResolution::Double ? "2x the game's pixels"
                                                         : "game default (half resolution)");
@@ -141,6 +143,69 @@ void SceneTargets::QueueVolumetric(VideoCore::ImageId id, const VideoCore::Image
         volumetric_half = {image.info.size.width, image.info.size.height};
     }
     volumetric_queue.emplace_back(id, image.image_uid);
+}
+void SceneTargets::DumpVolumetric(const char* dir, u32 frame) {
+    for (const auto& [id, uid] : volumetric_images) {
+        auto* image = lookup(id, uid);
+        if (!image || image->info.props.is_depth) continue;
+        const auto format = image->info.pixel_format;
+        const bool half = format == vk::Format::eR16G16B16A16Sfloat;
+        if (!half && format != vk::Format::eR8G8B8A8Unorm) continue;
+        scheduler.EndRendering();
+        vk::Image src{};
+        vk::Extent2D size{};
+        const auto it = entries.find(Key(uid, 0));
+        if (it != entries.end() && it->second->state.valid) {
+            auto& e = *it->second;
+            Transition(e, vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eTransferSrcOptimal,
+                       vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+            src = e.image;
+            size = vk::Extent2D{e.image.image_ci.extent.width, e.image.image_ci.extent.height};
+        } else {
+            runtime.Transit(image, vk::ImageLayout::eTransferSrcOptimal,
+                            vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+            runtime.FlushBarriers();
+            src = image->GetImage();
+            size = vk::Extent2D{image->info.size.width, image->info.size.height};
+        }
+        const VkDeviceSize bytes = VkDeviceSize(size.width) * size.height * (half ? 8 : 4);
+        const VkBufferCreateInfo buffer_ci{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                                           .size = bytes, .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+        const VmaAllocationCreateInfo alloc_ci{
+            .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+            .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST};
+        VkBuffer buffer{};
+        VmaAllocation allocation{};
+        VmaAllocationInfo info{};
+        if (vmaCreateBuffer(instance.GetAllocator(), &buffer_ci, &alloc_ci, &buffer, &allocation,
+                            &info) != VK_SUCCESS) {
+            continue;
+        }
+        const vk::BufferImageCopy region{.imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                                         .imageExtent = {size.width, size.height, 1}};
+        scheduler.Record([src, buffer, region](vk::CommandBuffer cmd) {
+            cmd.copyImageToBuffer(src, vk::ImageLayout::eTransferSrcOptimal, buffer, region);
+            const vk::MemoryBarrier2 host{.srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                                          .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+                                          .dstStageMask = vk::PipelineStageFlagBits2::eHost,
+                                          .dstAccessMask = vk::AccessFlagBits2::eHostRead};
+            cmd.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &host});
+        });
+        char path[512];
+        std::snprintf(path, sizeof(path), "%s/vol%03u_%llx_%ux%u_%s.raw", dir, frame,
+                      static_cast<unsigned long long>(image->info.guest_address), size.width,
+                      size.height, half ? "rgba16f" : "rgba");
+        scheduler.DeferPriorityOperation([allocator = instance.GetAllocator(), buffer, allocation,
+                                          info, bytes, file = std::string{path}] {
+            vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
+            if (FILE* f = std::fopen(file.c_str(), "wb")) {
+                std::fwrite(info.pMappedData, 1, bytes, f);
+                std::fclose(f);
+            }
+            vmaDestroyBuffer(allocator, buffer, allocation);
+        });
+        std::printf("Volumetric dump: %s\n", path);
+    }
 }
 bool SceneTargets::CommitVolumetric() {
     bool changed = false;
@@ -157,8 +222,10 @@ bool SceneTargets::CommitVolumetric() {
         }
         image->volumetric = true;
         ++volumetric_count;
+        volumetric_images.emplace_back(id, uid);
         changed = true;
-        std::printf("Volumetric effects: %s %ux%u (%zu images)\n",
+        std::printf("Motion blur buffer: %#llx %s %ux%u (%zu images)\n",
+                    static_cast<unsigned long long>(image->info.guest_address),
                     vk::to_string(image->info.pixel_format).c_str(), image->info.size.width,
                     image->info.size.height, volumetric_count);
     }

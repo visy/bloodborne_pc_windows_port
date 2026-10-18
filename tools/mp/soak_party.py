@@ -23,6 +23,33 @@ lost / crashes counted from the logs).
 import argparse, os, re, subprocess, sys, time
 from pathlib import Path
 
+
+class LaterProc:
+    """Starts a helper (shot.py, the sampler) only once the harness has started the games (after the
+    shared game queue's wait), so its run timer and window watch cover the run, not the wait."""
+
+    def __init__(self, harness_log, args, **kw):
+        import threading
+        self.p, self.stop = None, False
+
+        def run():
+            while not self.stop:
+                try:
+                    if "instance 0 started" in Path(harness_log).read_text(errors="replace"):
+                        break
+                except OSError:
+                    pass
+                time.sleep(1)
+            if not self.stop:
+                self.p = subprocess.Popen(args, **kw)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def terminate(self):
+        self.stop = True
+        if self.p:
+            self.p.terminate()
+
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 AGENT_ROOT = REPO.parent
@@ -75,10 +102,11 @@ def run(a, out: Path):
            "--ienv", "0:BB_PARTY_DIRECTOR_TEST=" + chain("host", cycles, ARENA_HOST, lamp),
            "--ienv", "1:BB_PARTY_DIRECTOR_TEST=" + chain("guest", cycles, ARENA_GUEST, lamp)]
     env = dict(os.environ, BB_MP_LEASE=str(secs + 600))
-    sampler = subprocess.Popen([sys.executable, str(HERE / "soak_sample.py"), "--root", str(root), "--out",
+    (out / "harness.log").unlink(missing_ok=True)
+    sampler = LaterProc(out / "harness.log", [sys.executable, str(HERE / "soak_sample.py"), "--root", str(root), "--out",
                                 str(out / "soak.csv"), "--every", "60", "--seconds", str(secs + 300)],
                                stdout=open(out / "sampler.log", "w"), stderr=subprocess.STDOUT)
-    shooter = subprocess.Popen([sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out", str(out / "shots"),
+    shooter = LaterProc(out / "harness.log", [sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out", str(out / "shots"),
                                 "--tag", "soak", "--every", "60", "--grey", "--seconds", str(secs + 600)],
                                stdout=open(out / "shot.log", "w"), stderr=subprocess.STDOUT)
     (out / "shots").mkdir(exist_ok=True)

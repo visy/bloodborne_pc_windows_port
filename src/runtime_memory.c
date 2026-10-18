@@ -385,7 +385,7 @@ static uint64_t flex_alloc(uint64_t size) {
 static void flex_free(uint64_t phys, uint64_t size) {
     flex_set((phys-POOL_SIZE)/PAGE,size/PAGE,0);
 #ifdef _WIN32
-    if (backing_base) memset(backing_base+phys,0,size);
+    if (backing_base) { win_mem_commit(phys,size); memset(backing_base+phys,0,size); }
 #else
     fallocate(pool_fd,FALLOC_FL_PUNCH_HOLE|FALLOC_FL_KEEP_SIZE,(off_t)phys,(off_t)size);
 #endif

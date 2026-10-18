@@ -67,6 +67,15 @@ bool LiftCoopSlot(int rec0_status, int coop_count, int max_players);
 int BossCount(int count);
 /// H4: the SpEffect the game applies (7501 -> 7502 with >= 3 cooperators).
 int DopingSpEffect(int sp_effect, int coop_count);
+/// The boss doping rows (7500 / 7501 / 7502: 1 / 2 / 3 cooperators).
+bool IsDopingSpEffect(int sp_effect);
+/// H4 at ApplySpEffect: what to do with a doping apply on a chr that already holds `doping_held`
+/// doping rows (any of 7500-7502). A boss is doped once per fight (its fight-start event); a
+/// second copy (the same row from another game's event, sent over the link, or the event run
+/// again) multiplied its HP again (live pard4 B2: Logarius rate 14.19 = 5.676 x 2.5, a guest's
+/// max HP 22704 instead of 9081). Keep / upgrade 7501 -> 7502 / skip (dedupe off: never skip).
+enum class DopingAction { Keep, Upgrade, Skip };
+DopingAction DopingApply(int sp_effect, int coop_count, int doping_held, bool dedupe = true);
 /// B2 / summon placement beside the host: spot 1..3 (0 = the host; 4 defined for a larger party)
 /// as offsets along the host's right and forward axes: a line, right / left / 2x right, neighbours
 /// `d` (BB_PARTY_SUMMON_OFFSET, 0.5 m) apart.

@@ -62,6 +62,8 @@ typedef struct {
 } BbMouseState;
 /* 1 when mouse & keyboard mode is on (bbport.ini mk_enabled, BB_MOUSE_KEYBOARD, the menu). */
 int bbgpu_mouse_keyboard(BbMouseState *state, int consume_motion);
+/* Button prompts: bbport.ini prompt_style (src/pad_prompts.h PROMPT_STYLE_*, 0 Auto). */
+int bbgpu_prompt_style(void);
 /* Master volume multiplier: BB_AUDIO_BOOST, else the audio_boost setting (default 1.4). */
 float bbgpu_audio_boost(void);
 /* Test aid (BB_PAD_FILE "key=NAME"): a key press and release queued into the game window's

@@ -83,9 +83,9 @@ int win_mem_space(uintptr_t start, uintptr_t end) {
     return -1;
 }
 
-/* Commit charge errors: the pool section (direct + flexible memory, 7 GiB by default) is committed
- * up front, so it fails when the system commit limit (RAM + page file) is nearly used up - several
- * game instances, LTO builds - while the page file grows or others exit. */
+/* Commit charge errors: the pool section (direct + flexible memory, 7 GiB by default, 9152 MiB
+ * above 1080p) does not fit the system commit limit (RAM + page file) at once - a small page file,
+ * several game instances, LTO builds. */
 static int commit_error(DWORD e) {
     return e == ERROR_COMMITMENT_LIMIT || e == ERROR_PAGEFILE_QUOTA || e == ERROR_NOT_ENOUGH_MEMORY ||
            e == ERROR_OUTOFMEMORY || e == ERROR_COMMITMENT_MINIMUM || e == ERROR_NO_SYSTEM_RESOURCES;
@@ -101,52 +101,89 @@ static unsigned long long commit_free_mib(void) {
     return GlobalMemoryStatusEx(&st) ? st.ullAvailPageFile >> 20 : 0;
 }
 
-/* Creates the pool section. A commit failure is retried for BB_POOL_COMMIT_WAIT seconds (default
- * 120; 0 = no wait, the error goes to the guest as before); if it still fails the process exits (code 75) with the reason, instead of returning the
- * error to the guest: the game's first allocation (Dantelion2 runtime heap, guest +0x20819f0) then
- * panics with a deliberate write to address 0 (+0x20b56d2) and no hint of the cause.
- * BB_TEST_POOL_FAILURES=N simulates N commit failures (tests). */
+/* SEC_RESERVE pool: ranges are committed when the game maps them (win_mem_commit). */
+static int commit_on_map;
+static unsigned long long commit_wait_s;
+static uint8_t *committed_pages; /* one bit per 4 KiB page: the log's running total */
+static uint64_t committed_bytes, committed_logged;
+
+/* Creates the pool section, committed at once (SEC_COMMIT) when Windows' commit limit allows it.
+ * When it refuses, the section is reserved (SEC_RESERVE) and each range is committed when the game
+ * maps it (win_mem_commit): the game maps far less than the pool. Before, the commit was retried
+ * for 120 s and the process then exited.
+ * BB_GUEST_COMMIT_ON_MAP=1 forces the reserved pool; BB_TEST_POOL_FAILURES=N simulates N commit
+ * failures (the first one already picks the reserved pool; tests). */
 int win_mem_section(uint64_t size, void **backing) {
-    const unsigned long long wait_s = env_number("BB_POOL_COMMIT_WAIT", 120);
-    unsigned long long simulated = env_number("BB_TEST_POOL_FAILURES", 0);
-    const ULONGLONG t0 = GetTickCount64();
-    for (unsigned attempt = 0;; ++attempt) {
-        if (simulated) {
-            --simulated;
-            section = NULL;
-            SetLastError(ERROR_COMMITMENT_LIMIT);
-        } else {
-            section = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_EXECUTE_READWRITE | SEC_COMMIT,
-                                         (DWORD)(size >> 32), (DWORD)size, NULL);
-        }
-        if (section) {
-            if (attempt) printf("Runtime: memory pool committed after %llu s of waiting\n",
-                                (unsigned long long)((GetTickCount64() - t0) / 1000));
-            break;
-        }
+    commit_wait_s = env_number("BB_POOL_COMMIT_WAIT", 120);
+    const char *forced = getenv("BB_GUEST_COMMIT_ON_MAP");
+    section = NULL;
+    if (forced && forced[0] == '1') SetLastError(ERROR_COMMITMENT_LIMIT);
+    else if (env_number("BB_TEST_POOL_FAILURES", 0)) SetLastError(ERROR_COMMITMENT_LIMIT);
+    else section = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_EXECUTE_READWRITE | SEC_COMMIT,
+                                      (DWORD)(size >> 32), (DWORD)size, NULL);
+    if (!section) {
         const DWORD error = GetLastError();
-        const unsigned long long waited = (GetTickCount64() - t0) / 1000;
-        if (!commit_error(error) || waited >= wait_s) {
-            report("creating the memory pool section", 0, size);
-            if (!commit_error(error) || !wait_s) return -1; /* BB_POOL_COMMIT_WAIT=0: old behaviour */
-            fprintf(stderr, "Runtime: FATAL: Windows cannot commit the %llu MiB guest memory pool "
-                    "(%llu MiB of commit left after %llu s; error %lu). Close other game instances or "
-                    "builds, or enlarge the page file. Exiting.\n",
-                    (unsigned long long)(size >> 20), commit_free_mib(), waited, error);
-            fflush(stdout);
-            fflush(stderr);
-            ExitProcess(75);
-        }
-        if (!attempt || attempt % 10 == 0)
-            fprintf(stderr, "Runtime: committing the %llu MiB guest memory pool failed (Windows error %lu, "
-                    "%llu MiB of commit left: other games or builds?); retrying for up to %llu s\n",
-                    (unsigned long long)(size >> 20), error, commit_free_mib(), wait_s);
-        Sleep(simulated ? 50 : 1000);
+        if (!commit_error(error)) { report("creating the memory pool section", 0, size); return -1; }
+        section = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_EXECUTE_READWRITE | SEC_RESERVE,
+                                     (DWORD)(size >> 32), (DWORD)size, NULL);
+        if (!section) { report("creating the reserved memory pool section", 0, size); return -1; }
+        commit_on_map = 1;
+        committed_pages = calloc((size >> 15) + 1, 1);
+        printf("Runtime: the %llu MiB guest memory pool %s (error %lu, %llu MiB of commit left): "
+               "committed as the game maps it\n", (unsigned long long)(size >> 20),
+               forced && forced[0] == '1' ? "is reserved (BB_GUEST_COMMIT_ON_MAP=1)"
+                                          : "does not fit Windows' commit limit at once",
+               error, commit_free_mib());
+        fflush(stdout);
     }
     section_backing = MapViewOfFile(section, FILE_MAP_ALL_ACCESS, 0, 0, size);
     if (!section_backing) { report("mapping the memory pool", 0, size); return -1; }
     *backing = section_backing;
     return 0;
+}
+
+/* Commits pool bytes [phys, phys+size) of a reserved pool (no-op for a committed one; committing
+ * twice is free). Committed through the host view, the pages are committed for every view of the
+ * section. A commit-limit refusal is retried for BB_POOL_COMMIT_WAIT seconds (default 120: the
+ * page file grows, other instances exit), then the process exits (code 76) with the reason. */
+void win_mem_commit(uint64_t phys, uint64_t size) {
+    if (!commit_on_map || !size) return;
+    const uintptr_t lo = (uintptr_t)section_backing + (phys & ~(uint64_t)0xfff);
+    const uintptr_t hi = ((uintptr_t)section_backing + phys + size + 0xfff) & ~(uintptr_t)0xfff;
+    const ULONGLONG t0 = GetTickCount64();
+    for (unsigned attempt = 0;; ++attempt) {
+        if (VirtualAlloc((void *)lo, hi - lo, MEM_COMMIT, PAGE_READWRITE)) {
+            if (attempt) fprintf(stderr, "Runtime: guest memory committed after %llu s of waiting\n",
+                                 (unsigned long long)((GetTickCount64() - t0) / 1000));
+            if (committed_pages) {
+                for (uint64_t pg = (lo - (uintptr_t)section_backing) >> 12, end = (hi - (uintptr_t)section_backing) >> 12; pg < end; ++pg)
+                    if (!(committed_pages[pg >> 3] & (1u << (pg & 7)))) { committed_pages[pg >> 3] |= (uint8_t)(1u << (pg & 7)); committed_bytes += 4096; }
+                if (committed_bytes >= committed_logged + (UINT64_C(512) << 20)) {
+                    committed_logged = committed_bytes & ~((UINT64_C(512) << 20) - 1);
+                    printf("Runtime: guest memory committed on map: %llu MiB\n", (unsigned long long)(committed_bytes >> 20));
+                }
+            }
+            return;
+        }
+        const DWORD error = GetLastError();
+        const unsigned long long waited = (GetTickCount64() - t0) / 1000;
+        if (!commit_error(error) || waited >= commit_wait_s) {
+            report("committing guest memory", lo, hi);
+            fprintf(stderr, "Runtime: FATAL: Windows cannot commit %llu MiB more guest memory (%llu MiB of "
+                    "commit left; error %lu). The page file is too small: let Windows manage its size "
+                    "(System > About > Advanced system settings > Performance > Advanced > Virtual "
+                    "memory) or enlarge it, close other games, or use a lower resolution. Exiting.\n",
+                    (unsigned long long)((hi - lo) >> 20), commit_free_mib(), error);
+            fflush(stdout);
+            fflush(stderr);
+            ExitProcess(76);
+        }
+        if (!attempt || attempt % 40 == 0)
+            fprintf(stderr, "Runtime: committing %llu MiB of guest memory failed (Windows error %lu, %llu MiB "
+                    "of commit left); retrying for up to %llu s\n", (unsigned long long)((hi - lo) >> 20),
+                    error, commit_free_mib(), commit_wait_s);
+        Sleep(250);
+    }
 }
 
 static DWORD page_mode(int prot) {
@@ -235,6 +272,7 @@ int win_mem_release(uintptr_t a, uintptr_t b, WinMemRestore restore) {
 
 int win_mem_map(uintptr_t a, uintptr_t b, uint64_t phys, int prot, WinMemRestore restore) {
     if (win_mem_release(a, b, restore)) return -1;
+    win_mem_commit(phys, b - a);
     if (map_view(a, b, phys)) { report("mapping view", a, b); return -1; }
     return (prot & 7) == 3 ? 0 : win_mem_protect(a, b, prot);
 }
@@ -266,7 +304,8 @@ void *win_mem_private(uintptr_t a, uintptr_t b) {
 int win_mem_punch(uint64_t phys, uint64_t size) {
     if (!section_backing) return 0;
     void *ptr = (char *)section_backing + phys;
-    /* MEM_RESET notifies Windows memory manager that the pages are discarded and can be zeroed lazily */
+    /* MEM_RESET notifies Windows memory manager that the pages are discarded and can be zeroed lazily
+     * (a reserved pool: fails on never-committed pages, which hold nothing; reuse commits at map) */
     VirtualAlloc(ptr, size, MEM_RESET, PAGE_READWRITE);
     return 0;
 }

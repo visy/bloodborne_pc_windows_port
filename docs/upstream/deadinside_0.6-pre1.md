@@ -89,6 +89,14 @@ we put the notices back.
   one. The layout differs from our mouse and keyboard defaults and from users' saved `key.` /
   `mkkey.` bindings. The overlay rebinding rows and `pad_bindings.h` need chord syntax.
 - **Effort:** 4-6 days, with a migration of the bindings in bbport.ini.
+- **Status (next release after 0.6.4):** the button prompts are ported (`gpu/shim/bbport_button_prompts.*`,
+  `renderer_vulkan/vk_button_prompts.*`, the texture-cache upload and `BindTextures` hooks, the prompt part of
+  `runtime_pad.c` as `src/pad_prompts.h`), with Xbox / Nintendo / Keyboard sets and `prompt_style` added.
+  Not taken from the rewrite: the DS III-like default layout (a different muscle memory, users' saved
+  `key.` / `mkkey.` lines; no player gain), the chord bindings (our only chords are the built-in
+  Shift + click R2 / L1, which work already; chords need a new capture UI in the rebinding rows), the native
+  camera detour (our *Direct mouse camera*, imedved's, already turns the camera 1:1, and the stick path
+  keeps the measured curve of docs/SETTINGS.md), and the menu mouse pointer (not part of this task).
 
 **Suggested order:** frame-rate hooks first, then the mouse camera and button prompts. Leave the
 memory model off by default on Windows. Plan the renderer import as its own rebase project.

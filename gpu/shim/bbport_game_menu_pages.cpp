@@ -611,13 +611,14 @@ void DefineAll() {
                 AddText("5120 x 1440 (32:9)", "5120 x 1440 (32:9)")},
                Kind::Steps);
     }
-    // Volumetric effects resolution (idea from a playtester; volumetric_resolution.h). Live.
+    // Motion blur resolution (0.6.2's "Volumetric effects"; idea from a playtester;
+    // volumetric_resolution.h). Live.
     AddRow(Setting(
                Kind::Steps, [](const Values& v) { return std::clamp(v.volumetric_res.load(), 0, 2); },
                [](int i) { BbSettings::Get().volumetric_res = std::clamp(i, 0, 2); }, 3),
-           "Volumetric effects", "Объёмные эффекты",
-           "Smoke, mist and fog effects' buffer: 0-2 game (half), 3-7 2x pixels, 8-10 full resolution",
-           "Буфер дыма, тумана и дымки: 0-2 как в игре (половина), 3-7 2x пикселей, 8-10 полное",
+           "Motion blur resolution", "Разрешение размытия",
+           "The game's motion blur buffers: 0-2 game (half size), 3-7 2x pixels, 8-10 full",
+           "Буферы размытия в движении: 0-2 как в игре (половина), 3-7 2x пикселей, 8-10 полное",
            {AddText("Game default", "Как в игре"), AddText("2x pixels", "2x пикселей"),
             AddText("Full resolution", "Полное разрешение")},
            Kind::Steps);
@@ -877,21 +878,20 @@ void DefineAll() {
     AddRow(Scaled(&Values::mk_sens_y, SensTable), "Vertical speed", "Скорость по вертикали",
            "Mouse sensitivity: 0 = 0.25, 5 = 1.0 (default), 10 = 5.0",
            "Чувствительность мыши: 0 = 0.25, 5 = 1.0 (по умолчанию), 10 = 5.0", {}, Kind::Slider);
+    // Button prompts (bbport_button_prompts.h, from deadinside28/bloodborne_pc 72e5c8ce): live.
     AddRow(Setting(
-               Kind::List,
-               [](const Values& v) { return int(v.mk_invert_x.load()) | int(v.mk_invert_y.load()) << 1; },
-               [](int i) {
-                   BbSettings::Get().mk_invert_x = (i & 1) != 0;
-                   BbSettings::Get().mk_invert_y = (i & 2) != 0;
-               }),
-           "Invert look", "Инверсия", "Inverts the mouse look horizontally and/or vertically",
-           "Инверсия обзора мышью по горизонтали и/или вертикали",
-           {AddText("None", "Нет"), AddText("Horizontal", "По горизонтали"), AddText("Vertical", "По вертикали"),
-            AddText("Both", "Обе оси")},
+               Kind::List, [](const Values& v) { return v.prompt_style.load(); },
+               [](int i) { BbSettings::Get().prompt_style = std::clamp(i, 0, BbSettings::PromptStyleCount - 1); }),
+           "Button prompts", "Подсказки кнопок",
+           "Icons in the game's prompts. Auto: the device used last. Nintendo: letters only, Cross stays bottom",
+           "Значки в подсказках игры. Авто: последнее устройство. Nintendo: только буквы, Крест внизу",
+           {AddText("Auto", "Авто"), AddText("PlayStation", "PlayStation"), AddText("Xbox", "Xbox"),
+            AddText("Nintendo", "Nintendo"), AddText("Keyboard", "Клавиатура")},
            Kind::List);
-    // A page holds six rows: the fine tuning and the wheel (upstream 0.51, #52) have their own.
-    AddPage("Mouse tuning", "Настройка мыши", "Mouse look smoothing, dead zone and the wheel (bbport)",
-            "Сглаживание и мёртвая зона обзора мышью, колесо (bbport)");
+    // A page holds six rows, a list only as the last: the fine tuning, the wheel (upstream 0.51,
+    // #52) and the invert list have their own (the first page ends with the button prompts list).
+    AddPage("Mouse tuning", "Настройка мыши", "Mouse look smoothing, dead zone, the wheel, inverted look (bbport)",
+            "Сглаживание, мёртвая зона, колесо, инверсия обзора мышью (bbport)");
     AddRow(Scaled(&Values::mk_smoothing, SmoothTable), "Mouse smoothing", "Сглаживание мыши",
            "Averages the mouse over frames: 0 raw, 4 = 0.2 (default), 10 = 0.8",
            "Усреднение мыши: 0 без него, 4 = 0.2 (по умолчанию), 10 = 0.8", {}, Kind::Slider);
@@ -906,6 +906,18 @@ void DefineAll() {
            "The mouse turns the camera 1:1, no stick dead zone or curve (imedved's mouse camera)",
            "Мышь поворачивает камеру 1:1, без мёртвой зоны и кривой стика (камера imedved)", toggle,
            Kind::Toggle);
+    AddRow(Setting(
+               Kind::List,
+               [](const Values& v) { return int(v.mk_invert_x.load()) | int(v.mk_invert_y.load()) << 1; },
+               [](int i) {
+                   BbSettings::Get().mk_invert_x = (i & 1) != 0;
+                   BbSettings::Get().mk_invert_y = (i & 2) != 0;
+               }),
+           "Invert look", "Инверсия", "Inverts the mouse look horizontally and/or vertically",
+           "Инверсия обзора мышью по горизонтали и/или вертикали",
+           {AddText("None", "Нет"), AddText("Horizontal", "По горизонтали"), AddText("Vertical", "По вертикали"),
+            AddText("Both", "Обе оси")},
+           Kind::List);
 
     // ---- Game patches (after a restart) and the restart itself. ----
     AddPage("Game patches", "Патчи игры", "The game's own AA, intros, free camera, debug menu, restart, quit (bbport)",

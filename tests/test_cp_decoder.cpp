@@ -158,6 +158,28 @@ void MalformedBuffers() {
     assert(decoder.Registers()[Bank::Context + 0x10] == 0);
 }
 
+void ZeroDwordPadding() {
+    Decoder decoder;
+    Recorder sink;
+    sink.decoder = &decoder;
+    // An isolated zero between packets is skipped; trailing zeros end the buffer quietly.
+    Stream s;
+    s.Packet(Op::DrawIndexAuto, {3, 0x2});
+    s.words.push_back(0);
+    s.Packet(Op::DrawIndexAuto, {6, 0x2});
+    s.words.insert(s.words.end(), {0, 0, 0});
+    decoder.Decode(s.words, sink);
+    assert(decoder.Stats().bad == 0 && decoder.Stats().draws == 2);
+    assert(decoder.Stats().zero_padding == 2);
+    for (const auto& event : sink.events) {
+        assert(event.rfind("bad", 0) != 0);
+    }
+    // A non-zero type-0 dword still drops the rest of the buffer.
+    std::vector<u32> garbage = {0, 0x00010010, Type3(Op::DrawIndexAuto, 2), 3, 2};
+    decoder.Decode(garbage, sink);
+    assert(decoder.Stats().bad == 1 && decoder.Stats().draws == 2);
+}
+
 void CursorObserverAndOwnerStorage() {
     struct Observer : RegisterObserver {
         std::vector<RegisterWrite> writes;
@@ -218,6 +240,7 @@ int main() {
     PartialWritesClearStateAndEvents();
     ConditionalExecution();
     MalformedBuffers();
+    ZeroDwordPadding();
     CursorObserverAndOwnerStorage();
     std::puts("PASS: cp decoder: registers, draws, dispatches, indirect buffers, COND_EXEC, "
               "malformed buffers, cursor, observer");

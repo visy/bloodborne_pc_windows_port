@@ -104,6 +104,21 @@ int ItemCount(std::uint32_t type_bits, std::uint32_t id);
 /// GiveItemDirect 0x131CB70(0, type bits, id, count); false when the code differs or no player.
 /// It shows nothing; ShowItemGet adds the native "item acquired" entry.
 bool GiveItem(std::uint32_t type_bits, std::uint32_t id, int count);
+/// The game's own equip of one equipment slot (EquipGameData = PlayerGameData +0x1D0, setter
+/// 0x14CCB90: refcounted GaItem handle, id, inventory index, the chr's ChrAsm), giving one first if
+/// none is held. Slots: world_warper_rules.h EquipSlot (0..5 weapons, 8..11 armor). False when the
+/// code differs, the item is not in the inventory or the slot did not take it.
+bool EquipSlotItem(int slot, std::uint32_t type_bits, std::uint32_t id);
+/// The item id in equipment slot `slot` (0: empty / unknown).
+std::uint32_t EquippedSlotId(int slot);
+/// Quick-item slot `slot` (0..5; EquipItemData = PlayerGameData +0x3D0, slot i's inventory index
+/// at +0x1C + 8i, the selected item's index at +0x48) set to goods `id` (one given first if none is
+/// held), the selection normalised by the game (0x14CF920 on EquipGameData, as AddItem's
+/// auto-equip does); `select`: it becomes the active quick item (Square uses it). Hunter tools and
+/// throwables are goods in these slots too. False when the code differs or the item is missing.
+bool SetQuickItem(int slot, std::uint32_t id, bool select);
+/// The goods id in quick-item slot `slot` (0: empty / unknown); `*selected`: it is the active one.
+std::uint32_t QuickItemId(int slot, bool* selected = nullptr);
 /// The native item-get dialog entry, exactly as the lot award's give list (0x17D89F0 at
 /// 0x17D9348) queues it: 0x16D8850(*0x553B1C0, &gaitem handle, type bits, id, count, 0) - pushes
 /// the entry onto the item-get list and plays sound 300. The handle is the inventory entry's

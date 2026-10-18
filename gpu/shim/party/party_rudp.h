@@ -123,6 +123,9 @@ public:
     // towards a guest that is about to connect).
     void punch(Endpoint to, Clock::time_point now, int duration_ms = 30000, int interval_ms = 200);
     void poll(Clock::time_point now, std::vector<Datagram>& out);
+    // A stream its owner closed and lets go: kept until its next poll has sent what was written
+    // before close() and the FIN (a BYE / REJECT written just before closing reaches the peer).
+    void linger(std::shared_ptr<Stream> s);
     Clock::time_point next_due(Clock::time_point now) const;
     std::size_t streams() const { return streams_.size(); }
     std::uint64_t punches_sent() const { return punches_; }
@@ -135,6 +138,7 @@ private:
     };
     std::map<Key, std::weak_ptr<Stream>> streams_;
     std::deque<std::shared_ptr<Stream>> accepted_;
+    std::vector<std::shared_ptr<Stream>> lingering_;
     struct Punch {
         Endpoint to;
         Clock::time_point until, next;

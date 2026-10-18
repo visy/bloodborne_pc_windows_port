@@ -33,6 +33,33 @@ verdict reads logs, it cannot see a grey screen, a camera in a wall or a stuck d
 import argparse, os, re, subprocess, sys, time
 from pathlib import Path
 
+
+class LaterProc:
+    """Starts a helper (shot.py, the sampler) only once the harness has started the games (after the
+    shared game queue's wait), so its run timer and window watch cover the run, not the wait."""
+
+    def __init__(self, harness_log, args, **kw):
+        import threading
+        self.p, self.stop = None, False
+
+        def run():
+            while not self.stop:
+                try:
+                    if "instance 0 started" in Path(harness_log).read_text(errors="replace"):
+                        break
+                except OSError:
+                    pass
+                time.sleep(1)
+            if not self.stop:
+                self.p = subprocess.Popen(args, **kw)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def terminate(self):
+        self.stop = True
+        if self.p:
+            self.p.terminate()
+
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 AGENT_ROOT = REPO.parent  # agents/NAME when run from an agent worktree
@@ -49,54 +76,82 @@ CLERIC_TRIGGER_HOST = "-136.5:-26.6:52.8"   # region 2412805 (first fight)
 CLERIC_SPOT_GUEST = "-134.6:-26.6:54.7"
 
 
-def phase_s1():
+# Speed (smokefix 2026-10-16, "lots of standing around"): every step waits only as long as the game
+# needs (delays measured from the previous step's log, about 10 s of margin each), and a phase ends
+# the moment its last checked line is logged (instances.py --until), not after a fixed run length;
+# `seconds` is only the cap. Same steps and checks as before.
+# The scripted host death, or the boss got there first (the step then logs it found the chr dead)
+HOST_DIED = r"travel step \d+/\d+: host_die|travel step \d+ \(host_die\) waits: the own chr is dead"
+LEAVE_OUT = r"the host ended the party|host lost \(the host left its room\)"
+
+
+def phase_s1(only):
     host = ",".join([
-        "host_warp=2412953@150",            # party lamp travel: the Tomb of Oedon (after the leave/rejoin and death)
-        "host_die@118%m24_01",              # in the Gascoigne fight (the guest's fog at ~45 s, the intro ~47 s)
+        "host_warp=2412953@70",             # party lamp travel: the Tomb of Oedon (after the leave/rejoin and death)
+        "host_die@88%m24_01",               # in the fight: the guest at the fog ~20 s, the intro ~24-72 s (48 s)
     ])
     g1 = ",".join([
         "echoes=5000",                        # Blood Echoes to drop (the bloodstain)
-        "guest_leave@25", "guest_rejoin@10",  # Party > Leave, Rejoin
-        "guest_die@25",                       # a death outside a fight: bloodstain, respawn at the host's lamp
-        "guest_obj=2411810@45%m24_01",        # at Gascoigne's fog, facing it
+        "guest_leave@10", "guest_rejoin@5",   # Party > Leave, Rejoin
+        "guest_die@12",                       # a death outside a fight: bloodstain, respawn at the host's lamp
+        "guest_obj=2411810@20%m24_01",        # at Gascoigne's fog, facing it
         "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!",  # Cross: the guest goes in first
-        "guest_die@80%m24_01",                # after the host's death in the fight: the wipe
+        "guest_die@84%m24_01",                # ~18 s after the host's death in the fight: the wipe
     ])
-    g2 = "guest_die@150%m24_01"               # the headless guest: down too (everyone down: a wipe)
+    g2 = "guest_die@118%m24_01"                # the headless guest: down too (everyone down: a wipe)
     return dict(
-        name="s1", seconds=480,
+        name="s1", seconds=420,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=" + g2],
         crash=[],
+        until=["0:a wipe", "0:spectating: following"],
     )
 
 
-def phase_s2():
+def phase_s2(only):
+    host_tail = not only or bool({"host_crash", "host_leave"} & only)
     host = ",".join([
-        "host_warp=2412952@30",                                   # party lamp travel: the Cleric Beast's lamp
-        "host_move=%s@25%%m24_01" % CLERIC_TRIGGER_HOST,          # starts the fight
+        "goods=4114:0",                                           # the test save holds the badge: the kill's reward would say "storage max"
+        "host_warp=2412952@15",                                   # party lamp travel: the Cleric Beast's lamp
+        "host_move=%s@15%%m24_01" % CLERIC_TRIGGER_HOST,          # starts the fight
         "host_kill=2410800@12%m24_01",                            # the boss kill (its defeat path)
     ])
     g1 = ",".join([
-        "guest_move=%s@50%%m24_01" % CLERIC_SPOT_GUEST,
+        "guest_move=%s@25%%m24_01" % CLERIC_SPOT_GUEST,
         "guest_press=0x4000@16%m24_01", "guest_press=0x4000@4%m24_01",  # Cross: OK on the reward's item box
-        "guest_leave@30%m24_01",            # Leave right after the kill (no load between), then Rejoin
-        "guest_rejoin@8",
+        "guest_leave@10%m24_01",            # Leave right after the kill (no load between), then Rejoin
+        "guest_rejoin@5",
     ])
+    # guest 1 crashes 15 s after its Rejoin press (after the boss kill: a title join into a cleared
+    # area); the host crashes 15 s after guest 1 is back in its room.
+    crash = [r"1:guest_rejoin: Party > Rejoin pressed@15"]
+    if host_tail:
+        crash.append(r"0:cooperators [01] -> 2@15")
+        until = ["0:host_leave: Party > Leave pressed", "1:" + LEAVE_OUT, "2:" + LEAVE_OUT]
+    else:
+        until = ["0:cooperators [01] -> 2"]  # after the guest crash: back in the host's room
     return dict(
-        name="s2", seconds=560,
+        name="s2", seconds=480,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + CLERIC_CLEAR_REWARD, "BB_PARTY_TEST_INVINCIBLE=1"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1,
               # crash-restarted games: no second run of the chain; the restarted host Leaves last
-              "0:BB_PARTY_DIRECTOR_TEST_RESTART=host_leave@45", "1:BB_PARTY_DIRECTOR_TEST_RESTART=none",
+              "0:BB_PARTY_DIRECTOR_TEST_RESTART=host_leave@25", "1:BB_PARTY_DIRECTOR_TEST_RESTART=none",
               "2:BB_PARTY_DIRECTOR_TEST_RESTART=none"],
-        # guest 1 crashes 25 s after its Rejoin press (after the boss kill: a title join into a cleared
-        # area); the host crashes 40 s after guest 1 is back in its room.
-        crash=[r"1:guest_rejoin: Party > Rejoin pressed@25", r"0:cooperators [01] -> 2@40"],
+        crash=crash,
+        until=until,
     )
 
 
 PHASES = {"s1": phase_s1, "s2": phase_s2}
+# --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
+GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
+          "wipe": "s1", "kill": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
+          "host_leave": "s2"}
+GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
+              "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
+              "wipe": r"wipe", "kill": r"boss kill|party stays", "itembox": r"item box|reward on the summoned",
+              "rejoin_kill": r"s2 (Leave after|Rejoin|no kick)", "c6": r"guest crash",
+              "host_crash": r"host crash", "host_leave": r"host Leave"}
 
 
 def run_phase(a, ph, out: Path):
@@ -120,11 +175,14 @@ def run_phase(a, ph, out: Path):
         cmd += ["--ienv", e]
     for c in ph["crash"]:
         cmd += ["--crash-plan", c]
+    for u in ph.get("until", []):
+        cmd += ["--until", u]
     env = dict(os.environ, BB_MP_LEASE=os.environ.get("BB_MP_LEASE", "1200"))
     shots = out / "shots"
     shots.mkdir(exist_ok=True)
     print("[smoke] %s: %s" % (ph["name"], " ".join(cmd)), flush=True)
-    shooter = subprocess.Popen([sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out", str(shots),
+    (out / "harness.log").unlink(missing_ok=True)
+    shooter = LaterProc(out / "harness.log", [sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out", str(shots),
                                 "--tag", ph["name"], "--every", str(a.every), "--seconds", str(ph["seconds"] + 400)],
                                stdout=open(out / "shot.log", "w"), stderr=subprocess.STDOUT)
     t0 = time.time()
@@ -181,10 +239,13 @@ class Logs:
 
 
 class Verdict:
-    def __init__(self):
+    def __init__(self, only=None):
         self.rows = []
+        self.keep = [re.compile(GROUP_ROWS[g]) for g in only] if only else None
 
     def step(self, name, ok, detail):
+        if self.keep and not any(k.search(name) for k in self.keep) and not name.endswith(("no crash / assert", "no 'Session lost'")):
+            return
         self.rows.append((name, bool(ok), detail))
         print("%-4s %-40s %s" % ("PASS" if ok else "FAIL", name, detail), flush=True)
 
@@ -235,7 +296,7 @@ def check_s1(v, L):
     if gm is not None:
         need(v, L, "s1 guest-started intro on the host", 0, r"(?i)cutscene 24010010|remo 24010010|24010010", gm)
         need(v, L, "s1 guest-started intro on guest 1 (live mirror)", 1, r"(?i)live mirror|24010010", gm)
-    hd = need(v, L, "s1 host death in the fight", 0, r"travel step \d+/\d+: host_die", gm or 0)
+    hd = need(v, L, "s1 host death in the fight", 0, HOST_DIED, gm or 0)
     if hd is not None:
         need(v, L, "s1 host limbo + spectate", 0, r"spectating: following", hd)
     need(v, L, "s1 wipe: the party respawns together", 0, r"a wipe", hd or 0)
@@ -250,8 +311,12 @@ def check_s2(v, L, d: Path):
         need(v, L, "s2 boss kill reached guest 1", 1, r"host boss kill", k)
         need(v, L, "s2 boss kill reached guest 2", 2, r"host boss kill", k)
         need(v, L, "s2 the party stays after the boss (K10)", 0, r"K10: boss-clear leave suppressed", k)
-        ib = need(v, L, "s2 reward item box on the summoned guest", 1, r"item notice up on a summoned guest", k)
-        if ib is not None:
+        # The Cleric Beast's reward (lot 50000010, Sword Hunter Badge) is a key item: a summoned guest
+        # gets it owed to its own world (pard2, D4), not as a box; any other reward shows the box.
+        ib = need(v, L, "s2 reward on the summoned guest (item box or owed key item)", 1,
+                  r"item notice up on a summoned guest|lot 50000010 .*not given while summoned; waits for the own world|"
+                  r"owed key item: lot 50000010", 0)
+        if ib is not None and L.find(1, r"item notice up on a summoned guest", k):
             need(v, L, "s2 item box OK row closes it (Cross)", 1, r"item notice closed", ib)
     lv = need(v, L, "s2 Leave after the boss kill", 1, r"guest_leave: Party > Leave pressed", k or 0)
     rj = need(v, L, "s2 Rejoin pressed", 1, r"guest_rejoin: Party > Rejoin pressed", lv or 0) if lv else None
@@ -295,13 +360,21 @@ def main():
     ap.add_argument("--phase", default="s1,s2")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
+    ap.add_argument("--only", default="", help="comma list of step groups (a smaller run): " + ",".join(GROUPS))
     a = ap.parse_args()
+    only = {g.strip() for g in a.only.split(",") if g.strip()}
+    bad = only - set(GROUPS)
+    if bad:
+        sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
+    if only:
+        a.phase = ",".join(p for p in ("s1", "s2") if p in {GROUPS[g] for g in only})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
     out = Path(a.out)
-    v = Verdict()
+    v = Verdict(only)
+    t_all = time.time()
     for name in [p.strip() for p in a.phase.split(",") if p.strip()]:
-        ph = PHASES[name]()
+        ph = PHASES[name](only)
         if not a.check_only:
             run_phase(a, ph, out / name)
         print("[smoke] verdict %s" % name, flush=True)
@@ -309,6 +382,8 @@ def main():
     fails = [r for r in v.rows if not r[1]]
     text = "\n".join("%s  %s  %s" % ("PASS" if ok else "FAIL", n, d) for n, ok, d in v.rows)
     text += "\n\n%d steps, %d failed\n" % (len(v.rows), len(fails))
+    if not a.check_only:
+        text += "wall time %.0f s (queue wait included)" % (time.time() - t_all) + chr(10)
     out.mkdir(parents=True, exist_ok=True)
     (out / "verdict.txt").write_text(text, encoding="utf-8")
     print("[smoke] %d steps, %d failed; %s" % (len(v.rows), len(fails), out / "verdict.txt"))

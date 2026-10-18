@@ -44,12 +44,20 @@ def is_link(path):
         return False
 
 
-def content_root(folder):
+# Files that come with a mod without being part of it: notes, previews, links, licences.
+EXTRA_SUFFIXES = {'', '.txt', '.md', '.ini', '.json', '.pdf', '.rtf', '.nfo', '.url', '.htm', '.html',
+                  '.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'}
+ARCHIVE_SUFFIXES = {'.zip', '.7z', '.rar'}
+
+
+def content_root(folder, depth=0):
     """(root, prefix): where a mod's files are and the game path they go to, or None.
 
-    Accepted layouts: <mod>/dvdroot_ps4, <mod>/app0/dvdroot_ps4, <mod>/<serial>/dvdroot_ps4 (CUSA03173, CUSA00900, ...),
-    one wrapper folder around any of these (an archive extracted into a folder of its name), and
-    the game's folders without dvdroot_ps4 (<mod>/chr, <mod>/parts, ...)."""
+    Accepted layouts: <mod>/dvdroot_ps4, <mod>/app0/dvdroot_ps4, <mod>/<serial>/dvdroot_ps4 (CUSA03173,
+    CUSA00900, ...), up to three wrapper folders around any of these (archives extracted into a
+    folder of their name, beside notes and pictures), and the game's folders without dvdroot_ps4
+    (<mod>/chr, <mod>/parts, ...), also next to other folders (Screenshots, Optional), which stay
+    out of the game (mod_files). From Supermedo/bloodborne_pc dd2314ee."""
     folder = Path(folder)
     if not folder.is_dir():
         return None
@@ -60,12 +68,37 @@ def content_root(folder):
             return base, ''
     entries = [e for e in folder.iterdir() if not e.name.startswith('.')]
     folders = [e for e in entries if e.is_dir()]
-    if folders and all(e.name.casefold() in GAME_FOLDERS for e in folders):
+    if any(e.name.casefold() in GAME_FOLDERS for e in folders):
         return folder, 'dvdroot_ps4'
-    if len(folders) == 1 and not [e for e in entries if e.is_file() and
-                                  e.suffix.casefold() not in ('.txt', '.md', '.jpg', '.png', '.ini')]:
-        return content_root(folders[0])
+    if depth < 3 and len(folders) == 1 and not [e for e in entries if e.is_file() and
+                                                e.suffix.casefold() not in EXTRA_SUFFIXES]:
+        return content_root(folders[0], depth + 1)
     return None
+
+
+def problem(folder):
+    """Why `folder` is not a mod (content_root is None), for the launchers and the start log."""
+    folder = Path(folder)
+    files = [e for e in folder.rglob('*') if e.is_file()][:2000]
+    if not files:
+        return 'empty'
+    if any(e.suffix.casefold() in ARCHIVE_SUFFIXES for e in files):
+        return 'still an archive: extract it here'
+    folders = [e for e in folder.iterdir() if e.is_dir() and not e.name.startswith('.')]
+    if len(folders) > 1:
+        return ('several folders: put each mod in its own folder in mods (each with dvdroot_ps4, '
+                'or folders like chr, parts, map)')
+    return 'no game files: expected dvdroot_ps4, or folders like chr, parts, map'
+
+
+def unrecognized(root):
+    """(name, problem) of the folders of `root` that are not mods."""
+    root = Path(root)
+    if not root.is_dir():
+        return []
+    return sorted(((p.name, problem(p)) for p in root.iterdir()
+                   if p.is_dir() and not p.name.startswith('.') and not content_root(p)),
+                  key=lambda item: (item[0].casefold(), item[0]))
 
 
 def discover(root):
@@ -108,6 +141,8 @@ def mod_files(folder):
                 raise ValueError(f'Mod symlinks are unsupported: {directory / name}')
         for name in sorted(files):
             source = directory / name
+            if prefix and source.relative_to(root).parts[0].casefold() not in GAME_FOLDERS:
+                continue  # notes and folders beside the game's (Screenshots, Optional)
             relative = Path(prefix) / source.relative_to(root) if prefix else source.relative_to(root)
             # Readme/metadata stay outside the mounted game. This loader handles assets;
             # executable patches use the existing patch compiler, with address validation.
@@ -415,6 +450,10 @@ def main():
         else:
             for name in selected(args.mods_dir, args.config):
                 layers.append((name, args.mods_dir / name))
+            # Folders that are not mods are named, with why, instead of left out silently (the
+            # launcher's log shows run.bat's output).
+            for name, why in unrecognized(args.mods_dir):
+                print(f'Mods: not a mod: {name}: {why}', file=sys.stderr)
     # The Hunter's Dream mirror (scripts/dream_mirror.py, from bbhost): a generated layer first, so
     # a user mod with its own Dream layout wins. BB_DREAM_MIRROR=0: off.
     import dream_mirror

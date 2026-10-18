@@ -4,7 +4,7 @@ Run the PS4 version of *Bloodborne* (v1.09, any retail release) natively on Wind
 Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28 (Linux) and the original
 [Windows port](https://github.com/Mrsuss60/bloodborne_pc_windows_port) by Mrsuss60.
 
-**Version 0.6.2** · Playable · Party co-op in development
+**Version 0.6.5** · Playable · Party co-op in development
 
 > No game files are included: you need your own decrypted dump with update 1.09 (any retail
 > release: CUSA03173, CUSA00900, ...; they share the same 1.09 executable).
@@ -16,7 +16,7 @@ Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28
 Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](docs/party/ERSC_PARITY.md).
 Two numbers: **plan done** is how much of the plan is built and seen working at least once;
 **ERSC parity (evidence-weighted)** caps every row at 95% until it has been checked on two real PCs over
-the Internet (all checks so far ran on one PC), and caps rows where we chose to differ from ERSC (the
+the Internet (every check of the current build ran on one PC; the only Internet session so far was on 0.6.0), and caps rows where we chose to differ from ERSC (the
 whole party respawns with the host, 4 players instead of 6, one shared drop roll) at 95% too.
 
 | Area | Plan done | | ERSC parity (evidence-weighted) | |
@@ -43,10 +43,11 @@ whole party respawns with the host, 4 players instead of 6, one shared drop roll
 | **High frame rates** | 30 / 60 / 90 / uncapped, with correct game speed: hooks in the game's code follow the real frame time (deadinside's, 0.6-pre1; the community FPS++ patches as a fallback, `BB_FRAME_HOOKS=0`). |
 | **Upscaling** | FSR 3.1, FSR 4, FSR 4.1.1 and DLSS, with motion vectors added for this game. |
 | **Frame generation** | Optional, off by default: DLSS FG (2x-4x, RTX 40/50) or FSR FG (2x), paced, HUD kept sharp; NVIDIA Reflex. [More](docs/FG_REFLEX.md) |
+| **Finer motion blur** | Optional, off by default: the game's motion blur, which it builds from half-resolution buffers, at 2x the pixels or at full resolution (*System > Display > Motion blur resolution*; 0.6.2 called it *Volumetric effects*, but smoke and mist are already drawn at full resolution). [More](docs/SETTINGS.md) |
 | **HDR output** | Optional, off by default: HDR10 (PQ, Rec.2020) on an HDR display, the game's highlights expanded up to your display's peak while mid-tones and menus stay at paper white; peak, paper white, highlights, saturation and a calibration pattern in *System > HDR*. [More](docs/SETTINGS.md#hdr-output) |
 | **No shader stutter** | Known shaders are built before the intro. New ones compile in the background. |
 | **Shareable shader cache** | Export / import one `.zip`, works across GPUs; drop a shared one into `user\cache_import\`. |
-| **Shader cache builder** | *Advanced > Build shader cache (world warper)*: the game travels through every lamp and area by itself (looks round, walks, changes armor and weapons, fights every kind of enemy, plays the cutscenes, day / evening / Blood Moon), on a copy of your save, then exports the cache `.zip`. Two to three hours; Stop and resume. [More](docs/SETTINGS.md#shader-cache-builder-world-warper) |
+| **Shader cache builder** | *Advanced / Debug > Shader cache builder > Build shader cache (world warper)*: the game travels through every lamp and area by itself (looks round, walks, changes armor and weapons, fights every kind of enemy, plays the cutscenes, day / evening / Blood Moon), on a copy of your save, then exports the cache `.zip`. Two to three hours; Stop and resume. Opt-in faster loading screens: `BB_FAST_LOADING=1` (3-8 % shorter, but the loading animation stops). [More](docs/SETTINGS.md#shader-cache-builder-world-warper) |
 | **Save safety** | Crash-safe saving, save checks at start, automatic backups in party play. |
 | **The Old Hunters** | DLC enabled automatically (its data ships with patch 1.09). |
 | **Mods and patches** | Loose-file mods and shadPS4-format XML patches, with load order. |
@@ -76,10 +77,13 @@ Saves and the shader cache are stored in `user\`. Settings are stored in `bbport
 |---|---|---|
 | Port settings | *System* in the game's menu | *System* in the game's menu |
 | Overlay menu (fallback) | `L3 + R3` (enable in launcher) | `Insert` |
-| Gestures / key items | Touchpad left / right half (Xbox pads: `Back` + d-pad left / right; `Back` alone the left half) | `Tab` / `Backspace` |
+| Gestures / key items | Touchpad left / right half (Xbox pads: `Back` + d-pad left / right; `Back` alone the left half) | `Tab` or `G` / `Backspace` |
+| Walk (hold while moving) | Push the stick part way | `Left Alt` |
 | Fullscreen | — | `Alt + Enter` |
 
-Mouse and keyboard, free camera, debug menu: [docs/SETTINGS.md](docs/SETTINGS.md).
+Button prompts follow the device you used last: your keys and mouse buttons, Xbox letters or Nintendo letters (PlayStation pads keep the game's icons). Launcher *Input & Audio > Button prompts* (or *System > Mouse & keyboard* in game) picks a set, e.g. *Nintendo* for an 8BitDo pad in X-input mode; button functions never change.
+
+Mouse and keyboard, button prompts, free camera, debug menu: [docs/SETTINGS.md](docs/SETTINGS.md).
 
 ## Party co-op
 
@@ -264,8 +268,8 @@ before anyone is in the game):
 - **Boss fights need the host's area.** A guest who travelled alone cannot start a boss fight
   where the host is not (the fog stays closed, with a message); if the host leaves during a fight,
   the guest is taken to the host with one loading screen.
-- **Up to 4 players** (host + 3), all in the host's world. With 3 guests, a guest does not yet see
-  the guests who joined after it.
+- **Up to 4 players** (host + 3), all in the host's world; every guest sees every other guest, and
+  anyone can leave and rejoin while the others play on.
 - **Same version for everyone.** A player whose bbport build, game files, patches, mods or party
   options differ is refused on joining; the message says what differs and what to do.
 - **Chalice dungeons together.** Guests join the host's dungeon; levers, doors, the layer boss, its
@@ -306,7 +310,9 @@ before anyone is in the game):
   each other, both ways, like invaders: the game's *System -> Friendly fire* page, the Insert menu's
   Party tab or the launcher's Party tab (host). Everyone gets a notice when it changes; guests see
   the host's setting on their page but cannot change it. A party kill is a normal party death (the
-  rot applies as for any death); the killer gets no Echoes or Insight from it.
+  rot applies as for any death); the killer gets no Echoes or Insight from it. Checked live with
+  three players: guests can hurt each other too, guns and thrown items hit (Poison Knives poison),
+  and a host killed by a guest goes through the party's normal host-death respawn.
 - **Party HUD.** Party members and events are shown in a small HUD; all party settings are on the
   *Party* pages of the game's *System* menu.
 
@@ -325,13 +331,25 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 
 | Change | Status |
 |---|---|
-| Item pickups and enemy drops per player: everyone gets their own (enemy drops: one shared roll, each player's own Item Discovery) | Done |
-| Every cutscene for the whole party (story cutscenes, endings and guest-triggered scenes already work) | In progress |
-| Joining during a boss fight or cutscene waits outside until it ends | Done: boss fights and cutscenes with every join path (bell, title join, direct summon; verified live), the Party status says why you wait |
-| With 3 guests, every guest sees every other guest | Done: all four join and see each other; any player can leave and rejoin while the others play on (verified live with 3 and 4 players) |
-| Chalice dungeons: deeper layers and the bottom lift lever checked in a party | Done: layer 2 and its boss, both lift levers (verified live); dungeons with floor bosses still to check |
-| PvP / friendly fire the host can switch on and off | Done (0.6.2) |
-| Pings: party members and marked spots visible through walls, with distance and player colours | Done (0.6.2) |
+| FSR 4 white or grey picture fixed | In progress: protective fixes built; the cause (FSR 4 with HDR on in Windows) is being confirmed |
+| Frame rate through game hooks: physics, running and timers correct at 60-144 FPS and uncapped | In progress (port of deadinside's 0.6-pre1 work) |
+| Guests load at the same time as the host on party travel (about 10-15 s less per trip) | Planned (seamless research, opt-in first) |
+| Host death the ERSC way: the host loads alone, guests play on | Planned (opt-in first; today the whole party reloads) |
+| Game-style fades instead of blinks for in-world moves and revives | Planned |
+| Sharper smoke and fog checked with every upscaler, HDR and 21:9 | In progress |
+| Shader cache builder: bosses, gestures and hunter tools; a fuller shared cache | In progress |
+| Fixes from Supermedo 1.8.2 (keyboard sprint through direction changes, exFAT / FAT32 drives, read-only game files, VRAM fallback on 4-8 GB cards) | In progress |
+| Upstream renderer and memory model: measured evaluation | In progress |
+| A long unattended two-player test before every release; party code cost per frame; a co-op guide page in the launcher | Planned |
+| A real two-PC Internet session on the current build | Needs players: see `docs/party/playtest2_checklist.md` |
+
+### Known issues
+
+- **FSR 4 can show a white or grey picture** on some PCs. The cause is under investigation (suspected:
+  FSR 4 with HDR turned on in Windows). Meanwhile switch to FSR 3.1, DLSS or no upscaler.
+- **Co-op on the current build was tested on one PC** (several game copies, simulated internet lag);
+  a real two-PC Internet session on 0.6.2 is still to come. Please send support bundles if something goes
+  wrong (see *Reporting a co-op bug*).
 
 ### Connecting over the internet
 
@@ -402,7 +420,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 
 | Who | What |
 |---|---|
-| deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors; Linux mouse look capture (via Mrsuss60); in 0.6.2 fixes from 0.6-pre1 (Supermedo/bloodborne_pc 72e5c8ce): idle VRAM copies released on 4 GB cards, NVIDIA start without DLSS, unresolved Vulkan commands, pipeline cache stages, write-trap race, occlusion pass scale, sampler anisotropy clamp; in 0.6.3 the frame rate by hooks in the game's code (deadinside, 0.6-pre1) |
+| deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors; Linux mouse look capture (via Mrsuss60); in 0.6.2 fixes from 0.6-pre1 (Supermedo/bloodborne_pc 72e5c8ce): idle VRAM copies released on 4 GB cards, NVIDIA start without DLSS, unresolved Vulkan commands, pipeline cache stages, write-trap race, occlusion pass scale, sampler anisotropy clamp; next release: button prompts for the keyboard, Xbox and Nintendo pads (72e5c8ce); the frame rate by hooks in the game's code (0.6-pre1) |
 | Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD; audio pop fix, paths with parentheses in `run.bat`, parallel `build.bat`; CPUs without FSGSBASE (Windows TLS fallback), driver pipeline binaries kept between sessions, more background shader compile threads; SnormNz crash fix (packed formats such as 11_11_10), texture collector never evicting bound targets or presented surfaces; stream buffer placement switch (`BB_STREAM_MEMORY`), no draw-queue wait at `SET_PREDICATION`; mouse sensitivity fix (stick dead zone compensation), in-game key rebinding, focus click not a game press |
 | shadPS4 team | Vulkan video core and shader recompiler (GPL-2.0+), sirit |
 | droogie and the bbhost team | Long-session stability fixes; menu button rows and the menu cursor's offsets; direct summon delivery; the Hunter's Dream mirror (appearance editor) ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |

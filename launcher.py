@@ -19,7 +19,7 @@ from tkinter import ttk, filedialog, messagebox
 
 APP_DIR = Path(__file__).resolve().parent
 # The port's version (VERSION at the repository root; the release has no such file).
-PORT_VERSION = "0.6.2"
+PORT_VERSION = "0.6.5"
 RUN_BAT = APP_DIR / "run.bat"
 LOG_FILE = APP_DIR / "launcher.log"
 LOG_DIR = APP_DIR / "logs"
@@ -43,9 +43,9 @@ ANISO_CHOICES = [
     ("Off", "0", "Game's default anisotropic filtering (no override)"),
 ]
 
-# Volumetric effects resolution (idea from a playtester): the game's half-resolution buffer of
-# smoke, mist and fog effects. "In-game setting" leaves bbport.ini's volumetric_res (the Display
-# page) alone; the others set BB_VOLUMETRIC_RES, which wins over it.
+# Motion blur resolution (0.6.2's "Volumetric effects"; idea from a playtester): the game's
+# half-resolution motion blur buffers. "In-game setting" leaves bbport.ini's volumetric_res (the
+# Display page) alone; the others set BB_VOLUMETRIC_RES, which wins over it.
 VOLUMETRIC_CHOICES = [
     ("In-game setting", ""),
     ("Game default (half)", "0"),
@@ -580,6 +580,8 @@ def settings_env(s: dict) -> dict:
     env["BB_PREUPLOAD"] = preupload if preupload in ("0", "2") else None
     # Frame and readback statistics into logs\<time>.frames.csv / .readbacks.csv
     env["BB_SAVE_LOG"] = "1" if on("feat_save_log", False) else "0"
+    # Sound timing log for crackle reports: late buffers, underruns, a summary per minute
+    env["BB_AUDIO_LOG"] = "1" if on("feat_audio_log", False) else "0"
     # Mute the game while its window is in the background
     env["BB_MUTE_UNFOCUSED"] = "1" if on("feat_mute_unfocused") else "0"
     # Mouse & keyboard controls (scheme from Mrsuss60/bloodborne_pc_windows_port): opt-in, and the
@@ -608,7 +610,7 @@ def settings_env(s: dict) -> dict:
     aniso_mapping = {c[0]: c[1] for c in ANISO_CHOICES}
     env["BB_ANISO"] = aniso_mapping.get(s.get("aniso", "16x"), "16")
 
-    # Volumetric effects resolution: only when chosen here (else the in-game setting counts)
+    # Motion blur resolution: only when chosen here (else the in-game setting counts)
     volumetric = dict(VOLUMETRIC_CHOICES).get(s.get("volumetric_res", VOLUMETRIC_CHOICES[0][0]), "")
     if volumetric:
         env["BB_VOLUMETRIC_RES"] = volumetric
@@ -690,6 +692,19 @@ FRAME_GENERATION_CHOICES = [
 
 # NVIDIA Reflex (same PR): bbport.ini reflex, Off by default. (label, value)
 REFLEX_CHOICES = [("Off", "off"), ("On", "on"), ("On + Boost", "boost")]
+
+
+# Button prompts (from deadinside28/bloodborne_pc 72e5c8ce): bbport.ini prompt_style, a game setting
+# (also in game: Mouse & keyboard page, Insert > Controls), live. (label, value)
+PROMPT_STYLE_CHOICES = [("Auto", "auto"), ("PlayStation", "playstation"), ("Xbox", "xbox"),
+                        ("Nintendo", "nintendo"), ("Keyboard", "keyboard")]
+
+
+def prompt_style_label(ini: dict) -> str:
+    value = str(ini.get("prompt_style", "auto")).strip().lower()
+    if value.isdigit() and int(value) < len(PROMPT_STYLE_CHOICES):
+        value = PROMPT_STYLE_CHOICES[int(value)][1]
+    return next((label for label, v in PROMPT_STYLE_CHOICES if v == value), PROMPT_STYLE_CHOICES[0][0])
 
 
 def reflex_label(ini: dict) -> str:
@@ -1554,6 +1569,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_game_menu = tk.BooleanVar(value=self.settings.get("feat_game_menu", True))
         self.feat_skip_network_choice = tk.BooleanVar(value=self.settings.get("feat_skip_network_choice", True))
         self.feat_save_log = tk.BooleanVar(value=self.settings.get("feat_save_log", False))
+        self.feat_audio_log = tk.BooleanVar(value=self.settings.get("feat_audio_log", False))
         _lvl = str(self.settings.get("party_log_level", "") or "")
         self.party_log_level_var = tk.StringVar(
             value=next((label for label, v in PARTY_LOG_LEVELS if v == _lvl), PARTY_LOG_LEVELS[0][0]))
@@ -1584,6 +1600,7 @@ class BloodborneLauncher(tk.Tk):
         # option: read from and written to bbport.ini directly.
         self.frame_generation_var = tk.StringVar(value=frame_generation_label(read_ini(bbport_ini_path())))
         self.reflex_var = tk.StringVar(value=reflex_label(read_ini(bbport_ini_path())))
+        self.prompt_style_var = tk.StringVar(value=prompt_style_label(read_ini(bbport_ini_path())))
         # HDR output: game settings too (bbport.ini hdr / hdr_peak_nits / hdr_paper_white).
         _ini = read_ini(bbport_ini_path())
         self.hdr_var = tk.BooleanVar(value=str(_ini.get("hdr", "0")).strip() not in ("", "0"))
@@ -1719,10 +1736,11 @@ class BloodborneLauncher(tk.Tk):
         self.aniso_desc_lbl.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(0, 2))
         sec.next_row += 1
         self.update_aniso_desc()
-        self._combo(sec, "Volumetric effects:", self.volumetric_var, [c[0] for c in VOLUMETRIC_CHOICES],
-                    "Resolution of the game's smoke, mist and fog effects buffer (half resolution in the "
-                    "game). 2x pixels / Full resolution: less blocky, some GPU cost. In-game setting: the "
-                    "System > Display page decides (BB_VOLUMETRIC_RES).", width=18)
+        self._combo(sec, "Motion blur resolution:", self.volumetric_var, [c[0] for c in VOLUMETRIC_CHOICES],
+                    "Resolution of the game's motion blur buffers (half resolution in the game): 2x pixels / "
+                    "Full resolution give the blur of moving characters finer edges, some GPU cost. Smoke and "
+                    "mist are full resolution already. In-game setting: the System > Display page decides "
+                    "(BB_VOLUMETRIC_RES).", width=18)
         # Upstream 0.51: NVIDIA's DLSS library chosen by the player (vk_dlss.cpp looks in
         # <user>/dlss first, then next to bbport.exe; the bridge bbport_dlss.dll stays next to it).
         dlss_row = ttk.Frame(sec, style="Card.TFrame")
@@ -1893,6 +1911,16 @@ class BloodborneLauncher(tk.Tk):
                     "dodge, E interact, R item, X Blood Vial... (full list in the settings dialog). "
                     "Replaces the classic keyboard layout while on; a gamepad keeps working. Can be "
                     "switched in game (Insert > Controls). Default: off (BB_MOUSE_KEYBOARD).")
+        prompt_combo = self._combo(
+            sec, "Button prompts:", self.prompt_style_var, [c[0] for c in PROMPT_STYLE_CHOICES],
+            "The icons in the game's button prompts and key guides. Auto (default): keys after "
+            "keyboard or mouse input, the gamepad's own buttons after gamepad input (PlayStation pads "
+            "keep the game's icons; Switch-style pads get Nintendo letters, others Xbox letters). "
+            "Pick Nintendo for a pad with Nintendo-printed buttons that reports as an Xbox pad (e.g. "
+            "an 8BitDo in X-input mode): only the letters change, the bottom button still confirms "
+            "and then shows B. Also in game (Insert > Controls); bbport.ini prompt_style, "
+            "BB_PROMPT_STYLE.", width=14)
+        prompt_combo.bind("<<ComboboxSelected>>", lambda e: self.save_prompt_style())
         mk_btn = ttk.Button(sec, text="Mouse & keyboard settings...", style="Secondary.TButton",
                             command=self.open_mk_dialog)
         mk_btn.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(4, 2))
@@ -1920,6 +1948,9 @@ class BloodborneLauncher(tk.Tk):
         self._check(sec, "Save frame stats to logs\\", self.feat_save_log,
                     "Writes frame and readback statistics to logs\\<time>.frames.csv / .readbacks.csv for "
                     "performance analysis. Default: off (BB_SAVE_LOG).")
+        self._check(sec, "Audio log (crackling sound)", self.feat_audio_log,
+                    "Logs late sound buffers, sound dropouts and a sound timing summary once a minute, "
+                    "for crackling or popping reports. At most one line a second. Default: off (BB_AUDIO_LOG).")
 
         sec = self._section(tab, 1, "Watchdog")
         self._check(sec, "Watchdog", self.feat_watchdog,
@@ -2322,6 +2353,15 @@ class BloodborneLauncher(tk.Tk):
             update_ini(bbport_ini_path(), values)
         except OSError as ex:
             self.log(f"[GRAPHICS] Could not save the frame generation setting to bbport.ini: {ex}")
+
+    def save_prompt_style(self):
+        """The Button prompts choice: bbport.ini prompt_style (a running game picks it up within a
+        second)."""
+        try:
+            update_ini(bbport_ini_path(),
+                       {"prompt_style": dict(PROMPT_STYLE_CHOICES).get(self.prompt_style_var.get(), "auto")})
+        except OSError as ex:
+            self.log(f"[INPUT] Could not save the button prompts setting to bbport.ini: {ex}")
 
     def save_hdr(self):
         """The HDR options: bbport.ini hdr / hdr_peak_nits / hdr_paper_white (next start)."""
@@ -3312,6 +3352,7 @@ class BloodborneLauncher(tk.Tk):
             "feat_game_menu": self.feat_game_menu.get(),
             "feat_skip_network_choice": self.feat_skip_network_choice.get(),
             "feat_save_log": self.feat_save_log.get(),
+            "feat_audio_log": self.feat_audio_log.get(),
             "feat_mute_unfocused": self.feat_mute_unfocused.get(),
             "feat_async_pipelines": self.feat_async_shaders.get(),
             "feat_gpl": self.feat_gpl.get(),

@@ -44,6 +44,7 @@
 #include "runtime.h"
 #include "gpu/bbgpu.h"
 #include "pad_bindings.h"
+#include "pad_prompts.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -247,12 +248,82 @@ static int is_preferred(SDL_JoystickID id, const char *want) {
     const char *name=SDL_GetGamepadNameForID(id);
     return !SDL_strcasecmp(guid,want) || (name && SDL_strcasestr(name,want));
 }
+/* Button prompts (src/pad_prompts.h; gpu/shim/bbport_button_prompts.cpp draws them; derived from
+ * deadinside28/bloodborne_pc 72e5c8ce): the set the game's key guide icons show. The device whose
+ * input came last decides keyboard or gamepad, the gamepad's SDL type (or bbport.ini prompt_style)
+ * its set. prompt_generation changes whenever the icons must be drawn again: the set, the pad type
+ * or the bindings changed. 0: nothing sampled yet (the game's icons). */
+static int prompt_set=-1, prompt_keyboard_last=-1;
+static SDL_GamepadType prompt_pad_type=SDL_GAMEPAD_TYPE_UNKNOWN;
+static unsigned prompt_generation;
+static int prompt_style(void) {
+    const int style=bbgpu_prompt_style();
+    return style>=0 && style<PROMPT_STYLE_COUNT ? style : PROMPT_STYLE_AUTO;
+}
+/* One line per gamepad connect: what SDL reports and the set it gets. */
+static void prompt_log_pad(SDL_Gamepad *g, const char *suffix) {
+    const SDL_GamepadType type=SDL_GetGamepadType(g);
+    const int style=prompt_style();
+    const int set=prompt_set_choose(style,0,type);
+    const char *type_name=SDL_GetGamepadStringForType(type);
+    printf("Runtime: gamepad connected: %s%s, VID:PID %04x:%04x, SDL type %s, button prompts %s%s\n",
+           SDL_GetGamepadName(g),suffix,(unsigned)SDL_GetGamepadVendor(g),(unsigned)SDL_GetGamepadProduct(g),
+           type_name ? type_name : "unknown",prompt_set_names[set],
+           style==PROMPT_STYLE_AUTO ? " (auto)" : " (prompt_style)");
+}
+/* Called once per sample (under lock): which device gave input (each 0/1, both 0: none). */
+static void prompt_note(SDL_Gamepad *g, int pad_active, int keyboard_active, int bindings_changed) {
+    int keyboard_last=prompt_keyboard_last;
+    if (keyboard_active) keyboard_last=1;
+    else if (pad_active) keyboard_last=0;
+    else if (keyboard_last<0) keyboard_last=g ? 0 : 1; /* before any input: a connected pad's set */
+    const SDL_GamepadType type=g ? SDL_GetGamepadType(g) : prompt_pad_type;
+    const int set=prompt_set_choose(prompt_style(),keyboard_last,type);
+    if (set!=prompt_set || type!=prompt_pad_type || bindings_changed || !prompt_generation) {
+        if (set!=prompt_set && prompt_set>=0) printf("Runtime: button prompts: %s\n",prompt_set_names[set]);
+        prompt_set=set;
+        prompt_pad_type=type;
+        __atomic_add_fetch(&prompt_generation,1,__ATOMIC_RELAXED);
+    }
+    prompt_keyboard_last=keyboard_last;
+}
+static int stick_moved(uint8_t v) { return v<128-48 || v>128+48; }
+/* BB_PAD_FILE's input (read_inject below): buttons and sticks of a scripted pad, and keyhold=
+ * keys held on a scripted keyboard. */
+static struct { uint32_t buttons; int stick[4]; int touch_side; } injected={0,{-1,-1,-1,-1},-1};
+#define KEY_INJECT_MAX 8
+static int key_inject[KEY_INJECT_MAX], key_inject_count;
+
 /* The chosen gamepad, else the first while it is not connected (checked again every second, it
  * is taken as soon as it connects); called under lock. */
+/* BB_VIRTUAL_PAD=VID:PID (hex; test aid): an SDL virtual gamepad with that USB id, never pressed,
+ * so a run without that pad has its SDL type (button prompts' Auto set) while BB_PAD_FILE gives the
+ * input. With SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT=0xVID/0xPID real pads stay out of the run. */
+static void attach_virtual_pad(void) {
+    static int done;
+    if (done) return;
+    done=1;
+    const char *v=getenv("BB_VIRTUAL_PAD");
+    unsigned vid=0, pid=0;
+    if (!v || sscanf(v,"%x:%x",&vid,&pid)!=2) return;
+    SDL_VirtualJoystickDesc desc;
+    SDL_INIT_INTERFACE(&desc);
+    desc.type=SDL_JOYSTICK_TYPE_GAMEPAD;
+    desc.naxes=SDL_GAMEPAD_AXIS_COUNT;
+    desc.nbuttons=SDL_GAMEPAD_BUTTON_COUNT;
+    desc.button_mask=(1u<<SDL_GAMEPAD_BUTTON_COUNT)-1;
+    desc.axis_mask=(1u<<SDL_GAMEPAD_AXIS_COUNT)-1;
+    desc.name="bbport virtual pad";
+    desc.vendor_id=(Uint16)vid;
+    desc.product_id=(Uint16)pid;
+    const SDL_JoystickID id=SDL_AttachVirtualJoystick(&desc);
+    printf("Runtime: virtual gamepad %04x:%04x (BB_VIRTUAL_PAD): %s\n",vid,pid,id ? "attached" : SDL_GetError());
+}
 static SDL_Gamepad *current_gamepad(void) {
     static int on_preferred; static uint64_t last_scan;
     if (!sdl_ready) sdl_ready = SDL_WasInit(SDL_INIT_GAMEPAD) ? 1 : SDL_InitSubSystem(SDL_INIT_GAMEPAD) ? 1 : -1;
     if (sdl_ready<0) return NULL;
+    attach_virtual_pad();
     if (gamepad && !SDL_GamepadConnected(gamepad)) { SDL_CloseGamepad(gamepad); gamepad=NULL; }
     const char *want=preferred_gamepad();
     const uint64_t now=now_us();
@@ -269,8 +340,7 @@ static SDL_Gamepad *current_gamepad(void) {
             on_preferred=want && gamepad && is_preferred(ids[pick],want);
             if (gamepad) {
                 ++connected_count;
-                printf("Runtime: gamepad connected: %s%s\n",SDL_GetGamepadName(gamepad),
-                       !want ? "" : on_preferred ? " (the chosen one)" : " (the chosen one is not connected)");
+                prompt_log_pad(gamepad,!want ? "" : on_preferred ? " (the chosen one)" : " (the chosen one is not connected)");
             }
         }
         SDL_free(ids);
@@ -302,7 +372,7 @@ static void report_guest_heap(void) {
  * key.<input>=<SDL key names> and pad.<input>=<SDL gamepad button names>, comma-separated,
  * replace an input's binding (empty: unbound). Inputs: the buttons (cross ... right, touchpad =
  * a left-side click, touchpad_right), and on the keyboard the sticks: move_* (left), look_*
- * (right). Gamepad names as SDL's: a b x y back start leftstick rightstick leftshoulder
+ * (right), and walk (held: the move stick at a walk). Gamepad names as SDL's: a b x y back start leftstick rightstick leftshoulder
  * rightshoulder dpup dpdown dpleft dpright touchpad misc1 paddle1-4, plus lefttrigger and
  * righttrigger. The keyboard works next to a gamepad (the Steam Deck always has one): its buttons
  * add to the gamepad's, a held move/look key moves the stick all the way. */
@@ -551,6 +621,14 @@ static int key_stick_step(KeyStickState *s, int dx, int dy, uint64_t now, int *o
     *oy=s->held_y=y<-127 ? -127 : y>127 ? 127 : y;
     return 1;
 }
+/* The walk key (IN_WALK, key.walk=, Left Alt by default; after Mrsuss60/bloodborne_pc_windows_port
+ * 5e029181 by HatsyRei, who used 48): while it is held the keyboard's move stick keeps its angle
+ * but its larger axis is KEY_STICK_WALK instead of 127, so the hunter walks. Measured in game
+ * (2026-10-17, Hunter's Dream, one session, the left stick forward/back for 10 s each): 40 does not
+ * move (the dead zone), 48 to 115 all walk at about 1.5 m/s, 127 runs at 3.2-3.6 m/s. 64 is well
+ * clear of both ends. No PS4 button. */
+#define KEY_STICK_WALK 64
+static int key_stick_walk(int v) { return (int)lround((double)v*KEY_STICK_WALK/127.0); }
 static void apply_keyboard(PadData *d, const bool *k) {
     for (int i=IN_CROSS;i<=IN_RIGHT;++i)
         if (i!=IN_TOUCHPAD && i!=IN_TOUCHPAD_RIGHT && key_down(k,i)) d->buttons|=input_buttons[i];
@@ -562,6 +640,7 @@ static void apply_keyboard(PadData *d, const bool *k) {
     const int ly=key_direction(&key_axes[1],key_down(k,IN_MOVE_UP),key_down(k,IN_MOVE_DOWN));
     int sx, sy;
     if (key_stick_step(&key_move_stick,lx,ly,now_us(),&sx,&sy)) {
+        if (key_down(k,IN_WALK)) { sx=key_stick_walk(sx); sy=key_stick_walk(sy); }
         /* All the way is 0 / 255, as key_axis gives the other sticks. */
         d->left_x=(uint8_t)(sx<=-127 ? 0 : sx>=127 ? 255 : 128+sx);
         d->left_y=(uint8_t)(sy<=-127 ? 0 : sy>=127 ? 255 : 128+sy);
@@ -696,7 +775,9 @@ static void sample_host(PadData *d) {
     if (!mk) { look_x=look_y=0.0f; look_last=0; }
     else if (consume) look_last=now;
     static int bindings_generation;
+    int bindings_changed=0;
     if (bindings_mode!=mk || mouse.bindings_generation!=bindings_generation) {
+        bindings_changed=1;
         bindings_generation=mouse.bindings_generation;
         load_bindings(mk);
         note_mouse_bindings();
@@ -706,9 +787,18 @@ static void sample_host(PadData *d) {
         bindings_mode=mk;
     }
     if (bbgpu_overlay_captures_input() || bbgpu_text_input_is_active()) { /* settings menu open or typing: neutral input */
-        look_x=look_y=0.0f; mouse_held=0; mouse_wheel_reset(); return;
+        look_x=look_y=0.0f; mouse_held=0; mouse_wheel_reset();
+        prompt_note(g,0,0,bindings_changed); /* a key rebound in the menu: its prompt now */
+        return;
     }
     const bool *k=SDL_WasInit(SDL_INIT_VIDEO) ? SDL_GetKeyboardState(NULL) : NULL;
+    /* BB_PAD_FILE keyhold= keys: held as if pressed on the keyboard (bindings, prompts). */
+    static bool key_state[SDL_SCANCODE_COUNT];
+    if (key_inject_count) {
+        if (k) memcpy(key_state,k,sizeof key_state); else memset(key_state,0,sizeof key_state);
+        for (int i=0;i<key_inject_count;++i) key_state[key_inject[i]]=true;
+        k=key_state;
+    }
     if (mk) mouse_test_input(&mouse,consume,dt);
     mouse_held=mk ? mouse.buttons : 0;
     if (mk && mouse.wheel) mouse_wheel_step(now,mouse.wheel_up,mouse.wheel_down);
@@ -769,6 +859,18 @@ static void sample_host(PadData *d) {
         if ((d->buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d,0);
         if (touch_right) touch_click(d,1);
     }
+    /* Button prompts: the device used last (a scripted pad file's buttons and sticks are the pad's). */
+    {
+        int pad_active=(g && (d->buttons || d->l2>30 || d->r2>30 || d->touch_count ||
+                              stick_moved(d->left_x) || stick_moved(d->left_y) ||
+                              stick_moved(d->right_x) || stick_moved(d->right_y))) || injected.buttons;
+        for (int i=0;i<4;++i) pad_active|=injected.stick[i]>=0 && stick_moved((uint8_t)injected.stick[i]);
+        int keyboard_active=mk && (mouse.buttons || mouse.wheel_up || mouse.wheel_down ||
+                                   mouse.dx*mouse.dx+mouse.dy*mouse.dy>4.0f);
+        /* The walk key alone (Alt, as in Alt+Tab) moves nothing: the prompts stay. */
+        for (int i=0;i<IN_COUNT && !keyboard_active;++i) keyboard_active=i!=IN_WALK && key_down(k,i);
+        prompt_note(g,pad_active,keyboard_active,bindings_changed);
+    }
     if (mk) sample_mouse(d,&mouse,consume,dt,k);
     /* Alt+Enter toggles fullscreen (window.cpp): its Enter is not the game's Cross. The bound
      * mouse buttons and the wheel count without a keyboard state too. */
@@ -781,7 +883,6 @@ static void sample_host(PadData *d) {
  * options touchpad touchpad_left touchpad_right up down left right) are held while listed;
  * touchpad defaults to a left-side click; lx= ly= rx= ry= (0..255) override
  * the sticks. An empty file releases everything. */
-static struct { uint32_t buttons; int stick[4]; int touch_side; } injected={0,{-1,-1,-1,-1},-1};
 /* runtime_pad_director_press: buttons the party director holds (title "Continue" on its own, no
  * OS input); OR-ed into every sample like the pad file's. */
 static volatile uint32_t director_buttons;
@@ -842,6 +943,7 @@ static void read_inject(void) {
     mouse_inject.buttons=0;
     injected.buttons=0;
     injected.touch_side=-1;
+    key_inject_count=0;
     for (int i=0;i<4;++i) injected.stick[i]=-1;
     char token[64];
     while (fscanf(f,"%63s",token)==1) {
@@ -861,6 +963,15 @@ static void read_inject(void) {
         }
         if (!strcmp(token,"wheel_up")) ++mouse_inject.wheel_up;
         if (!strcmp(token,"wheel_down")) ++mouse_inject.wheel_down;
+        /* keyhold=NAME: a binding line's key name (Space; Left_Shift for Left Shift; rshift) held
+         * on the keyboard while listed, through the bindings like a real key (prompt tests). */
+        if (!strncmp(token,"keyhold=",8)) {
+            char name[64]; snprintf(name,sizeof name,"%s",token+8);
+            for (char *c=name;*c;++c) if (*c=='_') *c=' ';
+            const int sc=key_from_name(name);
+            if (sc<0 || sc>=SDL_SCANCODE_COUNT) printf("Runtime: pad file: unknown key %s\n",name);
+            else if (key_inject_count<KEY_INJECT_MAX) key_inject[key_inject_count++]=sc;
+        }
         /* key=NAME: a key press queued into the game window (the overlay menu: key=Insert). */
         if (!strncmp(token,"key=",4) && !bbgpu_test_key(token+4)) printf("Runtime: pad file: unknown key %s\n",token+4);
     }
@@ -868,8 +979,8 @@ static void read_inject(void) {
     if (mouse_inject.rate_x!=0.0f || mouse_inject.rate_y!=0.0f || mouse_inject.buttons)
         printf("Runtime: pad file: mouse %.0f,%.0f px/s buttons 0x%x\n",mouse_inject.rate_x,mouse_inject.rate_y,
                mouse_inject.buttons);
-    printf("Runtime: pad file: buttons 0x%x sticks %d %d %d %d\n",injected.buttons,
-           injected.stick[0],injected.stick[1],injected.stick[2],injected.stick[3]);
+    printf("Runtime: pad file: buttons 0x%x sticks %d %d %d %d keys %d\n",injected.buttons,
+           injected.stick[0],injected.stick[1],injected.stick[2],injected.stick[3],key_inject_count);
 }
 /* BB_PAD_RECORD=<file>: F9 starts and stops recording the pad state (gamepad or keyboard) with
  * the time since F9; BB_PAD_REPLAY=<file> plays such a recording back, started by the token
@@ -1021,6 +1132,62 @@ static void sample(PadData *d) {
     if (director_buttons & BTN_R2) d->r2=255;
     for (int i=0;i<4;++i) { const int v=director_stick[i]; if (v>=0) *axes[i]=(uint8_t)(v>255 ? 255 : v); }
     touch_ids(d);
+}
+
+/* Button prompts, asked by the renderer's thread (gpu/shim/bbport_button_prompts.cpp). */
+unsigned runtime_pad_prompt_generation(void) { return __atomic_load_n(&prompt_generation,__ATOMIC_RELAXED); }
+/* The set shown (PROMPT_SET_*), -1 before the first sample. */
+int runtime_pad_prompt_set(void) { return __atomic_load_n(&prompt_set,__ATOMIC_RELAXED); }
+/* Mouse & keyboard mode: the mouse turns the camera (the right stick's prompt is the mouse). */
+int runtime_pad_mouse_look(void) { return __atomic_load_n(&bindings_mode,__ATOMIC_RELAXED)==1; }
+/* The prompt of PS input `name` (input_names: cross ... look_right) in the set shown: its label
+ * (UTF-8) in `label`, the kind as returned (pad_prompts.h: 0 the game's icon, 'K' 'M' 'F' 'S'
+ * 'C'). `single`: an icon of one input (a mouse button may stand for it); 0 for a key cluster
+ * (the d-pad's or a stick's keys). Mouse & keyboard mode's mouse scheme (sample_mouse) counts
+ * for the buttons it drives: Left R1, Shift+Left R2, Right L2, Shift+Right L1, Middle R3. */
+int runtime_pad_prompt(const char *name, int single, char *label, int size) {
+    if (!name || !label || size<8) return 0;
+    label[0]=0;
+    int input=-1;
+    for (int i=0;i<IN_COUNT;++i) if (!strcmp(name,input_names[i])) input=i;
+    if (input<0) return 0;
+    host_lock(&lock);
+    const int set=prompt_set, mk=bindings_mode==1, loaded=bindings_mode>=0;
+    const SDL_GamepadType type=prompt_pad_type;
+    const Binding b=bindings[input];
+    const uint32_t mouse_bound=mouse_bound_mask;
+    host_unlock(&lock);
+    if (!loaded || set<0 || set==PROMPT_SET_PLAYSTATION) return 0;
+    if (set!=PROMPT_SET_KEYBOARD) {
+        if (input==IN_WALK) return 0; /* a keyboard-only input */
+        if (input>=IN_MOVE_UP) { snprintf(label,(size_t)size,"%s",input<IN_LOOK_UP ? "LS" : "RS"); return 'C'; }
+        if (b.pad_count==0) return 0;
+        return prompt_pad_label(set,type,b.pad[0],label,size);
+    }
+    /* The keyboard: with mouse & keyboard mode a mouse button first (the hand is on it). */
+    if (single && mk) {
+        for (int i=0;i<b.key_count;++i)
+            if (b.keys[i]>=MOUSE_KEY) {
+                const char *n=key_name(b.keys[i]);
+                snprintf(label,(size_t)size,"%s",!strncmp(n,"Mouse ",6) ? n+6 : n);
+                return 'M';
+            }
+        static const struct { int input; uint32_t bit; const char *label; } scheme[]={
+            {IN_R1,1u,"Left"}, {IN_R2,1u,"\xe2\x87\xa7Left"}, {IN_L2,2u,"Right"},
+            {IN_L1,2u,"\xe2\x87\xa7Right"}, {IN_R3,4u,"Middle"},
+        };
+        for (size_t i=0;i<sizeof(scheme)/sizeof(*scheme);++i)
+            if (scheme[i].input==input && !(mouse_bound & scheme[i].bit)) {
+                snprintf(label,(size_t)size,"%s",scheme[i].label);
+                return 'M';
+            }
+    }
+    for (int i=0;i<b.key_count;++i)
+        if (b.keys[i]<MOUSE_KEY) {
+            prompt_key_label(key_name(b.keys[i]),label,size);
+            return 'K';
+        }
+    return 0;
 }
 
 static ABI int32_t pad_init(void) { host_lock(&lock); initialized=1; host_unlock(&lock); return 0; }

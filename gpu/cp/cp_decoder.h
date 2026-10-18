@@ -151,6 +151,8 @@ public:
 struct DecodeStats {
     u64 packets = 0, draws = 0, dispatches = 0, indirect_buffers = 0, register_packets = 0;
     u64 filler = 0, bad = 0;
+    /// Zero dwords skipped as padding (a run ending a buffer counts once).
+    u64 zero_padding = 0;
     std::array<u64, 256> by_opcode{};
 };
 

@@ -15,6 +15,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <mmsystem.h>
+#include <tlhelp32.h>
 #include "win32_exception.h"
 #if defined(__GNUC__) || defined(__clang__)
 #include <cpuid.h>
@@ -1086,6 +1087,18 @@ static void start_crash_reaper(void) {
     }
 }
 
+/* Host address -> "module.dll+0xoff" (crash dumps only), or 0 outside any loaded module. */
+static int resolve_host_address(uintptr_t a, char *out, size_t n) {
+    HMODULE mod = NULL;
+    char path[MAX_PATH];
+    if (a < 0x10000 || !GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                           GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)a, &mod) ||
+        !GetModuleFileNameA(mod, path, sizeof(path))) return 0;
+    const char *name = strrchr(path, '\\');
+    snprintf(out, n, "%s+0x%" PRIxPTR, name ? name + 1 : path, a - (uintptr_t)mod);
+    return 1;
+}
+
 static void write_crash_dump(EXCEPTION_POINTERS *ep, void *fault_addr, uintptr_t rip, DWORD code) {
     char crash_path[MAX_PATH];
     SYSTEMTIME st;
@@ -1104,8 +1117,16 @@ static void write_crash_dump(EXCEPTION_POINTERS *ep, void *fault_addr, uintptr_t
     fprintf(f, "================================================================================\n\n");
     fprintf(f, "Exception Code: 0x%08lx\n", code);
     fprintf(f, "Fault Address:  %p\n", fault_addr);
+    const EXCEPTION_RECORD *er = ep->ExceptionRecord;
+    if ((code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_IN_PAGE_ERROR) && er->NumberParameters >= 2) {
+        const ULONG_PTR kind = er->ExceptionInformation[0];
+        fprintf(f, "Access:         %s of %p\n", kind == 0 ? "READ" : kind == 1 ? "WRITE" : kind == 8 ? "DEP-EXECUTE" : "?",
+                (void *)er->ExceptionInformation[1]);
+    }
+    char host_loc[MAX_PATH + 32];
     if (off) fprintf(f, "Faulting RIP:   %p (guest eboot.bin offset 0x%" PRIxPTR ")\n\n", (void *)rip, off);
-    else fprintf(f, "Faulting RIP:   %p (host address)\n\n", (void *)rip);
+    else if (resolve_host_address(rip, host_loc, sizeof(host_loc))) fprintf(f, "Faulting RIP:   %p (%s)\n\n", (void *)rip, host_loc);
+    else fprintf(f, "Faulting RIP:   %p (host address, no module)\n\n", (void *)rip);
 
     CONTEXT *c = ep->ContextRecord;
     fprintf(f, "--- REGISTERS ---\n");
@@ -1140,7 +1161,7 @@ static void write_crash_dump(EXCEPTION_POINTERS *ep, void *fault_addr, uintptr_t
                         }
                     }
                     if (!found_mod) snprintf(loc, sizeof(loc), "guest eboot.bin +0x%" PRIxPTR, val_off);
-                } else {
+                } else if (!resolve_host_address(val, loc, sizeof(loc))) {
                     snprintf(loc, sizeof(loc), "host / stack data");
                 }
                 fprintf(f, "  [frame +0x%02x] %016llx (%s)\n", i * 8, (unsigned long long)val, loc);
@@ -1160,7 +1181,7 @@ static void write_crash_dump(EXCEPTION_POINTERS *ep, void *fault_addr, uintptr_t
         if (ret_addr >= (uintptr_t)image && ret_addr < (uintptr_t)image + (image_size ? image_size : 0x20000000)) {
             uintptr_t val_off = ret_addr - (uintptr_t)image;
             snprintf(loc, sizeof(loc), "guest eboot.bin +0x%" PRIxPTR, val_off);
-        } else {
+        } else if (!resolve_host_address(ret_addr, loc, sizeof(loc))) {
             snprintf(loc, sizeof(loc), "host %p", (void *)ret_addr);
         }
         fprintf(f, "  [rbp frame %2d] ret=%016llx (%s)\n", frame, (unsigned long long)ret_addr, loc);
@@ -1187,6 +1208,19 @@ static void write_crash_dump(EXCEPTION_POINTERS *ep, void *fault_addr, uintptr_t
     runtime_memory_dump_recent_ops(f);
     if (gpu_enabled) bbgpu_dump_breadcrumbs(f);
     fflush(f);
+    /* Last: a snapshot can block on the loader lock (the reaper still ends the process). */
+    fprintf(f, "\n--- LOADED MODULES ---\n");
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0);
+    if (snap != INVALID_HANDLE_VALUE) {
+        MODULEENTRY32 me = {.dwSize = sizeof(me)};
+        for (BOOL ok = Module32First(snap, &me); ok; ok = Module32Next(snap, &me))
+            fprintf(f, "  %016llx-%016llx %-28s %8lu KiB %s\n", (unsigned long long)(uintptr_t)me.modBaseAddr,
+                    (unsigned long long)((uintptr_t)me.modBaseAddr + me.modBaseSize), me.szModule,
+                    (unsigned long)(me.modBaseSize >> 10), me.szExePath);
+        CloseHandle(snap);
+    } else {
+        fprintf(f, "  (snapshot failed: %lu)\n", (unsigned long)GetLastError());
+    }
     fclose(f);
     char note[256];
     snprintf(note, sizeof(note), "Crash details written to %s\n", crash_path);
@@ -1198,16 +1232,8 @@ static LONG WINAPI win_veh_handler(EXCEPTION_POINTERS *ep) {
     if (code == EXCEPTION_ACCESS_VIOLATION) {
         void *fault_addr = (void *)ep->ExceptionRecord->ExceptionInformation[1];
         uintptr_t rip = ep->ContextRecord->Rip;
-        // Save the 128-byte System V AMD64 Red Zone [RSP-128 .. RSP] before any handler runs.
-        // Windows kernel exception dispatch (KiUserExceptionDispatch) pushes its frame below RSP,
-        // which clobbers variables (like -0x60(%rsp)) used by PS4 guest functions.
-        char red_zone_backup[128];
-        uintptr_t red_zone_rsp = ep->ContextRecord->Rsp;
-        int has_red_zone = 0;
-        if (red_zone_rsp >= 128 && red_zone_rsp < (1ULL << 46)) {
-            memcpy(red_zone_backup, (void *)(red_zone_rsp - 128), 128);
-            has_red_zone = 1;
-        }
+        /* No red-zone backup here: the kernel built this exception's frame below RSP before
+         * the handler ran, so the guest's red zone is already gone (Mrsuss60 2ab6fe7a). */
 
         unsigned char *ip = (unsigned char *)rip;
         if (rip >= 0x10000 && !IsBadReadPtr((const void *)rip, 1) && ip[0] == 0x64) {
@@ -1224,31 +1250,42 @@ static LONG WINAPI win_veh_handler(EXCEPTION_POINTERS *ep) {
                 }
                 /* Without FSGSBASE any other fs: access would fault here again forever: it
                  * goes on to the crash report instead. */
-                if (handled) {
-                    if (has_red_zone) memcpy((void *)(red_zone_rsp - 128), red_zone_backup, 128);
-                    return EXCEPTION_CONTINUE_EXECUTION;
-                }
+                if (handled) return EXCEPTION_CONTINUE_EXECUTION;
             }
         }
-        if (gpu_enabled && bbgpu_handle_fault(ep, fault_addr)) {
-            if (has_red_zone) memcpy((void *)(red_zone_rsp - 128), red_zone_backup, 128);
-            return EXCEPTION_CONTINUE_EXECUTION;
-        }
+        if (gpu_enabled && bbgpu_handle_fault(ep, fault_addr)) return EXCEPTION_CONTINUE_EXECUTION;
         if (rip >= (uintptr_t)image && rip < (uintptr_t)image + (image_size ? image_size : 0x20000000)) {
             uintptr_t off = rip - (uintptr_t)image;
-            // Function 0x28ce7b0 is the particle/blood stream vertex generator.
-            // On Windows, if VRAM pressure or page-tracking clobbers its System V Red Zone (-0x60(%rsp)),
-            // or if vertex stream pointers are uninitialized, safely unroll the frame and return to caller.
-            if (off >= 0x28ce7ba && off < 0x28ceeb8) {
-                uintptr_t rsp = ep->ContextRecord->Rsp;
-                ep->ContextRecord->Rbx = *(DWORD64 *)(rsp + 0x30);
-                ep->ContextRecord->R12 = *(DWORD64 *)(rsp + 0x38);
-                ep->ContextRecord->R13 = *(DWORD64 *)(rsp + 0x40);
-                ep->ContextRecord->R14 = *(DWORD64 *)(rsp + 0x48);
-                ep->ContextRecord->R15 = *(DWORD64 *)(rsp + 0x50);
-                ep->ContextRecord->Rbp = *(DWORD64 *)(rsp + 0x58);
-                ep->ContextRecord->Rip = *(DWORD64 *)(rsp + 0x60);
-                ep->ContextRecord->Rsp = rsp + 0x68;
+            /* The effect-ribbon vertex writers keep their pointers in the SysV red zone, which a
+             * GPU write-watch fault's frame overwrites on Windows; the next point then reads through
+             * a null pointer. bbport_ribbons.cpp replaces the first two (BB_RIBBON_FIX); the other
+             * two (called from 0x2ab4ad0) have no replacement yet. All four are leaf functions
+             * (six pushes, then `frame` bytes) whose callers return right after them: on such a
+             * fault, return to the caller and the strip stays unfinished for this frame.
+             * From Mrsuss60/bloodborne_pc_windows_port 2ab6fe7a; frames checked on the 1.09 eboot. */
+            static const struct { uintptr_t from, to, frame; } ribbon_leaf[] = {
+                {0x28ce7be, 0x28ceeb8, 0x30}, {0x28ceece, 0x28cf572, 0x20},
+                {0x28cf58b, 0x28cfb95, 0x08}, {0x28cfbae, 0x28d015e, 0x18},
+            };
+            for (size_t i = 0; i < sizeof ribbon_leaf / sizeof ribbon_leaf[0]; ++i) {
+                if (off < ribbon_leaf[i].from || off >= ribbon_leaf[i].to) continue;
+                const uintptr_t rsp = ep->ContextRecord->Rsp, f = ribbon_leaf[i].frame;
+                ep->ContextRecord->Rbx = *(DWORD64 *)(rsp + f);
+                ep->ContextRecord->R12 = *(DWORD64 *)(rsp + f + 0x08);
+                ep->ContextRecord->R13 = *(DWORD64 *)(rsp + f + 0x10);
+                ep->ContextRecord->R14 = *(DWORD64 *)(rsp + f + 0x18);
+                ep->ContextRecord->R15 = *(DWORD64 *)(rsp + f + 0x20);
+                ep->ContextRecord->Rbp = *(DWORD64 *)(rsp + f + 0x28);
+                ep->ContextRecord->Rip = *(DWORD64 *)(rsp + f + 0x30);
+                ep->ContextRecord->Rsp = rsp + f + 0x38;
+                static volatile LONG hits;
+                const LONG n = InterlockedIncrement(&hits);
+                if (n <= 5 || (n & (n - 1)) == 0) { /* first 5, then at powers of two */
+                    char line[160];
+                    snprintf(line, sizeof line, "Runtime: effect ribbon writer +0x%llx faulted (red zone lost), strip skipped (%ld so far)\n",
+                             (unsigned long long)off, (long)n);
+                    veh_write(line);
+                }
                 return EXCEPTION_CONTINUE_EXECUTION;
             }
         }

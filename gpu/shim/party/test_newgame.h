@@ -115,6 +115,7 @@ private:
 /// text in 3 s -> skipped without a press (a first-time tutorial message). A '+' prefix waits for any
 /// new screen (TextActivity; 8 s at most). Each press is held 0.12 s (menus auto-repeat a held
 /// direction: 0.25 s moved a 2-item dialog twice), the next one no sooner than 1 s after it.
+/// l1 / r1: the shoulder buttons (a menu's tabs, e.g. the chalice ritual's families).
 /// Also (the party flow's live walk, tools/mp/flow_live.py): options; mark=NAME (a 2.5 s pause
 /// named in the log: a screenshot point); type=TEXT / enter / esc (TEXT typed into the open text
 /// box, or Enter / Esc there, in-process by the caller: TakeTyped, "\n" = Enter, "\x1b" = Esc). A

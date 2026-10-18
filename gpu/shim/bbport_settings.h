@@ -30,6 +30,12 @@ int ParseFgBackend(const char* value);
 enum ReflexMode : int { ReflexOff = 0, ReflexOn = 1, ReflexBoost = 2, ReflexModeCount };
 const char* ReflexModeName(int mode);
 int ParseReflex(const char* value);
+/// Button prompts' icon set (src/pad_prompts.h PROMPT_STYLE_*): Auto (the device used last and the
+/// gamepad's type), or one set: PlayStation, Xbox, Nintendo (the gamepad's prompts), Keyboard.
+enum PromptStyle : int { PromptAuto = 0, PromptPlayStation, PromptXbox, PromptNintendo, PromptKeyboard,
+                         PromptStyleCount };
+const char* PromptStyleName(int style);
+int ParsePromptStyle(const char* value);
 enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerformance, PresetCount };
 enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugMotion = 2, DebugViewCount };
 enum class MenuLanguage { English, Russian };
@@ -123,6 +129,8 @@ struct Values {
     std::atomic<bool> mk_wheel{true};
     /// Mouse turns the camera directly (1:1, no stick deadzone/curve; window.cpp, bloodborne_cam)
     std::atomic<bool> mk_direct_camera{false};
+    /// Button prompts (bbport.ini prompt_style, BB_PROMPT_STYLE, menus; live): PromptStyle.
+    std::atomic<int> prompt_style{PromptAuto};
     /// The settings menu's position (fraction of the screen), -1 until it is moved.
     std::atomic<float> menu_x{-1.0f}, menu_y{-1.0f};
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.
@@ -132,8 +140,8 @@ struct Values {
     /// Applied at start (patches.py); the menu shows when a restart is needed.
     std::atomic<bool> effects[EffectCount]{};
     std::atomic<int> model_lod{0}; ///< -2 highest .. 2 lowest, 0 the game's
-    /// Volumetric effects resolution (smoke, mist, fog sprites: the game's half-resolution effect
-    /// buffer; volumetric_resolution.h; idea from a playtester): 0 game default, 1 = 2x the
+    /// Motion blur resolution (0.6.2's "Volumetric effects"; the game's half-resolution motion blur
+    /// buffers; volumetric_resolution.h; idea from a playtester): 0 game default, 1 = 2x the
     /// pixels, 2 = the scene's resolution (ini volumetric_res, BB_VOLUMETRIC_RES). Live.
     std::atomic<int> volumetric_res{0};
     std::atomic<int> output_res{OutputDefault}; ///< index into OutputWidths
@@ -282,7 +290,7 @@ void WriteBindingLines(const std::vector<std::pair<std::string, std::optional<st
 int BindingsGeneration();
 /// Window thread, about once a second: when the file changed on disk since it was last read or
 /// written (the launcher's mouse & keyboard dialog while the game runs), re-reads the mouse
-/// tuning keys (mk_sens_*, mk_invert_*, mk_deadzone, mk_smoothing, mk_wheel) only.
+/// tuning keys (mk_sens_*, mk_invert_*, mk_deadzone, mk_smoothing, mk_wheel) and prompt_style only.
 void ReloadMouseTuning();
 
 /// The peak brightness the HDR curve uses now (setting, else the display's, else 1000).

@@ -187,6 +187,82 @@ int main() {
     CHECK(!ItemEffectAllowed(1600, 3400) && !ItemEffectAllowed(4320, 4685) && ItemEffectAllowed(1300, 2200));
     CHECK(Seconds(GearSteps()) < 45.0f);
 
+    // The cutscene pass: unplayed cutscenes with a row of their map, rows taking turns, tries capped.
+    {
+        const std::vector<std::uint32_t> tour = {2102950, 2402950, 2402951, 2412950};
+        Progress p = ParseProgress("remo 24000000\nremook 24000000\nremo 24000020\nremo 24000030\nremo 24000030\n");
+        CHECK(p.remos_ok.count(24000000) && p.remo_tries[24000030] == 2 && p.remo_tries[24000020] == 1);
+        const auto r = CutsceneRoute(tour, {24000000, 24000020, 24000030, 24000060, 21000010, 36000000}, p);
+        // 24000000 played, 24000030 tried twice, 36000000 has no row: 24000020, 24000060, 21000010.
+        CHECK(r.size() == 3);
+        CHECK(r[0].second == 24000020 && r[0].first == 2402951);  // tried once: the map's next row
+        CHECK(r[1].second == 24000060 && r[1].first == 2402951);  // the map's 2nd cutscene: 2nd row
+        CHECK(r[2].second == 21000010 && r[2].first == 2102950);
+        const Options o = ParseOptions("tour,remoonly,remos=24000020+21000010,remoskip=20");
+        CHECK(o.remo_only && o.remo && o.remos.size() == 2 && o.remo_skip == 20);
+        CHECK(ParseOptions("tour").remo_skip == 150 && !ParseOptions("tour").remo_only);
+    }
+    // Boss spots: in front of the boss first (forward = (-sin, -cos)), then right, left, back;
+    // usable only on its floor, near it, and when a walk toward it gets closer.
+    {
+        const float boss[3] = {10, 5, 20};
+        float p[3];
+        BossSpot(boss, 0.0f, 0, p);
+        CHECK(std::fabs(p[0] - 10) < 1e-4f && std::fabs(p[2] - 16) < 1e-4f && std::fabs(p[1] - 5.3f) < 1e-4f);
+        BossSpot(boss, 0.0f, 3, p);
+        CHECK(std::fabs(p[2] - 24) < 1e-4f);
+        BossSpot(boss, 0.0f, 1, p);
+        CHECK(std::fabs(std::fabs(p[0] - 10) - 4) < 1e-4f && std::fabs(p[2] - 20) < 1e-4f);
+        const float from[3] = {10, 5, 16};
+        const float yaw = FaceYaw(from, boss);  // looking from the spot to the boss: +z
+        CHECK(std::fabs(-std::sin(yaw)) < 1e-4f && std::fabs(-std::cos(yaw) - 1) < 1e-4f);
+        const float settled[3] = {10, 5.1f, 16}, walked[3] = {10, 5.1f, 17}, stuck[3] = {10, 5.1f, 16.1f};
+        const float fell[3] = {10, -3, 16}, far[3] = {10, 5, 9}, far2[3] = {10, 5, 10};
+        CHECK(BossSpotOk(boss, settled, walked));
+        CHECK(!BossSpotOk(boss, settled, stuck));   // inside a wall: no move
+        CHECK(!BossSpotOk(boss, fell, fell));       // fell through
+        CHECK(!BossSpotOk(boss, far, far2));        // pushed out of the arena
+        float a[3];
+        CHECK(BossArenaSpot(2300800, a) && std::fabs(a[0] + 88.3f) < 1e-3f && !BossArenaSpot(2300801, a));
+        const float spot[3] = {0, 10, 0}, s1[3] = {0, 10.2f, 0}, w1[3] = {0.5f, 10.2f, 0}, w0[3] = {0.1f, 10.2f, 0};
+        const float down[3] = {0, 3, 0};
+        CHECK(ArenaSpotOk(spot, s1, w1) && !ArenaSpotOk(spot, s1, w0) && !ArenaSpotOk(spot, down, down));
+    }
+    // Gestures and hunter tools: once per run, resumed from the progress file.
+    {
+        CHECK(GesturesLeft(Progress{}).size() == 23 && ToolsLeft(Progress{}).size() == std::size(kWarperTools));
+        const Progress p = ParseProgress("gesture 1\ngesture 23\ntool 1200\ntool 2120\n");
+        const auto gl = GesturesLeft(p);
+        CHECK(gl.size() == 21 && gl.front() == 2 && gl.back() == 22);
+        CHECK(ToolsLeft(p).size() == std::size(kWarperTools) - 2);
+        CHECK(std::string(GestureName(1)) == "Point Forward" && std::string(GestureName(23)) == "League Oath");
+        CHECK(std::string(GestureName(0)) == "?" && std::string(GestureName(24)) == "?");
+        CHECK(GestureSeen({0, 100, 0}, {104140, 100, 0}) && !GestureSeen({104140}, {104140, 0}));
+        CHECK(!GestureSeen({}, {100000, 0, 3000}));
+        CHECK(ToolUseSeen(3, 2, 20, 20) && ToolUseSeen(3, 3, 20, 17) && !ToolUseSeen(3, 3, 20, 20));
+        CHECK(!ToolUseSeen(-1, -1, -1, -1) && !ToolUseSeen(0, 0, 0, 0));
+        CHECK(ParseProgress("toolok 1200\ngestureok 3\n").tools_ok.count(1200) &&
+              ParseProgress("gestureok 3\n").gestures_ok.count(3));
+        const Options caps = ParseOptions("tour,gestures=1,tools=2");
+        CHECK(caps.gestures && caps.tools && caps.gestures_max == 1 && caps.tools_max == 2);
+        // Opt-in while unverified live.
+        const Options o = ParseOptions("tour,gestures,tools,remopass");
+        CHECK(o.gestures && o.tools && o.remo_pass);
+        CHECK(!ParseOptions("tour").gestures && !ParseOptions("tour").tools && !ParseOptions("tour").remo_pass);
+    }
+    // The title stage: first-launch screens confirmed (Down, Cross, Up, Cross), no Continue = no run.
+    {
+        CHECK(ClassifyTitle(5000, 0, 0, 0, 6000) == TitleScreen::Brightness);
+        CHECK(ClassifyTitle(5000, 6000, 0, 0, 7000) == TitleScreen::Controls);    // after brightness
+        CHECK(ClassifyTitle(5000, 6000, 0, 7000, 7500) == TitleScreen::Other);    // the title built since
+        CHECK(ClassifyTitle(5000, 6000, 0, 7000, 8500) == TitleScreen::NoCharacter); // ...without Continue
+        CHECK(TitleUndecided(0, 7000) && !TitleUndecided(7000, 7000) && !TitleUndecided(0, 0));
+        CHECK(ClassifyTitle(0, 0, 7000, 7000, 20000) == TitleScreen::Other);      // Continue: go on
+        CHECK(ClassifyTitle(0, 0, 0, 0, 20000) == TitleScreen::Other);
+        CHECK(FirstLaunchPress(TitleScreen::Brightness, 0) == kDown &&
+              FirstLaunchPress(TitleScreen::Brightness, 1) == 0x4000u &&
+              FirstLaunchPress(TitleScreen::Controls, 0) == kUp && FirstLaunchPress(TitleScreen::Controls, 1) == 0x4000u);
+    }
     if (g_failures) {
         std::fprintf(stderr, "%d failure(s)\n", g_failures);
         return 1;

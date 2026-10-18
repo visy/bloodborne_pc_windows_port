@@ -541,7 +541,11 @@ def run(a):
     want_crash = bool(plan)
     plan_next, plan_hit = 0, None
     plan_marks = list(starts)
-    until = [re.compile(u) for u in a.until or []]
+    # --until RX (any log) or I:RX (instance I's log only, e.g. "2:the host ended the party").
+    until = []
+    for u in a.until or []:
+        m = re.match(r"^(\d):(.*)$", u)
+        until.append((int(m.group(1)), re.compile(m.group(2))) if m else (None, re.compile(u)))
     marks = list(starts)  # log offsets at the crash: --until then looks at what follows it
     verdict = None
 
@@ -607,8 +611,9 @@ def run(a):
                 print(verdict, flush=True)
                 break
         if until and (crashed or not want_crash):
-            text = chr(10).join(log_text(i, marks[i]) for i in range(a.count))
-            if all(u.search(text) for u in until):
+            texts = [log_text(i, marks[i]) for i in range(a.count)]
+            text = chr(10).join(texts)
+            if all(u.search(texts[i] if i is not None and i < a.count else text) for i, u in until):
                 verdict = "all --until markers seen after %.0f s" % (time.time() - t0)
                 break
         time.sleep(1)
@@ -712,10 +717,13 @@ def main():
     ap.add_argument("--idle", type=float, default=float(os.environ.get("BB_MP_IDLE", "10")),
                     help="run: end once the party logs (Party:/Net: lines) stay unchanged this many s (0 = off)")
     ap.add_argument("--until", action="append",
-                    help="run: stop (kill all) once every such regex matched in the logs (after the crash, if any)")
+                    help="run: stop (kill all) once every such regex matched in the logs (after the crash, if any); "
+                         "I:REGEX matches instance I's log only")
     ap.add_argument("--instance", type=int, default=1, help="crash: which instance")
     ap.add_argument("--after", type=float, default=0, help="crash: wait this many s first")
     ap.add_argument("--env", action="append")
+    ap.add_argument("--reserve", type=int, default=0,
+                    help="run: hold this many game slots (at least --count), e.g. 2 for a performance run alone on the GPU")
     ap.add_argument("--ienv", action="append", help="run: I:KEY=VALUE, set for instance I only (after --env)")
     ap.add_argument("--timestamps", action="store_true",
                     help="run: prefix every log line with [+seconds] since the run started (one clock for all instances)")
@@ -725,8 +733,10 @@ def main():
         # At most max_clients game clients on this machine across all agents (tools/mp/game_queue.py).
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from game_queue import game_slots
-        with game_slots(a.count, a.root, label=a.label) as slots:
-            a.slots = slots
+        # --reserve N: hold N slots although only --count games start (performance runs: no other
+        # agent's game shares the GPU while frame times are measured).
+        with game_slots(max(a.count, a.reserve), a.root, label=a.label) as slots:
+            a.slots = slots[:a.count]
             run(a)
         return
     {"setup": setup, "run": run, "logs": logs, "kill": kill, "crash": crash}[a.cmd](a)

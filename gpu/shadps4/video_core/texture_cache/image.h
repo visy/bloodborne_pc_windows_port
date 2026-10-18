@@ -154,6 +154,17 @@ public:
         u32 vo_surface : 1;
     } usage{};
     bool scene_proxy = false; ///< bbport: SceneTargets holds a reduced-size proxy of it
+    // bbport button prompts (vk_button_prompts.h; from deadinside28/bloodborne_pc 72e5c8ce):
+    u8 prompt_icon = 0;    ///< one of the game's key guide icons (BbPrompts::IconOf + 1)
+    u8 prompt_atlas = 0;   ///< one of the HUD's icon atlases (BbPrompts::AtlasOf + 1)
+    u32 prompt_upload = 0; ///< the upload that gave it its bytes (ButtonPrompts::Atlas)
+    /// Its memory may hold one of the key guide icons (32x32, one level, block-compressed): the
+    /// bytes are checked at each bind until they are one (a copy the GPU made is never uploaded).
+    bool MaybePromptIcon() const {
+        return prompt_icon == 0 && info.size.width == 32 && info.size.height == 32 &&
+               info.resources.levels == 1 && info.resources.layers == 1 && info.props.is_block &&
+               info.guest_size >= 1024;
+    }
     /// bbport: part of the game's half-resolution effect chain (volumetric_resolution.h)
     bool volumetric = false;
     VAddr track_addr = 0;

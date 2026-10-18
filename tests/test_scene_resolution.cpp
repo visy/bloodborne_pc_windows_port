@@ -40,6 +40,9 @@ static void VolumetricRules() {
     V::PassFacts f{.scene_depth = {1920, 1080}, .has_depth = true, .depth_has_stencil = true,
                    .depth_size = {960, 540}};
     assert(V::DepthIsVolumetric(f));
+    f.after_gbuffer = false; // before this frame's G-buffer pass (Forbidden Woods' sky pieces)
+    assert(!V::DepthIsVolumetric(f));
+    f.after_gbuffer = true;
     f.depth_size = {480, 270};
     assert(!V::DepthIsVolumetric(f));
     f.depth_size = {1720, 720};

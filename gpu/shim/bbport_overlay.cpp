@@ -797,13 +797,15 @@ void DisplayTab() {
     const char* volumetric_levels[] = {T("Game default (half)", "Как в игре (половина)"),
                                        T("2x pixels", "2x пикселей"),
                                        T("Full resolution", "Полное разрешение")};
-    Choice("volumetric", T("Volumetric effects resolution", "Разрешение объёмных эффектов"),
+    Choice("volumetric", T("Motion blur resolution", "Разрешение размытия в движении"),
            std::clamp(s.volumetric_res.load(), 0, 2), 3, [&](int i) { return volumetric_levels[i]; },
            [](int) { return true; },
-           T("Smoke, mist and fog effects are drawn into a half-resolution buffer by the game; "
-             "2x pixels or full resolution make them less blocky at a GPU cost. Live.",
-             "Дым, туман и дымка рисуются игрой в буфер половинного разрешения; 2x пикселей или "
-             "полное разрешение делают их менее блочными ценой нагрузки на видеокарту. Сразу."),
+           T("The game draws the motion blur of moving characters and objects from "
+             "half-resolution buffers; 2x pixels or full resolution give it finer edges at a GPU "
+             "cost. Smoke and mist are drawn at full resolution already. Live.",
+             "Игра строит размытие в движении персонажей и объектов по буферам половинного "
+             "разрешения; 2x пикселей или полное разрешение дают более точные края ценой нагрузки "
+             "на видеокарту. Дым и туман и так рисуются в полном разрешении. Сразу."),
            true, [&](int i) { Store(s.volumetric_res, i, true); });
     Toggle("fps",T("FPS counter", "Счётчик FPS"), s.show_fps,
            s.show_hud ? T("The performance HUD is on and shows the frame rate itself.",
@@ -1427,6 +1429,20 @@ void ControlsTab() {
              "Мышь поворачивает камеру напрямую, 1:1, а не через правый стик (без мёртвой зоны и "
              "кривой). Камера мыши imedved; при захвате цели работает стик."),
            mk);
+    // Button prompts (bbport_button_prompts.h, from deadinside28/bloodborne_pc 72e5c8ce): live.
+    Choice("prompt_style", T("Button prompts", "Подсказки кнопок"), s.prompt_style, BbSettings::PromptStyleCount,
+           [](int i) {
+               static const char* names[] = {"Auto", "PlayStation", "Xbox", "Nintendo", "Keyboard"};
+               return i == 0 ? T("Auto", "Авто") : i == 4 ? T("Keyboard", "Клавиатура") : names[i];
+           },
+           [](int) { return true; },
+           T("The icons in the game's prompts and key guides. Auto: keys after keyboard or mouse "
+             "input, the gamepad's own buttons after gamepad input. Nintendo shows the letters of a "
+             "Nintendo pad (the bottom button is B); what each button does stays the same.",
+             "Значки в подсказках игры. Авто: клавиши после ввода с клавиатуры или мыши, кнопки "
+             "геймпада после ввода с геймпада. Nintendo показывает буквы геймпада Nintendo (нижняя "
+             "кнопка B); действия кнопок не меняются."),
+           true, [&](int i) { Store(s.prompt_style, i, true); });
     ImGui::Spacing();
     Note(mk ? T("Default mouse: move = camera, left = R1, Shift + left = R2, right = L2, Shift + right = L1, "
                 "middle = R3 (lock-on), side buttons = L1 / R2, wheel = d-pad up / down.  Keys: WASD move, Space = Circle "
@@ -1440,10 +1456,10 @@ void ControlsTab() {
                 "стрелки или 1 2 3 4 — крестовина, IJKL — камера.")
             : T("Classic layout (default keys): WASD move, IJKL camera, Space / Enter = Cross, Left Shift / Esc = "
                 "Circle, E = Square, Q = Triangle, 1 / 3 = L1 / R1, R / F = L2 / R2, Z / C = L3 / R3, "
-                "F1 / O = Options, Tab / Backspace = touchpad, arrows = d-pad.",
+                "F1 / O = Options, Tab / G = touchpad, Backspace = right touchpad, arrows = d-pad.",
                 "Классическая раскладка (по умолчанию): WASD — движение, IJKL — камера, Пробел / Enter — Крест, "
                 "Левый Shift / Esc — Круг, E — Квадрат, Q — Треугольник, 1 / 3 — L1 / R1, R / F — "
-                "L2 / R2, Z / C — L3 / R3, F1 / O — Options, Tab / Backspace — тачпад, стрелки — "
+                "L2 / R2, Z / C — L3 / R3, F1 / O — Options, Tab / G — тачпад, Backspace — правая сторона тачпада, стрелки — "
                 "крестовина."),
          Dim());
     KeyBindingRows(mk);

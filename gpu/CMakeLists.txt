@@ -486,6 +486,13 @@ if (WIN32)
 endif()
 set_target_properties(sema-test content-test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BB_OUT_DIR}")
 
+# src/runtime_pad.c with the button prompts' sets and labels (src/pad_prompts.h); build.bat also
+# builds it as out/pad-test.exe. cmake --build out/gpu --target pad-test
+add_executable(pad-test EXCLUDE_FROM_ALL ../tests/test_pad.c)
+target_include_directories(pad-test PRIVATE .. ../src)
+target_compile_options(pad-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_link_libraries(pad-test PRIVATE PkgConfig::SDL3)
+
 add_executable(bb-gpu-capabilities ../tools/gpu_capabilities.c)
 target_include_directories(bb-gpu-capabilities PRIVATE .. ../src)
 target_link_libraries(bb-gpu-capabilities PRIVATE Vulkan::Vulkan PkgConfig::SDL3)

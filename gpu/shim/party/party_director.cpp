@@ -55,6 +55,7 @@
 #include <algorithm>
 
 #include "../bbport_frame_state.h"
+#include <array>
 #include <cmath>
 #include <atomic>
 #include <cctype>
@@ -234,6 +235,16 @@ struct Test {
     bool god = false;     // god: the own chr kept invincible (test aid)
     bool log_pos = false; // log_pos: the player's area and position (FrpgNetMan +0xa7c / +0xaac) every 3 s
     Clock::time_point pos_at{};
+    // watch_text=A/B: every new appearance of a game text containing A or B (an action prompt
+    // "Kick Down Ladder", a dialog) is logged with its full text (test aid, dlast).
+    std::vector<std::string> watch_texts;
+    std::map<std::string, std::int64_t> watch_last; // text -> last lookup ms
+    std::int64_t watch_since = 0;
+    Clock::time_point watch_at{};
+    // log_obj=ENTITY: that map object's position (a lift car, a ladder) whenever it moved (> 5 cm).
+    std::vector<std::int32_t> log_objs;
+    std::map<std::int32_t, std::array<float, 3>> log_obj_pos;
+    Clock::time_point log_obj_at{};
     const char* ring = nullptr; // the event to raise once
     double delay = 10.0;
     bool start = false, grant_bells = false, drop_bells = false, drop_done = false;
@@ -1846,8 +1857,10 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     } else if (step.kind == TravelStep::HostObj || step.kind == TravelStep::GuestObj ||
                step.kind == TravelStep::HostChr || step.kind == TravelStep::GuestChr) {
         int entity = 0;
-        float dist = 1.2f, angle = 0;
-        std::sscanf(step.args.c_str(), "%d:%f:%f", &entity, &dist, &angle);
+        float dist = 1.2f, angle = 0, dy = 0;
+        // host_obj=ENTITY[:DIST[:ANGLE[:DY]]]: DY m above the object's origin (dlast: a raised
+        // ladder's top landing, its model's dummy 192).
+        std::sscanf(step.args.c_str(), "%d:%f:%f:%f", &entity, &dist, &angle, &dy);
         std::string what;
         const bool obj = step.kind == TravelStep::HostObj || step.kind == TravelStep::GuestObj;
         if (!obj && entity == 0) {
@@ -1867,7 +1880,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                     balance::EnemyHp(list[size_t(k)].chr));
             }
         }
-        const bool ok = obj ? worldact::StandAtObject(entity, dist, angle, &what)
+        const bool ok = obj ? worldact::StandAtObject(entity, dist, angle, &what, dy)
                             : worldact::StandAtChr(entity, dist, angle, &what);
         if (!obj) t.chr_target = ok ? std::uint32_t(entity) : 0u;
         Log("test: %s %d (%.1f m, %.0f deg): %s", TravelStepName(step.kind), entity, double(dist), double(angle),
@@ -2305,6 +2318,58 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         }
         Log("test: pos area 0x%08x (%.2f, %.2f, %.2f)", area, p[0], p[1], p[2]);
     }
+    if (!t.watch_texts.empty() && Seconds(t.watch_at, now) >= 0.25) {
+        t.watch_at = now;
+        struct Ctx {
+            Test* t;
+            std::int64_t newest;
+        } ctx{&t, t.watch_since};
+        BbGameMenu::RecentTexts(
+            t.watch_since,
+            [](const char16_t* text, std::int64_t ms, void* user) {
+                Ctx& c = *static_cast<Ctx*>(user);
+                std::string u8;
+                for (const char16_t* q = text; *q && u8.size() < 160; ++q) {
+                    const char32_t ch = *q;
+                    if (ch < 0x80) u8 += char(ch);
+                    else if (ch < 0x800) { u8 += char(0xc0 | (ch >> 6)); u8 += char(0x80 | (ch & 0x3f)); }
+                    else { u8 += char(0xe0 | (ch >> 12)); u8 += char(0x80 | ((ch >> 6) & 0x3f)); u8 += char(0x80 | (ch & 0x3f)); }
+                }
+                std::string low = u8;
+                for (char& ch : low) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+                bool hit = false;
+                for (const std::string& n : c.t->watch_texts) {
+                    std::string ln = n;
+                    for (char& ch : ln) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+                    if (!ln.empty() && low.find(ln) != std::string::npos) hit = true;
+                }
+                if (ms > c.newest) c.newest = ms;
+                if (!hit) return;
+                auto it = c.t->watch_last.find(u8);
+                if (it == c.t->watch_last.end() || ms - it->second > 2000) {
+                    Log("test: text shows: \"%s\"", u8.c_str());
+                }
+                c.t->watch_last[u8] = ms;
+            },
+            &ctx);
+        t.watch_since = ctx.newest;
+    }
+    if (!t.log_objs.empty() && s.world_up && !s.loading && Seconds(t.log_obj_at, now) >= 0.5) {
+        t.log_obj_at = now;
+        for (const std::int32_t e : t.log_objs) {
+            float p[3] = {};
+            if (!worldact::ObjectPoint(e, 0.0f, 0.0f, p)) continue;
+            auto it = t.log_obj_pos.find(e);
+            const bool moved = it == t.log_obj_pos.end() ||
+                               std::fabs(it->second[0] - p[0]) + std::fabs(it->second[1] - p[1]) +
+                                       std::fabs(it->second[2] - p[2]) > 0.05f;
+            if (moved) {
+                Log("test: object %d at (%.2f, %.2f, %.2f)%s", e, p[0], p[1], p[2],
+                    it == t.log_obj_pos.end() ? " (first seen)" : "");
+                t.log_obj_pos[e] = {p[0], p[1], p[2]};
+            }
+        }
+    }
     if (t.echoes >= 0 && Seconds(st.world_at, now) >= 2.0 && !s.loading) {
         const bool ok = WritePlayerEchoes(t.echoes);
         Log("test: Blood Echoes -> %d %s", t.echoes, ok ? "written" : "NOT written (no player record)");
@@ -2314,7 +2379,9 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         t.goods_done = true;
         for (const auto& [id, n] : t.goods) {
             const int before = GoodsCount(std::uint32_t(id));
-            const bool ok = before >= 0 && before < n ? GiveGoods(std::uint32_t(id), n - before) : before >= n;
+            // goods=ID:N tops up to N; goods=ID:0 (or any N below the count) takes the rest away
+            // (a key item a fixture's player must not hold yet, dlast D4).
+            const bool ok = before >= 0 && before != n ? GiveGoods(std::uint32_t(id), n - before) : before == n;
             Log("test: goods %d x%d -> x%d (%s)", id, before, GoodsCount(std::uint32_t(id)), ok ? "ok" : "failed");
         }
     }
@@ -2791,7 +2858,7 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.award_lot = std::atoi(item.c_str() + 10);
             } else if (item.rfind("goods=", 0) == 0) {
                 int id = 0, n = 0;
-                if (std::sscanf(item.c_str() + 6, "%d:%d", &id, &n) == 2 && id > 0 && n > 0 && n <= 99) {
+                if (std::sscanf(item.c_str() + 6, "%d:%d", &id, &n) == 2 && id > 0 && n >= 0 && n <= 99) {
                     st.test.goods.emplace_back(id, n);
                 }
             } else if (item.rfind("warp=", 0) == 0) {
@@ -2911,6 +2978,18 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.god = true;
             } else if (item == "log_pos") {
                 st.test.log_pos = true;
+            } else if (item.rfind("watch_text=", 0) == 0) {
+                std::string rest = item.substr(11);
+                for (std::size_t a = 0; a <= rest.size();) {
+                    const std::size_t b = rest.find('/', a);
+                    const std::string one = rest.substr(a, b == std::string::npos ? std::string::npos : b - a);
+                    if (!one.empty()) st.test.watch_texts.push_back(one);
+                    if (b == std::string::npos) break;
+                    a = b + 1;
+                }
+            } else if (item.rfind("log_obj=", 0) == 0) {
+                const int e = std::atoi(item.c_str() + 8);
+                if (e > 0) st.test.log_objs.push_back(e);
             } else if (item.rfind("echoes=", 0) == 0) {
                 st.test.echoes = std::atoi(item.c_str() + 7);
             } else if (item.rfind("bell_guest@", 0) == 0) {

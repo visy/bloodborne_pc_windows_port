@@ -28,7 +28,7 @@ from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 PORT_DIR = Path(__file__).resolve().parent.parent  # native_probe (or the package's copy)
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
-from mods import discover as discover_mods  # noqa: E402
+from mods import discover as discover_mods, unrecognized as unrecognized_mods  # noqa: E402
 import game_check  # noqa: E402
 from patches import external_patches  # noqa: E402
 # Packaged (AppImage): generated files, saves and bbport.ini live in BB_DATA_DIR.
@@ -357,7 +357,7 @@ CONTROLS = [
     ("l3", "L3", "Z", "leftstick"),
     ("r3", "R3", "C", "rightstick"),
     ("options", "Options", "Return", "start"),
-    ("touchpad", "Тачпад, левая половина (жесты)", "Tab", "back, touchpad"),
+    ("touchpad", "Тачпад, левая половина (жесты)", "Tab, G", "back, touchpad"),
     ("touchpad_right", "Тачпад, правая половина (личные вещи)", "Backspace", ""),
     ("up", "Крестовина вверх", "I", "dpup"),
     ("down", "Крестовина вниз", "K", "dpdown"),
@@ -371,6 +371,7 @@ CONTROLS = [
     ("look_down", "Камера вниз", "Down", None),
     ("look_left", "Камера влево", "Left", None),
     ("look_right", "Камера вправо", "Right", None),
+    ("walk", "Шаг (удерживать при движении)", "Left Alt", None),
 ]
 
 
@@ -972,7 +973,7 @@ class LauncherWindow(Adw.ApplicationWindow):
 
     def save_mod_profile(self):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
-        rows = self.mod_list.rows
+        rows = [(name, row) for name, row in self.mod_list.rows if name is not None]  # not the "not loaded" rows
         profile = {"order": [name for name, _ in rows],
                    "disabled": [name for name, row in rows if not row.get_active()]}
         (DATA_DIR / "mods.json").write_text(json.dumps(profile, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -993,6 +994,11 @@ class LauncherWindow(Adw.ApplicationWindow):
             row.add_suffix(flat_button("go-down-symbolic", tr("Загрузить позже"),
                                         lambda _b, n=name: self.move_mod(n, 1)))
             self.mod_list.add(name, row)
+        # Folders that are not mods are named, with why (Supermedo/bloodborne_pc dd2314ee).
+        for name, why in unrecognized_mods(self.mods_dir()):
+            row = Adw.ActionRow(title=name, subtitle=f"{tr('Не загружен')}: {why}")
+            row.set_sensitive(False)
+            self.mod_list.add(None, row)
         if not order:
             self.mods_folder_row.set_subtitle(f"{self.mods_dir()} — {tr('Модов нет')}")
 
@@ -1000,7 +1006,7 @@ class LauncherWindow(Adw.ApplicationWindow):
         rows = self.mod_list.rows
         index = next(i for i, (n, _) in enumerate(rows) if n == name)
         target = index + direction
-        if 0 <= target < len(rows):
+        if 0 <= target < len(rows) and rows[target][0] is not None:
             rows[index], rows[target] = rows[target], rows[index]
             self.save_mod_profile()
             self.refresh_mods()

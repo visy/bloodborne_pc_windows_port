@@ -1143,6 +1143,42 @@ static void test_rudp() {
     // With the punch (the guest code given to the host): connects and transfers.
     CHECK(run(0.02, 30, 5, true, true, 100000, &secs, &resends) == 1);
     std::printf("  simulated NAT both sides: no punch -> no connection; punch -> 2 x 100 KB in %.2f s\n", secs);
+    // smokefix: bytes written just before close() leave ahead of the FIN, even when the owner lets
+    // the stream go at once (Mux::linger): the peer reads them and then sees the stream closed.
+    {
+        const Endpoint H{0x0100007f, 0x1111}, G{0x0100007f, 0x2222};
+        Mux host(3), guest(5);
+        host.accepting = true;
+        const auto t = Clock::now();
+        auto gs = guest.connect(H, t, 8000);
+        std::shared_ptr<Stream> hs;
+        auto pump = [&] {
+            for (int i = 0; i < 4; ++i) {
+                std::vector<Datagram> out;
+                host.poll(t, out);
+                for (auto& d : out) guest.on_datagram(H, d.data.data(), d.data.size(), t);
+                out.clear();
+                guest.poll(t, out);
+                for (auto& d : out) host.on_datagram(G, d.data.data(), d.data.size(), t);
+                if (!hs) hs = host.accept();
+            }
+        };
+        pump();
+        CHECK(hs && gs->state() == Stream::State::Open);
+        std::vector<std::uint8_t> bye(3000, 0x5a);  // more than one segment
+        CHECK(hs && hs->write(bye.data(), bye.size()));
+        if (hs) {
+            hs->close();
+            host.linger(std::move(hs));
+        }
+        hs = nullptr;
+        pump();
+        std::vector<std::uint8_t> got(8192);
+        const std::size_t r = gs->read(got.data(), got.size());
+        CHECK(r == bye.size() && std::equal(bye.begin(), bye.end(), got.begin()));
+        CHECK(gs->state() == Stream::State::Closed);
+        std::printf("  close after write: %zu bytes, then the FIN\n", r);
+    }
 }
 
 // The link under the network simulator (BB_NET_SIM, netsim.h; configured process-wide, so this
@@ -1254,8 +1290,12 @@ static void test_udp_nat_link() {
     std::printf("  200 events in order over UDP, ping %u ms; bob (no code) not connected: %s\n", ping,
                 link_state_name(b.state()));
     b.stop();
-    a.stop();
+    // smokefix: the host's Leave (graceful stop) reaches a guest linked over UDP as the BYE ("the
+    // host ended the party"), not as a silent link 10 s later (the BYE used to be dropped at close).
     host.stop();
+    CHECK(a.wait_state(LinkState::Rejected, 5000) && a.reject_code() == RejectCode::Shutdown);
+    std::printf("  host Leave over UDP: alice %s (%s)\n", link_state_name(a.state()), a.reject_reason().c_str());
+    a.stop();
 }
 
 // F5: long outages and a stalled host, scaled 1:10 (lost timeout 1 s for the game's 10 s, slot

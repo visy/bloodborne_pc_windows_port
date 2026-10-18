@@ -417,7 +417,7 @@ void DefineEntryPoint(const Info& info, EmitContext& ctx, Id main) {
                                        : spv::ExecutionMode::VertexOrderCw);
         break;
     }
-    case SwStage::Fragment:
+    case SwStage::Fragment: {
         execution_model = spv::ExecutionModel::Fragment;
         if (ctx.profile.lower_left_origin_mode) {
             ctx.AddExecutionMode(main, spv::ExecutionMode::OriginLowerLeft);
@@ -427,10 +427,22 @@ void DefineEntryPoint(const Info& info, EmitContext& ctx, Id main) {
         if (info.has_discard) {
             ctx.AddCapability(spv::Capability::DemoteToHelperInvocation);
         }
-        if (info.stores.GetAny(IR::Attribute::Depth)) {
+        const bool stores_depth = info.stores.GetAny(IR::Attribute::Depth);
+        if (stores_depth) {
             ctx.AddExecutionMode(main, spv::ExecutionMode::DepthReplacing);
         }
+        // DEPTH_BEFORE_SHADER: the hardware tests and writes depth/stencil before the shader, so
+        // a later kill does not undo them; EarlyFragmentTests means the same (shadPS4 7d28d279).
+        // Not with a shader that exports depth or stencil (upstream asserts there), nor with the
+        // emulated clip distances: their discard stands for clipping, which the hardware does
+        // before any depth test.
+        const auto& fs = ctx.runtime_info.hw.fs;
+        if (fs.depth_before_shader && !stores_depth &&
+            !info.stores.GetAny(IR::Attribute::StencilRef) && !fs.clip_distance_emulation) {
+            ctx.AddExecutionMode(main, spv::ExecutionMode::EarlyFragmentTests);
+        }
         break;
+    }
     case SwStage::Geometry:
         execution_model = spv::ExecutionModel::Geometry;
         ctx.AddExecutionMode(main, GetInputPrimitiveType(ctx.runtime_info.hw.gs.in_primitive));
