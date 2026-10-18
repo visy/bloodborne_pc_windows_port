@@ -1712,7 +1712,9 @@ class BloodborneLauncher(tk.Tk):
                     "On: the frame rate is freed by hooks in the game's code (deadinside's 0.6-pre1): every "
                     "frame-tied timer, damping and speed follows the real frame time (no sprint dropping to "
                     "a walk above 90 FPS, physics timers at the right speed). Off: the community FPS++ "
-                    "patches as before. Default: on (BB_FRAME_HOOKS).")
+                    "patches as before; with the hooks on, a patch that changes the same code or constants "
+                    "(e.g. an FPS patch from the patches folder) is left out, with a line in the log. "
+                    "Default: on (BB_FRAME_HOOKS).")
         self._combo(sec, "Frames ahead:", self.frames_ahead_var, [c[0] for c in FRAMES_AHEAD_CHOICES],
                     "How many frames the GPU thread may queue ahead of the display. 1 = least input lag, "
                     "2 = smoother frame times (default), 3 = smoothest but more lag (BB_FRAMES_AHEAD).",
