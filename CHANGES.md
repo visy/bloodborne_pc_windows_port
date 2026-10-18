@@ -3,6 +3,16 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## 0.6.7 (Windows port 0.6.7, crash fixes)
+
+### Fixed
+- A crash in Ebrietas's particle effects above 60 FPS: a fault in one more effect routine (the particle bounding box at 0x28d0480) now skips that effect for the frame instead of crashing; the effect-ribbon table now records each routine's saved-register layout (from Mrsuss60/bloodborne_pc_windows_port bb3f67b3 by Mrsuss60).
+- A "device lost" GPU crash in Central Yharnam: empty texture tiling jobs are skipped instead of sent to the GPU, and pending GPU barriers are sent before the tiling pass ends and before a synchronous image read-back (from Mrsuss60/bloodborne_pc_windows_port bb3f67b3 by Mrsuss60).
+- A crash inside the C runtime's memcpy (and memmove, memset, memcmp) when the game passes a NULL pointer: the call is skipped and logged once per calling place in the game (from Mrsuss60/bloodborne_pc_windows_port bb3f67b3 by Mrsuss60).
+- The installer explains a missing, empty (0 bytes) or truncated eboot.bin instead of failing with a cryptic error (from Mrsuss60/bloodborne_pc_windows_port bb3f67b3 by Mrsuss60).
+- Crash reports show the calling game code for crashes inside the C runtime (from Supermedo/bloodborne_pc 3fbe0576 by Supermedo).
+
+
 ## 0.6.6 (Windows port 0.6.6, frame rate by game hooks, party FPS fix)
 
 - **Fixed: "Volumetric effects" is now called "Motion blur resolution", which is what it changes**: frame captures and dumps of the buffers showed that the half-resolution chain the 0.6.2 option renders larger is the game's motion blur (velocity of moving characters and objects), not smoke or mist, which the game already draws at full resolution. The option, its `bbport.ini` key and `BB_VOLUMETRIC_RES` stay; it gives the blur around moving characters finer edges (2x pixels: about +0.6 ms, full: about +1.2 ms at 1080p on an RTX 3070) and does nothing with motion blur off. A half-size pass of the Forbidden Woods drawn before the scene, which a compute pass clears as a buffer, is no longer scaled.
