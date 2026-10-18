@@ -338,6 +338,7 @@ enum class SfxSource { Hooks, Constant, Measured };
 SfxSource sfx_source = SfxSource::Hooks;
 float* sfx_step = nullptr; ///< in the near data page: what SprjSfx::Update's load reads
 double sfx_carry = 0.0;
+std::atomic<double> sfx_seconds{0.0}; ///< the effects' steps so far (diagnostics: BB_FRAME_RATE_LOG)
 constexpr u64 SfxStepConstant = 0x4929170; // the game's 1/30 (the 60/90 FPS++ patches: 1/60, 1/90)
 constexpr u64 FlipperSlot = 0x55404f8;     // SprjFlipper* (its +0x264: the measured frame time)
 
@@ -386,6 +387,7 @@ void BB_FR_SYSV SfxStepNow() {
         step = measured;
     }
     *sfx_step = SfxStep(sfx_carry, step);
+    sfx_seconds.store(sfx_seconds.load(std::memory_order_relaxed) + *sfx_step, std::memory_order_relaxed);
     if (--param_countdown <= 0) {
         param_countdown = 120;
         CheckBloodletter();
@@ -505,20 +507,21 @@ void LogThread(double period) {
     // detached thread instead.
     std::thread([period] {
         const auto t0 = std::chrono::steady_clock::now();
-        double last_game = 0, last_real = 0;
+        double last_game = 0, last_real = 0, last_sfx = 0;
         u64 last_steps = 0;
         for (;;) {
             std::this_thread::sleep_for(std::chrono::duration<double>(period));
             const double real = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
             const double game = game_seconds.load(std::memory_order_relaxed);
             const u64 n = steps.load(std::memory_order_relaxed);
-            const double dr = real - last_real, dg = game - last_game;
+            const double sfx = sfx_seconds.load(std::memory_order_relaxed);
+            const double dr = real - last_real, dg = game - last_game, ds = sfx - last_sfx;
             std::printf("Frame rate: %.1f s real, %llu steps (%.1f per s), game time %.3f s per real s, "
-                        "last dt %.5f s\n",
+                        "last dt %.5f s; effects time %.3f s per real s\n",
                         real, (unsigned long long)(n - last_steps), dr > 0 ? double(n - last_steps) / dr : 0.0,
-                        dr > 0 ? dg / dr : 0.0, live ? double(live->dt) : 0.0);
+                        dr > 0 ? dg / dr : 0.0, Unlocked() ? double(live->dt) : 0.0, dr > 0 ? ds / dr : 0.0);
             std::fflush(stdout);
-            last_game = game, last_real = real, last_steps = n;
+            last_game = game, last_real = real, last_steps = n, last_sfx = sfx;
         }
     }).detach();
 }
@@ -546,6 +549,9 @@ void Install(unsigned char* image, std::uint64_t size) {
         StubWritable(true);
         HighRateFixes(false);
         StubWritable(false);
+        if (const char* log = std::getenv("BB_FRAME_RATE_LOG"); log && std::atof(log) > 0) {
+            LogThread(std::atof(log)); // the effects' time only (no steps of ours)
+        }
         std::fflush(stdout);
         return;
     }
