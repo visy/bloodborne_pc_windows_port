@@ -28,8 +28,9 @@
 // so AVX is there; a host build with -march may use 256-bit registers and vzeroupper).
 #ifdef _WIN32
 extern "C" {
-uintptr_t bbcam_return;
-void bbcam_apply(uintptr_t camera);
+// Used only from the stub's asm: without `used`, LTO discards them (GCC 16; the release build).
+__attribute__((used)) uintptr_t bbcam_return;
+__attribute__((used)) void bbcam_apply(uintptr_t camera);
 extern char bbcam_stub[];
 }
 __asm__(".text\n"
@@ -483,7 +484,7 @@ void BloodborneCam::OnMouseMotion(float xrel, float yrel) {
     }
 }
 
-extern "C" void bbcam_apply(uintptr_t camera) {
+extern "C" __attribute__((used)) void bbcam_apply(uintptr_t camera) {
     BloodborneCam::Instance().Apply(camera);
 }
 
