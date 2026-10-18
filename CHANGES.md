@@ -5,6 +5,10 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.6.7 (Windows port 0.6.7, crash fixes)
 
+### Added
+
+- **Added: Python comes with the release**: a trimmed Python 3.12 with Tk (the `python\` folder, about 47 MB) runs the launcher and the patch scripts, so installing Python is no longer needed. `launch_gui.bat` and `run.bat` use it first and fall back to an installed Python 3.10+ when the folder is missing; it never writes into its own folder. Made by `tools/release/make_python_bundle.py` (see docs/BUILDING.md).
+
 ### Fixed
 - A crash in Ebrietas's particle effects above 60 FPS: a fault in one more effect routine (the particle bounding box at 0x28d0480) now skips that effect for the frame instead of crashing; the effect-ribbon table now records each routine's saved-register layout (from Mrsuss60/bloodborne_pc_windows_port bb3f67b3 by Mrsuss60).
 - A "device lost" GPU crash in Central Yharnam: empty texture tiling jobs are skipped instead of sent to the GPU, and pending GPU barriers are sent before the tiling pass ends and before a synchronous image read-back (from Mrsuss60/bloodborne_pc_windows_port bb3f67b3 by Mrsuss60).
