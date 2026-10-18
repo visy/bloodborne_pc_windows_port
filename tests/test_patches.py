@@ -360,7 +360,8 @@ class PartyVersionCheckTests(unittest.TestCase):
             struct.pack_into('<HH', elf, 0x36, 0x38, 1)
             struct.pack_into('<IIQQQQQQ', elf, 0x40, 1, 5, 0x100, 0, 0, 0, 0x6000000, 0x1000)
             (out / 'eboot.elf').write_bytes(bytes(elf))
-            env = {**os.environ, 'BB_PARTY': 'host', 'BB_INTEL_TONEMAP_FIX': '0', 'BB_SKIP_NETWORK_CHOICE': '1'}
+            env = {**os.environ, 'BB_PARTY': 'host', 'BB_INTEL_TONEMAP_FIX': '0', 'BB_SKIP_NETWORK_CHOICE': '1',
+                   'BB_FRAME_HOOKS': '0'}  # the FPS++ patches: uncap and 60 differ in the file
 
             def run(fps, extra=''):
                 subprocess.run([sys.executable, str(ROOT / 'scripts/patches.py'), '--out', str(out), '--fps', fps,
@@ -381,6 +382,120 @@ class PartyVersionCheckTests(unittest.TestCase):
             cheat, _ = run('60', 'Player No Dead (Read note)')
             self.assertIn('patch Player No Dead (Read note)', cheat.splitlines())
             self.assertNotEqual([line for line in cheat.splitlines() if line.startswith('hash ')], hash_line)
+
+
+class FrameRateHookTests(unittest.TestCase):
+    """Frame rate by hooks (gpu/shim/bbport_frame_rate.cpp, deadinside's 0.6-pre1)."""
+
+    def test_hooks_take_the_place_of_the_fps_patches(self):
+        for fps in ('uncap', '60', '90'):
+            self.assertEqual(patches.frame_hooks(fps, {}), patches.FRAME_HOOKS_DEFAULT, fps)
+            self.assertTrue(patches.frame_hooks(fps, {'BB_FRAME_HOOKS': '1'}), fps)
+            self.assertEqual(patches.preset_patches(fps, {'BB_FRAME_HOOKS': '1'}), [], fps)
+        self.assertEqual(patches.preset_patches('30', {}), [])
+        self.assertFalse(patches.frame_hooks('30', {'BB_FRAME_HOOKS': '1'}))
+
+    def test_bb_frame_hooks_0_keeps_the_patches(self):
+        env = {'BB_FRAME_HOOKS': '0'}
+        self.assertFalse(patches.frame_hooks('uncap', env))
+        self.assertEqual(patches.preset_patches('uncap', env), ['Uncap FPS++', 'Sprint Fix (High FPS)'])
+        self.assertEqual(patches.preset_patches('60', env), ['60 FPS++'])
+        self.assertEqual(patches.preset_patches('90', env), ['90 FPS++', 'Sprint Fix (High FPS)'])
+
+    def test_fps_patch_off_is_the_games_own_30(self):
+        for hooks in ('0', '1', ''):
+            env = {'BB_FPS_PATCH': '0', 'BB_FRAME_HOOKS': hooks}
+            self.assertFalse(patches.frame_hooks('uncap', env))
+            self.assertEqual(patches.preset_patches('uncap', env), [])
+
+    def test_default_matches_the_gpu_library(self):
+        logic = (ROOT / 'gpu' / 'shim' / 'bbport_frame_rate_logic.h').read_text(encoding='utf-8')
+        expected = 'true' if patches.FRAME_HOOKS_DEFAULT else 'false'
+        self.assertIn(f'constexpr bool HooksDefault = {expected};', logic)
+
+    def test_hook_sites_match_the_gpu_library(self):
+        import re
+        source = (ROOT / 'gpu' / 'shim' / 'bbport_frame_rate.cpp').read_text(encoding='utf-8')
+        redirects = [(int(a, 16), int(c, 16)) for a, c in re.findall(r'\{(0x[0-9a-f]+), (0x[0-9a-f]+), LIVE', source)]
+        self.assertEqual(patches.FRAME_HOOK_REDIRECTS, [a for a, _ in redirects])
+        self.assertEqual(sorted(patches.FRAME_HOOK_CONSTANTS), sorted({c for _, c in redirects}))
+        for site, _ in patches.FRAME_HOOK_DETOURS:
+            self.assertIn(f'{site:#x}', source)
+
+    def test_which_built_in_patches_touch_the_hooks(self):
+        root = ET.parse(ROOT / 'patches' / 'Bloodborne.xml').getroot()
+        touching = {m.get('Name') for m in root.iter('Metadata')
+                    if m.get('AppVer') == '01.09' and patches.touches_frame_hooks(patches.metadata_writes(m))}
+        # Every frame-rate patch (all presets among them), and nothing cosmetic.
+        for names in patches.FPS_PRESETS.values():
+            self.assertLessEqual(set(names), touching)
+        self.assertIn('60FPS (no deltatime)', touching)
+        for name in ('Skip Intro', 'Disable Motion Blur (perf increase)', 'Performance Patch (perf increase)',
+                     patches.RESOLUTION_TEMPLATE):
+            self.assertNotIn(name, touching)
+
+    def _run(self, env_extra, fps='60', extra='', external=None):
+        """patches.py end to end on a tiny ELF: (its output, the patches.bin writes {offset: bytes})."""
+        import os
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            elf = bytearray(0x200)
+            struct.pack_into('<Q', elf, 0x20, 0x40)
+            struct.pack_into('<HH', elf, 0x36, 0x38, 1)
+            struct.pack_into('<IIQQQQQQ', elf, 0x40, 1, 5, 0x100, 0, 0, 0, 0x6000000, 0x1000)
+            (out / 'eboot.elf').write_bytes(bytes(elf))
+            args = [sys.executable, str(ROOT / 'scripts/patches.py'), '--out', str(out), '--fps', fps,
+                    '--extra', extra, '--settings', str(out / 'none.ini'), '--game-dir', str(out)]
+            if external:
+                (out / 'patches').mkdir()
+                (out / 'patches' / 'mine.xml').write_text(external, encoding='utf-8')
+                args += ['--patches-dir', str(out / 'patches')]
+            env = {**os.environ, 'BB_INTEL_TONEMAP_FIX': '0', 'BB_SKIP_NETWORK_CHOICE': '1', **env_extra}
+            env.pop('BB_PARTY', None)
+            env.pop('BB_FPS_PATCH', None)
+            r = subprocess.run(args, check=True, env=env, capture_output=True, text=True)
+            blob = (out / 'patches.bin').read_bytes()
+            count = struct.unpack_from('<Q', blob, 16)[0]
+            writes, at = {}, 24
+            for _ in range(count):
+                offset, n = struct.unpack_from('<QQ', blob, at)
+                writes[offset] = blob[at + 16:at + 16 + n]
+                at += 16 + n
+            return r.stderr + r.stdout, writes
+
+    STEP = 0x4929e74  # a constant the hooks redirect away from (60 FPS++ writes 1/60 there)
+    EXTERNAL = (
+        '<Patch><TitleID><ID>CUSA03173</ID></TitleID>'
+        '<Metadata Title="Bloodborne" Name="My 60" AppVer="01.09" AppElf="eboot.bin" isEnabled="true">'
+        '<PatchList><Line Type="bytes" Address="0x04d29e74" Value="8988883C"/></PatchList></Metadata>'
+        '<Metadata Title="Bloodborne" Name="Mine" AppVer="01.09" AppElf="eboot.bin" isEnabled="true">'
+        '<PatchList><Line Type="bytes" Address="0x00500000" Value="90"/></PatchList></Metadata></Patch>')
+
+    def test_hooks_on_and_a_preset(self):
+        """Hooks on: no FPS++ preset, even when BB_PATCHES names one."""
+        log, writes = self._run({'BB_FRAME_HOOKS': '1'}, '60', '60 FPS++')
+        self.assertIn('"60 FPS++" left out', log)
+        self.assertFalse(patches.touches_frame_hooks(list(writes.items())))
+        self.assertNotIn(self.STEP, writes)
+
+    def test_hooks_on_and_an_external_overlapping_patch(self):
+        """Hooks on: an external patch over the hooks' bytes is left out; an unrelated one stays."""
+        log, writes = self._run({'BB_FRAME_HOOKS': '1'}, 'uncap', external=self.EXTERNAL)
+        self.assertIn('external mine.xml/My 60 left out', log)
+        self.assertNotIn(self.STEP, writes)
+        self.assertEqual(writes.get(0x100000), b'\x90')
+
+    def test_hooks_off_and_a_preset(self):
+        log, writes = self._run({'BB_FRAME_HOOKS': '0'}, '60')
+        self.assertNotIn('left out', log)
+        self.assertEqual(writes.get(self.STEP), bytes.fromhex('8988883C'))
+        self.assertTrue(patches.touches_frame_hooks(list(writes.items())))
+        # An external patch goes in too, after the preset (it wins).
+        log, writes = self._run({'BB_FRAME_HOOKS': '0'}, 'uncap', external=self.EXTERNAL)
+        self.assertNotIn('left out', log)
+        self.assertEqual(writes.get(0x100000), b'\x90')
 
 
 if __name__ == '__main__':

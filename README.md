@@ -25,7 +25,7 @@ Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28
 | **Party co-op, no server** | Play the whole campaign with friends over a direct connection: no PSN, no server. Modelled on Elden Ring Seamless Co-op. [More](#party-co-op) |
 | **Settings in the game's menu** | Every port setting is a page in the game's own *System* menu, with gamepad navigation. |
 | **Keyboard, mouse and any gamepad** | Classic keyboard layout or mouse & keyboard mode, every key rebindable; button prompts show your keys, Xbox or Nintendo buttons. [Controls](#controls) |
-| **High frame rates** | 30 / 60 / 90 / uncapped, with correct game speed (community patches). |
+| **High frame rates** | 30 / 60 / 90 / uncapped, with correct game speed: hooks in the game's code follow each frame's real time (deadinside's 0.6-pre1 work; *Frame rate by game hooks* in the launcher, off = the community FPS++ patches), plus bbhost's high-FPS fixes for effects, grass wind and the Bloodletter's L2. |
 | **Upscaling** | FSR 3.1, FSR 4, FSR 4.1.1 and DLSS, with motion vectors added for this game. |
 | **Frame generation** | Optional, off by default: DLSS FG (2x-4x, RTX 40/50) or FSR FG (2x), paced, HUD kept sharp; NVIDIA Reflex. [More](docs/FG_REFLEX.md) |
 | **Finer motion blur** | Optional, off by default: the game builds its motion blur from half-resolution buffers; render them at 2x the pixels or at full resolution (*System > Display > Motion blur resolution*). [More](docs/SETTINGS.md) |
@@ -379,7 +379,7 @@ whole party respawns with the host, 4 players instead of 6, one shared drop roll
 
 | Change | Status |
 |---|---|
-| Frame rate through game hooks: physics, running and timers correct at 60-144 FPS and uncapped | In progress (port of deadinside's 0.6-pre1 work) |
+| Frame rate through game hooks: physics, running and timers correct at 60-144 FPS and uncapped | Done for the next release (port of deadinside's 0.6-pre1 work; launcher switch, on by default) |
 | FSR 4 white or grey picture fixed | Protective fixes built; the cause (FSR 4 with HDR on in Windows) is still being confirmed |
 | Guests load at the same time as the host on party travel (about 10-15 s less per trip) | Planned (opt-in first) |
 | Host death the ERSC way: the host loads alone, guests play on | Planned (opt-in first; today the whole party reloads) |
@@ -464,10 +464,10 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 
 | Who | What |
 |---|---|
-| deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors; Linux mouse look capture (via Mrsuss60); in 0.6.2 fixes from 0.6-pre1 (Supermedo/bloodborne_pc 72e5c8ce): idle VRAM copies released on 4 GB cards, NVIDIA start without DLSS, unresolved Vulkan commands, pipeline cache stages, write-trap race, occlusion pass scale, sampler anisotropy clamp; next release: button prompts for the keyboard, Xbox and Nintendo pads (72e5c8ce) |
+| deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors; Linux mouse look capture (via Mrsuss60); in 0.6.2 fixes from 0.6-pre1 (Supermedo/bloodborne_pc 72e5c8ce): idle VRAM copies released on 4 GB cards, NVIDIA start without DLSS, unresolved Vulkan commands, pipeline cache stages, write-trap race, occlusion pass scale, sampler anisotropy clamp; next release: button prompts for the keyboard, Xbox and Nintendo pads (72e5c8ce) and the frame rate by hooks in the game's code (0.6-pre1) |
 | Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD; audio pop fix, paths with parentheses in `run.bat`, parallel `build.bat`; CPUs without FSGSBASE (Windows TLS fallback), driver pipeline binaries kept between sessions, more background shader compile threads; SnormNz crash fix (packed formats such as 11_11_10), texture collector never evicting bound targets or presented surfaces; stream buffer placement switch (`BB_STREAM_MEMORY`), no draw-queue wait at `SET_PREDICATION`; mouse sensitivity fix (stick dead zone compensation), in-game key rebinding, focus click not a game press |
 | shadPS4 team | Vulkan video core and shader recompiler (GPL-2.0+), sirit |
-| droogie and the bbhost team | Long-session stability fixes; menu button rows and the menu cursor's offsets; direct summon delivery; the Hunter's Dream mirror (appearance editor) ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |
+| droogie and the bbhost team | Long-session stability fixes; menu button rows and the menu cursor's offsets; direct summon delivery; the Hunter's Dream mirror (appearance editor); next release: the high-FPS fixes for effects, grass wind and the Bloodletter's L2 (Kyoskii, perf/next 6f735f4, b2818b4) ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |
 | FireBurn | FSR-Vulkan (MIT); AMD FidelityFX SDK (MIT) |
 | Supermedo, IFreemz | DLSS bridge and Windows loader |
 | FIocker (Supermedo/bloodborne_pc PR #69) | Frame generation (DLSS FG, FSR FG) with paced presentation, NVIDIA Reflex, conservative object motion for frame generation, DLSS bridge ABI 2, FG diagnostics tools |

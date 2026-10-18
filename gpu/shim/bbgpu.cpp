@@ -1,6 +1,7 @@
 #include "bbport_write_log.h"
 #include "bbport_game_menu.h"
 #include "bbport_gnm_hooks.h"
+#include "bbport_frame_rate.h"
 #include "bbport_stability.h"
 #include "party/party_director.h"
 #include "party/lamp_travel.h"
@@ -399,6 +400,7 @@ extern "C" void bbgpu_patch_image(unsigned char* image, uint64_t size) {
     BbGnmHooks::PatchImage(image, size);
     BbGameMenu::PatchImage(image, size);
     BbStability::PatchImage(image, size);
+    BbFrameRate::PatchImage(image, size);  // frame rate by hooks (deadinside 0.6-pre1; BB_FRAME_HOOKS=0: FPS++ patches)
     bbnet_set_image(image, size);  // the party library's view of game data (gpu/shim/net)
     // Its guest_read through the fault-recovering SafeRead, not a VirtualQuery check per call:
     // VirtualQuery took ~4-12 ms per call in a running game, and the party's per-frame save slot

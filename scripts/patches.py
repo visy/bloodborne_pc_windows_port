@@ -24,6 +24,76 @@ EBOOT_BASE=0x400000
 # half speed (the game's wall detector measured distance per frame, a 30 FPS rule).
 FPS_PRESETS={'30':[],'60':['60 FPS++'],'90':['90 FPS++','Sprint Fix (High FPS)'],
              'uncap':['Uncap FPS++','Sprint Fix (High FPS)']}
+# Above 30 FPS the frame rate is done by hooks in the game's code (gpu/shim/bbport_frame_rate.cpp,
+# deadinside's 0.6-pre1): no FPS++ patches. BB_FRAME_HOOKS=0 keeps the patches (the fallback and
+# comparisons). The default must match HooksDefault in gpu/shim/bbport_frame_rate_logic.h.
+FRAME_HOOKS_DEFAULT=True
+
+
+def frame_hooks(fps, env=os.environ):
+    """Does the GPU library run this frame rate by hooks (bbport_frame_rate_logic.h HooksWanted)?"""
+    off=lambda v: v in ('0','off','false')
+    if not fps or fps=='30' or off(env.get('BB_FPS_PATCH')):
+        return False
+    value=env.get('BB_FRAME_HOOKS','')
+    return not off(value) if value else FRAME_HOOKS_DEFAULT
+
+
+def preset_patches(fps, env=os.environ):
+    """The FPS++ patches for BB_FPS: none with the hooks or with the FPS patch off."""
+    if off_patch(env) or frame_hooks(fps, env):
+        return []
+    return FPS_PRESETS[fps]
+
+
+# The bytes the frame rate hooks rewrite or read instead of the game's (image offsets, length):
+# gpu/shim/bbport_frame_rate.cpp's detours, its redirected instructions (Redirects) and the
+# frame-tied constants they read (tests/test_patches.py checks the list against the C++ source).
+# With the hooks on, a patch that writes any of them (an FPS patch of its own, e.g. "60FPS (no
+# deltatime)", or another patch of the same code) is left out with a message: on top of the hooks
+# the two would each rescale the same steps. BB_FRAME_HOOKS=0 applies it with the FPS++ patches.
+FRAME_HOOK_DETOURS=[(0x203493d,8),(0x2034d96,9),(0x2018e36,7),(0x17f9b71,7),(0x1572a7d,7),(0x1514c24,8)]
+FRAME_HOOK_REDIRECTS=[
+    0xab9f0d,0xdca3ed,0xee596a,0xee5a8a,0xee5baa,0xef06f1,0xef6992,0x1044943,0x12a4416,0x15dc1f7,
+    0x173456e,0x17f9d26,0x180f647,0x18bc4f7,0x18bc50d,0x1dbc308,0x227784b,0x2277892,0x2313d8d,0x2313dad,
+    0x2313db7,0x2315d71,0x1515fab,0x1516030,0x19084f5,0x1908522,0x1908518,0x190854c,0x143e2b2,0x143af8c,
+    0x1a4abca,0x1514c4d,0x47c6dc,0x7e45be,0x7e4642,0x7e6239,0x7f706d,0x7f70ad,0x7f79e5,0x7f7be8,
+    0x7f7dbd,0x805898,0x805d18,0x806269,0x8062f0,0x809d62,0x80a4c9,0x80a876]
+FRAME_HOOK_CONSTANTS=[
+    0x47693f0,0x47b63e4,0x47b8474,0x47b91c0,0x47b98b8,0x47efdcc,0x4888688,0x48ad65c,0x48ad660,0x48ad664,
+    0x48adc08,0x48add28,0x48cc3f4,0x490b5b0,0x492577c,0x4925e68,0x4925e94,0x4926334,0x4926364,0x4926c9c,
+    0x49270e4,0x4927554,0x49275f4,0x4927c4c,0x4927fd4,0x4927fe0,0x4928e98,0x4929b80,0x4929e70,0x4929e74]
+FRAME_HOOK_SITES=(FRAME_HOOK_DETOURS+[(a,8) for a in FRAME_HOOK_REDIRECTS]
+                  +[(a,16 if a==0x490b5b0 else 4) for a in FRAME_HOOK_CONSTANTS])
+
+
+def touches_frame_hooks(writes):
+    """True if any (offset, bytes) write overlaps FRAME_HOOK_SITES (overlaps(), as for the presets)."""
+    return overlaps([(site,bytes(n)) for site,n in FRAME_HOOK_SITES],writes)
+
+
+def metadata_writes(meta):
+    """A patch's (offset, bytes) writes, without the eboot check; [] when a line cannot be read."""
+    try:
+        return [(int(line.get('Address') or '',0)-EBOOT_BASE,encode(line)) for line in meta.iter('Line')]
+    except ValueError:
+        return []
+
+
+def without_frame_hook_conflicts(items, writes_of, label):
+    """items whose writes (writes_of(item)) leave the hooks' bytes alone; the others are reported."""
+    kept=[]
+    for item in items:
+        if touches_frame_hooks(writes_of(item)):
+            print(f'Patches: {label(item)} left out: it changes code or constants the frame rate hooks '
+                  f'rewrite (BB_FRAME_HOOKS=0 applies it, with the FPS++ patches)',file=sys.stderr)
+        else:
+            kept.append(item)
+    return kept
+
+
+def off_patch(env):
+    return env.get('BB_FPS_PATCH') in ('0','off','false')
 # Upscaler presets (bbport.ini "preset", the in-game menu): output / render size ratio. The game
 # then renders at 1920x1080 / ratio and the port's temporal upscaler restores the output size.
 OUTPUT_SIZE=(1920,1080)
@@ -566,9 +636,9 @@ def main():
         size=render_size(settings)
         if size: print(f'{size[0]}x{size[1]}')
         return
-    fps_patches = FPS_PRESETS[a.fps]
-    if os.environ.get('BB_FPS_PATCH') in ('0', 'off', 'false'):
-        fps_patches = []
+    if frame_hooks(a.fps):
+        print(f'Patches: frame rate {a.fps} by hooks in the game code (BB_FRAME_HOOKS=0: the FPS++ patches)',file=sys.stderr)
+    fps_patches = preset_patches(a.fps)
     raw_names = fps_patches + [n.strip() for n in a.extra.split(';') if n.strip()]
     raw_names += [n for n in effect_patches(read_settings(a.settings)) if n not in raw_names]
     if intel_tonemap_fix() and INTEL_TONEMAP not in raw_names:
@@ -590,6 +660,12 @@ def main():
         if n not in names:
             names.append(n)
     names = validate_patch_requirements(names,a.game_dir)
+    if frame_hooks(a.fps):
+        # A built-in FPS patch (an FPS++ preset in BB_PATCHES, "60FPS (no deltatime)") or another
+        # patch of the hooks' bytes: left out (the hooks check the game's bytes they rewrite).
+        metas_all={m.get('Name'):m for m in ET.parse(a.xml).getroot().iter('Metadata') if m.get('AppVer')==a.app_version}
+        names=without_frame_hook_conflicts(names,lambda n: metadata_writes(metas_all[n]) if n in metas_all else [],
+                                           lambda n: f'"{n}"')
     elf=(a.out/'eboot.elf').read_bytes()
     segments=eboot_segments(elf)
     names=[n for n in names if originals_match(a.xml,n,a.app_version,elf)]
@@ -638,6 +714,8 @@ def main():
             for key in dropped:
                 print(f'Patches: external {key} is off in party mode (BB_PARTY)',file=sys.stderr)
             selected=[x for x in selected if x[0] not in dropped]
+        if frame_hooks(a.fps):
+            selected=without_frame_hook_conflicts(selected,lambda x: metadata_writes(x[2]),lambda x: f'external {x[0]}')
         applied=[]
         external=[]
         for item in selected:
