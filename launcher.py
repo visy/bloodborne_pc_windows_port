@@ -1370,6 +1370,12 @@ class BloodborneLauncher(tk.Tk):
 
         self.build_style()
         self.build_ui()
+        # Tall enough for the tallest settings tab when the screen allows (the tabs outgrew a fixed
+        # 760); on a smaller screen the tabs are clipped, never the Launch row (build_ui).
+        self.update_idletasks()
+        req_h = max(self.notebook.nametowidget(t).winfo_reqheight() for t in self.notebook.tabs())
+        need = self.winfo_reqheight() - self.notebook.winfo_reqheight() + req_h + 40
+        self.geometry(f"780x{max(760, min(need, self.winfo_screenheight() - 80))}")
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.after(50, self.poll_queue)
@@ -2011,8 +2017,13 @@ class BloodborneLauncher(tk.Tk):
         self.update_party_state()
         self.notebook.bind("<<NotebookTabChanged>>", lambda e: self.refresh_party_code(), add="+")
 
+        # Launch, log and log buttons: packed before the notebook, so a window shorter than the
+        # content clips the settings tabs and then shrinks the log, never the Launch button.
+        bottom = ttk.Frame(main)
+        bottom.pack(side="bottom", fill="both", expand=True, before=self.notebook)
+
         # launch / stop
-        action = ttk.Frame(main)
+        action = ttk.Frame(bottom)
         action.pack(fill="x", pady=(0, 8))
         self.launch_btn = ttk.Button(action, text="▶  LAUNCH BLOODBORNE", style="Action.TButton",
                                      command=self.launch_game)
@@ -2026,7 +2037,7 @@ class BloodborneLauncher(tk.Tk):
         Tooltip(self.stop_btn, "Stops the running game and everything run.bat started.")
 
         # log header
-        log_header = ttk.Frame(main)
+        log_header = ttk.Frame(bottom)
         log_header.pack(fill="x")
         ttk.Label(log_header, text="Launcher Log:", font=("Segoe UI", 9, "bold")).pack(side="left")
         self.hide_vk_var = tk.BooleanVar(value=self.settings.get("hide_vk", True))
@@ -2036,7 +2047,7 @@ class BloodborneLauncher(tk.Tk):
                             "launcher.log still gets the full output.")
 
         # bottom button bar
-        bar = ttk.Frame(main)
+        bar = ttk.Frame(bottom)
         bar.pack(side="bottom", fill="x", pady=(6, 0))
         for text, command, tip, padx in (
                 ("✓ Verify Setup", self.manual_verify_setup,
@@ -2056,9 +2067,9 @@ class BloodborneLauncher(tk.Tk):
                 "is drawn wrong on this PC; the shaders are compiled again while you play.")
 
         # log text + scrollbar
-        log_frame = ttk.Frame(main)
+        log_frame = ttk.Frame(bottom)
         log_frame.pack(fill="both", expand=True, pady=(2, 0))
-        self.log_text = tk.Text(log_frame, height=8, bg="#111111", fg="#a0a0a0", insertbackground="white",
+        self.log_text = tk.Text(log_frame, height=3, bg="#111111", fg="#a0a0a0", insertbackground="white",
                                 font=("Consolas", 9), relief="flat", wrap="word")
         scroll = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scroll.set)
