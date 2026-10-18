@@ -3,7 +3,10 @@
 #include "bbport_mouse.h"
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <thread>
 
 #include <SDL3/SDL.h>
@@ -29,6 +32,63 @@ HANDLE g_stopEvent = nullptr;
 HANDLE g_timer = nullptr;
 #endif
 
+struct TestPanConfig {
+    float rate = 0.0f;
+    double ab_seconds = 0.0;
+};
+
+const TestPanConfig& TestPanSettings() {
+    static const TestPanConfig config = [] {
+        TestPanConfig c;
+        if (const char* v = std::getenv("BB_CAM_TEST_PAN")) {
+            char* end = nullptr;
+            c.rate = std::strtof(v, &end);
+            if (end && *end == ',') {
+                c.ab_seconds = std::strtod(end + 1, nullptr);
+            }
+        }
+        return c;
+    }();
+    return config;
+}
+
+// BB_CAM_TEST_PAN: the steady pan's counts for this sample. With SECONDS: from 5 s after the
+// camera first updates, SECONDS applied in the game's update, then SECONDS from the mouse thread,
+// then the pan stops (one A/B per session).
+float TestPanCounts() {
+    const TestPanConfig& c = TestPanSettings();
+    using Clock = std::chrono::steady_clock;
+    static Clock::time_point last = Clock::now(), start{};
+    static int phase = -1;
+    const Clock::time_point now = Clock::now();
+    const double dt = std::chrono::duration<double>(now - last).count();
+    last = now;
+    if (c.ab_seconds > 0.0) {
+        auto& cam = Core::BloodborneCam::Instance();
+        if (start == Clock::time_point{}) {
+            if (!cam.CameraLive()) {
+                return 0.0f;
+            }
+            start = now + std::chrono::seconds(5);
+        }
+        const double t = std::chrono::duration<double>(now - start).count();
+        const int want = t < 0.0 ? -1 : std::min(2, static_cast<int>(t / c.ab_seconds));
+        if (want != phase) {
+            phase = want;
+            if (phase >= 0 && phase < 2) {
+                cam.SetApplyInGame(phase == 0);
+            }
+            std::printf("Camera test pan: %s\n", phase < 0 ? "waiting" : phase == 0 ? "apply in the game's update"
+                                                 : phase == 1 ? "apply from the mouse thread" : "done");
+            std::fflush(stdout);
+        }
+        if (phase != 0 && phase != 1) {
+            return 0.0f;
+        }
+    }
+    return dt < 0.1 ? static_cast<float>(c.rate * dt) : 0.0f;
+}
+
 void Sample() {
     if (g_active.load(std::memory_order_acquire)) {
         float xrel = 0.0f;
@@ -39,6 +99,11 @@ void Sample() {
             const auto& s = BbSettings::Get();
             xrel *= s.mk_sens_x.load() * (s.mk_invert_x.load() ? -1.0f : 1.0f);
             yrel *= s.mk_sens_y.load() * (s.mk_invert_y.load() ? -1.0f : 1.0f);
+        }
+        if (TestPan()) {
+            xrel += TestPanCounts();
+        }
+        if (xrel != 0.0f || yrel != 0.0f) {
             Core::BloodborneCam::Instance().OnMouseMotion(xrel, yrel);
         }
     } else {
@@ -124,6 +189,10 @@ void Stop() {
         g_stopEvent = nullptr;
     }
 #endif
+}
+
+bool TestPan() {
+    return TestPanSettings().rate != 0.0f;
 }
 
 void SetActive(bool active) {

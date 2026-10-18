@@ -1255,6 +1255,10 @@ void TemporalUpscaler::Run() {
     float frame_ms = std::chrono::duration<float, std::milli>(now - last_frame).count();
     if (frame_ms <= 0.0f || frame_ms > 200.0f) {
         frame_ms = 16.6f;
+    } else {
+        // A hitch counts as at most 66.7 ms (15 FPS) so it doesn't smear the next frames
+        // (from Mrsuss60/bloodborne_pc_windows_port b363586d).
+        frame_ms = std::min(frame_ms, 66.7f);
     }
     last_frame = now;
 
@@ -1903,6 +1907,10 @@ void TemporalUpscaler::RunScaled() {
     float frame_ms = std::chrono::duration<float, std::milli>(now - last_frame).count();
     if (frame_ms <= 0.0f || frame_ms > 200.0f) {
         frame_ms = 16.6f;
+    } else {
+        // A hitch counts as at most 66.7 ms (15 FPS) so it doesn't smear the next frames
+        // (from Mrsuss60/bloodborne_pc_windows_port b363586d).
+        frame_ms = std::min(frame_ms, 66.7f);
     }
     last_frame = now;
 

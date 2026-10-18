@@ -10,4 +10,8 @@ void Start();
 void Stop();
 // Gate snapshot published by the window thread once per pump.
 void SetActive(bool active);
+/// BB_CAM_TEST_PAN=RATE[,SECONDS] (measurement aid, direct camera): a steady pan of RATE mouse
+/// counts a second fed to the camera without focus or OS input; with SECONDS the camera's apply
+/// mode (in the game's update / from the mouse thread) alternates every SECONDS for an A/B.
+bool TestPan();
 } // namespace BbMouse
