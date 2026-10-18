@@ -39,6 +39,14 @@ build.bat
 - `-DBB_MARCH=native` (or a CPU name such as `skylake`) when configuring `out/gpu` tunes the code for your processor; the result may not start on older CPUs. Release builds use `-DBB_MARCH=x86-64-v3`, the AVX2 baseline the port already requires (Intel Haswell / AMD Ryzen and newer).
 - Profile-guided optimization: configure a second build folder with `-DBB_PGO=generate -DBB_OUT_DIR=<folder>`, play about 20 minutes with that `bbport.exe` (it writes a profile into `pgo\` every 30 s), then reconfigure the same build folder with `-DBB_PGO=use` and build again. Only the port's own code is optimized (GPU command translation, caches, runtime), so it helps in CPU-limited scenes.
 
+## Bundled Python for a release
+
+Releases ship a trimmed CPython 3.12 x64 with Tk in `python\`, so players need no installed Python: `launch_gui.bat` runs the launcher on `python\pythonw.exe` and `run.bat` runs the scripts on `python\python.exe`, falling back to an installed Python 3.10+ when the folder is missing (a source checkout). python.org's embeddable zip has no tkinter, so the bundle is made from a full python.org install (3.12.x, 64-bit):
+```cmd
+python tools\release\make_python_bundle.py --src C:\Python312 --out <release folder>\python
+```
+It copies the interpreter, `DLLs\`, `tcl\` and `Lib\` without tests, IDLE, pip, lib2to3 and site-packages (about 47 MB, 17.5 MB zipped), and precompiles the standard library to unchecked-hash `.pyc` files, so the interpreter never writes into the folder and two builds from the same install are identical. The bats set `PYTHONDONTWRITEBYTECODE=1` and clear `PYTHONHOME` / `PYTHONPATH` for it. `launch_gui.bat --print-python` shows which Python the launcher would use. The scripts use the standard library only; a new script must too (check with `python\python.exe -I -c "import <module>"`).
+
 ## Upscaler assets
 
 FSR 3.1 needs none. FSR 4 (v07) and FSR 4.1.1 need assets that are not included: `tools/fetch_fsr4_assets.sh` downloads FSR 4 v07, and FSR 4.1.1 is built from your own AMD `amd_fidelityfx_upscaler_dx12.dll` (4.1.x) by `tools/fsr4cap` (upstream runs this under Proton on Linux; the resulting `fsr4_411` folder can be copied here). On RDNA4 the FP8 variant is picked automatically; `BB_FSR411_VARIANT=int8` forces INT8.
