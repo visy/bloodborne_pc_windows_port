@@ -77,5 +77,39 @@ class SelfTests(unittest.TestCase):
             parse_self(data)
 
 
+
+class EbootValidationTests(unittest.TestCase):
+    """Clear errors for a missing, empty or truncated eboot.bin (from Mrsuss60 bb3f67b3)."""
+
+    def run_prepare(self, content):
+        from prepare import prepare
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp) / 'game'
+            game.mkdir()
+            if content is not None:
+                (game / 'eboot.bin').write_bytes(content)
+            prepare(game, Path(tmp) / 'out')
+
+    def test_missing_eboot(self):
+        with self.assertRaisesRegex(FileNotFoundError, 'eboot.bin not found'):
+            self.run_prepare(None)
+
+    def test_empty_eboot(self):
+        with self.assertRaisesRegex(ValueError, r'empty \(0 bytes\)'):
+            self.run_prepare(b'')
+
+    def test_truncated_eboot(self):
+        with self.assertRaisesRegex(ValueError, r'truncated \(5 bytes\)'):
+            self.run_prepare(b'O\x15=\x1d\x00')
+
+    def test_short_data_in_parse_self(self):
+        with self.assertRaisesRegex(ValueError, 'empty or truncated'):
+            parse_self(b'\x7fELF')
+
+    def test_wrong_magic(self):
+        with self.assertRaisesRegex(ValueError, 'expected PS4 SELF or ELF'):
+            parse_self(b'\x00' * 64)
+
+
 if __name__ == '__main__':
     unittest.main()
