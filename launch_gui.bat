@@ -5,9 +5,16 @@ cd /d "%~dp0"
 set "PYTHON_EXE="
 rem The release's bundled Python (python\ next to this file) comes first: no installed Python needed.
 rem It never writes __pycache__ into the bundle, and ignores a system Python's PYTHONHOME / PYTHONPATH.
-if exist "%~dp0python\pythonw.exe" set "PYTHON_EXE=%~dp0python\pythonw.exe"
-if defined PYTHON_EXE set "PYTHONDONTWRITEBYTECODE=1" & set "PYTHONHOME=" & set "PYTHONPATH="
-if defined PYTHON_EXE goto found
+rem A partly extracted or quarantined folder fails a quick import check and is skipped.
+if not exist "%~dp0python\pythonw.exe" goto search
+"%~dp0python\python.exe" -I -c "import tkinter, encodings" >nul 2>nul
+if errorlevel 1 goto bundle_broken
+set "PYTHON_EXE=%~dp0python\pythonw.exe"
+set "PYTHONDONTWRITEBYTECODE=1" & set "PYTHONHOME=" & set "PYTHONPATH="
+goto found
+:bundle_broken
+echo bundled Python is incomplete (re-extract the zip); using an installed Python
+:search
 for %%P in (
     "C:\Program Files\Python314\python.exe"
     "C:\Program Files\Python313\python.exe"
