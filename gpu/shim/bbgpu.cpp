@@ -7,6 +7,8 @@
 #include "party/mirror_frame.h"
 #include "party/world_warper.h"
 #include "party/coop_hooks.h"
+#include "party/game_state.h"
+#include "net/bbnet_internal.h"
 // bbport: glue between the C loader and the vendored shadPS4 video core.
 #include "bbport_overlay.h"
 #include "bbport_settings.h"
@@ -398,6 +400,10 @@ extern "C" void bbgpu_patch_image(unsigned char* image, uint64_t size) {
     BbGameMenu::PatchImage(image, size);
     BbStability::PatchImage(image, size);
     bbnet_set_image(image, size);  // the party library's view of game data (gpu/shim/net)
+    // Its guest_read through the fault-recovering SafeRead, not a VirtualQuery check per call:
+    // VirtualQuery took ~4-12 ms per call in a running game, and the party's per-frame save slot
+    // reads took 112 FPS to 40 (GitHub issue #3).
+    bbnet::set_guest_reader(&coop::SafeRead);
     coop::HooksInit(image, size);  // the image for game-state reads (the performance HUD's menu / banner check, solo too)
     coop::lamptravel::Install(image, size);  // direct lamp travel (solo and party; BB_LAMP_TRAVEL=0 off)
     coop::mirror::Install();  // the Dream mirror's editor in character creation's frame (H5)
