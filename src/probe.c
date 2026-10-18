@@ -15,6 +15,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <mmsystem.h>
+#include <tlhelp32.h>
 #include "win32_exception.h"
 #if defined(__GNUC__) || defined(__clang__)
 #include <cpuid.h>
@@ -1086,6 +1087,18 @@ static void start_crash_reaper(void) {
     }
 }
 
+/* Host address -> "module.dll+0xoff" (crash dumps only), or 0 outside any loaded module. */
+static int resolve_host_address(uintptr_t a, char *out, size_t n) {
+    HMODULE mod = NULL;
+    char path[MAX_PATH];
+    if (a < 0x10000 || !GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                           GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)a, &mod) ||
+        !GetModuleFileNameA(mod, path, sizeof(path))) return 0;
+    const char *name = strrchr(path, '\\');
+    snprintf(out, n, "%s+0x%" PRIxPTR, name ? name + 1 : path, a - (uintptr_t)mod);
+    return 1;
+}
+
 static void write_crash_dump(EXCEPTION_POINTERS *ep, void *fault_addr, uintptr_t rip, DWORD code) {
     char crash_path[MAX_PATH];
     SYSTEMTIME st;
@@ -1104,8 +1117,16 @@ static void write_crash_dump(EXCEPTION_POINTERS *ep, void *fault_addr, uintptr_t
     fprintf(f, "================================================================================\n\n");
     fprintf(f, "Exception Code: 0x%08lx\n", code);
     fprintf(f, "Fault Address:  %p\n", fault_addr);
+    const EXCEPTION_RECORD *er = ep->ExceptionRecord;
+    if ((code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_IN_PAGE_ERROR) && er->NumberParameters >= 2) {
+        const ULONG_PTR kind = er->ExceptionInformation[0];
+        fprintf(f, "Access:         %s of %p\n", kind == 0 ? "READ" : kind == 1 ? "WRITE" : kind == 8 ? "DEP-EXECUTE" : "?",
+                (void *)er->ExceptionInformation[1]);
+    }
+    char host_loc[MAX_PATH + 32];
     if (off) fprintf(f, "Faulting RIP:   %p (guest eboot.bin offset 0x%" PRIxPTR ")\n\n", (void *)rip, off);
-    else fprintf(f, "Faulting RIP:   %p (host address)\n\n", (void *)rip);
+    else if (resolve_host_address(rip, host_loc, sizeof(host_loc))) fprintf(f, "Faulting RIP:   %p (%s)\n\n", (void *)rip, host_loc);
+    else fprintf(f, "Faulting RIP:   %p (host address, no module)\n\n", (void *)rip);
 
     CONTEXT *c = ep->ContextRecord;
     fprintf(f, "--- REGISTERS ---\n");
@@ -1140,7 +1161,7 @@ static void write_crash_dump(EXCEPTION_POINTERS *ep, void *fault_addr, uintptr_t
                         }
                     }
                     if (!found_mod) snprintf(loc, sizeof(loc), "guest eboot.bin +0x%" PRIxPTR, val_off);
-                } else {
+                } else if (!resolve_host_address(val, loc, sizeof(loc))) {
                     snprintf(loc, sizeof(loc), "host / stack data");
                 }
                 fprintf(f, "  [frame +0x%02x] %016llx (%s)\n", i * 8, (unsigned long long)val, loc);
@@ -1160,7 +1181,7 @@ static void write_crash_dump(EXCEPTION_POINTERS *ep, void *fault_addr, uintptr_t
         if (ret_addr >= (uintptr_t)image && ret_addr < (uintptr_t)image + (image_size ? image_size : 0x20000000)) {
             uintptr_t val_off = ret_addr - (uintptr_t)image;
             snprintf(loc, sizeof(loc), "guest eboot.bin +0x%" PRIxPTR, val_off);
-        } else {
+        } else if (!resolve_host_address(ret_addr, loc, sizeof(loc))) {
             snprintf(loc, sizeof(loc), "host %p", (void *)ret_addr);
         }
         fprintf(f, "  [rbp frame %2d] ret=%016llx (%s)\n", frame, (unsigned long long)ret_addr, loc);
@@ -1187,6 +1208,19 @@ static void write_crash_dump(EXCEPTION_POINTERS *ep, void *fault_addr, uintptr_t
     runtime_memory_dump_recent_ops(f);
     if (gpu_enabled) bbgpu_dump_breadcrumbs(f);
     fflush(f);
+    /* Last: a snapshot can block on the loader lock (the reaper still ends the process). */
+    fprintf(f, "\n--- LOADED MODULES ---\n");
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0);
+    if (snap != INVALID_HANDLE_VALUE) {
+        MODULEENTRY32 me = {.dwSize = sizeof(me)};
+        for (BOOL ok = Module32First(snap, &me); ok; ok = Module32Next(snap, &me))
+            fprintf(f, "  %016llx-%016llx %-28s %8lu KiB %s\n", (unsigned long long)(uintptr_t)me.modBaseAddr,
+                    (unsigned long long)((uintptr_t)me.modBaseAddr + me.modBaseSize), me.szModule,
+                    (unsigned long)(me.modBaseSize >> 10), me.szExePath);
+        CloseHandle(snap);
+    } else {
+        fprintf(f, "  (snapshot failed: %lu)\n", (unsigned long)GetLastError());
+    }
     fclose(f);
     char note[256];
     snprintf(note, sizeof(note), "Crash details written to %s\n", crash_path);
