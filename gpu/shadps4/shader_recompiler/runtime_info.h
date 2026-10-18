@@ -227,6 +227,9 @@ struct HwFragmentRuntimeInfo {
     bool front_face_all_bits{false};
     bool dual_source_blending{false};
     bool clip_distance_emulation{false};
+    /// DB_SHADER_CONTROL.DEPTH_BEFORE_SHADER: depth/stencil tests run before the shader
+    /// (EarlyFragmentTests; shadPS4 7d28d279).
+    bool depth_before_shader{false};
     /// bbport: writes the object motion vector to MotionVectors::Output.
     bool motion_vectors{false};
 
@@ -238,6 +241,7 @@ struct HwFragmentRuntimeInfo {
                front_face_all_bits == other.front_face_all_bits &&
                dual_source_blending == other.dual_source_blending &&
                clip_distance_emulation == other.clip_distance_emulation &&
+               depth_before_shader == other.depth_before_shader &&
                motion_vectors == other.motion_vectors &&
                std::ranges::equal(inputs.begin(), inputs.begin() + num_inputs, other.inputs.begin(),
                                   other.inputs.begin() + num_inputs);

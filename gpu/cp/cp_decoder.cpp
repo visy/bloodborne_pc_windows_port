@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cp_decoder.h"
+#include <algorithm>
 
 namespace BbCp {
 
@@ -119,6 +120,18 @@ const Packet* Cursor::Next() {
         if (header.Type() == 2) { // filler
             ++stats.filler;
             level.rest = level.rest.subspan(1);
+            continue;
+        }
+        if (level.rest[0] == 0) {
+            // A zero dword is padding (as Mrsuss60 8f3a88fc): skipped; a buffer whose remaining
+            // dwords are all zero just ends here, its parents go on. Other type-0 dwords (reused
+            // command buffers decoded as garbage) still drop the rest below.
+            ++stats.zero_padding;
+            if (std::ranges::all_of(level.rest, [](u32 w) { return w == 0; })) {
+                levels.pop_back();
+            } else {
+                level.rest = level.rest.subspan(1);
+            }
             continue;
         }
         if (header.Type() != 3) {
