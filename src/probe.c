@@ -1198,16 +1198,8 @@ static LONG WINAPI win_veh_handler(EXCEPTION_POINTERS *ep) {
     if (code == EXCEPTION_ACCESS_VIOLATION) {
         void *fault_addr = (void *)ep->ExceptionRecord->ExceptionInformation[1];
         uintptr_t rip = ep->ContextRecord->Rip;
-        // Save the 128-byte System V AMD64 Red Zone [RSP-128 .. RSP] before any handler runs.
-        // Windows kernel exception dispatch (KiUserExceptionDispatch) pushes its frame below RSP,
-        // which clobbers variables (like -0x60(%rsp)) used by PS4 guest functions.
-        char red_zone_backup[128];
-        uintptr_t red_zone_rsp = ep->ContextRecord->Rsp;
-        int has_red_zone = 0;
-        if (red_zone_rsp >= 128 && red_zone_rsp < (1ULL << 46)) {
-            memcpy(red_zone_backup, (void *)(red_zone_rsp - 128), 128);
-            has_red_zone = 1;
-        }
+        /* No red-zone backup here: the kernel built this exception's frame below RSP before
+         * the handler ran, so the guest's red zone is already gone (Mrsuss60 2ab6fe7a). */
 
         unsigned char *ip = (unsigned char *)rip;
         if (rip >= 0x10000 && !IsBadReadPtr((const void *)rip, 1) && ip[0] == 0x64) {
@@ -1224,31 +1216,42 @@ static LONG WINAPI win_veh_handler(EXCEPTION_POINTERS *ep) {
                 }
                 /* Without FSGSBASE any other fs: access would fault here again forever: it
                  * goes on to the crash report instead. */
-                if (handled) {
-                    if (has_red_zone) memcpy((void *)(red_zone_rsp - 128), red_zone_backup, 128);
-                    return EXCEPTION_CONTINUE_EXECUTION;
-                }
+                if (handled) return EXCEPTION_CONTINUE_EXECUTION;
             }
         }
-        if (gpu_enabled && bbgpu_handle_fault(ep, fault_addr)) {
-            if (has_red_zone) memcpy((void *)(red_zone_rsp - 128), red_zone_backup, 128);
-            return EXCEPTION_CONTINUE_EXECUTION;
-        }
+        if (gpu_enabled && bbgpu_handle_fault(ep, fault_addr)) return EXCEPTION_CONTINUE_EXECUTION;
         if (rip >= (uintptr_t)image && rip < (uintptr_t)image + (image_size ? image_size : 0x20000000)) {
             uintptr_t off = rip - (uintptr_t)image;
-            // Function 0x28ce7b0 is the particle/blood stream vertex generator.
-            // On Windows, if VRAM pressure or page-tracking clobbers its System V Red Zone (-0x60(%rsp)),
-            // or if vertex stream pointers are uninitialized, safely unroll the frame and return to caller.
-            if (off >= 0x28ce7ba && off < 0x28ceeb8) {
-                uintptr_t rsp = ep->ContextRecord->Rsp;
-                ep->ContextRecord->Rbx = *(DWORD64 *)(rsp + 0x30);
-                ep->ContextRecord->R12 = *(DWORD64 *)(rsp + 0x38);
-                ep->ContextRecord->R13 = *(DWORD64 *)(rsp + 0x40);
-                ep->ContextRecord->R14 = *(DWORD64 *)(rsp + 0x48);
-                ep->ContextRecord->R15 = *(DWORD64 *)(rsp + 0x50);
-                ep->ContextRecord->Rbp = *(DWORD64 *)(rsp + 0x58);
-                ep->ContextRecord->Rip = *(DWORD64 *)(rsp + 0x60);
-                ep->ContextRecord->Rsp = rsp + 0x68;
+            /* The effect-ribbon vertex writers keep their pointers in the SysV red zone, which a
+             * GPU write-watch fault's frame overwrites on Windows; the next point then reads through
+             * a null pointer. bbport_ribbons.cpp replaces the first two (BB_RIBBON_FIX); the other
+             * two (called from 0x2ab4ad0) have no replacement yet. All four are leaf functions
+             * (six pushes, then `frame` bytes) whose callers return right after them: on such a
+             * fault, return to the caller and the strip stays unfinished for this frame.
+             * From Mrsuss60/bloodborne_pc_windows_port 2ab6fe7a; frames checked on the 1.09 eboot. */
+            static const struct { uintptr_t from, to, frame; } ribbon_leaf[] = {
+                {0x28ce7be, 0x28ceeb8, 0x30}, {0x28ceece, 0x28cf572, 0x20},
+                {0x28cf58b, 0x28cfb95, 0x08}, {0x28cfbae, 0x28d015e, 0x18},
+            };
+            for (size_t i = 0; i < sizeof ribbon_leaf / sizeof ribbon_leaf[0]; ++i) {
+                if (off < ribbon_leaf[i].from || off >= ribbon_leaf[i].to) continue;
+                const uintptr_t rsp = ep->ContextRecord->Rsp, f = ribbon_leaf[i].frame;
+                ep->ContextRecord->Rbx = *(DWORD64 *)(rsp + f);
+                ep->ContextRecord->R12 = *(DWORD64 *)(rsp + f + 0x08);
+                ep->ContextRecord->R13 = *(DWORD64 *)(rsp + f + 0x10);
+                ep->ContextRecord->R14 = *(DWORD64 *)(rsp + f + 0x18);
+                ep->ContextRecord->R15 = *(DWORD64 *)(rsp + f + 0x20);
+                ep->ContextRecord->Rbp = *(DWORD64 *)(rsp + f + 0x28);
+                ep->ContextRecord->Rip = *(DWORD64 *)(rsp + f + 0x30);
+                ep->ContextRecord->Rsp = rsp + f + 0x38;
+                static volatile LONG hits;
+                const LONG n = InterlockedIncrement(&hits);
+                if (n <= 5 || (n & (n - 1)) == 0) { /* first 5, then at powers of two */
+                    char line[160];
+                    snprintf(line, sizeof line, "Runtime: effect ribbon writer +0x%llx faulted (red zone lost), strip skipped (%ld so far)\n",
+                             (unsigned long long)off, (long)n);
+                    veh_write(line);
+                }
                 return EXCEPTION_CONTINUE_EXECUTION;
             }
         }
