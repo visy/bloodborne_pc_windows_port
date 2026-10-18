@@ -722,6 +722,8 @@ def main():
     ap.add_argument("--instance", type=int, default=1, help="crash: which instance")
     ap.add_argument("--after", type=float, default=0, help="crash: wait this many s first")
     ap.add_argument("--env", action="append")
+    ap.add_argument("--reserve", type=int, default=0,
+                    help="run: hold this many game slots (at least --count), e.g. 2 for a performance run alone on the GPU")
     ap.add_argument("--ienv", action="append", help="run: I:KEY=VALUE, set for instance I only (after --env)")
     ap.add_argument("--timestamps", action="store_true",
                     help="run: prefix every log line with [+seconds] since the run started (one clock for all instances)")
@@ -731,8 +733,10 @@ def main():
         # At most max_clients game clients on this machine across all agents (tools/mp/game_queue.py).
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from game_queue import game_slots
-        with game_slots(a.count, a.root, label=a.label) as slots:
-            a.slots = slots
+        # --reserve N: hold N slots although only --count games start (performance runs: no other
+        # agent's game shares the GPU while frame times are measured).
+        with game_slots(max(a.count, a.reserve), a.root, label=a.label) as slots:
+            a.slots = slots[:a.count]
             run(a)
         return
     {"setup": setup, "run": run, "logs": logs, "kill": kill, "crash": crash}[a.cmd](a)
