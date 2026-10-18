@@ -302,6 +302,7 @@ void Load() {
         {"BB_GPL", "gpl"},                          {"BB_COMPILE_INDICATOR", "compile_indicator"},
         {"BB_HUD", "show_hud"},                     {"BB_HUD_POSITION", "hud_position"},
         {"BB_MOUSE_KEYBOARD", "mk_enabled"},
+        {"BB_MOUSE_DIRECT_CAMERA", "mk_direct_camera"},
         {"BB_HDR", "hdr"},                          {"BB_HDR_PEAK", "hdr_peak_nits"},
         {"BB_HDR_PAPER_WHITE", "hdr_paper_white"},  {"BB_HDR_STRENGTH", "hdr_strength"},
         {"BB_HDR_SATURATION", "hdr_saturation"},   {"BB_PARTY_OVERHEAD", "party_overhead"},
