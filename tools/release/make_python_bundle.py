@@ -30,9 +30,10 @@ LIB_SKIP_NAMES = {"__pycache__", "tests"}  # anywhere in Lib
 DLL_SKIP_PREFIX = ("_test", "_ctypes_test")
 DLL_SKIP_EXT = {".ico", ".cat"}
 
-# tcl\: runtime scripts only (no link libraries, nmake files, build config scripts).
+# tcl\: runtime scripts only (no link libraries, nmake files, build config scripts, Tk demos,
+# Tix: tkinter.tix is deprecated and unused here). Paths relative to tcl, forward slashes.
 TCL_SKIP_EXT = {".lib", ".sh"}
-TCL_SKIP_DIRS = {"nmake"}
+TCL_SKIP_DIRS = {"nmake", "tk8.6/demos", "tix8.4.3"}
 
 README = """\
 Bundled Python for the Bloodborne PC Windows port
@@ -44,7 +45,7 @@ run.bat runs the patch and setup scripts (scripts\\*.py) on python.exe. No insta
 is needed. The standard library is precompiled; tests, IDLE, pip and site-packages are left out.
 
 CPython is under the PSF License (LICENSE.txt in this folder). Tcl/Tk is under a BSD-style
-license (tcl\\tcl8.6\\license.terms, tcl\\tk8.6\\license.terms). LICENSE.txt also lists the
+license (LICENSE-tcltk.txt, the same terms for both). LICENSE.txt also lists the
 licenses of the other libraries CPython includes (OpenSSL, libffi, SQLite, zlib, ...).
 
 Made by tools/release/make_python_bundle.py from the port's source repository.
@@ -100,7 +101,7 @@ def keep_dlls(rel: Path, is_dir: bool) -> bool:
 
 def keep_tcl(rel: Path, is_dir: bool) -> bool:
     if is_dir:
-        return rel.name not in TCL_SKIP_DIRS
+        return rel.as_posix() not in TCL_SKIP_DIRS
     return rel.suffix.lower() not in TCL_SKIP_EXT
 
 
@@ -128,6 +129,8 @@ def main() -> None:
     copy_tree(src / "tcl", out / "tcl", keep_tcl)
     copy_tree(src / "Lib", out / "Lib", keep_lib)
     (out / "Lib" / "site-packages").mkdir(exist_ok=True)
+    # The install has Tk's license.terms but not Tcl's; Tcl and Tk carry the same terms.
+    copy_file(src / "tcl" / "tk8.6" / "license.terms", out / "LICENSE-tcltk.txt")
     (out / "README.txt").write_text(README.format(version=version), encoding="utf-8", newline="\r\n")
 
     # Compile with the bundle's own interpreter so the .pyc magic matches it exactly; -B so its own
