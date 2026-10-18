@@ -12,6 +12,9 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 #include "common/types.h"
 
@@ -41,8 +44,16 @@ public:
         return m_lockedOn.load(std::memory_order_relaxed);
     }
 
-    /// Mouse sampler thread: applies relative motion to the camera.
+    /// Mouse sampler thread: gathers relative motion for the next camera update (or, with
+    /// BB_MOUSE_CAM_APPLY=thread, the old way: writes the angles from this thread).
     void OnMouseMotion(float xrel, float yrel);
+    /// The game's thread, from the camera hook: turns `camera` by the gathered motion.
+    void Apply(uintptr_t camera);
+    /// A/B switch (BB_MOUSE_CAM_APPLY, BB_CAM_TEST_PAN): apply in the game's update (default).
+    void SetApplyInGame(bool in_game);
+    [[nodiscard]] bool ApplyInGame() const;
+    /// True while the game updates the camera (the last update less than 100 ms ago).
+    [[nodiscard]] bool CameraLive() const;
 
     /// BB_CAM_PROBE=1 (measurement aid, window thread): hooks only the camera-object capture, so
     /// the game still turns the camera from the stick, and reads its angles for the log. Direct
@@ -58,11 +69,22 @@ private:
     BloodborneCam& operator=(const BloodborneCam&) = delete;
 
     bool InitializeAddresses();
+    /// Turns `camera` by mouse counts.
+    void Turn(uintptr_t camera, float xrel, float yrel, bool game_thread = false);
+    static std::FILE* StepLog();
 
     std::atomic<bool> m_enabled{false};
     std::atomic<bool> m_configured{false};
     std::atomic<float> m_scale{1.0f};
     std::atomic<bool> m_lockedOn{false};
+    std::atomic<bool> m_applyInGame{[] {
+        const char* v = std::getenv("BB_MOUSE_CAM_APPLY");
+        return !(v && std::strcmp(v, "thread") == 0);
+    }()};
+    std::atomic<float> m_pendingX{0.0f}, m_pendingY{0.0f}; ///< mouse counts since the last update
+    std::atomic<float> m_logCounts{0.0f};
+    std::atomic<int64_t> m_lastApplyMs{0};
+    std::atomic<uintptr_t> m_camera{0}; ///< the camera object of the last update
     bool m_probe = false;
     bool m_probeHooked = false;
     bool m_addressesResolved = false;
