@@ -1851,6 +1851,7 @@ int main(int argc, char **argv) {
         bb_boot_mark("GPU ready");
     }
     image_size = size;
+    runtime_set_guest_image(image, size);
     resolved_targets = calloc(import_count + 1, sizeof(void *));
     import_call_counts = calloc(import_count + 1, sizeof(uint64_t));
     is_unbound = calloc(import_count + 1, sizeof(uint8_t));

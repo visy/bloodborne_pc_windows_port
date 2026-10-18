@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdatomic.h>
+#include <inttypes.h>
 #include <sched.h>
 #include <pthread.h>
 
@@ -176,23 +177,60 @@ static ABI __attribute__((noreturn)) void stack_fail(void) {
     fputs("STOP: guest stack protector detected corruption\n", stderr);
     exit(22);
 }
+/* #135: a guest mem* call with size > 0 and a NULL pointer would fault inside the C runtime.
+ * It is skipped instead (memory untouched) and reported once per guest call site, at most 32
+ * sites. Hot path: one combined test (from Mrsuss60/bloodborne_pc_windows_port bb3f67b3). */
+static uintptr_t guest_image_lo, guest_image_hi;
+void runtime_set_guest_image(const void *base, uint64_t size) {
+    guest_image_lo = (uintptr_t)base;
+    guest_image_hi = (uintptr_t)base + size;
+}
+#define MEM_NULL(a, b, size) __builtin_expect((((a) == NULL) | ((b) == NULL)) & ((size) != 0), 0)
+static __attribute__((noinline, cold)) void mem_null_report(const char *op, const void *a, const void *b,
+                                                            size_t size, void *ret) {
+    static _Atomic uintptr_t seen[32];
+    const uintptr_t r = (uintptr_t)ret;
+    for (int i = 0; i < 32; ++i) {
+        uintptr_t expected = 0;
+        if (atomic_load_explicit(&seen[i], memory_order_relaxed) == r) return;
+        if (!atomic_compare_exchange_strong(&seen[i], &expected, r)) {
+            if (expected == r) return;
+            continue;
+        }
+        if (r >= guest_image_lo && r < guest_image_hi)
+            fprintf(stderr, "Runtime: guest %s(%p, %p, %zu) with a NULL pointer skipped (caller eboot +0x%" PRIxPTR "; once per call site)\n",
+                    op, a, b, size, r - guest_image_lo);
+        else
+            fprintf(stderr, "Runtime: guest %s(%p, %p, %zu) with a NULL pointer skipped (caller %p; once per call site)\n",
+                    op, a, b, size, ret);
+        return;
+    }
+}
 static ABI void *guest_memset(void *dst, int value, size_t size) {
     atomic_fetch_add_explicit(&memory_calls,1,memory_order_relaxed);
+    if (MEM_NULL(dst, dst, size)) { mem_null_report("memset", dst, NULL, size, __builtin_return_address(0)); return dst; }
     runtime_memory_prepare_cpu_write((uintptr_t)dst, size);
     memset(dst, value, size); runtime_memory_note_cpu_write((uintptr_t)dst, size); return dst;
 }
 static ABI void *guest_memcpy(void *dst, const void *src, size_t size) {
     atomic_fetch_add_explicit(&memory_calls,1,memory_order_relaxed);
+    if (MEM_NULL(dst, src, size)) { mem_null_report("memcpy", dst, src, size, __builtin_return_address(0)); return dst; }
     runtime_memory_prepare_cpu_write((uintptr_t)dst, size);
     memcpy(dst, src, size); runtime_memory_note_cpu_write((uintptr_t)dst, size); return dst;
 }
 static ABI void *guest_memmove(void *dst, const void *src, size_t size) {
     atomic_fetch_add_explicit(&memory_calls,1,memory_order_relaxed);
+    if (MEM_NULL(dst, src, size)) { mem_null_report("memmove", dst, src, size, __builtin_return_address(0)); return dst; }
     runtime_memory_prepare_cpu_write((uintptr_t)dst, size);
     memmove(dst, src, size); runtime_memory_note_cpu_write((uintptr_t)dst, size); return dst;
 }
 static ABI int guest_memcmp(const void *a, const void *b, size_t size) {
-    atomic_fetch_add_explicit(&memory_calls,1,memory_order_relaxed); return memcmp(a, b, size);
+    atomic_fetch_add_explicit(&memory_calls,1,memory_order_relaxed);
+    if (MEM_NULL(a, b, size)) {
+        mem_null_report("memcmp", a, b, size, __builtin_return_address(0));
+        return a == b ? 0 : a ? 1 : -1;
+    }
+    return memcmp(a, b, size);
 }
 static ABI size_t guest_strlen(const char *text) { return strlen(text); }
 static ABI __attribute__((noreturn)) void guest_libc_exit(int status) {
