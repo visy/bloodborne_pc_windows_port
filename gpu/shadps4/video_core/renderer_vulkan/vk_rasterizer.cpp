@@ -4163,9 +4163,9 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
 }
 
 void Rasterizer::VolumetricFrameStart() {
-    // Test aid BB_VOLUMETRIC_RES_FILE=<file>: its first character (0/1/2), polled about once a
-    // second, sets the level (a sweep within one session); each level's mean frame time is
-    // logged when it changes.
+    // Test aid BB_VOLUMETRIC_RES_FILE=<file>: its first character (0/1/2), polled every 4 frames
+    // (same-scene comparisons a few frames apart), sets the level (a sweep within one session);
+    // each level's mean frame time is logged when it changes.
     static const char* sweep_file = std::getenv("BB_VOLUMETRIC_RES_FILE");
     static u64 frames = 0, level_frames = 0;
     static auto level_start = std::chrono::steady_clock::now();
@@ -4178,7 +4178,8 @@ void Rasterizer::VolumetricFrameStart() {
         if (same_frame) return;
     }
     ++frames;
-    if (sweep_file && frames % 60 == 0) {
+    volumetric_after_gbuffer = false;
+    if (sweep_file && frames % 4 == 0) {
         if (FILE* f = std::fopen(sweep_file, "r")) {
             const int c = std::fgetc(f);
             std::fclose(f);
@@ -4186,6 +4187,14 @@ void Rasterizer::VolumetricFrameStart() {
         }
     }
     ++level_frames;
+    // Test aid BB_VOLUMETRIC_DUMP_TRIGGER=<file>: creating the file writes the effect buffers as
+    // the last frame left them (BB_DUMP_DIR), before a level change can drop their proxies.
+    static const char* dump_trigger = std::getenv("BB_VOLUMETRIC_DUMP_TRIGGER");
+    if (dump_trigger && frames % 4 == 2 && std::remove(dump_trigger) == 0) {
+        static u32 dump_index = 0;
+        const char* dir = std::getenv("BB_DUMP_DIR");
+        scene_targets->DumpVolumetric(dir && dir[0] ? dir : "out/dump", dump_index++);
+    }
     const int level = BbSettings::Get().volumetric_res.load(std::memory_order_relaxed);
     if (sweep_file && VolumetricResolution::ClampLevel(level) != scene_targets->VolumetricLevel()) {
         const auto now = std::chrono::steady_clock::now();
@@ -4214,6 +4223,7 @@ void Rasterizer::VolumetricClassifyPass(const GraphicsPipelineKey& key, u32 num_
     // The G-buffer pass (5+ color targets) holds the scene depth: rule 1's reference.
     if (std::popcount(key.mrt_mask & 0x7fu) >= 5) {
         scene_targets->NoteSceneDepth(depth_size);
+        volumetric_after_gbuffer = true;
         return;
     }
     const PassFacts facts{
@@ -4222,6 +4232,7 @@ void Rasterizer::VolumetricClassifyPass(const GraphicsPipelineKey& key, u32 num_
         .depth_has_stencil = depth.info.props.is_depth && depth.info.props.has_stencil,
         .depth_volumetric = depth.volumetric,
         .depth_size = depth_size,
+        .after_gbuffer = volumetric_after_gbuffer,
     };
     if (!DepthIsVolumetric(facts)) {
         return;

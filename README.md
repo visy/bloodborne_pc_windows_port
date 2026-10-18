@@ -43,7 +43,7 @@ whole party respawns with the host, 4 players instead of 6, one shared drop roll
 | **High frame rates** | 30 / 60 / 90 / uncapped, with correct game speed (community patches). |
 | **Upscaling** | FSR 3.1, FSR 4, FSR 4.1.1 and DLSS, with motion vectors added for this game. |
 | **Frame generation** | Optional, off by default: DLSS FG (2x-4x, RTX 40/50) or FSR FG (2x), paced, HUD kept sharp; NVIDIA Reflex. [More](docs/FG_REFLEX.md) |
-| **Sharper smoke and fog** | Optional, off by default: smoke, mist and other soft effects, which the game draws at half resolution, at 2x the pixels or at full resolution (*System > Display > Volumetric effects*). [More](docs/SETTINGS.md) |
+| **Finer motion blur** | Optional, off by default: the game's motion blur, which it builds from half-resolution buffers, at 2x the pixels or at full resolution (*System > Display > Motion blur resolution*; 0.6.2 called it *Volumetric effects*, but smoke and mist are already drawn at full resolution). [More](docs/SETTINGS.md) |
 | **HDR output** | Optional, off by default: HDR10 (PQ, Rec.2020) on an HDR display, the game's highlights expanded up to your display's peak while mid-tones and menus stay at paper white; peak, paper white, highlights, saturation and a calibration pattern in *System > HDR*. [More](docs/SETTINGS.md#hdr-output) |
 | **No shader stutter** | Known shaders are built before the intro. New ones compile in the background. |
 | **Shareable shader cache** | Export / import one `.zip`, works across GPUs; drop a shared one into `user\cache_import\`. |

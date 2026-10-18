@@ -611,13 +611,14 @@ void DefineAll() {
                 AddText("5120 x 1440 (32:9)", "5120 x 1440 (32:9)")},
                Kind::Steps);
     }
-    // Volumetric effects resolution (idea from a playtester; volumetric_resolution.h). Live.
+    // Motion blur resolution (0.6.2's "Volumetric effects"; idea from a playtester;
+    // volumetric_resolution.h). Live.
     AddRow(Setting(
                Kind::Steps, [](const Values& v) { return std::clamp(v.volumetric_res.load(), 0, 2); },
                [](int i) { BbSettings::Get().volumetric_res = std::clamp(i, 0, 2); }, 3),
-           "Volumetric effects", "Объёмные эффекты",
-           "Smoke, mist and fog effects' buffer: 0-2 game (half), 3-7 2x pixels, 8-10 full resolution",
-           "Буфер дыма, тумана и дымки: 0-2 как в игре (половина), 3-7 2x пикселей, 8-10 полное",
+           "Motion blur resolution", "Разрешение размытия",
+           "The game's motion blur buffers: 0-2 game (half size), 3-7 2x pixels, 8-10 full",
+           "Буферы размытия в движении: 0-2 как в игре (половина), 3-7 2x пикселей, 8-10 полное",
            {AddText("Game default", "Как в игре"), AddText("2x pixels", "2x пикселей"),
             AddText("Full resolution", "Полное разрешение")},
            Kind::Steps);

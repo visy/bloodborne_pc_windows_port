@@ -99,6 +99,10 @@ public:
     [[nodiscard]] std::size_t VolumetricCount() const noexcept {
         return volumetric_count;
     }
+    /// Test aid (BB_VOLUMETRIC_DUMP_TRIGGER): writes every classified volumetric color image as
+    /// it is drawn (its proxy when that holds the content, else the game's image) to
+    /// <dir>/vol<frame>_<address>_<w>x<h>_<format>.raw once the GPU is done.
+    void DumpVolumetric(const char* dir, u32 frame);
     /// The size `image` would have without the volumetric scale (its proxy's base).
     SceneResolution::Size BaseSize(const VideoCore::Image&, u32 level = 0) const;
 private:
@@ -144,6 +148,7 @@ private:
     SceneResolution::Size scene_depth{0, 0};
     SceneResolution::Size volumetric_half{0, 0};
     std::vector<std::pair<VideoCore::ImageId, u64>> volumetric_queue;
+    std::vector<std::pair<VideoCore::ImageId, u64>> volumetric_images; ///< committed (diagnostics)
     mutable std::unordered_map<vk::Format, vk::FormatFeatureFlags> format_features;
     mutable std::array<vk::FormatFeatureFlags, 256> format_table{};
     mutable std::array<bool, 256> format_known{};
