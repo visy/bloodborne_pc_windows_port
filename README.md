@@ -4,7 +4,7 @@ Run the PS4 version of *Bloodborne* (v1.09, any retail release) natively on Wind
 Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28 (Linux) and the original
 [Windows port](https://github.com/Mrsuss60/bloodborne_pc_windows_port) by Mrsuss60.
 
-**Version 0.6.5** · Playable · Party co-op in development
+**Version 0.6.6** · Playable · Party co-op in development
 
 > No game files are included: you need your own decrypted dump with update 1.09 (any retail
 > release: CUSA03173, CUSA00900, ...; they share the same 1.09 executable).
@@ -379,7 +379,6 @@ whole party respawns with the host, 4 players instead of 6, one shared drop roll
 
 | Change | Status |
 |---|---|
-| Frame rate through game hooks: physics, running and timers correct at 60-144 FPS and uncapped | Done for the next release (port of deadinside's 0.6-pre1 work; launcher switch, on by default) |
 | FSR 4 white or grey picture fixed | Protective fixes built; the cause (FSR 4 with HDR on in Windows) is still being confirmed |
 | Guests load at the same time as the host on party travel (about 10-15 s less per trip) | Planned (opt-in first) |
 | Host death the ERSC way: the host loads alone, guests play on | Planned (opt-in first; today the whole party reloads) |
