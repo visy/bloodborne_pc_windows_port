@@ -504,6 +504,13 @@ def external_selection(found, config):
             if key in enabled or (key not in disabled and meta.get('isEnabled','false').lower()=='true')]
 
 
+def overlaps(writes_a, writes_b):
+    """True if any write of writes_a touches a byte of writes_b."""
+    ranges=[(offset,offset+len(data)) for offset,data in writes_a]
+    return any(start<offset+len(data) and offset<end
+               for offset,data in writes_b for start,end in ranges)
+
+
 def compile_external(selected, segments, applied=None):
     """Writes of the selected external patches; a patch with unsupported lines is skipped whole.
     applied: a list that gets (key, metadata, writes) of each applied patch."""
@@ -586,7 +593,11 @@ def main():
     elf=(a.out/'eboot.elf').read_bytes()
     segments=eboot_segments(elf)
     names=[n for n in names if originals_match(a.xml,n,a.app_version,elf)]
-    writes=compile_patches(a.xml,names,a.app_version,segments)
+    # The FPS preset's writes come first, so an external FPS patch can replace them whole.
+    fps_names=[n for n in names if n in fps_patches]
+    names=fps_names+[n for n in names if n not in fps_names]
+    fps_writes=compile_patches(a.xml,fps_names,a.app_version,segments)
+    writes=fps_writes+compile_patches(a.xml,names[len(fps_names):],a.app_version,segments)
     metas={m.get('Name'):m for m in ET.parse(a.xml).getroot().iter('Metadata') if m.get('AppVer')==a.app_version}
     party_items=[(n,metas.get(n),compile_patches(a.xml,[n],a.app_version,segments)) for n in names]
     party=[n for n in names if n.startswith('Party: ')]
@@ -628,7 +639,19 @@ def main():
                 print(f'Patches: external {key} is off in party mode (BB_PARTY)',file=sys.stderr)
             selected=[x for x in selected if x[0] not in dropped]
         applied=[]
-        writes+=compile_external(selected,segments,applied)
+        external=[]
+        for item in selected:
+            ours=compile_external([item],segments,applied)
+            # An FPS patch of its own (e.g. "60FPS (no deltatime)", at 60 FPS++'s addresses with
+            # other values) replaces the built-in preset whole: applied over it, the two mixed.
+            if fps_writes and overlaps(fps_writes,ours):
+                print(f'Patches: external {item[0]} replaces the built-in {", ".join(fps_names)}')
+                writes=writes[len(fps_writes):]
+                names=[n for n in names if n not in fps_names]
+                party_items=[x for x in party_items if x[0] not in fps_names]
+                fps_writes=[]
+            external+=ours
+        writes+=external
         party_items+=[(f'{meta.get("Name")} (external)',meta,ours) for _,meta,ours in applied]
     # BBPATCH2: the patch base, so the loader can rebase pointers the patches write into
     # relocated slots (60/90 FPS++ replace function pointers).

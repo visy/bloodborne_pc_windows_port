@@ -182,6 +182,24 @@ class ExternalPatchTests(unittest.TestCase):
             writes = compile_external(external_selection(found, config), SEGMENTS)
             self.assertEqual(writes, [(0x2000, (0x12345678).to_bytes(4, 'little'))])
 
+    def test_external_fps_patch_overlaps_preset(self):
+        # "60FPS (no deltatime)" writes at 60 FPS++'s addresses: main() then drops the preset
+        # whole instead of mixing the two. A patch elsewhere (e.g. an effect) does not.
+        preset = compile_patches(XML, patches.FPS_PRESETS['60'], '01.09', SEGMENTS)
+        offset, data = preset[len(preset) // 2]
+        address = hex(EBOOT_BASE + offset + len(data) - 1)
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            (folder / 'fps.xml').write_text(EXTERNAL.replace('0x00401000', address))
+            found = external_patches(folder)
+            ours = compile_external([x for x in found if x[0] == 'fps.xml/On'], SEGMENTS)
+            self.assertTrue(patches.overlaps(preset, ours))
+            far = compile_external([x for x in found if x[0] == 'fps.xml/Off'], SEGMENTS)
+            self.assertFalse(patches.overlaps(preset, far))
+        self.assertFalse(patches.overlaps([], ours))
+        self.assertFalse(patches.overlaps([(0x10, b'ab')], [(0x12, b'c')]))
+        self.assertTrue(patches.overlaps([(0x10, b'ab')], [(0x11, b'c')]))
+
     def test_built_in_file_is_not_external(self):
         self.assertEqual(external_patches(XML.parent), [])
 
