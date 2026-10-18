@@ -196,6 +196,8 @@ def setup(a):
                 shutil.copy2(build / name, inst / name)
         for sub in ("scripts", "patches"):
             link_tree(build / sub, inst / sub)
+        if (build / "python").is_dir():  # a staged release's bundled Python (run.bat prefers it)
+            link_tree(build / "python", inst / "python")
         for f in (build / "out").iterdir():
             if f.suffix.lower() in (".exe", ".dll"):
                 t = inst / "out" / f.name

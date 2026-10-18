@@ -19,7 +19,7 @@ REM a PYTHON the launcher passes is that same one when the launcher runs on it.
 REM A partly extracted or quarantined folder fails a quick import check and is skipped.
 if defined PYTHON goto bundle_done
 if not exist "%~dp0python\python.exe" goto bundle_done
-"%~dp0python\python.exe" -I -c "import encodings, zipfile, xml.etree.ElementTree" >nul 2>nul
+"%~dp0python\python.exe" -I -B -c "import encodings, zipfile, xml.etree.ElementTree" >nul 2>nul
 if errorlevel 1 goto bundle_broken
 set "PYTHON=%~dp0python\python.exe"
 goto bundle_done

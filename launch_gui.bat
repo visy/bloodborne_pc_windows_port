@@ -7,7 +7,7 @@ rem The release's bundled Python (python\ next to this file) comes first: no ins
 rem It never writes __pycache__ into the bundle, and ignores a system Python's PYTHONHOME / PYTHONPATH.
 rem A partly extracted or quarantined folder fails a quick import check and is skipped.
 if not exist "%~dp0python\pythonw.exe" goto search
-"%~dp0python\python.exe" -I -c "import tkinter, encodings" >nul 2>nul
+"%~dp0python\python.exe" -I -B -c "import tkinter, encodings" >nul 2>nul
 if errorlevel 1 goto bundle_broken
 set "PYTHON_EXE=%~dp0python\pythonw.exe"
 set "PYTHONDONTWRITEBYTECODE=1" & set "PYTHONHOME=" & set "PYTHONPATH="
