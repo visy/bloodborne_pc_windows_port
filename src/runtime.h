@@ -71,6 +71,7 @@ void runtime_rwlock_dump_info(void *f, void *handle);
 void runtime_set_libc_tls(const void *data, uint64_t filesz, uint64_t memsz);
 void runtime_set_module_tls(uint64_t module, const void *data, uint64_t filesz, uint64_t memsz);
 void runtime_set_procparam(void *param);
+void runtime_set_guest_image(const void *base, uint64_t size); /* call-site offsets in guard logs */
 void **runtime_application_heap_api(void);
 uintptr_t runtime_thread_resolve(const char *name);
 void runtime_thread_report(void);

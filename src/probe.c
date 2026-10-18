@@ -1127,6 +1127,27 @@ static void write_crash_dump(EXCEPTION_POINTERS *ep, void *fault_addr, uintptr_t
     if (off) fprintf(f, "Faulting RIP:   %p (guest eboot.bin offset 0x%" PRIxPTR ")\n\n", (void *)rip, off);
     else if (resolve_host_address(rip, host_loc, sizeof(host_loc))) fprintf(f, "Faulting RIP:   %p (%s)\n\n", (void *)rip, host_loc);
     else fprintf(f, "Faulting RIP:   %p (host address, no module)\n\n", (void *)rip);
+    /* A fault inside a host DLL (ucrtbase/msvcrt memcpy, free): those keep no frame pointers, so
+     * list the return addresses into the game or our exe in the top 512 bytes of the stack
+     * (from Supermedo/bloodborne_pc 3fbe0576). Every slot is read through ReadProcessMemory. */
+    HMODULE rip_mod = NULL, self_mod = GetModuleHandleA(NULL);
+    if (!off && GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                   (LPCSTR)rip, &rip_mod) && rip_mod != self_mod) {
+        fprintf(f, "--- CALLERS NEAR RSP (fault in a host DLL) ---\n");
+        for (int slot = 0; slot < 64; ++slot) {
+            uintptr_t v = 0, at = (uintptr_t)ep->ContextRecord->Rsp + slot * 8;
+            SIZE_T got = 0;
+            HMODULE owner = NULL;
+            if (!ReadProcessMemory(GetCurrentProcess(), (void *)at, &v, sizeof v, &got) || got != sizeof v) break;
+            if (v >= (uintptr_t)image && v < (uintptr_t)image + (image_size ? image_size : 0x20000000))
+                fprintf(f, "  [rsp+0x%03x] guest eboot.bin +0x%" PRIxPTR "\n", slot * 8, v - (uintptr_t)image);
+            else if (v >= 0x10000 && GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                                        (LPCSTR)v, &owner) && owner == self_mod &&
+                     resolve_host_address(v, host_loc, sizeof(host_loc)))
+                fprintf(f, "  [rsp+0x%03x] %s\n", slot * 8, host_loc);
+        }
+        fprintf(f, "\n");
+    }
 
     CONTEXT *c = ep->ContextRecord;
     fprintf(f, "--- REGISTERS ---\n");
@@ -1259,30 +1280,37 @@ static LONG WINAPI win_veh_handler(EXCEPTION_POINTERS *ep) {
             /* The effect-ribbon vertex writers keep their pointers in the SysV red zone, which a
              * GPU write-watch fault's frame overwrites on Windows; the next point then reads through
              * a null pointer. bbport_ribbons.cpp replaces the first two (BB_RIBBON_FIX); the other
-             * two (called from 0x2ab4ad0) have no replacement yet. All four are leaf functions
-             * (six pushes, then `frame` bytes) whose callers return right after them: on such a
-             * fault, return to the caller and the strip stays unfinished for this frame.
-             * From Mrsuss60/bloodborne_pc_windows_port 2ab6fe7a; frames checked on the 1.09 eboot. */
-            static const struct { uintptr_t from, to, frame; } ribbon_leaf[] = {
-                {0x28ce7be, 0x28ceeb8, 0x30}, {0x28ceece, 0x28cf572, 0x20},
-                {0x28cf58b, 0x28cfb95, 0x08}, {0x28cfbae, 0x28d015e, 0x18},
+             * two (called from 0x2ab4ad0) have no replacement yet. All are leaf functions whose
+             * callers tolerate an early return: on such a fault, pop the saved registers, return to
+             * the caller, and the strip stays unfinished for this frame. Each entry names the body
+             * range (after the prologue, before the epilogue pops), the `sub rsp` frame and the push
+             * layout. From Mrsuss60/bloodborne_pc_windows_port 2ab6fe7a and bb3f67b3 (#127, Ebrietas
+             * particles above 60 FPS); every entry checked against the 1.09 eboot disassembly.
+             * 0x28d0480 (push rbp/r14/rbx, no frame) builds a particle AABB its callers only read as
+             * floats. Not taken from bb3f67b3: 0x28d0160 (no caller found) and 0x28d02c0 (tail-calls
+             * the key sort 0x28eaf20; its callers index vertices with the keys it writes). */
+            enum { RL_RBX, RL_R12, RL_R13, RL_R14, RL_R15, RL_RBP };
+            static const uint8_t pop6[] = {RL_RBX, RL_R12, RL_R13, RL_R14, RL_R15, RL_RBP};
+            static const uint8_t pop3[] = {RL_RBX, RL_R14, RL_RBP}; /* push rbp, r14, rbx */
+            static const struct { uint32_t from, to; uint8_t frame, npop; const uint8_t *pops; } ribbon_leaf[] = {
+                {0x28ce7be, 0x28ceeb8, 0x30, 6, pop6}, {0x28ceece, 0x28cf572, 0x20, 6, pop6},
+                {0x28cf58b, 0x28cfb95, 0x08, 6, pop6}, {0x28cfbae, 0x28d015e, 0x18, 6, pop6},
+                {0x28d0484, 0x28d0649, 0x00, 3, pop3},
             };
             for (size_t i = 0; i < sizeof ribbon_leaf / sizeof ribbon_leaf[0]; ++i) {
                 if (off < ribbon_leaf[i].from || off >= ribbon_leaf[i].to) continue;
-                const uintptr_t rsp = ep->ContextRecord->Rsp, f = ribbon_leaf[i].frame;
-                ep->ContextRecord->Rbx = *(DWORD64 *)(rsp + f);
-                ep->ContextRecord->R12 = *(DWORD64 *)(rsp + f + 0x08);
-                ep->ContextRecord->R13 = *(DWORD64 *)(rsp + f + 0x10);
-                ep->ContextRecord->R14 = *(DWORD64 *)(rsp + f + 0x18);
-                ep->ContextRecord->R15 = *(DWORD64 *)(rsp + f + 0x20);
-                ep->ContextRecord->Rbp = *(DWORD64 *)(rsp + f + 0x28);
-                ep->ContextRecord->Rip = *(DWORD64 *)(rsp + f + 0x30);
-                ep->ContextRecord->Rsp = rsp + f + 0x38;
+                CONTEXT *c = ep->ContextRecord;
+                DWORD64 *const reg[] = {&c->Rbx, &c->R12, &c->R13, &c->R14, &c->R15, &c->Rbp};
+                const uintptr_t saved = c->Rsp + ribbon_leaf[i].frame, n_pop = ribbon_leaf[i].npop;
+                for (uintptr_t k = 0; k < n_pop; ++k)
+                    *reg[ribbon_leaf[i].pops[k]] = *(DWORD64 *)(saved + 8 * k);
+                c->Rip = *(DWORD64 *)(saved + 8 * n_pop);
+                c->Rsp = saved + 8 * n_pop + 8;
                 static volatile LONG hits;
                 const LONG n = InterlockedIncrement(&hits);
                 if (n <= 5 || (n & (n - 1)) == 0) { /* first 5, then at powers of two */
                     char line[160];
-                    snprintf(line, sizeof line, "Runtime: effect ribbon writer +0x%llx faulted (red zone lost), strip skipped (%ld so far)\n",
+                    snprintf(line, sizeof line, "Runtime: effect ribbon writer +0x%llx faulted, strip skipped (%ld so far)\n",
                              (unsigned long long)off, (long)n);
                     veh_write(line);
                 }
@@ -1844,6 +1872,7 @@ int main(int argc, char **argv) {
         bb_boot_mark("GPU ready");
     }
     image_size = size;
+    runtime_set_guest_image(image, size);
     resolved_targets = calloc(import_count + 1, sizeof(void *));
     import_call_counts = calloc(import_count + 1, sizeof(uint64_t));
     is_unbound = calloc(import_count + 1, sizeof(uint8_t));

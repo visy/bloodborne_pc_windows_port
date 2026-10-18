@@ -44,6 +44,8 @@ def parse_elf(data):
 
 
 def parse_self(data):
+    if len(data) < 32:
+        raise ValueError(f"eboot.bin is empty or truncated ({len(data)} bytes; a SELF or ELF header needs at least 32)")
     if span(data, 0, 4) == b'\x7fELF':
         return parse_elf(data)
     if span(data, 0, 4) != b'O\x15=\x1d':
@@ -147,7 +149,14 @@ class GameCheckError(Exception):
 
 
 def prepare(game, out):
-    source = (game / 'eboot.bin').read_bytes()
+    eboot = game / 'eboot.bin'
+    if not eboot.is_file():
+        raise FileNotFoundError(f"eboot.bin not found at {eboot}: pick the game folder that contains eboot.bin")
+    source = eboot.read_bytes()
+    if not source:
+        raise ValueError(f"eboot.bin at {eboot} is empty (0 bytes): re-copy or re-extract the game dump")
+    if len(source) < 32:
+        raise ValueError(f"eboot.bin at {eboot} is truncated ({len(source)} bytes): re-copy or re-extract the game dump")
     elf, header, ph, segments, missing = parse_self(source)
     loads = [p for p in ph if p['type'] in (1, 0x61000010)]
     def mapped(addr, size=8):
