@@ -54,6 +54,8 @@ extern "C" void* runtime_low_map(size_t size, int prot); // src/runtime_memory.c
 
 namespace BbFrameRate {
 void StartSweep(); // bbport_frame_sweep.cpp
+void SweepOnStep(); // bbport_frame_sweep.cpp: its main-thread work (a warp home), when asked
+extern std::atomic<bool> sweep_step_pending;
 namespace {
 using BbGuestCode::Emitter;
 using u64 = std::uint64_t;
@@ -93,6 +95,7 @@ void BB_FR_SYSV FrameStep(u64 pacer) {
         return env && *env ? std::strtof(env, nullptr) : -1.0f;
     }();
     Compute(*live, dt, cloth_override);
+    if (sweep_step_pending.load(std::memory_order_relaxed)) SweepOnStep();
     game_seconds.store(game_seconds.load(std::memory_order_relaxed) + dt, std::memory_order_relaxed);
     steps.fetch_add(1, std::memory_order_relaxed);
 }

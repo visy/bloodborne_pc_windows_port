@@ -19,6 +19,8 @@
 #include "party/game_state.h"
 
 #include <cstdarg>
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -31,6 +33,7 @@
 #include <vector>
 
 namespace BbFrameRate {
+extern std::atomic<bool> sweep_step_pending; // below; read by FrameStep
 namespace {
 using u64 = std::uint64_t;
 using Clock = std::chrono::steady_clock;
@@ -169,6 +172,44 @@ void Log(const char* fmt, ...) {
     std::fflush(stdout);
 }
 
+// ---- The way back: each test starts from the same spot (the game's warp, main thread) ----
+alignas(16) float g_home[4], g_home_rot[4];
+bool g_have_home = false;
+std::atomic<bool> g_warp_done{false};
+
+/// The local PlayerIns (WorldChrMan +0x60).
+u64 Player() {
+    return Field<u64>(Field<u64>(coop::Guest(0x553e878), 0), 0x60);
+}
+u64 PhysOf(u64 chr) {
+    return Field<u64>(Field<u64>(Field<u64>(Field<u64>(chr, 0x58), 8), 0x3b0), 0x68);
+}
+
+bool CaptureHome() {
+    const u64 phys = PhysOf(Player());
+    g_have_home = phys && coop::SafeRead(phys + 0x1e0, g_home, 16) && coop::SafeRead(phys + 0x1d0, g_home_rot, 16);
+    return g_have_home;
+}
+
+/// Back to the start spot and facing (frame rate by hooks only: the warp runs in FrameStep), then
+/// `settle` s without input. Untouched with the patches (no main-thread step of ours).
+void Home(double settle = 0.8) {
+    Pad("");
+    if (g_have_home && Unlocked()) {
+        g_warp_done = false;
+        sweep_step_pending = true;
+        const double until = Now() + 2.0;
+        while (!g_warp_done && Now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    std::this_thread::sleep_for(std::chrono::duration<double>(settle));
+}
+
+double Median(std::vector<float> v) {
+    if (v.empty()) return 0;
+    std::sort(v.begin(), v.end());
+    return v[v.size() / 2];
+}
+
 void Pass(const std::string& name) {
     const double r0 = Now();
     const double g0 = GameSeconds();
@@ -180,15 +221,15 @@ void Pass(const std::string& name) {
         double(Steps() - s0) / (r1 - r0), Unlocked() ? (GameSeconds() - g0) / (r1 - r0) : -1.0, double(LastDt()));
     if (g_pad.empty()) return;
 
+    Home();
     auto run = Hold("ly=0", 3.0);
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-    auto back = Hold("ly=255", 3.0);
-    Log("%s run: forward %.3f m/s, back %.3f m/s", name.c_str(), Speed(run, 1.0, 3.0), Speed(back, 1.0, 3.0));
-    std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+    Home();
+    auto run2 = Hold("ly=0", 3.0);
+    Log("%s run: %.3f m/s, again %.3f m/s", name.c_str(), Speed(run, 1.0, 3.0), Speed(run2, 1.0, 3.0));
 
-    auto sprint = Hold("ly=0 circle", 3.5);
-    auto regen = Hold("", 3.5, false);
-    // Regen delay: the first stamina rise after the release.
+    Home(1.5);
+    auto sprint = Hold("ly=0 circle", 3.0);
+    auto regen = Hold("", 3.0, false);
     double delay = -1;
     for (std::size_t i = 1; i < regen.size(); ++i) {
         if (regen[i].stamina > regen[i - 1].stamina && regen[i - 1].stamina >= 0) {
@@ -196,52 +237,52 @@ void Pass(const std::string& name) {
             break;
         }
     }
-    // Regen rate: from the delay on, over 1 s (before stamina is full).
     const double rate = delay >= 0 ? StaminaRate(regen, delay + 0.05, delay + 1.05) : 0;
-    auto sprint_back = Hold("ly=255 circle", 3.5);
-    Log("%s sprint: forward %.3f m/s, back %.3f m/s; stamina %.1f per s while sprinting, regen %.1f per s after "
-        "%.2f s",
-        name.c_str(), Speed(sprint, 1.5, 3.5), Speed(sprint_back, 1.5, 3.5), StaminaRate(sprint, 0.6, 3.4), rate,
-        delay);
-    std::this_thread::sleep_for(std::chrono::milliseconds(3500));
+    Home(1.5);
+    auto sprint2 = Hold("ly=0 circle", 3.0);
+    Log("%s sprint: %.3f m/s, again %.3f m/s; stamina %.1f per s while sprinting, regen %.1f per s after %.2f s",
+        name.c_str(), Speed(sprint, 1.2, 3.0), Speed(sprint2, 1.2, 3.0), StaminaRate(sprint, 0.6, 2.9), rate, delay);
 
     // Backstep (Circle without the stick): the root motion of one animation.
+    Home(2.0);
     Pad("circle");
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    auto backstep = Hold("", 1.6, false);
+    auto backstep = Hold("", 1.4, false);
     double bs_s = 0, bs_m = 0;
     Motion(backstep, &bs_s, &bs_m);
-    // A forward roll (stick + Circle tap).
-    Pad("ly=0");
-    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    // A forward roll (stick + Circle tap, the stick kept to the release).
+    Home(1.0);
     const Sample before = Read();
     Pad("ly=0 circle");
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    auto roll = Hold("", 1.6, false);
+    Pad("ly=0");
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    auto roll = Hold("", 1.3, false);
     if (before.ok) roll.insert(roll.begin(), before);
     double ro_s = 0, ro_m = 0;
     Motion(roll, &ro_s, &ro_m);
     Log("%s dodge: backstep %.3f m in %.3f s, roll %.3f m in %.3f s", name.c_str(), bs_m, bs_s, ro_m, ro_s);
-    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
 
     // A jump out of a sprint (L3 while sprinting): air time and height (gravity).
+    Home(1.0);
     auto lead = Hold("ly=0 circle", 1.6, false);
-    const float ground = lead.empty() ? 0.0f : lead.back().pos[1];
+    std::vector<float> ys;
+    for (const Sample& s : lead)
+        if (s.t > lead.back().t - 0.3) ys.push_back(s.pos[1]);
+    const float ground = float(Median(ys));
     Pad("ly=0 circle l3");
     std::this_thread::sleep_for(std::chrono::milliseconds(120));
     auto jump = Hold("ly=0", 1.6);
     double up_at = -1, down_at = -1;
     float peak = ground;
     for (const Sample& s : jump) {
-        if (s.pos[1] > ground + 0.05f && up_at < 0) up_at = s.t;
+        if (s.pos[1] > ground + 0.1f && up_at < 0) up_at = s.t;
         if (up_at >= 0 && s.pos[1] > peak) peak = s.pos[1];
-        if (up_at >= 0 && down_at < 0 && s.t > up_at + 0.05 && s.pos[1] <= ground + 0.05f) down_at = s.t;
+        if (up_at >= 0 && down_at < 0 && s.pos[1] <= ground + 0.1f) down_at = s.t;
     }
-    Log("%s jump: air %.3f s, height %.3f m%s", name.c_str(), up_at >= 0 && down_at >= 0 ? down_at - up_at : -1.0,
-        double(peak - ground), up_at < 0 ? " (no jump seen)" : "");
-    auto home = Hold("ly=255 circle", 2.3);
-    (void)home;
-    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    Log("%s jump: above +0.1 m for %.3f s, height %.3f m%s", name.c_str(),
+        up_at >= 0 && down_at >= 0 ? down_at - up_at : -1.0, double(peak - ground), up_at < 0 ? " (no jump seen)" : "");
+    Home(1.0);
 }
 
 void Sweep(std::vector<int> rates) {
@@ -265,6 +306,7 @@ void Sweep(std::vector<int> rates) {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
+    CaptureHome();
     const Sample at = Read();
     Log("world up; start at (%.2f, %.2f, %.2f), map %08x", at.pos[0], at.pos[1], at.pos[2],
         coop::ReadGameState(false).map_id);
@@ -282,6 +324,20 @@ void Sweep(std::vector<int> rates) {
     Log("done");
 }
 } // namespace
+
+std::atomic<bool> sweep_step_pending{false};
+
+/// Main thread (FrameStep): the warp home the sweep asked for.
+void SweepOnStep() {
+    sweep_step_pending = false;
+    const u64 player = Player();
+    const u64 fn = player ? Field<u64>(Field<u64>(player, 0), 0x5f8) : 0;
+    if (fn) {
+        using Warp = void(__attribute__((sysv_abi))*)(u64, const float*, const float*, std::uint32_t);
+        reinterpret_cast<Warp>(fn)(player, g_home, g_home_rot, 1);
+    }
+    g_warp_done = true;
+}
 
 void StartSweep() {
     const char* v = std::getenv("BB_FRAME_SWEEP");
