@@ -14,7 +14,11 @@ cd /d "%~dp0"
 REM Startup timeline (docs/STARTUP.md): the clock time here and at the launch below.
 echo Boot: run.bat started at %TIME%
 
-REM Find Python 3
+REM Find Python 3. The release's bundled python\ folder comes first (no installed Python needed);
+REM a PYTHON the launcher passes is that same one when the launcher runs on it.
+if not defined PYTHON if exist "%~dp0python\python.exe" set "PYTHON=%~dp0python\python.exe"
+REM Never write __pycache__ into the bundle, and ignore a system Python's PYTHONHOME / PYTHONPATH.
+if /i "%PYTHON%"=="%~dp0python\python.exe" set "PYTHONDONTWRITEBYTECODE=1" & set "PYTHONHOME=" & set "PYTHONPATH="
 if "%PYTHON%"=="" (
     for %%P in (
         "C:\Program Files\Python314\python.exe"

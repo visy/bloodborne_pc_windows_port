@@ -3,6 +3,11 @@ setlocal
 cd /d "%~dp0"
 
 set "PYTHON_EXE="
+rem The release's bundled Python (python\ next to this file) comes first: no installed Python needed.
+rem It never writes __pycache__ into the bundle, and ignores a system Python's PYTHONHOME / PYTHONPATH.
+if exist "%~dp0python\pythonw.exe" set "PYTHON_EXE=%~dp0python\pythonw.exe"
+if defined PYTHON_EXE set "PYTHONDONTWRITEBYTECODE=1" & set "PYTHONHOME=" & set "PYTHONPATH="
+if defined PYTHON_EXE goto found
 for %%P in (
     "C:\Program Files\Python314\python.exe"
     "C:\Program Files\Python313\python.exe"
@@ -36,4 +41,10 @@ if not defined PYTHON_EXE (
     exit /b 1
 )
 
+:found
+rem --print-python: show the Python this would run and stop (release checks).
+if /i not "%~1"=="--print-python" goto start
+echo(%PYTHON_EXE%
+exit /b 0
+:start
 start "" "%PYTHON_EXE%" launcher.py
