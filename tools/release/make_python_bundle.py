@@ -130,10 +130,11 @@ def main() -> None:
     (out / "Lib" / "site-packages").mkdir(exist_ok=True)
     (out / "README.txt").write_text(README.format(version=version), encoding="utf-8", newline="\r\n")
 
-    # Compile with the bundle's own interpreter so the .pyc magic matches it exactly.
-    ok = subprocess.run([str(out / "python.exe"), "-I", "-c",
+    # Compile with the bundle's own interpreter so the .pyc magic matches it exactly; -B so its own
+    # startup imports do not leave timestamp-based .pyc files behind (force rewrites everything).
+    ok = subprocess.run([str(out / "python.exe"), "-I", "-B", "-c",
                          "import compileall, py_compile, sys; "
-                         "sys.exit(0 if compileall.compile_dir(sys.argv[1], quiet=1, workers=1, "
+                         "sys.exit(0 if compileall.compile_dir(sys.argv[1], quiet=1, workers=1, force=True, "
                          "invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH, "
                          "optimize=0, stripdir=sys.argv[1], prependdir='') else 1)",
                          str(out / "Lib")])
