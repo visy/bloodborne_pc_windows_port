@@ -230,6 +230,17 @@ std::pair<const Buffer*, u64> TileManager::DetileImage(const VideoCore::Buffer* 
         return {in_buffer, in_offset};
     }
 
+    // A zero-sized dispatch or a zero bpp (division) is invalid: skip it (#129, VK_ERROR_DEVICE_LOST in
+    // Central Yharnam; from Mrsuss60/bloodborne_pc_windows_port bb3f67b3).
+    const u32 bpp = info.num_bits / 8;
+    if (bpp == 0 || info.guest_size == 0) {
+        return {in_buffer, in_offset};
+    }
+    const auto dim_x = static_cast<u32>((info.guest_size / bpp) / 64);
+    if (dim_x == 0) {
+        return {in_buffer, in_offset};
+    }
+
     TilingInfo params{};
     params.bank_swizzle = info.bank_swizzle;
     params.micro_tiled_mips = info.micro_tiled_mips;
@@ -264,7 +275,6 @@ std::pair<const Buffer*, u64> TileManager::DetileImage(const VideoCore::Buffer* 
         .offset = staging.offset,
         .range = info.guest_size,
     };
-    const auto dim_x = static_cast<u32>((info.guest_size / (info.num_bits / 8)) / 64);
     // bbport: recorded with copies of the descriptor infos (threaded recording).
     RecordTilingDispatch(GetTilingPipeline(info, false), tiled_buffer_info, linear_buffer_info,
                          params_buffer_info, dim_x);
@@ -277,6 +287,7 @@ std::pair<const Buffer*, u64> TileManager::DetileImage(const VideoCore::Buffer* 
     runtime.AccessBuffer(staging.buffer, staging.offset, info.guest_size,
                          vk::PipelineStageFlagBits2::eComputeShader,
                          vk::AccessFlagBits2::eShaderWrite);
+    runtime.FlushBarriers();
 
     return {staging.buffer, staging.offset};
 }
@@ -289,6 +300,17 @@ void TileManager::TileImage(Image& in_image, std::span<vk::BufferImageCopy> buff
             copy.bufferOffset += out_offset;
         }
         runtime.DownloadImage(&in_image, out_buffer, buffer_copies);
+        return;
+    }
+
+    // A zero-sized dispatch or a zero bpp (division) is invalid: skip it (#129, VK_ERROR_DEVICE_LOST in
+    // Central Yharnam; from Mrsuss60/bloodborne_pc_windows_port bb3f67b3).
+    const u32 bpp = info.num_bits / 8;
+    if (bpp == 0 || info.guest_size == 0) {
+        return;
+    }
+    const auto dim_x = static_cast<u32>((info.guest_size / bpp) / 64);
+    if (dim_x == 0) {
         return;
     }
 
@@ -329,7 +351,6 @@ void TileManager::TileImage(Image& in_image, std::span<vk::BufferImageCopy> buff
         .offset = staging.offset,
         .range = info.guest_size,
     };
-    const auto dim_x = static_cast<u32>((info.guest_size / (info.num_bits / 8)) / 64);
     // bbport: recorded with copies of the descriptor infos (threaded recording).
     RecordTilingDispatch(GetTilingPipeline(info, true), tiled_buffer_info, linear_buffer_info,
                          params_buffer_info, dim_x);
@@ -342,6 +363,7 @@ void TileManager::TileImage(Image& in_image, std::span<vk::BufferImageCopy> buff
     runtime.AccessBuffer(out_buffer, out_offset, info.guest_size,
                          vk::PipelineStageFlagBits2::eComputeShader,
                          vk::AccessFlagBits2::eShaderWrite);
+    runtime.FlushBarriers();
 }
 
 } // namespace VideoCore
