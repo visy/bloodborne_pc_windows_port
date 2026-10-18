@@ -35,6 +35,26 @@ inline bool HooksWanted(const char* bb_fps, const char* bb_fps_patch, const char
     return HooksDefault;
 }
 
+/// Does the game run above 30 FPS at all (by the hooks or by the FPS++ patches)? The high-frame-
+/// rate fixes from bbhost (the effects' step, the grass wind, the Bloodletter's self-hit) go in
+/// then, in both modes.
+inline bool HighRate(const char* bb_fps, const char* bb_fps_patch) {
+    if (!bb_fps || !*bb_fps || !std::strcmp(bb_fps, "30")) return false;
+    return !(bb_fps_patch &&
+             (!std::strcmp(bb_fps_patch, "0") || !std::strcmp(bb_fps_patch, "off") || !std::strcmp(bb_fps_patch, "false")));
+}
+
+/// The effects' step (bbhost 6f735f4, droogie/bbhost perf/next, GPL-3.0-or-later): the game's step
+/// in whole 1/60 s, the rest carried to the next frame (0, 1/60, 1/60 at 90 FPS; 0, 1/60 at 120;
+/// 1/60 every frame at 60). Effect data count 30 FPS frames; with a share of one that moves from
+/// frame to frame Ebrietas's effects broke and her rock debris spawned without end.
+inline float SfxStep(double& carry, float step) {
+    carry += double(std::isfinite(step) ? std::clamp(step, 0.0f, Frame30) : Frame30);
+    const double n = std::floor(carry * 60.0 + 1e-6);
+    carry -= n / 60.0;
+    return float(n / 60.0);
+}
+
 /// The pacer's shortest frame: BB_FPS (uncap = MaxRate, 60, 90, or any number) and BB_FPS_LIMIT
 /// (the launcher's limit), clamped to 30..MaxRate.
 inline int TargetRate(const char* bb_fps, const char* bb_fps_limit) {

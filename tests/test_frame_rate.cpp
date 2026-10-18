@@ -63,6 +63,42 @@ int main() {
     Compute(l, Frame30, 0.75f); // BB_CLOTH_STIFFNESS
     assert(Near(l.cloth, 0.75f));
 
+    // Above 30 at all (the bbhost fixes, both modes).
+    assert(HighRate("uncap", nullptr) && HighRate("60", nullptr) && HighRate("90", "1"));
+    assert(!HighRate("30", nullptr) && !HighRate(nullptr, nullptr) && !HighRate("", nullptr));
+    assert(!HighRate("uncap", "0") && !HighRate("60", "off"));
+
+    // The effects' step in whole 1/60 s, the rest carried (bbhost 6f735f4).
+    {
+        auto pattern = [](float dt, int frames, float* out) {
+            double carry = 0;
+            for (int i = 0; i < frames; ++i) out[i] = SfxStep(carry, dt);
+        };
+        float s[12];
+        pattern(1.0f / 60.0f, 12, s); // 60 FPS: 1/60 every frame, for good
+        for (float v : s) assert(Near(v, 1.0f / 60.0f));
+        double carry = 0;
+        for (int i = 0; i < 1000000; ++i) assert(Near(SfxStep(carry, 1.0f / 60.0f), 1.0f / 60.0f));
+        pattern(1.0f / 90.0f, 3, s); // 90: 0, 1/60, 1/60
+        assert(Near(s[0], 0) && Near(s[1], 1.0f / 60.0f) && Near(s[2], 1.0f / 60.0f));
+        pattern(1.0f / 120.0f, 4, s); // 120: 0, 1/60, 0, 1/60
+        assert(Near(s[0], 0) && Near(s[1], 1.0f / 60.0f) && Near(s[2], 0) && Near(s[3], 1.0f / 60.0f));
+        pattern(Frame30, 2, s); // 30: two sixtieths
+        assert(Near(s[0], Frame30) && Near(s[1], Frame30));
+        carry = 0;
+        assert(Near(SfxStep(carry, 1.0f), Frame30)); // a long frame: at most 1/30, as the game's step
+        assert(Near(SfxStep(carry, NAN), Frame30));
+        // Time kept over a varying frame rate: the sum of the steps is the sum of the frames.
+        carry = 0;
+        double sum = 0, real = 0;
+        for (int i = 0; i < 10000; ++i) {
+            const float dt = 1.0f / float(70 + (i * 37) % 200);
+            real += dt;
+            sum += SfxStep(carry, dt);
+        }
+        assert(std::fabs(sum - real) < 1.0 / 60.0 + 1e-3);
+    }
+
     // The layout the game's code reads.
     static_assert(offsetof(Live, decay95) % 16 == 0, "decay95 is read as one vector");
     static_assert(alignof(Live) == 64);

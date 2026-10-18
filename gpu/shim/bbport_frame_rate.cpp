@@ -26,6 +26,8 @@
 #include "bbport_frame_rate.h"
 #include "bbport_frame_rate_logic.h"
 #include "bbport_guest_code.h"
+#include "party/game_state.h"
+#include "party/seamless_rules.h"
 
 #include <algorithm>
 #include <atomic>
@@ -125,9 +127,12 @@ constexpr Redirect Redirects[] = {
     {0x18bc4f7, 0x4927c4c, LIVE(dt)},  // an update by one frame (twice)
     {0x18bc50d, 0x4927c4c, LIVE(dt)},
     {0x1dbc308, 0x4928e98, LIVE(dt)},  // frames counted at one frame's time
-    {0x1f77d4a, 0x4929170, LIVE(dt)},  // an update by one frame (0 after a reset)
+    // 0x1f77d4a (SprjSfx::Update's step, 0x4929170): not here, the effects step in whole 1/60 s
+    // (HookSfxStep, both modes).
     {0x227784b, 0x4929b80, LIVE(dt)},  // timers advanced by one frame (0xebbda0)
     {0x2277892, 0x4929b80, LIVE(dt)},
+    {0x2313d8d, 0x4929e70, LIVE(dt)},  // the grass wind's step (0x2313870): its 60 Hz mode path
+                                       // (bbhost b2818b4's frame-time site 0x2713d8d)
     {0x2313dad, 0x4929e70, LIVE(dt)},  // a simulation step: 1/60 in the game's 60 Hz mode,
     {0x2313db7, 0x4929e74, LIVE(dt)},  // 1/30 otherwise
     {0x2315d71, 0x4929e74, LIVE(dt)},
@@ -325,6 +330,144 @@ int HookRunSpeed() {
     return Detour(site, expected, 8, e) ? 1 : 0;
 }
 
+// ---- High-frame-rate fixes from bbhost (droogie/bbhost perf/next 6f735f4, b2818b4; GPL-3.0-or-later;
+// their addresses minus 0x400000). Above 30 FPS in both modes: the hooks and the FPS++ patches. ----
+
+/// Where the effects' step comes from (HookSfxStep).
+enum class SfxSource { Hooks, Constant, Measured };
+SfxSource sfx_source = SfxSource::Hooks;
+float* sfx_step = nullptr; ///< in the near data page: what SprjSfx::Update's load reads
+double sfx_carry = 0.0;
+constexpr u64 SfxStepConstant = 0x4929170; // the game's 1/30 (the 60/90 FPS++ patches: 1/60, 1/90)
+constexpr u64 FlipperSlot = 0x55404f8;     // SprjFlipper* (its +0x264: the measured frame time)
+
+// The Bloodletter's transformed L2 gives its wielder a frenzy aura through one attack that hits
+// only them: AtkParam_Pc 2900931, a 0.4 m sphere live for one 30 FPS frame of the slam. Posed with
+// the hit bodies it overlaps the right hand by 5 cm; when those trail the pose by even 1/120 s it
+// misses, and above 30 the aura never came. At 0.6 m (bbhost 6f735f4) it overlaps by 25 cm.
+constexpr std::uint32_t BloodletterSelfHit = 2900931;
+constexpr std::uint32_t SelfHitRadiusWas = 0x3ecccccd, SelfHitRadiusNow = 0x3f19999a; // 0.4, 0.6
+int param_countdown = 0;
+bool param_logged = false;
+
+/// The Bloodletter's self-hit radius, written over the game's own 0.4 whenever the table is (re)loaded
+/// (checked every 2 s or so, main thread).
+void CheckBloodletter() {
+    const u64 row = coop::GameParamRow("AtkParam_Pc", "ATK_PARAM_ST", BloodletterSelfHit);
+    std::uint32_t radius = 0;
+    if (!row || !coop::SafeRead(row, &radius, 4)) return; // hit0_Radius: ATK_PARAM_ST's first field
+    if (radius == SelfHitRadiusWas && coop::SafeWrite(row, &SelfHitRadiusNow, 4)) {
+        std::printf("Frame rate: AtkParam_Pc %u hit0_Radius 0.4 -> 0.6 m (the Bloodletter's L2 self-hit above "
+                    "30 FPS, bbhost)\n",
+                    BloodletterSelfHit);
+        std::fflush(stdout);
+    } else if (radius != SelfHitRadiusNow && !param_logged) {
+        param_logged = true;
+        float f;
+        std::memcpy(&f, &radius, 4);
+        std::printf("Frame rate: AtkParam_Pc %u hit0_Radius is %g, not the game's 0.4: left as it is\n",
+                    BloodletterSelfHit, double(f));
+        std::fflush(stdout);
+    }
+}
+
+/// SprjSfx::Update, once a frame on the main thread, before it steps the effects: their step.
+void BB_FR_SYSV SfxStepNow() {
+    float step = Frame30;
+    if (sfx_source == SfxSource::Hooks) {
+        step = live->dt;
+    } else if (sfx_source == SfxSource::Constant) {
+        step = *reinterpret_cast<const float*>(image_base + SfxStepConstant);
+    } else {
+        u64 flipper = 0;
+        std::memcpy(&flipper, reinterpret_cast<const void*>(image_base + FlipperSlot), 8);
+        float measured = Frame30;
+        if (flipper) coop::SafeRead(flipper + 0x264, &measured, 4);
+        step = measured;
+    }
+    *sfx_step = SfxStep(sfx_carry, step);
+    if (--param_countdown <= 0) {
+        param_countdown = 120;
+        CheckBloodletter();
+    }
+}
+
+/// SprjSfx::Update (0x1f77bd0) hands the effect manager's update the one 1/30 it loads at 0x1f77d4a
+/// (0 for a still frame: the jne at 0x1f77d48 skips it). That load gets our step instead. The
+/// Uncap FPS++ patch turns the jne into a jump to its own load of the measured frame time: put back.
+bool HookSfxStep(bool hooks) {
+    constexpr u64 site = 0x1f77d4a;
+    u8* code = reinterpret_cast<u8*>(image_base + site);
+    constexpr u8 load[] = {0xc5, 0xfa, 0x10, 0x05, 0x1e, 0x14, 0x9b, 0x02}; // vmovss xmm0, [0x4929170]
+    constexpr u8 jne[] = {0x75, 0x08}, uncap_jump[] = {0xeb, 0xa2};
+    if (std::memcmp(code, load, sizeof(load)) != 0) return false;
+    if (hooks) {
+        if (std::memcmp(code - 2, jne, 2) != 0) return false;
+        sfx_source = SfxSource::Hooks;
+    } else if (std::memcmp(code - 2, jne, 2) == 0) {
+        sfx_source = SfxSource::Constant;
+    } else if (std::memcmp(code - 2, uncap_jump, 2) == 0) {
+        sfx_source = SfxSource::Measured;
+    } else {
+        return false;
+    }
+    Emitter e;
+    e.SaveVolatile();
+    e.SaveXmm();
+    e.CallAbs(reinterpret_cast<const void*>(&SfxStepNow));
+    e.RestoreXmm();
+    e.RestoreVolatile();
+    e.Bytes({0x50, 0x48, 0xb8}); // push rax; movabs rax, &sfx_step (rax: the update to call)
+    e.U64(reinterpret_cast<u64>(sfx_step));
+    e.Bytes({0xc5, 0xfa, 0x10, 0x00, 0x58}); // vmovss xmm0, [rax]; pop rax
+    e.JmpAbs(image_base + site + sizeof(load));
+    if (!Detour(site, load, sizeof(load), e)) return false;
+    return sfx_source != SfxSource::Measured || WriteCode(code - 2, jne, 2);
+}
+
+/// The grass wind (0x2313870 builds the block the grass vertex shader reads) uses its one step twice:
+/// as the wave time (t += step) and as the force (V * step) the shader bends the grass by. With the
+/// frame's time in both the grass bent by each frame's length (22% of the authored bend at 134 FPS,
+/// shaking from frame to frame); with the patches' fixed 1/60, by half. bbhost b2818b4: the force
+/// takes the authored 1/30 (0x4926364) and only the time the step ([rbp - 0x170]).
+bool GrassWind() {
+    // vmovdqa xmm14, [rbp - 0x170] -> vmovss xmm14, [0x4926364]
+    constexpr u64 force_site = 0x23149ea;
+    constexpr u8 force_was[] = {0xc5, 0x79, 0x6f, 0xb5, 0x90, 0xfe, 0xff, 0xff};
+    constexpr u8 force_now[] = {0xc5, 0x7a, 0x10, 0x35, 0x72, 0x19, 0x61, 0x02};
+    // lea rax, [0x5540df9]; cmp byte [rax], 0; vxorps xmm10, xmm10, xmm10; mov r8d, [rbp - 0x1b8];
+    // jne +5; vmovdqa xmm10, xmm14 -> mov r8d, [rbp - 0x1b8]; vxorps xmm10, xmm10, xmm10;
+    // cmp byte [0x5540df9], 0; jne +8; vmovdqa xmm10, [rbp - 0x170] (rax is written before it is read)
+    constexpr u64 time_site = 0x2314b26;
+    constexpr u8 time_was[] = {0x48, 0x8d, 0x05, 0xcc, 0xc2, 0x22, 0x03, 0x80, 0x38, 0x00, 0xc4, 0x41, 0x28, 0x57, 0xd2,
+                               0x44, 0x8b, 0x85, 0x48, 0xfe, 0xff, 0xff, 0x75, 0x05, 0xc4, 0x41, 0x79, 0x6f, 0xd6};
+    constexpr u8 time_now[] = {0x44, 0x8b, 0x85, 0x48, 0xfe, 0xff, 0xff, 0xc4, 0x41, 0x28, 0x57, 0xd2, 0x80, 0x3d, 0xc0,
+                               0xc2, 0x22, 0x03, 0x00, 0x75, 0x08, 0xc5, 0x79, 0x6f, 0x95, 0x90, 0xfe, 0xff, 0xff};
+    static_assert(sizeof(time_was) == sizeof(time_now));
+    u8* force = reinterpret_cast<u8*>(image_base + force_site);
+    u8* time = reinterpret_cast<u8*>(image_base + time_site);
+    float authored = 0;
+    std::memcpy(&authored, reinterpret_cast<const void*>(image_base + 0x4926364), 4);
+    if (std::memcmp(force, force_was, sizeof(force_was)) != 0 || std::memcmp(time, time_was, sizeof(time_was)) != 0 ||
+        std::fabs(authored - Frame30) > 1e-6f) {
+        return false;
+    }
+    return WriteCode(time, time_now, sizeof(time_now)) && WriteCode(force, force_now, sizeof(force_now));
+}
+
+/// The bbhost fixes (both modes); `hooks`: the frame rate is the hooks'. Needs the stub page.
+void HighRateFixes(bool hooks) {
+    const bool sfx = sfx_step && HookSfxStep(hooks);
+    const bool grass = GrassWind();
+    std::printf("Frame rate: high-FPS fixes (bbhost): effects step in whole 1/60 s %s, grass wind force at "
+                "1/30 %s, the Bloodletter's L2 self-hit 0.6 m when its table loads\n",
+                !sfx ? "NOT installed (other code at 0x1f77d4a)"
+                : sfx_source == SfxSource::Hooks    ? "(from the frame's time)"
+                : sfx_source == SfxSource::Constant ? "(from the patch's fixed step)"
+                                                    : "(from the measured frame time, Uncap FPS++)",
+                grass ? "on" : "NOT installed (other code or constant)");
+}
+
 /// A mapping within rel32 reach of the image (the redirected operands are RIP-relative).
 u8* MapNear(std::size_t size) {
 #ifdef _WIN32
@@ -384,23 +527,28 @@ void LogThread(double period) {
 namespace {
 void Install(unsigned char* image, std::uint64_t size) {
     const char* fps = std::getenv("BB_FPS");
-    if (!HooksWanted(fps, std::getenv("BB_FPS_PATCH"), std::getenv("BB_FRAME_HOOKS"))) {
-        if (fps && std::strcmp(fps, "30") != 0) {
-            const char* hooks = std::getenv("BB_FRAME_HOOKS");
-            std::printf("Frame rate: hooks off (BB_FRAME_HOOKS=%s): the FPS++ patches (BB_FPS=%s)\n",
-                        hooks ? hooks : "(unset)", fps);
-        }
-        return;
-    }
+    if (!HighRate(fps, std::getenv("BB_FPS_PATCH"))) return; // the game's own 30 FPS
     image_base = reinterpret_cast<u64>(image);
     image_size = size;
     u8* data = MapNear(4096);
     stub_page = MapNear(StubPageSize);
     if (!data || !stub_page) {
-        std::printf("Frame rate: no memory next to the game's code: 30 FPS\n");
+        std::printf("Frame rate: no memory next to the game's code: no hooks, no high-FPS fixes\n");
         return;
     }
     live = new (data) Live{};
+    sfx_step = reinterpret_cast<float*>(data + sizeof(Live)); // a float of its own after Live
+    *sfx_step = Frame30;
+    if (!HooksWanted(fps, std::getenv("BB_FPS_PATCH"), std::getenv("BB_FRAME_HOOKS"))) {
+        const char* hooks = std::getenv("BB_FRAME_HOOKS");
+        std::printf("Frame rate: hooks off (BB_FRAME_HOOKS=%s): the FPS++ patches (BB_FPS=%s)\n",
+                    hooks ? hooks : "(unset)", fps);
+        StubWritable(true);
+        HighRateFixes(false);
+        StubWritable(false);
+        std::fflush(stdout);
+        return;
+    }
     // The mode's rate and BB_FPS_LIMIT (the launcher's frame rate limit): the game's pacer waits for
     // it itself, before the frame's simulation (lower latency than holding finished frames back at
     // the present).
@@ -431,6 +579,7 @@ void Install(unsigned char* image, std::uint64_t size) {
             std::printf("Frame rate: %#llx is not the expected code, left as it is\n", (unsigned long long)r.site);
         }
     }
+    HighRateFixes(true);
     StubWritable(false);
     std::printf("Frame rate: free (hooks, no patches): the game steps by each frame's time "
                 "(1/%d..1/30 s); %d of 2 fixed steps, %d of %zu per-frame values follow the frame's "
