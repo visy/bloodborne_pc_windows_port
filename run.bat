@@ -14,7 +14,20 @@ cd /d "%~dp0"
 REM Startup timeline (docs/STARTUP.md): the clock time here and at the launch below.
 echo Boot: run.bat started at %TIME%
 
-REM Find Python 3
+REM Find Python 3. The release's bundled python\ folder comes first (no installed Python needed);
+REM a PYTHON the launcher passes is that same one when the launcher runs on it.
+REM A partly extracted or quarantined folder fails a quick import check and is skipped.
+if defined PYTHON goto bundle_done
+if not exist "%~dp0python\python.exe" goto bundle_done
+"%~dp0python\python.exe" -I -c "import encodings, zipfile, xml.etree.ElementTree" >nul 2>nul
+if errorlevel 1 goto bundle_broken
+set "PYTHON=%~dp0python\python.exe"
+goto bundle_done
+:bundle_broken
+echo bundled Python is incomplete (re-extract the zip); using an installed Python
+:bundle_done
+REM Never write __pycache__ into the bundle, and ignore a system Python's PYTHONHOME / PYTHONPATH.
+if /i "%PYTHON%"=="%~dp0python\python.exe" set "PYTHONDONTWRITEBYTECODE=1" & set "PYTHONHOME=" & set "PYTHONPATH="
 if "%PYTHON%"=="" (
     for %%P in (
         "C:\Program Files\Python314\python.exe"

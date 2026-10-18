@@ -3852,7 +3852,15 @@ class BloodborneLauncher(tk.Tk):
         py = Path(sys.executable)
         if py.name.lower() == "pythonw.exe" and (py.parent / "python.exe").exists():
             py = py.parent / "python.exe"
-        env.setdefault("PYTHON", str(py))
+        if py.resolve().parent == APP_DIR / "python":
+            # The release's bundled python\ folder: always hand run.bat that one (a PYTHON set in the
+            # user's environment would otherwise win), and never write __pycache__ into it.
+            env["PYTHON"] = str(py)
+            env["PYTHONDONTWRITEBYTECODE"] = "1"
+            env.pop("PYTHONHOME", None)
+            env.pop("PYTHONPATH", None)
+        else:
+            env.setdefault("PYTHON", str(py))
         for key, value in settings_env(self.current_settings()).items():
             if value is None:
                 env.pop(key, None)
