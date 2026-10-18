@@ -9010,6 +9010,11 @@ bool HostRejoinRunning() {
 bool RejoinRunning() {
     return g_on.load() && g_rejoin.load();
 }
+bool GuestTravelPending() {
+    if (!g_on.load() || Role() != RoleClient) return false;
+    std::lock_guard<std::mutex> lk(S().mu);
+    return S().gphase != GuestPhase::Idle && S().gphase != GuestPhase::InWorldFollow;
+}
 int LocalHp() {
     const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
     return player ? ChrHp(player) : -1;

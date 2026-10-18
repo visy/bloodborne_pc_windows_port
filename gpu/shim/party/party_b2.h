@@ -183,6 +183,9 @@ int MembersApart();
 bool HostRejoinRunning();
 /// Any role: a B2 re-join (a host load's re-sync, a guest's follow / alone travel back) is running.
 bool RejoinRunning();
+/// Guest: a travel re-join is between the host's travel and its own arrival (the game shows its
+/// loading card from the start, ~10 s before its loading flag rises): the party overlay hides.
+bool GuestTravelPending();
 /// The local player's HP (-1: no chr).
 int LocalHp();
 /// Host: when (Now() clock, s) the last member_down notice came; 0 never (test aid).
