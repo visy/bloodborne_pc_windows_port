@@ -5,7 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
-- **Changed: party co-op parity checks**: shared NPC talk under a party member's own Level Up screen is now checked live: the companion's lines and the caption wait, nothing is drawn over the screen (docs/party/ERSC_PARITY.md D8).
+- **Changed: party co-op parity checks**: shared NPC talk under a party member's own Level Up screen is now checked live: the companion's lines and the caption wait, nothing is drawn over the screen (docs/party/ERSC_PARITY.md D8). A key item a guest picks up in the host's world (live: the Upper Cathedral Key) now checked live going to the host (D4).
 
 ## 0.6.7 (Windows port 0.6.7, crash fixes)
 
