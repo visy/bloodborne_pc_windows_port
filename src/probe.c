@@ -1127,6 +1127,27 @@ static void write_crash_dump(EXCEPTION_POINTERS *ep, void *fault_addr, uintptr_t
     if (off) fprintf(f, "Faulting RIP:   %p (guest eboot.bin offset 0x%" PRIxPTR ")\n\n", (void *)rip, off);
     else if (resolve_host_address(rip, host_loc, sizeof(host_loc))) fprintf(f, "Faulting RIP:   %p (%s)\n\n", (void *)rip, host_loc);
     else fprintf(f, "Faulting RIP:   %p (host address, no module)\n\n", (void *)rip);
+    /* A fault inside a host DLL (ucrtbase/msvcrt memcpy, free): those keep no frame pointers, so
+     * list the return addresses into the game or our exe in the top 512 bytes of the stack
+     * (from Supermedo/bloodborne_pc 3fbe0576). Every slot is read through ReadProcessMemory. */
+    HMODULE rip_mod = NULL, self_mod = GetModuleHandleA(NULL);
+    if (!off && GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                   (LPCSTR)rip, &rip_mod) && rip_mod != self_mod) {
+        fprintf(f, "--- CALLERS NEAR RSP (fault in a host DLL) ---\n");
+        for (int slot = 0; slot < 64; ++slot) {
+            uintptr_t v = 0, at = (uintptr_t)ep->ContextRecord->Rsp + slot * 8;
+            SIZE_T got = 0;
+            HMODULE owner = NULL;
+            if (!ReadProcessMemory(GetCurrentProcess(), (void *)at, &v, sizeof v, &got) || got != sizeof v) break;
+            if (v >= (uintptr_t)image && v < (uintptr_t)image + (image_size ? image_size : 0x20000000))
+                fprintf(f, "  [rsp+0x%03x] guest eboot.bin +0x%" PRIxPTR "\n", slot * 8, v - (uintptr_t)image);
+            else if (v >= 0x10000 && GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                                        (LPCSTR)v, &owner) && owner == self_mod &&
+                     resolve_host_address(v, host_loc, sizeof(host_loc)))
+                fprintf(f, "  [rsp+0x%03x] %s\n", slot * 8, host_loc);
+        }
+        fprintf(f, "\n");
+    }
 
     CONTEXT *c = ep->ContextRecord;
     fprintf(f, "--- REGISTERS ---\n");
