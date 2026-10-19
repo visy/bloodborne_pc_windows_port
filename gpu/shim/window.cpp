@@ -474,17 +474,23 @@ void WindowSDL::UpdateMouseCamera() {
     const bool wanted = s.mk_enabled.load() && s.mk_direct_camera.load();
     cam.Configure(wanted, 1.0f);
     if (!wanted) {
-        cam_hook_failed = false;
+        cam_hook_tries = 0;
+        cam_hook_next_ms = 0;
         if (cam.IsEnabled()) {
             cam.SetEnabled(false);
         }
-    } else if (!cam.IsEnabled() && !cam_hook_failed && (relative_mouse || (BbMouse::TestPan() && SDL_GetTicks() > 20000))) {
+    } else if (!cam.IsEnabled() && cam_hook_tries < 12 && SDL_GetTicks() >= cam_hook_next_ms &&
+               (relative_mouse || (BbMouse::TestPan() && SDL_GetTicks() > 20000))) {
         // BB_CAM_TEST_PAN: hooked from 20 s on, once the game code is there (no focus to wait for).
         if (!mouse_sampler_started) {
             BbMouse::Start();
             mouse_sampler_started = true;
         }
-        cam_hook_failed = !cam.SetEnabled(true);
+        // Not found yet (focus came before the game code was mapped): again in 5 s, 12 tries.
+        if (!cam.SetEnabled(true)) {
+            ++cam_hook_tries;
+            cam_hook_next_ms = SDL_GetTicks() + 5000;
+        }
     }
     if (mouse_sampler_started) {
         BbMouse::SetActive((relative_mouse || BbMouse::TestPan()) && cam.IsEnabled());

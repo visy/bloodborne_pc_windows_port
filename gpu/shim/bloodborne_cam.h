@@ -88,7 +88,6 @@ private:
     bool m_probe = false;
     bool m_probeHooked = false;
     bool m_addressesResolved = false;
-    bool m_addressSearchFailed = false;
 
     uintptr_t m_addrCamMain = 0;
     uintptr_t m_addrCamNop[4] = {0, 0, 0, 0};

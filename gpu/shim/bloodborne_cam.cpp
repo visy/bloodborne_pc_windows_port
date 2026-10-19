@@ -213,9 +213,7 @@ bool BloodborneCam::InitializeAddresses() {
     if (m_addressesResolved) {
         return true;
     }
-    if (m_addressSearchFailed) {
-        return false; // scanned once already; the result will not change
-    }
+    // A failed scan may be early (the game code not mapped yet): the caller retries (window.cpp).
 
 #ifdef _WIN32
     static constexpr size_t CAM_PATTERN_LEN = 18;
@@ -279,7 +277,6 @@ bool BloodborneCam::InitializeAddresses() {
 
     if (foundCamMain == 0) {
         m_addressesResolved = false;
-        m_addressSearchFailed = true;
         return false;
     }
 
