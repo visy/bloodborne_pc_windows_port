@@ -15,13 +15,16 @@
 #include <cstdlib>
 #include <string>
 #include <vk_mem_alloc.h>
+#include "video_core/texture_cache/reclaim_rounds.h"
 
 namespace Vulkan {
 SceneTargets::SceneTargets(const Instance& i, Scheduler& s, Runtime& r,
                            VideoCore::TextureCache& t)
     : SceneTargets(i, s, r, [&t](VideoCore::ImageId id, u64 uid) {
         return t.TryGetImage(id, uid);
-    }) {}
+    }) {
+    reclaim = [&t](u64 bytes) { return t.ReclaimMemory(bytes); };
+}
 SceneTargets::SceneTargets(const Instance& i, Scheduler& s, Runtime& r, Lookup get)
     : instance{i}, scheduler{s}, runtime{r}, lookup{std::move(get)} {
     runtime.scene_targets = this;
@@ -544,7 +547,21 @@ SceneTargets::Entry& SceneTargets::Get(VideoCore::ImageId id, u32 level) {
         const auto proxy = ProxySize(original, level);
         ci.extent = vk::Extent3D{proxy.width, proxy.height, 1};
         ci.mipLevels = 1;
-        entry->image.Create(ci);
+        // bbport: out of VRAM (4 GB cards): unused textures go and it is tried again, as for
+        // the texture cache's own images (TextureCache::InsertImage).
+        if (!entry->image.TryCreate(ci)) {
+            u64 freed = 0;
+            const bool created = VideoCore::ReclaimAndRetry(
+                0, [&](u64 want) { return reclaim ? reclaim(want) : u64(0); },
+                [&] { return entry->image.TryCreate(ci); }, freed);
+            std::printf("GPU: video memory full: %llu MiB of unused textures freed for a "
+                        "%ux%u scene target%s\n",
+                        (unsigned long long)(freed >> 20), proxy.width, proxy.height,
+                        created ? "" : ", not enough");
+            std::fflush(stdout);
+            ASSERT_MSG(created, "Failed allocating image with error {}",
+                       vk::to_string(vk::Result::eErrorOutOfDeviceMemory));
+        }
         tracked.insert(original.image_uid);
     }
     recent[recent_next++ % recent.size()] = {key, entry.get()};

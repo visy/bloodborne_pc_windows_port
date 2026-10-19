@@ -4,6 +4,7 @@
 #include <xxhash.h>
 
 #include <bit>
+#include <cstdio>
 #include "bbport_button_prompts.h"
 #include "bbport_toggles.h"
 #include "bbport_free_check.h"
@@ -18,6 +19,7 @@
 #include "video_core/page_manager.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
+#include "video_core/texture_cache/reclaim_rounds.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/host_compatibility.h"
 #include "video_core/texture_cache/texture_cache.h"
@@ -336,7 +338,7 @@ ImageId TextureCache::ResolveDepthOverlap(const ImageInfo& requested_info, Bindi
         auto new_info = requested_info;
         new_info.resources = std::max(requested_info.resources, cache_image.info.resources);
         new_info.UpdateSize();
-        const auto new_image_id = slot_images.insert(instance, runtime, slot_image_views, new_info);
+        const auto new_image_id = InsertImage(new_info);
         RegisterImage(new_image_id);
 
         // insert() may have grown slot_images and moved every image: `cache_image` would then
@@ -591,7 +593,7 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
 }
 
 ImageId TextureCache::ExpandImage(const ImageInfo& info, ImageId image_id) {
-    const auto new_image_id = slot_images.insert(instance, runtime, slot_image_views, info);
+    const auto new_image_id = InsertImage(info);
     RegisterImage(new_image_id);
 
     auto& src_image = slot_images[image_id];
@@ -714,7 +716,7 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     }
     // Create and register a new image
     if (!image_id) {
-        image_id = slot_images.insert(instance, runtime, slot_image_views, info);
+        image_id = InsertImage(info);
         RegisterImage(image_id);
     }
 
@@ -870,7 +872,7 @@ ImageView& TextureCache::FindDepthTarget(ImageId image_id, const ImageDesc& desc
             info.guest_address = desc.info.stencil_addr;
             info.guest_size = desc.info.stencil_size;
             info.size = desc.info.size;
-            stencil_id = slot_images.insert(instance, runtime, slot_image_views, info);
+            stencil_id = InsertImage(info);
             RegisterImage(stencil_id);
         }
         Image& stencil_image = slot_images[stencil_id];
@@ -1506,7 +1508,94 @@ void TextureCache::TouchImage(const Image& image) {
     lru_cache.Touch(image.lru_id, gc_tick);
 }
 
-void TextureCache::DeleteImage(ImageId image_id) {
+ImageId TextureCache::InsertImage(const ImageInfo& info) {
+    const ImageId image_id = slot_images.insert(instance, runtime, slot_image_views, info);
+    if (!slot_images[image_id].allocation_failed) [[likely]] {
+        return image_id;
+    }
+    // bbport: the GPU has no memory left for it, past the driver's budget too (4 GB cards, on
+    // entering a big area or the Hunter's Dream). Unused textures go at once, more each round,
+    // before the image is given up on: a moment's stutter instead of the game ending (from
+    // Supermedo/bloodborne_pc 5f56ed6a).
+    u64 freed = 0;
+    const bool created = ReclaimAndRetry(
+        u64(info.guest_size) * 2,
+        [&](u64 want) { return ReclaimMemoryFor(info.guest_address, info.guest_size, want); },
+        [&] { return slot_images[image_id].RetryAllocation(); }, freed);
+    if (created) {
+        static int reported = 0;
+        if (reported < 8) {
+            ++reported;
+            std::printf("GPU: video memory full: %llu MiB of unused textures freed for a new "
+                        "%ux%u image\n",
+                        (unsigned long long)(freed >> 20), info.size.width, info.size.height);
+            std::fflush(stdout);
+        }
+        return image_id;
+    }
+    std::printf("GPU: video memory full: no memory for a %ux%u image after freeing %llu MiB of "
+                "unused textures\n",
+                info.size.width, info.size.height, (unsigned long long)(freed >> 20));
+    std::fflush(stdout);
+    UNREACHABLE_MSG("Failed allocating image with error {}",
+                    vk::to_string(vk::Result::eErrorOutOfDeviceMemory));
+    return image_id;
+}
+
+u64 TextureCache::ReclaimMemoryFor(VAddr addr, size_t size, u64 bytes) {
+    // Unused for 2 s: in no command buffer still being recorded, and after WaitSubmittedWork in
+    // none the GPU is still running, so destroying it at once is safe. The collector's rules
+    // hold: images bound to the draw being recorded, its render/depth targets, presented
+    // surfaces and scene proxies stay, and so do images holding GPU results (render targets),
+    // as writing them back here would stall in the middle of a draw. Textures are uploaded
+    // again from guest memory when next used.
+    const u64 second = u64(std::chrono::duration_cast<std::chrono::seconds>(
+                               std::chrono::steady_clock::now().time_since_epoch())
+                               .count());
+    const u64 unused_tick =
+        std::min(gc_tick, gc_tick_at_second[(second - 2) % gc_tick_at_second.size()]);
+    boost::container::small_vector<ImageId, 64> victims;
+    u64 freed = 0;
+    lru_cache.ForEachItemBelow(unused_tick, [&](ImageId image_id) {
+        if (freed >= bytes) {
+            return true;
+        }
+        const Image& image = slot_images[image_id];
+        // No backing (an undefined format): no GPU memory to give back.
+        if (!image.backing || image.lru_touched_tick >= unused_tick || image.binding.is_bound ||
+            image.binding.is_target || image.usage.vo_surface || image.scene_proxy ||
+            True(image.flags & ImageFlagBits::GpuModified) || image.allocation_failed ||
+            image.Overlaps(addr, size)) {
+            return false;
+        }
+        victims.push_back(image_id);
+        freed += image.GetHostImageSize();
+        return false;
+    });
+    if (victims.empty()) {
+        return 0;
+    }
+    scheduler.WaitSubmittedWork();
+    for (const ImageId image_id : victims) {
+        UntrackImage(image_id);
+        UnregisterImage(image_id);
+        DeleteImage(image_id, true);
+        ++gc_evictions;
+        BbStats::gc_freed_images.fetch_add(1, std::memory_order_relaxed);
+    }
+    static int reported = 0;
+    if (reported < 32) {
+        ++reported;
+        std::printf("GPU: video memory full: a round of up to %llu MiB freed %llu MiB (%zu "
+                    "unused textures)\n",
+                    (unsigned long long)(bytes >> 20), (unsigned long long)(freed >> 20),
+                    victims.size());
+        std::fflush(stdout);
+    }
+    return freed;
+}
+
+void TextureCache::DeleteImage(ImageId image_id, bool now) {
     Image& image = slot_images[image_id];
     ASSERT_MSG(!image.IsTracked(), "Image was not untracked");
     ASSERT_MSG(False(image.flags & ImageFlagBits::Registered), "Image was not unregistered");
@@ -1531,15 +1620,21 @@ void TextureCache::DeleteImage(ImageId image_id) {
     }
 
     // Reclaim image and any image views it references.
-    scheduler.DeferOperation([this, image_id] {
-        Image& image = slot_images[image_id];
-        for (auto& backing : image.backing_images) {
-            for (const ImageViewId image_view_id : backing.image_view_ids) {
-                slot_image_views.erase(image_view_id);
-            }
+    if (now) {
+        EraseImage(image_id);
+        return;
+    }
+    scheduler.DeferOperation([this, image_id] { EraseImage(image_id); });
+}
+
+void TextureCache::EraseImage(ImageId image_id) {
+    Image& image = slot_images[image_id];
+    for (auto& backing : image.backing_images) {
+        for (const ImageViewId image_view_id : backing.image_view_ids) {
+            slot_image_views.erase(image_view_id);
         }
-        slot_images.erase(image_id);
-    });
+    }
+    slot_images.erase(image_id);
 }
 
 } // namespace VideoCore
