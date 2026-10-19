@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Fixed: a guest who dies from a fall, or far from its lamp, respawns through a loading screen** (issue #4): the instant respawn could leave the camera underground and the controls broken; a death after a fall or more than about 60 m from the lamp now loads normally, and a nearby normal death stays instant.
 - **Fixed: the "Travel with the party?" question at a lamp no longer silently fails** (issue #4): it waits until the lamp's own menu has closed before opening, and if the game still does not show it, the party travels together (the usual default) instead of nothing happening.
 - **Fixed: a guest can use lamps, talk to NPCs and pick things up again after a boss kill** (issue #4): the game's "waiting to be sent home" state, which blocks a summoned player's actions, stayed on because the party keeps the guest after the boss; it is now cleared once the party stays.
 - **Fixed: a party wipe in a boss fight no longer gets stuck when a guest had been dead for over 90 s** (issue #4): the host forgot the guest's death after 90 s, so its own death later went into the boss-fight wait instead of the party's respawn. A death now counts until that player is revived, comes back or leaves the party.

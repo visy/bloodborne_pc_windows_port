@@ -45,6 +45,7 @@
 #include <cstring>
 #include <array>
 #include <deque>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <string>
@@ -3129,6 +3130,7 @@ u32 LitLampInMap(u32 map) {
     return first;
 }
 
+bool GuestDeadLoadAt(u32 lamp, double held_for, const char* which);
 bool SoloRespawn(double held_for, u32 map_now) {
     static const bool on = !(std::getenv("BB_PARTY_B2_SOLO_RESPAWN") && std::getenv("BB_PARTY_B2_SOLO_RESPAWN")[0] == '0');
     u32 lamp = GuestDeathRedirectLamp();
@@ -3141,8 +3143,18 @@ bool SoloRespawn(double held_for, u32 map_now) {
         Log("guest: the host's last lamp %u is not in %s; lit lamp here: %u", lamp, MapName(map_now).c_str(), here);
         lamp = here;
     }
+    if (!on) {
+        return false;
+    }
+    return GuestDeadLoadAt(lamp, held_for, "the host's lamp");
+}
+
+/// A dead guest's respawn load (the vanilla loading screen, this guest only) at `lamp` of the
+/// host's world: a re-join into the host's world with the death follow; the host removes the dead
+/// member chr where it lay. SoloRespawn, and GuestReviveInPlace when the in-place revive is not safe.
+bool GuestDeadLoadAt(u32 lamp, double held_for, const char* which) {
     TravelIntent t;
-    if (!on || Role() != RoleClient || lamp == kTravelNone || lamp == 0 || !LampIntent(lamp, &t)) {
+    if (Role() != RoleClient || lamp == kTravelNone || lamp == 0 || !LampIntent(lamp, &t)) {
         return false;
     }
     g_dead_follow = true;
@@ -3161,9 +3173,9 @@ bool SoloRespawn(double held_for, u32 map_now) {
         std::snprintf(b, sizeof b, "{\"op\":\"respawn\",\"pos\":[%.3f,%.3f,%.3f]}", p[0], p[1], p[2]);
         Send(0, b);
     }
-    Log("guest: died alone (no host travel in %.1f s): respawn at the host's lamp %u in the host's world (%s); "
+    Log("guest: died alone (no host travel in %.1f s): respawn at %s %u in the host's world (%s); "
         "asked the host for a snapshot",
-        held_for, lamp, DescribeTravel(t).c_str());
+        held_for, which, lamp, DescribeTravel(t).c_str());
     return true;
 }
 
@@ -4016,6 +4028,46 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
 /// Guest, main thread: its held death respawns at `lamp` in the loaded map with no load (the
 /// Bloodborne rule: a load only for a real map change). False: the lamp is not in this map or has
 /// no known spawn spot (the caller loads as before).
+// The local chr's height around its death (issue #4 item 7): the highest point in the 3 s before
+// HP 0 and the height at HP 0, for PlanGuestRevive's fall test. Main thread, every role.
+struct DeathHeight {
+    bool known = false;
+    double peak = 0, at_death = 0;
+};
+DeathHeight g_death_height;
+void LocalDeathHeightTick(const GameSnapshot& s, double now) {
+    static std::deque<std::pair<double, float>> hist;
+    static bool was_dead = false;
+    static u64 chr = 0;
+    if (!s.world_up || s.loading || !s.player) {
+        hist.clear();
+        was_dead = false;
+        return;
+    }
+    if (s.player != chr) {
+        chr = s.player;
+        hist.clear();
+        was_dead = false;
+    }
+    float p[3];
+    if (!ChrPos(s.player, p) || !std::isfinite(p[1])) {
+        return;
+    }
+    const bool dead = ChrHp(s.player) <= 0;
+    if (!dead) {
+        hist.emplace_back(now, p[1]);
+        while (!hist.empty() && now - hist.front().first > 3.0) hist.pop_front();
+    } else if (!was_dead) {
+        DeathHeight d;
+        d.known = !hist.empty() && now - hist.front().first >= 1.0;
+        d.at_death = p[1];
+        d.peak = p[1];
+        for (const auto& h : hist) d.peak = std::max(d.peak, double(h.second));
+        g_death_height = d;
+    }
+    was_dead = dead;
+}
+
 bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
     static const bool on = !(std::getenv("BB_PARTY_GUEST_REVIVE") && std::getenv("BB_PARTY_GUEST_REVIVE")[0] == '0');
     const u32 stage = Field<u32>(s.player, 0x3f8);
@@ -4023,6 +4075,28 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
     if (!on || !s.player || lamp == 0 || lamp == kTravelNone || (ids::EntityMap(lamp) >> 16) != (stage >> 16) ||
         !ids::ReturnSpot(lamp, rs)) {
         return false;
+    }
+    {
+        // Issue #4 item 7, correct over seamless: far from the lamp or after a fall, the respawn
+        // load instead (the in-place warp left the guest's camera underground and its controls
+        // broken). BB_PARTY_GUEST_REVIVE_FAR=1: the old in-place revive at any distance.
+        static const bool always = deathrules::OptIn(std::getenv("BB_PARTY_GUEST_REVIVE_FAR"));
+        float p[3] = {0, 0, 0};
+        double dist = std::numeric_limits<double>::quiet_NaN(), fell = 0;
+        if (ChrPos(s.player, p) && std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2])) {
+            const double dx = p[0] - rs[0], dy = p[1] - rs[1], dz = p[2] - rs[2];
+            dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+            fell = deathrules::FallDrop(g_death_height.peak, g_death_height.at_death, p[1]);
+        }
+        const deathrules::GuestRevive plan = deathrules::PlanGuestRevive(dist, fell, g_death_height.known);
+        if (plan != deathrules::GuestRevive::InPlace && !always) {
+            Log("guest: died %.1f m from %s %u (dropped %.1f m%s): %s", dist, why, lamp, fell,
+                g_death_height.known ? "" : ", no height history", deathrules::GuestReviveName(plan));
+            if (GuestDeadLoadAt(lamp, 0.0, why)) {
+                return true;
+            }
+            Log("guest: the respawn load could not start; revived in place instead");
+        }
     }
     LampSpot sp;
     sp.valid = true;
@@ -8213,6 +8287,7 @@ void Tick(const GameSnapshot& s) {
     DeadAfterClearTick(s, now);
     K10ProbeTick(s, now);
     K10ActionHoldTick(s, now);
+    LocalDeathHeightTick(s, now);
     {
         GuestPhase gp;
         {
