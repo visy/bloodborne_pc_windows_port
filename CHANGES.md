@@ -3,7 +3,7 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
-## Unreleased
+## 0.6.8 (Windows port 0.6.8, co-op fixes from issue #4, settings sync)
 
 - **Fixed: a guest revived at its lamp gets its body back on its own screen** (issue #4): the instant respawn never ran the game's own revive for a guest, so its character kept the death dissolve's state (its draw factor stayed 0; the issue's guest saw only eyes and armour, the host saw it whole). The guest's respawn now runs it too, keeping the guest a summoned phantom, and puts back the draw factor it had alive. `BB_PARTY_GUEST_REVIVE_BODY=0` turns it off.
 - **Fixed: a party member's dialogue choices are shared again with lamp travel on** (issue #4 logs): lamp travel (on by default) took over the game's talk command code first, so the shared NPC talk's choice observer could not hook it and never ran ("talk menu observer NOT installed" on both PCs); the choice tracker now rides on lamp travel's hook. Talk lines and gifts were not affected.
