@@ -54,7 +54,7 @@ uint64_t runtime_gfx_heap_more_mib(void) {
  * it in table order with little to spare. A GFX_GraphicsPrivate growth past 1 GiB (above) adds
  * the rest. BB_DMEM_MB overrides it (5056..16384; the resolution patches above 1080p need about
  * 4 GiB more than retail; run.bat/run.sh set 9152 then). */
-static uint64_t pool_size_bytes(void) {
+static uint64_t game_pool_bytes(void) {
     static uint64_t size;
     if (!size) {
         const char *env = getenv("BB_DMEM_MB");
@@ -68,7 +68,23 @@ static uint64_t pool_size_bytes(void) {
     }
     return size;
 }
-uint64_t runtime_memory_pool_size(void) { return pool_size_bytes(); }
+/* bbport: direct memory past the game's size, for the port's own guest allocations
+ * (runtime_extra_direct_map: the render resource cache's larger backing, bbport_stability.cpp).
+ * The game neither sees nor allocates it. BB_DMEM_EXTRA_MB (0..2048, default 512; from
+ * deadinside28/bloodborne_pc 0.6). */
+static uint64_t extra_pool_bytes(void) {
+    static int64_t size=-1;
+    if (size<0) {
+        const char *env = getenv("BB_DMEM_EXTRA_MB");
+        uint64_t mb = env ? strtoull(env, NULL, 10) : 512;
+        if (mb > 2048) mb = 2048;
+        size = (int64_t)(mb * 1024 * 1024);
+    }
+    return (uint64_t)size;
+}
+static uint64_t pool_size_bytes(void) { return game_pool_bytes() + extra_pool_bytes(); }
+/* The game's direct memory (sceKernelGetDirectMemorySize), without the port's extra. */
+uint64_t runtime_memory_pool_size(void) { return game_pool_bytes(); }
 /* Flexible memory budget: PS4's 448 MiB, plus what the SprjMemory MENU heap grows by
  * (bbport_stability.cpp: Scaleform's heaps, carved from MENU, which is flexible memory). */
 static uint64_t flexible_extra;
@@ -76,6 +92,7 @@ void runtime_memory_grow_flexible(uint64_t bytes) {
     __atomic_add_fetch(&flexible_extra, bytes, __ATOMIC_RELAXED);
 }
 #define POOL_SIZE pool_size_bytes()
+#define GAME_POOL_SIZE game_pool_bytes()
 #define FLEXIBLE_SIZE (UINT64_C(448) * 1024 * 1024 + __atomic_load_n(&flexible_extra, __ATOMIC_RELAXED))
 #define PAGE UINT64_C(16384)
 #define USER_MIN UINT64_C(0x1000000000)
@@ -520,13 +537,13 @@ static int direct_range_allocated(uint64_t phys, uint64_t size) {
     return 1;
 }
 
-static ABI uint64_t direct_size(void) { return POOL_SIZE; }
+static ABI uint64_t direct_size(void) { return GAME_POOL_SIZE; }
 static ABI int32_t direct_allocate(int64_t low, int64_t high, uint64_t size,
                                   uint64_t alignment, int type, int64_t *out) {
     if (!alignment) alignment = PAGE;
     if (!out || low < 0 || high < 0 || !size || size % PAGE || !valid_alignment(alignment) || type < 0 || type > 10)
         return INVALID;
-    uint64_t end = (uint64_t)high < POOL_SIZE ? (uint64_t)high : POOL_SIZE;
+    uint64_t end = (uint64_t)high < GAME_POOL_SIZE ? (uint64_t)high : GAME_POOL_SIZE;
     if ((uint64_t)low >= end || size > end - (uint64_t)low) return NO_SPACE;
     write_lock();
     if (pool()) { write_unlock(); return NO_MEMORY; }
@@ -558,6 +575,36 @@ static int32_t map_direct_locked(void **out, uint64_t size, int prot, int flags,
     if (!direct_range_allocated((uint64_t)physical,size)) return INVALID;
     int32_t result=place(out,size,prot,flags,alignment,KIND_DIRECT,block_type((uint64_t)physical),(uint64_t)physical);
     if (!result) ++maps;
+    return result;
+}
+/* bbport: `size` bytes of direct memory past the game's size (extra_pool_bytes), mapped for the
+ * CPU and the GPU (read and write) at an address of the runtime's choosing; the GPU side is told
+ * as of a game mapping. 0 or the error (from deadinside28/bloodborne_pc 0.6). */
+int runtime_extra_direct_map(uint64_t size, uint64_t alignment, void **out) {
+    if (!out || !size || size % PAGE || !valid_alignment(alignment)) return INVALID;
+    write_lock();
+    if (pool()) { write_unlock(); return NO_MEMORY; }
+    const uint64_t end=POOL_SIZE;
+    uint64_t start=align_up(GAME_POOL_SIZE,alignment);
+    int slot=-1;
+    for (int i=0;i<LIMIT;++i) if (!blocks[i].used) { slot=i; break; }
+    for (;;) {
+        if (slot<0 || start>end || size>end-start) { write_unlock(); return NO_SPACE; }
+        int overlap=0;
+        for (int i=0;i<LIMIT;++i) {
+            const Block b=blocks[i];
+            if (b.used && start<b.start+b.size && b.start<start+size) { start=align_up(b.start+b.size,alignment); overlap=1; break; }
+        }
+        if (!overlap) break;
+    }
+    blocks[slot]=(Block){start,size,3,1};
+    ensure_chunks(start,size);
+    *out=NULL;
+    const int32_t result=map_direct_locked(out,size,0x33,0,(int64_t)start,alignment);
+    if (result) blocks[slot].used=0;
+    write_unlock();
+    flush_hooks();
+    if (!result) printf("Runtime: port direct memory %p, size=%" PRIu64 " (past the game's %" PRIu64 " MiB)\n", *out, size, GAME_POOL_SIZE>>20);
     return result;
 }
 static ABI int32_t direct_map(void **out, uint64_t size, int prot, int flags, int64_t physical, uint64_t alignment) {

@@ -64,6 +64,9 @@ struct UniqueImage {
     }
 
     void Create(const vk::ImageCreateInfo& image_ci);
+    /// bbport: as Create, but false where the GPU has no memory left for the image (the
+    /// texture cache frees unused images and tries again).
+    bool TryCreate(const vk::ImageCreateInfo& image_ci);
 
     void Destroy();
 
@@ -130,6 +133,9 @@ struct Image {
 
     ImageView& FindView(const ImageViewInfo& view_info, bool ensure_guest_samples = true);
 
+    /// bbport: creates the Vulkan image again after allocation_failed; false while no memory.
+    bool RetryAllocation();
+
     using Barriers = boost::container::small_vector<vk::ImageMemoryBarrier2, 32>;
     void GetBarriers(Barriers& out_barriers, vk::ImageLayout dst_layout, vk::AccessFlags2 dst_mask,
                      vk::PipelineStageFlags2 dst_stage,
@@ -154,6 +160,8 @@ public:
         u32 vo_surface : 1;
     } usage{};
     bool scene_proxy = false; ///< bbport: SceneTargets holds a reduced-size proxy of it
+    /// bbport: no GPU memory for the image when it was created (RetryAllocation).
+    bool allocation_failed = false;
     // bbport button prompts (vk_button_prompts.h; from deadinside28/bloodborne_pc 72e5c8ce):
     u8 prompt_icon = 0;    ///< one of the game's key guide icons (BbPrompts::IconOf + 1)
     u8 prompt_atlas = 0;   ///< one of the HUD's icon atlases (BbPrompts::AtlasOf + 1)
