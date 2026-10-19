@@ -461,12 +461,16 @@ bool SendHomeVeto(u64 site) {
 // ended the guest's session although its own leave was dropped), so both are kept.
 std::atomic<double> g_k10_at{0};  // when K10 last kept the party (BossClearInvincibleTick)
 std::atomic<bool> g_k10_this_load{false};  // K10 ran since the last load (DeadAfterClearTick)
+std::atomic<double> g_k10_hold_at{0};  // guest: K10 ran in this session (K10ActionHoldTick; 0 = no)
 BB_COOP_SYSV u64 BossClearLeaveHook(u64 session) {
     const int role = Role();
     if (g_on.load() && (role == RoleClient || role == RoleHost)) {
         Log("K10: boss-clear leave suppressed (%s; party stays)", role == RoleHost ? "host" : "guest");
         g_k10_at = Now();
         g_k10_this_load = true;
+        if (role == RoleClient && g_k10_hold_at.load() <= 0) {
+            g_k10_hold_at = Now();
+        }
         return 0;
     }
     using Fn = u64(BB_COOP_SYSV*)(u64);
@@ -3177,6 +3181,78 @@ bool DeadWatchdogHolds() {
                                 std::strcmp(std::getenv("BB_PARTY_B2_DEAD_WATCHDOG"), "redirect") == 0);
     return holds;
 }
+int ChrHp(u64 chr);
+
+/// Test aid BB_PARTY_K10_PROBE=1 (issue #4 item 1: the guest's confirms after a boss clear): for
+/// 120 s after a K10 on a guest, every 2 s, the input gates: SprjActionButtonMan (*0x5540048)
+/// +0x50..+0x55, the menu (*0x5562878) +0x78 / +0xC0 / +0x118, the menu busy byte 0x553B1BA, the
+/// own chr's +0x1E1 flags.
+void K10ProbeTick(const GameSnapshot& s, double now) {
+    static const bool on = deathrules::OptIn(std::getenv("BB_PARTY_K10_PROBE"));
+    static double next = 0;
+    static double since = 0;
+    const double at = g_k10_hold_at.load();
+    if (at > 0 && at != since) {
+        since = at;
+        next = 0;
+    }
+    if (!on || Role() != RoleClient || at <= 0 || now - at > 120.0 || now < next) {
+        return;
+    }
+    next = now + 2.0;
+    const u64 man = Slot(0x5540048), menu = Slot(0x5562878);
+    u8 busy = 0;
+    SafeGet(Guest(0x553b1ba), &busy);
+    u64 f = 0;
+    if (s.player) SafeRead(s.player + 0x1e1, &f, 5);
+    const u64 ctx = Field<u64>(Slot(0x553b0c8), 8);
+    Log("K10 probe +%.0f s: lua load wait %d; buttons +0x50 %d +0x51 %d +0x52 %d +0x53 %d +0x54 %d +0x55 %d; menu +0x78 %d +0xC0 %d "
+        "+0x118 %d busy %u; chr +0x1e1 %010llx hp %d",
+        now - at, ctx ? int(Field<u8>(ctx, 0x8d)) : -1, Field<u8>(man, 0x50), Field<u8>(man, 0x51), Field<u8>(man, 0x52), Field<u8>(man, 0x53),
+        Field<u8>(man, 0x54), Field<u8>(man, 0x55), Field<int>(menu, 0x78, -1), Field<int>(menu, 0xc0, -1),
+        Field<int>(menu, 0x118, -1), unsigned(busy), ull(f), s.player ? ChrHp(s.player) : -1);
+}
+
+/// Guest (issue #4 item 1): after a boss clear every action button stayed dead (lamps, NPCs, item
+/// pickups). SprjActionButtonMan (*0x5540048) +0x52 is the phantom's action-button hold: each frame
+/// the Lua event update 0x1339B50 copies it from the Lua event context (*(*0x553B0C8 + 8)) +0x8D,
+/// the "load wait" flag the Lua command SetLoadWait (0x13358F0, registered at 0x1342357) sets and
+/// only the context's constructor (0x1339669) clears; IsLoadWait (0x1335900) reads it. The
+/// boss-clear states call it before the phantom's send-home load; K10 drops that send-home, so the
+/// flag stayed set for the rest of the session (live issue4 r1 / r1b: +0x52 1 from the K10 on, a
+/// write of 0 to +0x52 alone was back to 1 the next frame; pard3 lifted it only while the boss
+/// reward's item box was up). Once K10 kept the party, the flag and the hold are cleared. BB_PARTY_K10_HOLD=keep: the old behaviour; BB_PARTY_K10_HOLD_DELAY=S (test aid):
+/// lift it S s after the K10 instead of at once (an A/B in one run).
+bool K10HoldLifted() {
+    return g_k10_hold_at.load() > 0 && Role() == RoleClient;
+}
+void K10ActionHoldTick(const GameSnapshot& s, double now) {
+    static const bool keep = std::getenv("BB_PARTY_K10_HOLD") && std::strcmp(std::getenv("BB_PARTY_K10_HOLD"), "keep") == 0;
+    static const double delay = std::getenv("BB_PARTY_K10_HOLD_DELAY") ? std::atof(std::getenv("BB_PARTY_K10_HOLD_DELAY")) : 0.0;
+    static double logged_for = 0;
+    const double at = g_k10_hold_at.load();
+    if (at > 0 && (!g_on.load() || Role() != RoleClient)) {
+        g_k10_hold_at = 0;  // the session ended: a new one starts without the lift
+        return;
+    }
+    if (keep || at <= 0 || now - at < delay || !s.world_up || s.loading || !s.player) {
+        return;
+    }
+    const u64 man = Slot(0x5540048), ctx = Field<u64>(Slot(0x553b0c8), 8);
+    const u8 wait = ctx ? Field<u8>(ctx, 0x8d) : 0, hold = man ? Field<u8>(man, 0x52) : 0;
+    if (wait != 1 && hold != 1) {
+        return;
+    }
+    const u8 zero = 0;
+    if (wait == 1) SafeWrite(ctx + 0x8d, &zero, 1);
+    if (hold == 1) SafeWrite(man + 0x52, &zero, 1);
+    if (logged_for != at) {
+        logged_for = at;
+        Log("K10: the boss-clear action-button hold lifted %.1f s after the clear (Lua load wait +0x8d %u, hold +0x52 "
+            "%u -> 0; the party stays: lamps, NPCs and pickups work again)", now - at, unsigned(wait), unsigned(hold));
+    }
+}
+
 void DeadAfterClearTick(const GameSnapshot& s, double now) {
     static double dead_since = 0;
     static bool fired = false;
@@ -3362,7 +3438,7 @@ std::atomic<double> g_host_down_at{0};
 std::atomic<int> g_revivals{0};
 std::atomic<bool> g_host_limbo{false};   // the host's death came in a boss fight: it waits for the end
 std::mutex g_dead_mu;
-std::map<int, double> g_dead_members;    // host: party slot -> when it said it died (under g_dead_mu)
+deathrules::DownLedger g_dead_members;    // host: party slots down until revived / re-arrived / gone (under g_dead_mu)
 std::atomic<bool> g_host_revived_note{false};  // guest: the host was revived in place (re-create its chr)
 
 // What a chr death writes (ChrIns_OnDeath 0x18C49F0 and its followers 0x18C4F90 / 0x18C5070, the
@@ -3607,14 +3683,51 @@ void LampSpotTick(const GameSnapshot& s) {
         MapName(sp.map).c_str(), double(sp.pos[0]), double(sp.pos[1]), double(sp.pos[2]), double(sp.rot[1]));
 }
 
-/// Host: how many members said they are down ("dead", until they arrive again; 90 s at most).
-int DeadMemberCount() {
-    std::lock_guard<std::mutex> lk(g_dead_mu);
-    const double now = Now();
-    for (auto it = g_dead_members.begin(); it != g_dead_members.end();) {
-        it = now - it->second > 90.0 ? g_dead_members.erase(it) : std::next(it);
+/// The party members' current state as the link knows it (roster + their own vitals), for the
+/// down record's reconcile and the "seen at HP 0" count. Not the host's own entry.
+std::vector<deathrules::MemberNow> MembersNow() {
+    std::vector<deathrules::MemberNow> out;
+    party::PartyLink* link = party::runtime_link();
+    if (!link) {
+        return out;
     }
-    return int(g_dead_members.size());
+    party::MemberVitals v[party::kMaxVitals];
+    const int n = link->vitals(v, party::kMaxVitals);
+    for (const party::RosterEntry& r : link->roster()) {
+        if (r.slot == party::kHostSlot) {
+            continue;
+        }
+        deathrules::MemberNow m;
+        m.slot = r.slot;
+        m.in_roster = true;
+        for (int i = 0; i < n; ++i) {
+            if (v[i].slot == r.slot && r.connected && v[i].age_ms <= u32(party::kVitalsStaleMs) &&
+                (v[i].flags & party::kVitalsValid)) {
+                m.vitals_fresh = true;
+                m.alive = (v[i].flags & party::kVitalsAlive) != 0;
+            }
+        }
+        out.push_back(m);
+    }
+    return out;
+}
+
+/// Host: how many members are down: each "member_down" counts until that member is revived
+/// ("member_revived"), arrives again ("arrived": a rejoin / respawn load), leaves the roster, or
+/// its own vitals say alive for a few seconds (issue #4 item 6: no 90 s expiry any more).
+/// `seen` (optional): members whose vitals say HP 0 right now (HostDeathView::down_seen).
+int DeadMemberCount(int* seen = nullptr) {
+    const std::vector<deathrules::MemberNow> m = MembersNow();
+    if (seen) {
+        *seen = deathrules::SeenDown(m);
+    }
+    std::lock_guard<std::mutex> lk(g_dead_mu);
+    int slot = -1;
+    if (party::runtime_link() && g_dead_members.Reconcile(m, Now(), &slot) > 0) {
+        Log("host: slot %d no longer counted down (alive again or left the party; %d member(s) down)", slot,
+            g_dead_members.Count());
+    }
+    return g_dead_members.Count();
 }
 
 int MemberTaskCount() {
@@ -3641,7 +3754,9 @@ bool HostDeathIntercept() {
     if (g_host_down.load()) {
         return true;  // the same death's funnel again (a taken death: limbo or revive pending)
     }
-    const int members = MemberTaskCount(), dead = DeadMemberCount();
+    int seen = 0;
+    const int members = MemberTaskCount(), reported = DeadMemberCount(&seen);
+    const int dead = deathrules::PartyDown(members, reported, seen);  // for the log lines
     const u64 gsm = Slot(kSlotGsm);
     const u32 lamp = Field<u32>(gsm, 0x1528);
     const u32 stage = Field<u32>(Field<u64>(Slot(kSlotWorldChrMan), 0x60), 0x3f8);  // the player's stage
@@ -3666,7 +3781,8 @@ bool HostDeathIntercept() {
     deathrules::HostDeathView v;
     v.party_on = true;
     v.members = members;
-    v.down_reported = dead;
+    v.down_reported = reported;
+    v.down_seen = seen;
     v.boss_fight = BossFightActive(&boss);
     v.revive_opt_in = HostReviveOn();
     // The stage id (PlayerIns +0x3F8) and the map id share the area / block bytes.
@@ -4082,7 +4198,7 @@ void HostDownTick(const GameSnapshot& s, double now) {
             HostDeathFunnelNow();
         }
         std::lock_guard<std::mutex> lk(g_dead_mu);
-        g_dead_members.clear();
+        g_dead_members.ClearAll();
         return;
     }
     if (s.loading && g_host_down.load()) {
@@ -4131,7 +4247,8 @@ void HostDownTick(const GameSnapshot& s, double now) {
         }
         return;
     }
-    const int members = MemberTaskCount(), dead = DeadMemberCount();
+    int seen = 0;
+    const int members = MemberTaskCount(), dead = DeadMemberCount(&seen);
     static const double delay = [] {
         const char* v = std::getenv("BB_PARTY_B2_HOST_REVIVE_DELAY");
         return v && v[0] ? std::atof(v) : 1.0;
@@ -4139,6 +4256,7 @@ void HostDownTick(const GameSnapshot& s, double now) {
     deathrules::DownView dv;
     dv.members = members;
     dv.down_reported = dead;
+    dv.down_seen = seen;
     dv.limbo = g_host_limbo.load();
     dv.boss_active = dv.limbo && BossFightActive();
     dv.revive_opt_in = HostReviveOn();
@@ -4158,7 +4276,7 @@ void HostDownTick(const GameSnapshot& s, double now) {
     if (plan == deathrules::DownTick::Wipe) {
         Log("host death: every member went down while the host was (%d of %d, recounted %.1f s after the death): a "
             "wipe; the stock funnel runs",
-            dead, members, dv.down_for);
+            deathrules::PartyDown(members, dead, seen), members, dv.down_for);
         HostDeathFunnelNow();
         return;
     }
@@ -4169,7 +4287,7 @@ void HostDownTick(const GameSnapshot& s, double now) {
                                                       : "the party's respawn load");
     }
     if (plan == deathrules::DownTick::PartyLoad) {
-        Log("host death: the respawn load for the whole party (%d member(s), %d down)", members, dead);
+        Log("host death: the respawn load for the whole party (%d member(s), %d down)", members, deathrules::PartyDown(members, dead, seen));
         HostDeathFunnelNow();
         return;
     }
@@ -7301,6 +7419,10 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
 
 } // namespace
 
+bool K10ActionHoldLifted() {
+    return K10HoldLifted();
+}
+
 std::string NrFindTimeouts(u64 base, std::size_t span) {
     std::vector<std::uint32_t> buf(span / 4);
     for (std::size_t chunk = 0; chunk < buf.size(); chunk += 256)
@@ -8089,6 +8211,8 @@ void Tick(const GameSnapshot& s) {
     ReviveRearmTick(s);
     BossClearInvincibleTick(s, now);
     DeadAfterClearTick(s, now);
+    K10ProbeTick(s, now);
+    K10ActionHoldTick(s, now);
     {
         GuestPhase gp;
         {
@@ -8459,7 +8583,7 @@ void OnLinkEvent(int from_slot, const std::string& body) {
         }
         {
             std::lock_guard<std::mutex> lk(g_dead_mu);
-            g_dead_members.erase(from_slot);
+            g_dead_members.Clear(from_slot);
         }
         Log("slot %d was revived in place (no load)", from_slot);
         return;
@@ -8471,17 +8595,15 @@ void OnLinkEvent(int from_slot, const std::string& body) {
     }
     if (body.find("\"member_down\"") != std::string::npos) {
         std::lock_guard<std::mutex> lk(g_dead_mu);
-        if (from_slot > 0 && from_slot < 16) {
-            g_dead_members[from_slot] = Now();
-        }
+        g_dead_members.Down(from_slot, Now());
         g_last_down_at = Now();
-        Log("host: slot %d is down (%zu member(s) down)", from_slot, g_dead_members.size());
+        Log("host: slot %d is down (%d member(s) down)", from_slot, g_dead_members.Count());
         return;
     }
     if (body.find("\"arrived\"") != std::string::npos) {
         {
             std::lock_guard<std::mutex> lk(g_dead_mu);
-            g_dead_members.erase(from_slot);
+            g_dead_members.Clear(from_slot);
         }
         std::lock_guard<std::mutex> lk(S().mu);
         S().arrived = true;
