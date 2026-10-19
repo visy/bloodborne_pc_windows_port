@@ -71,7 +71,8 @@ private:
     void UpdateMouseMode();
     /// Direct mouse camera (bloodborne_cam.h): hooks/unhooks it to match mk_direct_camera.
     void UpdateMouseCamera();
-    bool cam_hook_failed{};       ///< camera code not found: stay on the stick until toggled
+    int cam_hook_tries{};         ///< failed direct-camera hooks since it was turned on (max 12)
+    std::uint64_t cam_hook_next_ms{}; ///< SDL ticks of the next try (every 5 s: the game code may load later)
     bool mouse_sampler_started{}; ///< BbMouse thread runs (started on first direct use)
     u64 last_mouse_motion_ms{}; ///< SDL_GetTicks of the last mouse motion (UpdateCursor)
     bool cursor_hidden{};
