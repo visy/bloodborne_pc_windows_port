@@ -3982,6 +3982,10 @@ void RearmDeathScript(const char* why) {
 
 /// Main thread: the taken host death's revive.
 void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host);
+// The local chr's draw factor (PlayerIns +0x208: 0 -> 1 when built, 1 -> 0 in the death dissolve)
+// while alive, for a guest's in-place revive (issue #4 item 4). LocalDeathHeightTick, main thread.
+float g_local_draw_alive = 1.0f;
+u64 g_local_draw_chr = 0;
 void ReviveHost(const GameSnapshot& s) {
     ReviveLocal(s, g_lamp_spot, true);
 }
@@ -4018,6 +4022,28 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
     if (RecipeHas("recover") && host) {  // a guest keeps its phantom type (0x1900710 writes +0x78 = 0)
         // RevivePlayer / OnSpEffectRevive's 0x1900710: body form, SpEffects reset, HP to max.
         reinterpret_cast<void(BB_COOP_SYSV*)(u64)>(Guest(0x1900710))(p);
+    }
+    static const bool guest_body = !(std::getenv("BB_PARTY_GUEST_REVIVE_BODY") &&
+                                     std::getenv("BB_PARTY_GUEST_REVIVE_BODY")[0] == '0');
+    if (RecipeHas("recover") && !host && guest_body) {
+        // Issue #4 item 4: a guest revived in place kept its dead body form (on its own screen only
+        // skin missing, eyes and armour drawn; peers re-create its chr, so they saw it whole). The
+        // game's revive (body form, SpEffects) runs for the guest too, its phantom type put back after
+        // (0x1900710 writes +0x78 = 0, which would turn the phantom into a body); then the draw
+        // factor it had alive. BB_PARTY_GUEST_REVIVE_BODY=0: as before (no revive call).
+        const int type = Field<int>(p, 0x78, -1);
+        const float draw0 = Field<float>(p, 0x208);
+        reinterpret_cast<void(BB_COOP_SYSV*)(u64)>(Guest(0x1900710))(p);
+        if (type >= 0 && Field<int>(p, 0x78, -1) != type) {
+            SafeWrite(p + 0x78, &type, 4);
+        }
+        const float alive = g_local_draw_chr == p ? g_local_draw_alive : 1.0f;
+        const float draw1 = Field<float>(p, 0x208);
+        if (draw1 < alive) {
+            SafeWrite(p + 0x208, &alive, 4);
+        }
+        Log("guest revive: the game's revive for the body, type %d kept; draw %.2f -> %.2f -> %.2f (alive %.2f)", type,
+            double(draw0), double(draw1), double(Field<float>(p, 0x208)), double(alive));
     }
     if (RecipeHas("flags")) {
         u64 f = 0;
@@ -4179,6 +4205,13 @@ void LocalDeathHeightTick(const GameSnapshot& s, double now) {
         return;
     }
     const bool dead = ChrHp(s.player) <= 0;
+    if (!dead && !(Field<u64>(s.player, 0x1e1) & 0x10000)) {
+        const float draw = Field<float>(s.player, 0x208);
+        if (draw > 0.5f && draw <= 1.0f) {
+            g_local_draw_alive = draw;
+            g_local_draw_chr = s.player;
+        }
+    }
     if (!dead) {
         hist.emplace_back(now, p[1]);
         while (!hist.empty() && now - hist.front().first > 3.0) hist.pop_front();
