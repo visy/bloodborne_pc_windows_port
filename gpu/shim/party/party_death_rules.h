@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <map>
 #include <string>
 
 namespace coop::deathrules {
@@ -118,6 +119,96 @@ inline DownTick PlanDownTick(const DownView& v) {
         return DownTick::AloneLoad;
     }
     return DownTick::Revive;
+}
+
+// ---- The host's record of members that are down (issue #4 item 6) ----
+// A member's "member_down" notice is sent once per HP-0 period, so the record must last until the
+// member is back: a confirmed revival ("member_revived"), a new chr ("arrived": a rejoin or a
+// respawn load) or the member gone from the roster (left / replaced). It used to be dropped after
+// 90 s, so a guest that spectated longer than that no longer counted when the host died: no wipe,
+// both players stuck in a boss fight's limbo. Reconcile() also clears a record whose member's own
+// vitals say alive for kDownAliveConfirm s (a revive notice that never came), but only once the
+// notice is kDownNoticeGrace s old (vitals can lag the notice).
+constexpr double kDownNoticeGrace = 3.0;
+constexpr double kDownAliveConfirm = 3.0;
+struct MemberNow {
+    int slot = -1;
+    bool in_roster = true;    ///< the slot is in the party's roster (connected or kept while lost)
+    bool vitals_fresh = false;///< its vitals are recent and read from a live chr
+    bool alive = false;       ///< those vitals say hp > 0
+};
+class DownLedger {
+public:
+    void Down(int slot, double now) {
+        if (slot > 0 && slot < 16) {
+            e_[slot] = Entry{now, -1.0};
+        }
+    }
+    /// A confirmed revival, a new chr (rejoin / respawn load) or a leave.
+    void Clear(int slot) {
+        e_.erase(slot);
+    }
+    void ClearAll() {
+        e_.clear();
+    }
+    bool Has(int slot) const {
+        return e_.count(slot) != 0;
+    }
+    int Count() const {
+        return int(e_.size());
+    }
+    /// Against the members' current state; returns how many records it cleared (the last slot in
+    /// *cleared_slot, for the log).
+    template <class Container>
+    int Reconcile(const Container& members, double now, int* cleared_slot = nullptr) {
+        int cleared = 0;
+        for (auto it = e_.begin(); it != e_.end();) {
+            const MemberNow* m = nullptr;
+            for (const MemberNow& x : members) {
+                if (x.slot == it->first) {
+                    m = &x;
+                    break;
+                }
+            }
+            bool drop = false;
+            if (!m || !m->in_roster) {
+                drop = true;  // left the party (or replaced: a new member has another record)
+            } else if (m->vitals_fresh && m->alive && now - it->second.since >= kDownNoticeGrace) {
+                if (it->second.alive_since < 0) {
+                    it->second.alive_since = now;
+                }
+                drop = now - it->second.alive_since >= kDownAliveConfirm;
+            } else {
+                it->second.alive_since = -1.0;  // dead (or unknown) again: the confirm starts over
+            }
+            if (drop) {
+                if (cleared_slot) {
+                    *cleared_slot = it->first;
+                }
+                ++cleared;
+                it = e_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        return cleared;
+    }
+
+private:
+    struct Entry {
+        double since = 0;
+        double alive_since = -1.0;
+    };
+    std::map<int, Entry> e_;
+};
+/// Members seen at HP 0 right now (their own fresh vitals): HostDeathView / DownView down_seen.
+template <class Container>
+inline int SeenDown(const Container& members) {
+    int n = 0;
+    for (const MemberNow& m : members) {
+        n += (m.in_roster && m.vitals_fresh && !m.alive) ? 1 : 0;
+    }
+    return n;
 }
 
 // ---- Split travel's question ("Travel with the party?") ----
