@@ -34,6 +34,9 @@
 #include "party_guestvals_rules.h"
 #include "party_ping.h"
 #include "party_flow.h"
+#include "../bbport_camera.h"
+#include "../bbport_frame_state.h"
+#include "../bbport_toggles.h"
 
 #include <algorithm>
 #include <atomic>
@@ -2512,6 +2515,109 @@ void ArrivalWatchTick(const GameSnapshot& s, double now) {
     if (now >= until) {
         next = 0;
     }
+}
+
+/// BB_ARRIVAL_LOG=1 (launcher: Diagnostics > Party arrival render log; off by default): after a
+/// host-world arrival (flow 3 -> 4, e.g. a party travel to the Hunter's Dream), whether the 3D
+/// world drew, for black-world reports (issue #4 item 2): at 3 s and 10 s after the world is up,
+/// the presented frames since and how many had a G-buffer pass, the render camera against the
+/// own chr, a depth probe down the screen's centre column (rows that hit geometry), and the
+/// texture collector's state (usage, marks, images freed since the arrival). Two lines per
+/// arrival, at most 24 arrivals a session.
+bool ArrivalLogOn() {
+    static const bool on = [] {
+        const char* v = std::getenv("BB_ARRIVAL_LOG");
+        return v && v[0] == '1';
+    }();
+    return on;
+}
+
+void ArrivalRenderCheckTick(const GameSnapshot& s, double now) {
+    if (!ArrivalLogOn()) {
+        return;
+    }
+    static int last_flow = -1, arrivals = 0, step = 0;
+    static double up_at = 0;
+    static bool armed = false;
+    static u64 frames0 = 0, scenes0 = 0, freed0 = 0, draws0 = 0;
+    static u32 probe_seq = 0;
+    static double probe_at = 0;
+    const int fs = Field<int>(Slot(kSlotFlow), 0x84, -1);
+    if (last_flow == 3 && fs == 4 && arrivals < 24) {
+        ++arrivals;
+        armed = true;
+        up_at = 0;
+        step = 0;
+        probe_seq = 0;
+    }
+    last_flow = fs;
+    if (!armed) {
+        return;
+    }
+    if (s.loading || !s.world_up || !s.player) {
+        up_at = 0;  // counts from the world up after the load
+        return;
+    }
+    if (up_at == 0) {
+        up_at = now;
+        frames0 = BbFrameState::presented_frames.load(std::memory_order_relaxed);
+        scenes0 = BbFrameState::scene_frames.load(std::memory_order_relaxed);
+        freed0 = BbStats::gc_freed_images.load(std::memory_order_relaxed);
+        draws0 = BbStats::draws.load(std::memory_order_relaxed);
+        return;
+    }
+    static const double marks[2] = {3.0, 10.0};
+    if (step >= 2) {
+        armed = false;
+        return;
+    }
+    if (!probe_seq && now - up_at >= marks[step] - 0.5) {
+        probe_seq = BbCamera::RequestProbe();  // answered at the next display pass
+        probe_at = now;
+        return;
+    }
+    if (!probe_seq || now - up_at < marks[step]) {
+        return;
+    }
+    BbCamera::Probe probe{};
+    const bool answered = BbCamera::ProbeFor(probe_seq, &probe) && probe.at_ms > 0;
+    if (!answered && now - probe_at < 2.0) {
+        return;  // no display pass yet (no scene): logged without it after 2 s
+    }
+    int hits = 0;
+    if (answered) {
+        for (int i = 0; i < probe.n; ++i) hits += probe.hit[i] ? 1 : 0;
+    }
+    const u64 frames = BbFrameState::presented_frames.load(std::memory_order_relaxed) - frames0;
+    const u64 scenes = BbFrameState::scene_frames.load(std::memory_order_relaxed) - scenes0;
+    const u64 draws = BbStats::draws.load(std::memory_order_relaxed) - draws0;
+    float me[4] = {};
+    ChrPos(s.player, me);
+    const BbCamera::State cam = BbCamera::Latest(1000);
+    char cam_text[160];
+    if (cam.valid) {
+        const auto c = BbCamera::Position(cam);
+        const float dx = c[0] - me[0], dy = c[1] - me[1], dz = c[2] - me[2];
+        std::snprintf(cam_text, sizeof cam_text, "camera (%.1f, %.1f, %.1f) %.1f m from the chr (%.1f, %.1f, %.1f)",
+                      double(c[0]), double(c[1]), double(c[2]), double(std::sqrt(dx * dx + dy * dy + dz * dz)),
+                      double(me[0]), double(me[1]), double(me[2]));
+    } else {
+        std::snprintf(cam_text, sizeof cam_text, "no render camera in the last 1 s; chr (%.1f, %.1f, %.1f)",
+                      double(me[0]), double(me[1]), double(me[2]));
+    }
+    char probe_text[64];
+    if (answered && probe.n > 0) {
+        std::snprintf(probe_text, sizeof probe_text, "%d/%d centre rows hit geometry", hits, probe.n);
+    } else {
+        std::snprintf(probe_text, sizeof probe_text, "no depth probe (no scene drawn)");
+    }
+    Log("arrival render check %d (%.0f s after the world was up, %s): %llu of %llu frames drew the 3D "
+        "scene, %llu draws; %s; %s; textures %llu MiB (pressure %llu, critical %llu MiB), %llu freed since",
+        arrivals, marks[step], MapName(LocalMap()).c_str(), ull(scenes), ull(frames), ull(draws), cam_text,
+        probe_text, ull(BbStats::gc_used_bytes.load() >> 20), ull(BbStats::gc_pressure_bytes.load() >> 20),
+        ull(BbStats::gc_critical_bytes.load() >> 20), ull(BbStats::gc_freed_images.load() - freed0));
+    probe_seq = 0;
+    ++step;
 }
 
 /// Host: the same 3 s watch when a member's chr appears (a join or a B2 re-creation).
@@ -8255,6 +8361,7 @@ void Tick(const GameSnapshot& s) {
     KickStalledTasks(s, now);
     TestBossTick(s, now);
     ArrivalWatchTick(s, now);
+    ArrivalRenderCheckTick(s, now);
     MemberSessionTypeTick(s);
     GuestChrTypeTick(s);
     BannerRejoinTick();
