@@ -1356,6 +1356,7 @@ void TextureCache::GarbageCollectImages() {
             --num_deletions;
             ++gc_evictions;
             BbStats::gc_freed_images.fetch_add(1, std::memory_order_relaxed);
+            BbStats::gc_freed_total.fetch_add(1, std::memory_order_relaxed);
             FreeImage(image_id);
             return false;
         }
@@ -1391,6 +1392,7 @@ void TextureCache::GarbageCollectImages() {
         --num_deletions;
         ++gc_evictions;
         BbStats::gc_freed_images.fetch_add(1, std::memory_order_relaxed);
+        BbStats::gc_freed_total.fetch_add(1, std::memory_order_relaxed);
         FreeImage(image_id);
         if (total_used_memory < critical_gc_memory) {
             if (aggresive) {
@@ -1583,6 +1585,7 @@ u64 TextureCache::ReclaimMemoryFor(VAddr addr, size_t size, u64 bytes) {
         DeleteImage(image_id, true);
         ++gc_evictions;
         BbStats::gc_freed_images.fetch_add(1, std::memory_order_relaxed);
+        BbStats::gc_freed_total.fetch_add(1, std::memory_order_relaxed);
     }
     static int reported = 0;
     if (reported < 32) {

@@ -36,6 +36,7 @@
 #include "party_flow.h"
 #include "../bbport_camera.h"
 #include "../bbport_frame_state.h"
+#include "../bbport_settings.h"
 #include "../bbport_toggles.h"
 
 #include <algorithm>
@@ -2562,7 +2563,7 @@ void ArrivalRenderCheckTick(const GameSnapshot& s, double now) {
         up_at = now;
         frames0 = BbFrameState::presented_frames.load(std::memory_order_relaxed);
         scenes0 = BbFrameState::scene_frames.load(std::memory_order_relaxed);
-        freed0 = BbStats::gc_freed_images.load(std::memory_order_relaxed);
+        freed0 = BbStats::gc_freed_total.load(std::memory_order_relaxed);
         draws0 = BbStats::draws.load(std::memory_order_relaxed);
         return;
     }
@@ -2611,11 +2612,14 @@ void ArrivalRenderCheckTick(const GameSnapshot& s, double now) {
     } else {
         std::snprintf(probe_text, sizeof probe_text, "no depth probe (no scene drawn)");
     }
-    Log("arrival render check %d (%.0f s after the world was up, %s): %llu of %llu frames drew the 3D "
-        "scene, %llu draws; %s; %s; textures %llu MiB (pressure %llu, critical %llu MiB), %llu freed since",
-        arrivals, marks[step], MapName(LocalMap()).c_str(), ull(scenes), ull(frames), ull(draws), cam_text,
+    // The scene drawn with geometry in the probe while the screen is black points past the scene:
+    // the upscaler or the frame's post passes.
+    Log("arrival render check %d (%.0f s after the world was up, %s, upscaler %s): %llu of %llu frames drew "
+        "the 3D scene, %llu draws; %s; %s; textures %llu MiB (pressure %llu, critical %llu MiB), %llu freed since",
+        arrivals, marks[step], MapName(LocalMap()).c_str(), BbSettings::UpscalerName(BbSettings::Get().upscaler.load()),
+        ull(scenes), ull(frames), ull(draws), cam_text,
         probe_text, ull(BbStats::gc_used_bytes.load() >> 20), ull(BbStats::gc_pressure_bytes.load() >> 20),
-        ull(BbStats::gc_critical_bytes.load() >> 20), ull(BbStats::gc_freed_images.load() - freed0));
+        ull(BbStats::gc_critical_bytes.load() >> 20), ull(BbStats::gc_freed_total.load() - freed0));
     probe_seq = 0;
     ++step;
 }
