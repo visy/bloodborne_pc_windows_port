@@ -232,5 +232,8 @@ bool NativeWarpLocal(std::uint64_t player, const float* pos16, const float* rot1
 /// The local player's in-world warp: NativeWarpLocal unless BB_PARTY_WARP_REFRESH=0, else the chr
 /// warp vfunc +0x5F8. Main thread.
 bool LocalChrWarp(std::uint64_t player, const float* pos16, const float* rot16, const char* why);
+/// Guest: the boss-clear action-button hold (+0x52) is lifted for this session (K10 kept the
+/// party; issue #4 item 1). The item box must not put the hold back then.
+bool K10ActionHoldLifted();
 
 } // namespace coop::b2

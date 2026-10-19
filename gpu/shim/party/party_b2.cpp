@@ -461,12 +461,16 @@ bool SendHomeVeto(u64 site) {
 // ended the guest's session although its own leave was dropped), so both are kept.
 std::atomic<double> g_k10_at{0};  // when K10 last kept the party (BossClearInvincibleTick)
 std::atomic<bool> g_k10_this_load{false};  // K10 ran since the last load (DeadAfterClearTick)
+std::atomic<double> g_k10_hold_at{0};  // guest: K10 ran in this session (K10ActionHoldTick; 0 = no)
 BB_COOP_SYSV u64 BossClearLeaveHook(u64 session) {
     const int role = Role();
     if (g_on.load() && (role == RoleClient || role == RoleHost)) {
         Log("K10: boss-clear leave suppressed (%s; party stays)", role == RoleHost ? "host" : "guest");
         g_k10_at = Now();
         g_k10_this_load = true;
+        if (role == RoleClient && g_k10_hold_at.load() <= 0) {
+            g_k10_hold_at = Now();
+        }
         return 0;
     }
     using Fn = u64(BB_COOP_SYSV*)(u64);
@@ -3177,6 +3181,78 @@ bool DeadWatchdogHolds() {
                                 std::strcmp(std::getenv("BB_PARTY_B2_DEAD_WATCHDOG"), "redirect") == 0);
     return holds;
 }
+int ChrHp(u64 chr);
+
+/// Test aid BB_PARTY_K10_PROBE=1 (issue #4 item 1: the guest's confirms after a boss clear): for
+/// 120 s after a K10 on a guest, every 2 s, the input gates: SprjActionButtonMan (*0x5540048)
+/// +0x50..+0x55, the menu (*0x5562878) +0x78 / +0xC0 / +0x118, the menu busy byte 0x553B1BA, the
+/// own chr's +0x1E1 flags.
+void K10ProbeTick(const GameSnapshot& s, double now) {
+    static const bool on = deathrules::OptIn(std::getenv("BB_PARTY_K10_PROBE"));
+    static double next = 0;
+    static double since = 0;
+    const double at = g_k10_hold_at.load();
+    if (at > 0 && at != since) {
+        since = at;
+        next = 0;
+    }
+    if (!on || Role() != RoleClient || at <= 0 || now - at > 120.0 || now < next) {
+        return;
+    }
+    next = now + 2.0;
+    const u64 man = Slot(0x5540048), menu = Slot(0x5562878);
+    u8 busy = 0;
+    SafeGet(Guest(0x553b1ba), &busy);
+    u64 f = 0;
+    if (s.player) SafeRead(s.player + 0x1e1, &f, 5);
+    const u64 ctx = Field<u64>(Slot(0x553b0c8), 8);
+    Log("K10 probe +%.0f s: lua load wait %d; buttons +0x50 %d +0x51 %d +0x52 %d +0x53 %d +0x54 %d +0x55 %d; menu +0x78 %d +0xC0 %d "
+        "+0x118 %d busy %u; chr +0x1e1 %010llx hp %d",
+        now - at, ctx ? int(Field<u8>(ctx, 0x8d)) : -1, Field<u8>(man, 0x50), Field<u8>(man, 0x51), Field<u8>(man, 0x52), Field<u8>(man, 0x53),
+        Field<u8>(man, 0x54), Field<u8>(man, 0x55), Field<int>(menu, 0x78, -1), Field<int>(menu, 0xc0, -1),
+        Field<int>(menu, 0x118, -1), unsigned(busy), ull(f), s.player ? ChrHp(s.player) : -1);
+}
+
+/// Guest (issue #4 item 1): after a boss clear every action button stayed dead (lamps, NPCs, item
+/// pickups). SprjActionButtonMan (*0x5540048) +0x52 is the phantom's action-button hold: each frame
+/// the Lua event update 0x1339B50 copies it from the Lua event context (*(*0x553B0C8 + 8)) +0x8D,
+/// the "load wait" flag the Lua command SetLoadWait (0x13358F0, registered at 0x1342357) sets and
+/// only the context's constructor (0x1339669) clears; IsLoadWait (0x1335900) reads it. The
+/// boss-clear states call it before the phantom's send-home load; K10 drops that send-home, so the
+/// flag stayed set for the rest of the session (live issue4 r1 / r1b: +0x52 1 from the K10 on, a
+/// write of 0 to +0x52 alone was back to 1 the next frame; pard3 lifted it only while the boss
+/// reward's item box was up). Once K10 kept the party, the flag and the hold are cleared. BB_PARTY_K10_HOLD=keep: the old behaviour; BB_PARTY_K10_HOLD_DELAY=S (test aid):
+/// lift it S s after the K10 instead of at once (an A/B in one run).
+bool K10HoldLifted() {
+    return g_k10_hold_at.load() > 0 && Role() == RoleClient;
+}
+void K10ActionHoldTick(const GameSnapshot& s, double now) {
+    static const bool keep = std::getenv("BB_PARTY_K10_HOLD") && std::strcmp(std::getenv("BB_PARTY_K10_HOLD"), "keep") == 0;
+    static const double delay = std::getenv("BB_PARTY_K10_HOLD_DELAY") ? std::atof(std::getenv("BB_PARTY_K10_HOLD_DELAY")) : 0.0;
+    static double logged_for = 0;
+    const double at = g_k10_hold_at.load();
+    if (at > 0 && (!g_on.load() || Role() != RoleClient)) {
+        g_k10_hold_at = 0;  // the session ended: a new one starts without the lift
+        return;
+    }
+    if (keep || at <= 0 || now - at < delay || !s.world_up || s.loading || !s.player) {
+        return;
+    }
+    const u64 man = Slot(0x5540048), ctx = Field<u64>(Slot(0x553b0c8), 8);
+    const u8 wait = ctx ? Field<u8>(ctx, 0x8d) : 0, hold = man ? Field<u8>(man, 0x52) : 0;
+    if (wait != 1 && hold != 1) {
+        return;
+    }
+    const u8 zero = 0;
+    if (wait == 1) SafeWrite(ctx + 0x8d, &zero, 1);
+    if (hold == 1) SafeWrite(man + 0x52, &zero, 1);
+    if (logged_for != at) {
+        logged_for = at;
+        Log("K10: the boss-clear action-button hold lifted %.1f s after the clear (Lua load wait +0x8d %u, hold +0x52 "
+            "%u -> 0; the party stays: lamps, NPCs and pickups work again)", now - at, unsigned(wait), unsigned(hold));
+    }
+}
+
 void DeadAfterClearTick(const GameSnapshot& s, double now) {
     static double dead_since = 0;
     static bool fired = false;
@@ -7343,6 +7419,10 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
 
 } // namespace
 
+bool K10ActionHoldLifted() {
+    return K10HoldLifted();
+}
+
 std::string NrFindTimeouts(u64 base, std::size_t span) {
     std::vector<std::uint32_t> buf(span / 4);
     for (std::size_t chunk = 0; chunk < buf.size(); chunk += 256)
@@ -8131,6 +8211,8 @@ void Tick(const GameSnapshot& s) {
     ReviveRearmTick(s);
     BossClearInvincibleTick(s, now);
     DeadAfterClearTick(s, now);
+    K10ProbeTick(s, now);
+    K10ActionHoldTick(s, now);
     {
         GuestPhase gp;
         {

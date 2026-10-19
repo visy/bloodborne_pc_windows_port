@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Fixed: a guest can use lamps, talk to NPCs and pick things up again after a boss kill** (issue #4): the game's "waiting to be sent home" state, which blocks a summoned player's actions, stayed on because the party keeps the guest after the boss; it is now cleared once the party stays.
 - **Fixed: a party wipe in a boss fight no longer gets stuck when a guest had been dead for over 90 s** (issue #4): the host forgot the guest's death after 90 s, so its own death later went into the boss-fight wait instead of the party's respawn. A death now counts until that player is revived, comes back or leaves the party.
 - **Fixed: a party item box no longer opens under a game message**: a key item handed to the party while a story message (e.g. "Ritual secret broken") was open drew its box underneath it; the box now waits until the message is closed.
 - **Changed: party co-op parity checks**: shared NPC talk under a party member's own Level Up screen is now checked live: the companion's lines and the caption wait, nothing is drawn over the screen (docs/party/ERSC_PARITY.md D8). A key item a guest picks up in the host's world (live: the Upper Cathedral Key) now checked live going to the host (D4).
