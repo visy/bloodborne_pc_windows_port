@@ -651,7 +651,33 @@ struct Upscaler::Impl {
         }
         const VkCommandBuffer cmd = f.cmdbuf;
         if (!uploaded) {
-            Upload(cmd);
+            Upload(cmd); // clears every buffer: a reset in this frame has nothing more to do
+        } else if (f.reset) {
+            // bbport: the recurrent, history and reprojected buffers are cleared on a reset (a
+            // scene change, another save loaded): the shader's reset flag alone left the old
+            // scene's temporal data in them, a white picture (from deadinside28/bloodborne_pc 0.6).
+            VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            mb.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+            mb.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 0, 1, &mb, 0, nullptr, 0, nullptr);
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            const VkClearColorValue zero{};
+            for (Img* img : {&recurrent, &history, &reprojected}) {
+                vkCmdClearColorImage(cmd, img->image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
+            }
+            mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                 0, 1, &mb, 0, nullptr, 0, nullptr);
+            // The previous exposure belongs to the old scene too.
+            previous_pre_exposure = 0.0f;
+            static int reported = 0;
+            if (reported < 16) {
+                ++reported;
+                std::printf("FSR 4.1.1: temporal buffers cleared on reset\n");
+                std::fflush(stdout);
+            }
         }
         const uint32_t aw = (ow + 7) & ~7u, ah = (oh + 7) & ~7u;
         const float pre_exposure = f.pre_exposure > 0.0f ? f.pre_exposure : 1.0f;
