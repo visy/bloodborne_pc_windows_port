@@ -1025,6 +1025,13 @@ void UpscalerTab() {
                   s.active_render_width.load(), s.active_render_height.load());
     ImGui::Spacing();
     Note(line, Dim());
+    if (s.upscaler_scene_above_output.load() && s.upscaler != BbSettings::UpscalerOff) {
+        Note(T("The scene is larger than the output resolution: the upscaler does not run (it only "
+               "upscales). Choose a render resolution at or below the output to use it.",
+               "Сцена больше выходного разрешения: апскейлер не работает (он только увеличивает). "
+               "Выберите разрешение рендера не выше выходного, чтобы его использовать."),
+             Dim());
+    }
     if (BbSettings::FixedRenderSession()) {
         std::snprintf(line, sizeof(line), T("Preset at startup: %s (changes after a restart)",
                                             "Пресет при запуске: %s (смена — после перезапуска)"),

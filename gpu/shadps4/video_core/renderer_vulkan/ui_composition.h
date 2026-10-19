@@ -63,6 +63,14 @@ constexpr bool MovieShader(uint64_t hash) {
            hash == 0x44072322 || hash == 0xa334a845;
 }
 
+// A scene larger than the output in either dimension (a launcher render resolution above the
+// output resolution: supersampling) cannot go through FSR, DLSS or TAA, which only upscale:
+// RunScaled skips them and the UI composition scales the scene down by a copy (issue #4: a guest
+// with DLSS chosen, a 2560x1440 render and a 1920x1080 output never ran DLSS).
+constexpr bool SceneAboveOutput(uint32_t w, uint32_t h, uint32_t ow, uint32_t oh) {
+    return w > ow || h > oh;
+}
+
 inline std::array<float, 2> Scale(uint32_t guest_width, uint32_t guest_height,
                                 uint32_t output_width, uint32_t output_height,
                                 bool native_coordinates) {

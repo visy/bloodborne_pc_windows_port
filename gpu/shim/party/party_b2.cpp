@@ -2614,9 +2614,10 @@ void ArrivalRenderCheckTick(const GameSnapshot& s, double now) {
     }
     // The scene drawn with geometry in the probe while the screen is black points past the scene:
     // the upscaler or the frame's post passes.
-    Log("arrival render check %d (%.0f s after the world was up, %s, upscaler %s): %llu of %llu frames drew "
+    Log("arrival render check %d (%.0f s after the world was up, %s, upscaler %s%s): %llu of %llu frames drew "
         "the 3D scene, %llu draws; %s; %s; textures %llu MiB (pressure %llu, critical %llu MiB), %llu freed since",
         arrivals, marks[step], MapName(LocalMap()).c_str(), BbSettings::UpscalerName(BbSettings::Get().upscaler.load()),
+        BbSettings::Get().upscaler_scene_above_output.load() ? " not running: the scene is larger than the output" : "",
         ull(scenes), ull(frames), ull(draws), cam_text,
         probe_text, ull(BbStats::gc_used_bytes.load() >> 20), ull(BbStats::gc_pressure_bytes.load() >> 20),
         ull(BbStats::gc_critical_bytes.load() >> 20), ull(BbStats::gc_freed_total.load() - freed0));
@@ -3572,6 +3573,7 @@ struct DeathFields {
     int m8_1b4 = 0, m8_1b8 = 0;  // [+0x3B0] +8: +0x1B4 / +0x1B8 (death kind 2/9, 2)
     u16 m20_200 = 0;       // HP module [+0x3B0] +0x20 +0x200 (dead mode / no-dead bits)
     int type = 0;          // +0x78
+    float draw = 0;        // +0x208 draw factor (1 -> 0 in the death dissolve; issue #4 item 4 diagnostics)
     float alpha = 0, alpha_rate = 0;  // +0x20C draw alpha, +0x210 its rate (ChrFadeIn / ChrFadeOut 0x1339010 / 0x13390B0)
     int upd_state = 0;     // [+0x18] +0x10 (4: disabled, IsDisable 0x1337E70), +0x20 bits
     u8 upd_bits = 0;
@@ -3590,6 +3592,7 @@ bool ReadDeathFields(u64 chr, DeathFields* d) {
     d->m8_1b8 = Field<int>(m8, 0x1b8);
     d->m20_200 = Field<u16>(m20, 0x200);
     d->type = Field<int>(chr, 0x78);
+    d->draw = Field<float>(chr, 0x208);
     d->alpha = Field<float>(chr, 0x20c);
     d->alpha_rate = Field<float>(chr, 0x210);
     d->upd_state = Field<int>(Field<u64>(chr, 0x18), 0x10);
@@ -3599,10 +3602,10 @@ bool ReadDeathFields(u64 chr, DeathFields* d) {
 std::string DescribeDeathFields(const DeathFields& d) {
     char b[260];
     std::snprintf(b, sizeof b,
-                  "+0x1e1 %010llx ctrl+0x114 %04x ctrl38+0x48 %02x m8 %d/%d hp+0x200 %04x type %d alpha %.2f (%+.2f/s) "
+                  "+0x1e1 %010llx ctrl+0x114 %04x ctrl38+0x48 %02x m8 %d/%d hp+0x200 %04x type %d draw %.2f alpha %.2f (%+.2f/s) "
                   "upd %d/%02x",
                   ull(d.f1e1), unsigned(d.ctrl114), unsigned(d.ctrl38_48), d.m8_1b4, d.m8_1b8, unsigned(d.m20_200),
-                  d.type, double(d.alpha), double(d.alpha_rate), d.upd_state, unsigned(d.upd_bits));
+                  d.type, double(d.draw), double(d.alpha), double(d.alpha_rate), d.upd_state, unsigned(d.upd_bits));
     return b;
 }
 DeathFields g_alive_fields;  // main thread: the host's, last seen alive
@@ -3979,6 +3982,10 @@ void RearmDeathScript(const char* why) {
 
 /// Main thread: the taken host death's revive.
 void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host);
+// The local chr's draw factor (PlayerIns +0x208: 0 -> 1 when built, 1 -> 0 in the death dissolve)
+// while alive, for a guest's in-place revive (issue #4 item 4). LocalDeathHeightTick, main thread.
+float g_local_draw_alive = 1.0f;
+u64 g_local_draw_chr = 0;
 void ReviveHost(const GameSnapshot& s) {
     ReviveLocal(s, g_lamp_spot, true);
 }
@@ -4016,10 +4023,44 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
         // RevivePlayer / OnSpEffectRevive's 0x1900710: body form, SpEffects reset, HP to max.
         reinterpret_cast<void(BB_COOP_SYSV*)(u64)>(Guest(0x1900710))(p);
     }
+    static const bool guest_body = !(std::getenv("BB_PARTY_GUEST_REVIVE_BODY") &&
+                                     std::getenv("BB_PARTY_GUEST_REVIVE_BODY")[0] == '0');
+    if (RecipeHas("recover") && !host && guest_body) {
+        // Issue #4 item 4: a guest revived in place kept its dead body form (on its own screen only
+        // skin missing, eyes and armour drawn; peers re-create its chr, so they saw it whole). The
+        // game's revive (body form, SpEffects) runs for the guest too, its phantom type put back after
+        // (0x1900710 writes +0x78 = 0, which would turn the phantom into a body); then the draw
+        // factor it had alive. BB_PARTY_GUEST_REVIVE_BODY=0: as before (no revive call).
+        const int type = Field<int>(p, 0x78, -1);
+        const float draw0 = Field<float>(p, 0x208);
+        reinterpret_cast<void(BB_COOP_SYSV*)(u64)>(Guest(0x1900710))(p);
+        if (type >= 0 && Field<int>(p, 0x78, -1) != type) {
+            SafeWrite(p + 0x78, &type, 4);
+        }
+        const float alive = g_local_draw_chr == p ? g_local_draw_alive : 1.0f;
+        const float draw1 = Field<float>(p, 0x208);
+        if (draw1 < alive) {
+            SafeWrite(p + 0x208, &alive, 4);
+        }
+        Log("guest revive: the game's revive for the body, type %d kept; draw %.2f -> %.2f -> %.2f (alive %.2f)", type,
+            double(draw0), double(draw1), double(Field<float>(p, 0x208)), double(alive));
+    }
     if (RecipeHas("flags")) {
         u64 f = 0;
         SafeRead(p + 0x1e1, &f, 5);
         f &= ~u64(0x10000 | 0x20000 | 0x2000 | 0x40000);
+        // Issue #4 item 7: the game's fall-death state (normally a load path; an in-place revive
+        // after a fall only with BB_PARTY_GUEST_REVIVE_FAR or a failed load) is cleared too.
+        const u16 hp200 = Field<u16>(Field<u64>(Field<u64>(p, 0x3b0), 0x20), 0x200);
+        if (deathrules::FallDeathState(f, hp200)) {
+            f &= ~deathrules::kFallFlags1e1;
+            if (const u64 m20 = Field<u64>(Field<u64>(p, 0x3b0), 0x20)) {
+                const u16 w = u16(hp200 & ~deathrules::kFallBitsHp200);
+                SafeWrite(m20 + 0x200, &w, 2);
+            }
+            Log("%s revive: the game's fall-death state cleared (hp+0x200 %04x)", host ? "host" : "guest",
+                unsigned(hp200));
+        }
         SafeWrite(p + 0x1e1, &f, 5);
     }
     if (RecipeHas("ctrl") && ctrl) {
@@ -4164,6 +4205,13 @@ void LocalDeathHeightTick(const GameSnapshot& s, double now) {
         return;
     }
     const bool dead = ChrHp(s.player) <= 0;
+    if (!dead && !(Field<u64>(s.player, 0x1e1) & 0x10000)) {
+        const float draw = Field<float>(s.player, 0x208);
+        if (draw > 0.5f && draw <= 1.0f) {
+            g_local_draw_alive = draw;
+            g_local_draw_chr = s.player;
+        }
+    }
     if (!dead) {
         hist.emplace_back(now, p[1]);
         while (!hist.empty() && now - hist.front().first > 3.0) hist.pop_front();
@@ -4187,9 +4235,10 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
         return false;
     }
     {
-        // Issue #4 item 7, correct over seamless: far from the lamp or after a fall, the respawn
-        // load instead (the in-place warp left the guest's camera underground and its controls
-        // broken). BB_PARTY_GUEST_REVIVE_FAR=1: the old in-place revive at any distance.
+        // Issue #4 item 7, correct over seamless: after a fall death (the drop test or the game's
+        // own fall-death state on the chr) the respawn load instead (the in-place warp left the
+        // guest's camera underground and its controls broken); any other death revives in place at
+        // any distance. BB_PARTY_GUEST_REVIVE_FAR=1: the in-place revive after a fall too.
         static const bool always = deathrules::OptIn(std::getenv("BB_PARTY_GUEST_REVIVE_FAR"));
         float p[3] = {0, 0, 0};
         double dist = std::numeric_limits<double>::quiet_NaN(), fell = 0;
@@ -4198,10 +4247,14 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
             dist = std::sqrt(dx * dx + dy * dy + dz * dz);
             fell = deathrules::FallDrop(g_death_height.peak, g_death_height.at_death, p[1]);
         }
-        const deathrules::GuestRevive plan = deathrules::PlanGuestRevive(dist, fell, g_death_height.known);
+        DeathFields dead;
+        ReadDeathFields(s.player, &dead);
+        const bool fall_state = deathrules::FallDeathState(dead.f1e1, dead.m20_200);
+        const deathrules::GuestRevive plan = deathrules::PlanGuestRevive(fell, g_death_height.known, fall_state);
         if (plan != deathrules::GuestRevive::InPlace && !always) {
-            Log("guest: died %.1f m from %s %u (dropped %.1f m%s): %s", dist, why, lamp, fell,
-                g_death_height.known ? "" : ", no height history", deathrules::GuestReviveName(plan));
+            Log("guest: died %.1f m from %s %u (dropped %.1f m%s, +0x1e1 %010llx hp+0x200 %04x): %s", dist, why,
+                lamp, fell, g_death_height.known ? "" : ", no height history", ull(dead.f1e1),
+                unsigned(dead.m20_200), deathrules::GuestReviveName(plan));
             if (GuestDeadLoadAt(lamp, 0.0, why)) {
                 return true;
             }

@@ -32,6 +32,10 @@ int main() {
     assert(StageSide(true, 2560) == 0.0f && StageSide(true, 3840) == 0.0f);
     assert(std::fabs(StageSide(false, 2560) - 0.125f) < 1e-6f);
     assert(std::fabs(StageSide(false, 3840) - 0.25f) < 1e-6f);
+    // Supersampling (render above the output) skips the temporal upscalers; equal or below runs.
+    assert(SceneAboveOutput(2560, 1440, 1920, 1080));
+    assert(SceneAboveOutput(1920, 1440, 1920, 1080) && SceneAboveOutput(2560, 1080, 1920, 1080));
+    assert(!SceneAboveOutput(1920, 1080, 1920, 1080) && !SceneAboveOutput(1280, 720, 1920, 1080));
     std::puts("UI composition: PASS (menu without camera, HUD, FSR off, viewport scaling, "
-              "ultrawide stage)");
+              "ultrawide stage, scene above the output)");
 }

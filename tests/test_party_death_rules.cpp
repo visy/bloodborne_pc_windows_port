@@ -376,13 +376,20 @@ int main() {
         CHECK(led.Count() == 1);
     }
     // Issue #4 item 7: a guest's respawn at a lamp of the loaded map.
-    CHECK(PlanGuestRevive(12.0, 0.0, true) == GuestRevive::InPlace);         // near, a normal death
-    CHECK(PlanGuestRevive(59.9, 2.0, true) == GuestRevive::InPlace);         // a stumble is no fall
-    CHECK(PlanGuestRevive(122.5, 0.0, true) == GuestRevive::LoadFar);        // the issue's distance
-    CHECK(PlanGuestRevive(60.1, 0.0, false) == GuestRevive::LoadFar);
-    CHECK(PlanGuestRevive(10.0, 6.0, true) == GuestRevive::LoadFall);        // a fall, even near
-    CHECK(PlanGuestRevive(10.0, 30.0, false) == GuestRevive::InPlace);       // no history: distance only
-    CHECK(PlanGuestRevive(std::numeric_limits<double>::quiet_NaN(), 0.0, true) == GuestRevive::LoadFar);  // spot unknown
+    // Fall state only (user decision): the distance no longer decides.
+    CHECK(PlanGuestRevive(0.0, true, false) == GuestRevive::InPlace);        // a normal death
+    CHECK(PlanGuestRevive(2.0, true, false) == GuestRevive::InPlace);        // a stumble is no fall
+    CHECK(PlanGuestRevive(6.0, true, false) == GuestRevive::LoadFall);       // a fall
+    CHECK(PlanGuestRevive(30.0, false, false) == GuestRevive::InPlace);      // no history, no fall state
+    CHECK(PlanGuestRevive(0.0, false, true) == GuestRevive::LoadFallState);  // no history, the game's state
+    // The issue's bundles: the 27 m fall (157 m from its lamp) loads; the normal deaths 92-191 m
+    // from the lamp (+0x1E1 0001001098, hp+0x200 0000 or 8000) stay in place.
+    CHECK(PlanGuestRevive(26.8, true, FallDeathState(0x04010010d8ull, 0xf800)) == GuestRevive::LoadFall);
+    CHECK(FallDeathState(0x04010010d8ull, 0xf800) && FallDeathState(0x00030010d8ull, 0xf800));
+    CHECK(FallDeathState(0x0400011088ull, 0) && FallDeathState(0x00030010d8ull, 0));
+    CHECK(!FallDeathState(0x0001001098ull, 0x0000) && !FallDeathState(0x0001001098ull, 0x8000));
+    CHECK(!FallDeathState(0x0003001098ull, 0x8000));  // after a normal revive
+    CHECK(PlanGuestRevive(0.0, true, FallDeathState(0x0001001098ull, 0x8000)) == GuestRevive::InPlace);
     CHECK(FallDrop(-20.0, -40.0, -80.0) == 60.0);                            // into the void: still dropping
     CHECK(FallDrop(-20.0, -21.0, -21.0) == 1.0);
     CHECK(GuestReviveName(GuestRevive::LoadFall)[0] != '?');

@@ -266,8 +266,11 @@ bool TryOpen(u64 orig_ctx, u64 a2, u64 a3, u64 a4, u64 a5) {
     return true;
 }
 
+ObserverList<TalkCommandObserver> g_cmd_observers;  // registered before the game runs
+
 __attribute__((noinline)) BB_COOP_SYSV u64 TalkCommandHook(u64 ctx, u64 call, u64 a2, u64 a3, u64 a4, u64 a5) {
     const auto orig = reinterpret_cast<CmdFn>(g_cmd_orig);
+    g_cmd_observers.Dispatch(ctx, call, a2, a3, a4, a5);  // shared NPC talk's choice tracker, ...
     if (!g_on.load(std::memory_order_relaxed) || g_inside.load(std::memory_order_relaxed) || !call) {
         return orig(ctx, call, a2, a3, a4, a5);
     }
@@ -656,6 +659,10 @@ void Install(unsigned char* image, std::uint64_t size) {
     }
     Log("%s: a lamp offers the headstones' travel list (the Hunter's Dream and every lit lamp)%s",
         g_on ? "on" : "NOT installed", g_on ? "" : " - the code differs from 1.09");
+}
+
+bool AddTalkCommandObserver(TalkCommandObserver fn) {
+    return g_cmd_orig && g_cmd_observers.Add(fn);
 }
 
 bool OwnsTick() {
