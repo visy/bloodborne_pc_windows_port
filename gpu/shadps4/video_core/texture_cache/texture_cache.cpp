@@ -1235,6 +1235,7 @@ void TextureCache::GarbageCollectImages() {
     }
     BbStats::gc_used_bytes.store(total_used_memory, std::memory_order_relaxed);
     BbStats::gc_trigger_bytes.store(trigger_gc_memory, std::memory_order_relaxed);
+    BbStats::gc_pressure_bytes.store(pressure_gc_memory, std::memory_order_relaxed);
     BbStats::gc_critical_bytes.store(critical_gc_memory, std::memory_order_relaxed);
     // bbport: gc_tick (one per guest submission, hundreds a second) at each of the last 64
     // seconds, for ages in seconds. The usage compared is all of our VRAM, not only images: on a
@@ -1355,6 +1356,7 @@ void TextureCache::GarbageCollectImages() {
             --num_deletions;
             ++gc_evictions;
             BbStats::gc_freed_images.fetch_add(1, std::memory_order_relaxed);
+            BbStats::gc_freed_total.fetch_add(1, std::memory_order_relaxed);
             FreeImage(image_id);
             return false;
         }
@@ -1390,6 +1392,7 @@ void TextureCache::GarbageCollectImages() {
         --num_deletions;
         ++gc_evictions;
         BbStats::gc_freed_images.fetch_add(1, std::memory_order_relaxed);
+        BbStats::gc_freed_total.fetch_add(1, std::memory_order_relaxed);
         FreeImage(image_id);
         if (total_used_memory < critical_gc_memory) {
             if (aggresive) {
@@ -1582,6 +1585,7 @@ u64 TextureCache::ReclaimMemoryFor(VAddr addr, size_t size, u64 bytes) {
         DeleteImage(image_id, true);
         ++gc_evictions;
         BbStats::gc_freed_images.fetch_add(1, std::memory_order_relaxed);
+        BbStats::gc_freed_total.fetch_add(1, std::memory_order_relaxed);
     }
     static int reported = 0;
     if (reported < 32) {

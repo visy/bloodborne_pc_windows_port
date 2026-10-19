@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Added: a party arrival render log for black-world reports** (issue #4): Launcher > Diagnostics > "Party arrival render log" (off by default, `BB_ARRIVAL_LOG=1`) writes two lines 3 s and 10 s after each party travel or join load: whether the 3D world drew, the upscaler, where the camera is against your character, whether the screen centre hits geometry, and the video memory state.
 - **Changed: the launcher and the game's settings menus always agree**: settings that are also in the game's menus (the upscaler, object motion vectors, motion blur resolution, the performance HUD, mouse & keyboard mode, async shaders, pipeline libraries, the shader indicator, *Skip Intro*, *Disable Motion Blur* and the other effect patches) are now read from and written to `bbport.ini` only, and the launcher shows what was chosen in game when the game exits. Before, the launcher overrode them at every start (e.g. an unchecked upscaler turned off a DLSS chosen in game). Old launcher choices move to `bbport.ini` once.
 - **Added: an upscaler choice in the launcher**: *Enable upscaler* (was *Upscaler (FSR 3.1)*) with FSR 3.1 / FSR 4 / FSR 4.1.1 / TAA / DLSS next to it, as in the game's menu; the game still falls back to FSR 3.1 on a GPU without FSR 4 or DLSS.
 - **Fixed: the DLSS library row no longer pushes its Choose... / Remove buttons off the card**: the status is a few words (bundled, your own, none (FSR used), + FG) under the buttons, the full explanation is in its tooltip.

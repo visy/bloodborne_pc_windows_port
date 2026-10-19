@@ -19,6 +19,10 @@ inline constexpr std::uint32_t MenuFrames = 10;
 inline std::atomic<bool> scene_this_frame{false};
 inline std::atomic<bool> scene_active{false};
 inline std::atomic<std::uint32_t> frames_without_scene{0};
+/// Presented frames, and those of them with a G-buffer pass, since the start (the party arrival
+/// render check, BB_ARRIVAL_LOG: did the 3D scene draw after a load).
+inline std::atomic<std::uint64_t> presented_frames{0};
+inline std::atomic<std::uint64_t> scene_frames{0};
 /// The game's own loading flag (the party director's snapshot, each tick). Some loads draw the
 /// scene behind the loading screen (a title join's load after the in-world placement, parfin3
 /// s3b): the frame signal alone then kept the party overlay (name tags, the stain marker) on top
@@ -50,7 +54,9 @@ inline void NoteScenePass() {
 
 /// Presenter, once per presented frame.
 inline void OnPresent() {
+    presented_frames.fetch_add(1, std::memory_order_relaxed);
     if (scene_this_frame.exchange(false, std::memory_order_relaxed)) {
+        scene_frames.fetch_add(1, std::memory_order_relaxed);
         frames_without_scene.store(0, std::memory_order_relaxed);
         scene_active.store(true, std::memory_order_relaxed);
         return;
