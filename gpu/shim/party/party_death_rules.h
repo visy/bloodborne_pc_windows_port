@@ -212,32 +212,38 @@ inline int SeenDown(const Container& members) {
 }
 
 // ---- A guest's respawn at a lamp of the loaded map (issue #4 item 7) ----
-// The in-place revive (no load) puts the chr on the lamp's spawn spot. Far from where it died, or
-// after a fall, that broke the guest's game (issue #4: 122 m from the host after a fall death:
-// camera underground, only forward movement, broken world). Correct over seamless: then the
-// vanilla respawn loading screen (a re-join load for this guest only).
-// kGuestReviveNearMax: the in-place revives that worked live were all within a few tens of metres
-// (a lamp beside the fight, smoke s1 / parx deaths); the failing report was 122 m. 60 m keeps the
-// near case seamless and loads in the band where the lamp's surroundings may not be streamed in
-// around a chr that died elsewhere (the warp has no ground probe).
+// The in-place revive (no load) puts the chr on the lamp's spawn spot. After a FALL death that
+// broke the guest's game (issue #4: a 27 m fall, revived 157 m from its lamp: camera underground,
+// only forward movement, broken world); correct over seamless: then the vanilla respawn loading
+// screen (a re-join load for this guest only). The distance alone does not matter: the issue's
+// bundles had seven in-place revives 60-191 m from the lamp after normal deaths that all worked,
+// so the 60 m rule of the first fix is gone (user decision: "fall state only").
 // kGuestReviveFallDrop: the chr dropped at least this far in the 3 s before its death or after it
 // (lethal falls in Bloodborne are well over 10 m; a void fall keeps dropping): a fall death.
-constexpr double kGuestReviveNearMax = 60.0;
 constexpr double kGuestReviveFallDrop = 6.0;
-enum class GuestRevive { InPlace, LoadFall, LoadFar };
-inline const char* GuestReviveName(GuestRevive g) {
-    return g == GuestRevive::InPlace ? "in place" : g == GuestRevive::LoadFall ? "a fall death: loading screen"
-                                                                               : "far from the lamp: loading screen";
+// The game's own fall-death state, left on the chr after the death (issue #4 bundles: only the fall
+// death had them; nine normal deaths had neither): PlayerIns +0x1E1 (5 bytes read as one value)
+// bit 0x40 of its first byte and 0x04 of its fifth (0x04'0000'0040), and the HP module's +0x200 word
+// bits 0x7800 (the fall read 0xF800; a normal death 0x0000 or 0x8000).
+constexpr std::uint64_t kFallFlags1e1 = 0x0400000040ull;
+constexpr std::uint16_t kFallBitsHp200 = 0x7800;
+inline bool FallDeathState(std::uint64_t f1e1, std::uint16_t hp200) {
+    return (f1e1 & kFallFlags1e1) != 0 || (hp200 & kFallBitsHp200) != 0;
 }
-/// `dist_m`: from where it died (its chr now) to the lamp's spawn spot; `fell_m`: how far it
-/// dropped around its death (negative / 0: no fall); `fall_known` false: no height history (a death
-/// right after a load) - then only the distance decides.
-inline GuestRevive PlanGuestRevive(double dist_m, double fell_m, bool fall_known) {
+enum class GuestRevive { InPlace, LoadFall, LoadFallState };
+inline const char* GuestReviveName(GuestRevive g) {
+    return g == GuestRevive::InPlace    ? "in place"
+           : g == GuestRevive::LoadFall ? "a fall death: loading screen"
+                                        : "the game's fall-death state: loading screen";
+}
+/// `fell_m`: how far it dropped around its death (negative / 0: no fall); `fall_known` false: no
+/// height history (a death right after a load); `fall_state`: FallDeathState of the dead chr.
+inline GuestRevive PlanGuestRevive(double fell_m, bool fall_known, bool fall_state) {
     if (fall_known && fell_m >= kGuestReviveFallDrop) {
         return GuestRevive::LoadFall;
     }
-    if (!(dist_m <= kGuestReviveNearMax)) {  // NaN: unknown spot -> load
-        return GuestRevive::LoadFar;
+    if (fall_state) {
+        return GuestRevive::LoadFallState;
     }
     return GuestRevive::InPlace;
 }

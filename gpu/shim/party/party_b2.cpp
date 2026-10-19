@@ -4023,6 +4023,18 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
         u64 f = 0;
         SafeRead(p + 0x1e1, &f, 5);
         f &= ~u64(0x10000 | 0x20000 | 0x2000 | 0x40000);
+        // Issue #4 item 7: the game's fall-death state (normally a load path; an in-place revive
+        // after a fall only with BB_PARTY_GUEST_REVIVE_FAR or a failed load) is cleared too.
+        const u16 hp200 = Field<u16>(Field<u64>(Field<u64>(p, 0x3b0), 0x20), 0x200);
+        if (deathrules::FallDeathState(f, hp200)) {
+            f &= ~deathrules::kFallFlags1e1;
+            if (const u64 m20 = Field<u64>(Field<u64>(p, 0x3b0), 0x20)) {
+                const u16 w = u16(hp200 & ~deathrules::kFallBitsHp200);
+                SafeWrite(m20 + 0x200, &w, 2);
+            }
+            Log("%s revive: the game's fall-death state cleared (hp+0x200 %04x)", host ? "host" : "guest",
+                unsigned(hp200));
+        }
         SafeWrite(p + 0x1e1, &f, 5);
     }
     if (RecipeHas("ctrl") && ctrl) {
@@ -4190,9 +4202,10 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
         return false;
     }
     {
-        // Issue #4 item 7, correct over seamless: far from the lamp or after a fall, the respawn
-        // load instead (the in-place warp left the guest's camera underground and its controls
-        // broken). BB_PARTY_GUEST_REVIVE_FAR=1: the old in-place revive at any distance.
+        // Issue #4 item 7, correct over seamless: after a fall death (the drop test or the game's
+        // own fall-death state on the chr) the respawn load instead (the in-place warp left the
+        // guest's camera underground and its controls broken); any other death revives in place at
+        // any distance. BB_PARTY_GUEST_REVIVE_FAR=1: the in-place revive after a fall too.
         static const bool always = deathrules::OptIn(std::getenv("BB_PARTY_GUEST_REVIVE_FAR"));
         float p[3] = {0, 0, 0};
         double dist = std::numeric_limits<double>::quiet_NaN(), fell = 0;
@@ -4201,10 +4214,14 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
             dist = std::sqrt(dx * dx + dy * dy + dz * dz);
             fell = deathrules::FallDrop(g_death_height.peak, g_death_height.at_death, p[1]);
         }
-        const deathrules::GuestRevive plan = deathrules::PlanGuestRevive(dist, fell, g_death_height.known);
+        DeathFields dead;
+        ReadDeathFields(s.player, &dead);
+        const bool fall_state = deathrules::FallDeathState(dead.f1e1, dead.m20_200);
+        const deathrules::GuestRevive plan = deathrules::PlanGuestRevive(fell, g_death_height.known, fall_state);
         if (plan != deathrules::GuestRevive::InPlace && !always) {
-            Log("guest: died %.1f m from %s %u (dropped %.1f m%s): %s", dist, why, lamp, fell,
-                g_death_height.known ? "" : ", no height history", deathrules::GuestReviveName(plan));
+            Log("guest: died %.1f m from %s %u (dropped %.1f m%s, +0x1e1 %010llx hp+0x200 %04x): %s", dist, why,
+                lamp, fell, g_death_height.known ? "" : ", no height history", ull(dead.f1e1),
+                unsigned(dead.m20_200), deathrules::GuestReviveName(plan));
             if (GuestDeadLoadAt(lamp, 0.0, why)) {
                 return true;
             }
