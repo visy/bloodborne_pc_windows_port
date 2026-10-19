@@ -4,6 +4,7 @@
 #include "party/party_death_rules.h"
 
 #include <cstdio>
+#include <limits>
 #include <vector>
 
 using namespace coop::deathrules;
@@ -374,6 +375,17 @@ int main() {
         led.Down(1, 300.0);
         CHECK(led.Count() == 1);
     }
+    // Issue #4 item 7: a guest's respawn at a lamp of the loaded map.
+    CHECK(PlanGuestRevive(12.0, 0.0, true) == GuestRevive::InPlace);         // near, a normal death
+    CHECK(PlanGuestRevive(59.9, 2.0, true) == GuestRevive::InPlace);         // a stumble is no fall
+    CHECK(PlanGuestRevive(122.5, 0.0, true) == GuestRevive::LoadFar);        // the issue's distance
+    CHECK(PlanGuestRevive(60.1, 0.0, false) == GuestRevive::LoadFar);
+    CHECK(PlanGuestRevive(10.0, 6.0, true) == GuestRevive::LoadFall);        // a fall, even near
+    CHECK(PlanGuestRevive(10.0, 30.0, false) == GuestRevive::InPlace);       // no history: distance only
+    CHECK(PlanGuestRevive(std::numeric_limits<double>::quiet_NaN(), 0.0, true) == GuestRevive::LoadFar);  // spot unknown
+    CHECK(FallDrop(-20.0, -40.0, -80.0) == 60.0);                            // into the void: still dropping
+    CHECK(FallDrop(-20.0, -21.0, -21.0) == 1.0);
+    CHECK(GuestReviveName(GuestRevive::LoadFall)[0] != '?');
     CHECK(RestLoadName(RestLoad::TooSoon)[0] != '?');
     if (g_failures) {
         std::fprintf(stderr, "%d failure(s)\n", g_failures);
