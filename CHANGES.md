@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Fixed: an enemy the host kills just across an area border now dies for the guests too**: at the Tomb of Oedon, a host's kill of a Cathedral Ward enemy (the next area, loaded alongside) never reached the guest's game, so it stayed alive there. The guest's enemy check, which compares its enemies with the host's every 15 s, now also puts such an enemy to death (the guest gets the kill's echoes as for any party kill); it catches it 5-20 s after the kill. Bosses are left to their own defeat. `BB_PARTY_CENSUS_REPAIR=0` turns it off (report only).
 - **Fixed: a boss intro no longer plays twice for the host when a guest goes into the fog first**: the guest's copy of the scene now waits a few seconds for the host's own, so the host sees it once (before, Father Gascoigne's 48-second intro ran twice on the host).
 - **Fixed: a guest who dies from a fall, or far from its lamp, respawns through a loading screen** (issue #4): the instant respawn could leave the camera underground and the controls broken; a death after a fall or more than about 60 m from the lamp now loads normally, and a nearby normal death stays instant.
 - **Fixed: the "Travel with the party?" question at a lamp no longer silently fails** (issue #4): it waits until the lamp's own menu has closed before opening, and if the game still does not show it, the party travels together (the usual default) instead of nothing happening.
