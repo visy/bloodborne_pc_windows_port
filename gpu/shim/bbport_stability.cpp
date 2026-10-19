@@ -937,6 +937,31 @@ bool InstallResourceCache() {
     return WriteBranch(kCacheBacking, 0xe9, PlaceStub(e), 7 - 5);
 }
 
+// ======================================================================================
+// 9. Yebis's blur-kernel sample parameters (GPUTexUtil_GetRecursiveSampleParameters, +0xbbc3e0;
+// from deadinside28/bloodborne_pc 0.6): its first argument, the base sample count, must be at
+// least 3 (an assertion the retail build has compiled out). Game data now and then gives 2; the
+// function then runs on in a state that does not end (the guest stops submitting: a black
+// screen), so the count is raised to 3 at the entry.
+// ======================================================================================
+constexpr u64 kKernelParams = 0xbbc3e0;
+
+bool InstallKernelSampleClamp() {
+    // push rbp; mov rbp, rsp; push r15
+    if (!Matches(kKernelParams, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57})) {
+        std::printf("Stability: blur-kernel clamp: guest +0x%llx is not the expected code; left alone\n",
+                    ull(kKernelParams));
+        return false;
+    }
+    Emitter e = NewStub();
+    e.Bytes({0x83, 0xff, 0x03});                         // cmp edi, 3
+    e.Bytes({0x7d, 0x05});                               // jge over the mov
+    e.Bytes({0xbf, 0x03, 0x00, 0x00, 0x00});             // mov edi, 3
+    e.Bytes({0x55, 0x48, 0x89, 0xe5, 0x41, 0x57});       // the instructions the jump covers
+    e.JmpTo(reinterpret_cast<u64>(image) + kKernelParams + 6);
+    return WriteBranch(kKernelParams, 0xe9, PlaceStub(e), 6 - 5);
+}
+
 } // namespace
 
 void PatchImage(unsigned char* image_, std::uint64_t size) {
@@ -971,6 +996,8 @@ void PatchImage(unsigned char* image_, std::uint64_t size) {
     note(std::string("blend-mask-fix ") + (blend ? "on" : "off"));
     const bool cache = stub_page && InstallResourceCache();
     note(std::string("resource-cache ") + (cache ? "on" : "off"));
+    const bool kernel = On("BB_KERNEL_CLAMP") && stub_page && InstallKernelSampleClamp();
+    note(std::string("kernel-clamp ") + (kernel ? "on" : "off"));
     if (stub_page) {
 #ifdef _WIN32
         DWORD unused = 0;
