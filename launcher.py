@@ -44,10 +44,10 @@ ANISO_CHOICES = [
 ]
 
 # Motion blur resolution (0.6.2's "Volumetric effects"; idea from a playtester): the game's
-# half-resolution motion blur buffers. "In-game setting" leaves bbport.ini's volumetric_res (the
-# Display page) alone; the others set BB_VOLUMETRIC_RES, which wins over it.
+# half-resolution motion blur buffers. A game setting: bbport.ini volumetric_res (System > Display),
+# read and written by the launcher. (label, value); "In-game setting" was a launcher-only choice.
+VOLUMETRIC_LEGACY_INGAME = "In-game setting"
 VOLUMETRIC_CHOICES = [
-    ("In-game setting", ""),
     ("Game default (half)", "0"),
     ("2x pixels", "1"),
     ("Full resolution", "2"),
@@ -542,8 +542,9 @@ def settings_env(s: dict) -> dict:
     env["BB_MODS_ENABLED"] = "1" if on("mods") else "0"
     env["BB_DREAM_MIRROR"] = None if on("dream_mirror") else "0"
     env["BB_LAMP_TRAVEL"] = None if on("lamp_travel") else "0"
-    env["BB_UPSCALER"] = None if on("feat_upscaler") else "off"
-    env["BB_OBJECT_MOTION"] = None if on("feat_object_motion") else "0"
+    # Game settings (the upscaler, object motion, the HUD, M&K mode, shader options, motion blur
+    # resolution, the effect patches) live in bbport.ini only: no BB_* override from the launcher
+    # (GAME_SETTING_ENVS; the variables stay for scripts and tests).
     env["BB_OVERLAY"] = None if on("feat_overlay") else "0"
     env["BB_FPS_PATCH"] = None if on("feat_fps_patch") else "0"
     env["BB_FRAME_HOOKS"] = None if on("feat_frame_hooks") else "0"
@@ -584,22 +585,9 @@ def settings_env(s: dict) -> dict:
     env["BB_AUDIO_LOG"] = "1" if on("feat_audio_log", False) else "0"
     # Mute the game while its window is in the background
     env["BB_MUTE_UNFOCUSED"] = "1" if on("feat_mute_unfocused") else "0"
-    # Mouse & keyboard controls (scheme from Mrsuss60/bloodborne_pc_windows_port): opt-in, and the
-    # launcher decides at each start (the in-game Controls tab switches it for the session). Its
-    # tuning (mk_* keys) lives in bbport.ini: the launcher's dialog and the in-game menu edit it.
-    env["BB_MOUSE_KEYBOARD"] = "1" if on("feat_mouse_keyboard", False) else "0"
-    # Performance HUD (F11 in game): on = shown at every start; off = the game keeps the choice
-    # made with F11 or in its menu (bbport.ini show_hud).
-    env["BB_HUD"] = "1" if on("feat_hud", False) else None
-
-    # Shader compilation: background compile that skips the draw meanwhile (also a live toggle in
-    # the in-game menu), graphics pipeline library (stages compiled ahead, linked at draw time) and
-    # the "Compiling shaders: NN%" indicator.
-    # On by default since 0.5-pre4 (upstream's BB_ASYNC_PIPELINES); stored as feat_async_pipelines:
-    # the old feat_async_shaders key mostly held the old default (off) and is not read any more.
-    env["BB_ASYNC_SHADERS"] = "1" if on("feat_async_pipelines", True) else "0"
-    env["BB_GPL"] = "1" if on("feat_gpl", False) else "0"
-    env["BB_COMPILE_INDICATOR"] = "1" if on("feat_compile_indicator") else "0"
+    # Mouse & keyboard mode (bbport.ini mk_enabled), the performance HUD (show_hud), async shaders
+    # (async_pipelines), pipeline libraries (gpl) and the shader indicator (compile_indicator) are
+    # game settings: bbport.ini only (INI_FLAG_SETTINGS).
     env["BB_SHADER_PRECOMPILE"] = "1" if on("feat_shader_precompile") else "0"
 
     # Frame ahead queue (smooth frametimes & bound queue latency: 2 = balanced)
@@ -610,13 +598,10 @@ def settings_env(s: dict) -> dict:
     aniso_mapping = {c[0]: c[1] for c in ANISO_CHOICES}
     env["BB_ANISO"] = aniso_mapping.get(s.get("aniso", "16x"), "16")
 
-    # Motion blur resolution: only when chosen here (else the in-game setting counts)
-    volumetric = dict(VOLUMETRIC_CHOICES).get(s.get("volumetric_res", VOLUMETRIC_CHOICES[0][0]), "")
-    if volumetric:
-        env["BB_VOLUMETRIC_RES"] = volumetric
-
-    # Bloodborne.xml Patches
-    active_patches = sorted(s.get("enabled_patches", ["Skip Intro"]))
+    # Bloodborne.xml Patches; the ones the game's Effects page switches (EFFECT_PATCHES, model LOD)
+    # come from bbport.ini through scripts/patches.py, not from here.
+    active_patches = sorted(n for n in s.get("enabled_patches", ["Skip Intro"])
+                            if n not in EFFECT_PATCHES and n not in MODEL_LOD_PATCHES)
     env["BB_PATCHES"] = ";".join(active_patches) if active_patches else None
 
     # Party co-op (BB_PARTY=host|join; off = every BB_PARTY_* unset)
@@ -637,6 +622,12 @@ def write_env_bat(path: Path, settings_path: Path = SETTINGS_FILE):
         data = {}
     if not isinstance(data, dict):
         data = {}
+    # run.bat without the launcher after an update: the old launcher values move to bbport.ini once.
+    try:
+        if migrate_settings_to_ini(data, bbport_ini_path()) is not None:
+            settings_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except OSError:
+        pass
     lines = ["@echo off"]
     for key, value in settings_env(data).items():
         value = "" if value is None else value.replace('"', "").replace("%", "%%")
@@ -821,6 +812,139 @@ def update_ini(path: Path, values: dict):
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text("\n".join(out) + "\n", encoding="utf-8")
     os.replace(temporary, path)
+
+
+# ---- Game settings: bbport.ini is their one source of truth ----
+# Settings that are also in the game's menus (System pages, Insert overlay) are read from bbport.ini
+# when the launcher opens (and again when the game exits or the window gets the focus) and written
+# there on change; the launcher sets no BB_* override for them at launch. Launch-only options stay
+# in launcher_settings.json.
+
+# Upscaler (bbport.ini upscaler=off|fsr3|fsr4|fsr411|taa|dlss): the game menu's labels and order
+# (bbport_game_menu_pages.cpp "Upscaler" row). "Enable upscaler" off writes off.
+UPSCALER_CHOICES = [("FSR 3.1", "fsr3"), ("FSR 4", "fsr4"), ("FSR 4.1.1", "fsr411"), ("TAA", "taa"),
+                    ("DLSS", "dlss")]
+UPSCALER_DEFAULT = "FSR 3.1"
+
+
+def upscaler_state(ini: dict, remembered: str = "") -> tuple:
+    """(enabled, label) for bbport.ini's upscaler; when off, the label is the last choice the
+    launcher remembered (launcher_settings.json upscaler_choice), else FSR 3.1."""
+    value = str(ini.get("upscaler", "off")).strip().lower()
+    for label, name in UPSCALER_CHOICES:
+        if name == value:
+            return True, label
+    return False, remembered if remembered in dict(UPSCALER_CHOICES) else UPSCALER_DEFAULT
+
+
+def upscaler_ini(enabled: bool, label: str) -> dict:
+    return {"upscaler": dict(UPSCALER_CHOICES).get(label, "fsr3") if enabled else "off"}
+
+
+# 0/1 game settings: (launcher_settings.json key before 0.6.8, bbport.ini key, the game's default
+# without the key, the old launch variable)
+INI_FLAG_SETTINGS = [
+    ("feat_object_motion", "object_motion", False, "BB_OBJECT_MOTION"),
+    ("feat_hud", "show_hud", False, "BB_HUD"),
+    ("feat_mouse_keyboard", "mk_enabled", False, "BB_MOUSE_KEYBOARD"),
+    ("feat_async_pipelines", "async_pipelines", True, "BB_ASYNC_SHADERS"),
+    ("feat_gpl", "gpl", False, "BB_GPL"),
+    ("feat_compile_indicator", "compile_indicator", True, "BB_COMPILE_INDICATOR"),
+]
+# Every BB_* variable the launcher no longer sets because its setting lives in bbport.ini.
+GAME_SETTING_ENVS = ["BB_UPSCALER", "BB_VOLUMETRIC_RES"] + [env for *_, env in INI_FLAG_SETTINGS]
+
+
+def ini_flag_value(ini: dict, key: str, default: bool) -> bool:
+    value = str(ini.get(key, "")).strip()
+    return default if value == "" else value != "0"
+
+
+def volumetric_label(ini: dict) -> str:
+    """bbport.ini volumetric_res (0/1/2, or game/2x/full as the game also reads) as a launcher label."""
+    value = str(ini.get("volumetric_res", "0")).strip().lower()
+    value = {"full": "2", "2x": "1", "double": "1", "game": "0", "off": "0"}.get(value, value)
+    return next((label for label, v in VOLUMETRIC_CHOICES if v == value), VOLUMETRIC_CHOICES[0][0])
+
+
+def volumetric_ini(label: str) -> dict:
+    return {"volumetric_res": dict(VOLUMETRIC_CHOICES).get(label, "0")}
+
+
+# Community patches the game's Effects page switches (scripts/patches.py EFFECTS / MODEL_LOD,
+# bbport_settings.h Effects): patch name -> (bbport.ini key, the value that applies the patch).
+# A missing key is the game's default, which never applies one of these patches.
+EFFECT_PATCHES = {
+    "Disable Chromatic Aberration": ("effect_chromatic_aberration", "0"),
+    "Disable DoF": ("effect_dof", "0"),
+    "Disable Motion Blur (perf increase)": ("effect_motion_blur", "0"),
+    "Disable SSAO": ("effect_ssao", "0"),
+    "Disable AA": ("effect_game_aa", "0"),
+    "Disable Dynamic Light Shadows (perf increase)": ("effect_dynamic_shadows", "0"),
+    "Enable Screen Space Reflections (READ NOTE)": ("effect_ssr", "1"),
+    "Skip Intro": ("skip_intro", "1"),
+    "Restore Debug Camera": ("debug_camera", "1"),
+    "Restore Debug Menu (READ NOTES)": ("debug_menu", "1"),
+}
+MODEL_LOD_PATCHES = {"Model LOD -2 (Highest)": "-2", "Model LOD 1 (Lower)": "1", "Model LOD 2 (Lowest)": "2"}
+
+
+def effect_patches_from_ini(ini: dict) -> set:
+    names = {name for name, (key, on) in EFFECT_PATCHES.items() if str(ini.get(key, "")).strip() == on}
+    lod = str(ini.get("model_lod", "0")).strip()
+    names |= {name for name, value in MODEL_LOD_PATCHES.items() if value == lod}
+    return names
+
+
+def effect_patches_ini(names) -> dict:
+    """bbport.ini values for the effect patches in `names` (every effect key and model_lod)."""
+    values = {key: (on if name in names else ("1" if on == "0" else "0"))
+              for name, (key, on) in EFFECT_PATCHES.items()}
+    values["model_lod"] = next((v for n, v in MODEL_LOD_PATCHES.items() if n in names), "0")
+    return values
+
+
+INI_SYNC_REV = 1  # launcher_settings.json ini_sync_rev: the old launcher values moved to bbport.ini
+
+
+def migrate_settings_to_ini(s: dict, ini_path: Path):
+    """Moves the game settings of a launcher_settings.json from before 0.6.8 into bbport.ini, once.
+
+    A key is written when bbport.ini lacks it, or when the old launcher value overrode the ini at
+    every launch (it was what the game ran with); otherwise the ini already held the game's value.
+    From then on the ini wins. Returns the values written ({} = none), None when already done."""
+    if int(s.get("ini_sync_rev", 0) or 0) >= INI_SYNC_REV:
+        return None
+    ini = read_ini(ini_path)
+    values = {}
+
+    def put(key, value, forced):
+        if forced or key not in ini:
+            values[key] = value
+
+    upscaler_on = bool(s.get("feat_upscaler", True))
+    put("upscaler", "fsr3" if upscaler_on else "off", not upscaler_on)  # BB_UPSCALER=off when unchecked
+    for old, key, default, env in INI_FLAG_SETTINGS:
+        launcher_default = {"feat_object_motion": True}.get(old, default)
+        value = bool(s.get(old, launcher_default))
+        # BB_OBJECT_MOTION only when off, BB_HUD only when on; the others were always set.
+        forced = (not value if env == "BB_OBJECT_MOTION" else value if env == "BB_HUD" else True)
+        put(key, "1" if value else "0", forced)
+    volumetric = s.get("volumetric_res", VOLUMETRIC_LEGACY_INGAME)
+    if volumetric in dict(VOLUMETRIC_CHOICES):
+        put("volumetric_res", dict(VOLUMETRIC_CHOICES)[volumetric], True)
+    # BB_PATCHES applied a launcher patch whatever the ini said: such a patch is written as on.
+    patches = set(s.get("enabled_patches", ["Skip Intro"]))
+    for name, (key, on) in EFFECT_PATCHES.items():
+        if name in patches:
+            values[key] = on
+    lod = next((v for n, v in MODEL_LOD_PATCHES.items() if n in patches), None)
+    if lod:
+        values["model_lod"] = lod
+    if values:
+        update_ini(ini_path, values)
+    s["ini_sync_rev"] = INI_SYNC_REV
+    return values
 
 
 # Shader cache: <user>\cache\<title id>\ (run.bat: BB_USER_DIR or BB_DATA_DIR\user). Pipeline keys
@@ -1362,8 +1486,17 @@ class BloodborneLauncher(tk.Tk):
         self.hidden_count = 0
         self.log_queue = queue.Queue()
         self.settings = self.load_settings()
+        try:  # the game settings of an older launcher_settings.json move to bbport.ini once
+            moved = migrate_settings_to_ini(self.settings, bbport_ini_path())
+            if moved is not None:
+                SETTINGS_FILE.write_text(json.dumps(self.settings, indent=2), encoding="utf-8")
+        except OSError:
+            pass
         self.all_xml_patches = load_xml_patches()
-        self.enabled_patches = set(self.settings.get("enabled_patches", ["Skip Intro"]))
+        # Effect patches (Skip Intro, Disable Motion Blur, model LOD ...) are game settings: bbport.ini.
+        self.enabled_patches = ({n for n in self.settings.get("enabled_patches", ["Skip Intro"])
+                                 if n not in EFFECT_PATCHES and n not in MODEL_LOD_PATCHES}
+                                | effect_patches_from_ini(read_ini(bbport_ini_path())))
 
         self.feat_skip_intro = tk.BooleanVar(value="Skip Intro" in self.enabled_patches)
         self.feat_perf_patch = tk.BooleanVar(value="Performance Patch (perf increase)" in self.enabled_patches)
@@ -1379,6 +1512,8 @@ class BloodborneLauncher(tk.Tk):
         self.geometry(f"780x{max(760, min(need, self.winfo_screenheight() - 80))}")
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self._ini_stamp = self.ini_stamp()
+        self.bind("<FocusIn>", lambda e: self.refresh_game_settings() if e.widget is self else None, add="+")
         self.after(50, self.poll_queue)
         self.log("Ready. Select your eboot.bin and press Launch Bloodborne.")
         self.after(1200, self.check_last_party_session)
@@ -1522,9 +1657,7 @@ class BloodborneLauncher(tk.Tk):
         self.res_var = tk.StringVar(value=res if res in RES_CHOICES else RES_CHOICES[0])
         self.timeout_var = tk.StringVar(value=matching_choice)
         self.aniso_var = tk.StringVar(value=aniso)
-        volumetric = self.settings.get("volumetric_res", VOLUMETRIC_CHOICES[0][0])
-        self.volumetric_var = tk.StringVar(
-            value=volumetric if volumetric in dict(VOLUMETRIC_CHOICES) else VOLUMETRIC_CHOICES[0][0])
+        self.volumetric_var = tk.StringVar(value=volumetric_label(read_ini(bbport_ini_path())))
         self.aniso_desc_var = tk.StringVar()
 
         # Monitor (BB_DISPLAY) and controller (BB_GAMEPAD), listed by bb-gpu-capabilities.exe
@@ -1551,8 +1684,14 @@ class BloodborneLauncher(tk.Tk):
         self.frames_ahead_var = tk.StringVar(value=next(
             (label for label, value in FRAMES_AHEAD_CHOICES if value == frames_ahead), FRAMES_AHEAD_CHOICES[0][0]))
 
-        self.feat_upscaler = tk.BooleanVar(value=self.settings.get("feat_upscaler", True))
-        self.feat_object_motion = tk.BooleanVar(value=self.settings.get("feat_object_motion", True))
+        # Game settings from bbport.ini (refresh_game_settings re-reads them)
+        _ini = read_ini(bbport_ini_path())
+        _up_on, _up_label = upscaler_state(_ini, str(self.settings.get("upscaler_choice", "")))
+        self.feat_upscaler = tk.BooleanVar(value=_up_on)
+        self.upscaler_var = tk.StringVar(value=_up_label)
+        self.ini_flag_vars = {key: tk.BooleanVar(value=ini_flag_value(_ini, key, default))
+                              for _, key, default, _ in INI_FLAG_SETTINGS}
+        self.feat_object_motion = self.ini_flag_vars["object_motion"]
         self.feat_overlay = tk.BooleanVar(value=self.settings.get("feat_overlay", True))
         self.feat_fps_patch = tk.BooleanVar(value=self.settings.get("feat_fps_patch", True))
         self.feat_frame_hooks = tk.BooleanVar(value=self.settings.get("feat_frame_hooks", True))
@@ -1585,12 +1724,12 @@ class BloodborneLauncher(tk.Tk):
         self.auto_support_bundle = tk.BooleanVar(value=self.settings.get("auto_support_bundle", True))
         self.check_updates = tk.BooleanVar(value=self.settings.get("check_updates", True))
         self.feat_mute_unfocused = tk.BooleanVar(value=self.settings.get("feat_mute_unfocused", True))
-        self.feat_async_shaders = tk.BooleanVar(value=self.settings.get("feat_async_pipelines", True))
-        self.feat_gpl = tk.BooleanVar(value=self.settings.get("feat_gpl", False))
-        self.feat_compile_indicator = tk.BooleanVar(value=self.settings.get("feat_compile_indicator", True))
+        self.feat_async_shaders = self.ini_flag_vars["async_pipelines"]
+        self.feat_gpl = self.ini_flag_vars["gpl"]
+        self.feat_compile_indicator = self.ini_flag_vars["compile_indicator"]
         self.feat_shader_precompile = tk.BooleanVar(value=self.settings.get("feat_shader_precompile", True))
-        self.feat_hud = tk.BooleanVar(value=self.settings.get("feat_hud", False))
-        self.feat_mouse_keyboard = tk.BooleanVar(value=self.settings.get("feat_mouse_keyboard", False))
+        self.feat_hud = self.ini_flag_vars["show_hud"]
+        self.feat_mouse_keyboard = self.ini_flag_vars["mk_enabled"]
 
         # Party co-op (BB_PARTY_*)
         party_mode = str(self.settings.get("party_mode", "") or "")
@@ -1722,18 +1861,38 @@ class BloodborneLauncher(tk.Tk):
         self._check(sec, "Performance HUD (F11)", self.feat_hud,
                     "In-game overlay with FPS, frame time and a frame-time graph, VRAM, GPU, CPU and RAM "
                     "load. F11 shows or hides it at any time; its corner, size and metrics are in the "
-                    "in-game menu (Insert > Display). On = shown at every start; off = the game keeps "
-                    "your last F11 / menu choice. Default: off (BB_HUD).")
+                    "in-game menu (Insert > Display). A game setting (bbport.ini show_hud): F11 and the "
+                    "in-game menu change the same switch. Default: off.",
+                    command=lambda: self.save_game_settings("show_hud"))
 
         # 2. Graphics
         tab = self._tab("Graphics")
         sec = self._section(tab, 0, "Image quality")
-        self._check(sec, "Upscaler (FSR 3.1)", self.feat_upscaler,
-                    "Temporal upscaling and anti-aliasing with FSR 3.1. DLSS / FSR 4 can be selected in the "
-                    "in-game menu when available. Off = no upscaler. Default: on (BB_UPSCALER).")
+        upscaler_tip = ("Temporal upscaling and anti-aliasing; off = none. FSR 3.1 runs on every GPU, TAA "
+                        "is the lightest. FSR 4 and FSR 4.1.1 need a GPU that runs their shaders, DLSS an "
+                        "NVIDIA RTX GPU and NVIDIA's library (below). The launcher cannot check the GPU, "
+                        "so every choice is listed: at start the game checks and uses FSR 3.1 instead of "
+                        "one this GPU lacks (its menu then greys that choice out). A game setting "
+                        "(bbport.ini upscaler; in game: System > Display and the Insert overlay), used "
+                        "at the next start. Default: on, FSR 3.1.")
+        up_row = ttk.Frame(sec, style="Card.TFrame")
+        up_row.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=2)
+        sec.next_row += 1
+        up_cb = ttk.Checkbutton(up_row, text="Enable upscaler", variable=self.feat_upscaler,
+                                style="Card.TCheckbutton", command=self.save_upscaler)
+        up_cb.pack(side="left", padx=(0, 8))
+        self.upscaler_combo = ttk.Combobox(up_row, textvariable=self.upscaler_var, state="readonly",
+                                           values=[c[0] for c in UPSCALER_CHOICES], width=10)
+        self.upscaler_combo.pack(side="left")
+        self.upscaler_combo.bind("<<ComboboxSelected>>", lambda e: self.save_upscaler())
+        for widget in (up_cb, self.upscaler_combo):
+            Tooltip(widget, upscaler_tip)
+        self.update_upscaler_state()
         self._check(sec, "Object motion vectors", self.feat_object_motion,
-                    "Exact motion vectors for animated characters and objects, so FSR smears less on moving "
-                    "things. Small GPU cost. Default: on (BB_OBJECT_MOTION).")
+                    "Exact motion vectors for animated characters and objects, so the upscaler smears less "
+                    "on moving things. Small GPU cost. A game setting (bbport.ini object_motion; in game: "
+                    "System > Upscaler > Character motion), used at the next start.",
+                    command=lambda: self.save_game_settings("object_motion"))
         aniso_tip = ("Sharper textures at grazing angles (floors, roads). "
                      + "; ".join(f"{label}: {desc[0].lower() + desc[1:]}" for label, _, desc in ANISO_CHOICES)
                      + ". Very small cost. Default: 16x (BB_ANISO).")
@@ -1744,11 +1903,13 @@ class BloodborneLauncher(tk.Tk):
         self.aniso_desc_lbl.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(0, 2))
         sec.next_row += 1
         self.update_aniso_desc()
-        self._combo(sec, "Motion blur resolution:", self.volumetric_var, [c[0] for c in VOLUMETRIC_CHOICES],
-                    "Resolution of the game's motion blur buffers (half resolution in the game): 2x pixels / "
-                    "Full resolution give the blur of moving characters finer edges, some GPU cost. Smoke and "
-                    "mist are full resolution already. In-game setting: the System > Display page decides "
-                    "(BB_VOLUMETRIC_RES).", width=18)
+        volumetric_combo = self._combo(
+            sec, "Motion blur resolution:", self.volumetric_var, [c[0] for c in VOLUMETRIC_CHOICES],
+            "Resolution of the game's motion blur buffers (half resolution in the game): 2x pixels / "
+            "Full resolution give the blur of moving characters finer edges, some GPU cost. Smoke and "
+            "mist are full resolution already. A game setting (bbport.ini volumetric_res; in game: "
+            "System > Display).", width=18)
+        volumetric_combo.bind("<<ComboboxSelected>>", lambda e: self.save_game_settings("volumetric_res"))
         # Upstream 0.51: NVIDIA's DLSS library chosen by the player (vk_dlss.cpp looks in
         # <user>/dlss first, then next to bbport.exe; the bridge bbport_dlss.dll stays next to it).
         dlss_row = ttk.Frame(sec, style="Card.TFrame")
@@ -1757,17 +1918,26 @@ class BloodborneLauncher(tk.Tk):
         dlss_tip = ("DLSS (NVIDIA RTX) needs NVIDIA's nvngx_dlss.dll. A newer one (from a game or "
                     "NVIDIA's DLSS SDK) can be chosen here: it is copied to user\\dlss and used instead "
                     "of the one next to bbport.exe. Remove goes back to that one.")
+        # Label and the buttons, the short status on its own line under the buttons: the buttons
+        # never move whatever the status says (a long status once pushed them off the card at the
+        # minimum width); the long explanation is in the tooltip.
         lbl = ttk.Label(dlss_row, text="DLSS library:", style="Card.TLabel")
-        lbl.pack(side="left", padx=(0, 8))
-        self.dlss_var = tk.StringVar(value=self.dlss_status())
-        status = ttk.Label(dlss_row, textvariable=self.dlss_var, style="Hint.TLabel")
-        status.pack(side="left", padx=(0, 8))
-        choose = ttk.Button(dlss_row, text="Choose...", style="Secondary.TButton", command=self.choose_dlss_dll)
-        choose.pack(side="left", padx=(0, 4))
-        remove = ttk.Button(dlss_row, text="Remove", style="Secondary.TButton", command=self.remove_dlss_dll)
-        remove.pack(side="left")
-        for widget in (lbl, status, choose, remove):
-            Tooltip(widget, dlss_tip)
+        lbl.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.dlss_choose_btn = ttk.Button(dlss_row, text="Choose...", style="Secondary.TButton",
+                                          command=self.choose_dlss_dll)
+        self.dlss_choose_btn.grid(row=0, column=1, sticky="w", padx=(0, 4))
+        self.dlss_remove_btn = ttk.Button(dlss_row, text="Remove", style="Secondary.TButton",
+                                          command=self.remove_dlss_dll)
+        self.dlss_remove_btn.grid(row=0, column=2, sticky="w")
+        self.dlss_var = tk.StringVar()
+        self.dlss_status_lbl = ttk.Label(dlss_row, textvariable=self.dlss_var, style="Hint.TLabel",
+                                         wraplength=220, justify="left")
+        self.dlss_status_lbl.grid(row=1, column=1, columnspan=3, sticky="w", pady=(2, 0))
+        dlss_row.columnconfigure(3, weight=1)  # extra width of the status goes here, not to the buttons
+        self.dlss_base_tip = dlss_tip
+        self.dlss_tips = [Tooltip(widget, dlss_tip)
+                          for widget in (lbl, self.dlss_choose_btn, self.dlss_remove_btn, self.dlss_status_lbl)]
+        self.update_dlss_status()
         fg_tip = ("Generated frames between the rendered ones: smoother motion on a high refresh "
                   "display, slightly more input lag. DLSS FG needs an RTX 40 or 50 series GPU and "
                   "NVIDIA's nvngx_dlssg.dll (bundled; or chosen above); FSR FG (2x) runs on most GPUs. "
@@ -1814,7 +1984,8 @@ class BloodborneLauncher(tk.Tk):
                     "Off = upload on demand (BB_PREUPLOAD).", width=30)
         self._check(sec, "Disable Motion Blur", self.feat_no_blur,
                     "Game patch by Kyo: removes the motion blur effect (and its velocity-map pass), a small "
-                    "performance gain. Same as the 'Disable Motion Blur (perf increase)' XML patch.",
+                    "performance gain. Same as the 'Disable Motion Blur (perf increase)' XML patch and "
+                    "the in-game Effects page's Motion blur switch (bbport.ini effect_motion_blur).",
                     command=self.on_quick_patch_toggle)
 
         # 3. Performance & Shaders
@@ -1833,12 +2004,15 @@ class BloodborneLauncher(tk.Tk):
                     "Compiles a new pipeline of a pass drawn every frame in the background and skips drawing "
                     "that object for a frame or two instead of stuttering; brief pop-in is possible. Loading "
                     "screens, one-time renders, the final frame, the UI and compute work are never skipped. "
-                    "Can also be toggled live in the in-game menu. Default: on "
-                    "(BB_ASYNC_SHADERS; upstream's name BB_ASYNC_PIPELINES works too).")
+                    "A game setting (bbport.ini async_pipelines; in game: System > Shaders > Async "
+                    "shaders, live). Default: on.",
+                    command=lambda: self.save_game_settings("async_pipelines"))
         self._check(sec, "Graphics pipeline library (GPL)", self.feat_gpl,
                     "Compiles shader parts ahead of time (startup and loading screens) and links them quickly "
                     "at draw time. Needs driver support (NVIDIA/AMD; falls back automatically). Restart "
-                    "required. Default: off (BB_GPL).")
+                    "required. A game setting (bbport.ini gpl; in game: System > Shaders > Pipeline "
+                    "libraries). Default: off.",
+                    command=lambda: self.save_game_settings("gpl"))
         self._check(sec, "Precompile shaders at startup", self.feat_shader_precompile,
                     "Before the intro logos, builds every pipeline in the shader cache (and rebuilds the "
                     "cache for a new GPU) with a progress screen, so areas already in the cache never "
@@ -1846,7 +2020,9 @@ class BloodborneLauncher(tk.Tk):
                     "Default: on (BB_SHADER_PRECOMPILE).")
         self._check(sec, "Shader compile progress indicator", self.feat_compile_indicator,
                     "Shows 'Compiling shaders: NN%' in a corner while new shaders compile, only on loading "
-                    "screens and the main menu, never during gameplay. Default: on (BB_COMPILE_INDICATOR).")
+                    "screens and the main menu, never during gameplay. A game setting (bbport.ini "
+                    "compile_indicator, also in the in-game menu). Default: on.",
+                    command=lambda: self.save_game_settings("compile_indicator"))
         cache_row = ttk.Frame(sec, style="Card.TFrame")
         cache_row.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(6, 2))
         sec.next_row += 1
@@ -1868,7 +2044,8 @@ class BloodborneLauncher(tk.Tk):
         sec = self._section(tab, 0, "Startup")
         self._check(sec, "Skip Intro & Logos", self.feat_skip_intro,
                     "Game patch by illusion: skips the intro logo screens at startup. Same as the "
-                    "'Skip Intro' XML patch. Default: on.",
+                    "'Skip Intro' XML patch and the in-game Effects page's Skip intros (bbport.ini "
+                    "skip_intro). Default: on.",
                     command=self.on_quick_patch_toggle)
         self._check(sec, "Skip online/offline choice", self.feat_skip_network_choice,
                     "Skips the screen that asks whether to play online or offline at startup (game patch). "
@@ -1918,7 +2095,9 @@ class BloodborneLauncher(tk.Tk):
                     "R1, Shift+left R2, right click L2, Shift+right L1, middle click lock-on; Space "
                     "dodge, E interact, R item, X Blood Vial... (full list in the settings dialog). "
                     "Replaces the classic keyboard layout while on; a gamepad keeps working. Can be "
-                    "switched in game (Insert > Controls). Default: off (BB_MOUSE_KEYBOARD).")
+                    "switched in game (Insert > Controls). A game setting (bbport.ini mk_enabled). "
+                    "Default: off.",
+                    command=lambda: self.save_game_settings("mk_enabled"))
         prompt_combo = self._combo(
             sec, "Button prompts:", self.prompt_style_var, [c[0] for c in PROMPT_STYLE_CHOICES],
             "The icons in the game's button prompts and key guides. Auto (default): keys after "
@@ -2357,6 +2536,81 @@ class BloodborneLauncher(tk.Tk):
 
     def party_mode(self) -> str:
         return dict(PARTY_MODES).get(self.party_mode_var.get(), "")
+
+    # ---- game settings in bbport.ini (the launcher keeps no copy) ----
+    def update_upscaler_state(self):
+        if hasattr(self, "upscaler_combo"):
+            self.upscaler_combo.config(state="readonly" if self.feat_upscaler.get() else "disabled")
+
+    def save_upscaler(self):
+        """Enable upscaler + the choice: bbport.ini upscaler (off when unchecked); the choice is
+        remembered for re-enabling (launcher_settings.json upscaler_choice)."""
+        self.update_upscaler_state()
+        self.save_game_settings("upscaler")
+        self.save_settings()
+
+    def game_settings_ini(self) -> dict:
+        """Every game setting the launcher shows, as bbport.ini values."""
+        values = upscaler_ini(self.feat_upscaler.get(), self.upscaler_var.get())
+        values.update({key: "1" if var.get() else "0" for key, var in self.ini_flag_vars.items()})
+        values.update(volumetric_ini(self.volumetric_var.get()))
+        values.update(effect_patches_ini(self.enabled_patches))
+        return values
+
+    def save_game_settings(self, *keys):
+        """Writes these game settings (all when none given; "effects" = the effect patches) to
+        bbport.ini, keeping its other keys."""
+        values = self.game_settings_ini()
+        if keys:
+            wanted = set(keys)
+            if "effects" in wanted:
+                wanted |= set(effect_patches_ini(()))
+            values = {k: v for k, v in values.items() if k in wanted}
+        try:
+            update_ini(bbport_ini_path(), values)
+        except OSError as ex:
+            self.log(f"[SETTINGS] Could not save to bbport.ini: {ex}")
+        self._ini_stamp = self.ini_stamp()
+
+    @staticmethod
+    def ini_stamp():
+        try:
+            st = bbport_ini_path().stat()
+            return st.st_mtime_ns, st.st_size
+        except OSError:
+            return None
+
+    def refresh_game_settings(self, force=False):
+        """Re-reads the game settings from bbport.ini (after the game exits; on focus when the file
+        changed), so the launcher shows what was chosen in the game's menus."""
+        stamp = self.ini_stamp()
+        if not force and stamp == getattr(self, "_ini_stamp", None):
+            return
+        self._ini_stamp = stamp
+        ini = read_ini(bbport_ini_path())
+        enabled, label = upscaler_state(ini, self.upscaler_var.get())
+        self.feat_upscaler.set(enabled)
+        self.upscaler_var.set(label)
+        self.update_upscaler_state()
+        for _, key, default, _ in INI_FLAG_SETTINGS:
+            self.ini_flag_vars[key].set(ini_flag_value(ini, key, default))
+        self.volumetric_var.set(volumetric_label(ini))
+        self.enabled_patches = ({n for n in self.enabled_patches
+                                 if n not in EFFECT_PATCHES and n not in MODEL_LOD_PATCHES}
+                                | effect_patches_from_ini(ini))
+        self.sync_quick_patch_vars()
+        self.frame_generation_var.set(frame_generation_label(ini))
+        self.reflex_var.set(reflex_label(ini))
+        self.prompt_style_var.set(prompt_style_label(ini))
+        self.hdr_var.set(str(ini.get("hdr", "0")).strip() not in ("", "0"))
+        self.hdr_peak_var.set(hdr_peak_label(ini))
+        self.hdr_paper_var.set(hdr_paper_white_label(ini))
+        for key, var, default in (("party_hud", self.party_hud, True), ("party_name_tags", self.party_name_tags, True),
+                                  ("party_npc_talk", self.party_npc_talk, True), ("party_pings", self.party_pings, True),
+                                  ("party_through_walls", self.party_through_walls, False),
+                                  ("party_friendly_fire", self.party_friendly_fire, False),
+                                  ("party_share_lamps", self.party_share_lamps, True)):
+            var.set(ini_flag_value(ini, key, default))
 
     def save_frame_generation(self):
         """The Frame generation choice: bbport.ini frame_generation / fg_backend (next start)."""
@@ -2955,7 +3209,9 @@ class BloodborneLauncher(tk.Tk):
         self.update_aniso_desc()
         self.update_res_scaling_state()
         self.update_party_state()
+        self.update_upscaler_state()
         self.save_settings()
+        self.save_game_settings()
         self.log("Preset applied: Vanilla mode (all optional features off, FPS preset=30 native, BB_ANISO=0, all patches off, party off).")
 
     def set_everything_on(self):
@@ -2980,7 +3236,9 @@ class BloodborneLauncher(tk.Tk):
         self.sync_quick_patch_vars()
         self.update_aniso_desc()
         self.update_res_scaling_state()
+        self.update_upscaler_state()
         self.save_settings()
+        self.save_game_settings()
         self.log("Preset applied: Everything on (restored all defaults and recommended patches).")
 
     def on_quick_patch_toggle(self):
@@ -3000,6 +3258,7 @@ class BloodborneLauncher(tk.Tk):
             self.enabled_patches.discard("Disable Motion Blur (perf increase)")
 
         self.save_settings()
+        self.save_game_settings("effects")
 
     def sync_quick_patch_vars(self):
         self.feat_skip_intro.set("Skip Intro" in self.enabled_patches)
@@ -3179,6 +3438,7 @@ class BloodborneLauncher(tk.Tk):
             self.enabled_patches = set(working_set)
             self.sync_quick_patch_vars()
             self.save_settings()
+            self.save_game_settings("effects")
             self.log(f"[PATCHES] Saved {len(self.enabled_patches)} active patch(es): "
                      f"{', '.join(sorted(self.enabled_patches)) if self.enabled_patches else 'None'}")
             dlg.destroy()
@@ -3343,14 +3603,15 @@ class BloodborneLauncher(tk.Tk):
             "fps": self.fps_var.get(),
             "res": self.res_var.get(),
             "aniso": self.aniso_var.get(),
-            "volumetric_res": self.volumetric_var.get(),
             "timeout": self.timeout_var.get().split()[0],
             "mods": self.feat_mods.get(),
             "dream_mirror": self.feat_dream_mirror.get(),
             "lamp_travel": self.feat_lamp_travel.get(),
             "hide_vk": self.hide_vk_var.get(),
-            "feat_upscaler": self.feat_upscaler.get(),
-            "feat_object_motion": self.feat_object_motion.get(),
+            # Game settings (upscaler, object motion, HUD, M&K, shader switches, motion blur resolution,
+            # effect patches) are in bbport.ini; only the last upscaler choice is remembered here.
+            "ini_sync_rev": INI_SYNC_REV,
+            "upscaler_choice": self.upscaler_var.get(),
             "feat_overlay": self.feat_overlay.get(),
             "feat_fps_patch": self.feat_fps_patch.get(),
             "feat_frame_hooks": self.feat_frame_hooks.get(),
@@ -3367,18 +3628,14 @@ class BloodborneLauncher(tk.Tk):
             "feat_save_log": self.feat_save_log.get(),
             "feat_audio_log": self.feat_audio_log.get(),
             "feat_mute_unfocused": self.feat_mute_unfocused.get(),
-            "feat_async_pipelines": self.feat_async_shaders.get(),
-            "feat_gpl": self.feat_gpl.get(),
-            "feat_compile_indicator": self.feat_compile_indicator.get(),
             "feat_shader_precompile": self.feat_shader_precompile.get(),
-            "feat_hud": self.feat_hud.get(),
-            "feat_mouse_keyboard": self.feat_mouse_keyboard.get(),
             "display": dict(self.display_choices).get(self.display_var.get(), ""),
             "gamepad": gamepad,
             "gamepad_name": gamepad_label.removesuffix(" (not connected)") if gamepad else "",
             "preupload": dict(PREUPLOAD_CHOICES).get(self.preupload_var.get(), ""),
             "frames_ahead": dict(FRAMES_AHEAD_CHOICES).get(self.frames_ahead_var.get(), "2"),
-            "enabled_patches": sorted(list(self.enabled_patches)),
+            "enabled_patches": sorted(n for n in self.enabled_patches
+                                      if n not in EFFECT_PATCHES and n not in MODEL_LOD_PATCHES),
             "party_mode": self.party_mode(),
             "party_name": self.party_name_var.get().strip(),
             "party_max": self.party_max_var.get(),
@@ -3540,16 +3797,27 @@ class BloodborneLauncher(tk.Tk):
     def dlss_user_dll() -> Path:
         return party_user_dir() / "dlss" / "nvngx_dlss.dll"
 
-    def dlss_status(self) -> str:
+    def dlss_status(self) -> tuple:
+        """(short status for the DLSS row, its explanation for the row's tooltip)."""
         def found(name):
             return ((party_user_dir() / "dlss" / name).is_file() or (APP_DIR / "out" / name).is_file()
                     or (APP_DIR / name).is_file())
-        frame_generation = "; frame generation runtime found" if found("nvngx_dlssg.dll") else ""
+        fg = found("nvngx_dlssg.dll")
+        fg_detail = (" NVIDIA's frame generation runtime (nvngx_dlssg.dll) was found."
+                     if fg else " No frame generation runtime (nvngx_dlssg.dll) was found.")
         if self.dlss_user_dll().is_file():
-            return "your own (user\\dlss)" + frame_generation
-        if (APP_DIR / "out" / "nvngx_dlss.dll").is_file() or (APP_DIR / "nvngx_dlss.dll").is_file():
-            return "bundled" + frame_generation
-        return "none (DLSS falls back to FSR)"
+            short, detail = "your own", "Now: your own library (user\\dlss\\nvngx_dlss.dll) is used."
+        elif (APP_DIR / "out" / "nvngx_dlss.dll").is_file() or (APP_DIR / "nvngx_dlss.dll").is_file():
+            short, detail = "bundled", "Now: the bundled library next to bbport.exe is used."
+        else:
+            return "none (FSR used)", "Now: no DLSS library was found; DLSS falls back to FSR."
+        return short + (" + FG" if fg else ""), detail + fg_detail
+
+    def update_dlss_status(self):
+        short, detail = self.dlss_status()
+        self.dlss_var.set(short)
+        for tip in getattr(self, "dlss_tips", []):
+            tip.text = self.dlss_base_tip + "\n\n" + detail
 
     def choose_dlss_dll(self):
         # nvngx_dlss.dll (Super Resolution) or nvngx_dlssg.dll (frame generation), kept under its
@@ -3569,7 +3837,7 @@ class BloodborneLauncher(tk.Tk):
             self.log(f"[DLSS] {chosen} copied to {target}")
         except OSError as e:
             self.log(f"[ERROR] Could not copy the DLSS library: {e}")
-        self.dlss_var.set(self.dlss_status())
+        self.update_dlss_status()
 
     def remove_dlss_dll(self):
         try:
@@ -3578,7 +3846,7 @@ class BloodborneLauncher(tk.Tk):
             self.log("[DLSS] Your own DLSS library removed; the bundled one is used")
         except OSError as e:
             self.log(f"[ERROR] Could not remove the DLSS library: {e}")
-        self.dlss_var.set(self.dlss_status())
+        self.update_dlss_status()
 
     def reset_shader_cache(self):
         """Delete the pipeline cache: a damaged entry draws parts of an area wrong until then."""
@@ -3995,6 +4263,7 @@ class BloodborneLauncher(tk.Tk):
         self.launch_btn.config(state="normal")
         self.warper_btn.config(state="normal")
         self.stop_btn.config(state="disabled")
+        self.refresh_game_settings(force=True)  # what was chosen in the game's menus
         self.after(1500, self.check_last_party_session)
         if getattr(self, "_warper_run", False):
             self._warper_run = False
