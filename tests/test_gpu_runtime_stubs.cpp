@@ -55,6 +55,7 @@ int runtime_setjmp(void*) { std::abort(); }
 void* runtime_low_map(size_t, int) { std::abort(); }
 uint64_t runtime_gfx_heap_more_mib() { return 0; }
 uint64_t runtime_memory_pool_size() { return 0; }
+int runtime_extra_direct_map(uint64_t, uint64_t, void**) { std::abort(); }
 void runtime_memory_grow_flexible(uint64_t) { std::abort(); }
 void runtime_pad_director_press(uint32_t) { std::abort(); }
 void runtime_pad_director_sticks(int, int, int, int) { std::abort(); }

@@ -18,6 +18,9 @@
 //   BB_FRAME_POOL_FIX=0    the frame loop's pool borrow (+0x1067f60) is the game's own
 //   BB_RIBBON_FIX=0        the effect ribbon writers (+0x28ce7b0/+0x28ceec0) are the game's own
 //   BB_BLEND_MASK_FIX=0    the blend-state constructor's write mask (+0x2a51640) is not cleared
+//   BB_RENDER_RESOURCE_CACHE_MB=N the render resource cache's backing (+0x216b21d; 160..512, default
+//                          512 in the port's extra direct memory, BB_DMEM_EXTRA_MB; 160: the game's)
+//   BB_KERNEL_CLAMP=0      the blur-kernel base sample count (+0xbbc3e0) is not raised to 3
 #include "bbport_stability.h"
 #include "bbport_stability_logic.h"
 #include "bbport_ribbons.h"
@@ -46,6 +49,7 @@ extern "C" std::uint64_t runtime_gfx_heap_more_mib(void);
 extern "C" std::uint64_t runtime_memory_pool_size(void);
 extern "C" void runtime_memory_grow_flexible(std::uint64_t bytes);
 extern "C" void* runtime_low_map(size_t size, int prot); // src/runtime_memory.c
+extern "C" int runtime_extra_direct_map(std::uint64_t size, std::uint64_t alignment, void** out);
 
 namespace Libraries::GnmDriver {
 bool GpuCaughtUp();
@@ -868,6 +872,71 @@ bool InstallBlendMask() {
     return true;
 }
 
+// ======================================================================================
+// 8. The render resource cache (from deadinside28/bloodborne_pc 0.6). The cache the GX resource
+// allocator +0x26d0d30 serves has its own backing, a 160 MiB range heap set up from a creation
+// record (r14; its size at +0x54). Above 30 FPS it filled before the Laurence cinematic's
+// geometry was prepared, and failed 20-40 KiB allocations left models missing or exploding;
+// 512 MiB survived that peak. Taken from the game's own memory the larger backing starved the
+// areas loaded later (upstream), so the game allocates its 160 MiB as always and the cache gets
+// the port's direct memory past the game's size instead (runtime_extra_direct_map): right after
+// the allocator's Allocate(size, 16) returns (+0x216b21d), its result and the record's size are
+// replaced. BB_RENDER_RESOURCE_CACHE_MB=160: the game's cache as it is.
+// ======================================================================================
+constexpr u64 kCacheBacking = 0x216b21d, kCacheBackingNext = kCacheBacking + 7;
+constexpr u32 kCacheNativeBytes = 160u << 20;
+
+BB_SYSV u64 ResourceCacheBacking(u64 record, u64 allocated) {
+    if (!allocated || Rd32(record + 0x54) != kCacheNativeBytes) {
+        return allocated;
+    }
+    static const u32 bytes = [] {
+        const char* env = std::getenv("BB_RENDER_RESOURCE_CACHE_MB");
+        const long mb = env ? std::strtol(env, nullptr, 10) : 512;
+        return u32(std::clamp(mb, 160l, 512l)) << 20;
+    }();
+    if (bytes == kCacheNativeBytes) {
+        return allocated;
+    }
+    void* block = nullptr;
+    if (const int error = runtime_extra_direct_map(bytes, 64ull << 10, &block); error || !block) {
+        std::printf("Stability: render resource cache: no port memory for %u MiB (error %#x): the game's "
+                    "160 MiB\n",
+                    bytes >> 20, unsigned(error));
+        std::fflush(stdout);
+        return allocated;
+    }
+    // The creation record can be a stack object: not necessarily in the runtime's map.
+    std::memcpy(reinterpret_cast<void*>(record + 0x54), &bytes, sizeof(bytes));
+    std::printf("Stability: render resource cache: %u MiB in the port's memory at %p (the game's 160 MiB "
+                "stays allocated)\n",
+                bytes >> 20, block);
+    std::fflush(stdout);
+    return reinterpret_cast<u64>(block);
+}
+
+bool InstallResourceCache() {
+    // mov rcx, rbx; mov [rcx + 0x10], rax: right after the allocator's Allocate(size, 16) returns.
+    if (!Matches(kCacheBacking, {0x48, 0x89, 0xd9, 0x48, 0x89, 0x41, 0x10})) {
+        std::printf("Stability: render resource cache: guest +0x%llx is not the expected code; left alone\n",
+                    ull(kCacheBacking));
+        return false;
+    }
+    Emitter e = NewStub();
+    e.SkipRedZone();
+    e.SaveVolatile();
+    e.Bytes({0x4c, 0x89, 0xf7});             // mov rdi, r14 (the creation record)
+    e.Bytes({0x48, 0x89, 0xc6});             // mov rsi, rax (the game's allocation)
+    e.CallAbs(reinterpret_cast<const void*>(&ResourceCacheBacking));
+    e.Bytes({0x49, 0x89, 0x44, 0x24, 0x48}); // mov [r12 + 0x48], rax (the saved rax)
+    e.RestoreVolatile();
+    e.BackRedZone();
+    e.Bytes({0x48, 0x89, 0xd9});             // mov rcx, rbx
+    e.Bytes({0x48, 0x89, 0x41, 0x10});       // mov [rcx + 0x10], rax
+    e.JmpTo(reinterpret_cast<u64>(image) + kCacheBackingNext);
+    return WriteBranch(kCacheBacking, 0xe9, PlaceStub(e), 7 - 5);
+}
+
 } // namespace
 
 void PatchImage(unsigned char* image_, std::uint64_t size) {
@@ -900,6 +969,8 @@ void PatchImage(unsigned char* image_, std::uint64_t size) {
     note(std::string("ribbon-fix ") + (ribbons ? "on" : "off"));
     const bool blend = On("BB_BLEND_MASK_FIX") && InstallBlendMask();
     note(std::string("blend-mask-fix ") + (blend ? "on" : "off"));
+    const bool cache = stub_page && InstallResourceCache();
+    note(std::string("resource-cache ") + (cache ? "on" : "off"));
     if (stub_page) {
 #ifdef _WIN32
         DWORD unused = 0;
