@@ -2614,9 +2614,10 @@ void ArrivalRenderCheckTick(const GameSnapshot& s, double now) {
     }
     // The scene drawn with geometry in the probe while the screen is black points past the scene:
     // the upscaler or the frame's post passes.
-    Log("arrival render check %d (%.0f s after the world was up, %s, upscaler %s): %llu of %llu frames drew "
+    Log("arrival render check %d (%.0f s after the world was up, %s, upscaler %s%s): %llu of %llu frames drew "
         "the 3D scene, %llu draws; %s; %s; textures %llu MiB (pressure %llu, critical %llu MiB), %llu freed since",
         arrivals, marks[step], MapName(LocalMap()).c_str(), BbSettings::UpscalerName(BbSettings::Get().upscaler.load()),
+        BbSettings::Get().upscaler_scene_above_output.load() ? " not running: the scene is larger than the output" : "",
         ull(scenes), ull(frames), ull(draws), cam_text,
         probe_text, ull(BbStats::gc_used_bytes.load() >> 20), ull(BbStats::gc_pressure_bytes.load() >> 20),
         ull(BbStats::gc_critical_bytes.load() >> 20), ull(BbStats::gc_freed_total.load() - freed0));
@@ -3572,6 +3573,7 @@ struct DeathFields {
     int m8_1b4 = 0, m8_1b8 = 0;  // [+0x3B0] +8: +0x1B4 / +0x1B8 (death kind 2/9, 2)
     u16 m20_200 = 0;       // HP module [+0x3B0] +0x20 +0x200 (dead mode / no-dead bits)
     int type = 0;          // +0x78
+    float draw = 0;        // +0x208 draw factor (1 -> 0 in the death dissolve; issue #4 item 4 diagnostics)
     float alpha = 0, alpha_rate = 0;  // +0x20C draw alpha, +0x210 its rate (ChrFadeIn / ChrFadeOut 0x1339010 / 0x13390B0)
     int upd_state = 0;     // [+0x18] +0x10 (4: disabled, IsDisable 0x1337E70), +0x20 bits
     u8 upd_bits = 0;
@@ -3590,6 +3592,7 @@ bool ReadDeathFields(u64 chr, DeathFields* d) {
     d->m8_1b8 = Field<int>(m8, 0x1b8);
     d->m20_200 = Field<u16>(m20, 0x200);
     d->type = Field<int>(chr, 0x78);
+    d->draw = Field<float>(chr, 0x208);
     d->alpha = Field<float>(chr, 0x20c);
     d->alpha_rate = Field<float>(chr, 0x210);
     d->upd_state = Field<int>(Field<u64>(chr, 0x18), 0x10);
@@ -3599,10 +3602,10 @@ bool ReadDeathFields(u64 chr, DeathFields* d) {
 std::string DescribeDeathFields(const DeathFields& d) {
     char b[260];
     std::snprintf(b, sizeof b,
-                  "+0x1e1 %010llx ctrl+0x114 %04x ctrl38+0x48 %02x m8 %d/%d hp+0x200 %04x type %d alpha %.2f (%+.2f/s) "
+                  "+0x1e1 %010llx ctrl+0x114 %04x ctrl38+0x48 %02x m8 %d/%d hp+0x200 %04x type %d draw %.2f alpha %.2f (%+.2f/s) "
                   "upd %d/%02x",
                   ull(d.f1e1), unsigned(d.ctrl114), unsigned(d.ctrl38_48), d.m8_1b4, d.m8_1b8, unsigned(d.m20_200),
-                  d.type, double(d.alpha), double(d.alpha_rate), d.upd_state, unsigned(d.upd_bits));
+                  d.type, double(d.draw), double(d.alpha), double(d.alpha_rate), d.upd_state, unsigned(d.upd_bits));
     return b;
 }
 DeathFields g_alive_fields;  // main thread: the host's, last seen alive

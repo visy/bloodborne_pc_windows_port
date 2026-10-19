@@ -1829,7 +1829,20 @@ void TemporalUpscaler::RunScaled() {
     const u32 iw = color.info.size.width, ih = color.info.size.height;
     const auto [w, h] = SceneSize(iw, ih);
     const u32 ow = target_width, oh = target_height;
-    if (depth.info.size.width != iw || depth.info.size.height != ih || w > ow || h > oh) {
+    if (depth.info.size.width != iw || depth.info.size.height != ih) {
+        return;
+    }
+    const bool above = UiComposition::SceneAboveOutput(w, h, ow, oh);
+    BbSettings::Get().upscaler_scene_above_output.store(above, std::memory_order_relaxed);
+    if (above) {
+        static bool told = false;
+        if (!told) {
+            told = true;
+            std::printf("Upscaler: the scene (%ux%u) is larger than the output (%ux%u): %s does not "
+                        "run (it only upscales); the scene is scaled down by a copy. A render "
+                        "resolution at or below the output uses it.\n",
+                        w, h, ow, oh, BbSettings::UpscalerName(BbSettings::Get().upscaler.load()));
+        }
         return;
     }
     if (!EnsureResources(w, h, ow, oh, false)) {
