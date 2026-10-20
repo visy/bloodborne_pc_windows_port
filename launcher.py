@@ -1764,6 +1764,8 @@ class BloodborneLauncher(tk.Tk):
         # Pings (I2): game settings (bbport.ini party_pings on, party_through_walls off by default).
         self.party_pings = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_pings"))
         self.party_through_walls = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_through_walls", False))
+        # The marker on the own lost-echoes bloodstain (bbport.ini party_stain_marker, off by default).
+        self.party_stain_marker = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_stain_marker", False))
         # I1 friendly fire / PvP: a host rule (bbport.ini party_friendly_fire, off by default).
         self.party_friendly_fire = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_friendly_fire", False))
         # Shared lamps (statsaudit finding 5): a host rule (bbport.ini party_share_lamps, on by default).
@@ -2402,6 +2404,12 @@ class BloodborneLauncher(tk.Tk):
                                "walls and trees in the companion's colour. Also in the game: System > Pings. "
                                "Default: off (bbport.ini party_through_walls).",
                                command=self.save_party_through_walls)
+        stain_cb = self._check(sec, "Bloodstain marker", self.party_stain_marker,
+                               "A red drop with \"Blood Echoes\" and the distance on the bloodstain of your lost "
+                               "echoes in the host's world, drawn over walls. The bloodstain is there either "
+                               "way. Also in the game: System > Pings. Default: off (bbport.ini "
+                               "party_stain_marker).",
+                               command=self.save_party_stain_marker)
         ff_cb = self._check(sec, "Friendly fire / PvP (host)", self.party_friendly_fire,
                             "Host only: party members can hurt each other, both ways, like invaders (ERSC's "
                             "Judicator's Rulebook). A party kill is a normal party death; the killer gets no "
@@ -2536,7 +2544,7 @@ class BloodborneLauncher(tk.Tk):
 
         # Fields enabled in each mode: on (host or join), host only, join only
         self.party_widgets_on = [name_lbl, self.party_name_entry, self.party_max_combo, auto_cb, seamless_cb,
-                                 dsummon_cb, hud_cb, tags_cb, npc_talk_cb, pings_cb, walls_cb, save_cb,
+                                 dsummon_cb, hud_cb, tags_cb, npc_talk_cb, pings_cb, walls_cb, stain_cb, save_cb,
                                  port_lbl, self.party_port_entry, upnp_cb, rdv_cb, stun_lbl, self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
         self.party_widgets_host = [ff_cb, lamps_cb, public_lbl, self.party_public_entry,
@@ -2622,6 +2630,7 @@ class BloodborneLauncher(tk.Tk):
         for key, var, default in (("party_hud", self.party_hud, True), ("party_name_tags", self.party_name_tags, True),
                                   ("party_npc_talk", self.party_npc_talk, True), ("party_pings", self.party_pings, True),
                                   ("party_through_walls", self.party_through_walls, False),
+                                  ("party_stain_marker", self.party_stain_marker, False),
                                   ("party_friendly_fire", self.party_friendly_fire, False),
                                   ("party_share_lamps", self.party_share_lamps, True)):
             var.set(ini_flag_value(ini, key, default))
@@ -2705,6 +2714,13 @@ class BloodborneLauncher(tk.Tk):
             update_ini(bbport_ini_path(), {"party_through_walls": "1" if self.party_through_walls.get() else "0"})
         except OSError as ex:
             self.log(f"[PARTY] Could not save the Show party through walls setting to bbport.ini: {ex}")
+
+    def save_party_stain_marker(self):
+        """The Bloodstain marker checkbox: bbport.ini party_stain_marker (in game: System > Pings)."""
+        try:
+            update_ini(bbport_ini_path(), {"party_stain_marker": "1" if self.party_stain_marker.get() else "0"})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save the Bloodstain marker setting to bbport.ini: {ex}")
 
     def on_party_change(self):
         self.update_party_state()

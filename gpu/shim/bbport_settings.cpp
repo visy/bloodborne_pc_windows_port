@@ -177,6 +177,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_pings = i != 0;
     } else if (key == "party_through_walls") {
         v.party_through_walls = i != 0;
+    } else if (key == "party_stain_marker") {
+        v.party_stain_marker = i != 0;
     } else if (key == "party_friendly_fire") {
         v.party_friendly_fire = i != 0;
     } else if (key == "party_share_lamps") {
@@ -582,6 +584,7 @@ void Save() {
     put("party_npc_talk", flag(v.party_npc_talk));
     put("party_pings", flag(v.party_pings));
     put("party_through_walls", flag(v.party_through_walls));
+    put("party_stain_marker", flag(v.party_stain_marker));
     put("party_friendly_fire", flag(v.party_friendly_fire));
     put("party_share_lamps", flag(v.party_share_lamps));
     put("party_rendezvous", flag(v.party_rendezvous));
