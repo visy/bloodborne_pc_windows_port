@@ -394,6 +394,18 @@ row chosen again leaves `+0xEC0` unchanged). A choice / gift line stays under th
 listener writes no subtitle request and draws no caption (live: both were drawn across the
 "Travel with the party?" text).
 
+**Only conversations (2026-10-20).** The workbench (t210692), the Bath Messengers' shops (t210691,
+t210698), storage and the headstones (t210000) are talk scripts with a talk menu but no talk line.
+Their choices went out with the talk id of that player's last conversation, so the others saw
+"[Hunter talking to the Doll]" (or Gehrman) at the workbench (2026-10-20 session logs: `choice from
+... npc 210692 (the Doll)`). A choice is now shared only when its NPC spoke this game's last talk
+line (`ChoiceInConversation`); the others are logged on the talker (`local choice: ... a menu
+without talk (workbench, shop, headstone), not shared`). Live 2026-10-20 (uifix, guest in the
+host's Dream, one session): the Doll's talk and "Channel Blood Echoes" showed the caption on the host
+(`choice shown: Hunter1 chose: Channel Blood Echoes`); the workbench's "Fortify Weapon" and the
+messenger's "Acquire Items" (a purchase) were logged as not shared on the guest, and the host logged
+no npc_talk line and showed no caption (screenshots while the guest's workbench menu was open).
+
 **Live (2026-10-14, npctalk2, 2 instances in the Hunter's Dream).** Lines: each shared line reached
 the listener 9-30 ms after the talker's line; ends: the talker's talk stop reached the listener 10-30
 ms later (the subtitle went with the talker's, screenshots); a line the talker holds past its speaking

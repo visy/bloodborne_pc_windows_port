@@ -433,7 +433,7 @@ Texts CopyValue(const std::string& code, int which) {
     return code.empty() ? T2("Not known yet", "Ещё неизвестен") : T2("Copy", "Копировать");
 }
 
-/// The Party page's own rows (orders 10..40): status, copy code (two rows for a host with an
+/// The Party page's own rows (orders 10..40): status, rot, copy code (two rows for a host with an
 /// Internet and a LAN code), rejoin, leave. The join/leave notices switch and the last event are
 /// on the Party members page (room for the party flow's rows here).
 void DefineBuiltinPartyRows() {
@@ -469,6 +469,37 @@ void DefineBuiltinPartyRows() {
     };
     status.visible = [](const B&) { return !(status_hooks.hidden && status_hooks.hidden()); };
     party_rows.push_back({status});
+
+    // C4: this player's rot now and what it does (party_balance; each player has its own, under
+    // the host's "Rot on death" rule).
+    PartyRow rot;
+    rot.order = 15;
+    rot.name = [](const B&) { return T2("Rot", "Гниль"); };
+    rot.value = [](const B&) {
+        int kind[ps::kRotKinds];
+        ps::Rot(kind);
+        int n = 0;
+        for (int k : kind) n += k;
+        if (n == 0) return T2("None", "Нет");
+        const std::string v = std::to_string(std::min(n, coop::balance::kRotMaxStacks)) + "/" +
+                              std::to_string(coop::balance::kRotMaxStacks);
+        return Texts{v, v};
+    };
+    rot.help = [](const B&) {
+        int kind[ps::kRotKinds];
+        ps::Rot(kind);
+        const std::string en = coop::balance::DescribeRot(kind, false), ru = coop::balance::DescribeRot(kind, true);
+        if (en.empty())
+            return T2("No rot. Each death adds a stack (Party rules > Rot on death)",
+                      "Гнили нет. Каждая смерть добавляет её (Правила группы > Гниль при смерти)");
+        // All five kinds fill the help line: the lamp hint only while it fits.
+        const auto with = [](const std::string& t, const char* hint) {
+            return Utf16((t + hint).c_str()).size() <= MaxHelpLength ? t + hint : t;
+        };
+        return Texts{with(en, ". A lamp rest cleanses it"), with(ru, ". Отдых у фонаря снимает")};
+    };
+    rot.visible = [](const B& b) { return Running(b); };
+    party_rows.push_back({rot});
 
     // Copy the party code: one row per code, the value shows the code ("Copied" for a moment).
     // A host has two (party_status.h lan_code): Internet (friends elsewhere) and LAN (same network).
@@ -1100,6 +1131,11 @@ void DefineAll() {
     AddRow(Flag(&Values::party_through_walls), AddText("Show party through walls", "Группа сквозь стены"),
            AddText("A small marker with the distance on each companion on your map, also behind walls",
                    "Маленькая метка с расстоянием на каждом спутнике на вашей карте, и за стенами"),
+           toggle, Kind::Toggle);
+    // The marker on the own lost-echoes bloodstain (bbport_overlay PartyStainMarker), off by default.
+    AddRow(Flag(&Values::party_stain_marker), AddText("Bloodstain marker", "Метка пятна крови"),
+           AddText("A marker with Blood Echoes and distance on your lost echoes' bloodstain, also behind walls",
+                   "Метка с отголосками и расстоянием на пятне крови с вашими отголосками, и за стенами"),
            toggle, Kind::Toggle);
 
     // ---- Friendly fire / PvP (I1, party_pvp.h): a party rule only the host sets (ERSC's

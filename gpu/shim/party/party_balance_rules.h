@@ -155,6 +155,11 @@ std::string FormatRotFile(const RotFile& f);
 /// The loaded character's rot is another one's: a known save slot that is not the active one.
 bool RotSlotChanged(int active_slot, int current_slot);
 
+/// C4 rot as the player sees it (System > Party, the party HUD): "Rot 3/5: max HP -20 %, stamina
+/// costs +10 %" from the stacks per kind (party_rot.txt's order: health, stamina, stamina cost,
+/// rally, discovery); empty without stacks.
+std::string DescribeRot(const int kind[kRotFileKinds], bool russian);
+
 /// Short value texts for the menu (help line): "150 % (+75 % HP per extra hunter)".
 std::string DescribeHp(int percent, bool russian);
 std::string DescribeDamage(int percent, bool russian);
