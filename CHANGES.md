@@ -3,7 +3,7 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
-## Unreleased
+## 0.6.9 (Windows port 0.6.9, co-op fixes from PR #6 and its reports)
 
 - **Fixed: a guest can be hurt again after dying** (PR #6 report, vladtepes22): a guest that died outside a boss fight and got up at its lamp without a loading screen could not be hit until its next load (enemy attacks passed through it). A guest's death now always gets the short respawn loading screen at the lamp, which brings it back whole. The old in-place revive stays behind `BB_PARTY_GUEST_REVIVE_INPLACE=1` while it is investigated.
 - **Fixed: a boss killed while the host lies dead in the fight stays dead** (PR #6, vladtepes22): when the guests finished the boss while the host was spectating, the party's respawn load started as soon as the boss's HP reached 0, before the game's defeat event had saved the kill, and the boss came back after the load (Father Gascoigne, full health). The load now waits until the boss bar clears (at least 3 s, at most 20 s after the kill).
