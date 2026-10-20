@@ -3,6 +3,10 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## Unreleased
+
+- **Fixed: joining over a VPN when the host has no open port** (PR #7, vladtepes22): the 0.6.9 VPN fix rewrote the host's address but not its STUN-found public address, which the guest's game still preferred, so the join timed out (live over Radmin). Both now take the address the party connection reached.
+
 ## 0.6.9 (Windows port 0.6.9, co-op fixes from PR #6 and its reports)
 
 - **Fixed: a guest can be hurt again after dying** (PR #6 report, vladtepes22): a guest that died outside a boss fight and got up at its lamp without a loading screen could not be hit until its next load (enemy attacks passed through it). A guest's death now always gets the short respawn loading screen at the lamp, which brings it back whole. The old in-place revive stays behind `BB_PARTY_GUEST_REVIVE_INPLACE=1` while it is investigated.
