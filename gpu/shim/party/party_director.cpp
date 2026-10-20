@@ -25,6 +25,7 @@
 #include "party_catchup.h"
 #include "party_status_bridge.h"
 #include "party_chalice.h"
+#include "party_gestures.h"
 #include "party_items.h"
 #include "party_npc_test.h"
 #include "party_guestsvc.h"
@@ -3541,6 +3542,11 @@ void PartyDirector::Tick() {
         if (chalice::PopHostGoods(&chalices)) {
             link->post_event(party::kBroadcast, chalice::kGoodsEventName, chalice::GoodsToJsonText(chalices));
         }
+        // The party's gestures (the host's own and those it learned from the guests; party_gestures.h).
+        std::vector<std::uint32_t> gestures;
+        if (gestures::PopOwn(&gestures)) {
+            link->post_event(party::kBroadcast, gestures::kEventName, gestures::ToJsonText(gestures));
+        }
         // The host's own online id: the party's dungeon at its altar is another member's ritual.
         static Clock::time_point host_name_at{};
         if (Seconds(host_name_at, Clock::now()) >= 2.0) {
@@ -3560,6 +3566,10 @@ void PartyDirector::Tick() {
         std::vector<std::uint32_t> chalices;
         if (chalice::PopHostGoods(&chalices)) {
             link->post_event(party::kHostSlot, chalice::kGoodsEventName, chalice::GoodsToJsonText(chalices));
+        }
+        std::vector<std::uint32_t> gestures;  // its gestures go to the host (party_gestures.h)
+        if (gestures::PopOwn(&gestures)) {
+            link->post_event(party::kHostSlot, gestures::kEventName, gestures::ToJsonText(gestures));
         }
         std::string form;  // its own ritual dungeon's FormData for the host's board
         if (chalice::PopGuestForm(&form)) {
@@ -4069,6 +4079,7 @@ void CoopTick() {
     z.Next(Zone::Director);
     PartyDirector::Get().Tick();
     chalice::Tick(PartyDirector::Get().Role() == PartyRole::Host); // the local dungeon, the party's chalices
+    gestures::Tick(PartyDirector::Get().Role() == PartyRole::Host); // the party's gestures (party_gestures.h)
     z.Next(Zone::Travel);
     TravelTick(); // B1 guest replay (party_travel.h)
     lamptravel::Tick(); // direct lamp travel's warp menu choice (lamp_travel.h)

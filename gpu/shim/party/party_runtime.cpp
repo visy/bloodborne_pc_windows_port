@@ -4,6 +4,7 @@
 #include "party_runtime.h"
 #include "party_async_io.h"
 #include "party_chalice.h"
+#include "party_gestures.h"
 
 #include "party_addr.h"
 #include "party_code.h"
@@ -1165,6 +1166,13 @@ LinkCallbacks make_callbacks(bool host) {
                 else plog("%s event from slot %d: %s", name.c_str(), slot, err.c_str());
                 return;
             }
+            if (name == coop::gestures::kEventName) {  // a guest's gestures (party_gestures.h)
+                std::vector<std::uint32_t> ids;
+                std::string err;
+                if (coop::gestures::FromJsonText(body, &ids, &err)) coop::gestures::RequestPeer(ids);
+                else plog("%s event from slot %d: %s", name.c_str(), slot, err.c_str());
+                return;
+            }
             if (name == coop::desync::kCensusAskEvent) {  // a guest's enemy census differs from the digest
                 std::string err;
                 if (!coop::desync::HostQueueCensusAsk(slot, body, &err)) plog("census_ask from slot %d refused: %s", slot, err.c_str());
@@ -1308,6 +1316,13 @@ LinkCallbacks make_callbacks(bool host) {
                 } else {
                     plog("%s event: %s", name.c_str(), err.c_str());
                 }
+                return;
+            }
+            if (name == coop::gestures::kEventName) {  // the host's (the party's) gestures (party_gestures.h)
+                std::vector<std::uint32_t> ids;
+                std::string err;
+                if (coop::gestures::FromJsonText(body, &ids, &err)) coop::gestures::RequestPeer(ids);
+                else plog("%s event: %s", name.c_str(), err.c_str());
                 return;
             }
             if (name == coop::chalice::kGoodsEventName) {  // the host's chalices (party_chalice.h)
