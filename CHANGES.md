@@ -5,6 +5,8 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Fixed: a guest is no longer locked up after the host dies**: a few seconds after the host's death the game ran its own "the host has died" script on every guest, which blocked the guest's menus and left it unable to pick things up or use prompts until its next loading screen (for the whole wait when the host died in a boss fight). The party moves its guests itself after a host death, so a guest now skips that script; the host's own death is unchanged. `BB_PARTY_HOSTDEAD_SKIP=0` brings the old behaviour back.
+- **Added: a party host-death lock log** for reports of a guest that cannot move or open menus after the host died: Launcher > Diagnostics > "Party host-death lock log" (off by default, `BB_HOSTDEAD_LOG=1`) writes four lines a second on a guest from the host's death until the next load.
 - **Fixed: joining over a VPN when the host has no open port** (PR #7, vladtepes22): the 0.6.9 VPN fix rewrote the host's address but not its STUN-found public address, which the guest's game still preferred, so the join timed out (live over Radmin). Both now take the address the party connection reached.
 
 ## 0.6.9 (Windows port 0.6.9, co-op fixes from PR #6 and its reports)

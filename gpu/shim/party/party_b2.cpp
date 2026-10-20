@@ -460,6 +460,147 @@ bool SendHomeVeto(u64 site) {
     return false;
 }
 
+// K12: the guest's HostDead Lua state 0x1381870 (event 4000: the host's death event, packet 0x0E,
+// ~4.5 s after the host's HP 0). Its member path sets flag 4047 (0x132E5A0), runs 0x1386960 (the
+// "host died" banner 103101, the death-pending byte [0x553B130] +0x70) and starts the Lua timer
+// 4000 (0x132B1C0): "EventMenuBrake" for its 5 s (the menu brake) and then HostDead_1 0x1381A60
+// (*0x553B0D8 = 2, GSM +0x1520 = 1, the last-lamp selector 0x1332BC0(-1), the send-home 0x13CDE30
+// that K9 drops). Nothing but a load cleared them: the guest stood frozen until the party's
+// respawn load, the whole boss-fight limbo, or (host revive in place) until its next load
+// (triage bugs 6, 12, 18). With B2 the host's death travel (or its limbo / revive) moves the
+// party, so on a party guest the state does nothing: an early return, like the game's own for
+// role 3 (it then leaves the state's +0x8D unset too). An invader (chr type 2: the "PK success"
+// path) and type 8 keep the game's code. Lead: deadinside's BBSC notes (docs/upstream/
+// deadinside_0.6-pre1.md); facts only.
+// BB_PARTY_HOSTDEAD_SKIP (test fixture): 0 = the game's HostDead on a guest too (K9 then drops
+// only the send-home, as before); N >= 2 = the game's for the first N - 1 host deaths of this run,
+// skipped from the Nth (a before / after in one session). Default 1: always skipped.
+constexpr u64 kHostDeadState = 0x1381870;
+void* g_hostdead_orig = nullptr;
+std::atomic<int> g_hostdead_runs{0};      // HostDead entries on a party guest (this process)
+std::atomic<double> g_hostdead_at{0};     // the last one (BB_HOSTDEAD_LOG)
+std::atomic<bool> g_hostdead_skipped{false};
+
+int HostDeadSkipFrom() {
+    static const int from = [] {
+        const char* v = std::getenv("BB_PARTY_HOSTDEAD_SKIP");
+        return v && v[0] ? std::max(0, std::atoi(v)) : 1;
+    }();
+    return from;
+}
+
+BB_COOP_SYSV void HostDeadHook(u64 ctx, u64 state) {
+    if (g_on.load() && Role() == RoleClient) {
+        const int n = ++g_hostdead_runs;
+        g_hostdead_at = Now();
+        const u64 me = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+        const int type = Field<int>(me, 0x78, -1);
+        const int from = HostDeadSkipFrom();
+        if (deathrules::SkipGuestHostDead(true, RoleClient, type, from, n)) {
+            g_hostdead_skipped = true;
+            Log("K12: the host's death event: the guest's HostDead state skipped (no flag 4047, death-pending byte, "
+                "menu brake or send-home; the party's own host-death path moves this guest; #%d)", n);
+            return;
+        }
+        g_hostdead_skipped = false;
+        Log("K12: the host's death event: the game's HostDead state runs (chr type %d, BB_PARTY_HOSTDEAD_SKIP=%d, #%d)",
+            type, from, n);
+    }
+    using Fn = void(BB_COOP_SYSV*)(u64, u64);
+    reinterpret_cast<Fn>(g_hostdead_orig)(ctx, state);
+}
+
+/// BB_HOSTDEAD_LOG=1 (launcher: Diagnostics > Party host-death lock log; off by default): on a
+/// party guest, from the host's death (its chr here at HP 0, or the HostDead event) until the next
+/// load, the host alive again or 3 min: every 0.25 s the HostDead locks (flag 4047, [0x553B130]
+/// +0x70, the menu brake MenuMan +0x2DC, *0x553B0D8, GSM +0x1520), the own ChrCtrl +0x114, the
+/// left stick the game read and how far the own chr moved (a frozen guest: stick held, 0 m).
+bool HostDeadLogOn() {
+    static const bool on = [] {
+        const char* v = std::getenv("BB_HOSTDEAD_LOG");
+        return v && v[0] == '1';
+    }();
+    return on;
+}
+
+extern "C" std::uint32_t runtime_pad_last_left(void);  // src/runtime_pad.c
+
+void HostDeadLockTick(const GameSnapshot& s, double now) {
+    if (!HostDeadLogOn() || !g_on.load()) {
+        return;
+    }
+    static double start = 0, next = 0, alive_since = 0;
+    static float last[3] = {};
+    static bool have_last = false, host_was_down = false;
+    static double seen_event = 0;
+    // The host's chr here (its member task: slot 0) at HP 0.
+    int host_hp = -1;
+    for (const TaskInfo& t : Tasks(false)) {
+        if ((t.mode == 1 || t.mode == 2) && t.slot == 0) {
+            const u64 c = PlayerForPeer(t.task + kTaskPeer);
+            host_hp = c ? Field<int>(Field<u64>(Field<u64>(c, 0x3b0), 0x20), 0xf8, -1) : -1;
+            break;
+        }
+    }
+    const bool host_down = host_hp == 0;
+    const double ev = g_hostdead_at.load();
+    const bool loading = s.loading || !s.world_up;
+    if (start <= 0) {
+        if (Role() == RoleClient && !loading && ((host_down && !host_was_down) || (ev > 0 && ev != seen_event))) {
+            start = now;
+            next = now;
+            alive_since = 0;
+            have_last = false;
+            Log("hostdead lock log: start (%s)", host_down ? "the host's chr here at HP 0" : "HostDead event");
+        }
+        host_was_down = host_down;
+        seen_event = ev;
+        if (start <= 0) {
+            return;
+        }
+    }
+    host_was_down = host_down;
+    seen_event = ev;
+    alive_since = host_hp > 0 ? (alive_since > 0 ? alive_since : now) : 0;
+    const char* end = loading ? "a load" : (alive_since > 0 && now - alive_since >= 2.0) ? "the host alive again"
+                                           : now - start > 180.0 ? "3 min" : nullptr;
+    if (end) {
+        Log("hostdead lock log: end after %.1f s (%s)", now - start, end);
+        start = 0;
+        return;
+    }
+    if (now < next) {
+        return;
+    }
+    next = now + 0.25;
+    bool f4047 = false;
+    const bool f_ok = ReadEventFlag(4047, &f4047);
+    const u8 pending = Field<u8>(Slot(kSlotGameData), 0x70);
+    const u8 brake = Field<u8>(Slot(0x5562878), 0x2dc);
+    const int evstate = Field<int>(Slot(0x553b0d8), 0, -1);
+    const u8 forced = Field<u8>(Slot(kSlotGsm), 0x1520);
+    const u64 me = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+    const u32 ctrl = Field<u32>(Field<u64>(me, 0x58), 0x114);
+    const u32 stick = runtime_pad_last_left();
+    const int lx = int(stick & 0xff), ly = int((stick >> 8) & 0xff);
+    float p[3] = {};
+    float moved = -1.0f;
+    if (me && ChrPos(me, p)) {
+        if (have_last) {
+            const float dx = p[0] - last[0], dz = p[2] - last[2];
+            moved = std::sqrt(dx * dx + dz * dz);
+        }
+        std::memcpy(last, p, sizeof last);
+        have_last = true;
+    }
+    Log("hostdead lock: +%.2f s flag4047 %s gdm+0x70 %u menu+0x2dc %u *0x553b0d8 %d gsm+0x1520 %u ctrl+0x114 %08x "
+        "stick %d,%d%s moved %.2f m hp %d host hp %d menu+0x78 %d%s",
+        now - start, f_ok ? (f4047 ? "1" : "0") : "?", unsigned(pending), unsigned(brake), evstate, unsigned(forced),
+        ctrl, lx, ly, (std::abs(lx - 128) > 48 || std::abs(ly - 128) > 48) ? " (held)" : "", double(moved),
+        Field<int>(Field<u64>(Field<u64>(me, 0x3b0), 0x20), 0xf8, -1), host_hp, Field<int>(Slot(0x5562878), 0x78, -1),
+        g_hostdead_skipped.load() ? " [K12 skipped]" : "");
+}
+
 // K10: the boss-clear Lua states' BeginLeaveSession (0x13858F5 in BlockClear2_1 0x13858A0,
 // 0x1385A95 in BlockClear2_3 0x13859F0): the party stays in the session after the boss. Both
 // roles run these states after a kill (live run r3: the host left 12 s after the kill, which
@@ -8108,6 +8249,12 @@ void Init() {
                       &ChrPreStepHook, "remote chr stale map hit guard (0x18CB0E0)")) {
         Log("remote chr stale map hit guard: NOT installed (bytes differ)");
     }
+    // K12: the guest's HostDead state (push rbp; mov rbp, rsp; push r15: 6 bytes, position-independent).
+    if (!ReplacePrologue(kHostDeadState, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, reinterpret_cast<const void*>(&HostDeadHook),
+                         &g_hostdead_orig, "B2 K12 guest HostDead state (0x1381870)")) {
+        g_hostdead_orig = nullptr;
+        Log("K12: guest HostDead state hook NOT installed (bytes differ)");
+    }
     SetSendHomeVeto(&SendHomeVeto);
     SetGuestDeathHold(&HoldGuestDeath);
     SetHostDeathIntercept(&HostDeathIntercept);
@@ -8466,6 +8613,7 @@ void Tick(const GameSnapshot& s) {
     TestBossTick(s, now);
     ArrivalWatchTick(s, now);
     ArrivalRenderCheckTick(s, now);
+    HostDeadLockTick(s, now);
     MemberSessionTypeTick(s);
     GuestChrTypeTick(s);
     BannerRejoinTick();
