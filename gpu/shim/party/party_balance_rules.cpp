@@ -268,6 +268,30 @@ std::string DescribeDamage(int percent, bool russian) {
     return b;
 }
 
+std::string DescribeRot(const int kind[kRotFileKinds], bool russian) {
+    // Per stack, as party_balance's UpdateRotFactor applies them.
+    static const char* const kEn[kRotFileKinds] = {"max HP -%d %%", "max stamina -%d %%", "stamina costs +%d %%",
+                                                    "rally -%d %%", "item discovery -%d"};
+    static const char* const kRu[kRotFileKinds] = {"здоровье -%d %%", "выносливость -%d %%", "траты выносл. +%d %%",
+                                                    "отыгрыш -%d %%", "находки -%d"};
+    static const int kPer[kRotFileKinds] = {kRotHpPercentPerStack, kRotHpPercentPerStack, 10, 15, 10};
+    int stacks = 0;
+    std::string what;
+    for (int k = 0; k < kRotFileKinds; ++k) {
+        const int n = std::clamp(kind[k], 0, kRotMaxStacks);
+        if (n == 0) continue;
+        stacks += n;
+        char b[64];
+        std::snprintf(b, sizeof b, russian ? kRu[k] : kEn[k], std::min(n * kPer[k], 100));
+        what += (what.empty() ? "" : ", ") + std::string(b);
+    }
+    if (stacks == 0) return {};
+    char head[32];
+    std::snprintf(head, sizeof head, russian ? "Гниль %d/%d: " : "Rot %d/%d: ", std::min(stacks, kRotMaxStacks),
+                  kRotMaxStacks);
+    return head + what;
+}
+
 std::string DescribePoise(int percent, bool russian) {
     char b[96];
     const int per = static_cast<int>(std::lround(percent * kVanillaPoiseStep / 100.0));

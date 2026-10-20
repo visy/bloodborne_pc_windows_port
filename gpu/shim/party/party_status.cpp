@@ -199,6 +199,16 @@ bool ShareLamps() {
     return g_share_lamps.load();
 }
 
+namespace {
+std::atomic<int> g_rot[kRotKinds];
+}  // namespace
+void SetRot(const int kind[kRotKinds]) {
+    for (int k = 0; k < kRotKinds; ++k) g_rot[k].store(kind[k]);
+}
+void Rot(int kind[kRotKinds]) {
+    for (int k = 0; k < kRotKinds; ++k) kind[k] = g_rot[k].load();
+}
+
 std::uint64_t AlertSeq() {
     return alert_seq.load(std::memory_order_acquire);
 }

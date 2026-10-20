@@ -198,6 +198,11 @@ struct Values {
     /// I2: every party member on this map drawn through walls as a small marker with its distance
     /// in its colour (ini party_through_walls; off by default: busy next to the name plates). Live.
     std::atomic<bool> party_through_walls{false};
+    /// The marker on this player's own lost-echoes bloodstain in the host's world ("Blood Echoes N"
+    /// with the distance, through walls; party_ping StainMark). Off by default (user decision
+    /// 2026-10-20); the bloodstain and its echoes are there either way (ini party_stain_marker; env
+    /// BB_PARTY_STAIN_MARKER overrides). Live, local.
+    std::atomic<bool> party_stain_marker{false};
     /// I1: friendly fire / PvP - party members can hurt each other (party_pvp.h). A party rule: the
     /// host's value is sent to every guest, a guest's own value never counts. Off by default (ini
     /// party_friendly_fire; env BB_PARTY_FRIENDLY_FIRE=0/1 overrides at start). Live.
