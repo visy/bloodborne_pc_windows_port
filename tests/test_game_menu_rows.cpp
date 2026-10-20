@@ -123,6 +123,34 @@ static void EveryState() {
 
 /// The states players reported.
 static void Reported() {
+    {
+        // A running host with both codes: New party code (two presses) fits the six rows; a guest
+        // never sees it.
+        context = {};
+        context.party_process = context.party_save = context.host = context.in_world = context.link_active = true;
+        ps::ResetForTest(true);
+        ps::SetRole(ps::Role::Host);
+        ps::SetState(ps::State::Hosting);
+        ps::SetCode("BBP1-AAAA-BBBB-CCCC");
+        ps::SetLanCode("BBP1-DDDD-EEEE-FFFF");
+        P::Load();
+        const P::Page& page = PageNamed("Party");
+        const auto names = Names(page);
+        assert(names.size() == 6 && Has(names, "New party code") && Has(names, "Leave the party"));
+        ps::ResetForTest(true);
+        ps::SetRole(ps::Role::Guest);
+        ps::SetState(ps::State::Joined);
+        P::Load();
+        assert(!Has(Names(page), "New party code"));
+        // The host's press queues the command (the board says host); a guest's would not.
+        ps::ResetForTest(true);
+        ps::SetRole(ps::Role::Host);
+        assert(ps::RequestNewCode());
+        ps::Command c;
+        assert(ps::PopCommand(&c) && c.type == ps::CommandType::NewCode);
+        ps::SetRole(ps::Role::Guest);
+        assert(!ps::RequestNewCode());
+    }
     const P::Page& party = PageNamed("Party");
     const P::Page& mode = PageNamed("Party mode");
     // The solo title with a party character: all six flow rows, 'Party name' too (no Status line).

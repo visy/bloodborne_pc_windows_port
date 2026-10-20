@@ -56,7 +56,10 @@ second press.
 - **Host**: *Party → New party game*. The game restarts by itself (a few seconds) into the party
   game: the party saves (`user\savedata_party`), the online title, hosting. Choose **New Game** and
   make your hunter. The party code is under *System → Party → Copy party code* (and in
-  `user\party_code.txt`); send it to your friends. It stays the same in later sessions.
+  `user\party_code.txt`); send it to your friends. It stays the same in later sessions and
+  launches until the host makes a new one (*System → Party → New party code*, or **New code** in
+  the launcher's Party tab while the game is closed); setting or removing a password also gives a
+  new code once.
 - **Friends**: *Party → Host address* (type the host's party code, or `address:port`; **Ctrl+V**
   pastes; Enter confirms), *Password* if the host set one (the host sets it on the same page before
   *New party game*), then *Join party game*. The game restarts, joined to the host: choose
@@ -377,7 +380,8 @@ needs *Join party* (restart).
 | *... gameplay mods differ* | Different mods in `mods\` | Use the same gameplay mods, or turn mods off on all PCs. |
 | *... party rules differ (host max 4 players ...; yours max 3 ...)* | Different *Max players* (or 4-player switches) | Set the same Max players everywhere. |
 | *different party protocol version ...: update the port* | Different builds of the port | Everyone updates to the same build. |
-| *Old party code: ask the host for the current one* | The code is from an earlier session of the host | Ask the host for the current code (a new party gets a new code). |
+| *Old party code: ask the host for the current one* | The host made a new code (*New party code*, or it set / removed a password), or the code is from an older build (every launch made a new code then) | Ask the host for the current code. The host's code otherwise stays the same from one launch to the next. |
+| *UDP to the guest is blocked* / *UDP to the host is blocked* (notice) | The guest's game has no public UDP address: the STUN on the host's party port gave it no answer, so the host knows only its private LAN address | Nothing at first: neither side rings until the guest's game gets an answer (it retries every 40 s) and the summon then starts by itself. If it stays blocked, restart the guest's game, or use a VPN (Tailscale) / let the other player host. |
 | *This party needs a password* (launcher hint, or in the game) | The host set a password; yours is empty | Enter the host's password (launcher *Password*, or *Party → Password* on the title screen). |
 | *Wrong party password (or an old party code ...)* | Your password differs from the host's | Same Password on all sides; copy the current code again. |
 | *Wrong or missing party password* | Joined by `host:port` and the password differs | Same Password on all sides. |
