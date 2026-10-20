@@ -350,7 +350,7 @@ before anyone is in the game):
 |---|---|
 | A guest | Gets up again at its own lamp after a short respawn loading screen; its Blood Echoes wait in a bloodstain where it fell, marked on screen; the others keep playing |
 | The host | Everyone gets one respawn loading screen at the host's lamp, as in the original game, and the world resets; the host's echoes stay in a bloodstain |
-| Anyone, during a boss fight | Watches a living party member fight (press Cross to watch the next one) until the boss dies (then gets up at the host's lamp), everyone dies, or someone travels |
+| Anyone, during a boss fight | Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies (then gets up at the host's lamp), everyone dies, or someone travels |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |
 
 A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's) or a party wipe resets them.

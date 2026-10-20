@@ -3457,6 +3457,17 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why);
 int ChrHp(u64 chr);
 void SpectateBegin(const char* who);
 void SpectateEnd();
+extern std::atomic<bool> g_spectating;
+/// Guest: the host's chr here is at HP 0 (the host is down too).
+bool HostChrDown() {
+    for (const TaskInfo& t : Tasks(false)) {
+        const u64 c = t.mode == 2 ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        if (c && ChrHp(c) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
 bool GuestDeathAloneToOwnLamp(const GameSnapshot& s, u32 own);
 void HeldDeathTick(const GameSnapshot& s, double now) {
     if (g_dead_follow.load() && !SessionUp()) {
@@ -3482,6 +3493,14 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         return;
     }
     if (now - at < DeathGrace() || s.loading) {
+        // The spectate starts at the hold in a boss fight, not after the grace (the guest's view
+        // stayed on its corpse 8 s longer than the host's): the limbo decision below still waits
+        // for the grace (a host death travel in it takes the guest along and ends the spectate).
+        if (!s.loading && !g_spectating.load() && !HostChrDown() && BossFightActive(nullptr)) {
+            Log("guest: dead in a boss fight: spectating from the hold (%.1f s after it), the limbo is decided "
+                "after the grace", now - at);
+            SpectateBegin("guest");
+        }
         return;
     }
     static double limbo_logged = 0;
@@ -3490,16 +3509,13 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         // this guest along. Live parx deaths (3 players): the guest died 11 s before the host and
         // was revived in place while the host lay dead, 4 s before the party's respawn load.
         static double host_down_logged = 0;
-        for (const TaskInfo& t : Tasks(false)) {
-            const u64 c = t.mode == 2 ? PlayerForPeer(t.task + kTaskPeer) : 0;
-            // At most 30 s (a stale host chr must not hold the respawn for good).
-            if (c && ChrHp(c) == 0 && now - at < 30.0) {
-                if (host_down_logged != at) {
-                    host_down_logged = at;
-                    Log("guest: dead while the host is down too: no revive; the host's death load takes it along");
-                }
-                return;
+        // At most 30 s (a stale host chr must not hold the respawn for good).
+        if (now - at < 30.0 && HostChrDown()) {
+            if (host_down_logged != at) {
+                host_down_logged = at;
+                Log("guest: dead while the host is down too: no revive; the host's death load takes it along");
             }
+            return;
         }
     }
     {
@@ -3516,8 +3532,8 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         }
         if (limbo_logged == at) {
             Log("guest: the boss fight is over (%.1f s after the death); respawning", now - at);
-            SpectateEnd();
         }
+        SpectateEnd();  // also one begun at the hold, when the boss died in the grace
     }
     g_death_held_at = 0;
     // Design decisions (ERSC_PARITY.md): outside a boss fight a dead player respawns at its OWN last
@@ -5533,23 +5549,58 @@ extern "C" std::uint32_t runtime_pad_cross_presses(void); // src/runtime_pad.c
 
 // ---- C5: spectate in a boss-fight limbo (BB_PARTY_SPECTATE, default on) ----
 // The dead player's camera follows its own chr: that chr (dissolved, draw 0) is carried along
-// 3 m behind a living party member with the chr warp, so the camera shows the fight. Peers remove
-// the dead copy meanwhile ("spectating"); the respawn (revive, a wipe load) builds it again.
+// with a living party member with the chr warp, so the camera shows the fight. Peers remove the
+// dead copy meanwhile ("spectating"); the respawn (revive, a wipe load) builds it again.
+// Smooth follow (default; user report "spectator cam is weird", 2026-10-20): the chr is carried
+// every frame onto the followed member's own spot with a short lag, so the camera orbits the
+// member as in normal play (the player's right stick turns it; the game's camera keeps itself
+// out of walls, from a spot that is never inside one). Before, the chr hopped every 0.2 s to a
+// point 3 m behind the member's body yaw (rolls and lock-on strafing swung it around a 3 m
+// circle, through pillars and arena walls), and the camera was reset behind it at every 35-degree
+// turn of the member (constant snaps against the right stick). BB_PARTY_SPECTATE_SMOOTH=0: that
+// old follow (comparison); BB_PARTY_SPECTATE_LAG=S: the lag (default 0.15 s).
 std::atomic<bool> g_spectating{false};
+std::atomic<double> g_spectate_at{0};
 bool SpectateOn() {
     static const bool on = !(std::getenv("BB_PARTY_SPECTATE") && std::getenv("BB_PARTY_SPECTATE")[0] == '0');
     return on;
+}
+/// BB_PARTY_SPECTATE_LOG=1 (launcher: Advanced / Debug > Diagnostics, off by default): a camera
+/// line every 10 s while spectating (camera resets per minute, the largest carry step and render
+/// camera move / turn between two frames, how near the camera came to the followed member).
+bool SpectateLogOn() {
+    static const bool on = std::getenv("BB_PARTY_SPECTATE_LOG") && std::getenv("BB_PARTY_SPECTATE_LOG")[0] == '1';
+    return on;
+}
+/// The smooth follow; test aid BB_PARTY_SPECTATE_SMOOTH_AFTER=S: the old follow for the first S s
+/// of each spectate, then the smooth one (an A/B in one session).
+bool SpectateSmooth(double spectating_for) {
+    static const bool on = !(std::getenv("BB_PARTY_SPECTATE_SMOOTH") && std::getenv("BB_PARTY_SPECTATE_SMOOTH")[0] == '0');
+    static const double after = [] {
+        const char* v = std::getenv("BB_PARTY_SPECTATE_SMOOTH_AFTER");
+        return v && v[0] ? std::atof(v) : 0.0;
+    }();
+    return on && spectating_for >= after;
+}
+float SpectateLag() {
+    static const float lag = [] {
+        const char* v = std::getenv("BB_PARTY_SPECTATE_LAG");
+        return v && v[0] ? float(std::atof(v)) : 0.15f;
+    }();
+    return lag;
 }
 void SpectateBegin(const char* who) {
     if (!SpectateOn() || g_spectating.exchange(true)) {
         return;
     }
+    g_spectate_at = Now();
     float p[3] = {0, 0, 0};
     ChrPos(Field<u64>(Slot(kSlotWorldChrMan), 0x60), p);
     char b[128];
     std::snprintf(b, sizeof b, "{\"op\":\"spectating\",\"pos\":[%.3f,%.3f,%.3f]}", p[0], p[1], p[2]);
     Send(-1, b);
-    Log("%s: spectating a living party member until the respawn", who);
+    Log("%s: spectating a living party member until the respawn (%s)", who,
+        SpectateSmooth(1e9) ? "smooth follow" : "BB_PARTY_SPECTATE_SMOOTH=0: the old 0.2 s follow");
 }
 void SpectateEnd() {
     if (g_spectating.exchange(false)) {
@@ -5557,26 +5608,85 @@ void SpectateEnd() {
     }
 }
 void SpectateTick(const GameSnapshot& s, double now) {
-    static double next = 0;
+    static double next = 0, last = 0, window_at = 0;
     static int target = -1;            // the followed member's task slot
     static u32 cross_seen = 0;
-    if (!g_spectating.load()) {
+    static bool smooth_was = false;
+    static SpectateFollow follow;
+    static SpectateCamStats stats;
+    static std::int64_t cam_ms = 0;
+    static float cam_prev[3] = {}, fwd_prev[3] = {}, put[3] = {};
+    static bool put_have = false;
+    static int pushed = 0;
+    alignas(16) static float carry_rot[4] = {0, 0, 0, 0};
+    const auto flush = [&](const char* why) {
+        if (SpectateLogOn() && window_at > 0 && stats.ticks > 0) {
+            const double secs = now - window_at;
+            Log("spectate cam (%s, %.1f s, %s): %d camera reset(s) (%.1f/min), carried spot largest step %.2f m/tick "
+                "(%d tick(s), %d jump(s), pushed off %d time(s)); render camera largest move %.2f m, turn %.1f deg "
+                "between frames, nearest to the followed member %.1f m",
+                why, secs, smooth_was ? "smooth" : "old 0.2 s follow", stats.resets,
+                double(stats.ResetsPerMinute(secs)), double(stats.max_step), stats.ticks, stats.snaps, pushed,
+                double(stats.max_cam_move), double(stats.max_cam_turn) * 57.29578,
+                stats.min_cam_dist < 1e8f ? double(stats.min_cam_dist) : -1.0);
+        }
+        stats.Reset();
+        pushed = 0;
+        window_at = now;
+    };
+    const auto stop = [&] {
+        if (target >= 0) flush("ended");
         target = -1;
+        window_at = 0;
+        cam_ms = 0;
+        follow.have = put_have = false;
+    };
+    if (!g_spectating.load()) {
+        stop();
         return;
     }
     if (!SessionUp() || s.loading || !s.world_up || !s.player || ChrHp(s.player) > 0) {
         SpectateEnd();  // a load or a revive took over
-        target = -1;
+        stop();
         return;
     }
     // Cross (does nothing while dead) switches to the next living member (C5 member switch).
     const u32 cross = runtime_pad_cross_presses();
     const bool advance = target >= 0 && cross != cross_seen;
     cross_seen = cross;
-    if (now < next && !advance) {
-        return;
+    const bool smooth = SpectateSmooth(now - g_spectate_at.load());
+    if (smooth != smooth_was && target >= 0) {
+        flush("follow mode changed");
+        follow.have = false;
+    }
+    smooth_was = smooth;
+    if (window_at <= 0) window_at = now;
+    if (now - window_at >= 10.0) flush("10 s");
+    if (SpectateLogOn()) {
+        // What the player sees: the render camera between two ticks (a new frame only).
+        const BbCamera::State cam = BbCamera::Latest(250);
+        if (cam.valid && cam.at_ms != cam_ms) {
+            const auto c = BbCamera::Position(cam);
+            const float f[3] = {cam.view[8], cam.view[9], cam.view[10]};
+            if (cam_ms != 0 && target >= 0) {
+                const float dx = c[0] - cam_prev[0], dy = c[1] - cam_prev[1], dz = c[2] - cam_prev[2];
+                const float dot = std::clamp(f[0] * fwd_prev[0] + f[1] * fwd_prev[1] + f[2] * fwd_prev[2], -1.0f, 1.0f);
+                // The followed member's spot (the old follow: 3 m in front of the carried chr).
+                const float ax = follow.at[0] - c[0], az = follow.at[2] - c[2];
+                const float dm = follow.have ? std::sqrt(ax * ax + az * az) : 1e9f;
+                stats.Camera(std::sqrt(dx * dx + dy * dy + dz * dz), std::acos(dot), dm);
+            }
+            cam_ms = cam.at_ms;
+            std::memcpy(cam_prev, c.data(), sizeof cam_prev);
+            std::memcpy(fwd_prev, f, sizeof fwd_prev);
+        }
+    }
+    if (!smooth && now < next && !advance) {
+        return;  // the old follow: 5 carries a second
     }
     next = now + 0.2;
+    const float dt = std::clamp(float(now - last), 0.0f, 0.1f);
+    last = now;
     int living[8];
     u64 chrs[8];
     int n = 0;
@@ -5606,30 +5716,75 @@ void SpectateTick(const GameSnapshot& s, double now) {
     }
     const bool new_target = pick != target || advance;
     target = pick;
+    using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
+    using CamReset = u64(BB_COOP_SYSV*)(u64, u32, u32);
+    const u64 fn = Field<u64>(Field<u64>(s.player, 0), 0x5f8);
     for (int i = 0; i < n; ++i) {
         alignas(16) float pos[4], rot[4];
         if (living[i] != pick || !ChrTransform(chrs[i], pos, rot)) {
             continue;
         }
         const float yaw = rot[1];
+        if (smooth) {
+            // Did the game move the carried chr since the last tick (pushed out of the member's
+            // capsule, a fall)? Counted for the diagnostics line; the next carry puts it back.
+            alignas(16) float mine[4], mrot[4];
+            if (put_have && ChrTransform(s.player, mine, mrot)) {
+                const float ox = mine[0] - put[0], oz = mine[2] - put[2];
+                pushed += (ox * ox + oz * oz > 1.0f || std::fabs(mine[1] - put[1]) > 1.0f) ? 1 : 0;
+            }
+            if (new_target) {
+                follow.have = false;  // a new member: straight there
+                std::memcpy(carry_rot, rot, sizeof carry_rot);
+            }
+            // The member's own spot (never inside a wall; a little up so the carried chr does not
+            // start in the floor); the camera keeps its own distance and wall collision.
+            const float want[3] = {pos[0], pos[1] + 0.2f, pos[2]};
+            bool snapped = false;
+            const float step = follow.Step(want, dt, SpectateLag(), 8.0f, &snapped);
+            stats.Step(step, snapped);
+            alignas(16) const float at[4] = {follow.at[0], follow.at[1], follow.at[2], 1.0f};
+            if (fn) {
+                reinterpret_cast<Warp>(fn)(s.player, at, carry_rot, 1);
+            }
+            std::memcpy(put, at, sizeof put);
+            put_have = true;
+            // The camera keeps its own direction when the dead chr is carried (parx2 smoke2: the
+            // host's view showed a wall for 106 s): the Lua CamReset (as WarpLocal) puts it behind
+            // the carried chr, which faces the way the member faced - once per member; after that
+            // the player's right stick turns it.
+            if (new_target) {
+                reinterpret_cast<CamReset>(Guest(0x132f5a0))(0, 10000, 1);
+                ++stats.resets;
+                Log("spectating: camera put behind the followed member (yaw %.2f)", double(yaw));
+            }
+            return;
+        }
+        // The old follow (BB_PARTY_SPECTATE_SMOOTH=0): 3 m behind the member's body yaw every 0.2 s,
+        // the camera reset behind it at a new member and whenever the member turned > ~35 degrees.
+        const bool had = follow.have;
+        follow.at[0] = pos[0], follow.at[1] = pos[1], follow.at[2] = pos[2];  // the member (diagnostics)
+        follow.have = true;
         pos[0] -= std::sin(yaw) * 3.0f;
         pos[2] -= std::cos(yaw) * 3.0f;
         pos[1] += 0.5f;
         pos[3] = 1.0f;
-        if (const u64 fn = Field<u64>(Field<u64>(s.player, 0), 0x5f8)) {
-            reinterpret_cast<void(BB_COOP_SYSV*)(u64, const float*, const float*, u32)>(fn)(s.player, pos, rot, 1);
+        if (had) {
+            const float dx = pos[0] - put[0], dy = pos[1] - put[1], dz = pos[2] - put[2];
+            stats.Step(std::sqrt(dx * dx + dy * dy + dz * dz), false);
         }
-        // The camera keeps its own direction when the dead chr is carried (parx2 smoke2: the host's
-        // view showed a wall for 106 s, the two living members 3-5 m away off screen): the Lua
-        // CamReset (as WarpLocal) puts it behind the carried chr, which faces the way the followed
-        // member faces - at a new target and when the member has turned by more than ~35 degrees.
+        std::memcpy(put, pos, sizeof put);
+        put_have = false;
+        if (fn) {
+            reinterpret_cast<Warp>(fn)(s.player, pos, rot, 1);
+        }
         static float reset_yaw = 0.0f;
         float turn = std::fabs(yaw - reset_yaw);
         if (turn > 3.14159265f) turn = 6.2831853f - std::fmod(turn, 6.2831853f);
         if (new_target || turn > 0.6f) {
             reset_yaw = yaw;
-            using CamReset = u64(BB_COOP_SYSV*)(u64, u32, u32);
             reinterpret_cast<CamReset>(Guest(0x132f5a0))(0, 10000, 1);
+            ++stats.resets;
             if (new_target) Log("spectating: camera put behind the followed member (yaw %.2f)", double(yaw));
         }
         return;
