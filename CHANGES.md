@@ -6,6 +6,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 ## Unreleased
 
 - **Fixed: a boss killed while the host lies dead in the fight stays dead** (PR #6, vladtepes22): when the guests finished the boss while the host was spectating, the party's respawn load started as soon as the boss's HP reached 0, before the game's defeat event had saved the kill, and the boss came back after the load (Father Gascoigne, full health). The load now waits until the boss bar clears (at least 3 s, at most 20 s after the kill).
+- **Fixed: joining through any VPN, or a host behind a strict (symmetric) NAT** (PR #6 report, vladtepes22): a guest now sends game traffic to the exact address and port its party connection reached the host at, whenever that differs from what the host advertises. Before, only LAN and Tailscale-style addresses were used; a host's router address (or a port only its STUN server could use) sent the guest back to its own world after the join's loading screen. Hamachi (25.x) and Radmin (26.x) addresses now work too, without setting *Host public address* by hand.
 
 ## 0.6.8 (Windows port 0.6.8, co-op fixes from issue #4, settings sync)
 
