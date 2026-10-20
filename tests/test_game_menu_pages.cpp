@@ -282,16 +282,29 @@ static void Party() {
     const P::Page& members = PageNamed(u"Party members");
     assert(std::u16string(P::Text(party.rows[0].choices[0], false)) == u"Together");
     assert(std::u16string(P::Text(party.rows[0].help, false)).find(u"Host (your world)") == 0);
+    // This player's rot (party_balance via party_status): none, then what the stacks do.
+    assert(std::u16string(P::Text(party.rows[1].name, false)) == u"Rot");
+    assert(std::u16string(P::Text(party.rows[1].choices[0], false)) == u"None");
+    {
+        const int kinds[ps::kRotKinds] = {2, 0, 1, 0, 0};
+        ps::SetRot(kinds);
+        P::Load();
+        assert(std::u16string(P::Text(party.rows[1].choices[0], false)) == u"3/5");
+        assert(std::u16string(P::Text(party.rows[1].help, false)) ==
+               u"Rot 3/5: max HP -20 %, stamina costs +10 %. A lamp rest cleanses it");
+        const int none[ps::kRotKinds] = {};
+        ps::SetRot(none);
+    }
     // One code (no LAN code): one copy row, the code as its value; the LAN row hidden.
-    assert(std::u16string(P::Text(party.rows[1].name, false)) == u"Copy party code");
-    assert(std::u16string(P::Text(party.rows[1].choices[0], false)) == u"Copy");
-    assert(std::u16string(P::Text(party.rows[1].help, true)).find(u"BBP1-ABCD-EFGH-IJKL") != std::u16string::npos);
-    assert(!party.rows[2].visible());
+    assert(std::u16string(P::Text(party.rows[2].name, false)) == u"Copy party code");
+    assert(std::u16string(P::Text(party.rows[2].choices[0], false)) == u"Copy");
+    assert(std::u16string(P::Text(party.rows[2].help, true)).find(u"BBP1-ABCD-EFGH-IJKL") != std::u16string::npos);
+    assert(!party.rows[3].visible());
     ps::SetLanCode("BBP1-LLLL-AAAA-NNNN");
     P::Load();
-    assert(std::u16string(P::Text(party.rows[1].name, false)) == u"Copy Internet code" && party.rows[2].visible());
-    assert(std::u16string(P::Text(party.rows[2].name, false)) == u"Copy LAN code");
-    assert(std::u16string(P::Text(party.rows[2].help, false)).find(u"BBP1-LLLL-AAAA-NNNN") != std::u16string::npos);
+    assert(std::u16string(P::Text(party.rows[2].name, false)) == u"Copy Internet code" && party.rows[3].visible());
+    assert(std::u16string(P::Text(party.rows[3].name, false)) == u"Copy LAN code");
+    assert(std::u16string(P::Text(party.rows[3].help, false)).find(u"BBP1-LLLL-AAAA-NNNN") != std::u16string::npos);
 
     // Member rows: one per member, name, state and ping; the host's own row cannot be kicked.
     int visible = 0;
@@ -380,7 +393,7 @@ static void Party() {
     // rejoin, leave) are hidden, the extension row shows (in order).
     ps::ResetForTest(false);
     P::Load();
-    assert(P::PartyRowCount() == 6); // status, copy, LAN copy, rejoin, leave + the extension row
+    assert(P::PartyRowCount() == 7); // status, rot, copy, LAN copy, rejoin, leave + the extension row
     assert(!hud.visible()); // the party HUD switch: party mode only
     std::vector<const P::Row*> shown;
     for (const P::Row& row : party.rows) if (!row.visible || row.visible()) shown.push_back(&row);

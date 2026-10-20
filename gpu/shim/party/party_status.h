@@ -92,6 +92,12 @@ bool FriendlyFire();
 /// Statsaudit finding 5: shared lamps in force (the host's rule on a guest), for the menus.
 void SetShareLamps(bool on);
 bool ShareLamps();
+/// C4: this player's rot stacks per kind (party_balance; health, stamina, stamina cost, rally,
+/// discovery; all 0 while rot is not in force), for System > Party and the party HUD. Cheap
+/// (atomics); set by the party tick.
+constexpr int kRotKinds = 5;
+void SetRot(const int kind[kRotKinds]);
+void Rot(int kind[kRotKinds]);
 /// BB_PARTY turns party mode on for this run (party_env.h: unset, empty, 0, off, false, no = off) (read once, or forced by tests via ResetForTest).
 bool Enabled();
 

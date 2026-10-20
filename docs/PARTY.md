@@ -57,7 +57,7 @@ second press.
   game: the party saves (`user\savedata_party`), the online title, hosting. Choose **New Game** and
   make your hunter. The party code is under *System → Party → Copy party code* (and in
   `user\party_code.txt`); send it to your friends. It stays the same in later sessions and
-  launches until the host makes a new one (*System → Party → New party code*, or **New code** in
+  launches until the host makes a new one (*System → Party mode → New party code*, or **New code** in
   the launcher's Party tab while the game is closed); setting or removing a password also gives a
   new code once.
 - **Friends**: *Party → Host address* (type the host's party code, or `address:port`; **Ctrl+V**

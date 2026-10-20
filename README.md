@@ -174,7 +174,7 @@ Nothing to set up outside the game, and later sessions are a single press.
 
 Code and password are remembered, so later sessions are just *Continue party game* for everyone
 (the options that restart the game ask for a second press). The host's party code stays the
-same every time it hosts, so friends can keep it; *System → Party → New party code* (or **New
+same every time it hosts, so friends can keep it; *System → Party mode → New party code* (or **New
 code** in the launcher's Party tab) makes a new one and the old one stops working. Setting or
 removing a password also changes the code once. *Continue party game* shows whenever
 the party saves hold a character, also if you started party games from the launcher.
@@ -300,7 +300,8 @@ before anyone is in the game):
 - **Talk to NPCs.** Guests can talk to NPCs in the host's world; quest steps are shared by the whole
   party, and NPCs look solid for guests. When a companion near you talks to an NPC you see the
   subtitles and hear the NPC, with a small "[Hunter talking to Iosefka]" caption (range in *System →
-  Party rules → NPC dialogue range*, default 25 m). One-time NPC gifts go to every party member;
+  Party rules → NPC dialogue range*, default 25 m). The workbench, the Bath Messengers' shops and
+  headstones show no caption. One-time NPC gifts go to every party member;
   repeatable ones (Blood of Arianna, Iosefka's vials, ...) to whoever asked.
 - **Change your appearance at the Dream's mirror.** The workshop mirror opens the appearance editor
   (a feature the game left unfinished, restored as in bbhost), in single player and for every party
@@ -311,8 +312,9 @@ before anyone is in the game):
 
 - **Death has a cost.** Each death stacks "rot", picked at random, up to 5: −10% max HP, −10% max
   stamina, +10% stamina use, −15% rally or −10 Item Discovery. Using a lamp (even just opening its
-  travel menu) or levelling up clears it. Each save slot keeps its own. On by default; the host can
-  turn it off on the *Party rules* page.
+  travel menu) or levelling up clears it. Each save slot keeps its own. Your current rot and what it
+  does ("Rot 2/5: max HP -20 %") show on the *Party* page and under the party HUD. On by default; the
+  host can turn it off on the *Party rules* page.
 - **Enemies scale with the party, harder than vanilla.** Bosses get more health (and a little more
   damage) per extra hunter; normal enemies get tougher too. Six values (boss / enemy health, damage,
   poise) on the *Enemy scaling* page.
@@ -351,7 +353,7 @@ before anyone is in the game):
 
 | Who dies | What happens |
 |---|---|
-| A guest | Gets up again at its own lamp after a short respawn loading screen; its Blood Echoes wait in a bloodstain where it fell, marked on screen; the others keep playing |
+| A guest | Gets up again at its own lamp after a short respawn loading screen; its Blood Echoes wait in a bloodstain where it fell (an on-screen marker for it: *System → Pings → Bloodstain marker*, off by default); the others keep playing |
 | The host | Everyone gets one respawn loading screen at the host's lamp, as in the original game, and the world resets; the host's echoes stay in a bloodstain |
 | Anyone, during a boss fight | Watches a living party member fight (press Cross to watch the next one) until the boss dies (then gets up at the host's lamp), everyone dies, or someone travels |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |

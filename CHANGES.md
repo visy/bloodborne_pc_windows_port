@@ -5,11 +5,14 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
-- **Changed: the host's party code stays the same from one launch to the next**: before, every game start from the launcher made a new code, so a friend's saved code was refused ("party code from another hosting session"). The code now only changes when the host asks for it: **New party code** on *System → Party* (the old code stops working at once; players already in stay) or **New code** in the launcher's Party tab. Setting or removing a password still changes it once.
+- **Changed: the host's party code stays the same from one launch to the next**: before, every game start from the launcher made a new code, so a friend's saved code was refused ("party code from another hosting session"). The code now only changes when the host asks for it: **New party code** on *System → Party mode* (the old code stops working at once; players already in stay) or **New code** in the launcher's Party tab. Setting or removing a password still changes it once.
 - **Fixed: a guest that tried to join before the host's game was up could not be summoned later**: its UDP fallback sent from the game's party port for a minute while nothing answered, and afterwards nothing from that port reached the host. Those first blind tries now go from a separate port; the party port is used once the host has been heard on it.
 - **Fixed: no more hopeless summons of a guest the host cannot reach**: when a remote guest's game has no public UDP address (no STUN answer from the host), the host no longer rings or summons it (4 failed 20 s summons and a session stop before). Both players see "UDP to the guest/host is blocked"; the guest keeps retrying and the summon starts by itself once it gets through.
 
 - **Fixed: joining over a VPN when the host has no open port** (PR #7, vladtepes22): the 0.6.9 VPN fix rewrote the host's address but not its STUN-found public address, which the guest's game still preferred, so the join timed out (live over Radmin). Both now take the address the party connection reached.
+- **Added: your rot is shown**: the *Party* page of the System menu has a *Rot* row ("3/5", and on its help line what it does, e.g. "Rot 3/5: max HP -20 %, stamina costs +10 %"), and the party HUD shows the same line under your companions while you carry rot. Each player sees their own; a lamp rest still cleanses it.
+- **Changed: the bloodstain marker is an option, off by default**: the red "Blood Echoes N" marker with its distance on a guest's lost-echoes bloodstain now shows only with *System > Pings > Bloodstain marker* (also a launcher checkbox, `bbport.ini party_stain_marker`, `BB_PARTY_STAIN_MARKER=1`). The bloodstain and its echoes are unchanged.
+- **Fixed: no more "[Hunter talking to the Doll]" at the workbench or a shop**: a party member's choice at the Hunter's Dream workbench, a Bath Messenger's shop or a headstone went to the others with the name of the last NPC that player had talked to. Only a choice in a real conversation (the NPC spoke) is shared now.
 
 ## 0.6.9 (Windows port 0.6.9, co-op fixes from PR #6 and its reports)
 

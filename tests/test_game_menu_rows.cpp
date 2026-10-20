@@ -124,8 +124,8 @@ static void EveryState() {
 /// The states players reported.
 static void Reported() {
     {
-        // A running host with both codes: New party code (two presses) fits the six rows; a guest
-        // never sees it.
+        // A running host with both codes: New party code (two presses) is on the Party mode page
+        // (the Party page is full); a guest never sees it.
         context = {};
         context.party_process = context.party_save = context.host = context.in_world = context.link_active = true;
         ps::ResetForTest(true);
@@ -134,9 +134,10 @@ static void Reported() {
         ps::SetCode("BBP1-AAAA-BBBB-CCCC");
         ps::SetLanCode("BBP1-DDDD-EEEE-FFFF");
         P::Load();
-        const P::Page& page = PageNamed("Party");
-        const auto names = Names(page);
-        assert(names.size() == 6 && Has(names, "New party code") && Has(names, "Leave the party"));
+        const auto names = Names(PageNamed("Party"));
+        assert(names.size() <= P::RowsPerPage && Has(names, "Leave the party") && !Has(names, "New party code"));
+        const P::Page& page = PageNamed("Party mode");
+        assert(Has(Names(page), "New party code") && Names(page).size() <= P::RowsPerPage);
         ps::ResetForTest(true);
         ps::SetRole(ps::Role::Guest);
         ps::SetState(ps::State::Joined);

@@ -72,7 +72,7 @@ void runtime_leave();
 // The Party tab's Rejoin: 0 the link is up (nothing done: the caller rings), 1 reconnecting now,
 // 2 a fresh link is starting (after Leave or a rejection; same config and codes), -1 nothing to do.
 int runtime_rejoin();
-/// Host: New party code (launcher Party tab / System > Party): a fresh secret for the running
+/// Host: New party code (launcher Party tab / System > Party mode): a fresh secret for the running
 /// party; the old code is refused from now on and the next launch keeps the new one. Blocking
 /// (key derivations, ~0.1 s): call it off the game's main thread. False (and why) when not hosting.
 bool runtime_new_code(std::string* message);

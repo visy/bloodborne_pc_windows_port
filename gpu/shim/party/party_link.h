@@ -401,7 +401,7 @@ public:
     // Host: kick() by member name; false when no remote member has it.
     bool kick_name(const std::string& name, const std::string& reason = {});
     bool is_banned(const std::string& name) const;
-    // Host: a new party code secret (System > Party > New party code): new handshakes need the
+    // Host: a new party code secret (System > Party mode > New party code): new handshakes need the
     // new code (an old code's AUTH is refused); the members in now keep their sessions.
     void set_secret(const std::array<std::uint8_t, 8>& secret);
     // Guest: while Reconnecting, try again now (backoff reset). False in any other state.

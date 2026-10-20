@@ -1618,7 +1618,7 @@ void start_host(LinkConfig cfg) {
         plog("party game from the menu: the party code of the last session (secret from party.json)");
     } else if (src == HostSecretFrom::Saved) {
         plog("hosting again: the same party code as last time (secret from party_secret.txt; New party code in the "
-             "launcher or System > Party makes a new one)");
+             "launcher or System > Party mode makes a new one)");
     } else {
         plog("a new party code (none saved): send it to your friends");
     }
@@ -1828,7 +1828,7 @@ void start_host(LinkConfig cfg) {
     write_code_files(internet, lan);
 }
 
-// New party code (System > Party; the launcher's button works while the game is closed): a fresh
+// New party code (System > Party mode; the launcher's button works while the game is closed): a fresh
 // secret for the running host. The link refuses the old code from now on (new handshakes; the
 // members in stay), the LAN responder and the DHT rendezvous take the new key, and the codes,
 // party_secret.txt, party.json and the crash marker get the new secret, so the next launch keeps

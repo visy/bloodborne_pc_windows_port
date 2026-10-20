@@ -116,7 +116,7 @@ std::string format_ipv4(const std::array<std::uint8_t, 4>& ip);
 
 // ---- The host's code secret from one launch to the next (party_runtime.cpp start_host) ----
 // The party code stays the same across game launches until the host asks for a new one
-// (launcher Party tab "New party code", System > Party > New party code). Where it comes from:
+// (launcher Party tab "New code", System > Party mode > New party code). Where it comes from:
 //   CrashRestart  the crash marker (party_state.json) of a restarted host: with its member slots
 //   Menu          a party game started from the game's menus: party.json's host_secret
 //   Saved         a normal launch: <user>/party_secret.txt (never the marker's member slots)
