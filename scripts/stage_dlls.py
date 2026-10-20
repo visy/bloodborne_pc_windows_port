@@ -31,6 +31,21 @@ system_dlls = {
     'ncrypt.dll'
 }
 
+def _norm(p):
+    return str(p).replace('\\', '/').lower().rstrip('/')
+
+_win = _norm(os.environ.get("SystemRoot", r"C:\Windows"))
+# MSYS2's Python sees PATH as /c/Windows/... rather than C:\Windows\...
+windows_dirs = (_win, f"/{_win[0]}{_win[2:]}", f"/cygdrive/{_win[0]}{_win[2:]}")
+
+def is_windows_dir(p):
+    n = _norm(p)
+    return any(n == w or n.startswith(w + '/') for w in windows_dirs)
+
+system_search_dirs = [Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"]
+system_search_dirs += [d for d in search_dirs if is_windows_dir(d)]
+search_dirs = [d for d in search_dirs if not is_windows_dir(d)]
+
 def find_objdump():
     if os.environ.get("W64DEVKIT_DIR"):
         candidate = Path(os.environ["W64DEVKIT_DIR"]) / "bin" / "objdump.exe"
@@ -114,6 +129,10 @@ if objdump:
             for imp in get_imported_dlls(f):
                 imp_lower = imp.lower()
                 if imp_lower in system_dlls or imp_lower.startswith('api-ms-win'):
+                    continue
+                # Windows' own DLLs are on every system and not ours to redistribute.
+                if any((sdir / imp).is_file() for sdir in system_search_dirs):
+                    system_dlls.add(imp_lower)
                     continue
                 if imp_lower not in copied_names:
                     for sdir in search_dirs:
