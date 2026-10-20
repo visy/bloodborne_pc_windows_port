@@ -3,6 +3,10 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## Unreleased
+
+- **Fixed: a boss killed while the host lies dead in the fight stays dead** (PR #6, vladtepes22): when the guests finished the boss while the host was spectating, the party's respawn load started as soon as the boss's HP reached 0, before the game's defeat event had saved the kill, and the boss came back after the load (Father Gascoigne, full health). The load now waits until the boss bar clears (at least 3 s, at most 20 s after the kill).
+
 ## 0.6.8 (Windows port 0.6.8, co-op fixes from issue #4, settings sync)
 
 - **Fixed: a guest revived at its lamp gets its body back on its own screen** (issue #4): the instant respawn never ran the game's own revive for a guest, so its character kept the death dissolve's state (its draw factor stayed 0; the issue's guest saw only eyes and armour, the host saw it whole). The guest's respawn now runs it too, keeping the guest a summoned phantom, and puts back the draw factor it had alive. `BB_PARTY_GUEST_REVIVE_BODY=0` turns it off.
