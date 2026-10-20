@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Fixed: a guest can be hurt again after dying** (PR #6 report, vladtepes22): a guest that died outside a boss fight and got up at its lamp without a loading screen could not be hit until its next load (enemy attacks passed through it). A guest's death now always gets the short respawn loading screen at the lamp, which brings it back whole. The old in-place revive stays behind `BB_PARTY_GUEST_REVIVE_INPLACE=1` while it is investigated.
 - **Fixed: a boss killed while the host lies dead in the fight stays dead** (PR #6, vladtepes22): when the guests finished the boss while the host was spectating, the party's respawn load started as soon as the boss's HP reached 0, before the game's defeat event had saved the kill, and the boss came back after the load (Father Gascoigne, full health). The load now waits until the boss bar clears (at least 3 s, at most 20 s after the kill).
 - **Fixed: joining through any VPN, or a host behind a strict (symmetric) NAT** (PR #6 report, vladtepes22): a guest now sends game traffic to the exact address and port its party connection reached the host at, whenever that differs from what the host advertises. Before, only LAN and Tailscale-style addresses were used; a host's router address (or a port only its STUN server could use) sent the guest back to its own world after the join's loading screen. Hamachi (25.x) and Radmin (26.x) addresses now work too, without setting *Host public address* by hand.
 
