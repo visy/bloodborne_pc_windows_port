@@ -876,6 +876,7 @@ void ShowLikeInGameStart(u64 c, const char* why) {
 
 std::atomic<double> g_rejoin_banner_at{0};  // Now() of the last B2 re-join (or a member chr rebuilt by a rewind)
 
+std::string DescribePlayerNumbers();
 int RewindRemoteTasks(const char* why) {
     int n = 0;
     // A member's chr rebuilt here (a revive in place, a new look, the host's revive): its task's
@@ -901,6 +902,7 @@ int RewindRemoteTasks(const char* why) {
         g_rewound[t.task] = Now();
         Log("%s: task mode %d (step %d) rewound to STEP_Create", why, t.mode, t.step);
     }
+    if (n > 0) Log("%s: player numbers at the rewind: %s", why, DescribePlayerNumbers().c_str());
     return n;
 }
 
@@ -1071,6 +1073,25 @@ bool BossBarDying() {
 /// The presentation slot table (GSM +0x16F8): 5 entries at +0x1C (stride 0x14: chr handle, kind,
 /// state, a, b), the counts +0x8/+0xC/+0x10/+0x14, the handle list +0x80..+0x8C (+0x90 count)
 /// and the max (flow +0xC). The game's cooperator count (0x15BDC20) walks the entries.
+/// The player numbers (PlayerGameData +0x10: the host's packet 7 sets the own one, packet 8 a
+/// member's row) that STEP_Create's chr build 0x18D8100 looks the chr's game data up by: the own
+/// record first, then the 4 remote rows (GameDataMan +0x10, 0x6A0 apart; occupancy *(+0x18)).
+/// A member whose row number equals the own one is drawn from the own record (look, equipment).
+std::string DescribePlayerNumbers() {
+    const u64 gdm = Slot(kSlotGameData);
+    const u64 own = Field<u64>(gdm, 8), rows = Field<u64>(gdm, 0x10), occ = Field<u64>(gdm, 0x18);
+    char b[96];
+    std::snprintf(b, sizeof b, "own %d (type %d)", own ? Field<int>(own, 0x10, -1) : -1, own ? Field<int>(own, 0xa4, -1) : -1);
+    std::string out = b;
+    for (int i = 0; rows && i < 4; ++i) {
+        const u64 r = rows + u64(i) * 0x6a0;
+        std::snprintf(b, sizeof b, "; row %d occ %#x no %d type %d st %d", i, unsigned(occ ? Field<u8>(occ, u64(i)) : 0),
+                      Field<int>(r, 0x10, -1), Field<int>(r, 0xa4, -1), Field<int>(r, 0x5d8, -1));
+        out += b;
+    }
+    return out;
+}
+
 std::string DescribePresence(bool deep = false) {
     const u64 t = Field<u64>(Slot(kSlotGsm), 0x16f8);
     if (!t) {
@@ -1192,6 +1213,7 @@ void ProbeTick(const GameSnapshot& s) {
             unsigned(Field<u8>(gsm, 0x1593)), Field<u32>(gsm, 0x1594), unsigned(Field<u8>(gsm, 0x1598)),
             Field<u32>(gsm, 0x159c), Field<u32>(Slot(kSlotGameData), 0x68), Field<u32>(gsm, 0x0c));
         Log("B2 load report: blobs %s", DescribeBlobs().c_str());
+        Log("B2 load report: player numbers: %s", DescribePlayerNumbers().c_str());
     }
     st.was_loading = loading;
 }
@@ -5723,6 +5745,75 @@ void JoinBesideTick(const GameSnapshot& s, double now) {
     }
 }
 
+/// This guest's player number (PlayerGameData +0x10): its party slot's (coop::fourp::
+/// PlayerNumberForSlot: slot N -> N + 1, the host 1), so no two players share one. Every remote
+/// chr is built from the record whose number matches its row's (0x18D8100, the own record first):
+/// with the 2 every title-joined guest used to write, a 3-player party drew both guests from one
+/// row (one look for both), and a guest numbered like the host was drawn with the host's look.
+int OwnGuestNumber() {
+    const int slot = g_local_slot.load();
+    return slot >= 1 ? coop::fourp::PlayerNumberForSlot(slot) : 2;
+}
+
+/// Host and guests in a session: the own player number kept (host 1, guest OwnGuestNumber()) once
+/// the world is up in the session (flow 4); a load or a late packet 7 that changed it is undone and
+/// the own record re-broadcast with a rebuild request (the mirror's path: the peers rebuild this
+/// chr). Also logs a clash in the remote rows (two rows, or a row and the own record, one number).
+/// BB_PARTY_PLAYER_NUMBERS=0: off.
+void PlayerNumberTick(const GameSnapshot& s, double now) {
+    static const bool on = !EnvOff("BB_PARTY_PLAYER_NUMBERS");
+    static double next = 0;
+    static std::string last_clash;
+    if (!on || !g_on.load() || !s.world_up || s.loading || !s.player || now < next) {
+        return;
+    }
+    next = now + 0.5;
+    const bool host = Role() == RoleHost && s.cooperators > 0;
+    const bool guest = Role() == RoleClient && g_local_slot.load() >= 1 && !g_rejoin.load();
+    if ((!host && !guest) || Field<int>(Slot(kSlotFlow), 0x84, -1) != 4) {
+        return;
+    }
+    const u64 gdm = Slot(kSlotGameData);
+    const u64 own = Field<u64>(gdm, 8);
+    if (!own) {
+        return;
+    }
+    const int want = host ? 1 : OwnGuestNumber();
+    const int was = Field<int>(own, 0x10, -1);
+    if (was != want) {
+        SafeWrite(own + 0x10, &want, 4);
+        SafeWrite(s.player + 0x3b8, &want, 4);  // as the packet 7 receive writes both
+        NoteOwnAppearanceChanged();             // own record again (with the number), peers rebuild this chr
+        Log("player number: own %d -> %d (%s, party slot %d): record re-broadcast, the peers rebuild this chr",
+            was, want, host ? "host" : "guest", host ? 0 : g_local_slot.load());
+    }
+    std::string clash;
+    const u64 rows = Field<u64>(gdm, 0x10), occ = Field<u64>(gdm, 0x18);
+    for (int i = 0; rows && occ && i < 4; ++i) {
+        if (!Field<u8>(occ, u64(i))) continue;
+        const int no = Field<int>(rows + u64(i) * 0x6a0, 0x10, -1);
+        if (!coop::fourp::PlayerNumberValid(no)) continue;
+        bool dup = no == want;
+        for (int j = 0; j < i && !dup; ++j) {
+            dup = Field<u8>(occ, u64(j)) && Field<int>(rows + u64(j) * 0x6a0, 0x10, -1) == no;
+        }
+        if (dup) {
+            char b[48];
+            std::snprintf(b, sizeof b, " row %d no %d", i, no);
+            clash += b;
+        }
+    }
+    if (clash != last_clash) {
+        last_clash = clash;
+        if (!clash.empty()) {
+            Log("player number clash (a remote chr drawn with another player's look):%s; %s", clash.c_str(),
+                DescribePlayerNumbers().c_str());
+        } else {
+            Log("player numbers unique again: %s", DescribePlayerNumbers().c_str());
+        }
+    }
+}
+
 /// A5 (one-load cross-map join, BB_PARTY_GATHER_DSUM, default on): the direct summon of a guest
 /// in another map than the host's joins the host's room without loading the host's map (live a5,
 /// 2026-10-13: a client still in its own m21_00). Set when that join is reported; the arrival
@@ -5753,12 +5844,12 @@ void CarryGameDataTick(const GameSnapshot& s, double now) {
     g_carry_gd_at = -1;
     if (const u64 gd = Field<u64>(Slot(kSlotGameData), 8)) {
         const int was = Field<int>(gd, 0x5d8, -1);
-        const int two = 2, one = 1, seven = 7;
+        const int two = OwnGuestNumber(), one = 1, seven = 7;
         SafeWrite(gd + 0x10, &two, 4);
         SafeWrite(gd + 0xa4, &one, 4);
         SafeWrite(gd + 0x5d8, &seven, 4);
         RebroadcastOwnRecord("A5 arrival: a summoned guest's session type");
-        Log("A5: arrived in the host's map: own GameData as a summoned guest's (+0x10 2, +0xA4 1, +0x5D8 %d -> 7)", was);
+        Log("A5: arrived in the host's map: own GameData as a summoned guest's (+0x10 %d, +0xA4 1, +0x5D8 %d -> 7)", two, was);
     }
 }
 
@@ -7495,11 +7586,11 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
         Field<int>(Slot(kSlotFlow), 0x84, -1) == 4 && Field<u64>(Slot(kSlotWorldChrMan), 0x60)) {
         if (const u64 gd = Field<u64>(Slot(kSlotGameData), 8)) {
             gd_set = true;
-            const int two = 2, one = 1, seven = 7;
+            const int two = OwnGuestNumber(), one = 1, seven = 7;
             SafeWrite(gd + 0x10, &two, 4);
             SafeWrite(gd + 0xa4, &one, 4);
             SafeWrite(gd + 0x5d8, &seven, 4);
-            Log("title join: own GameData as a summoned guest's (+0x10 2, +0xA4 1, +0x5D8 7) at flow 4 (%s)",
+            Log("title join: own GameData as a summoned guest's (+0x10 %d, +0xA4 1, +0x5D8 7) at flow 4 (%s)", two,
                 s.loading ? "loading screen still up" : "in the world");
         }
     }
@@ -7571,11 +7662,11 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
         // +0x10 2 (the 0x168 record and the first-sync packet 0xC are sent only with it set),
         // +0xA4 1 (white phantom, packet 0xB), +0x5D8 7 (session type).
         if (const u64 gd = Field<u64>(Slot(kSlotGameData), 8)) {
-            const int two = 2, one = 1, seven = 7;
+            const int two = OwnGuestNumber(), one = 1, seven = 7;
             SafeWrite(gd + 0x10, &two, 4);
             SafeWrite(gd + 0xa4, &one, 4);
             SafeWrite(gd + 0x5d8, &seven, 4);
-            Log("title join: own GameData as a summoned guest's (+0x10 2, +0xA4 1, +0x5D8 7)");
+            Log("title join: own GameData as a summoned guest's (+0x10 %d, +0xA4 1, +0x5D8 7)", two);
         }
     }
     // Ready (Continue pressed, the load not started): the save's spawn is the forced placement
@@ -8480,6 +8571,7 @@ void Tick(const GameSnapshot& s) {
     JoinBesideTick(s, Now());
     CarryArrivalTick(s, Now());
     CarryGameDataTick(s, Now());
+    PlayerNumberTick(s, now);
     SpectatorRemoveTick(s);
     SpectateTick(s, Now());
     OwnStainLogTick(s);
@@ -8854,7 +8946,19 @@ void OnLinkEvent(int from_slot, const std::string& body) {
             std::lock_guard<std::mutex> lk(g_member_revived_mu);
             if (g_appearance_todo.size() < 8) g_appearance_todo.push_back({Now() + 1.5, {p[0], p[1], p[2]}});
         }
-        Log("slot %d changed its appearance: its chr here is rebuilt from its new record in 1.5 s", from_slot);
+        // The host passes it on to the other guests (a guest's events reach only the host): their
+        // copy of the member's chr was built from the same old record (samemodel run A: guest 1
+        // never rebuilt guest 2's chr after its new look).
+        int origin = from_slot;
+        if (const char* pf = std::strstr(body.c_str(), "\"from\":")) std::sscanf(pf, "\"from\":%d", &origin);
+        if (Role() == RoleHost && from_slot > 0 && body.find("\"from\":") == std::string::npos) {
+            std::string fwd = body;
+            fwd.insert(fwd.size() - 1, ",\"from\":" + std::to_string(from_slot));
+            for (int slot = 1; slot < party::kMaxPartyPlayers; ++slot) {
+                if (slot != from_slot) Send(slot, fwd);  // absent slots: the link drops it
+            }
+        }
+        Log("slot %d changed its appearance: its chr here is rebuilt from its new record in 1.5 s", origin);
         return;
     }
     if (body.find("\"member_revived\"") != std::string::npos) {
