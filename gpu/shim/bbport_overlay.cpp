@@ -1825,6 +1825,12 @@ void PartyTab() {
              "Маленький ромб с расстоянием на каждом спутнике на вашей карте, поверх стен и деревьев, "
              "цветом спутника."),
            on);
+    Toggle("party_stain_marker", T("Bloodstain marker", "Метка пятна крови"), s.party_stain_marker,
+           T("A red drop with \"Blood Echoes\" and the distance on your lost echoes' bloodstain in the "
+             "host's world, drawn over walls. The bloodstain is there either way.",
+             "Красная капля с \"Отголосками крови\" и расстоянием на пятне крови с вашими потерянными "
+             "отголосками в мире хоста, поверх стен. Пятно есть в любом случае."),
+           on);
     Toggle("party_rendezvous", T("Find each other via the public DHT", "Поиск друг друга через публичный DHT"),
            s.party_rendezvous,
            T("When a direct connection fails, your address is posted on the public BitTorrent DHT under a "
@@ -2558,6 +2564,20 @@ void PartyHud() {
         }
         ImGui::Dummy(ImVec2(width, used + 1.0f * s));
     }
+    {   // C4: this player's own rot under the companions ("Rot 2/5: max HP -20 %"), while it has any.
+        int kind[party::status::kRotKinds];
+        party::status::Rot(kind);
+        const bool ru = BbSettings::MenuText("en", "ru")[0] == 'r';
+        const std::string rot = coop::balance::DescribeRot(kind, ru);
+        if (!rot.empty()) {
+            ImGui::Dummy(ImVec2(0.0f, 3.0f * s));
+            ImGui::PushFont(game_font, 14.0f);
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + width);
+            ImGui::TextColored(ImVec4(0.74f, 0.52f, 0.40f, 0.95f), "%s", rot.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::PopFont();
+        }
+    }
     party_hud_top = ImGui::GetWindowPos().y;
     ImGui::End();
     ImGui::PopStyleVar(3);
@@ -2712,7 +2732,12 @@ void PartyHud() {
 /// Statsaudit finding 1: the guest's own bloodstain in the host's world (party_ping.h StainMark),
 /// a blood-red drop through walls with "Blood Echoes N" and the distance (clamped to the screen
 /// edge when off screen). Hidden under the game's menus, dialogs, cutscenes and loading screens.
+/// An option, off by default (bbport.ini party_stain_marker; env BB_PARTY_STAIN_MARKER=0/1 over it).
 bool PartyStainWanted() {
+    static const char* const env = std::getenv("BB_PARTY_STAIN_MARKER");
+    if (!(env && *env ? env[0] != '0' : BbSettings::Get().party_stain_marker.load())) {
+        return false;
+    }
     party::ping::StainMark m;
     return party::status::Enabled() && party::ping::GetStain(&m) && party::hud::Shown() && !party::hud::GameDialog();
 }

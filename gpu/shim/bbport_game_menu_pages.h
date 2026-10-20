@@ -113,7 +113,7 @@ struct Texts {
 /// arrows) or, with `toggle`, an On/Off row.
 struct PartyRow {
     using Board = party::status::Board;
-    int order = 0; ///< position on the page; built-in rows: status 10, copy code 20/21, rejoin
+    int order = 0; ///< position on the page; built-in rows: status 10, rot 15, copy code 20/21, rejoin
                    ///< 30, leave 40 (notices and last event: Party members page)
     int page = 0;  ///< 0: the Party page, 1: the Party mode page (switching role / single player)
     std::function<Texts(const Board&)> name;    ///< at most MaxNameLength units (cut otherwise)
