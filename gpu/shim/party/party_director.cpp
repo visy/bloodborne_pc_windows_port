@@ -25,6 +25,7 @@
 #include "party_catchup.h"
 #include "party_status_bridge.h"
 #include "party_chalice.h"
+#include "party_gestures.h"
 #include "party_items.h"
 #include "party_npc_test.h"
 #include "party_guestsvc.h"
@@ -50,6 +51,8 @@
 
 #include "../net/bbnet_internal.h"
 #include "../net/party_host_service.h"
+#include "../net/np_session.h"
+#include "../net/party_util.h"
 #include "../../party_env.h"
 
 #include <algorithm>
@@ -153,6 +156,7 @@ struct TravelStep {
         // previous step, the later), while it is out (repeat cycles: tools/mp/smoke_party.py).
         HostLeave, GuestLeave, HostRejoin, GuestRejoin
     } kind = HostWarp;
+    bool after_scene = false; // "~": the delay counts from the end of a cutscene after the previous step
     std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30; HostKill: the entity id
     float pos[3] = {};    // HostMove / GuestMove: the chr warp target (map coordinates)
     float yaw = 0;        // HostMove / GuestMove: rotation about Y (radians) when has_yaw
@@ -190,6 +194,11 @@ struct Test {
     bool log_state = false;
     int insight = -1;
     int echoes = -1; // echoes=N: writes the player's Blood Echoes once (test saves)
+    // armor=SET: puts on armor set SET (EquipParamProtector SET, +1000, +2000, +3000: head, chest,
+    // arms, legs) once, 3 s into the first steady world, as the equipment menu does; in a session
+    // the peers rebuild this chr from its new record (the mirror's path). Distinct-looking players
+    // for the visual tests (all instances share one test save).
+    std::uint32_t armor = 0;
     // approach=X:Z:R[:BUTTON]: walk (pad file sticks, camera-relative, closed loop on the position)
     // until within R m of (X, Z), facing it; then BUTTON (cross / triangle / square / circle) once.
     bool approach = false, approach_done = false, ap_faced = false;
@@ -278,6 +287,9 @@ struct Test {
     // after the world was steady again with a cooperator, counted from here.
     Clock::time_point steady_at{};
     bool steady = false;
+    // The game's cutscenes (a step ending in "~" counts from the end of one).
+    bool scene_on = false;
+    Clock::time_point scene_end_at{};
     // A running multi-tick step (HostWalk / HostHeadstone).
     struct Script {
         TravelStep::Kind kind = TravelStep::HostWalk;
@@ -361,6 +373,11 @@ struct State {
     int watchdog_stops = 0;
     bool watchdog_check = false; // after a stop: log the session / phantoms once it is idle
     Clock::time_point watchdog_at{};
+    // Summons that cannot work (summon_endpoint_unusable, UdpReachTick): host: the members with no
+    // usable UDP endpoint; guest: this game (no STUN-mapped endpoint, the host is remote).
+    std::vector<std::string> unreachable;
+    bool self_unreachable = false;
+    Clock::time_point reach_at{}, reach_said{};
 };
 
 State& S() {
@@ -1614,6 +1631,12 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         t.steady = steady;
         t.steady_at = now;
     }
+    if (const bool scene = CutscenePlaying(); scene != t.scene_on) {
+        t.scene_on = scene;
+        if (!scene) {
+            t.scene_end_at = now;
+        }
+    }
     // A guest_stick walk holds the chain: the next step's delay counts from the end of the walk.
     if (t.ran &&
         (t.last_kind == TravelStep::GuestStick || t.last_kind == TravelStep::HostStick ||
@@ -1676,7 +1699,14 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         }
         // S s after the later of: the last load (steady again), the previous step (or the join).
         const Clock::time_point prev = t.ran ? t.step_at : t.joined_at;
-        const Clock::time_point from = t.steady_at > prev ? t.steady_at : prev;
+        Clock::time_point from = t.steady_at > prev ? t.steady_at : prev;
+        if (t.steps[t.next_step].after_scene) {
+            // "~": waits for a cutscene that ended after the previous step, then S s after its end.
+            if (t.scene_on || t.scene_end_at <= prev) {
+                return;
+            }
+            from = t.scene_end_at > from ? t.scene_end_at : from;
+        }
         if (Seconds(from, now) < t.steps[t.next_step].delay) {
             return;
         }
@@ -2157,6 +2187,7 @@ void HostWatchdogTick(State& st, const GameSnapshot& s, party::PartyLink* link, 
     if (link) {
         in.roster = link->roster();
     }
+    in.unreachable = st.unreachable;
     if (st.watchdog_check && s.session_role == RoleIdle && Seconds(st.watchdog_at, now) >= 2.0) {
         st.watchdog_check = false;
         Log("host watchdog: session idle %.1f s after the stop; %s; cooperators %d", Seconds(st.watchdog_at, now),
@@ -2199,6 +2230,101 @@ void HostWatchdogTick(State& st, const GameSnapshot& s, party::PartyLink* link, 
     st.watchdog_check = true;
     st.watchdog_at = now;
     st.rung_ever = false; // ring again as soon as the session is idle and a member waits
+}
+
+// ---- Summons that cannot work (party_util.h summon_endpoint_unusable) ----
+// 2026-10-20: a remote guest whose game had only its private LAN address (no STUN answer from the
+// host's party port): 4 summons of 20 s punching that address, then the host watchdog's stop.
+// Now neither side rings for it, both players get a notice, and it recovers on its own: the
+// guest's keepalive retries STUN (np_session.cpp) and its signaling_update clears the hold.
+// BB_PARTY_TEST_UNREACHABLE=1 (tests, loopback): every member (host) / this game (guest) counts
+// as unreachable.
+bool TestUnreachable() {
+    static const bool on = [] {
+        const char* v = std::getenv("BB_PARTY_TEST_UNREACHABLE");
+        return v && v[0] == '1';
+    }();
+    return on;
+}
+
+void UdpReachTick(State& st, PartyRole role, party::PartyLink* link, Clock::time_point now) {
+    if (role == PartyRole::None || !link || Seconds(st.reach_at, now) < 1.0) {
+        return;
+    }
+    st.reach_at = now;
+    if (role == PartyRole::Host) {
+        std::vector<std::pair<std::string, std::string>> bad = bbnet::party::PartyHostService::instance().unusable_endpoints();
+        std::vector<std::string> names;
+        for (const party::RosterEntry& e : link->roster()) {
+            if (e.slot == party::kHostSlot || !e.connected) {
+                continue;
+            }
+            std::string where;
+            bool hit = TestUnreachable();
+            for (const auto& [id, at] : bad) {
+                if (id == e.name) {
+                    hit = true;
+                    where = at;
+                }
+            }
+            if (!hit) {
+                continue;
+            }
+            names.push_back(e.name);
+            if (std::find(st.unreachable.begin(), st.unreachable.end(), e.name) == st.unreachable.end()) {
+                Log("summon: UDP to %s is blocked: its game has only the LAN address %s (no public UDP endpoint: "
+                    "the STUN on our party port gave it no answer); no bell or summon for it until it has one "
+                    "(it retries in the background)",
+                    e.name.c_str(), where.empty() ? "(test)" : where.c_str());
+                party::status::SetLastEvent("UDP to " + e.name +
+                                            " is blocked: their game has no public UDP address yet; no summon "
+                                            "until it has one (retrying)");
+            }
+        }
+        for (const std::string& n : st.unreachable) {
+            if (std::find(names.begin(), names.end(), n) == names.end()) {
+                Log("summon: UDP to %s works again (its public endpoint is known): summons resume", n.c_str());
+                party::status::SetLastEvent("UDP to " + n + " works again: summoning");
+                st.rung_ever = false;
+            }
+        }
+        st.unreachable = std::move(names);
+        return;
+    }
+    std::string stun_host;
+    bool asked = false;
+    const bool known = bbnet::session::mapped_known(&stun_host, &asked);
+    const bool blocked =
+        link->state() == party::LinkState::Connected && asked &&
+        (TestUnreachable() ||
+         (!known && bbnet::party::summon_endpoint_unusable(bbnet::party::ip_parse(stun_host),
+                                                           bbnet::party::ip_parse(bbnet::session::local_addr_text()), 0, 0)));
+    if (blocked != st.self_unreachable) {
+        st.self_unreachable = blocked;
+        st.reach_said = now;
+        if (blocked) {
+            Log("summon: UDP to the host is blocked: the host's party port gives no STUN answer, so this game has no "
+                "public UDP address; no bell until it answers (retrying every 40 s)");
+            party::status::SetLastEvent("UDP to the host is blocked: no answer from the host's party port; no summon "
+                                        "until it answers (retrying)");
+        } else {
+            Log("summon: UDP to the host works again (STUN answered): ringing resumes");
+            party::status::SetLastEvent("UDP to the host works again: joining");
+            st.rung_ever = false;
+        }
+    }
+}
+
+/// The roster without the members nobody can summon (State::unreachable).
+std::vector<party::RosterEntry> SummonableRoster(const State& st, const std::vector<party::RosterEntry>& roster) {
+    std::vector<party::RosterEntry> out;
+    for (const party::RosterEntry& e : roster) {
+        if (e.slot == party::kHostSlot ||
+            std::find(st.unreachable.begin(), st.unreachable.end(), e.name) == st.unreachable.end()) {
+            out.push_back(e);
+        }
+    }
+    return out;
 }
 
 void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
@@ -2376,6 +2502,18 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         const bool ok = WritePlayerEchoes(t.echoes);
         Log("test: Blood Echoes -> %d %s", t.echoes, ok ? "written" : "NOT written (no player record)");
         t.echoes = -1;
+    }
+    if (t.armor && Seconds(st.world_at, now) >= 3.0 && s.world_up && !s.loading) {
+        int ok = 0, all = 0;
+        for (int k = 0; k < 4; ++k) {
+            const std::uint32_t piece = t.armor + 1000u * static_cast<std::uint32_t>(k);
+            if (!GameParamRow("EquipParamProtector", "EQUIP_PARAM_PROTECTOR_ST", piece)) continue;
+            ++all;
+            ok += EquipSlotItem(8 + k, kItemProtector, piece) ? 1 : 0;  // head .. legs (slots 8..11)
+        }
+        Log("test: armor set %u put on: %d of %d pieces", t.armor, ok, all);
+        t.armor = 0;
+        if (ok > 0) b2::NoteOwnAppearanceChanged();
     }
     if (!t.goods.empty() && !t.goods_done && Seconds(st.world_at, now) >= 8.0 && s.world_up && !s.loading) {
         t.goods_done = true;
@@ -2850,7 +2988,13 @@ void PartyDirector::ConfigureFromEnv() {
             if (end == std::string::npos) {
                 end = list.size();
             }
-            const std::string item = list.substr(at, end - at);
+            std::string item = list.substr(at, end - at);
+            // "~" at the end of a travel step: its delay counts from the end of a cutscene that plays
+            // after the previous step (a boss intro), not from the previous step itself.
+            const bool after_scene = item.size() > 1 && item.back() == '~';
+            if (after_scene) {
+                item.pop_back();
+            }
             at = end + 1;
             if (item == "log_state") {
                 st.test.log_state = true;
@@ -2994,6 +3138,8 @@ void PartyDirector::ConfigureFromEnv() {
                 if (e > 0) st.test.log_objs.push_back(e);
             } else if (item.rfind("echoes=", 0) == 0) {
                 st.test.echoes = std::atoi(item.c_str() + 7);
+            } else if (item.rfind("armor=", 0) == 0) {
+                st.test.armor = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 6, nullptr, 10));
             } else if (item.rfind("bell_guest@", 0) == 0) {
                 st.test.bell = kGuestBell;
                 st.test.bell_area = std::atoi(item.c_str() + 11);
@@ -3017,6 +3163,7 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("guest_leave", 0) == 0 || item.rfind("host_rejoin", 0) == 0 ||
                        item.rfind("guest_rejoin", 0) == 0) {
                 TravelStep step;
+                step.after_scene = after_scene;
                 step.kind = item.rfind("guest_outage", 0) == 0  ? TravelStep::GuestOutage
                             : item.rfind("host_outage", 0) == 0   ? TravelStep::HostOutage
                             : item.rfind("guest_move", 0) == 0    ? TravelStep::GuestMove
@@ -3541,6 +3688,11 @@ void PartyDirector::Tick() {
         if (chalice::PopHostGoods(&chalices)) {
             link->post_event(party::kBroadcast, chalice::kGoodsEventName, chalice::GoodsToJsonText(chalices));
         }
+        // The party's gestures (the host's own and those it learned from the guests; party_gestures.h).
+        std::vector<std::uint32_t> gestures;
+        if (gestures::PopOwn(&gestures)) {
+            link->post_event(party::kBroadcast, gestures::kEventName, gestures::ToJsonText(gestures));
+        }
         // The host's own online id: the party's dungeon at its altar is another member's ritual.
         static Clock::time_point host_name_at{};
         if (Seconds(host_name_at, Clock::now()) >= 2.0) {
@@ -3560,6 +3712,10 @@ void PartyDirector::Tick() {
         std::vector<std::uint32_t> chalices;
         if (chalice::PopHostGoods(&chalices)) {
             link->post_event(party::kHostSlot, chalice::kGoodsEventName, chalice::GoodsToJsonText(chalices));
+        }
+        std::vector<std::uint32_t> gestures;  // its gestures go to the host (party_gestures.h)
+        if (gestures::PopOwn(&gestures)) {
+            link->post_event(party::kHostSlot, gestures::kEventName, gestures::ToJsonText(gestures));
         }
         std::string form;  // its own ritual dungeon's FormData for the host's board
         if (chalice::PopGuestForm(&form)) {
@@ -3693,6 +3849,7 @@ void PartyDirector::Tick() {
         st.poll_logged = true;
         Log("bell +2.5 s: %s", DescribeSignPolling().c_str());
     }
+    UdpReachTick(st, role, link, now);
     // Automatic summoning. The host also rings while hosting: the 2nd / 3rd cooperator of a
     // 3- / 4-player party (HostMayRing checks the count).
     if (!st.auto_ring || role == PartyRole::None || !link || !s.world_up || s.loading || !st.world_seen ||
@@ -3778,6 +3935,14 @@ void PartyDirector::Tick() {
                     OthersInPrologue().c_str());
             }
         }
+        if (st.self_unreachable && GuestMayRing(st.start_ready, link->state() == party::LinkState::Connected, party_ready)) {
+            // No usable UDP endpoint (UdpReachTick): a summon could only time out.
+            if (Seconds(st.reach_said, now) >= 30.0) {
+                st.reach_said = now;
+                Log("bell: not ringing: UDP to the host is blocked (no STUN answer yet; retrying)");
+            }
+            return;
+        }
         if (GuestMayRing(st.start_ready, link->state() == party::LinkState::Connected, party_ready)) {
             // Not before the host's map is known (it is still loading): the gather below needs it,
             // and a guest that rang meanwhile was summoned at its own world's spot (the Hunter's
@@ -3822,12 +3987,14 @@ void PartyDirector::Tick() {
         if (st.summons_seen && Seconds(st.summon_at, now) < 20.0) {
             return;
         }
+        // Members nobody can summon (UdpReachTick) do not count: no bell for them alone.
+        const std::vector<party::RosterEntry> roster = SummonableRoster(st, link->roster());
         const bool may = link->state() == party::LinkState::Hosting &&
-                         HostMayRing(st.start_ready, s.cooperators, max_players, link->roster());
+                         HostMayRing(st.start_ready, s.cooperators, max_players, roster);
         // A waiting member still in another map than ours (it gathers to our lamp first, with a
         // loading screen) is not waiting for this bell yet: the grace starts once it is here.
         bool member_elsewhere = false;
-        for (const party::RosterEntry& e : link->roster()) {
+        for (const party::RosterEntry& e : roster) {
             if (e.slot != party::kHostSlot && e.connected &&
                 (e.state == party::MemberState::Home || e.state == party::MemberState::Joining) &&
                 dsummon::MapKnown(e.map_id) && dsummon::MapKnown(s.map_id) && !dsummon::SameMap(e.map_id, s.map_id)) {
@@ -3853,7 +4020,8 @@ void PartyDirector::Tick() {
             st.bell_hold_logged = false;
             Ring(st, kHostBell, "host ready, a ready party member waits", now);
         } else if (link->state() == party::LinkState::Hosting && st.start_ready && b2::TitleJoinPending() &&
-                   s.cooperators + 1 < max_players && !AnyMemberInPrologue(link->roster())) {
+                   s.cooperators + 1 < max_players && !AnyMemberInPrologue(link->roster()) &&
+                   roster.size() == link->roster().size()) {
             // A guest at its title asks for this room (title join): the room comes with the bell.
             Ring(st, kHostBell, "host ready, a guest joins from its title", now);
         }
@@ -4069,6 +4237,7 @@ void CoopTick() {
     z.Next(Zone::Director);
     PartyDirector::Get().Tick();
     chalice::Tick(PartyDirector::Get().Role() == PartyRole::Host); // the local dungeon, the party's chalices
+    gestures::Tick(PartyDirector::Get().Role() == PartyRole::Host); // the party's gestures (party_gestures.h)
     z.Next(Zone::Travel);
     TravelTick(); // B1 guest replay (party_travel.h)
     lamptravel::Tick(); // direct lamp travel's warp menu choice (lamp_travel.h)

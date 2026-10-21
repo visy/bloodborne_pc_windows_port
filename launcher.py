@@ -429,6 +429,36 @@ def read_party_codes() -> tuple:
     return parse_party_codes(text)
 
 
+def revoke_party_code(user_dir: Path) -> list:
+    """New party code (the Party tab's button, the game not running): forgets the host's code
+    secret so the next hosting start makes a new code (party_code.h pick_host_secret): deletes
+    party_secret.txt, the old codes in party_code.txt and a crash marker (party_state.json: it
+    carries the secret too) and drops party.json's host_secret (the menu flow's copy). Returns
+    the names of what it changed."""
+    changed = []
+    for name in ("party_secret.txt", "party_code.txt", "party_state.json"):
+        path = user_dir / name
+        try:
+            path.unlink()
+            changed.append(name)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+    flow = user_dir / "party.json"
+    try:
+        data = json.loads(flow.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = None
+    if isinstance(data, dict) and "host_secret" in data:
+        del data["host_secret"]
+        tmp = flow.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, flow)
+        changed.append("party.json")
+    return changed
+
+
 def read_party_code() -> str:
     """The code to give friends: the Internet code, else the LAN code ('' if none)."""
     internet, lan = read_party_codes()
@@ -585,6 +615,10 @@ def settings_env(s: dict) -> dict:
     env["BB_AUDIO_LOG"] = "1" if on("feat_audio_log", False) else "0"
     # Party arrival render log for black-world reports: did the 3D scene draw after a party travel
     env["BB_ARRIVAL_LOG"] = "1" if on("feat_arrival_log", False) else "0"
+    # Party spectate camera log: camera resets and jumps while a dead player spectates a boss fight
+    env["BB_PARTY_SPECTATE_LOG"] = "1" if on("feat_spectate_log", False) else "0"
+    # Party host-death lock log for frozen-guest reports: the HostDead locks every 0.25 s on a guest
+    env["BB_HOSTDEAD_LOG"] = "1" if on("feat_hostdead_log", False) else "0"
     # Mute the game while its window is in the background
     env["BB_MUTE_UNFOCUSED"] = "1" if on("feat_mute_unfocused") else "0"
     # Mouse & keyboard mode (bbport.ini mk_enabled), the performance HUD (show_hud), async shaders
@@ -1718,6 +1752,8 @@ class BloodborneLauncher(tk.Tk):
         self.feat_save_log = tk.BooleanVar(value=self.settings.get("feat_save_log", False))
         self.feat_audio_log = tk.BooleanVar(value=self.settings.get("feat_audio_log", False))
         self.feat_arrival_log = tk.BooleanVar(value=self.settings.get("feat_arrival_log", False))
+        self.feat_spectate_log = tk.BooleanVar(value=self.settings.get("feat_spectate_log", False))
+        self.feat_hostdead_log = tk.BooleanVar(value=self.settings.get("feat_hostdead_log", False))
         _lvl = str(self.settings.get("party_log_level", "") or "")
         self.party_log_level_var = tk.StringVar(
             value=next((label for label, v in PARTY_LOG_LEVELS if v == _lvl), PARTY_LOG_LEVELS[0][0]))
@@ -2147,6 +2183,14 @@ class BloodborneLauncher(tk.Tk):
                     "After each party travel or join load: whether the 3D world drew, where the camera is "
                     "and the video memory state, 3 s and 10 s after arriving. Two lines per arrival. "
                     "Default: off (BB_ARRIVAL_LOG).")
+        self._check(sec, "Party spectate camera log", self.feat_spectate_log,
+                    "While a dead player watches a boss fight: camera resets per minute and the largest "
+                    "camera jump and turn between frames, one line every 10 s. Default: off "
+                    "(BB_PARTY_SPECTATE_LOG).")
+        self._check(sec, "Party host-death lock log (guest frozen)", self.feat_hostdead_log,
+                    "On a guest, from the host's death until the next load: four lines a second with the "
+                    "game's host-death locks, the left stick and how far your character moved. For reports of "
+                    "a guest that cannot move or open menus after the host died. Default: off (BB_HOSTDEAD_LOG).")
 
         sec = self._section(tab, 1, "Watchdog")
         self._check(sec, "Watchdog", self.feat_watchdog,
@@ -2503,7 +2547,8 @@ class BloodborneLauncher(tk.Tk):
             "Optional extra password: the host and every member must enter the same one. The party code "
             "already contains a secret; a password also keeps out people who get hold of the code, and "
             f"makes the code 3 characters shorter (like {PARTY_CODE_EXAMPLE}). Pick one that "
-            "is not easy to guess: it then carries the party's protection. "
+            "is not easy to guess: it then carries the party's protection. Setting or removing it "
+            "gives the host a new party code (once): send friends the new one. "
             "Stored in launcher_settings.json. Default: none (BB_PARTY_PASSWORD).", show="*")
         code_tip = (f"The code the host gave you, like {PARTY_CODE_EXAMPLE} (letters are not "
                     "case-sensitive; I, L and O count as 1, 1 and 0), or the host's address as host:port "
@@ -2515,10 +2560,18 @@ class BloodborneLauncher(tk.Tk):
                     "longer without a password); they paste it with Join a party. It appears after the "
                     "game starts hosting (user\\party_code.txt). Players on your own network can use it "
                     "too: the game then finds you on the LAN.")
-        host_lbl, self.party_host_code_entry, copy_btn, _ = self._entry(
+        host_lbl, self.party_host_code_entry, copy_btn, host_holder = self._entry(
             sec, "Internet code\n(friends elsewhere):", self.party_host_code_var, host_tip, width=20,
             button=("Copy", self.copy_party_code, "Copies the Internet code to the clipboard."))
         self.party_host_code_entry.state(["readonly"])
+        new_code_btn = ttk.Button(host_holder, text="New code", style="Secondary.TButton",
+                                  command=self.new_party_code, width=10)
+        new_code_btn.pack(side="left", padx=(6, 0))
+        Tooltip(new_code_btn, "Your party code stays the same every time you host, so friends can keep "
+                              "it. New code makes a new one (the old one stops working; friends need the "
+                              "new code). While the game hosts, use System > Party mode > New party code in "
+                              "the game instead. Setting or removing a password also gives a new code "
+                              "once.")
         lan_tip = (f"Your party code for players on the same network (same router), like "
                    f"{PARTY_LAN_CODE_EXAMPLE}. Use it when the "
                    "Internet code does not work at home: most routers cannot reach their own public "
@@ -2541,7 +2594,7 @@ class BloodborneLauncher(tk.Tk):
                                  port_lbl, self.party_port_entry, upnp_cb, rdv_cb, stun_lbl, self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
         self.party_widgets_host = [ff_cb, lamps_cb, public_lbl, self.party_public_entry,
-                                   host_lbl, self.party_host_code_entry, copy_btn,
+                                   host_lbl, self.party_host_code_entry, copy_btn, new_code_btn,
                                    lan_lbl, self.party_lan_code_entry, lan_copy_btn]
         self.party_widgets_join = [code_lbl, self.party_code_entry, paste_btn]
         for var in (self.party_name_var, self.party_port_var, self.party_code_var, self.party_password_var,
@@ -2812,6 +2865,27 @@ class BloodborneLauncher(tk.Tk):
 
     def copy_lan_code(self):
         self.copy_party_code(lan=True)
+
+    def new_party_code(self):
+        """The Party tab's New code: the next hosting start makes a new party code."""
+        if (self.proc is not None and self.proc.poll() is None) or running_instances():
+            messagebox.showinfo(
+                "New party code",
+                "The game is running. To change the code while hosting, use System > Party > "
+                "New party code in the game: the old code stops working at once.")
+            return
+        if not messagebox.askyesno(
+                "New party code",
+                "Make a new party code?\n\nThe old code stops working: friends who saved it need the "
+                "new one. The new code appears when the game starts hosting.\n\n(Setting or removing "
+                "a password also gives a new code, once.)"):
+            return
+        changed = revoke_party_code(party_user_dir())
+        self.party_host_code_var.set("")
+        self.party_lan_code_var.set("")
+        self.update_party_hints()
+        self.log("[PARTY] New party code: the next hosting start makes a new code (old one forgotten"
+                 + (": " + ", ".join(changed) if changed else ": there was none yet") + ").")
 
     def paste_party_code(self):
         try:
@@ -3651,6 +3725,8 @@ class BloodborneLauncher(tk.Tk):
             "feat_save_log": self.feat_save_log.get(),
             "feat_audio_log": self.feat_audio_log.get(),
             "feat_arrival_log": self.feat_arrival_log.get(),
+            "feat_spectate_log": self.feat_spectate_log.get(),
+            "feat_hostdead_log": self.feat_hostdead_log.get(),
             "feat_mute_unfocused": self.feat_mute_unfocused.get(),
             "feat_shader_precompile": self.feat_shader_precompile.get(),
             "display": dict(self.display_choices).get(self.display_var.get(), ""),

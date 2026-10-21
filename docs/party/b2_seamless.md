@@ -582,6 +582,7 @@ dissolved. Steps (`BB_PARTY_B2_REVIVE_RECIPE`, default `recover,flags,ctrl,fade,
 | fade | +0x20C alpha 0 -> 1 at 1.5/s, +0x1E5 &= ~4 | ChrFadeIn 0x1339010 |
 | reset | `0x18BCF30(player, 1)` + PlayerIns +0x1E4 \|= 2 (transform re-applied, ChrCtrl vfunc +0x38, behavior graph reset) | Lua ChrResetRequest 0x13370B0 |
 | idle | behavior event L"Idle_wild" (0x4992C40) via `0x1A19F60([+0x3B0]+0x30, name)` when its +0x384 is set: out of BeDead | Lua ChrResetAnimation 0x13370F0 |
+| hitbody | the hit bodies' collision filter back to the alive one: `0x1812400(ChrCtrl +0x20, filter)` (that object's vfunc +0x30) | see *Hit bodies* below |
 | warp | chr warp vfunc +0x5F8 to the lamp spot | as the B2 spacing |
 | gsm | GSM +0x1522 / +0x1523 (local player died / fell) = 0 | ChrIns_OnDeath |
 
@@ -596,6 +597,23 @@ alive copy of ChrCtrl +0x370 / module +8 written back, hd6 / hd7). So the bits a
 as a stage request is armed after a revive (`a stage request after the revive; ChrCtrl death bits
 set again for the load`); the load re-creates the chr anyway (hd12: both post-revive lamp warps
 loaded, the guest followed with B2 each time).
+
+**Hit bodies (why a player revived in place could not be hit).** Attacks find their targets in
+the hit world `[0x553D700]+0x28` (query `0x185FBE0` -> `0x1860FB0(attack, target)` -> hit record
+`0x185B200` -> `0x18B79E0` -> the victim's damage module, container +0x98, vfunc +0x60 `0x1A33440` ->
++0x68 `0x1A2A600`). A chr's hit bodies are the Havok bodies of ChrCtrl +0x20; their collision filter
+is set by that object's vfunc +0x30 `0x1812400(obj, filter)` (each body through `0xB6A370`, then
++0xA8 / +0xAC; the per-frame update `0x180DF90` re-applies it when the two differ). About 5 s into a
+death (the corpse) the game moves them to layer 0x36 (`0x01000008` -> `0x01000036` on a living
+player; caller stack `0x180E012` <- `0x18BF4AE`, hardware breakpoint, revivehit ab1), which attacks
+and other chrs do not collide with; walls still collide (the character proxy is separate). Only a
+chr rebuild (a load) brought them back, so a revived player took no hits and was never pushed
+(0.6.9 report; ruled out before: the body revive 0x1900710, the alive copy of chr / ChrCtrl /
+module fields, SpEffects, chr +0x218..+0x26C (the floor hit record, setter 0x18BBA70) and module
++0x88 +0x1C0 (a SpEffect entry's flags)). The `hitbody` step calls `0x1812400` with the filter the
+chr had alive (kept every frame while alive; else the dead one with layer 8). It also fixed the
+guest's team: 0x1900710 re-resolved it from type 0 (19, the host's body); `0x18C2A00` runs again
+with the phantom type back (20).
 
 **The guests.** `{"op":"host_revived"}` to every member: each guest removes its copy of the host's
 chr (it died with the host: +0x1E1 0x10000, invisible) as the host does for a guest's lone respawn
@@ -857,6 +875,21 @@ opt-in. The decisions are pure functions in `party_death_rules.h` (unit party-de
   by the boss-clear watchdog after a `host_kill` ForceDead raised BlockClear2_3 on the guest, so it
   left and rejoined by the bell - a test-aid artifact) and the guest's same-map solo load (it came
   while the host death's re-join ran and was correctly dropped: "nothing runs", the host stayed).
+
+**2026-10-20 (spectcam): C5 spectate camera, smooth follow.** User report from a real 2-player
+session: "spectator cam is weird". Live A/B in one session (Gascoigne, host dead in the fight, the
+guest walking circles and rolling; `BB_PARTY_SPECTATE_SMOOTH_AFTER=22`, `BB_PARTY_SPECTATE_LOG=1`):
+the old follow (dead chr carried every 0.2 s to 3 m behind the member's body yaw, Lua CamReset at
+every > 0.6 rad turn) logged 66-124 camera resets a minute, 4-5 m carry steps per tick and render
+camera moves of 5-10 m / turns of 113 degrees between frames; the screenshots show walls, pillars
+and fences in front of the camera most of the time. The smooth follow (carried every frame onto
+the member's own spot with a 0.15 s exponential lag, CamReset only for a new member) logged 0
+resets, 0.23 m steps, camera moves up to 0.35 m and turns up to 8.5 degrees between frames, the
+member on screen in every shot. The member's own spot is never inside a wall; the game's camera
+keeps its own distance and wall collision from there (no raycast needed). The guest's spectate now
+starts at its held death in a boss fight (it waited for the 8 s grace before). The host's ~9 s
+before the spectate is the game's own death (animation, YOU DIED) up to SoloPlayDeath_2's funnel,
+which also records the bloodstain from the chr's position: not shortened.
 
 ## 7. Risks / open items
 

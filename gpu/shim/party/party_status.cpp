@@ -92,6 +92,7 @@ const char* CommandName(CommandType type) {
     case CommandType::Rejoin: return "rejoin";
     case CommandType::Kick: return "kick";
     case CommandType::AddGuestCode: return "add_guest_code";
+    case CommandType::NewCode: return "new_code";
     }
     return "?";
 }
@@ -226,6 +227,13 @@ void RequestLeave() {
 void RequestRejoin() {
     std::scoped_lock lock{mutex};
     Queue({CommandType::Rejoin, {}});
+}
+
+bool RequestNewCode() {
+    std::scoped_lock lock{mutex};
+    if (board.role != Role::Host) return false;
+    Queue({CommandType::NewCode, {}});
+    return true;
 }
 
 bool KickMember(const std::string& name) {
