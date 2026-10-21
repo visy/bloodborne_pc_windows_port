@@ -646,6 +646,16 @@ slots 0..2 and resets them to -1; counted while the handle resolves to a living 
   0: ...): limbo`); it lies dead (YOU DIED, no load) until the bar goes (boss killed: revived at its
   lamp as above, or the party move if the lamp is elsewhere), every guest is down (a wipe: the stock
   funnel, everyone to the host's lamp) or a load starts (someone rests).
+* **Arena revive** (2026-10-21, `BB_PARTY_HOST_LIMBO_REVIVE`, default on; `party_death_rules.h`
+  `DownTick::ArenaRevive`): the limbo ends with a kill (the bar seen over a chr at HP 0, or the last
+  boss handle's chr at HP 0; a bar that just goes is no kill) and, after PR #6's wait for the defeat
+  event, the host is revived in place with `ReviveLocal` (all steps incl. `hitbody`) at its corpse
+  spot (kept at the limbo's start) when that is within 40 m / 4 m of the nearest living member and no
+  fall death (fall-state bits counted only when the chr did not carry them alive: the host's HP
+  module +0x200 reads 0x3800 alive), else exactly on that member's spot (`LampSpot::exact`, no 0.5 m
+  side step). Spectating ends; `host_revived` makes each guest rebuild the host chr and stop hiding
+  it as a spectator. No load for anyone, the bloodstain stays where the host died. Live: see
+  ERSC_PARITY C5 (2026-10-21).
 * A guest dies in a boss fight: its held death (6.8) is kept past the grace while the bar is up
   (`guest: dead in a boss fight (...): limbo until the boss is gone, a wipe or a rest`), then the lone
   respawn (6.9) at the host's last lamp; a host travel (wipe, rest) takes it along as before.

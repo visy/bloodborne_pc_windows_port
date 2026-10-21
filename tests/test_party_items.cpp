@@ -59,6 +59,14 @@ static void test_tables() {
     CHECK(ItemLedgerIndex(17010) == kItemNone);    // repeatable (common 9100)
     CHECK(ItemLedgerIndex(43000) == kItemNone);    // repeatable (13501940)
     CHECK(ItemLedgerIndex(2400450) == kItemNone);  // flagged
+    // Item spots hidden by the awarding event's own flag (playtest 2026-10-20: Old Yharnam's altar)
+    CHECK(ItemAwardSpotFlags(2300170) == std::vector<std::int32_t>{12300130});
+    CHECK(ItemAwardSpotFlags(2605005) == std::vector<std::int32_t>{12600028}); // two lots, one spot
+    CHECK(ItemAwardSpotFlags(43200).size() == 2);                              // one lot, two spots
+    CHECK(ItemAwardSpotFlags(2400450).empty());   // map treasure: its lot flag is the spot's
+    CHECK(ItemAwardSpotFlags(80000000).empty());  // boss reward: the event is a boss defeat
+    CHECK(ItemAwardSpotFlags(75002400).empty());  // flagless (ledger) lots keep their ledger bit only
+    CHECK(ItemAwardSpotFlags(10010).empty());     // per-player Messenger gift
     for (std::size_t i = 0; i < ItemLedgerCount(); ++i) {
         const int lot = ItemLedgerLot(static_cast<std::int32_t>(i));
         CHECK(lot > 0);

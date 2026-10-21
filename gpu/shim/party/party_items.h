@@ -137,6 +137,12 @@ std::int32_t ItemLedgerIndex(std::int32_t lot);
 /// The completion flag of the event that awards ledger lot `idx` (host's "already awarded").
 std::int32_t ItemLedgerDoneFlag(std::int32_t idx);
 std::int32_t ItemLedgerLot(std::int32_t idx);
+/// The item spot flags of a flagged host-only map award (ITEM_AWARD_SPOT): the awarding event's
+/// own item_lot_picked completion flag (Old Yharnam's altar: lot 2300170 -> 12300130), which -
+/// not the lot's flag - hides the spot. A guest given the lot gets them in its own save, so its
+/// copy of the host's world (the overlay's item bits follow the own pool, D4) no longer offers the
+/// spot, after loads too. Empty for every other lot.
+std::vector<std::int32_t> ItemAwardSpotFlags(std::int32_t lot);
 /// Ledger seeding (pure part of SeedLedgerFromOwnSave): with `is_set` reading the save, the ledger
 /// bits to set - one per ledger lot whose done flag is set and whose bit is not - or nothing when
 /// the save already carries the kItemLedgerSeeded marker.

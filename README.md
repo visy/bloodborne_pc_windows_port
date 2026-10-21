@@ -310,7 +310,8 @@ before anyone is in the game):
   headstones all work for guests. A guest can rest alone (lamp, "No"), level up and shop in the
   Dream and come back while the others play on. Shop stock is per player: one-of-a-kind items
   (armour sets, the Insight shop's attire) bought by one player stay in stock for the others.
-- **Talk to NPCs.** Guests can talk to NPCs in the host's world; quest steps are shared by the whole
+- **Talk to NPCs.** Guests can talk to NPCs in the host's world, Gehrman in the Hunter's Dream too
+  (his last offer, the ending choice, stays the host's); quest steps are shared by the whole
   party, and NPCs look solid for guests. When a companion near you talks to an NPC you see the
   subtitles and hear the NPC, with a small "[Hunter talking to Iosefka]" caption (range in *System →
   Party rules → NPC dialogue range*, default 25 m). The workbench, the Bath Messengers' shops and
@@ -367,11 +368,11 @@ before anyone is in the game):
 | Who dies | What happens |
 |---|---|
 | A guest | Gets up again at its own lamp after a short respawn loading screen; its Blood Echoes wait in a bloodstain where it fell (an on-screen marker for it: *System → Pings → Bloodstain marker*, off by default); the others keep playing |
-| The host | Everyone gets one respawn loading screen at the host's lamp, as in the original game, and the world resets; the host's echoes stay in a bloodstain |
-| Anyone, during a boss fight | Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies (then gets up at the host's lamp), everyone dies, or someone travels |
+| The host | Gets up again at its lamp with no loading screen while the guests play on (a lamp in another area: the host alone loads it); the host's echoes stay in a bloodstain. In a boss fight the guests kill: the host gets up in the arena (see below). `BB_PARTY_B2_HOST_REVIVE=0`: everyone gets one respawn loading screen at the host's lamp and the world resets, as in the original game |
+| Anyone, during a boss fight | Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies, everyone dies, or someone travels. When the boss dies the host gets up right there in the arena, where it fell (or beside the hunter it watched), no load, its echoes still in its bloodstain; a guest gets up at the host's lamp. *Party Rules & Sync → Host gets up after a boss kill* off: the party's respawn load instead |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |
 
-A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's) or a party wipe resets them.
+A death (host or guest) brings no enemies back; a rest at a lamp (anyone's) or a party wipe resets them.
 
 ### Seamless co-op progress
 

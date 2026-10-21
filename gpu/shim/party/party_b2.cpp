@@ -1202,6 +1202,19 @@ bool BossFightActive(std::string* who = nullptr) {
     return false;
 }
 
+/// The first boss bar's chr handle whose chr lives (BossFightActive's), ~0 when none.
+u32 LivingBossHandle() {
+    const u64 hud = Slot(0x5562878);
+    for (int i = 0; hud && i < 3; ++i) {
+        const u32 h = Field<u32>(hud, 0x165c + u64(i) * 0x14, ~0u);
+        const u64 chr = h == ~0u ? 0 : ChrOfHandle(h);
+        if (chr && Field<int>(Field<u64>(Field<u64>(chr, 0x3b0), 0x20), 0xf8, -1) > 0) {
+            return h;
+        }
+    }
+    return ~0u;
+}
+
 /// A boss bar is still up for a chr whose HP is 0 (or gone): the boss died and the game's defeat
 /// event, which clears the bar (2003[12]) and sets the defeat flag, has not run yet.
 bool BossBarDying() {
@@ -3667,8 +3680,8 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         return;
     }
     // The grace waits for a host travel that would take this guest along (a wipe's death load, a
-    // limbo). With the host alive and no boss bar up nothing is coming: 2 s, not 8 (every guest
-    // death takes the respawn load since 0.6.9; the 8 s wait was most of the delay before it).
+    // limbo). With the host alive and no boss bar up nothing is coming: 2 s, not 8 (the 8 s wait
+    // was most of the delay before a guest's respawn, in place or by the 0.6.9 respawn load).
     const double grace = HostChrDown() || BossFightActive(nullptr) ? DeathGrace() : std::min(DeathGrace(), 2.0);
     if (now - at < grace || s.loading) {
         // The spectate starts at the hold in a boss fight, not after the grace (the guest's view
@@ -3768,8 +3781,17 @@ struct LampSpot {
     u32 lamp = 0, map = 0;
     alignas(16) float pos[4] = {};
     alignas(16) float rot[4] = {};
+    bool exact = false;           // the arena revive: this very spot (no 0.5 m step beside a member)
+    const char* what = nullptr;   // the warp's log name (default: "... revive at the lamp")
 };
 LampSpot g_lamp_spot;  // main thread
+// The host's limbo (C5): where its chr lay when it died, for the arena revive (main thread).
+struct CorpseSpot {
+    bool valid = false;
+    alignas(16) float pos[4] = {};
+    alignas(16) float rot[4] = {};
+};
+CorpseSpot g_host_corpse;
 std::atomic<bool> g_host_down{false};    // the host's death was taken; not revived yet
 std::atomic<double> g_host_down_at{0};
 std::atomic<int> g_revivals{0};
@@ -3968,12 +3990,24 @@ bool ChrTransform(u64 chr, float pos[4], float rot[4]) {
     return a && SafeRead(a + 0x1e0, pos, 16) && SafeRead(a + 0x1d0, rot, 16);
 }
 
-/// BB_PARTY_B2_HOST_REVIVE=1 (opt-in since playtest 1): the host's death is a revive in place at
-/// its lamp in the loaded map (no load, no world reset). Default: the vanilla respawn load for the
-/// whole party (the chr warp broke occlusion, left the guests' HostDead state half-done until their
-/// next load - blocked pickups and prompts - and reset nothing; triage bugs 6, 7, 12, 13).
+/// The host's death is a revive in place at its lamp in the loaded map (no load, no world reset);
+/// a lamp in another map: the host loads it alone. On by default since 0.7.0 (user decision): the
+/// reasons it was opt-in since playtest 1 are fixed - the guests' HostDead locks (K12, hostdead),
+/// the revived chr's hit bodies (the "hitbody" recipe step), pickups / prompts / lock-on / rally
+/// checked live (revivecheck). BB_PARTY_B2_HOST_REVIVE=0: the vanilla respawn load for the whole party.
 bool HostReviveOn() {
-    static const bool on = deathrules::OptIn(std::getenv("BB_PARTY_B2_HOST_REVIVE"));
+    static const bool on = [] {
+        const char* v = std::getenv("BB_PARTY_B2_HOST_REVIVE");
+        return !(v && v[0] == '0');
+    }();
+    return on;
+}
+
+/// BB_PARTY_HOST_LIMBO_REVIVE (default on; launcher: Party rules & sync): the guests killed the
+/// boss while the host lay dead in the fight: the host gets up in the arena, nobody loads. "0":
+/// the party's respawn load as before.
+bool HostLimboReviveOn() {
+    static const bool on = !(std::getenv("BB_PARTY_HOST_LIMBO_REVIVE") && std::getenv("BB_PARTY_HOST_LIMBO_REVIVE")[0] == '0');
     return on;
 }
 
@@ -4156,7 +4190,7 @@ bool HostDeathIntercept() {
     case deathrules::HostDeathPlan::PartyLoad:
         Log("host death: the respawn load for the whole party at lamp %u (vanilla loading screen, the world resets); "
             "%d member(s), %d down%s",
-            lamp, members, dead, HostReviveOn() ? "" : " (BB_PARTY_B2_HOST_REVIVE=1: revive in place instead)");
+            lamp, members, dead, HostReviveOn() ? "" : " (BB_PARTY_B2_HOST_REVIVE=0: the in-place revive is off)");
         return false;
     case deathrules::HostDeathPlan::AloneLoad:
         // Design decision 1 (revive mode): the host respawns at its own last lamp in another map
@@ -4169,9 +4203,12 @@ bool HostDeathIntercept() {
         g_host_down = true;
         g_host_down_at = Now();
         g_host_limbo = true;
-        Log("host death in a boss fight (%s): limbo until the boss is gone (then the %s), a wipe or a rest; "
-            "%d member(s), %d down",
-            boss.c_str(), HostReviveOn() ? "respawn" : "party's respawn load", members, dead);
+        g_host_corpse = CorpseSpot{};
+        g_host_corpse.valid = ChrTransform(Field<u64>(Slot(kSlotWorldChrMan), 0x60), g_host_corpse.pos, g_host_corpse.rot);
+        Log("host death in a boss fight (%s): limbo until the boss is gone (killed: %s), a wipe or a rest; "
+            "%d member(s), %d down; died at (%.1f, %.1f, %.1f)",
+            boss.c_str(), HostLimboReviveOn() ? "the host gets up in the arena, no load" : "the party's respawn load",
+            members, dead, double(g_host_corpse.pos[0]), double(g_host_corpse.pos[1]), double(g_host_corpse.pos[2]));
         SpectateBegin("host");
         return true;
     case deathrules::HostDeathPlan::ReviveInPlace:
@@ -4324,10 +4361,10 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
         // Issue #4 item 7: the game's fall-death state (normally a load path; an in-place revive
         // after a fall only with BB_PARTY_GUEST_REVIVE_FAR or a failed load) is cleared too.
         const u16 hp200 = Field<u16>(Field<u64>(Field<u64>(p, 0x3b0), 0x20), 0x200);
-        if (deathrules::FallDeathState(f, hp200)) {
+        if (deathrules::FallDeathState(f, hp200) || (hp200 & deathrules::kDeathBitsHp200) != 0) {
             f &= ~deathrules::kFallFlags1e1;
             if (const u64 m20 = Field<u64>(Field<u64>(p, 0x3b0), 0x20)) {
-                const u16 w = u16(hp200 & ~deathrules::kFallBitsHp200);
+                const u16 w = u16(hp200 & ~deathrules::kDeathBitsHp200);
                 SafeWrite(m20 + 0x200, &w, 2);
             }
             Log("%s revive: the game's fall-death state cleared (hp+0x200 %04x)", host ? "host" : "guest",
@@ -4420,6 +4457,7 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
         // Another party member standing on the lamp spot (within 1 m): side by side instead of inside
         // it (BesideHost: 0.5 m by party slot).
         for (const TaskInfo& t : Tasks(false)) {
+            if (sp.exact) break;  // the arena revive's spot is chosen already
             const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
             float q[3];
             if (c && ChrPos(c, q) && (q[0] - pos[0]) * (q[0] - pos[0]) + (q[2] - pos[2]) * (q[2] - pos[2]) < 1.0f &&
@@ -4430,7 +4468,7 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
                 break;
             }
         }
-        LocalChrWarpImpl(p, pos, rot, host ? "host revive at the lamp" : "guest revive at the lamp");
+        LocalChrWarpImpl(p, pos, rot, sp.what ? sp.what : host ? "host revive at the lamp" : "guest revive at the lamp");
     }
     if (RecipeHas("rearm")) {
         RearmDeathScript(host ? "host revive" : "guest revive");
@@ -4439,8 +4477,14 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
     ReadDeathFields(p, &after);
     g_revivals.fetch_add(1);
     g_seen_dying = false;
-    Log("%s revive #%d: after: hp %d, %s; at lamp %u (%s)", host ? "host" : "guest", g_revivals.load(), ChrHp(p),
-        DescribeDeathFields(after).c_str(), sp.lamp, DescribeChr(p).c_str());
+    char where[48];
+    if (sp.exact) {
+        std::snprintf(where, sizeof where, "in the arena (no lamp)");
+    } else {
+        std::snprintf(where, sizeof where, "at lamp %u", sp.lamp);
+    }
+    Log("%s revive #%d: after: hp %d, %s; %s (%s)", host ? "host" : "guest", g_revivals.load(), ChrHp(p),
+        DescribeDeathFields(after).c_str(), where, DescribeChr(p).c_str());
     if (host) {
         Send(-1, "{\"op\":\"host_revived\"}");
     } else {
@@ -4561,9 +4605,12 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
         // 0.6.9, correct over seamless: every death takes the respawn load. A guest revived in place
         // could not be hit until its next load (enemy attacks passed through it; PR #6 report). The
         // cause: the death puts the chr's hit bodies on the dead collision layer; the revive's
-        // "hitbody" step puts them back (RestoreHitBodies, live A/B revivehit ab3).
-        // BB_PARTY_GUEST_REVIVE_INPLACE=1: the in-place revive.
-        static const bool inplace = deathrules::OptIn(std::getenv("BB_PARTY_GUEST_REVIVE_INPLACE"));
+        // "hitbody" step puts them back (RestoreHitBodies, live A/B revivehit ab3). On by default
+        // again since revivecheck (2026-10-21 live, after the revive: hits taken, lock-on, rally,
+        // Blood Vial, menu, lamp prompt and its menu, a treasure pickup with its item box, a party
+        // lamp travel). BB_PARTY_GUEST_REVIVE_INPLACE=0: every death takes the respawn load.
+        static const bool inplace = !(std::getenv("BB_PARTY_GUEST_REVIVE_INPLACE") &&
+                                      std::getenv("BB_PARTY_GUEST_REVIVE_INPLACE")[0] == '0');
         static const bool always = deathrules::OptIn(std::getenv("BB_PARTY_GUEST_REVIVE_FAR"));
         float p[3] = {0, 0, 0};
         double dist = std::numeric_limits<double>::quiet_NaN(), fell = 0;
@@ -4827,9 +4874,22 @@ void HostDownTick(const GameSnapshot& s, double now) {
         // The boss died while the host lay in limbo: wait for the game's defeat event (it clears the
         // bar and sets the defeat flag), then 3 s more for its flags, at most 20 s from the kill.
         static double gone_at = 0;
+        // Killed or only gone (ArenaRevive needs a kill): the bar seen over a dead chr, or the boss
+        // chr it showed last at HP 0.
+        static u32 boss_h = ~0u;
+        static bool killed = false;
+        if (dv.boss_active) {
+            boss_h = LivingBossHandle();
+            killed = false;
+        }
         if (dv.limbo && !dv.boss_active) {
             if (gone_at == 0) gone_at = now;
             const bool dying = BossBarDying();
+            if (!killed && (dying || (boss_h != ~0u && ChrHp(ChrOfHandle(boss_h)) == 0))) {
+                killed = true;
+                Log("host death: the limbo's boss was killed (%s)", dying ? "its bar over a dead chr" : "its chr at HP 0");
+            }
+            dv.boss_killed = killed;
             const double since = now - gone_at;
             dv.boss_dying = since < 20.0 && (dying || since < 3.0);
             static bool logged = false;
@@ -4840,7 +4900,33 @@ void HostDownTick(const GameSnapshot& s, double now) {
             if (!dv.boss_dying) logged = false;
         } else {
             gone_at = 0;
+            if (!dv.limbo) {
+                boss_h = ~0u;
+                killed = false;
+            }
         }
+    }
+    dv.arena_revive_on = HostLimboReviveOn();
+    // The arena revive's spot: the living member nearest to the host's chr (the spectate carries
+    // it with the member it follows), and the host's corpse spot when that is safe.
+    LampSpot arena;
+    if (dv.limbo) {
+        float me[3] = {};
+        ChrPos(s.player, me);
+        float best = 1e30f;
+        for (const TaskInfo& t : Tasks(false)) {
+            const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+            alignas(16) float pos[4], rot[4];
+            if (!c || ChrHp(c) <= 0 || !ChrTransform(c, pos, rot)) continue;
+            const float d = (pos[0] - me[0]) * (pos[0] - me[0]) + (pos[2] - me[2]) * (pos[2] - me[2]);
+            if (d < best) {
+                best = d;
+                arena.valid = true;
+                std::memcpy(arena.pos, pos, sizeof pos);
+                std::memcpy(arena.rot, rot, sizeof rot);
+            }
+        }
+        dv.member_here = arena.valid;
     }
     dv.revive_opt_in = HostReviveOn();
     dv.down_for = now - g_host_down_at.load();
@@ -4865,9 +4951,46 @@ void HostDownTick(const GameSnapshot& s, double now) {
     }
     if (was_limbo) {
         Log("host death: the boss fight is over (%.1f s after the death); %s", dv.down_for,
-            plan == deathrules::DownTick::Revive      ? "respawn at the lamp here"
+            plan == deathrules::DownTick::ArenaRevive ? "the boss was killed: the host gets up in the arena (no load)"
+            : plan == deathrules::DownTick::Revive    ? "respawn at the lamp here"
             : plan == deathrules::DownTick::AloneLoad ? "the lamp is in another map: the host loads it alone"
+            : dv.boss_killed && !dv.arena_revive_on   ? "the party's respawn load (BB_PARTY_HOST_LIMBO_REVIVE=0)"
                                                       : "the party's respawn load");
+    }
+    if (plan == deathrules::DownTick::ArenaRevive) {
+        // Its corpse spot (by its bloodstain) when safe, else the followed member's own spot. Both
+        // short warps inside the arena; the bloodstain (its echoes) stays where it died.
+        const DeathHeight dh = g_death_height;
+        u64 f = 0;
+        SafeRead(s.player + 0x1e1, &f, 5);
+        // The fall-death state counts only for bits the chr did not carry alive (live arena run: the
+        // host's HP module +0x200 read 0x3800 alive and dead, a normal death taken for a fall).
+        const u16 hp200 = Field<u16>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0x200);
+        const u64 f_new = g_alive_fields_ok ? f & ~g_alive_fields.f1e1 : f;
+        const u16 hp200_new = u16(g_alive_fields_ok ? hp200 & ~g_alive_fields.m20_200 : hp200);
+        const bool fell = (dh.known && deathrules::FallDrop(dh.peak, dh.at_death, dh.at_death) >= deathrules::kGuestReviveFallDrop) ||
+                          deathrules::FallDeathState(f_new, hp200_new);
+        const CorpseSpot& c = g_host_corpse;
+        const double dx = double(c.pos[0] - arena.pos[0]), dz = double(c.pos[2] - arena.pos[2]);
+        const double horiz = std::sqrt(dx * dx + dz * dz), dy = double(c.pos[1] - arena.pos[1]);
+        const bool corpse = deathrules::ArenaReviveAtCorpse(c.valid, fell, horiz, dy);
+        if (corpse) {
+            std::memcpy(arena.pos, c.pos, sizeof arena.pos);
+            std::memcpy(arena.rot, c.rot, sizeof arena.rot);
+        }
+        arena.exact = true;
+        arena.map = s.map_id;
+        arena.what = corpse ? "host revive at its corpse spot (arena)" : "host revive at the followed member (arena)";
+        Log("host death: up again in the arena %s at (%.1f, %.1f, %.1f): no load for anyone; the corpse spot was "
+            "%.1f m from the followed member (height %+.1f m)%s; echoes stay in its bloodstain",
+            corpse ? "where it died" : "on the followed member's spot", double(arena.pos[0]), double(arena.pos[1]),
+            double(arena.pos[2]), horiz, dy, fell ? ", a fall death" : "");
+        SpectateEnd();
+        ReviveLocal(s, arena, true);
+        party::status::SetLastEvent("The boss fell: you are back on your feet");
+        watch_until = now + 10.0;
+        next_watch = now + 0.5;
+        return;
     }
     if (plan == deathrules::DownTick::PartyLoad) {
         Log("host death: the respawn load for the whole party (%d member(s), %d down)", members, deathrules::PartyDown(members, dead, seen));
@@ -9523,6 +9646,9 @@ void OnLinkEvent(int from_slot, const std::string& body) {
     }
     if (body.find("\"host_revived\"") != std::string::npos) {
         g_host_revived_note = true;
+        // Its limbo is over (the arena revive): its new copy here is not disabled as a spectator's
+        // (live: the re-created chr read HP 0 for a frame and was disabled again).
+        g_spectator_until = 0;
         Log("guest: the host was revived in place (no load)");
         return;
     }

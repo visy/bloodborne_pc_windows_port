@@ -83,6 +83,10 @@ CLERIC_SPOT_GUEST = "-134.6:-26.6:54.7"
 # The scripted host death, or the boss got there first (the step then logs it found the chr dead)
 HOST_DIED = r"travel step \d+/\d+: host_die|travel step \d+ \(host_die\) waits: the own chr is dead"
 LEAVE_OUT = r"the host ended the party|host lost \(the host left its room\)"
+# The wipe itself ("a wipe; the stock funnel runs" / "a wipe; the party respawns together"), not the
+# limbo line, which also says "..., a wipe or a rest" (it ended s1 before the guests died)
+WIPE_RX = r"a wipe; the"
+WIPE_UNTIL = "0:" + WIPE_RX
 
 
 def phase_s1(only):
@@ -104,7 +108,7 @@ def phase_s1(only):
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=" + g2],
         crash=[],
-        until=["0:a wipe", "0:spectating: following"],
+        until=[WIPE_UNTIL, "0:spectating: following"],
     )
 
 
@@ -163,7 +167,7 @@ GROUP_UNTIL = {
     "travel": ["1:map - -> m24_01", "2:map - -> m24_01"],
     "boss": ["1:cutscene 24010010"],
     "host_death": ["0:spectating: following"],
-    "wipe": ["0:a wipe"],
+    "wipe": [WIPE_UNTIL],
     "kill": ["2:host boss kill", "0:K10: boss-clear leave suppressed"],
     "itembox": ["1:item notice closed|lot 50000010 .*not given while summoned|owed key item: lot 50000010"],
     "rejoin_kill": ["1:guest_rejoin: Party > Rejoin pressed"],
@@ -326,7 +330,7 @@ def check_s1(v, L):
     hd = need(v, L, "s1 host death in the fight", 0, HOST_DIED, gm or 0)
     if hd is not None:
         need(v, L, "s1 host limbo + spectate", 0, r"spectating: following", hd)
-    need(v, L, "s1 wipe: the party respawns together", 0, r"a wipe", hd or 0)
+    need(v, L, "s1 wipe: the party respawns together", 0, WIPE_RX, hd or 0)
     check_common(v, L, "s1")
 
 
