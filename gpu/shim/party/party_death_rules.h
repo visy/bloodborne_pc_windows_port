@@ -262,12 +262,31 @@ inline FallReviveStep PlanFallReviveStep(bool death_taken, bool body_far_below, 
     return FallReviveStep::Revive;
 }
 /// Where a fall death (off a ledge or out of the world) gets up outside a boss arena's revive (user
-/// rule): on its last safe floor in the party's world with no load when that spot is kept and the
-/// in-place revive is on (a guest: System > Deaths & revives; the host: its revive in place); else
-/// the respawn as before (Respawn: the lamp, a load if needed). Never at the bottom of the fall.
-enum class FallRespawn { SafeFloor, Respawn };
-inline FallRespawn PlanFallRespawn(bool fall_death, bool safe_ok, bool inplace_on) {
-    return fall_death && safe_ok && inplace_on ? FallRespawn::SafeFloor : FallRespawn::Respawn;
+/// decision 2026-10-21: at a lamp, so the walk back stays the penalty; its bloodstain stays on its
+/// last safe floor). In place with no load: its own last lamp when that is in the loaded map; a
+/// guest otherwise the host's last lamp in the party's map (beside it). Never a load for a fall (a
+/// respawn load after a death out of the world lands in the Hunter's Dream, as single player does):
+/// with neither lamp in the loaded map, its last safe floor. `inplace_on` off (a guest's System >
+/// Deaths & revives) or no fall: the respawn as before.
+enum class FallRespawn { OwnLamp, HostLamp, SafeFloor, Respawn };
+inline const char* FallRespawnName(FallRespawn f) {
+    return f == FallRespawn::OwnLamp    ? "its own last lamp"
+           : f == FallRespawn::HostLamp ? "the host's last lamp"
+           : f == FallRespawn::SafeFloor ? "its last safe floor (no lamp in the loaded map)"
+                                         : "the respawn as before";
+}
+inline FallRespawn PlanFallRespawn(bool fall_death, bool inplace_on, bool own_lamp_here, bool host_lamp_here, bool safe_ok,
+                                   bool host_role) {
+    if (!fall_death || !inplace_on) {
+        return FallRespawn::Respawn;
+    }
+    if (own_lamp_here) {
+        return FallRespawn::OwnLamp;
+    }
+    if (!host_role && host_lamp_here) {
+        return FallRespawn::HostLamp;
+    }
+    return safe_ok ? FallRespawn::SafeFloor : FallRespawn::Respawn;
 }
 enum class LiesRevive { WhereItLies, SafeFloor, Load };
 inline LiesRevive PlanLiesRevive(bool fall_death, bool safe_ok) {

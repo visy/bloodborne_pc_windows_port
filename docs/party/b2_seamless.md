@@ -703,9 +703,11 @@ slots 0..2 and resets them to -1; counted while the handle resolves to a living 
   * the arena revives (host `DownTick::ArenaRevive`, guest `GuestArenaRevive`, also the late kill):
     `deathrules::PlanArenaReviveSpot` - the safe spot, else the member's spot, never the corpse;
   * outside an arena revive, after the death is taken (host `ReviveHost`, guest `GuestFallSafeRevive`
-    from `HeldDeathTick`; `deathrules::PlanFallRespawn`): in place on the safe spot, no load (the
-    host needs no lamp in the map for it); a guest with the in-place revive off, or no safe spot
-    kept: the respawn as before;
+    from `HeldDeathTick`; `deathrules::PlanFallRespawn`; user decision 2026-10-21: at a lamp, the walk
+    back stays the penalty): in place at its own last lamp when that is in the loaded map, a guest
+    otherwise at the host's last lamp there (beside it), no load; never a load for a fall (it lands
+    in the Dream), so with neither lamp in the loaded map the safe spot (the host's death is taken
+    for that even without a lamp here); a guest with the in-place revive off: the respawn as before;
   * the guest's revive before an alone travel (`GuestDeathAloneToOwnLamp`): the safe spot first
     (`PlanLiesRevive`);
   * the stain: `FallStainToSafeSpot` puts the record's +0x00 on the HP 0 safe spot (the host's own
@@ -714,8 +716,9 @@ slots 0..2 and resets them to -1; counted while the handle resolves to a living 
   * a body far below its spot (out of the world): `ReviveLocal` moves it there first while dead and
     `PendingReviveTick` revives it once it has stood there `kFallSettle` s (`PlanFallReviveStep`);
     then 2 s of invincibility, and on the host the game's own 0x13CBAD0 (on a guest it calls
-    BeginLeaveSession at +0x13CBD0F: not used there); `SafeReviveWatchTick` sends a revive that
-    still drops 3 m within 5 s to the lamp.
+    BeginLeaveSession at +0x13CBD0F: not used there); `SafeReviveWatchTick` sends a safe-spot revive
+    that still drops 3 m within 5 s to the lamp. The same order holds for a lamp revive of a body
+    out of the world (moved up to the lamp first).
   Kill plane: m24_01 kills a chr that falls out of the world at about y -1500 (about 30 s of fall from
   the Great Bridge; no +0x1E1 fall flags). Single player then wakes in the Hunter's Dream (solo run:
   `map - -> m21_00_00_00` after the death); in a party the guest's respawn load did the same (r6-r10,
@@ -724,8 +727,10 @@ slots 0..2 and resets them to -1; counted while the handle resolves to a living 
   fall recovery nets (6 s of falling) normally catch such a fall first and put the chr back on the
   safe spot (`BB_PARTY_FALL_RECOVERY=0`: off, test aid). Live (fallsafe runs, Great Bridge, test aids:
   a 23-40 m drop by `guest_move` / `host_move` into the air, a fall through the bridge's floor into the
-  void with the recovery off): arena revives on the safe floor (host and guest), stains moved there,
-  host void death outside a fight up on its safe floor once, alive 5 s later, no load.
+  void with the recovery off): arena revives on the safe floor (host and guest), stains moved there;
+  void deaths outside a fight: up once (no second death), no load, never the Dream (r12 / r13, then
+  at the safe floor; the lamp rule's run: see ERSC_PARITY / the fallsafe report). Smoke group `fall`
+  (phase fl).
 * Shared boss lamp (design decision, ERSC_PARITY @ 7552b38): every respawn after a boss fight goes to
   the same lamp - the host's last lamp (a guest's lone respawn already uses the host's last lamp, or
   a lit lamp of the loaded map, 6.10; the wipe and the host use the host's lamp).

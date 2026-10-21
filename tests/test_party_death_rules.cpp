@@ -229,17 +229,21 @@ int main() {
         CHECK(PlanLiesRevive(false, false) == LiesRevive::WhereItLies);
         CHECK(PlanLiesRevive(true, true) == LiesRevive::SafeFloor);
         CHECK(PlanLiesRevive(true, false) == LiesRevive::Load);
-        // Outside an arena revive: a fall with a safe spot gets up there in place (no load).
-        CHECK(PlanFallRespawn(true, true, true) == FallRespawn::SafeFloor);
-        CHECK(PlanFallRespawn(true, false, true) == FallRespawn::Respawn);
-        CHECK(PlanFallRespawn(true, true, false) == FallRespawn::Respawn);
-        CHECK(PlanFallRespawn(false, true, true) == FallRespawn::Respawn);
+        // Outside an arena revive (user decision): a fall gets up at a lamp in the loaded map, no load.
+        CHECK(PlanFallRespawn(true, true, true, true, true, false) == FallRespawn::OwnLamp);
+        CHECK(PlanFallRespawn(true, true, false, true, true, false) == FallRespawn::HostLamp);   // guest: the host's
+        CHECK(PlanFallRespawn(true, true, false, true, true, true) == FallRespawn::SafeFloor);   // the host: no "host lamp"
+        CHECK(PlanFallRespawn(true, true, true, false, true, true) == FallRespawn::OwnLamp);
+        CHECK(PlanFallRespawn(true, true, false, false, true, false) == FallRespawn::SafeFloor); // never a load (Dream)
+        CHECK(PlanFallRespawn(true, true, false, false, false, false) == FallRespawn::Respawn);
+        CHECK(PlanFallRespawn(true, false, true, true, true, false) == FallRespawn::Respawn);    // in-place revive off
+        CHECK(PlanFallRespawn(false, true, true, true, true, false) == FallRespawn::Respawn);   // no fall: as before
         {
             // The sequence of a death out of the world: HP 0 (the game's death plays), the death taken
             // (held), the body moved up, a settle, the revive in place - and no load.
             double t = 0;
             CHECK(PlanFallReviveStep(false, true, false, false, t) == FallReviveStep::Wait);  // dying
-            CHECK(PlanFallRespawn(true, true, true) == FallRespawn::SafeFloor);              // taken: no load
+            CHECK(PlanFallRespawn(true, true, true, true, true, false) == FallRespawn::OwnLamp); // taken: no load
             CHECK(PlanFallReviveStep(true, true, false, false, t) == FallReviveStep::MoveBody);
             int frames = 0;
             for (t = 0; PlanFallReviveStep(true, true, true, true, t) == FallReviveStep::Wait; t += 1.0 / 30) ++frames;
