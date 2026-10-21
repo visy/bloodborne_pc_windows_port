@@ -802,8 +802,13 @@ def check_summonfail(v, L):
         return
     ask = need(v, L, "summonfail: guest 2 asks for a direct summon", 2, r"direct summon: asked the host for its room", f)
     if ask is not None:
-        served = need(v, L, "summonfail: the host serves guest 2's direct summon", 0,
-                      r"direct summon: slot 2 \(.*\) gets this host's room", ask)
+        # guest 2 comes in by the direct summon or by its sign (the host's sign summon of it can win)
+        hit = L.find(0, r"direct summon: slot 2 \(.*\) gets this host's room", ask)
+        sign = None if hit else L.find(2, r"chalice: summon message type 1", ask)
+        served = hit[0] if hit else None
+        v.step("summonfail: the host summons guest 2 (direct or by its sign)", hit or sign,
+               ("+%.1f s inst%d: %s" % ((hit or sign)[0], 0 if hit else 2, (hit or sign)[1][:150])) if hit or sign
+               else "neither a direct summon served nor a sign summon message on inst2 after +%.0f s" % ask)
         if served is not None:
             v.step("summonfail: served within 30 s of guest 2's first ask", served - ask < 30,
                    "%.1f s (limit 30)" % (served - ask))
