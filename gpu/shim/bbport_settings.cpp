@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <iterator>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -23,7 +24,41 @@
 
 namespace BbSettings {
 
+const PartySwitch PartySwitches[] = {
+    {"party_host_revive", "BB_PARTY_B2_HOST_REVIVE", &Values::party_host_revive},
+    {"party_host_limbo_revive", "BB_PARTY_HOST_LIMBO_REVIVE", &Values::party_host_limbo_revive},
+    {"party_guest_revive_inplace", "BB_PARTY_GUEST_REVIVE_INPLACE", &Values::party_guest_revive_inplace},
+    {"party_guest_respawn", "BB_PARTY_GUEST_RESPAWN", &Values::party_guest_respawn},
+    {"party_guest_refill", "BB_PARTY_GUEST_REFILL", &Values::party_guest_refill},
+    {"party_guest_mark", "BB_PARTY_GUEST_MARK", &Values::party_guest_mark},
+    {"party_full_rewards", "BB_PARTY_FULL_REWARDS", &Values::party_full_rewards},
+    {"party_items", "BB_PARTY_ITEMS", &Values::party_items},
+    {"party_grant_bells", "BB_PARTY_GRANT_BELLS", &Values::party_grant_bells},
+    {"party_open_world", "BB_PARTY_OPEN_WORLD", &Values::party_open_world},
+    {"party_progress", "BB_PARTY_PROGRESS", &Values::party_progress},
+    {"party_progress_npc", "BB_PARTY_PROGRESS_NPC", &Values::party_progress_npc},
+    {"party_story", "BB_PARTY_STORY", &Values::party_story},
+    {"party_story_mirror", "BB_PARTY_STORY_MIRROR", &Values::party_story_mirror},
+};
+const int PartySwitchCount = int(std::size(PartySwitches));
+
+const char* GuestInsightName(int mode) {
+    return mode == 1 ? "full" : mode == 2 ? "0" : "parity";
+}
+
 namespace {
+
+int ParseGuestInsight(const std::string& value) {
+    return value == "full" ? 1 : value == "0" || value == "off" ? 2 : 0;
+}
+
+void PutEnv(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
 
 const char* Path() {
     const char* env = std::getenv("BB_CONFIG");
@@ -149,6 +184,10 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.gpl = i != 0;
     } else if (key == "compile_indicator") {
         v.compile_indicator = i != 0;
+    } else if (const auto sw = std::find_if(std::begin(PartySwitches), std::end(PartySwitches),
+                                            [&](const PartySwitch& p) { return key == p.key; });
+               sw != std::end(PartySwitches)) {
+        v.*(sw->member) = i != 0;
     } else if (key == "party_toasts") {
         v.party_toasts = i != 0;
     } else if (key == "party_hud") {
@@ -187,6 +226,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_rendezvous = party::traversal::rendezvous_switch(value.c_str(), false);
     } else if (key == "party_npc_talk_range") {
         v.party_npc_talk_range = std::clamp(i, 0, 500);
+    } else if (key == "party_guest_insight") {
+        v.party_guest_insight = ParseGuestInsight(value);
     } else if (key == "party_overhead") {
         v.party_overhead = std::clamp(i, 0, 5);
     } else if (key == "hdr") {
@@ -322,6 +363,31 @@ void Load() {
         v.party_friendly_fire = ff[0] == '1';
     if (const char* sl = std::getenv("BB_PARTY_SHARE_LAMPS"); sl && (sl[0] == '0' || sl[0] == '1'))
         v.party_share_lamps = sl[0] == '1';
+    // The party gameplay switches: BB_PARTY_*=0/1 (tools/mp, scripts) wins over the ini; an unset
+    // variable gets the ini's value, for the party modules that read their switch at start.
+    // BB_PARTY_SWITCH_ENV lists the variables put there: a restart from the menu (runtime_restart
+    // inherits this environment) reads the ini again instead of the old exported values.
+    {
+        const char* exported_before = std::getenv("BB_PARTY_SWITCH_ENV");
+        const std::string before = exported_before ? "," + std::string(exported_before) + "," : "";
+        std::string exported;
+        const auto take = [&](const char* env, auto&& apply, const std::string& ini_value) {
+            const char* e = std::getenv(env);
+            if (e && e[0] && before.find("," + std::string(env) + ",") == std::string::npos) {
+                apply(e);
+                return;
+            }
+            PutEnv(env, ini_value.c_str());
+            exported += (exported.empty() ? "" : ",") + std::string(env);
+        };
+        for (const PartySwitch& sw : PartySwitches) {
+            take(sw.env, [&](const char* e) { v.*(sw.member) = e[0] != '0'; },
+                 (v.*(sw.member)).load() ? "1" : "0");
+        }
+        take("BB_PARTY_GUEST_INSIGHT", [&](const char* e) { v.party_guest_insight = ParseGuestInsight(e); },
+             GuestInsightName(v.party_guest_insight));
+        PutEnv("BB_PARTY_SWITCH_ENV", exported.c_str());
+    }
     // Async pipelines: BB_ASYNC_SHADERS (this port) wins over BB_ASYNC_PIPELINES (upstream's name).
     if (const char* value = std::getenv("BB_ASYNC_SHADERS"); value && value[0]) {
         Set(v, "async_pipelines", value);
@@ -466,6 +532,14 @@ bool RestartNeeded() {
 namespace {
 /// Rewrites the file with `keys` set (a value) or removed (none), in the order given for new
 /// ones; every other line stays as it is. Callers hold save_mutex.
+bool TraceIni() {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_GAME_MENU_TRACE");
+        return env && env[0] == '1';
+    }();
+    return on;
+}
+
 void WriteMergedLocked(const std::vector<std::pair<std::string, std::optional<std::string>>>& keys) {
     std::string out;
     bool had_lines = false;
@@ -486,6 +560,9 @@ void WriteMergedLocked(const std::vector<std::pair<std::string, std::optional<st
                 if (it != keys.end()) {
                     if (it->second) {
                         out += it->first + "=" + *it->second + "\n";
+                        // BB_GAME_MENU_TRACE=1 (scripted menu tests, smoke_party "rules"): what changed.
+                        if (TraceIni() && text.substr(eq + 1) != *it->second)
+                            std::printf("Settings: bbport.ini %s=%s\n", it->first.c_str(), it->second->c_str());
                     }
                     written[size_t(it - keys.begin())] = true;
                     continue;
@@ -501,6 +578,7 @@ void WriteMergedLocked(const std::vector<std::pair<std::string, std::optional<st
     for (size_t k = 0; k < keys.size(); ++k) {
         if (!written[k] && keys[k].second) {
             out += keys[k].first + "=" + *keys[k].second + "\n";
+            if (TraceIni()) std::printf("Settings: bbport.ini %s=%s\n", keys[k].first.c_str(), keys[k].second->c_str());
         }
     }
     // Replaced whole: a crash while writing leaves the old file.
@@ -588,6 +666,8 @@ void Save() {
     put("party_friendly_fire", flag(v.party_friendly_fire));
     put("party_share_lamps", flag(v.party_share_lamps));
     put("party_rendezvous", flag(v.party_rendezvous));
+    for (const PartySwitch& sw : PartySwitches) put(sw.key, flag(v.*(sw.member)));
+    put("party_guest_insight", GuestInsightName(v.party_guest_insight));
     put("party_npc_talk_range", std::to_string(v.party_npc_talk_range.load()));
     put("party_guest_lamps", flag(v.party_guest_lamps));
     put("party_rot", flag(v.party_rot));

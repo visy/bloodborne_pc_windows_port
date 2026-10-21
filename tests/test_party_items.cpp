@@ -3,6 +3,7 @@
 // ledger tables, the deny rules, award and flag classification, the EVENT "items" JSON round trip,
 // the host's send-once ledger and the guest's queue / apply gate with an injected game state.
 // Build and run: ninja -C out/gpu party-items-test && out/gpu/party-items-test.exe
+#include <cstring>
 #include "party/party_items.h"
 
 #include <algorithm>
@@ -1051,7 +1052,52 @@ static void test_messenger_own() {
     CHECK(regive.result == LotPlanResult::Give && regive.items.size() == 1 && regive.items[0].id == 4312);
 }
 
+// EquipParamGoods rows +0x36..+0x4B as in the 1.09 gameparam (maxNum, goodsType, maxRepositoryNum).
+static void test_goods_limits() {
+    struct Row {
+        int id, max_num, max_storage, type;
+        std::uint8_t bytes[22];
+    };
+    const Row rows[] = {
+        {1230, 20, 99, 0, {0x14, 0x00, 0x00, 0x32, 0x00, 0x01, 0x05, 0x00, 0x03, 0x00, 0x00, 0x00, 0xff, 0xff, 0xdf, 0x18, 0x08, 0x00, 0x63, 0x00, 0x00, 0x00}}, // Pebble
+        {1100, 10, 99, 0, {0x0a, 0x00, 0x00, 0x32, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xdf, 0x18, 0x08, 0x00, 0x63, 0x00, 0x00, 0x00}}, // Antidote
+        {1000, 20, 600, 0, {0x14, 0x00, 0x00, 0x32, 0x00, 0x02, 0x00, 0x00, 0x1a, 0x00, 0x00, 0x00, 0xff, 0xff, 0x9f, 0x18, 0x88, 0x09, 0x58, 0x02, 0x00, 0x00}}, // Blood Vial
+        {7000, 99, 600, 2, {0x63, 0x00, 0x00, 0x32, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x9f, 0x18, 0x00, 0x00, 0x58, 0x02, 0x00, 0x00}}, // Ritual Blood (1)
+        {4114, 1, 0, 1, {0x01, 0x00, 0x00, 0x32, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x9f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}}, // Sword Hunter Badge
+    };
+    for (const Row& r : rows) {
+        std::uint8_t row[kGoodsRowBytes] = {};
+        std::memcpy(row + 0x36, r.bytes, sizeof r.bytes);
+        LotSlotState s;
+        s.category = 4;
+        s.id = r.id;
+        GoodsLimitsFromRow(row, &s);
+        CHECK(s.max_num == r.max_num);
+        CHECK(s.max_storage == r.max_storage);
+        CHECK(s.goods_type == r.type);
+    }
+    // A Pebble at its inventory maximum goes to the storage: not "Full" (it was with storage read as 0).
+    std::uint8_t row[kGoodsRowBytes] = {};
+    std::memcpy(row + 0x36, rows[0].bytes, sizeof rows[0].bytes);
+    LotSlotState pebble;
+    pebble.category = 4;
+    pebble.id = 1230;
+    pebble.num = 1;
+    pebble.owned = 20;
+    GoodsLimitsFromRow(row, &pebble);
+    CHECK(ClassifyLotFit({pebble}) == LotFit::Give);
+    LotSlotState badge;
+    badge.category = 4;
+    badge.id = 4114;
+    badge.num = 1;
+    badge.owned = 1;
+    std::memcpy(row + 0x36, rows[4].bytes, sizeof rows[4].bytes);
+    GoodsLimitsFromRow(row, &badge);
+    CHECK(ClassifyLotFit({badge}) == LotFit::Owned);
+}
+
 int main() {
+    test_goods_limits();
     test_tables();
     test_fit();
     test_ledger_seed();
