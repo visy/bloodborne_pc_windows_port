@@ -470,6 +470,61 @@ inline double FallDrop(double peak_before, double y_at_death, double y_now) {
     return peak_before - std::min(y_at_death, y_now);
 }
 
+// ---- Lifts and moving platforms (liftfall) ----
+// A player's report (Nightmare of Mensis): the long lift 2601240 drops 60 m at ~4 m/s, and the fall
+// recovery nets (6 s of dropping more than 1.5 m/s) warped the host back to its lamp mid-ride and
+// put the summoned guest back on the top floor while the car went on down (then a fall down the
+// empty shaft). PlayerIns +0x1E5 bit 0x02 (the fifth byte of the +0x1E1 flags) is set on a REMOTE
+// chr standing in a lift car (the report: all 62 samples on lift rides, none elsewhere; off within a
+// second of leaving the car, on for a body lying in it); the local chr does not carry it (live,
+// Mensis lift 2601240: 0000005098 all the ride), so the game side also asks whether a lift car plays
+// a ride animation where the chr stands (worldact::OnMovingLiftCar), and the rate tests below hold
+// without either.
+constexpr std::uint64_t kRideFlag1e1 = 0x0200000000ull;
+inline bool RidingObject(std::uint64_t f1e1) {
+    return (f1e1 & kRideFlag1e1) != 0;
+}
+// A lift's car is steady and slow (every Bloodborne lift a few m/s); a fall out of the world is not
+// (the kill plane of m24_01, ~1470 m below the Great Bridge, in ~30 s: ~49 m/s on average). A drop
+// faster than this per sample is a fall even with the ride flag on (a stale flag never hides one).
+constexpr double kLiftMaxRate = 10.0;
+/// One recovery sample: the chr dropped `dy` m in `dt` s. A fall sample: at least `min_rate` m/s
+/// down, and not a ride on a moving object at a lift's rate.
+inline bool FallSample(double dy, double dt, double min_rate, bool riding) {
+    if (!(dt > 0.0) || !std::isfinite(dy)) {
+        return false;
+    }
+    const double rate = dy / dt;
+    return rate >= min_rate && !(riding && rate < kLiftMaxRate);
+}
+// The nets fire after kFallRecoverySeconds of fall samples and only for a real fall's drop over that
+// time: a free fall covers well over 100 m in 6 s; a lift that never set the ride flag 25-30 m.
+constexpr double kFallRecoverySeconds = 6.0;
+constexpr double kFallRecoveryMinDrop = 40.0;
+inline bool FallRecoveryDue(double falling_for, double dropped_m) {
+    return falling_for >= kFallRecoverySeconds && dropped_m >= kFallRecoveryMinDrop;
+}
+/// The drop test's top (PlanGuestRevive): the highest point since the chr last stood on a moving
+/// object. A ride down (12 m in the 3 s window at a lift's rate) is no fall; a fall off the car or
+/// onto it counts from where it left the car. `hist`: {t, y, riding} samples in time order.
+struct HeightSample {
+    double t = 0, y = 0;
+    bool riding = false;
+};
+template <class Container>
+inline double PeakSinceRide(const Container& hist, double y_at_death) {
+    double peak = y_at_death;
+    for (const HeightSample& h : hist) {
+        peak = h.riding ? h.y : std::max(peak, h.y);
+    }
+    return std::max(peak, y_at_death);
+}
+/// FallDrop for a chr that may lie in a lift's car: a body carried on down by the car (riding at
+/// HP 0) did not fall, so only the drop up to HP 0 counts then.
+inline double FallDropRide(double peak_before, double y_at_death, double y_now, bool riding_at_death) {
+    return riding_at_death ? peak_before - y_at_death : FallDrop(peak_before, y_at_death, y_now);
+}
+
 // ---- Split travel's question ("Travel with the party?") ----
 constexpr double kAskTimeout = 30.0;  ///< s an open question waits (was 120 s)
 enum class AskClose { Keep, Load, Dead, Timeout };

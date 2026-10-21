@@ -177,6 +177,10 @@ struct TravelStep {
     int min_coop = 0;     // "^N" (host): not before the host's game has N cooperators; S counts from then
     int coop_rise = 0;    // "^N*K": ... and only once the count has risen to N for the K-th time
     bool alive = false;   // "!" on a press step: waits as a step with the own chr (alive, world up)
+    // "?FLAG=V" at the end (liftfall): not before event flag FLAG reads V on this game; S counts from
+    // then (e.g. a lift's position flag at the end of its ride: no fixed wait for the ride's length)
+    std::uint32_t wait_flag = 0;
+    bool wait_value = true;
 };
 
 // host_route / guest_route (B1): a waypoint counts as reached within this many m; still blocked after
@@ -297,6 +301,7 @@ struct Test {
     int joins = 0;
     Clock::time_point joined_at{};
     Clock::time_point coop_since{};  // the next step's "^N" cooperator count reached (its clock)
+    Clock::time_point flag_since{};  // the next step's "?FLAG=V" condition met (its clock)
     int last_coop = 0;               // the host's cooperators at the previous tick ("^N*K")
     int coop_rises[8] = {};          // how often the count rose to >= N (index N), since the start
     Clock::time_point step_at{}; // the last step's run, for "back after" times
@@ -1812,6 +1817,22 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     } else {
         t.coop_since = {};
     }
+    // "?FLAG=V": the same, on an event flag of this game (a lift's position flag at the ride's end).
+    if (t.next_step < t.steps.size() && t.steps[t.next_step].wait_flag) {
+        const TravelStep& fs = t.steps[t.next_step];
+        bool v = false;
+        if (!progress::ReadFlag(fs.wait_flag, &v) || v != fs.wait_value) {
+            t.flag_since = {};
+            return;
+        }
+        if (t.flag_since == Clock::time_point{}) {
+            t.flag_since = now;
+            Log("test: travel step %zu (%s): flag %u = %d now; its delay counts from here", t.next_step + 1,
+                TravelStepName(fs.kind), fs.wait_flag, int(v));
+        }
+    } else {
+        t.flag_since = {};
+    }
     if (t.next_step < t.steps.size() &&
         (next_kind == TravelStep::HostKill || next_kind == TravelStep::HostMove || next_kind == TravelStep::GuestMove ||
          next_kind == TravelStep::HostPress || next_kind == TravelStep::GuestPress || next_kind == TravelStep::HostWalk ||
@@ -1829,6 +1850,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         const Clock::time_point prev = t.ran ? t.step_at : t.joined_at;
         Clock::time_point from = t.steady_at > prev ? t.steady_at : prev;
         if (t.coop_since > from) from = t.coop_since;
+        if (t.flag_since > from) from = t.flag_since;
         if (t.steps[t.next_step].after_scene) {
             // "~": waits for a cutscene that ended after the previous step, then S s after its end.
             if (t.scene_on || t.scene_end_at <= prev) {
@@ -2685,8 +2707,11 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         if (s.player && SafeGet(s.player + 0x400, &tr) && tr) {
             SafeRead(tr + 0x30, safe, 12);
         }
-        Log("test: pos area 0x%08x (%.2f, %.2f, %.2f) safe (%.2f, %.2f, %.2f)", area, p[0], p[1], p[2], safe[0], safe[1],
-            safe[2]);
+        // liftfall: the chr's +0x1E1 flags (+0x1E5 bit 0x02: on a moving object, deathrules::RidingObject)
+        std::uint64_t f = 0;
+        if (s.player) SafeRead(s.player + 0x1e1, &f, 5);
+        Log("test: pos area 0x%08x (%.2f, %.2f, %.2f) safe (%.2f, %.2f, %.2f) f %010llx", area, p[0], p[1], p[2], safe[0],
+            safe[1], safe[2], static_cast<unsigned long long>(f));
     }
     if (!t.watch_texts.empty() && Seconds(t.watch_at, now) >= 0.25) {
         t.watch_at = now;
@@ -3271,6 +3296,20 @@ void PartyDirector::ConfigureFromEnv() {
             if (after_scene) {
                 item.pop_back();
             }
+            // "?FLAG=V" (V 0 / 1, default 1) at the end of a travel step: its flag condition.
+            std::uint32_t wait_flag = 0;
+            bool wait_value = true;
+            if (item.rfind("host_", 0) == 0 || item.rfind("guest_", 0) == 0) {
+                if (const std::size_t q = item.find('?'); q != std::string::npos) {
+                    unsigned long f = 0;
+                    int v = 1;
+                    if (std::sscanf(item.c_str() + q + 1, "%lu=%d", &f, &v) >= 1 && f > 0 && f <= 0xffffffffull) {
+                        wait_flag = static_cast<std::uint32_t>(f);
+                        wait_value = v != 0;
+                    }
+                    item.erase(q);
+                }
+            }
             at = end + 1;
             if (item == "log_state") {
                 st.test.log_state = true;
@@ -3562,6 +3601,8 @@ void PartyDirector::ConfigureFromEnv() {
                 if (const std::size_t cut = step.map.find_first_of("#!@^"); cut != std::string::npos) {
                     step.map.erase(cut);
                 }
+                step.wait_flag = wait_flag;
+                step.wait_value = wait_value;
                 st.test.steps.push_back(step);
             } else if (item.rfind("host_mark", 0) == 0 || item.rfind("guest_mark", 0) == 0 ||
                        item.rfind("host_stage=", 0) == 0 || item.rfind("host_walk=", 0) == 0 ||
@@ -3617,6 +3658,8 @@ void PartyDirector::ConfigureFromEnv() {
                 if (const std::size_t cut = step.map.find_first_of("#!@^"); cut != std::string::npos) {
                     step.map.erase(cut);
                 }
+                step.wait_flag = wait_flag;
+                step.wait_value = wait_value;
                 st.test.steps.push_back(step);
             } else if (!item.empty()) {
                 Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, start, grant_bells, drop_bells, award_lot=N, set_flag=N[:N], insight=N, "

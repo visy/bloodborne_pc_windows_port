@@ -85,9 +85,18 @@ constexpr std::size_t kMaxKicks = 4, kMaxFog = 2, kMaxStory = 2, kMaxLift = 4;
 /// a game with that block streamed out (Cathedral Ward's lifts while that game is far away in
 /// Central Yharnam) never runs its copy: its world keeps the car at the old end, and the block's
 /// init event puts the car there again when the block streams back in.
+/// liftfall: a lift whose events have no network sync (the Nightmare of Mensis' library lift
+/// 12601352: each game's copy only waits for its own player in the car) never moves on the other
+/// games. `gate` / the end animations: what its own copy plays right before it writes `pos` (the car
+/// and its gate standing at that end); LiftReplayTick plays them on a game whose `pos` changed
+/// without its own ride (the mirror brought the host's ride to a guest, or the host took a guest's).
+/// busy 0: none (that lift's ride ends with the flag).
 struct Lift {
     std::uint32_t pos, busy, host_state;
     std::int32_t car;
+    std::int32_t gate = 0;
+    std::int16_t car_end_on = -1, car_end_off = -1, gate_end_on = -1, gate_end_off = -1;
+    bool Replays() const { return car_end_on >= 0 && car_end_off >= 0; }
 };
 /// Every lift of the main game and the DLC (not the Chalice Dungeons' generated ones).
 const std::vector<Lift>& Lifts();
@@ -99,8 +108,27 @@ const Lift* LiftByPosFlag(std::uint32_t pos);
 /// (left alone: setting the flag would not move the car), `apply` the lift's block is not loaded
 /// here: the flags are written and the block's init event puts the car at that end when it
 /// streams in.
-enum class LiftSync { apply, same, busy, loaded };
-LiftSync HostLiftSync(bool host_pos, bool host_busy, bool car_loaded, bool want);
+/// liftfall: a lift that `replays` (Lift::Replays) is applied with its car loaded too (the host's
+/// LiftReplayTick then puts the car at that end), unless the host stands at it (`occupied`: within
+/// a few m of the car: its own copy may be about to ride; left alone).
+enum class LiftSync { apply, same, busy, loaded, occupied };
+LiftSync HostLiftSync(bool host_pos, bool host_busy, bool car_loaded, bool want, bool replays = false,
+                      bool occupied = false);
+/// liftfall: what LiftReplayTick does when `pos` changed on this game: nothing when the car shows the
+/// new end's animation already (its own copy rode) or the lift does not replay; else play the end.
+bool LiftNeedsReplay(const Lift& l, bool pos_now, std::int32_t car_anim);
+/// Any role, main thread (liftfall): replays lifts' ends (Lift::Replays) moved by another game.
+void LiftReplayTick(const GameSnapshot& s);
+/// liftfall: the local chr at `p` stands within kLiftCarRadius m (horizontally) of a lift car that
+/// plays an animation (a ride): the fall recovery's "on a moving object" (the chr's own ride flag
+/// is not set on the local chr: live, Mensis lift 2601240).
+constexpr float kLiftCarRadius = 4.0f;
+/// The local player stands in a car (the library lift's car regions are 1.7 m from its call spots).
+constexpr float kLiftInCarRadius = 1.2f;
+bool OnMovingLiftCar(const float p[3]);
+/// liftfall: a ride of lift `l` runs on this game (its car animates) or the local player stands
+/// within `radius` m (horizontally) of its car. False when the car is not loaded.
+bool LiftBusyHere(const Lift& l, float radius);
 /// Guest: a lift position change of its own copy goes to the host once the ride is over (`busy`
 /// off) and the flag still reads the value it changed to; false while it runs.
 bool GuestLiftRideDone(bool pos_now, bool pos_changed_to, bool busy);

@@ -639,6 +639,41 @@ int main() {
     CHECK(PlanGuestRevive(0.0, true, FallDeathState(0x0001001098ull, 0x8000)) == GuestRevive::InPlace);
     CHECK(FallDrop(-20.0, -40.0, -80.0) == 60.0);                            // into the void: still dropping
     CHECK(FallDrop(-20.0, -21.0, -21.0) == 1.0);
+    // liftfall: lifts and moving objects. The report's remote chr flags: 0200001098 / 0200081098 on
+    // the Mensis lift, 0001001098 off it; the game's fall flags (0x0400000040) are another bit.
+    CHECK(RidingObject(0x0200001098ull) && RidingObject(0x0200081098ull) && RidingObject(0x020000108cull));
+    CHECK(!RidingObject(0x0001001098ull) && !RidingObject(0x04010010d8ull) && !RidingObject(0));
+    CHECK(!FallDeathState(0x0200001098ull, 0) && !FallDeathState(0x020000108cull, 0xf800));  // a body in a car
+    // The recovery samples: the own-world net (1 s, 1.5 m/s) and the host's-world net (0.5 s, 1.4 m/s).
+    CHECK(FallSample(4.0, 1.0, 1.5, false));          // a lift without the ride flag: a fall sample ...
+    CHECK(!FallSample(4.0, 1.0, 1.5, true));          // ... with it: a ride
+    CHECK(!FallSample(2.0, 0.5, 1.4, true));          // the host's-world net, the same ride
+    CHECK(FallSample(30.0, 1.0, 1.5, true));          // far faster than any lift: a fall, flag or not
+    CHECK(!FallSample(1.0, 1.0, 1.5, false));         // a slope
+    CHECK(!FallSample(-4.0, 1.0, 1.5, false));        // up
+    CHECK(!FallSample(4.0, 0.0, 1.5, false) && !FallSample(std::nan(""), 1.0, 1.5, false));
+    // ... and the nets' decision: 6 s and a real fall's drop. The report: 27 m of the Mensis lift in
+    // 6.5 s fired (warped to the lamp); a fall out of the world covers 100+ m in that time.
+    CHECK(!FallRecoveryDue(6.5, 27.0) && !FallRecoveryDue(15.0, 39.0));
+    CHECK(FallRecoveryDue(6.0, 150.0) && !FallRecoveryDue(5.9, 150.0));
+    // The drop test around a death: the peak counts from the last sample on a moving object.
+    {
+        std::vector<HeightSample> ride = {{0.0, 1003.8, true}, {1.0, 999.8, true}, {2.0, 995.8, true}, {3.0, 991.8, true}};
+        CHECK(PeakSinceRide(ride, 991.6) == 991.8);                           // killed in the car: no fall
+        CHECK(PlanGuestRevive(FallDropRide(PeakSinceRide(ride, 991.6), 991.6, 943.8, true), true, false) ==
+              GuestRevive::InPlace);                                          // the body rides on down
+        std::vector<HeightSample> off = {{0.0, 1003.8, true}, {0.5, 1001.8, true}, {1.0, 999.0, false},
+                                         {2.0, 985.0, false}};                 // out of the car, down the shaft
+        CHECK(PeakSinceRide(off, 960.0) == 1001.8);
+        CHECK(PlanGuestRevive(FallDropRide(PeakSinceRide(off, 960.0), 960.0, 960.0, false), true, false) ==
+              GuestRevive::LoadFall);
+        std::vector<HeightSample> onto = {{0.0, 1003.8, false}, {1.0, 990.0, false}, {2.0, 960.0, false}};
+        CHECK(PeakSinceRide(onto, 943.8) == 1003.8);                          // a fall onto the car counts
+        CHECK(FallDropRide(1003.8, 943.8, 900.0, true) == 60.0);              // not followed down in the car
+        CHECK(FallDropRide(-20.0, -40.0, -80.0, false) == 60.0);              // the void: as FallDrop
+        std::vector<HeightSample> none;
+        CHECK(PeakSinceRide(none, 5.0) == 5.0);
+    }
     CHECK(GuestReviveName(GuestRevive::LoadFall)[0] != '?');
     CHECK(RestLoadName(RestLoad::TooSoon)[0] != '?');
     // K12: the guest's HostDead state (the host's death event) on a party guest.

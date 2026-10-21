@@ -383,9 +383,9 @@ int main() {
     // D3 (lifts071): lifts. Every position / busy / host-state flag is a C2 state id (the mirror
     // carries the host's values), never a plain world action; a finished ride goes up as lift_set /
     // lift_clr instead.
-    assert(Lifts().size() == 12);
+    assert(Lifts().size() == 21);  // liftfall: + Cainhurst, seven Nightmare of Mensis lifts, Nightmare Frontier
     for (const Lift& l : Lifts()) {
-        assert(LiftByPosFlag(l.pos) == &l && !LiftByPosFlag(l.busy) && l.car > 0);
+        assert(LiftByPosFlag(l.pos) == &l && (l.busy == 0 || !LiftByPosFlag(l.busy)) && l.car > 0);
         assert(pg::ModeFor(pg::Policy::Defaults(), l.pos, pg::CategoryOf(l.pos)) == pg::SyncMode::State);
         assert(!WorldActionAllowed(l.pos, false, (l.pos / 100000u % 100u) << 24));
         if (l.host_state) {
@@ -397,6 +397,22 @@ int main() {
     const Lift* cw = LiftByPosFlag(12400827);  // Cathedral Ward <-> Old Yharnam: the l7 desync
     assert(cw && cw->busy == 12400828 && cw->host_state == 0 && cw->car == 2401102);
     assert(!LiftByPosFlag(12410351) && !LiftByPosFlag(0));
+    const Lift* mensis = LiftByPosFlag(12601256);  // the player's report: the long lift (lever kick 12601241)
+    assert(mensis && mensis->busy == 12605256 && mensis->host_state == 0 && mensis->car == 2601240);
+    assert(!LiftByPosFlag(12605256) && !mensis->Replays());  // a busy flag; a network-synced lift
+    // The library lift (the report's 60 m ride): no network sync, no busy flag; its ends replay.
+    const Lift* lib = LiftByPosFlag(12601253);
+    assert(lib && lib->busy == 0 && lib->car == 2601260 && lib->gate == 2601261 && lib->Replays());
+    assert(lib->car_end_on == 7 && lib->gate_end_on == 9 && lib->car_end_off == 9 && lib->gate_end_off == 7);
+    assert(!LiftNeedsReplay(*lib, true, 7) && !LiftNeedsReplay(*lib, false, 9));  // its own ride
+    assert(LiftNeedsReplay(*lib, true, 9) && LiftNeedsReplay(*lib, false, 7) && LiftNeedsReplay(*lib, true, -1));
+    assert(!LiftNeedsReplay(*cy, true, 0));  // network-synced lifts never replay
+    // The host takes a guest's ride of it with its car loaded (the replay moves the car), unless it
+    // stands at the car; a lift that does not replay stays `loaded`.
+    assert(HostLiftSync(false, false, true, true, true, false) == LiftSync::apply);
+    assert(HostLiftSync(false, false, true, true, true, true) == LiftSync::occupied);
+    assert(HostLiftSync(true, false, true, true, true, false) == LiftSync::same);
+    assert(HostLiftSync(false, false, true, true, false, false) == LiftSync::loaded);
     // The host: its own copy ran (same), a ride runs there (busy), the car is loaded but its copy did
     // not follow (left alone: a flag alone would not move it), the block is not loaded (apply).
     assert(HostLiftSync(true, false, false, true) == LiftSync::same);
