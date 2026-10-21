@@ -982,6 +982,15 @@ static void test_key_catchup() {
         GoodsLimitsFromRow(row, &s);
         CHECK(s.usable == 0 && s.goods_type == 1 && KeyRegiveAllowed(s));
     }
+    // 0.7.0 summoned restore after a host-world load: a key that is never used up, only at 0.
+    CHECK(SummonedRestoreAllowed(key, 0));
+    CHECK(!SummonedRestoreAllowed(key, 1));
+    CHECK(!SummonedRestoreAllowed(key, -1));
+    CHECK(!SummonedRestoreAllowed(pendant, 0));   // the Gold Pendant: never
+    CHECK(!SummonedRestoreAllowed(tear, 0));      // the Tear Stone: never
+    CHECK(!SummonedRestoreAllowed(ritual, 0));    // not a key item
+    CHECK(!SummonedRestoreAllowed(unknown_use, 0));
+    CHECK(SummonedRestoreAllowed(chalice, 0));
     // Owed lots at home. Given while summoned: only a key that is never used up, and only at 0.
     CHECK(OwedGiveAllowed(true, true, key, 0));
     CHECK(!OwedGiveAllowed(true, true, key, 1));

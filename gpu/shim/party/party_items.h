@@ -470,6 +470,11 @@ bool SummonedKeyGiveNow(const std::vector<LotSlotState>& slots);
 /// only a KeyRegiveAllowed item reading 0. Not given (deferred): never when the lot's done flag is
 /// in the save now (the award or another path gave it), else one only when none is held.
 bool OwedGiveAllowed(bool given, bool done_flag_set, const LotSlotState& s, int held);
+/// 0.7.0: after each host-world load a summoned guest's key section is empty (the game's phantom
+/// view; the save keeps it). A known key item of this character (seen in its own world, gained while
+/// summoned, or the done flag of its lot in the save) is put back silently when it reads 0 - only
+/// one that is never used up (KeyRegiveAllowed: never the Gold Pendant or the Tear Stone).
+bool SummonedRestoreAllowed(const LotSlotState& s, int held);
 /// party_summoned_gives.txt is one file per user folder, shared by every character in the save
 /// slots: an entry given to the character in save slot `entry_slot` is re-given only to that one
 /// (-1 on either side = unknown: an older file or an unreadable slot; given as before).

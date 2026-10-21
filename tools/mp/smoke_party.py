@@ -15,8 +15,9 @@ Phase s1 (~8 min, Father Gascoigne un-killed: the d10 fixture flags cleared on e
   travel to the Tomb of Oedon, a guest-started Gascoigne fight (intro on everyone), the host's death
   in the fight (limbo + spectate), the two guests' deaths (a wipe: the party's one respawn load).
 Phase s2 (~8 min, the Cleric Beast un-killed: the b2_seamless 6.7 fixture flags):
-  join, a party lamp travel to the Cleric Beast's lamp, the fight, the boss killed by the host
-  (echoes and the reward item box on every game: its OK row), Leave + Rejoin right after the
+  join, a party lamp travel to the Cleric Beast's lamp, the fight, guest 2 dead in it (limbo), the
+  boss killed by the host: guest 2 up in the arena with no load, then hit by an enemy (group
+  `arena`), (echoes and the reward item box on every game: its OK row), Leave + Rejoin right after the
   kill (A3 / K10b), a guest crash and its title rejoin (C6), the host's crash and recovery (the
   guests wait, then are summoned back), the host's Leave (every guest home).
 Phase rules (~3 min, 2 players, BB_GAME_MENU_TRACE + BB_TEST_MENU_FILE: the real System menu walked
@@ -40,7 +41,7 @@ OUT/verdict.txt (one line per step: PASS / FAIL, the evidence line or what was m
 Exit code 0 only when every step passed. LOOK AT THE SCREENSHOTS too (agents/RULES_062.txt): the
 verdict reads logs, it cannot see a grey screen, a camera in a wall or a stuck dialog.
 """
-import argparse, os, re, subprocess, sys, time
+import argparse, os, re, shutil, struct, subprocess, sys, time
 from pathlib import Path
 
 
@@ -133,13 +134,13 @@ def phase_s2(only):
         "goods=4114:0",                                           # the test save holds the badge: the kill's reward would say "storage max"
         "host_warp=2412952@15",                                   # party lamp travel: the Cleric Beast's lamp
         "host_move=%s@15%%m24_01" % CLERIC_TRIGGER_HOST,          # starts the fight
-        "host_kill=2410800@12%m24_01",                            # the boss kill (its defeat path)
+        "host_kill=2410800@25%m24_01",                            # the boss kill (its defeat path), after guest 2's death
     ])
     g1 = ",".join([
         "goods=1230:20",                    # Pebbles at their inventory maximum (20): the host's Pebble goes to storage
         "watch_text=Unable to acquire",     # the game's "inventory or storage max" box: must not show
         "guest_move=%s@25%%m24_01" % CLERIC_SPOT_GUEST,
-        "guest_press=0x4000@16%m24_01", "guest_press=0x4000@4%m24_01",  # Cross: OK on the reward's item box
+        "guest_press=0x4000@29%m24_01", "guest_press=0x4000@4%m24_01",  # Cross: OK on the reward's item box
         "guest_leave@10%m24_01",            # Leave right after the kill (no load between), then Rejoin
         "guest_rejoin@5",
     ])
@@ -151,10 +152,24 @@ def phase_s2(only):
         until = ["0:host_leave: Party > Leave pressed", "1:" + LEAVE_OUT, "2:" + LEAVE_OUT]
     else:
         until = ["0:cooperators [01] -> 2"]  # after the guest crash: back in the host's room
+    # Arena revive (arenaguest 2026-10-21): guest 2 dies in the fight before the kill, lies in its limbo
+    # when the boss dies and gets up in the arena with no load; then it stands next to a Central
+    # Yharnam enemy (the spot where revive1 and arenaguest took hits) and takes its hits, and goes back
+    # to the arena (guest_move: invincible again for the rest of s2).
+    g2 = ",".join([
+        "guest_move=%s@18%%m24_01" % CLERIC_SPOT_GUEST,     # into the fight (invincible)
+        "guest_die@3%m24_01",                               # dead in the fight: its limbo
+        "guest_press=0x0@3%m24_01!",                        # waits until it is up again (logs its HP)
+        "guest_chr=2410100@3%m24_01",                       # next to an enemy on that enemy's floor
+    ] + ["guest_press=0x800@1.5%m24_01"] * 4 + [            # R1: draws the enemy (A2: hit 8 s after)
+        "guest_press=0x0@12%m24_01",                        # its HP after the enemy's hits
+        "guest_move=%s@1%%m24_01" % CLERIC_TRIGGER_HOST,    # back to the arena (invincible)
+    ])
     return dict(
         name="s2", seconds=480,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + CLERIC_CLEAR_REWARD + "," + PEBBLE_FLAG, "BB_PARTY_TEST_INVINCIBLE=1"],
-        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1,
+        watch=["--watch", "up again in the arena=arena@1,4", "--watch", r"travel step \d+/\d+: guest_chr=hits@6,10"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=" + g2,
               # the host's own award of a Pebble treasure lot (host-only, 20 s after the join): the
               # summoned guest at its Pebble maximum gets it into its storage (items.md 10.4)
               "0:BB_PARTY_ITEMS_HOST_TEST=" + PEBBLE_LOT,
@@ -166,13 +181,82 @@ def phase_s2(only):
     )
 
 
+def _psf(entries):
+    """A PSF file (param.sfo): [(key, fmt, value bytes, max length)], keys sorted, as shadPS4 writes it."""
+    entries = sorted(entries)
+    keys = b"".join(k.encode() + b"\0" for k, *_ in entries)
+    keys += b"\0" * (-len(keys) % 4)
+    key_off = 20 + 16 * len(entries)
+    index, data, ko = b"", b"", 0
+    for k, fmt, v, mx in entries:
+        index += struct.pack("<HHIII", ko, fmt, len(v), mx, len(data))
+        data += v + b"\0" * (mx - len(v))
+        ko += len(k) + 1
+    return b"\0PSF" + struct.pack("<IIII", 0x101, key_off, key_off + len(keys), len(entries)) + index + keys + data
+
+
+def prep_savecopy(root: Path):
+    r"""The host's party save as a player brings one from another build (savecopy): a copy of the
+    instance's test save in shadPS4's layout (SPRJ0005\sce_sys\param.sfo inside, no SPRJ0005.sce_sys
+    beside it), with the Bloodborne Save Editor's *.bak leftovers, over a party folder whose side
+    files belong to another character in the same slot (party_characters.txt says so; party_rot.txt
+    has its rot). The game must take the save in, drop that rot and load it."""
+    user = root / "inst0" / "user"
+    solo = user / "savedata"
+    if not solo.is_dir():
+        subprocess.run([sys.executable, str(HERE / "instances.py"), "setup", "--count", "2", "--root", str(root)], check=False)
+    if not solo.is_dir():
+        sys.exit("savecopy: %s has no test save (instances.py setup failed)" % solo)
+    party = user / "savedata_party"
+    if party.exists():
+        shutil.rmtree(party)
+    shutil.copytree(solo, party)
+    for name in ("party_state.json", "party_story.json", "party_rot.txt", "party_prologue.txt", "party_stain.txt",
+                 "party_gestures.txt", "party_characters.txt"):
+        (user / name).unlink(missing_ok=True)
+    slots = []
+    for meta in list(party.rglob("*.sce_sys")):
+        folder = meta.with_name(meta.name[:-8])
+        p = (meta / "param.bin").read_bytes()
+        title, sub, detail = (p[a:b].split(b"\0")[0] + b"\0" for a, b in ((0, 128), (128, 256), (256, 1280)))
+        sfo = _psf([("ACCOUNT_ID", 0x0004, b"\0" * 8, 8), ("MAINTITLE", 0x0204, title, 128), ("SUBTITLE", 0x0204, sub, 128),
+                    ("DETAIL", 0x0204, detail, 1024), ("SAVEDATA_DIRECTORY", 0x0204, folder.name.encode() + b"\0", 32),
+                    ("SAVEDATA_LIST_PARAM", 0x0404, p[1280:1284], 4),
+                    ("TITLE_ID", 0x0204, folder.parent.name.encode() + b"\0", 16)])
+        (folder / "sce_sys").mkdir(exist_ok=True)
+        (folder / "sce_sys" / "param.sfo").write_bytes(sfo)
+        if (meta / "icon0.png").exists():
+            shutil.copy2(meta / "icon0.png", folder / "sce_sys" / "icon0.png")
+        shutil.rmtree(meta)
+        for f in list(folder.glob("userdata00*")) + list(folder.glob("backup0000")):
+            shutil.copy2(f, f.with_name(f.name + ".bak"))
+        slots += [int(f.name[-4:]) for f in folder.glob("userdata000[0-9]") if f.read_bytes().strip(b"\0")]
+    if not slots:
+        sys.exit("savecopy: the test save has no character")
+    (user / "party_characters.txt").write_text("".join("slot %d used %d play %u name %016x\n" % (
+        s, 1 if s in slots else 0, 99 * 3600000 if s in slots else 0, 0x1234 if s in slots else 0) for s in range(10)))
+    (user / "party_rot.txt").write_text("".join("slot %d kinds 1 0 0 0 0\n" % s for s in slots))
+    print("[smoke] savecopy: inst0's party save in shadPS4's layout with *.bak files; slot(s) %s marked as another "
+          "character's, with its rot" % slots, flush=True)
+
+
+def phase_sc(only):
+    # A save brought in from another build (savecopy): taken in, the old character's rot dropped,
+    # loaded by the host's Continue, a guest joins.
+    return dict(
+        name="sc", seconds=300, count=2, headless=0, fresh=False, prep=prep_savecopy,
+        env=[], ienv=[], crash=[],
+        until=["0:cooperators 0 -> 1", "1:session .* -> client"],
+    )
+
+
 # ---- Phase rules: the party rules pages in the System menu (2026-10-21) ----
 # Each page: (name, expected row labels, the host's change: (row, key presses there, the value it
 # shows after, the presses back, bbport.ini key=value after, =value back, the host's rules line
 # after or None)). The labels are the shown rows of a host (a guest's read-only lines have the same
 # names). Toggles: Left = Off, Right = On; sliders: Right = one step up.
 RULES_PAGES = [
-    ("Deaths & revives", ["Rot on death", "Guest gets up, no load", "Host gets up, no load", "Host up after boss kill",
+    ("Deaths & revives", ["Rot on death", "Guest gets up, no load", "Host gets up, no load", "Up after boss kill",
                           "Respawn at host's lamp", "Refill vials, bullets"],
      ("Rot on death", "", "left", "Off", "right", "party_rot=0", "party_rot=1", '"rot":false')),
     ("World & PvP", ["Friendly fire / PvP", "Shared lamps", "Guests use lamps", "Guests use Hunter's Mark", "Open world"],
@@ -255,17 +339,17 @@ def phase_summonfail(only):
     )
 
 
-PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "summonfail": phase_summonfail}
+PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
-          "wipe": "s1", "kill": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
-          "host_leave": "s2", "keyitems": "s2", "rules": "rules", "summonfail": "summonfail"}
+          "wipe": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
+          "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
-              "wipe": r"wipe", "kill": r"s2 boss kill|party stays", "itembox": r"item box|reward on the summoned",
+              "wipe": r"wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
               "rejoin_kill": r"s2 (Leave after|Rejoin|no kick)", "c6": r"guest crash",
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
-              "summonfail": r"^summonfail"}
+              "savecopy": r"^sc ", "summonfail": r"^summonfail"}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -279,6 +363,7 @@ GROUP_UNTIL = {
     "host_death": ["0:spectating: following"],
     "wipe": [WIPE_UNTIL],
     "kill": ["2:host boss kill", "0:K10: boss-clear leave suppressed"],
+    "arena": [r"2:test: guest_move to \(-136\.5"],
     "itembox": ["1:item notice closed|lot 50000010 .*(?:not )?given (?:now )?while summoned|owed key item: lot 50000010",
                 "1:" + STORAGE_GIVE],
     "rejoin_kill": ["1:guest_rejoin: Party > Rejoin pressed"],
@@ -342,9 +427,11 @@ def run_phase(a, ph, out: Path):
         # instances.py moves the old run.log to run.prev.log, unless something holds it open (then
         # it appends): remember the file id and size, and copy from there when it is the same file.
         starts[i] = (p.stat().st_ino, p.stat().st_size) if p.exists() else (None, 0)
+    if ph.get("prep"):
+        ph["prep"](root)
     cmd = [sys.executable, str(HERE / "instances.py"), "run", "--count", str(ph.get("count", 3)),
-           "--headless", str(ph.get("headless", 1)), "--party",
-           "--fresh-saves", "--timestamps", "--idle", "0", "--seconds", str(ph["seconds"]),
+           "--headless", str(ph.get("headless", 1)), "--party"] + (["--fresh-saves"] if ph.get("fresh", True) else []) + [
+           "--timestamps", "--idle", "0", "--seconds", str(ph["seconds"]),
            "--root", str(root), "--build", str(a.build), "--game", str(a.game),
            "--label", "smoke %s" % ph["name"]]
     for e in ph["env"]:
@@ -374,7 +461,7 @@ def run_phase(a, ph, out: Path):
         for h in held:
             h.close()
     print("[smoke] %s: harness exit %d after %.0f s" % (ph["name"], r.returncode, time.time() - t0), flush=True)
-    for i in range(3):
+    for i in range(ph.get("count", 3)):
         p = root / f"inst{i}" / "run.log"
         if not p.exists():
             continue
@@ -489,6 +576,24 @@ def check_s1(v, L):
     check_common(v, L, "s1")
 
 
+def check_arena(v, L, k):
+    """Guest 2 dead in the fight when the boss dies: up in the arena, no load (arenaguest 2026-10-21)."""
+    dead = need(v, L, "s2 arena: guest 2 dead in the fight", 2, r"travel step \d+/\d+: guest_die")
+    if dead is None:
+        return
+    if k is not None:
+        v.step("s2 arena: guest 2 died before the kill", dead < k, "death +%.1f s, kill +%.1f s" % (dead, k))
+    up = need(v, L, "s2 arena: guest 2 up in the arena (no load)", 2, r"up again in the arena", dead)
+    if up is None:
+        return
+    line = L.find(2, r"up again in the arena", dead)[1]
+    v.step("s2 arena: not a fall death", "a fall death" not in line, line[:150])
+    need(v, L, "s2 arena: host re-created guest 2's chr", 0, r"member revived: its chr", up - 1)
+    alive = need(v, L, "s2 arena: guest 2 alive after it", 2, r"test: guest_press 0x0; .*own HP [1-9]", up)
+    hit = need(v, L, "s2 arena: guest 2 takes an enemy hit", 2, r"hit: HP \d+ -> \d+ \(-\d+\), max", alive or up)
+    none_of(v, L, "s2 arena: no loading screen for guest 2", r"load started", dead, hit or up + 60, (2,))
+
+
 def check_s2(v, L, d: Path):
     need(v, L, "s2 join: 3 players", 0, r"cooperators [01] -> 2")
     tr = need(v, L, "s2 party lamp travel to the Cleric Beast", 0, r"travel step \d+/\d+: host_warp to lamp 2412952")
@@ -505,6 +610,7 @@ def check_s2(v, L, d: Path):
                   r"owed key item: lot 50000010|gave .*lot 50000010 .*while summoned", 0)
         if ib is not None and L.find(1, r"item notice up on a summoned guest", k):
             need(v, L, "s2 item box OK row closes it (Cross)", 1, r"item notice closed", ib)
+    check_arena(v, L, k)
     # Goods past the inventory maximum land in the storage (items.md 10.4: the +0x48 storage limit
     # and the give list), one in, no "Unable to acquire" box and nothing left on the ground.
     sg = L.find(1, STORAGE_GIVE)
@@ -525,6 +631,13 @@ def check_s2(v, L, d: Path):
     none_of(v, L, "s2 key item: no duplicate stack", r"DUPLICATE STACK")
     if tr is not None:
         need(v, L, "s2 key items after the travel (host)", 0, r"key goods held: .*4000 x1, 4001 x0,.*map m24_01", tr)
+        # BB_PARTY_KEY_RESTORE=1 (off by default: it duplicates keys in the save): a summoned guest's
+        # key items are put back right after each host-world load.
+        if L.find(1, r"summoned key items (put back|all held) after the load"):
+          need(v, L, "s2 key items put back on the summoned guest after the travel", 1,
+               r"summoned key items (put back|all held) after the load \(pass 1", tr)
+          need(v, L, "s2 key items held by the summoned guest after the travel", 1,
+               r"key goods held: .*4000 x1,.*4114 x1,.*map m24_01.*load mode 1", tr)
     lv = need(v, L, "s2 Leave after the boss kill", 1, r"guest_leave: Party > Leave pressed", k or 0)
     if lv is not None:
         need(v, L, "s2 key items back at home after the travels (guest)", 1,
@@ -556,6 +669,23 @@ def check_s2(v, L, d: Path):
             for i in (1, 2):
                 t = need(v, L, "s2 host Leave: guest %d out" % i, i, r"the host ended the party|host lost \(the host left its room\)", hl, hl + 15)
     check_common(v, L, "s2")
+
+
+def check_sc(v, L, d: Path):
+    root = Path(RUN_ROOT[0])
+    need(v, L, "sc save check OK (*.bak ignored)", 0, r"Saves: check OK: .*savedata_party")
+    need(v, L, "sc shadPS4 layout taken in", 0, r"is in shadPS4's layout \(sce_sys/param\.sfo inside\)")
+    need(v, L, "sc old character's side files dropped", 0, r"Saves: save slot \d: another character")
+    w = need(v, L, "sc host Continue loads the copied character", 0, r"auto-continue: world up after")
+    need(v, L, "sc guest joins the host", 0, r"cooperators 0 -> 1", w or 0)
+    need(v, L, "sc guest in the host's session", 1, r"session .* -> client")
+    party = root / "inst0" / "user" / "savedata_party"
+    both = bool(list(party.rglob("*.sce_sys/param.bin")) and list(party.rglob("sce_sys/param.sfo")))
+    v.step("sc both layouts' descriptions on disk", both, "param.bin and sce_sys/param.sfo" if both else "missing")
+    rot = root / "inst0" / "user" / "party_rot.txt"
+    left = rot.read_text().strip() if rot.exists() else ""
+    v.step("sc the other character's rot is gone", not left, "gone" if not left else repr(left[:80]))
+    none_of(v, L, "sc: no crash / assert", r"(?i)unhandled exception|assertion failed|EXCEPTION_ACCESS|fatal error", insts=(0, 1))
 
 
 def check_rules(v, L):
@@ -609,7 +739,8 @@ def check_summonfail(v, L):
     check_common(v, L, "summonfail")
 
 
-CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
+RUN_ROOT = ["."]  # main: --root (the sc checks read the host's save folder)
+CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L), "sc": check_sc,
           "summonfail": lambda v, L, d: check_summonfail(v, L)}
 
 
@@ -624,12 +755,13 @@ def main():
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--only", default="", help="comma list of step groups (a smaller run): " + ",".join(GROUPS))
     a = ap.parse_args()
+    RUN_ROOT[0] = a.root
     only = {g.strip() for g in a.only.split(",") if g.strip()}
     bad = only - set(GROUPS)
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "summonfail") if p in {GROUPS[g] for g in only})
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail") if p in {GROUPS[g] for g in only})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
     out = Path(a.out)

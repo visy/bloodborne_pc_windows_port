@@ -158,6 +158,34 @@ int main() {
         CHECK(!ArenaReviveAtCorpse(true, false, 41.0, 0.5));   // not in the arena with the member
         CHECK(!ArenaReviveAtCorpse(true, false, 5.0, -4.5));   // another floor
     }
+    {
+        // PR #6's wait: the bar over the dead boss, or 3 s after it went; at most 20 s.
+        CHECK(DefeatPending(0.5, true));
+        CHECK(DefeatPending(1.0, false));
+        CHECK(DefeatPending(10.0, true));
+        CHECK(!DefeatPending(3.5, false));
+        CHECK(!DefeatPending(21.0, true));
+        // A guest dead in the fight when the boss died (user request 2026-10-21): up in the arena.
+        CHECK(PlanGuestLimboEnd(true, true, false, true) == GuestLimboEnd::ArenaRevive);
+        CHECK(PlanGuestLimboEnd(true, true, true, true) == GuestLimboEnd::Wait);    // the defeat saved first
+        CHECK(PlanGuestLimboEnd(true, true, true, false) == GuestLimboEnd::Wait);
+        CHECK(PlanGuestLimboEnd(true, true, false, false) == GuestLimboEnd::Lamp);  // nobody alive here
+        CHECK(PlanGuestLimboEnd(false, true, false, true) == GuestLimboEnd::Lamp);  // the bar went, no kill
+        CHECK(PlanGuestLimboEnd(true, false, false, true) == GuestLimboEnd::Lamp);  // the switch off: as before
+        CHECK(PlanGuestLimboEnd(true, false, true, true) == GuestLimboEnd::Lamp);   // no wait either
+        // Host and a guest dead, the other guest's kill: both up in the arena (the host by
+        // PlanDownTick, the guest here); a wipe is the host's death load (PlanDownTick Wipe).
+        DownView h = d;
+        h.limbo = true;
+        h.boss_killed = true;
+        h.member_here = true;
+        h.down_reported = 1;  // guest 1 down; guest 2 alive
+        h.members = 2;
+        CHECK(PlanDownTick(h) == DownTick::ArenaRevive);
+        CHECK(PlanGuestLimboEnd(true, true, false, true) == GuestLimboEnd::ArenaRevive);
+        h.down_reported = 2;
+        CHECK(PlanDownTick(h) == DownTick::Wipe);
+    }
 
     // The split question closes on a load, a death or after 30 s (bug 12).
     CHECK(PlanAskClose(true, false, false, 5) == AskClose::Keep);
