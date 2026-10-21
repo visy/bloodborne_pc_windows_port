@@ -141,6 +141,15 @@ int main() {
     for (std::uint32_t f : {72410201u, 72410000u, 12410202u, 72100200u, 9401u, 1001u, 72411101u, 82410101u}) {
         CHECK(!LampTriggerFlag(f));
     }
+    // Live 2026-10-20: the Dream's talk state (Doll handshake, Gehrman's lines) and 70000100 are no
+    // lamp use; they stay out of the mirror as talk state.
+    for (std::uint32_t f : {72100100u, 72100101u, 72100102u, 72100123u, 72100124u, 72100136u, 70000100u}) {
+        CHECK(!LampTriggerFlag(f));
+        CHECK(TalkStateFlag(f));
+    }
+    for (std::uint32_t f : {72110100u, 72410101u, 72102110u, 72410201u, 9401u}) {
+        CHECK(!TalkStateFlag(f));
+    }
     CHECK(PlanLampOrigin(-1, -1) == LampOrigin::Other);     // no own flag: another game's warp event
     CHECK(PlanLampOrigin(-1, -1, false) == LampOrigin::Own); // no flag hook: ask as before
     CHECK(PlanLampOrigin(12, -1) == LampOrigin::Other);     // a stale own flag
