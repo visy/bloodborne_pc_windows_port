@@ -39,6 +39,13 @@ const PartySwitch PartySwitches[] = {
     {"party_progress_npc", "BB_PARTY_PROGRESS_NPC", &Values::party_progress_npc},
     {"party_story", "BB_PARTY_STORY", &Values::party_story},
     {"party_story_mirror", "BB_PARTY_STORY_MIRROR", &Values::party_story_mirror},
+    // 0.7.1: read live from Values (BB_PARTY_GATHER is also the director's pre-ring lamp gather,
+    // BB_PARTY_KEY_ITEMS_SUMMONED=1 means more without the key view: never exported).
+    {"party_kill_record", "BB_PARTY_KILL_RECORD", &Values::party_kill_record, false},
+    {"party_npc_mirror", "BB_PARTY_NPC_MIRROR", &Values::party_npc_mirror, false},
+    {"party_gather", "BB_PARTY_GATHER", &Values::party_gather, false},
+    {"party_key_view", "BB_PARTY_KEY_VIEW", &Values::party_key_view, false},
+    {"party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", &Values::party_key_items_summoned, false},
 };
 const int PartySwitchCount = int(std::size(PartySwitches));
 
@@ -381,6 +388,10 @@ void Load() {
             exported += (exported.empty() ? "" : ",") + std::string(env);
         };
         for (const PartySwitch& sw : PartySwitches) {
+            if (!sw.env_export) {
+                if (const char* e = std::getenv(sw.env); e && e[0]) v.*(sw.member) = e[0] != '0';
+                continue;
+            }
             take(sw.env, [&](const char* e) { v.*(sw.member) = e[0] != '0'; },
                  (v.*(sw.member)).load() ? "1" : "0");
         }

@@ -292,8 +292,6 @@ bool KillRecordFromJson(const std::string& text, KillRecordMsg* out, std::string
 /// The link's callback thread: EVENT kill_record from `slot` (validated, kept for the main thread).
 bool QueueKillRecord(int slot, const std::string& body, std::string* error = nullptr);
 std::vector<std::pair<int, KillRecordMsg>> PopKillRecords();
-/// BB_PARTY_KILL_RECORD (default on; 0: off).
-bool KillRecordFromEnv();
 
 /// Host, the link's callback thread: EVENT sync_resync from `slot` (validated, queued).
 bool HostQueueResync(int slot, const std::string& body, std::string* error = nullptr);

@@ -128,9 +128,10 @@ PARTY_SWITCHES = [
     ("party_restart", "BB_PARTY_RESTART", True),
 ]
 # The party gameplay switches, game settings in bbport.ini (also on the game's System pages Deaths &
-# revives, World & PvP, Story & dialogue, Party rewards; bbport_settings PartySwitches): (bbport.ini
-# key = the launcher_settings.json key before 0.7.0, the variable the launcher set until then, the
-# game's default). The launcher sets no variable for them (an explicit BB_PARTY_* still wins).
+# revives, World & PvP, Shared world, Story & dialogue, Party rewards; bbport_settings PartySwitches):
+# (bbport.ini key = the launcher_settings.json key before 0.7.0, the variable the launcher set until
+# then, the game's default; 0.7.1's: the variable that overrides the ini). The launcher sets no
+# variable for them (an explicit BB_PARTY_* still wins).
 PARTY_INI_SWITCHES = [
     ("party_host_revive", "BB_PARTY_B2_HOST_REVIVE", True),
     ("party_host_limbo_revive", "BB_PARTY_HOST_LIMBO_REVIVE", True),
@@ -146,6 +147,12 @@ PARTY_INI_SWITCHES = [
     ("party_progress_npc", "BB_PARTY_PROGRESS_NPC", True),
     ("party_story", "BB_PARTY_STORY", True),
     ("party_story_mirror", "BB_PARTY_STORY_MIRROR", True),
+    # 0.7.1 (no launcher_settings.json key before: nothing to migrate, INI_SYNC_REV stays)
+    ("party_kill_record", "BB_PARTY_KILL_RECORD", True),
+    ("party_gather", "BB_PARTY_GATHER", True),
+    ("party_npc_mirror", "BB_PARTY_NPC_MIRROR", True),
+    ("party_key_view", "BB_PARTY_KEY_VIEW", True),
+    ("party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", True),
 ]
 # Stale bbport.exe guard: a safety net, never a reason for the launcher not to start.
 try:
@@ -2989,8 +2996,8 @@ class BloodborneLauncher(tk.Tk):
         """Party rules & sync: the PARTY_SWITCHES, start mode, guest Insight and save backups."""
         dlg = tk.Toplevel(self)
         dlg.title("Party Rules & Sync")
-        dlg.geometry("720x620")
-        dlg.minsize(640, 560)
+        dlg.geometry("720x700")
+        dlg.minsize(640, 640)
         dlg.transient(self)
         dlg.grab_set()
         dlg.configure(bg="#1a1a1a")
@@ -3122,7 +3129,43 @@ class BloodborneLauncher(tk.Tk):
                     "save and rejoins the party (the host keeps your place for 60 s). At most 5 restarts "
                     "in 10 minutes. Default: on (BB_PARTY_RESTART).", command=save)
 
+        # 0.7.1: the host's world rules (System > Shared world) and the guest's key items (Party rewards)
+        sec = section(3, 0, "Shared world (host)")
+        self._check(sec, "Enemies stay dead", var["party_kill_record"],
+                    "An enemy the party killed is dead on every player's game: a kill across an area border "
+                    "reaches the others, and an enemy that comes back alive when its area loads again as you "
+                    "walk is put down again. Only a rest or a party wipe brings enemies back. The host's "
+                    "setting; guests follow it. Off: a kill another player did not see can leave the enemy "
+                    "standing on their game. Default: on (bbport.ini party_kill_record; in the game: System > Shared world).", command=save)
+        self._check(sec, "Host can gather the party", var["party_gather"],
+                    "Lets the host bring every guest to it with System > Party > Gather the party (each guest "
+                    "is asked first and may say no). The host's setting. Off: the row says gathering is off. "
+                    "Default: on (bbport.ini party_gather; in the game: System > Shared world).", command=save)
+        self._check(sec, "NPCs as in the host's world", var["party_npc_mirror"],
+                    "An NPC that is gone from the host's world (moved on by a story event, such as the one "
+                    "at the clinic's door) is gone for the guests too. The host's setting; guests follow it. "
+                    "Default: on (bbport.ini party_npc_mirror; in the game: System > Shared world).", command=save)
+
+        sec = section(3, 1, "Key items (guest)")
+        keys_now_cb = None
+
+        def update_keys():
+            keys_now_cb.state(["!disabled"] if var["party_key_view"].get() else ["disabled"])
+            save()
+        self._check(sec, "Own key items as a guest", var["party_key_view"],
+                    "While you are a guest in the host's world, your Key Items tab shows your own keys, "
+                    "badges and tools. Off: the game's view for a visiting hunter (an empty list; your save "
+                    "keeps them). Applies to you while you are a guest; at the next start. "
+                    "Default: on (bbport.ini party_key_view; in the game: System > Party rewards).", command=update_keys)
+        keys_now_cb = self._check(sec, "    Key items at once", var["party_key_items_summoned"],
+                                  "A key item the host's world gives you (Oedon Tomb Key, a badge) is yours "
+                                  "right away, while you are still in the host's world. Off: it waits until "
+                                  "you are back in your own world. Needs Own key items. Default: on "
+                                  "(bbport.ini party_key_items_summoned; in the game: System > Party rewards).",
+                                  command=save)
+
         update_dependents()
+        update_keys()
 
         def on_defaults():
             for key, _, default in PARTY_SWITCHES + PARTY_INI_SWITCHES:
@@ -3132,6 +3175,7 @@ class BloodborneLauncher(tk.Tk):
             self.party_backup_minutes_var.set("10")
             self.party_backup_keep_var.set("10")
             update_dependents()
+            update_keys()
             self.save_party_rules()
 
         bar = ttk.Frame(dlg, style="Card.TFrame", padding=10)

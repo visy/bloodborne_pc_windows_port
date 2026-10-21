@@ -780,11 +780,6 @@ std::vector<std::pair<int, KillRecordMsg>> PopKillRecords() {
     return out;
 }
 
-bool KillRecordFromEnv() {
-    const char* v = std::getenv("BB_PARTY_KILL_RECORD");
-    return !(v && *v == '0');
-}
-
 int CensusTestAfterFromEnv() {
     const char* v = std::getenv("BB_PARTY_CENSUS_TEST");
     return v && *v ? std::max(0, std::atoi(v)) : 0;

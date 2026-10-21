@@ -248,7 +248,8 @@ before anyone is in the game):
   host. Each guest is asked first (*Yes* / *No*): in the host's map you appear beside the host with
   no loading screen; from another map (the Hunter's Dream, say) it is one loading screen. A guest
   who is dead, in a menu, in a cutscene or in a boss fight is not moved (both see why); the host
-  cannot gather during its own boss fight or cutscene, and only once every 30 s.
+  cannot gather during its own boss fight or cutscene, and only once every 30 s. The host can turn
+  gathering off (*Host can gather* on *System → Shared world*).
 - **No loading screen inside the same map for the host.** A host's lamp or Hunter's Mark to a spot
   in its current map is an instant warp, for the whole party too. Alone (no one to travel with),
   lamps, headstones and the Hunter's Mark work exactly as in single player.
@@ -298,6 +299,7 @@ before anyone is in the game):
   host's world (Oedon Tomb Key, badges, workshop tools, chalices, umbilical cords) are given at once,
   and checked again when its own world loads and given again if missing; one you already hold is
   never handed out twice, and one you used up (the Gold Pendant, the Tear Stone) never comes back.
+  Both are your own switches on *System → Party rewards* (*Own key items as guest*, *Key items at once*).
   Keys and tools found lying around go to the whole party, so nobody is locked out of a door.
 - **Gestures are shared.** A gesture anyone in the party learns (from Gehrman, the Messengers, an
   NPC's talk) is learned by every player at once, with the game's "item acquired" notice, and kept
@@ -349,9 +351,11 @@ before anyone is in the game):
   gets no Echoes or Insight.
 - **Party HUD.** Party members and events in a small HUD.
 - **Every party rule in the game's own menu.** The *System* menu has the party pages *Deaths &
-  revives* (rot, getting up without a loading screen, respawns), *World & PvP*, *Story & dialogue*,
-  *Party rewards*, *Enemy scaling* and *Party display*; the host's rules show read-only for guests.
-  The launcher's *Party Rules & Sync* shows the same settings (`bbport.ini`).
+  revives* (rot, getting up without a loading screen, respawns), *World & PvP*, *Shared world*
+  (enemies the party killed stay dead, gathering the party, NPCs as in the host's world), *Story &
+  dialogue*, *Party rewards* (also your key items as a guest), *Enemy scaling* and *Party display*;
+  the host's rules show read-only for guests. The launcher's *Party Rules & Sync* shows the same
+  settings (`bbport.ini`).
 
 **Safety and recovery**
 
