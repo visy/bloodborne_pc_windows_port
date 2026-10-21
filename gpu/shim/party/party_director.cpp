@@ -190,6 +190,11 @@ struct Test {
     bool log_state = false;
     int insight = -1;
     int echoes = -1; // echoes=N: writes the player's Blood Echoes once (test saves)
+    // armor=SET: puts on armor set SET (EquipParamProtector SET, +1000, +2000, +3000: head, chest,
+    // arms, legs) once, 3 s into the first steady world, as the equipment menu does; in a session
+    // the peers rebuild this chr from its new record (the mirror's path). Distinct-looking players
+    // for the visual tests (all instances share one test save).
+    std::uint32_t armor = 0;
     // approach=X:Z:R[:BUTTON]: walk (pad file sticks, camera-relative, closed loop on the position)
     // until within R m of (X, Z), facing it; then BUTTON (cross / triangle / square / circle) once.
     bool approach = false, approach_done = false, ap_faced = false;
@@ -2377,6 +2382,18 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         Log("test: Blood Echoes -> %d %s", t.echoes, ok ? "written" : "NOT written (no player record)");
         t.echoes = -1;
     }
+    if (t.armor && Seconds(st.world_at, now) >= 3.0 && s.world_up && !s.loading) {
+        int ok = 0, all = 0;
+        for (int k = 0; k < 4; ++k) {
+            const std::uint32_t piece = t.armor + 1000u * static_cast<std::uint32_t>(k);
+            if (!GameParamRow("EquipParamProtector", "EQUIP_PARAM_PROTECTOR_ST", piece)) continue;
+            ++all;
+            ok += EquipSlotItem(8 + k, kItemProtector, piece) ? 1 : 0;  // head .. legs (slots 8..11)
+        }
+        Log("test: armor set %u put on: %d of %d pieces", t.armor, ok, all);
+        t.armor = 0;
+        if (ok > 0) b2::NoteOwnAppearanceChanged();
+    }
     if (!t.goods.empty() && !t.goods_done && Seconds(st.world_at, now) >= 8.0 && s.world_up && !s.loading) {
         t.goods_done = true;
         for (const auto& [id, n] : t.goods) {
@@ -2994,6 +3011,8 @@ void PartyDirector::ConfigureFromEnv() {
                 if (e > 0) st.test.log_objs.push_back(e);
             } else if (item.rfind("echoes=", 0) == 0) {
                 st.test.echoes = std::atoi(item.c_str() + 7);
+            } else if (item.rfind("armor=", 0) == 0) {
+                st.test.armor = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 6, nullptr, 10));
             } else if (item.rfind("bell_guest@", 0) == 0) {
                 st.test.bell = kGuestBell;
                 st.test.bell_area = std::atoi(item.c_str() + 11);
