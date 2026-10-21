@@ -61,6 +61,10 @@ struct HostDeathView {
     bool lamp_here = false;    ///< the host's last lamp has a spawn spot in the loaded map
     bool alone_opt = true;     ///< BB_PARTY_HOST_DEATH_ALONE (revive mode only)
     bool solo_fixture = false; ///< BB_PARTY_B2_HOST_REVIVE_SOLO=1 (test, no members needed)
+    /// The death's own script moved the respawn point to another map (ScriptedDeathWarp: the
+    /// Snatcher's kidnap to the Hypogean Gaol): always the party's respawn load, never the revive
+    /// or a lone load.
+    bool scripted_warp = false;
 };
 inline HostDeathPlan PlanHostDeath(const HostDeathView& v) {
     if (!v.party_on || (v.members <= 0 && !v.solo_fixture)) {
@@ -75,7 +79,7 @@ inline HostDeathPlan PlanHostDeath(const HostDeathView& v) {
     if (v.boss_fight || (v.boss_killed_late && v.arena_revive_on)) {
         return HostDeathPlan::BossLimbo;
     }
-    if (!v.revive_opt_in) {
+    if (!v.revive_opt_in || v.scripted_warp) {
         return HostDeathPlan::PartyLoad;
     }
     if (!v.lamp_here) {
@@ -124,6 +128,7 @@ struct DownView {
     bool member_here = false;
     bool revive_opt_in = false;
     bool lamp_here = false;
+    bool scripted_warp = false;  ///< as HostDeathView::scripted_warp (a death in a fight: after the limbo)
     double down_for = 0;       ///< s since the death was taken
     double delay = 1.0;        ///< BB_PARTY_B2_HOST_REVIVE_DELAY
 };
@@ -146,13 +151,41 @@ inline DownTick PlanDownTick(const DownView& v) {
     if (v.limbo && v.boss_killed && v.arena_revive_on && v.member_here) {
         return DownTick::ArenaRevive;
     }
-    if (!v.revive_opt_in) {
+    if (!v.revive_opt_in || v.scripted_warp) {
         return DownTick::PartyLoad;
     }
     if (!v.lamp_here) {
         return DownTick::AloneLoad;
     }
     return DownTick::Revive;
+}
+
+// ---- Scripted death warps (quest_audit.md "Scripted death warps") ----
+// A host death whose own EMEVD moves the respawn point (2003[23]) to another map. The party's
+// respawn load takes everyone there with one loading screen (the guests replay it as a lamp warp
+// to the host's last lamp record, which the script has just set); the in-place revive or a lone
+// load would send the host away alone and leave the guests where they are (a player report: the
+// host kidnapped alone, the guests shown its waking scene in the Cathedral Ward). The deaths in the
+// game data (every 2003[23] outside the lamp events): common 9421 (the Snatcher's kidnap: 9420 from
+// 12400780 / 12700500 -> the Gaol 2802959, until the waking scene sets 9423), 9404 (the first death
+// with Insight after the first Dream -> the Dream 2102961), 9400 (the prologue's first death -> the
+// Dream 2102962; the clinic has no multiplayer). All three end on a client: never a guest's.
+constexpr std::uint32_t kGaolReturnPoint = 2802959;  ///< ReturnPointParam row of the Gaol cell (m28)
+/// The kidnap is pending or done by this death: 9420 (the trigger) on, or the respawn record on the
+/// Gaol, while the waking scene has not played (9423 off; 9421 ends once it is on: a later grab is a
+/// plain death in the game data too).
+inline bool KidnapDeath(std::uint32_t lamp, bool trigger_9420, bool woke_9423) {
+    return !woke_9423 && (trigger_9420 || lamp == kGaolReturnPoint);
+}
+/// The respawn record changed after the player was last seen alive and points into another map than
+/// the one it died in (area << 8 | block of each, 0 = unknown: no).
+inline bool RespawnMovedAtDeath(std::uint32_t alive_lamp, std::uint32_t lamp, std::uint32_t lamp_map,
+                                std::uint32_t death_map) {
+    const bool known = alive_lamp != 0 && alive_lamp != 0xffffffffu && lamp != 0 && lamp != 0xffffffffu;
+    return known && lamp != alive_lamp && lamp_map != 0 && death_map != 0 && lamp_map != death_map;
+}
+inline bool ScriptedDeathWarp(bool kidnap, bool respawn_moved) {
+    return kidnap || respawn_moved;
 }
 
 // ---- Where the host gets up in the arena (DownTick::ArenaRevive) ----

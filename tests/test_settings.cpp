@@ -22,7 +22,7 @@ int main() {
     const int created = bb_test_temp_file(path, sizeof(path), "bbport-settings-test-");
     assert(created == 0);
     const char ini[] = "# launcher\nupscaler=fsr3\nkey.cross=X, Space\npad.circle=a\nshow_fps=0\n"
-                       "fullscreen_hint=1\n";
+                       "fullscreen_hint=1\nparty_enemy_poise=-50\nparty_boss_poise=-100\n";
     const int written = bb_test_write_file(path, ini, sizeof(ini) - 1);
     assert(written == 0);
     const int env = bb_test_setenv("BB_CONFIG", path);
@@ -33,6 +33,8 @@ int main() {
     auto& s = BbSettings::Get();
     assert(!s.party_rendezvous);  // the DHT rendezvous is opt-in: off without the ini key / env
     assert(s.upscaler == BbSettings::UpscalerFsr3 && !s.show_fps && s.menu_x < 0.0f);
+    // Poise starts at 0 (2026-10-21: below 0 enemies staggered less): old negative values read as 0.
+    assert(s.party_enemy_poise == 0 && s.party_boss_poise == 0);
     s.show_fps = true;
     s.upscaler = BbSettings::UpscalerFsr411;
     s.menu_x = 0.625f;
@@ -117,5 +119,5 @@ int main() {
     assert(BbSettings::ReadLines("mkkey.").empty());
     assert(Read(path).find("party_rendezvous=") != std::string::npos);  // the rest is kept
     std::remove(path);
-    std::puts("PASS: settings save keeps other keys, menu position, DHT rendezvous opt-in, 0.7.1 party switches, key binding lines");
+    std::puts("PASS: settings save keeps other keys, menu position, DHT rendezvous opt-in, poise clamp, 0.7.1 party switches, key binding lines");
 }

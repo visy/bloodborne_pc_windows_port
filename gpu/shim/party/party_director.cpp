@@ -1941,7 +1941,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         // D7 stagger A/B in one session: the host's Enemy poise setting, live (not saved); the
         // balance pass rewrites row 7503 and sends the rules on.
         const int was = BbSettings::Get().party_enemy_poise.load();
-        BbSettings::Get().party_enemy_poise = std::clamp(std::atoi(step.args.c_str()), -100, 300);
+        BbSettings::Get().party_enemy_poise = std::clamp(std::atoi(step.args.c_str()), 0, 300);
         Log("test: host_poise: Enemy poise %d -> %d %% of the step", was, BbSettings::Get().party_enemy_poise.load());
     } else if (step.kind == TravelStep::HostOutage || step.kind == TravelStep::GuestOutage) {
         bbnet::netsim::outage_now(double(step.buttons));

@@ -227,6 +227,19 @@ static void LiveValues() {
     Advance(16);
     assert(s.party_boss_hp == AtPosition(kHpTable, other) && P::ValueChanges() == values);
 
+    // Poise starts at 0 (user decision 2026-10-21: below 0 enemies staggered less): the slider's
+    // leftmost position is the game's own 0 %, the rightmost +300 %.
+    const P::Row& enemy_poise = RowNamed(scaling, u"Enemy poise");
+    *P::Byte(enemy_poise.field) = 0;
+    Advance(16);
+    assert(s.party_enemy_poise == 0);
+    assert(std::u16string(P::Text(enemy_poise.help, false)).find(P::Utf16(DescribePoise(0, false).c_str())) == 0);
+    *P::Byte(enemy_poise.field) = 10;
+    Advance(16);
+    assert(s.party_enemy_poise == 300);
+    s.party_enemy_poise = 0;
+    Advance(16);
+
     // A toggle (rot on death), a pop-up list (above companions) and a steps row (model detail).
     const P::Page& rules = PageNamed(u"Deaths & revives");
     const P::Row& rot = RowNamed(rules, u"Rot on death");

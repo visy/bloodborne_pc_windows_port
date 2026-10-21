@@ -15,7 +15,9 @@ namespace coop::balance {
 
 const int kHpTable[11] = {0, 25, 50, 75, 100, 125, 150, 200, 250, 300, 400};
 const int kDamageTable[11] = {0, 5, 10, 15, 20, 25, 30, 40, 50, 75, 100};
-const int kPoiseTable[11] = {-100, -75, -50, -25, 0, 25, 50, 100, 150, 200, 300};
+// Poise starts at 0 (user decision 2026-10-21): a negative changeSuperArmorPoint made enemies
+// stagger less, not more (live: 0 of 20 hits at -100 % against 18 of 40 at 0 %).
+const int kPoiseTable[11] = {0, 25, 50, 75, 100, 125, 150, 175, 200, 250, 300};
 
 bool Rules::operator==(const Rules& o) const {
     return rot == o.rot && boss_hp == o.boss_hp && boss_damage == o.boss_damage && boss_poise == o.boss_poise &&

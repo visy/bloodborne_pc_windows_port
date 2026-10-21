@@ -208,13 +208,13 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     } else if (key == "party_boss_damage") {
         v.party_boss_damage = std::clamp(i, 0, 100);
     } else if (key == "party_boss_poise") {
-        v.party_boss_poise = std::clamp(i, -100, 300);
+        v.party_boss_poise = std::clamp(i, 0, 300);  // below 0 staggered less (2026-10-21)
     } else if (key == "party_enemy_hp") {
         v.party_enemy_hp = std::clamp(i, 0, 400);
     } else if (key == "party_enemy_damage") {
         v.party_enemy_damage = std::clamp(i, 0, 100);
     } else if (key == "party_enemy_poise") {
-        v.party_enemy_poise = std::clamp(i, -100, 300);
+        v.party_enemy_poise = std::clamp(i, 0, 300);
     } else if (key == "party_name_tags") {
         v.party_name_tags = i != 0;
     } else if (key == "party_npc_talk") {

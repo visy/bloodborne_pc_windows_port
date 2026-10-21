@@ -791,6 +791,11 @@ std::optional<StoryAction> GuestStory::Step(const StoryState& st, double now) {
     if (mirror_) {
         if (now - mirror_since_ > kMirrorTimeout || st.session_role != 6) {
             mirror_.reset();
+        } else if (stable_mirror_ >= kStableTicks && !MirrorMapOk(mirror_->id, st.map_id)) {
+            mirror_other_map_ = mirror_->id;
+            mirror_other_map_at_ = st.map_id;
+            mirror_.reset();
+            return std::nullopt;
         } else if (stable_mirror_ >= kStableTicks) {
             const StoryIntent s = *mirror_;
             mirror_.reset();
@@ -816,6 +821,11 @@ std::optional<StoryAction> GuestStory::Step(const StoryState& st, double now) {
         !st.remo_playing) {
         for (auto it = queue_.begin(); it != queue_.end(); ++it) {
             if (it->kind == StoryKind::Ending) {
+                continue;
+            }
+            // A scene of another map waits (for its map, or for the own world as before): played
+            // here it drew without its scenery, as the live mirror did (MirrorMapOk).
+            if (it->kind == StoryKind::Cutscene && !MirrorMapOk(it->id, st.map_id)) {
                 continue;
             }
             const StoryIntent s = *it;
@@ -2058,6 +2068,11 @@ void StoryTick() {
         if (const u32 cut = g_guest.TakeMirrorCut()) {
             Log("live mirror of remo %u stopped after less than %.0f s (a load or travel cut it): not seen; the "
                 "queued replay plays it once this game is steady", cut, GuestStory::kMirrorMinSeen);
+        }
+        u32 other_at = 0;
+        if (const u32 other = g_guest.TakeMirrorOtherMap(&other_at)) {
+            Log("live mirror of remo %u dropped: its map is not loaded here (this guest is in %s); no host "
+                "cutscene over another map's scenery", other, MapName(other_at).c_str());
         }
     }
     if (a) {
