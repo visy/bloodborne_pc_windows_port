@@ -35,6 +35,9 @@ Phase lf (~3 min, 3 players, groups `lifts` / `ladder`): guest 1 lowers Central 
   130 m away with that map block unloaded; the ride must reach the host's world, the host's car must
   stand where the guest left it once the block streams in again, and every game ends with the same
   lift flags (D3, docs/party/world_actions.md 10.1).
+Phase fl (~3 min, 2 players, group `fall`): guest 1 falls out of the world from the Great Bridge (its
+  fall recovery off) to the kill plane; it must get up on its last safe floor in the host's world with
+  no loading screen and no session leave, stay standing, and its bloodstain must be on that spot.
 
 Test aids used (it is a smoke, not real play): BB_PARTY_DIRECTOR_TEST steps (lamp warps, moves into
 the boss trigger, scripted deaths, the boss kill, Party > Leave / Rejoin presses),
@@ -543,13 +546,38 @@ def phase_ga(only):
     )
 
 
+# Phase fl (fallsafe, ~3 min, 2 players, group `fall`): a guest's fall out of the world. At the Great
+# Bridge lamp guest 1 walks 3 m onto the bridge (the game's last safe ground spot), then is put just
+# under the bridge's floor: it falls into the void to the game's kill plane (about y -1500, ~30 s;
+# its fall recovery is off for this, BB_PARTY_FALL_RECOVERY=0). After its held death it must get up on
+# that safe floor in the host's world with no loading screen (never the Hunter's Dream), stay standing,
+# and its bloodstain must be on the same spot.
+FL_UNTIL = r"1:guest revive on its last safe floor: still standing"
+
+
+def phase_fl(only):
+    host = "god,log_pos,host_warp=2412952@15,host_press=0@60%m24_01!,host_press=0@30%m24_01!"
+    g1 = ",".join(["log_pos", "echoes=4000",
+                   "guest_stick=-127.0:62.0:0.7:20@10%m24_01!",   # onto the bridge: the safe ground
+                   "guest_press=0@2%m24_01!",
+                   "guest_move=-134.6:-27.8:54.7@1%m24_01",       # under the floor: out of the world
+                   "guest_press=0@3%m24_01!", "guest_press=0@5%m24_01!"])
+    return dict(
+        name="fl", seconds=360, count=2, headless=0, pads=(0, 1),
+        env=[], ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1,
+                      "1:BB_PARTY_FALL_RECOVERY=0"],
+        watch=["--watch", "guest: died from a fall=fallrevive@0.5,3", "--watch", "local death: HP 0=hp0@1,5"],
+        crash=[], until=[FL_UNTIL], until_hold=8,
+    )
+
+
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "fl": phase_fl}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf"}
+          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "fall": "fl"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -557,7 +585,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ",
-              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)"}
+              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "fall": r"^fl "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -586,6 +614,7 @@ GROUP_UNTIL = {
     # the host back at the lamp (the lift's block streamed in, its init run) and guest 1's chain done
     "lifts": [LF_UNTIL],
     "ladder": [r"1:travel step (\d+)/\1: guest_press"],
+    "fall": [FL_UNTIL],
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
 GROUP_HOLD = {"host_death": 10}  # the spectate on every screen (the guests' panels: "Spectating")
@@ -660,10 +689,10 @@ def run_phase(a, ph, out: Path):
         cmd += ["--ienv", e.replace("{hold}", hold).replace("{root}", str(root))]
     for w in ph.get("start_when", []):
         cmd += ["--start-when", w]
-    if ph.get("pad"):
-        # the stick walks (host_stick) write the in-process pad script
-        (root / "pad0.txt").write_text("lx=128 ly=128\n")
-        cmd += ["--ienv", "0:BB_PAD_FILE=" + str(root / "pad0.txt")]
+    for i in (ph.get("pads") or ((0,) if ph.get("pad") else ())):
+        # the stick walks (host_stick / guest_stick) write the in-process pad script
+        (root / f"pad{i}.txt").write_text("lx=128 ly=128\n")
+        cmd += ["--ienv", f"{i}:BB_PAD_FILE=" + str(root / f"pad{i}.txt")]
     if ph.get("until_hold"):
         cmd += ["--until-hold", str(ph["until_hold"])]
     for c in ph["crash"]:
@@ -1207,10 +1236,38 @@ def check_ga(v, L):
     need(v, L, "ga round 3 over", 0, r"round 3 over", r1)
     check_common(v, L, "ga")
 
+def check_fl(v, L):
+    need(v, L, "fl join: 2 players", 0, r"cooperators 0 -> 1")
+    hp0 = need(v, L, "fl guest fell out of the world (HP 0 in the void)", 1,
+               r"local death: HP 0 at \([-\d.]+, -(1\d{3}|[2-9]\d\d)\.")
+    if hp0 is None:
+        check_common(v, L, "fl")
+        return
+    up = need(v, L, "fl guest up on its last safe floor, no load", 1,
+              r"guest: died from a fall .*up on its last safe floor", hp0)
+    if up is not None:
+        need(v, L, "fl guest standing 5 s later (no second death)", 1, r"guest revive on its last safe floor: still standing", up)
+        none_of(v, L, "fl no loading screen after the death", r"Party B2: load started", hp0, up + 20, (1,))
+        none_of(v, L, "fl guest stays in the host's world (no session leave)", r"session client \(6, sub 0\) ->", hp0,
+                up + 20, (1,))
+        xyz = r"\(([-\d.]+), ([-\d.]+), ([-\d.]+)\)"
+        st = L.find(1, r"guest: bloodstain recorded: .*stain object at " + xyz, hp0, up + 1)
+        sf = re.search(r"up on its last safe floor " + xyz, L.find(1, r"guest: died from a fall", hp0)[1])
+        ok, d = False, -1.0
+        if st and sf:
+            so = re.search(r"stain object at " + xyz, st[1])
+            d = sum((float(a) - float(b)) ** 2 for a, b in zip(so.groups(), sf.groups())) ** 0.5
+            ok = d < 1.0
+        v.step("fl bloodstain on the same safe spot", ok,
+               ("%.1f m from it: %s" % (d, st[1][:120])) if st else "no stain record (echoes 0?)")
+    check_common(v, L, "fl")
+
+
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
-          "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L)}
+          "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L),
+          "fl": lambda v, L, d: check_fl(v, L)}
 
 
 def main():
@@ -1219,7 +1276,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf")
+    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,fl")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--only", default="", help="comma list of step groups (a smaller run): " + ",".join(GROUPS))
@@ -1230,7 +1287,7 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf")
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "fl")
                            if p in {GROUPS[g] for g in only})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")

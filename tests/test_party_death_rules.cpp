@@ -180,6 +180,32 @@ int main() {
         CHECK(PlanLiesRevive(false, false) == LiesRevive::WhereItLies);
         CHECK(PlanLiesRevive(true, true) == LiesRevive::SafeFloor);
         CHECK(PlanLiesRevive(true, false) == LiesRevive::Load);
+        // Outside an arena revive: a fall with a safe spot gets up there in place (no load).
+        CHECK(PlanFallRespawn(true, true, true) == FallRespawn::SafeFloor);
+        CHECK(PlanFallRespawn(true, false, true) == FallRespawn::Respawn);
+        CHECK(PlanFallRespawn(true, true, false) == FallRespawn::Respawn);
+        CHECK(PlanFallRespawn(false, true, true) == FallRespawn::Respawn);
+        {
+            // The sequence of a death out of the world: HP 0 (the game's death plays), the death taken
+            // (held), the body moved up, a settle, the revive in place - and no load.
+            double t = 0;
+            CHECK(PlanFallReviveStep(false, true, false, false, t) == FallReviveStep::Wait);  // dying
+            CHECK(PlanFallRespawn(true, true, true) == FallRespawn::SafeFloor);              // taken: no load
+            CHECK(PlanFallReviveStep(true, true, false, false, t) == FallReviveStep::MoveBody);
+            int frames = 0;
+            for (t = 0; PlanFallReviveStep(true, true, true, true, t) == FallReviveStep::Wait; t += 1.0 / 30) ++frames;
+            CHECK(frames >= 29);  // at least kFallSettle s of frames with the body on its spot first
+        }
+        // The order: never before the death is taken; a body out of the world moved first; then up.
+        CHECK(PlanFallReviveStep(false, true, false, false, 0.0) == FallReviveStep::Wait);
+        CHECK(PlanFallReviveStep(false, false, false, true, 0.0) == FallReviveStep::Wait);
+        CHECK(PlanFallReviveStep(true, true, false, false, 0.0) == FallReviveStep::MoveBody);
+        CHECK(PlanFallReviveStep(true, true, true, false, 0.5) == FallReviveStep::Wait);
+        CHECK(PlanFallReviveStep(true, true, true, true, 0.0) == FallReviveStep::Wait);    // moved this frame
+        CHECK(PlanFallReviveStep(true, true, true, true, 0.5) == FallReviveStep::Wait);    // physics settling
+        CHECK(PlanFallReviveStep(true, true, true, true, kFallSettle) == FallReviveStep::Revive);
+        CHECK(PlanFallReviveStep(true, true, true, false, kFallMoveWait) == FallReviveStep::Revive);
+        CHECK(PlanFallReviveStep(true, false, false, false, 0.0) == FallReviveStep::Revive);  // landed near
     }
     {
         // PR #6's wait: the bar over the dead boss, or 3 s after it went; at most 20 s.

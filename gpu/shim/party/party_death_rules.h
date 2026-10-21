@@ -205,6 +205,37 @@ inline ArenaSpot PlanArenaReviveSpot(bool corpse_known, bool fall_death, double 
 /// A revive "where it lies" (GuestDeathAloneToOwnLamp: up again, then the alone travel to its own
 /// lamp in another map). A fall: warped onto the game's safe spot first; with none, no revive here
 /// (the caller's respawn load). Any other death: where it lies, as before.
+/// The order of a fall revive (fallsafe, user report: the host was put on its safe spot and then
+/// still got "YOU DIED"): nothing before the game's death is taken (the host's death funnel / a
+/// guest's held death); then a body far below its spot (out of the world) is moved there while
+/// still dead; the revive itself runs once the body stands on the spot (or kFallMoveWait s after
+/// the move, whichever first) and has stood there kFallSettle s: the game's own warp updates the
+/// position at once but its physics a few frames later, and a revive in the same frame met the kill
+/// plane again (live r11: the guest's HP 0 again 36 ms after the revive, "YOU DIED", then a load).
+constexpr double kFallMoveWait = 3.0;
+constexpr double kFallSettle = 1.0;
+enum class FallReviveStep { Wait, MoveBody, Revive };
+inline FallReviveStep PlanFallReviveStep(bool death_taken, bool body_far_below, bool moved, bool at_spot,
+                                         double since_move) {
+    if (!death_taken) {
+        return FallReviveStep::Wait;
+    }
+    if (body_far_below && !moved) {
+        return FallReviveStep::MoveBody;
+    }
+    if (moved && since_move < (at_spot ? kFallSettle : kFallMoveWait)) {
+        return FallReviveStep::Wait;
+    }
+    return FallReviveStep::Revive;
+}
+/// Where a fall death (off a ledge or out of the world) gets up outside a boss arena's revive (user
+/// rule): on its last safe floor in the party's world with no load when that spot is kept and the
+/// in-place revive is on (a guest: System > Deaths & revives; the host: its revive in place); else
+/// the respawn as before (Respawn: the lamp, a load if needed). Never at the bottom of the fall.
+enum class FallRespawn { SafeFloor, Respawn };
+inline FallRespawn PlanFallRespawn(bool fall_death, bool safe_ok, bool inplace_on) {
+    return fall_death && safe_ok && inplace_on ? FallRespawn::SafeFloor : FallRespawn::Respawn;
+}
 enum class LiesRevive { WhereItLies, SafeFloor, Load };
 inline LiesRevive PlanLiesRevive(bool fall_death, bool safe_ok) {
     if (!fall_death) {
