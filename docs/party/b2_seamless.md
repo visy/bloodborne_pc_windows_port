@@ -311,7 +311,9 @@ warp's own target was used; with +0x1521 = 1 our +0x14C4/D0/E0 write gives the s
   12410000's 2002 (EMEVD skip predicate, `seamless_rules SetEmevdSkipPredicate`): logged
   `client: opening cutscene (event 12410000, 2002[3]) skipped in the host's world` and no remo.
   Overlay guard (save the host-world overlay at the travel event, restore every group the new
-  snapshot left all-zero): restored 7 of 11 non-zero groups, but 9401's group came back
+  snapshot left all-zero; never a map's fight-state group, T1 zones 4-6: the host's load reset
+  them, and restoring them restarted a wiped boss fight at the lamp - 0.7.2 known issue 2,
+  `party_bossfog_rules.h`): restored 7 of 11 non-zero groups, but 9401's group came back
   non-zero with the bit cleared - the re-sent snapshot itself carries different data. Root cause
   of the poor re-sent snapshot: **the apply 0x13BECA0 ran in load mode 1** (a join applies it in
   the guest's own world, mode 0). Run 20: host at the re-send 12410000=1 9401=1 12417810=1; guest
