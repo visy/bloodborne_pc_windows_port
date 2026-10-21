@@ -2589,13 +2589,15 @@ void PartyHud() {
             for (int k = 0; k < party::status::kRotKinds && !compact; ++k) {
                 const std::string e = coop::balance::DescribeRotEffect(k, kind[k], ru);
                 if (e.empty()) continue;
-                const std::string part = first ? e : ", " + e;
-                first = false;
-                // The next effect on the same line while it fits the panel, else on a new one.
+                // The next effect on the same line while it fits the panel (after ", "), else at the
+                // start of a new line without the separator.
                 ImGui::SameLine(0.0f, 0.0f);
+                std::string part = first ? e : ", " + e;
                 if (ImGui::GetCursorPosX() + ImGui::CalcTextSize(part.c_str()).x > x0 + width) {
                     ImGui::NewLine();
+                    part = e;
                 }
+                first = false;
                 ImGui::TextColored(kEffect[k], "%s", part.c_str());
             }
             ImGui::PopFont();
