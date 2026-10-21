@@ -4,7 +4,9 @@
  *   <user>/savedata/<user id>/<title id>/<dir name>.sce_sys/ param.bin, icon0.png
  *   <user>/savedata/<user id>/<title id>.memory/memory.dat  SaveDataMemory
  * A mounted directory appears to the guest as /savedata0../savedata15.
- * Metadata lives beside the directory so the guest's own files are untouched. */
+ * Metadata lives beside the directory so the guest's own files are untouched. shadPS4 keeps it inside
+ * (<dir name>/sce_sys/param.sfo): that is read when param.bin is missing and written next to ours, so
+ * saves move between the two builds as they are (save_policy.h "saves from other builds"). */
 #define _GNU_SOURCE
 #include "runtime.h"
 #include "save_policy.h"
@@ -81,11 +83,9 @@ static size_t mounts_done, memory_writes;
  * (e.g. the player's weapon sounds) never play. It is set before the game reads the save.
  * BB_SOUND_HACK=0 leaves saves untouched. */
 static void bloodborne_sound_hack(void) {
-    static const char *const ids[]={"CUSA00207","CUSA00208","CUSA00299","CUSA00900","CUSA01363","CUSA03014","CUSA03023","CUSA03173","CUSA03179"};
     const char *env=getenv("BB_SOUND_HACK");
     if (env && env[0]=='0') return;
-    int bloodborne=0;
-    for (size_t i=0;i<sizeof(ids)/sizeof(*ids);++i) if (!strcmp(title_id,ids[i])) bloodborne=1;
+    int bloodborne=runtime_savepolicy_bloodborne_title(title_id);
     if (!bloodborne) return;
     char users[700];
     snprintf(users,sizeof(users),"%s/%s",runtime_file_user_dir(),runtime_savepolicy_dir());
@@ -112,6 +112,25 @@ static void bloodborne_sound_hack(void) {
 
 void runtime_savedata_configure(const char *title) {
     if (title && *title) snprintf(title_id,sizeof(title_id),"%s",title);
+    /* A save from another build first (shadPS4's layout, another user id or region): the check and the
+     * start backup below then see it. User id 1: runtime_services.c USER_ID. */
+    runtime_savepolicy_adopt(runtime_file_user_dir(),runtime_savepolicy_dir(),1,title_id);
+    /* Party saves: another character in a save slot than last time (a save copied over the party
+     * save) does not inherit the old one's party side files. Before the party modules read them. */
+    if (!strcmp(runtime_savepolicy_dir(),"savedata_party")) {
+        char titles[800]; snprintf(titles,sizeof(titles),"%s/savedata_party/1/%s",runtime_file_user_dir(),title_id);
+        DIR *d=opendir(titles);
+        for (struct dirent *e; d && (e=readdir(d));) {
+            char folder[1100], system[1200]; struct stat st;
+            if (e->d_name[0]=='.' || strstr(e->d_name,".sce_sys") || strstr(e->d_name,".memory")) continue;
+            snprintf(folder,sizeof(folder),"%s/%s",titles,e->d_name);
+            snprintf(system,sizeof(system),"%s/userdata0010",folder);
+            if (stat(system,&st)) continue;
+            runtime_savepolicy_side_files(runtime_file_user_dir(),folder);
+            break;
+        }
+        if (d) closedir(d);
+    }
     runtime_savepolicy_start(); /* before the sound hack writes: the start backup has the save as it was */
     bloodborne_sound_hack();
 }
@@ -156,18 +175,55 @@ static int write_atomic(const char *path, const void *data, size_t size) {
     if (!ok || rename(temp,path)) { unlink(temp); return -1; }
     return 0;
 }
+/* <dir>.sce_sys -> <dir>/sce_sys/param.sfo (shadPS4's place for it); 0 when meta is not a save's. */
+static int sfo_path(const char *meta, char *out, size_t size, char *dir_name, size_t dir_size) {
+    size_t n=strlen(meta);
+    if (n<9 || strcmp(meta+n-8,".sce_sys")) return 0;
+    const char *slash=strrchr(meta,'/');
+    snprintf(dir_name,dir_size,"%.*s",(int)(meta+n-8-(slash ? slash+1 : meta)),slash ? slash+1 : meta);
+    snprintf(out,size,"%.*s/sce_sys/param.sfo",(int)(n-8),meta);
+    return 1;
+}
 static int write_param(const char *meta, const Param *p) {
     if (make_dirs(meta)) return -1;
     char path[800]; snprintf(path,sizeof(path),"%s/param.bin",meta);
     Param copy=*p; copy.mtime=time(NULL);
-    return write_atomic(path,&copy,sizeof(copy));
+    int r=write_atomic(path,&copy,sizeof(copy));
+    /* The same description as shadPS4's param.sfo inside the folder (BB_SAVE_SFO=0: not written). */
+    const char *sfo_env=getenv("BB_SAVE_SFO");
+    char sfo[800], dir_name[40], sfo_dir[800];
+    if (!r && !(sfo_env && sfo_env[0]=='0') && sfo_path(meta,sfo,sizeof(sfo),dir_name,sizeof(dir_name))) {
+        SaveSfo info; memset(&info,0,sizeof(info));
+        memcpy(info.title,p->title,sizeof(info.title)-1);
+        memcpy(info.subtitle,p->subtitle,sizeof(info.subtitle)-1);
+        memcpy(info.detail,p->detail,sizeof(info.detail)-1);
+        info.user_param=p->user_param;
+        unsigned char data[4096];
+        size_t size=runtime_savepolicy_sfo_build(&info,dir_name,title_id,data,sizeof(data));
+        snprintf(sfo_dir,sizeof(sfo_dir),"%s",sfo); *strrchr(sfo_dir,'/')=0;
+        if (size && !make_dirs(sfo_dir)) write_atomic(sfo,data,size);
+    }
+    return r;
 }
 
 static int read_param(const char *meta, Param *p) {
     memset(p,0,sizeof(*p));
     char path[800]; snprintf(path,sizeof(path),"%s/param.bin",meta);
     FILE *f=fopen(path,"rb");
-    if (!f) return -1;
+    if (!f) {
+        /* No param.bin: shadPS4's param.sfo inside the folder (a save brought from shadPS4). */
+        char sfo[800], dir_name[40];
+        if (!sfo_path(meta,sfo,sizeof(sfo),dir_name,sizeof(dir_name)) || !(f=fopen(sfo,"rb"))) return -1;
+        unsigned char data[8192]; size_t n=fread(data,1,sizeof(data),f);
+        fclose(f);
+        SaveSfo info;
+        if (runtime_savepolicy_sfo_parse(data,n,&info)) return -1;
+        memcpy(p->title,info.title,sizeof(p->title)); memcpy(p->subtitle,info.subtitle,sizeof(p->subtitle));
+        memcpy(p->detail,info.detail,sizeof(p->detail)); p->user_param=info.user_param;
+        struct stat st;
+        if (!stat(sfo,&st)) p->mtime=st.st_mtime;
+        return 0;
+    }
     size_t n=fread(p,sizeof(*p),1,f);
     fclose(f);
     struct stat st;
