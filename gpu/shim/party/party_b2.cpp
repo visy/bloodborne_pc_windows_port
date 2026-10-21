@@ -3775,8 +3775,8 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         // its limbo, or in the grace with the fight on at its death): it gets up in the arena, no
         // load, once the defeat is saved (PR #6's wait, as the host's arena revive).
         const LimboKillWatch& kw = g_limbo_kill;
-        const bool in_fight = limbo_logged == at || (g_local_death_in_fight && kw.killed && g_local_death_at > 0 &&
-                                                     kw.gone_at >= g_local_death_at && at - g_local_death_at < 60.0);
+        const bool in_fight = limbo_logged == at || deathrules::KilledAfterHp0(g_local_death_in_fight, kw.killed,
+                                                                               g_local_death_at, kw.gone_at, at);
         const deathrules::GuestLimboEnd end =
             in_fight ? deathrules::PlanGuestLimboEnd(kw.killed, GuestArenaRuleOn(), kw.pending,
                                                      s.player && LivingMemberHere(s.player))
@@ -3902,6 +3902,7 @@ std::atomic<bool> g_host_down{false};    // the host's death was taken; not revi
 std::atomic<double> g_host_down_at{0};
 std::atomic<int> g_revivals{0};
 std::atomic<bool> g_host_limbo{false};   // the host's death came in a boss fight: it waits for the end
+std::atomic<bool> g_host_limbo_late{false};  // ...its boss killed in its death animation (KilledAfterHp0)
 std::mutex g_dead_mu;
 deathrules::DownLedger g_dead_members;    // host: party slots down until revived / re-arrived / gone (under g_dead_mu)
 std::atomic<bool> g_host_revived_note{false};  // guest: the host was revived in place (re-create its chr)
@@ -4281,6 +4282,20 @@ bool HostDeathIntercept() {
     v.down_reported = reported;
     v.down_seen = seen;
     v.boss_fight = BossFightActive(&boss);
+    {
+        // The boss killed while the host's death animation ran (its HP 0 in the fight, the death
+        // taken 8-13 s later with no living bar left: hostcheck run C): the limbo, then the arena
+        // revive, as the guest's held death (LimboKillTick, LocalDeathHeightTick).
+        const LimboKillWatch& kw = g_limbo_kill;
+        v.boss_killed_late = !v.boss_fight && deathrules::KilledAfterHp0(g_local_death_in_fight, kw.killed,
+                                                                         g_local_death_at, kw.gone_at, Now());
+        if (v.boss_killed_late) {
+            char b[96];
+            std::snprintf(b, sizeof b, "boss killed %.1f s after the host's HP 0", kw.killed_at - g_local_death_at);
+            boss = b;
+        }
+    }
+    v.arena_revive_on = HostLimboReviveOn();
     v.revive_opt_in = HostReviveOn();
     // The stage id (PlayerIns +0x3F8) and the map id share the area / block bytes.
     v.lamp_here = sp.valid && sp.lamp == lamp && (sp.map >> 16) == (stage >> 16);
@@ -4310,6 +4325,7 @@ bool HostDeathIntercept() {
         g_host_down = true;
         g_host_down_at = Now();
         g_host_limbo = true;
+        g_host_limbo_late = v.boss_killed_late;
         g_host_corpse = CorpseSpot{};
         g_host_corpse.valid = ChrTransform(Field<u64>(Slot(kSlotWorldChrMan), 0x60), g_host_corpse.pos, g_host_corpse.rot);
         Log("host death in a boss fight (%s): limbo until the boss is gone (killed: %s), a wipe or a rest; "
@@ -5043,9 +5059,12 @@ void HostDownTick(const GameSnapshot& s, double now) {
         if (dv.limbo && !dv.boss_active) {
             if (gone_at == 0) gone_at = now;
             const bool dying = BossBarDying();
-            if (!killed && (dying || (boss_h != ~0u && ChrHp(ChrOfHandle(boss_h)) == 0))) {
+            // A late kill (before the death was taken) was seen by LimboKillTick.
+            if (!killed && (dying || g_host_limbo_late || (boss_h != ~0u && ChrHp(ChrOfHandle(boss_h)) == 0))) {
                 killed = true;
-                Log("host death: the limbo's boss was killed (%s)", dying ? "its bar over a dead chr" : "its chr at HP 0");
+                Log("host death: the limbo's boss was killed (%s)", dying ? "its bar over a dead chr"
+                                                                    : g_host_limbo_late ? "before the death was taken"
+                                                                                        : "its chr at HP 0");
             }
             dv.boss_killed = killed;
             const double since = now - gone_at;

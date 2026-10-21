@@ -358,8 +358,12 @@ def _s3_stain():
 
 def _s3_enemy():
     """A nearby enemy on the same floor: R3 lock-on, R1 once (it fights back), HP lines, the kills, a vial
-    (killed within ~10 s: two of them took the host's 575 HP in 13 s)."""
-    return ["host_chr=0:0.6@2%m24_01!", "host_press=0x4@1%m24_01!", "host_press=0@1%m24_01!",  # R3: lock-on
+    (killed within ~10 s: two of them took the host's 575 HP in 13 s). R3 twice (":lock": the second
+    only while not locked on): after the host_chr warp the camera can face away from the enemy, and
+    an R3 then only turns the camera behind the player, as on a pad (deaths071: the first R3 missed
+    after host_chr with and without a death before it; the second locked on)."""
+    return ["host_chr=0:0.6@2%m24_01!", "host_press=0x4:lock@1%m24_01!", "host_press=0@1%m24_01!",  # R3: lock-on
+            "host_press=0x4:lock@1%m24_01!", "host_press=0@1%m24_01!",
             "host_press=0x800@1%m24_01!"] + ["host_press=0@2%m24_01!"] * 4 + [                  # R1: it fights back
         "host_kill=0@1%m24_01", "host_kill=0@1%m24_01", "host_press=0@2%m24_01!",
         "host_press=0x1000@1%m24_01!", "host_press=0@3%m24_01!"]                           # Triangle: a Blood Vial

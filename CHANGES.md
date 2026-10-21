@@ -5,6 +5,8 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Fixed: the host gets up in the arena when the boss falls during its death**: when the guests killed the boss in the seconds between the host's HP reaching 0 and the end of its death animation, the host got up at its lamp instead of in the arena. Such a death now counts as one in the boss fight, as it already did for a guest: the host waits for the boss's defeat to be saved and gets up where it fell, with no loading screen.
+
 ## 0.7.0 (Windows port 0.7.0, party co-op round after the second playtest)
 
 - **Added: saves from shadPS4 and other regions load as they are**: a save in shadPS4's layout (`SPRJ0005\sce_sys\param.sfo` inside the folder) is taken in at the next start, and our port now also writes that `param.sfo`, so the same save folder opens in shadPS4 again. When the folder the game reads has no save but another user id or another region's Bloodborne folder has one (e.g. an EU save with a US game), it is copied in (the original stays); a save copied one folder too deep or too shallow is named in the log. How to bring a save over: docs/SAVES.md.
