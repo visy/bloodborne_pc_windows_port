@@ -144,11 +144,17 @@ All the details: [docs/SETTINGS.md](docs/SETTINGS.md#controls).
 Play the whole game with friends in one session, from the first lamp to the end credits.
 Modelled on Elden Ring Seamless Co-op, adapted to Bloodborne. **In development:** tested on one
 PC (several game copies, simulated internet lag), **between two PCs on a LAN** (summon, combat,
-shared kills and doors, per-player pickups) and **over the Internet**: a 2.5 h session between two
-PCs in different homes (two campaigns, prologue to Old Yharnam, several hosts and joins, one crash with
-a working rejoin). The bugs reported from it are fixed in 0.6.1
-([docs/party/playtest1_triage.md](docs/party/playtest1_triage.md)). A scripted two-player
-run from two new characters to the end credits passed, and a three-player travel run
+shared kills and doors, per-player pickups) and **over the Internet** in two real sessions between
+PCs in different homes:
+
+| Session | Build | What it showed |
+|---|---|---|
+| Playtest 1: 2.5 h, two campaigns, prologue to Old Yharnam | 0.6.0 | Fixed in 0.6.1 ([docs/party/playtest1_triage.md](docs/party/playtest1_triage.md)) |
+| Playtest 2: 2 h, Old Yharnam, the Blood-starved Beast and the Hunter's Dream | 0.6.9 | Joining, travel, deaths and boss kills held up; a boss the guest finished while the host lay dead stayed dead. Its reports are fixed for 0.7.0: guests frozen while the host died, the spectator camera, one-time shop items sold out for guests, gestures and key items not kept by guests, an uncollectable shared drop, guests unable to talk to Gehrman, captions at the workbench and shops, a new party code on every host launch |
+
+Players running bigger parties sent reports and fixes too (Chalice Dungeon entry, VPN joins, 3-4 player
+parties: guests drawn with one another's look, pickups animating every other player). A scripted
+two-player run from two new characters to the end credits passed, and a three-player travel run
 ([docs/party/campaign_soak.md](docs/party/campaign_soak.md)).
 
 **Party sections:** [Starting a party](#start-from-the-title-screen-recommended) ·
@@ -370,7 +376,7 @@ A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's
 Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](docs/party/ERSC_PARITY.md).
 Two numbers: **plan done** is how much of the plan is built and seen working at least once;
 **ERSC parity (evidence-weighted)** caps every row at 95% until it has been checked on two real PCs over
-the Internet (every check of the current build ran on one PC; the only Internet session so far was on 0.6.0), and caps rows where we chose to differ from ERSC (the
+the Internet (two real Internet sessions so far, on 0.6.0 and 0.6.9; every other check ran on one PC), and caps rows where we chose to differ from ERSC (the
 whole party respawns with the host, 4 players instead of 6, one shared drop roll) at 95% too.
 
 | Area | Plan done | | ERSC parity (evidence-weighted) | |
@@ -394,15 +400,17 @@ whole party respawns with the host, 4 players instead of 6, one shared drop roll
 | Host death the ERSC way: the host loads alone, guests play on | Planned (opt-in first; today the whole party reloads) |
 | Game-style fades instead of blinks for in-world moves and revives | Planned |
 | Shader cache builder: bosses, gestures and hunter tools; a fuller shared cache | In progress |
-| A real two-PC Internet session on the current build | Needs players: see `docs/party/playtest2_checklist.md` |
+| Playtest 3 over the Internet on 0.7.0 (the fixes from playtest 2, VPN joins, 3-4 players) | Needs players: see `docs/party/playtest2_checklist.md` |
 
 ### Known issues
 
 - **FSR 4 can show a white or grey picture** on some PCs. The cause is under investigation (suspected:
   FSR 4 with HDR turned on in Windows). Meanwhile switch to FSR 3.1, DLSS or no upscaler.
-- **Co-op on the current build was tested on one PC** (several game copies, simulated internet lag);
-  a real two-PC Internet session on the current build is still to come. Please send support bundles
-  if something goes wrong (see [Reporting a co-op bug](#reporting-a-co-op-bug)).
+- **The fixes since playtest 2 were tested on one PC** (several game copies, simulated internet lag),
+  not yet in a real Internet session. Please send support bundles if something goes wrong (see
+  [Reporting a co-op bug](#reporting-a-co-op-bug)).
+- **The Bath Messengers may pop in and out** (with their sound repeating) for a player watching while
+  another browses their shop. Being fixed.
 
 ### Connecting over the internet
 
