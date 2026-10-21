@@ -326,6 +326,7 @@ def phase_rules(only):
 # must serve its direct summon within 30 s of its first ask and it must end up in the host's world.
 # Before the fix every such ask was refused ("the host's game is summoning a sign") for minutes.
 SF_FAILED = r"direct summon: FAILED"
+SF_STAY = 60  # s guest 2 must stay in the host's world after its join (an unreachable joiner made it leave)
 
 
 def phase_summonfail(only):
@@ -334,6 +335,7 @@ def phase_summonfail(only):
         env=[], ienv=["1:BB_PARTY_PORT={hold}"],
         hold_ports=16,
         start_when=["2/1:" + SF_FAILED],
+        until_hold=SF_STAY + 5,  # guest 2 must stay in the host's world this long
         crash=[],
         until=GROUP_UNTIL["summonfail"],
     )
@@ -436,8 +438,7 @@ GROUP_UNTIL = {
     "keyitems": [r"1:key goods held: .*load mode 0\)"],  # guest 1 back in its own world after the Leave
     "rules": [r"0:mark=rules_h_ffoff[\s\S]{200}", "1:test menu: done"],
     # guest 2 in the host's world, then ~10 s more log (the screenshots of it in the host's world)
-    "summonfail": [r"0:cooperators 0 -> 1[\s\S]{40000}"],
-    "host_revive": [S3_UNTIL],
+    "summonfail": [r"0:cooperators 0 -> 1"],
 }
 NEEDS_CRASH = {"c6", "host_crash", "host_leave"}  # s2 groups that need the crash plan and its full chain
 
@@ -511,6 +512,8 @@ def run_phase(a, ph, out: Path):
         # the stick walks (host_stick) write the in-process pad script
         (root / "pad0.txt").write_text("lx=128 ly=128\n")
         cmd += ["--ienv", "0:BB_PAD_FILE=" + str(root / "pad0.txt")]
+    if ph.get("until_hold"):
+        cmd += ["--until-hold", str(ph["until_hold"])]
     for c in ph["crash"]:
         cmd += ["--crash-plan", c]
     for u in ph.get("until", []):
@@ -804,7 +807,16 @@ def check_summonfail(v, L):
         if served is not None:
             v.step("summonfail: served within 30 s of guest 2's first ask", served - ask < 30,
                    "%.1f s (limit 30)" % (served - ask))
-        need(v, L, "summonfail: guest 2 in the host's world (cooperators 0 -> 1)", 0, r"cooperators 0 -> 1", ask)
+        j = need(v, L, "summonfail: guest 2 in the host's world (cooperators 0 -> 1)", 0, r"cooperators 0 -> 1", ask)
+        if j is not None:
+            end = max([t for t, _ in L.all(0, r".", j)] or [j])
+            v.step("summonfail: the run lasted %d s past guest 2's join" % SF_STAY, end - j >= SF_STAY,
+                   "%.0f s" % (end - j))
+            left = L.find(0, r"cooperators 1 -> 0", j, j + SF_STAY) or L.find(2, r"BeginLeaveSession|session client .* -> leaving", j, j + SF_STAY)
+            v.step("summonfail: guest 2 stays in the host's world for %d s" % SF_STAY, not left,
+                   "left at +%.1f s: %s" % (left[0], left[1][:150]) if left else "no leave")
+            unr = L.find(0, r"slot 1 \(.*\) (refused \(its last join failed|reports a failure: its UDP is not heard)", f - 5)
+            v.step("summonfail: the unreachable guest 1 is held back", unr, unr[1][:150] if unr else "no hold line")
     stuck = L.all(0, r"refused \(the host's game is summoning a sign", f)
     v.step("summonfail: sign-summon refusals after the failure (info)", True, "%d" % len(stuck))
     check_common(v, L, "summonfail")

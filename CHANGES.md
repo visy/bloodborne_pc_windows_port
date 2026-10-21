@@ -5,6 +5,8 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Fixed: a guest that cannot be reached no longer knocks other guests out of the host's world**: PLACEHOLDER
+
 ## 0.7.0 (Windows port 0.7.0, party co-op round after the second playtest)
 
 - **Added: saves from shadPS4 and other regions load as they are**: a save in shadPS4's layout (`SPRJ0005\sce_sys\param.sfo` inside the folder) is taken in at the next start, and our port now also writes that `param.sfo`, so the same save folder opens in shadPS4 again. When the folder the game reads has no save but another user id or another region's Bloodborne folder has one (e.g. an EU save with a US game), it is copied in (the original stays); a save copied one folder too deep or too shallow is named in the log. How to bring a save over: docs/SAVES.md.

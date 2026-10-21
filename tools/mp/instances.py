@@ -607,6 +607,7 @@ def run(a):
     for u in a.until or []:
         m = re.match(r"^(\d):(.*)$", u)
         until.append((int(m.group(1)), re.compile(m.group(2))) if m else (None, re.compile(u)))
+    until_seen_at = 0.0
     marks = list(starts)  # log offsets at the crash: --until then looks at what follows it
     verdict = None
 
@@ -714,8 +715,14 @@ def run(a):
             texts = [log_text(i, marks[i]) for i in range(a.count)]
             text = chr(10).join(texts)
             if all(u.search(texts[i] if i is not None and i < a.count else text) for i, u in until):
-                verdict = "all --until markers seen after %.0f s" % (time.time() - t0)
-                break
+                # --until-hold S: the run goes on S s more (e.g. a guest must stay in the host's world)
+                if a.until_hold > 0 and not until_seen_at:
+                    until_seen_at = time.time()
+                    print("[harness +%.1f s] --until markers seen: %.0f s more (--until-hold)"
+                          % (time.time() - ts0, a.until_hold), flush=True)
+                if time.time() - (until_seen_at or 0) >= a.until_hold:
+                    verdict = "all --until markers seen after %.0f s" % (time.time() - t0)
+                    break
         if until and any(expects_steps) and plan_next >= len(plan) and until_quiet > 0:
             done = True
             for i in range(a.count):
@@ -838,6 +845,8 @@ def main():
     ap.add_argument("--until", action="append",
                     help="run: stop (kill all) once every such regex matched in the logs (after the crash, if any); "
                          "I:REGEX matches instance I's log only")
+    ap.add_argument("--until-hold", type=float, default=0,
+                    help="run: once every --until marker is seen, run this many s more")
     ap.add_argument("--instance", type=int, default=1, help="crash: which instance")
     ap.add_argument("--after", type=float, default=0, help="crash: wait this many s first")
     ap.add_argument("--env", action="append")
