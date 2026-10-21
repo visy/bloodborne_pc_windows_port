@@ -502,6 +502,7 @@ def phase_sk(only):
 LF_FAR = "-158.10:-41.72:16.93"    # 130 m from the Tomb of Oedon lamp: m24_00 streams out
 LF_BACK = "-36.8:-40.75:84.3"      # the lamp (m24_00 streams in again)
 LF_LIFT = "2401102"                # Cathedral Ward <-> lower Cathedral Ward lift car
+LF_CAR_LOW = "24.28:-45.3:194.17"  # region 2402059 (the up event's switch): in the car at the bottom
 LF_FLAGS = "12400827/12400828/12410285"  # lift position / busy, the ladder lever's event (ladder down)
 LF_UNTIL = r"0:travel step (\d+)/\1: host_press"
 
@@ -517,9 +518,14 @@ def phase_lf(only):
         "guest_obj=2411316:1.0:0@15%m24_01",               # the ladder's lever (Central Yharnam)
         "guest_press=0x4000@4%m24_01!",                    # pull: the ladder comes down
         "guest_move=%s@6%%m24_01" % LF_BACK,               # back at the lamp: Cathedral Ward streams in
-        "guest_obj=%s:0:0@8%%m24_01" % LF_LIFT,            # onto the car's root: drops into the car (at the
-                                                           # bottom), whose up event starts at once
-        "guest_obj=2401103:1.0:0@25%m24_01",               # out of the car at the bottom (its ride is over)
+        # liftfix: beside the car at the bottom (its bottom lever), then into the car's switch region:
+        # its up event starts and the guest rides it up. (0.7.1 put the guest on the car object's root,
+        # which is at the TOP with the car at the bottom: the guest fell the 48 m shaft through the
+        # region, the up event ran with nobody in the car and the guest stayed at the bottom; god mode
+        # and the flags-only checks hid it.)
+        "guest_obj=2401103:1.0:0@8%m24_0",                 # beside the car at the bottom (m24_00 / m24_01)
+        "guest_move=%s@3%%m24_0" % LF_CAR_LOW,             # into the car: up it goes
+        "guest_obj=2401104:1.0:0@0.5%%m24_0?obj=%s:32" % LF_LIFT,  # out at the top on the arrival
         "guest_press=0@10!",                               # (in m24_00 there: no map condition)
     ])
     g2 = "god,log_objanim=%s,log_objanim=2411204,log_flag=%s" % (LF_LIFT, LF_FLAGS)
@@ -578,67 +584,54 @@ def phase_ga(only):
     )
 
 
-# Phase el (liftfall / liftfix, ~4 min, 2 players, group `elevator`): the Nightmare of Mensis' library
+# Phase el (liftfall / liftfix, ~3 min, 2 players, group `elevator`): the Nightmare of Mensis' library
 # lift 2601260 (60 m, y 1003 -> 943, after Micolash: a player's report, the host warped back to its lamp
-# mid-ride and the guest dead). Its position flag 12601253 (1: the car at the top) flips once the rider
-# has left the car at the far end; every game runs its own copy of the lift's event, and a step into
-# the car starts the copy of every game (the game's own sync). Fixture: Micolash dead (12601850, the
-# lift's init waits for it), the car at the top. Each ride is started by one step into the car's
-# trigger region (2602242 top / 2602241 bottom: a 0.6 m box); a second rider stands in the car beside
-# it first, so no two chrs are put into one spot (the 0.7.1 smoke warped both onto the same point and
-# then onto a car already moving: the pushed chr fell through the floor) and nothing races on two
-# fixed delays. Riders step out right at the arrival (`?obj=` the car's ride animation stopped).
-# (A) host and guest ride down together; the guest steps out first, the host 2 s later. (B) both ride
-# up together and step out at once: both copies end in the same moment (the 0.7.1 race: the host's
-# flip held on the guest in the tick of its own end). (C) the host alone down, the guest at the top.
-# (D) the guest alone up (the host's copy ends first; the guest's own end must stand). (E) the guest
-# alone down, staying 3 s in the car at the arrival: the car stays there (no ride without a step into
-# its trigger; liftfix saw the car go back with a rider who stayed in it). After every
-# ride both games must show the same flag and the car at that end; no rider may drop faster than the
-# car or leave it mid-ride (vertical speed and the car's own position), nobody is moved by the fall
-# recovery, nobody dies.
+# mid-ride and the guest dead). Its car is a one-hunter birdcage (two hunters in it overlap: the 0.7.1
+# smoke warped both onto one spot and the pushed one fell through the floor). Its position flag
+# 12601253 (1: the car at the top) flips once the rider has left the car at the far end; every game
+# runs its own copy of the lift's event and a step into the car starts the copy of every game (the
+# game's own sync), so both games' cars ride and arrive together, and the copy of the game whose player
+# is out of the car ends at once: its flip reaches the other game while that one's rider is still in
+# the car. Fixture: Micolash dead (12601850, the lift's init waits for it), the car at the top.
+# (A) the guest rides down alone and steps out at the arrival (the host's copy ends first: the 0.7.1
+# race, the guest's own end must stand). (B) the host rides up alone, out at the arrival (the guest's
+# copy ends first: its report must not move the host's car). (C) the guest rides down alone and stays
+# 2 s in the car (the host's flip waits on the guest until its copy is done). Each ride starts with
+# one step into the car's trigger region (2602242 top / 2602241 bottom); riders step out on the car's
+# arrival (`?obj=`), the next ride waits for the flag (`?FLAG=V`) or the other player's spot (`?near=`).
+# After every ride both games show the same flag and the car at that end; no rider drops faster than a
+# lift or loses the car mid-ride (its ride bit), nobody is moved by the fall recovery, nobody dies.
 EL_CAR, EL_POS = "2601260", "12601253"
 EL_IN_CAR = "119.4:1003.5:-18.5"       # region 2602242: in the car at the top (its trigger)
-EL_IN_CAR2 = "119.4:1003.5:-17.75"     # in the car at the top beside the trigger (a second rider)
 EL_IN_CAR_LOW = "119.4:943.5:-18.5"    # region 2602241: in the car at the bottom (its trigger)
-EL_IN_CAR_LOW2 = "119.4:943.5:-17.75"  # in the car at the bottom beside the trigger
 EL_TOP = "112.1:1003.8:-23.0"          # the top floor, out of every region of the lift
 EL_LOW_OUT_H = "120.0:943.7:-20.15"    # the bottom floor beside the car (the host), out of every region
 EL_LOW_OUT_G = "118.1:943.7:-16.8"     # ... (the guest)
 EL_DOWN_END, EL_UP_END = "3", "5"      # the car's ride animations that stop at the arrival (down / up)
 # both chains' last steps: the guest's last one waits for its own copy's flag at its ride's end
 EL_UNTIL = [r"0:travel step (\d+)/\1: ", r"1:travel step (\d+)/\1: "]
+EL_RIDERS = ("guest", "host", "guest")  # (A), (B), (C)
 
 
 def phase_el(only):
-    common = ("god,log_pos=0.5,log_obj=%s,log_objanim=%s,log_objanim=2601261,log_flag=%s"
-              % (EL_CAR, EL_CAR, EL_POS))
-    near = lambda xyz: "?near=%s:0.8" % xyz
+    common = "god,log_pos=0.5,log_objanim=%s,log_objanim=2601261,log_flag=%s" % (EL_CAR, EL_POS)
+    near = lambda xyz: "?near=%s:1.5" % xyz
     arrived = lambda anim: "?obj=%s:%s" % (EL_CAR, anim)
     host = [common,
-            "host_move=%s@3%%m26^1" % EL_IN_CAR2,                                 # (A) beside the trigger
-            "host_move=%s@0.45%%m26%s" % (EL_LOW_OUT_H, arrived(EL_DOWN_END)),   # out just after the guest
-            "host_move=%s@2%%m26?%s=0" % (EL_IN_CAR_LOW2, EL_POS),               # (B) beside the trigger
-            "host_move=%s@0.3%%m26%s" % (EL_TOP, arrived(EL_UP_END)),            # out with the guest
-            "host_move=%s@4%%m26?%s=1" % (EL_IN_CAR, EL_POS),                    # (C) alone down
-            "host_move=%s@0.3%%m26%s" % (EL_LOW_OUT_H, arrived(EL_DOWN_END)),    # out at the arrival
-            "host_press=0@2%%m26!?%s=0" % EL_POS,                                # (C) over here
-            "host_press=0@2%%m26!?%s=1" % EL_POS,                                # (D) over here
-            "host_press=0@8%%m26!?%s=0" % EL_POS]                                # (E) over here, and 8 s more
+            "host_move=%s@3%%m26^1" % EL_TOP,                                    # at the top, out of the lift
+            "host_move=%s@3%%m26?%s=0" % (EL_LOW_OUT_H, EL_POS),                 # (A) over here: to the bottom
+            "host_move=%s@2%%m26%s" % (EL_IN_CAR_LOW, near(EL_LOW_OUT_G)),       # (B) into the trigger: up
+            "host_move=%s@0.3%%m26%s" % (EL_TOP, arrived(EL_UP_END)),            # out at the arrival
+            "host_press=0@10%%m26!?%s=0" % EL_POS]                               # (C) over here, 10 s more
     g1 = [common,
-          "guest_move=%s@1%%m26%s" % (EL_IN_CAR, near(EL_IN_CAR2)),               # (A) into the trigger
-          "guest_move=%s@0.3%%m26%s" % (EL_LOW_OUT_G, arrived(EL_DOWN_END)),     # out first
-          "guest_move=%s@1%%m26%s" % (EL_IN_CAR_LOW, near(EL_IN_CAR_LOW2)),      # (B) into the trigger
-          "guest_move=%s@0.3%%m26%s" % (EL_TOP, arrived(EL_UP_END)),             # out with the host
-          "guest_move=%s@3%%m26?%s=0" % (EL_LOW_OUT_G, EL_POS),                  # (C) over: to the bottom
-          "guest_move=%s@2%%m26" % EL_IN_CAR_LOW,                                # (D) alone up
-          "guest_move=%s@0.3%%m26%s" % (EL_TOP, arrived(EL_UP_END)),             # out at the arrival
-          "guest_press=0@2%%m26!?%s=1" % EL_POS,                                 # (D) over here
-          "guest_move=%s@2%%m26" % EL_IN_CAR,                                    # (E) alone down ...
-          "guest_move=%s@3%%m26%s" % (EL_LOW_OUT_G, arrived(EL_DOWN_END)),       # ... and 3 s in the car
-          "guest_press=0@6%%m26!?%s=0" % EL_POS]                                 # (E) over here
+          "guest_move=%s@6%%m26" % EL_TOP,                                       # at the top
+          "guest_move=%s@3%%m26%s" % (EL_IN_CAR, near(EL_TOP)),                  # (A) into the trigger: down
+          "guest_move=%s@0.3%%m26%s" % (EL_LOW_OUT_G, arrived(EL_DOWN_END)),     # out at the arrival
+          "guest_move=%s@3%%m26?%s=1" % (EL_IN_CAR, EL_POS),                     # (C) (B over here) down
+          "guest_move=%s@2%%m26%s" % (EL_LOW_OUT_G, arrived(EL_DOWN_END)),       # 2 s in the car, then out
+          "guest_press=0@10%%m26!?%s=0" % EL_POS]                                # (C) over here, 10 s more
     return dict(
-        name="el", seconds=480, count=2, headless=0,
+        name="el", seconds=360, count=2, headless=0,
         env=["BB_PARTY_TEST_START_LAMP=2602953", "BB_PARTY_PROGRESS_TEST_SET=12601850,%s" % EL_POS,
              "BB_PARTY_EMEVD_TRACE=1", "BB_PARTY_EMEVD_TRACE_ALL=12601352"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host), "1:BB_PARTY_DIRECTOR_TEST=" + ",".join(g1)],
@@ -1534,11 +1527,18 @@ def check_lf(v, L):
             need(v, L, "lf ladder down on game %d (12410285 = 1)" % i, i, r"test: flags .*12410285=1", pull, pull + 15)
         for i in (0, 1):
             need(v, L, "lf ladder down on game %d (its anim 2)" % i, i, r"test: object 2411204 anim 2 ", pull, pull + 20)
+    # liftfix: the guest rode the car up: at its top (y ~3) at the arrival, on the car all the way
+    arr = L.find(1, r"object %s stopped at anim 32 now" % LF_LIFT)
+    pos = L.all(1, POS_RX.pattern, arr[0] - 1.0, arr[0] + 0.1) if arr else []
+    y = float(POS_RX.search(pos[-1][1]).group(2)) if pos else None
+    v.step("lf guest's lift ride: guest 1 at the top on the car's arrival", y is not None and y > -5.0,
+           ("y %.1f at +%.1f s" % (y, arr[0])) if pos else "no arrival seen")
     # liftfix: the ride itself: no drop faster than a lift (god mode would hide a fall down the shaft)
     for i, who in ((0, "host"), (1, "guest 1")):
         f = falls(L, i)
         v.step("lf lift: %s no fall (vertical speed under 8 m/s)" % who, not f,
                ("; ".join("+%.1f s %.1f m/s" % x for x in f[:4])) if f else "fastest drop within a lift's speed")
+    none_of(v, L, "lf lift: nobody died", r"local death: HP 0", 0, 1e9, (0, 1, 2))
     check_common(v, L, "lf")
 
 
@@ -1737,33 +1737,29 @@ def car_anim_at(L, i, w):
     return val
 
 
-def follows_car(L, i, t0, t1):
-    """While instance i's chr stands in the car (within 1.2 m of its axis) between t0 and t1, its height
-    minus the car's (log_obj, interpolated) stays within 1.5 m: it rides, it does not fall through or
-    stay behind. (the spread, samples in the car)"""
-    car = [(t, float(m.group(2))) for t, l in L.all(i, r"test: object %s at \(" % EL_CAR, 0, t1 + 1)
-           for m in [re.search(r"at \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)", l)]]
-    d = []
-    for t, line in L.all(i, POS_RX.pattern, t0, t1):
+RIDE_BIT = 0x0200000000  # PlayerIns +0x1E5 bit 0x02: the chr stands on a moving object (deathrules::kRideFlag1e1)
+
+
+def rides_with_car(L, i, t0, t1):
+    """Instance i's chr in the car (within 0.6 m of its axis) between t0 and t1: (samples, samples with the
+    ride bit off - the chr is not on the car: falling, or left behind)."""
+    n = off = 0
+    for _t, line in L.all(i, POS_RX.pattern, t0, t1):
         m = POS_RX.search(line)
-        x, y, z = float(m.group(1)), float(m.group(2)), float(m.group(3))
-        if ((x - 119.43) ** 2 + (z + 18.52) ** 2) ** 0.5 > 1.2 or not car or car[0][0] > t:
+        f = re.search(r" f ([0-9a-f]{10})", line)
+        if not f or ((float(m.group(1)) - 119.43) ** 2 + (float(m.group(3)) + 18.52) ** 2) ** 0.5 > 0.6:
             continue
-        k = max(j for j in range(len(car)) if car[j][0] <= t)
-        cy = car[k][1]
-        if k + 1 < len(car) and car[k + 1][0] - car[k][0] < 1.0:
-            (ta, ya), (tb, yb) = car[k], car[k + 1]
-            cy = ya + (yb - ya) * (t - ta) / (tb - ta)
-        d.append(y - cy)
-    return (max(d) - min(d) if d else None), len(d)
+        n += 1
+        off += 0 if int(f.group(1), 16) & RIDE_BIT else 1
+    return n, off
 
 
 def check_el(v, L):
     need(v, L, "el join: 2 players", 0, r"cooperators 0 -> 1")
-    names = ["A together down", "B together up", "C host alone down", "D guest alone up", "E guest alone down, stays"]
+    names = ["A guest alone down", "B host alone up", "C guest alone down, 2 s in the car"]
     rides = [el_rides(L, i) for i in (0, 1)]
-    v.step("el rides: 5 on each game (no ride without a step into the car)", len(rides[0]) == 5 and len(rides[1]) == 5,
-           "host %d, guest %d" % (len(rides[0]), len(rides[1])))
+    v.step("el rides: %d on each game (no ride without a step into the car)" % len(names),
+           len(rides[0]) == len(names) and len(rides[1]) == len(names), "host %d, guest %d" % (len(rides[0]), len(rides[1])))
     for k, name in enumerate(names):
         rh = rides[0][k] if k < len(rides[0]) else None
         rg = rides[1][k] if k < len(rides[1]) else None
@@ -1786,18 +1782,15 @@ def check_el(v, L):
                fh == fg == end and ah == ag == (7 if want_up else 9),
                "flag host %s / guest %s (want %d), car anim host %s / guest %s, ends %.1f s apart"
                % (fh, fg, end, ah, ag, abs(rh["end"] - rg["end"])))
-    # Every ride's riders: no drop faster than a lift, no chr leaving the car mid-ride.
+        i = 0 if EL_RIDERS[k] == "host" else 1
+        r = rides[i][k]
+        n, off = rides_with_car(L, i, r["t"] + 0.6, r["t_end"] - 0.6) if r["t_end"] else (0, 0)
+        v.step("el %s: the %s rode in the car all the way" % (name, EL_RIDERS[k]), n >= 10 and off == 0,
+               "%d samples in the car, %d off it" % (n, off))
     for i, who in ((0, "host"), (1, "guest")):
         f = falls(L, i)
         v.step("el %s: no fall (vertical speed under 8 m/s)" % who, not f,
                ("; ".join("+%.1f s %.1f m/s" % x for x in f[:4])) if f else "fastest drop within a lift's speed")
-        for k, r in enumerate(rides[i][:5]):
-            if r["t_end"] is None:
-                continue
-            spread, n = follows_car(L, i, r["t"], r["t_end"])
-            if n:
-                v.step("el %s rides with the car in %s" % (who, names[k]), spread < 1.5,
-                       "height to the car varied %.2f m over %d samples" % (spread, n))
     none_of(v, L, "el no fall recovery on the lift", r"recovery: falling", 0, 1e9, (0, 1))
     none_of(v, L, "el nobody died", r"local death: HP 0", 0, 1e9, (0, 1))
     none_of(v, L, "el no flag put back after this game's own end",
