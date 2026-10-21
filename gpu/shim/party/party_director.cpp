@@ -174,6 +174,7 @@ struct TravelStep {
     std::string args;     // HostStage / HostWalk / HostHeadstone
     double delay = 15.0;
     int min_join = 0;     // "#N": not before this player's Nth join
+    int min_coop = 0;     // "^N" (host): not before the host's game has N cooperators; S counts from then
     bool alive = false;   // "!" on a press step: waits as a step with the own chr (alive, world up)
 };
 
@@ -294,6 +295,7 @@ struct Test {
     bool armed = false;        // a join since the last step ran
     int joins = 0;
     Clock::time_point joined_at{};
+    Clock::time_point coop_since{};  // the next step's "^N" cooperator count reached (its clock)
     Clock::time_point step_at{}; // the last step's run, for "back after" times
     bool ran = false;            // a step of this role ran
     TravelStep::Kind last_kind = TravelStep::HostWarp;
@@ -1774,6 +1776,17 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         t.pressing = false;
         runtime_pad_director_press(0);
     }
+    // "^N": a condition, not a fixed wait: the step waits until the host's game has N cooperators,
+    // and its S counts from that moment (e.g. host_warp=ID@3^2: 3 s after the second guest is in).
+    if (t.next_step < t.steps.size() && t.steps[t.next_step].min_coop) {
+        if (s.cooperators < t.steps[t.next_step].min_coop) {
+            t.coop_since = {};
+            return;
+        }
+        if (t.coop_since == Clock::time_point{}) t.coop_since = now;
+    } else {
+        t.coop_since = {};
+    }
     if (t.next_step < t.steps.size() &&
         (next_kind == TravelStep::HostKill || next_kind == TravelStep::HostMove || next_kind == TravelStep::GuestMove ||
          next_kind == TravelStep::HostPress || next_kind == TravelStep::GuestPress || next_kind == TravelStep::HostWalk ||
@@ -1790,6 +1803,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         // S s after the later of: the last load (steady again), the previous step (or the join).
         const Clock::time_point prev = t.ran ? t.step_at : t.joined_at;
         Clock::time_point from = t.steady_at > prev ? t.steady_at : prev;
+        if (t.coop_since > from) from = t.coop_since;
         if (t.steps[t.next_step].after_scene) {
             // "~": waits for a cutscene that ended after the previous step, then S s after its end.
             if (t.scene_on || t.scene_end_at <= prev) {
@@ -1804,7 +1818,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             return;
         }
     } else if (t.next_step >= t.steps.size() || !t.armed || !joined || !s.world_up || s.loading ||
-               t.joins < t.steps[t.next_step].min_join || Seconds(t.joined_at, now) < t.steps[t.next_step].delay) {
+               t.joins < t.steps[t.next_step].min_join ||
+               Seconds(t.coop_since > t.joined_at ? t.coop_since : t.joined_at, now) < t.steps[t.next_step].delay) {
         return;
     }
     {
@@ -3502,8 +3517,11 @@ void PartyDirector::ConfigureFromEnv() {
                 if (const std::size_t hash = item.find('#'); hash != std::string::npos) {
                     step.min_join = std::atoi(item.c_str() + hash + 1);
                 }
+                if (const std::size_t caret = item.find('^'); caret != std::string::npos) {
+                    step.min_coop = std::atoi(item.c_str() + caret + 1);  // "^N": N cooperators in
+                }
                 // "%MAP#N" / "%MAP!": the map name ends at the next option (a '#2' in it never matched).
-                if (const std::size_t cut = step.map.find_first_of("#!@"); cut != std::string::npos) {
+                if (const std::size_t cut = step.map.find_first_of("#!@^"); cut != std::string::npos) {
                     step.map.erase(cut);
                 }
                 st.test.steps.push_back(step);
@@ -3552,8 +3570,11 @@ void PartyDirector::ConfigureFromEnv() {
                 if (const std::size_t hash = item.find('#'); hash != std::string::npos) {
                     step.min_join = std::atoi(item.c_str() + hash + 1);
                 }
+                if (const std::size_t caret = item.find('^'); caret != std::string::npos) {
+                    step.min_coop = std::atoi(item.c_str() + caret + 1);  // "^N": N cooperators in
+                }
                 // "%MAP#N" / "%MAP!": the map name ends at the next option (a '#2' in it never matched).
-                if (const std::size_t cut = step.map.find_first_of("#!@"); cut != std::string::npos) {
+                if (const std::size_t cut = step.map.find_first_of("#!@^"); cut != std::string::npos) {
                     step.map.erase(cut);
                 }
                 st.test.steps.push_back(step);
