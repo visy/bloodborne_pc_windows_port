@@ -175,7 +175,9 @@ def phase_s2(only):
         name="s2", seconds=480,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + CLERIC_CLEAR_REWARD + "," + PEBBLE_FLAG, "BB_PARTY_TEST_INVINCIBLE=1"],
         watch=["--watch", "up again in the arena=arena@1,4", "--watch", r"travel step \d+/\d+: guest_chr=hits@6,10",
-               "--watch", r"test menu: step \d+/\d+: mark=keytab=keytab@0.5"],
+               "--watch", r"test menu: step \d+/\d+: mark=keytab=keytab@0.5",
+               # the restarted host's view of the first guest back (look at its phantom tint)
+               "--watch", r"its member's data after .*crash-restarted=hostback@3,10"],
         # Guest 1, 4 s after it arrives at the Cleric Beast's lamp (summoned): Options > Inventory, two
         # tabs right = Key Items (items.md 10.7, run10), a shot, back out. Its restarts: no walk.
         files={"menu1.txt": "m24_01 4 options/cross/right/right/mark=keytab/circle/circle\n-\n-\n-\n"},
@@ -964,6 +966,12 @@ def check_s2(v, L, d: Path):
         back = need(v, L, "s2 host crash: the party back together", 0, r"cooperators 0 -> [12]", h[0])
         if back is not None:
             v.step("s2 host crash recovery time (kill -> first guest back)", back - h[0] < 90, "%.1f s (limit 90)" % (back - h[0]))
+        # The restarted host's copies of the guests: built, then shown by the game when their data
+        # arrives (the draw bit with it), never by the port before it (the safety net firing early).
+        # chr +0xC0 is not checked: it keeps the creation spot on every join, not the drawn position.
+        need(v, L, "s2 host crash: a guest's chr gets its data, shown by the game", 0,
+             r"its member's data after [\d.]+ s, drawn by the game .*crash-restarted", h[0])
+        none_of(v, L, "s2 host crash: no guest shown by the safety net", r"shown as InGameStart does \(safety net", h[0], insts=(0,))
         hl = need(v, L, "s2 host Leave (restarted host)", 0, r"host_leave: Party > Leave pressed", h[0])
         if hl is not None:
             for i in (1, 2):

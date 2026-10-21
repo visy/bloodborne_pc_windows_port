@@ -591,6 +591,12 @@ add_executable(party-gather-test EXCLUDE_FROM_ALL ../tests/test_party_gather.cpp
 target_compile_options(party-gather-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-gather-test PRIVATE shim)
 set_target_properties(party-gather-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Remote player chrs shown by the port only after their member's data (party_remote_show_rules.h).
+# ninja -C out/gpu party-remote-show-test
+add_executable(party-remote-show-test EXCLUDE_FROM_ALL ../tests/test_party_remote_show.cpp)
+target_compile_options(party-remote-show-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-remote-show-test PRIVATE shim)
+set_target_properties(party-remote-show-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Deaths, rests and same-map lamps (party_death_rules.h). ninja -C out/gpu party-death-rules-test
 add_executable(party-death-rules-test EXCLUDE_FROM_ALL ../tests/test_party_death_rules.cpp)
 target_compile_options(party-death-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
