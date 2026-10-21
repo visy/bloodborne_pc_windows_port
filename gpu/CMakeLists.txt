@@ -824,6 +824,15 @@ target_compile_definitions(party-worldact-test PRIVATE BB_PARTY_WORLDACT_NO_GAME
 target_compile_options(party-worldact-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-worldact-test PRIVATE shim)
 set_target_properties(party-worldact-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Boss fights after a party load (party_bossfog_rules.h), over every boss fog (party_worldact.cpp).
+# cmake --build out/gpu --target party-bossfog-rules-test
+add_executable(party-bossfog-rules-test EXCLUDE_FROM_ALL ../tests/test_party_bossfog_rules.cpp
+    shim/party/party_worldact.cpp shim/party/party_progress.cpp shim/net/json.cpp)
+target_compile_definitions(party-bossfog-rules-test PRIVATE BB_PARTY_WORLDACT_NO_GAME BB_PARTY_PROGRESS_NO_GAME
+    BB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/..")
+target_compile_options(party-bossfog-rules-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(party-bossfog-rules-test PRIVATE shim)
+set_target_properties(party-bossfog-rules-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Shared NPC dialogue (shim/party/party_npctalk.cpp; in bbgpu through SHIM_SOURCES): event JSON,
 # speaker names, range decision, dedupe, talk menu choice tracking (BB_PARTY_NPCTALK_NO_GAME).
 # cmake --build out/gpu --target party-npctalk-test
