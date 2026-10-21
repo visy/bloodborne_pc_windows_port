@@ -210,10 +210,26 @@ def setup(a):
                     shutil.copy2(src, t)
         user = inst / "user"
         user.mkdir(exist_ok=True)
+        if a.saves and Path(a.saves).is_dir() and (user / "savedata").exists() and save_damaged(user / "savedata"):
+            # A game file all zeros (live: backup0010, the system data, zeroed by a killed run): the
+            # game then opens its first-boot brightness screen and auto-continue never gets past it.
+            print("instance", i, ": the test save copy is damaged (a file all zeros); copied again from", a.saves)
+            shutil.rmtree(user / "savedata")
         if a.saves and Path(a.saves).is_dir() and not (user / "savedata").exists():
             shutil.copytree(a.saves, user / "savedata")
         (inst / "bbport.ini").write_text(INI, encoding="utf-8")
         print("instance", i, "->", inst)
+
+
+def save_damaged(folder: Path) -> bool:
+    """The game's system data (userdata0010 / backup0010) all zeros. Character slots that were never
+    used (userdata0001-0009 in the test save) are all zeros on purpose and not looked at."""
+    for f in folder.rglob("*0010"):
+        if f.is_file() and f.stat().st_size:
+            with open(f, "rb") as h:
+                if not h.read().strip(b"\0"):
+                    return True
+    return False
 
 
 def party_saves_from(user: Path, fresh: bool = False):
