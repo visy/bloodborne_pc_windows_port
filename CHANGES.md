@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Changed: the host gets up at its lamp without a loading screen too**: when the host dies outside a boss fight, it is revived at its lamp in the loaded area while the guests play on (the world does not reset; a lamp in another area: the host loads it alone). A party wipe still takes everyone's respawn load. `BB_PARTY_B2_HOST_REVIVE=0` brings back the old whole-party load.
 - **Changed: licence texts ship with the game** (HatsyRei, via Mrsuss60's port): `out\licenses` holds the licences of every library the port ships or is built from, and `out\licenses\msys2\PACKAGES.txt` lists each DLL with its package and version.
 - **Fixed: no more Windows system DLLs in `out\`** (HatsyRei, via Mrsuss60's port): `WSOCK32.dll`, `bcryptprimitives.dll` and `gdiplus.dll` were copied next to `bbport.exe` though every Windows has them; four unused DLLs from other toolchains (`libnettle-8`, `libhogweed-6`, `libsnappy`, `libtwolame-0`) are gone too.
 - **Fixed: a clear message for a missing or damaged `sce_module/libc.prx`** (Mrsuss60): preparing the game now says which file is missing or cut short and to re-copy the dump, instead of a bare parse error.

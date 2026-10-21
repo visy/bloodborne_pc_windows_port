@@ -366,11 +366,11 @@ before anyone is in the game):
 | Who dies | What happens |
 |---|---|
 | A guest | Gets up again at its own lamp, with no loading screen when that lamp is in the area you are in (after a fall, or from a lamp elsewhere, a short respawn loading screen); its Blood Echoes wait in a bloodstain where it fell (an on-screen marker for it: *System → Pings → Bloodstain marker*, off by default); the others keep playing |
-| The host | Everyone gets one respawn loading screen at the host's lamp, as in the original game, and the world resets; the host's echoes stay in a bloodstain |
+| The host | Gets up again at its lamp with no loading screen while the guests play on (a lamp in another area: the host alone loads it); the host's echoes stay in a bloodstain. `BB_PARTY_B2_HOST_REVIVE=0`: everyone gets one respawn loading screen at the host's lamp and the world resets, as in the original game |
 | Anyone, during a boss fight | Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies (then gets up at the host's lamp), everyone dies, or someone travels |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |
 
-A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's) or a party wipe resets them.
+A death (host or guest) brings no enemies back; a rest at a lamp (anyone's) or a party wipe resets them.
 
 ### Seamless co-op progress
 

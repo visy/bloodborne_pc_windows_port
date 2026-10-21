@@ -3968,12 +3968,16 @@ bool ChrTransform(u64 chr, float pos[4], float rot[4]) {
     return a && SafeRead(a + 0x1e0, pos, 16) && SafeRead(a + 0x1d0, rot, 16);
 }
 
-/// BB_PARTY_B2_HOST_REVIVE=1 (opt-in since playtest 1): the host's death is a revive in place at
-/// its lamp in the loaded map (no load, no world reset). Default: the vanilla respawn load for the
-/// whole party (the chr warp broke occlusion, left the guests' HostDead state half-done until their
-/// next load - blocked pickups and prompts - and reset nothing; triage bugs 6, 7, 12, 13).
+/// The host's death is a revive in place at its lamp in the loaded map (no load, no world reset);
+/// a lamp in another map: the host loads it alone. On by default since 0.7.0 (user decision): the
+/// reasons it was opt-in since playtest 1 are fixed - the guests' HostDead locks (K12, hostdead),
+/// the revived chr's hit bodies (the "hitbody" recipe step), pickups / prompts / lock-on / rally
+/// checked live (revivecheck). BB_PARTY_B2_HOST_REVIVE=0: the vanilla respawn load for the whole party.
 bool HostReviveOn() {
-    static const bool on = deathrules::OptIn(std::getenv("BB_PARTY_B2_HOST_REVIVE"));
+    static const bool on = [] {
+        const char* v = std::getenv("BB_PARTY_B2_HOST_REVIVE");
+        return !(v && v[0] == '0');
+    }();
     return on;
 }
 
@@ -4156,7 +4160,7 @@ bool HostDeathIntercept() {
     case deathrules::HostDeathPlan::PartyLoad:
         Log("host death: the respawn load for the whole party at lamp %u (vanilla loading screen, the world resets); "
             "%d member(s), %d down%s",
-            lamp, members, dead, HostReviveOn() ? "" : " (BB_PARTY_B2_HOST_REVIVE=1: revive in place instead)");
+            lamp, members, dead, HostReviveOn() ? "" : " (BB_PARTY_B2_HOST_REVIVE=0: the in-place revive is off)");
         return false;
     case deathrules::HostDeathPlan::AloneLoad:
         // Design decision 1 (revive mode): the host respawns at its own last lamp in another map
