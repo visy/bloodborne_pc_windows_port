@@ -48,7 +48,32 @@ def base_port(root) -> int:
     if r == Path(DEFAULT_ROOT).resolve() and REPO.parent.parent.name != "agents":
         return BASE_PORT
     import zlib
-    return 47700 + 10 * (zlib.crc32(str(r).lower().encode()) % 150)
+    # Below 49152: Windows (Hyper-V / WSL / WinNAT) reserves blocks of the dynamic range at will
+    # (2026-10-21: UDP 49152-49551 excluded; a root hashed to 49190 and its guests' party port
+    # bind failed with "in use by another program", so the direct summon never joined).
+    port = 47700 + 10 * (zlib.crc32(str(r).lower().encode()) % 145)
+    excluded = excluded_ports()
+    for _ in range(400):
+        if not any(lo <= q <= hi for lo, hi in excluded for q in (port, port + 9)):
+            return port
+        port = 20000 + (port - 20000 + 10) % 27000
+    return port
+
+
+def excluded_ports():
+    """Windows' reserved port ranges (netsh int ipv4 show excludedportrange), UDP and TCP both."""
+    out = []
+    if os.name != "nt":
+        return out
+    import re, subprocess
+    for proto in ("udp", "tcp"):
+        try:
+            txt = subprocess.run(["netsh", "int", "ipv4", "show", "excludedportrange", f"protocol={proto}"],
+                                 capture_output=True, text=True, timeout=10).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        out += [(int(a), int(b)) for a, b in re.findall(r"^\s*(\d+)\s+(\d+)", txt, re.M)]
+    return out
 # Up to 4 test games share one GPU and RAM: lowest-cost settings (720p, no upscaler, every optional
 # effect off, lowest model detail). Agents read screenshots, so 720p stays.
 INI = ("upscaler=off\npreset=0\noutput_res=1280x720\nlive_resolution=0\nshow_fps=1\n"
