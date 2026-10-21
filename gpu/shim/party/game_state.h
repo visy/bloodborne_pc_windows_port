@@ -101,6 +101,9 @@ constexpr std::uint32_t kItemWeapon = 0x00000000u, kItemProtector = 0x10000000u,
                         kItemGoods = 0x40000000u;
 /// How many of item `id` (type bits above) the local player holds: 0 none, -1 unknown.
 int ItemCount(std::uint32_t type_bits, std::uint32_t id);
+/// How many inventory entries (stacks) hold item `id`: 1 normally; 2 or more is a duplicated stack
+/// (a unique key item given while one was held: the save then lists it twice). -1 unknown.
+int ItemStacks(std::uint32_t type_bits, std::uint32_t id);
 /// GiveItemDirect 0x131CB70(0, type bits, id, count); false when the code differs or no player.
 /// It shows nothing; ShowItemGet adds the native "item acquired" entry.
 bool GiveItem(std::uint32_t type_bits, std::uint32_t id, int count);
