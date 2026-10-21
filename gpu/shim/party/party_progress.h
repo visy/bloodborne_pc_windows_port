@@ -510,6 +510,9 @@ void SessionEnded();
 /// retried until the baseline exists), session boundaries (hosting / first member connected ->
 /// "host", last one gone -> ended); guest: entering / leaving the host's world -> "guest" / ended.
 void DirectorTick(const GameSnapshot& s, party::PartyLink* link);
+/// Guest, any thread: the next enemy census check is logged whatever its result (a host revive in
+/// place: the census after it is the desync check, hostcheck; otherwise only the 1st / 20th match).
+void CensusLogNext(const char* why);
 
 // Host.
 /// C3 hook point (party_items): called on the main thread, outside every progress lock, once for

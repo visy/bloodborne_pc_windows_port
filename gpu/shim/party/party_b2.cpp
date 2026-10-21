@@ -5385,13 +5385,18 @@ void OwnStainWatchTick(const GameSnapshot& s) {
     }
     const deathrules::StainChange c = deathrules::PlanStainChange(flag_was, echoes_was, flag, echoes);
     if (c != deathrules::StainChange::None) {
-        float me[3] = {};
+        // +0x18 is the chr's spot at the death; +0x00 the game's own stain spot (0x1904660, the last
+        // safe spot of the chr's position history), where 0x1868A50 builds the live stain and its
+        // "Acquire Blood Echoes" prompt (hostcheck: 6 m apart after a death right after a lamp).
+        float me[3] = {}, obj[3] = {};
         ChrPos(s.player, me);
-        Log("own bloodstain %s: flag %d -> %d, echoes %d -> %d at (%.1f, %.1f, %.1f) map %#x (was at (%.1f, %.1f, %.1f)); "
-            "me (%.1f, %.1f, %.1f) %s, own echoes %d%s",
+        SafeRead(rec, obj, 12);
+        Log("own bloodstain %s: flag %d -> %d, echoes %d -> %d at (%.1f, %.1f, %.1f) (stain object at (%.1f, %.1f, %.1f)) "
+            "map %#x (was at (%.1f, %.1f, %.1f)); me (%.1f, %.1f, %.1f) %s, own echoes %d%s",
             deathrules::StainChangeName(c), flag_was, flag, echoes_was, echoes, double(p[0]), double(p[1]), double(p[2]),
-            Field<u32>(rec, 0x3c), double(pos_was[0]), double(pos_was[1]), double(pos_was[2]), double(me[0]),
-            double(me[1]), double(me[2]), MapName(s.map_id).c_str(), s.echoes,
+            double(obj[0]), double(obj[1]), double(obj[2]), Field<u32>(rec, 0x3c), double(pos_was[0]),
+            double(pos_was[1]), double(pos_was[2]), double(me[0]), double(me[1]), double(me[2]), MapName(s.map_id).c_str(),
+            s.echoes,
             c == deathrules::StainChange::Replaced ? ": the old stain's echoes are lost" : "");
     }
     flag_was = flag;
@@ -9813,6 +9818,7 @@ void OnLinkEvent(int from_slot, const std::string& body) {
         // (live: the re-created chr read HP 0 for a frame and was disabled again).
         g_spectator_until = 0;
         Log("guest: the host was revived in place (no load)");
+        coop::progress::CensusLogNext("the host's revive in place");
         return;
     }
     if (body.find("\"member_down\"") != std::string::npos) {
