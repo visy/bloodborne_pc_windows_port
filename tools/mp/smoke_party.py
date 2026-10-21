@@ -15,8 +15,9 @@ Phase s1 (~8 min, Father Gascoigne un-killed: the d10 fixture flags cleared on e
   travel to the Tomb of Oedon, a guest-started Gascoigne fight (intro on everyone), the host's death
   in the fight (limbo + spectate), the two guests' deaths (a wipe: the party's one respawn load).
 Phase s2 (~8 min, the Cleric Beast un-killed: the b2_seamless 6.7 fixture flags):
-  join, a party lamp travel to the Cleric Beast's lamp, the fight, the boss killed by the host
-  (echoes and the reward item box on every game: its OK row), Leave + Rejoin right after the
+  join, a party lamp travel to the Cleric Beast's lamp, the fight, guest 2 dead in it (limbo), the
+  boss killed by the host: guest 2 up in the arena with no load, then hit by an enemy (group
+  `arena`), (echoes and the reward item box on every game: its OK row), Leave + Rejoin right after the
   kill (A3 / K10b), a guest crash and its title rejoin (C6), the host's crash and recovery (the
   guests wait, then are summoned back), the host's Leave (every guest home).
 
@@ -118,11 +119,11 @@ def phase_s2(only):
         "goods=4114:0",                                           # the test save holds the badge: the kill's reward would say "storage max"
         "host_warp=2412952@15",                                   # party lamp travel: the Cleric Beast's lamp
         "host_move=%s@15%%m24_01" % CLERIC_TRIGGER_HOST,          # starts the fight
-        "host_kill=2410800@12%m24_01",                            # the boss kill (its defeat path)
+        "host_kill=2410800@25%m24_01",                            # the boss kill (its defeat path), after guest 2's death
     ])
     g1 = ",".join([
         "guest_move=%s@25%%m24_01" % CLERIC_SPOT_GUEST,
-        "guest_press=0x4000@16%m24_01", "guest_press=0x4000@4%m24_01",  # Cross: OK on the reward's item box
+        "guest_press=0x4000@29%m24_01", "guest_press=0x4000@4%m24_01",  # Cross: OK on the reward's item box
         "guest_leave@10%m24_01",            # Leave right after the kill (no load between), then Rejoin
         "guest_rejoin@5",
     ])
@@ -134,10 +135,23 @@ def phase_s2(only):
         until = ["0:host_leave: Party > Leave pressed", "1:" + LEAVE_OUT, "2:" + LEAVE_OUT]
     else:
         until = ["0:cooperators [01] -> 2"]  # after the guest crash: back in the host's room
+    # Arena revive (arenaguest 2026-10-21): guest 2 dies in the fight before the kill, lies in its limbo
+    # when the boss dies and gets up in the arena with no load; then it stands next to a Central
+    # Yharnam enemy (the spot where revive1 and arenaguest took hits) and takes its hits, and goes back
+    # to the arena (guest_move: invincible again for the rest of s2).
+    g2 = ",".join([
+        "guest_move=%s@18%%m24_01" % CLERIC_SPOT_GUEST,     # into the fight (invincible)
+        "guest_die@3%m24_01",                               # dead in the fight: its limbo
+        "guest_press=0x0@3%m24_01!",                        # waits until it is up again (logs its HP)
+        "guest_chr=2410100@3%m24_01",                       # next to an enemy on that enemy's floor
+        "guest_press=0x0@12%m24_01",                        # its HP after the enemy's hits
+        "guest_move=%s@1%%m24_01" % CLERIC_TRIGGER_HOST,    # back to the arena (invincible)
+    ])
     return dict(
         name="s2", seconds=480,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + CLERIC_CLEAR_REWARD, "BB_PARTY_TEST_INVINCIBLE=1"],
-        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1,
+        watch=["up again in the arena=arena@1,4", "travel step \\d+/\\d+: guest_chr=hits@6,10"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=" + g2,
               # crash-restarted games: no second run of the chain; the restarted host Leaves last
               "0:BB_PARTY_DIRECTOR_TEST_RESTART=host_leave@25", "1:BB_PARTY_DIRECTOR_TEST_RESTART=none",
               "2:BB_PARTY_DIRECTOR_TEST_RESTART=none"],
@@ -149,11 +163,11 @@ def phase_s2(only):
 PHASES = {"s1": phase_s1, "s2": phase_s2}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
-          "wipe": "s1", "kill": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
+          "wipe": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
-              "wipe": r"wipe", "kill": r"boss kill|party stays", "itembox": r"item box|reward on the summoned",
+              "wipe": r"wipe", "kill": r"boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
               "rejoin_kill": r"s2 (Leave after|Rejoin|no kick)", "c6": r"guest crash",
               "host_crash": r"host crash", "host_leave": r"host Leave"}
 
@@ -169,6 +183,7 @@ GROUP_UNTIL = {
     "host_death": ["0:spectating: following"],
     "wipe": [WIPE_UNTIL],
     "kill": ["2:host boss kill", "0:K10: boss-clear leave suppressed"],
+    "arena": [r"2:test: guest_move to \(-136\.5"],
     "itembox": ["1:item notice closed|lot 50000010 .*not given while summoned|owed key item: lot 50000010"],
     "rejoin_kill": ["1:guest_rejoin: Party > Rejoin pressed"],
 }
@@ -213,7 +228,8 @@ def run_phase(a, ph, out: Path):
     print("[smoke] %s: %s" % (ph["name"], " ".join(cmd)), flush=True)
     (out / "harness.log").unlink(missing_ok=True)
     shooter = LaterProc(out / "harness.log", [sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out", str(shots),
-                                "--tag", ph["name"], "--every", str(a.every), "--seconds", str(ph["seconds"] + 400)],
+                                "--tag", ph["name"], "--every", str(a.every), "--seconds", str(ph["seconds"] + 400)]
+                               + [x for w in ph.get("watch", []) for x in ("--watch", w)],
                                stdout=open(out / "shot.log", "w"), stderr=subprocess.STDOUT)
     t0 = time.time()
     try:
@@ -334,6 +350,24 @@ def check_s1(v, L):
     check_common(v, L, "s1")
 
 
+def check_arena(v, L, k):
+    """Guest 2 dead in the fight when the boss dies: up in the arena, no load (arenaguest 2026-10-21)."""
+    dead = need(v, L, "s2 arena: guest 2 dead in the fight", 2, r"travel step \d+/\d+: guest_die")
+    if dead is None:
+        return
+    if k is not None:
+        v.step("s2 arena: guest 2 died before the kill", dead < k, "death +%.1f s, kill +%.1f s" % (dead, k))
+    up = need(v, L, "s2 arena: guest 2 up in the arena (no load)", 2, r"up again in the arena", dead)
+    if up is None:
+        return
+    line = L.find(2, r"up again in the arena", dead)[1]
+    v.step("s2 arena: not a fall death", "a fall death" not in line, line[:150])
+    need(v, L, "s2 arena: host re-created guest 2's chr", 0, r"member revived: its chr", up - 1)
+    alive = need(v, L, "s2 arena: guest 2 alive after it", 2, r"test: guest_press 0x0; .*own HP [1-9]", up)
+    hit = need(v, L, "s2 arena: guest 2 takes an enemy hit", 2, r"hit: HP \d+ -> \d+ \(-\d+\), max", alive or up)
+    none_of(v, L, "s2 arena: no loading screen for guest 2", r"load started", dead, hit or up + 60, (2,))
+
+
 def check_s2(v, L, d: Path):
     need(v, L, "s2 join: 3 players", 0, r"cooperators [01] -> 2")
     tr = need(v, L, "s2 party lamp travel to the Cleric Beast", 0, r"travel step \d+/\d+: host_warp to lamp 2412952")
@@ -350,6 +384,7 @@ def check_s2(v, L, d: Path):
                   r"owed key item: lot 50000010", 0)
         if ib is not None and L.find(1, r"item notice up on a summoned guest", k):
             need(v, L, "s2 item box OK row closes it (Cross)", 1, r"item notice closed", ib)
+    check_arena(v, L, k)
     lv = need(v, L, "s2 Leave after the boss kill", 1, r"guest_leave: Party > Leave pressed", k or 0)
     rj = need(v, L, "s2 Rejoin pressed", 1, r"guest_rejoin: Party > Rejoin pressed", lv or 0) if lv else None
     if rj is not None:
