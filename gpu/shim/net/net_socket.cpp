@@ -2175,6 +2175,20 @@ void p2p_punch(const char* label, std::uint32_t addr, std::uint16_t port_host, s
     }).detach();
 }
 
+std::int64_t p2p_ms_since_heard(std::uint32_t addr, std::uint16_t port_host) {
+    std::shared_ptr<P2pPort> port;
+    {
+        std::lock_guard<std::mutex> lock(g_net_mu);
+        auto it = g_p2p_ports.find(g_bound_port.load());
+        if (it != g_p2p_ports.end()) port = it->second;
+    }
+    if (!port || !addr || !port_host) return -1;
+    std::lock_guard<std::mutex> lk(port->mu);
+    auto it = port->heard.find(source_key(addr, bswap16(port_host)));
+    if (it == port->heard.end()) return -1;
+    return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - it->second).count();
+}
+
 std::string p2p_status() {
     std::shared_ptr<P2pPort> port;
     {
