@@ -543,6 +543,16 @@ inline ChaliceApart PlanChaliceApart(bool rule_on, bool chosen, double apart_s) 
 inline bool ChaliceRejoinLeavesFirst(bool in_session, bool apart, bool host_in_dungeon) {
     return in_session && apart && host_in_dungeon;
 }
+/// A summoned guest's boss clear (Lua BlockClear2 0x13849A0: PREY SLAUGHTERED, the clear bonus
+/// echoes, Insight 4680) that runs within `kStaleBossClearS` of its arrival in the host's world is a
+/// boss that was already dead there (chalamp cl6 / cl8: re-summoned into a cleared Chalice Dungeon,
+/// the boss came up alive for a moment and its defeat paid 1995 echoes and +1 Insight each time).
+/// A guest never arrives into a running boss fight (the host's summon waits for the fight's end,
+/// A11), so a real kill is never that early: the first real kill pays everyone as before.
+constexpr double kStaleBossClearS = 15.0;
+inline bool StaleBossClear(bool summoned_guest, double since_arrival_s) {
+    return summoned_guest && since_arrival_s >= 0 && since_arrival_s < kStaleBossClearS;
+}
 inline const char* ChaliceApartNotice() {
     return "The host is in a Chalice Dungeon: Party > Rejoin to go back";
 }

@@ -1709,6 +1709,11 @@ def check_cl(v, L):
                     if press:
                         need(v, L, "cl Rejoin: home first", 1, r"chalice: Party > Rejoin while apart", press - 1)
                         need(v, L, "cl guest 1 back in the dungeon after Rejoin", 1, r"map .* -> m29_00", press)
+    # A re-summon into the dungeon whose layer boss is dead never pays it again (cl6 / cl8: PREY
+    # SLAUGHTERED, +1995 echoes and +1 Insight at every re-summon).
+    none_of(v, L, "cl no second paid kill of 2900100 after a re-summon",
+            r"boss clear on this game \(BlockClear2\): boss 2900100|kill seen: entity 2900100 3\.5 s later: .*\(\+[1-9]\d* since\)",
+            0, 1e9, (1,))
     none_of(v, L, "cl no GPU device lost / guest fault",
             r"(?i)device lost|GPU fault|Guest fault|Dantelion2 Panic|exited with code [1-9]")
     check_common(v, L, "cl")
