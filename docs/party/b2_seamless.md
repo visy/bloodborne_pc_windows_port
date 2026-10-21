@@ -858,6 +858,21 @@ opt-in. The decisions are pure functions in `party_death_rules.h` (unit party-de
   left and rejoined by the bell - a test-aid artifact) and the guest's same-map solo load (it came
   while the host death's re-join ran and was correctly dropped: "nothing runs", the host stayed).
 
+**2026-10-20 (spectcam): C5 spectate camera, smooth follow.** User report from a real 2-player
+session: "spectator cam is weird". Live A/B in one session (Gascoigne, host dead in the fight, the
+guest walking circles and rolling; `BB_PARTY_SPECTATE_SMOOTH_AFTER=22`, `BB_PARTY_SPECTATE_LOG=1`):
+the old follow (dead chr carried every 0.2 s to 3 m behind the member's body yaw, Lua CamReset at
+every > 0.6 rad turn) logged 66-124 camera resets a minute, 4-5 m carry steps per tick and render
+camera moves of 5-10 m / turns of 113 degrees between frames; the screenshots show walls, pillars
+and fences in front of the camera most of the time. The smooth follow (carried every frame onto
+the member's own spot with a 0.15 s exponential lag, CamReset only for a new member) logged 0
+resets, 0.23 m steps, camera moves up to 0.35 m and turns up to 8.5 degrees between frames, the
+member on screen in every shot. The member's own spot is never inside a wall; the game's camera
+keeps its own distance and wall collision from there (no raycast needed). The guest's spectate now
+starts at its held death in a boss fight (it waited for the 8 s grace before). The host's ~9 s
+before the spectate is the game's own death (animation, YOU DIED) up to SoloPlayDeath_2's funnel,
+which also records the bloodstain from the chr's position: not shortened.
+
 ## 7. Risks / open items
 
 * (Closed in 6.7 / 6.8) K10 / boss clear with a real kill; wipes (guest and host dead) and falls
