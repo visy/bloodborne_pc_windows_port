@@ -839,7 +839,7 @@ GROUP_UNTIL = {
     "host_death": ["0:spectating: following", "1:Party HUD: slot 0 spectating"],
     "wipe": [WIPE_UNTIL],
     # guest 1 back from the late wipe's respawn load (then the hold: no revive of its own after it)
-    "wipe_late": [r"1:travel step \d+/\d+: guest_die[\s\S]*arrived in the host world \(flow 4\)"],
+    "wipe_late": [r"1:own chr at HP 0: told the host[\s\S]*arrived in the host world \(flow 4\)"],
     "kill": ["2:host boss kill", "0:K10: boss-clear leave suppressed"],
     "arena": [r"2:test: guest_move to \(-136\.5"],
     "itembox": ["1:item notice closed|lot 50000010 .*(?:not )?given (?:now )?while summoned|owed key item: lot 50000010",
@@ -1095,39 +1095,39 @@ GASCOIGNE_ARENA = (-48.76, -40.92, 72.44)  # the intro's trigger box, in the are
 
 
 def check_wipe_late(v, L, hd):
-    """Late-death wipe (player report 2026-10-21): guest 1 is the last one down, 40 s after the host;
-    one respawn load for everyone, its bloodstain in the arena, no revive of its own after the load."""
-    need(v, L, "s1 late wipe: guest 2 down", 2, r"travel step \d+/\d+: guest_die", hd or 0)
-    g1 = need(v, L, "s1 late wipe: guest 1 down last", 1, r"travel step \d+/\d+: guest_die", hd or 0)
+    """Late-death wipe (player report 2026-10-21): guest 1 is the last one down, long after the host
+    (its scripted death at 40 s, or Gascoigne's hit before it: run1 36 s); one respawn load for
+    everyone, its bloodstain in the arena, no revive of its own after the load."""
+    g2 = need(v, L, "s1 late wipe: guest 2 down", 2, r"own chr at HP 0: told the host", hd or 0)
+    g1 = need(v, L, "s1 late wipe: guest 1 down last", 1, r"own chr at HP 0: told the host", (g2 or hd or 0) + 0.5)
     if g1 is None or hd is None:
         return
-    v.step("s1 late wipe: guest 1 down >= 30 s after the host", g1 - hd >= 30, "%.1f s after" % (g1 - hd))
-    wipes = L.all(0, WIPE_RX, hd)
+    v.step("s1 late wipe: guest 1 down >= 20 s after the host", g1 - hd >= 20, "%.1f s after" % (g1 - hd))
+    arr = need(v, L, "s1 late wipe: guest 1 arrives with the respawn load", 1, r"arrived in the host world \(flow 4\)", g1)
+    end = arr if arr is not None else 1e9
+    wipes = L.all(0, WIPE_RX, hd, end)
     v.step("s1 late wipe: one wipe (one respawn load)", len(wipes) == 1, "%d wipe line(s)" % len(wipes))
     w = wipes[0][0] if wipes else g1
-    v.step("s1 late wipe: the wipe after guest 1's death", w >= g1 - 1, "wipe +%.1f s, death +%.1f s" % (w, g1))
-    need(v, L, "s1 late wipe: guest 1 follows once its death is taken", 1,
-         r"follows it dead to the host's lamp|held death goes with the host's travel|"
-         r"own death in the host's world held \(the host's travel is in flight", g1 - 1)
-    st = L.find(1, r"party stain \(death in the host's world\): \d+ Blood Echoes at", g1 - 1)
+    v.step("s1 late wipe: the wipe at guest 1's death", w >= g1 - 1, "wipe +%.1f s, guest 1 down +%.1f s" % (w, g1))
+    need(v, L, "s1 late wipe: guest 1 waits for its death, then follows dead", 1,
+         r"follows it dead to the host's lamp with the party", g1 - 1, end)
+    st = L.find(1, r"party stain \(death in the host's world\): \d+ Blood Echoes at", g1 - 1, end)
     if st:
         m = re.search(r"at \((-?[\d.]+), (-?[\d.]+), (-?[\d.]+)\)", st[1])
         p = [float(x) for x in m.groups()] if m else [1e9] * 3
         d = sum((a - b) ** 2 for a, b in zip(p, GASCOIGNE_ARENA)) ** 0.5
-        v.step("s1 late wipe: guest 1's bloodstain in the arena", d < 60, "%.1f m from the arena: %s" % (d, st[1][:120]))
+        v.step("s1 late wipe: guest 1's bloodstain where it died", d < 30, "%.1f m from the arena: %s" % (d, st[1][:120]))
     else:
-        v.step("s1 late wipe: guest 1's bloodstain in the arena", False, "no party stain line after +%.1f s" % g1)
-    arr = need(v, L, "s1 late wipe: guest 1 arrives with the respawn load", 1, r"arrived in the host world \(flow 4\)", g1)
+        v.step("s1 late wipe: guest 1's bloodstain where it died", False, "no party stain line after +%.1f s" % g1)
     if arr is None:
         return
-    loads = L.all(1, r"Loading: begins", g1 - 1)
-    v.step("s1 late wipe: guest 1 took one load", len(loads) == 1, "%d load(s) after its death" % len(loads))
-    need(v, L, "s1 late wipe: guest 1 placed beside the host", 1,
-         r"placed beside the host after the death follow|arrived by the host's own travel; placed beside", arr - 1)
+    loads = L.all(1, r"Loading: begins|loading screen up", g1 - 1, end)
+    v.step("s1 late wipe: guest 1 took one load", 1 <= len(loads) <= 2, "%d load line(s) after its death" % len(loads))
+    need(v, L, "s1 late wipe: guest 1 up beside the host", 1, r"placed beside the host after the death follow", arr - 1)
+    need(v, L, "s1 late wipe: guest 1 alive after the load", 1, r"guest: HP [1-9]\d* after the load", g1, arr + 1)
     none_of(v, L, "s1 late wipe: no revive of its own after the load", r"died alone: revived|revived at its own last lamp|"
-            r"died alone \(no host travel|guest death redirect runs", arr, insts=(1,))
+            r"died alone \(no host travel|guest death redirect runs|own death in the host's world held", arr, arr + 15, insts=(1,))
     need(v, L, "s1 late wipe: host re-join done", 0, r"host: re-join done", arr - 2)
-
 
 def check_arena(v, L, k):
     """Guest 2 dead in the fight when the boss dies: up in the arena, no load (arenaguest 2026-10-21)."""
