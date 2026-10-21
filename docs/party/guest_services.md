@@ -74,8 +74,8 @@ the host's flag (e.g. 12100320) in the overlay the guest sees the same messenger
 (7005/7006/7029), wait 29 frames, `[8-10]` at the shop (7003/7004/7043), `[11]` wait 12105041 OFF,
 `[12-14]` sink (7007/7008/7047), wait 28 frames, `[16]` 1000[04] restart. 12105041 is set by the
 talk script (talk command switch, return 0x2043F5C -> 0x27C1C12 -> SetEventFlag) of whoever opens
-the shop, in its own game only, and nothing clears it before a load (vanilla: the messengers stay up
-after the first shop visit). The event's state is network-synced: packet 0x31, drained by
+the shop, in its own game only, and cleared by it when the player leaves (return 0x27C1D3D). The
+event's state is network-synced: packet 0x31, drained by
 0x12F0F90 at 0x12F1744 (`{u16 kind 0, u16, u32 size, i32 event, i16 slot, state}` to every
 instance with that event id and slot, vfunc +0x28). With one player in the shop (flag 1) and one
 watching (flag 0) each game passed the other's wait: the shopper's `[3]` ON reached the watcher,
@@ -83,7 +83,11 @@ the watcher's `[11]` OFF reached the shopper, and the event ran rise / sink ever
 games (the watcher saw the messengers pop in and out with their sound; the shopper too, behind the
 menu). No SetEventFlag of 12105041 ever happened on the watcher (`BB_PARTY_WORLD_WATCH` write
 trace). Now (`PerPlayerMessengerEvent`, `BB_PARTY_MESSENGER_SYNC=1` restores it) the 0x31 packets
-of 12105040 are dropped on receipt: each game animates the messengers from its own talk flag. The
+of 12105040 are dropped on receipt: each game animates the messengers from its own talk flag (live
+after: the shopper's messengers rise once, stay at 3007003 and sink once when it leaves; on the
+watcher they rose once with the other player's shop opening - the animation itself reaches it
+some other way - and stayed up, no loop; the rise / sink loop count on the watcher went from 16
+to 0). The
 Insight messenger's 12105043 is different and stays synced: its copy ends on a client
 (`1003[101]`), the host's copy drives every game (live: one rise 3007034/3007035 when the host
 opened t210698, one sink 3007036 when it closed; its talk script clears 12105044 on leaving).
