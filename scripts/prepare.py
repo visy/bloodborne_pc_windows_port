@@ -43,13 +43,13 @@ def parse_elf(data):
     return bytearray(span(data, 0, end)), header, ph, [], []
 
 
-def parse_self(data):
+def parse_self(data, name='eboot.bin'):
     if len(data) < 32:
-        raise ValueError(f"eboot.bin is empty or truncated ({len(data)} bytes; a SELF or ELF header needs at least 32)")
+        raise ValueError(f"{name} is empty or truncated ({len(data)} bytes; a SELF or ELF header needs at least 32)")
     if span(data, 0, 4) == b'\x7fELF':
         return parse_elf(data)
     if span(data, 0, 4) != b'O\x15=\x1d':
-        raise ValueError("expected PS4 SELF or ELF (eboot.bin is neither: an encrypted or damaged dump?)")
+        raise ValueError(f"expected PS4 SELF or ELF ({name} is neither: an encrypted or damaged dump?)")
     count, = unpack('<H', data, 24)
     base = 32 + count * 32
     header = unpack('<16sHHIQQQIHHHHHH', data, base)
@@ -114,8 +114,16 @@ def nid(name):
 
 def inspect_libc(path):
     """Prove that this dump's _init_env is exactly RET; never assume it."""
+    # Missing or cut-short module: say which file and what to do (Mrsuss60 17d58066).
+    if not path.is_file():
+        raise ValueError(f"sce_module/libc.prx is missing at {path}: the game dump needs its sce_module folder; re-copy or re-extract it")
     source = path.read_bytes()
-    elf, header, ph, _, missing = parse_self(source)
+    if len(source) < 32:
+        raise ValueError(f"sce_module/libc.prx at {path} is truncated ({len(source)} bytes): re-copy or re-extract the game dump")
+    try:
+        elf, header, ph, _, missing = parse_self(source, 'sce_module/libc.prx')
+    except (ValueError, struct.error) as error:
+        raise ValueError(f"sce_module/libc.prx at {path} is unreadable ({error}): re-copy or re-extract the game dump") from None
     dynamic = next(p for p in ph if p['type'] == 2)
     tags = dict(unpack('<QQ', elf, pos) for pos in
                 range(dynamic['offset'], dynamic['offset'] + dynamic['filesz'], 16))
