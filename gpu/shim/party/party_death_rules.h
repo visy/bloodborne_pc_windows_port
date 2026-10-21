@@ -236,15 +236,15 @@ constexpr double kGuestReviveFallDrop = 6.0;
 // The game's own fall-death state, left on the chr after the death (issue #4 bundles: only the fall
 // death had them; nine normal deaths had neither): PlayerIns +0x1E1 (5 bytes read as one value)
 // bit 0x40 of its first byte and 0x04 of its fifth (0x04'0000'0040), and the HP module's +0x200 word
-// bit 0x0800 (the fall read 0xF800; normal deaths 0x0000 or 0x8000 in the bundles; revivecheck
-// 2026-10-21 live: an enemy's kill 0x7000 and a ForceDead 0xD000, so 0x7000 is no fall sign and the
-// old 0x7800 mask sent normal deaths to the loading screen). kDeathBitsHp200: what the revive's
-// "flags" step clears (the old mask; the revives after 0xD000 -> 0x8000 worked).
+// bits 0x7800 (the fall read 0xF800; normal deaths 0x0000 or 0x8000 in the bundles). The +0x200
+// word is no fall sign (revivecheck 2026-10-21 live, normal deaths with no drop: an enemy's kill
+// 0x7000, ForceDeads 0xD000 and 0xF800 - the fall's own value - each sent to the loading screen
+// as a fall), so only the +0x1E1 flags count (with the 6 m drop test above). kDeathBitsHp200:
+// what the revive's "flags" step still clears (the revives after 0xD000 -> 0x8000 worked).
 constexpr std::uint64_t kFallFlags1e1 = 0x0400000040ull;
-constexpr std::uint16_t kFallBitsHp200 = 0x0800;
 constexpr std::uint16_t kDeathBitsHp200 = 0x7800;
-inline bool FallDeathState(std::uint64_t f1e1, std::uint16_t hp200) {
-    return (f1e1 & kFallFlags1e1) != 0 || (hp200 & kFallBitsHp200) != 0;
+inline bool FallDeathState(std::uint64_t f1e1, std::uint16_t /*hp200*/) {
+    return (f1e1 & kFallFlags1e1) != 0;
 }
 enum class GuestRevive { InPlace, LoadFall, LoadFallState };
 inline const char* GuestReviveName(GuestRevive g) {

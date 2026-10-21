@@ -399,10 +399,11 @@ int main() {
     CHECK(FallDeathState(0x0400011088ull, 0) && FallDeathState(0x00030010d8ull, 0));
     CHECK(!FallDeathState(0x0001001098ull, 0x0000) && !FallDeathState(0x0001001098ull, 0x8000));
     CHECK(!FallDeathState(0x0003001098ull, 0x8000));  // after a normal revive
-    // revivecheck live: an enemy's kill (0x7000, dropped 0.0 m) and a ForceDead (0xD000) are no falls.
+    // revivecheck live: deaths with no drop and hp+0x200 0x7000 (an enemy's kill), 0xD000 and 0xF800
+    // (ForceDeads) are no falls; only the +0x1E1 flags are.
     CHECK(!FallDeathState(0x0001001098ull, 0x7000) && !FallDeathState(0x0001001098ull, 0xd000));
-    CHECK(PlanGuestRevive(0.0, true, FallDeathState(0x0001001098ull, 0x7000)) == GuestRevive::InPlace);
-    CHECK(FallDeathState(0x0001001098ull, 0x0800));
+    CHECK(!FallDeathState(0x0001001098ull, 0xf800));
+    CHECK(PlanGuestRevive(0.0, true, FallDeathState(0x0001001098ull, 0xf800)) == GuestRevive::InPlace);
     CHECK(PlanGuestRevive(0.0, true, FallDeathState(0x0001001098ull, 0x8000)) == GuestRevive::InPlace);
     CHECK(FallDrop(-20.0, -40.0, -80.0) == 60.0);                            // into the void: still dropping
     CHECK(FallDrop(-20.0, -21.0, -21.0) == 1.0);
