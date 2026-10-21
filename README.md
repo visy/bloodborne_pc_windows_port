@@ -290,8 +290,10 @@ before anyone is in the game):
 - **Key items are never lost.** Key items a guest earns in the host's world (Oedon Tomb Key,
   badges, workshop tools, chalices, umbilical cords) go into its inventory right away, and are
   checked again each time its own world loads and given again if missing; one you already hold is
-  never handed out twice. Keys and tools found
-  lying around go to the whole party, so nobody is locked out of a door.
+  never handed out twice, and one you used up (the Gold Pendant, the Tear Stone) never comes back.
+  While summoned, the Key Items tab is empty after each load in the host's world: that is the
+  game's own view for a visiting hunter; your save keeps them and they are back in your own world.
+  Keys and tools found lying around go to the whole party, so nobody is locked out of a door.
 - **Gestures are shared.** A gesture anyone in the party learns (from Gehrman, the Messengers, an
   NPC's talk) is learned by every player at once, with the game's "item acquired" notice, and kept
   in each player's own save, also when it was learned in someone else's world.

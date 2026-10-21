@@ -259,12 +259,12 @@ PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "summonfail": ph
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "kill": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
-          "host_leave": "s2", "rules": "rules", "summonfail": "summonfail"}
+          "host_leave": "s2", "keyitems": "s2", "rules": "rules", "summonfail": "summonfail"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "kill": r"s2 boss kill|party stays", "itembox": r"item box|reward on the summoned",
               "rejoin_kill": r"s2 (Leave after|Rejoin|no kick)", "c6": r"guest crash",
-              "host_crash": r"host crash", "host_leave": r"host Leave", "rules": r"^rules",
+              "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "summonfail": r"^summonfail"}
 
 
@@ -282,6 +282,7 @@ GROUP_UNTIL = {
     "itembox": ["1:item notice closed|lot 50000010 .*(?:not )?given (?:now )?while summoned|owed key item: lot 50000010",
                 "1:" + STORAGE_GIVE],
     "rejoin_kill": ["1:guest_rejoin: Party > Rejoin pressed"],
+    "keyitems": [r"1:key goods held: .*load mode 0\)"],  # guest 1 back in its own world after the Leave
     "rules": [r"0:mark=rules_h_ffoff[\s\S]{200}", "1:test menu: done"],
     # guest 2 in the host's world, then ~10 s of log for the screenshots
     "summonfail": [r"0:cooperators 0 -> 1[\s\S]{6000}"],
@@ -472,7 +473,7 @@ def check_s1(v, L):
     if d is not None:
         need(v, L, "s1 bloodstain recorded (5000 echoes)", 1, r"guest: bloodstain recorded", d)
         # 0.6.9: a guest's death takes the respawn load (the in-place revive left it unhittable)
-    need(v, L, "s1 guest respawned at the lamp", 1, r"guest: respawned at the host's lamp|guest: died alone: revived|revived at", d)
+    need(v, L, "s1 guest respawned at the lamp", 1, r"guest: respawned at the host's lamp|guest: died alone: revived|revived at", d or 0)
     tr = need(v, L, "s1 party lamp travel (host)", 0, r"travel step \d+/\d+: host_warp to lamp 2412953")
     if tr is not None:
         for i in (1, 2):
@@ -517,7 +518,17 @@ def check_s2(v, L, d: Path):
     none_of(v, L, "s2 item box: no 'Unable to acquire' box on guest 1", r"text shows: \"Unable to acquire", 0, 1e9, (1,))
     none_of(v, L, "s2 item box: no Pebble left on the ground (no give counted as Full)",
             r"lot 2100000 .*(Full|skip .*while summoned)", 0, 1e9, (1,))
+    # Key items (items.md 10.5). The test save used Amelia's Gold Pendant (4001): 0.6.2 - 0.6.9 gave it
+    # back at every own-world load. After the travel the host holds its keys; summoned, a guest's key
+    # section reads empty (the game's own view), and at home the save's keys are back, one stack each.
+    none_of(v, L, "s2 key item: a used-up item is not given back", r"(catch-up|owed lot|given again).*goods 4001")
+    none_of(v, L, "s2 key item: no duplicate stack", r"DUPLICATE STACK")
+    if tr is not None:
+        need(v, L, "s2 key items after the travel (host)", 0, r"key goods held: .*4000 x1, 4001 x0,.*map m24_01", tr)
     lv = need(v, L, "s2 Leave after the boss kill", 1, r"guest_leave: Party > Leave pressed", k or 0)
+    if lv is not None:
+        need(v, L, "s2 key items back at home after the travels (guest)", 1,
+             r"key goods held: .*4000 x1, 4001 x0,.*4114 x1,.*load mode 0\)", lv)
     rj = need(v, L, "s2 Rejoin pressed", 1, r"guest_rejoin: Party > Rejoin pressed", lv or 0) if lv else None
     if rj is not None:
         back = need(v, L, "s2 Rejoin after the kill: back in", 0, r"cooperators 1 -> 2", rj)
